@@ -3,7 +3,7 @@ import { Card } from '@/ui-next/primitives/Card';
 import { RetryLine } from '@/ui-next/primitives/RetryLine';
 import { SkeletonLines } from '@/ui-next/primitives/SkeletonLines';
 import { Button } from '@/ui-next/public';
-import { VERIFY_WORDS, kindWord, sourceWord } from './library-copy';
+import { ADMISSION_WORDS, VERIFY_WORDS, kindWord, sourceWord } from './library-copy';
 import type { LibraryScope } from './library-url';
 import { LoadMore, QuestionLine, shortDay } from './QuestionLine';
 import { ReviewBar } from './ReviewBar';
@@ -32,6 +32,9 @@ export function ReviewView({
   const [skipped, setSkipped] = useState<ReadonlySet<string>>(new Set());
   const batch = useBatchVerify(() => setPicked(new Set()));
   const shown = rows.filter((row) => !skipped.has(row.id));
+  // Only a question the automatic check owns refuses a hand verify. An old draft can have a check
+  // status too and stays pickable.
+  const pickable = shown.filter((row) => !row.admission_owned);
   // A new scope or search starts a fresh selection, so nothing hidden stays ticked.
   const scopeKey = JSON.stringify(scope);
   const [pickedFor, setPickedFor] = useState(scopeKey);
@@ -39,8 +42,8 @@ export function ReviewView({
     setPickedFor(scopeKey);
     setPicked(new Set());
   }
-  const shownIds = new Set(shown.map((row) => row.id));
-  const pickedShown = [...picked].filter((id) => shownIds.has(id));
+  const pickableIds = new Set(pickable.map((row) => row.id));
+  const pickedShown = [...picked].filter((id) => pickableIds.has(id));
 
   const toggle = (id: string, on: boolean) =>
     setPicked((prev) => {
@@ -49,7 +52,7 @@ export function ReviewView({
       else next.delete(id);
       return next;
     });
-  const allPicked = shown.length > 0 && shown.every((row) => picked.has(row.id));
+  const allPicked = pickable.length > 0 && pickable.every((row) => picked.has(row.id));
   const more = (
     <LoadMore
       shown={shown.length}
@@ -81,18 +84,20 @@ export function ReviewView({
   return (
     <>
       <div className="ql-review-tools">
-        <label className="ql-tick-all">
-          <input
-            type="checkbox"
-            className="ql-tick"
-            checked={allPicked}
-            disabled={batch.progress !== null}
-            onChange={(e) =>
-              setPicked(e.currentTarget.checked ? new Set(shown.map((r) => r.id)) : new Set())
-            }
-          />
-          全选这里显示的
-        </label>
+        {pickable.length > 0 && (
+          <label className="ql-tick-all">
+            <input
+              type="checkbox"
+              className="ql-tick"
+              checked={allPicked}
+              disabled={batch.progress !== null}
+              onChange={(e) =>
+                setPicked(e.currentTarget.checked ? new Set(pickable.map((r) => r.id)) : new Set())
+              }
+            />
+            全选这里显示的
+          </label>
+        )}
         {skipped.size > 0 && (
           <button
             type="button"
@@ -105,6 +110,12 @@ export function ReviewView({
       </div>
       <ol className="ql-list">
         {shown.map((row) => {
+          const check =
+            row.admission && row.admission.status !== 'admitted'
+              ? [ADMISSION_WORDS[row.admission.status].title, row.admission.reason]
+                  .filter(Boolean)
+                  .join('：')
+              : null;
           const verify = VERIFY_WORDS[row.verify_status] ?? { word: '还不确定', tone: 'neutral' };
           return (
             <QuestionLine
@@ -114,18 +125,25 @@ export function ReviewView({
               notation={lookups.notationFor(row.knowledge.map((k) => k.id))}
               navigate={navigate}
               lead={
-                <input
-                  type="checkbox"
-                  className="ql-tick ql-line-tick"
-                  aria-label="选中这道题"
-                  checked={picked.has(row.id)}
-                  disabled={batch.progress !== null}
-                  onChange={(e) => toggle(row.id, e.currentTarget.checked)}
-                />
+                row.admission_owned ? undefined : (
+                  <input
+                    type="checkbox"
+                    className="ql-tick ql-line-tick"
+                    aria-label="选中这道题"
+                    checked={picked.has(row.id)}
+                    disabled={batch.progress !== null}
+                    onChange={(e) => toggle(row.id, e.currentTarget.checked)}
+                  />
+                )
               }
               detail={
-                row.verify_reason ? (
-                  <span className="ql-reason">核验写下的原因：{row.verify_reason}</span>
+                check || row.verify_reason ? (
+                  <>
+                    {check ? <span className="ql-reason">{check}</span> : null}
+                    {row.verify_reason ? (
+                      <span className="ql-reason">核验写下的原因：{row.verify_reason}</span>
+                    ) : null}
+                  </>
                 ) : null
               }
               knowledge={row.knowledge.map((k) => ({ id: k.id, name: k.label }))}

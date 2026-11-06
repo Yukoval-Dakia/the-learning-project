@@ -53,6 +53,7 @@
 - auth_failed/unconfigured、未接线/无凭据沿已有可用性 guard 禁用模型保存；已有 runnable=false 明确禁选但目录可查，不编排备用 provider。
 - 原确认入口继续成组提交 provider/model。确认期间若目录/认证事实更新为不可用，提交前以当前展示事实阻止该模型保存并显示原因；不会改成另一个模型。最终授权/组合合法性仍由原 backend writer 验证。
 - budget/language/reset、全局pin优先、typed只读、facts未注入禁编辑、已提交与刷新失败分列均保留。不新增 credentials/custom-provider CRUD UI，不执行一次真实配置写入或探针。
+- 2026-11-07 更新（YUK-1910）：typed 只读现在只指模型和思考强度；服务端真实消费 typed 预算，所以预算开放编辑，模型和思考的写入服务端返回 422。
 
 ## 验收范围
 
