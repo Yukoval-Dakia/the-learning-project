@@ -4,7 +4,10 @@ import { runAuthenticatedStartWorkbench } from './workbench-read';
 
 export const recomposeStartPracticeStreamFunction = createServerFn({ method: 'POST' }).handler(
   ({ context }) =>
-    runAuthenticatedStartWorkbench(context, getRequest(), async () =>
-      JSON.stringify(await context.recomposePracticeStream()),
-    ),
+    runAuthenticatedStartWorkbench(context, getRequest(), async () => {
+      const { recomposeStartPracticeStream } = await import(
+        './practice-stream-recompose-operation'
+      );
+      return JSON.stringify(await recomposeStartPracticeStream());
+    }),
 );
