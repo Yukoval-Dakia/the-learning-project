@@ -1,11 +1,17 @@
+// Start-side adapters for this family. `frontdoor.ts` loads this module from the API
+// graph, so every adapter below runs with the initialized subject registry, config
+// snapshot and database pool; each keeps its own conversion, error and deadline handling.
+
 import type { AgentNoteBoardQuery } from '@/capabilities/agency/public';
 import type { Db, Tx } from '@/db/client';
 import { ApiError, errorResponse } from '@/kernel/http';
 
 // Called only inside the token/epoch guard. Domain owns validation, selection and ISO DTOs.
+export type AgentNoteBoardOptions = { database?: Db | Tx; now?: Date };
+
 export async function readStartAgentNoteBoard(
   input: AgentNoteBoardQuery,
-  options: { database?: Db | Tx; now?: Date } = {},
+  options: AgentNoteBoardOptions = {},
 ) {
   try {
     const now = options.now ?? new Date();
@@ -27,3 +33,5 @@ export async function readStartAgentNoteBoard(
     throw errorResponse(error);
   }
 }
+
+export const agentNoteAdapters = { readStartAgentNoteBoard };
