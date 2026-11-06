@@ -110,6 +110,7 @@ pnpm audit:question-writers
 pnpm audit:api-contracts
 pnpm audit:api-client
 pnpm audit:tool-params
+pnpm audit:copilot-prompt-budget
 pnpm audit:capability-boundaries
 pnpm audit:architecture-deepening
 pnpm audit:practice-subowners

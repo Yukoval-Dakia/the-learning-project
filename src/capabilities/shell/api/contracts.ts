@@ -157,6 +157,9 @@ export const ProposalInboxRowResponseSchema = z.object({
 export const ProposalPageResponseSchema = z.object({
   data: z.array(ProposalInboxRowResponseSchema),
   page: z.object({ limit: z.number().int().positive(), next_cursor: z.string().nullable() }),
+  // Page copy branches on this (auto-create vs. confirm in the inbox). Served by
+  // the API process so it reflects the hydrated config, not a Start-bundle default.
+  auto_apply_enabled: z.boolean(),
   // Compatibility fields remain part of the declared contract until every
   // browser caller consumes the canonical collection envelope.
   rows: z.array(ProposalInboxRowResponseSchema),

@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { AiProposalKind } from '@/core/schema/proposal';
 import type { Db } from '@/db/client';
 import { ApiError, collectionPayload } from '@/kernel/http';
+import { proposalAutoApplyEnabled } from '@/kernel/proposals/auto-apply-marker';
 import { listProposalInboxPage } from '@/kernel/proposals/inbox';
 import { proposalInboxRowForLearner } from '@/kernel/proposals/learner-read';
 
@@ -60,6 +61,8 @@ export async function readProposalInbox(db: Db, input: unknown = {}) {
     {
       rows,
       next_cursor: page.next_cursor,
+      // Resolved in the API process, where the config snapshot is hydrated.
+      auto_apply_enabled: proposalAutoApplyEnabled(),
     },
   );
 }
