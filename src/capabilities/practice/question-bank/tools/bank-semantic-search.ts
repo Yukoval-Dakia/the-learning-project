@@ -364,6 +364,11 @@ export async function runBankSemanticSearch(
     hit.final_rank = i + 1;
   });
   const unverified = hits.filter((h) => h.group === 'unverified').length;
+  // Unverified candidates are recall evidence, never a match; say what the model can do next.
+  const nextStep =
+    stop === 'verification_failed_no_retry'
+      ? '未核验候选只是召回证据，不能称为匹配；可以先查看候选，也可以直接写新题，不要原样重复这次搜索。'
+      : undefined;
   const indexMissing = ['revision_material_long_text_visibility_projections_not_delivered'];
   const incomplete =
     recall.coverage.retrieval_truncated ||
@@ -441,6 +446,7 @@ export async function runBankSemanticSearch(
       index_missing: indexMissing,
       stop_reason: stop,
       absence: 'not_established',
+      ...(nextStep !== undefined ? { next_step: nextStep } : {}),
       reasons: [
         ...(incomplete ? ['retrieval_incomplete'] : []),
         ...(unverified ? ['evidence_missing'] : []),

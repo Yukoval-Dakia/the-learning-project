@@ -195,6 +195,14 @@ function replyStatesPlacement(reply: string, placementNote: string): boolean {
   return placed !== undefined && placed.length > 0 && reply.includes(placed);
 }
 
+const NO_EXECUTOR_ADMISSION =
+  '这类题目前没有可用的自动判分器，暂时不能作答；可以换一道选择、填空、配对、断句或排序题。';
+const PENDING_ADMISSION = '自动检查通过后才能作答；当前状态和原因可在题库查看。';
+// The tool summary and the disclosure share these exact clauses; checking the
+// clause (not loose wording) keeps the admission fact stated once either way.
+const NO_EXECUTOR_MARKER = '没有可用的自动判分器';
+const PENDING_MARKER = '自动检查通过后';
+
 function proposalDisclosure(trace: readonly TraceEntry[], reply: string): string | undefined {
   const bankLinks = [
     ...new Set(
@@ -227,16 +235,22 @@ function proposalDisclosure(trace: readonly TraceEntry[], reply: string): string
           typeof out.placement_note === 'string' ? out.placement_note : undefined;
         const missingPlacement =
           placementNote !== undefined && !replyStatesPlacement(reply, placementNote);
-        // The model already linked the stored question: it owns the disclosure, and the
-        // server only adds the fact it left out. Repeated server copy is the duplicate here.
-        if (reply.includes(out.bank_path))
-          return missingPlacement && placementNote !== undefined ? [placementNote] : [];
-        const stored = noExecutor
-          ? `题已存入[题库](${out.bank_path})，但这类题目前没有可用的自动判分器，暂时不能作答；可以换一道选择、填空、配对、断句或排序题。`
-          : `题已存入[题库](${out.bank_path})，自动检查通过后才能作答；当前状态和原因可在题库查看。`;
-        return [
-          missingPlacement && placementNote !== undefined ? `${placementNote}\n${stored}` : stored,
-        ];
+        const admissionSentence = noExecutor ? NO_EXECUTOR_ADMISSION : PENDING_ADMISSION;
+        const linkStated = reply.includes(out.bank_path);
+        // Link and admission are separate facts: the model may have linked the
+        // question while omitting that it still needs a check or cannot be answered.
+        const admissionStated = reply.includes(noExecutor ? NO_EXECUTOR_MARKER : PENDING_MARKER);
+        const facts: string[] = [];
+        if (missingPlacement && placementNote !== undefined) facts.push(placementNote);
+        if (!linkStated && !admissionStated)
+          facts.push(
+            `题已存入[题库](${out.bank_path})，${noExecutor ? `但${admissionSentence}` : admissionSentence}`,
+          );
+        else {
+          if (!linkStated) facts.push(`题已存入[题库](${out.bank_path})。`);
+          if (!admissionStated) facts.push(admissionSentence);
+        }
+        return facts.length > 0 ? [facts.join('\n')] : [];
       }),
     ),
   ];

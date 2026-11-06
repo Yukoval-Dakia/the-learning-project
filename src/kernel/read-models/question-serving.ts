@@ -258,11 +258,14 @@ function admissionRead(
   if (
     fact.admission_paid_state === 'unknown' ||
     fact.admission_unknown_stage ||
-    fact.admission_result_status === 'waiting' ||
     (fact.admission_withheld_reason === 'verification_failed' &&
       fact.verification_policy === 'question_admission_unknown_close@1')
   ) {
     return { status: 'undecided', reason: '自动检查的结果尚未确认，题目暂不能作答。' };
+  }
+  // A recorded quota wait has a durable wake-up: it is still being checked, not undecided.
+  if (fact.admission_result_status === 'waiting') {
+    return { status: 'pending', reason: '还在检查，系统会自动再试。' };
   }
   const reason = fact.admission_failure_reason ?? fact.admission_withheld_reason;
   if (
