@@ -239,7 +239,7 @@ function GlobalDefault({ data, save }: { data: ConfigData; save: SaveConfig }) {
       ) : null}
       {pinned ? (
         <p className="adm-warn-line">
-          紧急开关开着（部署环境变量），它压过这里的设置，这里改不了。勾了「不跟全局默认」的任务不受影响。
+          紧急开关开着（部署环境变量），它压过这里的模型，这里只能改思考强度。勾了「不跟全局默认」的任务不受影响。
           {current?.model && current.source !== current.model_source
             ? ` Provider 来自${current?.source === 'env' ? '环境变量' : '这里的设置'}，模型来自${current?.model_source === 'env' ? '环境变量' : '这里的设置'}。`
             : ''}
