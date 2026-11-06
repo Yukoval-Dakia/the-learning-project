@@ -810,6 +810,13 @@ export const issueAssessment = (
     body,
   });
 
+/** A question placed in a reply: its state and answer-free face. Reading it never writes. */
+export const getQuestionCard = (id: string, sessionId: string) =>
+  apiOperationJson('getQuestionCard', {
+    url: `/api/questions/${encodeURIComponent(id)}/card?session_id=${encodeURIComponent(sessionId)}`,
+    method: 'GET',
+  });
+
 /** pending 恢复读面：issuance + live draft + 已接收提交（draft=null 即服务端无草稿）。 */
 export const getIssuanceState = (issuanceId: string) =>
   apiOperationJson('getIssuance', {

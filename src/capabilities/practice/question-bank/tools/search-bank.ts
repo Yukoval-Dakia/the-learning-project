@@ -27,7 +27,12 @@ import { runBankSemanticSearch } from './bank-semantic-search';
 const SearchBankNewFormSchema = z
   .object({
     /** 自然语言检索（中文直接可用；不要求知识点 ID / 题型枚举 / 难度数字）。 */
-    query: z.string().trim().min(1).max(400),
+    query: z
+      .string()
+      .trim()
+      .min(1)
+      .max(400)
+      .describe('新搜索必填；cursor 续页也带上原 query（服务端仍按 cursor 续页）。'),
     /** Subject profile id（如 'yuwen'）；省略 = 全学科。 */
     subject: z.string().min(1).optional(),
     /** 规范题型 label（choice / reading / computation …）。 */
@@ -57,7 +62,9 @@ const SearchBankNewFormSchema = z
 // Pi's bridge needs an object root, so the wire document is one flat key set even
 // though the runtime has three forms (v1 new search, v2 new search, cursor). The
 // branch checks below name cross-form fields per key instead of one root-level
-// "Unrecognized keys" the model cannot map back to a form.
+// "Unrecognized keys" the model cannot map back to a form. The provider wire
+// separately marks query required for a new search; the bridge still accepts a
+// cursor-only resume, and ignores query if a required-wire resume carries it.
 const V1_ONLY_KEYS = [
   'subject',
   'kind',
@@ -94,11 +101,17 @@ export const SearchBankInputSchema = SearchBankNewFormSchema.extend({
   draft_state: z.enum(['all', 'active', 'draft']).optional(),
   admission_state: z.enum(['any', 'admitted', 'withheld']).optional(),
   limit: z.number().int().min(1).max(50).optional(),
-  cursor: z.string().min(1).optional(),
+  cursor: z
+    .string()
+    .min(1)
+    .optional()
+    .describe('续页时传 cursor 和 contract_version=2，不要改条件。'),
   contract_version: z.union([z.literal(1), z.literal(2)]).optional(),
   requirements: BankSearchV2NewSchema.shape.requirements,
   scope: BankSearchV2NewSchema.shape.scope,
-  use: BankSearchV2NewSchema.shape.use.optional(),
+  use: BankSearchV2NewSchema.shape.use
+    .optional()
+    .describe('contract_version=2 的新搜索必填：inspect 或 practice。cursor 续页可省略。'),
   need: BankSearchV2NewSchema.shape.need,
   anchors: BankSearchV2NewSchema.shape.anchors,
   supersedes_search_id: BankSearchV2NewSchema.shape.supersedes_search_id,
@@ -107,7 +120,7 @@ export const SearchBankInputSchema = SearchBankNewFormSchema.extend({
   const presentKeys = Object.keys(input);
   if (input.cursor !== undefined) {
     for (const key of presentKeys) {
-      if (key === 'cursor' || key === 'contract_version') continue;
+      if (key === 'cursor' || key === 'contract_version' || key === 'query') continue;
       ctx.addIssue({
         code: 'custom',
         path: [key],
