@@ -15,6 +15,12 @@
  *                    never match;
  *   - alias    (A1): `export const X = importedBinding` / `export default
  *                    importedBinding` — no call, no transform;
+ *   - object   (O1): exported object literal whose entire value surface is
+ *                    verbatim value-import bindings (`{ foo }`, `{ foo: foo }`,
+ *                    `{ foo: bar }`) — the object-shaped analogue of the M1
+ *                    module shell; a computed key, method, accessor, spread or
+ *                    any non-import value makes the object a real definition
+ *                    and produces no site;
  *   - site     (S1): a value-bearing export-from statement inside a module that
  *                    also owns runtime definitions.
  * Type-only declarations and `import type`/`export type` produce no value
@@ -24,9 +30,9 @@ import { createHash } from 'node:crypto';
 import { parse } from '@babel/parser';
 import { analyzeSource } from './ts-tokenize';
 
-export const PASS_THROUGH_SCANNER_VERSION = 2;
+export const PASS_THROUGH_SCANNER_VERSION = 3;
 
-export type PassThroughKind = 'module' | 'function' | 'alias' | 'site';
+export type PassThroughKind = 'module' | 'function' | 'alias' | 'object' | 'site';
 
 export interface PassThroughSite {
   /** Repo-relative posix path of the file owning the site. */
@@ -72,6 +78,13 @@ interface ImportBinding {
   source: string;
   imported: string;
   typeOnly: boolean;
+}
+
+interface ObjectCandidate {
+  localName: string;
+  node: Record<string, unknown>;
+  /** Exported by its own declaration; `export { local }` is resolved after the pass. */
+  exportedDirectly: boolean;
 }
 
 interface FunctionCandidate {
@@ -297,6 +310,49 @@ function forwardDetail(
   return { target: call.binding, member: call.member, awaited, shape };
 }
 
+/** A `const`/`export const` declarator whose initializer is an object literal;
+ *  whether it is exported (directly or by a later `export { … }`) and whether
+ *  the object is a pure forward table are resolved after the whole pass. */
+function objectCandidateFromDeclarator(
+  declarator: Record<string, unknown>,
+): ObjectCandidate | null {
+  const localName = nodeName(declarator.id);
+  let init: unknown = declarator.init;
+  if (isRecord(init) && init.type === 'TSAsExpression') init = init.expression;
+  if (!localName || !isRecord(init) || init.type !== 'ObjectExpression') return null;
+  return { localName, node: init, exportedDirectly: false };
+}
+
+/** An exported object literal is a forwarding table only when it adds no
+ *  runtime surface of its own: every property holds an imported binding
+ *  verbatim. One non-import value (a literal, a call, a local function, a
+ *  spread, a method) means the object owns behavior or data, so none of its
+ *  properties are provable identity forwards — same all-or-nothing rule as the
+ *  M1 module shell. `TSAs` wrappers and string keys stay verbatim. */
+function objectPropertyBindings(
+  node: Record<string, unknown>,
+  bindings: Map<string, ImportBinding>,
+): { key: string; binding: ImportBinding }[] {
+  const properties = Array.isArray(node.properties) ? node.properties : [];
+  if (properties.length === 0) return [];
+  const pairs: { key: string; binding: ImportBinding }[] = [];
+  for (const property of properties) {
+    if (!isRecord(property)) return [];
+    if (property.type !== 'ObjectProperty' && property.type !== 'Property') return [];
+    if (property.computed === true || property.method === true) return [];
+    if (property.kind !== undefined && property.kind !== 'init') return [];
+    const key = nodeName(property.key) ?? literalString(property.key);
+    if (!key) return [];
+    let value: unknown = property.value;
+    if (isRecord(value) && value.type === 'TSAsExpression') value = value.expression;
+    if (!isRecord(value) || value.type !== 'Identifier') return [];
+    const binding = bindings.get(nodeName(value) ?? '');
+    if (!binding || binding.typeOnly) return [];
+    pairs.push({ key, binding });
+  }
+  return pairs;
+}
+
 function functionCandidateFromDeclarator(
   declarator: Record<string, unknown>,
 ): FunctionCandidate | null {
@@ -373,6 +429,7 @@ export function scanPassThroughSites(
     // pass-through as an export specifier of an import binding. `let`/`var`
     // and non-identifier inits are never provable permanent bindings.
     const varAliases = new Map<string, ImportBinding>();
+    const objectCandidates: ObjectCandidate[] = [];
     const pendingVarExports: { local: string; exported: string }[] = [];
     let runtimeDefs = 0;
     let sawValueReexport = false;
@@ -457,6 +514,12 @@ export function scanPassThroughSites(
                   }
                 }
               }
+              const exportedObject =
+                declaration.kind === 'const' ? objectCandidateFromDeclarator(declarator) : null;
+              if (exportedObject) {
+                exportedObject.exportedDirectly = true;
+                objectCandidates.push(exportedObject);
+              }
             }
           }
         } else if (statement.exportKind !== 'type' && Array.isArray(statement.specifiers)) {
@@ -536,6 +599,14 @@ export function scanPassThroughSites(
             end: typeof declaration.end === 'number' ? declaration.end : 0,
           });
           exportedNames.add('default');
+        } else if (isRecord(declaration) && declaration.type === 'ObjectExpression') {
+          // `export default { foo }` — the same object-shape forward, exported
+          // under `default`, matched at the end of the pass.
+          objectCandidates.push({
+            localName: 'default',
+            node: declaration,
+            exportedDirectly: true,
+          });
         } else if (
           isRecord(declaration) &&
           (declaration.type === 'Identifier' ||
@@ -591,6 +662,8 @@ export function scanPassThroughSites(
           // that identifier is a value import binding. `let`/`var`, member or
           // call expressions are never provable permanent bindings.
           if (statement.kind !== 'const') continue;
+          const objectCandidate = objectCandidateFromDeclarator(declarator);
+          if (objectCandidate) objectCandidates.push(objectCandidate);
           const name = nodeName(declarator.id);
           let init: unknown = declarator.init;
           if (isRecord(init) && init.type === 'TSAsExpression') init = init.expression;
@@ -646,6 +719,31 @@ export function scanPassThroughSites(
         targetSymbol: alias.imported,
         detail: `var-export:${alias.imported}`,
       });
+    }
+
+    // Exported object literals whose properties hold an imported binding
+    // verbatim: the object-shaped A1 alias. Exported names are resolved after
+    // the whole pass so declaration/export order cannot hide one.
+    for (const candidate of objectCandidates) {
+      const exportedSet = new Set<string>(
+        localToExported.get(candidate.localName) ?? new Set<string>(),
+      );
+      if (candidate.exportedDirectly) exportedSet.add(candidate.localName);
+      if (exportedSet.size === 0) continue;
+      for (const { key, binding } of objectPropertyBindings(candidate.node, bindings)) {
+        const target = resolve(path, binding.source);
+        if (!target) continue;
+        for (const exported of exportedSet) {
+          sites.push({
+            file: path,
+            kind: 'object',
+            symbol: `${exported}.${key}`,
+            targetModule: target,
+            targetSymbol: binding.imported,
+            detail: `object:${binding.imported}`,
+          });
+        }
+      }
     }
 
     const reexports = [...reexportPairs.values()].sort(
