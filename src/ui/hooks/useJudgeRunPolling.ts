@@ -76,8 +76,9 @@ export interface UseJudgeRunPollingOptions {
   maxConsecutiveErrors?: number;
   enabled?: boolean;
   /**
-   * 本 run 到终态（done/failed）或错误停机时调用，每个 run 至多一次。宿主在这里认领
-   * 终态（推进下一题、揭晓反馈），不要在渲染里根据快照推进。
+   * 本 run 到终态（done/failed）时调用一次；每次错误停机也调用一次（status 不是终态，之后
+   * 可能恢复轮询并再次回调）。宿主在这里认领终态（推进下一题、揭晓反馈），不要在渲染里根据
+   * 快照推进。
    */
   onSettled?: (state: JudgeRunPollingState) => void;
 }
