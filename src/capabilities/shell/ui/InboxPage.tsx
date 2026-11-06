@@ -16,6 +16,7 @@ import {
   infiniteQueryOptions,
   notifyManager,
   useInfiniteQuery,
+  useMutation,
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query';
@@ -24,7 +25,6 @@ import {
   Check,
   ChevronDown,
   CircleAlert,
-  Clock,
   Eye,
   History,
   Lock,
@@ -38,8 +38,9 @@ import { ToastHost } from '@/ui-next/feedback/ToastHost';
 import { showToast } from '@/ui-next/feedback/toast-store';
 import { RetryLine } from '@/ui-next/primitives/RetryLine';
 import { SkeletonLines } from '@/ui-next/primitives/SkeletonLines';
-import { Button, UiNextRoot } from '@/ui-next/public';
+import { Button, ChipToggle, UiNextRoot } from '@/ui-next/public';
 import {
+  type AutoAppliedRetractResultWire,
   type AutoAppliedRowWire,
   KIND_META,
   type ProposalInboxRow,
@@ -52,18 +53,17 @@ import {
 } from './inbox-api';
 import { inboxTone, kindIcon } from './inbox-look';
 import {
+  AUTO_APPLIED_WINDOWS,
+  type AutoAppliedWindowKey,
   TIER_C_COPY,
   TIER_META,
-  autoAppliedState,
+  autoAppliedWindow,
   bucketPendingByTier,
-  undoRemainingMs,
 } from './inbox-tier';
 import { ProposalCard } from './ProposalCard';
 import { type WorkbenchClient, useWorkbenchClient } from './workbench-client';
 import './inbox-m3e.css';
 
-// A 档撤销窗口的重渲染节拍：每 15s 刷新 nowMs，让倒计时 + live→consumed 过渡随时间走。
-const UNDO_TICK_MS = 15_000;
 const DECISION_QUERY_KEY = queryKeys.decisionProposals;
 const EMPTY_DECISION_PAGES: readonly ProposalPageWire[] = [];
 const EMPTY_DECISION_PAGE_PARAMS: readonly (string | null)[] = [];
@@ -154,24 +154,6 @@ class DecisionBacklogDrain {
  * remaining window is always computed from the real applied time, so the tick rate never
  * stretches or resets the window.
  */
-class UndoClock {
-  #nowMs = Date.now();
-
-  subscribe = (onChange: () => void): (() => void) => {
-    // Cards may arrive long after mount; start the countdown from the current time.
-    this.#nowMs = Date.now();
-    onChange();
-    const id = setInterval(() => {
-      this.#nowMs = Date.now();
-      onChange();
-    }, UNDO_TICK_MS);
-    return () => clearInterval(id);
-  };
-
-  getSnapshot = (): number => this.#nowMs;
-}
-
-const idleSubscribe = (): (() => void) => () => {};
 
 function formatWindowLabel(windowMs: number): string {
   const minutes = Math.round(windowMs / 60_000);
@@ -179,11 +161,32 @@ function formatWindowLabel(windowMs: number): string {
   return `近 ${minutes} 分钟`;
 }
 
-// A 档卡的窗口脚注文案（早返，避免链式三元 — 项目红线）。reverted 态在 JSX 里单独硬渲，
-// 不经此函数——故 state 只收 'live' | 'consumed'（删原 'reverted' 死分支）。
-function windowText(state: 'live' | 'consumed', remainingMinutes: number): string {
-  if (state === 'consumed') return '已无法干净撤销';
-  return `${remainingMinutes} 分钟内可撤销`;
+function autoAppliedHeadline(
+  rows: readonly AutoAppliedRowWire[],
+  loading: boolean,
+  windowKey: AutoAppliedWindowKey,
+): string {
+  const when = AUTO_APPLIED_WINDOWS.find(({ key }) => key === windowKey)?.label ?? '';
+  if (loading) return `正在看${when}替你做了什么。`;
+  if (rows.length === 0) return `${when}没有替你做什么。`;
+  const counts = new Map<string, number>();
+  for (const row of rows) {
+    const { label } = kindMeta(row.kind);
+    counts.set(label, (counts.get(label) ?? 0) + 1);
+  }
+  const parts = [...counts].map(([label, count]) => `${label} ${count} 件`).join('，');
+  return `${when}替你做了 ${rows.length} 件：${parts}。`;
+}
+
+function batchResultWords(summary: AutoAppliedRetractResultWire['summary']): string {
+  const parts = [
+    summary.reverted > 0 ? `撤销了 ${summary.reverted} 件` : null,
+    summary.blocked > 0 ? `${summary.blocked} 件不能撤，原因写在各自下面` : null,
+    summary.already_reverted > 0 ? `${summary.already_reverted} 件之前已经撤过` : null,
+    summary.failed > 0 ? `${summary.failed} 件这次没撤成，可以再试一次` : null,
+  ].filter(Boolean);
+  const done = parts.length > 0 ? `${parts.join('，')}。` : '这次没有可撤的。';
+  return summary.truncated ? `${done}一次最多处理 200 件，还有没处理的，可以再点一次。` : done;
 }
 
 function TierHead({ tier, count, id }: { tier: 'A' | 'B' | 'C'; count: number; id: string }) {
@@ -237,31 +240,24 @@ function BreakerMeter({ breaker }: { breaker: VerdictBreakerWire }) {
 
 function AutoAppliedCard({
   row,
-  nowMs,
   reverting,
   onRevert,
 }: {
   row: AutoAppliedRowWire;
-  nowMs: number;
   reverting: boolean;
   onRevert: (proposalId: string) => void;
 }) {
   const [trace, setTrace] = useState(false);
   const traceId = useId();
-  const appliedMs = Date.parse(row.applied_at);
-  const state = autoAppliedState(appliedMs, nowMs, row.reverted);
-  const consumed = state === 'consumed';
+  const { undo } = row;
+  // Cards from before auto-apply have no undo here, and the server's sentence does not fit them.
+  const blockReason =
+    undo.status === 'blocked' && undo.code !== 'not_auto_applied' ? undo.reason_md : null;
   // A 档卡的 kind 由读模型给出（首批含建知识点/学习项/错因类目）。
   const meta = kindMeta(row.kind);
-  const remainingMinutes = Math.max(1, Math.ceil(undoRemainingMs(appliedMs, nowMs) / 60_000));
-  // 撤销按钮 label（if/else 替链式三元，守项目「禁链式三元」OCR 红线）。
-  let revertLabel: string;
-  if (consumed) revertLabel = '已无法干净撤销';
-  else if (reverting) revertLabel = '撤销中…';
-  else revertLabel = '撤销';
-  const KindIcon = consumed ? Lock : kindIcon(meta.icon);
+  const KindIcon = undo.status === 'blocked' ? Lock : kindIcon(meta.icon);
   return (
-    <article className="ib-aa" data-state={state}>
+    <article className="ib-aa" data-state={undo.status}>
       <span className="ib-aa-ic" aria-hidden="true">
         <KindIcon size={16} />
       </span>
@@ -272,42 +268,33 @@ function AutoAppliedCard({
           </span>
           <span className="ib-aa-title">{row.title}</span>
         </div>
-        <p className="ib-aa-text">
-          {row.summary || '自动处理了这条提议 · 安全可逆，不放心的窗口内一键撤回即可。'}
-        </p>
+        <p className="ib-aa-text">{row.summary || '自动处理了这条提议。'}</p>
         {trace && (
           <div id={traceId} className="ib-aa-trace">
-            来自 <b>{meta.label}</b> · 干净可逆
+            来自 <b>{meta.label}</b>
             <br />
             静态可逆性兜底 · 非 confidence 判定（apply 档位 {row.level}）
           </div>
         )}
         <div className="ib-acts ib-aa-foot">
-          {state === 'reverted' ? (
+          {undo.status === 'reverted' ? (
             <span className="ib-aa-window">
               <Undo2 size={13} aria-hidden="true" />
               已撤销 · 恢复到应用前
             </span>
-          ) : (
-            <>
-              <span className="ib-aa-window" data-state={state}>
-                {consumed ? (
-                  <CircleAlert size={13} aria-hidden="true" />
-                ) : (
-                  <Clock size={13} aria-hidden="true" />
-                )}
-                {windowText(state, remainingMinutes)}
-              </span>
-              <Button
-                size="sm"
-                disabled={consumed || reverting}
-                onClick={() => onRevert(row.proposal_id)}
-              >
-                <Undo2 size={14} aria-hidden="true" />
-                {revertLabel}
-              </Button>
-            </>
-          )}
+          ) : null}
+          {undo.status === 'revertable' ? (
+            <Button size="sm" disabled={reverting} onClick={() => onRevert(row.proposal_id)}>
+              <Undo2 size={14} aria-hidden="true" />
+              {reverting ? '撤销中…' : '撤销'}
+            </Button>
+          ) : null}
+          {blockReason ? (
+            <span className="ib-aa-window" data-state="blocked">
+              <CircleAlert size={13} aria-hidden="true" />
+              {blockReason}
+            </span>
+          ) : null}
           <Button
             size="sm"
             variant="quiet"
@@ -429,6 +416,7 @@ export default function InboxPage({ navigate }: InboxPageProps) {
     listDecisionProposalPage,
     listObservationProposalPreview,
     listAutoApplied,
+    retractAutoApplied,
     retractProposal,
   } = useWorkbenchClient();
   const [resolved, setResolved] = useState<Record<string, string>>({});
@@ -440,7 +428,11 @@ export default function InboxPage({ navigate }: InboxPageProps) {
     queryKey: queryKeys.observationProposals,
     queryFn: listObservationProposalPreview,
   });
-  const aaQ = useQuery({ queryKey: queryKeys.autoAppliedProposals, queryFn: listAutoApplied });
+  const [aaWindow, setAaWindow] = useState<AutoAppliedWindowKey>('today');
+  const aaQ = useQuery({
+    queryKey: [...queryKeys.autoAppliedProposals, aaWindow],
+    queryFn: () => listAutoApplied(autoAppliedWindow(aaWindow)),
+  });
 
   // 第一页 commit 后才开始逐页补齐；每次只发一个 continuation。失败时停住并把重试权交给
   // 用户，避免瞬时错误形成请求风暴。已加载卡片始终保持可操作。
@@ -480,22 +472,24 @@ export default function InboxPage({ navigate }: InboxPageProps) {
 
   const autoApplied = aaQ.data?.rows ?? [];
   const breaker = aaQ.data?.breaker;
-  // 撤销窗口倒计时 + live→consumed 过渡靠定时重渲染刷新（否则 nowMs 仅在偶发重渲时更新，
-  // 窗口过期后仍显示旧剩余时间 + 撤销键启用，与 UNDO_WINDOW_MS 语义不符；CodeRabbit #1）。
-  // 仅在有 auto-applied 卡时订阅时钟（才挂 interval），无则不跑。
-  const [undoClock] = useState(() => new UndoClock());
-  const nowMs = useSyncExternalStore(
-    autoApplied.length > 0 ? undoClock.subscribe : idleSubscribe,
-    undoClock.getSnapshot,
-    undoClock.getSnapshot,
-  );
   // A 块在有 auto-applied 卡、熔断 tripped、或读模型出错（surface 错误而非静默空）时露出。
   // With the switch off nothing new applies, so only cards from before it can still need undoing.
   const autoApplyOn = decisionPages[0]?.auto_apply_enabled === true;
   const showTierA =
     autoApplied.length > 0 ||
     aaQ.isError ||
+    aaWindow !== 'today' ||
     (autoApplyOn && (aaQ.isLoading || breaker?.tripped === true));
+
+  const revertable = autoApplied.filter((row) => row.undo.status === 'revertable');
+  const [confirmingBatch, setConfirmingBatch] = useState(false);
+  const batch = useMutation({
+    mutationFn: () => retractAutoApplied(revertable.map((row) => row.proposal_id).slice(0, 200)),
+    onSettled: () => {
+      setConfirmingBatch(false);
+      return invalidateAfterProposalRetract(queryClient);
+    },
+  });
 
   const onRevert = async (proposalId: string) => {
     setReverting((r) => ({ ...r, [proposalId]: true }));
@@ -588,22 +582,81 @@ export default function InboxPage({ navigate }: InboxPageProps) {
                 <RetryLine message="自动应用列表暂不可用。" onRetry={() => void aaQ.refetch()} />
               )}
               {autoApplyOn && breaker && <BreakerMeter breaker={breaker} />}
-              {autoApplied.length > 0 && (
+              <div className="ib-aa-summary">
+                <fieldset className="ib-aa-windows">
+                  <legend className="un-sr-only">看哪段时间</legend>
+                  {AUTO_APPLIED_WINDOWS.map(({ key, label }) => (
+                    <ChipToggle
+                      key={key}
+                      pressed={aaWindow === key}
+                      onPressedChange={() => {
+                        setAaWindow(key);
+                        setConfirmingBatch(false);
+                        batch.reset();
+                      }}
+                    >
+                      {label}
+                    </ChipToggle>
+                  ))}
+                </fieldset>
                 <p className="ib-aa-banner">
                   <Zap size={16} aria-hidden="true" />
                   <span>
-                    <b>{autoApplyOn ? '这些已经替你做了。' : '这些是之前替你做的。'}</b>
-                    都是安全可逆的小操作，没占用你的裁决队列 —— 不放心的，窗口内一键撤回即可。
+                    <b>{autoAppliedHeadline(autoApplied, aaQ.isLoading, aaWindow)}</b>
+                    撤销只撤还没被用到的内容，已经被用到的会留着，并写明原因。
                   </span>
                 </p>
-              )}
+                {revertable.length > 0 && !confirmingBatch ? (
+                  <div className="ib-acts">
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      disabled={batch.isPending}
+                      onClick={() => {
+                        batch.reset();
+                        setConfirmingBatch(true);
+                      }}
+                    >
+                      <Undo2 size={14} aria-hidden="true" />
+                      撤销全部可撤的（{revertable.length}）
+                    </Button>
+                  </div>
+                ) : null}
+                {confirmingBatch ? (
+                  <div className="ib-aa-confirm">
+                    <p>撤销这 {revertable.length} 件？撤销时才确认有没有被用到，被用到的不会动。</p>
+                    <div className="ib-acts">
+                      <Button size="sm" disabled={batch.isPending} onClick={() => batch.mutate()}>
+                        {batch.isPending ? '正在撤销…' : '确认撤销'}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={batch.isPending}
+                        onClick={() => setConfirmingBatch(false)}
+                      >
+                        先不撤
+                      </Button>
+                    </div>
+                  </div>
+                ) : null}
+                {batch.data ? (
+                  <p className="ib-aa-result" role="status">
+                    {batchResultWords(batch.data.summary)}
+                  </p>
+                ) : null}
+                {batch.isError ? (
+                  <p className="ib-aa-result" role="alert">
+                    这次没撤成，可以再试一次。
+                  </p>
+                ) : null}
+              </div>
               {autoApplied.length > 0 && (
                 <div className="ib-aa-list">
                   {autoApplied.map((row) => (
                     <AutoAppliedCard
                       key={row.proposal_id}
                       row={row}
-                      nowMs={nowMs}
                       reverting={reverting[row.proposal_id] === true}
                       onRevert={onRevert}
                     />

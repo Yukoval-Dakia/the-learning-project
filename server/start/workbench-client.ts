@@ -23,6 +23,7 @@ import {
   getStartTeachingBrief,
   getStartTodayCost,
   getStartWorkbenchSummary,
+  retractStartAutoApplied,
   undoStartArtifactAiChange,
 } from './workbench-function';
 
@@ -63,7 +64,12 @@ export const startWorkbenchClient: WorkbenchClient = {
         limit: '200',
       },
     }).then(toProposalPageWire),
-  listAutoApplied: () => getStartAutoApplied(transport),
+  listAutoApplied: (window) => getStartAutoApplied({ ...transport, data: window }),
+  retractAutoApplied: (proposalIds) =>
+    retractStartAutoApplied({
+      ...transport,
+      data: { proposal_ids: [...proposalIds] },
+    }).then((json) => JSON.parse(json)),
   decideProposal: (id, decision, opts) =>
     decideStartProposal({
       ...transport,

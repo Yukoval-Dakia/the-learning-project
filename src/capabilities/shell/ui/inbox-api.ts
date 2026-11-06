@@ -247,10 +247,23 @@ export type AutoAppliedDigestWire = ApiOperationJsonResponse<'getAutoAppliedProp
 export type AutoAppliedRowWire = AutoAppliedDigestWire['rows'][number];
 export type VerdictBreakerWire = AutoAppliedDigestWire['breaker'];
 
-export const listAutoApplied = () =>
-  apiOperationJson('getAutoAppliedProposals', {
-    url: '/api/proposals/auto-applied',
+export type AutoAppliedRetractResultWire =
+  ApiOperationJsonResponse<'batchRetractAutoAppliedProposals'>;
+
+export const listAutoApplied = (window?: { from: string; to?: string }) => {
+  const query = new URLSearchParams(window);
+  return apiOperationJson('getAutoAppliedProposals', {
+    url: `/api/proposals/auto-applied${window ? `?${query.toString()}` : ''}`,
     method: 'GET',
+  });
+};
+
+/** Each proposal is tried on its own: part done and part refused is a normal result. */
+export const retractAutoApplied = (proposalIds: readonly string[]) =>
+  apiOperationJson('batchRetractAutoAppliedProposals', {
+    url: '/api/proposals/auto-applied/retract',
+    method: 'POST',
+    body: { proposal_ids: [...proposalIds] },
   });
 
 // YUK-271 行为恢复（codex 验证轮 P2）：block_merge accept 在目标题块已离开

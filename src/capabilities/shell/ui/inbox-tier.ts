@@ -22,7 +22,7 @@ export interface TierMeta {
 export const TIER_META: Record<'A' | 'B' | 'C', TierMeta> = {
   A: {
     label: '自动应用',
-    sub: '安全可撤 · 已自动采用 · 可在期限内撤销',
+    sub: '已自动采用 · 还没被用到的可以撤销',
     tone: 'good',
   },
   B: {
@@ -106,33 +106,25 @@ export function kindCountsByTier(byKind: Readonly<Record<string, number>>): Kind
   return { decide, observe, decideTotal: sum(decide), observeTotal: sum(observe) };
 }
 
-// ── A 档撤销窗口态（时间基 v0）─────────────────────────────────────────────────
-// 撤销窗口：apply 后这段时间内 'live'（一键干净撤回）；窗口过 → 'consumed'（视为已被
-// 下游消费、不保证干净撤销——但 retract 车道仍可达，只是不再标 live）；已 retract → 'reverted'。
-export const UNDO_WINDOW_MS = 10 * 60_000; // 10 min
+// ── 替你做了什么：摘要的时间窗 ─────────────────────────────────────────────────
+export type AutoAppliedWindowKey = 'today' | 'yesterday' | 'week';
+export const AUTO_APPLIED_WINDOWS: readonly { key: AutoAppliedWindowKey; label: string }[] = [
+  { key: 'today', label: '今天' },
+  { key: 'yesterday', label: '昨天' },
+  { key: 'week', label: '近 7 天' },
+];
 
-export type AutoAppliedDisplayState = 'live' | 'consumed' | 'reverted';
-
-/**
- * 纯判定（零 IO）：给定 apply 时刻 + now + 是否已撤销，决定 A 档卡的显示态。
- * reverted 优先（已撤销盖一切）；否则窗口内 live、窗口外 consumed。
- */
-export function autoAppliedState(
-  appliedAtMs: number,
-  nowMs: number,
-  reverted: boolean,
-  windowMs: number = UNDO_WINDOW_MS,
-): AutoAppliedDisplayState {
-  if (reverted) return 'reverted';
-  if (nowMs - appliedAtMs < windowMs) return 'live';
-  return 'consumed';
-}
-
-/** live 态剩余可撤销毫秒（≤0 即已过窗口）。consumed/reverted 调用方不需要它。 */
-export function undoRemainingMs(
-  appliedAtMs: number,
-  nowMs: number,
-  windowMs: number = UNDO_WINDOW_MS,
-): number {
-  return Math.max(0, appliedAtMs + windowMs - nowMs);
+/** Local-day boundaries as the server's ISO window. */
+export function autoAppliedWindow(
+  key: AutoAppliedWindowKey,
+  now: Date = new Date(),
+): { from: string; to?: string } {
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const daysAgo = (days: number) =>
+    new Date(startOfToday.getFullYear(), startOfToday.getMonth(), startOfToday.getDate() - days);
+  if (key === 'today') return { from: startOfToday.toISOString() };
+  if (key === 'yesterday') {
+    return { from: daysAgo(1).toISOString(), to: startOfToday.toISOString() };
+  }
+  return { from: daysAgo(6).toISOString() };
 }
