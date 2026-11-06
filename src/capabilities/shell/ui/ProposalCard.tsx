@@ -461,8 +461,8 @@ export function ProposalCard({ p, resolved, navigate, onResolve, onError }: Prop
     legacyBody.length > LEGACY_BODY_MAX ||
     legacySegments.some((seg) => seg.raw);
   // YUK-264：不透明 ID 不露出来；已加载的题块显示位置身份，其他引用折叠为通用标签，原 ID 只保留在 hover title 供追溯。
-  const reasonText = (text: string) =>
-    splitReasonIds(text).map((seg) =>
+  const reasonText = (text: string, learnerSentence = false) =>
+    splitReasonIds(text, learnerSentence).map((seg) =>
       seg.raw ? (
         <button
           type="button"
@@ -513,7 +513,7 @@ export function ProposalCard({ p, resolved, navigate, onResolve, onError }: Prop
       </div>
 
       {ownSummary ? (
-        <p className="ib-prop-reason">{reasonText(ownSummary)}</p>
+        <p className="ib-prop-reason">{reasonText(ownSummary, true)}</p>
       ) : (
         <div
           className="ib-prop-reason"
