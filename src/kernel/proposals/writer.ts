@@ -21,6 +21,12 @@ export interface WriteAiProposalInput {
   actor_ref?: string;
   outcome?: 'success' | 'partial';
   payload: AiProposalPayloadInputT;
+  /**
+   * Explicit creation-time auto-apply opt-out for a strength-A kind. Omitted =
+   * follow the kind strength. Only internal producers that know a proposal is
+   * not fully retractable set this; model-facing tool input cannot reach it.
+   */
+  auto_apply_eligible?: boolean;
   event_override?: {
     action: string;
     subject_kind: string;
@@ -127,7 +133,10 @@ export async function writeAiProposal(db: DbLike, input: WriteAiProposalInput): 
 
   // Capture the tier at creation time. The sweep only applies rows that carry
   // this marker, so a later tier flip never retroactively applies old pending rows.
-  const autoApplyMarker = proposalAutoApplyMarker(payload.kind);
+  // An explicit producer opt-out also wins over the kind strength: a proposal that
+  // cannot be fully retracted stays an ordinary pending item for human review.
+  const autoApplyMarker =
+    input.auto_apply_eligible === false ? undefined : proposalAutoApplyMarker(payload.kind);
   const eventPayload = autoApplyMarker
     ? { ...eventShape.event_payload, auto_apply: autoApplyMarker }
     : eventShape.event_payload;
