@@ -445,9 +445,8 @@ export function ProposalCard({ p, resolved, navigate, onResolve, onError }: Prop
       : [],
   );
   const CardIcon = kindIcon(cardIcon);
-  // A new proposal's sentence passed the write check, so it renders as written. An older one falls
-  // back to its whole reason, which can hold opaque ids and run long: it keeps the id folding, and a
-  // long one is cut to two lines with the full text under the fold.
+  // An older proposal has no sentence of its own and falls back to its whole reason, which can run
+  // long: a long one is cut to two lines with the full text under the fold.
   const ownSummary = p.payload.learner_summary ? p.presentation?.learner_summary : undefined;
   const legacyBody = p.presentation?.learner_summary ?? p.payload.reason_md;
   const reasonFolded = Boolean(ownSummary) || legacyBody.length > LEGACY_BODY_MAX;
@@ -504,7 +503,7 @@ export function ProposalCard({ p, resolved, navigate, onResolve, onError }: Prop
       </div>
 
       {ownSummary ? (
-        <p className="ib-prop-reason">{ownSummary}</p>
+        <p className="ib-prop-reason">{reasonText(ownSummary)}</p>
       ) : (
         <div className="ib-prop-reason" data-clamp={reasonFolded ? '' : undefined}>
           {reasonText(legacyBody)}
@@ -638,6 +637,36 @@ export function ProposalCard({ p, resolved, navigate, onResolve, onError }: Prop
         </div>
       )}
 
+      {reasonFolded || p.payload.evidence_refs.length > 0 ? (
+        <details className="ib-why">
+          <summary className="ib-why-toggle un-hit">
+            查看依据
+            <ChevronDown size={14} aria-hidden="true" />
+          </summary>
+          <div className="ib-why-body">
+            {reasonFolded ? (
+              <div className="ib-prop-reason ib-why-reason">{reasonText(p.payload.reason_md)}</div>
+            ) : null}
+            {p.payload.evidence_refs.length > 0 ? (
+              <div className="ib-evidence">
+                {/* S7 (YUK-335)：同 readable 文案去重 + 计数，避免 N 枚一模一样的灰 chip。 */}
+                {dedupeEvidence(p.payload.evidence_refs, p.presentation?.evidence_labels).map(
+                  ({ ref, count }) => (
+                    <EvidenceChip
+                      key={`${ref.kind}:${ref.id}`}
+                      er={ref}
+                      count={count}
+                      label={p.presentation?.evidence_labels[`${ref.kind}:${ref.id}`]}
+                      navigate={navigate}
+                    />
+                  ),
+                )}
+              </div>
+            ) : null}
+          </div>
+        </details>
+      ) : null}
+
       <div className="ib-prop-foot">
         <div className="ib-acts ib-prop-acts">
           {/* M4 review fix (codex P2)：defer/archive/judge_retraction 的 accept
@@ -726,36 +755,6 @@ export function ProposalCard({ p, resolved, navigate, onResolve, onError }: Prop
           ))}
         </fieldset>
       )}
-
-      {reasonFolded || p.payload.evidence_refs.length > 0 ? (
-        <details className="ib-why">
-          <summary className="ib-why-toggle un-hit">
-            查看依据
-            <ChevronDown size={14} aria-hidden="true" />
-          </summary>
-          <div className="ib-why-body">
-            {reasonFolded ? (
-              <div className="ib-prop-reason ib-why-reason">{reasonText(p.payload.reason_md)}</div>
-            ) : null}
-            {p.payload.evidence_refs.length > 0 ? (
-              <div className="ib-evidence">
-                {/* S7 (YUK-335)：同 readable 文案去重 + 计数，避免 N 枚一模一样的灰 chip。 */}
-                {dedupeEvidence(p.payload.evidence_refs, p.presentation?.evidence_labels).map(
-                  ({ ref, count }) => (
-                    <EvidenceChip
-                      key={`${ref.kind}:${ref.id}`}
-                      er={ref}
-                      count={count}
-                      label={p.presentation?.evidence_labels[`${ref.kind}:${ref.id}`]}
-                      navigate={navigate}
-                    />
-                  ),
-                )}
-              </div>
-            ) : null}
-          </div>
-        </details>
-      ) : null}
     </Card>
   );
 }
