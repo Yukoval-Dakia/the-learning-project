@@ -59,7 +59,7 @@ describe('Copilot subagent mailbox', () => {
           userAskEventId: parentTurnEventId,
           taskRunId: parentTaskRunId,
           actorRef: 'agent:copilot',
-          replyText: '已停止这次运行。',
+          replyText: '这次已按你的意思停下。',
           outcome: 'failure',
           durableFailure: { reason: 'cancelled', error: 'owner requested Stop' },
           now: new Date(),

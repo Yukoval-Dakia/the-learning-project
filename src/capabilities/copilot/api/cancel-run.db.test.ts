@@ -112,7 +112,7 @@ describe('POST /api/copilot/runs/:id/cancel', () => {
       outcome: 'failure',
       taskRunId: `copilot_run_cancelled_${accepted.runId}`,
       payload: {
-        reply_md: '已停止这次运行。',
+        reply_md: '这次已按你的意思停下。',
         durable_failure: {
           reason: 'cancelled',
           error: 'copilot run cancelled by user',
@@ -133,7 +133,7 @@ describe('POST /api/copilot/runs/:id/cancel', () => {
       }),
     ).resolves.toEqual([
       expect.objectContaining({ role: 'user', text: complexRunInput.user_message }),
-      expect.objectContaining({ role: 'ai', text: '已停止这次运行。' }),
+      expect.objectContaining({ role: 'ai', text: '这次已按你的意思停下。' }),
     ]);
 
     await expect(claimCopilotExecutionFence(testDb(), accepted.runId)).resolves.toMatchObject({
