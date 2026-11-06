@@ -2,8 +2,10 @@ node_modules
 .next
 .git
 .claude
-.env
-.env.*
+# Anything whose name starts with .env is private-adjacent (covers
+# ".env backup", ".env<TAB>x", ".envrc" — not only .env and .env.*).
+# The tracked example file stays via the exact-path exception.
+.env*
 !.env.example
 .vercel
 docs
@@ -19,3 +21,10 @@ dist
 .wrangler-state
 drizzle/.snapshots
 tsconfig.tsbuildinfo
+# Agent/worktree private state — must never reach a build context or an image
+# (YUK-1845 image content check fails the build if these show up).
+.remember/
+.omc/
+.agents/
+.devin/
+PLAN.md
