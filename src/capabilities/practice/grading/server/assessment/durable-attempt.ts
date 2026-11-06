@@ -360,12 +360,16 @@ export async function executeNativeAttempt(
         },
       }),
     } satisfies Parameters<typeof writeEvent>[1];
-    // grading_provenance 由 unit_results.judged_by 纯派生（不写持久化输入），
-    // 部署边界两侧回执有无该字段都合法；剥离后比较。judged_by 本体仍在
-    // payload 内被逐字节比对，派生字段本身不带独立事实，不损失防篡改性。
+    // grading_provenance 由 unit_results.judged_by 纯派生；顶层 feedback_md 由评判
+    // 记录与文案常量投影，部署边界两侧只差这段散文也合法。两者都不带独立事实，
+    // 剥离后比较；其余字段（含 evidence_json.unit_results 里的单元 feedback）仍逐字节比对。
     const stripDerivedResultFields = (payload: unknown) => {
       if (payload === null || typeof payload !== 'object') return payload;
-      const { grading_provenance: _derived, ...rest } = payload as Record<string, unknown>;
+      const {
+        grading_provenance: _derived,
+        feedback_md: _copy,
+        ...rest
+      } = payload as Record<string, unknown>;
       return rest;
     };
     const validateReceipt = (receipt: typeof event.$inferSelect | undefined) => {
