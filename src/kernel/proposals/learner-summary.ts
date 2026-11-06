@@ -3,14 +3,15 @@
 // the single deterministic gate — pattern matching only, no AI review, no scoring.
 //
 // What stays allowed: math notation with a short subscript (`v_0`, `v_t`, `a_n`,
-// `x_1`, `log_2`, `CO_2`), one-letter assignments (`x=2`, `n=1`), function forms
-// (`f(x)`), ordinary English words (`pH`, `DNA`, `Python`), and Chinese prose.
+// `x_1`, `log_2`, `CO_2`, `x_max`, `v_max`), one-letter assignments (`x=2`, `n=1`),
+// uppercase-start assignments (`AB=CD`, `pH=7`, `Ka=1.8`), function forms (`f(x)`),
+// ordinary English words (`pH`, `DNA`, `Python`), and Chinese prose.
 //
 // Known false positives (误拦): a snake_case English term (`self_attention`,
-// `for_each`, `base_case`) and a multi-letter camelCase word (`myVar`) are
-// rejected; the producer should rewrite them as plain Chinese. We accept this
-// over-blocking because those tokens are indistinguishable from schema field /
-// tool names.
+// `for_each`, `base_case`), a multi-letter camelCase word (`myVar`), and a
+// lowercase function name in assignment form (`sin=0.5`) are rejected; the
+// producer should rewrite them as plain Chinese. We accept this over-blocking
+// because those tokens are indistinguishable from schema field / tool names.
 //
 // Known false negatives (漏拦): camelCase field names inside Chinese prose are
 // caught only when they start lowercase (`queryKnowledge`), bare English words
@@ -27,9 +28,10 @@ export interface LearnerSummaryViolation {
 }
 
 // Short math subscripts are subject notation, not field names. `v_0` / `log_2` /
-// `CO_2` are `<letters>_<digits>`, `v_t` / `a_n` are `<letter>_<letter>`.
+// `CO_2` are `<letters>_<digits>`, and a single-letter base takes any short
+// subscript (`v_t`, `a_n`, `x_max`, `v_max`).
 const MATH_SUBSCRIPT = /^[A-Za-z]+_\d+$/;
-const SINGLE_LETTER_SUBSCRIPT = /^[A-Za-z]_[A-Za-z]$/;
+const SINGLE_LETTER_SUBSCRIPT = /^[A-Za-z]_[A-Za-z0-9]+$/;
 
 function isMathNotation(token: string): boolean {
   return MATH_SUBSCRIPT.test(token) || SINGLE_LETTER_SUBSCRIPT.test(token);
@@ -50,10 +52,11 @@ interface MatchRule {
 const HYPHENATED_UUID = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
 const RAW_ID = /\b(?:block-[a-z0-9]{12,}|[a-z]+:[a-z0-9:_-]{8,}|[a-z0-9]{20,})\b/g;
 
-// Any multi-letter `field=value` form is a leak; the field name is not limited to
-// an allowlist, so `id=`, `weight=`, `op=`, `domain=`, `status=` all match while
-// one-letter math operands (`x=2`, `n=1`) and `CO_2=` stay out.
-const FIELD_ASSIGNMENT = /\b([A-Za-z][A-Za-z0-9_]*)\s*=\s*[^\s，。；、,;）)]+/g;
+// Any multi-letter all-lowercase `field=value` form is a leak; the field name is
+// not limited to an allowlist, so `id=`, `weight=`, `op=`, `domain=`, `status=`
+// all match. One-letter math operands (`x=2`, `n=1`), uppercase-start names
+// (`AB=CD`, `pH=7`, `Ka=1.8`), and math subscripts (`x_max=`) stay out.
+const FIELD_ASSIGNMENT = /\b([a-z][a-z0-9_]*)\s*=\s*[^\s，。；、,;）)]+/g;
 
 // Snake_case identifiers, case-insensitive so `Propose_Knowledge_Edge` is caught
 // like `propose_knowledge_edge`; math subscripts are excluded above.
