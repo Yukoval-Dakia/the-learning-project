@@ -1156,8 +1156,8 @@ async function main() {
   await primeDispatch(Q7);
   // Dispatch the submission intent first: recovery synthesis only re-drives
   // questions whose earlier intents the outbox already completed.
-  await sweep();
   await lane('fixed');
+  await sweep();
   await handlerDeliver(Q7, { grounded: false, answer: '名词' });
   const s7a = await dumpState(Q7);
   if (s7a.terminal_events < 1) throw new Error('Q7 failed verdict was not recorded');
