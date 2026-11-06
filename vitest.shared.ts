@@ -157,6 +157,7 @@ export const dbTestInclude = [
   'src/capabilities/practice/session/api/review-sessions.db.test.ts',
   'src/capabilities/practice/session/api/session-resources.db.test.ts',
   'src/capabilities/practice/scheduling/api/stream.db.test.ts',
+  'src/capabilities/practice/grading/api/submit-crisis-referral.db.test.ts',
   'src/capabilities/practice/grading/api/submit-durable-resource.db.test.ts',
   'src/capabilities/practice/grading/api/submit-late-arrival.db.test.ts',
   'src/capabilities/practice/grading/api/submit-native-calibration.db.test.ts',

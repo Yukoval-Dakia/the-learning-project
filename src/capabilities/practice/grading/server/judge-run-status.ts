@@ -6,6 +6,7 @@
 // Kept dependency-light for manifest eager imports; no DB client.
 
 import { z } from 'zod';
+import { CrisisReferralWireSchema } from '@/core/crisis/referral';
 
 /** job_events.business_table 标签——这一族 durable judge run 事件的归属键。 */
 export const JUDGE_RUN_TABLE = 'judge_run' as const;
@@ -174,6 +175,9 @@ export const JudgeDurablePendingResponseSchema = z.object({
     url: z.string(),
     poll_url: z.string(),
   }),
+  // Immediate support surface; written from the persisted attempt mark before
+  // any model grading runs. Absent for unmarked answers.
+  crisis_referral: CrisisReferralWireSchema.optional(),
 });
 
 /** A native submission has exactly one durable judge run; dispatch and recovery reads derive it here. */

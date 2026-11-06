@@ -7,7 +7,7 @@
 // Constraints: lexical only (no paid model classifier), no real institution contact,
 // no diagnosis or lecturing, and the raw text never leaves the conversation store.
 
-export const CRISIS_GUARD_CONFIG_VERSION = '3';
+export const CRISIS_GUARD_CONFIG_VERSION = '4';
 
 /** 'none' means no match; normal flow, no crisis handling. */
 export type CrisisDetectionClass = 'explicit' | 'indirect' | 'quoted_ironic' | 'distress' | 'none';
@@ -210,7 +210,7 @@ export const CRISIS_GUARD_CONFIG: CrisisGuardConfig = {
 
   templates: {
     full_support: {
-      version: 'full-support-v1',
+      version: 'full-support-v2',
       review_status: '未审定',
       text_md: [
         '听到你这么说，我很在意你现在的状态。你现在愿意多说说吗？我在这里，可以陪你慢慢聊。',
@@ -218,9 +218,9 @@ export const CRISIS_GUARD_CONFIG: CrisisGuardConfig = {
         '如果你身边有让你觉得安全、信任的大人——家人、老师或者学校心理老师——希望你能把现在的情况告诉他们；让他们知道你在承受这些，不是小题大做。',
         '',
         '另外提供一些可以随时联系的支持渠道，仅供参考，不是诊断或命令：',
-        '- 全国 24 小时心理援助热线：**12356**（中国大陆，工信部已将 12356 设为全国统一心理援助热线）',
-        '- 北京心理危机研究与干预中心热线：010-82951332（24 小时）',
-        '- 如果你不在大陆或更方便英文沟通：International Association for Suicide Prevention 站点列出了各国家/地区热线（findahelpline.com）',
+        '- 全国统一心理援助热线：**12356**（中国大陆，由国家卫生健康委设置）',
+        '- 北京市心理援助热线（北京心理危机研究与干预中心）：手机拨 010-82951332，座机拨 800-810-1117（每天 24 小时）',
+        '- 如果你不在大陆或更方便英文沟通：findahelpline.com 收录了 175 个以上国家/地区的心理援助热线，可以按所在地区查询',
         '',
         '学习的事先放一放完全没问题，想继续做题、看讲解也随时可以——这两件事不冲突。你现在的感受才是最重要的。',
       ].join('\n'),
@@ -238,10 +238,10 @@ export const CRISIS_GUARD_CONFIG: CrisisGuardConfig = {
       ].join('\n'),
     },
     distress: {
-      version: 'distress-v1',
+      version: 'distress-v2',
       review_status: '未审定',
       text_md: [
-        '听起来你最近承受的压力真的很重——睡不够、连着学不完，身体都开始发信号了。这种状态换成谁都会难受。',
+        '听起来你最近承受的压力真的很重，重到已经在影响你的状态了。这种感受换成谁都不好受。',
         '',
         '愿意的话跟我说说现在最压着你的是哪一块？也可以考虑把现在的状态告诉一个你信任的大人——家人、老师或学校心理老师——让他们帮你一起扛，这不是示弱。',
         '',

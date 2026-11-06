@@ -165,6 +165,17 @@ export async function writeCopilotReply(
     taskRunId: string;
     /** Sealed FULL-validator run linkage; contains no model prose or reasoning. */
     evidenceValidation?: CopilotEvidenceValidationRef;
+    /**
+     * Deterministic crisis-referral provenance marker (class/config/template
+     * versions). Written on the non-terminal referral reply only; never carries
+     * raw text — the reply body itself is the versioned template.
+     */
+    crisisReferral?: {
+      detection_class: string;
+      guard_version: string;
+      template_version: string;
+      template_review_status: string;
+    };
     /** Compact root-owned structural finalization receipt. */
     replyFinalization?: CopilotReplyFinalizationReceipt;
     /** Product mode state persisted with the reply; never included in model input. */
@@ -278,6 +289,7 @@ export async function writeCopilotReply(
       task_run_id: params.taskRunId,
       ...(params.evidenceValidation ? { evidence_validation: params.evidenceValidation } : {}),
       ...(sealed.receipt ? { reply_finalization: sealed.receipt } : {}),
+      ...(params.crisisReferral ? { crisis_referral: params.crisisReferral } : {}),
       ...(params.durableFinishReason ? { durable_finish_reason: params.durableFinishReason } : {}),
       ...(params.durableFailure ? { durable_failure: params.durableFailure } : {}),
       ...(params.modeState ?? {}),

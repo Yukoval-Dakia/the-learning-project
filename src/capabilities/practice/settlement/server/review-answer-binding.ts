@@ -210,7 +210,7 @@ export async function consumeReviewAnswerBinding(
     auto_rate: true,
   });
   const result = await submitReviewAnswer(database, body, context);
-  if (result.kind === 'pending') return result;
+  if (result.kind === 'pending') return { kind: 'pending', run_id: result.run_id };
   return {
     kind: 'committed',
     status: result.committed.status,

@@ -6,6 +6,7 @@
 // server/copilot-run-settlement.ts; this owner only feeds its paid outcome into it.
 
 import { createHash } from 'node:crypto';
+import { eq } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import { observeTaskOperation } from '@/ai/task-observation';
 import {
@@ -68,8 +69,13 @@ import {
 } from '@/capabilities/copilot/server/durable-dispatch';
 import { runTeachingSkill } from '@/capabilities/copilot/server/skills/teaching-skill';
 import { reconcileNativeSubagentsForParent } from '@/capabilities/copilot/server/subagent-mailbox';
-import { classifyCrisisExpression, crisisTemplateForClass } from '@/core/crisis/classify';
+import {
+  CRISIS_GUARD_CONFIG_VERSION,
+  classifyCrisisExpression,
+  crisisTemplateForClass,
+} from '@/core/crisis/classify';
 import type { Db, Tx } from '@/db/client';
+import { event } from '@/db/schema';
 import { readEventDerivationPolicy } from '@/kernel/events/derivation-policy';
 import { computeReplay } from '@/kernel/job-events';
 import type { ModelBinding } from '@/server/ai/execution-adapter';
@@ -330,44 +336,76 @@ async function executeAcceptedCopilotRun(
   if (derivationPolicy === 'crisis') {
     const detectionClass = classifyCrisisExpression(data.user_message);
     // 'none'（客户端自送策略的 fail-safe）按 explicit 处理，不过度也不漏。
-    const template = crisisTemplateForClass(
-      detectionClass === 'none' ? 'explicit' : detectionClass,
-    );
+    const effectiveClass = detectionClass === 'none' ? 'explicit' : detectionClass;
+    const template = crisisTemplateForClass(effectiveClass);
     const crisisTaskRunId = `copilot_run_crisis_${runId}`;
-    const settlement = await withCopilotExecutionSettlementLock(
-      db,
-      runId,
-      async (tx, lockedEvents) => {
-        await persistReply(tx, {
-          sessionId: data.session_id,
-          userAskEventId: runId,
-          replyText: template.text_md,
-          actorRef,
-          taskRunId: crisisTaskRunId,
-          outcome: 'success',
-          durableFinishReason: 'crisis_template',
-          now: new Date(),
-        });
-        await projectSuccessfulTerminal(
-          tx,
-          {
-            runId,
-            replyMd: template.text_md,
+    if (effectiveClass === 'distress') {
+      // distress 裁决：确定性转介先落地（非终态回复，不占 outcome marker），
+      // 随后按正常模型回合继续。受限读面不放宽——执行层仍按 ask 继承的
+      // crisis 策略运行（answer_only 工具面、无 Exa/子代理），回复与派生面
+      // 同样排除该回合。
+      const referralReplyId = `copilot_reply_crisis_${runId}`;
+      const [persistedReferral] = await db
+        .select({ id: event.id })
+        .from(event)
+        .where(eq(event.id, referralReplyId))
+        .limit(1);
+      if (!persistedReferral) {
+        await db.transaction((tx) =>
+          persistReply(tx, {
+            sessionId: data.session_id,
+            userAskEventId: runId,
+            replyEventId: referralReplyId,
+            replyText: template.text_md,
+            actorRef,
             taskRunId: crisisTaskRunId,
-            finishReason: 'crisis_template',
-          },
-          lockedEvents,
+            crisisReferral: {
+              detection_class: effectiveClass,
+              guard_version: CRISIS_GUARD_CONFIG_VERSION,
+              template_version: template.version,
+              template_review_status: template.review_status,
+            },
+            now: new Date(),
+          }),
         );
-        return {
-          status: 'done' as const,
-          reply: template.text_md,
-          task_run_id: crisisTaskRunId,
-        };
-      },
-    );
-    return settlement.outcome === 'settled'
-      ? settlement.value
-      : terminalRunResult(settlement.events, crisisTaskRunId);
+      }
+      // fall through to the normal paid model turn below
+    } else {
+      const settlement = await withCopilotExecutionSettlementLock(
+        db,
+        runId,
+        async (tx, lockedEvents) => {
+          await persistReply(tx, {
+            sessionId: data.session_id,
+            userAskEventId: runId,
+            replyText: template.text_md,
+            actorRef,
+            taskRunId: crisisTaskRunId,
+            outcome: 'success',
+            durableFinishReason: 'crisis_template',
+            now: new Date(),
+          });
+          await projectSuccessfulTerminal(
+            tx,
+            {
+              runId,
+              replyMd: template.text_md,
+              taskRunId: crisisTaskRunId,
+              finishReason: 'crisis_template',
+            },
+            lockedEvents,
+          );
+          return {
+            status: 'done' as const,
+            reply: template.text_md,
+            task_run_id: crisisTaskRunId,
+          };
+        },
+      );
+      return settlement.outcome === 'settled'
+        ? settlement.value
+        : terminalRunResult(settlement.events, crisisTaskRunId);
+    }
   }
 
   // EXECUTION_STARTED is the load-bearing at-most-once fence committed

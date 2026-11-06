@@ -38,28 +38,51 @@ export function classifyCopilotTurn(userMessage: string): CrisisTurnClassificati
   };
 }
 
-/** 收集附件里所有学习者书写的字符串值（作答正文、reasoning_trace 等）。 */
-function collectAttachmentText(value: unknown, out: string[]): void {
+/** 学习者书写的字段名；题面、reference、评分依据等宿主字段不在其中。 */
+const LEARNER_AUTHORED_ATTACHMENT_KEYS = new Set([
+  'text_md',
+  'text',
+  'raw_input',
+  'latex',
+  'reasoning_trace',
+]);
+
+/** 收集一个已确认归属学习者的子树里的全部字符串。 */
+function collectStrings(value: unknown, out: string[]): void {
   if (typeof value === 'string') {
     out.push(value);
     return;
   }
   if (Array.isArray(value)) {
-    for (const item of value) collectAttachmentText(item, out);
+    for (const item of value) collectStrings(item, out);
     return;
   }
   if (value !== null && typeof value === 'object') {
-    for (const item of Object.values(value)) collectAttachmentText(item, out);
+    for (const item of Object.values(value)) collectStrings(item, out);
+  }
+}
+
+function collectLearnerAuthoredText(value: unknown, out: string[]): void {
+  if (Array.isArray(value)) {
+    for (const item of value) collectLearnerAuthoredText(item, out);
+    return;
+  }
+  if (value === null || typeof value !== 'object') return;
+  for (const [key, item] of Object.entries(value)) {
+    if (LEARNER_AUTHORED_ATTACHMENT_KEYS.has(key)) collectStrings(item, out);
+    else collectLearnerAuthoredText(item, out);
   }
 }
 
 /**
  * 附件作答与消息本体同权：消息未命中、附件作答命中时同样强制 crisis——
  * 附件随后按既有危机路径被剔除，守卫事件照常记 dropped_attachment_kind。
+ * 只扫学习者书写的字段（作答正文/思路等）；题面、reference、图片说明等
+ * 宿主字符串不参与分类，避免题面引用把整轮误变模板。
  */
 export function classifyCopilotAttachment(attachment: unknown): CrisisTurnClassification {
   const texts: string[] = [];
-  collectAttachmentText(attachment, texts);
+  collectLearnerAuthoredText(attachment, texts);
   const detectionClass = classifyCrisisExpression(texts.join('\n'));
   return {
     detectionClass,

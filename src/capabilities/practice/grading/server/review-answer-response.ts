@@ -1,9 +1,10 @@
+import { type CrisisAttemptMark, buildCrisisReferral } from '@/core/crisis/referral';
 import type { CreateAttemptBody } from '../../api/contracts';
 import { ratingFromCoarseOutcome } from './judge-rating';
 import { JUDGE_RUN_TABLE, judgeRunPollUrl } from './judge-run-status';
 import type { ReviewAnswerResult } from './review-operation';
 
-export function projectJudgeRunPending(runId: string) {
+export function projectJudgeRunPending(runId: string, crisisMark?: CrisisAttemptMark | null) {
   return {
     run_id: runId,
     verdict: 'pending' as const,
@@ -12,6 +13,7 @@ export function projectJudgeRunPending(runId: string) {
       url: `/api/jobs/${JUDGE_RUN_TABLE}/${encodeURIComponent(runId)}/events`,
       poll_url: judgeRunPollUrl(runId),
     },
+    ...(crisisMark ? { crisis_referral: buildCrisisReferral(crisisMark) } : {}),
   };
 }
 
@@ -20,7 +22,7 @@ export function projectReviewAnswerResponse(body: CreateAttemptBody, result: Rev
   if (result.kind === 'pending') {
     return {
       kind: 'pending' as const,
-      body: projectJudgeRunPending(result.run_id),
+      body: projectJudgeRunPending(result.run_id, result.crisis_mark),
     };
   }
   const committed = result.committed;
@@ -37,6 +39,7 @@ export function projectReviewAnswerResponse(body: CreateAttemptBody, result: Rev
         effect: committed.status === 'effective' ? committed.activation.effect : null,
       },
       review_event: { id: committed.attempt_id },
+      ...(result.crisis_mark ? { crisis_referral: buildCrisisReferral(result.crisis_mark) } : {}),
       judge: body.self_report
         ? null
         : {

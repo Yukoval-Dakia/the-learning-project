@@ -10936,6 +10936,17 @@ export interface operations {
                             evaluation_group_id: string;
                             submission_id: string;
                         };
+                        crisis_referral?: {
+                            /** @enum {string} */
+                            detection_class: "explicit" | "indirect" | "quoted_ironic" | "distress";
+                            guard_version: string;
+                            template: {
+                                /** @enum {string} */
+                                review_status: "未审定" | "已审定";
+                                text_md: string;
+                                version: string;
+                            };
+                        };
                         judge: (({
                             auto_rated: boolean;
                             capability_ref: {
@@ -11155,6 +11166,17 @@ export interface operations {
                             channel: "sse";
                             poll_url: string;
                             url: string;
+                        };
+                        crisis_referral?: {
+                            /** @enum {string} */
+                            detection_class: "explicit" | "indirect" | "quoted_ironic" | "distress";
+                            guard_version: string;
+                            template: {
+                                /** @enum {string} */
+                                review_status: "未审定" | "已审定";
+                                text_md: string;
+                                version: string;
+                            };
                         };
                         run_id: string;
                         /** @enum {string} */
@@ -36672,6 +36694,17 @@ export interface operations {
                                 evaluation_group_id: string;
                                 submission_id: string;
                             };
+                            crisis_referral?: {
+                                /** @enum {string} */
+                                detection_class: "explicit" | "indirect" | "quoted_ironic" | "distress";
+                                guard_version: string;
+                                template: {
+                                    /** @enum {string} */
+                                    review_status: "未审定" | "已审定";
+                                    text_md: string;
+                                    version: string;
+                                };
+                            };
                             judge: (({
                                 auto_rated: boolean;
                                 capability_ref: {
@@ -36822,6 +36855,17 @@ export interface operations {
                             channel: "sse";
                             poll_url: string;
                             url: string;
+                        };
+                        crisis_referral?: {
+                            /** @enum {string} */
+                            detection_class: "explicit" | "indirect" | "quoted_ironic" | "distress";
+                            guard_version: string;
+                            template: {
+                                /** @enum {string} */
+                                review_status: "未审定" | "已审定";
+                                text_md: string;
+                                version: string;
+                            };
                         };
                         run_id: string;
                         /** @enum {string} */

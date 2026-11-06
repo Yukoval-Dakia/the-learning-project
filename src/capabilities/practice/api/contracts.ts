@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { CrisisReferralWireSchema } from '@/core/crisis/referral';
 import { ActivateEvaluationIntent } from '@/core/schema/assessment';
 
 import {
@@ -158,6 +159,7 @@ export const FormalAttemptResponseSchema = z.object({
   }),
   // The immutable native receipt is an occurrence anchor, not an FSRS snapshot.
   review_event: z.object({ id: z.string() }),
+  crisis_referral: CrisisReferralWireSchema.optional(),
   judge: AttemptJudgeResponseSchema.nullable(),
 });
 export const AttemptResponseSchema = z.union([

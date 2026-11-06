@@ -1,4 +1,5 @@
 import { and, eq, exists, notExists } from 'drizzle-orm';
+import type { CrisisAttemptMark } from '@/core/crisis/referral';
 import { isBlankSlotResponse } from '@/core/schema/assessment/response';
 import {
   INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
@@ -16,10 +17,15 @@ import {
 } from '@/db/schema';
 import { shouldEnqueueBackgroundJobs } from '@/kernel/background-job-enqueue';
 import { ApiError } from '@/kernel/http';
+import { assessmentAttemptEventId } from '@/kernel/records/assessment-attempt-identity';
 import { type CreateAttemptBody, CreateAttemptBodySchema } from '../../api/contracts';
 import { validatePlacementSubmission } from '../../placement/public';
 import { type ReviewSubmitIdentityInput, normalizeReviewSubmitActivityRef } from './activity-ref';
-import { type FormalAttemptCapture, commitFormalAttempt } from './assessment/attempt';
+import {
+  type FormalAttemptCapture,
+  commitFormalAttempt,
+  readAttemptCrisisMark,
+} from './assessment/attempt';
 import type { NativeAttemptDispatchPort } from './assessment/native-attempt-dispatch-port';
 import { judgeDurableEnabled } from './judge-durable-config';
 import { readJudgeRunPermanent } from './judge-run-observation';
@@ -283,7 +289,22 @@ export async function divertReviewAnswer(database: Db, handover: ReviewAnswerHan
         detail: '自动判分已停止，原作答已保存，可以自己评一下。',
       },
     };
-  return projectJudgeRunPending(runId);
+  const [pendingSubmission] = await database
+    .select({ id: assessment_submission.submission_id })
+    .from(assessment_submission)
+    .where(
+      and(
+        eq(assessment_submission.issuance_id, handover.assessment.issuance_id),
+        eq(assessment_submission.evaluation_group_id, handover.assessment.evaluation_group_id),
+        eq(assessment_submission.idempotency_key, handover.assessment.idempotency_key),
+      ),
+    );
+  return projectJudgeRunPending(
+    runId,
+    pendingSubmission
+      ? await readAttemptCrisisMark(database, assessmentAttemptEventId(pendingSubmission.id))
+      : null,
+  );
 }
 
 export interface ReviewAnswerContext {
@@ -300,8 +321,12 @@ export interface ReviewAnswerContext {
 }
 
 export type ReviewAnswerResult =
-  | { kind: 'pending'; run_id: string }
-  | { kind: 'committed'; committed: Awaited<ReturnType<typeof commitFormalAttempt>> };
+  | { kind: 'pending'; run_id: string; crisis_mark: CrisisAttemptMark | null }
+  | {
+      kind: 'committed';
+      committed: Awaited<ReturnType<typeof commitFormalAttempt>>;
+      crisis_mark: CrisisAttemptMark | null;
+    };
 
 /**
  * Submit an authorized learner original. Network callers own authentication and
@@ -409,7 +434,22 @@ export async function submitReviewAnswer(
         : await dispatchOriginal();
       if (runId !== null) {
         retainDiagnosticClaim = true;
-        return { kind: 'pending', run_id: runId };
+        const [pendingSubmission] = saved
+          ? [saved]
+          : await database
+              .select({ id: assessment_submission.submission_id })
+              .from(assessment_submission)
+              .where(
+                and(
+                  eq(assessment_submission.issuance_id, assessment.issuance_id),
+                  eq(assessment_submission.evaluation_group_id, assessment.evaluation_group_id),
+                  eq(assessment_submission.idempotency_key, assessment.idempotency_key),
+                ),
+              );
+        const crisis_mark = pendingSubmission
+          ? await readAttemptCrisisMark(database, assessmentAttemptEventId(pendingSubmission.id))
+          : null;
+        return { kind: 'pending', run_id: runId, crisis_mark };
       }
     }
     context.signal?.throwIfAborted();
@@ -431,7 +471,11 @@ export async function submitReviewAnswer(
       },
     );
     retainDiagnosticClaim = true;
-    return { kind: 'committed', committed };
+    return {
+      kind: 'committed',
+      committed,
+      crisis_mark: await readAttemptCrisisMark(database, committed.attempt_id),
+    };
   } catch (err) {
     if (claimedDiagnostic !== null && !retainDiagnosticClaim) {
       const claim = claimedDiagnostic;
