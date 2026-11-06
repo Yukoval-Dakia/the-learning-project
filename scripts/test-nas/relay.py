@@ -59,8 +59,7 @@ def conn_log(msg):
     try:
         if os.path.exists(CONN_LOG) and os.path.getsize(CONN_LOG) > CONN_LOG_MAX:
             os.replace(CONN_LOG, CONN_LOG + '.1')
-        fd = os.open(CONN_LOG, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
-        with os.fdopen(fd, 'a') as f:
+        with open(CONN_LOG, 'a') as f:
             f.write(f"{time.strftime('%Y-%m-%dT%H:%M:%S%z')} {msg}\n")
     except OSError as e:
         log(f'connection log failed: {e}')
@@ -72,7 +71,11 @@ async def conn_owner(cid, peer_port):
         async with lsof_slots:
             p = await asyncio.create_subprocess_exec('/usr/sbin/lsof', '-nP', f'-iTCP@127.0.0.1:{peer_port}', '-Fpc',
                                                      stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
-            out, _ = await asyncio.wait_for(p.communicate(), 5)
+            try:
+                out, _ = await asyncio.wait_for(p.communicate(), 5)
+            except asyncio.TimeoutError:
+                await kill(p)
+                raise
         pid = None
         for line in out.decode(errors='replace').splitlines():
             if line.startswith('p'):
