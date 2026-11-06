@@ -140,6 +140,8 @@ export interface ToolContext {
    * the mount sets it from durable job data, and it only anchors the published revision.
    */
   publicationCausedByEventId?: string;
+  /** Server-bound gap-ticket scope for a preparer run; gates edits of existing questions. */
+  ticketEventId?: string;
 }
 
 /**

@@ -892,6 +892,25 @@ function legacyChoiceUnitFaithful(stored: ScoringUnitT, canonical: ScoringUnitT)
  * select_key + the printed set rule; any other dropped or rewritten field counts as
  * a scoring change.
  */
+/** Relation axes are display order, not scoring input: right/object arrays are compared
+ *  by id so a historical revision whose frozen order predates the display permutation is
+ *  still a faithful round trip. Every other slot field stays byte-strict. */
+function scoringSlotEqual(stored: ResponseSlotT, canonical: ResponseSlotT): boolean {
+  return stableJson(sortRelationAxes(stored)) === stableJson(sortRelationAxes(canonical));
+}
+
+function sortRelationAxes(slot: ResponseSlotT): ResponseSlotT {
+  if (slot.kind !== 'select' || slot.axes == null) return slot;
+  const axes = { ...slot.axes };
+  for (const name of ['right', 'object'] as const) {
+    const entries = axes[name];
+    if (entries != null) {
+      axes[name] = [...entries].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    }
+  }
+  return { ...slot, axes };
+}
+
 export function scoringRoundTripIsFaithful(
   stored: Pick<PublishedQuestionRevisionT, 'response_spec' | 'scoring_basis' | 'execution_plan'>,
   canonical: Pick<DraftContract, 'response_spec' | 'scoring_basis' | 'execution_plan'>,
@@ -921,7 +940,7 @@ export function scoringRoundTripIsFaithful(
       legacySlotIds.add(storedSlot.slot_id);
     } else if (
       stableJson(storedUnit) !== stableJson(nextUnit) ||
-      stableJson(storedSlot) !== stableJson(nextSlot)
+      !scoringSlotEqual(storedSlot, nextSlot)
     ) {
       return false;
     }
@@ -934,7 +953,7 @@ export function scoringRoundTripIsFaithful(
       if (!legacySlotIds.has(slotId)) return false;
       continue;
     }
-    if (stableJson(storedSlot) !== stableJson(nextSlot)) return false;
+    if (!scoringSlotEqual(storedSlot, nextSlot)) return false;
   }
   if (
     stableJson(stored.scoring_basis.aggregation) !==

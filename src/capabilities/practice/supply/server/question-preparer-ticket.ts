@@ -4,9 +4,10 @@
 // because the preparer may have read learner mistakes into the question.
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
+import { fromPgBossDrizzleTx } from '@/db/pg-boss-drizzle';
 import { writeEvent } from '@/kernel/events';
 import { EvidenceDemandV1, type EvidenceDemandV1T } from '@/kernel/supply-contracts';
-import { fromPgBossDrizzleTx, getStartedBoss } from '@/server/boss/client';
+import { getStartedBoss } from '@/server/boss/client';
 import { JOB_RETRY_DELAY_SECONDS, JOB_RETRY_LIMIT } from '@/server/boss/queue-config';
 
 export const QUESTION_PREPARER_TICKET_ACTION = 'experimental:question_preparer_ticket';
@@ -34,6 +35,7 @@ export async function enqueueQuestionPreparerTicket(
         demand_id: parsed.demand_id,
         subject_id: parsed.subject_id,
         knowledge_ids: parsed.claim.knowledge_ids,
+        task_kinds: parsed.task.kinds,
       },
       created_at: now,
     });

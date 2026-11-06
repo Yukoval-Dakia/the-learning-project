@@ -196,9 +196,10 @@ export async function readAdmissionPurpose(
   }
   // A real session (including a non-Ingestion session) or immutable document
   // binding proves provenance. A publisher id with empty source fields does not.
-  // A server-written gap ticket is the preparer's equivalent anchor: it proves the
-  // question was requested supply, while the `submit_question:*` publisher check
-  // above keeps the transcript closed (the preparer may have read learner mistakes).
+  // A server-written gap ticket is the preparer's supply-lineage anchor: it proves the
+  // question answered a requested gap, not that the content came from a learner source.
+  // Ticket-bound runs also drop `query_mistakes` (temporary LIGHT limit, YUK-1938); the
+  // `submit_question:*` publisher check above stays because bank-returning tools remain.
   const [proven] = await tx.execute<{ known: boolean }>(sql`WITH RECURSIVE lineage AS (
     SELECT id, session_id, caused_by_event_id, action, actor_kind, actor_ref FROM event WHERE id = ${sourceId}
     UNION SELECT p.id, p.session_id, p.caused_by_event_id, p.action, p.actor_kind, p.actor_ref FROM event p

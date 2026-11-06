@@ -292,6 +292,7 @@ type CandidateSubmitContext = Pick<
   | 'causedByEventId'
   | 'beforeIngestionWrite'
   | 'publicationCausedByEventId'
+  | 'ticketEventId'
 > & {
   callerActor?: ToolContext['callerActor'];
   /** Server-held placement delivery authority; never accepted from agent/tool input. */
@@ -402,6 +403,19 @@ async function executeCandidateSubmit(
   });
 }
 
+/** Flat extraction hash unless the declaration's flat projection loses content (relation
+ *  axes, break-tap text); only then does the document identity decide. Keeps existing
+ *  rows deduplicating exactly as base for every other typed candidate. */
+export function declaredCandidateDedupHash(
+  document: QuestionDraftDocumentT,
+  extractionHash: string,
+): string {
+  const identity = draftCanonicalIdentity(document);
+  return identity.selectStructure != null
+    ? canonicalQuestionContentHash(identity)
+    : extractionHash.slice('sha256:'.length);
+}
+
 async function runCandidateSubmit(
   ctx: CandidateSubmitContext,
   input: ParsedInput & { candidate: NonNullable<ParsedInput['candidate']> },
@@ -477,15 +491,12 @@ async function runCandidateSubmit(
     }
   }
 
-  // Typed declarations deduplicate by document identity. The fetch extraction hash covers
-  // only flat prompt/reference/choices, so structurally different candidates (parts,
-  // relation axes) could merge; flat candidates keep the extraction hash unchanged.
   const declaredDocument =
     candidate.question.parts != null && candidate.question.parts.length > 0
       ? declaredCandidateDocument(candidate.question, input.source_route, knowledgeIds)
       : null;
   const canonicalHash = declaredDocument
-    ? canonicalQuestionContentHash(draftCanonicalIdentity(declaredDocument.document))
+    ? declaredCandidateDedupHash(declaredDocument.document, candidate.extraction_hash)
     : candidate.extraction_hash.slice('sha256:'.length);
 
   const merged = await db.transaction(async (tx) => {
@@ -1057,6 +1068,7 @@ async function runDeclaredCandidateSubmit(
       taskRunId: ctx.taskRunId,
       causedByEventId: ctx.causedByEventId ?? null,
       publicationCausedByEventId: ctx.publicationCausedByEventId ?? null,
+      ticketEventId: ctx.ticketEventId ?? null,
       now,
     },
     caller: {
@@ -1345,6 +1357,7 @@ async function execute(ctx: ToolContext, raw: ExecInput): Promise<Output> {
         taskRunId: ctx.taskRunId,
         causedByEventId: ctx.causedByEventId ?? null,
         publicationCausedByEventId: ctx.publicationCausedByEventId ?? null,
+        ticketEventId: ctx.ticketEventId ?? null,
       },
     );
     return result as Output;

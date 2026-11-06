@@ -53,10 +53,10 @@ import {
 import {
   type DifficultyBand,
   type QuestionSupplyTarget,
+  enqueueQuestionPreparerTicket,
   isUnanchoredSupplyPaused,
   targetFingerprint,
 } from '../../supply/public';
-import { enqueueQuestionPreparerTicket } from '../../supply/server/question-preparer-ticket';
 
 // ── 输入 / 输出契约 ──────────────────────────────────────────────────────────
 
@@ -254,7 +254,28 @@ function buildBankGapTarget(
   };
 }
 
-// ── 主流程 ─────────────────────────────────────────────────────────────────
+// ── 主流程 ────────────────────────────────────────────────────────────
+
+/** The signed search scope narrows the ticket exactly as the old dispatcher narrowed its
+ *  target: the scope's KCs replace the demand claim set (the guard proved ⊆), and a stated
+ *  scope kind becomes the ticket's only task kind. Without this the preparer would judge
+ *  inventory and author against the broader demand. */
+function narrowDemandToSignedScope(
+  demand: EvidenceDemandV1T,
+  evidence: z.infer<typeof BankGapRequestSchema>,
+): EvidenceDemandV1T {
+  const scope = evidence.constraints.scope;
+  const knowledgeIds =
+    scope.knowledge_ids !== undefined
+      ? [...new Set(scope.knowledge_ids)]
+      : demand.claim.knowledge_ids;
+  const kind = scope.kind !== undefined ? scopeTargetKind(scope.kind, demand.task.kinds) : null;
+  return EvidenceDemandV1.parse({
+    ...demand,
+    claim: { ...demand.claim, knowledge_ids: knowledgeIds },
+    task: { ...demand.task, kinds: kind !== null ? [kind] : demand.task.kinds },
+  });
+}
 
 interface StoredFilingPayload {
   kind: 'bank_gap_filing';
@@ -500,8 +521,10 @@ async function executeFileBankGap(ctx: ToolContext, rawInput: FileBankGapInput) 
   }
 
   // 只有 claim 赢家能抵达这里（需求控制已在上方 hold 关卡 enforcing），直接入备题员队列。
-  const target = buildBankGapTarget(demand, evidence, input.request_id);
-  const enqueued = await enqueueQuestionPreparerTicket(ctx.db, demand);
+  // 生效约束（范围 KC + 范围 kind）随票进 job；范围外的检索限制已在上面 held。
+  const effectiveDemand = narrowDemandToSignedScope(demand, evidence);
+  const target = buildBankGapTarget(effectiveDemand, evidence, input.request_id);
+  const enqueued = await enqueueQuestionPreparerTicket(ctx.db, effectiveDemand);
   const queued = enqueued.job_id !== null;
   const dispatch = dispatchReceipt({
     fingerprint: target.fingerprint,

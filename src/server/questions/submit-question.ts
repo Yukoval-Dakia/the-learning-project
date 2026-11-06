@@ -139,6 +139,8 @@ interface SubmitContext {
   causedByEventId?: string | null;
   /** Server-bound publication anchor for a run whose content provenance is its ticket. */
   publicationCausedByEventId?: string | null;
+  /** Server-bound gap-ticket scope; gates edits of existing questions. */
+  ticketEventId?: string | null;
   now?: Date;
 }
 

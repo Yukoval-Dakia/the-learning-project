@@ -56,6 +56,38 @@ function stripVolatile(value: unknown): unknown {
   );
 }
 
+/** Temporary LIGHT limit (YUK-1938): a ticket-bound run may not read learner mistakes.
+ *  Runs without a ticket keep the full surface; this is not the target shape. */
+export function questionPreparerToolSurface(ticketBound: boolean) {
+  const toolNames = ticketBound
+    ? QUESTION_PREPARER_TOOLS.filter((name) => name !== 'query_mistakes')
+    : QUESTION_PREPARER_TOOLS;
+  return {
+    toolNames,
+    allowedTools: resolveMcpAllowedTools('question_preparer').filter(
+      (wire) => !ticketBound || !wire.endsWith('__query_mistakes'),
+    ),
+  };
+}
+
+/** Ticket-bound runs never read learner evidence (YUK-1938); strip the request flags
+ *  server-side so the model cannot ask for it. Structure reads stay available. */
+export function stripLearnerEvidenceInput(
+  toolName: string,
+  args: Record<string, unknown>,
+): Record<string, unknown> {
+  const without = (blocked: readonly string[]) =>
+    Array.isArray(args.include)
+      ? args.include.filter((value) => !blocked.includes(String(value)))
+      : args.include;
+  if (toolName === 'query_knowledge')
+    return { ...args, include: without(['stats', 'recent_failures']) };
+  if (toolName === 'expand_knowledge_subgraph')
+    return { ...args, include: without(['recent_failures', 'mastery']) };
+  if (toolName === 'get_subject_graph_overview') return { ...args, includeWeaknessSummary: false };
+  return args;
+}
+
 /** One admitted segment, with durable continuations on repair and interrupted delivery. */
 export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown, retryCount = 0) {
   let data = QuestionPreparerJobData.parse(raw);
@@ -358,6 +390,9 @@ export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown, r
       return false;
     },
   });
+  // Temporary LIGHT limit (YUK-1938): a ticket-bound run may not read learner mistakes.
+  // Runs without a ticket keep the full surface; this is not the target shape.
+  const surface = questionPreparerToolSurface(data.ticket_event_id != null);
   let result: Awaited<ReturnType<typeof runAgentTask>> | undefined;
   let executionError: unknown;
   try {
@@ -395,7 +430,7 @@ export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown, r
             db,
             taskRunId,
             subjectProfile: resolveSubjectProfile(data.ticket.subject_id),
-            allowedTools: [...resolveMcpAllowedTools('question_preparer')],
+            allowedTools: [...surface.allowedTools],
             judgeRetryPolicy: 'none',
             budgetOverride: {
               maxIterations: 'unbounded',
@@ -413,6 +448,7 @@ export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown, r
                     ? {
                         causedByEventId: data.ticket_event_id,
                         publicationCausedByEventId: data.ticket_event_id,
+                        ticketEventId: data.ticket_event_id,
                       }
                     : {}),
                   beforeIngestionWrite: assertSegmentOpen,
@@ -423,15 +459,25 @@ export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown, r
                 },
                 interceptInput(tool, args) {
                   if (args && typeof args === 'object' && !Array.isArray(args)) {
+                    const record = args as Record<string, unknown>;
                     if (tool.name === 'scan_coverage_gaps')
-                      return { args: { ...args, ticket: data.ticket } };
+                      return { args: { ...record, ticket: data.ticket } };
                     if (tool.name === 'submit_question')
-                      return { args: { ...args, demand_id: data.ticket.demand_id } };
+                      return { args: { ...record, demand_id: data.ticket.demand_id } };
+                    if (data.ticket_event_id) {
+                      // Ticket-bound runs never read learner evidence (YUK-1938).
+                      if (
+                        tool.name === 'query_knowledge' ||
+                        tool.name === 'expand_knowledge_subgraph' ||
+                        tool.name === 'get_subject_graph_overview'
+                      )
+                        return { args: stripLearnerEvidenceInput(tool.name, record) };
+                    }
                   }
                   return { args };
                 },
                 serverName: 'loom',
-                toolNames: QUESTION_PREPARER_TOOLS,
+                toolNames: surface.toolNames,
                 taskKind: 'QuestionPreparerTask',
                 onResult(observation) {
                   const value = z
