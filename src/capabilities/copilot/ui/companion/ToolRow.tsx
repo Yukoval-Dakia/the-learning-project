@@ -201,57 +201,38 @@ function useSecondsSince(key: string): number {
  * progress, and never a word about models or sending.
  * Writing moves on its own, so its seconds only appear once the words have stopped for a moment.
  */
-function LiveActivity({
-  steps,
-  stage,
-  textLength,
+export function LiveActivity({
+  message,
+  override,
 }: {
-  steps: StepView[];
-  stage?: CopilotModelStage;
-  textLength: number;
+  /** The reply this run is writing; absent until it lands. */
+  message?: ChatMessage;
+  /** Says something else than the reply's own progress (queued, stopping). */
+  override?: string;
 }) {
+  const steps = message ? stepsOf(message) : [];
+  const textLength = (message?.public_prose?.text ?? message?.text ?? '').trim().length;
   const running = steps.findLast((step) => step.status === 'running');
-  const current = stage ?? (textLength > 0 ? 'writing' : 'waiting');
-  const text = running?.activity ?? STAGE_WORDS[current];
+  const current = message?.stream_stage ?? 'waiting';
+  const text = override ?? running?.activity ?? STAGE_WORDS[current];
   const seconds = useSecondsSince(`${text}|${steps.length}|${textLength}`);
   const showSeconds = seconds >= (current === 'writing' && !running ? 2 : 1);
   return (
-    // Not a live region: RunFooter already announces the run's stage politely; announcing every
-    // step or second here too would flood a screen reader.
-    <p className="un-cp-activity" aria-live="off">
-      <span className="un-cp-step-glyph" aria-hidden="true">
-        <LoaderCircle size={14} className="un-cp-spin" />
-      </span>
+    <>
       <span className="un-cp-activity-text">{text}</span>
       {showSeconds && <span className="un-cp-activity-seconds">{seconds} 秒</span>}
       {steps.length > 0 && <span className="un-cp-activity-count">第 {steps.length} 步</span>}
-    </p>
+    </>
   );
 }
 
 /**
- * YUK-1664 — the steps of one reply as the learner should see them. While the reply is being
- * generated (`live`), one status line under the text says what the companion is doing right now and
- * updates in place; earlier steps are not listed. Once the reply settles it folds into one summary
- * line above the text that opens the full step list. The only motion is the running spinner and
- * the chevron turning on open.
+ * YUK-1664 — the steps of a settled reply: one summary line above the text that opens the full step
+ * list. While it is generating, the one status line sits above the composer (RunFooter).
  */
-export function StepActivity({
-  steps,
-  live,
-  stage,
-  textLength = 0,
-}: {
-  steps: StepView[];
-  live: boolean;
-  /** Live only: what the model is doing right now. */
-  stage?: CopilotModelStage;
-  /** Live only: how much reply text is on screen. */
-  textLength?: number;
-}) {
+export function StepActivity({ steps }: { steps: StepView[] }) {
   const [open, setOpen] = useState(false);
   const listId = useId();
-  if (live) return <LiveActivity steps={steps} stage={stage} textLength={textLength} />;
   if (steps.length === 0) return null;
   const failed = steps.filter((step) => step.status === 'failed').length;
   const summary =

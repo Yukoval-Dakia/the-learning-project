@@ -15,6 +15,7 @@ import {
   selectionValidated,
 } from './companion-state';
 import { PROGRESS_LABELS } from './run-copy';
+import { LiveActivity } from './ToolRow';
 import { useCompanion, useCompanionShallow } from './use-companion';
 
 function Notice({
@@ -90,19 +91,42 @@ export function RunFooter({ controller }: { controller: CompanionController }) {
   const pending = useCompanionShallow(controller, (s) =>
     currentPendingTurns(s).filter((turn) => turn.error),
   );
+  const sending = useCompanion(controller, (s) =>
+    currentPendingTurns(s).some((turn) => turn.dispatching && !turn.error),
+  );
+  const messages = useCompanion(controller, (s) => s.messages);
   const error = useCompanion(controller, (s) => s.error);
   const refreshFailed = useCompanion(controller, (s) => s.refreshFailed);
   const { runs: tracker, sender, actions } = controller;
 
   return (
     <div className="un-cp-footer-notes">
+      {sending && runs.length === 0 ? (
+        <div className="un-cp-run">
+          <LoaderCircle size={14} aria-hidden="true" className="un-cp-spin un-cp-run-glyph" />
+          <span className="un-sr-only" aria-live="polite">
+            {PROGRESS_LABELS.dispatch}
+          </span>
+          <span aria-hidden="true" className="un-cp-run-line">
+            <LiveActivity override={PROGRESS_LABELS.dispatch} />
+          </span>
+        </div>
+      ) : null}
       {runs.map((run) => {
         const stopping = run.stopPending || run.cancelRequested;
+        const announced = run.cancelRequested ? '正在停止…' : PROGRESS_LABELS[run.stage];
         return (
           <div key={run.runId} className="un-cp-run" data-phase={run.phase}>
             <LoaderCircle size={14} aria-hidden="true" className="un-cp-spin un-cp-run-glyph" />
-            <span className="un-cp-run-label" aria-live="polite">
-              {run.cancelRequested ? '正在停止…' : PROGRESS_LABELS[run.stage]}
+            {/* The stage is announced; every step and second on the visible line would flood. */}
+            <span className="un-sr-only" aria-live="polite">
+              {announced}
+            </span>
+            <span aria-hidden="true" className="un-cp-run-line">
+              <LiveActivity
+                message={messages.find((message) => message.run_id === run.runId)}
+                override={run.cancelRequested || run.stage === 'dispatch' ? announced : undefined}
+              />
             </span>
             <Button
               variant="quiet"

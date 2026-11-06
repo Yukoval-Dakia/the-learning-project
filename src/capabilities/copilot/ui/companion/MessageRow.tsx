@@ -77,7 +77,7 @@ export const MessageRow = memo(function MessageRow(props: MessageRowProps) {
   return (
     <div className="un-cp-row un-cp-row-ai" data-streaming={generating ? '' : undefined}>
       {/* YUK-1664 — settled: the reply's steps fold into one summary line above the text. */}
-      {settled ? <StepActivity steps={steps} live={false} /> : null}
+      {settled ? <StepActivity steps={steps} /> : null}
       <ConversationMarkdown className="un-cp-md un-cp-reply">{shown}</ConversationMarkdown>
       {failureBadge ? (
         <p className="un-cp-reply-badge">
@@ -88,15 +88,6 @@ export const MessageRow = memo(function MessageRow(props: MessageRowProps) {
         <p className="un-cp-reply-status" role="status">
           {generationStatus}
         </p>
-      ) : generating ? (
-        // YUK-1664 — while generating, one status line under the text says what is happening now
-        // (text and tool steps interleave, so it stays until the reply settles).
-        <StepActivity
-          steps={steps}
-          live
-          stage={m.stream_stage}
-          textLength={body?.trim().length ?? 0}
-        />
       ) : null}
       {m.confirmationIncompatible && <p role="alert">确认题版本或状态不兼容，暂不能操作。</p>}
       {props.showConfirmation &&
