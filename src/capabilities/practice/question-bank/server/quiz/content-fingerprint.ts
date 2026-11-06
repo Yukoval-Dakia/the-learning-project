@@ -33,6 +33,7 @@ export interface CanonicalQuestionContentInput {
    * byte-identical for every pre-existing producer (no hash migration).
    */
   composite?: boolean;
+  selectStructure?: unknown[];
   // Callers may carry provenance envelopes. Identity intentionally reads only the fields above.
   [key: string]: unknown;
 }
@@ -88,6 +89,9 @@ export function canonicalQuestionContent(input: CanonicalQuestionContentInput): 
     // byte-identical canonical string they always did; only composite:true adds
     // the key (JSON.stringify drops undefined/absent keys).
     ...(input.composite === true ? { composite: true } : {}),
+    ...(input.selectStructure != null
+      ? { select_structure: stableJson(input.selectStructure) }
+      : {}),
   });
 }
 
