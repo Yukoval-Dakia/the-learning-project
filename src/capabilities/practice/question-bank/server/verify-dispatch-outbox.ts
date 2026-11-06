@@ -42,6 +42,7 @@ export type EnqueueVerifyFn = (
   questionIds: string[],
   options?: object,
   placementAuthorities?: PlacementVerificationAuthority[],
+  recoveryEpochs?: Record<string, string>,
 ) => Promise<void>;
 
 export interface VerifyDispatchResult {
@@ -386,20 +387,22 @@ export async function dispatchPendingVerifyIntents(
         const placementAuthorities = group.flatMap((intent) =>
           intent.placement_authority ? [intent.placement_authority] : [],
         );
-        if (placementAuthorities.length > 0) {
-          await input.enqueue(
-            verifier,
-            group.map((intent) => intent.question_id),
-            { db: fromPgBossDrizzleTx(tx) },
-            placementAuthorities,
-          );
-        } else {
-          await input.enqueue(
-            verifier,
-            group.map((intent) => intent.question_id),
-            { db: fromPgBossDrizzleTx(tx) },
-          );
-        }
+        // Only sweep-synthesized intents carry a recovery_epoch; the handler reads
+        // this marker to tell a recovery job from an ordinary redelivery. Job data
+        // is written here alone — a redelivery replays the same payload and cannot
+        // forge the epoch.
+        const recoveryEpochs = Object.fromEntries(
+          group
+            .filter((intent) => intent.recovery_epoch != null)
+            .map((intent) => [intent.question_id, intent.recovery_epoch as string]),
+        );
+        await input.enqueue(
+          verifier,
+          group.map((intent) => intent.question_id),
+          { db: fromPgBossDrizzleTx(tx) },
+          placementAuthorities.length > 0 ? placementAuthorities : undefined,
+          Object.keys(recoveryEpochs).length > 0 ? recoveryEpochs : undefined,
+        );
         for (const intent of group) {
           completionEvents.push(
             dispatchCompletionEvent(intent, { recovery, disposition: 'enqueued', now }),

@@ -43,12 +43,14 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
     questionIds: string[],
     options?: object,
     placementAuthorities?: PlacementVerificationAuthority[],
+    recoveryEpochs?: Record<string, string>,
   ) => {
     await boss.send(
       verifier,
       {
         question_ids: questionIds,
         ...(placementAuthorities?.length ? { placement_authorities: placementAuthorities } : {}),
+        ...(recoveryEpochs ? { recovery_epochs: recoveryEpochs } : {}),
       },
       options,
     );

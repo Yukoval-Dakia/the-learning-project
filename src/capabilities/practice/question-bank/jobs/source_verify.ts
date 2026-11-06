@@ -117,6 +117,15 @@ export interface SourceVerifyJobData {
   recheck?: { command_event_id: string };
   /** Server-written placement authorities (verify outbox), one per bound question. */
   placement_authorities?: PlacementVerificationAuthority[];
+  /**
+   * Recovery marker written ONLY by the verify outbox: question_id → the sweep's
+   * error-epoch event id. Its presence means the sweep synthesized this intent
+   * after a non-terminal error; a stale placement authority may then be
+   * re-verified without it. Ordinary deliveries never carry the map and keep
+   * refusing stale authority. Job data is server-written, so the marker cannot
+   * be forged by a redelivery or an operator payload.
+   */
+  recovery_epochs?: Record<string, string>;
 }
 
 // Loose run seam (mirrors quiz_verify): the handler + solve-check only consume
@@ -1427,6 +1436,7 @@ export function buildSourceVerifyHandler(
         continue;
       }
       const recheckCommandEventId = job.data?.recheck?.command_event_id;
+      const recoveryEpochs = job.data?.recovery_epochs ?? {};
       const placementAuthorities = new Map(
         (job.data.placement_authorities ?? []).map((authority) => [
           authority.question_id,
@@ -1435,6 +1445,7 @@ export function buildSourceVerifyHandler(
       );
       for (const questionId of questionIds) {
         const placementAuthority = placementAuthorities.get(questionId);
+        const recoveryEpoch = recoveryEpochs[questionId];
         const runOne = (authority?: PlacementVerificationAuthority) =>
           runSourceVerify({
             db,
@@ -1448,19 +1459,24 @@ export function buildSourceVerifyHandler(
             ...(recheckCommandEventId != null
               ? { recheckCommandEventId, recheckDeliveryId: job.id }
               : {}),
+            ...(recoveryEpoch != null ? { recoveryEpoch } : {}),
             ...(authority ? { placementAuthority: authority } : {}),
           });
         try {
           const result = await runOne(placementAuthority);
           console.log(`[source_verify] ${questionId} -> ${result.status}`);
         } catch (error) {
-          // A recovery intent can carry an authority the claim has since moved past
-          // (re-bound attempt, expired lease). The verify is still owed: re-run it
-          // provenance-safe without the dead authority instead of completing the
-          // intent with nothing written.
-          if (placementAuthority && error instanceof PlacementStarterStaleAuthorityError) {
+          // Only a sweep-synthesized recovery intent may re-run provenance-safe
+          // without its stale authority — job.data.recovery_epochs marks exactly
+          // those. An ordinary delivery with dead authority refuses: re-running
+          // it would launch paid calls with no claim ledger behind them.
+          if (
+            placementAuthority &&
+            recoveryEpoch != null &&
+            error instanceof PlacementStarterStaleAuthorityError
+          ) {
             console.warn(
-              `[source_verify] ${questionId} placement authority is stale; re-running without it`,
+              `[source_verify] ${questionId} recovery authority is stale; re-running without it`,
             );
             const result = await runOne();
             console.log(`[source_verify] ${questionId} -> ${result.status}`);

@@ -35,6 +35,7 @@ import {
   recoverOrphanVerifyDispatches,
   writeVerifyDispatchIntent,
 } from '@/capabilities/practice/question-bank/server/verify-dispatch-outbox';
+import { PlacementStarterStaleAuthorityError } from '@/capabilities/practice/supply/public';
 import type { RunWebFetchCandidatesResult } from '@/capabilities/practice/supply/server/web-candidates';
 import {
   observeWebSuppliesForQuestion,
@@ -308,6 +309,7 @@ async function handlerDeliver(
     answer?: string;
     jobId?: string;
     placementAuthorities?: PlacementVerificationAuthority[];
+    recoveryEpochs?: Record<string, string>;
   } = {},
 ) {
   const grounded = opts.grounded ?? true;
@@ -325,6 +327,7 @@ async function handlerDeliver(
       ...(opts.placementAuthorities?.length
         ? { placement_authorities: opts.placementAuthorities }
         : {}),
+      ...(opts.recoveryEpochs ? { recovery_epochs: opts.recoveryEpochs } : {}),
     },
   };
   await handler([job as never]);
@@ -384,10 +387,16 @@ async function sweep() {
     verifier: string;
     questionIds: string[];
     authorities?: PlacementVerificationAuthority[];
+    recoveryEpochs?: Record<string, string>;
   }> = [];
   const result = await recoverOrphanVerifyDispatches(db, {
-    enqueue: async (verifier, questionIds, _options, placementAuthorities) => {
-      enqueued.push({ verifier, questionIds, authorities: placementAuthorities });
+    enqueue: async (verifier, questionIds, _options, placementAuthorities, recoveryEpochs) => {
+      enqueued.push({
+        verifier,
+        questionIds,
+        authorities: placementAuthorities,
+        recoveryEpochs,
+      });
     },
     sourceVerifyRecoveryPreflight: () =>
       assertSourceGroundingLaneConfigured({ db, subjectProfile: profile }),
@@ -907,6 +916,9 @@ async function main() {
     created_at: new Date(),
   });
   await primeDispatch(Q6, staleAuthority);
+  // The outbox must act on the authority intent (completion 'enqueued') before
+  // the error event exists — recovery synthesis only re-drives completed intents.
+  await sweep();
   await lane('stale');
   const r10 = await deliver(Q6, { answer: '名词' });
   if (r10.status !== 'skipped:config_error')
@@ -921,10 +933,29 @@ async function main() {
   note('E1:sweep-stale-authority', sweepS as Record<string, unknown>);
   const q6Enq = sweepS.enqueued.find((entry) => entry.questionIds.includes(Q6));
   if (!q6Enq) throw new Error('sweep did not re-drive Q6');
+  // An ordinary redelivery of the same dead authority — no recovery_epochs marker —
+  // still refuses: the unpaid-rerun gate is sweep intents only, and it spends
+  // nothing.
+  const gOrd = counts.grounding;
+  let ordinaryThrew: unknown;
+  try {
+    await handlerDeliver(Q6, { answer: '名词', placementAuthorities: [staleAuthority] });
+  } catch (err) {
+    ordinaryThrew = err;
+  }
+  note('E1b:ordinary-stale-refused', {
+    threw: ordinaryThrew instanceof Error ? ordinaryThrew.constructor.name : String(ordinaryThrew),
+    groundingCalls: counts.grounding - gOrd,
+  });
+  if (!(ordinaryThrew instanceof PlacementStarterStaleAuthorityError))
+    throw new Error('ordinary stale-authority delivery was not refused');
+  if (counts.grounding - gOrd !== 0)
+    throw new Error('ordinary stale delivery launched a paid call with no ledger');
   const g4 = counts.grounding;
   await handlerDeliver(Q6, {
     answer: '名词',
     placementAuthorities: q6Enq.authorities ?? [staleAuthority],
+    ...(q6Enq.recoveryEpochs ? { recoveryEpochs: q6Enq.recoveryEpochs } : {}),
   });
   const s6 = await dumpState(Q6);
   note('E2:stale-authority-recovery', {
