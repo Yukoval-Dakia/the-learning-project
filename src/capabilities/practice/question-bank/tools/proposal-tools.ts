@@ -188,6 +188,12 @@ export interface AuthorQuestionDeps {
   sessionId?: string;
   /** ctx.causedByEventId (optional, matches ToolContext). */
   causedByEventId?: string;
+  /**
+   * Called as soon as a subject commits (create) or replays, before any later step
+   * can fail. The tool keeps this receipt outside its try so a thrown error still
+   * tells the learner a subject exists.
+   */
+  onSubjectCreated?: (subject: { id: string; created: boolean }) => void;
   /** Injectable for tests; the variant seed defaults to the central AI runner. */
   runTaskFn?: TaskTextRunFn;
 }
@@ -365,6 +371,10 @@ export async function authorQuestion(
     case 'teaching_draft': {
       const { submitCopilotAuthoredDraft } = await import('@/capabilities/practice/public');
       const draft = TeachingDraft.parse(seed.draft);
+      // Expansion is pure, database-free validation (answer indices, blank counts,
+      // unit shapes). Run it before any subject write so a malformed draft leaves
+      // no subject behind.
+      teachingDraftToDocument(draft);
       // Conversation provenance is a dry check: it must fail before any subject write.
       if (!(await hasTeachingDraftConversation(deps.db, deps.sessionId)))
         return {
@@ -388,6 +398,10 @@ export async function authorQuestion(
           mistake_variant_ids: [],
           variant_question_ids: [],
           problem: placement.issue,
+          // A subject created before this failure must still be reported.
+          ...(placement.subject
+            ? { subject_created: placement.subject.created, subject_id: placement.subject.id }
+            : {}),
           reasoning_summary: placement.issue.detail,
         };
       const base = {
@@ -449,15 +463,22 @@ async function authorQuestionExecute(
   raw: AuthorQuestionInput,
 ): Promise<AuthorQuestionOutput> {
   const input = AuthorQuestionInputSchema.parse(raw);
+  // Creation is a committed side effect. Keep its receipt outside the try so an
+  // exception anywhere after it still returns subject_created/subject_id.
+  const receipt: { subject_created?: boolean; subject_id?: string } = {};
   try {
     validateAuthorQuestionInput(input);
     const seed = toAuthorQuestionSeed(input);
-    return await authorQuestion(seed, {
+    const result = await authorQuestion(seed, {
       db: ctx.db,
       actorRef: ctx.callerActor.ref,
       taskRunId: ctx.taskRunId,
       causedByEventId: ctx.causedByEventId,
       sessionId: ctx.sessionId,
+      onSubjectCreated: (subject) => {
+        receipt.subject_created = subject.created;
+        receipt.subject_id = subject.id;
+      },
       runTaskFn: makeRunTaskFn(ctx.db, {
         signal: ctx.signal,
         parentTaskRunId: ctx.taskRunId,
@@ -466,6 +487,7 @@ async function authorQuestionExecute(
           : {}),
       }),
     });
+    return Object.keys(receipt).length > 0 ? { ...result, ...receipt } : result;
   } catch (err) {
     return {
       status: err instanceof z.ZodError ? 'skipped:invalid_payload' : 'failed',
@@ -473,6 +495,7 @@ async function authorQuestionExecute(
       proposal_ids: [],
       mistake_variant_ids: [],
       variant_question_ids: [],
+      ...receipt,
       reasoning_summary: err instanceof Error ? err.message : String(err),
     };
   }

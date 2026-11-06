@@ -24,11 +24,23 @@ export type SubjectCreateResult =
   | { kind: 'invalid'; message: string }
   | { kind: 'name_conflict'; message: string };
 
+export interface CommittedSubject {
+  id: string;
+  displayName: string;
+  seedRootId: string;
+}
+
 export interface SubjectCreateSource {
   /** The learner ask event that justified creating this subject. */
   askEventId: string;
   /** The AI task run that authored the question. */
   taskRunId: string;
+  /**
+   * Fired once the create transaction commits, before post-commit registry
+   * hydration. A later failure (hydration, re-read) still has to be reported to the
+   * learner, so the caller needs the receipt even when this call throws.
+   */
+  onCommitted?: (subject: CommittedSubject) => void;
 }
 
 type SubjectCreateOperation = (

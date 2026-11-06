@@ -198,7 +198,8 @@ export async function thinCreateSubject(
     throw err;
   }
 
-  // commit 后装配上架（回滚不会走到这里 → 不留内存幻影）。
+  // commit 后先回执，再装配上架：水合失败时调用方仍能如实报告已建的学科。
+  source?.onCommitted?.({ id, displayName, seedRootId: subjectRootId(id) });
   await hydrateSubjectRegistryFromDb(db);
   return {
     kind: 'created',

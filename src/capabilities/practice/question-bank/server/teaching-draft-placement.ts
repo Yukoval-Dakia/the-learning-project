@@ -27,6 +27,8 @@ type PlacementResult =
   | {
       ok: false;
       issue: { code: 'subject_root_missing' | 'learner_topic_required'; detail: string };
+      /** Set when a subject was created/replayed before a later placement failure. */
+      subject?: PlacementSubject;
     };
 
 const ROOT = /^seed:([^:]+):root$/;
@@ -53,7 +55,13 @@ function learnerAskMessage(
 export async function resolveTeachingDraftPlacement(
   db: Db,
   input: PlacementInput,
-  origin: { sessionId?: string; causedByEventId?: string; taskRunId?: string },
+  origin: {
+    sessionId?: string;
+    causedByEventId?: string;
+    taskRunId?: string;
+    /** Receives the created/replayed subject before later failures can hide it. */
+    onSubjectCreated?: (subject: PlacementSubject) => void;
+  },
 ): Promise<PlacementResult> {
   const rootOnly =
     input.knowledge_ids.length > 0 && input.knowledge_ids.every((id) => ROOT.test(id));
@@ -100,8 +108,12 @@ export async function resolveTeachingDraftPlacement(
       const created = await createSubjectThroughPort(db, claim, {
         askEventId: origin.causedByEventId,
         taskRunId: origin.taskRunId,
+        onCommitted: (committed) => origin.onSubjectCreated?.({ id: committed.id, created: true }),
       });
       if (created.kind === 'created' || created.kind === 'replayed') {
+        // Replay has no commit callback; report it before the re-read can throw.
+        if (created.kind === 'replayed')
+          origin.onSubjectCreated?.({ id: created.payload.id, created: false });
         [row] = await readSubject(created.payload.id);
         if (row) placedSubject = { id: row.id, created: created.kind === 'created' };
       }
@@ -130,6 +142,7 @@ export async function resolveTeachingDraftPlacement(
         code: 'subject_root_missing',
         detail: '这个学科目前还没有收进来，这次没有存题。可以只在对话里讲题，但不会进入题库。',
       },
+      ...(placedSubject ? { subject: placedSubject } : {}),
     };
   }
   return {
