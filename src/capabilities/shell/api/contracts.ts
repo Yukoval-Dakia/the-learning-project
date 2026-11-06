@@ -41,6 +41,13 @@ export const AutoAppliedProposalDigestSchema = z.object({
       applied_at: z.string(),
       level: z.string(),
       reverted: z.boolean(),
+      // Batch-undo state from the same kernel classifier the retraction lane
+      // guards with; the summary page renders this instead of re-deriving it.
+      undo: z.object({
+        status: z.enum(['revertable', 'blocked', 'reverted']),
+        code: z.string().nullable(),
+        reason_md: z.string().nullable(),
+      }),
     }),
   ),
   breaker: z.object({
@@ -50,6 +57,28 @@ export const AutoAppliedProposalDigestSchema = z.object({
     cap: z.number().int().nonnegative(),
     window: z.number().int().nonnegative(),
   }),
+});
+
+export const AutoAppliedBatchRetractResponseSchema = z.object({
+  items: z.array(
+    z.object({
+      proposal_id: z.string(),
+      kind: z.string(),
+      status: z.enum(['reverted', 'blocked', 'already_reverted', 'failed']),
+      code: z.string().nullable(),
+      reason_md: z.string().nullable(),
+      correction_event_id: z.string().nullable(),
+    }),
+  ),
+  summary: z.object({
+    requested: z.number().int().nonnegative(),
+    reverted: z.number().int().nonnegative(),
+    blocked: z.number().int().nonnegative(),
+    already_reverted: z.number().int().nonnegative(),
+    failed: z.number().int().nonnegative(),
+    truncated: z.boolean(),
+  }),
+  window: z.object({ from: z.string(), to: z.string() }).nullable(),
 });
 
 // Previews may be shorter than the counts; counts are null for legacy blocks
