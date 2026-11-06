@@ -28,6 +28,7 @@ import type { Db } from '@/db/client';
 import { writeToolCallLog } from '@/kernel/tools/call-evidence';
 import {
   type AttemptCostTruth,
+  UNBILLED_PROVIDER_REJECTION_REF_PREFIX,
   resolveAttemptCostTruth,
   unknownAttemptCostTruth,
 } from './attempt-cost';
@@ -74,14 +75,6 @@ export interface TerminalResultEvidence {
   finishReason: string;
   structuredOutput?: unknown;
 }
-
-/**
- * `cost_ref` prefix marking an attempt the provider positively rejected before
- * any billable work — every observed root request settled as a non-2xx response
- * (or provably never reached the wire) and no model usage exists. The spend
- * gate charges these at a known zero; writer and gate share this one prefix.
- */
-export const UNBILLED_PROVIDER_REJECTION_REF_PREFIX = 'unbilled-provider-rejection:';
 
 export type ObservedRunUsage = Pick<
   TerminalResultEvidence,

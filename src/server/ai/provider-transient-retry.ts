@@ -29,7 +29,7 @@ export interface ProviderTransientRetryPolicy {
  */
 export function providerTransientRetryPolicy(): ProviderTransientRetryPolicy {
   return {
-    maxRetries: (getConfig('ADMISSION_PROVIDER_RETRY_MAX_ATTEMPTS') as number | undefined) ?? 3,
+    maxRetries: (getConfig('ADMISSION_PROVIDER_RETRY_MAX_RETRIES') as number | undefined) ?? 3,
     maxWaitMs: (getConfig('ADMISSION_PROVIDER_RETRY_MAX_WAIT_MS') as number | undefined) ?? 60_000,
     baseDelayMs:
       (getConfig('ADMISSION_PROVIDER_RETRY_BASE_DELAY_MS') as number | undefined) ?? 2_000,
@@ -139,6 +139,17 @@ export async function planProviderTransientRetry(input: {
   return { verdict, delayMs };
 }
 
-export function sleepMs(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+export function sleepMs(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.reject(signal.reason);
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal?.reason ?? new Error('aborted'));
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
 }

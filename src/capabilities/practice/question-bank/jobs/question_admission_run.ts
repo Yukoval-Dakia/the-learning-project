@@ -532,10 +532,11 @@ export async function runAdmissionForQuestion(
       });
     };
     try {
+      const providerSessionDeadlineAt = Date.now() + 15 * 60_000;
       const executeTask =
         deps.runTask ??
         makeRunTaskTextFn(db, {
-          providerSessionDeadlineAt: Date.now() + 15 * 60_000,
+          providerSessionDeadlineAt,
           judgeRetryPolicy: 'none',
           laminarTranscript: await admissionTranscriptAllowed(db, {
             groupId: rootId,
@@ -598,6 +599,7 @@ export async function runAdmissionForQuestion(
         recovery: deps.providerRecovery,
         recoveryConfirmed: data.recovery_confirmed,
         loginProbeRoute: data.login_probe_route,
+        deadlineAt: providerSessionDeadlineAt,
       });
       // Metadata for the solution prior only: a read failure must not touch the paid batch.
       const knowledgeCandidates = await loadPriorKnowledgeCandidates(db, {

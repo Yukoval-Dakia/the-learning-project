@@ -637,13 +637,13 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     note: 'P2: enforce 断流风险',
   },
   // ── 准入/结构化任务 provider 瞬时失败有界重试（YUK-1876）─────────────────
-  ADMISSION_PROVIDER_RETRY_MAX_ATTEMPTS: {
+  ADMISSION_PROVIDER_RETRY_MAX_RETRIES: {
     schema: z.number().int().min(0).max(10),
     codeDefault: 3,
-    envName: 'ADMISSION_PROVIDER_RETRY_MAX_ATTEMPTS',
+    envName: 'ADMISSION_PROVIDER_RETRY_MAX_RETRIES',
     envParse: nonNegIntEnv,
     tier: 'A',
-    note: '绑定状态 429 等瞬时失败的额外付费发送上限（0=关闭 in-run 重试）',
+    note: '绑定状态 429 等瞬时失败的额外付费发送上限（0=关闭 in-run 重试；发送总数=1+该值）',
   },
   ADMISSION_PROVIDER_RETRY_MAX_WAIT_MS: {
     schema: z.number().int().positive().max(600_000),

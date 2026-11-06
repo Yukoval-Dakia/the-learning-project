@@ -439,7 +439,7 @@ export function createRubricModelExecutor(
             if (reported !== undefined) knownSpent += reported;
             else unknownAttempts += 1;
             priorRefs.splice(0, priorRefs.length, ...refs);
-            if (plan.delayMs > 0) await sleepMs(plan.delayMs);
+            if (plan.delayMs > 0) await sleepMs(plan.delayMs, signal);
             continue;
           }
         }

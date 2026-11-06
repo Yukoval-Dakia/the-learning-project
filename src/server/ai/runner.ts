@@ -36,6 +36,7 @@ import type { R2Client } from '@/kernel/object-storage';
 import type { SubjectProfile } from '@/subjects/profile';
 import { resolveProviderSessionDeadlineAt } from '../http/provider-session-deadline';
 import { bindAgentRunError, isApiErrorSuccessResult } from './agent-run-error';
+import { failureSpendChargeUsd } from './attempt-cost';
 import {
   type ModelBinding,
   type PiQueueSources,
@@ -54,7 +55,6 @@ import type { ResolvedProvider } from './providers';
 import {
   type AiRunLifecycle,
   AttemptSettlementError,
-  UNBILLED_PROVIDER_REJECTION_REF_PREFIX,
   classifyLifecycleRetry,
   createRunLifecycle,
   maxLifecycleAttempts,
@@ -531,17 +531,8 @@ async function withPreparedExecutionQuery<TResult extends RunTaskResult, TValue>
       try {
         return await consume(prepared.query(prompt));
       } catch (error) {
-        // YUK-1878 — a positively-evidenced unbilled provider rejection carries a
-        // known-zero charge; any other failure keeps the paid outcome unknown
-        // (fail closed) so an uncertain attempt never masquerades as free.
-        const truth = lifecycle.costTruth;
-        currentTaskSpendScope()?.charge(
-          truth.basis === 'estimated' &&
-            truth.amountUsd === 0 &&
-            truth.ref.startsWith(UNBILLED_PROVIDER_REJECTION_REF_PREFIX)
-            ? 0
-            : null,
-        );
+        // YUK-1878 — known-zero unbilled rejection vs fail-closed unknown.
+        currentTaskSpendScope()?.charge(failureSpendChargeUsd(lifecycle.costTruth));
         throw error;
       }
     },

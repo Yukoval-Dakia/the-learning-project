@@ -588,7 +588,7 @@ export function createJevModelExecutor(options: JevModelExecutorOptions): ModelU
               if (reported !== undefined) knownSpentMicros += reported;
               else unknownAttempts += 1;
             }
-            if (plan.delayMs > 0) await sleepMs(plan.delayMs);
+            if (plan.delayMs > 0) await sleepMs(plan.delayMs, options.signal);
             continue;
           }
         }
