@@ -120,6 +120,11 @@ export const ModelUnitOutcome = z.discriminatedUnion('kind', [
     confidence: z.number().min(0).max(1).optional(),
     /** 掌握证据。聚合不读它。 */
     kc_mastery_evidence: GraderKcMasteryEvidence.optional(),
+    /**
+     * 判分输入含 `transcript:` 证据（照片转写）时由执行器盖印 —— 引文
+     * 校验只证明引的是转写文本，不证明转写与原图一致；读面据此区分。
+     */
+    transcription_derived: z.boolean().optional(),
     run_refs: z.array(z.string().min(1)).default([]),
     cost_usd_micros: z.number().int().min(0).optional(),
   }),
@@ -129,6 +134,8 @@ export const ModelUnitOutcome = z.discriminatedUnion('kind', [
     /** 执行期拒收诊断（脱敏）；sibling 而非 PendingState 字段 —— 见上。 */
     diagnostics: ModelOutcomeDiagnostics.optional(),
     confidence: z.number().min(0).max(1).optional(),
+    /** 见 scored 分支同名字段。 */
+    transcription_derived: z.boolean().optional(),
     run_refs: z.array(z.string().min(1)).default([]),
     cost_usd_micros: z.number().int().min(0).optional(),
   }),
@@ -1312,6 +1319,7 @@ export async function evaluateSubmissionCore(
             scoring_unit_id: '',
             pending: outcome.pending,
             judged_by: executor.task_kind,
+            ...(outcome.transcription_derived ? { transcription_derived: true } : {}),
           },
           unitId,
         ),
@@ -1347,6 +1355,7 @@ export async function evaluateSubmissionCore(
           points_awarded: outcome.points_awarded,
           scored_because: 'response',
           judged_by: executor.task_kind,
+          ...(outcome.transcription_derived ? { transcription_derived: true } : {}),
           ...(outcome.matched ? { matched: outcome.matched } : {}),
           ...(outcome.feedback_md ? { feedback_md: outcome.feedback_md } : {}),
           ...(outcome.kc_mastery_evidence

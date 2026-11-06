@@ -194,6 +194,11 @@ export const ScoredUnitResult = z.object({
    * 真相）；asserted 结果由调用方按实标注。历史行无此字段 ⇒ 未知不补造。
    */
   judged_by: z.string().min(1).optional(),
+  /**
+   * YUK-1877 — 判分输入含照片转写证据（`transcript:` 附件）时置位。
+   * 只声明「分数产生于转写文本在场」；不声明转写与原图一致。
+   */
+  transcription_derived: z.boolean().optional(),
   probe_judgement: ConjectureProbeResponseJudgement.optional(),
 });
 export type ScoredUnitResultT = z.infer<typeof ScoredUnitResult>;
@@ -205,6 +210,8 @@ export const PendingUnitResult = z.object({
   pending: PendingState,
   /** YUK-1407 — 见 ScoredUnitResult.judged_by；pending 单元同样盖印执行路径。 */
   judged_by: z.string().min(1).optional(),
+  /** 见 ScoredUnitResult.transcription_derived；pending 单元同样盖印。 */
+  transcription_derived: z.boolean().optional(),
   probe_judgement: ConjectureProbeResponseJudgement.optional(),
 });
 export type PendingUnitResultT = z.infer<typeof PendingUnitResult>;

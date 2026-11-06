@@ -56,6 +56,10 @@ const RECEIPT_ACTION = 'experimental:assessment_evidence_transcription';
 const LOCK_NAMESPACE = 'assessment_evidence_transcription';
 // 收据锁定等待上限：竞态方正在付费转写，等它完成即零成本复用。
 const LOCK_WAIT_MS = 120_000;
+// 付费闸（第一笔付费之前评估）：单次提交的图片证据数与总字节上限。
+// 超限不静默丢证据 —— 对应分辨率落 over_limit，单元按 unjudgeable 待定。
+const MAX_IMAGES_PER_SUBMISSION = 8;
+const MAX_IMAGE_BYTES_PER_SUBMISSION = 32 * 1024 * 1024;
 
 const ReceiptPayload = z.object({
   version: z.literal(1),
@@ -83,17 +87,27 @@ export interface EvidenceTranscriptionDeps {
 
 interface ImageEvidenceRef {
   evidence_id: string;
+  /** 证据所属提交：每提交的图片数/字节上限按它归账。 */
+  submission_id: string;
   asset_id: string;
   /** `sha256:<hex>` — EvidenceAttachment.asset.digest 的既有形态。 */
   digest: string;
   sha256: string;
   mime_type: string;
+  bytes: number;
   uploaded_at: string;
 }
 
 type TranscriptResolution =
   | { ok: true; attachment: EvidenceAttachmentT; run_refs: string[]; cost_micros: number }
-  | { ok: false; unreadable: boolean; detail: string; run_refs: string[]; cost_micros: number };
+  | {
+      ok: false;
+      /** unreadable=终态证据不可读；infra=可重试基建失败；over_limit=超付费上限（终态）。 */
+      failure: 'unreadable' | 'infra' | 'over_limit';
+      detail: string;
+      run_refs: string[];
+      cost_micros: number;
+    };
 
 function isImageAttachment(attachment: EvidenceAttachmentT): boolean {
   return attachment.kind === 'image' && attachment.mime_type.startsWith('image/');
@@ -104,9 +118,10 @@ function sha256OfDigest(digest: string): string {
 }
 
 function receiptIdFor(image: ImageEvidenceRef): string {
+  // 身份只按内容 digest：源资产行 id 是随机的（persistSourceAsset createId），
+  // 同字节重传得新 asset_id —— 收据按 sha256 复用才成立。
   return `evt_aets_${canonicalHash({
     kind: 'evidence_transcription',
-    image_asset_id: image.asset_id,
     image_sha256: image.sha256,
   })}`;
 }
@@ -128,21 +143,26 @@ function transcriptAttachment(
 
 /** submission 内全部 image 附件：group_evidence 与 open 槽位 evidence，按证据 id 去重。 */
 function collectSubmissionImages(submissions: readonly SubmissionRecordT[]): ImageEvidenceRef[] {
-  const attachments: EvidenceAttachmentT[] = submissions.flatMap((sub) => [
-    ...sub.group_evidence.map((g) => g.evidence),
-    ...sub.response_set.entries.flatMap((entry) => (entry.kind === 'open' ? entry.evidence : [])),
-  ]);
+  const attachments: { sub: SubmissionRecordT; attachment: EvidenceAttachmentT }[] =
+    submissions.flatMap((sub) => [
+      ...sub.group_evidence.map((g) => ({ sub, attachment: g.evidence })),
+      ...sub.response_set.entries.flatMap((entry) =>
+        entry.kind === 'open' ? entry.evidence.map((attachment) => ({ sub, attachment })) : [],
+      ),
+    ]);
   const seen = new Set<string>();
   const out: ImageEvidenceRef[] = [];
-  for (const attachment of attachments) {
+  for (const { sub, attachment } of attachments) {
     if (!isImageAttachment(attachment) || seen.has(attachment.evidence_id)) continue;
     seen.add(attachment.evidence_id);
     out.push({
       evidence_id: attachment.evidence_id,
+      submission_id: sub.submission_id,
       asset_id: attachment.asset.asset_id,
       digest: attachment.asset.digest,
       sha256: sha256OfDigest(attachment.asset.digest),
       mime_type: attachment.mime_type,
+      bytes: attachment.bytes,
       uploaded_at: attachment.uploaded_at,
     });
   }
@@ -160,10 +180,10 @@ async function resolveReceiptRow(
     .limit(1);
   if (!saved) return null;
   const payload = ReceiptPayload.safeParse(saved.payload);
-  if (!payload.success || payload.data.image_asset_id !== image.asset_id) {
+  if (!payload.success || payload.data.image_sha256 !== image.sha256) {
     return {
       ok: false,
-      unreadable: false,
+      failure: 'infra',
       detail: `transcription receipt '${saved.id}' exists but does not match this image evidence`,
       run_refs: [],
       cost_micros: 0,
@@ -172,7 +192,7 @@ async function resolveReceiptRow(
   if (payload.data.status === 'illegible') {
     return {
       ok: false,
-      unreadable: true,
+      failure: 'unreadable',
       detail: payload.data.detail ?? 'image evidence was recorded as illegible',
       run_refs: [],
       cost_micros: 0,
@@ -183,7 +203,7 @@ async function resolveReceiptRow(
   if (assetId === undefined || assetSha === undefined) {
     return {
       ok: false,
-      unreadable: false,
+      failure: 'infra',
       detail: `transcription receipt '${saved.id}' lacks transcript asset identity`,
       run_refs: [],
       cost_micros: 0,
@@ -193,7 +213,7 @@ async function resolveReceiptRow(
   if (!row || row.sha256 !== assetSha || row.mime_type !== 'text/markdown') {
     return {
       ok: false,
-      unreadable: false,
+      failure: 'infra',
       detail: `transcription receipt '${saved.id}' points at a missing or divergent transcript asset`,
       run_refs: [],
       cost_micros: 0,
@@ -242,7 +262,7 @@ async function transcribe(
   if (!loaded) {
     return {
       ok: false,
-      unreadable: true,
+      failure: 'unreadable',
       detail: `image asset '${image.asset_id}' bytes are unavailable; evidence cannot be judged`,
       run_refs: [],
       cost_micros: 0,
@@ -298,7 +318,7 @@ async function transcribe(
     await writeReceipt(deps.db, image, submissionId, payload, run);
     return {
       ok: false,
-      unreadable: true,
+      failure: 'unreadable',
       detail: output.note ?? 'image evidence transcribed as illegible',
       run_refs: [result.task_run_id],
       cost_micros: costMicros ?? 0,
@@ -435,18 +455,43 @@ export async function prepareEvidenceTranscriptions(
   const images = collectSubmissionImages(submissions);
   const resolutions = new Map<string, TranscriptResolution>();
   const callerSignal = signal ?? new AbortController().signal;
+  // 付费闸在两笔之间也生效：同一提交的图片数/总字节有上限；共享
+  // provider-session deadline 到期后不再发起付费，余下图片落可重试 infra。
+  const perSubmission = new Map<string, { count: number; bytes: number }>();
   for (const image of images) {
+    const usage = perSubmission.get(image.submission_id) ?? { count: 0, bytes: 0 };
+    perSubmission.set(image.submission_id, usage);
     let resolution: TranscriptResolution;
-    try {
-      resolution = await ensureTranscript(deps, image, anchor.submission_id, callerSignal);
-    } catch (error) {
+    usage.count += 1;
+    usage.bytes += image.bytes;
+    if (usage.count > MAX_IMAGES_PER_SUBMISSION || usage.bytes > MAX_IMAGE_BYTES_PER_SUBMISSION) {
       resolution = {
         ok: false,
-        unreadable: false,
-        detail: `transcription infrastructure failure: ${error instanceof Error ? error.message : String(error)}`,
+        failure: 'over_limit',
+        detail: `image evidence exceeds per-submission transcription limits (max ${MAX_IMAGES_PER_SUBMISSION} images / ${MAX_IMAGE_BYTES_PER_SUBMISSION} bytes)`,
         run_refs: [],
         cost_micros: 0,
       };
+    } else if (deps.deadlineAt !== undefined && Date.now() >= deps.deadlineAt) {
+      resolution = {
+        ok: false,
+        failure: 'infra',
+        detail: 'provider session deadline reached before transcription could start',
+        run_refs: [],
+        cost_micros: 0,
+      };
+    } else {
+      try {
+        resolution = await ensureTranscript(deps, image, anchor.submission_id, callerSignal);
+      } catch (error) {
+        resolution = {
+          ok: false,
+          failure: 'infra',
+          detail: `transcription infrastructure failure: ${error instanceof Error ? error.message : String(error)}`,
+          run_refs: [],
+          cost_micros: 0,
+        };
+      }
     }
     resolutions.set(image.evidence_id, resolution);
   }
@@ -474,7 +519,11 @@ export function createEvidenceTranscriptionExecutor(
   prepared: PreparedEvidenceTranscriptions,
 ): ModelUnitExecutorPort {
   return async (request, signal) => {
-    const failures: { unreadable: boolean; evidence_id: string; detail: string }[] = [];
+    const failures: {
+      failure: 'unreadable' | 'infra' | 'over_limit';
+      evidence_id: string;
+      detail: string;
+    }[] = [];
     const runRefs: string[] = [];
     let costMicros = 0;
     const attachments: EvidenceAttachmentT[] = [
@@ -488,7 +537,7 @@ export function createEvidenceTranscriptionExecutor(
       const resolution = prepared.resolutions.get(attachment.evidence_id);
       if (resolution === undefined) {
         failures.push({
-          unreadable: false,
+          failure: 'infra',
           evidence_id: attachment.evidence_id,
           detail: 'image evidence was never presented for transcription',
         });
@@ -498,25 +547,31 @@ export function createEvidenceTranscriptionExecutor(
       costMicros += resolution.cost_micros;
       if (!resolution.ok) {
         failures.push({
-          unreadable: resolution.unreadable,
+          failure: resolution.failure,
           evidence_id: attachment.evidence_id,
           detail: resolution.detail,
         });
       }
     }
     if (failures.length > 0) {
-      const anyInfra = failures.some((f) => !f.unreadable);
-      const pending: PendingStateT = anyInfra
+      const pending: PendingStateT = failures.some((f) => f.failure === 'infra')
         ? {
             reason: 'infra_failure',
             retryable: true,
             detail: failures.map((f) => `${f.evidence_id}: ${f.detail}`).join('; '),
           }
-        : {
-            reason: 'unreadable_evidence',
-            evidence_ids: failures.map((f) => f.evidence_id),
-            detail: failures.map((f) => f.detail).join('; '),
-          };
+        : failures.some((f) => f.failure === 'over_limit')
+          ? {
+              reason: 'unjudgeable',
+              detail: `image evidence over transcription limits: ${failures
+                .map((f) => `${f.evidence_id} ${f.detail}`)
+                .join('; ')}`,
+            }
+          : {
+              reason: 'unreadable_evidence',
+              evidence_ids: failures.map((f) => f.evidence_id),
+              detail: failures.map((f) => f.detail).join('; '),
+            };
       return {
         kind: 'pending',
         pending,
@@ -525,9 +580,13 @@ export function createEvidenceTranscriptionExecutor(
       };
     }
     const outcome: ModelUnitOutcomeT = await inner(request, signal);
-    if (runRefs.length === 0 && costMicros === 0) return outcome;
+    // 请求含转写证据 → 结果标来源：引文校验只证明引的是转写文本，
+    // 不证明转写与原图一致；读面据此把分数归属到转写路径。
+    const transcriptionDerived = attachments.some((a) => a.evidence_id.startsWith('transcript:'));
+    if (runRefs.length === 0 && costMicros === 0 && !transcriptionDerived) return outcome;
     return {
       ...outcome,
+      ...(transcriptionDerived ? { transcription_derived: true } : {}),
       run_refs: [...runRefs, ...outcome.run_refs],
       ...(costMicros > 0 ? { cost_usd_micros: costMicros + (outcome.cost_usd_micros ?? 0) } : {}),
     };
