@@ -108,25 +108,33 @@ export function projectDurableCopilotMessage(
   // append only later durable deltas from this run's already-deduplicated view.
   const snapshot = previous.public_prose;
   // The final reply replaced what was streamed, so the draft must not stay on screen beside it.
-  // A sealed exit keeps its prose: the reason it stopped is on it, and it holds no draft to clear.
-  const replaced = view.replyPayload?.thinking_clear === true && !view.publicProse?.failure;
-  const publicProse = replaced
-    ? undefined
-    : (view.publicProse ??
-      (!terminal && snapshot?.status === 'streaming'
-        ? mergePublicProse(
-            snapshot,
-            new Map(
-              view.frames
-                .filter(
-                  (frame) =>
-                    frame.event_type === 'copilot_run.delta' &&
-                    typeof frame.payload.text === 'string',
-                )
-                .map((frame) => [frame.event_id, frame.payload.text as string]),
-            ),
-          )
-        : undefined));
+  const streamedProse =
+    view.publicProse ??
+    (!terminal && snapshot?.status === 'streaming'
+      ? mergePublicProse(
+          snapshot,
+          new Map(
+            view.frames
+              .filter(
+                (frame) =>
+                  frame.event_type === 'copilot_run.delta' &&
+                  typeof frame.payload.text === 'string',
+              )
+              .map((frame) => [frame.event_id, frame.payload.text as string]),
+          ),
+        )
+      : undefined);
+  // The final words replaced what streamed, so the draft must not stay on screen. How it ended stays:
+  // a stop, failure or sealed exit keeps its status and notice, with the final words as its text.
+  const keepsEnding =
+    streamedProse?.failure !== undefined ||
+    streamedProse?.status === 'failed' ||
+    streamedProse?.status === 'interrupted';
+  const publicProse = !view.thinkingClear
+    ? streamedProse
+    : streamedProse && keepsEnding
+      ? { ...streamedProse, text: view.replyText }
+      : undefined;
   const base = {
     ...previous,
     subtasks: view.subtasks,

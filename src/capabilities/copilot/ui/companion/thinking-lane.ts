@@ -45,7 +45,7 @@ export function visibleThinking(
   segments: readonly ThinkingSegment[],
   view: CopilotRunView,
 ): string {
-  if (view.replyPayload?.thinking_clear === true) return '';
+  if (view.thinkingClear) return '';
   const replaced = new Set<string>();
   for (const frame of view.frames) {
     if (frame.event_type !== COPILOT_RUN_STEP_EVENT) continue;

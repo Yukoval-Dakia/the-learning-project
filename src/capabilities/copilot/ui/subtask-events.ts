@@ -84,6 +84,8 @@ export interface CopilotRunView {
   publicProse?: PublicProse;
   /** Authoritative reply metadata; decoded into presentation only by message-projection. */
   replyPayload?: Record<string, unknown>;
+  /** The final words replaced what streamed: on a reply, or on a failed or cancelled end. */
+  thinkingClear?: boolean;
   failureReason?: string;
   checkpointEventId?: string;
   subtasks: CopilotSubtaskView[];
@@ -436,6 +438,7 @@ export function foldCopilotRunFrames(
     publicProse = mergePublicProse(snapshot, publicDeltas);
   };
   let replyPayload: Record<string, unknown> | undefined;
+  let thinkingClear = false;
   let failureReason: string | undefined;
   let checkpointEventId: string | undefined;
   const subtasks = new Map<string, MutableSubtask>();
@@ -540,6 +543,7 @@ export function foldCopilotRunFrames(
         if (terminalRun) break;
         receivePublicProse(item);
         replyPayload = { ...replyPayload, ...item.payload };
+        if (item.payload.thinking_clear === true) thinkingClear = true;
         phase = 'running';
         if (typeof item.payload.reply_md === 'string') replyText = item.payload.reply_md;
         if (typeof item.payload.checkpoint_event_id === 'string') {
@@ -571,6 +575,7 @@ export function foldCopilotRunFrames(
           receivePublicProse(item);
           phase = 'failed';
           replyPayload = undefined;
+          if (item.payload.thinking_clear === true) thinkingClear = true;
           if (typeof item.payload.reply_md === 'string') replyText = item.payload.reply_md;
           if (typeof item.payload.reason === 'string') failureReason = item.payload.reason;
           if (failureReason === 'ambiguous_execution') {
@@ -598,6 +603,7 @@ export function foldCopilotRunFrames(
     modelStage,
     ...(publicProse ? { publicProse } : {}),
     ...(replyPayload ? { replyPayload } : {}),
+    ...(thinkingClear ? { thinkingClear } : {}),
     ...(failureReason ? { failureReason } : {}),
     ...(checkpointEventId ? { checkpointEventId } : {}),
     subtasks: [...subtasks.values()]
