@@ -2,6 +2,8 @@
 import { eq, inArray } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import { z } from 'zod';
+import { AgentRunError } from '@/ai/agent-run-error';
+import { providerTransientVerdict } from '@/ai/provider-failure';
 import { type TaskKind, resolveTaskBudget } from '@/capabilities/task-registry';
 import { assessmentRubricInvocationWindowMs } from '@/core/assessment-rubric-timeout';
 import { canonicalHash } from '@/core/migration/canonical';
@@ -20,7 +22,7 @@ import {
   modelResponseClassForUnit,
 } from '@/core/schema/assessment';
 import type { ModelOutcomeDiagnosticsT } from '@/core/schema/assessment/model-diagnostics';
-import { sha256Canonical } from '@/core/task-input-hash';
+import { sha256Canonical, taskInputHash } from '@/core/task-input-hash';
 import type { Db } from '@/db/client';
 import { ai_task_runs, event, question_revision } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
@@ -28,6 +30,10 @@ import { withModelSliceAdmissionLock } from '@/kernel/locks/grading';
 import { lookupGroupSubjects } from '@/kernel/read-models/model-admission';
 import { resolveTaskBinding } from '@/server/ai/providers';
 import { currentTaskSpendScope } from '@/server/ai/task-spend-scope';
+import {
+  createAssessmentAssetLoader,
+  prepareAssessmentModelInput,
+} from '../server/assessment-model-assets';
 import { createAdmissionRunExecutor } from '../server/judge/evaluate-submission';
 import {
   assertModelAdmissionSliceRegistrable,
@@ -249,6 +255,14 @@ const ModelSliceAdmissionRunData = z
     /** dry run 只出证据，绝不登记准入。 */
     dry_run: z.boolean().default(false),
     admitted_by: z.string().min(1),
+    // The caller must pin the archived payload and explicitly select only provider failures.
+    resume: z
+      .object({
+        evidence_digest: z.string().regex(/^[a-f0-9]{64}$/),
+        item_ids: z.array(z.string().min(1)).min(1),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 export type ModelSliceAdmissionRunDataT = z.infer<typeof ModelSliceAdmissionRunData>;
@@ -495,6 +509,7 @@ export async function runModelSliceAdmission(
 ): Promise<ModelSliceAdmissionRunResult> {
   const rawItems = rawHoldoutItems(rawData);
   const data = ModelSliceAdmissionRunData.parse(rawData);
+  const { resume, ...frozenRequest } = data;
   const failures: string[] = [];
 
   // 1) 冻结证明：对调用方给出的 items 取哈希，不把 zod 默认值算进去。
@@ -521,10 +536,12 @@ export async function runModelSliceAdmission(
   const expectedRoute = resolveTaskBinding(data.slice.task_kind as TaskKind);
   const sliceId = modelSliceIdFor(data.slice);
   // 证据事件 id 只由 run_id 决定 —— 付费循环前就能算出，供登记预检使用。
-  const evidenceEventId = `evt_model_slice_admission_${data.run_id}`;
+  const originalEvidenceEventId = `evt_model_slice_admission_${data.run_id}`;
+  const evidenceEventId = resume ? `${originalEvidenceEventId}_resumed` : originalEvidenceEventId;
+  const claimEventId = `${originalEvidenceEventId}_resume_claim`;
   const registrationInput = {
     ...data.slice,
-    request_digest: canonicalHash(data),
+    request_digest: canonicalHash(frozenRequest),
     holdout_evidence_ref: evidenceEventId,
     admitted_by: data.admitted_by,
   };
@@ -533,8 +550,8 @@ export async function runModelSliceAdmission(
   // caught and the job returns, so the queue does not rerun those calls.
   await assertModelAdmissionSliceRegistrable(db, registrationInput);
 
-  // 2c) 同一 run_id 的证据已存在就直接复读。先写者赢：失败的证据不能被后来的
-  //     同 id 成功跑覆盖成准入，也绝不再付一次费。
+  // Default replay never repays or overwrites failed evidence. Explicit resume
+  // uses a separate evidence id and must pass the provider-only checks below.
   const storedEvidence = await readAdmissionEvidence(db, evidenceEventId);
   if (storedEvidence !== null) {
     return finishFromStoredEvidence(
@@ -545,6 +562,75 @@ export async function runModelSliceAdmission(
       evidenceEventId,
       data.run_id,
     );
+  }
+
+  const originalEvidence = resume ? await readAdmissionEvidence(db, originalEvidenceEventId) : null;
+  const resumeItems = new Set(resume?.item_ids ?? []);
+  let originalResults: ModelSliceAdmissionItemResult[] = [];
+  if (resume) {
+    const original = StoredAdmissionPayload.safeParse(originalEvidence?.payload);
+    if (
+      originalEvidence?.outcome !== 'failed' ||
+      !original.success ||
+      canonicalHash(originalEvidence.payload) !== resume.evidence_digest ||
+      original.data.request_digest !== registrationInput.request_digest ||
+      data.slice.response_class !== 'free' ||
+      data.slice.task_kind !== 'AssessmentRuleJudgeTask' ||
+      original.data.failures.length !== 1 ||
+      original.data.failures[0] !== 'unresolved comparison items; no admission evidence' ||
+      original.data.unknown_cost_items !== 0 ||
+      original.data.items.length !== data.items.length ||
+      resumeItems.size !== resume.item_ids.length
+    )
+      throw new Error(
+        'resume refused: missing, changed, mismatched or non-provider-failed evidence',
+      );
+    // The archived digest binds the full result shape; no missing/unattempted items qualify.
+    originalResults = z
+      .array(
+        z
+          .object({
+            item_id: z.string(),
+            status: z.enum(['pending', 'scored']),
+            awarded_points: z.number().nullable(),
+            reference_points: z.number(),
+            agreed: z.boolean(),
+            severe_error: z.boolean(),
+            run_refs: z.array(z.string()).min(1),
+            input_digest: z.string(),
+            cost_usd_micros: z.number().int().nonnegative(),
+          })
+          .passthrough(),
+      )
+      .parse(original.data.items);
+    if (
+      new Set(originalResults.map((item) => item.item_id)).size !== data.items.length ||
+      data.items.some((item) => !originalResults.some((result) => result.item_id === item.item_id))
+    ) {
+      throw new Error('resume refused: incomplete original item identities');
+    }
+    for (const itemId of resumeItems) {
+      const item = originalResults.find((result) => result.item_id === itemId);
+      if (
+        item?.status !== 'pending' ||
+        item.pending_reason !== 'infra_failure' ||
+        item.model_call_completed !== false ||
+        !item.input_digest ||
+        !item.run_refs?.length ||
+        item.actual_runs?.length !== item.run_refs.length ||
+        item.actual_runs.some(
+          (run) =>
+            run.status !== 'failure' ||
+            run.result_digest !== null ||
+            run.input_hash !== item.input_digest ||
+            !run.error_message,
+        )
+      ) {
+        throw new Error(
+          `resume refused: ${itemId} has a model result or no proven provider failure`,
+        );
+      }
+    }
   }
 
   // 3) 留出题集与切片响应类一致 + 规模阈值 + 单元可加性。
@@ -675,11 +761,129 @@ export async function runModelSliceAdmission(
       throw new Error('independent reference run identity required before admission');
     }
 
+    const requestFor = (
+      item: ModelSliceAdmissionRunDataT['items'][number],
+      spent: number,
+    ): ModelExecutorRequest => ({
+      submission_id: `holdout_${data.run_id}_${item.item_id}`,
+      evaluation_group_id: `holdout_${data.run_id}`,
+      revision_id: item.revision_id,
+      attempt: 1,
+      scoring_unit_id: item.unit.scoring_unit_id,
+      executor: {
+        kind: 'model_executor',
+        task_kind: data.slice.task_kind,
+        // 候选切片身份：端口只对 null 切片 fail-closed；准入与否由登记处裁决。
+        admitted_slice_id: sliceId,
+        max_cost_usd_micros: data.per_item_max_cost_usd_micros,
+      },
+      unit: item.unit,
+      question_parts: item.question_parts,
+      response_slots: item.response_slots,
+      slot_responses: item.slot_responses,
+      group_evidence: item.group_evidence,
+      materials: item.materials,
+      spent_cost_usd_micros: spent,
+    });
+
+    if (resume) {
+      if (await readAdmissionEvidence(db, claimEventId)) {
+        throw new Error(
+          'resume already claimed; incomplete outcomes remain unknown, no automatic repayment',
+        );
+      }
+      const currentOriginal = await readAdmissionEvidence(db, originalEvidenceEventId);
+      if (canonicalHash(currentOriginal?.payload) !== resume.evidence_digest) {
+        throw new Error('resume refused: original evidence changed while acquiring lock');
+      }
+      // Validate every frozen input and every ledger snapshot before any paid call.
+      for (const item of data.items) {
+        const previous = originalResults.find((result) => result.item_id === item.item_id);
+        const prepared = await prepareAssessmentModelInput(
+          requestFor(item, 0),
+          createAssessmentAssetLoader(db),
+          AbortSignal.timeout(30_000),
+        );
+        if (
+          !previous?.input_digest ||
+          !prepared.ok ||
+          taskInputHash(prepared.input) !== previous.input_digest
+        ) {
+          throw new Error(`resume refused: input_digest differs for ${item.item_id}`);
+        }
+        const rows = await db
+          .select({
+            id: ai_task_runs.id,
+            provider: ai_task_runs.provider,
+            model: ai_task_runs.model,
+            status: ai_task_runs.status,
+            cost_basis: ai_task_runs.cost_basis,
+            cost_usd: ai_task_runs.cost_usd,
+            input_hash: ai_task_runs.input_hash,
+            result_digest: ai_task_runs.result_digest,
+            error_message: ai_task_runs.error_message,
+          })
+          .from(ai_task_runs)
+          .where(inArray(ai_task_runs.id, previous.run_refs));
+        if (
+          !previous.actual_runs ||
+          rows.length !== previous.run_refs.length ||
+          canonicalHash([...rows].sort((a, b) => a.id.localeCompare(b.id))) !==
+            canonicalHash([...previous.actual_runs].sort((a, b) => a.id.localeCompare(b.id)))
+        ) {
+          throw new Error(`resume refused: ledger evidence changed for ${item.item_id}`);
+        }
+      }
+      for (const item of originalResults.filter((result) => resumeItems.has(result.item_id))) {
+        const attempts = await db
+          .select({
+            id: ai_task_runs.id,
+            finished_at: ai_task_runs.finished_at,
+            usage_json: ai_task_runs.usage_json,
+          })
+          .from(ai_task_runs)
+          .where(inArray(ai_task_runs.id, item.run_refs));
+        if (
+          attempts.length !== item.run_refs.length ||
+          attempts.some(
+            (attempt) =>
+              attempt.finished_at === null ||
+              !providerTransientVerdict({
+                error: new AgentRunError({
+                  kind: data.slice.task_kind,
+                  taskRunId: attempt.id,
+                  subtype: 'runner_error',
+                  errors: [],
+                }),
+                transport: attempt.usage_json?.transport,
+              }),
+          )
+        )
+          throw new Error(
+            `resume refused: provider rejection or not_sent proof missing for ${item.item_id}`,
+          );
+      }
+      const now = new Date();
+      await writeEvent(db, {
+        id: claimEventId,
+        actor_kind: 'system',
+        actor_ref: 'practice:model_slice_admission_run',
+        action: 'experimental:model_slice_admission_resume_claim',
+        subject_kind: 'model_admission_slice',
+        subject_id: sliceId,
+        outcome: 'claimed',
+        payload: { original_evidence_ref: originalEvidenceEventId, ...resume },
+        created_at: now,
+        ingest_at: now,
+      });
+    }
+
     // 逐题判分（生产同源端口；每题独立墙钟，细则含一次超时重试窗口）。
     const budget = resolveTaskBudget(data.slice.task_kind as TaskKind);
-    const results: ModelSliceAdmissionItemResult[] = [];
-    let knownCostMicros = 0;
+    const results: ModelSliceAdmissionItemResult[] = [...originalResults];
+    let knownCostMicros = holdoutRunTally(results).known_cost_usd_micros;
     for (const item of data.items) {
+      if (resume && !resumeItems.has(item.item_id)) continue;
       if (currentTaskSpendScope()?.remainingUsd() === 0) {
         failures.push('shared task allowance exhausted or unpriced; no further calls permitted');
         break;
@@ -700,34 +904,19 @@ export async function runModelSliceAdmission(
         db,
         data.slice.task_kind,
         Date.now() + admissionCallWindowMs(data.slice.task_kind, budget.timeout),
-        data.per_item_max_cost_usd_micros,
+        data.per_item_max_cost_usd_micros -
+          (originalResults.find((result) => result.item_id === item.item_id)?.cost_usd_micros ?? 0),
+        resume
+          ? (originalResults.find((result) => result.item_id === item.item_id)?.input_digest ??
+              undefined)
+          : undefined,
       );
       if (port === undefined) {
         throw new Error(
           `model_slice_admission_run: task kind '${data.slice.task_kind}' has no admission-run executor lane`,
         );
       }
-      const request: ModelExecutorRequest = {
-        submission_id: `holdout_${data.run_id}_${item.item_id}`,
-        evaluation_group_id: `holdout_${data.run_id}`,
-        revision_id: item.revision_id,
-        attempt: 1,
-        scoring_unit_id: item.unit.scoring_unit_id,
-        executor: {
-          kind: 'model_executor',
-          task_kind: data.slice.task_kind,
-          // 候选切片身份：端口只对 null 切片 fail-closed；准入与否由登记处裁决。
-          admitted_slice_id: sliceId,
-          max_cost_usd_micros: data.per_item_max_cost_usd_micros,
-        },
-        unit: item.unit,
-        question_parts: item.question_parts,
-        response_slots: item.response_slots,
-        slot_responses: item.slot_responses,
-        group_evidence: item.group_evidence,
-        materials: item.materials,
-        spent_cost_usd_micros: knownCostMicros,
-      };
+      const request = requestFor(item, knownCostMicros);
       const outcome = await port(request);
       const actualRuns =
         outcome.run_refs.length === 0
@@ -785,8 +974,8 @@ export async function runModelSliceAdmission(
             ? actualRuns.find((run) => run.id === outcome.run_refs.at(-1))
             : undefined;
         lastResult.input_digest = decidingRun?.input_hash ?? null;
-        // outcome 即定夺输出（分数/matched/pending 细节 + run_refs）；逐条封存其
-        // canonical digest，与 invoker 写 result_digest 同一哈希约定。
+        // Digest binds this invocation's outcome. A resume retains prior attempts in
+        // run_refs below; its original outcome remains in resumed_from evidence.
         lastResult.output_digest = sha256Canonical(outcome);
         // 计入 pending 上限的资格：定夺 attempt 真实完成（success）且费用有账。
         // 超时/取消/provider 失败落 failure 或无 run_refs，一律不算完成。
@@ -801,6 +990,20 @@ export async function runModelSliceAdmission(
             );
           } else delete lastResult.cost_usd_micros;
         }
+      }
+      if (resume && lastResult) {
+        const index = results.findIndex((result) => result.item_id === item.item_id);
+        const previous = results[index];
+        if (!previous || previous.cost_usd_micros === undefined) {
+          throw new Error('resume lost original cost evidence');
+        }
+        if (lastResult.cost_usd_micros !== undefined) {
+          lastResult.cost_usd_micros += previous.cost_usd_micros;
+        }
+        lastResult.run_refs = [...previous.run_refs, ...lastResult.run_refs];
+        lastResult.actual_runs = [...(previous.actual_runs ?? []), ...actualRuns];
+        results[index] = lastResult;
+        results.pop();
       }
       knownCostMicros = holdoutRunTally(results).known_cost_usd_micros;
       if (lastResult?.cost_usd_micros === undefined || !actualCostKnown) {
@@ -896,7 +1099,8 @@ export async function runModelSliceAdmission(
       outcome: passed ? 'passed' : 'failed',
       payload: {
         version: 2,
-        request_digest: canonicalHash(data),
+        ...(resume ? { resumed_from: originalEvidenceEventId, resume } : {}),
+        request_digest: canonicalHash(frozenRequest),
         evidence_kind: 'reference_model_comparison',
         comparison_role: data.comparison_role,
         reference_run_id: data.reference_run_id ?? null,

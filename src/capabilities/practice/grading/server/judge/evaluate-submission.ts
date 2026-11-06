@@ -256,6 +256,7 @@ export function createAdmissionRunExecutor(
   taskKind: string,
   deadlineAt: number,
   maxCostUsdMicros: number,
+  expectedInputHash?: string,
 ): ModelUnitExecutorPort | undefined {
   if (taskKind === 'AssessmentRuleJudgeTask') {
     return createPiModelExecutor({
@@ -263,6 +264,7 @@ export function createAdmissionRunExecutor(
       deadlineAt,
       maxCostUsdMicros,
       judgeRetryPolicy: 'none',
+      expectedInputHash,
       providerTransientRetry: true,
     });
   }

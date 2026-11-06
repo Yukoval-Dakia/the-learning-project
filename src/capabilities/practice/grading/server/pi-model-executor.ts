@@ -17,6 +17,7 @@ import type {
   ModelOutcomeDiagnosticsT,
   ModelOutcomeRejectedCitationT,
 } from '@/core/schema/assessment/model-diagnostics';
+import { taskInputHash } from '@/core/task-input-hash';
 import type { Db } from '@/db/client';
 import {
   isLaminarTracingEnabled,
@@ -58,6 +59,8 @@ export interface PiModelExecutorOptions {
    * instead of ending the whole holdout on one rejection.
    */
   providerTransientRetry?: boolean;
+  /** Admission resume must bind the prepared input before entering the paid runner. */
+  expectedInputHash?: string;
   /** Tests replace bytes/runner boundaries, not frozen interpretation. */
   loadAsset?: AssessmentAssetLoader;
   runTask?: (
@@ -315,6 +318,12 @@ export function createPiModelExecutor(options: PiModelExecutorOptions): ModelUni
           signal,
         );
         if (!prepared.ok) return pending(prepared.pending, priorRefs);
+        if (
+          options.expectedInputHash !== undefined &&
+          taskInputHash(prepared.input) !== options.expectedInputHash
+        ) {
+          throw new Error('admission resume input_digest changed before paid runner');
+        }
         signal.throwIfAborted();
         const runTask = options.runTask ?? (await import('@/server/ai/runner')).runTask;
         result = await withinAssessmentSignal(
