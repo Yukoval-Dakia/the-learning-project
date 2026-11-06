@@ -40,6 +40,14 @@ import type {
 import type { thinCreateSubject } from '@/capabilities/observability/public';
 import type { AdminControlClient } from '@/capabilities/observability/ui/admin-control-client';
 import type {
+  getIssuanceState,
+  readJudgeRunStatus,
+  requestAssessmentIssuance,
+  requestResponseDraftSave,
+  requestReviewAnswer,
+  revealFrozenStudyReference,
+} from '@/capabilities/practice/grading/public';
+import type {
   PlacementProfileResponse,
   readPlacementSession,
   releaseHeldPlacement,
@@ -50,12 +58,6 @@ import type {
 import type {
   createPracticeHintRequest,
   createPracticeSolveSession,
-  getIssuanceState,
-  readJudgeRunStatus,
-  requestAssessmentIssuance,
-  requestResponseDraftSave,
-  requestReviewAnswer,
-  revealFrozenStudyReference,
 } from '@/capabilities/practice/public';
 import type {
   archivePracticeQuestion,

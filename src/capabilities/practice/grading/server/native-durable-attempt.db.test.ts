@@ -1,5 +1,5 @@
 import { createId } from '@paralleldrive/cuid2';
-import { eq, ne, sql } from 'drizzle-orm';
+import { and, eq, ne, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { canonicalHash } from '@/core/migration/canonical';
@@ -31,6 +31,7 @@ import { seedHistoricalAssessmentIssuance } from '../../../../../tests/fixtures/
 
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { JudgeRunTerminalResultSchema } from '../../api/assessment-contracts';
+import type { CreateAttemptBody } from '../../api/contracts';
 import { GET as pollStatus } from '../api/judge-run-status-route';
 import { createAttempt } from '../api/submit';
 import { RECONCILE_STALL_MS, reconcileStalledJudgeAttempts } from '../jobs/judge_pending_reconcile';
@@ -51,6 +52,8 @@ import * as dispatch from './judge-run-dispatch';
 import { readJudgeRunPermanent } from './judge-run-observation';
 import type { NativeJudgeRunJobData } from './judge-run-payload';
 import { NativeJudgeResolutionPayload, reconstructDoneFromDomainEvents } from './judge-run-payload';
+import { judgeRunPollUrl } from './judge-run-status';
+import { submitReviewAnswer } from './review-operation';
 
 async function fixture(knowledgeIds: string[] = []) {
   const db = testDb();
@@ -123,6 +126,7 @@ async function fixture(knowledgeIds: string[] = []) {
         },
       ],
     },
+    group_evidence: [],
   };
   const execute = vi.fn(
     async (
@@ -230,6 +234,25 @@ async function nativeEffects(db: Db, runId: string) {
     db.select().from(mastery_state).orderBy(mastery_state.subject_kind, mastery_state.subject_id),
   ]);
   return { events, submissions, evaluations, heads, cards, mastery };
+}
+
+function effectiveHead(db: Db, evaluationGroupId: string) {
+  return db
+    .select()
+    .from(evaluation_effective_head)
+    .where(eq(evaluation_effective_head.evaluation_group_id, evaluationGroupId))
+    .then(([row]) => row);
+}
+function groupSettlements(db: Db, evaluationGroupId: string) {
+  return db
+    .select()
+    .from(event)
+    .where(
+      and(
+        eq(event.action, 'experimental:assessment_settlement'),
+        eq(event.subject_id, evaluationGroupId),
+      ),
+    );
 }
 
 function resolutionReceipt(
@@ -1000,9 +1023,72 @@ describe('native durable assessment', () => {
     ).toBe(1);
   });
 
-  // @invariant grading: unjudgeable work is held unscored with no learning effects, and a later self-report never replaces its first evaluation reference
-  // @fails-if score the unjudgeable attempt or let the self-report rewrite the original reference; the review_required/unsupported, original-id equality and receipt toEqual assertions fail
-  it('keeps unjudgeable work unscored; later self-report does not replace the first evaluation reference', async () => {
+  // @invariant grading: an accepted durable run closes its admission — a transport retry of the submit or a redelivery of the job never takes another admission token, never pays for the model again, and settles the accepted candidate exactly once
+  // @fails-if mint a second admission/job per retry or let a redelivery re-execute the model; the single checkRateLimit / boss.send / model-executor call counts and the one-settlement assertion fail
+  it('closes admission after accept so submit and job replays settle the candidate once', async () => {
+    const f = await fixture();
+    const submit = () =>
+      submitReviewAnswer(
+        f.db,
+        {
+          question_id: f.id,
+          assessment: f.request,
+          rating: 'good',
+          auto_rate: true,
+          referenced_knowledge_ids: [],
+          answer_image_refs: [],
+        },
+        {
+          durableEnabled: true,
+          dispatchNativeAttempt: (database, questionId, request, options) =>
+            dispatchNativeAttempt(database, questionId, request, options, f.deps),
+        },
+      );
+    const first = await submit();
+    if (first.kind !== 'pending') throw new Error('expected a durable pending submit');
+    const run = first.run_id;
+    expect(await submit()).toEqual(first);
+    expect(f.deps.checkRateLimit).toHaveBeenCalledTimes(1);
+    expect(f.deps.boss.send).toHaveBeenCalledTimes(1);
+    expect(f.jobs).toHaveLength(1);
+    expect(f.execute).not.toHaveBeenCalled();
+    expect(
+      await f.db
+        .select()
+        .from(event)
+        .where(eq(event.action, dispatch.JUDGE_PENDING_ATTEMPT_ACTION)),
+    ).toHaveLength(1);
+    expect(await runJudgeRun(f.db, f.jobs[0], meta)).toMatchObject({
+      status: 'done',
+      coarse_outcome: 'correct',
+    });
+    expect(await submit()).toEqual(first);
+    expect(await runJudgeRun(f.db, f.jobs[0], { ...meta, retryCount: 1 })).toMatchObject({
+      status: 'skipped',
+    });
+    expect(f.deps.checkRateLimit).toHaveBeenCalledTimes(1);
+    expect(f.deps.boss.send).toHaveBeenCalledTimes(1);
+    expect(f.execute).toHaveBeenCalledTimes(1);
+    const done = JudgeRunTerminalResultSchema.parse(
+      await reconstructDoneFromDomainEvents(f.db, run),
+    );
+    const candidate = done.assessment?.candidate_id;
+    expect(candidate).toBeTruthy();
+    expect(await effectiveHead(f.db, f.request.evaluation_group_id)).toMatchObject({
+      effective_evaluation_id: candidate,
+      generation: 1,
+    });
+    const settlements = await groupSettlements(f.db, f.request.evaluation_group_id);
+    expect(settlements).toHaveLength(1);
+    expect(settlements[0].payload).toMatchObject({ evaluation_id: candidate });
+    expect(
+      FsrsStateSchema.parse((await f.db.select().from(material_fsrs_state))[0].state).reps,
+    ).toBe(1);
+  });
+
+  // @invariant grading: an unjudgeable durable result is held unscored until the learner's resumed self-rating seals a new self-report candidate that becomes the settled effective head, and replaying that submission settles it once via idempotent_replay
+  // @fails-if let the stored intent's evaluation_id overwrite the newly sealed self-report candidate on resume, or drop the already-effective replay branch; the head == candidate, self_report provenance, idempotent_replay and single-settlement assertions fail
+  it('settles the resumed self-report candidate as the effective head once across submit replays', async () => {
     const f = await fixture();
     f.execute.mockResolvedValue({
       kind: 'pending',
@@ -1022,9 +1108,55 @@ describe('native durable assessment', () => {
     expect(first.status).toBe('review_required');
     expect(first.coarse_outcome).toBe('unsupported');
     expect(await f.db.select().from(material_fsrs_state)).toHaveLength(0);
-    await commitFormalAttempt(f.db, 'solo_submit', f.id, f.request, {
-      selfReport: true,
-      userRating: 'hard',
+    const intent = NativeJudgeResolutionPayload.parse(receipts[0].payload).assessment
+      ?.activation_intent;
+    if (!intent) throw new Error('expected the held receipt to carry its activation intent');
+    const submit = () =>
+      submitReviewAnswer(
+        f.db,
+        {
+          question_id: f.id,
+          assessment: f.request,
+          rating: 'hard',
+          activation_intent: intent,
+          auto_rate: false,
+          referenced_knowledge_ids: [],
+          answer_image_refs: [],
+        },
+        {
+          durableEnabled: true,
+          dispatchNativeAttempt: (database, questionId, request, options) =>
+            dispatchNativeAttempt(database, questionId, request, options, f.deps),
+        },
+      );
+    const resumed = await submit();
+    if (resumed.kind !== 'committed' || resumed.committed.status !== 'effective')
+      throw new Error('expected the resumed self-report to become effective');
+    const candidate = resumed.committed.candidate.evaluation.record.evaluation_id;
+    expect(candidate).not.toBe(intent.evaluation_id);
+    expect(resumed.committed.candidate.evaluation.record.provenance).toMatchObject({
+      source: 'self_report',
+    });
+    expect(await effectiveHead(f.db, f.request.evaluation_group_id)).toMatchObject({
+      effective_evaluation_id: candidate,
+      submission_id: resumed.committed.submission.submission_id,
+      generation: 1,
+    });
+    const replayed = await submit();
+    if (replayed.kind !== 'committed' || replayed.committed.status !== 'effective')
+      throw new Error('expected the replayed submit to stay effective');
+    expect(replayed.committed.candidate.evaluation.record.evaluation_id).toBe(candidate);
+    expect(replayed.committed.activation).toMatchObject({
+      status: 'already_effective',
+      effect: 'idempotent_replay',
+    });
+    const settlements = await groupSettlements(f.db, f.request.evaluation_group_id);
+    expect(settlements).toHaveLength(1);
+    expect(settlements[0].payload).toMatchObject({
+      evaluation_id: candidate,
+      rating: 'hard',
+      rating_source: 'user',
+      provenance: { source: 'self_report' },
     });
     const later = JudgeRunTerminalResultSchema.parse(
       await reconstructDoneFromDomainEvents(f.db, run),
@@ -1032,12 +1164,107 @@ describe('native durable assessment', () => {
     expect(later.assessment?.original_evaluation_id).toBe(first.assessment?.candidate_id);
     expect(later.final_rating).toBe('hard');
     expect(later.coarse_outcome).toBe('unsupported');
-    expect(later.assessment?.effective_evaluation_id).not.toBe(first.assessment?.candidate_id);
+    expect(later.assessment?.effective_evaluation_id).toBe(candidate);
     expect(await f.db.select().from(event).where(eq(event.id, run))).toEqual(receipts);
+    expect(f.execute).toHaveBeenCalledTimes(1);
     expect(
       FsrsStateSchema.parse((await f.db.select().from(material_fsrs_state))[0].state).reps,
     ).toBe(1);
   });
+
+  // @invariant concurrency: a stale expected head never overwrites a newer judgment — a stale intent is refused at acceptance with 409 cas_conflict, and a head advanced after acceptance sends the worker to a permanent review_required exit without paying for another judgment, moving the head, or settling twice
+  // @fails-if admit the stale intent or let the worker pay for and write over a moved head; the cas_conflict rejection, zero-admission, unpaid-model, review_required-receipt and single-settlement assertions fail
+  it.each([{ phase: 'acceptance' }, { phase: 'execution' }] as const)(
+    'refuses a stale expected head at $phase without overwriting the newer judgment or settling twice',
+    async ({ phase }) => {
+      const f = await fixture();
+      const submit = (body: CreateAttemptBody) =>
+        submitReviewAnswer(f.db, body, {
+          durableEnabled: true,
+          dispatchNativeAttempt: (database, questionId, request, options) =>
+            dispatchNativeAttempt(database, questionId, request, options, f.deps),
+        });
+      const attemptBody: CreateAttemptBody = {
+        question_id: f.id,
+        assessment: f.request,
+        rating: 'good',
+        auto_rate: true,
+        referenced_knowledge_ids: [],
+        answer_image_refs: [],
+      };
+      let newer: string;
+      if (phase === 'acceptance') {
+        f.execute.mockResolvedValue({
+          kind: 'pending',
+          pending: { reason: 'unjudgeable', detail: 'diagram insufficient' },
+          run_refs: [],
+          cost_usd_micros: 0,
+        });
+        const held = await commitFormalAttempt(f.db, 'solo_submit', f.id, f.request, {});
+        const heldCandidate = held.candidate.evaluation.record.evaluation_id;
+        const recovered = await commitFormalAttempt(f.db, 'solo_submit', f.id, f.request, {
+          selfReport: true,
+          userRating: 'hard',
+        });
+        newer = recovered.candidate.evaluation.record.evaluation_id;
+        await expect(
+          submit({
+            ...attemptBody,
+            activation_intent: {
+              evaluation_id: heldCandidate,
+              expected_effective_id: null,
+              expected_generation: 0,
+            },
+          }),
+        ).rejects.toMatchObject({ code: 'cas_conflict', status: 409 });
+        expect(f.deps.checkRateLimit).not.toHaveBeenCalled();
+        expect(f.jobs).toHaveLength(0);
+        expect(f.execute).toHaveBeenCalledTimes(1);
+      } else {
+        const accepted = await submit(attemptBody);
+        if (accepted.kind !== 'pending') throw new Error('expected a durable pending submit');
+        const run = accepted.run_id;
+        const recovered = await commitFormalAttempt(f.db, 'solo_submit', f.id, f.request, {
+          selfReport: true,
+          userRating: 'hard',
+        });
+        newer = recovered.candidate.evaluation.record.evaluation_id;
+        expect(await runJudgeRun(f.db, f.jobs[0], meta)).toMatchObject({
+          status: 'done',
+          coarse_outcome: 'unsupported',
+        });
+        expect(f.execute).not.toHaveBeenCalled();
+        const [receipt] = await f.db.select().from(event).where(eq(event.id, run));
+        const resolution = NativeJudgeResolutionPayload.parse(receipt.payload);
+        expect(resolution.status).toBe('review_required');
+        expect(resolution.assessment.candidate_id).not.toBe(newer);
+        const permanent = await readJudgeRunPermanent(f.db, run);
+        expect(permanent.kind).toBe('resolved');
+        const polled = await pollStatus(new Request(`http://localhost${judgeRunPollUrl(run)}`), {
+          id: run,
+        });
+        expect(polled.status).toBe(200);
+        const terminal = await polled.json();
+        expect(terminal).toMatchObject({
+          status: 'done',
+          result: {
+            status: 'effective',
+            assessment: { effective_evaluation_id: newer },
+          },
+        });
+      }
+      expect(await effectiveHead(f.db, f.request.evaluation_group_id)).toMatchObject({
+        effective_evaluation_id: newer,
+        generation: 1,
+      });
+      const settlements = await groupSettlements(f.db, f.request.evaluation_group_id);
+      expect(settlements).toHaveLength(1);
+      expect(settlements[0].payload).toMatchObject({ evaluation_id: newer });
+      expect(
+        FsrsStateSchema.parse((await f.db.select().from(material_fsrs_state))[0].state).reps,
+      ).toBe(1);
+    },
+  );
   // @invariant data: an admitted native attempt enqueues with durable authorization, returns a 202 handle, and its poll reconstructs the effective terminal result with original anchored to its candidate
   // @fails-if execute synchronously in the request, enqueue without authorization, or return a handle that cannot reconstruct the result; the 202/poll-200, effective-result and original==candidate assertions fail
   it('returns a real HTTP 202 handle and polls native completion with evaluation anchors', async () => {
