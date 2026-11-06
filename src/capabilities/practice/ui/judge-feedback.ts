@@ -20,17 +20,23 @@ export function provenanceOf(result: unknown): Pick<JudgeFeedback, 'grading_prov
   return parsed.success ? { grading_provenance: parsed.data.grading_provenance } : {};
 }
 
-/** The card shows what a rejudge changed it to, without waiting for a reload. */
+/** Whether the card can show this outcome from the status read alone (no per-part counts). */
+export function outcomeFitsFeedbackCard(
+  outcome: string,
+): outcome is 'correct' | 'partial' | 'incorrect' {
+  return outcome === 'correct' || outcome === 'partial' || outcome === 'incorrect';
+}
+
+/** The card shows the result the last finished rejudge made effective, without a reload. */
 export function feedbackAfterRejudge<F extends JudgeFeedback>(
   feedback: F,
-  appeal: AppealStatus | undefined,
+  effective: NonNullable<AppealStatus['after']> | null,
 ): F {
-  const outcome = appeal?.status === 'changed' ? appeal.after?.coarse_outcome : undefined;
-  if (outcome !== 'correct' && outcome !== 'partial' && outcome !== 'incorrect') return feedback;
+  if (!effective || !outcomeFitsFeedbackCard(effective.coarse_outcome)) return feedback;
   return {
     ...feedback,
-    coarse_outcome: outcome,
-    feedback_md: appeal?.after?.feedback_md ?? feedback.feedback_md,
+    coarse_outcome: effective.coarse_outcome,
+    feedback_md: effective.feedback_md ?? feedback.feedback_md,
   };
 }
 

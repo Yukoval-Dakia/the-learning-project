@@ -16,6 +16,7 @@ import type {
 } from '@/ui-next/practice-studio/contracts';
 import { PracticeStudio } from '@/ui-next/practice-studio/PracticeStudio';
 import { PresentationBlocks } from '../blocks/PresentationBlocks';
+import { outcomeFitsFeedbackCard } from '../judge-feedback';
 import { practiceSourceLabel } from '../PfStream';
 import type { StreamItem } from '../practice-api';
 import {
@@ -512,9 +513,11 @@ export function PracticePresentation(props: PracticePresentationProps) {
             kind: 'resolved',
             notice: {
               title:
-                read.before && read.after
-                  ? `重判改了结果：${outcomeWord(read.before.coarse_outcome)} → ${outcomeWord(read.after.coarse_outcome)}。`
-                  : '重判改了结果，之后可以看到。',
+                read.after && !outcomeFitsFeedbackCard(read.after.coarse_outcome)
+                  ? '重判改了结果，刷新这页可以看到新结果。'
+                  : read.before && read.after
+                    ? `重判改了结果：${outcomeWord(read.before.coarse_outcome)} → ${outcomeWord(read.after.coarse_outcome)}。`
+                    : '重判改了结果，之后可以看到。',
               actions: [addReason],
             },
           };

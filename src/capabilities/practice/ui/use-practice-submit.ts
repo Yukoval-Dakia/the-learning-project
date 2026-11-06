@@ -39,6 +39,7 @@ import {
 import type { PfToast } from './PracticeFacePage';
 import {
   type AdviceCommit,
+  type AppealStatus,
   type JudgePreview,
   type StreamItem,
   type SubmitReviewInput,
@@ -662,8 +663,25 @@ export function usePracticeSubmit({
     queryKey: ['practice-appeal-status', appealId],
     queryFn: () => getAppealStatus(appealId as string),
     enabled: appealId !== null,
-    refetchInterval: (query) => (query.state.data?.status === 'in_progress' ? 3000 : false),
+    // Keeps reading until a final status, including while the first reads fail.
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return status === undefined || status === 'in_progress' ? 3000 : false;
+    },
   });
+  // The result the last finished rejudge made effective. It outlives the appeal being read: a
+  // later appeal still running, unchanged or failed must not bring back the older result.
+  const [rejudged, setRejudged] = useState<{
+    appealId: string;
+    effective: NonNullable<AppealStatus['after']>;
+  } | null>(null);
+  const finishedRead =
+    appealRead.data?.status === 'changed' || appealRead.data?.status === 'unchanged'
+      ? appealRead.data
+      : null;
+  if (finishedRead?.after && rejudged?.appealId !== finishedRead.appeal_event_id) {
+    setRejudged({ appealId: finishedRead.appeal_event_id, effective: finishedRead.after });
+  }
   // YUK-1501 — an accepted answer that /api/attempts already recorded is read-only review:
   // nothing on this page may submit it again. Recorded = the question's timeline holds an
   // attempt for its evaluation group that is settled (an effective evaluation) or whose
@@ -1169,10 +1187,7 @@ export function usePracticeSubmit({
   // 重复 submit 一条 review event）；直接对自动 commit 时暂存的 judge 锚点发 appeal。无锚点 → 入口本
   // 就被 appealEntryAvailable 隐藏，这里再兜底一次。
   // A finished rejudge moved the effective result; a further appeal must name the new one.
-  const appealAnchor =
-    (appealRead.data?.status === 'changed' || appealRead.data?.status === 'unchanged'
-      ? appealRead.data.after?.effective_evaluation_id
-      : null) ?? autoCommitJudgeEventId;
+  const appealAnchor = rejudged?.effective.effective_evaluation_id ?? autoCommitJudgeEventId;
   const submitAutoCommitAppeal = async () => {
     const anchor = appealAnchor;
     if (!anchor || committing) return;
@@ -1407,7 +1422,7 @@ export function usePracticeSubmit({
 
   const settledFeedback = preview ?? committedPreview;
   const displayedFeedback = settledFeedback
-    ? feedbackAfterRejudge(settledFeedback, appealRead.data)
+    ? feedbackAfterRejudge(settledFeedback, rejudged?.effective ?? null)
     : settledFeedback;
 
   return {
