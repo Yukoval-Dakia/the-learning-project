@@ -40,7 +40,8 @@ export function providerTransientRetryPolicy(): ProviderTransientRetryPolicy {
  * The bound a verdict's class earns. `rate_limited` and `not_sent` — the two
  * classes the admission bound was designed for — consume the full configured
  * retry/wait budget; the other positively-proven classes keep the ADR-0079
- * single immediate re-send.
+ * single immediate re-send, capped by the configured limit so `0` still
+ * disables every resend.
  */
 export function transientClassBound(
   verdict: ProviderTransientVerdict,
@@ -48,7 +49,7 @@ export function transientClassBound(
 ): ProviderTransientRetryPolicy {
   return verdict.class === 'rate_limited' || verdict.class === 'not_sent'
     ? policy
-    : { maxRetries: 1, maxWaitMs: 0, baseDelayMs: 0 };
+    : { maxRetries: Math.min(1, policy.maxRetries), maxWaitMs: 0, baseDelayMs: 0 };
 }
 
 /**
