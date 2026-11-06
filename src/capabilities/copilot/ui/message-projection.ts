@@ -9,7 +9,12 @@ import { BLOCK_DRAFT_FENCE_INFO, blockFence } from '@/ui/components/blocks/block
 import { parseCopilotPrimaryView } from '../primary-view-contract';
 import { parseConfirmation } from './confirmation';
 import { mergePublicProse, parsePublicProse } from './public-prose';
-import type { ReplayChatMessage, ReplaySkillContext, ReplayTurn } from './replay';
+import type {
+  ReplayChatMessage,
+  ReplayCrisisReferral,
+  ReplaySkillContext,
+  ReplayTurn,
+} from './replay';
 import { parseSkillContext, parseSkillTurn } from './skill-lifecycle';
 import type {
   CopilotModelStage,
@@ -33,6 +38,8 @@ export interface ChatMessage extends Omit<ReplayChatMessage, 'tool_calls'> {
   run_id?: string;
   /** Client-only correlation while the 202 boundary is still ambiguous. */
   idempotency_key?: string;
+  /** Non-terminal crisis referral provenance; marks the row as not the run's answer. */
+  crisis_referral?: ReplayCrisisReferral;
 }
 
 function record(value: unknown): Record<string, unknown> | undefined {
@@ -43,6 +50,15 @@ function record(value: unknown): Record<string, unknown> | undefined {
 
 function text(value: unknown): string | undefined {
   return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+/** Presence alone identifies the non-terminal referral row; fields pass through verbatim. */
+function parseCrisisReferral(value: unknown): ReplayCrisisReferral | undefined {
+  const ref = record(value);
+  if (!ref) return undefined;
+  return typeof ref.detection_class === 'string'
+    ? (ref as unknown as ReplayCrisisReferral)
+    : undefined;
 }
 
 function settleTools(
@@ -80,6 +96,7 @@ export function projectCopilotReply(
     public_prose: publicProse,
     derivation_policy:
       DerivationPolicy.safeParse(reply.derivation_policy).data ?? previous.derivation_policy,
+    crisis_referral: parseCrisisReferral(reply.crisis_referral) ?? previous.crisis_referral,
     streaming: false,
     checkpoint_event_id: text(reply.checkpoint_event_id),
     session_id: text(reply.session_id) ?? previous.session_id,
@@ -291,11 +308,14 @@ export function acceptPendingCopilotRun(
   },
 ): ChatMessage[] {
   const replyId = copilotRunReplyMessageId(accepted.runId);
+  // A persisted non-terminal referral reply is not the run's answer — the
+  // optimistic AI row must survive to become the model reply's stream row.
   const hasPersistedReply = messages.some(
     (message) =>
       message.role === 'ai' &&
       message.run_id === accepted.runId &&
-      message.idempotency_key !== accepted.idempotencyKey,
+      message.idempotency_key !== accepted.idempotencyKey &&
+      message.crisis_referral === undefined,
   );
   const mapped = messages.flatMap((message): ChatMessage[] => {
     if (message.idempotency_key !== accepted.idempotencyKey) return [message];
@@ -354,9 +374,15 @@ export function projectCopilotRunUpdate(
     ];
   }
   const aiMessageId = copilotRunReplyMessageId(run.runId);
+  // Referral rows share the run_id but are never the run's answer: excluding
+  // them keeps the persisted referral visible while live deltas and the
+  // terminal model reply land on their own row.
   const existingReply = next.find(
     (message) =>
-      message.role === 'ai' && message.run_id === run.runId && message.session_id === run.sessionId,
+      message.role === 'ai' &&
+      message.run_id === run.runId &&
+      message.session_id === run.sessionId &&
+      message.crisis_referral === undefined,
   );
   const previous = existingReply ?? {
     id: aiMessageId,
@@ -423,7 +449,12 @@ export function reconcileCopilotSnapshotMessages(
 ): ChatMessage[] {
   const persistedReplyRuns = new Set(
     replayed
-      .filter((message) => message.role === 'ai' && message.run_id !== undefined)
+      .filter(
+        (message) =>
+          message.role === 'ai' &&
+          message.run_id !== undefined &&
+          message.crisis_referral === undefined,
+      )
       .map((message) => message.run_id as string),
   );
   const transientRunMessages = previous.filter(

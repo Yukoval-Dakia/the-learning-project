@@ -23134,6 +23134,17 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
+                        crisis_referral?: {
+                            /** @enum {string} */
+                            detection_class: "explicit" | "indirect" | "quoted_ironic" | "distress";
+                            guard_version: string;
+                            template: {
+                                /** @enum {string} */
+                                review_status: "未审定" | "已审定";
+                                text_md: string;
+                                version: string;
+                            };
+                        };
                         mistake_id: string;
                         question_id: string;
                         record_id: string;

@@ -39,6 +39,14 @@ export interface ReplaySkillContext {
 // Live delivery and persisted replay share the same pure product contract.
 export type ReplayPrimaryView = CopilotPrimaryView;
 
+/** Mirror of the server CopilotCrisisReferralProvenance wire shape. */
+export interface ReplayCrisisReferral {
+  detection_class: string;
+  guard_version: string;
+  template_version: string;
+  template_review_status: string;
+}
+
 export interface ReplayTurn {
   confirmation?: unknown;
   public_prose?: PublicProse;
@@ -58,6 +66,8 @@ export interface ReplayTurn {
   skill_context?: ReplaySkillContext;
   // YUK-307 — present on AI turns whose reply nominated a hero deliverable.
   primary_view?: ReplayPrimaryView;
+  /** Non-terminal crisis referral provenance; present on referral replies only. */
+  crisis_referral?: ReplayCrisisReferral;
   // YUK-457 — present on AI turns whose parent emitted tool_use mirror events.
   tool_calls?: ReplayToolCall[];
   tool_operations?: ReplayToolOperation[];
@@ -86,6 +96,8 @@ export interface ReplayChatMessage {
   // YUK-307 — forwarded so the (future) UI slice can restore the hero
   // nomination on replay; pure passthrough, zero rendering here.
   primary_view?: ReplayPrimaryView;
+  /** Non-terminal crisis referral provenance; marks the row as not the run's answer. */
+  crisis_referral?: ReplayCrisisReferral;
   // YUK-457 — forwarded so tool-use cards survive drawer reopen / page refresh.
   tool_calls?: ReplayToolCall[];
   tool_operations?: ReplayToolOperation[];

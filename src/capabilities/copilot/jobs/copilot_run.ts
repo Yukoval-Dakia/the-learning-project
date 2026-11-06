@@ -236,7 +236,10 @@ async function executeAcceptedCopilotRun(
 ): Promise<RunCopilotRunResult> {
   const { db, data } = params;
   const derivationPolicy = await acceptedCopilotDerivationPolicy(db, data);
-  const answerOnly = derivationPolicy === 'answer_only';
+  // Restricted turns (answer_only, crisis) never own the native worker-session
+  // cursor: neither resume a prior session nor persist this turn's — the same
+  // boundary copilot-execution applies to the tool surface (`!== 'allow'`).
+  const restrictedTurn = derivationPolicy !== 'allow';
   const execute = params.executeCopilotTurnFn ?? executeCopilotTurn;
   const assembleRunInput = params.resolveCopilotRunInputFn ?? assembleCopilotRunInput;
   const runId = data.run_id;
@@ -444,7 +447,7 @@ async function executeAcceptedCopilotRun(
       surface,
       triggered_by: data.triggered_by,
     },
-    { beforeCancelled: answerOnly ? undefined : discardWorkerCursor },
+    { beforeCancelled: restrictedTurn ? undefined : discardWorkerCursor },
   );
   if (started.outcome === 'terminal') return terminalRunResult(started.events, taskRunId);
   if (started.outcome === 'cancelled') {
@@ -469,7 +472,7 @@ async function executeAcceptedCopilotRun(
     now: new Date(),
     historyAnchorEventId: runId,
   });
-  const resumeSessionId = await selectResumableWorkerSession(db, data.session_id, answerOnly);
+  const resumeSessionId = await selectResumableWorkerSession(db, data.session_id, restrictedTurn);
   let streamedProse = '';
   // Delta persistence is coalesced; streamedProse only grows with committed
   // flushes, so partial-reply recovery always matches durable evidence.
@@ -493,8 +496,8 @@ async function executeAcceptedCopilotRun(
   // the run while the winner may still be live; throwing lets pg-boss retry after
   // the owner either persists DONE or crashes.
   const executionClaim = await claimExecutionFence(db, runId, {
-    beforeCancelled: answerOnly ? undefined : discardWorkerCursor,
-    beforeExecution: answerOnly ? discardWorkerCursor : undefined,
+    beforeCancelled: restrictedTurn ? undefined : discardWorkerCursor,
+    beforeExecution: restrictedTurn ? discardWorkerCursor : undefined,
   });
   if (executionClaim.outcome === 'terminal') {
     return terminalRunResult(executionClaim.events, taskRunId);
@@ -644,10 +647,14 @@ async function executeAcceptedCopilotRun(
         projectFailedTerminal,
       );
     }
-    if (answerOnly && data.skill_context?.skill === 'teaching') {
+    if (derivationPolicy === 'answer_only' && data.skill_context?.skill === 'teaching') {
       throw new Error('仅用于本次回答：不能创建教学练习。请重新提交需要用于日常学习的内容。');
     }
-    if (data.skill_context?.skill === 'teaching') {
+    // Crisis turns that continue to a model reply skip the teaching skill:
+    // writeTeachingCopilotReply refuses non-allow asks after the paid call,
+    // which would leave the run without an outcome marker. They take the
+    // ordinary restricted model path below.
+    if (derivationPolicy === 'allow' && data.skill_context?.skill === 'teaching') {
       const skillContext = data.skill_context;
       const skillResult = await (params.runTeachingSkillFn ?? runTeachingSkill)({
         db,
@@ -833,7 +840,7 @@ async function executeAcceptedCopilotRun(
           const candidateMatchesCommitted =
             finalized.receipt.candidate_sha256 ===
             createHash('sha256').update(cleanedReply, 'utf8').digest('hex');
-          if (!answerOnly && result.sdkSessionId && candidateMatchesCommitted) {
+          if (!restrictedTurn && result.sdkSessionId && candidateMatchesCommitted) {
             // The settlement lock still prevents terminal publication and successor pickup.
             await commitWorkerSessionCursor(
               tx,
@@ -841,7 +848,7 @@ async function executeAcceptedCopilotRun(
               result.sdkSessionId,
               result.contextDigest,
             );
-          } else if (!answerOnly) {
+          } else if (!restrictedTurn) {
             await discardWorkerCursor(tx);
           }
           if (result.correctionFiling) {

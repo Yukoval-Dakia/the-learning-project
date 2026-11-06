@@ -76,6 +76,36 @@ export function readCopilotSkillTurn(
   return result;
 }
 
+/** Provenance persisted on the non-terminal crisis referral reply only. */
+export interface CopilotCrisisReferralProvenance {
+  detection_class: string;
+  guard_version: string;
+  template_version: string;
+  template_review_status: string;
+}
+
+/** One reader shared by replay projection and consumers of the reply payload. */
+export function readCopilotCrisisReferral(
+  payload: Record<string, unknown>,
+): CopilotCrisisReferralProvenance | undefined {
+  const ref = payload.crisis_referral;
+  if (!ref || typeof ref !== 'object' || Array.isArray(ref)) return undefined;
+  const r = ref as Record<string, unknown>;
+  if (
+    typeof r.detection_class !== 'string' ||
+    typeof r.guard_version !== 'string' ||
+    typeof r.template_version !== 'string' ||
+    typeof r.template_review_status !== 'string'
+  )
+    return undefined;
+  return {
+    detection_class: r.detection_class,
+    guard_version: r.guard_version,
+    template_version: r.template_version,
+    template_review_status: r.template_review_status,
+  };
+}
+
 export const CopilotChatRequest = z
   .object({
     session_id: z.string().min(1).max(160).optional(),

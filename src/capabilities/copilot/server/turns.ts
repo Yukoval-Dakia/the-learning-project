@@ -27,7 +27,12 @@ import {
 } from '@/kernel/learning-content';
 import { type CopilotPrimaryView, parseCopilotPrimaryView } from '../primary-view-contract';
 import { type CopilotPublicProse, parseCopilotPublicProse } from '../public-prose-contract';
-import { type CopilotSkillTurn, readCopilotSkillTurn as replySkillTurn } from './chat-contracts';
+import {
+  type CopilotCrisisReferralProvenance,
+  type CopilotSkillTurn,
+  readCopilotCrisisReferral,
+  readCopilotSkillTurn as replySkillTurn,
+} from './chat-contracts';
 import { findReusableCopilotConversation, getCopilotConversation } from './conversation-lifecycle';
 import {
   COPILOT_RUN_EVENTS,
@@ -78,6 +83,8 @@ export interface CopilotTurn {
   skill_context?: CopilotTurnSkillContext;
   /** Present for AI turns whose reply nominated a hero deliverable. */
   primary_view?: CopilotPrimaryView;
+  /** Provenance of a non-terminal crisis referral reply; marks it as not the run's answer. */
+  crisis_referral?: CopilotCrisisReferralProvenance;
   public_prose?: CopilotPublicProse;
   /** Per-call tool-use mirrors chained to this turn's ask/chip parent. */
   tool_calls?: CopilotTurnToolCall[];
@@ -589,6 +596,8 @@ async function projectCopilotTurnRows(
       };
       if (!forModel && payload.confirmation !== undefined)
         turn.confirmation = await readConfirmationProjection(dbArg, payload.confirmation);
+      const crisisReferral = readCopilotCrisisReferral(payload);
+      if (crisisReferral) turn.crisis_referral = crisisReferral;
       if (!forModel && publicProse) turn.public_prose = publicProse;
       if (skillTurn) turn.skill_turn = skillTurn;
       if (skillContext) turn.skill_context = skillContext;
