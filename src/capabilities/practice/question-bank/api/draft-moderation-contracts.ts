@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { QuestionAdmissionReadSchema } from './question-contracts';
 
 export const DraftModerationParamsSchema = z.object({
   id: z.string().trim().min(1),
@@ -29,6 +30,8 @@ const DraftReviewRowSchema = z.object({
   knowledge: z.array(DraftKnowledgeRefSchema),
   verify_status: DraftVerifyStatusSchema,
   verify_reason: z.string().nullable(),
+  admission_owned: z.boolean(),
+  admission: QuestionAdmissionReadSchema.nullable().optional(),
 });
 
 export const DraftReviewListResponseSchema = z.object({
@@ -60,6 +63,8 @@ export const DraftReviewDetailResponseSchema = z.object({
   answer: z.string().nullable(),
   verify_status: DraftVerifyStatusSchema,
   verify_reason: z.string().nullable(),
+  admission_owned: z.boolean(),
+  admission: QuestionAdmissionReadSchema.nullable().optional(),
 });
 
 export const DraftForceEnableBodySchema = z.object({

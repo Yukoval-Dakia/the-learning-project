@@ -9,6 +9,7 @@ import { event, question } from '@/db/schema';
 import type { WriteEventInput } from '@/kernel/events/index';
 import { writeEvent, writeEvents } from '@/kernel/events/index';
 import type { PlacementVerificationAuthority } from '@/kernel/supply-contracts';
+import { declaredAdmissionOwned } from './admission/ownership';
 
 export const VERIFY_DISPATCH_INTENT_ACTION = 'experimental:verify_dispatch_intent';
 export const VERIFY_DISPATCH_COMPLETE_ACTION = 'experimental:verify_dispatch';
@@ -433,6 +434,7 @@ export async function dispatchPendingVerifyIntents(
         .select({
           id: question.id,
           draftStatus: question.draft_status,
+          admissionOwned: declaredAdmissionOwned(),
           metadata: question.metadata,
           parentQuestionId: question.parent_question_id,
         })
@@ -492,6 +494,7 @@ export async function dispatchPendingVerifyIntents(
         if (
           row?.draftStatus !== 'draft' ||
           metadataIsArchived(row.metadata) ||
+          (intent.verifier_kind === 'quiz_verify' && row.admissionOwned) ||
           // A part has no verify of its own. The parent's cascade owns it. Drain a stray intent instead of enqueueing a job that can only skip.
           row.parentQuestionId != null ||
           terminalHit(intent)
@@ -605,6 +608,7 @@ export async function recoverOrphanVerifyDispatches(
             and(
               eq(question.draft_status, 'draft'),
               inArray(question.source, ['quiz_gen', 'web_sourced']),
+              sql`NOT ${declaredAdmissionOwned()}`,
               sql`${question.metadata}->>'archived_at' IS NULL`,
               sql`${question.metadata}->>'dismissed_at' IS NULL`,
               // A part is promoted with its parent. An intent here can only skip.

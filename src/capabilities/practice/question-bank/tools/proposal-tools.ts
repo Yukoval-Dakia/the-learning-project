@@ -1,11 +1,5 @@
 import { sourceAllowsDerivation } from '@/kernel/read-models/usage-policy';
-// YUK-892 (F4.0) — Practice-owned proposal tools.
-//
-// author_question (ADR-0032 D8 unified question-authoring front door) and
-// propose_question_edit (ADR-0032 D6-B / YUK-203 lane L6) are practice product
-// operations: they propose only — the user accepts in the inbox; accept
-// appliers live in practice/question-bank/server/proposal-appliers.ts. Shared proposal
-// inbox/writer machinery lives in @/kernel/proposals.
+// New conversation questions are submitted directly; edits retain their proposal gate.
 
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
@@ -17,12 +11,12 @@ import { QuestionKind } from '@/core/schema/business';
 // P5.6 / YUK-178 — the proactive/corrective discriminator the model can label
 // explicitly via the propose-tool input arg (§4.1/§4.2).
 import { SuggestionKind } from '@/core/schema/event/known';
+import { QuestionEditOp, type QuestionEditOpT } from '@/core/schema/proposal';
 import {
-  type ProposalEvidenceRefT,
-  QuestionEditOp,
-  type QuestionEditOpT,
-} from '@/core/schema/proposal';
-import { SourceSpanLocator } from '@/core/schema/question-generation-grounding';
+  TeachingDraft,
+  type TeachingDraftT,
+  teachingDraftToDocument,
+} from '@/core/schema/teaching-draft';
 import type { Db } from '@/db/client';
 import { question } from '@/db/schema';
 import { pendingProposalWithCooldown } from '@/kernel/proposals/inbox';
@@ -31,7 +25,10 @@ import { getActiveLearningRecord } from '@/kernel/records/queries';
 import { type DomainTool, OpaqueJsonInput, type ToolContext } from '@/kernel/tools/types';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
-import { runQuestionAuthor } from '../../server/tools/question-author';
+import {
+  hasTeachingDraftConversation,
+  resolveTeachingDraftPlacement,
+} from '../server/teaching-draft-placement';
 
 const TEXT_EXCERPT_MAX = 180;
 
@@ -40,44 +37,6 @@ function excerpt(value: string | null | undefined, max = TEXT_EXCERPT_MAX): stri
   return text.length <= max ? text : `${text.slice(0, max - 1)}…`;
 }
 
-// ---------------------------------------------------------------------------
-// author_question  (ADR-0032 D8 — unified question-authoring front door)
-// ---------------------------------------------------------------------------
-//
-// ADR-0032 D8 (docs/adr/0032-domaintool-surface-redesign.md:76-83): the three
-// question-creation entry points share ONE `author_question` core keyed by a
-// seeding mode:
-//   - seed_mode='variant'           = the practice-owned Failure Learning path
-//   - seed_mode='record'            = the existing record_promotion → question path
-//   - seed_mode='knowledge'|'material' = ADR-0031 lane B (quiz C→A, YUK-304):
-//                                        generate ONE original draft question via
-//                                        the single-shot QuestionAuthorTask
-//                                        (runQuestionAuthor) — draft row +
-//                                        question_draft proposal in one tx;
-//                                        accept promotes draft→active + FSRS.
-//
-// Minimal-risk unification boundary (grounded in the actual code):
-//   * The variant seed DELEGATES to Failure Learning — every hard guard
-//     (cause-targetable, depth≤2, chain terminus) and soft guard (in-flight cap,
-//     cooldown) lives there and is preserved by construction (HARD INVARIANT #1/#3).
-//   * The record seed writes `kind:'record_promotion'` with `target:'question'`
-//     so the EXISTING `acceptRecordPromotionProposal` + its accept-rate
-//     idempotency (caused_by_event_id = proposalId) apply verbatim (HARD INVARIANT
-//     #2). A1 introduces NO new proposal kind and touches NO accept-time code.
-//   * The two legacy tools (propose_variant / propose_record_promotion) STAY as-is
-//     with their exact contracts; `author_question` is an ADDITIVE front door, not
-//     a replacement. (The legacy record tool still covers the wider
-//     target∈{question,learning_item,artifact} surface; author_question's record
-//     seed is deliberately the question-only sub-case per D8 "→question 支".)
-//
-// The public input remains a flat object with a `seed_mode` discriminator and
-// per-mode optional fields. The cross-field "required-by-mode" check runs in
-// `validateAuthorQuestionInput`
-// (inside execute, OFF the schema), and the core maps the parsed input to an
-// internal discriminated union for exhaustive dispatch.
-
-// Internal discriminated union — exhaustive dispatch target. NOT the tool's
-// inputSchema (the bridge requires a flat z.object — see note above).
 type AuthorQuestionSeed =
   | { seed_mode: 'variant'; attempt_event_id: string }
   | {
@@ -88,23 +47,14 @@ type AuthorQuestionSeed =
       suggestion_kind?: z.infer<typeof SuggestionKind>;
     }
   | {
-      // ADR-0031 lane B (quiz C→A, YUK-304) — implemented: delegates to
-      // runQuestionAuthor (practice/server/tools/question-author.ts), which owns
-      // the proposal kind (question_draft) + the accept path. The accept applier
-      // body is acceptQuestionDraftProposal in
-      // src/capabilities/practice/question-bank/server/proposal-appliers.ts (moved there in M4
-      // YUK-319); src/server/proposals/actions.ts only DISPATCHES to it.
-      seed_mode: 'knowledge' | 'material';
+      // Companion 直接写稿；服务端校验 TeachingDraft → 声明文档 →
+      // persistDeclaredQuestionGroup（与备题员同一 save+submit+准入门）。
+      seed_mode: 'teaching_draft';
       knowledge_ids: string[];
-      requested_kind?: string;
+      subject_id?: string;
+      learner_topic?: string;
+      draft: TeachingDraftT;
       difficulty?: number;
-      material_body_md?: string;
-      material_answer_anchor?: {
-        canonical_answer: { kind: string; value: string };
-        locator: z.infer<typeof SourceSpanLocator>;
-      };
-      material_url?: string;
-      material_title?: string;
     };
 
 // Public input schema — flat `z.object`. All per-mode fields are optional here;
@@ -112,7 +62,7 @@ type AuthorQuestionSeed =
 // `validateAuthorQuestionInput` inside execute (NOT on the schema), keeping the
 // schema a pure ZodObject.
 const AuthorQuestionInputSchema = z.object({
-  seed_mode: z.enum(['variant', 'record', 'knowledge', 'material']),
+  seed_mode: z.enum(['variant', 'record', 'teaching_draft']),
   // variant seed
   attempt_event_id: z.string().min(1).optional(),
   // ADR-0032 D2 — count>1 is now allowed in principle; the variant core still
@@ -125,21 +75,10 @@ const AuthorQuestionInputSchema = z.object({
   // applier; z.json instead of an unconstrained value (YUK-1553 C1-1).
   draft: OpaqueJsonInput.optional(),
   suggestion_kind: SuggestionKind.optional(),
-  // knowledge | material seed (ADR-0031 lane B). material_body_md is bounded to
-  // keep the single-shot QuestionAuthorTask prompt budget sane (20k chars ≈ a
-  // long reading passage; longer pastes should be split by the model upstream).
-  knowledge_ids: z.array(z.string().min(1)).min(1).optional(),
-  requested_kind: z.string().min(1).optional(),
+  knowledge_ids: z.array(z.string().min(1)).optional(),
+  subject_id: z.string().min(1).max(160).optional(),
+  learner_topic: z.string().min(1).max(200).optional(),
   difficulty: z.number().int().min(1).max(5).optional(),
-  material_body_md: z.string().min(1).max(20_000).optional(),
-  material_answer_anchor: z
-    .object({
-      canonical_answer: z.object({ kind: z.string().min(1), value: z.string().min(1) }),
-      locator: SourceSpanLocator,
-    })
-    .optional(),
-  material_url: z.string().url().optional(),
-  material_title: z.string().min(1).optional(),
 });
 
 // Cross-field required-by-mode validation. Kept OFF the schema (see note above)
@@ -160,22 +99,9 @@ function validateAuthorQuestionInput(input: z.infer<typeof AuthorQuestionInputSc
         throw new Error("author_question seed_mode 'record' requires reasoning");
       }
       break;
-    case 'knowledge':
-    case 'material':
-      if (!input.knowledge_ids || input.knowledge_ids.length === 0) {
-        throw new Error(
-          `author_question seed_mode '${input.seed_mode}' requires non-empty knowledge_ids`,
-        );
-      }
-      // material seed REQUIRES the pasted body: QuestionAuthorTask is a
-      // single-shot structured call with NO fetch tool (决定6 — no Tavily), so a
-      // URL-only seed would hallucinate the passage. material_url /
-      // material_title are provenance-only metadata.
-      if (input.seed_mode === 'material' && !input.material_body_md) {
-        throw new Error("author_question seed_mode 'material' requires material_body_md");
-      }
-      if (input.seed_mode === 'material' && !input.material_answer_anchor) {
-        throw new Error("author_question seed_mode 'material' requires material_answer_anchor");
+    case 'teaching_draft':
+      if (input.draft === undefined) {
+        throw new Error("author_question seed_mode 'teaching_draft' requires draft");
       }
       break;
   }
@@ -186,9 +112,17 @@ const AuthorQuestionOutputSchema = z.object({
     // shared
     'proposed',
     'failed',
+    // teaching_draft: 已入题库（published，
+    // admission 字段给出待准入/通过/暂扣的提交回执）。
+    'submitted',
+    // 草稿已留但未发布（contract/group blocker）——不在题库；issues 给出原因。
+    'withheld',
+    // dedup/CAS/请求冲突 —— reason 字段给出 detail。
+    'conflict',
     // knowledge|material seed (ADR-0031 lane B): every seed knowledge id is
     // unknown / archived.
     'skipped:knowledge_not_found',
+    'skipped:invalid_payload',
     // variant passthrough (verbatim from RunVariantGenResult, names remapped to
     // match the propose_variant tool's external vocabulary)
     'skipped:attempt_not_found',
@@ -206,17 +140,34 @@ const AuthorQuestionOutputSchema = z.object({
     'skipped:not_found',
     'skipped:duplicate_pending',
   ]),
-  seed_mode: z.enum(['variant', 'record', 'knowledge', 'material']),
+  seed_mode: z.enum(['variant', 'record', 'teaching_draft']),
   proposal_ids: z.array(z.string()),
   mistake_variant_ids: z.array(z.string()),
   // Always [] today (no variant_question row exists pre-accept); surfaced for
   // forward-compat with the legacy propose_variant output and lane B.
   variant_question_ids: z.array(z.string()),
-  // ADR-0031 lane B (ADDITIVE) — set ONLY by the knowledge|material seed: the
-  // draft question row id(s) inserted at propose time, so the copilot can feed
-  // the SAME id into write_quiz in the SAME turn (draft-allowed, RP-2).
-  // variant/record seeds never set it — their contracts are untouched.
+  // teaching_draft: the bank question id — visible
+  // in the question bank, awaiting admission. NOT a proposal, no learner accept.
+  question_id: z.string().optional(),
   question_ids: z.array(z.string()).optional(),
+  // Where the learner sees the new question in the bank.
+  bank_path: z.string().optional(),
+  placement_note: z.string().optional(),
+  problem: z
+    .object({
+      code: z.enum(['subject_root_missing', 'learner_topic_required', 'conversation_required']),
+      detail: z.string(),
+    })
+    .optional(),
+  admission: z
+    .object({
+      state: z.enum(['admitted', 'withheld', 'pending']),
+      per_unit: z.array(
+        z.object({ unit_id: z.string(), status: z.string(), reason: z.string().optional() }),
+      ),
+    })
+    .optional(),
+  issues: z.array(z.object({ code: z.string(), detail: z.string() })).optional(),
   reasoning_summary: z.string().optional(),
 });
 
@@ -229,6 +180,8 @@ export interface AuthorQuestionDeps {
   actorRef: string;
   /** ctx.taskRunId (non-nullable, matches ToolContext). */
   taskRunId: string;
+  /** ctx.sessionId — the conversation the authoring came from (admission purpose lineage). */
+  sessionId?: string;
   /** ctx.causedByEventId (optional, matches ToolContext). */
   causedByEventId?: string;
   /** Injectable for tests; the variant seed defaults to the central AI runner. */
@@ -252,20 +205,24 @@ function toAuthorQuestionSeed(input: AuthorQuestionInput): AuthorQuestionSeed {
         ...(input.draft !== undefined ? { draft: input.draft } : {}),
         ...(input.suggestion_kind ? { suggestion_kind: input.suggestion_kind } : {}),
       };
-    case 'knowledge':
-    case 'material':
+    case 'teaching_draft': {
+      let draft = input.draft;
+      if (typeof draft === 'string') {
+        try {
+          draft = JSON.parse(draft);
+        } catch {
+          draft = undefined;
+        }
+      }
       return {
-        seed_mode: input.seed_mode,
-        knowledge_ids: input.knowledge_ids as string[],
-        ...(input.requested_kind ? { requested_kind: input.requested_kind } : {}),
-        ...(input.difficulty !== undefined ? { difficulty: input.difficulty } : {}),
-        ...(input.material_body_md ? { material_body_md: input.material_body_md } : {}),
-        ...(input.material_answer_anchor
-          ? { material_answer_anchor: input.material_answer_anchor }
-          : {}),
-        ...(input.material_url ? { material_url: input.material_url } : {}),
-        ...(input.material_title ? { material_title: input.material_title } : {}),
+        seed_mode: 'teaching_draft',
+        knowledge_ids: input.knowledge_ids ?? [],
+        subject_id: input.subject_id,
+        learner_topic: input.learner_topic,
+        draft: TeachingDraft.parse(draft),
+        difficulty: input.difficulty,
       };
+    }
   }
 }
 
@@ -401,53 +358,77 @@ export async function authorQuestion(
         reasoning_summary: `record_promotion ${proposalId}`,
       };
     }
-    case 'knowledge':
-    case 'material': {
-      // ADR-0031 lane B (quiz C→A, YUK-304) — DELEGATE to runQuestionAuthor:
-      // ONE single-shot QuestionAuthorTask call (决定6 — NOT the QuizGenTask
-      // agent loop) → draft question row + question_draft proposal in one tx
-      // (决定4/决定5 proposal-only; accept promotes draft→active + FSRS).
-      // causedByEventId IS threaded here (like the record seed): the proposal's
-      // causality anchors on the triggering chat/tool event.
-      const result = await runQuestionAuthor(
-        {
-          seed_mode: seed.seed_mode,
-          knowledge_ids: seed.knowledge_ids,
-          ...(seed.requested_kind ? { requested_kind: seed.requested_kind } : {}),
-          ...(seed.difficulty !== undefined ? { difficulty: seed.difficulty } : {}),
-          ...(seed.material_body_md ? { material_body_md: seed.material_body_md } : {}),
-          ...(seed.material_answer_anchor
-            ? { material_answer_anchor: seed.material_answer_anchor }
-            : {}),
-          ...(seed.material_url ? { material_url: seed.material_url } : {}),
-          ...(seed.material_title ? { material_title: seed.material_title } : {}),
-        },
-        {
-          db: deps.db,
-          actorRef: deps.actorRef,
-          taskRunId: deps.taskRunId,
-          ...(deps.causedByEventId ? { causedByEventId: deps.causedByEventId } : {}),
-          runTaskFn,
-        },
-      );
-      if (result.status !== 'proposed') {
+    case 'teaching_draft': {
+      const { submitCopilotAuthoredDraft } = await import('@/capabilities/practice/public');
+      const draft = TeachingDraft.parse(seed.draft);
+      const placement = await resolveTeachingDraftPlacement(deps.db, seed, deps);
+      if (!placement.ok)
         return {
-          status: result.status,
+          status: 'failed',
           seed_mode: seed.seed_mode,
           proposal_ids: [],
           mistake_variant_ids: [],
           variant_question_ids: [],
+          problem: placement.issue,
+          reasoning_summary: placement.issue.detail,
         };
-      }
-      return {
-        status: 'proposed',
+      if (!(await hasTeachingDraftConversation(deps.db, deps.sessionId)))
+        return {
+          status: 'failed',
+          seed_mode: seed.seed_mode,
+          proposal_ids: [],
+          mistake_variant_ids: [],
+          variant_question_ids: [],
+          problem: {
+            code: 'conversation_required',
+            detail: '没有找到这次对话的来源，这次没有存题。可以在对话里继续讲题，但不会进入题库。',
+          },
+          reasoning_summary: '没有找到这次对话的来源，这次没有存题。',
+        };
+      const result = await submitCopilotAuthoredDraft(
+        teachingDraftToDocument(draft, {
+          knowledge_ids: placement.knowledge_ids,
+          origin: { session_id: deps.sessionId, turn_id: deps.causedByEventId },
+        }),
+        {
+          question_kind: draft.response.form,
+          difficulty: seed.difficulty,
+          learner_topic: placement.learner_topic,
+        },
+        deps,
+      );
+      const base = {
         seed_mode: seed.seed_mode,
-        proposal_ids: [result.proposalId],
+        proposal_ids: [],
         mistake_variant_ids: [],
         variant_question_ids: [],
-        // The draft row id — feedable into write_quiz in the SAME turn (RP-2).
-        question_ids: [result.questionId],
-        reasoning_summary: `question_draft ${result.proposalId}`,
+      };
+      if (result.status === 'declaration_failed')
+        return {
+          ...base,
+          status: 'failed',
+          reasoning_summary: result.issues.map((i) => i.detail).join('; '),
+        };
+      if (result.status === 'request_id_reused')
+        return { ...base, status: 'conflict', reasoning_summary: result.detail };
+      if (result.status === 'save_failed')
+        return { ...base, status: 'failed', reasoning_summary: JSON.stringify(result.save) };
+      const submit = result.status === 'replayed' ? result.receipt : result.submit;
+      if (submit.status === 'conflict')
+        return { ...base, status: 'conflict', reasoning_summary: submit.detail };
+      if ('published' in submit)
+        return { ...base, status: 'withheld', reasoning_summary: submit.detail };
+      return {
+        ...base,
+        status: 'submitted',
+        question_id: submit.question_id,
+        question_ids: [submit.question_id],
+        bank_path: `/questions/${submit.question_id}`,
+        placement_note: placement.placement_note,
+        admission: { state: submit.status, per_unit: submit.per_unit },
+        reasoning_summary: submit.per_unit.some((unit) => unit.reason === 'no_admitted_executor')
+          ? '题已存入题库，但这类题目前没有可用的自动判分器，暂时不能作答；可以换一道选择、填空、配对、断句或排序题。'
+          : '题已存入题库，自动检查通过后才能作答；请打开题库链接查看状态和原因。',
       };
     }
   }
@@ -466,6 +447,7 @@ async function authorQuestionExecute(
       actorRef: ctx.callerActor.ref,
       taskRunId: ctx.taskRunId,
       causedByEventId: ctx.causedByEventId,
+      sessionId: ctx.sessionId,
       runTaskFn: makeRunTaskFn(ctx.db, {
         signal: ctx.signal,
         parentTaskRunId: ctx.taskRunId,
@@ -476,7 +458,7 @@ async function authorQuestionExecute(
     });
   } catch (err) {
     return {
-      status: 'failed',
+      status: err instanceof z.ZodError ? 'skipped:invalid_payload' : 'failed',
       seed_mode: input.seed_mode,
       proposal_ids: [],
       mistake_variant_ids: [],
@@ -489,7 +471,8 @@ async function authorQuestionExecute(
 export const authorQuestionTool: DomainTool<AuthorQuestionInput, AuthorQuestionOutput> = {
   name: 'author_question',
   description:
-    'Author one question proposal via a seeding mode (ADR-0032 D8). seed_mode="variant" generates a targeted variant through the practice-owned Failure Learning guards; seed_mode="record" promotes a LearningRecord into a question draft; seed_mode="knowledge"|"material" generates ONE original draft question seeded by knowledge_ids (and, for "material", a pasted material_body_md — 材料 stem + sub_questions tree supported), inserts it as draft_status="draft", and writes a question_draft proposal whose accept promotes it to active + FSRS. The returned question_ids may be assembled into a paper via write_quiz in the same turn (drafts allowed). Proposal-only: the user accepts in the inbox; no draft ever enters the review pool without accept.',
+    'Create one question with seed_mode="teaching_draft": write draft={stem_md,response,solution_md?}. Prefer confirmed matching knowledge_ids. If no suitable knowledge node exists, pass knowledge_ids=[], subject_id (existing subject ID), learner_topic (exact topic substring from this user request). Match the discipline to existing subjects first; a topic is not a new subject. For an unregistered discipline use its name as subject_id so the server returns a typed missing-subject problem. Explain only that the subject is not available and nothing was saved. Never show problem codes or suggest creating subjects, roots, nodes, proposals or inbox confirmations. You may explain a question in chat, explicitly saying it will not enter the bank. Do not retry this missing-subject problem. Never create or propose nodes for authoring, or ask confirmation. On root fallback repeat placement_note once. response.form: single_choice(options,answer_index), multi_choice(options,answer_indices), blank(blanks:[{answer,accepted?,numeric?}]), matching(left,right,pairs), break_tap(segments), ordering(objects_in_order). Direct bank submission, no inbox. Give bank_path; only admitted questions can be practiced. Free response has no automatic grader today; offer a deterministic form. variant/record retain proposal paths.',
+
   effect: 'propose',
   inputSchema: AuthorQuestionInputSchema,
   outputSchema: AuthorQuestionOutputSchema,

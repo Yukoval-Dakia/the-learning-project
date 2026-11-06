@@ -1330,6 +1330,24 @@ function projectChoices(doc: QuestionDraftDocumentT): string[] | null {
   return unit.response_spec.items.map((item) => item.label_md ?? item.item_id);
 }
 
+/** Axis labels and break-tap text are content even when relation items have no labels. */
+export function structuredSelectIdentity(
+  specs: readonly Pick<SelectSlotT, 'axes' | 'items' | 'text'>[],
+): unknown[] | undefined {
+  const structured = specs.filter((spec) => spec.axes != null || spec.text != null);
+  return structured.length === 0
+    ? undefined
+    : structured.map((spec) => ({
+        ...(spec.axes != null ? { axes: spec.axes } : {}),
+        ...(spec.text != null ? { text: spec.text } : {}),
+        items: spec.items.map(({ label_md, coordinates, gap_after_codepoint }) => ({
+          ...(label_md != null ? { label_md } : {}),
+          ...(coordinates != null ? { coordinates } : {}),
+          ...(gap_after_codepoint != null ? { gap_after_codepoint } : {}),
+        })),
+      }));
+}
+
 /** Content identity for canonicalQuestionContentHash; source and knowledge ids do not participate. */
 export function draftCanonicalIdentity(doc: QuestionDraftDocumentT): {
   promptMd: string;
@@ -1337,6 +1355,7 @@ export function draftCanonicalIdentity(doc: QuestionDraftDocumentT): {
   choicesMd: string[] | null;
   rubricJson: unknown;
   composite?: boolean;
+  selectStructure?: unknown[];
 } {
   const classes = new Set(
     doc.parts.flatMap((part) => part.units.map((unit) => unit.response_class)),
@@ -1345,12 +1364,20 @@ export function draftCanonicalIdentity(doc: QuestionDraftDocumentT): {
   const rubrics = doc.parts.flatMap((part) =>
     part.units.map((unit) => unit.rubric).filter((rubric) => rubric != null),
   );
+  const selectStructure = structuredSelectIdentity(
+    doc.parts.flatMap((part) =>
+      part.units.flatMap((unit) =>
+        unit.response_spec.kind === 'select' ? [unit.response_spec] : [],
+      ),
+    ),
+  );
   return {
     promptMd: projectPrompt(doc),
     referenceMd: projectReference(doc),
     choicesMd: projectChoices(doc),
     rubricJson: rubrics.length === 0 ? null : rubrics.length === 1 ? rubrics[0] : rubrics,
     ...(composite ? { composite: true as const } : {}),
+    ...(selectStructure != null ? { selectStructure } : {}),
   };
 }
 

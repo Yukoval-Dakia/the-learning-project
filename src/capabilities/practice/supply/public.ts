@@ -173,6 +173,7 @@ export {
   probeDraftEdit,
   readCandidateSubmitReceipt,
   saveDraftEdit,
+  submitCopilotAuthoredDraft,
   submitDraftQuestion,
   submitPlacementSupplyCandidate,
   submitQuestionTool,

@@ -31,7 +31,7 @@ import type {
 import { helpFaultForRootStatus, rootBoundProviderStatus } from '@/ai/help-provider-fault';
 import { NO_PROGRESS_BUDGET_LANDING_MARGIN_MS } from '@/ai/no-progress-loop';
 import { type PiToolMount, piCustomTool } from '@/ai/pi-tool-mount';
-import type { TaskDefinition } from '@/ai/task-spec';
+import { type TaskDefinition, resolveStructuredSubmitSchema } from '@/ai/task-spec';
 import { tasks } from '@/capabilities/task-registry';
 import { getConfig } from '@/core/config/store';
 import { rawArgumentsEvidence } from '@/core/raw-arguments-evidence';
@@ -120,10 +120,7 @@ const OPENCODE_SESSION_HEADER = 'x-opencode-session';
 const STRUCTURED_OUTPUT_TOOL = STRUCTURED_OUTPUT_SUBMIT_TOOL;
 
 function toolOutputSchema(kind: ExecutionAdapterStartupArgs['kind'], input?: unknown) {
-  const definition: TaskDefinition = tasks[kind];
-  return definition.structuredOutputMode === 'tool'
-    ? (definition.structuredSubmitSchema?.(input) ?? definition.structuredOutputSchema)
-    : undefined;
+  return resolveStructuredSubmitSchema(tasks[kind], input);
 }
 
 /**
