@@ -137,6 +137,28 @@ function decodeDatabase(pathname: string): string | undefined {
   }
 }
 
+function describeDatabaseTarget(
+  rawUrl: string | undefined,
+  env: LocalEnvInput = process.env,
+): string {
+  if (!rawUrl) return '(unset)';
+  try {
+    const url = new URL(rawUrl);
+    const query = rawQueryParams(rawUrl);
+    const host =
+      url.hostname ||
+      splitCommaList(query.get('host'))[0] ||
+      splitCommaList(env.PGHOST)[0] ||
+      'localhost';
+    const port =
+      url.port || splitCommaList(query.get('port'))[0] || splitCommaList(env.PGPORT)[0] || '5432';
+    const database = decodeDatabase(url.pathname) || '(none)';
+    return `${host}:${port}/${database}`;
+  } catch {
+    return '(unparseable)';
+  }
+}
+
 // parseInt, not Number: `5544xyz` reaches the driver as 5544.
 function parseIntPort(raw: string | undefined): number {
   const n = Number.parseInt(String(raw ?? '').trim(), 10);
@@ -264,12 +286,19 @@ export function testDatabaseUrlRefusalReason(
   for (const value of query.getAll('host'))
     for (const host of splitCommaList(value)) hosts.add(host);
   for (const host of splitCommaList(env.PGHOST)) hosts.add(host);
+  // Both drivers default to localhost when no host is named anywhere. Without
+  // this, `postgres:///dev` + PGPORT=5544 and `postgres:///loom` had no host
+  // candidate and slipped through.
+  if (hosts.size === 0) hosts.add('localhost');
 
   const portRaws = new Set<string>();
   for (const candidate of candidates) if (candidate.port) portRaws.add(candidate.port);
   for (const value of query.getAll('port'))
     for (const port of splitCommaList(value)) portRaws.add(port);
   for (const port of splitCommaList(env.PGPORT)) portRaws.add(port);
+  // Only a host with no port and no PGPORT reaches the driver default. 5432 is
+  // never a TEST port, so adding it cannot refuse a legitimate target.
+  if (portRaws.size === 0) portRaws.add('5432');
 
   const loopbackHosts = [...hosts].filter(isLoopbackHost);
   if (loopbackHosts.length === 0) return null;
@@ -295,16 +324,15 @@ export function guardDatabaseUrl(label: string, env: LocalEnvInput = process.env
   if (isProductionRuntime()) return;
   const rawUrl = env.DATABASE_URL;
   if (env.DEV_ALLOW_TEST_DB === '1') {
-    const shown = rawUrl?.replace(/:[^:@/]*@/, ':***@');
     console.warn(
-      `[${label}] DEV_ALLOW_TEST_DB=1 — TEST-target guard bypassed; DATABASE_URL ${shown}`,
+      `[${label}] DEV_ALLOW_TEST_DB=1 — TEST-target guard bypassed; target ${describeDatabaseTarget(rawUrl, env)}`,
     );
     return;
   }
   const reason = testDatabaseUrlRefusalReason(rawUrl, env);
   if (reason) {
     console.error(
-      `[${label}] refusing: DATABASE_URL ${rawUrl?.replace(/:[^:@/]*@/, ':***@')} — ${reason}.\n` +
+      `[${label}] refusing: target ${describeDatabaseTarget(rawUrl, env)} — ${reason}.\n` +
         `[${label}] Local scripts target this worktree's dev database on the dev Postgres (:5434); ` +
         'point DATABASE_URL there, or set DEV_ALLOW_TEST_DB=1 to override.',
     );
