@@ -122,6 +122,10 @@ async function installPracticeOperationsBeforeServe(): Promise<void> {
   await installPracticeHost();
   const { installAgencyHostOperations } = await import('@/capabilities/agency/public');
   await installAgencyHostOperations();
+  const { installObservabilityHostOperations } = await import(
+    '@/capabilities/observability/public'
+  );
+  await installObservabilityHostOperations();
 }
 
 async function installSettlementPortsBeforeServe(): Promise<void> {
