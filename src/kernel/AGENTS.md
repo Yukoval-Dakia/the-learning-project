@@ -6,7 +6,7 @@
 | 文件 | 职责 |
 |------|------|
 | `manifest.ts` | `CapabilityManifest` 接口、`defineCapability()`、`validateComposition()`；声明包名 / event actions / api routes / jobs / proposals / copilotTools / ui 的唯一归属 |
-| `host-operation.ts` + `records/conversation-confirmation-assessment.ts`、`records/review-answer-binding.ts`、`read-models/review-due.ts` | Practice 在启动时经 `installPracticeHostOperations()` 安装的宿主端口（Copilot 调用）；未安装即抛 `HostOperationNotInstalledError`，调用方不得把它当普通读失败降级 |
+| `host-operation.ts` + `records/conversation-confirmation-assessment.ts`、`records/review-answer-binding.ts`、`read-models/review-due.ts` | Practice 在启动时经 `installPracticeHostOperations()` 安装的宿主端口（Copilot 调用）；未安装即抛 `HostOperationNotInstalledError`，调用方不得把它当普通读失败降级。**端口槽是进程级**：所有 install 端口经 `installHostOperation`/`installedHostOperation` 存取共享注册表——同进程第二模块图（built Start bundle、Vite SSR）读到同一份安装，禁止回落到模块级 `let` |
 | `settlement-cascade-revert.ts` | 结算重放调用级联撤回的宿主端口：实现在 `src/server/revert/cascade-revert.ts`，API、worker、验收入口和跑结算的脚本在启动时经 `installSettlementCascadeRevert()` 安装，未安装时抛 `HostOperationNotInstalledError` |
 | `read-models/learner-context.ts`、`read-models/memory-brief.ts` | Agency 在启动时经 `installAgencyHostOperations()` 安装的宿主端口：前者是启动段装配（Copilot 调用），后者是 memory brief 读语义（行 + 用途现行 + freshness 的唯一口径，Copilot 今日摘要经它读）；未安装即抛 `HostOperationNotInstalledError`，契约同上 |
 | `config-completeness.ts` | 关键配置是否齐全：纯函数 `checkConfigCompleteness()`（只返回缺失的变量名，不含值）、事件 action `CONFIG_INCOMPLETE_EVENT_ACTION` 与 payload schema；`/api/ready` 缺配置时返回 503，API 与 worker 启动时按「进程 + UTC 日」各写一条事件，任务失败告警读它 |
