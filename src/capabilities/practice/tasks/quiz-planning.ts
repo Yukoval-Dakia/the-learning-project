@@ -43,8 +43,6 @@ export const quizPlanTaskSpec = {
     kind: 'QuizPlanTask',
     description:
       'Plan-then-generate Phase 1 (ADR-0038 决定#2): produces the machine-checkable question PLAN — which knowledge point, what kind, difficulty, and the standard-answer anchor for objective kinds — as strict QuizGenPlan JSON. The Q3 handler deterministically gates it (schema + real knowledge-point existence + kind/anchor sanity; bounded regeneration, fail-closed) before the QuizGenTask generation call consumes the accepted plan. Read-only domain MCP mounted by the handler; no Tavily.',
-    defaultProvider: 'xiaomi',
-    defaultModel: 'mimo-v2.5-pro',
     budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 4, timeout: 90_000 },
     needsToolCall: true,
     isMultimodal: false,

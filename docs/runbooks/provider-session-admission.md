@@ -11,7 +11,7 @@ Both app and worker must receive the same values:
 
 ```dotenv
 AI_PROVIDER_SESSION_ADMISSION_MODE=off
-AI_PROVIDER_SESSION_ADMISSION_POLICIES_JSON={"xiaomi":{"maxConcurrentSessions":4,"maxSessionStartsPerMinute":30,"maxQueuedSessions":32,"maxWaitMs":30000}}
+AI_PROVIDER_SESSION_ADMISSION_POLICIES_JSON={"opencode-go":{"maxConcurrentSessions":4,"maxSessionStartsPerMinute":30,"maxQueuedSessions":32,"maxWaitMs":30000}}
 ```
 
 - `off`: no admission-table/control-plane access. This rolls back the admission control plane only;

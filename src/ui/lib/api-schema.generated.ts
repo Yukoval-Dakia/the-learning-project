@@ -2765,6 +2765,11 @@ export interface operations {
                             /** @enum {string|null} */
                             model_source?: "env" | "db" | null;
                             provider: string | null;
+                            reasoning?: {
+                                level: string | null;
+                                /** @enum {string} */
+                                source: "db" | "env" | "code-default" | "compose-forced";
+                            };
                             /** @enum {string|null} */
                             source: "env" | "db" | null;
                         } | null;
@@ -2915,6 +2920,8 @@ export interface operations {
                                     applied: string | null;
                                     error: string | null;
                                     requested: string | null;
+                                    /** @enum {string} */
+                                    source?: "task" | "global" | "catalog";
                                 } | null;
                                 /** @enum {string|null} */
                                 selection_rule: "env_pin" | "task_pair_priority" | "call_override" | "global_pin" | "task_config" | "registry_default" | null;
@@ -3104,6 +3111,11 @@ export interface operations {
                                 /** @enum {string|null} */
                                 model_source?: "env" | "db" | null;
                                 provider: string | null;
+                                reasoning?: {
+                                    level: string | null;
+                                    /** @enum {string} */
+                                    source: "db" | "env" | "code-default" | "compose-forced";
+                                };
                                 /** @enum {string|null} */
                                 source: "env" | "db" | null;
                             } | null;
@@ -3122,6 +3134,8 @@ export interface operations {
                                         applied: string | null;
                                         error: string | null;
                                         requested: string | null;
+                                        /** @enum {string} */
+                                        source?: "task" | "global" | "catalog";
                                     } | null;
                                     /** @enum {string|null} */
                                     selection_rule: "env_pin" | "task_pair_priority" | "call_override" | "global_pin" | "task_config" | "registry_default" | null;
@@ -3286,6 +3300,11 @@ export interface operations {
                                 /** @enum {string|null} */
                                 model_source?: "env" | "db" | null;
                                 provider: string | null;
+                                reasoning?: {
+                                    level: string | null;
+                                    /** @enum {string} */
+                                    source: "db" | "env" | "code-default" | "compose-forced";
+                                };
                                 /** @enum {string|null} */
                                 source: "env" | "db" | null;
                             } | null;
@@ -3304,6 +3323,8 @@ export interface operations {
                                         applied: string | null;
                                         error: string | null;
                                         requested: string | null;
+                                        /** @enum {string} */
+                                        source?: "task" | "global" | "catalog";
                                     } | null;
                                     /** @enum {string|null} */
                                     selection_rule: "env_pin" | "task_pair_priority" | "call_override" | "global_pin" | "task_config" | "registry_default" | null;

@@ -34,8 +34,6 @@ export const coldStartPlacementBridgeTaskSpec = {
     kind: 'ColdStartPlacementBridgeTask',
     description:
       'YUK-478 — cold-start upload→placement bridge. Runs ONCE per uploaded question whose VLM extraction matched NO knowledge node (the thin-seed tree from YUK-477 has only subject roots, so TaggingTask drops every suggestion). COMBINES two bridges in ONE text-only structured call: (①) classify the question into one KNOWN_SUBJECT_ID so a child KC can be created under seed:<subjectId>:root, and (③) generate a correct reference answer FOR the existing prompt when OCR extracted no answer, so the judge has a real grading anchor. Output = { subject_id, kc_name, reference_md }.',
-    defaultProvider: 'xiaomi',
-    defaultModel: 'mimo-v2.5',
     budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1, timeout: 90_000 },
     needsToolCall: false,
     isMultimodal: false,

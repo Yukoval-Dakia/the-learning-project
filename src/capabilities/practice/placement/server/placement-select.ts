@@ -10,8 +10,7 @@
 import { and, notInArray, sql } from 'drizzle-orm';
 import type { SelectionCandidateSignal } from '@/core/selection-signals';
 import type { Db, Tx } from '@/db/client';
-import { notDraftPredicate, questionSuspendedPredicate } from '@/db/predicates';
-import { question, question_group_lifecycle } from '@/db/schema';
+import { question } from '@/db/schema';
 import { resolveSubjectKnowledgeIds } from '@/kernel/read-models/knowledge-tree';
 import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
 import {
@@ -19,6 +18,7 @@ import {
   collectCandidateSignals,
   rotationClassForKind,
 } from '../../scheduling/public';
+import { placementUsableQuestionPredicate } from '../../supply/public';
 
 type DbLike = Db | Tx;
 
@@ -136,28 +136,14 @@ export async function selectNextPlacementItem(
     kcs.map((kc) => sql`${question.knowledge_ids} @> ${JSON.stringify([kc])}::jsonb`),
     sql` OR `,
   );
-  const admitted = sql`EXISTS (
-    SELECT 1 FROM ${question_group_lifecycle} AS l
-    WHERE l.group_id = COALESCE(${question.parent_question_id}, ${question.id})
-      AND l.current_revision_id IS NOT NULL AND l.scoring_admission_state = 'admitted'
-      AND l.availability = 'general_pool' AND l.suspended = false AND l.withdrawn = false
-  )`;
   const whereClause =
     exclude.length > 0
       ? and(
           sql`(${kcContainment})`,
-          notDraftPredicate(question.draft_status),
-          // 契约准入门：suspended/withdrawn 组不进 probe 池。
-          questionSuspendedPredicate(question),
-          admitted,
+          placementUsableQuestionPredicate(),
           notInArray(question.id, exclude),
         )
-      : and(
-          sql`(${kcContainment})`,
-          notDraftPredicate(question.draft_status),
-          questionSuspendedPredicate(question),
-          admitted,
-        );
+      : and(sql`(${kcContainment})`, placementUsableQuestionPredicate());
 
   const candidatesRows = await db
     .select({

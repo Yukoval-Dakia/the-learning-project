@@ -171,6 +171,7 @@ export function executablePiModels(
   env: Record<string, string | undefined> = process.env,
 ): ReadonlyArray<ExecutablePiModelFacts & { id: string }> {
   return Object.entries(nativePiModels(provider, env)).flatMap(([id, facts]) => {
+    if (id.startsWith('mimo-v2.5')) return [];
     const executable = executableFacts(facts);
     return executable ? [{ id, ...executable }] : [];
   });
@@ -182,6 +183,7 @@ export function executablePiModel(
   model: string,
   env: Record<string, string | undefined> = process.env,
 ): ExecutablePiModelFacts | undefined {
+  if (model.startsWith('mimo-v2.5')) return undefined;
   const models = nativePiModels(provider, env);
   return Object.hasOwn(models, model) ? executableFacts(models[model]) : undefined;
 }

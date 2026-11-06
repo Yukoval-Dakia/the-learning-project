@@ -122,6 +122,7 @@ export const KEY_CONSUMERS: Readonly<Record<string, string | null>> = {
   'lane.verify_solve.model': 'src/capabilities/practice/question-bank/server/quiz/solve-lane.ts',
   'lane.vision_judge.provider': 'src/server/ai/vision-judge-config.ts',
   'lane.vision_judge.model': 'src/server/ai/vision-judge-config.ts',
+  'lane.global.reasoning': 'src/server/ai/providers.ts',
   'lane.global.provider': 'src/server/ai/providers.ts',
   'lane.global.model': 'src/server/ai/providers.ts',
   'locale.learner': 'src/ai/task-prompts.ts',

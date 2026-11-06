@@ -140,6 +140,7 @@ export type AdminConfigTaskSelectionRule =
  * be honored at all.
  */
 export interface AdminConfigTaskEffectiveReasoning {
+  readonly source?: 'task' | 'global' | 'catalog';
   readonly requested: string | null;
   readonly applied: string | null;
   readonly error: string | null;
@@ -216,6 +217,10 @@ export interface AdminConfigTaskFacts {
  * the configured name is invalid.
  */
 export interface AdminConfigGlobalEffective {
+  readonly reasoning?: {
+    readonly level: string | null;
+    readonly source: 'db' | 'env' | 'code-default' | 'compose-forced';
+  };
   readonly provider: string | null;
   readonly model: string | null;
   /** The provider field's producing layer ('env' emergency pin vs 'db' panel default). */

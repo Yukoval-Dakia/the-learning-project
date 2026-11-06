@@ -30,8 +30,6 @@ export const profileCriticTaskSpec = {
     kind: 'ProfileCriticTask',
     description:
       'U7 (YUK-203) — review a draft SubjectProfile for taxonomy/capability/route/prompt/fixture issues. Proposal-only; single-shot, no tools. Input { draft } → strict JSON { review_md, patches[], blocking }.',
-    defaultProvider: 'xiaomi',
-    defaultModel: 'mimo-v2.5-pro',
     budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1, timeout: 60_000 },
     needsToolCall: false,
     isMultimodal: false,

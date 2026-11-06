@@ -84,8 +84,6 @@ export const interventionRecommendationTaskSpec = {
     kind: 'InterventionRecommendationTask',
     description:
       'Selects one method from the server-provided deterministic pedagogy shortlist, or abstains. It cannot restore an excluded/disabled method and does not claim causal method efficacy.',
-    defaultProvider: 'xiaomi',
-    defaultModel: 'mimo-v2.5-pro',
     budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },
     needsToolCall: false,
     isMultimodal: false,
@@ -122,8 +120,6 @@ export const interventionPackageAuthorTaskSpec = {
     kind: 'InterventionPackageAuthorTask',
     description:
       'Authors one atomic intervention package: one teaching material plus immediate, delayed, and transfer diagnostics, all bound to the frozen claim, target error, and selected method.',
-    defaultProvider: 'xiaomi',
-    defaultModel: 'mimo-v2.5-pro',
     // Measured: one valid 7,178-token package at 117.1s, then two consecutive SDK
     // aborts at the old 120s cap. Keep the bounded two-turn contract and let output land.
     budget: { ...DEFAULT_BUDGET, maxIterations: 2, timeout: 180_000 },
@@ -149,8 +145,6 @@ export const interventionPackageReviewTaskSpec = {
     kind: 'InterventionPackageReviewTask',
     description:
       'Compares a complete intervention package with three sealed outputs from the shared independent question validator. Returns bounded diagnostic/package checks and never repairs or partially activates the package.',
-    defaultProvider: 'xiaomi',
-    defaultModel: 'mimo-v2.5-pro',
     // Receives three worked blind solutions plus the package; keep the measured
     // 180s envelope.
     budget: { ...DEFAULT_BUDGET, maxIterations: 2, timeout: 180_000 },
