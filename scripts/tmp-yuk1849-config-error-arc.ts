@@ -1,12 +1,15 @@
-// YUK-1849 — dev-DB acceptance arc for the CURRENT config_error hold + automatic
-// outbox recovery design (f627180ca / 64bec57b3 semantics — NOT the superseded
-// operator-recheck design). Real dev Postgres rows and real lane machinery; the
-// only fakes sit at the external boundary (provider call + image bytes), and the
-// grounding call is counted at that seam. No pg-boss send, no paid call.
+// YUK-1849 — dev-DB acceptance arc for the FINAL non-terminal-hold recovery
+// design: the fingerprint gate is gone; any source_verify hold whose latest
+// outcome is an error (config_error OR transient) is re-driven once per error
+// epoch by the bounded sweep behind a zero-send lane preflight. A recovery
+// intent carrying stale placement authority re-runs provenance-safe without it.
+// Real dev Postgres rows and real lane machinery; the only fakes sit at the
+// external boundary (provider call + image bytes + acquisition fetch), and the
+// paid calls are counted at those seams. No pg-boss send, no real paid call.
 //
 // Each question is primed with the submission-time verify intent + completion so
-// the sweep must take the recovery_epoch path (a completed original intent cannot
-// re-dispatch; only a changed lane fingerprint re-arms the config-error epoch).
+// the sweep must take the recovery_epoch path (a completed original intent
+// cannot re-dispatch; the latest error event is the epoch the sweep re-arms on).
 //
 // Run:
 //   DATABASE_URL=postgres://loom_dev:loom_dev@127.0.0.1:5434/loom_dev_t3_5ba50596_acba784d \
@@ -14,22 +17,28 @@
 
 import { randomUUID } from 'node:crypto';
 import { and, desc, eq, sql } from 'drizzle-orm';
+import { AgentRunError } from '@/ai/agent-run-error';
 import {
   assertSourceGroundingLaneConfigured,
   runSourceGroundingVerify,
-  sourceGroundingLaneFingerprint,
 } from '@/capabilities/practice/grading/server/judge/source-grounding-verify';
 import type {
   RunTaskFn,
   SourceGroundingFn,
 } from '@/capabilities/practice/question-bank/jobs/source_verify';
-import { runSourceVerify } from '@/capabilities/practice/question-bank/jobs/source_verify';
+import {
+  buildSourceVerifyHandler,
+  runSourceVerify,
+} from '@/capabilities/practice/question-bank/jobs/source_verify';
+import { runServingAction } from '@/capabilities/practice/question-bank/server/serving-actions';
 import {
   recoverOrphanVerifyDispatches,
   writeVerifyDispatchIntent,
 } from '@/capabilities/practice/question-bank/server/verify-dispatch-outbox';
+import type { RunWebFetchCandidatesResult } from '@/capabilities/practice/supply/server/web-candidates';
 import {
   observeWebSuppliesForQuestion,
+  placementWebDemandOutcome,
   runWebSupply,
 } from '@/capabilities/practice/supply/server/web-supply';
 import { canonicalHash } from '@/core/migration/canonical';
@@ -38,11 +47,13 @@ import {
   event,
   knowledge,
   placement_starter_attempt,
+  placement_starter_attempt_question,
   placement_starter_claim,
   question,
   question_group_lifecycle,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events/index';
+import type { PlacementVerificationAuthority } from '@/kernel/supply-contracts';
 import { hydrateConfigFromDb } from '@/server/config/hydrate';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
@@ -175,10 +186,11 @@ async function seedQuestion(id: string, c: SeedContent) {
 }
 
 /** The submission-time verify dispatch the pipeline already committed for this row. */
-async function primeDispatch(qid: string) {
+async function primeDispatch(qid: string, authority?: PlacementVerificationAuthority) {
   const intentId = await writeVerifyDispatchIntent(db, {
     questionId: qid,
     verifier: 'source_verify',
+    ...(authority ? { placementAuthority: authority } : {}),
   });
   await writeEvent(db, {
     id: `arc-complete-${qid}`,
@@ -229,15 +241,28 @@ async function lane(mode: 'stale' | 'fixed') {
   // hydration snapshot stays stale (epochUnchanged → outcome 'unchanged').
   await db.execute(sql`update system_config_epoch set epoch = epoch + 1, updated_at = now()`);
   const report = await hydrateConfigFromDb(db);
-  const fp = sourceGroundingLaneFingerprint();
-  note(`lane:${mode}`, { hydrate: report, fingerprint: fp });
-  return fp;
+  note(`lane:${mode}`, { hydrate: report });
 }
 
 const groundingSeam = (grounded: boolean, answer: string): SourceGroundingFn => {
   const runTask = makeRunTask({ grounded, answer });
   return (p) =>
     runSourceGroundingVerify({ ...p, runTaskFn: runTask, imageFetchFn: fakeImageFetch });
+};
+
+/** A 429 at the provider call: the seam is reached (paid attempt) but the
+ * provider answered transient-failed, so the run holds and throws for retry. */
+const transientGroundingSeam = (): SourceGroundingFn => {
+  return async () => {
+    counts.grounding += 1;
+    throw new AgentRunError({
+      kind: 'SourceGroundingVerifyTask',
+      taskRunId: `arc-tr-${TAG}`,
+      subtype: 'api_error_result',
+      apiErrorStatus: 429,
+      errors: ['arc: simulated rate limit'],
+    });
+  };
 };
 
 async function deliver(
@@ -247,6 +272,7 @@ async function deliver(
     answer?: string;
     commandEventId?: string;
     deliveryId?: string;
+    transient?: boolean;
   } = {},
 ) {
   const grounded = opts.grounded ?? true;
@@ -257,11 +283,42 @@ async function deliver(
     runTaskFn: makeRunTask({ grounded, answer }),
     imageFetchFn: fakeImageFetch,
     sourceGroundingPreflightFn: (i) => assertSourceGroundingLaneConfigured(i),
-    sourceGroundingFn: groundingSeam(grounded, answer),
+    sourceGroundingFn: opts.transient ? transientGroundingSeam() : groundingSeam(grounded, answer),
     ...(opts.commandEventId
       ? { recheckCommandEventId: opts.commandEventId, recheckDeliveryId: opts.deliveryId }
       : {}),
   });
+}
+
+/** The REAL job-handler path — what a pg-boss delivery of a verify intent runs,
+ * including the stale-authority re-drive inside the handler. */
+async function handlerDeliver(
+  qid: string,
+  opts: {
+    grounded?: boolean;
+    answer?: string;
+    jobId?: string;
+    placementAuthorities?: PlacementVerificationAuthority[];
+  } = {},
+) {
+  const grounded = opts.grounded ?? true;
+  const answer = opts.answer ?? '代词';
+  const handler = buildSourceVerifyHandler(db, {
+    runTaskFn: makeRunTask({ grounded, answer }),
+    imageFetchFn: fakeImageFetch,
+    sourceGroundingFn: groundingSeam(grounded, answer),
+    sourceGroundingPreflightFn: (i) => assertSourceGroundingLaneConfigured(i),
+  });
+  const job = {
+    id: opts.jobId ?? `arc-job-${TAG}-${qid.slice(-6)}`,
+    data: {
+      question_ids: [qid],
+      ...(opts.placementAuthorities?.length
+        ? { placement_authorities: opts.placementAuthorities }
+        : {}),
+    },
+  };
+  await handler([job as never]);
 }
 
 async function dumpState(qid: string) {
@@ -305,7 +362,6 @@ async function dumpState(qid: string) {
       id: e.id,
       outcome: e.outcome,
       config_error: (e.payload as Record<string, unknown> | null)?.config_error,
-      lane_fingerprint: (e.payload as Record<string, unknown> | null)?.lane_fingerprint,
       created: e.created,
     })),
     terminal_events: terminal.length,
@@ -315,17 +371,20 @@ async function dumpState(qid: string) {
 }
 
 async function sweep() {
-  const enqueued: Array<{ verifier: string; questionIds: string[] }> = [];
+  const enqueued: Array<{
+    verifier: string;
+    questionIds: string[];
+    authorities?: PlacementVerificationAuthority[];
+  }> = [];
   const result = await recoverOrphanVerifyDispatches(db, {
-    enqueue: async (verifier, questionIds) => {
-      enqueued.push({ verifier, questionIds });
+    enqueue: async (verifier, questionIds, _options, placementAuthorities) => {
+      enqueued.push({ verifier, questionIds, authorities: placementAuthorities });
     },
-    sourceVerifyLaneFingerprint: () => sourceGroundingLaneFingerprint(),
     sourceVerifyRecoveryPreflight: () =>
       assertSourceGroundingLaneConfigured({ db, subjectProfile: profile }),
   });
   const intents = await db.execute(
-    sql`select subject_id, payload->>'recovery_epoch' as epoch, payload->>'lane_fingerprint' as fp,
+    sql`select subject_id, payload->>'recovery_epoch' as epoch, payload->'placement_authority' as authority,
                created_at from event
         where action = 'experimental:verify_dispatch_intent' order by created_at`,
   );
@@ -353,7 +412,7 @@ async function webSupplySegment(qid: string, c: SeedContent) {
   await db.insert(placement_starter_claim).values({
     id: claimId,
     fingerprint: `arc-claim-fp-${TAG}-${qid.slice(-6)}`,
-    goal_id: `arc-goal-${TAG}`,
+    goal_id: `arc-goal-${TAG}-ws-${qid.slice(-6)}`,
     semantic_goal_revision_id: `arc-sgr-${TAG}-${qid.slice(-6)}`,
     subject_id: profile.id,
     knowledge_id: KID,
@@ -528,6 +587,127 @@ async function webSupplySegment(qid: string, c: SeedContent) {
   };
 }
 
+/** 401/403 park seam: a FRESH placement demand whose acquisition throws a
+ * provider-auth rejection must park as config_error (paid effect provably 0),
+ * and a later delivery after the lane is fixed must re-drive a refill round —
+ * acquisition called again at the same seam. */
+async function webSupplyAuthParkSegment() {
+  const demandId = `arc-authdemand-${TAG}`;
+  const claimId = `arc-authclaim-${TAG}`;
+  const attemptId = `arc-authattempt-${TAG}`;
+  const fencingToken = randomUUID();
+  await db.insert(placement_starter_claim).values({
+    id: claimId,
+    fingerprint: `arc-authclaim-fp-${TAG}`,
+    goal_id: `arc-goal-${TAG}-auth`,
+    semantic_goal_revision_id: `arc-authsgr-${TAG}`,
+    subject_id: profile.id,
+    knowledge_id: KID,
+    demand_id: demandId,
+    target_id: `arc-authtarget-${TAG}`,
+    status: 'verifying',
+    supply_route: 'sourcing_web',
+    budget_limit_micro_usd: null,
+    created_at: new Date(),
+    updated_at: new Date(),
+  });
+  await db.insert(placement_starter_attempt).values({
+    id: attemptId,
+    claim_id: claimId,
+    pg_boss_job_id: `arc-authjob-${TAG}`,
+    delivery_no: 1,
+    fencing_token: fencingToken,
+    status: 'verifying',
+    lease_expires_at: new Date(Date.now() + 3600_000),
+    started_at: new Date(),
+    created_at: new Date(),
+    updated_at: new Date(),
+  });
+  const item = {
+    demandId,
+    knowledgeId: KID,
+    kind: 'any' as const,
+    difficultyBand: null,
+    count: 1,
+    routePreference: ['sourcing_web' as const],
+    placementClaimId: claimId,
+  };
+  const placement = {
+    attempt: {
+      claimId,
+      attemptId,
+      pgBossJobId: `arc-authjob-${TAG}`,
+      deliveryNo: 1,
+      fencingToken,
+      leaseExpiresAt: new Date(Date.now() + 3600_000),
+      startedOn: new Date(),
+    },
+    heartbeat: {
+      done: new Promise<void>(() => {}),
+      assertHealthy: async () => {},
+      stop: async () => {},
+    },
+    signal: new AbortController().signal,
+  };
+  let fetchCalls = 0;
+  const fetch401 = async () => {
+    fetchCalls += 1;
+    throw new AgentRunError({
+      kind: 'SourcingTask',
+      taskRunId: `arc-auth-${TAG}-t${fetchCalls}`,
+      subtype: 'api_error_result',
+      apiErrorStatus: 401,
+      errors: ['arc: unauthorized'],
+    });
+  };
+  const fetchOk = async (): Promise<RunWebFetchCandidatesResult> => {
+    fetchCalls += 1;
+    return {
+      status: 'ok' as const,
+      candidates: [],
+      imageCandidates: [],
+      queryPlan: [],
+      fetchedAt: ts(),
+      taskRunId: `arc-auth-${TAG}-t${fetchCalls}`,
+      costUsd: 0,
+    };
+  };
+  const supplyParams = {
+    db,
+    item,
+    trace: undefined,
+    causeId: null,
+    subjectProfile: profile as never,
+    placement,
+  };
+  const first = await runWebSupply({ ...supplyParams, fetch: fetch401 });
+  const outcome1 = await placementWebDemandOutcome(db, demandId);
+  // Same delivery resumed while the lane is still broken: the prior config_error
+  // round redrives into a refill identity, fetch parks it again.
+  const second = await runWebSupply({ ...supplyParams, fetch: fetch401 });
+  const outcome2 = await placementWebDemandOutcome(db, demandId);
+  // Lane repaired (a different key would answer): the next delivery opens the
+  // last refill round and reaches the paid acquisition seam.
+  const third = await runWebSupply({ ...supplyParams, fetch: fetchOk });
+  const outcome3 = await placementWebDemandOutcome(db, demandId);
+  const rounds = await db.execute(
+    sql`select subject_id, payload->>'phase' as phase, payload->>'reason' as reason from event
+        where action='experimental:web_supply' and subject_id like ${`${demandId}%`}
+        order by created_at`,
+  );
+  return {
+    demandId,
+    fetchCalls,
+    first: { phase: first.phase, reason: first.reason, costUsd: first.costUsd },
+    outcome1,
+    second: { phase: second.phase, reason: second.reason },
+    outcome2,
+    third: { phase: third.phase, reason: third.reason },
+    outcome3,
+    rounds,
+  };
+}
+
 async function main() {
   note('arc:start', {
     tag: TAG,
@@ -540,7 +720,7 @@ async function main() {
   await seedQuestion(Q1, CONTENT.zhi);
   await primeDispatch(Q1);
   // --- Phase A: broken lane -------------------------------------------------
-  const fpStale = await lane('stale');
+  await lane('stale');
   const E1 = `cmd-${TAG}-e1`;
   const r1 = await deliver(Q1, {
     commandEventId: E1,
@@ -564,11 +744,19 @@ async function main() {
   if (r2.status !== 'skipped:config_error')
     throw new Error(`A2 expected skipped:config_error, got ${r2.status}`);
 
+  // The sweep while the lane is still broken: the zero-send preflight fails, so
+  // no recovery intent is written and the hold is left exactly where it is.
+  const sweepBroken = await sweep();
+  note('A3:sweep-while-broken', sweepBroken as Record<string, unknown>);
+  if (sweepBroken.enqueued.some((entry) => entry.questionIds.includes(Q1)))
+    throw new Error('broken-lane sweep still dispatched Q1');
+
   // --- Phase B: lane repair → recovery sweep → real grounding ---------------
-  const fpFixed = await lane('fixed');
-  if (fpFixed === fpStale) throw new Error('fingerprint did not change after lane repair');
+  await lane('fixed');
   const sweep1 = await sweep();
   note('B1:sweep-after-repair', sweep1 as Record<string, unknown>);
+  if (!sweep1.enqueued.some((entry) => entry.questionIds.includes(Q1)))
+    throw new Error('repaired-lane sweep did not re-drive Q1');
   const countsBefore = { ...counts };
   const r3 = await deliver(Q1, { answer: CONTENT.zhi.answer });
   const s3 = await dumpState(Q1);
@@ -584,7 +772,7 @@ async function main() {
     throw new Error('grounding seam not called exactly once');
   if (s3.terminal_events < 1) throw new Error('no terminal verify event after repair');
 
-  // --- Phase C: not_grounded variant fails on merit -------------------------
+  // --- Phase C: not_grounded variant fails on merit; merit hold releases ----
   const Q2 = `q2hu-${TAG}`;
   await seedQuestion(Q2, CONTENT.hu);
   await primeDispatch(Q2);
@@ -598,37 +786,148 @@ async function main() {
     lifecycle: s4.lifecycle,
     verify_events: s4.verify_events,
   });
-
-  // --- Phase D: credential-only change re-arms ------------------------------
-  const Q3 = `q3yi-${TAG}`;
-  await seedQuestion(Q3, CONTENT.yi);
-  await primeDispatch(Q3);
-  await lane('stale');
-  const r5 = await deliver(Q3, { answer: CONTENT.yi.answer });
-  if (r5.status !== 'skipped:config_error')
-    throw new Error(`Q3 expected config_error, got ${r5.status}`);
-  const fpBeforeCred = sourceGroundingLaneFingerprint();
-  process.env.OPENCODE_API_KEY = 'arc-dummy-b';
-  const fpAfterCred = sourceGroundingLaneFingerprint();
-  const credChanged = fpAfterCred !== fpBeforeCred;
-  const sweepCred = await sweep();
-  note('D1:credential-only-change', {
-    fpBeforeCred,
-    fpAfterCred,
-    credentialChangeAltersFingerprint: credChanged,
-    sweep: sweepCred.result,
-    intents: sweepCred.intents,
+  // A merit-based failed hold still has a verdict to override: release stays
+  // accepted. (Contrast with the suspended-hold rejection in Phase F.)
+  const rel2 = await runServingAction(db, {
+    questionId: Q2,
+    command: 'release_verify_hold',
+    idempotencyKey: `arc-rel2-${TAG}`,
   });
-  if (!credChanged) throw new Error('credential change did not alter lane fingerprint');
-  await lane('fixed');
-  process.env.OPENCODE_API_KEY = 'arc-dummy-a';
-  const sweep2 = await sweep();
-  note('D2:sweep-after-real-repair', sweep2 as Record<string, unknown>);
-  const g2 = counts.grounding;
-  const r6 = await deliver(Q3, { answer: CONTENT.yi.answer });
-  note('D3:q3-recovered', { status: r6.status, groundingCalls: counts.grounding - g2 });
+  note('C2:release-merit-hold', { accepted: rel2.accepted });
+  if (rel2.accepted !== true) throw new Error('merit-failed hold release was not accepted');
 
-  // --- Phase E: unknown claim holds the same command -------------------------
+  // --- Phase D: transient 429 hold → sweep re-drives the error epoch --------
+  const Q5 = `q5wei-${TAG}`;
+  await seedQuestion(Q5, {
+    prompt_md: '「为」在「可以为师矣」中作？',
+    reference_md: '动词',
+    choices: ['动词', '介词', '连词'],
+    extract: '「为」在「可以为师矣」中作动词，意为「成为、当作」。',
+    answer: '动词',
+  });
+  await primeDispatch(Q5);
+  try {
+    await deliver(Q5, { transient: true, answer: '动词' });
+    throw new Error('transient grounding did not throw');
+  } catch (err) {
+    note('D1:transient-delivery-threw', {
+      qid: Q5,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+  const s5 = await dumpState(Q5);
+  note('D1:transient-state', s5 as Record<string, unknown>);
+  if (s5.terminal_events !== 0) throw new Error('terminal event written for transient');
+  if (s5.verify_events.filter((e) => e.outcome === 'error').length === 0)
+    throw new Error('no non-terminal error event for transient hold');
+  if (s5.verify_events.some((e) => e.config_error === true))
+    throw new Error('transient hold mislabelled config_error');
+  const sweepT = await sweep();
+  note('D2:sweep-after-transient', sweepT as Record<string, unknown>);
+  if (!sweepT.enqueued.some((entry) => entry.questionIds.includes(Q5)))
+    throw new Error('sweep did not re-drive the transient hold');
+  const g3 = counts.grounding;
+  await handlerDeliver(Q5, { answer: '动词' });
+  const s5b = await dumpState(Q5);
+  note('D3:transient-recovered', {
+    groundingCalls: counts.grounding - g3,
+    draft_status: s5b.draft_status,
+    verify_events: s5b.verify_events,
+  });
+  if (counts.grounding - g3 !== 1) throw new Error('transient re-drive skipped grounding');
+  if (s5b.terminal_events < 1) throw new Error('transient re-drive wrote no terminal event');
+
+  // --- Phase E: recovery intent with stale placement authority --------------
+  // The original intent carries an authority the claim has since moved past:
+  // the handler must re-run provenance-safe without it — never "done with
+  // nothing written".
+  const Q6 = `q6gu-${TAG}`;
+  await seedQuestion(Q6, {
+    prompt_md: '「故」在「温故而知新」中作？',
+    reference_md: '名词',
+    choices: ['名词', '连词', '副词'],
+    extract: '「故」在「温故而知新」中作名词，指旧的知识。',
+    answer: '名词',
+  });
+  const staleClaimId = `arc-staleclaim-${TAG}`;
+  const staleAttemptId = `arc-staleattempt-${TAG}`;
+  const staleFence = randomUUID();
+  await db.insert(placement_starter_claim).values({
+    id: staleClaimId,
+    fingerprint: `arc-staleclaim-fp-${TAG}`,
+    goal_id: `arc-goal-${TAG}-stale`,
+    semantic_goal_revision_id: `arc-stalesgr-${TAG}`,
+    subject_id: profile.id,
+    knowledge_id: KID,
+    demand_id: `arc-staledemand-${TAG}`,
+    target_id: `arc-staletarget-${TAG}`,
+    status: 'verifying',
+    supply_route: 'sourcing_web',
+    budget_limit_micro_usd: null,
+    created_at: new Date(),
+    updated_at: new Date(),
+  });
+  await db.insert(placement_starter_attempt).values({
+    id: staleAttemptId,
+    claim_id: staleClaimId,
+    pg_boss_job_id: `arc-stalejob-${TAG}`,
+    delivery_no: 1,
+    fencing_token: staleFence,
+    status: 'verifying',
+    lease_expires_at: new Date(Date.now() + 3600_000),
+    started_at: new Date(),
+    created_at: new Date(),
+    updated_at: new Date(),
+  });
+  const staleAuthority: PlacementVerificationAuthority = {
+    claim_id: staleClaimId,
+    attempt_id: staleAttemptId,
+    question_id: Q6,
+    verification_authority_epoch: randomUUID(),
+    fencing_token: staleFence,
+  };
+  // The real authority binding `authorizePlacementQuestion` would have written:
+  // the recovery intent must carry authority over a row that actually existed.
+  await db.insert(placement_starter_attempt_question).values({
+    attempt_id: staleAttemptId,
+    claim_id: staleClaimId,
+    question_id: Q6,
+    canonical_hash: `arc-ch-${TAG}`,
+    verification_authority_epoch: staleAuthority.verification_authority_epoch,
+    verification_status: 'authorized',
+    created_at: new Date(),
+  });
+  await primeDispatch(Q6, staleAuthority);
+  await lane('stale');
+  const r10 = await deliver(Q6, { answer: '名词' });
+  if (r10.status !== 'skipped:config_error')
+    throw new Error(`Q6 expected config_error, got ${r10.status}`);
+  // The claim moves past the authority while the hold sits: the recovery intent
+  // synthesized below inherits the NOW-dead attempt reference.
+  await db.execute(
+    sql`update placement_starter_attempt set status = 'interrupted', updated_at = now() where id = ${staleAttemptId}`,
+  );
+  await lane('fixed');
+  const sweepS = await sweep();
+  note('E1:sweep-stale-authority', sweepS as Record<string, unknown>);
+  const q6Enq = sweepS.enqueued.find((entry) => entry.questionIds.includes(Q6));
+  if (!q6Enq) throw new Error('sweep did not re-drive Q6');
+  const g4 = counts.grounding;
+  await handlerDeliver(Q6, {
+    answer: '名词',
+    placementAuthorities: q6Enq.authorities ?? [staleAuthority],
+  });
+  const s6 = await dumpState(Q6);
+  note('E2:stale-authority-recovery', {
+    carriedAuthority: q6Enq.authorities ?? null,
+    groundingCalls: counts.grounding - g4,
+    draft_status: s6.draft_status,
+    verify_events: s6.verify_events,
+  });
+  if (s6.terminal_events < 1)
+    throw new Error('stale-authority recovery intent died with nothing written');
+
+  // --- Phase F: unknown claim holds the same command -------------------------
   // The held path is only reachable for a NOT-yet-verified question: a verified
   // one short-circuits at 'skipped:already_verified' before the claim check, so
   // this runs on Q4 while it is still inside its config_error hold.
@@ -645,7 +944,7 @@ async function main() {
     deliveryId: `d7-${TAG}`,
     answer: CONTENT.ye.answer,
   });
-  note('E1:recheck-while-broken', { status: r7.status });
+  note('F1:recheck-while-broken', { status: r7.status });
   // Fabricate a crashed paid call: 'unknown' requires the state-shape columns to
   // match (result/application cleared, lease cleared, unresolved_reason set).
   await db.execute(sql`
@@ -660,13 +959,41 @@ async function main() {
     deliveryId: `d8-${TAG}`,
     answer: CONTENT.ye.answer,
   });
-  note('E2:recheck-with-unknown-claim', { status: r8.status });
+  note('F2:recheck-with-unknown-claim', { status: r8.status });
 
-  // --- Phase F: supply observe on a still-held question ---------------------
+  // --- Phase G: supply observe on a still-held question ---------------------
   const ws = await webSupplySegment(Q4, CONTENT.ye);
-  note('F1:supply-observe-on-config-error-hold', ws as Record<string, unknown>);
-  await lane('fixed');
+  note('G1:supply-observe-on-config-error-hold', ws as Record<string, unknown>);
+  if (ws.fetchCalls !== 0) throw new Error('config-error hold authorized a paid refill');
 
+  // The release button on a suspended (no-verdict) hold must NOT clear it: the
+  // question stays draft+withheld and can never reach admission without a real
+  // source_verify verdict.
+  const rel4 = await runServingAction(db, {
+    questionId: Q4,
+    command: 'release_verify_hold',
+    idempotencyKey: `arc-rel4-${TAG}`,
+  });
+  const s4b = await dumpState(Q4);
+  note('G2:release-suspended-hold', {
+    accepted: rel4.accepted,
+    draft_status: s4b.draft_status,
+    lifecycle: s4b.lifecycle,
+  });
+  if (rel4.accepted !== false)
+    throw new Error('release_verify_hold accepted on an unverified suspended hold');
+  if (s4b.lifecycle?.suspended !== true)
+    throw new Error('suspended hold was cleared by the rejected release');
+
+  // --- Phase H: placement 401 park → re-drive → acquisition seam ------------
+  const ap = await webSupplyAuthParkSegment();
+  note('H1:placement-401-park-lifecycle', ap as Record<string, unknown>);
+  if (ap.outcome1 !== 'config_error') throw new Error('401 did not park as config_error');
+  if (ap.outcome2 !== 'config_error') throw new Error('still-broken delivery did not re-park');
+  if (ap.fetchCalls !== 3)
+    throw new Error(`acquisition seam expected 3 calls, got ${ap.fetchCalls}`);
+
+  await lane('fixed');
   note('arc:done', { counts });
   console.log('\n=== EVIDENCE JSON ===');
   console.log(JSON.stringify({ tag: TAG, evidence }, null, 2));
@@ -686,12 +1013,15 @@ main()
       // arc's audit trail, tagged by this run's TAG.
       await db.execute(sql`delete from system_config where updated_by = 'yuk1849-arc'`);
       await db.execute(
-        sql`delete from placement_starter_attempt_question where claim_id like 'arc-claim-arc%'`,
+        sql`delete from placement_starter_attempt_question where claim_id like 'arc-%claim-arc%'`,
       );
       await db.execute(
-        sql`delete from placement_starter_attempt where claim_id like 'arc-claim-arc%'`,
+        sql`delete from placement_starter_cost_component where claim_id like 'arc-%claim-arc%'`,
       );
-      await db.execute(sql`delete from placement_starter_claim where id like 'arc-claim-arc%'`);
+      await db.execute(
+        sql`delete from placement_starter_attempt where claim_id like 'arc-%claim-arc%'`,
+      );
+      await db.execute(sql`delete from placement_starter_claim where id like 'arc-%claim-arc%'`);
     } catch (e) {
       console.error('cleanup failed', e);
     }
