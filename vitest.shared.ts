@@ -252,6 +252,7 @@ export const dbTestInclude = [
   'src/capabilities/practice/settlement/server/recalibration.db.test.ts',
   'src/kernel/records/retire-state-on-merge.db.test.ts',
   'src/kernel/records/mastery-state.db.test.ts',
+  'src/capabilities/agency/server/memory/learner-answer-memory-gate.db.test.ts',
   'src/capabilities/agency/server/memory/mem0-sdk-failure.db.test.ts',
   'src/capabilities/agency/server/memory/memory-ingest-recovery.db.test.ts',
   'src/capabilities/agency/server/memory/memory-reconcile-handoff-handler.db.test.ts',
