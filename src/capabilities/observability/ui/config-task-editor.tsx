@@ -103,6 +103,8 @@ export function ConfigTaskEditor({
     return <p className="adm-note">此任务使用专用执行通道，当前只读。</p>;
   }
   const notice = confirm ? sliceNotice(confirm, task, draft) : null;
+  // Said while the choice is still open, not only once it is about to be saved.
+  const editingNotice = confirm ? null : sliceNotice('model', task, draft);
   const issue = modelIssue(providers, draft.provider, draft.model);
   const hasGlobal = Boolean(global?.provider);
   const noModelChange = modelChanges(task, draft).length === 0;
@@ -219,6 +221,7 @@ export function ConfigTaskEditor({
                 : `全局默认只定了 provider（${global?.provider}），上面选的模型会生效，provider 仍跟全局。`}
             </p>
           ) : null}
+          {editingNotice ? <p className="adm-note">{editingNotice}</p> : null}
           <div className="adm-acts">
             <Button disabled={Boolean(issue) || noModelChange} onClick={() => setConfirm('model')}>
               保存

@@ -247,10 +247,23 @@ export type AutoAppliedDigestWire = ApiOperationJsonResponse<'getAutoAppliedProp
 export type AutoAppliedRowWire = AutoAppliedDigestWire['rows'][number];
 export type VerdictBreakerWire = AutoAppliedDigestWire['breaker'];
 
-export const listAutoApplied = () =>
-  apiOperationJson('getAutoAppliedProposals', {
-    url: '/api/proposals/auto-applied',
+export type AutoAppliedRetractResultWire =
+  ApiOperationJsonResponse<'batchRetractAutoAppliedProposals'>;
+
+export const listAutoApplied = (window?: { from: string; to?: string }) => {
+  const query = new URLSearchParams(window);
+  return apiOperationJson('getAutoAppliedProposals', {
+    url: `/api/proposals/auto-applied${window ? `?${query.toString()}` : ''}`,
     method: 'GET',
+  });
+};
+
+/** Each proposal is tried on its own: part done and part refused is a normal result. */
+export const retractAutoApplied = (proposalIds: readonly string[]) =>
+  apiOperationJson('batchRetractAutoAppliedProposals', {
+    url: '/api/proposals/auto-applied/retract',
+    method: 'POST',
+    body: { proposal_ids: [...proposalIds] },
   });
 
 // YUK-271 行为恢复（codex 验证轮 P2）：block_merge accept 在目标题块已离开
@@ -343,6 +356,19 @@ const WRITTEN_FOR_LEARNER_ID_RE = /(block-[a-z0-9]{12,}|[a-z]+:[a-z0-9:_-]{8,}|\
 // 蛇形字段名 evidence_event_ids（数学写法不算：x_1、a_n、log_10、100…）。全文都在折叠里。
 const INTERNAL_REASON_ID_RE =
   /(block-[a-z0-9]{12,}|[a-z]+:[a-z0-9:_-]{8,}|\b(?=[a-z0-9]*[a-z])[a-z0-9]{4,}…|\b[a-z0-9]+_[a-z0-9_]{4,}…|\b[a-z][a-z0-9]*\.[a-z0-9]+(?:_[a-z0-9]+)+|\b[a-z][a-z0-9]{2,}(?:_[0-9]{2,})*_(?=[a-z0-9]*[a-z])[a-z0-9]{2,}(?:_[a-z0-9]{2,})*\b|\b[a-z0-9]{20,}\b)/g;
+
+/** A reason as the first thing read: ids gone (a known one keeps its name), no stray spaces. */
+export function reasonWithoutIds(
+  text: string,
+  nameOf?: (id: string) => string | undefined,
+): string {
+  return splitReasonIds(text)
+    .map((seg) => (seg.raw ? (nameOf?.(seg.text) ?? '') : seg.text))
+    .join('')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/[ \t]+(?=[（）「」，。；：、])/g, '')
+    .trim();
+}
 
 export interface ReasonSegment {
   start: number;

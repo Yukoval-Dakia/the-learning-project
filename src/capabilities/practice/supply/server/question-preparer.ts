@@ -27,6 +27,7 @@ import {
   preparerUnitContent,
   recoverQuestionPreparer,
 } from './question-preparer-journal';
+import { recoveryPriorContext } from './question-preparer-recovery';
 import {
   admitNightlySourcingRun,
   holdNightlySupplyUnit,
@@ -149,15 +150,7 @@ export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown, r
     if ((previous.ticket_event_id ?? null) !== (data.ticket_event_id ?? null))
       throw new Error('continuation must retain the original ticket binding');
     const calls = await preparerCalls(db, previous.task_run_id);
-    priorContext = {
-      previous,
-      calls: calls.map((call) => ({
-        tool: call.tool_name,
-        input: call.input_json,
-        output: call.output_json,
-        error: call.error_reason,
-      })),
-    };
+    priorContext = recoveryPriorContext(previous, calls);
   }
   // Short advisory-locked journal acts as the execution lease. Queue state, never age, releases it.
   const boss = await getStartedBoss();

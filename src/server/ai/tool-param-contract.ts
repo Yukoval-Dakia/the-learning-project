@@ -64,11 +64,14 @@ export function isToolArgumentContractFailure(result: {
   if (result.isError !== true) return false;
   const text = toolResultText(result.content);
   // pi 1.5 reports a wholly unparseable arguments payload as "Invalid arguments
-  // for tool"; schema rejection stays "Validation failed for tool".
+  // for tool"; schema rejection stays "Validation failed for tool". The MCP
+  // bridge reports a rejected bridge-owned schema as a JSON error body.
   return (
     text.includes(TOOL_PARAM_CONTRACT_MARKER) ||
     text.startsWith('Validation failed for tool') ||
-    text.startsWith('Invalid arguments for tool')
+    text.startsWith('Invalid arguments for tool') ||
+    text.includes('"error":"Tool input does not match the declared schema:') ||
+    text.includes('"error": "Tool input does not match the declared schema:')
   );
 }
 

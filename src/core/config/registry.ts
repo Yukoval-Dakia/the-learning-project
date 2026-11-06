@@ -42,6 +42,25 @@ export type EnvMode = 'fallback' | 'priority' | 'pinned';
 
 export type EnvParseFn = (raw: string) => ConfigValue | undefined;
 
+/**
+ * 语义消费方（capability.operation / owner 名）。只声明「谁依赖这个事实」，
+ * 不维护 reader 文件路径——读点位置由 audit:flags 从源码推导。
+ */
+export type ConfigConsumer = string;
+
+/**
+ * boolean env 开关的真实字面量域。必须与 envParse 逐字一致；audit:flags 用探针
+ * 逐字面量核验，声明与 parser 任何分叉都失败。
+ */
+export interface ConfigFlagGrammar {
+  trueLiterals: readonly string[];
+  falseLiterals: readonly string[];
+  caseInsensitive: boolean;
+  /** opt-in = 默认关、字面量显式开；opt-out = 默认开、字面量显式关。 */
+  polarity: 'opt-in' | 'opt-out';
+}
+
+/** 预算类键的事务读语义由片 2 引入；本片不预建。 */
 export interface ConfigKeyDef {
   /** key → DB 值 zod schema（setConfig 写时校验 + hydrate 逐行 parse）。 */
   schema: z.ZodTypeAny;
@@ -57,9 +76,42 @@ export interface ConfigKeyDef {
   tier: 'A' | 'B' | 'C';
   /** 备注（面板文案提示 / 风险标注）。 */
   note?: string;
+  /** 面向运营的一句话说明；flags family 必填（audit:flags 强制）。 */
+  description?: string;
+  /** 语义消费方；flags family 必填。 */
+  consumers?: readonly ConfigConsumer[];
+  /** 生效时机；flags family 必填。 */
+  reload?: 'per-call' | 'snapshot' | 'restart';
+  /** 暴露面；flags family 必填。credential-reference 不出现在公共读面。 */
+  exposure?: 'browser-safe' | 'operator' | 'credential-reference';
+  /** 仅 boolean env 开关：字面量域与默认侧。 */
+  flag?: ConfigFlagGrammar;
 }
 
 // ─── env 翻译器（每个 reader 的现 parse 语义） ──────────────────────────────
+
+/** 全仓统一 flag grammar：trim + 小写后 'true'/'1' 开、'false'/'0' 关，其余 → undefined。 */
+const OPT_IN_FLAG = {
+  trueLiterals: ['true', '1'],
+  falseLiterals: ['false', '0'],
+  caseInsensitive: true,
+  polarity: 'opt-in',
+} as const satisfies ConfigFlagGrammar;
+
+const OPT_OUT_FLAG = {
+  trueLiterals: ['true', '1'],
+  falseLiterals: ['false', '0'],
+  caseInsensitive: true,
+  polarity: 'opt-out',
+} as const satisfies ConfigFlagGrammar;
+
+/** 精确字面量开关：只认 '1'，其余（含 '0'）都交给 codeDefault。 */
+const EXACT_ONE_FLAG = {
+  trueLiterals: ['1'],
+  falseLiterals: [],
+  caseInsensitive: false,
+  polarity: 'opt-in',
+} as const satisfies ConfigFlagGrammar;
 
 /** parseFlag 语义：'true'/'1'→true，'false'/'0'→false，其余/空 → undefined(=落到 codeDefault)。 */
 const flagEnv: EnvParseFn = (raw) => {
@@ -202,6 +254,11 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     envName: 'JUDGE_DURABLE_ENABLED',
     envParse: flagEnv,
     tier: 'A',
+    description: '判分走异步 judge_run 队列；关闭时保持同步判分（回滚位）',
+    consumers: ['practice.judge-durable-dispatch'],
+    reload: 'per-call',
+    exposure: 'operator',
+    flag: OPT_IN_FLAG,
   },
   // 提议自动应用总开关（默认关，所有环境）。关着时 writeAiProposal 不盖
   // auto_apply marker（不追溯），sweep 直接返回；开启后只应用开启之后写入的提议。
@@ -212,6 +269,11 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     envParse: flagEnv,
     tier: 'A',
     note: '默认关：关着时新提议不盖 marker（开启后也不追溯），sweep 不应用',
+    description: '创建提议时盖 auto_apply marker，并允许 sweep 自动应用',
+    consumers: ['kernel.proposal-auto-apply'],
+    reload: 'per-call',
+    exposure: 'operator',
+    flag: OPT_IN_FLAG,
   },
   JUDGE_FALLBACK_PROVIDER: {
     // '' = 显式关闭跨 provider 兜底（env 语义）；非空 = provider 名（写端校验）。
@@ -228,6 +290,11 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     envName: 'MISCONCEPTION_PROMOTE_ENABLED',
     envParse: flagEnv,
     tier: 'A',
+    description: '接受猜想时生成 misconception 与 caused_by 边',
+    consumers: ['agency.conjecture-accept'],
+    reload: 'per-call',
+    exposure: 'operator',
+    flag: OPT_OUT_FLAG,
   },
   MISCONCEPTION_HARD_CONFIRM_ENABLED: {
     schema: z.boolean(),
@@ -235,6 +302,11 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     envName: 'MISCONCEPTION_HARD_CONFIRM_ENABLED',
     envParse: flagEnv,
     tier: 'A',
+    description: '允许证据驱动的 soft→hard 确认轨',
+    consumers: ['agency.conjecture-accountability'],
+    reload: 'per-call',
+    exposure: 'operator',
+    flag: OPT_IN_FLAG,
   },
   QUESTION_SUPPLY_REFILL_ENABLED: {
     schema: z.boolean(),
@@ -242,6 +314,11 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     envName: 'QUESTION_SUPPLY_REFILL_ENABLED',
     envParse: flagEnv,
     tier: 'A',
+    description: '取题时按需补充见底题池',
+    consumers: ['practice.supply-refill'],
+    reload: 'per-call',
+    exposure: 'operator',
+    flag: OPT_IN_FLAG,
   },
   JUDGE_CALIBRATION_SAMPLING_ENABLED: {
     schema: z.boolean(),
@@ -249,6 +326,11 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     envName: 'JUDGE_CALIBRATION_SAMPLING_ENABLED',
     envParse: flagEnv,
     tier: 'A',
+    description: '允许付费 judge 校准抽样运行',
+    consumers: ['practice.judge-calibration-sampling'],
+    reload: 'per-call',
+    exposure: 'operator',
+    flag: OPT_IN_FLAG,
   },
   WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED: {
     schema: z.boolean(),
@@ -256,6 +338,11 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     envName: 'WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED',
     envParse: flagEnv,
     tier: 'A',
+    description: '提取后自动入队付费标注/判分',
+    consumers: ['ingestion.workflow-judge-auto-enroll'],
+    reload: 'per-call',
+    exposure: 'operator',
+    flag: OPT_OUT_FLAG,
   },
   WORKFLOW_JUDGE_OBSERVE_ENABLED: {
     schema: z.boolean(),
@@ -263,6 +350,11 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     envName: 'WORKFLOW_JUDGE_OBSERVE_ENABLED',
     envParse: flagEnv,
     tier: 'A',
+    description: '允许付费 observe-only 判分路径',
+    consumers: ['ingestion.workflow-judge-observe'],
+    reload: 'per-call',
+    exposure: 'operator',
+    flag: OPT_IN_FLAG,
   },
   WORKFLOW_JUDGE_AUTO_ENROLL_THRESHOLD: {
     schema: z.number().min(0).max(1),
@@ -277,6 +369,11 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     envName: 'WORKFLOW_JUDGE_STUDENT_ANSWER_GRADING_ENABLED',
     envParse: flagEnv,
     tier: 'A',
+    description: '允许学生作答走多模态判分并写学习数据',
+    consumers: ['ingestion.workflow-judge-student-answer'],
+    reload: 'per-call',
+    exposure: 'operator',
+    flag: OPT_IN_FLAG,
   },
   WAVE6_TRIGGER_MARK_WRONG_ENABLED: {
     schema: z.boolean(),
@@ -284,6 +381,11 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     envName: 'WAVE6_TRIGGER_MARK_WRONG_ENABLED',
     envParse: flagEnv,
     tier: 'A',
+    description: '错题笔记变化触发 note refine',
+    consumers: ['notes.note-refine-trigger'],
+    reload: 'per-call',
+    exposure: 'operator',
+    flag: OPT_OUT_FLAG,
   },
   WAVE6_TRIGGER_MASTERY_ENABLED: {
     schema: z.boolean(),
@@ -291,6 +393,11 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     envName: 'WAVE6_TRIGGER_MASTERY_ENABLED',
     envParse: flagEnv,
     tier: 'A',
+    description: '掌握度变化触发 note refine',
+    consumers: ['notes.note-refine-trigger'],
+    reload: 'per-call',
+    exposure: 'operator',
+    flag: OPT_OUT_FLAG,
   },
   WAVE6_TRIGGER_DREAMING_ENABLED: {
     schema: z.boolean(),
@@ -298,6 +405,11 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     envName: 'WAVE6_TRIGGER_DREAMING_ENABLED',
     envParse: flagEnv,
     tier: 'A',
+    description: 'dreaming 变化触发 note refine',
+    consumers: ['notes.note-refine-trigger'],
+    reload: 'per-call',
+    exposure: 'operator',
+    flag: OPT_OUT_FLAG,
   },
   NOTES_MASTERY_SUBSCRIPTION_ENABLED: {
     schema: z.boolean(),
@@ -305,6 +417,11 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     envName: 'NOTES_MASTERY_SUBSCRIPTION_ENABLED',
     envParse: flagEnv,
     tier: 'A',
+    description: '掌握度进度事件订阅生效',
+    consumers: ['notes.mastery-refine-subscription'],
+    reload: 'per-call',
+    exposure: 'operator',
+    flag: OPT_OUT_FLAG,
   },
   AUTO_INTERVENTION_EXPANSION_ENABLED: {
     schema: z.boolean(),
@@ -312,6 +429,11 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     envName: 'AUTO_INTERVENTION_EXPANSION_ENABLED',
     envParse: flagEnv,
     tier: 'A',
+    description: '干预包进入 eligible 投递；关闭时仅 shadow',
+    consumers: ['agency.intervention-preparation'],
+    reload: 'per-call',
+    exposure: 'operator',
+    flag: OPT_IN_FLAG,
   },
   INTERVENTION_DISABLED_METHOD_IDS: {
     schema: z.array(PedagogyMethodId),
@@ -319,6 +441,10 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     envName: 'INTERVENTION_DISABLED_METHOD_IDS',
     envParse: csvEnv,
     tier: 'A',
+    description: '干预禁用的教学方法 id 列表（env 为 CSV，DB 为数组）',
+    consumers: ['agency.intervention-preparation'],
+    reload: 'per-call',
+    exposure: 'operator',
   },
   COPILOT_SUBAGENT_ENABLED: {
     schema: z.boolean(),
@@ -326,6 +452,11 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     envName: 'COPILOT_SUBAGENT_ENABLED',
     envParse: flagEnv,
     tier: 'A',
+    description: '允许 Copilot 派出 depth-1 researcher 子代理',
+    consumers: ['copilot.researcher-subagent'],
+    reload: 'per-call',
+    exposure: 'operator',
+    flag: OPT_OUT_FLAG,
   },
   COPILOT_NUDGE_ENABLED: {
     schema: z.boolean(),
@@ -333,6 +464,11 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     envName: 'COPILOT_NUDGE_ENABLED',
     envParse: flagEnv,
     tier: 'A',
+    description: 'Copilot 主动开口对用户可见（关闭时只写 shadow 证据）',
+    consumers: ['copilot.nudge'],
+    reload: 'per-call',
+    exposure: 'operator',
+    flag: OPT_IN_FLAG,
   },
   COPILOT_NUDGE_DAILY_MAX: {
     schema: z.number().int().positive(),
@@ -356,6 +492,10 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     // ' legacy ' 落 default，不得纠成 legacy。
     envParse: (raw) => (raw === 'legacy' || raw === 'softmax_mfi' ? raw : undefined),
     tier: 'A',
+    description: '练习流选题策略',
+    consumers: ['practice.stream-selection'],
+    reload: 'per-call',
+    exposure: 'operator',
   },
   HUB_SYNC_MODE: {
     schema: z.enum(['off', 'shadow', 'apply']),
@@ -366,6 +506,10 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     tier: 'A',
     // 'off' 不是完整 kill switch（触发器照常记账）——面板文案必须带这句。
     note: "P2: 'off' is not a complete kill switch (trigger bookkeeping continues)",
+    description: 'Hub 同步调和模式',
+    consumers: ['notes.hub-sync-reconciliation'],
+    reload: 'per-call',
+    exposure: 'operator',
   },
   PROJECTION_IS_WRITER_ITEM_CALIBRATION: {
     schema: z.boolean(),
@@ -375,6 +519,11 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     envParse: (raw) => (raw === '1' ? true : undefined),
     tier: 'A',
     note: 'P2: 写所有权翻位（Scheme A dark-ship）',
+    description: 'item_calibration 投影 writer 翻位',
+    consumers: ['kernel.projection-writer-policy'],
+    reload: 'per-call',
+    exposure: 'operator',
+    flag: EXACT_ONE_FLAG,
   },
   PLACEMENT_PROBE_ENABLED: {
     schema: z.boolean(),
@@ -382,6 +531,11 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     envName: 'PLACEMENT_PROBE_ENABLED',
     envParse: flagEnv,
     tier: 'A',
+    description: '冷启动 placement 探测入口开放',
+    consumers: ['practice.placement'],
+    reload: 'per-call',
+    exposure: 'operator',
+    flag: OPT_OUT_FLAG,
   },
   AI_RATE_LIMIT_MAX: {
     schema: z.number().int().positive(),
@@ -510,6 +664,10 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     // 原 reader 裸 === 比较（无 trim）。
     envParse: (raw) => (raw === 'glm' || raw === 'tencent' ? raw : undefined),
     tier: 'A',
+    description: '提取管线 OCR 引擎',
+    consumers: ['ingestion.ocr-extract'],
+    reload: 'per-call',
+    exposure: 'operator',
   },
   DOCX_CONVERT_ENGINE: {
     // 'docker' 是唯一显式值（探针 seam）；unset/其余 = 自动解析（reader 侧判 === 'docker'）。
@@ -518,6 +676,10 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     envName: 'DOCX_CONVERT_ENGINE',
     envParse: (raw) => (raw === 'docker' ? 'docker' : undefined),
     tier: 'A',
+    description: 'DOCX 转换引擎（docker = 显式探针 seam）',
+    consumers: ['ingestion.docx-convert'],
+    reload: 'per-call',
+    exposure: 'operator',
   },
   // ── KC dedup + tagging match 旋钮（spec §1.4：「≤0 = 静默禁用」进 zod）──
   KC_DEDUP_DISTANCE_MAX: {
@@ -612,6 +774,10 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     },
     tier: 'A',
     note: 'P2: enforce 断流风险（preflight §5 高风险确认）',
+    description: 'provider attempt 准入模式',
+    consumers: ['server.ai.provider-attempt-admission'],
+    reload: 'per-call',
+    exposure: 'operator',
   },
   AI_PROVIDER_ATTEMPT_ADMISSION_POLICIES_JSON: {
     // DB 层存解析后的 object：逐 lane {maxConcurrentAttempts, maxAttemptStartsPerMinute}
@@ -632,6 +798,10 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     envParse: stringEnv,
     tier: 'A',
     note: 'P2: 同 admission mode',
+    description: 'provider attempt 逐 lane 准入策略（env JSON / DB object）',
+    consumers: ['server.ai.provider-attempt-admission'],
+    reload: 'per-call',
+    exposure: 'operator',
   },
   AI_PROVIDER_SESSION_ADMISSION_MODE: {
     schema: z.enum(['off', 'observe', 'enforce']),
@@ -645,6 +815,10 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     },
     tier: 'A',
     note: 'P2: enforce 断流风险',
+    description: 'provider session 准入模式',
+    consumers: ['server.ai.provider-session-admission'],
+    reload: 'per-call',
+    exposure: 'operator',
   },
   // ── 准入/结构化任务 provider 瞬时失败有界重试（YUK-1876）─────────────────
   ADMISSION_PROVIDER_RETRY_MAX_RETRIES: {
@@ -695,6 +869,10 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     envParse: stringEnv,
     tier: 'A',
     note: 'P2: 同 admission mode',
+    description: 'provider session 逐 provider 准入策略（env JSON / DB object）',
+    consumers: ['server.ai.provider-session-admission'],
+    reload: 'per-call',
+    exposure: 'operator',
   },
   // ── scoped lane overrides（DB 版 solve/vision 异源拨道） ─────────────────
   'lane.verify_solve.provider': {
