@@ -58,8 +58,12 @@ export function taskWords(task: ConfigTask): { name: string; detail: string | nu
   const [name, ...rest] = (task.label ?? '').split('：');
   return name ? { name, detail: rest.join('：') || null } : { name: task.kind, detail: null };
 }
-export function taskEditable(task: ConfigTask): boolean {
+/** A dedicated-channel task has its model fixed by its wire contract; the server refuses a stored one. */
+export function modelEditable(task: ConfigTask): boolean {
   return task.override_wired.provider && task.override_wired.model;
+}
+export function budgetEditable(task: ConfigTask): boolean {
+  return Object.values(task.budget_wiring).some(Boolean);
 }
 export const BUDGET_FIELDS = [
   { key: 'maxIterations', label: '最大轮数', min: 1, step: 1 },
@@ -67,7 +71,23 @@ export const BUDGET_FIELDS = [
   { key: 'transientRetries', label: '瞬时错误重试次数', min: 0, step: 1 },
   { key: 'maxCost', label: '费用上限（美元）', min: 0, step: 0.001 },
 ] as const;
-export type BudgetDraft = Record<(typeof BUDGET_FIELDS)[number]['key'], string>;
+export type BudgetKey = (typeof BUDGET_FIELDS)[number]['key'];
+export type BudgetDraft = Record<BudgetKey, string>;
+/**
+ * The value a run's caller always passes for this field, which beats a stored one. A caller's
+ * maxCost is not listed: the runtime takes the lower of the two, so the stored one still counts.
+ */
+export function callerBudgetValue(task: ConfigTask, key: BudgetKey): string | null {
+  const caller = task.caller_budget_override;
+  if (!caller) return null;
+  if (key === 'maxIterations') {
+    return caller.maxIterations === 'unbounded' ? '不限' : `${caller.maxIterations} 轮`;
+  }
+  return key === 'timeout' ? `${Math.round(caller.timeoutMs / 60_000)} 分钟` : null;
+}
+function budgetFieldEditable(task: ConfigTask, key: BudgetKey): boolean {
+  return task.budget_wiring[key] && callerBudgetValue(task, key) === null;
+}
 export function initialBudget(task: ConfigTask): BudgetDraft {
   return Object.fromEntries(
     BUDGET_FIELDS.map(({ key }) => {
@@ -79,7 +99,7 @@ export function initialBudget(task: ConfigTask): BudgetDraft {
 export function budgetChanges(task: ConfigTask, draft: BudgetDraft): ConfigWrite['changes'] {
   const budget = { ...task.override?.budget };
   for (const { key, label, min } of BUDGET_FIELDS) {
-    if (!task.budget_wiring[key]) continue;
+    if (!budgetFieldEditable(task, key)) continue;
     const value = Number(draft[key]);
     if (
       !draft[key].trim() ||
@@ -93,6 +113,14 @@ export function budgetChanges(task: ConfigTask, draft: BudgetDraft): ConfigWrite
     budget[key] = key === 'timeout' ? value * 1000 : value;
   }
   return [{ action: 'set', key: `task.${task.kind}.budget`, value: budget }];
+}
+/** In the field's own units and only what changed, not the stored object. */
+export function budgetSummary(task: ConfigTask, draft: BudgetDraft): string {
+  const before = initialBudget(task);
+  const parts = BUDGET_FIELDS.filter(
+    ({ key }) => budgetFieldEditable(task, key) && Number(before[key]) !== Number(draft[key]),
+  ).map(({ key, label }) => `${label}：${before[key]} → ${draft[key]}`);
+  return parts.length > 0 ? `预算：${parts.join('；')}` : '预算没有改动。';
 }
 export interface ModelDraft {
   provider: string;
@@ -237,6 +265,34 @@ export function thinkingChoiceWord(model: ConfigModel | undefined, level: string
   return model?.reasoning_options?.mode === 'toggle' && level !== 'off'
     ? '开启'
     : thinkingWord(level);
+}
+const SLICE_PENDING = '判分变成待定，直到重新跑判分准入。';
+export const SLICE_MODEL_NOTICE = `换模型后，已准入的判分切片会失配，${SLICE_PENDING}`;
+// A slice is admitted for what is sent: a level joins its identity only when it changes the wire.
+export const SLICE_THINKING_NOTICE = `思考强度如果真的改变了发出去的档位，已准入的判分切片也会失配，${SLICE_PENDING}同一档的不同叫法、这个模型调不了的档位不受影响。`;
+/** What a global default change does to grading tasks that move with it. */
+export function globalSliceNotice(
+  tasks: readonly ConfigTask[],
+  pairChanged: boolean,
+  thinkingChanged: boolean,
+): string | null {
+  const judged = tasks.filter((task) => task.slice_admission && modelEditable(task));
+  const names = (list: readonly ConfigTask[]) =>
+    list.map((task) => taskWords(task).name).join('、');
+  const byPair = pairChanged
+    ? judged.filter((task) => task.override?.override_global_pin !== true)
+    : [];
+  const byThinking = thinkingChanged
+    ? judged.filter((task) => !task.override?.reasoning && !byPair.includes(task))
+    : [];
+  return (
+    [
+      byPair.length > 0 ? `「${names(byPair)}」跟着动。${SLICE_MODEL_NOTICE}` : null,
+      byThinking.length > 0 ? `「${names(byThinking)}」跟着动。${SLICE_THINKING_NOTICE}` : null,
+    ]
+      .filter(Boolean)
+      .join('') || null
+  );
 }
 export function resetTaskChanges(
   task: ConfigTask,
