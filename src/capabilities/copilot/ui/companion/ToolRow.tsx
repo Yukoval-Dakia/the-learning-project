@@ -245,10 +245,10 @@ export function ThinkingDone({ text }: { text: string }) {
         onClick={() => setOpen((value) => !value)}
       >
         <span className="un-cp-step-label">刚才的想法</span>
-        <ChevronDown size={14} aria-hidden="true" className="un-cp-activity-chevron" />
+        <ChevronDown size={14} aria-hidden="true" className="un-cp-activity-chev" />
       </button>
       <Expand open={open} id={panelId}>
-        <div className="un-cp-thinking">
+        <div className="un-cp-thinking" data-done="">
           <p>{text}</p>
         </div>
       </Expand>

@@ -108,7 +108,8 @@ export function projectDurableCopilotMessage(
   // append only later durable deltas from this run's already-deduplicated view.
   const snapshot = previous.public_prose;
   // The final reply replaced what was streamed, so the draft must not stay on screen beside it.
-  const replaced = view.replyPayload?.thinking_clear === true;
+  // A sealed exit keeps its prose: the reason it stopped is on it, and it holds no draft to clear.
+  const replaced = view.replyPayload?.thinking_clear === true && !view.publicProse?.failure;
   const publicProse = replaced
     ? undefined
     : (view.publicProse ??

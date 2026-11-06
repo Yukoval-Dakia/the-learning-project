@@ -858,6 +858,11 @@
     overflow-wrap: anywhere;
   }
 
+  /* Finished: read from the start. */
+  & .un-cp-thinking[data-done] {
+    flex-direction: column;
+  }
+
   & .un-cp-thinking p {
     margin: 0;
   }

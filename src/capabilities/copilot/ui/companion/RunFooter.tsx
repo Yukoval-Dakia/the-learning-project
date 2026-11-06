@@ -67,11 +67,11 @@ function RunLine({
         type="button"
         className="un-cp-run-line un-cp-run-toggle un-hit"
         aria-expanded={open}
-        aria-controls={panelId}
-        aria-label={open ? '收起在想的内容' : '看看在想什么'}
+        aria-controls={open ? panelId : undefined}
         onClick={() => setOpen((value) => !value)}
       >
         {children}
+        <span className="un-sr-only">{open ? '，收起在想的内容' : '，看看在想什么'}</span>
         <ChevronDown size={14} aria-hidden="true" data-open={open ? '' : undefined} />
       </button>
       {open ? (
