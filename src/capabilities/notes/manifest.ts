@@ -270,8 +270,8 @@ export const notesCapability = defineCapability({
     ],
   },
   // YUK-1769 — write_note is the companion's direct Markdown note write
-  // (create / append / note_generate handoff). Notes owns it; Copilot holds
-  // only the allowlist surface grant.
+  // (create / append / patch / note_generate handoff). Notes owns it; Copilot
+  // holds only the allowlist surface grant.
   copilotTools: {
     tools: [
       {

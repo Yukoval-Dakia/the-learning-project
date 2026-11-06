@@ -105,8 +105,8 @@ export const PROPOSE_WRITE_TOOLS = [
   // only.
   'write_quiz',
   // YUK-1769 — direct Markdown note write for the companion (create / append /
-  // note_generate handoff). Owned by the notes manifest; granted to the copilot
-  // surfaces only.
+  // patch / note_generate handoff). Owned by the notes manifest; granted to the
+  // copilot surfaces only.
   'write_note',
   // YUK-1772 — read-only deterministic note check (issues list, no verdict).
   'check_note',
@@ -248,8 +248,8 @@ export const COPILOT_TOOLS = [
   // 本面；供给侧回执走既有 dispatcher 台账）。
   'file_bank_gap',
   // YUK-1769 — write_note is the companion's Markdown note write (create /
-  // append / note_generate handoff); the chip surface inherits it via the
-  // [...COPILOT_TOOLS, …] spread below.
+  // append / patch / note_generate handoff); the chip surface inherits it via
+  // the [...COPILOT_TOOLS, …] spread below.
   'write_note',
   // YUK-1772 — read-only deterministic note check (issues list, no verdict).
   'check_note',
