@@ -1,0 +1,453 @@
+name: Build TEST images
+
+# Builds the TEST deployment images (runner / worker / builder) for an
+# arbitrary commit and hands them off as a workflow artifact. The NAS builder
+# is capped at 3 GB where `pnpm build` is OOM-killed, so images are built on
+# the hosted runner and loaded onto the NAS from this artifact via
+# scripts/test-nas/load-ci-images.sh (YUK-1845).
+#
+# SECURITY: on a public repository any logged-in GitHub user may download a
+# run's artifacts while they are retained — treat this artifact as PUBLIC.
+# This workflow therefore never references secrets.*, never passes
+# credential-bearing build args (the NPM_REGISTRY / PLAYWRIGHT_DOWNLOAD_HOST
+# mirror args stay unset), and the image-content check below fails the run if
+# anything that looks like a private file or key material lands in an image.
+# retention-days: 1 keeps the exposure window as short as Actions allows.
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: Full 40-hex commit SHA to build
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.commit }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: runner · worker · builder
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      # The dispatch input must be a full 40-hex commit and is validated
+      # before anything consumes it, including the checkout below.
+      - name: Validate commit input
+        env:
+          COMMIT_INPUT: ${{ inputs.commit }}
+        run: |
+          set -euo pipefail
+          case "$COMMIT_INPUT" in
+            *[!0-9a-f]* | '') echo "commit must be 40 lowercase hex, got: ${COMMIT_INPUT}" >&2; exit 1;;
+          esac
+          [ "${#COMMIT_INPUT}" -eq 40 ] \
+            || { echo "commit must be exactly 40 hex chars, got: ${COMMIT_INPUT}" >&2; exit 1; }
+
+      - name: Checkout target commit
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ inputs.commit }}
+          persist-credentials: false
+
+      - name: Record resolved commit
+        id: src
+        run: |
+          set -euo pipefail
+          sha="$(git rev-parse HEAD)"
+          [ "$sha" = "$COMMIT_INPUT" ] \
+            || { echo "checkout resolved ${sha} != requested ${COMMIT_INPUT}" >&2; exit 1; }
+          echo "sha=${sha}" >> "$GITHUB_OUTPUT"
+          echo "building commit ${sha}"
+        env:
+          COMMIT_INPUT: ${{ inputs.commit }}
+
+      # The three images plus the buildkit cache and the save archive add up to
+      # ~15 GB; drop preinstalled toolchains this job never touches.
+      - name: Free disk space
+        run: |
+          set -x
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/hostedtoolcache /opt/ghc
+          df -h /
+
+      # The docker driver cannot export a layer cache; the container driver
+      # can. ACTIONS_RUNTIME_TOKEN is not present on this runner image, so
+      # type=gha cache is unavailable — the buildkit local cache is persisted
+      # across runs with actions/cache instead (restore-keys falls back to the
+      # most recent tlp-test entry).
+      - name: Set up buildx
+        run: |
+          set -euo pipefail
+          docker buildx create --name tlp-images --driver docker-container --use >/dev/null
+          docker buildx inspect --bootstrap | tail -5
+
+      - name: Restore buildx layer cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /tmp/tlp-buildx-cache
+          key: tlp-test-${{ steps.src.outputs.sha }}
+          restore-keys: tlp-test-
+
+      # Every stage that matters for an incremental code-only change lives in
+      # the cache after the worker build: worker's stage graph contains the
+      # whole Dockerfile (runner is one of its ancestors), so a single mode=max
+      # export from the worker build captures every stage. The runner/builder
+      # builds only import; exporting from all three would fight over the same
+      # cache dir. Mirror build args are deliberately not passed.
+      - name: Build runner / worker / builder images
+        env:
+          SHA: ${{ steps.src.outputs.sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/tlp-buildx-cache
+          # Evidence files written between target builds MUST stay outside the
+          # build context (i.e. outside the workspace): a changed file makes
+          # COPY . . miss the cache and re-runs pnpm build per target.
+          ev=/tmp/tlp-evidence
+          mkdir -p "$ev"
+          : > "$ev/timings.tsv"
+          for target in runner worker builder; do
+            t0=$(date +%s)
+            cache_to=''
+            if [ "$target" = worker ]; then
+              cache_to='--cache-to type=local,dest=/tmp/tlp-buildx-cache-new,mode=max'
+            fi
+            if ! docker buildx build \
+              --load --provenance=false --progress=plain \
+              --target "$target" \
+              --tag "tlp-test:${SHA}-${target}" \
+              --label "org.opencontainers.image.revision=${SHA}" \
+              --cache-from 'type=local,src=/tmp/tlp-buildx-cache' \
+              $cache_to \
+              . >"$ev/build-${target}.log" 2>&1; then
+              tail -80 "$ev/build-${target}.log"
+              exit 1
+            fi
+            if [ "$target" = worker ] && [ -d /tmp/tlp-buildx-cache-new ]; then
+              rm -rf /tmp/tlp-buildx-cache
+              mv /tmp/tlp-buildx-cache-new /tmp/tlp-buildx-cache
+            fi
+            secs=$(( $(date +%s) - t0 ))
+            cached=$(grep -c ' CACHED' "$ev/build-${target}.log" || true)
+            printf '%s\t%s\t%s\n' "$target" "$secs" "$cached" | tee -a "$ev/timings.tsv"
+          done
+          docker image ls --format '{{.Repository}}:{{.Tag}} {{.Size}}' | grep '^tlp-test:'
+
+      - name: Save archive and write manifest
+        env:
+          SHA: ${{ steps.src.outputs.sha }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifact
+          archive="artifact/tlp-test-${SHA}.tar.gz"
+          docker save \
+            "tlp-test:${SHA}-runner" \
+            "tlp-test:${SHA}-worker" \
+            "tlp-test:${SHA}-builder" \
+            | gzip -1 >"$archive"
+          (cd artifact && sha256sum "$(basename "$archive")" > "$(basename "$archive").sha256")
+          python3 - "$archive" <<'PY'
+          import json, os, sys, tarfile
+          archive, sha, run_id = sys.argv[1], os.environ["SHA"], os.environ["RUN_ID"]
+          # docker save emits classic manifest.json on the classic image store
+          # and an OCI index.json + blobs/ tree on the containerd store; both
+          # resolve to per-tag config digest + rootfs diff_ids below.
+          members, small, manifest, index = {}, {}, None, None
+          with tarfile.open(archive, "r|gz") as tf:
+              for m in tf:
+                  name = m.name.lstrip("./")
+                  if not m.isfile():
+                      continue
+                  members[name] = m.size
+                  if name == "manifest.json":
+                      manifest = json.loads(tf.extractfile(m).read())
+                  elif name == "index.json":
+                      index = json.loads(tf.extractfile(m).read())
+                  elif "/" not in name and name.endswith(".json"):
+                      small[name] = json.loads(tf.extractfile(m).read())
+                  elif name.startswith("blobs/sha256/") and m.size <= 1 << 18:
+                      try:
+                          small[name.rsplit("/", 1)[-1]] = json.loads(tf.extractfile(m).read())
+                      except ValueError:
+                          pass
+          sha256 = open(archive + ".sha256").read().split()[0]
+          targets = []
+          if manifest is not None:
+              for entry in manifest:
+                  tag = entry["RepoTags"][0]
+                  cfg, layers = entry["Config"], entry["Layers"]
+                  # classic store names it "<hex>.json"; containerd store names
+                  # it "blobs/sha256/<hex>" — the digest is the basename either way.
+                  cfgkey = cfg.rsplit("/", 1)[-1]
+                  size = members.get(cfg, 0) + sum(members.get(l, 0) for l in layers)
+                  targets.append({
+                      "target": tag.rsplit("-", 1)[-1],
+                      "tag": tag,
+                      "size_bytes": size,
+                      "config_digest": "sha256:" + cfgkey.removesuffix(".json"),
+                      "diff_ids": small.get(cfgkey, {}).get("rootfs", {}).get("diff_ids", []),
+                  })
+          elif index is not None:
+              def resolve(desc):
+                  blob = small.get(desc["digest"].split(":", 1)[1])
+                  if blob is None:
+                      sys.exit(f"unresolvable descriptor {desc['digest']} in archive")
+                  return blob
+              for desc in index.get("manifests", []):
+                  ann = desc.get("annotations", {})
+                  name = ann.get("io.containerd.image.name") or ann.get(
+                      "org.opencontainers.image.ref.name") or ""
+                  tag = name.split("/")[-1]
+                  if ":" not in tag:
+                      sys.exit(f"cannot determine tag for descriptor {desc['digest']}")
+                  doc = resolve(desc)
+                  if "manifests" in doc:
+                      cands = [d for d in doc["manifests"]
+                               if "attestation" not in json.dumps(d.get("annotations", {}))]
+                      if not cands:
+                          sys.exit("index contains only attestation manifests")
+                      doc = resolve(cands[0])
+                  cfgdesc = doc["config"]
+                  cfg = small.get(cfgdesc["digest"].split(":", 1)[1], {})
+                  layers = doc.get("layers", [])
+                  size = cfgdesc.get("size", 0) + sum(l.get("size", 0) for l in layers)
+                  targets.append({
+                      "target": tag.rsplit("-", 1)[-1],
+                      "tag": tag,
+                      "size_bytes": size,
+                      "config_digest": cfgdesc["digest"],
+                      "diff_ids": cfg.get("rootfs", {}).get("diff_ids", []),
+                  })
+          else:
+              sys.exit("archive has neither manifest.json nor index.json")
+          out = {
+              "commit": sha,
+              "run_id": run_id,
+              "archive": archive.split("/")[-1],
+              "archive_sha256": sha256,
+              "targets": sorted(targets, key=lambda t: t["target"]),
+          }
+          with open("artifact/manifest.json", "w") as f:
+              json.dump(out, f, indent=2)
+          print(json.dumps(out, indent=2))
+          PY
+          ls -lh "$archive"
+
+      # Scans every image's exported file list for private files and key
+      # material, dumps Config.Env names, and scans `docker history` for
+      # key-looking values. Any finding fails the job — the artifact is public.
+      - name: Image content check
+        env:
+          SHA: ${{ steps.src.outputs.sha }}
+        run: |
+          set -euo pipefail
+          for target in runner worker builder; do
+            cid=$(docker create "tlp-test:${SHA}-${target}")
+            tmp=$(mktemp /tmp/fs-export-XXXXXX.tar)
+            docker export "$cid" >"$tmp"
+            docker rm "$cid" >/dev/null
+            tar -tf "$tmp" >"fs-${target}.txt"
+            # A .pem filename alone cannot tell a public CA bundle from a
+            # private key (distro images ship both), so check each .pem's
+            # bytes for a real private-key header. Matches land in the report
+            # as findings; cert-only .pem files are listed as seen-but-public.
+            : >"pemkey-${target}.txt"
+            { grep -E '\.pem$' "fs-${target}.txt" | grep -v '/node_modules/' || true; } \
+              | while IFS= read -r p; do
+              # grep without -q: an early-exiting grep would SIGPIPE tar and
+              # pipefail would turn a found key into a miss.
+              if tar -xOf "$tmp" "$p" 2>/dev/null \
+                 | LC_ALL=C grep -aE 'PRIVATE KEY( BLOCK)?-----|openssh-key-v1' >/dev/null; then
+                printf '%s\n' "$p" >>"pemkey-${target}.txt"
+              fi
+            done
+            rm -f "$tmp"
+            docker image inspect "tlp-test:${SHA}-${target}" \
+              --format '{{range .Config.Env}}{{println .}}{{end}}' \
+              | cut -d= -f1 | sort > "env-${target}.txt"
+            docker history --no-trunc --format '{{.CreatedBy}}' \
+              "tlp-test:${SHA}-${target}" > "history-${target}.txt"
+          done
+          python3 - "$SHA" <<'PY'
+          import re, sys
+          sha = sys.argv[1]
+          basename_globs = [
+              ("dotenv-like", re.compile(r"^\.env")),
+              ("*.private.*", re.compile(r".*\.private\..*")),
+              ("compose*private*", re.compile(r"^compose.*private.*", re.I)),
+              ("auth.json", re.compile(r"^auth\.json$", re.I)),
+              ("*.dump", re.compile(r".*\.dump$")),
+              ("history.db", re.compile(r"^history\.db$", re.I)),
+              ("PLAN.md", re.compile(r"^PLAN\.md$")),
+              ("ssh-key-name", re.compile(r"^id_(rsa|dsa|ecdsa|ed25519)$")),
+              ("credential-file", re.compile(r"^\.(npmrc|netrc|git-credentials)$")),
+              ("key-bundle", re.compile(r".*\.(p12|pfx)$", re.I)),
+          ]
+          exact_names = {".git", ".remember", ".ssh", ".omc", ".agents", ".devin",
+                         "tlp-status", "tlp-audit-artifacts", "tlp-docs"}
+          # Tracked example file; the only permitted .env* in an image, by exact path.
+          allowed = {"app/.env.example"}
+          history_patterns = [
+              ("credential assignment", re.compile(r"(?i)(secret|token|password|passwd|credential|api[_-]?key|private[_-]?key|auth[_-]?token|access[_-]?key)[a-z0-9_]*\s*=")),
+              ("aws access key", re.compile(r"AKIA[0-9A-Z]{16}")),
+              ("private key header", re.compile(r"BEGIN [A-Z ]*PRIVATE KEY")),
+              ("long base64 secret", re.compile(r"=[A-Za-z0-9+/]{48,}={0,2}(\s|$)")),
+          ]
+          report, findings = [], []
+          for target in ["runner", "worker", "builder"]:
+              tag = f"tlp-test:{sha}-{target}"
+              report.append(f"== {tag} ==")
+              env_names = open(f"env-{target}.txt").read().split()
+              report.append(f"config.env names ({len(env_names)}): {' '.join(env_names)}")
+              seen_allowed, skipped_vendor = [], 0
+              for line in open(f"fs-{target}.txt"):
+                  path = line.strip()
+                  if path.startswith("./"):
+                      path = path[2:]
+                  path = path.lstrip("/").rstrip("/")
+                  if not path:
+                      continue
+                  if "node_modules" in path.split("/"):
+                      # pnpm-installed package content: can only contain what
+                      # upstream published (already public); the repo's own
+                      # files never reach these paths — the build context has
+                      # node_modules dockerignored and pnpm manages the rest.
+                      skipped_vendor += 1
+                      continue
+                  base = path.rsplit("/", 1)[-1]
+                  hit = None
+                  component = next((p for p in path.split("/") if p in exact_names), None)
+                  if component is not None:
+                      hit = f"named '{component}'"
+                  else:
+                      for name, rx in basename_globs:
+                          if rx.match(base):
+                              hit = name
+                              break
+                  if hit:
+                      (seen_allowed if path in allowed else findings).append(
+                          f"{tag}: {path} [{hit}]")
+              for line in open(f"pemkey-{target}.txt"):
+                  findings.append(
+                      f"{tag}: {line.strip()} [.pem containing a private key]")
+              for line in open(f"history-{target}.txt"):
+                  line = line.strip()
+                  for name, rx in history_patterns:
+                      if rx.search(line):
+                          # Report the pattern name only: the matching line
+                          # itself could carry the secret into a public log.
+                          findings.append(f"{tag}: history line matches '{name}'")
+                          break
+              report.append(
+                  f"allowed (tracked example, still reported): {seen_allowed or 'none'}")
+              report.append(
+                  f"skipped {skipped_vendor} vendored node_modules paths")
+          report.append(
+              "RESULT: " + ("FAIL" if findings else "PASS")
+              + f" ({len(findings)} finding(s))")
+          text = "\n".join(report + findings) + "\n"
+          open("image-content-check.txt", "w").write(text)
+          print(text)
+          sys.exit(1 if findings else 0)
+          PY
+          cp image-content-check.txt env-*.txt history-*.txt pemkey-*.txt artifact/
+          tar -czf artifact/fs-lists.tar.gz fs-*.txt && rm -f fs-*.txt
+
+      # A real image-config comparison against origin/main would need a second
+      # full build, so it is not done; this static check diffs the Dockerfile
+      # directives (FROM/USER/WORKDIR/ENV/EXPOSE/CMD) that produce those fields.
+      - name: Worker config vs origin/main Dockerfile (static)
+        env:
+          SHA: ${{ steps.src.outputs.sha }}
+        run: |
+          set -uo pipefail
+          {
+            echo "worker image: user=$(docker image inspect -f '{{.Config.User}}' "tlp-test:${SHA}-worker") workdir=$(docker image inspect -f '{{.Config.WorkingDir}}' "tlp-test:${SHA}-worker")"
+            echo "worker env names: $(cut -d= -f1 env-worker.txt | sort | tr '\n' ' ')"
+          } | tee worker-config.txt
+          if git fetch --depth=1 origin main >/dev/null 2>&1 \
+              && git show FETCH_HEAD:Dockerfile >/tmp/main.Dockerfile 2>/dev/null; then
+            grep -nE '^(FROM|USER|WORKDIR|ENV|EXPOSE|CMD)' Dockerfile >/tmp/this.df
+            grep -nE '^(FROM|USER|WORKDIR|ENV|EXPOSE|CMD)' /tmp/main.Dockerfile >/tmp/main.df
+            if diff -u /tmp/main.df /tmp/this.df > worker-config-vs-main.diff; then
+              echo "origin/main Dockerfile directives: identical" | tee -a worker-config.txt
+            else
+              echo "origin/main Dockerfile directives: DIFFER (see worker-config-vs-main.diff)" | tee -a worker-config.txt
+              cat worker-config-vs-main.diff
+            fi
+          else
+            echo "origin/main Dockerfile: not fetched — config NOT compared" | tee -a worker-config.txt
+          fi
+          cp worker-config.txt artifact/
+          cp worker-config-vs-main.diff artifact/ 2>/dev/null || true
+
+      # The same runtime path the worksheet_render job exercises:
+      # playwright-core + bundled chromium-headless-shell, as USER node.
+      - name: Worker runtime check — Chromium renders a PDF
+        env:
+          SHA: ${{ steps.src.outputs.sha }}
+        run: |
+          set -euo pipefail
+          docker run --rm --entrypoint node "tlp-test:${SHA}-worker" -e '
+            const { chromium } = require("playwright-core");
+            (async () => {
+              const browser = await chromium.launch();
+              const page = await browser.newPage();
+              await page.setContent("<h1>tlp worker chromium ok</h1>");
+              const pdf = await page.pdf();
+              if (pdf.length < 500 || pdf.toString("latin1", 0, 5) !== "%PDF-")
+                throw new Error("not a real pdf: " + pdf.length + " bytes");
+              console.log("PDF bytes:", pdf.length);
+              await browser.close();
+            })().catch((e) => { console.error(e); process.exit(1); });
+          '
+
+      # always() evidence steps run with `set +e` — a missing file or empty
+      # glob must not kill evidence collection on an already-failing run.
+      - name: Collect evidence into artifact dir
+        if: always()
+        run: |
+          set +e
+          mkdir -p artifact
+          cp /tmp/tlp-evidence/timings.tsv artifact/ 2>/dev/null
+          cp /tmp/tlp-evidence/build-*.log artifact/ 2>/dev/null
+          for f in image-content-check.txt env-*.txt history-*.txt pemkey-*.txt \
+                   worker-config.txt worker-config-vs-main.diff; do
+            [ -f "$f" ] && cp "$f" artifact/
+          done
+          ls -la artifact/
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: tlp-test-images-${{ steps.src.outputs.sha }}-${{ github.run_id }}
+          path: artifact/
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
+
+      - name: Job summary
+        if: always()
+        run: |
+          set +e
+          {
+            echo "### Build timings"
+            if [ -f /tmp/tlp-evidence/timings.tsv ]; then
+              total=0
+              while IFS="$(printf '\t')" read -r target secs cached; do
+                echo "- ${target}: ${secs}s (${cached} cached steps)"
+                total=$((total + secs))
+              done < /tmp/tlp-evidence/timings.tsv
+              echo "- **total: ${total}s**"
+            fi
+            ls -lh artifact/*.tar.gz 2>/dev/null | awk '{print "- archive size: "$5" ("$9")"}'
+            echo
+            [ -f image-content-check.txt ] && { echo "### Image content check"; \
+              sed 's/^/    /' image-content-check.txt; }
+            [ -f worker-config.txt ] && { echo "### Worker config"; \
+              sed 's/^/    /' worker-config.txt; }
+          } >> "$GITHUB_STEP_SUMMARY"

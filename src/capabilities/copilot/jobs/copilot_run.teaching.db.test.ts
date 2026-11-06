@@ -7,7 +7,7 @@ import {
   COPILOT_RUN_TABLE,
 } from '@/capabilities/copilot/server/copilot-run-status';
 import type { TeachingSkillResult } from '@/capabilities/copilot/server/skills/teaching-skill';
-import { installPracticeHostOperations } from '@/capabilities/practice/public';
+import { installPracticeHost } from '@/capabilities/practice/public';
 import { event, learning_item, question } from '@/db/schema';
 import { computeReplay } from '@/kernel/job-events';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -18,7 +18,7 @@ const db = testDb();
 
 beforeAll(async () => {
   await installAgencyHostOperations();
-  await installPracticeHostOperations();
+  await installPracticeHost();
 });
 
 async function acceptedTeachingTurn(kind: TeachingSkillResult['kind']) {

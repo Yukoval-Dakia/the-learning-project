@@ -50,12 +50,12 @@ export function AdminConfigSurface({
     setCommittedEpoch(receipt.committed_epoch);
     // A refresh failure must not turn an acknowledged write into a reported write failure.
     await query.refetch();
+    return receipt;
   };
   return (
     <AdminFrame>
       <AdminNav links={ADMIN_LINKS} current="/admin/config" navigate={navigate} />
       <AdminHead
-        kicker="ADMIN · config"
         title="配置"
         lead="查看真实运行选择，按任务管理模型与输出偏好。"
         actions={
@@ -93,9 +93,8 @@ export function AdminConfigSurface({
       {committedEpoch !== null && (
         <p role="status" className="adm-saved">
           {(query.data?.snapshot.epoch ?? -1) >= committedEpoch
-            ? '配置已保存，当前进程已刷新；后续调用按新配置解析。'
-            : '已保存，等待刷新。'}{' '}
-          不代表 worker 已确认。
+            ? '已保存。后台最多 15 秒后读到，这之后发起的运行才用新配置。'
+            : '已保存，等待刷新。'}
         </p>
       )}
       {query.isError && query.data && (

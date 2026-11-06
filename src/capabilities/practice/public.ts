@@ -10,24 +10,16 @@ export {
   type JudgeQuestionRow,
   assertSourceGroundingLaneConfigured,
   buildLegacyJudgeHandler,
-  commitFormalAttempt,
-  defaultImageFetch,
   executeJudgeWorkflow,
-  installInterventionDiagnosticLeaves,
-  installModelAdmissionPins,
   judgeDeliveryInput,
   judgeLegacyJobId,
-  previewFormalAttempt,
   readPermanentJudgeRun,
   reconcileJudgeAttempts,
-  recordFormalAttemptCapture,
   recordJudgeOperationalReceipt,
   reserveJudgeOperationalDelivery,
   saveResponseDraft,
-  saveSubmission,
   sealJudgeEngineInventory,
   validateJudgeEngineInventory,
-  withdrawCapturedOccurrence,
 } from './grading/public';
 export {
   type EnqueueVerifyFn,
@@ -36,33 +28,13 @@ export {
   canonicalQuestionContentHash,
   dispatchPendingVerifyIntents,
   embedQuestionTextForIngest,
-  installInterventionAuthorStages,
   mergeExactQuestionDuplicateKnowledgeIds,
   recoverOrphanVerifyDispatches,
   resolveSolveOverrideFromEnv,
   runQuestionAdmissionChecks,
   writeVerifyDispatchIntent,
 } from './question-bank/public';
-export { installDailyReviewPlanFacts } from './scheduling/public';
 
-/**
- * YUK-1770 — installs practice's today-recompose operation behind the kernel
- * steering port. Agency's steering subscription calls the port and never
- * imports practice (cross-capability value edges are decrease-only). Defined
- * inline here so the barrel adds no new pass-through site.
- */
-export async function installTodayPracticeRecompose(): Promise<void> {
-  const [{ installTodayPracticeRecompose: install, installSteeringDeferredDueCount }] =
-    await Promise.all([import('@/kernel/steering-recompose')]);
-  // Both operations ride the scheduling sub-owner's own public seam — the
-  // capability barrel must not enter scheduling/server directly
-  // (pnpm audit:practice-subowners).
-  const { recomposePracticeStream, countSteeringDeferredDueReviews } = await import(
-    './scheduling/public'
-  );
-  install((db) => recomposePracticeStream(db, {}));
-  installSteeringDeferredDueCount((db, now) => countSteeringDeferredDueReviews(db, { now }));
-}
 // practice 拥有配置键的 consumer-effective 事实（真实 reader 调用）：
 // 组合根 facts seam 聚合进 GET /api/admin/config keys[].effective。
 export { practiceConfigEffectiveFacts } from './server/config-effective-facts';
@@ -73,21 +45,43 @@ export {
   maxNgramOverlap,
   vectorNearHoldMetadata,
 } from './supply/public';
+
+// Keep executeSupplyPlan/buildSupplyExecutorDeps out of this barrel: that chain
+// (plan-executor → web-candidates → SourcingTask → pi agent runtime) pulls the SDK into the
+// migrate cjs bundle, whose top-level createRequire(import.meta.url) fails at startup.
+// server/worker mark it external, so only migrate is affected. scripts/supply-execute.ts
+// imports the deep path directly.
+
+// ---------- composition seam ----------
+
+// The two install entrypoints live in this barrel (it is the audit-registered
+// composition file): a separate composition module would ride every barrel
+// importer into the migrate bundle, which design §5 forbids. installPracticeHost
+// covers API / Start acceptance hosts, the release rehearsal, and DB tests;
+// installPracticeWorker adds the worker-only bindings. Repair scripts needing
+// only model pins install installModelAdmissionPins via grading/public directly.
+// Each install fills an independent process-wide slot — order is explicit, no
+// timing coupling. An uninstalled port call throws HostOperationNotInstalledError.
+
 // Binds the operations Practice owns behind kernel ports that API routes and worker
 // jobs both call. Hosts call this before serving or mounting handlers.
-export async function installPracticeHostOperations(): Promise<void> {
+async function installPracticeHostOperationPorts(): Promise<void> {
   const [
     { installReviewAnswerBindingOperations },
     { installReviewDueReader },
     { installConversationConfirmationAssessment },
-    { captureReviewAnswerBinding, consumeReviewAnswerBinding },
+    { installJudgeOperations },
+    { captureReviewAnswerBinding, consumeReviewAnswerBinding, withdrawCapturedOccurrence },
+    grading,
     executeGetReviewDue,
     { issueConversationConfirmation, readConversationConfirmation, submitConversationConfirmation },
   ] = await Promise.all([
     import('@/kernel/records/review-answer-binding'),
     import('@/kernel/read-models/review-due'),
     import('@/kernel/records/conversation-confirmation-assessment'),
+    import('@/kernel/judge'),
     import('./settlement/public'),
+    import('./grading/public'),
     loadReviewDueReader(),
     import('./server/conversation-confirmation'),
   ]);
@@ -101,13 +95,59 @@ export async function installPracticeHostOperations(): Promise<void> {
     submit: submitConversationConfirmation,
     read: readConversationConfirmation,
   });
+  installJudgeOperations({
+    previewFormalAttempt: grading.previewFormalAttempt,
+    commitFormalAttempt: grading.commitFormalAttempt,
+    recordFormalAttemptCapture: grading.recordFormalAttemptCapture,
+    saveSubmission: grading.saveSubmission,
+    withdrawCapturedOccurrence,
+  });
 }
 
-// Keep executeSupplyPlan/buildSupplyExecutorDeps out of this barrel: that chain
-// (plan-executor → web-candidates → SourcingTask → pi agent runtime) pulls the SDK into the
-// migrate cjs bundle, whose top-level createRequire(import.meta.url) fails at startup.
-// server/worker mark it external, so only migrate is affected. scripts/supply-execute.ts
-// imports the deep path directly.
+/**
+ * YUK-1770 — installs practice's today-recompose operation behind the kernel
+ * steering port. Agency's steering subscription calls the port and never
+ * imports practice (cross-capability value edges are decrease-only).
+ */
+async function installTodayPracticeRecompose(): Promise<void> {
+  const [{ installTodayPracticeRecompose: install, installSteeringDeferredDueCount }] =
+    await Promise.all([import('@/kernel/steering-recompose')]);
+  // Both operations ride the scheduling sub-owner's own public seam — the
+  // capability barrel must not enter scheduling/server directly
+  // (pnpm audit:practice-subowners).
+  const { recomposePracticeStream, countSteeringDeferredDueReviews } = await import(
+    './scheduling/public'
+  );
+  install((db) => recomposePracticeStream(db, {}));
+  installSteeringDeferredDueCount((db, now) => countSteeringDeferredDueReviews(db, { now }));
+}
+
+/** Every port an API, Start acceptance, rehearsal or test host needs, in an explicit order. */
+export async function installPracticeHost(): Promise<void> {
+  await installPracticeHostOperationPorts();
+  const { installModelAdmissionPins } = await import('./grading/public');
+  await installModelAdmissionPins();
+  const { installSchedulingCandidateRebuild } = await import('./settlement/public');
+  installSchedulingCandidateRebuild();
+}
+
+/** Worker bindings: the host set plus worker-only facts and paid stages. */
+export async function installPracticeWorker(): Promise<void> {
+  await installPracticeHost();
+  const [
+    { installDailyReviewPlanFacts },
+    { installInterventionAuthorStages },
+    { installInterventionDiagnosticLeaves },
+  ] = await Promise.all([
+    import('./scheduling/public'),
+    import('./question-bank/public'),
+    import('./grading/public'),
+  ]);
+  await installDailyReviewPlanFacts();
+  await installTodayPracticeRecompose();
+  await installInterventionAuthorStages();
+  await installInterventionDiagnosticLeaves();
+}
 
 export type { CoverageLatticeRead } from './supply/public';
 export const recoverWebSupplies: typeof import('./supply/public').recoverWebSupplies = async (
@@ -133,5 +173,3 @@ export {
   abandonOrphanReviewSession,
   selectOrphanReviewCandidates,
 } from './session/public';
-
-export { installSchedulingCandidateRebuild } from './settlement/public';

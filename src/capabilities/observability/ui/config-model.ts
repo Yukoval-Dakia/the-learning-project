@@ -6,7 +6,10 @@ export type ConfigProvider = ConfigData['providers'][number];
 export type ConfigKey = ConfigData['keys'][number];
 export type ConfigWrite = ApiOperationRequestBody<'writeAdminConfig'>;
 export type ConfigReceipt = ApiOperationJsonResponse<'writeAdminConfig'>;
-export type SaveConfig = (changes: ConfigWrite['changes']) => Promise<void>;
+export type SaveConfig = (changes: ConfigWrite['changes']) => Promise<ConfigReceipt>;
+export type ConfigGlobal = NonNullable<ConfigData['global']>;
+export type ConfigBinding = NonNullable<ConfigTask['effective_binding']>;
+export type ConfigModel = NonNullable<ConfigProvider['models']>[number];
 export const CONFIG_QUERY_KEY = ['admin-config'] as const;
 export const SECTIONS = [
   { id: 'overview', label: '总览' },
@@ -50,6 +53,11 @@ export function providerStatus(provider: ConfigProvider): string {
       return '认证状态未知';
   }
 }
+/** A task's plain name and one line on what it does; the code name until it has one. */
+export function taskWords(task: ConfigTask): { name: string; detail: string | null } {
+  const [name, ...rest] = (task.label ?? '').split('：');
+  return name ? { name, detail: rest.join('：') || null } : { name: task.kind, detail: null };
+}
 export function taskEditable(task: ConfigTask): boolean {
   return task.override_wired.provider && task.override_wired.model;
 }
@@ -86,21 +94,157 @@ export function budgetChanges(task: ConfigTask, draft: BudgetDraft): ConfigWrite
   }
   return [{ action: 'set', key: `task.${task.kind}.budget`, value: budget }];
 }
-export function modelChanges(
-  task: ConfigTask,
-  provider: string,
-  model: string,
-): ConfigWrite['changes'] {
+export interface ModelDraft {
+  provider: string;
+  model: string;
+  /** Empty string: no level of its own. */
+  thinking: string;
+  ownModel: boolean;
+}
+export function storedThinking(task: ConfigTask): string {
+  const reasoning = task.override?.reasoning;
+  // Same precedence as the runtime; a legacy stored 'none' means off there too.
+  const level = reasoning?.level ?? reasoning?.reasoning_effort;
+  if (typeof level !== 'string') return '';
+  return level === 'none' ? 'off' : level;
+}
+export function initialModelDraft(task: ConfigTask): ModelDraft {
+  return {
+    provider: task.override?.provider ?? task.default_provider,
+    model: task.override?.model ?? task.default_model,
+    thinking: storedThinking(task),
+    ownModel: task.override?.override_global_pin === true,
+  };
+}
+/** Only what actually changed is written, so an untouched field never becomes an override. */
+export function modelChanges(task: ConfigTask, draft: ModelDraft): ConfigWrite['changes'] {
+  const initial = initialModelDraft(task);
+  const key = (field: string) => `task.${task.kind}.${field}`;
+  const changes: ConfigWrite['changes'] = [];
+  // A task that keeps its own model needs a stored pair: the server refuses the flag alone.
+  const pairMissing = !task.override?.provider || !task.override?.model;
+  if (
+    draft.provider !== initial.provider ||
+    draft.model !== initial.model ||
+    (draft.ownModel && pairMissing)
+  ) {
+    changes.push(
+      { action: 'set', key: key('provider'), value: draft.provider },
+      { action: 'set', key: key('model'), value: draft.model },
+    );
+  }
+  if (draft.thinking !== initial.thinking) {
+    changes.push(
+      draft.thinking
+        ? { action: 'set', key: key('reasoning'), value: { level: draft.thinking } }
+        : { action: 'clear', key: key('reasoning') },
+    );
+  }
+  if (draft.ownModel !== initial.ownModel) {
+    changes.push(
+      draft.ownModel
+        ? { action: 'set', key: key('override_global_pin'), value: true }
+        : { action: 'clear', key: key('override_global_pin') },
+    );
+  }
+  return changes;
+}
+const THINKING_WORDS: Readonly<Record<string, string>> = {
+  off: '关闭',
+  none: '关闭',
+  on: '开启',
+  minimal: '最少',
+  low: '低',
+  medium: '中',
+  high: '高',
+  xhigh: '很高',
+  max: '最高',
+};
+export function thinkingWord(level: string | null | undefined): string {
+  if (!level) return '未设置';
+  return THINKING_WORDS[level] ?? level;
+}
+const RULE_WORDS: Readonly<Record<NonNullable<ConfigBinding['selection_rule']>, string>> = {
+  env_pin: '紧急开关',
+  global_pin: '全局默认',
+  task_pair_priority: '这个任务自己选的',
+  task_config: '这个任务自己选的',
+  call_override: '专用通道',
+  registry_default: '代码默认',
+};
+export function ruleWord(rule: ConfigBinding['selection_rule']): string {
+  return rule ? RULE_WORDS[rule] : '来源未知';
+}
+const LANE_WORDS: Readonly<Record<string, string>> = {
+  vision_judge: '判图通道',
+  verify_solve: '解题核对通道',
+};
+export function laneWords(lanes: readonly string[]): string {
+  return lanes.map((lane) => LANE_WORDS[lane] ?? lane).join('、');
+}
+/** One line for what a task really runs on, or why it cannot be told. */
+export function bindingLine(binding: ConfigBinding | null): string {
+  if (!binding) return '运行时事实尚未就绪';
+  if (binding.error) return binding.error;
+  return `${binding.provider} / ${binding.model}`;
+}
+export function bindingThinking(binding: ConfigBinding | null): string | null {
+  const reasoning = binding?.reasoning;
+  if (!reasoning) return null;
+  if (reasoning.error) return reasoning.error;
+  if (!reasoning.applied) return null;
+  // 'none' is no parameter on the wire: the model's own default, which may not be off.
+  if (reasoning.applied === 'none') {
+    return reasoning.requested
+      ? `思考由模型决定（选的是${thinkingWord(reasoning.requested)}，这个模型调不了）`
+      : '思考由模型决定';
+  }
+  const applied = thinkingWord(reasoning.applied);
+  return reasoning.requested && reasoning.requested !== reasoning.applied
+    ? `思考 ${applied}（选的是${thinkingWord(reasoning.requested)}，这个模型取到${applied}）`
+    : `思考 ${applied}`;
+}
+/** The model's own facts, in the words the picker shows. */
+export function modelFactsLine(model: ConfigModel): string {
+  const size = (n: number | null) => (n === null ? '未知' : `${Math.round(n / 1000)}k`);
+  const yes = (v: boolean | 'unknown') => (v === 'unknown' ? '未知' : v ? '能' : '不能');
+  const price = model.cost
+    ? `每百万 token 输入 $${model.cost.input} / 输出 $${model.cost.output}`
+    : '单价未知';
   return [
-    { action: 'set', key: `task.${task.kind}.provider`, value: provider },
-    { action: 'set', key: `task.${task.kind}.model`, value: model },
-  ];
+    `上下文 ${size(model.context_window_tokens)}`,
+    `输出 ${size(model.max_output_tokens)}`,
+    `用工具：${yes(model.tool_call)}`,
+    `看图：${yes(model.vision)}`,
+    price,
+  ].join(' · ');
+}
+const RUNTIME_LEVELS = new Set(['minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
+/**
+ * The levels a task can ask for, in the runtime's names (it refuses anything else). A toggle model
+ * lists off/on but takes any non-off level as on; a budget model lists nothing but takes the levels
+ * up to high. Off is always offered: the save receipt says if a model cannot express it.
+ */
+export function thinkingLevels(model: ConfigModel | undefined): string[] {
+  const options = model?.reasoning_options;
+  if (!options || options.mode === 'unknown') return [];
+  if (options.mode === 'toggle') return ['off', 'high'];
+  if (options.mode === 'budget_tokens') return ['off', 'low', 'medium', 'high'];
+  return ['off', ...options.values.filter((level) => RUNTIME_LEVELS.has(level))];
+}
+/** A toggle model has only off and on, so its non-off level reads as on. */
+export function thinkingChoiceWord(model: ConfigModel | undefined, level: string): string {
+  return model?.reasoning_options?.mode === 'toggle' && level !== 'off'
+    ? '开启'
+    : thinkingWord(level);
 }
 export function resetTaskChanges(
   task: ConfigTask,
   group: 'model' | 'budget',
 ): ConfigWrite['changes'] {
-  return (group === 'model' ? ['provider', 'model'] : ['budget']).map((field) => ({
+  const fields =
+    group === 'model' ? ['provider', 'model', 'reasoning', 'override_global_pin'] : ['budget'];
+  return fields.map((field) => ({
     action: 'clear',
     key: `task.${task.kind}.${field}`,
   }));

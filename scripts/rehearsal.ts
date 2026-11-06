@@ -37,6 +37,11 @@ async function main(): Promise<void> {
   const out = args.out === null ? resolve('.remember', 'rehearsal', ts) : resolve(args.out);
 
   const { runRehearsal } = await import('@/server/release/rehearsal/orchestrate');
+  // The rehearsal is a host: post-write simulation calls the kernel judge port the
+  // same way the API does. All bindings are lazy — installing reads no env or DB,
+  // so the placeholder DATABASE_URL stays untouched.
+  const { installPracticeHost } = await import('@/capabilities/practice/public');
+  await installPracticeHost();
   const report = await runRehearsal({ out });
 
   console.log(`\n[rehearsal] report: ${report.out_dir}/report.json`);

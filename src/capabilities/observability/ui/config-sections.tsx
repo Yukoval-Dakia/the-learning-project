@@ -1,5 +1,5 @@
-import { Fragment, useState } from 'react';
-import { Button, Chip } from '@/ui-next/public';
+import { useState } from 'react';
+import { Button } from '@/ui-next/public';
 import { AdminKpi, AdminKpis } from './admin-frame';
 import {
   type ConfigData,
@@ -8,10 +8,8 @@ import {
   configOwner,
   displayValue,
   matchesSearch,
-  taskEditable,
 } from './config-model';
-import { ConfigProviderCatalog } from './config-provider-catalog';
-import { ConfigTaskEditor } from './config-task-editor';
+import { ConfigModels } from './config-models';
 
 function NoMatches() {
   return <p className="adm-empty adm-pad">没有匹配项，请调整搜索条件。</p>;
@@ -94,112 +92,6 @@ export function ConfigKeys({ rows, query }: { rows: ConfigKey[]; query: string }
           </table>
         </div>
       )}
-    </div>
-  );
-}
-
-function Models({ data, query, save }: { data: ConfigData; query: string; save: SaveConfig }) {
-  const [editing, setEditing] = useState<string | null>(null);
-  const rows = data.tasks.filter((t) =>
-    matchesSearch(
-      query,
-      t.kind,
-      t.default_provider,
-      t.default_model,
-      t.override,
-      t.effective_binding,
-    ),
-  );
-  return (
-    <div className="adm-stack">
-      <p className="adm-note">
-        当前选择是下一次调用的解析基线；调用参数或专用通道可进一步覆盖。运行中的调用继续使用其固定快照。
-      </p>
-      {!rows.length ? (
-        <div className="adm-panel">
-          <NoMatches />
-        </div>
-      ) : (
-        <div className="adm-panel adm-table-scroll">
-          <table className="adm-table adm-table-wide">
-            <caption className="adm-caption">{rows.length} 个 AI 任务</caption>
-            <thead>
-              <tr>
-                <th scope="col">任务</th>
-                <th scope="col">任务配置</th>
-                <th scope="col">当前选择</th>
-                <th scope="col">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((task) => (
-                <Fragment key={task.kind}>
-                  <tr data-open={editing === task.kind ? '' : undefined}>
-                    <th scope="row" className="adm-row-head adm-mono">
-                      {task.kind}
-                      {!taskEditable(task) && (
-                        <p className="adm-cell-chip">
-                          <Chip>专用通道 · 只读</Chip>
-                        </p>
-                      )}
-                    </th>
-                    <td className="adm-mono adm-break">
-                      {task.override?.provider ?? task.default_provider}
-                      <br />
-                      {task.override?.model ?? task.default_model}
-                      <p className="adm-cell-sub">
-                        {task.override?.provider || task.override?.model
-                          ? '含数据库覆盖'
-                          : '代码默认'}
-                      </p>
-                    </td>
-                    <td className="adm-mono adm-break">
-                      {task.effective_binding?.error ??
-                        (task.effective_binding
-                          ? `${task.effective_binding.provider} / ${task.effective_binding.model}`
-                          : '运行时事实尚未就绪')}
-                      {task.global_pin && (
-                        <p className="adm-cell-caution">
-                          全局固定：{displayValue(task.global_pin)}
-                        </p>
-                      )}
-                      <p className="adm-cell-sub">
-                        预算：{task.effective_budget.maxIterations ?? '—'} 轮 ·{' '}
-                        {task.effective_budget.timeout / 1000} 秒 ·{' '}
-                        {task.effective_budget.transientRetries} 次重试
-                      </p>
-                    </td>
-                    <td className="adm-num">
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        disabled={editing !== null || !taskEditable(task) || !data.facts_injected}
-                        onClick={() => setEditing(editing === task.kind ? null : task.kind)}
-                        aria-expanded={editing === task.kind}
-                      >
-                        编辑 {task.kind}
-                      </Button>
-                    </td>
-                  </tr>
-                  {editing === task.kind && (
-                    <tr className="adm-editor-row">
-                      <td colSpan={4}>
-                        <ConfigTaskEditor
-                          task={task}
-                          providers={data.providers}
-                          save={save}
-                          onClose={() => setEditing(null)}
-                        />
-                      </td>
-                    </tr>
-                  )}
-                </Fragment>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-      <ConfigProviderCatalog providers={data.providers} query={query} />
     </div>
   );
 }
@@ -309,7 +201,7 @@ export function ConfigSections({
   const flags = data.keys.filter(
     (r) => typeof r.default === 'boolean' || typeof r.value === 'boolean',
   );
-  if (section === 'ai-models') return <Models data={data} query={query} save={save} />;
+  if (section === 'ai-models') return <ConfigModels data={data} query={query} save={save} />;
   if (section === 'locale') return <Locale data={data} save={save} />;
   if (section === 'flags') return <ConfigKeys rows={flags} query={query} />;
   if (section === 'thresholds')

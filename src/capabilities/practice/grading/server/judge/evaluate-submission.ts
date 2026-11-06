@@ -26,7 +26,6 @@ import {
   activateEvaluation,
   learningSettlement,
   snapshotAssessmentLearningScope,
-  withdrawCapturedOccurrence,
 } from '@/capabilities/practice/settlement/public';
 import { resolveTaskBudget } from '@/capabilities/task-registry';
 import {
@@ -44,7 +43,6 @@ import {
   type EvaluationRecordT,
   ModelExecutionNotStartedError,
   type ModelUnitExecutorPort,
-  type ScoringBasisT,
   SubmissionRecord,
   evaluateSubmissionCore,
   projectIssuedScoringBasis,
@@ -82,7 +80,7 @@ import { createRubricModelExecutor } from '../rubric-model-executor';
 import { createRecordedModelExecutor } from './recorded-model-executor';
 
 // Grading reaches the settlement seam only through this module (design §3.1 item 1).
-export { snapshotAssessmentLearningScope, withdrawCapturedOccurrence };
+export { snapshotAssessmentLearningScope };
 
 /**
  * 装配描述符：在本模块组合点按 descriptor 铸
@@ -141,18 +139,9 @@ export interface EvaluateSubmissionRequest {
   model_executor?: ModelUnitExecutorPort | JevModelExecutorSpec | PiModelExecutorSpec;
 }
 
-export interface EvaluateSubmissionResult {
-  /** 落库（或 replay 已存在）的 candidate evaluation。 */
-  record: EvaluationRecordT;
-  /** 真实写入时间（持久化列；契约 EvaluationRecord 不含该字段）。 */
-  created_at: Date;
-  /** true = (submission, attempt) 冲突且全载荷一致 —— 幂等重放，未新写。 */
-  replayed: boolean;
-  /** 本次评估依据的【已冻结】scoring basis（revision 快照；消费侧投影用）。 */
-  scoring_basis: ScoringBasisT;
-  model_units_invoked: number;
-  spent_cost_usd_micros: number;
-}
+export type { EvaluateSubmissionResult } from '@/core/schema/assessment';
+
+import type { EvaluateSubmissionResult } from '@/core/schema/assessment';
 
 export class EvaluateSubmissionError extends Error {
   override name = 'EvaluateSubmissionError';

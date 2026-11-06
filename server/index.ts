@@ -109,21 +109,16 @@ async function registerToolsBeforeServe(): Promise<void> {
 
 // API routes and worker jobs both call Practice-owned operations through kernel ports.
 async function installPracticeOperationsBeforeServe(): Promise<void> {
-  const { installPracticeHostOperations, installModelAdmissionPins } = await import(
-    '@/capabilities/practice/public'
-  );
-  await installPracticeHostOperations();
-  await installModelAdmissionPins();
+  const { installPracticeHost } = await import('@/capabilities/practice/public');
+  await installPracticeHost();
   const { installAgencyHostOperations } = await import('@/capabilities/agency/public');
   await installAgencyHostOperations();
 }
 
 async function installSettlementPortsBeforeServe(): Promise<void> {
-  const { installSchedulingCandidateRebuild } = await import('@/capabilities/practice/public');
   // Dynamic: its import chain reads DB_POOL_MAX, which loadApiEnv has to set first.
   const { orchestrateCascadeRevert } = await import('@/server/revert/cascade-revert');
   installSettlementCascadeRevert(orchestrateCascadeRevert);
-  installSchedulingCandidateRebuild();
 }
 
 // YUK-1007 — admin config 读面的运行时事实注入（providers[] / infra schedules /

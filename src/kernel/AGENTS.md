@@ -6,11 +6,11 @@
 | 文件 | 职责 |
 |------|------|
 | `manifest.ts` | `CapabilityManifest` 接口、`defineCapability()`、`validateComposition()`；声明包名 / event actions / api routes / jobs / proposals / copilotTools / ui 的唯一归属 |
-| `host-operation.ts` + `records/conversation-confirmation-assessment.ts`、`records/review-answer-binding.ts`、`read-models/review-due.ts` | Practice 在启动时经 `installPracticeHostOperations()` 安装的宿主端口（Copilot 调用）；未安装即抛 `HostOperationNotInstalledError`，调用方不得把它当普通读失败降级。**端口槽是进程级**：所有 install 端口经 `installHostOperation`/`installedHostOperation` 存取共享注册表——同进程第二模块图（built Start bundle、Vite SSR）读到同一份安装，禁止回落到模块级 `let` |
+| `host-operation.ts` + `records/conversation-confirmation-assessment.ts`、`records/review-answer-binding.ts`、`read-models/review-due.ts`、`judge.ts` | Practice 在启动时经 `installPracticeHost()`（`capabilities/practice/public.ts` 组合 seam）安装的宿主端口；未安装即抛 `HostOperationNotInstalledError`，调用方不得把它当普通读失败降级。**端口槽是进程级**：所有 install 端口经 `installHostOperation`/`installedHostOperation` 存取共享注册表——同进程第二模块图（built Start bundle、Vite SSR）读到同一份安装，禁止回落到模块级 `let`。`judge.ts` 只持 5 个判题操作（preview/commit/capture/save/withdraw），不 import practice 实现 |
 | `settlement-cascade-revert.ts` | 结算重放调用级联撤回的宿主端口：实现在 `src/server/revert/cascade-revert.ts`，API、worker、验收入口和跑结算的脚本在启动时经 `installSettlementCascadeRevert()` 安装，未安装时抛 `HostOperationNotInstalledError` |
 | `read-models/learner-context.ts`、`read-models/memory-brief.ts` | Agency 在启动时经 `installAgencyHostOperations()` 安装的宿主端口：前者是启动段装配（Copilot 调用），后者是 memory brief 读语义（行 + 用途现行 + freshness 的唯一口径，Copilot 今日摘要经它读）；未安装即抛 `HostOperationNotInstalledError`，契约同上 |
 | `config-completeness.ts` | 关键配置是否齐全：纯函数 `checkConfigCompleteness()`（只返回缺失的变量名，不含值）、事件 action `CONFIG_INCOMPLETE_EVENT_ACTION` 与 payload schema；`/api/ready` 缺配置时返回 503，API 与 worker 启动时按「进程 + UTC 日」各写一条事件，任务失败告警读它 |
-| `read-models/model-admission.ts` | 判分模型准入的读侧：active 切片、题组→科目查找；当前模型 pin 表由 practice 判分 owner 的 `installModelAdmissionPins()`（`capabilities/practice/grading/server/model-admission-pins.ts`，经 practice `public.ts` 转出）在 API、Start 验收入口、worker 与维护脚本启动时安装；未安装时只要存在 active 切片即抛错（无 active 切片时 pin 不参与判定）。切片登记与退役归 `capabilities/practice/grading/server/model-slice-registry` |
+| `read-models/model-admission.ts` | 判分模型准入的读侧：active 切片、题组→科目查找；当前模型 pin 表由 practice 判分 owner 的 `installModelAdmissionPins()`（`capabilities/practice/grading/server/model-admission-pins.ts`）在 API、Start 验收入口、worker 启动时经 `installPracticeHost()` 安装、维护脚本经 `grading/public.ts` 直装；未安装时只要存在 active 切片即抛错（无 active 切片时 pin 不参与判定）。切片登记与退役归 `capabilities/practice/grading/server/model-slice-registry` |
 | `events/` | event envelope 的完整读写 API、修正投影（corrections / effective-truth）和 deterministic scope tagging；唯一 event INSERT owner |
 | `tools/` | DomainTool 契约（types / allowlists / budgets / context-throttle），central registry 与 capability tool 共享 |
 | `read-models/` | 跨 capability 只读投影（failure attempts、failure-learning knowledge context、question activity、cause policy、knowledge tree/subject 解析、目标定位范围与种子根锚点 `placement-scope`、questions 列表、daily review plan inputs、intervention preparation stage、note section projection、练习会话打开态 `practice-session-open`、学习者作答/学习活动集合与学科解析及最长连错 `learner-activity`） |
@@ -28,7 +28,8 @@
 | `parse-task-output.ts` / `generation-prompt-support.ts` | TaskSpec 文本输出的 JSON 解析与 schema 校验；出题类 prompt 的题型词表与科目 rubric 规范段 |
 | `object-storage.ts` | 共享 R2/S3 对象 I/O：完整 client 接口、SDK 命令/响应适配与 lazy singleton；不拥有资产引用、数据库事务或付费策略 |
 | `http.ts` | 公共 HTTP helper（公共件，非契约） |
-| `judge.ts` / `placement-persistence.ts` | 根目录过渡门面：只 re-export 现有消费者实际使用的符号，不得新增符号。`judge.ts` 只剩 ingestion / agency 用到的 6 个判题入口 |
+| `judge.ts` | 判分宿主端口：agency / ingestion 需要的 5 个判分入口（preview / commit / capture / submit / withdraw）。Practice 组合入口 `capabilities/practice/public.ts` 启动时经 `installJudgeOperations()` 把真实 grading/settlement 实现装进进程级槽；未安装即抛 `HostOperationNotInstalledError`。DTO 归 `@/core/schema/assessment`，kernel 只拥有端口与端口自有形状 |
+| `placement-persistence.ts` | 根目录过渡门面：只 re-export 现有消费者实际使用的符号，不得新增符号 |
 
 ## CONVENTIONS
 - `JobHandlerFactory` 参数刻意用 `any`：kernel 不 import pg-boss 类型，让 capability 包的 `buildXHandler(db)` 工厂能零适配注册（注释已说明 variance escape hatch）。
