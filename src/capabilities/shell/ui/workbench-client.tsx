@@ -6,6 +6,7 @@ import {
   listAutoApplied,
   listDecisionProposalPage,
   listObservationProposalPreview,
+  retractAutoApplied,
   retractProposal,
 } from './inbox-api';
 import { getPrepDeskConjectures } from './prep-desk-api';
@@ -24,6 +25,7 @@ export type WorkbenchClient = {
   listAutoApplied: typeof listAutoApplied;
   decideProposal: typeof decideProposal;
   retractProposal: typeof retractProposal;
+  retractAutoApplied: typeof retractAutoApplied;
   getPrepDeskConjectures: typeof getPrepDeskConjectures;
   getActiveProbes: typeof getActiveProbes;
   submitProbeAnswer: typeof submitProbeAnswer;
@@ -42,9 +44,10 @@ export const httpWorkbenchClient: WorkbenchClient = {
     ),
   listDecisionProposalPage: (...args) => listDecisionProposalPage(...args),
   listObservationProposalPreview: () => listObservationProposalPreview(),
-  listAutoApplied: () => listAutoApplied(),
+  listAutoApplied: (...args) => listAutoApplied(...args),
   decideProposal: (...args) => decideProposal(...args),
   retractProposal: (...args) => retractProposal(...args),
+  retractAutoApplied: (...args) => retractAutoApplied(...args),
   getPrepDeskConjectures: () => getPrepDeskConjectures(),
   getActiveProbes: () => getActiveProbes(),
   submitProbeAnswer: (...args) => submitProbeAnswer(...args),

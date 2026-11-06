@@ -26,7 +26,7 @@ description: Full mechanics of this repo's pnpm audit:* scripts and their allowl
 - `audit:provider-lanes`：lane 接线，并包含 attempt-truth（wrapper、legacy cost、zero-cost）。`pnpm test` 前缀与 CI policy audit lane 都跑它。
 - `audit:dependencies`：`pnpm audit --prod --audit-level=high`，CI standalone hard gate。
 - `audit:fold-writes`：fold-owned projection 表写者 registry ↔ 源码反查；默认 report-only，`--strict` 对未授权写点/陈旧 registry fail。
-- `audit:flags`：`*_ENABLED` 加 `SCOPED_CONTROL_NAMES` 有界控制项 ↔ `audit-flags-ledger.json` 对账（布尔 env/const 与 enum/CSV/JSON 分别声明真实值域和 reader marker）；默认 report-only，`--strict` 对漏登记/陈旧/坏 ledger fail，字面量差异只报告。
+- `audit:flags`：唯一登记处是 `src/core/config/registry.ts` 的 `CONFIG_REGISTRY`（boolean env 开关 + operator enum/CSV/JSON 控制项）；11 个编译期 const 由领域源码自己的 `const NAME = true|false` 登记；reader 从 `getConfig`/`getConfigFlag`/`getConfigMany` 调用点推导。默认 report-only，`--strict` 对未登记 flag、定义与 `envParse` 不符、无 reader、const 重复、以及相对 base 的 env 名/envMode/字面量域/枚举值漂移 fail；默认值变化与 base/head 增删、reader 变化只报告；base 取不到即失败。
 - `audit:golden --kind=<kind>`：用当前 reducer/gather 重放保留的 imperative golden；适用于已翻 ON entity 的 reducer/gather 变更，drift 直接 fail。
 - `audit:mastery-provenance`（YUK-559 / S2）：mastery provenance 消费纪律反查；unguarded 的 `.mastery`/`.theta_hat` 读按比较基线豁免——base 已 unguarded 的文件标 `base`，基线无记录的新 unguarded 消费标 FLAGGED；tracked 文件失踪仍记 MISSING。默认 report-only（exit 0），`--strict` 才非零 exit（policy audit lane 与 `pnpm test` 前缀跑默认命令；`--strict` 仍不进 CI）。升 hard-gate 绑「任一借用 flag 翻转」前置（spec §7 open question 4）。
 

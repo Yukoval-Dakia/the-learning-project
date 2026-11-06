@@ -56,10 +56,20 @@ export const readStartTaskFailureAlerts = () =>
     const { loadTaskFailureAlerts } = await import('@/capabilities/observability/public');
     return loadTaskFailureAlerts(db);
   });
-export const readStartAutoApplied = () =>
+export const readStartAutoApplied = (window?: { from: string; to?: string }) =>
   withStartDb(async (db) => {
     const { getAutoAppliedDigest } = await import('@/capabilities/shell/public');
-    return getAutoAppliedDigest(db);
+    return getAutoAppliedDigest(
+      db,
+      window
+        ? { from: new Date(window.from), ...(window.to ? { to: new Date(window.to) } : {}) }
+        : {},
+    );
+  });
+export const retractStartAutoApplied = (input: unknown) =>
+  withStartDb(async (db) => {
+    const { batchRetractAutoAppliedProposals } = await import('@/server/proposals/batch-retract');
+    return batchRetractAutoAppliedProposals(db, input);
   });
 
 function knowledgeTimestampJson(value: Date | string): string {
@@ -170,6 +180,7 @@ export const workbenchAdapters = {
   createStartProposalDecision,
   readStartActiveProbes,
   readStartAutoApplied,
+  retractStartAutoApplied,
   readStartConjectures,
   readStartKnowledgeFrontier,
   readStartKnowledgeReviewDue,
