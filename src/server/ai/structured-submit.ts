@@ -130,10 +130,13 @@ export function structuredSubmitShapeErrors(
       errors?: unknown[][];
       keys?: unknown[];
     };
-    if (item.code === 'invalid_union' && item.errors) {
+    if (item.code === 'invalid_union' && item.errors && item.errors.length > 0) {
       item.errors.flat().forEach(visit);
       return;
     }
+    // A discriminated-union miss arrives as invalid_union with an EMPTY errors
+    // array; falling through reports the discriminator path (a declared field)
+    // as a shape error instead of silently returning no feedback.
     const path = (item.path ?? [])
       .map((part) =>
         typeof part === 'number'
@@ -428,6 +431,10 @@ export function createStructuredSubmitLoop(input: {
           feedback: string,
           event: string,
         ): { action: 'end' } | { action: 'continue' } => {
+          // A redactor coverage gap must never surface as an empty tool result.
+          const text =
+            feedback ||
+            'Submit arguments failed shape validation; use the declared fields and types.';
           const occurrences = countOccurrence(
             id === undefined ? `run:${errorKey}` : `unit:${id}|${errorKey}`,
           );
@@ -438,7 +445,7 @@ export function createStructuredSubmitLoop(input: {
               unit: id ?? null,
               output_hash: hash,
               error_occurrences: occurrences,
-              diagnostics: feedback,
+              diagnostics: text,
             }),
           );
           logTurn(message, false, { unit: id ?? null, event, remaining: remainingIds().length });
@@ -449,7 +456,7 @@ export function createStructuredSubmitLoop(input: {
             }
             const remaining = remainingIds();
             const sealedFeedback =
-              `${feedback}\nUnit ${id} is sealed after ${occurrences} identical errors and can no longer be ` +
+              `${text}\nUnit ${id} is sealed after ${occurrences} identical errors and can no longer be ` +
               `accepted. Continue with the remaining units: ${remaining.join(', ')}.`;
             rewriteToolResults(toolResults, sealedFeedback, true);
             submitFeedback = sealedFeedback;
@@ -461,8 +468,8 @@ export function createStructuredSubmitLoop(input: {
           if (Date.now() >= input.correctionDeadline) {
             return failRun('budget_landing', unitSummary());
           }
-          rewriteToolResults(toolResults, feedback, true);
-          submitFeedback = feedback;
+          rewriteToolResults(toolResults, text, true);
+          submitFeedback = text;
           return { action: 'continue' as const };
         };
 
