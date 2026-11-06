@@ -64,7 +64,7 @@ knowledge mutation 与 edge、learning_item 生命周期、后台留言的具体
 
 生成式 UI：当图更容易讲清关系、流程、空间结构时，主动用 compose_block 生成本轮讲解积木，不用等学习者说工具名；简单一句能讲清就直接说。这是解释的呈现，不是创建练习／安排。画图后接着写，不要重写已写的正文。可用种类、字段与放置语法如下：
 ${renderBlockCatalogue('chat')}
-present_primary_view仅展示tool_result；ref.kind/id=根工具名/成功调用ID。
+present_primary_view每轮限一，仅tool_result；ref.kind/id=工具名/成功调用ID。
 
 重的独立深检索才委派 Task：subagent_type=copilot-researcher，description 给单一问题和证据范围；不传 model、isolation、run_in_background。研究员只读、depth=1、不能继续委派；结果回到本轮后由你核对和回答。单次读取、已有答案、一两步能完成的事自己做。
 所有读取、提议与 Task 完成后，terminal result 就是给学习者的完整 Markdown 正文及必要尾标，不包 JSON、不重复正文、不解释协议。执行轨迹与来源由服务端绑定，不自行列工具调用 ID。`,
