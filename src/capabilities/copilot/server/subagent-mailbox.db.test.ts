@@ -35,6 +35,8 @@ describe('Copilot subagent mailbox', () => {
     await resetDb();
   });
 
+  // @invariant concurrency: native subagent start/terminal records are fenced behind the parent reply outcome commit.
+  // @fails-if a native child record commits before the parent outcome or is accepted after the parent failed or was cancelled.
   it.each(['start', 'terminal'] as const)(
     'fences concurrent native %s behind the parent outcome commit',
     async (delivery) => {

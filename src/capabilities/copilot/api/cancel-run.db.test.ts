@@ -76,6 +76,8 @@ describe('POST /api/copilot/runs/:id/cancel', () => {
     await testDb().delete(job_events);
   });
 
+  // @invariant concurrency: a Stop accepted before the paid execution fence settles the run as cancelled with one terminal reply and no started execution.
+  // @fails-if the cancel path starts a paid run, writes more than one terminal reply, or drops the accepted run's checkpoint identity.
   it('atomically cancels a rich accepted run before its paid execution fence', async () => {
     const accepted = await seedAcceptedRun();
 
