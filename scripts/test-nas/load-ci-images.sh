@@ -56,14 +56,31 @@ mkdir -p "$DEST" 2>/dev/null || die "cannot create destination $DEST"
 # `docker load`, whose stdin the caller explicitly redirects.
 nas() {
   ssh -n -F none -i "$NAS_KEY" -o IdentitiesOnly=yes -o BatchMode=yes \
-      -o StrictHostKeyChecking=yes -o ConnectTimeout=15 "${NAS_USER}@${NAS_HOST}" "$@"
+      -o StrictHostKeyChecking=yes -o ConnectTimeout=15 \
+      -o ServerAliveInterval=30 -o ServerAliveCountMax=4 \
+      "${NAS_USER}@${NAS_HOST}" "$@"
 }
 nas_stdin() {
   ssh -F none -i "$NAS_KEY" -o IdentitiesOnly=yes -o BatchMode=yes \
-      -o StrictHostKeyChecking=yes -o ConnectTimeout=15 "${NAS_USER}@${NAS_HOST}" "$@"
+      -o StrictHostKeyChecking=yes -o ConnectTimeout=15 \
+      -o ServerAliveInterval=30 -o ServerAliveCountMax=4 \
+      "${NAS_USER}@${NAS_HOST}" "$@"
 }
 
 # ---------- download ----------------------------------------------------
+# The run must be a successful run of THIS workflow on this repo's own
+# branches — artifact names are attacker-controlled on fork runs.
+note "checking provenance of run ${RUN_ID} in ${REPO}"
+prov=$(gh api "repos/${REPO}/actions/runs/${RUN_ID}" \
+  --jq '[.path, .event, .conclusion, (.head_branch // "")] | @tsv') \
+  || die "could not read run ${RUN_ID}"
+wpath=$(printf '%s' "$prov" | cut -f1)
+concl=$(printf '%s' "$prov" | cut -f3)
+[ "$wpath" = ".github/workflows/build-test-images.yml" ] \
+  || die "run ${RUN_ID} is not a build-test-images run (workflow: ${wpath})"
+[ "$concl" = "success" ] \
+  || die "run ${RUN_ID} concluded '${concl}', not success — refusing its artifact"
+
 note "listing artifacts of run ${RUN_ID} in ${REPO}"
 names=$(gh api "repos/${REPO}/actions/runs/${RUN_ID}/artifacts" \
         --jq '.artifacts[].name') || die "could not list artifacts for run ${RUN_ID}"
@@ -80,9 +97,11 @@ gh run download "$RUN_ID" --repo "$REPO" --name "$art" --dir "$DL" \
 # ---------- locate + verify archive -------------------------------------
 # Files are located by name anywhere under the download dir — artifact
 # extraction does not guarantee a fixed top-level layout.
-archives=$(find "$DL" -type f \( -name '*.tar.gz' -o -name '*.tar' \) -print | sort)
-acount=$(printf '%s\n' "$archives" | grep -c .)
-[ "$acount" = 1 ] || die "expected exactly 1 image archive in artifact, found ${acount}"
+# Only the image archive matches tlp-test-*: fs-lists.tar.gz and other
+# evidence files in the same artifact must not be mistaken for it.
+archives=$(find "$DL" -type f \( -name 'tlp-test-*.tar.gz' -o -name 'tlp-test-*.tar' \) -print | sort)
+acount=$(printf '%s\n' "$archives" | grep -c . || true)
+[ "$acount" = 1 ] || die "expected exactly 1 tlp-test-* image archive in artifact, found ${acount}"
 ARCHIVE=$archives
 
 SHA_FILE=$(find "$DL" -type f -name '*.sha256' -print | sort | head -1)
@@ -90,26 +109,34 @@ SHA_FILE=$(find "$DL" -type f -name '*.sha256' -print | sort | head -1)
 MANIFEST=$(find "$DL" -type f -name 'manifest.json' -print | sort | head -1)
 [ -n "$MANIFEST" ] || die "manifest.json missing in artifact"
 
-# The .sha256 references the archive by basename, so verify inside its own dir.
+# Hash the archive we actually located, then require agreement from both the
+# .sha256 file and the manifest — a .sha256 naming another file cannot pass.
 if command -v shasum >/dev/null 2>&1; then
-  (cd "$(dirname "$SHA_FILE")" && shasum -a 256 -c "$(basename "$SHA_FILE")" >/dev/null) \
-    || die "archive sha256 MISMATCH — nothing is sent to the NAS"
+  actual_sha=$(shasum -a 256 "$ARCHIVE" | awk '{print $1}')
 elif command -v sha256sum >/dev/null 2>&1; then
-  (cd "$(dirname "$SHA_FILE")" && sha256sum -c "$(basename "$SHA_FILE")" >/dev/null) \
-    || die "archive sha256 MISMATCH — nothing is sent to the NAS"
+  actual_sha=$(sha256sum "$ARCHIVE" | awk '{print $1}')
 else
   die "no shasum or sha256sum available to verify the archive"
 fi
-ARCHIVE_SHA=$(awk 'NR==1{print $1}' "$SHA_FILE")
+file_sha=$(awk 'NR==1{print $1}' "$SHA_FILE")
+file_named=$(awk 'NR==1{print $NF}' "$SHA_FILE" | sed 's|.*/||')
+[ "$file_sha" = "$actual_sha" ] \
+  || die "archive sha256 MISMATCH — nothing is sent to the NAS"
+[ "$file_named" = "$(basename "$ARCHIVE")" ] \
+  || die ".sha256 names '${file_named}' but archive is '$(basename "$ARCHIVE")'"
+ARCHIVE_SHA=$actual_sha
 note "archive sha256 verified: ${ARCHIVE_SHA}"
 
 # ---------- verify manifest commit --------------------------------------
 VERIFY=$(mktemp "${TMPDIR:-/tmp}/tlp-ci-manifest.XXXXXX") || die "mktemp failed"
-trap 'rm -f "$VERIFY" "$VERIFY".targets' EXIT HUP INT TERM
+trap 'rm -f "$VERIFY" "$VERIFY".targets' EXIT
+trap 'exit 1' HUP INT TERM
 python3 - "$MANIFEST" >"$VERIFY" <<'PY' || die "could not parse manifest.json"
 import json, sys
 m = json.load(open(sys.argv[1]))
 print("commit=" + str(m.get("commit", "")))
+print("archive=" + str(m.get("archive", "")))
+print("archive_sha256=" + str(m.get("archive_sha256", "")))
 for t in m.get("targets", []):
     ids = ",".join(t.get("diff_ids") or [])
     print("|".join(["T", str(t.get("target", "")), str(t.get("tag", "")),
@@ -119,6 +146,24 @@ MANI_COMMIT=$(sed -n 's/^commit=//p' "$VERIFY")
 [ "$MANI_COMMIT" = "$WANT_COMMIT" ] \
   || die "manifest commit ${MANI_COMMIT} != expected ${WANT_COMMIT} — refusing to load"
 grep -q '^T|' "$VERIFY" || die "manifest lists no targets"
+MANI_ARCHIVE=$(sed -n 's/^archive=//p' "$VERIFY")
+MANI_AWSHA=$(sed -n 's/^archive_sha256=//p' "$VERIFY")
+[ -n "$MANI_ARCHIVE" ] && [ "$(basename "$ARCHIVE")" = "$(basename "$MANI_ARCHIVE")" ] \
+  || die "manifest archive '${MANI_ARCHIVE}' != located '$(basename "$ARCHIVE")'"
+[ "$MANI_AWSHA" = "$ARCHIVE_SHA" ] \
+  || die "manifest archive_sha256 != verified ${ARCHIVE_SHA} — refusing to load"
+
+# Every expected image must be present and tagged exactly
+# tlp-test:<commit>-<target>; anything else is not loaded.
+expect="runner worker builder"
+for t in $expect; do
+  grep -q "^T|${t}|tlp-test:${WANT_COMMIT}-${t}|" "$VERIFY" \
+    || die "manifest missing expected target/tag tlp-test:${WANT_COMMIT}-${t}"
+done
+# Reject manifest entries whose tag could carry shell metacharacters: the tag
+# is interpolated into a remote ssh command.
+bad=$(grep '^T|' "$VERIFY" | cut -d'|' -f3 | grep -v '^tlp-test:[0-9a-f]\{40\}-[a-z]*$' || true)
+[ -z "$bad" ] || die "manifest contains unexpected tag: ${bad}"
 note "manifest commit verified: ${MANI_COMMIT}"
 
 # ---------- NAS preflight ------------------------------------------------
@@ -134,7 +179,7 @@ stop=$(nas "test -f '${NAS_STOP}' && echo present || echo absent") \
 # ---------- load ----------------------------------------------------------
 note "streaming $(basename "$ARCHIVE") to docker load on ${NAS_HOST}"
 if ! nas_stdin 'docker load' < "$ARCHIVE" > "$DL/docker-load.log" 2>&1; then
-  sed -n '1,10p' "$DL/docker-load.log" >&2 || true
+  tail -10 "$DL/docker-load.log" >&2 || true
   die "docker load failed on NAS (log: $DL/docker-load.log)"
 fi
 cat "$DL/docker-load.log"

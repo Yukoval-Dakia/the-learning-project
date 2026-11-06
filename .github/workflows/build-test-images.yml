@@ -26,7 +26,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.commit || github.sha }}
   cancel-in-progress: true
 
 jobs:
@@ -46,6 +46,8 @@ jobs:
         run: |
           set -euo pipefail
           sha="$(git rev-parse HEAD)"
+          case "$sha" in *[!0-9a-f]*) echo "resolved ref is not hex: ${sha}" >&2; exit 1;; esac
+          [ "${#sha}" -eq 40 ] || { echo "resolved ref is not a full SHA: ${sha}" >&2; exit 1; }
           echo "sha=${sha}" >> "$GITHUB_OUTPUT"
           echo "building commit ${sha}"
 
@@ -87,7 +89,12 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p /tmp/tlp-buildx-cache
-          : > timings.tsv
+          # Evidence files written between target builds MUST stay outside the
+          # build context (i.e. outside the workspace): a changed file makes
+          # COPY . . miss the cache and re-runs pnpm build per target.
+          ev=/tmp/tlp-evidence
+          mkdir -p "$ev"
+          : > "$ev/timings.tsv"
           for target in runner worker builder; do
             t0=$(date +%s)
             cache_to=''
@@ -101,8 +108,8 @@ jobs:
               --label "org.opencontainers.image.revision=${SHA}" \
               --cache-from 'type=local,src=/tmp/tlp-buildx-cache' \
               $cache_to \
-              . >"build-${target}.log" 2>&1; then
-              tail -80 "build-${target}.log"
+              . >"$ev/build-${target}.log" 2>&1; then
+              tail -80 "$ev/build-${target}.log"
               exit 1
             fi
             if [ "$target" = worker ] && [ -d /tmp/tlp-buildx-cache-new ]; then
@@ -110,8 +117,8 @@ jobs:
               mv /tmp/tlp-buildx-cache-new /tmp/tlp-buildx-cache
             fi
             secs=$(( $(date +%s) - t0 ))
-            cached=$(grep -c ' CACHED' "build-${target}.log" || true)
-            printf '%s\t%s\t%s\n' "$target" "$secs" "$cached" | tee -a timings.tsv
+            cached=$(grep -c ' CACHED' "$ev/build-${target}.log" || true)
+            printf '%s\t%s\t%s\n' "$target" "$secs" "$cached" | tee -a "$ev/timings.tsv"
           done
           docker image ls --format '{{.Repository}}:{{.Tag}} {{.Size}}' | grep '^tlp-test:'
 
@@ -237,8 +244,10 @@ jobs:
             : >"pemkey-${target}.txt"
             { grep -E '\.pem$' "fs-${target}.txt" | grep -v '/node_modules/' || true; } \
               | while IFS= read -r p; do
+              # grep without -q: an early-exiting grep would SIGPIPE tar and
+              # pipefail would turn a found key into a miss.
               if tar -xOf "$tmp" "$p" 2>/dev/null \
-                 | LC_ALL=C grep -aqE 'PRIVATE KEY( BLOCK)?-----|openssh-key-v1'; then
+                 | LC_ALL=C grep -aE 'PRIVATE KEY( BLOCK)?-----|openssh-key-v1' >/dev/null; then
                 printf '%s\n' "$p" >>"pemkey-${target}.txt"
               fi
             done
@@ -261,15 +270,18 @@ jobs:
               ("history.db", re.compile(r"^history\.db$", re.I)),
               ("PLAN.md", re.compile(r"^PLAN\.md$")),
               ("ssh-key-name", re.compile(r"^id_(rsa|dsa|ecdsa|ed25519)$")),
+              ("credential-file", re.compile(r"^\.(npmrc|netrc|git-credentials)$")),
+              ("key-bundle", re.compile(r".*\.(p12|pfx)$", re.I)),
           ]
-          exact_names = {".git", ".remember", ".ssh", "tlp-status", "tlp-audit-artifacts", "tlp-docs"}
+          exact_names = {".git", ".remember", ".ssh", ".omc", ".agents", ".devin",
+                         "tlp-status", "tlp-audit-artifacts", "tlp-docs"}
           # Tracked example file; the only permitted .env* in an image, by exact path.
           allowed = {"app/.env.example"}
           history_patterns = [
-              re.compile(r"(?i)(secret|token|password|passwd|credential|api[_-]?key|private[_-]?key|auth[_-]?token|access[_-]?key)[a-z0-9_]*\s*="),
-              re.compile(r"AKIA[0-9A-Z]{16}"),
-              re.compile(r"BEGIN [A-Z ]*PRIVATE KEY"),
-              re.compile(r"=[A-Za-z0-9+/]{48,}={0,2}(\s|$)"),
+              ("credential assignment", re.compile(r"(?i)(secret|token|password|passwd|credential|api[_-]?key|private[_-]?key|auth[_-]?token|access[_-]?key)[a-z0-9_]*\s*=")),
+              ("aws access key", re.compile(r"AKIA[0-9A-Z]{16}")),
+              ("private key header", re.compile(r"BEGIN [A-Z ]*PRIVATE KEY")),
+              ("long base64 secret", re.compile(r"=[A-Za-z0-9+/]{48,}={0,2}(\s|$)")),
           ]
           report, findings = [], []
           for target in ["runner", "worker", "builder"]:
@@ -310,8 +322,12 @@ jobs:
                       f"{tag}: {line.strip()} [.pem containing a private key]")
               for line in open(f"history-{target}.txt"):
                   line = line.strip()
-                  if any(rx.search(line) for rx in history_patterns):
-                      findings.append(f"{tag}: history: {line[:200]}")
+                  for name, rx in history_patterns:
+                      if rx.search(line):
+                          # Report the pattern name only: the matching line
+                          # itself could carry the secret into a public log.
+                          findings.append(f"{tag}: history line matches '{name}'")
+                          break
               report.append(
                   f"allowed (tracked example, still reported): {seen_allowed or 'none'}")
               report.append(
@@ -376,15 +392,18 @@ jobs:
             })().catch((e) => { console.error(e); process.exit(1); });
           '
 
+      # always() evidence steps run with `set +e` — a missing file or empty
+      # glob must not kill evidence collection on an already-failing run.
       - name: Collect evidence into artifact dir
         if: always()
         run: |
-          set -uo pipefail
+          set +e
           mkdir -p artifact
-          cp timings.tsv artifact/ 2>/dev/null || true
-          for f in build-*.log image-content-check.txt env-*.txt history-*.txt \
+          cp /tmp/tlp-evidence/timings.tsv artifact/ 2>/dev/null
+          cp /tmp/tlp-evidence/build-*.log artifact/ 2>/dev/null
+          for f in image-content-check.txt env-*.txt history-*.txt pemkey-*.txt \
                    worker-config.txt worker-config-vs-main.diff; do
-            [ -f "$f" ] && cp "$f" artifact/ || true
+            [ -f "$f" ] && cp "$f" artifact/
           done
           ls -la artifact/
 
@@ -393,20 +412,21 @@ jobs:
           name: tlp-test-images-${{ steps.src.outputs.sha }}-${{ github.run_id }}
           path: artifact/
           retention-days: 1
+          compression-level: 0
           if-no-files-found: error
 
       - name: Job summary
         if: always()
         run: |
-          set -uo pipefail
+          set +e
           {
             echo "### Build timings"
-            if [ -f timings.tsv ]; then
+            if [ -f /tmp/tlp-evidence/timings.tsv ]; then
               total=0
               while IFS="$(printf '\t')" read -r target secs cached; do
                 echo "- ${target}: ${secs}s (${cached} cached steps)"
                 total=$((total + secs))
-              done < timings.tsv
+              done < /tmp/tlp-evidence/timings.tsv
               echo "- **total: ${total}s**"
             fi
             ls -lh artifact/*.tar.gz 2>/dev/null | awk '{print "- archive size: "$5" ("$9")"}'
