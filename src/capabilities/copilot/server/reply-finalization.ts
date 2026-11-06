@@ -227,6 +227,7 @@ function proposalDisclosure(trace: readonly TraceEntry[], reply: string): string
       return [];
     if (seenBankPaths.has(out.bank_path)) return [];
     seenBankPaths.add(out.bank_path);
+    const bankPath = out.bank_path;
     const admission = isRecord(out.admission) ? out.admission : undefined;
     const noExecutor =
       Array.isArray(admission?.per_unit) &&
@@ -235,21 +236,24 @@ function proposalDisclosure(trace: readonly TraceEntry[], reply: string): string
     const missingPlacement =
       placementNote !== undefined && !replyStatesPlacement(reply, placementNote);
     const admissionSentence = noExecutor ? NO_EXECUTOR_ADMISSION : PENDING_ADMISSION;
-    const linkStated = reply.includes(out.bank_path);
-    // Warning and link are separate facts. Only the full sentence counts as stated:
-    // a phrase quoted for another question (or denied) cannot suppress this question's
-    // warning. A missing unanswerable warning always carries this question's link.
-    const admissionStated = reply.includes(admissionSentence);
+    const linkStated = reply.includes(bankPath);
+    // Warning and link are separate facts. A warning counts as stated for this
+    // question only when the full sentence and this question's bank_path share a
+    // line; a phrase quoted for another question cannot suppress it.
+    const warningStated =
+      noExecutor &&
+      reply.split('\n').some((line) => line.includes(bankPath) && line.includes(admissionSentence));
+    const admissionStated = !noExecutor && reply.includes(admissionSentence);
     const facts: string[] = [];
     if (missingPlacement && placementNote !== undefined) facts.push(placementNote);
-    if (!admissionStated) {
+    if (noExecutor) {
+      if (!warningStated) facts.push(`题已存入[题库](${bankPath})，但${admissionSentence}`);
+    } else if (!admissionStated) {
       facts.push(
-        noExecutor || !linkStated
-          ? `题已存入[题库](${out.bank_path})，${noExecutor ? `但${admissionSentence}` : admissionSentence}`
-          : admissionSentence,
+        linkStated ? admissionSentence : `题已存入[题库](${bankPath})，${admissionSentence}`,
       );
     } else if (!linkStated) {
-      facts.push(`题已存入[题库](${out.bank_path})。`);
+      facts.push(`题已存入[题库](${bankPath})。`);
     }
     return facts.length > 0 ? [facts.join('\n')] : [];
   });
