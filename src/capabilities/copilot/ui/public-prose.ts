@@ -156,8 +156,8 @@ export function publicProseFailureBadge(prose: PublicProse): string | undefined 
   switch (prose.failure.kind) {
     case 'rate_limited':
       return prose.failure.retry_after_seconds
-        ? `模型额度已满 · ${retryWait(prose.failure.retry_after_seconds)}后可再试`
-        : '模型额度已满';
+        ? `现在有点忙 · ${retryWait(prose.failure.retry_after_seconds)}后可再试`
+        : '现在有点忙';
     case 'provider_rejected':
       return `模型服务拒绝了请求${statusSuffix(prose.failure.http_status)}`;
     case 'provider_error':

@@ -484,13 +484,20 @@ export function createCopilotExecutionOwner(
       ),
     );
     budgetLandingTimer.unref?.();
-    const assembledHooks = prependCopilotPiFinalizationHooks(finalizer.piHooks, {
-      beforeToolCall: [
-        policy.cancellation.piBeforeToolCall,
-        ...(piSpawnContract ? [piSpawnContract.gate] : []),
-      ],
-      afterToolCall: [remoteMcpToolFinished],
-    });
+    // Retries replace the finalizer; both hook directions must follow its current instance.
+    const assembledHooks = prependCopilotPiFinalizationHooks(
+      {
+        beforeToolCall: [(...args) => finalizer.piHooks.beforeToolCall[0](...args)],
+        afterToolCall: [(...args) => finalizer.piHooks.afterToolCall[0](...args)],
+      },
+      {
+        beforeToolCall: [
+          policy.cancellation.piBeforeToolCall,
+          ...(piSpawnContract ? [piSpawnContract.gate] : []),
+        ],
+        afterToolCall: [remoteMcpToolFinished],
+      },
+    );
     // No-progress runs before the finalizer so a blocked repeat never enters the trace.
     const piHooks = {
       progress: noProgress,
