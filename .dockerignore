@@ -19,3 +19,10 @@ dist
 .wrangler-state
 drizzle/.snapshots
 tsconfig.tsbuildinfo
+# Agent/worktree private state — must never reach a build context or an image
+# (YUK-1845 image content check fails the build if these show up).
+.remember/
+.omc/
+.agents/
+.devin/
+PLAN.md
