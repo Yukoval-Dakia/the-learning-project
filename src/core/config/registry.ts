@@ -60,12 +60,7 @@ export interface ConfigFlagGrammar {
   polarity: 'opt-in' | 'opt-out';
 }
 
-/** 预算类键的事务读语义（slice 2 的 live consumer 使用；本片只保留字段）。 */
-export interface ConfigTransactionReadPolicy {
-  expiredRow: 'ignore' | 'honor-expiry';
-  invalidEnv: 'error' | 'fallback';
-}
-
+/** 预算类键的事务读语义由片 2 引入；本片不预建。 */
 export interface ConfigKeyDef {
   /** key → DB 值 zod schema（setConfig 写时校验 + hydrate 逐行 parse）。 */
   schema: z.ZodTypeAny;
@@ -85,16 +80,12 @@ export interface ConfigKeyDef {
   description?: string;
   /** 语义消费方；flags family 必填。 */
   consumers?: readonly ConfigConsumer[];
-  /** 值单位（数值键）；无单位的开关省略。 */
-  unit?: 'ms' | 'usd' | 'count' | 'ratio';
   /** 生效时机；flags family 必填。 */
   reload?: 'per-call' | 'snapshot' | 'restart';
   /** 暴露面；flags family 必填。credential-reference 不出现在公共读面。 */
   exposure?: 'browser-safe' | 'operator' | 'credential-reference';
   /** 仅 boolean env 开关：字面量域与默认侧。 */
   flag?: ConfigFlagGrammar;
-  /** 事务内直读 key 的过期/非法 env 语义（slice 2）。 */
-  transactionReadPolicy?: ConfigTransactionReadPolicy;
 }
 
 // ─── env 翻译器（每个 reader 的现 parse 语义） ──────────────────────────────

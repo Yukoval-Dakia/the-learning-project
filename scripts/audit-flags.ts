@@ -82,11 +82,20 @@ export interface DefinitionFingerprint {
   key: string;
   kind: ControlKind;
   codeDefault: unknown;
+  /** codeDefault 不是静态字面量时置位：跳过默认值对比，避免假 drift。 */
+  codeDefaultUnresolved?: boolean;
   envName: string | null;
   envMode: string;
   tier: string;
   flag: FlagGrammarFingerprint | null;
-  enumValues: string[] | null;
+  /** flag 属性存在但静态不可解析：已单独报问题，不再伪造 BASE-DRIFT。 */
+  flagUnresolved?: boolean;
+  enumValues: string[] | null | undefined;
+}
+
+export interface FingerprintExtraction {
+  fingerprints: Map<string, DefinitionFingerprint>;
+  problems: string[];
 }
 
 export interface HeadDefinition extends DefinitionFingerprint {
@@ -108,6 +117,8 @@ export type ViolationCode =
   | 'DEFINITION-PROBLEM'
   | 'NO-READER'
   | 'ORPHAN-READER'
+  | 'ORPHAN-ENV-READ'
+  | 'DIRECT-ENV-READ'
   | 'CONST-PROBLEM'
   | 'BASE-PROBLEM'
   | 'BASE-DRIFT';
@@ -428,6 +439,7 @@ function unwrapExpression(expr: AstNode): AstNode {
       current.type === 'TSSatisfiesExpression' ||
       current.type === 'TSNonNullExpression' ||
       current.type === 'ParenthesizedExpression' ||
+      current.type === 'ChainExpression' ||
       current.type === 'TypeCastExpression')
   ) {
     current = current.expression;
@@ -633,14 +645,94 @@ export function collectConstFlags(tree: SourceTree): ConstDefinition[] {
     const ast = tree.ast(path);
     if (!ast) continue;
     walkAst(ast, (node) => {
-      if (node.type !== 'VariableDeclarator' || node.id?.type !== 'Identifier') return;
-      if (!/_ENABLED$/.test(node.id.name) || !node.init) return;
-      const value = evaluateLiteral(node.init);
-      if (typeof value !== 'boolean') return;
-      consts.push({ name: node.id.name, value, file: path });
+      // Only `const` is a compile-time definition; `let`/`var`/assignment are mutable and
+      // therefore fall through to UNREGISTERED instead of earning the const exemption.
+      if (node.type !== 'VariableDeclaration' || node.kind !== 'const') return;
+      for (const decl of node.declarations ?? []) {
+        if (decl.type !== 'VariableDeclarator' || decl.id?.type !== 'Identifier') continue;
+        if (!/_ENABLED$/.test(decl.id.name) || !decl.init) continue;
+        const value = evaluateLiteral(decl.init);
+        if (typeof value !== 'boolean') continue;
+        consts.push({ name: decl.id.name, value, file: path });
+      }
     });
   }
   return consts.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** `process.env` expression (member or computed), optionally wrapped in an optional chain. */
+function isProcessEnvObject(node: AstNode | undefined): boolean {
+  if (!node) return false;
+  const current = unwrapExpression(node);
+  if (current.type !== 'MemberExpression' && current.type !== 'OptionalMemberExpression') {
+    return false;
+  }
+  const object = unwrapExpression(current.object);
+  if (object.type !== 'Identifier' || object.name !== 'process') return false;
+  if (!current.computed && current.property?.type === 'Identifier') {
+    return current.property.name === 'env';
+  }
+  if (current.computed && current.property?.type === 'StringLiteral') {
+    return current.property.value === 'env';
+  }
+  return false;
+}
+
+/** One direct `process.env` read of a named key. */
+export interface DirectEnvRead {
+  key: string;
+  file: string;
+  form: 'member' | 'computed' | 'destructure';
+}
+
+/**
+ * Direct env reads of a specific name: `process.env.KEY`, `process.env['KEY']`, and
+ * `const { KEY } = process.env`. Deliberately NOT a general env-discovery scan: callers
+ * only consult the names they already care about (registered or removed definitions).
+ */
+export function collectDirectEnvReads(tree: SourceTree): DirectEnvRead[] {
+  const reads = new Map<string, DirectEnvRead>();
+  const add = (key: string, file: string, form: DirectEnvRead['form']): void => {
+    if (!key) return;
+    const id = `${key}\0${file}`;
+    if (!reads.has(id)) reads.set(id, { key, file, form });
+  };
+
+  for (const path of tree.filesContaining('process.env')) {
+    const ast = tree.ast(path);
+    if (!ast) continue;
+    walkAst(ast, (node) => {
+      if (node.type === 'MemberExpression' || node.type === 'OptionalMemberExpression') {
+        if (!isProcessEnvObject(node.object)) return;
+        if (!node.computed && node.property?.type === 'Identifier') {
+          add(node.property.name, path, 'member');
+        } else if (node.computed && node.property?.type === 'StringLiteral') {
+          add(node.property.value, path, 'computed');
+        }
+        return;
+      }
+      if (node.type !== 'VariableDeclarator' || !isProcessEnvObject(node.init)) return;
+      if (node.id?.type !== 'ObjectPattern') return;
+      for (const prop of node.id.properties ?? []) {
+        if (prop.type !== 'ObjectProperty' || prop.computed) continue;
+        const key =
+          prop.key.type === 'Identifier'
+            ? prop.key.name
+            : prop.key.type === 'StringLiteral'
+              ? prop.key.value
+              : undefined;
+        if (key) add(key, path, 'destructure');
+      }
+    });
+  }
+  return [...reads.values()].sort(
+    (a, b) => a.key.localeCompare(b.key) || a.file.localeCompare(b.file),
+  );
+}
+
+/** Allowed homes for direct env reads of registered keys (definitions, not readers). */
+function isAllowedDirectEnvFile(path: string): boolean {
+  return path.startsWith('src/core/config/') || path === 'src/server/config/env.ts';
 }
 
 // ── definition fingerprints ─────────────────────────────────────────────────────────────────
@@ -713,8 +805,96 @@ function objectProperty(node: AstNode | undefined, name: string): AstNode | unde
   return undefined;
 }
 
-function stringArray(node: AstNode | undefined): string[] | undefined {
-  const value = evaluateLiteral(node);
+/** Top-level `const` initializers in one module, for same-file constant resolution. */
+function constInitializers(ast: AstNode): Map<string, AstNode> {
+  const map = new Map<string, AstNode>();
+  walkAst(ast, (node) => {
+    if (node.type !== 'VariableDeclaration' || node.kind !== 'const') return;
+    for (const decl of node.declarations ?? []) {
+      if (decl.type !== 'VariableDeclarator' || decl.id?.type !== 'Identifier' || !decl.init) {
+        continue;
+      }
+      if (!map.has(decl.id.name)) map.set(decl.id.name, decl.init);
+    }
+  });
+  return map;
+}
+
+/** Resolve literals through same-file const identifiers; UNKNOWN = not statically decidable. */
+function resolveStatic(
+  node: AstNode | undefined,
+  consts: Map<string, AstNode>,
+  depth = 0,
+): unknown {
+  if (!node || depth > 8) return UNKNOWN;
+  const current = unwrapExpression(node);
+  if (current.type === 'Identifier') {
+    if (current.name === 'undefined') return undefined;
+    const init = consts.get(current.name);
+    return init ? resolveStatic(init, consts, depth + 1) : UNKNOWN;
+  }
+  if (current.type === 'ArrayExpression') {
+    const values: unknown[] = [];
+    for (const element of current.elements ?? []) {
+      if (!element) return UNKNOWN;
+      const value = resolveStatic(element, consts, depth + 1);
+      if (value === UNKNOWN) return UNKNOWN;
+      values.push(value);
+    }
+    return values;
+  }
+  if (current.type === 'ObjectExpression') {
+    const value: Record<string, unknown> = {};
+    for (const prop of current.properties ?? []) {
+      if (prop.type !== 'ObjectProperty' || prop.computed) return UNKNOWN;
+      const key =
+        prop.key.type === 'Identifier'
+          ? prop.key.name
+          : prop.key.type === 'StringLiteral'
+            ? prop.key.value
+            : undefined;
+      if (key === undefined) return UNKNOWN;
+      const propValue = resolveStatic(prop.value, consts, depth + 1);
+      if (propValue === UNKNOWN) return UNKNOWN;
+      value[key] = propValue;
+    }
+    return value;
+  }
+  return evaluateLiteral(current);
+}
+
+function grammarFromAst(
+  node: AstNode | undefined,
+  consts: Map<string, AstNode>,
+  depth = 0,
+): FlagGrammarFingerprint | null | typeof UNKNOWN {
+  if (!node || depth > 8) return null;
+  const current = unwrapExpression(node);
+  if (current.type === 'Identifier') {
+    const init = consts.get(current.name);
+    return init ? grammarFromAst(init, consts, depth + 1) : UNKNOWN;
+  }
+  if (current.type !== 'ObjectExpression') return UNKNOWN;
+  const trueLiterals = stringArrayFromAst(objectProperty(current, 'trueLiterals'), consts);
+  const falseLiterals = stringArrayFromAst(objectProperty(current, 'falseLiterals'), consts);
+  const caseInsensitive = resolveStatic(objectProperty(current, 'caseInsensitive'), consts);
+  const polarity = resolveStatic(objectProperty(current, 'polarity'), consts);
+  if (
+    !trueLiterals ||
+    !falseLiterals ||
+    typeof caseInsensitive !== 'boolean' ||
+    (polarity !== 'opt-in' && polarity !== 'opt-out')
+  ) {
+    return UNKNOWN;
+  }
+  return { trueLiterals, falseLiterals, caseInsensitive, polarity };
+}
+
+function stringArrayFromAst(
+  node: AstNode | undefined,
+  consts: Map<string, AstNode>,
+): string[] | undefined {
+  const value = resolveStatic(node, consts);
   if (!Array.isArray(value)) return undefined;
   return value.every((item) => typeof item === 'string') ? (value as string[]) : undefined;
 }
@@ -745,21 +925,28 @@ function schemaKindFromAst(node: AstNode | undefined): ControlKind {
   }
 }
 
-function enumValuesFromAst(node: AstNode | undefined): string[] | undefined {
+function enumValuesFromAst(
+  node: AstNode | undefined,
+  consts: Map<string, AstNode>,
+): string[] | undefined {
   const schema = node ? unwrapExpression(node) : undefined;
   if (schema?.type !== 'CallExpression') return undefined;
   const first = schema.arguments?.[0];
-  return stringArray(first);
+  return stringArrayFromAst(first, consts);
 }
 
-export function extractRegistryFingerprints(
-  sourceText: string,
-): Map<string, DefinitionFingerprint> {
+/**
+ * Extract CONFIG_REGISTRY fingerprints from source text. Used for BOTH base and head so the
+ * comparison is apples-to-apples; same-file `const` identifiers (e.g. `flag: OPT_IN_FLAG`) are
+ * resolved, and anything not statically decidable is reported instead of faked as drift.
+ */
+export function extractRegistryFingerprints(sourceText: string): FingerprintExtraction {
   const ast = parse(sourceText, {
     sourceType: 'module',
     plugins: ['typescript'],
     errorRecovery: true,
   }) as unknown as AstNode;
+  const consts = constInitializers(ast);
   let registry: AstNode | undefined;
   walkAst(ast, (node) => {
     if (registry) return;
@@ -769,7 +956,8 @@ export function extractRegistryFingerprints(
     if (init?.type === 'ObjectExpression') registry = init;
   });
   const result = new Map<string, DefinitionFingerprint>();
-  if (!registry) return result;
+  const problems: string[] = [];
+  if (!registry) return { fingerprints: result, problems };
 
   for (const prop of registry.properties ?? []) {
     if (prop.type !== 'ObjectProperty' || prop.computed) continue;
@@ -783,38 +971,52 @@ export function extractRegistryFingerprints(
     const node = prop.value;
     const schemaNode = objectProperty(node, 'schema');
     const kind = schemaKindFromAst(schemaNode);
-    const envNameValue = evaluateLiteral(objectProperty(node, 'envName'));
+
+    const envNameNode = objectProperty(node, 'envName');
+    const envNameValue = resolveStatic(envNameNode, consts);
+    if (envNameNode && envNameValue === UNKNOWN) {
+      problems.push(`${key}: envName is not statically decidable`);
+    }
     const envName = typeof envNameValue === 'string' ? envNameValue : null;
     if (!isFamilyKind(kind, envName !== null)) continue;
 
     const flagNode = objectProperty(node, 'flag');
-    const grammar: FlagGrammarFingerprint | null = flagNode
-      ? {
-          trueLiterals: stringArray(objectProperty(flagNode, 'trueLiterals')) ?? [],
-          falseLiterals: stringArray(objectProperty(flagNode, 'falseLiterals')) ?? [],
-          caseInsensitive: evaluateLiteral(objectProperty(flagNode, 'caseInsensitive')) === true,
-          polarity:
-            evaluateLiteral(objectProperty(flagNode, 'polarity')) === 'opt-out'
-              ? 'opt-out'
-              : 'opt-in',
-        }
-      : null;
+    const grammar = grammarFromAst(flagNode, consts);
+    if (grammar === UNKNOWN) {
+      problems.push(
+        `${key}: flag grammar is not statically resolvable (use a literal object or a same-file const)`,
+      );
+    }
 
-    const codeDefault = evaluateLiteral(objectProperty(node, 'codeDefault'));
-    const envMode = evaluateLiteral(objectProperty(node, 'envMode'));
-    const tier = evaluateLiteral(objectProperty(node, 'tier'));
+    const codeDefaultValue = resolveStatic(objectProperty(node, 'codeDefault'), consts);
+    const envModeValue = resolveStatic(objectProperty(node, 'envMode'), consts);
+    const tierValue = resolveStatic(objectProperty(node, 'tier'), consts);
+    if (objectProperty(node, 'envMode') && envModeValue === UNKNOWN) {
+      problems.push(`${key}: envMode is not statically decidable`);
+    }
+    if (objectProperty(node, 'tier') && tierValue === UNKNOWN) {
+      problems.push(`${key}: tier is not statically decidable`);
+    }
+
+    const enumValues = kind === 'enum' ? enumValuesFromAst(schemaNode, consts) : null;
+    if (kind === 'enum' && !enumValues) {
+      problems.push(`${key}: enum values are not statically resolvable`);
+    }
+
     result.set(key, {
       key,
       kind,
-      codeDefault: codeDefault === UNKNOWN ? undefined : codeDefault,
+      codeDefault: codeDefaultValue === UNKNOWN ? undefined : codeDefaultValue,
+      codeDefaultUnresolved: codeDefaultValue === UNKNOWN,
       envName,
-      envMode: typeof envMode === 'string' ? envMode : 'fallback',
-      tier: typeof tier === 'string' ? tier : 'A',
-      flag: grammar,
-      enumValues: kind === 'enum' ? (enumValuesFromAst(schemaNode) ?? []) : null,
+      envMode: typeof envModeValue === 'string' ? envModeValue : 'fallback',
+      tier: typeof tierValue === 'string' ? tierValue : 'A',
+      flag: grammar === UNKNOWN ? null : grammar,
+      flagUnresolved: grammar === UNKNOWN,
+      enumValues,
     });
   }
-  return result;
+  return { fingerprints: result, problems };
 }
 
 // ── validation ──────────────────────────────────────────────────────────────────────────────
@@ -901,17 +1103,17 @@ function sameEnum(a: string[] | null, b: string[] | null): boolean {
 /** Base/head contract drift. Default values and reader sets are reported, never failed. */
 function compareWithBase(
   base: Map<string, DefinitionFingerprint>,
-  head: HeadDefinition[],
+  head: Map<string, DefinitionFingerprint>,
+  headDefs: Map<string, HeadDefinition>,
   baseReaders: Map<string, string[]>,
   baseConsts: ConstDefinition[],
   headConsts: ConstDefinition[],
 ): { violations: FlagViolation[]; diff: DiffEntry[] } {
   const violations: FlagViolation[] = [];
   const diff: DiffEntry[] = [];
-  const headByKey = new Map(head.map((def) => [def.key, def]));
 
   for (const [key, baseDef] of base) {
-    const headDef = headByKey.get(key);
+    const headDef = head.get(key);
     if (!headDef) {
       diff.push({ name: key, field: 'removed', base: baseDef.kind, head: null });
       continue;
@@ -940,11 +1142,14 @@ function compareWithBase(
     if (baseDef.flag === null && headDef.flag !== null) {
       diff.push({ name: key, field: 'flag-metadata', base: null, head: headDef.flag });
     } else if (baseDef.flag !== null && headDef.flag === null) {
-      violations.push({
-        code: 'BASE-DRIFT',
-        name: key,
-        detail: 'flag grammar metadata was removed at head',
-      });
+      // A head extraction problem is already reported; do not fake a grammar change.
+      if (!headDef.flagUnresolved) {
+        violations.push({
+          code: 'BASE-DRIFT',
+          name: key,
+          detail: 'flag grammar metadata was removed at head',
+        });
+      }
     } else if (!sameGrammar(baseDef.flag, headDef.flag)) {
       violations.push({
         code: 'BASE-DRIFT',
@@ -952,7 +1157,11 @@ function compareWithBase(
         detail: `flag grammar changed: base ${JSON.stringify(baseDef.flag)} → head ${JSON.stringify(headDef.flag)}`,
       });
     }
-    if (!sameEnum(baseDef.enumValues, headDef.enumValues)) {
+    if (
+      baseDef.enumValues !== undefined &&
+      headDef.enumValues !== undefined &&
+      !sameEnum(baseDef.enumValues, headDef.enumValues)
+    ) {
       violations.push({
         code: 'BASE-DRIFT',
         name: key,
@@ -960,11 +1169,19 @@ function compareWithBase(
       });
     }
     const before = (baseReaders.get(key) ?? []).join(',');
-    const after = headDef.readers.join(',');
+    const after = (headDefs.get(key)?.readers ?? []).join(',');
     if (before !== after) {
       diff.push({ name: key, field: 'readers', base: before, head: after });
     }
-    if (JSON.stringify(baseDef.codeDefault) !== JSON.stringify(headDef.codeDefault)) {
+    if (baseDef.codeDefaultUnresolved || headDef.codeDefaultUnresolved) {
+      // Not statically comparable; report once instead of fabricating a value change.
+      diff.push({
+        name: key,
+        field: 'codeDefault-unresolved',
+        base: baseDef.codeDefaultUnresolved ? 'unresolved' : baseDef.codeDefault,
+        head: headDef.codeDefaultUnresolved ? 'unresolved' : headDef.codeDefault,
+      });
+    } else if (JSON.stringify(baseDef.codeDefault) !== JSON.stringify(headDef.codeDefault)) {
       diff.push({
         name: key,
         field: 'codeDefault',
@@ -974,9 +1191,9 @@ function compareWithBase(
     }
   }
 
-  for (const headDef of head) {
-    if (!base.has(headDef.key)) {
-      diff.push({ name: headDef.key, field: 'added', base: null, head: headDef.kind });
+  for (const [key, headDef] of head) {
+    if (!base.has(key)) {
+      diff.push({ name: key, field: 'added', base: null, head: headDef.kind });
     }
   }
 
@@ -997,6 +1214,57 @@ function compareWithBase(
   }
 
   return { violations, diff };
+}
+
+/** The AST extractor must see exactly what the runtime registry sees at head. */
+function crossCheckHead(
+  runtime: HeadDefinition[],
+  extraction: FingerprintExtraction,
+): FlagViolation[] {
+  const violations: FlagViolation[] = [];
+  for (const def of runtime) {
+    const ast = extraction.fingerprints.get(def.key);
+    if (!ast) {
+      violations.push({
+        code: 'DEFINITION-PROBLEM',
+        name: def.key,
+        detail: 'AST extractor cannot see this CONFIG_REGISTRY entry',
+      });
+      continue;
+    }
+    if (ast.kind !== def.kind) {
+      violations.push({
+        code: 'DEFINITION-PROBLEM',
+        name: def.key,
+        detail: `runtime schema kind '${def.kind}' but AST extraction says '${ast.kind}'`,
+      });
+    }
+    if (ast.envName !== def.envName) {
+      violations.push({
+        code: 'DEFINITION-PROBLEM',
+        name: def.key,
+        detail: `runtime envName ${JSON.stringify(def.envName)} but AST extraction says ${JSON.stringify(ast.envName)}`,
+      });
+    }
+    if (def.flag && ast.flag) {
+      const runtimeGrammar = normalizeGrammar(def.flag);
+      if (!sameGrammar(runtimeGrammar, ast.flag)) {
+        violations.push({
+          code: 'DEFINITION-PROBLEM',
+          name: def.key,
+          detail: `runtime flag grammar ${JSON.stringify(runtimeGrammar)} but AST extraction says ${JSON.stringify(ast.flag)}`,
+        });
+      }
+    }
+    if (def.enumValues && ast.enumValues && !sameEnum(def.enumValues, ast.enumValues)) {
+      violations.push({
+        code: 'DEFINITION-PROBLEM',
+        name: def.key,
+        detail: `runtime enum values ${JSON.stringify(def.enumValues)} but AST extraction says ${JSON.stringify(ast.enumValues)}`,
+      });
+    }
+  }
+  return violations;
 }
 
 export function auditFlags(comparisonBase?: string): FlagAuditResult {
@@ -1070,10 +1338,11 @@ export function auditFlags(comparisonBase?: string): FlagAuditResult {
     }
   }
 
-  // 4) Base/head contract diff.
+  // 4) Base/head contract diff, orphaned consumers, and direct-env bypass detection.
   const baseSha = resolveAuditBaseSha(REPO_ROOT, comparisonBase);
   const baseTree = SourceTree.atRef(baseSha);
   const baseRegistryText = baseTree.text(REGISTRY_PATH);
+  const headRegistryText = headTree.text(REGISTRY_PATH);
   const diff: DiffEntry[] = [];
   if (baseRegistryText === undefined) {
     violations.push({
@@ -1092,37 +1361,87 @@ export function auditFlags(comparisonBase?: string): FlagAuditResult {
       variance: computeVariance(definitions),
     };
   }
-  const baseFingerprints = extractRegistryFingerprints(baseRegistryText);
-  if (baseFingerprints.size === 0) {
+
+  const headExtraction = headRegistryText
+    ? extractRegistryFingerprints(headRegistryText)
+    : { fingerprints: new Map<string, DefinitionFingerprint>(), problems: ['registry missing'] };
+  for (const problem of headExtraction.problems) {
+    violations.push({ code: 'DEFINITION-PROBLEM', name: REGISTRY_PATH, detail: problem });
+  }
+  violations.push(...crossCheckHead(definitions, headExtraction));
+
+  const baseExtraction = extractRegistryFingerprints(baseRegistryText);
+  for (const problem of baseExtraction.problems) {
+    violations.push({ code: 'BASE-PROBLEM', name: REGISTRY_PATH, detail: problem });
+  }
+  if (baseExtraction.fingerprints.size === 0) {
     violations.push({
       code: 'BASE-PROBLEM',
       name: REGISTRY_PATH,
       detail: `could not extract CONFIG_REGISTRY at comparison base ${baseSha}`,
     });
-  } else {
-    const baseReaders = collectReaders(baseTree);
-    const compared = compareWithBase(
-      baseFingerprints,
+    return {
+      ok: false,
+      base: baseSha,
       definitions,
-      baseReaders,
-      collectConstFlags(baseTree),
       consts,
-    );
-    violations.push(...compared.violations);
-    diff.push(...compared.diff);
+      foundTokens,
+      violations,
+      diff,
+      variance: computeVariance(definitions),
+    };
+  }
 
-    // A removed family definition that head source still reads is an orphaned consumer.
-    for (const key of baseFingerprints.keys()) {
-      if (registered.has(key)) continue;
-      const headFiles = readers.get(key) ?? [];
-      if (headFiles.length > 0) {
-        violations.push({
-          code: 'ORPHAN-READER',
-          name: key,
-          detail: `definition removed at head but still read from ${headFiles.join(', ')}`,
-        });
-      }
+  const baseReaders = collectReaders(baseTree);
+  const compared = compareWithBase(
+    baseExtraction.fingerprints,
+    headExtraction.fingerprints,
+    new Map(definitions.map((def) => [def.key, def])),
+    baseReaders,
+    collectConstFlags(baseTree),
+    consts,
+  );
+  violations.push(...compared.violations);
+  diff.push(...compared.diff);
+
+  const headReads = collectDirectEnvReads(headTree);
+  const baseReadIds = new Set(
+    collectDirectEnvReads(baseTree).map((read) => `${read.key}\u0000${read.file}`),
+  );
+
+  // (a) A definition removed at head must not leave direct env reads behind.
+  for (const key of baseExtraction.fingerprints.keys()) {
+    if (registered.has(key)) continue;
+    const orphanReads = headReads.filter((read) => read.key === key);
+    if (orphanReads.length > 0) {
+      const files = [...new Set(orphanReads.map((read) => read.file))].sort();
+      violations.push({
+        code: 'ORPHAN-ENV-READ',
+        name: key,
+        detail: `definition removed at head but still read directly from ${files.join(', ')}`,
+      });
     }
+    const headFiles = readers.get(key) ?? [];
+    if (headFiles.length > 0) {
+      violations.push({
+        code: 'ORPHAN-READER',
+        name: key,
+        detail: `definition removed at head but still read from ${headFiles.join(', ')}`,
+      });
+    }
+  }
+
+  // (b) A registered key read directly from process.env bypasses DB/env/default resolution.
+  //     Only new (key, file) pairs relative to base fail; existing reads are grandfathered.
+  for (const read of headReads) {
+    if (!registered.has(read.key)) continue;
+    if (isAllowedDirectEnvFile(read.file)) continue;
+    if (baseReadIds.has(`${read.key}\u0000${read.file}`)) continue;
+    violations.push({
+      code: 'DIRECT-ENV-READ',
+      name: read.key,
+      detail: `registered key read directly from process.env in ${read.file} (${read.form}); use getConfig/getConfigFlag/getConfigMany`,
+    });
   }
 
   return {
@@ -1177,6 +1496,8 @@ function printViolations(violations: FlagViolation[]): void {
     'DEFINITION-PROBLEM',
     'NO-READER',
     'ORPHAN-READER',
+    'ORPHAN-ENV-READ',
+    'DIRECT-ENV-READ',
     'CONST-PROBLEM',
     'BASE-PROBLEM',
     'BASE-DRIFT',
@@ -1244,7 +1565,8 @@ function main(): void {
     console.log('');
     console.log(
       '  定义在 src/core/config/registry.ts；const 由领域源码自己的 boolean 声明登记。' +
-        ' report-only (exit 0); --strict gates UNREGISTERED / DEFINITION-PROBLEM / NO-READER / CONST-PROBLEM / BASE-DRIFT.',
+        ' 直接 env 读只对已登记 key 与 base 删除的 key 检查，不做全仓未登记 env 普查。' +
+        ' report-only (exit 0); --strict gates UNREGISTERED / DEFINITION-PROBLEM / NO-READER / ORPHAN-* / DIRECT-ENV-READ / CONST-PROBLEM / BASE-DRIFT.',
     );
   }
 
