@@ -3,9 +3,7 @@ import {
   HTTP_PROVIDER_SESSION_BUDGET_MS,
   runWithHttpProviderSessionDeadline,
 } from '@/server/http/provider-session-deadline';
-import type { FrontdoorContext } from './context';
-
-export const readStartLibraryDrafts: FrontdoorContext['readLibraryDrafts'] = (query) =>
+export const readStartLibraryDrafts = (query: string) =>
   runWithHttpProviderSessionDeadline(Date.now() + HTTP_PROVIDER_SESSION_BUDGET_MS, async () => {
     try {
       const { readPracticeDraftList } = await import(
