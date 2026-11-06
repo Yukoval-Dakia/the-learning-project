@@ -6,7 +6,7 @@ export const heartbeatStartNoteEditingFunction = createServerFn({ method: 'POST'
   .validator((body: string) => body)
   .handler(({ context, data }) =>
     runAuthenticatedStartWorkbench(context, getRequest(), async () => {
-      const { heartbeatStartNoteEditing } = await import('./note-editing-operation');
+      const { heartbeatStartNoteEditing } = await context.adapters.noteEditing();
       return JSON.stringify(await heartbeatStartNoteEditing(data));
     }),
   );
@@ -15,7 +15,7 @@ export const blurStartNoteEditingFunction = createServerFn({ method: 'POST' })
   .validator((body: string) => body)
   .handler(({ context, data }) =>
     runAuthenticatedStartWorkbench(context, getRequest(), async () => {
-      const { blurStartNoteEditing } = await import('./note-editing-operation');
+      const { blurStartNoteEditing } = await context.adapters.noteEditing();
       return JSON.stringify(await blurStartNoteEditing(data));
     }),
   );

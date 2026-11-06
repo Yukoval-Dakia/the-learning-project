@@ -5,7 +5,8 @@ import { runAuthenticatedStartWorkbench } from './workbench-read';
 export const getStartKnowledgeNodePage = createServerFn({ method: 'GET' })
   .validator((id: string) => id)
   .handler(({ context, data }) =>
-    runAuthenticatedStartWorkbench(context, getRequest(), async () =>
-      JSON.stringify(await context.readKnowledgeNodePage(data)),
-    ),
+    runAuthenticatedStartWorkbench(context, getRequest(), async () => {
+      const { readStartKnowledgeNodePage } = await context.adapters.knowledge();
+      return JSON.stringify(await readStartKnowledgeNodePage(data));
+    }),
   );

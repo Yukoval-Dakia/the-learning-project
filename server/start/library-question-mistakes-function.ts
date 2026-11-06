@@ -5,7 +5,8 @@ import { runAuthenticatedStartWorkbench } from './workbench-read';
 export const getStartLibraryQuestionMistakesFunction = createServerFn({ method: 'GET' })
   .validator((id: string) => id)
   .handler(({ context, data }) =>
-    runAuthenticatedStartWorkbench(context, getRequest(), async () =>
-      JSON.stringify(await context.readLibraryQuestionMistakes(data)),
-    ),
+    runAuthenticatedStartWorkbench(context, getRequest(), async () => {
+      const { readStartLibraryQuestionMistakes } = await context.adapters.library();
+      return JSON.stringify(await readStartLibraryQuestionMistakes(data));
+    }),
   );

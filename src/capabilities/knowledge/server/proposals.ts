@@ -27,6 +27,7 @@ import {
 import { getProposalInboxRow } from '@/kernel/proposals/inbox';
 import { archiveProposalCooldownKey, writeArchiveProposal } from '@/kernel/proposals/producers';
 import type { ProposalSignalSource } from '@/kernel/proposals/signals';
+import type { ProposalDecisionActor } from '@/kernel/proposals/types';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
 import { rewriteGoalScopeOnMerge } from '@/kernel/records/goal-commands';
@@ -1013,6 +1014,8 @@ export interface AcceptProposalOptions {
   /** Inbox/signal source for the decision signal; fetched when omitted. */
   proposal?: ProposalSignalSource;
   userNote?: string;
+  /** Auto-apply passes the proposing agent's identity; omitted = human `user/self`. */
+  actor?: ProposalDecisionActor;
 }
 
 /** Apply a pending knowledge proposal inside the shared decision transaction. */
@@ -1027,6 +1030,7 @@ export async function acceptProposal(
     const { result } = await runProposalAccept(db, proposalId, {
       proposal: signalSource,
       userNote: opts.userNote,
+      ...(opts.actor ? { actor: opts.actor } : {}),
       signal: 'after_commit',
       replay: (rate) => replayedKnowledgeAccept(db, proposalId, rate),
       effect: async ({ tx, writeRate }): Promise<ProposalAcceptEffectOutcome<AcceptResult>> => {

@@ -34,8 +34,10 @@ export const AutoAppliedProposalDigestSchema = z.object({
   rows: z.array(
     z.object({
       proposal_id: z.string(),
+      kind: z.string(),
       learning_item_id: z.string(),
       title: z.string(),
+      summary: z.string(),
       applied_at: z.string(),
       level: z.string(),
       reverted: z.boolean(),

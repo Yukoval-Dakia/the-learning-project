@@ -6,9 +6,7 @@ export const getStartPracticeQuestionDetailFunction = createServerFn({ method: '
   .validator((id: string) => id)
   .handler(({ context, data }) =>
     runAuthenticatedStartWorkbench(context, getRequest(), async () => {
-      const { readStartPracticeQuestionDetail } = await import(
-        './practice-question-detail-operation'
-      );
+      const { readStartPracticeQuestionDetail } = await context.adapters.library();
       return JSON.stringify(await readStartPracticeQuestionDetail(data));
     }),
   );

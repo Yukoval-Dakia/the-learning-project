@@ -323,6 +323,10 @@ export async function planLearningIntent(
   const proposalId = await writeLearningItemProposal(db, {
     topic,
     plan_case: planCase,
+    // 3a/3b mint knowledge nodes on accept, but the learning_item retract lane only
+    // archives items/artifacts. Keep them human-reviewed rather than auto-applied;
+    // 3c writes no knowledge and is the only fully retractable case.
+    auto_apply_eligible: planCase === '3c_existing_graph',
     knowledge_node: knowledgeNode,
     proposed_knowledge: proposedKnowledge,
     hub: outline.hub,

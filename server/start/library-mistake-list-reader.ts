@@ -3,9 +3,7 @@ import {
   HTTP_PROVIDER_SESSION_BUDGET_MS,
   runWithHttpProviderSessionDeadline,
 } from '@/server/http/provider-session-deadline';
-import type { FrontdoorContext } from './context';
-
-export const readStartLibraryMistakes: FrontdoorContext['readLibraryMistakes'] = (query) =>
+export const readStartLibraryMistakes = (query: string) =>
   runWithHttpProviderSessionDeadline(Date.now() + HTTP_PROVIDER_SESSION_BUDGET_MS, async () => {
     try {
       const { readMistakes } = await import('@/capabilities/ingestion/public');

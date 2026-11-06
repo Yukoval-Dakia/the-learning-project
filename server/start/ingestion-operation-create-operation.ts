@@ -3,12 +3,14 @@ import {
   HTTP_PROVIDER_SESSION_BUDGET_MS,
   runWithHttpProviderSessionDeadline,
 } from '@/server/http/provider-session-deadline';
-import type { FrontdoorContext } from './context';
-
-export const createStartIngestionOperation: FrontdoorContext['createIngestionOperation'] = ({
+export const createStartIngestionOperation = ({
   sessionId,
   body,
   key,
+}: {
+  sessionId: string;
+  body: string;
+  key: string | null;
 }) =>
   runWithHttpProviderSessionDeadline(Date.now() + HTTP_PROVIDER_SESSION_BUDGET_MS, async () => {
     try {

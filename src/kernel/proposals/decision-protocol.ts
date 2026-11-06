@@ -18,6 +18,7 @@ import {
   ensureProposalDecisionSignal,
   recordProposalDecisionSignal,
 } from './signals';
+import { type ProposalDecisionActor, USER_DECISION_ACTOR } from './types';
 
 export type RecordedProposalRate = NonNullable<Awaited<ReturnType<typeof findExistingRateEvent>>>;
 
@@ -71,6 +72,11 @@ export type ProposalWriteGuard = (tx: Tx) => Promise<void>;
 export interface ProposalAcceptPlan<TResult, TPrepared> {
   readonly proposal: ProposalSignalSource;
   readonly userNote?: string;
+  /**
+   * Decision actor for the one rate event. Omitted = the human inbox path
+   * (`user/self`); auto-apply passes the proposing agent's real identity.
+   */
+  readonly actor?: ProposalDecisionActor;
   readonly signal: ProposalSignalTiming;
   /**
    * The decision this accept requests. The replay condition is "the recorded
@@ -132,12 +138,13 @@ async function writeRateEvent(
   rating: ExistingRateDecision,
   userNote: string | undefined,
   rate: ProposalRateWrite = {},
+  actor: ProposalDecisionActor = USER_DECISION_ACTOR,
 ): Promise<string> {
   const rateEventId = rate.id ?? newId();
   await writeEvent(tx, {
     id: rateEventId,
-    actor_kind: 'user',
-    actor_ref: 'self',
+    actor_kind: actor.kind,
+    actor_ref: actor.ref,
     action: 'rate',
     subject_kind: rate.subject?.kind ?? 'event',
     subject_id: rate.subject?.id ?? proposalId,
@@ -161,8 +168,14 @@ export async function runProposalAccept<TResult, TPrepared = undefined>(
   plan: ProposalAcceptPlan<TResult, TPrepared>,
 ): Promise<ProposalAcceptRun<TResult>> {
   const requestedRating: ExistingRateDecision = plan.rating ?? 'accept';
+  // Learner decision signals feed the coach's acceptance-rate context. An agent
+  // auto-apply is not a learner decision, so it must not move those counts; the
+  // human inbox path (actor omitted) keeps recording exactly as before.
+  const recordsLearnerSignal = plan.actor?.kind !== 'agent';
   const replayed = async (rate: RecordedProposalRate): Promise<ProposalAcceptRun<TResult>> => {
-    await ensureProposalDecisionSignal(db, plan.proposal, 'accept', plan.userNote);
+    if (recordsLearnerSignal) {
+      await ensureProposalDecisionSignal(db, plan.proposal, 'accept', plan.userNote);
+    }
     return { outcome: 'replayed', result: await plan.replay(rate) };
   };
 
@@ -208,6 +221,7 @@ export async function runProposalAccept<TResult, TPrepared = undefined>(
             rate?.rating ?? requestedRating,
             plan.userNote,
             rate,
+            plan.actor ?? USER_DECISION_ACTOR,
           );
         },
       },
@@ -218,7 +232,7 @@ export async function runProposalAccept<TResult, TPrepared = undefined>(
         `accept effect for proposal ${proposalId} returned ${outcome.status} after ${rateWrites} rate writes`,
       );
     }
-    if (outcome.status === 'accepted' && plan.signal === 'in_transaction') {
+    if (outcome.status === 'accepted' && plan.signal === 'in_transaction' && recordsLearnerSignal) {
       await recordProposalDecisionSignal(tx, plan.proposal, 'accept', plan.userNote);
     }
     return outcome;
@@ -226,7 +240,7 @@ export async function runProposalAccept<TResult, TPrepared = undefined>(
 
   if (settled.status === 'decided') return replayed(settled.rate);
   if (settled.status === 'skipped') return { outcome: 'skipped', result: settled.result };
-  if (plan.signal === 'after_commit') {
+  if (plan.signal === 'after_commit' && recordsLearnerSignal) {
     await recordProposalDecisionSignal(db, plan.proposal, 'accept', plan.userNote);
   }
   return { outcome: 'accepted', result: settled.result };
