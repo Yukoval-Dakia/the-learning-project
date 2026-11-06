@@ -1381,7 +1381,9 @@ async function streamTaskCollectingImpl(
         // model turn; the proven category still rides providerFailure so the wire
         // can name it. Cancellation is not one.
         if (helpFault) {
-          const exit = renderHelpExitMarkdown(helpFault);
+          const exit = renderHelpExitMarkdown(helpFault, {
+            retryAfterMs: providerFailure?.retry_after_ms,
+          });
           const prose = resultText.trim();
           return {
             task_run_id: lifecycle.taskRunId,
