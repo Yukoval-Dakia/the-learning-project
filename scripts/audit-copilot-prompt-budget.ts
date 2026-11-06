@@ -17,8 +17,7 @@
  * proposal_feedback, ambient_context and the answer-only prefix (compiled into
  * the user message), plus tool JSON schemas (mounted in pi's tools array).
  *
- * Characters = JS String.length (UTF-16 code units). The main d8e8ac4 = 12,296
- * and #2594 f7339e6 = 11,999 baselines use the same metric.
+ * Characters = JS String.length (UTF-16 code units).
  *
  * Exit 1 when the total exceeds the budget, or when the assembly anchors no
  * longer match (that means this audit can no longer see the real prompt).
