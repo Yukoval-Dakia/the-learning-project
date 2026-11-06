@@ -212,7 +212,7 @@ export async function maybeProposeCauseCategoryFromOthers(params: {
         ...(learnerSummary !== undefined ? { learner_summary: learnerSummary } : {}),
         reason_md:
           (output.rationale_md ??
-            `${subjectId} 的 other 归因复发 ${scopedCauses.length} 次，LLM 判定存在连贯错因模式。`) +
+            `没能归到现有类别的错误反复出现了 ${scopedCauses.length} 次，看起来是同一种错因。`) +
           (unresolvedCount > 0
             ? `\n\n另有 ${unresolvedCount} 条 other 失败因 KC 不可解析未计入本桶（bucket=unresolved）。`
             : ''),

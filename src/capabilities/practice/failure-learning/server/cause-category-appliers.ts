@@ -91,6 +91,9 @@ function parseCauseCategoryChange(input: ProposalAcceptInput): PreparedCauseCate
   return { categoryId, label, description, source, subjectId, evidenceEventIds };
 }
 
+// Shown to the learner as is; programs branch on the `conflict` code, never on this text.
+const CATEGORY_ID_TAKEN_MESSAGE = '已经有同样的错因类别了，这张可以忽略。';
+
 // Rate was written but the row did not materialize — caller should retract +
 // re-run, not silently fix up (variant_question precedent).
 async function loadActiveOverlayRowOrThrow(
@@ -153,11 +156,7 @@ export const causeCategoryProposalAcceptApplier: ProposalAcceptApplier = async (
           .limit(1)
       )[0];
       if (existing) {
-        throw new ApiError(
-          'conflict',
-          `cause_category_overlay ${prepared.categoryId} already exists; choose a different slug`,
-          409,
-        );
+        throw new ApiError('conflict', CATEGORY_ID_TAKEN_MESSAGE, 409);
       }
       const inserted = await tx
         .insert(cause_category_overlay)
@@ -176,11 +175,7 @@ export const causeCategoryProposalAcceptApplier: ProposalAcceptApplier = async (
         .onConflictDoNothing({ target: cause_category_overlay.id })
         .returning({ id: cause_category_overlay.id });
       if (inserted.length === 0) {
-        throw new ApiError(
-          'conflict',
-          `cause_category_overlay ${prepared.categoryId} already exists; choose a different slug`,
-          409,
-        );
+        throw new ApiError('conflict', CATEGORY_ID_TAKEN_MESSAGE, 409);
       }
       const rateEventId = await writeRate({ created_at: now });
       return {
