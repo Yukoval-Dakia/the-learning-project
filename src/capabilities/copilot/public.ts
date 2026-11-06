@@ -25,6 +25,7 @@ export {
 export { createCopilotSession, readCopilotSessions } from './server/conversation-requests';
 export { loadCopilotSummary } from './server/copilot-summary';
 export { dispatchSessionHead } from './server/durable-dispatch';
+export { DURABLE_COPILOT_EXECUTION_BUDGET } from './server/durable-execution-budget';
 // Migration readiness checks consume this read-only port.
 export { assertCopilotLegacyDrained } from './server/legacy-drain-readiness';
 export { dismissCopilotNudge, markCopilotNudgeOpened } from './server/nudge-actions';

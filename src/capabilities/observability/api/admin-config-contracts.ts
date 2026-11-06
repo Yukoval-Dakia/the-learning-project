@@ -141,6 +141,16 @@ export const AdminConfigTaskRowSchema = z.object({
     transientRetries: z.number(),
     timeout: z.number(),
   }),
+  /** Caller-owned limits that outrank the stored budget (durable CopilotTask). */
+  caller_budget_override: z
+    .object({
+      maxIterations: z.union([z.number(), z.literal('unbounded')]),
+      maxCost: z.number().optional(),
+      timeoutMs: z.number(),
+    })
+    .optional(),
+  /** true = changing model/reasoning invalidates already-admitted grading slices. */
+  slice_admission: z.boolean(),
   budget_note: z.string(),
   override: AdminConfigTaskOverrideSchema.nullable(),
   override_wired: z.object({

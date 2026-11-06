@@ -168,6 +168,8 @@ export interface AdminConfigTaskRow {
   readonly default_budget: AdminConfigTaskFacts['default_budget'];
   readonly budget_wiring: AdminConfigTaskFacts['budget_wiring'];
   readonly effective_budget: AdminConfigTaskFacts['effective_budget'];
+  readonly caller_budget_override?: AdminConfigTaskFacts['caller_budget_override'];
+  readonly slice_admission: AdminConfigTaskFacts['slice_admission'];
   readonly budget_note: string;
   readonly override: {
     provider?: string;
@@ -303,6 +305,8 @@ export function buildAdminConfigReadModel(
       default_budget: task.default_budget,
       budget_wiring: task.budget_wiring,
       effective_budget: task.effective_budget,
+      caller_budget_override: task.caller_budget_override,
+      slice_admission: task.slice_admission,
       budget_note:
         '下次调用的预算基线；显式调用参数优先，执行及重试使用固定快照。chat费用上限/typed轮数未接线（null）；重试还受caller opt-in、路由pin及retry:none约束，流式不自动重试。',
       override: override

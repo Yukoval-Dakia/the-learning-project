@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { LEARNER_SUMMARY_MAX_CHARS } from '@/core/schema/proposal';
 
 const UNREADABLE_REASON = '这条提议暂无可读的依据说明，请核实后再决定是否采纳。';
 
@@ -83,17 +84,29 @@ export function proposalReasonPlainText(value: unknown): string {
   return maskCredentials(text);
 }
 
-/** Raw reason copies in legacy payloads must not bypass the public read mapping. */
+// Raw reason copies in legacy payloads must not bypass the public read mapping.
+// learner_summary is learner copy rather than a reason, but it crosses the same
+// boundary: credential masking and think-tag stripping apply before the card or
+// digest renders it. Masking can lengthen the text, so the mapped summary stays
+// within the schema cap instead of failing the read-side re-parse.
 export function mapProposalReasonFields(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(mapProposalReasonFields);
   if (typeof value !== 'object' || value === null) return value;
   const entries: Array<[string, unknown]> = Object.entries(value);
   return Object.fromEntries(
-    entries.map(([key, item]) => [
-      key,
-      key === 'reason_md' || key === 'reasoning' || key === 'reason' || key === 'archived_reason'
-        ? proposalReasonPlainText(item)
-        : mapProposalReasonFields(item),
-    ]),
+    entries.map(([key, item]) => {
+      if (
+        key === 'reason_md' ||
+        key === 'reasoning' ||
+        key === 'reason' ||
+        key === 'archived_reason'
+      ) {
+        return [key, proposalReasonPlainText(item)];
+      }
+      if (key === 'learner_summary') {
+        return [key, proposalReasonPlainText(item).slice(0, LEARNER_SUMMARY_MAX_CHARS)];
+      }
+      return [key, mapProposalReasonFields(item)];
+    }),
   );
 }

@@ -201,12 +201,13 @@ runTask(kind, input, ctx):
 retryEnabled(ctx):
   if ctx.enableTransientRetry !== true: return false     // 调用面显式 opt-in，默认 OFF
   if ctx.override?.provider || ctx.override?.model: return false   // 调用方钉死路由
-  if hasGlobalProviderOverride(): return false           // env 钉死路由（委托 providers.ts）
   return true
 ```
 
+> 2026-11-07 YUK-1910：删除 `hasGlobalProviderOverride()` 门。全局 pin（`AI_PROVIDER_OVERRIDE` 或 `lane.global.*`）只钉路由，不再静默关闭这两个判分的进程内重试；`ctx.override` / `ctx.modelBinding` 的 per-call pin 门不变。
+
 - **`ctx.enableTransientRetry`（新 RunTaskCtx 字段，默认 undefined=OFF）**：进程内 transient 重试**只给无 durable backstop 的路径**。两个 vision judge 的调用点（`steps-judge.ts` / `multimodal-direct-judge.ts` 的 defaultRunTaskFn ctx）设 `true` —— 它们 catch 吞成 `'unsupported'`，pg-boss 永远看不到 throw，是判词点名的无-backstop 面。**durable job handler 一律不设** → 队列重投（§6）保持唯一 transient 层，杜绝 2×3 相乘付费（判词以 `src/capabilities/knowledge/jobs/attribution_followup.ts:15` YUK-379 transient-rethrow 为证）。默认 OFF = 全仓其余调用点 byte-identical 零回归。
-- **`hasGlobalProviderOverride()`**：providers.ts 新增导出谓词，内部复用 `readEnvOverride()`（providers.ts:169）——不二写 `process.env.AI_PROVIDER_OVERRIDE` 真值检查（判词 should）。
+- **全局 pin 不是 retry 开关**：YUK-1910 起 `AI_PROVIDER_OVERRIDE`/`lane.global.*` 不再参与 retry 门控；只有 per-call override 和 modelBinding 会关掉进程内重试。
 - **门控矩阵**：
 
 | 场景 | override | 结果 |
@@ -215,7 +216,7 @@ retryEnabled(ctx):
 | `VISION_JUDGE_PROVIDER=anthropic-sub` + token 在场 | `{provider:'anthropic-sub'}` | retry OFF（operator 钉死） |
 | **`VISION_JUDGE_PROVIDER=anthropic-sub` + token 缺失** | `visionJudgeProviderOverride()` 降级返回 **undefined** | **retry ON**（行为偏差，显式记录：operator 意图 Opus、实际落 mimo+retry —— vision-judge-config 的 degrade-before-call 语义既有如此，retry 顺着已降级的解析走，可接受） |
 | induce.ts self-consistency（per-call 钉 anthropic-sub） | set | retry OFF（保 agreement 统计纯度；**该用例是 YUK-573 承重回归测试**，判词 should） |
-| 全局 `AI_PROVIDER_OVERRIDE` | env set | retry OFF |
+| 全局 `AI_PROVIDER_OVERRIDE` / `lane.global.*` | — | **retry ON**（YUK-1910 起全局 pin 只钉路由；retry 仍受 override/modelBinding 门约束） |
 | durable handler（不设 enableTransientRetry） | — | retry OFF（第一道门就关） |
 
 ### 3.3 留痕与计费（判词 should 修正）
@@ -362,7 +363,7 @@ WHERE status='running' AND started_at < now() - INTERVAL '1 hour'
 | `src/ai/registry.ts` | TaskBudget 删 maxCost / 增 transientRetries（必填）；TaskDef 删 fallbackChain；DEFAULT_BUDGET 改 `{maxIterations:6, transientRetries:0, timeout:60_000}`；40+ task def 删 chain 行；两 judge budget 加 `transientRetries:1` + 注释改写 + description 注记 |
 | `src/ai/registry.test.ts` | 删 4 处 fallbackChain 断言；增 judges transientRetries pin |
 | `src/server/ai/runner.ts` | AgentRunError（subtype+errors[] 捕获）；runTask 重试循环 + retryEnabled 门控 + `RETRY_ELAPSED_CAP_MS` elapsed 门（R1）；失败留痕所有权外置到循环 catch、按 §3.3 真值表写 finish_reason（R2）；resolved 传参重构（buildQueryOptions 第四参）；retry breadcrumb warn（R3）；runTask 两处补结构化 stuck warn；success+is_error breadcrumb warn |
-| `src/server/ai/providers.ts` | 导出 `hasGlobalProviderOverride()`（复用 readEnvOverride） |
+| `src/server/ai/providers.ts` | 导出 `hasGlobalProviderOverride()`（复用 readEnvOverride）；2026-11-07 YUK-1910 删除该谓词，全局 pin 不再关 retry |
 | `src/server/ai/judges/steps-judge.ts` / `multimodal-direct-judge.ts` | defaultRunTaskFn ctx 增 `enableTransientRetry: true` |
 | `src/server/ai/tools/budgets.ts` | :12 注释改写 |
 | `src/server/boss/queue-config.ts` | jobQueueOpts 增 retryLimit/retryDelay/retryBackoff + opts 类型 |

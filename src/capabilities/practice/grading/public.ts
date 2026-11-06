@@ -92,6 +92,7 @@ export {
   runSourceGroundingVerify,
 } from './server/judge/source-grounding-verify';
 export { judgeFallbackProvider } from './server/judge-durable-config';
+export { MODEL_SLICE_PINNED_TASK_KINDS } from './server/model-slice-pins';
 export const divertReviewAnswer: typeof import('./server/review-operation').divertReviewAnswer =
   async (...args) => (await import('./server/review-operation')).divertReviewAnswer(...args);
 // Judge engine identity and census belong to grading; the shared DBOS host consumes them.
