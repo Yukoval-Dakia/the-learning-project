@@ -26,9 +26,10 @@ export const loadWorksheetPrintPage = () =>
 export { CoverageLatticeResponseSchema } from './api/coverage-lattice-contracts';
 export { readIssuedBlocks } from './ui/blocks/issued-blocks';
 export { ConfirmationAssessment, type ConfirmationDraftClient } from './ui/ConfirmationAssessment';
-export {
-  QuestionCardBlock,
-  type QuestionCardBlockProps,
-  type QuestionCardClient,
+export type {
+  QuestionCardBlockProps,
+  QuestionCardClient,
 } from './ui/chat-card/QuestionCardBlock';
+export const loadQuestionCardBlock = () =>
+  import('./ui/chat-card/QuestionCardBlock').then((module) => module.QuestionCardBlock);
 export { type LibraryClient, LibraryClientProvider } from './ui/library/library-client';

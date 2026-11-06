@@ -13,10 +13,12 @@ import { restoreStartLibraryQuestion } from './library-question-restore-operatio
 import { updateStartLibraryQuestion } from './library-question-update-operation';
 import { runStartLibraryServingAction } from './library-serving-action-operation';
 import { readStartPracticeQuestionDetail } from './practice-question-detail-operation';
+import { readStartQuestionCard } from './question-card-operation';
 
 // One family surface, constructed in the API graph when a Start operation first asks
 // for it; each adapter keeps owning its own conversion, error and deadline handling.
 export const libraryAdapters = {
+  readStartQuestionCard,
   readStartLibraryQuestionDetail,
   readStartLibraryQuestionMistakes,
   readStartLibraryQuestions,

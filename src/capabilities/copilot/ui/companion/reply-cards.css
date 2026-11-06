@@ -39,7 +39,7 @@
   gap: var(--un-sp-1);
   margin-inline-start: auto;
 }
-[data-ui-next] .un-cp-block-status[data-tone='caution'] {
+[data-ui-next] .un-cp-block-status[data-tone="caution"] {
   color: var(--un-caution);
 }
 [data-ui-next] .un-cp-block-title {

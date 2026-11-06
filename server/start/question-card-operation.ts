@@ -1,9 +1,9 @@
+import { db } from '@/db/client';
 import { errorResponse } from '@/kernel/http';
+import { readQuestionCard } from '@/kernel/read-models/question-card';
 
 export const readStartQuestionCard = async (id: string, sessionId: string) => {
   try {
-    const { readQuestionCard } = await import('@/kernel/read-models/question-card');
-    const { db } = await import('@/db/client');
     return await readQuestionCard(db, id, sessionId);
   } catch (error) {
     throw errorResponse(error);
