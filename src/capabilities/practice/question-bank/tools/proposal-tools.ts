@@ -205,15 +205,24 @@ function toAuthorQuestionSeed(input: AuthorQuestionInput): AuthorQuestionSeed {
         ...(input.draft !== undefined ? { draft: input.draft } : {}),
         ...(input.suggestion_kind ? { suggestion_kind: input.suggestion_kind } : {}),
       };
-    case 'teaching_draft':
+    case 'teaching_draft': {
+      let draft = input.draft;
+      if (typeof draft === 'string') {
+        try {
+          draft = JSON.parse(draft);
+        } catch {
+          draft = undefined;
+        }
+      }
       return {
         seed_mode: 'teaching_draft',
         knowledge_ids: input.knowledge_ids ?? [],
         subject_id: input.subject_id,
         learner_topic: input.learner_topic,
-        draft: TeachingDraft.parse(input.draft),
+        draft: TeachingDraft.parse(draft),
         difficulty: input.difficulty,
       };
+    }
   }
 }
 
