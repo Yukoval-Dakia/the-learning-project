@@ -126,6 +126,23 @@ export interface TaskDefinition {
   readonly structuredSubmitUnits?: (input: unknown) => StructuredSubmitUnitPlan | undefined;
 }
 
+/**
+ * The single mount-selection rule for the structured submit tool. The pi adapter
+ * mounts the returned schema and audit:tool-params checks the same value, so the
+ * gate cannot drift from the wire (YUK-1904).
+ */
+export function resolveStructuredSubmitSchema(
+  definition: Pick<
+    TaskDefinition,
+    'structuredOutputMode' | 'structuredSubmitSchema' | 'structuredOutputSchema'
+  >,
+  input?: unknown,
+): ZodTypeAny | undefined {
+  return definition.structuredOutputMode === 'tool'
+    ? (definition.structuredSubmitSchema?.(input) ?? definition.structuredOutputSchema)
+    : undefined;
+}
+
 export const DEFAULT_TASK_BUDGET: TaskBudget = {
   maxIterations: 6,
   maxCost: 0.5,
