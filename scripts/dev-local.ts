@@ -271,10 +271,18 @@ const env: NodeJS.ProcessEnv = {
 // process (server/dev-frontdoor.ts): HMR for pages, no build step, no second watcher.
 //
 // Each child leads its own process group (detached → pgid = pid on POSIX), so a stop signal
-// reaches pnpm, tsx and the node API/worker together. Signalling only the pnpm child left
-// tsx/node running, and exiting at once left no chance to reap them either way.
+// reaches pnpm, tsx and the node API/worker together instead of leaving tsx/node running.
+// The cost: `kill -KILL` of this launcher skips every handler below, and the two groups keep
+// running; the pids/gpids printed at startup are the cleanup handle.
 const POSIX_PROCESS_GROUP = process.platform !== 'win32';
-function spawnDev(name: 'api' | 'worker', script: string, extraEnv: NodeJS.ProcessEnv) {
+type DevChild = {
+  name: 'api' | 'worker';
+  child: ReturnType<typeof spawn>;
+  pid: number | undefined;
+};
+const children: DevChild[] = [];
+
+function spawnDev(name: DevChild['name'], script: string, extraEnv: NodeJS.ProcessEnv): DevChild {
   const child = spawn('pnpm', [script], {
     stdio: 'inherit',
     env: { ...env, ...extraEnv },
@@ -282,23 +290,19 @@ function spawnDev(name: 'api' | 'worker', script: string, extraEnv: NodeJS.Proce
     // dev stacks are in different groups and must not be touched.
     detached: POSIX_PROCESS_GROUP,
   });
-  return { name, child, pid: child.pid };
+  const entry = { name, child, pid: child.pid };
+  children.push(entry);
+  return entry;
 }
-const api = spawnDev('api', 'rw:api', { RW_FRONTDOOR: 'dev' });
-const worker = spawnDev('worker', 'worker:dev', {});
-const children = [api, worker];
-console.log(
-  `[dev-local] open ${devOrigin}/ (Vite HMR; /api/* on the same origin; database ${databaseUrl.replace(/:\/\/[^@]*@/, '://***@')})`,
-);
-if (!process.env.DEV_PORT) console.log(`[dev-local] port ${devPort} auto-selected`);
-console.log(
-  `[dev-local] api pid ${api.pid ?? '?'}, worker pid ${worker.pid ?? '?'}; SIGINT/SIGTERM stops both`,
-);
 
-// Above the API's own 65s shutdown deadline (server/shutdown.ts), so a signal it handles
-// gracefully is never cut short; only a group that ignores the signal is force-killed after this.
+// Above the API's own 65s shutdown deadline (server/shutdown.ts). This is a backstop only:
+// tsx 4.23.x force-SIGKILLs its node child 5s after it receives the relayed signal, so a real
+// drain is cut at ~5s regardless; this long wait only catches a wrapper that ignores signals.
 const STOP_TIMEOUT_MS = 70_000;
 const STOP_POLL_MS = 100;
+// tsx relays the terminal signal into its own tree; a repeat inside this window is that echo,
+// not a user asking for an immediate kill.
+const REPEAT_SIGNAL_WINDOW_MS = 1_000;
 
 /** Negative pid targets the child's whole group on POSIX; Windows has no group kill. */
 function signalChild(pid: number, signal: NodeJS.Signals): void {
@@ -324,6 +328,7 @@ function processAlive(pid: number): boolean {
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 let stopping = false;
+let lastStopSignalAt = 0;
 
 async function stop(reason: string, signal: NodeJS.Signals, code: number | null): Promise<void> {
   if (stopping) return;
@@ -349,18 +354,60 @@ async function stop(reason: string, signal: NodeJS.Signals, code: number | null)
   process.exit(code ?? 0);
 }
 
+/**
+ * SIGHUP/SIGQUIT mean the terminal went away. The API and worker only install SIGINT/SIGTERM
+ * handlers (server/shutdown.ts, src/server/boss/shutdown.ts), so forward SIGTERM for those;
+ * forwarding the raw signal would kill them without draining.
+ */
+function forwardSignalFor(signal: NodeJS.Signals): NodeJS.Signals {
+  return signal === 'SIGINT' || signal === 'SIGTERM' ? signal : 'SIGTERM';
+}
+
 const onSignal = (signal: NodeJS.Signals) => {
-  // A second signal is the explicit "stop now" escape hatch for a stuck drain. The running
-  // stop() loop still owns the exit, so it reaps the killed groups before exiting.
+  const now = Date.now();
   if (stopping) {
+    if (now - lastStopSignalAt < REPEAT_SIGNAL_WINDOW_MS) return;
+    lastStopSignalAt = now;
     for (const { pid } of children) if (pid !== undefined) signalChild(pid, 'SIGKILL');
     console.warn(`[dev-local] ${signal} received again — killing api and worker process groups`);
     return;
   }
-  void stop(`${signal} received`, signal, 0);
+  lastStopSignalAt = now;
+  void stop(`${signal} received`, forwardSignalFor(signal), 0);
 };
-process.on('SIGINT', onSignal);
-process.on('SIGTERM', onSignal);
+// Registered before spawn: otherwise a terminal signal in that window takes Node's default exit
+// and leaves the detached groups behind. SIGHUP is the one a closed terminal window sends.
+for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGQUIT'] as const) {
+  process.on(signal, onSignal);
+}
+// Best effort for any other exit path (uncaught error, explicit exit). Exit handlers run
+// synchronously, so this only signals; it cannot wait for the drain. `kill -KILL` skips it.
+process.on('exit', () => {
+  for (const { pid } of children) if (pid !== undefined) signalChild(pid, 'SIGTERM');
+});
+
+spawnDev('api', 'rw:api', { RW_FRONTDOOR: 'dev' });
+spawnDev('worker', 'worker:dev', {});
+console.log(
+  `[dev-local] open ${devOrigin}/ (Vite HMR; /api/* on the same origin; database ${databaseUrl.replace(/:\/\/[^@]*@/, '://***@')})`,
+);
+if (!process.env.DEV_PORT) console.log(`[dev-local] port ${devPort} auto-selected`);
+const groupLabel = children
+  .map(({ name, pid }) =>
+    POSIX_PROCESS_GROUP && pid !== undefined
+      ? `${name} pid ${pid} (pgid ${pid})`
+      : `${name} pid ${pid ?? '?'}`,
+  )
+  .join(', ');
+console.log(`[dev-local] ${groupLabel}; Ctrl-C, SIGTERM, SIGHUP or a closed terminal stops both`);
+if (POSIX_PROCESS_GROUP) {
+  const groups = children.filter(({ pid }) => pid !== undefined).map(({ pid }) => `-${pid}`);
+  if (groups.length > 0) {
+    console.log(
+      `[dev-local] SIGKILL of this launcher is not handled; if its groups survive: kill -TERM -- ${groups.join(' ')} (then -KILL)`,
+    );
+  }
+}
 
 for (const { name, child } of children) {
   child.on('error', (err) => {
