@@ -291,7 +291,11 @@ export async function runProposalAutoApplySweep(
     // rate event recorded with this agent identity means the lane actually applied
     // it; never write an auto-apply card for a user decision.
     const recorded = await findExistingRateEvent(db, candidate.id);
-    if (!recorded || recorded.actor_kind !== 'agent' || recorded.actor_ref !== candidate.actorRef) {
+    if (!recorded) {
+      applied -= 1;
+      continue;
+    }
+    if (recorded.actor_kind !== 'agent' || recorded.actor_ref !== candidate.actorRef) {
       applied -= 1;
       continue;
     }
