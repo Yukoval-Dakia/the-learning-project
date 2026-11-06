@@ -2,6 +2,8 @@ import { notifyManager, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   type ComponentProps,
   type ReactNode,
+  Suspense,
+  lazy,
   useCallback,
   useMemo,
   useState,
@@ -12,6 +14,9 @@ import type { NotePageClient } from '@/capabilities/notes/ui-public';
 import {
   ConfirmationAssessment,
   type ConfirmationDraftClient,
+  type QuestionCardBlockProps,
+  type QuestionCardClient,
+  loadQuestionCardBlock,
 } from '@/capabilities/practice/ui-public';
 import { useWorkbenchClient } from '@/capabilities/shell/ui-public';
 import { queryKeys } from '@/ui/lib/write-invalidation';
@@ -21,6 +26,8 @@ import { NAV, type NavItem, activeFromPath, isSection } from './nav-config';
 
 // S13 (YUK-335 批次丙) — 主题持久化 key，与 design app.jsx:86 / 既有
 // ThemeToggle primitive 同 key（'loom-theme'），互不打架。
+const QuestionCardBlock = lazy(() => loadQuestionCardBlock().then((block) => ({ default: block })));
+
 const THEME_KEY = 'loom-theme';
 const THEME_ATTR = 'data-theme';
 type ShellTheme = 'light' | 'dark';
@@ -123,6 +130,7 @@ function ShellMain({ blockedByModal, children }: ShellMainProps) {
 // RootShell owns navigation, theme and the single Companion lifetime; presenters only arrange them.
 export function RootShell({
   confirmationClient,
+  questionCardClient,
   children,
   pathname,
   navigate,
@@ -130,6 +138,7 @@ export function RootShell({
   readNotePage,
 }: {
   confirmationClient?: ConfirmationDraftClient;
+  questionCardClient?: QuestionCardClient;
   children: ReactNode;
   pathname: string;
   navigate: (to: string) => void;
@@ -144,6 +153,17 @@ export function RootShell({
         return <ConfirmationAssessment {...props} client={confirmationClient} />;
       },
     [confirmationClient],
+  );
+  const QuestionCardRenderer = useMemo(
+    () =>
+      function QuestionCardRenderer(props: QuestionCardBlockProps) {
+        return (
+          <Suspense fallback={<props.Frame status={{ word: '在取题目', tone: 'waiting' }} />}>
+            <QuestionCardBlock {...props} client={questionCardClient} />
+          </Suspense>
+        );
+      },
+    [questionCardClient],
   );
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -248,6 +268,7 @@ export function RootShell({
       <div className="un-st-companion-slot">
         <CompanionMount
           confirmationRenderer={ConfirmationRenderer}
+          questionCardRenderer={QuestionCardRenderer}
           readNotePage={readNotePage}
           open={companionOpen}
           presentation="workspace"
