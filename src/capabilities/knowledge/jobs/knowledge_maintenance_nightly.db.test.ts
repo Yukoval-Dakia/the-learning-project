@@ -13,7 +13,11 @@ import { runKnowledgeMaintenanceNightly } from './knowledge_maintenance_nightly'
 function proposeNewChild(db: Db, parentId: string, name: string, reasoning: string) {
   return proposeKnowledgeMutationTool.execute(
     { db, taskRunId: '', callerActor: { kind: 'agent', ref: 'dreaming' } },
-    { change: { mutation: 'propose_new', parent_id: parentId, name }, reasoning },
+    {
+      change: { mutation: 'propose_new', parent_id: parentId, name },
+      learner_summary: `补充知识点：${name}`,
+      reasoning,
+    },
   );
 }
 

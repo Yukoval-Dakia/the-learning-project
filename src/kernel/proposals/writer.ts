@@ -7,6 +7,7 @@ import {
 import type { Db, Tx } from '@/db/client';
 import { costUsdToMicroUsd } from '@/kernel/cost';
 import { writeEvent } from '@/kernel/events';
+import { assertLearnerSummaryAllowed } from '@/kernel/proposals/learner-summary';
 // Cited evidence records move raw -> linked in the same scope as the propose event;
 // pass a tx to make both atomic.
 import { extractRecordEvidenceIds, markRecordsLinked } from '@/kernel/records/record-processing';
@@ -107,6 +108,9 @@ function eventShapeForProposal(payload: AiProposalPayloadT): {
 
 export async function writeAiProposal(db: DbLike, input: WriteAiProposalInput): Promise<string> {
   const payload = parseAiProposalPayload(input.payload);
+  // One deterministic gate for every producer: the learner-facing line may not
+  // smuggle internal ids / tool names / field names into the inbox or digest.
+  assertLearnerSummaryAllowed(payload.learner_summary);
   const eventId = input.id ?? newId();
   const eventShape = input.event_override
     ? {
