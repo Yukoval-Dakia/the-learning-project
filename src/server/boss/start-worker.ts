@@ -5,7 +5,6 @@ import { orchestrateCascadeRevert } from '@/server/revert/cascade-revert';
 
 import type { PgBoss } from 'pg-boss';
 import { capabilities } from '@/capabilities';
-import { installSchedulingCandidateRebuild } from '@/capabilities/practice/public';
 import type { Db } from '@/db/client';
 import { hydrateSubjectRegistryFromDb } from '@/kernel/read-models/subject-hydration';
 import { recoverToolOperationsOnBoot } from '@/kernel/tools/tool-operations';
@@ -50,7 +49,6 @@ export async function startBossWorker(
 ): Promise<PgBoss> {
   await initializeLaminarTracing();
   installSettlementCascadeRevert(orchestrateCascadeRevert);
-  installSchedulingCandidateRebuild();
   // Before any consumer. A maintenance marker or a mismatched epoch polls here and does not
   // start boss. A database read failure throws, same as any other boot failure.
   await waitForRunnableEpoch(db, { pollIntervalMs: options.epochPollIntervalMs });

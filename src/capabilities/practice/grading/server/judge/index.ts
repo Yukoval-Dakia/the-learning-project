@@ -117,5 +117,5 @@ export {
   isModelBackedJudgeRoute,
   resolveQuestionJudgeRoute,
 } from './route-resolve';
-export { defaultImageFetch, runStepsJudge } from './steps-judge';
+export { runStepsJudge } from './steps-judge';
 export type { AnswerInput, JudgeResult };

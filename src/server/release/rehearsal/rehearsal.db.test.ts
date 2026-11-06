@@ -1,8 +1,9 @@
 import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { seedKnowledge } from '@/capabilities/knowledge/server/seed';
+import { installPracticeHost } from '@/capabilities/practice/public';
 import { buildMigrationApplyPlan } from '@/core/migration/apply';
 import { canonicalHash } from '@/core/migration/canonical';
 import { classifyMigrationCapture } from '@/core/migration/classify';
@@ -63,6 +64,7 @@ async function planInput(db: Db, registry: ReturnType<typeof buildRehearsalRegis
 }
 
 describe('rehearsal corpus → capture → apply（orchestrate 同缝）', () => {
+  beforeAll(installPracticeHost);
   beforeEach(async () => {
     await resetDb();
     // 与 scripts/migrate.ts 同缝：builtin 科目根（seed:math:root）先落，

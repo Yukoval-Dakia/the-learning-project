@@ -14,16 +14,11 @@ import { createFrontdoor } from '../frontdoor';
 const env = getServerEnv();
 requireApiInternalToken(env);
 const port = resolveApiPort(env.API_PORT);
-const { installPracticeHostOperations, installModelAdmissionPins } = await import(
-  '@/capabilities/practice/public'
-);
-await installPracticeHostOperations();
+const { installPracticeHost } = await import('@/capabilities/practice/public');
+await installPracticeHost();
 const { installAgencyHostOperations } = await import('@/capabilities/agency/public');
 await installAgencyHostOperations();
-await installModelAdmissionPins();
-const { installSchedulingCandidateRebuild } = await import('@/capabilities/practice/public');
 installSettlementCascadeRevert(orchestrateCascadeRevert);
-installSchedulingCandidateRebuild();
 const [{ buildAdminConfigRuntimeFacts }, { setAdminConfigRuntimeFacts }] = await Promise.all([
   import('@/server/config/admin-config-facts'),
   import('@/capabilities/observability/public'),

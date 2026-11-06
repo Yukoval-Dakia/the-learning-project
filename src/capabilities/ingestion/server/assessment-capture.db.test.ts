@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
 import { eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { activateSubmissionCandidate } from '@/capabilities/practice/grading/server/judge/evaluate-submission';
+import { installPracticeHost } from '@/capabilities/practice/public';
 import { projectPracticeIssuance } from '@/core/schema/assessment';
 import type { FigureRefT } from '@/core/schema/structured_question';
 import {
@@ -28,6 +29,7 @@ import { captureIngestionOriginal, enrollNativeCapture } from './assessment-capt
 import { revertAutoEnrolledBlock } from './revert-auto-enroll';
 
 const now = new Date('2026-10-05T01:00:00Z');
+beforeAll(installPracticeHost);
 beforeEach(resetDb);
 async function fixture(answer = '42') {
   const db = testDb();

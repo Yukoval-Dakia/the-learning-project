@@ -7,7 +7,7 @@
 // Replay is INSERT. The target is a clean restore, so a conflict fails.
 
 import { eq, sql } from 'drizzle-orm';
-import { saveResponseDraft, saveSubmission } from '@/capabilities/practice/public';
+import { saveResponseDraft } from '@/capabilities/practice/public';
 import { canonicalHash, stableStringify } from '@/core/migration/canonical';
 import type { Db } from '@/db/client';
 import {
@@ -24,6 +24,7 @@ import {
   question_group_lifecycle,
   question_revision,
 } from '@/db/schema';
+import { saveSubmission } from '@/kernel/judge';
 import { issueAssessment } from '@/kernel/records/assessment-issuance';
 import { contractIntegrityDigest } from '@/kernel/records/assessment-normalization';
 import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
