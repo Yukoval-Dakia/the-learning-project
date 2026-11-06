@@ -24,7 +24,18 @@ export type SubjectCreateResult =
   | { kind: 'invalid'; message: string }
   | { kind: 'name_conflict'; message: string };
 
-type SubjectCreateOperation = (db: Db, displayName: string) => Promise<SubjectCreateResult>;
+export interface SubjectCreateSource {
+  /** The learner ask event that justified creating this subject. */
+  askEventId: string;
+  /** The AI task run that authored the question. */
+  taskRunId: string;
+}
+
+type SubjectCreateOperation = (
+  db: Db,
+  displayName: string,
+  source?: SubjectCreateSource,
+) => Promise<SubjectCreateResult>;
 
 const CREATE_SLOT = 'kernel/subject-create:create';
 

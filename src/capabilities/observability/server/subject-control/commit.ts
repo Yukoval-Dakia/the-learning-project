@@ -66,6 +66,8 @@ export async function insertSubjectRow(
     actor: JournalRow['actor'];
     now: Date;
     ifMissing?: boolean;
+    /** create 的 provenance；管理面缺省 {}。 */
+    detail?: JournalRow['detail'];
   },
 ): Promise<boolean> {
   const values = { ...args.row, revision: 0, created_at: args.now, updated_at: args.now };
@@ -73,7 +75,7 @@ export async function insertSubjectRow(
     subject_id: args.row.id,
     revision: 0,
     action: 'create',
-    detail: {},
+    detail: args.detail ?? {},
     actor: args.actor,
     created_at: args.now,
   };

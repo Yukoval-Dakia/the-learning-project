@@ -10,8 +10,20 @@ interface PlacementInput {
   learner_topic?: string;
 }
 
+interface PlacementSubject {
+  id: string;
+  /** True only when this placement created the subject; replay is false. */
+  created: boolean;
+}
+
 type PlacementResult =
-  | { ok: true; knowledge_ids: string[]; learner_topic?: string; placement_note?: string }
+  | {
+      ok: true;
+      knowledge_ids: string[];
+      learner_topic?: string;
+      placement_note?: string;
+      subject?: PlacementSubject;
+    }
   | {
       ok: false;
       issue: { code: 'subject_root_missing' | 'learner_topic_required'; detail: string };
@@ -41,7 +53,7 @@ function learnerAskMessage(
 export async function resolveTeachingDraftPlacement(
   db: Db,
   input: PlacementInput,
-  origin: { sessionId?: string; causedByEventId?: string },
+  origin: { sessionId?: string; causedByEventId?: string; taskRunId?: string },
 ): Promise<PlacementResult> {
   const rootOnly =
     input.knowledge_ids.length > 0 && input.knowledge_ids.every((id) => ROOT.test(id));
@@ -55,6 +67,17 @@ export async function resolveTeachingDraftPlacement(
     ? await db.select().from(event).where(eq(event.id, origin.causedByEventId)).limit(1)
     : [];
   const message = learnerAskMessage(ask, origin.sessionId);
+  // Every check that can reject this draft runs before any subject write: a failed
+  // placement must not leave a subject behind.
+  if (!input.learner_topic || message === undefined || !message.includes(input.learner_topic)) {
+    return {
+      ok: false,
+      issue: {
+        code: 'learner_topic_required',
+        detail: '没有取得本轮请求中的主题原话，这次没有存题。',
+      },
+    };
+  }
   const readSubject = (id: string) =>
     db
       .select({ id: subject.id, name: subject.display_name })
@@ -62,14 +85,25 @@ export async function resolveTeachingDraftPlacement(
       .where(and(eq(subject.id, id), isNull(subject.retired_at), eq(subject.is_selectable, true)))
       .limit(1);
   let [row] = subjectId ? await readSubject(subjectId) : [];
+  let placedSubject: PlacementSubject | undefined;
   // Only an unregistered subject can be created here. A live row with a missing
   // root is a repair case: creating a same-named subject would fork the registry.
-  if (!row && input.knowledge_ids.length === 0 && input.subject_id !== undefined && message) {
+  if (
+    !row &&
+    input.knowledge_ids.length === 0 &&
+    input.subject_id !== undefined &&
+    origin.causedByEventId !== undefined &&
+    origin.taskRunId !== undefined
+  ) {
     const claim = learnerStatedSubject(message, input.subject_id);
     if (claim) {
-      const created = await createSubjectThroughPort(db, claim);
+      const created = await createSubjectThroughPort(db, claim, {
+        askEventId: origin.causedByEventId,
+        taskRunId: origin.taskRunId,
+      });
       if (created.kind === 'created' || created.kind === 'replayed') {
         [row] = await readSubject(created.payload.id);
+        if (row) placedSubject = { id: row.id, created: created.kind === 'created' };
       }
     }
   }
@@ -98,20 +132,12 @@ export async function resolveTeachingDraftPlacement(
       },
     };
   }
-  if (!input.learner_topic || message === undefined || !message.includes(input.learner_topic)) {
-    return {
-      ok: false,
-      issue: {
-        code: 'learner_topic_required',
-        detail: '没有取得本轮请求中的主题原话，这次没有存题。',
-      },
-    };
-  }
   return {
     ok: true,
     knowledge_ids: [root.id],
     learner_topic: input.learner_topic,
     placement_note: `请求的主题还没有合适的知识节点，这道题先放在「${row.name}」下。`,
+    ...(placedSubject ? { subject: placedSubject } : {}),
   };
 }
 
