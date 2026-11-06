@@ -80,6 +80,7 @@ export const KEY_CONSUMERS: Readonly<Record<string, string | null>> = {
   SELECTION_POLICY: 'src/capabilities/practice/scheduling/server/stream-store.ts',
   HUB_SYNC_MODE: 'src/capabilities/notes/server/hub-sync-reconciliation.ts',
   PROJECTION_IS_WRITER_ITEM_CALIBRATION: 'src/kernel/projection-writer-policy.ts',
+  PROPOSAL_AUTO_APPLY_ENABLED: 'src/kernel/proposals/auto-apply-marker.ts',
   PLACEMENT_PROBE_ENABLED:
     'src/capabilities/practice/placement/server/placement-session-lifecycle.ts',
   AI_RATE_LIMIT_MAX: 'src/kernel/request-rate-limit.ts',
