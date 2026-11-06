@@ -19303,6 +19303,17 @@ export interface operations {
                             revision_id: string;
                         } | null;
                         settled?: {
+                            crisis_referral?: {
+                                /** @enum {string} */
+                                detection_class: "explicit" | "indirect" | "quoted_ironic" | "distress";
+                                guard_version: string;
+                                template: {
+                                    /** @enum {string} */
+                                    review_status: "未审定" | "已审定";
+                                    text_md: string;
+                                    version: string;
+                                };
+                            };
                             /** @enum {string} */
                             kind: "terminal";
                             run: {
@@ -19324,6 +19335,17 @@ export interface operations {
                                     };
                                     coarse_outcome?: string;
                                     confidence?: number;
+                                    crisis_referral?: {
+                                        /** @enum {string} */
+                                        detection_class: "explicit" | "indirect" | "quoted_ironic" | "distress";
+                                        guard_version: string;
+                                        template: {
+                                            /** @enum {string} */
+                                            review_status: "未审定" | "已审定";
+                                            text_md: string;
+                                            version: string;
+                                        };
+                                    };
                                     evidence_json?: unknown;
                                     feedback_md?: string;
                                     final_rating?: string | null;
@@ -19363,6 +19385,17 @@ export interface operations {
                                 status: "queued" | "started" | "failed";
                             };
                         } | {
+                            crisis_referral?: {
+                                /** @enum {string} */
+                                detection_class: "explicit" | "indirect" | "quoted_ironic" | "distress";
+                                guard_version: string;
+                                template: {
+                                    /** @enum {string} */
+                                    review_status: "未审定" | "已审定";
+                                    text_md: string;
+                                    version: string;
+                                };
+                            };
                             /** @enum {string} */
                             kind: "pending";
                             poll_url: string;
@@ -20056,6 +20089,17 @@ export interface operations {
                             };
                             coarse_outcome?: string;
                             confidence?: number;
+                            crisis_referral?: {
+                                /** @enum {string} */
+                                detection_class: "explicit" | "indirect" | "quoted_ironic" | "distress";
+                                guard_version: string;
+                                template: {
+                                    /** @enum {string} */
+                                    review_status: "未审定" | "已审定";
+                                    text_md: string;
+                                    version: string;
+                                };
+                            };
                             evidence_json?: unknown;
                             feedback_md?: string;
                             final_rating?: string | null;
@@ -25211,6 +25255,17 @@ export interface operations {
                                         revision_id: string;
                                     } | null;
                                     settled?: {
+                                        crisis_referral?: {
+                                            /** @enum {string} */
+                                            detection_class: "explicit" | "indirect" | "quoted_ironic" | "distress";
+                                            guard_version: string;
+                                            template: {
+                                                /** @enum {string} */
+                                                review_status: "未审定" | "已审定";
+                                                text_md: string;
+                                                version: string;
+                                            };
+                                        };
                                         /** @enum {string} */
                                         kind: "terminal";
                                         run: {
@@ -25232,6 +25287,17 @@ export interface operations {
                                                 };
                                                 coarse_outcome?: string;
                                                 confidence?: number;
+                                                crisis_referral?: {
+                                                    /** @enum {string} */
+                                                    detection_class: "explicit" | "indirect" | "quoted_ironic" | "distress";
+                                                    guard_version: string;
+                                                    template: {
+                                                        /** @enum {string} */
+                                                        review_status: "未审定" | "已审定";
+                                                        text_md: string;
+                                                        version: string;
+                                                    };
+                                                };
                                                 evidence_json?: unknown;
                                                 feedback_md?: string;
                                                 final_rating?: string | null;
@@ -25271,6 +25337,17 @@ export interface operations {
                                             status: "queued" | "started" | "failed";
                                         };
                                     } | {
+                                        crisis_referral?: {
+                                            /** @enum {string} */
+                                            detection_class: "explicit" | "indirect" | "quoted_ironic" | "distress";
+                                            guard_version: string;
+                                            template: {
+                                                /** @enum {string} */
+                                                review_status: "未审定" | "已审定";
+                                                text_md: string;
+                                                version: string;
+                                            };
+                                        };
                                         /** @enum {string} */
                                         kind: "pending";
                                         poll_url: string;
@@ -26931,6 +27008,17 @@ export interface operations {
                                             revision_id: string;
                                         } | null;
                                         settled?: {
+                                            crisis_referral?: {
+                                                /** @enum {string} */
+                                                detection_class: "explicit" | "indirect" | "quoted_ironic" | "distress";
+                                                guard_version: string;
+                                                template: {
+                                                    /** @enum {string} */
+                                                    review_status: "未审定" | "已审定";
+                                                    text_md: string;
+                                                    version: string;
+                                                };
+                                            };
                                             /** @enum {string} */
                                             kind: "terminal";
                                             run: {
@@ -26952,6 +27040,17 @@ export interface operations {
                                                     };
                                                     coarse_outcome?: string;
                                                     confidence?: number;
+                                                    crisis_referral?: {
+                                                        /** @enum {string} */
+                                                        detection_class: "explicit" | "indirect" | "quoted_ironic" | "distress";
+                                                        guard_version: string;
+                                                        template: {
+                                                            /** @enum {string} */
+                                                            review_status: "未审定" | "已审定";
+                                                            text_md: string;
+                                                            version: string;
+                                                        };
+                                                    };
                                                     evidence_json?: unknown;
                                                     feedback_md?: string;
                                                     final_rating?: string | null;
@@ -26991,6 +27090,17 @@ export interface operations {
                                                 status: "queued" | "started" | "failed";
                                             };
                                         } | {
+                                            crisis_referral?: {
+                                                /** @enum {string} */
+                                                detection_class: "explicit" | "indirect" | "quoted_ironic" | "distress";
+                                                guard_version: string;
+                                                template: {
+                                                    /** @enum {string} */
+                                                    review_status: "未审定" | "已审定";
+                                                    text_md: string;
+                                                    version: string;
+                                                };
+                                            };
                                             /** @enum {string} */
                                             kind: "pending";
                                             poll_url: string;
@@ -28160,6 +28270,17 @@ export interface operations {
                                         revision_id: string;
                                     } | null;
                                     settled?: {
+                                        crisis_referral?: {
+                                            /** @enum {string} */
+                                            detection_class: "explicit" | "indirect" | "quoted_ironic" | "distress";
+                                            guard_version: string;
+                                            template: {
+                                                /** @enum {string} */
+                                                review_status: "未审定" | "已审定";
+                                                text_md: string;
+                                                version: string;
+                                            };
+                                        };
                                         /** @enum {string} */
                                         kind: "terminal";
                                         run: {
@@ -28181,6 +28302,17 @@ export interface operations {
                                                 };
                                                 coarse_outcome?: string;
                                                 confidence?: number;
+                                                crisis_referral?: {
+                                                    /** @enum {string} */
+                                                    detection_class: "explicit" | "indirect" | "quoted_ironic" | "distress";
+                                                    guard_version: string;
+                                                    template: {
+                                                        /** @enum {string} */
+                                                        review_status: "未审定" | "已审定";
+                                                        text_md: string;
+                                                        version: string;
+                                                    };
+                                                };
                                                 evidence_json?: unknown;
                                                 feedback_md?: string;
                                                 final_rating?: string | null;
@@ -28220,6 +28352,17 @@ export interface operations {
                                             status: "queued" | "started" | "failed";
                                         };
                                     } | {
+                                        crisis_referral?: {
+                                            /** @enum {string} */
+                                            detection_class: "explicit" | "indirect" | "quoted_ironic" | "distress";
+                                            guard_version: string;
+                                            template: {
+                                                /** @enum {string} */
+                                                review_status: "未审定" | "已审定";
+                                                text_md: string;
+                                                version: string;
+                                            };
+                                        };
                                         /** @enum {string} */
                                         kind: "pending";
                                         poll_url: string;
@@ -34264,6 +34407,17 @@ export interface operations {
                         };
                         choices_md: string[] | null;
                         committed_attempt?: {
+                            crisis_referral?: {
+                                /** @enum {string} */
+                                detection_class: "explicit" | "indirect" | "quoted_ironic" | "distress";
+                                guard_version: string;
+                                template: {
+                                    /** @enum {string} */
+                                    review_status: "未审定" | "已审定";
+                                    text_md: string;
+                                    version: string;
+                                };
+                            };
                             judge: {
                                 /** @enum {string} */
                                 coarse_outcome: "correct" | "partial" | "incorrect" | "unsupported";
@@ -36773,6 +36927,17 @@ export interface operations {
                             };
                             /** @enum {string} */
                             status: "effective" | "review_required";
+                        };
+                        crisis_referral?: {
+                            /** @enum {string} */
+                            detection_class: "explicit" | "indirect" | "quoted_ironic" | "distress";
+                            guard_version: string;
+                            template: {
+                                /** @enum {string} */
+                                review_status: "未审定" | "已审定";
+                                text_md: string;
+                                version: string;
+                            };
                         };
                         evaluation_group_id: string;
                         judge: {

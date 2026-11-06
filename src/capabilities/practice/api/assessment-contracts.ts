@@ -3,6 +3,7 @@
 
 import { z } from 'zod';
 
+import { CrisisReferralWireSchema } from '@/core/crisis/referral';
 import {
   AssessmentIssuance,
   GroupEvidence,
@@ -171,6 +172,8 @@ export const JudgeRunTerminalResultSchema = z
     /** W5 — verdict landed, but derived writes were skipped (newer evidence already existed). */
     late_arrival: z.boolean().optional(),
     already_persisted: z.boolean().optional(),
+    /** Referral projected from the attempt's persisted crisis mark; absent on ordinary attempts. */
+    crisis_referral: CrisisReferralWireSchema.optional(),
   })
   .passthrough();
 
@@ -205,8 +208,17 @@ export const JudgeRunStatusResponseSchema = z.discriminatedUnion('status', [
  * 或判分记录不可读时缺省。
  */
 export const IssuanceJudgeSettledSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('terminal'), run: JudgeRunStatusResponseSchema }),
-  z.object({ kind: z.literal('pending'), run_id: z.string(), poll_url: z.string() }),
+  z.object({
+    kind: z.literal('terminal'),
+    run: JudgeRunStatusResponseSchema,
+    crisis_referral: CrisisReferralWireSchema.optional(),
+  }),
+  z.object({
+    kind: z.literal('pending'),
+    run_id: z.string(),
+    poll_url: z.string(),
+    crisis_referral: CrisisReferralWireSchema.optional(),
+  }),
 ]);
 
 // ---------- 发题状态快照（pending 恢复读面） ----------

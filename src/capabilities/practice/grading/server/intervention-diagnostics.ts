@@ -1,4 +1,5 @@
 import { and, desc, eq } from 'drizzle-orm';
+import { type CrisisReferralWire, buildCrisisReferral } from '@/core/crisis/referral';
 import { EvaluationRecord } from '@/core/schema/assessment';
 import type { GradingProvenanceEntryT } from '@/core/schema/capability';
 import { ReviewOnQuestion } from '@/core/schema/event/known';
@@ -20,6 +21,7 @@ import {
   retireQuestionFsrsState,
 } from '@/kernel/records/scheduling-state';
 import { streamLocalDate } from '@/kernel/stream-date';
+import { readAttemptCrisisMark } from './assessment/attempt';
 import { projectEvaluationToJudgeResult } from './judge/evaluation-authority';
 import { readJudgeQuestionActivity } from './judge-run-observation';
 
@@ -66,6 +68,7 @@ export interface CommittedInterventionDiagnosticAttempt {
     evaluation_id?: string;
     grading_provenance?: GradingProvenanceEntryT[];
   };
+  crisis_referral?: CrisisReferralWire;
 }
 
 /**
@@ -108,8 +111,10 @@ export async function loadCommittedInterventionDiagnosticAttempt(
         ).grading_provenance
       : undefined;
     const units = native.effective.row.unit_results.filter((unit) => unit.status === 'scored');
+    const mark = await readAttemptCrisisMark(db, attempt.id);
     return {
       review_event: { id: attempt.id, rating },
+      ...(mark ? { crisis_referral: buildCrisisReferral(mark) } : {}),
       judge: {
         route: 'evaluate_submission',
         coarse_outcome: verdict,

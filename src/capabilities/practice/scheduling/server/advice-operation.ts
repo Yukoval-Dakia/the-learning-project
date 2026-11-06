@@ -20,6 +20,8 @@ import {
   requestReviewAnswer,
 } from '@/capabilities/practice/grading/public';
 import { judgeResultToRatingAdvice } from '@/capabilities/practice/scheduling/server/rating-advisor';
+import { crisisDerivationPayload } from '@/core/crisis/classify';
+import { buildCrisisReferral } from '@/core/crisis/referral';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import type { Db } from '@/db/client';
 import { question } from '@/db/schema';
@@ -114,6 +116,23 @@ export async function previewReviewAdvice(db: Db, raw: unknown, signal: AbortSig
     throw new ApiError('corrupt_state', 'advice commit was diverted to durable judging', 500);
   }
 
+  // Preview classifies the same learner text the write point persists (response_md +
+  // reasoning_trace) with the same deterministic lexer. It writes no event; the mark is
+  // persisted when the attempt commits. Ordinary answers get no referral.
+  const crisisPayload = crisisDerivationPayload(
+    `${body.response_md ?? ''}\n${body.commit?.reasoning_trace ?? ''}`,
+  );
+  const crisis_referral = crisisPayload
+    ? buildCrisisReferral({
+        detection_class: crisisPayload.crisis_detection_class as
+          | 'explicit'
+          | 'indirect'
+          | 'quoted_ironic'
+          | 'distress',
+        guard_version: crisisPayload.crisis_guard_version,
+      })
+    : undefined;
+
   return {
     activity_ref: identity.activity_ref,
     question_id: questionId,
@@ -141,5 +160,6 @@ export async function previewReviewAdvice(db: Db, raw: unknown, signal: AbortSig
     },
     advice,
     ...(commit ? { committed: commit.body } : {}),
+    ...(crisis_referral ? { crisis_referral } : {}),
   };
 }

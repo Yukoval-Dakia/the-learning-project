@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { CrisisReferralWireSchema } from '@/core/crisis/referral';
 import { ActivateEvaluationIntent } from '@/core/schema/assessment';
 import {
   ActivityRef,
@@ -110,6 +111,9 @@ export const ReviewAdviceResponseSchema = z.object({
   }),
   // The createAttempt body of the attempt this request committed (see `commit`).
   committed: FormalAttemptResponseSchema.optional(),
+  // Deterministic lexical classification of the same text the write point persists —
+  // present in the 200 preview regardless of the durable switch; absent on ordinary answers.
+  crisis_referral: CrisisReferralWireSchema.optional(),
 });
 
 export const ReviewWeeklyQuerySchema = z.object({

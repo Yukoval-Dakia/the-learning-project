@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { CrisisReferralWireSchema } from '@/core/crisis/referral';
 import { QuestionKind } from '@/core/schema/business';
 import { GradingProvenanceEntry } from '@/core/schema/capability';
 import { ReviewTimingJsonSchema } from '@/core/schema/learner-judgment';
@@ -309,6 +310,7 @@ export const QuestionDetailResponseSchema = z
             grading_provenance: z.array(GradingProvenanceEntry).optional(),
           })
           .strict(),
+        crisis_referral: CrisisReferralWireSchema.optional(),
       })
       .strict()
       .nullable()

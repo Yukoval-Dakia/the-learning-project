@@ -1,5 +1,6 @@
 import { and, eq, inArray, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
+import { buildCrisisReferral } from '@/core/crisis/referral';
 import { canonicalHash } from '@/core/migration/canonical';
 import {
   JUDGE_OPERATIONAL_ACTIONS,
@@ -15,6 +16,7 @@ import {
   JudgeRunStatusResponseSchema,
   JudgeRunTerminalResultSchema,
 } from '../../api/assessment-contracts';
+import { readAttemptCrisisMark } from './assessment/attempt';
 import {
   type JudgeWorkflowObservation,
   observeJudgeDelivery,
@@ -347,6 +349,13 @@ function permanentDto(runId: string, state: PermanentJudgeState): JudgeStatusDto
     return { run_id: runId, status: 'failed', result: null };
   return null;
 }
+/** Terminal results carry the attempt's persisted referral mark — same mark as the submit response. */
+async function withResultReferral(database: Db, dto: JudgeStatusDto): Promise<JudgeStatusDto> {
+  if (dto.status !== 'done' || !dto.result || dto.result.crisis_referral) return dto;
+  const mark = await readAttemptCrisisMark(database, dto.result.attempt_event_id);
+  if (!mark) return dto;
+  return { ...dto, result: { ...dto.result, crisis_referral: buildCrisisReferral(mark) } };
+}
 /** Engine observation occurs only after the read transaction closes. One re-read bounds races. */
 export function createJudgeRunStatusReader(port: ObservationPort) {
   return async (database: Db, runId: string): Promise<JudgeStatusRead> => {
@@ -358,14 +367,14 @@ export function createJudgeRunStatusReader(port: ObservationPort) {
         });
       const first = await snapshot();
       const terminal = permanentDto(runId, first);
-      if (terminal) return { kind: 'found', value: terminal };
+      if (terminal) return { kind: 'found', value: await withResultReferral(database, terminal) };
       const observation: JudgeWorkflowObservation =
         first.kind === 'pending' && first.delivery
           ? await port.observe(first.delivery.reservation)
           : await port.observeUnmapped(runId);
       const second = await snapshot();
       const committed = permanentDto(runId, second);
-      if (committed) return { kind: 'found', value: committed };
+      if (committed) return { kind: 'found', value: await withResultReferral(database, committed) };
       if (second.kind === 'pending') {
         const unchanged =
           first.kind === 'pending' &&
@@ -393,18 +402,16 @@ export function createJudgeRunStatusReader(port: ObservationPort) {
         .orderBy(job_events.id);
       if (notifications.length) {
         const status = deriveJudgeRunStatus(notifications);
-        return {
-          kind: 'found',
-          value: JudgeRunStatusResponseSchema.parse({
-            run_id: runId,
-            status,
-            result:
-              status === 'done'
-                ? (JudgeRunTerminalResultSchema.safeParse(terminalJudgeRunResult(notifications))
-                    .data ?? null)
-                : null,
-          }),
-        };
+        const value = JudgeRunStatusResponseSchema.parse({
+          run_id: runId,
+          status,
+          result:
+            status === 'done'
+              ? (JudgeRunTerminalResultSchema.safeParse(terminalJudgeRunResult(notifications))
+                  .data ?? null)
+              : null,
+        });
+        return { kind: 'found', value: await withResultReferral(database, value) };
       }
       if (observation.kind === 'unavailable')
         return { kind: 'unavailable', reason: 'observation_unavailable' };
@@ -431,9 +438,23 @@ export async function readNativeJudgeSettled(
   const durable = await readJudgeRunPermanent(database, runId);
   const state = durable.kind === 'absent' ? await readSyncJudged(database, submissionId) : durable;
   const terminal = permanentDto(runId, state);
-  if (terminal) return { kind: 'terminal', run: terminal };
+  // Same persisted mark as the submit response — recovery faces never re-classify.
+  const mark = await readAttemptCrisisMark(database, assessmentAttemptEventId(submissionId));
+  const crisis_referral = mark ? buildCrisisReferral(mark) : undefined;
+  if (terminal) {
+    const run =
+      crisis_referral && terminal.status === 'done' && terminal.result
+        ? { ...terminal, result: { ...terminal.result, crisis_referral } }
+        : terminal;
+    return { kind: 'terminal', run, ...(crisis_referral ? { crisis_referral } : {}) };
+  }
   return state.kind === 'pending'
-    ? { kind: 'pending', run_id: runId, poll_url: judgeRunPollUrl(runId) }
+    ? {
+        kind: 'pending',
+        run_id: runId,
+        poll_url: judgeRunPollUrl(runId),
+        ...(crisis_referral ? { crisis_referral } : {}),
+      }
     : undefined;
 }
 async function readSyncJudged(

@@ -339,11 +339,11 @@ async function executeAcceptedCopilotRun(
     const effectiveClass = detectionClass === 'none' ? 'explicit' : detectionClass;
     const template = crisisTemplateForClass(effectiveClass);
     const crisisTaskRunId = `copilot_run_crisis_${runId}`;
-    if (effectiveClass === 'distress') {
-      // distress 裁决：确定性转介先落地（非终态回复，不占 outcome marker），
-      // 随后按正常模型回合继续。受限读面不放宽——执行层仍按 ask 继承的
-      // crisis 策略运行（answer_only 工具面、无 Exa/子代理），回复与派生面
-      // 同样排除该回合。
+    if (effectiveClass === 'distress' || effectiveClass === 'quoted_ironic') {
+      // distress / quoted_ironic 裁决：确定性模板先落地（非终态回复，不占
+      // outcome marker；各类用自己的版本化模板，不串文案），随后按正常模型
+      // 回合继续。受限读面不放宽——执行层仍按 ask 继承的 crisis 策略运行
+      // （answer_only 工具面、无 Exa/子代理），回复与派生面同样排除该回合。
       const referralReplyId = `copilot_reply_crisis_${runId}`;
       const [persistedReferral] = await db
         .select({ id: event.id })
