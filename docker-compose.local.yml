@@ -4,8 +4,11 @@
 #   docker compose -f docker-compose.yml -f docker-compose.local.yml up app postgres -d
 #
 # Differences from prod compose:
-#   - Postgres exposes 5433 on the host so `pnpm db:migrate` and the host
-#     `pnpm test` testcontainer setup can reach it directly.
+#   - Postgres exposes 5433 on the host for manual access to this locally-run
+#     compose stack. 5433 is TEST's historical relay port (closed 2026-11-06);
+#     pnpm scripts never use it — `pnpm db:migrate:local` and friends default to
+#     the dev Postgres on :5434 (docker-compose.dev.yml) and the shared guard in
+#     scripts/local-db-env.ts refuses 5433/5544 and database `loom`.
 #   - cloudflared is gated behind a "production" profile so `docker compose up`
 #     does NOT try to start the tunnel locally (no TUNNEL_TOKEN required).
 

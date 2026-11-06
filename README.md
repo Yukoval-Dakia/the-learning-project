@@ -135,8 +135,9 @@ CI（`CI`、`GITHUB_ACTIONS` 或 `CIRCLECI` 为 `true` / `1`）不拿槽、不�
 它不自动删除旧槽，避免与其他进程回收竞争。若主机重启或 SIGKILL 留下槽位，先核
 `owner` PID 及运行资源，再由运营清理确认为过期的槽；不要删除仍由其他线持有的槽。
 
-Local development has its own Postgres, isolated from the TEST stack (whose Postgres is
-`127.0.0.1:5433` / `5544`). Install once, then one command:
+Local development has its own Postgres, isolated from the TEST stack (TEST's Postgres
+lives on the NAS; its former host ports `127.0.0.1:5433` / `5544` are closed since
+2026-11-06). Install once, then one command:
 
 ```bash
 pnpm install
@@ -153,9 +154,13 @@ so several worktrees run dev at the same time without sharing data or ports. Re-
 reuses the same database and only applies new migrations. Docker/OrbStack must be running
 (`open -ga OrbStack`).
 
-- **Guard:** `dev:local` refuses to start if the database target is TEST's (port 5433/5544 or
-  database `loom`). The only override is `DEV_ALLOW_TEST_DB=1`, which prints a warning banner and
-  runs the dev API and worker against TEST's data and jobs — do not use it casually.
+- **Guard:** `dev:local`, `dev:reset` and every script resolving a local database target
+  (`db:migrate:local`, `drizzle.config.local.ts`, delivery/spike scripts — one shared
+  judgment in `scripts/local-db-env.ts`) refuse TEST targets before connecting: resolved
+  port 5433/5544 or database `loom`. The default is always this worktree's dev database
+  (`loom_dev` role @ 127.0.0.1:5434). The only override is `DEV_ALLOW_TEST_DB=1`, which
+  prints a warning banner and honours the TEST stack's `POSTGRES_*` — do not use it
+  casually.
 - **Connections:** each dev API and worker uses a small pool (`DB_POOL_MAX=5`, also caps pg-boss), about 29 connections per worktree (pools plus the pg-boss and event LISTEN clients). `dev:local` saves `max_connections=300` on the shared dev Postgres (in its volume, not the compose file) and restarts it only when no other worktree is connected; otherwise it prints the restart command to run once they are stopped.
 - **Builtin subjects:** migrations run through the production entry `scripts/migrate.ts`, so every start also runs the subject-root seed and the builtin subject/trait reconcile (4 subjects, 24 traits); both are idempotent, so older dev databases are filled on their next start.
 - **Seed questions:** unless `DEV_SEED=0`, a fresh dev DB starts with 7 admitted math questions (ids `devseed:q:*`, fixed answer keys graded without any model call) so the question bank, practice and today pages have content; re-running adds nothing. Dev DB only — never with `DEV_ALLOW_TEST_DB=1`.
@@ -438,7 +443,7 @@ docs/             # architecture, configuration, operations, modules, ADRs, plan
 
 ### TEST on the NAS, reached through a Mac-local relay
 
-TEST runs on the NAS (`bancho-nb2.local`) at `/volume1/docker/tlp-test/` — project `the-learning-project` with a private `compose.private.json`, memory/CPU-limited containers, restart `unless-stopped`; `app` and Postgres bind `127.0.0.1:18787` / `127.0.0.1:15433` on the NAS only, never `0.0.0.0`. The NAS sshd forbids TCP forwarding, so the Mac reaches TEST through LaunchAgent `studio.yukoval.tlp-nas-tunnel`: a relay on `127.0.0.1:8787` / `5433` / `5544` where each connection is an ssh exec channel running `nc` on the NAS (~0.25 s extra per new connection). `studio.yukoval.tlp-nas-watch` restarts the NAS memory watchdog after NAS reboots and alerts on a memory stop or unhealthy TEST. With the Mac off, TEST keeps running but is unreachable from outside, the Tailscale entry is down, and that day's backup does not run. Relay/watch reinstall steps and token/health rules are in [docs/operations.md](docs/operations.md#网络与访问). Specific private addresses stay in owner private records, not this repo.
+TEST runs on the NAS (`bancho-nb2.local`) at `/volume1/docker/tlp-test/` — project `the-learning-project` with a private `compose.private.json`, memory/CPU-limited containers, restart `unless-stopped`; `app` and Postgres bind `127.0.0.1:18787` / `127.0.0.1:15433` on the NAS only, never `0.0.0.0`. The NAS sshd forbids TCP forwarding, so the Mac reaches TEST through LaunchAgent `studio.yukoval.tlp-nas-tunnel`: a relay on `127.0.0.1:8787` where each connection is an ssh exec channel running `nc` on the NAS (with a few warm channels parked, a request normally skips the ssh setup). The relay's Postgres ports (`5433`/`5544` → NAS `15433`) were closed on 2026-11-06 — dev scripts used to default to 5433, so those ports must not reach TEST; query TEST data over `ssh yukoval@bancho-nb2.local docker exec … psql` instead. `studio.yukoval.tlp-nas-watch` restarts the NAS memory watchdog after NAS reboots and alerts on a memory stop or unhealthy TEST. With the Mac off, TEST keeps running but is unreachable from outside, the Tailscale entry is down, and that day's backup does not run. Relay/watch reinstall steps and token/health rules are in [docs/operations.md](docs/operations.md#网络与访问). Specific private addresses stay in owner private records, not this repo.
 
 AI tasks inherit `opencode-go/deepseek-v4.1-flash` from `DEFAULT_TASK_MODEL` with
 `lane.global.reasoning={"level":"high"}`. Set `task.<kind>.reasoning={"level":"max"}`

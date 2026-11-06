@@ -19,7 +19,7 @@ import { config } from 'dotenv';
 import postgres from 'postgres';
 
 import { parseGolden, reauditGolden } from './golden-reaudit';
-import { buildLocalDatabaseUrl } from './local-db-env';
+import { localDatabaseUrl, resolveLocalDbTarget, testDbRefusalReason } from './local-db-env';
 
 // quiet: keep stdout clean for --json consumers (dotenv v17 prints inject banners otherwise).
 config({ path: '.env.local', quiet: true });
@@ -277,60 +277,78 @@ export async function collectDeliveryEvidence(): Promise<DeliveryEvidence> {
     `protected route: no-token=${noToken} with-token=${withToken}`,
   );
 
-  // --- DB counts + crons + migration drift (host port 5433 path; same for dev/prod on Mac) ---
-  const sql = postgres(buildLocalDatabaseUrl(process.env), {
-    max: 1,
-    connect_timeout: 5,
-    prepare: false,
-  });
-  try {
-    const core = await sql<{ k: string; c: number }[]>`
+  // --- DB counts + crons + migration drift (resolved local target; TEST refused) ---
+  const dbTarget = resolveLocalDbTarget(process.env);
+  const dbRefusal = testDbRefusalReason(dbTarget, process.env);
+  if (dbRefusal) {
+    check(
+      'db-target',
+      'fail',
+      `refusing to connect: ${dbTarget.host}:${dbTarget.port}/${dbTarget.database} — ${dbRefusal}`,
+    );
+  } else {
+    if (process.env.DEV_ALLOW_TEST_DB === '1') {
+      console.warn(
+        `[delivery-evidence] DEV_ALLOW_TEST_DB=1 — TEST-target guard bypassed; ` +
+          `DB probes target ${dbTarget.host}:${dbTarget.port}/${dbTarget.database}`,
+      );
+    }
+    const sql = postgres(localDatabaseUrl(dbTarget), {
+      max: 1,
+      connect_timeout: 5,
+      prepare: false,
+    });
+    try {
+      const core = await sql<{ k: string; c: number }[]>`
       select 'event' k, count(*)::int c from event
       union all select 'task', count(*)::int from ai_task_runs
       union all select 'attempt', count(*)::int from provider_attempt`;
-    const boss = await sql<{ k: string; c: number }[]>`
+      const boss = await sql<{ k: string; c: number }[]>`
       select 'queue_active' k, count(*)::int c from pgboss.job
         where state in ('created', 'retry', 'active')
       union all select 'queue_failed', count(*)::int from pgboss.job where state = 'failed'`;
-    const m = Object.fromEntries([...core, ...boss].map((r) => [r.k, r.c]));
-    fields.counts = {
-      event: m.event ?? 0,
-      task: m.task ?? 0,
-      attempt: m.attempt ?? 0,
-      queueActive: m.queue_active ?? 0,
-      queueFailed: m.queue_failed ?? 0,
-    };
-    check(
-      'db-counts',
-      fields.counts.queueFailed > 0 ? 'warn' : 'ok',
-      `event=${m.event} task=${m.task} attempt=${m.attempt} ` +
-        `queue_active=${m.queue_active} queue_failed=${m.queue_failed}`,
-    );
+      const m = Object.fromEntries([...core, ...boss].map((r) => [r.k, r.c]));
+      fields.counts = {
+        event: m.event ?? 0,
+        task: m.task ?? 0,
+        attempt: m.attempt ?? 0,
+        queueActive: m.queue_active ?? 0,
+        queueFailed: m.queue_failed ?? 0,
+      };
+      check(
+        'db-counts',
+        fields.counts.queueFailed > 0 ? 'warn' : 'ok',
+        `event=${m.event} task=${m.task} attempt=${m.attempt} ` +
+          `queue_active=${m.queue_active} queue_failed=${m.queue_failed}`,
+      );
 
-    const schedules = await sql<Record<string, unknown>[]>`
+      const schedules = await sql<Record<string, unknown>[]>`
       select row_to_json(s) as j from pgboss.schedule s order by s.name`;
-    fields.cronNames = schedules.map((s) => {
-      const j = s.j as { name?: string; cron?: string; timezone?: string };
-      return `${j.name}(${j.cron ?? '?'}${j.timezone ? ` ${j.timezone}` : ''})`;
-    });
-    check(
-      'crons',
-      'ok',
-      fields.cronNames.length > 0 ? fields.cronNames.join('; ') : 'no pgboss schedules',
-    );
+      fields.cronNames = schedules.map((s) => {
+        const j = s.j as { name?: string; cron?: string; timezone?: string };
+        return `${j.name}(${j.cron ?? '?'}${j.timezone ? ` ${j.timezone}` : ''})`;
+      });
+      check(
+        'crons',
+        'ok',
+        fields.cronNames.length > 0 ? fields.cronNames.join('; ') : 'no pgboss schedules',
+      );
 
-    const mig = await sql<
-      { c: number }[]
-    >`select count(*)::int c from drizzle.__drizzle_migrations`;
-    fields.migrationsApplied = mig[0]?.c ?? null;
-  } catch (e) {
-    check(
-      'db',
-      containers.some((c) => c.service === 'postgres' && c.health === 'healthy') ? 'fail' : 'warn',
-      `postgres query failed: ${e instanceof Error ? e.message : String(e)}`,
-    );
-  } finally {
-    await sql.end({ timeout: 3 });
+      const mig = await sql<
+        { c: number }[]
+      >`select count(*)::int c from drizzle.__drizzle_migrations`;
+      fields.migrationsApplied = mig[0]?.c ?? null;
+    } catch (e) {
+      check(
+        'db',
+        containers.some((c) => c.service === 'postgres' && c.health === 'healthy')
+          ? 'fail'
+          : 'warn',
+        `postgres query failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    } finally {
+      await sql.end({ timeout: 3 });
+    }
   }
 
   // migration files on disk
