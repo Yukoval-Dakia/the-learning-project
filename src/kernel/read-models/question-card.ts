@@ -178,7 +178,9 @@ export async function readQuestionCard(db: Db, id: string, sessionId?: string) {
         ? ('failed' as const)
         : admission === 'undecided'
           ? ('undecided' as const)
-          : ('checking' as const),
+          : admission === 'pending' && serving.hold_reason === 'awaiting_admission'
+            ? ('checking' as const)
+            : ('unavailable' as const),
     question: {
       id: row.id,
       group_id: groupId,

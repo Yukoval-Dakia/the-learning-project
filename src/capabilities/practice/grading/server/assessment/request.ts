@@ -45,7 +45,7 @@ export async function requestAssessmentIssuance(db: Db, readBody: () => Promise<
       issuance_id: context?.issuanceId ?? body.issuance_id,
       group_id: body.group_id,
       revision_id: body.revision_id,
-      part_ids: body.part_ids,
+      part_ids: context?.partIds ?? body.part_ids,
       option_order_overrides: body.option_order_overrides,
       mode: body.mode,
       container_occurrence_ref: context?.container ?? body.container_occurrence_ref ?? null,

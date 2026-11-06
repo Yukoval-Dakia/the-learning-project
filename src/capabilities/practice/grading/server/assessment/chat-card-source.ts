@@ -75,5 +75,5 @@ export async function bindChatCardIssuance(
     (input.container_occurrence_ref != null && input.container_occurrence_ref !== container)
   )
     throw new ApiError('conflict', 'question card issuance coordinates do not match', 409);
-  return { issuanceId, container, digest, questionId };
+  return { issuanceId, container, digest, questionId, partIds: card.question.part_ids };
 }

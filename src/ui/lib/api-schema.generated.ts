@@ -10305,10 +10305,6 @@ export interface operations {
                     /** @default [] */
                     answer_image_refs?: string[];
                     assessment?: {
-                        chat_card?: {
-                            block_ref: string;
-                            session_id: string;
-                        };
                         evaluation_group_id: string;
                         /** @default [] */
                         group_evidence?: {
@@ -10583,10 +10579,6 @@ export interface operations {
                     /** @default [] */
                     answer_image_refs?: string[];
                     assessment?: {
-                        chat_card?: {
-                            block_ref: string;
-                            session_id: string;
-                        };
                         evaluation_group_id: string;
                         /** @default [] */
                         group_evidence?: {
@@ -10861,10 +10853,6 @@ export interface operations {
                     /** @default [] */
                     answer_image_refs?: string[];
                     assessment?: {
-                        chat_card?: {
-                            block_ref: string;
-                            session_id: string;
-                        };
                         evaluation_group_id: string;
                         /** @default [] */
                         group_evidence?: {
@@ -36520,10 +36508,6 @@ export interface operations {
             content: {
                 "application/json": {
                     assessment?: {
-                        chat_card?: {
-                            block_ref: string;
-                            session_id: string;
-                        };
                         evaluation_group_id: string;
                         /** @default [] */
                         group_evidence?: {
@@ -36938,10 +36922,6 @@ export interface operations {
                 "application/json": {
                     answer_md: string;
                     assessment?: {
-                        chat_card?: {
-                            block_ref: string;
-                            session_id: string;
-                        };
                         evaluation_group_id: string;
                         /** @default [] */
                         group_evidence?: {
@@ -37231,10 +37211,6 @@ export interface operations {
                     /** @default [] */
                     answer_image_refs?: string[];
                     assessment: {
-                        chat_card?: {
-                            block_ref: string;
-                            session_id: string;
-                        };
                         evaluation_group_id: string;
                         /** @default [] */
                         group_evidence?: {
@@ -39028,10 +39004,6 @@ export interface operations {
                         expected_generation: number;
                     };
                     assessment?: {
-                        chat_card?: {
-                            block_ref: string;
-                            session_id: string;
-                        };
                         evaluation_group_id: string;
                         /** @default [] */
                         group_evidence?: {
@@ -39429,10 +39401,6 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    chat_card?: {
-                        block_ref: string;
-                        session_id: string;
-                    };
                     evaluation_group_id: string;
                     /** @default [] */
                     group_evidence?: {
