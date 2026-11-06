@@ -516,6 +516,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/appeals/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getAppealStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/artifacts/{id}/ai-changes": {
         parameters: {
             query?: never;
@@ -8316,6 +8332,147 @@ export interface operations {
                 content: {
                     "application/json": {
                         appeal_event_id: string;
+                    };
+                };
+            };
+            /** @description Malformed request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description State or version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Semantic validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Rate limited */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    getAppealStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        after: {
+                            coarse_outcome: string;
+                            effective_evaluation_id: string | null;
+                            feedback_md: string | null;
+                            score: number | null;
+                        } | null;
+                        appeal_event_id: string;
+                        before: {
+                            coarse_outcome: string;
+                            feedback_md: string | null;
+                            score: number | null;
+                        } | null;
+                        disposition: string | null;
+                        evaluation_group_id: string | null;
+                        evaluation_id: string;
+                        feedback_buffered: boolean;
+                        reason_md: string;
+                        /** @enum {string} */
+                        status: "in_progress" | "changed" | "unchanged" | "unjudgeable" | "failed";
+                        submitted_at_sec: number;
                     };
                 };
             };
@@ -19304,6 +19461,7 @@ export interface operations {
                         settled?: {
                             /** @enum {string} */
                             kind: "terminal";
+                            latest_appeal_event_id: string | null;
                             run: {
                                 result: ({
                                     already_persisted?: boolean;
@@ -25212,6 +25370,7 @@ export interface operations {
                                     settled?: {
                                         /** @enum {string} */
                                         kind: "terminal";
+                                        latest_appeal_event_id: string | null;
                                         run: {
                                             result: ({
                                                 already_persisted?: boolean;
@@ -26932,6 +27091,7 @@ export interface operations {
                                         settled?: {
                                             /** @enum {string} */
                                             kind: "terminal";
+                                            latest_appeal_event_id: string | null;
                                             run: {
                                                 result: ({
                                                     already_persisted?: boolean;
@@ -28161,6 +28321,7 @@ export interface operations {
                                     settled?: {
                                         /** @enum {string} */
                                         kind: "terminal";
+                                        latest_appeal_event_id: string | null;
                                         run: {
                                             result: ({
                                                 already_persisted?: boolean;

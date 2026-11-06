@@ -28,9 +28,6 @@ export function bindAgentRunError(input: {
       ...(input.error.apiErrorStatus !== undefined
         ? { apiErrorStatus: input.error.apiErrorStatus }
         : {}),
-      ...(input.error.providerHttpStatus !== undefined
-        ? { providerHttpStatus: input.error.providerHttpStatus }
-        : {}),
       ...(input.error.providerZeroOutput !== undefined
         ? { providerZeroOutput: input.error.providerZeroOutput }
         : {}),
@@ -44,6 +41,7 @@ export function bindAgentRunError(input: {
       ...((input.helpLatency ?? input.error.helpLatency)
         ? { helpLatency: input.helpLatency ?? input.error.helpLatency }
         : {}),
+      ...(input.error.providerFailure ? { providerFailure: input.error.providerFailure } : {}),
     });
   }
   if (input.error instanceof ProviderSessionAdmissionError) {

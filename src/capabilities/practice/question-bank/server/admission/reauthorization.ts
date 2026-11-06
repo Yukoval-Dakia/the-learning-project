@@ -4,6 +4,7 @@
 // per-question gate, recover after a crash). Nothing here family-codes to a
 // task list: every target arrives as explicit data.
 import { and, eq, inArray, sql } from 'drizzle-orm';
+import { z } from 'zod';
 import {
   ADMISSION_FAMILY,
   type AdmissionJobData,
@@ -12,7 +13,9 @@ import {
 } from '@/capabilities/practice/question-bank/server/admission/enqueue';
 import { FrozenAdmissionInput } from '@/capabilities/practice/question-bank/server/admission/receipt';
 import { resolveQuestionAdmissionPolicyId } from '@/capabilities/practice/question-bank/server/admission/run-admission';
+import { ADMISSION_STAGE_FAMILY } from '@/capabilities/practice/question-bank/server/admission/stages';
 import {
+  type PaidEffectInput,
   type PaidEffectVoidAuthorization,
   computePaidEffectIdentity,
 } from '@/core/migration/paid-effect-protocol';
@@ -30,12 +33,35 @@ export const ADMISSION_VOID_ACTOR_REF = 'owner:yuk1547-approved-reopen';
 const ENQUEUE_SUBSCRIBER_ID = 'practice.question-admission-enqueue';
 const PUBLISH_ACTION = 'experimental:assessment_publish';
 
+const FrozenStageAttempt = z.object({
+  kind: z.string(),
+  call_index: z.number().int().nonnegative(),
+  attempt: z.number().int().nonnegative(),
+  payload_digest: z.string(),
+});
+
+const StageSuccessorInput = z.object({
+  family: z.literal(ADMISSION_STAGE_FAMILY),
+  entityId: z.string(),
+  entityRevision: z.string(),
+  unit: z.string(),
+  input: FrozenStageAttempt.extend({ recovery_confirmation: z.string().nullable() }),
+});
+
 /** One group's void + successor spec — explicit row identities + fence CAS. */
 export interface AdmissionVoidGroupSpec {
   groupId: string;
   baseDigest: string;
   successorUnit: string;
-  void: { unit: string; inputDigest: string; expectedFence: number }[];
+  void: {
+    unit: string;
+    inputDigest: string;
+    expectedFence: number;
+    /** Defaults to the coordinator family. A stage-row void additionally
+     * carries the frozen successor send input the bound run will claim. */
+    family?: string;
+    successorInput?: PaidEffectInput;
+  }[];
 }
 
 export interface AdmissionVoidEval {
@@ -257,9 +283,73 @@ export async function evaluateAdmissionVoidGroup(
       failures.push(`uncovered '${effect.state}' paid row on entity: ${key}`);
     }
   }
+  // Stage-family rows share the entity: settled receipts and retired rows are
+  // history, a 'pending' or 'sending' row is live work, and an 'unknown' row
+  // blocks the successor run at its own chain unless the spec voids it too
+  // with a frozen successor input that provably continues the voided chain.
+  const stageEffects = await tx
+    .select()
+    .from(paid_effect)
+    .where(
+      and(
+        eq(paid_effect.family, ADMISSION_STAGE_FAMILY),
+        eq(paid_effect.entity_id, spec.groupId),
+        eq(paid_effect.entity_revision, spec.baseDigest),
+      ),
+    )
+    .for('update');
+  for (const effect of stageEffects) {
+    const target = spec.void.find(
+      (v) =>
+        v.family === ADMISSION_STAGE_FAMILY &&
+        v.unit === effect.unit &&
+        v.inputDigest === effect.input_digest,
+    );
+    if (!target) {
+      if (effect.state === 'pending' || effect.state === 'sending' || effect.state === 'unknown')
+        failures.push(
+          `uncovered '${effect.state}' stage row on entity: ${effect.unit}|${effect.input_digest}`,
+        );
+      continue;
+    }
+    seen.add(`${ADMISSION_STAGE_FAMILY}|${effect.unit}|${effect.input_digest}`);
+    if (effect.state !== 'unknown') {
+      failures.push(`stage void target ${effect.unit} is '${effect.state}', not 'unknown'`);
+      continue;
+    }
+    if (effect.fence !== target.expectedFence) {
+      failures.push(
+        `stage void target ${effect.unit} fence ${effect.fence} != expected_fence ${target.expectedFence}`,
+      );
+      continue;
+    }
+    const voided = FrozenStageAttempt.safeParse(effect.input_json);
+    const successor = StageSuccessorInput.safeParse(target.successorInput);
+    const nextAttempt = voided.success ? voided.data.attempt + 1 : -1;
+    if (
+      !voided.success ||
+      !successor.success ||
+      successor.data.entityId !== spec.groupId ||
+      successor.data.entityRevision !== spec.baseDigest ||
+      successor.data.unit !== `call:${voided.data.call_index}:attempt:${nextAttempt}` ||
+      successor.data.input.kind !== voided.data.kind ||
+      successor.data.input.call_index !== voided.data.call_index ||
+      successor.data.input.attempt !== nextAttempt ||
+      successor.data.input.payload_digest !== voided.data.payload_digest ||
+      successor.data.input.recovery_confirmation !== null
+    ) {
+      failures.push(
+        `stage void target ${effect.unit}: successorInput does not continue the voided attempt chain`,
+      );
+    }
+  }
   for (const v of spec.void) {
-    if (!seen.has(`${v.unit}|${v.inputDigest}`)) {
-      failures.push(`manifest void target missing: ${v.unit}|${v.inputDigest}`);
+    const key =
+      (v.family ?? ADMISSION_FAMILY) === ADMISSION_FAMILY
+        ? `${v.unit}|${v.inputDigest}`
+        : `${v.family}|${v.unit}|${v.inputDigest}`;
+    if (!seen.has(key)) {
+      failures.push(`manifest void target missing: ${key}`);
     }
   }
   // No in-flight work may exist for the group: live jobs, unsettled
@@ -465,12 +555,27 @@ export async function releaseAdmissionVoidSuccessor(
     throw new Error(`bound job ${frozen.jobId} already exists; inspect instead of replaying`);
   }
   // Void + authorize + admit the successor intent — inside this same
-  // transaction so the reservation and the bound job commit together.
+  // transaction so the reservation and the bound job commit together. Stage
+  // entries bind their own frozen chain-continuation input under the same
+  // authorization and the same bound delivery.
   for (const v of spec.void) {
+    const family = v.family ?? ADMISSION_FAMILY;
+    const successorInput =
+      family === ADMISSION_FAMILY
+        ? {
+            family: ADMISSION_FAMILY,
+            entityId: spec.groupId,
+            entityRevision: spec.baseDigest,
+            unit: spec.successorUnit,
+            input: fresh.successorInput,
+          }
+        : v.successorInput;
+    if (!successorInput)
+      throw new Error(`${spec.groupId}: stage void target ${v.unit} lacks a successor input`);
     await voidPaidEffectWithSuccessor(
       tx,
       {
-        family: ADMISSION_FAMILY,
+        family,
         entityId: spec.groupId,
         entityRevision: spec.baseDigest,
         unit: v.unit,
@@ -483,13 +588,7 @@ export async function releaseAdmissionVoidSuccessor(
           reason: auth.reason,
           operator: auth.operator,
           basis: auth.basis,
-          successorInput: {
-            family: ADMISSION_FAMILY,
-            entityId: spec.groupId,
-            entityRevision: spec.baseDigest,
-            unit: spec.successorUnit,
-            input: fresh.successorInput,
-          },
+          successorInput,
           successorDelivery: { backend: 'pg-boss', deliveryId: frozen.jobId },
         },
       },
@@ -529,6 +628,7 @@ export async function recoverAdmissionVoidSend(
   const { paid_effect } = await import('@/db/schema');
   const rows = await db
     .select({
+      family: paid_effect.family,
       unit: paid_effect.unit,
       input_digest: paid_effect.input_digest,
       state: paid_effect.state,
@@ -536,9 +636,19 @@ export async function recoverAdmissionVoidSend(
       void_json: paid_effect.void_json,
     })
     .from(paid_effect)
-    .where(and(eq(paid_effect.family, ADMISSION_FAMILY), eq(paid_effect.entity_id, spec.groupId)));
+    .where(
+      and(
+        inArray(paid_effect.family, [ADMISSION_FAMILY, ADMISSION_STAGE_FAMILY]),
+        eq(paid_effect.entity_id, spec.groupId),
+      ),
+    );
   const voidedRows = spec.void.map((v) =>
-    rows.find((r) => r.unit === v.unit && r.input_digest === v.inputDigest),
+    rows.find(
+      (r) =>
+        r.family === (v.family ?? ADMISSION_FAMILY) &&
+        r.unit === v.unit &&
+        r.input_digest === v.inputDigest,
+    ),
   );
   const released = voidedRows.every((row) => row?.state === 'voided');
   if (!released) return null;

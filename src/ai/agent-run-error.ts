@@ -54,18 +54,24 @@ export type AgentFailureSubtype =
  */
 export const RETRY_ELAPSED_CAP_MS = 10_000;
 
+/**
+ * Structured provider wire evidence bound to the request that failed at
+ * termination. `http_status` is only ever a strictly bound status (pi lane's
+ * root-request binding or the typed lane's response status); `retry_after_ms`
+ * pairs with that same status — never a guess from an error string.
+ */
+export interface ProviderFailureEvidence {
+  http_status?: number;
+  retry_after_ms?: number;
+  stream_error?: true;
+}
+
 export interface AgentRunErrorFields {
   kind: string;
   taskRunId: string;
   subtype: AgentFailureSubtype;
   /** Only for 'api_error_result'; null marks connection-class. */
   apiErrorStatus?: number | null;
-  /**
-   * Adapter-bound provider status on the terminal frame (`provider_failure
-   * .http_status`): the status of the request that failed at termination —
-   * strict root binding or the transport snapshot's last root request.
-   */
-  providerHttpStatus?: number;
   /**
    * The run produced zero provider output tokens. Together with a bound
    * 401/403 this proves the configured credential never authenticated; a 401
@@ -80,6 +86,8 @@ export interface AgentRunErrorFields {
   helpProviderFault?: HelpProviderFault;
   /** Attempt latency seal. Absent when this failure has no help-latency kind. */
   helpLatency?: SealedHelpLatency;
+  /** Bound provider wire evidence on a failed terminal; absent when unobserved. */
+  providerFailure?: ProviderFailureEvidence;
 }
 
 /**
@@ -92,12 +100,12 @@ export class AgentRunError extends Error {
   readonly taskRunId: string;
   readonly subtype: AgentFailureSubtype;
   readonly apiErrorStatus?: number | null;
-  readonly providerHttpStatus?: number;
   readonly providerZeroOutput?: boolean;
   readonly errors: string[];
   readonly costUsd?: number;
   readonly helpProviderFault?: HelpProviderFault;
   readonly helpLatency?: SealedHelpLatency;
+  readonly providerFailure?: ProviderFailureEvidence;
 
   constructor(fields: AgentRunErrorFields) {
     const http =
@@ -109,12 +117,12 @@ export class AgentRunError extends Error {
     this.taskRunId = fields.taskRunId;
     this.subtype = fields.subtype;
     this.apiErrorStatus = fields.apiErrorStatus;
-    this.providerHttpStatus = fields.providerHttpStatus;
     this.providerZeroOutput = fields.providerZeroOutput;
     this.errors = fields.errors;
     this.costUsd = fields.costUsd;
     this.helpProviderFault = fields.helpProviderFault;
     this.helpLatency = fields.helpLatency;
+    this.providerFailure = fields.providerFailure;
   }
 }
 
@@ -172,6 +180,6 @@ export function isProviderAuthConfigError(err: unknown): err is AgentRunError {
   // carry the adapter's bound http_status.
   return (
     err.subtype === 'error_during_execution' &&
-    (err.providerHttpStatus === 401 || err.providerHttpStatus === 403)
+    (err.providerFailure?.http_status === 401 || err.providerFailure?.http_status === 403)
   );
 }

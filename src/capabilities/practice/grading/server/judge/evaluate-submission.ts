@@ -269,7 +269,13 @@ export function createAdmissionRunExecutor(
   maxCostUsdMicros: number,
 ): ModelUnitExecutorPort | undefined {
   if (taskKind === 'AssessmentRuleJudgeTask') {
-    return createPiModelExecutor({ db, deadlineAt, maxCostUsdMicros, judgeRetryPolicy: 'none' });
+    return createPiModelExecutor({
+      db,
+      deadlineAt,
+      maxCostUsdMicros,
+      judgeRetryPolicy: 'none',
+      providerTransientRetry: true,
+    });
   }
   if (taskKind === 'AssessmentRubricJudgeTask') {
     return createRubricModelExecutor({
@@ -277,10 +283,16 @@ export function createAdmissionRunExecutor(
       deadlineAt,
       maxCostUsdMicros,
       judgeRetryPolicy: 'none',
+      providerTransientRetry: true,
     });
   }
   if (taskKind === 'JevScoringDecisionTask') {
-    return createJevModelExecutor({ db, deadlineAt, judgeRetryPolicy: 'none' });
+    return createJevModelExecutor({
+      db,
+      deadlineAt,
+      judgeRetryPolicy: 'none',
+      providerTransientRetry: true,
+    });
   }
   return undefined;
 }

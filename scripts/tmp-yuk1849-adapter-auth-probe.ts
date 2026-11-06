@@ -213,7 +213,8 @@ async function main() {
         error: err instanceof Error ? err.name : String(err),
         message: err instanceof Error ? err.message.slice(0, 220) : null,
         subtype: err instanceof AgentRunError ? err.subtype : null,
-        providerHttpStatus: err instanceof AgentRunError ? (err.providerHttpStatus ?? null) : null,
+        providerHttpStatus:
+          err instanceof AgentRunError ? (err.providerFailure?.http_status ?? null) : null,
         providerZeroOutput: err instanceof AgentRunError ? (err.providerZeroOutput ?? null) : null,
         authConfigError: isProviderAuthConfigError(err),
         wireCalls: wireRequests - before,

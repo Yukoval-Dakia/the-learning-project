@@ -96,6 +96,7 @@ import {
   AdmissionWaiting,
   admissionStageRunner,
 } from '../server/admission/stages';
+import { demoteWaitingCoordinatorOnUnresolvedStage } from '../server/admission/unknown-closure';
 import {
   applyCustomPreviewDecision,
   prepareAdmissionCustomPreview,
@@ -532,10 +533,11 @@ export async function runAdmissionForQuestion(
       });
     };
     try {
+      const providerSessionDeadlineAt = Date.now() + 15 * 60_000;
       const executeTask =
         deps.runTask ??
         makeRunTaskTextFn(db, {
-          providerSessionDeadlineAt: Date.now() + 15 * 60_000,
+          providerSessionDeadlineAt,
           judgeRetryPolicy: 'none',
           laminarTranscript: await admissionTranscriptAllowed(db, {
             groupId: rootId,
@@ -598,6 +600,8 @@ export async function runAdmissionForQuestion(
         recovery: deps.providerRecovery,
         recoveryConfirmed: data.recovery_confirmed,
         loginProbeRoute: data.login_probe_route,
+        signal: controller.signal,
+        deadlineAt: providerSessionDeadlineAt,
       });
       // Metadata for the solution prior only: a read failure must not touch the paid batch.
       const knowledgeCandidates = await loadPriorKnowledgeCandidates(db, {
@@ -825,6 +829,14 @@ export async function runAdmissionForQuestion(
               `${error instanceof Error ? error.message : String(error)};task_runs=${[...attemptedTaskRunIds].join(',')}`,
               { fence: batchFence },
             );
+          } else if (snapshot?.state === 'receipt_ready') {
+            // A recorded 'waiting' receipt answered by an unresolved stage
+            // send can never be re-asked: redeliveries keep landing on the
+            // same stage row, and no wakeup is scheduled.
+            await demoteWaitingCoordinatorOnUnresolvedStage(tx, batch.identity, {
+              expectedFence: snapshot.fence,
+              result: snapshot.result,
+            });
           }
         });
         deps.signal?.throwIfAborted();
