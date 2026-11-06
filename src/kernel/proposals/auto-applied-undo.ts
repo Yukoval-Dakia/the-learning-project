@@ -827,12 +827,25 @@ async function classifyLearningItems(
     }
   }
 
-  // Another note holding a block ref to a paired note is later content: archiving
-  // the target would leave that backlink dangling.
-  const referencedArtifactIds = new Set<string>();
+  // References from notes in the SAME proposal are part of that proposal: retract
+  // archives the whole note family together, so those refs disappear with it. Only
+  // a note outside the group is later content that a retract would orphan.
+  const pairedArtifactIdsByProposal = new Map<string, Set<string>>();
+  for (const proposalId of proposalIds) {
+    const group = new Set<string>(artifactIdsByProposal.get(proposalId) ?? []);
+    for (const item of rowsByProposal.get(proposalId) ?? []) {
+      if (item.primaryArtifactId) group.add(item.primaryArtifactId);
+    }
+    pairedArtifactIdsByProposal.set(proposalId, group);
+  }
+
+  const refsByTarget = new Map<string, string[]>();
   if (allArtifactIds.length > 0) {
     const refs = await db
-      .select({ toArtifactId: artifact_block_ref.to_artifact_id })
+      .select({
+        fromArtifactId: artifact_block_ref.from_artifact_id,
+        toArtifactId: artifact_block_ref.to_artifact_id,
+      })
       .from(artifact_block_ref)
       .where(
         and(
@@ -840,7 +853,22 @@ async function classifyLearningItems(
           ne(artifact_block_ref.from_artifact_id, artifact_block_ref.to_artifact_id),
         ),
       );
-    for (const row of refs) referencedArtifactIds.add(row.toArtifactId);
+    for (const row of refs) {
+      const list = refsByTarget.get(row.toArtifactId);
+      if (list) list.push(row.fromArtifactId);
+      else refsByTarget.set(row.toArtifactId, [row.fromArtifactId]);
+    }
+  }
+  const referencedArtifactIdsByProposal = new Map<string, Set<string>>();
+  for (const proposalId of proposalIds) {
+    const group = pairedArtifactIdsByProposal.get(proposalId) ?? new Set<string>();
+    const referenced = new Set<string>();
+    for (const artifactId of group) {
+      for (const fromArtifactId of refsByTarget.get(artifactId) ?? []) {
+        if (!group.has(fromArtifactId)) referenced.add(artifactId);
+      }
+    }
+    referencedArtifactIdsByProposal.set(proposalId, referenced);
   }
 
   const draftItemIds = new Set<string>();
@@ -925,7 +953,11 @@ async function classifyLearningItems(
       decisions.set(proposalId, blocked('learning_item_note_edited', entry.rate.createdAt));
       continue;
     }
-    if ([...pairedArtifactIds].some((artifactId) => referencedArtifactIds.has(artifactId))) {
+    if (
+      [...pairedArtifactIds].some((artifactId) =>
+        referencedArtifactIdsByProposal.get(proposalId)?.has(artifactId),
+      )
+    ) {
       decisions.set(proposalId, blocked('learning_item_artifact_referenced', entry.rate.createdAt));
     }
   }
