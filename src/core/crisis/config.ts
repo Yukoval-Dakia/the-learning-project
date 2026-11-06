@@ -89,7 +89,7 @@ const DEATH_TERMS_EN = new RegExp(
     'want to die|wanted to die|suicidal|better off dead|' +
     "not want to live|don't want to live|dont want to live|do not want to live|" +
     "not want to be alive|don't want to be alive|dont want to be alive|" +
-    'do not want to be alive|end it all|' +
+    'do not want to be alive|\\bend it all|' +
     `i\\b.{0,24}?\\b(?:wanna|gonna|going to) (?:die${EN_DIE_TAIL}|end it${EN_END_IT_TAIL}|kill myself)|` +
     `i\\b.{0,24}?\\bwant(?:ed)? to end it${EN_END_IT_TAIL})`,
 );
@@ -143,19 +143,25 @@ export const CRISIS_GUARD_CONFIG: CrisisGuardConfig = {
     // 了"); a noun directly before the verb ("这座桥撑不下去了") or after the
     // complement ("撑不下去这道题了") keeps it out.
     new RegExp(`(?:^|[${CLAUSE_BOUNDARY_ZH}])${ENDURANCE_VERB_ZH}${ENDURANCE_TAIL}`),
-    /(?:活着|做人).{0,6}(?:累|难|没劲)/,
+    // The hardship word must close the clause — "难道" is a rhetorical opener
+    // ("做人难道不应该诚实吗"), not an endurance collapse ("活着太难了").
+    new RegExp(`(?:活着|做人).{0,6}(?:累|难|没劲)${END_ALL_TAIL}`),
+    // "想不开" must close the clause too — an object after it is the literal
+    // verb ("我想不开这个窗口"), not the endurance idiom.
     new RegExp(
       `(?:^|[${CLAUSE_BOUNDARY_ZH}])${ENDURANCE_PREFIX_ZH}` +
-        `${PERSON_ANCHOR_ZH}.{0,6}想不开|(?:^|[${CLAUSE_BOUNDARY_ZH}])想不开`,
+        `${PERSON_ANCHOR_ZH}.{0,6}想不开${END_ALL_TAIL}|(?:^|[${CLAUSE_BOUNDARY_ZH}])想不开${END_ALL_TAIL}`,
     ),
     // Resignation/burdensomeness forms with volition/boundary anchors: "累死了算了"
     // and "来结束这一切" stay out, and "需要我" must end the clause or take an
     // abstract-self object ("没有人需要我的帮助" stays none, "…我的存在" hits).
     new RegExp(
-      `(?:${VOLITION_ZH}).{0,4}死了算|(?:不如|还不如|干脆|索性)死了|(?:^|[${CLAUSE_BOUNDARY_ZH}])死了算`,
+      `(?:${VOLITION_ZH}).{0,4}死了算了|(?:不如|还不如|干脆|索性)死了|(?:^|[${CLAUSE_BOUNDARY_ZH}])死了算了`,
     ),
     /想消失/,
-    /没(?:有|了)我.{0,6}(?:更好|会更好|清净|安宁)/,
+    // The better-off word must close the clause — comparative objects stay out
+    // ("有没有我更好理解的解法"), existential "没有我会更好" hits.
+    new RegExp(`没(?:有|了)我.{0,6}(?:会更好|更好|清净|安宁)${END_ALL_TAIL}`),
     new RegExp(
       `(?:没有人|没人|谁也没|谁也不).{0,4}需要我` +
         `(?=$|[${CLAUSE_BOUNDARY_ZH}]|了|呢|吧|啊|呀|哈|哦|唉|哎|呜|啦|咯|嘛|么|` +

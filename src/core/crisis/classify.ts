@@ -40,8 +40,11 @@ function matchesAny(patterns: readonly RegExp[], spaced: string, despaced: strin
 // and never compound; a 不 right after the char negates it instead ("想死记不住了").
 const SI_COMPOUND_RE =
   /(?:想|想去|要去|怎么)死(?:磕|缠|磨|黏|赖|跟|盯|抱|抓|捏|攥|揪|掐|拽|捂|记|背|啃|抠|命|卷|死)(?!不)/g;
+// Method words mirror the vocabulary in config.ts's intent-gated method
+// patterns (吞药/安眠药/褪黑素/跳楼/跳下去/割腕/烧炭/上吊/自尽/轻生) so the
+// evidence check sees the same methods the term patterns do.
 const DEATH_EVIDENCE_RE =
-  /死|自杀|跳楼|跳下去|割腕|烧炭|上吊|轻生|安乐死|了结|解脱|消失|撑不|熬不|挺不|扛不|顶不|活不下|不想活|kill|die|dying|suicide|self[- ]?harm|end it|wanna die/;
+  /死|自杀|吞药|自尽|安眠药|褪黑素|跳楼|跳下去|割腕|烧炭|上吊|轻生|安乐死|了结|解脱|一了百了|结束自己|结束生命|消失|撑不|熬不|挺不|扛不|顶不|活不下|不想活|kill|die|dying|suicide|self[- ]?harm|end it|wanna die/;
 
 // 2) Whitelist why-release: the third-party word must sit immediately next to the
 // why-word (either side; English allows one auxiliary + determiner), the whole
