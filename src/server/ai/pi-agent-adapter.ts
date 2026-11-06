@@ -90,6 +90,7 @@ import {
   createStructuredSubmitLoop,
   resolveStructuredSubmitPolicy,
   structuredSubmitSystemSuffix,
+  structuredSubmitUnitSuffix,
   structuredSubmitWireFields,
 } from './structured-submit';
 import {
@@ -948,13 +949,18 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     const structuredOutput = toolOutputSchema(this.args.kind) !== undefined;
     const submitPolicy = structuredOutput ? this.structuredSubmitPolicy(this.model) : undefined;
     const definition: TaskDefinition = tasks[this.args.kind];
+    // YUK-1904 — a unit plan switches the submit contract to one unit per call.
+    const unitPlan = structuredOutput
+      ? definition.structuredSubmitUnits?.(this.args.structuredSubmitInput)
+      : undefined;
     const submitLoop = structuredOutput
       ? createStructuredSubmitLoop({
           schema: toolOutputSchema(this.args.kind, this.args.structuredSubmitInput),
           parameters: this.allTools.find((tool) => tool.name === STRUCTURED_OUTPUT_TOOL)
             ?.parameters,
           taskInput: this.args.structuredSubmitInput,
-          validate: definition.validateStructuredSubmit,
+          ...(unitPlan ? { units: unitPlan } : {}),
+          ...(unitPlan ? { fullSchema: definition.structuredOutputSchema } : {}),
           forced: submitPolicy?.forced ?? true,
           runId: this.args.runId,
           correctionDeadline:
@@ -964,7 +970,9 @@ class PiPreparedQuery implements PreparedExecutionQuery {
         })
       : undefined;
     if (structuredOutput) {
-      systemPrompt += structuredSubmitSystemSuffix(submitPolicy?.forced ?? true);
+      systemPrompt += unitPlan
+        ? structuredSubmitUnitSuffix(submitPolicy?.forced ?? true)
+        : structuredSubmitSystemSuffix(submitPolicy?.forced ?? true);
     }
     const context: AgentContext = {
       // Durable-turn replay seeds context.messages — the pi equivalent of
@@ -1281,6 +1289,10 @@ class PiPreparedQuery implements PreparedExecutionQuery {
         structuredOutput && !submitLoop?.accepted
           ? (submitLoop?.failure ?? (costCeiling?.closed ? 'max_budget_usd' : 'validation_failed'))
           : undefined,
+      structuredSubmitFailureDetail: submitLoop?.failureDetail,
+      // YUK-1904 — unit submits assemble inside the loop; the final message only
+      // carries the last accepted unit, so the terminal prefers the assembled output.
+      structuredAssembledOutput: structuredOutput ? submitLoop?.assembled() : undefined,
       // What validation/execute actually saw after the shared repair — the
       // capability receives this, not the still-stringified raw fields.
       repairedSubmitArguments: this.repairedToolArgs.get(STRUCTURED_OUTPUT_TOOL),
@@ -1383,21 +1395,28 @@ export class PiAgentAdapter implements ExecutionAdapter {
     const remoteHandles: PiRemoteMcpMountHandle[] = [];
     const outputSchema = toolOutputSchema(args.kind, args.structuredSubmitInput);
     if (outputSchema) {
+      const definition: TaskDefinition = tasks[args.kind];
+      // YUK-1904 — unit plans validate one unit per submit call.
+      const unitPlan = definition.structuredSubmitUnits?.(args.structuredSubmitInput);
       tools.push(
         piCustomTool(
           'structured_output',
           'submit',
-          'Submit the complete output object as arguments. Correct rejected field/shape errors and resubmit until accepted.',
+          unitPlan
+            ? 'Submit ONE unit object as arguments. Correct the reported field/shape errors for a rejected unit and resubmit that unit; never resubmit an accepted unit.'
+            : 'Submit the complete output object as arguments. Correct rejected field/shape errors and resubmit until accepted.',
           outputSchema,
           async (output) => {
             const parsed = outputSchema.safeParse(output);
-            const definition: TaskDefinition = tasks[args.kind];
             const errors = parsed.success
-              ? (definition.validateStructuredSubmit?.(parsed.data, args.structuredSubmitInput) ??
-                [])
+              ? [...(unitPlan?.validateUnit?.(parsed.data, args.structuredSubmitInput) ?? [])]
               : ['Submit arguments must satisfy the declared output schema.'];
             if (errors.length) throw new Error(errors.join('\n'));
-            return { content: [{ type: 'text', text: 'Submission accepted.' }] };
+            return {
+              content: [
+                { type: 'text', text: unitPlan ? 'Unit accepted.' : 'Submission accepted.' },
+              ],
+            };
           },
         ),
       );
