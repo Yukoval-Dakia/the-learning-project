@@ -699,12 +699,19 @@ async function validateFinalProviderPairs(
               valueAsNonEmptyString(rowByKey.get('lane.global.model')),
           })
         : undefined;
+    // A task declared ignoreGlobalPin never runs on the global pair: its
+    // effective pair is its own stored/default rows, so the pin must not
+    // shadow them here either.
+    const dedicated =
+      taskKind != null && (tasks[taskKind] as TaskDefinition).ignoreGlobalPin === true;
     const effProvider = isGlobal
       ? globalSwitch?.provider
-      : (globalSwitch?.provider ??
+      : ((dedicated ? undefined : globalSwitch?.provider) ??
         configuredProvider ??
         (taskKind ? tasks[taskKind].defaultProvider : undefined));
-    const effModel = isGlobal ? globalSwitch?.model : (globalSwitch?.model ?? configuredModel);
+    const effModel = isGlobal
+      ? globalSwitch?.model
+      : ((dedicated ? undefined : globalSwitch?.model) ?? configuredModel);
     if (effProvider === undefined) continue; // 对解散 → 无事可验
     if (typeof effProvider === 'string') {
       const provider = readProviderId(effProvider);
@@ -770,8 +777,13 @@ async function validateFinalProviderPairs(
           // YUK-1658 — an opted-out task never runs on the global pair (its own
           // pair is validated in its task scope above, including when a global
           // reset exposes it), so validating it here 422'd global saves on
-          // bindings that will never execute.
-          if (rowByKey.get(`task.${kind}.override_global_pin`) === true) continue;
+          // bindings that will never execute. A declared ignoreGlobalPin task
+          // has the same property by definition.
+          if (
+            rowByKey.get(`task.${kind}.override_global_pin`) === true ||
+            (definition as TaskDefinition).ignoreGlobalPin === true
+          )
+            continue;
           const effectiveModel =
             effModel ??
             valueAsNonEmptyString(rowByKey.get(`task.${kind}.model`)) ??
