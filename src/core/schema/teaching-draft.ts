@@ -1,6 +1,7 @@
 // Compact conversation draft expanded deterministically into the shared declaration.
 // Author-supplied keys are evidence for admission, never official source answers.
 import { z } from 'zod';
+import { mulberry32 } from '../rng';
 import type { ScoringRuleT } from './assessment/scoring-rule';
 import { DRAFT_DOCUMENT_SCHEMA_VERSION, type QuestionDraftDocumentT } from './question-draft';
 
@@ -143,12 +144,23 @@ const FULL_CREDIT_BLANK_RULE = (points: number): ScoringRuleT => ({
 type DraftUnit = QuestionDraftDocumentT['parts'][number]['units'][number];
 
 function displayOrder<T extends { id: string; label_md: string }>(entries: readonly T[]): T[] {
+  // Canonical labels keep both the seed and starting order independent of the key.
+  // Rejecting identity would reveal positional information, especially for two items.
+  const shuffled = [...entries].sort((a, b) =>
+    a.label_md < b.label_md ? -1 : a.label_md > b.label_md ? 1 : 0,
+  );
   let seed = 2166136261;
-  for (const char of JSON.stringify(entries)) {
+  for (const char of JSON.stringify(shuffled.map((entry) => entry.label_md))) {
     seed = Math.imul(seed ^ char.charCodeAt(0), 16777619) >>> 0;
   }
-  const shift = 1 + (seed % (entries.length - 1));
-  return [...entries.slice(shift), ...entries.slice(0, shift)];
+  const random = mulberry32(seed);
+  for (let i = shuffled.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(random() * (i + 1));
+    const swap = shuffled[i];
+    shuffled[i] = shuffled[j];
+    shuffled[j] = swap;
+  }
+  return shuffled;
 }
 
 function choiceUnits(
@@ -242,11 +254,6 @@ function matchingUnit(form: z.infer<typeof TeachingMatching>): DraftUnit {
     left: left.map((label_md, i) => ({ id: `l${i + 1}`, label_md })),
     right: right.map((label_md, i) => ({ id: `r${i + 1}`, label_md })),
   };
-  let displayedRight = displayOrder(axes.right);
-  // A producer may already permute the right column; never rotate it back onto the key.
-  if (pairs.every(([li, ri]) => displayedRight[li]?.id === axes.right[ri].id)) {
-    displayedRight = [...displayedRight.slice(1), displayedRight[0]];
-  }
   // 作答宇宙 = 全部 left×right 关系项；correct pairs 即 key。
   const items = axes.left.flatMap((l) =>
     axes.right.map((r) => ({
@@ -261,7 +268,7 @@ function matchingUnit(form: z.infer<typeof TeachingMatching>): DraftUnit {
     response_spec: {
       kind: 'select',
       items,
-      axes: { ...axes, right: displayedRight },
+      axes: { ...axes, right: displayOrder(axes.right) },
       pick: 'many',
     },
     points: 1,
