@@ -4,8 +4,11 @@
 # Rollback use, naming services explicitly:
 #   docker compose -f docker-compose.yml -f docker-compose.mac.yml up -d --build migrate app worker postgres
 # Reach the app at http://localhost:8787 ; host DB access (flip migrations) at localhost:5433
-# (or :5544 — see the postgres ports note below). While TEST lives on the NAS these host ports
-# are normally held by the tlp-nas-tunnel relay — stop it before starting this stack.
+# (or :5544 — see the postgres ports note below). Since 2026-11-06 the tlp-nas-tunnel relay
+# no longer binds 5433/5544 (it keeps only 8787) — still check nothing else holds them
+# before starting this stack. Local pnpm scripts cannot connect to these ports either: a
+# loopback 5433/5544 URL is TEST's shape, so scripts/local-db-env.ts refuses it before
+# connecting — use `docker compose exec postgres psql`, or DEV_ALLOW_TEST_DB=1 explicitly.
 services:
   app:
     # YUK-1404 — pin the container resolver to public recursive DNS. The Mac host runs a

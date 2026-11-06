@@ -75,6 +75,7 @@ import {
   requireJudgeRunOpen,
 } from '../judge-operational';
 import { gradingSliceMatchesLivePin, taskKindHasModelPin } from '../model-slice-registry';
+import { photoJudgeAdmission } from '../photo-judge-gate';
 import { createPiModelExecutor } from '../pi-model-executor';
 import { createRubricModelExecutor } from '../rubric-model-executor';
 import { createRecordedModelExecutor } from './recorded-model-executor';
@@ -227,6 +228,16 @@ export function createFormalModelExecutor(
     },
   );
   return async (request, signal) => {
+    // 带图提交走照片身份，不走文本切片覆盖。无绑定即明确待定，
+    // 先于 claim/预留/付费与切片复核（门自身不碰 DB）。
+    const photo = photoJudgeAdmission(request);
+    if (!photo.ok) {
+      return {
+        kind: 'pending' as const,
+        pending: { reason: 'unjudgeable' as const, detail: photo.detail },
+        run_refs: [],
+      };
+    }
     const sliceId = request.executor.admitted_slice_id;
     // 只有登记处钉了 pin 的 task kind 才在付费前复核切片；成员判定用静态注册表
     // （taskKindHasModelPin），不是 currentModelPins()——配置行失效的 kind 必须

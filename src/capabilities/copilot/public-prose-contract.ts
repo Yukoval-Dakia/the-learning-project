@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { longQuotaRecoveryTextFromSeconds } from '@/ai/help-provider-fault';
 import type { ProviderFailureInfo } from '@/ai/provider-failure';
 
 /** Published prose is display evidence, never execution or tool-success evidence. */
@@ -75,8 +76,13 @@ export function publicProseFailureMessage(failure?: CopilotPublicProseFailure): 
       return failure.http_status === 400
         ? COPILOT_PROVIDER_REJECTION_REPLY
         : `模型服务拒绝了本次请求${httpStatusSuffix(failure.http_status)}，本次未完成回答。${retryAfterSentence(failure.retry_after_seconds)}`.trim();
-    case 'rate_limited':
+    case 'rate_limited': {
+      const recovery = longQuotaRecoveryTextFromSeconds(failure.retry_after_seconds);
+      if (recovery !== undefined) {
+        return `额度用完了，本次未完成回答。${recovery}恢复。`;
+      }
       return `模型额度已达上限${httpStatusSuffix(failure.http_status)}，本次未完成回答。${retryAfterSentence(failure.retry_after_seconds)}`.trim();
+    }
     case 'provider_error':
       return `模型服务暂时不可用${httpStatusSuffix(failure.http_status)}，本次未完成回答。${retryAfterSentence(failure.retry_after_seconds)}`.trim();
     case 'timeout':

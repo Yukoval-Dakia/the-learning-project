@@ -35,8 +35,9 @@ export function useCompanionShallow<T>(
 
 /**
  * While the companion shows a validated conversation, Query owns the read schedule: one read when
- * it becomes visible, then every 5 s (also in the background). Each read applies its snapshot in
- * request order and re-attaches every active run.
+ * it becomes visible, then every 5 s (also in the background), and at once when the tab comes back
+ * or the network returns. Each read applies its snapshot in request order, re-attaches every active
+ * run, and may replay a message not known to have arrived.
  */
 export function useTurnPolling(controller: CompanionController): void {
   const open = useCompanion(controller, (s) => s.visit.open);
@@ -44,11 +45,19 @@ export function useTurnPolling(controller: CompanionController): void {
   const validated = useCompanion(controller, selectionValidated);
   useQuery({
     queryKey: ['copilot-turns', controller.instance, sessionId],
-    queryFn: () => controller.runs.refetchTurns().catch(() => false),
+    queryFn: () =>
+      controller.runs
+        .refetchTurns()
+        .then((applied) => {
+          controller.sender.resendDoubtful();
+          return applied;
+        })
+        .catch(() => false),
     enabled: open && sessionId !== null && validated,
     refetchInterval: 5_000,
     refetchIntervalInBackground: true,
-    refetchOnWindowFocus: false,
+    refetchOnWindowFocus: 'always',
+    refetchOnReconnect: 'always',
     retry: false,
     gcTime: 0,
   });

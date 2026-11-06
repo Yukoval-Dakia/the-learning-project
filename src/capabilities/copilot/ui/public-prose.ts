@@ -1,4 +1,6 @@
 /** Public-channel text is independent of authoritative replies and tool receipts. */
+import { longQuotaRecoveryTextFromSeconds, quotaWaitDurationText } from '@/ai/help-provider-fault';
+
 export type PublicProseFailureKind =
   | 'provider_rejected'
   | 'rate_limited'
@@ -96,21 +98,16 @@ export function mergePublicProse(
 
 /**
  * "约 40 秒" / "约 3 分钟" / "约 2 小时" for a provider's Retry-After. Rounds up, so the
- * stated wait is never shorter than the provider asked for.
+ * stated wait is never shorter than the provider asked for. Same rules as the
+ * sealed exit copy — one source so badge and reply body never disagree.
  */
 function retryWait(seconds: number): string {
-  if (seconds < 90) return `约 ${Math.max(1, Math.ceil(seconds))} 秒`;
-  if (seconds < 60 * 60) return `约 ${Math.ceil(seconds / 60)} 分钟`;
-  return `约 ${Math.ceil(seconds / 3600)} 小时`;
-}
-
-function statusSuffix(status: number | undefined): string {
-  return status === undefined ? '' : `（${status}）`;
+  return quotaWaitDurationText(seconds * 1000);
 }
 
 /** When to try again, from the provider's own Retry-After only; never a guess. */
 function retryAfterText(seconds: number | undefined): string {
-  if (seconds === undefined || seconds <= 0) return '提供方没有给出恢复时间，请过一会儿再试。';
+  if (seconds === undefined || seconds <= 0) return '过一会儿再试试。';
   return `${retryWait(seconds)}后可以再试。`;
 }
 
@@ -122,26 +119,28 @@ function keptText(prose: PublicProse): string {
 type Failure = NonNullable<PublicProse['failure']>;
 
 function providerFailureText(prose: PublicProse, failure: Failure): string | undefined {
-  const status = statusSuffix(failure.http_status);
   const kept = keptText(prose);
   switch (failure.kind) {
-    case 'rate_limited':
-      return `模型额度暂时用完了${status}，本次没有完成回答。${retryAfterText(failure.retry_after_seconds)}${kept}`;
+    case 'rate_limited': {
+      const recovery = longQuotaRecoveryTextFromSeconds(failure.retry_after_seconds);
+      if (recovery !== undefined) {
+        return `额度用完了，这次没答完。${recovery}恢复。${kept}`;
+      }
+      return `现在有点忙，这次没答完。${retryAfterText(failure.retry_after_seconds)}${kept}`;
+    }
     case 'provider_rejected':
-      return failure.http_status === 400
-        ? `模型服务拒绝了请求（400），具体参数原因尚未定位，本次没有完成回答。${kept}`
-        : `模型服务拒绝了请求${status}，本次没有完成回答。${kept}`;
+      return `这次没答成，可以换个说法再试一次。${kept}`;
     case 'provider_error': {
       const wait =
         failure.retry_after_seconds === undefined
           ? ''
           : retryAfterText(failure.retry_after_seconds);
-      return `模型服务暂时出错${status}，本次没有完成回答。${wait}${kept}`;
+      return `服务暂时出了点问题，这次没答完。${wait}${kept}`;
     }
     case 'timeout':
-      return `模型服务响应超时，本次没有完成回答。${kept}`;
+      return `等得太久了，这次没答完。${kept}`;
     case 'connection':
-      return `与模型服务的连接中断，本次没有完成回答。${kept}`;
+      return `连接断了一下，这次没答完。${kept}`;
     default:
       return undefined;
   }
@@ -154,18 +153,21 @@ function providerFailureText(prose: PublicProse, failure: Failure): string | und
 export function publicProseFailureBadge(prose: PublicProse): string | undefined {
   if (prose.status !== 'completed' || !prose.failure) return undefined;
   switch (prose.failure.kind) {
-    case 'rate_limited':
+    case 'rate_limited': {
+      const recovery = longQuotaRecoveryTextFromSeconds(prose.failure.retry_after_seconds);
+      if (recovery !== undefined) return `额度用完了 · ${recovery}恢复`;
       return prose.failure.retry_after_seconds
         ? `现在有点忙 · ${retryWait(prose.failure.retry_after_seconds)}后可再试`
         : '现在有点忙';
+    }
     case 'provider_rejected':
-      return `模型服务拒绝了请求${statusSuffix(prose.failure.http_status)}`;
+      return '这次没答成';
     case 'provider_error':
-      return `模型服务出错${statusSuffix(prose.failure.http_status)}`;
+      return '服务出了点问题';
     case 'timeout':
-      return '模型服务超时';
+      return '等得太久了';
     case 'connection':
-      return '模型连接中断';
+      return '连接断了一下';
     default:
       return undefined;
   }
