@@ -1,3 +1,7 @@
+// Start-side adapters for this family. `frontdoor.ts` loads this module from the API
+// graph, so every adapter below runs with the initialized subject registry, config
+// snapshot and database pool; each keeps its own conversion, error and deadline handling.
+
 import type { WeeklyReportQuery } from '@/capabilities/practice/scheduling/public';
 import { errorResponse } from '@/kernel/http';
 
@@ -30,3 +34,9 @@ export async function readStartCoachEffectiveness() {
     throw errorResponse(error);
   }
 }
+
+export const coachAdapters = {
+  readStartCoachCalibration,
+  readStartCoachEffectiveness,
+  readStartCoachWeekly,
+};

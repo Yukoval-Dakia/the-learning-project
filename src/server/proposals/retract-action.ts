@@ -66,6 +66,7 @@ export async function retractAiProposal(
     try {
       await db.transaction(async (tx) => {
         await acquireProposalDecisionLock(tx, proposalId);
+        if (opts.guard) await opts.guard(tx);
         const correctionAt = new Date(Math.max(Date.now(), correctionFloor));
         await writeEvent(tx, {
           id: correctionEventId,

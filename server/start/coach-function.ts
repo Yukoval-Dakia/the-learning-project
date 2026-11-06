@@ -1,29 +1,27 @@
 import { createServerFn } from '@tanstack/react-start';
 import { getRequest } from '@tanstack/react-start/server';
 import type { WeeklyReportQuery } from '@/capabilities/practice/scheduling/public';
-import {
-  readStartCoachCalibration,
-  readStartCoachEffectiveness,
-  readStartCoachWeekly,
-} from './coach-reader';
 import { runAuthenticatedStartWorkbench } from './workbench-read';
 
 export const getStartCoachWeekly = createServerFn({ method: 'GET' })
   .validator((input: WeeklyReportQuery) => input)
   .handler(({ context, data }) =>
-    runAuthenticatedStartWorkbench(context, getRequest(), async () =>
-      JSON.stringify(await readStartCoachWeekly(data)),
-    ),
+    runAuthenticatedStartWorkbench(context, getRequest(), async () => {
+      const { readStartCoachWeekly } = await context.adapters.coach();
+      return JSON.stringify(await readStartCoachWeekly(data));
+    }),
   );
 
 export const getStartCoachCalibration = createServerFn({ method: 'GET' }).handler(({ context }) =>
-  runAuthenticatedStartWorkbench(context, getRequest(), async () =>
-    JSON.stringify(await readStartCoachCalibration()),
-  ),
+  runAuthenticatedStartWorkbench(context, getRequest(), async () => {
+    const { readStartCoachCalibration } = await context.adapters.coach();
+    return JSON.stringify(await readStartCoachCalibration());
+  }),
 );
 
 export const getStartCoachEffectiveness = createServerFn({ method: 'GET' }).handler(({ context }) =>
-  runAuthenticatedStartWorkbench(context, getRequest(), async () =>
-    JSON.stringify(await readStartCoachEffectiveness()),
-  ),
+  runAuthenticatedStartWorkbench(context, getRequest(), async () => {
+    const { readStartCoachEffectiveness } = await context.adapters.coach();
+    return JSON.stringify(await readStartCoachEffectiveness());
+  }),
 );
