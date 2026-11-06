@@ -221,7 +221,6 @@ export const dbTestInclude = [
   'src/capabilities/notes/server/artifacts/presence/pg.db.test.ts',
   'src/capabilities/practice/settlement/server/activate.db.test.ts',
   'src/capabilities/practice/settlement/server/admission.db.test.ts',
-  'src/capabilities/practice/settlement/server/appeal-status.db.test.ts',
   'src/capabilities/practice/grading/server/grading-slice-admission.db.test.ts',
   'src/capabilities/practice/grading/server/model-slice-registry.db.test.ts',
   'src/capabilities/practice/settlement/server/joint-input.db.test.ts',
