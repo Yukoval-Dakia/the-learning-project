@@ -639,7 +639,7 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
   // ── 准入/结构化任务 provider 瞬时失败有界重试（YUK-1876）─────────────────
   ADMISSION_PROVIDER_RETRY_MAX_RETRIES: {
     schema: z.number().int().min(0).max(10),
-    codeDefault: 3,
+    codeDefault: 8,
     envName: 'ADMISSION_PROVIDER_RETRY_MAX_RETRIES',
     envParse: nonNegIntEnv,
     tier: 'A',

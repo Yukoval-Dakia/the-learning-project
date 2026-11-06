@@ -29,7 +29,7 @@ export interface ProviderTransientRetryPolicy {
  */
 export function providerTransientRetryPolicy(): ProviderTransientRetryPolicy {
   return {
-    maxRetries: (getConfig('ADMISSION_PROVIDER_RETRY_MAX_RETRIES') as number | undefined) ?? 3,
+    maxRetries: (getConfig('ADMISSION_PROVIDER_RETRY_MAX_RETRIES') as number | undefined) ?? 8,
     maxWaitMs: (getConfig('ADMISSION_PROVIDER_RETRY_MAX_WAIT_MS') as number | undefined) ?? 60_000,
     baseDelayMs:
       (getConfig('ADMISSION_PROVIDER_RETRY_BASE_DELAY_MS') as number | undefined) ?? 2_000,
