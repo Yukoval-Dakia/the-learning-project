@@ -6,19 +6,38 @@ import { ResponseSlotField, nativeSlotFieldSpec } from '@/ui/components/response
 import type { ApiOperationJsonResponse } from '@/ui/lib/api';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { Button } from '@/ui-next/public';
-import { getQuestionCard } from '../practice-api';
+import {
+  getAdvice,
+  getIssuanceState,
+  getQuestionCard,
+  issueAssessment,
+  saveResponseDraft,
+  submitReview,
+} from '../practice-api';
+import type { PracticeClient } from '../practice-client';
+import { InlineAnswer } from './InlineAnswer';
 
 const CHECK_AGAIN_MS = 3000;
 
 export type QuestionCardRead = ApiOperationJsonResponse<'getQuestionCard'>;
 
-export interface QuestionCardClient {
-  getQuestionCard: (id: string) => Promise<QuestionCardRead>;
-}
+export type QuestionCardClient = Pick<
+  PracticeClient,
+  'issueAssessment' | 'getIssuanceState' | 'saveResponseDraft' | 'getAdvice' | 'submitReview'
+> & {
+  getQuestionCard: (id: string, sessionId: string) => Promise<QuestionCardRead>;
+};
 
-const httpClient: QuestionCardClient = { getQuestionCard };
+const httpClient: QuestionCardClient = {
+  getQuestionCard,
+  issueAssessment,
+  getIssuanceState,
+  saveResponseDraft,
+  getAdvice,
+  submitReview,
+};
 
-interface FrameProps {
+export interface FrameProps {
   gone?: string;
   status?: { word: string; tone: 'waiting' | 'caution' | 'neutral' };
   note?: string | null;
@@ -69,13 +88,14 @@ function QuestionFace({ question }: { question: NonNullable<QuestionCardRead['qu
 export function QuestionCardBlock({
   questionId,
   label,
+  sessionId,
   Frame,
   onAskAnother,
   client = httpClient,
 }: QuestionCardBlockProps) {
   const read = useQuery({
-    queryKey: ['question-card', questionId],
-    queryFn: () => client.getQuestionCard(questionId),
+    queryKey: ['question-card', questionId, sessionId],
+    queryFn: () => client.getQuestionCard(questionId, sessionId),
     refetchInterval: (query) => (query.state.data?.state === 'checking' ? CHECK_AGAIN_MS : false),
   });
   const card = read.data;
@@ -132,6 +152,21 @@ export function QuestionCardBlock({
         </Frame>
       );
     default:
-      return <Frame actions={open}>{face}</Frame>;
+      if (!question.inline_supported || !card.inline_block_ref) {
+        return <Frame actions={open}>{face}</Frame>;
+      }
+      return (
+        <InlineAnswer
+          key={card.inline_block_ref}
+          question={question}
+          attempt={card.latest_attempt}
+          chatCard={{ session_id: sessionId, block_ref: card.inline_block_ref }}
+          Frame={Frame}
+          open={open}
+          face={face}
+          client={client}
+          onAttemptChanged={() => void read.refetch()}
+        />
+      );
   }
 }

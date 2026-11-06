@@ -811,9 +811,9 @@ export const issueAssessment = (
   });
 
 /** A question placed in a reply: its state and answer-free face. Reading it never writes. */
-export const getQuestionCard = (id: string) =>
+export const getQuestionCard = (id: string, sessionId: string) =>
   apiOperationJson('getQuestionCard', {
-    url: `/api/questions/${encodeURIComponent(id)}/card`,
+    url: `/api/questions/${encodeURIComponent(id)}/card?session_id=${encodeURIComponent(sessionId)}`,
     method: 'GET',
   });
 
