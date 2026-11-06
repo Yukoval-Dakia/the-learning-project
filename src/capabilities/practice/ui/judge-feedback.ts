@@ -2,7 +2,7 @@
 
 import { z } from 'zod';
 import { GradingProvenanceEntry, type GradingProvenanceEntryT } from '@/core/schema/capability';
-import type { JudgePreview, QuestionFullDetail, SubmitResult } from './practice-api';
+import type { AppealStatus, JudgePreview, QuestionFullDetail, SubmitResult } from './practice-api';
 
 export type JudgeFeedback = Pick<
   JudgePreview,
@@ -18,6 +18,20 @@ const WithProvenance = z.object({ grading_provenance: z.array(GradingProvenanceE
 export function provenanceOf(result: unknown): Pick<JudgeFeedback, 'grading_provenance'> {
   const parsed = WithProvenance.safeParse(result);
   return parsed.success ? { grading_provenance: parsed.data.grading_provenance } : {};
+}
+
+/** The card shows what a rejudge changed it to, without waiting for a reload. */
+export function feedbackAfterRejudge<F extends JudgeFeedback>(
+  feedback: F,
+  appeal: AppealStatus | undefined,
+): F {
+  const outcome = appeal?.status === 'changed' ? appeal.after?.coarse_outcome : undefined;
+  if (outcome !== 'correct' && outcome !== 'partial' && outcome !== 'incorrect') return feedback;
+  return {
+    ...feedback,
+    coarse_outcome: outcome,
+    feedback_md: appeal?.after?.feedback_md ?? feedback.feedback_md,
+  };
 }
 
 export function feedbackFromCommittedAttempt(result: SubmitResult): JudgeFeedback {

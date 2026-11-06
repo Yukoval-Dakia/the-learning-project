@@ -31,6 +31,7 @@ import { boundSlots, entriesForSubmit } from './blocks/envelope';
 import { type EntriesUpdate, parsePresentation } from './blocks/PresentationBlocks';
 import {
   type JudgeFeedback,
+  feedbackAfterRejudge,
   feedbackFromCommittedAttempt,
   feedbackFromCommittedDiagnosticAttempt,
   provenanceOf,
@@ -41,6 +42,7 @@ import {
   type JudgePreview,
   type StreamItem,
   type SubmitReviewInput,
+  getAppealStatus,
   isSubmitPending,
 } from './practice-api';
 import { type PracticeClient, usePracticeClient } from './practice-client';
@@ -410,7 +412,7 @@ export function usePracticeSubmit({
   const [rating, setRating] = useState<Rating | null>(null);
   const [appealOpen, setAppealOpen] = useState(false);
   const [appealText, setAppealText] = useState('');
-  const [appealFiled, setAppealFiled] = useState(false);
+  const [filedAppealId, setFiledAppealId] = useState<string | null>(null);
   const [committing, setCommitting] = useState(false);
   const [returning, setReturning] = useState(false);
   const returningRef = useRef(false);
@@ -649,6 +651,19 @@ export function usePracticeSubmit({
   }
   const nativeEvidence = useMemo(() => nativeGroupEvidence(evidence), [evidence]);
   const accepted = issuedState?.submissions[0];
+  // This visit's appeal, or after a reload the latest one the issuance read names.
+  const appealId =
+    filedAppealId ??
+    (issuedState?.settled?.kind === 'terminal'
+      ? issuedState.settled.latest_appeal_event_id
+      : null) ??
+    null;
+  const appealRead = useQuery({
+    queryKey: ['practice-appeal-status', appealId],
+    queryFn: () => getAppealStatus(appealId as string),
+    enabled: appealId !== null,
+    refetchInterval: (query) => (query.state.data?.status === 'in_progress' ? 3000 : false),
+  });
   // YUK-1501 — an accepted answer that /api/attempts already recorded is read-only review:
   // nothing on this page may submit it again. Recorded = the question's timeline holds an
   // attempt for its evaluation group that is settled (an effective evaluation) or whose
@@ -1153,13 +1168,22 @@ export function usePracticeSubmit({
   // YUK-432 (Bugbot FINDING 2) — 客观题自动 commit 后的「不服判」。review 已落库，不能再走 commit（会
   // 重复 submit 一条 review event）；直接对自动 commit 时暂存的 judge 锚点发 appeal。无锚点 → 入口本
   // 就被 appealEntryAvailable 隐藏，这里再兜底一次。
+  // A finished rejudge moved the effective result; a further appeal must name the new one.
+  const appealAnchor =
+    (appealRead.data?.status === 'changed' || appealRead.data?.status === 'unchanged'
+      ? appealRead.data.after?.effective_evaluation_id
+      : null) ?? autoCommitJudgeEventId;
   const submitAutoCommitAppeal = async () => {
-    if (!autoCommitJudgeEventId || committing) return;
+    const anchor = appealAnchor;
+    if (!anchor || committing) return;
     setCommitting(true);
     try {
-      await fileAppeal(autoCommitJudgeEventId, appealText.trim(), committedAppealKind.current);
-      setAppealFiled(true);
+      const filed = await fileAppeal(anchor, appealText.trim(), committedAppealKind.current);
+      setFiledAppealId(filed.appeal_event_id);
+      setAppealText('');
       setAppealOpen(false);
+      // A retry can return the same id: its last read must not keep showing the failure.
+      if (filed.appeal_event_id === appealId) void appealRead.refetch();
     } catch (e) {
       addToast(
         e instanceof ApiError && e.code === 'stale_head'
@@ -1381,6 +1405,11 @@ export function usePracticeSubmit({
       }
     : null;
 
+  const settledFeedback = preview ?? committedPreview;
+  const displayedFeedback = settledFeedback
+    ? feedbackAfterRejudge(settledFeedback, appealRead.data)
+    : settledFeedback;
+
   return {
     question: { query: qQ, data: q, isInterventionDiagnostic, timelineEvents },
     issuance: issuanceView,
@@ -1414,7 +1443,7 @@ export function usePracticeSubmit({
       returning,
       pendingRun,
       pendingPoll,
-      displayedPreview: preview ?? committedPreview,
+      displayedPreview: displayedFeedback,
       committedPreview,
       rating,
       setRating,
@@ -1430,7 +1459,8 @@ export function usePracticeSubmit({
     },
     appeal: {
       open: appealOpen,
-      filed: appealFiled,
+      id: appealId,
+      read: appealRead.data,
       setOpen: setAppealOpen,
       text: appealText,
       setText: setAppealText,
