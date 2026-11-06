@@ -701,6 +701,7 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
             apiErrorStatus: msg.api_error_status ?? null,
             errors: args.apiErrorMessages?.(msg) ?? [msg.result ?? ''],
             ...(helpProviderFault ? { helpProviderFault } : {}),
+            ...(msg.usage.output_tokens === 0 ? { providerZeroOutput: true } : {}),
           });
         }
         await args.onSuccess?.(msg);

@@ -676,6 +676,8 @@ async function webSupplyAuthParkSegment() {
       subtype: 'api_error_result',
       apiErrorStatus: 401,
       errors: ['arc: unauthorized'],
+      // Provable zero-activity rejection: the run produced no provider output.
+      providerZeroOutput: true,
     });
   };
   const fetchOk = async (): Promise<RunWebFetchCandidatesResult> => {
@@ -723,6 +725,100 @@ async function webSupplyAuthParkSegment() {
     third: { phase: third.phase, reason: third.reason },
     outcome3,
     rounds,
+  };
+}
+
+/** Mid-run 401: the run produced provider output before the rejection, so the
+ * paid effect is NOT provably zero — the round must record unknown (null cost),
+ * park nothing, and must not re-drive another paid acquisition. */
+async function webSupplyMidRunAuthSegment() {
+  const demandId = `arc-midrundemand-${TAG}`;
+  const claimId = `arc-midclaim-${TAG}`;
+  const attemptId = `arc-midattempt-${TAG}`;
+  const fencingToken = randomUUID();
+  await db.insert(placement_starter_claim).values({
+    id: claimId,
+    fingerprint: `arc-midclaim-fp-${TAG}`,
+    goal_id: `arc-goal-${TAG}-mid`,
+    semantic_goal_revision_id: `arc-midsgr-${TAG}`,
+    subject_id: profile.id,
+    knowledge_id: KID,
+    demand_id: demandId,
+    target_id: `arc-midtarget-${TAG}`,
+    status: 'verifying',
+    supply_route: 'sourcing_web',
+    budget_limit_micro_usd: null,
+    created_at: new Date(),
+    updated_at: new Date(),
+  });
+  await db.insert(placement_starter_attempt).values({
+    id: attemptId,
+    claim_id: claimId,
+    pg_boss_job_id: `arc-midjob-${TAG}`,
+    delivery_no: 1,
+    fencing_token: fencingToken,
+    status: 'verifying',
+    lease_expires_at: new Date(Date.now() + 3600_000),
+    started_at: new Date(),
+    created_at: new Date(),
+    updated_at: new Date(),
+  });
+  const item = {
+    demandId,
+    knowledgeId: KID,
+    kind: 'any' as const,
+    difficultyBand: null,
+    count: 1,
+    routePreference: ['sourcing_web' as const],
+    placementClaimId: claimId,
+  };
+  const placement = {
+    attempt: {
+      claimId,
+      attemptId,
+      pgBossJobId: `arc-midjob-${TAG}`,
+      deliveryNo: 1,
+      fencingToken,
+      leaseExpiresAt: new Date(Date.now() + 3600_000),
+      startedOn: new Date(),
+    },
+    heartbeat: {
+      done: new Promise<void>(() => {}),
+      assertHealthy: async () => {},
+      stop: async () => {},
+    },
+    signal: new AbortController().signal,
+  };
+  let fetchCalls = 0;
+  // 401 without zero-activity evidence: models a rejection that landed after a
+  // billed turn — the outcome is unknown, never a known-zero config_error.
+  const fetchMidRun401 = async () => {
+    fetchCalls += 1;
+    throw new AgentRunError({
+      kind: 'SourcingTask',
+      taskRunId: `arc-mid-${TAG}-t${fetchCalls}`,
+      subtype: 'api_error_result',
+      apiErrorStatus: 401,
+      errors: ['arc: unauthorized after a billed turn'],
+    });
+  };
+  const params = {
+    db,
+    item,
+    trace: undefined,
+    causeId: null,
+    subjectProfile: profile as never,
+    placement,
+  };
+  const first = await runWebSupply({ ...params, fetch: fetchMidRun401 });
+  const outcome1 = await placementWebDemandOutcome(db, demandId);
+  // A redelivery must not reach the paid acquisition seam again.
+  const second = await runWebSupply({ ...params, fetch: fetchMidRun401 });
+  return {
+    fetchCalls,
+    first: { phase: first.phase, reason: first.reason, costUsd: first.costUsd },
+    outcome1,
+    second: { phase: second.phase, reason: second.reason },
   };
 }
 
@@ -1033,6 +1129,16 @@ async function main() {
   if (ap.fetchCalls !== 3)
     throw new Error(`acquisition seam expected 3 calls, got ${ap.fetchCalls}`);
 
+  // --- Phase H2: mid-run 401 → unknown, no park, no second acquisition -------
+  const mid = await webSupplyMidRunAuthSegment();
+  note('H2:midrun-401-unknown', mid as Record<string, unknown>);
+  if (mid.outcome1 !== 'unknown')
+    throw new Error(`mid-run 401 recorded ${mid.outcome1}, expected unknown`);
+  if (mid.first.costUsd !== null)
+    throw new Error('mid-run 401 booked a known cost instead of null');
+  if (mid.fetchCalls !== 1)
+    throw new Error(`redelivery reached the paid seam again (${mid.fetchCalls} calls)`);
+
   // --- Phase I: failed verdict → recheck config error → latest-event recovery --
   // A terminal verdict in the past must NOT bar recovery: eligibility keys on
   // the LATEST source_verify event. Sequence: merit fail (terminal 'failed') →
@@ -1110,6 +1216,7 @@ async function main() {
   if (sweep7b.enqueued.some((entry) => entry.questionIds.includes(Q7)))
     throw new Error('terminal-then-quiet question was re-driven by the sweep');
   note('I4:terminal-quiet-excluded', { reEnqueued: false });
+
   await lane('fixed');
   note('arc:done', { counts });
   console.log('\n=== EVIDENCE JSON ===');

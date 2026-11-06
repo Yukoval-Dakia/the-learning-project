@@ -156,18 +156,22 @@ export function isTransientAgentFailure(err: unknown): boolean {
   return false; // error_during_execution / error_max_* / anything else
 }
 
-/** A bound provider 401/403 proves the configured lane cannot authenticate. */
+/**
+ * A bound provider 401/403 proves the configured lane cannot authenticate —
+ * but only when the run provably produced no provider output. A rejection that
+ * lands after a billed turn means the key worked once; the outcome is unknown,
+ * not config, so the paid effect must not be recorded as a known zero.
+ */
 export function isProviderAuthConfigError(err: unknown): err is AgentRunError {
   if (!(err instanceof AgentRunError)) return false;
+  if (err.providerZeroOutput !== true) return false;
   if (err.subtype === 'api_error_result') {
     return err.apiErrorStatus === 401 || err.apiErrorStatus === 403;
   }
   // Native pi path: provider rejections terminate as error_during_execution and
-  // carry the adapter's bound http_status. The zero-output bound keeps a
-  // rejection that lands after a billed turn out of the config class.
+  // carry the adapter's bound http_status.
   return (
     err.subtype === 'error_during_execution' &&
-    err.providerZeroOutput === true &&
     (err.providerHttpStatus === 401 || err.providerHttpStatus === 403)
   );
 }
