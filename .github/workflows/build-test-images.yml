@@ -62,46 +62,56 @@ jobs:
           df -h /
 
       # The docker driver cannot export a layer cache; the container driver
-      # can — but only if the job's ephemeral cache endpoints are forwarded
-      # into the buildkit container, else type=gha cache silently no-ops.
-      # These are per-job tokens, never written into an image or the artifact.
+      # can. ACTIONS_RUNTIME_TOKEN is not present on this runner image, so
+      # type=gha cache is unavailable — the buildkit local cache is persisted
+      # across runs with actions/cache instead (restore-keys falls back to the
+      # most recent tlp-test entry).
       - name: Set up buildx
         run: |
           set -euo pipefail
-          docker buildx create --name tlp-images --driver docker-container --use \
-            --driver-opt "env.ACTIONS_RUNTIME_TOKEN=$ACTIONS_RUNTIME_TOKEN" \
-            --driver-opt "env.ACTIONS_CACHE_URL=${ACTIONS_CACHE_URL:-}" \
-            --driver-opt "env.ACTIONS_RESULTS_URL=${ACTIONS_RESULTS_URL:-}" >/dev/null
+          docker buildx create --name tlp-images --driver docker-container --use >/dev/null
           docker buildx inspect --bootstrap | tail -5
 
+      - name: Restore buildx layer cache
+        uses: actions/cache@v6
+        with:
+          path: /tmp/tlp-buildx-cache
+          key: tlp-test-${{ steps.src.outputs.sha }}
+          restore-keys: tlp-test-
+
       # Every stage that matters for an incremental code-only change lives in
-      # the gha cache after the worker build: worker's stage graph contains the
+      # the cache after the worker build: worker's stage graph contains the
       # whole Dockerfile (runner is one of its ancestors), so a single mode=max
       # export from the worker build captures every stage. The runner/builder
       # builds only import; exporting from all three would fight over the same
-      # cache scope. Mirror build args are deliberately not passed.
+      # cache dir. Mirror build args are deliberately not passed.
       - name: Build runner / worker / builder images
         env:
           SHA: ${{ steps.src.outputs.sha }}
         run: |
           set -euo pipefail
+          mkdir -p /tmp/tlp-buildx-cache
           : > timings.tsv
           for target in runner worker builder; do
             t0=$(date +%s)
             cache_to=''
             if [ "$target" = worker ]; then
-              cache_to='--cache-to type=gha,mode=max,scope=tlp-test'
+              cache_to='--cache-to type=local,dest=/tmp/tlp-buildx-cache-new,mode=max'
             fi
             if ! docker buildx build \
               --load --provenance=false --progress=plain \
               --target "$target" \
               --tag "tlp-test:${SHA}-${target}" \
               --label "org.opencontainers.image.revision=${SHA}" \
-              --cache-from 'type=gha,scope=tlp-test' \
+              --cache-from 'type=local,src=/tmp/tlp-buildx-cache' \
               $cache_to \
               . >"build-${target}.log" 2>&1; then
               tail -80 "build-${target}.log"
               exit 1
+            fi
+            if [ "$target" = worker ] && [ -d /tmp/tlp-buildx-cache-new ]; then
+              rm -rf /tmp/tlp-buildx-cache
+              mv /tmp/tlp-buildx-cache-new /tmp/tlp-buildx-cache
             fi
             secs=$(( $(date +%s) - t0 ))
             cached=$(grep -c ' CACHED' "build-${target}.log" || true)
