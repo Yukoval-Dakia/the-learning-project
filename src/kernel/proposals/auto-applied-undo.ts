@@ -17,16 +17,23 @@
 // in batch undo (knowledge_node, cause_category, learning_item 3c). Everything
 // else stays a per-card human decision.
 
-import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 
 import { type AiProposalPayloadT, parseAiProposalPayload } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
-import { notDraftPredicate } from '@/db/predicates';
 import { event } from '@/db/schema';
-import { cause_category_overlay, knowledge } from '@/db/schema/knowledge';
-import { learning_item, learning_record } from '@/db/schema/learning';
+import { artifact } from '@/db/schema/artifacts';
+import {
+  cause_category_overlay,
+  knowledge,
+  knowledge_edge,
+  misconception_edge,
+} from '@/db/schema/knowledge';
+import { goal, placement_starter_claim } from '@/db/schema/learner-state';
+import { answer, learning_item, learning_record } from '@/db/schema/learning';
 import { question } from '@/db/schema/question';
 import { getCorrectionStatuses } from '@/kernel/events';
+import { findExistingRateEvent } from './applier-helpers';
 import { PROPOSAL_AUTOAPPLY_ACTION } from './auto-apply';
 
 type DbLike = Db | Tx;
@@ -55,18 +62,27 @@ export type AutoAppliedUndoCode =
   | 'knowledge_already_archived'
   | 'knowledge_later_edit'
   | 'knowledge_has_children'
+  | 'knowledge_has_edges'
   | 'knowledge_has_questions'
   | 'knowledge_has_records'
   | 'knowledge_has_learning_items'
+  | 'knowledge_has_artifacts'
+  | 'knowledge_has_goals'
+  | 'knowledge_has_placement_claims'
+  | 'knowledge_has_misconception_edges'
   | 'cause_not_found'
   | 'cause_not_owned'
   | 'cause_already_archived'
   | 'cause_not_active'
+  | 'cause_used_in_attribution'
   | 'learning_item_missing'
   | 'learning_item_already_archived'
   | 'learning_item_partially_archived'
   | 'learning_item_later_changes'
-  | 'learning_item_has_records';
+  | 'learning_item_has_records'
+  | 'learning_item_artifact_missing'
+  | 'learning_item_note_edited'
+  | 'learning_item_has_answer_drafts';
 
 export interface AutoAppliedUndoDecision {
   readonly status: AutoAppliedUndoStatus;
@@ -93,20 +109,32 @@ const BLOCKED_REASONS: Record<AutoAppliedUndoCode, string> = {
   knowledge_already_archived: '这个知识点已经被归档，不需要再撤销。',
   knowledge_later_edit: '这个知识点应用后被改过，撤销会覆盖后来的修改，所以先保留了。',
   knowledge_has_children: '这个知识点下已经有新的子知识点，撤销会连带影响它们，所以先保留了。',
+  knowledge_has_edges:
+    '这个知识点已经和别的知识点建立了关联，撤销会连带删掉这些关联，所以先保留了。',
   knowledge_has_questions: '已经有题目挂在这个知识点上，撤销会让它们失去归属，所以先保留了。',
   knowledge_has_records: '已经有错题或学习记录关联这个知识点，撤销会让它们失去归属，所以先保留了。',
   knowledge_has_learning_items:
     '已经有学习项挂在这个知识点上，撤销会中断正在进行的计划，所以先保留了。',
+  knowledge_has_artifacts: '已经有笔记把这个知识点当作标签，撤销会让笔记失去归属，所以先保留了。',
+  knowledge_has_goals: '已经有学习目标覆盖这个知识点，撤销会让目标失去依据，所以先保留了。',
+  knowledge_has_placement_claims: '起点的出题任务正在使用这个知识点，撤销会打断它，所以先保留了。',
+  knowledge_has_misconception_edges:
+    '已经有错因关联指向这个知识点，撤销会让关联失去归属，所以先保留了。',
   cause_not_found: '这个错因类目已经找不到了。',
   cause_not_owned: '这个错因类目已经不由这条改动负责，不能再撤销。',
   cause_already_archived: '这个错因类目已经被归档，不需要再撤销。',
   cause_not_active: '这个错因类目当前不在词表里，不能撤销。',
+  cause_used_in_attribution: '已经有错因判定用了这个类目，撤销会让这些判定失去解释，所以先保留了。',
   learning_item_missing: '这批学习项已经找不到了。',
   learning_item_already_archived: '这些学习项已经被归档，不需要再撤销。',
   learning_item_partially_archived:
     '其中部分学习项已经被归档，撤销会对不上原来的计划，所以先保留了。',
   learning_item_later_changes: '这些学习项之后有了新的进展，撤销会丢掉进度，所以先保留了。',
   learning_item_has_records: '这些学习项已经产生练习记录，撤销会让记录失去关联，所以先保留了。',
+  learning_item_artifact_missing: '这些学习项配对的笔记找不到了，撤销会对不上，所以先保留了。',
+  learning_item_note_edited: '这些学习项的笔记之后被编辑过，撤销会覆盖这些修改，所以先保留了。',
+  learning_item_has_answer_drafts:
+    '这些学习项还有未提交的作答草稿，撤销会打断正在写的答案，所以先保留了。',
 };
 
 /** Codes that cannot become revertable during one batch run (batch order never clears them). */
@@ -353,6 +381,78 @@ function isBatchUndoKind(kind: string): kind is AutoAppliedBatchUndoKind {
   return (AUTO_APPLIED_BATCH_UNDO_KINDS as readonly string[]).includes(kind);
 }
 
+/**
+ * Take the owner row locks the retract appliers will need, before the batch guard
+ * reads owner state. Lock order is fixed by the caller: proposal decision lock →
+ * owner rows (ascending id) → the applier's own locks, which are already held.
+ *
+ * Only the row set the applier will mutate is locked. Content that references the
+ * target through JSONB (questions, records, goals, note labels) has no row to lock;
+ * that residual race is documented in the PR instead of being hidden here.
+ */
+export async function lockAutoAppliedUndoOwnerRows(tx: Tx, proposalId: string): Promise<void> {
+  const [proposal] = await tx
+    .select({ payload: event.payload })
+    .from(event)
+    .where(eq(event.id, proposalId))
+    .limit(1);
+  if (!proposal) return;
+  const payload = proposalPayload(proposal.payload);
+  if (!payload) return;
+
+  if (payload.kind === 'knowledge_node') {
+    const rate = await findExistingRateEvent(tx, proposalId);
+    const nodeId = rate ? appliedKnowledgeNodeId(rate.payload) : null;
+    if (nodeId) {
+      await tx
+        .select({ id: knowledge.id })
+        .from(knowledge)
+        .where(eq(knowledge.id, nodeId))
+        .for('update');
+    }
+    return;
+  }
+
+  if (payload.kind === 'cause_category') {
+    const categoryId = readString(payload.proposed_change, 'category_id');
+    if (categoryId) {
+      await tx
+        .select({ id: cause_category_overlay.id })
+        .from(cause_category_overlay)
+        .where(eq(cause_category_overlay.id, categoryId))
+        .for('update');
+    }
+    return;
+  }
+
+  if (payload.kind === 'learning_item') {
+    const items = await tx
+      .select({ id: learning_item.id, primaryArtifactId: learning_item.primary_artifact_id })
+      .from(learning_item)
+      .where(eq(learning_item.source_ref, proposalId))
+      .orderBy(learning_item.id)
+      .for('update');
+    const primaryIds = items
+      .map((row) => row.primaryArtifactId)
+      .filter((id): id is string => typeof id === 'string' && id.length > 0);
+    if (primaryIds.length === 0) {
+      await tx
+        .select({ id: artifact.id })
+        .from(artifact)
+        .where(eq(artifact.source_ref, proposalId))
+        .orderBy(artifact.id)
+        .for('update');
+      return;
+    }
+    await tx
+      .select({ id: artifact.id })
+      .from(artifact)
+      .where(or(eq(artifact.source_ref, proposalId), inArray(artifact.id, primaryIds)))
+      .orderBy(artifact.id)
+      .for('update');
+  }
+}
+
 interface KnowledgeCheck {
   readonly proposalId: string;
   readonly nodeId: string;
@@ -398,7 +498,7 @@ async function classifyKnowledgeNodes(
     .select({ nodeId: knowledge.id, count: sql<number>`count(*)::int` })
     .from(knowledge)
     .innerJoin(question, sql`${question.knowledge_ids} @> jsonb_build_array(${knowledge.id})`)
-    .where(and(inArray(knowledge.id, nodeIds), notDraftPredicate(question.draft_status)))
+    .where(inArray(knowledge.id, nodeIds))
     .groupBy(knowledge.id)) as Array<{ nodeId: string; count: number }>;
   const questionCounts = new Map(questionRows.map((row) => [row.nodeId, Number(row.count)]));
 
@@ -424,6 +524,57 @@ async function classifyKnowledgeNodes(
     .groupBy(knowledge.id)) as Array<{ nodeId: string; count: number }>;
   const itemCounts = new Map(itemRows.map((row) => [row.nodeId, Number(row.count)]));
 
+  // A later-added mesh edge archives with the node, so any live incident edge is
+  // later learner content. The node row lock also blocks new edges: an edge INSERT
+  // takes a KEY SHARE lock on both endpoint rows through its foreign keys.
+  const edgeRows = (await db
+    .select({ nodeId: knowledge.id, count: sql<number>`count(*)::int` })
+    .from(knowledge)
+    .innerJoin(
+      knowledge_edge,
+      sql`(${knowledge_edge.from_knowledge_id} = ${knowledge.id} OR ${knowledge_edge.to_knowledge_id} = ${knowledge.id})`,
+    )
+    .where(and(inArray(knowledge.id, nodeIds), isNull(knowledge_edge.archived_at)))
+    .groupBy(knowledge.id)) as Array<{ nodeId: string; count: number }>;
+  const edgeCounts = new Map(edgeRows.map((row) => [row.nodeId, Number(row.count)]));
+
+  const artifactRows = (await db
+    .select({ nodeId: knowledge.id, count: sql<number>`count(*)::int` })
+    .from(knowledge)
+    .innerJoin(artifact, sql`${artifact.knowledge_ids} @> jsonb_build_array(${knowledge.id})`)
+    .where(and(inArray(knowledge.id, nodeIds), isNull(artifact.archived_at)))
+    .groupBy(knowledge.id)) as Array<{ nodeId: string; count: number }>;
+  const artifactCounts = new Map(artifactRows.map((row) => [row.nodeId, Number(row.count)]));
+
+  const goalRows = (await db
+    .select({ nodeId: knowledge.id, count: sql<number>`count(*)::int` })
+    .from(knowledge)
+    .innerJoin(goal, sql`${goal.scope_knowledge_ids} @> jsonb_build_array(${knowledge.id})`)
+    .where(inArray(knowledge.id, nodeIds))
+    .groupBy(knowledge.id)) as Array<{ nodeId: string; count: number }>;
+  const goalCounts = new Map(goalRows.map((row) => [row.nodeId, Number(row.count)]));
+
+  const claimRows = (await db
+    .select({ nodeId: knowledge.id, count: sql<number>`count(*)::int` })
+    .from(knowledge)
+    .innerJoin(placement_starter_claim, eq(placement_starter_claim.knowledge_id, knowledge.id))
+    .where(inArray(knowledge.id, nodeIds))
+    .groupBy(knowledge.id)) as Array<{ nodeId: string; count: number }>;
+  const claimCounts = new Map(claimRows.map((row) => [row.nodeId, Number(row.count)]));
+
+  const misconceptionRows = (await db
+    .select({ nodeId: knowledge.id, count: sql<number>`count(*)::int` })
+    .from(knowledge)
+    .innerJoin(
+      misconception_edge,
+      and(eq(misconception_edge.to_kind, 'knowledge'), eq(misconception_edge.to_id, knowledge.id)),
+    )
+    .where(and(inArray(knowledge.id, nodeIds), isNull(misconception_edge.archived_at)))
+    .groupBy(knowledge.id)) as Array<{ nodeId: string; count: number }>;
+  const misconceptionCounts = new Map(
+    misconceptionRows.map((row) => [row.nodeId, Number(row.count)]),
+  );
+
   for (const check of checks) {
     const node = nodeById.get(check.nodeId);
     if (!node) {
@@ -442,6 +593,10 @@ async function classifyKnowledgeNodes(
       decisions.set(check.proposalId, blocked('knowledge_has_children', check.appliedAt));
       continue;
     }
+    if ((edgeCounts.get(check.nodeId) ?? 0) > 0) {
+      decisions.set(check.proposalId, blocked('knowledge_has_edges', check.appliedAt));
+      continue;
+    }
     if ((questionCounts.get(check.nodeId) ?? 0) > 0) {
       decisions.set(check.proposalId, blocked('knowledge_has_questions', check.appliedAt));
       continue;
@@ -452,6 +607,25 @@ async function classifyKnowledgeNodes(
     }
     if ((itemCounts.get(check.nodeId) ?? 0) > 0) {
       decisions.set(check.proposalId, blocked('knowledge_has_learning_items', check.appliedAt));
+      continue;
+    }
+    if ((artifactCounts.get(check.nodeId) ?? 0) > 0) {
+      decisions.set(check.proposalId, blocked('knowledge_has_artifacts', check.appliedAt));
+      continue;
+    }
+    if ((goalCounts.get(check.nodeId) ?? 0) > 0) {
+      decisions.set(check.proposalId, blocked('knowledge_has_goals', check.appliedAt));
+      continue;
+    }
+    if ((claimCounts.get(check.nodeId) ?? 0) > 0) {
+      decisions.set(check.proposalId, blocked('knowledge_has_placement_claims', check.appliedAt));
+      continue;
+    }
+    if ((misconceptionCounts.get(check.nodeId) ?? 0) > 0) {
+      decisions.set(
+        check.proposalId,
+        blocked('knowledge_has_misconception_edges', check.appliedAt),
+      );
     }
   }
 }
@@ -491,6 +665,29 @@ async function classifyCauseCategories(
     .where(inArray(cause_category_overlay.id, categoryIds));
   const rowById = new Map(rows.map((row) => [row.id, row]));
 
+  // A category already used by an attribution is load-bearing history: retracting it
+  // makes later variant generation treat the cited cause as not targetable
+  // (failure-learning-variant.ts). Judge events store it under `cause`; manual user
+  // causes store it at the payload root.
+  const usedCategoryIds = new Set<string>();
+  for (const categoryId of categoryIds) {
+    const [hit] = await db
+      .select({ id: event.id })
+      .from(event)
+      .where(
+        and(
+          inArray(event.action, ['judge', 'experimental:user_cause']),
+          sql`(
+            ${event.payload} -> 'cause' ->> 'primary_category' = ${categoryId}
+            OR ${event.payload} -> 'cause' -> 'secondary_categories' ? ${categoryId}
+            OR ${event.payload} ->> 'primary_category' = ${categoryId}
+          )`,
+        ),
+      )
+      .limit(1);
+    if (hit) usedCategoryIds.add(categoryId);
+  }
+
   for (const check of checks) {
     const row = rowById.get(check.categoryId);
     if (!row) {
@@ -507,6 +704,10 @@ async function classifyCauseCategories(
     }
     if (row.status !== 'active') {
       decisions.set(check.proposalId, blocked('cause_not_active', check.appliedAt));
+      continue;
+    }
+    if (usedCategoryIds.has(check.categoryId)) {
+      decisions.set(check.proposalId, blocked('cause_used_in_attribution', check.appliedAt));
     }
   }
 }
@@ -516,7 +717,15 @@ interface LearningItemRow {
   readonly id: string;
   readonly archivedAt: Date | null;
   readonly updatedAt: Date;
+  readonly primaryArtifactId: string | null;
 }
+
+/** note_generate owns these body writes; they are not learner edits. */
+const NOTE_GENERATE_EDIT_ACTORS: ReadonlySet<string> = new Set([
+  'note_generate',
+  'note_generate_retry',
+  'note_generate_fallback',
+]);
 
 async function classifyLearningItems(
   db: DbLike,
@@ -534,6 +743,7 @@ async function classifyLearningItems(
       id: learning_item.id,
       archivedAt: learning_item.archived_at,
       updatedAt: learning_item.updated_at,
+      primaryArtifactId: learning_item.primary_artifact_id,
     })
     .from(learning_item)
     .where(inArray(learning_item.source_ref, proposalIds))) as LearningItemRow[];
@@ -546,9 +756,94 @@ async function classifyLearningItems(
   }
 
   const activeItemIds: string[] = [];
+  const primaryArtifactIds: string[] = [];
   for (const proposalId of proposalIds) {
     for (const row of rowsByProposal.get(proposalId) ?? []) {
       if (row.archivedAt === null) activeItemIds.push(row.id);
+      if (row.primaryArtifactId) primaryArtifactIds.push(row.primaryArtifactId);
+    }
+  }
+
+  const artifacts = await db
+    .select({
+      id: artifact.id,
+      sourceRef: artifact.source_ref,
+      archivedAt: artifact.archived_at,
+      version: artifact.version,
+    })
+    .from(artifact)
+    .where(
+      or(
+        inArray(artifact.source_ref, proposalIds),
+        primaryArtifactIds.length > 0 ? inArray(artifact.id, primaryArtifactIds) : undefined,
+      ),
+    );
+  const artifactById = new Map(artifacts.map((row) => [row.id, row]));
+  const artifactIdsByProposal = new Map<string, string[]>();
+  for (const row of artifacts) {
+    if (!row.sourceRef) continue;
+    const list = artifactIdsByProposal.get(row.sourceRef);
+    if (list) list.push(row.id);
+    else artifactIdsByProposal.set(row.sourceRef, [row.id]);
+  }
+  const allArtifactIds = [...new Set(artifacts.map((row) => row.id))];
+
+  // A learner (or a learner-triggered AI action) editing a generated note after the
+  // apply is later content. note_generate's own body writes share the same event
+  // action, so the actor is what separates them.
+  const editedArtifactIds = new Set<string>();
+  if (allArtifactIds.length > 0) {
+    const editRows = await db
+      .select({
+        artifactId: event.subject_id,
+        actorKind: event.actor_kind,
+        actorRef: event.actor_ref,
+        createdAt: event.created_at,
+      })
+      .from(event)
+      .where(
+        and(
+          eq(event.action, 'experimental:body_blocks_edit'),
+          eq(event.subject_kind, 'artifact'),
+          inArray(event.subject_id, allArtifactIds),
+        ),
+      );
+    const anyBodyEdit = new Set(editRows.map((row) => row.artifactId));
+    const appliedAtByArtifact = new Map<string, Date>();
+    for (const proposalId of proposalIds) {
+      const appliedAt = working.get(proposalId)?.rate.createdAt;
+      if (!appliedAt) continue;
+      for (const artifactId of artifactIdsByProposal.get(proposalId) ?? []) {
+        appliedAtByArtifact.set(artifactId, appliedAt);
+      }
+      for (const row of rowsByProposal.get(proposalId) ?? []) {
+        if (row.primaryArtifactId) appliedAtByArtifact.set(row.primaryArtifactId, appliedAt);
+      }
+    }
+    for (const row of editRows) {
+      const appliedAt = appliedAtByArtifact.get(row.artifactId);
+      if (!appliedAt || row.createdAt.getTime() <= appliedAt.getTime()) continue;
+      if (row.actorKind === 'agent' && NOTE_GENERATE_EDIT_ACTORS.has(row.actorRef)) continue;
+      editedArtifactIds.add(row.artifactId);
+    }
+    // A version bump with no body-edit event at all is an unattributable write: the
+    // learner may have edited it, so fail closed rather than archive the note.
+    for (const artifactId of allArtifactIds) {
+      const row = artifactById.get(artifactId);
+      if (row && row.version > 0 && !anyBodyEdit.has(artifactId)) {
+        editedArtifactIds.add(artifactId);
+      }
+    }
+  }
+
+  const draftItemIds = new Set<string>();
+  if (activeItemIds.length > 0) {
+    const drafts = await db
+      .select({ learningItemId: answer.learning_item_id })
+      .from(answer)
+      .where(and(inArray(answer.learning_item_id, activeItemIds), isNull(answer.submitted_at)));
+    for (const row of drafts) {
+      if (row.learningItemId) draftItemIds.add(row.learningItemId);
     }
   }
   const recordItemIds = new Set<string>();
@@ -596,6 +891,31 @@ async function classifyLearningItems(
     }
     if (active.some((item) => recordItemIds.has(item.id))) {
       decisions.set(proposalId, blocked('learning_item_has_records', entry.rate.createdAt));
+      continue;
+    }
+    if (active.some((item) => draftItemIds.has(item.id))) {
+      decisions.set(proposalId, blocked('learning_item_has_answer_drafts', entry.rate.createdAt));
+      continue;
+    }
+    const proposalArtifactIds = artifactIdsByProposal.get(proposalId) ?? [];
+    const pairedArtifactIds = new Set([
+      ...proposalArtifactIds,
+      ...active.flatMap((item) => (item.primaryArtifactId ? [item.primaryArtifactId] : [])),
+    ]);
+    if (pairedArtifactIds.size === 0) {
+      decisions.set(proposalId, blocked('learning_item_artifact_missing', entry.rate.createdAt));
+      continue;
+    }
+    const missingOrArchived = [...pairedArtifactIds].some((artifactId) => {
+      const row = artifactById.get(artifactId);
+      return !row || row.archivedAt !== null;
+    });
+    if (missingOrArchived) {
+      decisions.set(proposalId, blocked('learning_item_artifact_missing', entry.rate.createdAt));
+      continue;
+    }
+    if ([...pairedArtifactIds].some((artifactId) => editedArtifactIds.has(artifactId))) {
+      decisions.set(proposalId, blocked('learning_item_note_edited', entry.rate.createdAt));
     }
   }
 }

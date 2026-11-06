@@ -40,6 +40,7 @@ import {
   type AutoAppliedUndoDecision,
   classifyAutoAppliedUndoBatch,
   isNonTransientUndoBlock,
+  lockAutoAppliedUndoOwnerRows,
 } from '@/kernel/proposals/auto-applied-undo';
 import { PROPOSAL_AUTOAPPLY_ACTION } from '@/kernel/proposals/auto-apply';
 import { retractAiProposal } from './retract-action';
@@ -355,6 +356,10 @@ export async function batchRetractAutoAppliedProposals(
       const result = await retractAiProposal(db, proposalId, {
         ...(parsed.reason_md ? { reason_md: parsed.reason_md } : {}),
         guard: async (tx: Tx) => {
+          // The decision lock is held; take the owner row locks the applier will
+          // need before re-reading owner state, so an edit that commits after the
+          // pre-scan is visible here instead of archived away.
+          await lockAutoAppliedUndoOwnerRows(tx, proposalId);
           const fresh = (await classifyAutoAppliedUndoBatch(tx, [proposalId])).get(proposalId);
           if (!fresh) {
             throw new BatchUndoGuardSignal(

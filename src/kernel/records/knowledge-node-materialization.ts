@@ -15,12 +15,19 @@ import {
 
 type DbLike = Db | Tx;
 
-export async function assertKnowledgeParentExists(db: DbLike, parentId: string): Promise<void> {
+/**
+ * Parent existence check for node creation. `FOR SHARE` waits for an in-flight
+ * archive and then re-checks `archived_at`, so creating a child and archiving the
+ * parent cannot interleave; callers must supply the transaction that will insert
+ * the child row.
+ */
+export async function assertKnowledgeParentExists(tx: Tx, parentId: string): Promise<void> {
   const row = (
-    await db
+    await tx
       .select({ id: knowledge.id })
       .from(knowledge)
       .where(and(eq(knowledge.id, parentId), isNull(knowledge.archived_at)))
+      .for('share')
       .limit(1)
   )[0];
   if (!row) {
@@ -31,7 +38,7 @@ export async function assertKnowledgeParentExists(db: DbLike, parentId: string):
 // Shared preparation for explicit acceptance and automatic tagging. It does not
 // write a node: each owner records its creation contract before projection.
 export async function prepareProposedKnowledgeId(
-  db: DbLike,
+  tx: Tx,
   payload: { parent_id: string | null; domain?: string },
 ): Promise<string> {
   // Root creation has no parent to assert; the projected row stamps payload.domain.
@@ -44,7 +51,7 @@ export async function prepareProposedKnowledgeId(
     }
     return newId();
   }
-  await assertKnowledgeParentExists(db, payload.parent_id);
+  await assertKnowledgeParentExists(tx, payload.parent_id);
   return newId();
 }
 
