@@ -22079,6 +22079,7 @@ export interface operations {
                                 updated_at: string;
                             }[];
                             id: string;
+                            removed: boolean;
                             undo_of: string | null;
                         }[];
                         topics: {

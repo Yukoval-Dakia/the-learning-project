@@ -15,7 +15,7 @@ export const releaseStartHeldPlacement: FrontdoorContext['releaseHeldPlacement']
       throw new ApiError('validation_error', 'request body must be valid JSON', 400);
     }
     const { db } = await import('@/db/client');
-    const { releaseHeldPlacement } = await import('@/capabilities/practice/public');
+    const { releaseHeldPlacement } = await import('@/capabilities/practice/placement/public');
     return await releaseHeldPlacement(db, input.sessionId, raw);
   } catch (error) {
     // Shape the original errors in the host, including the UI's not_releasable branch.

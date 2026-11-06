@@ -8,7 +8,7 @@
  * provenance marker so the action is traceable and reversible.
  */
 import { createId } from '@paralleldrive/cuid2';
-
+import { crisisDerivationPayload } from '@/core/crisis/classify';
 import type { Tx } from '@/db/client';
 import { writeEvent } from '@/kernel/events';
 import { loadAttemptQuestionSnapshot } from '@/kernel/read-models/question-evidence-snapshot';
@@ -90,7 +90,12 @@ export async function enrollCapturedBlock(
   // shared filter apply a later consent withdrawal.
   const docUsage = input.docUsage ?? (await resolveDocumentUsage(tx, input.sourceDocumentId));
   const derivationPolicy = docUsage.policy;
-  const policyField = derivationPolicy === 'allow' ? {} : { derivation_policy: derivationPolicy };
+  // Crisis takes precedence over an allow policy; an already-restricted document
+  // policy stays as written (it carries its own provenance).
+  const policyField =
+    derivationPolicy === 'allow'
+      ? (crisisDerivationPayload(input.answerMd) ?? {})
+      : { derivation_policy: derivationPolicy };
 
   // Unanswered: material only, no attempt event.
   if (input.outcome === 'unanswered') {
