@@ -13,6 +13,7 @@
 // 快照（status/result/error/polls/settled）和唯一的 timer；React 经 useSyncExternalStore
 // 订阅它——有订阅且 enabled 时才轮询，退订即停（卸载后不再读）。到终态（或错误停机）时
 // 资源对本 run 只回调一次 onSettled，宿主在回调里认领终态，而不是用 effect 盯快照推进。
+// 错误停机不是结论：切回标签页或网络恢复时重新开始读，读到终态再回调一次。
 // 没用 TanStack Query 的 refetchInterval：它首次立即请求、按固定 setInterval 而非「上次
 // 响应后」计时、默认后台暂停，且没有「连续失败 N 次停机、成功即清零」的计数，保不住既有
 // 的起步延迟、退避与停机上限。
@@ -127,6 +128,27 @@ class JudgeRunPoller {
   // identity because enabled/onSettled/read changed, or a StrictMode re-subscribe). The
   // timer and any in-flight read then survive instead of restarting the backoff.
   private stopPending = false;
+  private stoppedByErrors = false;
+  private enabled = false;
+
+  // Coming back to the tab or the network is the signal to try again after giving up.
+  private readonly onReturn = () => {
+    if (!this.stoppedByErrors || !this.enabled || !this.connection) return;
+    if (document.visibilityState === 'hidden') return;
+    this.stoppedByErrors = false;
+    this.consecutiveErrors = 0;
+    this.settledDelivered = false;
+    this.nextDelay = this.config.intervalMs;
+    this.publish({ ...this.snapshot, settled: false });
+    this.start();
+  };
+
+  private watchReturn(on: boolean) {
+    if (typeof window === 'undefined') return;
+    const change = on ? 'addEventListener' : 'removeEventListener';
+    window[change]('online', this.onReturn);
+    document[change]('visibilitychange', this.onReturn);
+  }
 
   constructor(private readonly config: PollerConfig) {
     this.key = configKey(config);
@@ -138,7 +160,9 @@ class JudgeRunPoller {
   connect(listener: () => void, enabled: boolean, connection: PollerConnection): () => void {
     this.listener = listener;
     this.connection = connection;
+    this.enabled = enabled;
     this.stopPending = false;
+    this.watchReturn(true);
     if (!enabled) this.stop();
     else if (!this.running) this.start();
     else this.deliverSettled();
@@ -149,6 +173,7 @@ class JudgeRunPoller {
         if (!this.stopPending) return;
         this.stopPending = false;
         this.connection = null;
+        this.watchReturn(false);
         this.stop();
       });
     };
@@ -202,6 +227,7 @@ class JudgeRunPoller {
       this.consecutiveErrors += 1;
       if (this.consecutiveErrors >= maxConsecutiveErrors) {
         this.running = false;
+        this.stoppedByErrors = true;
         this.publish({ ...this.snapshot, error: err as Error, settled: true });
         this.deliverSettled();
         return;

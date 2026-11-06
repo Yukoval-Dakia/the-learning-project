@@ -369,7 +369,7 @@ export function PracticePresentation(props: PracticePresentationProps) {
               ? '这次没判成，答案还在，不用重交。'
               : poll.error
                 ? poll.settled
-                  ? '一直连不上。答案已经存住，刷新这页可以看结果。'
+                  ? '一直连不上。答案已经存住，连上后回到这页，结果会自己出来。'
                   : '暂时连不上。答案已经存住，连上后结果会自己出来。'
                 : poll.polls >= LONG_WAIT_POLLS
                   ? '比平时久一点。不用等，可以先做下一题，判完结果会记进这题的作答记录。'
