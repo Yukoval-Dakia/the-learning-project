@@ -167,8 +167,9 @@ export const CRISIS_GUARD_CONFIG: CrisisGuardConfig = {
     ),
     // English first-person endurance collapse: the phrase must close the utterance
     // ("i can't go on, my leg hurts" and "…anymore, i'm out of breath" stay out);
-    // "hold on" keeps its object use free; "bear it"/"stand it" are not terms.
-    /i can'?t hold on(?! *to)/,
+    // "hold on" shares that ending restriction and also excludes "hold on to";
+    // "bear it"/"stand it" are not terms.
+    /i can'?t hold on(?! *to)(?: anymore| any longer| like this| living| like that)*(?=\s*(?:$|[.!?;]))/,
     /i can'?t (?:go on|keep going)(?: anymore| any longer| like this| living| like that)*(?=\s*(?:$|[.!?;]))/,
     /giv(?:e|ing) up on (?:life|everything|myself|the world)/,
     /feel like (?:giving up|disappearing)|no reason to (?:live|go on)|can'?t (?:take|do) (?:this|it) anymore|want (?:it to end|to disappear)/,
