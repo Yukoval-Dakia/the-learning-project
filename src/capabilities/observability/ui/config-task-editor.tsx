@@ -115,7 +115,10 @@ export function ConfigTaskEditor({
   return (
     <section aria-label={`${task.kind} 配置编辑`} className="adm-editor">
       <div className="adm-editor-head">
-        <h3 className="adm-editor-title">{taskWords(task).name}</h3>
+        <div>
+          <h3 className="adm-editor-title">{taskWords(task).name}</h3>
+          <p className="adm-cell-sub adm-mono adm-break">{task.kind}</p>
+        </div>
         <Button variant="ghost" size="sm" onClick={onClose} disabled={pending}>
           取消编辑
         </Button>
@@ -167,14 +170,31 @@ export function ConfigTaskEditor({
             <input
               type="checkbox"
               checked={draft.ownModel}
-              onChange={(e) => setDraft({ ...draft, ownModel: e.target.checked })}
+              onChange={(e) => {
+                const ownModel = e.target.checked;
+                // The model that really runs changes, and a level it does not list would be saved unseen.
+                const next = ownModel
+                  ? findModel(providers, draft.provider, draft.model)
+                  : findModel(
+                      providers,
+                      global?.provider ?? draft.provider,
+                      global?.model ?? draft.model,
+                    );
+                setDraft({
+                  ...draft,
+                  ownModel,
+                  thinking: thinkingLevels(next).includes(draft.thinking) ? draft.thinking : '',
+                });
+              }}
             />
             这个任务用自己的模型，不跟全局默认
           </label>
         ) : null}
         {globalWins ? (
           <p className="adm-note">
-            全局默认现在优先（{global?.provider} / {global?.model}），上面选的模型先存着，不会生效。
+            {global?.model
+              ? `全局默认现在优先（${global.provider} / ${global.model}），上面选的模型先存着，不会生效。`
+              : `全局默认只定了 provider（${global?.provider}），上面选的模型会生效，provider 仍跟全局。`}
           </p>
         ) : null}
         <div className="adm-acts">

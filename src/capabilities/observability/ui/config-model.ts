@@ -193,6 +193,12 @@ export function bindingThinking(binding: ConfigBinding | null): string | null {
   if (!reasoning) return null;
   if (reasoning.error) return reasoning.error;
   if (!reasoning.applied) return null;
+  // 'none' is no parameter on the wire: the model's own default, which may not be off.
+  if (reasoning.applied === 'none') {
+    return reasoning.requested
+      ? `思考由模型决定（选的是${thinkingWord(reasoning.requested)}，这个模型调不了）`
+      : '思考由模型决定';
+  }
   const applied = thinkingWord(reasoning.applied);
   return reasoning.requested && reasoning.requested !== reasoning.applied
     ? `思考 ${applied}（选的是${thinkingWord(reasoning.requested)}，这个模型取到${applied}）`
@@ -213,6 +219,7 @@ export function modelFactsLine(model: ConfigModel): string {
     price,
   ].join(' · ');
 }
+const RUNTIME_LEVELS = new Set(['minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
 /**
  * The levels a task can ask for, in the runtime's names (it refuses anything else). A toggle model
  * lists off/on but takes any non-off level as on; a budget model lists nothing but takes the levels
@@ -223,7 +230,7 @@ export function thinkingLevels(model: ConfigModel | undefined): string[] {
   if (!options || options.mode === 'unknown') return [];
   if (options.mode === 'toggle') return ['off', 'high'];
   if (options.mode === 'budget_tokens') return ['off', 'low', 'medium', 'high'];
-  return ['off', ...options.values.filter((level) => level !== 'off' && level !== 'none')];
+  return ['off', ...options.values.filter((level) => RUNTIME_LEVELS.has(level))];
 }
 /** A toggle model has only off and on, so its non-off level reads as on. */
 export function thinkingChoiceWord(model: ConfigModel | undefined, level: string): string {

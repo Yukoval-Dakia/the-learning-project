@@ -56,7 +56,6 @@ export function AdminConfigSurface({
     <AdminFrame>
       <AdminNav links={ADMIN_LINKS} current="/admin/config" navigate={navigate} />
       <AdminHead
-        kicker="ADMIN · config"
         title="配置"
         lead="查看真实运行选择，按任务管理模型与输出偏好。"
         actions={

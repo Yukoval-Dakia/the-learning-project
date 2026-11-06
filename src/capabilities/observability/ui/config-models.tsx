@@ -1,6 +1,19 @@
-// AI 模型 (YUK-1808): the global default, then tasks by what they are for. Each row says what the
-// task really runs on and why; a save shows what the server says took effect, not what was asked.
-import { ChevronDown } from 'lucide-react';
+// AI 模型 (YUK-1808): the global default first, then a card per use. A card or row names a model only
+// where it differs from the default, so what is different shows at a glance. A save shows what the
+// server says took effect, not what was asked.
+import {
+  BookOpen,
+  Brain,
+  CheckCheck,
+  ChevronDown,
+  Compass,
+  FileQuestion,
+  type LucideIcon,
+  MessageCircle,
+  MoreHorizontal,
+  Shapes,
+  Upload,
+} from 'lucide-react';
 import { useId, useState } from 'react';
 import { Button, Chip } from '@/ui-next/public';
 import {
@@ -17,23 +30,68 @@ import {
   ruleWord,
   taskEditable,
   taskWords,
+  thinkingChoiceWord,
+  thinkingLevels,
+  thinkingWord,
 } from './config-model';
-import { ModelPicker, modelIssue } from './config-model-picker';
+import { ModelPicker, findModel, modelIssue } from './config-model-picker';
 import { ConfigProviderCatalog } from './config-provider-catalog';
 import { ConfigTaskEditor } from './config-task-editor';
 
-function BindingFacts({ binding }: { binding: ConfigBinding | null }) {
+const GROUP_ICON: Readonly<Record<string, LucideIcon>> = {
+  companion: MessageCircle,
+  coach: Compass,
+  'question-prep': FileQuestion,
+  grading: CheckCheck,
+  ingestion: Upload,
+  memory: Brain,
+  'notes-knowledge': BookOpen,
+};
+
+/**
+ * True only when the task really runs on the pair the hero names. The selection rule alone cannot
+ * say so: it reports the provider's layer, and the model resolves separately, so a provider-only pin
+ * can leave a task on a model of its own.
+ */
+const GLOBAL_THINKING_LEVELS = ['off', 'low', 'medium', 'high', 'max'];
+
+function followsGlobal(binding: ConfigBinding | null, global: ConfigGlobal | null): boolean {
+  return (
+    binding !== null &&
+    !binding.error &&
+    (binding.selection_rule === 'env_pin' || binding.selection_rule === 'global_pin') &&
+    Boolean(global?.model) &&
+    binding.provider === global?.provider &&
+    binding.model === global?.model
+  );
+}
+
+function BindingFacts({
+  binding,
+  terseAgainst,
+}: {
+  binding: ConfigBinding | null;
+  /** In a list under the default: say 「跟全局默认」 instead of repeating the same name. */
+  terseAgainst?: ConfigGlobal | null;
+}) {
   const thinking = bindingThinking(binding);
+  const follows = terseAgainst !== undefined && followsGlobal(binding, terseAgainst);
   return (
     <div className="adm-binding">
-      <p className="adm-mono adm-break" data-error={binding?.error ? '' : undefined}>
-        {bindingLine(binding)}
-      </p>
-      {binding && !binding.error ? (
+      {follows ? (
+        <p className="adm-follows">跟全局默认</p>
+      ) : (
+        <p className="adm-mono adm-break" data-error={binding?.error ? '' : undefined}>
+          {bindingLine(binding)}
+        </p>
+      )}
+      {binding && !binding.error && (!follows || thinking) ? (
         <p className="adm-binding-tags">
-          <Chip tone={binding.selection_rule === 'env_pin' ? 'caution' : 'neutral'}>
-            {ruleWord(binding.selection_rule)}
-          </Chip>
+          {follows ? null : (
+            <Chip tone={binding.selection_rule === 'env_pin' ? 'caution' : 'neutral'}>
+              {ruleWord(binding.selection_rule)}
+            </Chip>
+          )}
           {thinking ? (
             <span className={binding.reasoning?.error ? 'adm-cell-caution' : 'adm-cell-sub'}>
               {thinking}
@@ -68,14 +126,30 @@ function GlobalDefault({ data, save }: { data: ConfigData; save: SaveConfig }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<{ text: string; epoch: number } | null>(null);
-  // Every task without its own model moves with this, so a change says so and asks first.
+  const stored = current?.reasoning?.level ?? '';
+  const [thinking, setThinking] = useState(stored);
+  // Every task without its own choice moves with this, so a change says so and asks first.
   const [confirm, setConfirm] = useState<{
     text: string;
     changes: Parameters<SaveConfig>[0];
   } | null>(null);
-  const issue = modelIssue(data.providers, pick.provider, pick.model);
-  const currentPair = current?.provider ? `${current.provider} / ${current.model}` : null;
-  const unchanged = pick.provider === current?.provider && pick.model === current?.model;
+  const currentPair = current?.provider
+    ? current.model
+      ? `${current.provider} / ${current.model}`
+      : current.provider
+    : null;
+  const pairChanged =
+    !pinned &&
+    (pick.provider !== (current?.provider ?? '') || pick.model !== (current?.model ?? ''));
+  // Thinking is independent of the pair: with no default model, or only a provider, it still saves.
+  const issue = pairChanged ? modelIssue(data.providers, pick.provider, pick.model) : null;
+  const thinkingChanged = thinking !== stored;
+  const pickedModel = pinned
+    ? findModel(data.providers, current?.provider ?? '', current?.model ?? '')
+    : findModel(data.providers, pick.provider, pick.model);
+  const catalogLevels = thinkingLevels(pickedModel);
+  // With no single model to read it from, the level still applies to whatever each task runs.
+  const levels = catalogLevels.length > 0 ? catalogLevels : GLOBAL_THINKING_LEVELS;
   const run = async (changes: Parameters<SaveConfig>[0]) => {
     setPending(true);
     setError(null);
@@ -83,7 +157,16 @@ function GlobalDefault({ data, save }: { data: ConfigData; save: SaveConfig }) {
       const receipt = await save(changes);
       const after = receipt.effective?.global ?? null;
       setSaved({
-        text: after?.provider ? `现在生效：${after.provider} / ${after.model}` : '已清除全局默认。',
+        text: [
+          changes.some((change) => change.action === 'clear')
+            ? '已清除全局默认。'
+            : after?.provider
+              ? `现在生效：${after.provider} / ${after.model}`
+              : null,
+          after?.reasoning?.level ? `思考强度 ${thinkingWord(after.reasoning.level)}。` : null,
+        ]
+          .filter(Boolean)
+          .join(' '),
         epoch: receipt.committed_epoch,
       });
       setEditing(false);
@@ -94,8 +177,35 @@ function GlobalDefault({ data, save }: { data: ConfigData; save: SaveConfig }) {
       setPending(false);
     }
   };
+  const askToSave = () => {
+    const parts = [
+      pairChanged ? `全局默认：${currentPair ?? '没有'} → ${pick.provider} / ${pick.model}` : null,
+      thinkingChanged
+        ? `思考强度：${stored ? thinkingWord(stored) : '没有'} → ${thinkingChoiceWord(pickedModel, thinking)}`
+        : null,
+    ].filter(Boolean);
+    setConfirm({
+      text: `${parts.join('；')}。${[
+        pairChanged ? '没有自己模型的任务改用新模型' : null,
+        thinkingChanged ? '没有自己思考强度的任务改用新强度，用自己模型的任务也一样' : null,
+      ]
+        .filter(Boolean)
+        .join('；')}。`,
+      changes: [
+        ...(pairChanged
+          ? ([
+              { action: 'set', key: 'lane.global.provider', value: pick.provider },
+              { action: 'set', key: 'lane.global.model', value: pick.model },
+            ] as const)
+          : []),
+        ...(thinkingChanged
+          ? ([{ action: 'set', key: 'lane.global.reasoning', value: { level: thinking } }] as const)
+          : []),
+      ],
+    });
+  };
   return (
-    <section className="adm-panel adm-form" aria-labelledby={`${id}-title`}>
+    <section className="adm-global adm-form" aria-labelledby={`${id}-title`}>
       <div className="adm-global-head">
         <div>
           <h2 id={`${id}-title`} className="adm-panel-title">
@@ -103,7 +213,7 @@ function GlobalDefault({ data, save }: { data: ConfigData; save: SaveConfig }) {
           </h2>
           <p className="adm-note">没有单独设置的任务都用它。</p>
         </div>
-        {!pinned && !editing ? (
+        {!editing ? (
           <Button
             variant="secondary"
             size="sm"
@@ -113,6 +223,7 @@ function GlobalDefault({ data, save }: { data: ConfigData; save: SaveConfig }) {
               // Start from what is in effect now: another session may have changed it, and saving an
               // older pair would move every task that follows the default back.
               setPick({ provider: current?.provider ?? '', model: current?.model ?? '' });
+              setThinking(stored);
               setEditing(true);
             }}
           >
@@ -121,12 +232,22 @@ function GlobalDefault({ data, save }: { data: ConfigData; save: SaveConfig }) {
         ) : null}
       </div>
       {current?.provider ? (
-        <p className="adm-mono adm-break">
-          {current.provider} / {current.model}
+        <p className="adm-global-model">
+          {current.model ?? current.provider}
+          <span className="adm-global-provider">
+            {current.model ? current.provider : '只定了 provider，模型由各任务决定'}
+          </span>
         </p>
       ) : (
         <p className="adm-note">没有全局默认，各任务用自己的模型。</p>
       )}
+      {stored ? (
+        <p className="adm-cell-sub">
+          思考强度 {thinkingWord(stored)}
+          {current?.reasoning?.source === 'code-default' ? '（系统默认）' : ''}
+          ，每个模型取它能用的最接近一档。
+        </p>
+      ) : null}
       {current?.error ? (
         <p role="alert" className="adm-field-error">
           {current.error}
@@ -134,8 +255,8 @@ function GlobalDefault({ data, save }: { data: ConfigData; save: SaveConfig }) {
       ) : null}
       {pinned ? (
         <p className="adm-warn-line">
-          紧急开关开着（部署环境变量），它压过这里和所有任务的设置，这里改不了。
-          {current?.source !== current?.model_source
+          紧急开关开着（部署环境变量），它压过这里的模型，这里只能改思考强度。勾了「不跟全局默认」的任务不受影响。
+          {current?.model && current.source !== current.model_source
             ? ` Provider 来自${current?.source === 'env' ? '环境变量' : '这里的设置'}，模型来自${current?.model_source === 'env' ? '环境变量' : '这里的设置'}。`
             : ''}
         </p>
@@ -148,29 +269,41 @@ function GlobalDefault({ data, save }: { data: ConfigData; save: SaveConfig }) {
       {editing ? (
         <fieldset disabled={pending || confirm !== null} className="adm-fieldset">
           <legend className="adm-legend">全局默认</legend>
-          <ModelPicker
-            id={id}
-            providers={data.providers}
-            provider={pick.provider}
-            model={pick.model}
-            onChange={setPick}
-          />
+          {pinned ? null : (
+            <ModelPicker
+              id={id}
+              providers={data.providers}
+              provider={pick.provider}
+              model={pick.model}
+              onChange={setPick}
+            />
+          )}
+          <label htmlFor={`${id}-thinking`} className="adm-inline-field">
+            <span className="adm-field-name">思考强度</span>
+            <select
+              id={`${id}-thinking`}
+              className="adm-input"
+              value={levels.includes(thinking) ? thinking : ''}
+              onChange={(e) => setThinking(e.target.value)}
+            >
+              {levels.includes(thinking) ? null : (
+                <option value="">{thinking ? thinkingWord(thinking) : '没有'}</option>
+              )}
+              {levels.map((level) => (
+                <option key={level} value={level}>
+                  {thinkingChoiceWord(pickedModel, level)}
+                </option>
+              ))}
+            </select>
+          </label>
           <div className="adm-acts">
             <Button
-              disabled={Boolean(issue) || unchanged}
-              onClick={() =>
-                setConfirm({
-                  text: `全局默认：${currentPair ?? '没有'} → ${pick.provider} / ${pick.model}。没有单独设置的任务都会改用它。`,
-                  changes: [
-                    { action: 'set', key: 'lane.global.provider', value: pick.provider },
-                    { action: 'set', key: 'lane.global.model', value: pick.model },
-                  ],
-                })
-              }
+              disabled={Boolean(issue) || !(pairChanged || thinkingChanged)}
+              onClick={askToSave}
             >
               保存
             </Button>
-            {current?.provider ? (
+            {!pinned && current?.provider ? (
               <Button
                 variant="secondary"
                 onClick={() =>
@@ -214,10 +347,29 @@ function GlobalDefault({ data, save }: { data: ConfigData; save: SaveConfig }) {
   );
 }
 
-/** What a whole group runs on, in one phrase. */
-function groupSummary(tasks: readonly ConfigTask[]): string {
-  const pairs = new Set(tasks.map((task) => bindingLine(task.effective_binding)));
-  return pairs.size === 1 ? [...pairs][0] : `${pairs.size} 种模型`;
+/** What a whole group runs on: only a difference from the default gets a tag. */
+function GroupSummary({
+  tasks,
+  global,
+}: {
+  tasks: readonly ConfigTask[];
+  global: ConfigGlobal | null;
+}) {
+  const bindings = tasks.map((task) => task.effective_binding);
+  const broken = bindings.filter((binding) => binding === null || binding.error).length;
+  if (broken > 0) {
+    return <span className="adm-tag-caution">{broken} 个任务读不出模型</span>;
+  }
+  if (bindings.every((binding) => followsGlobal(binding, global))) {
+    return <span className="adm-follows">跟全局默认</span>;
+  }
+  // The same model id from two providers is two different things: compare the whole pair.
+  const pairs = new Set(bindings.map(bindingLine));
+  return (
+    <span className="adm-tag-differs">
+      {pairs.size === 1 ? [...pairs][0] : `${pairs.size} 种模型`}
+    </span>
+  );
 }
 
 // A dedicated-channel task has no model to choose and the server now refuses this flag on it. A row
@@ -296,11 +448,10 @@ function TaskRow({
       <div className="adm-task-main">
         <div className="adm-task-name">
           <p>{words.name}</p>
-          {words.detail ? <p className="adm-cell-sub">{words.detail}</p> : null}
-          <p className="adm-cell-sub adm-mono adm-break">{task.kind}</p>
+          {words.detail ? <p className="adm-task-detail">{words.detail}</p> : null}
         </div>
         <div className="adm-task-binding">
-          <BindingFacts binding={task.effective_binding} />
+          <BindingFacts binding={task.effective_binding} terseAgainst={data.global} />
           {dormant ? (
             <p className="adm-cell-sub">
               自己设了 {task.override?.provider} / {task.override?.model}，现在不生效。
@@ -391,7 +542,7 @@ export function ConfigModels({
   return (
     <div className="adm-stack">
       <GlobalDefault data={data} save={save} />
-      <section className="adm-stack" aria-label="按用途的任务">
+      <section className="adm-groups" aria-label="按用途的任务">
         {groups.length === 0 ? (
           <div className="adm-panel">
             <p className="adm-empty adm-pad">没有匹配项，请调整搜索条件。</p>
@@ -400,8 +551,13 @@ export function ConfigModels({
           groups.map((group) => {
             const expanded = searching || open.has(group.id);
             const panelId = `adm-group-${group.id}`;
+            const Icon = GROUP_ICON[group.id] ?? Shapes;
             return (
-              <div key={group.id} className="adm-panel adm-group">
+              <div
+                key={group.id}
+                className="adm-panel adm-group"
+                data-open={expanded ? '' : undefined}
+              >
                 <button
                   type="button"
                   className="adm-group-head un-hit"
@@ -409,9 +565,16 @@ export function ConfigModels({
                   aria-controls={panelId}
                   onClick={() => toggle(group.id)}
                 >
-                  <span className="adm-group-label">{group.label}</span>
-                  <span className="adm-cell-sub">{group.tasks.length} 个任务</span>
-                  <span className="adm-group-summary adm-mono">{groupSummary(group.tasks)}</span>
+                  <span className="adm-group-label">
+                    <span className="adm-group-icon">
+                      <Icon size={16} aria-hidden="true" />
+                    </span>
+                    {group.label}
+                  </span>
+                  <span className="adm-group-count">{group.tasks.length} 个任务</span>
+                  <span className="adm-group-summary">
+                    <GroupSummary tasks={group.tasks} global={data.global} />
+                  </span>
                   <ChevronDown size={16} aria-hidden="true" className="adm-group-chev" />
                 </button>
                 {expanded ? (
@@ -434,7 +597,14 @@ export function ConfigModels({
           })
         )}
       </section>
-      <ConfigProviderCatalog providers={data.providers} query={query} />
+      <details className="adm-catalog-fold" open={searching || undefined}>
+        <summary className="adm-summary">
+          <MoreHorizontal size={16} aria-hidden="true" />
+          模型目录：{data.providers.length} 家，
+          {data.providers.filter((p) => p.auth?.status === 'configured').length} 家已配置
+        </summary>
+        <ConfigProviderCatalog providers={data.providers} query={query} />
+      </details>
     </div>
   );
 }

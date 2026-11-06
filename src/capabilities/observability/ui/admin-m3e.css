@@ -1181,7 +1181,14 @@
   }
 
   /* Native disclosure: the closed body is not rendered, so it is already out of the tab order. */
-  /* AI 模型: tasks by what they are for (YUK-1808). */
+  /* AI 模型 (YUK-1808): the default as the deep hero, one card per use. Only a difference from the
+     default gets a tag. Owner chose this from two directions on 2026-11-06. */
+  & .adm-global {
+    padding: var(--un-sp-5);
+    border-radius: 16px;
+    background: var(--un-bg-sunk);
+  }
+
   & .adm-global-head {
     display: flex;
     align-items: flex-start;
@@ -1189,31 +1196,103 @@
     gap: var(--un-sp-3);
   }
 
+  & .adm-global-model {
+    display: grid;
+    gap: 2px;
+    margin: var(--un-sp-1) 0 0;
+    color: var(--un-text-1);
+    font-size: 28px;
+    font-weight: var(--un-fw-semibold);
+    letter-spacing: -0.01em;
+    overflow-wrap: anywhere;
+  }
+
+  & .adm-global-provider {
+    color: var(--un-text-3);
+    font-size: 13px;
+    font-weight: var(--un-fw-regular);
+    letter-spacing: 0;
+  }
+
+  & .adm-groups {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  & .adm-group {
+    border-radius: 16px;
+  }
+
+  & .adm-group[data-open] {
+    grid-column: 1 / -1;
+  }
+
   & .adm-group-head {
     display: grid;
-    grid-template-columns: auto auto minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
-    gap: var(--un-sp-3);
+    gap: 6px var(--un-sp-3);
     width: 100%;
-    padding: var(--un-sp-3) var(--un-sp-4);
+    padding: var(--un-sp-4) 18px;
     text-align: left;
   }
 
   & .adm-group-label {
-    font-weight: var(--un-fw-medium);
+    display: inline-flex;
+    align-items: center;
+    gap: var(--un-sp-2);
+    font-size: 16px;
+    font-weight: var(--un-fw-semibold);
+  }
+
+  & .adm-group-icon {
+    display: inline-flex;
+    padding: 6px;
+    border-radius: 9px;
+    background: var(--un-accent-soft);
+    color: var(--un-accent);
+  }
+
+  & .adm-group-count {
+    grid-column: 1;
+    color: var(--un-text-3);
+    font-size: 13px;
   }
 
   & .adm-group-summary {
+    grid-column: 1 / -1;
     min-width: 0;
-    overflow: hidden;
-    color: var(--un-text-3);
-    font-size: var(--un-fs-1);
-    text-align: right;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+  }
+
+  & .adm-follows {
+    color: var(--un-positive);
+    font-size: 14px;
+  }
+
+  & .adm-tag-differs,
+  & .adm-tag-caution {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 999px;
+    font-size: 13px;
+    font-weight: var(--un-fw-medium);
+    overflow-wrap: anywhere;
+  }
+
+  & .adm-tag-differs {
+    background: var(--un-accent-soft);
+    color: var(--un-accent);
+  }
+
+  & .adm-tag-caution {
+    background: var(--un-caution-soft);
+    color: var(--un-caution);
   }
 
   & .adm-group-chev {
+    grid-column: 2;
+    grid-row: 1;
     color: var(--un-text-3);
     transition: transform var(--un-t-feedback) var(--un-ease-glide);
   }
@@ -1232,7 +1311,7 @@
   & .adm-task {
     display: grid;
     gap: var(--un-sp-3);
-    padding: var(--un-sp-3) var(--un-sp-4);
+    padding: 14px 18px;
     border-top: var(--un-hairline) solid var(--un-line);
   }
 
@@ -1247,6 +1326,18 @@
     display: grid;
     gap: 2px;
     min-width: 0;
+  }
+
+  & .adm-task-name > p:first-child {
+    color: var(--un-text-1);
+    font-size: 15px;
+    font-weight: var(--un-fw-medium);
+  }
+
+  & .adm-task-detail {
+    color: var(--un-text-2);
+    font-size: 14px;
+    line-height: 1.6;
   }
 
   & .adm-task-saved {
@@ -1279,15 +1370,22 @@
     font-size: var(--un-fs-1);
   }
 
+  & .adm-catalog-fold {
+    border-radius: 14px;
+    background: var(--un-bg-sunk);
+  }
+
+  & .adm-catalog-fold[open] {
+    padding-bottom: var(--un-sp-3);
+  }
+
+  @media (max-width: 860px) {
+    & .adm-groups {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
   @media (max-width: 720px) {
-    & .adm-group-head {
-      grid-template-columns: auto minmax(0, 1fr) auto;
-    }
-    & .adm-group-summary {
-      grid-column: 1 / -1;
-      grid-row: 2;
-      text-align: left;
-    }
     & .adm-task-main {
       grid-template-columns: minmax(0, 1fr);
     }

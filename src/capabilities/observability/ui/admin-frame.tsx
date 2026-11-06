@@ -80,14 +80,14 @@ export function AdminHead({
   lead,
   actions,
 }: {
-  kicker: string;
+  kicker?: string;
   title: string;
   lead: string;
   actions?: ReactNode;
 }) {
   return (
     <header className="adm-head">
-      <p className="adm-kicker">{kicker}</p>
+      {kicker ? <p className="adm-kicker">{kicker}</p> : null}
       <div className="adm-head-row">
         <h1 className="adm-title">{title}</h1>
         {actions && <div className="adm-head-acts">{actions}</div>}
