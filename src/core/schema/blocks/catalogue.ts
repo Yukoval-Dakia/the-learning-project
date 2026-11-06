@@ -9,17 +9,14 @@ import {
   DiagramBlock,
   FigureBlockInput,
   InteractiveBlockInput,
+  QuestionRefBlock,
 } from './block';
 import { BLOCK_IMPLEMENTED_KINDS, BLOCK_SURFACE_KINDS, type BlockSurface } from './surfaces';
 
 // Field lists are generated from the MODEL-FACING input schemas so the
 // catalogue matches what compose_block actually accepts (figure `svg`,
 // interactive `html`), never the asset-only stored form.
-// Question-card discovery waits for the coordinated prompt switch.
-const MEMBER_META: Record<
-  Exclude<BlockKind, 'question_ref'>,
-  { schema: z.ZodType; example: unknown }
-> = {
+const MEMBER_META: Record<BlockKind, { schema: z.ZodType; example: unknown }> = {
   diagram: {
     schema: DiagramBlock,
     example: {
@@ -38,6 +35,17 @@ const MEMBER_META: Record<
       svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 80"><rect x="10" y="10" width="40" height="60" fill="none" stroke="black"/><text x="30" y="45" text-anchor="middle" font-size="10">试管</text></svg>',
       alt: '加热固体的试管装置',
       long_desc: '试管口略向下倾斜，内装固体反应物，下方加热。',
+    },
+  },
+  question_ref: {
+    schema: QuestionRefBlock,
+    example: {
+      v: 1,
+      kind: 'question_ref',
+      question_ids: ['q_id'],
+      display: 'inline',
+      alt: '题目',
+      label: '打开题目',
     },
   },
   chart: { schema: ChartBlock, example: { v: 1, kind: 'chart', chart: 'bar' } },
@@ -69,13 +77,19 @@ export function renderBlockCatalogue(surface: BlockSurface): string {
   const allowed = new Set(BLOCK_SURFACE_KINDS[surface]);
   const implemented = new Set(BLOCK_IMPLEMENTED_KINDS);
   const lines: string[] = [
-    '【生成式积木】要在回复里放流程图或装置图，必须调用 compose_block（唯一通道，不要手写 tlp-block 代码块，也不要写 ```mermaid 代码块或手绘 SVG/ASCII 充当图——页面只会显示源代码，不会出现图）。通过校验返回 ref 与 place；正文中用 `![简短说明](block:<ref>)` 把每个要给学习者看的积木都放到想要的位置；只要放置了一个，未放置的就不会显示。校验失败返回 status=invalid + issues[]（code/path/line/expected 指明怎么改），修好重新提交；不要重复提交同样的内容。',
+    '【生成式积木】流程图/装置图须用 compose_block；勿手写 tlp-block、mermaid代码块或SVG/ASCII冒充图（页面只显示源码）。成功返ref/place；正文用 `![简短说明](block:<ref>)` 逐块放置；已放一个时，未放者隐藏。失败返回status=invalid和issues[]（code/path/line/expected），修正重提，勿重复原内容。',
   ];
-  for (const kind of ['diagram', 'figure', 'chart', 'interactive'] as const) {
+  for (const kind of ['diagram', 'figure', 'chart', 'interactive', 'question_ref'] as const) {
     const meta = MEMBER_META[kind];
     if (!allowed.has(kind)) continue;
     if (!implemented.has(kind)) {
       lines.push(`- ${kind}：本版本尚未开放，不要调用。`);
+      continue;
+    }
+    if (kind === 'question_ref') {
+      lines.push(
+        `- question_ref：仅id题卡；display=link|inline（inline单题），alt/label固定，禁caption。入参：${JSON.stringify({ block: meta.example })}`,
+      );
       continue;
     }
     const description = descriptionOf(meta.schema);
@@ -84,10 +98,10 @@ export function renderBlockCatalogue(surface: BlockSurface): string {
     );
   }
   lines.push(
-    '- 化学式与方程式：在行内数学里用 `$\\ce{…}$`，如 `$\\ce{2H2 + O2 -> 2H2O}$`、`$\\ce{CuSO4 * 5H2O}$`。',
+    '- 化学式/方程式：用行内数学 `$\\ce{…}$`，如 `$\\ce{2H2 + O2 -> 2H2O}$`、`$\\ce{CuSO4 * 5H2O}$`。',
   );
   lines.push(
-    '- figure 返回 images 字段的位图自检结果：先看图确认装置连接无误，再把 place 引用写进正文；画错了就修 SVG 重新提交。',
+    '- figure 的 images 是位图自检：先看图确认装置连接无误，再写 place；画错修 SVG 重提。',
   );
   return lines.join('\n');
 }
