@@ -448,11 +448,21 @@ export function ProposalCard({ p, resolved, navigate, onResolve, onError }: Prop
   // An older proposal has no sentence of its own and falls back to its whole reason, which can run
   // long: a long one is cut to two lines with the full text under the fold.
   const ownSummary = p.payload.learner_summary ? p.presentation?.learner_summary : undefined;
-  const legacyBody = p.presentation?.learner_summary ?? p.payload.reason_md;
-  const reasonFolded = Boolean(ownSummary) || legacyBody.length > LEGACY_BODY_MAX;
+  const legacySegments = splitReasonIds(p.presentation?.learner_summary ?? p.payload.reason_md);
+  // The first thing read holds no ids: a known block keeps its name, anything else waits in the fold.
+  const legacyBody = legacySegments
+    .map((seg) => (seg.raw ? (mergeBlockLabelById.get(seg.text) ?? '') : seg.text))
+    .join('')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/[ \t]+(?=[（）「」，。；：、])/g, '')
+    .trim();
+  const reasonFolded =
+    Boolean(ownSummary) ||
+    legacyBody.length > LEGACY_BODY_MAX ||
+    legacySegments.some((seg) => seg.raw);
   // YUK-264：不透明 ID 不露出来；已加载的题块显示位置身份，其他引用折叠为通用标签，原 ID 只保留在 hover title 供追溯。
-  const reasonText = (text: string) =>
-    splitReasonIds(text).map((seg) =>
+  const reasonText = (text: string, learnerSentence = false) =>
+    splitReasonIds(text, learnerSentence).map((seg) =>
       seg.raw ? (
         <button
           type="button"
@@ -503,10 +513,13 @@ export function ProposalCard({ p, resolved, navigate, onResolve, onError }: Prop
       </div>
 
       {ownSummary ? (
-        <p className="ib-prop-reason">{reasonText(ownSummary)}</p>
+        <p className="ib-prop-reason">{reasonText(ownSummary, true)}</p>
       ) : (
-        <div className="ib-prop-reason" data-clamp={reasonFolded ? '' : undefined}>
-          {reasonText(legacyBody)}
+        <div
+          className="ib-prop-reason"
+          data-clamp={legacyBody.length > LEGACY_BODY_MAX ? '' : undefined}
+        >
+          {legacyBody || '理由都是技术引用，在下面的依据里。'}
         </div>
       )}
 
