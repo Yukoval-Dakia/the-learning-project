@@ -191,7 +191,10 @@ export function createFormalModelExecutor(
   admission?: 'durable',
   execution?: JudgeExecution,
 ): ModelUnitExecutorPort {
-  const deadlineAt = Date.now() + 90_000;
+  // 判分窗口从首次单元调用起算，不是执行器创建时：照片转写在创建后、core
+  // 调用前运行，判分的 90s 不得被转写吃光（YUK-1877 — 两阶段显式协调）。
+  let deadlineAt: number | undefined;
+  const gradingDeadlineAt = () => (deadlineAt ??= Date.now() + 90_000);
   let admitted = false;
   const recorded = createRecordedModelExecutor(
     db,
@@ -199,7 +202,7 @@ export function createFormalModelExecutor(
       if (request.executor.task_kind === 'AssessmentRuleJudgeTask') {
         return createPiModelExecutor({
           db,
-          deadlineAt,
+          deadlineAt: gradingDeadlineAt(),
           signal,
           taskRunId,
           maxCostUsdMicros: request.executor.max_cost_usd_micros ?? 0,
@@ -220,7 +223,7 @@ export function createFormalModelExecutor(
       }
       return createJevModelExecutor({
         db,
-        deadlineAt,
+        deadlineAt: gradingDeadlineAt(),
         signal,
         taskRunId,
         judgeRetryPolicy: admission === 'durable' ? 'none' : undefined,
@@ -703,11 +706,17 @@ export async function evaluateSubmission(
               : await prepareEvidenceTranscriptions(
                   {
                     db: db as Db,
-                    ...(typeof request.model_executor === 'object' &&
-                    request.model_executor !== null &&
-                    'deadline_at' in request.model_executor
-                      ? { deadlineAt: request.model_executor.deadline_at }
-                      : {}),
+                    attempt,
+                    // 转写窗口有界且独立：外部注入截止与 6 分钟本地上限取小，
+                    // 绝不无限串行（图数与字节上限在 prepare 内部再收口）。
+                    deadlineAt: Math.min(
+                      typeof request.model_executor === 'object' &&
+                        request.model_executor !== null &&
+                        'deadline_at' in request.model_executor
+                        ? request.model_executor.deadline_at
+                        : Number.POSITIVE_INFINITY,
+                      Date.now() + 360_000,
+                    ),
                   },
                   submission,
                   members,

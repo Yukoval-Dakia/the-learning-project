@@ -68,6 +68,10 @@ const ReceiptPayload = z.object({
   image_sha256: z.string().min(1),
   transcript_asset_id: z.string().optional(),
   transcript_sha256: z.string().optional(),
+  /** 付费归属：(submission_id, attempt)。同 attempt durable replay 还原原记账
+   * 保 recorded-request digest；跨 attempt（重判/新提交）零成本复用。 */
+  submission_id: z.string().optional(),
+  attempt: z.number().int().optional(),
   detail: z.string().optional(),
 });
 
@@ -83,6 +87,8 @@ export interface EvidenceTranscriptionDeps {
   ) => Promise<RunTaskResult>;
   /** 调用方墙钟：转写共享该单元判分的 provider-session 截止。 */
   deadlineAt?: number;
+  /** 本次评估 attempt 号：收据复用时区分同 attempt replay 与跨 attempt 重判。 */
+  attempt: number;
 }
 
 interface ImageEvidenceRef {
@@ -172,6 +178,8 @@ function collectSubmissionImages(submissions: readonly SubmissionRecordT[]): Ima
 async function resolveReceiptRow(
   db: Db,
   image: ImageEvidenceRef,
+  submissionId: string,
+  attempt: number,
 ): Promise<TranscriptResolution | null> {
   const [saved] = await db
     .select()
@@ -189,13 +197,20 @@ async function resolveReceiptRow(
       cost_micros: 0,
     };
   }
+  // 同 attempt replay 还原原记账（recorded-request digest 稳定）；跨 attempt
+  // （重判/新提交命中同 digest 图）零成本复用 —— 新 attempt 无新付费。
+  const sameAttempt =
+    payload.data.submission_id === submissionId && payload.data.attempt === attempt;
+  const reuse = {
+    run_refs: saved.task_run_id !== null ? [saved.task_run_id] : [],
+    cost_micros: sameAttempt ? (saved.cost_micro_usd ?? 0) : 0,
+  };
   if (payload.data.status === 'illegible') {
     return {
       ok: false,
       failure: 'unreadable',
       detail: payload.data.detail ?? 'image evidence was recorded as illegible',
-      run_refs: [],
-      cost_micros: 0,
+      ...reuse,
     };
   }
   const assetId = payload.data.transcript_asset_id;
@@ -219,7 +234,7 @@ async function resolveReceiptRow(
       cost_micros: 0,
     };
   }
-  return { ok: true, attachment: transcriptAttachment(image, row), run_refs: [], cost_micros: 0 };
+  return { ok: true, attachment: transcriptAttachment(image, row), ...reuse };
 }
 
 async function writeReceipt(
@@ -313,6 +328,8 @@ async function transcribe(
       status: 'illegible',
       image_asset_id: image.asset_id,
       image_sha256: image.sha256,
+      submission_id: submissionId,
+      attempt: deps.attempt,
       ...(output.note ? { detail: output.note } : {}),
     };
     await writeReceipt(deps.db, image, submissionId, payload, run);
@@ -350,6 +367,8 @@ async function transcribe(
     image_sha256: image.sha256,
     transcript_asset_id: row.id,
     transcript_sha256: row.sha256,
+    submission_id: submissionId,
+    attempt: deps.attempt,
   };
   await writeReceipt(deps.db, image, submissionId, payload, run);
   return {
@@ -366,7 +385,7 @@ async function ensureTranscript(
   submissionId: string,
   signal: AbortSignal,
 ): Promise<TranscriptResolution> {
-  const resolved = await resolveReceiptRow(deps.db, image);
+  const resolved = await resolveReceiptRow(deps.db, image, submissionId, deps.attempt);
   if (resolved !== null) return resolved;
   // 收据缺失 ⇒ 可能付费。同一 digest 的并发首用串行化：锁内复查收据，
   // 后到者零成本复用前者刚写下的收据。
@@ -381,7 +400,7 @@ async function ensureTranscript(
     },
     new Date(Date.now() + LOCK_WAIT_MS),
     async (lockedDb) => {
-      const recheck = await resolveReceiptRow(lockedDb, image);
+      const recheck = await resolveReceiptRow(lockedDb, image, submissionId, deps.attempt);
       if (recheck !== null) return recheck;
       return transcribe({ ...deps, db: lockedDb }, image, submissionId, signal);
     },
@@ -518,6 +537,9 @@ export function createEvidenceTranscriptionExecutor(
   inner: ModelUnitExecutorPort,
   prepared: PreparedEvidenceTranscriptions,
 ): ModelUnitExecutorPort {
+  // 一次评估内同一图片的转写费只记一次：首个消费单元记账（单元按冻结
+  // 顺序串行执行，确定性可回放），后续单元只带 run_refs 出处。
+  const charged = new Set<string>();
   return async (request, signal) => {
     const failures: {
       failure: 'unreadable' | 'infra' | 'over_limit';
@@ -544,7 +566,10 @@ export function createEvidenceTranscriptionExecutor(
         continue;
       }
       runRefs.push(...resolution.run_refs);
-      costMicros += resolution.cost_micros;
+      if (!charged.has(attachment.evidence_id)) {
+        charged.add(attachment.evidence_id);
+        costMicros += resolution.cost_micros;
+      }
       if (!resolution.ok) {
         failures.push({
           failure: resolution.failure,
