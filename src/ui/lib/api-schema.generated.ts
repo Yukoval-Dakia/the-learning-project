@@ -40568,6 +40568,7 @@ export interface operations {
                             status: string;
                             summary_md: string | null;
                         }[];
+                        auto_apply_enabled: boolean;
                         cold_start: {
                             evidence: {
                                 active_goal: boolean;
