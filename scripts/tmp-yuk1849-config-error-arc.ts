@@ -1033,6 +1033,83 @@ async function main() {
   if (ap.fetchCalls !== 3)
     throw new Error(`acquisition seam expected 3 calls, got ${ap.fetchCalls}`);
 
+  // --- Phase I: failed verdict → recheck config error → latest-event recovery --
+  // A terminal verdict in the past must NOT bar recovery: eligibility keys on
+  // the LATEST source_verify event. Sequence: merit fail (terminal 'failed') →
+  // lane breaks → owner recheck bypasses the old verdict, hits config_error,
+  // leaves an error event + a settled (not_sent) claim → lane repaired → the
+  // sweep re-drives exactly that error epoch → handler reruns to 'success'.
+  const Q7 = `q7guan-${TAG}`;
+  await seedQuestion(Q7, {
+    prompt_md: '「观」在「此则岳阳楼之大观也」中作？',
+    reference_md: '名词',
+    choices: ['名词', '动词', '形容词'],
+    extract: '「观」在「此则岳阳楼之大观也」中作名词，意为「景象」。',
+    answer: '名词',
+  });
+  await primeDispatch(Q7);
+  await handlerDeliver(Q7, { grounded: false, answer: '名词' });
+  const s7a = await dumpState(Q7);
+  if (s7a.terminal_events < 1) throw new Error('Q7 failed verdict was not recorded');
+  await lane('stale');
+  const E3 = `cmd-${TAG}-e3`;
+  const r11 = await deliver(Q7, {
+    commandEventId: E3,
+    deliveryId: `d10-${TAG}`,
+    answer: '名词',
+  });
+  const s7b = await dumpState(Q7);
+  note('I1:recheck-after-verdict-config-error', {
+    status: r11.status,
+    terminal_events: s7b.terminal_events,
+    paid_effect: s7b.paid_effect,
+  });
+  if (r11.status !== 'skipped:config_error')
+    throw new Error(`Q7 recheck expected config_error, got ${r11.status}`);
+  if (s7b.terminal_events !== 1)
+    throw new Error('recheck config error wrote a second terminal event');
+  // The recheck claim must be settled (not_sent), not left 'sending' to wedge
+  // any later delivery of the same command.
+  const e3Paid = (s7b.paid_effect as Array<{ state?: string; delivery_id?: string }>).filter(
+    (p) => p.delivery_id === `d10-${TAG}`,
+  );
+  if (!e3Paid.length || e3Paid.some((p) => p.state !== 'not_sent'))
+    throw new Error('recheck claim not settled not_sent for the broken recheck');
+  // A quiet terminal state stays excluded: sweeping now (lane still broken)
+  // yields nothing for Q7 — the preflight holds, but even disregarding the
+  // preflight the latest event is the error, so the intent belongs to the
+  // repaired-lane sweep below.
+  await lane('fixed');
+  const sweep7 = await sweep();
+  const q7Enq = sweep7.enqueued.find((entry) => entry.questionIds.includes(Q7));
+  note('I2:sweep-latest-error-epoch', {
+    enqueued: q7Enq !== undefined,
+    recoveryEpochs: q7Enq?.recoveryEpochs ?? null,
+  });
+  if (!q7Enq?.recoveryEpochs?.[Q7])
+    throw new Error('latest-event sweep did not re-drive Q7 error epoch');
+  const g5 = counts.grounding;
+  await handlerDeliver(Q7, {
+    answer: '名词',
+    ...(q7Enq.recoveryEpochs ? { recoveryEpochs: q7Enq.recoveryEpochs } : {}),
+  });
+  const s7c = await dumpState(Q7);
+  note('I3:recovery-over-old-verdict', {
+    groundingCalls: counts.grounding - g5,
+    draft_status: s7c.draft_status,
+    lifecycle: s7c.lifecycle,
+    latest_verify: s7c.verify_events[0] ?? null,
+    terminal_events: s7c.terminal_events,
+  });
+  if (counts.grounding - g5 !== 1)
+    throw new Error('recovery run did not execute the grounding seam exactly once');
+  if (s7c.terminal_events !== 2) throw new Error('recovery did not write a second terminal event');
+  // Terminal-then-quiet exclusion: the verdict is now the latest event, so the
+  // next sweep must NOT synthesize another recovery intent for Q7.
+  const sweep7b = await sweep();
+  if (sweep7b.enqueued.some((entry) => entry.questionIds.includes(Q7)))
+    throw new Error('terminal-then-quiet question was re-driven by the sweep');
+  note('I4:terminal-quiet-excluded', { reEnqueued: false });
   await lane('fixed');
   note('arc:done', { counts });
   console.log('\n=== EVIDENCE JSON ===');
