@@ -2,6 +2,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, inArray, isNull } from 'drizzle-orm';
 import type { z } from 'zod';
 import { crisisDerivationPayload } from '@/core/crisis/classify';
+import { buildCrisisReferral } from '@/core/crisis/referral';
 import type { Db, Tx } from '@/db/client';
 import { knowledge, question, source_asset } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
@@ -128,6 +129,9 @@ export async function createManualMistake(
         now,
       });
       const questionSnapshot = await loadAttemptQuestionSnapshot(tx, questionId);
+      // One judgment, one object: the persisted mark and the response
+      // referral come from the same payload — never re-classified.
+      const crisisMark = crisisDerivationPayload(body.wrong_answer_md);
       await writeEvent(tx, {
         id: attemptEventId,
         session_id: null,
@@ -142,7 +146,7 @@ export async function createManualMistake(
           answer_image_refs: body.wrong_answer_image_refs,
           referenced_knowledge_ids: body.knowledge_ids,
           question_snapshot: questionSnapshot,
-          ...(crisisDerivationPayload(body.wrong_answer_md) ?? {}),
+          ...(crisisMark ?? {}),
           // Reserve the reconstruction-signal slot until a classifier lands.
           reconstruction_signal: 'unknown',
         },
@@ -195,7 +199,23 @@ export async function createManualMistake(
 
       return {
         status: 201,
-        body: { question_id: questionId, mistake_id: mistakeId, record_id: recordId },
+        body: {
+          question_id: questionId,
+          mistake_id: mistakeId,
+          record_id: recordId,
+          ...(crisisMark
+            ? {
+                crisis_referral: buildCrisisReferral({
+                  detection_class: crisisMark.crisis_detection_class as
+                    | 'explicit'
+                    | 'indirect'
+                    | 'quoted_ironic'
+                    | 'distress',
+                  guard_version: crisisMark.crisis_guard_version,
+                }),
+              }
+            : {}),
+        },
         location: `/api/events/${encodeURIComponent(mistakeId)}`,
       };
     },

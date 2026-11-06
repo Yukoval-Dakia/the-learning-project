@@ -468,10 +468,19 @@ export async function submitReviewAnswer(
       },
     );
     retainDiagnosticClaim = true;
+    // The referral is additive on a committed attempt: a mark-read failure must
+    // not turn the successful submission into a 500 — respond without it.
+    let crisisMark: Awaited<ReturnType<typeof readAttemptCrisisMark>>;
+    try {
+      crisisMark = await readAttemptCrisisMark(database, committed.attempt_id);
+    } catch (error) {
+      console.error('[review-operation] crisis mark read failed; submission kept', error);
+      crisisMark = null;
+    }
     return {
       kind: 'committed',
       committed,
-      crisis_mark: await readAttemptCrisisMark(database, committed.attempt_id),
+      crisis_mark: crisisMark,
     };
   } catch (err) {
     if (claimedDiagnostic !== null && !retainDiagnosticClaim) {

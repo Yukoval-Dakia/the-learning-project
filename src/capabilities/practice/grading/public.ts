@@ -12,7 +12,10 @@ export {
   previewFormalAttempt,
   recordFormalAttemptCapture,
 } from './server/assessment/attempt';
-export { readAttemptCrisisMark } from './server/assessment/crisis-mark';
+export {
+  crisisMarkFromAttemptPayload,
+  readAttemptCrisisMark,
+} from './server/assessment/crisis-mark';
 export type {
   NativeAttemptDispatchOptions,
   NativeAttemptDispatchPort,

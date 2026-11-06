@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { CrisisReferralWireSchema } from '@/core/crisis/referral';
 import {
   CauseCategory,
   FigureRef,
@@ -245,6 +246,9 @@ export const CreateMistakeResponseSchema = z.strictObject({
   question_id: z.string().min(1),
   mistake_id: z.string().min(1),
   record_id: z.string().min(1),
+  // The attempt event's persisted crisis mark, projected as a referral —
+  // absent on ordinary wrong answers. Same object written, never re-classified.
+  crisis_referral: CrisisReferralWireSchema.optional(),
 });
 
 export const MistakeListResponseSchema = z.object({

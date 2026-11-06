@@ -47,7 +47,15 @@ export async function submitLegacyPaperSubmission(db: Db, paperArtifactId: strin
     db,
   );
   // Same persisted mark as the review-answer response — read, never re-classify.
-  const crisisMark = await readAttemptCrisisMark(db, result.attemptEventId);
+  // Additive on a committed attempt: a mark-read failure omits the referral,
+  // it must not turn the successful submission into a 500.
+  let crisisMark: Awaited<ReturnType<typeof readAttemptCrisisMark>>;
+  try {
+    crisisMark = await readAttemptCrisisMark(db, result.attemptEventId);
+  } catch (error) {
+    console.error('[paper-submission] crisis mark read failed; submission kept', error);
+    crisisMark = null;
+  }
   const crisis_referral = crisisMark ? buildCrisisReferral(crisisMark) : undefined;
   const identity = {
     attempt_event_id: result.attemptEventId,

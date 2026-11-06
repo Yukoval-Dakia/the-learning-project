@@ -1,4 +1,5 @@
 import { and, eq, inArray } from 'drizzle-orm';
+import { buildCrisisReferral } from '@/core/crisis/referral';
 import { EvaluationRecord, projectPracticeIssuance } from '@/core/schema/assessment';
 import type { Db } from '@/db/client';
 import {
@@ -22,7 +23,11 @@ import {
   readAutomaticIssuanceServingDecisions,
   revisionRowToContract,
 } from '@/kernel/records/assessment-issuance';
-import { projectEvaluationToJudgeResult, projectFrozenStudyContext } from '../../../grading/public';
+import {
+  crisisMarkFromAttemptPayload,
+  projectEvaluationToJudgeResult,
+  projectFrozenStudyContext,
+} from '../../../grading/public';
 import type { PaperDetailResult, PaperDetailSection, PaperDetailSlot } from '../paper-detail';
 import { resolveKnowledgeNames } from '../practice-read';
 import type { PaperAssessmentBindingT } from './paper-issuance';
@@ -148,10 +153,15 @@ export async function getFrozenPaperDetail(
         if (grade?.coarse_outcome === 'correct' || grade?.coarse_outcome === 'partial') right++;
         else if (grade?.coarse_outcome === 'incorrect') wrong++;
       }
+      // Referral is identity/support metadata from the persisted mark on the
+      // already-loaded capture payload (no re-classify, no extra round-trip):
+      // it survives feedback buffering and never carries outcome/score content.
+      const crisisMark = crisisMarkFromAttemptPayload(capture.payload);
       const common = {
         submitted: true as const,
         answer_md: frozenAnswer?.content_md ?? '',
         answer_image_refs: frozenAnswer?.image_refs ?? [],
+        ...(crisisMark ? { crisis_referral: buildCrisisReferral(crisisMark) } : {}),
       };
       submission = visible
         ? {

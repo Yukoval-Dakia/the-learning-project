@@ -24780,6 +24780,17 @@ export interface operations {
                                     submission: ({
                                         answer_image_refs: string[];
                                         answer_md: string;
+                                        crisis_referral?: {
+                                            /** @enum {string} */
+                                            detection_class: "explicit" | "indirect" | "quoted_ironic" | "distress";
+                                            guard_version: string;
+                                            template: {
+                                                /** @enum {string} */
+                                                review_status: "未审定" | "已审定";
+                                                text_md: string;
+                                                version: string;
+                                            };
+                                        };
                                         feedback_md: string | null;
                                         outcome: string;
                                         partial_units?: {
@@ -24796,6 +24807,17 @@ export interface operations {
                                     } | {
                                         answer_image_refs: string[];
                                         answer_md: string;
+                                        crisis_referral?: {
+                                            /** @enum {string} */
+                                            detection_class: "explicit" | "indirect" | "quoted_ironic" | "distress";
+                                            guard_version: string;
+                                            template: {
+                                                /** @enum {string} */
+                                                review_status: "未审定" | "已审定";
+                                                text_md: string;
+                                                version: string;
+                                            };
+                                        };
                                         /** @enum {boolean} */
                                         feedback_buffered: true;
                                         /** @enum {boolean} */
@@ -29634,6 +29656,17 @@ export interface operations {
                                     submission: ({
                                         answer_image_refs: string[];
                                         answer_md: string;
+                                        crisis_referral?: {
+                                            /** @enum {string} */
+                                            detection_class: "explicit" | "indirect" | "quoted_ironic" | "distress";
+                                            guard_version: string;
+                                            template: {
+                                                /** @enum {string} */
+                                                review_status: "未审定" | "已审定";
+                                                text_md: string;
+                                                version: string;
+                                            };
+                                        };
                                         feedback_md: string | null;
                                         outcome: string;
                                         partial_units?: {
@@ -29650,6 +29683,17 @@ export interface operations {
                                     } | {
                                         answer_image_refs: string[];
                                         answer_md: string;
+                                        crisis_referral?: {
+                                            /** @enum {string} */
+                                            detection_class: "explicit" | "indirect" | "quoted_ironic" | "distress";
+                                            guard_version: string;
+                                            template: {
+                                                /** @enum {string} */
+                                                review_status: "未审定" | "已审定";
+                                                text_md: string;
+                                                version: string;
+                                            };
+                                        };
                                         /** @enum {boolean} */
                                         feedback_buffered: true;
                                         /** @enum {boolean} */

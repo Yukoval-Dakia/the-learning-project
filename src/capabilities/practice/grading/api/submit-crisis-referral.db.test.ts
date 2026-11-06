@@ -125,8 +125,11 @@ describe('submit response carries the versioned crisis referral immediately', ()
           kind: 'pending',
           crisis_referral: { detection_class: 'explicit' },
         });
-      } else if (settledEarly?.kind === 'terminal') {
-        expect(settledEarly.crisis_referral?.detection_class).toBe('explicit');
+      } else {
+        expect(settledEarly).toMatchObject({
+          kind: 'terminal',
+          crisis_referral: { detection_class: 'explicit' },
+        });
       }
 
       if (mode === 'sync') {

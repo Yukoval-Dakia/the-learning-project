@@ -240,9 +240,9 @@ export function createCopilotExecutionOwner(
 
   return async (db, turn, policy) => {
     const derivationPolicy = readDerivationPolicy(turn.input);
-    // YUK-1398：crisis 与 answer_only 同走受限工具面。防御性变更——现行唯一
-    // 在途路径是 durable worker，crisis 回合在 jobs/copilot_run.ts 已确定性
-    // 终局，不进这里；此行把任何未来直连执行路径降到只读工具。
+    // YUK-1398：crisis 与 answer_only 同走受限工具面。explicit/indirect 在
+    // jobs/copilot_run.ts 已确定性终局不进这里；distress/quoted_ironic 在
+    // 确定性转介之后照常进模型回合——受限工具面对它们是承重路径，不是防御位。
     const answerOnly = derivationPolicy !== 'allow';
     const lifecycleAbortController = new AbortController();
     const cancellationSignals = [

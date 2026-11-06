@@ -958,7 +958,15 @@ export async function submitSolveAttempt(
         ? await revealFrozenStudyReference(db, issuanceId)
         : { reference_md: null };
     // Same persisted mark as the review-answer response — read, never re-classify.
-    const crisisMark = await readAttemptCrisisMark(db, committed.attempt_id);
+    // Additive on a committed attempt: a mark-read failure omits the referral,
+    // it must not turn the successful submission into a 500.
+    let crisisMark: Awaited<ReturnType<typeof readAttemptCrisisMark>>;
+    try {
+      crisisMark = await readAttemptCrisisMark(db, committed.attempt_id);
+    } catch (error) {
+      console.error('[solve-session] crisis mark read failed; submission kept', error);
+      crisisMark = null;
+    }
     const crisis_referral = crisisMark ? buildCrisisReferral(crisisMark) : undefined;
     return {
       status: committed.status,

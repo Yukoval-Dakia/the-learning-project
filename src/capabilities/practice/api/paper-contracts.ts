@@ -168,6 +168,9 @@ const PaperVisibleSubmissionStateSchema = z.object({
   answer_md: z.string(),
   answer_image_refs: z.array(z.string()),
   reference_md: z.string().nullable(),
+  // Referral is identity/support metadata, not verdict content — same rule as
+  // PaperSubmissionIdentitySchema.crisis_referral.
+  crisis_referral: CrisisReferralWireSchema.optional(),
 });
 
 const PaperBufferedSubmissionStateSchema = z.object({
@@ -176,6 +179,9 @@ const PaperBufferedSubmissionStateSchema = z.object({
   feedback_buffered: z.literal(true),
   answer_md: z.string(),
   answer_image_refs: z.array(z.string()),
+  // Referral is identity/support metadata, not verdict content — same rule as
+  // PaperSubmissionIdentitySchema.crisis_referral.
+  crisis_referral: CrisisReferralWireSchema.optional(),
 });
 
 const PaperSlotStateSchema = z.object({

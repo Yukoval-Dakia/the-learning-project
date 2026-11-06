@@ -1,6 +1,5 @@
 import { eq } from 'drizzle-orm';
-import { CRISIS_GUARD_CONFIG_VERSION, crisisDerivationPayload } from '@/core/crisis/classify';
-import { type CrisisAttemptMark, CrisisAttemptMarkSchema } from '@/core/crisis/referral';
+import { crisisDerivationPayload } from '@/core/crisis/classify';
 import {
   type ActivateEvaluationIntentT,
   type AssessmentAttemptCaptureT,

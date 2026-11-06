@@ -10,6 +10,8 @@ import {
   isJudgementVisibleToUser,
   resolveKnowledgeNames,
 } from '@/capabilities/practice/session/server/practice-read';
+import type { CrisisReferralWire } from '@/core/crisis/referral';
+import { buildCrisisReferral } from '@/core/crisis/referral';
 import { Artifact } from '@/core/schema/index';
 import type { Db } from '@/db/client';
 import { answer, artifact, learning_session, question } from '@/db/schema';
@@ -21,6 +23,7 @@ import {
   batchResolveSubjectDisplayIds,
   resolveSubjectRenderNotation,
 } from '@/kernel/read-models/subject-resolution';
+import { crisisMarkFromAttemptPayload } from '../../grading/public';
 
 // ────────────────────────────────────────────────────────────────────────────
 // Response types (contract for L-practice-ui)
@@ -64,6 +67,10 @@ export interface PaperSlotState {
    * - buffered feedback: { submitted, visible_to_user: false, feedback_buffered: true,
    * answer_md, answer_image_refs } — user's own answer is always safe to echo back;
    * reference_md/outcome/score are NOT included (server visibility gate).
+   * crisis_referral is identity/support metadata from the persisted attempt mark
+   * (never re-classified here): present on both variants, including while feedback
+   * stays buffered, and never carries outcome/score/feedback content. Ordinary
+   * submissions omit the field entirely.
    */
   submission:
     | null
@@ -87,6 +94,8 @@ export interface PaperSlotState {
          * visible variant (same gate as outcome/score).
          */
         reference_md: string | null;
+        /** Persisted crisis mark → versioned referral; absent for ordinary answers. */
+        crisis_referral?: CrisisReferralWire;
       }
     | {
         submitted: true;
@@ -97,6 +106,8 @@ export interface PaperSlotState {
         /** Image refs attached to the frozen answer row. */
         answer_image_refs: string[];
         // reference_md / outcome / score are structurally absent (visibility discipline).
+        /** Persisted crisis mark → versioned referral; absent for ordinary answers. */
+        crisis_referral?: CrisisReferralWire;
       };
 }
 
@@ -346,6 +357,11 @@ export async function getPaperDetail(
     // attempt event outcome — right/wrong fallback when the attempt carries no
     // effective judge (historical rows pre paper-judge).
     attempt_outcome: string | null;
+    // Persisted crisis mark scalars from the same attempt event (att.payload);
+    // projected by crisisMarkFromAttemptPayload — never re-classified here.
+    derivation_policy: string | null;
+    crisis_detection_class: string | null;
+    crisis_guard_version: string | null;
   };
 
   const draftMap = new Map<string, DraftRow>(); // slotKey → draft
@@ -393,7 +409,10 @@ export async function getPaperDetail(
         -- F1 (PR #309 round-4): the attempt event's un-judged marker, so slot
         -- assembly can surface outcome='unsupported' without an extra round-trip.
         att.payload->>'unsupported_judge' AS unsupported_judge,
-        att.outcome AS attempt_outcome
+        att.outcome AS attempt_outcome,
+        att.payload->>'derivation_policy' AS derivation_policy,
+        att.payload->>'crisis_detection_class' AS crisis_detection_class,
+        att.payload->>'crisis_guard_version' AS crisis_guard_version
       FROM answer
       LEFT JOIN event att ON att.id = answer.event_id
       WHERE answer.session_id = ${sid}
@@ -526,6 +545,14 @@ export async function getPaperDetail(
         // User's own answer is always safe to echo back (both variants).
         const answerMd = frozenRow.content_md;
         const answerImageRefs = (frozenRow.image_refs as string[]) ?? [];
+        // Referral is identity/support metadata: it survives the feedback buffer
+        // and never adds outcome/score content. Persisted mark only — no re-classify.
+        const crisisMark = crisisMarkFromAttemptPayload({
+          derivation_policy: frozenRow.derivation_policy,
+          crisis_detection_class: frozenRow.crisis_detection_class,
+          crisis_guard_version: frozenRow.crisis_guard_version,
+        });
+        const referral = crisisMark ? { crisis_referral: buildCrisisReferral(crisisMark) } : {};
         if (visible) {
           // reference_md lives on the question row — fetched in referenceMap (step 4).
           // Null when question is missing/orphaned or has no reference answer.
@@ -551,6 +578,7 @@ export async function getPaperDetail(
             answer_md: answerMd,
             answer_image_refs: answerImageRefs,
             reference_md: refMd,
+            ...referral,
           };
         } else {
           submission = {
@@ -559,6 +587,7 @@ export async function getPaperDetail(
             feedback_buffered: true,
             answer_md: answerMd,
             answer_image_refs: answerImageRefs,
+            ...referral,
           };
         }
       }
