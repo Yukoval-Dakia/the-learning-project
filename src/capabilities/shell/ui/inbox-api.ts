@@ -338,7 +338,10 @@ export function dedupeEvidence(
 //   block-<12+ 位小写字母数字>（cuid2 = 24 位，留余量到 12）
 //   命名空间 ID <小写词>:<8+ 位 [a-z0-9:_-]>（如 synthetic:yuwen:...）
 //   裸长串 <20+ 位小写字母数字>（词边界限定，短词不误伤）
-const RAW_ID_RE = /(block-[a-z0-9]{12,}|[a-z]+:[a-z0-9:_-]{8,}|\b[a-z0-9]{20,}\b)/g;
+//   截断的 ID <3+ 位>…、字段路径 links.question_id、蛇形字段名 evidence_event_ids
+//   （每段至少两位：x_1、a_n、log_2 这类数学写法不算）
+const RAW_ID_RE =
+  /(block-[a-z0-9]{12,}|[a-z]+:[a-z0-9:_-]{8,}|\b[a-z0-9_]{3,}…|\b[a-z][a-z0-9]*\.[a-z0-9]+(?:_[a-z0-9]+)+|\b[a-z][a-z0-9]{2,}(?:_[a-z0-9]{2,})+\b|\b[a-z0-9]{20,}\b)/g;
 
 export interface ReasonSegment {
   start: number;
