@@ -32,6 +32,8 @@ export type PersistedDurableReply =
       reason: 'cancelled' | 'exhausted' | 'ambiguous_execution' | 'pre_execution_lost';
       error: string;
       checkpointSafe?: boolean;
+      /** YUK-1909 — the failure reply replaced the streamed draft. */
+      thinkingClear?: boolean;
     };
 
 /** One persisted outcome decoder for paid settlement and native child fencing. */
@@ -98,6 +100,7 @@ export async function findPersistedDurableReply(
       reason,
       error: typeof failureRecord.error === 'string' ? failureRecord.error : replyMd,
       ...(failureRecord.checkpoint_safe === false ? { checkpointSafe: false } : {}),
+      ...(payload.thinking_clear === true ? { thinkingClear: true } : {}),
     };
   }
   if (row.outcome !== 'success') return null;

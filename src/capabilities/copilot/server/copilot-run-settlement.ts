@@ -104,6 +104,8 @@ interface FailedTerminalProjection {
   /** User-facing terminal copy for the live job-events consumer. */
   replyMd?: string;
   publicProse?: CopilotPublicProse;
+  /** YUK-1909 — the failure reply replaced the streamed draft. */
+  thinkingClear?: boolean;
 }
 
 type ClaimCopilotExecutionFenceResult =
@@ -328,6 +330,7 @@ export async function writeFailedTerminalProjection(
           : projection.error,
         ...(projection.publicProse ? { public_prose: projection.publicProse } : {}),
         ...(projection.replyMd ? { reply_md: projection.replyMd } : {}),
+        ...(projection.thinkingClear ? { thinking_clear: true } : {}),
         ...checkpointPayload,
       },
     });
@@ -536,6 +539,7 @@ export async function projectCopilotOutcomeMarker(
           replyMd: marker.replyMd,
           checkpointSafe: marker.checkpointSafe,
           publicProse: marker.publicProse,
+          thinkingClear: marker.thinkingClear,
         },
         lockedEvents,
       );
@@ -596,6 +600,8 @@ export async function handleDurableFailure(
     taskRunId?: string;
     /** Legacy partial text, used only when no finalized reply was supplied. */
     partialText?: string;
+    /** YUK-1909 — streamed draft the page already showed; the failure reply may replace it. */
+    streamedDraft?: string;
     /** Byte-authoritative finalized projection for a failed or partial run. */
     preparedReply?: PreparedCopilotReply;
     projectSuccessfulTerminal: WriteSuccessfulTerminalProjectionFn;
@@ -613,6 +619,7 @@ export async function handleDurableFailure(
     actorRef,
     taskRunId,
     partialText,
+    streamedDraft,
     preparedReply,
     projectSuccessfulTerminal,
     projectFailedTerminal,
@@ -639,6 +646,7 @@ export async function handleDurableFailure(
           userAskEventId: runId,
           replyText,
           ...(preparedReply ? { preparedReply } : {}),
+          ...(streamedDraft !== undefined ? { streamedDraft } : {}),
           actorRef,
           taskRunId: failureTaskRunId,
           ...(replyFinalization ? { replyFinalization } : {}),

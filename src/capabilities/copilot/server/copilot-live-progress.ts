@@ -12,18 +12,13 @@
 // LIVE_PENDING_FRAMES_MAX are dropped instead of growing memory. A publish
 // failure drops that frame only; it can never fail the run or its settlement.
 
-import { and, eq, inArray } from 'drizzle-orm';
+import { sql } from 'drizzle-orm';
 import type { Db } from '@/db/client';
-import { event, job_events } from '@/db/schema';
+import { event as eventTable, job_events } from '@/db/schema';
 import { COPILOT_REPLY_ACTION } from '@/kernel/events/copilot-actions';
-import { publishJobLiveEvent } from '@/kernel/job-events';
+import { JOB_LIVE_NOTIFY_CHANNEL } from '@/kernel/job-events';
 import { COPILOT_RUN_THINKING_EVENT } from '../thinking-lane-contract';
-import {
-  COPILOT_RUN_EVENTS,
-  COPILOT_RUN_TABLE,
-  hasCancelRequest,
-  isCopilotRunTerminalEvent,
-} from './copilot-run-status';
+import { COPILOT_RUN_EVENTS, COPILOT_RUN_TABLE } from './copilot-run-status';
 
 const LIVE_FLUSH_MS = 150;
 const LIVE_MAX_FRAMES_PER_FLUSH = 4;
@@ -37,6 +32,9 @@ const NOTIFY_ENVELOPE_BUDGET_BYTES = 6000;
 const LIVE_BUFFER_MAX_BYTES = 256 * 1024;
 // Frames already sliced out of the buffer but not yet published.
 const LIVE_PENDING_FRAMES_MAX = 64;
+// Defensive duplicate of the writer's 6000-byte envelope budget: pg_notify
+// rejects payloads near 8000 bytes.
+const NOTIFY_PAYLOAD_BUDGET_BYTES = 7000;
 // A display-only drain must never hold the reply or settlement behind a slow DB.
 const LIVE_DRAIN_MAX_WAIT_MS = 500;
 
@@ -101,43 +99,47 @@ export function createCopilotRunLiveWriter(deps: { db: Db; runId: string }): Cop
     return candidate;
   };
 
-  // Same interception boundary as persisted progress: a committed cancel,
-  // terminal frame, or durable reply closes the lane. Read-only check instead
-  // of the settlement lock — the residual race is the ms between probe and
-  // notify, accepted for a display-only lane.
-  const laneOpen = async (): Promise<boolean> => {
-    const blocking = await deps.db
-      .select({ event_type: job_events.event_type, payload: job_events.payload })
-      .from(job_events)
-      .where(
-        and(
-          eq(job_events.business_table, COPILOT_RUN_TABLE),
-          eq(job_events.business_id, deps.runId),
-          inArray(job_events.event_type, [
-            COPILOT_RUN_EVENTS.CANCEL_REQUESTED,
-            COPILOT_RUN_EVENTS.DONE,
-            COPILOT_RUN_EVENTS.FAILED,
-          ]),
-        ),
-      );
-    if (hasCancelRequest(blocking) || blocking.some(isCopilotRunTerminalEvent)) return false;
-    // A recovery delivery may persist the reply before its terminal projection;
-    // existence is enough (no prose decode on the per-frame hot path).
-    const [reply] = await deps.db
-      .select({ id: event.id })
-      .from(event)
-      .where(
-        and(
-          eq(event.action, COPILOT_REPLY_ACTION),
-          eq(event.caused_by_event_id, deps.runId),
-          inArray(event.outcome, ['success', 'failure']),
-        ),
+  // Terminal check and send are one statement: a frame queued behind a Stop or
+  // terminal frame cannot notify after the fact, and one pool statement per
+  // frame replaces the prior two SELECTs + NOTIFY. The notification string
+  // (which embeds the thinking text) is a bound parameter; no text is inlined
+  // into SQL, so PostgreSQL's statement/error logs never carry the content.
+  const publishGuarded = async (frame: {
+    business_table: string;
+    business_id: string;
+    event_type: string;
+    payload: Record<string, unknown>;
+  }): Promise<boolean> => {
+    const notification = JSON.stringify(frame);
+    if (Buffer.byteLength(notification, 'utf8') > NOTIFY_PAYLOAD_BUDGET_BYTES) {
+      return false;
+    }
+    const rows = await deps.db.execute(sql`
+      SELECT pg_notify(${JOB_LIVE_NOTIFY_CHANNEL}, ${notification})
+      WHERE NOT EXISTS (
+        SELECT 1 FROM ${job_events}
+        WHERE ${job_events.business_table} = ${COPILOT_RUN_TABLE}
+          AND ${job_events.business_id} = ${deps.runId}
+          AND (
+            ${job_events.event_type} = ${COPILOT_RUN_EVENTS.CANCEL_REQUESTED}
+            OR ${job_events.event_type} = ${COPILOT_RUN_EVENTS.DONE}
+            OR (
+              ${job_events.event_type} = ${COPILOT_RUN_EVENTS.FAILED}
+              AND coalesce(${job_events.payload}->>'reason', '') <> 'error'
+            )
+          )
       )
-      .limit(1);
-    return reply === undefined;
+      AND NOT EXISTS (
+        SELECT 1 FROM ${eventTable}
+        WHERE ${eventTable.action} = ${COPILOT_REPLY_ACTION}
+          AND ${eventTable.caused_by_event_id} = ${deps.runId}
+          AND ${eventTable.outcome} IN ('success', 'failure')
+      )
+    `);
+    return rows.length > 0;
   };
 
-  // Terminal states are irreversible: once the boundary probe closes the lane,
+  // Terminal states are irreversible: once the guarded statement reports them,
   // later frames skip the probe entirely instead of re-checking a settled run.
   let laneClosed = false;
   const enqueueFrame = (text: string) => {
@@ -158,22 +160,18 @@ export function createCopilotRunLiveWriter(deps: { db: Db; runId: string }): Cop
     chain = chain
       .catch(() => undefined)
       .then(async () => {
-        if (laneClosed) {
+        if (disposed || laneClosed) {
           framesDropped += 1;
           return;
         }
-        if (!(await laneOpen())) {
+        const notified = await publishGuarded(frame);
+        if (!notified) {
           laneClosed = true;
           framesDropped += 1;
           return;
         }
-        const sent = await publishJobLiveEvent(deps.db, frame);
-        if (sent) {
-          framesSent += 1;
-          bytesSent += utf8.encode(text).byteLength;
-        } else {
-          framesDropped += 1;
-        }
+        framesSent += 1;
+        bytesSent += utf8.encode(text).byteLength;
       })
       // A probe/publish throw must terminate here: an unhandled rejection would
       // hit the worker's supervised-restart handler and kill unrelated runs.
@@ -213,6 +211,16 @@ export function createCopilotRunLiveWriter(deps: { db: Db; runId: string }): Cop
     }
   };
 
+  // true = chain settled within the bound; false = bound hit.
+  const waitForChain = (ms: number): Promise<boolean> =>
+    Promise.race([
+      chain.then(() => true),
+      new Promise<boolean>((resolve) => {
+        const timer = setTimeout(() => resolve(false), ms);
+        timer.unref?.();
+      }),
+    ]);
+
   const scheduleFlush = () => {
     if (timer || disposed) return;
     const wait = Math.max(0, lastFlushAt + LIVE_FLUSH_MS - Date.now());
@@ -237,6 +245,8 @@ export function createCopilotRunLiveWriter(deps: { db: Db; runId: string }): Cop
       buffered += delta.text;
       if (utf8.encode(buffered).byteLength > LIVE_BUFFER_MAX_BYTES) {
         buffered = '';
+        // Consume a seq so the client sees a gap, not silently missing text.
+        seq += 1;
         if (!bufferOverflowWarned) {
           bufferOverflowWarned = true;
           console.warn('[copilot-live] thinking buffer overflow; dropping buffered frames', {
@@ -254,22 +264,35 @@ export function createCopilotRunLiveWriter(deps: { db: Db; runId: string }): Cop
     },
     async drain() {
       clearFlushTimer();
-      flush(Number.POSITIVE_INFINITY);
+      const deadline = Date.now() + LIVE_DRAIN_MAX_WAIT_MS;
       let timedOut = false;
-      await Promise.race([
-        chain,
-        new Promise<void>((resolve) => {
-          const timer = setTimeout(() => {
-            timedOut = true;
-            resolve();
-          }, LIVE_DRAIN_MAX_WAIT_MS);
-          timer.unref?.();
-        }),
-      ]);
+      // Drain in 4-frame batches: a full tail must not enqueue a 64-frame burst.
+      while (buffered.length > 0 && !laneClosed && !disposed) {
+        flush(LIVE_MAX_FRAMES_PER_FLUSH);
+        clearFlushTimer();
+        const remaining = deadline - Date.now();
+        if (remaining <= 0 || !(await waitForChain(remaining))) {
+          timedOut = true;
+          break;
+        }
+      }
+      if (pendingFrames > 0) {
+        const remaining = Math.max(0, deadline - Date.now());
+        if (remaining === 0 || !(await waitForChain(remaining))) {
+          timedOut = true;
+        }
+      }
       if (timedOut) {
+        if (buffered.length > 0) seq += 1;
+        buffered = '';
+        laneClosed = true;
         console.warn('[copilot-live] thinking drain timed out; live lane abandoned', {
           run_id: deps.runId,
         });
+      } else if (laneClosed) {
+        // Terminal/cancel landed while draining; a late tail must not notify.
+        if (buffered.length > 0) seq += 1;
+        buffered = '';
       }
     },
     dispose() {

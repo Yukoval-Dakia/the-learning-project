@@ -276,8 +276,18 @@ export function createCopilotExecutionOwner(
     // bound to a not-yet-submitted answer, get status only: reasoning text could
     // leak the answer or describe a reply that never ships. Status frames
     // (request_sent / model_thinking / thinking_end) still fire.
+    // A focused page question is also an unsubmitted-question context: the
+    // learner can quote a live question (QuoteSelection -> kind 'question') and
+    // ask in ordinary chat. Whether that question was already submitted is not
+    // cheaply knowable here, so every question-focus turn stays status-only.
+    // Other focus kinds: knowledge / note / learning_session (nudges) carry no
+    // unsubmitted question; teaching skill turns run outside this owner.
+    const focusedQuestion = turn.input.ambient_context?.focused_entity?.kind === 'question';
     const suppressThinkingStream =
-      answerOnly || authoritativeReply !== undefined || reviewAnswer !== undefined;
+      answerOnly ||
+      authoritativeReply !== undefined ||
+      reviewAnswer !== undefined ||
+      focusedQuestion;
 
     let activeTaskRunId = turn.taskRunId;
     const createFinalizer = () =>

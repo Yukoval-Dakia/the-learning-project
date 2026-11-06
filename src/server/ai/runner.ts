@@ -447,10 +447,14 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
         if (msg.type === 'thinking_delta' && msg.text) {
           thinkingObserved = true;
           args.onThinking?.();
-          args.ctx.onThinkingDelta?.({
-            text: msg.text,
-            taskRunId: args.lifecycle.taskRunId,
-          });
+          try {
+            args.ctx.onThinkingDelta?.({
+              text: msg.text,
+              taskRunId: args.lifecycle.taskRunId,
+            });
+          } catch {
+            // Display observers must not abort the paid attempt.
+          }
         }
         continue;
       }

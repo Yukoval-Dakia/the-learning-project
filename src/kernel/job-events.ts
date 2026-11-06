@@ -43,48 +43,11 @@ export async function writeJobEvent(tx: Db | Tx, input: JobEventInput): Promise<
 
 /**
  * Ephemeral live frames ride the NOTIFY payload itself and are never written to
- * job_events: consumers that reconnect replay nothing. pg_notify rejects
- * payloads >= ~8000 bytes, so oversize frames are dropped here (the producer's
- * own budget is tighter) rather than throwing into the caller's write path.
+ * job_events: consumers that reconnect replay nothing. Producers use bound
+ * parameters for the payload (never SQL string interpolation), so statement and
+ * error logs cannot capture the content.
  */
 export const JOB_LIVE_NOTIFY_CHANNEL = 'job_status_live';
-
-const NOTIFY_PAYLOAD_BUDGET_BYTES = 7000;
-
-export type JobLiveEventInput = {
-  business_table: string;
-  business_id: string;
-  event_type: string;
-  payload: Record<string, unknown>;
-};
-
-/** @returns false when the frame was dropped; live delivery is best-effort. */
-export async function publishJobLiveEvent(db: Db, input: JobLiveEventInput): Promise<boolean> {
-  const notification = JSON.stringify(input);
-  const bytes = Buffer.byteLength(notification, 'utf8');
-  if (bytes > NOTIFY_PAYLOAD_BUDGET_BYTES) {
-    console.warn('[job-events] live frame dropped: notify payload over budget', {
-      business_table: input.business_table,
-      business_id: input.business_id,
-      event_type: input.event_type,
-      bytes,
-    });
-    return false;
-  }
-  try {
-    await db.execute(sql`SELECT pg_notify(${JOB_LIVE_NOTIFY_CHANNEL}, ${notification})`);
-    return true;
-  } catch (error) {
-    // Live payload content must never reach logs: identifiers and sizes only.
-    console.warn('[job-events] live frame notify failed', {
-      business_table: input.business_table,
-      business_id: input.business_id,
-      event_type: input.event_type,
-      error: error instanceof Error ? error.name : 'unknown',
-    });
-    return false;
-  }
-}
 
 export type ReplayParams = {
   businessTable: string;
