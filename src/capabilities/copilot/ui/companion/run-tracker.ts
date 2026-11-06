@@ -18,7 +18,7 @@ import { consumeDurableCopilotRun, createCopilotRunView } from '../subtask-event
 import type { ActiveRun, CompanionCtx } from './companion-context';
 import type { RunSnapshot } from './companion-state';
 import { plainError } from './plain-errors';
-import { isTerminal, progressStage, reconnectCopy } from './run-copy';
+import { PICKUP_STALLED_COPY, isPickupStalled, isTerminal, progressStage } from './run-copy';
 
 /** Replay-last-N window (matches the turns route default). */
 const REPLAY_LIMIT = 20;
@@ -45,6 +45,7 @@ export function createRunTracker(ctx: CompanionCtx): RunTracker {
       stopPending: run.stopPending,
       cancelRequested: run.cancelRequested,
       ...(run.connectionError ? { connectionError: run.connectionError } : {}),
+      ...(run.connectionLost ? { connectionLost: true } : {}),
     }));
     ctx.set({ runs: snapshots });
   }
@@ -64,7 +65,10 @@ export function createRunTracker(ctx: CompanionCtx): RunTracker {
     if (run.view.phase === 'completed') {
       ctx.internals.nudgeSession = nextNudgeSessionAfterTurn(ctx.internals.nudgeSession, true);
     }
-    if (isTerminal(run.view)) run.connectionError = undefined;
+    if (isTerminal(run.view)) {
+      run.connectionError = undefined;
+      run.connectionLost = false;
+    }
   }
 
   function detachSubscriptions(sessionId?: string, notify = true) {
@@ -88,6 +92,7 @@ export function createRunTracker(ctx: CompanionCtx): RunTracker {
     const controller = new AbortController();
     run.controller = controller;
     run.connectionError = undefined;
+    run.connectionLost = false;
     publishRuns();
     const owns = () => {
       const current = runs.get(runId);
@@ -117,7 +122,13 @@ export function createRunTracker(ctx: CompanionCtx): RunTracker {
       .catch((cause) => {
         const current = owns();
         if (!current || controller.signal.aborted) return;
-        current.connectionError = reconnectCopy(cause);
+        // The run keeps going on the server. A dropped stream needs nothing from the learner:
+        // the next good read (every 5 s, at once on coming back) attaches it again.
+        if (!isPickupStalled(cause)) {
+          current.connectionLost = true;
+          return;
+        }
+        current.connectionError = PICKUP_STALLED_COPY;
         const replyId = copilotRunReplyMessageId(runId);
         ctx.updateMessages((previous) =>
           previous.map((m) => (m.id === replyId ? { ...m, streaming: false } : m)),

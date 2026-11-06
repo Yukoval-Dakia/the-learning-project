@@ -55,12 +55,16 @@ export interface TurnSender {
   sendQuiz: (text: string, knowledgeId: string | null) => void;
   retryPendingTurn: (idempotencyKey: string) => void;
   discardPendingRecovery: (idempotencyKey: string) => void;
+  /** A good read says the network is back: replay recent messages not known to have arrived. */
+  resendDoubtful: () => void;
   pendingMessagesForSession: (sessionId: string) => ChatMessage[];
 }
 
 /** Waits before each automatic replay, about half a minute in all. */
 const AUTO_RESEND_DELAYS_MS = [1_000, 3_000, 8_000, 20_000];
 const AUTO_RESEND_MAX_AGE_MS = 10 * 60_000;
+/** A read can succeed while sends still fail: start another round at most this often. */
+const RESUME_RESEND_GAP_MS = 60_000;
 
 export function canResendUnasked(turn: PersistedPendingCopilotTurn): boolean {
   return turn.sentAt !== undefined && Date.now() - turn.sentAt <= AUTO_RESEND_MAX_AGE_MS;
@@ -70,6 +74,7 @@ export function createTurnSender(ctx: CompanionCtx): TurnSender {
   const { internals } = ctx;
   /** Automatic replays already spent per message; a learner's own 再发一次 starts over. */
   const autoResends = new Map<string, number>();
+  const lastResumeAt = new Map<string, number>();
 
   const setPending = (fn: (previous: PendingTurn[]) => PendingTurn[]) =>
     ctx.set({ pendingTurns: fn(ctx.get().pendingTurns) });
@@ -79,6 +84,7 @@ export function createTurnSender(ctx: CompanionCtx): TurnSender {
     );
   const dropPending = (key: string) => {
     autoResends.delete(key);
+    lastResumeAt.delete(key);
     clearPersistedPendingCopilotTurn(key);
     setPending((previous) => previous.filter((t) => t.idempotencyKey !== key));
   };
@@ -103,8 +109,21 @@ export function createTurnSender(ctx: CompanionCtx): TurnSender {
   }
 
   /** A fresh read before every restricted dispatch; an earlier list never authorizes it. */
+  const stopReplyRow = (key: string) =>
+    ctx.updateMessages((previous) =>
+      previous.map((m) =>
+        m.idempotency_key === key && m.role === 'ai' ? { ...m, text: '', streaming: false } : m,
+      ),
+    );
+
   async function confirmAnswerOnly(key: string, recovery: boolean): Promise<boolean> {
-    if (internals.checkingPolicy) return false;
+    if (internals.checkingPolicy) {
+      if (recovery) {
+        markPending(key, { dispatching: false, doubtful: true, error: ACCEPTANCE_UNKNOWN_COPY });
+        stopReplyRow(key);
+      }
+      return false;
+    }
     internals.checkingPolicy = true;
     const record = (result: 'checking' | 'supported' | 'unsupported') =>
       ctx.set({
@@ -124,7 +143,10 @@ export function createTurnSender(ctx: CompanionCtx): TurnSender {
     } catch {
       record('unsupported');
       ctx.set({ error: ANSWER_ONLY_UNAVAILABLE_COPY });
-      if (recovery) markPending(key, { dispatching: false, error: ANSWER_ONLY_UNAVAILABLE_COPY });
+      if (recovery) {
+        markPending(key, { dispatching: false, error: ANSWER_ONLY_UNAVAILABLE_COPY });
+        stopReplyRow(key);
+      }
       return false;
     } finally {
       internals.checkingPolicy = false;
@@ -205,24 +227,33 @@ export function createTurnSender(ctx: CompanionCtx): TurnSender {
         ? previous.map((t) => (t.idempotencyKey === key ? pending : t))
         : [...previous, pending],
     );
+    // A replay may belong to a conversation the learner has left: it still goes out, but the screen
+    // and the state of the conversation in front of them stay as they are.
+    const showing = () => ctx.get().currentSessionId === sessionId;
     const s = ctx.get();
-    ctx.set({
-      error: null,
-      refreshFailed: false,
-      correctionTarget: null,
-      ...(!recovery && !explicit && s.draft === raw ? { draft: '' } : {}),
-    });
-    ctx.updateMessages((previous) =>
-      projectPendingCopilotMessagePair(previous, {
-        idempotencyKey: key,
-        sessionId,
-        userMessageId,
-        aiMessageId,
-        userMessage: text,
-        derivationPolicy: requestBody.derivation_policy ?? 'allow',
-        dispatching: true,
-      }),
-    );
+    if (!recovery) {
+      ctx.set({
+        error: null,
+        refreshFailed: false,
+        correctionTarget: null,
+        ...(!explicit && s.draft === raw ? { draft: '' } : {}),
+      });
+    } else if (showing()) {
+      ctx.set({ error: null, refreshFailed: false });
+    }
+    if (showing()) {
+      ctx.updateMessages((previous) =>
+        projectPendingCopilotMessagePair(previous, {
+          idempotencyKey: key,
+          sessionId,
+          userMessageId,
+          aiMessageId,
+          userMessage: text,
+          derivationPolicy: requestBody.derivation_policy ?? 'allow',
+          dispatching: true,
+        }),
+      );
+    }
     try {
       const res = await ctx.client.sendChat(requestBody, key);
       const accepted = await readAcceptance(res, requestBody.derivation_policy);
@@ -246,9 +277,25 @@ export function createTurnSender(ctx: CompanionCtx): TurnSender {
       });
       ctx.sessions.revalidateAutomaticSelection();
     } catch (cause) {
+      // A first send refused by these never arrived. A replay may be refused while the first send
+      // is still landing, so it keeps its key: a new key could start a second run.
+      const replayMayStillLand =
+        Boolean(recovery) &&
+        cause instanceof ApiError &&
+        (cause.status === 429 || cause.status >= 500);
       const acceptanceUnknown =
         (!(cause instanceof ApiError) && !(cause instanceof ApiAuthError)) ||
-        (cause instanceof ApiError && cause.code === 'copilot_enqueue_ambiguous');
+        (cause instanceof ApiError && cause.code === 'copilot_enqueue_ambiguous') ||
+        replayMayStillLand;
+      const authFailed =
+        cause instanceof ApiAuthError ||
+        (cause instanceof ApiError && (cause.status === 401 || cause.status === 403));
+      if (recovery && authFailed) {
+        // Keep it through signing in again: the words are still only here.
+        markPending(key, { dispatching: false, doubtful: true, error: plainSendError(cause) });
+        stopReplyRow(key);
+        return;
+      }
       if (acceptanceUnknown) {
         // Keep the exact tuple: a replay can only find the original run or start this one.
         const spent = autoResends.get(key) ?? 0;
@@ -257,22 +304,27 @@ export function createTurnSender(ctx: CompanionCtx): TurnSender {
           autoResends.set(key, spent + 1);
           setTimeout(() => {
             const latest = ctx.get().pendingTurns.find((t) => t.idempotencyKey === key);
-            if (latest) void send(latest.userMessage, latest);
+            if (latest) void send(latest.userMessage, latest, explicit);
           }, delay);
           return;
         }
         // The footer notice asks; the AI row stays empty rather than voicing it.
-        markPending(key, { dispatching: false, error: ACCEPTANCE_UNKNOWN_COPY });
-        ctx.updateMessages((previous) =>
-          previous.map((m) =>
-            m.idempotency_key === key && m.role === 'ai' ? { ...m, text: '', streaming: false } : m,
-          ),
-        );
+        markPending(key, { dispatching: false, doubtful: true, error: ACCEPTANCE_UNKNOWN_COPY });
+        stopReplyRow(key);
         return;
       }
       // A definite refusal: nothing was accepted, so the tuple is no longer needed.
       const copy = plainSendError(cause);
       explicit?.onRefused(copy);
+      // The words of a refused replay go back to the composer. When they cannot (another
+      // conversation, or the learner typed more), the message stays for 再发一次 / 算了.
+      const wordsCanReturn =
+        !explicit && !requestBody.confirmation && showing() && ctx.get().draft === '';
+      if (recovery && !explicit && !requestBody.confirmation && !wordsCanReturn) {
+        markPending(key, { dispatching: false, error: copy });
+        stopReplyRow(key);
+        return;
+      }
       dropPending(key);
       // Nothing was accepted, so there is no reply row; the error notice below carries the copy.
       ctx.updateMessages((previous) =>
@@ -283,11 +335,13 @@ export function createTurnSender(ctx: CompanionCtx): TurnSender {
         }),
       );
       // Nothing was sent: give the words back to the composer unless the learner already typed more.
-      ctx.set({
-        refreshFailed: false,
-        error: copy,
-        ...(!recovery && !explicit && ctx.get().draft === '' ? { draft: raw } : {}),
-      });
+      if (showing()) {
+        ctx.set({
+          refreshFailed: false,
+          error: copy,
+          ...(wordsCanReturn ? { draft: raw } : {}),
+        });
+      }
       ctx.sessions.revalidateAutomaticSelection();
     }
   }
@@ -352,6 +406,18 @@ export function createTurnSender(ctx: CompanionCtx): TurnSender {
     void send(pending.userMessage, pending);
   }
 
+  function resendDoubtful() {
+    const now = Date.now();
+    for (const turn of ctx.get().pendingTurns) {
+      if (!turn.doubtful || turn.dispatching || !canResendUnasked(turn)) continue;
+      const key = turn.idempotencyKey;
+      if (now - (lastResumeAt.get(key) ?? 0) < RESUME_RESEND_GAP_MS) continue;
+      lastResumeAt.set(key, now);
+      autoResends.delete(key);
+      void send(turn.userMessage, turn);
+    }
+  }
+
   function discardPendingRecovery(key: string) {
     if (
       ctx.get().pendingTurns.some((t) => t.idempotencyKey === key && t.requestBody.confirmation)
@@ -371,6 +437,7 @@ export function createTurnSender(ctx: CompanionCtx): TurnSender {
     send,
     sendQuiz,
     retryPendingTurn,
+    resendDoubtful,
     discardPendingRecovery,
     pendingMessagesForSession,
   };

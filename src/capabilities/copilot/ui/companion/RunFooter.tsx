@@ -14,7 +14,7 @@ import {
   selectedSession,
   selectionValidated,
 } from './companion-state';
-import { PROGRESS_LABELS } from './run-copy';
+import { CONNECTION_LOST_COPY, PROGRESS_LABELS } from './run-copy';
 import { LiveActivity } from './ToolRow';
 import { useCompanion, useCompanionShallow } from './use-companion';
 
@@ -114,7 +114,11 @@ export function RunFooter({ controller }: { controller: CompanionController }) {
       ) : null}
       {runs.map((run) => {
         const stopping = run.stopPending || run.cancelRequested;
-        const announced = run.cancelRequested ? '正在停止…' : PROGRESS_LABELS[run.stage];
+        const announced = run.cancelRequested
+          ? '正在停止…'
+          : run.connectionLost
+            ? CONNECTION_LOST_COPY
+            : PROGRESS_LABELS[run.stage];
         return (
           <div key={run.runId} className="un-cp-run" data-phase={run.phase}>
             <LoaderCircle size={14} aria-hidden="true" className="un-cp-spin un-cp-run-glyph" />
@@ -125,7 +129,11 @@ export function RunFooter({ controller }: { controller: CompanionController }) {
             <span aria-hidden="true" className="un-cp-run-line">
               <LiveActivity
                 message={messages.find((m) => m.role === 'ai' && m.run_id === run.runId)}
-                override={run.cancelRequested || run.stage === 'dispatch' ? announced : undefined}
+                override={
+                  run.cancelRequested || run.connectionLost || run.stage === 'dispatch'
+                    ? announced
+                    : undefined
+                }
               />
             </span>
             <Button
@@ -180,7 +188,7 @@ export function RunFooter({ controller }: { controller: CompanionController }) {
             actions={
               <Button variant="secondary" size="sm" onClick={() => tracker.reconnectRun(run.runId)}>
                 <RefreshCw size={13} aria-hidden="true" />
-                重新连接
+                再看看
               </Button>
             }
           >

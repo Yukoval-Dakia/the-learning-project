@@ -29,6 +29,7 @@ export function initializeFromStorage(ctx: CompanionCtx) {
     pendingTurns: restored.map((t) => ({
       ...t,
       dispatching: false,
+      doubtful: true,
       error: RESTORED_PENDING_COPY,
     })),
     currentSessionId: recoverySessionId,
