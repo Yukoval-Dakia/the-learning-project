@@ -99,13 +99,8 @@ async function executeWriteQuiz(
     throw new Error(`write_quiz: question_id(s) do not exist: [${missing.join(',')}]`);
   }
 
-  // the RP-2 draft allowance is NARROW (header comment): a
-  // draft_status='draft' row is admitted only when it is a same-turn
-  // author_question product — source='copilot_authored' — that is still a live
-  // draft (no dismissed_at tombstone written by the question_draft dismiss
-  // applier, no archived_at soft-delete marker). Drafts from other pipelines
-  // (quiz_gen / web_sourced / teaching_check / …) are gated behind their own
-  // verify/owner promote flows and must NOT be smuggled into a runnable paper.
+  // Retained proposal drafts have a separate compatibility allowance; new teaching
+  // drafts belong to admission and must not enter a runnable paper before it passes.
   const draftIds = questionIds.filter((id) => byId.get(id)?.draft_status === 'draft');
   // One batched read of pending question_draft proposals (the spec's second
   // admission branch). pendingProposalWithCooldown exists but keys on
@@ -129,7 +124,7 @@ async function executeWriteQuiz(
   });
   if (nonCopilotDrafts.length > 0) {
     throw new Error(
-      `write_quiz: draft question_id(s) are neither copilot-authored drafts nor covered by a pending question_draft proposal (only author_question drafts may enter a paper pre-accept): [${nonCopilotDrafts.join(',')}]`,
+      `write_quiz: question_id(s) are awaiting admission and cannot enter a runnable paper: [${nonCopilotDrafts.join(',')}]`,
     );
   }
   const tombstonedDrafts = questionIds.filter((id) => {
@@ -260,7 +255,7 @@ async function executeWriteQuiz(
     }
     if (racedUncovered.length > 0) {
       throw new Error(
-        `write_quiz: draft question_id(s) are neither copilot-authored drafts nor covered by a pending question_draft proposal (only author_question drafts may enter a paper pre-accept): [${racedUncovered.join(',')}]`,
+        `write_quiz: question_id(s) are awaiting admission and cannot enter a runnable paper: [${racedUncovered.join(',')}]`,
       );
     }
 
@@ -307,7 +302,7 @@ async function executeWriteQuiz(
 export const writeQuizTool: DomainTool<WriteQuizInput, WriteQuizOutput> = {
   name: 'write_quiz',
   description:
-    'Assemble questions into ONE runnable tool_quiz practice paper and return a /practice/<id> link to embed in the reply. question_ids may include draft questions authored this turn via author_question (drafts are runnable in the paper pre-accept; pool/FSRS entry still waits for the proposal accept) as well as existing pool questions found via search_bank. Only author_question drafts are admitted — drafts from other pipelines, or ones whose proposal was dismissed, are rejected. Every question must carry at least one knowledge_id. Pure local write — call it once, after authoring/selecting all the questions for the paper (a second call in the same run is refused).',
+    'Assemble admitted, answerable questions into ONE runnable tool_quiz practice paper and return a /practice/<id> link. New author_question teaching drafts enter the question bank awaiting automatic admission; they cannot enter a runnable paper in the same turn until admission passes. Return their bank links and current status instead. Existing pool questions can be found via search_bank. Retained legacy proposal drafts keep their compatibility path. Every question must carry at least one knowledge_id. Pure local write — call it once after selecting the questions; a second call in the same run is refused.',
   effect: 'write',
   inputSchema: WriteQuizInputSchema,
   outputSchema: WriteQuizOutputSchema,

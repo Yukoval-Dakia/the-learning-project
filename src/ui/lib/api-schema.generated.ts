@@ -33964,6 +33964,11 @@ export interface operations {
                                 prompt_md: string;
                                 root_question_id: string | null;
                                 serving: {
+                                    admission?: {
+                                        reason: string | null;
+                                        /** @enum {string} */
+                                        status: "pending" | "admitted" | "failed" | "undecided";
+                                    } | null;
                                     held_since: string | null;
                                     /** @enum {string|null} */
                                     hold_reason: "awaiting_admission" | "admission_failed" | "source_check_failed" | "verify_hold" | "retraction_hold" | "no_input_renderer" | "invalid_presentation" | "withdrawn" | null;
@@ -34007,6 +34012,11 @@ export interface operations {
                             prompt_md: string;
                             root_question_id: string | null;
                             serving: {
+                                admission?: {
+                                    reason: string | null;
+                                    /** @enum {string} */
+                                    status: "pending" | "admitted" | "failed" | "undecided";
+                                } | null;
                                 held_since: string | null;
                                 /** @enum {string|null} */
                                 hold_reason: "awaiting_admission" | "admission_failed" | "source_check_failed" | "verify_hold" | "retraction_hold" | "no_input_renderer" | "invalid_presentation" | "withdrawn" | null;
@@ -34055,6 +34065,11 @@ export interface operations {
                                     prompt_md: string;
                                     root_question_id: string | null;
                                     serving: {
+                                        admission?: {
+                                            reason: string | null;
+                                            /** @enum {string} */
+                                            status: "pending" | "admitted" | "failed" | "undecided";
+                                        } | null;
                                         held_since: string | null;
                                         /** @enum {string|null} */
                                         hold_reason: "awaiting_admission" | "admission_failed" | "source_check_failed" | "verify_hold" | "retraction_hold" | "no_input_renderer" | "invalid_presentation" | "withdrawn" | null;
@@ -34098,6 +34113,11 @@ export interface operations {
                                 prompt_md: string;
                                 root_question_id: string | null;
                                 serving: {
+                                    admission?: {
+                                        reason: string | null;
+                                        /** @enum {string} */
+                                        status: "pending" | "admitted" | "failed" | "undecided";
+                                    } | null;
                                     held_since: string | null;
                                     /** @enum {string|null} */
                                     hold_reason: "awaiting_admission" | "admission_failed" | "source_check_failed" | "verify_hold" | "retraction_hold" | "no_input_renderer" | "invalid_presentation" | "withdrawn" | null;
@@ -34151,6 +34171,11 @@ export interface operations {
                                     prompt_md: string;
                                     root_question_id: string | null;
                                     serving: {
+                                        admission?: {
+                                            reason: string | null;
+                                            /** @enum {string} */
+                                            status: "pending" | "admitted" | "failed" | "undecided";
+                                        } | null;
                                         held_since: string | null;
                                         /** @enum {string|null} */
                                         hold_reason: "awaiting_admission" | "admission_failed" | "source_check_failed" | "verify_hold" | "retraction_hold" | "no_input_renderer" | "invalid_presentation" | "withdrawn" | null;
@@ -34194,6 +34219,11 @@ export interface operations {
                                 prompt_md: string;
                                 root_question_id: string | null;
                                 serving: {
+                                    admission?: {
+                                        reason: string | null;
+                                        /** @enum {string} */
+                                        status: "pending" | "admitted" | "failed" | "undecided";
+                                    } | null;
                                     held_since: string | null;
                                     /** @enum {string|null} */
                                     hold_reason: "awaiting_admission" | "admission_failed" | "source_check_failed" | "verify_hold" | "retraction_hold" | "no_input_renderer" | "invalid_presentation" | "withdrawn" | null;
@@ -34244,6 +34274,11 @@ export interface operations {
                                 prompt_md: string;
                                 root_question_id: string | null;
                                 serving: {
+                                    admission?: {
+                                        reason: string | null;
+                                        /** @enum {string} */
+                                        status: "pending" | "admitted" | "failed" | "undecided";
+                                    } | null;
                                     held_since: string | null;
                                     /** @enum {string|null} */
                                     hold_reason: "awaiting_admission" | "admission_failed" | "source_check_failed" | "verify_hold" | "retraction_hold" | "no_input_renderer" | "invalid_presentation" | "withdrawn" | null;
@@ -34287,6 +34322,11 @@ export interface operations {
                             prompt_md: string;
                             root_question_id: string | null;
                             serving: {
+                                admission?: {
+                                    reason: string | null;
+                                    /** @enum {string} */
+                                    status: "pending" | "admitted" | "failed" | "undecided";
+                                } | null;
                                 held_since: string | null;
                                 /** @enum {string|null} */
                                 hold_reason: "awaiting_admission" | "admission_failed" | "source_check_failed" | "verify_hold" | "retraction_hold" | "no_input_renderer" | "invalid_presentation" | "withdrawn" | null;
@@ -34452,6 +34492,7 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
+                        admission_owned: boolean;
                         backlinks: {
                             artifact_id: string;
                             created_at_sec: number;
@@ -34723,6 +34764,11 @@ export interface operations {
                             }[];
                         };
                         serving: {
+                            admission?: {
+                                reason: string | null;
+                                /** @enum {string} */
+                                status: "pending" | "admitted" | "failed" | "undecided";
+                            } | null;
                             held_since: string | null;
                             /** @enum {string|null} */
                             hold_reason: "awaiting_admission" | "admission_failed" | "source_check_failed" | "verify_hold" | "retraction_hold" | "no_input_renderer" | "invalid_presentation" | "withdrawn" | null;
@@ -35310,6 +35356,11 @@ export interface operations {
                     "application/json": {
                         accepted: boolean;
                         serving: {
+                            admission?: {
+                                reason: string | null;
+                                /** @enum {string} */
+                                status: "pending" | "admitted" | "failed" | "undecided";
+                            } | null;
                             held_since: string | null;
                             /** @enum {string|null} */
                             hold_reason: "awaiting_admission" | "admission_failed" | "source_check_failed" | "verify_hold" | "retraction_hold" | "no_input_renderer" | "invalid_presentation" | "withdrawn" | null;
@@ -37184,6 +37235,12 @@ export interface operations {
                 content: {
                     "application/json": {
                         data: {
+                            admission?: {
+                                reason: string | null;
+                                /** @enum {string} */
+                                status: "pending" | "admitted" | "failed" | "undecided";
+                            } | null;
+                            admission_owned: boolean;
                             /** Format: date-time */
                             created_at: string;
                             difficulty: number;
@@ -37207,6 +37264,12 @@ export interface operations {
                             next_cursor: string | null;
                         };
                         rows: {
+                            admission?: {
+                                reason: string | null;
+                                /** @enum {string} */
+                                status: "pending" | "admitted" | "failed" | "undecided";
+                            } | null;
+                            admission_owned: boolean;
                             /** Format: date-time */
                             created_at: string;
                             difficulty: number;
@@ -37345,6 +37408,12 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
+                        admission?: {
+                            reason: string | null;
+                            /** @enum {string} */
+                            status: "pending" | "admitted" | "failed" | "undecided";
+                        } | null;
+                        admission_owned: boolean;
                         answer: string | null;
                         /** Format: date-time */
                         created_at: string;

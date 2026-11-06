@@ -41,7 +41,7 @@ import { randomUUID } from 'node:crypto';
 // single-txn persist → writeEvent → catch).
 
 import { createId } from '@paralleldrive/cuid2';
-import { and, eq, ne } from 'drizzle-orm';
+import { and, eq, getTableColumns, ne } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
 import { type TaskTextResult, aiAgentRef } from '@/ai/task-result';
@@ -77,6 +77,7 @@ import {
   settleAuthorizedPaidCall,
   terminalizePlacementUnknownCost,
 } from '../../supply/public';
+import { declaredAdmissionOwned } from '../server/admission/ownership';
 import { choiceSurfacePrecheckRecord, evaluateChoiceSurface } from '../server/quiz/choice-surface';
 import { resolveSolveOverrideFromEnv } from '../server/quiz/solve-lane';
 import {
@@ -134,6 +135,7 @@ export type QuizVerifyPerQuestionStatus =
   | 'failed'
   | 'skipped:not_found'
   | 'skipped:not_quiz_gen'
+  | 'skipped:admission_owned'
   | 'skipped:question_part'
   | 'skipped:already_verified';
 
@@ -239,10 +241,15 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
     );
   }
 
-  const rows = await db.select().from(question).where(eq(question.id, questionId)).limit(1);
+  const rows = await db
+    .select({ ...getTableColumns(question), admissionOwned: declaredAdmissionOwned() })
+    .from(question)
+    .where(eq(question.id, questionId))
+    .limit(1);
   const row = rows[0];
   if (!row) return { status: 'skipped:not_found' };
   if (row.source !== 'quiz_gen') return { status: 'skipped:not_quiz_gen' };
+  if (row.admissionOwned) return { status: 'skipped:admission_owned' };
   // a question_part is never an independent verify subject: the
   // composite group is verified at the parent and this handler's promote branch
   // cascades to its draft children in the same tx. A stray dispatch (orphan

@@ -61,6 +61,15 @@ function proposalEffectContract(
   output?: unknown,
 ): ProposalEffectContract | undefined {
   if (effect !== 'propose') return undefined;
+  // Draft submission has its own receipt; only the other seeds create inbox proposals.
+  if (
+    name === 'author_question' &&
+    output !== null &&
+    typeof output === 'object' &&
+    'seed_mode' in output &&
+    output.seed_mode === 'teaching_draft'
+  )
+    return undefined;
   const base = {
     owner_gate: 'FULL',
     direct_write: false,

@@ -2,7 +2,7 @@ import { Card } from '@/ui-next/primitives/Card';
 import { RetryLine } from '@/ui-next/primitives/RetryLine';
 import { SkeletonLines } from '@/ui-next/primitives/SkeletonLines';
 import { Button } from '@/ui-next/public';
-import { difficultyWord, holdWords, kindWord, sourceWord } from './library-copy';
+import { difficultyWord, holdKey, holdWords, kindWord, sourceWord } from './library-copy';
 import type { LibraryScope } from './library-url';
 import { LoadMore, QuestionLine, shortDay } from './QuestionLine';
 import { useQuestionPages } from './use-library';
@@ -67,7 +67,7 @@ export function AllView({
             aside={
               item.serving.servable ? null : (
                 <span className="ql-state" data-tone="caution">
-                  {holdWords(item.serving.hold_reason).title}
+                  {holdWords(holdKey(item.serving)).title}
                 </span>
               )
             }
