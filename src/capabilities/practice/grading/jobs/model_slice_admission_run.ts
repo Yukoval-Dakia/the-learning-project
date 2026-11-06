@@ -1,4 +1,5 @@
 // System grading admission uses frozen reference-model comparisons, never gold labels.
+import { randomUUID } from 'node:crypto';
 import { eq, inArray } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import { z } from 'zod';
@@ -133,7 +134,10 @@ export function holdoutRunTally(results: readonly ModelSliceAdmissionItemResult[
     if (result.agreed) agreed += 1;
     if (result.severe_error) severe += 1;
     if (result.cost_usd_micros !== undefined) known += result.cost_usd_micros;
-    else unknown += 1;
+    else {
+      known += result.known_cost_usd_micros ?? 0;
+      unknown += 1;
+    }
   }
   return {
     items: results.length,
@@ -306,6 +310,8 @@ export interface ModelSliceAdmissionItemResult {
   }>;
   run_refs: string[];
   cost_usd_micros?: number;
+  /** Settled portion retained when the cumulative item cost is still unknown. */
+  known_cost_usd_micros?: number;
 }
 
 export interface ModelSliceAdmissionRunSummary {
@@ -864,6 +870,7 @@ export async function runModelSliceAdmission(
           );
       }
       const now = new Date();
+      const claimToken = randomUUID();
       await writeEvent(db, {
         id: claimEventId,
         actor_kind: 'system',
@@ -872,10 +879,19 @@ export async function runModelSliceAdmission(
         subject_kind: 'model_admission_slice',
         subject_id: sliceId,
         outcome: 'claimed',
-        payload: { original_evidence_ref: originalEvidenceEventId, ...resume },
+        payload: {
+          original_evidence_ref: originalEvidenceEventId,
+          ...resume,
+          claim_token: claimToken,
+        },
         created_at: now,
         ingest_at: now,
       });
+      // INSERT conflicts are silent; the session lock may have been lost during preflight.
+      const claim = await readAdmissionEvidence(db, claimEventId);
+      if (!z.object({ claim_token: z.literal(claimToken) }).safeParse(claim?.payload).success) {
+        throw new Error('resume claim belongs to another caller; no paid calls permitted');
+      }
     }
 
     // 逐题判分（生产同源端口；每题独立墙钟，细则含一次超时重试窗口）。
@@ -999,6 +1015,8 @@ export async function runModelSliceAdmission(
         }
         if (lastResult.cost_usd_micros !== undefined) {
           lastResult.cost_usd_micros += previous.cost_usd_micros;
+        } else {
+          lastResult.known_cost_usd_micros = previous.cost_usd_micros;
         }
         lastResult.run_refs = [...previous.run_refs, ...lastResult.run_refs];
         lastResult.actual_runs = [...(previous.actual_runs ?? []), ...actualRuns];
