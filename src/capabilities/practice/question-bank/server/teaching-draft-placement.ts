@@ -1,6 +1,8 @@
 import { and, eq, isNull } from 'drizzle-orm';
 import type { Db } from '@/db/client';
 import { event, knowledge, learning_session, subject } from '@/db/schema';
+import { createSubjectThroughPort } from '@/kernel/subject-create';
+import { learnerStatedSubject } from './learner-subject-claim';
 
 interface PlacementInput {
   knowledge_ids: string[];
@@ -17,6 +19,24 @@ type PlacementResult =
 
 const ROOT = /^seed:([^:]+):root$/;
 
+interface LearnerAsk {
+  session_id: string | null;
+  actor_kind: string;
+  action: string;
+  payload: { user_message?: unknown };
+}
+
+/** The learner's own message for this turn, or undefined when the ask is not theirs. */
+function learnerAskMessage(
+  ask: LearnerAsk | undefined,
+  sessionId: string | undefined,
+): string | undefined {
+  if (!ask || sessionId === undefined) return undefined;
+  if (ask.session_id !== sessionId) return undefined;
+  if (ask.actor_kind !== 'user' || ask.action !== 'experimental:copilot_user_ask') return undefined;
+  return typeof ask.payload.user_message === 'string' ? ask.payload.user_message : undefined;
+}
+
 /** Topic provenance stays outside the frozen question and scoring contract. */
 export async function resolveTeachingDraftPlacement(
   db: Db,
@@ -29,19 +49,30 @@ export async function resolveTeachingDraftPlacement(
   if (!fallback) return { ok: true, knowledge_ids: input.knowledge_ids };
   const ids = new Set(input.knowledge_ids.map((id) => ROOT.exec(id)?.[1]));
   const subjectId = input.subject_id ?? (ids.size === 1 ? [...ids][0] : undefined);
-  const [row] = subjectId
-    ? await db
-        .select({ id: subject.id, name: subject.display_name })
-        .from(subject)
-        .where(
-          and(
-            eq(subject.id, subjectId),
-            isNull(subject.retired_at),
-            eq(subject.is_selectable, true),
-          ),
-        )
-        .limit(1)
+  // Read the owning ask once: the same message proves both the new-subject claim
+  // and the topic provenance come from this turn's learner.
+  const [ask] = origin.causedByEventId
+    ? await db.select().from(event).where(eq(event.id, origin.causedByEventId)).limit(1)
     : [];
+  const message = learnerAskMessage(ask, origin.sessionId);
+  const readSubject = (id: string) =>
+    db
+      .select({ id: subject.id, name: subject.display_name })
+      .from(subject)
+      .where(and(eq(subject.id, id), isNull(subject.retired_at), eq(subject.is_selectable, true)))
+      .limit(1);
+  let [row] = subjectId ? await readSubject(subjectId) : [];
+  // Only an unregistered subject can be created here. A live row with a missing
+  // root is a repair case: creating a same-named subject would fork the registry.
+  if (!row && input.knowledge_ids.length === 0 && input.subject_id !== undefined && message) {
+    const claim = learnerStatedSubject(message, input.subject_id);
+    if (claim) {
+      const created = await createSubjectThroughPort(db, claim);
+      if (created.kind === 'created' || created.kind === 'replayed') {
+        [row] = await readSubject(created.payload.id);
+      }
+    }
+  }
   const rootId = row ? `seed:${row.id}:root` : undefined;
   const [root] =
     rootId && row
@@ -67,28 +98,14 @@ export async function resolveTeachingDraftPlacement(
       },
     };
   }
-  {
-    const [ask] = origin.causedByEventId
-      ? await db.select().from(event).where(eq(event.id, origin.causedByEventId)).limit(1)
-      : [];
-    const message = ask?.payload.user_message;
-    if (
-      !input.learner_topic ||
-      !origin.sessionId ||
-      ask?.session_id !== origin.sessionId ||
-      ask.actor_kind !== 'user' ||
-      ask.action !== 'experimental:copilot_user_ask' ||
-      typeof message !== 'string' ||
-      !message.includes(input.learner_topic)
-    ) {
-      return {
-        ok: false,
-        issue: {
-          code: 'learner_topic_required',
-          detail: '没有取得本轮请求中的主题原话，这次没有存题。',
-        },
-      };
-    }
+  if (!input.learner_topic || message === undefined || !message.includes(input.learner_topic)) {
+    return {
+      ok: false,
+      issue: {
+        code: 'learner_topic_required',
+        detail: '没有取得本轮请求中的主题原话，这次没有存题。',
+      },
+    };
   }
   return {
     ok: true,
