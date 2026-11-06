@@ -4,8 +4,7 @@
 // judgment contract; the question-level decay bucket is a derived worst-of, never
 // question-owned state. Timestamps on the older fields are unix seconds.
 
-import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
-
+import { and, asc, desc, eq, getTableColumns, inArray, isNull, sql } from 'drizzle-orm';
 import { type MasteryDecayBucket, worstMasteryDecayBucket } from '@/core/mastery-freshness';
 import type { ReviewTimingJson } from '@/core/schema/learner-judgment';
 import { type SourceTier, type SourceTierName, deriveSourceTier } from '@/core/schema/provenance';
@@ -26,6 +25,7 @@ import {
   batchResolveSubjectDisplayIds,
   resolveSubjectRenderNotation,
 } from '@/kernel/read-models/subject-resolution';
+import { declaredAdmissionOwned } from './admission/ownership';
 
 const DEFAULT_TIMELINE_LIMIT = 10;
 const MAX_TIMELINE_LIMIT = 50;
@@ -158,6 +158,7 @@ export interface QuestionDetail {
   created_at_sec: number;
   updated_at_sec: number;
   computed_at_sec: number;
+  admission_owned: boolean;
 }
 
 function toSec(d: Date | null | undefined): number | null {
@@ -173,7 +174,11 @@ export async function loadQuestionDetail(
   questionId: string,
   timelineLimit: number = DEFAULT_TIMELINE_LIMIT,
 ): Promise<QuestionDetail | null> {
-  const rows = await db.select().from(question).where(eq(question.id, questionId)).limit(1);
+  const rows = await db
+    .select({ ...getTableColumns(question), admission_owned: declaredAdmissionOwned() })
+    .from(question)
+    .where(eq(question.id, questionId))
+    .limit(1);
   const q = rows[0];
   if (!q) return null;
 
@@ -223,6 +228,7 @@ export async function loadQuestionDetail(
 
   return {
     id: q.id,
+    admission_owned: q.admission_owned,
     subject,
     notation: resolveSubjectRenderNotation(subject),
     kind: q.kind,

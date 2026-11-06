@@ -20,7 +20,8 @@ import {
 // validate — 纯本地校验（四层契约 validators + 引用完整性），不写。
 // probe — 显式合成作答走 evaluateSubmissionCore 同一入口；不落
 // attempt/candidate/settlement；模型方法未准入如实未决。
-// 面权限（服务端判定，非入参）：Copilot 面（agent:copilot*）的 save 一律落
+// 新题由 author_question 的 teaching_draft 直接提交题库。
+// 面权限（服务端判定，非入参）：Copilot 面编辑既有题的 save 落
 // question_edit proposal（用户 accept 后 accept applier 走同一 ops → submit
 // 管线）；其它 surface 直写授权草稿。validate/probe 对 Copilot 直出（无写）。
 

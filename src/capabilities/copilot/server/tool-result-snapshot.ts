@@ -57,6 +57,9 @@ const POLICIES: Record<string, ResultPolicy> = {
     'mistake_variant_ids',
     'variant_question_ids',
     'question_ids',
+    'question_id',
+    'bank_path',
+    'admission',
   ],
   edit_question: [
     'status',

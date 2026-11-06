@@ -1,10 +1,5 @@
-// Draft-review pool projection for the owner manual gate.
-//
-// Lists draft_status='draft' rows except soft-archived drafts (metadata.archived_at).
-// Verify status comes from the latest terminal quiz_verify/source_verify event; outcome
-// 'error' marks a transient failure with no verdict and is ignored. A non-promoted
-// source_verify failure means 'failed'; no terminal event means 'unverified'. reason comes
-// from payload.summary_md when present.
+// Legacy verification and canonical admission remain separate projections: a new
+// declared draft must not appear unchecked merely because it has no legacy event.
 
 import { and, desc, eq, inArray, isNull, lt, ne, or, sql } from 'drizzle-orm';
 
@@ -13,11 +8,14 @@ import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db, Tx } from '@/db/client';
 import { event, knowledge, question } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
+import { type QuestionServing, readQuestionServing } from '@/kernel/read-models/question-serving';
 import {
   batchResolveSubjectDisplayIds,
   resolveSubjectRenderNotation,
 } from '@/kernel/read-models/subject-resolution';
 import { canonicalKindToPersistedForms } from '@/subjects/question-kind';
+
+import { declaredAdmissionOwned } from './admission/ownership';
 
 type DbLike = Db | Tx;
 
@@ -48,6 +46,8 @@ export interface DraftReviewRow {
   verify_status: DraftVerifyStatus;
   /** model's驳回理由 (summary_md) when the latest terminal verify did not promote. */
   verify_reason: string | null;
+  admission_owned: boolean;
+  admission?: QuestionServing['admission'];
 }
 
 /**
@@ -76,6 +76,8 @@ export interface DraftReviewDetail {
   answer: string | null;
   verify_status: DraftVerifyStatus;
   verify_reason: string | null;
+  admission_owned: boolean;
+  admission?: QuestionServing['admission'];
 }
 
 export interface DraftReviewListOpts {
@@ -255,6 +257,7 @@ export async function listDraftReview(
 
   const conditions = [
     eq(question.draft_status, 'draft'),
+    sql`NOT ${declaredAdmissionOwned()}`,
     // composite children (question_part rows) are group-internal:
     // they carry no independent verify intent and must never appear as separate
     // unverified drafts — their lifecycle is the parent's verify cascade.
@@ -292,6 +295,7 @@ export async function listDraftReview(
   const fetchedRows = await db
     .select({
       id: question.id,
+      admission_owned: declaredAdmissionOwned(),
       prompt_md: question.prompt_md,
       kind: question.kind,
       source: question.source,
@@ -318,6 +322,7 @@ export async function listDraftReview(
   // Fetch the latest TERMINAL (outcome != 'error') verify event per draft in one
   // round-trip; pick the newest by created_at in memory.
   const ids = rows.map((r) => r.id);
+  const admissionById = (await readQuestionServing(db, ids)).byId;
   const verdictById = new Map<
     string,
     { status: 'needs_review' | 'failed'; reason: string | null }
@@ -361,6 +366,7 @@ export async function listDraftReview(
       const verdict = verdictById.get(r.id);
       return {
         id: r.id,
+        admission_owned: r.admission_owned,
         prompt_preview: truncatePrompt(r.prompt_md),
         kind: r.kind,
         source: r.source,
@@ -369,6 +375,7 @@ export async function listDraftReview(
         knowledge: toKnowledgeRefs(r.knowledge_ids, labelById),
         verify_status: verdict?.status ?? 'unverified',
         verify_reason: verdict?.reason ?? null,
+        admission: admissionById.get(r.id)?.admission ?? null,
       };
     }),
     limit,
@@ -392,6 +399,7 @@ export async function getDraftReviewDetail(
   const rows = await db
     .select({
       id: question.id,
+      admission_owned: declaredAdmissionOwned(),
       kind: question.kind,
       source: question.source,
       difficulty: question.difficulty,
@@ -455,6 +463,7 @@ export async function getDraftReviewDetail(
 
   return {
     id: row.id,
+    admission_owned: row.admission_owned,
     subject,
     notation: resolveSubjectRenderNotation(subject),
     kind: row.kind,
@@ -469,6 +478,7 @@ export async function getDraftReviewDetail(
       typeof row.reference_md === 'string' && row.reference_md.length > 0 ? row.reference_md : null,
     verify_status: verdict?.status ?? 'unverified',
     verify_reason: verdict?.reason ?? null,
+    admission: (await readQuestionServing(db, [id])).byId.get(id)?.admission ?? null,
   };
 }
 
