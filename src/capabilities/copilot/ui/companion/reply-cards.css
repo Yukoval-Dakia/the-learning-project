@@ -42,6 +42,13 @@
 [data-ui-next] .un-cp-block-status[data-tone="caution"] {
   color: var(--un-caution);
 }
+[data-ui-next] .un-cp-block-choices {
+  display: grid;
+  gap: var(--un-sp-1);
+  margin: 0;
+  padding-inline-start: 1.5em;
+  list-style: upper-alpha;
+}
 [data-ui-next] .un-cp-block-title {
   margin: 0;
   overflow-wrap: anywhere;

@@ -13,6 +13,7 @@ import {
 } from '@/ui/components/response/response-types';
 import { usePagehideTransition } from '@/ui/hooks/usePagehideTransition';
 import { useResponseDraftAutosave } from '@/ui/hooks/useResponseDraftAutosave';
+import { ApiError } from '@/ui/lib/api';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { Button } from '@/ui-next/public';
 import { boundSlots, entriesForSubmit } from '../blocks/envelope';
@@ -84,6 +85,12 @@ export function InlineAnswer({
     queryKey: ['question-card-issuance', issuanceId],
     enabled: issuanceId !== null,
     queryFn: () => client.getIssuanceState(issuanceId ?? ''),
+    // The answer area starts from this read once. A cached one could be older than the last saved
+    // draft, and handing that in would delete the draft, so each entry reads the server again.
+    gcTime: 0,
+    staleTime: Number.POSITIVE_INFINITY,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
   if (issuanceId === null) {
     return (
@@ -157,6 +164,7 @@ function AnswerArea({
   const [stillGrading, setStillGrading] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
   const [conflict, setConflict] = useState(false);
+  const [notRecorded, setNotRecorded] = useState(false);
 
   const ackedEpoch = useRef(restored.draft?.save_epoch ?? 0);
   const saveDraft = useCallback(
@@ -200,10 +208,12 @@ function AnswerArea({
     evaluation_group_id: accepted?.evaluation_group_id ?? `group_${issuanceId}`,
     submission_id: accepted?.submission_id ?? `submission_${issuanceId}`,
     idempotency_key: accepted?.idempotency_key ?? `submit_${issuanceId}`,
+    // Once accepted, the stored answer is the one to repeat: any difference is refused as a change.
     response_set:
-      presentation && !accepted
+      accepted?.response_set ??
+      (presentation
         ? { entries: entriesForSubmit(presentation, slots, responses.entries) }
-        : responses,
+        : responses),
     group_evidence: [],
   };
   const answerMd = responses.entries
@@ -224,8 +234,13 @@ function AnswerArea({
     retry: false,
   });
   const grade = useMutation({
-    mutationFn: readAdvice,
-    onMutate: () => autosave.hold(),
+    // Leaving during grading must not lose the last edit: it is saved before saving stops, and the
+    // fields are locked from the moment this starts.
+    mutationFn: async () => {
+      if (!(await flush())) throw new Error('the answer was not saved');
+      autosave.hold();
+      return readAdvice();
+    },
     onSuccess: (advice) => {
       if (isSubmitPending(advice)) {
         setStillGrading(true);
@@ -252,9 +267,17 @@ function AnswerArea({
         referenced_knowledge_ids: [],
       });
     },
-    onSuccess: () => {
-      setConfirmed(true);
+    onSuccess: (result) => {
       onAttemptChanged();
+      if (isSubmitPending(result) || ('status' in result && result.status === 'review_required')) {
+        setNotRecorded(true);
+        return;
+      }
+      setConfirmed(true);
+    },
+    // Someone else moved the result on: read it again so the next tap names the current one.
+    onError: (error) => {
+      if (error instanceof ApiError && error.status === 409) grade.mutate();
     },
   });
 
@@ -360,15 +383,21 @@ function AnswerArea({
       <Frame
         status={{ word: '等你确认', tone: 'neutral' }}
         note={
-          confirm.isError
-            ? '没记上，可以再点一次。'
-            : rating
-              ? `确认后${SOURCE_NOTE}`
-              : '这次判不了，可以打开题目接着做。'
+          notRecorded
+            ? '答案保存了，但这次没法自动记下，可以打开题目看看。'
+            : confirm.isError
+              ? '没记上，可以再点一次。'
+              : rating
+                ? `确认后${SOURCE_NOTE}`
+                : '这次判不了，可以打开题目接着做。'
         }
         actions={
-          rating ? (
-            <Button size="sm" disabled={confirm.isPending} onClick={() => confirm.mutate(graded)}>
+          rating && !notRecorded ? (
+            <Button
+              size="sm"
+              disabled={confirm.isPending || grade.isPending}
+              onClick={() => confirm.mutate(graded)}
+            >
               {confirm.isPending ? '正在记下' : `记为「${RATING_WORDS[rating]}」`}
             </Button>
           ) : (

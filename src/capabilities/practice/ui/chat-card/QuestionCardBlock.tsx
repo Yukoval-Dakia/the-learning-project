@@ -55,30 +55,68 @@ export interface QuestionCardBlockProps {
   client?: QuestionCardClient;
 }
 
+/** The options as text: the face is readable before answering opens, and nothing can be picked. */
+function SlotPreview({
+  slot,
+  notation,
+}: {
+  slot: NonNullable<
+    NonNullable<QuestionCardRead['question']>['display_response_spec']
+  >['slots'][number];
+  notation: string | null;
+}) {
+  if (slot.kind === 'select') {
+    const lists = slot.axes ? Object.entries(slot.axes) : [['items', slot.items] as const];
+    return (
+      <>
+        {lists.map(([name, entries]) => (
+          <ol key={name} className="un-cp-block-choices">
+            {entries.map((entry) => {
+              const words = 'label_md' in entry ? entry.label_md : undefined;
+              return words ? (
+                <li key={words}>
+                  <MathMarkdown notation={notation}>{words}</MathMarkdown>
+                </li>
+              ) : null;
+            })}
+          </ol>
+        ))}
+      </>
+    );
+  }
+  const spec = nativeSlotFieldSpec(slot);
+  return spec ? (
+    <ResponseSlotField
+      spec={spec}
+      value={undefined}
+      notation={notation}
+      disabled
+      hotkeys={false}
+      onChange={() => {}}
+    />
+  ) : null;
+}
+
 function QuestionFace({ question }: { question: NonNullable<QuestionCardRead['question']> }) {
-  const slots = question.display_response_spec?.slots ?? [];
+  const declared = question.blank_order ?? [];
+  const rank = (slotId: string) => {
+    const at = declared.indexOf(slotId);
+    return at < 0 ? declared.length : at;
+  };
+  // A declared order applies to its blanks; the sort is stable, so anything else keeps its place.
+  const slots = [...(question.display_response_spec?.slots ?? [])].sort(
+    (a, b) => rank(a.slot_id) - rank(b.slot_id),
+  );
+  const notation = question.notation ?? null;
   return (
     <>
-      <MathMarkdown className="un-read" notation={question.notation ?? null}>
+      <MathMarkdown className="un-read" notation={notation}>
         {question.prompt_md}
       </MathMarkdown>
       {slots.length > 0
-        ? slots.map((slot) => {
-            const spec = nativeSlotFieldSpec(slot);
-            return spec ? (
-              <ResponseSlotField
-                key={slot.slot_id}
-                spec={spec}
-                value={undefined}
-                notation={question.notation ?? null}
-                disabled
-                hotkeys={false}
-                onChange={() => {}}
-              />
-            ) : null;
-          })
+        ? slots.map((slot) => <SlotPreview key={slot.slot_id} slot={slot} notation={notation} />)
         : question.choices_md?.map((choice) => (
-            <MathMarkdown key={choice} className="un-read" notation={question.notation ?? null}>
+            <MathMarkdown key={choice} className="un-read" notation={notation}>
               {choice}
             </MathMarkdown>
           ))}
@@ -128,7 +166,10 @@ export function QuestionCardBlock({
   switch (card.state) {
     case 'checking':
       return (
-        <Frame status={{ word: '还在检查', tone: 'waiting' }} note="检查完就能在这里作答。">
+        <Frame
+          status={{ word: '还在检查', tone: 'waiting' }}
+          note={reason ?? '检查完就能在这里作答。'}
+        >
           {face}
         </Frame>
       );
