@@ -433,7 +433,12 @@
   padding-block: 24px;
   border-top: 1px solid var(--st-line);
 }
-[data-ui-next] .un-st-feedback,
+[data-ui-next] .un-st-feedback {
+  margin-top: 24px;
+  padding: 24px;
+  background: var(--st-panel);
+  border-radius: 24px;
+}
 [data-ui-next] .un-st-feedback h2 {
   font-size: 20px;
   line-height: 1.5;
@@ -929,7 +934,10 @@
     min-height: 48px;
     flex: 1;
   }
-  [data-ui-next] .un-st-feedback,
+  [data-ui-next] .un-st-feedback {
+    padding: 20px 16px;
+    border-radius: 20px;
+  }
   [data-ui-next] .un-st-study-tools > .un-st-actions {
     gap: 0;
   }

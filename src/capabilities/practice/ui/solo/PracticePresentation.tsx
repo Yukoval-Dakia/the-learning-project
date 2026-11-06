@@ -376,8 +376,7 @@ export function PracticePresentation(props: PracticePresentationProps) {
       const outcome = feedback.coarse_outcome;
       const unsupported = outcome === 'unsupported';
       // The field lists model-graded parts only: missing or empty means no model graded this.
-      // An ungraded verdict can still carry the field (YUK-1889), so it never counts as AI-graded.
-      const aiGraded = !unsupported && Boolean(feedback.grading_provenance?.length);
+      const aiGraded = Boolean(feedback.grading_provenance?.length);
       submission.grading = { kind: unsupported ? 'manual' : 'settled' };
       if (submit.autoCommitted || submit.committedPreview) submission.recording = { kind: 'saved' };
       revelation = {
