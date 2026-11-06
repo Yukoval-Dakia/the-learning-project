@@ -39,6 +39,14 @@ description: 数学「计算」题型的出题与质检规范包 —— 题面�
 - 计算题的最终答案常有**多种等价书写**（如 `1/2` 与 `0.5`、`x=2 或 x=-1` 与 `{-1, 2}`）。出题时应在结构化答案里给出 `final_answer` + `answer_equivalents`（等价形式列表），让 solve-check / judge 的 normalize 比对能命中。
 - 选择题形式的计算题：给 4 个选项，`reference_md` 第一行是正确选项原文，干扰项设在常见计算/方法错误上（符号错、漏解、定义域忽略）。
 
+## 备题员草稿（schema_version:2）
+
+以下约束用于备题员的 `edit_question` / `submit_question` 草稿，字段以 `src/core/schema/question-draft.ts` 和 `src/core/schema/assessment/blank-answer-shape.ts` 为准：
+
+- 选择沿用 `select + set-compare`，单值数值填空沿用 numeric key。文本 blank key 必须带实际可解析比较的 `response_spec.answer_shape`；`format:math`、`final_answer` 或等价写法列表不能替代声明。
+- shape 只表示其封闭数学对象与允许语法。任意代数式、三角式或“减函数”等文字概念无法声明时，用 `free + ai-rubric` 并提供参考答案、等价表述和可核查标准；短答也可以是 free，不伪装成裸文本 exact。
+- 每个 blank 键只放该空完整的单个答案对象；推导和解释放 `reference_md`。多作答位拆 units，需要判理由/过程则走 free，不截取长解释中的一句作为修复。
+
 ## 可解性与 solve-check 契合
 
 - 题必须**真的可解且答案真的对**：质检会用独立 solver 重解，solver 答案与题面 `reference_md` / `final_answer` 不一致即 solve-check fail。
