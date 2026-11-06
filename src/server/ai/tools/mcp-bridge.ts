@@ -447,15 +447,29 @@ export function toolInputFailure(dt: DomainTool<unknown, unknown>, args: unknown
     }
     const examples = object(expected)?.examples;
     const path = `/${issue.path.map((key) => String(key).replace(/~/g, '~0').replace(/\//g, '~1')).join('/')}`;
+    const searchBankExample =
+      dt.name !== 'search_bank'
+        ? undefined
+        : path === '/query'
+          ? '一元二次方程'
+          : path === '/use'
+            ? 'practice'
+            : undefined;
     return {
       code: 'shape_invalid',
       path,
       detail: sanitizeProviderErrorText(issue.message),
-      ...(issue.code === 'custom'
+      // Custom v2 issues still name the wire field (query/use) so the model can
+      // correct the next call instead of only reading "expected string".
+      ...(issue.code === 'custom' && dt.name !== 'search_bank'
         ? {}
         : {
             expected: expected ?? root,
-            ...(Array.isArray(examples) && examples.length ? { example: examples[0] } : {}),
+            ...(Array.isArray(examples) && examples.length
+              ? { example: examples[0] }
+              : searchBankExample
+                ? { example: searchBankExample }
+                : {}),
           }),
       next_action:
         dt.name === 'present_primary_view' &&

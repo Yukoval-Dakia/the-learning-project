@@ -27,7 +27,12 @@ import { runBankSemanticSearch } from './bank-semantic-search';
 const SearchBankNewFormSchema = z
   .object({
     /** 自然语言检索（中文直接可用；不要求知识点 ID / 题型枚举 / 难度数字）。 */
-    query: z.string().trim().min(1).max(400),
+    query: z
+      .string()
+      .trim()
+      .min(1)
+      .max(400)
+      .describe('新搜索必填；cursor 续页也带上原 query（服务端仍按 cursor 续页）。'),
     /** Subject profile id（如 'yuwen'）；省略 = 全学科。 */
     subject: z.string().min(1).optional(),
     /** 规范题型 label（choice / reading / computation …）。 */
@@ -54,26 +59,32 @@ const SearchBankNewFormSchema = z
   })
   .strict();
 
-// Pi's existing tool bridge requires a top-level object. Keep the two wire
-// forms mutually exclusive in the runtime schema; defaults apply only to new
-// searches, so a cursor-only request never gains accidental scope fields.
+// Pi's existing tool bridge requires a top-level object. The runtime schema
+// keeps query optional for cursor-only resumes; the provider wire marks it
+// required for new searches, and the bridge ignores it on a cursor resume.
 export const SearchBankInputSchema = SearchBankNewFormSchema.extend({
   query: SearchBankNewFormSchema.shape.query.optional(),
   draft_state: z.enum(['all', 'active', 'draft']).optional(),
   admission_state: z.enum(['any', 'admitted', 'withheld']).optional(),
   limit: z.number().int().min(1).max(50).optional(),
-  cursor: z.string().min(1).optional(),
+  cursor: z
+    .string()
+    .min(1)
+    .optional()
+    .describe('续页时传 cursor 和 contract_version=2，不要改条件。'),
   contract_version: z.union([z.literal(1), z.literal(2)]).optional(),
   requirements: BankSearchV2NewSchema.shape.requirements,
   scope: BankSearchV2NewSchema.shape.scope,
-  use: BankSearchV2NewSchema.shape.use.optional(),
+  use: BankSearchV2NewSchema.shape.use
+    .optional()
+    .describe('contract_version=2 的新搜索必填：inspect 或 practice。cursor 续页可省略。'),
   need: BankSearchV2NewSchema.shape.need,
   anchors: BankSearchV2NewSchema.shape.anchors,
   supersedes_search_id: BankSearchV2NewSchema.shape.supersedes_search_id,
   page_size: z.number().int().min(1).max(50).optional(),
 }).superRefine((input, ctx) => {
   if (input.cursor !== undefined) {
-    if (Object.keys(input).some((key) => key !== 'cursor' && key !== 'contract_version')) {
+    if (Object.keys(input).some((key) => !['cursor', 'contract_version', 'query'].includes(key))) {
       ctx.addIssue({
         code: 'custom',
         message: 'cursor must be supplied alone; changed conditions require a new search',
