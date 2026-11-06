@@ -57,8 +57,18 @@ describe('submit response carries the versioned crisis referral immediately', ()
   // @invariant crisis: an answer marked crisis at the write point gets the versioned referral template in the accepted response, before and regardless of model grading; a durable model failure cannot remove it, and grading/settlement/FSRS still run on the marked attempt
   // @fails-if drop the persisted-mark read or gate the referral on the judge result; the 200/202 response loses crisis_referral, the model-failure assertion fails, or the settlement count drops
   it.each([
-    { mode: 'sync' as const, answer: CRISIS_ANSWER, durable: false, modelOutcome: 'pending' as const },
-    { mode: 'durable' as const, answer: CRISIS_ANSWER, durable: true, modelOutcome: 'throw' as const },
+    {
+      mode: 'sync' as const,
+      answer: CRISIS_ANSWER,
+      durable: false,
+      modelOutcome: 'pending' as const,
+    },
+    {
+      mode: 'durable' as const,
+      answer: CRISIS_ANSWER,
+      durable: true,
+      modelOutcome: 'throw' as const,
+    },
     { mode: 'sync' as const, answer: ORDINARY_ANSWER, durable: false, modelOutcome: 1 },
   ])(
     'returns referral only for crisis answers ($mode)',
@@ -67,9 +77,7 @@ describe('submit response carries the versioned crisis referral immediately', ()
       const db = testDb();
       const f = await nativeSoloHttpFixture(db, { model: true });
       f.setOutcome(modelOutcome);
-      const response = await createAttempt(
-        nativeHttpRequest({ ...f.body(), response_md: answer }),
-      );
+      const response = await createAttempt(nativeHttpRequest({ ...f.body(), response_md: answer }));
       const crisis = answer === CRISIS_ANSWER;
 
       if (mode === 'durable') {
@@ -100,10 +108,7 @@ describe('submit response carries the versioned crisis referral immediately', ()
 
       const [submission] = await db.select().from(assessment_submission);
       const attemptId = assessmentAttemptEventId(submission.submission_id);
-      const [attemptEvent] = await db
-        .select()
-        .from(event)
-        .where(eq(event.id, attemptId));
+      const [attemptEvent] = await db.select().from(event).where(eq(event.id, attemptId));
       expect(attemptEvent.payload).toMatchObject({
         derivation_policy: 'crisis',
         crisis_detection_class: 'explicit',
