@@ -2,18 +2,23 @@
 // function): body validation, the domain-status -> ApiError contract and the writer call.
 // Each door keeps only its own transport (body read, Response or JSON shaping).
 
+import { and, eq, sql } from 'drizzle-orm';
 import type { ZodType } from 'zod';
 import type { Db } from '@/db/client';
+import { event } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import {
   type IssueAssessmentRequest,
   type IssueAssessmentResult,
   issueAssessment,
 } from '@/kernel/records/assessment-issuance';
+import { STUDY_ASSISTANCE_ACTION } from '@/kernel/records/study-reference';
 import {
   IssueAssessmentBodySchema,
   SaveResponseDraftBodySchema,
 } from '../../../api/assessment-contracts';
+import { recordAssistanceExposure } from './assistance';
+import { bindChatCardIssuance } from './chat-card-source';
 import { type SaveResponseDraftResult, saveResponseDraft } from './submit';
 
 /** A missing or malformed body reaches the schema as null, so both doors report the same 400. */
@@ -34,18 +39,43 @@ export async function parseAssessmentBody<T>(
 /** POST /api/issuances: the writer owns locking, frozen bindings, claims and replay. */
 export async function requestAssessmentIssuance(db: Db, readBody: () => Promise<unknown>) {
   const body = await parseAssessmentBody(readBody, IssueAssessmentBodySchema);
-  const out = await issueAssessment(db, {
-    issuance_id: body.issuance_id,
-    group_id: body.group_id,
-    revision_id: body.revision_id,
-    part_ids: body.part_ids,
-    option_order_overrides: body.option_order_overrides,
-    mode: body.mode,
-    container_occurrence_ref: body.container_occurrence_ref ?? null,
-    claim: body.claim,
-    actorRef: 'api:issue',
+  return db.transaction(async (tx) => {
+    const context = await bindChatCardIssuance(tx, body);
+    const out = await issueAssessment(tx, {
+      issuance_id: context?.issuanceId ?? body.issuance_id,
+      group_id: body.group_id,
+      revision_id: body.revision_id,
+      part_ids: body.part_ids,
+      option_order_overrides: body.option_order_overrides,
+      mode: body.mode,
+      container_occurrence_ref: context?.container ?? body.container_occurrence_ref ?? null,
+      claim: body.claim,
+      actorRef: 'api:issue',
+    });
+    if (context && (out.status === 'issued' || out.status === 'replayed')) {
+      const [existing] = await tx
+        .select({ id: event.id })
+        .from(event)
+        .where(
+          and(
+            eq(event.action, STUDY_ASSISTANCE_ACTION),
+            eq(event.subject_kind, 'issuance'),
+            eq(event.subject_id, out.issuance.issuance_id),
+            sql`${event.payload}->>'content_digest' = ${context.digest}`,
+          ),
+        )
+        .limit(1);
+      if (!existing)
+        await recordAssistanceExposure(tx, {
+          issuanceId: out.issuance.issuance_id,
+          questionId: context.questionId,
+          kind: 'chat_context',
+          impact: 'unknown',
+          contentDigest: context.digest,
+        });
+    }
+    return projectIssuanceResult(body, out);
   });
-  return projectIssuanceResult(body, out);
 }
 
 /**

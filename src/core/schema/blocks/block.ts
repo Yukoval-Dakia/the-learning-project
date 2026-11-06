@@ -170,10 +170,7 @@ export const QuestionRefBlock = z
   .object({
     ...Common,
     kind: z.literal('question_ref'),
-    question_ids: z
-      .array(z.string().regex(/^[A-Za-z0-9_-]{1,128}$/))
-      .min(1)
-      .max(5),
+    question_ids: z.array(z.string().min(1).max(256)).min(1).max(5),
     display: z.enum(['link', 'inline']).default('link'),
     label: z.string().max(30),
   })

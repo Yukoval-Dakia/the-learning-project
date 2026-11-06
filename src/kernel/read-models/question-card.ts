@@ -1,5 +1,10 @@
 import { createHash } from 'node:crypto';
-import { and, desc, eq, ne, sql } from 'drizzle-orm';
+import { and, desc, eq, getTableColumns, ne, sql } from 'drizzle-orm';
+import {
+  PublishedQuestionRevision,
+  hasOnlyDeterministicExecutors,
+  projectIssuedScoringBasis,
+} from '@/core/schema/assessment';
 import { ResponseSpec } from '@/core/schema/assessment/response';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import type { Db } from '@/db/client';
@@ -7,6 +12,8 @@ import { notHoldoutOnlyPredicate } from '@/db/predicates';
 import {
   assessment_issuance,
   assessment_submission,
+  evaluation,
+  event,
   question,
   question_group_lifecycle,
   question_revision,
@@ -14,6 +21,7 @@ import {
 import { declaredAdmissionOwned } from '@/kernel/read-models/question-admission-ownership';
 import { UNKNOWN_SERVING, readQuestionServing } from '@/kernel/read-models/question-serving';
 import { resolveQuestionRenderNotation } from '@/kernel/read-models/subject-resolution';
+import { revisionRowToContract } from '@/kernel/records/assessment-issuance';
 
 /** A learner-safe reference read; answering still requires the issuance gate. */
 export async function readQuestionCard(db: Db, id: string) {
@@ -49,11 +57,7 @@ export async function readQuestionCard(db: Db, id: string) {
     return { question_id: id, state: 'unavailable' as const, question: null, serving: null };
   const groupId = row.parent_question_id ?? row.id;
   const [revision] = await db
-    .select({
-      response_spec: question_revision.response_spec,
-      structure: question_revision.structure,
-      revision_id: question_revision.revision_id,
-    })
+    .select(getTableColumns(question_revision))
     .from(question_group_lifecycle)
     .innerJoin(
       question_revision,
@@ -62,11 +66,28 @@ export async function readQuestionCard(db: Db, id: string) {
     .where(eq(question_group_lifecycle.group_id, groupId))
     .limit(1);
   const parts = (revision?.structure as { parts?: { part_id: string }[] } | undefined)?.parts ?? [];
-  const inlineSupported = row.parent_question_id != null || parts.length === 1;
+  const singlePart = row.parent_question_id != null || parts.length === 1;
   const partIds = row.parent_question_id ? [row.id] : parts.map((part) => part.part_id);
+  const parsedRevision = revision
+    ? PublishedQuestionRevision.safeParse(revisionRowToContract(revision))
+    : null;
+  const inlineSupported =
+    singlePart &&
+    parsedRevision?.success === true &&
+    partIds.every((id) =>
+      parsedRevision.data.structure.parts.some((part) => part.part_id === id),
+    ) &&
+    hasOnlyDeterministicExecutors(
+      parsedRevision.data.execution_plan,
+      new Set(
+        projectIssuedScoringBasis(parsedRevision.data, partIds).units.map(
+          (unit) => unit.scoring_unit_id,
+        ),
+      ),
+    );
   const spec = ResponseSpec.safeParse(revision?.response_spec);
   const displaySlots =
-    inlineSupported && spec.success && revision != null
+    singlePart && spec.success && revision != null
       ? spec.data.slots
           .filter((slot) => partIds.includes(slot.part_id))
           .map((slot) => {
@@ -110,6 +131,8 @@ export async function readQuestionCard(db: Db, id: string) {
       revision_id: assessment_issuance.revision_id,
       part_ids: assessment_issuance.part_ids,
       submitted_at: assessment_submission.submitted_at,
+      confirmed: sql<boolean>`exists(select 1 from ${event} where ${event.action} = 'experimental:assessment_attempt' and ${event.payload}->>'submission_id' = ${assessment_submission.submission_id})`,
+      graded: sql<boolean>`exists(select 1 from ${evaluation} where ${evaluation.submission_id} = ${assessment_submission.submission_id} and ${evaluation.status} = 'completed')`,
     })
     .from(assessment_issuance)
     .innerJoin(
@@ -163,7 +186,13 @@ export async function readQuestionCard(db: Db, id: string) {
           issuance_id: latest.issuance_id,
           revision_id: latest.revision_id,
           part_ids: latest.part_ids,
-          status: latest.submitted_at ? ('submitted' as const) : ('issued' as const),
+          status: latest.confirmed
+            ? ('submitted' as const)
+            : latest.graded
+              ? ('graded_unconfirmed' as const)
+              : latest.submitted_at
+                ? ('answer_saved' as const)
+                : ('issued' as const),
         }
       : null,
   };

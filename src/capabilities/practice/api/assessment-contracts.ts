@@ -15,6 +15,13 @@ import { GradingProvenanceEntry } from '@/kernel/capability-contract-schemas';
 // ---------- 发题（issueAssessment） ----------
 
 export const IssueAssessmentBodySchema = z.object({
+  chat_card: z
+    .object({
+      session_id: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
+      block_ref: z.string().regex(/^blk_[0-9a-f]{32}$/),
+    })
+    .strict()
+    .optional(),
   /** 客户端可选幂等锚；缺省服务端生成。 */
   issuance_id: z.string().min(1).optional(),
   /** 组根 question id。 */
@@ -90,6 +97,13 @@ export const ResponseDraftSchema = z.object({
 
 export const CreateSubmissionBodySchema = z.object({
   issuance_id: z.string().min(1),
+  chat_card: z
+    .object({
+      session_id: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
+      block_ref: z.string().regex(/^blk_[0-9a-f]{32}$/),
+    })
+    .strict()
+    .optional(),
   /** 客户端可选幂等锚；缺省服务端生成。 */
   submission_id: z.string().min(1).optional(),
   evaluation_group_id: z.string().min(1),

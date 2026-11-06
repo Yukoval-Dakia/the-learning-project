@@ -411,7 +411,7 @@ export const QuestionCardResponseSchema = z.object({
       issuance_id: z.string(),
       revision_id: z.string(),
       part_ids: z.array(z.string()),
-      status: z.enum(['issued', 'submitted']),
+      status: z.enum(['issued', 'answer_saved', 'graded_unconfirmed', 'submitted']),
     })
     .nullable()
     .optional(),
