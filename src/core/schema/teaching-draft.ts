@@ -70,7 +70,7 @@ export const TeachingMatching = z
 export const TeachingOrdering = z
   .object({
     form: z.literal('ordering'),
-    /** 按【正确顺序】给出的对象；作答时由界面打乱。 */
+    /** 正确顺序；转换时仅打乱显示轴，答案继续绑定原 id。 */
     objects_in_order: z.array(z.string().min(1).max(OPTION_MAX)).min(2).max(8),
   })
   .strict();
@@ -141,6 +141,15 @@ const FULL_CREDIT_BLANK_RULE = (points: number): ScoringRuleT => ({
 });
 
 type DraftUnit = QuestionDraftDocumentT['parts'][number]['units'][number];
+
+function displayOrder<T extends { id: string; label_md: string }>(entries: readonly T[]): T[] {
+  let seed = 2166136261;
+  for (const char of JSON.stringify(entries)) {
+    seed = Math.imul(seed ^ char.charCodeAt(0), 16777619) >>> 0;
+  }
+  const shift = 1 + (seed % (entries.length - 1));
+  return [...entries.slice(shift), ...entries.slice(0, shift)];
+}
 
 function choiceUnits(
   options: readonly string[],
@@ -233,6 +242,11 @@ function matchingUnit(form: z.infer<typeof TeachingMatching>): DraftUnit {
     left: left.map((label_md, i) => ({ id: `l${i + 1}`, label_md })),
     right: right.map((label_md, i) => ({ id: `r${i + 1}`, label_md })),
   };
+  let displayedRight = displayOrder(axes.right);
+  // A producer may already permute the right column; never rotate it back onto the key.
+  if (pairs.every(([li, ri]) => displayedRight[li]?.id === axes.right[ri].id)) {
+    displayedRight = [...displayedRight.slice(1), displayedRight[0]];
+  }
   // 作答宇宙 = 全部 left×right 关系项；correct pairs 即 key。
   const items = axes.left.flatMap((l) =>
     axes.right.map((r) => ({
@@ -247,7 +261,7 @@ function matchingUnit(form: z.infer<typeof TeachingMatching>): DraftUnit {
     response_spec: {
       kind: 'select',
       items,
-      axes,
+      axes: { ...axes, right: displayedRight },
       pick: 'many',
     },
     points: 1,
@@ -282,7 +296,7 @@ function orderingUnit(form: z.infer<typeof TeachingOrdering>): DraftUnit {
     response_spec: {
       kind: 'select',
       items,
-      axes: { position: positions, object: objectAxis },
+      axes: { position: positions, object: displayOrder(objectAxis) },
       at_most_per_coordinate: { position: 1, object: 1 },
       pick: 'many',
     },

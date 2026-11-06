@@ -24,6 +24,7 @@ export interface ActiveRun {
   view: CopilotRunView;
   controller?: AbortController;
   connectionError?: string;
+  connectionLost?: boolean;
   stopPending: boolean;
   cancelRequested: boolean;
 }

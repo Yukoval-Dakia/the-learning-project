@@ -25,7 +25,10 @@ import { getActiveLearningRecord } from '@/kernel/records/queries';
 import { type DomainTool, OpaqueJsonInput, type ToolContext } from '@/kernel/tools/types';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
-import { resolveTeachingDraftPlacement } from '../server/teaching-draft-placement';
+import {
+  hasTeachingDraftConversation,
+  resolveTeachingDraftPlacement,
+} from '../server/teaching-draft-placement';
 
 const TEXT_EXCERPT_MAX = 180;
 
@@ -119,6 +122,7 @@ const AuthorQuestionOutputSchema = z.object({
     // knowledge|material seed (ADR-0031 lane B): every seed knowledge id is
     // unknown / archived.
     'skipped:knowledge_not_found',
+    'skipped:invalid_payload',
     // variant passthrough (verbatim from RunVariantGenResult, names remapped to
     // match the propose_variant tool's external vocabulary)
     'skipped:attempt_not_found',
@@ -151,7 +155,7 @@ const AuthorQuestionOutputSchema = z.object({
   placement_note: z.string().optional(),
   problem: z
     .object({
-      code: z.enum(['subject_root_missing', 'learner_topic_required']),
+      code: z.enum(['subject_root_missing', 'learner_topic_required', 'conversation_required']),
       detail: z.string(),
     })
     .optional(),
@@ -201,15 +205,24 @@ function toAuthorQuestionSeed(input: AuthorQuestionInput): AuthorQuestionSeed {
         ...(input.draft !== undefined ? { draft: input.draft } : {}),
         ...(input.suggestion_kind ? { suggestion_kind: input.suggestion_kind } : {}),
       };
-    case 'teaching_draft':
+    case 'teaching_draft': {
+      let draft = input.draft;
+      if (typeof draft === 'string') {
+        try {
+          draft = JSON.parse(draft);
+        } catch {
+          draft = undefined;
+        }
+      }
       return {
         seed_mode: 'teaching_draft',
         knowledge_ids: input.knowledge_ids ?? [],
         subject_id: input.subject_id,
         learner_topic: input.learner_topic,
-        draft: TeachingDraft.parse(input.draft),
+        draft: TeachingDraft.parse(draft),
         difficulty: input.difficulty,
       };
+    }
   }
 }
 
@@ -359,6 +372,19 @@ export async function authorQuestion(
           problem: placement.issue,
           reasoning_summary: placement.issue.detail,
         };
+      if (!(await hasTeachingDraftConversation(deps.db, deps.sessionId)))
+        return {
+          status: 'failed',
+          seed_mode: seed.seed_mode,
+          proposal_ids: [],
+          mistake_variant_ids: [],
+          variant_question_ids: [],
+          problem: {
+            code: 'conversation_required',
+            detail: '没有找到这次对话的来源，这次没有存题。可以在对话里继续讲题，但不会进入题库。',
+          },
+          reasoning_summary: '没有找到这次对话的来源，这次没有存题。',
+        };
       const result = await submitCopilotAuthoredDraft(
         teachingDraftToDocument(draft, {
           knowledge_ids: placement.knowledge_ids,
@@ -432,7 +458,7 @@ async function authorQuestionExecute(
     });
   } catch (err) {
     return {
-      status: 'failed',
+      status: err instanceof z.ZodError ? 'skipped:invalid_payload' : 'failed',
       seed_mode: input.seed_mode,
       proposal_ids: [],
       mistake_variant_ids: [],

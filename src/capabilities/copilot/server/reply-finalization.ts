@@ -187,7 +187,7 @@ export function piToolErrorText(error: unknown): string {
   }
 }
 
-function proposalDisclosure(trace: readonly TraceEntry[]): string | undefined {
+function proposalDisclosure(trace: readonly TraceEntry[], reply: string): string | undefined {
   const bankLinks = [
     ...new Set(
       trace.flatMap((entry) => {
@@ -196,10 +196,13 @@ function proposalDisclosure(trace: readonly TraceEntry[]): string | undefined {
         if (
           out?.seed_mode === 'teaching_draft' &&
           out.status === 'failed' &&
-          problem?.code === 'subject_root_missing' &&
+          (problem?.code === 'subject_root_missing' || problem?.code === 'conversation_required') &&
           typeof problem.detail === 'string'
         ) {
-          return [problem.detail];
+          const explained =
+            /(?:学科|对话).{0,24}(?:没有|还没|尚未)/u.test(reply) &&
+            /(?:没.{0,8}存|不会.{0,8}(?:题库|入库)|无法.{0,8}题库)/u.test(reply);
+          return explained || reply.includes(problem.detail) ? [] : [problem.detail];
         }
         if (
           entry.status !== 'succeeded' ||
@@ -417,7 +420,7 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
       if (correction.reply.trim().length === 0) {
         return publishUnsealed('', 'missing_terminal', context);
       }
-      const disclosure = proposalDisclosure(trace);
+      const disclosure = proposalDisclosure(trace, correction.reply);
       const { text: composed, blocksReceipt } = prepareReplyText(correction.reply);
       const disclosed = applyProposalDisclosure(composed, disclosure);
       const fixed = truncateCopilotReply(disclosed, COPILOT_REPLY_CHAR_LIMIT, context.retainedTail);
@@ -545,7 +548,6 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
     reason: NonNullable<CopilotReplyFinalizationReceipt['unsealed_reason']>,
     context: { streamedText?: string; retainedTail?: string },
   ): CopilotReplyFinalizationResult {
-    const disclosure = proposalDisclosure(trace);
     const candidateBody = stripCopilotInternalComments(candidate);
     const streamedBody = stripCopilotInternalComments(context.streamedText ?? '');
     const body = candidateBody.trim()
@@ -553,6 +555,7 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
       : streamedBody.trim()
         ? streamedBody
         : FINALIZATION_FAILURE_REPLY;
+    const disclosure = proposalDisclosure(trace, body);
     const prepared = prepareReplyText(body);
     const replyText = truncateCopilotReply(
       applyProposalDisclosure(prepared.text, disclosure),

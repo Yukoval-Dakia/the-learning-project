@@ -1,6 +1,6 @@
 import { and, eq, isNull } from 'drizzle-orm';
 import type { Db } from '@/db/client';
-import { event, knowledge, subject } from '@/db/schema';
+import { event, knowledge, learning_session, subject } from '@/db/schema';
 
 interface PlacementInput {
   knowledge_ids: string[];
@@ -26,31 +26,7 @@ export async function resolveTeachingDraftPlacement(
   const rootOnly =
     input.knowledge_ids.length > 0 && input.knowledge_ids.every((id) => ROOT.test(id));
   const fallback = input.knowledge_ids.length === 0 || rootOnly;
-  if (fallback || input.learner_topic !== undefined) {
-    const [ask] = origin.causedByEventId
-      ? await db.select().from(event).where(eq(event.id, origin.causedByEventId)).limit(1)
-      : [];
-    const message = ask?.payload.user_message;
-    if (
-      !input.learner_topic ||
-      !origin.sessionId ||
-      ask?.session_id !== origin.sessionId ||
-      ask.actor_kind !== 'user' ||
-      ask.action !== 'experimental:copilot_user_ask' ||
-      typeof message !== 'string' ||
-      !message.includes(input.learner_topic)
-    ) {
-      return {
-        ok: false,
-        issue: {
-          code: 'learner_topic_required',
-          detail: '没有取得本轮请求中的主题原话，这次没有存题。',
-        },
-      };
-    }
-  }
-  if (!fallback)
-    return { ok: true, knowledge_ids: input.knowledge_ids, learner_topic: input.learner_topic };
+  if (!fallback) return { ok: true, knowledge_ids: input.knowledge_ids };
   const ids = new Set(input.knowledge_ids.map((id) => ROOT.exec(id)?.[1]));
   const subjectId = input.subject_id ?? (ids.size === 1 ? [...ids][0] : undefined);
   const [row] = subjectId
@@ -91,10 +67,44 @@ export async function resolveTeachingDraftPlacement(
       },
     };
   }
+  {
+    const [ask] = origin.causedByEventId
+      ? await db.select().from(event).where(eq(event.id, origin.causedByEventId)).limit(1)
+      : [];
+    const message = ask?.payload.user_message;
+    if (
+      !input.learner_topic ||
+      !origin.sessionId ||
+      ask?.session_id !== origin.sessionId ||
+      ask.actor_kind !== 'user' ||
+      ask.action !== 'experimental:copilot_user_ask' ||
+      typeof message !== 'string' ||
+      !message.includes(input.learner_topic)
+    ) {
+      return {
+        ok: false,
+        issue: {
+          code: 'learner_topic_required',
+          detail: '没有取得本轮请求中的主题原话，这次没有存题。',
+        },
+      };
+    }
+  }
   return {
     ok: true,
     knowledge_ids: [root.id],
     learner_topic: input.learner_topic,
     placement_note: `请求的主题还没有合适的知识节点，这道题先放在「${row.name}」下。`,
   };
+}
+
+/** Draft admission requires a real conversation, not an unbound publisher identity. */
+export async function hasTeachingDraftConversation(db: Db, sessionId?: string): Promise<boolean> {
+  if (!sessionId) return false;
+  const [session] = await db
+    .select({ id: learning_session.id })
+    .from(learning_session)
+    .where(and(eq(learning_session.id, sessionId), eq(learning_session.type, 'conversation')))
+    .limit(1);
+  return session !== undefined;
 }

@@ -47,6 +47,7 @@ import type {
   PublishQuestionGroupInput,
   WithheldReason,
 } from '@/kernel/records/assessment-publication';
+import { structuredSelectIdentity } from '@/kernel/records/question-draft-contract';
 import { canonicalQuestionContentHash } from '../quiz/content-fingerprint';
 import type { AdmissionResultReceipt, FrozenAdmissionInput } from './receipt';
 
@@ -522,6 +523,9 @@ export function projectAdmittedQuestionRow(contract: {
       promptMd,
       referenceMd,
       choicesMd,
+      selectStructure: structuredSelectIdentity(
+        contract.response_spec.slots.flatMap((slot) => (slot.kind === 'select' ? [slot] : [])),
+      ),
       ...(composite ? { composite: true } : {}),
     }),
     draft_status: LEGACY_DRAFT_STATUS.ACTIVE,

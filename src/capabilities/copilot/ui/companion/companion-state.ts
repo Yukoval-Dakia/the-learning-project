@@ -19,6 +19,8 @@ export type ProgressStage = 'dispatch' | 'generation' | 'evidence-review';
 export interface PendingTurn extends PersistedPendingCopilotTurn {
   dispatching: boolean;
   error?: string;
+  /** Not known to have arrived: a later good read may replay it. A definite refusal is not. */
+  doubtful?: boolean;
 }
 
 /** Render view of one accepted server-owned run (the live handles stay in the controller). */
@@ -32,6 +34,8 @@ export interface RunSnapshot {
   stopPending: boolean;
   cancelRequested: boolean;
   connectionError?: string;
+  /** The progress stream dropped; the next good read attaches it again by itself. */
+  connectionLost?: boolean;
 }
 
 export interface CorrectionTarget {

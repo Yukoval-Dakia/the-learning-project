@@ -801,6 +801,9 @@ export async function advanceStreamItem(
     .where(eq(practice_stream_item.id, id))
     .limit(1);
   if (!row) return null;
+  // Already there: a second tab, a page behind the server, or a lost receipt asks again. The answer
+  // is the row as it stands, with no second transition and none of its side effects.
+  if (row.status === next) return row;
   if (!LEGAL_TRANSITIONS[row.status].includes(next)) {
     throw new ApiError('conflict', `illegal stream transition ${row.status} -> ${next}`, 409);
   }

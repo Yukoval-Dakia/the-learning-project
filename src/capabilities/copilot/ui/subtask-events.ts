@@ -72,7 +72,7 @@ export interface CopilotRunJobFrame {
 }
 
 /** What the model is doing right now, from run frames only: nothing sent yet, reasoning, writing. */
-export type CopilotModelStage = 'waiting' | 'thinking' | 'writing';
+export type CopilotModelStage = 'waiting' | 'thinking' | 'writing' | 'busy';
 
 export type CopilotRunPhase = 'queued' | 'running' | 'cancel_requested' | 'completed' | 'failed';
 
@@ -414,6 +414,10 @@ export function foldCopilotRunFrames(
         phase = 'running';
         if (item.payload.step_kind === 'model_thinking') {
           modelStage = 'thinking';
+          break;
+        }
+        if (item.payload.step_kind === 'provider_retry') {
+          modelStage = 'busy';
           break;
         }
         // Any other step: once it ends, the next thing to come is the model's next response.

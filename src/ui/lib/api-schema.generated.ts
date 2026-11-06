@@ -34442,6 +34442,7 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
+                        admission_owned: boolean;
                         backlinks: {
                             artifact_id: string;
                             created_at_sec: number;
@@ -37189,6 +37190,7 @@ export interface operations {
                                 /** @enum {string} */
                                 status: "pending" | "admitted" | "failed" | "undecided";
                             } | null;
+                            admission_owned: boolean;
                             /** Format: date-time */
                             created_at: string;
                             difficulty: number;
@@ -37217,6 +37219,7 @@ export interface operations {
                                 /** @enum {string} */
                                 status: "pending" | "admitted" | "failed" | "undecided";
                             } | null;
+                            admission_owned: boolean;
                             /** Format: date-time */
                             created_at: string;
                             difficulty: number;
@@ -37360,6 +37363,7 @@ export interface operations {
                             /** @enum {string} */
                             status: "pending" | "admitted" | "failed" | "undecided";
                         } | null;
+                        admission_owned: boolean;
                         answer: string | null;
                         /** Format: date-time */
                         created_at: string;
