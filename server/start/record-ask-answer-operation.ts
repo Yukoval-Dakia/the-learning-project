@@ -3,13 +3,16 @@ import {
   HTTP_PROVIDER_SESSION_BUDGET_MS,
   runWithHttpProviderSessionDeadline,
 } from '@/server/http/provider-session-deadline';
-import type { FrontdoorContext } from './context';
-
-export const answerStartRecordAsk: FrontdoorContext['answerRecordAsk'] = ({
+export const answerStartRecordAsk = ({
   sessionId,
   askId,
   body,
   key,
+}: {
+  sessionId: string;
+  askId: string;
+  body: string;
+  key: string | null;
 }) =>
   runWithHttpProviderSessionDeadline(Date.now() + HTTP_PROVIDER_SESSION_BUDGET_MS, async () => {
     try {

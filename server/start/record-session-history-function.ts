@@ -5,7 +5,8 @@ import { runAuthenticatedStartWorkbench } from './workbench-read';
 export const getStartRecordSessionHistoryFunction = createServerFn({ method: 'GET' })
   .validator((id: string) => id)
   .handler(({ context, data }) =>
-    runAuthenticatedStartWorkbench(context, getRequest(), async () =>
-      JSON.stringify(await context.readRecordSessionHistory(data)),
-    ),
+    runAuthenticatedStartWorkbench(context, getRequest(), async () => {
+      const { readStartRecordSessionHistory } = await context.adapters.records();
+      return JSON.stringify(await readStartRecordSessionHistory(data));
+    }),
   );

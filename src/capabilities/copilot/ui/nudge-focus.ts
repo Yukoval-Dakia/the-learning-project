@@ -12,16 +12,20 @@ export interface AmbientFocus {
 }
 
 /**
- * Ambient focus for a turn: an active skill entity wins; else the nudge's ingestion session (if a
- * 「看看」click seeded one); else none.
+ * Ambient focus for a turn: an active skill entity wins; then a page question
+ * (an unsubmitted-question context must not be hidden by a nudge); then the
+ * nudge's ingestion session (if a 「看看」click seeded one); then any other page
+ * focus.
  */
 export function resolveTurnAmbientFocus(
   skillFocus: AmbientFocus | undefined,
   nudgeSessionId: string | null,
+  pageFocus?: AmbientFocus,
 ): AmbientFocus | undefined {
   if (skillFocus) return skillFocus;
+  if (pageFocus?.kind === 'question') return pageFocus;
   if (nudgeSessionId) return { kind: 'learning_session', id: nudgeSessionId };
-  return undefined;
+  return pageFocus;
 }
 
 /**

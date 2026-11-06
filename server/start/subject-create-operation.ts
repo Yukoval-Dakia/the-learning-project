@@ -1,8 +1,7 @@
 import { errorResponse } from '@/kernel/http';
-import type { FrontdoorContext } from './context';
 
 // Stay in the initialized host graph: the canonical writer commits and hydrates its registry.
-export const createStartSubject: FrontdoorContext['createSubject'] = async (displayName) => {
+export const createStartSubject = async (displayName: string) => {
   try {
     if (typeof displayName !== 'string') {
       throw Response.json({ error: 'displayName (string) is required' }, { status: 400 });

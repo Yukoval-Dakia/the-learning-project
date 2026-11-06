@@ -7,7 +7,8 @@ export const answerStartRecordAskFunction = createServerFn({ method: 'POST' })
   .handler(({ context, data }) => {
     const request = getRequest();
     return runAuthenticatedStartWorkbench(context, request, async () => {
-      const result = await context.answerRecordAsk({
+      const { answerStartRecordAsk } = await context.adapters.records();
+      const result = await answerStartRecordAsk({
         ...data,
         key: request.headers.get('Idempotency-Key'),
       });

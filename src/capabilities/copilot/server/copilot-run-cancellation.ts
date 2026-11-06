@@ -54,6 +54,8 @@ export interface PersistCopilotRunCancellationArgs {
   sessionId: string;
   actorRef: string;
   partialText?: string;
+  /** YUK-1909 — streamed draft the page already showed; a stop reply may replace it. */
+  streamedDraft?: string;
   toolSummaries?: readonly string[];
   /** Actual provider run when stream collection reached a terminal result. */
   taskRunId?: string;
@@ -97,6 +99,7 @@ export async function persistCopilotRunCancellationMarker(
     userAskEventId: args.runId,
     replyText,
     ...(args.preparedReply ? { preparedReply: args.preparedReply } : {}),
+    ...(args.streamedDraft !== undefined ? { streamedDraft: args.streamedDraft } : {}),
     actorRef: args.actorRef,
     taskRunId,
     ...(args.replyFinalization ? { replyFinalization: args.replyFinalization } : {}),
