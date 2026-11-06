@@ -10,46 +10,44 @@
 
 import { createHash } from 'node:crypto';
 import type { ContentBlock } from '@anthropic-ai/sdk/resources/messages';
+import { createId } from '@paralleldrive/cuid2';
 import { AgentRunError, RETRY_ELAPSED_CAP_MS } from '@/ai/agent-run-error';
 import {
   helpFinishReason,
   helpProviderFaultFromSdkResult,
   renderHelpExitMarkdown,
 } from '@/ai/help-provider-fault';
-import type { PiToolMount } from '@/ai/pi-tool-mount';
 import { type ProviderFailureInfo, classifyProviderFailure } from '@/ai/provider-failure';
 import { installTaskOperationObserver } from '@/ai/task-observation';
 import type { RunTaskResult } from '@/ai/task-result';
 import type { TaskBudget, TaskDefinition } from '@/ai/task-spec';
 import {
-  type TaskBudgetOverride,
   type TaskKind,
   getLearnerLocale,
   getTaskSystemPrompt,
   resolveTaskBudget,
   tasks,
 } from '@/capabilities/task-registry';
-import { type PiSubagentSpec, isSpawnToolName } from '@/core/subagent-contract';
-import type { PiHookBridge } from '@/core/tool-call-contract';
-import type { Db } from '@/db/client';
-import type { R2Client } from '@/kernel/object-storage';
-import type { SubjectProfile } from '@/subjects/profile';
+import { isSpawnToolName } from '@/core/subagent-contract';
 import { resolveProviderSessionDeadlineAt } from '../http/provider-session-deadline';
 import { bindAgentRunError, isApiErrorSuccessResult } from './agent-run-error';
 import { failureSpendChargeUsd } from './attempt-cost';
 import {
   type ModelBinding,
-  type PiQueueSources,
-  type PiReplayTurn,
   type PreparedExecutionQuery,
   type RunnerMessage,
   resolveExecutionAdapter,
 } from './execution-adapter';
-import { type TraceContent, traceMetadata, traceOperation } from './laminar-tracing';
+import { traceMetadata, traceOperation } from './laminar-tracing';
 import { taskMayExportTranscript } from './laminar-transcript';
 import { logMissingToolMountsWarning } from './log';
 import { PROVIDER_HTTP_TIMEOUT_MARGIN_MS, providerHttpTimeoutMs } from './provider-http-timeout';
 import { PROVIDER_SESSION_SDK_STARTUP_TIMEOUT_MS } from './provider-session-admission-policy';
+import {
+  planProviderTransientRetry,
+  providerTransientRetryPolicy,
+  sleepMs,
+} from './provider-transient-retry';
 import type { ProviderTransportCollector } from './provider-transport';
 import type { ResolvedProvider } from './providers';
 import {
@@ -60,16 +58,7 @@ import {
   maxLifecycleAttempts,
 } from './run-lifecycle';
 import { createSdkTerminalEvidenceCollector } from './sdk-terminal';
-import type {
-  Options,
-  SDKAssistantMessage,
-  SDKMessage,
-  SDKTaskNotificationMessage,
-  SDKTaskProgressMessage,
-  SDKTaskStartedMessage,
-  SDKTaskUpdatedMessage,
-  SDKUserMessage,
-} from './sdk-types';
+import type { Options, SDKAssistantMessage, SDKMessage, SDKUserMessage } from './sdk-types';
 import { currentTaskSpendScope, withinTaskSpendFrame } from './task-spend-scope';
 import { addStreamText, emptyStreamTextStats } from './timeout-usage';
 
@@ -97,183 +86,22 @@ installTaskOperationObserver((observation, execute) =>
 
 export type { RunTaskResult } from '@/ai/task-result';
 
-export interface CompiledModelPrompt {
-  text: string;
-  codecVersion: string;
-  mode: 'cold' | 'resume';
-  contextDigest: string;
-}
+export type {
+  BeforeProviderQuery,
+  CompiledModelPrompt,
+  ProviderQueryStartContext,
+  RunTaskCtx,
+  TaskEventMessage,
+  TaskEventObserver,
+  TaskMiddleware,
+} from './runner-context';
 
-/**
- * Structural background-task lifecycle messages safe for product observers.
- * Assistant messages (including thinking/text blocks) are intentionally absent.
- */
-export type TaskEventMessage =
-  | SDKTaskStartedMessage
-  | SDKTaskProgressMessage
-  | SDKTaskUpdatedMessage
-  | SDKTaskNotificationMessage;
-
-export type TaskEventObserver = (event: TaskEventMessage) => Promise<void> | void;
-
-export type ProviderQueryStartContext = {
-  readonly taskRunId: string;
-  readonly provider: ResolvedProvider['provider'];
-  readonly model: string;
-};
-
-export type BeforeProviderQuery = (context: ProviderQueryStartContext) => Promise<void>;
-
-export interface TaskMiddleware {
-  /**
-   * Called once before the model invocation. Can return a transformed
-   * input (e.g. memory module prepends recall context).
-   */
-  beforeRun?: (kind: string, input: unknown, ctx: RunTaskCtx) => Promise<unknown> | unknown;
-  /**
-   * Called once with the resolved result. Side-effects only — observation
-   * logging, memory write. Errors caught + logged, never thrown back.
-   */
-  afterRun?: (kind: string, result: RunTaskResult, ctx: RunTaskCtx) => Promise<void> | void;
-}
-
-export interface RunTaskCtx {
-  judgeRetryPolicy?: Options['judgeRetryPolicy'];
-  db: Db;
-  /** Per-run capability-owned sanitized content; omitted runs export metadata only. */
-  laminarContent?: TraceContent<RunTaskResult>;
-  /**
-   * The caller has judged that this run's content holds no learner material. Only takes
-   * effect for tasks on the transcript whitelist.
-   */
-  laminarTranscript?: boolean;
-  /** Caller-owned cancellation propagated into the provider run lifecycle. */
-  signal?: AbortSignal;
-  /**
-   * Stable controller shared with an in-process MCP ToolContext; the runner
-   * aborts it on timeout/fencing/caller stop.
-   */
-  lifecycleAbortController?: AbortController;
-  /** Only vision/ingestion paths use this; runTask itself doesn't dereference. */
-  r2?: R2Client;
-  /** Override provider/model for testing or per-call routing escapes. */
-  override?: { provider?: ResolvedProvider['provider']; model?: string };
-  /**
-   * YUK-921 / YUK-1013 — per-run model binding. Resolved inside the
-   * `explicit > env > registry` order; `ctx.override` still wins per field. The
-   * only legal `adapter` value is 'pi'.
-   */
-  modelBinding?: ModelBinding;
-  /**
-   * YUK-576 — in-process transient-retry opt-in, default OFF. ONLY call paths
-   * with NO durable backstop may set it (today the two vision judges). Durable
-   * pg-boss handlers must NOT: queue redelivery is their single transient layer
-   * and stacking both multiplies worst-case paid calls. Even when set, retry
-   * requires unpinned routing, a whitelisted transient failure, budget room, and
-   * arrival within RETRY_ELAPSED_CAP_MS of the first attempt.
-   */
-  enableTransientRetry?: boolean;
-  /**
-   * Absolute wall-clock deadline for the whole provider session: admission,
-   * startup and execution share it. Hono requests inherit one automatically;
-   * durable workers omit it and keep the task's full budget.
-   */
-  providerSessionDeadlineAt?: number;
-  /** Memory-layer hook surface. */
-  middleware?: TaskMiddleware;
-  /**
-   * Override allowedTools. When omitted, runner uses `tasks[kind].allowedTools`
-   * from the registry — single source of truth for what each task can call.
-   * The adapter filters mounted AgentTools against these `mcp__<server>__<tool>`
-   * wire names.
-   */
-  allowedTools?: string[];
-  /** Subject context for prompts that are rendered from SubjectProfile. */
-  subjectProfile?: SubjectProfile;
-  /** Stable prompt language for this execution, including retries and provenance. */
-  learnerLocale?: 'zh-CN' | 'en';
-  /**
-   * ADR-0060 — bounded session context re-injected after a budget prune. Never
-   * contains raw summary/CoT; enabled only for the Copilot live-session lane.
-   */
-  nativeCompaction?: {
-    /** Context to reintroduce after compaction; never raw summary/CoT. */
-    sessionContext: string;
-  };
-  /** YUK-757 — structural task-lifecycle frames only; observer failures fail open. */
-  onTaskEvent?: TaskEventObserver;
-  /** YUK-457 — sanitized streaming tool_use observer; failures cannot abort paid work. */
-  onToolUse?: (call: {
-    toolName: string;
-    input: Record<string, unknown>;
-    toolUseId?: string;
-  }) => void;
-  /**
-   * YUK-1548 §5 — streamed tool-argument progress for progressive block
-   * display. Carries identity + byte count + a bounded prefix only.
-   */
-  onToolArgsDelta?: (delta: {
-    toolName: string;
-    toolUseId: string;
-    receivedBytes: number;
-    argsPrefix: string;
-  }) => void;
-  /**
-   * YUK-1765 — the model is sending reasoning. A signal only: the reasoning text never leaves
-   * the runner, so nothing can show or persist it.
-   */
-  onThinking?: () => void;
-  /**
-   * YUK-575 (N5/MF-A) — per-call budget override for durable copilot runs. The
-   * registry default must stay untouched (YUK-458: raising it only turned
-   * error_max_turns into an inline-request abort). Snapshotted before
-   * middleware/admission/startup; retries retain that snapshot. 'unbounded'
-   * removes the agentic-turn ceiling entirely.
-   */
-  budgetOverride?: TaskBudgetOverride;
-  /** Correlation id shared with an in-process MCP server; a retry gets a fresh id. */
-  taskRunId?: string;
-  /** Runs after durable attempt creation and immediately before the prepared query submits its prompt. */
-  beforeProviderQuery?: BeforeProviderQuery;
-  /**
-   * Active outer central attempt for a nested DomainTool run. Same-lane children
-   * borrow the parent's session slot so maxConcurrency=1 cannot deadlock; the DB
-   * validates the parent lease.
-   */
-  parentTaskRunId?: string;
-  /**
-   * Disable runner-owned tool logging. DomainTools, custom mounts and remote MCP
-   * write their own row (YUK-1557: one row per executed call).
-   */
-  autoLogToolCalls?: boolean;
-  /**
-   * YUK-936 (ADR-0054) — durable agent-session slot (historically the SDK
-   * session-file id; now the `pi:` cursor). `persist` keeps the cursor,
-   * `resume` replays `ctx.piSessionReplay`, `onSessionId` observes the minted id.
-   * Set explicitly by chat.ts; omitted ⇒ no resume, no subscription.
-   */
-  sdkSession?: {
-    persist: boolean;
-    resume?: string;
-    onSessionId?: (sessionId: string) => void | Promise<void>;
-  };
-  compiledModelPrompt?: CompiledModelPrompt;
-  /**
-   * YUK-921 P2 (YUK-1021) — THE tool mount surface. needsToolCall kinds must
-   * mount at least one visible tool; the adapter fails closed otherwise.
-   */
-  piToolMounts?: PiToolMount[];
-  /** YUK-1022 — ordered beforeToolCall gates + afterToolCall observers. */
-  piHooks?: PiHookBridge;
-  /** Replay turns seeded into `context.messages` when `sdkSession.resume` is set. */
-  piSessionReplay?: readonly PiReplayTurn[];
-  /** Resolved skill bodies appended to the pi system prompt. */
-  piSkillDocs?: readonly { name: string; body: string }[];
-  /** Depth-one nested-agent specs; mounts the `Task`/`Agent` AgentTool. */
-  piAgents?: Record<string, PiSubagentSpec>;
-  /** YUK-1022 — steering/follow-up sources for the root loop; no live caller yet. */
-  piQueues?: PiQueueSources;
-}
+import type {
+  BeforeProviderQuery,
+  CompiledModelPrompt,
+  RunTaskCtx,
+  TaskEventMessage,
+} from './runner-context';
 
 export function compiledPromptProvenance(prompt?: CompiledModelPrompt) {
   if (!prompt) return undefined;
@@ -569,6 +397,7 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
     args_prefix: string;
   }) => void;
   onThinking?: () => void;
+  onOutputObserved?: () => void;
   onSuccess?: (msg: SDKSuccessResultMessage) => Promise<void> | void;
   onApiError?: (msg: SDKSuccessResultMessage) => void;
   apiErrorMessages?: (msg: SDKSuccessResultMessage) => string[];
@@ -596,6 +425,16 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
 
   try {
     for await (const msg of args.query) {
+      if (
+        ((msg.type === 'text_delta' || msg.type === 'thinking_delta') && msg.text.length > 0) ||
+        (msg.type === 'assistant' &&
+          msg.message.content?.some((block) => block.type === 'tool_use')) ||
+        (msg.type === 'user' &&
+          Array.isArray(msg.message.content) &&
+          msg.message.content.some((block) => block.type === 'tool_result')) ||
+        (msg.type === 'system' && msg.subtype === 'tool_args_progress')
+      )
+        args.onOutputObserved?.();
       if (msg.type === 'text_delta' || msg.type === 'thinking_delta') {
         if (msg.text) {
           addStreamText(outputStats, msg.text);
@@ -1296,192 +1135,283 @@ async function streamTaskCollectingImpl(
           maxCost: Math.min(resolveTaskBudget(kind, ctx.budgetOverride).maxCost, scopedAllowance),
         }),
   });
-  const modelBinding = ctx.modelBinding;
-  const lifecycle = createRunLifecycle<StreamCollectResult>({
-    db: ctx.db,
-    kind,
-    timeoutMs: budget.timeout,
-    timeoutSource: budget.timeoutSource,
-    abortController: ctx.lifecycleAbortController,
-    override: ctx.override,
-    modelBinding,
-    parentTaskRunId: ctx.parentTaskRunId,
-    providerSessionDeadlineAt: resolveProviderSessionDeadlineAt(ctx.providerSessionDeadlineAt),
-    taskRunId: ctx.taskRunId,
-    signal: ctx.signal,
-    logScope: 'streamTaskCollecting',
-    compiledPromptProvenance: compiledPromptProvenance(ctx.compiledModelPrompt),
-    afterRun: ctx.middleware?.afterRun
-      ? (result) => ctx.middleware?.afterRun?.(kind, result, ctx)
-      : undefined,
-  });
-  let resultText = '';
-  let terminalText: string | undefined;
-  let providerFailureEvidence:
-    | { http_status?: number; retry_after_ms?: number; stream_error?: true }
-    | undefined;
+  const policy = providerTransientRetryPolicy();
+  const retryPolicy = {
+    ...policy,
+    maxRetries: Math.min(2, policy.maxRetries),
+    maxWaitMs: Math.min(15_000, policy.maxWaitMs),
+  };
+  const retryBudget = { retries: 0, waitedMs: 0 };
+  const deadlineAt = Math.min(
+    Date.now() + budget.timeout,
+    resolveProviderSessionDeadlineAt(ctx.providerSessionDeadlineAt) ?? Infinity,
+  );
+  let taskRunId = ctx.taskRunId;
+  const actualInput = ctx.middleware?.beforeRun
+    ? await ctx.middleware.beforeRun(kind, input, ctx)
+    : input;
+  for (;;) {
+    const modelBinding = ctx.modelBinding;
+    const lifecycle = createRunLifecycle<StreamCollectResult>({
+      db: ctx.db,
+      kind,
+      timeoutMs: budget.timeout,
+      timeoutSource: budget.timeoutSource,
+      abortController: ctx.lifecycleAbortController,
+      override: ctx.override,
+      modelBinding,
+      parentTaskRunId: ctx.parentTaskRunId,
+      providerSessionDeadlineAt:
+        kind === 'CopilotTask'
+          ? deadlineAt
+          : resolveProviderSessionDeadlineAt(ctx.providerSessionDeadlineAt),
+      taskRunId,
+      signal: ctx.signal,
+      logScope: 'streamTaskCollecting',
+      compiledPromptProvenance: compiledPromptProvenance(ctx.compiledModelPrompt),
+      afterRun: ctx.middleware?.afterRun
+        ? (result) => ctx.middleware?.afterRun?.(kind, result, ctx)
+        : undefined,
+    });
+    let outputObserved = false;
+    let resultText = '';
+    let terminalText: string | undefined;
+    let providerFailureEvidence:
+      | { http_status?: number; retry_after_ms?: number; stream_error?: true }
+      | undefined;
 
-  return lifecycle.withTracing(async () => {
-    let usagePromptText = '';
-    try {
-      const actualInput = ctx.middleware?.beforeRun
-        ? await ctx.middleware.beforeRun(kind, input, ctx)
-        : input;
-      const promptText = ctx.compiledModelPrompt?.text ?? promptFromInput(actualInput);
-      usagePromptText = typeof promptText === 'string' ? promptText : '';
-      const callOptions = buildQueryOptions(
-        kind,
-        ctx,
-        lifecycle.abortController,
-        lifecycle.resolved,
-        budget,
-        lifecycle.transportEvidence,
-      );
-      const consumePreparedQuery = async (q: AsyncIterable<RunnerMessage>) => {
-        await consumeProviderAttempt({
-          query: q,
+    const outcome = await lifecycle.withTracing(async () => {
+      let usagePromptText = '';
+      try {
+        const promptText = ctx.compiledModelPrompt?.text ?? promptFromInput(actualInput);
+        usagePromptText = typeof promptText === 'string' ? promptText : '';
+        const callOptions = buildQueryOptions(
           kind,
           ctx,
-          lifecycle,
-          notifySessionId: true,
-          shouldRecordToolCall: (block) =>
-            isSpawnToolName(block.name) && ctx.autoLogToolCalls !== false,
-          onTextDelta: (text) => {
-            onDelta(text);
-            resultText += text;
-          },
-          onAssistant: (msg) => {
-            if (
-              lifecycle.abortController.signal.aborted ||
-              msg.text_streamed ||
-              msg.parent_tool_use_id != null
-            )
-              return;
-            const text = extractAssistantText(msg);
-            if (text) {
+          lifecycle.abortController,
+          lifecycle.resolved,
+          budget,
+          lifecycle.transportEvidence,
+        );
+        if (kind === 'CopilotTask') callOptions.judgeRetryPolicy = 'none';
+        const consumePreparedQuery = async (q: AsyncIterable<RunnerMessage>) => {
+          await consumeProviderAttempt({
+            query: q,
+            kind,
+            ctx,
+            lifecycle,
+            notifySessionId: true,
+            shouldRecordToolCall: (block) =>
+              isSpawnToolName(block.name) && ctx.autoLogToolCalls !== false,
+            onOutputObserved: () => {
+              outputObserved = true;
+            },
+            onTextDelta: (text) => {
               onDelta(text);
               resultText += text;
-            }
-          },
-          onSuccess: (msg) => {
-            terminalText = msg.result;
-          },
-          onToolUse: ctx.onToolUse
-            ? (block) => {
-                ctx.onToolUse?.({
-                  toolName: block.name,
-                  input: (block.input ?? {}) as Record<string, unknown>,
-                  toolUseId: block.id,
-                });
+            },
+            onAssistant: (msg) => {
+              if (
+                lifecycle.abortController.signal.aborted ||
+                msg.text_streamed ||
+                msg.parent_tool_use_id != null
+              )
+                return;
+              const text = extractAssistantText(msg);
+              if (text) {
+                outputObserved = true;
+                onDelta(text);
+                resultText += text;
               }
-            : undefined,
-          onToolArgsDelta: ctx.onToolArgsDelta
-            ? (msg) => {
-                ctx.onToolArgsDelta?.({
-                  toolName: msg.tool_name,
-                  toolUseId: msg.tool_call_id,
-                  receivedBytes: msg.received_bytes,
-                  argsPrefix: msg.args_prefix,
-                });
-              }
-            : undefined,
-          onThinking: ctx.onThinking,
-          onApiError: (msg) => {
-            console.warn('[streamTaskCollecting] task_run_success_with_error_flag', {
-              event: 'task_run_success_with_error_flag',
-              task_run_id: lifecycle.taskRunId,
-              kind,
-              api_error_status: msg.api_error_status ?? null,
-            });
-          },
-          apiErrorMessages: (msg) => (msg.result ? [msg.result] : []),
-          onResultError: (msg) => {
-            if (msg.provider_failure !== undefined) providerFailureEvidence = msg.provider_failure;
-          },
-          abortedWithoutTerminalMessage: `[${kind}] Agent SDK run aborted with no terminal result`,
-        });
-      };
-      await withPreparedExecutionQuery(
-        lifecycle,
-        modelBinding,
-        actualInput,
-        promptText,
-        callOptions,
-        consumePreparedQuery,
-        ctx.beforeProviderQuery,
-        ctx,
-      );
-
-      const result: StreamCollectResult = {
-        task_run_id: lifecycle.taskRunId,
-        text: resultText,
-        ...(terminalText !== undefined ? { terminalText } : {}),
-        finishReason: lifecycle.finishReason,
-        usage: lifecycle.usage,
-        cost_usd: lifecycle.costUsd,
-        cost_basis: lifecycle.costBasis,
-        cost_ref: lifecycle.costRef,
-      };
-      await lifecycle.finishSuccess(result);
-      return result;
-    } catch (error) {
-      if (!lifecycle.started) throw error;
-      await lifecycle.recordEstimatedUsage({
-        promptText: usagePromptText,
-        output: emptyStreamTextStats(),
-        priceOrigin: 'failure-estimate',
-      });
-      const successSettlementFailed = error instanceof AttemptSettlementError;
-      const boundError = bindAgentRunError({
-        error,
-        kind,
-        taskRunId: lifecycle.taskRunId,
-        aborted: lifecycle.aborted,
-        costUsd: lifecycle.costUsd,
-      });
-      const helpFault = !lifecycle.aborted ? boundError.helpProviderFault : undefined;
-      if (helpFault) lifecycle.noteExecutableHelp('deterministic_step');
-      // An aborted/stopped run never claims a provider cause — our own armed
-      // timer or a caller cancel is not provider evidence.
-      const providerFailure = lifecycle.aborted
-        ? undefined
-        : classifyProviderFailure({
-            subtype: boundError.subtype,
-            apiErrorStatus: boundError.apiErrorStatus,
-            httpStatus: providerFailureEvidence?.http_status,
-            retryAfterMs: providerFailureEvidence?.retry_after_ms,
-            streamErrorTerminal: providerFailureEvidence?.stream_error === true,
-            transport: lifecycle.transportEvidence.snapshot(),
+            },
+            onSuccess: (msg) => {
+              terminalText = msg.result;
+            },
+            onToolUse: ctx.onToolUse
+              ? (block) => {
+                  ctx.onToolUse?.({
+                    toolName: block.name,
+                    input: (block.input ?? {}) as Record<string, unknown>,
+                    toolUseId: block.id,
+                  });
+                }
+              : undefined,
+            onToolArgsDelta: ctx.onToolArgsDelta
+              ? (msg) => {
+                  ctx.onToolArgsDelta?.({
+                    toolName: msg.tool_name,
+                    toolUseId: msg.tool_call_id,
+                    receivedBytes: msg.received_bytes,
+                    argsPrefix: msg.args_prefix,
+                  });
+                }
+              : undefined,
+            onThinking: ctx.onThinking,
+            onApiError: (msg) => {
+              console.warn('[streamTaskCollecting] task_run_success_with_error_flag', {
+                event: 'task_run_success_with_error_flag',
+                task_run_id: lifecycle.taskRunId,
+                kind,
+                api_error_status: msg.api_error_status ?? null,
+              });
+            },
+            apiErrorMessages: (msg) => (msg.result ? [msg.result] : []),
+            onResultError: (msg) => {
+              if (msg.provider_failure !== undefined)
+                providerFailureEvidence = msg.provider_failure;
+            },
+            abortedWithoutTerminalMessage: `[${kind}] Agent SDK run aborted with no terminal result`,
           });
-      const settled = await lifecycle.finishFailure(boundError);
-      // A provider-success payload whose projection failed must never be returned
-      // as graceful partial text; admission fencing is likewise a fail-closed
-      // verdict, not a stream failure Copilot may present as a partial reply.
-      if (!settled || successSettlementFailed || boundError.subtype === 'provider_admission') {
-        throw boundError;
-      }
-      // Quota / 502 / parse seal an exit the caller can publish without another
-      // model turn; the proven category still rides providerFailure so the wire
-      // can name it. Cancellation is not one.
-      if (helpFault) {
-        const exit = renderHelpExitMarkdown(helpFault);
-        const prose = resultText.trim();
-        return {
+        };
+        await withPreparedExecutionQuery(
+          lifecycle,
+          modelBinding,
+          actualInput,
+          promptText,
+          callOptions,
+          consumePreparedQuery,
+          ctx.beforeProviderQuery,
+          ctx,
+        );
+
+        const result: StreamCollectResult = {
           task_run_id: lifecycle.taskRunId,
           text: resultText,
-          terminalText: prose.length > 0 ? `${prose}\n\n${exit}` : exit,
-          finishReason: helpFinishReason(helpFault),
+          ...(terminalText !== undefined ? { terminalText } : {}),
+          finishReason: lifecycle.finishReason,
           usage: lifecycle.usage,
           cost_usd: lifecycle.costUsd,
           cost_basis: lifecycle.costBasis,
           cost_ref: lifecycle.costRef,
-          partial: false,
+        };
+        await lifecycle.finishSuccess(result);
+        return result;
+      } catch (error) {
+        if (!lifecycle.started) throw error;
+        await lifecycle.recordEstimatedUsage({
+          promptText: usagePromptText,
+          output: emptyStreamTextStats(),
+          priceOrigin: 'failure-estimate',
+        });
+        const successSettlementFailed = error instanceof AttemptSettlementError;
+        const boundError = bindAgentRunError({
+          error,
+          kind,
+          taskRunId: lifecycle.taskRunId,
+          aborted: lifecycle.aborted,
+          costUsd: lifecycle.costUsd,
+        });
+        const helpFault = !lifecycle.aborted ? boundError.helpProviderFault : undefined;
+        if (helpFault && kind !== 'CopilotTask') lifecycle.noteExecutableHelp('deterministic_step');
+        // An aborted/stopped run never claims a provider cause — our own armed
+        // timer or a caller cancel is not provider evidence.
+        const providerFailure = lifecycle.aborted
+          ? undefined
+          : classifyProviderFailure({
+              subtype: boundError.subtype,
+              apiErrorStatus: boundError.apiErrorStatus,
+              httpStatus: providerFailureEvidence?.http_status,
+              retryAfterMs: providerFailureEvidence?.retry_after_ms,
+              streamErrorTerminal: providerFailureEvidence?.stream_error === true,
+              transport: lifecycle.transportEvidence.snapshot(),
+            });
+        const settled = await lifecycle.finishFailure(boundError);
+        // A provider-success payload whose projection failed must never be returned
+        // as graceful partial text; admission fencing is likewise a fail-closed
+        // verdict, not a stream failure Copilot may present as a partial reply.
+        if (!settled || successSettlementFailed || boundError.subtype === 'provider_admission') {
+          throw boundError;
+        }
+        const transport = lifecycle.transportEvidence.snapshot();
+        // Reject the policy's broader 5xx verdicts and any earlier accepted/unknown send.
+        // A bound 429 alone cannot erase a successful turn hidden earlier in this loop.
+        const noEffect =
+          transport.requests_seen > 0 &&
+          transport.requests_dropped === 0 &&
+          transport.requests.length === transport.requests_seen &&
+          transport.requests.every(
+            (request) =>
+              request.loop === 'root' &&
+              !request.timeout_layer &&
+              (request.send_state === 'not_sent' ||
+                (request.send_state === 'response_received' && request.http_status === 429)),
+          );
+        const retry =
+          kind === 'CopilotTask' &&
+          !outputObserved &&
+          !lifecycle.aborted &&
+          noEffect &&
+          lifecycle.costTruth.amountUsd === 0
+            ? await planProviderTransientRetry({
+                db: ctx.db,
+                error: boundError,
+                policy: retryPolicy,
+                budget: retryBudget,
+                deadlineAt,
+              })
+            : undefined;
+        if (
+          retry &&
+          (retry.verdict.class === 'rate_limited' || retry.verdict.class === 'not_sent')
+        ) {
+          return {
+            retryDelayMs: retry.delayMs,
+            failedTaskRunId: lifecycle.taskRunId,
+            error: boundError,
+          };
+        }
+        // Quota / 502 / parse seal an exit the caller can publish without another
+        // model turn; the proven category still rides providerFailure so the wire
+        // can name it. Cancellation is not one.
+        if (helpFault) {
+          const exit = renderHelpExitMarkdown(helpFault, {
+            retryAfterMs: providerFailure?.retry_after_ms,
+          });
+          const prose = resultText.trim();
+          return {
+            task_run_id: lifecycle.taskRunId,
+            text: resultText,
+            terminalText: prose.length > 0 ? `${prose}\n\n${exit}` : exit,
+            finishReason: helpFinishReason(helpFault),
+            usage: lifecycle.usage,
+            cost_usd: lifecycle.costUsd,
+            cost_basis: lifecycle.costBasis,
+            cost_ref: lifecycle.costRef,
+            partial: false,
+            ...(providerFailure ? { providerFailure } : {}),
+          };
+        }
+        return {
+          task_run_id: lifecycle.taskRunId,
+          text: resultText,
+          finishReason: 'error',
+          usage: lifecycle.usage,
+          cost_usd: lifecycle.costUsd,
+          cost_basis: lifecycle.costBasis,
+          cost_ref: lifecycle.costRef,
+          partial: true,
+          error: error instanceof Error ? error.message : String(error),
           ...(providerFailure ? { providerFailure } : {}),
         };
+      } finally {
+        lifecycle.dispose();
       }
+    });
+    if (!('retryDelayMs' in outcome)) return outcome;
+    const nextTaskRunId = createId();
+    try {
+      await ctx.onProviderRetry?.({
+        nextTaskRunId,
+        delayMs: outcome.retryDelayMs,
+        retry: retryBudget.retries + 1,
+      });
+      await sleepMs(outcome.retryDelayMs, ctx.lifecycleAbortController?.signal ?? ctx.signal);
+      if (ctx.signal?.aborted || ctx.lifecycleAbortController?.signal.aborted)
+        throw new Error('cancelled during retry');
+    } catch (error) {
       return {
-        task_run_id: lifecycle.taskRunId,
-        text: resultText,
+        task_run_id: outcome.failedTaskRunId,
+        text: '',
         finishReason: 'error',
         usage: lifecycle.usage,
         cost_usd: lifecycle.costUsd,
@@ -1489,10 +1419,11 @@ async function streamTaskCollectingImpl(
         cost_ref: lifecycle.costRef,
         partial: true,
         error: error instanceof Error ? error.message : String(error),
-        ...(providerFailure ? { providerFailure } : {}),
       };
-    } finally {
-      lifecycle.dispose();
     }
-  });
+    await lifecycle.markRetried();
+    retryBudget.retries += 1;
+    retryBudget.waitedMs += outcome.retryDelayMs;
+    taskRunId = nextTaskRunId;
+  }
 }

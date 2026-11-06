@@ -19,6 +19,7 @@
 
 import { warnFlipOrder } from '@/kernel/projection-writer-policy';
 import { loadEnv } from '../server/env';
+import { guardDatabaseUrl } from './local-db-env';
 
 // YUK-365 (Codex review P2, Finding 2): the standalone worker MUST load the same
 // env files the Hono API loads (server/index.ts → loadEnv()), and it must do so
@@ -30,6 +31,10 @@ import { loadEnv } from '../server/env';
 // environment / docker-compose-injected values always win (prod container env is
 // unaffected). Dynamic-import the db client + boss modules below so this runs first.
 loadEnv();
+// The worker reads DATABASE_URL directly, so it gets the same TEST-target
+// refusal as every other local entry. Containers pass untouched: their
+// DATABASE_URL host is the compose service name (`postgres`), never loopback.
+guardDatabaseUrl('worker:dev');
 // YUK-548: boot-time SoT-flip flag vector + flip-order WARN (never throws — the worker reads the
 // SAME flag env as the API; stop-the-world flipping keeps the two vectors consistent).
 warnFlipOrder();

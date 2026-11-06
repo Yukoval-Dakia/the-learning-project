@@ -1,10 +1,15 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { createServer as createNetServer } from 'node:net';
 import { config } from 'dotenv';
 import { CODE_CONTRACT_EPOCH } from '@/server/migration/contract-epoch/rules';
 import { devDatabaseName } from './dev-worktree-db';
-import { buildLocalDatabaseUrl, buildLocalDevEnv } from './local-db-env';
+import {
+  buildLocalDatabaseUrl,
+  buildLocalDevEnv,
+  firstFreePort,
+  guardDevApiPort,
+  testDbRefusalReason,
+} from './local-db-env';
 
 // YUK-365 (Codex review P2, Finding 2): load .env.local BEFORE .env, both
 // non-overriding, so the AI provider toggle (AI_PROVIDER_OVERRIDE /
@@ -21,23 +26,15 @@ const localEnv = buildLocalDevEnv(process.env);
 
 // The TEST app container holds :8787 (loopback and LAN), so dev never binds it: two
 // servers on one port would collide, and a browser could silently open TEST instead.
-// Without DEV_PORT the first free 127.0.0.1 port from 8788 up is taken, so parallel
-// worktrees each get their own origin. DEV_PORT pins the port and is used as-is; either
-// way it is passed as API_PORT so a TEST-oriented API_PORT in .env can't win.
-async function firstFreePort(from: number): Promise<number> {
-  for (let port = from; port < from + 100; port++) {
-    if (port === 8787) continue;
-    const free = await new Promise<boolean>((resolve) => {
-      const probe = createNetServer();
-      probe.once('error', () => resolve(false));
-      probe.once('listening', () => probe.close(() => resolve(true)));
-      probe.listen(port, '127.0.0.1');
-    });
-    if (free) return port;
-  }
-  throw new Error(`[dev-local] no free 127.0.0.1 port in ${from}–${from + 99}`);
-}
+// Without DEV_PORT the first port free on 127.0.0.1, ::1 and :: from 8788 up is
+// taken (firstFreePort in local-db-env), so parallel worktrees each get their own
+// origin. DEV_PORT pins the port and is used as-is; either way it is passed as API_PORT so a
+// TEST-oriented API_PORT in .env can't win.
 const devPort = process.env.DEV_PORT ?? String(await firstFreePort(8788));
+// An explicit DEV_PORT=8787 bypasses firstFreePort's skip; refuse it before any
+// Docker/DB work. dev:local is a local dev launcher, so it refuses regardless of
+// an inherited NODE_ENV or container marker; DEV_ALLOW_TEST_DB=1 does not relax it.
+guardDevApiPort(devPort, 'dev-local', { inContainer: false, inProduction: false });
 const devOrigin = `http://127.0.0.1:${devPort}`;
 
 // Dev runs against the shared dev Postgres container (docker-compose.dev.yml: :5434,
@@ -46,7 +43,6 @@ const devOrigin = `http://127.0.0.1:${devPort}`;
 // derived in dev-worktree-db.ts. Credentials are fixed and deliberately ignore
 // POSTGRES_*; only the host/port can be overridden for the guard below.
 const DEV_DB = { user: 'loom_dev', password: 'loom_dev', database: devDatabaseName() };
-const TEST_DB_PORTS = ['5433', '5544'];
 const devDbEnv = {
   POSTGRES_USER: DEV_DB.user,
   POSTGRES_PASSWORD: DEV_DB.password,
@@ -56,12 +52,15 @@ const devDbEnv = {
 };
 
 const allowTestDb = process.env.DEV_ALLOW_TEST_DB === '1';
-const testDbName = process.env.POSTGRES_DB ?? 'loom';
-const targetsTest =
-  TEST_DB_PORTS.includes(devDbEnv.LOCAL_POSTGRES_PORT) || DEV_DB.database === testDbName;
-if (targetsTest && !allowTestDb) {
+// Shared TEST-target judgment (scripts/local-db-env.ts): TEST's relay ports or
+// TEST's database name are refused before any dev process can write to them.
+const testRefusal = testDbRefusalReason(
+  { port: devDbEnv.LOCAL_POSTGRES_PORT, database: DEV_DB.database },
+  process.env,
+);
+if (testRefusal) {
   console.error(
-    `[dev-local] refusing to start: the database target ${devDbEnv.LOCAL_POSTGRES_HOST}:${devDbEnv.LOCAL_POSTGRES_PORT} is TEST's (ports ${TEST_DB_PORTS.join('/')} or database "${testDbName}"). ` +
+    `[dev-local] refusing to start: the database target ${devDbEnv.LOCAL_POSTGRES_HOST}:${devDbEnv.LOCAL_POSTGRES_PORT}/${DEV_DB.database} is TEST's — ${testRefusal}. ` +
       'dev:local would run a dev API and worker that write data and take jobs there.\n' +
       '[dev-local] Use the dev database instead: unset LOCAL_POSTGRES_PORT and run `pnpm dev:local` (it starts Postgres on :5434 by itself).\n' +
       "[dev-local] To really use TEST's database, set DEV_ALLOW_TEST_DB=1.",
@@ -71,7 +70,8 @@ if (targetsTest && !allowTestDb) {
 
 let databaseUrl: string;
 if (allowTestDb) {
-  // Explicit override: keep the pre-isolation behaviour (POSTGRES_* from .env, port 5433).
+  // Explicit override: keep the pre-isolation behaviour (POSTGRES_* from .env).
+  // No default points at a TEST port — LOCAL_POSTGRES_PORT must be given.
   databaseUrl = localEnv.DATABASE_URL;
   console.warn(
     `\n${'!'.repeat(78)}\n` +

@@ -17,7 +17,41 @@ export interface HelpExitCopy {
 }
 
 const DETERMINISTIC_PRACTICE =
-  '回到题面，把已知条件和它问的东西各划一遍，然后只写下一步。这一步不调用模型。';
+  '回到题面，把已知条件和它问的东西各划一遍，然后只写下一步。可以先自己试着写。';
+
+/**
+ * A Retry-After that cannot fit the copilot short-retry budget (the collecting
+ * runner caps transient-retry waits at 15 s) names a long limit, not brief
+ * congestion; copy must not tell the learner to try again in a moment.
+ */
+export const SHORT_RETRY_WAIT_BOUND_MS = 15_000;
+
+/** Duration text for a provider Retry-After, rounded up so the stated wait is
+ * never shorter than the provider asked for. Shared by the sealed exit and the
+ * run badge so both name the same recovery time. */
+export function quotaWaitDurationText(ms: number): string {
+  const seconds = ms / 1000;
+  if (seconds < 90) return `约 ${Math.max(1, Math.ceil(seconds))} 秒`;
+  if (seconds < 60 * 60) return `约 ${Math.ceil(seconds / 60)} 分钟`;
+  return `约 ${Math.ceil(seconds / 3600)} 小时`;
+}
+
+/** 「约 N后」 only when the wait outlives the short-retry bound; undefined means
+ * brief congestion (or no hint) and today's copy stands. */
+export function longQuotaRecoveryText(ms: number | undefined): string | undefined {
+  if (ms === undefined || ms <= SHORT_RETRY_WAIT_BOUND_MS) return undefined;
+  return `${quotaWaitDurationText(ms)}后`;
+}
+
+/** Wire-side variant: the public failure shape carries whole seconds. */
+export function longQuotaRecoveryTextFromSeconds(seconds: number | undefined): string | undefined {
+  return longQuotaRecoveryText(seconds === undefined ? undefined : seconds * 1000);
+}
+
+/** Bound provider timing the copy may reflect; absent means unknown, never zero. */
+export interface HelpExitTiming {
+  readonly retryAfterMs?: number;
+}
 
 export function isHelpProviderFault(value: unknown): value is HelpProviderFault {
   if (!value || typeof value !== 'object') return false;
@@ -87,11 +121,19 @@ export function readHelpProviderFault(error: unknown): HelpProviderFault | undef
   return undefined;
 }
 
-export function helpExitCopy(fault: HelpProviderFault): HelpExitCopy {
+export function helpExitCopy(fault: HelpProviderFault, timing?: HelpExitTiming): HelpExitCopy {
   if (fault.kind === 'quota') {
+    const recovery = longQuotaRecoveryText(timing?.retryAfterMs);
+    if (recovery !== undefined) {
+      return {
+        reason: `额度用完了，${recovery}恢复。`,
+        stopRetryGuidance: '恢复之前再发，还是会马上得到同样的回复。',
+        deterministicPractice: DETERMINISTIC_PRACTICE,
+      };
+    }
     return {
-      reason: '模型额度已用完（429）。这次没有新的计划、提案或知识。',
-      stopRetryGuidance: '请停止重试。额度恢复前，再发同样的请求还会立刻失败。',
+      reason: '现在有点忙，这次没能继续回答。',
+      stopRetryGuidance: '过一会儿再试试吧。',
       deterministicPractice: DETERMINISTIC_PRACTICE,
     };
   }
@@ -116,12 +158,16 @@ export function helpFinishReason(fault: HelpProviderFault): HelpFinishReason {
 }
 
 /** Reason, stop-retry, and a deterministic step. The continue line is for a sealed reply. */
-export function helpExitLead(fault: HelpProviderFault): string {
-  const copy = helpExitCopy(fault);
+export function helpExitLead(fault: HelpProviderFault, timing?: HelpExitTiming): string {
+  const copy = helpExitCopy(fault, timing);
   return [
     copy.reason,
     '',
-    '停止重试',
+    fault.kind === 'quota'
+      ? longQuotaRecoveryText(timing?.retryAfterMs) !== undefined
+        ? '先不重试'
+        : '稍后再试'
+      : '停止重试',
     copy.stopRetryGuidance,
     '',
     '确定性练习',
@@ -129,11 +175,11 @@ export function helpExitLead(fault: HelpProviderFault): string {
   ].join('\n');
 }
 
-export function renderHelpExitMarkdown(fault: HelpProviderFault): string {
+export function renderHelpExitMarkdown(fault: HelpProviderFault, timing?: HelpExitTiming): string {
   return [
-    helpExitLead(fault),
+    helpExitLead(fault, timing),
     '',
     '下一步',
-    '可以在这次对话里接着说明卡在哪一步。这次不会自动再请求模型。',
+    '可以在这次对话里接着说明卡在哪一步。这次不会自动再试。',
   ].join('\n');
 }
