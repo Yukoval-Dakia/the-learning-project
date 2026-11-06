@@ -192,6 +192,13 @@ export const advisoryLockRegistry = {
     keyPrefix: 'supply-spend:v1:',
     suffixFields: ['day'],
   },
+  supplyTargetFingerprint: {
+    family: 'supply-target-fingerprint',
+    encoding: 'hashtextextended',
+    salt: 0,
+    keyPrefix: 'question-preparer-ticket:',
+    suffixFields: ['fingerprint'],
+  },
   questionServingCommand: {
     family: 'serving-command',
     encoding: 'hashtextextended',

@@ -68,6 +68,7 @@ export {
   jyeooSpawnMaxStdoutBytes,
   jyeooSpawnTimeoutMs,
 } from './server/jyeoo-supply-config';
+export { enqueueQuestionPreparerTicket } from './server/question-preparer-ticket';
 export { type RefillDeps, refillActiveLearningPools } from './server/refill';
 export {
   DEDUP_OVERLAP_THRESHOLD,

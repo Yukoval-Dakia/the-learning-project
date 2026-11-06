@@ -6,13 +6,13 @@
 // evidence_not_from_search_bank——调用方伪造 complete=true 也触发不了付费
 // dispatch。secret 未配置时 filing 整体 fail closed。
 // 2. 幂等登记 + claim-first 派发：request_id 派生确定性事件 id。派发付费 job
-// 前先写 'claimed' 占位行（与 dispatcher 同一 experimental:question_supply
-// action，状态恒为 'claimed'/'filed'/'held'——绝不写 'dispatched'，不污染
-// dispatcher 的 7d cooldown 凭证）。writeEvent first-write-wins，
-// filing_nonce 回读相等者独占派发权；输掉并发的调用走重放/拒绝，绝不
-// dispatch。派发结果追加到 `fbgap|<request_id>|receipt` 回执事件（台账只增
-// 不改）。同 request_id + 同内容 → 重放已存回执（deduplicated=true）；同 id
-// + 不同内容 → 显式 rejected。
+// 前先写 'claimed' 占位行（experimental:question_supply，状态 'claimed'/'filed'/
+// 'held'）。writeEvent first-write-wins，filing_nonce 回读相等者独占派发权；
+// 输掉并发的调用走重放/拒绝，绝不 dispatch。派发结果追加到
+// `fbgap|<request_id>|receipt` 回执事件（台账只增不改）。同 request_id + 同内容
+// → 重放已存回执（deduplicated=true）；同 id + 不同内容 → 显式 rejected。
+// 入队成功的缺口单另写一条 dispatcher 兼容的 'dispatched' 事件（带窄化后的
+// target fingerprint），供同一 7d 指纹 cooldown 判据使用。
 // 3. retrieval_constraints（within_refs / source / kind / difficulty / KC，含
 // subject / exclude_refs / similar_to）随需求一并存档——缺口上下文完整可追溯。
 // 4. 检索不完整（池截断 / 通道不可用）→ held/retrieval_incomplete：只证明没搜全，
@@ -20,15 +20,17 @@
 // 5. 需求控制先于派发 enforcing：max_budget_micro_usd <= 0 → held/
 // budget_exhausted；needed_by 已过期 → held/deadline_passed。零预算/过期
 // 需求绝不触发付费 job。
-// 6. 调用既有 dispatcher（dispatchSupplyTarget）。dispatcher 无法落实的限制 →
-// held/unsupported_constraint，绝不静默丢字段后假装已供题。
+// 6. 入备题员队列（`question_preparer_run`）：同一事务写 server-only 缺口单事件 +
+//    发 job；事件 id 成为提交的因果锚点，准入用它证明供给血缘（不把
+//    `submit_question:*` 当管线发布者）。无法落实的检索限制 → held/
+//    unsupported_constraint，绝不静默丢字段后假装已供题。
 // 已知限制（claim-first 的诚实形态）：winner 在 claim 落账后、receipt 落账前崩溃
 // 时，该 request_id 永久停在 claimed_not_dispatched——同内容重试只重放 held 回执、
 // 绝不再派发（付费 job 可能已入队也可能没有，两者无法区分，fail closed）。须由
-// operator 人工对账（查 dispatcher cooldown 台账里该 target fingerprint 是否真派过
-// job 队列），确认未派后用新 request_id 重新落需求。
+// operator 人工对账（查 question_supply 台账里该 target fingerprint 是否有
+// 'dispatched' 记录），确认未派后用新 request_id 重新落需求。
 // 硬边界：不碰 learner state；不做教学决策；本工具自身零 LLM 调用（付费发生在
-// 派出的 sourcing_web / quiz_gen job 内，受 dispatcher 指纹 cooldown 节流）。
+// 备题员 job 内，受同一 7d 指纹 cooldown 与统一供给 spend 策略约束）。
 
 import { createHash, randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
@@ -50,9 +52,8 @@ import {
 } from '../../question-bank/public';
 import {
   type DifficultyBand,
-  type DispatchResult,
   type QuestionSupplyTarget,
-  dispatchSupplyTarget,
+  enqueueQuestionPreparerTicket,
   isUnanchoredSupplyPaused,
   targetFingerprint,
 } from '../../supply/public';
@@ -253,7 +254,28 @@ function buildBankGapTarget(
   };
 }
 
-// ── 主流程 ─────────────────────────────────────────────────────────────────
+// ── 主流程 ────────────────────────────────────────────────────────────
+
+/** The signed search scope narrows the ticket exactly as the old dispatcher narrowed its
+ *  target: the scope's KCs replace the demand claim set (the guard proved ⊆), and a stated
+ *  scope kind becomes the ticket's only task kind. Without this the preparer would judge
+ *  inventory and author against the broader demand. */
+function narrowDemandToSignedScope(
+  demand: EvidenceDemandV1T,
+  evidence: z.infer<typeof BankGapRequestSchema>,
+): EvidenceDemandV1T {
+  const scope = evidence.constraints.scope;
+  const knowledgeIds =
+    scope.knowledge_ids !== undefined
+      ? [...new Set(scope.knowledge_ids)]
+      : demand.claim.knowledge_ids;
+  const kind = scope.kind !== undefined ? scopeTargetKind(scope.kind, demand.task.kinds) : null;
+  return EvidenceDemandV1.parse({
+    ...demand,
+    claim: { ...demand.claim, knowledge_ids: knowledgeIds },
+    task: { ...demand.task, kinds: kind !== null ? [kind] : demand.task.kinds },
+  });
+}
 
 interface StoredFilingPayload {
   kind: 'bank_gap_filing';
@@ -299,12 +321,17 @@ function contentDigest(demand: EvidenceDemandV1T, evidence: z.infer<typeof BankG
     .digest('hex');
 }
 
-function dispatchReceipt(result: DispatchResult): DispatchReceipt {
+function dispatchReceipt(result: {
+  status: DispatchReceipt['status'];
+  fingerprint: string;
+  jobId: string | null;
+  stopCondition: string;
+}): DispatchReceipt {
   return {
     status: result.status,
     fingerprint: result.fingerprint,
-    chosen_route: result.chosenRoute,
-    route_plan: result.routePlan,
+    chosen_route: 'question_preparer',
+    route_plan: ['question_preparer'],
     job_id: result.jobId,
     stop_condition: result.stopCondition,
   };
@@ -398,6 +425,7 @@ async function executeFileBankGap(ctx: ToolContext, rawInput: FileBankGapInput) 
       subject_kind: 'query',
       subject_id: demand.demand_id,
       outcome: payload.status === 'filed' ? 'success' : 'partial',
+      session_id: ctx.sessionId ?? null,
       caused_by_event_id: ctx.causedByEventId ?? null,
       payload: {
         kind: 'bank_gap_filing',
@@ -467,6 +495,7 @@ async function executeFileBankGap(ctx: ToolContext, rawInput: FileBankGapInput) 
     subject_kind: 'query',
     subject_id: demand.demand_id,
     outcome: 'partial',
+    session_id: ctx.sessionId ?? null,
     caused_by_event_id: ctx.causedByEventId ?? null,
     payload: {
       kind: 'bank_gap_filing',
@@ -493,21 +522,39 @@ async function executeFileBankGap(ctx: ToolContext, rawInput: FileBankGapInput) 
     return respondToStored(receiptRow ?? canonical);
   }
 
-  // 只有 claim 赢家能抵达这里（需求控制已在上方 hold 关卡 enforcing），直接派发。
-  const target = buildBankGapTarget(demand, evidence, input.request_id);
-  const dispatch = await dispatchSupplyTarget(ctx.db, target, {
-    actorRef: 'file_bank_gap',
+  // 只有 claim 赢家能抵达这里（需求控制已在上方 hold 关卡 enforcing）。
+  // 生效约束（范围 KC + 范围 kind）随票进 job；7d 指纹 cooldown 与旧入口同一判据。
+  const effectiveDemand = narrowDemandToSignedScope(demand, evidence);
+  const target = buildBankGapTarget(effectiveDemand, evidence, input.request_id);
+  const enqueued = await enqueueQuestionPreparerTicket(ctx.db, effectiveDemand, target, {
+    sessionId: ctx.sessionId ?? null,
+    filingEventId: eventId,
   });
-  const queued = dispatch.status === 'dispatched';
+  const queued = enqueued.status === 'dispatched';
+  const dispatch =
+    enqueued.status === 'dispatched'
+      ? dispatchReceipt({
+          status: 'dispatched',
+          fingerprint: target.fingerprint,
+          jobId: enqueued.job_id,
+          stopCondition: `enqueued question_preparer_run (job ${enqueued.job_id}, ticket ${enqueued.event_id}); satisfied when ${target.desiredCount} usable question(s) meet the ticket's inventory goal`,
+        })
+      : dispatchReceipt({
+          status: 'skipped',
+          fingerprint: enqueued.fingerprint,
+          jobId: null,
+          stopCondition: enqueued.stop_condition,
+        });
   const receipt: FileBankGapOutput['receipt'] = {
     filing_event_id: eventId,
     content_digest: digest,
     retrieval_constraints: retrievalConstraints,
-    dispatch: dispatchReceipt(dispatch),
+    dispatch,
   };
-  const reason = queued
-    ? `dispatched via ${dispatch.chosenRoute} (job ${dispatch.jobId}); satisfied when ${target.desiredCount} verified question(s) land`
-    : `${dispatch.status}: ${dispatch.stopCondition}`;
+  const reason =
+    enqueued.status === 'dispatched'
+      ? `dispatched to the question preparer (job ${enqueued.job_id}); satisfied when ${target.desiredCount} usable question(s) meet the ticket's inventory goal`
+      : `skipped: ${enqueued.stop_condition}`;
   // 终态回执追加到独立事件 id（台账只增不改；claim 行保留为占位凭证）。本写入失败
   // 会抛出 → 该 request_id 停在 claimed_not_dispatched，重试绝不重派（见文件头注释）。
   await writeEvent(ctx.db, {
@@ -518,6 +565,7 @@ async function executeFileBankGap(ctx: ToolContext, rawInput: FileBankGapInput) 
     subject_kind: 'query',
     subject_id: demand.demand_id,
     outcome: queued ? 'success' : 'partial',
+    session_id: ctx.sessionId ?? null,
     caused_by_event_id: ctx.causedByEventId ?? null,
     payload: {
       kind: 'bank_gap_filing',
@@ -541,7 +589,7 @@ async function executeFileBankGap(ctx: ToolContext, rawInput: FileBankGapInput) 
 export const fileBankGapTool: DomainTool<FileBankGapInput, FileBankGapOutput> = {
   name: 'file_bank_gap',
   description:
-    "File a question-supply demand for a bank search gap (search_bank coverage.verdict sparse/none). Input: request_id (your idempotency key), the full EvidenceDemandV1 (search_bank's gap_request is only a seed — you must add demand_id/policy_version/subject_id/claim/evidence/task/difficulty/inventory_goal.horizon_days/control), and the search evidence — the gap_request object VERBATIM, including its server-minted evidence_mac (a missing or mismatched MAC is rejected as evidence_not_from_search_bank; fabricated evidence can never trigger paid dispatch). Idempotent: same request_id + same content replays the stored receipt; same request_id + different content is rejected. Demand controls are enforced BEFORE any dispatch: max_budget_micro_usd<=0 is held as budget_exhausted and an already-past needed_by is held as deadline_passed. The demand plus its retrieval constraints (within_refs/source/kind/difficulty/KC) are ledgered, then the existing supply dispatcher is called with the search kind and KC set as hard constraints. Dispatch is claim-first: a 'claimed' ledger row (first-write-wins) is written BEFORE any paid job is enqueued, so concurrent same-request_id calls can never double-dispatch — only the claim winner dispatches, and its outcome is appended as a separate receipt event. If the search was incomplete (gap_request.complete=false or a channel unavailable) the result is held/retrieval_incomplete — an incomplete search never proves the bank lacks the question. If the dispatcher cannot honour a constraint (including a subject that differs from demand.subject_id, or knowledge_mode 'all' over several KCs) the result is held/unsupported_constraint — fields are never silently dropped. If an earlier call claimed the request_id but left no receipt (crash between claim and dispatch), the result is held/claimed_not_dispatched and never redispatches — reconcile manually and re-file under a NEW request_id only if no job went out. Output: demand_id, deduplicated, queued|held|rejected, reason, business receipt (ledger event id + dispatch outcome).",
+    "File a question-supply demand for a bank search gap (search_bank coverage.verdict sparse/none). Input: request_id (your idempotency key), the full EvidenceDemandV1 (search_bank's gap_request is only a seed — you must add demand_id/policy_version/subject_id/claim/evidence/task/difficulty/inventory_goal.horizon_days/control), and the search evidence — the gap_request object VERBATIM, including its server-minted evidence_mac (a missing or mismatched MAC is rejected as evidence_not_from_search_bank; fabricated evidence can never trigger paid dispatch). Idempotent: same request_id + same content replays the stored receipt; same request_id + different content is rejected. Demand controls are enforced BEFORE any dispatch: max_budget_micro_usd<=0 is held as budget_exhausted and an already-past needed_by is held as deadline_passed. The demand plus its retrieval constraints (within_refs/source/kind/difficulty/KC) are ledgered; the signed scope narrows the demand's KCs and task kind, then a question_preparer_run job is enqueued with that effective demand. A same-fingerprint dispatch within the 7-day cooldown is skipped (status skipped, no job). Dispatch is claim-first: a 'claimed' ledger row (first-write-wins) is written BEFORE any paid job is enqueued, so concurrent same-request_id calls can never double-dispatch — only the claim winner dispatches, and its outcome is appended as a separate receipt event. If the search was incomplete (gap_request.complete=false or a channel unavailable) the result is held/retrieval_incomplete — an incomplete search never proves the bank lacks the question. If the entry cannot honour a constraint (including a subject that differs from demand.subject_id, or knowledge_mode 'all' over several KCs) the result is held/unsupported_constraint — fields are never silently dropped. If an earlier call claimed the request_id but left no receipt (crash between claim and dispatch), the result is held/claimed_not_dispatched and never redispatches — reconcile manually and re-file under a NEW request_id only if no job went out. Output: demand_id, deduplicated, queued|held|rejected, reason, business receipt (ledger event id + dispatch outcome).",
   effect: 'write',
   inputSchema: FileBankGapInputSchema,
   outputSchema: FileBankGapOutputSchema,

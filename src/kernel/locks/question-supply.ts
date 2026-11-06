@@ -27,3 +27,11 @@ export async function lockSupplySpendDay(tx: Tx, day: string): Promise<void> {
   const key = deriveHashtextExtendedLockKey(advisoryLockRegistry.supplySpendDay, { day });
   await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${key}, 0))`);
 }
+
+/** Serializes one supply target's cooldown check and enqueue across filings. */
+export async function lockSupplyTargetFingerprint(tx: Tx, fingerprint: string): Promise<void> {
+  const key = deriveHashtextExtendedLockKey(advisoryLockRegistry.supplyTargetFingerprint, {
+    fingerprint,
+  });
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${key}, 0))`);
+}

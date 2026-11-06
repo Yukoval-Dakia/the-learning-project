@@ -55,6 +55,7 @@ import {
   type OpIssue,
   applyEditOps,
 } from '@/server/questions/draft-ops';
+import { ticketScopeIssue } from './ticket-scope';
 
 // ====================================================================
 // YUK-1468 — edit_question 领域服务（save / validate / probe）
@@ -236,6 +237,8 @@ interface EditContext {
   actorKind: 'agent' | 'user' | 'system';
   taskRunId?: string;
   sessionId?: string | null;
+  /** Server-bound gap-ticket scope; gates edits of existing questions. */
+  ticketEventId?: string | null;
   now?: Date;
 }
 
@@ -700,6 +703,17 @@ export async function saveDraftEditInTx(
       expectedParsed.value !== undefined ? expectedParsed.value : pinnedBaseRevision;
     const importedQuestionId = block?.imported_question_id ?? pending?.importedQuestionId ?? null;
     const groupId = docBefore.base?.question_id ?? importedQuestionId;
+    if (groupId != null) {
+      const denied = await ticketScopeIssue(tx, ctx.ticketEventId, groupId);
+      if (denied != null) {
+        return {
+          status: 'rejected',
+          reason: 'ticket_scope_denied',
+          issues: [denied],
+          request_id: requestId,
+        };
+      }
+    }
     let currentRevisionId: string | null = null;
     let currentRevisionRow: typeof question_revision.$inferSelect | null = null;
     if (groupId != null || expectedRevisionId !== undefined) {
