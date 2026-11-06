@@ -490,8 +490,12 @@ export default function InboxPage({ navigate }: InboxPageProps) {
     undoClock.getSnapshot,
   );
   // A 块在有 auto-applied 卡、熔断 tripped、或读模型出错（surface 错误而非静默空）时露出。
+  // With the switch off nothing new applies, so only cards from before it can still need undoing.
+  const autoApplyOn = decisionPages[0]?.auto_apply_enabled === true;
   const showTierA =
-    aaQ.isLoading || autoApplied.length > 0 || breaker?.tripped === true || aaQ.isError;
+    autoApplied.length > 0 ||
+    aaQ.isError ||
+    (autoApplyOn && (aaQ.isLoading || breaker?.tripped === true));
 
   const onRevert = async (proposalId: string) => {
     setReverting((r) => ({ ...r, [proposalId]: true }));
@@ -536,7 +540,9 @@ export default function InboxPage({ navigate }: InboxPageProps) {
       </span>
       <p className="ib-empty-title">收件箱已清空</p>
       <p className="ib-empty-text">
-        所有提议都已裁决或自动处理。新提议会在下次 Dreaming session 后出现。
+        {autoApplyOn
+          ? '所有提议都已裁决或自动处理。新提议会在下次 Dreaming session 后出现。'
+          : '所有提议都已裁决。新提议会在下次 Dreaming session 后出现。'}
       </p>
       <Button onClick={() => navigate('/knowledge')}>
         <Network size={16} aria-hidden="true" />
@@ -552,8 +558,9 @@ export default function InboxPage({ navigate }: InboxPageProps) {
         <header className="ib-head">
           <h1 className="ib-title">收件箱</h1>
           <p className="ib-lead">
-            AI 提议会按影响自动分流：安全可撤的建议已替你处理，需要判断的留在这里，提醒类信息归入 AI
-            观察。
+            {autoApplyOn
+              ? 'AI 提议会按影响自动分流：安全可撤的建议已替你处理，需要判断的留在这里，提醒类信息归入 AI 观察。'
+              : '需要判断的提议留在这里，提醒类信息归入 AI 观察。'}
           </p>
         </header>
 
@@ -570,7 +577,7 @@ export default function InboxPage({ navigate }: InboxPageProps) {
           {showTierA && (
             <section className="ib-tier" aria-labelledby="ib-tier-a">
               <TierHead tier="A" count={autoApplied.length} id="ib-tier-a" />
-              {aaQ.isLoading && (
+              {autoApplyOn && aaQ.isLoading && (
                 <TierNote>
                   <output aria-live="polite">自动应用记录正在加载；待裁决提议不受影响。</output>
                 </TierNote>
@@ -580,12 +587,12 @@ export default function InboxPage({ navigate }: InboxPageProps) {
               {aaQ.isError && (
                 <RetryLine message="自动应用列表暂不可用。" onRetry={() => void aaQ.refetch()} />
               )}
-              {breaker && <BreakerMeter breaker={breaker} />}
+              {autoApplyOn && breaker && <BreakerMeter breaker={breaker} />}
               {autoApplied.length > 0 && (
                 <p className="ib-aa-banner">
                   <Zap size={16} aria-hidden="true" />
                   <span>
-                    <b>这些已经替你做了。</b>
+                    <b>{autoApplyOn ? '这些已经替你做了。' : '这些是之前替你做的。'}</b>
                     都是安全可逆的小操作，没占用你的裁决队列 —— 不放心的，窗口内一键撤回即可。
                   </span>
                 </p>

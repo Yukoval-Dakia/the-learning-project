@@ -338,7 +338,11 @@ export function dedupeEvidence(
 //   block-<12+ 位小写字母数字>（cuid2 = 24 位，留余量到 12）
 //   命名空间 ID <小写词>:<8+ 位 [a-z0-9:_-]>（如 synthetic:yuwen:...）
 //   裸长串 <20+ 位小写字母数字>（词边界限定，短词不误伤）
-const RAW_ID_RE = /(block-[a-z0-9]{12,}|[a-z]+:[a-z0-9:_-]{8,}|\b[a-z0-9]{20,}\b)/g;
+const WRITTEN_FOR_LEARNER_ID_RE = /(block-[a-z0-9]{12,}|[a-z]+:[a-z0-9:_-]{8,}|\b[a-z0-9]{20,}\b)/g;
+// 旧提议的理由是内部文字，还会写：截断的 ID q94c…、evt_assessment_…、字段路径 links.question_id、
+// 蛇形字段名 evidence_event_ids（数学写法不算：x_1、a_n、log_10、100…）。全文都在折叠里。
+const INTERNAL_REASON_ID_RE =
+  /(block-[a-z0-9]{12,}|[a-z]+:[a-z0-9:_-]{8,}|\b(?=[a-z0-9]*[a-z])[a-z0-9]{4,}…|\b[a-z0-9]+_[a-z0-9_]{4,}…|\b[a-z][a-z0-9]*\.[a-z0-9]+(?:_[a-z0-9]+)+|\b[a-z][a-z0-9]{2,}(?:_[0-9]{2,})*_(?=[a-z0-9]*[a-z])[a-z0-9]{2,}(?:_[a-z0-9]{2,})*\b|\b[a-z0-9]{20,}\b)/g;
 
 export interface ReasonSegment {
   start: number;
@@ -346,10 +350,16 @@ export interface ReasonSegment {
   raw: boolean;
 }
 
-export function splitReasonIds(md: string): ReasonSegment[] {
+/**
+ * `learnerSentence`: a sentence that passed the write check. Only the narrow forms fold there,
+ * because the wide ones can take words the check allows, such as `attention…`.
+ */
+export function splitReasonIds(md: string, learnerSentence = false): ReasonSegment[] {
   const out: ReasonSegment[] = [];
   let last = 0;
-  for (const m of md.matchAll(RAW_ID_RE)) {
+  for (const m of md.matchAll(
+    learnerSentence ? WRITTEN_FOR_LEARNER_ID_RE : INTERNAL_REASON_ID_RE,
+  )) {
     const start = m.index ?? 0;
     if (start > last) out.push({ start: last, text: md.slice(last, start), raw: false });
     out.push({ start, text: m[0], raw: true });
