@@ -78,6 +78,7 @@ export {
   VERIFY_DISPATCH_COMPLETE_ACTION,
   VERIFY_DISPATCH_INTENT_ACTION,
   VERIFY_DISPATCH_VERSION,
+  type VerifyRecoveryMark,
   dispatchPendingVerifyIntents,
   recoverOrphanVerifyDispatches,
   writeVerifyDispatchIntent,

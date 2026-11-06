@@ -88,6 +88,7 @@ export { assertGeneratedQuestionHasJudgeContract } from './server/judge/question
 export {
   type RunSourceGroundingVerifyParams,
   type SourceGroundingVerifyResult,
+  assertSourceGroundingLaneConfigured,
   runSourceGroundingVerify,
 } from './server/judge/source-grounding-verify';
 export { judgeFallbackProvider } from './server/judge-durable-config';
