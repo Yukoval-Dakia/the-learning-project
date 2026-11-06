@@ -17,10 +17,11 @@ import { HeroBlock } from './HeroBlock';
 import { ProposalNotice } from './ProposalNotice';
 import { splitProposalDisclosure } from './proposal-disclosure';
 import { SkillTurnBlock } from './SkillTurnBlock';
-import { StepActivity, stepsOf } from './ToolRow';
+import { StepActivity, ThinkingDone, stepsOf } from './ToolRow';
 
 export interface MessageRowProps {
   confirmationRenderer?: ConfirmationAssessmentRenderer;
+  thinkingText?: string;
   readNotePage: NotePageClient;
   showConfirmation?: boolean;
   confirmationDisabled?: boolean;
@@ -78,6 +79,7 @@ export const MessageRow = memo(function MessageRow(props: MessageRowProps) {
     <div className="un-cp-row un-cp-row-ai" data-streaming={generating ? '' : undefined}>
       {/* YUK-1664 — settled: the reply's steps fold into one summary line above the text. */}
       {settled ? <StepActivity steps={steps} /> : null}
+      {settled && props.thinkingText ? <ThinkingDone text={props.thinkingText} /> : null}
       <ConversationMarkdown className="un-cp-md un-cp-reply">{shown}</ConversationMarkdown>
       {failureBadge ? (
         <p className="un-cp-reply-badge">

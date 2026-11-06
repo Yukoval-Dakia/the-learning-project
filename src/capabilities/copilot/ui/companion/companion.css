@@ -818,10 +818,48 @@
 
   & .un-cp-run {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: var(--un-sp-2);
     color: var(--un-text-3);
     font-size: var(--un-fs-1);
+  }
+
+  & .un-cp-run-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--un-sp-1);
+    padding: 0;
+    border: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+  }
+
+  & .un-cp-run-toggle svg[data-open] {
+    transform: rotate(180deg);
+  }
+
+  /* Newest words stay in view while it streams, with no scroll handling: the list runs bottom-up. */
+  & .un-cp-thinking {
+    display: flex;
+    flex-basis: 100%;
+    flex-direction: column-reverse;
+    max-height: 30vh;
+    overflow-y: auto;
+    padding: var(--un-sp-2) var(--un-sp-3);
+    border-radius: var(--un-md-sys-shape-medium);
+    background: var(--un-bg-sunk);
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+    line-height: var(--un-lh-prose);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  & .un-cp-thinking p {
+    margin: 0;
   }
 
   & .un-cp-run-glyph {

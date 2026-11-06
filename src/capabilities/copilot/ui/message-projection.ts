@@ -107,22 +107,25 @@ export function projectDurableCopilotMessage(
   // A turns snapshot can precede its SSE backlog. Preserve its covered prefix and
   // append only later durable deltas from this run's already-deduplicated view.
   const snapshot = previous.public_prose;
-  const publicProse =
-    view.publicProse ??
-    (!terminal && snapshot?.status === 'streaming'
-      ? mergePublicProse(
-          snapshot,
-          new Map(
-            view.frames
-              .filter(
-                (frame) =>
-                  frame.event_type === 'copilot_run.delta' &&
-                  typeof frame.payload.text === 'string',
-              )
-              .map((frame) => [frame.event_id, frame.payload.text as string]),
-          ),
-        )
-      : undefined);
+  // The final reply replaced what was streamed, so the draft must not stay on screen beside it.
+  const replaced = view.replyPayload?.thinking_clear === true;
+  const publicProse = replaced
+    ? undefined
+    : (view.publicProse ??
+      (!terminal && snapshot?.status === 'streaming'
+        ? mergePublicProse(
+            snapshot,
+            new Map(
+              view.frames
+                .filter(
+                  (frame) =>
+                    frame.event_type === 'copilot_run.delta' &&
+                    typeof frame.payload.text === 'string',
+                )
+                .map((frame) => [frame.event_id, frame.payload.text as string]),
+            ),
+          )
+        : undefined));
   const base = {
     ...previous,
     subtasks: view.subtasks,

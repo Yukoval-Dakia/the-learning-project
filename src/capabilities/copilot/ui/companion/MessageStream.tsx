@@ -26,6 +26,7 @@ export function MessageStream({
   readNotePage,
 }: MessageStreamProps) {
   const messages = useCompanion(controller, (s) => s.messages);
+  const thinkingByRun = useCompanion(controller, (s) => s.thinkingByRun);
   const correctionTurnId = useCompanion(controller, (s) => s.correctionTarget?.turnId ?? null);
   const revertPendingId = useCompanion(controller, (s) => s.revertPendingId);
   const chipPending = useCompanion(controller, (s) => s.chipPending);
@@ -67,6 +68,7 @@ export function MessageStream({
             <MessageRow
               key={message.id}
               message={message}
+              thinkingText={message.run_id ? thinkingByRun[message.run_id] : undefined}
               confirmationRenderer={confirmationRenderer}
               readNotePage={readNotePage}
               showConfirmation={
