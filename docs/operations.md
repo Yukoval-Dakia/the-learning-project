@@ -217,7 +217,7 @@ TEST 跑在 NAS（`bancho-nb2.local`，x86_64）的 `/volume1/docker/tlp-test/`�
 
 NAS sshd 禁 TCP 转发（`AllowTcpForwarding no`，系统配置不改），Mac 访问 TEST 靠本机两个 LaunchAgent（源文件在 `scripts/test-nas/`，运行副本装在 `~/Library/Application Support/tlp-nas-tunnel/`）：
 
-- `studio.yukoval.tlp-nas-tunnel`（`relay.py`）：只监听本机 `127.0.0.1:8787`（→NAS 18787），每条连接开一个 ssh exec channel 在 NAS 上跑 `nc`；常驻几条预热通道，新连接通常跳过 ssh 建链。数据库端口 5433/5544→15433 已于 2026-11-06 关闭——本地 dev 脚本曾默认 5433，任何指向它们的连接都可能落到 TEST；查 TEST 数据改用 `ssh yukoval@bancho-nb2.local docker exec … psql` 一类方式。
+- `studio.yukoval.tlp-nas-tunnel`（`relay.py`）：只监听本机 `127.0.0.1:8787`（→NAS 18787），每条连接开一个 ssh exec channel 在 NAS 上跑一段 Python 转发；常驻几条预热通道，新连接通常跳过 ssh 建链。中继给每个请求加 `Connection: close`，一个请求一条连接，因为 app 关空闲连接的通知经 ssh 传回有延迟，复用空闲连接会连续撞 `ERR_CONNECTION_CLOSED`。每条连接的来源进程、时间、字节数记在运行目录的 `connections.log`（不记内容和 token）。数据库端口 5433/5544→15433 已于 2026-11-06 关闭——本地 dev 脚本曾默认 5433，任何指向它们的连接都可能落到 TEST；查 TEST 数据改用 `ssh yukoval@bancho-nb2.local docker exec … psql` 一类方式。
 - `studio.yukoval.tlp-nas-watch`（`nas-watch.sh`）：NAS 重启后拉回 memory watchdog（watchdog 在 MemAvailable < 2 GB 时停 TEST 容器）；memory stop 或 TEST 不健康时写 `ALERT` 文件并弹通知。NAS 重启与 watchdog 恢复之间只有容器内存限额兜底；Mac 关机则 watchdog 无人重启。
 
 Mac 关机：TEST 在 NAS 上继续跑，但外部不可达、Tailscale 入口断、当日日级 dump 不跑。
