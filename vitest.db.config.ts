@@ -4,7 +4,10 @@ import { dbTestInclude, resolveConfig, sharedExclude, sharedOxc } from './vitest
 
 const isListCommand = process.argv[2] === 'list';
 if (isListCommand) {
-  const dummyUrl = 'postgres://loom:loom@127.0.0.1:5432/loom?sslmode=disable';
+  // Module-load stub only (list mode imports test files, which import script
+  // modules whose load-env TEST guard runs): keep it a non-TEST shape — a
+  // loopback `loom` database name would be refused as TEST's.
+  const dummyUrl = 'postgres://loom:loom@127.0.0.1:5432/loom_dev?sslmode=disable';
   process.env.DATABASE_URL ??= dummyUrl;
   process.env.TEST_DATABASE_URL ??= dummyUrl;
 }

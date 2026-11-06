@@ -157,10 +157,14 @@ reuses the same database and only applies new migrations. Docker/OrbStack must b
 - **Guard:** `dev:local`, `dev:reset` and every script resolving a local database target
   (`db:migrate:local`, `drizzle.config.local.ts`, delivery/spike scripts — one shared
   judgment in `scripts/local-db-env.ts`) refuse TEST targets before connecting: resolved
-  port 5433/5544 or database `loom`. The default is always this worktree's dev database
-  (`loom_dev` role @ 127.0.0.1:5434). The only override is `DEV_ALLOW_TEST_DB=1`, which
-  prints a warning banner and honours the TEST stack's `POSTGRES_*` — do not use it
-  casually.
+  port 5433/5544 (compared after parsing, so `05433`-style spellings are caught too) or
+  database `loom`. Scripts that read `DATABASE_URL` directly (`db:generate` / `db:push` /
+  `db:migrate` via `drizzle.config.ts`, `worker:dev`, `seed:*`, `db:backfill:*`,
+  `db:recompute:*` and every CLI importing `scripts/load-env.ts`) get the same refusal for
+  a loopback URL on a TEST port or with database `loom`. The default is always this
+  worktree's dev database (`loom_dev` role @ 127.0.0.1:5434). The only override is
+  `DEV_ALLOW_TEST_DB=1`, which prints a warning banner and honours the TEST stack's
+  `POSTGRES_*` — do not use it casually.
 - **Connections:** each dev API and worker uses a small pool (`DB_POOL_MAX=5`, also caps pg-boss), about 29 connections per worktree (pools plus the pg-boss and event LISTEN clients). `dev:local` saves `max_connections=300` on the shared dev Postgres (in its volume, not the compose file) and restarts it only when no other worktree is connected; otherwise it prints the restart command to run once they are stopped.
 - **Builtin subjects:** migrations run through the production entry `scripts/migrate.ts`, so every start also runs the subject-root seed and the builtin subject/trait reconcile (4 subjects, 24 traits); both are idempotent, so older dev databases are filled on their next start.
 - **Seed questions:** unless `DEV_SEED=0`, a fresh dev DB starts with 7 admitted math questions (ids `devseed:q:*`, fixed answer keys graded without any model call) so the question bank, practice and today pages have content; re-running adds nothing. Dev DB only — never with `DEV_ALLOW_TEST_DB=1`.
