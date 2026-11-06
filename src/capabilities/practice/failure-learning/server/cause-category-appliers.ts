@@ -122,6 +122,7 @@ export const causeCategoryProposalAcceptApplier: ProposalAcceptApplier = async (
   const run = await runProposalAccept(db as Db, input.proposalId, {
     proposal: inboxView(input),
     userNote: input.user_note,
+    ...(input.actor ? { actor: input.actor } : {}),
     signal: 'after_commit',
     replay: async (rate: RecordedProposalRate): Promise<CauseCategoryAcceptResult> => {
       const { categoryId } = parseCauseCategoryChange(input);

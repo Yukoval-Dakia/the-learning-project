@@ -1,7 +1,7 @@
 // M4-T6 (YUK-319/YUK-318)：收件箱页。YUK-521 (A4 强度轴) 重构为三档分流：
-//   A 自动应用（completion；后台静默物化 + 撤销窗口，卡来自 /api/proposals/auto-applied，
+//   A 自动应用（strength A；后台静默物化 + 撤销窗口，卡来自 /api/proposals/auto-applied，
 //     撤销复用既有 retractProposal —— 无新撤销逻辑）+ 裁决熔断 meter/banner；
-//   B 逐条人审（真裁决项，复用既有 ProposalCard；含 breaker 退回 B 的 completion）；
+//   B 逐条人审（真裁决项，复用既有 ProposalCard；含 breaker 退回 B 的 strength-A 行）；
 //   C 纯状态（无 accept applier 的 defer/archive/judge_retraction；折叠链到 AI 观察面）。
 // tier 映射以 core 强度表为单一真相（inbox-tier.ts），不照抄设计稿 v0 的 INBOX_TIER。
 // M3E 呈现（YUK-1473）：外壳 UiNextRoot.ib-page + main.un-m3e-bridge，样式在 inbox-m3e.css，
@@ -251,8 +251,8 @@ function AutoAppliedCard({
   const appliedMs = Date.parse(row.applied_at);
   const state = autoAppliedState(appliedMs, nowMs, row.reverted);
   const consumed = state === 'consumed';
-  // A 档当前唯一 kind 是 completion；用其 KIND_META 取 label/icon。
-  const meta = kindMeta('completion');
+  // A 档卡的 kind 由读模型给出（首批含建知识点/学习项/错因类目）。
+  const meta = kindMeta(row.kind);
   const remainingMinutes = Math.max(1, Math.ceil(undoRemainingMs(appliedMs, nowMs) / 60_000));
   // 撤销按钮 label（if/else 替链式三元，守项目「禁链式三元」OCR 红线）。
   let revertLabel: string;
@@ -273,11 +273,11 @@ function AutoAppliedCard({
           <span className="ib-aa-title">{row.title}</span>
         </div>
         <p className="ib-aa-text">
-          自动判定为完成并已记录 · 安全可逆，不放心的窗口内一键撤回即可。
+          {row.summary || '自动处理了这条提议 · 安全可逆，不放心的窗口内一键撤回即可。'}
         </p>
         {trace && (
           <div id={traceId} className="ib-aa-trace">
-            来自 <b>completion</b> · 干净可逆
+            来自 <b>{row.kind}</b> · 干净可逆
             <br />
             静态可逆性兜底 · 非 confidence 判定（apply 档位 {row.level}）
           </div>

@@ -1,11 +1,13 @@
-// 裁决（verdict）速率熔断读数：把窗口内的 rate 事件数归到 ok/warned/tripped
-// 三档，供 A 档历史卡的 meter/banner 展示。A 档 auto-apply 自 YUK-525 起改为
-// 人工审批，这里不再触发任何自动物化。
+// Verdict-rate breaker for the proposal auto-apply lane: windowed `rate` event
+// counts mapped to ok/warned/tripped. Kernel-owned because the auto-apply
+// executor and the shell digest both consult it, and kernel cannot import a
+// capability.
 //
-// 计数只从 `event.action='rate'` 派生（event log 是 SoT，不建表）。warn 只告知，
-// max 是满刻度；阈值按正常裁决速率留足余量。
+// Counting only reads `event.action='rate'` (the event log is the SoT; no table).
+// warn only informs, max is the hard stop: the executor applies nothing past it
+// and leaves the proposals for human review.
 //
-// 红线：只数 rate 速率，绝不触 θ̂ / p(L) / FSRS。
+// Red line: only counts rate velocity, never touches θ̂ / p(L) / FSRS.
 
 import { and, eq, gte, lte, sql } from 'drizzle-orm';
 
@@ -14,7 +16,7 @@ import { event } from '@/db/schema';
 
 type DbLike = Db | Tx;
 
-// 窗口 1h；warn=12、max=30 取正常裁决速率的数倍，正常使用碰不到。
+// 1h window; warn=12 / max=30 are multiples of a normal decision rate.
 export const VERDICT_RATE_WINDOW_MS = 3_600_000;
 export const VERDICT_AUTOAPPLY_WARN = 12;
 export const VERDICT_AUTOAPPLY_MAX = 30;
@@ -22,17 +24,17 @@ export const VERDICT_AUTOAPPLY_MAX = 30;
 export type VerdictBreakerStatus = 'ok' | 'warned' | 'tripped';
 
 export interface CheckVerdictRateBreakerInput {
-  /** 窗口内已发生的裁决次数（含本次之前的，不含本次）。 */
+  /** Decisions already inside the window (before this one). */
   recentCount: number;
-  /** warn 水位：达到/超过即 'warned'。默认 VERDICT_AUTOAPPLY_WARN。 */
+  /** warn level: at/above → 'warned'. Defaults to VERDICT_AUTOAPPLY_WARN. */
   warn?: number;
-  /** max 水位：达到/超过即 'tripped'。默认 VERDICT_AUTOAPPLY_MAX。 */
+  /** max level: at/above → 'tripped'. Defaults to VERDICT_AUTOAPPLY_MAX. */
   max?: number;
 }
 
 /**
- * 纯判定（零 IO）：recentCount < warn → ok；≥ warn → warned；≥ max → tripped。
- * max 先于 warn 检查，故 warn === max 时只剩一条硬边界。
+ * Pure decision (zero IO): < warn → ok; ≥ warn → warned; ≥ max → tripped.
+ * max is checked before warn, so warn === max leaves one hard boundary.
  */
 export function checkVerdictRateBreaker(input: CheckVerdictRateBreakerInput): {
   status: VerdictBreakerStatus;
@@ -46,15 +48,15 @@ export function checkVerdictRateBreaker(input: CheckVerdictRateBreakerInput): {
 }
 
 export interface CountRecentVerdictsInput {
-  /** 窗口右端（通常 = 本次 auto-apply 的 now）。 */
+  /** Window right edge (usually the auto-apply instant). */
   now: Date;
-  /** 窗口长度（ms）。默认 VERDICT_RATE_WINDOW_MS。 */
+  /** Window length in ms. Defaults to VERDICT_RATE_WINDOW_MS. */
   windowMs?: number;
 }
 
 /**
- * 数窗口内 `event.action='rate'` 的行数（一条 rate = 一次裁决），只取 count。
- * 源是 rate 事件日志，绝不读 θ̂ / p(L) / FSRS 状态。
+ * Count `event.action='rate'` rows inside the window (one rate = one decision).
+ * Count only; never reads θ̂ / p(L) / FSRS state.
  */
 export async function countRecentVerdicts(
   db: DbLike,
@@ -62,7 +64,7 @@ export async function countRecentVerdicts(
 ): Promise<number> {
   const windowMs = input.windowMs ?? VERDICT_RATE_WINDOW_MS;
   const windowStart = new Date(input.now.getTime() - windowMs);
-  // 上界 created_at <= now：未来时间的 rate 不进入「最近 1h」，避免虚高 meter。
+  // Upper bound created_at <= now: future-dated rates do not inflate the meter.
   const rows = await db
     .select({ value: sql<number>`count(*)::int` })
     .from(event)
@@ -76,21 +78,21 @@ export async function countRecentVerdicts(
   return rows[0]?.value ?? 0;
 }
 
-/** A 档 meter/banner 消费的熔断快照。 */
+/** Breaker snapshot consumed by the A-lane meter/banner. */
 export interface VerdictBreakerResult {
-  /** true → 已达 max 水位。 */
+  /** true → max reached. */
   tripped: boolean;
-  /** 三档水位。 */
+  /** Three-level status. */
   level: VerdictBreakerStatus;
-  /** 窗口内裁决次数（meter 当前水位）。 */
+  /** Decisions in the window (meter level). */
   applied: number;
-  /** max 水位（meter 满刻度）。 */
+  /** max level (meter full scale). */
   cap: number;
-  /** 窗口长度（ms）。 */
+  /** Window length in ms. */
   window: number;
 }
 
-/** 读取窗口内裁决数并归到熔断快照；计数函数可注入用于测试。 */
+/** Read the window count and map it to the breaker snapshot; counter injectable for tests. */
 export async function checkAutoApplyBreaker(
   db: DbLike,
   now: Date,

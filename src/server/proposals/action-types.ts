@@ -1,6 +1,10 @@
 import type { ActivityRefT } from '@/core/schema/activity';
 import type { RelationTypeSchemaT } from '@/core/schema/event/blocks';
-import type { ProposalCorrectedPayload, ProposalLifecycleResult } from '@/kernel/proposals';
+import type {
+  ProposalCorrectedPayload,
+  ProposalDecisionActor,
+  ProposalLifecycleResult,
+} from '@/kernel/proposals';
 
 export type AcceptAiProposalResult = ProposalLifecycleResult;
 export type DismissAiProposalResult = ProposalLifecycleResult;
@@ -12,6 +16,12 @@ export interface RetractAiProposalResult extends ProposalLifecycleResult {
 
 export type AcceptAiProposalOpts = {
   user_note?: string;
+  /**
+   * Internal decision attribution. The HTTP decision route never forwards a
+   * client field here, so external callers stay `user/self`; only the auto-apply
+   * lane supplies the proposing agent's identity.
+   */
+  actor?: ProposalDecisionActor;
 } & (
   | {
       decision?: 'accept';

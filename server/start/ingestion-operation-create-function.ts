@@ -7,7 +7,8 @@ export const createStartIngestionOperationFunction = createServerFn({ method: 'P
   .handler(({ context, data }) => {
     const request = getRequest();
     return runAuthenticatedStartWorkbench(context, request, async () => {
-      const result = await context.createIngestionOperation({
+      const { createStartIngestionOperation } = await context.adapters.records();
+      const result = await createStartIngestionOperation({
         ...data,
         key: request.headers.get('Idempotency-Key'),
       });

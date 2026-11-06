@@ -1,9 +1,8 @@
 import { errorResponse } from '@/kernel/http';
-import type { FrontdoorContext } from './context';
 
-// Bound by the frontdoor's initialized Hono graph, never imported by the Start
-// function bundle: use the same hydrated registry and fallback cache as HTTP.
-export const readStartSubjects: FrontdoorContext['readSubjects'] = async () => {
+// Loaded through context.adapters from the API graph, so the reader uses the same
+// hydrated subject registry, config snapshot and pool as the HTTP routes.
+export const readStartSubjects = async () => {
   try {
     const { db } = await import('@/db/client');
     const { loadLearnerSubjects } = await import('@/capabilities/shell/public');
