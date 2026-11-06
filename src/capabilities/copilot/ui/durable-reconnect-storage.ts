@@ -41,6 +41,8 @@ export interface PersistedPendingCopilotTurn {
   requestBody: PersistedPendingCopilotRequestBody;
   /** When it was first sent (ms). Absent on older entries, which are never resent unasked. */
   sentAt?: number;
+  /** The server refused it outright: sending it again is the learner's call, never automatic. */
+  refused?: boolean;
 }
 
 interface PersistedPendingCopilotTurns {
@@ -154,6 +156,7 @@ function parsePendingCopilotTurn(value: unknown): PersistedPendingCopilotTurn | 
     aiMessageId,
     userMessage,
     ...(typeof candidate.sentAt === 'number' ? { sentAt: candidate.sentAt } : {}),
+    ...(candidate.refused === true ? { refused: true } : {}),
     requestBody: {
       session_id: sessionId,
       user_message: userMessage,

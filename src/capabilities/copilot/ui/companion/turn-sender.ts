@@ -67,7 +67,9 @@ const AUTO_RESEND_MAX_AGE_MS = 10 * 60_000;
 const RESUME_RESEND_GAP_MS = 60_000;
 
 export function canResendUnasked(turn: PersistedPendingCopilotTurn): boolean {
-  return turn.sentAt !== undefined && Date.now() - turn.sentAt <= AUTO_RESEND_MAX_AGE_MS;
+  return (
+    !turn.refused && turn.sentAt !== undefined && Date.now() - turn.sentAt <= AUTO_RESEND_MAX_AGE_MS
+  );
 }
 
 export function createTurnSender(ctx: CompanionCtx): TurnSender {
@@ -116,7 +118,11 @@ export function createTurnSender(ctx: CompanionCtx): TurnSender {
       ),
     );
 
-  async function confirmAnswerOnly(key: string, recovery: boolean): Promise<boolean> {
+  async function confirmAnswerOnly(
+    key: string,
+    recovery: boolean,
+    sessionId: string,
+  ): Promise<boolean> {
     if (internals.checkingPolicy) {
       if (recovery) {
         markPending(key, { dispatching: false, doubtful: true, error: ACCEPTANCE_UNKNOWN_COPY });
@@ -142,7 +148,9 @@ export function createTurnSender(ctx: CompanionCtx): TurnSender {
       return true;
     } catch {
       record('unsupported');
-      ctx.set({ error: ANSWER_ONLY_UNAVAILABLE_COPY });
+      if (!recovery || ctx.get().currentSessionId === sessionId) {
+        ctx.set({ error: ANSWER_ONLY_UNAVAILABLE_COPY });
+      }
       if (recovery) {
         markPending(key, { dispatching: false, error: ANSWER_ONLY_UNAVAILABLE_COPY });
         stopReplyRow(key);
@@ -209,7 +217,7 @@ export function createTurnSender(ctx: CompanionCtx): TurnSender {
           }
         : buildBody(sessionId, text));
     if (requestBody.derivation_policy === 'answer_only') {
-      if (!(await confirmAnswerOnly(key, Boolean(recovery)))) return;
+      if (!(await confirmAnswerOnly(key, Boolean(recovery), sessionId))) return;
     }
     const pending: PendingTurn = {
       v: 2,
@@ -316,12 +324,13 @@ export function createTurnSender(ctx: CompanionCtx): TurnSender {
       // A definite refusal: nothing was accepted, so the tuple is no longer needed.
       const copy = plainSendError(cause);
       explicit?.onRefused(copy);
-      // The words of a refused replay go back to the composer. When they cannot (another
-      // conversation, or the learner typed more), the message stays for 再发一次 / 算了.
+      // Refused words go back to the composer. When they cannot (another conversation, or the
+      // learner typed more), the message stays for 再发一次 / 算了, and a reload does not resend it.
       const wordsCanReturn =
         !explicit && !requestBody.confirmation && showing() && ctx.get().draft === '';
-      if (recovery && !explicit && !requestBody.confirmation && !wordsCanReturn) {
-        markPending(key, { dispatching: false, error: copy });
+      if (!explicit && !requestBody.confirmation && !wordsCanReturn) {
+        persistPendingCopilotTurn({ ...pending, refused: true });
+        markPending(key, { dispatching: false, refused: true, error: copy });
         stopReplyRow(key);
         return;
       }
