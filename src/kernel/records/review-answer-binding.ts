@@ -4,7 +4,11 @@
 // both operations at API and worker startup.
 
 import type { Db, Tx } from '@/db/client';
-import { HostOperationNotInstalledError } from '@/kernel/host-operation';
+import {
+  HostOperationNotInstalledError,
+  installHostOperation,
+  installedHostOperation,
+} from '@/kernel/host-operation';
 import type { BoundReviewAnswer, ReviewAnswerAttachment } from '@/kernel/tools/review-answer';
 import type { ToolContext } from '@/kernel/tools/types';
 
@@ -22,15 +26,16 @@ export interface ReviewAnswerBindingOperations {
   ) => Promise<ReviewAnswerReceipt>;
 }
 
-let installed: ReviewAnswerBindingOperations | undefined;
+const OPERATIONS_SLOT = 'kernel/records/review-answer-binding:operations';
 
 export function installReviewAnswerBindingOperations(
   operations: ReviewAnswerBindingOperations,
 ): void {
-  installed = operations;
+  installHostOperation(OPERATIONS_SLOT, operations);
 }
 
 function operations(): ReviewAnswerBindingOperations {
+  const installed = installedHostOperation<ReviewAnswerBindingOperations>(OPERATIONS_SLOT);
   if (!installed) {
     throw new HostOperationNotInstalledError(
       'review-answer binding operations are not installed; call installPracticeHostOperations at startup',

@@ -31,6 +31,7 @@ import { boundSlots, entriesForSubmit } from './blocks/envelope';
 import { type EntriesUpdate, parsePresentation } from './blocks/PresentationBlocks';
 import {
   type JudgeFeedback,
+  feedbackAfterRejudge,
   feedbackFromCommittedAttempt,
   feedbackFromCommittedDiagnosticAttempt,
   provenanceOf,
@@ -38,9 +39,11 @@ import {
 import type { PfToast } from './PracticeFacePage';
 import {
   type AdviceCommit,
+  type AppealStatus,
   type JudgePreview,
   type StreamItem,
   type SubmitReviewInput,
+  getAppealStatus,
   isSubmitPending,
 } from './practice-api';
 import { type PracticeClient, usePracticeClient } from './practice-client';
@@ -147,12 +150,8 @@ export function shouldMarkSlotDoneOnBack(autoCommitted: boolean): boolean {
   return autoCommitted;
 }
 
-// YUK-432 (Bugbot FINDING 2) — 反馈卡上「不服判」入口是否可用。客观题自动 commit 同样落了独立 judge
-// 锚点 event（后端 submit.ts:550 在 judge_route ∈ JudgeKind {exact,keyword,…} 时写，并经响应
-// judge.judge_event_id 回传），故 deterministic 判定**可申诉**（如 exact-match 误拒了等价答案）。
-// 入口在反馈相位、当前未展开申诉框、且拿得到锚点 id 时可用——与 autoCommitted 无关（旧实现错误地用
-// autoCommitted 隐藏了它）。手动流锚点在用户提交申诉那刻随 commit 落（res.judge.judge_event_id），客观
-// 流锚点在 auto-commit 时已落（同一响应字段），暂存后供此谓词判定。
+// 反馈卡上的重判入口是否可用。可申诉的只有 evaluation：自动 commit 流要拿到它的 id 才显示入口；
+// 手动流锚点在提交申诉那刻随 commit 落，入口恒可见。judge event 没有冻结原答，服务端恒拒，不给入口。
 export function appealEntryAvailable(opts: {
   phase: 'answering' | 'feedback';
   appealOpen: boolean;
@@ -398,7 +397,6 @@ export function usePracticeSubmit({
   const [judging, setJudging] = useState(false);
   const [preview, setPreview] = useState<JudgePreview | null>(null);
   const activationIntent = useRef<SubmitReviewInput['activation_intent']>(undefined);
-  const committedAppealKind = useRef<'judge' | 'evaluation'>('judge');
   // intervention_diagnostic skips the repeatable advice preview and is committed
   // by the first /api/attempts call. Its response is sufficient for the feedback
   // card, but intentionally lacks advice-only provenance fields used by commit().
@@ -410,17 +408,14 @@ export function usePracticeSubmit({
   const [rating, setRating] = useState<Rating | null>(null);
   const [appealOpen, setAppealOpen] = useState(false);
   const [appealText, setAppealText] = useState('');
-  const [appealFiled, setAppealFiled] = useState(false);
+  const [filedAppealId, setFiledAppealId] = useState<string | null>(null);
   const [committing, setCommitting] = useState(false);
   const [returning, setReturning] = useState(false);
   const returningRef = useRef(false);
   // YUK-432 — 客观题在 preview 回来时已自动 commit（auto_rate:true）。记下来：反馈卡保留判定，
   // 「下一项」只 onDone() 推进（不再二次 commit）。开放题恒 false → 现有手动流不变。
   const [autoCommitted, setAutoCommitted] = useState(false);
-  // YUK-432 (Bugbot FINDING 2) — 客观题自动 commit 那次 submitReview 回执的 judge 锚点 id。后端为
-  // 客观判分（route ∈ JudgeKind）写了独立 judge event 并回传 judge.judge_event_id；存下来，让反馈卡上
-  // 的「不服判」入口在自动 commit 后仍能对这个锚点直接发 appeal（不再二次 submit——review 已落库）。
-  // null = 这次自动判定没有可申诉锚点（理论上 exact/keyword 恒有，留 null 兜底 → 入口自动隐藏）。
+  // 自动 commit 后可申诉的 evaluation id（名字是历史遗留）。null = 没有可申诉的记录，入口隐藏。
   const [autoCommitJudgeEventId, setAutoCommitJudgeEventId] = useState<string | null>(null);
   // YUK-433 — solo 路径 RT capture：题面变可见那刻的墙钟时间戳。commit 时 now - 它 = 这次作答用时
   // （computeLatencyMs clamp 后作为 latency_ms 发出，server 映射成事件 payload 的 duration_ms）。下面
@@ -499,13 +494,12 @@ export function usePracticeSubmit({
         });
         setRating(fr);
         setAutoCommitted(true);
-        committedAppealKind.current = r?.assessment ? 'evaluation' : 'judge';
+        // Only an evaluation can be appealed: a judge event has no frozen original to rerun
+        // (the server always answers historical_unknown), so it offers no entry.
         setAutoCommitJudgeEventId(
           r?.assessment
             ? (r.assessment.effective_evaluation_id ?? r.assessment.candidate_id)
-            : typeof r?.judge_event_id === 'string'
-              ? r.judge_event_id
-              : null,
+            : null,
         );
       }
       setPendingRun(null);
@@ -649,6 +643,36 @@ export function usePracticeSubmit({
   }
   const nativeEvidence = useMemo(() => nativeGroupEvidence(evidence), [evidence]);
   const accepted = issuedState?.submissions[0];
+  // This visit's appeal, or after a reload the latest one the issuance read names.
+  const appealId =
+    filedAppealId ??
+    (issuedState?.settled?.kind === 'terminal'
+      ? issuedState.settled.latest_appeal_event_id
+      : null) ??
+    null;
+  const appealRead = useQuery({
+    queryKey: ['practice-appeal-status', appealId],
+    queryFn: () => getAppealStatus(appealId as string),
+    enabled: appealId !== null,
+    // Keeps reading until a final status, including while the first reads fail.
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return status === undefined || status === 'in_progress' ? 3000 : false;
+    },
+  });
+  // The result the last finished rejudge made effective. It outlives the appeal being read: a
+  // later appeal still running, unchanged or failed must not bring back the older result.
+  const [rejudged, setRejudged] = useState<{
+    appealId: string;
+    effective: NonNullable<AppealStatus['after']>;
+  } | null>(null);
+  const finishedRead =
+    appealRead.data?.status === 'changed' || appealRead.data?.status === 'unchanged'
+      ? appealRead.data
+      : null;
+  if (finishedRead?.after && rejudged?.appealId !== finishedRead.appeal_event_id) {
+    setRejudged({ appealId: finishedRead.appeal_event_id, effective: finishedRead.after });
+  }
   // YUK-1501 — an accepted answer that /api/attempts already recorded is read-only review:
   // nothing on this page may submit it again. Recorded = the question's timeline holds an
   // attempt for its evaluation group that is settled (an effective evaluation) or whose
@@ -1007,7 +1031,7 @@ export function usePracticeSubmit({
       setCommittedPreview(feedback);
       setRating(feedback.suggested_rating);
       setAutoCommitted(true);
-      setAutoCommitJudgeEventId(committedDiagnostic.judge.judge_event_id);
+      setAutoCommitJudgeEventId(committedDiagnostic.judge.evaluation_id ?? null);
     } else {
       setCommittedPreview(null);
       setAutoCommitted(false);
@@ -1101,6 +1125,7 @@ export function usePracticeSubmit({
       // Pending originals are restored and polled before an appeal can name their verdict.
       if (isSubmitPending(res)) {
         setPendingRun({ runId: res.run_id, pollUrl: res.backfill.poll_url });
+        if (opts.withAppeal) addToast('作答已保存。判完后可以在结果上点重判。', 'info', 'clock');
         return;
       }
       if ('status' in res && res.status === 'review_required') {
@@ -1108,16 +1133,17 @@ export function usePracticeSubmit({
         return;
       }
       if (opts.withAppeal) {
-        const anchor = res.judge
-          ? 'assessment' in res
-            ? res.assessment.candidate_id
-            : res.judge.judge_event_id
-          : null;
-        if (anchor) {
-          await fileAppeal(anchor, appealText.trim(), 'assessment' in res ? 'evaluation' : 'judge');
-          addToast('已提交重判，在后台进行。判不准的话，原结果不变。', 'info', 'clock');
-        } else {
-          addToast('这次判定没有可以申诉的记录。', 'info', 'alert');
+        const anchor = res.judge && 'assessment' in res ? res.assessment.candidate_id : null;
+        // The answer is recorded by now: a failed appeal must not undo that.
+        try {
+          if (anchor) {
+            await fileAppeal(anchor, appealText.trim(), 'evaluation');
+            addToast('已提交重判，在后台进行。判不准的话，原结果不变。', 'info', 'clock');
+          } else {
+            addToast('这次判定没有可以申诉的记录。', 'info', 'alert');
+          }
+        } catch {
+          addToast('作答已保存，但重判没提交上。', 'info', 'alert');
         }
       }
       // 客观题自动 commit 成功 → 标记 autoCommitted（反馈卡隐藏手动评级、「下一项」只推进）+ 暂存
@@ -1125,13 +1151,8 @@ export function usePracticeSubmit({
       // 只在写入成功后置位：失败时保持手动评级行可见，用户可重试/手动评级（不丢答）。
       if (opts.autoRate && opts.advance === false) {
         setAutoCommitted(true);
-        committedAppealKind.current = 'assessment' in res ? 'evaluation' : 'judge';
         setAutoCommitJudgeEventId(
-          res.judge
-            ? 'assessment' in res
-              ? res.assessment.candidate_id
-              : res.judge.judge_event_id
-            : null,
+          res.judge && 'assessment' in res ? res.assessment.candidate_id : null,
         );
       }
       // advance=false（客观题自动 commit）→ 留在反馈卡让用户先看判定，「下一项」再 onDone()。
@@ -1153,13 +1174,20 @@ export function usePracticeSubmit({
   // YUK-432 (Bugbot FINDING 2) — 客观题自动 commit 后的「不服判」。review 已落库，不能再走 commit（会
   // 重复 submit 一条 review event）；直接对自动 commit 时暂存的 judge 锚点发 appeal。无锚点 → 入口本
   // 就被 appealEntryAvailable 隐藏，这里再兜底一次。
-  const submitAutoCommitAppeal = async () => {
-    if (!autoCommitJudgeEventId || committing) return;
+  // A finished rejudge moved the effective result; a further appeal must name the new one.
+  const appealAnchor = rejudged?.effective.effective_evaluation_id ?? autoCommitJudgeEventId;
+  // A retry passes the reason of the appeal it repeats: its own request, not a new one.
+  const submitAutoCommitAppeal = async (reason = appealText.trim()) => {
+    const anchor = appealAnchor;
+    if (!anchor || committing) return;
     setCommitting(true);
     try {
-      await fileAppeal(autoCommitJudgeEventId, appealText.trim(), committedAppealKind.current);
-      setAppealFiled(true);
+      const filed = await fileAppeal(anchor, reason, 'evaluation');
+      setFiledAppealId(filed.appeal_event_id);
+      setAppealText('');
       setAppealOpen(false);
+      // A retry can return the same id: its last read must not keep showing the failure.
+      if (filed.appeal_event_id === appealId) void appealRead.refetch();
     } catch (e) {
       addToast(
         e instanceof ApiError && e.code === 'stale_head'
@@ -1203,7 +1231,6 @@ export function usePracticeSubmit({
         return;
       }
       setAutoCommitted(true);
-      committedAppealKind.current = 'evaluation';
       setAutoCommitJudgeEventId(r.committed.judge ? r.committed.assessment.candidate_id : null);
       return;
     }
@@ -1279,7 +1306,7 @@ export function usePracticeSubmit({
         setCommittedPreview(feedback);
         setRating(feedback.suggested_rating);
         setAutoCommitted(true);
-        setAutoCommitJudgeEventId(res.judge?.judge_event_id ?? null);
+        setAutoCommitJudgeEventId('assessment' in res ? res.assessment.candidate_id : null);
         return;
       }
       const r = await getAdvice(q.id, answerMd, imageRefs, assessmentInput, adviceCommit(true));
@@ -1293,7 +1320,7 @@ export function usePracticeSubmit({
           setCommittedPreview(feedback);
           setRating(feedback.suggested_rating);
           setAutoCommitted(true);
-          setAutoCommitJudgeEventId(committed.judge.judge_event_id);
+          setAutoCommitJudgeEventId(committed.judge.evaluation_id ?? null);
           return;
         }
       }
@@ -1381,6 +1408,11 @@ export function usePracticeSubmit({
       }
     : null;
 
+  const settledFeedback = preview ?? committedPreview;
+  const displayedFeedback = settledFeedback
+    ? feedbackAfterRejudge(settledFeedback, rejudged?.effective ?? null)
+    : settledFeedback;
+
   return {
     question: { query: qQ, data: q, isInterventionDiagnostic, timelineEvents },
     issuance: issuanceView,
@@ -1414,7 +1446,7 @@ export function usePracticeSubmit({
       returning,
       pendingRun,
       pendingPoll,
-      displayedPreview: preview ?? committedPreview,
+      displayedPreview: displayedFeedback,
       committedPreview,
       rating,
       setRating,
@@ -1430,7 +1462,9 @@ export function usePracticeSubmit({
     },
     appeal: {
       open: appealOpen,
-      filed: appealFiled,
+      id: appealId,
+      read: appealRead.data,
+      readFailed: appealRead.isError && !appealRead.data,
       setOpen: setAppealOpen,
       text: appealText,
       setText: setAppealText,

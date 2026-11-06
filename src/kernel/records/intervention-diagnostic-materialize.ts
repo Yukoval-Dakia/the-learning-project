@@ -27,6 +27,7 @@ import {
   question_group_lifecycle,
   question_revision,
 } from '@/db/schema';
+import { installHostOperation, installedHostOperation } from '@/kernel/host-operation';
 import { lockInterventionDiagnosticDelivery } from '@/kernel/locks/intervention-diagnostic-delivery';
 import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
 
@@ -41,19 +42,20 @@ export interface InterventionDiagnosticLeaves {
   retireQuestionSchedule(tx: Tx, questionId: string): Promise<boolean>;
 }
 
-let installedLeaves: InterventionDiagnosticLeaves | undefined;
+const LEAVES_SLOT = 'kernel/records/intervention-diagnostic-materialize:leaves';
 
 export function installInterventionDiagnosticLeaves(leaves: InterventionDiagnosticLeaves): void {
-  installedLeaves = leaves;
+  installHostOperation(LEAVES_SLOT, leaves);
 }
 
 function requireLeaves(): InterventionDiagnosticLeaves {
-  if (!installedLeaves) {
+  const installed = installedHostOperation<InterventionDiagnosticLeaves>(LEAVES_SLOT);
+  if (!installed) {
     throw new Error(
       'intervention diagnostic leaves are not installed; call installInterventionDiagnosticLeaves before intervention handlers run',
     );
   }
-  return installedLeaves;
+  return installed;
 }
 
 export const INTERVENTION_DIAGNOSTIC_CLAIM_LEASE_MS = 10 * 60 * 1000;
