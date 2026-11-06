@@ -16,7 +16,7 @@ compose 的 `migrate` / `app` / `worker` 都从 `.env` 取环境，`cloudflared`
 | --- | --- | --- | --- |
 | `DATABASE_URL` | app、worker、脚本 | 必填；缺失时 `src/db/client.ts` 启动即抛错 | `src/server/config/env.ts`；`src/db/client.ts` |
 | `API_PORT` | app | `8787`；非正整数抛错 | `src/server/config/env.ts` |
-| `DEV_PORT` | `pnpm dev:local` | 未设时自动探测 8788 起首个空闲的 127.0.0.1 端口；作为 `API_PORT` 传给 dev 的 API 进程，并把 dev worker 的 `WORKSHEET_RENDER_APP_ORIGIN` 指到同一端口。避开 TEST app 容器占用的 :8787 | `scripts/dev-local.ts` |
+| `DEV_PORT` | `pnpm dev:local` | 未设时自动探测 8788 起首个空闲的 127.0.0.1 端口；作为 `API_PORT` 传给 dev 的 API 进程，并把 dev worker 的 `WORKSHEET_RENDER_APP_ORIGIN` 指到同一端口。避开 TEST 占用的 :8787（本机由 NAS 中继监听） | `scripts/dev-local.ts` |
 | `DEV_DB_NAME` | `pnpm dev:local`、`pnpm dev:reset` | 未设时按 worktree 根路径派生 `loom_dev_<name>_<sha1(path)前8>`；覆盖后 dev:local 用该库名，dev:reset 仍只接受 `loom_dev_*` | `scripts/dev-worktree-db.ts` |
 | `RW_WORKER` | app | `1` 时同进程启动 pg-boss worker | `server/index.ts` |
 | `RW_FRONTDOOR` | app | `1` 时启用 Start 前门（需要 `dist/start`）；`dev` 仅 `dev:local` 使用，经 API 进程内的 Vite dev server 提供同一前门（HMR，不需要 `dist/start`）；未设时 app 只服务 Hono API | `server/index.ts`；`server/dev-frontdoor.ts` |
@@ -216,3 +216,9 @@ app 与 worker 启动时各 hydrate 一次，之后每 `15_000` ms 刷新；刷�
 写面是 `PATCH /api/admin/config` 与 `POST /api/admin/config/reset`，页面为 `/admin/config`；同一事务内 upsert/删除行、追加 journal、bump epoch，提交后本进程立即 hydrate，响应分别报告提交 epoch 与本进程快照 epoch（`src/capabilities/observability/manifest.ts`；`src/server/config/write.ts`；`src/server/config/admin-config-write.ts`；`src/kernel/ui-surfaces.ts`）。
 
 生效优先级按 key 的 `envMode`：默认 `fallback` = DB > env > code default；`priority` = env 显式 > DB > code default；`pinned` = 只看 env（DB 写入 409）。目前没有 key 使用 `pinned`（`src/core/config/store.ts`；`registry`）。
+
+### 学习伙伴的思考层级
+
+任务键 `task.CopilotTask.reasoning` 使用 `{"level":"high"}`；旧值 `{"reasoning_effort":"high"}` 兼容读取。层级的实际应用取决于所选 provider/model 的目录能力，运行回执记录 `requested` 与 `applied`，不能只凭配置值认定生效（`src/server/ai/providers.ts`）。
+
+当前学习伙伴采用 `opencode-go/deepseek-v4.1-flash`，配置 `high` 时，Pi 的 OpenAI-compatible 请求实际携带 `reasoning_effort:"high"` 与 `thinking:{"type":"enabled"}`，端点为 `https://opencode.ai/inference/go/openai/v1/chat/completions`。此路由未配置任务层级时，不发送上述两个字段，由服务端默认行为决定，不能把未配置等同于关闭思考。上述字段由 Pi 传输层生成，应用不自行拼接（`src/server/ai/pi-agent-adapter.ts`、`src/server/ai/reasoning-wire.ts`、`src/server/ai/pi-models.ts`）。这描述的是该路由的请求事实，不代表其他同名模型路由，也不证明服务端实际计算的思考 token 数。

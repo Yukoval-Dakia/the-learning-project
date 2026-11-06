@@ -3,7 +3,6 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = process.cwd();
-const ALLOWLIST_PATH = 'scripts/audit-learner-copy-allowlist.json';
 
 // Only surfaces learners see directly. Admin/observability keep diagnostic terms; API clients,
 // comments, and identifiers are out of scope. Add new learner surfaces explicitly here.
@@ -163,17 +162,6 @@ export interface CopyViolation {
   value: string;
 }
 
-export interface CopyAllowlistEntry {
-  file: string;
-  label: string;
-  valueIncludes: string;
-  reason: string;
-}
-
-interface CopyAllowlistFile {
-  entries: CopyAllowlistEntry[];
-}
-
 function visibleLiterals(text: string): Array<{ value: string; line: number }> {
   const rows: Array<{ value: string; line: number }> = [];
   // Strip block/line comments before checking each line. Rules use whole words or explicit phrases,
@@ -216,72 +204,24 @@ export function scanLearnerCopy(file: string, text: string): CopyViolation[] {
   return violations;
 }
 
-export function validateCopyAllowlist(entries: readonly CopyAllowlistEntry[]): void {
-  for (const [index, entry] of entries.entries()) {
-    for (const key of ['file', 'label', 'valueIncludes', 'reason'] as const) {
-      if (typeof entry[key] !== 'string' || !entry[key].trim()) {
-        throw new Error(`learner-copy allowlist entry ${index} has empty ${key}`);
-      }
-    }
-  }
-}
-
-export function readCopyAllowlist(file = ALLOWLIST_PATH): CopyAllowlistEntry[] {
-  const parsed = JSON.parse(fs.readFileSync(path.join(ROOT, file), 'utf8')) as CopyAllowlistFile;
-  if (!parsed || !Array.isArray(parsed.entries)) {
-    throw new Error(`${file} must contain an entries array`);
-  }
-  validateCopyAllowlist(parsed.entries);
-  return parsed.entries;
-}
-
-function allowlistMatches(violation: CopyViolation, entry: CopyAllowlistEntry): boolean {
-  return (
-    violation.file === entry.file &&
-    violation.label === entry.label &&
-    violation.value.includes(entry.valueIncludes)
-  );
-}
-
-export function applyCopyAllowlist(
-  violations: readonly CopyViolation[],
-  entries: readonly CopyAllowlistEntry[],
-): { violations: CopyViolation[]; staleEntries: CopyAllowlistEntry[] } {
-  validateCopyAllowlist(entries);
-  return {
-    violations: violations.filter(
-      (violation) => !entries.some((entry) => allowlistMatches(violation, entry)),
-    ),
-    staleEntries: entries.filter(
-      (entry) => !violations.some((violation) => allowlistMatches(violation, entry)),
-    ),
-  };
-}
-
-export function auditLearnerCopy(
-  files: readonly string[] = LEARNER_COPY_FILES,
-  allowlist: readonly CopyAllowlistEntry[] = readCopyAllowlist(),
-): { violations: CopyViolation[]; staleEntries: CopyAllowlistEntry[] } {
-  const found: CopyViolation[] = [];
+export function auditLearnerCopy(files: readonly string[] = LEARNER_COPY_FILES): {
+  violations: CopyViolation[];
+} {
+  const violations: CopyViolation[] = [];
   for (const file of files) {
     const absolute = path.join(ROOT, file);
     const text = fs.readFileSync(absolute, 'utf8');
-    found.push(...scanLearnerCopy(file, text));
+    violations.push(...scanLearnerCopy(file, text));
   }
-  return applyCopyAllowlist(found, allowlist);
+  return { violations };
 }
 
 function run(): void {
-  const { violations, staleEntries } = auditLearnerCopy();
-  if (violations.length > 0 || staleEntries.length > 0) {
+  const { violations } = auditLearnerCopy();
+  if (violations.length > 0) {
     console.error('Learner copy audit failed:');
     for (const v of violations) {
       console.error(`  ${v.file}:${v.line} [${v.label}] ${JSON.stringify(v.value)}`);
-    }
-    for (const entry of staleEntries) {
-      console.error(
-        `  stale allowlist [${entry.label}] ${entry.file} contains ${JSON.stringify(entry.valueIncludes)}`,
-      );
     }
     process.exitCode = 1;
   } else {

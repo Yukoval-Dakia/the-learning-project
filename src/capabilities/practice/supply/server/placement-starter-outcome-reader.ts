@@ -1,5 +1,5 @@
 import { and, eq, inArray } from 'drizzle-orm';
-import type { Tx } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import {
   learning_session,
   placement_starter_attempt_question,
@@ -10,6 +10,7 @@ import {
   type PlacementStarterOutcome,
   readPlacementStarterFailure,
 } from '@/kernel/placement-starter-outcome';
+import { readAdmissionWaits } from '../../question-bank/public';
 import { PLACEMENT_STARTER_REQUIRED_COUNT } from './placement-starter-attempts';
 import { placementStarterIdentity } from './placement-starter-identity';
 import { readPlacementCandidateProgress } from './placement-starter-progress';
@@ -78,10 +79,18 @@ export async function readPlacementStarterOutcomes(
   const candidates = await readPlacementCandidateProgress(db, [
     ...new Set(bindings.map((row) => row.questionId)),
   ]);
+  const waits = await readAdmissionWaits(
+    db,
+    bindings.map((row) => row.questionId),
+  );
   return authority.subjectIds.map((subjectId): PlacementStarterOutcome => {
     const identity = placementStarterIdentity(authority.semanticGoalRevisionId, subjectId);
     const claim = claims.find((row) => row.subject_id === subjectId);
+    const admissionWaits = waits.filter((wait) =>
+      bindings.some((link) => link.questionId === wait.question_id && link.claimId === claim?.id),
+    );
     const binding = {
+      ...(admissionWaits.length ? { admission_waits: admissionWaits } : {}),
       session_id: sessionId,
       goal_id: goalId,
       semantic_goal_revision_id: authority.semanticGoalRevisionId,
@@ -186,5 +195,43 @@ export async function readPlacementStarterOutcomes(
         throw new Error(`unrecognized placement starter status: ${exhaustive}`);
       }
     }
+  });
+}
+
+/** Priority is a current placement fact, never an authority to spend or serve. */
+export async function isPlacementWaitingForQuestion(db: Db | Tx, questionId: string) {
+  return db.transaction(async (tx) => {
+    const sessions = await tx
+      .select({
+        sessionId: learning_session.id,
+        claimId: placement_starter_claim.id,
+      })
+      .from(placement_starter_attempt_question)
+      .innerJoin(
+        placement_starter_claim,
+        eq(placement_starter_claim.id, placement_starter_attempt_question.claim_id),
+      )
+      .innerJoin(learning_session, eq(learning_session.goal_id, placement_starter_claim.goal_id))
+      .where(
+        and(
+          eq(placement_starter_attempt_question.question_id, questionId),
+          eq(placement_starter_attempt_question.verification_status, 'authorized'),
+          eq(learning_session.type, 'placement'),
+          eq(learning_session.status, 'started'),
+        ),
+      );
+    for (const session of sessions) {
+      const outcomes = await readPlacementStarterOutcomes(tx, session.sessionId);
+      if (
+        outcomes.some(
+          (outcome) =>
+            outcome.claim_id === session.claimId &&
+            outcome.state === 'pending' &&
+            outcome.progress?.available_count === 0,
+        )
+      )
+        return true;
+    }
+    return false;
   });
 }

@@ -10,6 +10,7 @@ import {
   ResponseSet,
 } from '@/core/schema/assessment';
 import { SERVING_UNAVAILABLE_REASONS } from '@/core/schema/assessment/serving-admission';
+import { GradingProvenanceEntry } from '@/kernel/capability-contract-schemas';
 
 // ---------- 发题（issueAssessment） ----------
 
@@ -128,6 +129,8 @@ export const JudgeRunTerminalResultSchema = z
   .object({
     attempt_event_id: z.string(),
     status: z.enum(['effective', 'review_required']).optional(),
+    // Absent on legacy runs; a durable review_required result still owns its submission.
+    judge_lane: z.enum(['durable', 'sync']).optional(),
     assessment: z
       .object({
         submission_id: z.string(),
@@ -140,7 +143,7 @@ export const JudgeRunTerminalResultSchema = z
       .optional(),
     judge_event_id: z.string().nullable().optional(),
     outcome: z.string().optional(),
-    final_rating: z.string().optional(),
+    final_rating: z.string().nullable().optional(),
     route: z.string().nullable().optional(),
     coarse_outcome: z.string().optional(),
     score: z.number().nullable().optional(),
@@ -154,6 +157,7 @@ export const JudgeRunTerminalResultSchema = z
     confidence: z.number().optional(),
     feedback_md: z.string().optional(),
     capability_ref: z.object({ id: z.string(), version: z.string() }).optional(),
+    grading_provenance: z.array(GradingProvenanceEntry).optional(),
     telemetry: z.unknown().optional(),
     /** The override this handler REQUESTED — not necessarily the lane that executed (#Tunn0). */
     provider_override: z.string().nullable().optional(),

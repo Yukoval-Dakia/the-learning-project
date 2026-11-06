@@ -1,4 +1,4 @@
-import { RefreshCw, ShieldCheck } from 'lucide-react';
+import { CircleCheck, RefreshCw, ShieldCheck } from 'lucide-react';
 import { Button } from '@/ui-next/public';
 import { usePurposeChange } from './purpose-change';
 import type { PurposeImpact } from './record-api';
@@ -204,6 +204,7 @@ export function PurposeSection({ sessionId }: { sessionId: string }) {
             {p.receipt ? (
               <>
                 <p className="rc-purpose-committed" role="status">
+                  <CircleCheck size={15} aria-hidden="true" />
                   原请求的政策已提交。这不代表停止、修复或历史处理全部完成。
                 </p>
                 <p>

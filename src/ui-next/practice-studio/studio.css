@@ -462,6 +462,19 @@
   color: var(--st-muted);
   margin: 6px 0 0;
 }
+[data-ui-next] .un-st-ai-graded {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  margin-top: 6px;
+}
+[data-ui-next] .un-st-verdict .un-st-ai-graded svg {
+  flex: none;
+  margin-top: 4px;
+}
+[data-ui-next] .un-st-appeal {
+  margin-top: 12px;
+}
 [data-ui-next] .un-st-feedback-evidence {
   margin-top: 20px;
 }
@@ -534,6 +547,15 @@
   padding: 12px 16px;
   border-radius: 12px;
   background: var(--un-critical-soft);
+}
+[data-ui-next] .un-st-notice-title {
+  display: flex;
+  gap: 6px;
+}
+[data-ui-next] .un-st-notice-title svg {
+  flex: none;
+  margin-top: 0.2em;
+  color: var(--un-critical);
 }
 [data-ui-next] .un-st-page-state {
   padding-top: 48px;
@@ -945,4 +967,10 @@
 }
 [data-ui-next] .un-st-heading-companion .un-mascot {
   background: none;
+}
+[data-ui-next] .un-st-appeal .un-st-notice {
+  padding: 0;
+}
+[data-ui-next] .un-st-appeal .un-st-actions .un-st-button:first-child {
+  border-color: var(--st-line);
 }

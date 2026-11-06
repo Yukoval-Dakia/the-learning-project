@@ -35,11 +35,10 @@
  *     `)` 消歧 knowledge vs knowledge_edge）。
  *   - raw SQL 形：字符串/模板里的 `UPDATE <table>` / `DELETE FROM <table>` / `INSERT INTO <table>`
  *     （包括 Notes hub reconciliation 的现役 raw SQL 写点）。
- * 命中且其**文件**不在该表的 sanctioned_writers ∪ allowlist ⇒ VIOLATION。
+ * 命中且其**文件**不在该表的 sanctioned_writers ⇒ VIOLATION。
  *
- * 三类输出：
+ * 两类输出：
  *   - VIOLATION       —— 写点在未声明为合法写者的文件里（新增的绕过咽喉的 raw 写 → 红线兜底命中）。
- *   - ALLOWLISTED     —— 写点文件在 allowlist（带 reason + resolves_when{kind,ref,expected_by}）。
  *   - STALE-REGISTRY  —— 声明的 sanctioned_writer 的 marker 在文件里不再命中（registry ↔ 代码漂移：
  *                        写者被删/改名 → 该条 registry 是死配置，应清理）。
  *
@@ -71,7 +70,6 @@ import { lineOf } from './lib/ts-tokenize';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..');
-const ALLOWLIST_PATH = join(__dirname, 'audit-fold-writes-allowlist.json');
 
 // Scan roots: writers to fold-owned tables live under src/ and the top-level server/ (Hono
 // composition root). scripts/ are excluded — they orchestrate the projection shells, never write
@@ -590,57 +588,9 @@ export function reverseCheckWriters(
   return stale;
 }
 
-// ── allowlist contract (mirrors audit:schema / audit:mastery-provenance resolves_when) ──────────
-
-export type ResolvesWhen = { kind: 'pr' | 'phase' | 'manual'; ref: string; expected_by: string };
-export type AllowlistEntry = { reason: string; resolves_when: ResolvesWhen };
-/** allowlist key = `<table>::<file>` (a write site is allowlisted per table-file pair). */
-export type Allowlist = Record<string, AllowlistEntry>;
-
-export type AllowlistProblem = { key: string; detail: string };
-
-export function validateAllowlistEntry(
-  key: string,
-  entry: AllowlistEntry,
-  today: string,
-): AllowlistProblem[] {
-  const problems: AllowlistProblem[] = [];
-  if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) {
-    return [{ key, detail: 'allowlist entry must be an object with reason/resolves_when' }];
-  }
-  if (typeof entry.reason !== 'string' || entry.reason.trim().length === 0) {
-    problems.push({ key, detail: 'reason must be a non-empty string' });
-  }
-  const rw = entry.resolves_when;
-  if (rw === null || typeof rw !== 'object') {
-    problems.push({ key, detail: 'resolves_when must be { kind, ref, expected_by }' });
-    return problems;
-  }
-  if (rw.kind !== 'pr' && rw.kind !== 'phase' && rw.kind !== 'manual') {
-    problems.push({ key, detail: "resolves_when.kind must be 'pr', 'phase', or 'manual'" });
-  }
-  if (typeof rw.ref !== 'string' || rw.ref.trim().length === 0) {
-    problems.push({ key, detail: 'resolves_when.ref must be non-empty' });
-  }
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(rw.expected_by)) {
-    problems.push({ key, detail: 'resolves_when.expected_by must be YYYY-MM-DD' });
-  } else if (Number.isNaN(Date.parse(rw.expected_by))) {
-    problems.push({
-      key,
-      detail: `resolves_when.expected_by ${rw.expected_by} is not a valid date`,
-    });
-  } else if (rw.expected_by < today) {
-    problems.push({
-      key,
-      detail: `resolves_when.expected_by ${rw.expected_by} is before ${today}`,
-    });
-  }
-  return problems;
-}
-
 // ── audit verdict ────────────────────────────────────────────────────────────────────────────
 
-export type SiteStatus = 'sanctioned' | 'allowlisted' | 'violation';
+export type SiteStatus = 'sanctioned' | 'violation';
 export type SiteVerdict = WriteSite & { status: SiteStatus; role?: WriterRole };
 
 // A writer with one of these roles is locally constrained not to bypass fold truth:
@@ -672,27 +622,18 @@ export type FoldWriteAuditResult = {
   /** Report-only canonical/switchable writers whose event-native invariant needs owner review. */
   advisories: SiteVerdict[];
   stale: StaleWriter[];
-  allowlistProblems: AllowlistProblem[];
-  /** allowlist keys that match no live write site (dead config → drift). */
-  redundantAllowlist: string[];
-  /** true iff no violations, no stale registry entries, no allowlist problems, no dead allowlist. */
+  /** true iff no violations and no stale registry entries. */
   ok: boolean;
 };
 
-function allowlistKey(table: FoldOwnedTable, file: string): string {
-  return `${table}::${file}`;
-}
-
 /**
  * Core audit: classify each write site as sanctioned (its file is a declared writer of that table,
- * and that entry is NOT stale) / allowlisted / violation. Exported pure for unit testing.
+ * and that entry is NOT stale) or a violation. Exported pure for unit testing.
  */
 export function computeFoldWriteAudit(
   sites: WriteSite[],
   registry: SanctionedWriter[],
   stale: StaleWriter[],
-  allowlist: Allowlist,
-  today: string,
 ): FoldWriteAuditResult {
   const staleKeys = new Set(stale.map((s) => `${s.table}|${s.file}|${s.marker}`));
   // A (table,file) is a live sanctioned writer iff it has at least one NON-stale registry entry.
@@ -704,22 +645,11 @@ export function computeFoldWriteAudit(
 
   const verdicts: SiteVerdict[] = [];
   const violations: SiteVerdict[] = [];
-  const usedAllowlistKeys = new Set<string>();
-  const allowlistProblems: AllowlistProblem[] = [];
 
   for (const site of sites) {
     const pairKey = `${site.table}::${site.file}`;
-    const alKey = allowlistKey(site.table, site.file);
     if (sanctionedPairs.has(pairKey)) {
       verdicts.push({ ...site, status: 'sanctioned', role: sanctionedPairs.get(pairKey) });
-      continue;
-    }
-    if (Object.hasOwn(allowlist, alKey)) {
-      verdicts.push({ ...site, status: 'allowlisted' });
-      if (!usedAllowlistKeys.has(alKey)) {
-        usedAllowlistKeys.add(alKey);
-        allowlistProblems.push(...validateAllowlistEntry(alKey, allowlist[alKey], today));
-      }
       continue;
     }
     const v: SiteVerdict = { ...site, status: 'violation' };
@@ -727,24 +657,12 @@ export function computeFoldWriteAudit(
     violations.push(v);
   }
 
-  // Reverse check: an allowlist key that matched no live write site is dead config.
-  const redundantAllowlist: string[] = [];
-  for (const key of Object.keys(allowlist)) {
-    if (!usedAllowlistKeys.has(key)) redundantAllowlist.push(key);
-  }
-
   return {
     verdicts,
     violations,
     advisories: collectWriterAdvisories(verdicts),
     stale,
-    allowlistProblems,
-    redundantAllowlist,
-    ok:
-      violations.length === 0 &&
-      stale.length === 0 &&
-      allowlistProblems.length === 0 &&
-      redundantAllowlist.length === 0,
+    ok: violations.length === 0 && stale.length === 0,
   };
 }
 
@@ -758,36 +676,15 @@ function readFileOrNull(relPath: string): string | null {
   }
 }
 
-function loadAllowlist(): Allowlist {
-  try {
-    const parsed: unknown = JSON.parse(readFileSync(ALLOWLIST_PATH, 'utf-8'));
-    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      console.error(
-        `[audit:fold-writes] allowlist at ${ALLOWLIST_PATH} has a non-object root; treating as empty`,
-      );
-      return {};
-    }
-    return parsed as Allowlist;
-  } catch (err) {
-    console.error(
-      `[audit:fold-writes] failed to load allowlist at ${ALLOWLIST_PATH}; treating as empty:`,
-      err instanceof Error ? err.message : err,
-    );
-    return {};
-  }
-}
-
 /** Shared repository inventory for the CLI and existing table-ownership test gates. */
 export function auditFoldWrites(): FoldWriteAuditResult {
-  const today = new Date().toISOString().slice(0, 10);
-
   const files: string[] = [];
   for (const root of SCAN_ROOTS) walkSource(join(REPO_ROOT, root), files);
   files.sort();
 
   const sites = findWriteSites(files, readFileOrNull);
   const stale = reverseCheckWriters(SANCTIONED_WRITERS, readFileOrNull);
-  return computeFoldWriteAudit(sites, SANCTIONED_WRITERS, stale, loadAllowlist(), today);
+  return computeFoldWriteAudit(sites, SANCTIONED_WRITERS, stale);
 }
 
 function main(): void {
@@ -833,8 +730,7 @@ function main(): void {
       console.log(
         '\n  Fix: route the write through the projection shell (src/server/projections/<table>.ts) or an\n' +
           '  event-native, projectionIsWriter-gated applier — OR, if it is a legitimate new writer, add it to\n' +
-          '  scripts/audit-fold-writes.ts SANCTIONED_WRITERS with a role + marker, or to the allowlist with a\n' +
-          '  reason + resolves_when.',
+          '  scripts/audit-fold-writes.ts SANCTIONED_WRITERS with a role + marker.',
       );
     }
     console.log('');
@@ -863,20 +759,6 @@ function main(): void {
         '\n  Fix: the writer moved/renamed. Update SANCTIONED_WRITERS (file/marker), or drop the entry if the\n' +
           '  writer was genuinely removed.',
       );
-      console.log('');
-    }
-
-    if (result.redundantAllowlist.length > 0) {
-      console.log(
-        `  REDUNDANT allowlist entries (match no live write site):  ${result.redundantAllowlist.length}`,
-      );
-      for (const k of result.redundantAllowlist) console.log(`    - ${k}: drop from allowlist.`);
-      console.log('');
-    }
-
-    if (result.allowlistProblems.length > 0) {
-      console.log(`  ALLOWLIST problems:  ${result.allowlistProblems.length}`);
-      for (const p of result.allowlistProblems) console.log(`    - ${p.key}: ${p.detail}`);
       console.log('');
     }
 

@@ -73,7 +73,7 @@ function renderDueItems(items: DueItemLine[]): string | null {
  */
 export async function assembleCompanionContext(
   db: DbLike,
-  opts: { now: Date },
+  opts: { now: Date; budget?: number },
 ): Promise<LearnerContextResult> {
   const steady = await readSteadySection(db, { now: opts.now });
   const [delta, contract] = await Promise.all([
@@ -85,18 +85,27 @@ export async function assembleCompanionContext(
   const portraitMd = steady.portraitMd ? `画像：${steady.portraitMd}` : null;
   const signalsMd =
     contract.signalsMd.length > 0 ? `判读备注：${contract.signalsMd.join('')}` : null;
-  const overnightMd = contract.overnightMd ? `昨夜交班：${contract.overnightMd}` : null;
+  const overnightMd = steady.overnightMd ? `昨夜交班：${steady.overnightMd}` : null;
 
-  const trimmed = trimUnitsToBudget([
-    { rank: 0, name: 'steering', markdown: contract.steeringMd },
-    { rank: 1, name: 'delta', markdown: renderDelta(delta) },
-    { rank: 2, name: 'due_details', markdown: renderDueItems(delta.dueItems), dropRank: 8 },
-    { rank: 3, name: 'mastery_causes', markdown: masteryMd },
-    { rank: 4, name: 'failure_details', markdown: contract.failureDetailsMd, dropRank: 9 },
-    { rank: 5, name: 'portrait', markdown: portraitMd },
-    { rank: 6, name: 'signals', markdown: signalsMd },
-    { rank: 7, name: 'overnight', markdown: overnightMd },
-  ]);
+  const trimmed = trimUnitsToBudget(
+    [
+      { rank: 0, name: 'steering', markdown: contract.steeringMd },
+      {
+        rank: 0.5,
+        name: 'communication',
+        markdown: steady.communicationMd ? `怎么和我说话：${steady.communicationMd}` : null,
+        protected: true,
+      },
+      { rank: 1, name: 'delta', markdown: renderDelta(delta) },
+      { rank: 2, name: 'due_details', markdown: renderDueItems(delta.dueItems), dropRank: 8 },
+      { rank: 3, name: 'mastery_causes', markdown: masteryMd },
+      { rank: 4, name: 'failure_details', markdown: contract.failureDetailsMd, dropRank: 9 },
+      { rank: 5, name: 'portrait', markdown: portraitMd },
+      { rank: 6, name: 'signals', markdown: signalsMd },
+      { rank: 7, name: 'overnight', markdown: overnightMd },
+    ],
+    { maxEstimatedTokens: opts.budget ?? 1000, maxChars: 2400 },
+  );
 
   return {
     view: 'companion',

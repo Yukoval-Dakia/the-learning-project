@@ -120,7 +120,9 @@ export async function recoverPurposeChanges(
         const jobId = repair.job_id;
         if (!jobId) continue;
         try {
-          const job = await boss.getJobById('memory_brief_regen', jobId);
+          const job =
+            (await boss.getJobById('context_purpose_repair', jobId)) ??
+            (await boss.getJobById('memory_brief_regen', jobId));
           if (confirmedBriefJob(job, jobId, receipt.operation_id, repair.source_id))
             await recordPurposeRepair(db, {
               operation_id: receipt.operation_id,
@@ -198,7 +200,7 @@ export async function recoverPurposeChanges(
       if (!jobId) continue; // No automatic paid replay after reservation/unknown.
       try {
         const sent = await boss.send(
-          'memory_brief_regen',
+          'context_purpose_repair',
           { scope_key: scope.scope_key, purpose_operation_id: receipt.operation_id },
           {
             id: jobId,
@@ -210,7 +212,7 @@ export async function recoverPurposeChanges(
           sent === jobId ||
           (boss.getJobById &&
             confirmedBriefJob(
-              await boss.getJobById('memory_brief_regen', jobId),
+              await boss.getJobById('context_purpose_repair', jobId),
               jobId,
               receipt.operation_id,
               scope.scope_key,

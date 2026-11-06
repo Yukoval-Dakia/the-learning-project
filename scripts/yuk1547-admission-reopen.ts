@@ -5,6 +5,7 @@
 // paid_effect — the backlog driver releases each authorized group inside its
 // own per-question gate (STOP / queue / unknown-rate / budget), so nothing
 // becomes consumable before its turn.
+
 import { createHash, randomUUID } from 'node:crypto';
 import { open, readFile } from 'node:fs/promises';
 import { z } from 'zod';
@@ -13,12 +14,11 @@ import { evaluateAdmissionVoidGroup } from '@/capabilities/practice/question-ban
 import { QUESTION_ADMISSION_TASK_KIND } from '@/capabilities/practice/question-bank/server/admission/solve';
 import {
   QuestionAdmissionSolveInput,
-  QuestionAdmissionSourceCrosscheckInput,
-  QuestionAdmissionSourceCrosscheckOutput,
   parseQuestionAdmissionSolveModelOutput,
   questionAdmissionSolveTaskSpec,
 } from '@/capabilities/practice/question-bank/tasks/question-admission-solve';
 import { getTaskSystemPrompt } from '@/capabilities/task-registry';
+import { QUESTION_ADMISSION_CONTRACT_VERSION } from '@/core/question-admission-policy';
 import { zodToToolParametersSchema } from '@/kernel/zod-json-schema';
 import { assertModelProfileCapabilityFit } from '@/server/ai/model-profiles';
 import { executablePiModel } from '@/server/ai/pi-provider-catalog';
@@ -37,6 +37,39 @@ import {
   structuredSubmitWireFields,
 } from '@/server/ai/structured-submit';
 import { isToolParamContractError, repairToolArguments } from '@/server/ai/tool-param-contract';
+
+// Legacy manifest/probe shapes remain local; the retired provider preflight is fenced below.
+const QuestionAdmissionSourceCrosscheckInput = z.object({
+  mode: z.literal('source_crosscheck'),
+  parts: z.array(z.unknown()).min(1),
+  units: z.array(z.unknown()).min(1),
+  source_answers: z
+    .array(
+      z.object({
+        /** 归属的 scoring_unit_id；null = 组级未归属原文。 */
+        scoring_unit_id: z.string().min(1).nullable().default(null),
+        reference_md: z.string().min(1),
+        locator: z.string().optional(),
+      }),
+    )
+    .min(1),
+  /** 两次独立解题达成一致的 typed 键的可读摘要（含 item 显示文本）。 */
+  proposals: z.array(
+    z.object({
+      scoring_unit_id: z.string().min(1),
+      answer_summary_md: z.string().min(1),
+    }),
+  ),
+});
+const QuestionAdmissionSourceCrosscheckOutput = z.object({
+  per_unit: z.array(
+    z.object({
+      scoring_unit_id: z.string().min(1),
+      status: z.enum(['consistent', 'conflict', 'unknown']),
+      reason_md: z.string().optional(),
+    }),
+  ),
+});
 
 const submit = STRUCTURED_OUTPUT_SUBMIT_TOOL;
 const digest = z.string().regex(/^sha256:[0-9a-f]{64}$/);
@@ -670,7 +703,13 @@ const run =
         ),
       )
     : mode === '--preflight' && positional
-      ? preflight(positional)
+      ? QUESTION_ADMISSION_CONTRACT_VERSION >= 4
+        ? Promise.reject(
+            new Error(
+              'Legacy admission preflight is retired; run acceptance through question_admission_run.',
+            ),
+          )
+        : preflight(positional)
       : mode === '--plan' && positional && flags.out
         ? plan(positional, flags.out)
         : Promise.reject(new Error('Use --help; explicit mode and paths are required'));

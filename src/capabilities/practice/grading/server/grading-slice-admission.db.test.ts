@@ -50,7 +50,6 @@ async function seedIssuedRubric() {
   const pin = currentModelPins().get('AssessmentRubricJudgeTask');
   if (pin === undefined) throw new Error('rubric pin missing');
   const registered = await registerModelAdmissionSlice(db, {
-    subject: 'math',
     response_class: 'free',
     task_kind: 'AssessmentRubricJudgeTask',
     model: pin.model,

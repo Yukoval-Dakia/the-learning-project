@@ -1,5 +1,5 @@
-// Read side of model admission: the active slices plus the group→subject bridge the
-// issuance gate needs. Writing and retiring slices belongs to Practice grading.
+// Read active system slices and resolve group subjects for coverage reporting.
+// Writing and retiring slices belongs to Practice grading.
 // The live model pins come from the pin table Practice installs at startup.
 
 import { eq, inArray } from 'drizzle-orm';
@@ -38,7 +38,6 @@ function readModelPins(hasActiveSlice: boolean): ModelPins {
 export function admittedSliceFromRow(row: SliceRow): AdmittedModelSliceT {
   return {
     slice_id: row.slice_id,
-    subject: row.subject,
     response_class: row.response_class,
     task_kind: row.task_kind,
     model: row.model,
@@ -63,7 +62,7 @@ export async function resolveModelAdmissionContext(db: Db | Tx): Promise<ModelAd
 
 /** Same bridge as the holdout job: first knowledge id, then effective domain, then subject. */
 export type GroupSubjectLookup =
-  | { readonly kind: 'subject'; readonly subject: string }
+  | { readonly kind: 'subject'; readonly subject: string; readonly domain?: string }
   | { readonly kind: 'missing_group' }
   | { readonly kind: 'unlabeled' }
   | { readonly kind: 'no_domain'; readonly knowledge_id: string };
@@ -98,7 +97,7 @@ export async function lookupGroupSubjects(
       out.set(groupId, { kind: 'no_domain', knowledge_id: knowledgeId });
       continue;
     }
-    out.set(groupId, { kind: 'subject', subject: resolveSubjectProfile(domain).id });
+    out.set(groupId, { kind: 'subject', subject: resolveSubjectProfile(domain).id, domain });
   }
   return out;
 }

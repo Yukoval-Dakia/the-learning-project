@@ -9,7 +9,7 @@ export const transitionStartPlacementSession: FrontdoorContext['transitionPlacem
         throw new ApiError('validation_error', 'session id must be a string', 400);
       }
       const { UpdatePlacementSessionBodySchema, transitionPlacementSession } = await import(
-        '@/capabilities/practice/public'
+        '@/capabilities/practice/placement/public'
       );
       let rawBody: unknown = null;
       try {

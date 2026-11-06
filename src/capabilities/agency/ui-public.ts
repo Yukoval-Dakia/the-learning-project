@@ -8,3 +8,4 @@ export type LearningIntentProposalClient =
 export type { AgentNotesResponse } from './ui/types';
 
 export const loadAgentNotesPage = () => import('./ui/page').then((module) => module.default);
+export const loadMemoryPage = () => import('./ui/memory/page').then((module) => module.default);

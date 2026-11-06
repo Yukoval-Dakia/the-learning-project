@@ -47,7 +47,7 @@ import {
 import { type TraceContent, traceMetadata, traceOperation } from './laminar-tracing';
 import { taskMayExportTranscript } from './laminar-transcript';
 import { logMissingToolMountsWarning } from './log';
-import { providerHttpTimeoutMs } from './provider-http-timeout';
+import { PROVIDER_HTTP_TIMEOUT_MARGIN_MS, providerHttpTimeoutMs } from './provider-http-timeout';
 import { PROVIDER_SESSION_SDK_STARTUP_TIMEOUT_MS } from './provider-session-admission-policy';
 import type { ProviderTransportCollector } from './provider-transport';
 import type { ResolvedProvider } from './providers';
@@ -217,6 +217,11 @@ export interface RunTaskCtx {
     receivedBytes: number;
     argsPrefix: string;
   }) => void;
+  /**
+   * YUK-1765 — the model is sending reasoning. A signal only: the reasoning text never leaves
+   * the runner, so nothing can show or persist it.
+   */
+  onThinking?: () => void;
   /**
    * YUK-575 (N5/MF-A) — per-call budget override for durable copilot runs. The
    * registry default must stay untouched (YUK-458: raising it only turned
@@ -433,8 +438,7 @@ function buildQueryOptions(
   budget: TaskBudget,
   transportEvidence?: ProviderTransportCollector,
 ): Options {
-  // The registry map's value type is the union of every spec's inferred literal
-  // shape; optional fields are read through this declared-interface view.
+  // Read optional fields through the shared definition interface.
   const def = tasks[kind];
   const declaredDef: TaskDefinition = def;
   const options: Options = {
@@ -443,15 +447,13 @@ function buildQueryOptions(
     systemPrompt: getTaskSystemPrompt(kind, ctx.subjectProfile, ctx.learnerLocale),
     abortController,
     tools: ctx.allowedTools ?? def.allowedTools,
-    // YUK-575 (N5) — durable copilot run overrides the turn ceiling; 'unbounded'
-    // removes it entirely.
     maxTurns: budget.maxIterations === 'unbounded' ? undefined : budget.maxIterations || 1,
-    // YUK-1630 — the task budget is the single source for every provider HTTP
-    // layer: this value is both the SDK timeout and the controlled dispatcher's
-    // timer derivation (provider-transport.ts).
+    // Keep the HTTP timers behind the task lifecycle timeout.
     providerTimeoutMs: providerHttpTimeoutMs(budget.timeout),
     transportEvidence,
-    ...(declaredDef.enforceMaxCost === true || currentTaskSpendScope()
+    ...(declaredDef.enforceMaxCost === true ||
+    declaredDef.structuredOutputMode === 'tool' ||
+    currentTaskSpendScope()
       ? { maxBudgetUsd: budget.maxCost }
       : {}),
   };
@@ -502,10 +504,13 @@ async function withPreparedExecutionQuery<TResult extends RunTaskResult, TValue>
         resolved: lifecycle.resolved,
         runId: lifecycle.taskRunId,
         kind: lifecycle.kind,
+        structuredSubmitInput: actualInput,
+        executionWindowMs: lifecycle.providerPhaseTimeoutMs(
+          options.providerTimeoutMs === undefined
+            ? Number.POSITIVE_INFINITY
+            : options.providerTimeoutMs - PROVIDER_HTTP_TIMEOUT_MARGIN_MS,
+        ),
         piToolMounts: ctx?.piToolMounts,
-        // YUK-1022 — pi-lane descriptors for hooks, replay, skills, nested agents
-        // and compaction; forwarded verbatim because the adapter needs the raw
-        // sessionContext for transformContext.
         piHooks: ctx?.piHooks,
         piSessionReplay: ctx?.piSessionReplay,
         piSkillDocs: ctx?.piSkillDocs,
@@ -561,6 +566,7 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
     received_bytes: number;
     args_prefix: string;
   }) => void;
+  onThinking?: () => void;
   onSuccess?: (msg: SDKSuccessResultMessage) => Promise<void> | void;
   onApiError?: (msg: SDKSuccessResultMessage) => void;
   apiErrorMessages?: (msg: SDKSuccessResultMessage) => string[];
@@ -596,6 +602,7 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
         if (msg.type === 'text_delta' && !args.lifecycle.abortController.signal.aborted) {
           await args.onTextDelta?.(msg.text);
         }
+        if (msg.type === 'thinking_delta' && msg.text) args.onThinking?.();
         continue;
       }
       if (args.notifySessionId && msg.type === 'system' && msg.subtype === 'init') {
@@ -1375,6 +1382,7 @@ async function streamTaskCollectingImpl(
                 });
               }
             : undefined,
+          onThinking: ctx.onThinking,
           onApiError: (msg) => {
             console.warn('[streamTaskCollecting] task_run_success_with_error_flag', {
               event: 'task_run_success_with_error_flag',

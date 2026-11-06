@@ -20,5 +20,5 @@
 - dreaming 扫到新的 `note_update` artifact 时只写 `experimental:dreaming_note_refresh`；笔记 refine 入队由 notes 订阅完成。
 
 ## ANTI-PATTERNS
-- 别让夜链直写硬事实；产出必须是 propose event，用户 accept 才落地。
+- 学习事实变更仍经 propose event + 用户 accept；Curator 可直接写可逆记忆版本，不改判分、掌握度或排程。
 - 改 cron 时刻前先看链上 offset 注释，避免锁竞争/读不到同夜 proposal。

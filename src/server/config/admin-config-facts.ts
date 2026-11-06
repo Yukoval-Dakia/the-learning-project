@@ -12,14 +12,21 @@ import { knowledgeConfigEffectiveFacts } from '@/capabilities/knowledge/public';
 import { notesConfigEffectiveFacts } from '@/capabilities/notes/public';
 import type {
   AdminConfigCatalogModelRow,
+  AdminConfigGlobalEffective,
   AdminConfigProviderAuth,
   AdminConfigProviderRow,
   AdminConfigRuntimeFacts,
   AdminConfigScheduleRow,
+  AdminConfigTaskCredential,
+  AdminConfigTaskEffectiveBinding,
   AdminConfigTaskFacts,
 } from '@/capabilities/observability/public';
 import { observabilityConfigEffectiveFacts } from '@/capabilities/observability/public';
-import { practiceConfigEffectiveFacts } from '@/capabilities/practice/public';
+import {
+  SOLVE_LANE_TASK_KINDS,
+  practiceConfigEffectiveFacts,
+  resolveSolveOverrideFromEnv,
+} from '@/capabilities/practice/public';
 import {
   type TaskKind,
   getLearnerLocale,
@@ -27,6 +34,7 @@ import {
   tasks,
 } from '@/capabilities/task-registry';
 import type { ConfigEffectiveFact } from '@/core/config/effective';
+import { resolveConfigValue } from '@/core/config/store';
 import { DB_POOL_MAX } from '@/db/pool';
 import { projectDagMembers } from '@/kernel/manifest';
 import { resolveConfig as resolveAiRateLimitConfig } from '@/kernel/request-rate-limit';
@@ -46,11 +54,17 @@ import {
 import { providerAuthStatus } from '@/server/ai/provider-auth-status';
 import { providerCredentialFingerprint } from '@/server/ai/provider-models-check';
 import {
+  type Provider,
   type ProviderAuthSurfaceRow,
+  isOauthProvider,
   isProviderLaneReady,
+  providerAuthFileEnvName,
   providerAuthSurface,
+  providerCredentialEnvName,
   readGlobalProviderSwitch,
+  resolveTaskBinding,
   resolveTaskProvider,
+  resolveTaskReasoning,
 } from '@/server/ai/providers';
 import { registeredTypedTaskBindings } from '@/server/ai/typed-primitive-runner';
 import {
@@ -267,11 +281,223 @@ function providerAuthFacts(provider: ProviderAuthSurfaceRow['name']): AdminConfi
   };
 }
 
+/**
+ * Scoped-lane readers the runners use — the SAME functions, not a second
+ * mapping. Only kinds whose EVERY call path threads the lane override project
+ * `call_override` here: StepsJudge/MultimodalDirect go through
+ * runTaskWithLaneFallback, SourceGroundingVerify passes the override inline.
+ * The solve_check solver legs (SOLVE_LANE_TASK_KINDS) are shared kinds —
+ * quiz_verify threads verify_solve while reference-solution / source_verify /
+ * intervention callers run the same kind on the standard chain — so their
+ * binding stays on the standard chain and the lane reach surfaces via
+ * `sharedScopedLanes` → also_on_lanes.
+ */
+function scopedLaneCallOverride(
+  kind: TaskKind,
+): { provider?: Provider; model?: string } | undefined {
+  if (kind === 'StepsJudgeTask' || kind === 'MultimodalDirectJudgeTask') {
+    // runTaskWithLaneFallback suppresses the scoped lane under the process pin
+    // (a registry retry would burn the same pinned model) — an opted task then
+    // reports its own pair, not the lane.
+    return process.env.AI_PROVIDER_OVERRIDE
+      ? undefined
+      : visionJudgeProviderOverride(process.env, { checkCredentials: false });
+  }
+  if ((VISION_JUDGE_TASK_KINDS as readonly string[]).includes(kind)) {
+    // SourceGroundingVerifyTask passes the lane unguarded; the env pin still
+    // wins inside the binding for non-opted tasks.
+    return visionJudgeProviderOverride(process.env, { checkCredentials: false });
+  }
+  return undefined;
+}
+
+/** Scoped lanes a shared kind also rides on other call paths, when the lane is live. */
+function sharedScopedLanes(kind: TaskKind): ('vision_judge' | 'verify_solve')[] | undefined {
+  if ((SOLVE_LANE_TASK_KINDS as readonly string[]).includes(kind)) {
+    // A silent warn collector: the lane.* stored rows already carry the
+    // degrade reason; per-request console noise adds nothing. checkCredentials:
+    // the worker pre-flights its own lane; this process only projects it.
+    const solve = resolveSolveOverrideFromEnv(() => {}, { checkCredentials: false });
+    if (solve.provider !== undefined || solve.model !== undefined) return ['verify_solve'];
+  }
+  return undefined;
+}
+
+/**
+ * No resolver error reaching the API carries a filesystem path — the
+ * credential file's location is worker-side state. Scrub any token that
+ * reads as an absolute path (URLs and host/path strings are preserved:
+ * their slash is not preceded by whitespace/quote).
+ */
+function scrubFsPaths(message: string): string {
+  return message.replace(/(^|[\s'"`(=])(\/[^\s'"`)]+)/g, '$1<path>');
+}
+
+/** The credential lane a resolved provider sits on, from this process's env view. */
+function credentialLaneFor(provider: Provider): AdminConfigTaskCredential['lane'] {
+  if (isOauthProvider(provider)) return 'oauth';
+  const authFileEnv = providerAuthFileEnvName(provider);
+  if (authFileEnv === undefined) return 'key';
+  const keyEnv = providerCredentialEnvName(provider);
+  const authFileSet = process.env[authFileEnv] !== undefined;
+  // providerCredentialEnvName reports the key env when it is set — key + file
+  // together are a hard run-time conflict, not a live lane.
+  const keySet =
+    keyEnv !== undefined && keyEnv !== authFileEnv && process.env[keyEnv] !== undefined;
+  if (authFileSet && keySet) return 'conflict';
+  if (authFileSet) return 'oauth-file';
+  return 'key';
+}
+
+/**
+ * YUK-1808 — one task's effective binding projected through the runtime
+ * resolver chain (single source; the read face never re-derives the layering):
+ * `resolveTaskBinding` freezes provider/model + selection_rule + the stored
+ * reasoning config — fed the scoped lane's call override when the task rides
+ * one, so the pair and rule match what the run actually uses;
+ * `resolveTaskProvider` adds the credential+endpoint gate, and
+ * `resolveTaskReasoning` resolves the stored level against the effective
+ * model requested → applied.
+ *
+ * Credential checks are process-local facts: the env var or the auth-file
+ * mount may live only in the worker (docker-compose mounts
+ * OPENAI_CHATGPT_AUTH_FILE there alone). A credential-gate failure this
+ * process cannot verify therefore reports `credential.verified_in_process:
+ * false` — never an error, and the file path never leaves the process.
+ * Errors in every other class (unknown provider, unimplemented lane,
+ * endpoint allowlist, mutual key+file exclusion, capability fit) surface
+ * with paths scrubbed.
+ * Typed tasks bypass the chat lane entirely, so their defaults report
+ * 'registry_default' with no reasoning surface.
+ */
+export function resolveAdminTaskEffective(kind: TaskKind): AdminConfigTaskEffectiveBinding {
+  const task = tasks[kind];
+  if ('execution' in task && task.execution === 'typed') {
+    return {
+      provider: task.defaultProvider,
+      model: task.defaultModel,
+      error: null,
+      selection_rule: 'registry_default',
+      reasoning: null,
+      credential: null,
+      also_on_lanes: sharedScopedLanes(kind),
+    };
+  }
+  // The binding is the config truth (provider/model/selection_rule); the
+  // credential+endpoint gate runs separately so a missing key reports the
+  // effective pair AND the resolver's own readable reason, not a null pair.
+  // Errors contain env/model/provider names only — never values or paths.
+  const laneOverride = scopedLaneCallOverride(kind);
+  let binding: ReturnType<typeof resolveTaskBinding> | null = null;
+  let provider: string | null = null;
+  let model: string | null = null;
+  let error: string | null = null;
+  let credential: AdminConfigTaskEffectiveBinding['credential'] = null;
+  try {
+    binding = resolveTaskBinding(kind, laneOverride);
+    provider = binding.provider;
+    model = binding.model;
+    const authFileEnv = providerAuthFileEnvName(binding.provider);
+    const fileLaneOnly =
+      authFileEnv !== undefined &&
+      process.env[authFileEnv] !== undefined &&
+      providerCredentialEnvName(binding.provider) === authFileEnv;
+    const credentialEnv = providerCredentialEnvName(binding.provider);
+    const laneReady = isProviderLaneReady(binding.provider);
+    try {
+      const resolved = resolveTaskProvider(kind, laneOverride);
+      credential = { lane: resolved.authMode, verified_in_process: true };
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      const credentialLocal =
+        (fileLaneOnly && authFileEnv !== undefined && message.includes(authFileEnv)) ||
+        (!laneReady && credentialEnv !== undefined && message.includes(credentialEnv));
+      credential = {
+        lane: fileLaneOnly ? 'oauth-file' : credentialLaneFor(binding.provider),
+        verified_in_process: false,
+      };
+      if (!credentialLocal) error = scrubFsPaths(message);
+    }
+  } catch (e) {
+    error = scrubFsPaths(e instanceof Error ? e.message : String(e));
+  }
+  let reasoning: AdminConfigTaskEffectiveBinding['reasoning'] = null;
+  if (binding !== null) {
+    const stored = binding.reasoning;
+    const requested = stored?.level ?? stored?.reasoning_effort ?? null;
+    if (requested === null) {
+      reasoning = { requested: null, applied: null, error: null };
+    } else {
+      try {
+        const resolved = resolveTaskReasoning(kind, binding.provider, binding.model, stored);
+        reasoning = {
+          requested: resolved?.requested ?? requested,
+          applied: resolved?.applied ?? null,
+          error: null,
+        };
+      } catch (e) {
+        reasoning = {
+          requested,
+          applied: null,
+          error: scrubFsPaths(e instanceof Error ? e.message : String(e)),
+        };
+      }
+    }
+  }
+  return {
+    provider,
+    model,
+    error,
+    selection_rule: binding?.selectionRule ?? null,
+    reasoning,
+    credential,
+    also_on_lanes: sharedScopedLanes(kind),
+  };
+}
+
+/**
+ * YUK-1808 — the effective global provider switch and the layer that produced
+ * it. `readGlobalProviderSwitch` is the runtime truth (env pin wins over the
+ * DB `lane.global.*` pair); `resolveConfigValue` on the provider key reports
+ * which layer is live. An invalid configured name surfaces as `error`, not a
+ * silent fall-through.
+ */
+export function resolveAdminGlobalEffective(
+  env: NodeJS.ProcessEnv = process.env,
+): AdminConfigGlobalEffective {
+  let provider: string | null = null;
+  let model: string | null = null;
+  let error: string | null = null;
+  try {
+    const sw = readGlobalProviderSwitch();
+    provider = sw?.provider ?? null;
+    model = sw?.model ?? null;
+  } catch (e) {
+    error = scrubFsPaths(e instanceof Error ? e.message : String(e));
+  }
+  const providerSource = resolveConfigValue('lane.global.provider', env).source;
+  const source = providerSource === 'env' || providerSource === 'db' ? providerSource : null;
+  // The model field has its own layer: env AI_PROVIDER_MODEL rides next to a
+  // DB provider (envMode 'priority' on lane.global.model), while an env pin
+  // suppresses the DB model entirely.
+  const modelSource = resolveConfigValue('lane.global.model', env).source;
+  const model_source =
+    model === null
+      ? null
+      : source === 'env'
+        ? 'env'
+        : modelSource === 'env' || modelSource === 'db'
+          ? modelSource
+          : null;
+  return { provider, model, source, model_source, error };
+}
+
 function taskCatalogFacts(): AdminConfigTaskFacts[] {
   return Object.entries(tasks).map(([kind, def]) => {
     const budget = taskBudgetFacts(kind as TaskKind);
     return {
       kind,
+      description: def.description,
       default_provider: def.defaultProvider,
       default_model: def.defaultModel,
       default_budget: def.budget,
@@ -299,20 +525,37 @@ function manifestScheduleRows(): AdminConfigScheduleRow[] {
 
 export function buildAdminConfigRuntimeFacts(): AdminConfigRuntimeFacts {
   const typedBindings = registeredTypedTaskBindings();
-  const providers: AdminConfigProviderRow[] = providerAuthSurface().map((row) => ({
-    name: row.name,
-    auth_mode: row.authMode,
-    credential_env: row.credentialEnvName,
-    key_present: isProviderLaneReady(row.name),
-    implemented: row.implemented,
-    implemented_for: {
-      chat: row.implemented,
-      typed: typedBindings.some((binding) => binding.provider === row.name),
-    },
-    pi_provider: row.implemented ? piProviderId(row.name) : null,
-    models: catalogModelRows(row.name),
-    auth: providerAuthFacts(row.name),
-  }));
+  const providers: AdminConfigProviderRow[] = providerAuthSurface().map((row) => {
+    const authFileEnv = providerAuthFileEnvName(row.name);
+    // Key + auth-file envs both set is a run-time hard error (the lanes are
+    // mutually exclusive) — report 'conflict', not a live lane.
+    const authConflict =
+      authFileEnv !== undefined &&
+      row.credentialEnvName !== authFileEnv &&
+      Boolean(process.env[authFileEnv]) &&
+      Boolean(process.env[row.credentialEnvName]);
+    return {
+      name: row.name,
+      // The credential env that resolved IS the active lane: when it is the
+      // provider's auth-file env, report 'oauth-file' rather than the registry's
+      // declared 'key' (YUK-1833 — the page must not mislabel the login lane).
+      auth_mode: authConflict
+        ? ('conflict' as const)
+        : authFileEnv !== undefined && row.credentialEnvName === authFileEnv
+          ? ('oauth-file' as const)
+          : row.authMode,
+      credential_env: row.credentialEnvName,
+      key_present: isProviderLaneReady(row.name),
+      implemented: row.implemented,
+      implemented_for: {
+        chat: row.implemented,
+        typed: typedBindings.some((binding) => binding.provider === row.name),
+      },
+      pi_provider: row.implemented ? piProviderId(row.name) : null,
+      models: catalogModelRows(row.name),
+      auth: providerAuthFacts(row.name),
+    };
+  });
 
   const infraSchedules: AdminConfigScheduleRow[] = [
     {
@@ -360,35 +603,9 @@ export function buildAdminConfigRuntimeFacts(): AdminConfigRuntimeFacts {
             ...(typeof globalModel === 'string' ? { model: globalModel } : {}),
           }
         : null,
+    global: resolveAdminGlobalEffective(process.env),
     task_bindings: Object.fromEntries(
-      Object.keys(tasks).map((kind) => {
-        const task = tasks[kind as TaskKind];
-        if ('execution' in task && task.execution === 'typed') {
-          return [kind, { provider: task.defaultProvider, model: task.defaultModel, error: null }];
-        }
-        try {
-          const binding = resolveTaskProvider(kind as TaskKind);
-          // Explicit allowlist: never expose the binding's auth, headers or URLs.
-          return [kind, { provider: binding.provider, model: binding.model, error: null }];
-        } catch (e) {
-          // The app process never mounts the ChatGPT-login file (by design) —
-          // when the lane is env-selected, report that truthfully instead of a
-          // generic unconfigured verdict. A missing file on the WORKER is the
-          // real failure and surfaces through ai_task_runs instead.
-          const loginLane =
-            e instanceof Error && e.message.includes('OPENAI_CHATGPT_AUTH_FILE')
-              ? 'openai 登录通道已配置——凭据文件仅 worker 进程可挂载；app 侧不可读属于预期。'
-              : null;
-          return [
-            kind,
-            {
-              provider: null,
-              model: null,
-              error: loginLane ?? '当前配置不可用，请检查模型目录与服务端凭据。',
-            },
-          ];
-        }
-      }),
+      Object.keys(tasks).map((kind) => [kind, resolveAdminTaskEffective(kind as TaskKind)]),
     ),
     task_catalog: taskCatalogFacts(),
     providers,

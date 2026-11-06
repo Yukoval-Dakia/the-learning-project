@@ -20,7 +20,6 @@ const pin = () => {
 function input(evidence: string) {
   const current = pin();
   return {
-    subject: 'math',
     response_class: 'blank' as const,
     task_kind: 'JevScoringDecisionTask',
     model: current.model,
@@ -34,26 +33,25 @@ function input(evidence: string) {
 describe('model admission slice identity', () => {
   beforeEach(resetDb);
 
-  // @invariant grading: the stored slice id is the five-field natural key, so a question citing the reported id resolves
-  // @fails-if hash the registration payload (evidence, actor, or admitted_at) into the slice id; the stored id diverges from modelSliceIdFor of the five fields
-  it('stores the five-field slice id even when the registration carries evidence and an actor', async () => {
+  // @invariant grading: the stored slice id is the four-field natural key, so a question citing the reported id resolves
+  // @fails-if hash the registration payload (evidence, actor, or admitted_at) into the slice id; the stored id diverges from modelSliceIdFor of the four fields
+  it('stores the four-field slice id even when the registration carries evidence and an actor', async () => {
     const db = testDb();
     const registration = input('evt_holdout_a');
     const stored = await registerModelAdmissionSlice(db, registration);
-    const fiveFields = {
-      subject: registration.subject,
+    const identityFields = {
       response_class: registration.response_class,
       task_kind: registration.task_kind,
       model: registration.model,
       model_version: registration.model_version,
     };
-    expect(stored.slice_id).toBe(modelSliceIdFor(fiveFields));
+    expect(stored.slice_id).toBe(modelSliceIdFor(identityFields));
     expect(stored.slice_id).not.toBe(`slice_${canonicalHash(registration).slice(0, 32)}`);
     const [row] = await db.select().from(model_admission_slice);
     expect(row?.slice_id).toBe(stored.slice_id);
   });
 
-  // @invariant concurrency: registering an existing pin with different evidence is a coded refusal, including a row whose slice_id was not the five-field hash
+  // @invariant concurrency: registering an existing pin with different evidence is a coded refusal, including a row whose slice_id was not the four-field hash
   // @fails-if look up only by slice_id or let the natural-key unique index surface as a raw 23505; the second register throws ModelSliceRegistrationError slice_conflict
   it('refuses a second registration of the same pin with different evidence', async () => {
     const db = testDb();
@@ -66,7 +64,7 @@ describe('model admission slice identity', () => {
     const current = pin();
     await db.insert(model_admission_slice).values({
       slice_id: 'slice_legacy_wrong',
-      subject: 'physics',
+
       response_class: 'free',
       task_kind: 'JevScoringDecisionTask',
       model: current.model,
@@ -77,7 +75,6 @@ describe('model admission slice identity', () => {
       status: 'active',
     });
     const legacy = {
-      subject: 'physics',
       response_class: 'free' as const,
       task_kind: 'JevScoringDecisionTask',
       model: current.model,

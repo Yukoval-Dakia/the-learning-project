@@ -27,6 +27,7 @@ export interface TrimUnit {
    * 比所有基础段高：预算紧时先丢明细、不动既有段落，也给 §13 留空间。
    */
   readonly dropRank?: number;
+  readonly protected?: boolean;
   /** 遥测名：被裁时按名字记（只记名不记内容）。 */
   readonly name: string;
   readonly markdown: string | null;
@@ -50,7 +51,7 @@ export interface TrimResult {
  */
 export function trimUnitsToBudget(
   units: readonly TrimUnit[],
-  budget = LEARNER_CONTEXT_STARTUP_BUDGET,
+  budget: { maxEstimatedTokens: number; maxChars: number } = LEARNER_CONTEXT_STARTUP_BUDGET,
 ): TrimResult {
   const kept = units
     .filter((u): u is TrimUnit & { markdown: string } => !!u.markdown && u.markdown.length > 0)
@@ -61,24 +62,40 @@ export function trimUnitsToBudget(
 
   // Drop the highest-dropRank (lowest-priority) unit until the estimate fits;
   // rank 0 (Steering) is never dropped whole — it takes the boundary truncation instead.
-  while (kept.length > 1 && estimateTokens(render()) > budget.maxEstimatedTokens) {
-    let dropIdx = 0;
-    for (let i = 1; i < kept.length; i++) {
-      if ((kept[i].dropRank ?? kept[i].rank) >= (kept[dropIdx].dropRank ?? kept[dropIdx].rank))
-        dropIdx = i;
-    }
-    droppedUnits.push(kept[dropIdx].name);
-    kept.splice(dropIdx, 1);
+  while (
+    estimateTokens(render()) > budget.maxEstimatedTokens ||
+    render().length > budget.maxChars
+  ) {
+    const candidates = kept.filter((u) => u.rank !== 0 && !u.protected);
+    const drop = candidates.sort((a, b) => (b.dropRank ?? b.rank) - (a.dropRank ?? a.rank))[0];
+    if (!drop) break;
+    droppedUnits.push(drop.name);
+    kept.splice(kept.indexOf(drop), 1);
   }
   let md = render();
-  if (md.length > budget.maxChars) {
-    const slice = md.slice(0, budget.maxChars);
-    const boundary = Math.max(
-      slice.lastIndexOf('。'),
-      slice.lastIndexOf('\n'),
-      slice.lastIndexOf('；'),
-    );
-    md = `${boundary > 0 ? slice.slice(0, boundary + 1) : slice}…`;
+  if (estimateTokens(md) > budget.maxEstimatedTokens || md.length > budget.maxChars) {
+    const steering = kept.find((u) => u.rank === 0);
+    if (steering) {
+      const protectedText = kept
+        .filter((u) => u !== steering)
+        .map((u) => u.markdown)
+        .join('\n');
+      let text = steering.markdown;
+      const fits = () =>
+        estimateTokens(`${text}…\n${protectedText}`) <= budget.maxEstimatedTokens &&
+        text.length + protectedText.length + 2 <= budget.maxChars;
+      while (text.length && !fits()) text = text.slice(0, -1);
+      const boundary = Math.max(
+        text.lastIndexOf('。'),
+        text.lastIndexOf('\n'),
+        text.lastIndexOf('；'),
+      );
+      if (boundary > 0) text = text.slice(0, boundary + 1);
+      steering.markdown = `${text}…`;
+      md = render();
+    }
+    if (estimateTokens(md) > budget.maxEstimatedTokens || md.length > budget.maxChars)
+      throw new Error('communication brief exceeds its compact storage contract');
   }
   return {
     markdown: md,

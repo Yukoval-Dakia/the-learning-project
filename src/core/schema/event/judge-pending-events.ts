@@ -91,6 +91,9 @@ export const NativeJudgePendingSubmitInput = z.object({
     expected_effective_id: z.string().min(1).nullable(),
     expected_generation: z.number().int().nonnegative(),
   }),
+  // Present when the submit named a candidate an earlier synchronous preview sealed; the worker
+  // then activates exactly that candidate under expected_head instead of judging afresh.
+  candidate_id: z.string().min(1).optional(),
   user_rating: z.enum(['again', 'hard', 'good']).optional(),
   capture: AssessmentAttemptCapture,
   require_unassisted_model_evidence: z.boolean().default(false),

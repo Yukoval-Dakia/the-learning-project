@@ -10,6 +10,10 @@ import { eq, sql } from 'drizzle-orm';
 import { PgBoss } from 'pg-boss';
 import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest';
 import { z } from 'zod';
+import {
+  inspectDbosJudgeInventory,
+  sealJudgeEngineInventory,
+} from '@/capabilities/practice/grading/public';
 import { dispatchNativeAttempt } from '@/capabilities/practice/grading/server/assessment/durable-attempt';
 import { evaluateSubmission } from '@/capabilities/practice/grading/server/judge/evaluate-submission';
 import { createRecordedModelExecutor } from '@/capabilities/practice/grading/server/judge/recorded-model-executor';
@@ -19,10 +23,6 @@ import {
   startJudgeDelivery,
 } from '@/capabilities/practice/grading/server/judge-operational';
 import { readJudgeRunPermanent } from '@/capabilities/practice/grading/server/judge-run-observation';
-import {
-  inspectDbosJudgeInventory,
-  sealJudgeEngineInventory,
-} from '@/capabilities/practice/public';
 import { canonicalHash } from '@/core/migration/canonical';
 import { JudgePendingAttemptPayload } from '@/core/schema/event/judge-pending-events';
 import { evaluation, event } from '@/db/schema';

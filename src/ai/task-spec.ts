@@ -61,7 +61,7 @@ export type TaskPrompt =
  * 声明它消费哪个 learner-context view，或显式 `view:'none'` 加理由（如判分只评
  * 本次作答、有意不读历史）。已登记 view 的词表只在 CONTEXT_VIEWS 一处扩。
  */
-export const CONTEXT_VIEWS = ['companion'] as const;
+export const CONTEXT_VIEWS = ['companion', 'curator'] as const;
 export type ContextViewName = (typeof CONTEXT_VIEWS)[number];
 export type TaskContextDeclaration =
   | { readonly view: ContextViewName }
@@ -102,8 +102,12 @@ export interface TaskDefinition {
   readonly reasoningEffort?: EffortLevel;
   readonly invocation?: 'auto' | 'manual_rescue_only';
   readonly structuredOutputSchema?: ZodTypeAny;
-  /** Opt-in single model turn submitting schema-constrained tool arguments. */
+  /** Submit schema-constrained tool arguments, correcting failures within one run. */
   readonly structuredOutputMode?: 'tool';
+  /** Shape/coverage only. Return authored field diagnostics, never values or judgments. */
+  /** Input mode may narrow the wire schema; it must not depend on answer evidence. */
+  readonly structuredSubmitSchema?: (input: unknown) => ZodTypeAny;
+  readonly validateStructuredSubmit?: (output: unknown, input: unknown) => readonly string[];
 }
 
 export const DEFAULT_TASK_BUDGET: TaskBudget = {

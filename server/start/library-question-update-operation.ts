@@ -11,7 +11,9 @@ export const updateStartLibraryQuestion: FrontdoorContext['updateLibraryQuestion
 }) =>
   runWithHttpProviderSessionDeadline(Date.now() + HTTP_PROVIDER_SESSION_BUDGET_MS, async () => {
     try {
-      const { updatePracticeQuestion } = await import('@/capabilities/practice/public');
+      const { updatePracticeQuestion } = await import(
+        '@/capabilities/practice/question-bank/public'
+      );
       const { db } = await import('@/db/client');
       return await updatePracticeQuestion(db, { id }, async () => JSON.parse(body));
     } catch (error) {

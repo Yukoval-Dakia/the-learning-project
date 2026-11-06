@@ -12,6 +12,7 @@ import { mergePublicProse, parsePublicProse } from './public-prose';
 import type { ReplayChatMessage, ReplaySkillContext, ReplayTurn } from './replay';
 import { parseSkillContext, parseSkillTurn } from './skill-lifecycle';
 import type {
+  CopilotModelStage,
   CopilotRunBlock,
   CopilotRunView,
   CopilotSubtaskView,
@@ -26,6 +27,8 @@ export interface ChatMessage extends Omit<ReplayChatMessage, 'tool_calls'> {
   tool_calls?: ToolCallRecord[];
   /** Client-only, while streaming: pictures being drawn, at their stream positions (YUK-1548). */
   stream_blocks?: CopilotRunBlock[];
+  /** Client-only, while streaming: what the model is doing right now (YUK-1765). */
+  stream_stage?: CopilotModelStage;
   /** Client-only stable correlation for an accepted server-owned run. */
   run_id?: string;
   /** Client-only correlation while the 202 boundary is still ambiguous. */
@@ -129,6 +132,7 @@ export function projectDurableCopilotMessage(
     // there, or every block would show twice until the run ends.
     stream_blocks:
       terminal || typeof view.replyPayload?.reply_md === 'string' ? undefined : view.blocks,
+    stream_stage: terminal ? undefined : view.modelStage,
   };
   if (!terminal) return { ...base, text: view.replyText || previous.text, streaming: true };
   const reply = projectCopilotReply(

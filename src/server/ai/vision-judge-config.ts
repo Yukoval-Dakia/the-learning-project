@@ -72,6 +72,7 @@ export type VisionJudgeEnv = Record<string, string | undefined>;
  */
 export function visionJudgeProviderOverride(
   env: VisionJudgeEnv = process.env,
+  opts?: { checkCredentials?: boolean },
 ): { provider: Provider; model?: string } | undefined {
   // YUK-1007 — DB lane config wins over env (the passed env is the fallback),
   // matching resolveTaskProvider's global override layering.
@@ -80,7 +81,13 @@ export function visionJudgeProviderOverride(
   if (!rawProvider) return undefined;
   const provider = readProviderId(rawProvider) ?? (rawProvider as Provider);
 
-  if (isOAuthLaneProvider(provider as Provider) && !env[OAUTH_TOKEN_ENV]) {
+  // checkCredentials=false (the admin read face): the OAuth token may be
+  // worker-only — report the configured lane, never this process's env view.
+  if (
+    opts?.checkCredentials !== false &&
+    isOAuthLaneProvider(provider as Provider) &&
+    !env[OAUTH_TOKEN_ENV]
+  ) {
     console.warn(
       `[vision-judge] ${VISION_JUDGE_PROVIDER_FLAG}=${provider} but ${OAUTH_TOKEN_ENV} missing — omitting the override so resolution falls through to the standard chain (registry default OR AI_PROVIDER_OVERRIDE if set)`,
     );

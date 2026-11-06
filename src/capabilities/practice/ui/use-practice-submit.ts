@@ -29,13 +29,17 @@ import { useCustomBlocksReady } from './blocks/CustomBlock';
 import { customBlocksOf, summarizeAnswers } from './blocks/custom-sandbox';
 import { boundSlots, entriesForSubmit } from './blocks/envelope';
 import { type EntriesUpdate, parsePresentation } from './blocks/PresentationBlocks';
+import {
+  type JudgeFeedback,
+  feedbackFromCommittedAttempt,
+  feedbackFromCommittedDiagnosticAttempt,
+  provenanceOf,
+} from './judge-feedback';
 import type { PfToast } from './PracticeFacePage';
 import {
   type AdviceCommit,
   type JudgePreview,
-  type QuestionFullDetail,
   type StreamItem,
-  type SubmitResult,
   type SubmitReviewInput,
   isSubmitPending,
 } from './practice-api';
@@ -45,12 +49,6 @@ import { verdictNeedsLearnerRating } from './submit-recovery';
 export type Rating = 'again' | 'hard' | 'good';
 type IssuanceMode = 'auto_score' | 'manual';
 type IssuanceState = Awaited<ReturnType<PracticeClient['getIssuanceState']>>;
-export type JudgeFeedback = Pick<
-  JudgePreview,
-  'route' | 'coarse_outcome' | 'confidence' | 'feedback_md' | 'suggested_rating'
-> & {
-  partial_units?: Extract<JudgePreview, { coarse_outcome: 'partial_unknown' }>['partial_units'];
-};
 
 const PartialUnknownFeedback = PartialUnknownJudgeResult.pick({
   coarse_outcome: true,
@@ -63,40 +61,6 @@ const JUDGE_FAILURE_MESSAGE = '判题失败，请稍后重试';
 
 export function isInterventionDiagnosticSource(source: string): boolean {
   return source === INTERVENTION_DIAGNOSTIC_SOURCE;
-}
-
-export function feedbackFromCommittedAttempt(result: SubmitResult): JudgeFeedback {
-  if (!result.judge) {
-    throw new Error('诊断提交没有返回服务端判分');
-  }
-  return {
-    route: result.judge.route,
-    coarse_outcome: result.judge.coarse_outcome,
-    ...(result.judge.coarse_outcome === 'partial_unknown'
-      ? { partial_units: result.judge.partial_units }
-      : {}),
-    confidence: result.judge.confidence,
-    feedback_md: result.judge.feedback_md,
-    // auto_rate 的正常回执恒带 suggested_rating；旧/滚动部署响应若漏掉，
-    // review_event.rating 仍是服务端最终实际采用的评级，不能在 UI 侧猜。
-    suggested_rating:
-      result.judge.coarse_outcome === 'partial_unknown'
-        ? null
-        : (result.judge.suggested_rating ??
-          ('rating' in result.review_event ? result.review_event.rating : null)),
-  };
-}
-
-export function feedbackFromCommittedDiagnosticAttempt(
-  result: NonNullable<QuestionFullDetail['committed_attempt']>,
-): JudgeFeedback {
-  return {
-    route: result.judge.route,
-    coarse_outcome: result.judge.coarse_outcome,
-    confidence: result.judge.confidence,
-    feedback_md: result.judge.feedback_md,
-    suggested_rating: result.judge.suggested_rating,
-  };
 }
 
 export const VERDICT_OF: Record<JudgePreview['coarse_outcome'], { label: string; tone: Rating }> = {
@@ -474,6 +438,7 @@ export function usePracticeSubmit({
   const [rating, setRating] = useState<Rating | null>(null);
   const [appealOpen, setAppealOpen] = useState(false);
   const [appealText, setAppealText] = useState('');
+  const [appealFiled, setAppealFiled] = useState(false);
   const [committing, setCommitting] = useState(false);
   const [returning, setReturning] = useState(false);
   const returningRef = useRef(false);
@@ -554,6 +519,7 @@ export function usePracticeSubmit({
         setCommittedPreview({
           route: typeof r?.route === 'string' && r.route ? r.route : 'durable',
           coarse_outcome: outcome,
+          ...provenanceOf(r),
           ...(partial?.success ? { partial_units: partial.data.partial_units } : {}),
           confidence: typeof r?.confidence === 'number' ? r.confidence : 0,
           feedback_md: typeof r?.feedback_md === 'string' ? r.feedback_md : '',
@@ -1085,6 +1051,8 @@ export function usePracticeSubmit({
     runId: pendingRun?.runId ?? null,
     pollUrl: pendingRun?.pollUrl ?? null,
     readStatus: readJudgeRunStatus,
+    // About four minutes at the backoff cap: a dropped connection recovers on its own.
+    maxConsecutiveErrors: 40,
     onSettled: onPolledSettled,
   });
 
@@ -1142,10 +1110,7 @@ export function usePracticeSubmit({
         // YUK-1051 (D10) — 开放作答的证据附件随提交冻结；空值不发（既有 wire 逐字不变）。
         ...(imageRefs.length > 0 ? { answer_image_refs: imageRefs } : {}),
       });
-      // YUK-1051 — 202-pending 是返回 union（不是错误）：答案已随提交持久化，判分走
-      // durable lane。记下 run 锚点进 pending 卡；轮询到终态再揭晓反馈（见 pendingPoll effect）。
-      // 带申诉的提交在 pending 下先把提交落定——申诉锚点要等终态判词回来才有，故 pending
-      // 分支暂不发 appeal（反馈卡出现后「不服判」入口照常可用）。
+      // Pending originals are restored and polled before an appeal can name their verdict.
       if (isSubmitPending(res)) {
         setPendingRun({ runId: res.run_id, pollUrl: res.backfill.poll_url });
         return;
@@ -1162,7 +1127,7 @@ export function usePracticeSubmit({
           : null;
         if (anchor) {
           await fileAppeal(anchor, appealText.trim(), 'assessment' in res ? 'evaluation' : 'judge');
-          addToast('已提交重判，在后台进行，结果回来会提醒你。', 'info', 'clock');
+          addToast('已提交重判，在后台进行。判不准的话，原结果不变。', 'info', 'clock');
         } else {
           addToast('这次判定没有可以申诉的记录。', 'info', 'alert');
         }
@@ -1206,10 +1171,16 @@ export function usePracticeSubmit({
     setCommitting(true);
     try {
       await fileAppeal(autoCommitJudgeEventId, appealText.trim(), committedAppealKind.current);
-      addToast('已提交重判，在后台进行，结果回来会提醒你。', 'info', 'clock');
+      setAppealFiled(true);
       setAppealOpen(false);
-    } catch {
-      addToast('提交重判没有成功，稍后再试一次。', 'info', 'alert');
+    } catch (e) {
+      addToast(
+        e instanceof ApiError && e.code === 'stale_head'
+          ? '这个结果已经更新过了，刷新页面看最新结果。'
+          : '提交重判没有成功，稍后再试一次。',
+        'info',
+        'alert',
+      );
     } finally {
       setCommitting(false);
     }
@@ -1221,17 +1192,19 @@ export function usePracticeSubmit({
     stream_item_id: item.id,
     referenced_knowledge_ids: q ? q.labels.map((l) => l.id) : [],
     reasoning_trace: buildCaptureFields({ reasoningTrace, selfConfidence }).reasoning_trace ?? null,
+    ...(selfConfidence === null ? {} : { self_confidence: selfConfidence }),
     latency_ms: withLatency ? computeLatencyMs(questionShownAtRef.current, Date.now()) : null,
   });
 
-  // One advice outcome path for a live answer and a recovery replay. Open (or unrated) verdicts
-  // go to the confidence step and the learner's own rating, as before. An automatic verdict the
-  // advice request already recorded (`committed`) settles here with what commit() would set; a
-  // server without that field still gets the separate commit() (idempotent on the submission).
+  // A 200 replay restores the preview; accepted originals use the existing durable poller.
   const applyAdvice = async (
     r: Awaited<ReturnType<typeof getAdvice>>,
     recovery: boolean,
   ): Promise<void> => {
+    if (isSubmitPending(r)) {
+      setPendingRun({ runId: r.run_id, pollUrl: r.backfill.poll_url });
+      return;
+    }
     activationIntent.current = r.activation_intent;
     if (!r.automatic_commit || r.judge.suggested_rating === null) {
       setPendingPreview(r.judge);
@@ -1484,6 +1457,7 @@ export function usePracticeSubmit({
     },
     appeal: {
       open: appealOpen,
+      filed: appealFiled,
       setOpen: setAppealOpen,
       text: appealText,
       setText: setAppealText,

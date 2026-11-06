@@ -10,6 +10,8 @@ export interface PiHookToolCall {
   name: string;
   /** Declared subagent type for nested calls; undefined on the root loop. */
   agentType?: string;
+  /** Independent execution-loop identity, including separate invocations of one agent type. */
+  loopId?: string;
 }
 
 export type PiBeforeToolCall = (
@@ -18,11 +20,13 @@ export type PiBeforeToolCall = (
   signal?: AbortSignal,
 ) => Promise<BeforeToolCallResult | undefined> | BeforeToolCallResult | undefined;
 
-/** Post-execution observation — fires for success and failure (isError). */
+/** Settled attempt observation, including lookup, validation and hook rejection. */
 export interface PiToolCallObservation {
   call: PiHookToolCall;
   args: Record<string, unknown>;
   isError: boolean;
+  /** Declared domain effect; absent for tools without an effect contract. */
+  effect?: 'read' | 'propose' | 'write' | 'control';
   /** The tool's result payload when it settled (absent on execute-throw). */
   output?: unknown;
   /** The thrown/settled error value when isError. */
@@ -41,6 +45,12 @@ export type PiAfterToolCall = (
 ) => Promise<AfterToolCallResult | undefined> | AfterToolCallResult | undefined;
 
 export interface PiHookBridge {
+  /** Root loop owner policy. Nested loops always receive their own state. */
+  progress?: {
+    beforeToolCall: PiBeforeToolCall;
+    afterToolCall: PiAfterToolCall;
+    closure?(): { readonly reason: string } | undefined;
+  };
   /** Ordered gate entries — the first defined result wins, including a non-blocking allow. */
   beforeToolCall?: PiBeforeToolCall[];
   /** Ordered observers — all run; failures are logged and swallowed. */

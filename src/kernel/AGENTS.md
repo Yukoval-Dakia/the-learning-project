@@ -14,7 +14,6 @@
 | `events/` | event envelope 的完整读写 API、修正投影（corrections / effective-truth）和 deterministic scope tagging；唯一 event INSERT owner |
 | `tools/` | DomainTool 契约（types / allowlists / budgets / context-throttle），central registry 与 capability tool 共享 |
 | `read-models/` | 跨 capability 只读投影（failure attempts、failure-learning knowledge context、question activity、cause policy、knowledge tree/subject 解析、目标定位范围与种子根锚点 `placement-scope`、questions 列表、daily review plan inputs、intervention preparation stage、note section projection、练习会话打开态 `practice-session-open`、学习者作答/学习活动集合与学科解析及最长连错 `learner-activity`） |
-| `memory-brief-regen.ts` | memory brief regen 队列契约：队列名、`memory.regen.<scope>` singleton key 与槽长（`subject:*` 4 小时，其余 6 分钟）；Agency 挂 handler，Agency 与 Practice 都经 `enqueueMemoryBriefRegen` 入队 |
 | `coach-wake.ts` | coach_daily 队列契约与回访义务：队列名、过期判定（24h 内无 `experimental:trigger_coach_scan` 且此后有允许推导的学习活动）、`coach.wake` 24h singleton 槽；Agency 挂 handler，Practice 的 `learner_return_wake` 经 `enqueueCoachIfDue` 入队 |
 | `scheduling.ts` + `records/scheduling-state.ts` | 遗忘引擎选择（`FORGETTING_ENGINE`）与保持率读数；`material_fsrs_state` 唯一存取（读投影、enroll/upsert/退役/merge，锁序不变）。写入调用方仍只有结算等既有 owner（ADR-0037）。候选引擎重建由结算经 `installSchedulingCandidateRebuild()` 在 API / worker / acceptance 启动时安装；未安装时只在候选引擎需要重建的分支抛 `HostOperationNotInstalledError`，默认 `fsrs` 引擎不受影响 |
 | `records/mastery-state.ts` | 在线 mastery 诊断的完整 attempt 更新、显式 upsert 与单 KC merge retirement；跨面结算、恢复和 merge 编排仍归调用方 |
@@ -29,7 +28,7 @@
 | `parse-task-output.ts` / `generation-prompt-support.ts` | TaskSpec 文本输出的 JSON 解析与 schema 校验；出题类 prompt 的题型词表与科目 rubric 规范段 |
 | `object-storage.ts` | 共享 R2/S3 对象 I/O：完整 client 接口、SDK 命令/响应适配与 lazy singleton；不拥有资产引用、数据库事务或付费策略 |
 | `http.ts` | 公共 HTTP helper（公共件，非契约） |
-| `judge.ts` / `placement.ts` / `placement-persistence.ts` | 根目录过渡门面：只 re-export 现有消费者实际使用的符号，不得新增符号。`judge.ts` 只剩 ingestion / agency 用到的 6 个判题入口 |
+| `judge.ts` / `placement-persistence.ts` | 根目录过渡门面：只 re-export 现有消费者实际使用的符号，不得新增符号。`judge.ts` 只剩 ingestion / agency 用到的 6 个判题入口 |
 
 ## CONVENTIONS
 - `JobHandlerFactory` 参数刻意用 `any`：kernel 不 import pg-boss 类型，让 capability 包的 `buildXHandler(db)` 工厂能零适配注册（注释已说明 variance escape hatch）。

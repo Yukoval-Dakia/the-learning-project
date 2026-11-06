@@ -325,7 +325,7 @@ export function PracticePresentation(props: PracticePresentationProps) {
       else
         submission.primary = action(
           'submit',
-          submit.judging ? '正在判…' : '提交',
+          submit.judging ? '在看…' : '提交',
           () => void submit.runJudge(),
           submit.canSubmit,
           '请完成作答，或等待当前操作结束',
@@ -347,9 +347,13 @@ export function PracticePresentation(props: PracticePresentationProps) {
         kind: 'pending',
         notice: {
           title:
-            submit.pendingPoll.status === 'failed' || submit.pendingPoll.error
-              ? '判分暂时没跑成。你的作答已经存住，系统会自动补判，不需要重交。'
-              : '这份作答在排队判分，不需要重交。可以先做下一题，结果稍后到。',
+            submit.pendingPoll.status === 'failed'
+              ? '这次没判成，答案还在，不用重交。'
+              : !submit.pendingPoll.error
+                ? '在看你的答案，不用重交。可以先做下一题，判完结果会记进这题的作答记录。'
+                : submit.pendingPoll.settled
+                  ? '一直连不上。答案已经存住，刷新这页可以看结果。'
+                  : '暂时连不上。答案已经存住，连上后结果会自己出来。',
         },
       };
       submission.primary = action(
@@ -370,6 +374,9 @@ export function PracticePresentation(props: PracticePresentationProps) {
     } else if (phase === 'feedback' && feedback) {
       const outcome = feedback.coarse_outcome;
       const unsupported = outcome === 'unsupported';
+      // Only committed results carry it; a live preview has no such field yet.
+      const aiGraded =
+        'grading_provenance' in feedback && Boolean(feedback.grading_provenance?.length);
       submission.grading = { kind: unsupported ? 'manual' : 'settled' };
       if (submit.autoCommitted || submit.committedPreview) submission.recording = { kind: 'saved' };
       revelation = {
@@ -377,12 +384,14 @@ export function PracticePresentation(props: PracticePresentationProps) {
         result: {
           verdict: unsupported ? 'unknown' : outcome === 'partial_unknown' ? 'partial' : outcome,
           summary: unsupported
-            ? '这题暂时没法自动判。'
+            ? '这题暂时判不准，先记为待定。'
             : outcome === 'partial_unknown'
               ? `部分正确（${(feedback.partial_units ?? []).map((unit) => `${unit.correct_count}/${unit.total_count}`).join('、')}），分数未知`
               : isObjectiveQuestion(feedback.route)
                 ? '自动核对只比较了答案本身，还没有判断原因。'
-                : '这是 AI 的判断，觉得不对可以申诉。',
+                : aiGraded
+                  ? ''
+                  : '这是 AI 的判断。',
           parts: [],
           reference: q.reference_md
             ? { kind: 'ready', content: markdown('reference', '参考答案', q.reference_md) }
@@ -392,6 +401,7 @@ export function PracticePresentation(props: PracticePresentationProps) {
               ? [markdown('feedback', '判分反馈', feedback.feedback_md)]
               : [],
           uncertainty: unknownScore ? '对了几处是确定的；分数还算不出来，不按 0 分记。' : undefined,
+          aiGraded,
         },
       };
       if (!submit.autoCommitted && !unknownScore)
@@ -432,52 +442,61 @@ export function PracticePresentation(props: PracticePresentationProps) {
               },
               !submit.committing && !advancing && !!submit.rating,
             );
-      if (
-        appealEntryAvailable({
-          phase,
-          appealOpen: appeal.open,
-          autoCommitted: submit.autoCommitted,
-          autoCommitJudgeEventId: submit.autoCommitJudgeEventId,
-        })
-      )
-        submission.secondary = [
-          ...submission.secondary,
-          action('appeal-open', '觉得判得不对？说明理由重判', () => appeal.setOpen(true)),
-        ];
-      if (appeal.open)
+      // A verdict that could not be graded has no effective result to appeal: self-rate only.
+      if (appeal.filed)
         revelation.appeal = {
-          kind: 'editing',
-          field: {
-            id: 'appeal',
-            label: '重判理由',
-            kind: 'text',
-            value: appeal.text,
-            mode: 'editable',
-          },
-          notice: {
-            title: '重判在后台进行，不耽误做下一题',
-            actions: [
-              action(
-                'appeal-submit',
-                '提交重判，先继续',
-                () => {
-                  if (submit.autoCommitted) void appeal.submitAfterAutoCommit();
-                  else if (unknownScore)
-                    void submit.commit({ withAppeal: true, rating: 'hard', autoRate: true });
-                  else if (submit.rating)
-                    void submit.commit({ withAppeal: true, rating: submit.rating });
-                },
-                !!appeal.text.trim() &&
-                  !submit.committing &&
-                  !advancing &&
-                  (submit.autoCommitted
-                    ? !!submit.autoCommitJudgeEventId
-                    : !!submit.rating || !!unknownScore),
-              ),
-              action('appeal-cancel', '算了', () => appeal.setOpen(false)),
-            ],
-          },
+          kind: 'waiting',
+          notice: { title: '已提交重判，在后台进行。判不准的话，原结果不变。' },
         };
+      else if (
+        !unsupported &&
+        (appeal.open ||
+          appealEntryAvailable({
+            phase,
+            appealOpen: false,
+            autoCommitted: submit.autoCommitted,
+            autoCommitJudgeEventId: submit.autoCommitJudgeEventId,
+          }))
+      ) {
+        const send = action(
+          'appeal-submit',
+          // Without an automatic commit, the appeal goes with the commit that also moves on.
+          submit.autoCommitted ? '重判这题' : '重判这题，先继续',
+          () => {
+            if (submit.autoCommitted) void appeal.submitAfterAutoCommit();
+            else if (unknownScore)
+              void submit.commit({ withAppeal: true, rating: 'hard', autoRate: true });
+            else if (submit.rating) void submit.commit({ withAppeal: true, rating: submit.rating });
+          },
+          !submit.committing &&
+            !advancing &&
+            (submit.autoCommitted
+              ? !!submit.autoCommitJudgeEventId
+              : !!submit.rating || !!unknownScore),
+        );
+        revelation.appeal = appeal.open
+          ? {
+              kind: 'editing',
+              field: {
+                id: 'appeal',
+                label: '理由（选填）',
+                kind: 'text',
+                value: appeal.text,
+                mode: 'editable',
+              },
+              notice: {
+                title: '',
+                actions: [send, action('appeal-cancel', '算了', () => appeal.setOpen(false))],
+              },
+            }
+          : {
+              kind: 'available',
+              notice: {
+                title: '觉得判得不对？',
+                actions: [send, action('appeal-open', '加一句理由', () => appeal.setOpen(true))],
+              },
+            };
+      }
     }
     if (advancing)
       submission.continuation = { kind: 'advancing', notice: { title: '正在准备下一题' } };

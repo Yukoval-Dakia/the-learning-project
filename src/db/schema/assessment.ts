@@ -312,7 +312,6 @@ export const model_admission_slice = pgTable(
   'model_admission_slice',
   {
     slice_id: text('slice_id').primaryKey(),
-    subject: text('subject').notNull(),
     response_class: text('response_class', { enum: ['blank', 'free'] }).notNull(),
     /** 注册的判分 task kind（typed task，如 JevScoringDecisionTask）。 */
     task_kind: text('task_kind').notNull(),
@@ -329,9 +328,8 @@ export const model_admission_slice = pgTable(
       .default('active'),
   },
   (t) => [
-    index('model_admission_slice_lookup_idx').on(t.subject, t.response_class, t.task_kind),
+    index('model_admission_slice_lookup_idx').on(t.response_class, t.task_kind),
     uniqueIndex('model_admission_slice_natural_key').on(
-      t.subject,
       t.response_class,
       t.task_kind,
       t.model,

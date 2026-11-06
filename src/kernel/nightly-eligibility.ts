@@ -12,10 +12,6 @@ export const FRONTIER_PENDING_CAP = 5;
 /** 空闲档「回来练两次」：两次练习 × 前沿每次 5 题。 */
 export const RETURN_STOCK_QUESTIONS = 10;
 
-export const MEMORY_BRIEF_SWEEP_JOB = 'memory_brief_sweep';
-
-export const REFLECTION_BRIEF_SCOPE_KEYS = ['global', 'meta:orchestrator_self'] as const;
-
 export type ActivityTier = 'active' | 'recent' | 'idle' | 'dormant';
 
 export type NightlyJobClass =

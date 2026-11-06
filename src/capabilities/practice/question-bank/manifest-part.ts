@@ -311,8 +311,19 @@ export const questionBankManifestPart: Omit<CapabilityManifest, 'name' | 'descri
       {
         name: 'question_admission_run',
         queue: 'llm',
+        reservedPriority: 1,
+        notify: true,
         load: () =>
           import('./jobs/question_admission_run').then((m) => m.buildQuestionAdmissionRunHandler),
+      },
+      {
+        name: 'question_admission_unknown_close',
+        queue: 'fast',
+        schedule: { cron: '* * * * *', tz: 'UTC' },
+        load: () =>
+          import('./server/admission/unknown-closure').then(
+            (m) => m.buildAdmissionUnknownCloseHandler,
+          ),
       },
     ],
   },

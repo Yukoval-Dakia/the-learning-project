@@ -119,6 +119,16 @@ export const UI_SURFACES = [
     search: { label: 'AI 观察' },
   },
   {
+    id: 'memory',
+    route: '/memory',
+    owner: 'agency',
+    kind: 'page',
+    title: '记忆',
+    activeId: 'memory',
+    nav: { section: '整理', order: 55 },
+    search: { label: '记忆', keywords: '记住 关于我 偏好 称呼 更正' },
+  },
+  {
     id: 'event-detail',
     route: '/events/$id',
     owner: 'observability',

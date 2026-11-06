@@ -122,6 +122,11 @@ export const advisoryLockRegistry = {
     keyPrefix: 'intervention:source:',
     suffixFields: ['eventId'],
   },
+  curatorConsolidation: {
+    family: 'curator-consolidation',
+    encoding: 'hashtext',
+    key: 'context:curator',
+  },
   memoryIngestSource: {
     family: 'memory-ingest-source',
     encoding: 'hashtextextended',

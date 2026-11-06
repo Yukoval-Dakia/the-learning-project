@@ -22,6 +22,7 @@ import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { event, knowledge, learning_session, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { allowedEventIds } from '@/kernel/events/derivation-policy';
 import {
   nativeAttemptOutcome,
   resolveVerdictsForAttempts,
@@ -29,6 +30,7 @@ import {
 } from '@/kernel/read-models/assessment-verdict';
 import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
 import { getFailureAttempts } from '@/kernel/read-models/failure-attempts';
+import { LEARNER_ANSWER_ACTIONS } from '@/kernel/read-models/learner-activity';
 import { resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
 import type { BoundRunTaskTextFn } from '@/server/ai/runner-fn';
 import { resolveSubjectProfile } from '@/subjects/profile';
@@ -36,7 +38,6 @@ import { type SessionSummaryIssue, checkSessionSummaryClaims } from './session-s
 
 const NOTABLE_LIMIT = 3;
 const NATIVE_ATTEMPT_ACTION = 'experimental:assessment_attempt';
-const LEARNER_ANSWER_ACTIONS = ['attempt', 'review', NATIVE_ATTEMPT_ACTION] as const;
 export const SESSION_SUMMARY_EVENT_ACTION = 'experimental:session_summary';
 
 /**
@@ -244,7 +245,14 @@ export async function runSessionSummary(
     primary_cause: topCauses[0]?.category_label?.trim() || null,
   });
 
+  // Model-facing text only: restricted answers still count in numeric_facts
+  // (the learner's own session stats), but their response_md never leaves.
+  const derivableIds = await allowedEventIds(
+    db,
+    answerEvents.map((r) => r.id),
+  );
   const notable = answerEvents
+    .filter((r) => derivableIds.has(r.id))
     .filter((r) => {
       if (r.action === NATIVE_ATTEMPT_ACTION) {
         const outcome = outcomeFor(r);

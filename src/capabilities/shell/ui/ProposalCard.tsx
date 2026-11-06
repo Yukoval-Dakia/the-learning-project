@@ -22,6 +22,7 @@ import {
   Network,
   RefreshCw,
   Sparkles,
+  TriangleAlert,
   X,
 } from 'lucide-react';
 import { useState } from 'react';
@@ -616,7 +617,10 @@ export function ProposalCard({ p, resolved, navigate, onResolve, onError }: Prop
 
       {mergeBlockedWords && !resolved && (
         <div className="ib-prop-blocked">
-          <b>不能合并</b>
+          <b>
+            <TriangleAlert size={14} aria-hidden="true" />
+            不能合并
+          </b>
           <span>{mergeBlockedWords}</span>
         </div>
       )}

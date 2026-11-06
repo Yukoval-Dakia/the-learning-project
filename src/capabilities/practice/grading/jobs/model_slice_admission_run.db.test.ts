@@ -72,7 +72,6 @@ function payload(runId: string, items: ReturnType<typeof holdoutItem>[]) {
   return {
     run_id: runId,
     slice: {
-      subject: 'math',
       response_class: 'free' as const,
       task_kind: 'JevScoringDecisionTask',
       model: pin.model,
@@ -163,7 +162,6 @@ describe('model slice admission pre-paid refusals', () => {
     const db = testDb();
     const pin = jevPin();
     const registered = await registerModelAdmissionSlice(db, {
-      subject: 'math',
       response_class: 'free',
       task_kind: 'JevScoringDecisionTask',
       model: pin.model,
@@ -243,7 +241,7 @@ describe('model slice admission pre-paid refusals', () => {
     const slices = await db
       .select({ id: model_admission_slice.slice_id })
       .from(model_admission_slice)
-      .where(eq(model_admission_slice.subject, 'math'));
+      .where(eq(model_admission_slice.response_class, 'free'));
     expect(slices).toEqual([]);
   });
 

@@ -1,4 +1,3 @@
-import { archiveProposalArtifacts } from '@/capabilities/notes/public';
 import { newId } from '@/core/ids';
 import type { ActivityRefT } from '@/core/schema/activity';
 import type { AiProposalPayloadT } from '@/core/schema/proposal';
@@ -13,7 +12,12 @@ import {
   rollbackRecordsActioned,
 } from '@/kernel/records/record-processing';
 import type { RetractAiProposalOpts, RetractAiProposalResult } from './action-types';
-import { ownerInput, proposalLifecycleRegistry, requireProposal } from './lifecycle-context';
+import {
+  ownerInput,
+  proposalLifecycleRegistry,
+  proposalRuntimeSeams,
+  requireProposal,
+} from './lifecycle-context';
 
 function activityRefsForProposal(proposal: ProposalInboxRow): ActivityRefT[] {
   const direct = activityRefFromTarget(proposal.target.subject_kind, proposal.target.subject_id);
@@ -81,8 +85,8 @@ export async function retractAiProposal(
         });
 
         if (applier) {
-          // Owners that archive a proposal's notes take the Notes operation from the runtime
-          // instead of importing another capability.
+          // Cross-capability and platform ops the owner needs reach it through the
+          // declared seams (lifecycle-context), never through an applier-side import.
           await applier(
             tx,
             {
@@ -93,7 +97,7 @@ export async function retractAiProposal(
               reason_md: opts.reason_md,
               affected_refs: opts.affected_refs,
             },
-            { archiveProposalArtifacts },
+            proposalRuntimeSeams,
           );
         }
 
