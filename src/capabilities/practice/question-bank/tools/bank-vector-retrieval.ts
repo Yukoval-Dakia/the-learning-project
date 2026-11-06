@@ -18,6 +18,7 @@
 import { type SQL, sql } from 'drizzle-orm';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import { embedCurrencyPredicate } from '@/db/embed-currency';
+import { notHoldoutOnlyPredicate } from '@/db/predicates';
 import { question, question_group_lifecycle } from '@/db/schema';
 
 export const BANK_VECTOR_RETRIEVAL_RULE_VERSION = 2;
@@ -304,7 +305,7 @@ export function bankVectorBaselineLimit(params: BankVectorRetrievalParamsV2): nu
 
 /**
  * 「合格库面」谓词（单一真相，引擎的 margin 基线查询与标定脚本的取数共用，防漂移）：
- * 顶层、非固定窗口诊断题、无 dismissed/archived 墓碑、未撤回、带向量。**不含任何
+ * 顶层、非固定窗口诊断题、无 dismissed/archived 墓碑、未撤回、非留出集、带向量。**不含任何
  * scope 过滤**（subject/kind/source/knowledge/difficulty/within/exclude/draft/admission
  * 一概不施）——margin 必须在全球库面上量，否则 scope 滤掉全局 rank-2 会伪造 decisive。
  * 调用方必须 LEFT JOIN question_group_lifecycle（withdrawn 谓词引用它）。
@@ -318,6 +319,9 @@ export function bankVectorBaselinePredicates(): SQL[] {
     sql`((${question.metadata} -> 'dismissed_at') IS NULL)`,
     sql`((${question.metadata} -> 'archived_at') IS NULL)`,
     sql`(${lc.withdrawn} IS NULL OR ${lc.withdrawn} = false)`,
+    // 留出集同样不进 margin 基线面：留出向量占位 rank-1/rank-2 窗口会压制或
+    // 伪造 decisive 判定，与召回侧排除同一语义。
+    notHoldoutOnlyPredicate(question),
     sql`(${question.embedding} IS NOT NULL)`,
     embedCurrencyPredicate(question),
   ];
