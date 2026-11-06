@@ -16,6 +16,7 @@ import type {
 } from '@/ui-next/practice-studio/contracts';
 import { PracticeStudio } from '@/ui-next/practice-studio/PracticeStudio';
 import { PresentationBlocks } from '../blocks/PresentationBlocks';
+import { outcomeFitsFeedbackCard } from '../judge-feedback';
 import { practiceSourceLabel } from '../PfStream';
 import type { StreamItem } from '../practice-api';
 import {
@@ -33,6 +34,15 @@ const ratings: readonly Rating[] = ['again', 'hard', 'good'];
 const ratingLabels = { again: '再练', hard: '模糊', good: '掌握' };
 // About 30 s of successful reads at the poller's backoff; a loose first number, no timer needed.
 const LONG_WAIT_POLLS = 8;
+const APPEAL_REASON_MAX = 2000;
+const outcomeWords: Record<string, string> = {
+  correct: '做对了',
+  partial: '部分正确',
+  partial_unknown: '部分正确',
+  incorrect: '再看一遍',
+  unsupported: '待定',
+};
+const outcomeWord = (outcome: string) => outcomeWords[outcome] ?? '结果';
 
 export interface PracticePresentationProps {
   engine: Engine;
@@ -442,14 +452,10 @@ export function PracticePresentation(props: PracticePresentationProps) {
               '先选一个复习安排',
             );
       // A verdict that could not be graded has no effective result to appeal: self-rate only.
-      if (appeal.filed)
-        revelation.appeal = {
-          kind: 'waiting',
-          notice: { title: '已提交重判，在后台进行。判不准的话，原结果不变。' },
-        };
-      else if (
+      if (
         !unsupported &&
         (appeal.open ||
+          appeal.id ||
           appealEntryAvailable({
             phase,
             appealOpen: false,
@@ -457,44 +463,97 @@ export function PracticePresentation(props: PracticePresentationProps) {
             autoCommitJudgeEventId: submit.autoCommitJudgeEventId,
           }))
       ) {
-        const send = action(
-          'appeal-submit',
-          // Without an automatic commit, the appeal goes with the commit that also moves on.
-          submit.autoCommitted ? '重判这题' : '重判这题，先继续',
-          () => {
-            if (submit.autoCommitted) void appeal.submitAfterAutoCommit();
-            else if (unknownScore)
-              void submit.commit({ withAppeal: true, rating: 'hard', autoRate: true });
-            else if (submit.rating) void submit.commit({ withAppeal: true, rating: submit.rating });
-          },
-          !submit.committing &&
-            !advancing &&
-            (submit.autoCommitted
-              ? !!submit.autoCommitJudgeEventId
-              : !!submit.rating || !!unknownScore),
-        );
-        revelation.appeal = appeal.open
-          ? {
-              kind: 'editing',
-              field: {
-                id: 'appeal',
-                label: '理由（选填）',
-                kind: 'text',
-                value: appeal.text,
-                mode: 'editable',
-              },
-              notice: {
-                title: '',
-                actions: [send, action('appeal-cancel', '算了', () => appeal.setOpen(false))],
-              },
-            }
-          : {
-              kind: 'available',
-              notice: {
-                title: '觉得判得不对？',
-                actions: [send, action('appeal-open', '加一句理由', () => appeal.setOpen(true))],
-              },
-            };
+        const send = (label: string, retryReason?: string) =>
+          action(
+            'appeal-submit',
+            label,
+            () => {
+              if (submit.autoCommitted) void appeal.submitAfterAutoCommit(retryReason);
+              else if (unknownScore)
+                void submit.commit({ withAppeal: true, rating: 'hard', autoRate: true });
+              else if (submit.rating)
+                void submit.commit({ withAppeal: true, rating: submit.rating });
+            },
+            appeal.text.length <= APPEAL_REASON_MAX &&
+              !submit.committing &&
+              !advancing &&
+              (submit.autoCommitted
+                ? !!submit.autoCommitJudgeEventId
+                : !!submit.rating || !!unknownScore),
+            appeal.text.length > APPEAL_REASON_MAX ? `理由最多 ${APPEAL_REASON_MAX} 字` : undefined,
+          );
+        // Without an automatic commit, the appeal goes with the commit that also moves on.
+        const firstSend = send(submit.autoCommitted ? '重判这题' : '重判这题，先继续');
+        const addReason = action('appeal-open', '加一句理由', () => appeal.setOpen(true));
+        const read = appeal.read;
+        if (appeal.open)
+          revelation.appeal = {
+            kind: 'editing',
+            field: {
+              id: 'appeal',
+              label: '理由（选填）',
+              kind: 'text',
+              value: appeal.text,
+              mode: 'editable',
+            },
+            notice: {
+              title: '',
+              actions: [firstSend, action('appeal-cancel', '算了', () => appeal.setOpen(false))],
+            },
+          };
+        else if (!appeal.id)
+          revelation.appeal = {
+            kind: 'available',
+            notice: { title: '觉得判得不对？', actions: [firstSend, addReason] },
+          };
+        else if (!read || read.status === 'in_progress')
+          revelation.appeal = {
+            kind: 'waiting',
+            notice: {
+              title: appeal.readFailed
+                ? '暂时读不到重判结果。连上后会自己更新。'
+                : '在重判，这里先显示原来的结果。判不准的话，原结果不变。',
+            },
+          };
+        else if (read.status === 'changed')
+          revelation.appeal = {
+            kind: 'resolved',
+            notice: {
+              title:
+                read.after && !outcomeFitsFeedbackCard(read.after.coarse_outcome)
+                  ? '重判改了结果，刷新这页可以看到新结果。'
+                  : read.before && read.after
+                    ? `重判改了结果：${outcomeWord(read.before.coarse_outcome)} → ${outcomeWord(read.after.coarse_outcome)}。`
+                    : '重判改了结果，之后可以看到。',
+              actions: [addReason],
+            },
+          };
+        else if (read.status === 'unchanged')
+          revelation.appeal = {
+            kind: 'resolved',
+            notice: { title: '重判看过了，结果没变。', actions: [addReason] },
+          };
+        else if (read.status === 'unjudgeable')
+          revelation.appeal = {
+            kind: 'resolved',
+            notice: { title: '这次重判判不准，原结果不变。', actions: [addReason] },
+          };
+        else
+          revelation.appeal = {
+            kind: 'failed',
+            // No disposition means the job itself died, so the same request runs it again; a
+            // recorded disposition is final for that request, and only a new reason reruns it.
+            notice:
+              read.disposition === 'stale_head'
+                ? { title: '这个结果已经更新过了，刷新这页看最新结果。', actions: [addReason] }
+                : {
+                    title: '这次重判没跑成，原结果不变。',
+                    actions:
+                      read.disposition === null
+                        ? [send('再试一次', read.reason_md), addReason]
+                        : [addReason],
+                  },
+          };
       }
     }
     if (advancing)
