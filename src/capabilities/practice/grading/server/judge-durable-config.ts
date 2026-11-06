@@ -1,6 +1,6 @@
 //durable judge_run 的运行时开关 + lane 常量。
-// 集中读 env（*_ENABLED ledger 惯例 + 共享 parseFlag），让 submit 面分流、handler
-// kill-switch、pnpm audit:flags 对账三处引同一 reader，不各写一份 truthiness。
+// 集中读 registry 定义（*_ENABLED flag 惯例 + 共享 parseFlag），
+// 让 submit 面分流、handler kill-switch、pnpm audit:flags 对账三处引同一 reader，不各写一份 truthiness。
 
 import type { Provider } from '@/ai/registry';
 import { getConfig, getConfigFlag } from '@/core/config/store';
