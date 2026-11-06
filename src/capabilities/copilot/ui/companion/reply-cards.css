@@ -1,0 +1,121 @@
+/* Cards a reply places between its paragraphs: a knowledge point, a note, a question. Filled M3
+   cards on the panel's surface; no side stripes, emphasis comes from type and surface tiers. */
+[data-ui-next] .un-cp-block {
+  display: grid;
+  gap: var(--un-sp-2);
+  min-width: 0;
+  margin-block: var(--un-sp-3);
+  padding: var(--un-sp-4);
+  border: 0;
+  border-radius: var(--un-md-sys-shape-large);
+  background: var(--un-md-sys-color-surface-container-lowest);
+  color: var(--un-md-sys-color-on-surface);
+  font: inherit;
+  text-align: start;
+}
+[data-ui-next] button.un-cp-block {
+  width: 100%;
+  cursor: pointer;
+  transition: background-color var(--un-t-feedback) var(--un-ease-glide);
+}
+[data-ui-next] button.un-cp-block:hover {
+  background: var(--un-md-sys-color-surface-container);
+}
+[data-ui-next] .un-cp-block-kind {
+  display: flex;
+  align-items: center;
+  gap: var(--un-sp-1);
+  min-height: 20px;
+  margin: 0;
+  color: var(--un-md-sys-color-on-surface-variant);
+  font-size: var(--un-fs-1);
+}
+[data-ui-next] .un-cp-block-kind svg {
+  flex: none;
+}
+[data-ui-next] .un-cp-block-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--un-sp-1);
+  margin-inline-start: auto;
+}
+[data-ui-next] .un-cp-block-title {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: var(--un-md-sys-typescale-title-medium-size);
+  font-weight: var(--un-fw-semibold);
+  line-height: var(--un-md-sys-typescale-title-medium-line-height);
+}
+[data-ui-next] .un-cp-block-summary {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  color: var(--un-md-sys-color-on-surface-variant);
+  font-size: var(--un-fs-2);
+  line-height: var(--un-lh-prose);
+}
+[data-ui-next] .un-cp-block-band {
+  display: flex;
+  align-items: center;
+  gap: var(--un-sp-2);
+  margin: 0;
+  font-size: var(--un-fs-2);
+}
+[data-ui-next] .un-cp-block-meter {
+  display: grid;
+  grid-template-columns: repeat(4, 20px);
+  gap: 3px;
+}
+[data-ui-next] .un-cp-block-meter > span {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--un-md-sys-color-surface-container-highest);
+}
+[data-ui-next] .un-cp-block-meter > span[data-on] {
+  background: var(--un-md-sys-color-primary);
+}
+[data-ui-next] .un-cp-block-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--un-sp-1) var(--un-sp-3);
+  color: var(--un-md-sys-color-on-surface-variant);
+  font-size: var(--un-fs-1);
+}
+[data-ui-next] .un-cp-block-open {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--un-sp-1);
+  margin-inline-start: auto;
+  color: var(--un-md-sys-color-primary);
+  font-weight: var(--un-fw-medium);
+}
+[data-ui-next] .un-cp-block-question {
+  gap: var(--un-sp-3);
+}
+[data-ui-next] .un-cp-block-note {
+  margin: 0;
+  color: var(--un-md-sys-color-on-surface-variant);
+  font-size: var(--un-fs-1);
+}
+[data-ui-next] .un-cp-block-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+/* The card says why answering waits, and number keys belong to the composer here. */
+[data-ui-next] .un-cp-block .un-blk[data-mode="disabled"] .un-blk-head,
+[data-ui-next] .un-cp-block .un-blk:has(.un-blk-opts-list) .un-blk-head {
+  display: none;
+}
+[data-ui-next] .un-cp-block-gone {
+  color: var(--un-md-sys-color-on-surface-variant);
+  font-size: var(--un-fs-2);
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-ui-next] button.un-cp-block {
+    transition: none;
+  }
+}
