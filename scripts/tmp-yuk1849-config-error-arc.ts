@@ -1177,10 +1177,14 @@ async function main() {
     throw new Error('recheck config error wrote a second terminal event');
   // The recheck claim must be settled (not_sent), not left 'sending' to wedge
   // any later delivery of the same command.
-  const e3Paid = (s7b.paid_effect as Array<{ state?: string; delivery_id?: string }>).filter(
-    (p) => p.delivery_id === `d10-${TAG}`,
-  );
-  if (!e3Paid.length || e3Paid.some((p) => p.state !== 'not_sent'))
+  const e3Paid = (
+    s7b.paid_effect as Array<{
+      state?: string;
+      delivery_id?: string;
+      application_json?: { status?: string };
+    }>
+  ).filter((p) => p.delivery_id === `d10-${TAG}`);
+  if (!e3Paid.length || e3Paid.some((p) => p.application_json?.status !== 'not_sent'))
     throw new Error('recheck claim not settled not_sent for the broken recheck');
   // A quiet terminal state stays excluded: sweeping now (lane still broken)
   // yields nothing for Q7 — the preflight holds, but even disregarding the
