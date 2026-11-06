@@ -58,6 +58,7 @@ export async function readQuestionDetail(
       held_since: null,
       next_action: null,
       pending_action: null,
+      source_verify_config_error: false,
     } as const);
   if (detail.source === INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE) {
     const [diagnosticRow] = await db

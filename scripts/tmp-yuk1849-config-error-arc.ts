@@ -12,6 +12,7 @@
 //   DATABASE_URL=postgres://loom_dev:loom_dev@127.0.0.1:5434/loom_dev_t3_5ba50596_acba784d \
 //   OPENCODE_API_KEY=arc-dummy-a pnpm exec tsx scripts/tmp-yuk1849-config-error-arc.ts
 
+import { randomUUID } from 'node:crypto';
 import { and, desc, eq, sql } from 'drizzle-orm';
 import {
   assertSourceGroundingLaneConfigured,
@@ -27,9 +28,20 @@ import {
   recoverOrphanVerifyDispatches,
   writeVerifyDispatchIntent,
 } from '@/capabilities/practice/question-bank/server/verify-dispatch-outbox';
-import { observeWebSuppliesForQuestion } from '@/capabilities/practice/supply/server/web-supply';
+import {
+  observeWebSuppliesForQuestion,
+  runWebSupply,
+} from '@/capabilities/practice/supply/server/web-supply';
+import { canonicalHash } from '@/core/migration/canonical';
 import { db } from '@/db/client';
-import { event, knowledge, question, question_group_lifecycle } from '@/db/schema';
+import {
+  event,
+  knowledge,
+  placement_starter_attempt,
+  placement_starter_claim,
+  question,
+  question_group_lifecycle,
+} from '@/db/schema';
 import { writeEvent } from '@/kernel/events/index';
 import { hydrateConfigFromDb } from '@/server/config/hydrate';
 import { resolveSubjectProfile } from '@/subjects/profile';
@@ -331,6 +343,40 @@ async function webSupplySegment(qid: string, c: SeedContent) {
     .from(question_group_lifecycle)
     .where(eq(question_group_lifecycle.group_id, qid));
   const demandId = `arc-demand-${TAG}-${qid.slice(-6)}`;
+  const claimId = `arc-claim-${TAG}-${qid.slice(-6)}`;
+  const attemptId = `arc-attempt-${TAG}-${qid.slice(-6)}`;
+  const fencingToken = randomUUID();
+  // A real claim+attempt lets the SAME demand resume inside the real placement
+  // delivery path (runWebSupply -> resumeWebSupply), so the acquisition seam is
+  // exercised exactly like production: a config-error hold must never reach a
+  // second paid fetch.
+  await db.insert(placement_starter_claim).values({
+    id: claimId,
+    fingerprint: `arc-claim-fp-${TAG}-${qid.slice(-6)}`,
+    goal_id: `arc-goal-${TAG}`,
+    semantic_goal_revision_id: `arc-sgr-${TAG}-${qid.slice(-6)}`,
+    subject_id: profile.id,
+    knowledge_id: KID,
+    demand_id: demandId,
+    target_id: `arc-target-${TAG}`,
+    status: 'verifying',
+    supply_route: 'sourcing_web',
+    budget_limit_micro_usd: null,
+    created_at: new Date(),
+    updated_at: new Date(),
+  });
+  await db.insert(placement_starter_attempt).values({
+    id: attemptId,
+    claim_id: claimId,
+    pg_boss_job_id: `arc-job-${TAG}-${qid.slice(-6)}`,
+    delivery_no: 1,
+    fencing_token: fencingToken,
+    status: 'verifying',
+    lease_expires_at: new Date(Date.now() + 3600_000),
+    started_at: new Date(Date.now() - 2 * 3600_000),
+    created_at: new Date(),
+    updated_at: new Date(),
+  });
   const q = {
     kind: 'choice',
     prompt_md: c.prompt_md,
@@ -381,6 +427,22 @@ async function webSupplySegment(qid: string, c: SeedContent) {
   );
   const rev = (revRows as unknown as Array<{ revision_id: string; integrity_digest: string }>)[0];
   if (rev) submission.binding.digest = rev.integrity_digest;
+  const item = {
+    demandId,
+    knowledgeId: KID,
+    kind: 'any' as const,
+    difficultyBand: null,
+    count: 1,
+    routePreference: ['sourcing_web' as const],
+    placementClaimId: claimId,
+  };
+  // The resume path refuses a demand whose persisted fingerprint does not match
+  // the recomputed intent, so seed the real one.
+  const fingerprint = canonicalHash({
+    item: { ...item, routePreference: undefined },
+    trace: undefined,
+    subjectId: profile.id,
+  });
   await db.insert(event).values({
     id: `arc-ws-${qid}`,
     session_id: null,
@@ -394,8 +456,8 @@ async function webSupplySegment(qid: string, c: SeedContent) {
       version: 1,
       sequence: 0,
       demandId,
-      fingerprint: 'arc',
-      item: { demandId, knowledgeId: KID, kind: 'any', difficultyBand: null, count: 1 },
+      fingerprint,
+      item,
       subjectId: profile.id,
       causeId: null,
       producerTaskRunId: `arc-run-${TAG}`,
@@ -414,6 +476,41 @@ async function webSupplySegment(qid: string, c: SeedContent) {
     created_at: new Date(),
     ingest_at: new Date(),
   });
+  // Acquisition seam: the only paid fetch entry point. The seeded demand already
+  // spent its one acquisition; a correct observe must never reach fetch again.
+  let fetchCalls = 0;
+  const fetch = async () => {
+    fetchCalls += 1;
+    throw new Error('arc: acquisition fetch invoked on a held demand');
+  };
+  const controller = new AbortController();
+  const resumed = await runWebSupply({
+    db,
+    item,
+    trace: undefined,
+    causeId: null,
+    fetch,
+    subjectProfile: profile as never,
+    placement: {
+      attempt: {
+        claimId,
+        attemptId,
+        pgBossJobId: `arc-job-${TAG}-${qid.slice(-6)}`,
+        deliveryNo: 1,
+        fencingToken,
+        leaseExpiresAt: new Date(Date.now() + 3600_000),
+        // Past the decision deadline: if the candidate progress ever reads
+        // 'pending', the poll returns on the first deadline check.
+        startedOn: new Date(Date.now() - 2 * 3600_000),
+      },
+      heartbeat: {
+        done: new Promise<void>(() => {}),
+        assertHealthy: async () => {},
+        stop: async () => {},
+      },
+      signal: controller.signal,
+    },
+  });
   const observed = await observeWebSuppliesForQuestion(db, qid);
   const after = await db.execute(
     sql`select payload->>'phase' as phase, payload->>'reason' as reason,
@@ -422,7 +519,13 @@ async function webSupplySegment(qid: string, c: SeedContent) {
         where action='experimental:web_supply' and subject_id=${demandId}
         order by (payload->>'sequence')::int desc limit 1`,
   );
-  return { demandId, observed, after: (after as unknown as unknown[])[0] };
+  return {
+    demandId,
+    fetchCalls,
+    resumed: { phase: resumed.phase, reason: resumed.reason, observations: resumed.observations },
+    observed,
+    after: (after as unknown as unknown[])[0],
+  };
 }
 
 async function main() {
@@ -582,6 +685,13 @@ main()
       // lifecycle rows and paid_effect claims are left in place — they are the
       // arc's audit trail, tagged by this run's TAG.
       await db.execute(sql`delete from system_config where updated_by = 'yuk1849-arc'`);
+      await db.execute(
+        sql`delete from placement_starter_attempt_question where claim_id like 'arc-claim-arc%'`,
+      );
+      await db.execute(
+        sql`delete from placement_starter_attempt where claim_id like 'arc-claim-arc%'`,
+      );
+      await db.execute(sql`delete from placement_starter_claim where id like 'arc-claim-arc%'`);
     } catch (e) {
       console.error('cleanup failed', e);
     }

@@ -4,7 +4,10 @@ import { readQuestionServing } from '@/kernel/read-models/question-serving';
 
 /** With no live job left, waiting cannot advance a candidate once admission finished or
  * source verification failed. A completed source verification alone still leads to an
- * admission enqueue; the age covers that gap and pg-boss purging job records. This never grants serving permission or authorizes another paid send. */
+ * admission enqueue; the age covers that gap and pg-boss purging job records. A
+ * config_error verify hold is the exception: the candidate is parked on a broken
+ * lane, so it reads 'pending' — waiting for repair, never 'unavailable' — and this
+ * never grants serving permission or authorizes another paid send. */
 export async function readPlacementCandidateProgress(db: Db | Tx, questionIds: string[]) {
   if (questionIds.length === 0) return [];
   const serving = (await readQuestionServing(db, questionIds)).byId;
@@ -48,11 +51,15 @@ export async function readPlacementCandidateProgress(db: Db | Tx, questionIds: s
   return questionIds.map((questionId) => {
     const item = serving.get(questionId);
     const terminalHold = item?.hold_reason != null && item.hold_reason !== 'awaiting_admission';
+    // 'stopped' cannot see config_error evidence (pgboss/paid_effect only); the
+    // projection flag is the one place that distinction is made.
+    const configErrorHold =
+      item?.hold_reason === 'verify_hold' && item?.source_verify_config_error === true;
     return {
       question_id: questionId,
       state: item?.servable
         ? ('available' as const)
-        : terminalHold || stopped.has(questionId)
+        : !configErrorHold && (terminalHold || stopped.has(questionId))
           ? ('unavailable' as const)
           : ('pending' as const),
       reason: item?.servable ? null : (item?.hold_reason ?? null),

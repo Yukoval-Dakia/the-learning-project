@@ -590,16 +590,20 @@ async function observe(db: Db, state: WebSupplyState) {
         q.metadata?.archived_at == null &&
         q.metadata?.dismissed_at == null &&
         q.metadata?.exposure_blocked !== true;
+      // A config_error verify hold is a lane failure, not a finding about the
+      // candidate — read as still waiting so the demand never blocks into a paid
+      // refill for replacements that would land in the same hold. The flag is the
+      // serving projection's single distinction; every other hold stays terminal.
+      const holdReason =
+        projection?.hold_reason === 'verify_hold' && projection?.source_verify_config_error === true
+          ? 'awaiting_source_verification'
+          : (projection?.hold_reason ??
+            (!sourcePassed ? 'awaiting_source_verification' : 'demand_not_servable'));
       observations.push({
         questionId: q.id,
         revisionId: r.revision_id,
         generation: l.scoring_admission_generation,
-        hold: !sameCandidate
-          ? 'revision_changed'
-          : usable
-            ? null
-            : (projection?.hold_reason ??
-              (!sourcePassed ? 'awaiting_source_verification' : 'demand_not_servable')),
+        hold: !sameCandidate ? 'revision_changed' : usable ? null : holdReason,
         verificationIds: verifications.map((v) => v.id),
       });
       if (usable)

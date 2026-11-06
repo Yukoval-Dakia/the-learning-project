@@ -588,6 +588,7 @@ const UNKNOWN_SERVING: QuestionServing = {
   held_since: null,
   next_action: null,
   pending_action: null,
+  source_verify_config_error: false,
 };
 
 /**

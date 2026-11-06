@@ -74,6 +74,14 @@ export interface QuestionServing {
   held_since: string | null;
   next_action: QuestionServingActionRef | null;
   pending_action: { command: ServingActionCommand; since: string } | null;
+  /**
+   * The group's latest admission-verification row is a source_verify@1 suspension
+   * whose own evidence carries config_error — the hold records a broken lane, not a
+   * finding about the content. Consumers that would otherwise treat 'verify_hold'
+   * as candidate failure (supply observe, placement progress) keep waiting on the
+   * lane's recovery instead; every other hold keeps its current verdict.
+   */
+  source_verify_config_error: boolean;
 }
 
 export interface ServingCounts {
@@ -90,6 +98,7 @@ const NOT_SERVABLE: QuestionServing = {
   held_since: null,
   next_action: null,
   pending_action: null,
+  source_verify_config_error: false,
 };
 
 /** "not servable, reason unknown" — list-item placeholder pre-attach and the
@@ -152,6 +161,7 @@ function servingFactsQuery(filters: SQL[]): SQL {
     select ${question.id} as id, diagnosis.state,
       l.group_id is null as legacy_unpublished,
       applied.entity_id is null as may_reverify,
+      coalesce(verification.source_verify_config_error, false) as source_verify_config_error,
       case
         when l.withdrawn then coalesce(l.withdrawn_at, l.updated_at)
         when l.suspended then l.updated_at
@@ -168,7 +178,9 @@ function servingFactsQuery(filters: SQL[]): SQL {
       on l.group_id = coalesce(${question.parent_question_id}, ${question.id})
     left join ${question_revision} r on r.revision_id = l.current_revision_id
     left join lateral (
-      select v.policy_id, v.outcome, v.recorded_at
+      select v.policy_id, v.outcome, v.recorded_at,
+        v.policy_id = 'source_verify@1' and v.outcome = 'suspended'
+          and v.evidence->>'config_error' = 'true' as source_verify_config_error
       from ${question_admission_verification} v
       join ${question_revision} vr on vr.revision_id = v.revision_id
       where vr.group_id = l.group_id
@@ -328,6 +340,7 @@ export async function readQuestionServing(
     state: ServingState;
     legacy_unpublished: boolean;
     may_reverify: boolean;
+    source_verify_config_error: boolean;
     held_since: string | Date | null;
   }>(servingFactsQuery([inArray(question.id, ids)]));
   const factsById = new Map(facts.map((row) => [row.id, row]));
@@ -502,6 +515,7 @@ export async function readQuestionServing(
       held_since: servable ? null : (heldSince?.toISOString() ?? null),
       next_action: nextAction,
       pending_action: pendingAction,
+      source_verify_config_error: fact.source_verify_config_error === true,
     });
   }
 
