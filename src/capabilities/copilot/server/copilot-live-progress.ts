@@ -70,6 +70,7 @@ export function createCopilotRunLiveWriter(deps: { db: Db; runId: string }): Cop
   let disposed = false;
   let bufferOverflowWarned = false;
   let pendingOverflowWarned = false;
+  let publishFailureWarned = false;
   // seq is strictly increasing per (run, attempt task_run_id); a new attempt
   // fully flushes the previous one before restarting at 1.
   let currentTaskRunId: string | undefined;
@@ -172,6 +173,17 @@ export function createCopilotRunLiveWriter(deps: { db: Db; runId: string }): Cop
           bytesSent += utf8.encode(text).byteLength;
         } else {
           framesDropped += 1;
+        }
+      })
+      // A probe/publish throw must terminate here: an unhandled rejection would
+      // hit the worker's supervised-restart handler and kill unrelated runs.
+      .catch(() => {
+        framesDropped += 1;
+        if (!publishFailureWarned) {
+          publishFailureWarned = true;
+          console.warn('[copilot-live] thinking publish failed; dropping frame', {
+            run_id: deps.runId,
+          });
         }
       })
       .finally(() => {

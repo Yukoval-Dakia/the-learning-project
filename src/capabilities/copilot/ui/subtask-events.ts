@@ -680,11 +680,6 @@ export interface ConsumeDurableCopilotRunOptions {
    * replayed after reconnect). Segment assembly and clearing are page rules.
    */
   onThinkingFrame?: (frame: CopilotRunThinkingFrame) => void;
-  /**
-   * YUK-1909 — a new connection replaced the previous one; live thinking text
-   * is not replayed, so any partially shown segment is incomplete.
-   */
-  onReconnect?: () => void;
   /** Resume cursor/view from a previously accepted run; never redispatches it. */
   initialState?: CopilotRunView;
   /** Number of reconnects after the initial request. */
@@ -825,7 +820,6 @@ export async function consumeDurableCopilotRun(
         : error;
       if (reconnects >= maxReconnects) throw retryError;
       reconnects += 1;
-      options.onReconnect?.();
       await waitForReconnectDelay(reconnectBaseDelayMs * reconnects, options.signal);
       continue;
     } finally {
@@ -839,7 +833,6 @@ export async function consumeDurableCopilotRun(
       throw new Error('durable stream closed before a terminal event');
     }
     reconnects += 1;
-    options.onReconnect?.();
     await waitForReconnectDelay(reconnectBaseDelayMs * reconnects, options.signal);
   }
 }
