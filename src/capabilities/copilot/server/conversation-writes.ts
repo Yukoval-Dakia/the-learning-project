@@ -155,6 +155,12 @@ export async function writeCopilotReply(
     /** 模型终稿；遗留 primary_view marker 只会被剥除，不再授予展示权限。 */
     replyText: string;
     /**
+     * YUK-1909 — the exact prose the client already received as DELTA frames.
+     * When the committed reply differs, the REPLY frame asks the page to clear
+     * any live thinking displayed for the replaced draft.
+     */
+    streamedDraft?: string;
+    /**
      * A reply already normalized by root finalization. When present, its digest
      * is checked before the commit owner seals product-state disclosure.
      */
@@ -260,6 +266,7 @@ export async function writeCopilotReply(
     : 'allow';
   const replyAt = new Date(params.now.getTime() + 1);
   const replyEventId = params.replyEventId ?? `copilot_reply_${createId()}`;
+  const thinkingClear = params.streamedDraft !== undefined && cleanedReply !== params.streamedDraft;
   await write(db, {
     id: replyEventId,
     session_id: params.sessionId,
@@ -280,6 +287,7 @@ export async function writeCopilotReply(
       ...(sealed.receipt ? { reply_finalization: sealed.receipt } : {}),
       ...(params.durableFinishReason ? { durable_finish_reason: params.durableFinishReason } : {}),
       ...(params.durableFailure ? { durable_failure: params.durableFailure } : {}),
+      ...(thinkingClear ? { thinking_clear: true } : {}),
       ...(params.modeState ?? {}),
       ...(params.teaching
         ? {

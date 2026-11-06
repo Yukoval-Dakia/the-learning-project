@@ -84,6 +84,8 @@ interface SuccessfulTerminalProjection {
   publicProse?: CopilotPublicProse;
   modeState?: CopilotModeState;
   primaryView?: CopilotPrimaryView;
+  /** YUK-1909 — the committed reply replaced the streamed draft. */
+  thinkingClear?: boolean;
 }
 
 export interface TerminalProjectionEvent {
@@ -267,6 +269,7 @@ export async function writeSuccessfulTerminalProjection(
         payload: {
           reply_md: projection.replyMd,
           ...(projection.publicProse ? { public_prose: projection.publicProse } : {}),
+          ...(projection.thinkingClear ? { thinking_clear: true } : {}),
           task_run_id: projection.taskRunId,
           ...(projection.primaryView ? { primary_view: projection.primaryView } : {}),
           ...(projection.modeState ?? {}),

@@ -21,6 +21,8 @@ export type PersistedDurableReply =
       finishReason: string;
       modeState?: CopilotModeState;
       primaryView?: CopilotPrimaryView;
+      /** YUK-1909 — the committed reply replaced the streamed draft. */
+      thinkingClear?: boolean;
     }
   | {
       outcome: 'failure';
@@ -115,5 +117,6 @@ export async function findPersistedDurableReply(
         : 'recovered',
     ...(modeState ? { modeState } : {}),
     ...(primaryView.success ? { primaryView: primaryView.data } : {}),
+    ...(payload.thinking_clear === true ? { thinkingClear: true } : {}),
   };
 }

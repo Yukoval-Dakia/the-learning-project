@@ -44,11 +44,6 @@ export interface ModelBinding {
 }
 
 /**
- * Pi-adapter runner frames. Pi events are normalized to SDKMessage shapes at the
- * adapter boundary so the consume loop stays one implementation; `source: 'pi'`
- * declares provenance instead of faking SDK-only metadata.
- */
-/**
  * YUK-1909 — pi folds two provider reasoning channels into one `thinking_delta`:
  * the Responses-API `reasoning.summary` stream ('summary', sanitized for display)
  * and raw reasoning text ('full'). The tag stays internal and never enters
@@ -56,6 +51,11 @@ export interface ModelBinding {
  */
 export type ThinkingWireKind = 'summary' | 'full';
 
+/**
+ * Pi-adapter runner frames. Pi events are normalized to SDKMessage shapes at the
+ * adapter boundary so the consume loop stays one implementation; `source: 'pi'`
+ * declares provenance instead of faking SDK-only metadata.
+ */
 export type PiRunnerMessage =
   | { type: 'text_delta'; text: string; session_id: string; source: 'pi' }
   | {

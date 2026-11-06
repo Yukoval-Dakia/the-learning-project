@@ -691,7 +691,7 @@ async function executeAcceptedCopilotRun(
         ...(params.copilotSubagentEnabled !== undefined
           ? { subagentsEnabled: params.copilotSubagentEnabled }
           : {}),
-        observe: (activity) => {
+        observe: async (activity) => {
           if (activity.kind === 'tool_finished' && activity.summary.trim().length > 0) {
             toolSummaries.push(`${activity.toolName}: ${activity.summary.trim()}`);
           }
@@ -705,6 +705,11 @@ async function executeAcceptedCopilotRun(
               text: activity.text,
             });
             return;
+          }
+          if (activity.kind === 'thinking_end') {
+            // Order the attempt's last live frames before its durable end step;
+            // the drain is bounded so a slow notify lane cannot hold the reply.
+            await liveWriter.drain();
           }
           const isProse = activity.kind === 'prose_delta';
           const payload = isProse ? { text: activity.text } : projectCopilotActivity(activity);
@@ -800,6 +805,9 @@ async function executeAcceptedCopilotRun(
             sessionId: data.session_id,
             userAskEventId: runId,
             replyText: finalReply,
+            // The page may have shown a draft that the authoritative reply
+            // replaced; the reply marker records that so the UI clears it.
+            streamedDraft: streamedProse,
             preparedReply,
             actorRef,
             taskRunId: result.taskRunId,
