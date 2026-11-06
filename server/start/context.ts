@@ -18,18 +18,6 @@ import type {
   requestTeachingChipAcceptance,
 } from '@/capabilities/copilot/public';
 import type {
-  answerIngestionAsk,
-  createIngestionSession,
-  createManualMistake,
-  readIngestionSessionBlocks,
-  readIngestionSessionDetail,
-  readIngestionSessionHistory,
-  readIngestionSessions,  requestIngestionOperation,
-  requestPurposeChange,
-  requestPurposeImpact,
-  revertIngestionBlock,
-} from '@/capabilities/ingestion/public';
-import type {
   createManualKnowledgeEdge,
   loadMisconceptionsForKc,
   readKnowledgeEdges,
@@ -75,11 +63,6 @@ import type { LearnerSubjectRow } from '@/capabilities/shell/public';
 
 export type FrontdoorContext = {
   api: Hono;
-  createIngestionOperation: (input: {
-    sessionId: string;
-    body: string;
-    key: string | null;
-  }) => Promise<Awaited<ReturnType<typeof requestIngestionOperation>>>;
   acceptTeachingChip: (input: {
     sessionId: string;
     body: string;
@@ -106,44 +89,6 @@ export type FrontdoorContext = {
     input: { probeId: string; body: string },
     signal: AbortSignal,
   ) => Promise<Awaited<ReturnType<typeof submitConjectureProbeAnswer>>>;
-  answerRecordAsk: (input: {
-    sessionId: string;
-    askId: string;
-    body: string;
-    key: string | null;
-  }) => Promise<Awaited<ReturnType<typeof answerIngestionAsk>>>;
-  revertRecordBlock: (input: {
-    sessionId: string;
-    body: string;
-  }) => Promise<Awaited<ReturnType<typeof revertIngestionBlock>>>;
-  createRecordManualMistake: (input: {
-    body: string;
-    key: string | null;
-  }) => Promise<
-    Extract<Awaited<ReturnType<typeof createManualMistake>>, { body: { mistake_id: string } }>
-  >;
-  readRecordBlocks: (id: string) => Promise<Awaited<ReturnType<typeof readIngestionSessionBlocks>>>;
-  changeRecordPurpose: (input: {
-    sessionId: string;
-    body: string;
-  }) => Promise<Awaited<ReturnType<typeof requestPurposeChange>>>;
-  readRecordPurposeImpact: (input: {
-    sessionId: string;
-    query: string;
-  }) => Promise<Awaited<ReturnType<typeof requestPurposeImpact>>>;
-  readRecordSessionDetail: (
-    id: string,
-  ) => Promise<Awaited<ReturnType<typeof readIngestionSessionDetail>>>;
-  readRecordSessionHistory: (
-    id: string,
-  ) => Promise<Awaited<ReturnType<typeof readIngestionSessionHistory>>>;
-  readRecordSessions: (query: string) => Promise<Awaited<ReturnType<typeof readIngestionSessions>>>;
-  createIngestionSession: (input: {
-    body: string;
-    key: string | null;
-  }) => Promise<
-    Extract<Awaited<ReturnType<typeof createIngestionSession>>, { body: { session: unknown } }>
-  >;
   createKnowledgeEdge: (
     body: string,
   ) => Promise<Awaited<ReturnType<typeof createManualKnowledgeEdge>>>;

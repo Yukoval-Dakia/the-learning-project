@@ -17,8 +17,6 @@ import { readStartCopilotSummary } from './start/copilot-summary-reader';
 import { acceptStartTeachingChip } from './start/copilot-teaching-chip-operation';
 import { readStartCopilotTurns } from './start/copilot-turns-reader';
 import { createStartGoal } from './start/goal-create-operation';
-import { createStartIngestionOperation } from './start/ingestion-operation-create-operation';
-import { createStartIngestionSession } from './start/ingestion-session-create-operation';
 import { createStartIssuance } from './start/issuance-create-operation';
 import { readStartIssuanceState } from './start/issuance-state-reader';
 import { readStartJudgeRunStatus } from './start/judge-status-reader';
@@ -45,15 +43,6 @@ import { getStartPracticeStream } from './start/practice-stream-operation';
 import { recomposeStartPracticeStream } from './start/practice-stream-recompose-operation';
 import { answerStartConjectureProbe } from './start/probe-answer-operation';
 import { readStartPlacementProfile } from './start/profile-reader';
-import { answerStartRecordAsk } from './start/record-ask-answer-operation';
-import { readStartRecordBlocks } from './start/record-blocks-reader';
-import { createStartRecordManualMistake } from './start/record-manual-mistake-operation';
-import { changeStartRecordPurpose } from './start/record-purpose-change-operation';
-import { readStartRecordPurposeImpact } from './start/record-purpose-impact-reader';
-import { revertStartRecordBlock } from './start/record-revert-operation';
-import { readStartRecordSessionDetail } from './start/record-session-detail-reader';
-import { readStartRecordSessionHistory } from './start/record-session-history-reader';
-import { readStartRecordSessions } from './start/record-session-list-reader';
 import { saveStartResponseDraft } from './start/response-draft-operation';
 import { createStartHintRequest, createStartSolveSession } from './start/solve-operation';
 import { revealStartStudyReference } from './start/study-reference-operation';
@@ -101,17 +90,6 @@ export function createFrontdoorContext(api: Hono): FrontdoorContext {
     readCopilotNudges: readStartCopilotNudges,
     readCopilotSummary: readStartCopilotSummary,
     adminControls: () => (controls ??= createStartAdminControlReader()),
-    createIngestionSession: createStartIngestionSession,
-    createIngestionOperation: createStartIngestionOperation,
-    answerRecordAsk: answerStartRecordAsk,
-    changeRecordPurpose: changeStartRecordPurpose,
-    readRecordPurposeImpact: readStartRecordPurposeImpact,
-    readRecordBlocks: readStartRecordBlocks,
-    createRecordManualMistake: createStartRecordManualMistake,
-    revertRecordBlock: revertStartRecordBlock,
-    readRecordSessionDetail: readStartRecordSessionDetail,
-    readRecordSessionHistory: readStartRecordSessionHistory,
-    readRecordSessions: readStartRecordSessions,
     readPapers: readStartPapers,
     startPaperSession,
     submitPaperSlot: submitStartPaperSlot,

@@ -6,7 +6,8 @@ export const changeStartRecordPurposeFunction = createServerFn({ method: 'POST' 
   .validator((input: { sessionId: string; body: string }) => input)
   .handler(({ context, data }) =>
     runAuthenticatedStartWorkbench(context, getRequest(), async () => {
-      const result = await context.changeRecordPurpose(data);
+      const { changeStartRecordPurpose } = await import('./record-purpose-change-operation');
+      const result = await changeStartRecordPurpose(data);
       for (const [name, value] of Object.entries(result.headers)) {
         setResponseHeader(name, value);
       }
