@@ -34,6 +34,7 @@ const ratings: readonly Rating[] = ['again', 'hard', 'good'];
 const ratingLabels = { again: '再练', hard: '模糊', good: '掌握' };
 // About 30 s of successful reads at the poller's backoff; a loose first number, no timer needed.
 const LONG_WAIT_POLLS = 8;
+const APPEAL_REASON_MAX = 2000;
 const outcomeWords: Record<string, string> = {
   correct: '做对了',
   partial: '部分正确',
@@ -473,11 +474,13 @@ export function PracticePresentation(props: PracticePresentationProps) {
               else if (submit.rating)
                 void submit.commit({ withAppeal: true, rating: submit.rating });
             },
-            !submit.committing &&
+            appeal.text.length <= APPEAL_REASON_MAX &&
+              !submit.committing &&
               !advancing &&
               (submit.autoCommitted
                 ? !!submit.autoCommitJudgeEventId
                 : !!submit.rating || !!unknownScore),
+            appeal.text.length > APPEAL_REASON_MAX ? `理由最多 ${APPEAL_REASON_MAX} 字` : undefined,
           );
         // Without an automatic commit, the appeal goes with the commit that also moves on.
         const firstSend = send(submit.autoCommitted ? '重判这题' : '重判这题，先继续');
@@ -506,7 +509,11 @@ export function PracticePresentation(props: PracticePresentationProps) {
         else if (!read || read.status === 'in_progress')
           revelation.appeal = {
             kind: 'waiting',
-            notice: { title: '在重判，这里先显示原来的结果。判不准的话，原结果不变。' },
+            notice: {
+              title: appeal.readFailed
+                ? '暂时读不到重判结果。连上后会自己更新。'
+                : '在重判，这里先显示原来的结果。判不准的话，原结果不变。',
+            },
           };
         else if (read.status === 'changed')
           revelation.appeal = {
@@ -534,10 +541,16 @@ export function PracticePresentation(props: PracticePresentationProps) {
         else
           revelation.appeal = {
             kind: 'failed',
-            notice: {
-              title: '这次重判没跑成，原结果不变。',
-              actions: [send('再试一次'), addReason],
-            },
+            // No disposition means the job itself died, so the same request runs it again; a
+            // recorded disposition is final for that request, and only a new reason reruns it.
+            notice:
+              read.disposition === 'stale_head'
+                ? { title: '这个结果已经更新过了，刷新这页看最新结果。' }
+                : {
+                    title: '这次重判没跑成，原结果不变。',
+                    actions:
+                      read.disposition === null ? [send('再试一次'), addReason] : [addReason],
+                  },
           };
       }
     }
