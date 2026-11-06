@@ -1031,7 +1031,7 @@ export function usePracticeSubmit({
       setCommittedPreview(feedback);
       setRating(feedback.suggested_rating);
       setAutoCommitted(true);
-      setAutoCommitJudgeEventId(null);
+      setAutoCommitJudgeEventId(committedDiagnostic.judge.evaluation_id ?? null);
     } else {
       setCommittedPreview(null);
       setAutoCommitted(false);
@@ -1143,7 +1143,7 @@ export function usePracticeSubmit({
             addToast('这次判定没有可以申诉的记录。', 'info', 'alert');
           }
         } catch {
-          addToast('作答已保存，但重判没提交上。回到这题可以再点一次。', 'info', 'alert');
+          addToast('作答已保存，但重判没提交上。', 'info', 'alert');
         }
       }
       // 客观题自动 commit 成功 → 标记 autoCommitted（反馈卡隐藏手动评级、「下一项」只推进）+ 暂存
@@ -1176,12 +1176,13 @@ export function usePracticeSubmit({
   // 就被 appealEntryAvailable 隐藏，这里再兜底一次。
   // A finished rejudge moved the effective result; a further appeal must name the new one.
   const appealAnchor = rejudged?.effective.effective_evaluation_id ?? autoCommitJudgeEventId;
-  const submitAutoCommitAppeal = async () => {
+  // A retry passes the reason of the appeal it repeats: its own request, not a new one.
+  const submitAutoCommitAppeal = async (reason = appealText.trim()) => {
     const anchor = appealAnchor;
     if (!anchor || committing) return;
     setCommitting(true);
     try {
-      const filed = await fileAppeal(anchor, appealText.trim(), 'evaluation');
+      const filed = await fileAppeal(anchor, reason, 'evaluation');
       setFiledAppealId(filed.appeal_event_id);
       setAppealText('');
       setAppealOpen(false);
@@ -1319,7 +1320,7 @@ export function usePracticeSubmit({
           setCommittedPreview(feedback);
           setRating(feedback.suggested_rating);
           setAutoCommitted(true);
-          setAutoCommitJudgeEventId(null);
+          setAutoCommitJudgeEventId(committed.judge.evaluation_id ?? null);
           return;
         }
       }

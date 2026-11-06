@@ -463,12 +463,12 @@ export function PracticePresentation(props: PracticePresentationProps) {
             autoCommitJudgeEventId: submit.autoCommitJudgeEventId,
           }))
       ) {
-        const send = (label: string) =>
+        const send = (label: string, retryReason?: string) =>
           action(
             'appeal-submit',
             label,
             () => {
-              if (submit.autoCommitted) void appeal.submitAfterAutoCommit();
+              if (submit.autoCommitted) void appeal.submitAfterAutoCommit(retryReason);
               else if (unknownScore)
                 void submit.commit({ withAppeal: true, rating: 'hard', autoRate: true });
               else if (submit.rating)
@@ -545,11 +545,13 @@ export function PracticePresentation(props: PracticePresentationProps) {
             // recorded disposition is final for that request, and only a new reason reruns it.
             notice:
               read.disposition === 'stale_head'
-                ? { title: '这个结果已经更新过了，刷新这页看最新结果。' }
+                ? { title: '这个结果已经更新过了，刷新这页看最新结果。', actions: [addReason] }
                 : {
                     title: '这次重判没跑成，原结果不变。',
                     actions:
-                      read.disposition === null ? [send('再试一次'), addReason] : [addReason],
+                      read.disposition === null
+                        ? [send('再试一次', read.reason_md), addReason]
+                        : [addReason],
                   },
           };
       }
