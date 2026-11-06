@@ -7,7 +7,7 @@ export const saveStartResponseDraft: FrontdoorContext['saveResponseDraft'] = asy
     if (typeof input?.issuanceId !== 'string') {
       throw new ApiError('validation_error', 'issuance id must be a string', 400);
     }
-    const { requestResponseDraftSave } = await import('@/capabilities/practice/public');
+    const { requestResponseDraftSave } = await import('@/capabilities/practice/grading/public');
     const { db } = await import('@/db/client');
     return await requestResponseDraftSave(db, input.issuanceId, async () => JSON.parse(input.body));
   } catch (error) {

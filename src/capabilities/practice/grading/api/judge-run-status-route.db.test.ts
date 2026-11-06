@@ -6,7 +6,7 @@ import { event, job_events } from '@/db/schema';
 import { lockJudgeRun } from '@/kernel/locks/grading';
 import { dispatchFrozenJudge, resetJudgeControl } from '../../../../../tests/dbos-judge/support';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
-import * as practice from '../../public';
+import * as practice from '../public';
 import { judgeDeliveryInput } from '../server/judge-engine-client';
 import {
   disposeJudgeRun,

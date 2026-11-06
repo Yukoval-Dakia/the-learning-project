@@ -13,7 +13,7 @@ export const submitStartPlacementAnswer: FrontdoorContext['submitPlacementAnswer
 ) =>
   runWithHttpProviderSessionDeadline(Date.now() + HTTP_PROVIDER_SESSION_BUDGET_MS, async () => {
     try {
-      const { requestReviewAnswer } = await import('@/capabilities/practice/public');
+      const { requestReviewAnswer } = await import('@/capabilities/practice/grading/public');
       const { db } = await import('@/db/client');
       return (await requestReviewAnswer(db, async () => JSON.parse(body), { signal })).body;
     } catch (error) {
