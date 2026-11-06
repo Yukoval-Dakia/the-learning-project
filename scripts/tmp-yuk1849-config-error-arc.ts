@@ -1154,6 +1154,7 @@ async function main() {
     answer: '名词',
   });
   await primeDispatch(Q7);
+  await lane('fixed');
   await handlerDeliver(Q7, { grounded: false, answer: '名词' });
   const s7a = await dumpState(Q7);
   if (s7a.terminal_events < 1) throw new Error('Q7 failed verdict was not recorded');
