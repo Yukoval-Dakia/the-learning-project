@@ -260,8 +260,18 @@ const NonEmptyObject = z
     message: 'proposed_change must not be empty',
   });
 
+// Learner-facing one-liner: what the proposal does and why, without ids, tool
+// names, or English field names. The model's technical reasoning stays in
+// reason_md. Optional while the producer rollout is in progress, so every
+// proposal written before the field existed keeps parsing; whether a given read
+// surface shows it is up to that surface.
+export const LEARNER_SUMMARY_MAX_CHARS = 80;
+export const LearnerSummarySchema = z.string().trim().min(1).max(LEARNER_SUMMARY_MAX_CHARS);
+export type LearnerSummaryT = z.infer<typeof LearnerSummarySchema>;
+
 const BaseProposal = z.object({
   target: ProposalTarget,
+  learner_summary: LearnerSummarySchema.optional(),
   reason_md: z.string().min(1).max(4000),
   // Optional on the shared base (archive/mutation kinds may carry none). The
   // knowledge_edge create path enforces ≥1 entry structurally at the write
