@@ -190,6 +190,47 @@ function groupSummary(tasks: readonly ConfigTask[]): string {
   return pairs.size === 1 ? [...pairs][0] : `${pairs.size} 种模型`;
 }
 
+// A dedicated-channel task has no model to choose and the server now refuses this flag on it. A row
+// from before that refusal breaks reads of the task, and clearing it is all this page can offer.
+function LeftoverOwnModel({
+  task,
+  save,
+  onSaved,
+}: {
+  task: ConfigTask;
+  save: SaveConfig;
+  onSaved: (receipt: ConfigReceipt) => void;
+}) {
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  async function clear() {
+    setError(null);
+    setPending(true);
+    try {
+      onSaved(await save([{ action: 'clear', key: `task.${task.kind}.override_global_pin` }]));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPending(false);
+    }
+  }
+  return (
+    <div className="adm-saved adm-task-saved">
+      <p className="adm-field-error">
+        这个任务留着一条「用自己的模型」的设置。它用不上，留着可能让相关功能出错。
+      </p>
+      <Button variant="secondary" size="sm" disabled={pending} onClick={() => void clear()}>
+        {pending ? '清除中…' : '清除这条设置'}
+      </Button>
+      {error ? (
+        <p role="alert" className="adm-field-error">
+          {error}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 function TaskRow({
   task,
   data,
@@ -254,6 +295,9 @@ function TaskRow({
           <Chip>专用通道 · 只读</Chip>
         )}
       </div>
+      {!taskEditable(task) && task.override?.override_global_pin === true ? (
+        <LeftoverOwnModel task={task} save={save} onSaved={setReceipt} />
+      ) : null}
       {after && !editing ? (
         <div className="adm-saved adm-task-saved" role="status">
           <p>下一次运行会用：</p>

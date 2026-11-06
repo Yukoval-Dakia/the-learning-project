@@ -148,6 +148,7 @@ export function modelChanges(task: ConfigTask, draft: ModelDraft): ConfigWrite['
 }
 const THINKING_WORDS: Readonly<Record<string, string>> = {
   off: '关闭',
+  none: '关闭',
   on: '开启',
   minimal: '最少',
   low: '低',
