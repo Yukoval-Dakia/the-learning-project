@@ -6,14 +6,28 @@ import { showToast } from '@/ui-next/feedback/toast-store';
 import { Button, Expand } from '@/ui-next/public';
 import { type QuestionFullDetail, isDeleted, isDraft } from './library-api';
 import { useLibraryClient } from './library-client';
-import { VERIFY_WORDS, holdWords, verifyOutcomeWords } from './library-copy';
+import {
+  ADMISSION_WORDS,
+  VERIFY_WORDS,
+  admissionHolding,
+  holdKey,
+  holdWords,
+  verifyOutcomeWords,
+} from './library-copy';
 import { ServingButton } from './ServingButton';
 import { LIBRARY_KEY } from './use-library';
 import { useForceEnable, useRestore, useVerifyDraft, writeErrorText } from './use-question-writes';
 
 const MIN_REASON = 2;
 
-function DraftNotice({ id }: { id: string }) {
+function DraftNotice({
+  id,
+  admission,
+}: {
+  id: string;
+  /** Shown as a fact only. An old draft is still verified by hand whatever this says. */
+  admission: QuestionFullDetail['serving']['admission'];
+}) {
   const { getDraftDetail } = useLibraryClient();
   const check = useQuery({
     queryKey: [LIBRARY_KEY, 'draft-check', id],
@@ -65,6 +79,13 @@ function DraftNotice({ id }: { id: string }) {
         <MathMarkdown className="qd-notice-reason" notation={check.data.notation}>
           {check.data.verify_reason}
         </MathMarkdown>
+      ) : null}
+      {admission && admission.status !== 'admitted' ? (
+        <p className="qd-notice-text">
+          {[`自动检查：${ADMISSION_WORDS[admission.status].title}`, admission.reason]
+            .filter(Boolean)
+            .join('。')}
+        </p>
       ) : null}
       <div className="qd-notice-actions">
         <Button size="sm" variant="primary" disabled={busy} onClick={runVerify}>
@@ -128,12 +149,46 @@ function DeletedNotice({ id }: { id: string }) {
   );
 }
 
+/** The automatic check owns this question: say where it stands, with nothing to verify by hand. */
+function AdmissionNotice({
+  admission,
+  serving,
+}: {
+  admission: NonNullable<ReturnType<typeof admissionHolding>>;
+  serving: QuestionFullDetail['serving'];
+}) {
+  const words = ADMISSION_WORDS[admission.status];
+  const Icon = admission.status === 'pending' ? CircleDashed : TriangleAlert;
+  return (
+    <section
+      className="qd-notice"
+      data-tone={admission.status === 'pending' ? 'accent' : 'caution'}
+      aria-label={words.title}
+    >
+      <p className="qd-notice-title">
+        <Icon size={15} aria-hidden="true" />
+        {words.title}
+      </p>
+      <p className="qd-notice-text">{admission.reason ?? words.why}</p>
+      {serving.next_action ? (
+        <div className="qd-notice-actions">
+          <ServingButton serving={serving} variant="primary" />
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 /** The one thing this question needs from you, if anything. */
 export function QuestionNotice({ detail }: { detail: QuestionFullDetail }) {
   if (isDeleted(detail)) return <DeletedNotice id={detail.id} />;
-  if (isDraft(detail)) return <DraftNotice id={detail.id} />;
+  if (isDraft(detail) && !detail.admission_owned) {
+    return <DraftNotice id={detail.id} admission={detail.serving.admission} />;
+  }
+  const admission = admissionHolding(detail.serving);
+  if (admission) return <AdmissionNotice admission={admission} serving={detail.serving} />;
   if (detail.serving.servable) return null;
-  const words = holdWords(detail.serving.hold_reason);
+  const words = holdWords(holdKey(detail.serving));
   return (
     <section className="qd-notice" data-tone="caution" aria-label="暂不出题">
       <p className="qd-notice-title">

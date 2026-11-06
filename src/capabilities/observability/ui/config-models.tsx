@@ -25,10 +25,12 @@ import {
   type SaveConfig,
   bindingLine,
   bindingThinking,
+  budgetEditable,
+  globalSliceNotice,
   laneWords,
   matchesSearch,
+  modelEditable,
   ruleWord,
-  taskEditable,
   taskWords,
   thinkingChoiceWord,
   thinkingLevels,
@@ -131,6 +133,7 @@ function GlobalDefault({ data, save }: { data: ConfigData; save: SaveConfig }) {
   // Every task without its own choice moves with this, so a change says so and asks first.
   const [confirm, setConfirm] = useState<{
     text: string;
+    notice: string | null;
     changes: Parameters<SaveConfig>[0];
   } | null>(null);
   const currentPair = current?.provider
@@ -191,6 +194,7 @@ function GlobalDefault({ data, save }: { data: ConfigData; save: SaveConfig }) {
       ]
         .filter(Boolean)
         .join('；')}。`,
+      notice: globalSliceNotice(data.tasks, pairChanged, thinkingChanged),
       changes: [
         ...(pairChanged
           ? ([
@@ -309,6 +313,7 @@ function GlobalDefault({ data, save }: { data: ConfigData; save: SaveConfig }) {
                 onClick={() =>
                   setConfirm({
                     text: `清除全局默认（${currentPair}）。没有单独设置的任务回到各自的模型。`,
+                    notice: globalSliceNotice(data.tasks, true, false),
                     changes: [
                       { action: 'clear', key: 'lane.global.provider' },
                       { action: 'clear', key: 'lane.global.model' },
@@ -328,6 +333,7 @@ function GlobalDefault({ data, save }: { data: ConfigData; save: SaveConfig }) {
       {confirm ? (
         <fieldset className="adm-confirm" aria-label="确认全局默认变更">
           <p>{confirm.text}</p>
+          {confirm.notice ? <p>{confirm.notice}</p> : null}
           <div className="adm-acts">
             <Button disabled={pending} onClick={() => void run(confirm.changes)}>
               {pending ? '保存中…' : '确认变更'}
@@ -430,6 +436,7 @@ function TaskRow({
 }) {
   const [receipt, setReceipt] = useState<ConfigReceipt | null>(null);
   const words = taskWords(task);
+  const canPickModel = modelEditable(task);
   // Only until the next config snapshot: after that the row above is the truth, and a later write
   // anywhere could have changed this task.
   const fresh = receipt !== null && data.snapshot.epoch <= receipt.committed_epoch;
@@ -452,13 +459,14 @@ function TaskRow({
         </div>
         <div className="adm-task-binding">
           <BindingFacts binding={task.effective_binding} terseAgainst={data.global} />
+          {canPickModel ? null : <p className="adm-cell-sub">专用通道，模型固定</p>}
           {dormant ? (
             <p className="adm-cell-sub">
               自己设了 {task.override?.provider} / {task.override?.model}，现在不生效。
             </p>
           ) : null}
         </div>
-        {taskEditable(task) ? (
+        {canPickModel || budgetEditable(task) ? (
           <Button
             variant="secondary"
             size="sm"
@@ -470,13 +478,13 @@ function TaskRow({
               onEdit(!editing);
             }}
           >
-            编辑
+            {canPickModel ? '编辑' : '改预算'}
           </Button>
         ) : (
           <Chip>专用通道 · 只读</Chip>
         )}
       </div>
-      {!taskEditable(task) && task.override?.override_global_pin === true ? (
+      {!canPickModel && task.override?.override_global_pin === true ? (
         <LeftoverOwnModel task={task} save={save} onSaved={setReceipt} />
       ) : null}
       {after && !editing ? (
