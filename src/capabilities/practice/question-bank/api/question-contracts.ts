@@ -63,12 +63,17 @@ export const QuestionServingActionRefSchema = z.object({
   method: z.literal('POST'),
   path: z.string(),
 });
+export const QuestionAdmissionReadSchema = z.object({
+  status: z.enum(['pending', 'admitted', 'failed', 'undecided']),
+  reason: z.string().nullable(),
+});
 export const QuestionServingSchema = z.object({
   servable: z.boolean(),
   hold_reason: QuestionHoldReasonSchema.nullable(),
   held_since: z.string().nullable(),
   next_action: QuestionServingActionRefSchema.nullable(),
   pending_action: z.object({ command: QuestionServingCommandSchema, since: z.string() }).nullable(),
+  admission: QuestionAdmissionReadSchema.nullable().optional(),
 });
 export const QuestionServingCountsSchema = z.object({
   not_servable_total: z.number().int().nonnegative(),

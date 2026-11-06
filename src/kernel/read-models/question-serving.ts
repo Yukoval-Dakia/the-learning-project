@@ -14,6 +14,7 @@ import {
   type PublishedQuestionRevisionT,
   type ServingUnavailableReason,
   decideAutomaticServing,
+  validateExecutionPlan,
 } from '@/core/schema/assessment';
 import type { Db, Tx } from '@/db/client';
 import { notDraftPredicate } from '@/db/predicates';
@@ -74,6 +75,10 @@ export interface QuestionServing {
   held_since: string | null;
   next_action: QuestionServingActionRef | null;
   pending_action: { command: ServingActionCommand; since: string } | null;
+  admission?: {
+    status: 'pending' | 'admitted' | 'failed' | 'undecided';
+    reason: string | null;
+  } | null;
 }
 
 export interface ServingCounts {
@@ -150,6 +155,18 @@ type ServingState =
 function servingFactsQuery(filters: SQL[]): SQL {
   return sql`
     select ${question.id} as id, diagnosis.state,
+      l.scoring_admission_state as admission_state,
+      l.scoring_admission_withheld_reason as admission_withheld_reason,
+      verification.policy_id as verification_policy,
+      admission.state as admission_paid_state,
+      admission.result_json->'result'->>'status' as admission_result_status,
+      (select unit->>'reason'
+        from jsonb_array_elements(coalesce(admission.result_json->'result'->'per_unit', '[]'::jsonb)) unit
+        where unit->>'status' = 'withheld' limit 1) as admission_failure_reason,
+      exists (select 1 from ${paid_effect} stage
+        where stage.entity_id = l.group_id and stage.entity_revision = r.integrity_digest
+          and stage.family = 'question_admission_stage' and stage.state = 'unknown')
+        as admission_unknown_stage,
       l.group_id is null as legacy_unpublished,
       applied.entity_id is null as may_reverify,
       case
@@ -186,6 +203,17 @@ function servingFactsQuery(filters: SQL[]): SQL {
         and p.state = 'applied'
       order by p.created_at desc limit 1
     ) applied on true
+    left join lateral (
+      select p.state, p.result_json
+      from ${paid_effect} p
+      where p.entity_id = l.group_id and p.entity_revision = r.integrity_digest
+        and p.family = ${PAID_EFFECT_ADMISSION_FAMILY}
+        and p.unit in (${sql.join(
+          PAID_EFFECT_ADMISSION_UNITS.map((unit) => sql`${unit}`),
+          sql`, `,
+        )})
+      order by p.created_at desc limit 1
+    ) admission on true
     cross join lateral (
       select case
         when l.withdrawn then 'withdrawn'
@@ -209,6 +237,63 @@ function servingFactsQuery(filters: SQL[]): SQL {
     ) diagnosis
     where ${and(...filters) ?? sql`true`}
   `;
+}
+
+interface AdmissionReadFacts extends Record<string, unknown> {
+  admission_state: string | null;
+  admission_withheld_reason: string | null;
+  verification_policy: string | null;
+  admission_paid_state: string | null;
+  admission_result_status: string | null;
+  admission_failure_reason: string | null;
+  admission_unknown_stage: boolean;
+}
+
+function admissionRead(
+  fact: AdmissionReadFacts,
+  revision: PublishedQuestionRevisionT | null,
+): QuestionServing['admission'] {
+  if (fact.admission_state == null) return null;
+  if (fact.admission_state === 'admitted') return { status: 'admitted', reason: null };
+  if (
+    fact.admission_paid_state === 'unknown' ||
+    fact.admission_unknown_stage ||
+    fact.admission_result_status === 'waiting' ||
+    (fact.admission_withheld_reason === 'verification_failed' &&
+      fact.verification_policy === 'question_admission_unknown_close@1')
+  ) {
+    return { status: 'undecided', reason: '自动检查的结果尚未确认，题目暂不能作答。' };
+  }
+  const reason = fact.admission_failure_reason ?? fact.admission_withheld_reason;
+  if (
+    reason === 'no_admitted_executor' ||
+    reason === 'system_grading_slice_unadmitted' ||
+    (revision != null &&
+      validateExecutionPlan(revision.execution_plan, revision.scoring_basis).some(
+        (issue) => issue.code === 'unadmitted_model_executor',
+      ))
+  ) {
+    return {
+      status: 'failed',
+      reason:
+        '这类题目前没有可用的自动判分器，暂时不能作答；可以换一道选择、填空、配对、断句或排序题。',
+    };
+  }
+  if (
+    fact.admission_result_status === 'withheld' ||
+    fact.admission_withheld_reason === 'verification_failed'
+  ) {
+    // Provider exceptions can contain internal request details; only expose fixed learner copy.
+    const message = reason?.startsWith('dual solve failed')
+      ? '自动求解未能完成，题目暂不能作答。'
+      : reason === 'calibration_failed' || reason === 'no_probes_executed'
+        ? '自动判分检查未通过，题目暂不能作答。'
+        : reason === 'adjudication_attempts_exhausted'
+          ? '复核未能完成，题目暂不能作答。'
+          : '自动检查未通过，题目暂不能作答。';
+    return { status: 'failed', reason: message };
+  }
+  return { status: 'pending', reason: '题目已进入题库，自动检查通过后才能作答。' };
 }
 
 function stateHoldReason(state: ServingState): ServingHoldReason | null {
@@ -323,13 +408,15 @@ export async function readQuestionServing(
     : [];
   const revisionById = new Map(revisions.map((row) => [row.revision_id, row]));
 
-  const facts = await db.execute<{
-    id: string;
-    state: ServingState;
-    legacy_unpublished: boolean;
-    may_reverify: boolean;
-    held_since: string | Date | null;
-  }>(servingFactsQuery([inArray(question.id, ids)]));
+  const facts = await db.execute<
+    AdmissionReadFacts & {
+      id: string;
+      state: ServingState;
+      legacy_unpublished: boolean;
+      may_reverify: boolean;
+      held_since: string | Date | null;
+    }
+  >(servingFactsQuery([inArray(question.id, ids)]));
   const factsById = new Map(facts.map((row) => [row.id, row]));
 
   // Keep every command per group, newest first: a later rejected or finished
@@ -503,6 +590,7 @@ export async function readQuestionServing(
       held_since: servable ? null : (heldSince?.toISOString() ?? null),
       next_action: nextAction,
       pending_action: pendingAction,
+      admission: admissionRead(fact, contractEntry?.revision ?? null),
     });
   }
 
