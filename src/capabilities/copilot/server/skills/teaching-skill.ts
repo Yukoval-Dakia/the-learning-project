@@ -19,6 +19,7 @@
 
 import { AgentRunError } from '@/ai/agent-run-error';
 import {
+  type HelpExitTiming,
   type HelpProviderFault,
   readHelpProviderFault,
   renderHelpExitMarkdown,
@@ -83,9 +84,13 @@ export interface TeachingSkillResult {
   reply_grounding?: SealedReplyGrounding;
 }
 
-function helpExitResult(fault: HelpProviderFault, taskRunId: string): TeachingSkillResult {
+function helpExitResult(
+  fault: HelpProviderFault,
+  taskRunId: string,
+  timing?: HelpExitTiming,
+): TeachingSkillResult {
   return {
-    text_md: renderHelpExitMarkdown(fault),
+    text_md: renderHelpExitMarkdown(fault, timing),
     kind: 'explain',
     suggested_next: 'end',
     task_run_id: taskRunId,
@@ -153,7 +158,10 @@ export async function runTeachingSkill(
     const fault = readHelpProviderFault(error);
     const taskRunId = error instanceof AgentRunError ? error.taskRunId : params.taskRunId;
     if (!fault || !taskRunId) throw error;
-    return helpExitResult(fault, taskRunId);
+    return helpExitResult(fault, taskRunId, {
+      retryAfterMs:
+        error instanceof AgentRunError ? error.providerFailure?.retry_after_ms : undefined,
+    });
   }
 
   // A provider completing at the same time as Stop does not authorize returning
