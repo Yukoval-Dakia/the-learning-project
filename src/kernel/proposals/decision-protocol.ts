@@ -168,8 +168,14 @@ export async function runProposalAccept<TResult, TPrepared = undefined>(
   plan: ProposalAcceptPlan<TResult, TPrepared>,
 ): Promise<ProposalAcceptRun<TResult>> {
   const requestedRating: ExistingRateDecision = plan.rating ?? 'accept';
+  // Learner decision signals feed the coach's acceptance-rate context. An agent
+  // auto-apply is not a learner decision, so it must not move those counts; the
+  // human inbox path (actor omitted) keeps recording exactly as before.
+  const recordsLearnerSignal = plan.actor?.kind !== 'agent';
   const replayed = async (rate: RecordedProposalRate): Promise<ProposalAcceptRun<TResult>> => {
-    await ensureProposalDecisionSignal(db, plan.proposal, 'accept', plan.userNote);
+    if (recordsLearnerSignal) {
+      await ensureProposalDecisionSignal(db, plan.proposal, 'accept', plan.userNote);
+    }
     return { outcome: 'replayed', result: await plan.replay(rate) };
   };
 
@@ -226,7 +232,7 @@ export async function runProposalAccept<TResult, TPrepared = undefined>(
         `accept effect for proposal ${proposalId} returned ${outcome.status} after ${rateWrites} rate writes`,
       );
     }
-    if (outcome.status === 'accepted' && plan.signal === 'in_transaction') {
+    if (outcome.status === 'accepted' && plan.signal === 'in_transaction' && recordsLearnerSignal) {
       await recordProposalDecisionSignal(tx, plan.proposal, 'accept', plan.userNote);
     }
     return outcome;
@@ -234,7 +240,7 @@ export async function runProposalAccept<TResult, TPrepared = undefined>(
 
   if (settled.status === 'decided') return replayed(settled.rate);
   if (settled.status === 'skipped') return { outcome: 'skipped', result: settled.result };
-  if (plan.signal === 'after_commit') {
+  if (plan.signal === 'after_commit' && recordsLearnerSignal) {
     await recordProposalDecisionSignal(db, plan.proposal, 'accept', plan.userNote);
   }
   return { outcome: 'accepted', result: settled.result };

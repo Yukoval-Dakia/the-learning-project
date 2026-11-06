@@ -787,8 +787,8 @@ export type ToolOperationSettledT = z.infer<typeof ToolOperationSettled>;
 
 export const RateKnowledgeEdge = z
   .object({
-    actor_kind: z.enum(['user', 'agent']),
-    actor_ref: z.string().min(1).max(200),
+    actor_kind: z.literal('user'),
+    actor_ref: StableUserActorRef,
     action: z.literal('rate'),
     subject_kind: z.literal('knowledge_edge'),
     subject_id: z.string(),
@@ -817,8 +817,7 @@ export const RateKnowledgeEdge = z
         path: ['payload', 'new_direction_reversed'],
       });
     }
-  })
-  .superRefine(enforceStableUserActorRef);
+  });
 export type RateKnowledgeEdgeT = z.infer<typeof RateKnowledgeEdge>;
 
 // ====================================================================

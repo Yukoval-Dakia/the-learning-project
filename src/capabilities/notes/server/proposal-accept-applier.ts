@@ -1,8 +1,5 @@
-import { eq } from 'drizzle-orm';
-
 import { NotePatch } from '@/core/schema/note-patch';
 import type { Db } from '@/db/client';
-import { artifact } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import type {
   ProposalAcceptApplier,
@@ -28,7 +25,6 @@ import {
   persistNoteRefineApply,
   undoNoteRefineApplyEvent,
 } from './note-refine-apply';
-import { patchTouchesVerifiedBlock } from './note-refine-policy';
 
 export const noteUpdateProposalRetractApplier: ProposalRetractApplier = async (db, input) => {
   const ownerDb = db as Db;
@@ -88,29 +84,16 @@ async function acceptNoteUpdateProposal(
     );
   }
 
-  // Auto-apply must not bypass two product gates the mutator lane already owns:
-  // a patch that fell back because the Living Note breaker tripped, and a patch
-  // that would overwrite a user-verified block. Both stay in the human inbox.
-  if (opts.actor?.kind === 'agent') {
-    if (change.breaker_tripped === true) {
-      throw new ApiError(
-        'not_auto_applicable',
-        `note_update proposal ${proposalId} fell back to human review after the Living Note breaker tripped`,
-        409,
-      );
-    }
-    const [artifactRow] = await db
-      .select({ body_blocks: artifact.body_blocks })
-      .from(artifact)
-      .where(eq(artifact.id, artifactId))
-      .limit(1);
-    if (artifactRow && patchTouchesVerifiedBlock(artifactRow.body_blocks, patchParsed.data)) {
-      throw new ApiError(
-        'not_auto_applicable',
-        `note_update proposal ${proposalId} touches a user-verified block and stays human-reviewed`,
-        409,
-      );
-    }
+  // Auto-apply must not bypass the Living Note breaker fallback; that gate is
+  // proposal-level. The user-verified guard runs inside the apply transaction on
+  // the body it actually writes (see persistNoteRefineApply humanApproved), so a
+  // newer verified edit cannot slip under a stale pre-check.
+  if (opts.actor?.kind === 'agent' && change.breaker_tripped === true) {
+    throw new ApiError(
+      'not_auto_applicable',
+      `note_update proposal ${proposalId} fell back to human review after the Living Note breaker tripped`,
+      409,
+    );
   }
 
   const { result } = await runProposalAccept(db, proposalId, {
@@ -145,12 +128,17 @@ async function acceptNoteUpdateProposal(
       writeRate,
     }): Promise<ProposalAcceptEffectOutcome<NoteUpdateAcceptResult>> => {
       const now = new Date();
+      // Automated accepts keep the user-verified guard and record the real
+      // proposing agent; the human inbox path keeps its exact-patch exemption.
+      const autoApplied = opts.actor?.kind === 'agent';
       const applyResult = await persistNoteRefineApply({
         db: tx,
         artifactId,
         patch: patchParsed.data,
         triggerEventId: proposalId,
-        actorRef: NOTE_REFINE_ACCEPT_ACTOR,
+        actorRef: autoApplied ? proposal.actor_ref : NOTE_REFINE_ACCEPT_ACTOR,
+        humanApproved: !autoApplied,
+        ...(autoApplied ? { actorKind: 'agent' as const } : {}),
         now,
       });
       if (applyResult.status !== 'applied') {

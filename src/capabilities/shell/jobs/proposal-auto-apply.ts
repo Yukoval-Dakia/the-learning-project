@@ -15,6 +15,7 @@ export function buildProposalAutoApplyHandler(db: Db) {
         outcome: result.outcome,
         applied: result.applied,
         skipped: result.skipped,
+        backfilled: result.backfilled,
         breaker: result.breaker.level,
         breaker_applied: result.breaker.applied,
         breaker_cap: result.breaker.cap,

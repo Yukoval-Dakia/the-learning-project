@@ -15,8 +15,17 @@
 // silently disappearing. Kernel-owned so capability jobs can call it without a
 // capability -> server dependency; the accept dispatcher is installed as a port
 // at worker boot.
+//
+// Starvation control: the candidate query excludes decided / corrected / already
+// skipped rows in SQL *before* the page limit, and every in-loop refusal writes a
+// skipped anchor. Without both, 25 permanently-ineligible rows would occupy every
+// page and the 26th eligible proposal would never be reached.
+//
+// Anchor durability: the accept commits before this lane can write the card
+// anchor. A missing anchor is not a lost decision — the next sweep backfills it
+// from the agent rate event, so the card and its undo entry always reappear.
 
-import { and, asc, eq, gte, inArray, sql } from 'drizzle-orm';
+import { and, asc, gte, inArray, sql } from 'drizzle-orm';
 
 import {
   type AiProposalPayloadT,
@@ -25,7 +34,7 @@ import {
 } from '@/core/schema/proposal';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
-import { getCorrectionStatus, writeEvent } from '@/kernel/events';
+import { writeEvent } from '@/kernel/events';
 import { findExistingRateEvent } from './applier-helpers';
 import {
   type VerdictBreakerResult,
@@ -38,13 +47,13 @@ import { proposalReasonPlainText } from './reason-text';
 
 /** Successful auto-apply anchor (generic; the completion-era anchor stays readable). */
 export const PROPOSAL_AUTOAPPLY_ACTION = 'experimental:auto_apply';
-/** Returned-to-human anchor (breaker or apply failure); excludes the row from later sweeps. */
+/** Returned-to-human anchor (breaker / refusal / apply failure); excludes later sweeps. */
 export const PROPOSAL_AUTOAPPLY_SKIPPED_ACTION = 'experimental:auto_apply_skipped';
 
 /** Lookback for missed rows; older eligible rows fall back to human review. */
 const AUTO_APPLY_LOOKBACK_MS = 7 * 24 * 3_600_000;
 const AUTO_APPLY_SWEEP_LIMIT = 25;
-/** Proposal-event actions that can carry an eligibility marker for strength A. */
+/** Proposal-event actions that carry an eligibility marker for strength A. */
 const PROPOSAL_EVENT_ACTIONS = [
   'propose',
   'experimental:proposal',
@@ -79,14 +88,27 @@ export interface AutoApplySweepResult {
   readonly outcome: 'idle' | 'applied' | 'skipped' | 'unavailable';
   readonly applied: number;
   readonly skipped: number;
+  /** Cards whose accept committed earlier but whose anchor was missing. */
+  readonly backfilled: number;
   readonly breaker: VerdictBreakerResult;
 }
+
+type SkipReason = 'breaker_tripped' | 'apply_error' | 'ineligible';
+type IneligibleDetail =
+  | 'actor_not_agent'
+  | 'payload_unparseable'
+  | 'kind_not_auto'
+  | 'decision_skipped';
 
 interface CandidateRow {
   readonly id: string;
   readonly actorKind: string;
   readonly actorRef: string;
   readonly payload: unknown;
+}
+
+interface MissingAnchorRow extends CandidateRow {
+  readonly rateActorRef: string | null;
 }
 
 function proposalFromPayload(payload: unknown): AiProposalPayloadT | null {
@@ -150,9 +172,9 @@ async function writeAppliedAnchor(db: Db, input: AnchorInput): Promise<void> {
 async function writeSkippedAnchor(
   db: Db,
   proposalId: string,
-  reason: 'breaker_tripped' | 'apply_error',
+  reason: SkipReason,
   breaker: VerdictBreakerResult,
-  errorMessage?: string,
+  opts: { errorMessage?: string; detail?: IneligibleDetail } = {},
 ): Promise<void> {
   const now = new Date();
   await writeEvent(db, {
@@ -166,12 +188,13 @@ async function writeSkippedAnchor(
     payload: {
       proposal_id: proposalId,
       reason,
+      ...(opts.detail ? { detail: opts.detail } : {}),
       level: breaker.level,
       applied: breaker.applied,
       cap: breaker.cap,
       window: breaker.window,
       policy: AUTO_APPLY_POLICY,
-      ...(errorMessage ? { error: errorMessage.slice(0, 300) } : {}),
+      ...(opts.errorMessage ? { error: opts.errorMessage.slice(0, 300) } : {}),
     },
     caused_by_event_id: proposalId,
     ingest_at: now,
@@ -179,9 +202,31 @@ async function writeSkippedAnchor(
   });
 }
 
+async function writeSkippedAnchorSafe(
+  db: Db,
+  proposalId: string,
+  reason: SkipReason,
+  breaker: VerdictBreakerResult,
+  opts: { errorMessage?: string; detail?: IneligibleDetail } = {},
+): Promise<void> {
+  await writeSkippedAnchor(db, proposalId, reason, breaker, opts).catch((err) => {
+    console.warn('[proposal-auto-apply] skip anchor write failed', {
+      proposal_id: proposalId,
+      reason,
+      detail: opts.detail,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  });
+}
+
+/**
+ * Pending strength-A proposals with no terminal trace yet. Rate, correction and
+ * skipped-anchor exclusions run in SQL before LIMIT, so one page of ineligible
+ * rows can never crowd out later eligible ones.
+ */
 async function loadCandidates(db: Db, now: Date, limit: number, lookbackMs: number) {
   const lookbackStart = new Date(now.getTime() - lookbackMs);
-  const rows = await db
+  return (await db
     .select({
       id: event.id,
       actorKind: event.actor_kind,
@@ -194,33 +239,92 @@ async function loadCandidates(db: Db, now: Date, limit: number, lookbackMs: numb
         inArray(event.action, [...PROPOSAL_EVENT_ACTIONS]),
         sql`${event.payload} -> 'auto_apply' ->> 'eligible' = 'true'`,
         gte(event.created_at, lookbackStart),
+        sql`not exists (select 1 from event rate_row where rate_row.action = 'rate' and rate_row.caused_by_event_id = "event"."id")`,
+        sql`not exists (select 1 from event correction_row where correction_row.action = 'correct' and correction_row.subject_kind = 'event' and correction_row.subject_id = "event"."id")`,
+        sql`not exists (select 1 from event skip_row where skip_row.action = ${PROPOSAL_AUTOAPPLY_SKIPPED_ACTION} and skip_row.subject_kind = 'event' and skip_row.subject_id = "event"."id")`,
       ),
     )
     .orderBy(asc(event.created_at), asc(event.id))
-    .limit(limit);
-
-  if (rows.length === 0) return [] as CandidateRow[];
-  const skipped = await db
-    .select({ proposalId: event.subject_id })
-    .from(event)
-    .where(
-      and(
-        eq(event.action, PROPOSAL_AUTOAPPLY_SKIPPED_ACTION),
-        eq(event.subject_kind, 'event'),
-        inArray(
-          event.subject_id,
-          rows.map((row) => row.id),
-        ),
-      ),
-    );
-  const skippedIds = new Set(skipped.map((row) => row.proposalId));
-  return rows.filter((row) => !skippedIds.has(row.id)) as CandidateRow[];
+    .limit(limit)) as CandidateRow[];
 }
 
 /**
- * One bounded sweep: accept every eligible pending proposal until the breaker
- * budget or the batch limit is reached. Never throws for a single domain
- * failure; failures become skipped anchors and the proposal stays pending.
+ * Agent rates whose card anchor never landed (accept committed, anchor write
+ * failed, process died, ...). Backfilling keeps the card and its undo entry
+ * visible; without it the proposal would be decided but invisible.
+ */
+async function loadMissingAnchors(db: Db, now: Date, limit: number, lookbackMs: number) {
+  const lookbackStart = new Date(now.getTime() - lookbackMs);
+  return (await db
+    .select({
+      id: event.id,
+      actorKind: event.actor_kind,
+      actorRef: event.actor_ref,
+      payload: event.payload,
+      rateActorRef: sql<
+        string | null
+      >`(select rate_row.actor_ref from event rate_row where rate_row.action = 'rate' and rate_row.actor_kind = 'agent' and rate_row.caused_by_event_id = "event"."id" order by rate_row.created_at desc, rate_row.id desc limit 1)`,
+    })
+    .from(event)
+    .where(
+      and(
+        inArray(event.action, [...PROPOSAL_EVENT_ACTIONS]),
+        sql`${event.payload} -> 'auto_apply' ->> 'eligible' = 'true'`,
+        gte(event.created_at, lookbackStart),
+        sql`exists (select 1 from event rate_row where rate_row.action = 'rate' and rate_row.actor_kind = 'agent' and rate_row.caused_by_event_id = "event"."id")`,
+        sql`not exists (select 1 from event anchor_row where anchor_row.action = ${PROPOSAL_AUTOAPPLY_ACTION} and anchor_row.caused_by_event_id = "event"."id")`,
+        sql`not exists (select 1 from event skip_row where skip_row.action = ${PROPOSAL_AUTOAPPLY_SKIPPED_ACTION} and skip_row.subject_kind = 'event' and skip_row.subject_id = "event"."id")`,
+      ),
+    )
+    .orderBy(asc(event.created_at), asc(event.id))
+    .limit(limit)) as MissingAnchorRow[];
+}
+
+async function backfillMissingAnchors(
+  db: Db,
+  now: Date,
+  limit: number,
+  lookbackMs: number,
+  breaker: VerdictBreakerResult,
+): Promise<number> {
+  const rows = await loadMissingAnchors(db, now, limit, lookbackMs);
+  let written = 0;
+  for (const row of rows) {
+    const payload = proposalFromPayload(row.payload);
+    if (!payload) {
+      await writeSkippedAnchorSafe(db, row.id, 'ineligible', breaker, {
+        detail: 'payload_unparseable',
+      });
+      continue;
+    }
+    const rateActorRef = row.rateActorRef?.trim() ?? '';
+    if (rateActorRef.length === 0) continue;
+    try {
+      await writeAppliedAnchor(db, {
+        proposalId: row.id,
+        payload,
+        actorRef: rateActorRef,
+        breaker,
+        kind: payload.kind,
+        appliedCount: breaker.applied,
+      });
+      written += 1;
+    } catch (err) {
+      // The rate row stays the source of truth; the next sweep retries.
+      console.warn('[proposal-auto-apply] anchor backfill failed', {
+        proposal_id: row.id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+  return written;
+}
+
+/**
+ * One bounded sweep: backfill missing cards, then accept every eligible pending
+ * proposal until the breaker budget or the batch limit is reached. Never throws
+ * for a single domain failure; failures and refusals become skipped anchors and
+ * the proposal stays pending for human review.
  */
 export async function runProposalAutoApplySweep(
   db: Db,
@@ -232,32 +336,51 @@ export async function runProposalAutoApplySweep(
   const breaker = await checkAutoApplyBreaker(db, now);
 
   if (acceptPort === null) {
-    return { outcome: 'unavailable', applied: 0, skipped: 0, breaker };
+    return { outcome: 'unavailable', applied: 0, skipped: 0, backfilled: 0, breaker };
   }
 
+  const backfilled = await backfillMissingAnchors(db, now, limit, lookbackMs, breaker);
   const candidates = await loadCandidates(db, now, limit, lookbackMs);
   if (candidates.length === 0) {
-    return { outcome: 'idle', applied: 0, skipped: 0, breaker };
+    return {
+      outcome: backfilled > 0 ? 'applied' : 'idle',
+      applied: 0,
+      skipped: 0,
+      backfilled,
+      breaker,
+    };
   }
 
   let applied = 0;
   let skipped = 0;
   for (const candidate of candidates) {
-    if (candidate.actorKind !== 'agent') continue;
+    if (candidate.actorKind !== 'agent') {
+      await writeSkippedAnchorSafe(db, candidate.id, 'ineligible', breaker, {
+        detail: 'actor_not_agent',
+      });
+      skipped += 1;
+      continue;
+    }
     const payload = proposalFromPayload(candidate.payload);
-    if (!payload || kindStrength(payload.kind) !== 'A') continue;
-    if (await findExistingRateEvent(db, candidate.id)) continue;
-    if ((await getCorrectionStatus(db, candidate.id)).state !== 'active') continue;
+    if (!payload) {
+      await writeSkippedAnchorSafe(db, candidate.id, 'ineligible', breaker, {
+        detail: 'payload_unparseable',
+      });
+      skipped += 1;
+      continue;
+    }
+    if (kindStrength(payload.kind) !== 'A') {
+      await writeSkippedAnchorSafe(db, candidate.id, 'ineligible', breaker, {
+        detail: 'kind_not_auto',
+      });
+      skipped += 1;
+      continue;
+    }
 
     // Hard cap: the breaker window includes every rate event, so the budget is
     // shared across the whole ledger. Past max, the rest go to human review.
     if (breaker.applied + applied >= breaker.cap) {
-      await writeSkippedAnchor(db, candidate.id, 'breaker_tripped', breaker).catch((err) => {
-        console.warn('[proposal-auto-apply] skip anchor write failed', {
-          proposal_id: candidate.id,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      });
+      await writeSkippedAnchorSafe(db, candidate.id, 'breaker_tripped', breaker);
       skipped += 1;
       continue;
     }
@@ -274,33 +397,35 @@ export async function runProposalAutoApplySweep(
         kind: payload.kind,
         error: message,
       });
-      await writeSkippedAnchor(db, candidate.id, 'apply_error', breaker, message).catch(
-        (anchorErr) => {
-          console.warn('[proposal-auto-apply] failure anchor write failed', {
-            proposal_id: candidate.id,
-            error: anchorErr instanceof Error ? anchorErr.message : String(anchorErr),
-          });
-        },
-      );
+      await writeSkippedAnchorSafe(db, candidate.id, 'apply_error', breaker, {
+        errorMessage: message,
+      });
       skipped += 1;
       continue;
     }
 
-    applied += 1;
     // Honesty gate: a racing human decision can win the same proposal. Only the
     // rate event recorded with this agent identity means the lane actually applied
     // it; never write an auto-apply card for a user decision.
     const recorded = await findExistingRateEvent(db, candidate.id);
     if (!recorded) {
-      applied -= 1;
+      // Accept returned without a rate (SkippedProposalDecision / stale skip).
+      // Mark it returned-to-human so it cannot occupy the page forever.
+      await writeSkippedAnchorSafe(db, candidate.id, 'ineligible', breaker, {
+        detail: 'decision_skipped',
+      });
+      skipped += 1;
       continue;
     }
     if (recorded.actor_kind !== 'agent' || recorded.actor_ref !== candidate.actorRef) {
-      applied -= 1;
+      // Decided by someone else (human, or another agent identity): no card from
+      // this lane and no skip anchor on a decision that already happened.
       continue;
     }
+
+    applied += 1;
     // The apply already committed; a telemetry anchor failure must not turn it
-    // into a reported failure (the rate/proposal rows remain the source of truth).
+    // into a reported failure. The next sweep backfills it (see above).
     await writeAppliedAnchor(db, {
       proposalId: candidate.id,
       payload,
@@ -316,8 +441,14 @@ export async function runProposalAutoApplySweep(
     });
   }
 
-  if (applied === 0 && skipped === 0) {
-    return { outcome: 'idle', applied, skipped, breaker };
+  if (applied === 0 && skipped === 0 && backfilled === 0) {
+    return { outcome: 'idle', applied, skipped, backfilled, breaker };
   }
-  return { outcome: applied > 0 ? 'applied' : 'skipped', applied, skipped, breaker };
+  return {
+    outcome: applied > 0 || backfilled > 0 ? 'applied' : 'skipped',
+    applied,
+    skipped,
+    backfilled,
+    breaker,
+  };
 }
