@@ -269,7 +269,7 @@ export function thinkingChoiceWord(model: ConfigModel | undefined, level: string
 const SLICE_PENDING = '判分变成待定，直到重新跑判分准入。';
 export const SLICE_MODEL_NOTICE = `换模型后，已准入的判分切片会失配，${SLICE_PENDING}`;
 // A slice is admitted for what is sent: a level joins its identity only when it changes the wire.
-export const SLICE_THINKING_NOTICE = `思考强度如果真的改变了发出去的档位，已准入的判分切片也会失配，${SLICE_PENDING}同一档的不同叫法、这个模型调不了的档位不受影响。`;
+export const SLICE_THINKING_NOTICE = `思考强度如果真的改变了发出去的档位，已准入的判分切片也会失配，${SLICE_PENDING}同一档的不同叫法不受影响。`;
 /** What a global default change does to grading tasks that move with it. */
 export function globalSliceNotice(
   tasks: readonly ConfigTask[],
