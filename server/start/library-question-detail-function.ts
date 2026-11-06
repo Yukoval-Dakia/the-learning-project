@@ -6,7 +6,7 @@ export const getStartLibraryQuestionDetailFunction = createServerFn({ method: 'G
   .validator((id: string) => id)
   .handler(({ context, data }) =>
     runAuthenticatedStartWorkbench(context, getRequest(), async () => {
-      const { readStartLibraryQuestionDetail } = await import('./library-question-detail-reader');
+      const { readStartLibraryQuestionDetail } = await context.adapters.library();
       return JSON.stringify(await readStartLibraryQuestionDetail(data));
     }),
   );

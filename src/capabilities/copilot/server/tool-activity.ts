@@ -53,7 +53,22 @@ export function projectCopilotActivity(
   switch (activity.kind) {
     case 'prose_delta':
     case 'spawn_budget':
+    case 'thinking_delta':
+      // thinking_delta rides the display-only live lane; reasoning text must
+      // never enter the persisted frame stream.
       return null;
+    case 'request_sent':
+      return {
+        step_kind: 'request_sent',
+        task_run_id: activity.taskRunId,
+        ...(activity.retryOfTaskRunId ? { retry_of: activity.retryOfTaskRunId } : {}),
+      };
+    case 'thinking_end':
+      return {
+        step_kind: 'thinking_end',
+        task_run_id: activity.taskRunId,
+        result: activity.result,
+      };
     case 'provider_retry':
       return {
         step_kind: 'provider_retry',

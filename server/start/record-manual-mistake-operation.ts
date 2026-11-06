@@ -3,11 +3,12 @@ import {
   HTTP_PROVIDER_SESSION_BUDGET_MS,
   runWithHttpProviderSessionDeadline,
 } from '@/server/http/provider-session-deadline';
-import type { FrontdoorContext } from './context';
-
-export const createStartRecordManualMistake: FrontdoorContext['createRecordManualMistake'] = ({
+export const createStartRecordManualMistake = ({
   body,
   key,
+}: {
+  body: string;
+  key: string | null;
 }) =>
   runWithHttpProviderSessionDeadline(Date.now() + HTTP_PROVIDER_SESSION_BUDGET_MS, async () => {
     try {

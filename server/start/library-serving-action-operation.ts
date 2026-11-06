@@ -3,7 +3,6 @@ import {
   HTTP_PROVIDER_SESSION_BUDGET_MS,
   runWithHttpProviderSessionDeadline,
 } from '@/server/http/provider-session-deadline';
-import type { FrontdoorContext } from './context';
 
 function servingActionParams(path: string): Record<string, string> {
   const match =
@@ -28,9 +27,12 @@ function servingActionParams(path: string): Record<string, string> {
   }
 }
 
-export const runStartLibraryServingAction: FrontdoorContext['runLibraryServingAction'] = ({
+export const runStartLibraryServingAction = ({
   path,
   idempotencyKey,
+}: {
+  path: string;
+  idempotencyKey: string | null;
 }) =>
   runWithHttpProviderSessionDeadline(Date.now() + HTTP_PROVIDER_SESSION_BUDGET_MS, async () => {
     try {

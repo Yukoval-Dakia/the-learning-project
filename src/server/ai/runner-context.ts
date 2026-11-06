@@ -139,10 +139,21 @@ export interface RunTaskCtx {
     argsPrefix: string;
   }) => void;
   /**
-   * YUK-1765 — the model is sending reasoning. A signal only: the reasoning text never leaves
-   * the runner, so nothing can show or persist it.
+   * YUK-1765 — the model is sending reasoning. A signal only: the reasoning
+   * text itself leaves solely through `onThinkingDelta`.
    */
   onThinking?: () => void;
+  /**
+   * YUK-1909 — one reasoning delta for a display-only lane. The text leaves the
+   * runner only through this callback; consumers must not persist it into any
+   * durable sink (job_events, turns, Laminar, Mem0).
+   */
+  onThinkingDelta?: (delta: { text: string; taskRunId: string }) => void;
+  /** YUK-1909 — per-attempt settle of the reasoning lane, fired as the query ends. */
+  onThinkingSettled?: (result: {
+    taskRunId: string;
+    thinking: 'streamed' | 'none';
+  }) => Promise<void> | void;
   /** Settled, no-effect Copilot attempt; emitted before the next attempt is prepared. */
   onProviderRetry?: (retry: {
     nextTaskRunId: string;

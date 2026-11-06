@@ -3,12 +3,7 @@ import {
   HTTP_PROVIDER_SESSION_BUDGET_MS,
   runWithHttpProviderSessionDeadline,
 } from '@/server/http/provider-session-deadline';
-import type { FrontdoorContext } from './context';
-
-export const updateStartPracticeStreamItem: FrontdoorContext['updatePracticeStreamItem'] = ({
-  id,
-  body,
-}) =>
+export const updateStartPracticeStreamItem = ({ id, body }: { id: string; body: string }) =>
   runWithHttpProviderSessionDeadline(Date.now() + HTTP_PROVIDER_SESSION_BUDGET_MS, async () => {
     try {
       let raw: unknown = null;

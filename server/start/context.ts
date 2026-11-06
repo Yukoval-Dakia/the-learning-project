@@ -1,9 +1,5 @@
 import type { Hono } from 'hono';
-import type {
-  createGoal,
-  requestLearningIntent,
-  submitConjectureProbeAnswer,
-} from '@/capabilities/agency/public';
+import type { submitConjectureProbeAnswer } from '@/capabilities/agency/public';
 import type {
   cancelCopilotRun,
   createCopilotSession,
@@ -17,27 +13,6 @@ import type {
   requestCopilotCheckpointRevert,
   requestTeachingChipAcceptance,
 } from '@/capabilities/copilot/public';
-import type {
-  answerIngestionAsk,
-  createIngestionSession,
-  createManualMistake,
-  readIngestionSessionBlocks,
-  readIngestionSessionDetail,
-  readIngestionSessionHistory,
-  readIngestionSessions,
-  readMistakes,
-  requestIngestionOperation,
-  requestPurposeChange,
-  requestPurposeImpact,
-  revertIngestionBlock,
-} from '@/capabilities/ingestion/public';
-import type {
-  createManualKnowledgeEdge,
-  loadMisconceptionsForKc,
-  readKnowledgeEdges,
-  readLearnerKnowledgeNodePage,
-} from '@/capabilities/knowledge/public';
-import type { thinCreateSubject } from '@/capabilities/observability/public';
 import type { AdminControlClient } from '@/capabilities/observability/ui/admin-control-client';
 import type {
   getIssuanceState,
@@ -59,23 +34,7 @@ import type {
   createPracticeHintRequest,
   createPracticeSolveSession,
 } from '@/capabilities/practice/public';
-import type {
-  archivePracticeQuestion,
-  enablePracticeDraft,
-  forceEnablePracticeDraft,
-  readDraftReviewDetail,
-  readPracticeDraftList,
-  readPracticeQuestionList,
-  restorePracticeQuestion,
-  runPracticeServingAction,
-  updatePracticeQuestion,
-} from '@/capabilities/practice/question-bank/public';
-import type {
-  getPracticeStream,
-  previewReviewAdvice,
-  recomposePracticeStream,
-  updatePracticeStreamItem,
-} from '@/capabilities/practice/scheduling/public';
+import type { previewReviewAdvice } from '@/capabilities/practice/scheduling/public';
 import type {
   createPracticePaperSubmission,
   createReviewSession,
@@ -84,15 +43,23 @@ import type {
   readWorksheetExport,
   transitionReviewSession,
 } from '@/capabilities/practice/session/public';
-import type { LearnerSubjectRow } from '@/capabilities/shell/public';
+
+export type FrontdoorAdapters = {
+  library: () => Promise<typeof import('./library-adapters')['libraryAdapters']>;
+  records: () => Promise<typeof import('./record-adapters')['recordAdapters']>;
+  knowledge: () => Promise<typeof import('./knowledge-adapters')['knowledgeAdapters']>;
+  practiceStream: () => Promise<
+    typeof import('./practice-stream-adapters')['practiceStreamAdapters']
+  >;
+  subjects: () => Promise<typeof import('./subject-adapters')['subjectAdapters']>;
+  noteEditing: () => Promise<typeof import('./note-editing-adapters')['noteEditingAdapters']>;
+};
 
 export type FrontdoorContext = {
   api: Hono;
-  createIngestionOperation: (input: {
-    sessionId: string;
-    body: string;
-    key: string | null;
-  }) => Promise<Awaited<ReturnType<typeof requestIngestionOperation>>>;
+  // Loaded lazily by the API graph (createFrontdoorContext); the Start bundle only
+  // holds the references, so owner modules never evaluate in its module graph.
+  adapters: FrontdoorAdapters;
   acceptTeachingChip: (input: {
     sessionId: string;
     body: string;
@@ -114,72 +81,11 @@ export type FrontdoorContext = {
   ) => Promise<Awaited<ReturnType<typeof markCopilotNudgeOpened>>>;
   readCopilotNudges: () => Promise<{ nudges: Awaited<ReturnType<typeof loadActiveNudges>> }>;
   readCopilotSummary: () => Promise<Awaited<ReturnType<typeof loadCopilotSummary>>>;
-  enableLibraryDraft: (id: string) => Promise<Awaited<ReturnType<typeof enablePracticeDraft>>>;
-  forceEnableLibraryDraft: (input: {
-    id: string;
-    body: string;
-  }) => Promise<Awaited<ReturnType<typeof forceEnablePracticeDraft>>>;
-  runLibraryServingAction: (input: {
-    path: string;
-    idempotencyKey: string | null;
-  }) => Promise<Awaited<ReturnType<typeof runPracticeServingAction>>>;
   adminControls: () => Promise<AdminControlClient>;
   submitConjectureProbeAnswer: (
     input: { probeId: string; body: string },
     signal: AbortSignal,
   ) => Promise<Awaited<ReturnType<typeof submitConjectureProbeAnswer>>>;
-  answerRecordAsk: (input: {
-    sessionId: string;
-    askId: string;
-    body: string;
-    key: string | null;
-  }) => Promise<Awaited<ReturnType<typeof answerIngestionAsk>>>;
-  revertRecordBlock: (input: {
-    sessionId: string;
-    body: string;
-  }) => Promise<Awaited<ReturnType<typeof revertIngestionBlock>>>;
-  createRecordManualMistake: (input: {
-    body: string;
-    key: string | null;
-  }) => Promise<
-    Extract<Awaited<ReturnType<typeof createManualMistake>>, { body: { mistake_id: string } }>
-  >;
-  readRecordBlocks: (id: string) => Promise<Awaited<ReturnType<typeof readIngestionSessionBlocks>>>;
-  changeRecordPurpose: (input: {
-    sessionId: string;
-    body: string;
-  }) => Promise<Awaited<ReturnType<typeof requestPurposeChange>>>;
-  readRecordPurposeImpact: (input: {
-    sessionId: string;
-    query: string;
-  }) => Promise<Awaited<ReturnType<typeof requestPurposeImpact>>>;
-  readRecordSessionDetail: (
-    id: string,
-  ) => Promise<Awaited<ReturnType<typeof readIngestionSessionDetail>>>;
-  readRecordSessionHistory: (
-    id: string,
-  ) => Promise<Awaited<ReturnType<typeof readIngestionSessionHistory>>>;
-  readRecordSessions: (query: string) => Promise<Awaited<ReturnType<typeof readIngestionSessions>>>;
-  createIngestionSession: (input: {
-    body: string;
-    key: string | null;
-  }) => Promise<
-    Extract<Awaited<ReturnType<typeof createIngestionSession>>, { body: { session: unknown } }>
-  >;
-  createKnowledgeEdge: (
-    body: string,
-  ) => Promise<Awaited<ReturnType<typeof createManualKnowledgeEdge>>>;
-  readKnowledgeEdges: (subject?: string) => Promise<Awaited<ReturnType<typeof readKnowledgeEdges>>>;
-  readKnowledgeNodePage: (
-    id: string,
-  ) => Promise<Awaited<ReturnType<typeof readLearnerKnowledgeNodePage>>>;
-  readKnowledgeMisconceptions: (id: string) => Promise<{
-    rows: Awaited<ReturnType<typeof loadMisconceptionsForKc>>;
-  }>;
-  createGoal: (body: string) => Promise<Awaited<ReturnType<typeof createGoal>>>;
-  createLearningIntent: (
-    body: string,
-  ) => Promise<Awaited<ReturnType<typeof requestLearningIntent>>>;
   startPlacement: (body: string) => Promise<Awaited<ReturnType<typeof startPlacementProbe>>>;
   readPlacementSession: typeof readPlacementSession;
   selectNextPlacementQuestion: (
@@ -208,35 +114,6 @@ export type FrontdoorContext = {
   readPaperDetail: (
     artifactId: string,
   ) => Promise<NonNullable<Awaited<ReturnType<typeof getPaperDetail>>>>;
-  readLibraryDraftDetail: (
-    id: string,
-  ) => Promise<Awaited<ReturnType<typeof readDraftReviewDetail>>>;
-  readLibraryQuestionMistakes: (id: string) => Promise<Awaited<ReturnType<typeof readMistakes>>>;
-  readLibraryMistakes: (query: string) => Promise<Awaited<ReturnType<typeof readMistakes>>>;
-  readLibraryDrafts: (query: string) => Promise<Awaited<ReturnType<typeof readPracticeDraftList>>>;
-  readLibraryQuestions: (
-    query: string,
-  ) => Promise<Awaited<ReturnType<typeof readPracticeQuestionList>>>;
-  restoreLibraryQuestion: (input: {
-    id: string;
-    body: string;
-  }) => Promise<Awaited<ReturnType<typeof restorePracticeQuestion>>>;
-  updateLibraryQuestion: (input: {
-    id: string;
-    body: string;
-  }) => Promise<Awaited<ReturnType<typeof updatePracticeQuestion>>>;
-  archiveLibraryQuestion: (input: {
-    id: string;
-    query: string;
-  }) => Promise<Awaited<ReturnType<typeof archivePracticeQuestion>>>;
-  getPracticeStream: (
-    knowledgeId?: string,
-  ) => Promise<Awaited<ReturnType<typeof getPracticeStream>>>;
-  recomposePracticeStream: () => Promise<Awaited<ReturnType<typeof recomposePracticeStream>>>;
-  updatePracticeStreamItem: (input: {
-    id: string;
-    body: string;
-  }) => Promise<Awaited<ReturnType<typeof updatePracticeStreamItem>>>;
   createIssuance: (body: string) => ReturnType<typeof requestAssessmentIssuance>;
   readIssuanceState: (issuanceId: string) => Promise<Awaited<ReturnType<typeof getIssuanceState>>>;
   saveResponseDraft: (input: {
@@ -269,15 +146,6 @@ export type FrontdoorContext = {
     body: string,
     signal: AbortSignal,
   ) => Promise<Awaited<ReturnType<typeof requestReviewAnswer>>['body']>;
-  readSubjects: () => Promise<{ subjects: LearnerSubjectRow[] }>;
-  createSubject: (
-    displayName: string,
-  ) => Promise<
-    Extract<
-      Awaited<ReturnType<typeof thinCreateSubject>>,
-      { kind: 'created' | 'replayed' }
-    >['payload']
-  >;
   readPlacementProfile: (goalId: string) => Promise<PlacementProfileResponse>;
   readWorksheetExport: (
     token: string,

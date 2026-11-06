@@ -5,7 +5,8 @@ import { runAuthenticatedStartWorkbench } from './workbench-read';
 export const getStartLibraryDraftsFunction = createServerFn({ method: 'GET' })
   .validator((query: string) => query)
   .handler(({ context, data }) =>
-    runAuthenticatedStartWorkbench(context, getRequest(), async () =>
-      JSON.stringify(await context.readLibraryDrafts(data)),
-    ),
+    runAuthenticatedStartWorkbench(context, getRequest(), async () => {
+      const { readStartLibraryDrafts } = await context.adapters.library();
+      return JSON.stringify(await readStartLibraryDrafts(data));
+    }),
   );

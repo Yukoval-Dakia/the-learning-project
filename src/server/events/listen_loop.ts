@@ -1,5 +1,11 @@
 import postgres from 'postgres';
-import { type SSEPayload, broadcast } from '@/kernel/job-event-stream';
+import {
+  type SSELivePayload,
+  type SSEPayload,
+  broadcast,
+  broadcastLive,
+} from '@/kernel/job-event-stream';
+import { JOB_LIVE_NOTIFY_CHANNEL } from '@/kernel/job-events';
 
 // One dedicated LISTEN connection for the process lifetime. max:1 keeps it off
 // the pg-boss and drizzle pools. There is no reconnect; a dropped connection
@@ -28,6 +34,30 @@ export async function startListenLoop(): Promise<void> {
       }
     } catch (err) {
       console.error('[listen_loop] failed to parse NOTIFY payload', err);
+    }
+  });
+  // Both LISTEN callbacks are fully guarded: a malformed live payload or a
+  // throwing live subscriber is logged inside broadcastLive and cannot abort
+  // the durable job_status callback on the same connection.
+  // Live frames carry stream content inside the NOTIFY payload — never log the
+  // raw payload here; identifiers are validated, content is only forwarded.
+  await listenClient.listen(JOB_LIVE_NOTIFY_CHANNEL, (payloadStr) => {
+    try {
+      const data = JSON.parse(payloadStr) as SSELivePayload;
+      if (
+        typeof data.business_table === 'string' &&
+        typeof data.business_id === 'string' &&
+        typeof data.event_type === 'string' &&
+        data.payload !== null &&
+        typeof data.payload === 'object' &&
+        !Array.isArray(data.payload)
+      ) {
+        broadcastLive(data);
+      } else {
+        console.warn('[listen_loop] live NOTIFY payload missing required fields');
+      }
+    } catch {
+      console.error('[listen_loop] failed to parse live NOTIFY payload');
     }
   });
 }

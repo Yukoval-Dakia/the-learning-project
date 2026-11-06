@@ -17,7 +17,22 @@ export type SSEPayload = {
 
 export type SSEHandler = (payload: SSEPayload) => void;
 
+/**
+ * Live frames carry their content inside the NOTIFY payload (no event_id, no
+ * replay). They are emitted on the same SSE response as data-only frames and
+ * reach only clients already subscribed to this exact business channel.
+ */
+export type SSELivePayload = {
+  business_table: string;
+  business_id: string;
+  event_type: string;
+  payload: Record<string, unknown>;
+};
+
+export type SSELiveHandler = (payload: SSELivePayload) => void;
+
 const subscribers: Map<string, Set<SSEHandler>> = new Map();
+const liveSubscribers: Map<string, Set<SSELiveHandler>> = new Map();
 
 function channelKey(businessTable: string, businessId: string): string {
   return `${businessTable}:${businessId}`;
@@ -56,6 +71,38 @@ export function broadcast(payload: SSEPayload): void {
     } catch (err) {
       // One failing subscriber must not skip the rest.
       console.error('[sse_router] handler error', err);
+    }
+  }
+}
+
+export function subscribeLive(
+  businessTable: string,
+  businessId: string,
+  handler: SSELiveHandler,
+): () => void {
+  const key = channelKey(businessTable, businessId);
+  let set = liveSubscribers.get(key);
+  if (!set) {
+    set = new Set();
+    liveSubscribers.set(key, set);
+  }
+  set.add(handler);
+  return () => {
+    const current = liveSubscribers.get(key);
+    if (!current) return;
+    current.delete(handler);
+    if (current.size === 0) liveSubscribers.delete(key);
+  };
+}
+
+export function broadcastLive(payload: SSELivePayload): void {
+  const set = liveSubscribers.get(channelKey(payload.business_table, payload.business_id));
+  if (!set) return;
+  for (const h of set) {
+    try {
+      h(payload);
+    } catch (err) {
+      console.error('[sse_router] live handler error', err);
     }
   }
 }
@@ -111,6 +158,7 @@ export function jobEventStreamResponse(
     async start(controller) {
       let closed = false;
       let unsub: (() => void) | undefined;
+      let unsubLive: (() => void) | undefined;
       let lastEmittedId = lastEventId;
       let heartbeat: ReturnType<typeof setInterval> | undefined;
       let catchup: ReturnType<typeof setInterval> | undefined;
@@ -124,6 +172,7 @@ export function jobEventStreamResponse(
           req.signal.removeEventListener('abort', close);
         }
         unsub?.();
+        unsubLive?.();
         try {
           controller.close();
         } catch {
@@ -254,6 +303,13 @@ export function jobEventStreamResponse(
             emitError();
             close();
           });
+        });
+        // Live frames are data-only (no id: line): they never advance the durable
+        // cursor, so reconnect replay neither duplicates nor recovers them.
+        unsubLive = subscribeLive(businessTable, businessId, (live) => {
+          emitSseFrame(
+            `data: ${JSON.stringify({ event_type: live.event_type, payload: live.payload })}\n\n`,
+          );
         });
         // A healthy HTTP connection can outlive a lost LISTEN notification.
         // Keep only one periodic replay pending in the same serialized queue.
