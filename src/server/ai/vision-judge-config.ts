@@ -20,6 +20,7 @@ import { getLaneOverride } from '@/core/config/store';
 import { resolveModelProfile } from '@/server/ai/model-profiles';
 import {
   ANTHROPIC_SUB_DEFAULT_MODEL,
+  TaskConfigError,
   isOauthProvider,
   readProviderId,
 } from '@/server/ai/providers';
@@ -64,10 +65,13 @@ export type VisionJudgeEnv = Record<string, string | undefined>;
  * Resolve the vision-judge provider/model override.
  *
  * - Unset → undefined (judges keep their registry provider).
- * - OAuth lane without `CLAUDE_CODE_OAUTH_TOKEN` → warn and fall through to the
- *   standard resolution chain rather than fail at call time.
+ * - OAuth lane without `CLAUDE_CODE_OAUTH_TOKEN` → TaskConfigError on run
+ *   paths (a configured lane silently swapped for the default would hide the
+ *   misconfiguration); read faces pass `checkCredentials: false` because the
+ *   token may be worker-only.
  * - YUK-924 site 4 — a nameable model whose profile confirms no vision input →
- *   warn and fall through; 'unknown' and true pass through.
+ *   TaskConfigError on run paths for the same reason; 'unknown' and true pass
+ *   through.
  * - Otherwise `{ provider, model? }` (model only when explicitly configured).
  */
 export function visionJudgeProviderOverride(
@@ -81,30 +85,43 @@ export function visionJudgeProviderOverride(
   if (!rawProvider) return undefined;
   const provider = readProviderId(rawProvider) ?? (rawProvider as Provider);
 
+  const runPath = opts?.checkCredentials !== false;
   // checkCredentials=false (the admin read face): the OAuth token may be
   // worker-only — report the configured lane, never this process's env view.
-  if (
-    opts?.checkCredentials !== false &&
-    isOAuthLaneProvider(provider as Provider) &&
-    !env[OAUTH_TOKEN_ENV]
-  ) {
-    console.warn(
-      `[vision-judge] ${VISION_JUDGE_PROVIDER_FLAG}=${provider} but ${OAUTH_TOKEN_ENV} missing — omitting the override so resolution falls through to the standard chain (registry default OR AI_PROVIDER_OVERRIDE if set)`,
+  if (runPath && isOAuthLaneProvider(provider as Provider) && !env[OAUTH_TOKEN_ENV]) {
+    throw new TaskConfigError(
+      `${VISION_JUDGE_PROVIDER_FLAG}/lane.vision_judge.provider='${provider}' but ${OAUTH_TOKEN_ENV} missing — set the credential or clear the vision-judge lane override; the lane is never silently swapped for the standard resolution chain`,
     );
-    return undefined;
   }
 
   const model = lane?.model || undefined;
   const nameableModel = visionJudgeOverrideModel(provider as Provider, model);
   if (
+    runPath &&
     nameableModel !== undefined &&
     resolveModelProfile(provider as Provider, nameableModel).capabilities.vision === false
   ) {
-    console.warn(
-      `[vision-judge] ${VISION_JUDGE_PROVIDER_FLAG}=${provider}${model ? ` ${VISION_JUDGE_MODEL_FLAG}=${model}` : ''} names model '${nameableModel}' whose profile confirms NO vision input — omitting the override so resolution falls through to the standard chain (declare the capability in the provider binding or pick a vision-capable model)`,
+    throw new TaskConfigError(
+      `${VISION_JUDGE_PROVIDER_FLAG}/lane.vision_judge names model '${nameableModel}' whose profile confirms NO vision input for provider '${provider}' — pick a vision-capable model or clear the lane override; the lane is never silently swapped for the standard resolution chain`,
     );
-    return undefined;
   }
 
   return { provider: provider as Provider, model };
+}
+
+/**
+ * The vision-judge override that actually applies on a call path: an
+ * `AI_PROVIDER_OVERRIDE` process pin outranks the scoped lane inside binding,
+ * so the stored lane is not read at all — a broken lane must not block an
+ * explicit emergency pin that would never execute it. Without a pin the stored
+ * lane is authoritative and still validated strictly (credential/capability
+ * throws propagate per `opts.checkCredentials`). Single resolver shared by the
+ * run paths (provider-lane-fallback, source-grounding-verify) and the admin
+ * call-path projection so they cannot drift.
+ */
+export function applicableVisionJudgeOverride(
+  env: VisionJudgeEnv = process.env,
+  opts?: { checkCredentials?: boolean },
+): { provider: Provider; model?: string } | undefined {
+  return env.AI_PROVIDER_OVERRIDE ? undefined : visionJudgeProviderOverride(env, opts);
 }

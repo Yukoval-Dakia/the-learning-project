@@ -171,13 +171,13 @@ Read `private/eligibility.json`:
 Shadow induction needs both production task lanes:
 
 - `CLAUDE_CODE_OAUTH_TOKEN` for the three Opus induction samples;
-- `XIAOMI_API_KEY` for semantic claim grouping when exact strings do not already
+- `OPENCODE_API_KEY` for semantic claim grouping when exact strings do not already
   agree.
 
 The harness checks only presence and never prints values.
 It refuses non-empty `AI_PROVIDER_OVERRIDE` or `AI_PROVIDER_MODEL` so the three
 induction samples cannot inherit a global model/provider switch and semantic
-claim grouping cannot leave its Mimo lane.
+claim grouping cannot leave its resolved task lane.
 
 ```bash
 pnpm grounding:gate shadow \

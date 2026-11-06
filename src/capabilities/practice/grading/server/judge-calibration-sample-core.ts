@@ -10,7 +10,7 @@
 
 import { and, eq, gte, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { canonicalProviderName } from '@/ai/task-spec';
+import { DEFAULT_TASK_MODEL, canonicalProviderName } from '@/ai/task-spec';
 import {
   IMAGE_CONSUMING_JUDGE_ROUTES,
   MODEL_BACKED_JUDGE_ROUTES,
@@ -546,11 +546,14 @@ export async function applyJudgeCalibrationRejudgeSample(
   laneSnapshots: JudgeCalibrationLaneSnapshots,
   now: Date,
 ): Promise<'written' | 'duplicate'> {
+  // No captured env override means the original judge ran the registry default
+  // lane — follow the current default, never a literal provider name (a stale
+  // literal mislabels samples as contrastive and pollutes the agreement rate).
   const inferredOriginalProvider = rejudged.isVision
     ? (laneSnapshots.visionJudgeProviderAtSample ??
       laneSnapshots.aiProviderOverrideAtSample ??
-      'xiaomi')
-    : (laneSnapshots.aiProviderOverrideAtSample ?? 'xiaomi');
+      DEFAULT_TASK_MODEL.defaultProvider)
+    : (laneSnapshots.aiProviderOverrideAtSample ?? DEFAULT_TASK_MODEL.defaultProvider);
 
   return writeJudgeCalibrationSampleEvent(db, {
     originalJudgeEventId: rejudged.judgeEventId,

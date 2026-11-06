@@ -94,13 +94,11 @@ export interface TaskDefinition {
   readonly allowedTools: readonly string[];
   readonly context: TaskContextDeclaration;
   readonly prompt: TaskPrompt;
-  /**
-   * YUK-923 — optional reasoning effort tier threaded to the Agent SDK `effort`
-   * option. Absent ⇒ the runner does not pass the key (endpoint default; the
-   * mimo/default path stays byte-identical to pre-seam).
-   */
+  /** Explicit caller effort conflicts with configured reasoning: one wire writer. */
   readonly reasoningEffort?: EffortLevel;
   readonly invocation?: 'auto' | 'manual_rescue_only';
+  /** Dedicated route: env/DB global pins must not repoint this task. */
+  readonly ignoreGlobalPin?: boolean;
   readonly structuredOutputSchema?: ZodTypeAny;
   /** Submit schema-constrained tool arguments, correcting failures within one run. */
   readonly structuredOutputMode?: 'tool';
@@ -122,10 +120,18 @@ export interface TaskParseContext<Input> {
   subjectProfile: SubjectProfile;
 }
 
+export const DEFAULT_TASK_MODEL = Object.freeze({
+  defaultProvider: 'opencode-go',
+  defaultModel: 'deepseek-v4.1-flash',
+} as const);
+
+export type TaskDefinitionInput = Omit<TaskDefinition, 'defaultProvider' | 'defaultModel'> &
+  Partial<Pick<TaskDefinition, 'defaultProvider' | 'defaultModel'>>;
+
 /** Capability-owned model-task semantics; registry composition uses `definition`. */
 export interface TaskSpec<Input, Output> {
   readonly ownership: 'owned';
-  readonly definition: TaskDefinition;
+  readonly definition: TaskDefinitionInput;
   readonly outputSchema: ZodTypeAny;
   readonly parseText: (text: string, context: TaskParseContext<Input>) => Output;
 }
@@ -140,7 +146,7 @@ export interface TaskSpec<Input, Output> {
  */
 export interface TypedTaskSpec {
   readonly ownership: 'owned';
-  readonly definition: TaskDefinition;
+  readonly definition: TaskDefinitionInput;
   readonly outputSchema: ZodTypeAny;
   readonly typed: { readonly inputSchema: ZodTypeAny };
 }

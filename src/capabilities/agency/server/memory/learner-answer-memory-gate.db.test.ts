@@ -36,6 +36,7 @@ function providerBoundary() {
   const client = createMemoryClient({
     env: {
       DATABASE_URL: process.env.DATABASE_URL,
+      OPENCODE_API_KEY: 'fake-test-key',
       ZHIPU_API_KEY: 'fake-test-key',
       DASHSCOPE_API_KEY: 'fake-test-key',
     },

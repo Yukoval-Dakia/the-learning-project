@@ -96,6 +96,8 @@ describe('admin configuration writes over real Hono + Postgres', () => {
     ).toEqual([1, 2, 3]);
   });
 
+  // @invariant concurrency: clearing a global pin and its hidden stale task model commits atomically
+  // @fails-if a partial reset commits or a grouped reset cannot restore the runnable task default
   it('can atomically reset a global pin and the incompatible model it was hiding', async () => {
     expect(
       (
@@ -103,7 +105,7 @@ describe('admin configuration writes over real Hono + Postgres', () => {
           changes: [
             { action: 'set', key: 'lane.global.provider', value: 'openai' },
             { action: 'set', key: 'lane.global.model', value: 'gpt-6-astra' },
-            { action: 'set', key: 'task.QuizGenTask.model', value: 'gpt-6-astra' },
+            { action: 'set', key: 'task.QuizGenTask.model', value: 'mimo-v2.5-pro' },
           ],
         })
       ).status,
@@ -119,14 +121,14 @@ describe('admin configuration writes over real Hono + Postgres', () => {
           changes: [
             { action: 'clear', key: 'lane.global.provider' },
             { action: 'clear', key: 'lane.global.model' },
-            { action: 'set', key: 'task.QuizGenTask.model', value: 'mimo-v2.5-pro' },
+            { action: 'clear', key: 'task.QuizGenTask.model' },
           ],
         })
       ).status,
     ).toBe(200);
     expect(resolveTaskProvider('QuizGenTask')).toMatchObject({
-      provider: 'xiaomi',
-      model: 'mimo-v2.5-pro',
+      provider: tasks.QuizGenTask.defaultProvider,
+      model: tasks.QuizGenTask.defaultModel,
     });
   });
 });

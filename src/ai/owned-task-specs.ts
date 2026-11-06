@@ -1,6 +1,7 @@
 import {
   CONTEXT_VIEWS,
   type ContextViewName,
+  DEFAULT_TASK_MODEL,
   type OwnedTaskSpecEntry,
   type TaskDefinition,
 } from './task-spec';
@@ -208,10 +209,26 @@ function freezeDefinition(definition: TaskDefinition): void {
 
 export function defineOwnedTaskSpecs<
   const Specs extends { readonly [Kind in keyof Specs]: TaskOwnerEntry },
->(owner: TaskOwner, specs: Specs): Readonly<Specs> {
-  for (const [key, value] of Object.entries(specs)) {
+>(
+  owner: TaskOwner,
+  specs: Specs,
+): Readonly<{
+  [K in keyof Specs]: Omit<Specs[K], 'definition'> & {
+    readonly definition: Specs[K]['definition'] & TaskDefinition;
+  };
+}> {
+  const resolved = Object.fromEntries(
+    Object.entries(specs).map(([key, entry]) => [
+      key,
+      {
+        ...(entry as TaskOwnerEntry),
+        definition: { ...DEFAULT_TASK_MODEL, ...(entry as TaskOwnerEntry).definition },
+      },
+    ]),
+  );
+  for (const [key, value] of Object.entries(resolved)) {
     const entry = value as TaskOwnerEntry;
-    validateDefinition(owner, key, entry.definition);
+    validateDefinition(owner, key, entry.definition as TaskDefinition);
     const isTypedEntry = (entry.definition as TaskDefinition).execution === 'typed';
     if (isTypedEntry) {
       // Typed lane parses input/output directly via schemas; no free-text
@@ -241,8 +258,12 @@ export function defineOwnedTaskSpecs<
     ) {
       throw new Error(`defineOwnedTaskSpecs(${owner}): owned "${key}" missing outputSchema`);
     }
-    freezeDefinition(entry.definition);
+    freezeDefinition(entry.definition as TaskDefinition);
     Object.freeze(entry);
   }
-  return Object.freeze(specs);
+  return Object.freeze(resolved) as unknown as Readonly<{
+    [K in keyof Specs]: Omit<Specs[K], 'definition'> & {
+      readonly definition: Specs[K]['definition'] & TaskDefinition;
+    };
+  }>;
 }

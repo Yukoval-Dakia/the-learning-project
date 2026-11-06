@@ -532,7 +532,7 @@ export async function induceConjecture(
   // Semantic grouping covers the complete hypothesis (trigger/scope/wrong-answer
   // signature), not just the claim. At temperature > 0 with N=3, samples almost always
   // produce distinct strings, so this fires on essentially every run (+1
-  // ConjectureGroupingTask, mimo default). Confidence is non-deterministic: downstream
+  // ConjectureGroupingTask on its resolved lane). Confidence is non-deterministic: downstream
   // thresholds must treat it as a distribution, not a point estimate.
   const requiredAgreement = samples === 1 ? 1 : Math.floor(samples / 2) + 1;
   if (dominant.length < proposals.length && proposals.length > 1) {

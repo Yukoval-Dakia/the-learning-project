@@ -68,29 +68,6 @@ const overrides: Partial<Record<Provider, Record<string, CatalogOverride>>> = {
       protocol: { api: 'openai-responses' },
     },
   },
-  xiaomi: {
-    'mimo-v2.5': {
-      when: 'missing',
-      reason:
-        'pi 1.5.0 builtin catalog dropped this id; models.dev still lists it as served by api.xiaomimimo.com. Protocol cloned from the same-family mimo template (1.1.0 shape).',
-      facts: {},
-      protocol: { api: 'openai-completions', thinkingFormat: 'deepseek' },
-    },
-    'mimo-v2.5-pro': {
-      when: 'missing',
-      reason:
-        'pi 1.5.0 builtin catalog dropped this id; models.dev still lists it as served by api.xiaomimimo.com. Protocol cloned from the same-family mimo template (1.1.0 shape).',
-      facts: {},
-      protocol: { api: 'openai-completions', thinkingFormat: 'deepseek' },
-    },
-    'mimo-v2.5-pro-ultraspeed': {
-      when: 'missing',
-      reason:
-        'pi 1.5.0 builtin catalog dropped this id; models.dev still lists it as served by api.xiaomimimo.com. Protocol cloned from the same-family mimo template (1.1.0 shape).',
-      facts: {},
-      protocol: { api: 'openai-completions', thinkingFormat: 'deepseek' },
-    },
-  },
   'opencode-go': {
     'deepseek-v4-flash': {
       when: 'missing',
@@ -349,6 +326,7 @@ export function modelCatalogOverride(
 ): CatalogOverride | undefined {
   if (
     provider === 'xiaomi-token-plan' &&
+    !model.startsWith('mimo-v2.5') &&
     (Object.hasOwn(protocols.xiaomi, model) || Object.hasOwn(overrides.xiaomi ?? {}, model))
   ) {
     return {

@@ -275,7 +275,7 @@ export interface RunTaskCtx {
   piQueues?: PiQueueSources;
 }
 
-function compiledPromptProvenance(prompt?: CompiledModelPrompt) {
+export function compiledPromptProvenance(prompt?: CompiledModelPrompt) {
   if (!prompt) return undefined;
   return {
     compiledPromptHash: createHash('sha256').update(prompt.text, 'utf8').digest('hex'),
@@ -308,7 +308,7 @@ export interface MultimodalTaskInput {
 
 const TASK_KINDS = Object.keys(tasks) as TaskKind[];
 
-function isKnownTask(k: string): k is TaskKind {
+export function isKnownTask(k: string): k is TaskKind {
   return (TASK_KINDS as string[]).includes(k);
 }
 
@@ -318,7 +318,7 @@ function isKnownTask(k: string): k is TaskKind {
  * ({kind:'none'}). Fail closed at every chat entry instead of letting a
  * typed kind reach adapter startup / getTaskSystemPrompt.
  */
-function assertChatExecutionKind(kind: TaskKind): void {
+export function assertChatExecutionKind(kind: TaskKind): void {
   // Literal-union read through the declared interface view (see
   // buildQueryOptions): `execution` is optional on TaskDefinition.
   if (((tasks[kind] as TaskDefinition).execution ?? 'chat') !== 'chat') {
@@ -428,7 +428,7 @@ function promptFromInput(input: unknown): string | AsyncIterable<SDKUserMessage>
  * consistent on tools-from-registry default, turn ceiling and session resume.
  * The pi surfaces live on `ctx.pi*` and are read by the adapter, not here.
  */
-function buildQueryOptions(
+export function buildQueryOptions(
   kind: TaskKind,
   ctx: RunTaskCtx,
   abortController: AbortController,

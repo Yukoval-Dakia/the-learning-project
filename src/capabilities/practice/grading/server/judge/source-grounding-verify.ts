@@ -21,7 +21,7 @@ import {
 import type { Db } from '@/db/client';
 // Reuse the steps@1 R2 image fetcher verbatim — no R2 logic duplicated here.
 import { defaultImageFetch } from '@/kernel/records/assessment-assets';
-import { visionJudgeProviderOverride } from '@/server/ai/vision-judge-config';
+import { applicableVisionJudgeOverride } from '@/server/ai/vision-judge-config';
 import type { SubjectProfile } from '@/subjects/profile';
 import {
   type StructuredTaskResult,
@@ -116,8 +116,9 @@ export async function runSourceGroundingVerify(
       {
         db: params.db,
         subjectProfile: params.subjectProfile,
-        // Same vision provider routing as the multimodal judges.
-        override: visionJudgeProviderOverride(),
+        // Same vision provider routing as the multimodal judges; a process pin
+        // suppresses the scoped lane entirely (the lane never runs under a pin).
+        override: applicableVisionJudgeOverride(),
         // NO enableTransientRetry (single-transient-layer principle,): unlike
         // multimodal_direct / steps (called synchronously from the judge router, whose catch
         // swallows failures into 'unsupported' → pg-boss never sees a throw), this runner is
