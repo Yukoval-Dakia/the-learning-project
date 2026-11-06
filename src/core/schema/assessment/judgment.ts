@@ -101,6 +101,18 @@ export const EvidenceCitation = z.object({
 export type EvidenceCitationT = z.infer<typeof EvidenceCitation>;
 
 /**
+ * 未校验的模型观察：模型自述从非文本证据（图片等）里读到的内容。它不是学习
+ * 者原文，也没有原文可校 —— 图片没有可投影的文本源。呈现与下游消费必须按
+ * 「模型观察、未校验」对待，绝不冒充已验证引文或提交原文。
+ */
+export const ModelObservation = z.object({
+  slot_id: z.string().min(1).optional(),
+  evidence_id: z.string().min(1).optional(),
+  observation_md: z.string(),
+});
+export type ModelObservationT = z.infer<typeof ModelObservation>;
+
+/**
  * 单元已判分。scored_because 显式区分“作答判得”与“空白按声明 marking 计零”
  * （blank_marked_zero 只在 basis.blank_scores_zero=true 时合法 —— 由
  * settlement lane 校验；类型层先保证不是伪零分冒充）。
@@ -184,6 +196,12 @@ export const ScoredUnitResult = z.object({
     .optional(),
   feedback_md: z.string().optional(),
   evidence_citations: z.array(EvidenceCitation).default([]),
+  /**
+   * 照片作答判分的未校验模型观察（YUK-1877）：纯图片单元的图片引用不考原文
+   * 校验，模型附带的 quote 记在这里 —— 它是模型产出，不是已验证引文。
+   * 缺省 = 没有观察（含全部文本作答与历史行）。
+   */
+  model_observations: z.array(ModelObservation).optional(),
   /**
    * 掌握证据。不参与 points_awarded，也不进入聚合。缺省 = 结算侧自行归属。
    */
