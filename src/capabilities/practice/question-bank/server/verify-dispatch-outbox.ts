@@ -8,8 +8,8 @@ import { fromPgBossDrizzleTx } from '@/db/pg-boss-drizzle';
 import { event, question } from '@/db/schema';
 import type { WriteEventInput } from '@/kernel/events/index';
 import { writeEvent, writeEvents } from '@/kernel/events/index';
+import { declaredAdmissionOwned } from '@/kernel/read-models/question-admission-ownership';
 import type { PlacementVerificationAuthority } from '@/kernel/supply-contracts';
-import { declaredAdmissionOwned } from './admission/ownership';
 
 export const VERIFY_DISPATCH_INTENT_ACTION = 'experimental:verify_dispatch_intent';
 export const VERIFY_DISPATCH_COMPLETE_ACTION = 'experimental:verify_dispatch';
