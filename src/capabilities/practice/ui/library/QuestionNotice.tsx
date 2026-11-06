@@ -6,7 +6,7 @@ import { showToast } from '@/ui-next/feedback/toast-store';
 import { Button, Expand } from '@/ui-next/public';
 import { type QuestionFullDetail, isDeleted, isDraft } from './library-api';
 import { useLibraryClient } from './library-client';
-import { VERIFY_WORDS, holdWords, verifyOutcomeWords } from './library-copy';
+import { ADMISSION_WORDS, VERIFY_WORDS, holdWords, verifyOutcomeWords } from './library-copy';
 import { ServingButton } from './ServingButton';
 import { LIBRARY_KEY } from './use-library';
 import { useForceEnable, useRestore, useVerifyDraft, writeErrorText } from './use-question-writes';
@@ -128,10 +128,44 @@ function DeletedNotice({ id }: { id: string }) {
   );
 }
 
+/** The automatic check owns this question: say where it stands, with nothing to verify by hand. */
+function AdmissionNotice({
+  admission,
+  serving,
+}: {
+  admission: NonNullable<QuestionFullDetail['serving']['admission']>;
+  serving: QuestionFullDetail['serving'];
+}) {
+  const words = ADMISSION_WORDS[admission.status];
+  const Icon = admission.status === 'pending' ? CircleDashed : TriangleAlert;
+  return (
+    <section
+      className="qd-notice"
+      data-tone={admission.status === 'pending' ? 'accent' : 'caution'}
+      aria-label={words.title}
+    >
+      <p className="qd-notice-title">
+        <Icon size={15} aria-hidden="true" />
+        {words.title}
+      </p>
+      <p className="qd-notice-text">{admission.reason ?? words.why}</p>
+      {serving.next_action ? (
+        <div className="qd-notice-actions">
+          <ServingButton serving={serving} variant="primary" />
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 /** The one thing this question needs from you, if anything. */
 export function QuestionNotice({ detail }: { detail: QuestionFullDetail }) {
   if (isDeleted(detail)) return <DeletedNotice id={detail.id} />;
-  if (isDraft(detail)) return <DraftNotice id={detail.id} />;
+  const admission = detail.serving.admission;
+  if (admission && admission.status !== 'admitted') {
+    return <AdmissionNotice admission={admission} serving={detail.serving} />;
+  }
+  if (isDraft(detail) && !admission) return <DraftNotice id={detail.id} />;
   if (detail.serving.servable) return null;
   const words = holdWords(detail.serving.hold_reason);
   return (

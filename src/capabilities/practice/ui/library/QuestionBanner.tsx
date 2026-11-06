@@ -1,11 +1,16 @@
 import type { MouseEvent } from 'react';
 import { type QuestionFullDetail, isDeleted, isDraft } from './library-api';
-import { difficultyWord, holdWords, kindWord, sourceWord } from './library-copy';
+import { ADMISSION_WORDS, difficultyWord, holdWords, kindWord, sourceWord } from './library-copy';
 import { KnowledgeLinks, questionHref, shortDay } from './QuestionLine';
 
 function stateWord(detail: QuestionFullDetail): { word: string; tone: string } | null {
   if (isDeleted(detail)) return { word: '已删除', tone: 'critical' };
-  if (isDraft(detail)) return { word: '待审核', tone: 'accent' };
+  const admission = detail.serving.admission;
+  if (admission && admission.status !== 'admitted') {
+    const words = ADMISSION_WORDS[admission.status];
+    return { word: words.title, tone: words.tone === 'caution' ? 'caution' : 'accent' };
+  }
+  if (isDraft(detail) && !admission) return { word: '待审核', tone: 'accent' };
   if (!detail.serving.servable)
     return { word: holdWords(detail.serving.hold_reason).title, tone: 'caution' };
   return null;

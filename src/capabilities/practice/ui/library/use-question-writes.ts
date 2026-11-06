@@ -21,6 +21,7 @@ export function writeErrorText(err: unknown): string {
     if (err.code === 'unchanged_base_already_verified')
       return '题目没有改动，再核验一次结果也一样。先改题再核验。';
     if (err.code === 'owner_hold') return '这道题是你自己停出的，不需要核验。';
+    if (err.code === 'admission_owned') return '这道题由系统自动检查，不用手动核验。';
     if (err.code === 'immutable_question') return '这是系统用来了解你的诊断题，不能在这里改动。';
     if (err.status === 409) return '这道题刚刚在别处有了变化，已经刷新，请再看一眼。';
     if (err.status === 404) return '找不到这道题了。';

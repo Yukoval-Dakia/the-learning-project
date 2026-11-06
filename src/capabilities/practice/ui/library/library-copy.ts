@@ -57,9 +57,35 @@ export const HOLD_WORDS: Readonly<Record<string, { title: string; why: string }>
   no_input_renderer: { title: '这里还没法作答', why: '这种作答方式还不支持，暂时不出。' },
   invalid_presentation: { title: '题面显示有问题', why: '题面渲染不完整，改好后可以重新核验。' },
   withdrawn: { title: '已撤下', why: '这道题已经撤下，不会再出给你。' },
+  admission_undecided: { title: '这次没查出结果', why: '暂时不会出给你。' },
 };
 
+/** Where the automatic check of a new question stands. The server's reason, when given, comes first. */
+export const ADMISSION_WORDS = {
+  pending: { title: '还在检查', why: '刚收进来，检查完就会出给你。', tone: 'neutral' },
+  admitted: { title: '检查通过', why: '', tone: 'neutral' },
+  failed: { title: '检查没通过', why: '这道题暂时不会出给你。', tone: 'caution' },
+  undecided: { title: '这次没查出结果', why: '暂时不会出给你。', tone: 'caution' },
+} as const;
+
 export const HOLD_UNKNOWN = { title: '暂不出题', why: '原因还不确定。' };
+
+/** Why it is held: the automatic check's own state first, so a new question is never 「原因还不确定」. */
+export function holdKey(serving: {
+  hold_reason: string | null;
+  admission?: { status: keyof typeof ADMISSION_WORDS } | null;
+}): string | null {
+  switch (serving.admission?.status) {
+    case 'pending':
+      return 'awaiting_admission';
+    case 'failed':
+      return 'admission_failed';
+    case 'undecided':
+      return 'admission_undecided';
+    default:
+      return serving.hold_reason;
+  }
+}
 
 export function holdWords(reason: string | null): { title: string; why: string } {
   return (reason && HOLD_WORDS[reason]) || HOLD_UNKNOWN;

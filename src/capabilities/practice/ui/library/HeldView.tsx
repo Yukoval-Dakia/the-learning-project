@@ -3,7 +3,7 @@ import { RetryLine } from '@/ui-next/primitives/RetryLine';
 import { SkeletonLines } from '@/ui-next/primitives/SkeletonLines';
 import { Button } from '@/ui-next/public';
 import type { QBankQuestion } from './library-api';
-import { HOLD_WORDS, holdWords, kindWord } from './library-copy';
+import { HOLD_WORDS, holdKey, holdWords, kindWord } from './library-copy';
 import type { LibraryScope } from './library-url';
 import { LoadMore, QuestionLine, shortDay } from './QuestionLine';
 import { ServingButton } from './ServingButton';
@@ -14,7 +14,7 @@ const REASON_ORDER = [...Object.keys(HOLD_WORDS), 'unknown'];
 function groupByReason(items: readonly QBankQuestion[]) {
   const groups = new Map<string, QBankQuestion[]>();
   for (const item of items) {
-    const reason = item.serving.hold_reason ?? 'unknown';
+    const reason = holdKey(item.serving) ?? 'unknown';
     const group = groups.get(reason);
     if (group) group.push(item);
     else groups.set(reason, [item]);
