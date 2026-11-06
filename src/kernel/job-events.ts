@@ -41,6 +41,14 @@ export async function writeJobEvent(tx: Db | Tx, input: JobEventInput): Promise<
   return id;
 }
 
+/**
+ * Ephemeral live frames ride the NOTIFY payload itself and are never written to
+ * job_events: consumers that reconnect replay nothing. Producers use bound
+ * parameters for the payload (never SQL string interpolation), so statement and
+ * error logs cannot capture the content.
+ */
+export const JOB_LIVE_NOTIFY_CHANNEL = 'job_status_live';
+
 export type ReplayParams = {
   businessTable: string;
   businessId: string;

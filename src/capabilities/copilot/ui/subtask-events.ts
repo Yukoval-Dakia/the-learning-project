@@ -12,6 +12,7 @@ import {
   isDurablePickupStalled,
 } from '@/capabilities/copilot/durable-pickup';
 import { BLOCK_REF_PATTERN, BlockV1, type BlockV1T } from '@/core/schema/blocks';
+import { COPILOT_RUN_THINKING_EVENT } from '../thinking-lane-contract';
 
 import { type PublicProse, mergePublicProse, parsePublicProse } from './public-prose';
 
@@ -360,6 +361,48 @@ export function createCopilotRunView(): CopilotRunView {
   };
 }
 
+// ── Live thinking lane (YUK-1909) ────────────────────────────────────────────
+// Thinking text is display-only: live `data:`-only SSE frames carry it, durable
+// replay never reproduces it. This is the minimal parse seam only — segment
+// folding and display rules live with the page layer.
+
+export interface CopilotRunThinkingFrame {
+  task_run_id: string;
+  seq: number;
+  text: string;
+}
+
+/**
+ * Runtime-narrow a live `data:` frame (no `id:` line, no `event_id`). Returns
+ * null for durable payloads so callers can try durable parsing first.
+ */
+export function parseCopilotRunLiveFrame(data: string): {
+  event_type: string;
+  payload: Record<string, unknown>;
+} | null {
+  try {
+    const raw = objectRecord(JSON.parse(data));
+    if (!raw) return null;
+    const payload = objectRecord(raw.payload);
+    if (typeof raw.event_type !== 'string' || !payload) return null;
+    return { event_type: raw.event_type, payload };
+  } catch {
+    return null;
+  }
+}
+
+export function parseCopilotThinkingFrame(
+  payload: Record<string, unknown>,
+): CopilotRunThinkingFrame | null {
+  const taskRunId = payload.task_run_id;
+  const seq = payload.seq;
+  const text = payload.text;
+  if (typeof taskRunId !== 'string' || taskRunId.length === 0) return null;
+  if (!Number.isSafeInteger(seq) || (seq as number) <= 0) return null;
+  if (typeof text !== 'string' || text.length === 0) return null;
+  return { task_run_id: taskRunId, seq: seq as number, text };
+}
+
 interface MutableSubtask extends CopilotSubtaskView {
   firstEventId: number;
 }
@@ -632,6 +675,11 @@ export interface ConsumeDurableCopilotRunOptions {
   location: string;
   fetchResponse: (input: string, init?: RequestInit) => Promise<Response>;
   onUpdate?: (state: CopilotRunView) => void;
+  /**
+   * YUK-1909 — raw live thinking frames as they arrive (ephemeral; never
+   * replayed after reconnect). Segment assembly and clearing are page rules.
+   */
+  onThinkingFrame?: (frame: CopilotRunThinkingFrame) => void;
   /** Resume cursor/view from a previously accepted run; never redispatches it. */
   initialState?: CopilotRunView;
   /** Number of reconnects after the initial request. */
@@ -742,7 +790,16 @@ export async function consumeDurableCopilotRun(
       })) {
         if (event.event === 'error') throw new Error('durable stream failed');
         const frame = parseCopilotRunJobFrame(event.data);
-        if (!frame) continue;
+        if (!frame) {
+          // Live lane: data-only frames (no id:/event_id) carry thinking text.
+          // They skip the durable fold and never advance the cursor.
+          const live = parseCopilotRunLiveFrame(event.data);
+          if (live?.event_type === COPILOT_RUN_THINKING_EVENT) {
+            const thinking = parseCopilotThinkingFrame(live.payload);
+            if (thinking) options.onThinkingFrame?.(thinking);
+          }
+          continue;
+        }
         state = foldCopilotRunFrames(state, [frame]);
         armPickupTimer();
         options.onUpdate?.(state);

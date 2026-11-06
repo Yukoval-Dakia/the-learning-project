@@ -30,6 +30,7 @@ import type { ModelBinding } from '@/server/ai/execution-adapter';
 import { type StreamCollectResult, runAgentTask, streamTaskCollecting } from '@/server/ai/runner';
 import { shouldEmitToolUseForCaller } from '@/server/ai/tools/tool-mirror-policy';
 import { resolveCopilotSkillDocs } from '@/subjects/copilot-skills';
+import type { CopilotThinkingEndResult } from '../thinking-lane-contract';
 import type { CopilotRunCancellationControl } from './copilot-run-cancellation';
 import type { CopilotRunInput } from './copilot-run-input';
 import { selectActorRef } from './copilot-run-input';
@@ -102,6 +103,12 @@ export type CopilotExecutionActivity =
       toolUseId?: string;
     }
   | { kind: 'spawn_budget'; observation: SpawnBudgetObservation }
+  /** YUK-1909 — one provider query actually submitted (once per attempt, including retries). */
+  | { kind: 'request_sent'; taskRunId: string; retryOfTaskRunId?: string }
+  /** YUK-1909 — display-only reasoning text; routed to the live lane, never persisted. */
+  | { kind: 'thinking_delta'; taskRunId: string; text: string }
+  /** YUK-1909 — per-attempt settle of the thinking lane. */
+  | { kind: 'thinking_end'; taskRunId: string; result: CopilotThinkingEndResult }
   | {
       kind: 'block_draft';
       toolUseId: string;
@@ -260,6 +267,23 @@ export function createCopilotExecutionOwner(
       correctionResolution.kind === 'clarify'
         ? { reply: correctionResolution.reply, correction: 'clarify' as const }
         : undefined;
+
+    // YUK-1909 — turns whose committed reply is fixed before the model runs, or
+    // bound to a not-yet-submitted answer, get status only: reasoning text could
+    // leak the answer or describe a reply that never ships. Status frames
+    // (request_sent / model_thinking / thinking_end) still fire.
+    // A focused page question is also an unsubmitted-question context: the
+    // learner can quote a live question (QuoteSelection -> kind 'question') and
+    // ask in ordinary chat. Whether that question was already submitted is not
+    // cheaply knowable here, so every question-focus turn stays status-only.
+    // Other focus kinds: knowledge / note / learning_session (nudges) carry no
+    // unsubmitted question; teaching skill turns run outside this owner.
+    const focusedQuestion = turn.input.ambient_context?.focused_entity?.kind === 'question';
+    const suppressThinkingStream =
+      answerOnly ||
+      authoritativeReply !== undefined ||
+      reviewAnswer !== undefined ||
+      focusedQuestion;
 
     let activeTaskRunId = turn.taskRunId;
     const createFinalizer = () =>
@@ -510,6 +534,11 @@ export function createCopilotExecutionOwner(
     };
     // One signal per stretch of reasoning; reset by anything else the model sends.
     let thinkingAnnounced = false;
+    // #2572 retry mints the next attempt's task_run_id before the query exists;
+    // carry it so the next request_sent can name the attempt it replaces. Other
+    // serialized frames may interleave between provider_retry and request_sent,
+    // so the link must be explicit rather than positional.
+    let pendingRetryOf: { nextTaskRunId: string; retryOf: string } | undefined;
     const runnerContext: Parameters<typeof streamTaskCollecting>[2] = {
       db,
       taskRunId: turn.taskRunId,
@@ -544,13 +573,45 @@ export function createCopilotExecutionOwner(
       },
       sdkSession,
       nativeCompaction: { sessionContext: compileCopilotSessionContext(input) },
+      beforeProviderQuery: async (query) => {
+        const retryOfTaskRunId =
+          pendingRetryOf?.nextTaskRunId === query.taskRunId ? pendingRetryOf.retryOf : undefined;
+        pendingRetryOf = undefined;
+        await emitActivity(policy, {
+          kind: 'request_sent',
+          taskRunId: query.taskRunId,
+          ...(retryOfTaskRunId ? { retryOfTaskRunId } : {}),
+        });
+      },
       onProviderRetry: async ({ nextTaskRunId, delayMs, retry }) => {
         await disposeSubagentCancellation();
+        pendingRetryOf = { nextTaskRunId, retryOf: activeTaskRunId };
         activeTaskRunId = nextTaskRunId;
+        thinkingAnnounced = false;
         disposeSubagentCancellation = bindCancellation();
         domainMountOptions.ctx.taskRunId = nextTaskRunId;
         finalizer = createFinalizer();
         await emitActivity(policy, { kind: 'provider_retry', delayMs, retry });
+      },
+      ...(suppressThinkingStream
+        ? {}
+        : {
+            onThinkingDelta: (delta: { text: string; taskRunId: string }) => {
+              if (policy.cancellation.signal.aborted || lifecycleAbortController.signal.aborted)
+                return;
+              void Promise.resolve(
+                emitActivity(policy, { kind: 'thinking_delta', ...delta }),
+              ).catch(() => undefined);
+            },
+          }),
+      onThinkingSettled: async ({ taskRunId: settledTaskRunId, thinking }) => {
+        const result: CopilotThinkingEndResult =
+          suppressThinkingStream && thinking === 'streamed' ? 'suppressed' : thinking;
+        await emitActivity(policy, {
+          kind: 'thinking_end',
+          taskRunId: settledTaskRunId,
+          result,
+        });
       },
       onThinking: () => {
         if (thinkingAnnounced) return;

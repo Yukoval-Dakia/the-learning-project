@@ -13,6 +13,7 @@ import {
   writeCopilotReply,
   writeTeachingCopilotReply,
 } from '@/capabilities/copilot/server/conversation-writes';
+import { createCopilotRunLiveWriter } from '@/capabilities/copilot/server/copilot-live-progress';
 import {
   COPILOT_CANCEL_DRAIN_GRACE_MS,
   type CopilotRunCancellationControl,
@@ -432,6 +433,16 @@ async function executeAcceptedCopilotRun(
       streamedProse += text;
     },
   });
+  // YUK-1909 — display-only thinking lane: coalesced pg_notify frames to this
+  // run's authorized SSE clients; nothing is persisted or replayed.
+  const liveWriter = createCopilotRunLiveWriter({ db, runId });
+  const drainWriters = async () => {
+    await drainDeltaChain(
+      Promise.all([progressWriter.drain(), liveWriter.drain()]).then(() => undefined),
+      runId,
+    );
+    liveWriter.dispose();
+  };
   const toolSummaries: string[] = [];
   const partialReply = () => copilotPartialReply({ prose: streamedProse, toolSummaries });
   const displayedProse = (): string | undefined =>
@@ -480,6 +491,7 @@ async function executeAcceptedCopilotRun(
         ...(providerTaskRunId ? { taskRunId: providerTaskRunId } : {}),
         ...(replyFinalization ? { replyFinalization } : {}),
         ...(preparedReply ? { preparedReply } : {}),
+        streamedDraft: streamedProse,
         toolSummaries,
         checkpointSafe: !cancellationControl.materializingToolStarted,
         writeCopilotReplyFn: persistReply,
@@ -497,6 +509,7 @@ async function executeAcceptedCopilotRun(
         runId,
         sessionId: data.session_id,
         actorRef,
+        streamedDraft: streamedProse,
         projectSuccessfulTerminal,
         projectFailedTerminal,
         writeCopilotReplyFn: persistReply,
@@ -511,6 +524,7 @@ async function executeAcceptedCopilotRun(
       ...(providerTaskRunId ? { taskRunId: providerTaskRunId } : {}),
       ...(replyFinalization ? { replyFinalization } : {}),
       ...(preparedReply ? { preparedReply } : {}),
+      streamedDraft: streamedProse,
       toolSummaries,
       checkpointSafe: !cancellationControl.materializingToolStarted,
       projectSuccessfulTerminal,
@@ -670,13 +684,25 @@ async function executeAcceptedCopilotRun(
         ...(params.copilotSubagentEnabled !== undefined
           ? { subagentsEnabled: params.copilotSubagentEnabled }
           : {}),
-        observe: (activity) => {
+        observe: async (activity) => {
           if (activity.kind === 'tool_finished' && activity.summary.trim().length > 0) {
             toolSummaries.push(`${activity.toolName}: ${activity.summary.trim()}`);
           }
           if (activity.kind === 'spawn_budget') {
             params.onSpawnBudgetObservation?.(activity.observation);
             return;
+          }
+          if (activity.kind === 'thinking_delta') {
+            liveWriter.pushThinking({
+              taskRunId: activity.taskRunId,
+              text: activity.text,
+            });
+            return;
+          }
+          if (activity.kind === 'thinking_end') {
+            // Order the attempt's last live frames before its durable end step;
+            // the drain is bounded so a slow notify lane cannot hold the reply.
+            await liveWriter.drain();
           }
           const isProse = activity.kind === 'prose_delta';
           const payload = isProse ? { text: activity.text } : projectCopilotActivity(activity);
@@ -693,7 +719,7 @@ async function executeAcceptedCopilotRun(
         },
       },
     );
-    await drainDeltaChain(progressWriter.drain(), runId);
+    await drainWriters();
     const finalized = result.finalization;
     const finalReply = finalized.replyText;
     const preparedReply: PreparedCopilotReply = finalized.preparedReply;
@@ -723,6 +749,7 @@ async function executeAcceptedCopilotRun(
         actorRef,
         taskRunId: result.taskRunId,
         partialText: partialReply() ?? finalReply,
+        streamedDraft: streamedProse,
         preparedReply,
         projectSuccessfulTerminal,
         projectFailedTerminal,
@@ -746,6 +773,7 @@ async function executeAcceptedCopilotRun(
         actorRef,
         taskRunId: result.taskRunId,
         partialText: partialReply() ?? finalReply,
+        streamedDraft: streamedProse,
         preparedReply,
         projectSuccessfulTerminal,
         projectFailedTerminal,
@@ -772,6 +800,9 @@ async function executeAcceptedCopilotRun(
             sessionId: data.session_id,
             userAskEventId: runId,
             replyText: finalReply,
+            // The page may have shown a draft that the authoritative reply
+            // replaced; the reply marker records that so the UI clears it.
+            streamedDraft: streamedProse,
             preparedReply,
             actorRef,
             taskRunId: result.taskRunId,
@@ -843,7 +874,7 @@ async function executeAcceptedCopilotRun(
     if (err instanceof DurableTerminalProjectionError) throw err;
     // streamTaskCollecting graceful-degrades（resolve partial，见上），故这里只捕获
     // 它之外的 throw（装配 / MCP mount / 事件写），或注入 fixture 的 throw。
-    await drainDeltaChain(progressWriter.drain(), runId);
+    await drainWriters();
     if ((await cancellationControl.probe()) === 'cancel_requested') {
       return await settleObservedCancellation();
     }
@@ -853,6 +884,7 @@ async function executeAcceptedCopilotRun(
       sessionId: data.session_id,
       actorRef,
       partialText: partialReply(),
+      streamedDraft: streamedProse,
       projectSuccessfulTerminal,
       projectFailedTerminal,
       writeCopilotReplyFn: persistReply,

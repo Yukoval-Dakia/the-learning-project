@@ -7,7 +7,8 @@ export const createStartIngestionSessionFunction = createServerFn({ method: 'POS
   .handler(({ context, data }) => {
     const request = getRequest();
     return runAuthenticatedStartWorkbench(context, request, async () => {
-      const result = await context.createIngestionSession({
+      const { createStartIngestionSession } = await context.adapters.records();
+      const result = await createStartIngestionSession({
         body: data,
         key: request.headers.get('Idempotency-Key'),
       });
