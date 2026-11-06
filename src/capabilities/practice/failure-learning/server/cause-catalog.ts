@@ -15,6 +15,7 @@ import { inArray } from 'drizzle-orm';
 import type { Db } from '@/db/client';
 import { event, question } from '@/db/schema';
 import { pendingProposalWithCooldown } from '@/kernel/proposals/inbox';
+import { learnerSummaryIfAllowed } from '@/kernel/proposals/learner-summary';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
 import { getFailureAttemptsForDerivation } from '@/kernel/read-models/failure-attempts';
@@ -199,11 +200,16 @@ export async function maybeProposeCauseCategoryFromOthers(params: {
     const existingRows = await getCauseCategoryOverlaysByIds(db, [categoryId]);
     if (existingRows.length > 0) return;
 
+    // Deterministic learner line; omitted (card uses the kind sentence) when the
+    // model label would fail the same gate the writer applies.
+    const learnerSummary = learnerSummaryIfAllowed(`新增错因分类「${output.label}」`);
+
     await writeAiProposal(db, {
       actor_ref: 'attribution',
       payload: {
         kind: 'cause_category',
         target: { subject_kind: 'subject_profile', subject_id: subjectId },
+        ...(learnerSummary !== undefined ? { learner_summary: learnerSummary } : {}),
         reason_md:
           (output.rationale_md ??
             `${subjectId} 的 other 归因复发 ${scopedCauses.length} 次，LLM 判定存在连贯错因模式。`) +

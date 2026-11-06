@@ -46,6 +46,7 @@ import {
   installedHostOperation,
 } from '@/kernel/host-operation';
 import { findExistingRateEvent } from './applier-helpers';
+import { resolveAutoAppliedSummary } from './auto-applied-summary';
 import {
   type VerdictBreakerResult,
   checkAutoApplyBreaker,
@@ -53,7 +54,6 @@ import {
 } from './auto-apply-breaker';
 import { AUTO_APPLY_POLICY, proposalAutoApplyEnabled } from './auto-apply-marker';
 import { proposalDisplayTitle } from './presentation';
-import { proposalReasonPlainText } from './reason-text';
 
 /** Successful auto-apply anchor (generic; the completion-era anchor stays readable). */
 export const PROPOSAL_AUTOAPPLY_ACTION = 'experimental:auto_apply';
@@ -165,7 +165,7 @@ interface AnchorInput {
 
 async function writeAppliedAnchor(db: Db, input: AnchorInput): Promise<void> {
   const at = input.appliedAt ?? new Date();
-  const summary = proposalReasonPlainText(input.payload.learner_summary ?? input.payload.reason_md);
+  const { summary, source: summarySource } = resolveAutoAppliedSummary(input.payload);
   const level = checkVerdictRateBreaker({ recentCount: input.appliedCount }).status;
   await writeEvent(db, {
     id: proposalAutoApplyAnchorId(input.proposalId),
@@ -180,6 +180,7 @@ async function writeAppliedAnchor(db: Db, input: AnchorInput): Promise<void> {
       kind: input.kind,
       title: proposalDisplayTitle(input.payload),
       summary,
+      summary_source: summarySource,
       level,
       applied: input.appliedCount,
       cap: input.breaker.cap,

@@ -61,6 +61,7 @@ async function main(): Promise<number> {
 
   const { db } = await import('@/db/client');
   const { resolveKnownSubjectId, resolveSubjectProfile } = await import('@/subjects/profile');
+  const { learnerSummaryIfAllowed } = await import('@/kernel/proposals/learner-summary');
   const { writeAiProposal } = await import('@/kernel/proposals/writer');
   const { pendingProposalWithCooldown } = await import('@/kernel/proposals/inbox');
   const { CAUSE_OVERLAY_ID_PREFIX, getCauseCategoryOverlaysByIds } = await import(
@@ -96,11 +97,13 @@ async function main(): Promise<number> {
     return 1;
   }
 
+  const learnerSummary = learnerSummaryIfAllowed(`新增错因分类「${label}」`);
   const eventId = await writeAiProposal(db, {
     actor_ref: actor ?? 'owner-script',
     payload: {
       kind: 'cause_category',
       target: { subject_kind: 'subject_profile', subject_id: profile.id },
+      ...(learnerSummary !== undefined ? { learner_summary: learnerSummary } : {}),
       reason_md: reason ?? `owner 手动提议错因类目 ${label}（${categoryId}）`,
       evidence_refs: [],
       cooldown_key: cooldownKey,

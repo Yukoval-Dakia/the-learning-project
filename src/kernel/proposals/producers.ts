@@ -86,6 +86,8 @@ export async function writeVariantQuestionProposal(
 export interface WriteLearningItemProposalInput extends CommonProducerInput {
   topic: string;
   plan_case?: string;
+  /** Learner-facing line; the auto-applied card falls back to a kind sentence when absent. */
+  learner_summary?: string;
   /** Explicit: only the existing-graph case is fully retractable. */
   auto_apply_eligible?: boolean;
   knowledge_node: unknown;
@@ -117,6 +119,7 @@ export async function writeLearningItemProposal(
     payload: {
       kind: 'learning_item',
       target: { subject_kind: 'learning_item', subject_id: null },
+      ...(input.learner_summary !== undefined ? { learner_summary: input.learner_summary } : {}),
       reason_md: input.reason_md,
       evidence_refs: input.evidence_refs ?? [],
       proposed_change: proposedChange,

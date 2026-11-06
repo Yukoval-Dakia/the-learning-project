@@ -241,6 +241,8 @@ export const WorkbenchSummaryResponseSchema = z.object({
     }),
   ),
   week_heat: z.array(z.object({ day: z.string(), count: z.number().int().nonnegative() })),
+  // Served by the API process so it reflects the hydrated config, not a Start-bundle default.
+  auto_apply_enabled: z.boolean(),
 });
 
 const OvernightRunSchema = z.object({

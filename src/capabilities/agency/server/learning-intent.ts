@@ -17,6 +17,7 @@ import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
 import { knowledge } from '@/db/schema';
 import type { ProposalAcceptEffectContext } from '@/kernel/proposals/decision-protocol';
+import { learnerSummaryIfAllowed } from '@/kernel/proposals/learner-summary';
 import { writeLearningItemProposal } from '@/kernel/proposals/producers';
 import { createKnowledgeNodeFromEvents } from '@/kernel/records/knowledge-node-birth';
 import type { CreateLearningIntentNoteFn } from '@/kernel/records/learning-intent-note-birth';
@@ -320,9 +321,17 @@ export async function planLearningIntent(
     atomics: outline.atomics,
     longs: outline.longs,
   };
+  // 3c is the only auto-applied case; reuse the learner's own topic instead of
+  // the technical reason line. A topic that trips the learner-copy gate falls
+  // back to the fixed kind sentence at anchor write time.
+  const learnerSummary =
+    planCase === '3c_existing_graph'
+      ? learnerSummaryIfAllowed(`为你把「${topic.replace(/\s+/g, ' ').trim()}」整理成一条学习路径`)
+      : undefined;
   const proposalId = await writeLearningItemProposal(db, {
     topic,
     plan_case: planCase,
+    ...(learnerSummary !== undefined ? { learner_summary: learnerSummary } : {}),
     // 3a/3b mint knowledge nodes on accept, but the learning_item retract lane only
     // archives items/artifacts. Keep them human-reviewed rather than auto-applied;
     // 3c writes no knowledge and is the only fully retractable case.
