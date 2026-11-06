@@ -154,10 +154,7 @@ export function shouldMarkSlotDoneOnBack(autoCommitted: boolean): boolean {
 // autoCommitted 隐藏了它）。手动流锚点在用户提交申诉那刻随 commit 落（res.judge.judge_event_id），客观
 // 流锚点在 auto-commit 时已落（同一响应字段），暂存后供此谓词判定。
 export function appealEntryAvailable(opts: {
-  // YUK-444 — 三相后 phase 可为 'confidence'（judge 结果暂存、判定未揭晓）。入参放宽到含它，
-  // 语义上申诉入口只在 'feedback' 可用，'confidence'/'answering' 皆经下面首行 guard 返回 false
-  // （'confidence' 相位无已揭晓判定可申诉）。放宽入参即便调用点未被 phase==='feedback' 收窄也可赋值。
-  phase: 'answering' | 'confidence' | 'feedback';
+  phase: 'answering' | 'feedback';
   appealOpen: boolean;
   autoCommitted: boolean;
   autoCommitJudgeEventId: string | null;
@@ -176,29 +173,6 @@ export function appealEntryAvailable(opts: {
 // 的信号。零强制红线：即便显示也默认折叠、可完全忽略、空值不发字段。
 export function shouldOfferProcessBox(isChoice: boolean): boolean {
   return !isChoice;
-}
-
-// YUK-444 (信心自评插拍 gate) — 提交后「先自评再看结果」的 1-5 interstitial 只在**非客观**判分流插入。
-// 客观题（route ∈ {exact, keyword}）preview 回来即 auto-commit（advance:false 直接渲判定卡），不插拍
-// （与「客观题跳过」约束一致）。gate 与 isObjectiveQuestion 同源取反：只看 route，不看 kind。
-export function shouldOfferConfidenceGate(route: string): boolean {
-  return !isObjectiveQuestion(route);
-}
-
-// YUK-444 (推迟揭晓时序不变式) — PfSolo 三相由两个 judge-preview slot 派生：
-//   - preview===null && pending===null → answering（作答，判定未跑）
-//   - preview===null && pending!==null → confidence（judge 结果已到但**暂存未揭晓**，插信心自评拍）
-//   - preview!==null                    → feedback（判定卡揭晓）
-// 关键不变式：只要 pending 有值而 preview 仍 null，就停在 confidence（判定卡不渲染）——揭晓**必须**
-// 经 revealVerdict 把 pending 提上 preview。preview 一旦有值即优先 feedback（揭晓后 pending 已清）。
-// 纯函数，供单测固定「先自评、后揭晓」的相位时序。
-export function derivePhase(
-  preview: JudgePreview | null,
-  pendingPreview: JudgePreview | null,
-): 'answering' | 'confidence' | 'feedback' {
-  if (preview !== null) return 'feedback';
-  if (pendingPreview !== null) return 'confidence';
-  return 'answering';
 }
 
 // YUK-562 / YUK-444 (采集字段装配 · 零强制「空值不发字段」) — 把 UI 侧的过程文本 / 信心自评装配成
@@ -418,7 +392,9 @@ export function usePracticeSubmit({
     setUnreceipted((prev) => ({ ...prev, [slotId]: next }));
   // YUK-1051 — 202-pending：提交被分到 durable lane 时的 run 锚点；轮询直到终态，
   // 绝不重交同一答案。null = 非 pending（同步回执 / 未提交）。
-  const [pendingRun, setPendingRun] = useState<{ runId: string; pollUrl: string } | null>(null);
+  const [pendingRun, setPendingRun] = useState<{ runId: string; pollUrl: string | null } | null>(
+    null,
+  );
   const [judging, setJudging] = useState(false);
   const [preview, setPreview] = useState<JudgePreview | null>(null);
   const activationIntent = useRef<SubmitReviewInput['activation_intent']>(undefined);
@@ -429,12 +405,8 @@ export function usePracticeSubmit({
   const [committedPreview, setCommittedPreview] = useState<JudgeFeedback | null>(null);
   // YUK-562 (过程框) — reasoningTrace 是可选过程文本。零强制：不挡提交、空值不发字段（buildCaptureFields）。
   const [reasoningTrace, setReasoningTrace] = useState('');
-  // YUK-444 (信心自评 · 推迟揭晓) — 开放题提交后判定揭晓前，先渲 1-5 自评 interstitial。judge 结果
-  // 暂存在 pendingPreview（不 setPreview → 判定卡不渲染），确认/跳过后才 setPreview 揭晓（元认知语义：
-  // 先自评再看结果）。selfConfidence=null 表示未选 / 跳过 → 不发 self_confidence。客观题 auto-commit
-  // 流不经此（不插拍）。
-  const [pendingPreview, setPendingPreview] = useState<JudgePreview | null>(null);
-  const [selfConfidence, setSelfConfidence] = useState<number | null>(null);
+  // Optional, picked while answering (open questions only) and sent with the answer. null → no field.
+  const [selfConfidence, setSelfConfidence] = useState<1 | 2 | 3 | 4 | 5 | null>(null);
   const [rating, setRating] = useState<Rating | null>(null);
   const [appealOpen, setAppealOpen] = useState(false);
   const [appealText, setAppealText] = useState('');
@@ -619,6 +591,11 @@ export function usePracticeSubmit({
           }
           if (settled.kind === 'pending') {
             setPendingRun({ runId: settled.run_id, pollUrl: settled.poll_url });
+            return;
+          }
+          // Failed for good: same path as a live failure, starting from its poll.
+          if (settled.run.status === 'failed') {
+            setPendingRun({ runId: settled.run.run_id, pollUrl: null });
             return;
           }
           onPendingSettled({
@@ -959,9 +936,7 @@ export function usePracticeSubmit({
               )
             );
           }));
-  // YUK-444 — 三相：answering（作答）→ confidence（judge 结果暂存、信心自评插拍、判定未揭晓）→
-  // feedback（判定卡）。confidence 只在非客观流出现；客观题 answering 直接跳到 feedback（auto-commit）。
-  const phase = committedPreview ? 'feedback' : derivePhase(preview, pendingPreview);
+  const phase = preview || committedPreview ? 'feedback' : 'answering';
   // YUK-432 (Bugbot FINDING 1) — 「返回流」出口：自动 commit 后必须标 slot done（onCommittedBack），
   // 否则只 onBack 会留下「已判分但 slot 卡 in_progress」的不一致。未自动 commit → 原 onBack。
   const handleBack = async () => {
@@ -1040,6 +1015,12 @@ export function usePracticeSubmit({
     (settled: JudgeRunPollingState) => {
       if (verdictNeedsLearnerRating(settled.status, settled.result)) {
         setPendingRun(null);
+        setRecoverIssuance(issuanceId);
+        return;
+      }
+      // A run that failed for good: the replay offers the learner's own rating. The run stays set
+      // so a refused replay still shows «没判成»; the poller reports each run only once.
+      if (settled.status === 'failed') {
         setRecoverIssuance(issuanceId);
         return;
       }
@@ -1150,7 +1131,6 @@ export function usePracticeSubmit({
       if (opts.advance !== false) onDone();
     } catch {
       setPreview(null);
-      setPendingPreview(null);
       setCommittedPreview(null);
       setRating(null);
       setAutoCommitted(false);
@@ -1206,12 +1186,10 @@ export function usePracticeSubmit({
       return;
     }
     activationIntent.current = r.activation_intent;
-    if (!r.automatic_commit || r.judge.suggested_rating === null) {
-      setPendingPreview(r.judge);
-      return;
-    }
+    setPendingRun(null);
     setPreview(r.judge);
     setRating(r.judge.suggested_rating);
+    if (!r.automatic_commit || r.judge.suggested_rating === null) return;
     if (r.committed) {
       if (r.committed.status === 'review_required') {
         addToast('作答已保存，暂时没法自动判；可以自己评一下来安排复习。', 'info', 'clock');
@@ -1241,7 +1219,7 @@ export function usePracticeSubmit({
       const r = await getAdvice(q.id, answerMd, imageRefs, assessmentInput, adviceCommit(false));
       await applyAdvice(r, true);
     } catch {
-      addToast(JUDGE_FAILURE_MESSAGE, 'info', 'alert');
+      if (!pendingRun) addToast(JUDGE_FAILURE_MESSAGE, 'info', 'alert');
     } finally {
       setJudging(false);
     }
@@ -1320,17 +1298,6 @@ export function usePracticeSubmit({
     }
   };
 
-  // YUK-444 — 信心自评确认（选了 1-5）或「跳过」（confidence=null）→ 揭晓判定：把暂存的 judge 结果
-  // 提上 preview（触发判定卡渲染）+ 落 suggested_rating 到手动评级默认值。selfConfidence 存进 state，
-  // 待用户「确认评级 · 下一项」时随 commit 的 buildCaptureFields 一并发出（跳过 → null → 不发字段）。
-  const revealVerdict = (confidence: number | null) => {
-    if (!pendingPreview) return;
-    setSelfConfidence(confidence);
-    setRating(pendingPreview.suggested_rating);
-    setPreview(pendingPreview);
-    setPendingPreview(null);
-  };
-
   // 键盘：⌘/Ctrl+Enter 提交。选项数字键（1–9，随选项数）已移进 ChoiceSetResponse 的
   // hotkeys（YUK-1051 组件族一般化，不再硬编码 1–4）；这里不再重复监听。
   // YUK-1483：监听挂在 window（文本框里和题面上都能按），但归一个 DOM 节点所有——节点挂上才监听、
@@ -1354,7 +1321,6 @@ export function usePracticeSubmit({
   const startSelfRate = () => {
     setIssuanceMode('manual');
     setPreview(null);
-    setPendingPreview(null);
     activationIntent.current = undefined;
     // Back to answering (self-rated): unsaved edits resume autosaving.
     autosave.resume();
@@ -1448,11 +1414,11 @@ export function usePracticeSubmit({
       autoCommitted,
       autoCommitJudgeEventId,
       selfConfidence,
+      setSelfConfidence,
       reasoningTrace,
       setReasoningTrace,
       runJudge,
       commit,
-      revealVerdict,
       startSelfRate,
     },
     appeal: {
