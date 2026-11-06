@@ -4,7 +4,7 @@
 // 本脚本绕开 pg-boss 与 frontier discovery（后者被 YUK-604 pending-stall 挡住），直接以
 // spike KC 为锚驱动 runQuizGen（closed_book），再逐题 runQuizVerify，最后渲 markdown 质检报告。
 //
-// 用法（本地 dev DB，compose Postgres :5433）：
+// 用法（本 worktree dev DB，docker-compose.dev.yml Postgres :5434）：
 //   pnpm exec tsx scripts/dev/question-supply-spike.ts                       # gen+verify+report 全跑
 //   pnpm exec tsx scripts/dev/question-supply-spike.ts --phase gen --targets yuwen-huoyong --count 2
 //   pnpm exec tsx scripts/dev/question-supply-spike.ts --phase verify        # 只补验尚无终态判词的题
@@ -17,11 +17,12 @@
 // （YUK-555 精神——verify 每题 2-3 次 LLM call）。
 
 import { loadEnv } from '../../server/env';
-import { buildLocalDatabaseUrl } from '../local-db-env';
+import { guardLocalDbTarget, localDatabaseUrl } from '../local-db-env';
 
 loadEnv();
-// 强制本地 dev DB（覆盖 .env 里任何 DATABASE_URL），杜绝误连生产。
-process.env.DATABASE_URL = buildLocalDatabaseUrl(process.env);
+// 强制本地 dev DB（覆盖 .env 里任何 DATABASE_URL），杜绝误连生产；TEST 目标
+// （5433/5544 或库名 loom）在连接前拒绝。
+process.env.DATABASE_URL = localDatabaseUrl(guardLocalDbTarget('question-supply-spike'));
 const dbHost = new URL(process.env.DATABASE_URL.replace(/^postgres(ql)?:/, 'http:')).hostname;
 if (dbHost !== '127.0.0.1' && dbHost !== 'localhost') {
   throw new Error(`refusing non-local DB host: ${dbHost}`);
