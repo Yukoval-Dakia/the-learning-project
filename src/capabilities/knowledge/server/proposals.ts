@@ -150,6 +150,9 @@ export type KnowledgeMutationPayload =
 
 export interface WriteProposalEntry {
   payload: KnowledgeMutationPayload;
+  // Optional so direct/test callers that predate the learner-facing field keep
+  // working; the propose tools require it at their input boundary.
+  learner_summary?: string;
   reasoning: string;
   evidence_refs?: ProposalEvidenceRefT[];
   actor_ref?: string;
@@ -282,6 +285,7 @@ export async function writeKnowledgeProposeEvent(
       payload: {
         kind: 'knowledge_node',
         target: { subject_kind: 'knowledge', subject_id: null },
+        ...(entry.learner_summary !== undefined ? { learner_summary: entry.learner_summary } : {}),
         reason_md: reasoning,
         evidence_refs: entry.evidence_refs ?? [],
         proposed_change: {
@@ -314,6 +318,7 @@ export async function writeKnowledgeProposeEvent(
         node_id: entry.payload.node_id,
         expected_version: entry.payload.expected_version,
       },
+      ...(entry.learner_summary !== undefined ? { learner_summary: entry.learner_summary } : {}),
       reason_md: reasoning,
       evidence_refs: entry.evidence_refs,
       suggestion_kind: entry.suggestion_kind,
@@ -347,6 +352,7 @@ export async function writeKnowledgeProposeEvent(
     payload: {
       kind: 'knowledge_mutation',
       target: { subject_kind: 'knowledge', subject_id: subjectId },
+      ...(entry.learner_summary !== undefined ? { learner_summary: entry.learner_summary } : {}),
       reason_md: reasoning,
       evidence_refs: entry.evidence_refs ?? [],
       proposed_change: entry.payload,

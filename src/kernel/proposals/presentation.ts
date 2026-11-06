@@ -69,6 +69,13 @@ export interface ProposalSummaryItem {
 
 export interface ProposalPresentation {
   title: string;
+  /**
+   * The learner-facing main line (what this does + why). New proposals carry a
+   * validated `payload.learner_summary`; rows written before that field existed
+   * fall back to the sanitized `reason_md` they already rendered, so an old card
+   * never goes blank and the fallback is identical to today's body text.
+   */
+  learner_summary: string;
   change_summary: ProposalSummaryItem[];
   evidence_labels: Record<string, string>;
   knowledge_edge?: { from_label: string; to_label: string };
@@ -1015,6 +1022,9 @@ export async function loadProposalPresentations(
   for (const proposal of proposals) {
     presentations.set(proposal.id, {
       title: proposalDisplayTitle(proposal.payload),
+      learner_summary: proposalReasonPlainText(
+        proposal.payload.learner_summary ?? proposal.payload.reason_md,
+      ),
       change_summary: proposalChangeSummary(proposal.payload),
       evidence_labels: {},
       block_merge: null,
