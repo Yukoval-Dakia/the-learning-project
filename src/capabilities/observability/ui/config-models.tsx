@@ -133,14 +133,16 @@ function GlobalDefault({ data, save }: { data: ConfigData; save: SaveConfig }) {
     text: string;
     changes: Parameters<SaveConfig>[0];
   } | null>(null);
-  const issue = pinned ? null : modelIssue(data.providers, pick.provider, pick.model);
   const currentPair = current?.provider
     ? current.model
       ? `${current.provider} / ${current.model}`
       : current.provider
     : null;
   const pairChanged =
-    !pinned && (pick.provider !== current?.provider || pick.model !== current?.model);
+    !pinned &&
+    (pick.provider !== (current?.provider ?? '') || pick.model !== (current?.model ?? ''));
+  // Thinking is independent of the pair: with no default model, or only a provider, it still saves.
+  const issue = pairChanged ? modelIssue(data.providers, pick.provider, pick.model) : null;
   const thinkingChanged = thinking !== stored;
   const pickedModel = pinned
     ? findModel(data.providers, current?.provider ?? '', current?.model ?? '')
@@ -155,7 +157,16 @@ function GlobalDefault({ data, save }: { data: ConfigData; save: SaveConfig }) {
       const receipt = await save(changes);
       const after = receipt.effective?.global ?? null;
       setSaved({
-        text: after?.provider ? `现在生效：${after.provider} / ${after.model}` : '已清除全局默认。',
+        text: [
+          changes.some((change) => change.action === 'clear')
+            ? '已清除全局默认。'
+            : after?.provider
+              ? `现在生效：${after.provider} / ${after.model}`
+              : null,
+          after?.reasoning?.level ? `思考强度 ${thinkingWord(after.reasoning.level)}。` : null,
+        ]
+          .filter(Boolean)
+          .join(' '),
         epoch: receipt.committed_epoch,
       });
       setEditing(false);
@@ -174,7 +185,12 @@ function GlobalDefault({ data, save }: { data: ConfigData; save: SaveConfig }) {
         : null,
     ].filter(Boolean);
     setConfirm({
-      text: `${parts.join('；')}。没有单独设置的任务都会跟着变。`,
+      text: `${parts.join('；')}。${[
+        pairChanged ? '没有自己模型的任务改用新模型' : null,
+        thinkingChanged ? '没有自己思考强度的任务改用新强度，用自己模型的任务也一样' : null,
+      ]
+        .filter(Boolean)
+        .join('；')}。`,
       changes: [
         ...(pairChanged
           ? ([
