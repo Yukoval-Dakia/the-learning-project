@@ -1,8 +1,8 @@
 // Cards a reply places between its paragraphs. Each card shows what the system read for an id; the
-// question card takes its answer area as `children`, because the blocks belong to the practice page.
+// question card is only the frame, because the question and its answering belong to practice.
 import { ArrowRight, FileText, ListChecks, LoaderCircle, Network } from 'lucide-react';
-import type { ReactNode } from 'react';
 import { A5_BANDS, UNKNOWN_BAND_LABEL } from '@/core/mastery-band';
+import type { QuestionCardFrameProps } from '../question-card';
 import './reply-cards.css';
 
 function OpenLabel() {
@@ -66,34 +66,25 @@ export function NoteCard(p: {
   );
 }
 
-export function QuestionCard(p: {
-  /** Still being checked: the question reads, answering waits. */
-  checking: boolean;
-  actions?: ReactNode;
-  children: ReactNode;
-}) {
+export function QuestionCard(p: QuestionCardFrameProps) {
+  if (p.gone) return <div className="un-cp-block un-cp-block-gone">{p.gone}</div>;
   return (
     <section className="un-cp-block un-cp-block-question" aria-label="题目">
       <p className="un-cp-block-kind">
         <ListChecks size={14} aria-hidden="true" />
         题目
-        {p.checking ? (
-          <span className="un-cp-block-status" role="status">
-            <LoaderCircle size={14} aria-hidden="true" className="un-cp-spin" />
-            还在检查
+        {p.status ? (
+          <span className="un-cp-block-status" role="status" data-tone={p.status.tone}>
+            {p.status.tone === 'waiting' ? (
+              <LoaderCircle size={14} aria-hidden="true" className="un-cp-spin" />
+            ) : null}
+            {p.status.word}
           </span>
         ) : null}
       </p>
       {p.children}
-      {p.checking ? (
-        <p className="un-cp-block-note">检查完就能在这里作答。</p>
-      ) : p.actions ? (
-        <div className="un-cp-block-actions">{p.actions}</div>
-      ) : null}
+      {p.note ? <p className="un-cp-block-note">{p.note}</p> : null}
+      {p.actions ? <div className="un-cp-block-actions">{p.actions}</div> : null}
     </section>
   );
-}
-
-export function GoneCard({ what }: { what: string }) {
-  return <div className="un-cp-block un-cp-block-gone">这{what}已经不在了。</div>;
 }

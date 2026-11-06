@@ -12,6 +12,9 @@ import type { NotePageClient } from '@/capabilities/notes/ui-public';
 import {
   ConfirmationAssessment,
   type ConfirmationDraftClient,
+  QuestionCardBlock,
+  type QuestionCardBlockProps,
+  type QuestionCardClient,
 } from '@/capabilities/practice/ui-public';
 import { useWorkbenchClient } from '@/capabilities/shell/ui-public';
 import { queryKeys } from '@/ui/lib/write-invalidation';
@@ -123,6 +126,7 @@ function ShellMain({ blockedByModal, children }: ShellMainProps) {
 // RootShell owns navigation, theme and the single Companion lifetime; presenters only arrange them.
 export function RootShell({
   confirmationClient,
+  questionCardClient,
   children,
   pathname,
   navigate,
@@ -130,6 +134,7 @@ export function RootShell({
   readNotePage,
 }: {
   confirmationClient?: ConfirmationDraftClient;
+  questionCardClient?: QuestionCardClient;
   children: ReactNode;
   pathname: string;
   navigate: (to: string) => void;
@@ -144,6 +149,13 @@ export function RootShell({
         return <ConfirmationAssessment {...props} client={confirmationClient} />;
       },
     [confirmationClient],
+  );
+  const QuestionCardRenderer = useMemo(
+    () =>
+      function QuestionCardRenderer(props: QuestionCardBlockProps) {
+        return <QuestionCardBlock {...props} client={questionCardClient} />;
+      },
+    [questionCardClient],
   );
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -248,6 +260,7 @@ export function RootShell({
       <div className="un-st-companion-slot">
         <CompanionMount
           confirmationRenderer={ConfirmationRenderer}
+          questionCardRenderer={QuestionCardRenderer}
           readNotePage={readNotePage}
           open={companionOpen}
           presentation="workspace"

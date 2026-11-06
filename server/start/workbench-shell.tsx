@@ -12,6 +12,7 @@ import { TokenGate } from '../../web/src/TokenGate';
 import { startAgentNoteClient } from './agent-note-client';
 import { startCopilotClient } from './copilot-summary-client';
 import { startNotePageClient } from './note-page-client';
+import { startQuestionCardClient } from './question-card-client';
 import { startSubjectClient } from './subject-client';
 import { startKnowledgeTreeClient, startWorkbenchClient } from './workbench-client';
 
@@ -37,6 +38,7 @@ export function StartWorkbenchShell({
               <CopilotClientProvider value={startCopilotClient}>
                 <RootShell
                   confirmationClient={confirmationClient}
+                  questionCardClient={startQuestionCardClient}
                   pathname={pathname}
                   navigate={startNavigate}
                   readKnowledgeTree={startKnowledgeTreeClient}
