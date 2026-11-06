@@ -277,7 +277,7 @@ function AutoAppliedCard({
         </p>
         {trace && (
           <div id={traceId} className="ib-aa-trace">
-            来自 <b>{row.kind}</b> · 干净可逆
+            来自 <b>{meta.label}</b> · 干净可逆
             <br />
             静态可逆性兜底 · 非 confidence 判定（apply 档位 {row.level}）
           </div>
