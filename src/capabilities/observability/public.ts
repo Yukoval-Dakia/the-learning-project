@@ -3,6 +3,16 @@
  * truth sources and injects the config facts factory; the read face consumes it here.
  */
 
+// Subject creation is the registry's single writer. Question authoring reaches it
+// through the kernel port instead of importing this capability.
+export async function installObservabilityHostOperations(): Promise<void> {
+  const [{ installSubjectCreateOperation }, { thinCreateSubject }] = await Promise.all([
+    import('@/kernel/subject-create'),
+    import('./server/subject-create'),
+  ]);
+  installSubjectCreateOperation(thinCreateSubject);
+}
+
 export { readProviderCostWindow } from '@/kernel/read-models/provider-cost-projection';
 // Config consumers share the snapshot builder and the existing injected mutation writer.
 export { type AdminConfigResponse, AdminConfigResponseSchema } from './api/admin-config-contracts';

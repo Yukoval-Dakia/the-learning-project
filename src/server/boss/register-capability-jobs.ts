@@ -147,10 +147,16 @@ export async function registerCapabilityJobs(
   // through kernel ports. Kernel cannot import a capability. This runs before any capability
   // job mounts and before subscription dispatch starts. The API host installs only the host
   // operations. Agency probes issue assessments, so the model pin reader is bound here too.
+  // Question authoring creates learner-named subjects through the kernel port, so the
+  // registry writer is bound here as well.
   const { installPracticeWorker } = await import('@/capabilities/practice/public');
   await installPracticeWorker();
   const { installAgencyHostOperations } = await import('@/capabilities/agency/public');
   await installAgencyHostOperations();
+  const { installObservabilityHostOperations } = await import(
+    '@/capabilities/observability/public'
+  );
+  await installObservabilityHostOperations();
   const decls = capabilities
     .flatMap((cap) => cap.jobs?.handlers ?? [])
     .filter((d) => d.load || d.backend === 'dbos');

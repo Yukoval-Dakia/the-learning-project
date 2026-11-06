@@ -153,6 +153,10 @@ const AuthorQuestionOutputSchema = z.object({
   // Where the learner sees the new question in the bank.
   bank_path: z.string().optional(),
   placement_note: z.string().optional(),
+  // teaching_draft: a subject created by this call (or replayed by name) is recorded
+  // even when the question write fails afterwards, so the companion can say so.
+  subject_created: z.boolean().optional(),
+  subject_id: z.string().optional(),
   problem: z
     .object({
       code: z.enum(['subject_root_missing', 'learner_topic_required', 'conversation_required']),
@@ -184,6 +188,12 @@ export interface AuthorQuestionDeps {
   sessionId?: string;
   /** ctx.causedByEventId (optional, matches ToolContext). */
   causedByEventId?: string;
+  /**
+   * Called as soon as a subject commits (create) or replays, before any later step
+   * can fail. The tool keeps this receipt outside its try so a thrown error still
+   * tells the learner a subject exists.
+   */
+  onSubjectCreated?: (subject: { id: string; created: boolean }) => void;
   /** Injectable for tests; the variant seed defaults to the central AI runner. */
   runTaskFn?: TaskTextRunFn;
 }
@@ -361,17 +371,11 @@ export async function authorQuestion(
     case 'teaching_draft': {
       const { submitCopilotAuthoredDraft } = await import('@/capabilities/practice/public');
       const draft = TeachingDraft.parse(seed.draft);
-      const placement = await resolveTeachingDraftPlacement(deps.db, seed, deps);
-      if (!placement.ok)
-        return {
-          status: 'failed',
-          seed_mode: seed.seed_mode,
-          proposal_ids: [],
-          mistake_variant_ids: [],
-          variant_question_ids: [],
-          problem: placement.issue,
-          reasoning_summary: placement.issue.detail,
-        };
+      // Expansion is pure, database-free validation (answer indices, blank counts,
+      // unit shapes). Run it before any subject write so a malformed draft leaves
+      // no subject behind.
+      teachingDraftToDocument(draft);
+      // Conversation provenance is a dry check: it must fail before any subject write.
       if (!(await hasTeachingDraftConversation(deps.db, deps.sessionId)))
         return {
           status: 'failed',
@@ -385,6 +389,32 @@ export async function authorQuestion(
           },
           reasoning_summary: '没有找到这次对话的来源，这次没有存题。',
         };
+      const placement = await resolveTeachingDraftPlacement(deps.db, seed, deps);
+      if (!placement.ok)
+        return {
+          status: 'failed',
+          seed_mode: seed.seed_mode,
+          proposal_ids: [],
+          mistake_variant_ids: [],
+          variant_question_ids: [],
+          problem: placement.issue,
+          // A subject created before this failure must still be reported.
+          ...(placement.subject
+            ? { subject_created: placement.subject.created, subject_id: placement.subject.id }
+            : {}),
+          reasoning_summary: placement.issue.detail,
+        };
+      const base = {
+        seed_mode: seed.seed_mode,
+        proposal_ids: [],
+        mistake_variant_ids: [],
+        variant_question_ids: [],
+        // Creation already committed; a later write failure leaves that subject and
+        // the learner must be told about it (no compensation here).
+        ...(placement.subject
+          ? { subject_created: placement.subject.created, subject_id: placement.subject.id }
+          : {}),
+      };
       const result = await submitCopilotAuthoredDraft(
         teachingDraftToDocument(draft, {
           knowledge_ids: placement.knowledge_ids,
@@ -397,12 +427,6 @@ export async function authorQuestion(
         },
         deps,
       );
-      const base = {
-        seed_mode: seed.seed_mode,
-        proposal_ids: [],
-        mistake_variant_ids: [],
-        variant_question_ids: [],
-      };
       if (result.status === 'declaration_failed')
         return {
           ...base,
@@ -439,15 +463,22 @@ async function authorQuestionExecute(
   raw: AuthorQuestionInput,
 ): Promise<AuthorQuestionOutput> {
   const input = AuthorQuestionInputSchema.parse(raw);
+  // Creation is a committed side effect. Keep its receipt outside the try so an
+  // exception anywhere after it still returns subject_created/subject_id.
+  const receipt: { subject_created?: boolean; subject_id?: string } = {};
   try {
     validateAuthorQuestionInput(input);
     const seed = toAuthorQuestionSeed(input);
-    return await authorQuestion(seed, {
+    const result = await authorQuestion(seed, {
       db: ctx.db,
       actorRef: ctx.callerActor.ref,
       taskRunId: ctx.taskRunId,
       causedByEventId: ctx.causedByEventId,
       sessionId: ctx.sessionId,
+      onSubjectCreated: (subject) => {
+        receipt.subject_created = subject.created;
+        receipt.subject_id = subject.id;
+      },
       runTaskFn: makeRunTaskFn(ctx.db, {
         signal: ctx.signal,
         parentTaskRunId: ctx.taskRunId,
@@ -456,6 +487,7 @@ async function authorQuestionExecute(
           : {}),
       }),
     });
+    return Object.keys(receipt).length > 0 ? { ...result, ...receipt } : result;
   } catch (err) {
     return {
       status: err instanceof z.ZodError ? 'skipped:invalid_payload' : 'failed',
@@ -463,6 +495,7 @@ async function authorQuestionExecute(
       proposal_ids: [],
       mistake_variant_ids: [],
       variant_question_ids: [],
+      ...receipt,
       reasoning_summary: err instanceof Error ? err.message : String(err),
     };
   }
@@ -471,7 +504,7 @@ async function authorQuestionExecute(
 export const authorQuestionTool: DomainTool<AuthorQuestionInput, AuthorQuestionOutput> = {
   name: 'author_question',
   description:
-    'Create one question with seed_mode="teaching_draft": write draft={stem_md,response,solution_md?}. Prefer confirmed matching knowledge_ids. If no suitable knowledge node exists, pass knowledge_ids=[], subject_id (existing subject ID), learner_topic (exact topic substring from this user request). Match the discipline to existing subjects first; a topic is not a new subject. For an unregistered discipline use its name as subject_id so the server returns a typed missing-subject problem. Explain only that the subject is not available and nothing was saved. Never show problem codes or suggest creating subjects, roots, nodes, proposals or inbox confirmations. You may explain a question in chat, explicitly saying it will not enter the bank. Do not retry this missing-subject problem. Never create or propose nodes for authoring, or ask confirmation. On root fallback repeat placement_note once. response.form: single_choice(options,answer_index), multi_choice(options,answer_indices), blank(blanks:[{answer,accepted?,numeric?}]), matching(left,right,pairs), break_tap(segments), ordering(objects_in_order). Direct bank submission, no inbox. Give bank_path; only admitted questions can be practiced. Free response has no automatic grader today; offer a deterministic form. variant/record retain proposal paths.',
+    'Create one question with seed_mode="teaching_draft": write draft={stem_md,response,solution_md?}. Prefer confirmed matching knowledge_ids. If no suitable knowledge node exists, pass knowledge_ids=[], subject_id (existing subject ID), learner_topic (exact topic substring from this user request). Match the discipline to existing subjects first; a topic is not a new subject. For an unregistered discipline use its name as subject_id: when the learner message itself says they want to study it, the server creates the subject and files the question under its root; otherwise it returns a typed missing-subject problem. In the missing case explain only that the subject is not available and nothing was saved. If subject_created=true and the question was not saved, tell the learner the subject exists but the question was not saved; retrying the same subject reuses it. Never show problem codes or suggest creating subjects, roots, nodes, proposals or inbox confirmations. You may explain a question in chat, explicitly saying it will not enter the bank. Do not retry this missing-subject problem. Never create or propose nodes for authoring, or ask confirmation. On root fallback repeat placement_note once. response.form: single_choice(options,answer_index), multi_choice(options,answer_indices), blank(blanks:[{answer,accepted?,numeric?}]), matching(left,right,pairs), break_tap(segments), ordering(objects_in_order). Direct bank submission, no inbox. Give bank_path; only admitted questions can be practiced. Free response has no automatic grader today; offer a deterministic form. variant/record retain proposal paths.',
 
   effect: 'propose',
   inputSchema: AuthorQuestionInputSchema,

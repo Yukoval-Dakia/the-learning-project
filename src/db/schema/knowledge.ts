@@ -436,9 +436,11 @@ export const subject_control_journal = pgTable(
       enum: ['create', 'rename', 'retire', 'restore', 'reset', 'rebind', 'fork'],
     }).notNull(),
     // rebind/fork: {kind, from_trait_id, to_trait_id}；rename: {from, to}；
-    // create/retire/restore: {}；reset: {rebound: [{kind, from_trait_id, to_trait_id}]}。
+    // retire/restore: {}；create: 管理面 {}，author_question 建学科带
+    // {via, ask_event_id, task_run_id}；reset: {rebound: [{kind, from_trait_id, to_trait_id}]}。
     detail: jsonb('detail').notNull(),
-    actor: text('actor', { enum: ['owner', 'migrate'] }).notNull(),
+    // agent = author_question 为学习者新学科触发的创建（detail 带来源）。
+    actor: text('actor', { enum: ['owner', 'migrate', 'agent'] }).notNull(),
     change_seq: bigint('change_seq', { mode: 'number' })
       .notNull()
       .default(sql`nextval('subject_change_seq')`),

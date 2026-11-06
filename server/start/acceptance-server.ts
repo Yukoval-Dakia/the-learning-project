@@ -18,6 +18,8 @@ const { installPracticeHost } = await import('@/capabilities/practice/public');
 await installPracticeHost();
 const { installAgencyHostOperations } = await import('@/capabilities/agency/public');
 await installAgencyHostOperations();
+const { installObservabilityHostOperations } = await import('@/capabilities/observability/public');
+await installObservabilityHostOperations();
 installSettlementCascadeRevert(orchestrateCascadeRevert);
 const [{ buildAdminConfigRuntimeFacts }, { setAdminConfigRuntimeFacts }] = await Promise.all([
   import('@/server/config/admin-config-facts'),
