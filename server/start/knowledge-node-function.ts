@@ -6,7 +6,7 @@ export const getStartKnowledgeNodePage = createServerFn({ method: 'GET' })
   .validator((id: string) => id)
   .handler(({ context, data }) =>
     runAuthenticatedStartWorkbench(context, getRequest(), async () => {
-      const { readStartKnowledgeNodePage } = await import('./knowledge-node-reader');
+      const { readStartKnowledgeNodePage } = await context.adapters.knowledge();
       return JSON.stringify(await readStartKnowledgeNodePage(data));
     }),
   );

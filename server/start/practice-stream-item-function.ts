@@ -6,7 +6,7 @@ export const updateStartPracticeStreamItemFunction = createServerFn({ method: 'P
   .validator((input: { id: string; body: string }) => input)
   .handler(({ context, data }) =>
     runAuthenticatedStartWorkbench(context, getRequest(), async () => {
-      const { updateStartPracticeStreamItem } = await import('./practice-stream-item-operation');
+      const { updateStartPracticeStreamItem } = await context.adapters.practiceStream();
       return JSON.stringify(await updateStartPracticeStreamItem(data));
     }),
   );

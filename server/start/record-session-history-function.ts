@@ -6,7 +6,7 @@ export const getStartRecordSessionHistoryFunction = createServerFn({ method: 'GE
   .validator((id: string) => id)
   .handler(({ context, data }) =>
     runAuthenticatedStartWorkbench(context, getRequest(), async () => {
-      const { readStartRecordSessionHistory } = await import('./record-session-history-reader');
+      const { readStartRecordSessionHistory } = await context.adapters.records();
       return JSON.stringify(await readStartRecordSessionHistory(data));
     }),
   );

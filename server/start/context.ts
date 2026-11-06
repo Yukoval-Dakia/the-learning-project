@@ -44,8 +44,20 @@ import type {
   transitionReviewSession,
 } from '@/capabilities/practice/session/public';
 
+export type FrontdoorAdapters = {
+  library: () => Promise<typeof import('./library-adapters')>;
+  records: () => Promise<typeof import('./record-adapters')>;
+  knowledge: () => Promise<typeof import('./knowledge-adapters')>;
+  practiceStream: () => Promise<typeof import('./practice-stream-adapters')>;
+  subjects: () => Promise<typeof import('./subject-adapters')>;
+  noteEditing: () => Promise<typeof import('./note-editing-adapters')>;
+};
+
 export type FrontdoorContext = {
   api: Hono;
+  // Loaded lazily by the API graph (createFrontdoorContext); the Start bundle only
+  // holds the references, so owner modules never evaluate in its module graph.
+  adapters: FrontdoorAdapters;
   acceptTeachingChip: (input: {
     sessionId: string;
     body: string;

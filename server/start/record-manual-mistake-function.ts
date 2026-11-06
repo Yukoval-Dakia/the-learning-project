@@ -7,7 +7,7 @@ export const createStartRecordManualMistakeFunction = createServerFn({ method: '
   .handler(({ context, data }) => {
     const request = getRequest();
     return runAuthenticatedStartWorkbench(context, request, async () => {
-      const { createStartRecordManualMistake } = await import('./record-manual-mistake-operation');
+      const { createStartRecordManualMistake } = await context.adapters.records();
       const result = await createStartRecordManualMistake({
         body: data,
         key: request.headers.get('Idempotency-Key'),

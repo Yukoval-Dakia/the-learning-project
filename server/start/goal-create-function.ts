@@ -6,7 +6,7 @@ export const createStartGoalFunction = createServerFn({ method: 'POST' })
   .validator((body: string) => body)
   .handler(({ context, data }) =>
     runAuthenticatedStartWorkbench(context, getRequest(), async () => {
-      const { createStartGoal } = await import('./goal-create-operation');
+      const { createStartGoal } = await context.adapters.subjects();
       return JSON.stringify(await createStartGoal(data));
     }),
   );

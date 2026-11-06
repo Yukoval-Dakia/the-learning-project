@@ -7,7 +7,7 @@ export const runStartLibraryServingActionFunction = createServerFn({ method: 'PO
   .handler(({ context, data }) => {
     const request = getRequest();
     return runAuthenticatedStartWorkbench(context, request, async () => {
-      const { runStartLibraryServingAction } = await import('./library-serving-action-operation');
+      const { runStartLibraryServingAction } = await context.adapters.library();
       return JSON.stringify(
         await runStartLibraryServingAction({
           path: data?.path,

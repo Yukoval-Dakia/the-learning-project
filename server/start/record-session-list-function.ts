@@ -6,7 +6,7 @@ export const getStartRecordSessionsFunction = createServerFn({ method: 'GET' })
   .validator((query: string) => query)
   .handler(({ context, data }) =>
     runAuthenticatedStartWorkbench(context, getRequest(), async () => {
-      const { readStartRecordSessions } = await import('./record-session-list-reader');
+      const { readStartRecordSessions } = await context.adapters.records();
       return JSON.stringify(await readStartRecordSessions(data));
     }),
   );

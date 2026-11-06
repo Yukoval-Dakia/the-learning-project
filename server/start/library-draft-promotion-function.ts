@@ -6,7 +6,7 @@ export const enableStartLibraryDraftFunction = createServerFn({ method: 'POST' }
   .validator((input: { id: string }) => input)
   .handler(({ context, data }) =>
     runAuthenticatedStartWorkbench(context, getRequest(), async () => {
-      const { enableStartLibraryDraft } = await import('./library-draft-promotion-operation');
+      const { enableStartLibraryDraft } = await context.adapters.library();
       return JSON.stringify(await enableStartLibraryDraft(data.id));
     }),
   );
@@ -15,7 +15,7 @@ export const forceEnableStartLibraryDraftFunction = createServerFn({ method: 'PO
   .validator((input: { id: string; body: string }) => input)
   .handler(({ context, data }) =>
     runAuthenticatedStartWorkbench(context, getRequest(), async () => {
-      const { forceEnableStartLibraryDraft } = await import('./library-draft-promotion-operation');
+      const { forceEnableStartLibraryDraft } = await context.adapters.library();
       return JSON.stringify(await forceEnableStartLibraryDraft(data));
     }),
   );

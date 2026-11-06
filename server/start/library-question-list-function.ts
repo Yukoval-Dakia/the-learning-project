@@ -6,7 +6,7 @@ export const getStartLibraryQuestionsFunction = createServerFn({ method: 'GET' }
   .validator((query: string) => query)
   .handler(({ context, data }) =>
     runAuthenticatedStartWorkbench(context, getRequest(), async () => {
-      const { readStartLibraryQuestions } = await import('./library-question-list-reader');
+      const { readStartLibraryQuestions } = await context.adapters.library();
       return JSON.stringify(await readStartLibraryQuestions(data));
     }),
   );

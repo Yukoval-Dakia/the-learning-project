@@ -6,7 +6,7 @@ export const archiveStartLibraryQuestionFunction = createServerFn({ method: 'POS
   .validator((input: { id: string; query: string }) => input)
   .handler(({ context, data }) =>
     runAuthenticatedStartWorkbench(context, getRequest(), async () => {
-      const { archiveStartLibraryQuestion } = await import('./library-question-delete-operation');
+      const { archiveStartLibraryQuestion } = await context.adapters.library();
       const result = await archiveStartLibraryQuestion(data);
       if (result.status !== 200) {
         throw Response.json(result.body, { status: result.status });

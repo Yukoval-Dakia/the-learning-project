@@ -6,9 +6,7 @@ export const getStartLibraryQuestionMistakesFunction = createServerFn({ method: 
   .validator((id: string) => id)
   .handler(({ context, data }) =>
     runAuthenticatedStartWorkbench(context, getRequest(), async () => {
-      const { readStartLibraryQuestionMistakes } = await import(
-        './library-question-mistakes-reader'
-      );
+      const { readStartLibraryQuestionMistakes } = await context.adapters.library();
       return JSON.stringify(await readStartLibraryQuestionMistakes(data));
     }),
   );

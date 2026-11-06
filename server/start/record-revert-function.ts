@@ -6,7 +6,7 @@ export const revertStartRecordBlockFunction = createServerFn({ method: 'POST' })
   .validator((input: { sessionId: string; body: string }) => input)
   .handler(({ context, data }) =>
     runAuthenticatedStartWorkbench(context, getRequest(), async () => {
-      const { revertStartRecordBlock } = await import('./record-revert-operation');
+      const { revertStartRecordBlock } = await context.adapters.records();
       return JSON.stringify(await revertStartRecordBlock(data));
     }),
   );

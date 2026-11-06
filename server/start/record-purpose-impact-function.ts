@@ -6,7 +6,7 @@ export const getStartRecordPurposeImpactFunction = createServerFn({ method: 'GET
   .validator((input: { sessionId: string; query: string }) => input)
   .handler(({ context, data }) =>
     runAuthenticatedStartWorkbench(context, getRequest(), async () => {
-      const { readStartRecordPurposeImpact } = await import('./record-purpose-impact-reader');
+      const { readStartRecordPurposeImpact } = await context.adapters.records();
       return JSON.stringify(await readStartRecordPurposeImpact(data));
     }),
   );

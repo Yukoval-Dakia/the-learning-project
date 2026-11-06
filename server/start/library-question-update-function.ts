@@ -6,7 +6,7 @@ export const updateStartLibraryQuestionFunction = createServerFn({ method: 'POST
   .validator((input: { id: string; body: string }) => input)
   .handler(({ context, data }) =>
     runAuthenticatedStartWorkbench(context, getRequest(), async () => {
-      const { updateStartLibraryQuestion } = await import('./library-question-update-operation');
+      const { updateStartLibraryQuestion } = await context.adapters.library();
       return JSON.stringify(await updateStartLibraryQuestion(data));
     }),
   );

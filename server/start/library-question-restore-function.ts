@@ -6,7 +6,7 @@ export const restoreStartLibraryQuestionFunction = createServerFn({ method: 'POS
   .validator((input: { id: string; body: string }) => input)
   .handler(({ context, data }) =>
     runAuthenticatedStartWorkbench(context, getRequest(), async () => {
-      const { restoreStartLibraryQuestion } = await import('./library-question-restore-operation');
+      const { restoreStartLibraryQuestion } = await context.adapters.library();
       return JSON.stringify(await restoreStartLibraryQuestion(data));
     }),
   );

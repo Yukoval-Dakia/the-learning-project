@@ -67,6 +67,16 @@ export function createFrontdoorContext(api: Hono): FrontdoorContext {
   );
   const context: FrontdoorContext = {
     api,
+    // Lazy references only; each family module evaluates in this API graph when a
+    // Start operation that needs it runs after the auth/epoch gate.
+    adapters: {
+      library: () => import('./start/library-adapters'),
+      records: () => import('./start/record-adapters'),
+      knowledge: () => import('./start/knowledge-adapters'),
+      practiceStream: () => import('./start/practice-stream-adapters'),
+      subjects: () => import('./start/subject-adapters'),
+      noteEditing: () => import('./start/note-editing-adapters'),
+    },
     acceptTeachingChip: acceptStartTeachingChip,
     sendCopilotChat: sendStartCopilotChat,
     revertCopilotCheckpoint: revertStartCopilotCheckpoint,

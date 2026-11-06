@@ -6,7 +6,7 @@ export const createStartLearningIntentFunction = createServerFn({ method: 'POST'
   .validator((body: string) => body)
   .handler(({ context, data }) =>
     runAuthenticatedStartWorkbench(context, getRequest(), async () => {
-      const { createStartLearningIntent } = await import('./learning-intent-operation');
+      const { createStartLearningIntent } = await context.adapters.subjects();
       return JSON.stringify(await createStartLearningIntent(data));
     }),
   );

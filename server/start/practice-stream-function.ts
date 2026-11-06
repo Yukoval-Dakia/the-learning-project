@@ -6,7 +6,7 @@ export const getStartPracticeStreamFunction = createServerFn({ method: 'GET' })
   .validator((knowledgeId: string | undefined) => knowledgeId)
   .handler(({ context, data }) =>
     runAuthenticatedStartWorkbench(context, getRequest(), async () => {
-      const { getStartPracticeStream } = await import('./practice-stream-operation');
+      const { getStartPracticeStream } = await context.adapters.practiceStream();
       return JSON.stringify(await getStartPracticeStream(data));
     }),
   );
