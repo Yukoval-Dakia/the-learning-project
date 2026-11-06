@@ -50,7 +50,6 @@ export interface NoteUpdateAcceptResult {
 type NoteUpdateApplierOpts = {
   decision?: string;
   user_note?: string;
-  actor?: ProposalAcceptInput['actor'];
 };
 
 function inboxView(input: ProposalAcceptInput): ProposalInboxRow {
@@ -84,22 +83,9 @@ async function acceptNoteUpdateProposal(
     );
   }
 
-  // Auto-apply must not bypass the Living Note breaker fallback; that gate is
-  // proposal-level. The user-verified guard runs inside the apply transaction on
-  // the body it actually writes (see persistNoteRefineApply humanApproved), so a
-  // newer verified edit cannot slip under a stale pre-check.
-  if (opts.actor?.kind === 'agent' && change.breaker_tripped === true) {
-    throw new ApiError(
-      'not_auto_applicable',
-      `note_update proposal ${proposalId} fell back to human review after the Living Note breaker tripped`,
-      409,
-    );
-  }
-
   const { result } = await runProposalAccept(db, proposalId, {
     proposal,
     userNote: opts.user_note,
-    ...(opts.actor ? { actor: opts.actor } : {}),
     signal: 'in_transaction',
     replay: async (rate: RecordedProposalRate): Promise<NoteUpdateAcceptResult> => {
       const payload = rate.payload as {
@@ -128,17 +114,12 @@ async function acceptNoteUpdateProposal(
       writeRate,
     }): Promise<ProposalAcceptEffectOutcome<NoteUpdateAcceptResult>> => {
       const now = new Date();
-      // Automated accepts keep the user-verified guard and record the real
-      // proposing agent; the human inbox path keeps its exact-patch exemption.
-      const autoApplied = opts.actor?.kind === 'agent';
       const applyResult = await persistNoteRefineApply({
         db: tx,
         artifactId,
         patch: patchParsed.data,
         triggerEventId: proposalId,
-        actorRef: autoApplied ? proposal.actor_ref : NOTE_REFINE_ACCEPT_ACTOR,
-        humanApproved: !autoApplied,
-        ...(autoApplied ? { actorKind: 'agent' as const } : {}),
+        actorRef: NOTE_REFINE_ACCEPT_ACTOR,
         now,
       });
       if (applyResult.status !== 'applied') {
@@ -177,7 +158,6 @@ export const noteUpdateProposalAcceptApplier: ProposalAcceptApplier = async (db,
   const result = await acceptNoteUpdateProposal(db as Db, input.proposalId, inboxView(input), {
     decision: input.decision,
     user_note: input.user_note,
-    ...(input.actor ? { actor: input.actor } : {}),
   });
   return {
     kind: 'note_update',

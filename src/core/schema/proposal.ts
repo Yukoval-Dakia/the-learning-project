@@ -188,7 +188,7 @@ export type ProposalDecisionResourceT = z.infer<typeof ProposalDecisionResource>
 // ───────────────────────────────────────────────────────────────────────────
 // 出手强度轴（ADR-0039 strength tier）。三档语义：
 //   A — auto-apply：提议仍先入账，随后由自动通道经同一决策事务 accept（agent actor），
-//       撤销窗内可撤回；首批只收撤销路径现成、不动结算、不改学习者目标的四类。
+//       撤销窗内可撤回；首批只收撤销路径现成、不动结算、不改学习者目标的三类。
 //   B — propose（pending 入收件箱，人审 accept）。默认档，其余 kind 在此。
 //   C — observe-only（仅折叠到 AI 观察面，无 Accept CTA）。
 //
@@ -211,11 +211,13 @@ export const aiProposalKindStrength = {
   knowledge_node: 'A',
   knowledge_edge: 'B',
   knowledge_mutation: 'B',
-  // A — 产出方就是学习者本人；accept 物化学习项/笔记队列，retract 全量归档可还原。
+  // A — 产出方就是学习者本人；accept 物化学习项及其后续笔记生成队列，retract 全量归档可还原。
   learning_item: 'A',
-  // A — 小可逆笔记补丁；mutator 侧已验证 auto-apply + 撤销窗口，proposal 侧
-  // accept 走版本链回滚（undoNoteRefineApplyEvent），撤销完整。
-  note_update: 'A',
+  // B — 人审：进入提议通道的 note patch 已被 mutator v0 门控判为太大（阈值 3 op；schema
+  // 硬上限 200 op），或碰用户已验证块、或熔断退回。笔记内容可能来自材料，被注入的大 patch
+  // 不能在无人确认下删改一篇笔记的大部分；撤销窗口 10 分钟且不核对当前版本。翻 A 条件
+  // 见 YUK-1933。
+  note_update: 'B',
   variant_question: 'B',
   relearn: 'B',
   // LEGACY tombstone —— accept applier 仍在但 producer 早停写，永不 surface 到

@@ -47,14 +47,6 @@ export interface PersistNoteRefineApplyParams {
   triggerEventId?: string | null;
   // Defaults to the AI mutator actor.
   actorRef?: string;
-  /**
-   * Explicit human approval. Only the inbox accept path passes true; an
-   * automated caller keeps the user-verified guard on the body it actually
-   * writes, so a stale pre-check cannot be raced by a newer verified edit.
-   */
-  humanApproved?: boolean;
-  /** Event actor kind override; automated accepts record the real agent lane. */
-  actorKind?: 'agent' | 'system';
   eventId?: string;
   now?: Date;
 }
@@ -129,9 +121,6 @@ export async function persistNoteRefineApply(
   params: PersistNoteRefineApplyParams,
 ): Promise<PersistNoteRefineApplyResult> {
   const { db, artifactId, patch, taskResult, triggerEventId, actorRef, eventId, now } = params;
-  // Explicit approval beats the legacy actor-name inference: an automated lane
-  // that happens to reuse the accept actor name must not inherit the exemption.
-  const humanApproved = params.humanApproved ?? actorRef === NOTE_REFINE_ACCEPT_ACTOR;
 
   if (patch.ops.length === 0) {
     return { status: 'skipped:empty_patch', artifact_id: artifactId };
@@ -165,18 +154,18 @@ export async function persistNoteRefineApply(
       };
     }
 
-    // Check targets inside the tx so deferred patches are covered, and run the
-    // user-verified guard against this transaction's body (not an earlier read).
-    // A ghost target skips only itself; the human accept path stays exact.
-    const filtered = humanApproved
-      ? {
-          patch: mirroredPatch,
-          body_blocks: applyNotePatch(row.body_blocks, mirroredPatch, {
-            enforceUserVerifiedGuard: false,
-          }),
-          skipped_ops: 0,
-        }
-      : filterMissingNotePatchTargets(row.body_blocks, mirroredPatch);
+    // Check targets inside the tx so deferred patches are covered. A ghost target
+    // skips only itself; the human accept path stays exact.
+    const filtered =
+      actorRef === NOTE_REFINE_ACCEPT_ACTOR
+        ? {
+            patch: mirroredPatch,
+            body_blocks: applyNotePatch(row.body_blocks, mirroredPatch, {
+              enforceUserVerifiedGuard: false,
+            }),
+            skipped_ops: 0,
+          }
+        : filterMissingNotePatchTargets(row.body_blocks, mirroredPatch);
     if (filtered.patch.ops.length === 0) {
       return {
         status: 'skipped:target_not_found' as const,
@@ -214,7 +203,7 @@ export async function persistNoteRefineApply(
     await writeEvent(tx, {
       id,
       session_id: null,
-      actor_kind: params.actorKind ?? (taskResult ? 'agent' : 'system'),
+      actor_kind: taskResult ? 'agent' : 'system',
       actor_ref: actorRef ?? NOTE_REFINE_AUTOAPPLY_ACTOR,
       action: 'experimental:note_refine_apply',
       subject_kind: 'artifact',
@@ -273,7 +262,7 @@ export async function undoNoteRefineApplyEvent(
 }> {
   const rows = await db.select().from(event).where(eq(event.id, params.applyEventId)).limit(1);
   const applyRow = rows[0];
-  if (applyRow?.action !== 'experimental:note_refine_apply') {
+  if (!applyRow || applyRow.action !== 'experimental:note_refine_apply') {
     throw new Error(`note refine apply event ${params.applyEventId} not found`);
   }
 

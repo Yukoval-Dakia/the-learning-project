@@ -251,7 +251,7 @@ function AutoAppliedCard({
   const appliedMs = Date.parse(row.applied_at);
   const state = autoAppliedState(appliedMs, nowMs, row.reverted);
   const consumed = state === 'consumed';
-  // A 档卡的 kind 由读模型给出（首批含建知识点/学习项/笔记补丁/错因类目）。
+  // A 档卡的 kind 由读模型给出（首批含建知识点/学习项/错因类目）。
   const meta = kindMeta(row.kind);
   const remainingMinutes = Math.max(1, Math.ceil(undoRemainingMs(appliedMs, nowMs) / 60_000));
   // 撤销按钮 label（if/else 替链式三元，守项目「禁链式三元」OCR 红线）。
