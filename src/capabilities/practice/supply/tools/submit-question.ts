@@ -1456,7 +1456,7 @@ export const submitQuestionTool: DomainTool<ExecInput, Output> = {
 /** Conversation lineage stays on the submit receipt; author keys never grant admission. */
 export async function submitCopilotAuthoredDraft(
   doc: QuestionDraftDocumentT,
-  init: { question_kind: string; difficulty?: number },
+  init: { question_kind: string; difficulty?: number; learner_topic?: string },
   deps: {
     db: Db;
     actorRef: string;
@@ -1483,6 +1483,7 @@ export async function submitCopilotAuthoredDraft(
       metadata: {
         teaching_draft: {
           question_kind: init.question_kind,
+          ...(init.learner_topic !== undefined ? { learner_topic: init.learner_topic } : {}),
           chat_origin: { session_id: deps.sessionId, turn_id: deps.causedByEventId },
         },
       },

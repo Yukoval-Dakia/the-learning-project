@@ -25,6 +25,7 @@ import { getActiveLearningRecord } from '@/kernel/records/queries';
 import { type DomainTool, OpaqueJsonInput, type ToolContext } from '@/kernel/tools/types';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
+import { resolveTeachingDraftPlacement } from '../server/teaching-draft-placement';
 
 const TEXT_EXCERPT_MAX = 180;
 
@@ -47,6 +48,8 @@ type AuthorQuestionSeed =
       // persistDeclaredQuestionGroup（与备题员同一 save+submit+准入门）。
       seed_mode: 'teaching_draft';
       knowledge_ids: string[];
+      subject_id?: string;
+      learner_topic?: string;
       draft: TeachingDraftT;
       difficulty?: number;
     };
@@ -69,7 +72,9 @@ const AuthorQuestionInputSchema = z.object({
   // applier; z.json instead of an unconstrained value (YUK-1553 C1-1).
   draft: OpaqueJsonInput.optional(),
   suggestion_kind: SuggestionKind.optional(),
-  knowledge_ids: z.array(z.string().min(1)).min(1).optional(),
+  knowledge_ids: z.array(z.string().min(1)).optional(),
+  subject_id: z.string().min(1).max(160).optional(),
+  learner_topic: z.string().min(1).max(200).optional(),
   difficulty: z.number().int().min(1).max(5).optional(),
 });
 
@@ -92,11 +97,6 @@ function validateAuthorQuestionInput(input: z.infer<typeof AuthorQuestionInputSc
       }
       break;
     case 'teaching_draft':
-      if (!input.knowledge_ids || input.knowledge_ids.length === 0) {
-        throw new Error(
-          "author_question seed_mode 'teaching_draft' requires non-empty knowledge_ids",
-        );
-      }
       if (input.draft === undefined) {
         throw new Error("author_question seed_mode 'teaching_draft' requires draft");
       }
@@ -148,6 +148,13 @@ const AuthorQuestionOutputSchema = z.object({
   question_ids: z.array(z.string()).optional(),
   // Where the learner sees the new question in the bank.
   bank_path: z.string().optional(),
+  placement_note: z.string().optional(),
+  problem: z
+    .object({
+      code: z.enum(['subject_root_missing', 'learner_topic_required']),
+      detail: z.string(),
+    })
+    .optional(),
   admission: z
     .object({
       state: z.enum(['admitted', 'withheld', 'pending']),
@@ -197,7 +204,9 @@ function toAuthorQuestionSeed(input: AuthorQuestionInput): AuthorQuestionSeed {
     case 'teaching_draft':
       return {
         seed_mode: 'teaching_draft',
-        knowledge_ids: input.knowledge_ids as string[],
+        knowledge_ids: input.knowledge_ids ?? [],
+        subject_id: input.subject_id,
+        learner_topic: input.learner_topic,
         draft: TeachingDraft.parse(input.draft),
         difficulty: input.difficulty,
       };
@@ -339,12 +348,27 @@ export async function authorQuestion(
     case 'teaching_draft': {
       const { submitCopilotAuthoredDraft } = await import('@/capabilities/practice/public');
       const draft = TeachingDraft.parse(seed.draft);
+      const placement = await resolveTeachingDraftPlacement(deps.db, seed, deps);
+      if (!placement.ok)
+        return {
+          status: 'failed',
+          seed_mode: seed.seed_mode,
+          proposal_ids: [],
+          mistake_variant_ids: [],
+          variant_question_ids: [],
+          problem: placement.issue,
+          reasoning_summary: placement.issue.detail,
+        };
       const result = await submitCopilotAuthoredDraft(
         teachingDraftToDocument(draft, {
-          knowledge_ids: seed.knowledge_ids,
+          knowledge_ids: placement.knowledge_ids,
           origin: { session_id: deps.sessionId, turn_id: deps.causedByEventId },
         }),
-        { question_kind: draft.response.form, difficulty: seed.difficulty },
+        {
+          question_kind: draft.response.form,
+          difficulty: seed.difficulty,
+          learner_topic: placement.learner_topic,
+        },
         deps,
       );
       const base = {
@@ -374,6 +398,7 @@ export async function authorQuestion(
         question_id: submit.question_id,
         question_ids: [submit.question_id],
         bank_path: `/questions/${submit.question_id}`,
+        placement_note: placement.placement_note,
         admission: { state: submit.status, per_unit: submit.per_unit },
         reasoning_summary: submit.per_unit.some((unit) => unit.reason === 'no_admitted_executor')
           ? '题已存入题库，但这类题目前没有可用的自动判分器，暂时不能作答；可以换一道选择、填空、配对、断句或排序题。'
@@ -420,7 +445,7 @@ async function authorQuestionExecute(
 export const authorQuestionTool: DomainTool<AuthorQuestionInput, AuthorQuestionOutput> = {
   name: 'author_question',
   description:
-    'Create one question with seed_mode="teaching_draft": write draft={stem_md,response,solution_md?} yourself, with confirmed knowledge_ids. response.form: single_choice(options,answer_index), multi_choice(options,answer_indices), blank(blanks:[{answer,accepted?,numeric?}]), matching(left,right,pairs of zero-based indices), break_tap(segments), ordering(objects_in_order). No nested author task. The question goes directly into the bank for automatic admission, with no inbox confirmation. Only admitted questions can be practiced; use bank_path in your reply to show where checks and failure reasons appear. Free response is not supported for first-day practice: if supplied it stays withheld until a grading slice is admitted; explain and offer a deterministic question. variant and record seeds retain their existing proposal paths.',
+    'Create one question with seed_mode="teaching_draft": write draft={stem_md,response,solution_md?}. Prefer confirmed matching knowledge_ids. If no suitable knowledge node exists, pass knowledge_ids=[], subject_id (existing subject ID), learner_topic (exact topic substring from this user request). Match the discipline to existing subjects first; a topic is not a new subject. For an unregistered discipline use its name as subject_id so the server returns subject_root_missing; explain that no question was saved. Never create or propose nodes for authoring, or ask confirmation. On root fallback repeat placement_note once. response.form: single_choice(options,answer_index), multi_choice(options,answer_indices), blank(blanks:[{answer,accepted?,numeric?}]), matching(left,right,pairs), break_tap(segments), ordering(objects_in_order). Direct bank submission, no inbox. Give bank_path; only admitted questions can be practiced. Free response has no automatic grader today; offer a deterministic form. variant/record retain proposal paths.',
 
   effect: 'propose',
   inputSchema: AuthorQuestionInputSchema,

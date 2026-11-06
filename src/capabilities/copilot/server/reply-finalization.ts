@@ -192,6 +192,15 @@ function proposalDisclosure(trace: readonly TraceEntry[]): string | undefined {
     ...new Set(
       trace.flatMap((entry) => {
         const out = isRecord(entry.domain_output) ? entry.domain_output : undefined;
+        const problem = isRecord(out?.problem) ? out.problem : undefined;
+        if (
+          out?.seed_mode === 'teaching_draft' &&
+          out.status === 'failed' &&
+          problem?.code === 'subject_root_missing' &&
+          typeof problem.detail === 'string'
+        ) {
+          return [problem.detail];
+        }
         if (
           entry.status !== 'succeeded' ||
           out?.seed_mode !== 'teaching_draft' ||
@@ -205,10 +214,12 @@ function proposalDisclosure(trace: readonly TraceEntry[]): string | undefined {
           admission.per_unit.some(
             (unit) => isRecord(unit) && unit.reason === 'no_admitted_executor',
           );
+        const placement = typeof out.placement_note === 'string' ? `${out.placement_note}\n` : '';
         return [
-          noExecutor
-            ? `题已存入[题库](${out.bank_path})，但这类题目前没有可用的自动判分器，暂时不能作答；可以换一道选择、填空、配对、断句或排序题。`
-            : `题已存入[题库](${out.bank_path})，自动检查通过后才能作答；当前状态和原因可在题库查看。`,
+          placement +
+            (noExecutor
+              ? `题已存入[题库](${out.bank_path})，但这类题目前没有可用的自动判分器，暂时不能作答；可以换一道选择、填空、配对、断句或排序题。`
+              : `题已存入[题库](${out.bank_path})，自动检查通过后才能作答；当前状态和原因可在题库查看。`),
         ];
       }),
     ),
