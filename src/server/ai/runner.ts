@@ -723,12 +723,15 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
         }
         args.onResultError?.(msg);
         const helpProviderFault = helpProviderFaultFromSdkResult(msg);
+        const providerHttpStatus = msg.provider_failure?.http_status;
         throw new AgentRunError({
           kind: args.kind,
           taskRunId: args.lifecycle.taskRunId,
           subtype: msg.subtype,
           errors: 'errors' in msg && Array.isArray(msg.errors) ? msg.errors : [],
           ...(helpProviderFault ? { helpProviderFault } : {}),
+          ...(providerHttpStatus !== undefined ? { providerHttpStatus } : {}),
+          ...(msg.usage.output_tokens === 0 ? { providerZeroOutput: true } : {}),
         });
       }
       break;

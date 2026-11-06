@@ -28,6 +28,12 @@ export function bindAgentRunError(input: {
       ...(input.error.apiErrorStatus !== undefined
         ? { apiErrorStatus: input.error.apiErrorStatus }
         : {}),
+      ...(input.error.providerHttpStatus !== undefined
+        ? { providerHttpStatus: input.error.providerHttpStatus }
+        : {}),
+      ...(input.error.providerZeroOutput !== undefined
+        ? { providerZeroOutput: input.error.providerZeroOutput }
+        : {}),
       errors: input.error.errors,
       ...((input.costUsd ?? input.error.costUsd) !== undefined
         ? { costUsd: input.costUsd ?? input.error.costUsd }

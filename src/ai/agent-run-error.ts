@@ -60,6 +60,18 @@ export interface AgentRunErrorFields {
   subtype: AgentFailureSubtype;
   /** Only for 'api_error_result'; null marks connection-class. */
   apiErrorStatus?: number | null;
+  /**
+   * Adapter-bound provider status on the terminal frame (`provider_failure
+   * .http_status`): the status of the request that failed at termination —
+   * strict root binding or the transport snapshot's last root request.
+   */
+  providerHttpStatus?: number;
+  /**
+   * The run produced zero provider output tokens. Together with a bound
+   * 401/403 this proves the configured credential never authenticated; a 401
+   * after streamed output means the key worked earlier and is NOT auth config.
+   */
+  providerZeroOutput?: boolean;
   /** SDKResultError.errors, or [result error text] for api_error_result. */
   errors: string[];
   /** Known attempt cost; absent means unknown, not zero. */
@@ -80,6 +92,8 @@ export class AgentRunError extends Error {
   readonly taskRunId: string;
   readonly subtype: AgentFailureSubtype;
   readonly apiErrorStatus?: number | null;
+  readonly providerHttpStatus?: number;
+  readonly providerZeroOutput?: boolean;
   readonly errors: string[];
   readonly costUsd?: number;
   readonly helpProviderFault?: HelpProviderFault;
@@ -95,6 +109,8 @@ export class AgentRunError extends Error {
     this.taskRunId = fields.taskRunId;
     this.subtype = fields.subtype;
     this.apiErrorStatus = fields.apiErrorStatus;
+    this.providerHttpStatus = fields.providerHttpStatus;
+    this.providerZeroOutput = fields.providerZeroOutput;
     this.errors = fields.errors;
     this.costUsd = fields.costUsd;
     this.helpProviderFault = fields.helpProviderFault;
@@ -142,9 +158,16 @@ export function isTransientAgentFailure(err: unknown): boolean {
 
 /** A bound provider 401/403 proves the configured lane cannot authenticate. */
 export function isProviderAuthConfigError(err: unknown): err is AgentRunError {
+  if (!(err instanceof AgentRunError)) return false;
+  if (err.subtype === 'api_error_result') {
+    return err.apiErrorStatus === 401 || err.apiErrorStatus === 403;
+  }
+  // Native pi path: provider rejections terminate as error_during_execution and
+  // carry the adapter's bound http_status. The zero-output bound keeps a
+  // rejection that lands after a billed turn out of the config class.
   return (
-    err instanceof AgentRunError &&
-    err.subtype === 'api_error_result' &&
-    (err.apiErrorStatus === 401 || err.apiErrorStatus === 403)
+    err.subtype === 'error_during_execution' &&
+    err.providerZeroOutput === true &&
+    (err.providerHttpStatus === 401 || err.providerHttpStatus === 403)
   );
 }
