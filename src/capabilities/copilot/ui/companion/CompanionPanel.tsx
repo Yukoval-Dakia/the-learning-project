@@ -1,5 +1,6 @@
 import type { NotePageClient } from '@/capabilities/notes/ui-public';
 import type { ConfirmationAssessmentRenderer } from '../confirmation';
+import type { QuestionCardRenderer } from '../question-card';
 // The companion's frame, in three layouts:
 //   side  — desktop: a column beside the content (the shell gives it its place), not glass (T3);
 //   float — iPad: a glass layer floating over the page, the page stays usable;
@@ -37,6 +38,7 @@ export type CompanionLayout = 'side' | 'float' | 'sheet';
 
 export interface CompanionPanelProps {
   confirmationRenderer?: ConfirmationAssessmentRenderer;
+  questionCardRenderer?: QuestionCardRenderer;
   readNotePage: NotePageClient;
   controller: CompanionController;
   layout: CompanionLayout;
@@ -69,6 +71,7 @@ export function CompanionPanel({
   sessionId,
   presentation,
   confirmationRenderer,
+  questionCardRenderer,
   readNotePage,
 }: CompanionPanelProps) {
   const [wide, setWide] = useState(false);
@@ -141,6 +144,7 @@ export function CompanionPanel({
           messages={
             <MessageStream
               confirmationRenderer={confirmationRenderer}
+              questionCardRenderer={questionCardRenderer}
               readNotePage={readNotePage}
               controller={controller}
               stick={stick}
@@ -239,6 +243,7 @@ export function CompanionPanel({
         <div className="un-cp-body">
           <MessageStream
             confirmationRenderer={confirmationRenderer}
+            questionCardRenderer={questionCardRenderer}
             readNotePage={readNotePage}
             controller={controller}
             stick={stick}
