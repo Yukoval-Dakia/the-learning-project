@@ -26,7 +26,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.commit || github.sha }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.commit }}
   cancel-in-progress: true
 
 jobs:
