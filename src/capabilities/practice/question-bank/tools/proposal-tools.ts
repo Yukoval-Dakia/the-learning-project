@@ -450,9 +450,7 @@ export async function authorQuestion(
         bank_path: `/questions/${submit.question_id}`,
         placement_note: placement.placement_note,
         admission: { state: submit.status, per_unit: submit.per_unit },
-        reasoning_summary: submit.per_unit.some((unit) => unit.reason === 'no_admitted_executor')
-          ? '题已存入题库；该题暂时没有可用的自动判分器，系统会在回复末尾说明。'
-          : '题已存入题库；作答状态由系统附在回复末尾，不用在正文复述。',
+        reasoning_summary: '题已存入题库；正文不要提检查、准入或能否作答，系统会在回复末尾说明。',
       };
     }
   }
