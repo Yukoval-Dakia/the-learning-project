@@ -1,4 +1,6 @@
 /** Public-channel text is independent of authoritative replies and tool receipts. */
+import { longQuotaRecoveryTextFromSeconds, quotaWaitDurationText } from '@/ai/help-provider-fault';
+
 export type PublicProseFailureKind =
   | 'provider_rejected'
   | 'rate_limited'
@@ -96,12 +98,11 @@ export function mergePublicProse(
 
 /**
  * "约 40 秒" / "约 3 分钟" / "约 2 小时" for a provider's Retry-After. Rounds up, so the
- * stated wait is never shorter than the provider asked for.
+ * stated wait is never shorter than the provider asked for. Same rules as the
+ * sealed exit copy — one source so badge and reply body never disagree.
  */
 function retryWait(seconds: number): string {
-  if (seconds < 90) return `约 ${Math.max(1, Math.ceil(seconds))} 秒`;
-  if (seconds < 60 * 60) return `约 ${Math.ceil(seconds / 60)} 分钟`;
-  return `约 ${Math.ceil(seconds / 3600)} 小时`;
+  return quotaWaitDurationText(seconds * 1000);
 }
 
 /** When to try again, from the provider's own Retry-After only; never a guess. */
@@ -120,8 +121,13 @@ type Failure = NonNullable<PublicProse['failure']>;
 function providerFailureText(prose: PublicProse, failure: Failure): string | undefined {
   const kept = keptText(prose);
   switch (failure.kind) {
-    case 'rate_limited':
+    case 'rate_limited': {
+      const recovery = longQuotaRecoveryTextFromSeconds(failure.retry_after_seconds);
+      if (recovery !== undefined) {
+        return `额度用完了，这次没答完。${recovery}恢复。${kept}`;
+      }
       return `现在有点忙，这次没答完。${retryAfterText(failure.retry_after_seconds)}${kept}`;
+    }
     case 'provider_rejected':
       return `这次没答成，可以换个说法再试一次。${kept}`;
     case 'provider_error': {
@@ -147,10 +153,13 @@ function providerFailureText(prose: PublicProse, failure: Failure): string | und
 export function publicProseFailureBadge(prose: PublicProse): string | undefined {
   if (prose.status !== 'completed' || !prose.failure) return undefined;
   switch (prose.failure.kind) {
-    case 'rate_limited':
+    case 'rate_limited': {
+      const recovery = longQuotaRecoveryTextFromSeconds(prose.failure.retry_after_seconds);
+      if (recovery !== undefined) return `额度用完了 · ${recovery}恢复`;
       return prose.failure.retry_after_seconds
         ? `现在有点忙 · ${retryWait(prose.failure.retry_after_seconds)}后可再试`
         : '现在有点忙';
+    }
     case 'provider_rejected':
       return '这次没答成';
     case 'provider_error':
