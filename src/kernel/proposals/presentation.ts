@@ -752,9 +752,11 @@ const proposalPresenters: { [K in AiProposalPayloadT['kind']]: ProposalPresenter
       const change = recordOf(payload.proposed_change);
       return compact([
         summaryItem('新类目', change?.label),
-        summaryItem('类目 id', change?.category_id),
         summaryItem('说明', change?.description),
-        summaryItem('来源', change?.source === 'owner' ? '人工提议' : 'AI 提议（other 复发）'),
+        summaryItem(
+          '来源',
+          change?.source === 'owner' ? '人工提议' : 'AI 提议（同类错误反复出现）',
+        ),
       ]);
     },
   },

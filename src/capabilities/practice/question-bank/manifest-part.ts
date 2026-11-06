@@ -338,6 +338,17 @@ export const questionBankManifestPart: Omit<CapabilityManifest, 'name' | 'descri
             (m) => m.buildAdmissionUnknownCloseHandler,
           ),
       },
+      // YUK-1937 — 已记录 waiting 的额度唤醒投递丢失（重试耗尽 / retention 过期）后，
+      // 这一分钟扫描按 retry_at 幂等重排一次投递；只重排投递，已付费阶段由 claim 重放。
+      {
+        name: 'question_admission_waiting_recovery',
+        queue: 'fast',
+        schedule: { cron: '* * * * *', tz: 'UTC' },
+        load: () =>
+          import('./server/admission/waiting-recovery').then(
+            (m) => m.buildAdmissionWaitingRecoveryHandler,
+          ),
+      },
     ],
   },
   // M4-T4 (YUK-319)：proposal kind 归属声明。variant_question / question_draft
