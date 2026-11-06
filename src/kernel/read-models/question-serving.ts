@@ -62,6 +62,11 @@ const PAID_EFFECT_ADMISSION_UNITS = QUESTION_ADMISSION_PAID_UNITS;
  * before a reverify may re-dispatch admission (serving-actions guard). */
 export const AWAITING_ADMISSION_REVERIFY_AFTER_MS = 6 * 60 * 60 * 1000;
 
+/** The gate retries quota waits at 5/15/30 min then hourly (ADR-0079). Past one
+ *  missed hourly wake plus scheduling jitter, a stored waiting receipt can no
+ *  longer promise that another automatic attempt will happen. */
+const ADMISSION_WAIT_RETRY_GRACE_MS = 2 * 60 * 60 * 1000;
+
 export interface QuestionServingActionRef {
   command: ServingActionCommand;
   method: 'POST';
@@ -160,6 +165,7 @@ function servingFactsQuery(filters: SQL[]): SQL {
       verification.policy_id as verification_policy,
       admission.state as admission_paid_state,
       admission.result_json->'result'->>'status' as admission_result_status,
+      stage_wait.retry_at as admission_wait_retry_at,
       (select unit->>'reason'
         from jsonb_array_elements(coalesce(admission.result_json->'result'->'per_unit', '[]'::jsonb)) unit
         where unit->>'status' = 'withheld' limit 1) as admission_failure_reason,
@@ -214,6 +220,13 @@ function servingFactsQuery(filters: SQL[]): SQL {
         )})
       order by p.created_at desc limit 1
     ) admission on true
+    left join lateral (
+      select s.result_json->'recovery'->>'retry_at' as retry_at
+      from ${paid_effect} s
+      where s.entity_id = l.group_id and s.entity_revision = r.integrity_digest
+        and s.family = 'question_admission_stage'
+      order by s.created_at desc, s.unit desc limit 1
+    ) stage_wait on true
     cross join lateral (
       select case
         when l.withdrawn then 'withdrawn'
@@ -245,6 +258,7 @@ interface AdmissionReadFacts extends Record<string, unknown> {
   verification_policy: string | null;
   admission_paid_state: string | null;
   admission_result_status: string | null;
+  admission_wait_retry_at: string | null;
   admission_failure_reason: string | null;
   admission_unknown_stage: boolean;
 }
@@ -252,16 +266,25 @@ interface AdmissionReadFacts extends Record<string, unknown> {
 function admissionRead(
   fact: AdmissionReadFacts,
   revision: PublishedQuestionRevisionT | null,
+  now: Date,
 ): QuestionServing['admission'] {
   if (fact.admission_state == null) return null;
   if (fact.admission_state === 'admitted') return { status: 'admitted', reason: null };
   if (
     fact.admission_paid_state === 'unknown' ||
     fact.admission_unknown_stage ||
-    fact.admission_result_status === 'waiting' ||
     (fact.admission_withheld_reason === 'verification_failed' &&
       fact.verification_policy === 'question_admission_unknown_close@1')
   ) {
+    return { status: 'undecided', reason: '自动检查的结果尚未确认，题目暂不能作答。' };
+  }
+  // A recorded quota wait is only credible while its durable wake-up is still
+  // within the gate's own retry cadence; a lost delivery must not promise a retry.
+  if (fact.admission_result_status === 'waiting') {
+    const retryAt = fact.admission_wait_retry_at;
+    const retryAtMs = retryAt == null ? Number.NaN : Date.parse(retryAt);
+    if (Number.isFinite(retryAtMs) && now.getTime() <= retryAtMs + ADMISSION_WAIT_RETRY_GRACE_MS)
+      return { status: 'pending', reason: '还在检查，系统会自动再试。' };
     return { status: 'undecided', reason: '自动检查的结果尚未确认，题目暂不能作答。' };
   }
   const reason = fact.admission_failure_reason ?? fact.admission_withheld_reason;
@@ -369,8 +392,9 @@ export async function countQuestionServing(db: Db | Tx, servingSet: SQL): Promis
 export async function readQuestionServing(
   db: Db | Tx,
   questionIds: readonly string[],
-  _options: { now?: Date } = {},
+  options: { now?: Date } = {},
 ): Promise<QuestionServingRead> {
+  const now = options.now ?? new Date();
   const result = new Map<string, QuestionServing>();
   const legacyUnpublished = new Set<string>();
   const ids = [...new Set(questionIds)];
@@ -590,7 +614,7 @@ export async function readQuestionServing(
       held_since: servable ? null : (heldSince?.toISOString() ?? null),
       next_action: nextAction,
       pending_action: pendingAction,
-      admission: admissionRead(fact, contractEntry?.revision ?? null),
+      admission: admissionRead(fact, contractEntry?.revision ?? null, now),
     });
   }
 

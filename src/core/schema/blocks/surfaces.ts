@@ -13,4 +13,4 @@ export const BLOCK_SURFACE_KINDS: Record<BlockSurface, readonly BlockKind[]> = {
 };
 
 /** Kinds whose compose path exists in this build (slice 1). */
-export const BLOCK_IMPLEMENTED_KINDS: readonly BlockKind[] = ['diagram', 'figure'];
+export const BLOCK_IMPLEMENTED_KINDS: readonly BlockKind[] = ['diagram', 'figure', 'question_ref'];

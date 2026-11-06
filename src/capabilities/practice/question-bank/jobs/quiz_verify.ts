@@ -59,6 +59,7 @@ import {
 } from '@/core/schema/verify-contract';
 import type { Db } from '@/db/client';
 import { event, knowledge, question, question_group_lifecycle, source_document } from '@/db/schema';
+import { declaredAdmissionOwned } from '@/kernel/read-models/question-admission-ownership';
 import type { PlacementVerificationAuthority } from '@/kernel/supply-contracts';
 import { SupplyTraceV1 } from '@/kernel/supply-contracts';
 import { type TaskTextRunFn, costUsdToMicroUsd } from '@/server/ai/provenance';
@@ -77,7 +78,6 @@ import {
   settleAuthorizedPaidCall,
   terminalizePlacementUnknownCost,
 } from '../../supply/public';
-import { declaredAdmissionOwned } from '../server/admission/ownership';
 import { choiceSurfacePrecheckRecord, evaluateChoiceSurface } from '../server/quiz/choice-surface';
 import { resolveSolveOverrideFromEnv } from '../server/quiz/solve-lane';
 import {
