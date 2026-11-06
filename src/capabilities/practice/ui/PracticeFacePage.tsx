@@ -99,8 +99,13 @@ function replaceConfirmedItem(view: StreamView | undefined, confirmed: StreamIte
   };
 }
 
-function failureMessage(action: string, error: unknown) {
-  return `${action}失败：${error instanceof Error ? error.message : String(error)}`;
+/** The failure line sits above the list; the learner may have clicked far below it. */
+function revealFailure(node: HTMLElement | null) {
+  node?.scrollIntoView({ block: 'nearest' });
+}
+
+function failureMessage(action: string) {
+  return `${action}没成功，可以再试一次。`;
 }
 
 function streamForRequestedScope(
@@ -333,7 +338,8 @@ export default function PracticeFacePage({
   }, []);
 
   const recordFailure = useCallback((action: string, error: unknown, retry: () => void) => {
-    setActionFailure({ message: failureMessage(action, error), retry });
+    console.error(`[practice] ${action}`, error);
+    setActionFailure({ message: failureMessage(action), retry });
   }, []);
 
   // 只在 GET 真成功后替换 cache；失败时保留最后一份由 PATCH 回执确认过的状态。
@@ -368,8 +374,29 @@ export default function PracticeFacePage({
       try {
         ({ item: confirmed } = await advanceStreamItem(item.id, status));
       } catch (error) {
-        recordFailure(action, error, () => void commit(item, status, action, onConfirmed));
-        return null;
+        // This page may be behind the server (another tab, a lost receipt). Read before deciding:
+        // what the learner asked for may already be true, or may no longer make sense.
+        let fresh: StreamView;
+        try {
+          fresh = await fetchFreshStream();
+        } catch {
+          recordFailure(action, error, () => void commit(item, status, action, onConfirmed));
+          return null;
+        }
+        const current = fresh.items.find((it) => it.id === item.id);
+        if (current?.status === status) {
+          confirmed = current;
+        } else if (current?.status === item.status) {
+          recordFailure(action, error, () => void commit(current, status, action, onConfirmed));
+          return null;
+        } else {
+          // Nothing to retry: the list is already right. A toast, because the learner may have
+          // clicked far down the list, out of sight of the failure line at its top.
+          console.error(`[practice] ${action}`, error);
+          setActionFailure(null);
+          addToast('这一项刚刚有了变化，列表已经更新。', 'info');
+          return null;
+        }
       }
 
       // PATCH 回执是服务端确认态。先写 cache，再做导航或 refresh；后续 GET 即使失败，
@@ -379,7 +406,7 @@ export default function PracticeFacePage({
       await onConfirmed(confirmed);
       return confirmed;
     },
-    [advanceStreamItem, qc, recordFailure, streamQueryKey],
+    [addToast, advanceStreamItem, fetchFreshStream, qc, recordFailure, streamQueryKey],
   );
 
   const clearScope = useCallback(() => {
@@ -802,7 +829,7 @@ export default function PracticeFacePage({
       <div className="pface-root" ref={attachHost}>
         <div aria-live="assertive" className="pf-failure un-m3e-bridge">
           {actionFailure && (
-            <div className="pf-m3-error">
+            <div className="pf-m3-error" ref={revealFailure}>
               <RetryLine message={actionFailure.message} onRetry={actionFailure.retry} />
             </div>
           )}

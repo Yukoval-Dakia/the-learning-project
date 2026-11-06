@@ -21,7 +21,6 @@ import type {
 } from '@/capabilities/copilot/server/chat-contracts';
 import type { PreparedCopilotReply } from '@/capabilities/copilot/server/conversation-writes';
 import { writeCopilotReply } from '@/capabilities/copilot/server/conversation-writes';
-import { DURABLE_COPILOT_EXECUTION_BUDGET } from '@/capabilities/copilot/server/copilot-execution';
 import {
   type PersistCopilotRunCancellationArgs,
   type WriteJobEventFn,
@@ -45,6 +44,7 @@ import {
   type CopilotRunJobData,
   withCopilotDurableDispatchLock,
 } from '@/capabilities/copilot/server/durable-dispatch';
+import { DURABLE_COPILOT_EXECUTION_BUDGET } from '@/capabilities/copilot/server/durable-execution-budget';
 import { durableCheckpointPayload } from '@/capabilities/copilot/server/materializing-tools';
 import { parseCopilotModeState } from '@/capabilities/copilot/server/mode-completion';
 import {

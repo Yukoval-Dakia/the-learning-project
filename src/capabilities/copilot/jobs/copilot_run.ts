@@ -75,11 +75,7 @@ import { readEventDerivationPolicy } from '@/kernel/events/derivation-policy';
 import { computeReplay } from '@/kernel/job-events';
 import type { ModelBinding } from '@/server/ai/execution-adapter';
 import { providerFailureToPublicFailure } from '../public-prose-contract';
-import {
-  DURABLE_COPILOT_EXECUTION_BUDGET,
-  type ExecuteCopilotTurn,
-  executeCopilotTurn,
-} from '../server/copilot-execution';
+import { type ExecuteCopilotTurn, executeCopilotTurn } from '../server/copilot-execution';
 import { findPersistedDurableReply } from '../server/copilot-run-outcome';
 import { resolveCopilotModeCompletion } from '../server/mode-completion';
 import { fileSealedCorrection } from '../server/no-progress-loop';
@@ -110,12 +106,6 @@ export {
   writeSuccessfulTerminalProjection,
 } from '@/capabilities/copilot/server/copilot-run-settlement';
 export type { CopilotRunJobData } from '../server/durable-dispatch';
-
-// One execution owner resolves the budget. Copilot spend ceilings were removed
-// by owner directive — turns and tool calls are uncapped; the 45-minute
-// wall-clock window remains as the owner-recovery bound and stays below the
-// stuck-run sweeper threshold (1h).
-export const DURABLE_BUDGET = DURABLE_COPILOT_EXECUTION_BUDGET;
 
 export interface RunCopilotRunParams {
   db: Db;

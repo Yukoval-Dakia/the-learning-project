@@ -2897,6 +2897,11 @@ export interface operations {
                                 timeout: boolean;
                                 transientRetries: boolean;
                             };
+                            caller_budget_override?: {
+                                maxCost?: number;
+                                maxIterations: number | "unbounded";
+                                timeoutMs: number;
+                            };
                             default_budget: {
                                 maxCost: number;
                                 maxIterations: number;
@@ -2955,6 +2960,7 @@ export interface operations {
                                 model: boolean;
                                 provider: boolean;
                             };
+                            slice_admission: boolean;
                         }[];
                     };
                 };

@@ -26,6 +26,7 @@ import {
   type EvaluationRecordT,
   type EvidenceCitationT,
   type GroupEvidenceT,
+  ModelObservation,
   ScoringUnitResult,
   type ScoringUnitResultT,
   type SubmissionRecordT,
@@ -116,6 +117,12 @@ export const ModelUnitOutcome = z.discriminatedUnion('kind', [
         }),
       )
       .default([]),
+    /**
+     * 未校验模型观察：纯图片单元里模型对图片的 quote 引用不考
+     * 原文校验，落到此字段而非 evidence_citations —— 不是已验证引文。
+     * 缺省 = 无观察；绝不补造。
+     */
+    model_observations: z.array(ModelObservation).optional(),
     /** 分布形状信号（非 accuracy）；缺失不得补造（OpenRouter 核验 D12）。 */
     confidence: z.number().min(0).max(1).optional(),
     /** 掌握证据。聚合不读它。 */
@@ -160,6 +167,8 @@ export interface ModelExecutorRequest {
   response_slots: ResponseSlotT[];
   /** 该 unit 声明读取的槽位响应（已按 spec 校验过）。 */
   slot_responses: SlotResponseT[];
+  /** Whole-submission image totals survive per-unit slot/evidence projection; never sent to the model. */
+  submission_images?: { count: number; bytes: number };
   /** 该 unit 命中的 group 级证据（all_units 或显式子集）。 */
   group_evidence: GroupEvidenceT[];
   /** 该 unit 声明的共享材料（判分与学生所见同版资产）。 */
@@ -877,6 +886,14 @@ export async function evaluateSubmissionCore(
   //      的 cap/阈值绑死全量 unit 集，子集评估会改义 —— fail-closed。----
   // 上述 projectIssuedScoringBasis 同时执行该聚合 policy 守卫。
 
+  const submissionImages = [
+    ...responseSet.entries.flatMap((entry) => (entry.kind === 'open' ? entry.evidence : [])),
+    ...groupEvidence.map((item) => item.evidence),
+  ].filter((item) => item.kind === 'image');
+  const submissionImageSummary = {
+    count: submissionImages.length,
+    bytes: submissionImages.reduce((total, item) => total + item.bytes, 0),
+  };
   const entryBySlot = new Map(responseSet.entries.map((entry) => [entry.slot_id, entry] as const));
   const materialById = new Map(
     revision.structure.materials.map((material) => [material.material_id, material] as const),
@@ -1221,6 +1238,7 @@ export async function evaluateSubmissionCore(
         question_parts: questionParts,
         response_slots: spec.slots.filter((slot) => contextPartIds.has(slot.part_id)),
         slot_responses: entries,
+        ...(submissionImageSummary.count > 0 ? { submission_images: submissionImageSummary } : {}),
         group_evidence: unitGroupEvidence,
         materials: [...contextMaterialIds]
           .map((id) => materialById.get(id))
@@ -1353,6 +1371,9 @@ export async function evaluateSubmissionCore(
             ? { kc_mastery_evidence: outcome.kc_mastery_evidence }
             : {}),
           evidence_citations: outcome.evidence_citations,
+          ...(outcome.model_observations !== undefined
+            ? { model_observations: outcome.model_observations }
+            : {}),
           ...(probeJudgement ? { probe_judgement: probeJudgement } : {}),
         },
         unitId,

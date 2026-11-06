@@ -683,19 +683,6 @@ export function resolveGlobalProviderSwitch(
 }
 
 /**
- * YUK-576 — predicate form of the env switch for the runner's transient-retry
- * gate: when the operator pins the WHOLE process to one provider
- * (AI_PROVIDER_OVERRIDE env 或 lane.global.* DB 行), in-process retry stays off
- * (pinned routing is an explicit operator decision; see runner.ts
- * transientRetryEnabled). Delegates to `readGlobalProviderSwitch()` so the
- * truthiness/validation logic is never written twice — an invalid override
- * value throws the same clear config error here as it would at resolution time.
- */
-export function hasGlobalProviderOverride(): boolean {
-  return readGlobalProviderSwitch() !== undefined;
-}
-
-/**
  * A resolved pair the pi catalog cannot execute is a configuration error —
  * the same readable, no-substitution failure the write validator and adapter
  * startup enforce — never a provider 404 behind a healthy-looking binding

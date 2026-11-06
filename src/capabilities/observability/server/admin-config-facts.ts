@@ -196,6 +196,12 @@ export interface AdminConfigTaskFacts {
   };
   /** Typed tasks bypass the chat provider chain, so overrides and the global pin do not apply. */
   readonly typed: boolean;
+  /**
+   * True when this kind's grading slices carry a model+contract admission pin:
+   * changing its model or reasoning makes already-admitted slices unjudgeable
+   * until admission runs again under the new pin.
+   */
+  readonly slice_admission: boolean;
   readonly budget_wiring: {
     readonly maxIterations: boolean;
     readonly maxCost: boolean;
@@ -207,6 +213,16 @@ export interface AdminConfigTaskFacts {
     readonly maxCost: number | null;
     readonly transientRetries: number;
     readonly timeout: number;
+  };
+  /**
+   * Caller-owned limits that outrank task.<kind>.budget on every run (durable
+   * CopilotTask passes them explicitly). Present = the page must say the
+   * configured limits for these fields never take effect; absent = none.
+   */
+  readonly caller_budget_override?: {
+    readonly maxIterations: number | 'unbounded';
+    readonly maxCost?: number;
+    readonly timeoutMs: number;
   };
 }
 

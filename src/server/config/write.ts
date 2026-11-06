@@ -344,6 +344,7 @@ async function validateFinalProviderPairs(
   touchedScopes: ReadonlyMap<string, PairScope>,
   models: ConfigPairModels,
   mutatedKeys: ReadonlySet<string>,
+  setKeys: ReadonlySet<string>,
 ): Promise<void> {
   const scopes = new Map(touchedScopes);
   // A global reset exposes task-level configuration previously hidden by the pin.
@@ -618,6 +619,23 @@ async function validateFinalProviderPairs(
     // not a catalog chat model. Setting the flag on one stays a write-time
     // error (otherwise the row would be a poison pill only raw SQL removes).
     if (typed) {
+      // The typed runner builds its wire body from the definition's pinned
+      // defaultProvider/defaultModel and never resolves a task reasoning row.
+      // A stored set is therefore a dead config row the runtime cannot consume;
+      // clear remains legal so stale rows from earlier versions can be removed.
+      for (const deadKey of [
+        `task.${taskKind}.provider`,
+        `task.${taskKind}.model`,
+        `task.${taskKind}.reasoning`,
+      ]) {
+        if (setKeys.has(deadKey)) {
+          throw new ApiError(
+            'invalid_config_value',
+            `${scope.label}: ${deadKey} is never consumed by the typed-execution lane — its provider, model and reasoning are fixed by the wire contract; clear the row instead`,
+            422,
+          );
+        }
+      }
       if (
         mutatedKeys.has(`task.${taskKind}.override_global_pin`) &&
         rowByKey.get(`task.${taskKind}.override_global_pin`) === true
@@ -871,6 +889,7 @@ export async function mutateConfigs(
 ): Promise<ConfigMutationResult[]> {
   if (mutations.length === 0) return [];
   const seen = new Set<string>();
+  const setKeys = new Set<string>();
   const touchedPairs = new Map<string, PairScope>();
   const parsedExpiry = new Map<string, Date | null | undefined>();
   for (const mutation of mutations) {
@@ -879,6 +898,7 @@ export async function mutateConfigs(
     }
     seen.add(mutation.key);
     if (mutation.action === 'set') {
+      setKeys.add(mutation.key);
       validateEntryBasics(mutation.key, mutation.value);
       parsedExpiry.set(mutation.key, parseExpiresAt(mutation.expiresAt));
     } else {
@@ -964,7 +984,7 @@ export async function mutateConfigs(
         ...(action === 'clear' ? { cleared: Boolean(prevRow) } : {}),
       });
     }
-    if (models) await validateFinalProviderPairs(tx, touchedPairs, models, seen);
+    if (models) await validateFinalProviderPairs(tx, touchedPairs, models, seen, setKeys);
     return out;
   });
   // Hydration is best-effort. HTTP reports both committed and observed epochs separately.

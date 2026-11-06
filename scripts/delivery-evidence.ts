@@ -280,13 +280,23 @@ export async function collectDeliveryEvidence(): Promise<DeliveryEvidence> {
   // --- DB counts + crons + migration drift (resolved local target; TEST refused) ---
   const dbTarget = resolveLocalDbTarget(process.env);
   const dbRefusal = testDbRefusalReason(dbTarget, process.env);
+  // The API probe and the DB probe can target different stacks (the API base
+  // comes from `docker compose ps` / DELIVERY_API_*, the DB target from the
+  // resolved local default). Name both so a divergence is visible in the
+  // evidence block instead of silently mixing two stacks' results.
   if (dbRefusal) {
     check(
       'db-target',
       'fail',
-      `refusing to connect: ${dbTarget.host}:${dbTarget.port}/${dbTarget.database} — ${dbRefusal}`,
+      `refusing to connect: ${dbTarget.host}:${dbTarget.port}/${dbTarget.database} — ${dbRefusal}` +
+        ` (api probes → ${base})`,
     );
   } else {
+    check(
+      'db-target',
+      'ok',
+      `db probes → ${dbTarget.host}:${dbTarget.port}/${dbTarget.database}; api probes → ${base}`,
+    );
     if (process.env.DEV_ALLOW_TEST_DB === '1') {
       console.warn(
         `[delivery-evidence] DEV_ALLOW_TEST_DB=1 — TEST-target guard bypassed; ` +

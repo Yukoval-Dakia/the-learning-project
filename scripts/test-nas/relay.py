@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-# Local ports to NAS TEST. The NAS sshd forbids TCP forwarding, so each connection is an ssh exec channel running nc.
-# Ports stay bound to 127.0.0.1 on both ends. A port that fails to bind retries alone while the others keep serving
-# (5544 exists only as the fallback for a stuck 5433, so the ports must not share one fate). A channel can fail while
-# multiplexing starts or at sshd's limit of 10 sessions per connection, so the client's bytes are read only after the
-# remote side confirms it is up, and a failed setup retries safely on another multiplexed connection. A few channels stay
-# parked and ready, so a request normally skips the ssh setup.
+# Local port 8787 to the NAS TEST app. The NAS sshd forbids TCP forwarding, so each connection is an ssh exec
+# channel running nc. Ports stay bound to 127.0.0.1 on both ends. The former database relays (5433/5544 -> NAS
+# 15433) were closed on 2026-11-06: dev scripts used to default to 5433, so no local port may reach TEST's
+# Postgres — query TEST with ssh + docker exec instead (see PORTS below). A channel can fail while multiplexing
+# starts or at sshd's limit of 10 sessions per connection, so the client's bytes are read only after the remote
+# side confirms it is up, and a failed setup retries safely on another multiplexed connection. A few channels
+# stay parked and ready, so a request normally skips the ssh setup.
 import asyncio, collections, os, sys, time
 HOME = os.path.expanduser('~')
 MASTERS = 6

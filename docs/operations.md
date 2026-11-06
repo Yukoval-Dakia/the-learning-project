@@ -26,7 +26,7 @@
 
 | dev 子进程 | 端口 | 对应 compose |
 | --- | --- | --- |
-| `rw:api`（`RW_WORKER=1 tsx watch server/index.ts`，dev-local 设 `RW_FRONTDOOR=dev`） | dev-local 下自动选 8788 起首个空闲端口（`DEV_PORT` 固定，避开 TEST 的 :8787）；单独跑时按 `API_PORT`，缺省 :8787 | `app`；页面由同进程的 Vite dev server（middleware 模式）提供，HMR 热更新；生产 `app` 仍直接提供 `dist/start`（`RW_FRONTDOOR=1`）；同进程 pg-boss 只是兜底，不替代独立 worker |
+| `rw:api`（`RW_WORKER=1 tsx watch server/index.ts`，dev-local 设 `RW_FRONTDOOR=dev`） | dev-local 下自动选 8788 起首个空闲端口（`DEV_PORT` 固定）；单独跑时按 `API_PORT`，本机 dev（`NODE_ENV` 非 `production`、非容器）缺省 8787 会在绑定前退出，生产入口与容器照常（Dockerfile 显式设 `API_PORT=8787`） | `app`；页面由同进程的 Vite dev server（middleware 模式）提供，HMR 热更新；生产 `app` 仍直接提供 `dist/start`（`RW_FRONTDOOR=1`）；同进程 pg-boss 只是兜底，不替代独立 worker |
 | `worker:dev`（`tsx scripts/worker.ts`） | — | `worker` |
 
 dev 数据库与 TEST 隔离：`dev:local` 用独立的 `docker-compose.dev.yml`（项目名 `loom-dev`，服务 `postgres-dev`，profile `dev`，pgvector 同镜像，宿主端口 **5434**，用户 `loom_dev`，命名卷 `loom-dev_loom-dev-pgdata`）。同一个容器内每 worktree 一个库（`loom_dev_<name>_<path hash>`，由 worktree 根路径确定性派生，`DEV_DB_NAME` 可覆盖；旧共享库 `loom_dev` 可能仍在），多个 worktree 并行 dev 互不共享数据。TEST 的 `postgres`（宿主侧 :5433/:5544，2026-11-06 起中继已关闭这两个端口）与生产 compose 文件不含该服务，普通 `docker compose up` 不会启动它。使用方式只有一条：
@@ -35,9 +35,9 @@ dev 数据库与 TEST 隔离：`dev:local` 用独立的 `docker-compose.dev.yml`
 pnpm dev:local      # 打开打印的地址（自动选 8788 起首个空闲端口）
 ```
 
-`dev:local` 依次：`docker compose -f docker-compose.dev.yml --profile dev up -d --wait postgres-dev`（等 healthcheck）→ 本 worktree 库不存在则经 `postgres` 维护库创建 → `pnpm db:migrate:local`（对本 worktree 库，已有库只应用新迁移）→ 幂等写入代码当前的 contract epoch（新库只有隐式 legacy epoch，会让所有请求 503）→ `dbos schema` 建 `tlp_dbos` → `seed:dev-questions` 播种 → 启动 API 与 worker，`DATABASE_URL` 固定指向本 worktree 的 dev 库（忽略 `.env` 的 `POSTGRES_*`）。
+`dev:local` 依次：`docker compose -f docker-compose.dev.yml --profile dev up -d --wait postgres-dev`（等 healthcheck）→ 本 worktree 库不存在则经 `postgres` 维护库创建 → `pnpm exec tsx scripts/migrate.ts`（生产迁移入口，对本 worktree 库；已有库只应用新迁移，并幂等补 subject-root seed 与 builtin subject/trait reconcile）→ 幂等写入代码当前的 contract epoch（新库只有隐式 legacy epoch，会让所有请求 503）→ `dbos schema` 建 `tlp_dbos` → `seed:dev-questions` 播种 → 启动 API 与 worker，`DATABASE_URL` 固定指向本 worktree 的 dev 库（忽略 `.env` 的 `POSTGRES_*`）。
 
-保护：TEST 目标判定只有一个 owner——`scripts/local-db-env.ts` 的 `testDbRefusalReason`（解析后的端口是 5433/5544，或库名是 TEST 的 `loom`）。`dev:local`、`dev:reset`、`db:migrate:local`、`drizzle.config.local.ts` 及所有解析本地库目标的脚本共用同一判断，连接前拒绝。本地脚本的目标解析（`resolveLocalDbTarget`）缺省即本 worktree 的 dev 库（`loom_dev` 凭据 @ `LOCAL_POSTGRES_HOST:LOCAL_POSTGRES_PORT`，缺省 `127.0.0.1:5434`）；`POSTGRES_USER`/`POSTGRES_PASSWORD` 属 TEST/生产栈，只在 `DEV_ALLOW_TEST_DB=1` 下生效——该开关是唯一覆盖（沿用旧行为，用 `.env` 的 `POSTGRES_*` 连 `LOCAL_POSTGRES_HOST:LOCAL_POSTGRES_PORT`，跳过启动/迁移 dev 库，启动日志打印醒目警告），且该路径同样没有指向 TEST 端口的默认值。
+保护：TEST 目标判定只有一个 owner——`scripts/local-db-env.ts`：解析目标面用 `testDbRefusalReason`（端口按解析后的数字比，`05433`、带空白的 `5433` 都解析为 5433 被拒；或库名是 TEST 的 `loom`），直读 `DATABASE_URL` 的入口用同一文件新增的 `guardDatabaseUrl`（URL 解析后：回环 host + TEST 端口或库名 `loom` 即拒；容器/发版路径 host 为 `postgres` 等非回环名，一律放行）。解析目标面覆盖 `dev:local`、`dev:reset`、`db:migrate:local`、`drizzle.config.local.ts` 等；直读面覆盖 `db:generate`/`db:push`/`db:migrate`（`drizzle.config.ts`）、`worker:dev` 与所有 import `scripts/load-env.ts` 的本机 CLI（`seed:synthetic`、`db:backfill:*`、`db:recompute:bcalib` 等），全部连接前拒绝。本地脚本的目标解析（`resolveLocalDbTarget`）缺省即本 worktree 的 dev 库（`loom_dev` 凭据 @ `LOCAL_POSTGRES_HOST:LOCAL_POSTGRES_PORT`，缺省 `127.0.0.1:5434`）；`POSTGRES_USER`/`POSTGRES_PASSWORD` 属 TEST/生产栈，只在 `DEV_ALLOW_TEST_DB=1` 下生效——该开关是两个面共同的唯一覆盖（沿用旧行为，用 `.env` 的 `POSTGRES_*` 连 `LOCAL_POSTGRES_HOST:LOCAL_POSTGRES_PORT`，跳过启动/迁移 dev 库，启动日志打印醒目警告），且该路径同样没有指向 TEST 端口的默认值。回滚期本地栈（`docker-compose.mac.yml`/`docker-compose.local.yml` 的宿主 5433/5544）从本机脚本访问同样被拒——形态与 TEST 不可区分；要用 `docker compose exec` 进容器操作，或显式 `DEV_ALLOW_TEST_DB=1`。
 
 重置 dev 库：`pnpm dev:reset` 只删本 worktree 的库（`DROP DATABASE … WITH (FORCE)`，下次 `pnpm dev:local` 重建、迁移并播种）。绝不 `down -v`——卷里装着全部 worktree 的库。
 

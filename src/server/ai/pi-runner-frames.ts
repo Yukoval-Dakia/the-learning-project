@@ -412,6 +412,12 @@ export function piTerminalResultFrame(args: {
    *  submit still did not land; the name is reported in the terminal error. */
   submitLandingConsumedBy?: 'missing_submit' | 'param_contract';
   structuredSubmitFailure?: string;
+  /** YUK-1904 — per-unit outcome line (accepted/sealed/not-submitted) for the failure wire. */
+  structuredSubmitFailureDetail?: string;
+  /** YUK-1904 — unit-mode assembled output from the submit loop; preferred over
+   *   extracting the final message's single submit call, which only carries the
+   *   last accepted unit. */
+  structuredAssembledOutput?: unknown;
   /** YUK-1547 (C1) — submit arguments AFTER the shared parameter-contract repair,
    *  i.e. what validation and execute saw. Raw streamed bytes stay the evidence. */
   repairedSubmitArguments?: unknown;
@@ -590,7 +596,10 @@ export function piTerminalResultFrame(args: {
       stop_reason: args.structuredSubmitFailure,
       total_cost_usd: costUsd,
       ...usageParts,
-      errors: [`Structured submit incomplete: ${args.structuredSubmitFailure}`],
+      errors: [
+        `Structured submit incomplete: ${args.structuredSubmitFailure}` +
+          (args.structuredSubmitFailureDetail ? `; ${args.structuredSubmitFailureDetail}` : ''),
+      ],
       ...(args.structuredSubmitEvidence
         ? { structured_submit_evidence: args.structuredSubmitEvidence }
         : {}),
@@ -598,49 +607,55 @@ export function piTerminalResultFrame(args: {
   }
   let structuredOutput: unknown;
   if (args.structuredOutputTool) {
-    const calls = final.content.filter((block) => block.type === 'toolCall');
-    const call = calls[0];
-    const arguments_ = call?.arguments;
-    if (
-      args.invalidStructuredArguments ||
-      final.stopReason !== 'toolUse' ||
-      calls.length !== 1 ||
-      call?.name !== STRUCTURED_OUTPUT_TOOL ||
-      arguments_ == null
-    ) {
-      return {
-        ...base,
-        subtype: 'error_during_execution',
-        is_error: true,
-        stop_reason: null,
-        total_cost_usd: costUsd,
-        ...usageParts,
-        // The raw-args digest lands in error_message and unresolved_reason so
-        // the truncated tool_call_log evidence can be matched back to this run.
-        errors: [
-          'structured output requires exactly one non-truncated submit call with strictly valid raw JSON arguments; no text fallback' +
-            (args.submitLandingConsumedBy === 'missing_submit'
-              ? '; the single landing turn was already consumed by the missing-submit reminder without a submit'
-              : args.submitLandingConsumedBy === 'param_contract'
-                ? '; the single landing turn was already consumed by the parameter-contract correction without a submit'
-                : '') +
-            (args.structuredSubmitEvidence
-              ? `;raw_args_sha256=${args.structuredSubmitEvidence.raw_args_sha256}`
-              : ''),
-        ],
-        ...(args.structuredSubmitEvidence
-          ? { structured_submit_evidence: args.structuredSubmitEvidence }
-          : {}),
-        ...(args.invalidStructuredArguments
-          ? { help_provider_fault: { kind: 'parse' as const } }
-          : {}),
-      } as SDKResultMessage & { source: 'pi' };
+    if (args.structuredAssembledOutput !== undefined) {
+      // YUK-1904 — the submit loop assembled the accepted units in input order;
+      // the final message's submit call is only the last accepted unit.
+      structuredOutput = args.structuredAssembledOutput;
+    } else {
+      const calls = final.content.filter((block) => block.type === 'toolCall');
+      const call = calls[0];
+      const arguments_ = call?.arguments;
+      if (
+        args.invalidStructuredArguments ||
+        final.stopReason !== 'toolUse' ||
+        calls.length !== 1 ||
+        call?.name !== STRUCTURED_OUTPUT_TOOL ||
+        arguments_ == null
+      ) {
+        return {
+          ...base,
+          subtype: 'error_during_execution',
+          is_error: true,
+          stop_reason: null,
+          total_cost_usd: costUsd,
+          ...usageParts,
+          // The raw-args digest lands in error_message and unresolved_reason so
+          // the truncated tool_call_log evidence can be matched back to this run.
+          errors: [
+            'structured output requires exactly one non-truncated submit call with strictly valid raw JSON arguments; no text fallback' +
+              (args.submitLandingConsumedBy === 'missing_submit'
+                ? '; the single landing turn was already consumed by the missing-submit reminder without a submit'
+                : args.submitLandingConsumedBy === 'param_contract'
+                  ? '; the single landing turn was already consumed by the parameter-contract correction without a submit'
+                  : '') +
+              (args.structuredSubmitEvidence
+                ? `;raw_args_sha256=${args.structuredSubmitEvidence.raw_args_sha256}`
+                : ''),
+          ],
+          ...(args.structuredSubmitEvidence
+            ? { structured_submit_evidence: args.structuredSubmitEvidence }
+            : {}),
+          ...(args.invalidStructuredArguments
+            ? { help_provider_fault: { kind: 'parse' as const } }
+            : {}),
+        } as SDKResultMessage & { source: 'pi' };
+      }
+      // YUK-1547 — the submit call's arguments ARE the structured output; there is
+      // no {result: ...} envelope. When the parameter-contract repair was adopted
+      // the capability sees the REPAIRED arguments; raw streamed bytes stay the
+      // tool_call_log evidence.
+      structuredOutput = args.repairedSubmitArguments ?? arguments_;
     }
-    // YUK-1547 — the submit call's arguments ARE the structured output; there is
-    // no {result: ...} envelope. When the parameter-contract repair was adopted
-    // the capability sees the REPAIRED arguments; raw streamed bytes stay the
-    // tool_call_log evidence.
-    structuredOutput = args.repairedSubmitArguments ?? arguments_;
   }
   return {
     ...base,

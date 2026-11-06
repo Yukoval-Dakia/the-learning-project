@@ -36,6 +36,7 @@ import type { CopilotRunInput } from './copilot-run-input';
 import { selectActorRef } from './copilot-run-input';
 import { clearCopilotWorkerSession } from './copilot-worker-session';
 import { resolveDeterministicCorrectionContract } from './correction-contract';
+import { DURABLE_COPILOT_EXECUTION_BUDGET } from './durable-execution-budget';
 import {
   copilotSessionContextDigest,
   shouldDeliverCopilotSessionContext,
@@ -72,24 +73,6 @@ import {
   isCopilotSubagentEnabled,
 } from './subagents';
 import { learnerToolResult } from './tool-result-language';
-
-/**
- * Durable Copilot runs carry NO quantity ceilings — owner directive removes all
- * spend caps (agentic turns, tool calls, row budgets are uncapped; the Copilot
- * context-budget surface keeps advisory warnings only). What remains is the
- * wall-clock execution window, which exists for owner recovery, not cost:
- * `timeoutMs` doubles as the basis of DURABLE_OWNER_SETTLEMENT_BUDGET_MS in
- * copilot_run.ts, and it MUST stay finite and strictly below
- * STUCK_RUN_THRESHOLD_MS (1h) or the stuck-run sweeper would converge a live
- * execution. 45min leaves the sweeper a ~14.5min margin.
- */
-export const DURABLE_COPILOT_EXECUTION_BUDGET = {
-  /** 'unbounded' maps to no `shouldStopAfterTurn` on the pi lane — turns are
-   *  limited only by explicit Stop, cancellation, or the timeout below. */
-  maxIterations: 'unbounded',
-  timeoutMs: 45 * 60_000,
-} as const;
-
 /**
  * The wire-name predicate for hosted-MCP calls (Exa today): any `mcp__` tool
  * not served by the in-process domain mount. Kept identical to the
