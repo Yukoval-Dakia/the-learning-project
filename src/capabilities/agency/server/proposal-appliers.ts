@@ -28,6 +28,7 @@ import {
   type RecordedProposalRate,
   runProposalAccept,
 } from '@/kernel/proposals/decision-protocol';
+import type { ProposalAcceptInput } from '@/kernel/proposals/types';
 // Completion/relearn record subject-keyed actions, then materialize through the
 // single structural writer. Approval and row locking stay in this owner transaction.
 import {
@@ -45,6 +46,8 @@ import type { ProposalInboxRow } from './proposal-lifecycle';
 export interface AgencyApplierOpts {
   decision?: string;
   user_note?: string;
+  /** Auto-apply passes the proposing agent's identity; omitted = human `user/self`. */
+  actor?: ProposalAcceptInput['actor'];
   enqueueLearningIntentNote?: EnqueueLearningIntentNoteFn;
   createLearningIntentKnowledgeNode?: CreateLearningIntentKnowledgeNodeFn;
   createLearningIntentNote?: AcceptLearningIntentParams['createNote'];
@@ -126,6 +129,7 @@ export async function acceptLearningItemProposal(
   const run = await runProposalAccept(db, proposalId, {
     proposal,
     userNote: opts.user_note,
+    ...(opts.actor ? { actor: opts.actor } : {}),
     signal: 'after_commit',
     replay: async (rate: RecordedProposalRate): Promise<LearningItemAcceptResult> => {
       const summary = await summarizeLearningItemMaterialization(db, proposalId);

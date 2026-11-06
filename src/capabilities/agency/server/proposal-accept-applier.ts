@@ -61,6 +61,7 @@ function runtimeOptions(db: Db, input: ProposalAcceptInput, runtime: unknown): A
     decision: input.decision,
     user_note: input.user_note,
     corrected_payload: input.corrected_payload,
+    ...(input.actor ? { actor: input.actor } : {}),
   };
 }
 

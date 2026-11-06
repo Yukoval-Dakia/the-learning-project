@@ -458,7 +458,16 @@ async function rebuildProposalDecisionSignal(
       : await db
           .select()
           .from(event)
-          .where(and(eq(event.action, 'rate'), inArray(event.caused_by_event_id, proposalIds)))
+          .where(
+            and(
+              eq(event.action, 'rate'),
+              // Only a learner decision counts. Agent auto-applies also write
+              // `rate` rows for honest attribution, but they are not acceptance
+              // signal and must not move accept_count on a later rebuild.
+              eq(event.actor_kind, 'user'),
+              inArray(event.caused_by_event_id, proposalIds),
+            ),
+          )
           .orderBy(desc(event.created_at), desc(event.id));
 
   const latestRateByProposal = new Map<string, EventRow>();

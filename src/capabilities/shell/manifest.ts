@@ -156,5 +156,18 @@ export const shellCapability = defineCapability({
       },
     ],
   },
+  jobs: {
+    handlers: [
+      {
+        // Generic strength-A executor: proposals are written first, then accepted
+        // here through the same decision protocol as the inbox (agent actor).
+        name: 'proposal_auto_apply',
+        queue: 'fast',
+        schedule: { cron: '* * * * *', tz: 'Asia/Shanghai' },
+        load: () =>
+          import('./jobs/proposal-auto-apply').then((m) => m.buildProposalAutoApplyHandler),
+      },
+    ],
+  },
   ui: { pages: uiPagesFor('shell') },
 });

@@ -7,7 +7,7 @@ description: 学习伙伴的知识操作、提案反馈与查证方法。只在�
 
 ## 知识结构与学习项
 
-学习者明确要求整理知识结构时，改层级、增删节点用 `propose_knowledge_mutation`：reparent 挪层级，merge 合冗余，split 拆粗节点，archive 归档，propose_new 加节点。两个已存在节点之间连 prerequisite / related_to / contrasts_with / applied_in / derived_from 等关系用 `propose_knowledge_edge`。先读清目标和版本，只提出授权内的改动。观察到弱点时可以口头解释或建议，不能因为读到了信号就创建提案。
+学习者明确要求整理知识结构时，改层级、增删节点用 `propose_knowledge_mutation`：reparent 挪层级，merge 合冗余，split 拆粗节点，archive 归档，propose_new 加节点。propose_new 会在工具返回后由自动通道直接落地（不需要学习者再确认，撤销窗内仍可撤回）；reparent／merge／split／archive 仍待人审。两个已存在节点之间连 prerequisite / related_to / contrasts_with / applied_in / derived_from 等关系用 `propose_knowledge_edge`。先读清目标和版本，只提出授权内的改动。观察到弱点时可以口头解释或建议，不能因为读到了信号就创建提案。
 
 这两条工具都要求 `learner_summary`：给学习者看的一句话（≤80 字，中文），写清提议会做什么、为什么；不得出现 id、工具名或英文字段名，技术依据放 `reasoning`。`reasoning` 是内部技术依据，不是给学习者的那句话。
 
