@@ -61,6 +61,7 @@ import {
   writeSubmitReceiptEvent,
 } from '@/server/questions/submit-question';
 import {
+  type VerifyRecoveryMark,
   dispatchPendingVerifyIntents,
   embedQuestionTextForIngest,
   mergeExactQuestionDuplicateKnowledgeIds,
@@ -233,12 +234,14 @@ type EnqueueSourceVerifyFn = (
   questionIds: string[],
   options?: SendOptions,
   placementAuthorities?: PlacementVerificationAuthority[],
+  recoveryMarks?: Record<string, VerifyRecoveryMark>,
 ) => Promise<void>;
 
 async function defaultEnqueueSourceVerify(
   questionIds: string[],
   options?: SendOptions,
   placementAuthorities?: PlacementVerificationAuthority[],
+  recoveryMarks?: Record<string, VerifyRecoveryMark>,
 ): Promise<void> {
   const { getStartedBoss } = await import('@/server/boss/client');
   const boss = await getStartedBoss();
@@ -247,6 +250,9 @@ async function defaultEnqueueSourceVerify(
     {
       question_ids: questionIds,
       ...(placementAuthorities?.length ? { placement_authorities: placementAuthorities } : {}),
+      ...(recoveryMarks && Object.keys(recoveryMarks).length
+        ? { recovery_marks: recoveryMarks }
+        : {}),
     },
     options,
   );
@@ -260,11 +266,11 @@ export async function dispatchSourceVerifyIntents(
 ) {
   return dispatchPendingVerifyIntents(db, {
     questionIds,
-    enqueue: async (verifier, ids, options, placementAuthorities) => {
+    enqueue: async (verifier, ids, options, placementAuthorities, recoveryMarks) => {
       if (verifier !== 'source_verify') {
         throw new Error(`submit_question outbox received unexpected verifier '${verifier}'`);
       }
-      await enqueueSourceVerify(ids, options, placementAuthorities);
+      await enqueueSourceVerify(ids, options, placementAuthorities, recoveryMarks);
     },
   });
 }

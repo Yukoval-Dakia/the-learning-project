@@ -8,6 +8,7 @@ export {
   JUDGE_DBOS_WORKFLOW,
   type JudgeEngineInventoryT,
   type JudgeQuestionRow,
+  assertSourceGroundingLaneConfigured,
   buildLegacyJudgeHandler,
   executeJudgeWorkflow,
   judgeDeliveryInput,
@@ -23,6 +24,7 @@ export {
 export {
   type EnqueueVerifyFn,
   SOLVE_LANE_TASK_KINDS,
+  type VerifyRecoveryMark,
   canonicalQuestionContentHash,
   dispatchPendingVerifyIntents,
   embedQuestionTextForIngest,

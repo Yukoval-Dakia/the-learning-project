@@ -20,18 +20,15 @@
 // verify-framework.ts for the full asymmetry rationale before "unifying" the two.
 
 import { createId } from '@paralleldrive/cuid2';
-import { and, desc, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, inArray, isNull, ne, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
-import { type TaskTextResult, aiAgentRef } from '@/ai/task-result';
+import { aiAgentRef } from '@/ai/task-result';
 import {
   type RunSourceGroundingVerifyParams,
   type SourceGroundingVerifyResult,
+  assertSourceGroundingLaneConfigured,
   runSourceGroundingVerify,
 } from '@/capabilities/practice/grading/public';
-import {
-  type PaidEffectIdentity,
-  computePaidEffectIdentity,
-} from '@/core/migration/paid-effect-protocol';
 import { QUESTION_ADMISSION_POLICY_IDS } from '@/core/question-admission-policy';
 import {
   LEGACY_DRAFT_STATUS,
@@ -46,8 +43,6 @@ import { toUnifiedVerifyResult } from '@/core/schema/verify-contract';
 import type { Db } from '@/db/client';
 import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
 import {
-  admitPaidEffectIntent,
-  claimPaidEffectSend,
   markPaidEffectUnknown,
   recordPaidEffectApplication,
   recordPaidEffectResult,
@@ -95,13 +90,22 @@ import {
   checksForTier,
   runSolveCheck,
 } from '../server/quiz/verify-framework';
+import type { VerifyRecoveryMark } from '../server/verify-dispatch-outbox';
 import { checkDedup } from './source_verify_dedup';
-import { publishVerifyLifecycleUpdate } from './source_verify_lifecycle';
+import {
+  publishVerifyLifecycleUpdate,
+  suspendVerifyHoldForTransient,
+} from './source_verify_lifecycle';
 import {
   type CheckOutcome,
   checkSourceConsistency,
   checkStructureCompleteness,
 } from './source_verify_prechecks';
+import {
+  type SourceVerifyRecheckClaim,
+  claimSourceVerifyRecheck,
+  settleRecheckNotSent,
+} from './source_verify_recheck';
 import { projectSourceVerifyResult, solveCheckToOutcome } from './source_verify_result';
 
 export interface SourceVerifyJobData {
@@ -116,6 +120,11 @@ export interface SourceVerifyJobData {
   recheck?: { command_event_id: string };
   /** Server-written placement authorities (verify outbox), one per bound question. */
   placement_authorities?: PlacementVerificationAuthority[];
+  /** Sweep-recovery markers keyed by question_id. Written only by the verify
+   * outbox from a recovery_epoch intent — job redelivery replays the same data
+   * and a client cannot mint it, so presence is the sole authority for the
+   * recovery path (incl. the stale-authority non-placement re-run). */
+  recovery_marks?: Record<string, VerifyRecoveryMark>;
 }
 
 // Loose run seam (mirrors quiz_verify): the handler + solve-check only consume
@@ -171,6 +180,15 @@ export interface RunSourceVerifyParams {
   recheckDeliveryId?: string;
   /** Placement claim authority for this question (sourcing_web delivery); fences paid calls. */
   placementAuthority?: PlacementVerificationAuthority;
+  /** Sweep-recovery epoch: the source_verify error event this run re-drives.
+   * The terminal guard becomes epoch-scoped — only a terminal event NEWER than
+   * the epoch suppresses (an older terminal followed by the epoch error is the
+   * recoverable case). Set only from a recovery_mark, never client input. */
+  recoveryEpoch?: string;
+  /** Test seam for the pre-solve grounding-lane probe (default
+   * assertSourceGroundingLaneConfigured; skipped when sourceGroundingFn is
+   * injected). Zero-send: adapter startup only. */
+  sourceGroundingPreflightFn?: (input: { db: Db; subjectProfile: SubjectProfile }) => Promise<void>;
 }
 
 export interface RunSourceVerifyResult {
@@ -239,9 +257,25 @@ export async function runSourceVerify(
   params: RunSourceVerifyParams,
 ): Promise<RunSourceVerifyResult> {
   const { db, questionId, runTaskFn } = params;
+  // Stale-delivery fence for the catch-bottom error event: a terminal event
+  // written after this timestamp means the question's verify already resolved
+  // mid-run — recording an error epoch would re-arm the sweep for nothing.
+  const runStartedAt = new Date();
   const placementPaid = params.placementAuthority
     ? placementAuthority.buildPlacementQuestionPaidCalls(db, questionId, params.placementAuthority)
     : undefined;
+  // Whether ANY provider query actually started decides the recheck claim's
+  // terminal state: started → 'unknown' (never re-paid); provably not →
+  // 'not_sent' (the attempt may re-open under the same command).
+  let providerQueryStarted = false;
+  const observedRunTaskFn: RunTaskFn = (kind, input, ctx) =>
+    runTaskFn(kind, input, {
+      ...ctx,
+      beforeProviderQuery: async (query) => {
+        providerQueryStarted = true;
+        await ctx?.beforeProviderQuery?.(query);
+      },
+    });
 
   // 核验输入与身份必须同一快照：
   // 行内容 + 组 current revision/generation + 对应冻结 revision 行在【同一
@@ -473,6 +507,13 @@ export async function runSourceVerify(
   const supplyTraceResult = SupplyTraceV1.safeParse(metadataRaw.supply_trace);
   const supplyTrace = supplyTraceResult.success ? supplyTraceResult.data : undefined;
   const difficultyEvidence = readDifficultyEvidenceFromMetadata(metadataRaw);
+  // Read before the paid calls: the grounding-lane probe for re-driven rows
+  // needs these before solve_check runs.
+  const singleSourceGrounding = metadataRaw.single_source_grounding === true;
+  const groundingSourceAssetId =
+    typeof metadataRaw.image_candidate_source_asset_id === 'string'
+      ? metadataRaw.image_candidate_source_asset_id
+      : null;
 
   // Idempotency: only a TERMINAL verify event short-circuits a re-run (outcome !=
   // 'error'). The catch-bottom writes a TRANSIENT-error event with outcome='error'
@@ -489,9 +530,15 @@ export async function runSourceVerify(
         eq(event.subject_kind, 'question'),
         eq(event.subject_id, questionId),
         ne(event.outcome, 'error'),
-        params.recheckCommandEventId != null
-          ? sql`${event.payload}->>'recheck_command_event_id' = ${params.recheckCommandEventId}`
-          : sql`true`,
+        params.recoveryEpoch != null
+          ? // A sweep recovery suppresses only on a terminal event NEWER than the
+            // epoch error it re-drives (created_at,id tuple order).
+            sql`(${event.created_at}, ${event.id}) > (
+              SELECT e.created_at, e.id FROM ${event} e WHERE e.id = ${params.recoveryEpoch}
+            )`
+          : params.recheckCommandEventId != null
+            ? sql`${event.payload}->>'recheck_command_event_id' = ${params.recheckCommandEventId}`
+            : sql`true`,
       ),
     )
     .limit(1);
@@ -503,38 +550,21 @@ export async function runSourceVerify(
   // commit — the claim can: 'sending'/'unknown' is never re-paid, the job ends
   // honestly (hold stays, pending_action clears), and 'receipt_ready'/'applied'
   // means the run already completed.
-  let recheckClaim: { identity: PaidEffectIdentity; fence: number; deliveryId: string } | null =
-    null;
+  let recheckClaim: SourceVerifyRecheckClaim | null = null;
+  let recheckSettled = false;
   if (params.recheckCommandEventId != null) {
     const commandEventId = params.recheckCommandEventId;
     const deliveryId = params.recheckDeliveryId ?? `manual:${commandEventId}`;
-    const claimOutcome = await db.transaction(async (tx) => {
-      const recheckEffect = {
-        family: 'source_verify' as const,
-        entityId: questionId,
-        entityRevision: commandEventId,
-        unit: 'source_verify@1' as const,
-        input: { question_id: questionId, command_event_id: commandEventId },
-      };
-      const admitted = await admitPaidEffectIntent(tx, recheckEffect);
-      if (admitted.kind === 'existing' && admitted.state !== 'pending') {
-        return { kind: 'held' as const, state: admitted.state };
-      }
-      const identity = computePaidEffectIdentity(recheckEffect);
-      const send = await claimPaidEffectSend(tx, identity, {
-        backend: 'pg-boss',
-        deliveryId,
-        leaseExpiresAt: new Date(Date.now() + 60 * 60_000),
-      });
-      if (send.kind !== 'claimed') {
-        return { kind: 'held' as const, state: send.kind === 'refused' ? send.state : 'pending' };
-      }
-      return { kind: 'claimed' as const, identity, fence: send.fence };
+    const claimOutcome = await claimSourceVerifyRecheck({
+      db,
+      questionId,
+      commandEventId,
+      deliveryId,
     });
     if (claimOutcome.kind !== 'claimed') {
-      // 'sending'/'unknown' — a prior delivery reached the paid call and its
-      // outcome is genuinely unknown; never re-pay. The hold stays honest and
-      // the job completes so pending_action clears.
+      // 'sending'/'unknown'/'receipt_ready' — a prior delivery reached the paid
+      // call and its outcome is genuinely unknown; never re-pay. The hold stays
+      // honest and the job completes so pending_action clears.
       return { status: 'skipped:claim_held', checks: [] };
     }
     recheckClaim = { identity: claimOutcome.identity, fence: claimOutcome.fence, deliveryId };
@@ -573,6 +603,23 @@ export async function runSourceVerify(
   const archivedKnowledgeIds = referencedKnowledgeIds.filter((id) => !liveKnowledgeIds.has(id));
   const knowledgeAlive = archivedKnowledgeIds.length === 0;
 
+  // Transient grounding holds (gate transient_error AND the re-drive lane
+  // probe): commit legacy draft + contract suspended/withheld before throwing
+  // to retry. Root→child locks serialize with editing/publishing; re-read
+  // version and terminal success under those locks so a stale delivery cannot
+  // undo a newer admission. A failed suspension rolls back the demotion too;
+  // catch-bottom records an error.
+  const suspendForTransientGrounding = async (message: string): Promise<void> => {
+    await suspendVerifyHoldForTransient(db, {
+      questionId,
+      parentQuestionId: row.parent_question_id,
+      expectedVersion: row.version,
+      expectedRevision: verifiedIdentity.revisionId,
+      expectedGeneration: verifiedIdentity.admissionGeneration,
+      message,
+    });
+  };
+
   try {
     // Run the tier-2 check set (CHECK_SETS_BY_TIER[2]). structure_completeness +
     // source_consistency + dedup are deterministic; solve_check spends the LLM call.
@@ -602,6 +649,32 @@ export async function runSourceVerify(
       if (tierChecks.includes('dedup')) {
         checks.push(await checkDedup(db, verifyInput));
       }
+      if (
+        // A re-driven single-source row reaches the paid grounding gate only
+        // when nothing else fails; probe the lane config (zero-send adapter
+        // startup) BEFORE solve_check spends, so a still-broken grounding lane
+        // holds the row here instead of after a wasted solve call.
+        params.recoveryEpoch != null &&
+        singleSourceGrounding &&
+        groundingSourceAssetId != null &&
+        knowledgeAlive &&
+        !checks.some((c) => c.verdict === 'fail')
+      ) {
+        const laneProbe =
+          params.sourceGroundingPreflightFn ??
+          (params.sourceGroundingFn == null ? assertSourceGroundingLaneConfigured : undefined);
+        if (laneProbe != null) {
+          try {
+            await laneProbe({ db, subjectProfile });
+          } catch (laneErr) {
+            const message = laneErr instanceof Error ? laneErr.message : String(laneErr);
+            await suspendForTransientGrounding(`grounding lane preflight: ${message}`);
+            throw new Error(
+              `source_verify grounding lane preflight failed (transient) for ${questionId}: ${message}`,
+            );
+          }
+        }
+      }
       if (tierChecks.includes('solve_check')) {
         const solveQuestion: SolveCheckQuestion = {
           id: verifyInput.id,
@@ -619,7 +692,7 @@ export async function runSourceVerify(
           figures: verifyInput.figures,
         };
         const solveResult = await runSolveCheck(solveQuestion, {
-          runTaskFn,
+          runTaskFn: observedRunTaskFn,
           profile: { id: subjectProfile.id, full: subjectProfile },
           db,
           imageFetchFn: params.imageFetchFn,
@@ -653,11 +726,6 @@ export async function runSourceVerify(
     // a single-source row this is the FINAL, real grounding gate — its source_consistency
     // n-gram is grounding-against-self (extract === the same VLM call's output). See the
     // SourceGroundingParams docblock for the full semantics matrix.
-    const singleSourceGrounding = metadataRaw.single_source_grounding === true;
-    const groundingSourceAssetId =
-      typeof metadataRaw.image_candidate_source_asset_id === 'string'
-        ? metadataRaw.image_candidate_source_asset_id
-        : null;
     let multimodalGroundingFailed = false;
     let groundingRan = false;
     let groundingSummary: string | undefined;
@@ -696,8 +764,8 @@ export async function runSourceVerify(
           : await runSourceGroundingVerify({
               ...groundingParams,
               runTaskFn: placementPaid
-                ? placementPaid.wrapRunTask('source_grounding', runTaskFn)
-                : runTaskFn,
+                ? placementPaid.wrapRunTask('source_grounding', observedRunTaskFn)
+                : observedRunTaskFn,
             });
       } catch (err) {
         // a BARE throw from the grounding fn (a bug, or a future
@@ -711,69 +779,7 @@ export async function runSourceVerify(
         };
       }
       if (outcome.status === 'transient_error') {
-        // Transient grounding is retriable, not a content verdict. Commit legacy draft
-        // and contract suspended/withheld together before throwing to retry. Root→child
-        // locks serialize with editing/publishing; re-read version and terminal success
-        // under those locks so a stale delivery cannot undo a newer admission.
-        // A failed suspension rolls back the demotion too; catch-bottom records an error.
-        try {
-          await db.transaction(async (suspendTx) => {
-            const groupRootId = row.parent_question_id ?? questionId;
-            await suspendTx
-              .select({ id: question.id })
-              .from(question)
-              .where(eq(question.id, groupRootId))
-              .for('update')
-              .limit(1);
-            const [post] = await suspendTx
-              .select({
-                version: question.version,
-                promotedElsewhere: sql<boolean>`EXISTS (
-                  SELECT 1 FROM ${event}
-                  WHERE ${event.action} = 'experimental:source_verify'
-                    AND ${event.subject_kind} = 'question'
-                    AND ${event.subject_id} = ${questionId}
-                    AND ${event.outcome} = 'success'
-                )`,
-              })
-              .from(question)
-              .where(eq(question.id, questionId))
-              .for('update')
-              .limit(1);
-            const maySuspendContract =
-              post != null && post.version === row.version && !post.promotedElsewhere;
-            if (!maySuspendContract) return;
-            await suspendTx
-              .update(question)
-              .set({ draft_status: LEGACY_DRAFT_STATUS.DRAFT, updated_at: new Date() })
-              .where(eq(question.id, questionId));
-            // 已声明 revision 走冻结契约的 typed lifecycle 更新，
-            // 未声明组照旧行归一（helper 内部分派，fail-closed 不变）。
-            await publishVerifyLifecycleUpdate(suspendTx, {
-              rootId: groupRootId,
-              expectedRevision: verifiedIdentity.revisionId,
-              expectedGeneration: verifiedIdentity.admissionGeneration,
-              admission: {
-                state: SCORING_ADMISSION_STATE.WITHHELD,
-                reason: SCORING_ADMISSION_WITHHELD_REASON.UNVERIFIED_RULES,
-              },
-              suspension: { suspended: true, reason: SUSPENSION_REASON.VERIFY_HOLD },
-              verification: {
-                policy_id: 'source_verify@1',
-                outcome: 'suspended',
-                evidence: {
-                  check: 'source_grounding',
-                  transient: true,
-                  message: outcome.message,
-                },
-              },
-              actorRef: 'source_verify:suspend',
-              now: new Date(),
-            });
-          });
-        } catch (suspendErr) {
-          console.error('[source_verify] verify-hold write failed for', questionId, suspendErr);
-        }
+        await suspendForTransientGrounding(outcome.message);
         throw new Error(
           `source_verify source grounding failed (transient) for ${questionId}: ${outcome.message}`,
         );
@@ -1297,79 +1303,117 @@ export async function runSourceVerify(
       });
     });
 
+    recheckSettled = recheckClaim != null;
     return { status: promote ? 'verified' : 'failed', checks };
   } catch (err) {
     // A placement stale-authority/admission refusal concerns the claim delivery, not the
-    // content: write no verify error and let the handler decide.
-    if (
+    // content: write no verify error and let the handler decide. The recheck
+    // claim still settles below — a stale delivery that provably sent nothing
+    // records not_sent so a re-drive may proceed under its own proof.
+    const placementRefusal =
       err instanceof PlacementStarterStaleAuthorityError ||
-      err instanceof PlacementStarterAdmissionError
-    )
-      throw err;
-    // failure-bottom: write a TRANSIENT-error event so pg-boss redelivery re-runs the
-    // verify (idempotency guard treats outcome='error' as retriable). A failed write
-    // transaction preserves its prior state; the catch path never promotes.
-    // error-safe: promotion happens only inside the try (post-LLM
-    // gate), so reaching this catch guarantees the question was never promoted. The
-    // unified system_error projection now ALSO gives tier-2 a symmetric result-layer
-    // overall='error' (previously the handler emitted only failure_class); the
-    // outcome='error' event is filtered out by every downstream consumer, so this is
-    // purely additive. outcome + idempotency guard unchanged.
-    try {
-      await writeEvent(db, {
-        id: createId(),
-        session_id: null,
-        actor_kind: 'agent',
-        actor_ref: 'source_verify',
-        action: 'experimental:source_verify',
-        subject_kind: 'question',
-        subject_id: questionId,
-        outcome: 'error',
-        payload: {
-          question_id: questionId,
-          ...(params.recheckCommandEventId != null
-            ? { recheck_command_event_id: params.recheckCommandEventId }
-            : {}),
-          // unified verify contract shape via the system_error
-          // projection: { axes:[], overall:'error', failure_class:'system_error',
-          // summary_md, confidence:0 }. failure_class is byte-identical to the prior
-          // inline; overall/axes/summary_md/confidence are additive.
-          ...toUnifiedVerifyResult({
-            source: 'system_error',
-            summary_md: `source_verify failed: ${String((err as Error).message ?? err)}`,
+      err instanceof PlacementStarterAdmissionError;
+    // A terminal event that landed after this run started means the verify
+    // already resolved under another delivery; writing a fresh error epoch
+    // would re-arm the sweep against a settled question. For an ordinary run
+    // any existing terminal must post-date the start (the entry guard saw
+    // none); for a recovery run only a NEWER-than-epoch terminal proves it —
+    // both reduce to newer-than-run-start.
+    const staleDelivery = placementRefusal
+      ? true
+      : (
+          await db
+            .select({ id: event.id })
+            .from(event)
+            .where(
+              and(
+                eq(event.action, 'experimental:source_verify'),
+                eq(event.subject_kind, 'question'),
+                eq(event.subject_id, questionId),
+                sql`${event.outcome} IS DISTINCT FROM 'error'`,
+                gt(event.created_at, runStartedAt),
+              ),
+            )
+            .limit(1)
+        ).length > 0;
+    if (!staleDelivery) {
+      // failure-bottom: write a TRANSIENT-error event so pg-boss redelivery re-runs the
+      // verify (idempotency guard treats outcome='error' as retriable). A failed write
+      // transaction preserves its prior state; the catch path never promotes.
+      // error-safe: promotion happens only inside the try (post-LLM
+      // gate), so reaching this catch guarantees the question was never promoted. The
+      // unified system_error projection now ALSO gives tier-2 a symmetric result-layer
+      // overall='error' (previously the handler emitted only failure_class); the
+      // outcome='error' event is filtered out by every downstream consumer, so this is
+      // purely additive. outcome + idempotency guard unchanged.
+      try {
+        await writeEvent(db, {
+          id: createId(),
+          session_id: null,
+          actor_kind: 'agent',
+          actor_ref: 'source_verify',
+          action: 'experimental:source_verify',
+          subject_kind: 'question',
+          subject_id: questionId,
+          outcome: 'error',
+          payload: {
+            recovery_eligible: true,
+            question_id: questionId,
+            ...(params.recheckCommandEventId != null
+              ? { recheck_command_event_id: params.recheckCommandEventId }
+              : {}),
+            // unified verify contract shape via the system_error
+            // projection: { axes:[], overall:'error', failure_class:'system_error',
+            // summary_md, confidence:0 }. failure_class is byte-identical to the prior
+            // inline; overall/axes/summary_md/confidence are additive.
+            ...toUnifiedVerifyResult({
+              source: 'system_error',
+              summary_md: `source_verify failed: ${String((err as Error).message ?? err)}`,
+              error: String((err as Error).message ?? err),
+            }),
             error: String((err as Error).message ?? err),
-          }),
-          error: String((err as Error).message ?? err),
-          ...(difficultyEvidence ? { difficulty_evidence: difficultyEvidence } : {}),
-          ...(supplyTrace ? { supply_trace: supplyTrace } : {}),
-        },
-        caused_by_event_id: null,
-        // solve_check owns its own AI run inside runSolveCheck; this handler holds no
-        // single TaskTextResult, so the transient-error event carries no run id/cost.
-        task_run_id: null,
-        cost_micro_usd: null,
-        created_at: new Date(),
-      });
-    } catch (cleanupErr) {
-      console.error('[source_verify] catch-block cleanup failed for', questionId, cleanupErr);
+            ...(difficultyEvidence ? { difficulty_evidence: difficultyEvidence } : {}),
+            ...(supplyTrace ? { supply_trace: supplyTrace } : {}),
+          },
+          caused_by_event_id: null,
+          // solve_check owns its own AI run inside runSolveCheck; this handler holds no
+          // single TaskTextResult, so the transient-error event carries no run id/cost.
+          task_run_id: null,
+          cost_micro_usd: null,
+          created_at: new Date(),
+        });
+      } catch (cleanupErr) {
+        console.error('[source_verify] catch-block cleanup failed for', questionId, cleanupErr);
+      }
     }
-    // the recheck claim reached 'sending' but the run threw: the paid
-    // call may or may not have happened, so the honest terminal state for THIS
-    // attempt is 'unknown' — never re-paid under this command event (a later
-    // command needs a new key → a new claim identity).
-    if (recheckClaim != null) {
+    // the recheck claim reached 'sending' but the run threw: settle it by what
+    // provably happened. A provider query started → the call may or may not
+    // have landed, so the honest terminal state for THIS attempt is 'unknown'
+    // — never re-paid under this command event. Provably no provider query →
+    // 'not_sent': the attempt consumed nothing and the next claim attempt under
+    // the same command may proceed.
+    if (recheckClaim != null && !recheckSettled) {
       try {
         await db.transaction(async (tx) => {
-          await markPaidEffectUnknown(
-            tx,
-            recheckClaim.identity,
-            recheckClaim.deliveryId,
-            `source_verify threw: ${String((err as Error).message ?? err)}`,
-            { fence: recheckClaim.fence },
-          );
+          if (providerQueryStarted) {
+            await markPaidEffectUnknown(
+              tx,
+              recheckClaim.identity,
+              recheckClaim.deliveryId,
+              `source_verify threw: ${String((err as Error).message ?? err)}`,
+              { fence: recheckClaim.fence },
+            );
+          } else {
+            await settleRecheckNotSent(
+              tx,
+              recheckClaim,
+              questionId,
+              params.recheckCommandEventId ?? '',
+            );
+          }
         });
       } catch (markErr) {
-        console.error('[source_verify] recheck claim mark-unknown failed', questionId, markErr);
+        console.error('[source_verify] recheck claim settle failed', questionId, markErr);
       }
     }
     throw err;
@@ -1389,6 +1433,7 @@ export function buildSourceVerifyHandler(
         continue;
       }
       const recheckCommandEventId = job.data?.recheck?.command_event_id;
+      const recoveryMarks = job.data?.recovery_marks ?? {};
       const placementAuthorities = new Map(
         (job.data.placement_authorities ?? []).map((authority) => [
           authority.question_id,
@@ -1397,22 +1442,40 @@ export function buildSourceVerifyHandler(
       );
       for (const questionId of questionIds) {
         const placementAuthority = placementAuthorities.get(questionId);
-        try {
-          const result = await runSourceVerify({
+        const mark = recoveryMarks[questionId];
+        const commandEventId = recheckCommandEventId ?? mark?.recheck_command_event_id;
+        const runOne = (authority?: PlacementVerificationAuthority) =>
+          runSourceVerify({
             db,
             questionId,
             runTaskFn,
-            ...(recheckCommandEventId != null
-              ? { recheckCommandEventId, recheckDeliveryId: job.id }
+            ...(commandEventId != null
+              ? { recheckCommandEventId: commandEventId, recheckDeliveryId: job.id }
               : {}),
-            ...(placementAuthority ? { placementAuthority } : {}),
+            ...(mark != null ? { recoveryEpoch: mark.epoch } : {}),
+            ...(authority ? { placementAuthority: authority } : {}),
           });
+        try {
+          const result = await runOne(placementAuthority);
           console.log(`[source_verify] ${questionId} -> ${result.status}`);
         } catch (error) {
           // A superseded delivery's authority: the current delivery re-binds the question with
           // a new epoch and its own intent. Nothing to retry under this one.
           if (placementAuthority && error instanceof PlacementStarterStaleAuthorityError) {
-            console.warn(`[source_verify] ${questionId} placement authority is stale; skipped`);
+            if (mark == null) {
+              console.warn(`[source_verify] ${questionId} placement authority is stale; skipped`);
+              continue;
+            }
+            // A sweep-created recovery intent may fall back to a normal
+            // non-placement verify: the dead authority's claim can no longer
+            // pay, and the run keeps its own budget + cost ledger. Only the
+            // server-written mark authorizes this — ordinary redeliveries and
+            // client payloads still refuse.
+            console.warn(
+              `[source_verify] ${questionId} placement authority is stale; recovery re-run without it`,
+            );
+            const result = await runOne();
+            console.log(`[source_verify] ${questionId} -> ${result.status}`);
             continue;
           }
           throw error;

@@ -1,4 +1,5 @@
 import type { PgBoss } from 'pg-boss';
+import type { VerifyRecoveryMark } from '@/capabilities/practice/public';
 import type { Db } from '@/db/client';
 import type { PlacementVerificationAuthority } from '@/kernel/supply-contracts';
 import { FAST_QUEUE_OPTS, createOrUpdateQueue } from '@/server/boss/queue-config';
@@ -43,12 +44,16 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
     questionIds: string[],
     options?: object,
     placementAuthorities?: PlacementVerificationAuthority[],
+    recoveryMarks?: Record<string, VerifyRecoveryMark>,
   ) => {
     await boss.send(
       verifier,
       {
         question_ids: questionIds,
         ...(placementAuthorities?.length ? { placement_authorities: placementAuthorities } : {}),
+        ...(recoveryMarks && Object.keys(recoveryMarks).length
+          ? { recovery_marks: recoveryMarks }
+          : {}),
       },
       options,
     );
