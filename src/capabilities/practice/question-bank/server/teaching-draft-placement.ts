@@ -85,7 +85,10 @@ export async function resolveTeachingDraftPlacement(
   if (!row || !root || (rootOnly && (ids.size !== 1 || !ids.has(row.id)))) {
     return {
       ok: false,
-      issue: { code: 'subject_root_missing', detail: '这个学科还没有可用的学科根，这次没有存题。' },
+      issue: {
+        code: 'subject_root_missing',
+        detail: '这个学科目前还没有收进来，这次没有存题。可以只在对话里讲题，但不会进入题库。',
+      },
     };
   }
   return {
