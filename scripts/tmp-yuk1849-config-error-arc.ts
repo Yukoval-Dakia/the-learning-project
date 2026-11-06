@@ -1154,6 +1154,9 @@ async function main() {
     answer: '名词',
   });
   await primeDispatch(Q7);
+  // Dispatch the submission intent first: recovery synthesis only re-drives
+  // questions whose earlier intents the outbox already completed.
+  await sweep();
   await lane('fixed');
   await handlerDeliver(Q7, { grounded: false, answer: '名词' });
   const s7a = await dumpState(Q7);
