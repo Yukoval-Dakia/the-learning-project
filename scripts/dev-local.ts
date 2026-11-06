@@ -44,8 +44,9 @@ async function firstFreePort(from: number): Promise<number> {
 }
 const devPort = process.env.DEV_PORT ?? String(await firstFreePort(8788));
 // An explicit DEV_PORT=8787 bypasses firstFreePort's skip; refuse it before any
-// Docker/DB work. DEV_ALLOW_TEST_DB=1 does not relax this (TEST relay port).
-guardDevApiPort(devPort, 'dev-local');
+// Docker/DB work. dev:local is a local dev launcher, so it refuses regardless of
+// an inherited NODE_ENV or container marker; DEV_ALLOW_TEST_DB=1 does not relax it.
+guardDevApiPort(devPort, 'dev-local', { inContainer: false, inProduction: false });
 const devOrigin = `http://127.0.0.1:${devPort}`;
 
 // Dev runs against the shared dev Postgres container (docker-compose.dev.yml: :5434,

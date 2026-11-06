@@ -107,13 +107,35 @@ function encode(value: string): string {
 
 // Loopback hosts. The WHATWG URL parser does not normalize the host of a
 // non-special scheme like postgres:// (`LOCALHOST` and `localhost.` stay as
-// written), so compare lowercased and without the root dot. The raw-DATABASE_URL
-// guard below only refuses targets on a loopback host: containers and release
-// hosts connect via service names (`postgres:5432`) or remote addresses and
-// must pass untouched.
+// written), so compare lowercased and without the root dot. `0.0.0.0`/`[::]`
+// are the wildcard addresses: a client dialling them reaches this machine.
+// The raw-DATABASE_URL guard below only refuses targets on a loopback host:
+// containers and release hosts connect via service names (`postgres:5432`) or
+// remote addresses and must pass untouched.
 function isLoopbackHost(hostname: string): boolean {
-  const host = hostname.toLowerCase().replace(/\.$/, '');
-  return host === 'localhost' || host === '[::1]' || /^127(?:\.\d{1,3}){3}$/.test(host);
+  const host = hostname.trim().toLowerCase().replace(/\.$/, '');
+  return (
+    host === 'localhost' ||
+    host === '[::1]' ||
+    host === '0.0.0.0' ||
+    host === '[::]' ||
+    /^127(?:\.\d{1,3}){3}$/.test(host)
+  );
+}
+
+function nonEmpty(value: string | null | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+// Production is exactly the runtime that must keep binding 8787 and may point
+// at non-local databases. Read process.env.NODE_ENV directly: esbuild's
+// --define replaces this exact expression with "production" in dist/*.cjs, so
+// the bundle stays production even when the runtime env omits NODE_ENV. Going
+// through a parameter (`env.NODE_ENV`) defeats that substitution and let the
+// bundle fence itself — verified against node dist/server.cjs.
+export function isProductionRuntime(): boolean {
+  return process.env.NODE_ENV?.trim() === 'production';
 }
 
 // TEST-target judgment for scripts that read DATABASE_URL directly (drizzle-kit
@@ -121,7 +143,13 @@ function isLoopbackHost(hostname: string): boolean {
 // scripts/load-env.ts). Same single owner and same TEST definition as
 // testDbRefusalReason, applied to a parsed URL instead of a resolved target.
 // Returns null (no refusal) for a missing or unparseable URL — the driver's own
-// error is the correct failure there — and for any non-loopback host.
+// error is the correct failure there.
+//
+// The driver does not necessarily connect where the URL's authority points:
+// `pg`/postgres-js let `?host=`/`?port=` query parameters override it and fall
+// back to PGHOST/PGPORT when the URL omits them. Judge the effective target with
+// that precedence (query > URL > PG* > driver default) so a URL that says
+// `postgres:5432` but carries `?host=127.0.0.1&port=5544` cannot slip through.
 export function testDatabaseUrlRefusalReason(
   rawUrl: string | undefined,
   env: LocalEnvInput = process.env,
@@ -134,11 +162,22 @@ export function testDatabaseUrlRefusalReason(
   } catch {
     return null;
   }
-  if (!isLoopbackHost(url.hostname)) return null;
-  const port = parsedPort(url.port);
-  if (TEST_DB_PORT_NUMBERS.includes(port)) {
-    return `loopback port ${url.port} (parses to ${port}) is a TEST Postgres port (${TEST_DB_PORTS.join('/')})`;
+
+  const queryHost = nonEmpty(url.searchParams.get('host'));
+  const queryPort = nonEmpty(url.searchParams.get('port'));
+  const envHost = nonEmpty(env.PGHOST);
+  const envPort = nonEmpty(env.PGPORT);
+
+  const host = queryHost ?? nonEmpty(url.hostname) ?? envHost ?? 'localhost';
+  const portRaw = queryPort ?? nonEmpty(url.port) ?? envPort ?? '5432';
+  const port = parsedPort(portRaw);
+  if (isLoopbackHost(host) && TEST_DB_PORT_NUMBERS.includes(port)) {
+    return `loopback target ${host}:${portRaw} (parses to ${port}) is a TEST Postgres port (${TEST_DB_PORTS.join('/')})`;
   }
+
+  // Database-name refusal keeps the pre-existing scope: only when the URL's own
+  // authority is loopback. Extending it to query/env hosts is a separate ticket.
+  if (!isLoopbackHost(url.hostname)) return null;
   let database: string;
   try {
     database = decodeURIComponent(url.pathname.replace(/^\//, ''));
@@ -177,9 +216,9 @@ export function guardDatabaseUrl(label: string, env: LocalEnvInput = process.env
 // The TEST app relay owns 8787 on this Mac (scripts/test-nas/relay.py). A dev
 // API that binds it can coexist with the relay: the relay holds 127.0.0.1 while
 // `serve()` without a hostname takes the IPv6 wildcard, so both listen and
-// people silently reach the wrong app. Docker images legitimately listen on
-// 8787 (Dockerfile sets API_PORT=8787 and EXPOSE 8787) and Docker marks itself
-// with /.dockerenv, which is how the guard tells a container from this Mac.
+// people silently reach the wrong app. This is a LOCAL DEV fence only:
+// production stays able to bind 8787 (Dockerfile API_PORT=8787, NODE_ENV baked
+// into the esbuild bundles), and containers are recognized by /.dockerenv.
 // DEV_ALLOW_TEST_DB=1 only relaxes the database target and does not bypass this.
 export const TEST_APP_RELAY_PORT = 8787;
 
@@ -187,24 +226,33 @@ export function isContainerRuntime(): boolean {
   return existsSync('/.dockerenv');
 }
 
+export interface DevApiPortContext {
+  inContainer?: boolean;
+  inProduction?: boolean;
+}
+
 export function devApiPortRefusalReason(
   rawPort: string | number | undefined,
-  inContainer: boolean = isContainerRuntime(),
+  context: DevApiPortContext = {},
 ): string | null {
-  if (inContainer) return null;
+  const inContainer = context.inContainer ?? isContainerRuntime();
+  const inProduction = context.inProduction ?? isProductionRuntime();
+  if (inContainer || inProduction) return null;
   const port = typeof rawPort === 'number' ? rawPort : parsedPort(rawPort);
   if (port !== TEST_APP_RELAY_PORT) return null;
   return `port ${TEST_APP_RELAY_PORT} is the TEST app relay's port (scripts/test-nas/relay.py)`;
 }
 
 // Fail-closed entry for local dev API launches: exits before the socket binds.
-// `label` names the entry in the message; containers return immediately.
+// `label` names the entry in the message; production/container launches return
+// immediately. `dev:local` overrides the context to stay strict even when an
+// inherited NODE_ENV says production.
 export function guardDevApiPort(
   rawPort: string | number | undefined,
   label: string,
-  inContainer: boolean = isContainerRuntime(),
+  context: DevApiPortContext = {},
 ): void {
-  const reason = devApiPortRefusalReason(rawPort, inContainer);
+  const reason = devApiPortRefusalReason(rawPort, context);
   if (!reason) return;
   console.error(
     `[${label}] refusing to bind: ${reason}.\n` +

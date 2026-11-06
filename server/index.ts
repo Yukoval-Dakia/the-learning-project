@@ -11,7 +11,7 @@ import { warnFlipOrder } from '@/kernel/projection-writer-policy';
 import { installSettlementCascadeRevert } from '@/kernel/settlement-cascade-revert';
 import { initializeLaminarTracing } from '@/server/ai/laminar-tracing';
 import { resolveApiPort } from '@/server/config/env';
-import { guardDevApiPort } from '../scripts/local-db-env';
+import { guardDatabaseUrl, guardDevApiPort, isProductionRuntime } from '../scripts/local-db-env';
 import { buildHonoApp } from './app';
 import { assertComposedRoutesDeclared } from './composed-routes';
 import { loadApiEnv } from './env';
@@ -25,9 +25,14 @@ warnFlipOrder();
 // YUK-345 / YUK-1007：API_PORT 解析单一真源在 src/server/config/env.ts resolveApiPort
 // （trim → 空→默认 8787 → 非正整数 throw；admin config 读面 runtime 分区同源）。
 const port = resolveApiPort(env.API_PORT);
-// 8787 is the TEST app relay on this Mac; a local dev API must not share it.
-// Container images set API_PORT=8787 explicitly and are exempt (/.dockerenv).
-guardDevApiPort(port, 'rw:api');
+// Local dev only: 8787 is the TEST app relay on this Mac, and a dev API that
+// publishes a loopback TEST DATABASE_URL is just as wrong. Production keeps
+// binding 8787 (NODE_ENV=production, baked into dist bundles and the Dockerfile)
+// and containers are exempt inside the port guard.
+if (!isProductionRuntime()) {
+  guardDevApiPort(port, 'rw:api');
+  guardDatabaseUrl('rw:api');
+}
 assertComposedRoutesDeclared(capabilities);
 assertProposalKindsOwned(capabilities);
 const app = buildHonoApp(capabilities);

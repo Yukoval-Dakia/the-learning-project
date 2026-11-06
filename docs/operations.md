@@ -26,7 +26,7 @@
 
 | dev 子进程 | 端口 | 对应 compose |
 | --- | --- | --- |
-| `rw:api`（`RW_WORKER=1 tsx watch server/index.ts`，dev-local 设 `RW_FRONTDOOR=dev`） | dev-local 下自动选 8788 起首个空闲端口（`DEV_PORT` 固定）；单独跑时按 `API_PORT`，缺省 8787 会在绑定前退出（8787 是本机 TEST 中继端口，容器内 API 由 Dockerfile 显式设 `API_PORT=8787`，不受影响） | `app`；页面由同进程的 Vite dev server（middleware 模式）提供，HMR 热更新；生产 `app` 仍直接提供 `dist/start`（`RW_FRONTDOOR=1`）；同进程 pg-boss 只是兜底，不替代独立 worker |
+| `rw:api`（`RW_WORKER=1 tsx watch server/index.ts`，dev-local 设 `RW_FRONTDOOR=dev`） | dev-local 下自动选 8788 起首个空闲端口（`DEV_PORT` 固定）；单独跑时按 `API_PORT`，本机 dev（`NODE_ENV` 非 `production`、非容器）缺省 8787 会在绑定前退出，生产入口与容器照常（Dockerfile 显式设 `API_PORT=8787`） | `app`；页面由同进程的 Vite dev server（middleware 模式）提供，HMR 热更新；生产 `app` 仍直接提供 `dist/start`（`RW_FRONTDOOR=1`）；同进程 pg-boss 只是兜底，不替代独立 worker |
 | `worker:dev`（`tsx scripts/worker.ts`） | — | `worker` |
 
 dev 数据库与 TEST 隔离：`dev:local` 用独立的 `docker-compose.dev.yml`（项目名 `loom-dev`，服务 `postgres-dev`，profile `dev`，pgvector 同镜像，宿主端口 **5434**，用户 `loom_dev`，命名卷 `loom-dev_loom-dev-pgdata`）。同一个容器内每 worktree 一个库（`loom_dev_<name>_<path hash>`，由 worktree 根路径确定性派生，`DEV_DB_NAME` 可覆盖；旧共享库 `loom_dev` 可能仍在），多个 worktree 并行 dev 互不共享数据。TEST 的 `postgres`（宿主侧 :5433/:5544，2026-11-06 起中继已关闭这两个端口）与生产 compose 文件不含该服务，普通 `docker compose up` 不会启动它。使用方式只有一条：
