@@ -17,7 +17,7 @@ export interface HelpExitCopy {
 }
 
 const DETERMINISTIC_PRACTICE =
-  '回到题面，把已知条件和它问的东西各划一遍，然后只写下一步。这一步不调用模型。';
+  '回到题面，把已知条件和它问的东西各划一遍，然后只写下一步。可以先自己试着写。';
 
 export function isHelpProviderFault(value: unknown): value is HelpProviderFault {
   if (!value || typeof value !== 'object') return false;
@@ -90,8 +90,8 @@ export function readHelpProviderFault(error: unknown): HelpProviderFault | undef
 export function helpExitCopy(fault: HelpProviderFault): HelpExitCopy {
   if (fault.kind === 'quota') {
     return {
-      reason: '模型额度已用完（429）。这次没有新的计划、提案或知识。',
-      stopRetryGuidance: '请停止重试。额度恢复前，再发同样的请求还会立刻失败。',
+      reason: '现在有点忙，这次没能继续回答。',
+      stopRetryGuidance: '过一会儿再试试吧。',
       deterministicPractice: DETERMINISTIC_PRACTICE,
     };
   }
@@ -121,7 +121,7 @@ export function helpExitLead(fault: HelpProviderFault): string {
   return [
     copy.reason,
     '',
-    '停止重试',
+    fault.kind === 'quota' ? '稍后再试' : '停止重试',
     copy.stopRetryGuidance,
     '',
     '确定性练习',
@@ -134,6 +134,6 @@ export function renderHelpExitMarkdown(fault: HelpProviderFault): string {
     helpExitLead(fault),
     '',
     '下一步',
-    '可以在这次对话里接着说明卡在哪一步。这次不会自动再请求模型。',
+    '可以在这次对话里接着说明卡在哪一步。这次不会自动再试。',
   ].join('\n');
 }

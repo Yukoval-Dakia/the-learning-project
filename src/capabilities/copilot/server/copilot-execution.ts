@@ -102,6 +102,7 @@ export type CopilotExecutionActivity =
   | { kind: 'prose_delta'; text: string }
   /** YUK-1765 — the model started reasoning. Carries no reasoning text. */
   | { kind: 'model_thinking' }
+  | { kind: 'provider_retry'; delayMs: number; retry: number }
   | { kind: 'subtask'; event: CopilotSubtaskEvent }
   | {
       kind: 'tool_started';
@@ -281,12 +282,16 @@ export function createCopilotExecutionOwner(
         ? { reply: correctionResolution.reply, correction: 'clarify' as const }
         : undefined;
 
-    const finalizer = createCopilotReplyFinalizer({
-      rootTaskRunId: turn.taskRunId,
-      correctionContract: input.correction_contract,
-      ...(authoritativeReply ? { authoritativeReply } : {}),
-      resolveArtifactReference: (ref) => resolveLivePrimaryViewArtifact(db, ref),
-    });
+    let activeTaskRunId = turn.taskRunId;
+    const createFinalizer = () =>
+      createCopilotReplyFinalizer({
+        rootTaskRunId: activeTaskRunId,
+        correctionContract: input.correction_contract,
+        ...(authoritativeReply ? { authoritativeReply } : {}),
+        resolveArtifactReference: (ref) => resolveLivePrimaryViewArtifact(db, ref),
+      });
+
+    let finalizer = createFinalizer();
 
     const surface = input.surface;
     const baseContextBudget = resolveContextBudget(surface);
@@ -417,12 +422,12 @@ export function createCopilotExecutionOwner(
               const record = await handleNativeSubagentTaskEvent(db, message, {
                 sessionId: turn.sessionId,
                 parentTurnEventId: turn.sourceEventId,
-                parentTaskRunId: turn.taskRunId,
+                parentTaskRunId: activeTaskRunId,
               }).catch((error) => {
                 nativeProjectionFailed = true;
                 console.error('[copilot-execution] native subagent projection failed', {
                   session_id: turn.sessionId,
-                  parent_task_run_id: turn.taskRunId,
+                  parent_task_run_id: activeTaskRunId,
                   error,
                 });
               });
@@ -553,6 +558,14 @@ export function createCopilotExecutionOwner(
       },
       sdkSession,
       nativeCompaction: { sessionContext: compileCopilotSessionContext(input) },
+      onProviderRetry: async ({ nextTaskRunId, delayMs, retry }) => {
+        await disposeSubagentCancellation();
+        activeTaskRunId = nextTaskRunId;
+        disposeSubagentCancellation = bindCancellation();
+        domainMountOptions.ctx.taskRunId = nextTaskRunId;
+        finalizer = createFinalizer();
+        await emitActivity(policy, { kind: 'provider_retry', delayMs, retry });
+      },
       onThinking: () => {
         if (thinkingAnnounced) return;
         thinkingAnnounced = true;
@@ -591,11 +604,13 @@ export function createCopilotExecutionOwner(
       void emitActivity(policy, { kind: 'prose_delta', text });
     });
     let retainSdkSession = false;
-    const disposeSubagentCancellation = bindSubagentParentCancellation(db, {
-      sessionId: turn.sessionId,
-      parentTaskRunId: turn.taskRunId,
-      signals: cancellationSignals,
-    });
+    const bindCancellation = () =>
+      bindSubagentParentCancellation(db, {
+        sessionId: turn.sessionId,
+        parentTaskRunId: activeTaskRunId,
+        signals: cancellationSignals,
+      });
+    let disposeSubagentCancellation = bindCancellation();
     let nativeDrain: Promise<boolean> | undefined;
     const drainNativeTasks = () => {
       nativeDrain ??= (async () => {
@@ -611,7 +626,7 @@ export function createCopilotExecutionOwner(
         // retry the projection without buying another model execution.
         console.error('[copilot-execution] native lifecycle drain failed', {
           session_id: turn.sessionId,
-          parent_task_run_id: turn.taskRunId,
+          parent_task_run_id: activeTaskRunId,
           error,
         });
         return false;
