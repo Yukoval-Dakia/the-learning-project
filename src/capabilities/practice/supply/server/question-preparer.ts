@@ -24,6 +24,7 @@ import {
   preparerUnitContent,
   recoverQuestionPreparer,
 } from './question-preparer-journal';
+import { recoveryPriorContext } from './question-preparer-recovery';
 import {
   admitNightlySourcingRun,
   holdNightlySupplyUnit,
@@ -176,15 +177,7 @@ export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown, r
       )
         throw new Error('repair verdict must bind a unit in the submitted revision');
     }
-    priorContext = {
-      previous,
-      calls: calls.map((call) => ({
-        tool: call.tool_name,
-        input: call.input_json,
-        output: call.output_json,
-        error: call.error_reason,
-      })),
-    };
+    priorContext = recoveryPriorContext(previous, calls);
   }
   // Short advisory-locked journal acts as the execution lease. Queue state, never age, releases it.
   const boss = await getStartedBoss();
