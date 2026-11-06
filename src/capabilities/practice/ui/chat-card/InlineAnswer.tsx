@@ -271,7 +271,8 @@ function AnswerArea({
       autosave.hold();
       // Handing in deletes the saved draft. Another card or tab may have saved a newer answer, and
       // this one has nothing to flush, so the server's copy is checked before it can be replaced.
-      if (!accepted) {
+      // Once this card has graded, its own submission is there and the answer can no longer change.
+      if (!accepted && !judged) {
         const latest = await client.getIssuanceState(issuanceId);
         if (
           latest.submissions.length > 0 ||
@@ -338,7 +339,10 @@ function AnswerArea({
     slots.length > 0 &&
     !conflict &&
     (!presentation || slots.some((slot) => answered(slot.slot_id))) &&
-    slots.every((slot) => answered(slot.slot_id) || blankable.has(slot.slot_id));
+    slots
+      // A table only lays out its cells; answers belong to the cell slots.
+      .filter((slot) => slot.kind !== 'table')
+      .every((slot) => answered(slot.slot_id) || blankable.has(slot.slot_id));
   const finished = submitted || confirmed;
   const locked = finished || !!graded || grade.isPending || !!accepted;
 

@@ -525,8 +525,13 @@ export default function TodayPage({
   LearningIntentComposer,
   ColdStart,
 }: TodayPageProps) {
-  const { getWorkbenchSummary } = useWorkbenchClient();
+  const { getWorkbenchSummary, listDecisionProposalPage } = useWorkbenchClient();
   const now = new Date();
+  const autoApply = useQuery({
+    queryKey: ['proposals', 'auto-apply-enabled'],
+    queryFn: () => listDecisionProposalPage().then((page) => page.auto_apply_enabled),
+    staleTime: 60_000,
+  });
 
   const summaryQ = useQuery({ queryKey: queryKeys.workbenchSummary, queryFn: getWorkbenchSummary });
   // queryKey 与 /agent-notes 全量页（['agent-notes','full']，limit=50）分档，
@@ -591,6 +596,7 @@ export default function TodayPage({
               <LearningIntentComposer
                 initialTopic={s.active_goal?.title ?? ''}
                 pendingCount={s.proposals.by_kind.learning_item ?? 0}
+                autoApplyEnabled={autoApply.data === true}
                 navigate={navigate}
               />
 

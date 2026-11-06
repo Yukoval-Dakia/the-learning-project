@@ -12,6 +12,7 @@ import { restoreSkillContext } from '../skill-lifecycle';
 import type { CopilotRunView } from '../subtask-events';
 import type { CompanionState } from './companion-state';
 import type { RunTracker } from './run-tracker';
+import type { ThinkingSegment } from './thinking-lane';
 import type { TurnSender } from './turn-sender';
 import type { VisitSessions } from './visit-sessions';
 
@@ -27,6 +28,7 @@ export interface ActiveRun {
   connectionLost?: boolean;
   stopPending: boolean;
   cancelRequested: boolean;
+  thinking: readonly ThinkingSegment[];
 }
 
 export interface CompanionInternals {

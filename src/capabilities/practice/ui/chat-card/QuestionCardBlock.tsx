@@ -66,6 +66,14 @@ function SlotPreview({
   notation: string | null;
 }) {
   if (slot.kind === 'select') {
+    // A sentence to break: the frozen passage is the question, its gaps have no words of their own.
+    if (slot.text) {
+      return (
+        <MathMarkdown className="un-read" notation={notation}>
+          {slot.text}
+        </MathMarkdown>
+      );
+    }
     const lists = slot.axes ? Object.entries(slot.axes) : [['items', slot.items] as const];
     return (
       <>

@@ -231,6 +231,31 @@ export function LiveActivity({
  * YUK-1664 — the steps of a settled reply: one summary line above the text that opens the full step
  * list. While it is generating, the one status line sits above the composer (RunFooter).
  */
+/** What it thought on the way to a finished reply: for this visit only, folded until asked for. */
+export function ThinkingDone({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  const panelId = useId();
+  return (
+    <div className="un-cp-activity-done">
+      <button
+        type="button"
+        className="un-cp-step-line un-hit"
+        aria-expanded={open}
+        aria-controls={panelId}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <span className="un-cp-step-label">刚才的想法</span>
+        <ChevronDown size={14} aria-hidden="true" className="un-cp-activity-chev" />
+      </button>
+      <Expand open={open} id={panelId}>
+        <div className="un-cp-thinking" data-done="">
+          <p>{text}</p>
+        </div>
+      </Expand>
+    </div>
+  );
+}
+
 export function StepActivity({ steps }: { steps: StepView[] }) {
   const [open, setOpen] = useState(false);
   const listId = useId();

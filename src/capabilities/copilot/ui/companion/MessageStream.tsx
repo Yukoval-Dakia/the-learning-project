@@ -35,6 +35,7 @@ export function MessageStream({
   readNotePage,
 }: MessageStreamProps) {
   const messages = useCompanion(controller, (s) => s.messages);
+  const thinkingByRun = useCompanion(controller, (s) => s.thinkingByRun);
   const sessionId = useCompanion(controller, (s) => s.currentSessionId);
   // One stable component per conversation, so a streamed delta never remounts a card on screen.
   const questionSlot = useMemo(() => {
@@ -81,6 +82,8 @@ export function MessageStream({
   }
   const { actions } = controller;
   let replies = 0;
+  // A run's user message carries the run id; a settled reply read back from the server may not.
+  let currentRunId: string | undefined;
   return (
     <div className="un-cp-scroll" ref={stick.attach}>
       <QuestionRefSlotContext.Provider value={questionSlot}>
@@ -88,11 +91,17 @@ export function MessageStream({
           <SummaryCard empty={messages.length === 0} navigate={navigate} />
           {messages.map((message) => {
             if (message.role === 'ai') replies += 1;
+            if (message.role === 'user') currentRunId = message.id;
             const questionId = message.skill_turn?.structured_question?.id;
             return (
               <MessageRow
                 key={message.id}
                 message={message}
+                thinkingText={
+                  message.role === 'ai'
+                    ? thinkingByRun[message.run_id ?? currentRunId ?? '']
+                    : undefined
+                }
                 confirmationRenderer={confirmationRenderer}
                 readNotePage={readNotePage}
                 showConfirmation={
