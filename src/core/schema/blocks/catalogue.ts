@@ -9,14 +9,17 @@ import {
   DiagramBlock,
   FigureBlockInput,
   InteractiveBlockInput,
-  QuestionRefBlock,
 } from './block';
 import { BLOCK_IMPLEMENTED_KINDS, BLOCK_SURFACE_KINDS, type BlockSurface } from './surfaces';
 
 // Field lists are generated from the MODEL-FACING input schemas so the
 // catalogue matches what compose_block actually accepts (figure `svg`,
 // interactive `html`), never the asset-only stored form.
-const MEMBER_META: Record<BlockKind, { schema: z.ZodType; example: unknown }> = {
+// Question-card discovery waits for the coordinated prompt switch.
+const MEMBER_META: Record<
+  Exclude<BlockKind, 'question_ref'>,
+  { schema: z.ZodType; example: unknown }
+> = {
   diagram: {
     schema: DiagramBlock,
     example: {
@@ -41,17 +44,6 @@ const MEMBER_META: Record<BlockKind, { schema: z.ZodType; example: unknown }> = 
   interactive: {
     schema: InteractiveBlockInput,
     example: { v: 1, kind: 'interactive', title: '…' },
-  },
-  question_ref: {
-    schema: QuestionRefBlock,
-    example: {
-      v: 1,
-      kind: 'question_ref',
-      question_ids: ['q_id'],
-      display: 'inline',
-      alt: '题目',
-      label: '打开题目',
-    },
   },
 };
 
@@ -79,17 +71,11 @@ export function renderBlockCatalogue(surface: BlockSurface): string {
   const lines: string[] = [
     '【生成式积木】要在回复里放流程图或装置图，必须调用 compose_block（唯一通道，不要手写 tlp-block 代码块，也不要写 ```mermaid 代码块或手绘 SVG/ASCII 充当图——页面只会显示源代码，不会出现图）。通过校验返回 ref 与 place；正文中用 `![简短说明](block:<ref>)` 把每个要给学习者看的积木都放到想要的位置；只要放置了一个，未放置的就不会显示。校验失败返回 status=invalid + issues[]（code/path/line/expected 指明怎么改），修好重新提交；不要重复提交同样的内容。',
   ];
-  for (const kind of ['diagram', 'figure', 'chart', 'interactive', 'question_ref'] as const) {
+  for (const kind of ['diagram', 'figure', 'chart', 'interactive'] as const) {
     const meta = MEMBER_META[kind];
     if (!allowed.has(kind)) continue;
     if (!implemented.has(kind)) {
       lines.push(`- ${kind}：本版本尚未开放，不要调用。`);
-      continue;
-    }
-    if (kind === 'question_ref') {
-      lines.push(
-        '- question_ref：真实题目引用；v=1，question_ids=题目id数组（inline恰一项），display=link|inline，alt=题目，label=打开题目，不含caption。',
-      );
       continue;
     }
     const description = descriptionOf(meta.schema);
