@@ -769,9 +769,13 @@ async function runCandidateSubmit(
       // The flat candidate's receipt belongs to the same commit as its question,
       // publication and verify intent. Recovery must not lose the original id
       // and treat an already committed submission as a new duplicate candidate.
-      // The owner decides whether this seam result wrote a publication; its receipt is
-      // the only thing progress/repair read. `published` is display only.
-      const publicationReceipt = flatCandidatePublication(publication, {
+      // The row-insert seam already minted the first revision in this transaction, so
+      // this post-metadata republish is normally a noop: the receipt must reflect what
+      // the transaction published, not the second seam's status. A genuine noop with no
+      // first publication stays unrecorded. `published` is display only.
+      const publicationInTx =
+        publication.status === 'noop' ? inserted.firstPublication : publication;
+      const publicationReceipt = flatCandidatePublication(publicationInTx, {
         demand_id: input.demand_id ?? null,
         request_id: input.request_id,
         task_run_id: ctx.taskRunId ?? null,
@@ -799,7 +803,7 @@ async function runCandidateSubmit(
           causedByEventId: ctx.causedByEventId ?? null,
         },
         now,
-        { demand_id: input.demand_id ?? null },
+        { demand_id: input.demand_id ?? null, receipt: publicationReceipt },
       );
       return { ...inserted, publication: receipt };
     });
@@ -916,9 +920,13 @@ function declaredCandidateOutcome(
   identity: PublicationIdentity,
 ): Output {
   const { receipt, publication } = declaredCandidateReceipt(outcome, requestId, identity);
+  // Unpublishable and conflict receipts keep their own status. A successfully submitted
+  // candidate keeps the tool contract: `pending` means "committed, awaiting admission /
+  // verify", even when the inner SubmitResult reports the admission state as withheld.
+  const submitted = !('published' in receipt) && receipt.status !== 'conflict';
   return {
     ...receipt,
-    ...(receipt.status === 'conflict' ? {} : { published: publication != null }),
+    ...(submitted ? { status: 'pending' as const, published: publication != null } : {}),
     ...publicationDisplay(publication),
     difficulty_evidence: difficultyEvidence,
     request_id: requestId,

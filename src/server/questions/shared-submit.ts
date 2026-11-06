@@ -275,13 +275,22 @@ export async function writeSubmitReceiptEvent(
   receipt: SubmitResult,
   ctx: SharedSubmitContext,
   now: Date,
-  publication?: { demand_id?: string | null },
+  publication?: {
+    demand_id?: string | null;
+    /** Owner receipt for the whole transaction. The flat row-insert seam publishes the
+     *  first revision and the later republish is a noop, so that caller computes the
+     *  receipt from the earlier seam and passes it here; omitted → derive from `receipt`. */
+    receipt?: PublicationReceiptT | null;
+  },
 ): Promise<PublicationReceiptT | null> {
-  const publicationReceipt = publicationReceiptFromSubmit(receipt, {
-    demand_id: publication?.demand_id ?? null,
-    request_id: requestId,
-    task_run_id: ctx.taskRunId ?? null,
-  });
+  const publicationReceipt =
+    publication?.receipt !== undefined
+      ? publication.receipt
+      : publicationReceiptFromSubmit(receipt, {
+          demand_id: publication?.demand_id ?? null,
+          request_id: requestId,
+          task_run_id: ctx.taskRunId ?? null,
+        });
   await writeEvent(tx, {
     id: newId(),
     session_id: ctx.sessionId ?? null,
