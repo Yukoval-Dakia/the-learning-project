@@ -3,8 +3,8 @@
 // send to recover, a dropped progress stream to reconnect, a refresh to retry after a revert, a
 // plain error — and, when the shown conversation cannot take a new message, why and what to do.
 
-import { CircleAlert, LoaderCircle, Plus, RefreshCw, Square } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { ChevronDown, CircleAlert, LoaderCircle, Plus, RefreshCw, Square } from 'lucide-react';
+import { type ReactNode, useId, useState } from 'react';
 import { Button } from '@/ui-next/public';
 import type { CompanionController } from './companion-controller';
 import {
@@ -35,6 +35,51 @@ function Notice({
       <p className="un-cp-notice-text">{children}</p>
       {actions ? <div className="un-cp-notice-actions">{actions}</div> : null}
     </div>
+  );
+}
+
+/**
+ * The one activity line. Thinking stays folded behind it on every turn, because a model can write a
+ * question's answer in its thoughts before the reply; opening it shows the live text.
+ */
+function RunLine({
+  controller,
+  runId,
+  children,
+}: {
+  controller: CompanionController;
+  runId: string;
+  children: ReactNode;
+}) {
+  const text = useCompanion(controller, (s) => s.thinkingByRun[runId] ?? '');
+  const [open, setOpen] = useState(false);
+  const panelId = useId();
+  if (!text) {
+    return (
+      <span aria-hidden="true" className="un-cp-run-line">
+        {children}
+      </span>
+    );
+  }
+  return (
+    <>
+      <button
+        type="button"
+        className="un-cp-run-line un-cp-run-toggle un-hit"
+        aria-expanded={open}
+        aria-controls={open ? panelId : undefined}
+        onClick={() => setOpen((value) => !value)}
+      >
+        {children}
+        <span className="un-sr-only">{open ? '，收起在想的内容' : '，看看在想什么'}</span>
+        <ChevronDown size={14} aria-hidden="true" data-open={open ? '' : undefined} />
+      </button>
+      {open ? (
+        <div id={panelId} className="un-cp-thinking">
+          <p>{text}</p>
+        </div>
+      ) : null}
+    </>
   );
 }
 
@@ -126,7 +171,7 @@ export function RunFooter({ controller }: { controller: CompanionController }) {
             <span className="un-sr-only" aria-live="polite">
               {announced}
             </span>
-            <span aria-hidden="true" className="un-cp-run-line">
+            <RunLine controller={controller} runId={run.runId}>
               <LiveActivity
                 message={messages.find((m) => m.role === 'ai' && m.run_id === run.runId)}
                 override={
@@ -135,7 +180,7 @@ export function RunFooter({ controller }: { controller: CompanionController }) {
                     : undefined
                 }
               />
-            </span>
+            </RunLine>
             <Button
               variant="quiet"
               size="sm"

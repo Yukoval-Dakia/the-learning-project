@@ -59,6 +59,8 @@ export interface CompanionState {
   messages: ChatMessage[];
   pendingTurns: PendingTurn[];
   runs: RunSnapshot[];
+  /** What each run of this visit thought, by run id. Never stored anywhere else. */
+  thinkingByRun: Readonly<Record<string, string>>;
   error: string | null;
   /** The revert landed but the refresh after it failed (never shown as a revert failure). */
   refreshFailed: boolean;
@@ -91,6 +93,7 @@ export const initialCompanionState: CompanionState = {
   messages: [],
   pendingTurns: [],
   runs: [],
+  thinkingByRun: {},
   error: null,
   refreshFailed: false,
   revertPendingId: null,
