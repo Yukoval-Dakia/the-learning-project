@@ -146,14 +146,16 @@ export function RunFooter({ controller }: { controller: CompanionController }) {
           tone="caution"
           actions={
             <>
-              <Button
-                variant="ghost"
-                size="sm"
-                disabled={turn.dispatching}
-                onClick={() => sender.discardPendingRecovery(turn.idempotencyKey)}
-              >
-                不再恢复
-              </Button>
+              {turn.requestBody.confirmation ? null : (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={turn.dispatching}
+                  onClick={() => sender.discardPendingRecovery(turn.idempotencyKey)}
+                >
+                  算了
+                </Button>
+              )}
               <Button
                 variant="secondary"
                 size="sm"
@@ -161,7 +163,7 @@ export function RunFooter({ controller }: { controller: CompanionController }) {
                 onClick={() => sender.retryPendingTurn(turn.idempotencyKey)}
               >
                 <RefreshCw size={13} aria-hidden="true" />
-                {turn.dispatching ? '恢复中…' : '恢复'}
+                {turn.dispatching ? '发送中…' : '再发一次'}
               </Button>
             </>
           }

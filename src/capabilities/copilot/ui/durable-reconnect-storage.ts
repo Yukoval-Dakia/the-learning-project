@@ -39,6 +39,8 @@ export interface PersistedPendingCopilotTurn {
   aiMessageId: string;
   userMessage: string;
   requestBody: PersistedPendingCopilotRequestBody;
+  /** When it was first sent (ms). Absent on older entries, which are never resent unasked. */
+  sentAt?: number;
 }
 
 interface PersistedPendingCopilotTurns {
@@ -151,6 +153,7 @@ function parsePendingCopilotTurn(value: unknown): PersistedPendingCopilotTurn | 
     userMessageId,
     aiMessageId,
     userMessage,
+    ...(typeof candidate.sentAt === 'number' ? { sentAt: candidate.sentAt } : {}),
     requestBody: {
       session_id: sessionId,
       user_message: userMessage,

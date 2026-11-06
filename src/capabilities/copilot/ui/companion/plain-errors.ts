@@ -37,12 +37,10 @@ export function plainRevertError(cause: unknown): string {
   return plainError(cause, '撤回没有成功，稍后再试。');
 }
 
-/** The 202 boundary is unknown: the exact request is kept and can be replayed safely. */
-export const ACCEPTANCE_UNKNOWN_COPY =
-  '这条消息是否已送达还不能确认；恢复时会用原来的请求，不会重复执行。';
+/** Automatic resends ran out, or the message is too old to resend unasked. Sending again is safe. */
+export const ACCEPTANCE_UNKNOWN_COPY = '刚才网络断了一下，要再发一次吗？';
 
-export const RESTORED_PENDING_COPY =
-  '上次有一条消息没确认送达；恢复时会用原来的请求，不会重复执行。';
+export const RESTORED_PENDING_COPY = '上次有条消息可能没发出去，要再发一次吗？';
 
 export const ANSWER_ONLY_UNAVAILABLE_COPY =
   '现在没法确认是否支持「仅用于本次回答」，这条没有发出，内容还在。';

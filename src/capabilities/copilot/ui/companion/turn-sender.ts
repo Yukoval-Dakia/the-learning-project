@@ -6,7 +6,9 @@ import {
 // Sending a turn. POST /api/copilot/chat only accepts (202 + events Location); the server owns the
 // run. Until the 202 is known the exact key + body are kept in sessionStorage, and a recovery
 // replays that same tuple (same Idempotency-Key, same body, same message ids), so it can only ever
-// find the original run, never start a second one. Nothing auto-retries: the learner chooses 恢复.
+// find the original run, never start a second one. That makes the replay both the check and the
+// resend, so it runs by itself a few times; the learner is asked only when those run out, or when
+// the message is too old to send behind their back.
 
 import { ApiAuthError, ApiError } from '@/ui/lib/api';
 import { randomId } from '@/ui/lib/random-id';
@@ -56,8 +58,18 @@ export interface TurnSender {
   pendingMessagesForSession: (sessionId: string) => ChatMessage[];
 }
 
+/** Waits before each automatic replay, about half a minute in all. */
+const AUTO_RESEND_DELAYS_MS = [1_000, 3_000, 8_000, 20_000];
+const AUTO_RESEND_MAX_AGE_MS = 10 * 60_000;
+
+export function canResendUnasked(turn: PersistedPendingCopilotTurn): boolean {
+  return turn.sentAt !== undefined && Date.now() - turn.sentAt <= AUTO_RESEND_MAX_AGE_MS;
+}
+
 export function createTurnSender(ctx: CompanionCtx): TurnSender {
   const { internals } = ctx;
+  /** Automatic replays already spent per message; a learner's own 再发一次 starts over. */
+  const autoResends = new Map<string, number>();
 
   const setPending = (fn: (previous: PendingTurn[]) => PendingTurn[]) =>
     ctx.set({ pendingTurns: fn(ctx.get().pendingTurns) });
@@ -66,6 +78,7 @@ export function createTurnSender(ctx: CompanionCtx): TurnSender {
       previous.map((t) => (t.idempotencyKey === key ? { ...t, ...patch } : t)),
     );
   const dropPending = (key: string) => {
+    autoResends.delete(key);
     clearPersistedPendingCopilotTurn(key);
     setPending((previous) => previous.filter((t) => t.idempotencyKey !== key));
   };
@@ -183,6 +196,7 @@ export function createTurnSender(ctx: CompanionCtx): TurnSender {
       aiMessageId,
       userMessage: text,
       requestBody,
+      ...(recovery ? (recovery.sentAt ? { sentAt: recovery.sentAt } : {}) : { sentAt: Date.now() }),
       dispatching: true,
     };
     persistPendingCopilotTurn(pending);
@@ -236,8 +250,18 @@ export function createTurnSender(ctx: CompanionCtx): TurnSender {
         (!(cause instanceof ApiError) && !(cause instanceof ApiAuthError)) ||
         (cause instanceof ApiError && cause.code === 'copilot_enqueue_ambiguous');
       if (acceptanceUnknown) {
-        // Keep the exact tuple: 恢复 replays it and can only find the original run. The footer
-        // notice states the delivery doubt; the AI row stays empty rather than voicing it.
+        // Keep the exact tuple: a replay can only find the original run or start this one.
+        const spent = autoResends.get(key) ?? 0;
+        const delay = canResendUnasked(pending) ? AUTO_RESEND_DELAYS_MS[spent] : undefined;
+        if (delay !== undefined) {
+          autoResends.set(key, spent + 1);
+          setTimeout(() => {
+            const latest = ctx.get().pendingTurns.find((t) => t.idempotencyKey === key);
+            if (latest) void send(latest.userMessage, latest);
+          }, delay);
+          return;
+        }
+        // The footer notice asks; the AI row stays empty rather than voicing it.
         markPending(key, { dispatching: false, error: ACCEPTANCE_UNKNOWN_COPY });
         ctx.updateMessages((previous) =>
           previous.map((m) =>
@@ -323,7 +347,9 @@ export function createTurnSender(ctx: CompanionCtx): TurnSender {
 
   function retryPendingTurn(key: string) {
     const pending = ctx.get().pendingTurns.find((t) => t.idempotencyKey === key);
-    if (pending && !pending.dispatching) void send(pending.userMessage, pending);
+    if (!pending || pending.dispatching) return;
+    autoResends.delete(key);
+    void send(pending.userMessage, pending);
   }
 
   function discardPendingRecovery(key: string) {
@@ -331,7 +357,7 @@ export function createTurnSender(ctx: CompanionCtx): TurnSender {
       ctx.get().pendingTurns.some((t) => t.idempotencyKey === key && t.requestBody.confirmation)
     ) {
       ctx.set({
-        error: '确认题的接纳仍未确认，保留原请求。请恢复原发送记录或读取原对话，不另建提交。',
+        error: '这道确认题的答案要发出去才算数，再发一次就好。',
       });
       return;
     }

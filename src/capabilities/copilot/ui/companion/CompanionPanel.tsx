@@ -199,9 +199,7 @@ export function CompanionPanel({
               aria-hidden="true"
             />
             <h2 className="un-cp-name">学习伙伴</h2>
-            <span className="un-cp-state" aria-live="polite">
-              {thinking ? '在想…' : '在这里'}
-            </span>
+            {thinking ? null : <span className="un-cp-state">在这里</span>}
           </div>
           <div className="un-cp-head-actions">
             <IconButton

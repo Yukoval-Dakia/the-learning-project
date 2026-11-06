@@ -1,5 +1,5 @@
 // Arriving at the companion: once per mount, the browser-held state comes back (the policy
-// preference and every exact pre-202 tuple, shown for 恢复 / 不再恢复 — nothing auto-retries); and
+// preference and every exact pre-202 tuple: a recent one resends itself, an old one asks); and
 // each open request from a page is claimed once (skill context, nudge opening line, prefill).
 
 import type { CopilotOpenRequest } from '@/ui/lib/use-copilot-dwell';
@@ -11,6 +11,7 @@ import {
 import { type CompanionCtx, nextMessageId } from './companion-context';
 import { selectionValidated } from './companion-state';
 import { RESTORED_PENDING_COPY } from './plain-errors';
+import { canResendUnasked } from './turn-sender';
 
 /** Once per mount: the policy preference and every exact pre-202 tuple. Accepted runs come
  *  from the server snapshot only. */
@@ -35,12 +36,15 @@ export function initializeFromStorage(ctx: CompanionCtx) {
     optimisticSession: {
       id: recoverySessionId,
       status: 'active',
-      title: '正在恢复的对话',
+      title: '刚才的对话',
       created_at: now,
       updated_at: now,
     },
   });
   ctx.updateMessages(ctx.sender.pendingMessagesForSession(recoverySessionId));
+  for (const turn of restored) {
+    if (canResendUnasked(turn)) ctx.sender.retryPendingTurn(turn.idempotencyKey);
+  }
 }
 
 export function handleOpenRequest(
