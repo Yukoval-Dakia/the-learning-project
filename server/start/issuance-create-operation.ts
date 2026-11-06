@@ -5,7 +5,7 @@ import type { FrontdoorContext } from './context';
 // locking, frozen bindings, claims and replay; the caller supplies no actor or time.
 export const createStartIssuance: FrontdoorContext['createIssuance'] = async (body) => {
   try {
-    const { requestAssessmentIssuance } = await import('@/capabilities/practice/public');
+    const { requestAssessmentIssuance } = await import('@/capabilities/practice/grading/public');
     const { db } = await import('@/db/client');
     return await requestAssessmentIssuance(db, async () => JSON.parse(body));
   } catch (error) {

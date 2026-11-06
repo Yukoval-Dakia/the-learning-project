@@ -524,14 +524,19 @@ const MODEL_JUDGE_TASK_KINDS: ReadonlySet<string> = new Set([
 
 /**
  * 从 unit_results 的 judged_by 盖章派生 grading_provenance：标签只陈述
- * 实际执行路径（AI 判、未校准）；无盖章的历史行与确定性/人工单元不补造。
+ * 判出结果的实际执行路径（AI 判、未校准）。pending 单元上的盖章只是
+ * 分发路径记录 —— 没有任何判出的分数可归属时不算 AI 判；无盖章的
+ * 历史行与确定性/人工单元不补造。
  */
 export function gradingProvenanceFromUnitResults(
   unitResults: readonly ScoringUnitResultT[],
 ): GradingProvenanceEntryT[] | undefined {
   const entries = unitResults
     .filter(
-      (result) => result.judged_by !== undefined && MODEL_JUDGE_TASK_KINDS.has(result.judged_by),
+      (result) =>
+        result.status === 'scored' &&
+        result.judged_by !== undefined &&
+        MODEL_JUDGE_TASK_KINDS.has(result.judged_by),
     )
     .map((result) => ({
       scoring_unit_id: result.scoring_unit_id,
