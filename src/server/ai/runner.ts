@@ -450,7 +450,6 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
           args.ctx.onThinkingDelta?.({
             text: msg.text,
             taskRunId: args.lifecycle.taskRunId,
-            thinkingKind: msg.thinking_kind ?? 'full',
           });
         }
         continue;

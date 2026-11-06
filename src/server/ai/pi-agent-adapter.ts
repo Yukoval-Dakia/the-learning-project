@@ -116,14 +116,6 @@ export interface PiAdapterDeps {
 }
 
 const OPENCODE_SESSION_HEADER = 'x-opencode-session';
-// YUK-1909 — Responses-family lanes request `reasoning.summary` and stream its
-// sanitized summary channel as thinking_delta; every other api streams raw
-// reasoning text. The internal tag only marks which provider channel produced it.
-const SUMMARY_THINKING_WIRE_APIS: ReadonlySet<string> = new Set([
-  'openai-responses',
-  'openai-codex-responses',
-  'azure-openai-responses',
-]);
 const STRUCTURED_OUTPUT_TOOL = STRUCTURED_OUTPUT_SUBMIT_TOOL;
 
 function toolOutputSchema(kind: ExecutionAdapterStartupArgs['kind'], input?: unknown) {
@@ -1216,13 +1208,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       ) {
         const text = event.assistantMessageEvent.delta;
         if (text.length > 0 && !this.abort.signal.aborted) {
-          yield {
-            type: 'thinking_delta',
-            text,
-            session_id: this.sessionId,
-            source: 'pi',
-            thinking_kind: SUMMARY_THINKING_WIRE_APIS.has(this.model.api) ? 'summary' : 'full',
-          };
+          yield { type: 'thinking_delta', text, session_id: this.sessionId, source: 'pi' };
         }
         continue;
       }

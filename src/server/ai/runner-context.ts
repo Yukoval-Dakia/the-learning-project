@@ -6,12 +6,7 @@ import type { PiHookBridge } from '@/core/tool-call-contract';
 import type { Db } from '@/db/client';
 import type { R2Client } from '@/kernel/object-storage';
 import type { SubjectProfile } from '@/subjects/profile';
-import type {
-  ModelBinding,
-  PiQueueSources,
-  PiReplayTurn,
-  ThinkingWireKind,
-} from './execution-adapter';
+import type { ModelBinding, PiQueueSources, PiReplayTurn } from './execution-adapter';
 import type { TraceContent } from './laminar-tracing';
 import type { ResolvedProvider } from './providers';
 import type {
@@ -153,11 +148,7 @@ export interface RunTaskCtx {
    * runner only through this callback; consumers must not persist it into any
    * durable sink (job_events, turns, Laminar, Mem0).
    */
-  onThinkingDelta?: (delta: {
-    text: string;
-    taskRunId: string;
-    thinkingKind: ThinkingWireKind;
-  }) => void;
+  onThinkingDelta?: (delta: { text: string; taskRunId: string }) => void;
   /** YUK-1909 — per-attempt settle of the reasoning lane, fired as the query ends. */
   onThinkingSettled?: (result: {
     taskRunId: string;

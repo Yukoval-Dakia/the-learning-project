@@ -26,10 +26,11 @@ import {
 import { resolveContextBudget } from '@/kernel/tools/budgets';
 import { ContextBudgetTracker } from '@/kernel/tools/context-throttle';
 import { ANSWER_ONLY_TOOL_NAMES, derivationToolDenial } from '@/kernel/tools/derivation-policy';
-import type { ModelBinding, ThinkingWireKind } from '@/server/ai/execution-adapter';
+import type { ModelBinding } from '@/server/ai/execution-adapter';
 import { type StreamCollectResult, runAgentTask, streamTaskCollecting } from '@/server/ai/runner';
 import { shouldEmitToolUseForCaller } from '@/server/ai/tools/tool-mirror-policy';
 import { resolveCopilotSkillDocs } from '@/subjects/copilot-skills';
+import type { CopilotThinkingEndResult } from '../thinking-lane-contract';
 import type { CopilotRunCancellationControl } from './copilot-run-cancellation';
 import type { CopilotRunInput } from './copilot-run-input';
 import { selectActorRef } from './copilot-run-input';
@@ -122,18 +123,9 @@ export type CopilotExecutionActivity =
   /** YUK-1909 — one provider query actually submitted (once per attempt, including retries). */
   | { kind: 'request_sent'; taskRunId: string; retryOfTaskRunId?: string }
   /** YUK-1909 — display-only reasoning text; routed to the live lane, never persisted. */
-  | {
-      kind: 'thinking_delta';
-      taskRunId: string;
-      thinkingKind: ThinkingWireKind;
-      text: string;
-    }
+  | { kind: 'thinking_delta'; taskRunId: string; text: string }
   /** YUK-1909 — per-attempt settle of the thinking lane. */
-  | {
-      kind: 'thinking_end';
-      taskRunId: string;
-      result: 'streamed' | 'none' | 'suppressed';
-    }
+  | { kind: 'thinking_end'; taskRunId: string; result: CopilotThinkingEndResult }
   | {
       kind: 'block_draft';
       toolUseId: string;
@@ -615,11 +607,7 @@ export function createCopilotExecutionOwner(
       ...(suppressThinkingStream
         ? {}
         : {
-            onThinkingDelta: (delta: {
-              text: string;
-              taskRunId: string;
-              thinkingKind: ThinkingWireKind;
-            }) => {
+            onThinkingDelta: (delta: { text: string; taskRunId: string }) => {
               if (policy.cancellation.signal.aborted || lifecycleAbortController.signal.aborted)
                 return;
               void Promise.resolve(
@@ -628,7 +616,7 @@ export function createCopilotExecutionOwner(
             },
           }),
       onThinkingSettled: async ({ taskRunId: settledTaskRunId, thinking }) => {
-        const result: 'streamed' | 'none' | 'suppressed' =
+        const result: CopilotThinkingEndResult =
           suppressThinkingStream && thinking === 'streamed' ? 'suppressed' : thinking;
         await emitActivity(policy, {
           kind: 'thinking_end',
