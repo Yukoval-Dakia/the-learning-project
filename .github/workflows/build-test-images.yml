@@ -15,6 +15,9 @@ name: Build TEST images
 # retention-days: 1 keeps the exposure window as short as Actions allows.
 
 on:
+  # TEMPORARY evidence trigger — removed again before merge.
+  push:
+    branches: [yuk-1845-worker-image-layers]
   workflow_dispatch:
     inputs:
       commit:
@@ -39,7 +42,7 @@ jobs:
       # before anything consumes it, including the checkout below.
       - name: Validate commit input
         env:
-          COMMIT_INPUT: ${{ inputs.commit }}
+          COMMIT_INPUT: ${{ inputs.commit || github.sha }}
         run: |
           set -euo pipefail
           case "$COMMIT_INPUT" in
@@ -51,7 +54,7 @@ jobs:
       - name: Checkout target commit
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
-          ref: ${{ inputs.commit }}
+          ref: ${{ inputs.commit || github.sha }}
           persist-credentials: false
 
       - name: Record resolved commit
@@ -64,7 +67,7 @@ jobs:
           echo "sha=${sha}" >> "$GITHUB_OUTPUT"
           echo "building commit ${sha}"
         env:
-          COMMIT_INPUT: ${{ inputs.commit }}
+          COMMIT_INPUT: ${{ inputs.commit || github.sha }}
 
       # The three images plus the buildkit cache and the save archive add up to
       # ~15 GB; drop preinstalled toolchains this job never touches.
