@@ -4,6 +4,7 @@ import { AgentNoteClientProvider } from '@/capabilities/agency/ui-public';
 import { CopilotClientProvider } from '@/capabilities/copilot/ui-public';
 import { WorkbenchClientProvider } from '@/capabilities/shell/ui-public';
 import { SubjectClientProvider } from '@/ui/hooks/subject-client';
+import { startIssuanceCreateClient } from './issuance-create-client';
 import { startIssuanceStateClient } from './issuance-state-client';
 import { startResponseDraftClient } from './response-draft-client';
 import '../../web/src/globals.css';
@@ -12,13 +13,24 @@ import { TokenGate } from '../../web/src/TokenGate';
 import { startAgentNoteClient } from './agent-note-client';
 import { startCopilotClient } from './copilot-summary-client';
 import { startNotePageClient } from './note-page-client';
-import { startQuestionCardClient } from './question-card-client';
+import { startPracticeAdviceClient } from './practice-advice-client';
+import { startPracticeSubmitClient } from './practice-submit-client';
+import { startQuestionCardReadClient } from './question-card-client';
 import { startSubjectClient } from './subject-client';
 import { startKnowledgeTreeClient, startWorkbenchClient } from './workbench-client';
 
 const confirmationClient = {
   getIssuanceState: startIssuanceStateClient,
   saveResponseDraft: startResponseDraftClient,
+};
+
+const questionCardClient = {
+  getQuestionCard: startQuestionCardReadClient,
+  issueAssessment: startIssuanceCreateClient,
+  getIssuanceState: startIssuanceStateClient,
+  saveResponseDraft: startResponseDraftClient,
+  getAdvice: startPracticeAdviceClient,
+  submitReview: startPracticeSubmitClient,
 };
 
 export function StartWorkbenchShell({
@@ -38,7 +50,7 @@ export function StartWorkbenchShell({
               <CopilotClientProvider value={startCopilotClient}>
                 <RootShell
                   confirmationClient={confirmationClient}
-                  questionCardClient={startQuestionCardClient}
+                  questionCardClient={questionCardClient}
                   pathname={pathname}
                   navigate={startNavigate}
                   readKnowledgeTree={startKnowledgeTreeClient}
