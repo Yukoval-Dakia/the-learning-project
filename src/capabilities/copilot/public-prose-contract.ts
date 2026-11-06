@@ -54,48 +54,43 @@ export function providerFailureToPublicFailure(
   };
 }
 
-export const COPILOT_PROVIDER_REJECTION_REPLY =
-  '模型服务拒绝了请求(400)，具体参数原因尚未定位，本次未完成回答';
+export const COPILOT_PROVIDER_REJECTION_REPLY = '这次没答成，可以换个说法再试一次。';
 
 function retryAfterSentence(seconds: number | undefined): string {
   if (seconds === undefined || seconds <= 0) return '';
   const span =
     seconds >= 90 ? `约 ${Math.round(seconds / 60)} 分钟` : `约 ${Math.round(seconds)} 秒`;
-  return ` 提供方建议${span}后再试。`;
-}
-
-function httpStatusSuffix(status: number | undefined): string {
-  return status !== undefined ? `(${status})` : '';
+  return `${span}后再试一次。`;
 }
 
 /** Safe public copy; the original durable reason/error and paid receipts stay internal. */
 export function publicProseFailureMessage(failure?: CopilotPublicProseFailure): string {
-  if (failure === undefined) return '这次运行未完成回答。';
+  if (failure === undefined) return '这次没答完。';
   switch (failure.kind) {
     case 'provider_rejected':
       return failure.http_status === 400
         ? COPILOT_PROVIDER_REJECTION_REPLY
-        : `模型服务拒绝了本次请求${httpStatusSuffix(failure.http_status)}，本次未完成回答。${retryAfterSentence(failure.retry_after_seconds)}`.trim();
+        : `这次没答成。${retryAfterSentence(failure.retry_after_seconds) || '可以换个说法再试一次。'}`;
     case 'rate_limited': {
       const recovery = longQuotaRecoveryTextFromSeconds(failure.retry_after_seconds);
       if (recovery !== undefined) {
         return `额度用完了，本次未完成回答。${recovery}恢复。`;
       }
-      return `模型额度已达上限${httpStatusSuffix(failure.http_status)}，本次未完成回答。${retryAfterSentence(failure.retry_after_seconds)}`.trim();
+      return `现在有点忙，这次没答完。${retryAfterSentence(failure.retry_after_seconds) || '过一会儿再试试。'}`;
     }
     case 'provider_error':
-      return `模型服务暂时不可用${httpStatusSuffix(failure.http_status)}，本次未完成回答。${retryAfterSentence(failure.retry_after_seconds)}`.trim();
+      return `服务暂时出了点问题，这次没答完。${retryAfterSentence(failure.retry_after_seconds)}`;
     case 'timeout':
-      return '模型服务响应超时，本次未完成回答。';
+      return '等得太久了，这次没答完。';
     case 'connection':
-      return '与模型服务的连接中断，本次未完成回答。';
+      return '连接断了一下，这次没答完。';
     case 'cancelled':
-      return '已停止这次运行。';
+      return '这次已按你的意思停下。';
     case 'execution_unknown':
-      return '这次运行的执行结果尚未确认；请先确认现有结果，再决定是否重新发起。';
+      return '这次的结果还没确认；先看看已经有的内容，再决定要不要再来一次。';
     case 'finalization_failed':
-      return '这次回答未完成可验证的收口。';
+      return '这次回答没能完整收尾。';
     default:
-      return '这次运行未完成回答。';
+      return '这次没答完。';
   }
 }

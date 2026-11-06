@@ -127,7 +127,7 @@ export function helpExitCopy(fault: HelpProviderFault, timing?: HelpExitTiming):
     if (recovery !== undefined) {
       return {
         reason: `额度用完了，${recovery}恢复。`,
-        stopRetryGuidance: '恢复之前再发，还是会马上得到同样的回复。',
+        stopRetryGuidance: '恢复之前再问，还是会马上得到同样的回答。',
         deterministicPractice: DETERMINISTIC_PRACTICE,
       };
     }
@@ -139,14 +139,14 @@ export function helpExitCopy(fault: HelpProviderFault, timing?: HelpExitTiming):
   }
   if (fault.kind === 'bad_gateway') {
     return {
-      reason: '模型服务返回了 502。这次没有新的计划、提案或知识。',
-      stopRetryGuidance: '请停止重试。网关故障时，重复请求补不上这次没生成的内容。',
+      reason: '服务暂时出了点问题。这次没有新的计划、提案或知识。',
+      stopRetryGuidance: '先别再试了。这种时候再问一遍，也补不上这次没生成的内容。',
       deterministicPractice: DETERMINISTIC_PRACTICE,
     };
   }
   return {
-    reason: '模型返回的内容无法按约定读出。这次没有新的计划、提案或知识。',
-    stopRetryGuidance: '请停止重试。同样的请求还会得到读不出来的结果。',
+    reason: '这次的内容没能读出来。这次没有新的计划、提案或知识。',
+    stopRetryGuidance: '先别再试了。同样的问题再问一遍，还是会读不出来。',
     deterministicPractice: DETERMINISTIC_PRACTICE,
   };
 }
@@ -165,9 +165,9 @@ export function helpExitLead(fault: HelpProviderFault, timing?: HelpExitTiming):
     '',
     fault.kind === 'quota'
       ? longQuotaRecoveryText(timing?.retryAfterMs) !== undefined
-        ? '先不重试'
+        ? '等恢复后再试'
         : '稍后再试'
-      : '停止重试',
+      : '先别再试',
     copy.stopRetryGuidance,
     '',
     '确定性练习',
