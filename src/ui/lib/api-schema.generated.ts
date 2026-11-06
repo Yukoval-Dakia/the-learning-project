@@ -35231,7 +35231,9 @@ export interface operations {
     };
     getQuestionCard: {
         parameters: {
-            query?: never;
+            query?: {
+                session_id?: string;
+            };
             header?: never;
             path: {
                 id: string;
@@ -35247,7 +35249,8 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        latest_attempt?: {
+                        inline_block_ref: string | null;
+                        latest_attempt: {
                             issuance_id: string;
                             part_ids: string[];
                             revision_id: string;

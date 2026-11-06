@@ -388,8 +388,19 @@ export const RestoreQuestionResponseSchema = z
   })
   .passthrough();
 
+export const QuestionCardQuerySchema = z.object({
+  session_id: z
+    .string()
+    .regex(/^[A-Za-z0-9_-]{1,128}$/)
+    .optional(),
+});
+
 export const QuestionCardResponseSchema = z.object({
   question_id: z.string(),
+  inline_block_ref: z
+    .string()
+    .regex(/^blk_[0-9a-f]{32}$/)
+    .nullable(),
   state: z.enum(['ready', 'checking', 'failed', 'undecided', 'withdrawn', 'unavailable']),
   question: z
     .object({
@@ -413,6 +424,5 @@ export const QuestionCardResponseSchema = z.object({
       part_ids: z.array(z.string()),
       status: z.enum(['issued', 'answer_saved', 'graded_unconfirmed', 'submitted']),
     })
-    .nullable()
-    .optional(),
+    .nullable(),
 });

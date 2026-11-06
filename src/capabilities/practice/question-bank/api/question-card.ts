@@ -1,10 +1,16 @@
 import { db } from '@/db/client';
-import { errorResponse } from '@/kernel/http';
+import { ApiError, errorResponse } from '@/kernel/http';
 import { readQuestionCard } from '@/kernel/read-models/question-card';
 
-export async function GET(_req: Request, params: Record<string, string>): Promise<Response> {
+import { QuestionCardQuerySchema } from './question-contracts';
+
+export async function GET(req: Request, params: Record<string, string>): Promise<Response> {
   try {
-    return Response.json(await readQuestionCard(db, params.id));
+    const query = QuestionCardQuerySchema.safeParse({
+      session_id: new URL(req.url).searchParams.get('session_id') ?? undefined,
+    });
+    if (!query.success) throw new ApiError('validation_error', 'invalid session_id', 400);
+    return Response.json(await readQuestionCard(db, params.id, query.data.session_id));
   } catch (error) {
     return errorResponse(error);
   }

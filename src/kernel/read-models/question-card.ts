@@ -18,13 +18,15 @@ import {
   question_group_lifecycle,
   question_revision,
 } from '@/db/schema';
+import { blockDigest, blockRefForDigest } from '@/kernel/blocks/digest';
 import { declaredAdmissionOwned } from '@/kernel/read-models/question-admission-ownership';
 import { UNKNOWN_SERVING, readQuestionServing } from '@/kernel/read-models/question-serving';
 import { resolveQuestionRenderNotation } from '@/kernel/read-models/subject-resolution';
 import { revisionRowToContract } from '@/kernel/records/assessment-issuance';
 
 /** A learner-safe reference read; answering still requires the issuance gate. */
-export async function readQuestionCard(db: Db, id: string) {
+export async function readQuestionCard(db: Db, id: string, sessionId?: string) {
+  const empty = { question_id: id, inline_block_ref: null, latest_attempt: null };
   const [row] = await db
     .select({
       id: question.id,
@@ -45,16 +47,14 @@ export async function readQuestionCard(db: Db, id: string) {
       ),
     )
     .limit(1);
-  if (!row)
-    return { question_id: id, state: 'unavailable' as const, question: null, serving: null };
+  if (!row) return { ...empty, state: 'unavailable' as const, question: null, serving: null };
   const serving = (await readQuestionServing(db, [id])).byId.get(id) ?? UNKNOWN_SERVING;
   if (serving.hold_reason === 'withdrawn') {
-    return { question_id: id, state: 'withdrawn' as const, question: null, serving };
+    return { ...empty, state: 'withdrawn' as const, question: null, serving };
   }
   // Only the admission owner may expose a not-yet-servable question as a waiting card.
   const visible = serving.servable || (row.admission_owned && serving.admission != null);
-  if (!visible)
-    return { question_id: id, state: 'unavailable' as const, question: null, serving: null };
+  if (!visible) return { ...empty, state: 'unavailable' as const, question: null, serving: null };
   const groupId = row.parent_question_id ?? row.id;
   const [revision] = await db
     .select(getTableColumns(question_revision))
@@ -125,35 +125,53 @@ export async function readQuestionCard(db: Db, id: string) {
             return slot;
           })
       : [];
-  const [latest] = await db
-    .select({
-      issuance_id: assessment_issuance.issuance_id,
-      revision_id: assessment_issuance.revision_id,
-      part_ids: assessment_issuance.part_ids,
-      submitted_at: assessment_submission.submitted_at,
-      confirmed: sql<boolean>`exists(select 1 from ${event} where ${event.action} = 'experimental:assessment_attempt' and ${event.payload}->>'submission_id' = ${assessment_submission.submission_id})`,
-      graded: sql<boolean>`exists(select 1 from ${evaluation} where ${evaluation.submission_id} = ${assessment_submission.submission_id} and ${evaluation.status} = 'completed')`,
-    })
-    .from(assessment_issuance)
-    .innerJoin(
-      question_revision,
-      eq(question_revision.revision_id, assessment_issuance.revision_id),
-    )
-    .leftJoin(
-      assessment_submission,
-      eq(assessment_submission.issuance_id, assessment_issuance.issuance_id),
-    )
-    .where(
-      and(
-        eq(question_revision.group_id, groupId),
-        sql`${assessment_issuance.part_ids} @> ${JSON.stringify(partIds)}::jsonb`,
-      ),
-    )
-    .orderBy(desc(assessment_issuance.issued_at), desc(assessment_submission.submitted_at))
-    .limit(1);
+  const inlineBlockRef = blockRefForDigest(
+    blockDigest({
+      v: 1,
+      kind: 'question_ref',
+      display: 'inline',
+      question_ids: [id],
+      alt: '题目',
+      label: '打开题目',
+    }),
+  );
+  // A session only scopes recovery; it grants no additional question visibility in this single-tenant read.
+  const [latest] = sessionId
+    ? await db
+        .select({
+          issuance_id: assessment_issuance.issuance_id,
+          revision_id: assessment_issuance.revision_id,
+          part_ids: assessment_issuance.part_ids,
+          submitted_at: assessment_submission.submitted_at,
+          confirmed: sql<boolean>`exists(select 1 from ${event} where ${event.action} = 'experimental:assessment_attempt' and ${event.payload}->>'submission_id' = ${assessment_submission.submission_id})`,
+          graded: sql<boolean>`exists(select 1 from ${evaluation} where ${evaluation.submission_id} = ${assessment_submission.submission_id} and ${evaluation.status} = 'completed')`,
+        })
+        .from(assessment_issuance)
+        .innerJoin(
+          question_revision,
+          eq(question_revision.revision_id, assessment_issuance.revision_id),
+        )
+        .leftJoin(
+          assessment_submission,
+          eq(assessment_submission.issuance_id, assessment_issuance.issuance_id),
+        )
+        .where(
+          and(
+            eq(question_revision.group_id, groupId),
+            eq(
+              assessment_issuance.container_occurrence_ref,
+              `copilot-card:${sessionId}:${inlineBlockRef}`,
+            ),
+            sql`${assessment_issuance.part_ids} @> ${JSON.stringify(partIds)}::jsonb`,
+          ),
+        )
+        .orderBy(desc(assessment_issuance.issued_at), desc(assessment_submission.submitted_at))
+        .limit(1)
+    : [];
   const admission = serving.admission?.status;
   return {
     question_id: id,
+    inline_block_ref: inlineBlockRef,
     state: serving.servable
       ? ('ready' as const)
       : admission === 'failed'
