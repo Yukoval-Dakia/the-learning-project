@@ -1019,11 +1019,9 @@ async function runWebSupplyRound(
     });
   } catch (err) {
     // The agent may have spent before failing: its cost is unknown, never zero.
-    // TaskConfigError and a provider-auth rejection (401/403 surfaced as an
-    // api_error_result) are the exceptions — resolution failed or the provider
-    // refused the request before billable work, so the paid effect is provably
-    // zero and the round's failure is known AND non-retryable until the lane is
-    // repaired ('config_error').
+    // TaskConfigError is the exception — resolution failed before the provider
+    // call, so the paid effect is provably zero and the round's failure is known
+    // AND non-retryable until the lane is repaired ('config_error').
     const configError = err instanceof TaskConfigError;
     const reason = configError ? 'config_error' : 'acquisition_outcome_unknown';
     await recordAcquisition(null, configError ? 0 : null);
