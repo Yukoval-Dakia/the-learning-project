@@ -148,7 +148,7 @@ export function projectEvaluationToJudgeResult(
       confidence: 0,
       capability_ref: CONTRACT_CAPABILITY_REF,
       ...(gradingProvenance ? { grading_provenance: gradingProvenance } : {}),
-      feedback_md: 'evaluation pending: retryable infrastructure failure — not a grade',
+      feedback_md: '这次判定还没完成，稍后再看看。',
       evidence_json: pendingEvidence,
     };
   }
@@ -161,7 +161,7 @@ export function projectEvaluationToJudgeResult(
       confidence: 0,
       capability_ref: CONTRACT_CAPABILITY_REF,
       ...(gradingProvenance ? { grading_provenance: gradingProvenance } : {}),
-      feedback_md: `evaluation unresolved: ${aggregate.reason}`,
+      feedback_md: '这次判定没有完成，暂时不能给分。',
       evidence_json: {
         ...pendingEvidence,
         aggregate_reason: aggregate.reason,
@@ -197,7 +197,7 @@ export function projectEvaluationToJudgeResult(
       confidence: 0,
       capability_ref: CONTRACT_CAPABILITY_REF,
       ...(gradingProvenance ? { grading_provenance: gradingProvenance } : {}),
-      feedback_md: 'evaluation hit a level with no published points mapping',
+      feedback_md: '这次判定还没有公布分值，暂时不能给分。',
       evidence_json: pendingEvidence,
     };
   }
@@ -205,6 +205,13 @@ export function projectEvaluationToJudgeResult(
   const scoredUnitFeedback = record.unit_results
     .map((unit) => (unit.status === 'scored' ? unit.feedback_md : undefined))
     .find((feedback): feedback is string => typeof feedback === 'string' && feedback.length > 0);
+  // Zero score without unit feedback: distinguish an explicitly blank submission
+  // (blank_scores_zero policy) from an answer that disagreed with the reference.
+  const onlyBlankZero =
+    record.unit_results.length > 0 &&
+    record.unit_results.every(
+      (unit) => unit.status === 'scored' && unit.scored_because === 'blank_marked_zero',
+    );
   const evidence_json = {
     evaluation_id: record.evaluation_id,
     evaluation_group_id: record.evaluation_group_id,
@@ -226,7 +233,7 @@ export function projectEvaluationToJudgeResult(
       confidence: 0,
       capability_ref: CONTRACT_CAPABILITY_REF,
       ...(gradingProvenance ? { grading_provenance: gradingProvenance } : {}),
-      feedback_md: `evaluation has no published denominator (${verdict.reason}) — points cannot be normalized into a grade`,
+      feedback_md: '这次判定缺少总分，暂时不能给分。',
       evidence_json: { ...evidence_json, verdict_reason: verdict.reason },
     };
   }
@@ -238,7 +245,8 @@ export function projectEvaluationToJudgeResult(
       confidence: 1,
       capability_ref: CONTRACT_CAPABILITY_REF,
       ...(gradingProvenance ? { grading_provenance: gradingProvenance } : {}),
-      feedback_md: scoredUnitFeedback ?? 'no accepted answer key matched',
+      feedback_md:
+        scoredUnitFeedback ?? (onlyBlankZero ? '这次没有作答。' : '这次作答和参考答案不一致。'),
       evidence_json,
     };
   }
@@ -261,7 +269,7 @@ export function projectEvaluationToJudgeResult(
     confidence: 1,
     capability_ref: CONTRACT_CAPABILITY_REF,
     ...(gradingProvenance ? { grading_provenance: gradingProvenance } : {}),
-    feedback_md: scoredUnitFeedback ?? 'partial credit across scoring units',
+    feedback_md: scoredUnitFeedback ?? '这题部分答对了。',
     evidence_json,
   };
 }

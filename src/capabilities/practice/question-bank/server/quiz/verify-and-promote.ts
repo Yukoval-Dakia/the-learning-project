@@ -14,11 +14,11 @@ import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
 import { event, knowledge, question, question_group_lifecycle } from '@/db/schema';
 import { writeEvent } from '@/kernel/events/index';
 import { ApiError } from '@/kernel/http';
+import { declaredAdmissionOwned } from '@/kernel/read-models/question-admission-ownership';
 import { placementAuthority } from '../../../supply/public';
 import { type RunTaskFn, runQuizVerify } from '../../jobs/quiz_verify';
 import { runSourceVerify } from '../../jobs/source_verify';
 import { publishVerifyLifecycleUpdate } from '../../jobs/source_verify_lifecycle';
-import { declaredAdmissionOwned } from '../admission/ownership';
 import { enrollPromotedQuestionScheduling } from '../question-scheduling-enrollment';
 
 export interface VerifyAndPromoteParams {

@@ -31,13 +31,13 @@ import {
 import { writeEvent } from '@/kernel/events/index';
 import { assertKnowledgeIdsExist } from '@/kernel/read-models/knowledge-validate';
 import { QUESTION_ATTEMPT_ACTIONS } from '@/kernel/read-models/learner-activity';
+import { declaredAdmissionOwned } from '@/kernel/read-models/question-admission-ownership';
 import { deriveAnswerClassForValues } from '@/kernel/records/answer-class-write';
 import {
   archiveGroupLifecycle,
   publishQuestionGroupFromRow,
   restoreGroupLifecycle,
 } from '@/kernel/records/assessment-publication';
-import { declaredAdmissionOwned } from './admission/ownership';
 
 /** Display label stamped on part rows; part-ness is read from `parent_question_id`. */
 export const QUESTION_PART_KIND = 'question_part' as const;

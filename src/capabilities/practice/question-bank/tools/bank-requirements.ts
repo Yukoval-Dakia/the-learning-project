@@ -166,6 +166,8 @@ export const BankSearchV2OutputSchema = z.object({
     stop_reason: z.string(),
     absence: z.literal('not_established'),
     reasons: z.array(z.string()),
+    /** Set only when condition verification stopped early; recall evidence only. */
+    next_step: z.string().optional(),
     task_receipts: z.array(BankTaskReceiptSchema),
     evidence_ref: z.null(),
     redeemable_for_gap_or_issuance: z.literal(false),

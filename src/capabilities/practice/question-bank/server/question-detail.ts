@@ -19,13 +19,13 @@ import {
   type QuestionTimelineEntry,
   getQuestionTimeline,
 } from '@/kernel/read-models/question-activity';
+import { declaredAdmissionOwned } from '@/kernel/read-models/question-admission-ownership';
 import { loadFamilyMembers } from '@/kernel/read-models/questions';
 import { reviewTimingJson } from '@/kernel/read-models/review-timing';
 import {
   batchResolveSubjectDisplayIds,
   resolveSubjectRenderNotation,
 } from '@/kernel/read-models/subject-resolution';
-import { declaredAdmissionOwned } from './admission/ownership';
 
 const DEFAULT_TIMELINE_LIMIT = 10;
 const MAX_TIMELINE_LIMIT = 50;

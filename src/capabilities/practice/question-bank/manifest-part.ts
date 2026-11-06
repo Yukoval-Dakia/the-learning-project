@@ -17,6 +17,8 @@ import {
 import {
   DeleteQuestionQuerySchema,
   DeleteQuestionResponseSchema,
+  QuestionCardQuerySchema,
+  QuestionCardResponseSchema,
   QuestionDetailQuerySchema,
   QuestionDetailResponseSchema,
   QuestionListQuerySchema,
@@ -121,6 +123,15 @@ export const questionBankManifestPart: Omit<CapabilityManifest, 'name' | 'descri
         successStatus: 200,
         pagination: { kind: 'cursor', defaultLimit: 50, maxLimit: 200 },
         load: () => import('./api/questions-list').then((m) => m.GET),
+      },
+      {
+        method: 'GET',
+        path: '/api/questions/[id]/card',
+        operationId: 'getQuestionCard',
+        request: { params: QuestionParamsSchema, query: QuestionCardQuerySchema },
+        responses: { 200: QuestionCardResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        load: () => import('./api/question-card').then((m) => m.GET),
       },
       {
         method: 'GET',

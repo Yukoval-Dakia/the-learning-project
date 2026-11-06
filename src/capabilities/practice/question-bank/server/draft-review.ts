@@ -8,14 +8,13 @@ import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db, Tx } from '@/db/client';
 import { event, knowledge, question } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
+import { declaredAdmissionOwned } from '@/kernel/read-models/question-admission-ownership';
 import { type QuestionServing, readQuestionServing } from '@/kernel/read-models/question-serving';
 import {
   batchResolveSubjectDisplayIds,
   resolveSubjectRenderNotation,
 } from '@/kernel/read-models/subject-resolution';
 import { canonicalKindToPersistedForms } from '@/subjects/question-kind';
-
-import { declaredAdmissionOwned } from './admission/ownership';
 
 type DbLike = Db | Tx;
 
