@@ -1,7 +1,5 @@
 import { errorResponse } from '@/kernel/http';
-import type { FrontdoorContext } from './context';
-
-export const readStartKnowledgeEdges: FrontdoorContext['readKnowledgeEdges'] = async (subject) => {
+export const readStartKnowledgeEdges = async (subject: string | undefined) => {
   try {
     const { readKnowledgeEdges } = await import('@/capabilities/knowledge/public');
     const { db } = await import('@/db/client');
