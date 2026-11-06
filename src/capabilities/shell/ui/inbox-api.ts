@@ -79,6 +79,7 @@ export type ProposalEvidenceRefWire = GeneratedProposalPayload['evidence_refs'][
 export interface ProposalPayloadWire {
   kind: string;
   reason_md: string;
+  learner_summary?: string;
   evidence_refs: ProposalEvidenceRefWire[];
   confidence?: number;
   proposed_change?: {
