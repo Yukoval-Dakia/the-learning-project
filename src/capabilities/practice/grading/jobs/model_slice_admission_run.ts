@@ -516,6 +516,21 @@ export async function runModelSliceAdmission(
   const rawItems = rawHoldoutItems(rawData);
   const data = ModelSliceAdmissionRunData.parse(rawData);
   const { resume, ...frozenRequest } = data;
+  // Image comparisons may collect dry-run evidence, but cannot admit a text slice.
+  if (!data.dry_run) {
+    const imageItem = data.items.find(
+      (item) =>
+        item.slot_responses.some(
+          (entry) =>
+            entry.kind === 'open' && entry.evidence.some((evidence) => evidence.kind === 'image'),
+        ) || item.group_evidence.some((item) => item.evidence.kind === 'image'),
+    );
+    if (imageItem !== undefined) {
+      throw new Error(
+        `model_slice_admission_run: item '${imageItem.item_id}' carries image evidence; image comparisons require dry_run=true and cannot admit a text slice`,
+      );
+    }
+  }
   const failures: string[] = [];
 
   // 1) 冻结证明：对调用方给出的 items 取哈希，不把 zod 默认值算进去。

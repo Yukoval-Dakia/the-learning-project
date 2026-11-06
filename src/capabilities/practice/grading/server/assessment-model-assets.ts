@@ -34,6 +34,10 @@ export type AssessmentModelInput = {
   images: Array<{ data: string; mediaType: string }>;
 };
 
+/** 单次判分调用可携带的提交图片证据上限（张数 / 总字节）。 */
+const DIRECT_JUDGE_IMAGE_LIMIT = 8;
+const DIRECT_JUDGE_IMAGE_BYTES_LIMIT = 32 * 1024 * 1024;
+
 export async function prepareAssessmentModelInput(
   request: ModelExecutorRequest,
   load: AssessmentAssetLoader,
@@ -113,6 +117,21 @@ export async function prepareAssessmentModelInput(
     ...request.slot_responses.flatMap((entry) => (entry.kind === 'open' ? entry.evidence : [])),
     ...request.group_evidence.map((item) => item.evidence),
   ];
+  // 直接多模态判把每张图都发 provider：张数与字节是单次付费调用的费用与
+  // 滥用边界（8 张/32MB）。超限不静默裁减 ——
+  // 整个单元明确 unjudgeable。
+  const imageEvidence = evidence.filter((item) => item.kind === 'image');
+  if (imageEvidence.length > DIRECT_JUDGE_IMAGE_LIMIT) {
+    return hold(
+      `image evidence count ${imageEvidence.length} exceeds the direct-judging limit of ${DIRECT_JUDGE_IMAGE_LIMIT}`,
+    );
+  }
+  const imageBytes = imageEvidence.reduce((total, item) => total + item.bytes, 0);
+  if (imageBytes > DIRECT_JUDGE_IMAGE_BYTES_LIMIT) {
+    return hold(
+      `image evidence is ${imageBytes} bytes, over the direct-judging limit of ${DIRECT_JUDGE_IMAGE_BYTES_LIMIT}`,
+    );
+  }
   for (const item of evidence) {
     signal.throwIfAborted();
     if (item.kind !== 'image' && item.kind !== 'plaintext')
