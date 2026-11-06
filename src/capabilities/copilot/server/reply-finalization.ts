@@ -204,6 +204,7 @@ function proposalDisclosure(trace: readonly TraceEntry[], reply: string): string
   // question must not swallow this question's warning.
   const seenBankPaths = new Set<string>();
   const seenFailureDetails = new Set<string>();
+  let pendingStatus = false;
   const bankLinks = trace.flatMap((entry) => {
     const out = isRecord(entry.domain_output) ? entry.domain_output : undefined;
     const problem = isRecord(out?.problem) ? out.problem : undefined;
@@ -243,20 +244,21 @@ function proposalDisclosure(trace: readonly TraceEntry[], reply: string): string
     const warningStated =
       noExecutor &&
       reply.split('\n').some((line) => line.includes(bankPath) && line.includes(admissionSentence));
-    const admissionStated = !noExecutor && reply.includes(admissionSentence);
+    const admitted = admission?.state === 'admitted';
     const facts: string[] = [];
     if (missingPlacement && placementNote !== undefined) facts.push(placementNote);
     if (noExecutor) {
       if (!warningStated) facts.push(`题已存入[题库](${bankPath})，但${admissionSentence}`);
-    } else if (!admissionStated) {
-      facts.push(
-        linkStated ? admissionSentence : `题已存入[题库](${bankPath})，${admissionSentence}`,
-      );
-    } else if (!linkStated) {
-      facts.push(`题已存入[题库](${bankPath})。`);
+    } else {
+      // Admission state is server-owned: append one deterministic sentence per
+      // reply instead of matching whatever wording the model chose.
+      if (!linkStated) facts.push(`题已存入[题库](${bankPath})。`);
+      if (!admitted) pendingStatus = true;
     }
     return facts.length > 0 ? [facts.join('\n')] : [];
   });
+  // One status sentence covers every ordinary question still under check.
+  if (pendingStatus) bankLinks.push(PENDING_ADMISSION);
   const proposals = trace.filter((entry) => entry.proposal_effect_contract !== undefined);
   if (proposals.length === 0) return bankLinks.length ? bankLinks.join('\n') : undefined;
   const retainedDrafts = proposals.filter(
