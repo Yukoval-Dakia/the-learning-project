@@ -158,10 +158,14 @@ export class ImmutableAssetError extends Error {
 }
 
 /** Write-once asset profiles (YUK-1548 §2.3). custom_code behaviour is frozen. */
-export type ImmutableAssetProfile = 'custom_code' | 'svg_figure' | 'sandbox_html';
+export type ImmutableAssetProfile =
+  | 'custom_code'
+  | 'svg_figure'
+  | 'sandbox_html'
+  | 'evidence_transcript';
 
 interface ImmutableProfileSpec {
-  idPrefix: 'sbx_' | 'svf_' | 'sbh_';
+  idPrefix: 'sbx_' | 'svf_' | 'sbh_' | 'aet_';
   storagePrefix: string;
   mime: string;
   provenanceSourceKind: string;
@@ -188,6 +192,15 @@ const IMMUTABLE_PROFILES: Record<ImmutableAssetProfile, ImmutableProfileSpec> = 
     storagePrefix: 'assets/sandbox-html',
     mime: 'text/html',
     provenanceSourceKind: 'sandbox_html',
+    maxBytes: CUSTOM_ASSET_MAX_BYTES,
+  },
+  // 判分侧照片转写产物（grading owner）：digest 寻址的 UTF-8 明文证据，
+  // 同一图片内容全局一份，重判零成本复用。
+  evidence_transcript: {
+    idPrefix: 'aet_',
+    storagePrefix: 'assets/evidence-transcript',
+    mime: 'text/markdown',
+    provenanceSourceKind: 'evidence_transcription',
     maxBytes: CUSTOM_ASSET_MAX_BYTES,
   },
 };

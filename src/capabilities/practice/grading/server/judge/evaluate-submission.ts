@@ -69,6 +69,10 @@ import {
 import { checkRateLimit } from '@/kernel/request-rate-limit';
 import { authorizeConfirmationCorrection } from '../../../settlement/public';
 import { bindAppealExecution, reservedEvaluationAttempt } from '../assessment/appeal-execution';
+import {
+  createEvidenceTranscriptionExecutor,
+  prepareEvidenceTranscriptions,
+} from '../evidence-transcription';
 import { createJevModelExecutor } from '../jev-model-executor';
 import {
   type JudgeExecution,
@@ -391,10 +395,10 @@ export async function evaluateSubmission(
 ): Promise<EvaluateSubmissionResult> {
   // 模型执行器解析在事务之外（descriptor ⇒ Jev 端口装配；见
   // resolveModelExecutor 的 db 句柄纪律）。
-  const modelExecutor = resolveModelExecutor(db, request.model_executor);
+  const resolvedExecutor = resolveModelExecutor(db, request.model_executor);
 
   if (
-    modelExecutor !== undefined &&
+    resolvedExecutor !== undefined &&
     (!('$client' in db) || typeof db.$client.reserve !== 'function')
   ) {
     throw new EvaluateSubmissionError(
@@ -686,12 +690,43 @@ export async function evaluateSubmission(
         }
 
         return async () => {
+          // YUK-1877 — 照片证据先转写再判分：在 core 组装联合输入前，为冻结的
+          // submission/member 内存对象补 transcript 附件（只增不改；submission
+          // 行与 input_snapshot digest 都不动）。收据命中零成本，重判复用不重付。
+          // 失败经执行器失败门按单元落显式 pending。无执行器/manual_assert 不付费。
+          const transcription =
+            resolvedExecutor === undefined || request.mode === 'manual_assert' || !('$client' in db)
+              ? null
+              : await prepareEvidenceTranscriptions(
+                  {
+                    db: db as Db,
+                    ...(typeof request.model_executor === 'object' &&
+                    request.model_executor !== null &&
+                    'deadline_at' in request.model_executor
+                      ? { deadlineAt: request.model_executor.deadline_at }
+                      : {}),
+                  },
+                  submission,
+                  members,
+                );
+          const modelExecutor =
+            resolvedExecutor === undefined || transcription === null
+              ? resolvedExecutor
+              : createEvidenceTranscriptionExecutor(resolvedExecutor, transcription);
           const core = await evaluateSubmissionCore({
             evaluation_id: 'pending', // 占位：内容寻址 id 在 record 产生后重铸（不参与评估语义）
-            submission,
+            submission: transcription?.submissionFor(submission.submission_id) ?? submission,
             revision,
             issued_part_ids: inputSnapshot.issued_part_ids,
-            member_inputs: members,
+            member_inputs:
+              transcription === null
+                ? members
+                : members.map((member) => ({
+                    ...member,
+                    submission:
+                      transcription.submissionFor(member.submission.submission_id) ??
+                      member.submission,
+                  })),
             attempt,
             provenance: {
               ...(request.provenance ?? { source: 'automatic', assisted: false }),

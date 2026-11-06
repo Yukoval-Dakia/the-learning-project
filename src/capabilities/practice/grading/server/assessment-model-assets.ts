@@ -170,6 +170,11 @@ export async function prepareAssessmentModelInput(
         materials: request.materials,
         image_manifest: imageManifest,
         text_evidence: textEvidence,
+        // YUK-1877 — wire 级引文契约：判分任务 prompt 进 slice digest 不可动，
+        // 但模型需要从输入分辨 quote 该挂哪个键（slot_id 只能引该槽自己的
+        // text_md；转写/文本证据用其 evidence_id）。只陈述事实，不放宽校验。
+        citation_contract:
+          "evidence_citations name a submitted source. A quote must be an exact substring of the cited source: cite slot_id only when quoting that slot's own text_md (an empty slot supports no quote); cite evidence_id when quoting a text_evidence entry or referencing image evidence.",
       }),
       images,
     },

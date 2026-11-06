@@ -7,6 +7,7 @@ import {
 } from '../failure-learning/public';
 import { assessmentRubricTaskSpec } from '../grading/tasks/assessment-rubric';
 import { assessmentRuleTaskSpec } from '../grading/tasks/assessment-rule';
+import { assessmentEvidenceTranscriptionTaskSpec } from '../grading/tasks/evidence-transcription';
 import { jevScoringDecisionTaskSpec } from '../grading/tasks/jev-typed';
 import {
   multimodalDirectJudgeTaskSpec,
@@ -65,6 +66,7 @@ export const practiceTaskSpecs = defineOwnedTaskSpecs('practice', {
   JevScoringDecisionTask: jevScoringDecisionTaskSpec,
   AssessmentRuleJudgeTask: assessmentRuleTaskSpec,
   AssessmentRubricJudgeTask: assessmentRubricTaskSpec,
+  AssessmentEvidenceTranscriptionTask: assessmentEvidenceTranscriptionTaskSpec,
   QuestionAdmissionSolveTask: questionAdmissionSolveTaskSpec,
   QuestionAdmissionAdjudicateTask: questionAdmissionAdjudicateTaskSpec,
 });
