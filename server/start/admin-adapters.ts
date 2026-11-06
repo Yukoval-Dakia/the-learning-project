@@ -1,10 +1,8 @@
+// Start-side adapters for this family. `frontdoor.ts` loads this module from the API
+// graph, so every adapter below runs with the initialized subject registry, config
+// snapshot and database pool; each keeps its own conversion, error and deadline handling.
+
 import { z } from 'zod';
-import type {
-  AdminCostQuery,
-  AdminFailuresQuery,
-  AdminReadClient,
-  AdminRunsQuery,
-} from '@/capabilities/observability/ui/admin-client';
 import type { Db, Tx } from '@/db/client';
 import { ApiError, errorResponse } from '@/kernel/http';
 
@@ -24,6 +22,9 @@ export async function createStartAdminReader(options: { database?: Db | Tx; now?
   ]).catch((error: unknown) => {
     throw errorResponse(error);
   });
+  type RunsQueryInput = NonNullable<Parameters<typeof domain.parseAdminRunsQuery>[0]>;
+  type CostQueryInput = NonNullable<Parameters<typeof domain.parseAdminCostQuery>[0]>;
+  type FailuresQueryInput = NonNullable<Parameters<typeof domain.parseAdminFailuresQuery>[0]>;
   async function read<T>(operation: (database: Db | Tx) => Promise<T>): Promise<T> {
     try {
       const database = options.database ?? (await import('@/db/client')).db;
@@ -43,7 +44,7 @@ export async function createStartAdminReader(options: { database?: Db | Tx; now?
     }
   }
   return {
-    getRuns: (query: AdminRunsQuery = {}) => {
+    getRuns: (query: RunsQueryInput = {}) => {
       const opts = validate(() => domain.parseAdminRunsQuery(RunsQuery.parse(query)));
       return read((db) => domain.loadAdminRuns(db, opts));
     },
@@ -55,13 +56,13 @@ export async function createStartAdminReader(options: { database?: Db | Tx; now?
         return detail;
       });
     },
-    getCost: (query: AdminCostQuery = {}) => {
+    getCost: (query: CostQueryInput = {}) => {
       const opts = validate(() =>
         domain.parseAdminCostQuery(domain.AdminCostQuerySchema.parse(query)),
       );
       return read((db) => domain.loadAdminCost(db, opts, options.now));
     },
-    getFailures: (query: AdminFailuresQuery = {}) => {
+    getFailures: (query: FailuresQueryInput = {}) => {
       const opts = validate(() =>
         domain.parseAdminFailuresQuery(domain.AdminFailuresQuerySchema.parse(query)),
       );
@@ -69,5 +70,7 @@ export async function createStartAdminReader(options: { database?: Db | Tx; now?
     },
     getCoverage: () => read((db) => supply.loadCoverageLattice(db, options.now)),
     getConjectureScores: () => read((db) => domain.loadConjectureScores(db)),
-  } satisfies AdminReadClient;
+  };
 }
+
+export const adminAdapters = { createStartAdminReader };

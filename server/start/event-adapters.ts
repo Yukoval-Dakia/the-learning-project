@@ -1,3 +1,7 @@
+// Start-side adapters for this family. `frontdoor.ts` loads this module from the API
+// graph, so every adapter below runs with the initialized subject registry, config
+// snapshot and database pool; each keeps its own conversion, error and deadline handling.
+
 import type { Db, Tx } from '@/db/client';
 import { ApiError, errorResponse } from '@/kernel/http';
 
@@ -47,3 +51,5 @@ export async function createStartEventCorrection(input: unknown, options: StartE
     throw errorResponse(error);
   }
 }
+
+export const eventAdapters = { createStartEventCorrection, readStartEventDetail };
