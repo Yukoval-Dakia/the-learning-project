@@ -5,7 +5,27 @@ import type {
   AdminFailuresQuery,
   AdminRunsQuery,
 } from '@/capabilities/observability/ui/admin-client';
-import { runAuthenticatedStartAdmin } from './admin-read';
+import type { Db, Tx } from '@/db/client';
+import type { createStartAdminReader } from './admin-adapters';
+import type { FrontdoorAdapters, FrontdoorContext } from './context';
+import { runAuthenticatedStartWorkbench } from './workbench-read';
+
+type AdminStartContext = Pick<FrontdoorContext, 'api'> & {
+  adapters: Pick<FrontdoorAdapters, 'admin'>;
+};
+
+// Do not create the reader, import domain operations or acquire the DB before auth.
+export function runAuthenticatedStartAdmin<T>(
+  context: AdminStartContext,
+  request: Request,
+  operation: (reader: Awaited<ReturnType<typeof createStartAdminReader>>) => Promise<T>,
+  options?: { database?: Db | Tx; now?: Date },
+): Promise<T> {
+  return runAuthenticatedStartWorkbench(context, request, async () => {
+    const { createStartAdminReader } = await context.adapters.admin();
+    return operation(await createStartAdminReader(options));
+  });
+}
 
 // Runtime validation belongs after the auth/epoch gate, never in a client validator.
 export const getStartAdminRuns = createServerFn({ method: 'GET' })

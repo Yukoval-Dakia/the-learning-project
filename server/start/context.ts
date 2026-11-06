@@ -45,14 +45,18 @@ import type {
 } from '@/capabilities/practice/session/public';
 
 export type FrontdoorAdapters = {
-  library: () => Promise<typeof import('./library-adapters')['libraryAdapters']>;
-  records: () => Promise<typeof import('./record-adapters')['recordAdapters']>;
+  admin: () => Promise<typeof import('./admin-adapters')['adminAdapters']>;
+  agentNote: () => Promise<typeof import('./agent-note-adapters')['agentNoteAdapters']>;
+  coach: () => Promise<typeof import('./coach-adapters')['coachAdapters']>;
+  event: () => Promise<typeof import('./event-adapters')['eventAdapters']>;
   knowledge: () => Promise<typeof import('./knowledge-adapters')['knowledgeAdapters']>;
+  library: () => Promise<typeof import('./library-adapters')['libraryAdapters']>;
+  notes: () => Promise<typeof import('./notes-adapters')['notesAdapters']>;
   practiceStream: () => Promise<
     typeof import('./practice-stream-adapters')['practiceStreamAdapters']
   >;
+  records: () => Promise<typeof import('./record-adapters')['recordAdapters']>;
   subjects: () => Promise<typeof import('./subject-adapters')['subjectAdapters']>;
-  noteEditing: () => Promise<typeof import('./note-editing-adapters')['noteEditingAdapters']>;
   workbench: () => Promise<typeof import('./workbench-adapters')['workbenchAdapters']>;
 };
 
