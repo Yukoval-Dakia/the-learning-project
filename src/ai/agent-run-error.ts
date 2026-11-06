@@ -54,6 +54,18 @@ export type AgentFailureSubtype =
  */
 export const RETRY_ELAPSED_CAP_MS = 10_000;
 
+/**
+ * Structured provider wire evidence bound to the request that failed at
+ * termination. `http_status` is only ever a strictly bound status (pi lane's
+ * root-request binding or the typed lane's response status); `retry_after_ms`
+ * pairs with that same status — never a guess from an error string.
+ */
+export interface ProviderFailureEvidence {
+  http_status?: number;
+  retry_after_ms?: number;
+  stream_error?: true;
+}
+
 export interface AgentRunErrorFields {
   kind: string;
   taskRunId: string;
@@ -68,6 +80,8 @@ export interface AgentRunErrorFields {
   helpProviderFault?: HelpProviderFault;
   /** Attempt latency seal. Absent when this failure has no help-latency kind. */
   helpLatency?: SealedHelpLatency;
+  /** Bound provider wire evidence on a failed terminal; absent when unobserved. */
+  providerFailure?: ProviderFailureEvidence;
 }
 
 /**
@@ -84,6 +98,7 @@ export class AgentRunError extends Error {
   readonly costUsd?: number;
   readonly helpProviderFault?: HelpProviderFault;
   readonly helpLatency?: SealedHelpLatency;
+  readonly providerFailure?: ProviderFailureEvidence;
 
   constructor(fields: AgentRunErrorFields) {
     const http =
@@ -99,6 +114,7 @@ export class AgentRunError extends Error {
     this.costUsd = fields.costUsd;
     this.helpProviderFault = fields.helpProviderFault;
     this.helpLatency = fields.helpLatency;
+    this.providerFailure = fields.providerFailure;
   }
 }
 

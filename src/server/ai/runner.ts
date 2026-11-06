@@ -36,6 +36,7 @@ import type { R2Client } from '@/kernel/object-storage';
 import type { SubjectProfile } from '@/subjects/profile';
 import { resolveProviderSessionDeadlineAt } from '../http/provider-session-deadline';
 import { bindAgentRunError, isApiErrorSuccessResult } from './agent-run-error';
+import { failureSpendChargeUsd } from './attempt-cost';
 import {
   type ModelBinding,
   type PiQueueSources,
@@ -530,7 +531,8 @@ async function withPreparedExecutionQuery<TResult extends RunTaskResult, TValue>
       try {
         return await consume(prepared.query(prompt));
       } catch (error) {
-        currentTaskSpendScope()?.charge(null);
+        // YUK-1878 — known-zero unbilled rejection vs fail-closed unknown.
+        currentTaskSpendScope()?.charge(failureSpendChargeUsd(lifecycle.costTruth));
         throw error;
       }
     },
@@ -729,6 +731,7 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
           subtype: msg.subtype,
           errors: 'errors' in msg && Array.isArray(msg.errors) ? msg.errors : [],
           ...(helpProviderFault ? { helpProviderFault } : {}),
+          ...(msg.provider_failure ? { providerFailure: msg.provider_failure } : {}),
         });
       }
       break;

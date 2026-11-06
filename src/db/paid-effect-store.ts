@@ -607,6 +607,43 @@ export async function markPaidEffectUnknown(
     .where(and(identityWhere(identity), eq(paid_effect.state, 'sending')));
 }
 
+/**
+ * receipt_ready -> unknown when a sibling obligation proves the recorded
+ * receipt cannot be the run's outcome (e.g. an admission stage send left
+ * unresolved under a 'waiting' coordinator receipt — the wait can never be
+ * answered). A system transition with no owning delivery: the CAS is
+ * identity + 'receipt_ready' + expected fence, and the caller's own
+ * predicate is the justification. The unknown-state invariant requires
+ * result_json cleared — the caller carries the demoted receipt's digest in
+ * unresolved_reason, and a later winning delivery may still record monotone
+ * gain onto the row.
+ */
+export async function degradePaidEffectReceiptToUnknown(
+  tx: Tx,
+  identity: PaidEffectIdentity,
+  opts: { expectedFence: number; unresolvedReason: string },
+): Promise<boolean> {
+  await lockRow(tx, identity);
+  const updated = await tx
+    .update(paid_effect)
+    .set({
+      state: 'unknown',
+      result_json: null,
+      result_recorded_at: null,
+      unresolved_reason: opts.unresolvedReason,
+      updated_at: new Date(),
+    })
+    .where(
+      and(
+        identityWhere(identity),
+        eq(paid_effect.state, 'receipt_ready'),
+        eq(paid_effect.fence, opts.expectedFence),
+      ),
+    )
+    .returning({ family: paid_effect.family });
+  return updated.length === 1;
+}
+
 export type PaidEffectVoidOutcome =
   | {
       readonly kind: 'voided';
