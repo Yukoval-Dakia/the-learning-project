@@ -13,6 +13,7 @@ import {
   writeCopilotReply,
   writeTeachingCopilotReply,
 } from '@/capabilities/copilot/server/conversation-writes';
+import { createCopilotRunLiveWriter } from '@/capabilities/copilot/server/copilot-live-progress';
 import {
   COPILOT_CANCEL_DRAIN_GRACE_MS,
   type CopilotRunCancellationControl,
@@ -442,6 +443,16 @@ async function executeAcceptedCopilotRun(
       streamedProse += text;
     },
   });
+  // YUK-1909 — display-only thinking lane: coalesced pg_notify frames to this
+  // run's authorized SSE clients; nothing is persisted or replayed.
+  const liveWriter = createCopilotRunLiveWriter({ db, runId });
+  const drainWriters = async () => {
+    await drainDeltaChain(
+      Promise.all([progressWriter.drain(), liveWriter.drain()]).then(() => undefined),
+      runId,
+    );
+    liveWriter.dispose();
+  };
   const toolSummaries: string[] = [];
   const partialReply = () => copilotPartialReply({ prose: streamedProse, toolSummaries });
   const displayedProse = (): string | undefined =>
@@ -688,6 +699,13 @@ async function executeAcceptedCopilotRun(
             params.onSpawnBudgetObservation?.(activity.observation);
             return;
           }
+          if (activity.kind === 'thinking_delta') {
+            liveWriter.pushThinking({
+              taskRunId: activity.taskRunId,
+              text: activity.text,
+            });
+            return;
+          }
           const isProse = activity.kind === 'prose_delta';
           const payload = isProse ? { text: activity.text } : projectCopilotActivity(activity);
           if (!payload) return;
@@ -703,7 +721,7 @@ async function executeAcceptedCopilotRun(
         },
       },
     );
-    await drainDeltaChain(progressWriter.drain(), runId);
+    await drainWriters();
     const finalized = result.finalization;
     const finalReply = finalized.replyText;
     const preparedReply: PreparedCopilotReply = finalized.preparedReply;
@@ -853,7 +871,7 @@ async function executeAcceptedCopilotRun(
     if (err instanceof DurableTerminalProjectionError) throw err;
     // streamTaskCollecting graceful-degrades（resolve partial，见上），故这里只捕获
     // 它之外的 throw（装配 / MCP mount / 事件写），或注入 fixture 的 throw。
-    await drainDeltaChain(progressWriter.drain(), runId);
+    await drainWriters();
     if ((await cancellationControl.probe()) === 'cancel_requested') {
       return await settleObservedCancellation();
     }

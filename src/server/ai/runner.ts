@@ -411,6 +411,7 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
   let stepStartTime = Date.now();
   const modelStarted = Date.now();
   let firstTokenAt: number | undefined;
+  let thinkingObserved = false;
   let completeArtifact = false;
   const outputStats = emptyStreamTextStats();
   const settleUnobservedUsage = async () => {
@@ -443,7 +444,15 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
         if (msg.type === 'text_delta' && !args.lifecycle.abortController.signal.aborted) {
           await args.onTextDelta?.(msg.text);
         }
-        if (msg.type === 'thinking_delta' && msg.text) args.onThinking?.();
+        if (msg.type === 'thinking_delta' && msg.text) {
+          thinkingObserved = true;
+          args.onThinking?.();
+          args.ctx.onThinkingDelta?.({
+            text: msg.text,
+            taskRunId: args.lifecycle.taskRunId,
+            thinkingKind: msg.thinking_kind ?? 'full',
+          });
+        }
         continue;
       }
       if (args.notifySessionId && msg.type === 'system' && msg.subtype === 'init') {
@@ -590,6 +599,14 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
       model_ttft_ms: firstTokenAt === undefined ? null : firstTokenAt - modelStarted,
       stream_ms: firstTokenAt === undefined ? 0 : endedAt - firstTokenAt,
     });
+    try {
+      await args.ctx.onThinkingSettled?.({
+        taskRunId: args.lifecycle.taskRunId,
+        thinking: thinkingObserved ? 'streamed' : 'none',
+      });
+    } catch {
+      // Visibility callbacks must not mask the attempt's own outcome.
+    }
   }
 
   if (!args.lifecycle.sawTerminalResult) {

@@ -6,7 +6,12 @@ import type { PiHookBridge } from '@/core/tool-call-contract';
 import type { Db } from '@/db/client';
 import type { R2Client } from '@/kernel/object-storage';
 import type { SubjectProfile } from '@/subjects/profile';
-import type { ModelBinding, PiQueueSources, PiReplayTurn } from './execution-adapter';
+import type {
+  ModelBinding,
+  PiQueueSources,
+  PiReplayTurn,
+  ThinkingWireKind,
+} from './execution-adapter';
 import type { TraceContent } from './laminar-tracing';
 import type { ResolvedProvider } from './providers';
 import type {
@@ -139,10 +144,25 @@ export interface RunTaskCtx {
     argsPrefix: string;
   }) => void;
   /**
-   * YUK-1765 — the model is sending reasoning. A signal only: the reasoning text never leaves
-   * the runner, so nothing can show or persist it.
+   * YUK-1765 — the model is sending reasoning. A signal only: the reasoning
+   * text itself leaves solely through `onThinkingDelta`.
    */
   onThinking?: () => void;
+  /**
+   * YUK-1909 — one reasoning delta for a display-only lane. The text leaves the
+   * runner only through this callback; consumers must not persist it into any
+   * durable sink (job_events, turns, Laminar, Mem0).
+   */
+  onThinkingDelta?: (delta: {
+    text: string;
+    taskRunId: string;
+    thinkingKind: ThinkingWireKind;
+  }) => void;
+  /** YUK-1909 — per-attempt settle of the reasoning lane, fired as the query ends. */
+  onThinkingSettled?: (result: {
+    taskRunId: string;
+    thinking: 'streamed' | 'none';
+  }) => Promise<void> | void;
   /** Settled, no-effect Copilot attempt; emitted before the next attempt is prepared. */
   onProviderRetry?: (retry: {
     nextTaskRunId: string;

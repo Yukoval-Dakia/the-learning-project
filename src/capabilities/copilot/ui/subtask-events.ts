@@ -16,6 +16,7 @@ import { BLOCK_REF_PATTERN, BlockV1, type BlockV1T } from '@/core/schema/blocks'
 import { type PublicProse, mergePublicProse, parsePublicProse } from './public-prose';
 
 export const COPILOT_RUN_STEP_EVENT = 'copilot_run.step' as const;
+export const COPILOT_RUN_THINKING_EVENT = 'copilot_run.thinking' as const;
 
 export type CopilotSubtaskStatus = 'running' | 'completed' | 'failed';
 
@@ -360,6 +361,107 @@ export function createCopilotRunView(): CopilotRunView {
   };
 }
 
+// ── Live thinking lane (YUK-1909) ────────────────────────────────────────────
+// Thinking text is display-only: live `data:`-only SSE frames carry it, durable
+// replay never reproduces it. A thinking segment is one attempt's reasoning;
+// `request_sent` frames (durable) delimit segments and `retry_of` names the
+// attempt a retry replaces. Terminal frames clear all segments with the prose.
+
+export interface CopilotRunThinkingFrame {
+  task_run_id: string;
+  seq: number;
+  text: string;
+}
+
+/** One attempt's streamed thinking, assembled from seq-ordered live frames. */
+export interface CopilotThinkingSegment {
+  taskRunId: string;
+  text: string;
+  lastSeq: number;
+  result?: 'streamed' | 'none' | 'suppressed';
+}
+
+/**
+ * Runtime-narrow a live `data:` frame (no `id:` line, no `event_id`). Returns
+ * null for durable payloads so callers can try durable parsing first.
+ */
+export function parseCopilotRunLiveFrame(data: string): {
+  event_type: string;
+  payload: Record<string, unknown>;
+} | null {
+  try {
+    const raw = objectRecord(JSON.parse(data));
+    if (!raw) return null;
+    const payload = objectRecord(raw.payload);
+    if (typeof raw.event_type !== 'string' || !payload) return null;
+    return { event_type: raw.event_type, payload };
+  } catch {
+    return null;
+  }
+}
+
+export function parseCopilotThinkingFrame(
+  payload: Record<string, unknown>,
+): CopilotRunThinkingFrame | null {
+  const taskRunId = payload.task_run_id;
+  const seq = payload.seq;
+  const text = payload.text;
+  if (typeof taskRunId !== 'string' || taskRunId.length === 0) return null;
+  if (!Number.isSafeInteger(seq) || (seq as number) <= 0) return null;
+  if (typeof text !== 'string' || text.length === 0) return null;
+  return { task_run_id: taskRunId, seq: seq as number, text };
+}
+
+/**
+ * Per-attempt fold with the wire contract's rules: seq is strictly increasing
+ * per task_run_id — frames with seq <= the highest accepted are dropped and
+ * gaps are never backfilled.
+ */
+export function foldThinkingDelta(
+  segments: CopilotThinkingSegment[],
+  frame: CopilotRunThinkingFrame,
+): CopilotThinkingSegment[] {
+  const index = segments.findIndex((s) => s.taskRunId === frame.task_run_id);
+  if (index === -1) {
+    if (frame.seq !== 1) return segments; // a segment starts at seq 1; later orphans are gaps
+    return [...segments, { taskRunId: frame.task_run_id, text: frame.text, lastSeq: 1 }];
+  }
+  const current = segments[index];
+  if (frame.seq <= current.lastSeq) return segments;
+  const next = [...segments];
+  next[index] = { ...current, text: current.text + frame.text, lastSeq: frame.seq };
+  return next;
+}
+
+/**
+ * Durable step boundary for the thinking lane. `request_sent` opens a segment —
+ * `retry_of` replaces the named attempt's segment — and `thinking_end` closes it.
+ */
+export function foldThinkingStep(
+  segments: CopilotThinkingSegment[],
+  payload: Record<string, unknown>,
+): CopilotThinkingSegment[] {
+  if (payload.step_kind === 'request_sent') {
+    const taskRunId = typeof payload.task_run_id === 'string' ? payload.task_run_id : '';
+    if (!taskRunId) return segments;
+    const retryOf = typeof payload.retry_of === 'string' ? payload.retry_of : undefined;
+    const base = retryOf ? segments.filter((s) => s.taskRunId !== retryOf) : segments;
+    if (base.some((s) => s.taskRunId === taskRunId)) return base;
+    return [...base, { taskRunId, text: '', lastSeq: 0 }];
+  }
+  if (payload.step_kind === 'thinking_end') {
+    const taskRunId = typeof payload.task_run_id === 'string' ? payload.task_run_id : '';
+    const result = payload.result;
+    return segments.map((s) =>
+      s.taskRunId === taskRunId &&
+      (result === 'streamed' || result === 'none' || result === 'suppressed')
+        ? { ...s, result }
+        : s,
+    );
+  }
+  return segments;
+}
+
 interface MutableSubtask extends CopilotSubtaskView {
   firstEventId: number;
 }
@@ -632,6 +734,11 @@ export interface ConsumeDurableCopilotRunOptions {
   location: string;
   fetchResponse: (input: string, init?: RequestInit) => Promise<Response>;
   onUpdate?: (state: CopilotRunView) => void;
+  /**
+   * YUK-1909 — ephemeral thinking segments for this run. Cleared on terminal /
+   * reply frames; never rebuilt after reconnect (live text is not replayed).
+   */
+  onThinking?: (segments: CopilotThinkingSegment[]) => void;
   /** Resume cursor/view from a previously accepted run; never redispatches it. */
   initialState?: CopilotRunView;
   /** Number of reconnects after the initial request. */
@@ -681,6 +788,7 @@ export async function consumeDurableCopilotRun(
     options.reconnectBaseDelayMs ?? DEFAULT_RECONNECT_BASE_DELAY_MS,
   );
   let state = options.initialState ?? createCopilotRunView();
+  let thinkingSegments: CopilotThinkingSegment[] = [];
   let reconnects = 0;
   const pickupReobservationStartedAtMs = Date.now();
   const pickupReobservationUntilMs =
@@ -742,8 +850,36 @@ export async function consumeDurableCopilotRun(
       })) {
         if (event.event === 'error') throw new Error('durable stream failed');
         const frame = parseCopilotRunJobFrame(event.data);
-        if (!frame) continue;
+        if (!frame) {
+          // Live lane: data-only frames (no id:/event_id) carry thinking text.
+          // They skip the durable fold and never advance the cursor.
+          const live = parseCopilotRunLiveFrame(event.data);
+          if (live?.event_type === COPILOT_RUN_THINKING_EVENT) {
+            const thinking = parseCopilotThinkingFrame(live.payload);
+            if (thinking) {
+              thinkingSegments = foldThinkingDelta(thinkingSegments, thinking);
+              options.onThinking?.(thinkingSegments);
+            }
+          }
+          continue;
+        }
         state = foldCopilotRunFrames(state, [frame]);
+        // Thinking segments end at their durable boundaries; a terminal frame
+        // clears every segment together with the streamed prose it replaces.
+        if (frame.event_type === COPILOT_RUN_STEP_EVENT) {
+          thinkingSegments = foldThinkingStep(thinkingSegments, frame.payload);
+          options.onThinking?.(thinkingSegments);
+        } else if (
+          frame.event_type === 'copilot_run.reply' ||
+          frame.event_type === 'copilot_run.done' ||
+          frame.event_type === 'copilot_run.failed' ||
+          frame.event_type === 'copilot_run.cancel_requested'
+        ) {
+          if (thinkingSegments.length > 0) {
+            thinkingSegments = [];
+            options.onThinking?.(thinkingSegments);
+          }
+        }
         armPickupTimer();
         options.onUpdate?.(state);
         if (TERMINAL_RUN_PHASES.has(state.phase)) {
