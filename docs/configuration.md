@@ -21,12 +21,12 @@ compose 的 `migrate` / `app` / `worker` 都从 `.env` 取环境，`cloudflared`
 | `RW_WORKER` | app | `1` 时同进程启动 pg-boss worker | `server/index.ts` |
 | `RW_FRONTDOOR` | app | `1` 时启用 Start 前门（需要 `dist/start`）；`dev` 仅 `dev:local` 使用，经 API 进程内的 Vite dev server 提供同一前门（HMR，不需要 `dist/start`）；未设时 app 只服务 Hono API | `server/index.ts`；`server/dev-frontdoor.ts` |
 | `RW_BOSS_AUTOMATION` | app、worker | `enabled`；`disabled` 关闭 pg-boss 自带 automation | `src/server/config/env.ts`；`src/server/boss/client.ts` |
-| `POSTGRES_USER` | 脚本（dev 连接串、备份） | `loom` | `scripts/local-db-env.ts` |
-| `POSTGRES_PASSWORD` | 脚本（dev 连接串、备份） | `loom` | `scripts/local-db-env.ts` |
-| `POSTGRES_DB` | 脚本（dev 连接串、备份） | `loom` | `scripts/local-db-env.ts` |
+| `POSTGRES_USER` | 脚本（`DEV_ALLOW_TEST_DB=1` 下的连接串、备份） | 本地脚本 dev 目标固定 `loom_dev`；仅 `DEV_ALLOW_TEST_DB=1` 时才读它，缺省 `loom` | `scripts/local-db-env.ts` |
+| `POSTGRES_PASSWORD` | 脚本（`DEV_ALLOW_TEST_DB=1` 下的连接串、备份） | 本地脚本 dev 目标固定 `loom_dev`；仅 `DEV_ALLOW_TEST_DB=1` 时才读它，缺省 `loom` | `scripts/local-db-env.ts` |
+| `POSTGRES_DB` | 脚本（dev 连接串的库名选择器、备份） | 本 worktree 的 dev 库（`loom_dev_<name>_<hash>`）；设为 `loom`（TEST 库名）即解析为 TEST 目标，连接前被拒绝；仅 `DEV_ALLOW_TEST_DB=1` 放行 | `scripts/local-db-env.ts`；`scripts/dev-worktree-db.ts` |
 | `LOCAL_POSTGRES_HOST` | 脚本（`dev:local`） | `127.0.0.1` | `scripts/local-db-env.ts`；`scripts/dev-local.ts` |
-| `LOCAL_POSTGRES_PORT` | 脚本（`dev:local`、`dev:reset`） | dev 库 `5434`（`docker-compose.dev.yml`，用户 `loom_dev`，每 worktree 一库，卷 `loom-dev_loom-dev-pgdata`）；设为 `5433`/`5544`（TEST）会被 dev:local / dev:reset 拒绝；其余脚本（`db:migrate:local` 等）缺省仍是 `5433` | `scripts/dev-local.ts`；`scripts/dev-reset.ts`；`scripts/local-db-env.ts` |
-| `DEV_ALLOW_TEST_DB` | 脚本（`dev:local`） | 未设；`1` 才允许 dev:local 连 TEST 库（沿用 `.env` 的 `POSTGRES_*`），启动打印警告横幅；dev API/worker 会写 TEST 数据并消费其 job | `scripts/dev-local.ts` |
+| `LOCAL_POSTGRES_PORT` | 脚本（`dev:local`、`dev:reset`、`db:migrate:local` 等） | dev 库 `5434`（`docker-compose.dev.yml`，用户 `loom_dev`，每 worktree 一库，卷 `loom-dev_loom-dev-pgdata`）；设为 `5433`/`5544`（TEST）被共用护栏拒绝 | `scripts/local-db-env.ts`；`scripts/dev-local.ts`；`scripts/dev-reset.ts` |
+| `DEV_ALLOW_TEST_DB` | 脚本（`dev:local`、`dev:reset`、本地库目标解析） | 未设；`1` 放行 TEST 目标判定（`dev:local` 沿用 `.env` 的 `POSTGRES_*`，启动打印警告横幅；dev API/worker 会写 TEST 数据并消费其 job）；该路径同样没有指向 TEST 端口的默认值，`LOCAL_POSTGRES_PORT` 须显式给出 | `scripts/local-db-env.ts`；`scripts/dev-local.ts`；`scripts/dev-reset.ts` |
 | `LOCAL_NEXT_PORT` | 脚本（`smoke:local`） | `3001`，仅用于拼 `NEXT_PUBLIC_BASE_URL`；`dev:local` 的同名变量已直接指向自动探测到的 dev 端口 | `scripts/local-db-env.ts` |
 | `LOOM_PG_IMAGE` | 脚本（cutover 备份） | `pgvector/pgvector:0.8.2-pg16-bookworm` | `scripts/cutover-backup.ts` |
 

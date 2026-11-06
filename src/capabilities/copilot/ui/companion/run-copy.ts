@@ -26,8 +26,10 @@ export function progressStage(view: CopilotRunView): ProgressStage {
     : 'generation';
 }
 
-export function reconnectCopy(cause: unknown): string {
-  return cause instanceof DurablePickupStalledError
-    ? '这条还在排队等开始；请求已经保留，可以稍后重新连接。'
-    : '进度连接断了；它可能还在后台进行，可以重新连接。';
+export const CONNECTION_LOST_COPY = '连接断了，连上就接着说';
+
+export const PICKUP_STALLED_COPY = '这条排队比平时久，可以再看看。';
+
+export function isPickupStalled(cause: unknown): boolean {
+  return cause instanceof DurablePickupStalledError;
 }

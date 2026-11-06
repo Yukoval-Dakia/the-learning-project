@@ -54,6 +54,13 @@ export function projectCopilotActivity(
     case 'prose_delta':
     case 'spawn_budget':
       return null;
+    case 'provider_retry':
+      return {
+        step_kind: 'provider_retry',
+        label: '现在有点挤，再试一次',
+        retry: activity.retry,
+        delay_ms: activity.delayMs,
+      };
     case 'model_thinking':
       return { step_kind: 'model_thinking' };
     case 'block_draft':

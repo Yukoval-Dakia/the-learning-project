@@ -29,7 +29,7 @@
 | `rw:api`（`RW_WORKER=1 tsx watch server/index.ts`，dev-local 设 `RW_FRONTDOOR=dev`） | dev-local 下自动选 8788 起首个空闲端口（`DEV_PORT` 固定，避开 TEST 的 :8787）；单独跑时按 `API_PORT`，缺省 :8787 | `app`；页面由同进程的 Vite dev server（middleware 模式）提供，HMR 热更新；生产 `app` 仍直接提供 `dist/start`（`RW_FRONTDOOR=1`）；同进程 pg-boss 只是兜底，不替代独立 worker |
 | `worker:dev`（`tsx scripts/worker.ts`） | — | `worker` |
 
-dev 数据库与 TEST 隔离：`dev:local` 用独立的 `docker-compose.dev.yml`（项目名 `loom-dev`，服务 `postgres-dev`，profile `dev`，pgvector 同镜像，宿主端口 **5434**，用户 `loom_dev`，命名卷 `loom-dev_loom-dev-pgdata`）。同一个容器内每 worktree 一个库（`loom_dev_<name>_<path hash>`，由 worktree 根路径确定性派生，`DEV_DB_NAME` 可覆盖；旧共享库 `loom_dev` 可能仍在），多个 worktree 并行 dev 互不共享数据。TEST 的 `postgres`（:5433/:5544）与生产 compose 文件不含该服务，普通 `docker compose up` 不会启动它。使用方式只有一条：
+dev 数据库与 TEST 隔离：`dev:local` 用独立的 `docker-compose.dev.yml`（项目名 `loom-dev`，服务 `postgres-dev`，profile `dev`，pgvector 同镜像，宿主端口 **5434**，用户 `loom_dev`，命名卷 `loom-dev_loom-dev-pgdata`）。同一个容器内每 worktree 一个库（`loom_dev_<name>_<path hash>`，由 worktree 根路径确定性派生，`DEV_DB_NAME` 可覆盖；旧共享库 `loom_dev` 可能仍在），多个 worktree 并行 dev 互不共享数据。TEST 的 `postgres`（宿主侧 :5433/:5544，2026-11-06 起中继已关闭这两个端口）与生产 compose 文件不含该服务，普通 `docker compose up` 不会启动它。使用方式只有一条：
 
 ```bash
 pnpm dev:local      # 打开打印的地址（自动选 8788 起首个空闲端口）
@@ -37,7 +37,7 @@ pnpm dev:local      # 打开打印的地址（自动选 8788 起首个空闲端�
 
 `dev:local` 依次：`docker compose -f docker-compose.dev.yml --profile dev up -d --wait postgres-dev`（等 healthcheck）→ 本 worktree 库不存在则经 `postgres` 维护库创建 → `pnpm db:migrate:local`（对本 worktree 库，已有库只应用新迁移）→ 幂等写入代码当前的 contract epoch（新库只有隐式 legacy epoch，会让所有请求 503）→ `dbos schema` 建 `tlp_dbos` → `seed:dev-questions` 播种 → 启动 API 与 worker，`DATABASE_URL` 固定指向本 worktree 的 dev 库（忽略 `.env` 的 `POSTGRES_*`）。
 
-保护：目标库端口为 5433/5544 或库名等于 TEST 的 `POSTGRES_DB`（缺省 `loom`）时，`dev:local` 拒绝启动并指向 dev 库；唯一覆盖是 `DEV_ALLOW_TEST_DB=1`（沿用旧行为，用 `.env` 的 `POSTGRES_*` 连 `LOCAL_POSTGRES_HOST:LOCAL_POSTGRES_PORT`，跳过启动/迁移 dev 库，启动日志打印醒目警告）。
+保护：TEST 目标判定只有一个 owner——`scripts/local-db-env.ts` 的 `testDbRefusalReason`（解析后的端口是 5433/5544，或库名是 TEST 的 `loom`）。`dev:local`、`dev:reset`、`db:migrate:local`、`drizzle.config.local.ts` 及所有解析本地库目标的脚本共用同一判断，连接前拒绝。本地脚本的目标解析（`resolveLocalDbTarget`）缺省即本 worktree 的 dev 库（`loom_dev` 凭据 @ `LOCAL_POSTGRES_HOST:LOCAL_POSTGRES_PORT`，缺省 `127.0.0.1:5434`）；`POSTGRES_USER`/`POSTGRES_PASSWORD` 属 TEST/生产栈，只在 `DEV_ALLOW_TEST_DB=1` 下生效——该开关是唯一覆盖（沿用旧行为，用 `.env` 的 `POSTGRES_*` 连 `LOCAL_POSTGRES_HOST:LOCAL_POSTGRES_PORT`，跳过启动/迁移 dev 库，启动日志打印醒目警告），且该路径同样没有指向 TEST 端口的默认值。
 
 重置 dev 库：`pnpm dev:reset` 只删本 worktree 的库（`DROP DATABASE … WITH (FORCE)`，下次 `pnpm dev:local` 重建、迁移并播种）。绝不 `down -v`——卷里装着全部 worktree 的库。
 
@@ -203,8 +203,8 @@ import 需要 Hono 运行，所以不是“停掉所有进程”的恢复。步�
 ## 网络与访问
 
 - 基础 `docker-compose.yml` 不把 `app` 的 8787 暴露到宿主，`postgres` 也没有宿主端口；唯一外部路径是 `cloudflared`。
-- `docker-compose.local.yml` 给宿主开 `postgres` 的 5433（供 `pnpm db:migrate` / 本机测试），并把 `cloudflared` 放进 `production` profile，`docker compose up` 不会要求 `TUNNEL_TOKEN`。
-- `docker-compose.mac.yml` 把 `app` 绑到 `127.0.0.1:8787`，`postgres` 绑 `127.0.0.1:5433` 和 `127.0.0.1:5544`（OrbStack 偶发占住 5433 时的备用宿主端口），并通过显式列服务排除 `cloudflared`。TEST 已不在 Mac 上跑——这份文件只保留给回滚期（Mac 容器 stopped 不删，至少 7 天并经过一个成功 release）；这些宿主端口平时由下方 relay 占用，回滚启动前先停中继：
+- `docker-compose.local.yml` 给宿主开 `postgres` 的 5433（本机手动操作本地 compose 栈的 DB 用——5433 是 TEST 中继的历史端口，本地 pnpm 脚本一律不用它，`db:migrate:local` 等默认走 dev 库 :5434），并把 `cloudflared` 放进 `production` profile，`docker compose up` 不会要求 `TUNNEL_TOKEN`。
+- `docker-compose.mac.yml` 把 `app` 绑到 `127.0.0.1:8787`，`postgres` 绑 `127.0.0.1:5433` 和 `127.0.0.1:5544`（OrbStack 偶发占住 5433 时的备用宿主端口），并通过显式列服务排除 `cloudflared`。TEST 已不在 Mac 上跑——这份文件只保留给回滚期（Mac 容器 stopped 不删，至少 7 天并经过一个成功 release）；这些宿主端口自 2026-11-06 起不再由下方 relay 占用（中继只留 8787），回滚启动前仍应确认没有残留的中继或 dev 进程占着它们：
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.mac.yml \
@@ -217,7 +217,7 @@ TEST 跑在 NAS（`bancho-nb2.local`，x86_64）的 `/volume1/docker/tlp-test/`�
 
 NAS sshd 禁 TCP 转发（`AllowTcpForwarding no`，系统配置不改），Mac 访问 TEST 靠本机两个 LaunchAgent（源文件在 `scripts/test-nas/`，运行副本装在 `~/Library/Application Support/tlp-nas-tunnel/`）：
 
-- `studio.yukoval.tlp-nas-tunnel`（`relay.py`）：监听本机 `127.0.0.1:8787`/`5433`/`5544`，每条连接开一个 ssh exec channel 在 NAS 上跑 `nc`——8787→18787、5433/5544→15433；新连接约多 0.25 s。
+- `studio.yukoval.tlp-nas-tunnel`（`relay.py`）：只监听本机 `127.0.0.1:8787`（→NAS 18787），每条连接开一个 ssh exec channel 在 NAS 上跑 `nc`；常驻几条预热通道，新连接通常跳过 ssh 建链。数据库端口 5433/5544→15433 已于 2026-11-06 关闭——本地 dev 脚本曾默认 5433，任何指向它们的连接都可能落到 TEST；查 TEST 数据改用 `ssh yukoval@bancho-nb2.local docker exec … psql` 一类方式。
 - `studio.yukoval.tlp-nas-watch`（`nas-watch.sh`）：NAS 重启后拉回 memory watchdog（watchdog 在 MemAvailable < 2 GB 时停 TEST 容器）；memory stop 或 TEST 不健康时写 `ALERT` 文件并弹通知。NAS 重启与 watchdog 恢复之间只有容器内存限额兜底；Mac 关机则 watchdog 无人重启。
 
 Mac 关机：TEST 在 NAS 上继续跑，但外部不可达、Tailscale 入口断、当日日级 dump 不跑。
