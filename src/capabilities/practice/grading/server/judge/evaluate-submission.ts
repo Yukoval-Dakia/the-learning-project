@@ -228,7 +228,7 @@ export function createFormalModelExecutor(
     },
   );
   return async (request, signal) => {
-    // YUK-1877 —— 带图提交走照片身份，不走文本切片覆盖。无绑定即明确待定，
+    // 带图提交走照片身份，不走文本切片覆盖。无绑定即明确待定，
     // 先于 claim/预留/付费与切片复核（门自身不碰 DB）。
     const photo = photoJudgeAdmission(request);
     if (!photo.ok) {

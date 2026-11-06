@@ -197,7 +197,7 @@ export const ScoredUnitResult = z.object({
   feedback_md: z.string().optional(),
   evidence_citations: z.array(EvidenceCitation).default([]),
   /**
-   * 照片作答判分的未校验模型观察（YUK-1877）：纯图片单元的图片引用不考原文
+   * 照片作答判分的未校验模型观察：纯图片单元的图片引用不考原文
    * 校验，模型附带的 quote 记在这里 —— 它是模型产出，不是已验证引文。
    * 缺省 = 没有观察（含全部文本作答与历史行）。
    */

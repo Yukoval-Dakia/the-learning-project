@@ -27,7 +27,7 @@ export const ModelOutcomeRejectedCitation = z.object({
 export type ModelOutcomeRejectedCitationT = z.infer<typeof ModelOutcomeRejectedCitation>;
 
 /**
- * 未校验模型观察的脱敏摘要（YUK-1877）：纯图片单元里模型对图片带 quote
+ * 未校验模型观察的脱敏摘要：纯图片单元里模型对图片带 quote
  * 不考原文校验，记为观察 —— 观察文字是模型产出，与拒收引文同法只留
  * hash/长度与指向 id，绝不冒充已验证引文。
  */

@@ -117,7 +117,7 @@ function citableSources(
 }
 
 /**
- * 纯图片单元里模型对图片带 quote 的未校验观察（YUK-1877）：quote 原文是
+ * 纯图片单元里模型对图片带 quote 的未校验观察：quote 原文是
  * 模型产出、无文本源可校。citation_index 指向决策引文数组下标 —— 消费点
  * 用它把观察从已验证引文集里移出。
  */
@@ -132,7 +132,7 @@ interface ModelObservedCitation extends ModelOutcomeObservedCitationT {
  * 指向 id（真实提交的记原文，模型声称的记 sha256）。短引文与短声称 id
  * 不记 hash —— 可枚举短语/短 id 的 sha256 能被字典还原。
  *
- * 图片引用分流（YUK-1877）：纯图片单元（没有任何可原文引用的文字）里，
+ * 图片引用分流：纯图片单元（没有任何可原文引用的文字）里，
  * 图片引用带 quote 无文本可校 → 记为未校验模型观察，不拒收；混合单元里
  * 图片带 quote → image_not_quotable 拒收（rubric 线同款）。纯文本作答的
  * 校验逐位不变。

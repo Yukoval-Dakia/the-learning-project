@@ -118,7 +118,7 @@ export async function prepareAssessmentModelInput(
     ...request.group_evidence.map((item) => item.evidence),
   ];
   // 直接多模态判把每张图都发 provider：张数与字节是单次付费调用的费用与
-  // 滥用边界（YUK-1877，沿用 #2565 的 8 张/32MB）。超限不静默裁减 ——
+  // 滥用边界（8 张/32MB）。超限不静默裁减 ——
   // 整个单元明确 unjudgeable。
   const imageEvidence = evidence.filter((item) => item.kind === 'image');
   if (imageEvidence.length > DIRECT_JUDGE_IMAGE_LIMIT) {

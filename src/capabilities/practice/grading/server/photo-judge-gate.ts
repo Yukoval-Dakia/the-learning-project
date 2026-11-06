@@ -1,18 +1,3 @@
-// 带图作答不属于文本切片覆盖（YUK-1877）。
-//
-// response_class 是发布时属性（由作答槽位推导：open_response → 'free'），
-// 照片是提交时属性 —— 照片作答天然落在 'free' 文本切片身份下，而文本留出题
-// 从未证明过照片判分。main 上模型对图片只引 evidence_id（不带 quote）即可
-// 通过引文校验，照片会被文本切片身份判分。本门在正式判分装配点把带图提交
-// 分流到「照片身份」：只有 PHOTO_JUDGE_BINDINGS 绑定命中当前模型 pin 才放行，
-// 否则明确 unjudgeable 待定 —— 先于 claim、预留与付费调用。
-//
-// 绑定即开关：model_version 已含 provider + prompt canonicalHash + reasoning
-// （model-slice-registry resolveLiveModelPin），模型/prompt/reasoning 任一漂移
-// ⇒ 绑定失配 ⇒ 照片作答自动回到明确待定。evidence_ref 记录放行依据的小考
-// 证据（工件/事件 id）。admission-run lane 与调用方自带执行器不经此门 ——
-// 小考与留出题证据收集在这些 lane 上跑。
-
 import type { ModelExecutorRequest } from '@/core/schema/assessment';
 import { currentModelPinForKind } from './model-slice-registry';
 
@@ -46,7 +31,7 @@ export function collectImageEvidenceIds(request: ModelExecutorRequest): Set<stri
 
 /** 带图提交 = 请求里存在图片证据（纯图、文字加图、group_evidence 带图都算）。 */
 export function requestHasImageEvidence(request: ModelExecutorRequest): boolean {
-  return collectImageEvidenceIds(request).size > 0;
+  return (request.submission_images?.count ?? 0) > 0 || collectImageEvidenceIds(request).size > 0;
 }
 
 /**
@@ -57,6 +42,18 @@ export function photoJudgeAdmission(
   request: ModelExecutorRequest,
 ): { ok: true; evidence_ref: string | null } | { ok: false; detail: string } {
   if (!requestHasImageEvidence(request)) return { ok: true, evidence_ref: null };
+  const evidence = [
+    ...request.slot_responses.flatMap((entry) => (entry.kind === 'open' ? entry.evidence : [])),
+    ...request.group_evidence.map((item) => item.evidence),
+  ].filter((item) => item.kind === 'image');
+  const count = Math.max(request.submission_images?.count ?? 0, evidence.length);
+  const bytes = Math.max(
+    request.submission_images?.bytes ?? 0,
+    evidence.reduce((total, item) => total + item.bytes, 0),
+  );
+  if (count > 8 || bytes > 32 * 1024 * 1024) {
+    return { ok: false, detail: 'submission image evidence exceeds 8 images or 32 MiB' };
+  }
   const taskKind = request.executor.task_kind;
   let pin: { model: string; model_version: string } | undefined;
   try {
