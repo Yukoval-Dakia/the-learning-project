@@ -197,6 +197,7 @@ export function admissionStageRunner(input: {
   loginProbeRoute?: { provider: string; model: string };
   interrupted?: () => boolean;
   interruptionReason?: () => unknown;
+  signal?: AbortSignal;
   beforeSend?: () => Promise<void>;
   /** Wall-clock bound forwarded to the retry planner; a delay past it is not taken. */
   deadlineAt?: number;
@@ -260,6 +261,15 @@ export function admissionStageRunner(input: {
         let attempt = 0;
         let quotaFailures = 0;
         let priorWaitedMs = 0;
+        const routing = (value: unknown) =>
+          z
+            .object({
+              task: z
+                .object({ provider: z.string().optional(), model: z.string().optional() })
+                .nullable(),
+              override: z.unknown(),
+            })
+            .parse(value);
         if (previous) {
           const frozen = z
             .object({
@@ -272,89 +282,99 @@ export function admissionStageRunner(input: {
             .parse(previous.input_json);
           if (frozen.kind !== kind || frozen.payload_digest !== canonicalHash(payload))
             throw new Error('Admission stage input drift; no new payment authorized');
-          if (previous.state !== 'receipt_ready' && previous.state !== 'applied')
-            throw new Error('Admission stage has unresolved paid outcome; no resend');
-          const receipt = StageReceipt.parse(previous.result_json);
-          const previousIdentity = computePaidEffectIdentity({
-            family: FAMILY,
-            entityId: input.groupId,
-            entityRevision: input.baseDigest,
-            unit: previous.unit,
-            input: previous.input_json,
-          });
-          if (!input.receiptRefs?.some((ref) => ref.identity === previousIdentity))
-            input.receiptRefs?.push({
-              identity: previousIdentity,
-              receipt_digest: canonicalHash(receipt),
-            });
-          if (receipt.kind === 'result') input.taskRunIds?.add(receipt.result.task_run_id);
-          if (receipt.kind === 'failure' || receipt.kind === 'transient')
-            input.taskRunIds?.add(receipt.fields.taskRunId);
-          if (previous.state === 'receipt_ready')
-            await input.db.transaction((tx) =>
-              recordPaidEffectApplication(
-                tx,
-                computePaidEffectIdentity({
-                  family: FAMILY,
-                  entityId: input.groupId,
-                  entityRevision: input.baseDigest,
-                  unit: previous.unit,
-                  input: previous.input_json,
-                }),
-                { kind: 'recorded' },
-              ),
-            );
-          if (receipt.kind === 'result') return receipt.result;
-          if (receipt.kind === 'not_sent') throw new AdmissionNotSent();
-          if (receipt.kind === 'interrupted') throw new AdmissionInterrupted(receipt.reason);
-          if (receipt.kind === 'failure')
-            throw new AgentRunError(receipt.fields as AgentRunErrorFields);
-          if (receipt.kind === 'transient') {
-            // The transient chain stays bounded by the same policy the caller
-            // applies: beyond the retry bound the frozen failure is terminal.
-            if (frozen.attempt >= transientPolicy.maxRetries)
-              throw new AgentRunError(receipt.fields as AgentRunErrorFields);
-            attempt = frozen.attempt + 1;
-            priorWaitedMs = receipt.waited_ms ?? 0;
-            if (receipt.retry_not_before != null) {
-              // Honour the recorded retry instant once — in-process loops land
-              // here too, so the single sleep site serves every delivery.
-              const remaining = Date.parse(receipt.retry_not_before) - Date.now();
-              if (remaining > 0) await sleepMs(Math.min(remaining, transientPolicy.maxWaitMs));
-            }
-          } else {
-            const routing = (value: unknown) =>
-              z
-                .object({
-                  task: z
-                    .object({ provider: z.string().optional(), model: z.string().optional() })
-                    .nullable(),
-                  override: z.unknown(),
-                })
-                .parse(value);
-            const changedConfiguration =
-              canonicalHash(routing(frozen.configuration)) !==
-              canonicalHash(routing(configuration));
-            if (!changedConfiguration && receipt.recovery.reason === 'quota')
-              quotaFailures = receipt.quota_failures ?? frozen.attempt + 1;
-            const confirmed =
-              input.recoveryConfirmed &&
-              frozen.recovery_confirmation !== input.deliveryId &&
-              (receipt.recovery.reason !== 'login' || !loginWait || loginProbeConfirmed);
-            const due =
-              receipt.recovery.reason === 'quota' &&
-              receipt.recovery.retry_at != null &&
-              Date.parse(receipt.recovery.retry_at) <= Date.now();
-            const loginRecovered = receipt.recovery.reason === 'login' && loginWait == null;
+          if (previous.state === 'pending') {
+            // An admitted-but-unclaimed intent is this chain's next send — the
+            // authorization gate decides which delivery may claim it. Proceed
+            // only when its frozen input is byte-identical to what this
+            // delivery would send; anything else is drift, never a resend.
             if (
-              !due &&
-              !confirmed &&
-              !changedConfiguration &&
-              !loginRecovered &&
-              !automaticLoginProbe
+              canonicalHash(routing(frozen.configuration)) !==
+                canonicalHash(routing(configuration)) ||
+              (frozen.recovery_confirmation ?? null) !==
+                (input.recoveryConfirmed ? input.deliveryId : null)
             )
-              throw new AdmissionWaiting(receipt.recovery, previous.unit, route);
+              throw new Error('Admission stage admitted intent drift; no resend');
+            attempt = frozen.attempt;
+          } else if (previous.state === 'voided') {
+            // Operator-retired attempt: the authorization binds its successor.
             attempt = frozen.attempt + 1;
+          } else if (previous.state !== 'receipt_ready' && previous.state !== 'applied') {
+            throw new Error('Admission stage has unresolved paid outcome; no resend');
+          } else {
+            const receipt = StageReceipt.parse(previous.result_json);
+            const previousIdentity = computePaidEffectIdentity({
+              family: FAMILY,
+              entityId: input.groupId,
+              entityRevision: input.baseDigest,
+              unit: previous.unit,
+              input: previous.input_json,
+            });
+            if (!input.receiptRefs?.some((ref) => ref.identity === previousIdentity))
+              input.receiptRefs?.push({
+                identity: previousIdentity,
+                receipt_digest: canonicalHash(receipt),
+              });
+            if (receipt.kind === 'result') input.taskRunIds?.add(receipt.result.task_run_id);
+            if (receipt.kind === 'failure' || receipt.kind === 'transient')
+              input.taskRunIds?.add(receipt.fields.taskRunId);
+            if (previous.state === 'receipt_ready')
+              await input.db.transaction((tx) =>
+                recordPaidEffectApplication(
+                  tx,
+                  computePaidEffectIdentity({
+                    family: FAMILY,
+                    entityId: input.groupId,
+                    entityRevision: input.baseDigest,
+                    unit: previous.unit,
+                    input: previous.input_json,
+                  }),
+                  { kind: 'recorded' },
+                ),
+              );
+            if (receipt.kind === 'result') return receipt.result;
+            if (receipt.kind === 'not_sent') throw new AdmissionNotSent();
+            if (receipt.kind === 'interrupted') throw new AdmissionInterrupted(receipt.reason);
+            if (receipt.kind === 'failure')
+              throw new AgentRunError(receipt.fields as AgentRunErrorFields);
+            if (receipt.kind === 'transient') {
+              // The transient chain stays bounded by the same policy the caller
+              // applies: beyond the retry bound the frozen failure is terminal.
+              if (frozen.attempt >= transientPolicy.maxRetries)
+                throw new AgentRunError(receipt.fields as AgentRunErrorFields);
+              attempt = frozen.attempt + 1;
+              priorWaitedMs = receipt.waited_ms ?? 0;
+              if (receipt.retry_not_before != null) {
+                // Honour the recorded retry instant once — in-process loops land
+                // here too, so the single sleep site serves every delivery.
+                const remaining = Date.parse(receipt.retry_not_before) - Date.now();
+                if (remaining > 0)
+                  await sleepMs(Math.min(remaining, transientPolicy.maxWaitMs), input.signal);
+              }
+            } else {
+              const changedConfiguration =
+                canonicalHash(routing(frozen.configuration)) !==
+                canonicalHash(routing(configuration));
+              if (!changedConfiguration && receipt.recovery.reason === 'quota')
+                quotaFailures = receipt.quota_failures ?? frozen.attempt + 1;
+              const confirmed =
+                input.recoveryConfirmed &&
+                frozen.recovery_confirmation !== input.deliveryId &&
+                (receipt.recovery.reason !== 'login' || !loginWait || loginProbeConfirmed);
+              const due =
+                receipt.recovery.reason === 'quota' &&
+                receipt.recovery.retry_at != null &&
+                Date.parse(receipt.recovery.retry_at) <= Date.now();
+              const loginRecovered = receipt.recovery.reason === 'login' && loginWait == null;
+              if (
+                !due &&
+                !confirmed &&
+                !changedConfiguration &&
+                !loginRecovered &&
+                !automaticLoginProbe
+              )
+                throw new AdmissionWaiting(receipt.recovery, previous.unit, route);
+              attempt = frozen.attempt + 1;
+            }
           }
         }
         // Purpose/control guards and aborts retain their original identity.

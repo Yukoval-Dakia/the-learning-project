@@ -1,4 +1,6 @@
-// Bounded attempts inside one durable batch. A lost worker never resumes this loop.
+// Terminal mapping for one durable stage call — the bounded re-send chain
+// lives in stages.ts on `call:N:attempt:M`; this layer only turns a settled
+// failure into the caller's exhausted outcome.
 import { eq } from 'drizzle-orm';
 import { AgentRunError } from '@/ai/agent-run-error';
 import { boundTerminalHttpStatus, providerTransientVerdict } from '@/ai/provider-failure';
