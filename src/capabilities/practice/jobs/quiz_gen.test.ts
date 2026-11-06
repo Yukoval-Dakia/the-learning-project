@@ -24,6 +24,10 @@ import {
   question,
 } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+import {
+  acquirePlacementAttempt,
+  finishPlacementAttempt,
+} from '../supply/server/placement-starter-attempts';
 import { buildQuizGenHandler, runQuizGen } from './quiz_gen';
 
 // The ctx shape the handler passes to its runAgentTaskFn seam (db + piToolMounts +
@@ -187,6 +191,11 @@ describe('runQuizGen', () => {
     await resetDb();
   });
 
+  // @invariant data: a schema-rejected paid delivery seals the provider receipt
+  //   and exhausts the claim at its paid bound without inserting questions
+  // @fails-if drop the receipt on schema failure, leak private prompt text into
+  //   the sealed error, or let the claim survive its third paid delivery;
+  //   the receipt/exhausted/empty-pool assertions fail
   it('seals a successful model receipt and bounded schema paths through the fenced failure handler without inserting questions', async () => {
     await seedKnowledge({ id: 'k1' });
     const now = new Date();
@@ -224,6 +233,18 @@ describe('runQuizGen', () => {
       generation_method: 'closed_book',
       self_copy_safety: { verdict: 'unknown', checked_by: 'agent_self' },
     });
+    // Exhaustion counts attempt rows claim-wide, so spend the first two
+    // deliveries of this job before the handler runs the third (final) one.
+    for (const delivery of [1, 2]) {
+      const prior = await acquirePlacementAttempt(testDb(), {
+        claimId,
+        pgBossJobId: 'synthetic-job',
+        deliveryNo: delivery,
+        startedOn: now,
+        now,
+      });
+      await finishPlacementAttempt(testDb(), prior, 'interrupted', now);
+    }
     const handler = buildQuizGenHandler(testDb(), {
       runAgentTaskFn: agentMock(output, 'synthetic-model-success', 0.018885),
       buildExaMcpServerFn: () => null,
@@ -276,7 +297,10 @@ describe('runQuizGen', () => {
       ]),
     ).rejects.toThrow('schema_invalid');
     const [claim] = await testDb().select().from(placement_starter_claim);
-    const [attempt] = await testDb().select().from(placement_starter_attempt);
+    const [attempt] = await testDb()
+      .select()
+      .from(placement_starter_attempt)
+      .where(eq(placement_starter_attempt.delivery_no, 3));
     expect(claim).toMatchObject({
       status: 'exhausted',
       known_cost_micro_usd: 18885,

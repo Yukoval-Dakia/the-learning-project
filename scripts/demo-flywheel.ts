@@ -12,10 +12,10 @@ import { orchestrateCascadeRevert } from '@/server/revert/cascade-revert';
 //   SEED_SYNTHETIC_OK=1 DATABASE_URL=postgres://loom:loom@127.0.0.1:5433/loom_demo pnpm seed:synthetic
 //   DATABASE_URL=postgres://loom:loom@127.0.0.1:5433/loom_demo pnpm tsx scripts/demo-flywheel.ts
 //
-// load-env loads .env (XIAOMI_API_KEY) with override:false so the shell-set
+// load-env loads .env (OPENCODE_API_KEY) with override:false so the shell-set
 // loopback DATABASE_URL wins; @/db/client then targets the sandbox DB.
 //
-// load-env loads .env (XIAOMI_API_KEY) with override:false so the shell-set
+// load-env loads .env (OPENCODE_API_KEY) with override:false so the shell-set
 // loopback DATABASE_URL wins; @/db/client then targets loom_demo.
 import './load-env';
 

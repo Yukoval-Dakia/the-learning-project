@@ -294,7 +294,8 @@ function isAllowedSite(path: string, node: ts.StringLiteralLike): boolean {
     return scope !== undefined && (/_MODEL$/u.test(scope) || /\.model$/u.test(scope));
   }
   return (
-    /^src\/capabilities\/(?:[^/]+|practice\/[^/]+)\/tasks\//u.test(path) &&
+    (path === 'src/ai/task-spec.ts' ||
+      /^src\/capabilities\/(?:[^/]+|practice\/[^/]+)\/tasks\//u.test(path)) &&
     keyName === 'defaultModel'
   );
 }

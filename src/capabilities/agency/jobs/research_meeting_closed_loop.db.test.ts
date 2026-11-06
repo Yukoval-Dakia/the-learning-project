@@ -312,10 +312,10 @@ describe('closed loop: nightly → proposal → accept → probe → real judge 
     __resetRateLimitForTests();
     sdk.prompts.length = 0;
     sdk.respond = fakeModel;
-    // The induction lane pins provider=anthropic-sub per call; the vision judge stays on
-    // the registry mimo default. Both must resolve, so both credentials must be present.
+    // The induction lane pins provider=anthropic-sub per call; the vision judge uses the
+    // resolved registry default. Both lanes must resolve, so both credentials must be present.
     vi.stubEnv('CLAUDE_CODE_OAUTH_TOKEN', 'oauth-test-token');
-    vi.stubEnv('XIAOMI_API_KEY', 'sk-test-key');
+    vi.stubEnv('OPENCODE_API_KEY', 'sk-test-key');
     vi.stubEnv('AI_PROVIDER_OVERRIDE', '');
     vi.stubEnv('AI_PROVIDER_MODEL', '');
     vi.stubEnv('VISION_JUDGE_PROVIDER', '');

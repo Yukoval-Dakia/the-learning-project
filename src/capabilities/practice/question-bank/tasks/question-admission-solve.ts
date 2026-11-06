@@ -441,8 +441,6 @@ export const questionAdmissionSolveTaskSpec = {
     kind: 'QuestionAdmissionSolveTask',
     description:
       'Independent blind solutions of a frozen question; settled-key solution prior in a separate mode.',
-    defaultProvider: 'xiaomi',
-    defaultModel: 'mimo-v2.5-pro',
     budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1, timeout: 120_000 },
     needsToolCall: true,
     isMultimodal: false,

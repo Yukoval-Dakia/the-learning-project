@@ -81,6 +81,7 @@ import {
   providerHttpTimeoutMs,
 } from './provider-http-timeout';
 import { createBudgetedProviderFetch } from './provider-transport';
+import { TaskConfigError } from './providers';
 import { reasoningModelView } from './reasoning-wire';
 import { createRunMonitor } from './run-monitor';
 import type { SDKUserMessage } from './sdk-types';
@@ -1449,7 +1450,7 @@ export class PiAgentAdapter implements ExecutionAdapter {
     }
     const model = deps.models.getModel(piProviderId(args.resolved.provider), args.resolved.model);
     if (!model) {
-      throw new Error(
+      throw new TaskConfigError(
         `pi adapter cannot execute '${args.resolved.provider}/${args.resolved.model}': protocol or required catalog facts (endpoint, reasoning, input modalities, context/output limits) are unknown. Model selection is unchanged.`,
       );
     }
@@ -1457,7 +1458,7 @@ export class PiAgentAdapter implements ExecutionAdapter {
     // task.<kind>.reasoning resolution both target the wire reasoning slot —
     // even an applied 'off'/'none' outcome, or the receipt would lie.
     if (args.options.effort !== undefined && args.resolved.reasoning !== undefined) {
-      throw new Error(
+      throw new TaskConfigError(
         `conflicting reasoning params for task '${args.kind}': options.effort='${args.options.effort}' and task.<kind>.reasoning level='${args.resolved.reasoning.requested}' both target the wire reasoning level — keep exactly one source.`,
       );
     }

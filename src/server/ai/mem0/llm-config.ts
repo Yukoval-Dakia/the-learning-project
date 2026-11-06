@@ -1,3 +1,4 @@
+import { DEFAULT_TASK_MODEL } from '@/ai/task-spec';
 import { assertModelEndpointHostAllowed } from '@/core/config/model-endpoint-allowlist';
 import { getLaneOverride } from '@/core/config/store';
 import { resolveModelProfile } from '@/server/ai/model-profiles';
@@ -19,10 +20,11 @@ export type MemoryLlmConfig = {
   baseURL: string;
 };
 
-/** Mem0 extraction and both direct reconciliation callers share the product pin. */
+/** Memory shares product selection unless explicitly configured on the legacy memory lane. */
 export function resolveMemoryLlmConfig(env: Env = process.env): MemoryLlmConfig {
-  const pin = resolveGlobalProviderSwitch(env, getLaneOverride('global'));
-  if (!pin) {
+  const global = resolveGlobalProviderSwitch(env, getLaneOverride('global'));
+  const explicitLegacy = !!(env.MEM0_LLM_MODEL?.trim() || env.MEM0_LLM_BASE_URL?.trim());
+  if (!global && explicitLegacy) {
     const apiKey = env.ZHIPU_API_KEY?.trim();
     if (!apiKey) throw new Error('Mem0 memory client requires ZHIPU_API_KEY');
     const model = env.MEM0_LLM_MODEL?.trim() || LEGACY_GLM_MODEL_ID;
@@ -40,16 +42,20 @@ export function resolveMemoryLlmConfig(env: Env = process.env): MemoryLlmConfig 
       baseURL,
     };
   }
+  const pin = global ?? {
+    provider: DEFAULT_TASK_MODEL.defaultProvider,
+    model: DEFAULT_TASK_MODEL.defaultModel,
+  };
   const credentialEnv = providerCredentialEnvName(pin.provider);
   if (credentialEnv && credentialEnv === providerAuthFileEnvName(pin.provider)) {
     throw new Error(
-      `Memory LLM requires a key-auth credential for the global pin (${pin.provider}); the ChatGPT-login file lane cannot serve it`,
+      `Memory LLM requires a key-auth credential for the memory selection (${pin.provider}); the ChatGPT-login file lane cannot serve it`,
     );
   }
   const native = pin.model ? executablePiModel(pin.provider, pin.model, env) : undefined;
   if (isOauthProvider(pin.provider) || !pin.model || native?.api !== 'openai-completions') {
     throw new Error(
-      `Memory LLM requires a key-auth OpenAI completions model for the global pin (${pin.provider}/${pin.model ?? 'unset'}); no legacy LLM fallback`,
+      `Memory LLM requires a key-auth OpenAI completions model for the memory selection (${pin.provider}/${pin.model ?? 'unset'}); no legacy LLM fallback`,
     );
   }
   const apiKey = credentialEnv ? env[credentialEnv]?.trim() : undefined;

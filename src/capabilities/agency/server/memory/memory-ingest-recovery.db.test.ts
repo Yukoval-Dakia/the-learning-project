@@ -85,7 +85,7 @@ function providerBoundary() {
   const client = createMemoryClient({
     env: {
       DATABASE_URL: process.env.DATABASE_URL,
-      ZHIPU_API_KEY: 'fake-test-key',
+      OPENCODE_API_KEY: 'fake-test-key',
       DASHSCOPE_API_KEY: 'fake-test-key',
     },
     memoryFactory: () => sdk,
@@ -166,6 +166,8 @@ describe('explicit single-event memory ingest recovery', () => {
     ).not.toContain(completed.sourceEventId);
   });
 
+  // @invariant concurrency: recent markers and invalid replay grants cannot cross the external memory boundary
+  // @fails-if a recent or forged replay grant reaches lookup or paid add
   it('rejects a recent marker and missing or forged grants before any external call', async () => {
     const request = await stalledSource();
     await testDb()

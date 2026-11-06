@@ -56,7 +56,9 @@
 
 ## Switchable AI provider lane (YUK-365, post-P4)
 
-当前产品配置目标为 `AI_PROVIDER_OVERRIDE=opencode-go` + `AI_PROVIDER_MODEL=mimo-v2.6-pro`，认证变量 `OPENCODE_API_KEY`。此 env pin 压过所有显式聊天 override/modelBinding 和 DB task/lane 配置；Jev typed 协议保留其专用绑定。未设 pin 时才回到 registry 的旧 Xiaomi 默认。Mem0 抽取与两类直接调和经 `mem0/llm-config.ts` 读取同一全局 pair，embedding 保留 DashScope。设 `AI_PROVIDER_OVERRIDE=anthropic-sub` 全局切到 **Opus 4.8 via owner's Claude Max 订阅（OAuth）** —— token 是 `claude setup-token` 生成的长效 `CLAUDE_CODE_OAUTH_TOKEN`，**绝不入库不打印**。**Token + `AI_PROVIDER_OVERRIDE` 必须对所有 AI 进程可见**（API + worker 各自在启动期跑 `loadEnv()`；`dev:local` 透传给 child；生产经 docker-compose `.env` 注入）。订阅 token 与 mimo 互斥。可选 `AI_PROVIDER_MODEL` 覆盖模型 id（lane 默认 `claude-opus-4-8`）；切到非 mimo 的其它 provider 若不设 `AI_PROVIDER_MODEL` 会 throw 明确 config 错（YUK-365 Finding 4）。Wiring 在 `providers.ts`（`authMode: 'key' | 'oauth'` + override 开关）+ `pi-models.ts`（oauth variant 把 `sk-ant-oat*` token 交给 pi anthropic-messages 驱动，自动走 Bearer 头）。
+产品默认在 `src/ai/task-spec.ts` 的 `DEFAULT_TASK_MODEL` 唯一定义为 `opencode-go/deepseek-v4.1-flash`，任务装配时补齐；有真实专用协议的任务保留显式绑定。`AI_PROVIDER_OVERRIDE` + `AI_PROVIDER_MODEL` 仍是模型应急 pin，认证变量 `OPENCODE_API_KEY`；它不改变 reasoning。Mem0 跟随全局模型 pair；无 pair 且无显式 MEM0_LLM_MODEL/BASE_URL 时继承 DEFAULT_TASK_MODEL，显式旧 memory 配置保留 GLM 专用路径。app 与 worker 必须看到相同配置。mimo-v2.5 系列已退役：存量 task/lane 模型配置明确报错，需清除或显式选择支持的 pair，不自动替换；mimo-v2.6 仍可选。
+
+`lane.global.reasoning` 存 `{level}`，默认 `{level:'high'}`。任务 `task.<kind>.reasoning` > 全局 > 目录默认；所有模型共用 `resolveTaskReasoning` 的向上取整/toggle/none 规则，receipt 带 source 和 requested→applied。flash 目录档位 low/high/max；无 reasoning 配置位的模型记录 none。
 
 ## Xiaomi official Token Plan (YUK-1402)
 
@@ -80,12 +82,13 @@ Token Plan `tp-` key 与按量 `XIAOMI_API_KEY` 不互通，旧 `xiaomi` lane �
 
 生产视觉 rescue 与 vision judge 走同一 Token Plan `/v1` pi text+image 模型；
 `MIMO_VISION_*` 只供 `pnpm preflight:vision`，不改变生产 runner。
-该独立 probe 在 Token Plan env pin 下读取 Token Plan key，默认从 `/v1`
-派生 `/anthropic`，可用 `MIMO_VISION_BASE_URL` 明确指定 Anthropic-compatible
-端点（YUK-1654 起显式值只接受 `token-plan-<region>.xiaomimimo.com`，且 host 须过
-模型端点 allowlist）；`MIMO_VISION_MODEL` 优先于 product model。旧按量
-`api.xiaomimimo.com` probe/base URL 在此 lane 明确报配置错，不能混用 key。
-全局 env pin 下 vision judge 不重试 registry `xiaomi` fallback。
+该独立 probe 经 `resolveTaskProvider('StepsJudgeTask', visionJudgeProviderOverride())`
+解析 lane/provider/model/凭据，按目录 api 分发 wire 形状（openai-completions
+→ `/chat/completions`，anthropic-messages → Messages SDK）；`MIMO_VISION_BASE_URL`
+可显式覆盖端点（host 须过模型端点 allowlist），`MIMO_VISION_MODEL` 优先于
+product model。配置错/凭据缺失按 TaskConfigError 退出码 2 如实失败，
+oauth-file lane 不能从脚本侧探测。
+全局 env pin 下 vision judge 不重试 registry-default fallback。
 字符级 GLM/Tencent OCR 保留专用 credentials，不属于此 AI lane。
 Mem0 抽取与直接调和通过 `mem0/llm-config.ts` 走同一 Token Plan `/v1`
 模型/credential/region/base URL，缺配置明确失败，无按量 fallback；pin 端点与任务
@@ -105,7 +108,7 @@ DashScope。pi cost 只按 catalog 估值记录。
 - **工具循环**（`@/ai/pi-tool-mount` 声明/构造；`tools/pi-tools.ts` 执行装配）：`ctx.piToolMounts` 三种 mount——`piDomainMount(BuildMcpServerOptions)` 只构造描述子，server `buildPiDomainAgentTools` 把 registry DomainTool 编译成 `AgentTool`（zod→JSON Schema 薄转换，execute 委托 `executeDomainToolCall`）；`piRemoteMcpMount(serverName, RemoteMcpHttpConfig, toolNames, db)` 只构造描述子，server `connectPiRemoteMcp` 用真 `@modelcontextprotocol/sdk` client 桥远程 MCP（Exa），connect+listTools 失败在 startup 即响，具备 db 与 run 时，每次成功/失败调用自身写一行 `tool_call_log`（`task_run_id` = 当前 run）并记 unknown-cost ledger；`{type:'custom'}` 逃生门给非 registry 工具，owner 自记日志。wire name 统一 `mcp__<server>__<tool>`——`allowedTools`/`recordToolCall`/allowlist 语义零漂移。runner 只镜像 spawn 工具，不再为同一次执行写第二行（YUK-1557）。`options.maxTurns`→`finishTurn` 计数→terminal `error_max_turns`——cap 只在 completed turn 带 toolCall（循环本意续跑）时触发；clean end_turn 自然退出报 success（YUK-1026，SDK parity）。
 - **copilot/subagent/compaction 面**（YUK-1022，P4 后为唯一面）：`piHooks`（有序 before 闸 + after 观测器）、`piSessionReplay`（durable turns 回放进 `context.messages`，`pi:<uuid>` 标记复用 `agent_sdk_session_id` 槽）、`piSkillDocs`（SKILL.md 正文拼 systemPrompt）、`piAgents`（深度一嵌套 agentLoop，子 loop 不见 spawn 工具，usage/cost 归并父终态）、`nativeCompaction`（沿用 85%/60% 策略，基数取目录 context/input 较小值，阈值至少 1；裁剪保留最新完整工具调用/结果组 + bounded sessionContext 重注入 + `compact_boundary` 帧）、`piQueues`（steering/follow-up，已接线但零 caller）。嵌套 agent 生命周期帧（task_started/progress/updated）直接喂 `onTaskEvent` durable 投影。
 - **opencode-go 会话头**：每请求必须 `x-opencode-session`，注入 `ai_task_run.id`（attempt 级 fencing 身份）；缺了 endpoint 400 MissingSessionID。key-auth：`OPENCODE_API_KEY`。
-- **端点与限额（YUK-1563 ③）**：所有已接线 Pi 模型的 base URL、context/input/output 限额和输入模态取运行时目录；SDK 默认值不能覆盖。目录缺必需事实时不执行。模型级 `provider.npm` 的 Anthropic/OpenAI-compatible 声明优先于协议快照，已选模型协议变化也保留旧事实并记 finding；没有已接线模板的模型不自动启用。OpenCode Go 已知端点路径与协议矛盾时不执行。Anthropic SDK 追加 `/v1/messages`，Pi 传输适配去掉目录端点末尾 `/v1`，目录读面保持原值。Memory 全局 pin 与 typed runner 同读目录端点且共用同一可运行性门（`executablePiModel` / `getModel`）；未 pin 的 Memory 旧显式 `MEM0_LLM_BASE_URL` 回退配置保持不变（但端点 host 须过模型端点 allowlist，YUK-1654），未增加自定义 provider 能力。
+- **端点与限额（YUK-1563 ③）**：所有已接线 Pi 模型的 base URL、context/input/output 限额和输入模态取运行时目录；SDK 默认值不能覆盖。目录缺必需事实时不执行。模型级 `provider.npm` 的 Anthropic/OpenAI-compatible 声明优先于协议快照，已选模型协议变化也保留旧事实并记 finding；没有已接线模板的模型不自动启用。OpenCode Go 已知端点路径与协议矛盾时不执行。Anthropic SDK 追加 `/v1/messages`，Pi 传输适配去掉目录端点末尾 `/v1`，目录读面保持原值。Memory 全局 pin 与 typed runner 同读目录端点且共用同一可运行性门（`executablePiModel` / `getModel`）；未 pin 的 Memory 显式 `MEM0_LLM_MODEL` / `MEM0_LLM_BASE_URL` 保留旧 GLM 配置；无显式配置时继承产品默认（但端点 host 须过模型端点 allowlist，YUK-1654），未增加自定义 provider 能力。
 - **思考层级配置（YUK-1806，替代 YUK-1547 原生透传）**：per-task DB 键 `task.<kind>.reasoning` 存 `{level}`（pi 层级名：off|minimal|low|medium|high|xhigh|max；legacy `{"reasoning_effort":"<level>"}` 兼容读作同一 level）。决议在 `resolveTaskReasoning`（providers.ts）：effort 模型在 `reasoning_options.values` 内直取、缺失向上取整（顶档封顶）；toggle 模型任一非 off level → thinking 开（carrier 'high'）；`reasoning_options` 为空 → 不发参数用模型默认；`off` → lane 协议可表达 disable（thinkingFormat 或 anthropic-messages，且 level map 未关 off）时 `applied:'off'`、wire 发 `thinking:{disabled}`/effort:'none'；否则 `applied:'none'`、不发字段；非层级名 → config error。应用结果以 `requested→applied` 写入 run 回执 `reasoning` 字段，可回查不静默降级。wire 发 pi 侧完成（`streamSimple` `reasoning` + 模型 `thinkingLevelMap`；pi `clampThinkingLevel` 只收到目录已支持的 level），loom 不拼 vendor wire 字段。`options.effort` 与 task level 同设仍 fail-closed（单一 writer）。
 - **per-task opt-in 全局 pin 例外（YUK-1547）**：`task.<kind>.override_global_pin=true` 是显式 opt-in——仅当该 task 的 `task.<kind>.provider`+`.model` pair 完整且可服务（provider 已实现 + 模型过可运行事实门 `executablePiModel`）时，该 pair 优先于 env `AI_PROVIDER_*` 与 DB `lane.global.*`；per-call override arg 仍更高；未 opt-in 任务严格保持旧层序；pair 不完整/不可服务 → 明确 config error，不回落到 pin/default。解析结果冻结为 `selection_rule`（env_pin/task_pair_priority/call_override/global_pin/task_config/registry_default），写入 `model_profile_resolved` 与 reopen 预检回执。
 - **能力来自运行时 models.dev 目录**：所有已接线模型的能力、限额、输入模态和推理档位取 `model_catalog_cache`，无缓存则用 `model-catalog.snapshot.json`。缺字段为 unknown，不编造数值。`model-catalog-overrides.ts` 只补缺项或已实测差异；execution policy 不声明能力。新文档里消失的模型保留上一版条目并记 `model_absent`。已选模型能力或已知端点变化保留旧条目并记 `capability_changed`；两类 finding 的 owner 均为 YUK-1563。不改 system_config 里的模型 id。warn 只在该状态第一次出现时打。`version` 含 findings 与 provider `/models` 核对，缺席集合变化也会让 API watcher 重载。

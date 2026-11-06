@@ -97,8 +97,8 @@ probe question 的 authored kind 当前是 **`short_answer`**，但 `serveProbeO
 route 对文字与图片答案都走 **`multimodal_direct`**，不是 semantic，也不是尚未接线的
 future path。
 
-未设置 override 时，`MultimodalDirectJudgeTask` 按 registry 默认走
-`xiaomi / mimo-v2.5`。实际 provider 解析优先级是：vision 调用点传入的
+未设置 override 时，`MultimodalDirectJudgeTask` 走 `DEFAULT_TASK_MODEL` 补齐后的
+registry 默认 lane。实际 provider 解析优先级是：vision 调用点传入的
 `VISION_JUDGE_PROVIDER`（可选配套 `VISION_JUDGE_MODEL`；当前包括
 `multimodal_direct` 等 vision 调用点）> 全局
 `AI_PROVIDER_OVERRIDE` / `AI_PROVIDER_MODEL` > registry 默认；因此

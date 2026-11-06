@@ -43,6 +43,7 @@ export type ProviderWireFinding = {
     | 'glm-ocr-layout-parsing-fetch'
     | 'mem0-model-bearing-operation'
     | 'xiaomi-vision-preflight-sdk'
+    | 'vision-preflight-openai-fetch'
     | 'question-admission-preflight-fetch'
     | 'question-admission-reopen-preflight-fetch'
     | 'tencent-question-mark-agent-sdk'
@@ -806,6 +807,9 @@ function findingsFor(path: string, code: string, facts: SourceFacts): ProviderWi
     if (path === 'scripts/yuk1547-admission-reopen.ts' && code.includes('/chat/completions')) {
       return [{ kind: 'question-admission-reopen-preflight-fetch', call, path }];
     }
+    if (path === 'scripts/preflight-vision-one-shot.ts' && code.includes('/chat/completions')) {
+      return [{ kind: 'vision-preflight-openai-fetch', call, path }];
+    }
     if (code.includes('/embeddings')) return [{ kind: 'dashscope-embedding-fetch', call, path }];
     if (code.includes('layout_parsing'))
       return [{ kind: 'glm-ocr-layout-parsing-fetch', call, path }];
@@ -1085,6 +1089,7 @@ function laneForFinding(kind: ProviderWireFinding['kind']): string | undefined {
     'glm-ocr-layout-parsing-fetch': 'glm.ocr-layout-parsing',
     'mem0-model-bearing-operation': 'mem0.event-memory',
     'xiaomi-vision-preflight-sdk': 'xiaomi.vision-preflight',
+    'vision-preflight-openai-fetch': 'xiaomi.vision-preflight',
     'question-admission-preflight-fetch': 'xiaomi.question-admission-preflight',
     'question-admission-reopen-preflight-fetch': 'xiaomi.question-admission-reopen-preflight',
     'tencent-question-mark-agent-sdk': 'tencent.question-mark-agent',

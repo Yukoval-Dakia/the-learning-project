@@ -18,8 +18,6 @@ export const copilotTaskSpec = {
     // iterations; the 45-minute owner timeout is the only execution bound).
     // Startup consumes the route's absolute deadline; 90s is the inline request
     // envelope, not a separate 60s task cap.
-    defaultProvider: 'xiaomi',
-    defaultModel: 'mimo-v2.5-pro',
     budget: { ...DEFAULT_BUDGET, maxIterations: 6, timeout: 90_000 },
     needsToolCall: true,
     isMultimodal: false,

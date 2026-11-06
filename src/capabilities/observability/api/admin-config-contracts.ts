@@ -70,6 +70,7 @@ export const AdminConfigTaskSelectionRuleSchema = z.enum([
 
 /** resolveTaskReasoning's outcome: stored level → what the wire will carry, or its readable error. */
 export const AdminConfigTaskEffectiveReasoningSchema = z.object({
+  source: z.enum(['task', 'global', 'catalog']).optional(),
   requested: z.string().nullable(),
   applied: z.string().nullable(),
   error: z.string().nullable(),
@@ -101,6 +102,12 @@ export const AdminConfigTaskEffectiveBindingSchema = z.object({
 
 /** YUK-1808 — the effective global switch and the layer that produced it ('env' pin vs 'db' default). */
 export const AdminConfigGlobalEffectiveSchema = z.object({
+  reasoning: z
+    .object({
+      level: z.string().nullable(),
+      source: z.enum(['db', 'env', 'code-default', 'compose-forced']),
+    })
+    .optional(),
   provider: z.string().nullable(),
   model: z.string().nullable(),
   /** The provider field's producing layer. */

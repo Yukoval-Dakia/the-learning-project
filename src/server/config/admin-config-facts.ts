@@ -34,7 +34,7 @@ import {
   tasks,
 } from '@/capabilities/task-registry';
 import type { ConfigEffectiveFact } from '@/core/config/effective';
-import { resolveConfigValue } from '@/core/config/store';
+import { getTaskOverride, resolveConfigValue } from '@/core/config/store';
 import { DB_POOL_MAX } from '@/db/pool';
 import { projectDagMembers } from '@/kernel/manifest';
 import { resolveConfig as resolveAiRateLimitConfig } from '@/kernel/request-rate-limit';
@@ -69,6 +69,7 @@ import {
 import { registeredTypedTaskBindings } from '@/server/ai/typed-primitive-runner';
 import {
   VISION_JUDGE_TASK_KINDS,
+  applicableVisionJudgeOverride,
   visionJudgeProviderOverride,
 } from '@/server/ai/vision-judge-config';
 import { INFRA_HOUSEKEEPING_SCHEDULES } from '@/server/boss/infra-schedules';
@@ -190,6 +191,7 @@ function buildEffectiveValues(): AdminConfigRuntimeFacts['effective_values'] {
       value: getLearnerLocale(),
       note: 'AI 输出语言：下次 system prompt 构建时读取本进程快照；跨进程轮询间隔 15s（失败保留旧快照），不改变 UI 语言或 typed task',
     },
+    'lane.global.reasoning': { value: resolveConfigValue('lane.global.reasoning').value },
     'lane.global.provider': globalPinActive
       ? { value: globalSwitch?.provider }
       : {
@@ -295,18 +297,11 @@ function providerAuthFacts(provider: ProviderAuthSurfaceRow['name']): AdminConfi
 function scopedLaneCallOverride(
   kind: TaskKind,
 ): { provider?: Provider; model?: string } | undefined {
-  if (kind === 'StepsJudgeTask' || kind === 'MultimodalDirectJudgeTask') {
-    // runTaskWithLaneFallback suppresses the scoped lane under the process pin
-    // (a registry retry would burn the same pinned model) — an opted task then
-    // reports its own pair, not the lane.
-    return process.env.AI_PROVIDER_OVERRIDE
-      ? undefined
-      : visionJudgeProviderOverride(process.env, { checkCredentials: false });
-  }
   if ((VISION_JUDGE_TASK_KINDS as readonly string[]).includes(kind)) {
-    // SourceGroundingVerifyTask passes the lane unguarded; the env pin still
-    // wins inside the binding for non-opted tasks.
-    return visionJudgeProviderOverride(process.env, { checkCredentials: false });
+    // All three vision call paths resolve through applicableVisionJudgeOverride:
+    // a process pin suppresses the scoped lane everywhere, so a pinned run
+    // reports its own pair and a broken stored lane can never shadow the pin.
+    return applicableVisionJudgeOverride(process.env, { checkCredentials: false });
   }
   return undefined;
 }
@@ -368,7 +363,7 @@ function credentialLaneFor(provider: Provider): AdminConfigTaskCredential['lane'
  * endpoint allowlist, mutual key+file exclusion, capability fit) surface
  * with paths scrubbed.
  * Typed tasks bypass the chat lane entirely, so their defaults report
- * 'registry_default' with no reasoning surface.
+ * 'registry_default'; a model without reasoning options reports applied none.
  */
 export function resolveAdminTaskEffective(kind: TaskKind): AdminConfigTaskEffectiveBinding {
   const task = tasks[kind];
@@ -378,7 +373,28 @@ export function resolveAdminTaskEffective(kind: TaskKind): AdminConfigTaskEffect
       model: task.defaultModel,
       error: null,
       selection_rule: 'registry_default',
-      reasoning: null,
+      reasoning: (() => {
+        try {
+          const resolved = resolveTaskReasoning(
+            kind,
+            task.defaultProvider,
+            task.defaultModel,
+            getTaskOverride(kind)?.reasoning,
+          );
+          return {
+            requested: resolved?.requested ?? null,
+            applied: resolved?.applied ?? null,
+            source: resolved?.source,
+            error: null,
+          };
+        } catch (e) {
+          return {
+            requested: null,
+            applied: null,
+            error: scrubFsPaths(e instanceof Error ? e.message : String(e)),
+          };
+        }
+      })(),
       credential: null,
       also_on_lanes: sharedScopedLanes(kind),
     };
@@ -425,25 +441,23 @@ export function resolveAdminTaskEffective(kind: TaskKind): AdminConfigTaskEffect
   if (binding !== null) {
     const stored = binding.reasoning;
     const requested = stored?.level ?? stored?.reasoning_effort ?? null;
-    if (requested === null) {
-      reasoning = { requested: null, applied: null, error: null };
-    } else {
-      try {
-        const resolved = resolveTaskReasoning(kind, binding.provider, binding.model, stored);
-        reasoning = {
-          requested: resolved?.requested ?? requested,
-          applied: resolved?.applied ?? null,
-          error: null,
-        };
-      } catch (e) {
-        reasoning = {
-          requested,
-          applied: null,
-          error: scrubFsPaths(e instanceof Error ? e.message : String(e)),
-        };
-      }
+    try {
+      const resolved = resolveTaskReasoning(kind, binding.provider, binding.model, stored);
+      reasoning = {
+        requested: resolved?.requested ?? null,
+        applied: resolved?.applied ?? null,
+        source: resolved?.source,
+        error: null,
+      };
+    } catch (e) {
+      reasoning = {
+        requested,
+        applied: null,
+        error: scrubFsPaths(e instanceof Error ? e.message : String(e)),
+      };
     }
   }
+
   return {
     provider,
     model,
@@ -489,7 +503,16 @@ export function resolveAdminGlobalEffective(
         : modelSource === 'env' || modelSource === 'db'
           ? modelSource
           : null;
-  return { provider, model, source, model_source, error };
+  const reasoning = resolveConfigValue('lane.global.reasoning', env);
+  const level = (reasoning.value as { level?: string } | undefined)?.level ?? null;
+  return {
+    provider,
+    model,
+    source,
+    model_source,
+    error,
+    reasoning: { level, source: reasoning.source },
+  };
 }
 
 function taskCatalogFacts(): AdminConfigTaskFacts[] {

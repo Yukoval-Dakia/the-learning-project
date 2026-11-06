@@ -18,8 +18,6 @@ export const assessmentRubricTaskSpec = {
     kind: 'AssessmentRubricJudgeTask',
     description:
       'Admitted frozen per-criterion rubric judgment through native pi; awards validated against published allowed steps; no learning writes',
-    defaultProvider: 'xiaomi',
-    defaultModel: 'mimo-v2.5',
     // Timeout comes from the censored holdout distribution, not a fixed 90s; the
     // executor retries once.
     budget: {

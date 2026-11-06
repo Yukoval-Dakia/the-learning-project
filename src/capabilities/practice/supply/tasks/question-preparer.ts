@@ -8,8 +8,6 @@ export const questionPreparerTaskSpec = {
   definition: {
     kind: 'QuestionPreparerTask',
     description: 'Prepare questions for one gap; repair synchronous issues and admission returns.',
-    defaultProvider: 'opencode-go',
-    defaultModel: 'deepseek-v4.1-flash',
     budget: {
       ...DEFAULT_TASK_BUDGET,
       maxIterations: 6,

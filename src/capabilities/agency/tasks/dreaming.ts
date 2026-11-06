@@ -17,8 +17,6 @@ export const dreamingTaskSpec = {
   definition: {
     kind: 'DreamingTask',
     description: 'Curator consolidates learner context through reversible versioned DomainTools.',
-    defaultProvider: 'opencode-go',
-    defaultModel: 'deepseek-v4.1-flash',
     budget: { ...DEFAULT_BUDGET, maxIterations: Number(DEFAULT_BUDGET.maxIterations) },
     needsToolCall: true,
     isMultimodal: false,

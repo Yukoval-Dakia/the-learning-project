@@ -129,8 +129,6 @@ export const attributionTaskSpec = {
   definition: {
     kind: 'AttributionTask',
     description: '错题归因 + 知识点挂载（profile-scoped cause）',
-    defaultProvider: 'xiaomi',
-    defaultModel: 'mimo-v2.5-pro',
     budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 4 },
     needsToolCall: false,
     isMultimodal: false,
@@ -154,8 +152,6 @@ export const attributionRerankTaskSpec = {
     kind: 'AttributionRerankTask',
     description:
       '错题归因（retrieve→rerank stage 2）：从候选 cause 列表重排 + 选 primary + 逐候选理由',
-    defaultProvider: 'xiaomi',
-    defaultModel: 'mimo-v2.5-pro',
     budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 4 },
     needsToolCall: false,
     isMultimodal: false,
