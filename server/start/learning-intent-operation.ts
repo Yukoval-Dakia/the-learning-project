@@ -2,9 +2,7 @@ import {
   HTTP_PROVIDER_SESSION_BUDGET_MS,
   runWithHttpProviderSessionDeadline,
 } from '@/server/http/provider-session-deadline';
-import type { FrontdoorContext } from './context';
-
-export const createStartLearningIntent: FrontdoorContext['createLearningIntent'] = (body) =>
+export const createStartLearningIntent = (body: string) =>
   runWithHttpProviderSessionDeadline(Date.now() + HTTP_PROVIDER_SESSION_BUDGET_MS, async () => {
     const agency = await import('@/capabilities/agency/public');
     try {

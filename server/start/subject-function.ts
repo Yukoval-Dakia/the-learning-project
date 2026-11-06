@@ -3,13 +3,17 @@ import { getRequest } from '@tanstack/react-start/server';
 import { runAuthenticatedStartWorkbench } from './workbench-read';
 
 export const getStartSubjects = createServerFn({ method: 'GET' }).handler(({ context }) =>
-  runAuthenticatedStartWorkbench(context, getRequest(), () => context.readSubjects()),
+  runAuthenticatedStartWorkbench(context, getRequest(), async () => {
+    const { readStartSubjects } = await import('./subject-reader');
+    return readStartSubjects();
+  }),
 );
 
 export const createStartSubjectFunction = createServerFn({ method: 'POST' })
   .validator((displayName: string) => displayName)
   .handler(({ context, data }) =>
-    runAuthenticatedStartWorkbench(context, getRequest(), async () =>
-      JSON.stringify(await context.createSubject(data)),
-    ),
+    runAuthenticatedStartWorkbench(context, getRequest(), async () => {
+      const { createStartSubject } = await import('./subject-create-operation');
+      return JSON.stringify(await createStartSubject(data));
+    }),
   );

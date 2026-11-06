@@ -5,7 +5,8 @@ import { runAuthenticatedStartWorkbench } from './workbench-read';
 export const createStartLearningIntentFunction = createServerFn({ method: 'POST' })
   .validator((body: string) => body)
   .handler(({ context, data }) =>
-    runAuthenticatedStartWorkbench(context, getRequest(), async () =>
-      JSON.stringify(await context.createLearningIntent(data)),
-    ),
+    runAuthenticatedStartWorkbench(context, getRequest(), async () => {
+      const { createStartLearningIntent } = await import('./learning-intent-operation');
+      return JSON.stringify(await createStartLearningIntent(data));
+    }),
   );
