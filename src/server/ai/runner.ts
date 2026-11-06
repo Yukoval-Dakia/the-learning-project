@@ -703,7 +703,6 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
             apiErrorStatus: msg.api_error_status ?? null,
             errors: args.apiErrorMessages?.(msg) ?? [msg.result ?? ''],
             ...(helpProviderFault ? { helpProviderFault } : {}),
-            ...(msg.usage.output_tokens === 0 ? { providerZeroOutput: true } : {}),
           });
         }
         await args.onSuccess?.(msg);
@@ -733,7 +732,6 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
           errors: 'errors' in msg && Array.isArray(msg.errors) ? msg.errors : [],
           ...(helpProviderFault ? { helpProviderFault } : {}),
           ...(msg.provider_failure ? { providerFailure: msg.provider_failure } : {}),
-          ...(msg.usage.output_tokens === 0 ? { providerZeroOutput: true } : {}),
         });
       }
       break;
