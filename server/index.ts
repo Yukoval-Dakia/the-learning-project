@@ -275,4 +275,3 @@ void (async () => {
   console.error('[rw:api] startup failed before listen', err);
   process.exit(1);
 });
-// YUK-1845 CI incremental probe — reverted before merge.
