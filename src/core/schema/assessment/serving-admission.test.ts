@@ -83,7 +83,7 @@ function slice(
   overrides: Partial<AdmittedModelSliceT> &
     Pick<
       AdmittedModelSliceT,
-      'slice_id' | 'subject' | 'response_class' | 'task_kind' | 'model' | 'model_version'
+      'slice_id' | 'response_class' | 'task_kind' | 'model' | 'model_version'
     >,
 ): AdmittedModelSliceT {
   return {
@@ -106,15 +106,14 @@ describe('automatic serving model gate', () => {
     resetTestConfig();
   });
 
-  // @invariant grading: a model slice serves only its own subject; a missing subject stays withheld
-  // @fails-if compare only task, response class, and pin; a physics question citing a math slice is admitted
-  it('withholds a slice whose subject is not the question subject', () => {
+  // @invariant grading: a system slice serves matching model versions and response classes across subjects
+  // @fails-if bind admission to subject or ignore model/version/response drift
+  it('serves matching system slices across subjects and withholds model or response drift', () => {
     const pins = currentModelPins();
     const rubric = pins.get('AssessmentRubricJudgeTask');
     if (rubric === undefined) throw new Error('rubric pin missing');
     const row = slice({
       slice_id: 'slice_math',
-      subject: 'math',
       response_class: 'free',
       task_kind: 'AssessmentRubricJudgeTask',
       model: rubric.model,
@@ -123,16 +122,19 @@ describe('automatic serving model gate', () => {
     const revision = revisionFor(rubricUnit(), 'AssessmentRubricJudgeTask', row.slice_id);
     const context = admission(row, pins);
     expect(decideAutomaticServing(revision, ['p1'], context, 'math')).toEqual({ kind: 'admitted' });
-    expect(decideAutomaticServing(revision, ['p1'], context, 'physics')).toMatchObject({
-      kind: 'unavailable',
-      reason: 'model_admission_unavailable',
-      detail: expect.stringContaining("not 'physics'"),
+    expect(decideAutomaticServing(revision, ['p1'], context, 'physics')).toEqual({
+      kind: 'admitted',
     });
-    expect(decideAutomaticServing(revision, ['p1'], context, null)).toMatchObject({
-      kind: 'unavailable',
-      reason: 'model_admission_unavailable',
-      detail: expect.stringContaining('unresolved'),
-    });
+    expect(decideAutomaticServing(revision, ['p1'], context, null)).toEqual({ kind: 'admitted' });
+    for (const drift of [
+      { model: 'different-model' },
+      { model_version: `${row.model_version}:changed` },
+      { response_class: 'blank' as const },
+    ]) {
+      expect(
+        decideAutomaticServing(revision, ['p1'], admission({ ...row, ...drift }, pins), 'physics'),
+      ).toMatchObject({ kind: 'unavailable', reason: 'model_admission_unavailable' });
+    }
   });
 
   // @invariant grading: a blank unit Jev cannot judge is withheld instead of issued into a permanent pending
@@ -143,7 +145,6 @@ describe('automatic serving model gate', () => {
     if (jev === undefined) throw new Error('Jev pin missing');
     const row = slice({
       slice_id: 'slice_blank',
-      subject: 'math',
       response_class: 'blank',
       task_kind: 'JevScoringDecisionTask',
       model: jev.model,
@@ -198,13 +199,12 @@ describe('automatic serving model gate', () => {
   });
 
   // @invariant grading: the serving pin is the model that will actually run, so a task model override cannot grade under another slice
-  // @fails-if read only the registry defaultModel; a mimo-v2.5 slice stays admitted while the task override selects another model
+  // @fails-if read only the registry defaultModel; an old slice stays admitted while the task override selects another model
   it('withholds a slice when task.<kind>.model selects a different model', () => {
     const before = currentModelPins().get('AssessmentRubricJudgeTask');
     if (before === undefined) throw new Error('rubric pin missing');
     const row = slice({
       slice_id: 'slice_rubric',
-      subject: 'math',
       response_class: 'free',
       task_kind: 'AssessmentRubricJudgeTask',
       model: before.model,

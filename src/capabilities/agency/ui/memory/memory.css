@@ -1,0 +1,381 @@
+/* 记忆 (/memory; YUK-1776 §13). Owner chose a page to read, not a stack of cards: real sentences at
+   reading size, one tinted block for how to talk to me, controls that step back, and the box for
+   changes floating at the foot of the screen so it is not taken for search. No coloured side bars. */
+
+[data-ui-next].mm-page {
+  background: var(--un-md-sys-color-surface);
+  color: var(--un-md-sys-color-on-surface);
+
+  & .mm-main {
+    display: flex;
+    flex-direction: column;
+    gap: var(--un-sp-6);
+    width: min(680px, 100%);
+    min-height: calc(100dvh - 64px);
+    margin: 0 auto;
+    padding: var(--un-sp-6) var(--un-sp-6) var(--un-sp-5);
+  }
+
+  & .mm-content {
+    display: grid;
+    align-content: start;
+    gap: 28px;
+    flex: 1;
+  }
+
+  & .mm-head {
+    display: grid;
+    gap: var(--un-sp-1);
+  }
+
+  & .mm-title {
+    font-size: 30px;
+    font-weight: var(--un-fw-semibold);
+  }
+
+  & .mm-lead,
+  & .mm-empty {
+    color: var(--un-text-2);
+    font-size: 16px;
+  }
+
+  & .mm-visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  /* The box */
+  & .mm-tell {
+    display: grid;
+    gap: var(--un-sp-3);
+  }
+
+  & .mm-tell-form {
+    display: grid;
+    gap: var(--un-sp-2);
+  }
+
+  & .mm-tell-label {
+    color: var(--un-text-2);
+    font-size: 14px;
+  }
+
+  & .mm-tell-row {
+    display: flex;
+    align-items: center;
+    gap: var(--un-sp-2);
+    padding: var(--un-sp-2) var(--un-sp-2) var(--un-sp-2) var(--un-sp-3);
+    border: var(--un-hairline) solid var(--un-line-strong);
+    border-radius: var(--un-r-2);
+    background: var(--un-bg-raised);
+  }
+
+  & .mm-tell-row:focus-within {
+    border-color: var(--un-accent);
+  }
+
+  & .mm-tell-input {
+    flex: 1;
+    min-width: 0;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    color: var(--un-text-1);
+    font: inherit;
+    font-size: 16px;
+  }
+
+  & .mm-tell-input::placeholder {
+    color: var(--un-text-3);
+  }
+
+  /* In the page's flow, so it sits after the last line instead of covering it. */
+  & .mm-tell-floating {
+    position: sticky;
+    bottom: var(--un-sp-4);
+    z-index: 2;
+    padding: var(--un-sp-2);
+    border-radius: 18px;
+  }
+
+  /* A long result scrolls inside the bar and never takes the screen. */
+  & .mm-tell-result {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--un-sp-2);
+    max-height: 40dvh;
+    overflow-y: auto;
+  }
+
+  & .mm-tell-result .mm-outcome {
+    flex: 1;
+    min-width: 0;
+  }
+
+  & .mm-tell-bar-row {
+    display: flex;
+    align-items: center;
+    gap: var(--un-sp-2);
+    padding: 6px 6px 6px 14px;
+    border-radius: 12px;
+  }
+
+  & .mm-tell-bar-row:focus-within {
+    box-shadow: inset 0 0 0 var(--un-hairline) var(--un-accent);
+  }
+
+  & .mm-outcome {
+    display: grid;
+    justify-items: start;
+    gap: var(--un-sp-2);
+    padding: var(--un-sp-3) var(--un-sp-4);
+    border-radius: var(--un-r-2);
+    background: var(--un-bg-sunk);
+  }
+
+  & .mm-outcome[data-tone="changed"] {
+    background: var(--un-positive-soft);
+  }
+
+  & .mm-outcome[data-tone="refused"] {
+    background: var(--un-caution-soft);
+  }
+
+  & .mm-outcome-text {
+    color: var(--un-text-1);
+    font-size: 14px;
+    white-space: pre-wrap;
+  }
+
+  & .mm-outcome-text[data-tone="refused"] {
+    color: var(--un-caution);
+  }
+
+  & .mm-remaining {
+    display: grid;
+    gap: var(--un-sp-1);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    color: var(--un-caution);
+    font-size: 14px;
+  }
+
+  /* Topics */
+  & .mm-topics {
+    display: grid;
+    gap: var(--un-sp-7);
+  }
+
+  & .mm-topic {
+    display: grid;
+    gap: 10px;
+  }
+
+  & .mm-topic[data-talk] {
+    padding: var(--un-sp-5) 26px;
+    border-radius: 16px;
+    background: var(--un-accent-soft);
+  }
+
+  & .mm-topic-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--un-sp-3);
+  }
+
+  & .mm-topic-titles {
+    min-width: 0;
+  }
+
+  & .mm-topic-name {
+    display: flex;
+    align-items: center;
+    gap: var(--un-sp-2);
+    font-size: 18px;
+    font-weight: var(--un-fw-semibold);
+  }
+
+  & .mm-topic-name svg {
+    flex: none;
+    color: var(--un-accent);
+  }
+
+  & .mm-topic-foot,
+  & .mm-change-when {
+    color: var(--un-text-3);
+    font-size: 13px;
+  }
+
+  & .mm-facts {
+    display: grid;
+    gap: 10px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  & .mm-fact {
+    color: var(--un-text-1);
+    font-size: 17px;
+    line-height: 1.85;
+  }
+
+  & .mm-topic[data-talk] .mm-fact {
+    font-size: 19px;
+    font-weight: var(--un-fw-medium);
+    line-height: 1.75;
+  }
+
+  & .mm-fact .un-chip {
+    margin-left: var(--un-sp-2);
+  }
+
+  & .mm-topic-foot {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--un-sp-2);
+  }
+
+  & .mm-topic-foot > button {
+    margin-left: auto;
+  }
+
+  /* Controls step back until the pointer is on the topic; touch screens always show them. */
+  @media (hover: hover) {
+    & .mm-topic-head button,
+    & .mm-topic-foot > button {
+      opacity: 0;
+      transition: opacity var(--un-t-feedback) var(--un-ease-glide);
+    }
+    & .mm-topic:hover .mm-topic-head button,
+    & .mm-topic:hover .mm-topic-foot > button,
+    & .mm-topic:focus-within .mm-topic-head button,
+    & .mm-topic:focus-within .mm-topic-foot > button {
+      opacity: 1;
+    }
+  }
+
+  /* History, one line until asked for */
+  & .mm-changes {
+    display: grid;
+    justify-items: start;
+    gap: var(--un-sp-3);
+  }
+
+  & .mm-history-title {
+    width: 100%;
+    font: inherit;
+  }
+
+  & .mm-history-toggle {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--un-sp-2);
+    width: 100%;
+    padding: var(--un-sp-3) var(--un-sp-4);
+    border-radius: var(--un-r-2);
+    background: var(--un-bg-sunk);
+    color: var(--un-text-2);
+    font-size: 14px;
+    text-align: left;
+  }
+
+  & .mm-history-last {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: auto;
+    color: var(--un-positive);
+    font-size: 13px;
+  }
+
+  & .mm-change-list {
+    display: grid;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  & .mm-change {
+    display: grid;
+    gap: var(--un-sp-2);
+    padding: var(--un-sp-3) 0;
+    border-top: var(--un-hairline) solid var(--un-line);
+  }
+
+  & .mm-change-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--un-sp-3);
+  }
+
+  & .mm-diff {
+    display: grid;
+    gap: var(--un-sp-2);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  & .mm-diff-topic {
+    display: flex;
+    align-items: center;
+    gap: var(--un-sp-2);
+    color: var(--un-text-1);
+    font-size: 14px;
+    font-weight: var(--un-fw-medium);
+  }
+
+  & .mm-diff-state {
+    color: var(--un-text-3);
+    font-size: 13px;
+    font-weight: var(--un-fw-regular);
+  }
+
+  & .mm-diff-line {
+    color: var(--un-text-2);
+    font-size: 14px;
+  }
+
+  & .mm-diff-line[data-kind="added"] {
+    color: var(--un-positive);
+  }
+
+  & .mm-diff-line[data-kind="removed"] {
+    display: -webkit-box;
+    overflow: hidden;
+    color: var(--un-text-3);
+    text-decoration: line-through;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+
+  @media (max-width: 720px) {
+    & .mm-main {
+      padding-inline: var(--un-sp-4);
+    }
+    & .mm-topic[data-talk] {
+      padding: var(--un-sp-4);
+    }
+  }
+
+  /* The phone tab bar only exists up to the shell's 599px. */
+  @media (max-width: 599px) {
+    & .mm-main {
+      min-height: calc(100dvh - 60px - 72px - env(safe-area-inset-bottom));
+    }
+    & .mm-tell-floating {
+      bottom: calc(72px + env(safe-area-inset-bottom) + var(--un-sp-2));
+    }
+  }
+}

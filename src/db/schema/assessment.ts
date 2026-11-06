@@ -312,11 +312,10 @@ export const model_admission_slice = pgTable(
   'model_admission_slice',
   {
     slice_id: text('slice_id').primaryKey(),
-    subject: text('subject').notNull(),
     response_class: text('response_class', { enum: ['blank', 'free'] }).notNull(),
     /** 注册的判分 task kind（typed task，如 JevScoringDecisionTask）。 */
     task_kind: text('task_kind').notNull(),
-    /** 准入时实测的模型（请求 pin，如 typesafe/jev-1.13 / mimo-v2.5）。 */
+    /** 准入时实测的模型（请求 pin，如 typesafe/jev-1.13 / deepseek-v4.1-flash）。 */
     model: text('model').notNull(),
     /** 判分契约版本（typed：canonical 响应模型；chat：prompt 模板修订）。 */
     model_version: text('model_version').notNull(),
@@ -329,9 +328,8 @@ export const model_admission_slice = pgTable(
       .default('active'),
   },
   (t) => [
-    index('model_admission_slice_lookup_idx').on(t.subject, t.response_class, t.task_kind),
+    index('model_admission_slice_lookup_idx').on(t.response_class, t.task_kind),
     uniqueIndex('model_admission_slice_natural_key').on(
-      t.subject,
       t.response_class,
       t.task_kind,
       t.model,

@@ -115,6 +115,8 @@ export interface JobDecl {
   notify?: boolean;
   /** Per-node parallel workers for this queue (pg-boss `localConcurrency`). */
   localConcurrency?: number;
+  /** Reserve one worker for jobs at this priority or above; ordinary capacity remains below it. */
+  reservedPriority?: number;
   /** cron 调度；无 schedule 的是链式/按需 job（如 rejudge） */
   schedule?: JobScheduleDecl;
   /** Queue tier → registrar recipe: llm/agent get a DLQ, fast does not. */

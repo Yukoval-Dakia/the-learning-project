@@ -8,7 +8,7 @@ export const readStartIssuanceState: FrontdoorContext['readIssuanceState'] = asy
       throw new ApiError('validation_error', 'missing issuance id', 400);
     }
     const { db } = await import('@/db/client');
-    const { getIssuanceState } = await import('@/capabilities/practice/public');
+    const { getIssuanceState } = await import('@/capabilities/practice/grading/public');
     const state = await getIssuanceState(db, issuanceId);
     if (state.issuance == null) {
       throw new ApiError('not_found', `issuance '${issuanceId}' not found`, 404);

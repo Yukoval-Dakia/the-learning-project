@@ -13,7 +13,7 @@ import type { TaskKind } from '@/capabilities/task-registry';
 import type { PiSubagentSpec } from '@/core/subagent-contract';
 import type { PiHookBridge } from '@/core/tool-call-contract';
 import { PiAgentAdapter } from './pi-agent-adapter';
-import type { ResolvedProvider } from './providers';
+import { type ResolvedProvider, TaskConfigError } from './providers';
 import type {
   Options,
   SDKAssistantMessage,
@@ -93,6 +93,8 @@ export interface ExecutionAdapterStartupArgs {
   /** Call spec built by buildQueryOptions (model/systemPrompt/maxTurns/tools/effort/resume). */
   options: Options;
   initializeTimeoutMs: number;
+  structuredSubmitInput?: unknown;
+  executionWindowMs?: number;
   /**
    * Lifecycle-resolved provider binding for this attempt. The adapter maps it to
    * the pi catalog and passes the credential to streamSimple.
@@ -153,7 +155,7 @@ export function resolveExecutionAdapter(
 ): ExecutionAdapter {
   const requested = binding?.adapter ?? 'pi';
   if (requested !== 'pi') {
-    throw new Error(
+    throw new TaskConfigError(
       `ExecutionAdapter '${requested}' was retired in YUK-1025 — the Claude Agent SDK subprocess is gone and 'pi' is the only execution path (task kind '${kind}', provider '${resolved.provider}'). Remove the adapter pin.`,
     );
   }

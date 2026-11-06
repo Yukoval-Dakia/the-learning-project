@@ -636,6 +636,31 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     tier: 'A',
     note: 'P2: enforce 断流风险',
   },
+  // ── 准入/结构化任务 provider 瞬时失败有界重试（YUK-1876）─────────────────
+  ADMISSION_PROVIDER_RETRY_MAX_RETRIES: {
+    schema: z.number().int().min(0).max(10),
+    codeDefault: 3,
+    envName: 'ADMISSION_PROVIDER_RETRY_MAX_RETRIES',
+    envParse: nonNegIntEnv,
+    tier: 'A',
+    note: '绑定状态 429 等瞬时失败的额外付费发送上限（0=关闭 in-run 重试；发送总数=1+该值）',
+  },
+  ADMISSION_PROVIDER_RETRY_MAX_WAIT_MS: {
+    schema: z.number().int().positive().max(600_000),
+    codeDefault: 60_000,
+    envName: 'ADMISSION_PROVIDER_RETRY_MAX_WAIT_MS',
+    envParse: posNumFloorEnv,
+    tier: 'A',
+    note: 'in-run 重试的总睡眠预算；放不下的 delay 不执行（超界=明确 provider 失败）',
+  },
+  ADMISSION_PROVIDER_RETRY_BASE_DELAY_MS: {
+    schema: z.number().int().min(0).max(60_000),
+    codeDefault: 2_000,
+    envName: 'ADMISSION_PROVIDER_RETRY_BASE_DELAY_MS',
+    envParse: nonNegIntEnv,
+    tier: 'A',
+    note: '无 provider retry_after 时的回退退避基数（指数 2^n）',
+  },
   AI_PROVIDER_SESSION_ADMISSION_POLICIES_JSON: {
     // DB 层存解析后的 object：provider 名 → session lane policy 的 record（provider
     // key 白名单 isKnownProvider 在 write.ts / consumer 两侧校验）。env 层原文是 JSON
@@ -692,6 +717,13 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
   },
   // lane.global.* = AI_PROVIDER_OVERRIDE 的 DB 位（env pin 恒压它，见 §2.2
   // ordering：arg > env global pin > DB global/task override > registry default）。
+  'lane.global.reasoning': {
+    schema: z
+      .object({ level: z.enum(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']) })
+      .strict(),
+    codeDefault: { level: 'high' },
+    tier: 'B',
+  },
   'lane.global.provider': {
     schema: z.string(),
     codeDefault: undefined,

@@ -40,41 +40,50 @@ import type {
 import type { thinCreateSubject } from '@/capabilities/observability/public';
 import type { AdminControlClient } from '@/capabilities/observability/ui/admin-control-client';
 import type {
-  PlacementProfileResponse,
-  archivePracticeQuestion,
-  createPracticeHintRequest,
-  createPracticePaperSubmission,
-  createPracticeSolveSession,
-  createReviewSession,
-  enablePracticeDraft,
-  forceEnablePracticeDraft,
   getIssuanceState,
-  getPaperDetail,
-  getPracticeStream,
-  previewReviewAdvice,
-  readDraftReviewDetail,
   readJudgeRunStatus,
-  readPaperList,
-  readPlacementSession,
-  readPracticeDraftList,
-  readPracticeQuestionList,
-  readQuestionDetail,
-  readWorksheetExport,
-  recomposePracticeStream,
-  releaseHeldPlacement,
   requestAssessmentIssuance,
   requestResponseDraftSave,
   requestReviewAnswer,
-  restorePracticeQuestion,
   revealFrozenStudyReference,
-  runPracticeServingAction,
+} from '@/capabilities/practice/grading/public';
+import type {
+  PlacementProfileResponse,
+  readPlacementSession,
+  releaseHeldPlacement,
   selectNextPlacementQuestion,
   startPlacementProbe,
   transitionPlacementSession,
-  transitionReviewSession,
-  updatePracticeQuestion,
-  updatePracticeStreamItem,
+} from '@/capabilities/practice/placement/public';
+import type {
+  createPracticeHintRequest,
+  createPracticeSolveSession,
 } from '@/capabilities/practice/public';
+import type {
+  archivePracticeQuestion,
+  enablePracticeDraft,
+  forceEnablePracticeDraft,
+  readDraftReviewDetail,
+  readPracticeDraftList,
+  readPracticeQuestionList,
+  restorePracticeQuestion,
+  runPracticeServingAction,
+  updatePracticeQuestion,
+} from '@/capabilities/practice/question-bank/public';
+import type {
+  getPracticeStream,
+  previewReviewAdvice,
+  recomposePracticeStream,
+  updatePracticeStreamItem,
+} from '@/capabilities/practice/scheduling/public';
+import type {
+  createPracticePaperSubmission,
+  createReviewSession,
+  getPaperDetail,
+  readPaperList,
+  readWorksheetExport,
+  transitionReviewSession,
+} from '@/capabilities/practice/session/public';
 import type { LearnerSubjectRow } from '@/capabilities/shell/public';
 
 export type FrontdoorContext = {
@@ -220,12 +229,6 @@ export type FrontdoorContext = {
     id: string;
     query: string;
   }) => Promise<Awaited<ReturnType<typeof archivePracticeQuestion>>>;
-  readLibraryQuestionDetail: (
-    id: string,
-  ) => Promise<Awaited<ReturnType<typeof readQuestionDetail>>>;
-  readPracticeQuestionDetail: (
-    id: string,
-  ) => Promise<Awaited<ReturnType<typeof readQuestionDetail>>>;
   getPracticeStream: (
     knowledgeId?: string,
   ) => Promise<Awaited<ReturnType<typeof getPracticeStream>>>;

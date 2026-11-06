@@ -35,7 +35,6 @@ import {
 } from './start/library-draft-promotion-operation';
 import { readStartLibraryMistakes } from './start/library-mistake-list-reader';
 import { archiveStartLibraryQuestion } from './start/library-question-delete-operation';
-import { readStartLibraryQuestionDetail } from './start/library-question-detail-reader';
 import { readStartLibraryQuestions } from './start/library-question-list-reader';
 import { readStartLibraryQuestionMistakes } from './start/library-question-mistakes-reader';
 import { restoreStartLibraryQuestion } from './start/library-question-restore-operation';
@@ -54,7 +53,6 @@ import { createStartPlacement } from './start/placement-start-operation';
 import { submitStartPlacementAnswer } from './start/placement-submit-operation';
 import { previewStartReviewAdvice } from './start/practice-advice-operation';
 import { createStartPracticeAppeal } from './start/practice-appeal-operation';
-import { readStartPracticeQuestionDetail } from './start/practice-question-detail-operation';
 import { updateStartPracticeStreamItem } from './start/practice-stream-item-operation';
 import { getStartPracticeStream } from './start/practice-stream-operation';
 import { recomposeStartPracticeStream } from './start/practice-stream-recompose-operation';
@@ -132,8 +130,6 @@ export function createFrontdoorContext(api: Hono): FrontdoorContext {
     submitPaperSlot: submitStartPaperSlot,
     endPaperSession: endStartPaperSession,
     readPaperDetail: readStartPaperDetail,
-    readPracticeQuestionDetail: readStartPracticeQuestionDetail,
-    readLibraryQuestionDetail: readStartLibraryQuestionDetail,
     readLibraryQuestions: readStartLibraryQuestions,
     readLibraryQuestionMistakes: readStartLibraryQuestionMistakes,
     readLibraryMistakes: readStartLibraryMistakes,

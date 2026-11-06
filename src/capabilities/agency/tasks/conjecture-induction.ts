@@ -77,8 +77,6 @@ export const mindModelInductionTaskSpec = {
     kind: 'MindModelInductionTask',
     description:
       'YUK-406 / YUK-821 — induce/update ONE evidence-grounded conjecture and freeze its DiagnosticSpec. This stage emits no probes. Bounded structured-output run; the nightly job runs it on the Opus anthropic-sub lane via per-call override for self-consistency.',
-    defaultProvider: 'xiaomi',
-    defaultModel: 'mimo-v2.5',
     // Measured: a 12-cell real-Opus run on the grounded packet took 42–61s per
     // successful sample, and the old 60s cap aborted roughly half mid-flight. One turn
     // ended 10/24 samples as error_max_turns after writing reasoning but before
@@ -107,8 +105,6 @@ export const conjectureGroupingTaskSpec = {
     kind: 'ConjectureGroupingTask',
     description:
       'Groups misconception hypotheses by semantic equivalence across claim_md and the complete DiagnosticSpec. Input = { hypotheses: [{ claim_md, diagnostic_spec }] }. Output = { groups: number[][] }.',
-    defaultProvider: 'xiaomi',
-    defaultModel: 'mimo-v2.5-pro',
     // Structured output can spend early turns on reasoning before emitting JSON;
     // measured fixed-batch runs timed out at 2 turns under the old 60s cap.
     budget: { ...DEFAULT_BUDGET, maxIterations: 3, timeout: 120_000 },

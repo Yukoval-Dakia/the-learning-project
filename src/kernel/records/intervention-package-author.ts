@@ -13,6 +13,7 @@ import {
   validateInterventionPackageDeterministically,
 } from '@/core/schema/intervention';
 import type { Db } from '@/db/client';
+import { installHostOperation, installedHostOperation } from '@/kernel/host-operation';
 import { guardInterventionPreparationStage } from '@/kernel/read-models/intervention-preparation';
 import { resolveSubjectProfileForKnowledgeIdsStrict } from '@/kernel/read-models/subject-profile';
 import type { SubjectProfile } from '@/subjects/profile';
@@ -51,17 +52,19 @@ export interface InterventionAuthorCall {
   runTaskFn?: PackageAuthorRun;
 }
 
-let installedStages: InterventionAuthorStages | undefined;
+const STAGES_SLOT = 'kernel/records/intervention-package-author:stages';
 
 export function installInterventionAuthorStages(stages: InterventionAuthorStages): void {
-  installedStages = stages;
+  installHostOperation(STAGES_SLOT, stages);
 }
 
 export async function authorInterventionPackage(
   db: Db,
   interventionId: string,
   call: InterventionAuthorCall,
-  stages: InterventionAuthorStages | undefined = installedStages,
+  stages: InterventionAuthorStages | undefined = installedHostOperation<InterventionAuthorStages>(
+    STAGES_SLOT,
+  ),
 ): Promise<InterventionPreparationAttemptT> {
   if (!stages) {
     throw new Error(

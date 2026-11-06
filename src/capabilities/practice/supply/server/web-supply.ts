@@ -30,6 +30,7 @@ import { webSupplyDemandKey as key, lockWebSupplyDemand } from '@/kernel/locks/q
 import type { EventSubscriptionDelivery, EventSubscriptionOutcome } from '@/kernel/manifest';
 import { readQuestionServing } from '@/kernel/read-models/question-serving';
 import { SupplyTraceV1, type SupplyTraceV1T } from '@/kernel/supply-contracts';
+import { TaskConfigError } from '@/server/ai/providers';
 import { answerClassCompatible } from '@/subjects/question-kind';
 import { type EnqueueVerifyFn, dispatchPendingVerifyIntents } from '../../question-bank/public';
 import {
@@ -190,6 +191,78 @@ async function latestRequired(db: Db, demandId: string) {
   return state;
 }
 
+export type PlacementWebDemandOutcome = 'unknown' | 'config_error' | 'known';
+
+const PLACEMENT_KNOWN_BLOCK_REASONS: ReadonlySet<string> = new Set([
+  'candidate_not_servable',
+  'text_evidence_unavailable',
+  'anchor_not_found',
+  'web_search_unavailable',
+  'llm',
+  'parse',
+  'kind_gate',
+  'knowledge_unresolvable',
+  'request_id_reused',
+  'deadline_exhausted',
+  'budget_exhausted',
+  'placement_attempt_required',
+]);
+
+/**
+ * One placement round's durable paid outcome. 'unknown' is the default for any
+ * shape that cannot prove what happened on the wire; new failure vocabulary must
+ * be admitted to PLACEMENT_KNOWN_BLOCK_REASONS before it can authorize re-pay.
+ */
+function placementWebDemandStateOutcome(state: WebSupplyState): PlacementWebDemandOutcome {
+  if (
+    state.phase === 'acquiring' ||
+    state.activeRequestId != null ||
+    state.reason === 'acquisition_outcome_unknown' ||
+    state.reason === 'producer_identity_missing' ||
+    state.submissions.some((submission) => !submission.receipt)
+  )
+    return 'unknown';
+  if (state.reason === 'config_error') return 'config_error';
+  if (state.phase === 'fulfilled' || state.phase === 'verifying') return 'known';
+  return state.phase === 'blocked' && PLACEMENT_KNOWN_BLOCK_REASONS.has(state.reason ?? '')
+    ? 'known'
+    : 'unknown';
+}
+
+/**
+ * The durable paid-outcome class of a placement item demand after a failed delivery,
+ * read from the demand's own events — the thrown class cannot say whether a provider
+ * request went out.
+ *
+ * 'unknown': the state cannot prove what a paid round did — a thrown acquisition, an
+ * in-flight send, a missing producer identity, a submission without its receipt, or
+ * an unlisted terminal reason. That state never authorizes another paid round.
+ * 'config_error': the round provably spent nothing and cannot succeed until the lane
+ * is repaired — non-retryable, but known.
+ * 'known': a listed terminal outcome or a settled verification state.
+ * The latest durable round's class wins: an early config_error round superseded by a
+ * re-driven round must not keep parking the claim once the lane answers.
+ * A round id with no durable state never started: nothing was sent, so nothing is owed.
+ */
+export async function placementWebDemandOutcome(
+  db: Db | Tx,
+  demandId: string,
+): Promise<PlacementWebDemandOutcome> {
+  let latestOutcome: PlacementWebDemandOutcome | undefined;
+  for (const roundId of [
+    demandId,
+    `${demandId}:placement-refill:1`,
+    `${demandId}:placement-refill:2`,
+  ]) {
+    const state = await latest(db, roundId);
+    if (!state) continue;
+    const outcome = placementWebDemandStateOutcome(state);
+    if (outcome === 'unknown') return 'unknown';
+    latestOutcome = outcome;
+  }
+  return latestOutcome ?? 'known';
+}
+
 // ── Route fallback (YUK-1664 S3) ─────────────────────────────────────────────
 // A failed source is the supply agent's unfinished work inside the SAME demand:
 // when a demand lands on 'blocked' for a source/acquisition failure, the next
@@ -219,6 +292,23 @@ const FALLBACKABLE_BLOCK_REASONS: ReadonlySet<string> = new Set([
 
 /** Routes the executor can actually dispatch ('sourcing_web' is always tried). */
 const EXECUTABLE_FALLBACK_ROUTES: ReadonlySet<string> = new Set(['jyeoo_fetch', 'quiz_gen']);
+
+/** Blocked reasons a NEW placement delivery may turn into the next refill round.
+ * Unknown outcomes are still excluded below before this list is consulted; the
+ * list is only for outcomes durable enough to authorize another paid round.
+ * 'config_error' qualifies the same way: the round provably spent nothing, so a
+ * re-driven delivery can only pay once the lane actually answers. */
+const PLACEMENT_REDRIVE_BLOCK_REASONS: ReadonlySet<string> = new Set([
+  'config_error',
+  'candidate_not_servable',
+  'text_evidence_unavailable',
+  'anchor_not_found',
+  'web_search_unavailable',
+  'llm',
+  'parse',
+  'kind_gate',
+  'knowledge_unresolvable',
+]);
 
 /** Routes of the persisted plan not yet tried for this demand (deduped, in order). */
 function remainingRoutePlan(state: WebSupplyState): string[] {
@@ -505,16 +595,14 @@ async function observe(db: Db, state: WebSupplyState) {
         q.metadata?.archived_at == null &&
         q.metadata?.dismissed_at == null &&
         q.metadata?.exposure_blocked !== true;
+      const holdReason =
+        projection?.hold_reason ??
+        (!sourcePassed ? 'awaiting_source_verification' : 'demand_not_servable');
       observations.push({
         questionId: q.id,
         revisionId: r.revision_id,
         generation: l.scoring_admission_generation,
-        hold: !sameCandidate
-          ? 'revision_changed'
-          : usable
-            ? null
-            : (projection?.hold_reason ??
-              (!sourcePassed ? 'awaiting_source_verification' : 'demand_not_servable')),
+        hold: !sameCandidate ? 'revision_changed' : usable ? null : holdReason,
         verificationIds: verifications.map((v) => v.id),
       });
       if (usable)
@@ -740,8 +828,9 @@ interface WebSupplyParams {
   routesExecuted?: string[];
 }
 
-/** Placement alone may replace settled unusable candidates. Round identities survive
- * retries; unknown acquisition/submit outcomes never authorize another paid round. */
+/** Placement alone may replace settled unusable candidates and a fresh delivery may
+ * resume a durably known-failed round into the next refill identity. Round identities
+ * survive retries; unknown acquisition/submit outcomes never authorize another paid round. */
 export async function runWebSupply(params: WebSupplyParams): Promise<WebSupplyState> {
   const delivery = params.placement;
   if (!delivery) return runWebSupplyRound(params);
@@ -755,16 +844,27 @@ export async function runWebSupply(params: WebSupplyParams): Promise<WebSupplySt
     const prior = await latest(params.db, roundId);
     const count = prior?.item.count ?? Math.max(1, params.item.count - previousCount);
     state = await runWebSupplyRound({ ...params, item: { ...params.item, count } }, roundId);
-    if (
-      state.phase === 'acquiring' ||
-      state.activeRequestId !== null ||
-      state.reason === 'acquisition_outcome_unknown' ||
-      state.reason === 'producer_identity_missing' ||
-      (state.phase === 'blocked' &&
-        !['candidate_not_servable', 'text_evidence_unavailable'].includes(state.reason ?? '')) ||
-      state.submissions.some((submission) => !submission.receipt)
-    )
-      return state;
+    if (placementWebDemandStateOutcome(state) === 'unknown') return state;
+    if (state.phase === 'blocked') {
+      const settledCandidateRefill = [
+        'candidate_not_servable',
+        'text_evidence_unavailable',
+      ].includes(state.reason ?? '');
+      // A prior round that already terminalized as a durable known failure may
+      // yield to the next refill only inside a NEW delivery. A just-run round
+      // stops here, so one delivery never spends the claim's remaining attempts.
+      const nextDeliveryRedrive =
+        prior != null && PLACEMENT_REDRIVE_BLOCK_REASONS.has(state.reason ?? '');
+      if (nextDeliveryRedrive) {
+        previousCount = await countEligiblePlacementQuestions(
+          params.db,
+          delivery.attempt.claimId,
+          delivery.attempt.attemptId,
+        );
+        continue;
+      }
+      if (!settledCandidateRefill) return state;
+    }
     for (;;) {
       const ids = state.submissions.flatMap((submission) =>
         submission.receipt?.question_id ? [submission.receipt.question_id] : [],
@@ -905,6 +1005,8 @@ async function runWebSupplyRound(
         ...(item.kind !== 'any' ? { kind: item.kind } : {}),
         objectiveOnly: item.objectiveOnly,
         kindRequired: item.kindRequired,
+        // Placement 交付只走扁平提交链——取水即只要不带 parts 的单题。
+        flatOnly: placement !== undefined,
         subjectProfile: params.subjectProfile,
       },
       ctx: {
@@ -915,14 +1017,19 @@ async function runWebSupplyRound(
         ...(sourcingRun ? { maxCostUsd: sourcingRun.capUsd } : {}),
       },
     });
-  } catch {
+  } catch (err) {
     // The agent may have spent before failing: its cost is unknown, never zero.
-    await recordAcquisition(null, null);
+    // TaskConfigError is the exception — resolution failed before the provider
+    // call, so the paid effect is provably zero and the round's failure is known
+    // AND non-retryable until the lane is repaired ('config_error').
+    const configError = err instanceof TaskConfigError;
+    const reason = configError ? 'config_error' : 'acquisition_outcome_unknown';
+    await recordAcquisition(null, configError ? 0 : null);
     await settleSourcingRun([state.producerTaskRunId], 0);
     return advance(db, state, {
       phase: 'blocked',
-      reason: 'acquisition_outcome_unknown',
-      ...blockedRouting(state, 'acquisition_outcome_unknown'),
+      reason,
+      ...blockedRouting(state, reason),
     });
   }
   if (fetched.status === 'failed') {

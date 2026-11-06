@@ -5,6 +5,7 @@
 
 import type { SubjectDueCount } from '@/core/daily-review-plan';
 import type { Db, Tx } from '@/db/client';
+import { installHostOperation, installedHostOperation } from '@/kernel/host-operation';
 import { batchResolveSubjectIds } from '@/kernel/read-models/subject-resolution';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
@@ -34,17 +35,17 @@ export interface DailyReviewPlanInputs {
 
 export type ReadDailyReviewPlanFacts = (db: DbLike, now: Date) => Promise<DailyReviewPlanFacts>;
 
-let readFacts: ReadDailyReviewPlanFacts | undefined;
+const FACT_READER_SLOT = 'kernel/read-models/daily-review-plan:factReader';
 
 export function installDailyReviewPlanFactReader(reader: ReadDailyReviewPlanFacts): void {
-  readFacts = reader;
+  installHostOperation(FACT_READER_SLOT, reader);
 }
 
 export async function resolveDailyReviewPlanInputs(
   db: DbLike,
   now: Date = new Date(),
 ): Promise<DailyReviewPlanInputs> {
-  const reader = readFacts;
+  const reader = installedHostOperation<ReadDailyReviewPlanFacts>(FACT_READER_SLOT);
   if (!reader) {
     throw new Error(
       'daily review plan facts are not installed; call installDailyReviewPlanFacts before Coach reads the plan',

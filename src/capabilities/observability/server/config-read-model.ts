@@ -84,6 +84,9 @@ export const KEY_CONSUMERS: Readonly<Record<string, string | null>> = {
     'src/capabilities/practice/placement/server/placement-session-lifecycle.ts',
   AI_RATE_LIMIT_MAX: 'src/kernel/request-rate-limit.ts',
   AI_RATE_LIMIT_WINDOW_MS: 'src/kernel/request-rate-limit.ts',
+  ADMISSION_PROVIDER_RETRY_MAX_RETRIES: 'src/server/ai/provider-transient-retry.ts',
+  ADMISSION_PROVIDER_RETRY_MAX_WAIT_MS: 'src/server/ai/provider-transient-retry.ts',
+  ADMISSION_PROVIDER_RETRY_BASE_DELAY_MS: 'src/server/ai/provider-transient-retry.ts',
   CLAUDE_CODE_MAX_RETRIES: 'src/server/ai/pi-agent-adapter.ts',
   JUDGE_CALIBRATION_BATCH_MAX: 'src/capabilities/practice/grading/jobs/judge-calibration-config.ts',
   JUDGE_CALIBRATION_WINDOW_DAYS:
@@ -119,6 +122,7 @@ export const KEY_CONSUMERS: Readonly<Record<string, string | null>> = {
   'lane.verify_solve.model': 'src/capabilities/practice/question-bank/server/quiz/solve-lane.ts',
   'lane.vision_judge.provider': 'src/server/ai/vision-judge-config.ts',
   'lane.vision_judge.model': 'src/server/ai/vision-judge-config.ts',
+  'lane.global.reasoning': 'src/server/ai/providers.ts',
   'lane.global.provider': 'src/server/ai/providers.ts',
   'lane.global.model': 'src/server/ai/providers.ts',
   'locale.learner': 'src/ai/task-prompts.ts',

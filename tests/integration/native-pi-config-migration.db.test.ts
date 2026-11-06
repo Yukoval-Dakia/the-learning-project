@@ -121,11 +121,13 @@ describe('native pi routing config migration', () => {
     expect(await testDb().select().from(system_config_journal)).toHaveLength(0);
   });
 
+  // @invariant concurrency: an incompatible global model write preserves the prior pair and journal
+  // @fails-if a text-only model commits for image tasks or a rejected write leaves partial config state
   it('global writes reject a text-only pin before breaking image tasks and preserve the previous pair', async () => {
     await setConfigs(
       [
-        { key: 'lane.global.provider', value: 'xiaomi' },
-        { key: 'lane.global.model', value: 'mimo-v2.5' },
+        { key: 'lane.global.provider', value: 'opencode-go' },
+        { key: 'lane.global.model', value: 'deepseek-v4.1-flash' },
       ],
       { actor: 'owner' },
       testDb(),
@@ -133,7 +135,7 @@ describe('native pi routing config migration', () => {
     const before = await testDb().select().from(system_config_journal);
     await expect(
       setConfigs(
-        [{ key: 'lane.global.model', value: 'mimo-v2.5-pro' }],
+        [{ key: 'lane.global.model', value: 'deepseek-v4-flash' }],
         { actor: 'owner' },
         testDb(),
       ),
@@ -142,14 +144,25 @@ describe('native pi routing config migration', () => {
       .select()
       .from(system_config)
       .where(eq(system_config.key, 'lane.global.model'));
-    expect(row.value).toBe('mimo-v2.5');
+    expect(row.value).toBe('deepseek-v4.1-flash');
     expect(await testDb().select().from(system_config_journal)).toEqual(before);
   });
 
+  // @invariant security: a provider-only global pin cannot leave an unexecutable pair serving
+  //   image tasks — the write rejects atomically instead of borrowing a model
+  // @fails-if the write silently substitutes the provider's own default model into a
+  //   stored task override, or partial config state commits
   it('provider-only global pin validates per-task models, including image tasks', async () => {
     await seed({ 'task.StepsJudgeTask.model': 'mimo-v2.5-pro' });
+    // anthropic-sub self-supplies a runnable default model, so the write reaches
+    // per-task pair validation (a provider that needs an explicit model would
+    // 422 one check earlier and prove nothing about image tasks).
     await expect(
-      setConfigs([{ key: 'lane.global.provider', value: 'xiaomi' }], { actor: 'owner' }, testDb()),
+      setConfigs(
+        [{ key: 'lane.global.provider', value: 'anthropic-sub' }],
+        { actor: 'owner' },
+        testDb(),
+      ),
     ).rejects.toMatchObject({ status: 422 });
     expect(
       await testDb()

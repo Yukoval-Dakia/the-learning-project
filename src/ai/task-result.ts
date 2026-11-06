@@ -48,6 +48,7 @@ export interface NoteGeneratePhaseTimings {
 }
 
 export interface AiTaskUsage {
+  reasoning?: { requested: string; applied: string; source: 'task' | 'global' | 'catalog' };
   inputTokens: number;
   outputTokens: number;
   /**

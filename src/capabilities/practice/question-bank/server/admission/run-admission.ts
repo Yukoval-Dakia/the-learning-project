@@ -521,7 +521,6 @@ export async function runQuestionAdmission(
       (s) =>
         s.task_kind === 'AssessmentRuleJudgeTask' &&
         s.response_class === 'free' &&
-        s.subject === options.subjectProfile?.id &&
         s.model === pin?.model &&
         s.model_version === pin?.model_version,
     );

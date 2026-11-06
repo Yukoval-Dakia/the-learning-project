@@ -33,16 +33,16 @@ export async function createPracticeAppeal(
   }
   if ('evaluation_id' in parsed.data) {
     try {
-      const appealEventId = await createNativeAppeal(db, parsed.data);
-      if (shouldEnqueueBackgroundJobs()) {
+      const receipt = await createNativeAppeal(db, parsed.data);
+      if (receipt.should_rejudge && shouldEnqueueBackgroundJobs()) {
         const boss = await getStartedBoss();
         await boss.send(
           'rejudge',
-          { appeal_event_id: appealEventId },
-          { singletonKey: appealEventId, singletonSeconds: REJUDGE_SINGLETON_SECONDS },
+          { appeal_event_id: receipt.appeal_event_id },
+          { singletonKey: receipt.appeal_event_id, singletonSeconds: REJUDGE_SINGLETON_SECONDS },
         );
       }
-      return Response.json({ appeal_event_id: appealEventId });
+      return Response.json({ appeal_event_id: receipt.appeal_event_id });
     } catch (error) {
       return errorResponse(error);
     }

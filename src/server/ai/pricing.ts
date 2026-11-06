@@ -1,30 +1,6 @@
-// YUK-359 / YUK-841 — versioned local estimate for endpoints that do not expose
-// a trustworthy total_cost_usd. Amount and basis travel together; zero is never a
-// synonym for "unknown".
-//
-// The xiaomi/mimo endpoint reports no total_cost_usd, so this module computes USD
-// from token counts × per-model unit price and classifies unknown models as
-// {basis:'unknown', amountUsd:null} (attempt-cost.ts). Which models carry a local
-// pricebook derives from the ModelProfile registry (`execution.localPricebook`);
-// rates come from the runtime catalog, cache first, else the committed snapshot.
-//
-// YUK-964: public overseas USD rates checked 2026-09-06 against the official MiMo
-// card. These are estimates, not an invoice or a claim about a CNY contract.
+// Versioned estimates for the typed decision lane; chat estimates use catalog rates.
 
-import { catalogModelCost } from './model-catalog';
-import { resolveModelProfile } from './model-profiles';
-
-/** Version is embedded in every estimate ref so historical rows stay explainable. */
-export const ATTEMPT_PRICEBOOK_VERSION = '2026-09-06-mimo-public-usd-v2';
 export const ANTHROPIC_SUB_CONTRACT_REF = 'contract:claude-max-subscription/2026-08-02';
-
-/**
- * Membership is the xiaomi provider binding's `execution.localPricebook` flag
- * (YUK-924 site 5) — the pricebook exists because that endpoint reports no cost.
- */
-export function hasLocalPricing(model: string): boolean {
-  return resolveModelProfile('xiaomi', model).execution.localPricebook === true;
-}
 
 export interface TokenCounts {
   inputTokens: number;
@@ -33,31 +9,6 @@ export interface TokenCounts {
   cacheReadTokens?: number;
   /** Cache-creation input tokens; 0/absent when the endpoint doesn't report cache. */
   cacheCreationTokens?: number;
-}
-
-/**
- * USD cost from token counts; unknown model → null. Cache fields default to 0, so
- * arithmetic degrades to input+output pricing with semantics intact. Cache creation
- * is free on the pinned card (ATTEMPT_PRICEBOOK_VERSION), which is why only
- * cache-read is priced.
- */
-export function localCostUsd(model: string, tokens: TokenCounts): number | null {
-  if (!hasLocalPricing(model)) return null;
-  if (model !== 'mimo-v2.5' && model !== 'mimo-v2.5-pro') return null;
-  const p = catalogModelCost('xiaomi', model);
-  if (!p) return null;
-  const cacheRead = tokens.cacheReadTokens ?? 0;
-  const cacheCreation = tokens.cacheCreationTokens ?? 0;
-  if (
-    [tokens.inputTokens, tokens.outputTokens, cacheRead, cacheCreation].some(
-      (value) => !Number.isFinite(value) || value < 0,
-    )
-  )
-    return null;
-  return (
-    (tokens.inputTokens * p.input + tokens.outputTokens * p.output + cacheRead * p.cache_read) /
-    1_000_000
-  );
 }
 
 // YUK-1049 — TypeSafe Jev local pricebook: output tokens are free on the verified

@@ -4,7 +4,7 @@ import type { FrontdoorContext } from './context';
 export const readStartPapers: FrontdoorContext['readPapers'] = async () => {
   try {
     const { db } = await import('@/db/client');
-    const { readPaperList } = await import('@/capabilities/practice/public');
+    const { readPaperList } = await import('@/capabilities/practice/session/public');
     return await readPaperList(db);
   } catch (error) {
     throw errorResponse(error);

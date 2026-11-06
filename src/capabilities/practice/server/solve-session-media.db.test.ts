@@ -143,7 +143,7 @@ async function seed(options: { inline?: string; unsupported?: boolean; reference
 beforeEach(async () => {
   await resetDb();
   resetTestConfig();
-  vi.stubEnv('XIAOMI_API_KEY', 'offline-fixture');
+  vi.stubEnv('OPENCODE_API_KEY', 'offline-fixture');
   vi.stubEnv('AI_PROVIDER_OVERRIDE', '');
   vi.stubEnv('AI_PROVIDER_MODEL', '');
   r2.get.mockReset().mockResolvedValue(bytes);
@@ -156,6 +156,8 @@ afterEach(() => {
 });
 
 describe('frozen solve image task payload', () => {
+  // @invariant security: the vision runner receives only original issued image bytes
+  // @fails-if private or unissued media reaches the provider or the vision route loses its image blocks
   it('sends base64 image blocks through the real task runner and logs the vision route offline', async () => {
     const s = await seed();
     const messages: unknown[] = [];
@@ -203,7 +205,7 @@ describe('frozen solve image task payload', () => {
     expect(await planSolveHint({ db, sessionId: s.sessionId, hintIndex: 0 })).toEqual({
       text_md: reply,
     });
-    expect(startup).toHaveBeenCalledExactlyOnceWith('mimo-v2.5');
+    expect(startup).toHaveBeenCalledExactlyOnceWith('deepseek-v4.1-flash');
     expect(messages).toMatchObject([
       {
         message: {
@@ -221,8 +223,8 @@ describe('frozen solve image task payload', () => {
     expect(await db.select().from(ai_task_runs)).toMatchObject([
       {
         task_kind: 'TeachingTurnVisionTask',
-        provider: 'xiaomi',
-        model: 'mimo-v2.5',
+        provider: 'opencode-go',
+        model: 'deepseek-v4.1-flash',
         status: 'success',
       },
     ]);

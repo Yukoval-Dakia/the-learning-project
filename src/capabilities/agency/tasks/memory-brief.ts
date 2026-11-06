@@ -25,8 +25,6 @@ export const memoryBriefTaskSpec = {
     kind: 'MemoryBriefTask',
     description:
       'Station 2A (YUK-185, T-37) — per-scope memory brief writer. Input = scopeKey + template + three server-bucketed windows (recent_week / recent_months / long_term; each with evidence_ids + newest-first capped events[], every event carrying a top-level outcome (success/failure/partial/null) + a compact { excerpt? } payload projection) + facts[]. Output = strict JSON with 3 markdown summaries. Evidence ids are assembled server-side from the same input events; the model writes prose only. Single structured-output call (no tool loop), registry-default text model. Drives memory_brief_note rows.',
-    defaultProvider: 'xiaomi',
-    defaultModel: 'mimo-v2.5-pro',
     // Measured: a real-LLM run finished subject:yuwen at 59s and aborted the
     // global scope at the old 60s cap. Single structured-output call; the
     // per-message Copilot path does not use this task.

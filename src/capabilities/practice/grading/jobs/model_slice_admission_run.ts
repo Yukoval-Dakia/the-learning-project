@@ -1,18 +1,4 @@
-// model_slice_admission_run：模型判分切片的留出题准入 run
-// （ADR-0073 D2「每科 ≥30 道留出题的模型级准入，与单题标定互不替代」）。
-//
-// 输入是一套【冻结】留出题：每科 ≥30 道未调参题，带独立参考分。job 用生产
-// 同源的执行端口（createAdmissionRunExecutor —— 与正式判分同一装配边界，见
-// evaluate-submission.ts）逐题判分，把逐题 agreement / severe error 写成一条
-// 事件证据（experimental:model_slice_admission_run，幂等锚 run_id），只有
-// 阈值全过且非 dry_run 才登记切片。dry run 绝不准入；没有任何自动准入路径。
-//
-// 付费说明：本 job 调真实模型，由 lead 在周预算内运行。
-//
-// severe error 定义（零容忍方向翻转）：判出分 > unit 满分；参考 0 分而判
-// 出 > 0（假得分）；参考满分而判出 0（假零分）。pending/无法判定 = 不一致
-// （拉低 agreement），不算 severe —— 诚实 pending 不是判错。
-
+// System grading admission uses frozen reference-model comparisons, never gold labels.
 import { eq, inArray } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import { z } from 'zod';
@@ -23,6 +9,7 @@ import {
   GroupEvidence,
   type ModelExecutorRequest,
   type ModelUnitOutcomeT,
+  type PendingStateT,
   QuestionGroupStructure,
   QuestionPart,
   ResponseSlot,
@@ -32,29 +19,43 @@ import {
   SlotResponse,
   modelResponseClassForUnit,
 } from '@/core/schema/assessment';
+import type { ModelOutcomeDiagnosticsT } from '@/core/schema/assessment/model-diagnostics';
+import { sha256Canonical } from '@/core/task-input-hash';
 import type { Db } from '@/db/client';
-import { event, question_revision } from '@/db/schema';
+import { ai_task_runs, event, question_revision } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { withModelSliceAdmissionLock } from '@/kernel/locks/grading';
 import { lookupGroupSubjects } from '@/kernel/read-models/model-admission';
+import { resolveTaskBinding } from '@/server/ai/providers';
+import { currentTaskSpendScope } from '@/server/ai/task-spend-scope';
 import { createAdmissionRunExecutor } from '../server/judge/evaluate-submission';
 import {
   assertModelAdmissionSliceRegistrable,
-  currentModelPins,
+  currentModelPinForKind,
   modelSliceIdFor,
   registerModelAdmissionSlice,
 } from '../server/model-slice-registry';
 
 /**
- * 准入阈值（config value）。min_items = 每科至少 30 道留出题；
- * max_severe_errors=0 = 零容忍；min_agreement_ratio 是初始政策值（设计未定数），
- * 随第一刀真实留出题实测修订。
+ * Existing blank-response policy. Free responses use the fixed four-class bars below.
  */
 export const MODEL_SLICE_ADMISSION_THRESHOLDS = {
   min_items: 30,
   min_agreement_ratio: 0.9,
   max_severe_errors: 0,
 } as const;
+
+/**
+ * Free-response holdout 允许的显式 pending 上限：每 120 项 3 条，更大留出集按
+ * 比例 floor。pending 不算对也不算错，但超出上限说明候选没有给出可对照的完整
+ * 有分输出，不登记。与三条硬线同为常量，调用方不可放宽。
+ *
+ * 只有模型调用真实完成、收到回应、费用已结算的 pending 才计入此线 ——
+ * 以定夺 attempt（run_refs 末位）落账 `status='success'` 且全部引用 run
+ * 费用 resolved 为准；超时、取消、provider 失败、无账可对的 pending 与
+ * 未尝试/缺项/scored 无分不受此线保护，仍按完整性一律拦。
+ */
+const FREE_HOLDOUT_MAX_PENDING_PER_120 = 3;
 
 /** 同一数值口径：卷面十进制分值的二进制表示误差不当差异（与发布校验同律）。 */
 function samePoints(a: number, b: number): boolean {
@@ -81,6 +82,8 @@ export function holdoutItemFromOutcome(
       agreed: false,
       severe_error: false,
       pending_reason: outcome.pending.reason,
+      pending: outcome.pending,
+      ...(outcome.diagnostics !== undefined ? { diagnostics: outcome.diagnostics } : {}),
       run_refs: outcome.run_refs,
       ...(outcome.cost_usd_micros !== undefined
         ? { cost_usd_micros: outcome.cost_usd_micros }
@@ -216,6 +219,8 @@ const HoldoutItem = z
     materials: z.array(SharedMaterial).default([]),
     /** 独立参考分（不是模型产出；留出题带独立标定）。 */
     reference_points: z.number().min(0),
+    answer_class: z.enum(['correct', 'equivalent', 'wrong', 'partial']).optional(),
+    class_reason: z.string().min(1).optional(),
   })
   .strict();
 
@@ -223,9 +228,10 @@ const ModelSliceAdmissionRunData = z
   .object({
     /** 调用方钉的幂等身份（事件 id 锚；重投不重写证据、不重复准入）。 */
     run_id: z.string().min(1),
+    comparison_role: z.enum(['candidate', 'reference']).default('candidate'),
+    reference_run_id: z.string().min(1).optional(),
     slice: z
       .object({
-        subject: z.string().min(1),
         response_class: z.enum(['blank', 'free']),
         task_kind: z.string().min(1),
         model: z.string().min(1),
@@ -239,6 +245,7 @@ const ModelSliceAdmissionRunData = z
     holdout_digest: z.string().min(1),
     items: z.array(HoldoutItem).min(1),
     per_item_max_cost_usd_micros: z.number().int().min(1),
+    total_max_cost_usd_micros: z.number().int().min(1).max(3_000_000).default(3_000_000),
     /** dry run 只出证据，绝不登记准入。 */
     dry_run: z.boolean().default(false),
     admitted_by: z.string().min(1),
@@ -254,6 +261,35 @@ export interface ModelSliceAdmissionItemResult {
   agreed: boolean;
   severe_error: boolean;
   pending_reason?: string;
+  /** 完整未决态（detail / retryable / trigger 等）；pending_reason 只是它的索引。 */
+  pending?: PendingStateT;
+  /** 执行期拒收诊断（枚举/数量/hash/已提交 id；不含学习者或模型明文）。 */
+  diagnostics?: ModelOutcomeDiagnosticsT;
+  /**
+   * pending 是否计入 FREE_HOLDOUT_MAX_PENDING_PER_120：定夺 attempt
+   * （run_refs 末位）落账 success 且全部引用 run 费用 resolved 才为 true；
+   * 超时/取消/provider 失败/无账可对的 pending 为 false，按完整性一律拦。
+   */
+  model_call_completed?: boolean;
+  /**
+   * 定夺 attempt（run_refs 末位）的 canonical 输入 digest（ai_task_runs.input_hash）
+   * 与定夺 outcome 的 canonical digest。ai_task_runs.result_digest 只有 typed
+   * seal 消费方写，本 lane 恒 null —— 输出绑定由本 job 实算 outcome 承载。
+   * 无 run（预算门在付费前拒）时 input_digest 为 null；null 本身是证据，不补造。
+   */
+  input_digest?: string | null;
+  output_digest?: string | null;
+  actual_runs?: Array<{
+    id: string;
+    provider: string;
+    model: string;
+    status: string;
+    cost_basis: string | null;
+    cost_usd: number | null;
+    input_hash: string;
+    result_digest: string | null;
+    error_message: string | null;
+  }>;
   run_refs: string[];
   cost_usd_micros?: number;
 }
@@ -303,6 +339,7 @@ function rawHoldoutItems(rawData: unknown): unknown {
 
 const StoredAdmissionPayload = z
   .object({
+    request_digest: z.string().optional(),
     dry_run: z.boolean(),
     items: z.array(z.object({ agreed: z.boolean() }).passthrough()),
     agreement_ratio: z.number(),
@@ -325,15 +362,63 @@ async function readAdmissionEvidence(
   return row ?? null;
 }
 
+async function referenceComparisonReady(db: Db, raw: unknown): Promise<boolean> {
+  const candidate = z
+    .object({
+      comparison_role: z.literal('candidate'),
+      reference_run_id: z.string(),
+      holdout_digest: z.string(),
+      items: z.array(z.object({ item_id: z.string() }).passthrough()),
+    })
+    .safeParse(raw);
+  if (!candidate.success) return false;
+  const reference = await readAdmissionEvidence(
+    db,
+    `evt_model_slice_admission_${candidate.data.reference_run_id}`,
+  );
+  const payload = z
+    .object({
+      version: z.literal(2),
+      comparison_role: z.literal('reference'),
+      dry_run: z.literal(true),
+      holdout_digest: z.literal(candidate.data.holdout_digest),
+      items: z.array(
+        z
+          .object({
+            item_id: z.string(),
+            status: z.enum(['scored', 'pending']),
+            awarded_points: z.number().nullable(),
+            agreed: z.boolean(),
+            pending_reason: z.string().min(1).optional(),
+          })
+          .refine((item) =>
+            item.status === 'pending'
+              ? item.awarded_points === null && !item.agreed && item.pending_reason !== undefined
+              : item.awarded_points !== null,
+          ),
+      ),
+    })
+    .safeParse(reference?.payload);
+  return (
+    // A reference records comparison; disagreement and pending are not a gold threshold.
+    payload.success &&
+    payload.data.items.length === candidate.data.items.length &&
+    new Set(payload.data.items.map((item) => item.item_id)).size === candidate.data.items.length &&
+    candidate.data.items.every((item) =>
+      payload.data.items.some((result) => result.item_id === item.item_id),
+    )
+  );
+}
+
 async function finishFromStoredEvidence(
   db: Db,
   stored: { outcome: string | null; payload: unknown },
   registrationInput: {
-    subject: string;
     response_class: 'blank' | 'free';
     task_kind: string;
     model: string;
     model_version: string;
+    request_digest: string;
     holdout_evidence_ref: string;
     admitted_by: string;
   },
@@ -361,9 +446,23 @@ async function finishFromStoredEvidence(
       ],
     };
   }
+  if (
+    stored.outcome === 'passed' &&
+    parsed.data.request_digest !== registrationInput.request_digest
+  ) {
+    throw new Error(
+      'stored admission evidence does not match the frozen request; use a new run_id',
+    );
+  }
   const failures = [...parsed.data.failures];
   let admitted = false;
-  if (stored.outcome === 'passed' && !parsed.data.dry_run) {
+  const referenceReady =
+    registrationInput.response_class !== 'free' ||
+    (await referenceComparisonReady(db, stored.payload));
+  if (stored.outcome === 'passed' && !parsed.data.dry_run && !referenceReady) {
+    failures.push('reference comparison record incomplete or mismatched; no slice admitted');
+  }
+  if (stored.outcome === 'passed' && !parsed.data.dry_run && referenceReady) {
     try {
       await registerModelAdmissionSlice(db, registrationInput);
       admitted = true;
@@ -408,7 +507,7 @@ export async function runModelSliceAdmission(
 
   // 2) 切片与当前模型 pin 必须一致：不给「准入一个现在不会执行的模型」留门
   //    （registerModelAdmissionSlice 写前再校验一次，双保险）。
-  const pin = currentModelPins().get(data.slice.task_kind);
+  const pin = currentModelPinForKind(data.slice.task_kind);
   if (pin === undefined) {
     throw new Error(
       `model_slice_admission_run: task kind '${data.slice.task_kind}' is not a registered admissible grading task`,
@@ -419,11 +518,13 @@ export async function runModelSliceAdmission(
       `model_slice_admission_run: slice claims ${data.slice.model}@${data.slice.model_version} but the current pin is ${pin.model}@${pin.model_version}`,
     );
   }
+  const expectedRoute = resolveTaskBinding(data.slice.task_kind as TaskKind);
   const sliceId = modelSliceIdFor(data.slice);
   // 证据事件 id 只由 run_id 决定 —— 付费循环前就能算出，供登记预检使用。
   const evidenceEventId = `evt_model_slice_admission_${data.run_id}`;
   const registrationInput = {
     ...data.slice,
+    request_digest: canonicalHash(data),
     holdout_evidence_ref: evidenceEventId,
     admitted_by: data.admitted_by,
   };
@@ -471,10 +572,7 @@ export async function runModelSliceAdmission(
     }
   }
 
-  // 3b) 学科一致性（付费前置栅栏）：留出题必须真属于切片声明的学科。学科沿
-  //     canonical bridge 解析 —— revision → 根题 → knowledge_ids[0] →
-  //     effective domain → subject profile id；根题缺失、无知识标注或域不可
-  //     解析都当场失败，绝不在付费之后才发现留出题集不属于本切片学科。
+  // Subjects record coverage only; every item still binds its frozen question and rule.
   const revisionRows = await db
     .select({
       revision_id: question_revision.revision_id,
@@ -512,11 +610,6 @@ export async function runModelSliceAdmission(
         `model_slice_admission_run: item '${item.item_id}' knowledge '${lookup.knowledge_id}' has no resolvable effective domain`,
       );
     }
-    if (lookup.subject !== data.slice.subject) {
-      throw new Error(
-        `model_slice_admission_run: item '${item.item_id}' resolves to subject '${lookup.subject}', not '${data.slice.subject}' — the holdout set does not belong to the slice's subject`,
-      );
-    }
     assertFrozenUnit(item.item_id, item.revision_id, item.unit, revision.scoring_basis);
     assertFrozenQuestionParts(
       item.item_id,
@@ -526,16 +619,83 @@ export async function runModelSliceAdmission(
     );
   }
 
+  const answerClasses = ['correct', 'equivalent', 'wrong', 'partial'] as const;
+  if (new Set(data.items.map((item) => item.item_id)).size !== data.items.length) {
+    throw new Error('model_slice_admission_run: duplicate item identity');
+  }
+
   // 4) 占位之后才逐题判分。另一条 run 拿着同一切片的会话锁时，返回
   //    lock_busy，不抛、不付费。锁内再预检一次：对方可能已经登记完。
   const reservedWork = await withModelSliceAdmissionLock(db, sliceId, async () => {
     await assertModelAdmissionSliceRegistrable(db, registrationInput);
+
+    if (data.slice.response_class === 'free') {
+      const byQuestion = new Map<string, Set<string>>();
+      const questionUnits = new Map<string, string>();
+      for (const item of data.items) {
+        if (!item.answer_class || !item.class_reason) {
+          throw new Error(
+            'model_slice_admission_run: free responses require four-class explanations',
+          );
+        }
+        const groupId = revisionById.get(item.revision_id)?.group_id;
+        if (!groupId || item.unit.points === null)
+          throw new Error('missing frozen question or maximum');
+        const unitIdentity = canonicalHash([item.revision_id, item.unit]);
+        if (questionUnits.has(groupId) && questionUnits.get(groupId) !== unitIdentity) {
+          throw new Error('all four classes must compare the same frozen scoring unit');
+        }
+        questionUnits.set(groupId, unitIdentity);
+        const classes = byQuestion.get(groupId) ?? new Set<string>();
+        if (classes.has(item.answer_class)) throw new Error('duplicate question/class');
+        classes.add(item.answer_class);
+        byQuestion.set(groupId, classes);
+        if (
+          item.unit.points === 0 ||
+          ((item.answer_class === 'correct' || item.answer_class === 'equivalent') &&
+            !samePoints(item.reference_points, item.unit.points)) ||
+          (item.answer_class === 'wrong' && item.reference_points !== 0) ||
+          (item.answer_class === 'partial' &&
+            (item.reference_points <= 0 || item.reference_points >= item.unit.points))
+        ) {
+          throw new Error(`invalid reference points for ${item.item_id}`);
+        }
+      }
+      if (byQuestion.size < 30 || [...byQuestion.values()].some((classes) => classes.size !== 4)) {
+        throw new Error(
+          'model_slice_admission_run: at least 30 questions, each with all four classes required',
+        );
+      }
+    }
+
+    if (data.comparison_role === 'reference' && !data.dry_run) {
+      throw new Error('reference comparisons must be dry runs; reference models never serve');
+    }
+    if (data.slice.response_class === 'free' && !data.dry_run && !data.reference_run_id) {
+      throw new Error('independent reference run identity required before admission');
+    }
 
     // 逐题判分（生产同源端口；每题独立墙钟，细则含一次超时重试窗口）。
     const budget = resolveTaskBudget(data.slice.task_kind as TaskKind);
     const results: ModelSliceAdmissionItemResult[] = [];
     let knownCostMicros = 0;
     for (const item of data.items) {
+      if (currentTaskSpendScope()?.remainingUsd() === 0) {
+        failures.push('shared task allowance exhausted or unpriced; no further calls permitted');
+        break;
+      }
+      const livePin = currentModelPinForKind(data.slice.task_kind);
+      if (
+        livePin?.model !== data.slice.model ||
+        livePin.model_version !== data.slice.model_version
+      ) {
+        failures.push('task configuration changed during comparison; stop before next call');
+        break;
+      }
+      if (knownCostMicros + data.per_item_max_cost_usd_micros > data.total_max_cost_usd_micros) {
+        failures.push('total cost cap reached before next call');
+        break;
+      }
       const port = createAdmissionRunExecutor(
         db,
         data.slice.task_kind,
@@ -569,6 +729,31 @@ export async function runModelSliceAdmission(
         spent_cost_usd_micros: knownCostMicros,
       };
       const outcome = await port(request);
+      const actualRuns =
+        outcome.run_refs.length === 0
+          ? []
+          : await db
+              .select({
+                id: ai_task_runs.id,
+                provider: ai_task_runs.provider,
+                model: ai_task_runs.model,
+                status: ai_task_runs.status,
+                cost_basis: ai_task_runs.cost_basis,
+                cost_usd: ai_task_runs.cost_usd,
+                input_hash: ai_task_runs.input_hash,
+                result_digest: ai_task_runs.result_digest,
+                error_message: ai_task_runs.error_message,
+              })
+              .from(ai_task_runs)
+              .where(inArray(ai_task_runs.id, outcome.run_refs));
+      if (
+        actualRuns.length !== outcome.run_refs.length ||
+        actualRuns.some(
+          (run) => run.provider !== expectedRoute.provider || run.model !== expectedRoute.model,
+        )
+      ) {
+        failures.push(`actual route evidence missing or differs for ${item.item_id}`);
+      }
       results.push(
         holdoutItemFromOutcome(
           {
@@ -579,23 +764,122 @@ export async function runModelSliceAdmission(
           outcome,
         ),
       );
+      const lastResult = results.at(-1);
+      // 费用已知 = 每条引用 run 都解析到账且按实际用量结算（reported/estimated）。
+      // 空 run_refs 或缺行：执行器回报的数字（含 cap 预留）没有账本佐证，按 unknown。
+      const actualCostKnown =
+        outcome.run_refs.length > 0 &&
+        actualRuns.length === outcome.run_refs.length &&
+        actualRuns.every(
+          (run) =>
+            (run.cost_basis === 'reported' || run.cost_basis === 'estimated') &&
+            run.cost_usd !== null &&
+            Number.isFinite(run.cost_usd) &&
+            run.cost_usd >= 0,
+        );
+      if (lastResult) {
+        lastResult.actual_runs = actualRuns;
+        // run_refs 末位是定夺 attempt；同题重投共享同一 task input，input digest 恒定。
+        const decidingRun =
+          outcome.run_refs.length > 0
+            ? actualRuns.find((run) => run.id === outcome.run_refs.at(-1))
+            : undefined;
+        lastResult.input_digest = decidingRun?.input_hash ?? null;
+        // outcome 即定夺输出（分数/matched/pending 细节 + run_refs）；逐条封存其
+        // canonical digest，与 invoker 写 result_digest 同一哈希约定。
+        lastResult.output_digest = sha256Canonical(outcome);
+        // 计入 pending 上限的资格：定夺 attempt 真实完成（success）且费用有账。
+        // 超时/取消/provider 失败落 failure 或无 run_refs，一律不算完成。
+        if (lastResult.status === 'pending') {
+          lastResult.model_call_completed = decidingRun?.status === 'success' && actualCostKnown;
+        }
+        // An executor's fallback cap reserves spend; only settled attempt prices measure it.
+        if (outcome.run_refs.length > 0) {
+          if (actualCostKnown && actualRuns.length === outcome.run_refs.length) {
+            lastResult.cost_usd_micros = Math.ceil(
+              actualRuns.reduce((sum, run) => sum + (run.cost_usd ?? 0), 0) * 1_000_000,
+            );
+          } else delete lastResult.cost_usd_micros;
+        }
+      }
       knownCostMicros = holdoutRunTally(results).known_cost_usd_micros;
+      if (lastResult?.cost_usd_micros === undefined || !actualCostKnown) {
+        failures.push('unknown cost; no further paid calls permitted');
+      }
+      if (failures.length > 0) break;
     }
 
     const tally = holdoutRunTally(results);
-    const agreed = tally.agreed;
     const severeErrors = tally.severe_errors;
     const agreementRatio = tally.agreement_ratio;
     const unknownCostItems = tally.unknown_cost_items;
-    if (severeErrors > MODEL_SLICE_ADMISSION_THRESHOLDS.max_severe_errors) {
-      failures.push(
-        `severe_errors ${severeErrors} > ${MODEL_SLICE_ADMISSION_THRESHOLDS.max_severe_errors}`,
+    const classResults = answerClasses.map((answerClass) => {
+      const members = data.items.filter((item) => item.answer_class === answerClass);
+      const errors = members
+        .filter((item) => {
+          const result = results.find((result) => result.item_id === item.item_id);
+          // Pending has no correctness verdict; completeness is checked separately.
+          if (result?.status !== 'scored' || result.awarded_points === null) return false;
+          if (answerClass === 'partial') return !result.agreed;
+          if (answerClass === 'wrong') {
+            return (
+              result?.status === 'scored' &&
+              result.awarded_points !== null &&
+              samePoints(result.awarded_points, item.unit.points ?? Number.NaN)
+            );
+          }
+          return !result.agreed;
+        })
+        .map((item) => item.item_id);
+      const unresolved = members
+        .filter((item) => {
+          const result = results.find((result) => result.item_id === item.item_id);
+          return result?.status !== 'scored' || result.awarded_points === null;
+        })
+        .map((item) => item.item_id);
+      return { answer_class: answerClass, items: members.length, errors, unresolved };
+    });
+    if (data.slice.response_class === 'free') {
+      // 未决分两类：模型调用真实完成且费用已结算的显式 pending 按
+      // FREE_HOLDOUT_MAX_PENDING_PER_120 比例上限拦；其余未决（超时/取消/
+      // provider 失败/无账可对的 pending、未尝试、缺项、scored 无分）一律拦。
+      const pendingItemIds = new Set(
+        results
+          .filter((result) => result.status === 'pending' && result.model_call_completed === true)
+          .map((result) => result.item_id),
       );
-    }
-    if (agreementRatio < MODEL_SLICE_ADMISSION_THRESHOLDS.min_agreement_ratio) {
-      failures.push(
-        `agreement_ratio ${agreementRatio.toFixed(4)} < ${MODEL_SLICE_ADMISSION_THRESHOLDS.min_agreement_ratio}`,
-      );
+      const hardUnresolved = classResults
+        .flatMap((group) => group.unresolved)
+        .filter((itemId) => !pendingItemIds.has(itemId));
+      if (hardUnresolved.length > 0) {
+        failures.push('unresolved comparison items; no admission evidence');
+      }
+      const maxPending = Math.floor((data.items.length * FREE_HOLDOUT_MAX_PENDING_PER_120) / 120);
+      if (pendingItemIds.size > maxPending) {
+        failures.push(
+          `pending ${pendingItemIds.size}/${data.items.length} exceeds ${maxPending} (${FREE_HOLDOUT_MAX_PENDING_PER_120} per 120)`,
+        );
+      }
+      for (const group of classResults) {
+        if (group.answer_class === 'partial') continue;
+        const allowed = group.answer_class === 'wrong' ? 1 : 2;
+        if (group.errors.length * 30 > allowed * group.items) {
+          failures.push(
+            `${group.answer_class}: ${group.errors.length}/${group.items} exceeds ${allowed}/30`,
+          );
+        }
+      }
+    } else {
+      if (severeErrors > MODEL_SLICE_ADMISSION_THRESHOLDS.max_severe_errors) {
+        failures.push(
+          `severe_errors ${severeErrors} > ${MODEL_SLICE_ADMISSION_THRESHOLDS.max_severe_errors}`,
+        );
+      }
+      if (agreementRatio < MODEL_SLICE_ADMISSION_THRESHOLDS.min_agreement_ratio) {
+        failures.push(
+          `agreement_ratio ${agreementRatio.toFixed(4)} < ${MODEL_SLICE_ADMISSION_THRESHOLDS.min_agreement_ratio}`,
+        );
+      }
     }
     const passed = failures.length === 0;
 
@@ -611,11 +895,28 @@ export async function runModelSliceAdmission(
       subject_id: sliceId,
       outcome: passed ? 'passed' : 'failed',
       payload: {
-        version: 1,
+        version: 2,
+        request_digest: canonicalHash(data),
+        evidence_kind: 'reference_model_comparison',
+        comparison_role: data.comparison_role,
+        reference_run_id: data.reference_run_id ?? null,
+        calibration: 'uncalibrated',
+        class_results: classResults,
+        subject_coverage: [...subjects].map(([group_id, coverage]) => ({ group_id, ...coverage })),
         run_id: data.run_id,
         slice: data.slice,
         holdout_digest: data.holdout_digest,
-        thresholds: MODEL_SLICE_ADMISSION_THRESHOLDS,
+        thresholds:
+          data.slice.response_class === 'free'
+            ? {
+                min_questions: 30,
+                wrong_full_per_30: 1,
+                correct_nonfull_per_30: 2,
+                equivalent_nonfull_per_30: 2,
+                partial_bar: null,
+                max_pending_per_120: FREE_HOLDOUT_MAX_PENDING_PER_120,
+              }
+            : MODEL_SLICE_ADMISSION_THRESHOLDS,
         dry_run: data.dry_run,
         items: results,
         agreement_ratio: agreementRatio,
@@ -628,56 +929,17 @@ export async function runModelSliceAdmission(
       ingest_at: now,
     });
 
-    // 6) 只按已落库的证据准入。同 run_id 先写者赢：后来这次就算判过了，只要
-    //    库存的 outcome 不是 passed（或那次是 dry run），就不登记。登记失败是
-    //    终局的未准入结果，绝不向队列重抛 —— 重抛会重跑已付费的判分循环。
+    // Replay completes admission after the separately scheduled reference without repaying candidates.
     const storedAfterWrite = await readAdmissionEvidence(db, evidenceEventId);
-    if (storedAfterWrite !== null && storedAfterWrite.outcome !== (passed ? 'passed' : 'failed')) {
-      return finishFromStoredEvidence(
-        db,
-        storedAfterWrite,
-        registrationInput,
-        sliceId,
-        evidenceEventId,
-        data.run_id,
-      );
-    }
-    const storedPayload = StoredAdmissionPayload.safeParse(storedAfterWrite?.payload);
-    const storedAllowsAdmission =
-      storedAfterWrite?.outcome === 'passed' &&
-      storedPayload.success &&
-      storedPayload.data.dry_run === false;
-    let admitted = false;
-    if (storedAllowsAdmission) {
-      try {
-        await registerModelAdmissionSlice(db, registrationInput);
-        admitted = true;
-      } catch (error) {
-        failures.push(
-          `registration refused: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      }
-    } else if (passed && !data.dry_run) {
-      failures.push(
-        `stored evidence outcome is '${storedAfterWrite?.outcome ?? 'missing'}'; this run is not admitted`,
-      );
-    }
-
-    return {
-      run_id: data.run_id,
-      slice_id: sliceId,
-      passed,
-      dry_run: data.dry_run,
-      admitted,
-      evidence_event_id: evidenceEventId,
-      items: results.length,
-      agreed,
-      agreement_ratio: agreementRatio,
-      severe_errors: severeErrors,
-      known_cost_usd_micros: knownCostMicros,
-      unknown_cost_items: unknownCostItems,
-      failures,
-    };
+    if (storedAfterWrite === null) throw new Error('admission evidence write was not readable');
+    return finishFromStoredEvidence(
+      db,
+      storedAfterWrite,
+      registrationInput,
+      sliceId,
+      evidenceEventId,
+      data.run_id,
+    );
   });
   if ('outcome' in reservedWork) {
     return {

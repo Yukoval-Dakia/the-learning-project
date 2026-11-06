@@ -164,6 +164,8 @@ export const questionBankManifestPart: Omit<CapabilityManifest, 'name' | 'descri
         // YUK-1514 — serving-hold release commands. YUK-1664: only
         // release_verify_hold stays a user command; reverify / recheck_source
         // run through the system ledger and now parse-fail here (4xx).
+        // release_verify_hold refuses a hold whose latest source_verify@1 is
+        // 'suspended' (config_error/transient) — no verdict exists to override.
         // Idempotency-Key required; {accepted, serving}.
         method: 'POST',
         path: '/api/questions/[id]/serving-actions/[command]',
@@ -311,6 +313,8 @@ export const questionBankManifestPart: Omit<CapabilityManifest, 'name' | 'descri
       {
         name: 'question_admission_run',
         queue: 'llm',
+        reservedPriority: 1,
+        notify: true,
         load: () =>
           import('./jobs/question_admission_run').then((m) => m.buildQuestionAdmissionRunHandler),
       },

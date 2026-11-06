@@ -1,5 +1,5 @@
-// Read side of model admission: the active slices plus the group→subject bridge the
-// issuance gate needs. Writing and retiring slices belongs to Practice grading.
+// Read active system slices and resolve group subjects for coverage reporting.
+// Writing and retiring slices belongs to Practice grading.
 // The live model pins come from the pin table Practice installs at startup.
 
 import { eq, inArray } from 'drizzle-orm';
@@ -9,7 +9,11 @@ import type {
 } from '@/core/schema/assessment/serving-admission';
 import type { Db, Tx } from '@/db/client';
 import { model_admission_slice, question } from '@/db/schema';
-import { HostOperationNotInstalledError } from '@/kernel/host-operation';
+import {
+  HostOperationNotInstalledError,
+  installHostOperation,
+  installedHostOperation,
+} from '@/kernel/host-operation';
 import { batchResolveEffectiveDomains } from '@/kernel/read-models/knowledge-tree';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
@@ -17,10 +21,10 @@ type SliceRow = typeof model_admission_slice.$inferSelect;
 
 export type ModelPins = ReadonlyMap<string, { model: string; model_version: string }>;
 
-let readPins: (() => ModelPins) | undefined;
+const PIN_READER_SLOT = 'kernel/read-models/model-admission:pinReader';
 
 export function installModelPinReader(reader: () => ModelPins): void {
-  readPins = reader;
+  installHostOperation(PIN_READER_SLOT, reader);
 }
 
 const NO_PINS: ModelPins = new Map();
@@ -28,6 +32,7 @@ const NO_PINS: ModelPins = new Map();
 // Pins are only compared against an active slice. Without one the serving decision does not
 // read them, so a host or DB test that admitted no slice needs no reader; with one, fail loudly.
 function readModelPins(hasActiveSlice: boolean): ModelPins {
+  const readPins = installedHostOperation<() => ModelPins>(PIN_READER_SLOT);
   if (readPins) return readPins();
   if (!hasActiveSlice) return NO_PINS;
   throw new HostOperationNotInstalledError(
@@ -38,7 +43,6 @@ function readModelPins(hasActiveSlice: boolean): ModelPins {
 export function admittedSliceFromRow(row: SliceRow): AdmittedModelSliceT {
   return {
     slice_id: row.slice_id,
-    subject: row.subject,
     response_class: row.response_class,
     task_kind: row.task_kind,
     model: row.model,
@@ -63,7 +67,7 @@ export async function resolveModelAdmissionContext(db: Db | Tx): Promise<ModelAd
 
 /** Same bridge as the holdout job: first knowledge id, then effective domain, then subject. */
 export type GroupSubjectLookup =
-  | { readonly kind: 'subject'; readonly subject: string }
+  | { readonly kind: 'subject'; readonly subject: string; readonly domain?: string }
   | { readonly kind: 'missing_group' }
   | { readonly kind: 'unlabeled' }
   | { readonly kind: 'no_domain'; readonly knowledge_id: string };
@@ -98,7 +102,7 @@ export async function lookupGroupSubjects(
       out.set(groupId, { kind: 'no_domain', knowledge_id: knowledgeId });
       continue;
     }
-    out.set(groupId, { kind: 'subject', subject: resolveSubjectProfile(domain).id });
+    out.set(groupId, { kind: 'subject', subject: resolveSubjectProfile(domain).id, domain });
   }
   return out;
 }

@@ -36,6 +36,7 @@ import type { R2Client } from '@/kernel/object-storage';
 import type { SubjectProfile } from '@/subjects/profile';
 import { resolveProviderSessionDeadlineAt } from '../http/provider-session-deadline';
 import { bindAgentRunError, isApiErrorSuccessResult } from './agent-run-error';
+import { failureSpendChargeUsd } from './attempt-cost';
 import {
   type ModelBinding,
   type PiQueueSources,
@@ -47,7 +48,7 @@ import {
 import { type TraceContent, traceMetadata, traceOperation } from './laminar-tracing';
 import { taskMayExportTranscript } from './laminar-transcript';
 import { logMissingToolMountsWarning } from './log';
-import { providerHttpTimeoutMs } from './provider-http-timeout';
+import { PROVIDER_HTTP_TIMEOUT_MARGIN_MS, providerHttpTimeoutMs } from './provider-http-timeout';
 import { PROVIDER_SESSION_SDK_STARTUP_TIMEOUT_MS } from './provider-session-admission-policy';
 import type { ProviderTransportCollector } from './provider-transport';
 import type { ResolvedProvider } from './providers';
@@ -274,7 +275,7 @@ export interface RunTaskCtx {
   piQueues?: PiQueueSources;
 }
 
-function compiledPromptProvenance(prompt?: CompiledModelPrompt) {
+export function compiledPromptProvenance(prompt?: CompiledModelPrompt) {
   if (!prompt) return undefined;
   return {
     compiledPromptHash: createHash('sha256').update(prompt.text, 'utf8').digest('hex'),
@@ -307,7 +308,7 @@ export interface MultimodalTaskInput {
 
 const TASK_KINDS = Object.keys(tasks) as TaskKind[];
 
-function isKnownTask(k: string): k is TaskKind {
+export function isKnownTask(k: string): k is TaskKind {
   return (TASK_KINDS as string[]).includes(k);
 }
 
@@ -317,7 +318,7 @@ function isKnownTask(k: string): k is TaskKind {
  * ({kind:'none'}). Fail closed at every chat entry instead of letting a
  * typed kind reach adapter startup / getTaskSystemPrompt.
  */
-function assertChatExecutionKind(kind: TaskKind): void {
+export function assertChatExecutionKind(kind: TaskKind): void {
   // Literal-union read through the declared interface view (see
   // buildQueryOptions): `execution` is optional on TaskDefinition.
   if (((tasks[kind] as TaskDefinition).execution ?? 'chat') !== 'chat') {
@@ -427,7 +428,7 @@ function promptFromInput(input: unknown): string | AsyncIterable<SDKUserMessage>
  * consistent on tools-from-registry default, turn ceiling and session resume.
  * The pi surfaces live on `ctx.pi*` and are read by the adapter, not here.
  */
-function buildQueryOptions(
+export function buildQueryOptions(
   kind: TaskKind,
   ctx: RunTaskCtx,
   abortController: AbortController,
@@ -438,8 +439,7 @@ function buildQueryOptions(
   budget: TaskBudget,
   transportEvidence?: ProviderTransportCollector,
 ): Options {
-  // The registry map's value type is the union of every spec's inferred literal
-  // shape; optional fields are read through this declared-interface view.
+  // Read optional fields through the shared definition interface.
   const def = tasks[kind];
   const declaredDef: TaskDefinition = def;
   const options: Options = {
@@ -448,15 +448,13 @@ function buildQueryOptions(
     systemPrompt: getTaskSystemPrompt(kind, ctx.subjectProfile, ctx.learnerLocale),
     abortController,
     tools: ctx.allowedTools ?? def.allowedTools,
-    // YUK-575 (N5) — durable copilot run overrides the turn ceiling; 'unbounded'
-    // removes it entirely.
     maxTurns: budget.maxIterations === 'unbounded' ? undefined : budget.maxIterations || 1,
-    // YUK-1630 — the task budget is the single source for every provider HTTP
-    // layer: this value is both the SDK timeout and the controlled dispatcher's
-    // timer derivation (provider-transport.ts).
+    // Keep the HTTP timers behind the task lifecycle timeout.
     providerTimeoutMs: providerHttpTimeoutMs(budget.timeout),
     transportEvidence,
-    ...(declaredDef.enforceMaxCost === true || currentTaskSpendScope()
+    ...(declaredDef.enforceMaxCost === true ||
+    declaredDef.structuredOutputMode === 'tool' ||
+    currentTaskSpendScope()
       ? { maxBudgetUsd: budget.maxCost }
       : {}),
   };
@@ -507,10 +505,13 @@ async function withPreparedExecutionQuery<TResult extends RunTaskResult, TValue>
         resolved: lifecycle.resolved,
         runId: lifecycle.taskRunId,
         kind: lifecycle.kind,
+        structuredSubmitInput: actualInput,
+        executionWindowMs: lifecycle.providerPhaseTimeoutMs(
+          options.providerTimeoutMs === undefined
+            ? Number.POSITIVE_INFINITY
+            : options.providerTimeoutMs - PROVIDER_HTTP_TIMEOUT_MARGIN_MS,
+        ),
         piToolMounts: ctx?.piToolMounts,
-        // YUK-1022 — pi-lane descriptors for hooks, replay, skills, nested agents
-        // and compaction; forwarded verbatim because the adapter needs the raw
-        // sessionContext for transformContext.
         piHooks: ctx?.piHooks,
         piSessionReplay: ctx?.piSessionReplay,
         piSkillDocs: ctx?.piSkillDocs,
@@ -530,7 +531,8 @@ async function withPreparedExecutionQuery<TResult extends RunTaskResult, TValue>
       try {
         return await consume(prepared.query(prompt));
       } catch (error) {
-        currentTaskSpendScope()?.charge(null);
+        // YUK-1878 — known-zero unbilled rejection vs fail-closed unknown.
+        currentTaskSpendScope()?.charge(failureSpendChargeUsd(lifecycle.costTruth));
         throw error;
       }
     },
@@ -729,6 +731,7 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
           subtype: msg.subtype,
           errors: 'errors' in msg && Array.isArray(msg.errors) ? msg.errors : [],
           ...(helpProviderFault ? { helpProviderFault } : {}),
+          ...(msg.provider_failure ? { providerFailure: msg.provider_failure } : {}),
         });
       }
       break;

@@ -4,7 +4,7 @@ import { eq } from 'drizzle-orm';
 import { PgBoss } from 'pg-boss';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { itemPriorDispatchedRequestSchema } from '@/capabilities/practice/public';
+import { itemPriorDispatchedRequestSchema } from '@/capabilities/practice/question-bank/public';
 import {
   type ItemPriorPreparedWork,
   executeItemPriorRep,

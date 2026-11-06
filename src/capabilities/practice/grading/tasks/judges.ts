@@ -1,4 +1,4 @@
-import { DEFAULT_TASK_BUDGET, type TaskDefinition, type TaskSpec } from '@/ai/task-spec';
+import { DEFAULT_TASK_BUDGET, type TaskDefinitionInput, type TaskSpec } from '@/ai/task-spec';
 import {
   MultimodalDirectLlmOutput,
   type MultimodalDirectLlmOutputT,
@@ -119,8 +119,6 @@ const judgeTaskDefinitions = {
     description:
       'Judge v2 light — semantic answer scoring for prose embedded checks using rubric_json.required_points',
     structuredOutputSchema: SemanticJudgeOutput,
-    defaultProvider: 'xiaomi',
-    defaultModel: 'mimo-v2.5-pro',
     budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },
     needsToolCall: false,
     isMultimodal: false,
@@ -137,8 +135,6 @@ const judgeTaskDefinitions = {
     description:
       'Judge v2 physics fallback — parse natural-language units/dimensions when mathjs accelerator cannot parse',
     structuredOutputSchema: LlmFallbackOutput,
-    defaultProvider: 'xiaomi',
-    defaultModel: 'mimo-v2.5-pro',
     budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },
     needsToolCall: false,
     isMultimodal: false,
@@ -157,8 +153,6 @@ const judgeTaskDefinitions = {
     description:
       'Math derivation vision-aware step judging — single vision LLM call with structured output (StepsLlmOutput)',
     structuredOutputSchema: StepsLlmOutput,
-    defaultProvider: 'xiaomi',
-    defaultModel: 'mimo-v2.5',
     // transientRetries=1: one same-target in-process retry on a fast transient failure.
     // This is a synchronous-route sensor with no durable backstop — runStepsJudge
     // swallows failures into 'unsupported', so pg-boss never sees a throw. A real
@@ -184,8 +178,6 @@ const judgeTaskDefinitions = {
     description:
       'YUK-201 — Holistic vision-aware answer judging (no step-rubric). Single vision LLM call with structured output (MultimodalDirectLlmOutput) for image-bearing prompts/answers that lack a reference_solution (physics calc with a diagram; short-answer with a figure). steps@1 owns step/rubric-weighted derivation judging; this owns the holistic, no-step path.',
     structuredOutputSchema: MultimodalDirectLlmOutput,
-    defaultProvider: 'xiaomi',
-    defaultModel: 'mimo-v2.5',
     // Same retry/turn rationale as StepsJudgeTask above; maxIterations=2 still
     // makes one paid judge request.
     budget: { ...DEFAULT_BUDGET, maxIterations: 2, timeout: 90_000, transientRetries: 1 },
@@ -201,7 +193,7 @@ const judgeTaskDefinitions = {
 
     prompt: { kind: 'profile', build: buildMultimodalDirectJudgePrompt },
   },
-} satisfies Record<string, TaskDefinition>;
+} satisfies Record<string, TaskDefinitionInput>;
 
 export const semanticJudgeTaskSpec = {
   ownership: 'owned',

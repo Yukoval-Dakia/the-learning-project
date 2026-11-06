@@ -14,7 +14,7 @@ export const previewStartReviewAdvice: FrontdoorContext['previewReviewAdvice'] =
       } catch {
         // Preserve the HTTP adapter's malformed-JSON input to the shared schema.
       }
-      const { previewReviewAdvice } = await import('@/capabilities/practice/public');
+      const { previewReviewAdvice } = await import('@/capabilities/practice/scheduling/public');
       const { db } = await import('@/db/client');
       return await previewReviewAdvice(db, raw, signal);
     } catch (error) {

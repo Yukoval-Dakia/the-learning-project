@@ -340,11 +340,11 @@ export interface IndependentSolutionOptions {
   /**
    * (异源 solve/verify) — override the solver PROVIDER (not just the model) for
    * the solve_check leg, so it runs on a DIFFERENT lane than the generator/verifier (e.g.
-   * `anthropic-sub` / Opus 4.8 while generation stays mimo). Threaded into ctx.override.provider
+   * `anthropic-sub` / Opus 4.8 while generation stays on its resolved lane). Threaded into ctx.override.provider
    * for BOTH the SolutionGenerate solver call AND the semantic SemanticJudge leg. Typed as the
    * `Provider` union (re-exported from providers.ts) so ctx.override matches the runner's
    * RunTaskCallCtx; callers PRE-FLIGHT lane availability and fail-open to the default lane, so
-   * an unset value here just means the default provider (mimo).
+   * an unset value here just means the task's resolved default provider.
    */
   solverProviderOverride?: Provider;
   /** Test seam; production lazily resolves source_asset rows and R2 bytes. */

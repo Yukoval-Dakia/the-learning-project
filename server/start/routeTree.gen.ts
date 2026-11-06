@@ -15,6 +15,7 @@ import { Route as CoachRouteImport } from './routes/coach'
 import { Route as DraftsRouteImport } from './routes/drafts'
 import { Route as InboxRouteImport } from './routes/inbox'
 import { Route as KnowledgeRouteImport } from './routes/knowledge'
+import { Route as MemoryRouteImport } from './routes/memory'
 import { Route as MistakesRouteImport } from './routes/mistakes'
 import { Route as NotesRouteImport } from './routes/notes'
 import { Route as PlacementRouteImport } from './routes/placement'
@@ -69,6 +70,11 @@ const InboxRoute = InboxRouteImport.update({
 const KnowledgeRoute = KnowledgeRouteImport.update({
   id: '/knowledge',
   path: '/knowledge',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MemoryRoute = MemoryRouteImport.update({
+  id: '/memory',
+  path: '/memory',
   getParentRoute: () => rootRouteImport,
 } as any)
 const MistakesRoute = MistakesRouteImport.update({
@@ -204,6 +210,7 @@ export interface FileRoutesByFullPath {
   '/drafts': typeof DraftsRoute
   '/inbox': typeof InboxRoute
   '/knowledge': typeof KnowledgeRouteWithChildren
+  '/memory': typeof MemoryRoute
   '/mistakes': typeof MistakesRoute
   '/notes': typeof NotesRouteWithChildren
   '/placement': typeof PlacementRoute
@@ -237,6 +244,7 @@ export interface FileRoutesByTo {
   '/drafts': typeof DraftsRoute
   '/inbox': typeof InboxRoute
   '/knowledge': typeof KnowledgeRouteWithChildren
+  '/memory': typeof MemoryRoute
   '/mistakes': typeof MistakesRoute
   '/notes': typeof NotesRouteWithChildren
   '/placement': typeof PlacementRoute
@@ -271,6 +279,7 @@ export interface FileRoutesById {
   '/drafts': typeof DraftsRoute
   '/inbox': typeof InboxRoute
   '/knowledge': typeof KnowledgeRouteWithChildren
+  '/memory': typeof MemoryRoute
   '/mistakes': typeof MistakesRoute
   '/notes': typeof NotesRouteWithChildren
   '/placement': typeof PlacementRoute
@@ -306,6 +315,7 @@ export interface FileRouteTypes {
     | '/drafts'
     | '/inbox'
     | '/knowledge'
+    | '/memory'
     | '/mistakes'
     | '/notes'
     | '/placement'
@@ -339,6 +349,7 @@ export interface FileRouteTypes {
     | '/drafts'
     | '/inbox'
     | '/knowledge'
+    | '/memory'
     | '/mistakes'
     | '/notes'
     | '/placement'
@@ -372,6 +383,7 @@ export interface FileRouteTypes {
     | '/drafts'
     | '/inbox'
     | '/knowledge'
+    | '/memory'
     | '/mistakes'
     | '/notes'
     | '/placement'
@@ -406,6 +418,7 @@ export interface RootRouteChildren {
   DraftsRoute: typeof DraftsRoute
   InboxRoute: typeof InboxRoute
   KnowledgeRoute: typeof KnowledgeRouteWithChildren
+  MemoryRoute: typeof MemoryRoute
   MistakesRoute: typeof MistakesRoute
   NotesRoute: typeof NotesRouteWithChildren
   PlacementRoute: typeof PlacementRoute
@@ -471,6 +484,13 @@ declare module '@tanstack/react-router' {
       path: '/knowledge'
       fullPath: '/knowledge'
       preLoaderRoute: typeof KnowledgeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/memory': {
+      id: '/memory'
+      path: '/memory'
+      fullPath: '/memory'
+      preLoaderRoute: typeof MemoryRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/mistakes': {
@@ -704,6 +724,7 @@ const rootRouteChildren: RootRouteChildren = {
   DraftsRoute: DraftsRoute,
   InboxRoute: InboxRoute,
   KnowledgeRoute: KnowledgeRouteWithChildren,
+  MemoryRoute: MemoryRoute,
   MistakesRoute: MistakesRoute,
   NotesRoute: NotesRouteWithChildren,
   PlacementRoute: PlacementRoute,

@@ -1,4 +1,4 @@
-import { and, eq, inArray, or, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { canonicalHash } from '@/core/migration/canonical';
 import {
@@ -431,10 +431,41 @@ export async function readNativeJudgeSettled(
   const durable = await readJudgeRunPermanent(database, runId);
   const state = durable.kind === 'absent' ? await readSyncJudged(database, submissionId) : durable;
   const terminal = permanentDto(runId, state);
-  if (terminal) return { kind: 'terminal', run: terminal };
+  if (terminal) {
+    return {
+      kind: 'terminal',
+      run: terminal,
+      latest_appeal_event_id: await latestAppealForSubmission(database, submissionId),
+    };
+  }
   return state.kind === 'pending'
     ? { kind: 'pending', run_id: runId, poll_url: judgeRunPollUrl(runId) }
     : undefined;
+}
+
+/**
+ * Newest appeal filed against THIS submission; refresh resumes polling it.
+ * Filtered by the appealed evaluation's submission — a joint group's sibling
+ * submissions share `evaluation_group_id` but must not leak their appeals.
+ */
+async function latestAppealForSubmission(
+  database: Db | Tx,
+  submissionId: string,
+): Promise<string | null> {
+  const [appeal] = await database
+    .select({ id: event.id })
+    .from(event)
+    .innerJoin(evaluation, eq(evaluation.evaluation_id, event.subject_id))
+    .where(
+      and(
+        eq(event.action, 'experimental:appeal_request'),
+        eq(event.subject_kind, 'evaluation'),
+        eq(evaluation.submission_id, submissionId),
+      ),
+    )
+    .orderBy(desc(event.created_at), desc(event.id))
+    .limit(1);
+  return appeal?.id ?? null;
 }
 async function readSyncJudged(
   database: Db | Tx,

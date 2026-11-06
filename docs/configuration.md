@@ -16,7 +16,7 @@ compose 的 `migrate` / `app` / `worker` 都从 `.env` 取环境，`cloudflared`
 | --- | --- | --- | --- |
 | `DATABASE_URL` | app、worker、脚本 | 必填；缺失时 `src/db/client.ts` 启动即抛错 | `src/server/config/env.ts`；`src/db/client.ts` |
 | `API_PORT` | app | `8787`；非正整数抛错 | `src/server/config/env.ts` |
-| `DEV_PORT` | `pnpm dev:local` | 未设时自动探测 8788 起首个空闲的 127.0.0.1 端口；作为 `API_PORT` 传给 dev 的 API 进程，并把 dev worker 的 `WORKSHEET_RENDER_APP_ORIGIN` 指到同一端口。避开 TEST app 容器占用的 :8787 | `scripts/dev-local.ts` |
+| `DEV_PORT` | `pnpm dev:local` | 未设时自动探测 8788 起首个空闲的 127.0.0.1 端口；作为 `API_PORT` 传给 dev 的 API 进程，并把 dev worker 的 `WORKSHEET_RENDER_APP_ORIGIN` 指到同一端口。避开 TEST 占用的 :8787（本机由 NAS 中继监听） | `scripts/dev-local.ts` |
 | `DEV_DB_NAME` | `pnpm dev:local`、`pnpm dev:reset` | 未设时按 worktree 根路径派生 `loom_dev_<name>_<sha1(path)前8>`；覆盖后 dev:local 用该库名，dev:reset 仍只接受 `loom_dev_*` | `scripts/dev-worktree-db.ts` |
 | `RW_WORKER` | app | `1` 时同进程启动 pg-boss worker | `server/index.ts` |
 | `RW_FRONTDOOR` | app | `1` 时启用 Start 前门（需要 `dist/start`）；`dev` 仅 `dev:local` 使用，经 API 进程内的 Vite dev server 提供同一前门（HMR，不需要 `dist/start`）；未设时 app 只服务 Hono API | `server/index.ts`；`server/dev-frontdoor.ts` |
@@ -40,12 +40,12 @@ compose 的 `migrate` / `app` / `worker` 都从 `.env` 取环境，`cloudflared`
 
 ### AI provider 与模型选择
 
-全局 pin（`AI_PROVIDER_OVERRIDE` + `AI_PROVIDER_MODEL`）作用于非 typed 任务和 Mem0 提取/调和，但若某任务在 `system_config` 设了 `task.<kind>.override_global_pin=true` 且 provider/model 成对合法，则该任务走 task pair、压过全局 pin（`src/server/ai/providers.ts`）。模型端点 `base_url` 受 models.dev 目录端点 host allowlist 约束：内置 lane 的显式端点覆盖与 `custom_provider.base_url` 只能指向目录声明过的 host（另含代码声明的 anthropic/openai 直连根、Xiaomi Token Plan 三区、DashScope embedding 双端点与北京 workspace MaaS host `ws-tcvd1h9009b55vr0.cn-beijing.maas.aliyuncs.com`），在保存与执行解析边界报错；非默认端口必须由目录端点自身声明，否则拒绝；运维 env 端点（`MEM0_LLM_BASE_URL`、`MEM0_EMBEDDING_BASE_URL`、`MIMO_VISION_BASE_URL`、`XIAOMI_TOKEN_PLAN_BASE_URL`）同过该校验，不在白名单即拒绝发送；`custom_provider.api_key_env` 还与 provider 绑定——内置 provider 的凭据 env 只能发给自家端点，内置端点也只收自家凭据 env（跨 provider 配置被拒，YUK-1654）。Mem0 全局 pin 的端点同过该校验；该约束只作用于模型端点，不影响 agent 的网页浏览 / fetch 工具（`src/core/config/model-endpoint-allowlist.ts`；`src/server/ai/model-catalog.ts`）。`MEM0_LLM_*` 只在没有全局 pin 时生效（`src/server/ai/mem0/llm-config.ts`）。`.env.example` 当前把这对值写成 `opencode-go` / `mimo-v2.6-pro`（`.env.example`）。Mem0 在 app（读）与 worker（写）进程内运行，compose 没有独立 mem0 服务；embedding 维度必须与 pgvector 列一致（`docker-compose.yml`；`src/server/ai/mem0/client.ts`）。`openrouter` lane 同时服务 typed 判分（原生 decisions 端点）和 chat/agent 任务（pi OpenAI-compatible 传输，凭据同 `OPENROUTER_API_KEY`）；本地 dev 想用便宜模型跑对话/agent 任务，见下方「本地 dev 用 OpenRouter 便宜模型」；OCR 由 `EXTRACT_OCR_ENGINE` 在 `glm`/`tencent` 两套实现间选择（`src/server/ai/providers.ts`；`registry`；`src/capabilities/ingestion/server/tencent_mark.ts`）。
+全局 pin（`AI_PROVIDER_OVERRIDE` + `AI_PROVIDER_MODEL`）作用于非 typed 任务和 Mem0 提取/调和，但若某任务在 `system_config` 设了 `task.<kind>.override_global_pin=true` 且 provider/model 成对合法，则该任务走 task pair、压过全局 pin（`src/server/ai/providers.ts`）。模型端点 `base_url` 受 models.dev 目录端点 host allowlist 约束：内置 lane 的显式端点覆盖与 `custom_provider.base_url` 只能指向目录声明过的 host（另含代码声明的 anthropic/openai 直连根、Xiaomi Token Plan 三区、DashScope embedding 双端点与北京 workspace MaaS host `ws-tcvd1h9009b55vr0.cn-beijing.maas.aliyuncs.com`），在保存与执行解析边界报错；非默认端口必须由目录端点自身声明，否则拒绝；运维 env 端点（`MEM0_LLM_BASE_URL`、`MEM0_EMBEDDING_BASE_URL`、`MIMO_VISION_BASE_URL`、`XIAOMI_TOKEN_PLAN_BASE_URL`）同过该校验，不在白名单即拒绝发送；`custom_provider.api_key_env` 还与 provider 绑定——内置 provider 的凭据 env 只能发给自家端点，内置端点也只收自家凭据 env（跨 provider 配置被拒，YUK-1654）。Mem0 全局 pin 的端点同过该校验；该约束只作用于模型端点，不影响 agent 的网页浏览 / fetch 工具（`src/core/config/model-endpoint-allowlist.ts`；`src/server/ai/model-catalog.ts`）。`MEM0_LLM_*` 只在没有全局 pin 时生效（`src/server/ai/mem0/llm-config.ts`）。`.env.example` 当前把这对值写成 `opencode-go` / `deepseek-v4.1-flash`（`.env.example`）。Mem0 在 app（读）与 worker（写）进程内运行，compose 没有独立 mem0 服务；embedding 维度必须与 pgvector 列一致（`docker-compose.yml`；`src/server/ai/mem0/client.ts`）。`openrouter` lane 同时服务 typed 判分（原生 decisions 端点）和 chat/agent 任务（pi OpenAI-compatible 传输，凭据同 `OPENROUTER_API_KEY`）；本地 dev 想用便宜模型跑对话/agent 任务，见下方「本地 dev 用 OpenRouter 便宜模型」；OCR 由 `EXTRACT_OCR_ENGINE` 在 `glm`/`tencent` 两套实现间选择（`src/server/ai/providers.ts`；`registry`；`src/capabilities/ingestion/server/tencent_mark.ts`）。
 
 | 键 | 谁读 | 未设置时 | 出处 |
 | --- | --- | --- | --- |
 | `AI_PROVIDER_OVERRIDE` | app、worker | 走 task registry 默认 provider；未知 provider 抛错 | `src/server/ai/providers.ts`；`registry` |
-| `AI_PROVIDER_MODEL` | app、worker | 与 `AI_PROVIDER_OVERRIDE` 一起用：多数非 mimo lane（如 `opencode-go`/`openai`/`anthropic`）必须显式设可服务的 model，否则拒绝（task 默认常是 mimo id）；`xiaomi` 可复用默认；`anthropic-sub` 有自带 Opus 默认 | `src/server/ai/providers.ts` |
+| `AI_PROVIDER_MODEL` | app、worker | 与 `AI_PROVIDER_OVERRIDE` 一起用：除 `anthropic-sub`（自带 Opus 默认）外，provider-only pin 必须显式设可服务的 model，不能借用另一 provider 的 task 默认 | `src/server/ai/providers.ts` |
 | `ANTHROPIC_API_KEY` | app、worker | 选中 `anthropic` 时必需，缺失抛错 | `src/server/ai/providers.ts` |
 | `CLAUDE_CODE_OAUTH_TOKEN` | app、worker | 选中 `anthropic-sub` 时必需 | `src/server/ai/providers.ts` |
 | `CLAUDE_CODE_MAX_RETRIES` | app、worker | `2` | `registry` |
@@ -63,8 +63,8 @@ compose 的 `migrate` / `app` / `worker` 都从 `.env` 取环境，`cloudflared`
 | `VERIFY_SOLVE_MODEL_OVERRIDE` | app、worker | 用 provider 默认 model | `registry`；`src/capabilities/practice/question-bank/server/quiz/solve-lane.ts` |
 | `VISION_JUDGE_PROVIDER` | app、worker | 不启用 vision lane override，走常规解析链 | `registry`；`src/server/ai/vision-judge-config.ts` |
 | `VISION_JUDGE_MODEL` | app、worker | 用 provider/lane 默认 model | `registry`；`src/server/ai/vision-judge-config.ts` |
-| `MIMO_VISION_BASE_URL` | 脚本（vision/ingestion preflight） | `https://api.xiaomimimo.com/anthropic`（host 须过模型端点 allowlist）；Token Plan pin 下由 lane URL 推导，显式值只接受 `token-plan-<region>.xiaomimimo.com` | `scripts/preflight-vision.ts`；`src/server/ai/xiaomi-token-plan.ts` |
-| `MIMO_VISION_MODEL` | 脚本（vision/ingestion preflight） | 用解析后的 vision-judge 默认模型 | `scripts/preflight-vision.ts` |
+| `MIMO_VISION_BASE_URL` | 脚本（vision/ingestion preflight） | 用解析后的 vision-judge lane endpoint；显式值 host 须过模型端点 allowlist；Token Plan pin 下只接受 `token-plan-<region>.xiaomimimo.com` | `scripts/preflight-vision.ts`；`src/server/ai/xiaomi-token-plan.ts` |
+| `MIMO_VISION_MODEL` | 脚本（vision/ingestion preflight） | 用解析后的 vision-judge task model | `scripts/preflight-vision.ts` |
 
 #### 本地 dev 用 OpenRouter 便宜模型
 

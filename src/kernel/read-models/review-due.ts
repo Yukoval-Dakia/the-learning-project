@@ -2,7 +2,11 @@
 // failures). Non-LLM read paths call this reader so the predicate stays single-sourced;
 // Practice binds it at API and worker startup. No events are written.
 
-import { HostOperationNotInstalledError } from '@/kernel/host-operation';
+import {
+  HostOperationNotInstalledError,
+  installHostOperation,
+  installedHostOperation,
+} from '@/kernel/host-operation';
 import type { ToolContext } from '@/kernel/tools/types';
 
 export interface ReviewDueQuery {
@@ -33,20 +37,21 @@ export interface ReviewDueQueue {
 
 export type ReviewDueReader = (ctx: ToolContext, query: ReviewDueQuery) => Promise<ReviewDueQueue>;
 
-let installedReader: ReviewDueReader | undefined;
+const READER_SLOT = 'kernel/read-models/review-due:reader';
 
 export function installReviewDueReader(reader: ReviewDueReader): void {
-  installedReader = reader;
+  installHostOperation(READER_SLOT, reader);
 }
 
 export async function executeGetReviewDue(
   ctx: ToolContext,
   query: ReviewDueQuery,
 ): Promise<ReviewDueQueue> {
-  if (!installedReader) {
+  const reader = installedHostOperation<ReviewDueReader>(READER_SLOT);
+  if (!reader) {
     throw new HostOperationNotInstalledError(
       'review-due reader is not installed; call installPracticeHostOperations at startup',
     );
   }
-  return installedReader(ctx, query);
+  return reader(ctx, query);
 }

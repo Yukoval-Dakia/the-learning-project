@@ -36,7 +36,7 @@ export function judgeDurableEnabled(): boolean {
  * RunTaskCtx.override（providers.ts resolveTaskProvider 既有 per-call seam），不发明
  * 新 plumbing。仅在最后一次重投应用（有界：付费调用 ≤ 1 + JOB_RETRY_LIMIT）。
  *
- * 返回 undefined ⇒ 不切 provider（保持默认 mimo lane）。
+ * 返回 undefined ⇒ 不切 provider（保持当前 task 的 resolved default lane）。
  *
  * #3 — provider 名经 real 校验（isKnownProvider + isProviderImplemented +
  * providerRequiresExplicitModel，全部 单一真源谓词），但**非法配置降级+log、
@@ -47,7 +47,7 @@ export function judgeDurableEnabled(): boolean {
  * 「可用」的三道闸（全过才切）：① 名字是已知 provider；② 该 provider 真接了 endpoint
  * （非 reserved）；③ 它的 registry 默认 model 可直接跑——本 lane 只递 provider、不递
  * model，故 providerRequiresExplicitModel 为真的 provider（anthropic / zhipu）在这里
- * 判为不可用（否则 resolveTaskProvider 会把它和 mimo model id 配对 → 必然失败）。
+ * 判为不可用（否则 resolveTaskProvider 会把它和 task registry model id 配对 → 必然失败）。
  */
 export function judgeFallbackProvider(): Provider | undefined {
   const resolved = getConfig('JUDGE_FALLBACK_PROVIDER');
@@ -67,9 +67,9 @@ export function judgeFallbackProvider(): Provider | undefined {
     );
     return undefined;
   }
-  // #4 a provider whose registry-default model is the mimo id (anthropic / zhipu)
+  // #4 a provider that cannot self-supply a runnable model
   // is NOT runnable from a provider-only override: `resolveTaskProvider` would pair that
-  // provider's endpoint with the registry's mimo model and 404. This lane hands
+  // provider's endpoint with this task's registry model and fail. This lane hands
   // `RunTaskCtx.override` a provider WITHOUT a model, so such a provider is unusable here.
   // Reuse the single-source predicate (/ #1062) rather than re-deriving the rule:
   // no model env exists for this fallback, so degrade (warn + no fallback) instead of
@@ -87,7 +87,7 @@ export function judgeFallbackProvider(): Provider | undefined {
  * 跨 provider 兜底的 lane 决策：仅在 durable 重试的**最后一次**投递上切 fallback
  * provider，且该 provider 的 lane 就绪（凭据配齐）才切（未配则保持默认 lane，绝不
  * 因缺 token 把最后一次重投也判死 → 有界降级）。attempt 序列（JOB_RETRY_LIMIT=2）：
- * retryCount 0 = mimo（首发）、1 = mimo（transient 重投）、2 = anthropic-sub（终局）。
+ * retryCount 0 = default lane（首发）、1 = default lane（transient 重投）、2 = configured fallback（终局）。
  */
 export function resolveDurableProviderOverride(params: {
   retryCount: number;

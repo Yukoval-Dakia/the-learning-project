@@ -33,9 +33,9 @@ export function createAdminConfigWriter(db: Db = defaultDb): AdminConfigWriter {
         for (const kind of VISION_JUDGE_TASK_KINDS) taskKinds.add(kind);
       if (/^lane\.verify_solve\.(provider|model)$/.test(mutation.key))
         for (const kind of SOLVE_LANE_TASK_KINDS) taskKinds.add(kind);
-      if (mutation.key === 'lane.global.provider' || mutation.key === 'lane.global.model')
-        globalTouched = true;
+      if (mutation.key.startsWith('lane.global.')) globalTouched = true;
     }
+    if (globalTouched) for (const kind of Object.keys(tasks)) taskKinds.add(kind as TaskKind);
     const effectiveTasks: Record<string, AdminConfigTaskEffectiveBinding> = {};
     for (const kind of taskKinds) effectiveTasks[kind] = resolveAdminTaskEffective(kind);
     return {

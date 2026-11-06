@@ -48,8 +48,6 @@ export const solutionGenerateTaskSpec = {
     kind: 'SolutionGenerateTask',
     description:
       'YUK-193 — Generate a reference solution + worked solution for a bare question that has no rubric_json.reference_solution. Output = RubricReferenceSolution (expected_signals + final_answer + answer_equivalents) + worked_solution_md. The solve orchestrator writes it merge-preserving into rubric_json + reference_md so the shipped StepsJudge/SemanticJudge can grade real ingested questions. Single structured-output call, text-only (the question prompt is already text; figures are passed as a textual hint, not images — vision extraction is out of scope).',
-    defaultProvider: 'xiaomi',
-    defaultModel: 'mimo-v2.5-pro',
     budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1, timeout: 90_000 },
     needsToolCall: false,
     isMultimodal: false,
@@ -71,8 +69,6 @@ export const solutionGenerateVisionTaskSpec = {
     kind: 'SolutionGenerateVisionTask',
     description:
       'YUK-727 — Vision-capable sibling of SolutionGenerateTask for image-bearing questions. It consumes the same JSON/output contract plus attached prompt images so source_verify can independently solve a figure-dependent draft before promotion.',
-    defaultProvider: 'xiaomi',
-    defaultModel: 'mimo-v2.5',
     budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1, timeout: 90_000 },
     needsToolCall: false,
     isMultimodal: true,

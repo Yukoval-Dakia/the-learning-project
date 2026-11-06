@@ -27,13 +27,13 @@
 // `parseLimit` — stays importable in the unit test without a DATABASE_URL.
 import './load-env';
 
+import type { FailureLearningBossSend } from '@/capabilities/practice/failure-learning/public';
 // YUK-1064 CLI exception: this one-off backfill keeps its pure limit parser
 // importable without a DB URL. A value import from practice/public pulls app runtime.
 import {
   type EnqueueAttributionFollowupFn,
   runLostAttributionBackfill,
 } from '@/capabilities/practice/failure-learning/server/lost-attribution-backfill';
-import type { FailureLearningBossSend } from '@/capabilities/practice/public';
 
 export const DEFAULT_LIMIT = 25;
 const SIX_HOURS_MS = 6 * 60 * 60 * 1000;

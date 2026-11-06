@@ -76,7 +76,7 @@ import {
   fenceJudgeUnitClaim,
   requireJudgeRunOpen,
 } from '../judge-operational';
-import { currentModelPins, gradingSliceMatchesLivePin } from '../model-slice-registry';
+import { gradingSliceMatchesLivePin, taskKindHasModelPin } from '../model-slice-registry';
 import { createPiModelExecutor } from '../pi-model-executor';
 import { createRubricModelExecutor } from '../rubric-model-executor';
 import { createRecordedModelExecutor } from './recorded-model-executor';
@@ -239,10 +239,10 @@ export function createFormalModelExecutor(
   );
   return async (request, signal) => {
     const sliceId = request.executor.admitted_slice_id;
-    // 只有登记处钉了 pin 的 task kind（细则 / Jev）才在付费前复核切片。
-    // AssessmentRuleJudgeTask 不在这张 pin 表里；它的切片 id 是历史占位，
-    // 拦下来会让规则判分在 claim 之前直接扣留。
-    if (sliceId !== null && currentModelPins().has(request.executor.task_kind)) {
+    // 只有登记处钉了 pin 的 task kind 才在付费前复核切片；成员判定用静态注册表
+    // （taskKindHasModelPin），不是 currentModelPins()——配置行失效的 kind 必须
+    // 照样进门，由 gradingSliceMatchesLivePin 给出可读的 unjudgeable。
+    if (sliceId !== null && taskKindHasModelPin(request.executor.task_kind)) {
       const decision = await gradingSliceMatchesLivePin(db, sliceId, request.executor.task_kind);
       if (!decision.ok) {
         return {
@@ -268,16 +268,31 @@ export function createAdmissionRunExecutor(
   deadlineAt: number,
   maxCostUsdMicros: number,
 ): ModelUnitExecutorPort | undefined {
+  if (taskKind === 'AssessmentRuleJudgeTask') {
+    return createPiModelExecutor({
+      db,
+      deadlineAt,
+      maxCostUsdMicros,
+      judgeRetryPolicy: 'none',
+      providerTransientRetry: true,
+    });
+  }
   if (taskKind === 'AssessmentRubricJudgeTask') {
     return createRubricModelExecutor({
       db,
       deadlineAt,
       maxCostUsdMicros,
       judgeRetryPolicy: 'none',
+      providerTransientRetry: true,
     });
   }
   if (taskKind === 'JevScoringDecisionTask') {
-    return createJevModelExecutor({ db, deadlineAt, judgeRetryPolicy: 'none' });
+    return createJevModelExecutor({
+      db,
+      deadlineAt,
+      judgeRetryPolicy: 'none',
+      providerTransientRetry: true,
+    });
   }
   return undefined;
 }
