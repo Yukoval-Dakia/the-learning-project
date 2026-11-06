@@ -16,6 +16,7 @@ import {
 } from '../../../../../tests/fixtures/native-solo-http';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { runJudgeRun } from '../jobs/judge_run';
+import { readJudgeRunStatus, readNativeJudgeSettled } from '../server/judge-run-observation';
 import { createAttempt } from './submit';
 
 vi.mock('@/kernel/background-job-enqueue', async (importOriginal) => {
@@ -115,6 +116,18 @@ describe('submit response carries the versioned crisis referral immediately', ()
         response_md: CRISIS_ANSWER,
       });
 
+      // Recovery faces project the same persisted mark — refresh/reopen never
+      // lose the referral. Pending settled carries it before grading lands.
+      const settledEarly = await readNativeJudgeSettled(db, submission.submission_id);
+      if (mode === 'durable') {
+        expect(settledEarly).toMatchObject({
+          kind: 'pending',
+          crisis_referral: { detection_class: 'explicit' },
+        });
+      } else if (settledEarly?.kind === 'terminal') {
+        expect(settledEarly.crisis_referral?.detection_class).toBe('explicit');
+      }
+
       if (mode === 'durable') {
         // Model failure after acceptance cannot revoke the already-returned
         // referral; a later successful delivery still settles the marked attempt.
@@ -129,6 +142,16 @@ describe('submit response carries the versioned crisis referral immediately', ()
           }),
         ).toMatchObject({ status: 'done' });
         expect(await db.select().from(material_fsrs_state)).toHaveLength(1);
+
+        // Settled terminal and the poll face carry the same mark-derived referral.
+        const settledLate = await readNativeJudgeSettled(db, submission.submission_id);
+        expect(settledLate).toMatchObject({
+          kind: 'terminal',
+          crisis_referral: { detection_class: 'explicit' },
+        });
+        const polled = await readJudgeRunStatus(db, job.run_id);
+        if (polled.kind !== 'found') throw new Error('expected a found terminal run');
+        expect(polled.value.result?.crisis_referral?.detection_class).toBe('explicit');
       }
     },
   );
