@@ -62,7 +62,9 @@ const ENDURANCE_PREFIX_ZH =
   '一直|总是|老是|快要|也|还|又|都|很|太|可能|也许|大概|有点|有些|确实|的确|早|' +
   '终于|反正|说实话|说真的|讲真的|老实说|不知道为什么|不知为何|总之|今晚|今天|' +
   '昨天|明天|每天这样|每天|天天|老师|救命|救救我|帮帮我|帮帮忙|各位)?';
-const ENDURANCE_TAIL = `(?=$|[${CLAUSE_BOUNDARY_ZH}]|了|的|吗|呢|吧|啊|呀|哈|哦|唉|哎|呜|啦|咯|嘛|么)`;
+// A bare 的 counts as a tail only at an utterance/clause end — "我扛不住的箱子"
+// is an attributive object, not an endurance collapse.
+const ENDURANCE_TAIL = `(?=$|[${CLAUSE_BOUNDARY_ZH}]|了|吗|呢|吧|啊|呀|哈|哦|唉|哎|呜|啦|咯|嘛|么|的(?=$|[${CLAUSE_BOUNDARY_ZH}]))`;
 const ENDURANCE_VERB_ZH = '(?:撑|熬|挺|坚持|扛|顶)不(?:下去|住|动|了了)';
 const PERSON_ANCHOR_ZH =
   '(?:我|俺|咱|自己|本人|老子|老娘|我们|咱们|偶|人家|朕|吾|吾辈|本宝宝|这边)';
@@ -84,14 +86,16 @@ const DEATH_TERMS_ZH =
 // cause — "i wanna die" hits, "i wanna die of boredom" does not.
 const EN_DIE_TAIL = '(?! *(?:of|from|because|laughing|bored|in this|when))';
 const EN_END_IT_TAIL = '(?! *(?:with|a|the|by|in|on|at|before|when|using|through|to))';
+// English terms carry full word boundaries so substrings inside ordinary words
+// stay out ("want to diet", "skill myself", "defend my life", "spend it all").
 const DEATH_TERMS_EN = new RegExp(
-  '(kill myself|killing myself|end my life|ending my life|' +
+  '(\\b(?:kill myself|killing myself|end my life|ending my life|' +
     'want to die|wanted to die|suicidal|better off dead|' +
     "not want to live|don't want to live|dont want to live|do not want to live|" +
     "not want to be alive|don't want to be alive|dont want to be alive|" +
-    'do not want to be alive|\\bend it all|' +
-    `i\\b.{0,24}?\\b(?:wanna|gonna|going to) (?:die${EN_DIE_TAIL}|end it${EN_END_IT_TAIL}|kill myself)|` +
-    `i\\b.{0,24}?\\bwant(?:ed)? to end it${EN_END_IT_TAIL})`,
+    'do not want to be alive|end it all)\\b|' +
+    `i\\b.{0,24}?\\b(?:wanna|gonna|going to) (?:die\\b${EN_DIE_TAIL}|end it\\b${EN_END_IT_TAIL}|kill myself)|` +
+    `i\\b.{0,24}?\\bwant(?:ed)? to end it\\b${EN_END_IT_TAIL})`,
 );
 const JOKE_SIGNALS = /(😂|🤣|哈哈哈|hhhh|233|笑死|梗|烂梗)/;
 const IRONIC_DEATH_TERMS =
@@ -106,23 +110,23 @@ export const CRISIS_GUARD_CONFIG: CrisisGuardConfig = {
     // Intent-gated methods; third-party why-questions are released by code, not here.
     /(?:想|要|打算|准备|敢|去).{0,4}(?:自杀|安乐死)/,
     // English equivalent: intent phrases, not bare suicide; suicidal is self-description.
-    /((going to|gonna|want to|plan(ning)? to|tried to|attempt(ing)? to|about to) commit suicide|suicide method|how to suicide)/,
+    /\b((going to|gonna|want to|plan(ning)? to|tried to|attempt(ing)? to|about to) commit suicides?|suicide methods?|how to suicide)\b/,
     // Method inquiry: dose/count × drug × lethal outcome.
     /吃多少.{0,10}(片|颗|粒).{0,10}(死|致死|致命|没命)/,
     /(安眠药|褪黑素|药物).{0,12}(死|致死|致命|吃死|吞|过量)/,
     /(多少|几).{0,8}(片|颗|瓶).{0,12}(会|能|才).{0,6}(死|致死)/,
-    /how many.{0,24}(pills|tablets|mg).{0,24}(die|kill|dead|lethal|overdose)/,
+    /how many.{0,24}\b(pills|tablets|mgs?)\b.{0,24}\b(die|kills?|dead|lethal|overdose)\b/,
     // Intent-gated methods: "物体从楼上跳下去做自由落体" stays none; "我想跳楼" is explicit.
     /(想|好想|打算|准备|试着|尝试|敢).{0,6}(跳楼|跳下去|割腕|烧炭|上吊)/,
     /(我想|我要).{0,8}(跳楼|跳下去|割腕|烧炭|上吊)/,
     // Intent-gated; a completed large ingestion counts as crisis regardless of person.
     /(想|好想|打算|准备|试着|尝试).{0,6}(吃很多药|吃好多药|吃一大把药|吞药)/,
     /(吞|吃)下?(一大把|一整瓶|整瓶).{0,4}(药|片|安眠药|褪黑素)/,
-    /(jump off|hang myself|hurt myself|self[- ]harm|cut myself)/,
+    /\b(jump off|hang myself|hurt myself|self[- ]harm|cut myself)\b/,
     // No factive frame gate: method-shopping phrasing always hits, so academic
     // "海明威是怎么死的" is a documented known false positive, not a released miss.
     /(?:怎么死|怎么自杀|如何自杀|自杀方法|自杀方式|自杀工具)/,
-    /how to (die|kill myself|commit suicide)/,
+    /how to (die|kill myself|commit suicide)\b/,
   ],
 
   indirect_patterns: [
@@ -177,9 +181,9 @@ export const CRISIS_GUARD_CONFIG: CrisisGuardConfig = {
     // "bear it"/"stand it" are not terms.
     /i can'?t hold on(?! *to)(?: anymore| any longer| like this| living| like that)*(?=\s*(?:$|[.!?;]))/,
     /i can'?t (?:go on|keep going)(?: anymore| any longer| like this| living| like that)*(?=\s*(?:$|[.!?;]))/,
-    /giv(?:e|ing) up on (?:life|everything|myself|the world)/,
-    /feel like (?:giving up|disappearing)|no reason to (?:live|go on)|can'?t (?:take|do) (?:this|it) anymore|want (?:it to end|to disappear)/,
-    /i (?:feel|am) (?:empty|hopeless|worthless)|nothing matters anymore/,
+    /giv(?:e|ing) up on (?:life|everything|myself|the world)\b/,
+    /feel like (?:giving up|disappearing)|no reason to (?:live|go on)\b|can'?t (?:take|do) (?:this|it) anymore\b|want (?:it to end|to disappear)\b/,
+    /i (?:feel|am) (?:empty|hopeless|worthless)\b|nothing matters anymore\b/,
   ],
 
   quoted_ironic_patterns: [

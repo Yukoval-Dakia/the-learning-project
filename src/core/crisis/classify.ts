@@ -94,7 +94,7 @@ const QUESTION_BOUNDARY_EN = '，。！？；、：…—·.,!?;:';
 // utterance — any word after it means no release ("why does he want to die im
 // the same" stays a hit, the pronoun list can't cover every colloquial form).
 const EN_TERM_AT_END_RE =
-  /\b(?:want(?:ed)? to die|wanna die|gonna die|going to die|kill(?:ing)? myself|end(?:ing)? my life|end it all|end it|commit suicide|suicide|suicidal|better off dead|self[- ]?harm|hurt(?:ing)? myself|no reason to live|not want to live|don'?t want to live|do not want to live|not want to be alive|don'?t want to be alive|do not want to be alive|give up on life|die|dying|dead|kill)[\s.,!?;:，。？！；：…—·、]*$/;
+  /\b(?:want(?:ed)? to die|wanna die|gonna die|going to die|kill(?:ing)? myself|end(?:ing)? my life|end it all|end it|commit suicide|suicide|suicidal|better off dead|self[- ]?harm|hurt(?:ing)? myself|no reason to live|not want to live|don'?t want to live|do not want to live|not want to be alive|don'?t want to be alive|do not want to be alive|give up on life|die|dying|dead|kill)\b[\s.,!?;:，。？！；：…—·、]*$/;
 
 function stripWhyQuestion(text: string, pattern: RegExp, isEn: boolean): string {
   const match = pattern.exec(text);
