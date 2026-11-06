@@ -1,3 +1,5 @@
+import { existsSync } from 'node:fs';
+
 import { devDatabaseName } from './dev-worktree-db';
 
 export interface LocalEnvInput {
@@ -103,11 +105,16 @@ function encode(value: string): string {
   return encodeURIComponent(value);
 }
 
-// Loopback hostnames (WHATWG URL keeps brackets on IPv6). The raw-DATABASE_URL
+// Loopback hosts. The WHATWG URL parser does not normalize the host of a
+// non-special scheme like postgres:// (`LOCALHOST` and `localhost.` stay as
+// written), so compare lowercased and without the root dot. The raw-DATABASE_URL
 // guard below only refuses targets on a loopback host: containers and release
 // hosts connect via service names (`postgres:5432`) or remote addresses and
 // must pass untouched.
-const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(['127.0.0.1', 'localhost', '[::1]']);
+function isLoopbackHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/\.$/, '');
+  return host === 'localhost' || host === '[::1]' || /^127(?:\.\d{1,3}){3}$/.test(host);
+}
 
 // TEST-target judgment for scripts that read DATABASE_URL directly (drizzle-kit
 // db:* via drizzle.config.ts, worker:dev, and every CLI importing
@@ -127,7 +134,7 @@ export function testDatabaseUrlRefusalReason(
   } catch {
     return null;
   }
-  if (!LOOPBACK_HOSTS.has(url.hostname)) return null;
+  if (!isLoopbackHost(url.hostname)) return null;
   const port = parsedPort(url.port);
   if (TEST_DB_PORT_NUMBERS.includes(port)) {
     return `loopback port ${url.port} (parses to ${port}) is a TEST Postgres port (${TEST_DB_PORTS.join('/')})`;
@@ -165,6 +172,47 @@ export function guardDatabaseUrl(label: string, env: LocalEnvInput = process.env
     );
     process.exit(1);
   }
+}
+
+// The TEST app relay owns 8787 on this Mac (scripts/test-nas/relay.py). A dev
+// API that binds it can coexist with the relay: the relay holds 127.0.0.1 while
+// `serve()` without a hostname takes the IPv6 wildcard, so both listen and
+// people silently reach the wrong app. Docker images legitimately listen on
+// 8787 (Dockerfile sets API_PORT=8787 and EXPOSE 8787) and Docker marks itself
+// with /.dockerenv, which is how the guard tells a container from this Mac.
+// DEV_ALLOW_TEST_DB=1 only relaxes the database target and does not bypass this.
+export const TEST_APP_RELAY_PORT = 8787;
+
+export function isContainerRuntime(): boolean {
+  return existsSync('/.dockerenv');
+}
+
+export function devApiPortRefusalReason(
+  rawPort: string | number | undefined,
+  inContainer: boolean = isContainerRuntime(),
+): string | null {
+  if (inContainer) return null;
+  const port = typeof rawPort === 'number' ? rawPort : parsedPort(rawPort);
+  if (port !== TEST_APP_RELAY_PORT) return null;
+  return `port ${TEST_APP_RELAY_PORT} is the TEST app relay's port (scripts/test-nas/relay.py)`;
+}
+
+// Fail-closed entry for local dev API launches: exits before the socket binds.
+// `label` names the entry in the message; containers return immediately.
+export function guardDevApiPort(
+  rawPort: string | number | undefined,
+  label: string,
+  inContainer: boolean = isContainerRuntime(),
+): void {
+  const reason = devApiPortRefusalReason(rawPort, inContainer);
+  if (!reason) return;
+  console.error(
+    `[${label}] refusing to bind: ${reason}.\n` +
+      `[${label}] Pick another port: API_PORT=8788 (dev:local: DEV_PORT=8788), ` +
+      'or run `pnpm dev:local` — it takes the first free 127.0.0.1 port from 8788.\n' +
+      `[${label}] DEV_ALLOW_TEST_DB=1 does not bypass this; container images set API_PORT=8787 and keep working.`,
+  );
+  process.exit(1);
 }
 
 export function localDatabaseUrl(target: LocalDbTarget): string {

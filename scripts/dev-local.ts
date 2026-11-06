@@ -4,7 +4,12 @@ import { createServer as createNetServer } from 'node:net';
 import { config } from 'dotenv';
 import { CODE_CONTRACT_EPOCH } from '@/server/migration/contract-epoch/rules';
 import { devDatabaseName } from './dev-worktree-db';
-import { buildLocalDatabaseUrl, buildLocalDevEnv, testDbRefusalReason } from './local-db-env';
+import {
+  buildLocalDatabaseUrl,
+  buildLocalDevEnv,
+  guardDevApiPort,
+  testDbRefusalReason,
+} from './local-db-env';
 
 // YUK-365 (Codex review P2, Finding 2): load .env.local BEFORE .env, both
 // non-overriding, so the AI provider toggle (AI_PROVIDER_OVERRIDE /
@@ -38,6 +43,9 @@ async function firstFreePort(from: number): Promise<number> {
   throw new Error(`[dev-local] no free 127.0.0.1 port in ${from}–${from + 99}`);
 }
 const devPort = process.env.DEV_PORT ?? String(await firstFreePort(8788));
+// An explicit DEV_PORT=8787 bypasses firstFreePort's skip; refuse it before any
+// Docker/DB work. DEV_ALLOW_TEST_DB=1 does not relax this (TEST relay port).
+guardDevApiPort(devPort, 'dev-local');
 const devOrigin = `http://127.0.0.1:${devPort}`;
 
 // Dev runs against the shared dev Postgres container (docker-compose.dev.yml: :5434,
