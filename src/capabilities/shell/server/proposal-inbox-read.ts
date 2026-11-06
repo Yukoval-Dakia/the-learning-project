@@ -61,8 +61,7 @@ export async function readProposalInbox(db: Db, input: unknown = {}) {
     {
       rows,
       next_cursor: page.next_cursor,
-      // Resolved in the API process (hydrated snapshot); the Start bundle's own
-      // config copy is never hydrated, so readers must not import this there.
+      // Resolved in the API process, where the config snapshot is hydrated.
       auto_apply_enabled: proposalAutoApplyEnabled(),
     },
   );

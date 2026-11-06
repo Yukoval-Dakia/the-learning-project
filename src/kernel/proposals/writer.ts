@@ -116,6 +116,19 @@ function eventShapeForProposal(payload: AiProposalPayloadT): {
   }
 }
 
+/**
+ * Producers may override the raw event payload, but eligibility is the writer's
+ * decision alone: a caller-supplied `auto_apply` would otherwise survive the
+ * switch-off branch and become selectable later.
+ */
+function overridePayloadWithoutReservedFields(
+  payload: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  const copy = { ...(payload ?? {}) };
+  delete copy.auto_apply;
+  return copy;
+}
+
 export async function writeAiProposal(db: DbLike, input: WriteAiProposalInput): Promise<string> {
   const payload = parseAiProposalPayload(input.payload);
   // One deterministic gate for every producer: the learner-facing line may not
@@ -128,7 +141,7 @@ export async function writeAiProposal(db: DbLike, input: WriteAiProposalInput): 
         subject_kind: input.event_override.subject_kind,
         subject_id: input.event_override.subject_id ?? proposalSubjectId(payload),
         event_payload: {
-          ...(input.event_override.payload ?? {}),
+          ...overridePayloadWithoutReservedFields(input.event_override.payload),
           ai_proposal: payload,
         },
       }

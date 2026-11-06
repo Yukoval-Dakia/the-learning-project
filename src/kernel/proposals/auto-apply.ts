@@ -315,6 +315,9 @@ async function backfillMissingAnchors(
   const rows = await loadMissingAnchors(db, now, limit, lookbackMs);
   let written = 0;
   for (const row of rows) {
+    // A switch flip during the read must stop the remaining writes; backfilled
+    // anchors are the lane's own output and the next enabled sweep would redo them.
+    if (!proposalAutoApplyEnabled()) break;
     const payload = proposalFromPayload(row.payload);
     if (!payload) {
       await writeSkippedAnchorSafe(db, row.id, 'ineligible', breaker, {
@@ -393,7 +396,16 @@ export async function runProposalAutoApplySweep(
 
   let applied = 0;
   let skipped = 0;
+  let stoppedBySwitch = false;
   for (const candidate of candidates) {
+    // Re-read before every item. The entry check only covers the wait for the
+    // breaker/backfill/candidate queries; a switch flipped mid-sweep must not
+    // accept or write skip anchors (a skip would permanently return the row to
+    // human review). An accept already dispatched cannot be recalled.
+    if (!proposalAutoApplyEnabled()) {
+      stoppedBySwitch = true;
+      break;
+    }
     if (candidate.actorKind !== 'agent') {
       await writeSkippedAnchorSafe(db, candidate.id, 'ineligible', breaker, {
         detail: 'actor_not_agent',
@@ -425,6 +437,12 @@ export async function runProposalAutoApplySweep(
       continue;
     }
 
+    // Second read after the possibly slow ineligible/breaker branches and right
+    // before the decision write, so a mid-loop flip stops before any accept.
+    if (!proposalAutoApplyEnabled()) {
+      stoppedBySwitch = true;
+      break;
+    }
     let acceptError: unknown = null;
     try {
       await accept(db, {
@@ -525,7 +543,13 @@ export async function runProposalAutoApplySweep(
   }
 
   if (applied === 0 && skipped === 0 && backfilled === 0) {
-    return { outcome: 'idle', applied, skipped, backfilled, breaker };
+    return {
+      outcome: stoppedBySwitch ? 'disabled' : 'idle',
+      applied,
+      skipped,
+      backfilled,
+      breaker,
+    };
   }
   return {
     outcome: applied > 0 || backfilled > 0 ? 'applied' : 'skipped',
