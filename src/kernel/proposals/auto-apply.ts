@@ -1,13 +1,18 @@
 // Proposal auto-apply lane: the single generic executor behind strength A.
 //
 // Flow per proposal: the producer still writes the normal `propose` event first
-// (writer stamps `payload.auto_apply` from the kind strength *at creation time*,
-// which is also the non-retroactive switch: rows written before the tier flip
+// (writer stamps `payload.auto_apply` from the kind strength *at creation time*
+// only while the PROPOSAL_AUTO_APPLY_ENABLED master switch is on; both the tier
+// and the switch are non-retroactive, so rows written before either turned on
 // carry no marker and stay pending). A scheduled sweep later accepts eligible
 // rows through the same decision protocol as the inbox, with the proposing
 // agent's real identity as the rate actor, then writes one generic anchor
 // (`experimental:auto_apply`) that the digest read model consumes. Retraction
 // stays the existing correct/retract lane; this module never undoes anything.
+//
+// Master switch off: the sweep returns before reading the breaker, accepting,
+// writing skip anchors or backfilling anchors. The pg-boss job stays registered,
+// so the switch takes effect through the normal 15s config refresh (no restart).
 //
 // Safety: the verdict-rate breaker is checked before every sweep and again per
 // apply against its max; rows the lane cannot apply are marked
@@ -46,7 +51,7 @@ import {
   checkAutoApplyBreaker,
   checkVerdictRateBreaker,
 } from './auto-apply-breaker';
-import { AUTO_APPLY_POLICY } from './auto-apply-marker';
+import { AUTO_APPLY_POLICY, proposalAutoApplyEnabled } from './auto-apply-marker';
 import { proposalDisplayTitle } from './presentation';
 import { proposalReasonPlainText } from './reason-text';
 
@@ -100,12 +105,13 @@ export interface AutoApplySweepOptions {
 }
 
 export interface AutoApplySweepResult {
-  readonly outcome: 'idle' | 'applied' | 'skipped';
+  readonly outcome: 'idle' | 'applied' | 'skipped' | 'disabled';
   readonly applied: number;
   readonly skipped: number;
   /** Cards whose accept committed earlier but whose anchor was missing. */
   readonly backfilled: number;
-  readonly breaker: VerdictBreakerResult;
+  /** null when the lane switch is off: nothing was read, applied or skipped. */
+  readonly breaker: VerdictBreakerResult | null;
 }
 
 type SkipReason = 'breaker_tripped' | 'apply_error' | 'ineligible';
@@ -309,6 +315,9 @@ async function backfillMissingAnchors(
   const rows = await loadMissingAnchors(db, now, limit, lookbackMs);
   let written = 0;
   for (const row of rows) {
+    // A switch flip during the read must stop the remaining writes; backfilled
+    // anchors are the lane's own output and the next enabled sweep would redo them.
+    if (!proposalAutoApplyEnabled()) break;
     const payload = proposalFromPayload(row.payload);
     if (!payload) {
       await writeSkippedAnchorSafe(db, row.id, 'ineligible', breaker, {
@@ -360,6 +369,11 @@ export async function runProposalAutoApplySweep(
   db: Db,
   options: AutoApplySweepOptions = {},
 ): Promise<AutoApplySweepResult> {
+  // Off is zero work: no accepts, no skip anchors, no anchor backfill. The job
+  // stays registered, so flipping the switch is hot (config refresh, no restart).
+  if (!proposalAutoApplyEnabled()) {
+    return { outcome: 'disabled', applied: 0, skipped: 0, backfilled: 0, breaker: null };
+  }
   const now = options.now ?? new Date();
   const limit = options.limit ?? AUTO_APPLY_SWEEP_LIMIT;
   const lookbackMs = options.lookbackMs ?? AUTO_APPLY_LOOKBACK_MS;
@@ -382,7 +396,16 @@ export async function runProposalAutoApplySweep(
 
   let applied = 0;
   let skipped = 0;
+  let stoppedBySwitch = false;
   for (const candidate of candidates) {
+    // Re-read before every item. The entry check only covers the wait for the
+    // breaker/backfill/candidate queries; a switch flipped mid-sweep must not
+    // accept or write skip anchors (a skip would permanently return the row to
+    // human review). An accept already dispatched cannot be recalled.
+    if (!proposalAutoApplyEnabled()) {
+      stoppedBySwitch = true;
+      break;
+    }
     if (candidate.actorKind !== 'agent') {
       await writeSkippedAnchorSafe(db, candidate.id, 'ineligible', breaker, {
         detail: 'actor_not_agent',
@@ -414,6 +437,12 @@ export async function runProposalAutoApplySweep(
       continue;
     }
 
+    // Second read after the possibly slow ineligible/breaker branches and right
+    // before the decision write, so a mid-loop flip stops before any accept.
+    if (!proposalAutoApplyEnabled()) {
+      stoppedBySwitch = true;
+      break;
+    }
     let acceptError: unknown = null;
     try {
       await accept(db, {
@@ -514,7 +543,13 @@ export async function runProposalAutoApplySweep(
   }
 
   if (applied === 0 && skipped === 0 && backfilled === 0) {
-    return { outcome: 'idle', applied, skipped, backfilled, breaker };
+    return {
+      outcome: stoppedBySwitch ? 'disabled' : 'idle',
+      applied,
+      skipped,
+      backfilled,
+      breaker,
+    };
   }
   return {
     outcome: applied > 0 || backfilled > 0 ? 'applied' : 'skipped',

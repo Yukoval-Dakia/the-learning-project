@@ -5,6 +5,7 @@ import {
   type AssessmentAttemptCaptureT,
   type PendingStateT,
   type SubmissionRecordT,
+  hasOnlyDeterministicExecutors,
   projectIssuedScoringBasis,
 } from '@/core/schema/assessment';
 import type { Db, Tx } from '@/db/client';
@@ -29,6 +30,7 @@ import { type JudgeExecution, requireJudgeRunOpen } from '../judge-operational';
 import { ratingFromCoarseOutcome } from '../judge-rating';
 import { emitMasteryProgressSignal } from '../mastery-progress-signal';
 import { submissionWasAssisted } from './assistance';
+import { chatCardSource } from './chat-card-source';
 import { type SaveSubmissionRequest, saveSubmission } from './submit';
 
 /** Persist the served original before a synchronous evaluation or durable dispatch. */
@@ -165,11 +167,7 @@ export async function previewFormalAttempt(
       !options.selfReport &&
       !assisted &&
       candidate.result.coarse_outcome !== 'unsupported' &&
-      revision.execution_plan.assignments
-        .filter((assignment) =>
-          assignment.scoring_unit_ids.some((unitId) => scopedUnitIds.has(unitId)),
-        )
-        .every((assignment) => assignment.executor.kind === 'deterministic'),
+      hasOnlyDeterministicExecutors(revision.execution_plan, scopedUnitIds),
     activation_intent: {
       evaluation_id: candidate.evaluation.record.evaluation_id,
       expected_effective_id: head?.effective_evaluation_id ?? null,
@@ -199,12 +197,17 @@ export async function recordFormalAttemptCapture(
   // policy — writeEvent then stamps ingest_at and clears scopes, keeping the
   // answer in the ledger but off every derived read face. The class and config
   // version stay readable for the referral lane.
+  const [issued] = await tx
+    .select({ container: assessment_issuance.container_occurrence_ref })
+    .from(assessment_issuance)
+    .where(eq(assessment_issuance.issuance_id, submission.issuance_id));
+  const source = chatCardSource(issued?.container ?? null);
   const crisisFields = crisisDerivationPayload(
     `${capture.response_md ?? ''}\n${capture.reasoning_trace ?? ''}`,
   );
   await writeEvent(tx, {
     id: attemptId,
-    session_id: capture.session_id ?? null,
+    session_id: source?.session_id ?? capture.session_id ?? null,
     actor_kind: 'user',
     actor_ref: 'self',
     action: 'experimental:assessment_attempt',
@@ -215,6 +218,7 @@ export async function recordFormalAttemptCapture(
     outcome: null,
     payload: {
       version: 1,
+      ...(source ? { source } : {}),
       submission_id: submission.submission_id,
       evaluation_group_id: submission.evaluation_group_id,
       issuance_id: submission.issuance_id,

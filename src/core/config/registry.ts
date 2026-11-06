@@ -203,6 +203,16 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     envParse: flagEnv,
     tier: 'A',
   },
+  // 提议自动应用总开关（默认关，所有环境）。关着时 writeAiProposal 不盖
+  // auto_apply marker（不追溯），sweep 直接返回；开启后只应用开启之后写入的提议。
+  PROPOSAL_AUTO_APPLY_ENABLED: {
+    schema: z.boolean(),
+    codeDefault: false,
+    envName: 'PROPOSAL_AUTO_APPLY_ENABLED',
+    envParse: flagEnv,
+    tier: 'A',
+    note: '默认关：关着时新提议不盖 marker（开启后也不追溯），sweep 不应用',
+  },
   JUDGE_FALLBACK_PROVIDER: {
     // '' = 显式关闭跨 provider 兜底（env 语义）；非空 = provider 名（写端校验）。
     // reader 侧 trim 后 ' ' 也算显式关——不能裸存 raw。

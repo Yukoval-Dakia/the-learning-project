@@ -27,6 +27,18 @@ import {
 } from './workbench-function';
 
 const transport = { fetch: authenticatedStartFetch };
+
+// Keep the transport shape identical on both front doors: page copy reads
+// `auto_apply_enabled` from whichever page the client returns.
+function toProposalPageWire(json: string) {
+  const page = ProposalPageResponseSchema.parse(JSON.parse(json));
+  return {
+    rows: page.rows,
+    next_cursor: page.next_cursor,
+    auto_apply_enabled: page.auto_apply_enabled,
+  };
+}
+
 export const startWorkbenchClient: WorkbenchClient = {
   getWorkbenchSummary: () => getStartWorkbenchSummary(transport),
   getOvernightDigest: () => getStartOvernightDigest(transport),
@@ -41,7 +53,7 @@ export const startWorkbenchClient: WorkbenchClient = {
         limit: '500',
         cursor: cursor ?? undefined,
       },
-    }).then((json) => ProposalPageResponseSchema.parse(JSON.parse(json))),
+    }).then(toProposalPageWire),
   listObservationProposalPreview: () =>
     getStartProposalInbox({
       ...transport,
@@ -50,7 +62,7 @@ export const startWorkbenchClient: WorkbenchClient = {
         status: 'pending',
         limit: '200',
       },
-    }).then((json) => ProposalPageResponseSchema.parse(JSON.parse(json))),
+    }).then(toProposalPageWire),
   listAutoApplied: () => getStartAutoApplied(transport),
   decideProposal: (id, decision, opts) =>
     decideStartProposal({

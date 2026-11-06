@@ -195,51 +195,68 @@ function replyStatesPlacement(reply: string, placementNote: string): boolean {
   return placed !== undefined && placed.length > 0 && reply.includes(placed);
 }
 
+const NO_EXECUTOR_ADMISSION =
+  '这类题目前没有可用的自动判分器，暂时不能作答；可以换一道选择、填空、配对、断句或排序题。';
+const PENDING_ADMISSION = '自动检查通过后才能作答；当前状态和原因可在题库查看。';
+
 function proposalDisclosure(trace: readonly TraceEntry[], reply: string): string | undefined {
-  const bankLinks = [
-    ...new Set(
-      trace.flatMap((entry) => {
-        const out = isRecord(entry.domain_output) ? entry.domain_output : undefined;
-        const problem = isRecord(out?.problem) ? out.problem : undefined;
-        if (
-          out?.seed_mode === 'teaching_draft' &&
-          out.status === 'failed' &&
-          (problem?.code === 'subject_root_missing' || problem?.code === 'conversation_required') &&
-          typeof problem.detail === 'string'
-        ) {
-          // Model prose owns the explanation; the server only supplies the exact fact it omitted.
-          return reply.includes(problem.detail) ? [] : [problem.detail];
-        }
-        if (
-          entry.status !== 'succeeded' ||
-          out?.seed_mode !== 'teaching_draft' ||
-          out.status !== 'submitted' ||
-          typeof out.bank_path !== 'string'
-        )
-          return [];
-        const admission = isRecord(out.admission) ? out.admission : undefined;
-        const noExecutor =
-          Array.isArray(admission?.per_unit) &&
-          admission.per_unit.some(
-            (unit) => isRecord(unit) && unit.reason === 'no_admitted_executor',
-          );
-        const placementNote =
-          typeof out.placement_note === 'string' ? out.placement_note : undefined;
-        const missingPlacement =
-          placementNote !== undefined && !replyStatesPlacement(reply, placementNote);
-        // The model already linked the stored question: it owns the disclosure, and the
-        // server only adds the fact it left out. Repeated server copy is the duplicate here.
-        if (reply.includes(out.bank_path))
-          return missingPlacement && placementNote !== undefined ? [placementNote] : [];
-        const stored = noExecutor
-          ? `题已存入[题库](${out.bank_path})，但这类题目前没有可用的自动判分器，暂时不能作答；可以换一道选择、填空、配对、断句或排序题。`
-          : `题已存入[题库](${out.bank_path})，自动检查通过后才能作答；当前状态和原因可在题库查看。`;
-        return [
-          missingPlacement && placementNote !== undefined ? `${placementNote}\n${stored}` : stored,
-        ];
-      }),
-    ),
-  ];
+  // One disclosure per question, never a cross-question dedupe: a different
+  // question must not swallow this question's warning.
+  const seenBankPaths = new Set<string>();
+  const seenFailureDetails = new Set<string>();
+  const bankLinks = trace.flatMap((entry) => {
+    const out = isRecord(entry.domain_output) ? entry.domain_output : undefined;
+    const problem = isRecord(out?.problem) ? out.problem : undefined;
+    if (
+      out?.seed_mode === 'teaching_draft' &&
+      out.status === 'failed' &&
+      (problem?.code === 'subject_root_missing' || problem?.code === 'conversation_required') &&
+      typeof problem.detail === 'string'
+    ) {
+      if (seenFailureDetails.has(problem.detail)) return [];
+      seenFailureDetails.add(problem.detail);
+      // Model prose owns the explanation; the server only supplies the exact fact it omitted.
+      return reply.includes(problem.detail) ? [] : [problem.detail];
+    }
+    if (
+      entry.status !== 'succeeded' ||
+      out?.seed_mode !== 'teaching_draft' ||
+      out.status !== 'submitted' ||
+      typeof out.bank_path !== 'string'
+    )
+      return [];
+    if (seenBankPaths.has(out.bank_path)) return [];
+    seenBankPaths.add(out.bank_path);
+    const bankPath = out.bank_path;
+    const admission = isRecord(out.admission) ? out.admission : undefined;
+    const noExecutor =
+      Array.isArray(admission?.per_unit) &&
+      admission.per_unit.some((unit) => isRecord(unit) && unit.reason === 'no_admitted_executor');
+    const placementNote = typeof out.placement_note === 'string' ? out.placement_note : undefined;
+    const missingPlacement =
+      placementNote !== undefined && !replyStatesPlacement(reply, placementNote);
+    const admissionSentence = noExecutor ? NO_EXECUTOR_ADMISSION : PENDING_ADMISSION;
+    const linkStated = reply.includes(bankPath);
+    // Warning and link are separate facts. A warning counts as stated for this
+    // question only when the full sentence and this question's bank_path share a
+    // line; a phrase quoted for another question cannot suppress it.
+    const warningStated =
+      noExecutor &&
+      reply.split('\n').some((line) => line.includes(bankPath) && line.includes(admissionSentence));
+    const admissionStated = !noExecutor && reply.includes(admissionSentence);
+    const facts: string[] = [];
+    if (missingPlacement && placementNote !== undefined) facts.push(placementNote);
+    if (noExecutor) {
+      if (!warningStated) facts.push(`题已存入[题库](${bankPath})，但${admissionSentence}`);
+    } else if (!admissionStated) {
+      facts.push(
+        linkStated ? admissionSentence : `题已存入[题库](${bankPath})，${admissionSentence}`,
+      );
+    } else if (!linkStated) {
+      facts.push(`题已存入[题库](${bankPath})。`);
+    }
+    return facts.length > 0 ? [facts.join('\n')] : [];
+  });
   const proposals = trace.filter((entry) => entry.proposal_effect_contract !== undefined);
   if (proposals.length === 0) return bankLinks.length ? bankLinks.join('\n') : undefined;
   const retainedDrafts = proposals.filter(
