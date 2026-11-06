@@ -14,7 +14,8 @@ import {
   selectedSession,
   selectionValidated,
 } from './companion-state';
-import { PROGRESS_LABELS } from './run-copy';
+import { CONNECTION_LOST_COPY, PROGRESS_LABELS } from './run-copy';
+import { LiveActivity } from './ToolRow';
 import { useCompanion, useCompanionShallow } from './use-companion';
 
 function Notice({
@@ -90,19 +91,50 @@ export function RunFooter({ controller }: { controller: CompanionController }) {
   const pending = useCompanionShallow(controller, (s) =>
     currentPendingTurns(s).filter((turn) => turn.error),
   );
+  const sending = useCompanion(controller, (s) =>
+    currentPendingTurns(s).some((turn) => turn.dispatching && !turn.error),
+  );
+  const messages = useCompanion(controller, (s) => s.messages);
   const error = useCompanion(controller, (s) => s.error);
   const refreshFailed = useCompanion(controller, (s) => s.refreshFailed);
   const { runs: tracker, sender, actions } = controller;
 
   return (
     <div className="un-cp-footer-notes">
+      {sending && runs.length === 0 ? (
+        <div className="un-cp-run">
+          <LoaderCircle size={14} aria-hidden="true" className="un-cp-spin un-cp-run-glyph" />
+          <span className="un-sr-only" aria-live="polite">
+            {PROGRESS_LABELS.dispatch}
+          </span>
+          <span aria-hidden="true" className="un-cp-run-line">
+            <LiveActivity override={PROGRESS_LABELS.dispatch} />
+          </span>
+        </div>
+      ) : null}
       {runs.map((run) => {
         const stopping = run.stopPending || run.cancelRequested;
+        const announced = run.cancelRequested
+          ? '正在停止…'
+          : run.connectionLost
+            ? CONNECTION_LOST_COPY
+            : PROGRESS_LABELS[run.stage];
         return (
           <div key={run.runId} className="un-cp-run" data-phase={run.phase}>
             <LoaderCircle size={14} aria-hidden="true" className="un-cp-spin un-cp-run-glyph" />
-            <span className="un-cp-run-label" aria-live="polite">
-              {run.cancelRequested ? '正在停止…' : PROGRESS_LABELS[run.stage]}
+            {/* The stage is announced; every step and second on the visible line would flood. */}
+            <span className="un-sr-only" aria-live="polite">
+              {announced}
+            </span>
+            <span aria-hidden="true" className="un-cp-run-line">
+              <LiveActivity
+                message={messages.find((m) => m.role === 'ai' && m.run_id === run.runId)}
+                override={
+                  run.cancelRequested || run.connectionLost || run.stage === 'dispatch'
+                    ? announced
+                    : undefined
+                }
+              />
             </span>
             <Button
               variant="quiet"
@@ -122,14 +154,16 @@ export function RunFooter({ controller }: { controller: CompanionController }) {
           tone="caution"
           actions={
             <>
-              <Button
-                variant="ghost"
-                size="sm"
-                disabled={turn.dispatching}
-                onClick={() => sender.discardPendingRecovery(turn.idempotencyKey)}
-              >
-                不再恢复
-              </Button>
+              {turn.requestBody.confirmation ? null : (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={turn.dispatching}
+                  onClick={() => sender.discardPendingRecovery(turn.idempotencyKey)}
+                >
+                  算了
+                </Button>
+              )}
               <Button
                 variant="secondary"
                 size="sm"
@@ -137,7 +171,7 @@ export function RunFooter({ controller }: { controller: CompanionController }) {
                 onClick={() => sender.retryPendingTurn(turn.idempotencyKey)}
               >
                 <RefreshCw size={13} aria-hidden="true" />
-                {turn.dispatching ? '恢复中…' : '恢复'}
+                {turn.dispatching ? '发送中…' : '再发一次'}
               </Button>
             </>
           }
@@ -154,7 +188,7 @@ export function RunFooter({ controller }: { controller: CompanionController }) {
             actions={
               <Button variant="secondary" size="sm" onClick={() => tracker.reconnectRun(run.runId)}>
                 <RefreshCw size={13} aria-hidden="true" />
-                重新连接
+                再看看
               </Button>
             }
           >
