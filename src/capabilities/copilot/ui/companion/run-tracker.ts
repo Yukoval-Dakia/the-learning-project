@@ -219,6 +219,11 @@ export function createRunTracker(ctx: CompanionCtx): RunTracker {
         continue;
       run.controller?.abort();
       runs.delete(runId);
+      // It ended while nobody was listening, so whether its ending cleared the thoughts is unknown.
+      if (!isTerminal(run.view)) {
+        const { [runId]: _unknownEnding, ...kept } = ctx.get().thinkingByRun;
+        ctx.set({ thinkingByRun: kept });
+      }
     }
     const retained = new Set(activeIds);
     for (const run of runs.values()) {
