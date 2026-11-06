@@ -517,6 +517,7 @@ export function usePracticeSubmit({
   const settledApplied = useRef<string | null>(null);
   // YUK-1729 b-lite — the issuance whose accepted-but-unrecorded answer still needs its advice replay.
   const [recoverIssuance, setRecoverIssuance] = useState<string | null>(null);
+  const [ratingOwed, setRatingOwed] = useState(false);
   // YUK-1484 — issuing is a write, so it is a command, not a query: nothing may re-run it
   // on retry, focus, reconnect, invalidation, remount or StrictMode. The issuance
   // placeholder owns it (attachIssuance): when it attaches, this visit reads its issuance
@@ -586,6 +587,7 @@ export function usePracticeSubmit({
             settled.kind === 'terminal' &&
             verdictNeedsLearnerRating(settled.run.status, settled.run.result)
           ) {
+            setRatingOwed(true);
             setRecoverIssuance(issuanceId);
             return;
           }
@@ -655,7 +657,10 @@ export function usePracticeSubmit({
   // (「自己评一下」 after a verdict that could not be graded, or a visit left before rating),
   // and an attempt recorded as review_required (original evaluation, nothing effective) is
   // not scheduled yet — both must stay committable so the learner can still rate them.
+  // A run that ended without an effective verdict still has its queued anchor in the timeline
+  // (no original evaluation), which must not read as recorded: the learner's rating is owed.
   const answerRecorded =
+    !ratingOwed &&
     !!accepted &&
     (q?.timeline ?? []).some(
       (entry) =>
@@ -1015,12 +1020,14 @@ export function usePracticeSubmit({
     (settled: JudgeRunPollingState) => {
       if (verdictNeedsLearnerRating(settled.status, settled.result)) {
         setPendingRun(null);
+        setRatingOwed(true);
         setRecoverIssuance(issuanceId);
         return;
       }
       // A run that failed for good: the replay offers the learner's own rating. The run stays set
       // so a refused replay still shows «没判成»; the poller reports each run only once.
       if (settled.status === 'failed') {
+        setRatingOwed(true);
         setRecoverIssuance(issuanceId);
         return;
       }
