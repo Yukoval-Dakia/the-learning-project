@@ -187,6 +187,14 @@ export function piToolErrorText(error: unknown): string {
   }
 }
 
+/** The placement note is one server-authored fact. Recognize the model's verbatim copy
+ *  even when it trims the explanatory prefix, so the learner reads it once. */
+function replyStatesPlacement(reply: string, placementNote: string): boolean {
+  if (reply.includes(placementNote)) return true;
+  const placed = placementNote.match(/这道题先放在「[^」]+」下/u)?.[0];
+  return placed !== undefined && placed.length > 0 && reply.includes(placed);
+}
+
 function proposalDisclosure(trace: readonly TraceEntry[], reply: string): string | undefined {
   const bankLinks = [
     ...new Set(
@@ -199,10 +207,8 @@ function proposalDisclosure(trace: readonly TraceEntry[], reply: string): string
           (problem?.code === 'subject_root_missing' || problem?.code === 'conversation_required') &&
           typeof problem.detail === 'string'
         ) {
-          const explained =
-            /(?:学科|对话).{0,24}(?:没有|还没|尚未)/u.test(reply) &&
-            /(?:没.{0,8}存|不会.{0,8}(?:题库|入库)|无法.{0,8}题库)/u.test(reply);
-          return explained || reply.includes(problem.detail) ? [] : [problem.detail];
+          // Model prose owns the explanation; the server only supplies the exact fact it omitted.
+          return reply.includes(problem.detail) ? [] : [problem.detail];
         }
         if (
           entry.status !== 'succeeded' ||
@@ -217,12 +223,19 @@ function proposalDisclosure(trace: readonly TraceEntry[], reply: string): string
           admission.per_unit.some(
             (unit) => isRecord(unit) && unit.reason === 'no_admitted_executor',
           );
-        const placement = typeof out.placement_note === 'string' ? `${out.placement_note}\n` : '';
+        const placementNote =
+          typeof out.placement_note === 'string' ? out.placement_note : undefined;
+        const missingPlacement =
+          placementNote !== undefined && !replyStatesPlacement(reply, placementNote);
+        // The model already linked the stored question: it owns the disclosure, and the
+        // server only adds the fact it left out. Repeated server copy is the duplicate here.
+        if (reply.includes(out.bank_path))
+          return missingPlacement && placementNote !== undefined ? [placementNote] : [];
+        const stored = noExecutor
+          ? `题已存入[题库](${out.bank_path})，但这类题目前没有可用的自动判分器，暂时不能作答；可以换一道选择、填空、配对、断句或排序题。`
+          : `题已存入[题库](${out.bank_path})，自动检查通过后才能作答；当前状态和原因可在题库查看。`;
         return [
-          placement +
-            (noExecutor
-              ? `题已存入[题库](${out.bank_path})，但这类题目前没有可用的自动判分器，暂时不能作答；可以换一道选择、填空、配对、断句或排序题。`
-              : `题已存入[题库](${out.bank_path})，自动检查通过后才能作答；当前状态和原因可在题库查看。`),
+          missingPlacement && placementNote !== undefined ? `${placementNote}\n${stored}` : stored,
         ];
       }),
     ),

@@ -445,7 +445,7 @@ function presentHintFaultExit(outcome: SolveHintOutcome): SolveHintOutcome {
   if (!fault) return outcome;
   const copy = helpExitCopy(fault);
   const stop_retry: SolveHintStopRetry = { retry: 'stop', guidance: copy.stopRetryGuidance };
-  const preface = `${copy.reason}\n\n停止重试\n${copy.stopRetryGuidance}\n\n`;
+  const preface = `${copy.reason}\n\n先别再试\n${copy.stopRetryGuidance}\n\n`;
   if (outcome.status === 'unavailable') {
     return {
       ...outcome,

@@ -593,7 +593,9 @@ describe('native durable assessment', () => {
         const payload = NativeJudgeResolutionPayload.parse(input.payload);
         await write(database, {
           ...input,
-          payload: { ...payload, feedback_md: 'conflicting retained receipt' },
+          // Top-level feedback_md is deliberately outside receipt identity; tamper a
+          // still-compared result field so the first-write-wins collision stays observable.
+          payload: { ...payload, score: 999999 },
         });
       }
       // Both calls return the same ID. Only reading the stored row exposes the collision.
