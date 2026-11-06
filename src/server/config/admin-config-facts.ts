@@ -6,7 +6,10 @@
 
 import { capabilities } from '@/capabilities';
 import { MEMORY_INFRA_SCHEDULES } from '@/capabilities/agency/public';
-import { copilotConfigEffectiveFacts } from '@/capabilities/copilot/public';
+import {
+  DURABLE_COPILOT_EXECUTION_BUDGET,
+  copilotConfigEffectiveFacts,
+} from '@/capabilities/copilot/public';
 import { ingestionConfigEffectiveFacts } from '@/capabilities/ingestion/public';
 import { knowledgeConfigEffectiveFacts } from '@/capabilities/knowledge/public';
 import { notesConfigEffectiveFacts } from '@/capabilities/notes/public';
@@ -23,6 +26,7 @@ import type {
 } from '@/capabilities/observability/public';
 import { observabilityConfigEffectiveFacts } from '@/capabilities/observability/public';
 import {
+  MODEL_SLICE_PINNED_TASK_KINDS,
   SOLVE_LANE_TASK_KINDS,
   practiceConfigEffectiveFacts,
   resolveSolveOverrideFromEnv,
@@ -374,26 +378,16 @@ export function resolveAdminTaskEffective(kind: TaskKind): AdminConfigTaskEffect
       error: null,
       selection_rule: 'registry_default',
       reasoning: (() => {
-        try {
-          const resolved = resolveTaskReasoning(
-            kind,
-            task.defaultProvider,
-            task.defaultModel,
-            getTaskOverride(kind)?.reasoning,
-          );
-          return {
-            requested: resolved?.requested ?? null,
-            applied: resolved?.applied ?? null,
-            source: resolved?.source,
-            error: null,
-          };
-        } catch (e) {
-          return {
-            requested: null,
-            applied: null,
-            error: scrubFsPaths(e instanceof Error ? e.message : String(e)),
-          };
-        }
+        const stored = getTaskOverride(kind)?.reasoning;
+        const requested = stored?.level ?? stored?.reasoning_effort ?? null;
+        if (requested === null) return { requested: null, applied: 'none', error: null };
+        // The typed runner builds its request from the pinned wire contract and
+        // never sends a reasoning parameter, so a stored level has no effect.
+        return {
+          requested,
+          applied: 'none',
+          error: `typed-execution task '${kind}' fixes its request in the wire contract — task.${kind}.reasoning is stored but never applied`,
+        };
       })(),
       credential: null,
       also_on_lanes: sharedScopedLanes(kind),
@@ -525,8 +519,12 @@ function taskCatalogFacts(): AdminConfigTaskFacts[] {
       default_model: def.defaultModel,
       default_budget: def.budget,
       typed: 'execution' in def && def.execution === 'typed',
+      slice_admission: (MODEL_SLICE_PINNED_TASK_KINDS as readonly string[]).includes(kind),
       budget_wiring: budget.wired,
       effective_budget: budget.effective,
+      ...(kind === 'CopilotTask'
+        ? { caller_budget_override: DURABLE_COPILOT_EXECUTION_BUDGET }
+        : {}),
     };
   });
 }

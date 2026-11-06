@@ -20,6 +20,7 @@ import {
   resolveTaskBinding,
   resolveTaskReasoning,
 } from '@/server/ai/providers';
+import type { MODEL_SLICE_PINNED_TASK_KINDS } from './model-slice-pins';
 
 type SliceRow = typeof model_admission_slice.$inferSelect;
 
@@ -33,7 +34,7 @@ const CURRENT_MODEL_VERSION_PINS: Readonly<Record<string, string>> = {
   // Chat lane: the rubric prompt and output contract revision.
   AssessmentRubricJudgeTask: ASSESSMENT_RUBRIC_PROMPT_REVISION,
   AssessmentRuleJudgeTask: 'assessment-rule-v1',
-};
+} satisfies Record<(typeof MODEL_SLICE_PINNED_TASK_KINDS)[number], string>;
 
 /** True when this kind carries a registered pin — the live gate checks these kinds only. */
 export function taskKindHasModelPin(kind: string): boolean {
