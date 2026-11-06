@@ -38,7 +38,7 @@ const LIVE_BUFFER_MAX_BYTES = 256 * 1024;
 // Frames already sliced out of the buffer but not yet published.
 const LIVE_PENDING_FRAMES_MAX = 64;
 // A display-only drain must never hold the reply or settlement behind a slow DB.
-const LIVE_DRAIN_MAX_WAIT_MS = 2000;
+const LIVE_DRAIN_MAX_WAIT_MS = 500;
 
 const utf8 = new TextEncoder();
 
