@@ -20,6 +20,7 @@ import {
   declaredShapeSupport,
 } from '@/core/schema/assessment';
 import type { BlankNormalizationT } from '@/core/schema/assessment/scoring';
+import { deterministicDisplayOrder } from '@/core/schema/display-order';
 import type {
   DraftBlankTextKeyT,
   DraftMaterialT,
@@ -106,7 +107,10 @@ function slotFor(unit: DraftUnitT, partId: string): ResponseSlotT {
           ? { gap_after_codepoint: item.gap_after_codepoint }
           : {}),
       })),
-      ...(spec.axes != null ? { axes: spec.axes } : {}),
+      // The answer-aligned relation axis is permuted here, the one seam every declared
+      // document (candidate, teaching draft, edit) freezes through: rendering the
+      // producer's order would let the learner read the key off the screen.
+      ...(spec.axes != null ? { axes: displayOrderAxes(spec.axes) } : {}),
       ...(spec.at_most_per_coordinate != null
         ? { at_most_per_coordinate: spec.at_most_per_coordinate }
         : {}),
@@ -141,6 +145,18 @@ interface CriterionBuild {
   /** Only select_key/blank_key criteria may carry a K1 rule. */
   attachRule: boolean;
   issues: DraftConversionIssue[];
+}
+
+/** Matching pairs by column position and ordering by object position; permute the axis the
+ *  key aligns to so a declared key order is never rendered as-is. */
+function displayOrderAxes(
+  axes: NonNullable<SelectSlotT['axes']>,
+): NonNullable<SelectSlotT['axes']> {
+  return {
+    ...axes,
+    ...(axes.right != null ? { right: deterministicDisplayOrder(axes.right) } : {}),
+    ...(axes.object != null ? { object: deterministicDisplayOrder(axes.object) } : {}),
+  };
 }
 
 function ruleProvenance(doc: QuestionDraftDocumentT): 'official' | 'system_proposed' | 'manual' {
@@ -876,6 +892,25 @@ function legacyChoiceUnitFaithful(stored: ScoringUnitT, canonical: ScoringUnitT)
  * select_key + the printed set rule; any other dropped or rewritten field counts as
  * a scoring change.
  */
+/** Relation axes are display order, not scoring input: right/object arrays are compared
+ *  by id so a historical revision whose frozen order predates the display permutation is
+ *  still a faithful round trip. Every other slot field stays byte-strict. */
+function scoringSlotEqual(stored: ResponseSlotT, canonical: ResponseSlotT): boolean {
+  return stableJson(sortRelationAxes(stored)) === stableJson(sortRelationAxes(canonical));
+}
+
+function sortRelationAxes(slot: ResponseSlotT): ResponseSlotT {
+  if (slot.kind !== 'select' || slot.axes == null) return slot;
+  const axes = { ...slot.axes };
+  for (const name of ['right', 'object'] as const) {
+    const entries = axes[name];
+    if (entries != null) {
+      axes[name] = [...entries].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    }
+  }
+  return { ...slot, axes };
+}
+
 export function scoringRoundTripIsFaithful(
   stored: Pick<PublishedQuestionRevisionT, 'response_spec' | 'scoring_basis' | 'execution_plan'>,
   canonical: Pick<DraftContract, 'response_spec' | 'scoring_basis' | 'execution_plan'>,
@@ -905,7 +940,7 @@ export function scoringRoundTripIsFaithful(
       legacySlotIds.add(storedSlot.slot_id);
     } else if (
       stableJson(storedUnit) !== stableJson(nextUnit) ||
-      stableJson(storedSlot) !== stableJson(nextSlot)
+      !scoringSlotEqual(storedSlot, nextSlot)
     ) {
       return false;
     }
@@ -918,7 +953,7 @@ export function scoringRoundTripIsFaithful(
       if (!legacySlotIds.has(slotId)) return false;
       continue;
     }
-    if (stableJson(storedSlot) !== stableJson(nextSlot)) return false;
+    if (!scoringSlotEqual(storedSlot, nextSlot)) return false;
   }
   if (
     stableJson(stored.scoring_basis.aggregation) !==
@@ -1307,15 +1342,23 @@ function projectReference(doc: QuestionDraftDocumentT): string | null {
             : String(unit.key.key.value),
         );
       } else if (unit.key?.kind === 'select') {
-        const labels = unit.key.accepted_item_ids
-          .map((id) =>
-            unit.response_spec.kind === 'select'
-              ? unit.response_spec.items.findIndex((item) => item.item_id === id)
-              : -1,
-          )
-          .filter((index) => index >= 0)
-          .map((index) => String.fromCharCode(65 + index));
-        if (labels.length > 0) texts.push(labels.join(''));
+        const spec = unit.response_spec.kind === 'select' ? unit.response_spec : null;
+        if (spec != null && (spec.axes != null || spec.text != null)) {
+          // Structured keys are content labels, sorted: declaration ids/order must not
+          // reach the canonical hash (ids are re-declared on every supply attempt).
+          const labels = unit.key.accepted_item_ids
+            .map((id) => spec.items.find((item) => item.item_id === id))
+            .filter((item): item is SelectSlotT['items'][number] => item != null)
+            .map((item) => contentLabelForItem(spec, item))
+            .sort();
+          if (labels.length > 0) texts.push(labels.join(' / '));
+        } else {
+          const labels = unit.key.accepted_item_ids
+            .map((id) => (spec != null ? spec.items.findIndex((item) => item.item_id === id) : -1))
+            .filter((index) => index >= 0)
+            .map((index) => String.fromCharCode(65 + index));
+          if (labels.length > 0) texts.push(labels.join(''));
+        }
       } else if (unit.reference_md != null) {
         texts.push(unit.reference_md);
       }
@@ -1327,25 +1370,86 @@ function projectReference(doc: QuestionDraftDocumentT): string | null {
 function projectChoices(doc: QuestionDraftDocumentT): string[] | null {
   const unit = doc.parts.flatMap((p) => p.units).find((u) => u.response_spec.kind === 'select');
   if (unit == null || unit.response_spec.kind !== 'select') return null;
-  return unit.response_spec.items.map((item) => item.label_md ?? item.item_id);
+  const spec = unit.response_spec;
+  return spec.axes != null || spec.text != null
+    ? spec.items.map((item) => contentLabelForItem(spec, item)).sort()
+    : spec.items.map((item) => item.label_md ?? item.item_id);
 }
 
-/** Axis labels and break-tap text are content even when relation items have no labels. */
+function axisLabelFor(axes: SelectSlotT['axes'], axis: string, id: string): string {
+  return axes?.[axis]?.find((entry) => entry.id === id)?.label_md ?? id;
+}
+
+function contentCoordinates(
+  axes: SelectSlotT['axes'],
+  coordinates: Record<string, string>,
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(coordinates)
+      .map(([axis, id]) => [axis, axisLabelFor(axes, axis, id)] as const)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+  );
+}
+
+/** One select item as content: labels / coordinate labels / text, never declared ids.
+ *  A label-less, relation-less item keeps its id because that id is what gets displayed. */
+function structuredItemContent(
+  spec: Pick<SelectSlotT, 'axes' | 'items'>,
+  item: SelectSlotT['items'][number],
+): Record<string, unknown> {
+  return {
+    ...(item.label_md != null ? { label_md: item.label_md } : {}),
+    ...(item.coordinates != null
+      ? { coordinates: contentCoordinates(spec.axes, item.coordinates) }
+      : {}),
+    ...(item.gap_after_codepoint != null ? { gap_after_codepoint: item.gap_after_codepoint } : {}),
+    ...(item.label_md == null && item.coordinates == null ? { item_id: item.item_id } : {}),
+  };
+}
+
+function contentLabelForItem(
+  spec: Pick<SelectSlotT, 'axes' | 'items'>,
+  item: SelectSlotT['items'][number],
+): string {
+  if (item.label_md != null) return item.label_md;
+  if (item.coordinates != null)
+    return Object.entries(contentCoordinates(spec.axes, item.coordinates))
+      .map(([axis, label]) => `${axis}=${label}`)
+      .join(';');
+  if (item.gap_after_codepoint != null) return `gap@${item.gap_after_codepoint}`;
+  return item.item_id;
+}
+
+function byStableJson(a: unknown, b: unknown): number {
+  const left = stableJson(a);
+  const right = stableJson(b);
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+/** Axis labels and break-tap text are content even when relation items have no labels.
+ *  Declared axis-entry ids, coordinate ids and declaration order are identity-irrelevant. */
 export function structuredSelectIdentity(
   specs: readonly Pick<SelectSlotT, 'axes' | 'items' | 'text'>[],
 ): unknown[] | undefined {
   const structured = specs.filter((spec) => spec.axes != null || spec.text != null);
   return structured.length === 0
     ? undefined
-    : structured.map((spec) => ({
-        ...(spec.axes != null ? { axes: spec.axes } : {}),
-        ...(spec.text != null ? { text: spec.text } : {}),
-        items: spec.items.map(({ label_md, coordinates, gap_after_codepoint }) => ({
-          ...(label_md != null ? { label_md } : {}),
-          ...(coordinates != null ? { coordinates } : {}),
-          ...(gap_after_codepoint != null ? { gap_after_codepoint } : {}),
-        })),
-      }));
+    : structured
+        .map((spec) => ({
+          ...(spec.axes != null
+            ? {
+                axes: Object.entries(spec.axes)
+                  .map(([axis, entries]) => ({
+                    axis,
+                    labels: entries.map((entry) => entry.label_md).sort(),
+                  }))
+                  .sort(byStableJson),
+              }
+            : {}),
+          ...(spec.text != null ? { text: spec.text } : {}),
+          items: spec.items.map((item) => structuredItemContent(spec, item)).sort(byStableJson),
+        }))
+        .sort(byStableJson);
 }
 
 /** Content identity for canonicalQuestionContentHash; source and knowledge ids do not participate. */
