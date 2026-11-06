@@ -952,13 +952,25 @@ export async function drainSubmitVerifyIntents(db: Db, result: SubmitResult): Pr
   try {
     const dispatch = await dispatchPendingVerifyIntents(db, {
       questionIds: [verifyIntent],
-      enqueue: async (verifier, ids, options) => {
+      enqueue: async (verifier, ids, options, placementAuthorities, recoveryMarks) => {
         if (verifier !== 'source_verify') {
           throw new Error(`submit_question outbox received unexpected verifier '${verifier}'`);
         }
         const { getStartedBoss } = await import('@/server/boss/client');
         const boss = await getStartedBoss();
-        await boss.send('source_verify', { question_ids: ids }, options);
+        await boss.send(
+          'source_verify',
+          {
+            question_ids: ids,
+            ...(placementAuthorities?.length
+              ? { placement_authorities: placementAuthorities }
+              : {}),
+            ...(recoveryMarks && Object.keys(recoveryMarks).length
+              ? { recovery_marks: recoveryMarks }
+              : {}),
+          },
+          options,
+        );
       },
     });
     if (dispatch.failed > 0) {

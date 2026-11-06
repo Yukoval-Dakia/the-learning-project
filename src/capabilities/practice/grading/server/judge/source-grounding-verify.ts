@@ -57,6 +57,29 @@ export interface RunSourceGroundingVerifyParams {
   imageFetchFn?: SourceGroundingImageFetchFn;
 }
 
+/**
+ * Zero-send lane check for the grounding task: resolves and starts the same
+ * adapter the real call would use (provider/model/credential wiring, no
+ * session, no prompt). Callers use it to hold verify work before any paid
+ * call when the lane is provably unexecutable. Dynamic import keeps this
+ * module free of the runner-preflight → task-registry edge.
+ */
+export async function assertSourceGroundingLaneConfigured(input: {
+  db: Db;
+  subjectProfile: SubjectProfile;
+}): Promise<void> {
+  const { preflightTaskExecution } = await import('@/server/ai/runner-preflight');
+  await preflightTaskExecution(
+    'SourceGroundingVerifyTask',
+    { text: '{}', images: [] },
+    {
+      db: input.db,
+      subjectProfile: input.subjectProfile,
+      override: applicableVisionJudgeOverride(),
+    },
+  );
+}
+
 export type SourceGroundingVerifyResult =
   | { status: 'grounded'; confidence: number; observed_md: string; reason_md: string }
   | { status: 'not_grounded'; confidence: number; observed_md: string; reason_md: string }

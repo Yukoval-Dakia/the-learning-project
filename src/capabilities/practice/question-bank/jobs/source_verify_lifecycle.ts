@@ -5,11 +5,17 @@
 // admission generation before any paid work; this compares them under the
 // group lock and rolls the caller transaction back on drift.
 
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 
-import { QUESTION_AVAILABILITY } from '@/core/schema/assessment/lifecycle';
-import type { Tx } from '@/db/client';
-import { question, question_group_lifecycle, question_revision } from '@/db/schema';
+import {
+  LEGACY_DRAFT_STATUS,
+  QUESTION_AVAILABILITY,
+  SCORING_ADMISSION_STATE,
+  SCORING_ADMISSION_WITHHELD_REASON,
+  SUSPENSION_REASON,
+} from '@/core/schema/assessment/lifecycle';
+import type { Db, Tx } from '@/db/client';
+import { event, question, question_group_lifecycle, question_revision } from '@/db/schema';
 import {
   type AdmissionVerificationWrite,
   type PublishAdmission,
@@ -164,4 +170,82 @@ export async function publishVerifyLifecycleUpdate(
     );
   }
   return result;
+}
+
+/**
+ * 瞬时 grounding 失败 → verify_hold 挂起（draft + suspended, verdict 'suspended'）。
+ *
+ * Root→child 锁序与编辑/发布序列化；锁内重读 version 与 promote 证据，
+ * 陈旧投递不得撤销更新的准入。挂起事务失败整体回滚（demote 一并撤），
+ * 调用方在 catch-bottom 落 error event，此处只吞 suspend 自身的写入失败。
+ */
+export async function suspendVerifyHoldForTransient(
+  db: Db,
+  input: {
+    questionId: string;
+    parentQuestionId: string | null;
+    expectedVersion: number;
+    expectedRevision: string | null;
+    expectedGeneration: number | null;
+    message: string;
+  },
+): Promise<void> {
+  try {
+    await db.transaction(async (suspendTx) => {
+      const groupRootId = input.parentQuestionId ?? input.questionId;
+      await suspendTx
+        .select({ id: question.id })
+        .from(question)
+        .where(eq(question.id, groupRootId))
+        .for('update')
+        .limit(1);
+      const [post] = await suspendTx
+        .select({
+          version: question.version,
+          promotedElsewhere: sql<boolean>`EXISTS (
+            SELECT 1 FROM ${event}
+            WHERE ${event.action} = 'experimental:source_verify'
+              AND ${event.subject_kind} = 'question'
+              AND ${event.subject_id} = ${input.questionId}
+              AND ${event.outcome} = 'success'
+          )`,
+        })
+        .from(question)
+        .where(eq(question.id, input.questionId))
+        .for('update')
+        .limit(1);
+      const maySuspendContract =
+        post != null && post.version === input.expectedVersion && !post.promotedElsewhere;
+      if (!maySuspendContract) return;
+      await suspendTx
+        .update(question)
+        .set({ draft_status: LEGACY_DRAFT_STATUS.DRAFT, updated_at: new Date() })
+        .where(eq(question.id, input.questionId));
+      // 已声明 revision 走冻结契约的 typed lifecycle 更新，
+      // 未声明组照旧行归一（helper 内部分派，fail-closed 不变）。
+      await publishVerifyLifecycleUpdate(suspendTx, {
+        rootId: groupRootId,
+        expectedRevision: input.expectedRevision,
+        expectedGeneration: input.expectedGeneration,
+        admission: {
+          state: SCORING_ADMISSION_STATE.WITHHELD,
+          reason: SCORING_ADMISSION_WITHHELD_REASON.UNVERIFIED_RULES,
+        },
+        suspension: { suspended: true, reason: SUSPENSION_REASON.VERIFY_HOLD },
+        verification: {
+          policy_id: 'source_verify@1',
+          outcome: 'suspended',
+          evidence: {
+            check: 'source_grounding',
+            transient: true,
+            message: input.message,
+          },
+        },
+        actorRef: 'source_verify:suspend',
+        now: new Date(),
+      });
+    });
+  } catch (suspendErr) {
+    console.error('[source_verify] verify-hold write failed for', input.questionId, suspendErr);
+  }
 }

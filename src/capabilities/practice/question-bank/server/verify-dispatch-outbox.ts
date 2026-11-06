@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { createId } from '@paralleldrive/cuid2';
-import { type AnyColumn, and, eq, inArray, isNull, notExists, sql } from 'drizzle-orm';
+import { type AnyColumn, and, eq, exists, inArray, isNull, notExists, or, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { z } from 'zod';
 import type { Db, Tx } from '@/db/client';
@@ -31,15 +31,29 @@ const verifyDispatchIntentPayloadSchema = z.object({
       fencing_token: z.string().uuid(),
     })
     .optional(),
+  /** Sweep recovery only: the source_verify error event this intent re-drives. */
+  recovery_epoch: z.string().min(1).optional(),
+  /** Copied from the recovered error event so the run consults that command's
+   * paid-effect claim instead of re-paying under it. */
+  recheck_command_event_id: z.string().min(1).optional(),
 });
 
 type VerifyDispatchIntentPayload = z.infer<typeof verifyDispatchIntentPayloadSchema>;
+
+/** Server-written recovery marker for one question in a sweep-created job. Only
+ * an intent carrying recovery_epoch produces this; job redelivery or client
+ * input cannot mint it, so it is the sole authority for the recovery path. */
+export interface VerifyRecoveryMark {
+  epoch: string;
+  recheck_command_event_id?: string;
+}
 
 export type EnqueueVerifyFn = (
   verifier: VerifyKind,
   questionIds: string[],
   options?: object,
   placementAuthorities?: PlacementVerificationAuthority[],
+  recoveryMarks?: Record<string, VerifyRecoveryMark>,
 ) => Promise<void>;
 
 export interface VerifyDispatchResult {
@@ -96,9 +110,13 @@ function stableEventId(
   questionId: string,
   verifier: VerifyKind,
   authority?: PlacementVerificationAuthority,
+  recoveryEpoch?: string,
 ) {
   const digest = createHash('sha256')
-    .update(`${verifier}\0${questionId}${placementAuthorityIdentity(authority)}`)
+    .update(
+      `${verifier}\0${questionId}${placementAuthorityIdentity(authority)}` +
+        (recoveryEpoch != null ? `\0${recoveryEpoch}` : ''),
+    )
     .digest('hex');
   return `verify-dispatch-${kind}-v${VERIFY_DISPATCH_VERSION_TAG}-${digest}`;
 }
@@ -107,23 +125,29 @@ function intentEventId(
   questionId: string,
   verifier: VerifyKind,
   authority?: PlacementVerificationAuthority,
+  recoveryEpoch?: string,
 ) {
-  return stableEventId('intent', questionId, verifier, authority);
+  return stableEventId('intent', questionId, verifier, authority, recoveryEpoch);
 }
 
 function completeEventId(
   questionId: string,
   verifier: VerifyKind,
   authority?: PlacementVerificationAuthority,
+  recoveryEpoch?: string,
 ) {
-  return stableEventId('complete', questionId, verifier, authority);
+  return stableEventId('complete', questionId, verifier, authority, recoveryEpoch);
 }
 
+/** Tombstoned drafts (archived or owner-dismissed) are dead, not pending —
+ * never synthesize/dispatch a paid verify against them (mirrors the
+ * verifyAndPromote guard). */
 function metadataIsArchived(metadata: unknown): boolean {
   return (
     typeof metadata === 'object' &&
     metadata !== null &&
-    (metadata as Record<string, unknown>).archived_at != null
+    ((metadata as Record<string, unknown>).archived_at != null ||
+      (metadata as Record<string, unknown>).dismissed_at != null)
   );
 }
 
@@ -134,11 +158,6 @@ function isTerminalVerifyEvent(row: { action: string; outcome: string | null }):
   );
 }
 
-function terminalVerifyKey(subjectId: string, action: string): string {
-  const verifier = action === 'experimental:source_verify' ? 'source_verify' : 'quiz_verify';
-  return `${subjectId}\0${verifier}`;
-}
-
 export async function writeVerifyDispatchIntent(
   db: Db | Tx,
   input: {
@@ -146,6 +165,11 @@ export async function writeVerifyDispatchIntent(
     verifier: VerifyKind;
     supplyTrace?: unknown;
     placementAuthority?: PlacementVerificationAuthority;
+    /** Sweep recovery only: the error event being re-driven. One intent exists
+     * per (question, verifier, authority, epoch) — a new error re-arms, the
+     * same error cannot dispatch twice. */
+    recoveryEpoch?: string;
+    recheckCommandEventId?: string;
     createdAt?: Date;
   },
 ): Promise<string> {
@@ -155,8 +179,17 @@ export async function writeVerifyDispatchIntent(
     question_id: input.questionId,
     ...(input.supplyTrace ? { supply_trace: input.supplyTrace } : {}),
     ...(input.placementAuthority ? { placement_authority: input.placementAuthority } : {}),
+    ...(input.recoveryEpoch != null ? { recovery_epoch: input.recoveryEpoch } : {}),
+    ...(input.recheckCommandEventId != null
+      ? { recheck_command_event_id: input.recheckCommandEventId }
+      : {}),
   });
-  const id = intentEventId(input.questionId, input.verifier, input.placementAuthority);
+  const id = intentEventId(
+    input.questionId,
+    input.verifier,
+    input.placementAuthority,
+    input.recoveryEpoch,
+  );
   if (input.placementAuthority) {
     const [existing] = await db
       .select({ payload: event.payload })
@@ -193,7 +226,12 @@ function dispatchCompletionEvent(
   input: { recovery: boolean; disposition: 'enqueued' | 'terminal_skip'; now: Date },
 ): WriteEventInput {
   return {
-    id: completeEventId(intent.question_id, intent.verifier_kind, intent.placement_authority),
+    id: completeEventId(
+      intent.question_id,
+      intent.verifier_kind,
+      intent.placement_authority,
+      intent.recovery_epoch,
+    ),
     actor_kind: 'system',
     actor_ref: 'verify_dispatch_outbox',
     action: VERIFY_DISPATCH_COMPLETE_ACTION,
@@ -209,6 +247,10 @@ function dispatchCompletionEvent(
       disposition: input.disposition,
       ...(intent.supply_trace ? { supply_trace: intent.supply_trace } : {}),
       ...(intent.placement_authority ? { placement_authority: intent.placement_authority } : {}),
+      ...(intent.recovery_epoch != null ? { recovery_epoch: intent.recovery_epoch } : {}),
+      ...(intent.recheck_command_event_id != null
+        ? { recheck_command_event_id: intent.recheck_command_event_id }
+        : {}),
     },
     created_at: input.now,
     ingest_at: input.now,
@@ -285,6 +327,7 @@ export async function dispatchPendingVerifyIntents(
                 eq(completion.subject_id, event.subject_id),
                 sql`${completion.payload}->>'verifier_kind' = ${event.payload}->>'verifier_kind'`,
                 sql`COALESCE(${completion.payload}->'placement_authority', 'null'::jsonb) = COALESCE(${event.payload}->'placement_authority', 'null'::jsonb)`,
+                sql`COALESCE(${completion.payload}->>'recovery_epoch', '') = COALESCE(${event.payload}->>'recovery_epoch', '')`,
               ),
             ),
         ),
@@ -327,7 +370,13 @@ export async function dispatchPendingVerifyIntents(
         .where(inArray(question.id, questionIds));
       const questions = new Map(questionRows.map((row) => [row.id, row]));
       const verifyRows = await tx
-        .select({ subjectId: event.subject_id, action: event.action, outcome: event.outcome })
+        .select({
+          id: event.id,
+          subjectId: event.subject_id,
+          action: event.action,
+          outcome: event.outcome,
+          createdAt: event.created_at,
+        })
         .from(event)
         .where(
           and(
@@ -335,23 +384,47 @@ export async function dispatchPendingVerifyIntents(
             inArray(event.action, ['experimental:quiz_verify', 'experimental:source_verify']),
           ),
         );
-      const terminalKeys = new Set(
-        verifyRows
-          .filter(isTerminalVerifyEvent)
-          .map((row) => terminalVerifyKey(row.subjectId, row.action)),
-      );
+      const verifyByQuestion = new Map<string, typeof verifyRows>();
+      for (const row of verifyRows) {
+        const bucket = verifyByQuestion.get(row.subjectId);
+        if (bucket) bucket.push(row);
+        else verifyByQuestion.set(row.subjectId, [row]);
+      }
+      // A recovery intent is suppressed only by a terminal event NEWER than the
+      // epoch error it re-drives: an older terminal followed by the epoch error
+      // is exactly what recovery exists for. An ordinary intent suppresses on
+      // any terminal event. An unresolvable epoch suppresses (fail-closed).
+      const terminalHit = (intent: VerifyDispatchIntentPayload): boolean => {
+        const rows = verifyByQuestion.get(intent.question_id) ?? [];
+        const action =
+          intent.verifier_kind === 'source_verify'
+            ? 'experimental:source_verify'
+            : 'experimental:quiz_verify';
+        if (intent.recovery_epoch == null) {
+          return rows.some((row) => row.action === action && row.outcome !== 'error');
+        }
+        const epoch = rows.find((row) => row.id === intent.recovery_epoch);
+        if (epoch == null) return true;
+        const epochTs = epoch.createdAt.getTime();
+        return rows.some(
+          (row) =>
+            row.action === action &&
+            row.outcome !== 'error' &&
+            (row.createdAt.getTime() > epochTs ||
+              (row.createdAt.getTime() === epochTs && row.id > epoch.id)),
+        );
+      };
 
       const terminal: VerifyDispatchIntentPayload[] = [];
       const eligible: VerifyDispatchIntentPayload[] = [];
       for (const intent of pending) {
         const row = questions.get(intent.question_id);
         if (
-          !row ||
-          row.draftStatus !== 'draft' ||
+          row?.draftStatus !== 'draft' ||
           metadataIsArchived(row.metadata) ||
           // A part has no verify of its own. The parent's cascade owns it. Drain a stray intent instead of enqueueing a job that can only skip.
           row.parentQuestionId != null ||
-          terminalKeys.has(`${intent.question_id}\0${intent.verifier_kind}`)
+          terminalHit(intent)
         ) {
           terminal.push(intent);
         } else {
@@ -366,20 +439,24 @@ export async function dispatchPendingVerifyIntents(
         const placementAuthorities = group.flatMap((intent) =>
           intent.placement_authority ? [intent.placement_authority] : [],
         );
-        if (placementAuthorities.length > 0) {
-          await input.enqueue(
-            verifier,
-            group.map((intent) => intent.question_id),
-            { db: fromPgBossDrizzleTx(tx) },
-            placementAuthorities,
-          );
-        } else {
-          await input.enqueue(
-            verifier,
-            group.map((intent) => intent.question_id),
-            { db: fromPgBossDrizzleTx(tx) },
-          );
+        const recoveryMarks: Record<string, VerifyRecoveryMark> = {};
+        for (const intent of group) {
+          if (intent.recovery_epoch != null) {
+            recoveryMarks[intent.question_id] = {
+              epoch: intent.recovery_epoch,
+              ...(intent.recheck_command_event_id != null
+                ? { recheck_command_event_id: intent.recheck_command_event_id }
+                : {}),
+            };
+          }
         }
+        await input.enqueue(
+          verifier,
+          group.map((intent) => intent.question_id),
+          { db: fromPgBossDrizzleTx(tx) },
+          placementAuthorities.length > 0 ? placementAuthorities : undefined,
+          Object.keys(recoveryMarks).length > 0 ? recoveryMarks : undefined,
+        );
         for (const intent of group) {
           completionEvents.push(
             dispatchCompletionEvent(intent, { recovery, disposition: 'enqueued', now }),
@@ -412,17 +489,47 @@ export async function dispatchPendingVerifyIntents(
 }
 
 /**
- * Startup/nightly repair: synthesize intents for legacy orphan drafts, then drain only the
- * verify outbox. It never invokes sourcing or generation.
+ * Startup/nightly repair: synthesize intents for legacy orphan drafts AND re-drive
+ * source-verify holds whose LATEST source_verify event is an error (config fault,
+ * 429, 5xx — any transient). An older terminal verdict followed by a newer error is
+ * recoverable; a latest terminal event is never re-run. Each error event is one
+ * recovery epoch: the intent carries its id, so the same error cannot dispatch
+ * twice and the next error re-arms. The recovery intent copies the error event's
+ * recheck command id and the latest prior intent's placement authority, so the
+ * re-run stays inside the paid-effect claim and the claim ledger; a stale
+ * authority fails closed inside the run. It never invokes sourcing or generation.
  */
 export async function recoverOrphanVerifyDispatches(
   db: Db,
-  input: { enqueue: EnqueueVerifyFn; batchSize?: number; now?: Date },
+  input: {
+    enqueue: EnqueueVerifyFn;
+    batchSize?: number;
+    now?: Date;
+    /** Zero-send lane probe (adapter startup only). When provided, a failure
+     * skips this sweep's recovery re-drives entirely — a broken lane must not
+     * mint paid attempts. Without it the sweep synthesizes orphans only. */
+    sourceVerifyRecoveryPreflight?: () => Promise<void>;
+  },
 ): Promise<VerifyDispatchResult> {
   const now = input.now ?? new Date();
-  const synthesizedIds = await db.transaction(async (tx) => {
+  const batchSize = input.batchSize ?? 500;
+
+  interface RecoveryCandidate {
+    questionId: string;
+    epoch: string;
+    recheckCommandEventId?: string;
+    supplyTrace?: unknown;
+    placementAuthority?: PlacementVerificationAuthority;
+  }
+
+  const { synthesizedIds, candidates } = await db.transaction(async (tx) => {
     const existingIntent = alias(event, 'verify_dispatch_existing_intent');
     const terminalVerify = alias(event, 'verify_dispatch_terminal_verify');
+    const latestErr = alias(event, 'verify_recovery_latest_err');
+    const newerVerify = alias(event, 'verify_recovery_newer');
+    const epochIntent = alias(event, 'verify_recovery_epoch_intent');
+    const incompleteIntent = alias(event, 'verify_recovery_incomplete_intent');
+    const incompleteCompletion = alias(event, 'verify_recovery_incomplete_completion');
     const drafts = await tx
       .select({ id: question.id, source: question.source, metadata: question.metadata })
       .from(question)
@@ -431,84 +538,352 @@ export async function recoverOrphanVerifyDispatches(
           eq(question.draft_status, 'draft'),
           inArray(question.source, ['quiz_gen', 'web_sourced']),
           sql`${question.metadata}->>'archived_at' IS NULL`,
+          sql`${question.metadata}->>'dismissed_at' IS NULL`,
           // A part is promoted with its parent. An intent here can only skip.
           isNull(question.parent_question_id),
           // Filter owned and terminal rows before LIMIT, or a stuck first page hides later drafts.
-          // An incomplete intent is not owned. Counting it would block the valid replacement.
-          notExists(
-            tx
-              .select({ id: existingIntent.id })
-              .from(existingIntent)
-              .where(
-                and(
-                  eq(existingIntent.action, VERIFY_DISPATCH_INTENT_ACTION),
-                  eq(existingIntent.subject_id, question.id),
-                  isStructurallyDispatchableIntent(existingIntent.payload),
-                  sql`${existingIntent.payload}->>'verifier_kind' = CASE WHEN ${question.source} = 'web_sourced' THEN 'source_verify' ELSE 'quiz_verify' END`,
-                ),
+          or(
+            // Orphan arm: no dispatchable intent and no terminal verify event.
+            and(
+              notExists(
+                tx
+                  .select({ id: existingIntent.id })
+                  .from(existingIntent)
+                  .where(
+                    and(
+                      eq(existingIntent.action, VERIFY_DISPATCH_INTENT_ACTION),
+                      eq(existingIntent.subject_id, question.id),
+                      isStructurallyDispatchableIntent(existingIntent.payload),
+                      sql`${existingIntent.payload}->>'verifier_kind' = CASE WHEN ${question.source} = 'web_sourced' THEN 'source_verify' ELSE 'quiz_verify' END`,
+                    ),
+                  ),
               ),
-          ),
-          notExists(
-            tx
-              .select({ id: terminalVerify.id })
-              .from(terminalVerify)
-              .where(
-                and(
-                  eq(terminalVerify.subject_id, question.id),
-                  sql`${terminalVerify.action} = CASE WHEN ${question.source} = 'web_sourced' THEN 'experimental:source_verify' ELSE 'experimental:quiz_verify' END`,
-                  sql`${terminalVerify.outcome} IS DISTINCT FROM 'error'`,
-                ),
+              notExists(
+                tx
+                  .select({ id: terminalVerify.id })
+                  .from(terminalVerify)
+                  .where(
+                    and(
+                      eq(terminalVerify.subject_id, question.id),
+                      sql`${terminalVerify.action} = CASE WHEN ${question.source} = 'web_sourced' THEN 'experimental:source_verify' ELSE 'experimental:quiz_verify' END`,
+                      sql`${terminalVerify.outcome} IS DISTINCT FROM 'error'`,
+                    ),
+                  ),
               ),
+            ),
+            // Recovery arm (source_verify only): the latest source_verify event is
+            // an error, no intent already carries that epoch, and no scoped intent
+            // is still in flight. An incomplete intent is not owned — but it is
+            // pending, and the drain owns it, so it suppresses a second dispatch.
+            and(
+              eq(question.source, 'web_sourced'),
+              exists(
+                tx
+                  .select({ id: latestErr.id })
+                  .from(latestErr)
+                  .where(
+                    and(
+                      eq(latestErr.action, 'experimental:source_verify'),
+                      eq(latestErr.subject_id, question.id),
+                      eq(latestErr.outcome, 'error'),
+                      notExists(
+                        tx
+                          .select({ id: newerVerify.id })
+                          .from(newerVerify)
+                          .where(
+                            and(
+                              eq(newerVerify.action, 'experimental:source_verify'),
+                              eq(newerVerify.subject_id, question.id),
+                              sql`(${newerVerify.created_at}, ${newerVerify.id}) > (${latestErr.created_at}, ${latestErr.id})`,
+                            ),
+                          ),
+                      ),
+                    ),
+                  ),
+              ),
+              notExists(
+                tx
+                  .select({ id: epochIntent.id })
+                  .from(epochIntent)
+                  .where(
+                    and(
+                      eq(epochIntent.action, VERIFY_DISPATCH_INTENT_ACTION),
+                      eq(epochIntent.subject_id, question.id),
+                      sql`${epochIntent.payload}->>'verifier_kind' = 'source_verify'`,
+                      sql`${epochIntent.payload}->>'recovery_epoch' = (
+                        SELECT e2.id FROM ${event} e2
+                        WHERE e2.action = 'experimental:source_verify'
+                          AND e2.subject_id = ${question.id}
+                        ORDER BY e2.created_at DESC, e2.id DESC LIMIT 1
+                      )`,
+                    ),
+                  ),
+              ),
+              notExists(
+                tx
+                  .select({ id: incompleteIntent.id })
+                  .from(incompleteIntent)
+                  .where(
+                    and(
+                      eq(incompleteIntent.action, VERIFY_DISPATCH_INTENT_ACTION),
+                      eq(incompleteIntent.subject_id, question.id),
+                      isStructurallyDispatchableIntent(incompleteIntent.payload),
+                      sql`${incompleteIntent.payload}->>'verifier_kind' = 'source_verify'`,
+                      notExists(
+                        tx
+                          .select({ id: incompleteCompletion.id })
+                          .from(incompleteCompletion)
+                          .where(
+                            and(
+                              eq(incompleteCompletion.action, VERIFY_DISPATCH_COMPLETE_ACTION),
+                              eq(incompleteCompletion.subject_id, incompleteIntent.subject_id),
+                              sql`${incompleteCompletion.payload}->>'verifier_kind' = 'source_verify'`,
+                              sql`COALESCE(${incompleteCompletion.payload}->'placement_authority', 'null'::jsonb) = COALESCE(${incompleteIntent.payload}->'placement_authority', 'null'::jsonb)`,
+                              sql`COALESCE(${incompleteCompletion.payload}->>'recovery_epoch', '') = COALESCE(${incompleteIntent.payload}->>'recovery_epoch', '')`,
+                            ),
+                          ),
+                      ),
+                    ),
+                  ),
+              ),
+            ),
           ),
         ),
       )
       .orderBy(question.created_at, question.id)
-      .limit(input.batchSize ?? 500)
+      .limit(batchSize)
       .for('update', { skipLocked: true });
     const liveDrafts = drafts.filter((row) => !metadataIsArchived(row.metadata));
-    if (liveDrafts.length === 0) return [];
+    if (liveDrafts.length === 0) return { synthesizedIds: [], candidates: [] };
     const ids = liveDrafts.map((row) => row.id);
     const relatedEvents = await tx
       .select({
+        id: event.id,
         subjectId: event.subject_id,
         action: event.action,
         outcome: event.outcome,
         payload: event.payload,
+        createdAt: event.created_at,
       })
       .from(event)
       .where(inArray(event.subject_id, ids));
-    const intentKeys = new Set(
-      relatedEvents
-        .filter((row) => row.action === VERIFY_DISPATCH_INTENT_ACTION)
-        .map((row) => verifyDispatchIntentPayloadSchema.safeParse(row.payload))
-        .filter((result) => result.success)
-        .map((result) => `${result.data.question_id}\0${result.data.verifier_kind}`),
-    );
-    const terminalKeys = new Set(
-      relatedEvents
-        .filter(isTerminalVerifyEvent)
-        .map((row) => terminalVerifyKey(row.subjectId, row.action)),
-    );
+    const intentsByQuestion = new Map<
+      string,
+      { payload: VerifyDispatchIntentPayload; createdAt: Date }[]
+    >();
+    const verifyByQuestion = new Map<string, typeof relatedEvents>();
+    const completionKeys = new Set<string>();
+    const intentKey = (p: {
+      question_id: string;
+      verifier_kind: VerifyKind;
+      placement_authority?: PlacementVerificationAuthority;
+      recovery_epoch?: string;
+    }) =>
+      `${p.question_id}\0${p.verifier_kind}${placementAuthorityIdentity(p.placement_authority)}\0${p.recovery_epoch ?? ''}`;
+    for (const row of relatedEvents) {
+      if (row.action === VERIFY_DISPATCH_INTENT_ACTION) {
+        const parsed = verifyDispatchIntentPayloadSchema.safeParse(row.payload);
+        if (parsed.success) {
+          const bucket = intentsByQuestion.get(parsed.data.question_id);
+          const entry = { payload: parsed.data, createdAt: row.createdAt };
+          if (bucket) bucket.push(entry);
+          else intentsByQuestion.set(parsed.data.question_id, [entry]);
+        }
+      } else if (row.action === VERIFY_DISPATCH_COMPLETE_ACTION) {
+        const p = row.payload as {
+          question_id?: unknown;
+          verifier_kind?: unknown;
+          placement_authority?: PlacementVerificationAuthority;
+          recovery_epoch?: unknown;
+        } | null;
+        if (
+          p != null &&
+          typeof p.question_id === 'string' &&
+          verifyKindSchema.safeParse(p.verifier_kind).success
+        ) {
+          completionKeys.add(
+            intentKey({
+              question_id: p.question_id,
+              verifier_kind: p.verifier_kind as VerifyKind,
+              placement_authority: p.placement_authority,
+              recovery_epoch: typeof p.recovery_epoch === 'string' ? p.recovery_epoch : undefined,
+            }),
+          );
+        }
+      } else {
+        const bucket = verifyByQuestion.get(row.subjectId);
+        if (bucket) bucket.push(row);
+        else verifyByQuestion.set(row.subjectId, [row]);
+      }
+    }
     const synthesized: string[] = [];
+    const recovered: RecoveryCandidate[] = [];
     for (const row of liveDrafts) {
       const verifier = row.source === 'web_sourced' ? 'source_verify' : 'quiz_verify';
-      const key = `${row.id}\0${verifier}`;
-      if (intentKeys.has(key) || terminalKeys.has(key)) continue;
+      const verifyRows = (verifyByQuestion.get(row.id) ?? []).filter(
+        (r) => r.action === `experimental:${verifier}`,
+      );
+      const latestVerify = verifyRows.sort(
+        (a, b) => b.createdAt.getTime() - a.createdAt.getTime() || b.id.localeCompare(a.id),
+      )[0];
+      const scoped = (intentsByQuestion.get(row.id) ?? []).filter(
+        (entry) => entry.payload.verifier_kind === verifier,
+      );
+      // A pending (incomplete) intent owns the row: the drain decides its fate.
+      if (scoped.some((entry) => !completionKeys.has(intentKey(entry.payload)))) continue;
+      if (
+        verifier === 'source_verify' &&
+        latestVerify != null &&
+        latestVerify.outcome === 'error'
+      ) {
+        // Recovery arm: latest is an error → one epoch-marked intent re-drives it.
+        if (scoped.some((entry) => entry.payload.recovery_epoch === latestVerify.id)) continue;
+        const prior = [...scoped].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+        const latestIntent = prior[prior.length - 1]?.payload;
+        const errorPayload = latestVerify.payload as Record<string, unknown> | null;
+        recovered.push({
+          questionId: row.id,
+          epoch: latestVerify.id,
+          ...(typeof errorPayload?.recheck_command_event_id === 'string'
+            ? { recheckCommandEventId: errorPayload.recheck_command_event_id }
+            : {}),
+          ...(latestIntent?.supply_trace != null ? { supplyTrace: latestIntent.supply_trace } : {}),
+          ...(latestIntent?.placement_authority != null
+            ? { placementAuthority: latestIntent.placement_authority }
+            : {}),
+        });
+        continue;
+      }
+      // Orphan arm: no scoped intent and no terminal verify event.
+      if (scoped.length === 0 && !verifyRows.some(isTerminalVerifyEvent)) {
+        await writeVerifyDispatchIntent(tx, {
+          questionId: row.id,
+          verifier,
+          createdAt: now,
+        });
+        synthesized.push(row.id);
+      }
+    }
+    return { synthesizedIds: synthesized, candidates: recovered };
+  });
+
+  // The preflight probes lane config without sending (adapter startup only). A
+  // broken lane must not mint paid attempts — holds stay held and re-try next sweep.
+  const recoverable = [...candidates];
+  if (recoverable.length > 0) {
+    if (input.sourceVerifyRecoveryPreflight == null) {
+      console.warn(
+        '[verify-dispatch-outbox] recovery candidates found but no preflight provided; skipping',
+      );
+      recoverable.length = 0;
+    } else {
+      try {
+        await input.sourceVerifyRecoveryPreflight();
+      } catch (preflightErr) {
+        console.warn(
+          '[verify-dispatch-outbox] source-verify recovery preflight failed; skipping recovery',
+          preflightErr,
+        );
+        recoverable.length = 0;
+      }
+    }
+  }
+
+  // Between the selection tx and the preflight the world moved: re-lock each
+  // candidate and re-check the epoch before writing its intent, so a verify that
+  // landed (or a dispatch that appeared) in between wins.
+  const recoveredIds = await db.transaction(async (tx) => {
+    const written: string[] = [];
+    for (const candidate of recoverable) {
+      const [row] = await tx
+        .select({
+          id: question.id,
+          source: question.source,
+          draftStatus: question.draft_status,
+          metadata: question.metadata,
+          parentQuestionId: question.parent_question_id,
+        })
+        .from(question)
+        .where(eq(question.id, candidate.questionId))
+        .for('update')
+        .limit(1);
+      if (
+        row == null ||
+        row.draftStatus !== 'draft' ||
+        row.source !== 'web_sourced' ||
+        metadataIsArchived(row.metadata) ||
+        row.parentQuestionId != null
+      )
+        continue;
+      const scopedEvents = await tx
+        .select({
+          id: event.id,
+          action: event.action,
+          outcome: event.outcome,
+          payload: event.payload,
+          createdAt: event.created_at,
+        })
+        .from(event)
+        .where(
+          and(
+            eq(event.subject_id, candidate.questionId),
+            inArray(event.action, [
+              'experimental:source_verify',
+              VERIFY_DISPATCH_INTENT_ACTION,
+              VERIFY_DISPATCH_COMPLETE_ACTION,
+            ]),
+          ),
+        );
+      const verifyRows = scopedEvents.filter((r) => r.action === 'experimental:source_verify');
+      const latestVerify = verifyRows.sort(
+        (a, b) => b.createdAt.getTime() - a.createdAt.getTime() || b.id.localeCompare(a.id),
+      )[0];
+      if (latestVerify == null || latestVerify.id !== candidate.epoch) continue;
+      const intents = scopedEvents
+        .filter((r) => r.action === VERIFY_DISPATCH_INTENT_ACTION)
+        .map((r) => verifyDispatchIntentPayloadSchema.safeParse(r.payload))
+        .filter((r) => r.success)
+        .map((r) => r.data)
+        .filter((i) => i.verifier_kind === 'source_verify');
+      const completionKeys = new Set(
+        scopedEvents
+          .filter((r) => r.action === VERIFY_DISPATCH_COMPLETE_ACTION)
+          .map((r) => {
+            const p = r.payload as {
+              question_id?: unknown;
+              placement_authority?: PlacementVerificationAuthority;
+              recovery_epoch?: unknown;
+            } | null;
+            return `${p?.question_id ?? ''}\0source_verify${placementAuthorityIdentity(p?.placement_authority)}\0${typeof p?.recovery_epoch === 'string' ? p.recovery_epoch : ''}`;
+          }),
+      );
+      const intentKey = (p: {
+        question_id: string;
+        placement_authority?: PlacementVerificationAuthority;
+        recovery_epoch?: string;
+      }) =>
+        `${p.question_id}\0source_verify${placementAuthorityIdentity(p.placement_authority)}\0${p.recovery_epoch ?? ''}`;
+      if (intents.some((i) => i.recovery_epoch === candidate.epoch)) continue;
+      if (intents.some((i) => !completionKeys.has(intentKey(i)))) continue;
       await writeVerifyDispatchIntent(tx, {
-        questionId: row.id,
-        verifier,
+        questionId: candidate.questionId,
+        verifier: 'source_verify',
+        supplyTrace: candidate.supplyTrace,
+        placementAuthority: candidate.placementAuthority,
+        recoveryEpoch: candidate.epoch,
+        recheckCommandEventId: candidate.recheckCommandEventId,
         createdAt: now,
       });
-      synthesized.push(row.id);
+      written.push(candidate.questionId);
     }
-    return synthesized;
+    return written;
   });
 
   const dispatched = await dispatchPendingVerifyIntents(db, {
     enqueue: input.enqueue,
     recovery: true,
-    batchSize: input.batchSize ?? 500,
+    batchSize,
     now,
   });
-  return { ...dispatched, synthesized: synthesizedIds.length };
+  return { ...dispatched, synthesized: synthesizedIds.length + recoveredIds.length };
 }
