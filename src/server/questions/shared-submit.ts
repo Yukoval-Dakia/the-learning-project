@@ -107,6 +107,8 @@ export interface SharedSubmitContext {
   sessionId?: string | null;
   taskRunId?: string;
   causedByEventId?: string | null;
+  /** Server-bound publication anchor for a run whose content provenance is its ticket. */
+  publicationCausedByEventId?: string | null;
   now?: Date;
 }
 
@@ -859,6 +861,11 @@ export async function submitDraftQuestionInTx(
     admission: effectiveAdmission,
     actorRef: `submit_question:${ctx.actorRef}`,
     publishedBy: AgentRef.parse({ by: 'ai', task_kind: 'submit_question' }),
+    // Only an explicit server anchor participates: null/undefined keeps the prior
+    // revision's provenance (edits) or no anchor (ordinary submissions).
+    ...(ctx.publicationCausedByEventId != null
+      ? { causedByEventId: ctx.publicationCausedByEventId }
+      : {}),
     now,
   });
   if (publishResult.status === 'conflict') {

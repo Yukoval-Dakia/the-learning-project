@@ -30,6 +30,8 @@ export const AdmissionRepairReturn = z.object({
 });
 export const QuestionPreparerJobData = z.object({
   ticket: EvidenceDemandV1,
+  /** Server-written ticket event; the submission's causal anchor for admission purpose. */
+  ticket_event_id: z.string().min(1).optional(),
   steering: z.array(z.json()).optional(),
   continuation: z
     .object({

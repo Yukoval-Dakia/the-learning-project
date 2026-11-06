@@ -134,6 +134,12 @@ export interface ToolContext {
   callerActor: ToolCallerActor;
   /** When set, mirror events use this as `caused_by_event_id`. */
   causedByEventId?: string;
+  /**
+   * Server-bound publication anchor for a run whose content provenance is its ticket rather
+   * than a learner session (the question preparer). Never accepted from model arguments:
+   * the mount sets it from durable job data, and it only anchors the published revision.
+   */
+  publicationCausedByEventId?: string;
 }
 
 /**

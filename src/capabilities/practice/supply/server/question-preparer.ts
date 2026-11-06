@@ -409,6 +409,12 @@ export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown, r
                   db,
                   taskRunId,
                   callerActor: { kind: 'agent', ref: 'question_preparer' },
+                  ...(data.ticket_event_id
+                    ? {
+                        causedByEventId: data.ticket_event_id,
+                        publicationCausedByEventId: data.ticket_event_id,
+                      }
+                    : {}),
                   beforeIngestionWrite: assertSegmentOpen,
                 },
                 beforeExecute: async () => {

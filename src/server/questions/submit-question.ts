@@ -134,6 +134,8 @@ interface SubmitContext {
   sessionId?: string | null;
   taskRunId?: string;
   causedByEventId?: string | null;
+  /** Server-bound publication anchor for a run whose content provenance is its ticket. */
+  publicationCausedByEventId?: string | null;
   now?: Date;
 }
 

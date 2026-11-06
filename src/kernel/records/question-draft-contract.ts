@@ -20,6 +20,7 @@ import {
   declaredShapeSupport,
 } from '@/core/schema/assessment';
 import type { BlankNormalizationT } from '@/core/schema/assessment/scoring';
+import { deterministicDisplayOrder } from '@/core/schema/display-order';
 import type {
   DraftBlankTextKeyT,
   DraftMaterialT,
@@ -106,7 +107,10 @@ function slotFor(unit: DraftUnitT, partId: string): ResponseSlotT {
           ? { gap_after_codepoint: item.gap_after_codepoint }
           : {}),
       })),
-      ...(spec.axes != null ? { axes: spec.axes } : {}),
+      // The answer-aligned relation axis is permuted here, the one seam every declared
+      // document (candidate, teaching draft, edit) freezes through: rendering the
+      // producer's order would let the learner read the key off the screen.
+      ...(spec.axes != null ? { axes: displayOrderAxes(spec.axes) } : {}),
       ...(spec.at_most_per_coordinate != null
         ? { at_most_per_coordinate: spec.at_most_per_coordinate }
         : {}),
@@ -141,6 +145,18 @@ interface CriterionBuild {
   /** Only select_key/blank_key criteria may carry a K1 rule. */
   attachRule: boolean;
   issues: DraftConversionIssue[];
+}
+
+/** Matching pairs by column position and ordering by object position; permute the axis the
+ *  key aligns to so a declared key order is never rendered as-is. */
+function displayOrderAxes(
+  axes: NonNullable<SelectSlotT['axes']>,
+): NonNullable<SelectSlotT['axes']> {
+  return {
+    ...axes,
+    ...(axes.right != null ? { right: deterministicDisplayOrder(axes.right) } : {}),
+    ...(axes.object != null ? { object: deterministicDisplayOrder(axes.object) } : {}),
+  };
 }
 
 function ruleProvenance(doc: QuestionDraftDocumentT): 'official' | 'system_proposed' | 'manual' {

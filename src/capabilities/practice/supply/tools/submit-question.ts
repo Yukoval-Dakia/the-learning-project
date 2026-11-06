@@ -285,7 +285,13 @@ const COMMIT_ROUTE_CONFIG = {
 
 type CandidateSubmitContext = Pick<
   ToolContext,
-  'db' | 'sessionId' | 'taskRunId' | 'logTaskRunId' | 'causedByEventId' | 'beforeIngestionWrite'
+  | 'db'
+  | 'sessionId'
+  | 'taskRunId'
+  | 'logTaskRunId'
+  | 'causedByEventId'
+  | 'beforeIngestionWrite'
+  | 'publicationCausedByEventId'
 > & {
   callerActor?: ToolContext['callerActor'];
   /** Server-held placement delivery authority; never accepted from agent/tool input. */
@@ -431,7 +437,6 @@ async function runCandidateSubmit(
     };
   }
   const enqueueSourceVerify = deps.enqueueSourceVerify ?? defaultEnqueueSourceVerify;
-  const canonicalHash = candidate.extraction_hash.slice('sha256:'.length);
   const now = new Date();
 
   const liveRows = await db
@@ -471,6 +476,17 @@ async function runCandidateSubmit(
       };
     }
   }
+
+  // Typed declarations deduplicate by document identity. The fetch extraction hash covers
+  // only flat prompt/reference/choices, so structurally different candidates (parts,
+  // relation axes) could merge; flat candidates keep the extraction hash unchanged.
+  const declaredDocument =
+    candidate.question.parts != null && candidate.question.parts.length > 0
+      ? declaredCandidateDocument(candidate.question, input.source_route, knowledgeIds)
+      : null;
+  const canonicalHash = declaredDocument
+    ? canonicalQuestionContentHash(draftCanonicalIdentity(declaredDocument.document))
+    : candidate.extraction_hash.slice('sha256:'.length);
 
   const merged = await db.transaction(async (tx) => {
     await ctx.beforeIngestionWrite?.(tx);
@@ -576,7 +592,7 @@ async function runCandidateSubmit(
   // 上面的 KC 活体/host/exact/source-URL/near/vector 判重原样先跑。
   // 未声明候选照旧旧 flat 路径（insertSourcedDraft 的 live 无声明 caller）。
   const declaredParts = candidate.question.parts;
-  if (declaredParts != null && declaredParts.length > 0) {
+  if (declaredParts != null && declaredParts.length > 0 && declaredDocument != null) {
     return runDeclaredCandidateSubmit(ctx, input, {
       knowledgeIds,
       canonicalHash,
@@ -584,6 +600,8 @@ async function runCandidateSubmit(
       ingestVector,
       questionText,
       now,
+      document: declaredDocument.document,
+      markupSanitized: declaredDocument.markupSanitized,
     });
   }
 
@@ -940,6 +958,9 @@ interface DeclaredCandidateRun {
   canonicalHash: string;
   vectorNear: { id: string; similarity: number } | null;
   ingestVector: number[] | null;
+  /** The sanitized document the submission will freeze (built once, before dedup). */
+  document: QuestionDraftDocumentT;
+  markupSanitized: boolean;
   /** 实际送 embed 的 flat 文本（向量输入身份；R1 F4：只允许它与 stored
    *  投影一致时才复用向量戳，否则保持未嵌入交给 nightly backfill）。 */
   questionText: { prompt_md: string; reference_md: string; choices_md: string[] | null };
@@ -1031,6 +1052,7 @@ async function runDeclaredCandidateSubmit(
   const q = candidate.question;
   const requestId = input.request_id;
   const { knowledgeIds, canonicalHash, vectorNear, ingestVector, questionText, now } = run;
+  const { document, markupSanitized } = run;
   const routeConfig = COMMIT_ROUTE_CONFIG[input.source_route];
 
   // typed 路径本片不承载图片/figure 资产绑定（图片候选仍在旧 flat 写口）；
@@ -1077,12 +1099,6 @@ async function runDeclaredCandidateSubmit(
       ? vectorNearHoldMetadata(vectorNear)
       : null;
 
-  const { document, markupSanitized } = declaredCandidateDocument(
-    q,
-    input.source_route,
-    knowledgeIds,
-  );
-
   const committed = await persistDeclaredQuestionGroup(db, {
     document,
     idNamespace: `yuk1568-candidate:${requestId}`,
@@ -1121,6 +1137,7 @@ async function runDeclaredCandidateSubmit(
       sessionId: ctx.sessionId ?? null,
       taskRunId: ctx.taskRunId,
       causedByEventId: ctx.causedByEventId ?? null,
+      publicationCausedByEventId: ctx.publicationCausedByEventId ?? null,
       now,
     },
     caller: {
@@ -1408,6 +1425,7 @@ async function execute(ctx: ToolContext, raw: ExecInput): Promise<Output> {
         sessionId: ctx.sessionId ?? null,
         taskRunId: ctx.taskRunId,
         causedByEventId: ctx.causedByEventId ?? null,
+        publicationCausedByEventId: ctx.publicationCausedByEventId ?? null,
       },
     );
     return result as Output;
