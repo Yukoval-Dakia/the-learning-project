@@ -375,7 +375,9 @@ export async function authorQuestion(
         question_ids: [submit.question_id],
         bank_path: `/questions/${submit.question_id}`,
         admission: { state: submit.status, per_unit: submit.per_unit },
-        reasoning_summary: '题已存入题库，自动检查通过后才能作答；请打开题库链接查看状态和原因。',
+        reasoning_summary: submit.per_unit.some((unit) => unit.reason === 'no_admitted_executor')
+          ? '题已存入题库，但这类题目前没有可用的自动判分器，暂时不能作答；可以换一道选择、填空、配对、断句或排序题。'
+          : '题已存入题库，自动检查通过后才能作答；请打开题库链接查看状态和原因。',
       };
     }
   }

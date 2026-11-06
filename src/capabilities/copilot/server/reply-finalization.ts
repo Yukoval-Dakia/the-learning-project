@@ -192,14 +192,24 @@ function proposalDisclosure(trace: readonly TraceEntry[]): string | undefined {
     ...new Set(
       trace.flatMap((entry) => {
         const out = isRecord(entry.domain_output) ? entry.domain_output : undefined;
-        return entry.status === 'succeeded' &&
-          out?.seed_mode === 'teaching_draft' &&
-          out.status === 'submitted' &&
-          typeof out.bank_path === 'string'
-          ? [
-              `题已存入[题库](${out.bank_path})，自动检查通过后才能作答；当前状态和原因可在题库查看。`,
-            ]
-          : [];
+        if (
+          entry.status !== 'succeeded' ||
+          out?.seed_mode !== 'teaching_draft' ||
+          out.status !== 'submitted' ||
+          typeof out.bank_path !== 'string'
+        )
+          return [];
+        const admission = isRecord(out.admission) ? out.admission : undefined;
+        const noExecutor =
+          Array.isArray(admission?.per_unit) &&
+          admission.per_unit.some(
+            (unit) => isRecord(unit) && unit.reason === 'no_admitted_executor',
+          );
+        return [
+          noExecutor
+            ? `题已存入[题库](${out.bank_path})，但这类题目前没有可用的自动判分器，暂时不能作答；可以换一道选择、填空、配对、断句或排序题。`
+            : `题已存入[题库](${out.bank_path})，自动检查通过后才能作答；当前状态和原因可在题库查看。`,
+        ];
       }),
     ),
   ];
