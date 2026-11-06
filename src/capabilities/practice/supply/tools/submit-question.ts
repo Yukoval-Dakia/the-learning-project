@@ -12,8 +12,8 @@ import {
   explainDifficultyEvidence,
 } from '@/core/schema/difficulty-evidence';
 import type { WebSourcedProvenanceT } from '@/core/schema/provenance';
-import { QuestionDraftDocument, type QuestionDraftDocumentT } from '@/core/schema/question-draft';
-import { SourcedQuestion, type SourcedQuestionT } from '@/core/schema/sourcing';
+import type { QuestionDraftDocumentT } from '@/core/schema/question-draft';
+import { SourcedQuestion } from '@/core/schema/sourcing';
 import { FigureRef, StructuredQuestion } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
 import { knowledge, question, source_asset } from '@/db/schema';
@@ -28,10 +28,10 @@ import {
   type SubmitResult,
   canonicalJson,
   claimSubmitRequestId,
+  declaredCandidateDocument,
   findSubmitReceipt,
   insertSourcedDraft,
   persistDeclaredQuestionGroup,
-  sanitizeSourcedMarkup,
   submitDraftQuestion,
   writeSubmitReceiptEvent,
 } from '@/server/questions/submit-question';
@@ -870,87 +870,6 @@ async function runCandidateSubmit(
     difficulty_evidence: persisted.difficultyEvidence,
     request_id: input.request_id,
   };
-}
-
-/** 声明 → v2 草稿文档。内容文本过 ingest markup 清洗（与旧 flat 入库同口径；
- *  确定性、不改语义）；答案键（accepted/equivalent_forms）同口径清洗——旧
- *  flat 路径的 reference_md 本就经此清洗后才作判分输入。producer 声明的
- *  结构/槽位/id/answer_shape/blank_order 逐字保留，不重铸不推断。 */
-function declaredCandidateDocument(
-  q: SourcedQuestionT,
-  sourceRoute: 'jyeoo_fetch' | 'sourcing_web',
-  knowledgeIds: string[],
-): { document: QuestionDraftDocumentT; markupSanitized: boolean } {
-  let markupSanitized = false;
-  const clean = (text: string): string => {
-    const next = sanitizeSourcedMarkup(text);
-    if (next !== text) markupSanitized = true;
-    return next;
-  };
-  const parts = (q.parts ?? []).map((part) => ({
-    ...part,
-    prompt_md: clean(part.prompt_md),
-    ...(part.explanation_md != null ? { explanation_md: clean(part.explanation_md) } : {}),
-    units: part.units.map((unit) => ({
-      ...unit,
-      ...(unit.reference_md != null ? { reference_md: clean(unit.reference_md) } : {}),
-      ...(unit.key?.kind === 'blank'
-        ? {
-            key:
-              unit.key.key.kind === 'text'
-                ? {
-                    ...unit.key,
-                    key: { ...unit.key.key, accepted: unit.key.key.accepted.map(clean) },
-                  }
-                : unit.key.key.equivalent_forms != null
-                  ? {
-                      ...unit.key,
-                      key: {
-                        ...unit.key.key,
-                        equivalent_forms: unit.key.key.equivalent_forms.map(clean),
-                      },
-                    }
-                  : unit.key,
-          }
-        : {}),
-      response_spec:
-        unit.response_spec.kind === 'select'
-          ? {
-              ...unit.response_spec,
-              items: unit.response_spec.items.map((item) => ({
-                ...item,
-                ...(item.label_md != null ? { label_md: clean(item.label_md) } : {}),
-              })),
-              ...(unit.response_spec.text != null ? { text: clean(unit.response_spec.text) } : {}),
-            }
-          : unit.response_spec,
-      ...(unit.rubric != null
-        ? {
-            rubric: {
-              ...unit.rubric,
-              ...(unit.rubric.guidance_md != null
-                ? { guidance_md: clean(unit.rubric.guidance_md) }
-                : {}),
-              criteria: unit.rubric.criteria.map((criterion) => ({
-                ...criterion,
-                ...(criterion.statement_md != null
-                  ? { statement_md: clean(criterion.statement_md) }
-                  : {}),
-              })),
-            },
-          }
-        : {}),
-    })),
-  }));
-  const document = QuestionDraftDocument.parse({
-    schema_version: 2,
-    parts,
-    materials: [],
-    knowledge_ids: knowledgeIds,
-    metadata: {},
-    source: { kind: sourceRoute, ref: q.source_url, note: q.source_title },
-  });
-  return { document, markupSanitized };
 }
 
 interface DeclaredCandidateRun {

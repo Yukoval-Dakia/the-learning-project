@@ -1,3 +1,5 @@
+import { QuestionDraftDocument, type QuestionDraftDocumentT } from '@/core/schema/question-draft';
+import type { SourcedQuestionT } from '@/core/schema/sourcing';
 import type { Db, Tx } from '@/db/client';
 import type { question } from '@/db/schema';
 import type { PublishQuestionGroupResult } from '@/kernel/records/assessment-publication';
@@ -7,6 +9,7 @@ import {
   drainSubmitVerifyIntents,
   submitDraftQuestionInTx,
 } from './shared-submit';
+import { sanitizeSourcedMarkup } from './sourced-markup';
 
 // submit_question: draft (v2 or adapted legacy) → four-layer contract →
 // publishQuestionGroup, the only revision writer. CAS uses expected_draft_version and
@@ -175,4 +178,86 @@ export async function submitDraftQuestion(
   }
   await drainSubmitVerifyIntents(db, out);
   return out;
+}
+
+// Declared candidate → v2 draft document. Content text passes the same ingest markup
+// sanitizer as the legacy flat writer (deterministic, no semantic change); answer keys
+// (accepted/equivalent_forms) are cleaned the same way, because the flat path already
+// cleaned reference_md before grading. Producer-declared structure/slots/ids/answer_shape/
+// blank_order pass through verbatim — never re-minted or inferred.
+export function declaredCandidateDocument(
+  q: SourcedQuestionT,
+  sourceRoute: 'jyeoo_fetch' | 'sourcing_web',
+  knowledgeIds: string[],
+): { document: QuestionDraftDocumentT; markupSanitized: boolean } {
+  let markupSanitized = false;
+  const clean = (text: string): string => {
+    const next = sanitizeSourcedMarkup(text);
+    if (next !== text) markupSanitized = true;
+    return next;
+  };
+  const parts = (q.parts ?? []).map((part) => ({
+    ...part,
+    prompt_md: clean(part.prompt_md),
+    ...(part.explanation_md != null ? { explanation_md: clean(part.explanation_md) } : {}),
+    units: part.units.map((unit) => ({
+      ...unit,
+      ...(unit.reference_md != null ? { reference_md: clean(unit.reference_md) } : {}),
+      ...(unit.key?.kind === 'blank'
+        ? {
+            key:
+              unit.key.key.kind === 'text'
+                ? {
+                    ...unit.key,
+                    key: { ...unit.key.key, accepted: unit.key.key.accepted.map(clean) },
+                  }
+                : unit.key.key.equivalent_forms != null
+                  ? {
+                      ...unit.key,
+                      key: {
+                        ...unit.key.key,
+                        equivalent_forms: unit.key.key.equivalent_forms.map(clean),
+                      },
+                    }
+                  : unit.key,
+          }
+        : {}),
+      response_spec:
+        unit.response_spec.kind === 'select'
+          ? {
+              ...unit.response_spec,
+              items: unit.response_spec.items.map((item) => ({
+                ...item,
+                ...(item.label_md != null ? { label_md: clean(item.label_md) } : {}),
+              })),
+              ...(unit.response_spec.text != null ? { text: clean(unit.response_spec.text) } : {}),
+            }
+          : unit.response_spec,
+      ...(unit.rubric != null
+        ? {
+            rubric: {
+              ...unit.rubric,
+              ...(unit.rubric.guidance_md != null
+                ? { guidance_md: clean(unit.rubric.guidance_md) }
+                : {}),
+              criteria: unit.rubric.criteria.map((criterion) => ({
+                ...criterion,
+                ...(criterion.statement_md != null
+                  ? { statement_md: clean(criterion.statement_md) }
+                  : {}),
+              })),
+            },
+          }
+        : {}),
+    })),
+  }));
+  const document = QuestionDraftDocument.parse({
+    schema_version: 2,
+    parts,
+    materials: [],
+    knowledge_ids: knowledgeIds,
+    metadata: {},
+    source: { kind: sourceRoute, ref: q.source_url, note: q.source_title },
+  });
+  return { document, markupSanitized };
 }
