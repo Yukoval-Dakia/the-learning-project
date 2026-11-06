@@ -269,18 +269,156 @@ const env: NodeJS.ProcessEnv = {
 
 // RW_FRONTDOOR=dev serves the Start front door through the Vite dev server inside the API
 // process (server/dev-frontdoor.ts): HMR for pages, no build step, no second watcher.
-const api = spawn('pnpm', ['rw:api'], { stdio: 'inherit', env: { ...env, RW_FRONTDOOR: 'dev' } });
-const worker = spawn('pnpm', ['worker:dev'], { stdio: 'inherit', env });
-const children = [api, worker];
+//
+// Each child leads its own process group (detached → pgid = pid on POSIX), so a stop signal
+// reaches pnpm, tsx and the node API/worker together instead of leaving tsx/node running.
+// The cost: `kill -KILL` of this launcher skips every handler below, and the two groups keep
+// running; the pids/gpids printed at startup are the cleanup handle.
+const POSIX_PROCESS_GROUP = process.platform !== 'win32';
+type DevChild = {
+  name: 'api' | 'worker';
+  child: ReturnType<typeof spawn>;
+  pid: number | undefined;
+};
+const children: DevChild[] = [];
+
+function spawnDev(name: DevChild['name'], script: string, extraEnv: NodeJS.ProcessEnv): DevChild {
+  const child = spawn('pnpm', [script], {
+    stdio: 'inherit',
+    env: { ...env, ...extraEnv },
+    // A new group per child keeps the kill scoped to this worktree's tree; other worktrees'
+    // dev stacks are in different groups and must not be touched.
+    detached: POSIX_PROCESS_GROUP,
+  });
+  const entry = { name, child, pid: child.pid };
+  children.push(entry);
+  return entry;
+}
+
+// Above the API's own 65s shutdown deadline (server/shutdown.ts). This is a backstop only:
+// tsx 4.23.x force-SIGKILLs its node child 5s after it receives the relayed signal, so a real
+// drain is cut at ~5s regardless; this long wait only catches a wrapper that ignores signals.
+const STOP_TIMEOUT_MS = 70_000;
+const STOP_POLL_MS = 100;
+// tsx relays the terminal signal into its own tree; a repeat inside this window is that echo,
+// not a user asking for an immediate kill.
+const REPEAT_SIGNAL_WINDOW_MS = 1_000;
+
+/** Negative pid targets the child's whole group on POSIX; Windows has no group kill. */
+function signalChild(pid: number, signal: NodeJS.Signals): void {
+  try {
+    process.kill(POSIX_PROCESS_GROUP ? -pid : pid, signal);
+  } catch (err) {
+    // ESRCH: the group is already gone, which is the normal end state.
+    if ((err as NodeJS.ErrnoException).code !== 'ESRCH') {
+      console.warn(`[dev-local] could not send ${signal} to pid ${pid}`, err);
+    }
+  }
+}
+
+function processAlive(pid: number): boolean {
+  try {
+    process.kill(POSIX_PROCESS_GROUP ? -pid : pid, 0);
+    return true;
+  } catch (err) {
+    // EPERM still means it exists; ESRCH (and anything else) means it is gone.
+    return (err as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+let stopping = false;
+let lastStopSignalAt = 0;
+
+async function stop(reason: string, signal: NodeJS.Signals, code: number | null): Promise<void> {
+  if (stopping) return;
+  stopping = true;
+  console.log(`[dev-local] ${reason} — stopping api and worker`);
+  for (const { pid } of children) if (pid !== undefined) signalChild(pid, signal);
+
+  const deadline = Date.now() + STOP_TIMEOUT_MS;
+  while (
+    Date.now() < deadline &&
+    children.some(({ pid }) => pid !== undefined && processAlive(pid))
+  ) {
+    await sleep(STOP_POLL_MS);
+  }
+
+  const survivors = children.filter(({ pid }) => pid !== undefined && processAlive(pid));
+  if (survivors.length > 0) {
+    console.warn(
+      `[dev-local] ${survivors.map(({ name }) => name).join(', ')} still running after ${STOP_TIMEOUT_MS / 1000}s — killing only their process groups`,
+    );
+    for (const { pid } of survivors) if (pid !== undefined) signalChild(pid, 'SIGKILL');
+  }
+  process.exit(code ?? 0);
+}
+
+/**
+ * SIGHUP/SIGQUIT mean the terminal went away. The API and worker only install SIGINT/SIGTERM
+ * handlers (server/shutdown.ts, src/server/boss/shutdown.ts), so forward SIGTERM for those;
+ * forwarding the raw signal would kill them without draining.
+ */
+function forwardSignalFor(signal: NodeJS.Signals): NodeJS.Signals {
+  return signal === 'SIGINT' || signal === 'SIGTERM' ? signal : 'SIGTERM';
+}
+
+const onSignal = (signal: NodeJS.Signals) => {
+  const now = Date.now();
+  if (stopping) {
+    if (now - lastStopSignalAt < REPEAT_SIGNAL_WINDOW_MS) return;
+    lastStopSignalAt = now;
+    for (const { pid } of children) if (pid !== undefined) signalChild(pid, 'SIGKILL');
+    console.warn(`[dev-local] ${signal} received again — killing api and worker process groups`);
+    return;
+  }
+  lastStopSignalAt = now;
+  void stop(`${signal} received`, forwardSignalFor(signal), 0);
+};
+// Registered before spawn: otherwise a terminal signal in that window takes Node's default exit
+// and leaves the detached groups behind. SIGHUP is the one a closed terminal window sends.
+for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGQUIT'] as const) {
+  process.on(signal, onSignal);
+}
+// Best effort for any other exit path (uncaught error, explicit exit). Exit handlers run
+// synchronously, so this only signals; it cannot wait for the drain. `kill -KILL` skips it.
+process.on('exit', () => {
+  for (const { pid } of children) if (pid !== undefined) signalChild(pid, 'SIGTERM');
+});
+
+spawnDev('api', 'rw:api', { RW_FRONTDOOR: 'dev' });
+spawnDev('worker', 'worker:dev', {});
 console.log(
   `[dev-local] open ${devOrigin}/ (Vite HMR; /api/* on the same origin; database ${databaseUrl.replace(/:\/\/[^@]*@/, '://***@')})`,
 );
 if (!process.env.DEV_PORT) console.log(`[dev-local] port ${devPort} auto-selected`);
+const groupLabel = children
+  .map(({ name, pid }) =>
+    POSIX_PROCESS_GROUP && pid !== undefined
+      ? `${name} pid ${pid} (pgid ${pid})`
+      : `${name} pid ${pid ?? '?'}`,
+  )
+  .join(', ');
+console.log(`[dev-local] ${groupLabel}; Ctrl-C, SIGTERM, SIGHUP or a closed terminal stops both`);
+if (POSIX_PROCESS_GROUP) {
+  const groups = children.filter(({ pid }) => pid !== undefined).map(({ pid }) => `-${pid}`);
+  if (groups.length > 0) {
+    console.log(
+      `[dev-local] SIGKILL of this launcher is not handled; if its groups survive: kill -TERM -- ${groups.join(' ')} (then -KILL)`,
+    );
+  }
+}
 
-const stop = (code: number | null) => {
-  for (const c of children) c.kill('SIGINT');
-  process.exit(code ?? 0);
-};
-process.on('SIGINT', () => stop(0));
-process.on('SIGTERM', () => stop(0));
-for (const c of children) c.on('exit', stop);
+for (const { name, child } of children) {
+  child.on('error', (err) => {
+    console.error(`[dev-local] ${name} failed to start`, err);
+    void stop(`${name} failed to start`, 'SIGINT', 1);
+  });
+  child.on('exit', (code) => {
+    // The pnpm wrapper can exit while its tsx/node descendants keep running; stop() signals
+    // the exited child's group too, not just the surviving sibling.
+    if (stopping) return;
+    console.log(`[dev-local] ${name} exited (${code ?? 'signal'})`);
+    void stop(`${name} exited`, 'SIGINT', code);
+  });
+}
