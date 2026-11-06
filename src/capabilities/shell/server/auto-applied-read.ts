@@ -1,8 +1,9 @@
 // A 档 auto-applied 卡的只读读模型。
 //
-// 数据源是历史 `experimental:completion_autoapply` 锚（YUK-525 后不再有新写入）：
-// payload 带 proposal_id + 熔断快照；每条锚按 proposal_id 查对应 correct(retract)
-// 事件判 reverted。撤销复用既有 retractAiProposal 车道，这里只读它留下的痕迹。
+// 数据源：通用 `experimental:auto_apply` 锚（strength A 自动通道写入）+
+// 历史 `experimental:completion_autoapply` 锚（YUK-525 后不再有新写入，仍可读）。
+// 每条锚按 proposal_id 查对应 correct(retract) 事件判 reverted。撤销复用既有
+// retractAiProposal 车道，这里只读它留下的痕迹。
 //
 // 同时透传当前裁决速率快照（checkAutoApplyBreaker）供 A 块 meter/banner 渲染。
 //
@@ -12,8 +13,12 @@ import { and, desc, eq, gte, inArray, sql } from 'drizzle-orm';
 
 import type { Db, Tx } from '@/db/client';
 import { event, learning_item } from '@/db/schema';
+import { PROPOSAL_AUTOAPPLY_ACTION } from '@/kernel/proposals/auto-apply';
+import {
+  type VerdictBreakerStatus,
+  checkAutoApplyBreaker,
+} from '@/kernel/proposals/auto-apply-breaker';
 import { COMPLETION_AUTOAPPLY_ACTION } from './completion-autoapply-actions';
-import { type VerdictBreakerStatus, checkAutoApplyBreaker } from './decide-breaker';
 
 type DbLike = Db | Tx;
 
@@ -25,9 +30,14 @@ export const AUTO_APPLIED_MAX_ROWS = 200;
 
 export interface AutoAppliedRow {
   proposal_id: string;
+  /** Proposal kind that was auto-applied; drives the card's tag/icon. */
+  kind: string;
+  /** Historical wire field: learning_item id for completion, anchor subject otherwise. */
   learning_item_id: string;
-  /** 学习项标题（已删/缺失 → fallback 到 id）。 */
+  /** Card main line (anchor title; completion keeps the learning-item title). */
   title: string;
+  /** Learner-facing one-liner recorded at apply time. */
+  summary: string;
   /** apply 时刻（ISO）；前端据此 + now 判 live/consumed。 */
   applied_at: string;
   /** apply 时的熔断档位（'ok' | 'warned' | 'tripped'）。 */
@@ -48,6 +58,8 @@ export interface AutoAppliedDigest {
   };
 }
 
+const COMPLETION_SUMMARY = '自动判定为完成并已记录';
+
 export async function getAutoAppliedDigest(
   db: DbLike,
   opts: { now?: Date; windowMs?: number } = {},
@@ -62,24 +74,26 @@ export async function getAutoAppliedDigest(
     checkAutoApplyBreaker(db, now),
   ]);
 
-  const out: AutoAppliedRow[] = rows.flatMap((r) => {
+  const byProposal = new Map<string, AutoAppliedRow>();
+  for (const r of rows) {
     const proposalId = readProposalId(r.payload);
     // 缺 proposal_id 的坏锚不进列表：UI 用 proposal id 做 key 和撤销入口。
-    if (proposalId.length === 0) return [];
-    return [
-      {
-        proposal_id: proposalId,
-        learning_item_id: r.subjectId,
-        title: r.title ?? r.subjectId,
-        applied_at: r.createdAt.toISOString(),
-        level: readLevel(r.payload),
-        reverted: revertedSet.has(proposalId),
-      },
-    ];
-  });
+    if (proposalId.length === 0 || byProposal.has(proposalId)) continue;
+    const kind = readKind(r.action, r.payload);
+    byProposal.set(proposalId, {
+      proposal_id: proposalId,
+      kind,
+      learning_item_id: r.subjectId,
+      title: readTitle(r),
+      summary: readSummary(r.payload, kind),
+      applied_at: r.createdAt.toISOString(),
+      level: readLevel(r.payload),
+      reverted: revertedSet.has(proposalId),
+    });
+  }
 
   return {
-    rows: out,
+    rows: [...byProposal.values()],
     breaker: {
       tripped: breaker.tripped,
       level: breaker.level,
@@ -94,6 +108,7 @@ export async function getAutoAppliedDigest(
 async function loadAutoAppliedRows(db: DbLike, windowStart: Date) {
   const rows = await db
     .select({
+      action: event.action,
       subjectId: event.subject_id,
       payload: event.payload,
       createdAt: event.created_at,
@@ -101,7 +116,12 @@ async function loadAutoAppliedRows(db: DbLike, windowStart: Date) {
     })
     .from(event)
     .leftJoin(learning_item, eq(learning_item.id, event.subject_id))
-    .where(and(eq(event.action, COMPLETION_AUTOAPPLY_ACTION), gte(event.created_at, windowStart)))
+    .where(
+      and(
+        inArray(event.action, [COMPLETION_AUTOAPPLY_ACTION, PROPOSAL_AUTOAPPLY_ACTION]),
+        gte(event.created_at, windowStart),
+      ),
+    )
     .orderBy(desc(event.created_at), desc(event.id))
     .limit(AUTO_APPLIED_MAX_ROWS);
 
@@ -115,6 +135,39 @@ async function loadAutoAppliedRows(db: DbLike, windowStart: Date) {
 function readProposalId(payload: unknown): string {
   const value = (payload as { proposal_id?: unknown } | null)?.proposal_id;
   return typeof value === 'string' ? value : '';
+}
+
+function readString(payload: unknown, key: string): string {
+  const value = (payload as Record<string, unknown> | null)?.[key];
+  return typeof value === 'string' ? value : '';
+}
+
+function readKind(action: string, payload: unknown): string {
+  if (action === PROPOSAL_AUTOAPPLY_ACTION) {
+    const kind = readString(payload, 'kind');
+    if (kind.length > 0) return kind;
+  }
+  // Historical completion anchors predate the kind field.
+  return 'completion';
+}
+
+function readTitle(row: {
+  title: string | null;
+  subjectId: string;
+  action: string;
+  payload: unknown;
+}): string {
+  if (row.action === PROPOSAL_AUTOAPPLY_ACTION) {
+    const anchorTitle = readString(row.payload, 'title');
+    if (anchorTitle.length > 0) return anchorTitle;
+  }
+  return row.title ?? row.subjectId;
+}
+
+function readSummary(payload: unknown, kind: string): string {
+  const summary = readString(payload, 'summary');
+  if (summary.length > 0) return summary;
+  return kind === 'completion' ? COMPLETION_SUMMARY : '';
 }
 
 // payload.level 只接受三档；非法/缺失落 'ok'。

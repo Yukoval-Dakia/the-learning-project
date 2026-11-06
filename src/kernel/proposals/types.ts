@@ -9,6 +9,18 @@ export interface ProposalAcceptProposal {
   actor_ref: string;
 }
 
+/**
+ * Who records the decision. Human inbox decisions stay `user/self`; the
+ * auto-apply lane passes the proposing agent's real identity so the rate ledger
+ * never claims a user decision that did not happen (YUK-525).
+ */
+export interface ProposalDecisionActor {
+  readonly kind: 'user' | 'agent' | 'system';
+  readonly ref: string;
+}
+
+export const USER_DECISION_ACTOR: ProposalDecisionActor = { kind: 'user', ref: 'self' };
+
 export interface ProposalCorrectedPayload {
   readonly claim_md: string;
 }
@@ -54,6 +66,8 @@ export type ProposalAcceptInput = {
   proposalId: string;
   proposal: ProposalAcceptProposal;
   user_note?: string;
+  /** Omitted by the HTTP decision face; only internal callers set a non-user actor. */
+  actor?: ProposalDecisionActor;
 } & ProposalAcceptDecision;
 
 export interface ProposalAcceptResult {

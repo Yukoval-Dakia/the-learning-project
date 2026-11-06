@@ -1,6 +1,6 @@
 // KnowledgeReviewTask — maintenance agent runtime. Mounts the shared
-// knowledge_review tools through piDomainMount; proposals are proposal-only and the
-// user accepts in the inbox.
+// knowledge_review tools through piDomainMount; proposals still land in the inbox,
+// and strength-A node creation is auto-applied there by the automated lane.
 
 import { piDomainMount } from '@/ai/pi-tool-mount';
 import { newId } from '@/core/ids';
