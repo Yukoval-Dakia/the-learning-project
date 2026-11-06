@@ -61,11 +61,17 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/hostedtoolcache /opt/ghc
           df -h /
 
-      # The docker driver cannot export a layer cache; the container driver can.
+      # The docker driver cannot export a layer cache; the container driver
+      # can — but only if the job's ephemeral cache endpoints are forwarded
+      # into the buildkit container, else type=gha cache silently no-ops.
+      # These are per-job tokens, never written into an image or the artifact.
       - name: Set up buildx
         run: |
           set -euo pipefail
-          docker buildx create --name tlp-images --driver docker-container --use >/dev/null
+          docker buildx create --name tlp-images --driver docker-container --use \
+            --driver-opt "env.ACTIONS_RUNTIME_TOKEN=$ACTIONS_RUNTIME_TOKEN" \
+            --driver-opt "env.ACTIONS_CACHE_URL=${ACTIONS_CACHE_URL:-}" \
+            --driver-opt "env.ACTIONS_RESULTS_URL=${ACTIONS_RESULTS_URL:-}" >/dev/null
           docker buildx inspect --bootstrap | tail -5
 
       # Every stage that matters for an incremental code-only change lives in
@@ -223,7 +229,8 @@ jobs:
             # bytes for a real private-key header. Matches land in the report
             # as findings; cert-only .pem files are listed as seen-but-public.
             : >"pemkey-${target}.txt"
-            { grep -E '\.pem$' "fs-${target}.txt" || true; } | while IFS= read -r p; do
+            { grep -E '\.pem$' "fs-${target}.txt" | grep -v '/node_modules/' || true; } \
+              | while IFS= read -r p; do
               if tar -xOf "$tmp" "$p" 2>/dev/null \
                  | LC_ALL=C grep -aqE 'PRIVATE KEY( BLOCK)?-----|openssh-key-v1'; then
                 printf '%s\n' "$p" >>"pemkey-${target}.txt"
@@ -264,13 +271,20 @@ jobs:
               report.append(f"== {tag} ==")
               env_names = open(f"env-{target}.txt").read().split()
               report.append(f"config.env names ({len(env_names)}): {' '.join(env_names)}")
-              seen_allowed = []
+              seen_allowed, skipped_vendor = [], 0
               for line in open(f"fs-{target}.txt"):
                   path = line.strip()
                   if path.startswith("./"):
                       path = path[2:]
                   path = path.lstrip("/").rstrip("/")
                   if not path:
+                      continue
+                  if "node_modules" in path.split("/"):
+                      # pnpm-installed package content: can only contain what
+                      # upstream published (already public); the repo's own
+                      # files never reach these paths — the build context has
+                      # node_modules dockerignored and pnpm manages the rest.
+                      skipped_vendor += 1
                       continue
                   base = path.rsplit("/", 1)[-1]
                   hit = None
@@ -294,6 +308,8 @@ jobs:
                       findings.append(f"{tag}: history: {line[:200]}")
               report.append(
                   f"allowed (tracked example, still reported): {seen_allowed or 'none'}")
+              report.append(
+                  f"skipped {skipped_vendor} vendored node_modules paths")
           report.append(
               "RESULT: " + ("FAIL" if findings else "PASS")
               + f" ({len(findings)} finding(s))")
