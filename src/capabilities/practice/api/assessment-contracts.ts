@@ -205,7 +205,15 @@ export const JudgeRunStatusResponseSchema = z.discriminatedUnion('status', [
  * 或判分记录不可读时缺省。
  */
 export const IssuanceJudgeSettledSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('terminal'), run: JudgeRunStatusResponseSchema }),
+  z.object({
+    kind: z.literal('terminal'),
+    run: JudgeRunStatusResponseSchema,
+    /**
+     * Newest `experimental:appeal_request` for this submission's evaluation group;
+     * null when never appealed. Lets a refresh resume `GET /api/appeals/{id}` polling.
+     */
+    latest_appeal_event_id: z.string().nullable(),
+  }),
   z.object({ kind: z.literal('pending'), run_id: z.string(), poll_url: z.string() }),
 ]);
 
