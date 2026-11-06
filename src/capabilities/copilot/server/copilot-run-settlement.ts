@@ -691,6 +691,8 @@ export async function handleAmbiguousExecution(
     runId: string;
     sessionId: string;
     actorRef: string;
+    /** YUK-1909 — streamed draft the page already showed; the ambiguous reply replaces it. */
+    streamedDraft?: string;
     projectSuccessfulTerminal: WriteSuccessfulTerminalProjectionFn;
     projectFailedTerminal: WriteFailedTerminalProjectionFn;
     writeCopilotReplyFn: typeof writeCopilotReply;
@@ -700,6 +702,7 @@ export async function handleAmbiguousExecution(
     runId,
     sessionId,
     actorRef,
+    streamedDraft,
     projectSuccessfulTerminal,
     projectFailedTerminal,
     writeCopilotReplyFn,
@@ -713,6 +716,7 @@ export async function handleAmbiguousExecution(
         sessionId,
         userAskEventId: runId,
         replyText,
+        ...(streamedDraft !== undefined ? { streamedDraft } : {}),
         actorRef,
         taskRunId: `copilot_run_ambiguous_${runId}`,
         outcome: 'failure',

@@ -36,6 +36,9 @@ export async function startListenLoop(): Promise<void> {
       console.error('[listen_loop] failed to parse NOTIFY payload', err);
     }
   });
+  // Both LISTEN callbacks are fully guarded: a malformed live payload or a
+  // throwing live subscriber is logged inside broadcastLive and cannot abort
+  // the durable job_status callback on the same connection.
   // Live frames carry stream content inside the NOTIFY payload — never log the
   // raw payload here; identifiers are validated, content is only forwarded.
   await listenClient.listen(JOB_LIVE_NOTIFY_CHANNEL, (payloadStr) => {
