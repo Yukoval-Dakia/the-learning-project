@@ -70,6 +70,7 @@ export function InlineAnswer({
 }: Shared & { attempt: QuestionCardRead['latest_attempt'] }) {
   const { question, chatCard, Frame, face, client } = shared;
   const [startedId, setStartedId] = useState<string | null>(null);
+  const [readCount, setReadCount] = useState(0);
   const issuanceId = attempt?.issuance_id ?? startedId;
   const start = useMutation({
     mutationFn: () =>
@@ -95,10 +96,19 @@ export function InlineAnswer({
   if (issuanceId === null) {
     // The question changed after this card was placed: the card cannot issue it again, so the way
     // on is the question itself.
-    const changed = start.error instanceof ApiError && start.error.status === 409;
-    if (changed) {
+    const refused = start.error instanceof ApiError && start.error.status === 409;
+    if (refused) {
+      const changed =
+        start.error instanceof ApiError && start.error.code === 'issuance_id_conflict';
       return (
-        <Frame note="这道题改过了，这里不能再答，可以打开题目做。" actions={shared.open}>
+        <Frame
+          note={
+            changed
+              ? '这道题改过了，这里不能再答，可以打开题目做。'
+              : '这道题现在不能在这里作答，可以打开题目做。'
+          }
+          actions={shared.open}
+        >
           {face}
         </Frame>
       );
@@ -138,7 +148,11 @@ export function InlineAnswer({
   }
   return (
     <AnswerArea
-      key={issuanceId}
+      key={`${issuanceId}:${readCount}`}
+      onLoadLatest={async () => {
+        await state.refetch();
+        setReadCount((count) => count + 1);
+      }}
       {...shared}
       issuanceId={issuanceId}
       restored={state.data}
@@ -156,11 +170,14 @@ function AnswerArea({
   client,
   onAttemptChanged,
   issuanceId,
+  onLoadLatest,
   restored,
   resumeGraded,
   submitted,
 }: Shared & {
   issuanceId: string;
+  /** Read the server's answer again and start over from it. */
+  onLoadLatest(): Promise<void>;
   restored: IssuanceState;
   resumeGraded: boolean;
   submitted: boolean;
@@ -252,9 +269,22 @@ function AnswerArea({
     mutationFn: async () => {
       if (!(await flush())) throw new Error('the answer was not saved');
       autosave.hold();
+      // Handing in deletes the saved draft. Another card or tab may have saved a newer answer, and
+      // this one has nothing to flush, so the server's copy is checked before it can be replaced.
+      if (!accepted) {
+        const latest = await client.getIssuanceState(issuanceId);
+        if (
+          latest.submissions.length > 0 ||
+          (latest.draft?.save_epoch ?? 0) !== ackedEpoch.current
+        ) {
+          setConflict(true);
+          return null;
+        }
+      }
       return readAdvice();
     },
     onSuccess: (advice) => {
+      if (advice === null) return;
       if (isSubmitPending(advice)) {
         setStillGrading(true);
         return;
@@ -429,7 +459,7 @@ function AnswerArea({
   }
 
   const gradeNote = conflict
-    ? '这道题在别处改过了，请打开题目看看。'
+    ? '这道题在别处改过了，这里的答案不是最新的。'
     : stillGrading
       ? '还在判，过一会儿再看一次。'
       : grade.isError || resume.isError
@@ -441,7 +471,9 @@ function AnswerArea({
         note={gradeNote}
         actions={
           conflict ? (
-            open
+            <Button size="sm" variant="secondary" onClick={() => void onLoadLatest()}>
+              用最新的答案
+            </Button>
           ) : (
             <Button
               size="sm"

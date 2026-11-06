@@ -98,15 +98,19 @@ function SlotPreview({
 }
 
 function QuestionFace({ question }: { question: NonNullable<QuestionCardRead['question']> }) {
-  const declared = question.blank_order ?? [];
-  const rank = (slotId: string) => {
-    const at = declared.indexOf(slotId);
-    return at < 0 ? declared.length : at;
-  };
-  // A declared order applies to its blanks; the sort is stable, so anything else keeps its place.
-  const slots = [...(question.display_response_spec?.slots ?? [])].sort(
-    (a, b) => rank(a.slot_id) - rank(b.slot_id),
-  );
+  const all = question.display_response_spec?.slots ?? [];
+  // A declared order only reorders the blanks among their own places; other slots stay put.
+  const order = question.blank_order ?? [];
+  const blanks = all
+    .filter((slot) => slot.kind === 'blank')
+    .sort((x, y) => order.indexOf(x.slot_id) - order.indexOf(y.slot_id));
+  let nextBlank = 0;
+  const slots = all.map((slot) => {
+    if (slot.kind !== 'blank' || order.length === 0) return slot;
+    const placed = blanks[nextBlank];
+    nextBlank += 1;
+    return placed ?? slot;
+  });
   const notation = question.notation ?? null;
   return (
     <>
