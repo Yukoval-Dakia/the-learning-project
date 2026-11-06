@@ -58,8 +58,9 @@ import {
   type AutoAppliedWindowKey,
   TIER_C_COPY,
   TIER_META,
-  autoAppliedWindow,
+  autoAppliedReadWindow,
   bucketPendingByTier,
+  isInAutoAppliedWindow,
 } from './inbox-tier';
 import { ProposalCard } from './ProposalCard';
 import { type WorkbenchClient, useWorkbenchClient } from './workbench-client';
@@ -149,13 +150,6 @@ class DecisionBacklogDrain {
   }
 }
 
-/**
- * Wall clock for the A-tier undo countdown, owned by one mounted inbox. The interval only runs
- * while subscribed, and the page subscribes only while it shows auto-applied cards. The
- * remaining window is always computed from the real applied time, so the tick rate never
- * stretches or resets the window.
- */
-
 function formatWindowLabel(windowMs: number): string {
   const minutes = Math.round(windowMs / 60_000);
   if (minutes % 60 === 0) return `近 ${minutes / 60} 小时`;
@@ -164,11 +158,9 @@ function formatWindowLabel(windowMs: number): string {
 
 function autoAppliedHeadline(
   rows: readonly AutoAppliedRowWire[],
-  loading: boolean,
   windowKey: AutoAppliedWindowKey,
 ): string {
   const when = AUTO_APPLIED_WINDOWS.find(({ key }) => key === windowKey)?.label ?? '';
-  if (loading) return `正在看${when}替你做了什么。`;
   if (rows.length === 0) return `${when}没有替你做什么。`;
   const counts = new Map<string, number>();
   for (const row of rows) {
@@ -186,8 +178,7 @@ function batchResultWords(summary: AutoAppliedRetractResultWire['summary']): str
     summary.already_reverted > 0 ? `${summary.already_reverted} 件之前已经撤过` : null,
     summary.failed > 0 ? `${summary.failed} 件这次没撤成，可以再试一次` : null,
   ].filter(Boolean);
-  const done = parts.length > 0 ? `${parts.join('，')}。` : '这次没有可撤的。';
-  return summary.truncated ? `${done}一次最多处理 200 件，还有没处理的，可以再点一次。` : done;
+  return parts.length > 0 ? `${parts.join('，')}。` : '这次没有可撤的。';
 }
 
 function TierHead({ tier, count, id }: { tier: 'A' | 'B' | 'C'; count: number; id: string }) {
@@ -434,8 +425,8 @@ export default function InboxPage({ navigate }: InboxPageProps) {
   });
   const [aaWindow, setAaWindow] = useState<AutoAppliedWindowKey>('today');
   const aaQ = useQuery({
-    queryKey: [...queryKeys.autoAppliedProposals, aaWindow],
-    queryFn: () => listAutoApplied(autoAppliedWindow(aaWindow)),
+    queryKey: queryKeys.autoAppliedProposals,
+    queryFn: () => listAutoApplied(autoAppliedReadWindow()),
   });
 
   // 第一页 commit 后才开始逐页补齐；每次只发一个 continuation。失败时停住并把重试权交给
@@ -474,21 +465,23 @@ export default function InboxPage({ navigate }: InboxPageProps) {
 
   const decideRemaining = decide.filter((r) => !resolved[r.id]).length;
 
-  const autoApplied = aaQ.data?.rows ?? [];
+  const weekAutoApplied = aaQ.data?.rows ?? [];
+  const autoApplied = weekAutoApplied.filter((row) =>
+    isInAutoAppliedWindow(row.applied_at, aaWindow),
+  );
   const breaker = aaQ.data?.breaker;
   // A 块在有 auto-applied 卡、熔断 tripped、或读模型出错（surface 错误而非静默空）时露出。
   // With the switch off nothing new applies, so only cards from before it can still need undoing.
   const autoApplyOn = decisionPages[0]?.auto_apply_enabled === true;
   const showTierA =
-    autoApplied.length > 0 ||
+    weekAutoApplied.length > 0 ||
     aaQ.isError ||
-    aaWindow !== 'today' ||
     (autoApplyOn && (aaQ.isLoading || breaker?.tripped === true));
 
   const revertable = autoApplied.filter((row) => row.undo.status === 'revertable');
   const [confirmingBatch, setConfirmingBatch] = useState(false);
   const batch = useMutation({
-    mutationFn: () => retractAutoApplied(revertable.map((row) => row.proposal_id).slice(0, 200)),
+    mutationFn: () => retractAutoApplied(revertable.map((row) => row.proposal_id)),
     onSettled: () => {
       setConfirmingBatch(false);
       return invalidateAfterProposalRetract(queryClient);
@@ -519,7 +512,7 @@ export default function InboxPage({ navigate }: InboxPageProps) {
     loading: decisionQ.isLoading,
     error: decisionQ.isError && decisionPages.length === 0,
     hasVisibleContent:
-      decide.length > 0 || moved.length > 0 || autoApplied.length > 0 || aaQ.isError,
+      decide.length > 0 || moved.length > 0 || weekAutoApplied.length > 0 || aaQ.isError,
     hasDiagnostic:
       backlog.hasNextPage ||
       backlog.isFetchingNextPage ||
@@ -586,75 +579,79 @@ export default function InboxPage({ navigate }: InboxPageProps) {
                 <RetryLine message="自动应用列表暂不可用。" onRetry={() => void aaQ.refetch()} />
               )}
               {autoApplyOn && breaker && <BreakerMeter breaker={breaker} />}
-              <div className="ib-aa-summary">
-                <fieldset className="ib-aa-windows">
-                  <legend className="un-sr-only">看哪段时间</legend>
-                  {AUTO_APPLIED_WINDOWS.map(({ key, label }) => (
-                    <ChipToggle
-                      key={key}
-                      pressed={aaWindow === key}
-                      onPressedChange={() => {
-                        setAaWindow(key);
-                        setConfirmingBatch(false);
-                        batch.reset();
-                      }}
-                    >
-                      {label}
-                    </ChipToggle>
-                  ))}
-                </fieldset>
-                <p className="ib-aa-banner">
-                  <Zap size={16} aria-hidden="true" />
-                  <span>
-                    <b>{autoAppliedHeadline(autoApplied, aaQ.isLoading, aaWindow)}</b>
-                    撤销只撤还没被用到的内容，已经被用到的会留着，并写明原因。
-                  </span>
-                </p>
-                {revertable.length > 0 && !confirmingBatch ? (
-                  <div className="ib-acts">
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      disabled={batch.isPending}
-                      onClick={() => {
-                        batch.reset();
-                        setConfirmingBatch(true);
-                      }}
-                    >
-                      <Undo2 size={14} aria-hidden="true" />
-                      撤销全部可撤的（{revertable.length}）
-                    </Button>
-                  </div>
-                ) : null}
-                {confirmingBatch ? (
-                  <div className="ib-aa-confirm">
-                    <p>撤销这 {revertable.length} 件？撤销时才确认有没有被用到，被用到的不会动。</p>
+              {weekAutoApplied.length > 0 && (
+                <div className="ib-aa-summary">
+                  <fieldset className="ib-aa-windows">
+                    <legend className="un-sr-only">看哪段时间</legend>
+                    {AUTO_APPLIED_WINDOWS.map(({ key, label }) => (
+                      <ChipToggle
+                        key={key}
+                        pressed={aaWindow === key}
+                        onPressedChange={() => {
+                          setAaWindow(key);
+                          setConfirmingBatch(false);
+                          batch.reset();
+                        }}
+                      >
+                        {label}
+                      </ChipToggle>
+                    ))}
+                  </fieldset>
+                  <p className="ib-aa-banner">
+                    <Zap size={16} aria-hidden="true" />
+                    <span>
+                      <b>{autoAppliedHeadline(autoApplied, aaWindow)}</b>
+                      撤销只撤还没被用到的内容，已经被用到的会留着，并写明原因。
+                    </span>
+                  </p>
+                  {revertable.length > 0 && !confirmingBatch ? (
                     <div className="ib-acts">
-                      <Button size="sm" disabled={batch.isPending} onClick={() => batch.mutate()}>
-                        {batch.isPending ? '正在撤销…' : '确认撤销'}
-                      </Button>
                       <Button
                         size="sm"
-                        variant="ghost"
+                        variant="secondary"
                         disabled={batch.isPending}
-                        onClick={() => setConfirmingBatch(false)}
+                        onClick={() => {
+                          batch.reset();
+                          setConfirmingBatch(true);
+                        }}
                       >
-                        先不撤
+                        <Undo2 size={14} aria-hidden="true" />
+                        撤销全部可撤的（{revertable.length}）
                       </Button>
                     </div>
-                  </div>
-                ) : null}
-                {batch.data ? (
-                  <p className="ib-aa-result" role="status">
-                    {batchResultWords(batch.data.summary)}
-                  </p>
-                ) : null}
-                {batch.isError ? (
-                  <p className="ib-aa-result" role="alert">
-                    这次没撤成，可以再试一次。
-                  </p>
-                ) : null}
-              </div>
+                  ) : null}
+                  {confirmingBatch && revertable.length > 0 ? (
+                    <div className="ib-aa-confirm">
+                      <p>
+                        撤销这 {revertable.length} 件？撤销时才确认有没有被用到，被用到的不会动。
+                      </p>
+                      <div className="ib-acts">
+                        <Button size="sm" disabled={batch.isPending} onClick={() => batch.mutate()}>
+                          {batch.isPending ? '正在撤销…' : '确认撤销'}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          disabled={batch.isPending}
+                          onClick={() => setConfirmingBatch(false)}
+                        >
+                          先不撤
+                        </Button>
+                      </div>
+                    </div>
+                  ) : null}
+                  {batch.data ? (
+                    <p className="ib-aa-result" role="status">
+                      {batchResultWords(batch.data.summary)}
+                    </p>
+                  ) : null}
+                  {batch.isError ? (
+                    <p className="ib-aa-result" role="alert">
+                      这次没撤成，可以再试一次。
+                    </p>
+                  ) : null}
+                </div>
+              )}
               {autoApplied.length > 0 && (
                 <div className="ib-aa-list">
                   {autoApplied.map((row) => (

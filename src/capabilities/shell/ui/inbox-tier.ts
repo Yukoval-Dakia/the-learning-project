@@ -114,17 +114,25 @@ export const AUTO_APPLIED_WINDOWS: readonly { key: AutoAppliedWindowKey; label: 
   { key: 'week', label: '近 7 天' },
 ];
 
-/** Local-day boundaries as the server's ISO window. */
-export function autoAppliedWindow(
+const WEEK_DAYS_BACK = 6;
+
+function localDayStart(now: Date, daysAgo: number): number {
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate() - daysAgo).getTime();
+}
+
+/** The page reads the whole week once, so history stays reachable when today is empty. */
+export function autoAppliedReadWindow(now: Date = new Date()): { from: string } {
+  return { from: new Date(localDayStart(now, WEEK_DAYS_BACK)).toISOString() };
+}
+
+export function isInAutoAppliedWindow(
+  appliedAt: string,
   key: AutoAppliedWindowKey,
   now: Date = new Date(),
-): { from: string; to?: string } {
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const daysAgo = (days: number) =>
-    new Date(startOfToday.getFullYear(), startOfToday.getMonth(), startOfToday.getDate() - days);
-  if (key === 'today') return { from: startOfToday.toISOString() };
-  if (key === 'yesterday') {
-    return { from: daysAgo(1).toISOString(), to: startOfToday.toISOString() };
-  }
-  return { from: daysAgo(6).toISOString() };
+): boolean {
+  const at = new Date(appliedAt).getTime();
+  const today = localDayStart(now, 0);
+  if (key === 'today') return at >= today;
+  if (key === 'yesterday') return at >= localDayStart(now, 1) && at < today;
+  return at >= localDayStart(now, WEEK_DAYS_BACK);
 }

@@ -453,10 +453,6 @@
     font-size: var(--un-fs-1);
   }
 
-  & .ib-aa-window[data-state="revertable"] {
-    color: var(--un-positive);
-  }
-
   & .ib-aa-window[data-state="blocked"] {
     color: var(--un-caution);
   }
