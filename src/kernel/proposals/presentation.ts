@@ -70,10 +70,10 @@ export interface ProposalSummaryItem {
 export interface ProposalPresentation {
   title: string;
   /**
-   * The learner-facing main line (what this does + why). New proposals carry a
-   * validated `payload.learner_summary`; rows written before that field existed
-   * fall back to the sanitized `reason_md` they already rendered, so an old card
-   * never goes blank and the fallback is identical to today's body text.
+   * The learner-facing main line (what this does + why), never blank. New
+   * proposals carry a validated `payload.learner_summary`; rows written before
+   * that field existed fall back to their sanitized `reason_md`, which is the
+   * same text older surfaces already showed.
    */
   learner_summary: string;
   change_summary: ProposalSummaryItem[];
