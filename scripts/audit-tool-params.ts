@@ -15,8 +15,9 @@
  *                        same converter buildPiDomainAgentTools + registerTool
  *                        enforce at runtime).
  *   structured_submit  — task-registry kinds with structuredOutputMode:'tool'
- *                        → structuredOutputSchema through the same converter
- *                        (pi-agent-adapter mounts it via piCustomTool).
+ *                        → resolveStructuredSubmitSchema (the SAME selection
+ *                        pi-agent-adapter mounts: structuredSubmitSchema ??
+ *                        structuredOutputSchema) through the same converter.
  *   custom_mount       — the hand-rolled piCustomTool inventories: the
  *                        Task/Agent spawn tools. (YUK-1553 retired the private
  *                        knowledge write_proposal mount; the shared
@@ -44,7 +45,8 @@ const TOOL_PARAMS_PARAMS = { io: 'input', reused: 'inline', target: 'draft-07' }
 
 /** Minimal registry shape this audit reads (mirrors audit-structured-judge). */
 type TaskDefLike = {
-  structuredOutputMode?: unknown;
+  structuredOutputMode?: 'tool';
+  structuredSubmitSchema?: (input: unknown) => ZodTypeAny;
   structuredOutputSchema?: ZodTypeAny;
 };
 
@@ -65,6 +67,7 @@ function isObjectRoot(parameters: unknown): boolean {
 }
 
 async function main(): Promise<void> {
+  const { resolveStructuredSubmitSchema } = await import('@/ai/task-spec');
   const { zodToToolParametersSchema } = await import('@/kernel/zod-json-schema');
   const { capabilities } = await import('@/capabilities/index');
   const { tasks } = await import('@/capabilities/task-registry');
@@ -115,29 +118,29 @@ async function main(): Promise<void> {
     }
   }
 
-  // ── structured_submit: tool-mode task output schemas become the submit
-  //    tool's parameters via pi-agent-adapter → piCustomTool. ──
+  // ── structured_submit: the submit tool mounts resolveStructuredSubmitSchema
+  //    (structuredSubmitSchema ?? structuredOutputSchema) via piCustomTool. ──
   for (const [kind, def] of Object.entries(tasks as Record<string, TaskDefLike>)) {
     if (def.structuredOutputMode !== 'tool') continue;
     const name = `${kind} → mcp__structured_output__submit`;
-    if (def.structuredOutputSchema === undefined) {
-      rows.push({
-        surface: 'structured_submit',
-        name,
-        ok: false,
-        detail: "structuredOutputMode:'tool' without a structuredOutputSchema",
-      });
-      continue;
-    }
     try {
-      const parameters = zodToToolParametersSchema(def.structuredOutputSchema, TOOL_PARAMS_PARAMS);
+      // Same selector, same input shape as the adapter's bare
+      // toolOutputSchema(kind) probe; the mount passes the run input, which can
+      // only narrow this schema by input mode (TaskDefinition contract).
+      const schema = resolveStructuredSubmitSchema(def);
+      const parameters = schema ? zodToToolParametersSchema(schema, TOOL_PARAMS_PARAMS) : undefined;
       rows.push({
         surface: 'structured_submit',
         name,
-        ok: isObjectRoot(parameters),
-        ...(isObjectRoot(parameters)
-          ? {}
-          : { detail: `converted root type is ${JSON.stringify(parameters.type ?? null)}` }),
+        ok: parameters !== undefined && isObjectRoot(parameters),
+        ...(parameters === undefined
+          ? {
+              detail:
+                'mount selector resolves no schema (structuredSubmitSchema and structuredOutputSchema are both absent)',
+            }
+          : isObjectRoot(parameters)
+            ? {}
+            : { detail: `converted root type is ${JSON.stringify(parameters.type ?? null)}` }),
       });
     } catch (error) {
       rows.push({
