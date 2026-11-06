@@ -349,7 +349,13 @@ export async function dispatchPendingVerifyIntents(
         .where(inArray(question.id, questionIds));
       const questions = new Map(questionRows.map((row) => [row.id, row]));
       const verifyRows = await tx
-        .select({ subjectId: event.subject_id, action: event.action, outcome: event.outcome })
+        .select({
+          id: event.id,
+          subjectId: event.subject_id,
+          action: event.action,
+          outcome: event.outcome,
+          createdAt: event.created_at,
+        })
         .from(event)
         .where(
           and(
@@ -357,11 +363,36 @@ export async function dispatchPendingVerifyIntents(
             inArray(event.action, ['experimental:quiz_verify', 'experimental:source_verify']),
           ),
         );
-      const terminalKeys = new Set(
-        verifyRows
-          .filter(isTerminalVerifyEvent)
-          .map((row) => terminalVerifyKey(row.subjectId, row.action)),
-      );
+      const verifyByQuestion = new Map<string, typeof verifyRows>();
+      for (const row of verifyRows) {
+        const bucket = verifyByQuestion.get(row.subjectId);
+        if (bucket) bucket.push(row);
+        else verifyByQuestion.set(row.subjectId, [row]);
+      }
+      const verifyActionFor: Record<VerifyKind, string> = {
+        source_verify: 'experimental:source_verify',
+        quiz_verify: 'experimental:quiz_verify',
+      };
+      // A recovery intent answers one error epoch: only a terminal verdict
+      // written after that epoch suppresses it — an older terminal is the case
+      // the recovery exists for. Ordinary intents keep the any-terminal gate.
+      const terminalHit = (intent: VerifyDispatchIntentPayload): boolean => {
+        const scopedTerminal = (verifyByQuestion.get(intent.question_id) ?? []).filter(
+          (row) =>
+            row.action === verifyActionFor[intent.verifier_kind] && isTerminalVerifyEvent(row),
+        );
+        if (scopedTerminal.length === 0) return false;
+        if (intent.recovery_epoch == null) return true;
+        const epoch = (verifyByQuestion.get(intent.question_id) ?? []).find(
+          (row) => row.id === intent.recovery_epoch,
+        );
+        if (epoch == null) return true;
+        return scopedTerminal.some(
+          (row) =>
+            row.createdAt.getTime() > epoch.createdAt.getTime() ||
+            (row.createdAt.getTime() === epoch.createdAt.getTime() && row.id > epoch.id),
+        );
+      };
 
       const terminal: VerifyDispatchIntentPayload[] = [];
       const eligible: VerifyDispatchIntentPayload[] = [];
@@ -372,7 +403,7 @@ export async function dispatchPendingVerifyIntents(
           metadataIsArchived(row.metadata) ||
           // A part has no verify of its own. The parent's cascade owns it. Drain a stray intent instead of enqueueing a job that can only skip.
           row.parentQuestionId != null ||
-          terminalKeys.has(`${intent.question_id}\0${intent.verifier_kind}`)
+          terminalHit(intent)
         ) {
           terminal.push(intent);
         } else {
