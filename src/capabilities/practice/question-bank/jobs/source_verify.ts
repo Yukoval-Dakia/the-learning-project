@@ -1357,6 +1357,7 @@ export async function runSourceVerify(
           subject_id: questionId,
           outcome: 'error',
           payload: {
+            recovery_eligible: true,
             question_id: questionId,
             ...(params.recheckCommandEventId != null
               ? { recheck_command_event_id: params.recheckCommandEventId }

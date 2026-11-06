@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { createId } from '@paralleldrive/cuid2';
-import { type AnyColumn, and, eq, exists, inArray, isNull, notExists, or, sql } from 'drizzle-orm';
+import { type AnyColumn, and, eq, exists, inArray, isNull, notExists, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { z } from 'zod';
 import type { Db, Tx } from '@/db/client';
@@ -16,7 +16,7 @@ export const VERIFY_DISPATCH_VERSION = 1 as const;
 
 // Leave a daily recovery gap after errors; queue liveness separately covers delayed retries.
 const SOURCE_VERIFY_RECOVERY_MIN_AGE_MS = 20 * 60 * 60_000;
-const SOURCE_VERIFY_RECOVERY_BATCH_SIZE = 500;
+const SOURCE_VERIFY_RECOVERY_BATCH_SIZE = 50;
 
 function noLiveSourceVerifyJob(questionId: AnyColumn) {
   return sql`NOT EXISTS (
@@ -31,7 +31,7 @@ function eligibleRecoveryError(questionId: AnyColumn, now: Date, epoch?: AnyColu
     SELECT 1 FROM ${event} e
     WHERE e.subject_id = ${questionId} AND e.action = 'experimental:source_verify'
       AND e.outcome = 'error' AND e.payload->'recovery_eligible' = 'true'::jsonb
-      AND e.created_at <= ${new Date(now.getTime() - SOURCE_VERIFY_RECOVERY_MIN_AGE_MS)}
+      AND e.created_at <= ${new Date(now.getTime() - SOURCE_VERIFY_RECOVERY_MIN_AGE_MS).toISOString()}
       ${epoch ? sql`AND e.id = ${epoch}->>'recovery_epoch'` : sql``}
       AND NOT EXISTS (SELECT 1 FROM ${event} n
         WHERE n.subject_id = e.subject_id AND n.action = e.action
@@ -504,6 +504,7 @@ export async function dispatchPendingVerifyIntents(
             batch.map((intent) => intent.question_id),
             {
               db: fromPgBossDrizzleTx(tx),
+              ...(batch[0]?.recovery_epoch != null ? { retryLimit: 0 } : {}),
             },
             placementAuthorities.length > 0 ? placementAuthorities : undefined,
             Object.keys(recoveryMarks).length > 0 ? recoveryMarks : undefined,
@@ -844,23 +845,21 @@ export async function recoverOrphanVerifyDispatches(
     // broken lane must not mint paid attempts — holds stay held and re-try next sweep.
     const recoverable = [...candidates];
     let recoveryPreflightOk = false;
-    {
-      if (input.sourceVerifyRecoveryPreflight == null) {
+    if (input.sourceVerifyRecoveryPreflight == null) {
+      console.warn(
+        '[verify-dispatch-outbox] recovery candidates found but no preflight provided; skipping',
+      );
+      recoverable.length = 0;
+    } else {
+      try {
+        await input.sourceVerifyRecoveryPreflight();
+        recoveryPreflightOk = true;
+      } catch (preflightErr) {
         console.warn(
-          '[verify-dispatch-outbox] recovery candidates found but no preflight provided; skipping',
+          '[verify-dispatch-outbox] source-verify recovery preflight failed; skipping recovery',
+          preflightErr,
         );
         recoverable.length = 0;
-      } else {
-        try {
-          await input.sourceVerifyRecoveryPreflight();
-          recoveryPreflightOk = true;
-        } catch (preflightErr) {
-          console.warn(
-            '[verify-dispatch-outbox] source-verify recovery preflight failed; skipping recovery',
-            preflightErr,
-          );
-          recoverable.length = 0;
-        }
       }
     }
 
