@@ -69,9 +69,10 @@ export function createTaskBudgetReaders<const Catalog extends TaskCatalog>(tasks
   function taskBudgetWiring(kind: TaskKindOf<Catalog>): Record<keyof TaskBudget, boolean> {
     const def: TaskDefinition = tasks[kind];
     const typed = def.execution === 'typed';
+    const structuredTool = def.structuredOutputMode === 'tool';
     return {
-      maxIterations: !typed,
-      maxCost: typed || def.enforceMaxCost === true,
+      maxIterations: !typed && !structuredTool,
+      maxCost: typed || structuredTool || def.enforceMaxCost === true,
       transientRetries: true,
       timeout: true,
     };

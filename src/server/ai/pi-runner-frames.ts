@@ -411,6 +411,7 @@ export function piTerminalResultFrame(args: {
   /** YUK-1547 — the run's ONE shared landing turn was already consumed and the
    *  submit still did not land; the name is reported in the terminal error. */
   submitLandingConsumedBy?: 'missing_submit' | 'param_contract';
+  structuredSubmitFailure?: string;
   /** YUK-1547 (C1) — submit arguments AFTER the shared parameter-contract repair,
    *  i.e. what validation and execute saw. Raw streamed bytes stay the evidence. */
   repairedSubmitArguments?: unknown;
@@ -579,6 +580,20 @@ export function piTerminalResultFrame(args: {
       // positive provider-side evidence even when no status was bound.
       provider_failure: { stream_error: true, ...(providerStatusEvidence ?? {}) },
       ...usageParts,
+    } as SDKResultMessage & { source: 'pi' };
+  }
+  if (args.structuredSubmitFailure) {
+    return {
+      ...base,
+      subtype: 'error_max_structured_output_retries',
+      is_error: true,
+      stop_reason: args.structuredSubmitFailure,
+      total_cost_usd: costUsd,
+      ...usageParts,
+      errors: [`Structured submit incomplete: ${args.structuredSubmitFailure}`],
+      ...(args.structuredSubmitEvidence
+        ? { structured_submit_evidence: args.structuredSubmitEvidence }
+        : {}),
     } as SDKResultMessage & { source: 'pi' };
   }
   let structuredOutput: unknown;

@@ -3,7 +3,7 @@
 // click. The topic names are the curator's own: the page imposes no categories.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { MessageCircle, RotateCcw, Trash2 } from 'lucide-react';
+import { Check, History, MessageCircle, RotateCcw, Trash2, X } from 'lucide-react';
 import { type FormEvent, useId, useState } from 'react';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { RetryLine } from '@/ui-next/primitives/RetryLine';
@@ -165,11 +165,14 @@ function TellBox({
   topicKey,
   label,
   placeholder,
+  floating = false,
 }: {
   version: number;
   topicKey?: string;
   label: string;
   placeholder: string;
+  /** The page's own box: a glass bar at the foot of the screen, its label read by screen readers only. */
+  floating?: boolean;
 }) {
   const inputId = useId();
   const { edit } = useMemoryActions();
@@ -199,12 +202,22 @@ function TellBox({
   };
 
   return (
-    <div className="mm-tell">
+    <div className={floating ? 'mm-tell mm-tell-floating un-glass' : 'mm-tell'}>
+      {floating && outcome ? (
+        <div className="mm-tell-result">
+          <OutcomeNote outcome={outcome} version={version} onUndone={setOutcome} />
+          {/* A reply with no change to review (a crisis reply among them) stays until the next
+              sentence, so it can be read again. */}
+          {outcome.tone ? (
+            <IconButton label="收起" icon={<X size={15} />} onClick={() => setOutcome(null)} />
+          ) : null}
+        </div>
+      ) : null}
       <form className="mm-tell-form" onSubmit={submit}>
-        <label className="mm-tell-label" htmlFor={inputId}>
+        <label className={floating ? 'mm-visually-hidden' : 'mm-tell-label'} htmlFor={inputId}>
           {label}
         </label>
-        <div className="mm-tell-row">
+        <div className={floating ? 'mm-tell-bar-row' : 'mm-tell-row'}>
           <input
             id={inputId}
             className="mm-tell-input"
@@ -219,7 +232,9 @@ function TellBox({
           </Button>
         </div>
       </form>
-      {outcome ? <OutcomeNote outcome={outcome} version={version} onUndone={setOutcome} /> : null}
+      {!floating && outcome ? (
+        <OutcomeNote outcome={outcome} version={version} onUndone={setOutcome} />
+      ) : null}
     </div>
   );
 }
@@ -250,7 +265,6 @@ function TopicCard({ topic, version }: { topic: MemoryTopic; version: number }) 
             {isTalk ? <MessageCircle size={16} aria-hidden="true" /> : null}
             {topic.name}
           </h2>
-          {topic.description ? <p className="mm-topic-desc">{topic.description}</p> : null}
         </div>
         <IconButton
           label={`删除主题：${topic.name}`}
@@ -347,6 +361,7 @@ function sortedTopics(board: MemoryBoard): MemoryTopic[] {
 export default function MemoryPage() {
   const query = useQuery({ queryKey: MEMORY_KEY, queryFn: readMemoryBoard });
   const board = query.data;
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [allChanges, setAllChanges] = useState(false);
   // Housekeeping rows change nothing a learner can read, and have nothing to undo.
   const changes = (board?.changes ?? []).filter(
@@ -356,50 +371,75 @@ export default function MemoryPage() {
   return (
     <UiNextRoot className="mm-page">
       <main className="mm-main un-m3e-bridge">
-        <header className="mm-head">
-          <h1 className="mm-title">记忆</h1>
-          <p className="mm-lead">学习伙伴记得的关于你的事。不对的地方，说一句就能改。</p>
-        </header>
-        {query.isPending ? <SkeletonLines rows={4} label="正在读取记忆" /> : null}
-        {query.isError && !board ? (
-          <RetryLine message="记忆暂时读不出来。" onRetry={() => void query.refetch()} />
-        ) : null}
-        {board ? (
-          <>
-            <TellBox
-              version={board.version}
-              label="告诉它要改什么"
-              placeholder="比如：叫我小林。别再提上次考砸的事。"
-            />
-            {board.topics.length === 0 ? (
-              <p className="mm-empty">
-                还没有记下什么。你在对话里说过的偏好和习惯，会慢慢出现在这里。
-              </p>
-            ) : (
-              <section className="mm-topics" aria-label="记下的主题">
-                {sortedTopics(board).map((topic) => (
-                  <TopicCard key={topic.key} topic={topic} version={board.version} />
-                ))}
-              </section>
-            )}
-            {changes.length > 0 ? (
-              <section className="mm-changes" aria-labelledby="mm-changes-title">
-                <h2 id="mm-changes-title" className="mm-section-title">
-                  最近的改动
-                </h2>
-                <ul className="mm-change-list">
-                  {shownChanges.map((change) => (
-                    <ChangeRow key={change.id} change={change} version={board.version} />
+        <div className="mm-content">
+          <header className="mm-head">
+            <h1 className="mm-title">记忆</h1>
+            <p className="mm-lead">学习伙伴记得的关于你的事。不对的地方，说一句就能改。</p>
+          </header>
+          {query.isPending ? <SkeletonLines rows={4} label="正在读取记忆" /> : null}
+          {query.isError && !board ? (
+            <RetryLine message="记忆暂时读不出来。" onRetry={() => void query.refetch()} />
+          ) : null}
+          {board ? (
+            <>
+              {board.topics.length === 0 ? (
+                <p className="mm-empty">
+                  还没有记下什么。你在对话里说过的偏好和习惯，会慢慢出现在这里。
+                </p>
+              ) : (
+                <section className="mm-topics" aria-label="记下的主题">
+                  {sortedTopics(board).map((topic) => (
+                    <TopicCard key={topic.key} topic={topic} version={board.version} />
                   ))}
-                </ul>
-                {changes.length > CHANGES_SHOWN ? (
-                  <Button variant="quiet" size="sm" onClick={() => setAllChanges((all) => !all)}>
-                    {allChanges ? '收起' : `看更早的 ${changes.length - CHANGES_SHOWN} 条`}
-                  </Button>
-                ) : null}
-              </section>
-            ) : null}
-          </>
+                </section>
+              )}
+              {changes.length > 0 ? (
+                <section className="mm-changes" aria-labelledby="mm-changes-title">
+                  <h2 id="mm-changes-title" className="mm-history-title">
+                    <button
+                      type="button"
+                      className="mm-history-toggle un-hit"
+                      aria-expanded={historyOpen}
+                      onClick={() => setHistoryOpen((open) => !open)}
+                    >
+                      <History size={15} aria-hidden="true" />
+                      最近改过 {changes.length} 次
+                      <span className="mm-history-last">
+                        <Check size={13} aria-hidden="true" />
+                        最后一次 {whenText(changes[0]?.at ?? '')}
+                      </span>
+                    </button>
+                  </h2>
+                  {historyOpen ? (
+                    <>
+                      <ul className="mm-change-list">
+                        {shownChanges.map((change) => (
+                          <ChangeRow key={change.id} change={change} version={board.version} />
+                        ))}
+                      </ul>
+                      {changes.length > CHANGES_SHOWN ? (
+                        <Button
+                          variant="quiet"
+                          size="sm"
+                          onClick={() => setAllChanges((all) => !all)}
+                        >
+                          {allChanges ? '收起' : `看更早的 ${changes.length - CHANGES_SHOWN} 条`}
+                        </Button>
+                      ) : null}
+                    </>
+                  ) : null}
+                </section>
+              ) : null}
+            </>
+          ) : null}
+        </div>
+        {board ? (
+          <TellBox
+            floating
+            version={board.version}
+            label="告诉它要改什么"
+            placeholder="告诉它要改什么，比如：叫我小林"
+          />
         ) : null}
       </main>
     </UiNextRoot>

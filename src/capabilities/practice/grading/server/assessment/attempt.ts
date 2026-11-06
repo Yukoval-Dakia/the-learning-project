@@ -3,6 +3,7 @@ import { crisisDerivationPayload } from '@/core/crisis/classify';
 import {
   type ActivateEvaluationIntentT,
   type AssessmentAttemptCaptureT,
+  type PendingStateT,
   type SubmissionRecordT,
   projectIssuedScoringBasis,
 } from '@/core/schema/assessment';
@@ -24,6 +25,7 @@ import {
 } from '../judge/evaluate-submission';
 import { type GradingEntryPoint, evaluateAttempt } from '../judge/evaluation-authority';
 import { type JudgeExecution, requireJudgeRunOpen } from '../judge-operational';
+import { ratingFromCoarseOutcome } from '../judge-rating';
 import { emitMasteryProgressSignal } from '../mastery-progress-signal';
 import { submissionWasAssisted } from './assistance';
 import { type SaveSubmissionRequest, saveSubmission } from './submit';
@@ -96,10 +98,13 @@ export async function previewFormalAttempt(
     expectedSubmissionIds?: string[];
     modelAdmission?: 'durable';
     judgeExecution?: JudgeExecution;
+    /** A superseded accepted original must finish without another paid judgment. */
+    hold?: PendingStateT;
   } = {},
 ) {
   const { issuance, revision, scopedBasis, scopedUnitIds, submission, assisted } =
     await prepareFormalAttemptSubmission(database, entry, questionId, request);
+  const hold = options.hold;
   const candidate = await evaluateAttempt({
     db: database,
     entry,
@@ -125,12 +130,14 @@ export async function previewFormalAttempt(
           }
         : {
             provenance: { source: 'automatic' as const, assisted },
-            model_executor: createFormalModelExecutor(
-              database,
-              signal,
-              options.modelAdmission,
-              options.judgeExecution,
-            ),
+            model_executor: hold
+              ? async () => ({ kind: 'pending' as const, pending: hold, run_refs: [] })
+              : createFormalModelExecutor(
+                  database,
+                  signal,
+                  options.modelAdmission,
+                  options.judgeExecution,
+                ),
           }),
     },
   }).catch((error: unknown) => {
@@ -316,6 +323,9 @@ export async function commitFormalAttempt(
   };
   if (
     candidate.evaluation.record.status !== 'completed' ||
+    (options.modelAdmission === 'durable' &&
+      (candidate.evaluation.record.provenance?.assisted ||
+        ratingFromCoarseOutcome(candidate.result.coarse_outcome) === null)) ||
     (!options.selfReport && candidate.result.coarse_outcome === 'unsupported')
   ) {
     await database.transaction(record);
@@ -326,9 +336,8 @@ export async function commitFormalAttempt(
     {
       ...(options.activationIntent ?? {
         evaluation_id: candidate.evaluation.record.evaluation_id,
-        expected_effective_id: null,
-        expected_generation: 0,
-        ...options.expectedHead,
+        expected_effective_id: options.expectedHead?.expected_effective_id ?? null,
+        expected_generation: options.expectedHead?.expected_generation ?? 0,
       }),
       user_rating: options.userRating,
     },

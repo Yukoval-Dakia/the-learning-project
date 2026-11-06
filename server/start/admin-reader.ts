@@ -18,9 +18,9 @@ const RunsQuery = z.object({
 // This factory and all its imports are invoked inside the authenticated request boundary.
 // Tests can inject their Db/Tx without changing the production connection owner.
 export async function createStartAdminReader(options: { database?: Db | Tx; now?: Date } = {}) {
-  const [domain, practice] = await Promise.all([
+  const [domain, supply] = await Promise.all([
     import('@/capabilities/observability/public'),
-    import('@/capabilities/practice/public'),
+    import('@/capabilities/practice/supply/public'),
   ]).catch((error: unknown) => {
     throw errorResponse(error);
   });
@@ -67,7 +67,7 @@ export async function createStartAdminReader(options: { database?: Db | Tx; now?
       );
       return read((db) => domain.loadAdminFailures(db, opts));
     },
-    getCoverage: () => read((db) => practice.loadCoverageLattice(db, options.now)),
+    getCoverage: () => read((db) => supply.loadCoverageLattice(db, options.now)),
     getConjectureScores: () => read((db) => domain.loadConjectureScores(db)),
   } satisfies AdminReadClient;
 }

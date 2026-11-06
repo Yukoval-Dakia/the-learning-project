@@ -438,6 +438,7 @@ export function usePracticeSubmit({
   const [rating, setRating] = useState<Rating | null>(null);
   const [appealOpen, setAppealOpen] = useState(false);
   const [appealText, setAppealText] = useState('');
+  const [appealFiled, setAppealFiled] = useState(false);
   const [committing, setCommitting] = useState(false);
   const [returning, setReturning] = useState(false);
   const returningRef = useRef(false);
@@ -1050,6 +1051,8 @@ export function usePracticeSubmit({
     runId: pendingRun?.runId ?? null,
     pollUrl: pendingRun?.pollUrl ?? null,
     readStatus: readJudgeRunStatus,
+    // About four minutes at the backoff cap: a dropped connection recovers on its own.
+    maxConsecutiveErrors: 40,
     onSettled: onPolledSettled,
   });
 
@@ -1107,10 +1110,7 @@ export function usePracticeSubmit({
         // YUK-1051 (D10) — 开放作答的证据附件随提交冻结；空值不发（既有 wire 逐字不变）。
         ...(imageRefs.length > 0 ? { answer_image_refs: imageRefs } : {}),
       });
-      // YUK-1051 — 202-pending 是返回 union（不是错误）：答案已随提交持久化，判分走
-      // durable lane。记下 run 锚点进 pending 卡；轮询到终态再揭晓反馈（见 pendingPoll effect）。
-      // 带申诉的提交在 pending 下先把提交落定——申诉锚点要等终态判词回来才有，故 pending
-      // 分支暂不发 appeal（反馈卡出现后「不服判」入口照常可用）。
+      // Pending originals are restored and polled before an appeal can name their verdict.
       if (isSubmitPending(res)) {
         setPendingRun({ runId: res.run_id, pollUrl: res.backfill.poll_url });
         return;
@@ -1127,7 +1127,7 @@ export function usePracticeSubmit({
           : null;
         if (anchor) {
           await fileAppeal(anchor, appealText.trim(), 'assessment' in res ? 'evaluation' : 'judge');
-          addToast('已提交重判，在后台进行，结果回来会提醒你。', 'info', 'clock');
+          addToast('已提交重判，在后台进行。判不准的话，原结果不变。', 'info', 'clock');
         } else {
           addToast('这次判定没有可以申诉的记录。', 'info', 'alert');
         }
@@ -1171,10 +1171,16 @@ export function usePracticeSubmit({
     setCommitting(true);
     try {
       await fileAppeal(autoCommitJudgeEventId, appealText.trim(), committedAppealKind.current);
-      addToast('已提交重判，在后台进行，结果回来会提醒你。', 'info', 'clock');
+      setAppealFiled(true);
       setAppealOpen(false);
-    } catch {
-      addToast('提交重判没有成功，稍后再试一次。', 'info', 'alert');
+    } catch (e) {
+      addToast(
+        e instanceof ApiError && e.code === 'stale_head'
+          ? '这个结果已经更新过了，刷新页面看最新结果。'
+          : '提交重判没有成功，稍后再试一次。',
+        'info',
+        'alert',
+      );
     } finally {
       setCommitting(false);
     }
@@ -1186,17 +1192,19 @@ export function usePracticeSubmit({
     stream_item_id: item.id,
     referenced_knowledge_ids: q ? q.labels.map((l) => l.id) : [],
     reasoning_trace: buildCaptureFields({ reasoningTrace, selfConfidence }).reasoning_trace ?? null,
+    ...(selfConfidence === null ? {} : { self_confidence: selfConfidence }),
     latency_ms: withLatency ? computeLatencyMs(questionShownAtRef.current, Date.now()) : null,
   });
 
-  // One advice outcome path for a live answer and a recovery replay. Open (or unrated) verdicts
-  // go to the confidence step and the learner's own rating, as before. An automatic verdict the
-  // advice request already recorded (`committed`) settles here with what commit() would set; a
-  // server without that field still gets the separate commit() (idempotent on the submission).
+  // A 200 replay restores the preview; accepted originals use the existing durable poller.
   const applyAdvice = async (
     r: Awaited<ReturnType<typeof getAdvice>>,
     recovery: boolean,
   ): Promise<void> => {
+    if (isSubmitPending(r)) {
+      setPendingRun({ runId: r.run_id, pollUrl: r.backfill.poll_url });
+      return;
+    }
     activationIntent.current = r.activation_intent;
     if (!r.automatic_commit || r.judge.suggested_rating === null) {
       setPendingPreview(r.judge);
@@ -1449,6 +1457,7 @@ export function usePracticeSubmit({
     },
     appeal: {
       open: appealOpen,
+      filed: appealFiled,
       setOpen: setAppealOpen,
       text: appealText,
       setText: setAppealText,

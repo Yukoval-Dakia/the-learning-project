@@ -8,7 +8,7 @@ import type { FrontdoorContext } from './context';
 export const getStartPracticeStream: FrontdoorContext['getPracticeStream'] = (knowledgeId) =>
   runWithHttpProviderSessionDeadline(Date.now() + HTTP_PROVIDER_SESSION_BUDGET_MS, async () => {
     try {
-      const { getPracticeStream } = await import('@/capabilities/practice/public');
+      const { getPracticeStream } = await import('@/capabilities/practice/scheduling/public');
       const { db } = await import('@/db/client');
       return await getPracticeStream(db, { date: 'today', kc: knowledgeId });
     } catch (error) {

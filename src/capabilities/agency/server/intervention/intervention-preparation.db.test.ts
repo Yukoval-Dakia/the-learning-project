@@ -1,6 +1,7 @@
 import { and, count, eq, inArray, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
+import { JUDGE_RUN_EVENTS, JUDGE_RUN_TABLE } from '@/capabilities/practice/grading/public';
 import {
   dispatchNativeAttempt,
   executeNativeAttempt,
@@ -13,13 +14,9 @@ import {
 } from '@/capabilities/practice/grading/server/judge-operational';
 import { readJudgeQuestionActivity } from '@/capabilities/practice/grading/server/judge-run-observation';
 import { freezeQuestionForJudge } from '@/capabilities/practice/grading/server/judge-run-payload';
-import {
-  JUDGE_RUN_EVENTS,
-  JUDGE_RUN_TABLE,
-  authorInterventionPackage,
-  handleReviewDue,
-  installInterventionDiagnosticLeaves,
-} from '@/capabilities/practice/public';
+import { installInterventionDiagnosticLeaves } from '@/capabilities/practice/public';
+import { authorInterventionPackage } from '@/capabilities/practice/question-bank/public';
+import { handleReviewDue } from '@/capabilities/practice/scheduling/public';
 
 import { resetTestConfig } from '@/core/config/store';
 import { newId } from '@/core/ids';

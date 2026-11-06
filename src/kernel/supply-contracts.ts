@@ -132,6 +132,9 @@ export const SupplyTraceV1 = SupplyTargetContextV1.extend({
 }).strict();
 export type SupplyTraceV1T = z.infer<typeof SupplyTraceV1>;
 
+/** Supply difficulty band vocabulary; band assignment logic stays with the supply owner. */
+export type DifficultyBand = 'below' | 'near' | 'above' | 'stretch';
+
 export function parseEvidenceDemand(value: unknown): EvidenceDemandV1T {
   return EvidenceDemandV1.parse(value);
 }
@@ -189,7 +192,7 @@ export function buildCoverageEvidenceDemand(input: {
   statement: string;
   kinds?: string[];
   allowedUses?: EvidenceAllowedUseT[];
-  difficultyBand?: 'below' | 'near' | 'above' | 'stretch';
+  difficultyBand?: DifficultyBand;
   targetValue?: number | null;
   eligibleCount?: number;
   neededBy?: string | null;

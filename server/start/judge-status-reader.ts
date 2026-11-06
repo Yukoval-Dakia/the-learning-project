@@ -8,7 +8,7 @@ export const readStartJudgeRunStatus: FrontdoorContext['readJudgeRunStatus'] = a
       throw new ApiError('validation_error', 'missing run id', 400);
     }
     const { db } = await import('@/db/client');
-    const { readJudgeRunStatus } = await import('@/capabilities/practice/public');
+    const { readJudgeRunStatus } = await import('@/capabilities/practice/grading/public');
     const read = await readJudgeRunStatus(db, runId);
     if (read.kind === 'not_found') throw new ApiError('not_found', 'judge run not found', 404);
     if (read.kind === 'unavailable') {

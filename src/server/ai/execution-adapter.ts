@@ -93,6 +93,8 @@ export interface ExecutionAdapterStartupArgs {
   /** Call spec built by buildQueryOptions (model/systemPrompt/maxTurns/tools/effort/resume). */
   options: Options;
   initializeTimeoutMs: number;
+  structuredSubmitInput?: unknown;
+  executionWindowMs?: number;
   /**
    * Lifecycle-resolved provider binding for this attempt. The adapter maps it to
    * the pi catalog and passes the credential to streamSimple.
