@@ -6,7 +6,11 @@
 
 import type { GroupEvidenceT, ResponseSetT } from '@/core/schema/assessment';
 import type { Db, Tx } from '@/db/client';
-import { HostOperationNotInstalledError } from '@/kernel/host-operation';
+import {
+  HostOperationNotInstalledError,
+  installHostOperation,
+  installedHostOperation,
+} from '@/kernel/host-operation';
 
 export type ConfirmationIssueResult =
   | { status: 'issued'; issuance_id: string }
@@ -37,15 +41,17 @@ export interface ConversationConfirmationAssessmentOperations {
   read: (db: Db | Tx, occurrenceId: string) => Promise<ConfirmationAssessment | null>;
 }
 
-let installed: ConversationConfirmationAssessmentOperations | undefined;
+const OPERATIONS_SLOT = 'kernel/records/conversation-confirmation-assessment:operations';
 
 export function installConversationConfirmationAssessment(
   operations: ConversationConfirmationAssessmentOperations,
 ): void {
-  installed = operations;
+  installHostOperation(OPERATIONS_SLOT, operations);
 }
 
 function operations(): ConversationConfirmationAssessmentOperations {
+  const installed =
+    installedHostOperation<ConversationConfirmationAssessmentOperations>(OPERATIONS_SLOT);
   if (!installed) {
     throw new HostOperationNotInstalledError(
       'conversation confirmation assessment is not installed; call installPracticeHostOperations at startup',
