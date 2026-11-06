@@ -6,7 +6,7 @@
 | 文件 | 职责 |
 |------|------|
 | `manifest.ts` | 组合根：根目录条目加各子 owner 的 `manifest-part.ts`，按固定顺序拼接（路由注册顺序即匹配顺序） |
-| `composition.ts` | 端口安装组合：`installPracticeHost()`（API / 验收 / 脚本宿主）与 `installPracticeWorker()`（host + worker-only 绑定）装齐 practice 拥有的 kernel 端口——判分端口 `kernel/judge`、review-answer binding、review-due、conversation-confirmation、model pins、candidate rebuild、daily review facts、today recompose、author/diagnostic stages；未安装经 `HostOperationNotInstalledError` fail-fast。`public.ts` 只转出这两个入口 |
+| `public.ts` 组合 seam | 端口安装组合：`installPracticeHost()`（API / 验收 / 演练 / 测试宿主）与 `installPracticeWorker()`（host + worker-only 绑定）装齐 practice 拥有的 kernel 端口——判分端口 `kernel/judge`、review-answer binding、review-due、conversation-confirmation、model pins、candidate rebuild、daily review facts、today recompose、author/diagnostic stages；未安装经 `HostOperationNotInstalledError` fail-fast。安装入口只有这两个，实现直接在 barrel 内（独立 composition 模块会随 barrel 进入 migrate bundle，设计 §5 拒绝） |
 | `<owner>/` | 子 owner 目录（grading、settlement、question-bank、failure-learning、session、scheduling、supply、placement），各有 `public.ts` 与 `manifest-part.ts`；根目录其余文件归练习面，尚未迁出的按 `scripts/audit-practice-subowners.ts` 的映射计归属 |
 | `api/*.ts` | solve 与共享契约；申诉路由在 `settlement/api/`；作答/发卷/提交路由在 `grading/api/`，定位路由在 `placement/api/` |
 | `placement/server/placement-session-lifecycle.ts` | Placement 完整状态操作与运行时 flag；跨域 orphan 操作经 `public.ts` |

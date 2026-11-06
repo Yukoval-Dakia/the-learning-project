@@ -16,7 +16,7 @@ export type AssessmentAssetLoader = (
  * Default R2 image fetcher: for each asset_id, look up storage_key + mime,
  * fetch bytes via getR2.get(key), base64-encode.
  *
- * Split as an injectable so tests can stub. Also reused by T9 sanity script.
+ * Split as an injectable so tests can stub.
  */
 export async function defaultImageFetch(
   assetIds: string[],
