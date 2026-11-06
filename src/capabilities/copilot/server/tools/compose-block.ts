@@ -248,7 +248,8 @@ export function createComposeBlockTool(
               {
                 code: 'block_limit_exceeded',
                 path: '',
-                detail: 'a reply carries at most three inline question references',
+                detail:
+                  'a reply carries at most three inline question references; use display: "link" for the remaining questions',
               },
             ]);
           }

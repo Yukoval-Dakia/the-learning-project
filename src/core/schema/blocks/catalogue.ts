@@ -88,7 +88,7 @@ export function renderBlockCatalogue(surface: BlockSurface): string {
     }
     if (kind === 'question_ref') {
       lines.push(
-        `- question_ref：仅id题卡；display=link|inline（inline单题），alt/label固定，禁caption。入参：${JSON.stringify({ block: meta.example })}`,
+        `- question_ref：仅id题卡；display=link|inline（inline单题，每回复最多3张，其余display=link），alt/label固定，禁caption。入参：${JSON.stringify({ block: meta.example })}`,
       );
       continue;
     }
