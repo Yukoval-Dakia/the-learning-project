@@ -272,7 +272,7 @@ const env: NodeJS.ProcessEnv = {
 //
 // Each child leads its own process group (detached → pgid = pid on POSIX), so a stop signal
 // reaches pnpm, tsx and the node API/worker together. Signalling only the pnpm child left
-// tsx/node running, and exiting at once left no chance to reap them either way (YUK-1921).
+// tsx/node running, and exiting at once left no chance to reap them either way.
 const POSIX_PROCESS_GROUP = process.platform !== 'win32';
 function spawnDev(name: 'api' | 'worker', script: string, extraEnv: NodeJS.ProcessEnv) {
   const child = spawn('pnpm', [script], {
