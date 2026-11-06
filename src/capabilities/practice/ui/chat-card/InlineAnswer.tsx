@@ -93,13 +93,26 @@ export function InlineAnswer({
     refetchOnReconnect: false,
   });
   if (issuanceId === null) {
+    // The question changed after this card was placed: the card cannot issue it again, so the way
+    // on is the question itself.
+    const changed = start.error instanceof ApiError && start.error.status === 409;
+    if (changed) {
+      return (
+        <Frame note="这道题改过了，这里不能再答，可以打开题目做。" actions={shared.open}>
+          {face}
+        </Frame>
+      );
+    }
     return (
       <Frame
         note={start.isError ? '这道题现在开始不了，可以再试一次。' : null}
         actions={
-          <Button size="sm" disabled={start.isPending} onClick={() => start.mutate()}>
-            {start.isPending ? '正在准备' : '开始作答'}
-          </Button>
+          <>
+            <Button size="sm" disabled={start.isPending} onClick={() => start.mutate()}>
+              {start.isPending ? '正在准备' : '开始作答'}
+            </Button>
+            {start.isError ? shared.open : null}
+          </>
         }
       >
         {face}
