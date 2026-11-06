@@ -68,7 +68,14 @@ function GlobalDefault({ data, save }: { data: ConfigData; save: SaveConfig }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<{ text: string; epoch: number } | null>(null);
+  // Every task without its own model moves with this, so a change says so and asks first.
+  const [confirm, setConfirm] = useState<{
+    text: string;
+    changes: Parameters<SaveConfig>[0];
+  } | null>(null);
   const issue = modelIssue(data.providers, pick.provider, pick.model);
+  const currentPair = current?.provider ? `${current.provider} / ${current.model}` : null;
+  const unchanged = pick.provider === current?.provider && pick.model === current?.model;
   const run = async (changes: Parameters<SaveConfig>[0]) => {
     setPending(true);
     setError(null);
@@ -83,6 +90,7 @@ function GlobalDefault({ data, save }: { data: ConfigData; save: SaveConfig }) {
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
+      setConfirm(null);
       setPending(false);
     }
   };
@@ -138,7 +146,7 @@ function GlobalDefault({ data, save }: { data: ConfigData; save: SaveConfig }) {
         </p>
       ) : null}
       {editing ? (
-        <fieldset disabled={pending} className="adm-fieldset">
+        <fieldset disabled={pending || confirm !== null} className="adm-fieldset">
           <legend className="adm-legend">全局默认</legend>
           <ModelPicker
             id={id}
@@ -149,24 +157,30 @@ function GlobalDefault({ data, save }: { data: ConfigData; save: SaveConfig }) {
           />
           <div className="adm-acts">
             <Button
-              disabled={Boolean(issue)}
+              disabled={Boolean(issue) || unchanged}
               onClick={() =>
-                void run([
-                  { action: 'set', key: 'lane.global.provider', value: pick.provider },
-                  { action: 'set', key: 'lane.global.model', value: pick.model },
-                ])
+                setConfirm({
+                  text: `全局默认：${currentPair ?? '没有'} → ${pick.provider} / ${pick.model}。没有单独设置的任务都会改用它。`,
+                  changes: [
+                    { action: 'set', key: 'lane.global.provider', value: pick.provider },
+                    { action: 'set', key: 'lane.global.model', value: pick.model },
+                  ],
+                })
               }
             >
-              {pending ? '保存中…' : '保存'}
+              保存
             </Button>
             {current?.provider ? (
               <Button
                 variant="secondary"
                 onClick={() =>
-                  void run([
-                    { action: 'clear', key: 'lane.global.provider' },
-                    { action: 'clear', key: 'lane.global.model' },
-                  ])
+                  setConfirm({
+                    text: `清除全局默认（${currentPair}）。没有单独设置的任务回到各自的模型。`,
+                    changes: [
+                      { action: 'clear', key: 'lane.global.provider' },
+                      { action: 'clear', key: 'lane.global.model' },
+                    ],
+                  })
                 }
               >
                 清除全局默认
@@ -174,6 +188,19 @@ function GlobalDefault({ data, save }: { data: ConfigData; save: SaveConfig }) {
             ) : null}
             <Button variant="ghost" onClick={() => setEditing(false)}>
               取消
+            </Button>
+          </div>
+        </fieldset>
+      ) : null}
+      {confirm ? (
+        <fieldset className="adm-confirm" aria-label="确认全局默认变更">
+          <p>{confirm.text}</p>
+          <div className="adm-acts">
+            <Button disabled={pending} onClick={() => void run(confirm.changes)}>
+              {pending ? '保存中…' : '确认变更'}
+            </Button>
+            <Button variant="ghost" disabled={pending} onClick={() => setConfirm(null)}>
+              返回修改
             </Button>
           </div>
         </fieldset>
