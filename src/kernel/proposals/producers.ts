@@ -86,6 +86,8 @@ export async function writeVariantQuestionProposal(
 export interface WriteLearningItemProposalInput extends CommonProducerInput {
   topic: string;
   plan_case?: string;
+  /** Explicit: only the existing-graph case is fully retractable. */
+  auto_apply_eligible?: boolean;
   knowledge_node: unknown;
   proposed_knowledge?: unknown;
   hub: unknown;
@@ -132,6 +134,9 @@ export async function writeLearningItemProposal(
     task_run_id: input.task_run_id ?? null,
     cost_usd: input.cost_usd,
     created_at: input.created_at,
+    ...(input.auto_apply_eligible === undefined
+      ? {}
+      : { auto_apply_eligible: input.auto_apply_eligible }),
   });
 }
 

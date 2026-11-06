@@ -1,9 +1,9 @@
 // YUK-1016 / 454-B — owner 手动加错因类目的小入口。
 //
 // 与 LLM 复发提议共用同一落地路径：写 `cause_category` proposal event
-// （source='owner'）→ 收件箱 accept → causeCategoryProposalAcceptApplier INSERT
-// cause_category_overlay。owner 不在 DB 里直写词表——proposal 边界保留
-// human-vet 语义（自己提、自己审、留证据链）。
+// （source='owner'）→ 自动通道按 strength A 接受 → causeCategoryProposalAcceptApplier
+// INSERT cause_category_overlay；撤销窗内可 retract 归档。owner 不在 DB 里直写词表
+// ——proposal 边界保留证据链和 undo 语义。
 //
 // 用法：
 //   pnpm tsx scripts/propose-cause-category.ts \
@@ -12,7 +12,7 @@
 //     [--subject general] [--reason "近期多次 time-boxed 练习超时"] [--actor yuqi]
 //
 // slug 只收蛇形英文（语义 id）；`ov_` 前缀由脚本拼接（同 LLM 路径）。脚本只做
-// 提议写入——落地仍需收件箱里点 Accept。
+// 提议写入——strength A 自动通道随后接受，撤销走收件箱 retract。
 
 import './load-env';
 
@@ -113,7 +113,7 @@ async function main(): Promise<number> {
     },
   });
   console.log(
-    `[propose-cause-category] proposal written: event=${eventId} category=${categoryId} subject=${profile.id} — 收件箱 accept 后生效`,
+    `[propose-cause-category] proposal written: event=${eventId} category=${categoryId} subject=${profile.id} — 自动通道随后接受（可在撤销窗内 retract）`,
   );
   return 0;
 }
