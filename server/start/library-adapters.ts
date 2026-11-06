@@ -191,6 +191,16 @@ export const forceEnableStartLibraryDraft = ({ id, body }: { id: string; body: s
     }
   });
 
+export const readStartQuestionCard = async (id: string, sessionId: string) => {
+  try {
+    const { readQuestionCard } = await import('@/kernel/read-models/question-card');
+    const { db } = await import('@/db/client');
+    return await readQuestionCard(db, id, sessionId);
+  } catch (error) {
+    throw errorResponse(error);
+  }
+};
+
 export const readStartPracticeQuestionDetail = (
   id: string,
 ): Promise<Awaited<ReturnType<typeof readQuestionDetail>>> =>
@@ -205,6 +215,7 @@ export const readStartPracticeQuestionDetail = (
   });
 
 export const libraryAdapters = {
+  readStartQuestionCard,
   readStartLibraryQuestionDetail,
   readStartLibraryQuestionMistakes,
   readStartLibraryQuestions,

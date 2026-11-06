@@ -1,5 +1,6 @@
 import type { NotePageClient } from '@/capabilities/notes/ui-public';
 import type { ConfirmationAssessmentRenderer } from '../confirmation';
+import type { QuestionCardRenderer } from '../question-card';
 // The shell's one companion instance. Always mounted (closed it renders nothing visible): it restores
 // unconfirmed sends from the browser once, claims open requests published by pages, polls nudges
 // for the shell's badge, and shows the panel while `open`. Unmounting only detaches streams.
@@ -12,6 +13,7 @@ import { useCompanionController, useTurnPolling } from './use-companion';
 
 export interface CompanionMountProps {
   confirmationRenderer?: ConfirmationAssessmentRenderer;
+  questionCardRenderer?: QuestionCardRenderer;
   readNotePage: NotePageClient;
   open: boolean;
   presentation?: 'workspace';
@@ -33,6 +35,7 @@ export function CompanionMount({
   navigate,
   presentation,
   confirmationRenderer,
+  questionCardRenderer,
   readNotePage,
 }: CompanionMountProps) {
   const controller = useCompanionController();
@@ -65,6 +68,7 @@ export function CompanionMount({
       {open ? (
         <CompanionPanel
           confirmationRenderer={confirmationRenderer}
+          questionCardRenderer={questionCardRenderer}
           readNotePage={readNotePage}
           controller={controller}
           presentation={presentation}

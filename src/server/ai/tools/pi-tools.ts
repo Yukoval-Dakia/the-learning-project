@@ -44,6 +44,12 @@ export function buildPiDomainAgentTools(options: BuildMcpServerOptions): AgentTo
       },
       dt.name === 'present_primary_view',
     ) as AgentTool['parameters'];
+    // The runtime schema keeps query optional so a cursor-only resume still
+    // validates; the provider wire must say a new search needs the learner's
+    // query. cursor remains a runtime-only alternative (bridge validation).
+    if (dt.name === 'search_bank') {
+      (parameters as unknown as Record<string, unknown>).required = ['query'];
+    }
 
     return {
       name: piToolWireName(options.serverName, dt.name),
@@ -52,7 +58,11 @@ export function buildPiDomainAgentTools(options: BuildMcpServerOptions): AgentTo
       parameters,
       effect: dt.effect,
       // Keep rejection in the bridge so the normal hooks and durable log observe it.
-      ...(dt.name === 'present_primary_view' ? { inputValidation: 'bridge' as const } : {}),
+      // search_bank also needs the bridge's cursor-only runtime alternative while
+      // its provider wire requires query for a new search.
+      ...(dt.name === 'present_primary_view' || dt.name === 'search_bank'
+        ? { inputValidation: 'bridge' as const }
+        : {}),
       execute: async (toolCallId, params, signal) => {
         // The loop abort must reach the tool: merge it with the caller's
         // ctx.signal so either source cancels execution.

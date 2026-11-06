@@ -180,6 +180,10 @@ function GlobalDefault({ data, save }: { data: ConfigData; save: SaveConfig }) {
       setPending(false);
     }
   };
+  // Said while the choice is still open, not only once it is about to be saved.
+  const editingNotice = confirm
+    ? null
+    : globalSliceNotice(data.tasks, pairChanged, thinkingChanged);
   const askToSave = () => {
     const parts = [
       pairChanged ? `全局默认：${currentPair ?? '没有'} → ${pick.provider} / ${pick.model}` : null,
@@ -300,6 +304,7 @@ function GlobalDefault({ data, save }: { data: ConfigData; save: SaveConfig }) {
               ))}
             </select>
           </label>
+          {editingNotice ? <p className="adm-note">{editingNotice}</p> : null}
           <div className="adm-acts">
             <Button
               disabled={Boolean(issue) || !(pairChanged || thinkingChanged)}

@@ -375,9 +375,9 @@ class PiPreparedQuery implements PreparedExecutionQuery {
         session_id: this.sessionId,
       });
     }
-    if (executions > 0) return;
-    // YUK-1559 (C6) — a call rejected at the argument-contract seam never reached
-    // execute: persist the sanitized ≤4KiB original arguments as run evidence.
+    // YUK-1559 (C6) — persist the sanitized ≤4KiB original arguments for any
+    // argument-contract rejection, including a bridge-owned schema rejection
+    // (the bridge executes, then rejects before domain work).
     if (
       pending !== undefined &&
       isToolArgumentContractFailure({ isError: event.isError, content: event.result?.content })
@@ -407,6 +407,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
         session_id: this.sessionId,
       });
     }
+    if (executions > 0) return;
     // Pi emits start/end even for validation, missing-tool and hook-blocked calls.
     // None crossed AgentTool.execute; do not label them executed or copy errors/args.
     const span = startTraceSpan('tool.attempt', {
