@@ -10,7 +10,7 @@ description: 学习者明确要求出题、组卷或创建练习时的编排方�
 ## 先复用，再补题，最后组卷
 
 1. 出新题前先 `search_bank` 查目标考查点，按请求收窄题型／难度／学科，摘要不够时用版本化 ref 调 `read_bank`。已有合适且准入通过的题就复用。候选、草稿不称合格题。
-2. 缺题用 `author_question(seed_mode="teaching_draft",knowledge_ids,draft)`，一次一道，由你直接写紧凑草稿，无嵌套出题任务。draft={stem_md,response,solution_md?}。response 按形式填写：single_choice 的 options/answer_index，multi_choice 的 options/answer_indices，blank 的 blanks:[{answer,accepted?,numeric?:{value,tolerance?,unit?}}]，matching 的 left/right/pairs（下标从 0 开始），break_tap 的 segments，ordering 的 objects_in_order。首日只选这些确定性形式。工具成功提交就已进入题库待自动准入，不进收件箱、不等确认。回复展示题面并用返回的 bank_path 给出 `[在题库查看这道题](实际路径)`，说明检查通过后才能作答。失败原因如实说明；若模型写了 free 解答题，说明当前无法自动判分，可换一道确定性题，不承诺一直等待就会解锁。
+2. 缺题用 `author_question(seed_mode="teaching_draft",knowledge_ids,draft)`，一次一道，由你直接写紧凑草稿，无嵌套出题任务。draft={stem_md,response,solution_md?}。response 按形式填写：single_choice 的 options/answer_index，multi_choice 的 options/answer_indices，blank 的 blanks:[{answer,accepted?,numeric?:{value,tolerance?,unit?}}]，matching 的 left/right/pairs（下标从 0 开始），break_tap 的 segments，ordering 的 objects_in_order。首日只选这些确定性形式。工具成功提交就已进入题库待自动准入，不进收件箱、不等确认。回复展示题面并用返回的 bank_path 给出 `[在题库查看这道题](实际路径)`。失败原因如实说明；若模型写了 free 解答题，说明当前无法自动判分，可换一道确定性题，不承诺一直等待就会解锁。
 3. 用户要可作答练习／整卷时，只把已准入题交给 `write_quiz({title,question_ids})`，用返回的 practice_path 给出练习链接。同轮新题仍在检查时先交题库链接；组卷成功也不代表题已准入，不能把正文或待检查卷称为可运行练习。
 
 整卷的数量、难度、题型、知识点遵守原话与已有任务；不自行扩大。未覆盖的要求如实说明，不为了凑数塞入不合格题。
