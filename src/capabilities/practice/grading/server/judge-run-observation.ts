@@ -8,13 +8,7 @@ import {
 } from '@/core/schema/event/judge-operational-events';
 import { JudgePendingAttemptPayload } from '@/core/schema/event/judge-pending-events';
 import type { Db, Tx } from '@/db/client';
-import {
-  assessment_submission,
-  evaluation,
-  event,
-  job_events,
-  judge_run_control,
-} from '@/db/schema';
+import { evaluation, event, job_events, judge_run_control } from '@/db/schema';
 import { assessmentAttemptEventId } from '@/kernel/records/assessment-attempt-identity';
 import {
   type IssuanceJudgeSettledSchema,
@@ -449,24 +443,24 @@ export async function readNativeJudgeSettled(
     : undefined;
 }
 
-/** Newest appeal filed against this submission's evaluation group; refresh resumes polling it. */
+/**
+ * Newest appeal filed against THIS submission; refresh resumes polling it.
+ * Filtered by the appealed evaluation's submission — a joint group's sibling
+ * submissions share `evaluation_group_id` but must not leak their appeals.
+ */
 async function latestAppealForSubmission(
   database: Db | Tx,
   submissionId: string,
 ): Promise<string | null> {
-  const [submission] = await database
-    .select({ evaluation_group_id: assessment_submission.evaluation_group_id })
-    .from(assessment_submission)
-    .where(eq(assessment_submission.submission_id, submissionId))
-    .limit(1);
-  if (!submission) return null;
   const [appeal] = await database
     .select({ id: event.id })
     .from(event)
+    .innerJoin(evaluation, eq(evaluation.evaluation_id, event.subject_id))
     .where(
       and(
         eq(event.action, 'experimental:appeal_request'),
-        sql`${event.payload}->>'evaluation_group_id' = ${submission.evaluation_group_id}`,
+        eq(event.subject_kind, 'evaluation'),
+        eq(evaluation.submission_id, submissionId),
       ),
     )
     .orderBy(desc(event.created_at), desc(event.id))

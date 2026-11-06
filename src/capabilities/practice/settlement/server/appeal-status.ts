@@ -6,9 +6,11 @@ import { and, desc, eq, sql } from 'drizzle-orm';
 import { EvaluationRecord } from '@/core/schema/assessment';
 import type { ScoringBasisT } from '@/core/schema/assessment/scoring';
 import type { Db } from '@/db/client';
-import { evaluation, event } from '@/db/schema';
+import { evaluation, event, learning_session } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { resolveVerdictsForGroups } from '@/kernel/read-models/assessment-verdict';
+import { assessmentAttemptEventId } from '@/kernel/records/assessment-attempt-identity';
+import { RETENTION_7D } from '@/server/boss/queue-config';
 import { projectEvaluationToJudgeResult } from '../../grading/public';
 
 const APPEAL_ACTION = 'experimental:appeal_request';
@@ -32,21 +34,59 @@ function projectEval(row: typeof evaluation.$inferSelect, basis: ScoringBasisT):
 }
 
 /**
- * pg-boss delivery state for this appeal's `rejudge` job. A job row may legitimately
- * be absent (enqueue flag off, or a completed delivery pruned by keep_completed) —
- * absence alone is not a failure signal, only an explicit `failed`/`dlq` row is.
+ * pg-boss delivery state for this appeal's `rejudge` job. The data payload only
+ * exists on `rejudge` sends, so matching by `appeal_event_id` alone also catches
+ * the `*_dlq` row the job lands on once retries are exhausted (the queue move
+ * rewrites `name`). A row may legitimately be absent (enqueue flag off, or a
+ * completed delivery pruned by retention) — absence alone is not a failure
+ * signal until the row outlives queue retention, after which an unresolved
+ * appeal can never produce a resolution on its own.
  */
-async function rejudgeJobState(db: Db, appealEventId: string): Promise<string | null> {
+async function rejudgeJobState(
+  db: Db,
+  appealEventId: string,
+): Promise<'failed' | 'absent' | 'live'> {
   const [schema] = await db.execute<{ present: boolean }>(sql`
     SELECT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'pgboss') AS present
   `);
-  if (!schema?.present) return null;
-  const [job] = await db.execute<{ state: string }>(sql`
-    SELECT state FROM pgboss.job
-    WHERE name = 'rejudge' AND data->>'appeal_event_id' = ${appealEventId}
+  if (!schema?.present) return 'absent';
+  const [job] = await db.execute<{ name: string; state: string }>(sql`
+    SELECT name, state FROM pgboss.job
+    WHERE data->>'appeal_event_id' = ${appealEventId}
     ORDER BY created_on DESC LIMIT 1
   `);
-  return job?.state ?? null;
+  if (!job) return 'absent';
+  if (job.name.endsWith('_dlq') || job.state === 'failed' || job.state === 'cancelled')
+    return 'failed';
+  return 'live';
+}
+
+/**
+ * judge_now_show_later 反馈封锁（与 assessment-verdict 同一判定）：判分缓冲到
+ * session 完成，考中不可见 ⇒ 只回状态，不回判词/分数。同一 occurrence 判定靠
+ * attempt payload 的 `paper_started_at` 对 `learning_session.started_at` —— 重开
+ * 卷换 started_at，旧 occurrence 的缓冲不解锁。
+ */
+async function appealFeedbackLocked(db: Db, submissionId: string): Promise<boolean> {
+  const [anchor] = await db
+    .select({ session_id: event.session_id, payload: event.payload })
+    .from(event)
+    .where(
+      and(
+        eq(event.id, assessmentAttemptEventId(submissionId)),
+        eq(event.action, 'experimental:assessment_attempt'),
+      ),
+    )
+    .limit(1);
+  if (anchor?.payload.paper_feedback_policy !== 'judge_now_show_later') return false;
+  const paperStartedAt = anchor.payload.paper_started_at;
+  if (typeof paperStartedAt !== 'string' || anchor.session_id === null) return true;
+  const [session] = await db
+    .select({ status: learning_session.status, started_at: learning_session.started_at })
+    .from(learning_session)
+    .where(eq(learning_session.id, anchor.session_id))
+    .limit(1);
+  return session?.status !== 'completed' || session.started_at.toISOString() !== paperStartedAt;
 }
 
 export async function readAppealStatus(database: Db, appealEventId: string) {
@@ -74,6 +114,16 @@ export async function readAppealStatus(database: Db, appealEventId: string) {
     typeof resolution?.payload.disposition === 'string' ? resolution.payload.disposition : null;
   const candidateId =
     typeof resolution?.payload.evaluation_id === 'string' ? resolution.payload.evaluation_id : null;
+  // The rejudge owner records the changed/unchanged decision on the receipt —
+  // it is the only side holding the before record, the after record and the
+  // activation result. Receipts predating the field carry no `verdict_change`;
+  // the read model falls back to the coarse+score comparison below, which is
+  // documented to under-report partial_unknown count flips on legacy rows.
+  const verdictChange =
+    resolution?.payload.verdict_change === 'changed' ||
+    resolution?.payload.verdict_change === 'unchanged'
+      ? resolution.payload.verdict_change
+      : null;
 
   const [appealedEval, group] = await Promise.all([
     database
@@ -109,20 +159,31 @@ export async function readAppealStatus(database: Db, appealEventId: string) {
 
   let status: AppealStatusKind;
   if (disposition === null) {
-    status = (await rejudgeJobState(database, appeal.id)) === 'failed' ? 'failed' : 'in_progress';
+    const jobState = await rejudgeJobState(database, appeal.id);
+    status =
+      jobState === 'failed' ||
+      (jobState === 'absent' && appeal.created_at.getTime() + RETENTION_7D * 1000 < Date.now())
+        ? 'failed'
+        : 'in_progress';
   } else if (disposition === 'effective') {
     status =
-      after !== null &&
-      before !== null &&
-      after.coarse_outcome === before.coarse_outcome &&
-      after.score === before.score
-        ? 'unchanged'
-        : 'changed';
+      after === null
+        ? 'failed'
+        : (verdictChange ??
+          (before !== null &&
+          after.coarse_outcome === before.coarse_outcome &&
+          after.score === before.score
+            ? 'unchanged'
+            : 'changed'));
   } else if (disposition === 'review_required') {
     status = 'unjudgeable';
   } else {
     status = 'failed';
   }
+
+  const locked = appealedEval[0]
+    ? await appealFeedbackLocked(database, appealedEval[0].submission_id)
+    : false;
 
   return {
     appeal_event_id: appeal.id,
@@ -131,8 +192,9 @@ export async function readAppealStatus(database: Db, appealEventId: string) {
     evaluation_group_id: groupId,
     reason_md: reason,
     submitted_at_sec: Math.floor(appeal.created_at.getTime() / 1000),
-    before,
-    after,
+    before: locked ? null : before,
+    after: locked ? null : after,
+    feedback_buffered: locked,
     disposition,
   };
 }

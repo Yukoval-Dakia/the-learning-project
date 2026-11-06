@@ -1,6 +1,11 @@
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { canonicalHash } from '@/core/migration/canonical';
-import { ActivateEvaluationIntent, EvaluationProvenance } from '@/core/schema/assessment';
+import {
+  ActivateEvaluationIntent,
+  EvaluationProvenance,
+  EvaluationRecord,
+  type EvaluationRecordT,
+} from '@/core/schema/assessment';
 import type { Db, Tx } from '@/db/client';
 import { evaluation, evaluation_effective_head, event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
@@ -286,9 +291,71 @@ function isPermanentRejudgeConflict(error: unknown): boolean {
   return false;
 }
 
+/**
+ * changed/unchanged 在写侧裁决：只有这里同时拥有 before record、after record
+ * 与激活结果（读侧拿不到 partial_unknown 计数这类 null-score 维度）。
+ * 签名只取结果承载面——分数 / 部分对计数 / 单元判定 / 聚合结果；散文段
+ * （feedback_md / evidence_citations / comparison / detail）每次重判必然
+ * 不同，不入签。数组按 id 归序，option_ids 排序。
+ */
+function appealOutcomeSignature(record: EvaluationRecordT) {
+  return {
+    status: record.status,
+    units: record.unit_results
+      .map((unit) =>
+        unit.status === 'scored'
+          ? {
+              id: unit.scoring_unit_id,
+              points: unit.points_awarded,
+              blank: unit.scored_because,
+              partial: unit.partial_unknown_points
+                ? {
+                    c: unit.partial_unknown_points.correct_count,
+                    t: unit.partial_unknown_points.total_count,
+                  }
+                : null,
+              matched: unit.matched
+                ? {
+                    rule: unit.matched.rule_id ?? null,
+                    level: unit.matched.level_id ?? null,
+                    options: [...unit.matched.option_ids].sort(),
+                  }
+                : null,
+            }
+          : { id: unit.scoring_unit_id, pending: unit.pending.reason },
+      )
+      .sort((a, b) => a.id.localeCompare(b.id)),
+    aggregate:
+      record.aggregate == null
+        ? null
+        : record.aggregate.kind === 'points_total'
+          ? { kind: record.aggregate.kind, points: record.aggregate.points }
+          : record.aggregate.kind === 'level'
+            ? {
+                kind: record.aggregate.kind,
+                level: record.aggregate.level_id,
+                points: record.aggregate.points,
+              }
+            : record.aggregate.kind === 'partial_unknown_points'
+              ? {
+                  kind: record.aggregate.kind,
+                  known: record.aggregate.known_points,
+                  units: record.aggregate.partial_units
+                    .map((u) => ({ id: u.scoring_unit_id, c: u.correct_count, t: u.total_count }))
+                    .sort((a, b) => a.id.localeCompare(b.id)),
+                }
+              : { kind: record.aggregate.kind, reason: record.aggregate.reason },
+  };
+}
+
 export async function rejudgeNativeAppeal(database: Db, appeal: typeof event.$inferSelect) {
   const resolutionId = `evt_native_resolution_${canonicalHash(appeal.id)}`;
-  const record = async (tx: Tx, disposition: string, evaluationId?: string) => {
+  const record = async (
+    tx: Tx,
+    disposition: string,
+    evaluationId?: string,
+    verdictChange?: 'changed' | 'unchanged',
+  ) => {
     // Used with the activation transaction, or alone for an explicit held result.
     await lockNativeResolution(tx, resolutionId);
     const [existing] = await tx
@@ -305,7 +372,11 @@ export async function rejudgeNativeAppeal(database: Db, appeal: typeof event.$in
       subject_id: appeal.subject_id,
       outcome: null,
       caused_by_event_id: appeal.id,
-      payload: { disposition, ...(evaluationId ? { evaluation_id: evaluationId } : {}) },
+      payload: {
+        disposition,
+        ...(evaluationId ? { evaluation_id: evaluationId } : {}),
+        ...(verdictChange ? { verdict_change: verdictChange } : {}),
+      },
     });
   };
   const hold = async (reason: string, evaluationId?: string) => {
@@ -375,13 +446,18 @@ export async function rejudgeNativeAppeal(database: Db, appeal: typeof event.$in
     candidate.result.coarse_outcome === 'unsupported'
   )
     return hold('review_required', candidateId);
+  const verdictChange: 'changed' | 'unchanged' =
+    canonicalHash(appealOutcomeSignature(EvaluationRecord.parse(original))) ===
+    canonicalHash(appealOutcomeSignature(candidate.evaluation.record))
+      ? 'unchanged'
+      : 'changed';
   const activation = await activateSubmissionCandidate(
     database,
     { ...intent.data, evaluation_id: candidateId },
     {
       actorRef: 'assessment:appeal',
       correction: { appealEventId: appeal.id, priorEvaluationId: original.evaluation_id },
-      record: (tx) => record(tx, 'effective', candidateId),
+      record: (tx) => record(tx, 'effective', candidateId, verdictChange),
     },
   );
   if (activation.status !== 'activated' && activation.status !== 'already_effective')

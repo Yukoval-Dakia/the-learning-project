@@ -42,6 +42,11 @@ export const AppealStatusResponseSchema = z.object({
   submitted_at_sec: z.number(),
   before: AppealVerdictSchema.nullable(),
   after: AppealVerdictSchema.extend({ effective_evaluation_id: z.string().nullable() }).nullable(),
+  /**
+   * judge_now_show_later 封锁标记（与 paper-detail `feedback_buffered` 同一
+   * 语义）：考中判定缓冲，before/after 一律 null，只回状态。
+   */
+  feedback_buffered: z.boolean(),
   /** Raw resolution disposition (`effective`, `review_required`, `stale_head`, …); null while unresolved. */
   disposition: z.string().nullable(),
 });

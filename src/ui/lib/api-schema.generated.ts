@@ -8447,6 +8447,7 @@ export interface operations {
                         disposition: string | null;
                         evaluation_group_id: string | null;
                         evaluation_id: string;
+                        feedback_buffered: boolean;
                         reason_md: string;
                         /** @enum {string} */
                         status: "in_progress" | "changed" | "unchanged" | "unjudgeable" | "failed";
