@@ -196,7 +196,7 @@ function proposalDisclosure(trace: readonly TraceEntry[]): string | undefined {
         if (
           out?.seed_mode === 'teaching_draft' &&
           out.status === 'failed' &&
-          problem?.code === 'subject_root_missing' &&
+          (problem?.code === 'subject_root_missing' || problem?.code === 'conversation_required') &&
           typeof problem.detail === 'string'
         ) {
           return [problem.detail];

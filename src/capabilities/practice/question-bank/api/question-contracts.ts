@@ -172,6 +172,7 @@ export const QuestionDetailQuerySchema = z.object({
 export const QuestionDetailResponseSchema = z
   .object({
     id: z.string(),
+    admission_owned: z.boolean(),
     subject: z.string().nullable(),
     notation: z.string().nullable(),
     kind: z.string(),

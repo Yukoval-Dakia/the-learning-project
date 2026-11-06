@@ -30,6 +30,7 @@ const DraftReviewRowSchema = z.object({
   knowledge: z.array(DraftKnowledgeRefSchema),
   verify_status: DraftVerifyStatusSchema,
   verify_reason: z.string().nullable(),
+  admission_owned: z.boolean(),
   admission: QuestionAdmissionReadSchema.nullable().optional(),
 });
 
@@ -62,6 +63,7 @@ export const DraftReviewDetailResponseSchema = z.object({
   answer: z.string().nullable(),
   verify_status: DraftVerifyStatusSchema,
   verify_reason: z.string().nullable(),
+  admission_owned: z.boolean(),
   admission: QuestionAdmissionReadSchema.nullable().optional(),
 });
 

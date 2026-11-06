@@ -15,6 +15,8 @@ import {
 } from '@/kernel/read-models/subject-resolution';
 import { canonicalKindToPersistedForms } from '@/subjects/question-kind';
 
+import { declaredAdmissionOwned } from './admission/ownership';
+
 type DbLike = Db | Tx;
 
 /** A knowledge concept tag on a draft: id + display label (knowledge.name). */
@@ -44,6 +46,7 @@ export interface DraftReviewRow {
   verify_status: DraftVerifyStatus;
   /** model's驳回理由 (summary_md) when the latest terminal verify did not promote. */
   verify_reason: string | null;
+  admission_owned: boolean;
   admission?: QuestionServing['admission'];
 }
 
@@ -73,6 +76,7 @@ export interface DraftReviewDetail {
   answer: string | null;
   verify_status: DraftVerifyStatus;
   verify_reason: string | null;
+  admission_owned: boolean;
   admission?: QuestionServing['admission'];
 }
 
@@ -253,6 +257,7 @@ export async function listDraftReview(
 
   const conditions = [
     eq(question.draft_status, 'draft'),
+    sql`NOT ${declaredAdmissionOwned()}`,
     // composite children (question_part rows) are group-internal:
     // they carry no independent verify intent and must never appear as separate
     // unverified drafts — their lifecycle is the parent's verify cascade.
@@ -290,6 +295,7 @@ export async function listDraftReview(
   const fetchedRows = await db
     .select({
       id: question.id,
+      admission_owned: declaredAdmissionOwned(),
       prompt_md: question.prompt_md,
       kind: question.kind,
       source: question.source,
@@ -360,6 +366,7 @@ export async function listDraftReview(
       const verdict = verdictById.get(r.id);
       return {
         id: r.id,
+        admission_owned: r.admission_owned,
         prompt_preview: truncatePrompt(r.prompt_md),
         kind: r.kind,
         source: r.source,
@@ -392,6 +399,7 @@ export async function getDraftReviewDetail(
   const rows = await db
     .select({
       id: question.id,
+      admission_owned: declaredAdmissionOwned(),
       kind: question.kind,
       source: question.source,
       difficulty: question.difficulty,
@@ -455,6 +463,7 @@ export async function getDraftReviewDetail(
 
   return {
     id: row.id,
+    admission_owned: row.admission_owned,
     subject,
     notation: resolveSubjectRenderNotation(subject),
     kind: row.kind,

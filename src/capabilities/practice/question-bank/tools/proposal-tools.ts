@@ -25,7 +25,10 @@ import { getActiveLearningRecord } from '@/kernel/records/queries';
 import { type DomainTool, OpaqueJsonInput, type ToolContext } from '@/kernel/tools/types';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
-import { resolveTeachingDraftPlacement } from '../server/teaching-draft-placement';
+import {
+  hasTeachingDraftConversation,
+  resolveTeachingDraftPlacement,
+} from '../server/teaching-draft-placement';
 
 const TEXT_EXCERPT_MAX = 180;
 
@@ -151,7 +154,7 @@ const AuthorQuestionOutputSchema = z.object({
   placement_note: z.string().optional(),
   problem: z
     .object({
-      code: z.enum(['subject_root_missing', 'learner_topic_required']),
+      code: z.enum(['subject_root_missing', 'learner_topic_required', 'conversation_required']),
       detail: z.string(),
     })
     .optional(),
@@ -358,6 +361,19 @@ export async function authorQuestion(
           variant_question_ids: [],
           problem: placement.issue,
           reasoning_summary: placement.issue.detail,
+        };
+      if (!(await hasTeachingDraftConversation(deps.db, deps.sessionId)))
+        return {
+          status: 'failed',
+          seed_mode: seed.seed_mode,
+          proposal_ids: [],
+          mistake_variant_ids: [],
+          variant_question_ids: [],
+          problem: {
+            code: 'conversation_required',
+            detail: '没有找到这次对话的来源，这次没有存题。可以在对话里继续讲题，但不会进入题库。',
+          },
+          reasoning_summary: '没有找到这次对话的来源，这次没有存题。',
         };
       const result = await submitCopilotAuthoredDraft(
         teachingDraftToDocument(draft, {
