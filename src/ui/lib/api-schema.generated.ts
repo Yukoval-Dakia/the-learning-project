@@ -31224,6 +31224,7 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
+                        auto_apply_enabled: boolean;
                         data: {
                             actor_ref: string;
                             cost_micro_usd: number | null;

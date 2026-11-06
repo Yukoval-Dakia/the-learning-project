@@ -13,7 +13,9 @@ export function buildProposalAutoApplyHandler(db: Db) {
     // HostOperationNotInstalledError and this handler deliberately lets it reach
     // pg-boss as a failed job instead of swallowing it.
     const result = await runProposalAutoApplySweep(db);
-    if (result.outcome !== 'idle') {
+    // disabled returns before reading anything (breaker null); stay quiet so the
+    // minute job does not log the off state every run.
+    if (result.outcome !== 'idle' && result.breaker !== null) {
       console.info('[proposal-auto-apply]', {
         outcome: result.outcome,
         applied: result.applied,

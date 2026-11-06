@@ -53,6 +53,7 @@ export type FrontdoorAdapters = {
   >;
   subjects: () => Promise<typeof import('./subject-adapters')['subjectAdapters']>;
   noteEditing: () => Promise<typeof import('./note-editing-adapters')['noteEditingAdapters']>;
+  workbench: () => Promise<typeof import('./workbench-adapters')['workbenchAdapters']>;
 };
 
 export type FrontdoorContext = {

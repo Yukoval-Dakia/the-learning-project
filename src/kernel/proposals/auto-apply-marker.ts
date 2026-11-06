@@ -5,10 +5,23 @@
 // non-retroactive switch: proposals written before a kind flips to A carry no
 // marker and stay pending for human review.
 
+import { getConfigFlag } from '@/core/config/store';
 import { type AiProposalPayloadT, kindStrength } from '@/core/schema/proposal';
 
 /** Version of the tier policy stamped on proposals at creation time. */
 export const AUTO_APPLY_POLICY = 'strength_a_v1';
+
+/** Hot switch for the whole lane; default off in every environment. */
+export const PROPOSAL_AUTO_APPLY_ENABLED_KEY = 'PROPOSAL_AUTO_APPLY_ENABLED';
+
+/**
+ * Read from the hydrated config snapshot (DB override first, then env, then the
+ * registry default). Off means no marker at creation and no sweep work, so
+ * rows written while off can never be auto-applied retroactively.
+ */
+export function proposalAutoApplyEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return getConfigFlag(PROPOSAL_AUTO_APPLY_ENABLED_KEY, env);
+}
 
 export interface ProposalAutoApplyMarker {
   readonly eligible: true;

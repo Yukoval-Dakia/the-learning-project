@@ -14,7 +14,6 @@ import {
   readStartKnowledgeReviewDue,
   readStartKnowledgeTree,
   readStartOvernightDigest,
-  readStartProposalInbox,
   readStartRecentAiChanges,
   readStartTaskFailureAlerts,
   readStartTeachingBrief,
@@ -71,9 +70,12 @@ export const getStartRecentAiChanges = createServerFn({ method: 'GET' }).handler
 export const getStartProposalInbox = createServerFn({ method: 'GET' })
   .validator((input: ProposalInboxQuery) => input)
   .handler(({ context, data }) =>
-    runAuthenticatedStartWorkbench(context, getRequest(), async () =>
-      JSON.stringify(await readStartProposalInbox(data)),
-    ),
+    runAuthenticatedStartWorkbench(context, getRequest(), async () => {
+      // API-graph read: the Start bundle's own config snapshot is never hydrated,
+      // so `auto_apply_enabled` must come from the process that owns the writer.
+      const { readStartProposalInbox } = await context.adapters.workbench();
+      return JSON.stringify(await readStartProposalInbox(data));
+    }),
   );
 export const decideStartProposal = createServerFn({ method: 'POST' })
   .validator((input: StartProposalDecisionRequest) => input)

@@ -286,5 +286,14 @@
     "reader_marker": "getConfigFlag(PER_ENTITY_FLAG_ENV[entity])",
     "file": "src/kernel/projection-writer-policy.ts",
     "notes": "Default OFF write-ownership switch. Shared config reader preserves registry's exact env literal '1'; other env strings fall back to false. DB boolean override remains supported. No production flip."
+  },
+  "PROPOSAL_AUTO_APPLY_ENABLED": {
+    "kind": "env",
+    "literals": ["true", "1"],
+    "case_insensitive": true,
+    "polarity": "opt-in",
+    "reader_marker": "getConfigFlag(PROPOSAL_AUTO_APPLY_ENABLED_KEY",
+    "file": "src/kernel/proposals/auto-apply-marker.ts",
+    "notes": "YUK-1905 proposal auto-apply master switch. Opt-in/default OFF in every environment, resolved through the hot config registry (DB row > env > code default). OFF: writeAiProposal stamps no auto_apply marker (re-enabling never applies older rows retroactively) and runProposalAutoApplySweep returns before accepting, skipping or backfilling. ON: unchanged S6a behavior. Consumers: src/kernel/proposals/writer.ts and src/kernel/proposals/auto-apply.ts."
   }
 }
