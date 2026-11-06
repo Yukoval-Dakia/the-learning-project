@@ -69,6 +69,7 @@ import {
   piToolResultToSdkFrame,
   piUserMessage,
 } from './pi-runner-frames';
+import { composePiSystemPrompt } from './pi-system-prompt';
 import { withPiUsageEvidence } from './pi-usage-evidence';
 import {
   createProviderErrorCaptureFetch,
@@ -927,22 +928,18 @@ class PiPreparedQuery implements PreparedExecutionQuery {
   private async *iterate(promptsPromise: Promise<AgentMessage[]>): AsyncGenerator<RunnerMessage> {
     const { options } = this.args;
     const prompts = await promptsPromise;
-    let systemPrompt =
+    // Skill docs: SDK injected SKILL.md via a filesystem mirror; pi appends the
+    // bodies to the system prompt (same model-visible contract, no Skill tool).
+    let systemPrompt = composePiSystemPrompt(
       typeof options.systemPrompt === 'string'
         ? options.systemPrompt
         : (() => {
             throw new Error(
               'pi adapter requires a plain string systemPrompt (claude_code presets are SDK-only)',
             );
-          })();
-    // Skill docs: SDK injected SKILL.md via a filesystem mirror; pi appends the
-    // bodies to the system prompt (same model-visible contract, no Skill tool).
-    if (this.args.piSkillDocs && this.args.piSkillDocs.length > 0) {
-      const docs = this.args.piSkillDocs
-        .map((doc) => `<skill name="${doc.name}">\n${doc.body}\n</skill>`)
-        .join('\n\n');
-      systemPrompt = `${systemPrompt}\n\n${docs}`;
-    }
+          })(),
+      this.args.piSkillDocs,
+    );
     const structuredOutput = toolOutputSchema(this.args.kind) !== undefined;
     const submitPolicy = structuredOutput ? this.structuredSubmitPolicy(this.model) : undefined;
     const definition: TaskDefinition = tasks[this.args.kind];
