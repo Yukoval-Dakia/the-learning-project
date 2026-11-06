@@ -50,6 +50,7 @@ export interface NoteUpdateAcceptResult {
 type NoteUpdateApplierOpts = {
   decision?: string;
   user_note?: string;
+  actor?: ProposalAcceptInput['actor'];
 };
 
 function inboxView(input: ProposalAcceptInput): ProposalInboxRow {
@@ -86,6 +87,7 @@ async function acceptNoteUpdateProposal(
   const { result } = await runProposalAccept(db, proposalId, {
     proposal,
     userNote: opts.user_note,
+    ...(opts.actor ? { actor: opts.actor } : {}),
     signal: 'in_transaction',
     replay: async (rate: RecordedProposalRate): Promise<NoteUpdateAcceptResult> => {
       const payload = rate.payload as {
@@ -158,6 +160,7 @@ export const noteUpdateProposalAcceptApplier: ProposalAcceptApplier = async (db,
   const result = await acceptNoteUpdateProposal(db as Db, input.proposalId, inboxView(input), {
     decision: input.decision,
     user_note: input.user_note,
+    ...(input.actor ? { actor: input.actor } : {}),
   });
   return {
     kind: 'note_update',

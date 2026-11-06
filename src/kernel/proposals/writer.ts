@@ -7,6 +7,7 @@ import {
 import type { Db, Tx } from '@/db/client';
 import { costUsdToMicroUsd } from '@/kernel/cost';
 import { writeEvent } from '@/kernel/events';
+import { proposalAutoApplyMarker } from '@/kernel/proposals/auto-apply-marker';
 import { assertLearnerSummaryAllowed } from '@/kernel/proposals/learner-summary';
 // Cited evidence records move raw -> linked in the same scope as the propose event;
 // pass a tx to make both atomic.
@@ -124,6 +125,13 @@ export async function writeAiProposal(db: DbLike, input: WriteAiProposalInput): 
       }
     : eventShapeForProposal(payload);
 
+  // Capture the tier at creation time. The sweep only applies rows that carry
+  // this marker, so a later tier flip never retroactively applies old pending rows.
+  const autoApplyMarker = proposalAutoApplyMarker(payload.kind);
+  const eventPayload = autoApplyMarker
+    ? { ...eventShape.event_payload, auto_apply: autoApplyMarker }
+    : eventShape.event_payload;
+
   await writeEvent(db, {
     id: eventId,
     session_id: input.session_id ?? null,
@@ -133,7 +141,7 @@ export async function writeAiProposal(db: DbLike, input: WriteAiProposalInput): 
     subject_kind: eventShape.subject_kind,
     subject_id: eventShape.subject_id,
     outcome: input.outcome ?? defaultOutcome(payload),
-    payload: eventShape.event_payload,
+    payload: eventPayload,
     caused_by_event_id: input.caused_by_event_id ?? null,
     task_run_id: input.task_run_id ?? null,
     cost_micro_usd: costUsdToMicroUsd(input.cost_usd),

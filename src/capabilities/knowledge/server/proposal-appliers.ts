@@ -53,6 +53,7 @@ async function acceptKnowledgeProposal(
   const result = await acceptProposal(db, proposalId, {
     proposal: signalProposal(proposal),
     userNote: input.user_note,
+    ...(input.actor ? { actor: input.actor } : {}),
   });
   return { kind, result: { kind, result } };
 }

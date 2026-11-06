@@ -187,9 +187,9 @@ export type ProposalDecisionResourceT = z.infer<typeof ProposalDecisionResource>
 
 // ───────────────────────────────────────────────────────────────────────────
 // 出手强度轴（ADR-0039 strength tier）。三档语义：
-//   A — reserved auto-apply tier. No proposal kind currently uses it: destructive
-//       lifecycle changes require an explicit user decision.
-//   B — propose（pending 入收件箱，人审 accept）。默认档，绝大多数 kind 在此。
+//   A — auto-apply：提议仍先入账，随后由自动通道经同一决策事务 accept（agent actor），
+//       撤销窗内可撤回；首批只收撤销路径现成、不动结算、不改学习者目标的四类。
+//   B — propose（pending 入收件箱，人审 accept）。默认档，其余 kind 在此。
 //   C — observe-only（仅折叠到 AI 观察面，无 Accept CTA）。
 //
 // 本表是「能否接受」的唯一真相：C 档 ⟺ 没有 accept applier。
@@ -207,14 +207,15 @@ export const aiProposalKindStrength = {
   image_candidate: 'C',
   // 判分纠错：人审 accept 才生效（B 档），绝不自动执行。
   judge_retraction: 'B',
-  // B — propose（默认档）。
-  knowledge_node: 'B',
+  // A — 建节点（含 propose_new 根/子节点）走 retractKnowledgeCreate 归档，撤销完整。
+  knowledge_node: 'A',
   knowledge_edge: 'B',
   knowledge_mutation: 'B',
-  learning_item: 'B',
-  // note_update 是下一个 A 候选（小可逆笔记编辑；mutator 侧已验证 auto-apply +
-  // 撤销窗口，proposal 侧仍 B，待 owner 翻档）。
-  note_update: 'B',
+  // A — 产出方就是学习者本人；accept 物化学习项/笔记队列，retract 全量归档可还原。
+  learning_item: 'A',
+  // A — 小可逆笔记补丁；mutator 侧已验证 auto-apply + 撤销窗口，proposal 侧
+  // accept 走版本链回滚（undoNoteRefineApplyEvent），撤销完整。
+  note_update: 'A',
   variant_question: 'B',
   relearn: 'B',
   // LEGACY tombstone —— accept applier 仍在但 producer 早停写，永不 surface 到
@@ -226,8 +227,8 @@ export const aiProposalKindStrength = {
   question_draft: 'B',
   question_edit: 'B',
   conjecture: 'B',
-  // catalog 扩张永远过人审（词表是归因合同的一部分）。
-  cause_category: 'B',
+  // A — 词表扩张只 INSERT 本提议的 overlay 行；retract 按归属归档该行，撤销完整。
+  cause_category: 'A',
 } as const satisfies Record<AiProposalKindT, AiProposalStrength>;
 
 export function kindStrength(kind: AiProposalKindT): AiProposalStrength {

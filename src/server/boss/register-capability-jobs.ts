@@ -151,6 +151,16 @@ export async function registerCapabilityJobs(
   await installPracticeWorker();
   const { installAgencyHostOperations } = await import('@/capabilities/agency/public');
   await installAgencyHostOperations();
+  // Bind the generic auto-apply executor to the canonical accept dispatcher before
+  // any job (including the sweep) can run. Kernel owns the sweep; the server owns
+  // capability dispatch, so boot wires the port once.
+  const [{ installProposalAutoApplyAcceptPort }, { acceptAiProposal }] = await Promise.all([
+    import('@/kernel/proposals/auto-apply'),
+    import('@/server/proposals/accept-action'),
+  ]);
+  installProposalAutoApplyAcceptPort(async (db, { proposalId, actor }) => {
+    await acceptAiProposal(db, proposalId, { actor });
+  });
   const decls = capabilities
     .flatMap((cap) => cap.jobs?.handlers ?? [])
     .filter((d) => d.load || d.backend === 'dbos');

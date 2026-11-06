@@ -18,6 +18,7 @@ import {
   ensureProposalDecisionSignal,
   recordProposalDecisionSignal,
 } from './signals';
+import { type ProposalDecisionActor, USER_DECISION_ACTOR } from './types';
 
 export type RecordedProposalRate = NonNullable<Awaited<ReturnType<typeof findExistingRateEvent>>>;
 
@@ -71,6 +72,11 @@ export type ProposalWriteGuard = (tx: Tx) => Promise<void>;
 export interface ProposalAcceptPlan<TResult, TPrepared> {
   readonly proposal: ProposalSignalSource;
   readonly userNote?: string;
+  /**
+   * Decision actor for the one rate event. Omitted = the human inbox path
+   * (`user/self`); auto-apply passes the proposing agent's real identity.
+   */
+  readonly actor?: ProposalDecisionActor;
   readonly signal: ProposalSignalTiming;
   /**
    * The decision this accept requests. The replay condition is "the recorded
@@ -132,12 +138,13 @@ async function writeRateEvent(
   rating: ExistingRateDecision,
   userNote: string | undefined,
   rate: ProposalRateWrite = {},
+  actor: ProposalDecisionActor = USER_DECISION_ACTOR,
 ): Promise<string> {
   const rateEventId = rate.id ?? newId();
   await writeEvent(tx, {
     id: rateEventId,
-    actor_kind: 'user',
-    actor_ref: 'self',
+    actor_kind: actor.kind,
+    actor_ref: actor.ref,
     action: 'rate',
     subject_kind: rate.subject?.kind ?? 'event',
     subject_id: rate.subject?.id ?? proposalId,
@@ -208,6 +215,7 @@ export async function runProposalAccept<TResult, TPrepared = undefined>(
             rate?.rating ?? requestedRating,
             plan.userNote,
             rate,
+            plan.actor ?? USER_DECISION_ACTOR,
           );
         },
       },
