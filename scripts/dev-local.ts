@@ -269,18 +269,109 @@ const env: NodeJS.ProcessEnv = {
 
 // RW_FRONTDOOR=dev serves the Start front door through the Vite dev server inside the API
 // process (server/dev-frontdoor.ts): HMR for pages, no build step, no second watcher.
-const api = spawn('pnpm', ['rw:api'], { stdio: 'inherit', env: { ...env, RW_FRONTDOOR: 'dev' } });
-const worker = spawn('pnpm', ['worker:dev'], { stdio: 'inherit', env });
+//
+// Each child leads its own process group (detached → pgid = pid on POSIX), so a stop signal
+// reaches pnpm, tsx and the node API/worker together. Signalling only the pnpm child left
+// tsx/node running, and exiting at once left no chance to reap them either way (YUK-1921).
+const POSIX_PROCESS_GROUP = process.platform !== 'win32';
+function spawnDev(name: 'api' | 'worker', script: string, extraEnv: NodeJS.ProcessEnv) {
+  const child = spawn('pnpm', [script], {
+    stdio: 'inherit',
+    env: { ...env, ...extraEnv },
+    // A new group per child keeps the kill scoped to this worktree's tree; other worktrees'
+    // dev stacks are in different groups and must not be touched.
+    detached: POSIX_PROCESS_GROUP,
+  });
+  return { name, child, pid: child.pid };
+}
+const api = spawnDev('api', 'rw:api', { RW_FRONTDOOR: 'dev' });
+const worker = spawnDev('worker', 'worker:dev', {});
 const children = [api, worker];
 console.log(
   `[dev-local] open ${devOrigin}/ (Vite HMR; /api/* on the same origin; database ${databaseUrl.replace(/:\/\/[^@]*@/, '://***@')})`,
 );
 if (!process.env.DEV_PORT) console.log(`[dev-local] port ${devPort} auto-selected`);
+console.log(
+  `[dev-local] api pid ${api.pid ?? '?'}, worker pid ${worker.pid ?? '?'}; SIGINT/SIGTERM stops both`,
+);
 
-const stop = (code: number | null) => {
-  for (const c of children) c.kill('SIGINT');
+// Above the API's own 65s shutdown deadline (server/shutdown.ts), so a signal it handles
+// gracefully is never cut short; only a group that ignores the signal is force-killed after this.
+const STOP_TIMEOUT_MS = 70_000;
+const STOP_POLL_MS = 100;
+
+/** Negative pid targets the child's whole group on POSIX; Windows has no group kill. */
+function signalChild(pid: number, signal: NodeJS.Signals): void {
+  try {
+    process.kill(POSIX_PROCESS_GROUP ? -pid : pid, signal);
+  } catch (err) {
+    // ESRCH: the group is already gone, which is the normal end state.
+    if ((err as NodeJS.ErrnoException).code !== 'ESRCH') {
+      console.warn(`[dev-local] could not send ${signal} to pid ${pid}`, err);
+    }
+  }
+}
+
+function processAlive(pid: number): boolean {
+  try {
+    process.kill(POSIX_PROCESS_GROUP ? -pid : pid, 0);
+    return true;
+  } catch (err) {
+    // EPERM still means it exists; ESRCH (and anything else) means it is gone.
+    return (err as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+let stopping = false;
+
+async function stop(reason: string, signal: NodeJS.Signals, code: number | null): Promise<void> {
+  if (stopping) return;
+  stopping = true;
+  console.log(`[dev-local] ${reason} — stopping api and worker`);
+  for (const { pid } of children) if (pid !== undefined) signalChild(pid, signal);
+
+  const deadline = Date.now() + STOP_TIMEOUT_MS;
+  while (
+    Date.now() < deadline &&
+    children.some(({ pid }) => pid !== undefined && processAlive(pid))
+  ) {
+    await sleep(STOP_POLL_MS);
+  }
+
+  const survivors = children.filter(({ pid }) => pid !== undefined && processAlive(pid));
+  if (survivors.length > 0) {
+    console.warn(
+      `[dev-local] ${survivors.map(({ name }) => name).join(', ')} still running after ${STOP_TIMEOUT_MS / 1000}s — killing only their process groups`,
+    );
+    for (const { pid } of survivors) if (pid !== undefined) signalChild(pid, 'SIGKILL');
+  }
   process.exit(code ?? 0);
+}
+
+const onSignal = (signal: NodeJS.Signals) => {
+  // A second signal is the explicit "stop now" escape hatch for a stuck drain. The running
+  // stop() loop still owns the exit, so it reaps the killed groups before exiting.
+  if (stopping) {
+    for (const { pid } of children) if (pid !== undefined) signalChild(pid, 'SIGKILL');
+    console.warn(`[dev-local] ${signal} received again — killing api and worker process groups`);
+    return;
+  }
+  void stop(`${signal} received`, signal, 0);
 };
-process.on('SIGINT', () => stop(0));
-process.on('SIGTERM', () => stop(0));
-for (const c of children) c.on('exit', stop);
+process.on('SIGINT', onSignal);
+process.on('SIGTERM', onSignal);
+
+for (const { name, child } of children) {
+  child.on('error', (err) => {
+    console.error(`[dev-local] ${name} failed to start`, err);
+    void stop(`${name} failed to start`, 'SIGINT', 1);
+  });
+  child.on('exit', (code) => {
+    // The pnpm wrapper can exit while its tsx/node descendants keep running; stop() signals
+    // the exited child's group too, not just the surviving sibling.
+    if (stopping) return;
+    console.log(`[dev-local] ${name} exited (${code ?? 'signal'})`);
+    void stop(`${name} exited`, 'SIGINT', code);
+  });
+}
