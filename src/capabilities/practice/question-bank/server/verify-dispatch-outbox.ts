@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { createId } from '@paralleldrive/cuid2';
-import { type AnyColumn, and, eq, exists, inArray, isNull, notExists, or, sql } from 'drizzle-orm';
+import { type AnyColumn, and, eq, inArray, isNull, notExists, or, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { z } from 'zod';
 import type { Db, Tx } from '@/db/client';
@@ -449,7 +449,6 @@ export async function recoverOrphanVerifyDispatches(
   const synthesis = await db.transaction(async (tx) => {
     const existingIntent = alias(event, 'verify_dispatch_existing_intent');
     const terminalVerify = alias(event, 'verify_dispatch_terminal_verify');
-    const verifyError = alias(event, 'verify_dispatch_verify_error');
     const drafts = await tx
       .select({ id: question.id, source: question.source, metadata: question.metadata })
       .from(question)
@@ -461,33 +460,53 @@ export async function recoverOrphanVerifyDispatches(
           // A part is promoted with its parent. An intent here can only skip.
           isNull(question.parent_question_id),
           or(
-            notExists(
-              tx
-                .select({ id: existingIntent.id })
-                .from(existingIntent)
-                .where(
-                  and(
-                    eq(existingIntent.action, VERIFY_DISPATCH_INTENT_ACTION),
-                    eq(existingIntent.subject_id, question.id),
-                    isStructurallyDispatchableIntent(existingIntent.payload),
-                    sql`${existingIntent.payload}->>'verifier_kind' = CASE WHEN ${question.source} = 'web_sourced' THEN 'source_verify' ELSE 'quiz_verify' END`,
-                  ),
-                ),
-            ),
             and(
-              eq(question.source, 'web_sourced'),
-              exists(
+              notExists(
                 tx
-                  .select({ id: verifyError.id })
-                  .from(verifyError)
+                  .select({ id: existingIntent.id })
+                  .from(existingIntent)
                   .where(
                     and(
-                      eq(verifyError.action, 'experimental:source_verify'),
-                      eq(verifyError.subject_id, question.id),
-                      eq(verifyError.outcome, 'error'),
+                      eq(existingIntent.action, VERIFY_DISPATCH_INTENT_ACTION),
+                      eq(existingIntent.subject_id, question.id),
+                      isStructurallyDispatchableIntent(existingIntent.payload),
+                      sql`${existingIntent.payload}->>'verifier_kind' = CASE WHEN ${question.source} = 'web_sourced' THEN 'source_verify' ELSE 'quiz_verify' END`,
                     ),
                   ),
               ),
+              // Orphan arm keeps the historical exclusion: a draft that already
+              // reached a terminal verify never gets a fresh intent synthesized.
+              notExists(
+                tx
+                  .select({ id: terminalVerify.id })
+                  .from(terminalVerify)
+                  .where(
+                    and(
+                      eq(terminalVerify.subject_id, question.id),
+                      sql`${terminalVerify.action} = CASE WHEN ${question.source} = 'web_sourced' THEN 'experimental:source_verify' ELSE 'experimental:quiz_verify' END`,
+                      sql`${terminalVerify.outcome} IS DISTINCT FROM 'error'`,
+                    ),
+                  ),
+              ),
+            ),
+            and(
+              eq(question.source, 'web_sourced'),
+              // Recovery eligibility is the LATEST source_verify event, not any
+              // past one: a config/transient error written after an old failed
+              // verdict is recoverable; a terminal verdict followed by quiet
+              // stays excluded.
+              sql`exists (
+                select 1 from ${event} le
+                where le.action = 'experimental:source_verify'
+                  and le.subject_id = ${question.id}
+                  and le.outcome = 'error'
+                  and not exists (
+                    select 1 from ${event} newer
+                    where newer.action = 'experimental:source_verify'
+                      and newer.subject_id = ${question.id}
+                      and (newer.created_at, newer.id) > (le.created_at, le.id)
+                  )
+              )`,
               // A non-terminal error hold is re-driven once per error epoch: the
               // recovery intent carries the latest error's id, so a row whose
               // recovery was already dispatched leaves this page entirely instead
@@ -502,24 +521,11 @@ export async function recoverOrphanVerifyDispatches(
                     select e.id from ${event} e
                     where e.action = 'experimental:source_verify'
                       and e.subject_id = ${question.id}
-                      and e.outcome = 'error'
                     order by e.created_at desc, e.id desc
                     limit 1
                   )
               )`,
             ),
-          ),
-          notExists(
-            tx
-              .select({ id: terminalVerify.id })
-              .from(terminalVerify)
-              .where(
-                and(
-                  eq(terminalVerify.subject_id, question.id),
-                  sql`${terminalVerify.action} = CASE WHEN ${question.source} = 'web_sourced' THEN 'experimental:source_verify' ELSE 'experimental:quiz_verify' END`,
-                  sql`${terminalVerify.outcome} IS DISTINCT FROM 'error'`,
-                ),
-              ),
           ),
         ),
       )
@@ -573,17 +579,24 @@ export async function recoverOrphanVerifyDispatches(
         .filter(isTerminalVerifyEvent)
         .map((row) => terminalVerifyKey(row.subjectId, row.action)),
     );
-    const latestErrorByQuestion = new Map<string, { id: string; createdAt: Date }>();
+    const latestVerifyByQuestion = new Map<
+      string,
+      { id: string; outcome: string | null; createdAt: Date }
+    >();
     for (const row of relatedEvents) {
-      if (row.action !== 'experimental:source_verify' || row.outcome !== 'error') continue;
-      const existing = latestErrorByQuestion.get(row.subjectId);
+      if (row.action !== 'experimental:source_verify') continue;
+      const existing = latestVerifyByQuestion.get(row.subjectId);
       if (
         existing &&
         (row.createdAt < existing.createdAt ||
           (row.createdAt.getTime() === existing.createdAt.getTime() && row.id <= existing.id))
       )
         continue;
-      latestErrorByQuestion.set(row.subjectId, { id: row.id, createdAt: row.createdAt });
+      latestVerifyByQuestion.set(row.subjectId, {
+        id: row.id,
+        outcome: row.outcome,
+        createdAt: row.createdAt,
+      });
     }
     const synthesized: string[] = [];
     const recoveryCandidates: {
@@ -596,7 +609,6 @@ export async function recoverOrphanVerifyDispatches(
     for (const row of liveDrafts) {
       const verifier = row.source === 'web_sourced' ? 'source_verify' : 'quiz_verify';
       const key = `${row.id}\0${verifier}`;
-      if (terminalKeys.has(key)) continue;
       const intents = intentsByQuestion.get(row.id) ?? [];
       const scoped = intents
         .map((entry) => entry.payload)
@@ -604,6 +616,9 @@ export async function recoverOrphanVerifyDispatches(
       const incomplete = scoped.some((intent) => !completionKeys.has(intentKey(intent)));
       if (incomplete) continue;
       if (scoped.length === 0) {
+        // Orphan arm keeps the historical exclusion: a draft that already reached
+        // a terminal verify never gets a fresh intent synthesized.
+        if (terminalKeys.has(key)) continue;
         await writeVerifyDispatchIntent(tx, {
           questionId: row.id,
           verifier,
@@ -616,17 +631,19 @@ export async function recoverOrphanVerifyDispatches(
       // transient failure that outlasted its pg-boss retries) leaves a hold with no
       // way back on its own. The sweep re-drives it once per error epoch — one
       // intent per latest error id, so a re-failed run re-arms only after it writes
-      // a NEWER error event.
-      const latestError = latestErrorByQuestion.get(row.id);
-      if (verifier !== 'source_verify' || latestError == null) continue;
-      if (scoped.some((intent) => intent.recovery_epoch === latestError.id)) continue;
+      // a NEWER error event. Eligibility is the LATEST source_verify event: a
+      // config error after an old failed verdict is recoverable; a terminal
+      // verdict followed by quiet stays out.
+      const latestVerify = latestVerifyByQuestion.get(row.id);
+      if (verifier !== 'source_verify' || latestVerify?.outcome !== 'error') continue;
+      if (scoped.some((intent) => intent.recovery_epoch === latestVerify.id)) continue;
       const prior = intents
         .filter((entry) => entry.payload.verifier_kind === verifier)
         .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0]?.payload;
       recoveryCandidates.push({
         questionId: row.id,
         verifier,
-        recoveryEpoch: latestError.id,
+        recoveryEpoch: latestVerify.id,
         ...(prior?.placement_authority ? { placementAuthority: prior.placement_authority } : {}),
         ...(prior?.supply_trace ? { supplyTrace: prior.supply_trace } : {}),
       });
@@ -698,26 +715,19 @@ export async function recoverOrphanVerifyDispatches(
       for (const candidate of synthesis.recoveryCandidates) {
         const locked = lockedDrafts.get(candidate.questionId);
         if (locked?.draftStatus !== 'draft' || metadataIsArchived(locked.metadata)) continue;
-        if (
-          relatedEvents.some(
-            (row) =>
-              row.subjectId === candidate.questionId &&
-              row.action === 'experimental:source_verify' &&
-              row.outcome !== 'error',
-          )
-        )
-          continue;
-        const latestError = relatedEvents
+        // Same latest-event rule as the synthesis arm: an older terminal verdict
+        // does not exclude the recovery; only a terminal event written after the
+        // epoch error does.
+        const latestVerify = relatedEvents
           .filter(
             (row) =>
-              row.subjectId === candidate.questionId &&
-              row.action === 'experimental:source_verify' &&
-              row.outcome === 'error',
+              row.subjectId === candidate.questionId && row.action === 'experimental:source_verify',
           )
           .sort(
             (a, b) => b.createdAt.getTime() - a.createdAt.getTime() || b.id.localeCompare(a.id),
           )[0];
-        if (latestError?.id !== candidate.recoveryEpoch) continue;
+        if (latestVerify?.outcome !== 'error' || latestVerify.id !== candidate.recoveryEpoch)
+          continue;
         const hasIncompleteIntent = relatedEvents
           .filter(
             (row) =>

@@ -176,6 +176,13 @@ export interface RunSourceVerifyParams {
    * under ANY job id is refused — one paid attempt per command event, never two.
    */
   recheckDeliveryId?: string;
+  /**
+   * The sweep's error-epoch event id (recovery intents only). When set, the
+   * terminal-event guard short-circuits only on a terminal event NEWER than the
+   * epoch: an older failed/passed verdict is history a commanded recovery
+   * supersedes, while a fresh terminal event still dedupes redeliveries.
+   */
+  recoveryEpoch?: string;
   /** Placement claim authority for this question (sourcing_web delivery); fences paid calls. */
   placementAuthority?: PlacementVerificationAuthority;
   /**
@@ -513,7 +520,9 @@ export async function runSourceVerify(
         ne(event.outcome, 'error'),
         params.recheckCommandEventId != null
           ? sql`${event.payload}->>'recheck_command_event_id' = ${params.recheckCommandEventId}`
-          : sql`true`,
+          : params.recoveryEpoch != null
+            ? sql`(${event.created_at}, ${event.id}) > (select e.created_at, e.id from ${event} e where e.id = ${params.recoveryEpoch})`
+            : sql`true`,
       ),
     )
     .limit(1);
