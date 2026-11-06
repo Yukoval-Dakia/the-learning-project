@@ -8,6 +8,7 @@ export {
   JUDGE_DBOS_WORKFLOW,
   type JudgeEngineInventoryT,
   type JudgeQuestionRow,
+  MODEL_SLICE_PINNED_TASK_KINDS,
   assertSourceGroundingLaneConfigured,
   buildLegacyJudgeHandler,
   executeJudgeWorkflow,

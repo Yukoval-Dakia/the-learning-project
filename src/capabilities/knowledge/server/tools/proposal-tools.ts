@@ -14,7 +14,7 @@ import {
 import { RelationTypeSchema } from '@/core/schema/event/blocks';
 // P5.6 / YUK-178 — model-labeled proactive/corrective discriminator.
 import { SuggestionKind } from '@/core/schema/event/known';
-import type { ProposalEvidenceRefT } from '@/core/schema/proposal';
+import { LearnerSummarySchema, type ProposalEvidenceRefT } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
 import { knowledge } from '@/db/schema';
 import { withProposalGateLock } from '@/kernel/proposals/signals';
@@ -77,6 +77,8 @@ const ProposeKnowledgeEdgeInputSchema = z.object({
   weight: z.number().min(0).max(1).optional(),
   // archive-op target: the live knowledge_edge.id to soft-delete.
   edge_id: z.string().min(1).optional(),
+  // Learner-facing line; technical evidence stays in reasoning/evidence_event_ids.
+  learner_summary: LearnerSummarySchema,
   reasoning: z.string().min(1).max(2000),
   evidence_event_ids: EvidenceEventIdsSchema.optional(),
   // P5.6 / YUK-178 — optional model label: 'corrective' only when this edge
@@ -185,6 +187,7 @@ async function proposeKnowledgeEdgeCreate(
       relation_type: relationType,
       weight: input.weight ?? 1,
     },
+    learner_summary: input.learner_summary,
     reason_md: input.reasoning,
     evidence_refs: evidenceRefsFromEventIds(input.evidence_event_ids ?? []),
     // P5.6 — explicit model label; survives parseAiProposalPayload into the rubric.
@@ -208,6 +211,7 @@ async function proposeKnowledgeEdgeArchive(
   return await writeKnowledgeEdgeProposal(ctx.db, {
     validate: 'rubric',
     change: { edge_op: 'archive', edge_id: input.edge_id },
+    learner_summary: input.learner_summary,
     reason_md: input.reasoning,
     evidence_refs: evidenceRefsFromEventIds(input.evidence_event_ids ?? []),
     suggestion_kind: input.suggestion_kind ?? 'proactive',
@@ -233,7 +237,7 @@ export const proposeKnowledgeEdgeTool: DomainTool<
 > = {
   name: 'propose_knowledge_edge',
   description:
-    'Propose one knowledge mesh edge change. op="create" (default) proposes a NEW edge from {from_knowledge_id, to_knowledge_id, relation_type, weight?} — validates active same-subject nodes, self loops, duplicate live/pending edges, and parent-only related_to redundancy. A create must name at least one supporting attempt/event id in evidence_event_ids (else skipped:no_evidence — fix and retry); evidence sufficiency is decided by the user at accept, not by a write-time gate. op="archive" proposes soft-deleting an EXISTING live edge named by edge_id (no failure evidence required — archiving is the inverse of proposing). Both ops are proposal-only: the user accepts in the inbox; archive sets archived_at, never a hard delete. Results starting with skipped: mean the proposal was NOT written — do not retry the same change.',
+    'Propose one knowledge mesh edge change. op="create" (default) proposes a NEW edge from {from_knowledge_id, to_knowledge_id, relation_type, weight?} — validates active same-subject nodes, self loops, duplicate live/pending edges, and parent-only related_to redundancy. A create must name at least one supporting attempt/event id in evidence_event_ids (else skipped:no_evidence — fix and retry); evidence sufficiency is decided by the user at accept, not by a write-time gate. op="archive" proposes soft-deleting an EXISTING live edge named by edge_id (no failure evidence required — archiving is the inverse of proposing). Both ops are proposal-only: the user accepts in the inbox; archive sets archived_at, never a hard delete. Results starting with skipped: mean the proposal was NOT written — do not retry the same change. Every call also requires learner_summary: one plain Chinese sentence (max 80 chars) for the learner — state WHAT this proposal will do and WHY. Never put knowledge/edge ids, tool names, or English field names (for example propose_knowledge_edge, evidence_event_ids, children=0) in learner_summary; technical evidence belongs in reasoning/evidence_event_ids. A hard failure beginning with learner_summary_rejected means only that sentence must be rewritten before retrying.',
   effect: 'propose',
   inputSchema: ProposeKnowledgeEdgeInputSchema,
   outputSchema: ProposeKnowledgeEdgeOutputSchema,
@@ -286,6 +290,8 @@ const KnowledgeMutationChangeSchema = z.discriminatedUnion('mutation', [
 
 const KnowledgeMutationInputSchema = z.object({
   change: KnowledgeMutationChangeSchema,
+  // Learner-facing line; technical evidence stays in reasoning/evidence_event_ids.
+  learner_summary: LearnerSummarySchema,
   reasoning: z.string().min(1).max(2000),
   evidence_event_ids: EvidenceEventIdsSchema.optional(),
   // P5.6 — optional model label; omit unless this mutation repairs an observed failure.
@@ -392,6 +398,7 @@ async function proposeKnowledgeMutationExecute(
   const writeProposal = (db: DbLike) =>
     writeKnowledgeProposeEvent(db, {
       payload: change,
+      learner_summary: input.learner_summary,
       reasoning: input.reasoning,
       evidence_refs: evidenceRefsFromEventIds(input.evidence_event_ids ?? []),
       actor_ref: ctx.callerActor.ref,
@@ -427,7 +434,7 @@ export const proposeKnowledgeMutationTool: DomainTool<
 > = {
   name: 'propose_knowledge_mutation',
   description:
-    "Propose one knowledge tree mutation (proposal-only; the user accepts in the inbox — never a direct write). Input: {change, reasoning, evidence_event_ids?}. change.mutation picks the branch: propose_new {name, parent_id} — parent_id=null + domain proposes a NEW subject root; a child uses an existing node id and omits domain. reparent {node_id, new_parent_id, expected_version}. merge {from_ids, into_id, expected_versions:{id:version} for every from_id}. split {from_id, into:[{name,parent_id}], expected_version}. archive {node_id, expected_version}. expected_version(s) are CAS tokens — copy the node's current `version` from query_knowledge / the tree input. Results starting with skipped: mean the proposal was NOT written — do not retry the same change.",
+    "Propose one knowledge tree mutation (proposal-only; the user accepts in the inbox — never a direct write). Input: {change, learner_summary, reasoning, evidence_event_ids?}. change.mutation picks the branch: propose_new {name, parent_id} — parent_id=null + domain proposes a NEW subject root; a child uses an existing node id and omits domain. reparent {node_id, new_parent_id, expected_version}. merge {from_ids, into_id, expected_versions:{id:version} for every from_id}. split {from_id, into:[{name,parent_id}], expected_version}. archive {node_id, expected_version}. expected_version(s) are CAS tokens — copy the node's current `version` from query_knowledge / the tree input. Results starting with skipped: mean the proposal was NOT written — do not retry the same change. learner_summary is one plain Chinese sentence (max 80 chars) for the learner — state WHAT this proposal will do and WHY. Never put node ids, tool names, or English field names (for example propose_knowledge_mutation, expected_version, children=0) in learner_summary; technical evidence belongs in reasoning/evidence_event_ids. A hard failure beginning with learner_summary_rejected means only that sentence must be rewritten before retrying.",
   effect: 'propose',
   inputSchema: KnowledgeMutationInputSchema,
   outputSchema: KnowledgeMutationOutputSchema,

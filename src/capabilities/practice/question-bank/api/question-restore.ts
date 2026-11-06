@@ -1,6 +1,7 @@
 // POST /api/questions/[id]/restore: the restore (un-archive) write.
 //
-// Un-tombstones a soft-archived question back to draft, clears the withdrawn
+// Legacy questions re-enter verification; admission-owned roots retain admission.
+// Un-tombstones a soft-archived question, clears the withdrawn
 // lifecycle dimension, and atomically re-acquires the live dedup claim (the
 // canonical_content_hash retained on metadata.archived_content_hash at
 // archive time). Cascade-archived composite parts (archived_via_parent=this id)
