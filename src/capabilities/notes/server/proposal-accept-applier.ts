@@ -1,5 +1,8 @@
+import { eq } from 'drizzle-orm';
+
 import { NotePatch } from '@/core/schema/note-patch';
 import type { Db } from '@/db/client';
+import { artifact } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import type {
   ProposalAcceptApplier,
@@ -25,6 +28,7 @@ import {
   persistNoteRefineApply,
   undoNoteRefineApplyEvent,
 } from './note-refine-apply';
+import { patchTouchesVerifiedBlock } from './note-refine-policy';
 
 export const noteUpdateProposalRetractApplier: ProposalRetractApplier = async (db, input) => {
   const ownerDb = db as Db;
@@ -82,6 +86,31 @@ async function acceptNoteUpdateProposal(
       `note_update proposal ${proposalId} has invalid proposed_change.patch: ${patchParsed.error.issues.map((issue) => issue.message).join('; ')}`,
       400,
     );
+  }
+
+  // Auto-apply must not bypass two product gates the mutator lane already owns:
+  // a patch that fell back because the Living Note breaker tripped, and a patch
+  // that would overwrite a user-verified block. Both stay in the human inbox.
+  if (opts.actor?.kind === 'agent') {
+    if (change.breaker_tripped === true) {
+      throw new ApiError(
+        'not_auto_applicable',
+        `note_update proposal ${proposalId} fell back to human review after the Living Note breaker tripped`,
+        409,
+      );
+    }
+    const [artifactRow] = await db
+      .select({ body_blocks: artifact.body_blocks })
+      .from(artifact)
+      .where(eq(artifact.id, artifactId))
+      .limit(1);
+    if (artifactRow && patchTouchesVerifiedBlock(artifactRow.body_blocks, patchParsed.data)) {
+      throw new ApiError(
+        'not_auto_applicable',
+        `note_update proposal ${proposalId} touches a user-verified block and stays human-reviewed`,
+        409,
+      );
+    }
   }
 
   const { result } = await runProposalAccept(db, proposalId, {

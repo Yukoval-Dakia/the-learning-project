@@ -24,6 +24,11 @@ type StableActorAttribution = { actor_kind: unknown; actor_ref: unknown };
 const STABLE_USER_ACTOR_REF_MESSAGE = "actor_ref must be 'self' when actor_kind='user'";
 
 function stableActorRefAllowed(actorKind: unknown, actorRef: unknown): boolean {
+  if (actorKind === 'agent') {
+    // Auto-apply records the proposing agent's identity; `self` is reserved for
+    // the human owner and must never appear on an agent decision.
+    return typeof actorRef === 'string' && actorRef.length > 0 && actorRef !== 'self';
+  }
   return actorKind !== 'user' || actorRef === 'self';
 }
 
@@ -373,52 +378,55 @@ export const MergeRepairEntry = z
   .strict();
 export type MergeRepairEntryT = z.infer<typeof MergeRepairEntry>;
 
-// 6. RateEvent — 用户对 prior event 投票 accept / dismiss / rollback。
+// 6. RateEvent — 用户对 prior event 投票 accept / dismiss / rollback；自动通道
+// 用 agent 身份记录同一条决策（不允许伪造 user/self）。
 
-export const RateEvent = z.object({
-  actor_kind: z.literal('user'),
-  actor_ref: StableUserActorRef,
-  action: z.literal('rate'),
-  subject_kind: z.literal('event'),
-  subject_id: z.string(),
-  outcome: z.literal('success'),
-  payload: z.object({
-    rating: z.enum(['accept', 'dismiss', 'rollback']),
-    user_note: z.string().optional(),
-    // When this rate event ACCEPTS a completion/relearn proposal it pins the
-    // learning_item it materialized so retract can find the row to reverse
-    // without re-reading the proposal. Only completion/relearn accepts set it.
-    materialized_learning_item_id: z.string().optional(),
-    // PRIOR-STATE CAPTURE: completion/relearn accepts overwrite status
-    // (+ completed_at); the pre-accept values are otherwise UNRECOVERABLE, and a
-    // wrong retract guess corrupts a `resting` item into `done` with a fabricated
-    // completed_at. The accept pins the exact prior state so retract restores it
-    // byte-for-byte. `null` means the prior completed_at was NULL. Reuses the
-    // shared LearningItemStatus enum — the DB column has no constraint, so this
-    // parse barrier is the only gate against restoring an invalid state.
-    materialized_prior_status: LearningItemStatus.optional(),
-    materialized_prior_completed_at: z.string().nullable().optional(),
-    // When this rate event ACCEPTS a structural proposal, it pins the ids the
-    // accept path minted so the fold can REPRODUCE the same knowledge.id /
-    // knowledge_edge.id on replay (deterministic projection). MUST be optional:
-    // dismiss/rollback mint nothing, and an accept may touch only nodes or only
-    // edges.
-    materialized_ids: z
-      .object({
-        knowledge: z.array(z.string()).optional(),
-        knowledge_edge: z.array(z.string()).optional(),
-      })
-      // .strict() — reject unknown keys so a typo (e.g. `knowledge_edges`)
-      // fails loudly at the parse barrier instead of silently dropping the
-      // minted ids, which would break the fold's deterministic replay.
-      .strict()
-      .optional(),
-    // The merge-repair forensic breadcrumb (see MergeRepairEntry above).
-    // Only merge accepts set it.
-    merge_repair: z.array(MergeRepairEntry).optional(),
-  }),
-  ...baseOptionalFields,
-});
+export const RateEvent = z
+  .object({
+    actor_kind: z.enum(['user', 'agent']),
+    actor_ref: z.string().min(1).max(200),
+    action: z.literal('rate'),
+    subject_kind: z.literal('event'),
+    subject_id: z.string(),
+    outcome: z.literal('success'),
+    payload: z.object({
+      rating: z.enum(['accept', 'dismiss', 'rollback']),
+      user_note: z.string().optional(),
+      // When this rate event ACCEPTS a completion/relearn proposal it pins the
+      // learning_item it materialized so retract can find the row to reverse
+      // without re-reading the proposal. Only completion/relearn accepts set it.
+      materialized_learning_item_id: z.string().optional(),
+      // PRIOR-STATE CAPTURE: completion/relearn accepts overwrite status
+      // (+ completed_at); the pre-accept values are otherwise UNRECOVERABLE, and a
+      // wrong retract guess corrupts a `resting` item into `done` with a fabricated
+      // completed_at. The accept pins the exact prior state so retract restores it
+      // byte-for-byte. `null` means the prior completed_at was NULL. Reuses the
+      // shared LearningItemStatus enum — the DB column has no constraint, so this
+      // parse barrier is the only gate against restoring an invalid state.
+      materialized_prior_status: LearningItemStatus.optional(),
+      materialized_prior_completed_at: z.string().nullable().optional(),
+      // When this rate event ACCEPTS a structural proposal, it pins the ids the
+      // accept path minted so the fold can REPRODUCE the same knowledge.id /
+      // knowledge_edge.id on replay (deterministic projection). MUST be optional:
+      // dismiss/rollback mint nothing, and an accept may touch only nodes or only
+      // edges.
+      materialized_ids: z
+        .object({
+          knowledge: z.array(z.string()).optional(),
+          knowledge_edge: z.array(z.string()).optional(),
+        })
+        // .strict() — reject unknown keys so a typo (e.g. `knowledge_edges`)
+        // fails loudly at the parse barrier instead of silently dropping the
+        // minted ids, which would break the fold's deterministic replay.
+        .strict()
+        .optional(),
+      // The merge-repair forensic breadcrumb (see MergeRepairEntry above).
+      // Only merge accepts set it.
+      merge_repair: z.array(MergeRepairEntry).optional(),
+    }),
+    ...baseOptionalFields,
+  })
+  .superRefine(enforceStableUserActorRef);
 export type RateEventT = z.infer<typeof RateEvent>;
 
 // 6b. CorrectEvent — first-class semantic correction for append-only history
@@ -779,8 +787,8 @@ export type ToolOperationSettledT = z.infer<typeof ToolOperationSettled>;
 
 export const RateKnowledgeEdge = z
   .object({
-    actor_kind: z.literal('user'),
-    actor_ref: StableUserActorRef,
+    actor_kind: z.enum(['user', 'agent']),
+    actor_ref: z.string().min(1).max(200),
     action: z.literal('rate'),
     subject_kind: z.literal('knowledge_edge'),
     subject_id: z.string(),
@@ -809,7 +817,8 @@ export const RateKnowledgeEdge = z
         path: ['payload', 'new_direction_reversed'],
       });
     }
-  });
+  })
+  .superRefine(enforceStableUserActorRef);
 export type RateKnowledgeEdgeT = z.infer<typeof RateKnowledgeEdge>;
 
 // ====================================================================

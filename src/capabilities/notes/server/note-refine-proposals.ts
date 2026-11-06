@@ -23,7 +23,7 @@ export async function writeNoteRefineProposal(
   const { db, artifactId, patch, summary, triggerEventId, taskResult, breakerTripped } = params;
   const reasonMd = breakerTripped
     ? `Living Note auto-apply 速率在单位时间内超限，熔断退回人工审批（本次 ${summary.ops_count} 个 patch op，新增 ${summary.new_blocks} 个 block）。可在收件箱直接采纳。`
-    : `Living Note 建议 ${summary.ops_count} 个 patch op（新增 ${summary.new_blocks} 个 block），超过 mutator v0 阈值，转入人工审批。`;
+    : `Living Note 建议 ${summary.ops_count} 个 patch op（新增 ${summary.new_blocks} 个 block）；安全可逆的小改动由自动通道应用，可在收件箱撤销。`;
   return writeAiProposal(db, {
     actor_ref: 'note_refine',
     payload: {
