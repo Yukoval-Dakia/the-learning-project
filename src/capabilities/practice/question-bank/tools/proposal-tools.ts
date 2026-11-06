@@ -122,6 +122,7 @@ const AuthorQuestionOutputSchema = z.object({
     // knowledge|material seed (ADR-0031 lane B): every seed knowledge id is
     // unknown / archived.
     'skipped:knowledge_not_found',
+    'skipped:invalid_payload',
     // variant passthrough (verbatim from RunVariantGenResult, names remapped to
     // match the propose_variant tool's external vocabulary)
     'skipped:attempt_not_found',
@@ -448,7 +449,7 @@ async function authorQuestionExecute(
     });
   } catch (err) {
     return {
-      status: 'failed',
+      status: err instanceof z.ZodError ? 'skipped:invalid_payload' : 'failed',
       seed_mode: input.seed_mode,
       proposal_ids: [],
       mistake_variant_ids: [],
