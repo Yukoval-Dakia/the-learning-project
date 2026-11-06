@@ -52,73 +52,11 @@ export async function previewReviewAdvice(db: Db, raw: unknown, signal: AbortSig
     );
   }
 
-  let replay:
-    | { candidateId?: string; hold?: { reason: 'unjudgeable'; detail: string } }
-    | undefined;
-  if (body.commit && body.accept_pending) {
-    const pending = await divertReviewAnswer(db, {
-      ...body.commit,
-      question_id: questionId,
-      assessment: body.assessment,
-      response_md: body.response_md,
-    });
-    if (pending && 'verdict' in pending) return pending;
-    if (pending?.kind === 'terminal') replay = pending;
-  }
-
-  const subjectProfile = await resolveSubjectProfileForKnowledgeIds(
-    db,
-    questionKnowledgeIdsForJudge(q),
-  );
-  const {
-    candidate: invoked,
-    submission,
-    activation_intent,
-    automatic_commit,
-  } = await previewFormalAttempt(db, 'advice_preview', questionId, body.assessment, signal, replay);
-  const suggestedRating = ratingFromCoarseOutcome(invoked.result.coarse_outcome);
-
-  // Resolve effective cause via the shared `resolveAdviceCauseForQuestion`
-  // helper. It folds `effectiveCauseCategoryForFailureAttempt` over a
-  // recent-attempt window (active user_cause wins over the latest active agent
-  // judge) until it finds a cause; null keeps the default partial-credit bucket.
-  const causeCategory = await resolveAdviceCauseForQuestion(db, questionId);
-  const advice = judgeResultToRatingAdvice(invoked.result, {
-    causeCategory,
-    // lean/anchors resolve through the subject's own rating_lean /
-    // ratingPolicy declarations.
-    subjectProfile,
-  });
-
-  // The practice page applies the same split: an open answer or one without a suggested rating
-  // keeps its learner confidence and rating step.
-  const commit =
-    body.commit && automatic_commit && suggestedRating !== null
-      ? await requestReviewAnswer(
-          db,
-          async () => ({
-            ...body.commit,
-            question_id: questionId,
-            assessment: body.assessment,
-            activation_intent,
-            rating: suggestedRating,
-            auto_rate: true,
-            response_md: body.response_md,
-            answer_image_refs: body.answer_image_refs,
-          }),
-          // No abort signal: the original is already accepted, and a reload that stopped the
-          // commit half-way would leave it accepted but never recorded or settled. Every unit is
-          // deterministic here, so the durable divert can never apply.
-          { durableEnabled: false },
-        )
-      : null;
-  if (commit?.kind === 'pending') {
-    throw new ApiError('corrupt_state', 'advice commit was diverted to durable judging', 500);
-  }
-
-  // Preview classifies the same learner text the write point persists (response_md +
-  // reasoning_trace) with the same deterministic lexer. It writes no event; the mark is
-  // persisted when the attempt commits. Ordinary answers get no referral.
+  // Classify before any model call (divert, preview judge, commit). A model
+  // failure on this route must still answer with the referral — the learner's
+  // real path with the durable switch off is advice → rating → submit, and the
+  // page advances right after. Preview writes no event; the mark is persisted
+  // at commit time by the write point.
   const crisisPayload = crisisDerivationPayload(
     `${body.response_md ?? ''}\n${body.commit?.reasoning_trace ?? ''}`,
   );
@@ -133,33 +71,124 @@ export async function previewReviewAdvice(db: Db, raw: unknown, signal: AbortSig
       })
     : undefined;
 
-  return {
-    activity_ref: identity.activity_ref,
-    question_id: questionId,
-    submission_id: submission.submission_id,
-    evaluation_group_id: submission.evaluation_group_id,
-    candidate_id: invoked.evaluation.record.evaluation_id,
-    activation_intent,
-    automatic_commit,
-    judge: {
-      route: 'evaluate_submission',
-      score: invoked.result.score,
-      score_meaning: invoked.result.score_meaning,
-      coarse_outcome: invoked.result.coarse_outcome,
-      ...(invoked.result.coarse_outcome === 'partial_unknown'
-        ? { partial_units: invoked.result.partial_units }
-        : {}),
-      confidence: invoked.result.confidence,
-      feedback_md: invoked.result.feedback_md,
-      evidence_json: invoked.result.evidence_json,
-      capability_ref: invoked.result.capability_ref,
-      ...(invoked.result.grading_provenance
-        ? { grading_provenance: invoked.result.grading_provenance }
-        : {}),
-      suggested_rating: suggestedRating,
-    },
-    advice,
-    ...(commit ? { committed: commit.body } : {}),
-    ...(crisis_referral ? { crisis_referral } : {}),
-  };
+  try {
+    let replay:
+      | { candidateId?: string; hold?: { reason: 'unjudgeable'; detail: string } }
+      | undefined;
+    if (body.commit && body.accept_pending) {
+      const pending = await divertReviewAnswer(db, {
+        ...body.commit,
+        question_id: questionId,
+        assessment: body.assessment,
+        response_md: body.response_md,
+      });
+      if (pending && 'verdict' in pending) return pending;
+      if (pending?.kind === 'terminal') replay = pending;
+    }
+
+    const subjectProfile = await resolveSubjectProfileForKnowledgeIds(
+      db,
+      questionKnowledgeIdsForJudge(q),
+    );
+    const {
+      candidate: invoked,
+      submission,
+      activation_intent,
+      automatic_commit,
+    } = await previewFormalAttempt(
+      db,
+      'advice_preview',
+      questionId,
+      body.assessment,
+      signal,
+      replay,
+    );
+    const suggestedRating = ratingFromCoarseOutcome(invoked.result.coarse_outcome);
+
+    // Resolve effective cause via the shared `resolveAdviceCauseForQuestion`
+    // helper. It folds `effectiveCauseCategoryForFailureAttempt` over a
+    // recent-attempt window (active user_cause wins over the latest active agent
+    // judge) until it finds a cause; null keeps the default partial-credit bucket.
+    const causeCategory = await resolveAdviceCauseForQuestion(db, questionId);
+    const advice = judgeResultToRatingAdvice(invoked.result, {
+      causeCategory,
+      // lean/anchors resolve through the subject's own rating_lean /
+      // ratingPolicy declarations.
+      subjectProfile,
+    });
+
+    // The practice page applies the same split: an open answer or one without a
+    // suggested rating keeps its learner confidence and rating step.
+    const commit =
+      body.commit && automatic_commit && suggestedRating !== null
+        ? await requestReviewAnswer(
+            db,
+            async () => ({
+              ...body.commit,
+              question_id: questionId,
+              assessment: body.assessment,
+              activation_intent,
+              rating: suggestedRating,
+              auto_rate: true,
+              response_md: body.response_md,
+              answer_image_refs: body.answer_image_refs,
+            }),
+            // No abort signal: the original is already accepted, and a reload that
+            // stopped the commit half-way would leave it accepted but never recorded
+            // or settled. Every unit is deterministic here, so the durable divert
+            // can never apply.
+            { durableEnabled: false },
+          )
+        : null;
+    if (commit?.kind === 'pending') {
+      throw new ApiError('corrupt_state', 'advice commit was diverted to durable judging', 500);
+    }
+
+    return {
+      activity_ref: identity.activity_ref,
+      question_id: questionId,
+      submission_id: submission.submission_id,
+      evaluation_group_id: submission.evaluation_group_id,
+      candidate_id: invoked.evaluation.record.evaluation_id,
+      activation_intent,
+      automatic_commit,
+      judge: {
+        route: 'evaluate_submission',
+        score: invoked.result.score,
+        score_meaning: invoked.result.score_meaning,
+        coarse_outcome: invoked.result.coarse_outcome,
+        ...(invoked.result.coarse_outcome === 'partial_unknown'
+          ? { partial_units: invoked.result.partial_units }
+          : {}),
+        confidence: invoked.result.confidence,
+        feedback_md: invoked.result.feedback_md,
+        evidence_json: invoked.result.evidence_json,
+        capability_ref: invoked.result.capability_ref,
+        ...(invoked.result.grading_provenance
+          ? { grading_provenance: invoked.result.grading_provenance }
+          : {}),
+        suggested_rating: suggestedRating,
+      },
+      advice,
+      ...(commit ? { committed: commit.body } : {}),
+      ...(crisis_referral ? { crisis_referral } : {}),
+    };
+  } catch (err) {
+    // Any throw after the mark was classified (model 429/timeout/provider,
+    // divert recovery branch, commit) still answers with the referral; only a
+    // client abort does not need it.
+    if (!crisis_referral || signal.aborted || (err instanceof Error && err.name === 'AbortError')) {
+      throw err;
+    }
+    if (err instanceof ApiError) {
+      throw new ApiError(err.code, err.message, err.status, err.headers, {
+        ...err.details,
+        crisis_referral,
+      });
+    }
+    console.error('[review/advice] unhandled failure under crisis referral', err);
+    throw new ApiError('internal_error', 'Internal Server Error', 500, undefined, {
+      crisis_referral,
+    });
+  }
 }
