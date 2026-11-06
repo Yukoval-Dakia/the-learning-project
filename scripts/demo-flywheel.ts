@@ -5,15 +5,13 @@ import { orchestrateCascadeRevert } from '@/server/revert/cascade-revert';
 // flywheel turn end-to-end (added 2026-06-01; it surfaced YUK-189). Dev-only:
 // targets a loopback DB you migrate + seed yourself; makes real LLM calls.
 //
-// Setup + run (loom_demo sandbox):
-//   docker compose -f docker-compose.yml -f docker-compose.local.yml up postgres -d
-//   docker exec <pg> psql -U loom -d loom -c 'CREATE DATABASE loom_demo;'
-//   DATABASE_URL=postgres://loom:loom@127.0.0.1:5433/loom_demo pnpm exec drizzle-kit migrate
-//   SEED_SYNTHETIC_OK=1 DATABASE_URL=postgres://loom:loom@127.0.0.1:5433/loom_demo pnpm seed:synthetic
-//   DATABASE_URL=postgres://loom:loom@127.0.0.1:5433/loom_demo pnpm tsx scripts/demo-flywheel.ts
-//
-// load-env loads .env (OPENCODE_API_KEY) with override:false so the shell-set
-// loopback DATABASE_URL wins; @/db/client then targets the sandbox DB.
+// Setup + run (loom_demo sandbox on the dev Postgres, docker-compose.dev.yml :5434 —
+// TEST's ports/database name are refused by the shared guard and must not be used):
+//   docker compose -f docker-compose.dev.yml --profile dev up -d postgres-dev
+//   docker compose -f docker-compose.dev.yml exec postgres-dev psql -U loom_dev -d postgres -c 'CREATE DATABASE loom_demo;'
+//   DATABASE_URL=postgres://loom_dev:loom_dev@127.0.0.1:5434/loom_demo pnpm exec drizzle-kit migrate
+//   SEED_SYNTHETIC_OK=1 DATABASE_URL=postgres://loom_dev:loom_dev@127.0.0.1:5434/loom_demo pnpm seed:synthetic
+//   DATABASE_URL=postgres://loom_dev:loom_dev@127.0.0.1:5434/loom_demo pnpm tsx scripts/demo-flywheel.ts
 //
 // load-env loads .env (OPENCODE_API_KEY) with override:false so the shell-set
 // loopback DATABASE_URL wins; @/db/client then targets loom_demo.

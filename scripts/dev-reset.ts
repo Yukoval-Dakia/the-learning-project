@@ -6,20 +6,23 @@
 import { spawnSync } from 'node:child_process';
 import { config } from 'dotenv';
 import { DEV_DATABASE_PREFIX, devDatabaseName } from './dev-worktree-db';
+import { testDbRefusalReason } from './local-db-env';
 
 config({ path: '.env.local', override: false });
 config({ path: '.env', override: false });
 
+const database = devDatabaseName();
 const host = process.env.LOCAL_POSTGRES_HOST ?? '127.0.0.1';
 const port = process.env.LOCAL_POSTGRES_PORT ?? '5434';
-if (['5433', '5544'].includes(port) && process.env.DEV_ALLOW_TEST_DB !== '1') {
+// Shared TEST-target judgment (scripts/local-db-env.ts); the port arm is the
+// reachable one here — the database is always a loom_dev_* worktree name.
+const refusal = testDbRefusalReason({ port, database }, process.env);
+if (refusal) {
   console.error(
-    `[dev-reset] refusing: ${host}:${port} is TEST's Postgres. Point LOCAL_POSTGRES_PORT back at the dev container (:5434), or set DEV_ALLOW_TEST_DB=1.`,
+    `[dev-reset] refusing: ${host}:${port} — ${refusal}. Point LOCAL_POSTGRES_PORT back at the dev container (:5434), or set DEV_ALLOW_TEST_DB=1.`,
   );
   process.exit(1);
 }
-
-const database = devDatabaseName();
 // The derived name always carries the prefix; a DEV_DB_NAME override without it —
 // including the legacy shared `loom_dev` and TEST's `loom` — is refused outright.
 if (!database.startsWith(DEV_DATABASE_PREFIX)) {

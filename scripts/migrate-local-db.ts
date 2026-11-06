@@ -1,14 +1,17 @@
 import { spawn } from 'node:child_process';
 import { config } from 'dotenv';
-import { buildLocalDatabaseUrl } from './local-db-env';
+import { guardLocalDbTarget, localDatabaseUrl } from './local-db-env';
 
 config({ path: '.env', override: false });
+
+// Refuses TEST targets (ports 5433/5544 or database `loom`) before spawning.
+const databaseUrl = localDatabaseUrl(guardLocalDbTarget('db:migrate:local'));
 
 const child = spawn('drizzle-kit', ['migrate'], {
   stdio: 'inherit',
   env: {
     ...process.env,
-    DATABASE_URL: buildLocalDatabaseUrl(process.env),
+    DATABASE_URL: databaseUrl,
   },
 });
 
