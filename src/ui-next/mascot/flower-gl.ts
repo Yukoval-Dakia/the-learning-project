@@ -176,7 +176,7 @@ function glass(): MeshPhysicalMaterial {
     clearcoat: 1,
     clearcoatRoughness: 0.08,
   });
-  // r170 clears its transmission buffer to half-transparent white on a transparent canvas. This
+  // three clears its transmission buffer to half-transparent white on a transparent canvas. This
   // flower has no scene behind it, so refract the studio instead and composite the glass over the
   // page with Fresnel and absorption as its coverage.
   material.onBeforeCompile = (shader) => {
@@ -192,7 +192,7 @@ function glass(): MeshPhysicalMaterial {
         vec3 glassAbsorption = volumeAttenuation(glassPath, attenuationColor, attenuationDistance);
         float glassLoss = 1.0 - dot(glassAbsorption, vec3(0.333333));
         float glassRefraction = 0.16;
-        totalDiffuse = textureCubeUV(envMap, envMapRotation * glassRay, roughness).rgb
+        totalDiffuse = textureLod(envMap, envMapRotation * glassRay, roughnessToMip(roughness)).rgb
           * glassAbsorption * glassRefraction * envMapIntensity;
         float glassFresnel = 0.035 + 0.965 * pow(1.0 - glassFacing, 5.0);
         material.transmissionAlpha =
@@ -206,7 +206,7 @@ function glass(): MeshPhysicalMaterial {
         #include <opaque_fragment>`,
       );
   };
-  material.customProgramCacheKey = () => 'un-flower-glass-r170';
+  material.customProgramCacheKey = () => 'un-flower-glass';
   return material;
 }
 
