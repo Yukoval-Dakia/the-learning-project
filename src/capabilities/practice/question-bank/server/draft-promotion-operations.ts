@@ -21,6 +21,9 @@ export async function enablePracticeDraft(db: Db, params: Record<string, string>
   if (result.status === 'skipped:not_found') {
     throw new ApiError('not_found', `question ${id} not found`, 404);
   }
+  if (result.status === 'skipped:admission_owned') {
+    throw new ApiError('admission_owned', result.reason ?? '这道题由自动准入处理。', 409);
+  }
 
   return {
     promoted: result.promoted,
@@ -63,6 +66,9 @@ export async function forceEnablePracticeDraft(
 
   if (result.status === 'skipped:not_found') {
     throw new ApiError('not_found', `question ${id} not found`, 404);
+  }
+  if (result.status === 'skipped:admission_owned') {
+    throw new ApiError('admission_owned', result.reason ?? '这道题由自动准入处理。', 409);
   }
 
   return {

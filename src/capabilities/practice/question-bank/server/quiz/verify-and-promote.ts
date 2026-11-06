@@ -1,19 +1,6 @@
-// 增量 3 — verifyAndPromote 薄 tier-dispatcher (caller-agnostic gate).
-// plan §+ Gate 设计决策 (owner 拍板 b1). 三个 caller 的统一 gate 入口:
-// ① matcher lazy verify ② owner manual override (inc-4 UI) ③ 未来 pre-warm.
-// 它是一个**薄派发**: 按 source 字面转调现有 per-question runSourceVerify / runQuizVerify
-// (整体调用)，**不合并、不重写**任何 verify / promote / metadata / writeAgentNote / catch
-// 逻辑——那些全部由被转调的 run 函数天然产生 (三态/幂等/守门/note 全保留，blast radius 归零)。
-// 唯一例外是 override 分支 (skipVerify): owner 强制启用、跳 AI verify，没有 run 函数可转调，
-// 故此分支自己跑 promote (draft→active + FSRS enroll-if-absent + writeEvent)。它直接复用
-// acceptQuestionDraftProposal (proposal-appliers.ts:286) 的 draft→active+FSRS 同形逻辑 (参照，
-// 非 import)，与 run 函数同款 enroll-if-absent，绝不重置已有 schedule。
-// 边界纪律 : 本模块**只能** import runSourceVerify / runQuizVerify (正常分支
-// 转调) + 少量 promote 操作 (writeEvent / enrollPromotedQuestionScheduling /
-// publishVerifyLifecycleUpdate，仅 override 分支用)。派发判别按 source 字面
-// (web_sourced/quiz_gen)，比 deriveSourceTier 更稳。
-// **绝不** import 或复刻两 handler 的 check 逻辑 / promote 事务 / metadata 构造 / writeAgentNote
-// 那是「合并抽取」的滑坡，被 b1 决策否决。
+// Legacy verification and owner override share this gate so neither can reclaim
+// declared generated groups from scoring admission. Legacy source handlers retain
+// their own verification rules; override records manual rather than model evidence.
 
 import { and, desc, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
 import { newId } from '@/core/ids';
@@ -26,10 +13,12 @@ import type { Db } from '@/db/client';
 import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
 import { event, knowledge, question, question_group_lifecycle } from '@/db/schema';
 import { writeEvent } from '@/kernel/events/index';
+import { ApiError } from '@/kernel/http';
 import { placementAuthority } from '../../../supply/public';
 import { type RunTaskFn, runQuizVerify } from '../../jobs/quiz_verify';
 import { runSourceVerify } from '../../jobs/source_verify';
 import { publishVerifyLifecycleUpdate } from '../../jobs/source_verify_lifecycle';
+import { declaredAdmissionOwned } from '../admission/ownership';
 import { enrollPromotedQuestionScheduling } from '../question-scheduling-enrollment';
 
 export interface VerifyAndPromoteParams {
@@ -129,6 +118,7 @@ export async function verifyAndPromote(p: VerifyAndPromoteParams): Promise<Verif
       parent_question_id: question.parent_question_id,
       lifecycleRevisionId: question_group_lifecycle.current_revision_id,
       admissionGeneration: question_group_lifecycle.scoring_admission_generation,
+      admissionOwned: declaredAdmissionOwned(),
     })
     .from(question)
     .leftJoin(question_group_lifecycle, eq(question_group_lifecycle.group_id, question.id))
@@ -137,6 +127,13 @@ export async function verifyAndPromote(p: VerifyAndPromoteParams): Promise<Verif
   const row = rows[0];
   if (!row) {
     return { promoted: false, status: 'skipped:not_found', reason: 'question not found' };
+  }
+  if (row.admissionOwned) {
+    return {
+      promoted: false,
+      status: 'skipped:admission_owned',
+      reason: '这道题由自动准入处理，不能通过旧核验或强制启用。',
+    };
   }
 
   // a question_part is group-internal: it has no independent verify
@@ -214,10 +211,15 @@ export async function verifyAndPromote(p: VerifyAndPromoteParams): Promise<Verif
       // material_fsrs_state / mastery_state writer and the cascade revert).
       await acquireLearningStateWriteLock(tx);
       await placementAuthority.lockPlacementSupplyScopes(tx, row.knowledge_ids ?? []);
-      await tx
+      const promotedRoot = await tx
         .update(question)
         .set({ draft_status: LEGACY_DRAFT_STATUS.ACTIVE, updated_at: now })
-        .where(eq(question.id, questionId));
+        .where(and(eq(question.id, questionId), sql`NOT ${declaredAdmissionOwned()}`))
+        .returning({ id: question.id });
+      // Ownership may have changed since the dispatch snapshot; never overwrite the new gate.
+      if (promotedRoot.length === 0) {
+        throw new ApiError('admission_owned', '这道题由自动准入处理，不能强制启用。', 409);
+      }
 
       await enrollPromotedQuestionScheduling(tx, {
         questionId,
