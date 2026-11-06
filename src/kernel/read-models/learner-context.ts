@@ -8,7 +8,11 @@
 
 import type { ContextViewName } from '@/ai/task-spec';
 import type { Db, Tx } from '@/db/client';
-import { HostOperationNotInstalledError } from '@/kernel/host-operation';
+import {
+  HostOperationNotInstalledError,
+  installHostOperation,
+  installedHostOperation,
+} from '@/kernel/host-operation';
 
 type DbLike = Db | Tx;
 
@@ -44,10 +48,10 @@ export type LearnerContextLoader = (
   input: LearnerContextInput,
 ) => Promise<LearnerContextResult>;
 
-let installed: LearnerContextLoader | undefined;
+const LOADER_SLOT = 'kernel/read-models/learner-context:loader';
 
 export function installLearnerContextLoader(loader: LearnerContextLoader): void {
-  installed = loader;
+  installHostOperation(LOADER_SLOT, loader);
 }
 
 /**
@@ -59,10 +63,11 @@ export async function loadLearnerContext(
   db: DbLike,
   input: LearnerContextInput,
 ): Promise<LearnerContextResult> {
-  if (!installed) {
+  const loader = installedHostOperation<LearnerContextLoader>(LOADER_SLOT);
+  if (!loader) {
     throw new HostOperationNotInstalledError(
       'learner-context loader is not installed; call installAgencyHostOperations at startup',
     );
   }
-  return installed(db, input);
+  return loader(db, input);
 }

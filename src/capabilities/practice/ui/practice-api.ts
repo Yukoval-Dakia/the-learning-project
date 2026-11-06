@@ -357,6 +357,15 @@ export const fileAppeal = (
         : { judge_event_id: judgeEventId, reason_md: reasonMd },
   });
 
+export const getAppealStatus = (
+  appealEventId: string,
+): Promise<ApiOperationJsonResponse<'getAppealStatus'>> =>
+  apiOperationJson('getAppealStatus', {
+    url: `/api/appeals/${encodeURIComponent(appealEventId)}`,
+    method: 'GET',
+  });
+export type AppealStatus = ApiOperationJsonResponse<'getAppealStatus'>;
+
 export const solveStart = (
   questionId: string,
   issuanceId?: string,

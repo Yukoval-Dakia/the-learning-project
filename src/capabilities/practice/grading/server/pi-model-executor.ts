@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { AgentRunError } from '@/ai/agent-run-error';
 import type { RunTaskResult } from '@/ai/task-result';
 import { resolveTaskBudget } from '@/capabilities/task-registry';
@@ -9,7 +9,14 @@ import type {
   PendingStateT,
 } from '@/core/schema/assessment';
 import { isOriginalEvidenceQuote } from '@/core/schema/assessment/evidence-quote';
-import { AssessmentRuleDecision } from '@/core/schema/assessment/model-decision';
+import {
+  AssessmentRuleDecision,
+  type AssessmentRuleDecisionT,
+} from '@/core/schema/assessment/model-decision';
+import type {
+  ModelOutcomeDiagnosticsT,
+  ModelOutcomeRejectedCitationT,
+} from '@/core/schema/assessment/model-diagnostics';
 import type { Db } from '@/db/client';
 import {
   isLaminarTracingEnabled,
@@ -64,18 +71,60 @@ const pending = (
   state: PendingStateT,
   runRefs: string[] = [],
   cost?: number,
+  diagnostics?: ModelOutcomeDiagnosticsT,
 ): ModelUnitOutcomeT => ({
   kind: 'pending',
   pending: state,
   run_refs: runRefs,
   ...(cost === undefined ? {} : { cost_usd_micros: cost }),
+  ...(diagnostics === undefined ? {} : { diagnostics }),
 });
 
-function citationProblem(
+const sha256Hex = (value: string) => createHash('sha256').update(value).digest('hex');
+
+/**
+ * 当时可用于引用的来源：文字类记数量+总字符，image 与其他非文字证据
+ * 只记类型+数量 —— 让「照片作答没有文字」与「文本槽是空的」可区分。
+ */
+function citableSources(
+  request: ModelExecutorRequest,
+  textEvidence: Array<{ evidence_id: string; text: string }>,
+): NonNullable<ModelOutcomeDiagnosticsT['citable_sources']> {
+  const textEntries = request.slot_responses.filter(
+    (entry) => entry.kind === 'text' || entry.kind === 'open',
+  );
+  const evidenceKinds = [
+    ...request.slot_responses.flatMap((entry) =>
+      entry.kind === 'open' ? entry.evidence.map((item) => item.kind) : [],
+    ),
+    ...request.group_evidence.map((item) => item.evidence.kind),
+  ];
+  return [
+    {
+      kind: 'slot_text',
+      count: textEntries.length,
+      total_chars: textEntries.reduce((sum, entry) => sum + entry.text_md.length, 0),
+    },
+    {
+      kind: 'text_evidence',
+      count: textEvidence.length,
+      total_chars: textEvidence.reduce((sum, item) => sum + item.text.length, 0),
+    },
+    { kind: 'image_evidence', count: evidenceKinds.filter((k) => k === 'image').length },
+  ];
+}
+
+/**
+ * 与拒收判定同一逻辑，但逐条产出脱敏诊断：校验顺序不变（无目标 → 未知
+ * slot → 未知 evidence → 引文非原文），记录每条被拒引文的 hash/长度与
+ * 指向 id（真实提交的记原文，模型声称的记 sha256）。短引文与短声称 id
+ * 不记 hash —— 可枚举短语/短 id 的 sha256 能被字典还原。
+ */
+function citationRejections(
   request: ModelExecutorRequest,
   citations: Array<{ slot_id?: string; evidence_id?: string; quote?: string }>,
   textEvidence: Array<{ evidence_id: string; text: string }>,
-): boolean {
+): ModelOutcomeRejectedCitationT[] {
   const slots = new Map(request.slot_responses.map((entry) => [entry.slot_id, entry]));
   const evidenceIds = new Set([
     ...request.slot_responses.flatMap((entry) =>
@@ -83,25 +132,106 @@ function citationProblem(
     ),
     ...request.group_evidence.map((item) => item.evidence.evidence_id),
   ]);
-  return citations.some((citation) => {
-    if (
-      (!citation.slot_id && !citation.evidence_id) ||
-      (citation.slot_id && !slots.has(citation.slot_id)) ||
-      (citation.evidence_id && !evidenceIds.has(citation.evidence_id))
-    )
-      return true;
-    if (citation.quote === undefined) return false;
-    const entry = citation.slot_id ? slots.get(citation.slot_id) : undefined;
-    const text =
-      entry && (entry.kind === 'text' || entry.kind === 'open') ? entry.text_md : undefined;
-    const evidenceText = textEvidence.find(
-      (item) => item.evidence_id === citation.evidence_id,
-    )?.text;
-    const quote = citation.quote;
-    return ![text, evidenceText].some(
-      (source) => source !== undefined && isOriginalEvidenceQuote({ source, quote }),
-    );
-  });
+  const rejected: ModelOutcomeRejectedCitationT[] = [];
+  for (const citation of citations) {
+    const slotId = citation.slot_id || null;
+    const evidenceId = citation.evidence_id || null;
+    const slotKnown = slotId !== null && slots.has(slotId);
+    const evidenceKnown = evidenceId !== null && evidenceIds.has(evidenceId);
+    const record = {
+      ...(slotKnown ? { slot_id: slotId } : {}),
+      ...(slotId !== null && !slotKnown
+        ? {
+            claimed_slot_id_length: slotId.length,
+            ...(slotId.length >= 16 ? { claimed_slot_id_sha256: sha256Hex(slotId) } : {}),
+          }
+        : {}),
+      ...(evidenceKnown ? { evidence_id: evidenceId } : {}),
+      ...(evidenceId !== null && !evidenceKnown
+        ? {
+            claimed_evidence_id_length: evidenceId.length,
+            ...(evidenceId.length >= 16
+              ? { claimed_evidence_id_sha256: sha256Hex(evidenceId) }
+              : {}),
+          }
+        : {}),
+      ...(citation.quote !== undefined
+        ? {
+            ...(citation.quote.length >= 16 ? { quote_sha256: sha256Hex(citation.quote) } : {}),
+            quote_length: citation.quote.length,
+          }
+        : {}),
+    };
+    let problem: ModelOutcomeRejectedCitationT['problem'] | null = null;
+    if (slotId === null && evidenceId === null) {
+      problem = 'no_target';
+    } else if (slotId !== null && !slotKnown) {
+      problem = 'unknown_slot';
+    } else if (evidenceId !== null && !evidenceKnown) {
+      problem = 'unknown_evidence';
+    } else if (citation.quote !== undefined) {
+      const entry = slotId !== null ? slots.get(slotId) : undefined;
+      const text =
+        entry && (entry.kind === 'text' || entry.kind === 'open') ? entry.text_md : undefined;
+      const evidenceText = textEvidence.find(
+        (item) => item.evidence_id === citation.evidence_id,
+      )?.text;
+      const quote = citation.quote;
+      if (
+        ![text, evidenceText].some(
+          (source) => source !== undefined && isOriginalEvidenceQuote({ source, quote }),
+        )
+      ) {
+        problem = 'non_original_quote';
+      }
+    }
+    if (problem !== null) rejected.push({ problem, ...record });
+  }
+  return rejected;
+}
+
+/**
+ * 决策被冻结判据拒收时记录决策形状与目标 id：与发布 rule/level 一致的 id
+ * 记原文（那是我们发布的数据），不一致的 claimed id 只记 sha256。
+ */
+function decisionDiagnostics(
+  request: ModelExecutorRequest,
+  decision: AssessmentRuleDecisionT,
+): ModelOutcomeDiagnosticsT {
+  const criterion = request.unit.criterion;
+  // pending 决策在早退分支已返回；此出口只可能收到 rule/level 决策。
+  if (decision.kind === 'pending') return { check: 'decision_criterion_mismatch' };
+  const summary =
+    decision.kind === 'rule'
+      ? {
+          kind: 'rule' as const,
+          criterion_kind: criterion.kind,
+          ...(criterion.kind === 'rule_reference' && decision.rule_id === criterion.rule_id
+            ? { rule_id: decision.rule_id }
+            : {
+                rule_id_length: decision.rule_id.length,
+                ...(decision.rule_id.length >= 16
+                  ? { rule_id_sha256: sha256Hex(decision.rule_id) }
+                  : {}),
+              }),
+          points_awarded: decision.points_awarded,
+          unit_points: request.unit.points,
+        }
+      : {
+          kind: 'level' as const,
+          criterion_kind: criterion.kind,
+          ...(criterion.kind === 'holistic_level' &&
+          criterion.levels.some((level) => level.level_id === decision.level_id)
+            ? { level_id: decision.level_id }
+            : {
+                level_id_length: decision.level_id.length,
+                ...(decision.level_id.length >= 16
+                  ? { level_id_sha256: sha256Hex(decision.level_id) }
+                  : {}),
+              }),
+          unit_points: request.unit.points,
+        };
+  return { check: 'decision_criterion_mismatch', decision: summary };
 }
 
 /** Standalone native pi lane, selected only by an explicit published task and descriptor. */
@@ -222,6 +352,10 @@ export function createPiModelExecutor(options: PiModelExecutorOptions): ModelUni
             { reason: 'unjudgeable', detail: 'native model exceeded the admitted call cost cap' },
             refs,
             settledCost ?? cost,
+            {
+              check: 'cost_cap_exceeded',
+              cost: { cost_usd_micros: settledCost ?? cost, cap_usd_micros: cap },
+            },
           );
         const modelResult = result;
         const decision = await traceOperation(
@@ -239,16 +373,42 @@ export function createPiModelExecutor(options: PiModelExecutorOptions): ModelUni
         );
         // Pending citations are validated by the model schema but cannot supply a score.
         // The domain pending outcome retains only its reason and paid run provenance.
-        if (decision.kind === 'pending')
+        if (decision.kind === 'pending') {
+          // wire 只在本分支需要（诊断要 citable 来源计数）—— 非 pending 路径在
+          // 下方同一位置解析，判分路径的顺序逐位不变。
+          const wire = JSON.parse(prepared.input.text) as {
+            text_evidence: Array<{ evidence_id: string; text: string }>;
+          };
+          const declinedCitations = citationRejections(
+            request,
+            decision.evidence_citations ?? [],
+            wire.text_evidence,
+          );
           return pending(
             { reason: 'insufficient_evidence', detail: decision.detail },
             refs,
             settledCost,
+            {
+              check: 'model_declined',
+              citable_sources: citableSources(request, wire.text_evidence),
+              ...(declinedCitations.length > 0
+                ? {
+                    rejected_citations: declinedCitations.slice(0, 16),
+                    rejected_citation_count: declinedCitations.length,
+                  }
+                : {}),
+            },
           );
+        }
         const wire = JSON.parse(prepared.input.text) as {
           text_evidence: Array<{ evidence_id: string; text: string }>;
         };
-        if (citationProblem(request, decision.evidence_citations, wire.text_evidence)) {
+        const rejectedCitations = citationRejections(
+          request,
+          decision.evidence_citations,
+          wire.text_evidence,
+        );
+        if (rejectedCitations.length > 0) {
           return pending(
             {
               reason: 'unjudgeable',
@@ -256,6 +416,12 @@ export function createPiModelExecutor(options: PiModelExecutorOptions): ModelUni
             },
             refs,
             settledCost,
+            {
+              check: 'citation_validation',
+              rejected_citations: rejectedCitations.slice(0, 16),
+              rejected_citation_count: rejectedCitations.length,
+              citable_sources: citableSources(request, wire.text_evidence),
+            },
           );
         }
         const common = {
@@ -304,6 +470,7 @@ export function createPiModelExecutor(options: PiModelExecutorOptions): ModelUni
           },
           refs,
           settledCost,
+          decisionDiagnostics(request, decision),
         );
       } catch (error) {
         const refs = result

@@ -32,7 +32,7 @@ import {
   deriveSourceTier,
 } from '@/core/schema/provenance';
 import type { Db, Tx } from '@/db/client';
-import { notDraftPredicate } from '@/db/predicates';
+import { notDraftPredicate, notHoldoutOnlyPredicate } from '@/db/predicates';
 import { knowledge, question } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import {
@@ -251,6 +251,10 @@ function buildSqlFilters(params: ListQuestionsParams): SQL[] {
   // include_drafts. Kept off draft_status because the pool predicate treats any
   // non-'draft' value as pool-visible.
   filters.push(sql`(${question.metadata} -> 'dismissed_at') IS NULL`);
+  // Holdout-only groups (container_only + withheld/owner_hold) are never
+  // listed, searched, or counted here; pending-admission container stock with
+  // other withheld reasons stays visible.
+  filters.push(notHoldoutOnlyPredicate(question));
   if (params.source !== undefined) filters.push(eq(question.source, params.source));
   if (params.kind !== undefined) {
     // Match every persisted form; a single-element set is an exact match.
@@ -867,7 +871,10 @@ export async function loadFamilyMembers(
   excludeDrafts: boolean,
 ): Promise<CandidateRow[]> {
   const membership = sql`(${question.root_question_id} = ${rootKey} OR ${question.id} = ${rootKey})`;
-  const bankVisible = ne(question.source, INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE);
+  const bankVisible = and(
+    ne(question.source, INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE),
+    notHoldoutOnlyPredicate(question),
+  );
   const where = excludeDrafts
     ? and(membership, bankVisible, notDraftPredicate(question.draft_status))
     : and(membership, bankVisible);

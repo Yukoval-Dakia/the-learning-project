@@ -22,7 +22,11 @@ import {
   withLearningStateLock,
 } from '@/db/learning-state-lock';
 import { material_fsrs_state } from '@/db/schema';
-import { HostOperationNotInstalledError } from '@/kernel/host-operation';
+import {
+  HostOperationNotInstalledError,
+  installHostOperation,
+  installedHostOperation,
+} from '@/kernel/host-operation';
 import {
   type RetentionReading,
   retrievabilityForKc,
@@ -40,19 +44,20 @@ export type CandidateStateRebuild = (
   now: Date,
 ) => Promise<CandidateState>;
 
-let installedCandidateStateRebuild: CandidateStateRebuild | undefined;
+const REBUILD_SLOT = 'kernel/records/scheduling-state:candidateStateRebuild';
 
 export function installCandidateStateRebuild(rebuild: CandidateStateRebuild): void {
-  installedCandidateStateRebuild = rebuild;
+  installHostOperation(REBUILD_SLOT, rebuild);
 }
 
 function candidateStateRebuild(): CandidateStateRebuild {
-  if (!installedCandidateStateRebuild) {
+  const rebuild = installedHostOperation<CandidateStateRebuild>(REBUILD_SLOT);
+  if (!rebuild) {
     throw new HostOperationNotInstalledError(
       'candidate state rebuild is not installed; call installSchedulingCandidateRebuild at startup',
     );
   }
-  return installedCandidateStateRebuild;
+  return rebuild;
 }
 
 /** Resolve one row under the selected engine without writing a second projection. */
