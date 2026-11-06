@@ -251,16 +251,37 @@ function parseEventMemoryResult(value: unknown, source: string): MemoryEventResu
   return { results };
 }
 
-function redactQuestionEvidenceForMemory(payload: unknown): unknown {
-  if (!isJsonObject(payload) || !isJsonObject(payload.question_snapshot)) return payload;
-  const snapshot = payload.question_snapshot;
+// copilot_user_ask payloads carry learner-answer attachments (review_answer,
+// confirmation.response_set) beside the message. Keep only fields the learner
+// authored in the turn itself — new attachment kinds must not leak through.
+const COPILOT_ASK_MEMORY_KEYS = new Set([
+  'user_message',
+  'surface',
+  'derivation_policy',
+  'session_id',
+  'chip_kind',
+]);
+
+function redactQuestionEvidenceForMemory(action: string, payload: unknown): unknown {
+  if (!isJsonObject(payload)) return payload;
+  if (action === 'experimental:copilot_user_ask') {
+    const picked: Record<string, unknown> = {};
+    for (const key of COPILOT_ASK_MEMORY_KEYS) if (key in payload) picked[key] = payload[key];
+    return picked;
+  }
+  // review_answer carries the learner's verbatim submission + reasoning_trace
+  // as a copilot attachment. The turn's user_message still extracts; the
+  // answer text itself never enters the infer prompt.
+  const { review_answer: _reviewAnswer, ...rest } = payload;
+  if (!isJsonObject(rest.question_snapshot)) return rest;
+  const snapshot = rest.question_snapshot;
   const redactReference = (context: unknown): unknown => {
     if (!isJsonObject(context)) return context;
     const { reference_md: _referenceMd, ...safeContext } = context;
     return safeContext;
   };
   return {
-    ...payload,
+    ...rest,
     question_snapshot: {
       ...snapshot,
       question: redactReference(snapshot.question),
@@ -278,7 +299,7 @@ function eventToText(input: MemoryEventInput): string {
     // Attempt snapshots contain gold references for later evidence replay. They
     // are system truth, not learner-authored facts, and must never enter Mem0's
     // infer:true extraction prompt.
-    payload: redactQuestionEvidenceForMemory(input.payload),
+    payload: redactQuestionEvidenceForMemory(input.action, input.payload),
   });
 }
 

@@ -9,7 +9,9 @@ export const selectStartPlacementQuestion: FrontdoorContext['selectNextPlacement
       throw new ApiError('validation_error', 'session id must be a string', 400);
     }
     const { db } = await import('@/db/client');
-    const { selectNextPlacementQuestion } = await import('@/capabilities/practice/public');
+    const { selectNextPlacementQuestion } = await import(
+      '@/capabilities/practice/placement/public'
+    );
     // The live placement client sends an empty body; scope and policy stay server-owned.
     return await selectNextPlacementQuestion(db, sessionId, {});
   } catch (error) {

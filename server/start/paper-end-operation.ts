@@ -8,7 +8,7 @@ import type { FrontdoorContext } from './context';
 export const endStartPaperSession: FrontdoorContext['endPaperSession'] = (sessionId) =>
   runWithHttpProviderSessionDeadline(Date.now() + HTTP_PROVIDER_SESSION_BUDGET_MS, async () => {
     try {
-      const { transitionReviewSession } = await import('@/capabilities/practice/public');
+      const { transitionReviewSession } = await import('@/capabilities/practice/session/public');
       const transition = await transitionReviewSession(sessionId, 'completed');
       return {
         id: sessionId,

@@ -8,7 +8,7 @@ const composedRouteLoaders: Readonly<Record<string, () => Promise<RouteHandler>>
     const [{ loadWorkbenchSummary }, { queryReviewDue }, { db }, { errorResponse }] =
       await Promise.all([
         import('@/capabilities/shell/public'),
-        import('@/capabilities/practice/public'),
+        import('@/capabilities/practice/scheduling/public'),
         import('@/db/client'),
         import('@/kernel/http'),
       ]);

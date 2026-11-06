@@ -14,7 +14,9 @@ export const submitStartPaperSlot: FrontdoorContext['submitPaperSlot'] = ({ sess
       } catch {
         // Preserve the canonical HTTP malformed-JSON input to the original schema.
       }
-      const { createPracticePaperSubmission } = await import('@/capabilities/practice/public');
+      const { createPracticePaperSubmission } = await import(
+        '@/capabilities/practice/session/public'
+      );
       const { db } = await import('@/db/client');
       return await createPracticePaperSubmission(db, sessionId, raw);
     } catch (error) {

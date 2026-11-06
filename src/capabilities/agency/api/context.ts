@@ -23,9 +23,19 @@ export async function GET() {
           after: { topics: unknown[] };
           undo_of?: string | null;
         };
+        if (c.restricted)
+          return {
+            id: c.id,
+            at: c.at.toISOString(),
+            removed: true,
+            before: [],
+            after: [],
+            undo_of: null,
+          };
         return {
           id: c.id,
           at: c.at.toISOString(),
+          removed: false,
           before: p.before.topics,
           after: p.after.topics,
           undo_of: p.undo_of ?? null,
@@ -38,12 +48,15 @@ export async function GET() {
 }
 export async function ACTION(req: Request) {
   try {
-    const input = ContextActionRequest.parse(await req.json());
+    const parsed = ContextActionRequest.safeParse(await req.json());
+    if (!parsed.success)
+      throw new ApiError('context_action_invalid', 'invalid action request', 400);
+    const input = parsed.data;
     if (
       (input.op === 'undo' && !input.change_id) ||
       (input.op === 'withdraw_topic' && !input.topic_key)
     )
-      throw new Error('action target missing');
+      throw new ApiError('context_action_invalid', 'action target missing', 400);
     return Response.json(
       await changeTopics(db, {
         expectedVersion: input.expected_version,

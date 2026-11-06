@@ -17,7 +17,7 @@ export const readStartWorkbenchSummary = () =>
   withStartDb(async (db) => {
     const [{ loadWorkbenchSummary }, { queryReviewDue }] = await Promise.all([
       import('@/capabilities/shell/public'),
-      import('@/capabilities/practice/public'),
+      import('@/capabilities/practice/scheduling/public'),
     ]);
     return loadWorkbenchSummary(db, { queryReviewDue });
   });
