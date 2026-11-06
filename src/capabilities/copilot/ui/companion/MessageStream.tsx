@@ -57,18 +57,25 @@ export function MessageStream({
   }
   const { actions } = controller;
   let replies = 0;
+  // A run's user message carries the run id; a settled reply read back from the server may not.
+  let currentRunId: string | undefined;
   return (
     <div className="un-cp-scroll" ref={stick.attach}>
       <div className="un-cp-stream">
         <SummaryCard empty={messages.length === 0} navigate={navigate} />
         {messages.map((message) => {
           if (message.role === 'ai') replies += 1;
+          if (message.role === 'user') currentRunId = message.id;
           const questionId = message.skill_turn?.structured_question?.id;
           return (
             <MessageRow
               key={message.id}
               message={message}
-              thinkingText={message.run_id ? thinkingByRun[message.run_id] : undefined}
+              thinkingText={
+                message.role === 'ai'
+                  ? thinkingByRun[message.run_id ?? currentRunId ?? '']
+                  : undefined
+              }
               confirmationRenderer={confirmationRenderer}
               readNotePage={readNotePage}
               showConfirmation={
