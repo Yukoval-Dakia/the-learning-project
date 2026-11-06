@@ -161,6 +161,25 @@ export async function createKnowledgeEdge(
 
   try {
     await db.transaction(async (tx) => {
+      // Re-check the endpoints under share locks: the pre-read above is outside this
+      // transaction, so a concurrent retract can archive an endpoint in between. The
+      // share lock conflicts with the retract's FOR UPDATE, and the archived filter is
+      // re-evaluated after waiting.
+      const locked = await tx
+        .select({ id: knowledge.id })
+        .from(knowledge)
+        .where(and(inArray(knowledge.id, ids), isNull(knowledge.archived_at)))
+        .orderBy(knowledge.id)
+        .for('share');
+      const lockedIds = new Set(locked.map((row) => row.id));
+      const gone = ids.filter((endpointId) => !lockedIds.has(endpointId));
+      if (gone.length > 0) {
+        throw new ApiError(
+          'not_found',
+          `unknown or archived knowledge_id(s): ${gone.join(', ')}`,
+          404,
+        );
+      }
       await writeEvent(tx, {
         id: input.generate_event_id ?? createId(),
         actor_kind: input.actor_kind ?? 'user',

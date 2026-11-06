@@ -1,5 +1,6 @@
 import type { ActivityRefT } from '@/core/schema/activity';
 import type { RelationTypeSchemaT } from '@/core/schema/event/blocks';
+import type { Tx } from '@/db/client';
 import type {
   ProposalCorrectedPayload,
   ProposalDecisionActor,
@@ -51,4 +52,11 @@ export interface DismissAiProposalOpts {
 export interface RetractAiProposalOpts {
   reason_md?: string;
   affected_refs?: ActivityRefT[];
+  /**
+   * Batch-undo precondition, checked under the proposal decision lock in the
+   * retract transaction before any correction event is written. Single-card
+   * retract leaves it unset; the batch lane uses it to re-read owner state at
+   * retraction time instead of trusting a pre-scan.
+   */
+  guard?: (tx: Tx) => Promise<void>;
 }
