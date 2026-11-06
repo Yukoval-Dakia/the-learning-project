@@ -28,12 +28,22 @@ export const getStartTaskFailureAlerts = createServerFn({ method: 'GET' }).handl
     return readStartTaskFailureAlerts();
   }),
 );
-export const getStartAutoApplied = createServerFn({ method: 'GET' }).handler(({ context }) =>
-  runAuthenticatedStartWorkbench(context, getRequest(), async () => {
-    const { readStartAutoApplied } = await context.adapters.workbench();
-    return readStartAutoApplied();
-  }),
-);
+export const getStartAutoApplied = createServerFn({ method: 'GET' })
+  .validator((window: { from: string; to?: string } | undefined) => window)
+  .handler(({ context, data }) =>
+    runAuthenticatedStartWorkbench(context, getRequest(), async () => {
+      const { readStartAutoApplied } = await context.adapters.workbench();
+      return readStartAutoApplied(data);
+    }),
+  );
+export const retractStartAutoApplied = createServerFn({ method: 'POST' })
+  .validator((input: { proposal_ids: string[] }) => input)
+  .handler(({ context, data }) =>
+    runAuthenticatedStartWorkbench(context, getRequest(), async () => {
+      const { retractStartAutoApplied: retract } = await context.adapters.workbench();
+      return JSON.stringify(await retract(data));
+    }),
+  );
 export const getStartKnowledgeTree = createServerFn({ method: 'GET' })
   .validator((input: { subject?: string } | undefined) => input)
   .handler(({ context, data }) =>
