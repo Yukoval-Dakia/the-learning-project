@@ -70,6 +70,20 @@ export async function readQuestionCard(db: Db, id: string) {
       ? spec.data.slots
           .filter((slot) => partIds.includes(slot.part_id))
           .map((slot) => {
+            if (slot.kind === 'select' && slot.axes != null) {
+              return {
+                ...slot,
+                items: displayOrder(slot.items, `${revision.revision_id}:${slot.slot_id}:items`),
+                axes: Object.fromEntries(
+                  Object.entries(slot.axes).map(([axis, entries]) => [
+                    axis,
+                    axis === 'position'
+                      ? entries
+                      : displayOrder(entries, `${revision.revision_id}:${slot.slot_id}:${axis}`),
+                  ]),
+                ),
+              };
+            }
             if (slot.kind === 'matching')
               return {
                 ...slot,
@@ -130,7 +144,12 @@ export async function readQuestionCard(db: Db, id: string) {
       part_ids: partIds,
       prompt_md: row.prompt_md,
       kind: row.kind,
-      choices_md: displaySlots.some((slot) => slot.kind === 'matching' || slot.kind === 'ordering')
+      choices_md: displaySlots.some(
+        (slot) =>
+          slot.kind === 'matching' ||
+          slot.kind === 'ordering' ||
+          (slot.kind === 'select' && slot.axes != null),
+      )
         ? null
         : row.choices_md,
       notation: await resolveQuestionRenderNotation(db, row.id),
