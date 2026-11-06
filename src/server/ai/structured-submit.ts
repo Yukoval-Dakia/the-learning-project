@@ -399,6 +399,12 @@ export function createStructuredSubmitLoop(input: {
               // instead of collecting sealed-resubmit turns.
               return failRun('no_progress', unitSummary());
             }
+            if (Date.now() >= input.correctionDeadline) {
+              // No every-continue-path-checks-deadline exception here either:
+              // acceptance inside the window still lands the run when the
+              // correction window has closed.
+              return failRun('budget_landing', unitSummary());
+            }
             rewriteToolResults(
               toolResults,
               `Unit ${id} accepted. Remaining units: ${remaining.join(', ')}.`,
@@ -423,6 +429,42 @@ export function createStructuredSubmitLoop(input: {
           logTurn(message, true, { unit: id, event: 'all_units_accepted', remaining: 0 });
           rewriteToolResults(toolResults, `Unit ${id} accepted. All units accepted.`, false);
           return { action: 'end' as const };
+        };
+
+        // P1 (Sol review): resubmitting a TERMINAL unit (accepted or sealed) is an
+        // unproductive turn. It accumulates a run-level counter — reset only when a
+        // NEW unit is accepted — and checks the correction deadline first, so a
+        // terminal-resubmit spin always ends the run (budget_landing past the
+        // deadline, no_progress at the cap).
+        const rejectTerminalResubmit = (
+          id: string,
+          event: 'already_accepted' | 'sealed_resubmit',
+          feedback: string,
+        ): { action: 'end' } | { action: 'continue' } => {
+          const occurrences = countOccurrence('run:terminal_resubmit');
+          console.info(
+            '[structured_submit_validation]',
+            JSON.stringify({
+              task_run_id: input.runId,
+              unit: id,
+              output_hash: hash,
+              error_occurrences: occurrences,
+              diagnostics: feedback,
+            }),
+          );
+          logTurn(message, false, { unit: id, event, remaining: remainingIds().length });
+          if (Date.now() >= input.correctionDeadline) {
+            return failRun('budget_landing', unitSummary());
+          }
+          if (occurrences >= 3) {
+            return failRun(
+              'no_progress',
+              `terminal unit ${id} resubmitted without progress x${occurrences}; ${unitSummary()}`,
+            );
+          }
+          rewriteToolResults(toolResults, feedback, true);
+          submitFeedback = feedback;
+          return { action: 'continue' as const };
         };
 
         const rejectUnit = (
@@ -453,6 +495,9 @@ export function createStructuredSubmitLoop(input: {
             if (!sealedUnits.has(id)) sealedUnits.set(id, { error: errorKey, occurrences });
             if (allTerminal() && !fullCoverage()) {
               return failRun('no_progress', unitSummary());
+            }
+            if (Date.now() >= input.correctionDeadline) {
+              return failRun('budget_landing', unitSummary());
             }
             const remaining = remainingIds();
             const sealedFeedback =
@@ -505,24 +550,14 @@ export function createStructuredSubmitLoop(input: {
           return rejectUnit(undefined, 'unknown_unit_id', feedback, 'unknown_unit_id');
         }
         if (acceptedUnits.has(id)) {
-          // Accepted units are never rewritten; the wasted call is reported but
-          // does not count toward any unit's shape-error budget.
-          logTurn(message, false, {
-            unit: id,
-            event: 'already_accepted',
-            remaining: remainingIds().length,
-          });
-          if (Date.now() >= input.correctionDeadline) {
-            return failRun('budget_landing', unitSummary());
-          }
+          // Accepted units are never rewritten; the wasted call counts toward the
+          // run-level terminal-resubmit cap (P1), not any unit's shape-error budget.
           const feedback = `Unit ${id} was already accepted and was not rewritten. Do not resubmit it. Remaining units: ${remainingIds().join(', ')}.`;
-          rewriteToolResults(toolResults, feedback, true);
-          submitFeedback = feedback;
-          return { action: 'continue' as const };
+          return rejectTerminalResubmit(id, 'already_accepted', feedback);
         }
         if (sealedUnits.has(id)) {
           const feedback = `Unit ${id} is sealed after repeated identical shape errors and can no longer be accepted. Continue with: ${remainingIds().join(', ')}.`;
-          return rejectUnit(id, 'sealed_resubmit', feedback, 'sealed_resubmit');
+          return rejectTerminalResubmit(id, 'sealed_resubmit', feedback);
         }
         if (!parsed.success) {
           const errors = structuredSubmitShapeErrors(
