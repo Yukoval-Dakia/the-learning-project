@@ -1,10 +1,15 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { createServer as createNetServer } from 'node:net';
 import { config } from 'dotenv';
 import { CODE_CONTRACT_EPOCH } from '@/server/migration/contract-epoch/rules';
 import { devDatabaseName } from './dev-worktree-db';
-import { buildLocalDatabaseUrl, buildLocalDevEnv, testDbRefusalReason } from './local-db-env';
+import {
+  buildLocalDatabaseUrl,
+  buildLocalDevEnv,
+  firstFreePort,
+  guardDevApiPort,
+  testDbRefusalReason,
+} from './local-db-env';
 
 // YUK-365 (Codex review P2, Finding 2): load .env.local BEFORE .env, both
 // non-overriding, so the AI provider toggle (AI_PROVIDER_OVERRIDE /
@@ -21,23 +26,15 @@ const localEnv = buildLocalDevEnv(process.env);
 
 // The TEST app container holds :8787 (loopback and LAN), so dev never binds it: two
 // servers on one port would collide, and a browser could silently open TEST instead.
-// Without DEV_PORT the first free 127.0.0.1 port from 8788 up is taken, so parallel
-// worktrees each get their own origin. DEV_PORT pins the port and is used as-is; either
-// way it is passed as API_PORT so a TEST-oriented API_PORT in .env can't win.
-async function firstFreePort(from: number): Promise<number> {
-  for (let port = from; port < from + 100; port++) {
-    if (port === 8787) continue;
-    const free = await new Promise<boolean>((resolve) => {
-      const probe = createNetServer();
-      probe.once('error', () => resolve(false));
-      probe.once('listening', () => probe.close(() => resolve(true)));
-      probe.listen(port, '127.0.0.1');
-    });
-    if (free) return port;
-  }
-  throw new Error(`[dev-local] no free 127.0.0.1 port in ${from}–${from + 99}`);
-}
+// Without DEV_PORT the first port free on 127.0.0.1, ::1 and :: from 8788 up is
+// taken (firstFreePort in local-db-env), so parallel worktrees each get their own
+// origin. DEV_PORT pins the port and is used as-is; either way it is passed as API_PORT so a
+// TEST-oriented API_PORT in .env can't win.
 const devPort = process.env.DEV_PORT ?? String(await firstFreePort(8788));
+// An explicit DEV_PORT=8787 bypasses firstFreePort's skip; refuse it before any
+// Docker/DB work. dev:local is a local dev launcher, so it refuses regardless of
+// an inherited NODE_ENV or container marker; DEV_ALLOW_TEST_DB=1 does not relax it.
+guardDevApiPort(devPort, 'dev-local', { inContainer: false, inProduction: false });
 const devOrigin = `http://127.0.0.1:${devPort}`;
 
 // Dev runs against the shared dev Postgres container (docker-compose.dev.yml: :5434,

@@ -149,18 +149,30 @@ host port **5434**, role `loom_dev`, named volume `loom-dev_loom-dev-pgdata`), w
 is healthy, then creates **one database per worktree** inside that shared container —
 `loom_dev_<worktree>_<path hash>`, deterministic from the worktree root (`DEV_DB_NAME`
 overrides) — applies pending migrations, and starts the API and worker against it. The port
-is the first free 127.0.0.1 port from **8788** up (`DEV_PORT` pins one; 8787 stays TEST's),
-so several worktrees run dev at the same time without sharing data or ports. Re-running
+is the first port free on 127.0.0.1 and IPv6 from **8788** up (`DEV_PORT` pins one; 8787
+stays TEST's, and a local dev launch that asks for 8787 is refused before binding while
+production containers keep `API_PORT=8787`), so several worktrees run dev at the same
+time without sharing data or ports. Re-running
 reuses the same database and only applies new migrations. Docker/OrbStack must be running
 (`open -ga OrbStack`).
 
 - **Guard:** `dev:local`, `dev:reset` and every script resolving a local database target
   (`db:migrate:local`, `drizzle.config.local.ts`, delivery/spike scripts — one shared
   judgment in `scripts/local-db-env.ts`) refuse TEST targets before connecting: resolved
-  port 5433/5544 or database `loom`. The default is always this worktree's dev database
-  (`loom_dev` role @ 127.0.0.1:5434). The only override is `DEV_ALLOW_TEST_DB=1`, which
-  prints a warning banner and honours the TEST stack's `POSTGRES_*` — do not use it
-  casually.
+  port 5433/5544 (compared after parsing, so `05433`-style spellings are caught too) or
+  database `loom`. Scripts that read `DATABASE_URL` directly (`db:generate` / `db:push` /
+  `db:migrate` via `drizzle.config.ts`, `worker:dev`, `seed:*`, `db:backfill:*`,
+  `db:recompute:*` and every CLI importing `scripts/load-env.ts`) get the same refusal:
+  every candidate host:port from the URL authority, comma-separated hosts,
+  `?host=`/`?port=` and `PGHOST`/`PGPORT` is checked, and any loopback candidate on a
+  TEST port — or a loopback candidate whose database is `loom` — refuses. The
+  local dev API (`server/index.ts`, non-production) runs that same `DATABASE_URL` check
+  before serving; the 8787 fence is a separate non-container check. Production
+  (`NODE_ENV=production`) skips the database guard — an explicit switch, not a security
+  boundary. The default is always this
+  worktree's dev database (`loom_dev` role @ 127.0.0.1:5434). The only override is
+  `DEV_ALLOW_TEST_DB=1`, which prints a warning banner and honours the TEST stack's
+  `POSTGRES_*` — do not use it casually.
 - **Connections:** each dev API and worker uses a small pool (`DB_POOL_MAX=5`, also caps pg-boss), about 29 connections per worktree (pools plus the pg-boss and event LISTEN clients). `dev:local` saves `max_connections=300` on the shared dev Postgres (in its volume, not the compose file) and restarts it only when no other worktree is connected; otherwise it prints the restart command to run once they are stopped.
 - **Builtin subjects:** migrations run through the production entry `scripts/migrate.ts`, so every start also runs the subject-root seed and the builtin subject/trait reconcile (4 subjects, 24 traits); both are idempotent, so older dev databases are filled on their next start.
 - **Seed questions:** unless `DEV_SEED=0`, a fresh dev DB starts with 7 admitted math questions (ids `devseed:q:*`, fixed answer keys graded without any model call) so the question bank, practice and today pages have content; re-running adds nothing. Dev DB only — never with `DEV_ALLOW_TEST_DB=1`.
@@ -173,7 +185,7 @@ reuses the same database and only applies new migrations. Docker/OrbStack must b
   nothing needs it, drop it by hand:
   `docker compose -f docker-compose.dev.yml exec postgres-dev psql -U loom_dev -d postgres -c 'drop database if exists loom_dev with (force)'`.
 
-`pnpm dev:local`（= `tsx scripts/dev-local.ts`）spawn **两进程**，启动后打印要打开的地址（自动探测 8788 起首个空闲的 127.0.0.1 端口，可用 `DEV_PORT` 固定；8787 留给 TEST——本机由 NAS 中继监听，避免抢端口或误开到 TEST）：
+`pnpm dev:local`（= `tsx scripts/dev-local.ts`）spawn **两进程**，启动后打印要打开的地址（自动探测 8788 起在 127.0.0.1 与 IPv6 都空闲的首个端口，可用 `DEV_PORT` 固定；8787 是 TEST 中继端口，显式 `DEV_PORT=8787` 恒在绑定前退出，生产入口与容器内 API 的 `API_PORT=8787` 不受影响）：
 
 | 进程 | 端口 | 命令 | 角色 |
 | --- | --- | --- | --- |
@@ -182,7 +194,7 @@ reuses the same database and only applies new migrations. Docker/OrbStack must b
 
 dev 拓扑必须 api（含 Vite 前门）+ worker 两进程齐活（YUK-321 M5 双进程拓扑）：`LISTEN loop 不消费 boss job`，dev 也必须有独立 worker 进程；同进程 worker 是 RW_WORKER=1 的兜底，不替代独立 worker。
 
-`pnpm dev` 是 `pnpm dev:local` 的别名。dev 的 `DATABASE_URL` 由 dev-local 固定指向 dev Postgres（:5434）中本 worktree 自己的库（`loom_dev_<worktree>_<hash>`），忽略 `.env` / `.env.local` 里的 `DATABASE_URL` 与 `POSTGRES_*`。
+`pnpm dev` 是 `pnpm dev:local` 的别名。单独运行 `pnpm rw:api` 时 `API_PORT` 缺省也是 8787，本机 dev（`NODE_ENV` 非 `production`、非容器）会在绑定前退出（8787 是本机 NAS 中继的 TEST 端口；生产入口与容器由 Dockerfile 显式设 `API_PORT=8787`，照常监听）。dev 的 `DATABASE_URL` 由 dev-local 固定指向 dev Postgres（:5434）中本 worktree 自己的库（`loom_dev_<worktree>_<hash>`），忽略 `.env` / `.env.local` 里的 `DATABASE_URL` 与 `POSTGRES_*`。
 
 ```bash
 pnpm smoke:local

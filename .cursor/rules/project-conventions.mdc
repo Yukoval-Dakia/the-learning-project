@@ -86,7 +86,7 @@ Browser code never holds the provider key — all AI calls funnel through Hono r
 ## Commands (cheat sheet)
 
 ```bash
-pnpm dev:local       # compose Postgres :5433 + api + web + worker (推荐入口)
+pnpm dev:local       # dev Postgres :5434（每 worktree 一库）+ api + worker（推荐入口）
 pnpm typecheck       # tsc --noEmit
 pnpm lint            # biome check .
 pnpm format          # biome format --write .
