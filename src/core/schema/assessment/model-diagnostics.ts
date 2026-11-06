@@ -8,7 +8,13 @@ import { z } from 'zod';
  */
 export const ModelOutcomeRejectedCitation = z.object({
   /** 哪一类校验没过（与执行器的拒收判定一一对应）。 */
-  problem: z.enum(['no_target', 'unknown_slot', 'unknown_evidence', 'non_original_quote']),
+  problem: z.enum([
+    'no_target',
+    'unknown_slot',
+    'unknown_evidence',
+    'non_original_quote',
+    'image_not_quotable',
+  ]),
   slot_id: z.string().min(1).optional(),
   evidence_id: z.string().min(1).optional(),
   claimed_slot_id_sha256: z.string().min(1).optional(),
@@ -19,6 +25,19 @@ export const ModelOutcomeRejectedCitation = z.object({
   quote_length: z.number().int().min(0).optional(),
 });
 export type ModelOutcomeRejectedCitationT = z.infer<typeof ModelOutcomeRejectedCitation>;
+
+/**
+ * 未校验模型观察的脱敏摘要（YUK-1877）：纯图片单元里模型对图片带 quote
+ * 不考原文校验，记为观察 —— 观察文字是模型产出，与拒收引文同法只留
+ * hash/长度与指向 id，绝不冒充已验证引文。
+ */
+export const ModelOutcomeObservedCitation = z.object({
+  slot_id: z.string().min(1).optional(),
+  evidence_id: z.string().min(1).optional(),
+  observation_sha256: z.string().min(1).optional(),
+  observation_length: z.number().int().min(0),
+});
+export type ModelOutcomeObservedCitationT = z.infer<typeof ModelOutcomeObservedCitation>;
 
 /** 执行期拒收时可引用来源：文字类记数量+总字符，image 证据只记数量。 */
 export const ModelOutcomeCitableSource = z.object({
@@ -45,6 +64,9 @@ export const ModelOutcomeDiagnostics = z.object({
   /** 前 16 条被拒引文的摘要；真实总数在 rejected_citation_count。 */
   rejected_citations: z.array(ModelOutcomeRejectedCitation).max(16).optional(),
   rejected_citation_count: z.number().int().min(0).optional(),
+  /** 前 16 条未校验模型观察的摘要；真实总数在 model_observed_count。 */
+  model_observed: z.array(ModelOutcomeObservedCitation).max(16).optional(),
+  model_observed_count: z.number().int().min(0).optional(),
   citable_sources: z.array(ModelOutcomeCitableSource).optional(),
   decision: z
     .object({

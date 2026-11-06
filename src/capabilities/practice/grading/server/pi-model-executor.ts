@@ -15,6 +15,7 @@ import {
 } from '@/core/schema/assessment/model-decision';
 import type {
   ModelOutcomeDiagnosticsT,
+  ModelOutcomeObservedCitationT,
   ModelOutcomeRejectedCitationT,
 } from '@/core/schema/assessment/model-diagnostics';
 import type { Db } from '@/db/client';
@@ -42,6 +43,7 @@ import {
   assessmentTraceInput,
   assessmentTraceOutput,
 } from './assessment-trace-content';
+import { collectImageEvidenceIds } from './photo-judge-gate';
 
 export interface PiModelExecutorOptions {
   judgeRetryPolicy?: RunTaskCtx['judgeRetryPolicy'];
@@ -115,16 +117,31 @@ function citableSources(
 }
 
 /**
+ * 纯图片单元里模型对图片带 quote 的未校验观察（YUK-1877）：quote 原文是
+ * 模型产出、无文本源可校。citation_index 指向决策引文数组下标 —— 消费点
+ * 用它把观察从已验证引文集里移出。
+ */
+interface ModelObservedCitation extends ModelOutcomeObservedCitationT {
+  citation_index: number;
+  observation_md: string;
+}
+
+/**
  * 与拒收判定同一逻辑，但逐条产出脱敏诊断：校验顺序不变（无目标 → 未知
  * slot → 未知 evidence → 引文非原文），记录每条被拒引文的 hash/长度与
  * 指向 id（真实提交的记原文，模型声称的记 sha256）。短引文与短声称 id
  * 不记 hash —— 可枚举短语/短 id 的 sha256 能被字典还原。
+ *
+ * 图片引用分流（YUK-1877）：纯图片单元（没有任何可原文引用的文字）里，
+ * 图片引用带 quote 无文本可校 → 记为未校验模型观察，不拒收；混合单元里
+ * 图片带 quote → image_not_quotable 拒收（rubric 线同款）。纯文本作答的
+ * 校验逐位不变。
  */
 function citationRejections(
   request: ModelExecutorRequest,
   citations: Array<{ slot_id?: string; evidence_id?: string; quote?: string }>,
   textEvidence: Array<{ evidence_id: string; text: string }>,
-): ModelOutcomeRejectedCitationT[] {
+): { rejected: ModelOutcomeRejectedCitationT[]; observed: ModelObservedCitation[] } {
   const slots = new Map(request.slot_responses.map((entry) => [entry.slot_id, entry]));
   const evidenceIds = new Set([
     ...request.slot_responses.flatMap((entry) =>
@@ -132,8 +149,20 @@ function citationRejections(
     ),
     ...request.group_evidence.map((item) => item.evidence.evidence_id),
   ]);
+  const imageIds = collectImageEvidenceIds(request);
+  // 单元级判定：存在图片证据且没有任何可原文引用的文字（非空槽文本或明文
+  // 证据）= 纯图片单元。空白槽文本不是可引文本 —— 空源上任何 quote 本来就
+  // 过不了原文校验。
+  const unitIsImageOnly =
+    imageIds.size > 0 &&
+    !request.slot_responses.some(
+      (entry) =>
+        (entry.kind === 'text' || entry.kind === 'open') && entry.text_md.trim().length > 0,
+    ) &&
+    !textEvidence.some((item) => item.text.trim().length > 0);
   const rejected: ModelOutcomeRejectedCitationT[] = [];
-  for (const citation of citations) {
+  const observed: ModelObservedCitation[] = [];
+  for (const [citationIndex, citation] of citations.entries()) {
     const slotId = citation.slot_id || null;
     const evidenceId = citation.evidence_id || null;
     const slotKnown = slotId !== null && slots.has(slotId);
@@ -171,23 +200,44 @@ function citationRejections(
       problem = 'unknown_evidence';
     } else if (citation.quote !== undefined) {
       const entry = slotId !== null ? slots.get(slotId) : undefined;
-      const text =
-        entry && (entry.kind === 'text' || entry.kind === 'open') ? entry.text_md : undefined;
-      const evidenceText = textEvidence.find(
-        (item) => item.evidence_id === citation.evidence_id,
-      )?.text;
-      const quote = citation.quote;
-      if (
-        ![text, evidenceText].some(
-          (source) => source !== undefined && isOriginalEvidenceQuote({ source, quote }),
-        )
-      ) {
-        problem = 'non_original_quote';
+      const targetsImage = evidenceId !== null && imageIds.has(evidenceId);
+      const slotHasCitableText =
+        entry !== undefined &&
+        (entry.kind === 'text' || entry.kind === 'open') &&
+        entry.text_md.trim().length > 0;
+      if (targetsImage && !unitIsImageOnly) {
+        // 混合单元：图片没有文本源，quote 冒充了原文 —— rubric 线同款拒收。
+        problem = 'image_not_quotable';
+      } else if (unitIsImageOnly && (targetsImage || (slotId !== null && !slotHasCitableText))) {
+        // 纯图片单元：没有任何可校文字，带 quote 的引用降为未校验模型观察。
+        observed.push({
+          citation_index: citationIndex,
+          ...(slotId !== null ? { slot_id: slotId } : {}),
+          ...(evidenceId !== null ? { evidence_id: evidenceId } : {}),
+          observation_md: citation.quote,
+          observation_length: citation.quote.length,
+          ...(citation.quote.length >= 16 ? { observation_sha256: sha256Hex(citation.quote) } : {}),
+        });
+        continue;
+      } else {
+        const text =
+          entry && (entry.kind === 'text' || entry.kind === 'open') ? entry.text_md : undefined;
+        const evidenceText = textEvidence.find(
+          (item) => item.evidence_id === citation.evidence_id,
+        )?.text;
+        const quote = citation.quote;
+        if (
+          ![text, evidenceText].some(
+            (source) => source !== undefined && isOriginalEvidenceQuote({ source, quote }),
+          )
+        ) {
+          problem = 'non_original_quote';
+        }
       }
     }
     if (problem !== null) rejected.push({ problem, ...record });
   }
-  return rejected;
+  return { rejected, observed };
 }
 
 /**
@@ -379,7 +429,7 @@ export function createPiModelExecutor(options: PiModelExecutorOptions): ModelUni
           const wire = JSON.parse(prepared.input.text) as {
             text_evidence: Array<{ evidence_id: string; text: string }>;
           };
-          const declinedCitations = citationRejections(
+          const { rejected: declinedCitations, observed: declinedObserved } = citationRejections(
             request,
             decision.evidence_citations ?? [],
             wire.text_evidence,
@@ -397,13 +447,26 @@ export function createPiModelExecutor(options: PiModelExecutorOptions): ModelUni
                     rejected_citation_count: declinedCitations.length,
                   }
                 : {}),
+              ...(declinedObserved.length > 0
+                ? {
+                    model_observed: declinedObserved.slice(0, 16).map((item) => ({
+                      ...(item.slot_id !== undefined ? { slot_id: item.slot_id } : {}),
+                      ...(item.evidence_id !== undefined ? { evidence_id: item.evidence_id } : {}),
+                      observation_length: item.observation_length,
+                      ...(item.observation_sha256 !== undefined
+                        ? { observation_sha256: item.observation_sha256 }
+                        : {}),
+                    })),
+                    model_observed_count: declinedObserved.length,
+                  }
+                : {}),
             },
           );
         }
         const wire = JSON.parse(prepared.input.text) as {
           text_evidence: Array<{ evidence_id: string; text: string }>;
         };
-        const rejectedCitations = citationRejections(
+        const { rejected: rejectedCitations, observed: observedCitations } = citationRejections(
           request,
           decision.evidence_citations,
           wire.text_evidence,
@@ -424,9 +487,23 @@ export function createPiModelExecutor(options: PiModelExecutorOptions): ModelUni
             },
           );
         }
+        // 纯图片单元的带 quote 引用从已验证引文集移出，落到 model_observations
+        // —— 观察文字如实保留（模型产出、标未校验），绝不混入已验证引文。
+        const observedIndex = new Set(observedCitations.map((item) => item.citation_index));
         const common = {
           feedback_md: decision.feedback_md,
-          evidence_citations: decision.evidence_citations,
+          evidence_citations: decision.evidence_citations.filter(
+            (_citation, index) => !observedIndex.has(index),
+          ),
+          ...(observedCitations.length > 0
+            ? {
+                model_observations: observedCitations.map((item) => ({
+                  ...(item.slot_id !== undefined ? { slot_id: item.slot_id } : {}),
+                  ...(item.evidence_id !== undefined ? { evidence_id: item.evidence_id } : {}),
+                  observation_md: item.observation_md,
+                })),
+              }
+            : {}),
           confidence: decision.confidence,
           ...(decision.kc_mastery_evidence
             ? { kc_mastery_evidence: decision.kc_mastery_evidence }

@@ -26,6 +26,7 @@ import {
   type EvaluationRecordT,
   type EvidenceCitationT,
   type GroupEvidenceT,
+  ModelObservation,
   ScoringUnitResult,
   type ScoringUnitResultT,
   type SubmissionRecordT,
@@ -116,6 +117,12 @@ export const ModelUnitOutcome = z.discriminatedUnion('kind', [
         }),
       )
       .default([]),
+    /**
+     * 未校验模型观察（YUK-1877）：纯图片单元里模型对图片的 quote 引用不考
+     * 原文校验，落到此字段而非 evidence_citations —— 不是已验证引文。
+     * 缺省 = 无观察；绝不补造。
+     */
+    model_observations: z.array(ModelObservation).optional(),
     /** 分布形状信号（非 accuracy）；缺失不得补造（OpenRouter 核验 D12）。 */
     confidence: z.number().min(0).max(1).optional(),
     /** 掌握证据。聚合不读它。 */
@@ -1353,6 +1360,9 @@ export async function evaluateSubmissionCore(
             ? { kc_mastery_evidence: outcome.kc_mastery_evidence }
             : {}),
           evidence_citations: outcome.evidence_citations,
+          ...(outcome.model_observations !== undefined
+            ? { model_observations: outcome.model_observations }
+            : {}),
           ...(probeJudgement ? { probe_judgement: probeJudgement } : {}),
         },
         unitId,
