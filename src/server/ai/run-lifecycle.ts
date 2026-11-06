@@ -58,12 +58,7 @@ import {
   type ProviderTransportCollector,
   createProviderTransportCollector,
 } from './provider-transport';
-import {
-  type ResolvedProvider,
-  TaskConfigError,
-  hasGlobalProviderOverride,
-  resolveTaskProvider,
-} from './providers';
+import { type ResolvedProvider, TaskConfigError, resolveTaskProvider } from './providers';
 import { estimateAbortedUsage } from './timeout-usage';
 
 /** Usage/cost evidence carried by either SDKResultSuccess or SDKResultError. */
@@ -1009,7 +1004,9 @@ export function transientRetryEnabled(ctx: LifecycleRetryContext): boolean {
   // YUK-1013 — a per-run binding pins routing exactly like ctx.override does;
   // retry stays off on pinned lanes (single-transient-layer principle).
   if (ctx.modelBinding?.provider || ctx.modelBinding?.model) return false;
-  if (hasGlobalProviderOverride()) return false;
+  // A global/default pin (env or lane.global.*) only chooses the routing
+  // target; it is not a retry switch. The two sync judges opt into this layer
+  // so a transient provider failure does not turn into a lost grading verdict.
   return true;
 }
 
