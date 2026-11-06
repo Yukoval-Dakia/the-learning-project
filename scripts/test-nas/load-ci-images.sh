@@ -17,6 +17,16 @@
 # falls back to rootfs diff_ids — identical on both stores. If neither
 # comparison can verify the image, this fails loudly.
 #
+# The artifact zip is downloaded with aria2c straight into
+# <dest>/artifact-<run-id>.zip (multi-connection, resumable): the blob host
+# caps a single connection near 38 KB/s on this network, so gh run download
+# takes hours for a 1.2 GB artifact and spills into the internal-disk temp
+# directory. The signed URL is fetched from the API without following the
+# redirect, never printed, and handed to aria2c only through an owner-only
+# input file removed on exit; the gh token lives in process env only. Signed
+# URLs expire mid-download as a normal case: rc=22 / leftover .aria2 control
+# file triggers a fresh-URL resume for a bounded number of attempts.
+#
 # Only `docker load` and read-only `docker image inspect` run on the NAS.
 # Nothing is stopped, started, restarted, or deleted. Works under sh, bash,
 # and zsh invocation. Every remote command gets stdin from /dev/null (-n)
@@ -39,7 +49,9 @@ NAS_KEY=$HOME/.ssh/tlp_nas_ed25519
 NAS_STOP=/volume1/docker/tlp-test/_load/MEMORY_STOP
 ART_PREFIX=tlp-test-images-
 
-need gh; need ssh; need ssh-keygen; need find; need python3
+need gh; need ssh; need ssh-keygen; need find; need python3; need curl; need unzip
+command -v aria2c >/dev/null 2>&1 \
+  || die "aria2c is required for the multi-connection artifact download (brew install aria2)"
 case $RUN_ID in
   (*[!0-9]*|'') die "run-id must be numeric, got [$RUN_ID]";;
 esac
@@ -93,17 +105,77 @@ wrepo=$(printf '%s' "$prov" | cut -f5)
   || die "run ${RUN_ID} concluded '${concl}', not success — refusing its artifact"
 
 note "listing artifacts of run ${RUN_ID} in ${REPO}"
-names=$(gh api "repos/${REPO}/actions/runs/${RUN_ID}/artifacts" \
-        --jq '.artifacts[].name') || die "could not list artifacts for run ${RUN_ID}"
-count=$(printf '%s\n' "$names" | grep -c "^${ART_PREFIX}" || true)
+arts=$(gh api "repos/${REPO}/actions/runs/${RUN_ID}/artifacts" \
+       --jq '.artifacts[] | [.name, .id] | @tsv') \
+  || die "could not list artifacts for run ${RUN_ID}"
+count=$(printf '%s\n' "$arts" | grep -c "^${ART_PREFIX}" || true)
 [ "$count" = 1 ] || die "expected exactly 1 ${ART_PREFIX}* artifact, found ${count}"
-art=$(printf '%s\n' "$names" | grep "^${ART_PREFIX}")
+art=$(printf '%s\n' "$arts" | grep "^${ART_PREFIX}" | cut -f1)
+art_id=$(printf '%s\n' "$arts" | grep "^${ART_PREFIX}" | cut -f2)
+[ -n "$art_id" ] || die "artifact '${art}' has no id in API response"
 
 DL=$DEST/artifact-${RUN_ID}
+ZIP=$DEST/artifact-${RUN_ID}.zip
 mkdir -p "$DL"
-note "downloading artifact '${art}' into ${DL}"
-gh run download "$RUN_ID" --repo "$REPO" --name "$art" --dir "$DL" \
-  || die "artifact download failed"
+
+# Owner-only carrier for the signed URL — neither URL nor token ever lands
+# in argv, and the file is removed on exit. VERIFY is the manifest scratch.
+URLFILE=$(mktemp "$DEST/.tlp-ci-uri.XXXXXX") || die "mktemp failed"
+VERIFY=$(mktemp "${TMPDIR:-/tmp}/tlp-ci-manifest.XXXXXX") || die "mktemp failed"
+trap 'rm -f "$VERIFY" "$VERIFY".targets "$URLFILE"' EXIT
+trap 'exit 1' HUP INT TERM
+
+# Redirect URL only, never followed: gh api follows it, so curl asks for the
+# 302 itself. The token reaches curl through env + --variable, not argv.
+signed_url() {
+  tok=$(gh auth token) || return 1
+  GHA_TOK=$tok curl -sS -o /dev/null --variable %GHA_TOK \
+    --expand-header "Authorization: Bearer {{GHA_TOK}}" \
+    -w '%{redirect_url}' \
+    "https://api.github.com/repos/${REPO}/actions/artifacts/${art_id}/zip" 2>/dev/null
+}
+
+if [ -f "$ZIP" ] && [ ! -f "$ZIP.aria2" ] && unzip -tq "$ZIP" 2>/dev/null; then
+  note "reusing existing ${ZIP} (integrity ok)"
+else
+  if [ -f "$ZIP" ] && [ ! -f "$ZIP.aria2" ] && ! unzip -tq "$ZIP" 2>/dev/null; then
+    note "existing ${ZIP} failed integrity check — re-downloading"
+    rm -f "$ZIP"
+  fi
+  note "downloading artifact '${art}' (id ${art_id}) to ${ZIP} (16 connections)"
+  attempt=0; MAX_ATTEMPTS=4
+  while :; do
+    attempt=$((attempt+1))
+    u=$(signed_url) || die "could not obtain a download URL for artifact ${art_id}"
+    [ -n "$u" ] || die "artifact zip request returned no redirect URL"
+    # aria2 input file: the indented out= pins the local name — the server
+    # sends Content-Disposition and -o alone is ignored in this input form.
+    { printf '%s\n' "$u"; printf '  out=%s\n' "artifact-${RUN_ID}.zip"; } > "$URLFILE"
+    aria2c --console-log-level=warn --download-result=hide --summary-interval=0 \
+      -x16 -s16 -k1M -c --file-allocation=none \
+      --retry-wait=5 --max-tries=3 --timeout=60 --connect-timeout=30 \
+      --auto-file-renaming=false --allow-overwrite=true \
+      -d "$DEST" -i "$URLFILE" \
+      && arc=0 || arc=$?
+    # Complete = exit 0 AND no .aria2 control file left. rc=22 (or any
+    # non-zero with a control file) means resume with a fresh URL.
+    if [ ! -f "${ZIP}.aria2" ]; then
+      [ "$arc" = 0 ] && break
+      [ "$attempt" -ge "$MAX_ATTEMPTS" ] \
+        && die "artifact download failed (aria2c exit ${arc})"
+      note "aria2c exited ${arc} without resume data — retrying with a fresh URL"
+    else
+      [ "$attempt" -ge "$MAX_ATTEMPTS" ] \
+        && die "artifact download incomplete after ${MAX_ATTEMPTS} attempts"
+      note "download interrupted (aria2c exit ${arc}) — fetching a fresh URL and resuming"
+    fi
+  done
+  unzip -tq "$ZIP" 2>/dev/null \
+    || die "downloaded zip failed integrity test — nothing reaches the NAS"
+fi
+
+note "extracting artifact into ${DL}"
+unzip -qo "$ZIP" -d "$DL" || die "could not extract ${ZIP}"
 
 # ---------- locate + verify archive -------------------------------------
 # Files are located by name anywhere under the download dir — artifact
@@ -139,9 +211,6 @@ ARCHIVE_SHA=$actual_sha
 note "archive sha256 verified: ${ARCHIVE_SHA}"
 
 # ---------- verify manifest commit --------------------------------------
-VERIFY=$(mktemp "${TMPDIR:-/tmp}/tlp-ci-manifest.XXXXXX") || die "mktemp failed"
-trap 'rm -f "$VERIFY" "$VERIFY".targets' EXIT
-trap 'exit 1' HUP INT TERM
 python3 - "$MANIFEST" >"$VERIFY" <<'PY' || die "could not parse manifest.json"
 import json, sys
 m = json.load(open(sys.argv[1]))
