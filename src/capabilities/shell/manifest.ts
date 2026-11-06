@@ -1,9 +1,10 @@
 import { z } from 'zod';
-import { ProposalDecisionInput } from '@/core/schema/proposal';
+import { ProposalBatchRetractInput, ProposalDecisionInput } from '@/core/schema/proposal';
 import { API_ERROR_RESPONSES, ApiIdParamsSchema } from '@/kernel/http-contracts';
 import { defineCapability } from '@/kernel/manifest';
 import { uiPagesFor } from '@/kernel/ui-surfaces';
 import {
+  AutoAppliedBatchRetractResponseSchema,
   AutoAppliedProposalDigestSchema,
   OvernightDigestResponseSchema,
   PrepDeskConjecturesResponseSchema,
@@ -61,9 +62,28 @@ export const shellCapability = defineCapability({
         method: 'GET',
         path: '/api/proposals/auto-applied',
         operationId: 'getAutoAppliedProposals',
+        request: {
+          query: z.object({
+            from: z.string().optional(),
+            to: z.string().optional(),
+          }),
+        },
         responses: { 200: AutoAppliedProposalDigestSchema, ...API_ERROR_RESPONSES },
         successStatus: 200,
         load: () => import('./api/proposals-auto-applied').then((m) => m.GET),
+      },
+      {
+        method: 'POST',
+        path: '/api/proposals/auto-applied/retract',
+        operationId: 'batchRetractAutoAppliedProposals',
+        request: { body: ProposalBatchRetractInput },
+        responses: {
+          200: AutoAppliedBatchRetractResponseSchema,
+          ...API_ERROR_RESPONSES,
+        },
+        successStatus: 200,
+        // The retraction lane lives in the server composition root (one canonical
+        // retract path); the shell manifest only owns the wire contract.
       },
       {
         method: 'POST',
