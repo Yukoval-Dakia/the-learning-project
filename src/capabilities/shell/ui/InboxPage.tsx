@@ -50,6 +50,7 @@ import {
   getNextDecisionPageParam,
   kindMeta,
   mergeProposalPages,
+  reasonWithoutIds,
 } from './inbox-api';
 import { inboxTone, kindIcon } from './inbox-look';
 import {
@@ -222,7 +223,7 @@ function BreakerMeter({ breaker }: { breaker: VerdictBreakerWire }) {
           </>
         ) : (
           <>
-            <b>自动通道正常。</b>auto-apply 在阈值内，安全可逆的小操作不占你的裁决队列。
+            <b>自动处理正常。</b>没到上限，安全可撤的小操作不占你的裁决队列。
           </>
         )}
         <div className="ib-breaker-meter">
@@ -268,9 +269,12 @@ function AutoAppliedCard({
           </span>
           <span className="ib-aa-title">{row.title}</span>
         </div>
-        <p className="ib-aa-text">{row.summary || '自动处理了这条提议。'}</p>
+        <p className="ib-aa-text">
+          {reasonWithoutIds(row.summary ?? '') || '自动处理了这条提议。'}
+        </p>
         {trace && (
           <div id={traceId} className="ib-aa-trace">
+            {row.summary ? <p className="ib-aa-trace-full">{row.summary}</p> : null}
             来自 <b>{meta.label}</b>
             <br />
             静态可逆性兜底 · 非 confidence 判定（apply 档位 {row.level}）

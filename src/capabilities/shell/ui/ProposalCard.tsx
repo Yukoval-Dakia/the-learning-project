@@ -48,6 +48,7 @@ import {
   isAcceptSupported,
   isBlockMergeStale,
   kindMeta,
+  reasonWithoutIds,
   splitReasonIds,
 } from './inbox-api';
 import { inboxTone, kindIcon } from './inbox-look';
@@ -450,12 +451,10 @@ export function ProposalCard({ p, resolved, navigate, onResolve, onError }: Prop
   const ownSummary = p.payload.learner_summary ? p.presentation?.learner_summary : undefined;
   const legacySegments = splitReasonIds(p.presentation?.learner_summary ?? p.payload.reason_md);
   // The first thing read holds no ids: a known block keeps its name, anything else waits in the fold.
-  const legacyBody = legacySegments
-    .map((seg) => (seg.raw ? (mergeBlockLabelById.get(seg.text) ?? '') : seg.text))
-    .join('')
-    .replace(/[ \t]{2,}/g, ' ')
-    .replace(/[ \t]+(?=[（）「」，。；：、])/g, '')
-    .trim();
+  const legacyBody = reasonWithoutIds(
+    p.presentation?.learner_summary ?? p.payload.reason_md,
+    (id) => mergeBlockLabelById.get(id),
+  );
   const reasonFolded =
     Boolean(ownSummary) ||
     legacyBody.length > LEGACY_BODY_MAX ||

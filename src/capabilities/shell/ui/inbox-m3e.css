@@ -417,8 +417,17 @@
   }
 
   & .ib-aa-text {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+    overflow: hidden;
     color: var(--un-text-3);
     font-size: var(--un-fs-1);
+  }
+
+  & .ib-aa-trace-full {
+    margin: 0 0 var(--un-sp-2);
+    white-space: pre-line;
   }
 
   & .ib-aa-trace {
