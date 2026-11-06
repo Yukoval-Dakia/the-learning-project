@@ -34,8 +34,12 @@ import {
 } from '@/core/schema/proposal';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
-import { HostOperationNotInstalledError, installHostOperation, installedHostOperation } from '@/kernel/host-operation';
 import { writeEvent } from '@/kernel/events';
+import {
+  HostOperationNotInstalledError,
+  installHostOperation,
+  installedHostOperation,
+} from '@/kernel/host-operation';
 import { findExistingRateEvent } from './applier-helpers';
 import {
   type VerdictBreakerResult,
@@ -120,7 +124,7 @@ interface CandidateRow {
 
 interface MissingAnchorRow extends CandidateRow {
   readonly rateActorRef: string | null;
-  readonly rateCreatedAt: Date | null;
+  readonly rateCreatedAt: Date | string | null;
 }
 
 function proposalFromPayload(payload: unknown): AiProposalPayloadT | null {
@@ -278,9 +282,7 @@ async function loadMissingAnchors(db: Db, now: Date, limit: number, lookbackMs: 
       rateActorRef: sql<
         string | null
       >`(select rate_row.actor_ref from event rate_row where rate_row.action = 'rate' and rate_row.actor_kind = 'agent' and rate_row.payload ->> 'rating' = 'accept' and rate_row.caused_by_event_id = "event"."id" order by rate_row.created_at desc, rate_row.id desc limit 1)`,
-      rateCreatedAt: sql<
-        Date | null
-      >`(select rate_row.created_at from event rate_row where rate_row.action = 'rate' and rate_row.actor_kind = 'agent' and rate_row.payload ->> 'rating' = 'accept' and rate_row.caused_by_event_id = "event"."id" order by rate_row.created_at desc, rate_row.id desc limit 1)`,
+      rateCreatedAt: sql<Date | null>`(select rate_row.created_at from event rate_row where rate_row.action = 'rate' and rate_row.actor_kind = 'agent' and rate_row.payload ->> 'rating' = 'accept' and rate_row.caused_by_event_id = "event"."id" order by rate_row.created_at desc, rate_row.id desc limit 1)`,
     })
     .from(event)
     .where(
@@ -315,7 +317,14 @@ async function backfillMissingAnchors(
       continue;
     }
     const rateActorRef = row.rateActorRef?.trim() ?? '';
-    if (rateActorRef.length === 0 || !row.rateCreatedAt) continue;
+    const rateCreatedAt = row.rateCreatedAt;
+    const appliedAt =
+      rateCreatedAt instanceof Date
+        ? rateCreatedAt
+        : rateCreatedAt
+          ? new Date(rateCreatedAt)
+          : null;
+    if (rateActorRef.length === 0 || !appliedAt || Number.isNaN(appliedAt.getTime())) continue;
     try {
       await writeAppliedAnchor(db, {
         proposalId: row.id,
@@ -327,7 +336,7 @@ async function backfillMissingAnchors(
         // The card's applied_at is the anchor's created_at. Backfill at the
         // original decision time so an expired undo window stays expired instead
         // of reopening an old proposal over newer learner edits.
-        appliedAt: row.rateCreatedAt,
+        appliedAt,
       });
       written += 1;
     } catch (err) {
