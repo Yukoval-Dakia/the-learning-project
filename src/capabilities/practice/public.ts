@@ -173,3 +173,5 @@ export {
   abandonOrphanReviewSession,
   selectOrphanReviewCandidates,
 } from './session/public';
+
+export { submitCopilotAuthoredDraft } from './supply/public';

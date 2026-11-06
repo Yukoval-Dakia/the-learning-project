@@ -1,30 +1,4 @@
-// YUK-1468 — `submit_question` DomainTool（统一题目提交闸）。
-//
-// 泛化自 YUK-986 `store_sourced_question`：同一入库闸现在接两类输入：
-//
-//   A) 统一草稿提交：`draft_ref`（qdraft1:<block>:<version>）—— v2 草稿文档
-//      （或经入口适配的 legacy StructuredQuestion 块）→ 契约四层 →
-//      publishQuestionGroup（唯一 revision writer）。编辑已发布题时组 =
-//      doc.base.question_id / block.imported_question_id，新 revision 叠加在
-//      原组上；发布前绝不先覆盖已发布投影。
-//      来源：generated / adapted / owner_material / photo_ingest /
-//      jyeoo_fetch / sourcing_web / manual —— 非 fetch 来源用
-//      canonicalQuestionContentHash（prompt/reference/choices/rubric）做可复现
-//      指纹，不含 source 与知识点，绝不伪造 extraction_hash。
-//
-//   B) 供给候选提交：`candidate`（jyeoo_fetch / sourcing_web 产出）—— 原有
-//      提交链逐字保留：KC 活体 → foreign-host → exact-dup → near-dup →
-//      insertSourcedDraft + 同事务 publish + source_verify outbox。
-//
-// 响应统一为 admitted / withheld / conflict / pending + 逐 unit 原因：
-//   - withheld：发布了但未准入（verify lane 待跑），或草稿有未决项未发布；
-//   - pending：异步 op（source_verify 派发）挂起；
-//   - conflict：CAS / 去重 claim / request_id 复用；
-//   - admitted：判分准入决定的 admitted 分支。提交本身没有裁决，不把新题
-//     标成 admitted；question_admission_run 在双解通过后用同一决定标 admitted。
-//
-// 幂等：request_id 必填；同 id 同内容返回同回执，同 id 不同内容冲突拒绝。
-
+// All question sources share declaration, publication, deduplication and admission.
 import { createHash } from 'node:crypto';
 import { createId } from '@paralleldrive/cuid2';
 import { and, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
@@ -46,6 +20,7 @@ import { knowledge, question, source_asset } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { lockQuestionSubmitRequest } from '@/kernel/locks/question-supply';
 import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
+import { draftCanonicalIdentity } from '@/kernel/records/question-draft-contract';
 import type { PlacementVerificationAuthority } from '@/kernel/supply-contracts';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 import {
@@ -62,6 +37,7 @@ import {
 } from '@/server/questions/submit-question';
 import {
   type VerifyRecoveryMark,
+  canonicalQuestionContentHash,
   dispatchPendingVerifyIntents,
   embedQuestionTextForIngest,
   mergeExactQuestionDuplicateKnowledgeIds,
@@ -878,19 +854,6 @@ async function runCandidateSubmit(
   };
 }
 
-// ── YUK-1568 S3：已声明候选 → 统一草稿链（producer→candidate→draft→submit→revision） ──
-//
-// 携带 parts/units 声明的候选不再经 insertSourcedDraft flat insert +
-// publishQuestionGroupFromRow，而是：
-//   candidate.question.parts → v2 草稿文档 → saveDraftEdit（草稿创建）
-//   → submitDraftQuestion（单一发布 seam；同一事务铸 revision + 写行 +
-//     durable source_verify intent）。
-// KC 活体 / host / exact hash / source-URL / near-dup / vector 判重在
-// runCandidateSubmit 里与旧路径同序位先跑；本函数只管声明文档的建存与提交。
-// 首发事务：caller claim → bind/save → root+真实子行 → typed publish →
-// verify intent + 域/候选回执，一次 commit；之后才 drain。向量输入戳和可观测
-// canary 在 commit 后 best-effort；失败不重放已提交的业务。
-
 /** 声明 → v2 草稿文档。内容文本过 ingest markup 清洗（与旧 flat 入库同口径；
  *  确定性、不改语义）；答案键（accepted/equivalent_forms）同口径清洗——旧
  *  flat 路径的 reference_md 本就经此清洗后才作判分输入。producer 声明的
@@ -983,13 +946,6 @@ interface DeclaredCandidateRun {
   now: Date;
 }
 
-/**
- * 已声明候选的 typed commit。来源核验走共享 seam 的 durable intent（source
- * 声明在文档里 kind=jyeoo_fetch/sourcing_web → submit 内嵌写
- * verify_dispatch_intent + 提交后 dispatch）；web_sourced provenance、flat
- * dedup 指纹、路由 created_by/difficulty 经 `sourced` 系统注入与发布同事务
- * 落行——source_verify 的确定性来源核对依赖 web_sourced.extract。
- */
 function declaredCandidateOutcome(
   outcome: DeclaredGroupDomainOutcome,
   requestId: string,
@@ -1496,3 +1452,47 @@ export const submitQuestionTool: DomainTool<ExecInput, Output> = {
     return `submit_question ${target} → ${output.status}`;
   },
 };
+
+/** Conversation lineage stays on the submit receipt; author keys never grant admission. */
+export async function submitCopilotAuthoredDraft(
+  doc: QuestionDraftDocumentT,
+  init: { question_kind: string; difficulty?: number },
+  deps: {
+    db: Db;
+    actorRef: string;
+    taskRunId: string;
+    sessionId?: string;
+    causedByEventId?: string;
+  },
+) {
+  const request = `author_question:${createHash('sha256').update(canonicalJson(doc)).digest('hex').slice(0, 24)}`;
+  return persistDeclaredQuestionGroup(deps.db, {
+    document: doc,
+    idNamespace: request,
+    saveRequestId: `${request}:save`,
+    submitRequestId: `${request}:submit`,
+    availability: 'general_pool',
+    sourced: {
+      canonical_content_hash: canonicalQuestionContentHash(draftCanonicalIdentity(doc)),
+      created_by: AgentRef.parse({
+        by: 'ai',
+        task_kind: 'author_question',
+        task_run_id: deps.taskRunId,
+      }),
+      ...(init.difficulty !== undefined ? { difficulty: init.difficulty } : {}),
+      metadata: {
+        teaching_draft: {
+          question_kind: init.question_kind,
+          chat_origin: { session_id: deps.sessionId, turn_id: deps.causedByEventId },
+        },
+      },
+    },
+    ctx: {
+      actorRef: deps.actorRef,
+      actorKind: 'agent',
+      sessionId: deps.sessionId ?? null,
+      taskRunId: deps.taskRunId,
+      causedByEventId: deps.causedByEventId ?? null,
+    },
+  });
+}

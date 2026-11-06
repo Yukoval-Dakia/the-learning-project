@@ -188,8 +188,23 @@ export function piToolErrorText(error: unknown): string {
 }
 
 function proposalDisclosure(trace: readonly TraceEntry[]): string | undefined {
+  const bankLinks = [
+    ...new Set(
+      trace.flatMap((entry) => {
+        const out = isRecord(entry.domain_output) ? entry.domain_output : undefined;
+        return entry.status === 'succeeded' &&
+          out?.seed_mode === 'teaching_draft' &&
+          out.status === 'submitted' &&
+          typeof out.bank_path === 'string'
+          ? [
+              `题已存入[题库](${out.bank_path})，自动检查通过后才能作答；当前状态和原因可在题库查看。`,
+            ]
+          : [];
+      }),
+    ),
+  ];
   const proposals = trace.filter((entry) => entry.proposal_effect_contract !== undefined);
-  if (proposals.length === 0) return undefined;
+  if (proposals.length === 0) return bankLinks.length ? bankLinks.join('\n') : undefined;
   const retainedDrafts = proposals.filter(
     (entry) => entry.proposal_effect_contract?.retained_draft,
   ).length;
@@ -214,6 +229,7 @@ function proposalDisclosure(trace: readonly TraceEntry[]): string | undefined {
       : []),
     ...(retainedDrafts > 0 ? ['生成的草稿已经保存；暂不采纳建议也不会删除草稿。'] : []),
     '<!--copilot-proposal-disclosure:end-->',
+    ...bankLinks,
   ].join('\n');
 }
 

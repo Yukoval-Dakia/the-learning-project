@@ -32,7 +32,7 @@ export function createGenerateQuestionCandidateExecutor(
   return async (ctx: ToolContext, input: unknown): Promise<GenerateQuestionCandidateOutput> => {
     const intent = GenerateQuestionCandidateInputSchema.parse(input);
     const prepared = await dependencies.prepare(ctx, intent);
-    const result = await dependencies.bindRunner(
+    const runTask = dependencies.bindRunner(
       {
         signal: ctx.signal,
         parentTaskRunId: ctx.taskRunId,
@@ -41,7 +41,8 @@ export function createGenerateQuestionCandidateExecutor(
           : {}),
       },
       ctx.db,
-    )('QuestionAuthorTask', prepared.input, prepared.ctx);
+    );
+    const result = await runTask('QuestionAuthorTask', prepared.input, prepared.ctx);
 
     const draft = parseQuestionAuthorOutput(result.text);
     const allowedIds = new Set(prepared.input.knowledge_context.map((node) => node.id));
@@ -69,7 +70,7 @@ const executeGenerateQuestionCandidate = createGenerateQuestionCandidateExecutor
 
 /**
  * Returns a one-shot question candidate only; author_question remains the distinct
- * retained draft/proposal surface.
+ * conversation draft submission surface.
  */
 export const generateQuestionCandidateTool: DomainTool<
   GenerateQuestionCandidateInput,
@@ -77,7 +78,7 @@ export const generateQuestionCandidateTool: DomainTool<
 > = {
   name: 'generate_question_candidate',
   description:
-    'Generate one question candidate from a validated knowledge or material intent. It validates and normalizes the owner preparation, then returns audited generation output only; it never creates a draft or proposal. Use author_question when a retained draft/proposal is intended.',
+    'Generate one question candidate from a validated knowledge or material intent. It validates and normalizes the owner preparation, then returns audited generation output only; it never creates a draft or proposal. Use author_question to submit a conversation draft to the bank.',
   effect: 'read',
   inputSchema: GenerateQuestionCandidateInputSchema,
   outputSchema: GenerateQuestionCandidateOutputSchema,

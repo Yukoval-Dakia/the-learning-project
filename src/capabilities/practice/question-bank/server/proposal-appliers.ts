@@ -353,8 +353,7 @@ export async function acceptVariantQuestionProposal(
 
 /**
  * question_draft accept. The draft question row
- * was INSERTed at propose time (runQuestionAuthor, same tx as the proposal —
- * 决定4); accept PROMOTES it: draft_status='draft' → 'active' + per-knowledge
+ * was inserted in the proposal transaction; accept promotes it: draft_status='draft' → 'active' + per-knowledge
  * FSRS enroll-if-absent (copied from the quiz_verify promotion path, the one
  * other place a draft enters the pool) + the rate event, all in the kernel
  * decision transaction. Idempotency keys on caused_by_event_id = proposalId
