@@ -50,7 +50,7 @@ jobs:
         run: |
           set -euo pipefail
           sha="$(git rev-parse HEAD)"
-          echo "commit=${sha}" >> "$GITHUB_OUTPUT"
+          echo "sha=${sha}" >> "$GITHUB_OUTPUT"
           echo "building commit ${sha}"
 
       # The three images plus the buildkit cache and the save archive add up to
@@ -358,6 +358,7 @@ jobs:
         if: always()
         run: |
           set -uo pipefail
+          mkdir -p artifact
           cp timings.tsv artifact/ 2>/dev/null || true
           for f in build-*.log image-content-check.txt env-*.txt history-*.txt \
                    worker-config.txt worker-config-vs-main.diff; do
