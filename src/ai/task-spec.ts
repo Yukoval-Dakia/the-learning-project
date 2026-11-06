@@ -67,6 +67,24 @@ export type TaskContextDeclaration =
   | { readonly view: ContextViewName }
   | { readonly view: 'none'; readonly reason: string };
 
+/**
+ * YUK-1904 — per-unit structured submit. The model submits ONE unit per submit
+ * call; the submit loop accepts units individually, seals a unit on its third
+ * identical shape error, and assembles the full output in expectedUnitIds order
+ * only when every expected unit was accepted. Injection stays shape/field-only:
+ * validators return authored field diagnostics, never values or judgments.
+ */
+export interface StructuredSubmitUnitPlan {
+  /** Expected unit ids in input order; assembly order is exactly this order. */
+  readonly expectedUnitIds: readonly string[];
+  /** Reads the submitted unit and its id off submit arguments (pre- or post-parse). */
+  readonly unitOf: (submitted: unknown) => { id: unknown; unit: unknown };
+  /** Wraps the schema-parsed submit arguments (expectedUnitIds order) into the full output. */
+  readonly assemble: (units: readonly unknown[]) => unknown;
+  /** Field-level checks for one parsed submit; unit coverage is owned by the submit loop. */
+  readonly validateUnit?: (submitted: unknown, input: unknown) => readonly string[];
+}
+
 /** Runtime-neutral task definition projected into the central registry. */
 export interface TaskDefinition {
   readonly kind: string;
@@ -102,10 +120,10 @@ export interface TaskDefinition {
   readonly structuredOutputSchema?: ZodTypeAny;
   /** Submit schema-constrained tool arguments, correcting failures within one run. */
   readonly structuredOutputMode?: 'tool';
-  /** Shape/coverage only. Return authored field diagnostics, never values or judgments. */
   /** Input mode may narrow the wire schema; it must not depend on answer evidence. */
   readonly structuredSubmitSchema?: (input: unknown) => ZodTypeAny;
-  readonly validateStructuredSubmit?: (output: unknown, input: unknown) => readonly string[];
+  /** YUK-1904 — declare a unit plan to submit one unit per submit call. */
+  readonly structuredSubmitUnits?: (input: unknown) => StructuredSubmitUnitPlan | undefined;
 }
 
 export const DEFAULT_TASK_BUDGET: TaskBudget = {
