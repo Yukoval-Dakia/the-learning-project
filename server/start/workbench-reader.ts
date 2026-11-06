@@ -36,11 +36,6 @@ export const readStartTaskFailureAlerts = () =>
     const { loadTaskFailureAlerts } = await import('@/capabilities/observability/public');
     return loadTaskFailureAlerts(db);
   });
-export const readStartProposalInbox = (input: unknown) =>
-  withStartDb(async (db) => {
-    const { readProposalInbox } = await import('@/capabilities/shell/public');
-    return readProposalInbox(db, input);
-  });
 export const readStartAutoApplied = () =>
   withStartDb(async (db) => {
     const { getAutoAppliedDigest } = await import('@/capabilities/shell/public');

@@ -101,6 +101,7 @@ const server = {
   POSTGRES_USER: optionalString,
   PROFILE_CRITIC_OK: optionalString,
   PROJECTION_IS_WRITER_ITEM_CALIBRATION: optionalString,
+  PROPOSAL_AUTO_APPLY_ENABLED: optionalString,
   QUESTION_SUPPLY_REFILL_ENABLED: optionalString,
   R2_ACCESS_KEY_ID: optionalString,
   R2_BUCKET: optionalString,

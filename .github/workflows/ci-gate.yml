@@ -139,6 +139,7 @@ jobs:
           pnpm audit:api-contracts
           pnpm audit:api-client
           pnpm audit:tool-params
+          pnpm audit:copilot-prompt-budget
 
   audits_architecture:
     name: audits (architecture)
