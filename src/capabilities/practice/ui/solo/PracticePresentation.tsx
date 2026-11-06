@@ -439,6 +439,7 @@ export function PracticePresentation(props: PracticePresentationProps) {
                 if (submit.rating) void submit.commit({ withAppeal: false, rating: submit.rating });
               },
               !submit.committing && !advancing && !!submit.rating,
+              '先选一个复习安排',
             );
       // A verdict that could not be graded has no effective result to appeal: self-rate only.
       if (appeal.filed)
