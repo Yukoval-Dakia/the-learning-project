@@ -151,32 +151,6 @@ function parseText(text: string): unknown {
   }
 }
 
-function observationText(content: unknown): string {
-  if (typeof content === 'string') return content;
-  if (Array.isArray(content)) {
-    return content
-      .map((block) => (isRecord(block) && typeof block.text === 'string' ? block.text : ''))
-      .filter((part) => part.length > 0)
-      .join('\n');
-  }
-  return isRecord(content) && typeof content.text === 'string' ? content.text : '';
-}
-
-/**
- * A rejected tool call is not evidence of a query. Counting it would settle a
- * signature and close the loop before the model can correct the arguments.
- */
-function isArgumentValidationFailure(observation: Parameters<PiAfterToolCall>[0]): boolean {
-  if (!observation.isError) return false;
-  const text = observationText(observation.error ?? observation.output);
-  return (
-    text.includes('[tool_param_contract]') ||
-    text.includes('Tool input does not match the declared schema:') ||
-    text.startsWith('Validation failed for tool') ||
-    text.startsWith('Invalid arguments for tool')
-  );
-}
-
 function fingerprintOf(payload: unknown, normalizePending: boolean): string {
   const body = isRecord(payload) && 'output' in payload ? payload.output : payload;
   if (normalizePending && isRecord(body) && body.status === 'pending') {
@@ -381,7 +355,6 @@ export function createNoProgressLoop(policy?: {
 
   const afterToolCall: PiAfterToolCall = (observation) => {
     if (observation.interrupted) return undefined;
-    if (isArgumentValidationFailure(observation)) return undefined;
     const tool = domainToolName(observation.call.name);
     const payload = parsePayload(observation.isError ? observation.error : observation.output);
     const fingerprint = fingerprintOf(

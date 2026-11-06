@@ -20,6 +20,8 @@
 // (`splitReasonIds`) still de-emphasizes id-shaped tokens that reach a card, and
 // the schema cap keeps the line short.
 
+import { LEARNER_SUMMARY_MAX_CHARS } from '@/core/schema/proposal';
+
 export type LearnerSummaryViolationRule = 'opaque_id' | 'tool_or_field_name' | 'field_assignment';
 
 export interface LearnerSummaryViolation {
@@ -141,4 +143,15 @@ export function assertLearnerSummaryAllowed(value: string | undefined): void {
   if (value === undefined) return;
   const violations = findLearnerSummaryViolations(value);
   if (violations.length > 0) throw new LearnerSummaryRejectedError(violations);
+}
+
+/**
+ * Deterministic producer-side line: omit it instead of failing the proposal when
+ * the candidate trips the same gate the writer applies (or the schema cap). The
+ * card then falls back to the fixed per-kind sentence.
+ */
+export function learnerSummaryIfAllowed(candidate: string): string | undefined {
+  const value = candidate.trim();
+  if (value.length === 0 || value.length > LEARNER_SUMMARY_MAX_CHARS) return undefined;
+  return findLearnerSummaryViolations(value).length === 0 ? value : undefined;
 }

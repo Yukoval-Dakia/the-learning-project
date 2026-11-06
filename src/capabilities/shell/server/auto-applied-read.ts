@@ -14,6 +14,7 @@ import { and, desc, eq, gte, inArray, lte } from 'drizzle-orm';
 
 import type { Db, Tx } from '@/db/client';
 import { event, learning_item } from '@/db/schema';
+import { autoAppliedKindFallback } from '@/kernel/proposals/auto-applied-summary';
 import {
   type AutoAppliedUndoDecision,
   classifyAutoAppliedUndoBatch,
@@ -73,8 +74,6 @@ export interface AutoAppliedDigest {
     window: number;
   };
 }
-
-const COMPLETION_SUMMARY = '自动判定为完成并已记录';
 
 export async function getAutoAppliedDigest(
   db: DbLike,
@@ -201,10 +200,16 @@ function readTitle(row: {
   return row.title ?? row.subjectId;
 }
 
+const TRUSTED_SUMMARY_SOURCES: ReadonlySet<string> = new Set(['learner_summary', 'generated']);
+
 function readSummary(payload: unknown, kind: string): string {
   const summary = readString(payload, 'summary');
-  if (summary.length > 0) return summary;
-  return kind === 'completion' ? COMPLETION_SUMMARY : '';
+  const source = readString(payload, 'summary_source');
+  // Anchors written before the learner-copy split stored the sanitized reason_md
+  // here. Only a marked summary is trusted; legacy text falls back to the fixed
+  // per-kind line instead of surfacing internal metrics or ids.
+  if (summary.length > 0 && TRUSTED_SUMMARY_SOURCES.has(source)) return summary;
+  return autoAppliedKindFallback(kind);
 }
 
 // payload.level 只接受三档；非法/缺失落 'ok'。

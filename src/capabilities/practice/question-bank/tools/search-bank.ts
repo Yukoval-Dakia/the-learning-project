@@ -59,9 +59,43 @@ const SearchBankNewFormSchema = z
   })
   .strict();
 
-// Pi's existing tool bridge requires a top-level object. The runtime schema
-// keeps query optional for cursor-only resumes; the provider wire marks it
-// required for new searches, and the bridge ignores it on a cursor resume.
+// Pi's bridge needs an object root, so the wire document is one flat key set even
+// though the runtime has three forms (v1 new search, v2 new search, cursor). The
+// branch checks below name cross-form fields per key instead of one root-level
+// "Unrecognized keys" the model cannot map back to a form. The provider wire
+// separately marks query required for a new search; the bridge still accepts a
+// cursor-only resume, and ignores query if a required-wire resume carries it.
+const V1_ONLY_KEYS = [
+  'subject',
+  'kind',
+  'source',
+  'within_refs',
+  'knowledge_ids',
+  'knowledge_mode',
+  'difficulty',
+  'exclude_refs',
+  'similar_to',
+  'draft_state',
+  'admission_state',
+  'limit',
+] as const;
+const V2_ONLY_KEYS = [
+  'requirements',
+  'scope',
+  'use',
+  'need',
+  'anchors',
+  'supersedes_search_id',
+  'page_size',
+] as const;
+const v1OnlyKeys = new Set<string>(V1_ONLY_KEYS);
+const v2OnlyKeys = new Set<string>(V2_ONLY_KEYS);
+
+/** The v2 branch's own key set; v1-only keys are reported separately. */
+function v2FormOf(input: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(input).filter(([key]) => !v1OnlyKeys.has(key)));
+}
+
 export const SearchBankInputSchema = SearchBankNewFormSchema.extend({
   query: SearchBankNewFormSchema.shape.query.optional(),
   draft_state: z.enum(['all', 'active', 'draft']).optional(),
@@ -83,35 +117,45 @@ export const SearchBankInputSchema = SearchBankNewFormSchema.extend({
   supersedes_search_id: BankSearchV2NewSchema.shape.supersedes_search_id,
   page_size: z.number().int().min(1).max(50).optional(),
 }).superRefine((input, ctx) => {
+  const presentKeys = Object.keys(input);
   if (input.cursor !== undefined) {
-    if (Object.keys(input).some((key) => !['cursor', 'contract_version', 'query'].includes(key))) {
+    for (const key of presentKeys) {
+      if (key === 'cursor' || key === 'contract_version' || key === 'query') continue;
       ctx.addIssue({
         code: 'custom',
-        message: 'cursor must be supplied alone; changed conditions require a new search',
+        path: [key],
+        message:
+          'a cursor continuation carries the stored search unchanged; remove this field or start a new search',
       });
     }
-  } else if (input.contract_version === 2) {
-    const parsed = BankSearchV2NewSchema.safeParse(input);
+    return;
+  }
+  if (input.contract_version === 2) {
+    for (const key of presentKeys) {
+      if (!v1OnlyKeys.has(key)) continue;
+      ctx.addIssue({
+        code: 'custom',
+        path: [key],
+        message:
+          key === 'limit'
+            ? 'limit is a v1-only field; contract_version=2 pages with page_size'
+            : `${key} is a v1-only top-level field; contract_version=2 takes the same filter under scope.${key}`,
+      });
+    }
+    const parsed = BankSearchV2NewSchema.safeParse(v2FormOf(input));
     if (!parsed.success)
       for (const issue of parsed.error.issues)
         ctx.addIssue({ code: 'custom', path: issue.path, message: issue.message });
-  } else if (
-    Object.keys(input).some((key) =>
-      [
-        'requirements',
-        'scope',
-        'use',
-        'need',
-        'anchors',
-        'supersedes_search_id',
-        'page_size',
-      ].includes(key),
-    )
-  ) {
-    ctx.addIssue({
-      code: 'custom',
-      message: 'v2 fields require explicit contract_version=2; refusing legacy downgrade',
-    });
+    return;
+  }
+  const v2KeysPresent = presentKeys.filter((key) => v2OnlyKeys.has(key));
+  if (v2KeysPresent.length > 0) {
+    for (const key of v2KeysPresent)
+      ctx.addIssue({
+        code: 'custom',
+        path: [key],
+        message: `${key} is a v2 field and requires contract_version=2`,
+      });
   } else if (input.query === undefined) {
     ctx.addIssue({
       code: 'custom',

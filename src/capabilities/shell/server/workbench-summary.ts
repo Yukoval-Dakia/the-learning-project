@@ -13,6 +13,7 @@ import {
   source_asset,
   source_document,
 } from '@/db/schema';
+import { proposalAutoApplyEnabled } from '@/kernel/proposals/auto-apply-marker';
 import { listMistakeProjectionRows } from '@/kernel/read-models/mistake-projection';
 import { type ColdStartState, buildColdStartState } from './cold-start-state';
 import { type TodayProposalKpi, loadTodayProposalKpi } from './proposal-kpi';
@@ -52,6 +53,8 @@ export interface WorkbenchSummary {
   active_goal: { id: string; title: string } | null;
   active_sessions: WorkbenchSessionRow[];
   week_heat: WorkbenchHeatDay[];
+  // Resolved in the API process, where the config snapshot is hydrated.
+  auto_apply_enabled: boolean;
 }
 
 /** Practice owns the actionable review queue; the composition layer supplies its read. */
@@ -250,5 +253,6 @@ export async function loadWorkbenchSummary(
     active_goal: goalState.active,
     active_sessions: activeSessions,
     week_heat: weekHeat,
+    auto_apply_enabled: proposalAutoApplyEnabled(),
   };
 }

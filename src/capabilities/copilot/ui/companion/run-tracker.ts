@@ -19,13 +19,16 @@ import type { ActiveRun, CompanionCtx } from './companion-context';
 import type { RunSnapshot } from './companion-state';
 import { plainError } from './plain-errors';
 import { PICKUP_STALLED_COPY, isPickupStalled, isTerminal, progressStage } from './run-copy';
+import { addThinkingFrame, thinkingClosed, visibleThinking } from './thinking-lane';
 
 /** Replay-last-N window (matches the turns route default). */
 const REPLAY_LIMIT = 20;
 
 export interface RunTracker {
   /** Track an accepted run (from a 202) and attach its stream. */
-  trackAccepted: (run: Omit<ActiveRun, 'view' | 'stopPending' | 'cancelRequested'>) => void;
+  trackAccepted: (
+    run: Omit<ActiveRun, 'view' | 'stopPending' | 'cancelRequested' | 'thinking'>,
+  ) => void;
   detachSubscriptions: (sessionId?: string, notify?: boolean) => void;
   refetchTurns: () => Promise<boolean>;
   stopRun: (runId: string) => Promise<void>;
@@ -48,6 +51,13 @@ export function createRunTracker(ctx: CompanionCtx): RunTracker {
       ...(run.connectionLost ? { connectionLost: true } : {}),
     }));
     ctx.set({ runs: snapshots });
+  }
+
+  function publishThinking(run: ActiveRun) {
+    const text = visibleThinking(run.thinking, run.view);
+    const { thinkingByRun } = ctx.get();
+    if ((thinkingByRun[run.runId] ?? '') === text) return;
+    ctx.set({ thinkingByRun: { ...thinkingByRun, [run.runId]: text } });
   }
 
   /** A detached/background session may still settle; never project it into another conversation. */
@@ -108,8 +118,15 @@ export function createRunTracker(ctx: CompanionCtx): RunTracker {
         if (!current) return;
         current.view = view;
         applyRunView(current);
+        publishThinking(current);
         publishRuns();
         if (isTerminal(view)) ctx.sessions.revalidateAutomaticSelection();
+      },
+      onThinkingFrame: (frame) => {
+        const current = owns();
+        if (!current || thinkingClosed(current.view, current.cancelRequested)) return;
+        current.thinking = addThinkingFrame(current.thinking, frame);
+        publishThinking(current);
       },
     })
       .then((view) => {
@@ -141,12 +158,15 @@ export function createRunTracker(ctx: CompanionCtx): RunTracker {
       });
   }
 
-  function trackAccepted(accepted: Omit<ActiveRun, 'view' | 'stopPending' | 'cancelRequested'>) {
+  function trackAccepted(
+    accepted: Omit<ActiveRun, 'view' | 'stopPending' | 'cancelRequested' | 'thinking'>,
+  ) {
     const run: ActiveRun = runs.get(accepted.runId) ?? {
       ...accepted,
       view: createCopilotRunView(),
       stopPending: false,
       cancelRequested: false,
+      thinking: [],
     };
     run.location = accepted.location;
     run.userMessage = accepted.userMessage;
@@ -190,6 +210,7 @@ export function createRunTracker(ctx: CompanionCtx): RunTracker {
         view,
         stopPending: false,
         cancelRequested: item.status === 'cancel_requested',
+        thinking: [],
       });
     }
     // Drop runs the snapshot no longer lists, but only ones known when the read started.
@@ -198,6 +219,11 @@ export function createRunTracker(ctx: CompanionCtx): RunTracker {
         continue;
       run.controller?.abort();
       runs.delete(runId);
+      // It ended while nobody was listening, so whether its ending cleared the thoughts is unknown.
+      if (!isTerminal(run.view)) {
+        const { [runId]: _unknownEnding, ...kept } = ctx.get().thinkingByRun;
+        ctx.set({ thinkingByRun: kept });
+      }
     }
     const retained = new Set(activeIds);
     for (const run of runs.values()) {
