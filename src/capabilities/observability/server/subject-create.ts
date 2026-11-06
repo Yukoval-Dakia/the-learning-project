@@ -15,6 +15,7 @@ import { subject, subject_name_claim, subject_trait_binding } from '@/db/schema'
 import { hydrateSubjectRegistryFromDb } from '@/kernel/read-models/subject-hydration';
 import { isGeneralFallbackFor } from '@/kernel/read-models/subject-trait-resolutions';
 import { ensureSubjectRoot, subjectRootId } from '@/kernel/records/knowledge-node-birth';
+import type { SubjectCreateSource } from '@/kernel/subject-create';
 import { seedTraitId } from '@/subjects/builtin-trait-seeds';
 import { normalizeSubjectKey } from '@/subjects/profile';
 import { SUBJECT_TRAIT_KINDS } from '@/subjects/trait-schemas';
@@ -79,7 +80,11 @@ function replayPayload(row: {
   };
 }
 
-export async function thinCreateSubject(db: Db, rawDisplayName: string): Promise<ThinCreateResult> {
+export async function thinCreateSubject(
+  db: Db,
+  rawDisplayName: string,
+  source?: SubjectCreateSource,
+): Promise<ThinCreateResult> {
   const displayName = rawDisplayName.trim();
   const norm = normalizeSubjectKey(displayName);
   if (norm.length === 0) {
@@ -137,7 +142,7 @@ export async function thinCreateSubject(db: Db, rawDisplayName: string): Promise
         };
       }
 
-      // thin-create 是 owner 面，journal actor='owner'。
+      // thin-create 是 owner 面；author_question 触发的创建如实标 agent 并留来源。
       await insertSubjectRow(tx, {
         row: {
           id,
@@ -147,8 +152,17 @@ export async function thinCreateSubject(db: Db, rawDisplayName: string): Promise
           is_selectable: true,
           retired_at: null,
         },
-        actor: 'owner',
+        actor: source ? 'agent' : 'owner',
         now,
+        ...(source
+          ? {
+              detail: {
+                via: 'author_question',
+                ask_event_id: source.askEventId,
+                task_run_id: source.taskRunId,
+              },
+            }
+          : {}),
       });
       // canonical claim 用 id：claim 表是 id/alias 命名空间，保护 opaque id 不被
       // 他科抢作 alias；显示名唯一性由 custom 部分唯一索引 + 上面的写门承担。
@@ -184,7 +198,8 @@ export async function thinCreateSubject(db: Db, rawDisplayName: string): Promise
     throw err;
   }
 
-  // commit 后装配上架（回滚不会走到这里 → 不留内存幻影）。
+  // commit 后先回执，再装配上架：水合失败时调用方仍能如实报告已建的学科。
+  source?.onCommitted?.({ id, displayName, seedRootId: subjectRootId(id) });
   await hydrateSubjectRegistryFromDb(db);
   return {
     kind: 'created',
