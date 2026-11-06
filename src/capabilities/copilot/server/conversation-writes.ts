@@ -24,6 +24,7 @@ import {
   publicProseFailureMessage,
 } from '../public-prose-contract';
 import type { CopilotModeState, CopilotSkillContextT, CopilotSkillTurn } from './chat-contracts';
+import { stripCopilotInternalComments } from './prose-stream';
 import {
   publicProseFailureForReason,
   publicProseStatus,
@@ -266,7 +267,16 @@ export async function writeCopilotReply(
     : 'allow';
   const replyAt = new Date(params.now.getTime() + 1);
   const replyEventId = params.replyEventId ?? `copilot_reply_${createId()}`;
-  const thinkingClear = params.streamedDraft !== undefined && cleanedReply !== params.streamedDraft;
+  // YUK-1909 — only a replaced, actually streamed draft clears live thinking.
+  // Callers pass '' (not undefined) when nothing streamed, so blank counts as none.
+  // Append-only finalization keeps the prefix; block composition or truncation
+  // rewrites it. Compare after the same internal-comment stripping and trailing
+  // trim, otherwise an untouched draft looks replaced.
+  const streamedForComparison = stripCopilotInternalComments(params.streamedDraft ?? '').trimEnd();
+  const replyForComparison = stripCopilotInternalComments(cleanedReply).trimEnd();
+  const thinkingClear =
+    streamedForComparison.trim().length > 0 &&
+    !replyForComparison.startsWith(streamedForComparison);
   await write(db, {
     id: replyEventId,
     session_id: params.sessionId,
