@@ -304,6 +304,20 @@ export async function acquirePlacementAttempt(
       throw new PlacementStarterAdmissionError(`placement delivery is already ${existing.status}`);
     }
 
+    // The paid bound counts attempt ROWS claim-wide, not this job's deliveryNo — a re-driven
+    // claim dispatches under a fresh pg-boss job whose retryCount (hence delivery_no) restarts
+    // at 0/1, so a job-local count alone would reopen paid attempts past max_paid_attempts.
+    // Re-acquiring an interrupted row resumes the same logical delivery and is exempt.
+    if (!existing) {
+      const [attemptRows] = await tx
+        .select({ n: sql<number>`count(*)::int` })
+        .from(placement_starter_attempt)
+        .where(eq(placement_starter_attempt.claim_id, input.claimId));
+      if (Number(attemptRows?.n ?? 0) >= claim.max_paid_attempts) {
+        throw new PlacementStarterAdmissionError('placement claim paid attempts exhausted');
+      }
+    }
+
     const otherActive = await tx
       .select({
         id: placement_starter_attempt.id,
@@ -1204,16 +1218,16 @@ export async function finishPlacementAttempt(
       .update(placement_starter_attempt_question)
       .set({ verification_status: status === 'succeeded' ? 'satisfied' : 'superseded' })
       .where(eq(placement_starter_attempt_question.attempt_id, attempt.attemptId));
-    // Exhaustion (review): the pg-boss quiz_gen job has retryLimit=2 → exactly 3
-    // deliveries. When the FINAL (max_paid_attempts-th) delivery fails to satisfy, there is no
-    // further redelivery, so writing retry_scheduled here would zombie the claim non-terminal
-    // forever. Terminalize as 'exhausted' (owner-locked explicit terminal failure state) so
-    // placement stops waiting on a batch that will never arrive. Non-final failures stay
-    // retry_scheduled — acquirePlacementAttempt accepts that status and the pg-boss retry
-    // re-drives the next delivery. note: that pg-boss retry remains the ONLY re-driver of
-    // retry_scheduled; the recovery sweeper deliberately never re-dispatches this status (a second
-    // quiz_gen job would double-pay), it only REAPS a claim whose redelivery never arrived — so
-    // the eager terminalization above is still required, not superseded by the sweeper.
+    // Exhaustion is measured on attempt ROWS claim-wide, not this job's delivery_no: the paid
+    // bound is per claim and a re-driven claim can dispatch under a fresh job whose delivery
+    // count restarts. When the final paid attempt fails to satisfy there is no further
+    // re-drive, so writing retry_scheduled here would zombie the claim non-terminal forever.
+    // Terminalize as 'exhausted' (owner-locked explicit terminal failure state) so placement
+    // stops waiting on a batch that will never arrive. Non-final failures stay
+    // retry_scheduled — the next delivery re-acquires from there. The sweeper still never
+    // re-dispatches retry_scheduled itself (a second job could double-pay); it only REAPS a
+    // claim whose re-drive never arrived, so the eager terminalization above is required, not
+    // superseded by the sweeper.
     const [claimRow] = await tx
       .select({
         maxPaidAttempts: placement_starter_claim.max_paid_attempts,
@@ -1235,7 +1249,12 @@ export async function finishPlacementAttempt(
     ) {
       throw new PlacementStarterStaleAuthorityError('placement claim authority lost');
     }
-    const exhausted = status !== 'succeeded' && attempt.deliveryNo >= claimRow.maxPaidAttempts;
+    const [attemptRows] = await tx
+      .select({ n: sql<number>`count(*)::int` })
+      .from(placement_starter_attempt)
+      .where(eq(placement_starter_attempt.claim_id, attempt.claimId));
+    const exhausted =
+      status !== 'succeeded' && Number(attemptRows?.n ?? 0) >= claimRow.maxPaidAttempts;
     let claimUpdate: Partial<typeof placement_starter_claim.$inferInsert>;
     if (status === 'succeeded') {
       claimUpdate = { status: 'satisfied', satisfied_at: now, updated_at: now };

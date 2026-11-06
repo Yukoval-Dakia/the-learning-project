@@ -20,9 +20,6 @@ export const coachTaskSpec = {
     kind: 'CoachTask',
     description:
       'Wave 5 / T-D6 — Phase 3 Global Coach Orchestrator. Reads via the `coach` DomainTool allowlist and outputs a `TodayPlan` draft consumed by the coach_daily handler. Count, minutes, time box and subject mix are computed server-side; the model supplies daily_focus, knowledge focus, intent tags and proposals. All mutations are routed through propose_* tools (zero direct DB writes).',
-    defaultProvider: 'xiaomi',
-    // 纯文本推理，无 vision 需求；mimo-v2.5 (multimodal) 作为 fallback 保留。
-    defaultModel: 'mimo-v2.5-pro',
     budget: { ...DEFAULT_BUDGET, maxIterations: 12, timeout: 120_000 },
     needsToolCall: true,
     isMultimodal: false,

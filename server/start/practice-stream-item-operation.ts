@@ -17,7 +17,9 @@ export const updateStartPracticeStreamItem: FrontdoorContext['updatePracticeStre
       } catch {
         // Preserve the HTTP adapter's malformed-JSON input to the shared schema.
       }
-      const { updatePracticeStreamItem } = await import('@/capabilities/practice/public');
+      const { updatePracticeStreamItem } = await import(
+        '@/capabilities/practice/scheduling/public'
+      );
       const { db } = await import('@/db/client');
       return await updatePracticeStreamItem(db, id, raw);
     } catch (error) {

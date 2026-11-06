@@ -92,7 +92,7 @@ export async function createLoomPiModels() {
       const result: LoomPiModel[] = [];
       for (const { id: modelId, ...executable } of executablePiModels(lane)) {
         // pi 1.5 dropped builtin templates for ids overrides still admit
-        // (xiaomi/mimo-v2.5*, opencode-go legacy deepseek/grok): clone the wire
+        // (opencode-go legacy deepseek/grok): clone the wire
         // template from a same-provider sibling with the same api+thinkingFormat.
         let template = templates.find((model) => model.id === modelId);
         if (!template) {

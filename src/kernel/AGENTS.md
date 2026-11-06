@@ -6,7 +6,7 @@
 | 文件 | 职责 |
 |------|------|
 | `manifest.ts` | `CapabilityManifest` 接口、`defineCapability()`、`validateComposition()`；声明包名 / event actions / api routes / jobs / proposals / copilotTools / ui 的唯一归属 |
-| `host-operation.ts` + `records/conversation-confirmation-assessment.ts`、`records/review-answer-binding.ts`、`read-models/review-due.ts` | Practice 在启动时经 `installPracticeHostOperations()` 安装的宿主端口（Copilot 调用）；未安装即抛 `HostOperationNotInstalledError`，调用方不得把它当普通读失败降级 |
+| `host-operation.ts` + `records/conversation-confirmation-assessment.ts`、`records/review-answer-binding.ts`、`read-models/review-due.ts` | Practice 在启动时经 `installPracticeHostOperations()` 安装的宿主端口（Copilot 调用）；未安装即抛 `HostOperationNotInstalledError`，调用方不得把它当普通读失败降级。**端口槽是进程级**：所有 install 端口经 `installHostOperation`/`installedHostOperation` 存取共享注册表——同进程第二模块图（built Start bundle、Vite SSR）读到同一份安装，禁止回落到模块级 `let` |
 | `settlement-cascade-revert.ts` | 结算重放调用级联撤回的宿主端口：实现在 `src/server/revert/cascade-revert.ts`，API、worker、验收入口和跑结算的脚本在启动时经 `installSettlementCascadeRevert()` 安装，未安装时抛 `HostOperationNotInstalledError` |
 | `read-models/learner-context.ts`、`read-models/memory-brief.ts` | Agency 在启动时经 `installAgencyHostOperations()` 安装的宿主端口：前者是启动段装配（Copilot 调用），后者是 memory brief 读语义（行 + 用途现行 + freshness 的唯一口径，Copilot 今日摘要经它读）；未安装即抛 `HostOperationNotInstalledError`，契约同上 |
 | `config-completeness.ts` | 关键配置是否齐全：纯函数 `checkConfigCompleteness()`（只返回缺失的变量名，不含值）、事件 action `CONFIG_INCOMPLETE_EVENT_ACTION` 与 payload schema；`/api/ready` 缺配置时返回 503，API 与 worker 启动时按「进程 + UTC 日」各写一条事件，任务失败告警读它 |
@@ -28,7 +28,7 @@
 | `parse-task-output.ts` / `generation-prompt-support.ts` | TaskSpec 文本输出的 JSON 解析与 schema 校验；出题类 prompt 的题型词表与科目 rubric 规范段 |
 | `object-storage.ts` | 共享 R2/S3 对象 I/O：完整 client 接口、SDK 命令/响应适配与 lazy singleton；不拥有资产引用、数据库事务或付费策略 |
 | `http.ts` | 公共 HTTP helper（公共件，非契约） |
-| `judge.ts` / `placement.ts` / `placement-persistence.ts` | 根目录过渡门面：只 re-export 现有消费者实际使用的符号，不得新增符号。`judge.ts` 只剩 ingestion / agency 用到的 6 个判题入口 |
+| `judge.ts` / `placement-persistence.ts` | 根目录过渡门面：只 re-export 现有消费者实际使用的符号，不得新增符号。`judge.ts` 只剩 ingestion / agency 用到的 6 个判题入口 |
 
 ## CONVENTIONS
 - `JobHandlerFactory` 参数刻意用 `any`：kernel 不 import pg-boss 类型，让 capability 包的 `buildXHandler(db)` 工厂能零适配注册（注释已说明 variance escape hatch）。

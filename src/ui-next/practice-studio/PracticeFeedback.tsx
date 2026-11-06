@@ -1,4 +1,4 @@
-import { Check, CircleHelp, RotateCcw, X } from 'lucide-react';
+import { Check, CircleHelp, RotateCcw, Sparkles, X } from 'lucide-react';
 import type { PracticeIntents, PracticeRenderers, Revelation } from './contracts';
 import { IntentButton, NoticeBlock } from './controls';
 import { PracticeField } from './PracticeFields';
@@ -9,7 +9,7 @@ const verdicts = {
   incorrect: '再看一遍',
   unanswered: '尚未作答',
   review: '需要复核',
-  unknown: '结果尚不确定',
+  unknown: '待定',
 };
 export function PracticeFeedback({
   revelation: r,
@@ -20,37 +20,8 @@ export function PracticeFeedback({
   intents: PracticeIntents;
   renderers: PracticeRenderers;
 }) {
-  if (r.kind === 'concealed') {
-    if (!r.confidence) return r.reason ? <p className="un-st-secondary">{r.reason}</p> : null;
-    const c = r.confidence;
-    return (
-      <section className="un-st-confidence" aria-label="作答把握">
-        <h2>看反馈前，你有多大把握？</h2>
-        <p>按这次的感觉选择，也可以跳过。</p>
-        <fieldset className="un-st-confidence-scale" aria-label="把握从低到高">
-          {([1, 2, 3, 4, 5] as const).map((value) => (
-            <button
-              type="button"
-              key={value}
-              disabled={c.availability.kind !== 'enabled'}
-              aria-pressed={c.value === value}
-              onClick={() => intents.confidence(value)}
-            >
-              <strong>{value}</strong>
-              <span className="un-st-confidence-caption">
-                {value === 1 ? '没把握' : value === 3 ? '有些把握' : value === 5 ? '很有把握' : ' '}
-              </span>
-            </button>
-          ))}
-        </fieldset>
-        {c.availability.kind !== 'enabled' && <p>{c.availability.reason}</p>}
-        <div className="un-st-actions">
-          <IntentButton action={c.skip} intents={intents} />
-          {c.continue && <IntentButton action={c.continue} intents={intents} primary />}
-        </div>
-      </section>
-    );
-  }
+  if (r.kind === 'concealed')
+    return r.reason ? <p className="un-st-secondary">{r.reason}</p> : null;
   const result = r.result;
   const VerdictIcon =
     result?.verdict === 'correct' ? Check : result?.verdict === 'incorrect' ? X : CircleHelp;
@@ -62,10 +33,28 @@ export function PracticeFeedback({
             <VerdictIcon size={24} aria-hidden="true" />
             <div>
               <h2>{verdicts[result.verdict]}</h2>
-              <p>{result.summary}</p>
+              {result.summary && <p>{result.summary}</p>}
+              {result.aiGraded && (
+                <p className="un-st-ai-graded">
+                  <Sparkles size={14} aria-hidden="true" />
+                  这次有 AI 判的部分，还没和人工核对过，仅供参考。
+                </p>
+              )}
             </div>
           </header>
           {result.uncertainty && <p role="status">{result.uncertainty}</p>}
+        </>
+      )}
+      {r.appeal && (
+        <section className="un-st-appeal">
+          {r.appeal.field && (
+            <PracticeField field={r.appeal.field} intents={intents} renderers={renderers} />
+          )}
+          <NoticeBlock notice={r.appeal.notice} intents={intents} />
+        </section>
+      )}
+      {result && (
+        <>
           {result.parts.map((part) => (
             <section key={part.id}>
               <h3>
@@ -111,14 +100,6 @@ export function PracticeFeedback({
             <IntentButton key={action.id} action={action} intents={intents} />
           ))}
         </fieldset>
-      )}
-      {r.appeal && (
-        <section className="un-st-appeal">
-          <NoticeBlock notice={r.appeal.notice} intents={intents} />
-          {r.appeal.field && (
-            <PracticeField field={r.appeal.field} intents={intents} renderers={renderers} />
-          )}
-        </section>
       )}
     </section>
   );

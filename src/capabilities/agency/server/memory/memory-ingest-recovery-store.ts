@@ -7,6 +7,7 @@ import {
   readEventDerivationPolicy,
 } from '@/kernel/events/derivation-policy';
 import { lockMemoryIngestSource, lockMemoryOperatorRequest } from '@/kernel/locks/memory-locks';
+import { isLearnerAnswerAction } from './learner-evidence';
 import { providerOperationIdForInvocation } from './mem0-runtime';
 import {
   type MemoryIngestReplayGrant,
@@ -72,11 +73,17 @@ async function assertUserSource(db: Db | Tx, sourceId: string): Promise<void> {
       `operator replay requires an existing user event ${sourceId}`,
     );
   const rows = await db
-    .select({ actor: event.actor_kind, payload: event.payload })
+    .select({ actor: event.actor_kind, action: event.action, payload: event.payload })
     .from(event)
     .where(eq(event.id, sourceId))
     .limit(1);
-  if (rows[0]?.actor !== 'user' || !allowsDerivation(rows[0]?.payload))
+  // The same extraction judgment as the ingest handler gates replay: an answer
+  // event may never receive a grant that could push its text to the provider.
+  if (
+    rows[0]?.actor !== 'user' ||
+    !allowsDerivation(rows[0]?.payload) ||
+    isLearnerAnswerAction(rows[0]?.action ?? '')
+  )
     throw new MemoryReconcileHandoffError(
       `operator replay requires an existing user event ${sourceId}`,
     );

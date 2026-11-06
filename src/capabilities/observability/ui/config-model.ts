@@ -102,8 +102,11 @@ export interface ModelDraft {
   ownModel: boolean;
 }
 export function storedThinking(task: ConfigTask): string {
-  const level = task.override?.reasoning?.level;
-  return typeof level === 'string' ? level : '';
+  const reasoning = task.override?.reasoning;
+  // Same precedence as the runtime; a legacy stored 'none' means off there too.
+  const level = reasoning?.level ?? reasoning?.reasoning_effort;
+  if (typeof level !== 'string') return '';
+  return level === 'none' ? 'off' : level;
 }
 export function initialModelDraft(task: ConfigTask): ModelDraft {
   return {
@@ -148,6 +151,7 @@ export function modelChanges(task: ConfigTask, draft: ModelDraft): ConfigWrite['
 }
 const THINKING_WORDS: Readonly<Record<string, string>> = {
   off: '关闭',
+  none: '关闭',
   on: '开启',
   minimal: '最少',
   low: '低',
@@ -189,6 +193,12 @@ export function bindingThinking(binding: ConfigBinding | null): string | null {
   if (!reasoning) return null;
   if (reasoning.error) return reasoning.error;
   if (!reasoning.applied) return null;
+  // 'none' is no parameter on the wire: the model's own default, which may not be off.
+  if (reasoning.applied === 'none') {
+    return reasoning.requested
+      ? `思考由模型决定（选的是${thinkingWord(reasoning.requested)}，这个模型调不了）`
+      : '思考由模型决定';
+  }
   const applied = thinkingWord(reasoning.applied);
   return reasoning.requested && reasoning.requested !== reasoning.applied
     ? `思考 ${applied}（选的是${thinkingWord(reasoning.requested)}，这个模型取到${applied}）`
@@ -209,9 +219,23 @@ export function modelFactsLine(model: ConfigModel): string {
     price,
   ].join(' · ');
 }
+/**
+ * The levels a task can ask for, in the runtime's names (it refuses anything else). A toggle model
+ * lists off/on but takes any non-off level as on; a budget model lists nothing but takes the levels
+ * up to high. Off is always offered: the save receipt says if a model cannot express it.
+ */
 export function thinkingLevels(model: ConfigModel | undefined): string[] {
   const options = model?.reasoning_options;
-  return options && options.mode !== 'unknown' ? options.values : [];
+  if (!options || options.mode === 'unknown') return [];
+  if (options.mode === 'toggle') return ['off', 'high'];
+  if (options.mode === 'budget_tokens') return ['off', 'low', 'medium', 'high'];
+  return ['off', ...options.values.filter((level) => level !== 'off' && level !== 'none')];
+}
+/** A toggle model has only off and on, so its non-off level reads as on. */
+export function thinkingChoiceWord(model: ConfigModel | undefined, level: string): string {
+  return model?.reasoning_options?.mode === 'toggle' && level !== 'off'
+    ? '开启'
+    : thinkingWord(level);
 }
 export function resetTaskChanges(
   task: ConfigTask,

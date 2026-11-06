@@ -1,17 +1,14 @@
 import type { Provider } from '@/ai/registry';
 import type { AttemptCostTruth } from '@/ai/task-result';
 import { looksLikeCustomProviderId } from '@/core/config/custom-providers';
-import { catalogModelCost, currentModelCatalog } from './model-catalog';
+import { catalogModelCost } from './model-catalog';
 import { catalogProviderFor } from './model-profiles';
 import {
   ANTHROPIC_SUB_CONTRACT_REF,
-  ATTEMPT_PRICEBOOK_VERSION,
   JEV_PRICEBOOK_VERSION,
   type TokenCounts,
-  hasLocalPricing,
   isJevModel,
   jevLocalCostUsd,
-  localCostUsd,
 } from './pricing';
 
 export type { AttemptCostBasis, AttemptCostTruth } from '@/ai/task-result';
@@ -22,6 +19,27 @@ export type { AttemptCostBasis, AttemptCostTruth } from '@/ai/task-result';
  * prefix — defined once here so writer and gate cannot drift.
  */
 export const CATALOG_SUBSCRIPTION_REF_PREFIX = 'pi-catalog-subscription';
+
+/**
+ * `cost_ref` prefix marking an attempt the provider positively rejected before
+ * any billable work — every observed root request settled as a non-2xx response
+ * (or provably never reached the wire) and no model usage exists. The spend
+ * gate charges these at a known zero; writer and gate share this one prefix.
+ */
+export const UNBILLED_PROVIDER_REJECTION_REF_PREFIX = 'unbilled-provider-rejection:';
+
+/**
+ * The spend-scope charge for a failed attempt: a positively-evidenced unbilled
+ * provider rejection is a known zero; any other failure keeps the paid outcome
+ * unknown (null → fail closed) so an uncertain attempt never masquerades free.
+ */
+export function failureSpendChargeUsd(truth: AttemptCostTruth): 0 | null {
+  return truth.basis === 'estimated' &&
+    truth.amountUsd === 0 &&
+    truth.ref.startsWith(UNBILLED_PROVIDER_REJECTION_REF_PREFIX)
+    ? 0
+    : null;
+}
 
 export function unknownAttemptCostTruth(provider: string, model: string): AttemptCostTruth {
   return { basis: 'unknown', amountUsd: null, ref: `unpriced:${provider}/${model}` };
@@ -167,27 +185,6 @@ export function resolveAttemptCostTruth(input: {
     (input.provider === 'anthropic' || reported > 0);
   if (hasTrustworthyReportedAmount) {
     return { basis: 'reported', amountUsd: reported, ref: 'sdk:total_cost_usd' };
-  }
-
-  const estimated = input.tokensObserved === false ? null : localCostUsd(input.model, input.tokens);
-  if (
-    input.provider === 'xiaomi' &&
-    hasLocalPricing(input.model) &&
-    estimated !== null &&
-    Number.isFinite(estimated) &&
-    estimated >= 0
-  ) {
-    const prefix =
-      input.priceOrigin === 'timeout-estimate'
-        ? 'pricebook-timeout-estimate'
-        : input.priceOrigin === 'failure-estimate'
-          ? 'pricebook-failure-estimate'
-          : 'pricebook';
-    return {
-      basis: 'estimated',
-      amountUsd: estimated,
-      ref: `${prefix}:${ATTEMPT_PRICEBOOK_VERSION}/${input.provider}/${input.model}@${currentModelCatalog().version}`,
-    };
   }
 
   return unknownAttemptCostTruth(input.provider, input.model);

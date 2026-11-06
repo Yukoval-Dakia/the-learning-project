@@ -433,15 +433,13 @@
   padding-block: 24px;
   border-top: 1px solid var(--st-line);
 }
-[data-ui-next] .un-st-feedback,
-[data-ui-next] .un-st-confidence {
+[data-ui-next] .un-st-feedback {
   margin-top: 24px;
   padding: 24px;
   background: var(--st-panel);
   border-radius: 24px;
 }
-[data-ui-next] .un-st-feedback h2,
-[data-ui-next] .un-st-confidence h2 {
+[data-ui-next] .un-st-feedback h2 {
   font-size: 20px;
   line-height: 1.5;
   margin: 0;
@@ -462,22 +460,43 @@
   color: var(--st-muted);
   margin: 6px 0 0;
 }
+[data-ui-next] .un-st-ai-graded {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  margin-top: 6px;
+}
+[data-ui-next] .un-st-verdict .un-st-ai-graded svg {
+  flex: none;
+  margin-top: 4px;
+}
+[data-ui-next] .un-st-appeal {
+  margin-top: 12px;
+}
 [data-ui-next] .un-st-feedback-evidence {
   margin-top: 20px;
 }
-[data-ui-next] .un-st-confidence-scale {
+[data-ui-next] .un-st-answer-confidence {
   border: 0;
+  margin: 0 0 16px;
   padding: 0;
+}
+[data-ui-next] .un-st-answer-confidence legend {
+  padding: 0;
+  margin-bottom: 8px;
+  font-size: 14px;
+  color: var(--st-muted);
+}
+[data-ui-next] .un-st-confidence-scale {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 8px;
-  margin-block: 20px;
 }
 [data-ui-next] .un-st-confidence-scale button {
   display: grid;
-  gap: 3px;
-  padding: 12px 4px;
-  min-height: 60px;
+  gap: 2px;
+  padding: 8px 4px;
+  min-height: 52px;
   color: var(--st-ink);
   background: var(--st-soft);
   border: 1px solid var(--st-line);
@@ -487,6 +506,10 @@
 [data-ui-next] .un-st-confidence-scale button strong {
   font-size: 20px;
   font-weight: 500;
+}
+[data-ui-next] .un-st-confidence-scale [aria-pressed="true"] {
+  background: var(--st-selected);
+  border-color: var(--st-accent);
 }
 [data-ui-next] .un-st-confidence-caption {
   font-size: 11px;
@@ -911,8 +934,7 @@
     min-height: 48px;
     flex: 1;
   }
-  [data-ui-next] .un-st-feedback,
-  [data-ui-next] .un-st-confidence {
+  [data-ui-next] .un-st-feedback {
     padding: 20px 16px;
     border-radius: 20px;
   }
@@ -954,4 +976,10 @@
 }
 [data-ui-next] .un-st-heading-companion .un-mascot {
   background: none;
+}
+[data-ui-next] .un-st-appeal .un-st-notice {
+  padding: 0;
+}
+[data-ui-next] .un-st-appeal .un-st-actions .un-st-button:first-child {
+  border-color: var(--st-line);
 }

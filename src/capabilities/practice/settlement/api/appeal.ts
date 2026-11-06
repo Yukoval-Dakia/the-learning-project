@@ -1,9 +1,18 @@
 import { db } from '@/db/client';
-import { canonicalResourceResponse, deprecatedRouteResponse } from '@/kernel/http';
+import { canonicalResourceResponse, deprecatedRouteResponse, errorResponse } from '@/kernel/http';
 import { createPracticeAppeal } from '../server/appeal-operation';
+import { readAppealStatus } from '../server/appeal-status';
 
 export function createAppeal(req: Request): Promise<Response> {
   return createPracticeAppeal(db, () => req.json());
+}
+
+export async function GET(_req: Request, params: Record<string, string>): Promise<Response> {
+  try {
+    return Response.json(await readAppealStatus(db, params.id));
+  } catch (err) {
+    return errorResponse(err);
+  }
 }
 
 export async function createAppealResource(req: Request): Promise<Response> {

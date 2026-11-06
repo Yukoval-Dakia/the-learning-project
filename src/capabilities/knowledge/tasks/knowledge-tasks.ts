@@ -51,8 +51,6 @@ export const frontierPrerequisiteTaskSpec = {
     kind: 'FrontierPrerequisiteTask',
     description:
       '看 tree + 缺先决覆盖的 KC 列表，提议 0-5 条临时 prerequisite knowledge_edge（empty-frontier 冷启 bootstrap，propose-only 低置信）',
-    defaultProvider: 'xiaomi',
-    defaultModel: 'mimo-v2.5-pro',
     budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 2 },
     needsToolCall: false,
     isMultimodal: false,
@@ -99,8 +97,6 @@ export const knowledgeReviewTaskSpec = {
     kind: 'KnowledgeReviewTask',
     description:
       '看完整 tree + 最近 mistakes，提议任意 mutation（reparent/merge/split/archive/propose_new）让 tree 更合理',
-    defaultProvider: 'xiaomi',
-    defaultModel: 'mimo-v2.5-pro',
     budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 12, timeout: 120_000 },
     needsToolCall: true,
     isMultimodal: false,

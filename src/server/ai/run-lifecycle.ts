@@ -28,6 +28,7 @@ import type { Db } from '@/db/client';
 import { writeToolCallLog } from '@/kernel/tools/call-evidence';
 import {
   type AttemptCostTruth,
+  UNBILLED_PROVIDER_REJECTION_REF_PREFIX,
   resolveAttemptCostTruth,
   unknownAttemptCostTruth,
 } from './attempt-cost';
@@ -57,7 +58,12 @@ import {
   type ProviderTransportCollector,
   createProviderTransportCollector,
 } from './provider-transport';
-import { type ResolvedProvider, hasGlobalProviderOverride, resolveTaskProvider } from './providers';
+import {
+  type ResolvedProvider,
+  TaskConfigError,
+  hasGlobalProviderOverride,
+  resolveTaskProvider,
+} from './providers';
 import { estimateAbortedUsage } from './timeout-usage';
 
 /** Usage/cost evidence carried by either SDKResultSuccess or SDKResultError. */
@@ -239,12 +245,21 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
     this.resolved = resolveTaskProvider(config.kind, explicitProviderRouting(config));
     // YUK-924 P2 — fail-closed capability gate: a task declaring needsToolCall /
     // isMultimodal may only run on a profile that CONFIRMS it ('unknown' rejects).
-    // Thrown before any admission row, attempt row or paid call.
-    assertModelProfileCapabilityFit(
-      tasks[config.kind],
-      this.resolved.provider,
-      this.resolved.model,
-    );
+    // Thrown before any admission row, attempt row or paid call. A lane whose
+    // model can't serve the task is a configuration failure, not a runtime
+    // outcome — keep the TaskConfigError identity for callers that would
+    // otherwise degrade it (e.g. the vision judges' 'unsupported' bucket).
+    try {
+      assertModelProfileCapabilityFit(
+        tasks[config.kind],
+        this.resolved.provider,
+        this.resolved.model,
+      );
+    } catch (error) {
+      throw new TaskConfigError(error instanceof Error ? error.message : String(error), {
+        cause: error,
+      });
+    }
     this.modelProfile = resolveModelProfile(this.resolved.provider, this.resolved.model);
     this.admissionPlan = resolveProviderSessionAdmissionPlan(this.resolved.provider);
     this.transportEvidence = createProviderTransportCollector({
@@ -375,6 +390,15 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
     const counts = this.tokenCounts;
     const base: AiTaskUsage = {
       ...this.usage,
+      ...(this.resolved.reasoning
+        ? {
+            reasoning: {
+              requested: this.resolved.reasoning.requested,
+              applied: this.resolved.reasoning.applied,
+              source: this.resolved.reasoning.source,
+            },
+          }
+        : {}),
       cacheReadTokens: counts.cacheReadTokens ?? 0,
       cacheWriteTokens: counts.cacheCreationTokens ?? 0,
       numTurns: this.terminal?.numTurns ?? this.observedUsage?.numTurns ?? 0,
@@ -477,7 +501,7 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
       return {
         basis: 'estimated',
         amountUsd: 0,
-        ref: `unbilled-provider-rejection:${this.resolved.provider}/${this.resolved.model}#${this.taskRunId}`,
+        ref: `${UNBILLED_PROVIDER_REJECTION_REF_PREFIX}${this.resolved.provider}/${this.resolved.model}#${this.taskRunId}`,
       };
     if (!this.costTruthCache) {
       const evidence = this.terminal ?? this.observedUsage;
@@ -702,6 +726,7 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
         // YUK-1806 — task.<kind>.reasoning 决议（requested → applied；null = 未配置）。
         reasoning: this.resolved.reasoning
           ? {
+              source: this.resolved.reasoning.source,
               requested: this.resolved.reasoning.requested,
               applied: this.resolved.reasoning.applied,
             }

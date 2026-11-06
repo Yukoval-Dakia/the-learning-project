@@ -29,14 +29,21 @@ import { useCustomBlocksReady } from './blocks/CustomBlock';
 import { customBlocksOf, summarizeAnswers } from './blocks/custom-sandbox';
 import { boundSlots, entriesForSubmit } from './blocks/envelope';
 import { type EntriesUpdate, parsePresentation } from './blocks/PresentationBlocks';
+import {
+  type JudgeFeedback,
+  feedbackAfterRejudge,
+  feedbackFromCommittedAttempt,
+  feedbackFromCommittedDiagnosticAttempt,
+  provenanceOf,
+} from './judge-feedback';
 import type { PfToast } from './PracticeFacePage';
 import {
   type AdviceCommit,
+  type AppealStatus,
   type JudgePreview,
-  type QuestionFullDetail,
   type StreamItem,
-  type SubmitResult,
   type SubmitReviewInput,
+  getAppealStatus,
   isSubmitPending,
 } from './practice-api';
 import { type PracticeClient, usePracticeClient } from './practice-client';
@@ -45,12 +52,6 @@ import { verdictNeedsLearnerRating } from './submit-recovery';
 export type Rating = 'again' | 'hard' | 'good';
 type IssuanceMode = 'auto_score' | 'manual';
 type IssuanceState = Awaited<ReturnType<PracticeClient['getIssuanceState']>>;
-export type JudgeFeedback = Pick<
-  JudgePreview,
-  'route' | 'coarse_outcome' | 'confidence' | 'feedback_md' | 'suggested_rating'
-> & {
-  partial_units?: Extract<JudgePreview, { coarse_outcome: 'partial_unknown' }>['partial_units'];
-};
 
 const PartialUnknownFeedback = PartialUnknownJudgeResult.pick({
   coarse_outcome: true,
@@ -63,40 +64,6 @@ const JUDGE_FAILURE_MESSAGE = '判题失败，请稍后重试';
 
 export function isInterventionDiagnosticSource(source: string): boolean {
   return source === INTERVENTION_DIAGNOSTIC_SOURCE;
-}
-
-export function feedbackFromCommittedAttempt(result: SubmitResult): JudgeFeedback {
-  if (!result.judge) {
-    throw new Error('诊断提交没有返回服务端判分');
-  }
-  return {
-    route: result.judge.route,
-    coarse_outcome: result.judge.coarse_outcome,
-    ...(result.judge.coarse_outcome === 'partial_unknown'
-      ? { partial_units: result.judge.partial_units }
-      : {}),
-    confidence: result.judge.confidence,
-    feedback_md: result.judge.feedback_md,
-    // auto_rate 的正常回执恒带 suggested_rating；旧/滚动部署响应若漏掉，
-    // review_event.rating 仍是服务端最终实际采用的评级，不能在 UI 侧猜。
-    suggested_rating:
-      result.judge.coarse_outcome === 'partial_unknown'
-        ? null
-        : (result.judge.suggested_rating ??
-          ('rating' in result.review_event ? result.review_event.rating : null)),
-  };
-}
-
-export function feedbackFromCommittedDiagnosticAttempt(
-  result: NonNullable<QuestionFullDetail['committed_attempt']>,
-): JudgeFeedback {
-  return {
-    route: result.judge.route,
-    coarse_outcome: result.judge.coarse_outcome,
-    confidence: result.judge.confidence,
-    feedback_md: result.judge.feedback_md,
-    suggested_rating: result.judge.suggested_rating,
-  };
 }
 
 export const VERDICT_OF: Record<JudgePreview['coarse_outcome'], { label: string; tone: Rating }> = {
@@ -183,17 +150,10 @@ export function shouldMarkSlotDoneOnBack(autoCommitted: boolean): boolean {
   return autoCommitted;
 }
 
-// YUK-432 (Bugbot FINDING 2) — 反馈卡上「不服判」入口是否可用。客观题自动 commit 同样落了独立 judge
-// 锚点 event（后端 submit.ts:550 在 judge_route ∈ JudgeKind {exact,keyword,…} 时写，并经响应
-// judge.judge_event_id 回传），故 deterministic 判定**可申诉**（如 exact-match 误拒了等价答案）。
-// 入口在反馈相位、当前未展开申诉框、且拿得到锚点 id 时可用——与 autoCommitted 无关（旧实现错误地用
-// autoCommitted 隐藏了它）。手动流锚点在用户提交申诉那刻随 commit 落（res.judge.judge_event_id），客观
-// 流锚点在 auto-commit 时已落（同一响应字段），暂存后供此谓词判定。
+// 反馈卡上的重判入口是否可用。可申诉的只有 evaluation：自动 commit 流要拿到它的 id 才显示入口；
+// 手动流锚点在提交申诉那刻随 commit 落，入口恒可见。judge event 没有冻结原答，服务端恒拒，不给入口。
 export function appealEntryAvailable(opts: {
-  // YUK-444 — 三相后 phase 可为 'confidence'（judge 结果暂存、判定未揭晓）。入参放宽到含它，
-  // 语义上申诉入口只在 'feedback' 可用，'confidence'/'answering' 皆经下面首行 guard 返回 false
-  // （'confidence' 相位无已揭晓判定可申诉）。放宽入参即便调用点未被 phase==='feedback' 收窄也可赋值。
-  phase: 'answering' | 'confidence' | 'feedback';
+  phase: 'answering' | 'feedback';
   appealOpen: boolean;
   autoCommitted: boolean;
   autoCommitJudgeEventId: string | null;
@@ -212,29 +172,6 @@ export function appealEntryAvailable(opts: {
 // 的信号。零强制红线：即便显示也默认折叠、可完全忽略、空值不发字段。
 export function shouldOfferProcessBox(isChoice: boolean): boolean {
   return !isChoice;
-}
-
-// YUK-444 (信心自评插拍 gate) — 提交后「先自评再看结果」的 1-5 interstitial 只在**非客观**判分流插入。
-// 客观题（route ∈ {exact, keyword}）preview 回来即 auto-commit（advance:false 直接渲判定卡），不插拍
-// （与「客观题跳过」约束一致）。gate 与 isObjectiveQuestion 同源取反：只看 route，不看 kind。
-export function shouldOfferConfidenceGate(route: string): boolean {
-  return !isObjectiveQuestion(route);
-}
-
-// YUK-444 (推迟揭晓时序不变式) — PfSolo 三相由两个 judge-preview slot 派生：
-//   - preview===null && pending===null → answering（作答，判定未跑）
-//   - preview===null && pending!==null → confidence（judge 结果已到但**暂存未揭晓**，插信心自评拍）
-//   - preview!==null                    → feedback（判定卡揭晓）
-// 关键不变式：只要 pending 有值而 preview 仍 null，就停在 confidence（判定卡不渲染）——揭晓**必须**
-// 经 revealVerdict 把 pending 提上 preview。preview 一旦有值即优先 feedback（揭晓后 pending 已清）。
-// 纯函数，供单测固定「先自评、后揭晓」的相位时序。
-export function derivePhase(
-  preview: JudgePreview | null,
-  pendingPreview: JudgePreview | null,
-): 'answering' | 'confidence' | 'feedback' {
-  if (preview !== null) return 'feedback';
-  if (pendingPreview !== null) return 'confidence';
-  return 'answering';
 }
 
 // YUK-562 / YUK-444 (采集字段装配 · 零强制「空值不发字段」) — 把 UI 侧的过程文本 / 信心自评装配成
@@ -454,36 +391,31 @@ export function usePracticeSubmit({
     setUnreceipted((prev) => ({ ...prev, [slotId]: next }));
   // YUK-1051 — 202-pending：提交被分到 durable lane 时的 run 锚点；轮询直到终态，
   // 绝不重交同一答案。null = 非 pending（同步回执 / 未提交）。
-  const [pendingRun, setPendingRun] = useState<{ runId: string; pollUrl: string } | null>(null);
+  const [pendingRun, setPendingRun] = useState<{ runId: string; pollUrl: string | null } | null>(
+    null,
+  );
   const [judging, setJudging] = useState(false);
   const [preview, setPreview] = useState<JudgePreview | null>(null);
   const activationIntent = useRef<SubmitReviewInput['activation_intent']>(undefined);
-  const committedAppealKind = useRef<'judge' | 'evaluation'>('judge');
   // intervention_diagnostic skips the repeatable advice preview and is committed
   // by the first /api/attempts call. Its response is sufficient for the feedback
   // card, but intentionally lacks advice-only provenance fields used by commit().
   const [committedPreview, setCommittedPreview] = useState<JudgeFeedback | null>(null);
   // YUK-562 (过程框) — reasoningTrace 是可选过程文本。零强制：不挡提交、空值不发字段（buildCaptureFields）。
   const [reasoningTrace, setReasoningTrace] = useState('');
-  // YUK-444 (信心自评 · 推迟揭晓) — 开放题提交后判定揭晓前，先渲 1-5 自评 interstitial。judge 结果
-  // 暂存在 pendingPreview（不 setPreview → 判定卡不渲染），确认/跳过后才 setPreview 揭晓（元认知语义：
-  // 先自评再看结果）。selfConfidence=null 表示未选 / 跳过 → 不发 self_confidence。客观题 auto-commit
-  // 流不经此（不插拍）。
-  const [pendingPreview, setPendingPreview] = useState<JudgePreview | null>(null);
-  const [selfConfidence, setSelfConfidence] = useState<number | null>(null);
+  // Optional, picked while answering (open questions only) and sent with the answer. null → no field.
+  const [selfConfidence, setSelfConfidence] = useState<1 | 2 | 3 | 4 | 5 | null>(null);
   const [rating, setRating] = useState<Rating | null>(null);
   const [appealOpen, setAppealOpen] = useState(false);
   const [appealText, setAppealText] = useState('');
+  const [filedAppealId, setFiledAppealId] = useState<string | null>(null);
   const [committing, setCommitting] = useState(false);
   const [returning, setReturning] = useState(false);
   const returningRef = useRef(false);
   // YUK-432 — 客观题在 preview 回来时已自动 commit（auto_rate:true）。记下来：反馈卡保留判定，
   // 「下一项」只 onDone() 推进（不再二次 commit）。开放题恒 false → 现有手动流不变。
   const [autoCommitted, setAutoCommitted] = useState(false);
-  // YUK-432 (Bugbot FINDING 2) — 客观题自动 commit 那次 submitReview 回执的 judge 锚点 id。后端为
-  // 客观判分（route ∈ JudgeKind）写了独立 judge event 并回传 judge.judge_event_id；存下来，让反馈卡上
-  // 的「不服判」入口在自动 commit 后仍能对这个锚点直接发 appeal（不再二次 submit——review 已落库）。
-  // null = 这次自动判定没有可申诉锚点（理论上 exact/keyword 恒有，留 null 兜底 → 入口自动隐藏）。
+  // 自动 commit 后可申诉的 evaluation id（名字是历史遗留）。null = 没有可申诉的记录，入口隐藏。
   const [autoCommitJudgeEventId, setAutoCommitJudgeEventId] = useState<string | null>(null);
   // YUK-433 — solo 路径 RT capture：题面变可见那刻的墙钟时间戳。commit 时 now - 它 = 这次作答用时
   // （computeLatencyMs clamp 后作为 latency_ms 发出，server 映射成事件 payload 的 duration_ms）。下面
@@ -554,6 +486,7 @@ export function usePracticeSubmit({
         setCommittedPreview({
           route: typeof r?.route === 'string' && r.route ? r.route : 'durable',
           coarse_outcome: outcome,
+          ...provenanceOf(r),
           ...(partial?.success ? { partial_units: partial.data.partial_units } : {}),
           confidence: typeof r?.confidence === 'number' ? r.confidence : 0,
           feedback_md: typeof r?.feedback_md === 'string' ? r.feedback_md : '',
@@ -561,13 +494,12 @@ export function usePracticeSubmit({
         });
         setRating(fr);
         setAutoCommitted(true);
-        committedAppealKind.current = r?.assessment ? 'evaluation' : 'judge';
+        // Only an evaluation can be appealed: a judge event has no frozen original to rerun
+        // (the server always answers historical_unknown), so it offers no entry.
         setAutoCommitJudgeEventId(
           r?.assessment
             ? (r.assessment.effective_evaluation_id ?? r.assessment.candidate_id)
-            : typeof r?.judge_event_id === 'string'
-              ? r.judge_event_id
-              : null,
+            : null,
         );
       }
       setPendingRun(null);
@@ -579,6 +511,7 @@ export function usePracticeSubmit({
   const settledApplied = useRef<string | null>(null);
   // YUK-1729 b-lite — the issuance whose accepted-but-unrecorded answer still needs its advice replay.
   const [recoverIssuance, setRecoverIssuance] = useState<string | null>(null);
+  const [ratingOwed, setRatingOwed] = useState(false);
   // YUK-1484 — issuing is a write, so it is a command, not a query: nothing may re-run it
   // on retry, focus, reconnect, invalidation, remount or StrictMode. The issuance
   // placeholder owns it (attachIssuance): when it attaches, this visit reads its issuance
@@ -648,11 +581,17 @@ export function usePracticeSubmit({
             settled.kind === 'terminal' &&
             verdictNeedsLearnerRating(settled.run.status, settled.run.result)
           ) {
+            setRatingOwed(true);
             setRecoverIssuance(issuanceId);
             return;
           }
           if (settled.kind === 'pending') {
             setPendingRun({ runId: settled.run_id, pollUrl: settled.poll_url });
+            return;
+          }
+          // Failed for good: same path as a live failure, starting from its poll.
+          if (settled.run.status === 'failed') {
+            setPendingRun({ runId: settled.run.run_id, pollUrl: null });
             return;
           }
           onPendingSettled({
@@ -704,6 +643,36 @@ export function usePracticeSubmit({
   }
   const nativeEvidence = useMemo(() => nativeGroupEvidence(evidence), [evidence]);
   const accepted = issuedState?.submissions[0];
+  // This visit's appeal, or after a reload the latest one the issuance read names.
+  const appealId =
+    filedAppealId ??
+    (issuedState?.settled?.kind === 'terminal'
+      ? issuedState.settled.latest_appeal_event_id
+      : null) ??
+    null;
+  const appealRead = useQuery({
+    queryKey: ['practice-appeal-status', appealId],
+    queryFn: () => getAppealStatus(appealId as string),
+    enabled: appealId !== null,
+    // Keeps reading until a final status, including while the first reads fail.
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return status === undefined || status === 'in_progress' ? 3000 : false;
+    },
+  });
+  // The result the last finished rejudge made effective. It outlives the appeal being read: a
+  // later appeal still running, unchanged or failed must not bring back the older result.
+  const [rejudged, setRejudged] = useState<{
+    appealId: string;
+    effective: NonNullable<AppealStatus['after']>;
+  } | null>(null);
+  const finishedRead =
+    appealRead.data?.status === 'changed' || appealRead.data?.status === 'unchanged'
+      ? appealRead.data
+      : null;
+  if (finishedRead?.after && rejudged?.appealId !== finishedRead.appeal_event_id) {
+    setRejudged({ appealId: finishedRead.appeal_event_id, effective: finishedRead.after });
+  }
   // YUK-1501 — an accepted answer that /api/attempts already recorded is read-only review:
   // nothing on this page may submit it again. Recorded = the question's timeline holds an
   // attempt for its evaluation group that is settled (an effective evaluation) or whose
@@ -712,7 +681,10 @@ export function usePracticeSubmit({
   // (「自己评一下」 after a verdict that could not be graded, or a visit left before rating),
   // and an attempt recorded as review_required (original evaluation, nothing effective) is
   // not scheduled yet — both must stay committable so the learner can still rate them.
+  // A run that ended without an effective verdict still has its queued anchor in the timeline
+  // (no original evaluation), which must not read as recorded: the learner's rating is owed.
   const answerRecorded =
+    !ratingOwed &&
     !!accepted &&
     (q?.timeline ?? []).some(
       (entry) =>
@@ -993,9 +965,7 @@ export function usePracticeSubmit({
               )
             );
           }));
-  // YUK-444 — 三相：answering（作答）→ confidence（judge 结果暂存、信心自评插拍、判定未揭晓）→
-  // feedback（判定卡）。confidence 只在非客观流出现；客观题 answering 直接跳到 feedback（auto-commit）。
-  const phase = committedPreview ? 'feedback' : derivePhase(preview, pendingPreview);
+  const phase = preview || committedPreview ? 'feedback' : 'answering';
   // YUK-432 (Bugbot FINDING 1) — 「返回流」出口：自动 commit 后必须标 slot done（onCommittedBack），
   // 否则只 onBack 会留下「已判分但 slot 卡 in_progress」的不一致。未自动 commit → 原 onBack。
   const handleBack = async () => {
@@ -1061,7 +1031,7 @@ export function usePracticeSubmit({
       setCommittedPreview(feedback);
       setRating(feedback.suggested_rating);
       setAutoCommitted(true);
-      setAutoCommitJudgeEventId(committedDiagnostic.judge.judge_event_id);
+      setAutoCommitJudgeEventId(committedDiagnostic.judge.evaluation_id ?? null);
     } else {
       setCommittedPreview(null);
       setAutoCommitted(false);
@@ -1074,6 +1044,14 @@ export function usePracticeSubmit({
     (settled: JudgeRunPollingState) => {
       if (verdictNeedsLearnerRating(settled.status, settled.result)) {
         setPendingRun(null);
+        setRatingOwed(true);
+        setRecoverIssuance(issuanceId);
+        return;
+      }
+      // A run that failed for good: the replay offers the learner's own rating. The run stays set
+      // so a refused replay still shows «没判成»; the poller reports each run only once.
+      if (settled.status === 'failed') {
+        setRatingOwed(true);
         setRecoverIssuance(issuanceId);
         return;
       }
@@ -1085,6 +1063,8 @@ export function usePracticeSubmit({
     runId: pendingRun?.runId ?? null,
     pollUrl: pendingRun?.pollUrl ?? null,
     readStatus: readJudgeRunStatus,
+    // About four minutes at the backoff cap: a dropped connection recovers on its own.
+    maxConsecutiveErrors: 40,
     onSettled: onPolledSettled,
   });
 
@@ -1142,12 +1122,10 @@ export function usePracticeSubmit({
         // YUK-1051 (D10) — 开放作答的证据附件随提交冻结；空值不发（既有 wire 逐字不变）。
         ...(imageRefs.length > 0 ? { answer_image_refs: imageRefs } : {}),
       });
-      // YUK-1051 — 202-pending 是返回 union（不是错误）：答案已随提交持久化，判分走
-      // durable lane。记下 run 锚点进 pending 卡；轮询到终态再揭晓反馈（见 pendingPoll effect）。
-      // 带申诉的提交在 pending 下先把提交落定——申诉锚点要等终态判词回来才有，故 pending
-      // 分支暂不发 appeal（反馈卡出现后「不服判」入口照常可用）。
+      // Pending originals are restored and polled before an appeal can name their verdict.
       if (isSubmitPending(res)) {
         setPendingRun({ runId: res.run_id, pollUrl: res.backfill.poll_url });
+        if (opts.withAppeal) addToast('作答已保存。判完后可以在结果上点重判。', 'info', 'clock');
         return;
       }
       if ('status' in res && res.status === 'review_required') {
@@ -1155,16 +1133,17 @@ export function usePracticeSubmit({
         return;
       }
       if (opts.withAppeal) {
-        const anchor = res.judge
-          ? 'assessment' in res
-            ? res.assessment.candidate_id
-            : res.judge.judge_event_id
-          : null;
-        if (anchor) {
-          await fileAppeal(anchor, appealText.trim(), 'assessment' in res ? 'evaluation' : 'judge');
-          addToast('已提交重判，在后台进行，结果回来会提醒你。', 'info', 'clock');
-        } else {
-          addToast('这次判定没有可以申诉的记录。', 'info', 'alert');
+        const anchor = res.judge && 'assessment' in res ? res.assessment.candidate_id : null;
+        // The answer is recorded by now: a failed appeal must not undo that.
+        try {
+          if (anchor) {
+            await fileAppeal(anchor, appealText.trim(), 'evaluation');
+            addToast('已提交重判，在后台进行。判不准的话，原结果不变。', 'info', 'clock');
+          } else {
+            addToast('这次判定没有可以申诉的记录。', 'info', 'alert');
+          }
+        } catch {
+          addToast('作答已保存，但重判没提交上。', 'info', 'alert');
         }
       }
       // 客观题自动 commit 成功 → 标记 autoCommitted（反馈卡隐藏手动评级、「下一项」只推进）+ 暂存
@@ -1172,20 +1151,14 @@ export function usePracticeSubmit({
       // 只在写入成功后置位：失败时保持手动评级行可见，用户可重试/手动评级（不丢答）。
       if (opts.autoRate && opts.advance === false) {
         setAutoCommitted(true);
-        committedAppealKind.current = 'assessment' in res ? 'evaluation' : 'judge';
         setAutoCommitJudgeEventId(
-          res.judge
-            ? 'assessment' in res
-              ? res.assessment.candidate_id
-              : res.judge.judge_event_id
-            : null,
+          res.judge && 'assessment' in res ? res.assessment.candidate_id : null,
         );
       }
       // advance=false（客观题自动 commit）→ 留在反馈卡让用户先看判定，「下一项」再 onDone()。
       if (opts.advance !== false) onDone();
     } catch {
       setPreview(null);
-      setPendingPreview(null);
       setCommittedPreview(null);
       setRating(null);
       setAutoCommitted(false);
@@ -1201,15 +1174,28 @@ export function usePracticeSubmit({
   // YUK-432 (Bugbot FINDING 2) — 客观题自动 commit 后的「不服判」。review 已落库，不能再走 commit（会
   // 重复 submit 一条 review event）；直接对自动 commit 时暂存的 judge 锚点发 appeal。无锚点 → 入口本
   // 就被 appealEntryAvailable 隐藏，这里再兜底一次。
-  const submitAutoCommitAppeal = async () => {
-    if (!autoCommitJudgeEventId || committing) return;
+  // A finished rejudge moved the effective result; a further appeal must name the new one.
+  const appealAnchor = rejudged?.effective.effective_evaluation_id ?? autoCommitJudgeEventId;
+  // A retry passes the reason of the appeal it repeats: its own request, not a new one.
+  const submitAutoCommitAppeal = async (reason = appealText.trim()) => {
+    const anchor = appealAnchor;
+    if (!anchor || committing) return;
     setCommitting(true);
     try {
-      await fileAppeal(autoCommitJudgeEventId, appealText.trim(), committedAppealKind.current);
-      addToast('已提交重判，在后台进行，结果回来会提醒你。', 'info', 'clock');
+      const filed = await fileAppeal(anchor, reason, 'evaluation');
+      setFiledAppealId(filed.appeal_event_id);
+      setAppealText('');
       setAppealOpen(false);
-    } catch {
-      addToast('提交重判没有成功，稍后再试一次。', 'info', 'alert');
+      // A retry can return the same id: its last read must not keep showing the failure.
+      if (filed.appeal_event_id === appealId) void appealRead.refetch();
+    } catch (e) {
+      addToast(
+        e instanceof ApiError && e.code === 'stale_head'
+          ? '这个结果已经更新过了，刷新页面看最新结果。'
+          : '提交重判没有成功，稍后再试一次。',
+        'info',
+        'alert',
+      );
     } finally {
       setCommitting(false);
     }
@@ -1221,31 +1207,30 @@ export function usePracticeSubmit({
     stream_item_id: item.id,
     referenced_knowledge_ids: q ? q.labels.map((l) => l.id) : [],
     reasoning_trace: buildCaptureFields({ reasoningTrace, selfConfidence }).reasoning_trace ?? null,
+    ...(selfConfidence === null ? {} : { self_confidence: selfConfidence }),
     latency_ms: withLatency ? computeLatencyMs(questionShownAtRef.current, Date.now()) : null,
   });
 
-  // One advice outcome path for a live answer and a recovery replay. Open (or unrated) verdicts
-  // go to the confidence step and the learner's own rating, as before. An automatic verdict the
-  // advice request already recorded (`committed`) settles here with what commit() would set; a
-  // server without that field still gets the separate commit() (idempotent on the submission).
+  // A 200 replay restores the preview; accepted originals use the existing durable poller.
   const applyAdvice = async (
     r: Awaited<ReturnType<typeof getAdvice>>,
     recovery: boolean,
   ): Promise<void> => {
-    activationIntent.current = r.activation_intent;
-    if (!r.automatic_commit || r.judge.suggested_rating === null) {
-      setPendingPreview(r.judge);
+    if (isSubmitPending(r)) {
+      setPendingRun({ runId: r.run_id, pollUrl: r.backfill.poll_url });
       return;
     }
+    activationIntent.current = r.activation_intent;
+    setPendingRun(null);
     setPreview(r.judge);
     setRating(r.judge.suggested_rating);
+    if (!r.automatic_commit || r.judge.suggested_rating === null) return;
     if (r.committed) {
       if (r.committed.status === 'review_required') {
         addToast('作答已保存，暂时没法自动判；可以自己评一下来安排复习。', 'info', 'clock');
         return;
       }
       setAutoCommitted(true);
-      committedAppealKind.current = 'evaluation';
       setAutoCommitJudgeEventId(r.committed.judge ? r.committed.assessment.candidate_id : null);
       return;
     }
@@ -1268,7 +1253,7 @@ export function usePracticeSubmit({
       const r = await getAdvice(q.id, answerMd, imageRefs, assessmentInput, adviceCommit(false));
       await applyAdvice(r, true);
     } catch {
-      addToast(JUDGE_FAILURE_MESSAGE, 'info', 'alert');
+      if (!pendingRun) addToast(JUDGE_FAILURE_MESSAGE, 'info', 'alert');
     } finally {
       setJudging(false);
     }
@@ -1321,7 +1306,7 @@ export function usePracticeSubmit({
         setCommittedPreview(feedback);
         setRating(feedback.suggested_rating);
         setAutoCommitted(true);
-        setAutoCommitJudgeEventId(res.judge?.judge_event_id ?? null);
+        setAutoCommitJudgeEventId('assessment' in res ? res.assessment.candidate_id : null);
         return;
       }
       const r = await getAdvice(q.id, answerMd, imageRefs, assessmentInput, adviceCommit(true));
@@ -1335,7 +1320,7 @@ export function usePracticeSubmit({
           setCommittedPreview(feedback);
           setRating(feedback.suggested_rating);
           setAutoCommitted(true);
-          setAutoCommitJudgeEventId(committed.judge.judge_event_id);
+          setAutoCommitJudgeEventId(committed.judge.evaluation_id ?? null);
           return;
         }
       }
@@ -1345,17 +1330,6 @@ export function usePracticeSubmit({
     } finally {
       setJudging(false);
     }
-  };
-
-  // YUK-444 — 信心自评确认（选了 1-5）或「跳过」（confidence=null）→ 揭晓判定：把暂存的 judge 结果
-  // 提上 preview（触发判定卡渲染）+ 落 suggested_rating 到手动评级默认值。selfConfidence 存进 state，
-  // 待用户「确认评级 · 下一项」时随 commit 的 buildCaptureFields 一并发出（跳过 → null → 不发字段）。
-  const revealVerdict = (confidence: number | null) => {
-    if (!pendingPreview) return;
-    setSelfConfidence(confidence);
-    setRating(pendingPreview.suggested_rating);
-    setPreview(pendingPreview);
-    setPendingPreview(null);
   };
 
   // 键盘：⌘/Ctrl+Enter 提交。选项数字键（1–9，随选项数）已移进 ChoiceSetResponse 的
@@ -1381,7 +1355,6 @@ export function usePracticeSubmit({
   const startSelfRate = () => {
     setIssuanceMode('manual');
     setPreview(null);
-    setPendingPreview(null);
     activationIntent.current = undefined;
     // Back to answering (self-rated): unsaved edits resume autosaving.
     autosave.resume();
@@ -1435,6 +1408,11 @@ export function usePracticeSubmit({
       }
     : null;
 
+  const settledFeedback = preview ?? committedPreview;
+  const displayedFeedback = settledFeedback
+    ? feedbackAfterRejudge(settledFeedback, rejudged?.effective ?? null)
+    : settledFeedback;
+
   return {
     question: { query: qQ, data: q, isInterventionDiagnostic, timelineEvents },
     issuance: issuanceView,
@@ -1468,22 +1446,25 @@ export function usePracticeSubmit({
       returning,
       pendingRun,
       pendingPoll,
-      displayedPreview: preview ?? committedPreview,
+      displayedPreview: displayedFeedback,
       committedPreview,
       rating,
       setRating,
       autoCommitted,
       autoCommitJudgeEventId,
       selfConfidence,
+      setSelfConfidence,
       reasoningTrace,
       setReasoningTrace,
       runJudge,
       commit,
-      revealVerdict,
       startSelfRate,
     },
     appeal: {
       open: appealOpen,
+      id: appealId,
+      read: appealRead.data,
+      readFailed: appealRead.isError && !appealRead.data,
       setOpen: setAppealOpen,
       text: appealText,
       setText: setAppealText,

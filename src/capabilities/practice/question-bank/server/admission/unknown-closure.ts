@@ -1,8 +1,13 @@
 // End the question's wait without resolving, voiding, or retrying its unknown payment.
 import { and, eq, lte, sql } from 'drizzle-orm';
-import type { Db } from '@/db/client';
+import { canonicalHash } from '@/core/migration/canonical';
+import type { PaidEffectIdentity } from '@/core/migration/paid-effect-protocol';
+import type { Db, Tx } from '@/db/client';
 import { lockPaidEffectControlFamily } from '@/db/paid-effect-control';
-import { settleExpiredPaidEffectSends } from '@/db/paid-effect-store';
+import {
+  degradePaidEffectReceiptToUnknown,
+  settleExpiredPaidEffectSends,
+} from '@/db/paid-effect-store';
 import { paid_effect, question_revision } from '@/db/schema';
 import { closePendingQuestionAdmission } from '@/kernel/records/assessment-admission-close';
 import { ADMISSION_FAMILY, isPendingAdmission, lockAdmissionGroup } from './enqueue';
@@ -10,10 +15,78 @@ import { ADMISSION_STAGE_FAMILY } from './stages';
 
 const UNKNOWN_WAIT_MS = 5 * 60_000;
 
+/**
+ * A recorded 'waiting' coordinator receipt whose wakeup stage send died
+ * unresolved can never be re-asked and schedules no further wakeup. Demote
+ * the run row to 'unknown' so the generic void + successor path applies —
+ * the demoted receipt's digest rides in unresolved_reason as the audit key.
+ * A stage 'sending' inside its lease is still active work and is left alone.
+ * Returns the blocking stage unit when a demotion happened.
+ */
+export async function demoteWaitingCoordinatorOnUnresolvedStage(
+  tx: Tx,
+  identity: PaidEffectIdentity,
+  opts: { expectedFence: number; result: unknown },
+): Promise<string | null> {
+  const status = (opts.result as { result?: { status?: string } } | null | undefined)?.result
+    ?.status;
+  if (status !== 'waiting') return null;
+  const [unresolved] = await tx
+    .select({ unit: paid_effect.unit })
+    .from(paid_effect)
+    .where(
+      and(
+        eq(paid_effect.family, ADMISSION_STAGE_FAMILY),
+        eq(paid_effect.entity_id, identity.entityId),
+        eq(paid_effect.entity_revision, identity.entityRevision),
+        eq(paid_effect.state, 'unknown'),
+      ),
+    )
+    .limit(1);
+  if (!unresolved) return null;
+  const demoted = await degradePaidEffectReceiptToUnknown(tx, identity, {
+    expectedFence: opts.expectedFence,
+    unresolvedReason: `unresolved_stage:${unresolved.unit};demoted_receipt:${canonicalHash(opts.result)}`,
+  });
+  return demoted ? unresolved.unit : null;
+}
+
 export async function closeExpiredUnknownAdmissions(db: Db) {
   const now = new Date();
   await settleExpiredPaidEffectSends(db, { family: ADMISSION_FAMILY });
   await settleExpiredPaidEffectSends(db, { family: ADMISSION_STAGE_FAMILY });
+  const demoteable = await db
+    .select()
+    .from(paid_effect)
+    .where(
+      and(
+        eq(paid_effect.family, ADMISSION_FAMILY),
+        eq(paid_effect.state, 'receipt_ready'),
+        sql`${paid_effect.result_json}->'result'->>'status' = 'waiting'`,
+        sql`EXISTS (SELECT 1 FROM paid_effect s
+          WHERE s.family = ${ADMISSION_STAGE_FAMILY}
+            AND s.entity_id = ${paid_effect.entity_id}
+            AND s.entity_revision = ${paid_effect.entity_revision}
+            AND s.state = 'unknown')`,
+      ),
+    )
+    .limit(100);
+  for (const row of demoteable) {
+    await db.transaction(async (tx) => {
+      await lockPaidEffectControlFamily(tx, ADMISSION_FAMILY);
+      await demoteWaitingCoordinatorOnUnresolvedStage(
+        tx,
+        {
+          family: row.family,
+          entityId: row.entity_id,
+          entityRevision: row.entity_revision,
+          unit: row.unit,
+          inputDigest: row.input_digest,
+        },
+        { expectedFence: row.fence, result: row.result_json },
+      );
+    });
+  }
   const candidates = await db
     .select()
     .from(paid_effect)

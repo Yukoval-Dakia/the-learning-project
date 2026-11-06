@@ -5,7 +5,11 @@
 // freshness signal; they must not re-implement the purpose/freshness rules.
 
 import type { Db, Tx } from '@/db/client';
-import { HostOperationNotInstalledError } from '@/kernel/host-operation';
+import {
+  HostOperationNotInstalledError,
+  installHostOperation,
+  installedHostOperation,
+} from '@/kernel/host-operation';
 
 type DbLike = Db | Tx;
 
@@ -46,10 +50,10 @@ export type MemoryBriefReader = (
   now?: Date,
 ) => Promise<MemoryBriefRead>;
 
-let installed: MemoryBriefReader | undefined;
+const READER_SLOT = 'kernel/read-models/memory-brief:reader';
 
 export function installMemoryBriefReader(reader: MemoryBriefReader): void {
-  installed = reader;
+  installHostOperation(READER_SLOT, reader);
 }
 
 /**
@@ -62,10 +66,11 @@ export async function readMemoryBrief(
   scopeKey: string,
   now?: Date,
 ): Promise<MemoryBriefRead> {
-  if (!installed) {
+  const reader = installedHostOperation<MemoryBriefReader>(READER_SLOT);
+  if (!reader) {
     throw new HostOperationNotInstalledError(
       'memory-brief reader is not installed; call installAgencyHostOperations at startup',
     );
   }
-  return installed(db, scopeKey, now);
+  return reader(db, scopeKey, now);
 }

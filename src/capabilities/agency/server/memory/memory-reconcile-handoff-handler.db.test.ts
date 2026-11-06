@@ -24,7 +24,7 @@ function sourceEvent(id: string): MemoryEventInput {
   return {
     id,
     actor_kind: 'user',
-    action: 'attempt',
+    action: 'experimental:recovery_test_source',
     subject_kind: 'question',
     subject_id: 'question-1',
     payload: { answer_md: 'A', answer_image_refs: [] },

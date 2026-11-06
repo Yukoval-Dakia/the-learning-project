@@ -26,6 +26,9 @@ export const ContextBoardResponse = z.object({
     z.object({
       id: z.string(),
       at: z.string(),
+      // Source evidence restricted: before/after are withheld and the row reads
+      // as removed. Undo is not offered and the write side refuses it anyway.
+      removed: z.boolean(),
       before: z.array(Topic),
       after: z.array(Topic),
       undo_of: z.string().nullable(),

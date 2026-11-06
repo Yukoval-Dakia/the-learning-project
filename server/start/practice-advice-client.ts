@@ -16,6 +16,7 @@ export const startPracticeAdviceClient: PracticeClient['getAdvice'] = async (
         assessment,
         question_id: questionId,
         response_md: responseMd,
+        accept_pending: true,
         ...(imageRefs.length > 0 ? { answer_image_refs: [...imageRefs] } : {}),
         ...(commit ? { commit } : {}),
       }),

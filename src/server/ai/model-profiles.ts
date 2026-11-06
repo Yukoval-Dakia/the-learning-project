@@ -33,7 +33,6 @@ export interface ModelProfileExecution {
   timeoutClass: 'standard' | 'durable-heavy';
   budgetClass: 'cheap' | 'standard' | 'heavy';
   meteredUsd: boolean;
-  localPricebook: boolean;
 }
 
 /** Application policy is not a claim about upstream model capabilities. */
@@ -80,7 +79,6 @@ const CONSERVATIVE_EXECUTION: ModelProfileExecution = {
   timeoutClass: 'standard',
   budgetClass: 'standard',
   meteredUsd: false,
-  localPricebook: false,
 };
 
 export function resolveModelProfile(

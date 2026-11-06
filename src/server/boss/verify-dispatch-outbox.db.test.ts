@@ -5,7 +5,7 @@ import {
   VERIFY_DISPATCH_COMPLETE_ACTION,
   dispatchPendingVerifyIntents,
   writeVerifyDispatchIntent,
-} from '@/capabilities/practice/public';
+} from '@/capabilities/practice/question-bank/public';
 import { db } from '@/db/client';
 import { event, question } from '@/db/schema';
 import { resetDb } from '../../../tests/helpers/db';

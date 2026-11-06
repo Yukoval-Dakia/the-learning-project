@@ -36,7 +36,7 @@ import {
   matchJyeooKnowledgeHints,
   runJyeooFetchCandidates,
   submitQuestionTool,
-} from '@/capabilities/practice/public';
+} from '@/capabilities/practice/supply/public';
 import { db } from '@/db/client';
 import type { ToolContext } from '@/kernel/tools/types';
 

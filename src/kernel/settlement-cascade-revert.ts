@@ -1,5 +1,9 @@
 import type { Tx } from '@/db/client';
-import { HostOperationNotInstalledError } from '@/kernel/host-operation';
+import {
+  HostOperationNotInstalledError,
+  installHostOperation,
+  installedHostOperation,
+} from '@/kernel/host-operation';
 
 // The host owns cascade traversal and installs it before settlement can replay.
 type SettlementCascadeRevert = (
@@ -8,19 +12,20 @@ type SettlementCascadeRevert = (
   options: { reasonContext: { note: string } },
 ) => Promise<{ ok: true } | { ok: false; refusal: string; reason: string }>;
 
-let installedCascadeRevert: SettlementCascadeRevert | undefined;
+const REVERT_SLOT = 'kernel/settlement-cascade-revert:revert';
 
 export function installSettlementCascadeRevert(revert: SettlementCascadeRevert): void {
-  installedCascadeRevert = revert;
+  installHostOperation(REVERT_SLOT, revert);
 }
 
 export function orchestrateCascadeRevert(
   ...args: Parameters<SettlementCascadeRevert>
 ): ReturnType<SettlementCascadeRevert> {
-  if (!installedCascadeRevert) {
+  const revert = installedHostOperation<SettlementCascadeRevert>(REVERT_SLOT);
+  if (!revert) {
     throw new HostOperationNotInstalledError(
       'settlement cascade revert is not installed; call installSettlementCascadeRevert at startup',
     );
   }
-  return installedCascadeRevert(...args);
+  return revert(...args);
 }

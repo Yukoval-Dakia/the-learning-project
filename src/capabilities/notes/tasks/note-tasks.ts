@@ -116,8 +116,6 @@ export const noteGenerateTaskSpec = {
     kind: 'NoteGenerateTask',
     description:
       'Phase 2B — 给一个 atomic note 生成 5 种 section（definition/mechanism/example/pitfall/check）',
-    defaultProvider: 'xiaomi',
-    defaultModel: 'mimo-v2.5-pro',
     budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1, timeout: NOTE_GENERATE_TIMEOUT_MS },
     needsToolCall: false,
     isMultimodal: false,

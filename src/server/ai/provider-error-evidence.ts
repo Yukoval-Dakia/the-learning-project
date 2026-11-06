@@ -84,7 +84,7 @@ export function sanitizeProviderErrorText(
  * `retry-after-ms` wins when both headers exist; `retry-after` accepts the
  * standard delta-seconds or HTTP-date forms. Unparseable values stay absent.
  */
-function readRetryAfterMs(headers: Headers): number | undefined {
+export function readRetryAfterMs(headers: Headers): number | undefined {
   const rawMs = headers.get('retry-after-ms');
   if (rawMs !== null) {
     const ms = Number(rawMs);

@@ -33,9 +33,6 @@ export const teachingQualityTaskSpec = {
     kind: 'TeachingQualityTask',
     description:
       'YUK-578 (入池前审题闸) — teaching_quality VerifyCheck for tier3/4 quiz_gen drafts. Reads ONLY the question面 data (prompt_md / kind / choices_md / reference_md / rubric_json / is_choice) and scores three pedagogical axes: clarity (题干无歧义), unique_answer (唯一正解；rubric 有容错声明的算满足), and distractor_power (干扰项诊断力，仅选择题；非选择题跳过). Output = { clarity, unique_answer, distractor_power?, summary } with per-axis { verdict: pass|fail, reason }. CONSERVATIVE (宁可漏过不误杀真题): only fail on a genuine defect. Single structured-output call, text-only, no tool loop. quiz_verify consumes it: a confident fail holds the draft for review (needs_review), never promotes.',
-    defaultProvider: 'xiaomi',
-    // Text-only reasoning, no vision — same tier as QuizVerifyTask / SolutionGenerateTask.
-    defaultModel: 'mimo-v2.5-pro',
     budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1, timeout: 60_000 },
     needsToolCall: false,
     isMultimodal: false,

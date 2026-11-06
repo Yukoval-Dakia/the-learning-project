@@ -248,7 +248,7 @@ API 与独立 worker 都先由 `server/env.ts` 加载 `.env.local` / `.env`，�
 ```bash
 pnpm typecheck        # tsrs --noEmit（root + server/start/tsconfig.json）
 pnpm lint             # biome check .
-pnpm lint:ratchet     # warning/info 总数不得高于上限（scripts/lint-baseline.json 与 PR 分叉点实测数取低）；低于不失败，基线文件只降不升（pnpm lint:ratchet:update 可随时收紧）
+pnpm lint:ratchet     # warning/info 总数不得高于 PR 分叉点实测数（merge-base 用 head 的 Biome 重测）；低于不失败，无台账文件；取不到 base 时 fail closed（CI 必须给 LINT_BASE_SHA/--base）
 pnpm test             # 全量 umbrella（audit 链 + unit/db/migration）；CI Gate 不调用它，而是跑 .github/workflows/ci-gate.yml 的矩阵（见 docs/agents/development-workflow.md）；本机按 AGENTS.md 只跑 scoped tests
 pnpm audit:schema     # schema write-path 审计（新表/字段必须有 write path）
 pnpm audit:partition  # 测试分区审计（依赖 DB 的测试不得进 unit config）
@@ -439,3 +439,11 @@ docs/             # architecture, configuration, operations, modules, ADRs, plan
 ### TEST on the NAS, reached through a Mac-local relay
 
 TEST runs on the NAS (`bancho-nb2.local`) at `/volume1/docker/tlp-test/` — project `the-learning-project` with a private `compose.private.json`, memory/CPU-limited containers, restart `unless-stopped`; `app` and Postgres bind `127.0.0.1:18787` / `127.0.0.1:15433` on the NAS only, never `0.0.0.0`. The NAS sshd forbids TCP forwarding, so the Mac reaches TEST through LaunchAgent `studio.yukoval.tlp-nas-tunnel`: a relay on `127.0.0.1:8787` / `5433` / `5544` where each connection is an ssh exec channel running `nc` on the NAS (~0.25 s extra per new connection). `studio.yukoval.tlp-nas-watch` restarts the NAS memory watchdog after NAS reboots and alerts on a memory stop or unhealthy TEST. With the Mac off, TEST keeps running but is unreachable from outside, the Tailscale entry is down, and that day's backup does not run. Relay/watch reinstall steps and token/health rules are in [docs/operations.md](docs/operations.md#网络与访问). Specific private addresses stay in owner private records, not this repo.
+
+AI tasks inherit `opencode-go/deepseek-v4.1-flash` from `DEFAULT_TASK_MODEL` with
+`lane.global.reasoning={"level":"high"}`. Set `task.<kind>.reasoning={"level":"max"}`
+for a task override. `AI_PROVIDER_OVERRIDE` / `AI_PROVIDER_MODEL` remain process-wide
+provider/model emergency pins; clear both to exercise the defaults. Removed `mimo-v2.5*` stored
+models fail visibly instead of switching silently. Mem0 still follows the global
+model pair; without a pair it inherits the product default unless explicit
+`MEM0_LLM_MODEL` / `MEM0_LLM_BASE_URL` selects the legacy memory configuration.

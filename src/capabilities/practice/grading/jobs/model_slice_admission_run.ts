@@ -19,6 +19,7 @@ import {
   SlotResponse,
   modelResponseClassForUnit,
 } from '@/core/schema/assessment';
+import type { ModelOutcomeDiagnosticsT } from '@/core/schema/assessment/model-diagnostics';
 import { sha256Canonical } from '@/core/task-input-hash';
 import type { Db } from '@/db/client';
 import { ai_task_runs, event, question_revision } from '@/db/schema';
@@ -30,7 +31,7 @@ import { currentTaskSpendScope } from '@/server/ai/task-spend-scope';
 import { createAdmissionRunExecutor } from '../server/judge/evaluate-submission';
 import {
   assertModelAdmissionSliceRegistrable,
-  currentModelPins,
+  currentModelPinForKind,
   modelSliceIdFor,
   registerModelAdmissionSlice,
 } from '../server/model-slice-registry';
@@ -82,6 +83,7 @@ export function holdoutItemFromOutcome(
       severe_error: false,
       pending_reason: outcome.pending.reason,
       pending: outcome.pending,
+      ...(outcome.diagnostics !== undefined ? { diagnostics: outcome.diagnostics } : {}),
       run_refs: outcome.run_refs,
       ...(outcome.cost_usd_micros !== undefined
         ? { cost_usd_micros: outcome.cost_usd_micros }
@@ -261,6 +263,8 @@ export interface ModelSliceAdmissionItemResult {
   pending_reason?: string;
   /** 完整未决态（detail / retryable / trigger 等）；pending_reason 只是它的索引。 */
   pending?: PendingStateT;
+  /** 执行期拒收诊断（枚举/数量/hash/已提交 id；不含学习者或模型明文）。 */
+  diagnostics?: ModelOutcomeDiagnosticsT;
   /**
    * pending 是否计入 FREE_HOLDOUT_MAX_PENDING_PER_120：定夺 attempt
    * （run_refs 末位）落账 success 且全部引用 run 费用 resolved 才为 true；
@@ -503,7 +507,7 @@ export async function runModelSliceAdmission(
 
   // 2) 切片与当前模型 pin 必须一致：不给「准入一个现在不会执行的模型」留门
   //    （registerModelAdmissionSlice 写前再校验一次，双保险）。
-  const pin = currentModelPins().get(data.slice.task_kind);
+  const pin = currentModelPinForKind(data.slice.task_kind);
   if (pin === undefined) {
     throw new Error(
       `model_slice_admission_run: task kind '${data.slice.task_kind}' is not a registered admissible grading task`,
@@ -680,7 +684,7 @@ export async function runModelSliceAdmission(
         failures.push('shared task allowance exhausted or unpriced; no further calls permitted');
         break;
       }
-      const livePin = currentModelPins().get(data.slice.task_kind);
+      const livePin = currentModelPinForKind(data.slice.task_kind);
       if (
         livePin?.model !== data.slice.model ||
         livePin.model_version !== data.slice.model_version

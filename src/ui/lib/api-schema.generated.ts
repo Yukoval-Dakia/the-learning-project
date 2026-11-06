@@ -516,6 +516,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/appeals/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getAppealStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/artifacts/{id}/ai-changes": {
         parameters: {
             query?: never;
@@ -2749,6 +2765,11 @@ export interface operations {
                             /** @enum {string|null} */
                             model_source?: "env" | "db" | null;
                             provider: string | null;
+                            reasoning?: {
+                                level: string | null;
+                                /** @enum {string} */
+                                source: "db" | "env" | "code-default" | "compose-forced";
+                            };
                             /** @enum {string|null} */
                             source: "env" | "db" | null;
                         } | null;
@@ -2899,6 +2920,8 @@ export interface operations {
                                     applied: string | null;
                                     error: string | null;
                                     requested: string | null;
+                                    /** @enum {string} */
+                                    source?: "task" | "global" | "catalog";
                                 } | null;
                                 /** @enum {string|null} */
                                 selection_rule: "env_pin" | "task_pair_priority" | "call_override" | "global_pin" | "task_config" | "registry_default" | null;
@@ -3088,6 +3111,11 @@ export interface operations {
                                 /** @enum {string|null} */
                                 model_source?: "env" | "db" | null;
                                 provider: string | null;
+                                reasoning?: {
+                                    level: string | null;
+                                    /** @enum {string} */
+                                    source: "db" | "env" | "code-default" | "compose-forced";
+                                };
                                 /** @enum {string|null} */
                                 source: "env" | "db" | null;
                             } | null;
@@ -3106,6 +3134,8 @@ export interface operations {
                                         applied: string | null;
                                         error: string | null;
                                         requested: string | null;
+                                        /** @enum {string} */
+                                        source?: "task" | "global" | "catalog";
                                     } | null;
                                     /** @enum {string|null} */
                                     selection_rule: "env_pin" | "task_pair_priority" | "call_override" | "global_pin" | "task_config" | "registry_default" | null;
@@ -3270,6 +3300,11 @@ export interface operations {
                                 /** @enum {string|null} */
                                 model_source?: "env" | "db" | null;
                                 provider: string | null;
+                                reasoning?: {
+                                    level: string | null;
+                                    /** @enum {string} */
+                                    source: "db" | "env" | "code-default" | "compose-forced";
+                                };
                                 /** @enum {string|null} */
                                 source: "env" | "db" | null;
                             } | null;
@@ -3288,6 +3323,8 @@ export interface operations {
                                         applied: string | null;
                                         error: string | null;
                                         requested: string | null;
+                                        /** @enum {string} */
+                                        source?: "task" | "global" | "catalog";
                                     } | null;
                                     /** @enum {string|null} */
                                     selection_rule: "env_pin" | "task_pair_priority" | "call_override" | "global_pin" | "task_config" | "registry_default" | null;
@@ -8295,6 +8332,147 @@ export interface operations {
                 content: {
                     "application/json": {
                         appeal_event_id: string;
+                    };
+                };
+            };
+            /** @description Malformed request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description State or version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Semantic validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Rate limited */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    getAppealStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        after: {
+                            coarse_outcome: string;
+                            effective_evaluation_id: string | null;
+                            feedback_md: string | null;
+                            score: number | null;
+                        } | null;
+                        appeal_event_id: string;
+                        before: {
+                            coarse_outcome: string;
+                            feedback_md: string | null;
+                            score: number | null;
+                        } | null;
+                        disposition: string | null;
+                        evaluation_group_id: string | null;
+                        evaluation_id: string;
+                        feedback_buffered: boolean;
+                        reason_md: string;
+                        /** @enum {string} */
+                        status: "in_progress" | "changed" | "unchanged" | "unjudgeable" | "failed";
+                        submitted_at_sec: number;
                     };
                 };
             };
@@ -19283,6 +19461,7 @@ export interface operations {
                         settled?: {
                             /** @enum {string} */
                             kind: "terminal";
+                            latest_appeal_event_id: string | null;
                             run: {
                                 result: ({
                                     already_persisted?: boolean;
@@ -19304,7 +19483,7 @@ export interface operations {
                                     confidence?: number;
                                     evidence_json?: unknown;
                                     feedback_md?: string;
-                                    final_rating?: string;
+                                    final_rating?: string | null;
                                     grading_provenance?: {
                                         /** @enum {string} */
                                         calibration: "uncalibrated";
@@ -19313,6 +19492,8 @@ export interface operations {
                                         source: "ai";
                                     }[];
                                     judge_event_id?: string | null;
+                                    /** @enum {string} */
+                                    judge_lane?: "durable" | "sync";
                                     late_arrival?: boolean;
                                     model?: string;
                                     outcome?: string;
@@ -20034,7 +20215,7 @@ export interface operations {
                             confidence?: number;
                             evidence_json?: unknown;
                             feedback_md?: string;
-                            final_rating?: string;
+                            final_rating?: string | null;
                             grading_provenance?: {
                                 /** @enum {string} */
                                 calibration: "uncalibrated";
@@ -20043,6 +20224,8 @@ export interface operations {
                                 source: "ai";
                             }[];
                             judge_event_id?: string | null;
+                            /** @enum {string} */
+                            judge_lane?: "durable" | "sync";
                             late_arrival?: boolean;
                             model?: string;
                             outcome?: string;
@@ -21918,6 +22101,7 @@ export interface operations {
                                 updated_at: string;
                             }[];
                             id: string;
+                            removed: boolean;
                             undo_of: string | null;
                         }[];
                         topics: {
@@ -25186,6 +25370,7 @@ export interface operations {
                                     settled?: {
                                         /** @enum {string} */
                                         kind: "terminal";
+                                        latest_appeal_event_id: string | null;
                                         run: {
                                             result: ({
                                                 already_persisted?: boolean;
@@ -25207,7 +25392,7 @@ export interface operations {
                                                 confidence?: number;
                                                 evidence_json?: unknown;
                                                 feedback_md?: string;
-                                                final_rating?: string;
+                                                final_rating?: string | null;
                                                 grading_provenance?: {
                                                     /** @enum {string} */
                                                     calibration: "uncalibrated";
@@ -25216,6 +25401,8 @@ export interface operations {
                                                     source: "ai";
                                                 }[];
                                                 judge_event_id?: string | null;
+                                                /** @enum {string} */
+                                                judge_lane?: "durable" | "sync";
                                                 late_arrival?: boolean;
                                                 model?: string;
                                                 outcome?: string;
@@ -26904,6 +27091,7 @@ export interface operations {
                                         settled?: {
                                             /** @enum {string} */
                                             kind: "terminal";
+                                            latest_appeal_event_id: string | null;
                                             run: {
                                                 result: ({
                                                     already_persisted?: boolean;
@@ -26925,7 +27113,7 @@ export interface operations {
                                                     confidence?: number;
                                                     evidence_json?: unknown;
                                                     feedback_md?: string;
-                                                    final_rating?: string;
+                                                    final_rating?: string | null;
                                                     grading_provenance?: {
                                                         /** @enum {string} */
                                                         calibration: "uncalibrated";
@@ -26934,6 +27122,8 @@ export interface operations {
                                                         source: "ai";
                                                     }[];
                                                     judge_event_id?: string | null;
+                                                    /** @enum {string} */
+                                                    judge_lane?: "durable" | "sync";
                                                     late_arrival?: boolean;
                                                     model?: string;
                                                     outcome?: string;
@@ -28131,6 +28321,7 @@ export interface operations {
                                     settled?: {
                                         /** @enum {string} */
                                         kind: "terminal";
+                                        latest_appeal_event_id: string | null;
                                         run: {
                                             result: ({
                                                 already_persisted?: boolean;
@@ -28152,7 +28343,7 @@ export interface operations {
                                                 confidence?: number;
                                                 evidence_json?: unknown;
                                                 feedback_md?: string;
-                                                final_rating?: string;
+                                                final_rating?: string | null;
                                                 grading_provenance?: {
                                                     /** @enum {string} */
                                                     calibration: "uncalibrated";
@@ -28161,6 +28352,8 @@ export interface operations {
                                                     source: "ai";
                                                 }[];
                                                 judge_event_id?: string | null;
+                                                /** @enum {string} */
+                                                judge_lane?: "durable" | "sync";
                                                 late_arrival?: boolean;
                                                 model?: string;
                                                 outcome?: string;
@@ -34237,6 +34430,13 @@ export interface operations {
                                 confidence: number;
                                 evaluation_id?: string;
                                 feedback_md: string;
+                                grading_provenance?: {
+                                    /** @enum {string} */
+                                    calibration: "uncalibrated";
+                                    scoring_unit_id: string;
+                                    /** @enum {string} */
+                                    source: "ai";
+                                }[];
                                 judge_event_id: string | null;
                                 /** @enum {string} */
                                 route: "multimodal_direct" | "evaluate_submission";
@@ -36468,6 +36668,7 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    accept_pending?: boolean;
                     activity_ref?: {
                         id: string;
                         /** @enum {string} */
@@ -36603,6 +36804,7 @@ export interface operations {
                         reasoning_trace?: string | null;
                         /** @default [] */
                         referenced_knowledge_ids?: string[];
+                        self_confidence?: number | null;
                         session_id?: string | null;
                         stream_item_id?: string | null;
                     };
@@ -36734,6 +36936,13 @@ export interface operations {
                                 [key: string]: unknown;
                             };
                             feedback_md: string;
+                            grading_provenance?: {
+                                /** @enum {string} */
+                                calibration: "uncalibrated";
+                                scoring_unit_id: string;
+                                /** @enum {string} */
+                                source: "ai";
+                            }[];
                             provenance_token?: string;
                             route: string;
                             score: number | null;
@@ -36755,6 +36964,13 @@ export interface operations {
                                 [key: string]: unknown;
                             };
                             feedback_md: string;
+                            grading_provenance?: {
+                                /** @enum {string} */
+                                calibration: "uncalibrated";
+                                scoring_unit_id: string;
+                                /** @enum {string} */
+                                source: "ai";
+                            }[];
                             partial_units: {
                                 correct_count: number;
                                 scoring_unit_id: string;
@@ -36773,6 +36989,25 @@ export interface operations {
                         };
                         question_id: string;
                         submission_id: string;
+                    };
+                };
+            };
+            /** @description Successful response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        backfill: {
+                            /** @enum {string} */
+                            channel: "sse";
+                            poll_url: string;
+                            url: string;
+                        };
+                        run_id: string;
+                        /** @enum {string} */
+                        verdict: "pending";
                     };
                 };
             };

@@ -25,6 +25,7 @@ import type { Db } from '@/db/client';
 import { bindAgentRunError } from './agent-run-error';
 import type { AttemptCostBasis } from './attempt-cost';
 import { JEV_CANONICAL_MODEL, JEV_MAX_PRICE_USD_PER_MILLION } from './pricing';
+import { readRetryAfterMs } from './provider-error-evidence';
 import { classifyLifecycleRetry, createRunLifecycle } from './run-lifecycle';
 import { emptyStreamTextStats } from './timeout-usage';
 
@@ -261,12 +262,17 @@ export async function runTypedPrimitiveTask<Output = unknown>(
           if (!response.ok) {
             // Non-transient statuses are permanent; isTransientAgentFailure
             // whitelists only null/429/5xx. No blind retry.
+            const retryAfterMs = readRetryAfterMs(response.headers);
             throw new AgentRunError({
               kind,
               taskRunId: lifecycle.taskRunId,
               subtype: 'api_error_result',
               apiErrorStatus: response.status,
               errors: [text.slice(0, ERROR_SNIPPET_MAX)],
+              providerFailure: {
+                http_status: response.status,
+                ...(retryAfterMs !== undefined ? { retry_after_ms: retryAfterMs } : {}),
+              },
             });
           }
           let json: unknown;

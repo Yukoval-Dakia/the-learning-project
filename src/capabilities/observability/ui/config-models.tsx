@@ -30,8 +30,11 @@ import {
   ruleWord,
   taskEditable,
   taskWords,
+  thinkingChoiceWord,
+  thinkingLevels,
+  thinkingWord,
 } from './config-model';
-import { ModelPicker, modelIssue } from './config-model-picker';
+import { ModelPicker, findModel, modelIssue } from './config-model-picker';
 import { ConfigProviderCatalog } from './config-provider-catalog';
 import { ConfigTaskEditor } from './config-task-editor';
 
@@ -50,6 +53,8 @@ const GROUP_ICON: Readonly<Record<string, LucideIcon>> = {
  * say so: it reports the provider's layer, and the model resolves separately, so a provider-only pin
  * can leave a task on a model of its own.
  */
+const GLOBAL_THINKING_LEVELS = ['off', 'low', 'medium', 'high', 'max'];
+
 function followsGlobal(binding: ConfigBinding | null, global: ConfigGlobal | null): boolean {
   return (
     binding !== null &&
@@ -121,7 +126,28 @@ function GlobalDefault({ data, save }: { data: ConfigData; save: SaveConfig }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<{ text: string; epoch: number } | null>(null);
-  const issue = modelIssue(data.providers, pick.provider, pick.model);
+  const stored = current?.reasoning?.level ?? '';
+  const [thinking, setThinking] = useState(stored);
+  // Every task without its own choice moves with this, so a change says so and asks first.
+  const [confirm, setConfirm] = useState<{
+    text: string;
+    changes: Parameters<SaveConfig>[0];
+  } | null>(null);
+  const issue = pinned ? null : modelIssue(data.providers, pick.provider, pick.model);
+  const currentPair = current?.provider
+    ? current.model
+      ? `${current.provider} / ${current.model}`
+      : current.provider
+    : null;
+  const pairChanged =
+    !pinned && (pick.provider !== current?.provider || pick.model !== current?.model);
+  const thinkingChanged = thinking !== stored;
+  const pickedModel = pinned
+    ? findModel(data.providers, current?.provider ?? '', current?.model ?? '')
+    : findModel(data.providers, pick.provider, pick.model);
+  const catalogLevels = thinkingLevels(pickedModel);
+  // With no single model to read it from, the level still applies to whatever each task runs.
+  const levels = catalogLevels.length > 0 ? catalogLevels : GLOBAL_THINKING_LEVELS;
   const run = async (changes: Parameters<SaveConfig>[0]) => {
     setPending(true);
     setError(null);
@@ -136,8 +162,31 @@ function GlobalDefault({ data, save }: { data: ConfigData; save: SaveConfig }) {
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
+      setConfirm(null);
       setPending(false);
     }
+  };
+  const askToSave = () => {
+    const parts = [
+      pairChanged ? `全局默认：${currentPair ?? '没有'} → ${pick.provider} / ${pick.model}` : null,
+      thinkingChanged
+        ? `思考强度：${stored ? thinkingWord(stored) : '没有'} → ${thinkingChoiceWord(pickedModel, thinking)}`
+        : null,
+    ].filter(Boolean);
+    setConfirm({
+      text: `${parts.join('；')}。没有单独设置的任务都会跟着变。`,
+      changes: [
+        ...(pairChanged
+          ? ([
+              { action: 'set', key: 'lane.global.provider', value: pick.provider },
+              { action: 'set', key: 'lane.global.model', value: pick.model },
+            ] as const)
+          : []),
+        ...(thinkingChanged
+          ? ([{ action: 'set', key: 'lane.global.reasoning', value: { level: thinking } }] as const)
+          : []),
+      ],
+    });
   };
   return (
     <section className="adm-global adm-form" aria-labelledby={`${id}-title`}>
@@ -148,13 +197,17 @@ function GlobalDefault({ data, save }: { data: ConfigData; save: SaveConfig }) {
           </h2>
           <p className="adm-note">没有单独设置的任务都用它。</p>
         </div>
-        {!pinned && !editing ? (
+        {!editing ? (
           <Button
             variant="secondary"
             size="sm"
             disabled={!data.facts_injected}
             onClick={() => {
               setSaved(null);
+              // Start from what is in effect now: another session may have changed it, and saving an
+              // older pair would move every task that follows the default back.
+              setPick({ provider: current?.provider ?? '', model: current?.model ?? '' });
+              setThinking(stored);
               setEditing(true);
             }}
           >
@@ -172,6 +225,13 @@ function GlobalDefault({ data, save }: { data: ConfigData; save: SaveConfig }) {
       ) : (
         <p className="adm-note">没有全局默认，各任务用自己的模型。</p>
       )}
+      {stored ? (
+        <p className="adm-cell-sub">
+          思考强度 {thinkingWord(stored)}
+          {current?.reasoning?.source === 'code-default' ? '（系统默认）' : ''}
+          ，每个模型取它能用的最接近一档。
+        </p>
+      ) : null}
       {current?.error ? (
         <p role="alert" className="adm-field-error">
           {current.error}
@@ -191,35 +251,53 @@ function GlobalDefault({ data, save }: { data: ConfigData; save: SaveConfig }) {
         </p>
       ) : null}
       {editing ? (
-        <fieldset disabled={pending} className="adm-fieldset">
+        <fieldset disabled={pending || confirm !== null} className="adm-fieldset">
           <legend className="adm-legend">全局默认</legend>
-          <ModelPicker
-            id={id}
-            providers={data.providers}
-            provider={pick.provider}
-            model={pick.model}
-            onChange={setPick}
-          />
+          {pinned ? null : (
+            <ModelPicker
+              id={id}
+              providers={data.providers}
+              provider={pick.provider}
+              model={pick.model}
+              onChange={setPick}
+            />
+          )}
+          <label htmlFor={`${id}-thinking`} className="adm-inline-field">
+            <span className="adm-field-name">思考强度</span>
+            <select
+              id={`${id}-thinking`}
+              className="adm-input"
+              value={levels.includes(thinking) ? thinking : ''}
+              onChange={(e) => setThinking(e.target.value)}
+            >
+              {levels.includes(thinking) ? null : (
+                <option value="">{thinking ? thinkingWord(thinking) : '没有'}</option>
+              )}
+              {levels.map((level) => (
+                <option key={level} value={level}>
+                  {thinkingChoiceWord(pickedModel, level)}
+                </option>
+              ))}
+            </select>
+          </label>
           <div className="adm-acts">
             <Button
-              disabled={Boolean(issue)}
-              onClick={() =>
-                void run([
-                  { action: 'set', key: 'lane.global.provider', value: pick.provider },
-                  { action: 'set', key: 'lane.global.model', value: pick.model },
-                ])
-              }
+              disabled={Boolean(issue) || !(pairChanged || thinkingChanged)}
+              onClick={askToSave}
             >
-              {pending ? '保存中…' : '保存'}
+              保存
             </Button>
-            {current?.provider ? (
+            {!pinned && current?.provider ? (
               <Button
                 variant="secondary"
                 onClick={() =>
-                  void run([
-                    { action: 'clear', key: 'lane.global.provider' },
-                    { action: 'clear', key: 'lane.global.model' },
-                  ])
+                  setConfirm({
+                    text: `清除全局默认（${currentPair}）。没有单独设置的任务回到各自的模型。`,
+                    changes: [
+                      { action: 'clear', key: 'lane.global.provider' },
+                      { action: 'clear', key: 'lane.global.model' },
+                    ],
+                  })
                 }
               >
                 清除全局默认
@@ -227,6 +305,19 @@ function GlobalDefault({ data, save }: { data: ConfigData; save: SaveConfig }) {
             ) : null}
             <Button variant="ghost" onClick={() => setEditing(false)}>
               取消
+            </Button>
+          </div>
+        </fieldset>
+      ) : null}
+      {confirm ? (
+        <fieldset className="adm-confirm" aria-label="确认全局默认变更">
+          <p>{confirm.text}</p>
+          <div className="adm-acts">
+            <Button disabled={pending} onClick={() => void run(confirm.changes)}>
+              {pending ? '保存中…' : '确认变更'}
+            </Button>
+            <Button variant="ghost" disabled={pending} onClick={() => setConfirm(null)}>
+              返回修改
             </Button>
           </div>
         </fieldset>
@@ -262,6 +353,47 @@ function GroupSummary({
     <span className="adm-tag-differs">
       {pairs.size === 1 ? [...pairs][0] : `${pairs.size} 种模型`}
     </span>
+  );
+}
+
+// A dedicated-channel task has no model to choose and the server now refuses this flag on it. A row
+// from before that refusal breaks reads of the task, and clearing it is all this page can offer.
+function LeftoverOwnModel({
+  task,
+  save,
+  onSaved,
+}: {
+  task: ConfigTask;
+  save: SaveConfig;
+  onSaved: (receipt: ConfigReceipt) => void;
+}) {
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  async function clear() {
+    setError(null);
+    setPending(true);
+    try {
+      onSaved(await save([{ action: 'clear', key: `task.${task.kind}.override_global_pin` }]));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPending(false);
+    }
+  }
+  return (
+    <div className="adm-saved adm-task-saved">
+      <p className="adm-field-error">
+        这个任务留着一条「用自己的模型」的设置。它用不上，留着可能让相关功能出错。
+      </p>
+      <Button variant="secondary" size="sm" disabled={pending} onClick={() => void clear()}>
+        {pending ? '清除中…' : '清除这条设置'}
+      </Button>
+      {error ? (
+        <p role="alert" className="adm-field-error">
+          {error}
+        </p>
+      ) : null}
+    </div>
   );
 }
 
@@ -328,6 +460,9 @@ function TaskRow({
           <Chip>专用通道 · 只读</Chip>
         )}
       </div>
+      {!taskEditable(task) && task.override?.override_global_pin === true ? (
+        <LeftoverOwnModel task={task} save={save} onSaved={setReceipt} />
+      ) : null}
       {after && !editing ? (
         <div className="adm-saved adm-task-saved" role="status">
           <p>下一次运行会用：</p>

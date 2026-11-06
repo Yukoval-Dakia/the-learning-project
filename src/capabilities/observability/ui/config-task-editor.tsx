@@ -16,6 +16,7 @@ import {
   resetTaskChanges,
   taskEditable,
   taskWords,
+  thinkingChoiceWord,
   thinkingLevels,
   thinkingWord,
 } from './config-model';
@@ -82,10 +83,14 @@ export function ConfigTaskEditor({
   const [error, setError] = useState<string | null>(null);
   if (!taskEditable(task)) return <p className="adm-note">此任务使用专用执行通道，当前只读。</p>;
   const issue = modelIssue(providers, draft.provider, draft.model);
-  const levels = thinkingLevels(findModel(providers, draft.provider, draft.model));
   const hasGlobal = Boolean(global?.provider);
   const noModelChange = modelChanges(task, draft).length === 0;
   const globalWins = hasGlobal && !draft.ownModel;
+  // Following the global default, the level applies to the model that really runs.
+  const thinkingModel = globalWins
+    ? findModel(providers, global?.provider ?? draft.provider, global?.model ?? draft.model)
+    : findModel(providers, draft.provider, draft.model);
+  const levels = thinkingLevels(thinkingModel);
 
   async function commit() {
     if (!confirm || pending) return;
@@ -152,7 +157,7 @@ export function ConfigTaskEditor({
               <option value="">默认</option>
               {levels.map((level) => (
                 <option key={level} value={level}>
-                  {thinkingWord(level)}
+                  {thinkingChoiceWord(thinkingModel, level)}
                 </option>
               ))}
             </select>
@@ -165,7 +170,22 @@ export function ConfigTaskEditor({
             <input
               type="checkbox"
               checked={draft.ownModel}
-              onChange={(e) => setDraft({ ...draft, ownModel: e.target.checked })}
+              onChange={(e) => {
+                const ownModel = e.target.checked;
+                // The model that really runs changes, and a level it does not list would be saved unseen.
+                const next = ownModel
+                  ? findModel(providers, draft.provider, draft.model)
+                  : findModel(
+                      providers,
+                      global?.provider ?? draft.provider,
+                      global?.model ?? draft.model,
+                    );
+                setDraft({
+                  ...draft,
+                  ownModel,
+                  thinking: thinkingLevels(next).includes(draft.thinking) ? draft.thinking : '',
+                });
+              }}
             />
             这个任务用自己的模型，不跟全局默认
           </label>

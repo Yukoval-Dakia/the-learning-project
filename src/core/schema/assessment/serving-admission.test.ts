@@ -199,7 +199,7 @@ describe('automatic serving model gate', () => {
   });
 
   // @invariant grading: the serving pin is the model that will actually run, so a task model override cannot grade under another slice
-  // @fails-if read only the registry defaultModel; a mimo-v2.5 slice stays admitted while the task override selects another model
+  // @fails-if read only the registry defaultModel; an old slice stays admitted while the task override selects another model
   it('withholds a slice when task.<kind>.model selects a different model', () => {
     const before = currentModelPins().get('AssessmentRubricJudgeTask');
     if (before === undefined) throw new Error('rubric pin missing');

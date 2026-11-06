@@ -1,6 +1,10 @@
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { canonicalHash } from '@/core/migration/canonical';
-import { EvaluationProvenance } from '@/core/schema/assessment';
+import {
+  type ActivateEvaluationIntentT,
+  EvaluationProvenance,
+  resolveActivationCas,
+} from '@/core/schema/assessment';
 import type { JudgeReservation } from '@/core/schema/event/judge-operational-events';
 import {
   JudgePendingAttemptPayload,
@@ -11,6 +15,7 @@ import type { Db, Tx } from '@/db/client';
 import { assessment_submission, evaluation, evaluation_effective_head, event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
+import { lockAssessmentEvaluationGroup } from '@/kernel/locks/assessment-evaluation-group-lock';
 import { lockJudgeRun } from '@/kernel/locks/grading';
 import { assessmentAttemptEventId } from '@/kernel/records/assessment-attempt-identity';
 import {
@@ -39,7 +44,7 @@ import {
   type FormalAttemptCapture,
   commitFormalAttempt,
   prepareFormalAttemptSubmission,
-  type previewFormalAttempt,
+  previewFormalAttempt,
   recordFormalAttemptCapture,
 } from './attempt';
 import type { SaveSubmissionRequest } from './submit';
@@ -55,6 +60,8 @@ export async function dispatchNativeAttempt(
     enabled: boolean;
     capture: FormalAttemptCapture;
     userRating?: 'again' | 'hard' | 'good';
+    /** A candidate an earlier synchronous preview sealed: the worker activates exactly it. */
+    activationIntent?: ActivateEvaluationIntentT;
     requireUnassistedModelEvidence?: boolean;
   },
   deps: JudgeRunEnqueueDeps = {},
@@ -73,7 +80,11 @@ export async function dispatchNativeAttempt(
     submission_id: submission.submission_id,
     evaluation_group_id: submission.evaluation_group_id,
     submitted_at: submission.submitted_at,
-    expected_head: { expected_effective_id: null, expected_generation: 0 },
+    expected_head: {
+      expected_effective_id: options.activationIntent?.expected_effective_id ?? null,
+      expected_generation: options.activationIntent?.expected_generation ?? 0,
+    },
+    candidate_id: options.activationIntent?.evaluation_id,
     user_rating: options.userRating,
     require_unassisted_model_evidence: !!options.requireUnassistedModelEvidence,
   } satisfies Omit<NativeJudgePendingSubmitInputT, 'capture'>;
@@ -116,6 +127,7 @@ export async function dispatchNativeAttempt(
   let sendId: string | undefined;
   try {
     job = await db.transaction(async (tx) => {
+      await lockAssessmentEvaluationGroup(tx, submission.evaluation_group_id);
       const control = await readJudgeControl(tx, 'share');
       await lockJudgeRun(tx, runId);
       const [existing] = await tx.select().from(event).where(eq(event.id, pendingId));
@@ -123,6 +135,34 @@ export async function dispatchNativeAttempt(
       if (!options.enabled || !hasModel) return null;
       if (control.phase !== 'pg-boss' && control.phase !== 'dbos')
         throw new ApiError('judge_draining', 'Judge admissions are temporarily draining', 503);
+      // Same refusal the synchronous commit gives, before an anchor the worker could never settle.
+      if (options.activationIntent) {
+        const [sealed] = await tx
+          .select({ id: evaluation.evaluation_id })
+          .from(evaluation)
+          .where(
+            and(
+              eq(evaluation.evaluation_id, options.activationIntent.evaluation_id),
+              eq(evaluation.submission_id, submission.submission_id),
+            ),
+          );
+        if (!sealed)
+          throw new ApiError(
+            'candidate_not_found',
+            'commit requires a previously sealed candidate',
+            409,
+          );
+        const [head] = await tx
+          .select()
+          .from(evaluation_effective_head)
+          .where(eq(evaluation_effective_head.evaluation_group_id, submission.evaluation_group_id))
+          .for('update');
+        if (!head || head.submission_id !== submission.submission_id)
+          throw new ApiError('coordinate_mismatch', 'candidate and effective head differ', 409);
+        const cas = resolveActivationCas(head, options.activationIntent);
+        if (!cas.ok && cas.conflict !== 'already_effective')
+          throw new ApiError('cas_conflict', cas.conflict, 409);
+      }
       token = admitJudgeRun(deps);
       const input = NativeJudgePendingSubmitInput.parse({
         ...identity,
@@ -256,6 +296,7 @@ export async function executeNativeAttempt(
     .select()
     .from(evaluation_effective_head)
     .where(eq(evaluation_effective_head.evaluation_group_id, input.evaluation_group_id));
+  let superseded = false;
   if (
     (head?.effective_evaluation_id ?? null) !== input.expected_head.expected_effective_id ||
     (head?.generation ?? 0) !== input.expected_head.expected_generation
@@ -273,7 +314,7 @@ export async function executeNativeAttempt(
       EvaluationProvenance.safeParse(effective?.provenance).data?.execution_receipt?.key !==
         `submission:${input.submission_id}`
     ) {
-      throw new ApiError('stale_head', 'accepted operation no longer owns the effective head', 409);
+      superseded = true;
     }
   }
   const writeResolution = async (
@@ -283,6 +324,16 @@ export async function executeNativeAttempt(
   ) => {
     await lockJudgeRun(tx, job.run_id);
     const candidateId = prepared.candidate.evaluation.record.evaluation_id;
+    const finalRating =
+      status === 'effective'
+        ? ratingFromCoarseOutcome(prepared.candidate.result.coarse_outcome)
+        : null;
+    if (status === 'effective' && finalRating === null)
+      throw new ApiError(
+        'corrupt_state',
+        'effective worker result requires a model-derived rating',
+        500,
+      );
     const wanted = {
       id: job.run_id,
       session_id: input.capture.session_id ?? null,
@@ -298,14 +349,7 @@ export async function executeNativeAttempt(
         status,
         attempt_event_id: assessmentAttemptEventId(input.submission_id),
         judge_event_id: null,
-        ...(status === 'effective' &&
-        (input.user_rating ?? ratingFromCoarseOutcome(prepared.candidate.result.coarse_outcome))
-          ? {
-              final_rating:
-                input.user_rating ??
-                ratingFromCoarseOutcome(prepared.candidate.result.coarse_outcome),
-            }
-          : {}),
+        ...(finalRating ? { final_rating: finalRating } : {}),
         ...prepared.candidate.result,
         assessment: {
           submission_id: input.submission_id,
@@ -371,31 +415,93 @@ export async function executeNativeAttempt(
     const [saved] = await tx.select().from(event).where(eq(event.id, job.run_id));
     validateReceipt(saved);
   };
-  const committed = await commitFormalAttempt(
-    db,
-    'durable_judge_run',
-    input.question_id,
-    {
-      issuance_id: submission.issuance_id,
-      submission_id: submission.submission_id,
-      evaluation_group_id: submission.evaluation_group_id,
-      idempotency_key: submission.idempotency_key,
-      response_set: submission.response_set,
-      group_evidence: submission.group_evidence,
-      now: submission.submitted_at,
-    },
-    {
-      expectedHead: input.expected_head,
-      userRating: input.user_rating,
-      capture: input.capture,
-      modelAdmission: 'durable',
-      judgeExecution: authority,
-      requireUnassistedModelEvidence: input.require_unassisted_model_evidence,
-      onActivated: async (tx, prepared) => {
-        await writeResolution(tx, prepared, 'effective');
+  const finishSuperseded = async () => {
+    const prepared = await previewFormalAttempt(
+      db,
+      'durable_judge_run',
+      input.question_id,
+      {
+        issuance_id: submission.issuance_id,
+        submission_id: submission.submission_id,
+        evaluation_group_id: submission.evaluation_group_id,
+        idempotency_key: submission.idempotency_key,
+        response_set: submission.response_set,
+        group_evidence: submission.group_evidence,
+        now: submission.submitted_at,
       },
-    },
-  );
+      undefined,
+      {
+        candidateId: input.candidate_id,
+        modelAdmission: 'durable',
+        judgeExecution: authority,
+        hold: {
+          reason: 'unjudgeable',
+          detail: '已有更新的判定，本次作答已保存，未覆盖新结果。',
+        },
+      },
+    );
+    await db.transaction(async (tx) => {
+      await lockAssessmentEvaluationGroup(tx, input.evaluation_group_id);
+      await recordFormalAttemptCapture(
+        tx,
+        'durable_judge_run',
+        input.question_id,
+        prepared.submission,
+        prepared.candidate.evaluation.record.evaluation_id,
+        input.capture,
+      );
+      await writeResolution(tx, prepared, 'review_required');
+    });
+    return { ...prepared, status: 'review_required' as const };
+  };
+  if (superseded) return finishSuperseded();
+  let committed: Awaited<ReturnType<typeof commitFormalAttempt>>;
+  try {
+    committed = await commitFormalAttempt(
+      db,
+      'durable_judge_run',
+      input.question_id,
+      {
+        issuance_id: submission.issuance_id,
+        submission_id: submission.submission_id,
+        evaluation_group_id: submission.evaluation_group_id,
+        idempotency_key: submission.idempotency_key,
+        response_set: submission.response_set,
+        group_evidence: submission.group_evidence,
+        now: submission.submitted_at,
+      },
+      {
+        activationIntent:
+          input.candidate_id === undefined
+            ? undefined
+            : { evaluation_id: input.candidate_id, ...input.expected_head },
+        expectedHead: input.expected_head,
+        capture: input.capture,
+        modelAdmission: 'durable',
+        judgeExecution: authority,
+        requireUnassistedModelEvidence: input.require_unassisted_model_evidence,
+        onActivated: async (tx, prepared) => {
+          await writeResolution(tx, prepared, 'effective');
+        },
+      },
+    );
+  } catch (error) {
+    if (
+      !(error instanceof ApiError) ||
+      !['cas_conflict', 'coordinate_mismatch'].includes(error.code)
+    )
+      throw error;
+    const [current] = await db
+      .select()
+      .from(evaluation_effective_head)
+      .where(eq(evaluation_effective_head.evaluation_group_id, input.evaluation_group_id));
+    if (
+      (current?.effective_evaluation_id ?? null) === input.expected_head.expected_effective_id &&
+      (current?.generation ?? 0) === input.expected_head.expected_generation
+    )
+      throw error;
+    return finishSuperseded();
+  }
   // Held evaluation and recovery of an already-activated candidate skip the activation callback.
   await db.transaction((tx) => writeResolution(tx, committed, committed.status));
   return committed;

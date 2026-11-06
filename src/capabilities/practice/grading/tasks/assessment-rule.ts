@@ -11,8 +11,6 @@ export const assessmentRuleTaskSpec = {
     kind: 'AssessmentRuleJudgeTask',
     description:
       'Admitted frozen assessment rule/level judgment through native pi; no learning writes',
-    defaultProvider: 'xiaomi',
-    defaultModel: 'mimo-v2.5',
     budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1, transientRetries: 0, timeout: 90_000 },
     needsToolCall: false,
     isMultimodal: true,

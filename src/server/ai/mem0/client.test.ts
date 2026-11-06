@@ -33,6 +33,7 @@ vi.mock('mem0ai/oss', () => {
 const env = {
   DATABASE_URL: 'postgres://loom:secret@127.0.0.1:5433/loom_test?sslmode=disable',
   ZHIPU_API_KEY: 'zhipu-key',
+  MEM0_LLM_MODEL: 'glm-5.3-flash',
   DASHSCOPE_API_KEY: 'dashscope-key',
 };
 

@@ -22,15 +22,11 @@ function tokenPlanEndpoint(raw: string, envName: string): string {
   return raw.replace(/\/+$/u, '');
 }
 
-/** The operator vision probe uses Messages; product tasks use native pi Completions. */
+/** The operator vision probe hits the lane's native wire; explicit overrides stay TP-only. */
 export function xiaomiTokenPlanVisionBaseUrl(
   env: Record<string, string | undefined> = process.env,
 ): string {
   const explicit = env.MIMO_VISION_BASE_URL?.trim();
   if (explicit) return tokenPlanEndpoint(explicit, 'MIMO_VISION_BASE_URL');
-  const baseUrl = tokenPlanEndpointOverride(env);
-  if (!baseUrl.endsWith('/v1')) {
-    throw new Error('Set MIMO_VISION_BASE_URL for a Token Plan base URL without /v1');
-  }
-  return `${baseUrl.slice(0, -3)}/anthropic`;
+  return tokenPlanEndpointOverride(env);
 }

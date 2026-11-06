@@ -8,7 +8,7 @@ import type { FrontdoorContext } from './context';
 export const revealStartStudyReference: FrontdoorContext['revealStudyReference'] = (issuanceId) =>
   runWithHttpProviderSessionDeadline(Date.now() + HTTP_PROVIDER_SESSION_BUDGET_MS, async () => {
     try {
-      const { revealFrozenStudyReference } = await import('@/capabilities/practice/public');
+      const { revealFrozenStudyReference } = await import('@/capabilities/practice/grading/public');
       const { db } = await import('@/db/client');
       return await revealFrozenStudyReference(db, issuanceId);
     } catch (error) {

@@ -1,6 +1,6 @@
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/kernel/http';
-import { readJudgeRunStatus } from '../../public';
+import { readJudgeRunStatus } from '../public';
 
 export async function GET(_req: Request, params: Record<string, string>): Promise<Response> {
   try {
