@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { ResponseSpec } from '@/core/schema/assessment/response';
 import { QuestionKind } from '@/core/schema/business';
 import { GradingProvenanceEntry } from '@/core/schema/capability';
 import { ReviewTimingJsonSchema } from '@/core/schema/learner-judgment';
@@ -386,3 +387,43 @@ export const RestoreQuestionResponseSchema = z
     event_id: z.string(),
   })
   .passthrough();
+
+export const QuestionCardQuerySchema = z.object({
+  session_id: z
+    .string()
+    .regex(/^[A-Za-z0-9_-]{1,128}$/)
+    .optional(),
+});
+
+export const QuestionCardResponseSchema = z.object({
+  question_id: z.string(),
+  inline_block_ref: z
+    .string()
+    .regex(/^blk_[0-9a-f]{32}$/)
+    .nullable(),
+  state: z.enum(['ready', 'checking', 'failed', 'undecided', 'withdrawn', 'unavailable']),
+  question: z
+    .object({
+      id: z.string(),
+      group_id: z.string(),
+      part_ids: z.array(z.string()).optional(),
+      prompt_md: z.string(),
+      blank_order: z.array(z.string().min(1)).optional(),
+      admission_owned: z.boolean(),
+      kind: z.string(),
+      choices_md: z.array(z.string()).nullable(),
+      notation: z.string().nullable(),
+      inline_supported: z.boolean(),
+      display_response_spec: ResponseSpec.nullable(),
+    })
+    .nullable(),
+  serving: QuestionServingSchema.nullable(),
+  latest_attempt: z
+    .object({
+      issuance_id: z.string(),
+      revision_id: z.string(),
+      part_ids: z.array(z.string()),
+      status: z.enum(['issued', 'answer_saved', 'graded_unconfirmed', 'submitted']),
+    })
+    .nullable(),
+});

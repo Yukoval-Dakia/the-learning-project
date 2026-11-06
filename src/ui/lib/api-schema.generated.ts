@@ -2076,6 +2076,22 @@ export interface paths {
         patch: operations["updateQuestion"];
         trace?: never;
     };
+    "/api/questions/{id}/card": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getQuestionCard"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/questions/{id}/restore": {
         parameters: {
             query?: never;
@@ -18272,6 +18288,10 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    chat_card?: {
+                        block_ref: string;
+                        session_id: string;
+                    };
                     claim?: {
                         claimed_by_ref: string;
                     };
@@ -35096,6 +35116,422 @@ export interface operations {
                         /** @enum {boolean} */
                         ok: true;
                         version: number;
+                    };
+                };
+            };
+            /** @description Malformed request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description State or version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Semantic validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Rate limited */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    getQuestionCard: {
+        parameters: {
+            query?: {
+                session_id?: string;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        inline_block_ref: string | null;
+                        latest_attempt: {
+                            issuance_id: string;
+                            part_ids: string[];
+                            revision_id: string;
+                            /** @enum {string} */
+                            status: "issued" | "answer_saved" | "graded_unconfirmed" | "submitted";
+                        } | null;
+                        question: {
+                            admission_owned: boolean;
+                            blank_order?: string[];
+                            choices_md: string[] | null;
+                            display_response_spec: {
+                                slots: ({
+                                    /** @enum {string} */
+                                    kind: "single_choice";
+                                    options: {
+                                        label: string;
+                                        option_id: string;
+                                        text: string;
+                                    }[];
+                                    part_id: string;
+                                    placement?: {
+                                        col?: number;
+                                        label?: string;
+                                        row?: number;
+                                    };
+                                    slot_id: string;
+                                } | {
+                                    /** @enum {string} */
+                                    kind: "multi_choice";
+                                    max_select: number;
+                                    min_select: number;
+                                    options: {
+                                        label: string;
+                                        option_id: string;
+                                        text: string;
+                                    }[];
+                                    part_id: string;
+                                    placement?: {
+                                        col?: number;
+                                        label?: string;
+                                        row?: number;
+                                    };
+                                    slot_id: string;
+                                } | {
+                                    /** @enum {string} */
+                                    kind: "text";
+                                    /** @default false */
+                                    math_preview: boolean;
+                                    max_chars?: number;
+                                    part_id: string;
+                                    placement?: {
+                                        col?: number;
+                                        label?: string;
+                                        row?: number;
+                                    };
+                                    slot_id: string;
+                                } | {
+                                    /** @enum {string} */
+                                    kind: "numeric";
+                                    part_id: string;
+                                    placement?: {
+                                        col?: number;
+                                        label?: string;
+                                        row?: number;
+                                    };
+                                    precision?: number;
+                                    slot_id: string;
+                                    unit_hint?: string;
+                                } | {
+                                    /** @enum {string} */
+                                    kind: "formula";
+                                    /** @enum {string} */
+                                    notation: "latex";
+                                    part_id: string;
+                                    placement?: {
+                                        col?: number;
+                                        label?: string;
+                                        row?: number;
+                                    };
+                                    slot_id: string;
+                                } | {
+                                    cells: {
+                                        col: number;
+                                        row: number;
+                                        slot_id: string;
+                                    }[];
+                                    column_headers: string[];
+                                    /** @enum {string} */
+                                    kind: "table";
+                                    part_id: string;
+                                    placement?: {
+                                        col?: number;
+                                        label?: string;
+                                        row?: number;
+                                    };
+                                    row_labels: string[];
+                                    slot_id: string;
+                                } | {
+                                    /** @default false */
+                                    allow_left_unmatched: boolean;
+                                    has_distractors?: boolean;
+                                    /** @enum {string} */
+                                    kind: "matching";
+                                    left_items: {
+                                        item_id: string;
+                                        label: string;
+                                        text: string;
+                                    }[];
+                                    /** @enum {string} */
+                                    pairing?: "one_to_one" | "many_to_one";
+                                    part_id: string;
+                                    placement?: {
+                                        col?: number;
+                                        label?: string;
+                                        row?: number;
+                                    };
+                                    right_options: {
+                                        label: string;
+                                        option_id: string;
+                                        text: string;
+                                    }[];
+                                    slot_id: string;
+                                } | {
+                                    items: {
+                                        item_id: string;
+                                        label: string;
+                                        text: string;
+                                    }[];
+                                    /** @enum {string} */
+                                    kind: "ordering";
+                                    part_id: string;
+                                    placement?: {
+                                        col?: number;
+                                        label?: string;
+                                        row?: number;
+                                    };
+                                    slot_id: string;
+                                } | {
+                                    /** @default [] */
+                                    accepted_evidence: {
+                                        allowed_mime_patterns: string[];
+                                        /** @enum {string} */
+                                        kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                        max_bytes: number;
+                                        requires_security_scan: boolean;
+                                    }[];
+                                    /** @default false */
+                                    evidence_required: boolean;
+                                    /** @enum {string} */
+                                    kind: "open_response";
+                                    max_chars?: number;
+                                    part_id: string;
+                                    placement?: {
+                                        col?: number;
+                                        label?: string;
+                                        row?: number;
+                                    };
+                                    slot_id: string;
+                                } | {
+                                    /** @enum {string} */
+                                    kind: "sentence_breaks";
+                                    part_id: string;
+                                    placement?: {
+                                        col?: number;
+                                        label?: string;
+                                        row?: number;
+                                    };
+                                    slot_id: string;
+                                    text: string;
+                                } | {
+                                    at_most_per_coordinate?: {
+                                        [key: string]: number;
+                                    };
+                                    axes?: {
+                                        [key: string]: {
+                                            id: string;
+                                            label_md: string;
+                                        }[];
+                                    };
+                                    items: {
+                                        coordinates?: {
+                                            [key: string]: string;
+                                        };
+                                        gap_after_codepoint?: number;
+                                        item_id: string;
+                                        label_md?: string;
+                                    }[];
+                                    /** @enum {string} */
+                                    kind: "select";
+                                    part_id: string;
+                                    /**
+                                     * @default many
+                                     * @enum {string}
+                                     */
+                                    pick: "one" | "many";
+                                    placement?: {
+                                        col?: number;
+                                        label?: string;
+                                        row?: number;
+                                    };
+                                    slot_id: string;
+                                    text?: string;
+                                } | {
+                                    answer_shape?: {
+                                        notation: ("fraction" | "decimal" | "interval" | "inequality" | "set_builder" | "roster" | "tuple" | "equation")[];
+                                        value: {
+                                            /** @enum {string} */
+                                            kind: "number";
+                                            unit?: {
+                                                accepts_bare_number: boolean;
+                                                unit: string;
+                                            };
+                                        } | {
+                                            binding: string;
+                                            /** @enum {string} */
+                                            kind: "interval_set";
+                                        } | {
+                                            axes: string[];
+                                            /** @enum {string} */
+                                            kind: "point";
+                                        } | {
+                                            /** @enum {string} */
+                                            kind: "affine_line";
+                                            variables: string[];
+                                        } | {
+                                            axes?: string[];
+                                            /** @enum {string} */
+                                            duplicates: "forbidden";
+                                            /** @enum {string} */
+                                            item: "number" | "point" | "affine_line";
+                                            /** @enum {string} */
+                                            kind: "finite_set";
+                                            /** @enum {string} */
+                                            order: "unordered";
+                                            variables?: string[];
+                                        };
+                                        /** @enum {string} */
+                                        version: "k1-math-v1";
+                                    };
+                                    /**
+                                     * @default text
+                                     * @enum {string}
+                                     */
+                                    format: "text" | "math";
+                                    /** @enum {string} */
+                                    kind: "blank";
+                                    max_chars?: number;
+                                    part_id: string;
+                                    placement?: {
+                                        col?: number;
+                                        label?: string;
+                                        row?: number;
+                                    };
+                                    slot_id: string;
+                                    unit_hint?: string;
+                                })[];
+                            } | null;
+                            group_id: string;
+                            id: string;
+                            inline_supported: boolean;
+                            kind: string;
+                            notation: string | null;
+                            part_ids?: string[];
+                            prompt_md: string;
+                        } | null;
+                        question_id: string;
+                        serving: {
+                            admission?: {
+                                reason: string | null;
+                                /** @enum {string} */
+                                status: "pending" | "admitted" | "failed" | "undecided";
+                            } | null;
+                            held_since: string | null;
+                            /** @enum {string|null} */
+                            hold_reason: "awaiting_admission" | "admission_failed" | "source_check_failed" | "verify_hold" | "retraction_hold" | "no_input_renderer" | "invalid_presentation" | "withdrawn" | null;
+                            next_action: {
+                                /** @enum {string} */
+                                command: "reverify" | "recheck_source" | "release_verify_hold";
+                                /** @enum {string} */
+                                method: "POST";
+                                path: string;
+                            } | null;
+                            pending_action: {
+                                /** @enum {string} */
+                                command: "reverify" | "recheck_source" | "release_verify_hold";
+                                since: string;
+                            } | null;
+                            servable: boolean;
+                        } | null;
+                        /** @enum {string} */
+                        state: "ready" | "checking" | "failed" | "undecided" | "withdrawn" | "unavailable";
                     };
                 };
             };
