@@ -15,8 +15,9 @@ Collection-as-code for the Hono API surface（capability manifests → `server/a
 ## Using it
 
 **GUI:** import both files. Pick the `learning-local` environment, set
-`internalToken` to the value of `INTERNAL_TOKEN` from `.env` (note: `.env`, not
-`.env.local`). Point `baseUrl` at a running dev server.
+`internalToken` to the token printed by `pnpm dev:local` (or to an explicit
+`INTERNAL_TOKEN` you exported before starting it). Point `baseUrl` at the dev
+origin `dev:local` printed.
 
 **Headless (and how the agent drives it):**
 
@@ -24,21 +25,24 @@ Collection-as-code for the Hono API surface（capability manifests → `server/a
 pnpm api:smoke                 # default: only the `health` folder — server-up probe, safe
 pnpm api:smoke knowledge       # run one route folder by name
 pnpm api:smoke --no-folder     # whole collection (mutating endpoints included — see caveats)
-API_SMOKE_BASE_URL=http://localhost:8787 pnpm api:smoke   # override target (Hono port)
+API_SMOKE_BASE_URL=http://127.0.0.1:8788 pnpm api:smoke   # override target (dev:local origin)
 ```
 
-`scripts/api-smoke.ts` loads `INTERNAL_TOKEN` from `.env` and injects it (plus
-`baseUrl`) into Newman as env-vars, so the committed environment file stays
-secret-free. Newman runs via `pnpm dlx newman@6` — **not** a project dependency,
-zero install footprint (first run fetches it into the pnpm store).
+`scripts/api-smoke.ts` reads `INTERNAL_TOKEN` from the environment (`.env` only
+fills an unset key) and injects it (plus `baseUrl`) into Newman as env-vars, so
+the committed environment file stays secret-free. For a `dev:local` stack the
+token is random per start: pass the value it printed
+(`INTERNAL_TOKEN=<token> pnpm api:smoke`). Newman runs via `pnpm dlx newman@6` —
+**not** a project dependency, zero install footprint (first run fetches it into
+the pnpm store).
 
 ## Gotchas (project-specific)
 
-- **Port:** default `baseUrl` is `http://localhost:8787` —— the Hono API port
-  (post YUK-321 M5). OrbStack 容器内 app 亦 listen :8787；旧 dev :3001/:3000 端口
-  已不再使用（Vite SPA 走 :5173 + `/api` proxy → :8787）。
-- **Token:** `INTERNAL_TOKEN` lives in `.env`. Without it, only `/api/health`
-  works（`server/app.ts` 组合根层 token 校验豁免 `/api/health`）；everything else 401s.
+- **Port:** default `baseUrl` is `http://localhost:3001`; for a local stack pass the
+  origin `pnpm dev:local` printed (`API_SMOKE_BASE_URL=http://127.0.0.1:<port>`). 本机
+  `:8787` 是 TEST 中继，不要当 dev 目标。
+- **Token:** `dev:local` 每次启动生成随机 `INTERNAL_TOKEN` 并打印（不读 `.env*`）；
+  没有 token 时只有 `/api/health` 工作（`server/app.ts` 组合根层豁免），其余 401。
 - **Placeholder values:** path vars are `REPLACE_*` and bodies use example IDs.
   Replace them with real IDs before sending. The only guaranteed-safe target
   with placeholders is the `health` folder.

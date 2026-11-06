@@ -1,8 +1,8 @@
 // Compact conversation draft expanded deterministically into the shared declaration.
 // Author-supplied keys are evidence for admission, never official source answers.
 import { z } from 'zod';
-import { mulberry32 } from '../rng';
 import type { ScoringRuleT } from './assessment/scoring-rule';
+import { deterministicDisplayOrder } from './display-order';
 import { DRAFT_DOCUMENT_SCHEMA_VERSION, type QuestionDraftDocumentT } from './question-draft';
 
 // ---------- 工具参数形状 ----------
@@ -143,26 +143,6 @@ const FULL_CREDIT_BLANK_RULE = (points: number): ScoringRuleT => ({
 
 type DraftUnit = QuestionDraftDocumentT['parts'][number]['units'][number];
 
-function displayOrder<T extends { id: string; label_md: string }>(entries: readonly T[]): T[] {
-  // Canonical labels keep both the seed and starting order independent of the key.
-  // Rejecting identity would reveal positional information, especially for two items.
-  const shuffled = [...entries].sort((a, b) =>
-    a.label_md < b.label_md ? -1 : a.label_md > b.label_md ? 1 : 0,
-  );
-  let seed = 2166136261;
-  for (const char of JSON.stringify(shuffled.map((entry) => entry.label_md))) {
-    seed = Math.imul(seed ^ char.charCodeAt(0), 16777619) >>> 0;
-  }
-  const random = mulberry32(seed);
-  for (let i = shuffled.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(random() * (i + 1));
-    const swap = shuffled[i];
-    shuffled[i] = shuffled[j];
-    shuffled[j] = swap;
-  }
-  return shuffled;
-}
-
 function choiceUnits(
   options: readonly string[],
   multi: boolean,
@@ -268,7 +248,7 @@ function matchingUnit(form: z.infer<typeof TeachingMatching>): DraftUnit {
     response_spec: {
       kind: 'select',
       items,
-      axes: { ...axes, right: displayOrder(axes.right) },
+      axes: { ...axes, right: deterministicDisplayOrder(axes.right) },
       pick: 'many',
     },
     points: 1,
@@ -303,7 +283,7 @@ function orderingUnit(form: z.infer<typeof TeachingOrdering>): DraftUnit {
     response_spec: {
       kind: 'select',
       items,
-      axes: { position: positions, object: displayOrder(objectAxis) },
+      axes: { position: positions, object: deterministicDisplayOrder(objectAxis) },
       at_most_per_coordinate: { position: 1, object: 1 },
       pick: 'many',
     },

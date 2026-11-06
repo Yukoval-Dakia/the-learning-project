@@ -1,9 +1,11 @@
 /**
  * api:smoke — run the Postman collection headlessly via Newman.
  *
- * Mirrors `scripts/dev-local.ts`: loads INTERNAL_TOKEN from `.env` and injects
- * it into a private temporary Newman environment, keeping it out of process
- * arguments and the committed Postman environment (which ships empty).
+ * Loads INTERNAL_TOKEN from the caller's environment (`.env` only fills an unset
+ * key) and injects it into a private temporary Newman environment, keeping it out
+ * of process arguments and the committed Postman environment (which ships empty).
+ * `pnpm dev:local` generates a random token per start and prints it; pass that
+ * value as `INTERNAL_TOKEN=<printed token> pnpm api:smoke`.
  *
  * Newman itself is NOT a project dependency — we run it through `pnpm dlx` so
  * the smoke runner stays zero-footprint. First invocation fetches newman into
@@ -35,8 +37,8 @@ const DEFAULT_FOLDER = 'health';
 const token = process.env.INTERNAL_TOKEN ?? '';
 if (!token) {
   console.warn(
-    '[api:smoke] INTERNAL_TOKEN not found in .env — authed endpoints will 401. ' +
-      'health still works (middleware-exempt).',
+    '[api:smoke] INTERNAL_TOKEN is not set in the environment or .env — authed endpoints will 401. ' +
+      'health still works (middleware-exempt). For a dev stack, pass the token printed by `pnpm dev:local`.',
   );
 }
 

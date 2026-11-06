@@ -177,3 +177,12 @@ export function validateExecutionPlan(
   }
   return issues;
 }
+
+export function hasOnlyDeterministicExecutors(
+  plan: ExecutionPlanT,
+  unitIds: ReadonlySet<string>,
+): boolean {
+  return plan.assignments
+    .filter((assignment) => assignment.scoring_unit_ids.some((id) => unitIds.has(id)))
+    .every((assignment) => assignment.executor.kind === 'deterministic');
+}

@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { config } from 'dotenv';
 import { CODE_CONTRACT_EPOCH } from '@/server/migration/contract-epoch/rules';
 import { devDatabaseName } from './dev-worktree-db';
@@ -19,8 +19,20 @@ import {
 // is belt-and-braces — but it keeps dev-local's view consistent with the API's.
 // `override: false` keeps real shell env winning, matching loadEnv's "only fill
 // unset keys" contract.
+//
+// YUK-1918: INTERNAL_TOKEN is deliberately not read from these files. A token
+// exported in the shell is kept so local acceptance can pin one; otherwise every
+// start gets a fresh random token (printed below). Capture it before the dotenv
+// calls, which would otherwise turn a file value into "the process env" that the
+// children inherit.
+const explicitInternalToken = process.env.INTERNAL_TOKEN?.trim();
 config({ path: '.env.local', override: false });
 config({ path: '.env', override: false });
+
+const internalToken = explicitInternalToken || randomBytes(32).toString('hex');
+// Keep this launcher on the same value too: its run() helpers and Vite's process
+// view inherit process.env, which dotenv may have filled from the files above.
+process.env.INTERNAL_TOKEN = internalToken;
 
 const localEnv = buildLocalDevEnv(process.env);
 
@@ -250,6 +262,7 @@ if (allowTestDb) {
 // worker:dev 经此处 env 注入 DATABASE_URL，免手动 source .env。
 const env: NodeJS.ProcessEnv = {
   ...process.env,
+  INTERNAL_TOKEN: internalToken,
   DATABASE_URL: databaseUrl,
   NEXT_PUBLIC_BASE_URL: devOrigin,
   API_PORT: devPort,
@@ -386,6 +399,16 @@ process.on('exit', () => {
   for (const { pid } of children) if (pid !== undefined) signalChild(pid, 'SIGTERM');
 });
 
+console.log(
+  explicitInternalToken
+    ? '[dev-local] using INTERNAL_TOKEN from the process environment'
+    : `[dev-local] internal token: ${internalToken}`,
+);
+if (!explicitInternalToken) {
+  console.log(
+    '[dev-local] generated per start, not read from .env/.env.local; export INTERNAL_TOKEN=<value> to pin one',
+  );
+}
 spawnDev('api', 'rw:api', { RW_FRONTDOOR: 'dev' });
 spawnDev('worker', 'worker:dev', {});
 console.log(
