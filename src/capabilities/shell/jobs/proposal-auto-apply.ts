@@ -9,6 +9,9 @@ import { runProposalAutoApplySweep } from '@/kernel/proposals/auto-apply';
 
 export function buildProposalAutoApplyHandler(db: Db) {
   return async (_jobs: Job[]) => {
+    // A missing accept port is a wiring defect; runProposalAutoApplySweep throws
+    // HostOperationNotInstalledError and this handler deliberately lets it reach
+    // pg-boss as a failed job instead of swallowing it.
     const result = await runProposalAutoApplySweep(db);
     if (result.outcome !== 'idle') {
       console.info('[proposal-auto-apply]', {

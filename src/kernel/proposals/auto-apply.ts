@@ -34,6 +34,7 @@ import {
 } from '@/core/schema/proposal';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
+import { HostOperationNotInstalledError, installHostOperation, installedHostOperation } from '@/kernel/host-operation';
 import { writeEvent } from '@/kernel/events';
 import { findExistingRateEvent } from './applier-helpers';
 import {
@@ -71,11 +72,21 @@ export type ProposalAutoApplyAcceptPort = (
   input: ProposalAutoApplyAcceptInput,
 ) => Promise<void>;
 
-let acceptPort: ProposalAutoApplyAcceptPort | null = null;
+const ACCEPT_PORT_SLOT = 'kernel/proposals/auto-apply:accept';
 
 /** Installed once at worker boot with the canonical accept dispatcher. */
 export function installProposalAutoApplyAcceptPort(port: ProposalAutoApplyAcceptPort): void {
-  acceptPort = port;
+  installHostOperation(ACCEPT_PORT_SLOT, port);
+}
+
+function requireAcceptPort(): ProposalAutoApplyAcceptPort {
+  const port = installedHostOperation<ProposalAutoApplyAcceptPort>(ACCEPT_PORT_SLOT);
+  if (!port) {
+    throw new HostOperationNotInstalledError(
+      'proposal auto-apply accept port is not installed; call installProposalAutoApplyAcceptPort at worker startup',
+    );
+  }
+  return port;
 }
 
 export interface AutoApplySweepOptions {
@@ -85,7 +96,7 @@ export interface AutoApplySweepOptions {
 }
 
 export interface AutoApplySweepResult {
-  readonly outcome: 'idle' | 'applied' | 'skipped' | 'unavailable';
+  readonly outcome: 'idle' | 'applied' | 'skipped';
   readonly applied: number;
   readonly skipped: number;
   /** Cards whose accept committed earlier but whose anchor was missing. */
@@ -109,6 +120,7 @@ interface CandidateRow {
 
 interface MissingAnchorRow extends CandidateRow {
   readonly rateActorRef: string | null;
+  readonly rateCreatedAt: Date | null;
 }
 
 function proposalFromPayload(payload: unknown): AiProposalPayloadT | null {
@@ -137,10 +149,12 @@ interface AnchorInput {
   readonly kind: AiProposalPayloadT['kind'];
   /** Window count including this apply (breaker.applied + this sweep's applied). */
   readonly appliedCount: number;
+  /** Backfilled anchors reuse the original decision time; fresh applies use now. */
+  readonly appliedAt?: Date;
 }
 
 async function writeAppliedAnchor(db: Db, input: AnchorInput): Promise<void> {
-  const now = new Date();
+  const at = input.appliedAt ?? new Date();
   const summary = proposalReasonPlainText(input.payload.learner_summary ?? input.payload.reason_md);
   const level = checkVerdictRateBreaker({ recentCount: input.appliedCount }).status;
   await writeEvent(db, {
@@ -164,8 +178,8 @@ async function writeAppliedAnchor(db: Db, input: AnchorInput): Promise<void> {
     },
     caused_by_event_id: input.proposalId,
     // Internal status trail, not memory-worthy activity (mirrors the completion-era anchor).
-    ingest_at: now,
-    created_at: now,
+    ingest_at: at,
+    created_at: at,
   });
 }
 
@@ -263,7 +277,10 @@ async function loadMissingAnchors(db: Db, now: Date, limit: number, lookbackMs: 
       payload: event.payload,
       rateActorRef: sql<
         string | null
-      >`(select rate_row.actor_ref from event rate_row where rate_row.action = 'rate' and rate_row.actor_kind = 'agent' and rate_row.caused_by_event_id = "event"."id" order by rate_row.created_at desc, rate_row.id desc limit 1)`,
+      >`(select rate_row.actor_ref from event rate_row where rate_row.action = 'rate' and rate_row.actor_kind = 'agent' and rate_row.payload ->> 'rating' = 'accept' and rate_row.caused_by_event_id = "event"."id" order by rate_row.created_at desc, rate_row.id desc limit 1)`,
+      rateCreatedAt: sql<
+        Date | null
+      >`(select rate_row.created_at from event rate_row where rate_row.action = 'rate' and rate_row.actor_kind = 'agent' and rate_row.payload ->> 'rating' = 'accept' and rate_row.caused_by_event_id = "event"."id" order by rate_row.created_at desc, rate_row.id desc limit 1)`,
     })
     .from(event)
     .where(
@@ -271,7 +288,7 @@ async function loadMissingAnchors(db: Db, now: Date, limit: number, lookbackMs: 
         inArray(event.action, [...PROPOSAL_EVENT_ACTIONS]),
         sql`${event.payload} -> 'auto_apply' ->> 'eligible' = 'true'`,
         gte(event.created_at, lookbackStart),
-        sql`exists (select 1 from event rate_row where rate_row.action = 'rate' and rate_row.actor_kind = 'agent' and rate_row.caused_by_event_id = "event"."id")`,
+        sql`exists (select 1 from event rate_row where rate_row.action = 'rate' and rate_row.actor_kind = 'agent' and rate_row.payload ->> 'rating' = 'accept' and rate_row.caused_by_event_id = "event"."id")`,
         sql`not exists (select 1 from event anchor_row where anchor_row.action = ${PROPOSAL_AUTOAPPLY_ACTION} and anchor_row.caused_by_event_id = "event"."id")`,
         sql`not exists (select 1 from event skip_row where skip_row.action = ${PROPOSAL_AUTOAPPLY_SKIPPED_ACTION} and skip_row.subject_kind = 'event' and skip_row.subject_id = "event"."id")`,
       ),
@@ -298,7 +315,7 @@ async function backfillMissingAnchors(
       continue;
     }
     const rateActorRef = row.rateActorRef?.trim() ?? '';
-    if (rateActorRef.length === 0) continue;
+    if (rateActorRef.length === 0 || !row.rateCreatedAt) continue;
     try {
       await writeAppliedAnchor(db, {
         proposalId: row.id,
@@ -307,6 +324,10 @@ async function backfillMissingAnchors(
         breaker,
         kind: payload.kind,
         appliedCount: breaker.applied,
+        // The card's applied_at is the anchor's created_at. Backfill at the
+        // original decision time so an expired undo window stays expired instead
+        // of reopening an old proposal over newer learner edits.
+        appliedAt: row.rateCreatedAt,
       });
       written += 1;
     } catch (err) {
@@ -333,11 +354,10 @@ export async function runProposalAutoApplySweep(
   const now = options.now ?? new Date();
   const limit = options.limit ?? AUTO_APPLY_SWEEP_LIMIT;
   const lookbackMs = options.lookbackMs ?? AUTO_APPLY_LOOKBACK_MS;
+  // Fail fast on a wiring defect: an uninstalled port is a host bug, not a
+  // reason to silently skip the lane (host-operation contract).
+  const accept = requireAcceptPort();
   const breaker = await checkAutoApplyBreaker(db, now);
-
-  if (acceptPort === null) {
-    return { outcome: 'unavailable', applied: 0, skipped: 0, backfilled: 0, breaker };
-  }
 
   const backfilled = await backfillMissingAnchors(db, now, limit, lookbackMs, breaker);
   const candidates = await loadCandidates(db, now, limit, lookbackMs);
@@ -386,7 +406,7 @@ export async function runProposalAutoApplySweep(
     }
 
     try {
-      await acceptPort(db, {
+      await accept(db, {
         proposalId: candidate.id,
         actor: { kind: 'agent', ref: candidate.actorRef },
       });
