@@ -217,7 +217,7 @@ export function LiveActivity({
   const current = message?.stream_stage ?? 'waiting';
   const text = override ?? running?.activity ?? STAGE_WORDS[current];
   const seconds = useSecondsSince(`${text}|${steps.length}|${textLength}`);
-  const showSeconds = seconds >= (current === 'writing' && !running ? 2 : 1);
+  const showSeconds = !override && seconds >= (current === 'writing' && !running ? 2 : 1);
   return (
     <>
       <span className="un-cp-activity-text">{text}</span>
