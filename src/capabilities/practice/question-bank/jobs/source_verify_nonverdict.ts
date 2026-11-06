@@ -112,7 +112,6 @@ export async function writeSourceVerifyErrorEvent(input: {
   recheckCommandEventId?: string;
   error: unknown;
   configError: boolean;
-  laneFingerprint?: string;
   difficultyEvidence?: DifficultyEvidenceT | null;
   supplyTrace?: SupplyTraceV1T;
 }): Promise<void> {
@@ -135,7 +134,7 @@ export async function writeSourceVerifyErrorEvent(input: {
         summary_md: `source_verify failed: ${String((input.error as Error).message ?? input.error)}`,
         error: String((input.error as Error).message ?? input.error),
       }),
-      ...(input.configError ? { config_error: true, lane_fingerprint: input.laneFingerprint } : {}),
+      ...(input.configError ? { config_error: true } : {}),
       error: String((input.error as Error).message ?? input.error),
       ...(input.difficultyEvidence ? { difficulty_evidence: input.difficultyEvidence } : {}),
       ...(input.supplyTrace ? { supply_trace: input.supplyTrace } : {}),

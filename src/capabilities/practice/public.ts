@@ -26,7 +26,6 @@ export {
   saveResponseDraft,
   saveSubmission,
   sealJudgeEngineInventory,
-  sourceGroundingLaneFingerprint,
   validateJudgeEngineInventory,
   withdrawCapturedOccurrence,
 } from './grading/public';

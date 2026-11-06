@@ -92,7 +92,6 @@ export {
   type SourceGroundingVerifyResult,
   assertSourceGroundingLaneConfigured,
   runSourceGroundingVerify,
-  sourceGroundingLaneFingerprint,
 } from './server/judge/source-grounding-verify';
 export { judgeFallbackProvider } from './server/judge-durable-config';
 export const divertReviewAnswer: typeof import('./server/review-operation').divertReviewAnswer =

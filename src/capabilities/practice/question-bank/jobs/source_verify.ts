@@ -29,7 +29,6 @@ import {
   type SourceGroundingVerifyResult,
   assertSourceGroundingLaneConfigured,
   runSourceGroundingVerify,
-  sourceGroundingLaneFingerprint,
 } from '@/capabilities/practice/grading/public';
 import { QUESTION_ADMISSION_POLICY_IDS } from '@/core/question-admission-policy';
 import {
@@ -127,6 +126,9 @@ export type RunTaskFn = TaskTextRunFn;
 
 type DepsOverride = {
   runTaskFn?: RunTaskFn;
+  imageFetchFn?: RunSourceVerifyParams['imageFetchFn'];
+  sourceGroundingFn?: RunSourceVerifyParams['sourceGroundingFn'];
+  sourceGroundingPreflightFn?: RunSourceVerifyParams['sourceGroundingPreflightFn'];
 };
 
 // 阈值本体在 supply/server/sourced-dedup.ts；此处 re-export
@@ -583,7 +585,6 @@ export async function runSourceVerify(
     target: Db | Tx,
     error: unknown,
     configError: boolean,
-    laneFingerprint?: string,
   ): Promise<void> => {
     await writeSourceVerifyErrorEvent({
       target,
@@ -591,7 +592,6 @@ export async function runSourceVerify(
       recheckCommandEventId: params.recheckCommandEventId,
       error,
       configError,
-      laneFingerprint,
       difficultyEvidence,
       supplyTrace,
     });
@@ -625,10 +625,8 @@ export async function runSourceVerify(
       outcome: Extract<SourceGroundingVerifyResult, { status: 'transient_error' | 'config_error' }>,
     ): Promise<void> => {
       if (outcome.status === 'config_error') sourceGroundingConfigErrorCandidate = true;
-      const laneFingerprint =
-        outcome.status === 'config_error' ? sourceGroundingLaneFingerprint() : undefined;
       const settled = await db.transaction(async (suspendTx) => {
-        await suspendSourceVerifyContract({
+        const suspended = await suspendSourceVerifyContract({
           tx: suspendTx,
           questionId,
           groupRootId: row.parent_question_id ?? questionId,
@@ -636,12 +634,13 @@ export async function runSourceVerify(
           verifiedIdentity,
           outcome,
         });
-        await writeErrorEvent(
-          suspendTx,
-          outcome.message,
-          outcome.status === 'config_error',
-          laneFingerprint,
-        );
+        // A stale delivery (version moved on or the row promoted under another
+        // delivery) writes nothing about the question — no suspension, no error
+        // event that the recovery sweep would arm on. Only this delivery's own
+        // recheck claim still settles not_sent: it provably sent nothing.
+        if (suspended) {
+          await writeErrorEvent(suspendTx, outcome.message, outcome.status === 'config_error');
+        }
         return settleRecheckNotSent(suspendTx, outcome.message);
       });
       if (outcome.status === 'config_error') sourceGroundingConfigError = true;
@@ -704,6 +703,9 @@ export async function runSourceVerify(
             : err;
         }
       }
+      // Fence the placement paid-authority before the first paid call: a stale
+      // authority costs only the free deterministic checks here, not a solve.
+      await placementPaid?.assertBefore();
       if (tierChecks.includes('solve_check')) {
         const solveQuestion: SolveCheckQuestion = {
           id: verifyInput.id,
@@ -1424,22 +1426,35 @@ export function buildSourceVerifyHandler(
       );
       for (const questionId of questionIds) {
         const placementAuthority = placementAuthorities.get(questionId);
-        try {
-          const result = await runSourceVerify({
+        const runOne = (authority?: PlacementVerificationAuthority) =>
+          runSourceVerify({
             db,
             questionId,
             runTaskFn,
+            ...(deps.imageFetchFn ? { imageFetchFn: deps.imageFetchFn } : {}),
+            ...(deps.sourceGroundingFn ? { sourceGroundingFn: deps.sourceGroundingFn } : {}),
+            ...(deps.sourceGroundingPreflightFn
+              ? { sourceGroundingPreflightFn: deps.sourceGroundingPreflightFn }
+              : {}),
             ...(recheckCommandEventId != null
               ? { recheckCommandEventId, recheckDeliveryId: job.id }
               : {}),
-            ...(placementAuthority ? { placementAuthority } : {}),
+            ...(authority ? { placementAuthority: authority } : {}),
           });
+        try {
+          const result = await runOne(placementAuthority);
           console.log(`[source_verify] ${questionId} -> ${result.status}`);
         } catch (error) {
-          // A superseded delivery's authority: the current delivery re-binds the question with
-          // a new epoch and its own intent. Nothing to retry under this one.
+          // A recovery intent can carry an authority the claim has since moved past
+          // (re-bound attempt, expired lease). The verify is still owed: re-run it
+          // provenance-safe without the dead authority instead of completing the
+          // intent with nothing written.
           if (placementAuthority && error instanceof PlacementStarterStaleAuthorityError) {
-            console.warn(`[source_verify] ${questionId} placement authority is stale; skipped`);
+            console.warn(
+              `[source_verify] ${questionId} placement authority is stale; re-running without it`,
+            );
+            const result = await runOne();
+            console.log(`[source_verify] ${questionId} -> ${result.status}`);
             continue;
           }
           throw error;

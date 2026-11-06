@@ -31,10 +31,8 @@ const verifyDispatchIntentPayloadSchema = z.object({
       fencing_token: z.string().uuid(),
     })
     .optional(),
-  /** Source-verify config-error event id that this recovery intent answers. */
+  /** Source-verify error-event id that this recovery intent answers. */
   recovery_epoch: z.string().min(1).optional(),
-  /** Non-secret lane identity recorded by that config-error event. */
-  lane_fingerprint: z.string().min(1).optional(),
 });
 
 type VerifyDispatchIntentPayload = z.infer<typeof verifyDispatchIntentPayloadSchema>;
@@ -156,7 +154,6 @@ export async function writeVerifyDispatchIntent(
     supplyTrace?: unknown;
     placementAuthority?: PlacementVerificationAuthority;
     recoveryEpoch?: string;
-    laneFingerprint?: string;
     createdAt?: Date;
   },
 ): Promise<string> {
@@ -167,7 +164,6 @@ export async function writeVerifyDispatchIntent(
     ...(input.supplyTrace ? { supply_trace: input.supplyTrace } : {}),
     ...(input.placementAuthority ? { placement_authority: input.placementAuthority } : {}),
     ...(input.recoveryEpoch ? { recovery_epoch: input.recoveryEpoch } : {}),
-    ...(input.laneFingerprint ? { lane_fingerprint: input.laneFingerprint } : {}),
   });
   const id = intentEventId(
     input.questionId,
@@ -233,7 +229,6 @@ function dispatchCompletionEvent(
       ...(intent.supply_trace ? { supply_trace: intent.supply_trace } : {}),
       ...(intent.placement_authority ? { placement_authority: intent.placement_authority } : {}),
       ...(intent.recovery_epoch ? { recovery_epoch: intent.recovery_epoch } : {}),
-      ...(intent.lane_fingerprint ? { lane_fingerprint: intent.lane_fingerprint } : {}),
     },
     created_at: input.now,
     ingest_at: input.now,
@@ -446,8 +441,6 @@ export async function recoverOrphanVerifyDispatches(
     enqueue: EnqueueVerifyFn;
     batchSize?: number;
     now?: Date;
-    /** Non-secret source-grounding lane identity used to detect a real repair. */
-    sourceVerifyLaneFingerprint?: () => string;
     /** Zero-send check that the source-grounding lane executes as configured. */
     sourceVerifyRecoveryPreflight?: () => Promise<void>;
   },
@@ -456,7 +449,7 @@ export async function recoverOrphanVerifyDispatches(
   const synthesis = await db.transaction(async (tx) => {
     const existingIntent = alias(event, 'verify_dispatch_existing_intent');
     const terminalVerify = alias(event, 'verify_dispatch_terminal_verify');
-    const configError = alias(event, 'verify_dispatch_config_error');
+    const verifyError = alias(event, 'verify_dispatch_verify_error');
     const drafts = await tx
       .select({ id: question.id, source: question.source, metadata: question.metadata })
       .from(question)
@@ -485,18 +478,35 @@ export async function recoverOrphanVerifyDispatches(
               eq(question.source, 'web_sourced'),
               exists(
                 tx
-                  .select({ id: configError.id })
-                  .from(configError)
+                  .select({ id: verifyError.id })
+                  .from(verifyError)
                   .where(
                     and(
-                      eq(configError.action, 'experimental:source_verify'),
-                      eq(configError.subject_id, question.id),
-                      eq(configError.outcome, 'error'),
-                      sql`${configError.payload}->>'config_error' = 'true'`,
-                      sql`${configError.payload}->>'lane_fingerprint' IS NOT NULL`,
+                      eq(verifyError.action, 'experimental:source_verify'),
+                      eq(verifyError.subject_id, question.id),
+                      eq(verifyError.outcome, 'error'),
                     ),
                   ),
               ),
+              // A non-terminal error hold is re-driven once per error epoch: the
+              // recovery intent carries the latest error's id, so a row whose
+              // recovery was already dispatched leaves this page entirely instead
+              // of starving drafts behind it. A NEW error moves the epoch and the
+              // row becomes eligible again on the next sweep.
+              sql`not exists (
+                select 1 from ${event} ri
+                where ri.action = ${VERIFY_DISPATCH_INTENT_ACTION}
+                  and ri.subject_id = ${question.id}
+                  and ri.payload ->> 'verifier_kind' = 'source_verify'
+                  and ri.payload ->> 'recovery_epoch' = (
+                    select e.id from ${event} e
+                    where e.action = 'experimental:source_verify'
+                      and e.subject_id = ${question.id}
+                      and e.outcome = 'error'
+                    order by e.created_at desc, e.id desc
+                    limit 1
+                  )
+              )`,
             ),
           ),
           notExists(
@@ -563,10 +573,7 @@ export async function recoverOrphanVerifyDispatches(
         .filter(isTerminalVerifyEvent)
         .map((row) => terminalVerifyKey(row.subjectId, row.action)),
     );
-    const latestErrorByQuestion = new Map<
-      string,
-      { id: string; createdAt: Date; laneFingerprint?: string }
-    >();
+    const latestErrorByQuestion = new Map<string, { id: string; createdAt: Date }>();
     for (const row of relatedEvents) {
       if (row.action !== 'experimental:source_verify' || row.outcome !== 'error') continue;
       const existing = latestErrorByQuestion.get(row.subjectId);
@@ -576,31 +583,13 @@ export async function recoverOrphanVerifyDispatches(
           (row.createdAt.getTime() === existing.createdAt.getTime() && row.id <= existing.id))
       )
         continue;
-      const payload = row.payload as Record<string, unknown> | null;
-      latestErrorByQuestion.set(row.subjectId, {
-        id: row.id,
-        createdAt: row.createdAt,
-        ...(typeof payload?.lane_fingerprint === 'string'
-          ? { laneFingerprint: payload.lane_fingerprint }
-          : {}),
-      });
+      latestErrorByQuestion.set(row.subjectId, { id: row.id, createdAt: row.createdAt });
     }
-    const configErrorIds = new Set(
-      relatedEvents
-        .filter(
-          (row) =>
-            row.action === 'experimental:source_verify' &&
-            row.outcome === 'error' &&
-            (row.payload as Record<string, unknown> | null)?.config_error === true,
-        )
-        .map((row) => row.id),
-    );
     const synthesized: string[] = [];
     const recoveryCandidates: {
       questionId: string;
       verifier: VerifyKind;
       recoveryEpoch: string;
-      laneFingerprint: string;
       placementAuthority?: PlacementVerificationAuthority;
       supplyTrace?: unknown;
     }[] = [];
@@ -623,23 +612,21 @@ export async function recoverOrphanVerifyDispatches(
         synthesized.push(row.id);
         continue;
       }
-      const latestConfigError = latestErrorByQuestion.get(row.id);
-      if (
-        verifier !== 'source_verify' ||
-        latestConfigError == null ||
-        latestConfigError.laneFingerprint == null ||
-        !configErrorIds.has(latestConfigError.id)
-      )
-        continue;
-      if (scoped.some((intent) => intent.recovery_epoch === latestConfigError.id)) continue;
+      // Any non-terminal source_verify error (a broken lane's config_error AND a
+      // transient failure that outlasted its pg-boss retries) leaves a hold with no
+      // way back on its own. The sweep re-drives it once per error epoch — one
+      // intent per latest error id, so a re-failed run re-arms only after it writes
+      // a NEWER error event.
+      const latestError = latestErrorByQuestion.get(row.id);
+      if (verifier !== 'source_verify' || latestError == null) continue;
+      if (scoped.some((intent) => intent.recovery_epoch === latestError.id)) continue;
       const prior = intents
         .filter((entry) => entry.payload.verifier_kind === verifier)
         .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0]?.payload;
       recoveryCandidates.push({
         questionId: row.id,
         verifier,
-        recoveryEpoch: latestConfigError.id,
-        laneFingerprint: latestConfigError.laneFingerprint,
+        recoveryEpoch: latestError.id,
         ...(prior?.placement_authority ? { placementAuthority: prior.placement_authority } : {}),
         ...(prior?.supply_trace ? { supplyTrace: prior.supply_trace } : {}),
       });
@@ -648,32 +635,17 @@ export async function recoverOrphanVerifyDispatches(
   });
 
   if (synthesis.recoveryCandidates.length > 0) {
-    if (input.sourceVerifyLaneFingerprint == null || input.sourceVerifyRecoveryPreflight == null) {
+    if (input.sourceVerifyRecoveryPreflight == null) {
       synthesis.recoveryCandidates.length = 0;
     } else {
-      let currentLaneFingerprint: string | undefined;
+      // Zero-send lane check first: a still-broken lane leaves every hold exactly
+      // where it is, and a passing resolution is what proves the lane can execute —
+      // server-side unblocks need no marker beyond the error epoch itself.
       try {
-        currentLaneFingerprint = input.sourceVerifyLaneFingerprint();
+        await input.sourceVerifyRecoveryPreflight();
       } catch (error) {
-        console.warn('[verify-dispatch-outbox] source_verify lane fingerprint unavailable:', error);
-      }
-      if (!currentLaneFingerprint) {
+        console.warn('[verify-dispatch-outbox] source_verify recovery lane still broken:', error);
         synthesis.recoveryCandidates.length = 0;
-      } else {
-        synthesis.recoveryCandidates = synthesis.recoveryCandidates.filter(
-          (candidate) => candidate.laneFingerprint !== currentLaneFingerprint,
-        );
-        if (synthesis.recoveryCandidates.length > 0) {
-          try {
-            await input.sourceVerifyRecoveryPreflight();
-          } catch (error) {
-            console.warn(
-              '[verify-dispatch-outbox] source_verify recovery lane still broken:',
-              error,
-            );
-            synthesis.recoveryCandidates.length = 0;
-          }
-        }
       }
     }
   }
@@ -711,14 +683,6 @@ export async function recoverOrphanVerifyDispatches(
         )}\0${payload.recovery_epoch ?? ''}`;
       const intentKeys = new Set<string>();
       const completionKeys = new Set<string>();
-      const currentLaneFingerprint = (() => {
-        try {
-          return input.sourceVerifyLaneFingerprint?.();
-        } catch {
-          return undefined;
-        }
-      })();
-      if (!currentLaneFingerprint) return;
       for (const row of relatedEvents) {
         if (
           row.action !== VERIFY_DISPATCH_INTENT_ACTION &&
@@ -753,14 +717,7 @@ export async function recoverOrphanVerifyDispatches(
           .sort(
             (a, b) => b.createdAt.getTime() - a.createdAt.getTime() || b.id.localeCompare(a.id),
           )[0];
-        const latestErrorPayload = latestError?.payload as Record<string, unknown> | null;
-        if (
-          latestError?.id !== candidate.recoveryEpoch ||
-          latestErrorPayload?.config_error !== true ||
-          latestErrorPayload?.lane_fingerprint !== candidate.laneFingerprint ||
-          candidate.laneFingerprint === currentLaneFingerprint
-        )
-          continue;
+        if (latestError?.id !== candidate.recoveryEpoch) continue;
         const hasIncompleteIntent = relatedEvents
           .filter(
             (row) =>
@@ -789,7 +746,6 @@ export async function recoverOrphanVerifyDispatches(
             ? { placementAuthority: candidate.placementAuthority }
             : {}),
           recoveryEpoch: candidate.recoveryEpoch,
-          laneFingerprint: candidate.laneFingerprint,
           createdAt: now,
         });
         synthesis.synthesized.push(candidate.questionId);

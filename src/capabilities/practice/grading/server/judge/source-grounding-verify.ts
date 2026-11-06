@@ -13,27 +13,13 @@
 // - config_error    : lane resolution/auth cannot execute — same non-verdict
 // hold, with an error marker the verify outbox can recover after repair.
 
-import { createHash } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
 import { isProviderAuthConfigError } from '@/ai/agent-run-error';
-import { tasks } from '@/capabilities/task-registry';
-import { customProviderDefinition } from '@/core/config/custom-providers';
-import { getLaneOverride, getTaskOverride, resolveConfigValue } from '@/core/config/store';
 import {
   SourceGroundingVerifyOutput,
   type SourceGroundingVerifyOutputT,
 } from '@/core/schema/source-grounding';
 import type { Db } from '@/db/client';
-import { sha256CanonicalJson } from '@/kernel/canonical-json';
-import { executablePiModel } from '@/server/ai/pi-provider-catalog';
-import {
-  TaskConfigError,
-  providerAuthFileEnvName,
-  providerCredentialEnvName,
-  readProviderId,
-  resolveTaskBinding,
-  resolveTaskReasoning,
-} from '@/server/ai/providers';
+import { TaskConfigError } from '@/server/ai/providers';
 import { applicableVisionJudgeOverride } from '@/server/ai/vision-judge-config';
 import type { SubjectProfile } from '@/subjects/profile';
 import {
@@ -72,21 +58,6 @@ export interface RunSourceGroundingVerifyParams {
   imageFetchFn?: SourceGroundingImageFetchFn;
 }
 
-function secretFingerprint(secret: string): string {
-  return createHash('sha256').update(secret).digest('hex').slice(0, 16);
-}
-
-function envCredentialFingerprint(
-  provider: Exclude<ReturnType<typeof readProviderId>, undefined>,
-  env: Record<string, string | undefined>,
-): string | null {
-  const envName = providerCredentialEnvName(provider);
-  const authFileEnvName = providerAuthFileEnvName(provider);
-  if (envName === undefined || envName === authFileEnvName) return null;
-  const secret = env[envName]?.trim();
-  return secret && secret.length > 0 ? secretFingerprint(secret) : null;
-}
-
 /**
  * Run the runner's own lane resolution + adapter startup for this task without
  * submitting a prompt. source_verify calls this before solve_check so a broken
@@ -114,130 +85,6 @@ export async function assertSourceGroundingLaneConfigured(input: {
     }
     throw error;
   }
-}
-
-/**
- * Non-secret identity of the lane's configuration surface. A config_error event
- * records this value; the recovery sweep only re-arms that error epoch after the
- * identity changes. Credential material contributes only a SHA-256 prefix.
- */
-export function sourceGroundingLaneFingerprint(
-  env: Record<string, string | undefined> = process.env,
-): string {
-  const kind = 'SourceGroundingVerifyTask' as const;
-  const definition = tasks[kind];
-  const globalLane = getLaneOverride('global', env);
-  const visionLane = getLaneOverride('vision_judge', env);
-  const taskOverride = getTaskOverride(kind);
-  const scopedOverride = applicableVisionJudgeOverride(env, { checkCredentials: false });
-  const bindingResult = (() => {
-    try {
-      const binding = resolveTaskBinding(kind, scopedOverride);
-      const reasoning = (() => {
-        try {
-          return {
-            resolved: resolveTaskReasoning(
-              kind,
-              binding.provider,
-              binding.model,
-              binding.reasoning,
-            ),
-          };
-        } catch (error) {
-          return { error: error instanceof Error ? error.name : String(error) };
-        }
-      })();
-      const executable = (() => {
-        try {
-          return { facts: executablePiModel(binding.provider, binding.model, env) ?? null };
-        } catch (error) {
-          return { error: error instanceof Error ? error.name : String(error) };
-        }
-      })();
-      return { binding, reasoning, executable };
-    } catch (error) {
-      return {
-        error:
-          error instanceof Error
-            ? { name: error.name, message: error.message }
-            : { name: 'unknown', message: String(error) },
-      };
-    }
-  })();
-  const providerCandidates = [
-    env.AI_PROVIDER_OVERRIDE,
-    scopedOverride?.provider,
-    visionLane?.provider,
-    globalLane?.provider,
-    taskOverride?.provider,
-    definition.defaultProvider,
-    'binding' in bindingResult && bindingResult.binding !== undefined
-      ? bindingResult.binding.provider
-      : undefined,
-  ]
-    .filter((value): value is string => typeof value === 'string' && value.length > 0)
-    .sort();
-  const credentials = [...new Set(providerCandidates)].map((configuredAs) => {
-    const provider = readProviderId(configuredAs);
-    const authFileEnv = provider ? providerAuthFileEnvName(provider) : undefined;
-    const authFilePath = authFileEnv ? env[authFileEnv] : undefined;
-    const authFile = authFileEnv
-      ? {
-          env_name: authFileEnv,
-          configured: authFilePath !== undefined,
-          path_fingerprint: authFilePath !== undefined ? secretFingerprint(authFilePath) : null,
-          content_fingerprint: (() => {
-            if (authFilePath === undefined || !existsSync(authFilePath)) return null;
-            try {
-              return secretFingerprint(readFileSync(authFilePath, 'utf8'));
-            } catch {
-              return null;
-            }
-          })(),
-        }
-      : null;
-    const definition = provider ? customProviderDefinition(provider) : undefined;
-    return {
-      configured_as: configuredAs,
-      provider: provider ?? null,
-      credential_env_name: provider ? (providerCredentialEnvName(provider) ?? null) : null,
-      credential_fingerprint: provider ? envCredentialFingerprint(provider, env) : null,
-      auth_file: authFile,
-      custom_provider: definition
-        ? {
-            id: definition.id,
-            base_url: definition.baseUrl,
-            api_key_env: definition.apiKeyEnv,
-            protocol: definition.protocol,
-            display_name: definition.displayName,
-          }
-        : null,
-    };
-  });
-  return sha256CanonicalJson({
-    version: 1,
-    kind,
-    env: {
-      AI_PROVIDER_OVERRIDE: env.AI_PROVIDER_OVERRIDE ?? null,
-      AI_PROVIDER_MODEL: env.AI_PROVIDER_MODEL ?? null,
-      VISION_JUDGE_PROVIDER: env.VISION_JUDGE_PROVIDER ?? null,
-      VISION_JUDGE_MODEL: env.VISION_JUDGE_MODEL ?? null,
-    },
-    lane: {
-      global: globalLane ?? null,
-      vision_judge: visionLane ?? null,
-      global_reasoning: resolveConfigValue('lane.global.reasoning', env).value ?? null,
-    },
-    task: {
-      default_provider: definition.defaultProvider,
-      default_model: definition.defaultModel,
-      ignore_global_pin: definition.ignoreGlobalPin === true,
-      override: taskOverride,
-      scoped_override: scopedOverride ?? null,
-    },
-    binding: bindingResult,
-    credentials,
-  });
 }
 
 export type SourceGroundingVerifyResult =

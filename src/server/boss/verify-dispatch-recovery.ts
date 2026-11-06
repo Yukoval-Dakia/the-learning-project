@@ -5,7 +5,6 @@ import {
   recoverHeldServingRechecks,
   recoverOrphanVerifyDispatches,
   recoverWebSupplies,
-  sourceGroundingLaneFingerprint,
 } from '@/capabilities/practice/public';
 import type { Db } from '@/db/client';
 import { resolveSubjectProfile } from '@/subjects/profile';
@@ -18,7 +17,6 @@ export function buildVerifyDispatchRecoveryHandler(
   return async () => {
     await recoverOrphanVerifyDispatches(db, {
       enqueue,
-      sourceVerifyLaneFingerprint: () => sourceGroundingLaneFingerprint(),
       sourceVerifyRecoveryPreflight: () =>
         assertSourceGroundingLaneConfigured({ db, subjectProfile: resolveSubjectProfile(null) }),
     });
