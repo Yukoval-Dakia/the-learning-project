@@ -74,6 +74,7 @@ async function dispatchAccept(
         decision: opts.decision,
         new_relation_type: opts.new_relation_type,
         user_note: opts.user_note,
+        ...(opts.actor ? { actor: opts.actor } : {}),
       },
       runtime,
     );
@@ -85,6 +86,7 @@ async function dispatchAccept(
         proposal: ownerInput(proposal),
         decision: opts.decision,
         user_note: opts.user_note,
+        ...(opts.actor ? { actor: opts.actor } : {}),
       },
       runtime,
     );
@@ -98,6 +100,7 @@ async function dispatchAccept(
         user_note: opts.user_note,
         corrected_payload: opts.corrected_payload,
         confirm_lossy: opts.confirm_lossy,
+        ...(opts.actor ? { actor: opts.actor } : {}),
       },
       runtime,
     );

@@ -33796,10 +33796,12 @@ export interface operations {
                         };
                         rows: {
                             applied_at: string;
+                            kind: string;
                             learning_item_id: string;
                             level: string;
                             proposal_id: string;
                             reverted: boolean;
+                            summary: string;
                             title: string;
                         }[];
                     };

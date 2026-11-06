@@ -7,6 +7,7 @@ import {
 import type { Db, Tx } from '@/db/client';
 import { costUsdToMicroUsd } from '@/kernel/cost';
 import { writeEvent } from '@/kernel/events';
+import { proposalAutoApplyMarker } from '@/kernel/proposals/auto-apply-marker';
 import { assertLearnerSummaryAllowed } from '@/kernel/proposals/learner-summary';
 // Cited evidence records move raw -> linked in the same scope as the propose event;
 // pass a tx to make both atomic.
@@ -20,6 +21,12 @@ export interface WriteAiProposalInput {
   actor_ref?: string;
   outcome?: 'success' | 'partial';
   payload: AiProposalPayloadInputT;
+  /**
+   * Explicit creation-time auto-apply opt-out for a strength-A kind. Omitted =
+   * follow the kind strength. Only internal producers that know a proposal is
+   * not fully retractable set this; model-facing tool input cannot reach it.
+   */
+  auto_apply_eligible?: boolean;
   event_override?: {
     action: string;
     subject_kind: string;
@@ -124,6 +131,16 @@ export async function writeAiProposal(db: DbLike, input: WriteAiProposalInput): 
       }
     : eventShapeForProposal(payload);
 
+  // Capture the tier at creation time. The sweep only applies rows that carry
+  // this marker, so a later tier flip never retroactively applies old pending rows.
+  // An explicit producer opt-out also wins over the kind strength: a proposal that
+  // cannot be fully retracted stays an ordinary pending item for human review.
+  const autoApplyMarker =
+    input.auto_apply_eligible === false ? undefined : proposalAutoApplyMarker(payload.kind);
+  const eventPayload = autoApplyMarker
+    ? { ...eventShape.event_payload, auto_apply: autoApplyMarker }
+    : eventShape.event_payload;
+
   await writeEvent(db, {
     id: eventId,
     session_id: input.session_id ?? null,
@@ -133,7 +150,7 @@ export async function writeAiProposal(db: DbLike, input: WriteAiProposalInput): 
     subject_kind: eventShape.subject_kind,
     subject_id: eventShape.subject_id,
     outcome: input.outcome ?? defaultOutcome(payload),
-    payload: eventShape.event_payload,
+    payload: eventPayload,
     caused_by_event_id: input.caused_by_event_id ?? null,
     task_run_id: input.task_run_id ?? null,
     cost_micro_usd: costUsdToMicroUsd(input.cost_usd),
