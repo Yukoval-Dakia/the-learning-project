@@ -68,9 +68,8 @@ export function publicProseFailureMessage(failure?: CopilotPublicProseFailure): 
   if (failure === undefined) return '这次没答完。';
   switch (failure.kind) {
     case 'provider_rejected':
-      return failure.http_status === 400
-        ? COPILOT_PROVIDER_REJECTION_REPLY
-        : `这次没答成。${retryAfterSentence(failure.retry_after_seconds) || '可以换个说法再试一次。'}`;
+      // 401/403/404 等拒绝不是问法问题，不提示换说法或重试。
+      return failure.http_status === 400 ? COPILOT_PROVIDER_REJECTION_REPLY : '这次没答成。';
     case 'rate_limited': {
       const recovery = longQuotaRecoveryTextFromSeconds(failure.retry_after_seconds);
       if (recovery !== undefined) {

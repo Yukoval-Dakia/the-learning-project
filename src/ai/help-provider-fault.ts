@@ -140,13 +140,13 @@ export function helpExitCopy(fault: HelpProviderFault, timing?: HelpExitTiming):
   if (fault.kind === 'bad_gateway') {
     return {
       reason: '服务暂时出了点问题。这次没有新的计划、提案或知识。',
-      stopRetryGuidance: '先别再试了。这种时候再问一遍，也补不上这次没生成的内容。',
+      stopRetryGuidance: '这种时候再问一遍，也补不上这次没生成的内容。',
       deterministicPractice: DETERMINISTIC_PRACTICE,
     };
   }
   return {
     reason: '这次的内容没能读出来。这次没有新的计划、提案或知识。',
-    stopRetryGuidance: '先别再试了。同样的问题再问一遍，还是会读不出来。',
+    stopRetryGuidance: '同样的问题再问一遍，还是会读不出来。',
     deterministicPractice: DETERMINISTIC_PRACTICE,
   };
 }
