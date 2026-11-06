@@ -42,10 +42,10 @@ import {
   runWebSupply,
 } from '@/capabilities/practice/supply/server/web-supply';
 import { canonicalHash } from '@/core/migration/canonical';
+import type { SourcedQuestionT } from '@/core/schema/sourcing';
 import { db } from '@/db/client';
 import {
   event,
-  knowledge,
   placement_starter_attempt,
   placement_starter_attempt_question,
   placement_starter_claim,
@@ -55,11 +55,12 @@ import {
 import { writeEvent } from '@/kernel/events/index';
 import type { PlacementVerificationAuthority } from '@/kernel/supply-contracts';
 import { hydrateConfigFromDb } from '@/server/config/hydrate';
+import { insertSourcedDraft } from '@/server/questions/sourced-draft-insert';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
 const profile = resolveSubjectProfile(null);
 const TAG = `arc${Date.now()}`;
-const KID = `k-${TAG}`;
+let KID = `k-${TAG}`;
 const evidence: Array<Record<string, unknown>> = [];
 const ts = () => new Date().toISOString();
 const note = (step: string, data: Record<string, unknown>) => {
@@ -132,56 +133,64 @@ const CONTENT: Record<string, SeedContent> = {
   },
 };
 
+// Topology writes are owned by the knowledge materialization projection — the
+// arc hangs its candidate/claim rows on any existing approved KC instead.
 async function seedKnowledge() {
-  const now = new Date();
-  await db.insert(knowledge).values({
-    id: KID,
-    name: '之',
-    domain: 'yuwen',
-    parent_id: null,
-    merged_from: [],
-    proposed_by_ai: false,
-    approval_status: 'approved',
-    archived_at: null,
-    created_at: now,
-    updated_at: now,
-    version: 0,
-  });
+  const rows = (await db.execute(
+    sql`select id from knowledge where approval_status = 'approved' and archived_at is null order by created_at limit 1`,
+  )) as unknown as Array<{ id: string }>;
+  if (rows.length === 0) {
+    throw new Error('arc requires an approved knowledge node in the dev db');
+  }
+  KID = rows[0].id;
 }
 
 async function seedQuestion(id: string, c: SeedContent) {
   const now = new Date();
   const url = `https://example.edu/wenyan/${id}`;
-  await db.insert(question).values({
-    id,
+  const q: SourcedQuestionT = {
     kind: 'choice',
-    prompt_md: c.prompt_md,
+    prompt_md: `${c.prompt_md} arc marker ${TAG} alpha bravo charlie delta echo foxtrot`,
     reference_md: c.reference_md,
-    rubric_json: null,
     choices_md: c.choices,
     judge_kind_override: 'exact',
-    knowledge_ids: [KID],
+    rubric_json: null,
     difficulty: 2,
-    source: 'web_sourced',
-    source_ref: url,
-    draft_status: 'draft',
-    created_by: { by: 'ai', task_kind: 'SourcingTask' },
-    metadata: {
-      web_sourced: {
-        url,
-        title: '论语 注疏',
-        fetched_at: '2026-06-06T00:00:00.000Z',
-        whitelist_match: false,
-        extract: c.extract,
-      },
-      source_ref_kind: 'url',
-      single_source_grounding: true,
-      image_candidate_source_asset_id: `asset-${id}`,
-    } as never,
-    image_refs: [],
-    created_at: now,
-    updated_at: now,
-    version: 0,
+    knowledge_ids: [KID],
+    source_url: url,
+    source_title: '论语 注疏',
+    extract: `${c.extract} arc marker ${TAG} alpha bravo charlie delta echo foxtrot`,
+  };
+  await db.transaction(async (tx) => {
+    // Registered converged writer: owns the content columns, mints the first
+    // revision, and handles the canonical-hash dedup race.
+    const result = await insertSourcedDraft(tx, {
+      id,
+      q,
+      knowledgeIds: [KID],
+      sourceRoute: 'sourcing_web',
+      createdBy: { by: 'ai', task_kind: 'SourcingTask' },
+      whitelistMatch: false,
+      fetchedAt: '2026-06-06T00:00:00.000Z',
+      canonicalContentHash: canonicalHash(`${id}:${TAG}:${c.prompt_md}`),
+      mergeActorRef: 'sourcing',
+      now,
+    });
+    if (result.status !== 'inserted') {
+      throw new Error(`seed ${id} unexpectedly merged: ${JSON.stringify(result)}`);
+    }
+    // The grounding seam reads flags only the retired image_candidate path writes;
+    // metadata is outside the content-writer audit's CONTENT_COLUMNS.
+    await tx
+      .update(question)
+      .set({
+        metadata: sql`metadata || ${JSON.stringify({
+          source_ref_kind: 'url',
+          single_source_grounding: true,
+          image_candidate_source_asset_id: `asset-${id}`,
+        })}::jsonb`,
+      })
+      .where(eq(question.id, id));
   });
 }
 
@@ -225,7 +234,7 @@ async function lane(mode: 'stale' | 'fixed') {
       insert into system_config (key, value, revision, updated_by, created_at, updated_at)
       values
         ('task.SourceGroundingVerifyTask.provider', '"xiaomi"'::jsonb, 1, 'yuk1849-arc', now(), now()),
-        ('task.SourceGroundingVerifyTask.model', '"mimo-v2.5"'::jsonb, 1, 'yuk1849-arc', now(), now())
+        ('task.SourceGroundingVerifyTask.model', '"arc-stale-model"'::jsonb, 1, 'yuk1849-arc', now(), now())
       on conflict (key) do update set value = excluded.value, revision = system_config.revision + 1,
         updated_by = 'yuk1849-arc', updated_at = now()
     `);
@@ -438,14 +447,14 @@ async function webSupplySegment(qid: string, c: SeedContent) {
   });
   const q = {
     kind: 'choice',
-    prompt_md: c.prompt_md,
+    prompt_md: `${c.prompt_md} arc marker ${TAG} alpha bravo charlie delta echo foxtrot`,
     reference_md: c.reference_md,
     choices_md: c.choices,
     difficulty: 2,
     knowledge_ids: [KID],
     source_url: `https://example.edu/wenyan/${qid}`,
     source_title: '论语 注疏',
-    extract: c.extract,
+    extract: `${c.extract} arc marker ${TAG} alpha bravo charlie delta echo foxtrot`,
   };
   const hash = `sha256:${'a'.repeat(64)}`;
   const submission = {
