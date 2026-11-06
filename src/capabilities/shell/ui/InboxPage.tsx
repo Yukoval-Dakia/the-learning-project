@@ -540,7 +540,9 @@ export default function InboxPage({ navigate }: InboxPageProps) {
       </span>
       <p className="ib-empty-title">收件箱已清空</p>
       <p className="ib-empty-text">
-        所有提议都已裁决或自动处理。新提议会在下次 Dreaming session 后出现。
+        {autoApplyOn
+          ? '所有提议都已裁决或自动处理。新提议会在下次 Dreaming session 后出现。'
+          : '所有提议都已裁决。新提议会在下次 Dreaming session 后出现。'}
       </p>
       <Button onClick={() => navigate('/knowledge')}>
         <Network size={16} aria-hidden="true" />
@@ -558,7 +560,7 @@ export default function InboxPage({ navigate }: InboxPageProps) {
           <p className="ib-lead">
             {autoApplyOn
               ? 'AI 提议会按影响自动分流：安全可撤的建议已替你处理，需要判断的留在这里，提醒类信息归入 AI 观察。'
-              : 'AI 提议留在这里等你判断，提醒类信息归入 AI 观察。'}
+              : '需要判断的提议留在这里，提醒类信息归入 AI 观察。'}
           </p>
         </header>
 

@@ -519,7 +519,7 @@ export function ProposalCard({ p, resolved, navigate, onResolve, onError }: Prop
           className="ib-prop-reason"
           data-clamp={legacyBody.length > LEGACY_BODY_MAX ? '' : undefined}
         >
-          {legacyBody}
+          {legacyBody || '理由都是技术引用，在下面的依据里。'}
         </div>
       )}
 
