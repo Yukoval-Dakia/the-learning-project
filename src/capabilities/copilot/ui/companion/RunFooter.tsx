@@ -124,7 +124,7 @@ export function RunFooter({ controller }: { controller: CompanionController }) {
             </span>
             <span aria-hidden="true" className="un-cp-run-line">
               <LiveActivity
-                message={messages.find((message) => message.run_id === run.runId)}
+                message={messages.find((m) => m.role === 'ai' && m.run_id === run.runId)}
                 override={run.cancelRequested || run.stage === 'dispatch' ? announced : undefined}
               />
             </span>
