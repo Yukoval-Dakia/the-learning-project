@@ -315,6 +315,24 @@ export function createStructuredSubmitLoop(input: {
     return occurrences;
   }
 
+  // AGENTS.md contract: the same error with the same output hash is terminal
+  // immediately; the same error with changing outputs terminates after three.
+  // Unit mode keeps per-unit keys; run-level keys reset when a unit is accepted.
+  const errorHashes = new Map<string, Set<string>>();
+  function recordUnitError(
+    id: string | undefined,
+    errorKey: string,
+    hash: string,
+  ): { occurrences: number; duplicate: boolean } {
+    const key = id === undefined ? `run:${errorKey}` : `unit:${id}|${errorKey}`;
+    const occurrences = countOccurrence(key);
+    const seen = errorHashes.get(key) ?? new Set<string>();
+    const duplicate = seen.has(hash);
+    seen.add(hash);
+    errorHashes.set(key, seen);
+    return { occurrences, duplicate };
+  }
+
   function logTurn(
     message: AgentTurnContext['message'],
     accepted: boolean,
@@ -386,6 +404,8 @@ export function createStructuredSubmitLoop(input: {
           // no-progress run.
           for (const key of [...errorOccurrences.keys()])
             if (key.startsWith('run:')) errorOccurrences.delete(key);
+          for (const key of [...errorHashes.keys()])
+            if (key.startsWith('run:')) errorHashes.delete(key);
           if (!fullCoverage()) {
             const remaining = remainingIds();
             logTurn(message, true, {
@@ -477,9 +497,7 @@ export function createStructuredSubmitLoop(input: {
           const text =
             feedback ||
             'Submit arguments failed shape validation; use the declared fields and types.';
-          const occurrences = countOccurrence(
-            id === undefined ? `run:${errorKey}` : `unit:${id}|${errorKey}`,
-          );
+          const { occurrences, duplicate } = recordUnitError(id, errorKey, hash);
           console.info(
             '[structured_submit_validation]',
             JSON.stringify({
@@ -491,7 +509,10 @@ export function createStructuredSubmitLoop(input: {
             }),
           );
           logTurn(message, false, { unit: id ?? null, event, remaining: remainingIds().length });
-          if (id !== undefined && occurrences >= 3) {
+          // Duplicate hash: seal the unit (its terminal state) and let the
+          // remaining units continue. Run-level errors below end the whole run
+          // immediately instead, because there is no unit to seal.
+          if (id !== undefined && (duplicate || occurrences >= 3)) {
             if (!sealedUnits.has(id)) sealedUnits.set(id, { error: errorKey, occurrences });
             if (allTerminal() && !fullCoverage()) {
               return failRun('no_progress', unitSummary());
@@ -501,14 +522,17 @@ export function createStructuredSubmitLoop(input: {
             }
             const remaining = remainingIds();
             const sealedFeedback =
-              `${text}\nUnit ${id} is sealed after ${occurrences} identical errors and can no longer be ` +
+              `${text}\nUnit ${id} is sealed after ${occurrences} identical error/output submission(s) and can no longer be ` +
               `accepted. Continue with the remaining units: ${remaining.join(', ')}.`;
             rewriteToolResults(toolResults, sealedFeedback, true);
             submitFeedback = sealedFeedback;
             return { action: 'continue' as const };
           }
-          if (id === undefined && occurrences >= 3) {
-            return failRun('no_progress', `${oneLine(errorKey)} x${occurrences}; ${unitSummary()}`);
+          if (id === undefined && (duplicate || occurrences >= 3)) {
+            return failRun(
+              'no_progress',
+              `${oneLine(errorKey)} x${occurrences}${duplicate ? ' (identical output)' : ''}; ${unitSummary()}`,
+            );
           }
           if (Date.now() >= input.correctionDeadline) {
             return failRun('budget_landing', unitSummary());
@@ -535,13 +559,16 @@ export function createStructuredSubmitLoop(input: {
         }
         const { id } = plan.unitOf(candidate);
         if (typeof id !== 'string') {
-          const errors = parsed.success
+          const stableErrors = parsed.success
             ? ['unit id: missing from the submitted object']
+            : structuredSubmitShapeErrors(input.parameters, parsed.error.issues);
+          const detailErrors = parsed.success
+            ? stableErrors
             : structuredSubmitShapeErrors(input.parameters, parsed.error.issues, candidate);
           return rejectUnit(
             undefined,
-            errors.join('\n'),
-            errors.sort().join('\n'),
+            stableErrors.join('\n'),
+            detailErrors.sort().join('\n'),
             'unit_id_missing',
           );
         }
@@ -560,12 +587,20 @@ export function createStructuredSubmitLoop(input: {
           return rejectTerminalResubmit(id, 'sealed_resubmit', feedback);
         }
         if (!parsed.success) {
-          const errors = structuredSubmitShapeErrors(
+          // Counter key stays stable: candidate-derived JSON offsets and supplied
+          // value details belong only in the correction feedback.
+          const stableErrors = structuredSubmitShapeErrors(input.parameters, parsed.error.issues);
+          const detailErrors = structuredSubmitShapeErrors(
             input.parameters,
             parsed.error.issues,
             candidate,
           );
-          return rejectUnit(id, errors.join('\n'), errors.sort().join('\n'), 'shape_rejected');
+          return rejectUnit(
+            id,
+            stableErrors.join('\n'),
+            detailErrors.sort().join('\n'),
+            'shape_rejected',
+          );
         }
         const unitErrors = [...(plan.validateUnit?.(parsed.data, input.taskInput) ?? [])];
         if (unitErrors.length > 0) {
@@ -575,6 +610,23 @@ export function createStructuredSubmitLoop(input: {
             unitErrors.sort().join('\n'),
             'validate_rejected',
           );
+        }
+        if (toolResults.length !== 1 || toolResults[0]?.isError) {
+          // Whole-output parity: a tool gate (e.g. the cost ceiling's
+          // beforeToolCall) can refuse the call after the args parse. Never
+          // accept a unit from an error receipt or rewrite it to success.
+          const receiptText = toolResults
+            .flatMap((result) =>
+              result.content
+                .filter((block): block is { type: 'text'; text: string } => block.type === 'text')
+                .map((block) => block.text),
+            )
+            .join('\n')
+            .trim();
+          const feedback = `Submit tool did not return a successful receipt${
+            receiptText ? `: ${oneLine(receiptText)}` : ''
+          }. The unit was not accepted; resubmit it only if the tool is available.`;
+          return rejectUnit(id, 'tool_receipt_error', feedback, 'tool_receipt_error');
         }
         return landUnit(id);
       }
