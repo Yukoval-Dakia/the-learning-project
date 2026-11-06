@@ -14,10 +14,13 @@
  *                        inputSchema through zodToToolParametersSchema (the
  *                        same converter buildPiDomainAgentTools + registerTool
  *                        enforce at runtime).
- *   structured_submit  — task-registry kinds with structuredOutputMode:'tool'
- *                        → resolveStructuredSubmitSchema (the SAME selection
- *                        pi-agent-adapter mounts: structuredSubmitSchema ??
- *                        structuredOutputSchema) through the same converter.
+ *   structured_submit  — two independent checks per tool-mode task:
+ *                        (a) the assembled structuredOutputSchema must compile
+ *                        to an object root (runtime assembly still parses it),
+ *                        and (b) every schema the submit tool can mount —
+ *                        resolveStructuredSubmitSchema (structuredSubmitSchema
+ *                        ?? structuredOutputSchema), including named
+ *                        input-mode probes — must too.
  *   custom_mount       — the hand-rolled piCustomTool inventories: the
  *                        Task/Agent spawn tools. (YUK-1553 retired the private
  *                        knowledge write_proposal mount; the shared
@@ -118,37 +121,72 @@ async function main(): Promise<void> {
     }
   }
 
-  // ── structured_submit: the submit tool mounts resolveStructuredSubmitSchema
-  //    (structuredSubmitSchema ?? structuredOutputSchema) via piCustomTool. ──
-  for (const [kind, def] of Object.entries(tasks as Record<string, TaskDefLike>)) {
-    if (def.structuredOutputMode !== 'tool') continue;
-    const name = `${kind} → mcp__structured_output__submit`;
+  // ── structured_submit: two independent checks per tool-mode task. ──
+  //    (a) the assembled full output schema still has to compile to an object
+  //        root, and (b) every schema the submit tool actually mounts must too.
+  //    Input modes that narrow the mounted schema are probed by name below.
+  const checkStructuredSubmitSchema = (
+    name: string,
+    schema: ZodTypeAny | undefined,
+    missingDetail: string,
+  ): CheckRow => {
+    if (schema === undefined) {
+      return { surface: 'structured_submit', name, ok: false, detail: missingDetail };
+    }
     try {
-      // Same selector, same input shape as the adapter's bare
-      // toolOutputSchema(kind) probe; the mount passes the run input, which can
-      // only narrow this schema by input mode (TaskDefinition contract).
-      const schema = resolveStructuredSubmitSchema(def);
-      const parameters = schema ? zodToToolParametersSchema(schema, TOOL_PARAMS_PARAMS) : undefined;
-      rows.push({
+      const parameters = zodToToolParametersSchema(schema, TOOL_PARAMS_PARAMS);
+      return {
         surface: 'structured_submit',
         name,
-        ok: parameters !== undefined && isObjectRoot(parameters),
-        ...(parameters === undefined
-          ? {
-              detail:
-                'mount selector resolves no schema (structuredSubmitSchema and structuredOutputSchema are both absent)',
-            }
-          : isObjectRoot(parameters)
-            ? {}
-            : { detail: `converted root type is ${JSON.stringify(parameters.type ?? null)}` }),
-      });
+        ok: isObjectRoot(parameters),
+        ...(isObjectRoot(parameters)
+          ? {}
+          : { detail: `converted root type is ${JSON.stringify(parameters.type ?? null)}` }),
+      };
     } catch (error) {
-      rows.push({
+      return {
         surface: 'structured_submit',
         name,
         ok: false,
         detail: error instanceof Error ? error.message : String(error),
-      });
+      };
+    }
+  };
+
+  // The adapter mounts an input-dependent submit schema per run input;
+  // QuestionAdmissionSolveTask switches to QuestionAdmissionPriorPartOutput for
+  // mode:'prior'. {text: ...} is the raw run-input shape admissionSubmitInput parses.
+  const structuredSubmitInputProbes: Readonly<
+    Record<string, readonly { readonly mode: string; readonly input: unknown }[]>
+  > = {
+    QuestionAdmissionSolveTask: [{ mode: 'prior', input: { text: '{"mode":"prior"}' } }],
+  };
+
+  for (const [kind, def] of Object.entries(tasks as Record<string, TaskDefLike>)) {
+    if (def.structuredOutputMode !== 'tool') continue;
+    const submitTool = `${kind} → mcp__structured_output__submit`;
+    rows.push(
+      checkStructuredSubmitSchema(
+        `${kind} → structuredOutputSchema (assembled output)`,
+        def.structuredOutputSchema,
+        "structuredOutputMode:'tool' without a structuredOutputSchema",
+      ),
+    );
+    rows.push(
+      checkStructuredSubmitSchema(
+        `${submitTool} (mode: default)`,
+        resolveStructuredSubmitSchema(def),
+        'mount selector resolves no schema for the default input',
+      ),
+    );
+    for (const probe of structuredSubmitInputProbes[kind] ?? []) {
+      rows.push(
+        checkStructuredSubmitSchema(
+          `${submitTool} (mode: ${JSON.stringify(probe.mode)})`,
+          resolveStructuredSubmitSchema(def, probe.input),
+          `mount selector resolves no schema for mode ${JSON.stringify(probe.mode)}`,
+        ),
+      );
     }
   }
 
