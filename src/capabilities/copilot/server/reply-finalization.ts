@@ -187,9 +187,48 @@ export function piToolErrorText(error: unknown): string {
   }
 }
 
-function proposalDisclosure(trace: readonly TraceEntry[]): string | undefined {
+function proposalDisclosure(trace: readonly TraceEntry[], reply: string): string | undefined {
+  const bankLinks = [
+    ...new Set(
+      trace.flatMap((entry) => {
+        const out = isRecord(entry.domain_output) ? entry.domain_output : undefined;
+        const problem = isRecord(out?.problem) ? out.problem : undefined;
+        if (
+          out?.seed_mode === 'teaching_draft' &&
+          out.status === 'failed' &&
+          (problem?.code === 'subject_root_missing' || problem?.code === 'conversation_required') &&
+          typeof problem.detail === 'string'
+        ) {
+          const explained =
+            /(?:学科|对话).{0,24}(?:没有|还没|尚未)/u.test(reply) &&
+            /(?:没.{0,8}存|不会.{0,8}(?:题库|入库)|无法.{0,8}题库)/u.test(reply);
+          return explained || reply.includes(problem.detail) ? [] : [problem.detail];
+        }
+        if (
+          entry.status !== 'succeeded' ||
+          out?.seed_mode !== 'teaching_draft' ||
+          out.status !== 'submitted' ||
+          typeof out.bank_path !== 'string'
+        )
+          return [];
+        const admission = isRecord(out.admission) ? out.admission : undefined;
+        const noExecutor =
+          Array.isArray(admission?.per_unit) &&
+          admission.per_unit.some(
+            (unit) => isRecord(unit) && unit.reason === 'no_admitted_executor',
+          );
+        const placement = typeof out.placement_note === 'string' ? `${out.placement_note}\n` : '';
+        return [
+          placement +
+            (noExecutor
+              ? `题已存入[题库](${out.bank_path})，但这类题目前没有可用的自动判分器，暂时不能作答；可以换一道选择、填空、配对、断句或排序题。`
+              : `题已存入[题库](${out.bank_path})，自动检查通过后才能作答；当前状态和原因可在题库查看。`),
+        ];
+      }),
+    ),
+  ];
   const proposals = trace.filter((entry) => entry.proposal_effect_contract !== undefined);
-  if (proposals.length === 0) return undefined;
+  if (proposals.length === 0) return bankLinks.length ? bankLinks.join('\n') : undefined;
   const retainedDrafts = proposals.filter(
     (entry) => entry.proposal_effect_contract?.retained_draft,
   ).length;
@@ -214,6 +253,7 @@ function proposalDisclosure(trace: readonly TraceEntry[]): string | undefined {
       : []),
     ...(retainedDrafts > 0 ? ['生成的草稿已经保存；暂不采纳建议也不会删除草稿。'] : []),
     '<!--copilot-proposal-disclosure:end-->',
+    ...bankLinks,
   ].join('\n');
 }
 
@@ -380,7 +420,7 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
       if (correction.reply.trim().length === 0) {
         return publishUnsealed('', 'missing_terminal', context);
       }
-      const disclosure = proposalDisclosure(trace);
+      const disclosure = proposalDisclosure(trace, correction.reply);
       const { text: composed, blocksReceipt } = prepareReplyText(correction.reply);
       const disclosed = applyProposalDisclosure(composed, disclosure);
       const fixed = truncateCopilotReply(disclosed, COPILOT_REPLY_CHAR_LIMIT, context.retainedTail);
@@ -508,7 +548,6 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
     reason: NonNullable<CopilotReplyFinalizationReceipt['unsealed_reason']>,
     context: { streamedText?: string; retainedTail?: string },
   ): CopilotReplyFinalizationResult {
-    const disclosure = proposalDisclosure(trace);
     const candidateBody = stripCopilotInternalComments(candidate);
     const streamedBody = stripCopilotInternalComments(context.streamedText ?? '');
     const body = candidateBody.trim()
@@ -516,6 +555,7 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
       : streamedBody.trim()
         ? streamedBody
         : FINALIZATION_FAILURE_REPLY;
+    const disclosure = proposalDisclosure(trace, body);
     const prepared = prepareReplyText(body);
     const replyText = truncateCopilotReply(
       applyProposalDisclosure(prepared.text, disclosure),

@@ -258,6 +258,9 @@ export interface WriteArchiveProposalInput extends CommonProducerInput {
   target_subject_kind: string;
   target_subject_id: string;
   proposed_change: Record<string, unknown>;
+  // Learner-facing line; optional for producers that predate the field (the inbox
+  // presentation falls back to the sanitized reason text).
+  learner_summary?: string;
   // P5.6 / YUK-178 — OPTIONAL proactive/corrective discriminator. archive is
   // audited always-proactive (§3.1); this exists only so the
   // propose_knowledge_mutation tool's model-labeled arg can flow through the
@@ -289,6 +292,7 @@ export async function writeArchiveProposal(
     payload: {
       kind: 'archive',
       target: { subject_kind: input.target_subject_kind, subject_id: input.target_subject_id },
+      ...(input.learner_summary !== undefined ? { learner_summary: input.learner_summary } : {}),
       reason_md: input.reason_md,
       evidence_refs: input.evidence_refs ?? [],
       proposed_change: {

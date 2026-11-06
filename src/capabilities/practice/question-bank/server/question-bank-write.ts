@@ -37,6 +37,7 @@ import {
   publishQuestionGroupFromRow,
   restoreGroupLifecycle,
 } from '@/kernel/records/assessment-publication';
+import { declaredAdmissionOwned } from './admission/ownership';
 
 /** Display label stamped on part rows; part-ness is read from `parent_question_id`. */
 export const QUESTION_PART_KIND = 'question_part' as const;
@@ -543,8 +544,8 @@ function stripArchiveMetadata(meta: Record<string, unknown> | null): Record<stri
 /**
  * Reverse of archive in one transaction: lock the group root, restore lifecycle and
  * the dedup claim from metadata.archived_content_hash (never recomputed), cascade
- * parts this archive removed, and return to draft so owner/verify gates rerun.
- * A conflicting claim rolls back the whole restore. Suspension is preserved.
+ * parts this archive removed. Legacy drafts still require owner/verify; admission-owned
+ * groups retain their admission instead. Claim conflicts roll back; suspension stays.
  */
 export async function restoreQuestion(
   db: Db,
@@ -566,7 +567,7 @@ export async function restoreQuestion(
     // concurrent child edits cannot slip into the cascade decision.
     const groupRootId = initialRow.parent_question_id ?? questionId;
     const [rootLock] = await tx
-      .select({ id: question.id })
+      .select({ id: question.id, admissionOwned: declaredAdmissionOwned() })
       .from(question)
       .where(eq(question.id, groupRootId))
       .for('update')
@@ -578,6 +579,19 @@ export async function restoreQuestion(
     if (!row) return { status: 'not_found' };
     const rowMeta = (row.metadata ?? {}) as Record<string, unknown>;
     if (rowMeta.archived_at == null) return { status: 'not_archived' };
+
+    // Admission-owned groups cannot re-enter legacy promotion. A root archive keeps
+    // the admitted revision intact, so its working rows must retain that admission.
+    const [admission] =
+      rootLock.admissionOwned && row.parent_question_id == null
+        ? await tx
+            .select({ state: question_group_lifecycle.scoring_admission_state })
+            .from(question_group_lifecycle)
+            .where(eq(question_group_lifecycle.group_id, groupRootId))
+            .limit(1)
+        : [];
+    const restoredDraftStatus =
+      admission?.state === 'admitted' ? LEGACY_DRAFT_STATUS.ACTIVE : LEGACY_DRAFT_STATUS.DRAFT;
 
     const now = new Date();
     const cascadedParts =
@@ -624,12 +638,11 @@ export async function restoreQuestion(
       }
     }
 
-    // Reset the working copy (draft + tombstone keys cleared + claim re-stamped) under
-    // expectedVersion CAS. Parts reset before republish so FromRow sees them again.
+    // Parts reset before republish so FromRow sees them again.
     const restored = await tx
       .update(question)
       .set({
-        draft_status: LEGACY_DRAFT_STATUS.DRAFT,
+        draft_status: restoredDraftStatus,
         ...(claimsById.has(questionId)
           ? { canonical_content_hash: claimsById.get(questionId) }
           : {}),
@@ -646,7 +659,7 @@ export async function restoreQuestion(
       await tx
         .update(question)
         .set({
-          draft_status: LEGACY_DRAFT_STATUS.DRAFT,
+          draft_status: restoredDraftStatus,
           ...(claimsById.has(part.id) ? { canonical_content_hash: claimsById.get(part.id) } : {}),
           metadata: stripArchiveMetadata(partMeta),
           updated_at: now,

@@ -75,6 +75,9 @@ const ProposalBlockPreviewResponseSchema = z.object({
 
 const ProposalPresentationResponseSchema = z.object({
   title: z.string(),
+  // Always present on the wire: new proposals use the validated learner summary,
+  // older rows fall back to their sanitized reason text (never null).
+  learner_summary: z.string(),
   change_summary: z.array(z.object({ label: z.string(), value: z.string() })),
   evidence_labels: z.record(z.string(), z.string()),
   knowledge_edge: z.object({ from_label: z.string(), to_label: z.string() }).optional(),

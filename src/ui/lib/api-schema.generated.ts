@@ -31225,6 +31225,7 @@ export interface operations {
                                 }[];
                                 /** @enum {string} */
                                 kind: "knowledge_node";
+                                learner_summary?: string;
                                 proposed_change: {
                                     domain?: string;
                                     /** @enum {string} */
@@ -31253,6 +31254,7 @@ export interface operations {
                                 }[];
                                 /** @enum {string} */
                                 kind: "knowledge_edge";
+                                learner_summary?: string;
                                 proposed_change: {
                                     archive_edge_id?: string;
                                     /**
@@ -31294,6 +31296,7 @@ export interface operations {
                                 }[];
                                 /** @enum {string} */
                                 kind: "knowledge_mutation";
+                                learner_summary?: string;
                                 proposed_change: {
                                     expected_version: number;
                                     /** @enum {string} */
@@ -31339,6 +31342,7 @@ export interface operations {
                                 }[];
                                 /** @enum {string} */
                                 kind: "learning_item";
+                                learner_summary?: string;
                                 proposed_change: {
                                     [key: string]: unknown;
                                 };
@@ -31362,6 +31366,7 @@ export interface operations {
                                 }[];
                                 /** @enum {string} */
                                 kind: "note_update";
+                                learner_summary?: string;
                                 proposed_change: {
                                     [key: string]: unknown;
                                 };
@@ -31385,6 +31390,7 @@ export interface operations {
                                 }[];
                                 /** @enum {string} */
                                 kind: "variant_question";
+                                learner_summary?: string;
                                 proposed_change: {
                                     [key: string]: unknown;
                                 };
@@ -31408,6 +31414,7 @@ export interface operations {
                                 }[];
                                 /** @enum {string} */
                                 kind: "completion";
+                                learner_summary?: string;
                                 proposed_change: {
                                     [key: string]: unknown;
                                 };
@@ -31431,6 +31438,7 @@ export interface operations {
                                 }[];
                                 /** @enum {string} */
                                 kind: "relearn";
+                                learner_summary?: string;
                                 proposed_change: {
                                     [key: string]: unknown;
                                 };
@@ -31454,6 +31462,7 @@ export interface operations {
                                 }[];
                                 /** @enum {string} */
                                 kind: "defer";
+                                learner_summary?: string;
                                 proposed_change: {
                                     [key: string]: unknown;
                                 };
@@ -31478,6 +31487,7 @@ export interface operations {
                                 }[];
                                 /** @enum {string} */
                                 kind: "record_links";
+                                learner_summary?: string;
                                 proposed_change: {
                                     [key: string]: unknown;
                                 };
@@ -31502,6 +31512,7 @@ export interface operations {
                                 }[];
                                 /** @enum {string} */
                                 kind: "record_promotion";
+                                learner_summary?: string;
                                 proposed_change: {
                                     [key: string]: unknown;
                                 };
@@ -31526,6 +31537,7 @@ export interface operations {
                                 }[];
                                 /** @enum {string} */
                                 kind: "archive";
+                                learner_summary?: string;
                                 proposed_change: {
                                     [key: string]: unknown;
                                 };
@@ -31549,6 +31561,7 @@ export interface operations {
                                 }[];
                                 /** @enum {string} */
                                 kind: "judge_retraction";
+                                learner_summary?: string;
                                 proposed_change: {
                                     [key: string]: unknown;
                                 };
@@ -31572,6 +31585,7 @@ export interface operations {
                                 }[];
                                 /** @enum {string} */
                                 kind: "goal_scope";
+                                learner_summary?: string;
                                 proposed_change: {
                                     reasoning: string;
                                     /** @default [] */
@@ -31602,6 +31616,7 @@ export interface operations {
                                 }[];
                                 /** @enum {string} */
                                 kind: "block_merge";
+                                learner_summary?: string;
                                 proposed_change: {
                                     confidence?: number;
                                     /** @enum {string} */
@@ -31631,6 +31646,7 @@ export interface operations {
                                 }[];
                                 /** @enum {string} */
                                 kind: "image_candidate";
+                                learner_summary?: string;
                                 proposed_change: {
                                     /** @default [] */
                                     knowledge_ids: string[];
@@ -31661,6 +31677,7 @@ export interface operations {
                                 }[];
                                 /** @enum {string} */
                                 kind: "question_draft";
+                                learner_summary?: string;
                                 proposed_change: {
                                     difficulty: number;
                                     kind: string;
@@ -31692,6 +31709,7 @@ export interface operations {
                                 }[];
                                 /** @enum {string} */
                                 kind: "question_edit";
+                                learner_summary?: string;
                                 proposed_change: {
                                     edit?: {
                                         node_id: string;
@@ -31752,6 +31770,7 @@ export interface operations {
                                 }[];
                                 /** @enum {string} */
                                 kind: "conjecture";
+                                learner_summary?: string;
                                 proposed_change: {
                                     baseline_p_at_induction: number;
                                     cause_category: string;
@@ -32232,6 +32251,7 @@ export interface operations {
                                 }[];
                                 /** @enum {string} */
                                 kind: "cause_category";
+                                learner_summary?: string;
                                 proposed_change: {
                                     category_id: string;
                                     description?: string;
@@ -32295,6 +32315,7 @@ export interface operations {
                                     from_label: string;
                                     to_label: string;
                                 };
+                                learner_summary: string;
                                 title: string;
                             } | null;
                             proposed_at: string;
@@ -32337,6 +32358,7 @@ export interface operations {
                                 }[];
                                 /** @enum {string} */
                                 kind: "knowledge_node";
+                                learner_summary?: string;
                                 proposed_change: {
                                     domain?: string;
                                     /** @enum {string} */
@@ -32365,6 +32387,7 @@ export interface operations {
                                 }[];
                                 /** @enum {string} */
                                 kind: "knowledge_edge";
+                                learner_summary?: string;
                                 proposed_change: {
                                     archive_edge_id?: string;
                                     /**
@@ -32406,6 +32429,7 @@ export interface operations {
                                 }[];
                                 /** @enum {string} */
                                 kind: "knowledge_mutation";
+                                learner_summary?: string;
                                 proposed_change: {
                                     expected_version: number;
                                     /** @enum {string} */
@@ -32451,6 +32475,7 @@ export interface operations {
                                 }[];
                                 /** @enum {string} */
                                 kind: "learning_item";
+                                learner_summary?: string;
                                 proposed_change: {
                                     [key: string]: unknown;
                                 };
@@ -32474,6 +32499,7 @@ export interface operations {
                                 }[];
                                 /** @enum {string} */
                                 kind: "note_update";
+                                learner_summary?: string;
                                 proposed_change: {
                                     [key: string]: unknown;
                                 };
@@ -32497,6 +32523,7 @@ export interface operations {
                                 }[];
                                 /** @enum {string} */
                                 kind: "variant_question";
+                                learner_summary?: string;
                                 proposed_change: {
                                     [key: string]: unknown;
                                 };
@@ -32520,6 +32547,7 @@ export interface operations {
                                 }[];
                                 /** @enum {string} */
                                 kind: "completion";
+                                learner_summary?: string;
                                 proposed_change: {
                                     [key: string]: unknown;
                                 };
@@ -32543,6 +32571,7 @@ export interface operations {
                                 }[];
                                 /** @enum {string} */
                                 kind: "relearn";
+                                learner_summary?: string;
                                 proposed_change: {
                                     [key: string]: unknown;
                                 };
@@ -32566,6 +32595,7 @@ export interface operations {
                                 }[];
                                 /** @enum {string} */
                                 kind: "defer";
+                                learner_summary?: string;
                                 proposed_change: {
                                     [key: string]: unknown;
                                 };
@@ -32590,6 +32620,7 @@ export interface operations {
                                 }[];
                                 /** @enum {string} */
                                 kind: "record_links";
+                                learner_summary?: string;
                                 proposed_change: {
                                     [key: string]: unknown;
                                 };
@@ -32614,6 +32645,7 @@ export interface operations {
                                 }[];
                                 /** @enum {string} */
                                 kind: "record_promotion";
+                                learner_summary?: string;
                                 proposed_change: {
                                     [key: string]: unknown;
                                 };
@@ -32638,6 +32670,7 @@ export interface operations {
                                 }[];
                                 /** @enum {string} */
                                 kind: "archive";
+                                learner_summary?: string;
                                 proposed_change: {
                                     [key: string]: unknown;
                                 };
@@ -32661,6 +32694,7 @@ export interface operations {
                                 }[];
                                 /** @enum {string} */
                                 kind: "judge_retraction";
+                                learner_summary?: string;
                                 proposed_change: {
                                     [key: string]: unknown;
                                 };
@@ -32684,6 +32718,7 @@ export interface operations {
                                 }[];
                                 /** @enum {string} */
                                 kind: "goal_scope";
+                                learner_summary?: string;
                                 proposed_change: {
                                     reasoning: string;
                                     /** @default [] */
@@ -32714,6 +32749,7 @@ export interface operations {
                                 }[];
                                 /** @enum {string} */
                                 kind: "block_merge";
+                                learner_summary?: string;
                                 proposed_change: {
                                     confidence?: number;
                                     /** @enum {string} */
@@ -32743,6 +32779,7 @@ export interface operations {
                                 }[];
                                 /** @enum {string} */
                                 kind: "image_candidate";
+                                learner_summary?: string;
                                 proposed_change: {
                                     /** @default [] */
                                     knowledge_ids: string[];
@@ -32773,6 +32810,7 @@ export interface operations {
                                 }[];
                                 /** @enum {string} */
                                 kind: "question_draft";
+                                learner_summary?: string;
                                 proposed_change: {
                                     difficulty: number;
                                     kind: string;
@@ -32804,6 +32842,7 @@ export interface operations {
                                 }[];
                                 /** @enum {string} */
                                 kind: "question_edit";
+                                learner_summary?: string;
                                 proposed_change: {
                                     edit?: {
                                         node_id: string;
@@ -32864,6 +32903,7 @@ export interface operations {
                                 }[];
                                 /** @enum {string} */
                                 kind: "conjecture";
+                                learner_summary?: string;
                                 proposed_change: {
                                     baseline_p_at_induction: number;
                                     cause_category: string;
@@ -33344,6 +33384,7 @@ export interface operations {
                                 }[];
                                 /** @enum {string} */
                                 kind: "cause_category";
+                                learner_summary?: string;
                                 proposed_change: {
                                     category_id: string;
                                     description?: string;
@@ -33407,6 +33448,7 @@ export interface operations {
                                     from_label: string;
                                     to_label: string;
                                 };
+                                learner_summary: string;
                                 title: string;
                             } | null;
                             proposed_at: string;
@@ -33920,6 +33962,11 @@ export interface operations {
                                 prompt_md: string;
                                 root_question_id: string | null;
                                 serving: {
+                                    admission?: {
+                                        reason: string | null;
+                                        /** @enum {string} */
+                                        status: "pending" | "admitted" | "failed" | "undecided";
+                                    } | null;
                                     held_since: string | null;
                                     /** @enum {string|null} */
                                     hold_reason: "awaiting_admission" | "admission_failed" | "source_check_failed" | "verify_hold" | "retraction_hold" | "no_input_renderer" | "invalid_presentation" | "withdrawn" | null;
@@ -33963,6 +34010,11 @@ export interface operations {
                             prompt_md: string;
                             root_question_id: string | null;
                             serving: {
+                                admission?: {
+                                    reason: string | null;
+                                    /** @enum {string} */
+                                    status: "pending" | "admitted" | "failed" | "undecided";
+                                } | null;
                                 held_since: string | null;
                                 /** @enum {string|null} */
                                 hold_reason: "awaiting_admission" | "admission_failed" | "source_check_failed" | "verify_hold" | "retraction_hold" | "no_input_renderer" | "invalid_presentation" | "withdrawn" | null;
@@ -34011,6 +34063,11 @@ export interface operations {
                                     prompt_md: string;
                                     root_question_id: string | null;
                                     serving: {
+                                        admission?: {
+                                            reason: string | null;
+                                            /** @enum {string} */
+                                            status: "pending" | "admitted" | "failed" | "undecided";
+                                        } | null;
                                         held_since: string | null;
                                         /** @enum {string|null} */
                                         hold_reason: "awaiting_admission" | "admission_failed" | "source_check_failed" | "verify_hold" | "retraction_hold" | "no_input_renderer" | "invalid_presentation" | "withdrawn" | null;
@@ -34054,6 +34111,11 @@ export interface operations {
                                 prompt_md: string;
                                 root_question_id: string | null;
                                 serving: {
+                                    admission?: {
+                                        reason: string | null;
+                                        /** @enum {string} */
+                                        status: "pending" | "admitted" | "failed" | "undecided";
+                                    } | null;
                                     held_since: string | null;
                                     /** @enum {string|null} */
                                     hold_reason: "awaiting_admission" | "admission_failed" | "source_check_failed" | "verify_hold" | "retraction_hold" | "no_input_renderer" | "invalid_presentation" | "withdrawn" | null;
@@ -34107,6 +34169,11 @@ export interface operations {
                                     prompt_md: string;
                                     root_question_id: string | null;
                                     serving: {
+                                        admission?: {
+                                            reason: string | null;
+                                            /** @enum {string} */
+                                            status: "pending" | "admitted" | "failed" | "undecided";
+                                        } | null;
                                         held_since: string | null;
                                         /** @enum {string|null} */
                                         hold_reason: "awaiting_admission" | "admission_failed" | "source_check_failed" | "verify_hold" | "retraction_hold" | "no_input_renderer" | "invalid_presentation" | "withdrawn" | null;
@@ -34150,6 +34217,11 @@ export interface operations {
                                 prompt_md: string;
                                 root_question_id: string | null;
                                 serving: {
+                                    admission?: {
+                                        reason: string | null;
+                                        /** @enum {string} */
+                                        status: "pending" | "admitted" | "failed" | "undecided";
+                                    } | null;
                                     held_since: string | null;
                                     /** @enum {string|null} */
                                     hold_reason: "awaiting_admission" | "admission_failed" | "source_check_failed" | "verify_hold" | "retraction_hold" | "no_input_renderer" | "invalid_presentation" | "withdrawn" | null;
@@ -34200,6 +34272,11 @@ export interface operations {
                                 prompt_md: string;
                                 root_question_id: string | null;
                                 serving: {
+                                    admission?: {
+                                        reason: string | null;
+                                        /** @enum {string} */
+                                        status: "pending" | "admitted" | "failed" | "undecided";
+                                    } | null;
                                     held_since: string | null;
                                     /** @enum {string|null} */
                                     hold_reason: "awaiting_admission" | "admission_failed" | "source_check_failed" | "verify_hold" | "retraction_hold" | "no_input_renderer" | "invalid_presentation" | "withdrawn" | null;
@@ -34243,6 +34320,11 @@ export interface operations {
                             prompt_md: string;
                             root_question_id: string | null;
                             serving: {
+                                admission?: {
+                                    reason: string | null;
+                                    /** @enum {string} */
+                                    status: "pending" | "admitted" | "failed" | "undecided";
+                                } | null;
                                 held_since: string | null;
                                 /** @enum {string|null} */
                                 hold_reason: "awaiting_admission" | "admission_failed" | "source_check_failed" | "verify_hold" | "retraction_hold" | "no_input_renderer" | "invalid_presentation" | "withdrawn" | null;
@@ -34408,6 +34490,7 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
+                        admission_owned: boolean;
                         backlinks: {
                             artifact_id: string;
                             created_at_sec: number;
@@ -34679,6 +34762,11 @@ export interface operations {
                             }[];
                         };
                         serving: {
+                            admission?: {
+                                reason: string | null;
+                                /** @enum {string} */
+                                status: "pending" | "admitted" | "failed" | "undecided";
+                            } | null;
                             held_since: string | null;
                             /** @enum {string|null} */
                             hold_reason: "awaiting_admission" | "admission_failed" | "source_check_failed" | "verify_hold" | "retraction_hold" | "no_input_renderer" | "invalid_presentation" | "withdrawn" | null;
@@ -35266,6 +35354,11 @@ export interface operations {
                     "application/json": {
                         accepted: boolean;
                         serving: {
+                            admission?: {
+                                reason: string | null;
+                                /** @enum {string} */
+                                status: "pending" | "admitted" | "failed" | "undecided";
+                            } | null;
                             held_since: string | null;
                             /** @enum {string|null} */
                             hold_reason: "awaiting_admission" | "admission_failed" | "source_check_failed" | "verify_hold" | "retraction_hold" | "no_input_renderer" | "invalid_presentation" | "withdrawn" | null;
@@ -37140,6 +37233,12 @@ export interface operations {
                 content: {
                     "application/json": {
                         data: {
+                            admission?: {
+                                reason: string | null;
+                                /** @enum {string} */
+                                status: "pending" | "admitted" | "failed" | "undecided";
+                            } | null;
+                            admission_owned: boolean;
                             /** Format: date-time */
                             created_at: string;
                             difficulty: number;
@@ -37163,6 +37262,12 @@ export interface operations {
                             next_cursor: string | null;
                         };
                         rows: {
+                            admission?: {
+                                reason: string | null;
+                                /** @enum {string} */
+                                status: "pending" | "admitted" | "failed" | "undecided";
+                            } | null;
+                            admission_owned: boolean;
                             /** Format: date-time */
                             created_at: string;
                             difficulty: number;
@@ -37301,6 +37406,12 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
+                        admission?: {
+                            reason: string | null;
+                            /** @enum {string} */
+                            status: "pending" | "admitted" | "failed" | "undecided";
+                        } | null;
+                        admission_owned: boolean;
                         answer: string | null;
                         /** Format: date-time */
                         created_at: string;

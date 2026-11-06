@@ -148,6 +148,7 @@ interface EdgeArchiveChange {
 }
 
 interface EdgeProposalProvenance {
+  learner_summary?: string;
   reason_md: string;
   evidence_refs: ProposalEvidenceRefT[];
   suggestion_kind?: SuggestionKindT;
@@ -224,6 +225,7 @@ function edgeProposalPayload(
   return {
     kind: 'knowledge_edge',
     target: { subject_kind: 'knowledge_edge', subject_id: subjectId },
+    ...(input.learner_summary !== undefined ? { learner_summary: input.learner_summary } : {}),
     reason_md: input.reason_md,
     evidence_refs: input.evidence_refs,
     proposed_change: proposedChange,
