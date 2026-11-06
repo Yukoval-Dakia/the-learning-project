@@ -1,15 +1,20 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { AgentRunError } from '@/ai/agent-run-error';
 import type { RunTaskResult } from '@/ai/task-result';
 import { resolveTaskBudget } from '@/capabilities/task-registry';
 import type {
   ModelExecutorRequest,
+  ModelOutcomeDiagnosticsT,
+  ModelOutcomeRejectedCitationT,
   ModelUnitExecutorPort,
   ModelUnitOutcomeT,
   PendingStateT,
 } from '@/core/schema/assessment';
 import { isOriginalEvidenceQuote } from '@/core/schema/assessment/evidence-quote';
-import { AssessmentRuleDecision } from '@/core/schema/assessment/model-decision';
+import {
+  AssessmentRuleDecision,
+  type AssessmentRuleDecisionT,
+} from '@/core/schema/assessment/model-decision';
 import type { Db } from '@/db/client';
 import {
   isLaminarTracingEnabled,
@@ -53,18 +58,49 @@ const pending = (
   state: PendingStateT,
   runRefs: string[] = [],
   cost?: number,
+  diagnostics?: ModelOutcomeDiagnosticsT,
 ): ModelUnitOutcomeT => ({
   kind: 'pending',
   pending: state,
   run_refs: runRefs,
   ...(cost === undefined ? {} : { cost_usd_micros: cost }),
+  ...(diagnostics === undefined ? {} : { diagnostics }),
 });
 
-function citationProblem(
+const sha256Hex = (value: string) => createHash('sha256').update(value).digest('hex');
+
+/** 当时可用于引用的文字来源：只记类型、数量与总长度（脱敏诊断用）。 */
+function citableSources(
+  request: ModelExecutorRequest,
+  textEvidence: Array<{ evidence_id: string; text: string }>,
+): NonNullable<ModelOutcomeDiagnosticsT['citable_sources']> {
+  const textEntries = request.slot_responses.filter(
+    (entry) => entry.kind === 'text' || entry.kind === 'open',
+  );
+  return [
+    {
+      kind: 'slot_text',
+      count: textEntries.length,
+      total_chars: textEntries.reduce((sum, entry) => sum + entry.text_md.length, 0),
+    },
+    {
+      kind: 'text_evidence',
+      count: textEvidence.length,
+      total_chars: textEvidence.reduce((sum, item) => sum + item.text.length, 0),
+    },
+  ];
+}
+
+/**
+ * 与拒收判定同一逻辑，但逐条产出脱敏诊断：校验顺序不变（无目标 → 未知
+ * slot → 未知 evidence → 引文非原文），记录每条被拒引文的 hash/长度与
+ * 指向 id（真实提交的记原文，模型声称的记 sha256）。
+ */
+function citationRejections(
   request: ModelExecutorRequest,
   citations: Array<{ slot_id?: string; evidence_id?: string; quote?: string }>,
   textEvidence: Array<{ evidence_id: string; text: string }>,
-): boolean {
+): ModelOutcomeRejectedCitationT[] {
   const slots = new Map(request.slot_responses.map((entry) => [entry.slot_id, entry]));
   const evidenceIds = new Set([
     ...request.slot_responses.flatMap((entry) =>
@@ -72,25 +108,86 @@ function citationProblem(
     ),
     ...request.group_evidence.map((item) => item.evidence.evidence_id),
   ]);
-  return citations.some((citation) => {
-    if (
-      (!citation.slot_id && !citation.evidence_id) ||
-      (citation.slot_id && !slots.has(citation.slot_id)) ||
-      (citation.evidence_id && !evidenceIds.has(citation.evidence_id))
-    )
-      return true;
-    if (citation.quote === undefined) return false;
-    const entry = citation.slot_id ? slots.get(citation.slot_id) : undefined;
-    const text =
-      entry && (entry.kind === 'text' || entry.kind === 'open') ? entry.text_md : undefined;
-    const evidenceText = textEvidence.find(
-      (item) => item.evidence_id === citation.evidence_id,
-    )?.text;
-    const quote = citation.quote;
-    return ![text, evidenceText].some(
-      (source) => source !== undefined && isOriginalEvidenceQuote({ source, quote }),
-    );
-  });
+  const rejected: ModelOutcomeRejectedCitationT[] = [];
+  for (const citation of citations) {
+    const slotId = citation.slot_id || null;
+    const evidenceId = citation.evidence_id || null;
+    const slotKnown = slotId !== null && slots.has(slotId);
+    const evidenceKnown = evidenceId !== null && evidenceIds.has(evidenceId);
+    const record = {
+      ...(slotKnown ? { slot_id: slotId } : {}),
+      ...(slotId !== null && !slotKnown ? { claimed_slot_id_sha256: sha256Hex(slotId) } : {}),
+      ...(evidenceKnown ? { evidence_id: evidenceId } : {}),
+      ...(evidenceId !== null && !evidenceKnown
+        ? { claimed_evidence_id_sha256: sha256Hex(evidenceId) }
+        : {}),
+      ...(citation.quote !== undefined
+        ? { quote_sha256: sha256Hex(citation.quote), quote_length: citation.quote.length }
+        : {}),
+    };
+    let problem: ModelOutcomeRejectedCitationT['problem'] | null = null;
+    if (slotId === null && evidenceId === null) {
+      problem = 'no_target';
+    } else if (slotId !== null && !slotKnown) {
+      problem = 'unknown_slot';
+    } else if (evidenceId !== null && !evidenceKnown) {
+      problem = 'unknown_evidence';
+    } else if (citation.quote !== undefined) {
+      const entry = slotId !== null ? slots.get(slotId) : undefined;
+      const text =
+        entry && (entry.kind === 'text' || entry.kind === 'open') ? entry.text_md : undefined;
+      const evidenceText = textEvidence.find(
+        (item) => item.evidence_id === citation.evidence_id,
+      )?.text;
+      const quote = citation.quote;
+      if (
+        ![text, evidenceText].some(
+          (source) => source !== undefined && isOriginalEvidenceQuote({ source, quote }),
+        )
+      ) {
+        problem = 'non_original_quote';
+      }
+    }
+    if (problem !== null) rejected.push({ problem, ...record });
+  }
+  return rejected;
+}
+
+/**
+ * 决策被冻结判据拒收时记录决策形状与目标 id：与发布 rule/level 一致的 id
+ * 记原文（那是我们发布的数据），不一致的 claimed id 只记 sha256。
+ */
+function decisionDiagnostics(
+  request: ModelExecutorRequest,
+  decision: AssessmentRuleDecisionT,
+): ModelOutcomeDiagnosticsT {
+  const criterion = request.unit.criterion;
+  const summary =
+    decision.kind === 'rule'
+      ? {
+          kind: 'rule' as const,
+          criterion_kind: criterion.kind,
+          ...(criterion.kind === 'rule_reference' && decision.rule_id === criterion.rule_id
+            ? { rule_id: decision.rule_id }
+            : { rule_id_sha256: sha256Hex(decision.rule_id) }),
+          points_awarded: decision.points_awarded,
+          unit_points: request.unit.points,
+        }
+      : decision.kind === 'level'
+        ? {
+            kind: 'level' as const,
+            criterion_kind: criterion.kind,
+            ...(criterion.kind === 'holistic_level' &&
+            criterion.levels.some((level) => level.level_id === decision.level_id)
+              ? { level_id: decision.level_id }
+              : { level_id_sha256: sha256Hex(decision.level_id) }),
+            unit_points: request.unit.points,
+          }
+        : undefined;
+  return {
+    check: 'decision_criterion_mismatch',
+    ...(summary === undefined ? {} : { decision: summary }),
+  };
 }
 
 /** Standalone native pi lane, selected only by an explicit published task and descriptor. */
@@ -192,6 +289,10 @@ export function createPiModelExecutor(options: PiModelExecutorOptions): ModelUni
           { reason: 'unjudgeable', detail: 'native model exceeded the admitted call cost cap' },
           [result.task_run_id],
           cost,
+          {
+            check: 'cost_cap_exceeded',
+            cost: { cost_usd_micros: cost, cap_usd_micros: cap },
+          },
         );
       const modelResult = result;
       const decision = await traceOperation(
@@ -207,18 +308,39 @@ export function createPiModelExecutor(options: PiModelExecutorOptions): ModelUni
             : undefined,
         },
       );
+      const wire = JSON.parse(prepared.input.text) as {
+        text_evidence: Array<{ evidence_id: string; text: string }>;
+      };
       // Pending citations are validated by the model schema but cannot supply a score.
       // The domain pending outcome retains only its reason and paid run provenance.
-      if (decision.kind === 'pending')
+      if (decision.kind === 'pending') {
+        const declinedCitations = citationRejections(
+          request,
+          decision.evidence_citations ?? [],
+          wire.text_evidence,
+        );
         return pending(
           { reason: 'insufficient_evidence', detail: decision.detail },
           [result.task_run_id],
           cost,
+          {
+            check: 'model_declined',
+            citable_sources: citableSources(request, wire.text_evidence),
+            ...(declinedCitations.length > 0
+              ? {
+                  rejected_citations: declinedCitations.slice(0, 16),
+                  rejected_citation_count: declinedCitations.length,
+                }
+              : {}),
+          },
         );
-      const wire = JSON.parse(prepared.input.text) as {
-        text_evidence: Array<{ evidence_id: string; text: string }>;
-      };
-      if (citationProblem(request, decision.evidence_citations, wire.text_evidence)) {
+      }
+      const rejectedCitations = citationRejections(
+        request,
+        decision.evidence_citations,
+        wire.text_evidence,
+      );
+      if (rejectedCitations.length > 0) {
         return pending(
           {
             reason: 'unjudgeable',
@@ -226,6 +348,12 @@ export function createPiModelExecutor(options: PiModelExecutorOptions): ModelUni
           },
           [result.task_run_id],
           cost,
+          {
+            check: 'citation_validation',
+            rejected_citations: rejectedCitations.slice(0, 16),
+            rejected_citation_count: rejectedCitations.length,
+            citable_sources: citableSources(request, wire.text_evidence),
+          },
         );
       }
       const common = {
@@ -274,6 +402,7 @@ export function createPiModelExecutor(options: PiModelExecutorOptions): ModelUni
         },
         [result.task_run_id],
         cost,
+        decisionDiagnostics(request, decision),
       );
     } catch (error) {
       if (

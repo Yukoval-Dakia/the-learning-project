@@ -8,6 +8,7 @@ import { canonicalHash } from '@/core/migration/canonical';
 import {
   GroupEvidence,
   type ModelExecutorRequest,
+  type ModelOutcomeDiagnosticsT,
   type ModelUnitOutcomeT,
   type PendingStateT,
   QuestionGroupStructure,
@@ -82,6 +83,7 @@ export function holdoutItemFromOutcome(
       severe_error: false,
       pending_reason: outcome.pending.reason,
       pending: outcome.pending,
+      ...(outcome.diagnostics !== undefined ? { diagnostics: outcome.diagnostics } : {}),
       run_refs: outcome.run_refs,
       ...(outcome.cost_usd_micros !== undefined
         ? { cost_usd_micros: outcome.cost_usd_micros }
@@ -261,6 +263,8 @@ export interface ModelSliceAdmissionItemResult {
   pending_reason?: string;
   /** 完整未决态（detail / retryable / trigger 等）；pending_reason 只是它的索引。 */
   pending?: PendingStateT;
+  /** 执行期拒收诊断（枚举/数量/hash/已提交 id；不含学习者或模型明文）。 */
+  diagnostics?: ModelOutcomeDiagnosticsT;
   /**
    * pending 是否计入 FREE_HOLDOUT_MAX_PENDING_PER_120：定夺 attempt
    * （run_refs 末位）落账 success 且全部引用 run 费用 resolved 才为 true；

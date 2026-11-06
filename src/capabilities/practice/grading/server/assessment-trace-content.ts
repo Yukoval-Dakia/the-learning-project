@@ -64,7 +64,16 @@ export function assessmentTraceOutput(outcome: ModelUnitOutcomeT): SanitizedTrac
   const facts =
     outcome.kind === 'scored'
       ? { assessment_outcome: 'scored', points_awarded: safePoints(outcome.points_awarded) }
-      : { assessment_outcome: 'pending', pending_reason: safePendingReason(outcome.pending) };
+      : {
+          assessment_outcome: 'pending',
+          pending_reason: safePendingReason(outcome.pending),
+          ...(outcome.diagnostics === undefined
+            ? {}
+            : {
+                diagnostic_check: outcome.diagnostics.check,
+                rejected_citation_count: outcome.diagnostics.rejected_citation_count ?? 0,
+              }),
+        };
   return {
     summary: `${role} ${JSON.stringify({
       assessment_execution: assessmentExecutionOutcome(outcome),
