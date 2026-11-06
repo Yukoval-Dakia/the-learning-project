@@ -7,6 +7,7 @@
 // placement completion owner. Callers never assemble paid eligibility from primitives.
 import { and, count, desc, eq, sql } from 'drizzle-orm';
 import type { JobWithMetadata } from 'pg-boss';
+import { placementProbeEnabled } from '@/capabilities/practice/public';
 import type { Db } from '@/db/client';
 import {
   event,
@@ -60,8 +61,10 @@ type DeliveryJob = Pick<
 
 /** Dispatch the learner's next due pending claim through the existing CAS — a free
  * send that is never a re-send of this demand — and never let it break the delivery's
- * own error propagation. */
+ * own error propagation. With the probe flag off nothing places at all, so the
+ * pull-forward stands down like the sweeper's paid leg does. */
 async function dispatchNextDueQuietly(db: Db, excludeClaimId: string): Promise<void> {
+  if (!placementProbeEnabled()) return;
   try {
     const jobId = await dispatchNextDuePendingPlacementClaim(db, excludeClaimId);
     if (jobId != null)

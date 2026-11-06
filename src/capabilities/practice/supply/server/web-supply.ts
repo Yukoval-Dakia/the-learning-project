@@ -13,6 +13,7 @@ import { createHash } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
+import { isProviderAuthConfigError } from '@/ai/agent-run-error';
 import { resolveTaskBudget } from '@/capabilities/task-registry';
 import { canonicalHash } from '@/core/migration/canonical';
 import { SourcedQuestion, SourcingImageCandidate } from '@/core/schema/sourcing';
@@ -240,13 +241,15 @@ function placementWebDemandStateOutcome(state: WebSupplyState): PlacementWebDema
  * 'config_error': the round provably spent nothing and cannot succeed until the lane
  * is repaired — non-retryable, but known.
  * 'known': a listed terminal outcome or a settled verification state.
+ * The latest durable round's class wins: an early config_error round superseded by a
+ * re-driven round must not keep parking the claim once the lane answers.
  * A round id with no durable state never started: nothing was sent, so nothing is owed.
  */
 export async function placementWebDemandOutcome(
   db: Db | Tx,
   demandId: string,
 ): Promise<PlacementWebDemandOutcome> {
-  let configError = false;
+  let latestOutcome: PlacementWebDemandOutcome | undefined;
   for (const roundId of [
     demandId,
     `${demandId}:placement-refill:1`,
@@ -256,9 +259,9 @@ export async function placementWebDemandOutcome(
     if (!state) continue;
     const outcome = placementWebDemandStateOutcome(state);
     if (outcome === 'unknown') return 'unknown';
-    if (outcome === 'config_error') configError = true;
+    latestOutcome = outcome;
   }
-  return configError ? 'config_error' : 'known';
+  return latestOutcome ?? 'known';
 }
 
 // ── Route fallback (YUK-1664 S3) ─────────────────────────────────────────────
@@ -293,8 +296,11 @@ const EXECUTABLE_FALLBACK_ROUTES: ReadonlySet<string> = new Set(['jyeoo_fetch', 
 
 /** Blocked reasons a NEW placement delivery may turn into the next refill round.
  * Unknown outcomes are still excluded below before this list is consulted; the
- * list is only for outcomes durable enough to authorize another paid round. */
+ * list is only for outcomes durable enough to authorize another paid round.
+ * 'config_error' qualifies the same way: the round provably spent nothing, so a
+ * re-driven delivery can only pay once the lane actually answers. */
 const PLACEMENT_REDRIVE_BLOCK_REASONS: ReadonlySet<string> = new Set([
+  'config_error',
   'candidate_not_servable',
   'text_evidence_unavailable',
   'anchor_not_found',
@@ -845,7 +851,7 @@ export async function runWebSupply(params: WebSupplyParams): Promise<WebSupplySt
     const prior = await latest(params.db, roundId);
     const count = prior?.item.count ?? Math.max(1, params.item.count - previousCount);
     state = await runWebSupplyRound({ ...params, item: { ...params.item, count } }, roundId);
-    if (placementWebDemandStateOutcome(state) !== 'known') return state;
+    if (placementWebDemandStateOutcome(state) === 'unknown') return state;
     if (state.phase === 'blocked') {
       const settledCandidateRefill = [
         'candidate_not_servable',
@@ -1020,16 +1026,19 @@ async function runWebSupplyRound(
     });
   } catch (err) {
     // The agent may have spent before failing: its cost is unknown, never zero.
-    // TaskConfigError is the exception — config resolution fails before any provider
-    // request is sent, so the paid effect is provably zero and the round's failure is
-    // known AND non-retryable until the lane is repaired ('config_error').
-    const configError = err instanceof TaskConfigError;
+    // TaskConfigError and a provider-auth rejection (401/403 surfaced as an
+    // api_error_result) are the exceptions — resolution failed or the provider
+    // refused the request before billable work, so the paid effect is provably
+    // zero and the round's failure is known AND non-retryable until the lane is
+    // repaired ('config_error').
+    const configError = err instanceof TaskConfigError || isProviderAuthConfigError(err);
+    const reason = configError ? 'config_error' : 'acquisition_outcome_unknown';
     await recordAcquisition(null, configError ? 0 : null);
     await settleSourcingRun([state.producerTaskRunId], 0);
     return advance(db, state, {
       phase: 'blocked',
-      reason: configError ? 'config_error' : 'acquisition_outcome_unknown',
-      ...blockedRouting(state, 'acquisition_outcome_unknown'),
+      reason,
+      ...blockedRouting(state, reason),
     });
   }
   if (fetched.status === 'failed') {
