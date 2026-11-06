@@ -414,42 +414,85 @@ export async function runProposalAutoApplySweep(
       continue;
     }
 
+    let acceptError: unknown = null;
     try {
       await accept(db, {
         proposalId: candidate.id,
         actor: { kind: 'agent', ref: candidate.actorRef },
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.warn('[proposal-auto-apply] accept failed; proposal stays pending', {
+      acceptError = err;
+    }
+
+    // A thrown accept may still have committed: some appliers enqueue follow-up
+    // work after the decision transaction. Read the decision before writing any
+    // permanent skip, so an applied proposal never loses its card and undo entry.
+    let recorded: Awaited<ReturnType<typeof findExistingRateEvent>> | null = null;
+    try {
+      recorded = await findExistingRateEvent(db, candidate.id);
+    } catch (err) {
+      // Cannot tell whether the accept committed; leave it untouched for the next
+      // sweep instead of writing a permanent skip.
+      console.warn('[proposal-auto-apply] decision read failed; leaving proposal for next sweep', {
         proposal_id: candidate.id,
         kind: payload.kind,
-        error: message,
+        error: err instanceof Error ? err.message : String(err),
       });
-      await writeSkippedAnchorSafe(db, candidate.id, 'apply_error', breaker, {
-        errorMessage: message,
-      });
-      skipped += 1;
       continue;
     }
 
-    // Honesty gate: a racing human decision can win the same proposal. Only the
-    // rate event recorded with this agent identity means the lane actually applied
-    // it; never write an auto-apply card for a user decision.
-    const recorded = await findExistingRateEvent(db, candidate.id);
-    if (!recorded) {
-      // Accept returned without a rate (SkippedProposalDecision / stale skip).
-      // Mark it returned-to-human so it cannot occupy the page forever.
-      await writeSkippedAnchorSafe(db, candidate.id, 'ineligible', breaker, {
-        detail: 'decision_skipped',
-      });
-      skipped += 1;
-      continue;
-    }
-    if (recorded.actor_kind !== 'agent' || recorded.actor_ref !== candidate.actorRef) {
-      // Decided by someone else (human, or another agent identity): no card from
-      // this lane and no skip anchor on a decision that already happened.
-      continue;
+    const ownAccept =
+      recorded !== null &&
+      recorded.decision === 'accept' &&
+      recorded.actor_kind === 'agent' &&
+      recorded.actor_ref === candidate.actorRef;
+    const acceptErrorMessage =
+      acceptError === null
+        ? null
+        : acceptError instanceof Error
+          ? acceptError.message
+          : String(acceptError);
+
+    if (acceptErrorMessage !== null) {
+      if (ownAccept) {
+        // The decision committed; this lane only lost the follow-up call. Keep the
+        // same applied path as a successful accept (anchor backfill covers a write
+        // failure) instead of hiding it behind a permanent skip.
+        console.warn('[proposal-auto-apply] accept threw after commit; keeping applied card', {
+          proposal_id: candidate.id,
+          kind: payload.kind,
+          error: acceptErrorMessage,
+        });
+      } else if (recorded !== null) {
+        // Decided by someone else while this call raced; no skip and no card.
+        continue;
+      } else {
+        console.warn('[proposal-auto-apply] accept failed before commit; proposal stays pending', {
+          proposal_id: candidate.id,
+          kind: payload.kind,
+          error: acceptErrorMessage,
+        });
+        await writeSkippedAnchorSafe(db, candidate.id, 'apply_error', breaker, {
+          errorMessage: acceptErrorMessage,
+        });
+        skipped += 1;
+        continue;
+      }
+    } else {
+      if (recorded === null) {
+        // Accept returned without a rate (SkippedProposalDecision / stale skip).
+        // Mark it returned-to-human so it cannot occupy the page forever.
+        await writeSkippedAnchorSafe(db, candidate.id, 'ineligible', breaker, {
+          detail: 'decision_skipped',
+        });
+        skipped += 1;
+        continue;
+      }
+      if (!ownAccept) {
+        // Decided by someone else (human, or another agent identity): no card from
+        // this lane and no skip anchor on a decision that already happened.
+        continue;
+      }
     }
 
     applied += 1;
