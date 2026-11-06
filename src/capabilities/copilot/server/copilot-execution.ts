@@ -155,12 +155,8 @@ export interface CopilotExecutionResult {
 /** Tolerant scan of the streamed compose_block args prefix (never the payload). */
 function scanBlockArgsPrefix(prefix: string): { blockKind?: string; title?: string } {
   const kind = prefix.match(/"kind"\s*:\s*"([a-z_]{1,24})"/)?.[1];
-  const rawTitle = prefix.match(/"(?:alt|title)"\s*:\s*"((?:[^"\\]|\\.){0,80})/)?.[1];
-  const title = rawTitle?.slice(0, 60);
-  return {
-    ...(kind ? { blockKind: kind } : {}),
-    ...(title ? { title } : {}),
-  };
+  // Arguments have not passed validation yet, so no model-authored text is public.
+  return { ...(kind ? { blockKind: kind } : {}), title: '正在准备积木' };
 }
 
 export type ExecuteCopilotTurn = (

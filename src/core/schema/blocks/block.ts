@@ -170,12 +170,17 @@ export const QuestionRefBlock = z
   .object({
     ...Common,
     kind: z.literal('question_ref'),
-    question_ids: z.array(z.string()).min(1).max(5),
+    question_ids: z
+      .array(z.string().regex(/^[A-Za-z0-9_-]{1,128}$/))
+      .min(1)
+      .max(5),
+    display: z.enum(['link', 'inline']).default('link'),
     label: z.string().max(30),
   })
   .strict()
   .meta({
-    description: 'Practice by reference to admitted bank questions; never carries an answer.',
+    description:
+      'Question card by bank id only. display=link opens the question; inline is one question with in-place practice, disabled until admitted. alt must be 题目, label must be 打开题目; omit caption.',
   });
 
 /** Model-facing input union (payload fields allowed). */

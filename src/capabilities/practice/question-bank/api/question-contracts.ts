@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { ResponseSpec } from '@/core/schema/assessment/response';
 import { QuestionKind } from '@/core/schema/business';
 import { GradingProvenanceEntry } from '@/core/schema/capability';
 import { ReviewTimingJsonSchema } from '@/core/schema/learner-judgment';
@@ -386,3 +387,32 @@ export const RestoreQuestionResponseSchema = z
     event_id: z.string(),
   })
   .passthrough();
+
+export const QuestionCardResponseSchema = z.object({
+  question_id: z.string(),
+  state: z.enum(['ready', 'checking', 'failed', 'undecided', 'withdrawn', 'unavailable']),
+  question: z
+    .object({
+      id: z.string(),
+      group_id: z.string(),
+      part_ids: z.array(z.string()).optional(),
+      prompt_md: z.string(),
+      admission_owned: z.boolean(),
+      kind: z.string(),
+      choices_md: z.array(z.string()).nullable(),
+      notation: z.string().nullable(),
+      inline_supported: z.boolean(),
+      display_response_spec: ResponseSpec,
+    })
+    .nullable(),
+  serving: QuestionServingSchema.nullable(),
+  latest_attempt: z
+    .object({
+      issuance_id: z.string(),
+      revision_id: z.string(),
+      part_ids: z.array(z.string()),
+      status: z.enum(['issued', 'submitted']),
+    })
+    .nullable()
+    .optional(),
+});

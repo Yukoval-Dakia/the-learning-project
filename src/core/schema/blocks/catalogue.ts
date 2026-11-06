@@ -44,7 +44,14 @@ const MEMBER_META: Record<BlockKind, { schema: z.ZodType; example: unknown }> = 
   },
   question_ref: {
     schema: QuestionRefBlock,
-    example: { v: 1, kind: 'question_ref', question_ids: ['q_…'], label: '再练一道' },
+    example: {
+      v: 1,
+      kind: 'question_ref',
+      question_ids: ['q_id'],
+      display: 'inline',
+      alt: '题目',
+      label: '打开题目',
+    },
   },
 };
 
@@ -77,6 +84,12 @@ export function renderBlockCatalogue(surface: BlockSurface): string {
     if (!allowed.has(kind)) continue;
     if (!implemented.has(kind)) {
       lines.push(`- ${kind}：本版本尚未开放，不要调用。`);
+      continue;
+    }
+    if (kind === 'question_ref') {
+      lines.push(
+        '- question_ref：真实题目引用；v=1，question_ids=题目id数组（inline恰一项），display=link|inline，alt=题目，label=打开题目，不含caption。',
+      );
       continue;
     }
     const description = descriptionOf(meta.schema);

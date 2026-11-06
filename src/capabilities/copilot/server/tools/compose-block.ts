@@ -23,6 +23,7 @@ import { lintMermaidSource } from '@/kernel/blocks/mermaid-lint';
 import { parseMermaidSource } from '@/kernel/blocks/mermaid-validate';
 import { rebuildSvgFigure } from '@/kernel/blocks/svg-rebuild';
 import { getR2 } from '@/kernel/object-storage';
+import { readQuestionCard } from '@/kernel/read-models/question-card';
 import { createAssessmentAssetLoader } from '@/kernel/records/assessment-assets';
 import { ImmutableAssetError, persistImmutableAsset } from '@/kernel/records/asset-store';
 import type { DomainTool, ToolContext, ToolImageOutput } from '@/kernel/tools/types';
@@ -79,7 +80,7 @@ function shapeIssue(path: string, detail: string): BlockIssueT {
   return { code: 'shape_invalid', path, detail };
 }
 
-async function readyBlocksThisRun(ctx: ToolContext): Promise<number> {
+async function readyBlocksThisRun(ctx: ToolContext, inlineOnly = false): Promise<number> {
   const taskRunId = ctx.logTaskRunId ?? ctx.taskRunId;
   const rows = await ctx.db
     .select({ output: tool_call_log.output_json })
@@ -88,8 +89,14 @@ async function readyBlocksThisRun(ctx: ToolContext): Promise<number> {
       and(eq(tool_call_log.task_run_id, taskRunId), eq(tool_call_log.tool_name, 'compose_block')),
     );
   return rows.filter((row) => {
-    const output = row.output as { status?: string } | null;
-    return output?.status === 'ready';
+    const output = row.output as {
+      status?: string;
+      block?: { kind?: string; display?: string };
+    } | null;
+    return (
+      output?.status === 'ready' &&
+      (!inlineOnly || (output.block?.kind === 'question_ref' && output.block.display === 'inline'))
+    );
   }).length;
 }
 
@@ -220,6 +227,47 @@ export function createComposeBlockTool(
       let stored: BlockV1T;
       let images: ToolImageOutput[] | undefined;
       switch (block.kind) {
+        case 'question_ref': {
+          if (block.alt !== '题目' || block.label !== '打开题目' || block.caption !== undefined) {
+            return invalid([
+              {
+                code: 'block_text_reveals_key',
+                path: '',
+                detail:
+                  'question references carry ids only: alt must be 题目, label must be 打开题目, and caption must be absent',
+              },
+            ]);
+          }
+          if (block.display === 'inline' && block.question_ids.length !== 1) {
+            return invalid([
+              shapeIssue('/question_ids', 'inline requires exactly one question id'),
+            ]);
+          }
+          if (block.display === 'inline' && (await readyBlocksThisRun(ctx, true)) >= 3) {
+            return invalid([
+              {
+                code: 'block_limit_exceeded',
+                path: '',
+                detail: 'a reply carries at most three inline question references',
+              },
+            ]);
+          }
+          for (const [index, id] of block.question_ids.entries()) {
+            const card = await readQuestionCard(ctx.db, id);
+            if (card.question === null) {
+              return invalid([
+                {
+                  code: 'question_ref_not_servable',
+                  path: `/question_ids/${index}`,
+                  detail:
+                    'question must exist, be visible and not withdrawn; only admission-owned questions may be shown while checking',
+                },
+              ]);
+            }
+          }
+          stored = block;
+          break;
+        }
         case 'diagram': {
           const { issues } = await validateDiagram(block);
           if (issues.length > 0) return invalid(issues);
