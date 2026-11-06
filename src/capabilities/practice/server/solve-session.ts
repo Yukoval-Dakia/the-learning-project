@@ -17,6 +17,7 @@ import {
   readHelpProviderFault,
 } from '@/ai/help-provider-fault';
 import type { SealedReplyGrounding } from '@/ai/help-reply-grounding';
+import { type CrisisReferralWire, buildCrisisReferral } from '@/core/crisis/referral';
 import { sanitizeJsonStringLiterals } from '@/core/json-sanitize';
 import { canonicalHash } from '@/core/migration/canonical';
 import type { ActivateEvaluationIntentT, PracticeIssuanceDtoT } from '@/core/schema/assessment';
@@ -35,6 +36,7 @@ import {
   createAssessmentAssetLoader,
   loadFrozenStudyContext,
   loadFrozenStudyImages,
+  readAttemptCrisisMark,
   recordAssistanceExposure,
   revealFrozenStudyReference,
 } from '../grading/public';
@@ -844,6 +846,8 @@ export interface SubmitSolveAttemptResult {
   revealed_solution_md: string | null;
   /** Set when a mistake was enrolled (low score). */
   mistake_id?: string;
+  /** Versioned referral resolved from the persisted attempt mark; absent for ordinary answers. */
+  crisis_referral?: CrisisReferralWire;
 }
 
 export async function submitSolveAttempt(
@@ -953,6 +957,9 @@ export async function submitSolveAttempt(
       committed.status === 'effective'
         ? await revealFrozenStudyReference(db, issuanceId)
         : { reference_md: null };
+    // Same persisted mark as the review-answer response — read, never re-classify.
+    const crisisMark = await readAttemptCrisisMark(db, committed.attempt_id);
+    const crisis_referral = crisisMark ? buildCrisisReferral(crisisMark) : undefined;
     return {
       status: committed.status,
       attempt_event_id: committed.attempt_id,
@@ -973,6 +980,7 @@ export async function submitSolveAttempt(
       },
       revealed_solution_md: revealed.reference_md,
       ...(committed.status === 'effective' && belowMastery ? { mistake_id: mistakeId } : {}),
+      ...(crisis_referral ? { crisis_referral } : {}),
     };
   }
   throw new ApiError(

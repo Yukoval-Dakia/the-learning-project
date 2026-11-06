@@ -1,9 +1,11 @@
+import { buildCrisisReferral } from '@/core/crisis/referral';
 import type { Db } from '@/db/client';
 import { ApiError } from '@/kernel/http';
 import {
   CreatePaperSubmissionBodySchema,
   LegacyPaperSubmissionBodySchema,
 } from '../../api/paper-contracts';
+import { readAttemptCrisisMark } from '../../grading/public';
 import { submitPaperSlot } from './paper-submit';
 
 export async function createPracticePaperSubmission(db: Db, sessionId: string, raw: unknown) {
@@ -44,11 +46,15 @@ export async function submitLegacyPaperSubmission(db: Db, paperArtifactId: strin
     },
     db,
   );
+  // Same persisted mark as the review-answer response — read, never re-classify.
+  const crisisMark = await readAttemptCrisisMark(db, result.attemptEventId);
+  const crisis_referral = crisisMark ? buildCrisisReferral(crisisMark) : undefined;
   const identity = {
     attempt_event_id: result.attemptEventId,
     judge_event_id: null,
     evaluation_id: result.evaluationId,
     answer_id: result.answerId,
+    ...(crisis_referral ? { crisis_referral } : {}),
   };
   return result.visibleToUser
     ? {

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { CrisisReferralWireSchema } from '@/core/crisis/referral';
 import { ActivateEvaluationIntent } from '@/core/schema/assessment';
 import { MAX_HINT_COUNT, MAX_HINT_INDEX } from '@/core/schema/event/known';
 import { CreateSubmissionBodySchema } from './assessment-contracts';
@@ -122,5 +123,6 @@ export const SolveSubmissionResponseSchema = z
     judge: z.unknown().optional(),
     revealed_solution_md: z.string().nullable(),
     mistake_id: z.string().optional(),
+    crisis_referral: CrisisReferralWireSchema.optional(),
   })
   .passthrough();

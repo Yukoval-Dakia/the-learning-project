@@ -5,6 +5,7 @@
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
+import { CRISIS_GUARD_CONFIG_VERSION } from '@/core/crisis/config';
 import { JudgeWorkflowInput } from '@/core/schema/event/judge-operational-events';
 import { NativeJudgePendingSubmitInput } from '@/core/schema/event/judge-pending-events';
 import { assessment_submission, event, material_fsrs_state } from '@/db/schema';
@@ -62,7 +63,7 @@ describe('submit response carries the versioned crisis referral immediately', ()
       mode: 'sync' as const,
       answer: CRISIS_ANSWER,
       durable: false,
-      modelOutcome: 'pending' as const,
+      modelOutcome: 1,
     },
     {
       mode: 'durable' as const,
@@ -94,7 +95,7 @@ describe('submit response carries the versioned crisis referral immediately', ()
       }
 
       expect(body.crisis_referral).toMatchObject({
-        guard_version: expect.any(String),
+        guard_version: CRISIS_GUARD_CONFIG_VERSION,
         template: {
           version: 'full-support-v2',
           review_status: '未审定',
@@ -128,20 +129,29 @@ describe('submit response carries the versioned crisis referral immediately', ()
         expect(settledEarly.crisis_referral?.detection_class).toBe('explicit');
       }
 
+      if (mode === 'sync') {
+        // The marked attempt still commits effectively and settles — crisis
+        // marking never blocks grading/FSRS.
+        expect(await db.select().from(material_fsrs_state)).toHaveLength(1);
+      }
+
       if (mode === 'durable') {
-        // Model failure after acceptance cannot revoke the already-returned
-        // referral; a later successful delivery still settles the marked attempt.
+        // Model failure inside the worker delivery cannot revoke the
+        // already-returned referral — the run completes unsupported and the
+        // recovery faces still project the same persisted mark.
         const job = queuedJobs.find((queued) => queued.run_id === body.run_id);
         if (!job) throw new Error('expected mapped native delivery');
-        f.setOutcome(1);
+        // 'throw' outcome: the executor really throws inside the delivery; the
+        // recorded executor seals it as an infra_failure pending unit — the same
+        // honest degradation the live path reports — so the run completes with
+        // an unsupported verdict: a model failure, not a grade.
         expect(
           await runJudgeRun(db, job, {
             retryCount: 0,
             retryLimit: 2,
             deliveryId: job.operational.delivery_id,
           }),
-        ).toMatchObject({ status: 'done' });
-        expect(await db.select().from(material_fsrs_state)).toHaveLength(1);
+        ).toMatchObject({ status: 'done', coarse_outcome: 'unsupported' });
 
         // Settled terminal and the poll face carry the same mark-derived referral.
         const settledLate = await readNativeJudgeSettled(db, submission.submission_id);

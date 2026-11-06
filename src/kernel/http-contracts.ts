@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { CrisisReferralWireSchema } from '@/core/crisis/referral';
 
 /** Marker used by OpenAPI generation for a real binary request part or response body. */
 export const OPENAPI_BINARY_CONTENT_DESCRIPTION = 'Binary HTTP content';
@@ -12,15 +11,6 @@ export const ApiErrorResponseSchema = z
   .object({
     error: z.string(),
     message: z.string().optional(),
-    details: z
-      .object({
-        // Surfaces that classify the learner's answer text before any model call
-        // (e.g. advice preview) attach the versioned referral to error responses
-        // too, so a model failure cannot lose it.
-        crisis_referral: CrisisReferralWireSchema.optional(),
-      })
-      .passthrough()
-      .optional(),
   })
   .passthrough();
 

@@ -245,34 +245,6 @@ export async function recordFormalAttemptCapture(
   });
 }
 
-/**
- * The mark the write point persisted on the attempt event, projected for the
- * submit response. Never re-classifies: a restricted event whose stored class
- * cannot be parsed still refers (fail toward support, same as the Copilot
- * 'none' fail-safe).
- */
-export async function readAttemptCrisisMark(
-  database: Db | Tx,
-  attemptEventId: string,
-): Promise<CrisisAttemptMark | null> {
-  const [row] = await database
-    .select({ payload: event.payload })
-    .from(event)
-    .where(eq(event.id, attemptEventId))
-    .limit(1);
-  const payload = row?.payload;
-  if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) return null;
-  const record = payload as Record<string, unknown>;
-  if (record.derivation_policy !== 'crisis') return null;
-  const parsed = CrisisAttemptMarkSchema.safeParse({
-    detection_class: record.crisis_detection_class,
-    guard_version: record.crisis_guard_version,
-  });
-  return parsed.success
-    ? parsed.data
-    : { detection_class: 'explicit', guard_version: CRISIS_GUARD_CONFIG_VERSION };
-}
-
 /** The response and candidate are immutable; activation is the only learning writer. */
 export async function commitFormalAttempt(
   database: Db,

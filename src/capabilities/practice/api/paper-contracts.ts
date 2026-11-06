@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { CrisisReferralWireSchema } from '@/core/crisis/referral';
 import { GroupEvidence, PracticeIssuanceDto, ResponseSet } from '@/core/schema/assessment';
 import { SERVING_UNAVAILABLE_REASONS } from '@/core/schema/assessment/serving-admission';
 import { PartialUnknownJudgeResult } from '@/kernel/capability-contract-schemas';
@@ -122,6 +123,8 @@ const PaperSubmissionIdentitySchema = z.object({
   evaluation_id: z.string().optional(),
   status: z.enum(['effective', 'review_required']).optional(),
   answer_id: z.string(),
+  // Referral is identity, not verdict — visible even while feedback stays buffered.
+  crisis_referral: CrisisReferralWireSchema.optional(),
 });
 
 export const PaperSubmissionResponseSchema = z.discriminatedUnion('visible_to_user', [

@@ -1,6 +1,6 @@
 import { and, desc, eq, inArray, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { buildCrisisReferral } from '@/core/crisis/referral';
+import { type CrisisReferralWire, buildCrisisReferral } from '@/core/crisis/referral';
 import { canonicalHash } from '@/core/migration/canonical';
 import {
   JUDGE_OPERATIONAL_ACTIONS,
@@ -16,7 +16,7 @@ import {
   JudgeRunStatusResponseSchema,
   JudgeRunTerminalResultSchema,
 } from '../../api/assessment-contracts';
-import { readAttemptCrisisMark } from './assessment/attempt';
+import { readAttemptCrisisMark } from './assessment/crisis-mark';
 import {
   type JudgeWorkflowObservation,
   observeJudgeDelivery,
@@ -352,7 +352,15 @@ function permanentDto(runId: string, state: PermanentJudgeState): JudgeStatusDto
 /** Terminal results carry the attempt's persisted referral mark — same mark as the submit response. */
 async function withResultReferral(database: Db, dto: JudgeStatusDto): Promise<JudgeStatusDto> {
   if (dto.status !== 'done' || !dto.result || dto.result.crisis_referral) return dto;
-  const mark = await readAttemptCrisisMark(database, dto.result.attempt_event_id);
+  // A mark-read failure must not degrade a readable verdict into 'unavailable';
+  // the referral is additive, the verdict is the payload.
+  let mark: Awaited<ReturnType<typeof readAttemptCrisisMark>>;
+  try {
+    mark = await readAttemptCrisisMark(database, dto.result.attempt_event_id);
+  } catch (error) {
+    console.error('[judge-run-observation] crisis mark read failed; verdict kept', error);
+    return dto;
+  }
   if (!mark) return dto;
   return { ...dto, result: { ...dto.result, crisis_referral: buildCrisisReferral(mark) } };
 }
@@ -439,8 +447,14 @@ export async function readNativeJudgeSettled(
   const state = durable.kind === 'absent' ? await readSyncJudged(database, submissionId) : durable;
   const terminal = permanentDto(runId, state);
   // Same persisted mark as the submit response — recovery faces never re-classify.
-  const mark = await readAttemptCrisisMark(database, assessmentAttemptEventId(submissionId));
-  const crisis_referral = mark ? buildCrisisReferral(mark) : undefined;
+  // A mark-read failure degrades to no referral, never to a broken recovery face.
+  let crisis_referral: CrisisReferralWire | undefined;
+  try {
+    const mark = await readAttemptCrisisMark(database, assessmentAttemptEventId(submissionId));
+    crisis_referral = mark ? buildCrisisReferral(mark) : undefined;
+  } catch (error) {
+    console.error('[judge-run-observation] crisis mark read failed; settled kept', error);
+  }
   if (terminal) {
     const run =
       crisis_referral && terminal.status === 'done' && terminal.result

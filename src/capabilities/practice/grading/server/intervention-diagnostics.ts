@@ -21,7 +21,7 @@ import {
   retireQuestionFsrsState,
 } from '@/kernel/records/scheduling-state';
 import { streamLocalDate } from '@/kernel/stream-date';
-import { readAttemptCrisisMark } from './assessment/attempt';
+import { readAttemptCrisisMark } from './assessment/crisis-mark';
 import { projectEvaluationToJudgeResult } from './judge/evaluation-authority';
 import { readJudgeQuestionActivity } from './judge-run-observation';
 

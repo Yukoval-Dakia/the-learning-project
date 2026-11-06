@@ -35,6 +35,7 @@ export async function createSolveSubmission(
       judge: result.judge,
       revealed_solution_md: result.revealed_solution_md,
       ...(result.mistake_id !== undefined ? { mistake_id: result.mistake_id } : {}),
+      ...(result.crisis_referral ? { crisis_referral: result.crisis_referral } : {}),
     });
   } catch (err) {
     if (err instanceof SolveError) {

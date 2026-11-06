@@ -21,11 +21,8 @@ import { assessmentAttemptEventId } from '@/kernel/records/assessment-attempt-id
 import { type CreateAttemptBody, CreateAttemptBodySchema } from '../../api/contracts';
 import { validatePlacementSubmission } from '../../placement/public';
 import { type ReviewSubmitIdentityInput, normalizeReviewSubmitActivityRef } from './activity-ref';
-import {
-  type FormalAttemptCapture,
-  commitFormalAttempt,
-  readAttemptCrisisMark,
-} from './assessment/attempt';
+import { type FormalAttemptCapture, commitFormalAttempt } from './assessment/attempt';
+import { readAttemptCrisisMark } from './assessment/crisis-mark';
 import type { NativeAttemptDispatchPort } from './assessment/native-attempt-dispatch-port';
 import { judgeDurableEnabled } from './judge-durable-config';
 import { readJudgeRunPermanent } from './judge-run-observation';

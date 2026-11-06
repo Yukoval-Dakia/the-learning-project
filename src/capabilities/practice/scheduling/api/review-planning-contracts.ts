@@ -9,6 +9,7 @@ import {
   PartialUnknownJudgeResult,
   ScoreMeaning,
 } from '@/kernel/capability-contract-schemas';
+import { ApiErrorResponseSchema } from '@/kernel/http-contracts';
 import { CreateSubmissionBodySchema } from '../../api/assessment-contracts';
 import {
   AttemptCorrectionStateSchema,
@@ -115,6 +116,27 @@ export const ReviewAdviceResponseSchema = z.object({
   // present in the 200 preview regardless of the durable switch; absent on ordinary answers.
   crisis_referral: CrisisReferralWireSchema.optional(),
 });
+
+// The advice route classifies before any model call and folds the referral into
+// error details, so only its error responses declare the field — declared
+// locally to keep the shared ApiError component inline-cheap everywhere else.
+export const AdviceErrorResponseSchema = ApiErrorResponseSchema.extend({
+  details: z
+    .object({
+      crisis_referral: CrisisReferralWireSchema.optional(),
+    })
+    .passthrough()
+    .optional(),
+});
+export const ADVICE_ERROR_RESPONSES = {
+  400: AdviceErrorResponseSchema,
+  401: AdviceErrorResponseSchema,
+  404: AdviceErrorResponseSchema,
+  409: AdviceErrorResponseSchema,
+  422: AdviceErrorResponseSchema,
+  429: AdviceErrorResponseSchema,
+  500: AdviceErrorResponseSchema,
+} as const;
 
 export const ReviewWeeklyQuerySchema = z.object({
   days: z.string().optional(),
