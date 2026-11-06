@@ -32,8 +32,9 @@ export function ReviewView({
   const [skipped, setSkipped] = useState<ReadonlySet<string>>(new Set());
   const batch = useBatchVerify(() => setPicked(new Set()));
   const shown = rows.filter((row) => !skipped.has(row.id));
-  // Questions under the automatic check cannot be verified by hand, so they cannot be ticked.
-  const pickable = shown.filter((row) => !row.admission);
+  // Only a question the automatic check owns refuses a hand verify. An old draft can have a check
+  // status too and stays pickable.
+  const pickable = shown.filter((row) => !row.admission_owned);
   // A new scope or search starts a fresh selection, so nothing hidden stays ticked.
   const scopeKey = JSON.stringify(scope);
   const [pickedFor, setPickedFor] = useState(scopeKey);
@@ -41,8 +42,8 @@ export function ReviewView({
     setPickedFor(scopeKey);
     setPicked(new Set());
   }
-  const shownIds = new Set(shown.map((row) => row.id));
-  const pickedShown = [...picked].filter((id) => shownIds.has(id));
+  const pickableIds = new Set(pickable.map((row) => row.id));
+  const pickedShown = [...picked].filter((id) => pickableIds.has(id));
 
   const toggle = (id: string, on: boolean) =>
     setPicked((prev) => {
@@ -109,7 +110,12 @@ export function ReviewView({
       </div>
       <ol className="ql-list">
         {shown.map((row) => {
-          const admission = row.admission ? ADMISSION_WORDS[row.admission.status] : null;
+          const check =
+            row.admission && row.admission.status !== 'admitted'
+              ? [ADMISSION_WORDS[row.admission.status].title, row.admission.reason]
+                  .filter(Boolean)
+                  .join('：')
+              : null;
           const verify = VERIFY_WORDS[row.verify_status] ?? { word: '还不确定', tone: 'neutral' };
           return (
             <QuestionLine
@@ -119,7 +125,7 @@ export function ReviewView({
               notation={lookups.notationFor(row.knowledge.map((k) => k.id))}
               navigate={navigate}
               lead={
-                admission ? undefined : (
+                row.admission_owned ? undefined : (
                   <input
                     type="checkbox"
                     className="ql-tick ql-line-tick"
@@ -131,12 +137,13 @@ export function ReviewView({
                 )
               }
               detail={
-                row.admission ? (
-                  row.admission.reason ? (
-                    <span className="ql-reason">{row.admission.reason}</span>
-                  ) : null
-                ) : row.verify_reason ? (
-                  <span className="ql-reason">核验写下的原因：{row.verify_reason}</span>
+                check || row.verify_reason ? (
+                  <>
+                    {check ? <span className="ql-reason">{check}</span> : null}
+                    {row.verify_reason ? (
+                      <span className="ql-reason">核验写下的原因：{row.verify_reason}</span>
+                    ) : null}
+                  </>
                 ) : null
               }
               knowledge={row.knowledge.map((k) => ({ id: k.id, name: k.label }))}
@@ -146,8 +153,8 @@ export function ReviewView({
                 shortDay(Date.parse(row.created_at) / 1000),
               ]}
               aside={
-                <span className="ql-state" data-tone={admission?.tone ?? verify.tone}>
-                  {admission?.title ?? verify.word}
+                <span className="ql-state" data-tone={verify.tone}>
+                  {verify.word}
                 </span>
               }
             />

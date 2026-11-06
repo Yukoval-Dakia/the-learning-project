@@ -11,6 +11,26 @@ import { useQuestionPages } from './use-library';
 
 const REASON_ORDER = [...Object.keys(HOLD_WORDS), 'unknown'];
 
+/**
+ * A group can split one server reason by the check's state, and the server's count knows only the
+ * reason. So a split group says what is loaded when that is everything, and no number otherwise.
+ */
+function groupCount(
+  group: readonly QBankQuestion[],
+  others: readonly (readonly QBankQuestion[])[],
+  byReason: Partial<Record<string, number>>,
+  complete: boolean,
+): number | null {
+  if (complete) return group.length;
+  const raw = new Set(group.map((item) => item.serving.hold_reason));
+  const [only] = raw;
+  const split =
+    raw.size !== 1 ||
+    others.some((other) => other.some((item) => raw.has(item.serving.hold_reason)));
+  if (split) return null;
+  return only ? (byReason[only] ?? group.length) : group.length;
+}
+
 function groupByReason(items: readonly QBankQuestion[]) {
   const groups = new Map<string, QBankQuestion[]>();
   for (const item of items) {
@@ -40,6 +60,7 @@ export function HeldView({
   const pages = q.data?.pages ?? [];
   const items = pages.flatMap((page) => page.items);
   const byReason = pages[0]?.byReason ?? {};
+  const groups = groupByReason(items);
 
   if (q.isLoading) return <SkeletonLines rows={5} label="正在载入暂不出题的题目" />;
   if (q.isError)
@@ -59,14 +80,20 @@ export function HeldView({
 
   return (
     <>
-      {groupByReason(items).map(([reason, group]) => {
+      {groups.map(([reason, group]) => {
         const words = holdWords(reason === 'unknown' ? null : reason);
-        const count = byReason[reason] ?? group.length;
+        const count = groupCount(
+          group,
+          groups.filter(([other]) => other !== reason).map(([, other]) => other),
+          byReason,
+          !q.hasNextPage,
+        );
         return (
           <section key={reason} className="ql-group" aria-labelledby={`ql-held-${reason}`}>
             <header className="ql-group-head">
               <h2 id={`ql-held-${reason}`} className="ql-group-title">
-                {words.title} <span className="ql-group-count un-num">{count}</span>
+                {words.title}{' '}
+                {count === null ? null : <span className="ql-group-count un-num">{count}</span>}
               </h2>
               <p className="ql-group-why">{words.why}</p>
             </header>

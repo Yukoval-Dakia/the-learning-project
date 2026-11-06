@@ -70,12 +70,27 @@ export const ADMISSION_WORDS = {
 
 export const HOLD_UNKNOWN = { title: '暂不出题', why: '原因还不确定。' };
 
-/** Why it is held: the automatic check's own state first, so a new question is never 「原因还不确定」. */
-export function holdKey(serving: {
+type ServingFacts = {
+  servable: boolean;
   hold_reason: string | null;
-  admission?: { status: keyof typeof ADMISSION_WORDS } | null;
-}): string | null {
-  switch (serving.admission?.status) {
+  admission?: { status: keyof typeof ADMISSION_WORDS; reason: string | null } | null;
+};
+
+/**
+ * The automatic check's state, when that is why the question is held. A specific hold such as a
+ * withdrawal or a failed source check says more, so it comes first.
+ */
+export function admissionHolding(serving: ServingFacts) {
+  const { admission, hold_reason: reason } = serving;
+  if (serving.servable || !admission || admission.status === 'admitted') return null;
+  return reason === null || reason === 'awaiting_admission' || reason === 'admission_failed'
+    ? admission
+    : null;
+}
+
+/** Why it is held, so a new question is never 「原因还不确定」. */
+export function holdKey(serving: ServingFacts): string | null {
+  switch (admissionHolding(serving)?.status) {
     case 'pending':
       return 'awaiting_admission';
     case 'failed':
