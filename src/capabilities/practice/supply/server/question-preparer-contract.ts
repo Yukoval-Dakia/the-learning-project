@@ -45,6 +45,8 @@ export const QuestionPreparerJobData = z.object({
 export type QuestionPreparerData = z.infer<typeof QuestionPreparerJobData>;
 export const preparerTerminal = z.object({
   ticket: EvidenceDemandV1,
+  /** Durable ticket binding; a continuation may not cross from an unbound segment. */
+  ticket_event_id: z.string().min(1).optional(),
   task_run_id: z.string(),
   outcome: z.enum(['done', 'no_progress', 'awaiting_admission']),
   summary: z.string(),

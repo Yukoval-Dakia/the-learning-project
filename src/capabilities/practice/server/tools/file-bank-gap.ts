@@ -425,6 +425,7 @@ async function executeFileBankGap(ctx: ToolContext, rawInput: FileBankGapInput) 
       subject_kind: 'query',
       subject_id: demand.demand_id,
       outcome: payload.status === 'filed' ? 'success' : 'partial',
+      session_id: ctx.sessionId ?? null,
       caused_by_event_id: ctx.causedByEventId ?? null,
       payload: {
         kind: 'bank_gap_filing',
@@ -494,6 +495,7 @@ async function executeFileBankGap(ctx: ToolContext, rawInput: FileBankGapInput) 
     subject_kind: 'query',
     subject_id: demand.demand_id,
     outcome: 'partial',
+    session_id: ctx.sessionId ?? null,
     caused_by_event_id: ctx.causedByEventId ?? null,
     payload: {
       kind: 'bank_gap_filing',
@@ -524,7 +526,10 @@ async function executeFileBankGap(ctx: ToolContext, rawInput: FileBankGapInput) 
   // 生效约束（范围 KC + 范围 kind）随票进 job；7d 指纹 cooldown 与旧入口同一判据。
   const effectiveDemand = narrowDemandToSignedScope(demand, evidence);
   const target = buildBankGapTarget(effectiveDemand, evidence, input.request_id);
-  const enqueued = await enqueueQuestionPreparerTicket(ctx.db, effectiveDemand, target);
+  const enqueued = await enqueueQuestionPreparerTicket(ctx.db, effectiveDemand, target, {
+    sessionId: ctx.sessionId ?? null,
+    filingEventId: eventId,
+  });
   const queued = enqueued.status === 'dispatched';
   const dispatch =
     enqueued.status === 'dispatched'
@@ -560,6 +565,7 @@ async function executeFileBankGap(ctx: ToolContext, rawInput: FileBankGapInput) 
     subject_kind: 'query',
     subject_id: demand.demand_id,
     outcome: queued ? 'success' : 'partial',
+    session_id: ctx.sessionId ?? null,
     caused_by_event_id: ctx.causedByEventId ?? null,
     payload: {
       kind: 'bank_gap_filing',

@@ -1342,15 +1342,23 @@ function projectReference(doc: QuestionDraftDocumentT): string | null {
             : String(unit.key.key.value),
         );
       } else if (unit.key?.kind === 'select') {
-        const labels = unit.key.accepted_item_ids
-          .map((id) =>
-            unit.response_spec.kind === 'select'
-              ? unit.response_spec.items.findIndex((item) => item.item_id === id)
-              : -1,
-          )
-          .filter((index) => index >= 0)
-          .map((index) => String.fromCharCode(65 + index));
-        if (labels.length > 0) texts.push(labels.join(''));
+        const spec = unit.response_spec.kind === 'select' ? unit.response_spec : null;
+        if (spec != null && (spec.axes != null || spec.text != null)) {
+          // Structured keys are content labels, sorted: declaration ids/order must not
+          // reach the canonical hash (ids are re-declared on every supply attempt).
+          const labels = unit.key.accepted_item_ids
+            .map((id) => spec.items.find((item) => item.item_id === id))
+            .filter((item): item is SelectSlotT['items'][number] => item != null)
+            .map((item) => contentLabelForItem(spec, item))
+            .sort();
+          if (labels.length > 0) texts.push(labels.join(' / '));
+        } else {
+          const labels = unit.key.accepted_item_ids
+            .map((id) => (spec != null ? spec.items.findIndex((item) => item.item_id === id) : -1))
+            .filter((index) => index >= 0)
+            .map((index) => String.fromCharCode(65 + index));
+          if (labels.length > 0) texts.push(labels.join(''));
+        }
       } else if (unit.reference_md != null) {
         texts.push(unit.reference_md);
       }
@@ -1362,25 +1370,86 @@ function projectReference(doc: QuestionDraftDocumentT): string | null {
 function projectChoices(doc: QuestionDraftDocumentT): string[] | null {
   const unit = doc.parts.flatMap((p) => p.units).find((u) => u.response_spec.kind === 'select');
   if (unit == null || unit.response_spec.kind !== 'select') return null;
-  return unit.response_spec.items.map((item) => item.label_md ?? item.item_id);
+  const spec = unit.response_spec;
+  return spec.axes != null || spec.text != null
+    ? spec.items.map((item) => contentLabelForItem(spec, item)).sort()
+    : spec.items.map((item) => item.label_md ?? item.item_id);
 }
 
-/** Axis labels and break-tap text are content even when relation items have no labels. */
+function axisLabelFor(axes: SelectSlotT['axes'], axis: string, id: string): string {
+  return axes?.[axis]?.find((entry) => entry.id === id)?.label_md ?? id;
+}
+
+function contentCoordinates(
+  axes: SelectSlotT['axes'],
+  coordinates: Record<string, string>,
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(coordinates)
+      .map(([axis, id]) => [axis, axisLabelFor(axes, axis, id)] as const)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+  );
+}
+
+/** One select item as content: labels / coordinate labels / text, never declared ids.
+ *  A label-less, relation-less item keeps its id because that id is what gets displayed. */
+function structuredItemContent(
+  spec: Pick<SelectSlotT, 'axes' | 'items'>,
+  item: SelectSlotT['items'][number],
+): Record<string, unknown> {
+  return {
+    ...(item.label_md != null ? { label_md: item.label_md } : {}),
+    ...(item.coordinates != null
+      ? { coordinates: contentCoordinates(spec.axes, item.coordinates) }
+      : {}),
+    ...(item.gap_after_codepoint != null ? { gap_after_codepoint: item.gap_after_codepoint } : {}),
+    ...(item.label_md == null && item.coordinates == null ? { item_id: item.item_id } : {}),
+  };
+}
+
+function contentLabelForItem(
+  spec: Pick<SelectSlotT, 'axes' | 'items'>,
+  item: SelectSlotT['items'][number],
+): string {
+  if (item.label_md != null) return item.label_md;
+  if (item.coordinates != null)
+    return Object.entries(contentCoordinates(spec.axes, item.coordinates))
+      .map(([axis, label]) => `${axis}=${label}`)
+      .join(';');
+  if (item.gap_after_codepoint != null) return `gap@${item.gap_after_codepoint}`;
+  return item.item_id;
+}
+
+function byStableJson(a: unknown, b: unknown): number {
+  const left = stableJson(a);
+  const right = stableJson(b);
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+/** Axis labels and break-tap text are content even when relation items have no labels.
+ *  Declared axis-entry ids, coordinate ids and declaration order are identity-irrelevant. */
 export function structuredSelectIdentity(
   specs: readonly Pick<SelectSlotT, 'axes' | 'items' | 'text'>[],
 ): unknown[] | undefined {
   const structured = specs.filter((spec) => spec.axes != null || spec.text != null);
   return structured.length === 0
     ? undefined
-    : structured.map((spec) => ({
-        ...(spec.axes != null ? { axes: spec.axes } : {}),
-        ...(spec.text != null ? { text: spec.text } : {}),
-        items: spec.items.map(({ label_md, coordinates, gap_after_codepoint }) => ({
-          ...(label_md != null ? { label_md } : {}),
-          ...(coordinates != null ? { coordinates } : {}),
-          ...(gap_after_codepoint != null ? { gap_after_codepoint } : {}),
-        })),
-      }));
+    : structured
+        .map((spec) => ({
+          ...(spec.axes != null
+            ? {
+                axes: Object.entries(spec.axes)
+                  .map(([axis, entries]) => ({
+                    axis,
+                    labels: entries.map((entry) => entry.label_md).sort(),
+                  }))
+                  .sort(byStableJson),
+              }
+            : {}),
+          ...(spec.text != null ? { text: spec.text } : {}),
+          items: spec.items.map((item) => structuredItemContent(spec, item)).sort(byStableJson),
+        }))
+        .sort(byStableJson);
 }
 
 /** Content identity for canonicalQuestionContentHash; source and knowledge ids do not participate. */

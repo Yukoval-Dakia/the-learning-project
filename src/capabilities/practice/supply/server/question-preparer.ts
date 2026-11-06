@@ -141,6 +141,10 @@ export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown, r
     const previous = preparerTerminal.parse(terminal.payload.terminal);
     if (JSON.stringify(previous.ticket) !== JSON.stringify(data.ticket))
       throw new Error('continuation must retain the original gap ticket');
+    // A ticket-bound segment may never bind an unbound segment's tool log (it may hold
+    // learner evidence); both sides must name the same durable ticket event.
+    if ((previous.ticket_event_id ?? null) !== (data.ticket_event_id ?? null))
+      throw new Error('continuation must retain the original ticket binding');
     const calls = await preparerCalls(db, previous.task_run_id);
     const verdict = data.continuation?.verdict;
     if (verdict) {

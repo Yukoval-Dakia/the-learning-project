@@ -2,7 +2,9 @@
 // dispatcher-compatible dispatch ledger are one transaction; the event id becomes the
 // submission's causal anchor. Admission reads that anchor as supply lineage; it never treats
 // `submit_question:*` as a pipeline publisher because the preparer may have read learner
-// mistakes into the question.
+// mistakes into the question. The ticket also carries the filing session and its caused-by
+// edge, so the purpose closure can reach the session's source document; the demand's free
+// text itself is caller-written and is not filtered here (YUK-1938).
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { fromPgBossDrizzleTx } from '@/db/pg-boss-drizzle';
@@ -22,6 +24,13 @@ export type QuestionPreparerEnqueueResult =
   | { status: 'dispatched'; event_id: string; job_id: string; ledger_event_id: string }
   | { status: 'skipped'; fingerprint: string; stop_condition: string };
 
+export interface QuestionPreparerTicketScope {
+  /** Learner session that filed the demand: purpose closure reaches its bound document. */
+  sessionId?: string | null;
+  /** `fbgap|<request_id>` filing event: the ticket's causal parent. */
+  filingEventId?: string | null;
+}
+
 /**
  * Enqueue one durable gap ticket under the same 7-day fingerprint cooldown as the old
  * dispatcher (same query, same days). The cooldown check, ticket/job write and the
@@ -32,6 +41,7 @@ export async function enqueueQuestionPreparerTicket(
   db: Db,
   ticket: EvidenceDemandV1T,
   target: QuestionSupplyTarget,
+  scope: QuestionPreparerTicketScope = {},
   now = new Date(),
 ): Promise<QuestionPreparerEnqueueResult> {
   const parsed = EvidenceDemandV1.parse(ticket);
@@ -60,6 +70,10 @@ export async function enqueueQuestionPreparerTicket(
       action: QUESTION_PREPARER_TICKET_ACTION,
       subject_kind: 'query',
       subject_id: parsed.demand_id,
+      // The ticket text itself is caller-written free text; binding the filing session and
+      // its caused-by edge keeps the purpose closure able to reach the source document.
+      session_id: scope.sessionId ?? null,
+      caused_by_event_id: scope.filingEventId ?? null,
       payload: {
         demand_id: parsed.demand_id,
         subject_id: parsed.subject_id,
