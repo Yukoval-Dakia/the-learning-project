@@ -454,6 +454,7 @@ export function ProposalCard({ p, resolved, navigate, onResolve, onError }: Prop
     .map((seg) => (seg.raw ? (mergeBlockLabelById.get(seg.text) ?? '') : seg.text))
     .join('')
     .replace(/[ \t]{2,}/g, ' ')
+    .replace(/[ \t]+(?=[（）「」，。；：、])/g, '')
     .trim();
   const reasonFolded =
     Boolean(ownSummary) ||
