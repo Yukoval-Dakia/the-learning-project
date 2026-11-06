@@ -94,21 +94,11 @@ export function InlineAnswer({
     refetchOnReconnect: false,
   });
   if (issuanceId === null) {
-    // The question changed after this card was placed: the card cannot issue it again, so the way
-    // on is the question itself.
+    // Trying again would be refused the same way, so the way on is the question itself.
     const refused = start.error instanceof ApiError && start.error.status === 409;
     if (refused) {
-      const changed =
-        start.error instanceof ApiError && start.error.code === 'issuance_id_conflict';
       return (
-        <Frame
-          note={
-            changed
-              ? '这道题改过了，这里不能再答，可以打开题目做。'
-              : '这道题现在不能在这里作答，可以打开题目做。'
-          }
-          actions={shared.open}
-        >
+        <Frame note="这道题现在不能在这里作答，可以打开题目做。" actions={shared.open}>
           {face}
         </Frame>
       );
@@ -319,9 +309,15 @@ function AnswerArea({
       }
       setConfirmed(true);
     },
-    // Someone else moved the result on: read it again so the next tap names the current one.
     onError: (error) => {
-      if (error instanceof ApiError && error.status === 409) grade.mutate();
+      if (!(error instanceof ApiError) || error.status !== 409) return;
+      // The question moved on after this answer was started, and no retry can record this result.
+      if (error.code === 'stale_admission') {
+        setNotRecorded(true);
+        return;
+      }
+      // Someone else moved the result on: read it again so the next tap names the current one.
+      grade.mutate();
     },
   });
 
@@ -428,7 +424,7 @@ function AnswerArea({
     const rating = graded.judge.suggested_rating;
     return (
       <Frame
-        status={{ word: '等你确认', tone: 'neutral' }}
+        status={notRecorded ? undefined : { word: '等你确认', tone: 'neutral' }}
         note={
           notRecorded
             ? '答案保存了，但这次没法自动记下，可以打开题目看看。'

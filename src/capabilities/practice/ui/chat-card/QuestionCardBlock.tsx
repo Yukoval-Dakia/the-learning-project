@@ -74,7 +74,10 @@ function SlotPreview({
         </MathMarkdown>
       );
     }
-    const lists = slot.axes ? Object.entries(slot.axes) : [['items', slot.items] as const];
+    // Positions in a sequence say nothing until there is something to place in them.
+    const lists = slot.axes
+      ? Object.entries(slot.axes).filter(([axis]) => axis !== 'position')
+      : [['items', slot.items] as const];
     return (
       <>
         {lists.map(([name, entries]) => (
