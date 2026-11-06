@@ -15,6 +15,7 @@ export * from './ids';
 export * from './judgment';
 export * from './lifecycle';
 export * from './materials';
+export * from './model-diagnostics';
 export * from './pending';
 export * from './presentation';
 export * from './publish';

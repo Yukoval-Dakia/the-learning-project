@@ -33,6 +33,7 @@ import {
 } from './judgment';
 import { GraderKcMasteryEvidence } from './kc-mastery-evidence';
 import type { SharedMaterialT } from './materials';
+import { ModelOutcomeDiagnostics } from './model-diagnostics';
 import { PendingState, type PendingStateT } from './pending';
 import type { ResponseSlotT, ResponseSpecT, SlotResponseT } from './response';
 import { isBlankSlotResponse, validateResponseSet } from './response';
@@ -86,69 +87,6 @@ export class ModelExecutionNotStartedError extends Error {
     this.name = 'ModelExecutionNotStartedError';
   }
 }
-
-/**
- * 模型拒收引文的脱敏摘要。目标 id 只有真实提交过才记原文；模型声称但不
- * 存在的 id 与引文明文一律只留 sha256 + 长度，绝不落学习者/模型原文。
- */
-export const ModelOutcomeRejectedCitation = z.object({
-  /** 哪一类校验没过（与执行器的拒收判定一一对应）。 */
-  problem: z.enum(['no_target', 'unknown_slot', 'unknown_evidence', 'non_original_quote']),
-  slot_id: z.string().min(1).optional(),
-  evidence_id: z.string().min(1).optional(),
-  claimed_slot_id_sha256: z.string().min(1).optional(),
-  claimed_evidence_id_sha256: z.string().min(1).optional(),
-  quote_sha256: z.string().min(1).optional(),
-  quote_length: z.number().int().min(0).optional(),
-});
-export type ModelOutcomeRejectedCitationT = z.infer<typeof ModelOutcomeRejectedCitation>;
-
-/**
- * 执行期拒收诊断：哪一类校验没过 + 被拒引文摘要 + 当时可引用文字来源
- * 的计数/长度。挂在 pending outcome 旁（不进 PendingState/unit_results）——
- * ScoringUnitResult 的形状不变，evaluation_id 内容寻址与学习者投影面不受影响；
- * 诊断只随封存的 outcome 与留出题证据落地。
- */
-export const ModelOutcomeDiagnostics = z.object({
-  check: z.enum([
-    'model_declined',
-    'citation_validation',
-    'decision_criterion_mismatch',
-    'cost_cap_exceeded',
-  ]),
-  /** 前 16 条被拒引文的摘要；真实总数在 rejected_citation_count。 */
-  rejected_citations: z.array(ModelOutcomeRejectedCitation).max(16).optional(),
-  rejected_citation_count: z.number().int().min(0).optional(),
-  citable_sources: z
-    .array(
-      z.object({
-        kind: z.enum(['slot_text', 'text_evidence']),
-        count: z.number().int().min(0),
-        total_chars: z.number().int().min(0),
-      }),
-    )
-    .optional(),
-  decision: z
-    .object({
-      kind: z.enum(['rule', 'level']),
-      criterion_kind: z.string().min(1),
-      /** 与冻结 rule/level 一致时记原文 id；不一致时只记 claimed id 的 hash。 */
-      rule_id: z.string().min(1).optional(),
-      rule_id_sha256: z.string().min(1).optional(),
-      level_id: z.string().min(1).optional(),
-      level_id_sha256: z.string().min(1).optional(),
-      points_awarded: z.number().min(0).optional(),
-      unit_points: z.number().min(0).nullable(),
-    })
-    .optional(),
-  cost: z
-    .object({
-      cost_usd_micros: z.number().int().min(0),
-      cap_usd_micros: z.number().int().min(0),
-    })
-    .optional(),
-});
-export type ModelOutcomeDiagnosticsT = z.infer<typeof ModelOutcomeDiagnostics>;
 
 /**
  * 模型单元裁决。`scored` 只报告判据层面的【规则/档位命中】与发布口径分数

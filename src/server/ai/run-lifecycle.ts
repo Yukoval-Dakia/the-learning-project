@@ -28,6 +28,7 @@ import type { Db } from '@/db/client';
 import { writeToolCallLog } from '@/kernel/tools/call-evidence';
 import {
   type AttemptCostTruth,
+  UNBILLED_PROVIDER_REJECTION_REF_PREFIX,
   resolveAttemptCostTruth,
   unknownAttemptCostTruth,
 } from './attempt-cost';
@@ -477,7 +478,7 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
       return {
         basis: 'estimated',
         amountUsd: 0,
-        ref: `unbilled-provider-rejection:${this.resolved.provider}/${this.resolved.model}#${this.taskRunId}`,
+        ref: `${UNBILLED_PROVIDER_REJECTION_REF_PREFIX}${this.resolved.provider}/${this.resolved.model}#${this.taskRunId}`,
       };
     if (!this.costTruthCache) {
       const evidence = this.terminal ?? this.observedUsage;

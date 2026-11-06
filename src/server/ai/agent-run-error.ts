@@ -38,6 +38,7 @@ export function bindAgentRunError(input: {
       ...((input.helpLatency ?? input.error.helpLatency)
         ? { helpLatency: input.helpLatency ?? input.error.helpLatency }
         : {}),
+      ...(input.error.providerFailure ? { providerFailure: input.error.providerFailure } : {}),
     });
   }
   if (input.error instanceof ProviderSessionAdmissionError) {

@@ -5,7 +5,7 @@
 // from error-message string matching. `retry_after_ms` is the provider's own
 // Retry-After when the response carried one; absent means unknown, not zero.
 
-import type { AgentFailureSubtype } from './agent-run-error';
+import { type AgentFailureSubtype, AgentRunError } from './agent-run-error';
 import type { ProviderTransportEvidence } from './task-result';
 
 export type ProviderFailureCategory =
@@ -96,5 +96,85 @@ export function classifyProviderFailure(input: {
     }
     if (input.streamErrorTerminal) return { category: 'provider_error', ...retry };
   }
+  return undefined;
+}
+
+// ---------------------------------------------------------------------------
+// Bounded provider-transient retry (YUK-1876)
+// ---------------------------------------------------------------------------
+
+/**
+ * The terminal failure's bound HTTP status, or null when no status is proven.
+ * Priority: the runner-bound api_error_status, then the adapter-bound
+ * provider_failure status, then the observed final root request — and that last
+ * source only when no request is in flight/unknown/sent_without_response, so a
+ * status can never be fabricated onto an uncertain wire.
+ */
+export function boundTerminalHttpStatus(
+  error: AgentRunError,
+  transport?: ProviderTransportEvidence,
+): number | null {
+  if (error.apiErrorStatus != null && error.apiErrorStatus >= 400) return error.apiErrorStatus;
+  const bound = error.providerFailure?.http_status;
+  if (bound != null && bound >= 400) return bound;
+  const last = transport?.requests.at(-1);
+  if (
+    last?.loop === 'root' &&
+    last.send_state === 'response_received' &&
+    last.http_status != null &&
+    last.http_status >= 400 &&
+    transport?.totals.by_state.in_flight === 0 &&
+    transport.totals.by_state.unknown === 0 &&
+    transport.totals.by_state.sent_without_response === 0
+  )
+    return last.http_status;
+  return null;
+}
+
+/** Provider failures that are positively proven safe to re-issue. */
+export type ProviderTransientClass =
+  /** Bound HTTP 429 — the provider fully rejected the call before billing. */
+  | 'rate_limited'
+  /** Bound HTTP 5xx, or a pi bad-gateway fault — a completed rejection. */
+  | 'server_error'
+  | 'bad_gateway'
+  /** Transport proves the request never reached the wire — nothing to bill. */
+  | 'not_sent';
+
+export interface ProviderTransientVerdict {
+  readonly class: ProviderTransientClass;
+  /** The bound status for HTTP classes; absent for 'not_sent'. */
+  readonly httpStatus?: number;
+  /** The provider's own retry hint when it rode the bound rejection. */
+  readonly retryAfterMs?: number;
+}
+
+/**
+ * The single owner of "may this settled provider failure be re-issued?".
+ * Every class requires positive evidence: a bound status or a transport-level
+ * not_sent proof. `sent_without_response`, `unknown`, `in_flight`, timeouts and
+ * caller cancellation are never retryable — resending an uncertain request can
+ * double-bill. Callers bound retries and delays; this only names the class.
+ */
+export function providerTransientVerdict(input: {
+  error: unknown;
+  transport?: ProviderTransportEvidence;
+}): ProviderTransientVerdict | undefined {
+  const error = input.error;
+  if (!(error instanceof AgentRunError)) return undefined;
+  if (error.helpProviderFault?.kind === 'bad_gateway') return { class: 'bad_gateway' };
+  const bound = boundTerminalHttpStatus(error, input.transport);
+  if (bound === 429) {
+    return {
+      class: 'rate_limited',
+      httpStatus: 429,
+      ...(error.providerFailure?.http_status === bound &&
+      error.providerFailure.retry_after_ms !== undefined
+        ? { retryAfterMs: error.providerFailure.retry_after_ms }
+        : {}),
+    };
+  }
+  if (bound != null && bound >= 500) return { class: 'server_error', httpStatus: bound };
+  if (input.transport?.send_state === 'not_sent') return { class: 'not_sent' };
   return undefined;
 }
