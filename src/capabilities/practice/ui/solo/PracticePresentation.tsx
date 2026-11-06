@@ -16,12 +16,12 @@ import type {
 } from '@/ui-next/practice-studio/contracts';
 import { PracticeStudio } from '@/ui-next/practice-studio/PracticeStudio';
 import { PresentationBlocks } from '../blocks/PresentationBlocks';
+import { outcomeFitsFeedbackCard } from '../judge-feedback';
 import { practiceSourceLabel } from '../PfStream';
 import type { StreamItem } from '../practice-api';
 import {
   type Rating,
   appealEntryAvailable,
-  isObjectiveQuestion,
   shouldOfferProcessBox,
   type usePracticeSubmit,
 } from '../use-practice-submit';
@@ -32,6 +32,17 @@ type Frozen = Extract<Engine['issuance'], { status: 'ready' }>['frozen'];
 type Figure = Frozen['materials'][number];
 const ratings: readonly Rating[] = ['again', 'hard', 'good'];
 const ratingLabels = { again: '再练', hard: '模糊', good: '掌握' };
+// About 30 s of successful reads at the poller's backoff; a loose first number, no timer needed.
+const LONG_WAIT_POLLS = 8;
+const APPEAL_REASON_MAX = 2000;
+const outcomeWords: Record<string, string> = {
+  correct: '做对了',
+  partial: '部分正确',
+  partial_unknown: '部分正确',
+  incorrect: '再看一遍',
+  unsupported: '待定',
+};
+const outcomeWord = (outcome: string) => outcomeWords[outcome] ?? '结果';
 
 export interface PracticePresentationProps {
   engine: Engine;
@@ -330,6 +341,12 @@ export function PracticePresentation(props: PracticePresentationProps) {
           submit.canSubmit,
           '请完成作答，或等待当前操作结束',
         );
+      // Open questions only, like the working box; a diagnostic stays a one-shot measurement.
+      if (shouldOfferProcessBox(draft.isChoice) && !question.isInterventionDiagnostic)
+        submission.confidence = {
+          value: submit.selfConfidence,
+          availability: submit.judging ? { kind: 'busy', reason: '正在提交' } : { kind: 'enabled' },
+        };
     }
     if (submit.judging) submission.grading = { kind: 'grading' };
     if (submit.committing) submission.recording = { kind: 'saving' };
@@ -343,17 +360,20 @@ export function PracticePresentation(props: PracticePresentationProps) {
       };
     else if (submit.pendingRun) {
       submission.recording = { kind: 'saved' };
+      const poll = submit.pendingPoll;
       submission.grading = {
-        kind: 'pending',
+        kind: poll.status === 'failed' ? 'failed' : 'pending',
         notice: {
           title:
-            submit.pendingPoll.status === 'failed'
+            poll.status === 'failed'
               ? '这次没判成，答案还在，不用重交。'
-              : !submit.pendingPoll.error
-                ? '在看你的答案，不用重交。可以先做下一题，判完结果会记进这题的作答记录。'
-                : submit.pendingPoll.settled
+              : poll.error
+                ? poll.settled
                   ? '一直连不上。答案已经存住，刷新这页可以看结果。'
-                  : '暂时连不上。答案已经存住，连上后结果会自己出来。',
+                  : '暂时连不上。答案已经存住，连上后结果会自己出来。'
+                : poll.polls >= LONG_WAIT_POLLS
+                  ? '比平时久一点。不用等，可以先做下一题，判完结果会记进这题的作答记录。'
+                  : '在看你的答案，不用重交。可以先做下一题，判完结果会记进这题的作答记录。',
         },
       };
       submission.primary = action(
@@ -362,21 +382,11 @@ export function PracticePresentation(props: PracticePresentationProps) {
         onDone,
         !advancing,
       );
-    } else if (phase === 'confidence') {
-      revelation = {
-        kind: 'concealed',
-        confidence: {
-          value: null,
-          availability: { kind: 'enabled' },
-          skip: action('skip-confidence', '跳过', () => submit.revealVerdict(null)),
-        },
-      };
     } else if (phase === 'feedback' && feedback) {
       const outcome = feedback.coarse_outcome;
       const unsupported = outcome === 'unsupported';
-      // Only committed results carry it; a live preview has no such field yet.
-      const aiGraded =
-        'grading_provenance' in feedback && Boolean(feedback.grading_provenance?.length);
+      // The field lists model-graded parts only: missing or empty means no model graded this.
+      const aiGraded = Boolean(feedback.grading_provenance?.length);
       submission.grading = { kind: unsupported ? 'manual' : 'settled' };
       if (submit.autoCommitted || submit.committedPreview) submission.recording = { kind: 'saved' };
       revelation = {
@@ -387,11 +397,9 @@ export function PracticePresentation(props: PracticePresentationProps) {
             ? '这题暂时判不准，先记为待定。'
             : outcome === 'partial_unknown'
               ? `部分正确（${(feedback.partial_units ?? []).map((unit) => `${unit.correct_count}/${unit.total_count}`).join('、')}），分数未知`
-              : isObjectiveQuestion(feedback.route)
-                ? '自动核对只比较了答案本身，还没有判断原因。'
-                : aiGraded
-                  ? ''
-                  : '这是 AI 的判断。',
+              : aiGraded
+                ? ''
+                : '自动核对只比较了答案本身，还没有判断原因。',
           parts: [],
           reference: q.reference_md
             ? { kind: 'ready', content: markdown('reference', '参考答案', q.reference_md) }
@@ -441,16 +449,13 @@ export function PracticePresentation(props: PracticePresentationProps) {
                 if (submit.rating) void submit.commit({ withAppeal: false, rating: submit.rating });
               },
               !submit.committing && !advancing && !!submit.rating,
+              '先选一个复习安排',
             );
       // A verdict that could not be graded has no effective result to appeal: self-rate only.
-      if (appeal.filed)
-        revelation.appeal = {
-          kind: 'waiting',
-          notice: { title: '已提交重判，在后台进行。判不准的话，原结果不变。' },
-        };
-      else if (
+      if (
         !unsupported &&
         (appeal.open ||
+          appeal.id ||
           appealEntryAvailable({
             phase,
             appealOpen: false,
@@ -458,44 +463,97 @@ export function PracticePresentation(props: PracticePresentationProps) {
             autoCommitJudgeEventId: submit.autoCommitJudgeEventId,
           }))
       ) {
-        const send = action(
-          'appeal-submit',
-          // Without an automatic commit, the appeal goes with the commit that also moves on.
-          submit.autoCommitted ? '重判这题' : '重判这题，先继续',
-          () => {
-            if (submit.autoCommitted) void appeal.submitAfterAutoCommit();
-            else if (unknownScore)
-              void submit.commit({ withAppeal: true, rating: 'hard', autoRate: true });
-            else if (submit.rating) void submit.commit({ withAppeal: true, rating: submit.rating });
-          },
-          !submit.committing &&
-            !advancing &&
-            (submit.autoCommitted
-              ? !!submit.autoCommitJudgeEventId
-              : !!submit.rating || !!unknownScore),
-        );
-        revelation.appeal = appeal.open
-          ? {
-              kind: 'editing',
-              field: {
-                id: 'appeal',
-                label: '理由（选填）',
-                kind: 'text',
-                value: appeal.text,
-                mode: 'editable',
-              },
-              notice: {
-                title: '',
-                actions: [send, action('appeal-cancel', '算了', () => appeal.setOpen(false))],
-              },
-            }
-          : {
-              kind: 'available',
-              notice: {
-                title: '觉得判得不对？',
-                actions: [send, action('appeal-open', '加一句理由', () => appeal.setOpen(true))],
-              },
-            };
+        const send = (label: string, retryReason?: string) =>
+          action(
+            'appeal-submit',
+            label,
+            () => {
+              if (submit.autoCommitted) void appeal.submitAfterAutoCommit(retryReason);
+              else if (unknownScore)
+                void submit.commit({ withAppeal: true, rating: 'hard', autoRate: true });
+              else if (submit.rating)
+                void submit.commit({ withAppeal: true, rating: submit.rating });
+            },
+            appeal.text.length <= APPEAL_REASON_MAX &&
+              !submit.committing &&
+              !advancing &&
+              (submit.autoCommitted
+                ? !!submit.autoCommitJudgeEventId
+                : !!submit.rating || !!unknownScore),
+            appeal.text.length > APPEAL_REASON_MAX ? `理由最多 ${APPEAL_REASON_MAX} 字` : undefined,
+          );
+        // Without an automatic commit, the appeal goes with the commit that also moves on.
+        const firstSend = send(submit.autoCommitted ? '重判这题' : '重判这题，先继续');
+        const addReason = action('appeal-open', '加一句理由', () => appeal.setOpen(true));
+        const read = appeal.read;
+        if (appeal.open)
+          revelation.appeal = {
+            kind: 'editing',
+            field: {
+              id: 'appeal',
+              label: '理由（选填）',
+              kind: 'text',
+              value: appeal.text,
+              mode: 'editable',
+            },
+            notice: {
+              title: '',
+              actions: [firstSend, action('appeal-cancel', '算了', () => appeal.setOpen(false))],
+            },
+          };
+        else if (!appeal.id)
+          revelation.appeal = {
+            kind: 'available',
+            notice: { title: '觉得判得不对？', actions: [firstSend, addReason] },
+          };
+        else if (!read || read.status === 'in_progress')
+          revelation.appeal = {
+            kind: 'waiting',
+            notice: {
+              title: appeal.readFailed
+                ? '暂时读不到重判结果。连上后会自己更新。'
+                : '在重判，这里先显示原来的结果。判不准的话，原结果不变。',
+            },
+          };
+        else if (read.status === 'changed')
+          revelation.appeal = {
+            kind: 'resolved',
+            notice: {
+              title:
+                read.after && !outcomeFitsFeedbackCard(read.after.coarse_outcome)
+                  ? '重判改了结果，刷新这页可以看到新结果。'
+                  : read.before && read.after
+                    ? `重判改了结果：${outcomeWord(read.before.coarse_outcome)} → ${outcomeWord(read.after.coarse_outcome)}。`
+                    : '重判改了结果，之后可以看到。',
+              actions: [addReason],
+            },
+          };
+        else if (read.status === 'unchanged')
+          revelation.appeal = {
+            kind: 'resolved',
+            notice: { title: '重判看过了，结果没变。', actions: [addReason] },
+          };
+        else if (read.status === 'unjudgeable')
+          revelation.appeal = {
+            kind: 'resolved',
+            notice: { title: '这次重判判不准，原结果不变。', actions: [addReason] },
+          };
+        else
+          revelation.appeal = {
+            kind: 'failed',
+            // No disposition means the job itself died, so the same request runs it again; a
+            // recorded disposition is final for that request, and only a new reason reruns it.
+            notice:
+              read.disposition === 'stale_head'
+                ? { title: '这个结果已经更新过了，刷新这页看最新结果。', actions: [addReason] }
+                : {
+                    title: '这次重判没跑成，原结果不变。',
+                    actions:
+                      read.disposition === null
+                        ? [send('再试一次', read.reason_md), addReason]
+                        : [addReason],
+                  },
+          };
       }
     }
     if (advancing)
@@ -574,7 +632,8 @@ export function PracticePresentation(props: PracticePresentationProps) {
         rating: (value) => {
           if (ratings.some((rating) => rating === value)) submit.setRating(value as Rating);
         },
-        confidence: submit.revealVerdict,
+        confidence: (value) =>
+          submit.setSelfConfidence(submit.selfConfidence === value ? null : value),
       }}
       renderers={{
         content: (item) => content.get(item.id),
@@ -586,7 +645,6 @@ export function PracticePresentation(props: PracticePresentationProps) {
           hasQuestion &&
           ((submit.answerRecorded && phase === 'answering' && !submit.pendingRun) ||
             !!submit.pendingRun ||
-            phase === 'confidence' ||
             (phase === 'feedback' && !!feedback) ||
             (phase === 'answering' && submit.judging && !submit.pendingRun))
             ? props.lifecycle?.resultRef

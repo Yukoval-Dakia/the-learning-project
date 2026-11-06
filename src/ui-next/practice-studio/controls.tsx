@@ -1,6 +1,6 @@
 import { ArrowLeft, ArrowRight, CircleAlert, Lightbulb, Quote } from 'lucide-react';
 import type { ButtonHTMLAttributes, ReactNode } from 'react';
-import type { Action, Notice, PracticeIntents } from './contracts';
+import type { Action, Confidence, Notice, PracticeIntents } from './contracts';
 
 export function ToolButton({
   label,
@@ -46,6 +46,35 @@ export function IntentButton({
       {Icon && <Icon size={20} aria-hidden="true" />}
       <span>{action.label}</span>
     </button>
+  );
+}
+
+export function ConfidenceScale({
+  confidence: c,
+  intents,
+}: {
+  confidence: Confidence;
+  intents: PracticeIntents;
+}) {
+  return (
+    <fieldset className="un-st-answer-confidence" disabled={c.availability.kind !== 'enabled'}>
+      <legend>这题你有多大把握？（选填）</legend>
+      <div className="un-st-confidence-scale">
+        {([1, 2, 3, 4, 5] as const).map((value) => (
+          <button
+            type="button"
+            key={value}
+            aria-pressed={c.value === value}
+            onClick={() => intents.confidence(value)}
+          >
+            <strong>{value}</strong>
+            <span className="un-st-confidence-caption">
+              {value === 1 ? '没把握' : value === 3 ? '有些把握' : value === 5 ? '很有把握' : ' '}
+            </span>
+          </button>
+        ))}
+      </div>
+    </fieldset>
   );
 }
 

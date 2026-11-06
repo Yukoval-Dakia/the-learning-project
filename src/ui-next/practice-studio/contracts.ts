@@ -64,6 +64,8 @@ export type Draft =
   | { kind: 'restoring' | 'empty' | 'saving' | 'saved' | 'offline' | 'failed'; notice: Notice }
   | { kind: 'conflict'; notice: Notice; local: Content; remote: Content };
 export interface Submission {
+  /** Optional while answering; selecting the chosen value again clears it. */
+  confidence?: Confidence;
   recording: { kind: 'idle' | 'saving' | 'saved' | 'unknown' | 'failed'; notice?: Notice };
   grading: {
     kind: 'idle' | 'pending' | 'grading' | 'unknown' | 'failed' | 'settled' | 'manual';
@@ -90,12 +92,9 @@ export interface Appeal {
 export interface Confidence {
   value: 1 | 2 | 3 | 4 | 5 | null;
   availability: Action['availability'];
-  skip: Action;
-  /** Selection is a confidence intent, never a self-rating or result reveal. */
-  continue?: Action;
 }
 export type Revelation =
-  | { kind: 'concealed'; confidence?: Confidence; reason?: string }
+  | { kind: 'concealed'; reason?: string }
   | {
       kind: 'revealed';
       result?: Result;

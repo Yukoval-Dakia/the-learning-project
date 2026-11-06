@@ -2,7 +2,7 @@
 
 import { z } from 'zod';
 import { GradingProvenanceEntry, type GradingProvenanceEntryT } from '@/core/schema/capability';
-import type { JudgePreview, QuestionFullDetail, SubmitResult } from './practice-api';
+import type { AppealStatus, JudgePreview, QuestionFullDetail, SubmitResult } from './practice-api';
 
 export type JudgeFeedback = Pick<
   JudgePreview,
@@ -18,6 +18,26 @@ const WithProvenance = z.object({ grading_provenance: z.array(GradingProvenanceE
 export function provenanceOf(result: unknown): Pick<JudgeFeedback, 'grading_provenance'> {
   const parsed = WithProvenance.safeParse(result);
   return parsed.success ? { grading_provenance: parsed.data.grading_provenance } : {};
+}
+
+/** Whether the card can show this outcome from the status read alone (no per-part counts). */
+export function outcomeFitsFeedbackCard(
+  outcome: string,
+): outcome is 'correct' | 'partial' | 'incorrect' {
+  return outcome === 'correct' || outcome === 'partial' || outcome === 'incorrect';
+}
+
+/** The card shows the result the last finished rejudge made effective, without a reload. */
+export function feedbackAfterRejudge<F extends JudgeFeedback>(
+  feedback: F,
+  effective: NonNullable<AppealStatus['after']> | null,
+): F {
+  if (!effective || !outcomeFitsFeedbackCard(effective.coarse_outcome)) return feedback;
+  return {
+    ...feedback,
+    coarse_outcome: effective.coarse_outcome,
+    feedback_md: effective.feedback_md ?? feedback.feedback_md,
+  };
 }
 
 export function feedbackFromCommittedAttempt(result: SubmitResult): JudgeFeedback {
@@ -53,6 +73,9 @@ export function feedbackFromCommittedDiagnosticAttempt(
     coarse_outcome: result.judge.coarse_outcome,
     confidence: result.judge.confidence,
     feedback_md: result.judge.feedback_md,
+    ...(result.judge.grading_provenance
+      ? { grading_provenance: result.judge.grading_provenance }
+      : {}),
     suggested_rating: result.judge.suggested_rating,
   };
 }

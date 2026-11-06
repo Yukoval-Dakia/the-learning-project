@@ -1,7 +1,7 @@
 import { type SQL, and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import type { Db, Tx } from '@/db/client';
-import { notDraftPredicate } from '@/db/predicates';
+import { notDraftPredicate, notHoldoutOnlyPredicate } from '@/db/predicates';
 import { item_calibration, knowledge, question, question_group_lifecycle } from '@/db/schema';
 import { resolveSubjectKnowledgeIds } from '@/kernel/read-models/knowledge-tree';
 import { canonicalKindToPersistedForms } from '@/subjects/question-kind';
@@ -112,6 +112,9 @@ export function buildBankSearchFilters(resolved: ResolvedScope): SQL[] {
     // 死行与软删墓碑（listQuestions 同款标记族）。
     sql`((${question.metadata} -> 'dismissed_at') IS NULL)`,
     sql`((${question.metadata} -> 'archived_at') IS NULL)`,
+    // 留出集（container_only + withheld/owner_hold）不进任何召回通道——对
+    // 新检索、cursor 续页与卡片重验同样生效；不受 scope/use 参数影响。
+    notHoldoutOnlyPredicate(question),
   ];
   if (scope.draft_state === 'active') {
     filters.push(notDraftPredicate(question.draft_status));

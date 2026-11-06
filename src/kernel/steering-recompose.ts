@@ -7,20 +7,21 @@
 // installed-reader pattern in kernel/read-models/daily-review-plan.ts.
 
 import type { Db } from '@/db/client';
+import { installHostOperation, installedHostOperation } from '@/kernel/host-operation';
 
 export type RecomposeTodayPracticeFn = (db: Db) => Promise<unknown>;
 export type SteeringDeferredDueCountFn = (db: Db, now: Date) => Promise<number>;
 
-let recomposeTodayPracticeFn: RecomposeTodayPracticeFn | undefined;
-let steeringDeferredDueCountFn: SteeringDeferredDueCountFn | undefined;
+const RECOMPOSE_SLOT = 'kernel/steering-recompose:recomposeTodayPractice';
+const DEFERRED_DUE_COUNT_SLOT = 'kernel/steering-recompose:steeringDeferredDueCount';
 
 export function installTodayPracticeRecompose(fn: RecomposeTodayPracticeFn): void {
-  recomposeTodayPracticeFn = fn;
+  installHostOperation(RECOMPOSE_SLOT, fn);
 }
 
 /** Installs practice's 「顺延 N 项」 counter (same due query, deferral suppressed). */
 export function installSteeringDeferredDueCount(fn: SteeringDeferredDueCountFn): void {
-  steeringDeferredDueCountFn = fn;
+  installHostOperation(DEFERRED_DUE_COUNT_SLOT, fn);
 }
 
 /**
@@ -28,8 +29,9 @@ export function installSteeringDeferredDueCount(fn: SteeringDeferredDueCountFn):
  * (e.g. a unit-context host that never composed practice).
  */
 export async function recomposeTodayPractice(db: Db): Promise<boolean> {
-  if (!recomposeTodayPracticeFn) return false;
-  await recomposeTodayPracticeFn(db);
+  const fn = installedHostOperation<RecomposeTodayPracticeFn>(RECOMPOSE_SLOT);
+  if (!fn) return false;
+  await fn(db);
   return true;
 }
 
@@ -38,6 +40,7 @@ export async function recomposeTodayPractice(db: Db): Promise<boolean> {
  * never installed the counter (report unknown, never guess zero).
  */
 export async function steeringDeferredDueCount(db: Db, now: Date): Promise<number | null> {
-  if (!steeringDeferredDueCountFn) return null;
-  return steeringDeferredDueCountFn(db, now);
+  const fn = installedHostOperation<SteeringDeferredDueCountFn>(DEFERRED_DUE_COUNT_SLOT);
+  if (!fn) return null;
+  return fn(db, now);
 }

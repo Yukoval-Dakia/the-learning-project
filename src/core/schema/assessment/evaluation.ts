@@ -33,6 +33,7 @@ import {
 } from './judgment';
 import { GraderKcMasteryEvidence } from './kc-mastery-evidence';
 import type { SharedMaterialT } from './materials';
+import { ModelOutcomeDiagnostics } from './model-diagnostics';
 import { PendingState, type PendingStateT } from './pending';
 import type { ResponseSlotT, ResponseSpecT, SlotResponseT } from './response';
 import { isBlankSlotResponse, validateResponseSet } from './response';
@@ -125,6 +126,8 @@ export const ModelUnitOutcome = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('pending'),
     pending: PendingState,
+    /** 执行期拒收诊断（脱敏）；sibling 而非 PendingState 字段 —— 见上。 */
+    diagnostics: ModelOutcomeDiagnostics.optional(),
     confidence: z.number().min(0).max(1).optional(),
     run_refs: z.array(z.string().min(1)).default([]),
     cost_usd_micros: z.number().int().min(0).optional(),
