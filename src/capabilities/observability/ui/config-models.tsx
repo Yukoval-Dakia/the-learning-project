@@ -102,6 +102,9 @@ function GlobalDefault({ data, save }: { data: ConfigData; save: SaveConfig }) {
             disabled={!data.facts_injected}
             onClick={() => {
               setSaved(null);
+              // Start from what is in effect now: another session may have changed it, and saving an
+              // older pair would move every task that follows the default back.
+              setPick({ provider: current?.provider ?? '', model: current?.model ?? '' });
               setEditing(true);
             }}
           >
