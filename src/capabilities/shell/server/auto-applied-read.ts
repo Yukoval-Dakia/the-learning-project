@@ -1,18 +1,23 @@
-// A 档 auto-applied 卡的只读读模型。
+// A 档 auto-applied 卡的只读读模型（摘要页与收件箱共用）。
 //
 // 数据源：通用 `experimental:auto_apply` 锚（strength A 自动通道写入）+
 // 历史 `experimental:completion_autoapply` 锚（YUK-525 后不再有新写入，仍可读）。
-// 每条锚按 proposal_id 查对应 correct(retract) 事件判 reverted。撤销复用既有
-// retractAiProposal 车道，这里只读它留下的痕迹。
+// 每条锚的 proposal_id 交给 kernel 的批量撤销分类器，一次得到「已撤销 / 可撤 /
+// 被后续内容挡住」以及挡住的白话原因——页面不自己拼撤销条件，批量撤销入口也
+// 用同一个分类器在事务内复核。
 //
 // 同时透传当前裁决速率快照（checkAutoApplyBreaker）供 A 块 meter/banner 渲染。
 //
-// 红线：只读 event 日志，绝不触 θ̂ / p(L) / FSRS。
+// 红线：只读 event 日志与各 owner 的只读状态，绝不触 θ̂ / p(L) / FSRS。
 
-import { and, desc, eq, gte, inArray, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, lte } from 'drizzle-orm';
 
 import type { Db, Tx } from '@/db/client';
 import { event, learning_item } from '@/db/schema';
+import {
+  type AutoAppliedUndoDecision,
+  classifyAutoAppliedUndoBatch,
+} from '@/kernel/proposals/auto-applied-undo';
 import { PROPOSAL_AUTOAPPLY_ACTION } from '@/kernel/proposals/auto-apply';
 import {
   type VerdictBreakerStatus,
@@ -28,6 +33,15 @@ export const AUTO_APPLIED_LIST_WINDOW_MS = 24 * 3_600_000;
 // 行数上界仅防异常风暴（bug / 回填）一次拉爆列表，非业务上限。
 export const AUTO_APPLIED_MAX_ROWS = 200;
 
+/** Batch-undo state of one card; mirrors the batch retraction lane's verdict. */
+export interface AutoAppliedUndoView {
+  status: 'revertable' | 'blocked' | 'reverted';
+  /** Stable machine code for the blocked state; null otherwise. */
+  code: string | null;
+  /** Learner-facing explanation; null when the card can be undone. */
+  reason_md: string | null;
+}
+
 export interface AutoAppliedRow {
   proposal_id: string;
   /** Proposal kind that was auto-applied; drives the card's tag/icon. */
@@ -42,8 +56,10 @@ export interface AutoAppliedRow {
   applied_at: string;
   /** apply 时的熔断档位（'ok' | 'warned' | 'tripped'）。 */
   level: VerdictBreakerStatus;
-  /** 是否已被既有 retract 车道撤销（有对应 correct 事件）。 */
+  /** 是否已被既有 retract 车道撤销（最新更正状态为准）。 */
   reverted: boolean;
+  /** 能否加入一键批量撤销；blocked 时带白话原因。 */
+  undo: AutoAppliedUndoView;
 }
 
 export interface AutoAppliedDigest {
@@ -62,15 +78,16 @@ const COMPLETION_SUMMARY = '自动判定为完成并已记录';
 
 export async function getAutoAppliedDigest(
   db: DbLike,
-  opts: { now?: Date; windowMs?: number } = {},
+  opts: { now?: Date; windowMs?: number; from?: Date; to?: Date } = {},
 ): Promise<AutoAppliedDigest> {
   const now = opts.now ?? new Date();
-  const windowMs = opts.windowMs ?? AUTO_APPLIED_LIST_WINDOW_MS;
-  const windowStart = new Date(now.getTime() - windowMs);
+  const windowEnd = opts.to ?? now;
+  const windowStart =
+    opts.from ?? new Date(windowEnd.getTime() - (opts.windowMs ?? AUTO_APPLIED_LIST_WINDOW_MS));
 
-  // breaker 与 rows 无依赖，并行取；rows → retracted 仍串行。
-  const [{ rows, revertedSet }, breaker] = await Promise.all([
-    loadAutoAppliedRows(db, windowStart),
+  // breaker 与 rows 无依赖，并行取。
+  const [rows, breaker] = await Promise.all([
+    loadAutoAppliedRows(db, windowStart, windowEnd),
     checkAutoApplyBreaker(db, now),
   ]);
 
@@ -88,8 +105,17 @@ export async function getAutoAppliedDigest(
       summary: readSummary(r.payload, kind),
       applied_at: r.createdAt.toISOString(),
       level: readLevel(r.payload),
-      reverted: revertedSet.has(proposalId),
+      reverted: false,
+      undo: { status: 'blocked', code: null, reason_md: null },
     });
+  }
+
+  const decisions = await classifyAutoAppliedUndoBatch(db, [...byProposal.keys()]);
+  for (const [proposalId, row] of byProposal) {
+    const decision = decisions.get(proposalId);
+    if (!decision) continue;
+    row.reverted = decision.status === 'reverted';
+    row.undo = undoView(decision);
   }
 
   return {
@@ -104,9 +130,25 @@ export async function getAutoAppliedDigest(
   };
 }
 
-/** A 档列表行及其 retracted 集合；retracted 依赖 rows 抽出的 proposalIds。 */
-async function loadAutoAppliedRows(db: DbLike, windowStart: Date) {
-  const rows = await db
+function undoView(decision: AutoAppliedUndoDecision): AutoAppliedUndoView {
+  if (decision.status === 'reverted') {
+    return { status: 'reverted', code: null, reason_md: null };
+  }
+  if (decision.status === 'revertable') {
+    return { status: 'revertable', code: null, reason_md: null };
+  }
+  // Internal read failures surface as blocked on the card: the page may offer no
+  // action, and the reason still tells the learner why nothing happened.
+  return {
+    status: 'blocked',
+    code: decision.code,
+    reason_md: decision.reason_md,
+  };
+}
+
+/** A 档列表行；撤销状态由 kernel 分类器统一给出。 */
+async function loadAutoAppliedRows(db: DbLike, windowStart: Date, windowEnd: Date) {
+  return db
     .select({
       action: event.action,
       subjectId: event.subject_id,
@@ -120,16 +162,11 @@ async function loadAutoAppliedRows(db: DbLike, windowStart: Date) {
       and(
         inArray(event.action, [COMPLETION_AUTOAPPLY_ACTION, PROPOSAL_AUTOAPPLY_ACTION]),
         gte(event.created_at, windowStart),
+        lte(event.created_at, windowEnd),
       ),
     )
     .orderBy(desc(event.created_at), desc(event.id))
     .limit(AUTO_APPLIED_MAX_ROWS);
-
-  const proposalIds = rows
-    .map((r) => readProposalId(r.payload))
-    .filter((id): id is string => id.length > 0);
-  const revertedSet = await loadRetractedSet(db, proposalIds);
-  return { rows, revertedSet };
 }
 
 function readProposalId(payload: unknown): string {
@@ -183,21 +220,4 @@ function readLevel(payload: unknown): VerdictBreakerStatus {
     return value as VerdictBreakerStatus;
   }
   return 'ok';
-}
-
-/** proposalIds 中已被 retract（correct + correction_kind='retract'）的集合。 */
-async function loadRetractedSet(db: DbLike, proposalIds: string[]): Promise<Set<string>> {
-  if (proposalIds.length === 0) return new Set();
-  const rows = await db
-    .select({ subjectId: event.subject_id })
-    .from(event)
-    .where(
-      and(
-        eq(event.action, 'correct'),
-        eq(event.subject_kind, 'event'),
-        inArray(event.subject_id, proposalIds),
-        sql`${event.payload} ->> 'correction_kind' = 'retract'`,
-      ),
-    );
-  return new Set(rows.map((r) => r.subjectId));
 }
