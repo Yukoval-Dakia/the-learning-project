@@ -13,7 +13,6 @@ import { createHash } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { isProviderAuthConfigError } from '@/ai/agent-run-error';
 import { resolveTaskBudget } from '@/capabilities/task-registry';
 import { canonicalHash } from '@/core/migration/canonical';
 import { SourcedQuestion, SourcingImageCandidate } from '@/core/schema/sourcing';
@@ -596,15 +595,9 @@ async function observe(db: Db, state: WebSupplyState) {
         q.metadata?.archived_at == null &&
         q.metadata?.dismissed_at == null &&
         q.metadata?.exposure_blocked !== true;
-      // A config_error verify hold is a lane failure, not a finding about the
-      // candidate — read as still waiting so the demand never blocks into a paid
-      // refill for replacements that would land in the same hold. The flag is the
-      // serving projection's single distinction; every other hold stays terminal.
       const holdReason =
-        projection?.hold_reason === 'verify_hold' && projection?.source_verify_config_error === true
-          ? 'awaiting_source_verification'
-          : (projection?.hold_reason ??
-            (!sourcePassed ? 'awaiting_source_verification' : 'demand_not_servable'));
+        projection?.hold_reason ??
+        (!sourcePassed ? 'awaiting_source_verification' : 'demand_not_servable');
       observations.push({
         questionId: q.id,
         revisionId: r.revision_id,
@@ -1031,7 +1024,7 @@ async function runWebSupplyRound(
     // refused the request before billable work, so the paid effect is provably
     // zero and the round's failure is known AND non-retryable until the lane is
     // repaired ('config_error').
-    const configError = err instanceof TaskConfigError || isProviderAuthConfigError(err);
+    const configError = err instanceof TaskConfigError;
     const reason = configError ? 'config_error' : 'acquisition_outcome_unknown';
     await recordAcquisition(null, configError ? 0 : null);
     await settleSourcingRun([state.producerTaskRunId], 0);

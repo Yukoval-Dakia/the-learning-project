@@ -9,17 +9,16 @@
 // Returns a discriminated result so the caller (source_verify.ts) can distinguish:
 // - grounded / not_grounded : a real content verdict (not_grounded → demote to draft)
 // - transient_error : image fetch / LLM call / output parse failed — NOT a
-// content verdict. The caller parks the draft and writes a retriable error.
-// - config_error    : lane resolution/auth cannot execute — same non-verdict
-// hold, with an error marker the verify outbox can recover after repair.
+// content verdict. The caller fails closed (demote) AND
+// retries (既有 verify 错误惯例). Kept OUT of the grounded
+// vs not_grounded axis so a flaky VLM never reads as a
+// confident「题面不在图里」.
 
-import { isProviderAuthConfigError } from '@/ai/agent-run-error';
 import {
   SourceGroundingVerifyOutput,
   type SourceGroundingVerifyOutputT,
 } from '@/core/schema/source-grounding';
 import type { Db } from '@/db/client';
-import { TaskConfigError } from '@/server/ai/providers';
 import { applicableVisionJudgeOverride } from '@/server/ai/vision-judge-config';
 import type { SubjectProfile } from '@/subjects/profile';
 import {
@@ -58,40 +57,10 @@ export interface RunSourceGroundingVerifyParams {
   imageFetchFn?: SourceGroundingImageFetchFn;
 }
 
-/**
- * Run the runner's own lane resolution + adapter startup for this task without
- * submitting a prompt. source_verify calls this before solve_check so a broken
- * grounding lane is proven before the paid-effect send boundary.
- */
-export async function assertSourceGroundingLaneConfigured(input: {
-  db: Db;
-  subjectProfile: SubjectProfile;
-}): Promise<void> {
-  try {
-    const { preflightTaskExecution } = await import('@/server/ai/runner-preflight');
-    await preflightTaskExecution(
-      'SourceGroundingVerifyTask',
-      { text: '{}', images: [] },
-      {
-        db: input.db,
-        subjectProfile: input.subjectProfile,
-        override: applicableVisionJudgeOverride(),
-      },
-    );
-  } catch (error) {
-    if (error instanceof TaskConfigError) throw error;
-    if (isProviderAuthConfigError(error)) {
-      throw new TaskConfigError(error.message, { cause: error });
-    }
-    throw error;
-  }
-}
-
 export type SourceGroundingVerifyResult =
   | { status: 'grounded'; confidence: number; observed_md: string; reason_md: string }
   | { status: 'not_grounded'; confidence: number; observed_md: string; reason_md: string }
-  | { status: 'transient_error'; message: string }
-  | { status: 'config_error'; message: string };
+  | { status: 'transient_error'; message: string };
 
 /**
  * Three-state dispatch over the task result (mirrors the multimodal/steps judges):
@@ -160,11 +129,6 @@ export async function runSourceGroundingVerify(
       },
     );
   } catch (err) {
-    // A misconfigured or unauthenticated lane is a recoverable configuration
-    // defect, not a content verdict or ordinary transient failure.
-    if (err instanceof TaskConfigError || isProviderAuthConfigError(err)) {
-      return { status: 'config_error', message: err.message };
-    }
     return {
       status: 'transient_error',
       message: `source grounding VLM call failed: ${err instanceof Error ? err.message : String(err)}`,

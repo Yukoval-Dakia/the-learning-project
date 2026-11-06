@@ -1,13 +1,11 @@
 import type { Job, PgBoss } from 'pg-boss';
 import {
   type EnqueueVerifyFn,
-  assertSourceGroundingLaneConfigured,
   recoverHeldServingRechecks,
   recoverOrphanVerifyDispatches,
   recoverWebSupplies,
 } from '@/capabilities/practice/public';
 import type { Db } from '@/db/client';
-import { resolveSubjectProfile } from '@/subjects/profile';
 import { VERIFY_DISPATCH_RECOVERY_QUEUE } from './queue-names';
 
 export function buildVerifyDispatchRecoveryHandler(
@@ -15,11 +13,7 @@ export function buildVerifyDispatchRecoveryHandler(
   enqueue: EnqueueVerifyFn,
 ): (jobs: Job<object>[]) => Promise<void> {
   return async () => {
-    await recoverOrphanVerifyDispatches(db, {
-      enqueue,
-      sourceVerifyRecoveryPreflight: () =>
-        assertSourceGroundingLaneConfigured({ db, subjectProfile: resolveSubjectProfile(null) }),
-    });
+    await recoverOrphanVerifyDispatches(db, { enqueue });
     // Lost-delivery fallback only: web demands normally advance on their question's publication
     // (practice.web-supply-observe). This sweep also drains orphan verify intents.
     await recoverWebSupplies(db, { enqueue });

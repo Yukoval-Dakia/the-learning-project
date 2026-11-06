@@ -5,12 +5,9 @@
 //                        dimension-only path; never touches retraction_hold,
 //                        never mints a revision
 //
-//   recheck_source  — system-only source_verify recovery after lane repair
-//                        (outbox recovery_epoch owns re-dispatch; no operator POST)
-//
-// reverify stays a system duty driven by result events and the recovery pass
-// (auto:<group>:<digest>:<command>:<n> ledger keys); old clients posting either
-// system command get the params-schema 400.
+// YUK-1664 — reverify and recheck_source are system duties driven by result
+// events and the recovery pass (auto:<group>:<digest>:<command>:<n> ledger keys); old
+// clients posting them get the params-schema 400.
 //
 // Every command requires an Idempotency-Key header and returns
 // {accepted, serving} where serving is the same projection the list/detail

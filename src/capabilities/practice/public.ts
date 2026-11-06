@@ -8,7 +8,6 @@ export {
   JUDGE_DBOS_WORKFLOW,
   type JudgeEngineInventoryT,
   type JudgeQuestionRow,
-  assertSourceGroundingLaneConfigured,
   buildLegacyJudgeHandler,
   commitFormalAttempt,
   defaultImageFetch,

@@ -22,14 +22,16 @@
 import { createId } from '@paralleldrive/cuid2';
 import { and, desc, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
-import { isProviderAuthConfigError } from '@/ai/agent-run-error';
-import { aiAgentRef } from '@/ai/task-result';
+import { type TaskTextResult, aiAgentRef } from '@/ai/task-result';
 import {
   type RunSourceGroundingVerifyParams,
   type SourceGroundingVerifyResult,
-  assertSourceGroundingLaneConfigured,
   runSourceGroundingVerify,
 } from '@/capabilities/practice/grading/public';
+import {
+  type PaidEffectIdentity,
+  computePaidEffectIdentity,
+} from '@/core/migration/paid-effect-protocol';
 import { QUESTION_ADMISSION_POLICY_IDS } from '@/core/question-admission-policy';
 import {
   LEGACY_DRAFT_STATUS,
@@ -40,9 +42,12 @@ import {
 } from '@/core/schema/assessment/lifecycle';
 import { defaultPresentation } from '@/core/schema/assessment/presentation';
 import { readDifficultyEvidenceFromMetadata } from '@/core/schema/difficulty-evidence';
-import type { Db, Tx } from '@/db/client';
+import { toUnifiedVerifyResult } from '@/core/schema/verify-contract';
+import type { Db } from '@/db/client';
 import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
 import {
+  admitPaidEffectIntent,
+  claimPaidEffectSend,
   markPaidEffectUnknown,
   recordPaidEffectApplication,
   recordPaidEffectResult,
@@ -72,7 +77,6 @@ import {
 import type { PlacementVerificationAuthority } from '@/kernel/supply-contracts';
 import { SupplyTraceV1 } from '@/kernel/supply-contracts';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
-import { TaskConfigError } from '@/server/ai/providers';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
 import {
@@ -94,12 +98,6 @@ import {
 import { checkDedup } from './source_verify_dedup';
 import { publishVerifyLifecycleUpdate } from './source_verify_lifecycle';
 import {
-  type SourceVerifyRecheckClaim,
-  claimSourceVerifyRecheck,
-  suspendSourceVerifyContract,
-  writeSourceVerifyErrorEvent,
-} from './source_verify_nonverdict';
-import {
   type CheckOutcome,
   checkSourceConsistency,
   checkStructureCompleteness,
@@ -109,23 +107,15 @@ import { projectSourceVerifyResult, solveCheckToOutcome } from './source_verify_
 export interface SourceVerifyJobData {
   question_ids: string[];
   /**
-   * System serving-recheck command (no operator POST). The command event id
-   * bypasses the terminal-event idempotency guard ONLY for this command: at
-   * most one paid run per command event, because the guard short-circuits once
-   * a terminal event carries the same recheck_command_event_id.
+   * owner-initiated recheck (POST .../serving-actions/recheck_source).
+   * The command event id bypasses the terminal-event idempotency guard ONLY
+   * for this command: at most one paid run per command event, because the
+   * guard short-circuits once a terminal event carries the same
+   * recheck_command_event_id.
    */
   recheck?: { command_event_id: string };
   /** Server-written placement authorities (verify outbox), one per bound question. */
   placement_authorities?: PlacementVerificationAuthority[];
-  /**
-   * Recovery marker written ONLY by the verify outbox: question_id → the sweep's
-   * error-epoch event id. Its presence means the sweep synthesized this intent
-   * after a non-terminal error; a stale placement authority may then be
-   * re-verified without it. Ordinary deliveries never carry the map and keep
-   * refusing stale authority. Job data is server-written, so the marker cannot
-   * be forged by a redelivery or an operator payload.
-   */
-  recovery_epochs?: Record<string, string>;
 }
 
 // Loose run seam (mirrors quiz_verify): the handler + solve-check only consume
@@ -135,9 +125,6 @@ export type RunTaskFn = TaskTextRunFn;
 
 type DepsOverride = {
   runTaskFn?: RunTaskFn;
-  imageFetchFn?: RunSourceVerifyParams['imageFetchFn'];
-  sourceGroundingFn?: RunSourceVerifyParams['sourceGroundingFn'];
-  sourceGroundingPreflightFn?: RunSourceVerifyParams['sourceGroundingPreflightFn'];
 };
 
 // 阈值本体在 supply/server/sourced-dedup.ts；此处 re-export
@@ -154,10 +141,7 @@ export type SourceVerifyPerQuestionStatus =
   /** a recheck whose durable paid-attempt claim is 'sending' or
    * 'unknown' (a prior delivery reached the paid call and never committed an
    * outcome). Never re-paid; the job completes, the hold stays visible. */
-  | 'skipped:claim_held'
-  /** The grounding lane is broken; the error event is the recovery epoch for
-   * the next outbox sweep, not a pg-boss retry trigger. */
-  | 'skipped:config_error';
+  | 'skipped:claim_held';
 
 export interface RunSourceVerifyParams {
   db: Db;
@@ -185,21 +169,8 @@ export interface RunSourceVerifyParams {
    * under ANY job id is refused — one paid attempt per command event, never two.
    */
   recheckDeliveryId?: string;
-  /**
-   * The sweep's error-epoch event id (recovery intents only). When set, the
-   * terminal-event guard short-circuits only on a terminal event NEWER than the
-   * epoch: an older failed/passed verdict is history a commanded recovery
-   * supersedes, while a fresh terminal event still dedupes redeliveries.
-   */
-  recoveryEpoch?: string;
   /** Placement claim authority for this question (sourcing_web delivery); fences paid calls. */
   placementAuthority?: PlacementVerificationAuthority;
-  /**
-   * Production uses the runner's real adapter-startup resolution for
-   * SourceGroundingVerifyTask. Tests may inject the boundary explicitly; when a
-   * whole sourceGroundingFn stub is supplied the production lane is not probed.
-   */
-  sourceGroundingPreflightFn?: (input: { db: Db; subjectProfile: SubjectProfile }) => Promise<void>;
 }
 
 export interface RunSourceVerifyResult {
@@ -271,15 +242,6 @@ export async function runSourceVerify(
   const placementPaid = params.placementAuthority
     ? placementAuthority.buildPlacementQuestionPaidCalls(db, questionId, params.placementAuthority)
     : undefined;
-  let providerQueryStarted = false;
-  const observedRunTaskFn: RunTaskFn = async (kind, input, ctx = {}) =>
-    runTaskFn(kind, input, {
-      ...ctx,
-      beforeProviderQuery: async (query) => {
-        await ctx.beforeProviderQuery?.(query);
-        providerQueryStarted = true;
-      },
-    });
 
   // 核验输入与身份必须同一快照：
   // 行内容 + 组 current revision/generation + 对应冻结 revision 行在【同一
@@ -529,9 +491,7 @@ export async function runSourceVerify(
         ne(event.outcome, 'error'),
         params.recheckCommandEventId != null
           ? sql`${event.payload}->>'recheck_command_event_id' = ${params.recheckCommandEventId}`
-          : params.recoveryEpoch != null
-            ? sql`(${event.created_at}, ${event.id}) > (select e.created_at, e.id from ${event} e where e.id = ${params.recoveryEpoch})`
-            : sql`true`,
+          : sql`true`,
       ),
     )
     .limit(1);
@@ -543,16 +503,33 @@ export async function runSourceVerify(
   // commit — the claim can: 'sending'/'unknown' is never re-paid, the job ends
   // honestly (hold stays, pending_action clears), and 'receipt_ready'/'applied'
   // means the run already completed.
-  let recheckClaim: SourceVerifyRecheckClaim | null = null;
-  let recheckSettled = false;
+  let recheckClaim: { identity: PaidEffectIdentity; fence: number; deliveryId: string } | null =
+    null;
   if (params.recheckCommandEventId != null) {
     const commandEventId = params.recheckCommandEventId;
     const deliveryId = params.recheckDeliveryId ?? `manual:${commandEventId}`;
-    const claimOutcome = await claimSourceVerifyRecheck({
-      db,
-      questionId,
-      commandEventId,
-      deliveryId,
+    const claimOutcome = await db.transaction(async (tx) => {
+      const recheckEffect = {
+        family: 'source_verify' as const,
+        entityId: questionId,
+        entityRevision: commandEventId,
+        unit: 'source_verify@1' as const,
+        input: { question_id: questionId, command_event_id: commandEventId },
+      };
+      const admitted = await admitPaidEffectIntent(tx, recheckEffect);
+      if (admitted.kind === 'existing' && admitted.state !== 'pending') {
+        return { kind: 'held' as const, state: admitted.state };
+      }
+      const identity = computePaidEffectIdentity(recheckEffect);
+      const send = await claimPaidEffectSend(tx, identity, {
+        backend: 'pg-boss',
+        deliveryId,
+        leaseExpiresAt: new Date(Date.now() + 60 * 60_000),
+      });
+      if (send.kind !== 'claimed') {
+        return { kind: 'held' as const, state: send.kind === 'refused' ? send.state : 'pending' };
+      }
+      return { kind: 'claimed' as const, identity, fence: send.fence };
     });
     if (claimOutcome.kind !== 'claimed') {
       // 'sending'/'unknown' — a prior delivery reached the paid call and its
@@ -596,41 +573,6 @@ export async function runSourceVerify(
   const archivedKnowledgeIds = referencedKnowledgeIds.filter((id) => !liveKnowledgeIds.has(id));
   const knowledgeAlive = archivedKnowledgeIds.length === 0;
 
-  let sourceGroundingConfigErrorCandidate = false;
-  let sourceGroundingConfigError = false;
-  let nonVerdictErrorEventWritten = false;
-  const writeErrorEvent = async (
-    target: Db | Tx,
-    error: unknown,
-    configError: boolean,
-  ): Promise<void> => {
-    await writeSourceVerifyErrorEvent({
-      target,
-      questionId,
-      recheckCommandEventId: params.recheckCommandEventId,
-      error,
-      configError,
-      difficultyEvidence,
-      supplyTrace,
-    });
-  };
-  const settleRecheckNotSent = async (tx: Tx, message: string): Promise<boolean> => {
-    if (recheckClaim == null || providerQueryStarted || recheckSettled) return false;
-    await recordPaidEffectResult(
-      tx,
-      recheckClaim.identity,
-      recheckClaim.deliveryId,
-      { status: 'not_sent', error: message },
-      { fence: recheckClaim.fence },
-    );
-    await recordPaidEffectApplication(tx, recheckClaim.identity, {
-      question_id: questionId,
-      command_event_id: params.recheckCommandEventId,
-      status: 'not_sent',
-    });
-    return true;
-  };
-
   try {
     // Run the tier-2 check set (CHECK_SETS_BY_TIER[2]). structure_completeness +
     // source_consistency + dedup are deterministic; solve_check spends the LLM call.
@@ -639,45 +581,11 @@ export async function runSourceVerify(
     let unresolvedAnchoredExactMismatch = false;
     let imageInputUnavailable = false;
 
-    const holdForNonVerdictOutcome = async (
-      outcome: Extract<SourceGroundingVerifyResult, { status: 'transient_error' | 'config_error' }>,
-    ): Promise<void> => {
-      if (outcome.status === 'config_error') sourceGroundingConfigErrorCandidate = true;
-      const settled = await db.transaction(async (suspendTx) => {
-        const suspended = await suspendSourceVerifyContract({
-          tx: suspendTx,
-          questionId,
-          groupRootId: row.parent_question_id ?? questionId,
-          rowVersion: row.version,
-          verifiedIdentity,
-          outcome,
-        });
-        // A stale delivery (version moved on or the row promoted under another
-        // delivery) writes nothing about the question — no suspension, no error
-        // event that the recovery sweep would arm on. Only this delivery's own
-        // recheck claim still settles not_sent: it provably sent nothing.
-        if (suspended) {
-          await writeErrorEvent(suspendTx, outcome.message, outcome.status === 'config_error');
-        }
-        return settleRecheckNotSent(suspendTx, outcome.message);
-      });
-      if (outcome.status === 'config_error') sourceGroundingConfigError = true;
-      nonVerdictErrorEventWritten = true;
-      recheckSettled ||= settled;
-    };
-
     // R1 F2 —— flat 投影对核验输入有损 ⇒ 付费前明确 hold：只落一条
     // structure_completeness fail（原因名指到具体有损形状），不跑确定性
     // 检查不花 solve/grounding——不走「拿残缺视图验一遍」的猜测路径。
     // fail → 既有 !promote 分支（demote + verify_hold suspend + 证据落账），
     // 后续编辑改形状后重验可恢复，typed sourcing 的真实可用面不受影响。
-    const singleSourceGrounding = metadataRaw.single_source_grounding === true;
-    const groundingSourceAssetId =
-      typeof metadataRaw.image_candidate_source_asset_id === 'string'
-        ? metadataRaw.image_candidate_source_asset_id
-        : null;
-    const vectorNearHold = await readVisibleVectorNearHold(db, metadataRaw);
-
     if (verifyInputHoldReason != null) {
       checks.push({
         check: 'structure_completeness',
@@ -694,36 +602,6 @@ export async function runSourceVerify(
       if (tierChecks.includes('dedup')) {
         checks.push(await checkDedup(db, verifyInput));
       }
-      if (
-        singleSourceGrounding &&
-        groundingSourceAssetId &&
-        knowledgeAlive &&
-        vectorNearHold == null &&
-        !checks.some((c) => c.verdict === 'fail')
-      ) {
-        try {
-          await (
-            params.sourceGroundingPreflightFn ??
-            (params.sourceGroundingFn ? undefined : assertSourceGroundingLaneConfigured)
-          )?.({ db, subjectProfile });
-        } catch (err) {
-          const isConfigError = err instanceof TaskConfigError || isProviderAuthConfigError(err);
-          const outcome: Extract<
-            SourceGroundingVerifyResult,
-            { status: 'transient_error' | 'config_error' }
-          > = {
-            status: isConfigError ? 'config_error' : 'transient_error',
-            message: err instanceof Error ? err.message : String(err),
-          };
-          await holdForNonVerdictOutcome(outcome);
-          throw isConfigError && !(err instanceof TaskConfigError)
-            ? new TaskConfigError(outcome.message, { cause: err })
-            : err;
-        }
-      }
-      // Fence the placement paid-authority before the first paid call: a stale
-      // authority costs only the free deterministic checks here, not a solve.
-      await placementPaid?.assertBefore();
       if (tierChecks.includes('solve_check')) {
         const solveQuestion: SolveCheckQuestion = {
           id: verifyInput.id,
@@ -741,7 +619,7 @@ export async function runSourceVerify(
           figures: verifyInput.figures,
         };
         const solveResult = await runSolveCheck(solveQuestion, {
-          runTaskFn: observedRunTaskFn,
+          runTaskFn,
           profile: { id: subjectProfile.id, full: subjectProfile },
           db,
           imageFetchFn: params.imageFetchFn,
@@ -761,6 +639,7 @@ export async function runSourceVerify(
     // check. It is the SINGLE source for both the grounding-gate trigger below AND the final
     // `promote` (which just ANDs in the grounding verdict) (was
     // two copy-pasted condition lists).
+    const vectorNearHold = await readVisibleVectorNearHold(db, metadataRaw);
     const otherwisePromotable =
       knowledgeAlive &&
       !unresolvedAnchoredExactMismatch &&
@@ -774,6 +653,11 @@ export async function runSourceVerify(
     // a single-source row this is the FINAL, real grounding gate — its source_consistency
     // n-gram is grounding-against-self (extract === the same VLM call's output). See the
     // SourceGroundingParams docblock for the full semantics matrix.
+    const singleSourceGrounding = metadataRaw.single_source_grounding === true;
+    const groundingSourceAssetId =
+      typeof metadataRaw.image_candidate_source_asset_id === 'string'
+        ? metadataRaw.image_candidate_source_asset_id
+        : null;
     let multimodalGroundingFailed = false;
     let groundingRan = false;
     let groundingSummary: string | undefined;
@@ -812,29 +696,87 @@ export async function runSourceVerify(
           : await runSourceGroundingVerify({
               ...groundingParams,
               runTaskFn: placementPaid
-                ? placementPaid.wrapRunTask('source_grounding', observedRunTaskFn)
-                : observedRunTaskFn,
+                ? placementPaid.wrapRunTask('source_grounding', runTaskFn)
+                : runTaskFn,
             });
       } catch (err) {
         // a BARE throw from the grounding fn (a bug, or a future
         // change that stops returning the discriminated result) must NOT bypass fail-closed.
-        // Fold it into the SAME demote-first path as a returned result — a
-        // TaskConfigError keeps its own config_error status, anything else is transient.
-        outcome =
-          err instanceof TaskConfigError || isProviderAuthConfigError(err)
-            ? { status: 'config_error' as const, message: err.message }
-            : {
-                status: 'transient_error' as const,
-                message: err instanceof Error ? err.message : String(err),
-              };
+        // Fold it into the SAME transient_error branch (demote → throw) as a returned
+        // transient_error, so an unexpected throw can never silently leave a pre-promoted row
+        // in the pool.
+        outcome = {
+          status: 'transient_error',
+          message: err instanceof Error ? err.message : String(err),
+        };
       }
-      if (outcome.status === 'transient_error' || outcome.status === 'config_error') {
-        await holdForNonVerdictOutcome(outcome);
-        throw outcome.status === 'config_error'
-          ? new TaskConfigError(outcome.message)
-          : new Error(
-              `source_verify source grounding failed (transient) for ${questionId}: ${outcome.message}`,
-            );
+      if (outcome.status === 'transient_error') {
+        // Transient grounding is retriable, not a content verdict. Commit legacy draft
+        // and contract suspended/withheld together before throwing to retry. Root→child
+        // locks serialize with editing/publishing; re-read version and terminal success
+        // under those locks so a stale delivery cannot undo a newer admission.
+        // A failed suspension rolls back the demotion too; catch-bottom records an error.
+        try {
+          await db.transaction(async (suspendTx) => {
+            const groupRootId = row.parent_question_id ?? questionId;
+            await suspendTx
+              .select({ id: question.id })
+              .from(question)
+              .where(eq(question.id, groupRootId))
+              .for('update')
+              .limit(1);
+            const [post] = await suspendTx
+              .select({
+                version: question.version,
+                promotedElsewhere: sql<boolean>`EXISTS (
+                  SELECT 1 FROM ${event}
+                  WHERE ${event.action} = 'experimental:source_verify'
+                    AND ${event.subject_kind} = 'question'
+                    AND ${event.subject_id} = ${questionId}
+                    AND ${event.outcome} = 'success'
+                )`,
+              })
+              .from(question)
+              .where(eq(question.id, questionId))
+              .for('update')
+              .limit(1);
+            const maySuspendContract =
+              post != null && post.version === row.version && !post.promotedElsewhere;
+            if (!maySuspendContract) return;
+            await suspendTx
+              .update(question)
+              .set({ draft_status: LEGACY_DRAFT_STATUS.DRAFT, updated_at: new Date() })
+              .where(eq(question.id, questionId));
+            // 已声明 revision 走冻结契约的 typed lifecycle 更新，
+            // 未声明组照旧行归一（helper 内部分派，fail-closed 不变）。
+            await publishVerifyLifecycleUpdate(suspendTx, {
+              rootId: groupRootId,
+              expectedRevision: verifiedIdentity.revisionId,
+              expectedGeneration: verifiedIdentity.admissionGeneration,
+              admission: {
+                state: SCORING_ADMISSION_STATE.WITHHELD,
+                reason: SCORING_ADMISSION_WITHHELD_REASON.UNVERIFIED_RULES,
+              },
+              suspension: { suspended: true, reason: SUSPENSION_REASON.VERIFY_HOLD },
+              verification: {
+                policy_id: 'source_verify@1',
+                outcome: 'suspended',
+                evidence: {
+                  check: 'source_grounding',
+                  transient: true,
+                  message: outcome.message,
+                },
+              },
+              actorRef: 'source_verify:suspend',
+              now: new Date(),
+            });
+          });
+        } catch (suspendErr) {
+          console.error('[source_verify] verify-hold write failed for', questionId, suspendErr);
+        }
+        throw new Error(
+          `source_verify source grounding failed (transient) for ${questionId}: ${outcome.message}`,
+        );
       }
       groundingRan = true;
       groundingConfidence = outcome.confidence;
@@ -1374,34 +1316,48 @@ export async function runSourceVerify(
     // outcome='error' event is filtered out by every downstream consumer, so this is
     // purely additive. outcome + idempotency guard unchanged.
     try {
-      if (!nonVerdictErrorEventWritten) {
-        // Only the grounding lane may arm source_verify recovery. A solve_check
-        // TaskConfigError stays an ordinary error event and a pg-boss retry.
-        await writeErrorEvent(db, err, false);
-      }
+      await writeEvent(db, {
+        id: createId(),
+        session_id: null,
+        actor_kind: 'agent',
+        actor_ref: 'source_verify',
+        action: 'experimental:source_verify',
+        subject_kind: 'question',
+        subject_id: questionId,
+        outcome: 'error',
+        payload: {
+          question_id: questionId,
+          ...(params.recheckCommandEventId != null
+            ? { recheck_command_event_id: params.recheckCommandEventId }
+            : {}),
+          // unified verify contract shape via the system_error
+          // projection: { axes:[], overall:'error', failure_class:'system_error',
+          // summary_md, confidence:0 }. failure_class is byte-identical to the prior
+          // inline; overall/axes/summary_md/confidence are additive.
+          ...toUnifiedVerifyResult({
+            source: 'system_error',
+            summary_md: `source_verify failed: ${String((err as Error).message ?? err)}`,
+            error: String((err as Error).message ?? err),
+          }),
+          error: String((err as Error).message ?? err),
+          ...(difficultyEvidence ? { difficulty_evidence: difficultyEvidence } : {}),
+          ...(supplyTrace ? { supply_trace: supplyTrace } : {}),
+        },
+        caused_by_event_id: null,
+        // solve_check owns its own AI run inside runSolveCheck; this handler holds no
+        // single TaskTextResult, so the transient-error event carries no run id/cost.
+        task_run_id: null,
+        cost_micro_usd: null,
+        created_at: new Date(),
+      });
     } catch (cleanupErr) {
       console.error('[source_verify] catch-block cleanup failed for', questionId, cleanupErr);
     }
-    if (
-      recheckClaim != null &&
-      !providerQueryStarted &&
-      !recheckSettled &&
-      !sourceGroundingConfigErrorCandidate
-    ) {
-      try {
-        const settled = await db.transaction(async (tx) =>
-          settleRecheckNotSent(tx, String((err as Error).message ?? err)),
-        );
-        recheckSettled ||= settled;
-      } catch (settleErr) {
-        console.error(
-          '[source_verify] recheck claim not-sent settle failed',
-          questionId,
-          settleErr,
-        );
-      }
-    }
-    if (recheckClaim != null && providerQueryStarted) {
+    // the recheck claim reached 'sending' but the run threw: the paid
+    // call may or may not have happened, so the honest terminal state for THIS
+    // attempt is 'unknown' — never re-paid under this command event (a later
+    // command needs a new key → a new claim identity).
+    if (recheckClaim != null) {
       try {
         await db.transaction(async (tx) => {
           await markPaidEffectUnknown(
@@ -1415,9 +1371,6 @@ export async function runSourceVerify(
       } catch (markErr) {
         console.error('[source_verify] recheck claim mark-unknown failed', questionId, markErr);
       }
-    }
-    if (sourceGroundingConfigError) {
-      return { status: 'skipped:config_error', checks: [] };
     }
     throw err;
   }
@@ -1436,7 +1389,6 @@ export function buildSourceVerifyHandler(
         continue;
       }
       const recheckCommandEventId = job.data?.recheck?.command_event_id;
-      const recoveryEpochs = job.data?.recovery_epochs ?? {};
       const placementAuthorities = new Map(
         (job.data.placement_authorities ?? []).map((authority) => [
           authority.question_id,
@@ -1445,41 +1397,22 @@ export function buildSourceVerifyHandler(
       );
       for (const questionId of questionIds) {
         const placementAuthority = placementAuthorities.get(questionId);
-        const recoveryEpoch = recoveryEpochs[questionId];
-        const runOne = (authority?: PlacementVerificationAuthority) =>
-          runSourceVerify({
+        try {
+          const result = await runSourceVerify({
             db,
             questionId,
             runTaskFn,
-            ...(deps.imageFetchFn ? { imageFetchFn: deps.imageFetchFn } : {}),
-            ...(deps.sourceGroundingFn ? { sourceGroundingFn: deps.sourceGroundingFn } : {}),
-            ...(deps.sourceGroundingPreflightFn
-              ? { sourceGroundingPreflightFn: deps.sourceGroundingPreflightFn }
-              : {}),
             ...(recheckCommandEventId != null
               ? { recheckCommandEventId, recheckDeliveryId: job.id }
               : {}),
-            ...(recoveryEpoch != null ? { recoveryEpoch } : {}),
-            ...(authority ? { placementAuthority: authority } : {}),
+            ...(placementAuthority ? { placementAuthority } : {}),
           });
-        try {
-          const result = await runOne(placementAuthority);
           console.log(`[source_verify] ${questionId} -> ${result.status}`);
         } catch (error) {
-          // Only a sweep-synthesized recovery intent may re-run provenance-safe
-          // without its stale authority — job.data.recovery_epochs marks exactly
-          // those. An ordinary delivery with dead authority refuses: re-running
-          // it would launch paid calls with no claim ledger behind them.
-          if (
-            placementAuthority &&
-            recoveryEpoch != null &&
-            error instanceof PlacementStarterStaleAuthorityError
-          ) {
-            console.warn(
-              `[source_verify] ${questionId} recovery authority is stale; re-running without it`,
-            );
-            const result = await runOne();
-            console.log(`[source_verify] ${questionId} -> ${result.status}`);
+          // A superseded delivery's authority: the current delivery re-binds the question with
+          // a new epoch and its own intent. Nothing to retry under this one.
+          if (placementAuthority && error instanceof PlacementStarterStaleAuthorityError) {
+            console.warn(`[source_verify] ${questionId} placement authority is stale; skipped`);
             continue;
           }
           throw error;
