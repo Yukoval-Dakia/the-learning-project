@@ -141,7 +141,7 @@ lives on the NAS; its former host ports `127.0.0.1:5433` / `5544` are closed sin
 
 ```bash
 pnpm install
-pnpm dev:local      # then open the printed origin, e.g. http://127.0.0.1:8788/
+pnpm dev:local      # then open the printed origin (e.g. http://127.0.0.1:8788/) and paste the printed token
 ```
 
 `dev:local` starts the dev-only Postgres (`docker-compose.dev.yml`, service `postgres-dev`,
@@ -196,8 +196,10 @@ dev 拓扑必须 api（含 Vite 前门）+ worker 两进程齐活（YUK-321 M5 �
 
 `pnpm dev` 是 `pnpm dev:local` 的别名。单独运行 `pnpm rw:api` 时 `API_PORT` 缺省也是 8787，本机 dev（`NODE_ENV` 非 `production`、非容器）会在绑定前退出（8787 是本机 NAS 中继的 TEST 端口；生产入口与容器由 Dockerfile 显式设 `API_PORT=8787`，照常监听）。dev 的 `DATABASE_URL` 由 dev-local 固定指向 dev Postgres（:5434）中本 worktree 自己的库（`loom_dev_<worktree>_<hash>`），忽略 `.env` / `.env.local` 里的 `DATABASE_URL` 与 `POSTGRES_*`。
 
+`dev:local` 也不读 `.env` / `.env.local` 里的 `INTERNAL_TOKEN`：显式导出时沿用它，否则每次启动生成随机值，并打印在启动日志里（复制到页面 TokenGate）；API、worker 与前门共用同一个值。直跑 `rw:api` / `worker:dev` 仍按 `loadEnv()` 从文件加载。对 `dev:local` 跑本地验收脚本时用日志里的 token，例如 `INTERNAL_TOKEN=<值> API_SMOKE_BASE_URL=<打印的 origin> pnpm api:smoke`。
+
 ```bash
-pnpm smoke:local
+LOCAL_NEXT_PORT=<dev 端口> INTERNAL_TOKEN=<dev:local 打印值> pnpm smoke:local
 ```
 
 模型能力目录（YUK-924 / YUK-1563）：worker 启动时和每天从 models.dev 拉取
