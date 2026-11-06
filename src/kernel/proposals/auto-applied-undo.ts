@@ -17,12 +17,12 @@
 // in batch undo (knowledge_node, cause_category, learning_item 3c). Everything
 // else stays a per-card human decision.
 
-import { and, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm';
 
 import { type AiProposalPayloadT, parseAiProposalPayload } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
-import { artifact } from '@/db/schema/artifacts';
+import { artifact, artifact_block_ref } from '@/db/schema/artifacts';
 import {
   cause_category_overlay,
   knowledge,
@@ -82,6 +82,7 @@ export type AutoAppliedUndoCode =
   | 'learning_item_has_records'
   | 'learning_item_artifact_missing'
   | 'learning_item_note_edited'
+  | 'learning_item_artifact_referenced'
   | 'learning_item_has_answer_drafts';
 
 export interface AutoAppliedUndoDecision {
@@ -133,6 +134,8 @@ const BLOCKED_REASONS: Record<AutoAppliedUndoCode, string> = {
   learning_item_has_records: '这些学习项已经产生练习记录，撤销会让记录失去关联，所以先保留了。',
   learning_item_artifact_missing: '这些学习项配对的笔记找不到了，撤销会对不上，所以先保留了。',
   learning_item_note_edited: '这些学习项的笔记之后被编辑过，撤销会覆盖这些修改，所以先保留了。',
+  learning_item_artifact_referenced:
+    '已经有别的笔记引用了这些学习项的笔记，撤销会让引用失效，所以先保留了。',
   learning_item_has_answer_drafts:
     '这些学习项还有未提交的作答草稿，撤销会打断正在写的答案，所以先保留了。',
 };
@@ -788,9 +791,11 @@ async function classifyLearningItems(
   }
   const allArtifactIds = [...new Set(artifacts.map((row) => row.id))];
 
-  // A learner (or a learner-triggered AI action) editing a generated note after the
-  // apply is later content. note_generate's own body writes share the same event
-  // action, so the actor is what separates them.
+  // The artifact version is the only write-path-independent witness. Every
+  // note_generate body commit advances it by exactly one; any other body write
+  // (refine apply, refine undo, presence flush, hub auto sync, learner edit) also
+  // advances it without adding a whitelisted event. So equal counts prove every
+  // write came from generation, and any future writer is blocked by construction.
   const editedArtifactIds = new Set<string>();
   if (allArtifactIds.length > 0) {
     const editRows = await db
@@ -798,7 +803,6 @@ async function classifyLearningItems(
         artifactId: event.subject_id,
         actorKind: event.actor_kind,
         actorRef: event.actor_ref,
-        createdAt: event.created_at,
       })
       .from(event)
       .where(
@@ -808,32 +812,35 @@ async function classifyLearningItems(
           inArray(event.subject_id, allArtifactIds),
         ),
       );
-    const anyBodyEdit = new Set(editRows.map((row) => row.artifactId));
-    const appliedAtByArtifact = new Map<string, Date>();
-    for (const proposalId of proposalIds) {
-      const appliedAt = working.get(proposalId)?.rate.createdAt;
-      if (!appliedAt) continue;
-      for (const artifactId of artifactIdsByProposal.get(proposalId) ?? []) {
-        appliedAtByArtifact.set(artifactId, appliedAt);
-      }
-      for (const row of rowsByProposal.get(proposalId) ?? []) {
-        if (row.primaryArtifactId) appliedAtByArtifact.set(row.primaryArtifactId, appliedAt);
-      }
-    }
+    const generationWrites = new Map<string, number>();
     for (const row of editRows) {
-      const appliedAt = appliedAtByArtifact.get(row.artifactId);
-      if (!appliedAt || row.createdAt.getTime() <= appliedAt.getTime()) continue;
-      if (row.actorKind === 'agent' && NOTE_GENERATE_EDIT_ACTORS.has(row.actorRef)) continue;
-      editedArtifactIds.add(row.artifactId);
+      if (row.actorKind !== 'agent') continue;
+      if (!NOTE_GENERATE_EDIT_ACTORS.has(row.actorRef)) continue;
+      generationWrites.set(row.artifactId, (generationWrites.get(row.artifactId) ?? 0) + 1);
     }
-    // A version bump with no body-edit event at all is an unattributable write: the
-    // learner may have edited it, so fail closed rather than archive the note.
     for (const artifactId of allArtifactIds) {
       const row = artifactById.get(artifactId);
-      if (row && row.version > 0 && !anyBodyEdit.has(artifactId)) {
+      if (!row) continue;
+      if (row.version !== (generationWrites.get(artifactId) ?? 0)) {
         editedArtifactIds.add(artifactId);
       }
     }
+  }
+
+  // Another note holding a block ref to a paired note is later content: archiving
+  // the target would leave that backlink dangling.
+  const referencedArtifactIds = new Set<string>();
+  if (allArtifactIds.length > 0) {
+    const refs = await db
+      .select({ toArtifactId: artifact_block_ref.to_artifact_id })
+      .from(artifact_block_ref)
+      .where(
+        and(
+          inArray(artifact_block_ref.to_artifact_id, allArtifactIds),
+          ne(artifact_block_ref.from_artifact_id, artifact_block_ref.to_artifact_id),
+        ),
+      );
+    for (const row of refs) referencedArtifactIds.add(row.toArtifactId);
   }
 
   const draftItemIds = new Set<string>();
@@ -916,6 +923,10 @@ async function classifyLearningItems(
     }
     if ([...pairedArtifactIds].some((artifactId) => editedArtifactIds.has(artifactId))) {
       decisions.set(proposalId, blocked('learning_item_note_edited', entry.rate.createdAt));
+      continue;
+    }
+    if ([...pairedArtifactIds].some((artifactId) => referencedArtifactIds.has(artifactId))) {
+      decisions.set(proposalId, blocked('learning_item_artifact_referenced', entry.rate.createdAt));
     }
   }
 }
