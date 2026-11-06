@@ -21,10 +21,6 @@ on:
         description: Full 40-hex commit SHA to build
         required: true
         type: string
-  # TEMPORARY for evidence runs only — removed before merge.
-  push:
-    branches:
-      - yuk-1845-worker-image-layers
 
 permissions:
   contents: read
