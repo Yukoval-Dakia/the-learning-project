@@ -21,12 +21,13 @@
  *                    table is commonly written with (`as const`, `satisfies`,
  *                    `Object.freeze(…)`, a local `const` alias chain, any
  *                    export spelling). Counted per property: one non-forward
- *                    sibling never hides the forwards next to it. Imported
- *                    names ending in `Schema`/`Policy` are configuration
- *                    wiring and are not sites. Known gaps: spread, computed
- *                    keys, methods/getters, arrays, objects returned from
- *                    functions, class static fields, and members of a locally
- *                    built object;
+ *                    sibling never hides the forwards next to it. Two written
+ *                    exclusions: an imported name ending in `Schema`/`Policy`
+ *                    (case-insensitive), and the `outputSchema` property name
+ *                    — both are configuration wiring, not forwarding. Known
+ *                    gaps: spread, computed keys, methods/getters, arrays,
+ *                    objects returned from functions, class static fields, and
+ *                    members of a locally built object;
  *   - site     (S1): a value-bearing export-from statement inside a module that
  *                    also owns runtime definitions.
  * Type-only declarations and `import type`/`export type` produce no value
@@ -367,13 +368,21 @@ function unwrapObjectExpression(node: unknown): Record<string, unknown> | null {
 }
 
 /** Imported names ending in these suffixes are configuration wiring (a zod
- *  schema / a policy table), not a forwarding target. This is a written naming
- *  contract: new tools must name their schema `*Schema`, policies `*Policy`.
- *  Without it every `outputSchema: ImportedSchema` and `ratingPolicy: …` in an
- *  exported declaration would read as a new pass-through shell. */
+ *  schema / a policy table), not a forwarding target. Written naming contract:
+ *  new tools must name their schema `*Schema`, policies `*Policy`. Matched
+ *  case-insensitively so an `_POLICY` constant counts as a policy too. Without
+ *  it every `outputSchema: ImportedSchema` and `ratingPolicy: …` in an exported
+ *  declaration would read as a new pass-through shell. */
 function isConfigReferenceName(name: string): boolean {
-  return name.endsWith('Schema') || name.endsWith('Policy');
+  const lowered = name.toLowerCase();
+  return lowered.endsWith('schema') || lowered.endsWith('policy');
 }
+
+/** `outputSchema` is a contract field: a DomainTool or TaskSpec declares the
+ *  schema its output conforms to, it does not forward that schema as the
+ *  operation. Excluded by property name — a deliberate `{ outputSchema:
+ *  readFoo }` is a review problem, not a machine-detected shell. */
+const CONFIG_PROPERTY_NAMES = new Set(['outputSchema']);
 
 /** Resolve a const name to its object literal through `const x = y` chains.
  *  Cycles and non-object consts resolve to null; depth is capped by the chain
@@ -414,7 +423,7 @@ function objectPropertyForwards(
     if (property.computed === true || property.method === true) continue;
     if (property.kind !== undefined && property.kind !== 'init') continue;
     const key = nodeName(property.key) ?? literalString(property.key);
-    if (!key) continue;
+    if (!key || CONFIG_PROPERTY_NAMES.has(key)) continue;
     const value = unwrapValueExpression(property.value);
     if (!isRecord(value)) continue;
     if (value.type === 'Identifier') {
