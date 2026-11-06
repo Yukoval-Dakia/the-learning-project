@@ -1,4 +1,5 @@
 import { eq } from 'drizzle-orm';
+import { crisisDerivationPayload } from '@/core/crisis/classify';
 import {
   type ActivateEvaluationIntentT,
   type AssessmentAttemptCaptureT,
@@ -191,6 +192,15 @@ export async function recordFormalAttemptCapture(
   await lockAssessmentAttemptCapture(tx, attemptId);
   const [existing] = await tx.select({ id: event.id }).from(event).where(eq(event.id, attemptId));
   if (existing) return;
+  // Crisis classification runs server-side at every answer write point (see
+  // crisisDerivationPayload callers), so sync, durable and ingestion entries
+  // agree and no caller can force or dodge a mark. A hit writes the restricted
+  // policy — writeEvent then stamps ingest_at and clears scopes, keeping the
+  // answer in the ledger but off every derived read face. The class and config
+  // version stay readable for the referral lane.
+  const crisisFields = crisisDerivationPayload(
+    `${capture.response_md ?? ''}\n${capture.reasoning_trace ?? ''}`,
+  );
   await writeEvent(tx, {
     id: attemptId,
     session_id: capture.session_id ?? null,
@@ -228,6 +238,7 @@ export async function recordFormalAttemptCapture(
       ...(capture.final_hint_level !== undefined
         ? { final_hint_level: capture.final_hint_level }
         : {}),
+      ...(crisisFields ?? {}),
     },
     created_at: new Date(submission.submitted_at),
   });
