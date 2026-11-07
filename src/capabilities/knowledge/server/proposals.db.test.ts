@@ -5,10 +5,16 @@ import { acceptKnowledgeMutationFixture } from '../../../../tests/helpers/knowle
 // Pre-Step-9 tests INSERTed dreaming_proposal rows; post-Step-9 the legacy
 // table is gone. Seed propose events directly + assert event-driven flow.
 
-import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
+import postgres from 'postgres';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { runRootPlacementRefile } from '@/capabilities/practice/question-bank/server/root-placement-refile';
+import { newId } from '@/core/ids';
+import { QUESTION_EDIT_ACTION } from '@/core/schema/event/experimental';
 import { KnowledgeRowSnapshot } from '@/core/schema/event/genesis';
 import type { MergeRepairEntryT } from '@/core/schema/event/known';
+import type { Tx } from '@/db/client';
+import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
 import {
   event,
   goal,
@@ -21,6 +27,11 @@ import {
   misconception_edge,
   question,
 } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
+import {
+  KNOWLEDGE_UNDO_REFILE_REASON,
+  ROOT_PLACEMENT_REFILE_REASON,
+} from '@/kernel/proposals/node-question-attachments';
 import {
   edgeRowToSnapshot,
   gatherAndFoldKnowledgeEdge,
@@ -29,6 +40,7 @@ import { gatherAndFoldKnowledgeNode } from '@/kernel/records/knowledge-node-hist
 import { backfillKnowledgeGenesis } from '../../../../scripts/backfill-genesis-events';
 import { migrateCanonicalProjections } from '../../../../scripts/migrate-canonical-projections';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { retractKnowledgeCreate } from './knowledge-archive-operation';
 import { acceptProposal, dismissProposal, writeKnowledgeProposeEvent } from './proposals';
 import { seedKnowledge } from './seed';
 
@@ -1623,5 +1635,158 @@ describe('acceptProposal — legacy history refusal', () => {
     // The canonical projection appends attribution and archives the source.
     expect(root?.merged_from).toContain('k_from_seed');
     expect(from?.archived_at).toBeTruthy();
+  });
+});
+
+describe('question move against knowledge retraction', () => {
+  beforeEach(resetDb);
+
+  function writeCorrection(tx: Tx, proposalId: string): Promise<string> {
+    const id = newId();
+    return writeEvent(tx, {
+      id,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: proposalId,
+      outcome: 'success',
+      payload: {
+        correction_kind: 'retract',
+        reason_md: 'concurrent retraction fixture',
+        affected_refs: [{ kind: 'open_inquiry', id: proposalId }],
+      },
+      caused_by_event_id: proposalId,
+      created_at: new Date(),
+    }).then(() => id);
+  }
+
+  async function waitForLockWaiters(poll: postgres.Sql, expected: number): Promise<void> {
+    for (let attempt = 0; attempt < 400; attempt += 1) {
+      const rows = await poll`
+        select count(*)::int as count
+        from pg_stat_activity
+        where datname = current_database()
+          and wait_event_type = 'Lock'
+          and wait_event = 'advisory'
+      `;
+      const row = rows[0] as { count: number } | undefined;
+      if ((row?.count ?? 0) >= expected) return;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    throw new Error(`expected ${expected} sessions queued on an advisory lock`);
+  }
+
+  // @invariant concurrency: a root-placement move and a node retraction serialize on the learning-state write lock and converge to a non-empty, live question attribution with no reference to the archived node
+  // @fails-if both transactions enter the lock at once, the later operation ignores the earlier commit, the question keeps the archived node id, or either ordering leaves an empty/dead label set
+  it('serializes the move and the retraction and converges without a dangling attribution', async () => {
+    const db = testDb();
+    const rootId = 'seed:math:root';
+    const name = '移动并发点';
+    const now = new Date();
+    await db.insert(knowledge).values({
+      id: rootId,
+      name: '数学',
+      domain: 'math',
+      parent_id: null,
+      role: 'container',
+      created_at: now,
+      updated_at: now,
+    });
+    const proposalId = await writeKnowledgeProposeEvent(db, {
+      payload: { mutation: 'propose_new', name, parent_id: rootId },
+      reasoning: 'root-placement concurrency fixture',
+      actor_ref: 'test',
+    });
+    const accepted = await acceptProposal(db, proposalId);
+    if (accepted.kind !== 'propose_new_applied')
+      throw new Error(`fixture accept did not mint a node: ${accepted.kind}`);
+    const nodeId = accepted.new_node_id;
+
+    const questionId = newId();
+    await db.insert(question).values({
+      id: questionId,
+      kind: 'choice',
+      prompt_md: '移动并发题面',
+      reference_md: 'A',
+      knowledge_ids: [rootId],
+      difficulty: 3,
+      source: 'test',
+      draft_status: 'active',
+      metadata: { teaching_draft: { question_kind: 'choice', learner_topic: name } },
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+
+    let markGateAcquired!: () => void;
+    const gateAcquired = new Promise<void>((resolve) => {
+      markGateAcquired = resolve;
+    });
+    let releaseGate!: () => void;
+    const gateReleased = new Promise<void>((resolve) => {
+      releaseGate = resolve;
+    });
+    const gate = db.transaction(async (tx) => {
+      await acquireLearningStateWriteLock(tx);
+      markGateAcquired();
+      await gateReleased;
+    });
+    await gateAcquired;
+
+    const poller = postgres(process.env.TEST_DATABASE_URL ?? '', { max: 1, onnotice: () => {} });
+    try {
+      const retraction = db.transaction(async (tx) => {
+        const correctionEventId = await writeCorrection(tx, proposalId);
+        return retractKnowledgeCreate(tx, {
+          proposalId,
+          correction_event_id: correctionEventId,
+        });
+      });
+      const move = runRootPlacementRefile(db, 'apply');
+      await waitForLockWaiters(poller, 2);
+      releaseGate();
+      const [report, retracted] = await Promise.all([move, retraction]);
+      await gate;
+
+      expect(report.mode).toBe('apply');
+      expect(report.scanned).toBe(1);
+      expect(report.counts.moved + report.counts['skip:changed']).toBe(1);
+      expect(retracted).toMatchObject({ node_id: nodeId });
+
+      const [node] = await db.select().from(knowledge).where(eq(knowledge.id, nodeId));
+      expect(node?.archived_at).not.toBeNull();
+      const [row] = await db.select().from(question).where(eq(question.id, questionId));
+      expect(row?.knowledge_ids).toEqual([rootId]);
+      const liveLabels = await db
+        .select({ id: knowledge.id })
+        .from(knowledge)
+        .where(and(inArray(knowledge.id, row?.knowledge_ids ?? []), isNull(knowledge.archived_at)));
+      expect(liveLabels.map((label) => label.id)).toEqual(row?.knowledge_ids);
+      const pointingAtArchived = await db
+        .select({ id: question.id })
+        .from(question)
+        .where(sql`${question.knowledge_ids} @> ${JSON.stringify([nodeId])}::jsonb`);
+      expect(pointingAtArchived).toHaveLength(0);
+
+      const edits = await db
+        .select()
+        .from(event)
+        .where(and(eq(event.action, QUESTION_EDIT_ACTION), eq(event.subject_id, questionId)))
+        .orderBy(asc(event.created_at), asc(event.id));
+      const reasons = edits.map((edit) => (edit.payload as { reason?: string }).reason);
+      if (report.counts.moved === 1) {
+        expect(reasons).toEqual([ROOT_PLACEMENT_REFILE_REASON, KNOWLEDGE_UNDO_REFILE_REASON]);
+        expect(row?.version).toBe(2);
+      } else {
+        expect(reasons).toEqual([]);
+        expect(report.rows[0]?.detail ?? '').not.toContain('deadlock');
+        expect(row?.version).toBe(0);
+      }
+    } finally {
+      releaseGate();
+      await gate.catch(() => {});
+      await poller.end({ timeout: 5 });
+    }
   });
 });
