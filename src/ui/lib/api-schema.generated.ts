@@ -35036,6 +35036,7 @@ export interface operations {
                         figures?: unknown;
                         id: string;
                         image_refs: string[];
+                        ingestion_judge_confidence: number | null;
                         kind: string;
                         knowledge_ids: string[];
                         labels: {

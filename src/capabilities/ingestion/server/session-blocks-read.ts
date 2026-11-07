@@ -10,6 +10,7 @@ import { MistakeEnrollOutcome } from '@/core/schema/mistake_enroll';
 import type { Db } from '@/db/client';
 import { event, question, question_block } from '@/db/schema';
 import { learnerVisibleKnowledgeIds } from '@/kernel/read-models/learner-knowledge-visibility';
+import { readWorkflowJudgeConfidence } from '@/kernel/read-models/workflow-judge-confidence';
 
 export async function readIngestionSessionBlocks(db: Db, params: { id: string }) {
   const sessionId = params.id;
@@ -174,13 +175,6 @@ function stringOrNull(value: unknown): string | null {
 
 function booleanOrNull(value: unknown): boolean | null {
   return typeof value === 'boolean' ? value : null;
-}
-
-/** The enrolled question's stored judge confidence, or null for older/other rows. */
-function readWorkflowJudgeConfidence(metadata: Record<string, unknown> | null): number | null {
-  const judge = metadata?.workflow_judge;
-  if (judge === null || typeof judge !== 'object' || Array.isArray(judge)) return null;
-  return numberOrNull((judge as Record<string, unknown>).confidence);
 }
 
 function numberOrNull(value: unknown): number | null {

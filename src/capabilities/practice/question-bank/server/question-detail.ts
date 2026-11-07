@@ -26,6 +26,7 @@ import {
   batchResolveSubjectDisplayIds,
   resolveSubjectRenderNotation,
 } from '@/kernel/read-models/subject-resolution';
+import { readWorkflowJudgeConfidence } from '@/kernel/read-models/workflow-judge-confidence';
 
 const DEFAULT_TIMELINE_LIMIT = 10;
 const MAX_TIMELINE_LIMIT = 50;
@@ -155,6 +156,8 @@ export interface QuestionDetail {
   backlinks_by_intent_source: Record<string, QuestionDetailBacklink[]>;
   timeline: QuestionDetailTimelineEntry[];
   metadata: Record<string, unknown> | null;
+  /** Auto-enroll judge confidence (0..1) for a captured question; null otherwise. */
+  ingestion_judge_confidence: number | null;
   created_at_sec: number;
   updated_at_sec: number;
   computed_at_sec: number;
@@ -259,6 +262,7 @@ export async function loadQuestionDetail(
     backlinks_by_intent_source: groupByIntentSource(backlinks),
     timeline: timelineEntries.map(toTimelineEntry),
     metadata: (q.metadata ?? null) as Record<string, unknown> | null,
+    ingestion_judge_confidence: readWorkflowJudgeConfidence(q.metadata),
     created_at_sec: Math.floor(q.created_at.getTime() / 1000),
     updated_at_sec: Math.floor(q.updated_at.getTime() / 1000),
     computed_at_sec: Math.floor(Date.now() / 1000),
