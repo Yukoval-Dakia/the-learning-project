@@ -71,7 +71,7 @@ async function main(): Promise<void> {
     );
     return;
   }
-  const { hydrateConfigFromDb } = await import('@/server/config/hydrate');
+  const { hydrateConfigFromDb } = await import('@/core/config/server/hydrate');
   const { hydrateModelCatalog } = await import('@/server/ai/model-catalog');
   await hydrateConfigFromDb(db);
   await hydrateModelCatalog(db);

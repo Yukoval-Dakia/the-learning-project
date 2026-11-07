@@ -1,6 +1,6 @@
 // Unified verify contract (Verifier Router shape).
 //
-// docs/adr/0038-unified-verify-contract-plan-then-generate.md 决定 #1（三套
+// ADR-0038 决定 #1（三套
 // promote-gated 信任闸收敛到 QuizGen 多轴多信号模板：多轴 check + verdict + note →
 // rollup `overall`）+ 决定 #5（'error' 通道：transport/parse/DB 在产出 verdict 前炸了
 // 与「验了判失败」在 result 层分开）.

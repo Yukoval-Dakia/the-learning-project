@@ -1025,10 +1025,10 @@ export const PROVIDER_LANES = [
     ],
     directImporters: [
       { path: 'src/server/ai/model-catalog.ts', kind: 'runtime' },
-      // YUK-1563 part 4 — the custom provider integration (server composition
-      // root) projects the stored check's auth label for the panel and reads
-      // nothing else. Read-only: it sends nothing.
-      { path: 'src/server/config/custom-providers-hydrate.ts', kind: 'runtime' },
+      // YUK-1563 part 4 — the AI-side catalog ports adapter projects the
+      // stored check's auth label for the panel and reads nothing else.
+      // Read-only: it sends nothing.
+      { path: 'src/server/ai/custom-provider-catalog-ports.ts', kind: 'runtime' },
       // YUK-1563 QA AC3 — the admin config facts source reads the credential
       // fingerprint (never the value) to bind stored receipts to the current
       // key; the auth verdict projection lives in provider-auth-status.ts and

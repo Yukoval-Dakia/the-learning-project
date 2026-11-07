@@ -148,11 +148,8 @@ drizzle/.snapshots/
 /getting-started-with-browserbase/
 /docling-docx-parse-output/
 
-# One-off local preflight output
-docs/preflight/*-vision-rejudge.json
-
 # Stale session handoff and root-level visual QA captures. Durable design
-# evidence belongs under docs/design/ instead.
+# evidence belongs in the external repo-docs copy (see below).
 /RESUME.md
 /d-ui-knowledge-snapshot.md
 /d-ui-*.png
@@ -168,8 +165,10 @@ docs/preflight/*-vision-rejudge.json
 .slim/worktrees.json
 # END oh-my-opencode-slim worktrees
 
-# Process docs (planning notes, audits) and generated files live outside git.
-# Shared copy: /Volumes/YukovalSBak/yukoval-projects/tlp-docs/ . Files already tracked here stay tracked.
-docs/planning/
-docs/audit/
+# Documentation lives outside git. The copy of the former tracked docs/ and
+# PLANNING.md is /Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/
+# (manifest: MANIFEST.tsv, per-file hashes: SHA256SUMS). Process planning notes,
+# audits and design work continue under /Volumes/YukovalSBak/yukoval-projects/tlp-docs/.
+/docs/
+/PLANNING.md
 postman/learning-api.postman_collection.json

@@ -17,7 +17,7 @@
 import { sql } from 'drizzle-orm';
 import { unzipSync, zipSync } from 'fflate';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { hydrateConfigFromDb } from '@/server/config/hydrate';
+import { hydrateConfigFromDb } from '@/core/config/server/hydrate';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { createMem0Collection, seedMem0Row } from '../../../../../tests/helpers/mem0-collection';
 import { memR2 } from '../../../../../tests/helpers/r2';

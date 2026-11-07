@@ -8,11 +8,7 @@ import { z } from 'zod';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import {
-  EvidenceDemandV1,
-  type EvidenceDemandV1T,
-  evidenceDemandToTargetContext,
-} from '@/kernel/supply-contracts';
+import { EvidenceDemandV1, type EvidenceDemandV1T } from '@/kernel/supply-contracts';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 import { canonicalKindToPersistedForms } from '@/subjects/question-kind';
 import {
@@ -23,11 +19,9 @@ import {
   verifyBankGapEvidenceMac,
 } from '../../question-bank/public';
 import {
-  type DifficultyBand,
-  type QuestionSupplyTarget,
+  buildQuestionPreparerTarget,
   enqueueQuestionPreparerTicket,
   isUnanchoredSupplyPaused,
-  targetFingerprint,
 } from '../../supply/public';
 
 // ── 输入 / 输出契约 ──────────────────────────────────────────────────────────
@@ -195,47 +189,18 @@ function buildBankGapTarget(
   demand: EvidenceDemandV1T,
   evidence: z.infer<typeof BankGapRequestSchema>,
   requestId: string,
-): QuestionSupplyTarget {
+) {
   const scope = evidence.constraints.scope;
   // scope.kind 已由 checkHonourableConstraints 验证可落实；作为硬题型约束派出。
+  // 调用方已把 demand 窄化到签名 scope，所以共享推导读到的 KC 集合/题型与旧局部分支一致。
   const scopeKind =
     scope.kind !== undefined ? scopeTargetKind(scope.kind, demand.task.kinds) : null;
-  const kindSet = scopeTargetKinds(scope, demand.task.kinds) ?? demand.task.kinds;
-  const kind = scopeKind ?? (kindSet.length === 1 ? kindSet[0] : 'any');
-  const knowledgeIds =
-    scope.knowledge_ids !== undefined
-      ? [...new Set(scope.knowledge_ids)]
-      : demand.claim.knowledge_ids;
-  const desiredCount = Math.max(
-    1,
-    demand.inventory_goal.eligible_count,
-    evidence.constraints.requested_count,
-  );
-  return {
-    id: `bankgap:${demand.demand_id}`,
-    fingerprint: targetFingerprint({
-      subjectId: demand.subject_id,
-      knowledgeIds,
-      kind,
-      kindSet: kindSet.length > 1 ? kindSet : undefined,
-      difficultyBand: demand.difficulty.band as DifficultyBand,
-      gapKind: 'frontier_zero',
-      minSourceTier: 2,
-    }),
-    gapKind: 'frontier_zero',
-    subjectId: demand.subject_id,
-    knowledgeIds,
-    kind,
-    difficultyBand: demand.difficulty.band as DifficultyBand,
-    desiredCount,
-    // Legacy cooldown identity remains stable; the full ticket lets the preparer choose sourcing order.
-    minSourceTier: 2,
-    routePreference: ['sourcing_web', 'quiz_gen'],
-    priority: 50,
+  return buildQuestionPreparerTarget(demand, {
+    requestedCount: evidence.constraints.requested_count,
+    kindRequired: scopeKind !== null,
+
     reason: `bank search gap filed via file_bank_gap (request_id=${requestId}); query="${evidence.constraints.query}"; retrieved ${evidence.constraints.retrieved_count}/${evidence.constraints.requested_count}`,
-    constraints: scopeKind !== null ? { kindRequired: true } : {},
-    context: evidenceDemandToTargetContext(demand),
-  };
+  });
 }
 
 // ── 主流程 ────────────────────────────────────────────────────────────
