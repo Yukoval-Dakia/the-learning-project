@@ -467,6 +467,25 @@
 [data-ui-next] .un-st-feedback h3 {
   font-size: 16px;
 }
+[data-ui-next] .un-st-facts {
+  display: grid;
+  gap: var(--un-sp-1);
+  margin: 0;
+  font-size: var(--un-fs-1);
+}
+[data-ui-next] .un-st-facts > div {
+  display: flex;
+  gap: var(--un-sp-3);
+}
+[data-ui-next] .un-st-facts dt {
+  flex: none;
+  width: 3em;
+  color: var(--un-text-3);
+}
+[data-ui-next] .un-st-facts dd {
+  margin: 0;
+  color: var(--un-text-1);
+}
 [data-ui-next] .un-st-verdict {
   --verdict-ink: var(--st-muted);
   --verdict-soft: var(--st-raised);

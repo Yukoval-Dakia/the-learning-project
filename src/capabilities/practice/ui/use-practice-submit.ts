@@ -24,6 +24,7 @@ import { usePagehideTransition } from '@/ui/hooks/usePagehideTransition';
 import { useResponseDraftAutosave } from '@/ui/hooks/useResponseDraftAutosave';
 import { ApiError } from '@/ui/lib/api';
 import { computeLatencyMs } from '@/ui/lib/response-latency';
+import { type AttemptEvidence, attemptEvidenceOf } from './attempt-facts';
 import { toAttemptTimelineEvents } from './attempt-timeline-adapter';
 import { useCustomBlocksReady } from './blocks/CustomBlock';
 import { customBlocksOf, summarizeAnswers } from './blocks/custom-sandbox';
@@ -415,6 +416,8 @@ export function usePracticeSubmit({
   // YUK-432 — 客观题在 preview 回来时已自动 commit（auto_rate:true）。记下来：反馈卡保留判定，
   // 「下一项」只 onDone() 推进（不再二次 commit）。开放题恒 false → 现有手动流不变。
   const [autoCommitted, setAutoCommitted] = useState(false);
+  // What the server recorded about this answer, once it has been committed here.
+  const [recorded, setRecorded] = useState<AttemptEvidence | null>(null);
   // 自动 commit 后可申诉的 evaluation id（名字是历史遗留）。null = 没有可申诉的记录，入口隐藏。
   const [autoCommitJudgeEventId, setAutoCommitJudgeEventId] = useState<string | null>(null);
   // YUK-433 — solo 路径 RT capture：题面变可见那刻的墙钟时间戳。commit 时 now - 它 = 这次作答用时
@@ -440,6 +443,8 @@ export function usePracticeSubmit({
     (settled: JudgeRunPollingState) => {
       if (settled.status !== 'done') return;
       const r = settled.result;
+      // An older run has no evidence; that shows as nothing, not as a claim of independence.
+      setRecorded(attemptEvidenceOf(r));
       if (r?.status === 'review_required') {
         setCommittedPreview({
           route: 'durable',
@@ -1132,6 +1137,7 @@ export function usePracticeSubmit({
         addToast('作答已保存，暂时没法自动判；可以自己评一下来安排复习。', 'info', 'clock');
         return;
       }
+      if ('evidence' in res) setRecorded(res.evidence);
       if (opts.withAppeal) {
         const anchor = res.judge && 'assessment' in res ? res.assessment.candidate_id : null;
         // The answer is recorded by now: a failed appeal must not undo that.
@@ -1159,6 +1165,7 @@ export function usePracticeSubmit({
       if (opts.advance !== false) onDone();
     } catch {
       setPreview(null);
+      setRecorded(null);
       setCommittedPreview(null);
       setRating(null);
       setAutoCommitted(false);
@@ -1224,12 +1231,14 @@ export function usePracticeSubmit({
     setPendingRun(null);
     setPreview(r.judge);
     setRating(r.judge.suggested_rating);
+    setRecorded(r.evidence);
     if (!r.automatic_commit || r.judge.suggested_rating === null) return;
     if (r.committed) {
       if (r.committed.status === 'review_required') {
         addToast('作答已保存，暂时没法自动判；可以自己评一下来安排复习。', 'info', 'clock');
         return;
       }
+      setRecorded(r.committed.evidence);
       setAutoCommitted(true);
       setAutoCommitJudgeEventId(r.committed.judge ? r.committed.assessment.candidate_id : null);
       return;
@@ -1305,6 +1314,7 @@ export function usePracticeSubmit({
         const feedback = feedbackFromCommittedAttempt(res);
         setCommittedPreview(feedback);
         setRating(feedback.suggested_rating);
+        if ('evidence' in res) setRecorded(res.evidence);
         setAutoCommitted(true);
         setAutoCommitJudgeEventId('assessment' in res ? res.assessment.candidate_id : null);
         return;
@@ -1355,6 +1365,7 @@ export function usePracticeSubmit({
   const startSelfRate = () => {
     setIssuanceMode('manual');
     setPreview(null);
+    setRecorded(null);
     activationIntent.current = undefined;
     // Back to answering (self-rated): unsaved edits resume autosaving.
     autosave.resume();
@@ -1447,6 +1458,7 @@ export function usePracticeSubmit({
       pendingRun,
       pendingPoll,
       displayedPreview: displayedFeedback,
+      recorded,
       committedPreview,
       rating,
       setRating,
