@@ -14,7 +14,9 @@ import {
 } from './lib/git-base-scan';
 import {
   auditPassThroughNewSites,
+  collectPgTableDefinitions,
   diffPassThroughSites,
+  isSchemaTableEntrypointSite,
   scanPassThroughSites,
 } from './lib/pass-through-sites';
 
@@ -1152,6 +1154,8 @@ export interface ArchitectureDeepeningFacts {
     readonly removed: number;
     /** Added sites exempted as capability public.ts named entrypoints. */
     readonly exempt: number;
+    /** Added sites exempted as `src/db/schema.ts` pgTable re-exports. */
+    readonly exemptSchemaTables: number;
     readonly violations: readonly OwnershipViolation[];
   };
 }
@@ -1181,6 +1185,7 @@ export interface DeepeningAuditResult extends AuditResult {
     readonly passThroughSites: number;
     readonly newPassThroughSites: number;
     readonly exemptPassThroughSites: number;
+    readonly exemptSchemaTableSites: number;
   };
 }
 
@@ -1286,7 +1291,9 @@ export function auditArchitectureDeepening(
       dependencyTotals: facts.dependency.totals,
       passThroughSites: facts.passThrough?.headSites ?? 0,
       newPassThroughSites: facts.passThrough?.violations.length ?? 0,
-      exemptPassThroughSites: facts.passThrough?.exempt ?? 0,
+      exemptPassThroughSites:
+        (facts.passThrough?.exempt ?? 0) - (facts.passThrough?.exemptSchemaTables ?? 0),
+      exemptSchemaTableSites: facts.passThrough?.exemptSchemaTables ?? 0,
     },
   };
 }
@@ -1426,6 +1433,7 @@ async function runCli(): Promise<void> {
     sourceFilesUnder(projectRoot, resolve(projectRoot, root)),
   ).filter((file) => inScanScope(file.path));
   const headSites = scanPassThroughSites(headSources, resolveHeadTarget);
+  const pgTableDefinitions = collectPgTableDefinitions(headSources);
 
   const baseEntries = listTreeFiles(projectRoot, baseSha, SCAN_ROOTS).filter((entry) =>
     inScanScope(entry.path),
@@ -1450,7 +1458,11 @@ async function runCli(): Promise<void> {
   const siteDiff = diffPassThroughSites(baseSites, headSites, renames);
   const passThroughViolations: OwnershipViolation[] = auditPassThroughNewSites({
     newSites: siteDiff.added,
+    pgTableDefinitions,
   });
+  const exemptSchemaTables = siteDiff.added.filter((site) =>
+    isSchemaTableEntrypointSite(site, pgTableDefinitions),
+  ).length;
 
   const result = auditArchitectureDeepening(projectRoot, publicReadCycleCatalog, {
     ownerMaps,
@@ -1511,6 +1523,7 @@ async function runCli(): Promise<void> {
       added: siteDiff.added.length,
       removed: siteDiff.removed.length,
       exempt: siteDiff.added.length - passThroughViolations.length,
+      exemptSchemaTables,
       violations: passThroughViolations,
     },
   });
@@ -1531,7 +1544,7 @@ async function runCli(): Promise<void> {
       .map((component) => component.join('/'))
       .join(
         '; ',
-      )}] fully catalogued (${result.intraSccEdgeCount} intra-SCC edge directions; ${result.catalogReadFiles} public-read files, ${result.catalogCommandFiles} command files); ${result.counts.classifiedProviderLanes} classified provider lanes / ${result.counts.unclassifiedProviderWires} unclassified; dependency totals ${result.counts.dependencyTotals.capabilityToServer}/${result.counts.dependencyTotals.serverToCapabilityDeep}/${result.counts.dependencyTotals.crossCapabilityValue} strictly below 531/70/62; pass-through sites ${result.counts.passThroughSites} (+${result.counts.newPassThroughSites} new${result.counts.exemptPassThroughSites > 0 ? `, ${result.counts.exemptPassThroughSites} public.ts entrypoints exempt` : ''}).`,
+      )}] fully catalogued (${result.intraSccEdgeCount} intra-SCC edge directions; ${result.catalogReadFiles} public-read files, ${result.catalogCommandFiles} command files); ${result.counts.classifiedProviderLanes} classified provider lanes / ${result.counts.unclassifiedProviderWires} unclassified; dependency totals ${result.counts.dependencyTotals.capabilityToServer}/${result.counts.dependencyTotals.serverToCapabilityDeep}/${result.counts.dependencyTotals.crossCapabilityValue} strictly below 531/70/62; pass-through sites ${result.counts.passThroughSites} (+${result.counts.newPassThroughSites} new${result.counts.exemptPassThroughSites + result.counts.exemptSchemaTableSites > 0 ? `, ${result.counts.exemptPassThroughSites} public.ts entrypoints + ${result.counts.exemptSchemaTableSites} schema tables exempt` : ''}).`,
   );
 }
 

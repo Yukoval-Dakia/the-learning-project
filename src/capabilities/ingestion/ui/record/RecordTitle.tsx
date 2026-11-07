@@ -19,13 +19,14 @@ const TITLE_COMPONENTS = {
 };
 
 export function RecordTitle({ when, title }: { when: string | null; title?: string | null }) {
+  const source = title ? titleSource(title).trim() : '';
   return (
     <>
       {when}
-      {when && title ? ' · ' : null}
-      {title ? (
+      {when && source ? ' · ' : null}
+      {source ? (
         <MathMarkdown className="rc-row-md" components={TITLE_COMPONENTS}>
-          {titleSource(title)}
+          {source}
         </MathMarkdown>
       ) : null}
     </>

@@ -136,6 +136,84 @@ export const ChartBlock = z
   });
 export type ChartBlockT = z.infer<typeof ChartBlock>;
 
+const PLOT_DESCRIPTION =
+  'An exact graph of expressions over a view. The model declares expressions, ranges and optional learner sliders; the curve is computed deterministically from the expression, never from model-supplied points.';
+
+const PlotParam = z
+  .object({
+    name: z
+      .string()
+      .regex(/^[a-z][a-z0-9]{0,7}$/)
+      .meta({
+        description: 'Declared parameter name; x, y, t, e and pi are reserved.',
+      }),
+    label: z.string().max(30).optional(),
+    min: z.number(),
+    max: z.number(),
+    step: z.number().positive().optional(),
+    value: z.number().meta({ description: 'Default value; must lie within [min, max].' }),
+  })
+  .strict();
+
+const PlotFunctionItem = z
+  .object({
+    type: z.literal('function'),
+    expr: z.string().min(1).max(200).meta({
+      description: 'Expression in x and declared params, e.g. "a*x^2+b".',
+    }),
+    label: z.string().max(120).optional(),
+    color: z.number().int().min(0).max(5).optional(),
+    dashed: z.boolean().optional(),
+  })
+  .strict();
+
+const PlotViewInput = z
+  .object({
+    x: z.tuple([z.number(), z.number()]),
+    y: z.union([z.tuple([z.number(), z.number()]), z.literal('auto')]).optional(),
+    equal_aspect: z.boolean().optional(),
+  })
+  .strict();
+
+const PlotView = z
+  .object({
+    x: z.tuple([z.number(), z.number()]),
+    y: z.tuple([z.number(), z.number()]),
+    equal_aspect: z.boolean().optional(),
+  })
+  .strict();
+
+const PlotAxes = z
+  .object({
+    x_label: z.string().max(20).optional(),
+    y_label: z.string().max(20).optional(),
+    grid: z.boolean().optional(),
+    pi_ticks: z.boolean().optional(),
+    ticks: z.object({ x: z.number().positive(), y: z.number().positive() }).strict().optional(),
+  })
+  .strict();
+
+export const PlotBlockInput = z
+  .object({
+    ...Common,
+    kind: z.literal('plot'),
+    engine: z.literal('tlp-scene@1').default('tlp-scene@1'),
+    title: z.string().max(60).optional(),
+    view: PlotViewInput,
+    axes: PlotAxes.optional(),
+    params: z.array(PlotParam).max(4).optional(),
+    items: z.array(PlotFunctionItem).min(1).max(4),
+  })
+  .strict()
+  .meta({ description: PLOT_DESCRIPTION });
+
+/** Stored form: `view.y` is concrete (`auto` is resolved once at compose). */
+export const PlotBlock = PlotBlockInput.extend({ view: PlotView }).strict();
+export type PlotBlockInputT = z.infer<typeof PlotBlockInput>;
+export type PlotBlockT = z.infer<typeof PlotBlock>;
+export type PlotParamT = z.infer<typeof PlotParam>;
+export type PlotFunctionItemT = z.infer<typeof PlotFunctionItem>;
+
 const InteractiveField = z
   .object({
     name: z.string().regex(/^[a-z][a-z0-9_]{0,31}$/),
@@ -215,6 +293,7 @@ export const BlockInputV1 = z.discriminatedUnion('kind', [
   DiagramBlock,
   FigureBlockInput,
   ChartBlock,
+  PlotBlockInput,
   InteractiveBlockInput,
   QuestionRefBlock,
   EntityCardBlock,
@@ -226,6 +305,7 @@ export const BlockV1 = z.discriminatedUnion('kind', [
   DiagramBlock,
   FigureBlock,
   ChartBlock,
+  PlotBlock,
   InteractiveBlock,
   QuestionRefBlock,
   EntityCardBlock,

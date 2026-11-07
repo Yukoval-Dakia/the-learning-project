@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { isLowJudgeConfidence } from '@/core/judge-confidence';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { RescueButton, RevertButton } from './BlockTools';
-import { hasEmptyOptions, promptOf } from './block-text';
+import { hasEmptyOptions, promptOf, withoutPrintedNumber } from './block-text';
 import type { QuestionEdit, Readiness } from './import-draft';
 import { readiness } from './import-draft';
 import { KnowledgePick } from './KnowledgePick';
@@ -53,7 +53,7 @@ export function BlockLine({
     lowConfidence || emptyOptions ? (
       <p className="rc-line-note">
         {lowConfidence && <span>这道题认得把握不高，对照原页看一下。</span>}
-        {emptyOptions && <span>选项是图，这里显示不出来，对照原页看。</span>}
+        {emptyOptions && <span>选项的文字没读出来，可能是图，对照原页看。</span>}
       </p>
     ) : null;
   const first = block.page_spans?.[0];
@@ -79,7 +79,7 @@ export function BlockLine({
         </span>
         <div className="rc-line-main">
           <MathMarkdown className="rc-line-text">
-            {promptOf(block) || '（没认出文字）'}
+            {withoutPrintedNumber(promptOf(block), block) || '（没认出文字）'}
           </MathMarkdown>
           {notes}
           <div className="rc-line-tools">
@@ -126,7 +126,9 @@ export function BlockLine({
             onChange={(e) => onEdit({ prompt: e.target.value })}
           />
         ) : (
-          <MathMarkdown className="rc-line-text">{edit.prompt || '（没认出文字）'}</MathMarkdown>
+          <MathMarkdown className="rc-line-text">
+            {withoutPrintedNumber(edit.prompt, block) || '（没认出文字）'}
+          </MathMarkdown>
         )}
         {notes}
         {!edit.skip && (

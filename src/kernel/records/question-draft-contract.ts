@@ -35,6 +35,7 @@ import {
   isDraftDocumentV2,
 } from '@/core/schema/question-draft';
 import { contractIntegrityDigest } from '@/kernel/records/assessment-normalization';
+import { questionMaterialPlotParamIssues } from '@/kernel/records/question-material-gate';
 
 // v2 draft document ↔ four-layer assessment contract.
 //
@@ -57,7 +58,8 @@ export interface DraftConversionIssue {
     | 'duplicate_id'
     | 'unresolved_material_ref'
     | 'unresolved_key_item'
-    | 'rule_invalid';
+    | 'rule_invalid'
+    | 'question_material_plot_params';
   part_id?: string;
   unit_id?: string;
   detail: string;
@@ -357,6 +359,7 @@ export function draftDocumentToContract(
   if (new Set(doc.materials.map((m) => m.material_id)).size !== doc.materials.length) {
     issues.push({ code: 'duplicate_id', detail: 'duplicate material_id in document' });
   }
+  issues.push(...questionMaterialPlotParamIssues(doc));
   const partIds = new Set<string>();
   const unitIds = new Set<string>();
   const slotIds = new Set<string>();
