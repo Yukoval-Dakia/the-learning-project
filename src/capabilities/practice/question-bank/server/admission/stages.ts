@@ -487,7 +487,9 @@ export function admissionStageRunner(input: {
             backend: 'pg-boss',
             deliveryId: input.deliveryId,
             generation: 0,
-            leaseExpiresAt: new Date(Date.now() + 15 * 60_000),
+            // A stage lease must outlast one solve attempt (20min); otherwise a live solve
+            // is settled as expired. 25min keeps that margin; crash recovery pays the wait.
+            leaseExpiresAt: new Date(Date.now() + 25 * 60_000),
           },
         );
         if (reservation.kind !== 'winner')
