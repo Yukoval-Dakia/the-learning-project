@@ -5,7 +5,11 @@ import {
   validateScoringBasis,
   validateStructure,
 } from '../schema/assessment';
-import { extractAnswerHead } from '../schema/judge-routing';
+import {
+  extractAnswerHead,
+  normalizeTextKeyAnswer,
+  numericAnswerWithinTolerance,
+} from '../schema/assessment/answer-compare';
 import { canonicalHash } from './canonical';
 import type { RevisionRegistryEntry } from './revision-registry';
 import type { RawEventRow, RecordClassification } from './types';
@@ -197,25 +201,6 @@ export function verifySnapshotTransformation(
   return issues;
 }
 
-/** text_key.normalization 的冻结版本的本地镜像（与 evaluation.ts 归一化同语义）。 */
-function normalizeReferenceText(
-  value: string,
-  mode: 'exact' | 'trim' | 'trim_casefold_nfc' | 'answer_head' | 'answer_head@2',
-): string {
-  switch (mode) {
-    case 'exact':
-      return value;
-    case 'trim':
-      return value.trim();
-    case 'trim_casefold_nfc':
-      return value.normalize('NFKC').trim().toLowerCase();
-    case 'answer_head@2':
-      return extractAnswerHead(value, mode).trim().toLowerCase();
-    case 'answer_head':
-      return extractAnswerHead(value).normalize('NFKC').trim().toLowerCase();
-  }
-}
-
 /** 参考答案首部形态：选项字母/label 前缀（含 （C） / C. / C． 标注）。 */
 const OPTION_MARKER_RE = /^[（(]?\s*([A-Za-z]{1,6})\s*[)）.．、:：]?\s*/;
 const NUMERIC_HEAD_RE = /^[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?/;
@@ -245,9 +230,9 @@ function verifySnapshotReference(
   const slot = contract.response_spec.slots.find((candidate) => candidate.slot_id === slotId);
 
   if (criterion.kind === 'text_key') {
-    const given = normalizeReferenceText(view.reference_md, criterion.normalization);
+    const given = normalizeTextKeyAnswer(view.reference_md, criterion.normalization);
     const accepted = criterion.accepted_texts.map((t) =>
-      normalizeReferenceText(t, criterion.normalization),
+      normalizeTextKeyAnswer(t, criterion.normalization),
     );
     if (!accepted.includes(given)) {
       issues.push({
@@ -325,13 +310,11 @@ function verifySnapshotReference(
     if (match === null) return issues; // 非数值首部无法机械比对 —— 不判
     const value = Number.parseFloat(match[0]);
     if (!Number.isFinite(value)) return issues;
-    const diff = Math.abs(value - criterion.expected);
-    const inTolerance =
-      criterion.tolerance.kind === 'absolute'
-        ? diff <= criterion.tolerance.value
-        : criterion.expected === 0
-          ? diff === 0
-          : diff / Math.abs(criterion.expected) <= criterion.tolerance.ratio;
+    const inTolerance = numericAnswerWithinTolerance(
+      value,
+      criterion.expected,
+      criterion.tolerance,
+    );
     if (!inTolerance) {
       issues.push({
         detail: `参考答案不一致：snapshot 数值 ${value} 超出 scoring unit '${scoringUnitId}' 期望 ${criterion.expected}±容差 —— 同题面异答案快照不得绑定`,
