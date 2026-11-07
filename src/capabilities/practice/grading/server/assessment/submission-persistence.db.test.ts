@@ -238,6 +238,9 @@ describe('reveal_answer assistance recording', () => {
     expect(await revealAnswerTool.execute(toolCtx, { question_id: pub.groupId })).toMatchObject({
       status: 'no_open_issuance',
     });
+    expect(await revealAnswerTool.execute(toolCtx, { question_id: 'never-seen' })).toMatchObject({
+      status: 'unknown_question',
+    });
 
     const issued = await issueAssessment(db, { group_id: pub.groupId });
     if (issued.status !== 'issued') throw new Error(issued.status);
@@ -249,6 +252,8 @@ describe('reveal_answer assistance recording', () => {
     });
     if (revealed.status !== 'revealed') throw new Error(revealed.status);
     expect(revealed.reference_md).toContain('B');
+    expect(revealed.prompt_md.length).toBeGreaterThan(0);
+    expect(revealed.practice_dto.issuance_id).toBe(issued.issuance.issuance_id);
 
     const exposures = await db
       .select()
@@ -264,6 +269,34 @@ describe('reveal_answer assistance recording', () => {
     expect(exposures[0].payload).toMatchObject({ kind: 'solution', impact: 'answer_help' });
     expect(await snapshotIssuanceAssistance(db, issued.issuance.issuance_id)).toMatchObject({
       status: 'assisted',
+    });
+
+    const secondReveal = await revealAnswerTool.execute(toolCtx, {
+      question_id: issued.issuance.binding.part_ids[0],
+    });
+    expect(secondReveal).toMatchObject({
+      status: 'revealed',
+      issuance_id: issued.issuance.issuance_id,
+    });
+    expect(
+      (
+        await db
+          .select()
+          .from(event)
+          .where(
+            and(
+              eq(event.action, STUDY_ASSISTANCE_ACTION),
+              eq(event.subject_kind, 'issuance'),
+              eq(event.subject_id, issued.issuance.issuance_id),
+            ),
+          )
+      ).length,
+    ).toBe(1);
+
+    const secondIssued = await issueAssessment(db, { group_id: pub.groupId });
+    if (secondIssued.status !== 'issued') throw new Error(secondIssued.status);
+    expect(await revealAnswerTool.execute(toolCtx, { question_id: pub.groupId })).toMatchObject({
+      status: 'ambiguous',
     });
   });
 });

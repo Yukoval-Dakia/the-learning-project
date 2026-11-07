@@ -329,6 +329,7 @@ const PRIVATE_LAYER_READERS = new Set([
   'copilot_chip',
   // 备题/校正/判分与维护面（author + maintenance 面 → private）。
   'ingestion_block_edit',
+  'question_preparer',
   'supply_executor',
   'quiz_verify',
   'judge',
