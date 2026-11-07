@@ -5,12 +5,13 @@
 
 import { sql } from 'drizzle-orm';
 import { mergeExactQuestionDuplicateKnowledgeIds } from '@/capabilities/practice/public';
+import { isExactCapableReference } from '@/core/schema/assessment/answer-compare';
 import {
   DifficultyEvidence,
   type DifficultyEvidenceT,
   buildProducerDifficultyEvidence,
 } from '@/core/schema/difficulty-evidence';
-import { defaultJudgeKindForQuestion, isExactCapableReference } from '@/core/schema/judge-routing';
+import { defaultJudgeKindForQuestion } from '@/core/schema/judge-routing';
 import { type WebSourcedProvenanceT, webSourcedMetadata } from '@/core/schema/provenance';
 import type { SourcedQuestionT } from '@/core/schema/sourcing';
 import type { Tx } from '@/db/client';

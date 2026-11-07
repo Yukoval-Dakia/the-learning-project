@@ -1,6 +1,7 @@
 // Converts frozen contract slots and preserves private answers as adjudication evidence.
 // Deterministic typed criteria are author evidence; independent solves may correct them.
 
+import { CURRENT_BLANK_NORMALIZATION } from '@/core/schema/assessment/answer-compare';
 import { isPublicSharedMaterial } from '@/core/schema/assessment/materials';
 import type { ResponseSlotT } from '@/core/schema/assessment/response';
 import type { BlankNormalizationT, ScoringUnitCriterionT } from '@/core/schema/assessment/scoring';
@@ -12,16 +13,6 @@ import type {
   QuestionAdmissionDefinition,
 } from './contract';
 
-export const DEFAULT_BLANK_NORMALIZATION: BlankNormalizationT = {
-  version: 'blank-norm@2',
-  nfkc: true,
-  trim_outer: true,
-  casefold: false,
-  collapse_whitespace: true,
-  ignore_punctuation: false,
-  character_variants: [],
-};
-
 /** text_key 的 legacy 归一化档位 → 版本化 BlankNormalization（answer_head 的
  * 抽头步骤只对 reference 做过；作答侧同语义 = nfkc+trim+casefold）。 */
 export function mapLegacyTextNormalization(
@@ -30,22 +21,22 @@ export function mapLegacyTextNormalization(
   switch (normalization) {
     case 'exact':
       return {
-        ...DEFAULT_BLANK_NORMALIZATION,
+        ...CURRENT_BLANK_NORMALIZATION,
         nfkc: false,
         trim_outer: false,
         collapse_whitespace: false,
       };
     case 'trim':
       return {
-        ...DEFAULT_BLANK_NORMALIZATION,
+        ...CURRENT_BLANK_NORMALIZATION,
         nfkc: false,
         collapse_whitespace: false,
       };
     case 'trim_casefold_nfc':
-      return { ...DEFAULT_BLANK_NORMALIZATION, version: 'blank-norm@2', casefold: true };
+      return { ...CURRENT_BLANK_NORMALIZATION, casefold: true };
     case 'answer_head':
     case 'answer_head@2':
-      return { ...DEFAULT_BLANK_NORMALIZATION, version: 'blank-norm@2', casefold: true };
+      return { ...CURRENT_BLANK_NORMALIZATION, casefold: true };
   }
 }
 
@@ -200,7 +191,7 @@ function seedFor(
 
 function blankNormalizationFor(seed: ScoringUnitCriterionT | null): BlankNormalizationT | null {
   if (seed?.kind === 'blank_key' && seed.key.kind === 'text') return seed.key.normalization;
-  return DEFAULT_BLANK_NORMALIZATION;
+  return CURRENT_BLANK_NORMALIZATION;
 }
 
 /**
