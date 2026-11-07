@@ -70,7 +70,8 @@ const CIRCLED_DIGITS = '①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱�
 function withoutOwnMark(label: string, marker: string): string {
   const text = label.trimStart();
   const circled = CIRCLED_DIGITS.indexOf(text.charAt(0));
-  const typed = text.match(/^[(（]?([0-9]+|[A-Za-z]{1,2})[)）.．、]/);
+  // An ASCII dot only marks when no letter or digit follows: 「1.5 mol」 and 「A.B」 are content.
+  const typed = text.match(/^[(（]?([0-9]+|[A-Za-z]{1,2})(?:[)）．、]|\.(?![0-9A-Za-z]))/);
   const own = circled >= 0 ? String(circled + 1) : typed?.[1]?.toUpperCase();
   if (own !== marker.toUpperCase()) return label;
   const rest = text.slice(circled >= 0 ? 1 : (typed?.[0].length ?? 0)).trimStart();
