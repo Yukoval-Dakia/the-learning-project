@@ -18,12 +18,6 @@ import { runAutoEnrollForSession } from './auto-enroll';
 import { enrollCapturedBlock } from './enroll';
 import { revertAutoEnrolledBlock } from './revert-auto-enroll';
 
-const highConfidenceTagging = async () => ({
-  suggestions: [{ knowledge_id: 'k1', confidence: 0.95, reasoning: 'ok' }],
-  overall_confidence: 0.95,
-  reasoning: 'high',
-});
-
 const FAILURE_DRAFT: MistakeEnrollOutputT = {
   wrong_answer: 'failure',
   question_type: 'computation',
@@ -139,11 +133,9 @@ async function seedAndAutoEnroll(
     db,
     sessionId,
     subjectId: 'yuwen',
-    env: { [FLAG]: 'true' },
-    // P3 (YUK-489): the ENROLL path now tags via the unified `tagKnowledge` (embedding
-    // match-or-propose), not runTaggingFn — inject a stub that MATCHes the seeded KC so no real
-    // embedding model is called (runTaggingFn is OBSERVE-only now; kept harmless for parity).
-    runTaggingFn: highConfidenceTagging,
+    // P3 (YUK-489): the ENROLL path tags via the unified `tagKnowledge` (embedding
+    // match-or-propose); inject a stub that MATCHes the seeded KC so no real embedding
+    // model is called.
     tagKnowledgeFn: async () => ({ kind: 'match' as const, knowledge_ids: ['k1'] }),
   });
   expect(result.enrolled).toBe(1);
