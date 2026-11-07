@@ -133,7 +133,6 @@ const server = {
   WAVE6_TRIGGER_MARK_WRONG_ENABLED: optionalString,
   WAVE6_TRIGGER_MASTERY_ENABLED: optionalString,
   WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED: optionalString,
-  WORKFLOW_JUDGE_AUTO_ENROLL_THRESHOLD: optionalString,
   WORKFLOW_JUDGE_OBSERVE_ENABLED: optionalString,
   WORKFLOW_JUDGE_STUDENT_ANSWER_GRADING_ENABLED: optionalString,
   // Print-page origin for worksheet_render (worker side); production compose sets the
