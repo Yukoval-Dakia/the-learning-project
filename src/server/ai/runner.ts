@@ -892,6 +892,8 @@ async function runTaskImpl(
         maxAttempts,
         firstAttemptStartedAt,
         error: boundError,
+        transport: lifecycle.armedTransport(),
+        attemptCostUsd: lifecycle.costTruth.amountUsd ?? null,
       });
       // Settle the full truth before another provider call is allowed. The
       // actual-retry marker is a later, conservative transition performed only

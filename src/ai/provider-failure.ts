@@ -131,15 +131,41 @@ export function boundTerminalHttpStatus(
   return null;
 }
 
-/** Provider failures that are positively proven safe to re-issue. */
+/** Provider failures that are positively proven — naming the refusal, not its bound. */
 export type ProviderTransientClass =
-  /** Bound HTTP 429 — the provider fully rejected the call before billing. */
+  /** Bound HTTP 429 naming short congestion — Retry-After wins the delay. */
   | 'rate_limited'
-  /** Bound HTTP 5xx, or a pi bad-gateway fault — a completed rejection. */
+  /**
+   * Bound HTTP 429 whose provider body carries an account-level quota signature —
+   * a days-scale wait the in-run budget cannot outlast. Never resent; the caller
+   * maps it to its durable wait (admission quota waiting / sealed help exit).
+   */
+  | 'quota_exhausted'
+  /** Bound HTTP 5xx — a completed, pre-billing rejection. */
   | 'server_error'
+  /** A pi bad-gateway fault — a completed rejection. */
   | 'bad_gateway'
+  /** Bound HTTP 408/409 — the provider rejected without processing the call. */
+  | 'request_rejected'
   /** Transport proves the request never reached the wire — nothing to bill. */
   | 'not_sent';
+
+/**
+ * Provider-emitted quota/usage-limit code words. A bare 429 stays congestion
+ * (resendable); only the provider's own signature in the failure evidence
+ * promotes it to quota_exhausted — "rate limit"/"too many requests" prose must
+ * not match, and absence of a signature never means quota.
+ */
+const PROVIDER_QUOTA_LIMIT_SIGNATURE =
+  /GoUsageLimitError|usage[_ -]?limit|quota[_ -]?exceeded|billing[_ -]?limit|insufficient[_ -]?(?:quota|balance|credit)|(?:weekly|monthly|daily|hourly)[_ -]?(?:usage|quota|limit)/i;
+
+/**
+ * May a verdict's class re-issue the request inside the bounded budget? Every
+ * class except quota_exhausted is a complete, provably unbilled refusal.
+ */
+export function providerTransientResendable(cls: ProviderTransientClass): boolean {
+  return cls !== 'quota_exhausted';
+}
 
 export interface ProviderTransientVerdict {
   readonly class: ProviderTransientClass;
@@ -162,19 +188,40 @@ export function providerTransientVerdict(input: {
 }): ProviderTransientVerdict | undefined {
   const error = input.error;
   if (!(error instanceof AgentRunError)) return undefined;
-  if (error.helpProviderFault?.kind === 'bad_gateway') return { class: 'bad_gateway' };
   const bound = boundTerminalHttpStatus(error, input.transport);
+  const retryAfter =
+    error.providerFailure?.http_status === bound &&
+    error.providerFailure.retry_after_ms !== undefined
+      ? { retryAfterMs: error.providerFailure.retry_after_ms }
+      : {};
+  if (error.helpProviderFault?.kind === 'bad_gateway')
+    return { class: 'bad_gateway', httpStatus: 502, ...retryAfter };
   if (bound === 429) {
+    const quotaSigned = error.errors.some((entry) => PROVIDER_QUOTA_LIMIT_SIGNATURE.test(entry));
     return {
-      class: 'rate_limited',
+      class: quotaSigned ? 'quota_exhausted' : 'rate_limited',
       httpStatus: 429,
-      ...(error.providerFailure?.http_status === bound &&
-      error.providerFailure.retry_after_ms !== undefined
-        ? { retryAfterMs: error.providerFailure.retry_after_ms }
-        : {}),
+      ...retryAfter,
     };
   }
-  if (bound != null && bound >= 500) return { class: 'server_error', httpStatus: bound };
+  if (bound === 408 || bound === 409)
+    return { class: 'request_rejected', httpStatus: bound, ...retryAfter };
+  if (bound != null && bound >= 500)
+    return { class: 'server_error', httpStatus: bound, ...retryAfter };
   if (input.transport?.send_state === 'not_sent') return { class: 'not_sent' };
   return undefined;
+}
+
+/**
+ * Whitelist-only transient predicate — the error-only projection of
+ * `providerTransientVerdict`. Anything not an AgentRunError (budget aborts,
+ * config errors, unknown throws) is permanent by default; a verdict class that
+ * never resends (quota_exhausted) is likewise not transient for the caller.
+ */
+export function isTransientAgentFailure(
+  err: unknown,
+  transport?: ProviderTransportEvidence,
+): boolean {
+  const verdict = providerTransientVerdict({ error: err, transport });
+  return verdict !== undefined && providerTransientResendable(verdict.class);
 }

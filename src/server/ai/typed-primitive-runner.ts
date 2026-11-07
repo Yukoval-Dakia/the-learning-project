@@ -18,7 +18,8 @@
 // before each wire attempt and unknown cost counts as the reserve.
 
 import type { ZodTypeAny } from 'zod';
-import { AgentRunError, RETRY_ELAPSED_CAP_MS, isTransientAgentFailure } from '@/ai/agent-run-error';
+import { AgentRunError, RETRY_ELAPSED_CAP_MS } from '@/ai/agent-run-error';
+import { isTransientAgentFailure } from '@/ai/provider-failure';
 import type { LifecycleResult, AiTaskUsage as LifecycleUsage } from '@/ai/task-result';
 import type { TaskDefinition } from '@/ai/task-spec';
 import { type TaskKind, resolveTaskBudget, tasks } from '@/capabilities/task-registry';
@@ -275,8 +276,10 @@ export async function runTypedPrimitiveTask<Output = unknown>(
                   }
                   const text = await response.text();
                   if (!response.ok) {
-                    // Non-transient statuses are permanent; isTransientAgentFailure
-                    // whitelists only null/429/5xx. No blind retry.
+                    // This lane's single request was rejected with a bound status —
+                    // nothing reached billing, so the settled row must record the
+                    // unbilled zero, not a conservative estimate.
+                    lifecycle.noteUnbilledProviderRejection();
                     const retryAfterMs = readRetryAfterMs(response.headers);
                     throw new AgentRunError({
                       kind,
@@ -421,6 +424,7 @@ export async function runTypedPrimitiveTask<Output = unknown>(
             kind,
             taskRunId: lifecycle.taskRunId,
             aborted: lifecycle.aborted,
+            costUsd: lifecycle.costUsd,
           });
           lastErr = boundError;
           const settled = await lifecycle.finishFailure(boundError, 'error');
@@ -430,6 +434,8 @@ export async function runTypedPrimitiveTask<Output = unknown>(
             maxAttempts,
             firstAttemptStartedAt,
             error: boundError,
+            transport: lifecycle.armedTransport(),
+            attemptCostUsd: lifecycle.costTruth.amountUsd ?? null,
           });
           if (!retry.willRetry) throw boundError;
           retrySource = lifecycle;

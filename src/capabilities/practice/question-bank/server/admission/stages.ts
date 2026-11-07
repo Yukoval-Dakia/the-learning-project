@@ -624,9 +624,11 @@ export function admissionStageRunner(input: {
             } else if (plan !== undefined && error instanceof AgentRunError) {
               receipt = {
                 kind: 'transient',
-                ...(plan.verdict.class === 'not_sent'
-                  ? { retry_class: plan.verdict.class, retry_delay_ms: plan.delayMs }
-                  : {}),
+                // Every class rides the receipt: replay reads it directly instead
+                // of re-deriving from the frozen error, and the not_sent ledger
+                // still owns its independent delay accounting.
+                retry_class: plan.verdict.class,
+                ...(plan.verdict.class === 'not_sent' ? { retry_delay_ms: plan.delayMs } : {}),
                 waited_ms: priorWaitedMs + plan.delayMs,
                 retry_not_before: new Date(Date.now() + plan.delayMs).toISOString(),
                 fields: {

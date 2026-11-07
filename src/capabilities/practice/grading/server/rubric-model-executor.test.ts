@@ -141,23 +141,18 @@ describe('rubric timeout and timeout cost', () => {
     expect(overrideArmed).toBe(240_000);
   });
 
-  // @invariant grading: a rubric timeout is retried once when another estimated attempt still fits under the cap, and that timeout is not agreement
-  // @fails-if a timeout never retries, a third call is issued, or the timed-out attempt's reservation is returned as known cost on the scored retry
-  it('retries one timeout when the estimated attempt still fits under the cap', async () => {
+  // @invariant grading: a pre-wire timeout abort provably sent nothing, so it retries once while one more estimated attempt fits under the cap
+  // @fails-if a pre-submission abort never retries, a third call is issued, or the timed-out attempt's reservation is returned as known cost on the scored retry
+  it('retries one pre-wire timeout abort when the estimated attempt still fits under the cap', async () => {
     const cap = ASSESSMENT_RUBRIC_ESTIMATED_ATTEMPT_MICROS * 2;
     const calls: string[] = [];
     const executor = createRubricModelExecutor({
       db: {} as never,
       deadlineAt: Date.now() + assessmentRubricInvocationWindowMs(180_000) + 5_000,
       maxCostUsdMicros: cap,
-      runTask: async (_kind, _input, ctx) => {
+      runTask: async (_kind, _input, _ctx) => {
         const id = calls.length === 0 ? 'run-timeout' : 'run-retry';
         calls.push(id);
-        await ctx.beforeProviderQuery?.({
-          taskRunId: id,
-          provider: 'opencode-go',
-          model: 'mimo-v2.6-pro',
-        });
         if (calls.length === 1) throw timeoutError(id);
         return scoredResult(id);
       },
@@ -171,8 +166,35 @@ describe('rubric timeout and timeout cost', () => {
     expect(outcome.run_refs).toEqual(['run-timeout', 'run-retry']);
   });
 
-  // @invariant grading: a rubric timeout whose next estimated attempt would exceed the cap is a non-pass with unknown cost
-  // @fails-if a second paid call starts after the estimate no longer fits, or the reserved cap is returned as cost_usd_micros
+  // @invariant grading: a timeout after the provider query started is never resent — the sent attempt may still bill
+  // @fails-if a second runTask call starts after a post-submission timeout, or the uncertain attempt's cost is published as known
+  it('never resends a timeout once the provider query was submitted', async () => {
+    const cap = ASSESSMENT_RUBRIC_ESTIMATED_ATTEMPT_MICROS * 2;
+    const calls: string[] = [];
+    const executor = createRubricModelExecutor({
+      db: {} as never,
+      deadlineAt: Date.now() + assessmentRubricInvocationWindowMs(180_000) + 5_000,
+      maxCostUsdMicros: cap,
+      runTask: async (_kind, _input, ctx) => {
+        calls.push('run-timeout');
+        await ctx.beforeProviderQuery?.({
+          taskRunId: 'run-timeout',
+          provider: 'opencode-go',
+          model: 'mimo-v2.6-pro',
+        });
+        throw timeoutError('run-timeout');
+      },
+    });
+    const outcome = await executor(request(cap));
+    expect(calls).toEqual(['run-timeout']);
+    expect(outcome.kind).toBe('pending');
+    if (outcome.kind !== 'pending') return;
+    expect(outcome.pending.reason).toBe('infra_failure');
+    expect(outcome.cost_usd_micros).toBeUndefined();
+  });
+
+  // @invariant grading: a rubric pre-wire timeout whose next estimated attempt would exceed the cap is a non-pass with unknown cost
+  // @fails-if a second call starts after the estimate no longer fits, or the reserved cap is returned as cost_usd_micros
   it('does not retry a timeout the cap cannot pay for, and does not book the reservation as known cost', async () => {
     const cap = ASSESSMENT_RUBRIC_ESTIMATED_ATTEMPT_MICROS;
     let calls = 0;
@@ -180,13 +202,8 @@ describe('rubric timeout and timeout cost', () => {
       db: {} as never,
       deadlineAt: Date.now() + assessmentRubricInvocationWindowMs(180_000) + 5_000,
       maxCostUsdMicros: cap,
-      runTask: async (_kind, _input, ctx) => {
+      runTask: async (_kind, _input, _ctx) => {
         calls += 1;
-        await ctx.beforeProviderQuery?.({
-          taskRunId: 'run-timeout',
-          provider: 'opencode-go',
-          model: 'mimo-v2.6-pro',
-        });
         throw timeoutError('run-timeout');
       },
     });
