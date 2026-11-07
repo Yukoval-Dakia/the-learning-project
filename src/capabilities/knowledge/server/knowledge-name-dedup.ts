@@ -16,11 +16,16 @@ export interface SameNameKnowledgeScope {
   readonly parentId: string | null;
   /** Root proposals only: the sanitized domain the root anchors. */
   readonly domain?: string;
+  /** Restrict hits to one role: the authoring gate passes 'kc' so a reused
+   * node_id is always an attachable knowledge point — never a container,
+   * goal or seed root. The accept guard omits this so any same-name sibling
+   * blocks a duplicate create. */
+  readonly role?: 'kc' | 'goal' | 'container';
 }
 
 /**
  * Live same-scope same-name nodes, oldest first. Normalization is the shared
- * NFKC+trim+lowercase rule; there is no substring or semantic matching.
+ * trim+NFC rule; there is no substring or semantic matching.
  */
 export async function findLiveSameNameKnowledgeNodes(
   db: DbLike,
@@ -37,8 +42,13 @@ export async function findLiveSameNameKnowledgeNodes(
             isNull(knowledge.parent_id),
             eq(knowledge.domain, scope.domain ?? ''),
             isNull(knowledge.archived_at),
+            ...(scope.role ? [eq(knowledge.role, scope.role)] : []),
           )
-        : and(eq(knowledge.parent_id, scope.parentId), isNull(knowledge.archived_at)),
+        : and(
+            eq(knowledge.parent_id, scope.parentId),
+            isNull(knowledge.archived_at),
+            ...(scope.role ? [eq(knowledge.role, scope.role)] : []),
+          ),
     )
     .orderBy(knowledge.created_at, knowledge.id);
   return rows.filter((row) => normalizeKnowledgeNodeName(row.name) === normalized);

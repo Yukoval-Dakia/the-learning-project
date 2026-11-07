@@ -6,13 +6,17 @@
 // multiple matches skip without guessing; semantic similarity is out of scope
 // by design.
 //
-// Apply mode serializes under the shared learning-state write lock and follows
-// the duplicate-merge precedent: question row FOR UPDATE first, re-check the
-// root-attached predicate and the topic under the row lock, then FOR SHARE the
-// matched node so a concurrent archive/undo cannot leave the question pointing
-// at a dead id. Each run writes a QUESTION_EDIT_ACTION event with before/after
-// attribution; draft questions never enroll scheduling. Report mode performs
-// no writes — the flag gate is checked by the job wrapper, not inside the move.
+// Apply mode serializes under the shared learning-state write lock, then
+// FOR SHAREs the matched node before the question row FOR UPDATE — the same
+// node→question order the retract path uses, so a concurrent archive/undo
+// cannot leave the question pointing at a dead id. Only version=0 rows are
+// candidates: every edit path bumps question.version, so an untouched row is
+// the provable "no human ever chose this attachment" marker, and the move's
+// own version bump makes it a once-ever relocation. Each run writes a
+// QUESTION_EDIT_ACTION event with before/after attribution (the undo path
+// later uses it as the auto-ownership proof); draft questions never enroll
+// scheduling. Report mode performs no writes — the flag gate is checked by
+// the job wrapper, not inside the move.
 
 import { createId } from '@paralleldrive/cuid2';
 import { and, asc, eq, isNull, sql } from 'drizzle-orm';
@@ -117,9 +121,15 @@ function rootSubject(rootId: string): string | null {
 }
 
 async function scanCandidates(db: Db): Promise<{ candidates: CandidateRow[]; truncated: boolean }> {
-  // Exact-one-element knowledge_ids + a recorded learner_topic is the cheapest
-  // possible SQL prefilter; the root-id shape and normalized topic are checked
-  // in JS where the normalization rule lives.
+  // The full root-attached predicate lives in SQL: single-element knowledge_ids
+  // matching the synthetic subject-root shape, a recorded learner_topic, and
+  // version=0 (no human ever touched the row — see the module header). Moved
+  // questions leave this set entirely, so the scan page is not held by them.
+  // random() ordering is the fairness mechanism: questions that can never
+  // match (no live node / ambiguous name) stay in the set, and a fixed id
+  // order would let enough of them starve every later candidate out of the
+  // 500-row page. Stateless rotation gives each candidate an equal share of
+  // every run without cursor bookkeeping.
   const rows = await db
     .select({
       id: question.id,
@@ -132,10 +142,12 @@ async function scanCandidates(db: Db): Promise<{ candidates: CandidateRow[]; tru
     .where(
       and(
         sql`jsonb_array_length(${question.knowledge_ids}) = 1`,
+        sql`${question.knowledge_ids} ->> 0 ~ '^seed:[^:]+:root$'`,
+        eq(question.version, 0),
         sql`${question.metadata} -> 'teaching_draft' ->> 'learner_topic' is not null`,
       ),
     )
-    .orderBy(asc(question.id))
+    .orderBy(sql`random()`)
     .limit(REFILE_SCAN_LIMIT + 1);
   const truncated = rows.length > REFILE_SCAN_LIMIT;
   const candidates: CandidateRow[] = [];
@@ -162,37 +174,6 @@ function countStatuses(rows: RefileRow[]): Record<RefileStatus, number> {
   };
   for (const row of rows) counts[row.status] += 1;
   return counts;
-}
-
-/** Report-only pass: classify every scanned candidate, write nothing. */
-export async function collectRootPlacementReport(db: Db): Promise<RefileReport> {
-  const { candidates, truncated } = await scanCandidates(db);
-  const index = await buildLiveDomainIndex(db);
-  const rows: RefileRow[] = candidates.map((candidate) => {
-    const matches = index.get(candidate.subject)?.get(candidate.normTopic) ?? [];
-    const matchedNodeIds = matches.map((match) => match.id).sort();
-    return {
-      question_id: candidate.id,
-      learner_topic: candidate.learnerTopic,
-      root_id: candidate.rootId,
-      subject: candidate.subject,
-      matched_node_ids: matchedNodeIds,
-      matched_node_name: matches.length === 1 ? (matches[0]?.name ?? null) : null,
-      status:
-        matches.length === 1
-          ? 'would_move'
-          : matches.length === 0
-            ? 'skip:no_match'
-            : 'skip:ambiguous',
-    };
-  });
-  return {
-    mode: 'report',
-    scanned: candidates.length,
-    truncated,
-    counts: countStatuses(rows),
-    rows,
-  };
 }
 
 async function applyOneMove(
@@ -233,6 +214,12 @@ async function applyOneMove(
     .limit(1)
     .for('update');
   if (row == null) return { status: 'skip:changed', detail: 'question gone' };
+  // Any edit — learner, editor, an earlier move — bumps version; a nonzero
+  // version means a human may have chosen this attachment and is never
+  // overridden.
+  if (row.version !== 0) {
+    return { status: 'skip:changed', detail: 'row touched' };
+  }
   // Edits — learner, editor, an earlier move — must stick: only rows still
   // root-attached in the same tree are eligible.
   if (row.knowledgeIds.length !== 1 || row.knowledgeIds[0] !== candidate.rootId) {

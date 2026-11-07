@@ -31,11 +31,15 @@ import {
 } from '@/db/schema/knowledge';
 import { goal, placement_starter_claim } from '@/db/schema/learner-state';
 import { answer, learning_item, learning_record } from '@/db/schema/learning';
-import { question } from '@/db/schema/question';
 import { getCorrectionStatuses } from '@/kernel/events';
 import { batchResolveAncestorIds } from '@/kernel/read-models/knowledge-tree';
 import { findExistingRateEvent } from './applier-helpers';
 import { PROPOSAL_AUTOAPPLY_ACTION } from './auto-apply';
+import {
+  isAutoOwnedAttachment,
+  loadRefileProofMap,
+  selectNodeAttachedQuestions,
+} from './node-question-attachments';
 
 type DbLike = Db | Tx;
 
@@ -498,24 +502,29 @@ async function classifyKnowledgeNodes(
     .groupBy(knowledge.parent_id)) as Array<{ nodeId: string; count: number }>;
   const childCounts = new Map(childRows.map((row) => [row.nodeId, Number(row.count)]));
 
-  const questionRows = (await db
-    .select({
-      nodeId: knowledge.id,
-      count: sql<number>`count(*)::int`,
-      nonDraft: sql<number>`count(*) filter (where ${question.metadata} -> 'teaching_draft' is null)::int`,
-    })
-    .from(knowledge)
-    .innerJoin(question, sql`${question.knowledge_ids} @> jsonb_build_array(${knowledge.id})`)
-    .where(inArray(knowledge.id, nodeIds))
-    .groupBy(knowledge.id)) as Array<{ nodeId: string; count: number; nonDraft: number }>;
-  const questionCounts = new Map(questionRows.map((row) => [row.nodeId, Number(row.count)]));
-  const foreignQuestionCounts = new Map(
-    questionRows.map((row) => [row.nodeId, Number(row.nonDraft)]),
-  );
+  // Auto-ownership replaces birth-metadata counting: an attachment blocks the
+  // undo unless it is provably still the automation's own placement — the same
+  // rule the retract applier enforces, so the card verdict and the backend
+  // cannot disagree.
+  const questionCounts = new Map<string, number>();
+  const foreignQuestionCounts = new Map<string, number>();
+  for (const nodeId of nodeIds) {
+    const attached = await selectNodeAttachedQuestions(db, nodeId);
+    const proofs = await loadRefileProofMap(
+      db,
+      nodeId,
+      attached.map((row) => row.id),
+    );
+    questionCounts.set(nodeId, attached.length);
+    foreignQuestionCounts.set(
+      nodeId,
+      attached.filter((row) => !isAutoOwnedAttachment(row, nodeId, proofs)).length,
+    );
+  }
 
-  // Companion-authored attachments (teaching_draft provenance) return to the
-  // tree's live root on retraction instead of blocking the undo. Nodes whose
-  // only questions are companion-authored still need somewhere to send them:
+  // Auto-owned attachments (companion teaching drafts, refiled moves) return to
+  // the tree's live root on retraction instead of blocking the undo. Nodes
+  // whose only questions are auto-owned still need somewhere to send them:
   // the ancestor walk must end at a live root row.
   const refileRootByNode = new Map<string, string>();
   const refileCandidateIds = checks

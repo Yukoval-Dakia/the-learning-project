@@ -6,14 +6,20 @@
 // inside the same transaction. The node is archived at its CURRENT valid version, never rewound
 // to the birth version, so later legitimate edits survive.
 
-import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull } from 'drizzle-orm';
 import { newId } from '@/core/ids';
 import { QUESTION_EDIT_ACTION } from '@/core/schema/event/experimental';
 import type { Tx } from '@/db/client';
 import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
 import { event, knowledge, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { ApiError } from '@/kernel/http';
 import { findExistingRateEvent } from '@/kernel/proposals/applier-helpers';
+import {
+  isAutoOwnedAttachment,
+  loadRefileProofMap,
+  selectNodeAttachedQuestions,
+} from '@/kernel/proposals/node-question-attachments';
 import { batchResolveAncestorIds } from '@/kernel/read-models/knowledge-tree';
 import { projectKnowledgeNodeGuarded } from '@/kernel/records/knowledge-node-materialization';
 import { type RetiredKnowledgeEdge, prepareKnowledgeArchive } from './proposals';
@@ -176,16 +182,25 @@ export async function retractKnowledgeCreate(
       )[0]?.id
     : undefined;
 
-  const refs = await tx
-    .select({
-      id: question.id,
-      knowledgeIds: question.knowledge_ids,
-      version: question.version,
-    })
-    .from(question)
-    .where(sql`${question.knowledge_ids} @> ${JSON.stringify([nodeId])}::jsonb`)
-    .orderBy(asc(question.id))
-    .for('update');
+  // Only attachments the automation itself placed may be rewritten. A question
+  // a learner attached by hand — or edited after the automation moved it —
+  // blocks the whole retract instead of being silently re-rooted; every
+  // retract entry (inbox single, batch undo) lands here so the guard cannot
+  // be bypassed by skipping the batch classifier.
+  const refs = await selectNodeAttachedQuestions(tx, nodeId, { forUpdate: true });
+  const refileProofs = await loadRefileProofMap(
+    tx,
+    nodeId,
+    refs.map((row) => row.id),
+  );
+  const foreign = refs.filter((row) => !isAutoOwnedAttachment(row, nodeId, refileProofs));
+  if (foreign.length > 0) {
+    throw new ApiError(
+      'conflict',
+      `knowledge_node retract blocked: ${foreign.length} question(s) still reference node ${nodeId} without auto-ownership proof`,
+      409,
+    );
+  }
 
   for (const row of refs) {
     const next = row.knowledgeIds.filter((id) => id !== nodeId);
