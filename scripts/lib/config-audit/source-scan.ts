@@ -4,6 +4,19 @@
  * SCAN_ROOTS 的源码、git ref 的 blob、AST 解析、flag token / reader / const /
  * direct-env 扫描，以及 CONFIG_REGISTRY 的 head 定义投影都在这里；纯指纹
  * 与对比在 ./contract-compare，report/exit 留在 scripts/audit-flags.ts。
+ *
+ * 静态扫描的边界（产品 env 普查与登记键直读都只看这些形状）：
+ *   - 只看 `process.env.X` / `process.env['X']` / 同一文件内可解析的
+ *     `process.env[CONST]` / `const { X } = process.env`；
+ *   - 看不到 `const e = process.env` 别名（要求访问子对象时已是 process.env）、
+ *     `globalThis.process.env` / `process['env']`、`Object.keys(process.env)`、
+ *     computed destructure（`const { [k]: v } = process.env`）、以及把
+ *     `process.env` 传给 helper 后再读；这些要么用字面量读点，要么由 review 发现；
+ *   - 解析失败的文件跳过（调用方用 typecheck / CI 兜底）。
+ *
+ * `src/core/config/` 的直读豁免只属于 DIRECT-ENV-READ（定义/解析层），不豁免产品
+ * env 的读点门：新文件在该目录直读已登记 env 仍算新增读，需要进 STAY_IN_PLACE_ENV
+ * 并按 owner 放行。
  */
 import { type Dirent, readFileSync, readdirSync } from 'node:fs';
 import { dirname, join, posix, relative, resolve } from 'node:path';
@@ -514,7 +527,8 @@ export function collectDirectEnvReads(tree: SourceTree): DirectEnvRead[] {
   );
 }
 
-/** Allowed homes for direct env reads of registered keys (definitions, not readers). */
+/** Allowed homes for DIRECT-ENV-READ of registered keys (definitions, not readers). The
+ *  product env read-point gate is separate and does not inherit this exemption. */
 export function isAllowedDirectEnvFile(path: string): boolean {
   return path.startsWith('src/core/config/');
 }

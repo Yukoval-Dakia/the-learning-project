@@ -811,16 +811,26 @@ export interface EnvReadLike {
   file: string;
 }
 
+/** A direct env read that stays outside registry/boot by design, scoped to one owner. */
+export interface StayInPlaceEntry {
+  env: string;
+  /** Repo-relative file, or directory prefix; only this owner may read the name. */
+  owner: string;
+  reason: string;
+}
+
 export interface EnvCensusInput {
   registryEnvs: ReadonlySet<string>;
   baseRegistryEnvs: ReadonlySet<string>;
   bootKeys: ReadonlySet<string>;
   baseBootKeys: ReadonlySet<string>;
-  stayInPlace: ReadonlyMap<string, string>;
+  stayInPlace: readonly StayInPlaceEntry[];
   headNamedReads: readonly EnvReadLike[];
   baseNamedReads: readonly EnvReadLike[];
   headDynamicReads: readonly EnvReadLike[];
   baseDynamicReads: readonly EnvReadLike[];
+  /** Head path -> path at the comparison base, so a moved file keeps its base grant. */
+  baseFileOf: (headFile: string) => string;
   isAllowedDynamicFile: (path: string) => boolean;
 }
 
@@ -834,31 +844,44 @@ export interface EnvCensusReport {
   hidden: { key: string; files: string[] }[];
   existingUnclassified: { key: string; file: string }[];
   dynamicByFile: { file: string; count: number }[];
-  stayInPlace: { key: string; reason: string }[];
+  stayInPlace: StayInPlaceEntry[];
   namedReadCount: number;
   namedFileCount: number;
   namedNameCount: number;
+  existingNamedReadCount: number;
   dynamicReadCount: number;
   classified: { registry: number; boot: number; stay: number };
 }
 
 type EnvTable = 'registry' | 'boot' | 'stay';
 
-function envTableOf(
+function ownerMatches(owner: string, file: string): boolean {
+  return file === owner || file.startsWith(owner.endsWith('/') ? owner : `${owner}/`);
+}
+
+function stayEntryFor(
+  entries: readonly StayInPlaceEntry[],
   key: string,
-  registryEnvs: ReadonlySet<string>,
-  bootKeys: ReadonlySet<string>,
-  stayInPlace: ReadonlyMap<string, string>,
-): EnvTable | null {
-  if (registryEnvs.has(key)) return 'registry';
-  if (bootKeys.has(key)) return 'boot';
-  if (stayInPlace.has(key)) return 'stay';
+  file: string,
+): StayInPlaceEntry | undefined {
+  return entries.find((entry) => entry.env === key && ownerMatches(entry.owner, file));
+}
+
+function tableOf(input: EnvCensusInput, key: string, file: string): EnvTable | null {
+  if (stayEntryFor(input.stayInPlace, key, file)) return 'stay';
+  if (input.registryEnvs.has(key)) return 'registry';
+  if (input.bootKeys.has(key)) return 'boot';
   return null;
 }
 
+const READ_POINT_GUIDANCE =
+  'boot names must come from the parsed env in src/core/config/server/env.ts, registry keys from getConfig/getConfigFlag/getConfigMany, and provider/third-party credentials or pre-boot reads belong in STAY_IN_PLACE_ENV under their owner';
+
 /**
- * Product env census: every named read must own a table (registry, boot schema, stay-in-place);
- * unclassified reads and new dynamic reads fail, existing stock is reported against the base.
+ * Product env census: new named reads fail regardless of which table the name lives in
+ * (boot names included) unless the read sits at a STAY_IN_PLACE_ENV owner; reads present at
+ * the base — including the same read inside a renamed file — are grandfathered. New dynamic
+ * reads fail by per-file count vs base (rename-aware). The report lists the existing stock.
  */
 export function computeEnvCensus(input: EnvCensusInput): {
   report: EnvCensusReport;
@@ -880,6 +903,7 @@ export function computeEnvCensus(input: EnvCensusInput): {
     });
   }
 
+  const stayEnvs = new Set(input.stayInPlace.map((entry) => entry.env));
   const baseNamedIds = new Set(
     input.baseNamedReads.map((read) => `${read.key ?? ''}\u0000${read.file}`),
   );
@@ -888,6 +912,7 @@ export function computeEnvCensus(input: EnvCensusInput): {
   const existingUnclassified: { key: string; file: string }[] = [];
   const classified = { registry: 0, boot: 0, stay: 0 };
   let namedReadCount = 0;
+  let existingNamedReadCount = 0;
 
   for (const read of input.headNamedReads) {
     const key = read.key;
@@ -897,38 +922,26 @@ export function computeEnvCensus(input: EnvCensusInput): {
     seen.add(id);
     namedReadCount += 1;
 
-    if (!input.registryEnvs.has(key) && !input.bootKeys.has(key)) {
+    const table = tableOf(input, key, read.file);
+    if (table) classified[table] += 1;
+
+    if (!input.registryEnvs.has(key) && !input.bootKeys.has(key) && !stayEnvs.has(key)) {
       const files = hiddenFiles.get(key) ?? new Set<string>();
       files.add(read.file);
       hiddenFiles.set(key, files);
     }
 
-    const table = envTableOf(key, input.registryEnvs, input.bootKeys, input.stayInPlace);
-    if (table) {
-      classified[table] += 1;
+    const baseFile = input.baseFileOf(read.file);
+    if (baseNamedIds.has(`${key}\u0000${baseFile}`)) {
+      existingNamedReadCount += 1;
+      if (!table) existingUnclassified.push({ key, file: read.file });
       continue;
     }
-    const baseTable = envTableOf(
-      key,
-      input.baseRegistryEnvs,
-      input.baseBootKeys,
-      input.stayInPlace,
-    );
-    if (baseNamedIds.has(id)) {
-      existingUnclassified.push({ key, file: read.file });
-      if (baseTable) {
-        violations.push({
-          code: 'UNCLASSIFIED-ENV-READ',
-          name: key,
-          detail: `process.env.${key} in ${read.file} lost its '${baseTable}' table at head; keep it in CONFIG_REGISTRY, the boot schema, or STAY_IN_PLACE_ENV`,
-        });
-      }
-      continue;
-    }
+    if (table === 'stay') continue;
     violations.push({
       code: 'UNCLASSIFIED-ENV-READ',
       name: key,
-      detail: `process.env.${key} in ${read.file} has no config home; register it in CONFIG_REGISTRY (src/core/config/registry.ts) for hot config, add it to the boot schema (src/core/config/server/env.ts) for boot-only values, or add it with a reason to STAY_IN_PLACE_ENV for adapter/test/deploy reads`,
+      detail: `new product-code process.env.${key} read in ${read.file}; ${READ_POINT_GUIDANCE}`,
     });
   }
 
@@ -948,12 +961,12 @@ export function computeEnvCensus(input: EnvCensusInput): {
     if (input.isAllowedDynamicFile(file)) continue;
     dynamicByFile.push({ file, count });
     dynamicReadCount += count;
-    const previous = baseDynamicCounts.get(file) ?? 0;
+    const previous = baseDynamicCounts.get(input.baseFileOf(file)) ?? 0;
     if (count > previous) {
       violations.push({
         code: 'DYNAMIC-ENV-READ',
         name: file,
-        detail: `${count} dynamic process.env[...] read(s) at head vs ${previous} at base; use a literal key and put the name in CONFIG_REGISTRY, the boot schema, or STAY_IN_PLACE_ENV`,
+        detail: `${count} dynamic process.env[...] read(s) at head vs ${previous} at base; ${READ_POINT_GUIDANCE}`,
       });
     }
   }
@@ -976,12 +989,13 @@ export function computeEnvCensus(input: EnvCensusInput): {
         (a, b) => a.key.localeCompare(b.key) || a.file.localeCompare(b.file),
       ),
       dynamicByFile,
-      stayInPlace: [...input.stayInPlace.entries()]
-        .map(([key, reason]) => ({ key, reason }))
-        .sort((a, b) => a.key.localeCompare(b.key)),
+      stayInPlace: [...input.stayInPlace].sort(
+        (a, b) => a.env.localeCompare(b.env) || a.owner.localeCompare(b.owner),
+      ),
       namedReadCount,
       namedFileCount: namedFiles.size,
       namedNameCount: namedNames.size,
+      existingNamedReadCount,
       dynamicReadCount,
       classified,
     },

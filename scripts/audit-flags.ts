@@ -12,11 +12,17 @@
  *   - 已登记 flag 没有活 reader（或只有直接 process.env 读）；
  *   - base 不可得（fail closed）；
  *   - 非 ENABLED 控制项（enum/CSV/JSON）从定义推导 census，新增控制项不登记即失败；
- *   - 产品代码（src/、server/，测试除外）新增命名 process.env 读无法归入
- *     CONFIG_REGISTRY、boot schema（src/core/config/server/env.ts）或 STAY_IN_PLACE_ENV；
+ *   - 产品代码（src/、server/，测试除外）新增命名 process.env 读：不管变量在 registry、
+ *     boot schema 还是 stay 清单，只要 base 没有同一 key×file（文件搬家按 rename 继承）且
+ *     不在 STAY_IN_PLACE_ENV 的 owner 下，就失败；boot 名读解析好的 env，registry 名走
+ *     getConfig，只有 provider/第三方凭据与启动前必读进 stay 清单；
  *   - 新增动态 process.env[...] 读；新增 registry envName 缺 boot schema；
  *   - 非 family 键（number/string、无 env 的 json/enum）新增键缺 metadata/reader 或新增直读。
- *     非 family 与未归类 env 的存量只汇报，按 base 放行。
+ *     非 family 与存量 env 读只汇报，按 base 放行。
+ *
+ * 不在扫描范围（文件头有完整边界）：`const e = process.env` 别名、`globalThis.process`、
+ * `Object.keys(process.env)`、computed destructure、把 process.env 传给 helper；
+ * `src/core/config/` 的 DIRECT-ENV-READ 豁免不适用于新增读点门。
  *
  * 只报告不改行为：base/head 的 codeDefault、新增/删除键与 reader 集合变化全部打印，
  * 由 review 判断；LITERAL-VARIANCE 仍是 observability only。
@@ -38,6 +44,7 @@ import {
   type FlagAuditResult,
   type FlagViolation,
   type NonFamilyReport,
+  type StayInPlaceEntry,
   type ViolationCode,
   auditNonFamilyKeys,
   compareWithBase,
@@ -67,20 +74,176 @@ import {
   isAllowedDynamicEnvFile,
   scanFlagTokens,
 } from './lib/config-audit/source-scan';
-import { resolveAuditBaseSha } from './lib/git-base-scan';
+import { resolveAuditBaseSha, worktreeRenameMap } from './lib/git-base-scan';
 
 /**
- * Env names the census allows outside the registry and boot schema, with the owner that
- * keeps them there (config inventory §2: provider credentials/adapters, tests, deployment).
- * Anything not listed here must be registered or declared in the boot schema.
+ * Direct reads that stay outside the registry/boot schema by design, each scoped to its
+ * owner (config inventory §2: provider credentials and third-party adapters, boot-time reads,
+ * test/deploy knobs). Only the owner may add new reads; any other file must use the parsed
+ * env or getConfig, or this list grows with a new owner and reason.
  */
-const STAY_IN_PLACE_ENV: ReadonlyMap<string, string> = new Map([
-  [
-    'OPENAI_CHATGPT_AUTH_FILE',
-    'provider auth file resolved by the pi provider adapter (src/server/ai/pi-models.ts)',
-  ],
-  ['PLAYWRIGHT_BROWSERS_PATH', 'test/deploy browser root for the render runner (chromium-runner)'],
-]);
+const STAY_IN_PLACE_ENV: readonly StayInPlaceEntry[] = [
+  // boot / pre-hydration entries
+  {
+    env: 'DATABASE_URL',
+    owner: 'server/',
+    reason: 'API/worker entry builds the pool before the DB-backed config layer exists',
+  },
+  {
+    env: 'INTERNAL_TOKEN',
+    owner: 'server/',
+    reason: 'API entry validates the shared token before serving',
+  },
+  { env: 'API_PORT', owner: 'server/', reason: 'listen port is resolved before config hydration' },
+  {
+    env: 'DEV_HOST',
+    owner: 'server/dev-frontdoor.ts',
+    reason: 'dev front door binds before config hydration',
+  },
+  {
+    env: 'DB_POOL_MAX',
+    owner: 'src/db/pool.ts',
+    reason: 'pool size must be known before the DB-backed config layer',
+  },
+  // provider credentials / third-party adapters
+  {
+    env: 'DASHSCOPE_API_KEY',
+    owner: 'src/server/ai/',
+    reason: 'embedding provider credential owned by the embedding adapter',
+  },
+  {
+    env: 'OPENROUTER_API_KEY',
+    owner: 'src/server/ai/',
+    reason: 'provider credential owned by the AI provider layer',
+  },
+  {
+    env: 'OPENAI_CHATGPT_AUTH_FILE',
+    owner: 'src/server/ai/pi-models.ts',
+    reason: 'pi auth file owned by the pi model adapter',
+  },
+  {
+    env: 'ZHIPU_API_KEY',
+    owner: 'src/capabilities/ingestion/server/',
+    reason: 'OCR/vision provider key owned by the ingestion adapters',
+  },
+  {
+    env: 'TENCENT_SECRET_ID',
+    owner: 'src/capabilities/ingestion/server/tencent_mark.ts',
+    reason: 'Tencent OCR credential owned by the Tencent adapter',
+  },
+  {
+    env: 'TENCENT_SECRET_KEY',
+    owner: 'src/capabilities/ingestion/server/tencent_mark.ts',
+    reason: 'Tencent OCR credential owned by the Tencent adapter',
+  },
+  {
+    env: 'TENCENT_OCR_REGION',
+    owner: 'src/capabilities/ingestion/server/tencent_mark.ts',
+    reason: 'Tencent OCR region owned by the Tencent adapter',
+  },
+  {
+    env: 'EXA_API_KEY',
+    owner: 'src/ai/exa-mcp.ts',
+    reason: 'Exa MCP credential owned by the Exa adapter',
+  },
+  {
+    env: 'R2_ENDPOINT',
+    owner: 'src/kernel/object-storage.ts',
+    reason: 'blob storage endpoint owned by the S3-compatible client',
+  },
+  {
+    env: 'R2_ACCESS_KEY_ID',
+    owner: 'src/kernel/object-storage.ts',
+    reason: 'blob storage credential owned by the S3-compatible client',
+  },
+  {
+    env: 'R2_SECRET_ACCESS_KEY',
+    owner: 'src/kernel/object-storage.ts',
+    reason: 'blob storage credential owned by the S3-compatible client',
+  },
+  {
+    env: 'R2_BUCKET',
+    owner: 'src/kernel/object-storage.ts',
+    reason: 'blob storage bucket owned by the S3-compatible client',
+  },
+  {
+    env: 'LMNR_PROJECT_API_KEY',
+    owner: 'src/server/ai/',
+    reason: 'Laminar tracing key owned by the tracing adapter',
+  },
+  {
+    env: 'LMNR_DEBUG',
+    owner: 'src/server/ai/',
+    reason: 'Laminar tracing SDK option owned by the tracing adapter',
+  },
+  {
+    env: 'LMNR_SPAN_CONTEXT',
+    owner: 'src/server/ai/',
+    reason: 'Laminar tracing SDK option owned by the tracing adapter',
+  },
+  {
+    env: 'LMNR_TRACE_METADATA',
+    owner: 'src/server/ai/',
+    reason: 'Laminar tracing SDK option owned by the tracing adapter',
+  },
+  {
+    env: 'LMNR_TRACE_ENV',
+    owner: 'src/server/ai/',
+    reason: 'Laminar tracing SDK option owned by the tracing adapter',
+  },
+  {
+    env: 'LMNR_TRANSCRIPTS',
+    owner: 'src/server/ai/',
+    reason: 'Laminar transcript option owned by the tracing adapter',
+  },
+  {
+    env: 'LMNR_DEV_TRANSCRIPTS',
+    owner: 'src/server/ai/',
+    reason: 'Laminar transcript option owned by the tracing adapter',
+  },
+  {
+    env: 'MEM0_EMBEDDING_BASE_URL',
+    owner: 'src/server/ai/',
+    reason: 'embedding endpoint owned by the embedding adapter',
+  },
+  {
+    env: 'MEM0_EMBEDDING_BASE_URL',
+    owner: 'src/capabilities/practice/question-bank/tools/search-bank.ts',
+    reason: 'bank search probes the embedding endpoint before building the query',
+  },
+  {
+    env: 'MEM0_EMBEDDING_MODEL',
+    owner: 'src/server/ai/',
+    reason: 'embedding model owned by the embedding adapter',
+  },
+  // internal HMAC / entry secrets
+  {
+    env: 'JUDGE_PROVENANCE_SECRET',
+    owner: 'src/capabilities/practice/grading/server/judge/preview-provenance-token.ts',
+    reason: 'HMAC secret read at the signing entry',
+  },
+  {
+    env: 'BANK_GAP_EVIDENCE_SECRET',
+    owner: 'src/capabilities/practice/question-bank/tools/bank-search.ts',
+    reason: 'HMAC secret read at the evidence entry',
+  },
+  // test / deploy knobs
+  {
+    env: 'VITEST',
+    owner: 'src/kernel/background-job-enqueue.ts',
+    reason: 'test-mode branch in the job enqueue helper',
+  },
+  {
+    env: 'DOCKER_HOST',
+    owner: 'src/server/release/rehearsal/ephemeral-pg.ts',
+    reason: 'rehearsal-only Docker endpoint',
+  },
+  {
+    env: 'PLAYWRIGHT_BROWSERS_PATH',
+    owner: 'src/capabilities/practice/question-bank/server/custom-block-preview/chromium-runner.ts',
+    reason: 'deployment browser root for the render runner',
+  },
+];
 
 export function auditFlags(comparisonBase?: string): FlagAuditResult {
   const headTree = SourceTree.head();
@@ -305,6 +468,10 @@ export function auditFlags(comparisonBase?: string): FlagAuditResult {
   if (headBootMeasurable && baseBootKeys && baseRegistryMeasurable) {
     const headProductReads = collectProductEnvReads(headTree);
     const baseProductReads = collectProductEnvReads(baseTree);
+    const movedFromBase = new Map<string, string>();
+    for (const [baseFile, headFile] of worktreeRenameMap(REPO_ROOT, baseSha, ['src', 'server'])) {
+      movedFromBase.set(headFile, baseFile);
+    }
     const census = computeEnvCensus({
       registryEnvs,
       baseRegistryEnvs,
@@ -315,6 +482,7 @@ export function auditFlags(comparisonBase?: string): FlagAuditResult {
       baseNamedReads: baseProductReads.named,
       headDynamicReads: headProductReads.dynamic,
       baseDynamicReads: baseProductReads.dynamic,
+      baseFileOf: (file) => movedFromBase.get(file) ?? file,
       isAllowedDynamicFile: isAllowedDynamicEnvFile,
     });
     envCensus = census.report;
@@ -447,7 +615,7 @@ function printEnvCensus(census: EnvCensusReport): void {
     `    registry envName ${census.registryEnvCount}；boot schema ${census.bootKeyCount}；交集 ${census.overlapCount}`,
   );
   console.log(
-    `    命名读 ${census.namedReadCount} 个 (key×file) / ${census.namedFileCount} 文件 / ${census.namedNameCount} 名；动态读 ${census.dynamicReadCount} 处 / ${census.dynamicByFile.length} 文件`,
+    `    命名读 ${census.namedReadCount} 个 (key×file) / ${census.namedFileCount} 文件 / ${census.namedNameCount} 名；存量放行 ${census.existingNamedReadCount}（含 rename 继承）；动态读 ${census.dynamicReadCount} 处 / ${census.dynamicByFile.length} 文件`,
   );
   console.log(
     `    归属：registry ${census.classified.registry}，boot schema ${census.classified.boot}，stay-in-place ${census.classified.stay}`,
@@ -465,14 +633,14 @@ function printEnvCensus(census: EnvCensusReport): void {
 
   if (census.hidden.length > 0) {
     console.log(
-      `    hidden（产品代码在读，registry 与 boot schema 都没有）：${census.hidden.length}`,
+      `    hidden（产品代码在读，registry、boot schema 与 stay 清单都没有）：${census.hidden.length}`,
     );
     for (const item of census.hidden) console.log(`      ${item.key} ← ${item.files.join(', ')}`);
   }
 
   if (census.existingUnclassified.length > 0) {
     console.log(
-      `    存量未归类读（report-only，base 已存在的同一 key×file）：${census.existingUnclassified.length}`,
+      `    存量无表读（report-only，base 已存在的同一 key×file）：${census.existingUnclassified.length}`,
     );
     for (const item of census.existingUnclassified) {
       console.log(`      ${item.key} @ ${item.file}`);
@@ -487,8 +655,10 @@ function printEnvCensus(census: EnvCensusReport): void {
   }
 
   if (census.stayInPlace.length > 0) {
-    console.log(`    stay-in-place（已写明归属的原地读取）：${census.stayInPlace.length}`);
-    for (const item of census.stayInPlace) console.log(`      ${item.key} — ${item.reason}`);
+    console.log(`    stay-in-place（只对 owner 放行的原地读）：${census.stayInPlace.length}`);
+    for (const item of census.stayInPlace) {
+      console.log(`      ${item.env} @ ${item.owner} — ${item.reason}`);
+    }
   }
   console.log('');
 }
@@ -567,7 +737,7 @@ function main(): void {
     console.log('');
     console.log(
       '  定义在 src/core/config/registry.ts；const 由领域源码自己的 boolean 声明登记。' +
-        ' 产品代码 env 读必须归到 registry、boot schema（src/core/config/server/env.ts）或 STAY_IN_PLACE_ENV；存量按 base 放行并列出。' +
+        ' 产品代码新增 process.env 读一律红（boot 名也不例外，读 src/core/config/server/env.ts 解析后的 env；registry 名走 getConfig）；存量与 rename 继承按 base 放行并列出，只有 STAY_IN_PLACE_ENV 的 owner 可新增直读。' +
         ' report-only (exit 0); --strict gates UNREGISTERED / DEFINITION-PROBLEM / NO-READER / ORPHAN-* / DIRECT-ENV-READ / CONST-PROBLEM / UNCLASSIFIED-ENV-READ / DYNAMIC-ENV-READ / REGISTRY-SCHEMA-GAP / BASE-DRIFT.',
     );
   }
