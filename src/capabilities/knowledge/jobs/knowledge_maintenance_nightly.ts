@@ -40,7 +40,7 @@ async function drainResponseText(response: Response): Promise<string> {
 }
 
 const STREAM_ERROR_MARKER = /\[streamTask\][^\n]*/;
-const STREAM_ERROR_RUN_ID = /task_run_id=(\S+)/;
+const STREAM_ERROR_RUN_ID = /task_run_id=([^\s)]+)/;
 
 /** The settled run behind a streamTask failure marker, when the marker carried it. */
 export class KnowledgeMaintenanceStreamError extends Error {
@@ -80,10 +80,11 @@ export async function runKnowledgeMaintenanceNightly(
 
 export function buildKnowledgeMaintenanceNightlyHandler(
   db: Db,
+  deps: DepsOverride = {},
 ): (jobs: Job<Record<string, never>>[]) => Promise<Record<string, unknown> | undefined> {
   return async () => {
     try {
-      const result = await runKnowledgeMaintenanceNightly(db);
+      const result = await runKnowledgeMaintenanceNightly(db, deps);
       console.log('[knowledge_maintenance_nightly] result', result);
     } catch (err) {
       // Provable transient provider rejection → ask the DAG for a recovery wait.

@@ -80,24 +80,31 @@ export async function selectItemPriorCandidates(
   db: Db | Tx,
   maxPerRun: number,
 ): Promise<ItemPriorCandidateFrozen[]> {
-  return db
-    .select({
-      id: question.id,
-      kind: question.kind,
-      prompt_md: question.prompt_md,
-      reference_md: question.reference_md,
-      choices_md: question.choices_md,
-      knowledge_ids: question.knowledge_ids,
-    })
-    .from(question)
-    .where(
-      sql`NOT EXISTS (
+  return (
+    db
+      .select({
+        id: question.id,
+        kind: question.kind,
+        prompt_md: question.prompt_md,
+        reference_md: question.reference_md,
+        choices_md: question.choices_md,
+        knowledge_ids: question.knowledge_ids,
+      })
+      .from(question)
+      .where(
+        sql`NOT EXISTS (
         SELECT 1 FROM item_calibration ic
         WHERE ic.question_id = ${question.id} AND ic.track = 'hard'
       )`,
-    )
-    .orderBy(asc(question.created_at), asc(question.id))
-    .limit(maxPerRun);
+      )
+      // Daily-rotating deterministic order: a permanently failing oldest
+      // question can no longer monopolize the batch every run — each night a
+      // different window of the uncalibrated backlog is attempted, so new
+      // questions surface within ~backlog/25 runs. Same-day redeliveries (the
+      // provider-wait ladder) keep the same window.
+      .orderBy(sql`md5(${question.id} || to_char(current_date, 'YYYY-MM-DD'))`, asc(question.id))
+      .limit(maxPerRun)
+  );
 }
 
 /** 为候选并集一次性解析 knowledge 名（原 union 读，逐字节不变）。 */

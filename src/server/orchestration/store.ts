@@ -3,7 +3,7 @@
 // 控制面记录，与 event 数据面物理隔离。每个非平凡列都显式写（audit:schema
 // write-path 契约）。
 
-import { and, desc, eq, notInArray, sql } from 'drizzle-orm';
+import { and, desc, eq, isNull, notInArray, sql } from 'drizzle-orm';
 import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
 import { dag_orchestration_node, dag_orchestration_run } from '@/db/schema';
@@ -55,6 +55,8 @@ export interface NodeRow {
   provider_waits: number;
   enqueued_at: Date | null;
   finished_at: Date | null;
+  /** Last node write — the arm-time anchor a lost wait job resends against. */
+  updated_at: Date;
 }
 
 /**
@@ -316,7 +318,13 @@ export async function updateNodeStatus(
 export async function rescheduleNodeProviderWait(
   db: Db,
   nodeId: string,
-  input: { bossJobId: string; detail: string; now?: Date },
+  input: {
+    bossJobId: string;
+    /** The job id this tick observed; a rival re-point makes the CAS lose. */
+    oldBossJobId: string | null;
+    detail: string;
+    now?: Date;
+  },
 ): Promise<boolean> {
   const now = input.now ?? new Date();
   const rows = await db
@@ -332,6 +340,9 @@ export async function rescheduleNodeProviderWait(
       and(
         eq(dag_orchestration_node.id, nodeId),
         notInArray(dag_orchestration_node.status, [...TERMINAL_NODE_STATUSES]),
+        input.oldBossJobId === null
+          ? isNull(dag_orchestration_node.boss_job_id)
+          : eq(dag_orchestration_node.boss_job_id, input.oldBossJobId),
       ),
     )
     .returning({ id: dag_orchestration_node.id });
@@ -361,5 +372,6 @@ function toNodeRow(r: typeof dag_orchestration_node.$inferSelect): NodeRow {
     provider_waits: r.provider_waits,
     enqueued_at: r.enqueued_at,
     finished_at: r.finished_at,
+    updated_at: r.updated_at,
   };
 }

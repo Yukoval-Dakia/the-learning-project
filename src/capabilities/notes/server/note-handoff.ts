@@ -159,7 +159,7 @@ async function recoverNoteGenerationWaits(
     // Dead or never-landed wake: repoint the receipt to a fresh id and send it
     // immediately — the recorded retry instant is already past.
     const wakeJobId = randomUUID();
-    await db.transaction(async (tx) => {
+    const repointed = await db.transaction(async (tx) => {
       const [current] = await tx
         .select({ attrs: artifact.attrs })
         .from(artifact)
@@ -167,8 +167,15 @@ async function recoverNoteGenerationWaits(
         .for('update')
         .limit(1);
       const currentWait = readNoteGenerationWait(current?.attrs);
-      // Someone else already re-armed or finished this note — leave it.
-      if (!currentWait || currentWait.retry_at !== wait.retry_at) return;
+      // Someone else already re-armed or finished this note — leave it. The
+      // repoint only rewrites wake_job_id, so the CAS must compare it as well:
+      // retry_at alone cannot catch a concurrent floor's re-point.
+      if (
+        !currentWait ||
+        currentWait.retry_at !== wait.retry_at ||
+        currentWait.wake_job_id !== wait.wake_job_id
+      )
+        return false;
       await tx
         .update(artifact)
         .set({
@@ -179,7 +186,9 @@ async function recoverNoteGenerationWaits(
           updated_at: new Date(),
         })
         .where(and(eq(artifact.id, row.id), sql`${artifact.generation_status} = 'pending'`));
+      return true;
     });
+    if (!repointed) continue;
     const sent = await boss.send('note_generate', { artifact_id: row.id }, { id: wakeJobId });
     if (sent !== null) rearmed += 1;
   }

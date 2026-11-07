@@ -227,14 +227,24 @@ export async function recoverPreparingInterventions(
         if (jobAfterLock) {
           return LIVE_JOB_STATES.has(jobAfterLock.state) ? ('live' as const) : ('raced' as const);
         }
+        // The aggregate's wait receipt survives the lost row: the resent job
+        // carries the spent budget (the handler's next wait counts from it)
+        // and honors the armed instant instead of retrying on the spot.
         const sent = await boss.send(
           PREPARE_INTERVENTION_JOB,
           {
             intervention_id: current.id,
             version: current.version,
             idempotency_key: current.idempotency_key,
+            ...(current.preparation_waits > 0 ? { provider_waits: current.preparation_waits } : {}),
           },
-          { id: replacementJobId, db: fromPgBossDrizzleTx(tx) },
+          {
+            id: replacementJobId,
+            ...(current.preparation_wait_until
+              ? { startAfter: current.preparation_wait_until }
+              : {}),
+            db: fromPgBossDrizzleTx(tx),
+          },
         );
         await updatePreparationJobId(
           tx,
@@ -303,6 +313,7 @@ export async function rearmInterventionPreparationWait(
     if (current?.status !== 'preparing' || current.preparation_job_id !== input.supersededJobId) {
       return 'raced' as const;
     }
+    const waitUntil = new Date(now.getTime() + input.delayMs);
     const sent = await boss.send(
       PREPARE_INTERVENTION_JOB,
       {
@@ -313,11 +324,14 @@ export async function rearmInterventionPreparationWait(
       },
       {
         id: replacementJobId,
-        startAfter: new Date(now.getTime() + input.delayMs),
+        startAfter: waitUntil,
         db: fromPgBossDrizzleTx(tx),
       },
     );
-    await updatePreparationJobId(tx, current.id, current.version, sent ?? replacementJobId, now);
+    await updatePreparationJobId(tx, current.id, current.version, sent ?? replacementJobId, now, {
+      waits: input.waits,
+      until: waitUntil,
+    });
     return 'waiting' as const;
   });
 }

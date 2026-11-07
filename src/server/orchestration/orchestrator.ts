@@ -325,6 +325,7 @@ async function pollInflightNode(
       const bossJobId = randomUUID();
       const rescheduled = await rescheduleNodeProviderWait(deps.db, node.id, {
         bossJobId,
+        oldBossJobId: node.boss_job_id,
         detail: `provider_wait:${wait.retryClass}${wait.detail ? `: ${wait.detail}` : ''}`,
         now,
       });
@@ -387,8 +388,24 @@ async function pollInflightNode(
       console.warn(
         `[orchestrator] node '${node.job_name}' (${node.id}) has no pg-boss job for reserved id ${node.boss_job_id} — re-sending idempotently (send never landed)`,
       );
+      // A wait-armed node's lost job keeps its remaining delay: resending it
+      // immediately would burn the provider budget the wait was protecting.
+      // updated_at is the arm-time anchor (the CAS's own write).
+      const waitRemainingMs = node.detail?.startsWith('provider_wait:')
+        ? Math.max(
+            0,
+            providerWaitDelayMs(node.provider_waits) - (now.getTime() - node.updated_at.getTime()),
+          )
+        : 0;
       // Same empty payload as the first send.
-      await deps.boss.send(node.job_name, {}, { id: node.boss_job_id });
+      await deps.boss.send(
+        node.job_name,
+        {},
+        {
+          id: node.boss_job_id,
+          ...(waitRemainingMs > 0 ? { startAfter: Math.ceil(waitRemainingMs / 1000) } : {}),
+        },
+      );
       return;
     }
     if (isNodeTimedOut(node, now, timeoutMs)) {

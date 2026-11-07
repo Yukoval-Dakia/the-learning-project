@@ -8,6 +8,7 @@
 //   ⑤ 全终态 → run 收尾 completed，不再自调度 tick；
 //   ⑥ 单飞：同日重复 start 不建第二条 run。
 
+import { randomUUID } from 'node:crypto';
 import { and, eq } from 'drizzle-orm';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dag_orchestration_node, dag_orchestration_run } from '@/db/schema';
@@ -25,7 +26,7 @@ import {
   runOrchestratorStart,
   runOrchestratorTick,
 } from './orchestrator';
-import { finishRun, updateNodeStatus } from './store';
+import { finishRun, rescheduleNodeProviderWait, updateNodeStatus } from './store';
 
 let db = testDb();
 const RUN_DATE = '2026-07-25';
@@ -851,5 +852,51 @@ describe('YUK-2030 — provider-wait redelivery', () => {
     const aJobs = [...sharedJobs.keys()].filter((k) => k.startsWith('a:'));
     expect(aJobs).toHaveLength(2); // completed first + waiting replacement
     expect(bossA.hasJob('a', node.boss_job_id ?? '')).toBe(true);
+  });
+
+  // @invariant concurrency: two ticks racing the same re-arm compare the
+  // boss_job_id they each observed; the loser's CAS returns false, exactly
+  // one replacement identity lands, and the wait budget burns once.
+  // @fails-if the WHERE stops pinning the observed boss_job_id, letting both
+  // ticks win and double-arm the node (two live paid jobs, double-counted
+  // waits)
+  it('W4 two ticks racing the same re-arm CAS exactly once on the observed job id', async () => {
+    const boss = new FakeBoss();
+    const dag = dagOf(member('a'));
+    const run = must(
+      await runOrchestratorStart({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }, 'cron'),
+      'run',
+    );
+    const armed = must(await nodeRow(run.id, 'a'), 'node a');
+    const observedJobId = must(armed.boss_job_id, 'armed job id');
+
+    const [won, lost] = await Promise.all([
+      rescheduleNodeProviderWait(db, armed.id, {
+        bossJobId: randomUUID(),
+        oldBossJobId: observedJobId,
+        detail: 'provider_wait:server_error: tick one',
+        now: NOW,
+      }),
+      rescheduleNodeProviderWait(db, armed.id, {
+        bossJobId: randomUUID(),
+        oldBossJobId: observedJobId,
+        detail: 'provider_wait:server_error: tick two',
+        now: NOW,
+      }),
+    ]);
+    expect([won, lost].sort()).toEqual([false, true]);
+
+    const node = must(await nodeRow(run.id, 'a'), 'node a');
+    expect(node.provider_waits).toBe(1);
+    expect(node.boss_job_id).not.toBe(observedJobId);
+    // A stale-observation re-arm (the old serial shape) also loses.
+    const stale = await rescheduleNodeProviderWait(db, armed.id, {
+      bossJobId: randomUUID(),
+      oldBossJobId: observedJobId,
+      detail: 'provider_wait:server_error: stale tick',
+      now: NOW,
+    });
+    expect(stale).toBe(false);
+    expect((await nodeRow(run.id, 'a'))?.provider_waits).toBe(1);
   });
 });

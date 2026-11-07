@@ -50,7 +50,11 @@ export function attrsWithGenerationFailure(
   attrs: unknown,
   failure: NoteGenerationFailure,
 ): Record<string, unknown> {
-  return { ...attrsRecord(attrs), [NOTE_GENERATION_FAILURE_ATTR]: failure };
+  // A terminal flip ends the wait epoch too: the receipt must die here, not on
+  // a later reopen, or the re-armed epoch would inherit its spent budget.
+  const next = attrsRecord(attrs);
+  delete next[NOTE_GENERATION_WAIT_ATTR];
+  return { ...next, [NOTE_GENERATION_FAILURE_ATTR]: failure };
 }
 
 export function attrsClearingGenerationFailure(attrs: unknown): {

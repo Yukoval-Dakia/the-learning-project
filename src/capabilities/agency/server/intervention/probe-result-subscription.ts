@@ -29,9 +29,9 @@ export interface PrepareInterventionJobData {
   version: number;
   idempotency_key: string;
   /**
-   * Provider-wait count carried on redeliveries (YUK-2030). Subscription and
-   * recovery-floor sends omit it; only the wait rearm path writes it, so a lost
-   * wake's floor requeue restarts the ladder — acceptable for a rare path.
+   * Provider-wait count carried on redeliveries (YUK-2030). Every resend —
+   * rearm, recovery floor, subscription replay — echoes the aggregate's
+   * `preparation_waits` so a lost pg-boss row never resets the ladder.
    */
   provider_waits?: number;
 }
@@ -42,6 +42,7 @@ export type PrepareInterventionBossSend = (
   options: {
     db: ReturnType<typeof fromPgBossDrizzleTx>;
     id: string;
+    startAfter?: Date;
   },
 ) => Promise<string | null>;
 
@@ -62,10 +63,12 @@ async function enqueuePreparation(
   send: PrepareInterventionBossSend,
   data: PrepareInterventionJobData,
   reservedJobId: string,
+  startAfter?: Date,
 ): Promise<string> {
   const jobId = await send(PREPARE_INTERVENTION_JOB, data, {
     db: fromPgBossDrizzleTx(tx),
     id: reservedJobId,
+    ...(startAfter ? { startAfter } : {}),
   });
   // pg-boss returns null when this exact id already exists. That is the desired
   // duplicate-delivery result, not an enqueue failure: the aggregate already owns
@@ -130,8 +133,10 @@ export async function handleProbeResultInterventionDelivery(
           intervention_id: existing.id,
           version: existing.version,
           idempotency_key: existing.idempotency_key,
+          ...(existing.preparation_waits > 0 ? { provider_waits: existing.preparation_waits } : {}),
         },
         reservedJobId,
+        existing.preparation_wait_until ?? undefined,
       );
       await updatePreparationJobId(tx, existing.id, existing.version, jobId, now);
       return { ...existing, preparation_job_id: jobId, updated_at: now };

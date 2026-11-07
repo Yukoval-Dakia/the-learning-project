@@ -19,6 +19,7 @@ import {
   providerTransientClassForStatus,
   providerTransientResendable,
   providerTransientVerdict,
+  settledTransportHttpStatus,
 } from '@/ai/provider-failure';
 import type { ProviderTransportEvidence } from '@/ai/task-result';
 import type { Db } from '@/db/client';
@@ -85,24 +86,16 @@ export async function planJobProviderWaitForRun(
   return { retryClass: cls, evidenceRef: taskRunId };
 }
 
-/** Transport-only classification, mirroring boundTerminalHttpStatus's last leg. */
+/** Transport-only classification on the shared settled-bound leg. */
 function providerWaitClassForTransport(
   transport: ProviderTransportEvidence | undefined,
   input: { errorEvidence?: readonly string[] } = {},
 ): ProviderTransientClass | undefined {
   if (!transport) return undefined;
-  const last = transport.requests.at(-1);
-  if (
-    last?.loop === 'root' &&
-    last.send_state === 'response_received' &&
-    last.http_status != null &&
-    last.http_status >= 400 &&
-    transport.totals.by_state.in_flight === 0 &&
-    transport.totals.by_state.unknown === 0 &&
-    transport.totals.by_state.sent_without_response === 0
-  ) {
+  const status = settledTransportHttpStatus(transport);
+  if (status != null) {
     return providerTransientClassForStatus({
-      httpStatus: last.http_status,
+      httpStatus: status,
       errorEvidence: input.errorEvidence,
     })?.class;
   }
