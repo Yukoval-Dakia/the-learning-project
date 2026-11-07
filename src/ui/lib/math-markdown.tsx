@@ -212,6 +212,28 @@ if (import.meta.env.SSR) {
 
 const NO_MATH_PLUGINS: MathPlugins = { remarkPlugins: [], rehypePlugins: [] };
 
+// Formulas are on most pages that show questions, and the renderer only starts loading when the
+// first one mounts, after the page's data has arrived. Start it once the page is idle instead, so
+// on a slow link it is already there; it is one cached file, fetched once.
+if (!import.meta.env.SSR && typeof window !== 'undefined') {
+  const start = () => void loadMathPlugins().catch(() => {});
+  if ('requestIdleCallback' in window) window.requestIdleCallback(start, { timeout: 3000 });
+  else setTimeout(start, 1500);
+}
+
+/** Stands in for one formula until the renderer arrives; never shown as `$...$` source. */
+const FORMULA_WAIT = '\u2063';
+const PENDING_FORMULA =
+  /(```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`)|(?<!\\)\$\$(?:(?!\n\s*\n)(?:\\.|[^`$\\]))+?\$\$|(?<!\\)\\\[(?:(?!\n\s*\n)[^`])+?\\\]|(?<!\\)\\\((?:(?!\n\s*\n)[^`])+?\\\)|(?<![\\$])\$(?!\s)[^$\n`]*?[^\s\\]\$(?!\d)/g;
+
+function holdFormulas(source: string): string {
+  return source.replace(PENDING_FORMULA, (match: string, code?: string) =>
+    code !== undefined ? match : `\`${FORMULA_WAIT}\``,
+  );
+}
+
+type CodeProps = ComponentProps<'code'> & { node?: unknown };
+
 /** Tables and the rest of GFM on every reading surface. One tilde stays text: 「约 ~3」 is not a strike. */
 const GFM_PLUGIN: [typeof remarkGfm, { singleTilde: boolean }] = [
   remarkGfm,
@@ -422,8 +444,8 @@ export function looksLikeMath(source: string): boolean {
  * content: review prompt / reference / feedback; note section body; teaching turn text.
  *
  * When notation is `katex` (or legacy `latex`) on the browser, the KaTeX plugin chain is loaded
- * lazily on first render: the content shows as plain markdown for one frame, then
- * re-renders with math once the chunk arrives (a warm module cache makes later
+ * lazily (started when the page is idle): until it arrives each formula shows as a quiet
+ * placeholder, then the content re-renders with math (a warm module cache makes later
  * math mounts synchronous). Server-side renders resolve KaTeX synchronously (see
  * the module warm-up above). Non-math renders never touch the katex chunk.
  *
@@ -458,18 +480,37 @@ export function MathMarkdown({
   );
 
   const active = isKatex && mathPlugins ? mathPlugins : NO_MATH_PLUGINS;
-  const source =
-    active === NO_MATH_PLUGINS
+  // Waiting for the renderer: each formula is a quiet placeholder, not its source text.
+  const waiting = isKatex && !mathPlugins;
+  const source = waiting
+    ? holdFormulas(children)
+    : active === NO_MATH_PLUGINS
       ? children
       : protectTableMathPipes(
           normalizeMathDelimiters(fallback ? escapeLooseDollars(children) : children),
         );
+  const Code = components?.code;
+  const code = waiting
+    ? ({ node: _node, children: text, ...props }: CodeProps) =>
+        text === FORMULA_WAIT ? (
+          <span className="un-math-wait" role="img" aria-label="公式加载中" />
+        ) : typeof Code === 'function' ? (
+          <Code {...props}>{text}</Code>
+        ) : (
+          <code {...props}>{text}</code>
+        )
+    : components?.code;
   return (
     <MarkdownRenderer
       {...divProps}
       remarkPlugins={[...active.remarkPlugins, GFM_PLUGIN, ...(remarkPlugins ?? [])]}
       rehypePlugins={active.rehypePlugins}
-      components={{ table: MarkdownTable, ...components, img: MarkdownImage }}
+      components={{
+        table: MarkdownTable,
+        ...components,
+        ...(code ? { code } : {}),
+        img: MarkdownImage,
+      }}
       remarkRehypeOptions={remarkRehypeOptions}
     >
       {source}

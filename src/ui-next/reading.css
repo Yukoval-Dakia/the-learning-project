@@ -171,6 +171,17 @@
   font-size: 1em;
 }
 
+/* A formula whose renderer is still on its way: a quiet block in the line, not its source text. */
+:where(.un-math-wait) {
+  display: inline-block;
+  width: 2.4em;
+  height: 1em;
+  margin-inline: 0.1em;
+  border-radius: 4px;
+  background: color-mix(in srgb, currentColor 10%, transparent);
+  vertical-align: -0.12em;
+}
+
 [data-ui-next] :where(.un-md-table) {
   display: block;
   max-width: 100%;
