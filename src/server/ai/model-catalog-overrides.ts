@@ -68,6 +68,14 @@ const overrides: Partial<Record<Provider, Record<string, CatalogOverride>>> = {
       protocol: { api: 'openai-responses' },
     },
   },
+  'custom:opendesign': {
+    'deepseek-v4.1-flash': {
+      when: 'missing',
+      reason:
+        'OpenDesign dev structured submit accepted named tool_choice with high reasoning on 2026-11-07; task_run_id at1ab43yazalsqh6zpf3a771, all_units_accepted. This route does not inherit OpenCode Go forced-tool restrictions.',
+      facts: { forcedToolChoice: true },
+    },
+  },
   'opencode-go': {
     'deepseek-v4-flash': {
       when: 'missing',
@@ -246,6 +254,30 @@ export const DASHSCOPE_EMBEDDING_ENDPOINT_KEYS: ReadonlySet<string> = endpointKe
   'https://ws-tcvd1h9009b55vr0.cn-beijing.maas.aliyuncs.com/compatible-mode/v1',
 ]);
 
+/** OpenDesign Go is absent from models.dev; only this endpoint may receive its key. */
+export const OPENDESIGN_ENDPOINT_KEYS: ReadonlySet<string> = endpointKeysOf([
+  'https://amr-link.open-design.ai/v1',
+]);
+
+/**
+ * Route facts: /models metadata and high-effort usage observed 2026-11-07.
+ * USD/1M list rates: https://go.open-design.ai/models/deepseek-v4-1-flash/.
+ * The plan's 0.5x credit multiplier is not a token rate or a cash charge.
+ */
+export const OPENDESIGN_CATALOG_MODELS = {
+  'deepseek-v4.1-flash': {
+    id: 'deepseek-v4.1-flash',
+    name: 'DeepSeek V4.1 Flash',
+    limit: { context: 1_048_000, input: 328_000, output: 128_000 },
+    modalities: { input: ['text', 'image'], output: ['text'] },
+    tool_call: true,
+    structured_output: true,
+    reasoning: true,
+    reasoning_options: [{ type: 'effort', values: ['high'] }],
+    cost: { input: 0.3, output: 1.2, cache_read: 0.006 },
+  },
+};
+
 export const BUILTIN_MODEL_ENDPOINT_HOSTS: ReadonlySet<string> = (() => {
   const keys = new Set<string>();
   const add = (value: string | undefined) => {
@@ -266,6 +298,7 @@ export const BUILTIN_MODEL_ENDPOINT_HOSTS: ReadonlySet<string> = (() => {
   }
   for (const key of TOKEN_PLAN_ENDPOINT_KEYS) keys.add(key);
   for (const key of DASHSCOPE_EMBEDDING_ENDPOINT_KEYS) keys.add(key);
+  for (const key of OPENDESIGN_ENDPOINT_KEYS) keys.add(key);
   return keys;
 })();
 
