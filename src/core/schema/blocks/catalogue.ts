@@ -16,7 +16,12 @@ import { BLOCK_IMPLEMENTED_KINDS, BLOCK_SURFACE_KINDS, type BlockSurface } from 
 // Field lists are generated from the MODEL-FACING input schemas so the
 // catalogue matches what compose_block actually accepts (figure `svg`,
 // interactive `html`), never the asset-only stored form.
-const MEMBER_META: Record<BlockKind, { schema: z.ZodType; example: unknown }> = {
+// entity_card is deliberately absent: the Copilot system prompt sits at its
+// 12,000-char budget, and the tool's JSON schema already carries the shape.
+const MEMBER_META: Record<
+  Exclude<BlockKind, 'entity_card'>,
+  { schema: z.ZodType; example: unknown }
+> = {
   diagram: {
     schema: DiagramBlock,
     example: {

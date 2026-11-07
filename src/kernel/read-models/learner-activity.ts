@@ -2,7 +2,7 @@
 // such an event belongs to, and when the learner last did any of it. Consumers
 // read these sets instead of spelling their own action lists.
 
-import { and, desc, eq, inArray, isNull, lt, or } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, lt, or, sql } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
 import {
   evaluation,
@@ -27,7 +27,7 @@ import { batchResolveSubjectIds } from './subject-resolution';
 
 type DbLike = Db | Tx;
 type EventRow = typeof event.$inferSelect;
-type AnswerOutcome = 'success' | 'failure' | 'partial';
+export type AnswerOutcome = 'success' | 'failure' | 'partial';
 
 const NATIVE_ATTEMPT_ACTION = 'experimental:assessment_attempt';
 const RECORD_CAPTURE_ACTION = 'experimental:record_capture';
@@ -104,6 +104,63 @@ export async function loadNativeAttemptOutcomes(
       out.set(eventId, outcome);
   }
   return out;
+}
+
+export interface LastKnowledgePractice {
+  /** When the learner answered. */
+  at: string;
+  /** null when the newest answer has no usable verdict (pending, self-report, unsupported). */
+  outcome: AnswerOutcome | null;
+}
+
+/**
+ * The newest learner answer touching the node, with its effective outcome. Native
+ * attempts reach the node through their question (answered part or revision group);
+ * legacy attempt/review rows carry referenced_knowledge_ids in the payload. Reads
+ * the same action set and verdict mapping as the activity readers above.
+ */
+export async function loadLastKnowledgePractice(
+  db: DbLike,
+  knowledgeId: string,
+): Promise<LastKnowledgePractice | null> {
+  const kc = JSON.stringify([knowledgeId]);
+  const [row]: EventRow[] = await db
+    .select()
+    .from(event)
+    .where(
+      and(
+        eq(event.actor_kind, 'user'),
+        inArray(event.action, [...LEARNER_ANSWER_ACTIONS]),
+        eq(event.subject_kind, 'question'),
+        sql`(
+          (${event.action} = ${NATIVE_ATTEMPT_ACTION} AND EXISTS (
+            SELECT 1 FROM ${question} q
+            WHERE q.knowledge_ids @> ${kc}::jsonb
+              AND (
+                q.id = ${event.subject_id}
+                OR q.id = (
+                  SELECT qr.group_id FROM ${question_revision} qr
+                  WHERE qr.revision_id = ${event.payload}->>'revision_id'
+                )
+              )
+          ))
+          OR (${event.action} <> ${NATIVE_ATTEMPT_ACTION}
+              AND ${event.payload}->'referenced_knowledge_ids' @> ${kc}::jsonb)
+        )`,
+      ),
+    )
+    .orderBy(desc(event.created_at), desc(event.id))
+    .limit(1);
+  if (!row) return null;
+  const isNative = row.action === NATIVE_ATTEMPT_ACTION;
+  const [nativeOutcomes, legacyOutcomes] = await Promise.all([
+    loadNativeAttemptOutcomes(db, isNative ? [row.id] : []),
+    loadLegacyAnswerOutcomes(db, isNative ? [] : [row]),
+  ]);
+  return {
+    at: row.created_at.toISOString(),
+    outcome: nativeOutcomes.get(row.id) ?? legacyOutcomes.get(row.id) ?? null,
+  };
 }
 
 export interface KnowledgeFailureStreak {

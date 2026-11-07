@@ -33,6 +33,8 @@ export const BLOCK_ISSUE_CODES = [
   'sandbox_preview_unavailable',
   // Question ref
   'question_ref_not_servable',
+  // Entity card (knowledge point / note)
+  'entity_card_not_servable',
   // Question surface
   'block_text_reveals_key',
 ] as const;

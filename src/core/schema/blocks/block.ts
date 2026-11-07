@@ -180,6 +180,20 @@ export const QuestionRefBlock = z
       'Question card by bank id only. display=link opens the question; inline is one question with in-place practice, disabled until admitted. alt must be 题目, label must be 打开题目; omit caption.',
   });
 
+const ENTITY_CARD_DESCRIPTION =
+  'Knowledge-point or note card by id only; the server reads the visible content. entity_kind=knowledge|note. alt must be 知识点 (knowledge) or 笔记 (note), label must be 打开; omit caption.';
+
+export const EntityCardBlock = z
+  .object({
+    ...Common,
+    kind: z.literal('entity_card'),
+    entity_kind: z.enum(['knowledge', 'note']),
+    entity_id: z.string().min(1).max(256),
+    label: z.string().max(30),
+  })
+  .strict()
+  .meta({ description: ENTITY_CARD_DESCRIPTION });
+
 /** Model-facing input union (payload fields allowed). */
 export const BlockInputV1 = z.discriminatedUnion('kind', [
   DiagramBlock,
@@ -187,6 +201,7 @@ export const BlockInputV1 = z.discriminatedUnion('kind', [
   ChartBlock,
   InteractiveBlockInput,
   QuestionRefBlock,
+  EntityCardBlock,
 ]);
 export type BlockInputV1T = z.infer<typeof BlockInputV1>;
 
@@ -197,6 +212,7 @@ export const BlockV1 = z.discriminatedUnion('kind', [
   ChartBlock,
   InteractiveBlock,
   QuestionRefBlock,
+  EntityCardBlock,
 ]);
 export type BlockV1T = z.infer<typeof BlockV1>;
 export type BlockKind = BlockV1T['kind'];
