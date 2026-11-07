@@ -755,11 +755,19 @@ export function createCopilotExecutionOwner(
         : undefined;
       const closureText =
         closureCopy !== undefined ? mergeNoProgressReply(modelReply, closureCopy) : undefined;
-      // A sealed closure always owns the terminal outcome: when its copy is
-      // omitted, the model's accumulated prose is still the full reply.
+      // A sealed no-progress closure without its copy still owns the full
+      // accumulated prose. Cancellation keeps the published terminal bytes
+      // unchanged, so it stays on `result.text`/`terminalText`.
       const sealedExit = sealedClosure !== undefined;
-      const finalText = closureText ?? (sealedExit ? modelReply : terminalText);
       const partial = sealedExit ? false : result.partial === true;
+      const sealedNoProgressWithoutCopy =
+        sealedClosure?.reason === 'no_progress' &&
+        !cancelled &&
+        !result.partial &&
+        closureCopy === undefined;
+      const finalText =
+        closureText ??
+        (sealedNoProgressWithoutCopy ? modelReply : partial ? result.text : terminalText);
       const executionError = sealedExit ? undefined : result.error;
       const finishReason = sealedClosure
         ? sealedClosure.reason
