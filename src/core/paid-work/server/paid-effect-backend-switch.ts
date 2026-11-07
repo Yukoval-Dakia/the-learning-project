@@ -1,5 +1,5 @@
 // Backend-switch composition. Generic ownership admission and generation fencing
-// live in src/db/paid-effect-control.ts.
+// live in ./paid-effect-control.ts.
 //
 // A missing control row is the bootstrap owner (pg-boss, generation 0); DBOS
 // requires an explicit row. Admission takes the row FOR SHARE in the caller's
@@ -25,9 +25,12 @@ import {
   PaidEffectSwitchBlockedError,
   PaidEffectSwitchUnsupportedError,
   summarizePaidEffectSwitchBlocking,
-} from '@/core/migration/paid-effect-protocol';
+} from '@/core/paid-work/protocol/paid-effect-protocol';
+import {
+  lockPaidEffectControlFamily,
+  rowToControl,
+} from '@/core/paid-work/server/paid-effect-control';
 import type { Db, Tx } from '@/db/client';
-import { lockPaidEffectControlFamily, rowToControl } from '@/db/paid-effect-control';
 import { paid_effect, paid_effect_control } from '@/db/schema';
 
 /**

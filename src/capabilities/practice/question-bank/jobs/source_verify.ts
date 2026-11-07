@@ -29,6 +29,11 @@ import {
   assertSourceGroundingLaneConfigured,
   runSourceGroundingVerify,
 } from '@/capabilities/practice/grading/public';
+import {
+  markPaidEffectUnknown,
+  recordPaidEffectApplication,
+  recordPaidEffectResult,
+} from '@/core/paid-work/server/paid-effect-store';
 import { QUESTION_ADMISSION_POLICY_IDS } from '@/core/question-admission-policy';
 import {
   LEGACY_DRAFT_STATUS,
@@ -42,11 +47,6 @@ import { readDifficultyEvidenceFromMetadata } from '@/core/schema/difficulty-evi
 import { toUnifiedVerifyResult } from '@/core/schema/verify-contract';
 import type { Db } from '@/db/client';
 import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
-import {
-  markPaidEffectUnknown,
-  recordPaidEffectApplication,
-  recordPaidEffectResult,
-} from '@/db/paid-effect-store';
 import {
   event,
   knowledge,

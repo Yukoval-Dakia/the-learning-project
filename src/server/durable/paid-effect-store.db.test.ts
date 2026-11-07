@@ -3,15 +3,15 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
   type PaidEffectIdentity,
   computePaidEffectIdentity,
-} from '@/core/migration/paid-effect-protocol';
-import type { Db, Tx } from '@/db/client';
+} from '@/core/paid-work/protocol/paid-effect-protocol';
 import {
   admitPaidEffectIntent,
   claimPaidEffectSend,
   listPaidEffectObligations,
   readPaidEffect,
   settleExpiredPaidEffectSends,
-} from '@/db/paid-effect-store';
+} from '@/core/paid-work/server/paid-effect-store';
+import type { Db, Tx } from '@/db/client';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 
 const INPUT = { artifact_id: 'a1', sections: [{ kind: 'definition', md: 'x' }] };

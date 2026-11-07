@@ -135,11 +135,14 @@ import {
 import { resolveQuestionAdmissionPolicyId } from '@/capabilities/practice/question-bank/server/admission/run-admission';
 import { QUESTION_ADMISSION_TASK_KIND } from '@/capabilities/practice/question-bank/server/admission/solve';
 import {
+  lockPaidEffectControlFamily,
+  readPaidEffectControl,
+} from '@/core/paid-work/server/paid-effect-control';
+import {
   QUESTION_ADMISSION_PAID_UNIT,
   QUESTION_ADMISSION_POLICY_ID,
 } from '@/core/question-admission-policy';
 import type { Db, Tx } from '@/db/client';
-import { lockPaidEffectControlFamily, readPaidEffectControl } from '@/db/paid-effect-control';
 import { type TaskReasoningConfig, resolveTaskBinding } from '@/server/ai/providers';
 import { getStartedBoss } from '@/server/boss/client';
 
