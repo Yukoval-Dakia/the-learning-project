@@ -21,7 +21,7 @@ export const CURATOR_LEGACY_FACT_PREVIEW = 10;
 export const CURATOR_LEGACY_FACT_PREVIEW_CHARS = 400;
 
 export const CURATOR_INSTRUCTION =
-  '整理和压缩上下文，不决定做什么。本次输入是索引：topics 列出全部主题（名称、说明、事实数、陈旧度），evidence 只列自上次固化以来的事件索引（excerpt 只用于挑事件），legacy_scopes/legacy_facts 是旧层索引。写之前先用 query_context 读取要改主题的完整事实（topicKeys），用 query_events（filter.sinceAt=evidence.window_start，includePayload=true）读取事件正文；legacy scope 用 query_context 的 scopeKey 读，旧事实用 query_context 的 legacyFacts 分页读。索引里的 total/omitted_older/has_more/next_cursor 表示还没载入的部分：必须读到写到，才能声称整理完；没有读到的细节不能当事实写入，excerpt 不能代替正文。接管 legacy_scopes 中所有 scope 的整理；即使没有新事件也检查陈旧程度，主题保留 scope_key，陈旧不等于错误。legacy-global 是旧摘要原文：第一次整理时把主题名、说明和正文改成学习者能懂的白话，不提迁移、升级或内部系统名；逐条保留所有经历事实及成功/失败、先后和不确定性，不能以清理建议为由丢掉事实。逐条 supersede 原事实，不合并 event/weakness；原文仍保留在旧 scope 和版本日志。只重写内容有变化的主题；没变化就停止。学习者 correction 最高优先。';
+  '整理和压缩上下文，不决定做什么。本次输入是索引：topics 列出全部主题（名称、说明、事实数、陈旧度），evidence 只列自上次固化以来的事件索引（excerpt 只用于挑事件），legacy_scopes/legacy_facts 是旧层索引。写之前先用 query_context 读取要改主题的完整事实（topicKeys，每次至多 5 个），用 query_events（filter.sinceAt=evidence.window_start，includePayload=true）读取事件正文；legacy scope 用 query_context 的 scopeKey 读，旧事实用 query_context 的 legacyFacts 分页读。主题正文只能走 topicKeys：不要不带参数调 query_context，也不要用 scopeKey=global 或 global:digest 取主题正文——那几路把整份摘要当 brief 拉回来。索引里的 total/omitted_older/has_more/next_cursor 表示还没载入的部分：必须读到写到，才能声称整理完；没有读到的细节不能当事实写入，excerpt 不能代替正文。接管 legacy_scopes 中所有 scope 的整理；即使没有新事件也检查陈旧程度，主题保留 scope_key，陈旧不等于错误。legacy-global 是旧摘要原文：第一次整理时把主题名、说明和正文改成学习者能懂的白话，不提迁移、升级或内部系统名；逐条保留所有经历事实及成功/失败、先后和不确定性，不能以清理建议为由丢掉事实。逐条 supersede 原事实，不合并 event/weakness；原文仍保留在旧 scope 和版本日志。只重写内容有变化的主题；没变化就停止。学习者 correction 最高优先。';
 
 export interface CuratorPayloadBlocks {
   context_chars: number;
@@ -85,8 +85,11 @@ export async function buildCuratorPayload(
 
   const shownRows = evidenceRows.slice(-CURATOR_EVIDENCE_INDEX_LINES);
   const evidence = {
+    // `||`: a bootstrapped digest can carry as_of:''; the model passes this
+    // string straight into query_events.filter.sinceAt, so it must stay a
+    // parseable timestamp.
     window_start:
-      contextDigest.digest.as_of ?? new Date(input.now.getTime() - 30 * 86_400_000).toISOString(),
+      contextDigest.digest.as_of || new Date(input.now.getTime() - 30 * 86_400_000).toISOString(),
     total: evidenceRows.length,
     shown: shownRows.length,
     omitted_older: evidenceRows.length - shownRows.length,

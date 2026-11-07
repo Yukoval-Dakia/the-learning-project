@@ -3,7 +3,7 @@
 // in a way that is painful to consume generically, while the raw columns (id /
 // actor / action / subject / outcome / caused_by / created_at) are all the LLM needs.
 
-import { and, desc, eq, gte, lt, lte, max, ne, or, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, lt, lte, max, ne, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { event } from '@/db/schema';
 import { getCorrectionStatuses } from '@/kernel/events';
@@ -353,7 +353,6 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
       outcome: event.outcome,
       caused_by_event_id: event.caused_by_event_id,
       created_at: event.created_at,
-      payload: event.payload,
     })
     .from(event);
   const filtered = conditions.length > 0 ? baseQuery.where(and(...conditions)) : baseQuery;
@@ -372,6 +371,22 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
     ctx.db,
     rows.map((row) => row.id),
   );
+  // Payload text is fetched only when requested: context_change-class rows
+  // carry full before/after blobs (~hundreds of KB), and the default row set
+  // must stay exactly the slim index callers already had.
+  const payloadById = new Map<string, unknown>();
+  if (input.includePayload && rows.length) {
+    const payloadRows = await ctx.db
+      .select({ id: event.id, payload: event.payload })
+      .from(event)
+      .where(
+        inArray(
+          event.id,
+          rows.map((row) => row.id),
+        ),
+      );
+    for (const row of payloadRows) payloadById.set(row.id, row.payload);
+  }
   let payloadCharsLeft = QUERY_EVENTS_PAYLOAD_CAPS.pageChars;
   let omittedPayloadRows = 0;
   const events = rows.map((r) => {
@@ -393,7 +408,7 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
       replacement_event_id: correction?.replacement_event_id ?? null,
     };
     if (!input.includePayload) return base;
-    const full = JSON.stringify(r.payload ?? null);
+    const full = JSON.stringify(payloadById.get(r.id) ?? null);
     const rowBudget = Math.min(QUERY_EVENTS_PAYLOAD_CAPS.rowChars, payloadCharsLeft);
     if (rowBudget <= 0) {
       omittedPayloadRows += 1;
@@ -423,6 +438,7 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
       outcome: filter.outcome ?? null,
       causedByEventId: filter.causedByEventId ?? null,
       siblingOfEventId: filter.siblingOfEventId ?? null,
+      sinceAt: filter.sinceAt ?? null,
       sinceDays: filter.sinceDays ?? null,
       limit,
     },

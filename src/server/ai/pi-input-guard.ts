@@ -2,8 +2,10 @@
 //
 // The catalog's `maxInputTokens` is an input budget, not the model window. The
 // local estimator counts CJK ~1 token/char and other text ~1 token/4 chars, so
-// it undercounts JSON-shaped payloads; yuk1984 echo runs measured actual/estimate
-// 1.12–1.14 on the Dreaming payload. OpenDesign is the only catalog entry with a
+// it undercounts JSON-shaped payloads. yuk1984 evidence bounds the bias: echo
+// runs imply 1.12–1.14 counting only prompt+payload bytes (≈1.0 once assistant
+// turns are included), and the failed TEST run's provider-reported input was
+// ≥1.056–1.088× the 328k budget. OpenDesign is the only catalog entry with a
 // declared input budget (328k), and its compaction trigger is 85% of it (278.8k),
 // so a 1.15 safety factor (285.2k raw estimate) stays above every compacted
 // request and only rejects estimates that would already be over budget in fact.
