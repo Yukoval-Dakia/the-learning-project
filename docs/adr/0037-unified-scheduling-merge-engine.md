@@ -1,6 +1,6 @@
 # ADR-0037 — 调度合并引擎统一今日流（review_plan 退役）
 
-**Status**: Accepted (2026-06-14)
+**Status**: Accepted (2026-06-14)，经 [ADR-0080](0080-coach-owned-practice-queue.md) 修订（2026-11-07；已决定，尚未实施）
 **Part of**: YUK-203（领域模型重构）·调度轴 B3。
 **Decision source**: `docs/design/2026-06-14-product-rethink-decisions-ledger.md` §1 B3（调度拍板原文，最高权威）+ `docs/design/2026-06-14-product-rethink-phase2-synthesis.md` §2.2（A2 练习旅程·流为脊柱）/ §3.4（调度合并引擎 grounded 现状 + 目标）/ §7.1 H2（owner 拍板「推翻双通道」）。
 **Related**: ADR-0028（知识级 FSRS，仍是 *when* 真相源，本 ADR 不改其调度数学）/ ADR-0013（review-session lifecycle，仍是运行中 attempt 容器）/ ADR-0029（review-engine-lands-on-existing-primitives——**本 ADR amends 它**：§3.4 决定 4「Coach → brief → ReviewPlanTask 两级流水线」被合并引擎取代，ReviewPlanTask/review_plan 退化为 proposer 后直接退役，详见下文「§与 ADR-0029 的关系」）/ ADR-0012（mastery 派生 view，被 B1 `mastery_state` 重写但 frontier/排序读它）/ ADR-0030（variant-rotation probe selector，作为复习侧子步骤保留）。
@@ -24,7 +24,7 @@ Phase 0 现状（`...phase2-synthesis.md` §3.4 grounded 复核）暴露调度�
 2. **合并 what + mix，FSRS *when* 数学不并进 AI**（独立真相源，三轴正交红线 §4.1 R 轴）。AI 决定 **what**（今日学哪些知识点/题）+ **mix**（block↔interleave 配比、新知/巩固比，A2 由 B1 p(L) 掌握阶段驱动）；**FSRS 决定 when**——引擎只**读** ADR-0028 的 due 列表作约束输入，绝不把 FSRS 的间隔数学并进 AI 步骤，`material_fsrs_state` 仍是单 writer 的 *when* 真相源。复习配比 = AI 每日建议（非固定公式）。
 
 3. **三约束嵌入引擎**（决策总账 §1 B3 + §7.1 H5/H8，§6.2 B6）：
-   - ① **确定性硬约束嵌入**：到期必复习 + 孤儿 draft 排除作 **hard constraint**，AI **不能违反**。落地走**代码侧 post-filter**（LLM 产出今日流后确定性裁剪/补齐），**非 prompt 约束**（prompt 软约束会被 LLM 软化，§6.2 B6 处置）。到期项是 hard constraint——AI 只能改呈现顺序/主推不主推，**不能从队列删除**（H8 拍板，落代码 invariant + 测试，杜绝 §6.3 C1「what 决策隐性回灌 due 队列」正交破口）。
+   - ① **确定性事实与明确意图由代码守护**：孤儿 draft、不可服务或用途不允许的题不得入队；学习者已授权的明确 Steering 在候选、提交与取题处执行。依 ADR-0080，到期项可以由 Coach 有理由地推迟或调序；须记录原 due 事实、推迟理由和复看触发，保留积压可见性，不要求到期必入队或保持到期相对序。**FSRS 的间隔、到期与可提取度计算仍为确定性层，Coach 不改 dueAt、不伪造复习。** 新合同已决定但尚未实施，运行现状以源码与真实验收为准。
    - ② **可解释可追溯**：每条流项带 AI 理由，接 propose-only 留痕三表（evidence-first 红线，runs log 到 `src/server/ai/log.ts`）。
    - ③ **fallback**：AI 挂了退化到确定性 due 队列（先做确定性 fallback 兜底再叠 AI 层，§6.2 B6；degenerate 态设计）。
 
@@ -48,12 +48,12 @@ ADR-0029「Coach 复习引擎落在既有原语上」的存储与证据裁决（
 - 三套手抄 due 选题（`due-list` / review-session / `stream-store`）收敛到单一 picker，`variant-rotation` seam 真接进 AI——调度逻辑漂移源被消除。
 - due 通道 + review_plan paper channel 双轨不对账被合并引擎一处产流取代，Phase 0「编排甩给用户」反模式的调度切面闭合；今日流是 A1 `/today` 今日主缕（`...phase2-synthesis.md` §2.1）+ A2 `/practice` 流脊柱（§2.2）的统一数据源。
 - frontier 升一等公民（递归 CTE，零新基建复用 prereq 边），冷启动空 frontier 有 LLM 填充兜底，新知学习路径不再无人定义（§4.5 冷启动空池缺口的调度侧落点）。
-- 三约束（hard constraint post-filter + 留痕 + fallback）让 AI 编排在「到期必复习」不可违反的前提下自由出手，evidence-first / propose-only 红线延续，AI 挂了有确定性退化态。
+- 三约束（确定性事实/明确意图校验 + 留痕 + fallback）让 AI 编排在事实与授权边界内安排队列，evidence-first / propose-only 红线延续，AI 挂了有确定性退化态。
 
 **代价 / 风险**
 - **这是推翻已锁决策的真重构，不是「接通」**（§6.1 F1 / §7.1 H2 裁决）：三套手抄收敛 + AI 真接入 variant-rotation seam + review_plan 退役是实打实的工程量，决策总账「不计代价」下不作否决理由但如实登记。
-- **三约束具体形态欠规约**（§6.2 B6 升 blocker）：硬约束 post-filter 的裁剪/补齐规则、fallback 触发条件、mem0 prior 进 prompt 的权重契约（H5）落地前须定；先做确定性 fallback 兜底再叠 AI 层，硬约束走代码侧 post-filter 非 prompt 约束——否则 LLM 软化硬约束。
-- **正交破口需代码 invariant 守**：C1（credit「进 p(L)」经 what 决策隐性裁掉 due 队列项）由 H8「到期项 hard constraint，只能改呈现不能删队列」落代码 invariant + 测试防住；C2/C3（mem0 经曝光偏置/confirmation loop 污染 p(L)）由 H5/H6 + 防循环注入五防守住。
+- **三约束具体形态欠规约**（§6.2 B6 升 blocker）：原硬约束 post-filter 的裁剪/补齐解释已由 ADR-0080 的队列合同取代；fallback、上下文与确定性提交按该 ADR 及其完整设计实施；先做确定性 fallback 兜底再叠 AI 层，硬约束走代码侧 post-filter 非 prompt 约束——否则 LLM 软化硬约束。
+- **正交破口需代码 invariant 守**：C1 由到期推迟留痕、积压可见与禁止改写 FSRS 状态守护；ADR-0080 取代 H8 的到期必入队限制，不把队列取舍当作复习或掌握证据；C2/C3（mem0 经曝光偏置/confirmation loop 污染 p(L)）由 H5/H6 + 防循环注入五防守住。
 - **空 frontier LLM 填充有效性天花板**（§6.5 E4）：冷启动期 LLM 猜古文知识点先后序无验证，临时边只做软建议不做硬 gating，先埋点测吻合率——古文为主科目下 frontier 填充质量是 known-limitation。
 - **review_plan 退役需迁移**：`review_plan` job 注销 + ReviewPlanTask 退场 + 其窄 surface intent 迁入引擎，是一次性 migration + 测试覆盖；ADR-0029 decision 4 的 paper-channel 调用方须改读合并引擎产出。
 

@@ -1,6 +1,6 @@
 # ADR-0042 — MFI 调度信号 + 选题引擎三层三明治 + order 切分
 
-**Status**: Accepted (2026-06-15)
+**Status**: Superseded by [ADR-0080](0080-coach-owned-practice-queue.md)（2026-11-07；新决定已决定，尚未实施；以下保留历史裁决，FSRS 确定性层保留）
 **Part of**: YUK-203 · AI pipeline re-think · 调度轴 B3 · D14 编排面。
 **Decision source**: owner 2026-06-15 逐问压实（「上 MFI 强自适应怎么做」→「MFI 会怎样改造现有选题」→「新设计里的选题引擎」→「落成 design doc」→ 决策点 A/B 拍定）。完整实施形态见 `docs/design/2026-06-15-selection-engine-three-layer-design.md`（rev 2，经 4 视角独立 critic）。
 **Related**: **ADR-0037（合并引擎——本 ADR 是其「选题引擎欠规约 blocker」的形态落地 + 引入 MFI 新维度）** · ADR-0035（mastery_state 三维 + 四引擎——θ̂/b 来源、MFI 的 difficulty×p(L) 交叉派生）· ADR-0030（variant-rotation probe selector——降为 L1 复习侧子步骤）· ADR-0028（知识级 FSRS *when* 单 writer——只读约束）· ADR-0039（A/B/C 出手强度——今日流撤销链 blocker）· ADR-0041（copilot reach——copilot 改今日流边界 blocker）。
