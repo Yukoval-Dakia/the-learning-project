@@ -3,27 +3,14 @@ import { eq } from 'drizzle-orm';
 import type { TaskTextResult } from '@/ai/task-result';
 import { canonicalHash } from '@/core/migration/canonical';
 import { rawArgumentsEvidence } from '@/core/raw-arguments-evidence';
-import {
-  type DeclaredPrivateKey,
-  compileDeclaredKey,
-  compiledCanonicalOf,
-  declaredRationalValueOf,
-} from '@/core/schema/assessment/blank-answer-compare';
+import { type AnswerKeyT, compareAnswerKeys } from '@/core/schema/assessment/answer-compare';
+import { compileDeclaredKey } from '@/core/schema/assessment/blank-answer-compare';
 import type { BlankAnswerShapeT } from '@/core/schema/assessment/blank-answer-shape';
-import {
-  gradeBlankExactUnit,
-  gradeSelectUnit,
-  normalizeBlankText,
-  parseBlankNumericText,
-} from '@/core/schema/assessment/grade';
+import { gradeBlankAuthorKeyUnit, gradeSelectUnit } from '@/core/schema/assessment/grade';
 import type { ScoringUnitResultT } from '@/core/schema/assessment/judgment';
 import { isPublicSharedMaterial } from '@/core/schema/assessment/materials';
 import { describeSelectItem } from '@/core/schema/assessment/response';
-import type {
-  BlankNormalizationT,
-  ScoringUnitCriterionT,
-  ScoringUnitT,
-} from '@/core/schema/assessment/scoring';
+import type { ScoringUnitCriterionT, ScoringUnitT } from '@/core/schema/assessment/scoring';
 import { taskInputHash } from '@/core/task-input-hash';
 import type { Db } from '@/db/client';
 import { ai_task_runs } from '@/db/schema';
@@ -63,15 +50,7 @@ export function admissionWireInput(
 export const QUESTION_ADMISSION_TASK_KIND = 'QuestionAdmissionSolveTask';
 
 /** 已 mint 的 typed 键（solve 输出 ∪ 既有判据的统一表示）。 */
-export type AdmissionKey =
-  | { kind: 'select'; accepted_item_ids: string[] }
-  | { kind: 'blank_text'; accepted: string[] }
-  | {
-      kind: 'blank_numeric';
-      expected: number;
-      tolerance: { kind: 'absolute'; value: number } | { kind: 'relative'; ratio: number };
-      expected_unit?: string;
-    };
+export type AdmissionKey = AnswerKeyT;
 
 export interface AdmissionSolveReceipt {
   task_run_id: string;
@@ -300,285 +279,6 @@ function validSolveUnitOutput(
   };
 }
 
-/** Conflict details stay bounded — they land in withheld evidence and reasons. */
-const DETAIL_VALUE_MAX = 160;
-function boundDetail(value: string, max = DETAIL_VALUE_MAX): string {
-  return value.length <= max ? value : `${value.slice(0, max)}…(+${value.length - max} chars)`;
-}
-
-/** Compact value-level rendering of a key for conflict details. */
-function keyBrief(key: AdmissionKey): string {
-  switch (key.kind) {
-    case 'select':
-      return boundDetail(`select[${key.accepted_item_ids.join(',')}]`);
-    case 'blank_text':
-      return boundDetail(`blank_text[${key.accepted.join('|')}]`);
-    case 'blank_numeric':
-      return `blank_numeric{expected=${key.expected},tolerance=${JSON.stringify(
-        key.tolerance,
-      )},unit=${key.expected_unit ?? '∅'}}`;
-  }
-}
-
-type NumericTolerance = { kind: 'absolute'; value: number } | { kind: 'relative'; ratio: number };
-
-const tolOf = (t: { value?: number; ratio?: number }) => t.value ?? t.ratio ?? 0;
-
-function withinToleranceOf(x: number, expected: number, tolerance: NumericTolerance): boolean {
-  return tolerance.kind === 'absolute'
-    ? Math.abs(x - expected) <= tolerance.value
-    : expected === 0
-      ? x === expected
-      : Math.abs(x - expected) / Math.abs(expected) <= tolerance.ratio;
-}
-
-/** AdmissionKey → 比较核心的私有键读面（select 无对应 —— 声明只在 blank 槽）。 */
-function privateKeyOf(key: AdmissionKey): DeclaredPrivateKey | null {
-  switch (key.kind) {
-    case 'select':
-      return null;
-    case 'blank_text':
-      return { kind: 'text', accepted: key.accepted };
-    case 'blank_numeric':
-      return {
-        kind: 'numeric',
-        expected: key.expected,
-        tolerance: key.tolerance,
-        ...(key.expected_unit != null ? { expected_unit: key.expected_unit } : {}),
-      };
-  }
-}
-
-/**
- * 已声明槽的 A/B 键一致性（第 2 片）：两侧【全部】别名经同一
- * compileDeclaredKey 编译，每个别名必须完整解析且为同一数学对象（别名数
- * 可不同）；铸出的键携带全部已验证别名 —— 实际 grade 逐一接受。
- * 返回 null = 交由既有分支（numeric/numeric 容差铸键，单位相容已验）。
- */
-function declaredKeysAgree(
-  a: AdmissionKey,
-  b: AdmissionKey,
-  shape: BlankAnswerShapeT,
-): { agree: boolean; detail?: string; key?: AdmissionKey } | null {
-  if (a.kind === 'select' || b.kind === 'select') {
-    return { agree: false, detail: 'select key cannot satisfy a declared answer_shape' };
-  }
-  if (a.kind === 'blank_text' && b.kind === 'blank_text') {
-    const privateKeyA = privateKeyOf(a);
-    const privateKeyB = privateKeyOf(b);
-    if (privateKeyA == null || privateKeyB == null) {
-      return { agree: false, detail: 'blank_text keys must carry an accepted alias list' };
-    }
-    const ca = compileDeclaredKey(shape, privateKeyA);
-    const cb = compileDeclaredKey(shape, privateKeyB);
-    if (!ca.ok) {
-      return {
-        agree: false,
-        detail: `solver A aliases invalid under declared shape: ${ca.reason}`,
-      };
-    }
-    if (!cb.ok) {
-      return {
-        agree: false,
-        detail: `solver B aliases invalid under declared shape: ${cb.reason}`,
-      };
-    }
-    const canonicalA = compiledCanonicalOf(ca.compiled);
-    const canonicalB = compiledCanonicalOf(cb.compiled);
-    if (canonicalA == null || canonicalB == null || canonicalA !== canonicalB) {
-      return {
-        agree: false,
-        detail: `independent solves disagree as declared objects: ${canonicalA} vs ${canonicalB}`,
-      };
-    }
-    const accepted = [...a.accepted, ...b.accepted.filter((t) => !a.accepted.includes(t))];
-    return {
-      agree: true,
-      key: { kind: 'blank_text', accepted },
-      detail: `agreed as declared object ${canonicalA} (${accepted.length} validated aliases)`,
-    };
-  }
-  if (a.kind === 'blank_numeric' && b.kind === 'blank_numeric') {
-    if (shape.value.kind !== 'number') {
-      return {
-        agree: false,
-        detail: `numeric keys cannot express declared value kind '${shape.value.kind}'`,
-      };
-    }
-    if (shape.value.unit != null) {
-      const unit = shape.value.unit.unit.normalize('NFKC');
-      const norm = (u?: string): string => (u ?? '').normalize('NFKC');
-      if (norm(a.expected_unit) !== unit || norm(b.expected_unit) !== unit) {
-        return {
-          agree: false,
-          detail: `declared unit '${unit}' vs keys ${a.expected_unit ?? '∅'}/${b.expected_unit ?? '∅'}`,
-        };
-      }
-    }
-    return null; // 单位/形态相容 → 既有容差铸键分支（更严容差侧）。
-  }
-  // 跨 kind（numeric × text）：仅无声明单位的 number 形状；文本侧全部别名
-  // 必须编译为同一精确有理值且落在冻结容差内 —— 铸 numeric 键（判分读法
-  // 逐一接受这些文本形式）。
-  const numeric = a.kind === 'blank_numeric' ? a : b.kind === 'blank_numeric' ? b : null;
-  const text = a.kind === 'blank_text' ? a : b.kind === 'blank_text' ? b : null;
-  if (
-    numeric != null &&
-    text != null &&
-    shape.value.kind === 'number' &&
-    shape.value.unit == null &&
-    numeric.expected_unit == null
-  ) {
-    const privateKey = privateKeyOf(text);
-    if (privateKey == null) {
-      return { agree: false, detail: 'blank_text key must carry an accepted alias list' };
-    }
-    const ct = compileDeclaredKey(shape, privateKey);
-    if (!ct.ok) {
-      return {
-        agree: false,
-        detail: `text aliases invalid under declared number shape: ${ct.reason}`,
-      };
-    }
-    const value = declaredRationalValueOf(ct.compiled);
-    if (value != null && withinToleranceOf(value, numeric.expected, numeric.tolerance)) {
-      return {
-        agree: true,
-        key: numeric,
-        detail: `text forms all read as the declared numeric key: ${boundDetail(text.accepted.join('|'))} -> ${keyBrief(numeric)}`,
-      };
-    }
-    return {
-      agree: false,
-      detail: `declared text aliases (${boundDetail(text.accepted.join('|'))}) disagree with ${keyBrief(numeric)}`,
-    };
-  }
-  return {
-    agree: false,
-    detail: `key kinds ${a.kind}/${b.kind} cannot agree under declared value kind '${shape.value.kind}'`,
-  };
-}
-
-export function keysAgree(
-  a: AdmissionKey,
-  b: AdmissionKey,
-  normalization: BlankNormalizationT | null,
-  shape?: BlankAnswerShapeT | null,
-): { agree: boolean; detail?: string; key?: AdmissionKey } {
-  if (shape != null) {
-    const declared = declaredKeysAgree(a, b, shape);
-    if (declared != null) return declared;
-    // numeric/numeric 且单位/形态已验相容 → 落到既有容差铸键分支。
-  }
-  if (a.kind !== b.kind) {
-    // blank_text vs blank_numeric may still describe ONE key: every
-    // accepted text form must read as a plain number under the SAME
-    // deterministic parse the minted numeric key later applies in grading
-    // (parseBlankNumericText @2; width fold + trim + plain number, no units/separators),
-    // and each value must land inside the numeric tolerance. A numeric key
-    // carrying expected_unit can never agree — plain-number forms have no unit.
-    const numeric = a.kind === 'blank_numeric' ? a : b.kind === 'blank_numeric' ? b : null;
-    const text = a.kind === 'blank_text' ? a : b.kind === 'blank_text' ? b : null;
-    if (numeric != null && text != null && numeric.expected_unit == null) {
-      const parsed = text.accepted.map((form) => ({
-        form,
-        value: parseBlankNumericText(form, 'numeric-norm@2'),
-      }));
-      if (
-        parsed.length > 0 &&
-        parsed.every(
-          (entry) =>
-            entry.value != null &&
-            withinToleranceOf(entry.value, numeric.expected, numeric.tolerance),
-        )
-      ) {
-        // Mint the NUMERIC key — its grading read accepts exactly the forms
-        // that just parsed, so admission and grading stay consistent.
-        return {
-          agree: true,
-          key: numeric,
-          detail: `text forms all read as the numeric key: ${boundDetail(
-            text.accepted.join('|'),
-          )} -> ${keyBrief(numeric)}`,
-        };
-      }
-    }
-    return {
-      agree: false,
-      detail: `key kind ${a.kind} vs ${b.kind}: ${keyBrief(a)} vs ${keyBrief(b)}`,
-    };
-  }
-  if (a.kind === 'select' && b.kind === 'select') {
-    const sa = [...a.accepted_item_ids].sort();
-    const sb = [...b.accepted_item_ids].sort();
-    return sa.length === sb.length && sa.every((id, i) => id === sb[i])
-      ? { agree: true, key: a }
-      : {
-          agree: false,
-          detail: `select key ${boundDetail(sa.join(','))} vs ${boundDetail(sb.join(','))}`,
-        };
-  }
-  if (a.kind === 'blank_text' && b.kind === 'blank_text') {
-    const norm = normalization ?? {
-      version: 'n/a',
-      nfkc: false,
-      trim_outer: true,
-      casefold: false,
-      collapse_whitespace: false,
-      ignore_punctuation: false,
-      character_variants: [],
-    };
-    const na = [...new Set(a.accepted.map((t) => normalizeBlankText(t, norm)))].sort();
-    const nb = [...new Set(b.accepted.map((t) => normalizeBlankText(t, norm)))].sort();
-    // Partial overlap cannot prove that omitted aliases are wrong.
-    const allA = na.every((t) => nb.includes(t));
-    const allB = nb.every((t) => na.includes(t));
-    if (allA && allB) return { agree: true, key: a };
-    return {
-      agree: false,
-      detail: `blank_text ${boundDetail(na.join('|'))} vs ${boundDetail(nb.join('|'))}`,
-    };
-  }
-  if (a.kind === 'blank_numeric' && b.kind === 'blank_numeric') {
-    if ((a.expected_unit ?? null) !== (b.expected_unit ?? null)) {
-      return {
-        agree: false,
-        detail: `expected_unit ${a.expected_unit ?? '∅'} vs ${b.expected_unit ?? '∅'}: ${keyBrief(a)} vs ${keyBrief(b)}`,
-      };
-    }
-    // 容差同型才可互证：absolute/relative 语义不同型 ⇒ 不视为等价，不合并铸键。
-    if (a.tolerance.kind !== b.tolerance.kind) {
-      return {
-        agree: false,
-        detail: `tolerance kind ${a.tolerance.kind} vs ${b.tolerance.kind}: ${keyBrief(a)} vs ${keyBrief(b)}`,
-      };
-    }
-    const tolA = tolOf(a.tolerance);
-    const tolB = tolOf(b.tolerance);
-    const ok =
-      withinToleranceOf(a.expected, b.expected, b.tolerance) &&
-      withinToleranceOf(b.expected, a.expected, a.tolerance);
-    if (!ok) {
-      return { agree: false, detail: `numeric ${a.expected} vs ${b.expected}` };
-    }
-    // 一致且容差可比 ⇒ 铸更严的一侧（绝不取更宽）。
-    const tighter = tolA <= tolB ? a.tolerance : b.tolerance;
-    const looser = tolA <= tolB ? b.tolerance : a.tolerance;
-    return {
-      agree: true,
-      key: { ...a, tolerance: tighter },
-      detail:
-        tolA === tolB
-          ? undefined
-          : `minted stricter tolerance (kept ${JSON.stringify(tighter)} over ${JSON.stringify(looser)})`,
-    };
-  }
-  return {
-    agree: false,
-    detail: `uncomparable key kinds: ${keyBrief(a)} vs ${keyBrief(b)}`,
-  };
-}
-
 export function keyFromAnswer(
   answer: NonNullable<QuestionAdmissionSolveUnitOutputT['answer']>,
 ): AdmissionKey | null {
@@ -700,7 +400,7 @@ async function authorKeyAccepts(
   if (scoring.criterion.kind !== 'blank_key') return false;
   if (key.kind === 'blank_text') {
     for (const alias of key.accepted) {
-      const graded = await gradeBlankExactUnit(
+      const graded = await gradeBlankAuthorKeyUnit(
         scoring,
         { slot_id: slotId, kind: 'blank', state: 'answered', text: alias },
         shape,
@@ -712,7 +412,7 @@ async function authorKeyAccepts(
   const text = modelFinalAnswerText(key);
   if (text == null) return false;
   return authorKeyAcceptsGrade(
-    await gradeBlankExactUnit(
+    await gradeBlankAuthorKeyUnit(
       scoring,
       { slot_id: slotId, kind: 'blank', state: 'answered', text },
       shape,
@@ -928,7 +628,10 @@ export async function runDualSolve(
         });
         continue;
       }
-      const agreement = keysAgree(keyA, keyB, unit.blank_normalization, declaredShape);
+      const agreement = compareAnswerKeys(keyA, keyB, {
+        blank_normalization: unit.blank_normalization,
+        declared_shape: declaredShape,
+      });
       verdicts.set(
         unit.scoring_unit_id,
         agreement.agree && agreement.key != null
@@ -936,7 +639,10 @@ export async function runDualSolve(
           : { status: 'conflict', detail: agreement.detail ?? 'independent solves disagree' },
       );
     } else {
-      const agree = keysAgree(keyA, keyB, unit.blank_normalization, declaredShape);
+      const agree = compareAnswerKeys(keyA, keyB, {
+        blank_normalization: unit.blank_normalization,
+        declared_shape: declaredShape,
+      });
       if (!agree.agree || agree.key == null) {
         verdicts.set(unit.scoring_unit_id, {
           status: 'conflict',

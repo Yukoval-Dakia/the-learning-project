@@ -27,13 +27,14 @@ import type { SubjectProfile } from '@/subjects/profile';
 // admission lane 经本模块复导出 Provider；TaskTextResult 直接取共享结果契约。
 export type { Provider } from '@/server/ai/providers';
 
+import { foldSolveCheckAnswer } from '@/core/schema/assessment/answer-compare';
 import type { PlacementVerificationAuthority } from '@/kernel/supply-contracts';
 import {
   PlacementStarterAdmissionError,
   PlacementStarterStaleAuthorityError,
   placementAuthority,
 } from '../../../supply/public';
-import { answerCandidates, normalizeAnswer, referenceAnswerCandidates } from './choice-surface';
+import { answerCandidates, referenceAnswerCandidates } from './choice-surface';
 
 // ---------- check identifiers ----------
 // The full pluggable-checker vocabulary. The framework + solve-check land here;
@@ -449,7 +450,7 @@ function isExactQuestion(q: SolveCheckQuestion): boolean {
 
 // ---------- deterministic choice-surface pre-checks (#24) ----------
 // MOVED to ./choice-surface.ts: the pure answer-candidate kernel
-// (referenceAnswerCandidates / normalizeAnswer / choiceLabel* / answerCandidates)
+// (referenceAnswerCandidates / foldSolveCheckAnswer / choiceLabel* / answerCandidates)
 // plus the whole choice-surface rule block. runSolveCheck's exact path imports
 // the kernel back above; consumers (quiz_verify.ts) import the rules module
 // directly. Semantics unchanged — the module received the code verbatim.
@@ -932,11 +933,11 @@ export async function runSolveCheck(
     const allowChoiceWrapper = question.kind === 'choice' || choices.length > 0;
     const refCandidates = referenceCandidates
       .flatMap((candidate) => answerCandidates(candidate, choices, allowChoiceWrapper))
-      .map(normalizeAnswer)
+      .map(foldSolveCheckAnswer)
       .filter((c) => c.length > 0);
     const solverCandidates = [solverFinalAnswer, ...solverEquivalents]
       .flatMap((candidate) => answerCandidates(candidate, choices, allowChoiceWrapper))
-      .map(normalizeAnswer)
+      .map(foldSolveCheckAnswer)
       .filter((c) => c.length > 0);
     const agree = solverCandidates.some((candidate) => refCandidates.includes(candidate));
     if (agree) {

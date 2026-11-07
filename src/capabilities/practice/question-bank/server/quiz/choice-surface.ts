@@ -5,6 +5,10 @@
 // share that kernel. choiceSurfacePrecheck rejects insufficient, duplicate, or
 // reference-not-in-choices surfaces before any paid verify call.
 
+import {
+  foldSolveCheckAnswer,
+  foldSolveCheckOptionIdentity,
+} from '@/core/schema/assessment/answer-compare';
 import { normalizeToCanonicalKind } from '@/subjects/question-kind';
 
 /**
@@ -71,14 +75,6 @@ export function referenceAnswerCandidates(q: ReferenceAnswerSource): string[] {
   return out;
 }
 
-export function normalizeAnswer(text: string): string {
-  return text
-    .normalize('NFKC')
-    .toLowerCase()
-    .replace(/[\s　]+/gu, '') // strip ASCII + full-width whitespace only
-    .trim();
-}
-
 function choiceLabelIndex(value: string): number | null {
   // Wrapper forms「（C）」/「【C】」are legal label shapes (sourcing contract),
   // so strip label wrappers before the bare-letter test. NFKC already folds
@@ -138,7 +134,7 @@ function stripLeadingChoiceLabel(value: string): string | null {
 }
 
 // A1 (独立 review) — trailing sentence-punctuation variant for exact compare, applied
-// symmetrically to BOTH reference and solver candidates via answerCandidates. normalizeAnswer
+// symmetrically to BOTH reference and solver candidates via answerCandidates. foldSolveCheckAnswer
 // deliberately strips whitespace only (mathematical symbols are load-bearing), so 『长安。』 vs
 // 『长安』 was a stable false fail. Conservative trailing set: full-width 。．！？ + ASCII .!?
 // trailing-only, so interior punctuation ("3.14", "x=-1") is untouched.
@@ -225,10 +221,6 @@ function referenceFirstLine(referenceMd: string | null): string | null {
 }
 
 /** Case-preserving option identity: NFKC + whitespace only (duplicate detection). */
-function normalizeOptionIdentity(text: string): string {
-  return text.normalize('NFKC').replace(/[\s　]+/gu, '');
-}
-
 /**
  * Choice-surface rules that can decide before ANY paid verify call runs —
  * the model is reserved for what rules cannot judge. Applies to every flat row
@@ -269,7 +261,7 @@ export function evaluateChoiceSurface(question: ChoiceSurfaceQuestion): ChoiceSu
     },
   ];
 
-  const identities = choices.map((choice) => normalizeOptionIdentity(choice));
+  const identities = choices.map((choice) => foldSolveCheckOptionIdentity(choice));
   const collisions: string[] = [];
   const seen = new Map<string, number>();
   for (const [index, identity] of identities.entries()) {
@@ -288,10 +280,10 @@ export function evaluateChoiceSurface(question: ChoiceSurfaceQuestion): ChoiceSu
       : { rule: 'duplicate_options', verdict: 'pass', reason: '规范化后（保留大小写）无重复' },
   );
 
-  const normalizedOptions = choices.map((choice) => normalizeAnswer(choice));
+  const normalizedOptions = choices.map((choice) => foldSolveCheckAnswer(choice));
   const matchOptionIndex = (text: string, allowChoiceWrapper: boolean): number => {
     for (const expanded of answerCandidates(text, choices, allowChoiceWrapper)) {
-      const index = normalizedOptions.indexOf(normalizeAnswer(expanded));
+      const index = normalizedOptions.indexOf(foldSolveCheckAnswer(expanded));
       if (index >= 0) return index;
     }
     return -1;

@@ -1,5 +1,9 @@
 import { createHash } from 'node:crypto';
 import { resolveTaskBudget } from '@/capabilities/task-registry';
+import {
+  CURRENT_BLANK_NORMALIZATION,
+  CURRENT_NUMERIC_NORMALIZATION_VERSION,
+} from '@/core/schema/assessment/answer-compare';
 import { isPublicSharedMaterial } from '@/core/schema/assessment/materials';
 import { createAssessmentAssetLoader } from '../../../grading/public';
 import { AdmissionAttemptExhausted } from './attempt';
@@ -186,15 +190,7 @@ function criterionFromKey(key: AdmissionKey, unit: AdmissionUnitSpec): ScoringUn
       key: {
         kind: 'text',
         accepted: key.accepted,
-        normalization: unit.blank_normalization ?? {
-          version: 'blank-norm@2',
-          nfkc: true,
-          trim_outer: true,
-          casefold: false,
-          collapse_whitespace: true,
-          ignore_punctuation: false,
-          character_variants: [],
-        },
+        normalization: unit.blank_normalization ?? CURRENT_BLANK_NORMALIZATION,
       },
     };
   }
@@ -202,7 +198,7 @@ function criterionFromKey(key: AdmissionKey, unit: AdmissionUnitSpec): ScoringUn
     kind: 'blank_key',
     key: {
       kind: 'numeric',
-      normalization_version: 'numeric-norm@2',
+      normalization_version: CURRENT_NUMERIC_NORMALIZATION_VERSION,
       expected: key.expected,
       tolerance: key.tolerance,
       ...(key.expected_unit != null ? { expected_unit: key.expected_unit } : {}),
