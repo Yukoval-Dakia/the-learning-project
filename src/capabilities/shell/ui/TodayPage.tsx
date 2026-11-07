@@ -304,19 +304,17 @@ function AiFailureNotice() {
     queryKey: AI_NOTICE_DISMISSALS_KEY,
     queryFn: client.listAiNoticeDismissals,
   }).data;
+  // Two notices can close at once, so each close only adds or takes back its own keys.
+  const updateDismissed = (update: (keys: string[]) => string[]) =>
+    queryClient.setQueryData<{ keys: string[] }>(AI_NOTICE_DISMISSALS_KEY, (current) => ({
+      keys: update(current?.keys ?? []),
+    }));
   const dismiss = useMutation({
     mutationFn: (keys: string[]) => client.dismissAiNotices(keys),
-    onMutate: (keys) => {
-      const previous = queryClient.getQueryData<{ keys: string[] }>(AI_NOTICE_DISMISSALS_KEY);
-      queryClient.setQueryData(AI_NOTICE_DISMISSALS_KEY, {
-        keys: [...(previous?.keys ?? []), ...keys],
-      });
-      return { previous };
-    },
-    onError: (_error, _keys, context) => {
-      queryClient.setQueryData(AI_NOTICE_DISMISSALS_KEY, context?.previous);
-    },
-    onSuccess: (saved) => queryClient.setQueryData(AI_NOTICE_DISMISSALS_KEY, saved),
+    onMutate: (keys) => updateDismissed((current) => [...current, ...keys]),
+    onError: (_error, keys) =>
+      updateDismissed((current) => current.filter((key) => !keys.includes(key))),
+    onSuccess: (saved) => updateDismissed((current) => [...new Set([...current, ...saved.keys])]),
   });
   if (!dismissed) return null;
   const closed = new Set(dismissed.keys);
