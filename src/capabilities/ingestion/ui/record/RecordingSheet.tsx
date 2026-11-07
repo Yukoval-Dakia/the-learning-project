@@ -165,8 +165,10 @@ export function RecordingSheet({
       {rec.blocks.length > 0 && (
         <BlockLines
           sessionId={rec.id}
+          status={rec.status}
           blocks={rec.blocks}
           serving={rec.blockServing}
+          photos={facts.entrypoint === 'vision_single' || facts.entrypoint === 'vision_paper'}
           onHoverPage={setLitPage}
         />
       )}

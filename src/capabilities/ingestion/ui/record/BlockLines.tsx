@@ -3,16 +3,24 @@ import { printedNumber } from './block-text';
 import type { Block } from './record-api';
 import type { BlockServing } from './recording-model';
 
+/** Statuses in which a question can still be read again from its page (server rescue rule). */
+const RESCUABLE = new Set(['partial', 'extracted']);
+
 /** Recognised questions. They go into the library by themselves; each line says how that went. */
 export function BlockLines({
   sessionId,
+  status,
   blocks,
   serving,
+  photos,
   onHoverPage,
 }: {
   sessionId: string;
+  status: string;
   blocks: Block[];
   serving: ReadonlyMap<string, BlockServing>;
+  /** The material is photos or PDF pages, which a question can be read again from. */
+  photos: boolean;
   onHoverPage: (page: number | null) => void;
 }) {
   if (blocks.length === 0) return null;
@@ -30,6 +38,7 @@ export function BlockLines({
           block={block}
           no={lineNumber(block, i)}
           serving={serving.get(block.id) ?? null}
+          rescuable={photos && RESCUABLE.has(status)}
           onHoverPage={onHoverPage}
         />
       ))}

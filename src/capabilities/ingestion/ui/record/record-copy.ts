@@ -127,6 +127,18 @@ export function servingNote(
   return holdWords(serving.hold_reason);
 }
 
+/** Why one question didn't go in just now, in words; the list is re-read after these. */
+export function enrollProblemWords(code: string | undefined): string {
+  if (code === 'prompt_missing') return '这道题还没有题目文字，先补上。';
+  if (code === 'enroll_in_progress') return '这道题正在进题库，稍等一下。';
+  if (code === 'version_conflict' || code === 'conflict' || code === 'prompt_edit_unavailable') {
+    return '这道题刚刚变了，已经重新读出来，再试一次。';
+  }
+  if (code === 'validation_error') return '题目文字太长了，最多 2 万字。';
+  if (code === 'not_found') return '这道题已经不在了。';
+  return '这次没收进去，再试一次。';
+}
+
 export const START_WORDS: Record<StartProblem, { title: string; body: string }> = {
   quota_used: {
     title: '这周的录入助手启动额度用完了',
