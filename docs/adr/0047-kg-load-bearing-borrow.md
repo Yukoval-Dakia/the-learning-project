@@ -25,7 +25,7 @@
 | **A5** 图-Laplacian 平滑 | 对称（`related_to`） | proper GMRF 联合稠密解（`solveDense` O(n³)） | **request-shaped，无结构上界**（见决定 6/8） | `GRAPH_LAPLACIAN_ENABLED` |
 | **A6** prereq 有向 θ̂ 传播 | 有向（`prerequisite`/`derived_from`） | 单趟 O(E) 加性 Δθ | 真 1 跳 | `PREREQ_THETA_PROPAGATION_ENABLED` |
 | **A13** prereq 诊断向后 emit | 有向逆走（答错→上溯前置） | 闭包 + 当前 dark provisional 几何衰减 0.5^(d−1)，MAX 聚合，emit 事件 | 当前 dark 行为 depth≤16 + node-cap 10k + path-guard，overflow fail-safe→[]；这些界值未获 live ratification | `PREREQ_RISK_EMIT_ENABLED` |
-| Rust coldstart | day-one(n=0) 向前 DAG 先验 | Kahn 拓扑前向，probabilistic-AND | 全 DAG，遇环 reject | `DAY_ONE_PRIOR_ENABLED` |
+| day-one prior | day-one(n=0) 向前 DAG 先验 | Kahn 拓扑前向，probabilistic-AND；TS 计算，Rust `propagate_priors` 留作数值参考 | 全 DAG，遇环 reject | 无开关（YUK-2006） |
 
 不同 relation_type 的数学语义不同，混用会污染 firm-up：对称平滑假设同质，有向边假设序，对立边是反向信号。本 ADR 钉死映射 + 承重借用的 provenance / 半径 / 环 / 衰减契约。
 
@@ -80,7 +80,7 @@ A5/A6 都 ship 成软层：**只移 surfaced `theta_hat`（能力后验均值）
 | A5 | **request-shaped，无结构上界**：GMRF 联合解耦合 requested-诱导 `related_to` 连通分量全域（单 KC 请求 ≈1 跳星图；全树请求 = 整个连通分量）。冷启衰减最慢（λ=0.5/κ=0.01 下未观测链单跳保留 ≈0.87，5 跳仍 ~50%）。 | 线性解天然抗环 | 借用条目 `inferred`；被平滑观测 KC 保留 `theta_hat_raw` | 读侧重算自衰减（真证据一到 likelihood 盖过借用）；无独立 time-decay |
 | A6 | 真 1 跳（单趟同时更新、读原始 θ̂、无传递再传播）| `max(0,·)` 互斥、拓扑无关终止 | 同上（θ̂ 均值移动，band 不动）| 同 A5（读侧重算）|
 | A13 | **当前 dark provisional**：闭包 depth≤16 + node-cap 10k + path-guard，overflow fail-safe→[]；live radius/bounds 仍按 YUK-675 #4 deferred，须后续 owner disposition | path guard + depth bound | `risk_delta` 标 inferred 信号（event 投影，将来消费须走 provenance 契约）| 消费侧读时衰减（绑消费解锁；本单元不消费）|
-| Rust coldstart | 全 DAG 前向 | Kahn 检测 → `Err`（reject）| day-one 先验读，产 display-tier 标量，不进 `getMasteryProjection` | n=0 先验，真数据一到即被 likelihood 盖过 |
+| day-one prior | 全 DAG 前向 | Kahn 检测 → reject | 未测的模型先验；b 与域能力为中性全 0；evidence 0；`mean_mastery` 不是独立掌握；不进 `getMasteryProjection` | n=0 先验，真数据一到即被 likelihood 盖过 |
 
 **借用侧永不修图**：三处读边（`loadEdgesForProjection`/`loadPrereqClosure`/shadow sweep）全 SELECT 只读，遇环只读容忍或 fail-safe-to-noop，**绝不 raw-UPDATE fold-owned `knowledge_edge`**（写边唯一 throat = `edges.ts`）。自愈删边（环检测 → archive 最低 weight 边）归**图治理单元**（经事件层、mirror `merge_attribution_sweep` forensic 形态），不在本 ADR。
 
@@ -88,7 +88,7 @@ A5/A6 都 ship 成软层：**只移 surfaced `theta_hat`（能力后验均值）
 
 ### 7. dark-ship + flag-off byte-identical
 
-各 flag 默认 false（module-level const，仿 `THETA_GRID_ENABLED`，无 config 表/env）。flag-off → `getMasteryProjection` 不拉边、不平滑、不加借条目；**数值投影与 soft-layer 行为保持 byte-identical，但完整对象形状因 required `provenance` 新增而不保持 byte-identical**（回归锚）。λ/κ/λ_down/λ_up 是 owner 供给的固定 n=1 先验；现有 λ=0.5、κ=0.01、λ_down=0.3、λ_up=0.15 仅是 **dark provisional placeholders**，不是经验证或获准 live 的默认值，数值 ratification 仍 deferred。
+各 flag 默认 false（module-level const，仿 `THETA_GRID_ENABLED`，无 config 表/env）。flag-off → `getMasteryProjection` 不拉边、不平滑、不加借条目；**数值投影与 soft-layer 行为保持 byte-identical，但完整对象形状因 required `provenance` 新增而不保持 byte-identical**（回归锚）。day-one 先验自 YUK-2006 起没有 `DAY_ONE_PRIOR_ENABLED`，由 TS 在起始档案读侧计算，仍不写 mastery 投影。λ/κ/λ_down/λ_up 是 owner 供给的固定 n=1 先验；现有 λ=0.5、κ=0.01、λ_down=0.3、λ_up=0.15 仅是 **dark provisional placeholders**，不是经验证或获准 live 的默认值，数值 ratification 仍 deferred。
 
 **S1 形状变更说明**：`MasteryProjection` 加 required `provenance` 字段是 flag 无关的**类型形状变更**——flag-off 回归锚更新为「新形状下，soft-layer 不变量 = 无借用条目、无 theta 移动、无 theta_hat_raw」（数值仍 byte-identical）。
 
@@ -106,7 +106,7 @@ A5/A6 都 ship 成软层：**只移 surfaced `theta_hat`（能力后验均值）
 ### 9. Rust 落点与 S6 前置
 
 **本单元零 Rust 改动**。A6 kernel 平凡（O(E) 加法）零收益；A5 GMRF 是唯一重数值，但问题是「解形态在 batch-read 尺寸下不可扩展」——**先界定解规模（决定 8 分量守卫 / 将来稀疏 solver），再谈 port 语言**。S6（Rust A5 GMRF port）defer 触发 =（A5 flag 翻 + bit-exact 跨端一致或大分量性能需求），前置四件套：
-1. **deployment-aware loader（非 cwd-relative）+ .node/.wasm 进部署镜像**——`src/capabilities/practice/server/day-one-priors.ts` 白纸黑字：cwd-relative `NODE_PATH` 下 deployment-aware loader 是翻 flag 显式 PREREQUISITE；连 coldstart Rust 都未接生产，任何新 port 继承同 gap。
+1. **deployment-aware loader（非 cwd-relative）+ .node/.wasm 进部署镜像**——day-one 先验已改为 TS（YUK-2006），不再经 cwd-relative `.node`。任何新的 Rust 数值 port 仍要先有 deployment-aware loader 和镜像内产物，不能再靠可选 binding。
 2. YUK-501 wasm CI skip 接通（否则 parity 无 gate）。
 3. wasm32-wasip1-threads + napi 双构建面。
 4. crate `napi.targets:["wasm32-wasip1-threads"]`。

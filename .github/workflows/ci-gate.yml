@@ -858,7 +858,8 @@ jobs:
             src/core/calibration/native-parity.unit.test.ts \
             src/core/calibration/wasm-parity.unit.test.ts \
             src/core/poly-exp-parity.unit.test.ts \
-            src/core/coldstart-solver-parity.unit.test.ts
+            src/core/coldstart-solver-parity.unit.test.ts \
+            src/capabilities/practice/scheduling/server/day-one-prior-propagate.unit.test.ts
 
   # Keep this name identical to the historical required check while the work moves into parallel jobs.
   gate:

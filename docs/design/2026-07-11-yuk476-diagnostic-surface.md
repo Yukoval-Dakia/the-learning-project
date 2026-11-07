@@ -71,7 +71,7 @@ Issue 描述的「空屏」需精确化（`TodayPage.tsx`）：
 
 ### 2.5 客户端拿不到的字段（渲染 = 不可能，别提）
 
-服务端 `ProfileKc`（`placement-profile.ts:50-66`）带 `axis`（A11 谨慎/速度轴，`drift_v` 在自适应流为 NULL、多数 KC 无行）和 `day_one_prior`（inc-E，DARK，`DAY_ONE_PRIOR_ENABLED` + native binding 才在，PR-3 前无 UI 消费）。但**客户端 `profile-api.ts` 的 `ProfileKc` 根本没声明这两个字段**——它们是 server-only，永远到不了 UI。任何 axis/day-one-prior 可视化在 v1 都是空盒子/vaporware，**硬性排除**。
+服务端 `ProfileKc`（`placement-profile.ts:50-66`）带 `axis`（A11 谨慎/速度轴，`drift_v` 在自适应流为 NULL、多数 KC 无行）和 `day_one_prior`（inc-E，TS 读侧先验，证据数 0，无 UI 消费）。但**客户端 `profile-api.ts` 的 `ProfileKc` 根本没声明这两个字段**——它们是 server-only，永远到不了 UI。任何 axis/day-one-prior 可视化在 v1 都是空盒子/vaporware，**硬性排除**。
 
 ---
 

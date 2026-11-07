@@ -29150,6 +29150,33 @@ export interface operations {
                             };
                             beta: number;
                             day_one_prior?: {
+                                claim: {
+                                    /**
+                                     * @description 模型先验，不是校准结果
+                                     * @enum {string}
+                                     */
+                                    basis: "model_prior";
+                                    /**
+                                     * @description 难度锚和域能力输入全为 0，是中性假设
+                                     * @enum {string}
+                                     */
+                                    inputs: "neutral_zero";
+                                    /**
+                                     * @description mean_mastery 不是独立掌握
+                                     * @enum {string}
+                                     */
+                                    mastery_role: "not_independent_mastery";
+                                    /**
+                                     * @description 这份先验没有作答观测
+                                     * @enum {string}
+                                     */
+                                    observation: "untested";
+                                };
+                                /**
+                                 * @description 证据数仍为 0
+                                 * @enum {number}
+                                 */
+                                evidence_count: 0;
                                 mean_mastery: number;
                                 weakest_prereq_id?: string;
                                 weakest_prereq_mastery?: number;
@@ -29177,6 +29204,33 @@ export interface operations {
                                 ter: number | null;
                             };
                             day_one_prior?: {
+                                claim: {
+                                    /**
+                                     * @description 模型先验，不是校准结果
+                                     * @enum {string}
+                                     */
+                                    basis: "model_prior";
+                                    /**
+                                     * @description 难度锚和域能力输入全为 0，是中性假设
+                                     * @enum {string}
+                                     */
+                                    inputs: "neutral_zero";
+                                    /**
+                                     * @description mean_mastery 不是独立掌握
+                                     * @enum {string}
+                                     */
+                                    mastery_role: "not_independent_mastery";
+                                    /**
+                                     * @description 这份先验没有作答观测
+                                     * @enum {string}
+                                     */
+                                    observation: "untested";
+                                };
+                                /**
+                                 * @description 证据数仍为 0
+                                 * @enum {number}
+                                 */
+                                evidence_count: 0;
                                 mean_mastery: number;
                                 weakest_prereq_id?: string;
                                 weakest_prereq_mastery?: number;
@@ -29203,6 +29257,33 @@ export interface operations {
                             };
                             beta: number;
                             day_one_prior?: {
+                                claim: {
+                                    /**
+                                     * @description 模型先验，不是校准结果
+                                     * @enum {string}
+                                     */
+                                    basis: "model_prior";
+                                    /**
+                                     * @description 难度锚和域能力输入全为 0，是中性假设
+                                     * @enum {string}
+                                     */
+                                    inputs: "neutral_zero";
+                                    /**
+                                     * @description mean_mastery 不是独立掌握
+                                     * @enum {string}
+                                     */
+                                    mastery_role: "not_independent_mastery";
+                                    /**
+                                     * @description 这份先验没有作答观测
+                                     * @enum {string}
+                                     */
+                                    observation: "untested";
+                                };
+                                /**
+                                 * @description 证据数仍为 0
+                                 * @enum {number}
+                                 */
+                                evidence_count: 0;
                                 mean_mastery: number;
                                 weakest_prereq_id?: string;
                                 weakest_prereq_mastery?: number;

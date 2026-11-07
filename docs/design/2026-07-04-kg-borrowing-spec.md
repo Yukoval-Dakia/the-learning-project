@@ -13,16 +13,16 @@
 
 register 原 P1 判据（借用分支在**零证据**上翻 frontier mastered-gate）**已被同日更早的 YUK-539 evidence-floor(=4) 关闭**，并被 YUK-551（worklist #4 frontier-gate）落成文 + DB gate 测试 + 借用侧 UI/tone。**止血已完成**。本单元重心 = **翻 flag 前的形态收敛**：把「四个同名异实的 prereq 传播机制 + 无统一 provenance 契约 + 一处被误诊的双轴语义 + 一处真实的可扩展性悬崖」收敛成语义自洽、observed/inferred 结构分离、可观测可回滚、且**翻 flag 硬前置清晰成文**的形态。
 
-### 1.1 子系统实体清单（四个「prerequisite propagation」机制，全 dark）
+### 1.1 子系统实体清单（四个「prerequisite propagation」机制；A5/A6/A13 仍 dark）
 
-| # | 机制 | 方向 | 数值形态 | **影响半径（终裁修正）** | 遇环 | flag（全 false） | 落点 |
+| # | 机制 | 方向 | 数值形态 | **影响半径（终裁修正）** | 遇环 | flag | 落点 |
 |---|---|---|---|---|---|---|---|
 | A5 | 图-Laplacian 平滑先验 | 对称（`related_to`） | proper GMRF **联合稠密解**（Gauss 消元，`solveDense` O(n³)） | **request-shaped，无结构上界**：联合解耦合 requested-诱导连通分量全域。单 KC 请求（node-page/detail）≈1 跳星图；tree 全树请求（≤5000）= 整个连通分量。见 RP8 | 线性解天然抗环 | `GRAPH_LAPLACIAN_ENABLED`（`graph-laplacian.ts:56`） | `src/core/graph-laplacian.ts:164`（`gmrfPosteriorMean`）+ `solveDense`（:218） |
 | A6 | prereq 有向 θ̂ 传播 | 有向（`prerequisite`/`derived_from`） | **单趟 O(E) 加性** Δθ（序违背驱动） | **真 1 跳**：单趟同时更新、读原始 θ̂、无传递再传播（`core/prereq-propagation.ts:104-128,134-149`） | `max(0,·)` 互斥、拓扑无关终止 | `PREREQ_THETA_PROPAGATION_ENABLED`（`core/prereq-propagation.ts:57`） | `src/core/prereq-propagation.ts` |
 | A13 / inc-E | prereq 诊断**向后**风险 emit | 有向逆走（答错→上溯前置） | 传递闭包 + 几何衰减（0.5^(d−1)），**MAX 聚合**，emit 事件 | 闭包 walk，**depth≤16 + node-cap 10k + path-array 环卫，overflow fail-safe-to-[]**（`server/mastery/prereq-propagation.ts:59,65,108-152`） | path guard + depth bound | `PREREQ_RISK_EMIT_ENABLED`（`server/mastery/prereq-propagation.ts:51`） | `src/core/prereq-risk.ts` + `src/server/mastery/prereq-propagation.ts` |
-| Rust coldstart | day-one(n=0) **向前** DAG 先验 | 有向（`prerequisite`） | Kahn 拓扑前向，probabilistic-AND，grid posterior | 全 DAG 前向 | **reject**（Kahn 检测 → `Err`，`lib.rs:742`） | `DAY_ONE_PRIOR_ENABLED` | `crates/calibration-native/src/lib.rs:650`（inner）/`:822`（pub）+ `src/server/coldstart/propagate-priors.ts:116`（`loadDayOnePriors`） |
+| day-one prior | day-one(n=0) **向前** DAG 先验 | 有向（`prerequisite`） | Kahn 拓扑前向，probabilistic-AND，grid posterior；TS 生产，Rust `propagate_priors` 为数值参考 | 全 DAG 前向 | **reject**（Kahn 检测） | 无开关 | `day-one-prior-propagate.ts` + `loadDayOnePriors`；对照 `crates/calibration-native` `propagate_priors` |
 
-A5+A6 经 `applyKgSoftLayer`（`src/server/mastery/state.ts:462`）挂进读侧投影 `getMasteryProjection`（:367）；A13 是独立 event producer（两个 call site 在 practice submit / paper-submit，gate `PREREQ_RISK_EMIT_ENABLED && outcome==='failure' && wroteNewAttempt`，dark 契约成文于 `server/mastery/prereq-propagation.ts:9-21`）；Rust coldstart 是独立 day-one 先验读，产 display-tier 标量，不进 `getMasteryProjection`。
+A5+A6 经 `applyKgSoftLayer`（`src/server/mastery/state.ts:462`）挂进读侧投影 `getMasteryProjection`（:367）；A13 是独立 event producer（两个 call site 在 practice submit / paper-submit，gate `PREREQ_RISK_EMIT_ENABLED && outcome==='failure' && wroteNewAttempt`，dark 契约成文于 `server/mastery/prereq-propagation.ts:9-21`）；day-one 先验是独立读侧标量，evidence 恒 0，不进 `getMasteryProjection`。
 
 **`getMasteryProjection` 直接 live call site（终裁 grep 实数，9 处）**：`agency/jobs/research_meeting_nightly.ts:210`、`notes/server/mastery-progress-signal.ts:68`、`knowledge/server/node-page.ts:235`、`knowledge/server/frontier-read.ts:251`、`knowledge/server/tree.ts:99`、`practice/server/learnable-frontier.ts:303`、`practice/api/placement-profile.ts:107`、`ai/tools/knowledge-readers.ts:163`、`questions/detail.ts:308`；另有下游传递消费（如 `conjectures/evidence.ts` 收 caller 解析好的 projection）。draft 的「~24 consumer」按文件级含注释/测试计，实核直接调用是 9。
 

@@ -118,6 +118,12 @@ napi 约定——**反转后从 dev/CI 惯例升为生产正确性契约**，本
 - **为何登记**：同 R3 —— `fisherInformation` / `thetaSe` / `updateThetaPrecision`（2026-06-15，YUK-361 P2）**早于本 ADR**，属 §4 既有 live θ̂ 的一部分；`fisherInformation3pl`（2026-07-03，YUK-436 BKT 嫁接的算法层供件）为本 ADR 之后新增，但 dark-ship（`THETA_GRID_ENABLED` 默认 false，非选择题 c=0 路径与 1PL 逐位相同）且 n=1 红线合规（c 是 `choices_md.length` 派生的设计常量，非拟合参数）。显式收编进 §4 窗口，port 随 theta.ts 整体迁移走。
 - **PORT TRIGGER**：同 R3（theta.ts 逐点迁移 / 触到即 port / 浏览器 bit-exact 需求，replay-compatibility 条款同）；外加：`THETA_GRID_ENABLED` 未来翻转上线时，若 grid 路径成为 recurring 重算负载，随该翻转优先评估 port。
 
+### R5 · day-one prerequisite prior — `src/capabilities/practice/scheduling/server/day-one-prior-propagate.ts`
+
+- **是什么**：n=0 的 prerequisite DAG 先验（Kahn 拓扑、重复边去重、probabilistic-AND、最弱先修）。2026-11-07（YUK-2006）按 owner 要求从 napi `propagate_priors` 换成 TS，复用 41 点 `GRID_THETA` 与 `polySigmoid`。生产输入保持 b=0、域能力 0、`shrink_coeff=1`。`crates/calibration-native` 的 `propagate_priors` 留作数值参考，生产不再加载 `.node`。不改 θ̂ 真相源，不改 grid update、Laplacian、A6 传播。
+- **为何豁免**：这条读侧先验没有可部署的 binding，开关长期关闭，生产路径实际是空的。owner 要求换掉这段 dark native 加载。输出只挂在起始档案上，evidence 恒 0，不写 `mastery_state`，不是校准后的掌握。
+- **PORT TRIGGER**（任一即失效）：① 出现要在浏览器里逐位重算这份先验的消费者；② owner 决定把这条数值核收回 Rust 单实现，并提供部署期 binding。在那之前 TS 是生产实现，Rust 只作同输入对照。
+
 ### 定位说明（extended scope 尽调）
 
 YUK-679 extended scope 要求定位的「src/server/** 中的 srtOutcome 数值路径与 continuous-credit/Fisher helpers」：**定义面实际在 `src/core/theta.ts`**（server 侧是消费面，见 R3/R4 所列）。extended scope 全部条目均已定位、无一缺席；`resolveSrtTimeLimit`（theta.ts:380）为平凡 difficulty→秒查表（非 kernel），仅在此记录、不单独豁免、不改其头注释。

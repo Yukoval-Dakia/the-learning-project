@@ -37,6 +37,7 @@ export const fastTestInclude = [
   'src/capabilities/practice/grading/jobs/model_slice_admission_run.test.ts',
   'src/capabilities/practice/grading/server/calibration-sample-durable-operation.test.ts',
   'src/capabilities/practice/grading/server/assessment/durable-attempt-dispatch.unit.test.ts',
+  'src/capabilities/practice/scheduling/server/day-one-prior-propagate.unit.test.ts',
   'src/capabilities/practice/scheduling/server/fsrs.unit.test.ts',
   'src/capabilities/practice/question-bank/server/item-prior-durable-operation.unit.test.ts',
   'src/capabilities/practice/grading/server/judge-engine-client.unit.test.ts',
