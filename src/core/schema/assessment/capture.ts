@@ -29,7 +29,7 @@ export const AssessmentAttemptCapture = z.object({
       block_version: z.number().int().nonnegative(),
       source_document_id: z.string(),
       source_asset_ids: z.array(z.string()),
-      generated_by: z.literal('workflow_judge'),
+      generated_by: z.enum(['workflow_judge', 'ingestion_capture']),
       /** Per-unit handwriting evidence; unknown/failure stays explicit, never omitted. */
       unit_captures: z.array(CaptureUnit).optional(),
       red_ink_preference: z

@@ -13,6 +13,7 @@ import {
   markHandwritingTraceFailure,
   runHandwritingTrace,
 } from './handwriting-trace';
+import { enrollIngestionBlock } from './single-block-enroll';
 import { type VisionBlock, runVisionExtract } from './vision';
 
 export type RescueTier = 2 | 3;
@@ -148,6 +149,25 @@ export async function runRescue(
       figures: [],
     }),
   );
+  // Rescue enters through the explicit one-block owner, so only this block is touched.
+  // The session batch job would re-enroll other reverted blocks on the page; it is not
+  // used here. Failure never rolls back the committed rescue.
+  try {
+    const [rescued] = await params.db
+      .select({ id: question_block.id, version: question_block.version })
+      .from(question_block)
+      .where(eq(question_block.id, params.blockId));
+    if (rescued) {
+      await enrollIngestionBlock(params.db, {
+        sessionId: params.sessionId,
+        blockId: rescued.id,
+        expectedVersion: rescued.version,
+        source: 'rescue',
+      });
+    }
+  } catch (err) {
+    console.error(`[rescue] single-block enrollment failed for ${params.blockId}`, err);
+  }
   return { structured };
 }
 

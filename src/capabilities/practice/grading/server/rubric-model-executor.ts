@@ -406,6 +406,11 @@ export function createRubricModelExecutor(
           else unknownAttempts += 1;
           const retryRemaining = options.deadlineAt - Date.now();
           if (
+            // A pre-wire abort provably sent nothing — the executor lane's own
+            // not_sent proof, and the only timeout a retry may take. Once
+            // beforeProviderQuery returned the request may already bill, so a
+            // timeout after it is never resent.
+            !providerStarted &&
             timeoutRetriesLeft > 0 &&
             retryRemaining > 0 &&
             assessmentRubricTimeoutRetryFits(knownSpent, unknownAttempts, cap)
