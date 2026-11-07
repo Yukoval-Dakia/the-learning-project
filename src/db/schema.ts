@@ -67,7 +67,6 @@ export { drawing } from './schema/drawing';
 export {
   dag_orchestration_node,
   dag_orchestration_run,
-  echo_jobs,
   event,
   event_subscription_checkpoint,
   event_subscription_delivery,

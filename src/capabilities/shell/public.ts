@@ -13,6 +13,7 @@ export const loadWorkbenchSummary: LoadWorkbenchSummary = async (...args) => {
 };
 
 export { getAutoAppliedDigest } from './server/auto-applied-read';
+export { listProposalBatchAccepts } from './server/batch-accepts-read';
 export { loadPrepDeskConjectures } from './server/prep-desk';
 export { loadActiveProbes } from './server/prep-desk-probes';
 export { type ProposalInboxQuery, readProposalInbox } from './server/proposal-inbox-read';

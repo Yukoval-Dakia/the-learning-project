@@ -7,7 +7,6 @@ import type {
   ProposalAcceptResult,
   ProposalRetractApplier,
 } from '@/kernel/proposals';
-import { toProposalLifecycleResult } from '@/kernel/proposals';
 import {
   asPlainRecord,
   ensureAcceptOnly,
@@ -161,6 +160,6 @@ export const noteUpdateProposalAcceptApplier: ProposalAcceptApplier = async (db,
   });
   return {
     kind: 'note_update',
-    result: toProposalLifecycleResult(result),
+    result: { ...result },
   } satisfies ProposalAcceptResult;
 };

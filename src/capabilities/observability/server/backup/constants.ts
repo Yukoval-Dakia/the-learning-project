@@ -7,7 +7,7 @@
 // (artifact_block_ref, ai_task_runs, mistake_variant, goal, proposal_signals,
 // practice_stream_item, memory_reconciliation_log) — minor bump to 4.2. New tables
 // ride the whole-row dump/restore automatically. Transient/operational tables
-// (job_events, echo_jobs, editing_presence) were instead recorded in
+// (job_events, editing_presence) were instead recorded in
 // BACKUP_EXCLUDED_TABLES below.
 // B1-W1 (ADR-0035): additive `mastery_state` + `item_calibration` tables — also
 // additive within the 4.2 generation (both ride whole-row dump/restore via
@@ -458,9 +458,6 @@ export const BACKUP_EXCLUDED_TABLES: ReadonlySet<string> = new Set<string>([
   'session_orphan_tick',
   'session_orphan_receipt',
   'session_orphan_disposition',
-  // Sub-0c golden E2E health-check fixture (HTTP enqueue → worker → SSE). Transient
-  // echo-job state, not business data.
-  'echo_jobs',
   // Cross-process editing-presence state machine (YUK-321 M5); explicitly "纯状态机
   // 存储非业务实体". A restore starts from an empty presence backend — heartbeats are
   // re-established live, so persisting them would resurrect stale lock state.

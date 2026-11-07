@@ -66,7 +66,7 @@ export function SoloCoach({
         <header className="un-ps-coach-head">
           <Lightbulb size={15} aria-hidden="true" className="un-ps-coach-icon" />
           <span className="un-ps-coach-title">解题提示</span>
-          <span className="un-ps-hint">一级一级加力</span>
+          <span className="un-ps-hint">想看多深直接选</span>
           <IconButton
             label="关闭"
             className="un-ps-coach-close"
@@ -79,7 +79,7 @@ export function SoloCoach({
             {submitted
               ? '这题已经交了，现在看提示不影响这次的记录。'
               : '看了提示，这题不算独立做的；只打开这里不算。'}
-            提示一级一级加力，每一级更近一步；也可以直接看完整解。
+            越往后越接近答案，想看哪个直接点。
           </p>
           <HintLadder
             key={session}

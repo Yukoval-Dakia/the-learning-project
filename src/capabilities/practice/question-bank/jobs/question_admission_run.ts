@@ -92,6 +92,7 @@ import {
   ADMISSION_STAGE_FAMILY,
   AdmissionInterrupted,
   AdmissionNotSent,
+  AdmissionProviderWaitExhausted,
   type AdmissionRecoveryReader,
   AdmissionSafeRetryExhausted,
   type AdmissionStageReceiptRef,
@@ -827,10 +828,13 @@ export async function runAdmissionForQuestion(
         };
       }
       if (error instanceof AdmissionNotSent && !interrupted) {
+        const providerWaitOut = error instanceof AdmissionProviderWaitExhausted;
         const exhausted = error instanceof AdmissionSafeRetryExhausted;
-        const reason = exhausted
-          ? 'admission_provider_safe_retry_exhausted'
-          : 'admission_provider_query_not_started';
+        const reason = providerWaitOut
+          ? 'admission_provider_wait_exhausted'
+          : exhausted
+            ? 'admission_provider_safe_retry_exhausted'
+            : 'admission_provider_query_not_started';
         receipt = AdmissionResultReceipt.parse({
           version: 1,
           recorded_at: new Date().toISOString(),
@@ -846,14 +850,18 @@ export async function runAdmissionForQuestion(
               policy_id: batch.input.policy_id,
               outcome: 'suspended',
               evidence: {
-                pack: exhausted
-                  ? 'question_admission_safe_retry_exhausted'
-                  : 'question_admission_not_sent',
+                pack: providerWaitOut
+                  ? 'question_admission_provider_wait_exhausted'
+                  : exhausted
+                    ? 'question_admission_safe_retry_exhausted'
+                    : 'question_admission_not_sent',
                 repair_delivery: {
                   kind: 'system_closed',
-                  reason: exhausted
-                    ? 'provider_safe_retry_exhausted'
-                    : 'provider_query_not_started',
+                  reason: providerWaitOut
+                    ? 'provider_wait_exhausted'
+                    : exhausted
+                      ? 'provider_safe_retry_exhausted'
+                      : 'provider_query_not_started',
                 },
                 paid_stage_receipts: stageReceiptRefs,
               },

@@ -12,11 +12,14 @@ import {
   providerTransientResendable,
   providerTransientVerdict,
 } from '@/ai/provider-failure';
-import type { AttemptCostTruth, ProviderTransportEvidence } from '@/ai/task-result';
+import {
+  type AttemptCostTruth,
+  type ProviderTransportEvidence,
+  failureSpendChargeUsd,
+} from '@/ai/task-result';
 import { getConfig } from '@/core/config/store';
 import type { Db } from '@/db/client';
 import { ai_task_runs } from '@/db/schema';
-import { failureSpendChargeUsd } from './attempt-cost';
 
 export interface ProviderTransientRetryPolicy {
   /** Extra wire sends allowed after the first bound failure. */
@@ -87,6 +90,8 @@ export interface SettledAttemptEvidence {
   readonly unbilled: boolean;
   /** Armed-lane transport when the attempt produced one; absent on the typed lane. */
   readonly transport?: ProviderTransportEvidence;
+  /** Persisted failure line — the row-driven quota-signature source. */
+  readonly errorMessage?: string | null;
 }
 
 export async function settledAttemptEvidence(
@@ -101,6 +106,7 @@ export async function settledAttemptEvidence(
       cost_usd: ai_task_runs.cost_usd,
       cost_basis: ai_task_runs.cost_basis,
       cost_ref: ai_task_runs.cost_ref,
+      error_message: ai_task_runs.error_message,
     })
     .from(ai_task_runs)
     .where(eq(ai_task_runs.id, taskRunId));
@@ -112,6 +118,7 @@ export async function settledAttemptEvidence(
     settled: row?.finished_at != null && row.status !== 'running',
     unbilled: failureSpendChargeUsd(truth) === 0,
     ...(row?.usage_json?.transport !== undefined ? { transport: row.usage_json.transport } : {}),
+    errorMessage: row?.error_message,
   };
 }
 

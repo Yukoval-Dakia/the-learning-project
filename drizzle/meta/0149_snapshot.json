@@ -1,5 +1,5 @@
 {
-  "id": "17782c92-f4d1-4507-a626-e626916ca970",
+  "id": "e614c88c-7ee7-4ed0-8ee6-91b5f304e552",
   "prevId": "74cb4f48-4db9-4ba0-ace1-009efdaca37c",
   "version": "7",
   "dialect": "postgresql",
@@ -2356,6 +2356,13 @@
           "primaryKey": false,
           "notNull": false
         },
+        "provider_waits": {
+          "name": "provider_waits",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
         "enqueued_at": {
           "name": "enqueued_at",
           "type": "timestamp with time zone",
@@ -3031,6 +3038,133 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.edge_reconciliation_log": {
+      "name": "edge_reconciliation_log",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "candidate_from_knowledge_id": {
+          "name": "candidate_from_knowledge_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "candidate_to_knowledge_id": {
+          "name": "candidate_to_knowledge_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "candidate_relation_type": {
+          "name": "candidate_relation_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "action": {
+          "name": "action",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "superseded_edge_id": {
+          "name": "superseded_edge_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "confidence": {
+          "name": "confidence",
+          "type": "real",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "llm_raw": {
+          "name": "llm_raw",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "planned_at": {
+          "name": "planned_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "applied_at": {
+          "name": "applied_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "edge_recon_candidate_idx": {
+          "name": "edge_recon_candidate_idx",
+          "columns": [
+            {
+              "expression": "candidate_from_knowledge_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "candidate_to_knowledge_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "candidate_relation_type",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "edge_recon_unapplied_idx": {
+          "name": "edge_recon_unapplied_idx",
+          "columns": [
+            {
+              "expression": "applied_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "edge_recon_action_superseded_ck": {
+          "name": "edge_recon_action_superseded_ck",
+          "value": "(\"edge_reconciliation_log\".\"action\" = 'SUPERSEDE' AND \"edge_reconciliation_log\".\"superseded_edge_id\" IS NOT NULL) OR (\"edge_reconciliation_log\".\"action\" = 'KEEP_BOTH' AND \"edge_reconciliation_log\".\"superseded_edge_id\" IS NULL)"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.editing_presence": {

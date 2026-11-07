@@ -32,12 +32,13 @@ import {
   settledAttemptEvidence,
   sleepMs,
 } from '@/server/ai/provider-transient-retry';
+import { PROVIDER_WAIT_MAX, providerWaitDelayMs } from '@/server/ai/provider-wait';
 import type { BoundRunTaskTextFn } from '@/server/ai/runner-fn';
 
 export type AdmissionStageReceiptRef = { identity: PaidEffectIdentity; receipt_digest: string };
 
 export const AdmissionRecovery = z.object({
-  reason: z.enum(['quota', 'login', 'not_sent']),
+  reason: z.enum(['quota', 'login', 'not_sent', 'provider']),
   retry_at: z.string().datetime().nullable(),
   evidence_ref: z.string().min(1),
 });
@@ -58,7 +59,9 @@ export class AdmissionWaiting extends Error {
         ? 'Admission provider connection is waiting for recovery'
         : recovery.reason === 'quota'
           ? 'Admission adjudicator quota is exhausted'
-          : 'Admission adjudicator login needs renewal',
+          : recovery.reason === 'provider'
+            ? 'Admission provider route is waiting for recovery'
+            : 'Admission adjudicator login needs renewal',
     );
   }
 }
@@ -72,6 +75,13 @@ export class AdmissionNotSent extends Error {
 export class AdmissionSafeRetryExhausted extends AdmissionNotSent {
   constructor() {
     super('Admission provider safe retry budget is exhausted');
+  }
+}
+
+/** The provider-wait ladder (PROVIDER_WAIT_MAX) ran out during an outage. */
+export class AdmissionProviderWaitExhausted extends AdmissionNotSent {
+  constructor() {
+    super('Admission provider outage outlasted the recovery wait budget');
   }
 }
 
@@ -127,6 +137,7 @@ const StageReceipt = z.discriminatedUnion('kind', [
     recovery: AdmissionRecovery,
     not_sent_started_at: z.string().datetime().optional(),
     not_sent_waits: z.number().int().positive().optional(),
+    provider_waits: z.number().int().positive().optional(),
     quota_failures: z.number().int().nonnegative().optional(),
     inherited_login_wait: z.boolean().optional(),
     /** Set when the wait follows an exhausted in-run transient chain (429 lane). */
@@ -135,6 +146,7 @@ const StageReceipt = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('failure'),
     safe_retry_exhausted: z.literal(true).optional(),
+    provider_wait_exhausted: z.literal(true).optional(),
     fields: StageErrorFields,
   }),
   /**
@@ -291,6 +303,7 @@ export function admissionStageRunner(input: {
         let notSentWaits = 0;
         let notSentRetries = 0;
         let notSentWaitedMs = 0;
+        let providerWaits = 0;
         let previousTransientWait = 0;
         let latestRetryClass: string | undefined;
         for (const row of [...history].reverse()) {
@@ -303,6 +316,9 @@ export function admissionStageRunner(input: {
             notSentWaits = saved.not_sent_waits;
             notSentRetries = 0;
             notSentWaitedMs = 0;
+          }
+          if (saved.kind === 'waiting' && saved.recovery.reason === 'provider') {
+            providerWaits = saved.provider_waits ?? providerWaits;
           }
           if (saved.kind !== 'transient') {
             previousTransientWait = 0;
@@ -416,6 +432,8 @@ export function admissionStageRunner(input: {
             if (receipt.kind === 'result') return receipt.result;
             if (receipt.kind === 'not_sent') throw new AdmissionNotSent();
             if (receipt.kind === 'interrupted') throw new AdmissionInterrupted(receipt.reason);
+            if (receipt.kind === 'failure' && receipt.provider_wait_exhausted)
+              throw new AdmissionProviderWaitExhausted();
             if (receipt.kind === 'failure' && receipt.safe_retry_exhausted)
               throw new AdmissionSafeRetryExhausted();
             if (receipt.kind === 'failure')
@@ -596,6 +614,16 @@ export function admissionStageRunner(input: {
             const recovery =
               (kind === 'QuestionAdmissionAdjudicateTask' ? input.recovery?.(error) : undefined) ??
               existingRecovery(error, httpStatus, kind);
+            // A proven transient rejection whose in-run budget is spent can
+            // still wait the route out — but only while the sealed attempt is
+            // provably unbilled, the same gate a waited resend applies.
+            const providerWaitEvidence =
+              error instanceof AgentRunError &&
+              verdict !== undefined &&
+              plan === undefined &&
+              providerTransientResendable(verdict.class)
+                ? await settledAttemptEvidence(input.db, error.taskRunId)
+                : undefined;
             const knownFailure =
               error instanceof AgentRunError &&
               run?.finished_at != null &&
@@ -643,6 +671,27 @@ export function admissionStageRunner(input: {
                       : new Date(Date.now() + 60 * 60_000).toISOString(),
                 },
               };
+            } else if (
+              providerWaitEvidence?.settled === true &&
+              providerWaitEvidence.unbilled === true &&
+              providerWaits + 1 <= PROVIDER_WAIT_MAX &&
+              !input.interrupted?.() &&
+              error instanceof AgentRunError
+            ) {
+              // Outage-scale wait (5/15/30/60 min ladder): the coordinator wake
+              // redelivers this stage after route recovery instead of landing
+              // the question failed while the provider was merely down.
+              const nextWait = providerWaits + 1;
+              receipt = {
+                kind: 'waiting',
+                transient: true,
+                provider_waits: nextWait,
+                recovery: {
+                  reason: 'provider',
+                  evidence_ref: error.taskRunId,
+                  retry_at: new Date(Date.now() + providerWaitDelayMs(nextWait)).toISOString(),
+                },
+              };
             } else if (plan !== undefined && error instanceof AgentRunError) {
               receipt = {
                 kind: 'transient',
@@ -672,6 +721,11 @@ export function admissionStageRunner(input: {
               receipt = {
                 kind: 'failure',
                 ...(verdict?.class === 'not_sent' ? { safe_retry_exhausted: true as const } : {}),
+                ...(providerWaitEvidence?.settled === true &&
+                providerWaitEvidence.unbilled === true &&
+                providerWaits + 1 > PROVIDER_WAIT_MAX
+                  ? { provider_wait_exhausted: true as const }
+                  : {}),
                 fields: {
                   kind: error.kind,
                   taskRunId: error.taskRunId,
@@ -731,6 +785,8 @@ export function admissionStageRunner(input: {
           );
         if (receipt.kind === 'waiting') throw new AdmissionWaiting(receipt.recovery, unit, route);
         if (receipt.kind === 'not_sent') throw new AdmissionNotSent();
+        if (receipt.kind === 'failure' && receipt.provider_wait_exhausted)
+          throw new AdmissionProviderWaitExhausted();
         if (receipt.kind === 'failure' && receipt.safe_retry_exhausted)
           throw new AdmissionSafeRetryExhausted();
         if (receipt.kind === 'failure')
