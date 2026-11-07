@@ -14,12 +14,15 @@ import {
   question_block,
   source_document,
 } from '@/db/schema';
+import { writeQuestionBlockLifecycleEvent } from '@/kernel/records/question-block-lifecycle-event';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { captureIngestionOriginal } from './assessment-capture';
 import { runAutoEnrollForSession } from './auto-enroll';
 import { settleCapturedBlock } from './capture/captured-question';
 import { enrollCapturedBlock } from './enroll';
 import { revertAutoEnrolledBlock } from './revert-auto-enroll';
+import { readIngestionSessionBlocks } from './session-blocks-read';
+import { enrollIngestionBlock } from './single-block-enroll';
 
 const FAILURE_DRAFT: MistakeEnrollOutputT = {
   wrong_answer: 'failure',
@@ -260,7 +263,12 @@ describe('revertAutoEnrolledBlock', () => {
   //   while the question survives as reusable content
   // @fails-if a captured-answer enrollment's attempt stays live (timeline keeps it), or the
   //   block's imported links survive the revert
-  it.each(['historical_attempt', 'captured_answer'] as const)(
+  it.each([
+    'historical_attempt',
+    'captured_answer',
+    'reverted_read',
+    'legacy_revert_no_lifecycle',
+  ] as const)(
     'retracts an auto-enrollment (%s): retract event + archived record + reset block + question kept',
     async (mode) => {
       const db = testDb();
@@ -323,6 +331,62 @@ describe('revertAutoEnrolledBlock', () => {
       // Question row preserved (evidence-first, reusable).
       const q = await db.select().from(question).where(eq(question.id, res.questionId));
       expect(q).toHaveLength(1);
+
+      if (mode === 'reverted_read' || mode === 'legacy_revert_no_lifecycle') {
+        if (mode === 'legacy_revert_no_lifecycle') {
+          // Pre-lifecycle reverts only have the retract correction. Drop the lifecycle
+          // rows to reproduce that shape without inventing a second truth source.
+          await db
+            .delete(event)
+            .where(
+              and(
+                eq(event.action, 'experimental:question_block_lifecycle'),
+                eq(event.subject_id, blockId),
+              ),
+            );
+        } else {
+          // A later figure reassignment must not erase the revert.
+          await writeQuestionBlockLifecycleEvent(db, {
+            blockId,
+            op: 'reassign_figures',
+            figures: [],
+            nextVersion: (before.version ?? 0) + 1,
+            actorKind: 'user',
+            actorRef: 'self',
+            now: new Date(),
+          });
+        }
+        const blocks = await readIngestionSessionBlocks(db, { id: sessionId });
+        expect(blocks.rows[0]?.ingestion_enrollment).toMatchObject({
+          state: 'not_enrolled',
+          reason: 'reverted',
+        });
+        const auto = await runAutoEnrollForSession({
+          db,
+          sessionId,
+          subjectId: 'yuwen',
+          tagKnowledgeFn: async () => ({ kind: 'match' as const, knowledge_ids: ['k1'] }),
+        });
+        expect(auto.enrolled).toBe(0);
+        const [stillDraft] = await db
+          .select()
+          .from(question_block)
+          .where(eq(question_block.id, blockId));
+        expect(stillDraft?.status).toBe('draft');
+        if (mode === 'reverted_read') {
+          const manual = await enrollIngestionBlock(db, {
+            sessionId,
+            blockId,
+            expectedVersion: stillDraft?.version ?? 0,
+          });
+          expect(manual.status).toBe('enrolled');
+          const [reentered] = await db
+            .select()
+            .from(question_block)
+            .where(eq(question_block.id, blockId));
+          expect(reentered?.status).toBe('auto_enrolled');
+        }
+      }
     },
   );
 });

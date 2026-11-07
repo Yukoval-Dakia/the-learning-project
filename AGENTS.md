@@ -33,6 +33,7 @@
 - Postgres + Drizzle 是真相源；editing presence 走 PG，无 Redis；blob storage 走 R2/S3-compatible client。
 - 后端 route/job/copilotTool 只经 `src/capabilities/<name>/manifest.ts` 贡献到组合根；`server/app.ts` 对 `/api/*` 校验 `x-internal-token`（仅 `/api/health`、`/api/ready` 豁免）。
 - 浏览器不持 provider key，AI 调用只经 Hono route 或 worker；AI 动作可追踪、可逆，保留 run logging。
+- 配置：新 env 变量的归属（registry / boot schema / stay-in-place）与读法见 `src/core/config/AGENTS.md`；产品代码禁止新增裸 `process.env` 读，`pnpm audit:flags --strict` 拦截。
 - `core/` 只放跨科目逻辑，科目专属逻辑留 `subjects/<name>/`（科目知识是学科语境数据，ADR-0068）；多 provider 细节以 `src/server/ai/AGENTS.md` 为准；`src/server/` 子模块清单以 `ls src/server/*/` 现状为准。Next.js、Vercel、Redis/ioredis、`:3000`、`middleware.ts` 均为历史描述。
 - 架构不回退审查（YUK-1579 六项，独立审查逐项给源码证据或 NOT_APPLICABLE）：①一个 owner 拥有一项完整事实/操作；②窄接口隐藏决策、状态与恢复复杂度，拒绝 pass-through 与时序耦合；③深模块以两个真实变更场景的局部理解/修改范围衡量，行数与 import 数只是信号；④不新增 god file，业务规则不进 UI，调用方不得重写被依赖模块的内部排序或决策；⑤事务边界、锁顺序、幂等、部分完成/恢复与兼容契约显式，静态检查、CI 与真实运行验证分开；⑥新增依赖只走既有 `public`/`ui-public` 规则或已批 kernel 端口，ratchet 台账与机器输出逐条一致。
 

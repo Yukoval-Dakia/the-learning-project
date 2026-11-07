@@ -8,6 +8,7 @@ import {
 export type PublicProseFailureKind =
   | 'provider_rejected'
   | 'rate_limited'
+  | 'quota'
   | 'provider_error'
   | 'timeout'
   | 'connection'
@@ -19,6 +20,7 @@ export type PublicProseFailureKind =
 const FAILURE_KINDS: readonly PublicProseFailureKind[] = [
   'provider_rejected',
   'rate_limited',
+  'quota',
   'provider_error',
   'timeout',
   'connection',
@@ -138,12 +140,13 @@ type Failure = NonNullable<PublicProse['failure']>;
 function providerFailureText(prose: PublicProse, failure: Failure): string | undefined {
   const kept = keptText(prose);
   switch (failure.kind) {
-    case 'rate_limited': {
-      const recovery = longQuotaRecoveryTextFromSeconds(failure.retry_after_seconds);
-      if (recovery !== undefined) {
-        return `额度用完了，这次没答完。${recovery}恢复。${kept}`;
-      }
+    case 'rate_limited':
       return `现在有点忙，这次没答完。${retryAfterText(failure.retry_after_seconds)}${kept}`;
+    case 'quota': {
+      const recovery = longQuotaRecoveryTextFromSeconds(failure.retry_after_seconds);
+      return recovery !== undefined
+        ? `额度用完了，这次没答完。${recovery}恢复。${kept}`
+        : `额度用完了，这次没答完。恢复之后再来。${kept}`;
     }
     case 'provider_rejected':
       // Only a 400 is about how it was asked; asking differently can't fix the others.
@@ -173,12 +176,13 @@ function providerFailureText(prose: PublicProse, failure: Failure): string | und
 export function publicProseFailureBadge(prose: PublicProse): string | undefined {
   if (prose.status !== 'completed' || !prose.failure) return undefined;
   switch (prose.failure.kind) {
-    case 'rate_limited': {
-      const recovery = longQuotaRecoveryTextFromSeconds(prose.failure.retry_after_seconds);
-      if (recovery !== undefined) return `额度用完了 · ${recovery}恢复`;
+    case 'rate_limited':
       return prose.failure.retry_after_seconds
         ? `现在有点忙 · ${retryWait(prose.failure.retry_after_seconds)}后可再试`
         : '现在有点忙';
+    case 'quota': {
+      const recovery = longQuotaRecoveryTextFromSeconds(prose.failure.retry_after_seconds);
+      return recovery !== undefined ? `额度用完了 · ${recovery}恢复` : '额度用完了';
     }
     case 'provider_rejected':
       return '这次没答成';

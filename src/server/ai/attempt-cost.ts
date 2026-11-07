@@ -33,8 +33,8 @@ export const UNBILLED_PROVIDER_REJECTION_REF_PREFIX = 'unbilled-provider-rejecti
  * provider rejection is a known zero; any other failure keeps the paid outcome
  * unknown (null → fail closed) so an uncertain attempt never masquerades free.
  */
-export function failureSpendChargeUsd(truth: AttemptCostTruth): 0 | null {
-  return truth.basis === 'estimated' &&
+export function failureSpendChargeUsd(truth: AttemptCostTruth | undefined): 0 | null {
+  return truth?.basis === 'estimated' &&
     truth.amountUsd === 0 &&
     truth.ref.startsWith(UNBILLED_PROVIDER_REJECTION_REF_PREFIX)
     ? 0

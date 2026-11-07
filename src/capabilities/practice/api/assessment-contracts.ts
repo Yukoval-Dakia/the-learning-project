@@ -10,7 +10,7 @@ import {
   ResponseSet,
 } from '@/core/schema/assessment';
 import { SERVING_UNAVAILABLE_REASONS } from '@/core/schema/assessment/serving-admission';
-import { GradingProvenanceEntry } from '@/kernel/capability-contract-schemas';
+import { FsrsRating, GradingProvenanceEntry } from '@/kernel/capability-contract-schemas';
 
 // ---------- 发题（issueAssessment） ----------
 
@@ -125,6 +125,36 @@ export const SubmissionCreatedSchema = z.object({
   issuance_id: z.string().min(1),
 });
 
+/**
+ * Server-computed evidence split: exposure to help, judged outcome, and the
+ * learner's self-claim are separate facts. `null` members are honest unknowns —
+ * a historical receipt or a self-report has no such fact and the client must
+ * not fabricate one.
+ */
+export const AttemptAssistanceSchema = z.object({
+  status: z.enum(['independent', 'assisted', 'unknown']),
+  max_dose: z.number().int().nonnegative().nullable(),
+  kinds: z.array(z.enum(['hint', 'solution', 'chat_context'])),
+  phase: z.enum(['before_submit', 'after_submit']).nullable(),
+});
+
+export const AttemptEvidenceSchema = z.object({
+  // The sealed assistance receipt minus its internal event anchors.
+  assistance: AttemptAssistanceSchema.nullable(),
+  verdict: z
+    .object({
+      outcome: z.enum(['correct', 'partial', 'incorrect', 'unsupported', 'partial_unknown']),
+      score: z.number().nullable(),
+    })
+    .nullable(),
+  self_claim: z
+    .object({
+      rating: FsrsRating.nullable(),
+      confidence: z.number().int().min(1).max(5).nullable(),
+    })
+    .nullable(),
+});
+
 // ---------- judge_run 轮询读面 ----------
 
 /**
@@ -166,6 +196,9 @@ export const JudgeRunTerminalResultSchema = z
     capability_ref: z.object({ id: z.string(), version: z.string() }).optional(),
     grading_provenance: z.array(GradingProvenanceEntry).optional(),
     telemetry: z.unknown().optional(),
+    // Runs settled before this field shipped carry none — the reader degrades to
+    // "no evidence" rather than failing the payload parse.
+    evidence: AttemptEvidenceSchema.optional(),
     /** The override this handler REQUESTED — not necessarily the lane that executed (#Tunn0). */
     provider_override: z.string().nullable().optional(),
     // W5 #Tunn0 — the RESOLVED execution lane, read off the invoker's `kind:'invoked'`

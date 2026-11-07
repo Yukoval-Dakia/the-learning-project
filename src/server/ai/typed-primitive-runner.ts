@@ -18,7 +18,8 @@
 // before each wire attempt and unknown cost counts as the reserve.
 
 import type { ZodTypeAny } from 'zod';
-import { AgentRunError, RETRY_ELAPSED_CAP_MS, isTransientAgentFailure } from '@/ai/agent-run-error';
+import { AgentRunError, RETRY_ELAPSED_CAP_MS } from '@/ai/agent-run-error';
+import { isTransientAgentFailure } from '@/ai/provider-failure';
 import type { LifecycleResult, AiTaskUsage as LifecycleUsage } from '@/ai/task-result';
 import type { TaskDefinition } from '@/ai/task-spec';
 import { type TaskKind, resolveTaskBudget, tasks } from '@/capabilities/task-registry';
@@ -28,7 +29,7 @@ import { bindAgentRunError } from './agent-run-error';
 import type { AttemptCostBasis } from './attempt-cost';
 import { openTypedModelCall, traceOperation } from './laminar-tracing';
 import { JEV_CANONICAL_MODEL, JEV_MAX_PRICE_USD_PER_MILLION } from './pricing';
-import { readRetryAfterMs } from './provider-error-evidence';
+import { readProviderErrorEvidence } from './provider-error-evidence';
 import { classifyLifecycleRetry, createRunLifecycle } from './run-lifecycle';
 import { emptyStreamTextStats } from './timeout-usage';
 
@@ -273,23 +274,35 @@ export async function runTypedPrimitiveTask<Output = unknown>(
                       errors: [error instanceof Error ? error.message : String(error)],
                     });
                   }
-                  const text = await response.text();
                   if (!response.ok) {
-                    // Non-transient statuses are permanent; isTransientAgentFailure
-                    // whitelists only null/429/5xx. No blind retry.
-                    const retryAfterMs = readRetryAfterMs(response.headers);
+                    // This lane's single request was rejected with a bound status —
+                    // nothing reached billing, so the settled row must record the
+                    // unbilled zero, not a conservative estimate. Same evidence
+                    // boundary as the pi lane — the quota signature reads the
+                    // sanitized body, which a 500-char snippet could truncate.
+                    lifecycle.noteUnbilledProviderRejection();
+                    const evidence = await readProviderErrorEvidence(response.clone(), {
+                      secrets:
+                        lifecycle.resolved.authMode !== 'oauth-file' &&
+                        lifecycle.resolved.apiKey !== undefined
+                          ? [lifecycle.resolved.apiKey]
+                          : [],
+                    });
                     throw new AgentRunError({
                       kind,
                       taskRunId: lifecycle.taskRunId,
                       subtype: 'api_error_result',
                       apiErrorStatus: response.status,
-                      errors: [text.slice(0, ERROR_SNIPPET_MAX)],
+                      errors: [`provider_http_error=${JSON.stringify(evidence)}`],
                       providerFailure: {
                         http_status: response.status,
-                        ...(retryAfterMs !== undefined ? { retry_after_ms: retryAfterMs } : {}),
+                        ...(evidence.retry_after_ms !== undefined
+                          ? { retry_after_ms: evidence.retry_after_ms }
+                          : {}),
                       },
                     });
                   }
+                  const text = await response.text();
                   let json: unknown;
                   try {
                     json = JSON.parse(text);
@@ -421,6 +434,7 @@ export async function runTypedPrimitiveTask<Output = unknown>(
             kind,
             taskRunId: lifecycle.taskRunId,
             aborted: lifecycle.aborted,
+            costUsd: lifecycle.costUsd,
           });
           lastErr = boundError;
           const settled = await lifecycle.finishFailure(boundError, 'error');
@@ -430,6 +444,9 @@ export async function runTypedPrimitiveTask<Output = unknown>(
             maxAttempts,
             firstAttemptStartedAt,
             error: boundError,
+            transport: lifecycle.armedTransport(),
+            attemptCostTruth: lifecycle.costTruth,
+            aborted: lifecycle.aborted,
           });
           if (!retry.willRetry) throw boundError;
           retrySource = lifecycle;

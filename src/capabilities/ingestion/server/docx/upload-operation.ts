@@ -18,6 +18,7 @@ import { db } from '@/db/client';
 import { ApiError } from '@/kernel/http';
 import { getR2 } from '@/kernel/object-storage';
 import { getStartedBoss } from '@/server/boss/client';
+import { detectDuplicateUpload } from '../duplicate-upload';
 import { initiateDocxTextUpload } from './text-session-lifecycle';
 
 // Complete DOCX upload operation, private to the ingestion capability.
@@ -86,6 +87,13 @@ export async function uploadDocx(input: {
       await Ingestion.markSessionPackageFailed(db, sessionId, err);
       throw err;
     }
+    await db.transaction((tx) =>
+      detectDuplicateUpload(tx, {
+        sessionId,
+        sourceDocumentId,
+        assetIds: evidence.assetIds,
+      }),
+    );
     const boss = await getStartedBoss();
     await Ingestion.enqueueExtraction({ db, boss, sessionId });
     return { sessionId, line, pageCount: evidence.pageCount };
@@ -160,5 +168,12 @@ export async function uploadDocx(input: {
     if (outcome !== 'kept_extracted') throw err;
   }
 
+  await db.transaction((tx) =>
+    detectDuplicateUpload(tx, {
+      sessionId,
+      sourceDocumentId,
+      assetIds: evidence.assetIds,
+    }),
+  );
   return { sessionId, line, pageCount: evidence.pageCount };
 }

@@ -9,6 +9,7 @@
 import Markdown from 'react-markdown';
 
 import { AgentRunError } from '@/ai/agent-run-error';
+import { providerTransientResendable, providerTransientVerdict } from '@/ai/provider-failure';
 import type {
   GroupEvidenceT,
   ModelExecutorRequest,
@@ -648,15 +649,12 @@ export function createJevModelExecutor(options: JevModelExecutorOptions): ModelU
 }
 
 function isTypedRetryable(error: unknown): boolean {
-  // AgentRunError api_error_result: transient statuses (null/429/5xx) mean the
-  // runner already spent its retry budget inside the deadline → still
-  // retryable at the attempt level; permanent statuses (401/422) → not.
-  if (error instanceof AgentRunError) {
-    if (error.subtype === 'api_error_result') {
-      const status = error.apiErrorStatus;
-      return status === null || status === undefined || status === 429 || status >= 500;
-    }
-    return false; // budget_timeout / contract / runner_error: per-invocation terminal
-  }
-  return true;
+  // Same owner as every other lane: only a positively-classified, resendable
+  // provider rejection may mark the unit retryable — the inner lifecycle
+  // budget is spent, so this flag only says a LATER attempt is honest (the
+  // rejection billed nothing). Unknown statuses, plain errors, timeouts and
+  // quota fail closed: a possibly-paid attempt is never re-bought blindly.
+  if (!(error instanceof AgentRunError)) return false;
+  const verdict = providerTransientVerdict({ error });
+  return verdict !== undefined && providerTransientResendable(verdict.class);
 }
