@@ -471,14 +471,7 @@ export function toolInputFailure(dt: DomainTool<unknown, unknown>, args: unknown
                 ? { example: searchBankExample }
                 : {}),
           }),
-      next_action:
-        dt.name === 'present_primary_view' &&
-        object(args)?.source === 'tool_result' &&
-        issue.code === 'invalid_type' &&
-        path === '/ref' &&
-        object(expected)?.type === 'object'
-          ? 'copy_receipt'
-          : 'correct_arguments',
+      next_action: 'correct_arguments',
       retryable: true,
     };
   });

@@ -275,11 +275,6 @@ export const copilotCapability = defineCapability({
   copilotTools: {
     tools: [
       {
-        name: 'present_primary_view',
-        load: () =>
-          import('./server/tools/present-primary-view').then((m) => m.presentPrimaryViewTool),
-      },
-      {
         name: 'compose_block',
         load: () => import('./server/tools/compose-block').then((m) => m.composeBlockTool),
       },

@@ -21,12 +21,6 @@ import {
 import type { CopilotCorrectionContract } from './correction-contract';
 import { resolveCorrectionReply } from './correction-contract';
 import { stripCopilotInternalComments } from './prose-stream';
-import { buildCopilotToolResultSnapshot } from './tool-result-snapshot';
-import {
-  type PresentPrimaryViewInput,
-  PresentPrimaryViewOutputSchema,
-} from './tools/present-primary-view';
-import type { CopilotPrimaryView } from './turns';
 
 // Uncapped by owner directive. Kept as a named bound because the receipt schema
 // derives its `.max()` from it and the beforeToolCall gate reads it;
@@ -56,34 +50,9 @@ export function truncateCopilotReply(
   return `${body.slice(0, Math.max(0, limit - suffix.length - 2))}\n\n${suffix}`;
 }
 
-export const EPHEMERAL_PRESENTATION_STORAGE_NOTICE =
-  '\n\n> 保存说明（系统，以此为准）：这张卡片会随对话保存，重新打开仍可恢复；关闭面板不会删除。它不会另存为独立资料。当前不支持仅临时查看且完全不保存；正文中的其他保存描述不代表实际状态。';
-
-/** Called only at the shared commit boundary, after unsuccessful paths remove the view. */
-export function sealCommittedPresentationReply(
-  preparedReply: PreparedCopilotReply,
-  receipt?: CopilotReplyFinalizationReceipt,
-): { preparedReply: PreparedCopilotReply; receipt?: CopilotReplyFinalizationReceipt } {
-  const committedReceipt =
-    !preparedReply.primaryView && receipt?.primary_view === 'retained'
-      ? { ...receipt, primary_view: 'dropped' as const }
-      : receipt;
-  if (preparedReply.primaryView?.source !== 'ephemeral_html')
-    return { preparedReply, receipt: committedReceipt };
-  const text = preparedReply.text.endsWith(EPHEMERAL_PRESENTATION_STORAGE_NOTICE)
-    ? preparedReply.text
-    : preparedReply.text + EPHEMERAL_PRESENTATION_STORAGE_NOTICE;
-  return {
-    preparedReply: { ...preparedReply, text },
-    ...(committedReceipt
-      ? { receipt: { ...committedReceipt, reply_sha256: sha256Text(text) } }
-      : {}),
-  };
-}
-
 // YUK-1548 — extractPrimaryView (the retired <!--primary_view:--> marker) was
-// deleted in slice 1; nomination only ever comes from the present_primary_view
-// tool result bound to the trace below.
+// deleted in slice 1. Model-nominated primary views are retired; only persisted
+// historical views are read, by turns.ts and the companion UI.
 
 export const CopilotReplyFinalizationReceiptSchema = z
   .object({
@@ -107,7 +76,7 @@ export const CopilotReplyFinalizationReceiptSchema = z
     observed_completed_tool_use_ids: z.array(z.string().min(1)).max(COPILOT_REPLY_TRACE_MAX_CALLS),
     correction: z.enum(['normal', 'clarify', 'corrected']),
     proposal_disclosure: z.enum(['none', 'server_composed']),
-    primary_view: z.enum(['absent', 'retained', 'dropped']),
+    primary_view: z.enum(['absent', 'retained', 'dropped']).optional(),
     /** YUK-1548 §5 — block placement receipt (only when compose_block ran). */
     blocks: z
       .object({
@@ -125,7 +94,6 @@ export type CopilotReplyFinalizationReceipt = z.infer<typeof CopilotReplyFinaliz
 
 export interface PreparedCopilotReply {
   text: string;
-  primaryView?: CopilotPrimaryView;
 }
 
 interface TraceEntry {
@@ -154,11 +122,6 @@ export interface CreateCopilotReplyFinalizerOptions {
   correctionContract: CopilotCorrectionContract;
   /** Deterministic service reply that supersedes model prose for this turn. */
   authoritativeReply?: { reply: string; correction: 'clarify' };
-  /** Owned live-row validation plus canonical product reference. Null rejects the nomination. */
-  resolveArtifactReference: (ref: {
-    kind: string;
-    id: string;
-  }) => Promise<{ kind: string; id: string } | null>;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -340,37 +303,6 @@ function domainToolName(toolName: string): string {
   return separator === -1 ? toolName : toolName.slice(separator + 2);
 }
 
-async function resolvePrimaryViewNomination(
-  nomination: PresentPrimaryViewInput,
-  trace: readonly TraceEntry[],
-  resolveArtifactReference: CreateCopilotReplyFinalizerOptions['resolveArtifactReference'],
-): Promise<CopilotPrimaryView | undefined> {
-  if (nomination.source === 'ephemeral_html') return nomination;
-  if (nomination.source === 'tool_result') {
-    const observed = trace.find(
-      (entry) =>
-        entry.root_call &&
-        entry.status === 'succeeded' &&
-        entry.domain_executed === true &&
-        entry.effect !== 'control' &&
-        entry.tool_use_id === nomination.ref.id &&
-        domainToolName(entry.tool_name) === nomination.ref.kind,
-    );
-    if (!observed || observed.output_sha256 !== sha256CanonicalJson(observed.domain_output))
-      return undefined;
-    return {
-      ...nomination,
-      snapshot: buildCopilotToolResultSnapshot(nomination.ref.kind, observed.domain_output),
-    };
-  }
-  try {
-    const ref = await resolveArtifactReference(nomination.ref);
-    return ref ? { source: 'artifact', ref } : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 /**
  * The recorded value behind a chart's tool_result binding. Same gate as the hero
  * nomination, plus the producer's declared chart_bindings: a successful call is
@@ -481,29 +413,7 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
       }
       const candidateSha = sha256Text(terminalText);
       const presentedText = options.authoritativeReply?.reply ?? terminalText;
-      const successfulControls = trace.filter(
-        (entry) =>
-          entry.root_call &&
-          domainToolName(entry.tool_name) === 'present_primary_view' &&
-          entry.domain_executed === true &&
-          entry.status === 'succeeded',
-      );
-      const controlOutput = successfulControls.at(-1)?.domain_output;
-      // Lifecycle metadata is produced by the control; reject every other extra
-      // field, especially a model-supplied snapshot.
-      const { presentation_lifecycle: _lifecycle, ...nominationOutput } = isRecord(controlOutput)
-        ? controlOutput
-        : {};
-      const parsedNomination = PresentPrimaryViewOutputSchema.safeParse(nominationOutput);
-      const nomination = parsedNomination.success ? parsedNomination.data : undefined;
-      const resolvedNomination = nomination
-        ? await resolvePrimaryViewNomination(nomination, trace, options.resolveArtifactReference)
-        : undefined;
-      const presented = {
-        text: presentedText,
-        ...(resolvedNomination ? { primaryView: resolvedNomination } : {}),
-      };
-      const correction = resolveCorrectionReply(presented.text, options.correctionContract);
+      const correction = resolveCorrectionReply(presentedText, options.correctionContract);
       if (correction.reply.trim().length === 0) {
         return publishUnsealed('', 'missing_terminal', context);
       }
@@ -525,7 +435,6 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
       ) {
         return publishUnsealed(terminalText, 'trace_changed', context);
       }
-      const primaryView = presented.primaryView;
       const receipt: CopilotReplyFinalizationReceipt = {
         protocol_version: 2,
         assurance: truncated ? 'unsealed' : 'execution_trace_bound',
@@ -538,13 +447,11 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
         observed_completed_tool_use_ids: observedCompletedToolUseIds(),
         correction: options.authoritativeReply?.correction ?? correction.kind,
         proposal_disclosure: disclosure ? 'server_composed' : 'none',
-        primary_view:
-          successfulControls.length > 0 ? (primaryView ? 'retained' : 'dropped') : 'absent',
         ...(prepared.blocksReceipt ? { blocks: prepared.blocksReceipt } : {}),
       };
       return {
         replyText: fixed,
-        preparedReply: primaryView ? { text: fixed, primaryView } : { text: fixed },
+        preparedReply: { text: fixed },
         receipt,
         accepted: true,
       };
@@ -710,7 +617,6 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
         observed_completed_tool_use_ids: observedCompletedToolUseIds(),
         correction: 'normal',
         proposal_disclosure: disclosure ? 'server_composed' : 'none',
-        primary_view: 'absent',
         ...(prepared.blocksReceipt ? { blocks: prepared.blocksReceipt } : {}),
       },
     };

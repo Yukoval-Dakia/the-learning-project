@@ -56,7 +56,6 @@ import {
   mergeNoProgressReply,
   renderNoProgressClosure,
 } from './no-progress-loop';
-import { resolveLivePrimaryViewArtifact } from './primary-view-reference';
 import { createCopilotProposalFlowGate } from './proposal-flow-gate';
 import { createCopilotProseStream } from './prose-stream';
 import {
@@ -302,7 +301,6 @@ export function createCopilotExecutionOwner(
         rootTaskRunId: activeTaskRunId,
         correctionContract: input.correction_contract,
         ...(authoritativeReply ? { authoritativeReply } : {}),
-        resolveArtifactReference: (ref) => resolveLivePrimaryViewArtifact(db, ref),
       });
 
     let finalizer = createFinalizer();
