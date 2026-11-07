@@ -48,7 +48,10 @@ export function BlockLine({
   check?: { marked: boolean; disabled: boolean; onToggle: () => void };
 }) {
   const [editing, setEditing] = useState(false);
-  const lowConfidence = isLowJudgeConfidence(block.workflow_judge_confidence);
+  // A question still waiting here has no recorded judgement yet, only how sure the reading was.
+  const lowConfidence = isLowJudgeConfidence(
+    block.workflow_judge_confidence ?? block.extraction_confidence,
+  );
   const emptyOptions = hasOptionsWithoutFigure(block);
   const notes =
     lowConfidence || emptyOptions ? (

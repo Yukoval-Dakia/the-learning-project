@@ -21,7 +21,7 @@
 | `providers.ts` | provider 认证、任务选模与 execution policy；`task.<kind>.reasoning` 存 pi 思考层级名，按 models.dev `reasoning_options` 决议（effort 向上取整、toggle 映射、空档不发参数），`requested→applied` 记入 run 回执，`task.<kind>.override_global_pin` 优先级不变；`resolveTaskReasoning` 同时是 admin 配置读面投影与配置写校验的唯一 resolver（YUK-1808） |
 | `@/core/config/custom-providers` | YUK-1563 ④ 自定义 provider 定义的纯真相源：类型、校验（slug/https URL/env 名/协议）、进程内注册表 + 目录联动端口；凭据只存 env 变量名（DB 水合/CRUD 在 `src/server/config/custom-providers-hydrate.ts` 与 observability 写面） |
 | `model-catalog-overrides.ts` | 唯一手写模型事实例外源。按 provider/model 记原因，仅补目录缺项或实测差异，不接管选模 |
-| `model-profiles.ts` + `model-catalog.ts` + `provider-models-check.ts` + `model-catalog.snapshot.json` | ModelProfile 读取运行时 models.dev 缓存和有据例外；缺项 unknown。已有 `/models` 核对、鉴权探针和刷新锁不变。`pnpm gen:model-catalog` 只重写离线快照。自定义 provider 的模型 bucket 在 `model-catalog.ts` 刷新时从其自身 /models 合成（`mergeCustomProviderBuckets`），不进快照 |
+| `model-profiles.ts` + `model-catalog.ts` + `provider-models-check.ts` + `model-catalog.snapshot.json` | ModelProfile 读取运行时 models.dev 缓存和有据例外；缺项 unknown。已有 `/models` 核对、鉴权探针和刷新锁不变。`pnpm gen:model-catalog` 只重写离线快照。自定义 provider 的模型 bucket 在 `model-catalog.ts` 刷新时从其自身 /models 合成（`mergeCustomProviderBuckets`），合成前在刷新事务内重读定义表、不信任进程内 registry（YUK-1960），不进快照 |
 | `log.ts` | run / event 留痕 |
 | `provenance.ts` | source / `last_modified_by` 标记 |
 | `../../capabilities/practice/grading/server/judge/` | Practice 判分实现；题型路由和 TaskSpec 由 Practice 拥有 |

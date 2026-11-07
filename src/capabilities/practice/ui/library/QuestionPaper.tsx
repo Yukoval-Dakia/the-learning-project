@@ -54,7 +54,7 @@ export function QuestionPaper({
       </MathMarkdown>
       {isLowJudgeConfidence(detail.ingestion_judge_confidence) && (
         <p className="qd-low-confidence">
-          这道题录入时认得把握不高，文字可能有错，不对的话可以修改。
+          这道题录入时认得把握不高，内容可能有错{onEdit ? '，不对的话可以修改' : ''}。
         </p>
       )}
       <QuestionFigures detail={detail} />
