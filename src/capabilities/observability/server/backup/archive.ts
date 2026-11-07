@@ -495,6 +495,9 @@ export async function buildBackupArchive({
 // ─── Import ────────────────────────────────────────────────────────────────
 
 const INSERT_BATCH_SIZE = 50;
+// Row count alone cannot bound a statement: a table of multi-MB rows would
+// build a GB-scale INSERT. Cap staged bytes per statement too.
+const INSERT_BATCH_BYTES = 4 * 1024 * 1024;
 const TEXT_ARRAY_COLUMNS: Partial<Record<TableName, ReadonlySet<string>>> = {
   event: new Set(['affected_scopes']),
   event_subscription_effect: new Set(['mastery_event_ids', 'evidence_ids']),
@@ -1107,6 +1110,7 @@ export async function restoreFromArchive({
           if (!table || table.rowCount === 0) continue;
           let cols: string[] | null = null;
           let chunk: Array<Record<string, unknown>> = [];
+          let chunkBytes = 0;
           const flushChunk = async () => {
             if (!cols || chunk.length === 0) return;
             // Build the INSERT with drizzle templates for parameterization. Arrays and objects
@@ -1123,8 +1127,9 @@ export async function restoreFromArchive({
             await tx.execute(query);
             stats[t].inserted = (stats[t].inserted ?? 0) + chunk.length;
             chunk = [];
+            chunkBytes = 0;
           };
-          for await (const row of readTableRows(table.path)) {
+          for await (const { row, bytes } of readTableRows(table.path)) {
             if (!cols) cols = Object.keys(row);
             // pg-boss rows are operational and absent from the archive. A same-database
             // restore may still hold a live or terminal row with the archived UUID, so never
@@ -1135,7 +1140,10 @@ export async function restoreFromArchive({
               row.preparation_job_id = null;
             }
             chunk.push(row);
-            if (chunk.length === INSERT_BATCH_SIZE) await flushChunk();
+            chunkBytes += bytes;
+            if (chunk.length === INSERT_BATCH_SIZE || chunkBytes >= INSERT_BATCH_BYTES) {
+              await flushChunk();
+            }
           }
           await flushChunk();
         }
@@ -1260,6 +1268,7 @@ export async function restoreFromArchive({
             const orderedCols = [...MEM0_COLLECTION_COLUMNS];
             const colList = orderedCols.map((c) => `"${c}"`).join(',');
             let chunk: Array<Record<string, unknown>> = [];
+            let chunkBytes = 0;
             const flushChunk = async () => {
               if (chunk.length === 0) return;
               const rowFragments = chunk.map((row) => {
@@ -1277,10 +1286,14 @@ export async function restoreFromArchive({
               const inserted = (await tx.execute(query)) as Array<{ id: unknown }>;
               stats[mem0Table].inserted += inserted.length;
               chunk = [];
+              chunkBytes = 0;
             };
-            for await (const row of readTableRows(mem0Staged.path)) {
+            for await (const { row, bytes } of readTableRows(mem0Staged.path)) {
               chunk.push(row);
-              if (chunk.length === INSERT_BATCH_SIZE) await flushChunk();
+              chunkBytes += bytes;
+              if (chunk.length === INSERT_BATCH_SIZE || chunkBytes >= INSERT_BATCH_BYTES) {
+                await flushChunk();
+              }
             }
             await flushChunk();
           }
@@ -1311,7 +1324,8 @@ export async function restoreFromArchive({
     if (manifest.include_assets) {
       for (const asset of staged.assets) {
         try {
-          await r2.put(asset.key, new Uint8Array(await readFile(asset.path)));
+          // Buffer is already a Uint8Array; wrapping it would copy the asset again.
+          await r2.put(asset.key, await readFile(asset.path));
           assetsUploaded += 1;
         } catch (err) {
           console.error('import: R2 put failed', { key: asset.key, err });

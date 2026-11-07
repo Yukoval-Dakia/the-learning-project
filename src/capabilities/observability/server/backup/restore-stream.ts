@@ -4,17 +4,19 @@
  * directory before any database write begins.
  *
  * Two invariants shape the design:
- *  - fflate's streaming Unzip does NOT verify CRC (the sync path does), so each
- *    entry's bytes are rolled through a local CRC32 and compared with the
- *    central directory parsed from the stream tail. Corruption and truncation
- *    that would silently produce wrong rows are rejected instead.
+ *  - CRC is verified here because nothing upstream does it: fflate verifies
+ *    CRC nowhere — not in streaming Unzip and not in unzipSync (both trust
+ *    the central directory and inflate structure only). Each entry's bytes are
+ *    rolled through a local CRC32 and compared with the central directory
+ *    parsed from the stream tail, so corruption and truncation that would
+ *    silently produce wrong rows are rejected instead.
  *  - data.json is parsed with a bounded incremental extractor, not JSON.parse:
  *    the archive can exceed the heap, so only one row's text is resident at a
  *    time. Row text is captured by balanced scanning, then parsed — any JSON
  *    formatting a producer emits is handled identically.
  */
 import { createReadStream, createWriteStream } from 'node:fs';
-import { appendFile, mkdtemp, rm } from 'node:fs/promises';
+import { appendFile, mkdtemp, readdir, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Unzip, type UnzipFile, UnzipInflate, UnzipPassThrough } from 'fflate';
@@ -418,9 +420,17 @@ class DataJsonExtractor {
             this.state = 'expectFirstElemOrEnd';
             break;
           }
-          // Non-array table value: consume without retention.
-          const r = this.capture(false);
+          // Non-array table value: still must be valid JSON (JSON.parse vetted
+          // the whole document before). Retained only up to the cap — a bigger
+          // foreign value cannot be validated and is refused as malformed.
+          const r = this.capture(true, false, 64 * 1024);
           if (!r.done) return;
+          if (r.overflow) this.error();
+          try {
+            JSON.parse(r.text);
+          } catch {
+            this.error();
+          }
           this.events.onNotArray(this.key);
           this.state = 'afterEntry';
           break;
@@ -546,12 +556,35 @@ interface PendingTable {
  * All failures leave the database untouched — staging never opens a
  * transaction.
  */
+const STAGE_DIR_PREFIX = 'loom-restore-';
+// Older than this a spill dir can only be crash residue: a live restore keeps
+// its dir for its whole run, and restores take minutes, not hours.
+const STAGE_STALE_MS = 6 * 60 * 60 * 1000;
+
+/** Best-effort GC for dirs a killed restore never got to remove. */
+async function sweepStaleStageDirs(): Promise<void> {
+  try {
+    const now = Date.now();
+    for (const name of await readdir(tmpdir())) {
+      if (!name.startsWith(STAGE_DIR_PREFIX)) continue;
+      const path = join(tmpdir(), name);
+      const st = await stat(path).catch(() => null);
+      if (st && now - st.mtimeMs > STAGE_STALE_MS) {
+        await rm(path, { recursive: true, force: true }).catch(() => {});
+      }
+    }
+  } catch {
+    // A sweep failure must never block the restore that triggered it.
+  }
+}
+
 export async function stageArchive(
   source: ArchiveSource,
   events: StageEvents,
   maxExtractedBytes: number,
 ): Promise<StagedArchive> {
-  const stageDir = await mkdtemp(join(tmpdir(), 'loom-restore-'));
+  await sweepStaleStageDirs();
+  const stageDir = await mkdtemp(join(tmpdir(), STAGE_DIR_PREFIX));
   const fail = async (err: unknown): Promise<never> => {
     await rm(stageDir, { recursive: true, force: true });
     throw err;
@@ -685,6 +718,10 @@ export async function stageArchive(
     } else if (isAsset) {
       const path = join(stageDir, `asset-${assetSeq++}.bin`);
       const stream = createWriteStream(path);
+      // Never let a WriteStream error stall the flush queue: write callbacks
+      // and close both resolve regardless, parking the first error in
+      // stageError which the post-push check turns into a fail(). Waiting on
+      // 'drain' deadlocks here because an errored stream never drains.
       stream.on('error', (err) => {
         stageError = stageError ?? err;
       });
@@ -692,7 +729,16 @@ export async function stageArchive(
         stream,
         close: () =>
           new Promise<void>((resolve) => {
-            stream.end(resolve);
+            if (stream.errored) {
+              stageError = stageError ?? stream.errored;
+              resolve();
+              return;
+            }
+            stream.once('error', (err) => {
+              stageError = stageError ?? err;
+              resolve();
+            });
+            stream.end(() => resolve());
           }),
       };
       staged.assets.push({ key: name.slice('assets/'.length), path });
@@ -725,8 +771,13 @@ export async function stageArchive(
           flushQueue.push(
             () =>
               new Promise<void>((resolve) => {
-                if (!asset.stream.write(buf)) asset.stream.once('drain', resolve);
-                else resolve();
+                // The write callback fires once on flush or on error — on an
+                // errored stream it fires with the error — so the queue drains
+                // either way. Errors park in stageError, not in this promise.
+                asset.stream.write(buf, (err) => {
+                  if (err) stageError = stageError ?? err;
+                  resolve();
+                });
               }),
           );
           if (final) {
@@ -819,8 +870,11 @@ export async function cleanupStage(dir: string): Promise<void> {
   await rm(dir, { recursive: true, force: true });
 }
 
-/** Line reader over a staged table file: yields each row's parsed object. */
-export async function* readTableRows(path: string): AsyncGenerator<Record<string, unknown>> {
+/** Line reader over a staged table file: yields each row's parsed object and its
+ * staged line size, so insert batching can bound bytes, not only row count. */
+export async function* readTableRows(
+  path: string,
+): AsyncGenerator<{ row: Record<string, unknown>; bytes: number }> {
   const stream = createReadStream(path, { encoding: 'utf-8' });
   let buf = '';
   for await (const chunk of stream) {
@@ -829,9 +883,13 @@ export async function* readTableRows(path: string): AsyncGenerator<Record<string
     while (idx >= 0) {
       const line = buf.slice(0, idx);
       buf = buf.slice(idx + 1);
-      if (line.length > 0) yield JSON.parse(line) as Record<string, unknown>;
+      if (line.length > 0) {
+        yield { row: JSON.parse(line) as Record<string, unknown>, bytes: Buffer.byteLength(line) };
+      }
       idx = buf.indexOf('\n');
     }
   }
-  if (buf.trim().length > 0) yield JSON.parse(buf) as Record<string, unknown>;
+  if (buf.trim().length > 0) {
+    yield { row: JSON.parse(buf) as Record<string, unknown>, bytes: Buffer.byteLength(buf) };
+  }
 }
