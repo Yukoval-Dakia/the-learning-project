@@ -49,6 +49,7 @@ export const fastTestInclude = [
   'src/capabilities/practice/grading/server/judge/steps-judge.test.ts',
   'src/capabilities/practice/supply/server/jyeoo-spawn.test.ts',
   'src/kernel/placement-starter-outcome.unit.test.ts',
+  'src/kernel/read-models/knowledge-state.unit.test.ts',
   'src/capabilities/practice/question-bank/server/quiz/verify-framework.test.ts',
   'src/capabilities/practice/ui/blocks/custom-sandbox.test.ts',
   'src/capabilities/shell/server/overnight-digest-summary.unit.test.ts',
