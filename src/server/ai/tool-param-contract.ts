@@ -6,16 +6,18 @@
 // dead. pi validates before `AgentTool.execute` and does not JSON-parse strings,
 // so the repair must run at the `prepareArguments` seam pi calls ahead of it.
 //
-// Policy (shared with the admission preflight — no second implementation): a
-// string field whose sub-schema expects array/object and rejects strings gets
-// exactly ONE strict JSON.parse, adopted only when the parsed value has the
-// expected structure and passes that sub-schema. Required failures go to the
-// validation owner: pi receives `ToolParamContractError`; bridge tools retain
-// their canonical schema feedback without reaching domain execution.
+// Policy: a string field whose sub-schema expects array/object and rejects
+// strings gets exactly ONE strict JSON.parse, adopted only when the parsed value
+// has the expected structure and passes that sub-schema. A string that is a
+// finite numeric literal is adopted as a number only where the whole applicable
+// schema accepts that number (for example `"2"` for `z.literal(2)`); a string
+// accepted in its own right, a non-numeric string, or a number the schema
+// rejects is never changed.
 //
-// Never: guessing, markdown extraction, primitive coercion, provider/model/task
-// special-casing, silent field deletion, re-parsing a parsed field, or schema
-// loosening. Fields whose schema accepts strings are never touched.
+// Never: guessing, markdown extraction, non-numeric primitive coercion,
+// provider/model/task special-casing, silent field deletion, re-parsing a
+// parsed field, or schema loosening. Fields whose schema accepts strings are
+// never touched by the numeric conversion.
 
 import { z } from 'zod';
 
@@ -62,17 +64,44 @@ export function isToolArgumentContractFailure(result: {
   content?: unknown;
 }): boolean {
   if (result.isError !== true) return false;
-  const text = toolResultText(result.content);
-  // pi 1.5 reports a wholly unparseable arguments payload as "Invalid arguments
-  // for tool"; schema rejection stays "Validation failed for tool". The MCP
-  // bridge reports a rejected bridge-owned schema as a JSON error body.
-  return (
-    text.includes(TOOL_PARAM_CONTRACT_MARKER) ||
-    text.startsWith('Validation failed for tool') ||
-    text.startsWith('Invalid arguments for tool') ||
-    text.includes('"error":"Tool input does not match the declared schema:') ||
-    text.includes('"error": "Tool input does not match the declared schema:')
-  );
+  return toolResultTexts(result.content).some(isArgumentContractFailureText);
+}
+
+/** Text form of every text block, so callers inspect each result instead of one concatenation. */
+function toolResultTexts(content: unknown): string[] {
+  if (typeof content === 'string') return [content];
+  if (!Array.isArray(content)) return [];
+  const out: string[] = [];
+  for (const block of content) {
+    if (
+      block !== null &&
+      typeof block === 'object' &&
+      (block as { type?: unknown }).type === 'text' &&
+      typeof (block as { text?: unknown }).text === 'string'
+    ) {
+      out.push((block as { text: string }).text);
+    }
+  }
+  return out;
+}
+
+/** Only protocol-shaped rejection text counts; a business error carrying these
+ *  words in prose must not get the retryable-validation exemption. */
+function isArgumentContractFailureText(text: string): boolean {
+  const trimmed = text.trim();
+  if (trimmed.startsWith('Validation failed for tool ')) return true;
+  if (trimmed.startsWith('Invalid arguments for tool ')) return true;
+  if (trimmed.startsWith(TOOL_PARAM_CONTRACT_MARKER)) return true;
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    return (
+      isNode(parsed) &&
+      typeof parsed.error === 'string' &&
+      parsed.error.startsWith('Tool input does not match the declared schema:')
+    );
+  } catch {
+    return false;
+  }
 }
 
 /** True when the result is OUR contract rejection — the one correction-eligible failure. */
@@ -233,6 +262,13 @@ function matchesLiterals(
 
 function structuralMatch(kind: 'array' | 'object', value: unknown): boolean {
   return kind === 'array' ? Array.isArray(value) : isNode(value);
+}
+
+/** Only a canonical finite numeric literal, never `"2abc"`, `"0x2"` or whitespace. */
+function numericLiteral(value: string): number | undefined {
+  if (!/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/.test(value)) return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 // ─── sub-schema acceptance check ─────────────────────────────────────────────
@@ -477,6 +513,17 @@ function repairValue(
     schemas.some((schema) => subSchemaAccepts(schema, repaired, ctx.definitions));
 
   if (typeof value === 'string') {
+    const numeric = numericLiteral(value);
+    if (numeric !== undefined) {
+      for (const position of positions) {
+        if (!wholeSchemaAccepts(position, numeric)) continue;
+        ctx.coercions.push({
+          field_path: path === '' ? '(root)' : path,
+          original_length: value.length,
+        });
+        return numeric;
+      }
+    }
     let required: Set<'array' | 'object'> | undefined;
     let parsed: { ok: true; value: unknown } | { ok: false } | undefined;
     for (const position of positions) {
@@ -507,7 +554,12 @@ function repairValue(
       const mismatchedLiteral = Object.entries(value).some(([key, field]) => {
         const constraints: SchemaNode[] = [];
         collectPropertySchemas(position, key, ctx.definitions, constraints, new Set());
-        return constraints.some((schema) => !matchesLiterals(schema, field, ctx.definitions));
+        return constraints.some(
+          (schema) =>
+            !matchesLiterals(schema, field, ctx.definitions) &&
+            // A numeric literal string can be repaired by the field walk below.
+            !(typeof field === 'string' && numericLiteral(field) !== undefined),
+        );
       });
       if (mismatchedLiteral) continue;
       const mark = ctx.coercions.length;
