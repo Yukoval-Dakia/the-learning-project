@@ -260,6 +260,13 @@ export function PracticeSolo({
                   onClose={() => setCoachOpen(false)}
                   question={q}
                   issuanceId={ready?.id}
+                  submitted={
+                    !!ready?.accepted ||
+                    engine.submit.autoCommitted ||
+                    engine.submit.answerRecorded ||
+                    !!engine.submit.pendingRun ||
+                    engine.submit.phase !== 'answering'
+                  }
                 />
               )}
             </>
