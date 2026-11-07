@@ -28,6 +28,12 @@ export interface PrepareInterventionJobData {
   intervention_id: string;
   version: number;
   idempotency_key: string;
+  /**
+   * Provider-wait count carried on redeliveries (YUK-2030). Subscription and
+   * recovery-floor sends omit it; only the wait rearm path writes it, so a lost
+   * wake's floor requeue restarts the ladder — acceptable for a rare path.
+   */
+  provider_waits?: number;
 }
 
 export type PrepareInterventionBossSend = (

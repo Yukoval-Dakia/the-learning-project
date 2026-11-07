@@ -7,6 +7,11 @@ import { randomUUID } from 'node:crypto';
 
 import type { Db } from '@/db/client';
 import type { JobDag } from '@/kernel/job-dag';
+import {
+  PROVIDER_WAIT_MAX,
+  providerWaitDelayMs,
+  readProviderWaitRequest,
+} from '@/server/ai/provider-wait';
 import { readJobYieldReport } from '@/server/boss/job-yield';
 import {
   LAYER_STAGGER_MAX_SECONDS,
@@ -41,6 +46,7 @@ import {
   listActiveRuns,
   loadNode,
   loadNodes,
+  rescheduleNodeProviderWait,
   updateNodeStatus,
 } from './store';
 
@@ -310,6 +316,55 @@ async function pollInflightNode(
   const job = node.boss_job_id ? await deps.boss.getJobById(node.job_name, node.boss_job_id) : null;
   const jobState = mapBossState(job?.state ?? null);
   if (jobState === 'succeeded') {
+    // A member that proved a transient provider rejection leaves a wait marker on
+    // its output instead of settling; the node waits out the route outage rather
+    // than landing terminal. The orchestrator owns the budget (provider_waits +
+    // the node timeout), the member only proved eligibility.
+    const wait = readProviderWaitRequest(job?.output);
+    if (wait !== undefined && node.provider_waits < PROVIDER_WAIT_MAX) {
+      const bossJobId = randomUUID();
+      const rescheduled = await rescheduleNodeProviderWait(deps.db, node.id, {
+        bossJobId,
+        detail: `provider_wait:${wait.retryClass}${wait.detail ? `: ${wait.detail}` : ''}`,
+        now,
+      });
+      // CAS lost: a concurrent tick owns the transition; its outcome stands.
+      if (!rescheduled) return;
+      const delaySeconds = Math.ceil(providerWaitDelayMs(node.provider_waits + 1) / 1000);
+      const sentId = await deps.boss.send(
+        node.job_name,
+        {},
+        {
+          id: bossJobId,
+          startAfter: delaySeconds,
+        },
+      );
+      if (sentId === null) {
+        // A fresh uuid never conflicts, so null here means the send never landed;
+        // the row already carries the reserved id, so settle honestly.
+        await settleNode(deps.db, deps.run, node, {
+          status: 'failed',
+          detail: `provider wait redelivery never landed (waits=${node.provider_waits + 1})`,
+          now,
+        });
+        return;
+      }
+      node.boss_job_id = sentId;
+      node.provider_waits += 1;
+      console.warn(
+        `[orchestrator] node '${node.job_name}' waiting for provider recovery ` +
+          `(wait ${node.provider_waits}/${PROVIDER_WAIT_MAX}, next attempt in ${delaySeconds}s): ${wait.detail}`,
+      );
+      return;
+    }
+    if (wait !== undefined) {
+      await settleNode(deps.db, deps.run, node, {
+        status: 'failed',
+        detail: `provider_wait_exhausted:${wait.retryClass} after ${node.provider_waits} waits`,
+        now,
+      });
+      return;
+    }
     // A stalled yield becomes degraded; degraded stays succeeded with detail.
     const report = readJobYieldReport(job?.output);
     await settleNode(deps.db, deps.run, node, {

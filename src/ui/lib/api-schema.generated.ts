@@ -24530,6 +24530,16 @@ export interface operations {
                             /** @enum {string} */
                             kind: "model_or_parse";
                             task_run_id: string | null;
+                        } | {
+                            detail: string;
+                            /** @enum {string} */
+                            kind: "provider_outage";
+                            task_run_id: string | null;
+                        } | {
+                            detail: string;
+                            /** @enum {string} */
+                            kind: "learner_edited";
+                            task_run_id: string | null;
                         }) | null;
                         generation_status: string;
                         history: ({

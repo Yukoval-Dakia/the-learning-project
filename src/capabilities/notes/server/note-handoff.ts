@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
 
 import type { Db } from '@/db/client';
@@ -15,8 +17,10 @@ import {
 } from '@/kernel/records/note-handoff-protocol';
 import { getNotesBoss } from './boss-port';
 import { NOTE_ARTIFACT_TYPES } from './note-artifact-types';
+import { attrsWithGenerationWait, readNoteGenerationWait } from './note-generation-failure';
 
 const RECOVERY_BATCH_SIZE = 50;
+const LIVE_JOB_STATES = new Set(['created', 'retry', 'active']);
 
 async function resolveNotesBoss(deps: { readonly boss?: BossDispatch }): Promise<BossDispatch> {
   return deps.boss ?? (await getNotesBoss());
@@ -118,6 +122,70 @@ export async function recoverNoteHandoffs(
   return completed;
 }
 
+/**
+ * Provider-wait floor (YUK-2030): pending notes carrying a generation_wait
+ * receipt whose retry instant passed. The recorded wake_job_id is resent with
+ * the same id (a lost wake lands; a live one collides harmlessly), and when the
+ * recorded job is provably dead the receipt is repointed to a fresh id — the
+ * same repoint pattern intervention reconcile uses. No paid effect is created:
+ * the wake job is just a delivery.
+ */
+async function recoverNoteGenerationWaits(
+  db: Db,
+  deps: { readonly boss?: BossDispatch } = {},
+): Promise<number> {
+  const now = new Date().toISOString();
+  const rows = await db
+    .select({ id: artifact.id, attrs: artifact.attrs })
+    .from(artifact)
+    .where(
+      and(
+        isNull(artifact.archived_at),
+        inArray(artifact.type, NOTE_ARTIFACT_TYPES),
+        sql`${artifact.generation_status} = 'pending'`,
+        sql`${artifact.attrs} -> 'generation_wait' ->> 'retry_at' <= ${now}`,
+      ),
+    )
+    .orderBy(asc(artifact.updated_at), asc(artifact.id))
+    .limit(RECOVERY_BATCH_SIZE);
+
+  const boss = await resolveNotesBoss(deps);
+  let rearmed = 0;
+  for (const row of rows) {
+    const wait = readNoteGenerationWait(row.attrs);
+    if (!wait) continue;
+    const job = await boss.getJobById('note_generate', wait.wake_job_id);
+    if (job && LIVE_JOB_STATES.has(job.state)) continue;
+    // Dead or never-landed wake: repoint the receipt to a fresh id and send it
+    // immediately — the recorded retry instant is already past.
+    const wakeJobId = randomUUID();
+    await db.transaction(async (tx) => {
+      const [current] = await tx
+        .select({ attrs: artifact.attrs })
+        .from(artifact)
+        .where(and(eq(artifact.id, row.id), sql`${artifact.generation_status} = 'pending'`))
+        .for('update')
+        .limit(1);
+      const currentWait = readNoteGenerationWait(current?.attrs);
+      // Someone else already re-armed or finished this note — leave it.
+      if (!currentWait || currentWait.retry_at !== wait.retry_at) return;
+      await tx
+        .update(artifact)
+        .set({
+          attrs: attrsWithGenerationWait(current.attrs, {
+            ...currentWait,
+            wake_job_id: wakeJobId,
+          }),
+          updated_at: new Date(),
+        })
+        .where(and(eq(artifact.id, row.id), sql`${artifact.generation_status} = 'pending'`));
+    });
+    const sent = await boss.send('note_generate', { artifact_id: row.id }, { id: wakeJobId });
+    if (sent !== null) rearmed += 1;
+  }
+  return rearmed;
+}
+
 type NotesRecoveryFloorDeps = {
   recoverHandoffs?: () => Promise<number>;
 };
@@ -127,4 +195,8 @@ export async function recoverNoteHandoffsAndClaims(
   deps: NotesRecoveryFloorDeps = {},
 ): Promise<void> {
   await (deps.recoverHandoffs?.() ?? recoverNoteHandoffs(db));
+  const rearmed = await recoverNoteGenerationWaits(db);
+  if (rearmed > 0) {
+    console.log('[hub_sync_recovery] re-armed note generation waits', { rearmed });
+  }
 }

@@ -741,3 +741,111 @@ describe('YUK-778 ② the scheduling control plane leaves a diagnosable trail', 
     expect((await nodeRow(run.id, 'a'))?.detail).toBe('first');
   });
 });
+
+// ── YUK-2030 — provider-wait 节点重派 ─────────────────────────────────────────
+//
+// 成员 job 用 `provider_wait` 输出标记「已证明未计费的 provider 拒绝」，编排器
+// 拥有等待预算：CAS 换 boss_job_id + provider_waits+1 + startAfter 重派，
+// enqueued_at 不动（节点超时仍包整个等+跑窗口）。耗尽 → failed 留原因。
+describe('YUK-2030 — provider-wait redelivery', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  const waitOutput = { provider_wait: { retry_class: 'server_error', detail: 'ev=run_1' } };
+
+  it('W1 a member leaving provider_wait output waits instead of settling', async () => {
+    const boss = new FakeBoss();
+    const dag = dagOf(member('a'), member('b', ['a']));
+    const run = must(
+      await runOrchestratorStart({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }, 'cron'),
+      'run',
+    );
+    const first = must(await nodeRow(run.id, 'a'), 'node a');
+    const firstJobId = must(first.boss_job_id, 'first job id');
+    const firstEnqueuedAt = first.enqueued_at;
+    boss.setJobState('a', firstJobId, 'completed');
+    boss.setJobOutput('a', firstJobId, waitOutput);
+
+    await runOrchestratorTick({ db, boss, dag, now: NOW, localDate: () => RUN_DATE });
+
+    const waited = must(await nodeRow(run.id, 'a'), 'node a after wait');
+    // Non-terminal, wait counter spent, replacement identity repointed.
+    expect(waited.status).toBe('enqueued');
+    expect(waited.provider_waits).toBe(1);
+    expect(waited.boss_job_id).toBeTruthy();
+    expect(waited.boss_job_id).not.toBe(firstJobId);
+    // The node timeout still bounds the whole wait+run window.
+    expect(waited.enqueued_at).toEqual(firstEnqueuedAt);
+    // The replacement was actually sent, with the ladder's first delay (5 min).
+    const resend = boss.memberSends.find((s) => s.name === 'a' && s.id === waited.boss_job_id);
+    expect(resend?.startAfter).toBe(300);
+    expect(boss.hasJob('a', waited.boss_job_id ?? '')).toBe(true);
+    // Downstream stayed pending: a never produced a verdict.
+    expect((await nodeRow(run.id, 'b'))?.status).toBe('pending');
+  });
+
+  it('W2 exhausting the wait budget fails the node with an explicit reason', async () => {
+    const boss = new FakeBoss();
+    const dag = dagOf(member('a'));
+    const run = must(
+      await runOrchestratorStart({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }, 'cron'),
+      'run',
+    );
+    // Drive the node to its last wait, then let the next refusal land.
+    const spent = 8; // PROVIDER_WAIT_MAX
+    for (let i = 0; i < spent; i++) {
+      const node = must(await nodeRow(run.id, 'a'), 'node a');
+      const jobId = must(node.boss_job_id, 'job id');
+      boss.setJobState('a', jobId, 'completed');
+      boss.setJobOutput('a', jobId, waitOutput);
+      await runOrchestratorTick({ db, boss, dag, now: NOW, localDate: () => RUN_DATE });
+      expect((await nodeRow(run.id, 'a'))?.provider_waits).toBe(i + 1);
+    }
+    const last = must(await nodeRow(run.id, 'a'), 'node a');
+    const lastJobId = must(last.boss_job_id, 'last job id');
+    boss.setJobState('a', lastJobId, 'completed');
+    boss.setJobOutput('a', lastJobId, waitOutput);
+    const sendsBeforeTerminalTick = boss.memberSends.filter((s) => s.name === 'a').length;
+    await runOrchestratorTick({ db, boss, dag, now: NOW, localDate: () => RUN_DATE });
+
+    const terminal = must(await nodeRow(run.id, 'a'), 'node a terminal');
+    expect(terminal.status).toBe('failed');
+    expect(terminal.detail).toContain('provider_wait_exhausted:server_error');
+    expect(terminal.provider_waits).toBe(spent);
+    // No further member job was sent once the budget was gone.
+    expect(boss.memberSends.filter((s) => s.name === 'a')).toHaveLength(sendsBeforeTerminalTick);
+  });
+
+  // @invariant concurrency: two replicas polling a waiting node land exactly one replacement job
+  // @fails-if the reschedule CAS or the repoint-then-send order breaks, so a second job row or a second waits increment appears
+  it('W3 a second replica ticking a re-armed node sends no duplicate', async () => {
+    const sharedJobs = new Map<string, { state: string; output?: unknown }>();
+    const bossA = new FakeBoss(sharedJobs);
+    const bossB = new FakeBoss(sharedJobs);
+    const dag = dagOf(member('a'));
+    const run = must(
+      await runOrchestratorStart(
+        { db, boss: bossA, dag, now: NOW, localDate: () => RUN_DATE },
+        'cron',
+      ),
+      'run',
+    );
+    const first = must(await nodeRow(run.id, 'a'), 'node a');
+    const firstJobId = must(first.boss_job_id, 'first job id');
+    bossA.setJobState('a', firstJobId, 'completed');
+    bossA.setJobOutput('a', firstJobId, waitOutput);
+
+    // Replica A re-arms; replica B's later tick sees the replacement already live.
+    await runOrchestratorTick({ db, boss: bossA, dag, now: NOW, localDate: () => RUN_DATE });
+    await runOrchestratorTick({ db, boss: bossB, dag, now: NOW, localDate: () => RUN_DATE });
+
+    const node = must(await nodeRow(run.id, 'a'), 'node a');
+    expect(node.provider_waits).toBe(1);
+    expect(bossB.memberSends.filter((s) => s.name === 'a')).toHaveLength(0);
+    // Exactly one live job row for the repointed identity.
+    const aJobs = [...sharedJobs.keys()].filter((k) => k.startsWith('a:'));
+    expect(aJobs).toHaveLength(2); // completed first + waiting replacement
+    expect(bossA.hasJob('a', node.boss_job_id ?? '')).toBe(true);
+  });
+});

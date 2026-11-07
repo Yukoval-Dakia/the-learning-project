@@ -3,7 +3,7 @@
 // adapter. Rep identity is question revision + input digest + rep index. Staged reps resume
 // without provider calls; an unknown paid outcome stays held across deliveries.
 
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { ItemPriorPaidEffectAdapter } from '@/capabilities/practice/question-bank/server/item-prior-paid-effect-adapter';
 import { aggregateItemPriorDrafts, parseItemPriorDraft } from '@/core/item-prior-estimation';
@@ -14,6 +14,7 @@ import type { Db, Tx } from '@/db/client';
 import { item_calibration, knowledge, question } from '@/db/schema';
 import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
 import { applyItemPrior } from '@/kernel/records/item-calibration';
+import { planJobProviderWait } from '@/server/ai/provider-wait';
 import { type BoundRunTaskTextFn, type RunTaskCallCtx, makeRunTaskFn } from '@/server/ai/runner-fn';
 import type { SubjectProfile } from '@/subjects/profile';
 import { MAX_REPS } from './item-prior-limits';
@@ -41,6 +42,12 @@ export interface ItemPriorBackfillResult {
   calibrated: number;
   /** 单题 LLM/parse 失败被跳过的题数（不阻断其余题）。 */
   skipped_failed: number;
+  /**
+   * First provable transient provider rejection seen this round (YUK-2030).
+   * The job asks the DAG to wait for route recovery instead of settling as a
+   * completed-but-degraded round; unproven failures keep the skip-only path.
+   */
+  providerWait?: { retryClass: string; evidenceRef: string };
 }
 
 export const DEFAULT_MAX_PER_RUN = 25;
@@ -66,7 +73,9 @@ export function normalizeMethod(raw: unknown): ItemPriorMethod {
   return raw === 'llasa' ? 'llasa' : 'feature';
 }
 
-/** Pre-LLM read; errors propagate. Preserve the original unordered, capped query. */
+/** Pre-LLM read; errors propagate. Oldest unanchored questions first, id
+ * tiebreak — a capped run that skips failed questions re-picks them ahead of
+ * newer ones next round instead of starving on an unordered scan. */
 export async function selectItemPriorCandidates(
   db: Db | Tx,
   maxPerRun: number,
@@ -87,6 +96,7 @@ export async function selectItemPriorCandidates(
         WHERE ic.question_id = ${question.id} AND ic.track = 'hard'
       )`,
     )
+    .orderBy(asc(question.created_at), asc(question.id))
     .limit(maxPerRun);
 }
 
@@ -706,6 +716,11 @@ export async function runItemPriorBackfillOperation(
         err,
       });
       result.skipped_failed++;
+      // A provable transient provider rejection means the route is down: keep
+      // scanning the remaining questions (their settled evidence may still
+      // succeed on a sibling lane), but ask the DAG for a recovery wait so the
+      // round is redelivered instead of parked until tomorrow.
+      result.providerWait ??= (await planJobProviderWait(db, err)) ?? undefined;
     }
   }
 

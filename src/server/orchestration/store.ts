@@ -3,7 +3,7 @@
 // 控制面记录，与 event 数据面物理隔离。每个非平凡列都显式写（audit:schema
 // write-path 契约）。
 
-import { and, desc, eq, notInArray } from 'drizzle-orm';
+import { and, desc, eq, notInArray, sql } from 'drizzle-orm';
 import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
 import { dag_orchestration_node, dag_orchestration_run } from '@/db/schema';
@@ -52,6 +52,7 @@ export interface NodeRow {
   boss_job_id: string | null;
   stale: boolean;
   detail: string | null;
+  provider_waits: number;
   enqueued_at: Date | null;
   finished_at: Date | null;
 }
@@ -304,6 +305,39 @@ export async function updateNodeStatus(
   return rows.length > 0;
 }
 
+/**
+ * Provider-wait redelivery (YUK-2030): CAS non-terminal → repoint boss_job_id and
+ * bump provider_waits in one write, mirroring claimNodePending's ordering — the
+ * new pg-boss identity is durable BEFORE the send lands, so a crash between CAS
+ * and send leaves an id the next poll simply reads as missing (expiry path),
+ * never a double-paid duplicate. `enqueued_at` is deliberately untouched: the
+ * node timeout bounds the whole wait+run window.
+ */
+export async function rescheduleNodeProviderWait(
+  db: Db,
+  nodeId: string,
+  input: { bossJobId: string; detail: string; now?: Date },
+): Promise<boolean> {
+  const now = input.now ?? new Date();
+  const rows = await db
+    .update(dag_orchestration_node)
+    .set({
+      status: 'enqueued',
+      boss_job_id: input.bossJobId,
+      provider_waits: sql`${dag_orchestration_node.provider_waits} + 1`,
+      detail: input.detail,
+      updated_at: now,
+    })
+    .where(
+      and(
+        eq(dag_orchestration_node.id, nodeId),
+        notInArray(dag_orchestration_node.status, [...TERMINAL_NODE_STATUSES]),
+      ),
+    )
+    .returning({ id: dag_orchestration_node.id });
+  return rows.length > 0;
+}
+
 function toRunRow(r: typeof dag_orchestration_run.$inferSelect): RunRow {
   return {
     id: r.id,
@@ -324,6 +358,7 @@ function toNodeRow(r: typeof dag_orchestration_node.$inferSelect): NodeRow {
     boss_job_id: r.boss_job_id,
     stale: r.stale,
     detail: r.detail,
+    provider_waits: r.provider_waits,
     enqueued_at: r.enqueued_at,
     finished_at: r.finished_at,
   };

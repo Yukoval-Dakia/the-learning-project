@@ -1075,10 +1075,15 @@ export function streamTask(kind: string, input: unknown, initialCtx: StreamTaskC
                 shouldClose = false;
                 return;
               }
+              // The run id rides the marker so worker-side consumers (the
+              // knowledge-maintenance job) can read back the settled evidence
+              // row — the marker text alone cannot prove the failure class.
+              const markerRunId = lifecycle.taskRunId;
               const message =
-                error instanceof Error
+                (error instanceof Error
                   ? `[streamTask] ${error.message}`
-                  : '[streamTask] unknown error';
+                  : '[streamTask] unknown error') +
+                (markerRunId ? ` (task_run_id=${markerRunId})` : '');
               controller.enqueue(encoder.encode(`\n\n${message}\n`));
             } finally {
               lifecycle.dispose();
