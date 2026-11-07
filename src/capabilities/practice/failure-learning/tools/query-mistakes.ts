@@ -110,6 +110,8 @@ const OutputSchema = z.object({
   aggregates: AggregatesSchema,
   /** JSON Pointer paths this result declares as chart-bindable (producer allowlist). */
   chart_bindings: z.array(z.string()).max(8),
+  /** What a bound chart covers and its filters, in the learner's words; replaces any model caption. */
+  chart_caption: z.string().max(200),
   claim_boundaries: z.object({
     zero_rows_scope: z.literal('matching_failure_attempt_rows_only'),
     supports_entity_inventory_claim: z.literal(false),
@@ -145,6 +147,7 @@ const DESCRIPTION = [
   'by_cause is absent when includeAttribution=false (no cause was loaded).',
   'Bind a chart to them with data_source.path=/aggregates/by_cause or /aggregates/by_knowledge.',
   'chart_bindings lists the paths this result declares as chart-bindable.',
+  'chart_caption is the coverage line the server puts under a bound chart, replacing any caption you wrote.',
 ].join('\n');
 
 async function loadQuestionPrompts(db: Db, questionIds: string[]): Promise<Map<string, string>> {
@@ -264,6 +267,37 @@ function causeLabel(input: {
   );
 }
 
+function shortName(name: string): string {
+  const glyphs = Array.from(name);
+  return glyphs.length > 30 ? `${glyphs.slice(0, 30).join('')}…` : name;
+}
+
+/** What a bound chart covers: the window only when the rows reach across it, plus every filter. */
+function chartCaption(input: {
+  filter: NonNullable<Input['filter']>;
+  counted: number;
+  truncated: boolean;
+  knowledgeName: string | undefined;
+  causeName: string | undefined;
+}): string {
+  const { filter } = input;
+  const parts = [
+    filter.sinceDays && !input.truncated
+      ? `近 ${filter.sinceDays} 天`
+      : `本次查询的 ${input.counted} 条`,
+  ];
+  if (filter.knowledgeId) {
+    parts.push(input.knowledgeName ? `知识点「${shortName(input.knowledgeName)}」` : '指定知识点');
+  }
+  if (filter.causeCategoryId) {
+    parts.push(input.causeName ? `错因「${shortName(input.causeName)}」` : '指定错因');
+  }
+  if (filter.dueWithinDays !== undefined) {
+    parts.push(filter.dueWithinDays === 0 ? '已到期' : `${filter.dueWithinDays} 天内到期`);
+  }
+  return parts.join(' · ');
+}
+
 function buildAggregates(input: {
   final: Array<{
     fa: { referenced_knowledge_ids: string[] };
@@ -365,7 +399,10 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
   const final = byDue.slice(0, limit);
   const finalQids = Array.from(new Set(final.map((x) => x.fa.question_id)));
   const finalKnowledgeIds = Array.from(
-    new Set(final.flatMap((x) => x.fa.referenced_knowledge_ids)),
+    new Set([
+      ...final.flatMap((x) => x.fa.referenced_knowledge_ids),
+      ...(filter.knowledgeId ? [filter.knowledgeId] : []),
+    ]),
   );
   // 四个独立读并行（/1020 misc_ primary + secondary id 的 title 回填含在内，
   // 同一批查询）。
@@ -374,12 +411,12 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
     input.includeVariants
       ? loadVariants(ctx.db, finalQids)
       : Promise.resolve(new Map<string, Array<{ id: string; status: string }>>()),
-    resolveMiscCauseLabels(
-      ctx.db,
-      final.flatMap((x) =>
+    resolveMiscCauseLabels(ctx.db, [
+      ...final.flatMap((x) =>
         x.cause ? [x.cause.primary_category, ...x.cause.secondary_categories] : [],
       ),
-    ),
+      ...(filter.causeCategoryId ? [filter.causeCategoryId] : []),
+    ]),
     finalKnowledgeIds.length > 0
       ? loadFailureLearningKnowledgeContext(ctx.db, finalKnowledgeIds)
       : Promise.resolve([] as Awaited<ReturnType<typeof loadFailureLearningKnowledgeContext>>),
@@ -421,6 +458,30 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
     return row;
   });
 
+  // Subjects can word one cause differently; a single name only when every row agrees.
+  const filterCauseId = filter.causeCategoryId;
+  const filterCauseNames = new Set(
+    filterCauseId
+      ? final.map((row) =>
+          causeLabel({
+            cause: { primary_category: filterCauseId },
+            knowledgeIds: row.fa.referenced_knowledge_ids,
+            knowledgeById,
+            miscLabels,
+          }),
+        )
+      : [],
+  );
+  const filterCauseName = filterCauseNames.size === 1 ? [...filterCauseNames][0] : undefined;
+  const aggregates = buildAggregates({
+    final,
+    knowledgeById,
+    miscLabels,
+    includeCause: wantsCause,
+    // Windowed aggregates: with no post-filter the reader stopped at
+    // limit+1 raw rows, so any extra row means the window is partial.
+    truncated: hasPostFilter ? byDue.length > limit : candidates.length > limit,
+  });
   return OutputSchema.parse({
     mistakes,
     total: mistakes.length,
@@ -431,18 +492,17 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
       since_days: filter.sinceDays ?? null,
       limit,
     },
-    aggregates: buildAggregates({
-      final,
-      knowledgeById,
-      miscLabels,
-      includeCause: wantsCause,
-      // Windowed aggregates: with no post-filter the reader stopped at
-      // limit+1 raw rows, so any extra row means the window is partial.
-      truncated: hasPostFilter ? byDue.length > limit : candidates.length > limit,
-    }),
+    aggregates,
     chart_bindings: wantsCause
       ? ['/aggregates/by_cause', '/aggregates/by_knowledge']
       : ['/aggregates/by_knowledge'],
+    chart_caption: chartCaption({
+      filter,
+      counted: aggregates.counted,
+      truncated: aggregates.truncated,
+      knowledgeName: filter.knowledgeId ? knowledgeById.get(filter.knowledgeId)?.name : undefined,
+      causeName: filterCauseName,
+    }),
     claim_boundaries: {
       zero_rows_scope: 'matching_failure_attempt_rows_only',
       supports_entity_inventory_claim: false,
