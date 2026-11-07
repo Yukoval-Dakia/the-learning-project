@@ -77,8 +77,8 @@ const AggregatesSchema = z
     counted: z.number().int().nonnegative(),
     /** More matching attempts exist beyond the returned limit. */
     truncated: z.boolean(),
-    /** Human cause labels; no cause is 「未分类」. */
-    by_cause: AggregateSeriesSchema,
+    /** Human cause labels; no cause is 「未分类」. Absent when attribution was not loaded. */
+    by_cause: AggregateSeriesSchema.optional(),
     /** Knowledge-point names, one count per referenced point on a failed attempt. */
     by_knowledge: AggregateSeriesSchema,
   })
@@ -141,6 +141,7 @@ const DESCRIPTION = [
   '`counted` is how many attempts the series cover; `truncated` means more matching attempts exist',
   'beyond the returned limit, so the series describe a recent window, not the whole history.',
   'These are wrong-answer counts, never the due-review queue size.',
+  'by_cause is absent when includeAttribution=false (no cause was loaded).',
   'Bind a chart to them with data_source.path=/aggregates/by_cause or /aggregates/by_knowledge.',
   'chart_bindings lists the paths this result declares as chart-bindable.',
 ].join('\n');
@@ -270,21 +271,31 @@ function buildAggregates(input: {
   knowledgeById: ReadonlyMap<string, { name: string; domain: string | null }>;
   miscLabels: ReadonlyMap<string, string>;
   truncated: boolean;
+  includeCause: boolean;
 }): {
   counted: number;
   truncated: boolean;
-  by_cause: Array<{ name: string; points: Array<[string, number]> }>;
+  by_cause?: Array<{ name: string; points: Array<[string, number]> }>;
   by_knowledge: Array<{ name: string; points: Array<[string, number]> }>;
 } {
   const counted = input.final.length;
-  const causeLabels = input.final.map((row) =>
-    causeLabel({
-      cause: row.cause,
-      knowledgeIds: row.fa.referenced_knowledge_ids,
-      knowledgeById: input.knowledgeById,
-      miscLabels: input.miscLabels,
-    }),
-  );
+  const byCause = input.includeCause
+    ? [
+        {
+          name: '错次',
+          points: aggregatePoints(
+            input.final.map((row) =>
+              causeLabel({
+                cause: row.cause,
+                knowledgeIds: row.fa.referenced_knowledge_ids,
+                knowledgeById: input.knowledgeById,
+                miscLabels: input.miscLabels,
+              }),
+            ),
+          ),
+        },
+      ]
+    : undefined;
   const knowledgeLabels = input.final.flatMap((row) =>
     row.fa.referenced_knowledge_ids.map(
       (knowledgeId) => input.knowledgeById.get(knowledgeId)?.name ?? '未知知识点',
@@ -293,7 +304,7 @@ function buildAggregates(input: {
   return {
     counted,
     truncated: input.truncated,
-    by_cause: counted > 0 ? [{ name: '错次', points: aggregatePoints(causeLabels) }] : [],
+    ...(byCause ? { by_cause: counted > 0 ? byCause : [] } : {}),
     by_knowledge: counted > 0 ? [{ name: '错次', points: aggregatePoints(knowledgeLabels) }] : [],
   };
 }
@@ -426,11 +437,14 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
       final,
       knowledgeById,
       miscLabels,
+      includeCause: wantsCause,
       // Windowed aggregates: with no post-filter the reader stopped at
       // limit+1 raw rows, so any extra row means the window is partial.
       truncated: hasPostFilter ? byDue.length > limit : candidates.length > limit,
     }),
-    chart_bindings: ['/aggregates/by_cause', '/aggregates/by_knowledge'],
+    chart_bindings: wantsCause
+      ? ['/aggregates/by_cause', '/aggregates/by_knowledge']
+      : ['/aggregates/by_knowledge'],
     claim_boundaries: {
       zero_rows_scope: 'matching_failure_attempt_rows_only',
       supports_entity_inventory_claim: false,
