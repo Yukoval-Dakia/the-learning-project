@@ -13,6 +13,7 @@ import type { ItemPriorDraftT } from '@/core/schema/item_prior';
 import type { Db, Tx } from '@/db/client';
 import { item_calibration, knowledge, question } from '@/db/schema';
 import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
+import { sourceAllowsDerivationSql } from '@/kernel/read-models/usage-policy';
 import { applyItemPrior } from '@/kernel/records/item-calibration';
 import { planJobProviderWait } from '@/server/ai/provider-wait';
 import { type BoundRunTaskTextFn, type RunTaskCallCtx, makeRunTaskFn } from '@/server/ai/runner-fn';
@@ -92,10 +93,16 @@ export async function selectItemPriorCandidates(
       })
       .from(question)
       .where(
-        sql`NOT EXISTS (
+        and(
+          sql`NOT EXISTS (
         SELECT 1 FROM item_calibration ic
         WHERE ic.question_id = ${question.id} AND ic.track = 'hard'
       )`,
+          // Restricted source lineage is excluded before the batch window: the
+          // rep model input carries prompt/reference/choices, so a restricted
+          // question must never be selected, let alone sent.
+          sourceAllowsDerivationSql({ kind: 'question', id: question.id }),
+        ),
       )
       // Daily-rotating deterministic order: a permanently failing oldest
       // question can no longer monopolize the batch every run — each night a
