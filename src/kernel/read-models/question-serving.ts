@@ -321,7 +321,6 @@ function servingFactsQuery(filters: SQL[]): SQL {
             then 'source_check_failed'
           else 'verify_hold' end
         when l.group_id is null then 'legacy_unpublished'
-        when admission.result_json->'result'->>'status' = 'waiting' then 'awaiting_admission'
         when l.scoring_admission_state = 'withheld' then case
           when verification.policy_id = 'source_verify@1' and verification.outcome = 'failed'
             then 'source_check_failed'
@@ -331,6 +330,10 @@ function servingFactsQuery(filters: SQL[]): SQL {
               when l.scoring_admission_withheld_reason = 'no_admitted_executor'
                 or ${admissionReasonPresentSql('no_admitted_executor')}
                 or ${admissionReasonPresentSql('system_grading_slice_unadmitted')}
+                then 'admission_failed'
+              // Preserve the existing waiting-path hold; admissionRead decides whether the
+              // receipt is still within its retry grace (pending) or expired (undecided).
+              when admission.result_json->'result'->>'status' = 'waiting'
                 then 'admission_failed'
               when ${infrastructureAdmissionSql()}
                 then 'admission_undecided'
