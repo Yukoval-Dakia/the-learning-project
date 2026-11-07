@@ -7,7 +7,6 @@ status: accepted
 **Status:** Accepted（设计方向，2026-10-10；**2026-10-18 修订**：D2/D7 修订、D3/D6 实施时点提前，见文末「Amendment（2026-10-18）」节与 [ADR-0075](0075-agent-harness-contract.md)）；尚未实施。
 **Amended by:** [ADR-0075](0075-agent-harness-contract.md)（Amendment 2026-10-18，YUK-1559：D2 L3 资格门、D7 日上限改报警水位、D3/D6+白板页实施时点提前）。
 **Decision source:** owner 2026-10-10「我们后台有一些定时的agent会进行分析和产出。但是我一直模糊的觉得他们的配合有限，并且定时这种办法不够『智能』，没能更快更准确的抓住信息」，按设计草案推进并转成本 ADR（[YUK-1449](https://linear.app/yukoval-studios/issue/YUK-1449)）。
-**Tracking:** [YUK-1449](https://linear.app/yukoval-studios/issue/YUK-1449)。
 **Related:** ADR-0066（实时自适应学习目标）；[ADR-0075](0075-agent-harness-contract.md)（agent harness 契约，含对本文 D2/D7 的修订与 D3/D6 时点提前）；ADR-0017（逐事件 memory ingest 先例）；owner 愿景语料 `docs/archive/superpowers/specs/2026-06-18-private-teaching-research-team-vision.md`、`2026-06-18-jiaoyantuan-deliberative-panel-design.md`、`2026-06-18-jiaoyantuan-integration-and-build-start.md`、`docs/design/2026-06-25-recommendation-engine-x-algorithm-mapping.md`；设计草案（细节真相源，绝对 artifact 路径）`/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/yuk1388/stage4/final/teaching-team-design-draft.md`。
 
 ## 背景与问题

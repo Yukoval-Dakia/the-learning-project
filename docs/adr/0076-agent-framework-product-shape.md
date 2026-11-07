@@ -6,7 +6,6 @@ status: accepted
 
 **Status:** Accepted（决定本身 ratify 于 2026-06-03/04 owner 产品讨论 + U0 grill；2026-10-28 自归档 spec 重立档为现行 ADR）。
 **Decision source:** AF spec（`docs/archive/superpowers/specs/2026-06-04-agent-framework-design.md` §1.1–§1.3、§8、N2 rider；原文经 YUK-1575 退役归档，本 ADR 提取其仍有效且未被后续 ADR 承接的产品形态决定，并成为其现行出处）。
-**Tracking:** [YUK-1575](https://linear.app/yukoval-studios/issue/YUK-1575)（重立档）。
 **Supersedes:** [ADR-0004](0004-pattern-c-two-type-agent-architecture.md) 的产品形态面（两类 agent 的产品切分；0004 此前被 AF spec 取代，该取代关系现由本 ADR 正式承接）。
 **Related:** [ADR-0025](0025-north-star-goal-entity-and-coach-coexistence.md)（ND-5 proposal-only 不变量 owner）、[ADR-0029](0029-review-engine-lands-on-existing-primitives.md)（治理归位：memory 治理与 blast-radius admission 的现行记录）、[ADR-0031](0031-copilot-inline-quiz-authoring.md)、[ADR-0032](0032-domaintool-surface-redesign.md)（full safe capability 的下游消费）、[ADR-0062](0062-unified-copilot-conversation-lifecycle.md)/[ADR-0065](0065-pi-execution-and-conversation-replay.md)（会话生命周期与执行机制，后于 AF）、[ADR-0068](0068-general-subjects-co-maintained-context.md)（SKILL.md 语境层 C8 迁移方向）、[ADR-0075](0075-agent-harness-contract.md)（工具面细节修订）。
 

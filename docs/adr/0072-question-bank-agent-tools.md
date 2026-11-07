@@ -6,7 +6,6 @@ status: accepted
 
 **Status:** Accepted（设计方向，2026-10-11；2026-10-19 owner 批准 search 内逐条件语义核验）。三工具已在 main；2026-10-22 的 search v2 源码切片与迁移依赖见 本片实施边界 `/Volumes/YukovalSBak/yukoval-projects/tlp-docs/planning/2026-10-22-yuk1448-search-semantic-verification.md`（docs/planning 已出 git，YUK-1672），DB/provider/真实产品验收 NOT_RUN，不代表完整 L1/LIGHT。旧 LIGHT 的历史源码、6-case DB 证据与当时未交付能力见 [实施回执](../planning/2026-10-11-bank-tools-light-implementation.md#2026-10-12-cloud-接续与验收边界)。
 **Decision source:** owner 2026-10-11「关键还在给 agent 什么工具」；Coordinator 对题库工具提案的评估意见（YUK-1448 评论，2026-10-11 13:10），其调整逐条采纳为本文决定。
-**Tracking:** [YUK-1448](https://linear.app/yukoval-studios/issue/YUK-1448)。
 **Related:** ADR-0069（单一备题员——本文修订其 D1 工具清单与硬边界 1）、ADR-0070（统一学习者大脑——本文增补其 D1 契约一项批量读面，见 D4）、ADR-0067（教研白板）、ADR-0068（通用学科）、[YUK-1468](https://linear.app/yukoval-studios/issue/YUK-1468)（备题员）、[YUK-1470](https://linear.app/yukoval-studios/issue/YUK-1470)（学习者大脑）、[YUK-1474](https://linear.app/yukoval-studios/issue/YUK-1474)（provider fallback chain，不在本 ADR 范围）；详细设计真相源（随本文同提交版本化）`docs/planning/2026-10-11-question-bank-agent-tools-proposal.md`（下称「提案」，含接口细节、42 条种子查询与机制攻击集）。
 
 ## 背景与问题

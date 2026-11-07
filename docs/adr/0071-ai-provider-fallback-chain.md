@@ -6,7 +6,6 @@ status: proposed
 
 **Status:** Proposed（设计方向，2026-10-11）；尚未实施，先独立评审。
 **Decision source:** owner 2026-10-11 「fallback能力也要做，支持fallback chain——按provider/model fallback。」；TEST 两起真实事故（见背景）。
-**Tracking:** [YUK-1474](https://linear.app/yukoval-studios/issue/YUK-1474)。
 **Related:** ADR-0065（pi 执行与回放）、ADR-0069/0070（同期拍板）；[YUK-1123](https://linear.app/yukoval-studios/issue/YUK-1123)（vision-judge fallback 绕 pin）、[YUK-1445](https://linear.app/yukoval-studios/issue/YUK-1445)（判分准入）、YUK-924（model profiles 能力门）、YUK-1341（mimo-v2.6-pro 工具环证据）、YUK-365（全局 provider pin）。
 
 ## 背景与问题

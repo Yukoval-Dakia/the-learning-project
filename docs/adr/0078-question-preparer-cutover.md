@@ -7,7 +7,6 @@ status: accepted
 **Status:** Accepted（owner 2026-11-04 决定：废掉 ADR-0069，直接切到备题员）。
 **Supersedes:** ADR-0069（其保留条款已并入本文；冲突处以本文与 YUK-1468 的 2026-11-04 Owner 决定为准）。
 **Decision source:** YUK-1468 顶部「2026-11-04 Owner 决定」；协调线补充（2026-11-04，`tlp-docs/audit/2026-11-04-flexible-grading-and-presentation-review.md`）。
-**Tracking:** [YUK-1468](https://linear.app/yukoval-studios/issue/YUK-1468)。
 **Related:** ADR-0072（题库三工具，工具部分继续有效）、ADR-0073（判分系统）、ADR-0074（作答与展示）、ADR-0067（教研白板）、ADR-0068（通用学科——jyeoo 覆盖诚实声明）、YUK-1771（解法先验，迁移线接入同一准入路径）、YUK-1548 v2 §19（对话出题走同一入口）、YUK-1791（授权后继被用途闸拦下，影响准入存量）。切换计划真相源（仓库外，versioned）：`/Volumes/YukovalSBak/yukoval-projects/tlp-docs/design/2026-11-04-yuk1468-cutover-plan.md`。
 
 ## 决定
