@@ -15,7 +15,13 @@ import {
 } from '@/core/schema/assessment';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import type { Db, Tx } from '@/db/client';
-import { assessment_issuance, event, question, question_revision } from '@/db/schema';
+import {
+  assessment_issuance,
+  assessment_submission,
+  event,
+  question,
+  question_revision,
+} from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 
@@ -243,9 +249,17 @@ export async function loadIssuanceStudyCoordinate(
   };
 }
 
+export type StudyAssistancePhase = 'before_submit' | 'after_submit';
+
 /**
  * Record one assistance exposure. Locks the issuance and re-checks the
  * coordinate inside that lock, sharing the lock with submission snapshots.
+ *
+ * v2 payload: `dose` is the hint-ladder rung the server saw (`hint_index`),
+ * recorded only for `kind:'hint'` — a solution/chat exposure has no rung and
+ * stays null so a later receipt can never claim a rung it cannot prove.
+ * `phase` is decided here under the issuance lock: once a submission row
+ * exists the exposure is post-submit review, not pre-submit assistance.
  */
 export async function recordStudyAssistanceExposure(
   database: Db | Tx,
@@ -256,6 +270,7 @@ export async function recordStudyAssistanceExposure(
     impact: StudyAssistanceImpact;
     contentDigest: string;
     actorRef: string;
+    dose?: number;
   },
 ): Promise<string> {
   return database.transaction(async (tx) => {
@@ -277,6 +292,18 @@ export async function recordStudyAssistanceExposure(
     ) {
       throw new ApiError('coordinate_mismatch', 'assistance is outside the frozen issuance', 409);
     }
+    const [submitted] = await tx
+      .select({ submission_id: assessment_submission.submission_id })
+      .from(assessment_submission)
+      .where(eq(assessment_submission.issuance_id, input.issuanceId))
+      .limit(1);
+    const dose =
+      input.kind === 'hint' &&
+      typeof input.dose === 'number' &&
+      Number.isInteger(input.dose) &&
+      input.dose >= 0
+        ? input.dose
+        : null;
     return writeEvent(tx, {
       id: `evt_help_${createId()}`,
       actor_kind: 'system',
@@ -286,10 +313,12 @@ export async function recordStudyAssistanceExposure(
       subject_id: input.issuanceId,
       outcome: null,
       payload: {
-        version: 1,
+        version: 2,
         kind: input.kind,
         impact: input.impact,
         content_digest: input.contentDigest,
+        dose,
+        phase: submitted ? ('after_submit' as const) : ('before_submit' as const),
       },
     });
   });

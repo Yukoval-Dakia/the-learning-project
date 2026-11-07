@@ -10,6 +10,8 @@
 // Lifecycle reuse (spec §5.2 — do not fork): admission, cancellation, timeout,
 // durable rows, retry taxonomy and cost truth come from AiRunLifecycle; the
 // canonical typed body is what gets hashed into ai_task_runs.input_hash.
+// Laminar, when enabled, is task.run → task.attempt → llm.call on that lifecycle.
+// The systemone body is learner scoring state and is not span content.
 //
 // The registry's budget.maxCost has no runtime consumer (the SDK-era maxBudgetUsd
 // wiring is gone), so this runner enforces the cap itself: a reserve is charged
@@ -24,6 +26,7 @@ import { JevScoringDecisionInput, JevSystemOneResponse } from '@/core/schema/jev
 import type { Db } from '@/db/client';
 import { bindAgentRunError } from './agent-run-error';
 import type { AttemptCostBasis } from './attempt-cost';
+import { openTypedModelCall, traceOperation } from './laminar-tracing';
 import { JEV_CANONICAL_MODEL, JEV_MAX_PRICE_USD_PER_MILLION } from './pricing';
 import { readRetryAfterMs } from './provider-error-evidence';
 import { classifyLifecycleRetry, createRunLifecycle } from './run-lifecycle';
@@ -183,230 +186,268 @@ export async function runTypedPrimitiveTask<Output = unknown>(
         ? ctx.deadlineAt
         : Math.min(ctx.deadlineAt, retryingDeadlineAt);
 
-  let spentUsd = 0;
-  let unknownCost = false;
-  let lastErr: unknown;
-  let retrySource: ReturnType<typeof createRunLifecycle> | undefined;
+  return traceOperation(
+    'task.run',
+    { task_kind: kind, parent_task_run_id: ctx.parentTaskRunId },
+    async () => {
+      let spentUsd = 0;
+      let unknownCost = false;
+      let lastErr: unknown;
+      let retrySource: ReturnType<typeof createRunLifecycle> | undefined;
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    // Cumulative maxCost gate — the typed path's own enforcement. Unknown-cost
-    // attempts were accounted at the reserve, so the bound is conservative.
-    if (spentUsd + reserveUsd > maxCostUsd) {
-      throw (
-        lastErr ??
-        new AgentRunError({
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        // Cumulative maxCost gate — the typed path's own enforcement. Unknown-cost
+        // attempts were accounted at the reserve, so the bound is conservative.
+        if (spentUsd + reserveUsd > maxCostUsd) {
+          throw (
+            lastErr ??
+            new AgentRunError({
+              kind,
+              taskRunId: ctx.taskRunId ?? 'pre-attempt',
+              subtype: 'runner_error',
+              errors: [
+                `typed run cumulative cost cap reached (${spentUsd}+${reserveUsd} reserve > ${maxCostUsd} maxCost)`,
+              ],
+            })
+          );
+        }
+        const lifecycle = createRunLifecycle<LifecycleResult>({
+          db: ctx.db,
           kind,
-          taskRunId: ctx.taskRunId ?? 'pre-attempt',
-          subtype: 'runner_error',
-          errors: [
-            `typed run cumulative cost cap reached (${spentUsd}+${reserveUsd} reserve > ${maxCostUsd} maxCost)`,
-          ],
-        })
-      );
-    }
-    const lifecycle = createRunLifecycle<LifecycleResult>({
-      db: ctx.db,
-      kind,
-      timeoutMs: budget.timeout,
-      abortController: ctx.abortController,
-      // Pin provider+model: a global AI_PROVIDER_OVERRIDE must never redirect the
-      // typed lane, and the model pin is the verified request id, not an alias.
-      override: { provider: TYPED_PRIMITIVE_PROVIDER, model: def.defaultModel },
-      parentTaskRunId: ctx.parentTaskRunId,
-      providerStartDeadlineAt:
-        retrySource !== undefined ? firstAttemptStartedAt + RETRY_ELAPSED_CAP_MS : undefined,
-      providerSessionDeadlineAt,
-      taskRunId: attempt === 1 ? ctx.taskRunId : undefined,
-      signal: ctx.signal,
-      logScope: ctx.logScope ?? 'typedPrimitive',
-    });
-    let wireAttempted = false;
-    let endpointUrl: string;
-    try {
-      const output = await lifecycle.withProviderSession(body, {
-        async prepare() {
-          if (lifecycle.resolved.authMode !== 'key' || !lifecycle.resolved.baseUrl)
-            throw new Error('Typed model catalog endpoint is unknown');
-          endpointUrl = `${lifecycle.resolved.baseUrl}/${registration.endpointPath}`;
-        },
-        async run() {
-          await retrySource?.markRetried();
-          retrySource = undefined;
-          const transport = ctx.fetchImpl ?? fetch;
-          wireAttempted = true;
-          let response: Response;
-          try {
-            response = await transport(endpointUrl, {
-              method: 'POST',
-              redirect: 'error',
-              headers: {
-                Authorization: `Bearer ${lifecycle.resolved.authMode !== 'oauth-file' ? lifecycle.resolved.apiKey : ''}`,
-                'Content-Type': 'application/json',
+          timeoutMs: budget.timeout,
+          abortController: ctx.abortController,
+          // Pin provider+model: a global AI_PROVIDER_OVERRIDE must never redirect the
+          // typed lane, and the model pin is the verified request id, not an alias.
+          override: { provider: TYPED_PRIMITIVE_PROVIDER, model: def.defaultModel },
+          parentTaskRunId: ctx.parentTaskRunId,
+          providerStartDeadlineAt:
+            retrySource !== undefined ? firstAttemptStartedAt + RETRY_ELAPSED_CAP_MS : undefined,
+          providerSessionDeadlineAt,
+          taskRunId: attempt === 1 ? ctx.taskRunId : undefined,
+          signal: ctx.signal,
+          logScope: ctx.logScope ?? 'typedPrimitive',
+        });
+        let wireAttempted = false;
+        let endpointUrl: string;
+        try {
+          const output = await lifecycle.withTracing(() =>
+            lifecycle.withProviderSession(body, {
+              async prepare() {
+                if (lifecycle.resolved.authMode !== 'key' || !lifecycle.resolved.baseUrl)
+                  throw new Error('Typed model catalog endpoint is unknown');
+                endpointUrl = `${lifecycle.resolved.baseUrl}/${registration.endpointPath}`;
               },
-              body: JSON.stringify(body),
-              signal: lifecycle.abortController.signal,
-            });
-          } catch (error) {
-            if (lifecycle.abortController.signal.aborted) throw error;
-            // Connection-class failure before an HTTP status — the probe-frozen
-            // transient marker (api_error_status null).
-            throw new AgentRunError({
-              kind,
-              taskRunId: lifecycle.taskRunId,
-              subtype: 'api_error_result',
-              apiErrorStatus: null,
-              errors: [error instanceof Error ? error.message : String(error)],
-            });
-          }
-          const text = await response.text();
-          if (!response.ok) {
-            // Non-transient statuses are permanent; isTransientAgentFailure
-            // whitelists only null/429/5xx. No blind retry.
-            const retryAfterMs = readRetryAfterMs(response.headers);
-            throw new AgentRunError({
-              kind,
-              taskRunId: lifecycle.taskRunId,
-              subtype: 'api_error_result',
-              apiErrorStatus: response.status,
-              errors: [text.slice(0, ERROR_SNIPPET_MAX)],
-              providerFailure: {
-                http_status: response.status,
-                ...(retryAfterMs !== undefined ? { retry_after_ms: retryAfterMs } : {}),
+              async run() {
+                await retrySource?.markRetried();
+                retrySource = undefined;
+                const transport = ctx.fetchImpl ?? fetch;
+                wireAttempted = true;
+                const call = openTypedModelCall({
+                  provider: lifecycle.resolved.provider,
+                  model: lifecycle.resolved.model,
+                  signal: lifecycle.abortController.signal,
+                });
+                let callOutcome: 'success' | 'error' | 'cancelled' = 'error';
+                try {
+                  let response: Response;
+                  try {
+                    response = await transport(endpointUrl, {
+                      method: 'POST',
+                      redirect: 'error',
+                      headers: {
+                        Authorization: `Bearer ${lifecycle.resolved.authMode !== 'oauth-file' ? lifecycle.resolved.apiKey : ''}`,
+                        'Content-Type': 'application/json',
+                      },
+                      body: JSON.stringify(body),
+                      signal: lifecycle.abortController.signal,
+                    });
+                  } catch (error) {
+                    if (lifecycle.abortController.signal.aborted) throw error;
+                    // Connection-class failure before an HTTP status — the probe-frozen
+                    // transient marker (api_error_status null).
+                    throw new AgentRunError({
+                      kind,
+                      taskRunId: lifecycle.taskRunId,
+                      subtype: 'api_error_result',
+                      apiErrorStatus: null,
+                      errors: [error instanceof Error ? error.message : String(error)],
+                    });
+                  }
+                  const text = await response.text();
+                  if (!response.ok) {
+                    // Non-transient statuses are permanent; isTransientAgentFailure
+                    // whitelists only null/429/5xx. No blind retry.
+                    const retryAfterMs = readRetryAfterMs(response.headers);
+                    throw new AgentRunError({
+                      kind,
+                      taskRunId: lifecycle.taskRunId,
+                      subtype: 'api_error_result',
+                      apiErrorStatus: response.status,
+                      errors: [text.slice(0, ERROR_SNIPPET_MAX)],
+                      providerFailure: {
+                        http_status: response.status,
+                        ...(retryAfterMs !== undefined ? { retry_after_ms: retryAfterMs } : {}),
+                      },
+                    });
+                  }
+                  let json: unknown;
+                  try {
+                    json = JSON.parse(text);
+                  } catch {
+                    throw typedContractViolation(
+                      kind,
+                      lifecycle.taskRunId,
+                      'response body is not JSON',
+                    );
+                  }
+                  const parsed = registration.outputSchema.safeParse(json);
+                  if (!parsed.success) {
+                    throw typedContractViolation(
+                      kind,
+                      lifecycle.taskRunId,
+                      `response schema mismatch: ${parsed.error.issues
+                        .map((issue) => `${issue.path.join('.')}: ${issue.message}`)
+                        .join('; ')
+                        .slice(0, ERROR_SNIPPET_MAX)}`,
+                    );
+                  }
+                  const output = parsed.data as {
+                    model?: string;
+                    provider?: string;
+                    usage?: {
+                      input_tokens?: number;
+                      output_tokens?: number;
+                      cost?: number;
+                    };
+                  };
+                  if (output.model !== registration.expectedModel) {
+                    throw typedContractViolation(
+                      kind,
+                      lifecycle.taskRunId,
+                      `model drift: response model '${output.model}' != pinned canonical '${registration.expectedModel}'`,
+                    );
+                  }
+                  if (
+                    registration.expectedProvider !== undefined &&
+                    output.provider !== undefined &&
+                    output.provider !== registration.expectedProvider
+                  ) {
+                    throw typedContractViolation(
+                      kind,
+                      lifecycle.taskRunId,
+                      `provider drift: response provider '${output.provider}' != '${registration.expectedProvider}'`,
+                    );
+                  }
+                  const usage = output.usage;
+                  lifecycle.recordTerminalResult({
+                    usage: {
+                      inputTokens: usage?.input_tokens ?? 0,
+                      outputTokens: usage?.output_tokens ?? 0,
+                    },
+                    numTurns: 1,
+                    tokenCounts: {
+                      inputTokens: usage?.input_tokens ?? 0,
+                      outputTokens: usage?.output_tokens ?? 0,
+                    },
+                    costUsd: usage?.cost,
+                    finishReason: 'typed_terminal',
+                  });
+                  const inputTokens = lifecycle.usage.inputTokens;
+                  const outputTokens = lifecycle.usage.outputTokens;
+                  call.settle({
+                    responseModel: output.model ?? registration.expectedModel,
+                    inputTokens,
+                    outputTokens,
+                    costUsd: lifecycle.costUsd,
+                    costBasis: lifecycle.costBasis,
+                    costRef: lifecycle.costRef,
+                    usageObserved: inputTokens > 0 || outputTokens > 0,
+                  });
+                  callOutcome = lifecycle.abortController.signal.aborted ? 'cancelled' : 'success';
+                  return output;
+                } catch (error) {
+                  callOutcome = lifecycle.abortController.signal.aborted ? 'cancelled' : 'error';
+                  throw error;
+                } finally {
+                  call.end(callOutcome);
+                }
               },
-            });
-          }
-          let json: unknown;
-          try {
-            json = JSON.parse(text);
-          } catch {
-            throw typedContractViolation(kind, lifecycle.taskRunId, 'response body is not JSON');
-          }
-          const parsed = registration.outputSchema.safeParse(json);
-          if (!parsed.success) {
-            throw typedContractViolation(
-              kind,
-              lifecycle.taskRunId,
-              `response schema mismatch: ${parsed.error.issues
-                .map((issue) => `${issue.path.join('.')}: ${issue.message}`)
-                .join('; ')
-                .slice(0, ERROR_SNIPPET_MAX)}`,
-            );
-          }
-          const output = parsed.data as {
-            model?: string;
-            provider?: string;
-            usage?: {
-              input_tokens?: number;
-              output_tokens?: number;
-              cost?: number;
-            };
-          };
-          if (output.model !== registration.expectedModel) {
-            throw typedContractViolation(
-              kind,
-              lifecycle.taskRunId,
-              `model drift: response model '${output.model}' != pinned canonical '${registration.expectedModel}'`,
-            );
-          }
-          if (
-            registration.expectedProvider !== undefined &&
-            output.provider !== undefined &&
-            output.provider !== registration.expectedProvider
-          ) {
-            throw typedContractViolation(
-              kind,
-              lifecycle.taskRunId,
-              `provider drift: response provider '${output.provider}' != '${registration.expectedProvider}'`,
-            );
-          }
-          const usage = output.usage;
-          lifecycle.recordTerminalResult({
-            usage: {
-              inputTokens: usage?.input_tokens ?? 0,
-              outputTokens: usage?.output_tokens ?? 0,
-            },
-            numTurns: 1,
-            tokenCounts: {
-              inputTokens: usage?.input_tokens ?? 0,
-              outputTokens: usage?.output_tokens ?? 0,
-            },
-            costUsd: usage?.cost,
-            finishReason: 'typed_terminal',
-          });
-          return output;
-        },
-        async close() {},
-      });
+              async close() {},
+            }),
+          );
 
-      const result: LifecycleResult = {
-        task_run_id: lifecycle.taskRunId,
-        text: JSON.stringify(output),
-        finishReason: lifecycle.finishReason,
-        usage: lifecycle.usage,
-        cost_usd: lifecycle.costUsd,
-        cost_basis: lifecycle.costBasis,
-        cost_ref: lifecycle.costRef,
-        structured_output: output,
-      };
-      await lifecycle.finishSuccess(result);
-      // YUK-1092 — report CUMULATIVE invocation spend: earlier settled attempts plus
-      // this one (unknown ⇒ the reserve, never zero). Last-attempt-only reporting
-      // undercounts and can blow plan-level max_total_cost bounds after retries.
-      const successSettledUsd = result.cost_usd ?? reserveUsd;
-      spentUsd += successSettledUsd;
-      return {
-        task_run_id: lifecycle.taskRunId,
-        output: output as Output,
-        attempts: attempt,
-        usage: result.usage,
-        cost_usd: spentUsd,
-        cost_basis: result.cost_basis,
-        cost_ref: result.cost_ref,
-        model: def.defaultModel,
-        unknown_cost: unknownCost || result.cost_basis === 'unknown',
-      };
-    } catch (error) {
-      // A wire call that may have reached the provider contributes its settled
-      // truth — unknown ⇒ reserve, never zero.
-      if (wireAttempted || lifecycle.costBasis !== 'unknown') {
-        spentUsd += lifecycle.costUsd ?? reserveUsd;
-        if (lifecycle.costBasis === 'unknown') unknownCost = true;
+          const result: LifecycleResult = {
+            task_run_id: lifecycle.taskRunId,
+            text: JSON.stringify(output),
+            finishReason: lifecycle.finishReason,
+            usage: lifecycle.usage,
+            cost_usd: lifecycle.costUsd,
+            cost_basis: lifecycle.costBasis,
+            cost_ref: lifecycle.costRef,
+            structured_output: output,
+          };
+          await lifecycle.finishSuccess(result);
+          // YUK-1092 — report CUMULATIVE invocation spend: earlier settled attempts plus
+          // this one (unknown ⇒ the reserve, never zero). Last-attempt-only reporting
+          // undercounts and can blow plan-level max_total_cost bounds after retries.
+          const successSettledUsd = result.cost_usd ?? reserveUsd;
+          spentUsd += successSettledUsd;
+          return {
+            task_run_id: lifecycle.taskRunId,
+            output: output as Output,
+            attempts: attempt,
+            usage: result.usage,
+            cost_usd: spentUsd,
+            cost_basis: result.cost_basis,
+            cost_ref: result.cost_ref,
+            model: def.defaultModel,
+            unknown_cost: unknownCost || result.cost_basis === 'unknown',
+          };
+        } catch (error) {
+          // A wire call that may have reached the provider contributes its settled
+          // truth — unknown ⇒ reserve, never zero.
+          if (wireAttempted || lifecycle.costBasis !== 'unknown') {
+            spentUsd += lifecycle.costUsd ?? reserveUsd;
+            if (lifecycle.costBasis === 'unknown') unknownCost = true;
+          }
+          if (!lifecycle.started) throw error;
+          await lifecycle.recordEstimatedUsage({
+            promptText: JSON.stringify(body),
+            output: emptyStreamTextStats(),
+            priceOrigin: 'failure-estimate',
+          });
+          const boundError = bindAgentRunError({
+            error,
+            kind,
+            taskRunId: lifecycle.taskRunId,
+            aborted: lifecycle.aborted,
+          });
+          lastErr = boundError;
+          const settled = await lifecycle.finishFailure(boundError, 'error');
+          if (!settled) throw boundError;
+          const retry = classifyLifecycleRetry({
+            attempt,
+            maxAttempts,
+            firstAttemptStartedAt,
+            error: boundError,
+          });
+          if (!retry.willRetry) throw boundError;
+          retrySource = lifecycle;
+          console.warn('[typedPrimitive] task_run_transient_retry', {
+            event: 'task_run_transient_retry',
+            kind,
+            task_run_id: lifecycle.taskRunId,
+            attempt,
+            elapsed_ms: retry.elapsedMs,
+          });
+        } finally {
+          lifecycle.dispose();
+        }
       }
-      if (!lifecycle.started) throw error;
-      await lifecycle.recordEstimatedUsage({
-        promptText: JSON.stringify(body),
-        output: emptyStreamTextStats(),
-        priceOrigin: 'failure-estimate',
-      });
-      const boundError = bindAgentRunError({
-        error,
-        kind,
-        taskRunId: lifecycle.taskRunId,
-        aborted: lifecycle.aborted,
-      });
-      lastErr = boundError;
-      const settled = await lifecycle.finishFailure(boundError, 'error');
-      if (!settled) throw boundError;
-      const retry = classifyLifecycleRetry({
-        attempt,
-        maxAttempts,
-        firstAttemptStartedAt,
-        error: boundError,
-      });
-      if (!retry.willRetry) throw boundError;
-      retrySource = lifecycle;
-      console.warn('[typedPrimitive] task_run_transient_retry', {
-        event: 'task_run_transient_retry',
-        kind,
-        task_run_id: lifecycle.taskRunId,
-        attempt,
-        elapsed_ms: retry.elapsedMs,
-      });
-    } finally {
-      lifecycle.dispose();
-    }
-  }
-  throw lastErr;
+      throw lastErr;
+    },
+    { signal: ctx.signal },
+  );
 }
 
 /** Narrow predicate: does this error end the Jev lane for this invocation? */

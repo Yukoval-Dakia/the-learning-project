@@ -34,7 +34,7 @@ After running `git fetch` or `git pull`, report:
 ## Linear Closeout Reminder (mirrors .claude/hooks/linear-closeout-reminder.sh)
 
 Before ending a session where you made code changes (commits or uncommitted edits),
-remind the user to check Linear issue status sync per docs/agents/issue-tracker.md
+remind the user to check Linear issue status sync per /Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/agents/issue-tracker.md
 "Closeout issue capture gate".
 
 ## Post-Edit Lint (mirrors .claude/settings.json PostToolUse)

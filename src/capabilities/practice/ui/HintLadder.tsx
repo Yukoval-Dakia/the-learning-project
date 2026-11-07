@@ -43,11 +43,13 @@ export function HintLadder({
   question,
   onReturnToAnswer,
   issuanceId,
+  submitted = false,
   onStageReached,
   onFullSolutionRevealed,
   requestFullSolution,
 }: {
   question: QuestionDetail;
+  submitted?: boolean;
   onReturnToAnswer?: () => void;
   // YUK-1051 (D16) — 提示/揭示证据必须绑定 issuance 并在服务端留痕；服务端契约是
   // YUK-1052 lane。接缝：宿主传入 issuanceId + 回调后，每阶提示的抵达与完整解的揭示
@@ -228,7 +230,13 @@ export function HintLadder({
       {/* 已揭示的 hint 阶卡（H0-H4，仅到 reached）。 */}
       {HINT_LADDER.map((s, i) =>
         !s.isFull && i <= reached && hints[i] ? (
-          <HintStageCard key={s.key} stage={s} hint={hints[i]} notation={question.notation} />
+          <HintStageCard
+            key={s.key}
+            stage={s}
+            hint={hints[i]}
+            notation={question.notation}
+            submitted={submitted}
+          />
         ) : null,
       )}
 
@@ -237,10 +245,12 @@ export function HintLadder({
         <div className="un-hl-card full">
           <div className="un-hl-card-top">
             <span className="un-hl-badge">{HINT_LADDER[FULL_STAGE_INDEX].label}</span>
-            <span className="un-hl-noindep">
-              <CircleAlert size={14} aria-hidden="true" />
-              非独立完成
-            </span>
+            {!submitted && (
+              <span className="un-hl-noindep">
+                <CircleAlert size={14} aria-hidden="true" />
+                不算独立做的
+              </span>
+            )}
           </div>
           <div className="un-hl-body">
             {/* YUK-1005 — H5 full solution render through markdown+KaTeX like the rest
@@ -331,7 +341,7 @@ export function HintLadder({
         <div className="un-hl-confirm">
           <div className="un-hl-confirm-msg">
             <CircleAlert size={18} aria-hidden="true" />
-            看完整解 = 这题记为<b>非独立完成</b>。中间的提示可以跳过。确认要直接看吗？
+            {submitted ? '' : '看完整解，这题就不算独立做的。'}中间的提示可以跳过。确认要直接看吗？
           </div>
           <div className="un-hl-confirm-acts">
             <button
@@ -429,10 +439,12 @@ function HintStageCard({
   stage,
   hint,
   notation,
+  submitted,
 }: {
   stage: HintStage;
   hint: StageHint;
   notation: string | null;
+  submitted: boolean;
 }) {
   if (hint.kind === 'fallback') {
     // YUK-1409 — AI 提示没生成出来时的固定帮助：诚实标明是参考解答还是固定的下一步，
@@ -442,10 +454,10 @@ function HintStageCard({
       <div className={isReference ? 'un-hl-card full' : 'un-hl-card'}>
         <div className="un-hl-card-top">
           <span className="un-hl-badge">{isReference ? '参考解答' : '固定的下一步'}</span>
-          {isReference && (
+          {isReference && !submitted && (
             <span className="un-hl-noindep">
               <CircleAlert size={14} aria-hidden="true" />
-              非独立完成
+              不算独立做的
             </span>
           )}
         </div>

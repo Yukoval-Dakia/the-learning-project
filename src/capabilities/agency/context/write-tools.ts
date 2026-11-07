@@ -6,9 +6,12 @@ import { readEventDerivationPolicy } from '@/kernel/events/derivation-policy';
 import type { DomainTool } from '@/kernel/tools/types';
 import {
   COMMUNICATION_RULES,
+  ChangeReceipt,
+  type ChangeReceiptT,
   ChangeResult,
   FACT_PRESENTATION_RULES,
   TopicPatch,
+  changeReceipt,
 } from './topic-contract';
 import { changeTopics, readTopics } from './topics';
 
@@ -27,7 +30,7 @@ export const rememberLearnerTool: DomainTool<
   inputSchema: RememberInput,
   outputSchema: ChangeResult,
   async execute(ctx, input) {
-    const anchor = ctx.causedByEventId;
+    const anchor = ctx.learnerAskEventId ?? ctx.causedByEventId;
     if (
       !anchor ||
       ctx.derivationPolicy !== 'allow' ||
@@ -67,17 +70,14 @@ const CurateInput = z.object({
   remaining_changes: z.array(z.string()).default([]),
   request_complete: z.boolean().default(false),
 });
-export const curateContextTool: DomainTool<
-  z.infer<typeof CurateInput>,
-  z.infer<typeof ChangeResult>
-> = {
+export const curateContextTool: DomainTool<z.infer<typeof CurateInput>, ChangeReceiptT> = {
   name: 'curate_context',
   description: `直接整理上下文主题：新增事实，或 replaces 指定旧事实 id 做 supersede/merge；全部可撤销。weakness/event 不能 merge，必须逐条 supersede。学习者 correction 优先，不得推翻。只提交有变化的主题，命名自由。${COMMUNICATION_RULES}${FACT_PRESENTATION_RULES}长段正文会由服务端无损拆成不超过四百字的事实。事实正文禁止添加教学建议、推送安排或下一步计划。证据由服务端本次读取集绑定，不接受模型提供证据 id。无变化就停止。`,
   effect: 'write',
   costClass: 'local',
   mirrorEvent: 'when_causal',
   inputSchema: CurateInput,
-  outputSchema: ChangeResult,
+  outputSchema: ChangeReceipt,
   async execute(ctx, input) {
     if (ctx.callerActor.ref !== 'dreaming') throw new Error('Curator-only write');
     const [anchor] = await ctx.db
@@ -115,11 +115,11 @@ export const curateContextTool: DomainTool<
       remainingChanges: learnerEdit ? input.remaining_changes : [],
       requestComplete: learnerEdit && input.request_complete,
     });
-    return {
+    return changeReceipt({
       ...result,
       remaining_changes: learnerEdit ? input.remaining_changes : [],
       request_complete: learnerEdit && input.request_complete,
-    };
+    });
   },
   summarize: (_, out) => `整理记忆：${out.status}`,
 };

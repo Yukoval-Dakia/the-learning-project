@@ -293,7 +293,6 @@
   }
 
   & .un-cp-reply {
-    color: var(--un-text-1);
     transition: color var(--un-t-ui) var(--un-ease-glide);
   }
 
@@ -1125,10 +1124,13 @@
   letter-spacing: var(--un-md-sys-typescale-body-large-tracking);
   overflow-wrap: anywhere;
 }
-[data-ui-next][data-un-m3e="companion-content"] .un-cp-reply,
 [data-ui-next][data-un-m3e="companion-content"] .un-cp-row-ai[data-streaming] .un-cp-reply,
 [data-ui-next][data-un-m3e="companion-content"] .un-cp-today-focus {
   color: var(--un-md-sys-color-on-surface);
+}
+/* The panel is the colour of the reading layer's formula block: a tint shows on any panel. */
+[data-ui-next] .un-cp-reply .katex-display {
+  background: color-mix(in srgb, var(--un-md-sys-color-on-surface) 6%, transparent);
 }
 [data-ui-next][data-un-m3e="companion-content"] .un-cp-reply {
   /* Reading rhythm (YUK-1548): M3E body-large sets the size; the line height stays a reading one. */

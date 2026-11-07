@@ -63,6 +63,7 @@ import {
 } from '@/server/boss/job-observation';
 import type { CopilotPublicProse, CopilotPublicProseFailure } from '../public-prose-contract';
 import { publicProseFailureMessage } from '../public-prose-contract';
+import { copilotRetryRefusal } from './run-retry';
 
 export const COPILOT_RUN_QUEUE = 'copilot_run' as const;
 
@@ -287,6 +288,7 @@ export async function writeSuccessfulTerminalProjection(
       payload: {
         task_run_id: projection.taskRunId,
         finish_reason: projection.finishReason,
+        retryable: false,
         ...(projection.publicProse ? { public_prose: projection.publicProse } : {}),
         ...(projection.modeState ?? {}),
         ...checkpointPayload,
@@ -320,11 +322,27 @@ export async function writeFailedTerminalProjection(
       ? {}
       : await durableCheckpointPayload(db, projection.runId);
   await withinExistingOrNewTransaction(db, async (tx) => {
+    let retryable = false;
+    try {
+      // A failed SQL probe must not poison the transaction that publishes FAILED.
+      retryable = await tx.transaction(
+        async (probe) =>
+          (await copilotRetryRefusal(probe, projection.runId, {
+            terminal: { reason: projection.reason, public_prose: projection.publicProse },
+          })) === null,
+      );
+    } catch (error) {
+      console.error('[copilot_run] retry eligibility probe failed', {
+        runId: projection.runId,
+        error,
+      });
+    }
     await write(tx, {
       business_table: COPILOT_RUN_TABLE,
       business_id: projection.runId,
       event_type: COPILOT_RUN_EVENTS.FAILED,
       payload: {
+        retryable,
         reason: projection.reason,
         error: projection.publicProse
           ? publicProseFailureMessage(projection.publicProse.failure)

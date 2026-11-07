@@ -4,10 +4,13 @@ import postgres from 'postgres';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { reconcileBuiltinTraits, setAdminConfigWriter } from '@/capabilities/observability/public';
 import { thinCreateSubject } from '@/capabilities/observability/server/subject-create';
+import { createAdminConfigWriter } from '@/core/config/server/admin-config-write';
+import { installConfigWritePorts } from '@/core/config/server/write';
 import { replaceConfigSnapshot } from '@/core/config/store';
 import * as schema from '@/db/schema';
 import * as hydration from '@/kernel/read-models/subject-hydration';
-import { createAdminConfigWriter } from '@/server/config/admin-config-write';
+import { adminConfigWriterPorts } from '@/server/admin/config-facts-host';
+import { configWritePorts } from '@/server/ai/config-write-ports';
 import { seedTraitId } from '@/subjects/builtin-trait-seeds';
 import { SubjectRegistry } from '@/subjects/profile';
 import { resetDb, testDb } from '../../tests/helpers/db';
@@ -94,7 +97,8 @@ beforeEach(async () => {
   await reconcileBuiltinTraits(pool);
   await hydration.hydrateSubjectRegistryFromDb(pool);
   replaceConfigSnapshot({ epoch: 0, entries: new Map(), hydratedAt: '' });
-  setAdminConfigWriter(createAdminConfigWriter(pool));
+  installConfigWritePorts(configWritePorts());
+  setAdminConfigWriter(createAdminConfigWriter(adminConfigWriterPorts(), pool));
 });
 afterEach(async () => {
   vi.restoreAllMocks();

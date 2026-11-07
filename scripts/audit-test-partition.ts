@@ -3,10 +3,20 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
-import { dbTestInclude, fastTestInclude, migrationSmokeInclude } from '../vitest.shared';
+import {
+  containerBoundaryInclude,
+  dbTestInclude,
+  fastTestInclude,
+  migrationSmokeInclude,
+} from '../vitest.shared';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const partitions = { unit: fastTestInclude, db: dbTestInclude, migration: migrationSmokeInclude };
+const partitions = {
+  unit: fastTestInclude,
+  db: dbTestInclude,
+  migration: migrationSmokeInclude,
+  container: containerBoundaryInclude,
+};
 const errors: string[] = [];
 const assigned = new Set<string>();
 for (const [partition, files] of Object.entries(partitions)) {

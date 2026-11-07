@@ -9,6 +9,7 @@
 import { z } from 'zod';
 import { STUCK_RUN_THRESHOLD_MS } from '@/core/ai-run-limits';
 import { PedagogyMethodId } from '@/core/pedagogy/method-library';
+import { TASK_OUTPUT_CAP_TOKENS } from './task-output-limits';
 
 /** DB 层值的运行时形状（jsonb 载荷）。 */
 export type ConfigValue =
@@ -260,6 +261,17 @@ const taskReasoningSchema = z
 // ─── 注册表 ────────────────────────────────────────────────────────────────
 
 export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
+  PROVIDER_STREAM_IDLE_MS: {
+    schema: z.number().int().nonnegative(),
+    codeDefault: 180_000,
+    envName: 'PROVIDER_STREAM_IDLE_MS',
+    envParse: (raw) => (/^\d+$/.test(raw.trim()) ? Number(raw) : undefined),
+    tier: 'B',
+    description: 'SSE 无非空 data 字节的最长间隔；0 关闭，不改变任务总超时',
+    consumers: ['ai.pi-provider-wire'],
+    reload: 'per-call',
+    exposure: 'operator',
+  },
   // ── flags（z.boolean；env fallback 走 flagEnv） ────────────────────────────
   JUDGE_DURABLE_ENABLED: {
     schema: z.boolean(),
@@ -464,18 +476,6 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     reload: 'per-call',
     exposure: 'operator',
     flag: OPT_OUT_FLAG,
-  },
-  COPILOT_NUDGE_ENABLED: {
-    schema: z.boolean(),
-    codeDefault: false,
-    envName: 'COPILOT_NUDGE_ENABLED',
-    envParse: flagEnv,
-    tier: 'A',
-    description: 'Copilot 主动开口对用户可见（关闭时只写 shadow 证据）',
-    consumers: ['copilot.nudge'],
-    reload: 'per-call',
-    exposure: 'operator',
-    flag: OPT_IN_FLAG,
   },
   COPILOT_NUDGE_DAILY_MAX: {
     schema: z.number().int().positive(),
@@ -969,13 +969,22 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
 
 export interface DynamicKeyDef {
   kind: 'task' | 'lane';
-  field: 'provider' | 'model' | 'budget' | 'reasoning' | 'override_global_pin';
+  field:
+    | 'provider'
+    | 'model'
+    | 'budget'
+    | 'reasoning'
+    | 'override_global_pin'
+    | 'output_cap_tokens';
   /** task → kind；lane → lane id。 */
   scope: string;
 }
 
 export function matchDynamicConfigKey(key: string): DynamicKeyDef | null {
-  const task = /^task\.([^.]+)\.(provider|model|budget|reasoning|override_global_pin)$/.exec(key);
+  const task =
+    /^task\.([^.]+)\.(provider|model|budget|reasoning|override_global_pin|output_cap_tokens)$/.exec(
+      key,
+    );
   if (task) {
     return { kind: 'task', scope: task[1], field: task[2] as DynamicKeyDef['field'] };
   }
@@ -989,6 +998,8 @@ export function matchDynamicConfigKey(key: string): DynamicKeyDef | null {
 /** 动态 key 的 schema（按 field 而非整 override 对象）。 */
 export function dynamicKeySchema(def: DynamicKeyDef): z.ZodTypeAny | null {
   switch (def.field) {
+    case 'output_cap_tokens':
+      return z.number().int().nonnegative();
     case 'provider':
       return z.string();
     case 'model':
@@ -1012,7 +1023,11 @@ export function resolveKeyDef(key: string): ConfigKeyDef | null {
   if (!dyn || dyn.kind === 'lane') return null;
   const schema = dynamicKeySchema(dyn);
   if (!schema) return null;
-  return { schema, codeDefault: undefined, tier: 'B' };
+  return {
+    schema,
+    codeDefault: dyn.field === 'output_cap_tokens' ? TASK_OUTPUT_CAP_TOKENS[dyn.scope] : undefined,
+    tier: 'B',
+  };
 }
 
 export type ConfigKey = keyof typeof CONFIG_REGISTRY | (string & {});

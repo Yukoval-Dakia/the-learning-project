@@ -1,4 +1,4 @@
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import { IngestionExtractionNotices } from '@/core/schema/ingestion-extraction';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
@@ -13,6 +13,9 @@ export async function readExtractionNotices(db: Db | Tx, sessionId: string) {
         eq(event.session_id, sessionId),
         eq(event.action, 'extract'),
         eq(event.subject_kind, 'source_document'),
+        // Only the extraction receipt carries notices. Rescue, failure, and DOCX
+        // events also use action='extract' but must not erase the durable receipt.
+        sql`jsonb_exists(${event.payload}, ${'notices'})`,
       ),
     )
     .orderBy(desc(event.created_at), desc(event.id))
