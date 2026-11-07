@@ -23,7 +23,7 @@
 //
 // 纯模块纪律（ownership/boundary，镜像 web-candidates.ts）：不 import '@/server/'。
 // 外部效果（web LLM 相位、pg-boss enqueue、web 获取）全部依赖注入；
-// '../tools/store-sourced-question' 是 capability 内兄弟 seam（tools 层持 server 依赖）。
+// '../tools/submit-question' 是 capability 内兄弟 seam（tools 层持 server 依赖）。
 
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, isNotNull, isNull, or, sql } from 'drizzle-orm';
@@ -37,7 +37,7 @@ import type { SubjectProfile } from '@/subjects/profile-schema';
 import {
   type StoreSourcedQuestionDeps,
   executeStoreSourcedQuestion,
-} from '../tools/store-sourced-question';
+} from '../tools/submit-question';
 import { jyeooBudgetRemaining } from './jyeoo-budget';
 import {
   type JyeooCandidate,
