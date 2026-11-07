@@ -311,6 +311,10 @@ export const dbTestInclude = [
 
 export const migrationSmokeInclude = ['tests/integration/migration-smoke.test.ts'];
 
+// Node's runner inside the worker image owns these real-container invariants.
+// pnpm test:workspace consumes this partition; Vitest cannot supply that OS boundary.
+export const containerBoundaryInclude = ['scripts/workspace/boundary.test.ts'];
+
 export const allTestInclude = [...fastTestInclude, ...dbTestInclude, ...migrationSmokeInclude];
 
 export const sharedExclude = configDefaults.exclude;
