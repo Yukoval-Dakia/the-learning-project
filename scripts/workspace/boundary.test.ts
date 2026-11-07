@@ -76,6 +76,7 @@ print(json.dumps(r))
     .from(tool_call_log)
     .where(eq(tool_call_log.task_run_id, taskRunId));
   assert.equal(logs.length, 1);
+  console.log('pg-evidence', JSON.stringify(logs));
   const output = logs[0].output_json;
   assert.ok(output && typeof output === 'object' && 'output' in output);
   assert.equal(typeof output.output, 'string');

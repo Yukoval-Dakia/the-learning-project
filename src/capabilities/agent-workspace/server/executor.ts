@@ -26,12 +26,16 @@ function invoke(action: string, id: string, code: string, signal?: AbortSignal) 
     let bytes = 0;
     let stopReason: StopReason = null;
     const stop = (reason: Exclude<StopReason, null>) => {
-      stopReason ??= reason;
+      if (stopReason !== null) return;
+      stopReason = reason;
       if (child.pid) {
         try {
           process.kill(child.pid, 'SIGTERM');
         } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== 'ESRCH') reject(error);
+          // The fixed supervisor drops its identity only to reap the group.
+          // EPERM can race that final drop after the interpreter has exited.
+          const code = (error as NodeJS.ErrnoException).code;
+          if (code !== 'ESRCH' && code !== 'EPERM') reject(error);
         }
       }
     };
