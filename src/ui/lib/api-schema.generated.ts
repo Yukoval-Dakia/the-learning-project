@@ -17149,7 +17149,7 @@ export interface operations {
                                 /** @enum {string} */
                                 entry_kind: "legacy" | "attempt";
                                 /** @enum {string} */
-                                kind: "agent_task" | "extract_task" | "ocr";
+                                kind: "agent_task" | "ocr";
                                 model: string | null;
                                 operation_id: string | null;
                                 provider: string;
@@ -17164,7 +17164,7 @@ export interface operations {
                             unsettled: {
                                 attempt_id: string | null;
                                 /** @enum {string} */
-                                kind: "agent_task" | "extract_task" | "ocr";
+                                kind: "agent_task" | "ocr";
                                 operation_id: string | null;
                                 reasons: ("missing_task_run" | "task_in_progress" | "missing_attempt_binding" | "missing_canonical_cost" | "unknown_cost_basis" | "missing_amount" | "missing_cost_reference" | "unknown_currency")[];
                                 task_run_id: string | null;

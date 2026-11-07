@@ -11,10 +11,19 @@ import { AGENT_TASK_KIND, readAgentBudget } from './agent/budget-state';
 import { extractCostIdentitiesOf } from './extract-cost-identity';
 
 type Evidence = IngestionSessionCostEvidence;
-type Identity = Pick<
-  Evidence['unsettled'][number],
-  'kind' | 'task_run_id' | 'operation_id' | 'attempt_id'
->;
+// Internal kind is wider than the wire's: extract-lane task runs keep their own
+// identity for the kind checks below, then fold into the wire's 'agent_task'
+// display category — the record UI only owns two labels.
+type Identity = {
+  kind: 'agent_task' | 'extract_task' | 'ocr';
+  task_run_id: string | null;
+  attempt_id: string | null;
+  operation_id: string | null;
+};
+const wireIdentity = (i: Identity) => ({
+  ...i,
+  kind: i.kind === 'extract_task' ? ('agent_task' as const) : i.kind,
+});
 type Reason = Evidence['unsettled'][number]['reasons'][number];
 
 // Validate persisted identities without deriving ownership from their spelling.
@@ -303,7 +312,7 @@ export async function readSessionCostEvidence(db: Db, sessionId: string): Promis
               row.cost_basis === 'reported' ||
               row.cost_basis === 'estimated');
           records.push({
-            ...identity,
+            ...wireIdentity(identity),
             attempt_id: row.source === 'provider_attempt' ? row.ref : null,
             operation_id: row.operation_id,
             provider: row.provider,
@@ -343,7 +352,10 @@ export async function readSessionCostEvidence(db: Db, sessionId: string): Promis
             a.currency.localeCompare(b.currency),
           ),
           records,
-          unsettled: [...reasons].map(([identity, gaps]) => ({ ...identity, reasons: [...gaps] })),
+          unsettled: [...reasons].map(([identity, gaps]) => ({
+            ...wireIdentity(identity),
+            reasons: [...gaps],
+          })),
           missing,
         });
       },

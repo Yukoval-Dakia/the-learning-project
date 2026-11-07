@@ -617,7 +617,7 @@ export const IngestionHistoryPriorRunSchema = z
   .strict();
 
 const IngestionCostIdentitySchema = z.object({
-  kind: z.enum(['agent_task', 'extract_task', 'ocr']),
+  kind: z.enum(['agent_task', 'ocr']),
   /** Null on extract-lane OCR operations: bound by derived operation id, not a run. */
   task_run_id: z.string().nullable(),
   attempt_id: z.string().nullable(),
