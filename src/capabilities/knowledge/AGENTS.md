@@ -7,7 +7,7 @@
 |------|------|
 | `manifest.ts` | API、job、proposal kind、copilot tool 的组合声明 |
 | `api/*.ts` | tree / node-page / proposals / edges / review / frontier / misconceptions |
-| `server/` | tree、edges、proposals、rubric-validator、review、seed、domain/subject-profile |
+| `server/` | tree、edges、proposals、rubric-validator、review、seed、domain/subject-profile、`tools/knowledge-state.ts`（单知识点掌握读口） |
 | `jobs/` | Knowledge 图谱维护（兼夜间 edge 提议）、frontier 补边、dedup、merge attribution 与 projection oracle 后台任务 |
 | `ui/KnowledgePage.tsx` / `KnowledgeDetailPage.tsx` | 知识面与节点详情页 |
 

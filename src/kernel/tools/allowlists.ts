@@ -13,6 +13,7 @@ export const READ_TOOLS = [
   'get_attempt_context',
   'get_subject_graph_overview',
   'query_knowledge',
+  'get_knowledge_state',
   'expand_knowledge_subgraph',
   'find_knowledge_paths',
   'query_records',
@@ -57,6 +58,8 @@ export const READ_TOOLS = [
 export const PROPOSE_WRITE_TOOLS = [
   'curate_context',
   'submit_review_answer',
+  // YUK-1986 — copilot 给答案的唯一记受助路径（先写 solution/answer_help 再返参考解）。
+  'reveal_answer',
   'propose_knowledge_edge',
   'propose_knowledge_mutation',
   'attribute_mistake',
@@ -188,6 +191,7 @@ export const COPILOT_TOOLS = [
   'generate_question_candidate',
   'get_subject_graph_overview',
   'query_knowledge',
+  'get_knowledge_state',
   'query_events',
   'query_records',
   'get_record_context',
@@ -251,6 +255,8 @@ export const COPILOT_TOOLS = [
   'write_note',
   // YUK-1772 — read-only deterministic note check (issues list, no verdict).
   'check_note',
+  // YUK-1986 — 明确要答案时的记受助给答路径（owner「有记录的给」）。
+  'reveal_answer',
   // YUK-1468 — Copilot 编辑面：edit_question（ops/document/validate/probe）。
   // copilot 调 save 时工具按 caller surface 自动落 question_edit proposal
   // （accept applier 走同一 ops → submit gate）；validate/probe 直出。

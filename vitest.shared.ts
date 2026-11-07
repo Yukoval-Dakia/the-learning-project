@@ -49,6 +49,7 @@ export const fastTestInclude = [
   'src/capabilities/practice/grading/server/judge/steps-judge.test.ts',
   'src/capabilities/practice/supply/server/jyeoo-spawn.test.ts',
   'src/kernel/placement-starter-outcome.unit.test.ts',
+  'src/kernel/read-models/knowledge-state.unit.test.ts',
   'src/capabilities/practice/question-bank/server/quiz/verify-framework.test.ts',
   'src/capabilities/practice/ui/blocks/custom-sandbox.test.ts',
   'src/capabilities/shell/server/overnight-digest-summary.unit.test.ts',
@@ -86,6 +87,7 @@ export const fastTestInclude = [
 ];
 
 export const dbTestInclude = [
+  'src/server/ai/provider-stream-guards.db.test.ts',
   'src/capabilities/practice/grading/server/photo-gate.db.test.ts',
   'src/capabilities/shell/api/proposal-reason-privacy.db.test.ts',
   'src/server/boss/isolated-runtime.db.test.ts',
@@ -123,6 +125,7 @@ export const dbTestInclude = [
   'src/capabilities/ingestion/server/assessment-capture.db.test.ts',
   'src/capabilities/ingestion/server/auto-enroll.db.test.ts',
   'src/capabilities/ingestion/server/make-paper.db.test.ts',
+  'src/capabilities/drawing/server/drawing-service.db.test.ts',
   'src/capabilities/ingestion/server/operation-store.db.test.ts',
   'src/capabilities/ingestion/server/proposal-appliers.db.test.ts',
   'src/capabilities/ingestion/server/provider-attempts.db.test.ts',

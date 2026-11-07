@@ -151,7 +151,6 @@ PATCH /api/admin/config   # x-internal-token
 | `INTERVENTION_DISABLED_METHOD_IDS` | app、worker | `[]`；CSV 解析为数组 | `registry` |
 | `COPILOT_SUBAGENT_ENABLED` | app、worker | `true` | `registry` |
 | `NOTES_MASTERY_SUBSCRIPTION_ENABLED` | app、worker | `true`；关则掌握进度不入队笔记 refinement | `registry`；`src/capabilities/notes/server/mastery-progress-subscription.ts` |
-| `COPILOT_NUDGE_ENABLED` | app、worker | `false` | `registry` |
 | `COPILOT_NUDGE_DAILY_MAX` | app、worker | `3` | `registry` |
 | `COPILOT_NUDGE_EXPIRES_HOURS` | app、worker | `24` | `registry` |
 | `PLACEMENT_PROBE_ENABLED` | app、worker | `true` | `registry` |
