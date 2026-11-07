@@ -15,14 +15,16 @@
 import { sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { hydrateConfigFromDb } from '@/core/config/server/hydrate';
+import { installConfigWritePorts, setConfig } from '@/core/config/server/write';
 import { getConfig, replaceConfigSnapshot, resetTestConfig } from '@/core/config/store';
-import { setConfig } from '@/server/config/write';
+import { configWritePorts } from '@/server/ai/config-write-ports';
 
 import { resetDb, testDb } from '../helpers/db';
 
 const EMPTY_SNAPSHOT = { epoch: 0, entries: new Map(), hydratedAt: '' };
 
 beforeEach(async () => {
+  installConfigWritePorts(configWritePorts());
   await resetDb();
 });
 
