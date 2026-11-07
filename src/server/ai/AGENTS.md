@@ -101,6 +101,8 @@ DashScope。pi cost 只按 catalog 估值记录。
 
 `openrouter` 同时是 typed 判分 lane（原生 `/api/v1/systemone`，`typed-primitive-runner.ts`）和 pi chat/agent lane：pi 内置 `openrouter` provider 的 OpenAI-compatible / Anthropic 传输，经 `pi-models.ts` 的 lane 列表按目录事实重投影，协议模板来自 `pi-provider-catalog.snapshot.json`（`pnpm tsx scripts/gen-pi-provider-catalog.ts` 重生）。可运行集 = 运行时 models.dev openrouter bucket ∩ pi 内置列表 ∩ 必需事实齐全；离线快照不含 chat 目录，所以无缓存时没有可运行的 openrouter chat 模型。`implementedProviderIds()` 刻意排除 openrouter：无 auth probe 模型、不做 `/models` 核对，因此启用它不产生后台流量或花费。费用：非 `typesafe/jev*` 模型走 `pi-catalog` estimated，且需目录费率卡，否则 unknown；`typesafe/jev*` 仍走 typed 的 reported/pricebook 路径。选模只经 task 配置 / 全局 pin，代码无默认 openrouter 模型。
 
+Typed 判分在 Laminar 开启时导出 `task.run` → `task.attempt` → `llm.call`。叶子只抄该次 attempt 已结算的 token 和 cost，不把 systemone 请求或响应写进 span。
+
 ## Pi execution engine (YUK-921 → YUK-1025 P4 唯一引擎)
 
 `PiAgentAdapter`（`@earendil-works/pi-ai` + `@earendil-works/pi-agent-core` `agentLoop`，同 process 内跑）。P4 起它是唯一执行路径——`modelBinding.adapter` 只接受 `'pi'`，非 pi pin 一律 fail-closed config 错；needsToolCall=true kind 要求 `ctx.piToolMounts` 至少产出一件 pi-visible 工具，否则 startup throw（不许静默跑无工具循环）。
