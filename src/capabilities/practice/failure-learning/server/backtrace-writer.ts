@@ -100,6 +100,7 @@ async function paid(
     typeof claimed[0]?.result?.attempt_no === 'number' ? claimed[0].result.attempt_no : 0;
   const attemptTaskId = attemptNo ? `${workId}:retry${attemptNo}` : workId;
   const runTaskFn = makeRunTaskFn(db);
+  let providerQueryStarted = false;
   let result: Awaited<ReturnType<typeof runTaskFn>>;
   try {
     result = await runTaskFn(stage, input, {
@@ -113,6 +114,7 @@ async function paid(
           if (!anchor || (await backtracePool(db, anchor)).digest !== digest)
             throw new Error('backtrace pool changed');
         }
+        providerQueryStarted = true;
       },
     });
   } catch (error) {
@@ -124,6 +126,7 @@ async function paid(
           reason_md: '发送结果未确认，需对账后收口',
           attempt_no: attemptNo,
           last_task_run_id: attemptTaskId,
+          provider_query_started: providerQueryStarted,
         },
       })
       .where(eq(backtrace_work.id, workId));
@@ -529,12 +532,13 @@ export async function retryUnsentBacktraceWork(
     if (
       !run?.finished_at ||
       run.status === 'running' ||
-      !transport ||
-      transport.send_state !== 'not_sent' ||
-      !totals?.requests ||
-      transport.requests_dropped !== 0 ||
-      totals.by_state.not_sent !== totals.requests ||
-      transport.requests_seen !== totals.requests
+      (!(work.result?.provider_query_started === false && !transport) &&
+        (!transport ||
+          transport.send_state !== 'not_sent' ||
+          !totals?.requests ||
+          transport.requests_dropped !== 0 ||
+          totals.by_state.not_sent !== totals.requests ||
+          transport.requests_seen !== totals.requests))
     )
       return { ready: false };
     const attemptNo = typeof work.result?.attempt_no === 'number' ? work.result.attempt_no + 1 : 1;
