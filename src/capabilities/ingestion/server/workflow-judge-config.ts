@@ -3,15 +3,14 @@
  *
  * Auto-enroll is on by default and runs paid tagging and judging after extraction. Its
  * enrolments stay revertable through the review surface. Set the flag to false or 0, or
- * switch it off in /admin/config, to keep every block in human review.
+ * switch it off in /admin/config, to keep every block in human review. The judge
+ * confidence is stored as a signal; there is no confidence threshold gate.
  */
 
-import { getConfig, getConfigFlag } from '@/core/config/store';
+import { getConfigFlag } from '@/core/config/store';
 
 /** Env var that gates the auto-enroll path. Default on (see file header). */
 export const AUTO_ENROLL_FLAG = 'WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED';
-/** Env var for the combined-confidence threshold. Default 0.85 (conservative). */
-export const AUTO_ENROLL_THRESHOLD_FLAG = 'WORKFLOW_JUDGE_AUTO_ENROLL_THRESHOLD';
 /**
  * Gates the observe-only path. Default OFF: observe still spends paid model calls
  * per block, so it needs the same explicit opt-in.
@@ -26,9 +25,6 @@ export const OBSERVE_FLAG = 'WORKFLOW_JUDGE_OBSERVE_ENABLED';
  * writes durable learning data.
  */
 export const STUDENT_ANSWER_GRADING_FLAG = 'WORKFLOW_JUDGE_STUDENT_ANSWER_GRADING_ENABLED';
-
-/** Conservative default threshold: high bar → most blocks go to human review. */
-export const DEFAULT_AUTO_ENROLL_THRESHOLD = 0.85;
 
 /**
  * Singleton debounce for the auto_enroll enqueue. A bare singletonKey is a no-op on
@@ -46,15 +42,6 @@ export type FlagEnv = Record<string, string | undefined>;
 
 export function autoEnrollEnabled(env: FlagEnv = process.env): boolean {
   return getConfigFlag(AUTO_ENROLL_FLAG, env);
-}
-
-/** Threshold for routing auto; defaults to 0.85 when unset or invalid, clamped to [0, 1]. */
-export function autoEnrollThreshold(env: FlagEnv = process.env): number {
-  // Pinned key: env beats code default; DB writes are rejected with 409. Non-finite
-  // parses fall back to the code default, matching the previous clamp.
-  const resolved = getConfig(AUTO_ENROLL_THRESHOLD_FLAG, env);
-  if (typeof resolved !== 'number') return DEFAULT_AUTO_ENROLL_THRESHOLD;
-  return Math.min(1, Math.max(0, resolved));
 }
 
 /**
