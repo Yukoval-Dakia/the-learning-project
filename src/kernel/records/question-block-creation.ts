@@ -98,7 +98,12 @@ export function persistCapturedQuestionBlock(
 ): Promise<QuestionBlockRow>;
 export function persistCapturedQuestionBlock(
   db: Db | Tx,
-  command: OcrBlockCommand | RescueBlockCommand | HandwritingTraceBlockCommand | DocxBlockCommand | ImportBlockCommand,
+  command:
+    | OcrBlockCommand
+    | RescueBlockCommand
+    | HandwritingTraceBlockCommand
+    | DocxBlockCommand
+    | ImportBlockCommand,
   now: Date,
 ): Promise<void>;
 /**

@@ -7,10 +7,7 @@
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 
 import { MistakeEnrollOutcome } from '@/core/schema/mistake_enroll';
-import {
-  HandwritingTraceOutcome,
-  type StructuredQuestionT,
-} from '@/core/schema/structured_question';
+import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
 import { event, question, question_block } from '@/db/schema';
 import { learnerVisibleKnowledgeIds } from '@/kernel/read-models/learner-knowledge-visibility';

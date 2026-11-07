@@ -88,7 +88,8 @@ function installAdapter(responses: string[]): {
 
 function imageCount(content: readonly unknown[]): number {
   return content.filter(
-    (block) => typeof block === 'object' && block !== null && 'type' in block && block.type === 'image',
+    (block) =>
+      typeof block === 'object' && block !== null && 'type' in block && block.type === 'image',
   ).length;
 }
 

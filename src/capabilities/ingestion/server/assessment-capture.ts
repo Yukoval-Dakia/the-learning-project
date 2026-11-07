@@ -570,7 +570,8 @@ export async function captureIngestionOriginal(db: Db, input: CaptureInput) {
     // 不用空白或猜测填充。
     if (captureBySlot.size === 0 && hasStudentWorkSignal(current.structured)) {
       for (const slot of slots) captureBySlot.set(slot.slot_id, { state: 'unknown' });
-    }    const entries: ResponseSetT['entries'] = [];
+    }
+    const entries: ResponseSetT['entries'] = [];
     // flat 文本只在全组单槽时可归属（旧行为）；逐单元捕获按槽精确落位。
     const allowFlat = slots.length === 1;
     for (const slot of slots) {

@@ -60,6 +60,8 @@ export type IngestionUnitCapture = {
   ink: string | null;
   /** The learner's own red-pen mark; evidence only, never a grading result. */
   red_ink_mark?: 'check' | 'cross' | 'mixed';
+  /** Why this unit stayed unknown (for example a failed handwriting pass). */
+  reason?: string;
 };
 
 export type FailureAttempt = {
@@ -249,6 +251,7 @@ function parseIngestionUnitCaptures(payload: unknown): IngestionUnitCapture[] | 
       state,
       ink: typeof record.ink === 'string' ? record.ink : null,
       ...(mark === 'check' || mark === 'cross' || mark === 'mixed' ? { red_ink_mark: mark } : {}),
+      ...(typeof record.reason === 'string' ? { reason: record.reason } : {}),
     });
   }
   return out.length > 0 ? out : undefined;

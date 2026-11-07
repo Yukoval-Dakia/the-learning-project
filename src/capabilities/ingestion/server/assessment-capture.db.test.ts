@@ -27,10 +27,10 @@ import { readNativeMistakeEvidence } from '@/kernel/read-models/native-mistake-e
 import { issuanceRowToContract, revisionRowToContract } from '@/kernel/records/assessment-issuance';
 import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { captureIngestionOriginal, enrollNativeCapture } from './assessment-capture';
-import { revertAutoEnrolledBlock } from './revert-auto-enroll';
-import { runRescue } from './rescue';
 import { createImageR2 } from '../jobs/ingestion-test-support';
+import { captureIngestionOriginal, enrollNativeCapture } from './assessment-capture';
+import { runRescue } from './rescue';
+import { revertAutoEnrolledBlock } from './revert-auto-enroll';
 
 const now = new Date('2026-10-05T01:00:00Z');
 beforeAll(installPracticeHost);
@@ -457,9 +457,7 @@ describe('native ingestion originals and reversible enrollment', () => {
         ingestion?: { unit_captures?: Array<{ state: string; reason?: string }> };
       }
     )?.ingestion?.unit_captures;
-    expect(unitCaptures).toMatchObject([
-      { state: 'unknown', reason: 'handwriting_trace_failed' },
-    ]);
+    expect(unitCaptures).toMatchObject([{ state: 'unknown', reason: 'handwriting_trace_failed' }]);
     expect(unitCaptures?.some((item) => item.state === 'omitted')).toBe(false);
     expect(await db.select().from(evaluation)).toHaveLength(0);
   });

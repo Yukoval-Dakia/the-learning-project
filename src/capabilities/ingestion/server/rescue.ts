@@ -221,7 +221,8 @@ async function runHandwritingTraceRescue(
   return { structured };
 }
 
-function visionBlockToStructured(b: VisionBlock): StructuredQuestionT {  return {
+function visionBlockToStructured(b: VisionBlock): StructuredQuestionT {
+  return {
     id: createId(),
     role: 'standalone',
     page_index: b.page_index,

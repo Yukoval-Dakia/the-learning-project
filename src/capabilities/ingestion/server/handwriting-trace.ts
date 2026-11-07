@@ -6,6 +6,7 @@ import {
   HandwritingTraceTaskError,
   parseHandwritingTraceOutput,
 } from '@/capabilities/ingestion/tasks/handwriting';
+import { MAX_PDF_PAGES } from '@/core/limits';
 import type { BBoxT, StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
 import { markAiTaskRunOutputInvalid } from '@/server/ai/log';
@@ -198,6 +199,13 @@ export async function runHandwritingTrace(
   if (params.pageImages.length === 0) {
     throw new HandwritingTraceTaskError('runHandwritingTrace: no page images provided');
   }
+  if (params.pageImages.length > MAX_PDF_PAGES) {
+    // One call carries every page image and every leaf; uploads are already capped at
+    // MAX_PDF_PAGES, so this only catches a caller bypassing that gate.
+    throw new HandwritingTraceTaskError(
+      `runHandwritingTrace: ${params.pageImages.length} pages exceeds the ${MAX_PDF_PAGES}-page single-call cap`,
+    );
+  }
   if (params.leaves.length === 0) {
     throw new HandwritingTraceTaskError('runHandwritingTrace: no leaves provided');
   }
@@ -239,7 +247,11 @@ export async function runHandwritingTrace(
       err instanceof Error ? err.message : 'HandwritingTraceTask output did not match schema';
     if (params.db !== undefined && result.task_run_id !== undefined) {
       // The provider call succeeded but its text was not usable: not a success run.
-      await markAiTaskRunOutputInvalid(params.db, result.task_run_id, reason);
+      try {
+        await markAiTaskRunOutputInvalid(params.db, result.task_run_id, reason);
+      } catch (markErr) {
+        console.error('[handwriting_trace] failed to mark invalid model output', markErr);
+      }
     }
     throw new HandwritingTraceTaskError(
       'HandwritingTraceTask output did not match HandwritingTraceOutput schema',
@@ -259,5 +271,3 @@ export async function runHandwritingTrace(
     warnings,
   };
 }
-
-/** Leaves in reading order. A stem/container is not a leaf; only its sub-questions are. */
