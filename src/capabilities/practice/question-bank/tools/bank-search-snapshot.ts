@@ -75,6 +75,7 @@ export async function captureBankSnapshotBindings(
   identities: Array<{ question_id: string; ref: string | null }>,
   actor: ToolContext['callerActor'],
   calibrated = false,
+  knownServable?: ReadonlyMap<string, string[]>,
 ): Promise<BankSnapshotBinding[]> {
   if (!identities.length) return [];
   const ids = [...new Set(identities.map((h) => h.question_id))];
@@ -99,7 +100,15 @@ export async function captureBankSnapshotBindings(
     identities.flatMap((h) => (h.ref ? [h.ref] : [])),
   );
   const refs = new Map(resolutions.map((r) => [r.raw, r]));
-  const servable = await readBankServableParts(db, ids);
+  // Only issuance decisions from this exact read snapshot may be reused.
+  // Validation calls omit the cache and always read current serving state.
+  const servable = new Map([
+    ...(knownServable ?? []),
+    ...(await readBankServableParts(
+      db,
+      ids.filter((id) => !knownServable?.has(id)),
+    )),
+  ]);
   const calibrations = calibrated
     ? await db
         .select({

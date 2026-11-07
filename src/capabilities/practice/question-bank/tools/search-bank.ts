@@ -161,7 +161,7 @@ export async function collectBankSearchReceipt(
       predicates,
       publicOnly: bankReadRoleForActor(ctx.callerActor) === 'restricted',
       embedFn: ablation?.embedFn ?? ((text) => queryVector(ctx, text)),
-      onPoolFrozen: async (tx, pool) => {
+      onPoolFrozen: async (tx, pool, servable) => {
         const calibrated =
           scope.difficulty?.basis === 'calibrated' && pool.hits.length
             ? await tx
@@ -200,6 +200,7 @@ export async function collectBankSearchReceipt(
           ],
           ctx.callerActor,
           scope.difficulty?.basis === 'calibrated',
+          servable,
         );
         documents = await readBankDocuments(
           tx,

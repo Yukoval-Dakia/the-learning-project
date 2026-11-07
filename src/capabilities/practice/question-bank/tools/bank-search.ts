@@ -238,7 +238,11 @@ export interface BankSearchDeps {
   deadlineAt?: number;
   providerAttemptCaller?: 'api' | 'worker';
   onSnapshotOpened?: (tx: Db | Tx) => Promise<void>;
-  onPoolFrozen?: (tx: Db | Tx, output: BankSearchOutput) => Promise<void>;
+  onPoolFrozen?: (
+    tx: Db | Tx,
+    output: BankSearchOutput,
+    servable: ReadonlyMap<string, string[]>,
+  ) => Promise<void>;
 }
 
 export interface BankSearchMatchEvidence {
@@ -628,7 +632,7 @@ export async function runSearchBank(
   return db.transaction(
     async (tx) => {
       await deps.onSnapshotOpened?.(tx);
-      const output = await runSearchBankInSnapshot(tx, request, {
+      const { output, servable } = await runSearchBankInSnapshot(tx, request, {
         fullPool: deps.fullPool,
         publicOnly: deps.publicOnly,
         predicates: deps.predicates,
@@ -640,7 +644,7 @@ export async function runSearchBank(
           return embedded.vector;
         },
       });
-      await deps.onPoolFrozen?.(tx, output);
+      await deps.onPoolFrozen?.(tx, output, servable);
       return output;
     },
     { isolationLevel: 'repeatable read', accessMode: 'read only' },
@@ -651,7 +655,7 @@ async function runSearchBankInSnapshot(
   db: Db | Tx,
   request: BankSearchRequest,
   deps: BankSearchDeps & Required<Pick<BankSearchDeps, 'embedFn'>>,
-): Promise<BankSearchOutput> {
+): Promise<{ output: BankSearchOutput; servable: ReadonlyMap<string, string[]> }> {
   let offset = 0;
   let cursor: BankSearchCursor | undefined;
   let limit: number;
@@ -1240,83 +1244,87 @@ async function runSearchBankInSnapshot(
         })();
 
   return {
-    scope_applied: {
-      subject:
-        resolved.subjectKnowledgeIds !== undefined
-          ? {
-              profile: scope.subject as string,
-              knowledge_id_count: resolved.subjectKnowledgeIds.length,
-            }
-          : undefined,
-      kind:
-        resolved.kindForms !== undefined && scope.kind !== undefined
-          ? { canonical: scope.kind, persisted_forms: resolved.kindForms }
-          : undefined,
-      kinds:
-        scope.kinds && resolved.kindForms
-          ? { canonical: scope.kinds, persisted_forms: resolved.kindForms }
-          : undefined,
-      source: scope.source,
-      within_refs: scope.within_refs,
-      knowledge:
-        resolved.knowledgeFilterIds !== undefined
-          ? {
-              ids: resolved.knowledgeFilterIds,
-              mode: resolved.knowledgeFilterMode,
-              resolved_count: resolved.knowledgeFilterIds.length,
-            }
-          : undefined,
-      difficulty:
-        scope.difficulty !== undefined
-          ? {
-              basis: scope.difficulty.basis,
-              range: scope.difficulty.range,
-              scale: scope.difficulty.basis === 'authored' ? 'authored_1_5' : 'calibrated_logit_b',
-            }
-          : undefined,
-      exclude_refs:
-        resolved.excludedQuestionIds !== undefined
-          ? {
-              refs: scope.exclude_refs ?? [],
-              excluded_question_ids: resolved.excludedQuestionIds.length,
-            }
-          : undefined,
-      similar_to:
-        scope.similar_to !== undefined
-          ? {
-              question_ref: scope.similar_to.question_ref,
-              aspect: 'content',
-              vector_available: !unavailable.includes('vector'),
-            }
-          : undefined,
-      draft_state: scope.draft_state,
-      admission_state: scope.admission_state,
-    },
-    requirements: {
-      enforced,
-      not_verified: [
-        'query 语义相关性（排序依据，非逐项保证——候选不等于满足全部语义条件）',
-        '未被本通道召回的题不构成「库中没有」',
-        ...(scope.similar_to !== undefined && unavailable.includes('vector')
-          ? [
-              'similar_to 锚题暂无当前同版内容向量（未嵌入、旧 EMBED_VERSION、落后行 revision 或被内容编辑失效，待 embed_backfill 回填）——向量通道不可用，本页仅 FTS 召回',
-            ]
-          : []),
-      ],
-    },
-    hits: pageHits,
-    coverage: {
-      verdict,
-      unsatisfied_constraints: verdict === 'enough' ? [] : [unsatisfied],
-      gap_request: gapRequest,
-      candidate_pool_size: confirmedPoolSize,
-      recall_scan: recallScan,
-      counted_pool_size: countedPoolSize,
-      retrieval_truncated: retrievalTruncated,
-      page_has_more: hasMore,
-      next_cursor: nextCursor,
-      unavailable_channels: unavailable,
-      complete,
+    servable: servableParts,
+    output: {
+      scope_applied: {
+        subject:
+          resolved.subjectKnowledgeIds !== undefined
+            ? {
+                profile: scope.subject as string,
+                knowledge_id_count: resolved.subjectKnowledgeIds.length,
+              }
+            : undefined,
+        kind:
+          resolved.kindForms !== undefined && scope.kind !== undefined
+            ? { canonical: scope.kind, persisted_forms: resolved.kindForms }
+            : undefined,
+        kinds:
+          scope.kinds && resolved.kindForms
+            ? { canonical: scope.kinds, persisted_forms: resolved.kindForms }
+            : undefined,
+        source: scope.source,
+        within_refs: scope.within_refs,
+        knowledge:
+          resolved.knowledgeFilterIds !== undefined
+            ? {
+                ids: resolved.knowledgeFilterIds,
+                mode: resolved.knowledgeFilterMode,
+                resolved_count: resolved.knowledgeFilterIds.length,
+              }
+            : undefined,
+        difficulty:
+          scope.difficulty !== undefined
+            ? {
+                basis: scope.difficulty.basis,
+                range: scope.difficulty.range,
+                scale:
+                  scope.difficulty.basis === 'authored' ? 'authored_1_5' : 'calibrated_logit_b',
+              }
+            : undefined,
+        exclude_refs:
+          resolved.excludedQuestionIds !== undefined
+            ? {
+                refs: scope.exclude_refs ?? [],
+                excluded_question_ids: resolved.excludedQuestionIds.length,
+              }
+            : undefined,
+        similar_to:
+          scope.similar_to !== undefined
+            ? {
+                question_ref: scope.similar_to.question_ref,
+                aspect: 'content',
+                vector_available: !unavailable.includes('vector'),
+              }
+            : undefined,
+        draft_state: scope.draft_state,
+        admission_state: scope.admission_state,
+      },
+      requirements: {
+        enforced,
+        not_verified: [
+          'query 语义相关性（排序依据，非逐项保证——候选不等于满足全部语义条件）',
+          '未被本通道召回的题不构成「库中没有」',
+          ...(scope.similar_to !== undefined && unavailable.includes('vector')
+            ? [
+                'similar_to 锚题暂无当前同版内容向量（未嵌入、旧 EMBED_VERSION、落后行 revision 或被内容编辑失效，待 embed_backfill 回填）——向量通道不可用，本页仅 FTS 召回',
+              ]
+            : []),
+        ],
+      },
+      hits: pageHits,
+      coverage: {
+        verdict,
+        unsatisfied_constraints: verdict === 'enough' ? [] : [unsatisfied],
+        gap_request: gapRequest,
+        candidate_pool_size: confirmedPoolSize,
+        recall_scan: recallScan,
+        counted_pool_size: countedPoolSize,
+        retrieval_truncated: retrievalTruncated,
+        page_has_more: hasMore,
+        next_cursor: nextCursor,
+        unavailable_channels: unavailable,
+        complete,
+      },
     },
   };
 }
