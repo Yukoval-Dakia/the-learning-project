@@ -137,14 +137,6 @@
     box-shadow: inset 0 calc(-1 * var(--un-hairline)) 0 var(--un-line);
   }
 
-  & .rc-line-sec {
-    list-style: none;
-    padding: var(--un-sp-3) 0;
-    color: var(--un-text-3);
-    font-size: var(--un-fs-1);
-    box-shadow: inset 0 calc(-1 * var(--un-hairline)) 0 var(--un-line);
-  }
-
   & .rc-line:last-child {
     box-shadow: none;
   }
