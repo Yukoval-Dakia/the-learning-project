@@ -86,6 +86,17 @@ export const retractStartAutoApplied = (input: unknown) =>
     return batchRetractAutoAppliedProposals(db, input);
   });
 
+export const acceptStartProposalBatch = (input: unknown) =>
+  withStartDb(async (db) => {
+    const { batchAcceptProposals } = await import('@/server/proposals/batch-accept');
+    return batchAcceptProposals(db, input);
+  });
+export const readStartProposalBatches = () =>
+  withStartDb(async (db) => {
+    const { listProposalBatchAccepts } = await import('@/capabilities/shell/public');
+    return listProposalBatchAccepts(db);
+  });
+
 function knowledgeTimestampJson(value: Date | string): string {
   // Raw SQL timestamps lack a Drizzle decoder. Preserve their precision and
   // keep decoded Dates in ISO form without suppressing invalid-value errors.
@@ -195,6 +206,8 @@ export const workbenchAdapters = {
   readStartActiveProbes,
   readStartAutoApplied,
   retractStartAutoApplied,
+  acceptStartProposalBatch,
+  readStartProposalBatches,
   readStartConjectures,
   readStartKnowledgeFrontier,
   readStartKnowledgeReviewDue,
