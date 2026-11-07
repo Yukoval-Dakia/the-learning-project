@@ -31,6 +31,9 @@ export { assertCopilotLegacyDrained } from './server/legacy-drain-readiness';
 export { dismissCopilotNudge, markCopilotNudgeOpened } from './server/nudge-actions';
 export { loadActiveNudges } from './server/nudge-read';
 export { cancelCopilotRun } from './server/run-cancel-request';
+// Kernel job-events stream gate: deleting conversations deny copilot_run
+// replay. Serving entrypoints install it next to the other host operations.
+export { installCopilotJobStreamGate } from './server/stream-gate';
 // memory-brief reader for non-LLM read paths (today summary, demos); the read
 // semantics themselves are agency-owned behind the kernel memory-brief port.
 export { executeMemoryBrief } from './server/tools/memory-brief';

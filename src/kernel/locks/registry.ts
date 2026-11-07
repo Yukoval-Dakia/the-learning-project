@@ -61,6 +61,11 @@ export type AdvisoryLockNamespace =
   | HashtextExtendedIdentityLockNamespace;
 
 export const advisoryLockRegistry = {
+  agentWorkspacePool: {
+    family: 'agent-workspace:pool',
+    encoding: 'hashtext',
+    key: 'agent-workspace:pool',
+  },
   copilotSessionSelection: {
     family: 'copilot:session-selection',
     encoding: 'hashtext',
