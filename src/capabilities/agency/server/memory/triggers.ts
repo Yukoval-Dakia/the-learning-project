@@ -109,7 +109,19 @@ async function defaultLoadEvent(db: Db, eventId: string): Promise<MemoryEventInp
   const rows = await db
     .select()
     .from(event)
-    .where(and(eq(event.id, eventId), eventAllowsDerivationSql()))
+    .where(
+      and(
+        eq(event.id, eventId),
+        eventAllowsDerivationSql(),
+        // A deleting/deleted conversation stops feeding extraction at the load
+        // choke point: outbox rows already queued simply resolve to null.
+        sql`NOT EXISTS (
+          SELECT 1 FROM learning_session ls
+          WHERE ls.id = ${event.session_id}
+            AND (ls.deletion_requested_at IS NOT NULL OR ls.deleted_at IS NOT NULL)
+        )`,
+      ),
+    )
     .limit(1);
   const row = rows[0];
   if (!row) return null;

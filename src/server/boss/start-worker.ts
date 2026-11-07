@@ -25,6 +25,7 @@ import { resolveTaskProvider } from '@/server/ai/providers';
 import { createBoss, isQueueCreateRace, markBossStarted } from '@/server/boss/client';
 import { registerHandlers } from '@/server/boss/handlers';
 import { reconcileStuckAiTaskRuns } from '@/server/boss/handlers/ai_task_run_reconcile';
+import { AGENT_WORKSPACE_SWEEP_QUEUE } from '@/server/boss/queue-names';
 import { registerCapabilityJobs } from '@/server/boss/register-capability-jobs';
 import { sendVerifyDispatchStartupRecovery } from '@/server/boss/verify-dispatch-recovery';
 import { mountSubscriptionDispatch } from '@/server/events/subscriptions/dispatch-mount';
@@ -109,6 +110,9 @@ export async function startBossWorker(
   // After the verifier queues exist. The recover worker is mounted earlier, so a send
   // before those queues exist throws and the drain waits for the nightly cron.
   await sendVerifyDispatchStartupRecovery(boss);
+  // Startup sweep: a restart must not wait out the five-minute cron to retry
+  // tombstoned deletions or reclaim leases left by the previous incarnation.
+  await boss.send(AGENT_WORKSPACE_SWEEP_QUEUE, { trigger: 'startup' });
   // The checkpoint lease serializes workers, so the in-process and standalone workers can both mount.
   // No declared subscription means this is a no-op.
   await mountSubscriptionDispatch(boss, db, capabilities);

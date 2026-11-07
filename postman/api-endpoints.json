@@ -2200,5 +2200,19 @@
         "notes": "body 仅 {session_id}。live 行重复调用幂等返回当前态；来源被撤回返回 422 restricted_source。跨学习者一律 404。需 x-internal-token。"
       }
     ]
+  },
+  {
+    "path": "/api/copilot/sessions/:id/delete",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "彻底删除 Copilot 对话：撤销访问→取消并等在途 run 结算→持久 tombstone；工作区目录由清扫 job 随后移除",
+        "query": [],
+        "headers": [],
+        "contentType": "application/json",
+        "bodyExample": {},
+        "notes": "幂等。返回 {session_id,status}：deleting 表示撤销已提交、在途 run 尚在结算；deleted 表示会话 tombstone 已持久化。Stop/关抽屉不走此路由。"
+      }
+    ]
   }
 ]
