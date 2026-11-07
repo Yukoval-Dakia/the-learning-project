@@ -7,8 +7,9 @@
  */
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
+import { installPracticeHost } from '@/capabilities/practice/public';
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import {
   event,
@@ -101,6 +102,7 @@ const matchK1: RunAutoEnrollParams['tagKnowledgeFn'] = async () => ({
 });
 
 describe('runAutoEnrollForSession', () => {
+  beforeAll(installPracticeHost);
   beforeEach(async () => {
     await resetDb();
   });
