@@ -50,7 +50,9 @@ export function plainRetryError(cause: unknown): string {
     // The server's own envelope is { error, details: { reason } }, kept whole in ApiError.details.
     const envelope = cause.details?.details;
     const reason =
-      envelope && typeof envelope === 'object' && 'reason' in envelope ? envelope.reason : undefined;
+      envelope && typeof envelope === 'object' && 'reason' in envelope
+        ? envelope.reason
+        : undefined;
     return (
       (typeof reason === 'string' ? RETRY_REFUSALS[reason] : undefined) ??
       '这一轮不能直接再发，把这句话重新发一下吧。'
