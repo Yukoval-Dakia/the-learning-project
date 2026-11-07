@@ -26,6 +26,7 @@ import type { TaskDefinition } from '@/ai/task-spec';
 import { SOLVE_LANE_TASK_KINDS } from '@/capabilities/practice/public';
 import type { TaskKind } from '@/capabilities/task-registry';
 import { tasks } from '@/capabilities/task-registry';
+import { selectPairModel, selectPairProvider } from '@/core/config/model-overrides';
 import type { ConfigMutation, ConfigMutationResult } from '@/core/config/mutations';
 import type { ConfigValue } from '@/core/config/store';
 import { matchDynamicConfigKey, resolveKeyDef } from '@/core/config/store';
@@ -535,17 +536,24 @@ async function validateFinalProviderPairs(
         // (read side: call arg > task pair > registry, global pin skipped), so
         // the global switch must not leak into its lane resolution here.
         const followsGlobal = rowByKey.get(`task.${kind}.override_global_pin`) !== true;
-        const rawProvider =
-          configuredProvider ??
-          (followsGlobal ? global?.provider : undefined) ??
-          valueAsNonEmptyString(rowByKey.get(`task.${kind}.provider`)) ??
-          tasks[kind].defaultProvider;
-        const provider = readProviderId(rawProvider);
-        const model =
-          configuredModel ??
-          (followsGlobal ? global?.model : undefined) ??
-          valueAsNonEmptyString(rowByKey.get(`task.${kind}.model`)) ??
-          (provider === 'anthropic-sub' ? ANTHROPIC_SUB_DEFAULT_MODEL : tasks[kind].defaultModel);
+        // Final pair composition uses the same per-field chain as the runtime
+        // selector: lane call values > global pin > task rows > task defaults.
+        const rawProvider = selectPairProvider({
+          call: { provider: configuredProvider },
+          global: followsGlobal ? global : undefined,
+          task: { provider: valueAsNonEmptyString(rowByKey.get(`task.${kind}.provider`)) },
+          defaults: { provider: tasks[kind].defaultProvider },
+        }).value;
+        const provider = rawProvider ? readProviderId(rawProvider) : undefined;
+        const model = selectPairModel({
+          call: { model: configuredModel },
+          global: followsGlobal ? global : undefined,
+          task: { model: valueAsNonEmptyString(rowByKey.get(`task.${kind}.model`)) },
+          defaults: {
+            model:
+              provider === 'anthropic-sub' ? ANTHROPIC_SUB_DEFAULT_MODEL : tasks[kind].defaultModel,
+          },
+        }).value;
         // The pair this kind rides ON the lane changed only if the lane keys
         // (or, for verify_solve's model-only chain, its task/global fallbacks)
         // were written — a stale vision lane pair does not follow the global
@@ -595,9 +603,15 @@ async function validateFinalProviderPairs(
       continue;
     }
     if (scope.providerKey === 'JUDGE_CALIBRATION_REJUDGE_PROVIDER') {
-      const rawProvider = configuredProvider ?? valueAsNonEmptyString(providerDef?.codeDefault);
+      const rawProvider = selectPairProvider({
+        task: { provider: configuredProvider },
+        defaults: { provider: valueAsNonEmptyString(providerDef?.codeDefault) },
+      }).value;
       const provider = rawProvider ? readProviderId(rawProvider) : undefined;
-      const model = configuredModel ?? valueAsNonEmptyString(modelDef?.codeDefault);
+      const model = selectPairModel({
+        task: { model: configuredModel },
+        defaults: { model: valueAsNonEmptyString(modelDef?.codeDefault) },
+      }).value;
       if (
         provider &&
         model &&
@@ -722,14 +736,23 @@ async function validateFinalProviderPairs(
     // shadow them here either.
     const dedicated =
       taskKind != null && (tasks[taskKind] as TaskDefinition).ignoreGlobalPin === true;
-    const effProvider = isGlobal
-      ? globalSwitch?.provider
-      : ((dedicated ? undefined : globalSwitch?.provider) ??
-        configuredProvider ??
-        (taskKind ? tasks[taskKind].defaultProvider : undefined));
-    const effModel = isGlobal
-      ? globalSwitch?.model
-      : ((dedicated ? undefined : globalSwitch?.model) ?? configuredModel);
+    // Same per-field chain as the runtime binding: global pin > configured
+    // task/lane rows > registry default. `ignoreGlobalPin` and the global scope
+    // opt out of the global layer; defaults remain the task's own pair.
+    const globalLayer = dedicated ? undefined : globalSwitch;
+    const effProvider = selectPairProvider({
+      global: globalLayer,
+      task: isGlobal ? undefined : { provider: configuredProvider },
+      defaults: isGlobal
+        ? undefined
+        : taskKind
+          ? { provider: tasks[taskKind].defaultProvider }
+          : undefined,
+    }).value;
+    const effModel = selectPairModel({
+      global: globalLayer,
+      task: isGlobal ? undefined : { model: configuredModel },
+    }).value;
     if (effProvider === undefined) continue; // 对解散 → 无事可验
     if (typeof effProvider === 'string') {
       const provider = readProviderId(effProvider);
@@ -802,10 +825,16 @@ async function validateFinalProviderPairs(
             (definition as TaskDefinition).ignoreGlobalPin === true
           )
             continue;
-          const effectiveModel =
-            effModel ??
-            valueAsNonEmptyString(rowByKey.get(`task.${kind}.model`)) ??
-            (provider === 'anthropic-sub' ? ANTHROPIC_SUB_DEFAULT_MODEL : definition.defaultModel);
+          const effectiveModel = selectPairModel({
+            call: { model: effModel },
+            task: { model: valueAsNonEmptyString(rowByKey.get(`task.${kind}.model`)) },
+            defaults: {
+              model:
+                provider === 'anthropic-sub'
+                  ? ANTHROPIC_SUB_DEFAULT_MODEL
+                  : definition.defaultModel,
+            },
+          }).value;
           if (pairChanged(kind as TaskKind)) {
             validateNativeModel(scope.label, provider, effectiveModel, kind as TaskKind);
           } else if (pairBroken(provider, effectiveModel, kind as TaskKind)) {

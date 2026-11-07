@@ -29,10 +29,10 @@ import { canonicalHash } from '@/core/migration/canonical';
 import {
   type PaidEffectIdentity,
   computePaidEffectIdentity,
-} from '@/core/migration/paid-effect-protocol';
+} from '@/core/paid-work/protocol/paid-effect-protocol';
+import { lockPaidEffectControlFamily } from '@/core/paid-work/server/paid-effect-control';
 import { SCORING_ADMISSION_STATE } from '@/core/schema/assessment/lifecycle';
 import type { Tx } from '@/db/client';
-import { lockPaidEffectControlFamily } from '@/db/paid-effect-control';
 import { paid_effect, question, question_revision } from '@/db/schema';
 import {
   publishedContractSeal,

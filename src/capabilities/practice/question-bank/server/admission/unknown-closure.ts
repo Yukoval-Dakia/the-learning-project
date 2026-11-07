@@ -1,13 +1,13 @@
 // End the question's wait without resolving, voiding, or retrying its unknown payment.
 import { and, eq, lte, sql } from 'drizzle-orm';
 import { canonicalHash } from '@/core/migration/canonical';
-import type { PaidEffectIdentity } from '@/core/migration/paid-effect-protocol';
-import type { Db, Tx } from '@/db/client';
-import { lockPaidEffectControlFamily } from '@/db/paid-effect-control';
+import type { PaidEffectIdentity } from '@/core/paid-work/public';
+import { lockPaidEffectControlFamily } from '@/core/paid-work/server/paid-effect-control';
 import {
   degradePaidEffectReceiptToUnknown,
   settleExpiredPaidEffectSends,
-} from '@/db/paid-effect-store';
+} from '@/core/paid-work/server/paid-effect-store';
+import type { Db, Tx } from '@/db/client';
 import { paid_effect, question_revision } from '@/db/schema';
 import { closePendingQuestionAdmission } from '@/kernel/records/assessment-admission-close';
 import { ADMISSION_FAMILY, isPendingAdmission, lockAdmissionGroup } from './enqueue';

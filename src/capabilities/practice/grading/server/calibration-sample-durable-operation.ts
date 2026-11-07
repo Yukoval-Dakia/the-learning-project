@@ -23,9 +23,9 @@ import {
   computePaidEffectInputDigest,
   paidEffectIdentitySchema,
   paidEffectJsonEquals,
-} from '@/core/migration/paid-effect-protocol';
+} from '@/core/paid-work/protocol/paid-effect-protocol';
+import type { PaidEffectSnapshot } from '@/core/paid-work/server/paid-effect-store';
 import type { Db, Tx } from '@/db/client';
-import type { PaidEffectSnapshot } from '@/db/paid-effect-store';
 import { resolveTaskProvider } from '@/server/ai/providers';
 import {
   JUDGE_CALIBRATION_SAMPLING_ENABLED_ENV,

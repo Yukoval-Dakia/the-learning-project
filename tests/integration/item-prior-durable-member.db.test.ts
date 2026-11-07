@@ -15,7 +15,7 @@ import {
   itemPriorPaidEffectInput,
   itemPriorPaidEffectRevision,
 } from '@/capabilities/practice/question-bank/server/item-prior-paid-effect-adapter';
-import { readPaidEffect } from '@/db/paid-effect-store';
+import { readPaidEffect } from '@/core/paid-work/server/paid-effect-store';
 import { paid_effect, question } from '@/db/schema';
 import { resetDb, testDb } from '../helpers/db';
 

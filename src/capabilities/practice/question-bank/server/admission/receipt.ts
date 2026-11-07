@@ -3,7 +3,13 @@ import { z } from 'zod';
 import {
   computePaidEffectIdentity,
   paidEffectJsonEquals,
-} from '@/core/migration/paid-effect-protocol';
+} from '@/core/paid-work/protocol/paid-effect-protocol';
+import { admitPaidEffectDeliveryControl } from '@/core/paid-work/server/paid-effect-control';
+import {
+  admitPaidEffectIntent,
+  claimPaidEffectSend,
+  readPaidEffect,
+} from '@/core/paid-work/server/paid-effect-store';
 import {
   LEGACY_QUESTION_ADMISSION_PAID_UNIT,
   PREVIOUS_QUESTION_ADMISSION_PAID_UNIT,
@@ -17,8 +23,6 @@ import { ResponseSpec } from '@/core/schema/assessment/response';
 import { ScoringBasis } from '@/core/schema/assessment/scoring';
 import { QuestionGroupStructure } from '@/core/schema/assessment/structure';
 import type { Tx } from '@/db/client';
-import { admitPaidEffectDeliveryControl } from '@/db/paid-effect-control';
-import { admitPaidEffectIntent, claimPaidEffectSend, readPaidEffect } from '@/db/paid-effect-store';
 import { paid_effect, paid_effect_authorization } from '@/db/schema';
 import { SubjectProfileSchema } from '@/subjects/profile';
 import { ADMISSION_FAMILY, type AdmissionJobData } from './enqueue';

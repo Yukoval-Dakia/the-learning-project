@@ -1,9 +1,12 @@
 // One durable probe per paused route; successful authentication wakes existing waits.
 import { sql } from 'drizzle-orm';
 import { canonicalHash } from '@/core/migration/canonical';
+import {
+  lockPaidEffectControlFamily,
+  readPaidEffectControl,
+} from '@/core/paid-work/server/paid-effect-control';
 import { QUESTION_ADMISSION_CONTRACT_VERSION } from '@/core/question-admission-policy';
 import type { Db, Tx } from '@/db/client';
-import { lockPaidEffectControlFamily, readPaidEffectControl } from '@/db/paid-effect-control';
 import { fromPgBossDrizzleTx } from '@/db/pg-boss-drizzle';
 import { getStartedBoss } from '@/server/boss/client';
 import { ADMISSION_FAMILY, admissionJobId } from './enqueue';

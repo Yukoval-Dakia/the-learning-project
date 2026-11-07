@@ -12,13 +12,12 @@
 import { createHash } from 'node:crypto';
 import { and, asc, desc, eq, gt, inArray, or, sql } from 'drizzle-orm';
 import type { PgBoss } from 'pg-boss';
+import { readPaidEffectControl } from '@/core/paid-work/server/paid-effect-control';
 import {
   QUESTION_ADMISSION_CONTRACT_VERSION,
   QUESTION_ADMISSION_PAID_UNITS,
 } from '@/core/question-admission-policy';
-
 import type { Db, Tx } from '@/db/client';
-import { readPaidEffectControl } from '@/db/paid-effect-control';
 import {
   event,
   paid_effect,
