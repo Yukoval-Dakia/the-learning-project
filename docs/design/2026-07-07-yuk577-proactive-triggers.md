@@ -241,7 +241,7 @@ A3 把「刚 dismiss 哪条」列为克制承重前置（正式共写表）。�
 **③ Lane H 隔离契约（should#7——真正的撞车面；owner 已锁定两落点）**：`:206`(dwell hook)/`:549-572`(open-signal) 本就与 Lane H 不撞；真撞面是 **badge JSX 渲染落点**。owner 锁定 nudge 呈现只落两处，**都与 Lane H 的 footer/composer(`615-668`)+进度区 disjoint**：
 - ① **收起态 launcher Button(`:674-682`)** 的 count 角标/圆点（agent-actor tone，**非 alert 红**——邀请非错误）；
 - ② **drawer 开时 summary slot 顶部(~`:577`，`daily_focus` 之上)** 一行可 dismiss nudge 条：**agent-tone 左边框 + 图标 + 一行 headline + 「看看」/「×」**。「看看」→ openCopilotWith 打开 + chat 首 turn（§3.5 MF1）；「×」→ dismiss（写 dismissed event）。
-- **文案 = 确定性模板零-LLM**：ingestion「我看完《{source_document.title}》了，里面有 {n} 段题目片段」（title 空则降级「我处理完你上传的材料，提取到 {n} 个题目片段」，去《》）。**绝不「收进 N 题」**（should#3 flag-invariant）。
+- **文案 = 确定性模板零-LLM**：ingestion「我看完《{source_document.title}》了，里面有 {n} 段题目，要看看吗？」（title 空则降级「我看完你传的材料了，里面有 {n} 段题目，要看看吗？」，去《》）。**绝不「收进 N 题」**（should#3 flag-invariant）。
 - **明令不碰** footer/composer(`615-668`) + 消息列表。**两 lane 触非相邻 hunk。⚠️ Lane H 正在重做（copilot 默认即 agent），其进度组件将长在消息渲染区/footer——本 badge 严格钉死 launcher 角标 + summary 顶，物理隔开，后合者 rebase 无冲突。**
 
 **④ UI touch 文件清单（cut-1，owner 已批准）**：
