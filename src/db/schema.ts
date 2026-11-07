@@ -62,6 +62,8 @@ export {
   item_family_calibration,
   selection_observation,
 } from './schema/calibration';
+export type { DrawingSourceEpoch, DrawingSourceRef, DrawingStatus } from './schema/drawing';
+export { drawing } from './schema/drawing';
 export {
   dag_orchestration_node,
   dag_orchestration_run,

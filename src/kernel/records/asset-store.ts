@@ -158,10 +158,10 @@ export class ImmutableAssetError extends Error {
 }
 
 /** Write-once asset profiles (YUK-1548 §2.3). custom_code behaviour is frozen. */
-export type ImmutableAssetProfile = 'custom_code' | 'svg_figure' | 'sandbox_html';
+export type ImmutableAssetProfile = 'custom_code' | 'svg_figure' | 'sandbox_html' | 'drawing_svg';
 
 interface ImmutableProfileSpec {
-  idPrefix: 'sbx_' | 'svf_' | 'sbh_';
+  idPrefix: 'sbx_' | 'svf_' | 'sbh_' | 'drg_';
   storagePrefix: string;
   mime: string;
   provenanceSourceKind: string;
@@ -190,6 +190,16 @@ const IMMUTABLE_PROFILES: Record<ImmutableAssetProfile, ImmutableProfileSpec> = 
     provenanceSourceKind: 'sandbox_html',
     maxBytes: CUSTOM_ASSET_MAX_BYTES,
   },
+  // Drawing-owned SVGs get their own identity — same bytes as a learner
+  // svg_figure still produce a distinct id/key so the generic asset surface
+  // can refuse them by identity without touching shared content reuse.
+  drawing_svg: {
+    idPrefix: 'drg_',
+    storagePrefix: 'assets/drawing-svg',
+    mime: 'image/svg+xml',
+    provenanceSourceKind: 'drawing_svg',
+    maxBytes: CUSTOM_ASSET_MAX_BYTES,
+  },
 };
 
 const IMMUTABLE_STORAGE_PREFIXES = Object.values(IMMUTABLE_PROFILES).map((p) => p.storagePrefix);
@@ -202,7 +212,7 @@ const IMMUTABLE_SOURCE_KINDS = Object.values(IMMUTABLE_PROFILES).map((p) => p.pr
  * unconditional put for this path.
  */
 export async function persistImmutableAsset(
-  db: Db,
+  db: Db | Tx,
   blob: ImmutableAssetBlobClient,
   input: {
     profile: ImmutableAssetProfile;

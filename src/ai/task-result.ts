@@ -38,9 +38,12 @@ export interface LifecycleResult extends Omit<RunTaskResult, 'phases'> {}
 /** Millisecond phase timings for one long-note generation. Absent on other tasks. */
 export interface NoteGeneratePhaseTimings {
   prompt_build_ms?: number;
-  /** Null when the provider sent no token before the call ended. */
+  /** Milliseconds until the first text token. Null when the call produced none. */
   model_ttft_ms?: number | null;
+  /** Milliseconds until the first thinking token. Null when the model sent none. */
+  model_thinking_ttft_ms?: number | null;
   model_total_ms?: number;
+  /** Milliseconds from the first text token until the call ended. Zero when no text arrived. */
   stream_ms?: number;
   parse_ms?: number;
   validation_ms?: number;

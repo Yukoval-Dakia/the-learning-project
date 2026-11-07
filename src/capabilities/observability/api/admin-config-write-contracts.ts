@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { AdminConfigWriteResult } from '@/core/config/contracts/admin';
 import {
   AdminConfigGlobalEffectiveSchema,
   AdminConfigTaskEffectiveBindingSchema,
@@ -63,3 +64,13 @@ export const AdminConfigWriteResponseSchema = z.object({
     global: AdminConfigGlobalEffectiveSchema.nullable(),
   }),
 });
+
+/**
+ * Compile-time guard: the wire schema's output must satisfy the config owner's
+ * writer receipt contract (`AdminConfigWriteResult`). A drift on either side
+ * fails typecheck instead of silently changing the admin response shape.
+ */
+type ContractMatch<T extends true> = T;
+export type AdminConfigWriteWireContractMatch = ContractMatch<
+  z.infer<typeof AdminConfigWriteResponseSchema> extends AdminConfigWriteResult ? true : false
+>;

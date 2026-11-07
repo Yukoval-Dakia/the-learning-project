@@ -169,7 +169,7 @@ export const questionAdmissionAdjudicateTaskSpec = {
     defaultProvider: 'openai',
     defaultModel: 'gpt-6.1-sol',
     ignoreGlobalPin: true,
-    budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1, timeout: 120_000 },
+    budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1, timeout: 300_000 },
     needsToolCall: true,
     isMultimodal: false,
     allowedTools: ['mcp__structured_output__submit'],

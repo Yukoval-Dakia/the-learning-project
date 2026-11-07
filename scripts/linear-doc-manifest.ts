@@ -1,3 +1,6 @@
+// Enumerates tracked repo Markdown for Linear document migration. The former
+// documentation tree and PLANNING.md are no longer tracked; their copy lives in the
+// external repo-docs snapshot and is intentionally absent from this manifest.
 import { execFileSync } from 'node:child_process';
 
 type ManifestRow = {
@@ -32,62 +35,6 @@ function lastSourceCommit(path: string): string {
 }
 
 function classify(path: string): Omit<ManifestRow, 'repoPath' | 'lastSourceCommit'> {
-  if (path === 'docs/agents/linear-doc-migration.md') {
-    return {
-      role: 'current',
-      freshness: 'current',
-      verifiedAgainst: 'git ls-files + Linear Project Ops',
-      linearDestination: 'Doc Catalog - Repo Linear Manifest',
-      migrationAction: 'full-doc',
-      notes: 'Canonical repo-to-Linear mapping rules.',
-    };
-  }
-
-  if (path === 'docs/superpowers/status.md') {
-    return {
-      role: 'current',
-      freshness: 'current',
-      verifiedAgainst: 'HEAD + git log + code facts',
-      linearDestination: 'Current Status Snapshot',
-      migrationAction: 'full-doc',
-      notes: 'Primary current status source for Linear.',
-    };
-  }
-
-  if (path === 'docs/planning/v0.3-generalized-ai-learning-framework.md') {
-    return {
-      role: 'strategy',
-      freshness: 'current',
-      verifiedAgainst: 'HEAD + status.md + Linear projects',
-      linearDestination: 'Roadmap Execution Map',
-      migrationAction: 'summarized-doc',
-      notes: 'Strategy stays in repo; Linear gets execution map.',
-    };
-  }
-
-  if (path === 'PLANNING.md') {
-    return {
-      role: 'historical',
-      freshness: 'historical-reference',
-      verifiedAgainst: 'self-labelled superseded by v0.3',
-      linearDestination: 'Historical References Index',
-      migrationAction: 'catalog-only',
-      notes: 'Do not use as active roadmap.',
-    };
-  }
-
-  if (path === 'RESUME.md') {
-    return {
-      role: 'scratch',
-      freshness: 'scratch-do-not-migrate',
-      verifiedAgainst: 'git log + status.md + Linear issue extraction 2026-05-23',
-      linearDestination: 'issue extraction only',
-      migrationAction: 'issue-extraction',
-      notes:
-        'Reviewed 2026-05-23: valid leftovers mapped to YUK-13, YUK-14, YUK-15, YUK-17, YUK-47, YUK-48, YUK-49, YUK-50, and YUK-51; scratch/local notes are not mirrored.',
-    };
-  }
-
   if (path === 'README.md') {
     return {
       role: 'current',
@@ -108,90 +55,6 @@ function classify(path: string): Omit<ManifestRow, 'repoPath' | 'lastSourceCommi
       linearDestination: 'Doc Catalog - Repo Linear Manifest',
       migrationAction: 'catalog-only',
       notes: 'Repo-local agent/operator guidance remains in repo.',
-    };
-  }
-
-  if (path.startsWith('docs/agents/')) {
-    return {
-      role: 'current',
-      freshness: 'current',
-      verifiedAgainst: 'Linear workspace + repo instructions',
-      linearDestination: 'Doc Catalog - Repo Linear Manifest',
-      migrationAction: 'full-doc',
-      notes: 'Operational docs worth mirroring after verification.',
-    };
-  }
-
-  if (path.startsWith('docs/adr/')) {
-    return {
-      role: 'adr',
-      freshness: 'historical-reference',
-      verifiedAgainst: 'ADR chain + current status references',
-      linearDestination: 'Historical References Index',
-      migrationAction: 'catalog-only',
-      notes: 'Keep ADR text in repo; Linear links to it.',
-    };
-  }
-
-  if (path.startsWith('docs/audit/')) {
-    return {
-      role: 'audit',
-      freshness: 'historical-reference',
-      verifiedAgainst: 'audit date + git commit',
-      linearDestination: 'Historical References Index',
-      migrationAction: 'catalog-only',
-      notes: 'Evidence artifact; do not rewrite in Linear.',
-    };
-  }
-
-  if (
-    path.startsWith('docs/superpowers/plans/') ||
-    path.startsWith('docs/superpowers/specs/') ||
-    path.startsWith('docs/superpowers/brainstorms/') ||
-    path.startsWith('docs/superpowers/audits/')
-  ) {
-    return {
-      role: 'implementation-plan',
-      freshness: path.includes('2026-05-23-foundation-closeout-p0-physics-profile')
-        ? 'current-reference'
-        : 'historical-reference',
-      verifiedAgainst: 'git log + status.md',
-      linearDestination: 'Historical References Index',
-      migrationAction: 'catalog-only',
-      notes: 'Implementation evidence; active status is summarized elsewhere.',
-    };
-  }
-
-  if (path.startsWith('docs/design/')) {
-    return {
-      role: 'design-reference',
-      freshness: 'historical-reference',
-      verifiedAgainst: 'design bundle date + current UI code before reuse',
-      linearDestination: 'Historical References Index',
-      migrationAction: 'catalog-only',
-      notes: 'Reference only unless a new design pass refreshes it.',
-    };
-  }
-
-  if (path.startsWith('docs/modules/')) {
-    return {
-      role: 'module-doc',
-      freshness: 'needs-review',
-      verifiedAgainst: 'module code + schema before migration',
-      linearDestination: 'Historical References Index',
-      migrationAction: 'catalog-only',
-      notes: 'Review per module before making any Linear current doc.',
-    };
-  }
-
-  if (path.startsWith('docs/discussion/')) {
-    return {
-      role: 'discussion',
-      freshness: 'historical-reference',
-      verifiedAgainst: 'ADR-0014 summary',
-      linearDestination: 'Historical References Index',
-      migrationAction: 'catalog-only',
-      notes: 'Consensus evidence; Linear gets index links.',
     };
   }
 

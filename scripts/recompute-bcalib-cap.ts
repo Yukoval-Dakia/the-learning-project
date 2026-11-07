@@ -1,4 +1,4 @@
-// YUK-558 (worklist #7, spec docs/design/2026-07-03-softmax-spec.md §1.4 / Q2-d / Q-g) —
+// YUK-558 (worklist #7, spec 2026-07-03-softmax-spec §1.4 / Q2-d / Q-g) —
 // 一次性追溯 recompute：cap ship 后对已 firm-up 的存量题重跑 recalibrateQuestion，把 median-相对
 // IPW 截权追溯应用到既存的 b_calib。
 //
