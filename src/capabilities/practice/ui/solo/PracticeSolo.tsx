@@ -1,7 +1,8 @@
 // YUK-1473 — existing practice engine and lifecycle, rendered by the cleanroom M3E surface.
-import { type Ref, useCallback, useId, useState } from 'react';
+import { type Ref, useCallback, useState } from 'react';
 import type { PracticeIssuanceDtoT } from '@/core/schema/assessment';
 import { REASONING_TRACE_MAX_LEN } from '@/kernel/limits';
+import { useSubjects } from '@/ui/hooks/useSubjects';
 import { FoldList } from '@/ui-next/primitives/FoldList';
 import type { ChipTone } from '@/ui-next/public';
 import type { AttemptTimelineEvent } from '../attempt-timeline-adapter';
@@ -37,6 +38,9 @@ export interface PracticeSoloProps {
 
 type MaterialView = PracticeIssuanceDtoT['materials'][number];
 
+/** This try's own record entry lands around its hand-in time; nobody re-answers within this. */
+const SAME_TRY_WINDOW_SEC = 2;
+
 const RATING_LABEL: Record<Rating, string> = { again: '再练', hard: '模糊', good: '掌握' };
 
 const ATTEMPT_TEXT = {
@@ -52,77 +56,95 @@ function formatDay(sec: number): string {
   return `${d.getMonth() + 1}/${d.getDate()}`;
 }
 
-function formatDuration(ms: number | null): string | null {
-  if (ms == null || ms <= 0) return null;
-  if (ms < 60_000) return `用时 ${Math.max(1, Math.round(ms / 1000))} 秒`;
-  return `用时 ${Math.round(ms / 60_000)} 分钟`;
-}
-
 /** A question opens at its top (ref callback on the banner, which mounts once per question). */
 function startAtTop(node: HTMLElement | null) {
   if (node) window.scrollTo({ top: 0, behavior: 'instant' });
 }
 
 /** Where a quote button's text sits on the page: the block it belongs to. */
-/** The earlier attempts at this question, newest first, folded to the newest 3; a cause seen twice
- * across the whole history is marked (YUK-617). */
+/**
+ * The tries before this one. Closed, it answers the one thing worth knowing while on this question:
+ * how the last try went and, when known, what went wrong. Open, the newest 3 (the rest fold, L5).
+ */
 function AttemptHistory({
   events,
-  headingId,
+  submittedAt,
+  subjectId,
 }: {
   events: AttemptTimelineEvent[];
-  headingId: string;
+  /** This answer's hand-in time: the record holds this try too once the page is reopened. */
+  submittedAt: string | null;
+  subjectId: string | null;
 }) {
-  if (events.length === 0) return null;
-  const causeCounts = new Map<string, number>();
-  for (const e of events) {
-    if (e.kind === 'attempt' && e.cause) {
-      causeCounts.set(e.cause.primary, (causeCounts.get(e.cause.primary) ?? 0) + 1);
-    }
+  const { subjects } = useSubjects();
+  const cutoff = submittedAt ? Date.parse(submittedAt) / 1000 - SAME_TRY_WINDOW_SEC : null;
+  const earlier = cutoff === null ? events : events.filter((e) => e.created_at_sec < cutoff);
+  if (earlier.length === 0) return null;
+
+  // A category id ('concept') is named by the subject; an id nobody can name is never shown.
+  const causeNames = new Map<string, string>();
+  for (const subject of subjects.filter((s) => s.id !== subjectId)) {
+    for (const cause of subject.causeCategories ?? []) causeNames.set(cause.id, cause.label);
   }
+  for (const cause of subjects.find((s) => s.id === subjectId)?.causeCategories ?? []) {
+    causeNames.set(cause.id, cause.label);
+  }
+  const causeOf = (e: AttemptTimelineEvent) =>
+    e.kind === 'attempt' && e.cause
+      ? (e.cause.primary_label ?? causeNames.get(e.cause.primary) ?? null)
+      : null;
+  const causeCounts = new Map<string, number>();
+  for (const e of earlier) {
+    const cause = causeOf(e);
+    if (cause) causeCounts.set(cause, (causeCounts.get(cause) ?? 0) + 1);
+  }
+
+  const tries = earlier.filter((e) => e.kind === 'attempt').length;
+  const last = earlier.find((e) => e.kind === 'attempt');
+  const lastCause = last ? causeOf(last) : null;
+  const lastLine =
+    last?.kind !== 'attempt'
+      ? null
+      : lastCause && (causeCounts.get(lastCause) ?? 0) >= 2
+        ? `这个错出现过 ${causeCounts.get(lastCause)} 次：${lastCause}`
+        : `上次${ATTEMPT_TEXT[last.outcome].label}${lastCause ? `：${lastCause}` : ''}`;
+
   return (
-    <section className="un-ps-section un-ps-history-section" aria-labelledby={headingId}>
-      <h2 id={headingId} className="un-ps-h2">
-        作答记录
-      </h2>
-      {/* Newest 3 show; the rest fold behind 「全部 N 条」 (owner 2026-10-18, design doc L5). */}
-      <FoldList
-        items={events}
-        className="un-ps-history"
-        toggleClassName="un-ps-history-toggle"
-        renderItem={(e) => {
-          const duration = formatDuration(e.duration_ms);
-          if (e.kind === 'review') {
+    <details className="un-st-disclosure">
+      <summary>
+        <span className="un-ps-history-summary">
+          <span>{tries > 0 ? `之前做过 ${tries} 次` : `之前复习过 ${earlier.length} 次`}</span>
+          {lastLine && <span className="un-ps-history-last">{lastLine}</span>}
+        </span>
+      </summary>
+      <div className="un-ps-history-body">
+        <FoldList
+          items={earlier}
+          className="un-ps-history"
+          renderItem={(e) => {
+            if (e.kind === 'review') {
+              return (
+                <li key={e.event_id} data-tone="neutral">
+                  <span className="un-ps-history-day">{formatDay(e.created_at_sec)}</span>
+                  <span className="un-ps-history-cause">
+                    复习 · 自评「{RATING_LABEL[e.fsrs_rating]}」
+                  </span>
+                </li>
+              );
+            }
+            const text = ATTEMPT_TEXT[e.outcome];
+            const cause = causeOf(e);
             return (
-              <li key={e.event_id} data-tone="neutral">
-                <span className="un-ps-history-dot" aria-hidden="true" />
+              <li key={e.event_id} data-tone={text.tone}>
                 <span className="un-ps-history-day">{formatDay(e.created_at_sec)}</span>
-                <span className="un-ps-history-cause">
-                  复习 · 自评「{RATING_LABEL[e.fsrs_rating]}」
-                </span>
-                {duration && <span className="un-ps-history-day">{duration}</span>}
+                <span className="un-ps-history-outcome">{text.label}</span>
+                {cause && <span className="un-ps-history-cause">{cause}</span>}
               </li>
             );
-          }
-          const text = ATTEMPT_TEXT[e.outcome];
-          const repeated = !!e.cause && (causeCounts.get(e.cause.primary) ?? 0) >= 2;
-          return (
-            <li key={e.event_id} data-tone={text.tone}>
-              <span className="un-ps-history-dot" aria-hidden="true" />
-              <span className="un-ps-history-day">{formatDay(e.created_at_sec)}</span>
-              <span className="un-ps-history-outcome">{text.label}</span>
-              {e.cause && (
-                <span className="un-ps-history-cause" data-repeated={repeated || undefined}>
-                  {repeated ? '又是：' : ''}
-                  {e.cause.primary_label ?? e.cause.primary}
-                </span>
-              )}
-              {duration && <span className="un-ps-history-day">{duration}</span>}
-            </li>
-          );
-        }}
-      />
-    </section>
+          }}
+        />
+      </div>
+    </details>
   );
 }
 
@@ -150,8 +172,6 @@ export function PracticeSolo({
   // While a layer covers the page (hint drawer, figure zoom), ⌘Enter and the number keys pause.
   const hotkeysSuspended = coachOpen || zoomed !== null;
   const quoteSel = useQuotableSelection();
-  const uid = useId();
-  const id = (name: string) => `${uid}-${name}`;
 
   const quoteToCopilot = (text: string, _from: DOMRect | null) => {
     const clipped = clipQuote(text);
@@ -209,7 +229,13 @@ export function PracticeSolo({
             quotableRef: quoteSel.attach,
             resultRef: reportResult,
           }}
-          history={<AttemptHistory events={question.timelineEvents} headingId={id('history')} />}
+          history={
+            <AttemptHistory
+              events={question.timelineEvents}
+              submittedAt={ready?.accepted?.submitted_at ?? null}
+              subjectId={q?.subject ?? null}
+            />
+          }
           overlays={
             <>
               <QuoteBubble
