@@ -32,8 +32,8 @@ import {
   question_solution_prior,
   source_asset,
 } from '@/db/schema';
-import { ApiError } from '@/kernel/http';
 import { writeEvent } from '@/kernel/events';
+import { ApiError } from '@/kernel/http';
 import {
   type NormalizedContract,
   type PartRow,

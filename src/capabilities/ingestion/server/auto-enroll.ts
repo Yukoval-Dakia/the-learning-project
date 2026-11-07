@@ -307,8 +307,7 @@ export async function runAutoEnrollForSession(
     // Captured work keeps its private answer evidence (submission + participation
     // anchor) but is not graded here — scoring is slice 5. The question still enters
     // the item bank like any other block.
-    const hasCapturedAnswer =
-      Boolean(block.wrong_answer_md?.trim()) || detectStudentWork(block);
+    const hasCapturedAnswer = Boolean(block.wrong_answer_md?.trim()) || detectStudentWork(block);
     if (hasCapturedAnswer) {
       try {
         const captured = await captureIngestionOriginal(params.db, {
