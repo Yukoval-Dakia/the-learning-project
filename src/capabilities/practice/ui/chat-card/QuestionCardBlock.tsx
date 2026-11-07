@@ -213,7 +213,7 @@ export function QuestionCardBlock({
     }
     case 'undecided':
       return (
-        <Frame status={{ word: '这次没查出结果', tone: 'caution' }} note={reason}>
+        <Frame status={{ word: '暂时没查成', tone: 'caution' }} note={reason}>
           {face}
         </Frame>
       );
