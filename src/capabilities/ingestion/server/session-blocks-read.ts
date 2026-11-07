@@ -162,7 +162,9 @@ function toEnrollmentProjection(
       state: 'in_library' as const,
       reason: null,
       knowledge:
-        markers?.knowledge === 'attributed' || markers?.knowledge === 'missing'
+        markers?.knowledge === 'attributed' ||
+        markers?.knowledge === 'missing' ||
+        markers?.knowledge === 'restricted'
           ? markers.knowledge
           : null,
       library_visible: enrolled ? enrolled.draft_status !== 'draft' : null,

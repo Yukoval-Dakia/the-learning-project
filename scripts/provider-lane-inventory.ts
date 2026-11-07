@@ -514,7 +514,7 @@ export const PROVIDER_LANES = [
       },
     },
     evidence: {
-      path: 'src/db/schema/artifacts.ts',
+      path: 'drizzle/0042_yielding_blizzard.sql',
       contains: ['edge_reconciliation_log'],
     },
     attemptSemantics: {
@@ -528,16 +528,16 @@ export const PROVIDER_LANES = [
         fixedFanOutMultiplier: 1,
       },
       durableIdentity:
-        'none; pending supersede proposals still apply through edge_reconciliation_log on accept',
+        'none; supersede write path retired and edge_reconciliation_log dropped by YUK-1768; a stale pending supersede is dismiss-only (accept fails closed)',
       timeout: 'not applicable after pruning',
       clientRetry: 'not applicable after pruning',
       redelivery: 'not applicable after pruning',
       fanOut: 'zero live attempts',
       evidence: [
         {
-          path: 'src/db/schema/artifacts.ts',
-          calls: ['pgTable'],
-          contains: ['edge_reconciliation_log'],
+          path: 'src/capabilities/knowledge/server/edge-proposal-accept.ts',
+          calls: ['ApiError'],
+          contains: ["edgeOp === 'supersede'", 'retired'],
         },
       ],
     },

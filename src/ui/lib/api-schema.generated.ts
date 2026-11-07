@@ -18308,7 +18308,7 @@ export interface operations {
                             imported_question_id: string | null;
                             ingestion_enrollment: {
                                 /** @enum {string|null} */
-                                knowledge: "attributed" | "missing" | null;
+                                knowledge: "attributed" | "missing" | "restricted" | null;
                                 library_visible: boolean | null;
                                 /** @enum {string|null} */
                                 reason: "needs_text" | "pending" | "publish_failed" | "reverted" | null;
@@ -18659,7 +18659,7 @@ export interface operations {
                         block_status: string;
                         block_version: number;
                         /** @enum {string} */
-                        knowledge: "attributed" | "missing";
+                        knowledge: "attributed" | "missing" | "restricted";
                         library_visible: boolean;
                         question_id: string;
                         /** @enum {string} */
@@ -21564,7 +21564,7 @@ export interface operations {
             };
             path: {
                 id: string;
-                kind: "ingestion_session" | "copilot_run" | "echo_jobs" | "question_block" | "learning_session" | "ingestion_operation" | "judge_run";
+                kind: "ingestion_session" | "copilot_run" | "question_block" | "learning_session" | "ingestion_operation" | "judge_run";
             };
             cookie?: never;
         };

@@ -69,7 +69,9 @@ export interface RunAutoEnrollResult {
 /** Facts recorded on the question for a block auto-enrolled below the line. */
 export interface AutoEnrollmentMarkers {
   enrolled_by: 'workflow_judge';
-  knowledge: 'attributed' | 'missing';
+  /** 'restricted' = the document's derivation policy suppressed attribution —
+   *  distinct from 'missing' (attribution ran/failed and found nothing). */
+  knowledge: 'attributed' | 'missing' | 'restricted';
   /** Combined extraction/tagging confidence; a signal, never a gate. */
   confidence: number;
   figures_attached: number;
@@ -270,7 +272,7 @@ export async function runAutoEnrollForSession(
     // still enters the bank and the background knowledge backfill repairs the label.
     // A restricted usage policy forbids every model send of this document's content
     // — bridge, naming call and tag embedder alike — so the block enrolls with
-    // `knowledge: 'missing'`.
+    // `knowledge: 'restricted'` (not 'missing': the gap is policy, not attribution).
     let tagging: TaggingOutputT;
     if (sessionDocUsage.policy !== 'allow') {
       tagging = synthesizeTaggingOutput([]);
@@ -352,7 +354,12 @@ export async function runAutoEnrollForSession(
     const knowledgeIds = verdict.prefilled.knowledge_ids;
     const markers: AutoEnrollmentMarkers = {
       enrolled_by: 'workflow_judge',
-      knowledge: knowledgeIds.length > 0 ? 'attributed' : 'missing',
+      knowledge:
+        sessionDocUsage.policy !== 'allow'
+          ? 'restricted'
+          : knowledgeIds.length > 0
+            ? 'attributed'
+            : 'missing',
       confidence: verdict.confidence,
       figures_attached: block.figures.length,
       student_work: detectStudentWork(block),
