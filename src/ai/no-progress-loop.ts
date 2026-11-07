@@ -349,10 +349,21 @@ export function createNoProgressLoop(policy?: {
 
   const beforeToolCall: PiBeforeToolCall = (call, args) => {
     if (phase.status === 'closed') return deny(phase.reason);
+    if (budgetLandingDue(budget)) {
+      close('budget_landing');
+      return deny('budget_landing');
+    }
     const signature = signatureOf(call.name, args);
     if ((invalidArgumentAttempts.get(signature) ?? 0) >= INVALID_ARGUMENT_ATTEMPT_LIMIT) {
       // A gate denial is not a tool result: exclude it from settled/fingerprint.
+      // It still counts toward the run's validation budget; otherwise repeating
+      // the same invalid call could be blocked forever without ever closing.
       gateDeniedCalls.add(call.id);
+      validationFailureCount += 1;
+      if (validationFailureCount >= VALIDATION_FAILURE_LIMIT) {
+        close('no_progress');
+        return deny('no_progress');
+      }
       return { block: true, reason: INVALID_ARGUMENT_BLOCK_REASON };
     }
     if (
@@ -361,10 +372,6 @@ export function createNoProgressLoop(policy?: {
     ) {
       close('no_progress');
       return deny('no_progress');
-    }
-    if (budgetLandingDue(budget)) {
-      close('budget_landing');
-      return deny('budget_landing');
     }
     return undefined;
   };
