@@ -80,6 +80,14 @@ async function readTicket(path: string): Promise<string> {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const demand = EvidenceDemandV1.parse(JSON.parse(await readTicket(args.ticketPath)));
+  // A ticket that can never spend or has expired must not take the 7-day cooldown slot;
+  // file_bank_gap holds these too. Cap=0 is not checked here: open the cap before --confirm.
+  if (demand.control.max_budget_micro_usd !== null && demand.control.max_budget_micro_usd <= 0) {
+    throw new Error('Refusing ticket: control.max_budget_micro_usd is 0');
+  }
+  if (demand.control.needed_by !== null && Date.parse(demand.control.needed_by) <= Date.now()) {
+    throw new Error('Refusing ticket: control.needed_by has passed');
+  }
   const target = buildQuestionPreparerTarget(demand, {
     reason: `manual gap ticket (demand_id=${demand.demand_id}) filed by an operator; no search evidence scope`,
   });
