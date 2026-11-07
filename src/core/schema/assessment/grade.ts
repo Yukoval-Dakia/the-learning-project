@@ -1,5 +1,6 @@
 import {
   type AnswerCharDiff,
+  type BlankTextComparisonEntry,
   type FinalAnswerEvidence,
   compareBlankTextAnswer,
   compareNumericBlankAnswer,
@@ -127,17 +128,14 @@ export function gradeSelectUnit(unit: ScoringUnitT, entry: SelectEntry): Scoring
 }
 
 /**
- * 单空 exact：blank 作答对 blank_key，按 unit.rule 给分。
- *
- * declaredShape：冻结 slot 声明的 answer_shape（由 evaluation 按主槽位传入）。
- * 带声明时走同一共享比较核心 compareDeclaredBlank（准入 / 作者键核验 / 发布闸
- * 全部复用它，绝不两套数学）；无声明文本/数值的归一化、过程作答终态提取、
- * 数值解析与容差全部归 answer-compare。
+ * 单空 exact 的唯一实现；两个导出入口只决定文本空的比较语义：
+ * 学习者判分含过程作答终态救援，准入作者键核验只比整段答案形式。
  */
-export async function gradeBlankExactUnit(
+async function gradeBlankExactUnitCore(
   unit: ScoringUnitT,
   entry: BlankEntry,
-  declaredShape?: BlankAnswerShapeT,
+  declaredShape: BlankAnswerShapeT | undefined,
+  comparisonEntry: BlankTextComparisonEntry,
 ): Promise<ScoringUnitResultT> {
   if (unit.criterion.kind !== 'blank_key' || unit.rule == null) {
     return unjudgeable(unit, 'blank_exact needs blank_key and a rule');
@@ -166,7 +164,7 @@ export async function gradeBlankExactUnit(
     }
     correct = declared.outcome === 'correct' ? 1 : 0;
   } else if (key.kind === 'text') {
-    const comparison = compareBlankTextAnswer(key, entry.text);
+    const comparison = compareBlankTextAnswer(key, entry.text, comparisonEntry);
     if (comparison.outcome === 'undecidable') {
       return reviewPending(unit, comparison.detail);
     }
@@ -192,4 +190,29 @@ export async function gradeBlankExactUnit(
         : { correct },
     { correct_count: correct, total_count: 1 },
   );
+}
+
+/**
+ * 学习者判分入口：含 YUK-1407 过程作答终态救援。declaredShape 为冻结 slot
+ * 声明的 answer_shape（由 evaluation 按主槽位传入），带声明时走共享数学核心
+ * compareDeclaredBlank；无声明文本/数值的归一化与比较全部归 answer-compare。
+ */
+export function gradeBlankExactUnit(
+  unit: ScoringUnitT,
+  entry: BlankEntry,
+  declaredShape?: BlankAnswerShapeT,
+): Promise<ScoringUnitResultT> {
+  return gradeBlankExactUnitCore(unit, entry, declaredShape, 'learner_grading');
+}
+
+/**
+ * 准入作者键核验入口：只比整段答案形式，不做过程作答救援。
+ * 求解侧别名是候选答案而不是推导稿；整段不等就是 incorrect。
+ */
+export function gradeBlankAuthorKeyUnit(
+  unit: ScoringUnitT,
+  entry: BlankEntry,
+  declaredShape?: BlankAnswerShapeT,
+): Promise<ScoringUnitResultT> {
+  return gradeBlankExactUnitCore(unit, entry, declaredShape, 'admission_author_key');
 }

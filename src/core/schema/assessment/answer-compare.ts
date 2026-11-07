@@ -590,22 +590,35 @@ function charDiff(given: string, expected: string): AnswerCharDiff | undefined {
 }
 
 /**
- * Frozen blank text-key answer comparison, including the YUK-1407 process-answer
- * boundary: a full-text miss on a worked response first tries the explicit final
- * answer; if that cannot decide, the comparison is undecidable (pending), never
- * a fake zero. Numeric blanks do not go through here.
+ * Frozen blank text-key answer comparison.
+ *
+ * Two entries ask this question with different authority:
+ *   - 'learner_grading' (evaluation dispatch) owns the YUK-1407 process-answer
+ *     boundary: after a full-text miss on a worked response, the explicit final
+ *     answer is tried; if that cannot decide, the comparison is undecidable
+ *     (pending), never a fake zero.
+ *   - 'admission_author_key' (author-key acceptance) compares the whole answer
+ *     form only. A solver alias is one candidate answer, not a worked script, so
+ *     no rescue applies there; a miss is incorrect.
+ * Numeric blanks do not go through here.
  */
-export function compareBlankTextAnswer(key: BlankTextKeyT, raw: string): BlankTextComparison {
+export type BlankTextComparisonEntry = 'learner_grading' | 'admission_author_key';
+
+export function compareBlankTextAnswer(
+  key: BlankTextKeyT,
+  raw: string,
+  entry: BlankTextComparisonEntry,
+): BlankTextComparison {
   const normalize = (value: string) => normalizeBlankAnswerText(value, key.normalization);
   const given = normalize(raw);
   const accepted = key.accepted.map((text) => normalize(text));
   if (accepted.includes(given)) return { outcome: 'correct' };
-  if (!isProcessLikeAnswer(raw)) {
-    return {
-      outcome: 'incorrect',
-      charDiff: accepted.map((text) => charDiff(given, text)).find((entry) => entry != null),
-    };
-  }
+  // Whole-answer-form miss: same verdict under both entries.
+  const wholeTextMiss = (): BlankTextComparison => ({
+    outcome: 'incorrect',
+    charDiff: accepted.map((text) => charDiff(given, text)).find((entry) => entry != null),
+  });
+  if (entry === 'admission_author_key' || !isProcessLikeAnswer(raw)) return wholeTextMiss();
   const extraction = extractFinalAnswerWithPolicy(raw, blankHeadPolicy(key.normalization));
   const evidence = finalAnswerEvidence(extraction);
   if (extraction.kind === 'found') {

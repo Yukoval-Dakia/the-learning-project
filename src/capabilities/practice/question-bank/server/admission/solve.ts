@@ -6,7 +6,7 @@ import { rawArgumentsEvidence } from '@/core/raw-arguments-evidence';
 import { type AnswerKeyT, compareAnswerKeys } from '@/core/schema/assessment/answer-compare';
 import { compileDeclaredKey } from '@/core/schema/assessment/blank-answer-compare';
 import type { BlankAnswerShapeT } from '@/core/schema/assessment/blank-answer-shape';
-import { gradeBlankExactUnit, gradeSelectUnit } from '@/core/schema/assessment/grade';
+import { gradeBlankAuthorKeyUnit, gradeSelectUnit } from '@/core/schema/assessment/grade';
 import type { ScoringUnitResultT } from '@/core/schema/assessment/judgment';
 import { isPublicSharedMaterial } from '@/core/schema/assessment/materials';
 import { describeSelectItem } from '@/core/schema/assessment/response';
@@ -400,7 +400,7 @@ async function authorKeyAccepts(
   if (scoring.criterion.kind !== 'blank_key') return false;
   if (key.kind === 'blank_text') {
     for (const alias of key.accepted) {
-      const graded = await gradeBlankExactUnit(
+      const graded = await gradeBlankAuthorKeyUnit(
         scoring,
         { slot_id: slotId, kind: 'blank', state: 'answered', text: alias },
         shape,
@@ -412,7 +412,7 @@ async function authorKeyAccepts(
   const text = modelFinalAnswerText(key);
   if (text == null) return false;
   return authorKeyAcceptsGrade(
-    await gradeBlankExactUnit(
+    await gradeBlankAuthorKeyUnit(
       scoring,
       { slot_id: slotId, kind: 'blank', state: 'answered', text },
       shape,

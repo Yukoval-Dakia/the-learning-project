@@ -97,11 +97,11 @@ function run(input: JudgeRunInput): JudgeResultV2T {
         match: comparison.match,
         normalized_answer: normalizedAnswer,
         normalized_reference: normalizedReference,
-        ...choiceEvidence,
-        ...headEvidence,
         ...(finalAnswer?.kind === 'found'
           ? { final_answer: { value: finalAnswer.values[0] ?? '', marker: finalAnswer.marker } }
           : {}),
+        ...choiceEvidence,
+        ...headEvidence,
       },
     };
   }
