@@ -32366,6 +32366,49 @@ export interface operations {
                                     from_label: string;
                                     to_label: string;
                                 };
+                                knowledge_mutation?: {
+                                    from: {
+                                        label: string | null;
+                                        /** @enum {string} */
+                                        state: "live" | "archived" | "merged" | "missing";
+                                    }[];
+                                    into: {
+                                        label: string | null;
+                                        /** @enum {string} */
+                                        state: "live" | "archived" | "merged" | "missing";
+                                    };
+                                    /** @enum {string} */
+                                    mutation: "merge";
+                                } | {
+                                    /** @enum {string} */
+                                    mutation: "reparent";
+                                    node: {
+                                        label: string | null;
+                                        /** @enum {string} */
+                                        state: "live" | "archived" | "merged" | "missing";
+                                    };
+                                    parent: {
+                                        label: string | null;
+                                        /** @enum {string} */
+                                        state: "live" | "archived" | "merged" | "missing";
+                                    } | null;
+                                } | {
+                                    from: {
+                                        label: string | null;
+                                        /** @enum {string} */
+                                        state: "live" | "archived" | "merged" | "missing";
+                                    };
+                                    into: {
+                                        name: string;
+                                        parent: {
+                                            label: string | null;
+                                            /** @enum {string} */
+                                            state: "live" | "archived" | "merged" | "missing";
+                                        } | null;
+                                    }[];
+                                    /** @enum {string} */
+                                    mutation: "split";
+                                };
                                 learner_summary: string;
                                 title: string;
                             } | null;
@@ -33498,6 +33541,49 @@ export interface operations {
                                 knowledge_edge?: {
                                     from_label: string;
                                     to_label: string;
+                                };
+                                knowledge_mutation?: {
+                                    from: {
+                                        label: string | null;
+                                        /** @enum {string} */
+                                        state: "live" | "archived" | "merged" | "missing";
+                                    }[];
+                                    into: {
+                                        label: string | null;
+                                        /** @enum {string} */
+                                        state: "live" | "archived" | "merged" | "missing";
+                                    };
+                                    /** @enum {string} */
+                                    mutation: "merge";
+                                } | {
+                                    /** @enum {string} */
+                                    mutation: "reparent";
+                                    node: {
+                                        label: string | null;
+                                        /** @enum {string} */
+                                        state: "live" | "archived" | "merged" | "missing";
+                                    };
+                                    parent: {
+                                        label: string | null;
+                                        /** @enum {string} */
+                                        state: "live" | "archived" | "merged" | "missing";
+                                    } | null;
+                                } | {
+                                    from: {
+                                        label: string | null;
+                                        /** @enum {string} */
+                                        state: "live" | "archived" | "merged" | "missing";
+                                    };
+                                    into: {
+                                        name: string;
+                                        parent: {
+                                            label: string | null;
+                                            /** @enum {string} */
+                                            state: "live" | "archived" | "merged" | "missing";
+                                        } | null;
+                                    }[];
+                                    /** @enum {string} */
+                                    mutation: "split";
                                 };
                                 learner_summary: string;
                                 title: string;
