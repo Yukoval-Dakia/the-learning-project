@@ -3,6 +3,7 @@ import { authenticatedStartFetch } from './authenticated-fetch';
 import { startCopilotCancelRunClient } from './copilot-cancel-run-client';
 import { startCopilotChatClient } from './copilot-chat-client';
 import { startCopilotCheckpointRevertClient } from './copilot-checkpoint-revert-client';
+import { startCopilotEntityCardClient } from './copilot-entity-card-client';
 import {
   dismissStartCopilotNudgeFunction,
   markStartCopilotNudgeOpenedFunction,
@@ -21,6 +22,7 @@ export const startCopilotClient: CopilotClient = {
   revertCheckpoint: startCopilotCheckpointRevertClient,
   cancelRun: startCopilotCancelRunClient,
   listTurns: startCopilotTurnsClient,
+  getEntityCard: startCopilotEntityCardClient,
   createSession: startCopilotCreateSessionClient,
   listSessions: startCopilotSessionsClient,
   dismissNudge: async (id) => {
