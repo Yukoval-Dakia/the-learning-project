@@ -20,7 +20,9 @@ export const coachTaskSpec = {
     kind: 'CoachTask',
     description:
       'Wave 5 / T-D6 — Phase 3 Global Coach Orchestrator. Reads via the `coach` DomainTool allowlist and outputs a `TodayPlan` draft consumed by the coach_daily handler. Count, minutes, time box and subject mix are computed server-side; the model supplies daily_focus, knowledge focus, intent tags and proposals. All mutations are routed through propose_* tools (zero direct DB writes).',
-    budget: { ...DEFAULT_BUDGET, maxIterations: 12, timeout: 120_000 },
+    // TEST longest 308s (tlp-audit-artifacts/test-to-nas/route-c-plus-counts-20261106.txt);
+    // 900s clears it and stays under the 1h stuck-run bound.
+    budget: { ...DEFAULT_BUDGET, maxIterations: 12, timeout: 900_000 },
     needsToolCall: true,
     isMultimodal: false,
     // The coach_daily handler supplies the surface-specific DomainTool

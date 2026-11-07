@@ -148,12 +148,11 @@ export const DEFAULT_TASK_BUDGET: TaskBudget = {
   maxCost: 0.5,
   transientRetries: 0,
   // Loop guard, not a cost lever (owner 2026-11-07, YUK-1983): must sit above
-  // the slowest real completion. Measured basis: TEST 4710 runs 2026-10-07→11-05
+  // the slowest real completion. Measured: TEST 4710 runs 2026-10-07→11-05
   // (tlp-audit-artifacts/test-to-nas/route-c-plus-counts-20261106.txt) put the
-  // tier's flash worst at 40s; cross-provider worst on this tier is
-  // mimo-v2.5-pro Attribution at 57–60s (src/server/ai/AGENTS.md latency
-  // profile). 120s clears both; tasks with longer measured tails declare their
-  // own timeout instead of widening this default.
+  // tier's worst completion at 82s (SemanticJudgeTask; QuizVerify 77s), so 120s
+  // is 1.46× the measured longest. Tasks with longer measured tails declare
+  // their own timeout instead of widening this default.
   timeout: 120_000,
 };
 

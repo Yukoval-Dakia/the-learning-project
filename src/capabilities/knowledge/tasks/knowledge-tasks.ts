@@ -98,7 +98,9 @@ export const knowledgeReviewTaskSpec = {
     kind: 'KnowledgeReviewTask',
     description:
       '看完整 tree + 最近 mistakes，提议任意 mutation（reparent/merge/split/archive/propose_new）让 tree 更合理',
-    budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 12, timeout: 120_000 },
+    // TEST longest success 574s under the 12-turn ceiling; 900s clears it. The two
+    // 3000s failures came from the TEST 999-iteration override, not this budget.
+    budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 12, timeout: 900_000 },
     needsToolCall: true,
     isMultimodal: false,
     // YUK-1553 — the registered `knowledge_review` surface (readers +

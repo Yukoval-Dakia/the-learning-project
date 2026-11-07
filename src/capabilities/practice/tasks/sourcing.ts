@@ -103,7 +103,11 @@ export const sourcingTaskSpec = {
     kind: 'SourcingTask',
     description:
       "YUK-216 S2 slice 2 (题源扩展 Strategy D, docs/archive/superpowers/plans/2026-06-05-yuk216-question-source-s2.md §3). Tool-calling agent: given a subject + 考点/题型 + count, searches the web (Tavily) for EXISTING practice questions, restructures each into a SourcedQuestion (kind + prompt_md + reference_md + per-question source_url/title provenance), and emits a SourcingTaskOutput. First cut extracts from HTML/TEXT sources only (OF-1; no image sources). The sourcing handler injects the Tavily remote MCP + the in-process domain-tool MCP at run time (mirrors QuizGenTask's mount pattern) — allowedTools stays [] here so non-handler callers / tests register no tools. Output questions land as draft_status='draft' (source='web_sourced', tier 2) and chain a source_verify job.",
-    budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 8, timeout: 240_000 },
+    // TEST's two 3000s failures came from the TEST 999-iteration override, not
+    // this workload: 311 provider requests ≈ 311 turns against the 8-turn ceiling
+    // here. Capped runs spend 8.5–15s per turn (376s over 44 requests), so 600s is
+    // a wide margin; the iteration cap, not this value, ends runaway searching.
+    budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 8, timeout: 600_000 },
     enforceMaxCost: true,
     needsToolCall: true,
     isMultimodal: false,
