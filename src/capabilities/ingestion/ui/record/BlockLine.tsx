@@ -80,7 +80,7 @@ export function BlockLine({
             {lowConfidence && <span>这道题认得把握不高，对照原页看一下。</span>}
             {emptyOptions && <span>选项可能是图，对照原页看。</span>}
             {noKnowledge && <span>知识点还没标。</span>}
-            {restricted && <span>这份资料设了只用于答题，不配知识点。</span>}
+            {restricted && <span>这份资料只用于答题，不配知识点。</span>}
             {held && <span>{held}</span>}
           </p>
         ) : null}
