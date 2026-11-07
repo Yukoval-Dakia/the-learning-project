@@ -202,6 +202,7 @@ salt ∈ {0,1,1393})、int 字面量（`597_001`、`406_440_3`）、int pair 字
 | 79 | assessment-resolution-claim | evt_native_resolution_<hash> | hashtext | transaction | xact | 1 | assessment-evaluation-group |
 | 80 | appeal-rejudge-legacy-claim | hte(<appeal.id>, 0) | hashtextextended:0 | transaction | xact | 1 |  |
 | 81 | supply-spend-day | supply-spend:v1:<day> | hashtextextended:0 | transaction | xact | 1 |  |
+| 82 | knowledge-create-name | knowledge:create-name:<scope>:<normalized-name> | hashtext | transaction | xact | 1 | proposal-decision |
 
 #10/#79/#80 由旧版混族行 `assessment-appeal-claim`（sites 3）拆出：request
 （appeal.ts:24）、resolution（appeal.ts:78）、历史 rejudge（rejudge.ts:45）

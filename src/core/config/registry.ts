@@ -288,6 +288,19 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     exposure: 'operator',
     flag: OPT_IN_FLAG,
   },
+  QUESTION_ROOT_PLACEMENT_REFILE_ENABLED: {
+    schema: z.boolean(),
+    codeDefault: false,
+    envName: 'QUESTION_ROOT_PLACEMENT_REFILE_ENABLED',
+    envParse: flagEnv,
+    tier: 'A',
+    note: '默认关：关着时 mover 只报告不改库，开着才把唯一匹配的根挂载题归位到新节点',
+    description: 'root-attached teaching-draft 题按 learner_topic 精确名归位到唯一同名节点',
+    consumers: ['practice.question-bank.root-placement-refile'],
+    reload: 'per-call',
+    exposure: 'operator',
+    flag: OPT_IN_FLAG,
+  },
   JUDGE_FALLBACK_PROVIDER: {
     // '' = 显式关闭跨 provider 兜底（env 语义）；非空 = provider 名（写端校验）。
     // reader 侧 trim 后 ' ' 也算显式关——不能裸存 raw。

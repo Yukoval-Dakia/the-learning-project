@@ -7,10 +7,7 @@ import {
 import type { Db, Tx } from '@/db/client';
 import { costUsdToMicroUsd } from '@/kernel/cost';
 import { writeEvent } from '@/kernel/events';
-import {
-  proposalAutoApplyEnabled,
-  proposalAutoApplyMarker,
-} from '@/kernel/proposals/auto-apply-marker';
+import { proposalAutoApplies, proposalAutoApplyMarker } from '@/kernel/proposals/auto-apply-marker';
 import { assertLearnerSummaryAllowed } from '@/kernel/proposals/learner-summary';
 // Cited evidence records move raw -> linked in the same scope as the propose event;
 // pass a tx to make both atomic.
@@ -154,7 +151,7 @@ export async function writeAiProposal(db: DbLike, input: WriteAiProposalInput): 
   // Creation-time switch: rows written while the lane is off carry no marker, so
   // turning it on later never applies them retroactively.
   const autoApplyMarker =
-    input.auto_apply_eligible === false || !proposalAutoApplyEnabled()
+    input.auto_apply_eligible === false || !proposalAutoApplies(payload.kind)
       ? undefined
       : proposalAutoApplyMarker(payload.kind);
   const eventPayload = autoApplyMarker

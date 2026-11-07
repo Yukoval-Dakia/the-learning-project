@@ -33,6 +33,7 @@ import {
   type ProposalBatchRetractInputT,
 } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
+import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
 import { event } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import {
@@ -356,9 +357,11 @@ export async function batchRetractAutoAppliedProposals(
       const result = await retractAiProposal(db, proposalId, {
         ...(parsed.reason_md ? { reason_md: parsed.reason_md } : {}),
         guard: async (tx: Tx) => {
-          // The decision lock is held; take the owner row locks the applier will
-          // need before re-reading owner state, so an edit that commits after the
-          // pre-scan is visible here instead of archived away.
+          // The decision lock is held; the shared learning-state lock comes
+          // before any owner row lock — the mover and the applier both take it
+          // first, so a node FOR UPDATE held while waiting on it would deadlock.
+          // Advisory xact locks are re-entrant; the applier re-acquires freely.
+          await acquireLearningStateWriteLock(tx);
           await lockAutoAppliedUndoOwnerRows(tx, proposalId);
           const fresh = (await classifyAutoAppliedUndoBatch(tx, [proposalId])).get(proposalId);
           if (!fresh) {

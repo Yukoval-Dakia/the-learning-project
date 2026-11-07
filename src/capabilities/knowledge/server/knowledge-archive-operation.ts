@@ -8,10 +8,20 @@
 
 import { and, eq, inArray, isNull } from 'drizzle-orm';
 import { newId } from '@/core/ids';
+import { QUESTION_EDIT_ACTION } from '@/core/schema/event/experimental';
 import type { Tx } from '@/db/client';
-import { event, knowledge } from '@/db/schema';
+import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
+import { event, knowledge, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { ApiError } from '@/kernel/http';
 import { findExistingRateEvent } from '@/kernel/proposals/applier-helpers';
+import {
+  KNOWLEDGE_UNDO_REFILE_REASON,
+  isAutoOwnedAttachment,
+  loadAttachmentChangeMap,
+  selectNodeAttachedQuestions,
+} from '@/kernel/proposals/node-question-attachments';
+import { batchResolveAncestorIds } from '@/kernel/read-models/knowledge-tree';
 import { projectKnowledgeNodeGuarded } from '@/kernel/records/knowledge-node-materialization';
 import { type RetiredKnowledgeEdge, prepareKnowledgeArchive } from './proposals';
 
@@ -85,6 +95,16 @@ export async function retractKnowledgeCreate(
     throw new Error('knowledge retraction requires the correction event id');
   }
 
+  // Question refiling below takes question rows FOR UPDATE after the node
+  // lock. Writers that lock a node row before a question row (merge accepts,
+  // duplicate merges, the placement refile) share this learning-state lock, so
+  // they serialize whole-transaction behind it instead of meeting the retract
+  // mid-flight. Editors that take no node lock still order question locks
+  // parent→part (editQuestion FOR UPDATEs the group root before updating a
+  // part, no global lock); the FOR UPDATE batch below must take the same rows
+  // parents-first or a part sorted before its parent deadlocks against one.
+  await acquireLearningStateWriteLock(tx);
+
   const archiveEventId = newId();
   const now = new Date();
   const retiredEdges = await prepareKnowledgeArchive(
@@ -147,5 +167,81 @@ export async function retractKnowledgeCreate(
     created_at: now,
   });
   await projectKnowledgeNodeGuarded(tx, nodeId);
+
+  // Questions pointing at the archived node must not keep a dead reference.
+  // The node row lock above is held through this refile, so a concurrent
+  // root-placement move cannot commit a new reference to this node mid-retract:
+  // its FOR SHARE on the node waits for this commit and then sees it archived.
+  const chains = await batchResolveAncestorIds(tx, [nodeId]);
+  const top = chains.get(nodeId)?.at(-1);
+  const refileRoot = top
+    ? (
+        await tx
+          .select({ id: knowledge.id })
+          .from(knowledge)
+          .where(
+            and(eq(knowledge.id, top), isNull(knowledge.parent_id), isNull(knowledge.archived_at)),
+          )
+          .limit(1)
+      )[0]?.id
+    : undefined;
+
+  // Only attachments the automation itself placed may be rewritten. The shared
+  // event-history proof requires exactly one attribution change — the refile
+  // that put the question on this node; born-here rows, learner placements,
+  // merge rewrites and post-move edits all fail it and block the whole
+  // retract instead of being silently re-rooted. Every retract entry (inbox
+  // single, batch undo) lands here so the guard cannot be bypassed by
+  // skipping the batch classifier.
+  const refs = await selectNodeAttachedQuestions(tx, nodeId, { forUpdate: true });
+  const changes = await loadAttachmentChangeMap(
+    tx,
+    refs.map((row) => row.id),
+  );
+  const foreign = refs.filter((row) => !isAutoOwnedAttachment(row, nodeId, changes));
+  const attachedConflict = () =>
+    new ApiError(
+      'conflict',
+      '已经有题目挂在这个知识点上，撤销会让它们失去归属，所以先保留了。',
+      409,
+    );
+  if (foreign.length > 0) throw attachedConflict();
+  // Auto-owned rows are attached to exactly [nodeId]; without a live root
+  // ancestor there is nowhere to return them, so the retract blocks whole
+  // (same outcome the batch classifier produces) instead of leaving the
+  // questions pointing at an archived node id.
+  if (refs.length > 0 && refileRoot == null) throw attachedConflict();
+
+  for (const row of refs) {
+    const next = row.knowledgeIds.filter((id) => id !== nodeId);
+    if (refileRoot) next.push(refileRoot);
+    const nextVersion = row.version + 1;
+    await tx
+      .update(question)
+      .set({ knowledge_ids: next, updated_at: now, version: nextVersion })
+      .where(eq(question.id, row.id));
+    await writeEvent(tx, {
+      id: newId(),
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: QUESTION_EDIT_ACTION,
+      subject_kind: 'question',
+      subject_id: row.id,
+      outcome: 'success',
+      payload: {
+        question_id: row.id,
+        previous_version: row.version,
+        next_version: nextVersion,
+        before: { knowledge_ids: row.knowledgeIds },
+        after: { knowledge_ids: next },
+        reason: KNOWLEDGE_UNDO_REFILE_REASON,
+        archived_node_id: nodeId,
+        refile_root_id: refileRoot ?? null,
+      },
+      caused_by_event_id: archiveEventId,
+      created_at: now,
+    });
+  }
+
   return { node_id: nodeId };
 }
