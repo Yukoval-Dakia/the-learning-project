@@ -54,7 +54,7 @@ export const interventionRecommendationTaskSpec = {
     kind: 'InterventionRecommendationTask',
     description:
       'Selects one method from the server-provided deterministic pedagogy shortlist, or abstains. It cannot restore an excluded/disabled method and does not claim causal method efficacy.',
-    budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },
+    budget: { ...DEFAULT_BUDGET, maxIterations: 1 },
     needsToolCall: false,
     isMultimodal: false,
     allowedTools: [],

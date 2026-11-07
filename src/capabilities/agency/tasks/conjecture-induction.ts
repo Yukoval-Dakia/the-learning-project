@@ -80,8 +80,9 @@ export const mindModelInductionTaskSpec = {
     // Measured: a 12-cell real-Opus run on the grounded packet took 42–61s per
     // successful sample, and the old 60s cap aborted roughly half mid-flight. One turn
     // ended 10/24 samples as error_max_turns after writing reasoning but before
-    // JSON; no tools are allowed, so turn two can only finish output.
-    budget: { ...DEFAULT_BUDGET, maxIterations: 2, timeout: 120_000 },
+    // JSON; no tools are allowed, so turn two can only finish output. The 120s tier
+    // default already clears the 61s tail; inherit it instead of restating the value.
+    budget: { ...DEFAULT_BUDGET, maxIterations: 2 },
     needsToolCall: false,
     isMultimodal: true,
     allowedTools: [],
@@ -106,8 +107,9 @@ export const conjectureGroupingTaskSpec = {
     description:
       'Groups misconception hypotheses by semantic equivalence across claim_md and the complete DiagnosticSpec. Input = { hypotheses: [{ claim_md, diagnostic_spec }] }. Output = { groups: number[][] }.',
     // Structured output can spend early turns on reasoning before emitting JSON;
-    // measured fixed-batch runs timed out at 2 turns under the old 60s cap.
-    budget: { ...DEFAULT_BUDGET, maxIterations: 3, timeout: 120_000 },
+    // measured fixed-batch runs timed out at 2 turns under the old 60s cap. The
+    // 120s tier default covers that tail, so inherit it rather than restating it.
+    budget: { ...DEFAULT_BUDGET, maxIterations: 3 },
     needsToolCall: false,
     isMultimodal: false,
     allowedTools: [],

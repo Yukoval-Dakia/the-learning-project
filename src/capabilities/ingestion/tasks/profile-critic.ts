@@ -30,7 +30,7 @@ export const profileCriticTaskSpec = {
     kind: 'ProfileCriticTask',
     description:
       'U7 (YUK-203) — review a draft SubjectProfile for taxonomy/capability/route/prompt/fixture issues. Proposal-only; single-shot, no tools. Input { draft } → strict JSON { review_md, patches[], blocking }.',
-    budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1, timeout: 60_000 },
+    budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1 },
     needsToolCall: false,
     isMultimodal: false,
     allowedTools: [],

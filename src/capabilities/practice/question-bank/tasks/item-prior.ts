@@ -81,7 +81,7 @@ export const itemPriorLlasaTaskSpec = {
     kind: 'ItemPriorLlasaTask',
     description:
       'YUK-376 — LLaSA 学生模拟冷启先验（opt-in 变体，默认仍是 ItemPriorTask feature→b）。模拟 5 档 θ × 2 名学生实际作答（学生不见 reference_md，作答后对照判分），输出 simulated_responses；确定性 1PL MLE 反推 b（src/core/item-prior-llasa.ts），写 item_calibration（source=llm_prior_llasa, track=hard）。间接模拟路线——直接 zero-shot 估难度已证伪（ADR-0043 b_anchor 来源节）。',
-    budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1, timeout: 60_000 },
+    budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1 },
     needsToolCall: false,
     isMultimodal: false,
     allowedTools: [],
@@ -102,7 +102,7 @@ export const itemPriorTaskSpec = {
     kind: 'ItemPriorTask',
     description:
       'B1-W1 慢热阶段① — 给一道新题估冷启先验难度 b（logit 尺度）。输入=prompt_md + kind + knowledge_context（节点 name + 可选 anchored_b）。输出=b_logit + confidence + reasoning。单次结构化输出（无 tool loop，无 Tavily），写 item_calibration（source=llm_prior, track=hard）。⚠️ 不直接 prompt 估难度（文献 r≈0，phase2-synthesis-lanes:770），prompt 走「抽教学特征」路线。b 是 θ̂ 更新读的外部锚——只 propose-only 冷启锚，慢热由 fixed-anchor 校准 firm-up。',
-    budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1, timeout: 60_000 },
+    budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1 },
     needsToolCall: false,
     isMultimodal: false,
     allowedTools: [],

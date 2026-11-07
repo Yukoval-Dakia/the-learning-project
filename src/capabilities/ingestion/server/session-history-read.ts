@@ -1,5 +1,4 @@
 import { and, asc, eq, inArray, isNull } from 'drizzle-orm';
-
 import { parseDraftRef } from '@/core/question-draft-ref';
 import type { Db } from '@/db/client';
 import { learning_session, question, question_block } from '@/db/schema';
@@ -12,6 +11,7 @@ import {
   hasAgentEvidence,
   readAgentRunHistory,
 } from './agent/history';
+import { readExtractionNotices } from './extraction-notices';
 import { readSessionCostEvidence } from './session-cost-evidence';
 import { readSessionTitles } from './session-titles';
 
@@ -432,6 +432,7 @@ export async function readIngestionSessionHistory(
       updated_at: session.updated_at.toISOString(),
       error_message: session.error_message,
       warnings: session.warnings ?? [],
+      ...(await readExtractionNotices(db, sessionId)),
     },
     run,
     prior_runs,
