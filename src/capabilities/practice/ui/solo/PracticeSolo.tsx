@@ -99,6 +99,7 @@ function AttemptHistory({
     if (cause) causeCounts.set(cause, (causeCounts.get(cause) ?? 0) + 1);
   }
 
+  const tries = earlier.filter((e) => e.kind === 'attempt').length;
   const last = earlier.find((e) => e.kind === 'attempt');
   const lastCause = last ? causeOf(last) : null;
   const lastLine =
@@ -112,7 +113,7 @@ function AttemptHistory({
     <details className="un-st-disclosure">
       <summary>
         <span className="un-ps-history-summary">
-          <span>之前做过 {earlier.length} 次</span>
+          <span>{tries > 0 ? `之前做过 ${tries} 次` : `之前复习过 ${earlier.length} 次`}</span>
           {lastLine && <span className="un-ps-history-last">{lastLine}</span>}
         </span>
       </summary>

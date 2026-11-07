@@ -441,9 +441,7 @@ function HintStageCard({
     return (
       <div className={isReference ? 'un-hl-card full' : 'un-hl-card'}>
         <div className="un-hl-card-top">
-          <span className="un-hl-badge">
-            {stage.key} · {isReference ? '参考解答' : '固定的下一步'}
-          </span>
+          <span className="un-hl-badge">{isReference ? '参考解答' : '固定的下一步'}</span>
           {isReference && (
             <span className="un-hl-noindep">
               <CircleAlert size={14} aria-hidden="true" />
@@ -471,9 +469,7 @@ function HintStageCard({
   return (
     <div className="un-hl-card">
       <div className="un-hl-card-top">
-        <span className="un-hl-badge">
-          {stage.key} · {stage.weight}
-        </span>
+        <span className="un-hl-badge">{stage.weight}</span>
         <span className="un-hl-gives">{stage.label}</span>
       </div>
       <div className="un-hl-body">
