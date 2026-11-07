@@ -171,6 +171,12 @@
   font-size: 1em;
 }
 
+[data-ui-next] :where(.un-md-table) {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
 /* Tables: scroll sideways instead of squeezing, small text, rules between rows only. */
 [data-ui-next] :where(.un-read) :where(table) {
   display: block;

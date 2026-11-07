@@ -294,6 +294,11 @@ export function assetIdFromContentUrl(src: string | undefined): string | null {
   }
 }
 
+/** Not every surface has the reading styles, and a wide table must scroll rather than break its card. */
+function MarkdownTable({ node: _node, ...props }: ComponentProps<'table'> & { node?: unknown }) {
+  return <table {...props} className="un-md-table" />;
+}
+
 type MarkdownImageProps = ComponentProps<'img'> & { node?: unknown };
 
 /** Resolve protected source_asset URLs through apiFetch before handing bytes to <img>. */
@@ -361,6 +366,31 @@ const FALLBACK_DOLLARS = new RegExp(
   'g',
 );
 
+const TABLE_DELIMITER_ROW = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
+/** `$` … `$` as Pandoc reads it: no space inside either end, and no digit right after, so 「$5 | $10」 is two prices. */
+const INLINE_MATH = /(?<![\\$])\$(?!\s)[^$\n]*?[^\s\\]\$(?!\d)/g;
+
+/**
+ * A table row is split at every `|` before any formula is read, so `$|x|$` in a cell would fall
+ * apart and cost the row its later cells. Inside a formula, `\vert` draws the same bar.
+ */
+function protectTableMathPipes(source: string): string {
+  if (!source.includes('|')) return source;
+  const lines = source.split('\n');
+  const inRow = (line: string) =>
+    line.replace(INLINE_MATH, (math) => math.replace(/(?<!\\)\|/g, '\\vert '));
+  for (let index = 1; index < lines.length; index += 1) {
+    const line = lines[index] as string;
+    if (!line.includes('|') || !TABLE_DELIMITER_ROW.test(line)) continue;
+    if (!lines[index - 1]?.includes('|')) continue;
+    lines[index - 1] = inRow(lines[index - 1] as string);
+    for (let row = index + 1; row < lines.length && lines[row]?.includes('|'); row += 1) {
+      lines[row] = inRow(lines[row] as string);
+    }
+  }
+  return lines.join('\n');
+}
+
 function escapeLooseDollars(source: string): string {
   return source.replace(
     FALLBACK_DOLLARS,
@@ -419,13 +449,15 @@ export function MathMarkdown({
   const source =
     active === NO_MATH_PLUGINS
       ? children
-      : normalizeMathDelimiters(fallback ? escapeLooseDollars(children) : children);
+      : protectTableMathPipes(
+          normalizeMathDelimiters(fallback ? escapeLooseDollars(children) : children),
+        );
   return (
     <MarkdownRenderer
       {...divProps}
       remarkPlugins={[...active.remarkPlugins, GFM_PLUGIN, ...(remarkPlugins ?? [])]}
       rehypePlugins={active.rehypePlugins}
-      components={{ ...components, img: MarkdownImage }}
+      components={{ table: MarkdownTable, ...components, img: MarkdownImage }}
       remarkRehypeOptions={remarkRehypeOptions}
     >
       {source}
