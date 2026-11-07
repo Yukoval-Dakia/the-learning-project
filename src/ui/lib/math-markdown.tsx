@@ -76,13 +76,81 @@ function remarkLoneDisplayMath() {
   };
 }
 
+const LEADING_CLOSING = /^[，。；：！？、）》」』】,.;:!?)]+/;
+const TRAILING_OPENING = /[（《「『【(]+$/;
+/** A longer formula has to be free to wrap, so it can't be held on one line with its punctuation. */
+const TIE_MAX_LATEX = 40;
+
+interface HastLike {
+  type: string;
+  tagName?: string;
+  value?: string;
+  properties?: { className?: unknown };
+  children?: HastLike[];
+}
+
+function isInlineFormula(node: HastLike | undefined): boolean {
+  const names = node?.properties?.className;
+  return node?.type === 'element' && Array.isArray(names) && names.includes('katex');
+}
+
+function latexLength(node: HastLike): number | null {
+  if (node.tagName === 'annotation') return node.children?.[0]?.value?.length ?? null;
+  for (const child of node.children ?? []) {
+    const length = latexLength(child);
+    if (length !== null) return length;
+  }
+  return null;
+}
+
+/**
+ * A browser may break on either side of a formula, even right before 「，」 or after 「（」. A short
+ * formula goes in one no-wrap span with the punctuation that belongs to it.
+ */
+function tieMathPunctuation(node: HastLike): void {
+  const children = node.children;
+  if (!children) return;
+  const tied: HastLike[] = [];
+  for (let index = 0; index < children.length; index += 1) {
+    const child = children[index] as HastLike;
+    if (!isInlineFormula(child)) {
+      tieMathPunctuation(child);
+      tied.push(child);
+      continue;
+    }
+    const previous = tied[tied.length - 1];
+    const next = children[index + 1];
+    const opening = previous?.type === 'text' ? previous.value?.match(TRAILING_OPENING)?.[0] : null;
+    const closing = next?.type === 'text' ? next.value?.match(LEADING_CLOSING)?.[0] : null;
+    if ((!opening && !closing) || (latexLength(child) ?? TIE_MAX_LATEX + 1) > TIE_MAX_LATEX) {
+      tied.push(child);
+      continue;
+    }
+    if (opening && previous?.value) previous.value = previous.value.slice(0, -opening.length);
+    if (closing && next?.value) next.value = next.value.slice(closing.length);
+    tied.push({
+      type: 'element',
+      tagName: 'span',
+      properties: { className: ['un-math-tie'] },
+      children: [
+        ...(opening ? [{ type: 'text', value: opening }] : []),
+        child,
+        ...(closing ? [{ type: 'text', value: closing }] : []),
+      ],
+    });
+  }
+  node.children = tied;
+}
+
+const rehypeTieMathPunctuation = () => tieMathPunctuation;
+
 function cacheMathPlugins(
   remarkMath: MathPlugins['remarkPlugins'][number],
   rehypeKatex: MathPlugins['rehypePlugins'][number],
 ): MathPlugins {
   loadedMathPlugins = {
     remarkPlugins: [remarkMath, remarkLoneDisplayMath],
-    rehypePlugins: [rehypeKatex],
+    rehypePlugins: [rehypeKatex, rehypeTieMathPunctuation],
   };
   return loadedMathPlugins;
 }
