@@ -224,6 +224,7 @@ export const dbTestInclude = [
   'tests/integration/advisory-locks.db.test.ts',
   'src/server/ai/provider-attempt-lifecycle.db.test.ts',
   'src/server/ai/provider-session-admission.db.test.ts',
+  'src/server/ai/provider-transient-retry.db.test.ts',
   'src/server/ai/solution-generate.test.ts',
   'src/server/ai/tools/author-question.test.ts',
   'src/server/ai/tools/propose-question-edit.db.test.ts',

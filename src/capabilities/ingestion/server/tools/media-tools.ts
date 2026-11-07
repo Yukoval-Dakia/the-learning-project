@@ -3,6 +3,7 @@ import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import {
   GLM_OCR_PRICE_CNY_PER_MILLION_TOKENS,
+  GlmResendableRejectionError,
   runGlmLayoutParsingWithAttempt,
 } from '@/capabilities/ingestion/server/glm_ocr';
 import { PermanentError, RetryableError } from '@/core/schema/structured_question';
@@ -739,10 +740,21 @@ async function executeGlmOcr(ctx: ToolContext, raw: GlmOcrInput): Promise<GlmOcr
     // err.name === 'AbortError' check can never fire — test the signal.)
     if (ctx.signal?.aborted) throw err;
     const msg = err instanceof Error ? err.message : String(err);
+    if (err instanceof GlmResendableRejectionError) {
+      // A bound provider rejection (429 congestion / 408 / 409 / 5xx) provably
+      // billed nothing — the shared table says the agent may safely re-dispatch.
+      return {
+        ...base,
+        status: 'failed',
+        reason: `provider_rejected: ${msg}`,
+        retryable: true,
+        anchor,
+      };
+    }
     if (err instanceof PermanentError) {
       // A PermanentError either fired BEFORE dispatch (credential fail-fast —
       // the provider was never called, safe to retry) or the provider itself
-      // answered 4xx (known outcome — billed or not, never auto-redispatch).
+      // answered 4xx or quota (known outcome — billed or not, never auto-redispatch).
       const notSent = !(process.env.ZHIPU_API_KEY ?? '').trim();
       return {
         ...base,
