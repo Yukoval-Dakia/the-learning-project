@@ -1,8 +1,10 @@
 # IngestionSession — 录入会话状态机的单一所有者
 
+> **2026-11-07 现状：** `src/server/ingestion/session.ts` 已不存在，`ingestion_session` 表已 DROP。type=ingestion 的状态写入 owner 是 `src/capabilities/ingestion/server/session-lifecycle.ts`（DOCX 文本线在 `src/capabilities/ingestion/server/docx/text-session-lifecycle.ts`），会话行落在 `learning_session(type='ingestion')`；`question_block.ingestion_session_id` 保留并指向 `learning_session.id`。single-owner / transition 守卫 / 同事务 `job_events` 的约束不变；文末 2026-10-23 归属修订已记录该迁移，本节补上表形态与旧路径的现状。
+
 **决策**：`src/server/ingestion/session.ts` 是**唯一**可以写入 `ingestion_session.status` 和 `question_block.status` 的代码位置。任何 route handler / pg-boss handler / 服务函数都**不允许**直接 `db.update(ingestion_session)…status = …` 或 `db.update(question_block)…status = …`。所有状态迁移必须调用模块导出的 transition 函数（`initiateUpload` / `enqueueExtraction` / `markExtractionStarted` / `applyExtractionResult` / `markExtractionFailed` / `applyRescue` / `markReviewed` / `commitImport`），由模块内部守卫 from-state、写 `job_events`、保证事务原子性。
 
-状态机定义见 `CONTEXT.md` "录入会话" 词条；调用者清单见 `docs/architecture.md` "录入会话状态机" 章节。
+状态机定义见 `CONTEXT.md` "录入会话" 词条；调用者清单见 `docs/architecture.md` "学习会话 (LearningSession) 多态状态机" 章节（原「录入会话状态机」章节已并入）。
 
 ---
 

@@ -1,9 +1,11 @@
 # ADR-0066 — TypeScript 全栈与实时自适应学习
 
-**Status:** Accepted target（2026-10-06）；尚未实施或部署。
+**Status:** Accepted target（2026-10-06）；部分实施——TanStack Start 前门与 DBOS 持久层已在跑，实时自适应闭环与 YUK-1338 验收未完成。
 **Decision source:** owner「不错。就这么定下来了。」
 **Tracking:** [YUK-1337](https://linear.app/yukoval-studios/issue/YUK-1337)（决策记录）、[YUK-1338](https://linear.app/yukoval-studios/issue/YUK-1338)（集成验证）。
 **Related:** ADR-0051（产品操作所有权）、ADR-0052（持久交接语义）、ADR-0062（会话生命周期）。
+
+> **2026-11-07 现状：** 已落地：TanStack Start 前门（`server/start/`）、DBOS 持久层（`src/server/durable/`）、Hono API（`server/app.ts` / `server/index.ts`）与 `scripts/worker.ts`（pg-boss）。文末「当前运行代码仍为 Hono + Vite SPA + pg-boss」已被本节取代；实时自适应闭环、Pi×DBOS 步骤级恢复与 YUK-1338 的三项核心行为验证尚未完成，不能据本文声称已达成产品目标。
 
 ## 目标与约束
 
