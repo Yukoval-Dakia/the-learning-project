@@ -40,6 +40,11 @@ export {
   parseLearningIntentOutline,
   planLearningIntent,
 } from './server/learning-intent';
+export {
+  type LearningItemUndoDependencies,
+  type LearningItemUsageProbe,
+  createLearningItemUndoGuard,
+} from './server/learning-item-undo-guard';
 // The platform boss layer mounts the memory pipeline queues; admin config reads its crons.
 export type { GenerateBrief } from './server/memory/brief';
 export { buildBriefGenerator } from './server/memory/brief-writer';
@@ -70,5 +75,9 @@ export type {
   LearningItemAcceptResult,
   RelearnAcceptResult,
 } from './server/proposal-appliers';
+export {
+  knowledgeNodesWithGoalScopes,
+  knowledgeNodesWithLearningItems,
+} from './server/undo-usage';
 // Task composition uses the narrow task-public entry directly.
 export { agencyTaskSpecs } from './task-public';

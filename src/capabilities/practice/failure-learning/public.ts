@@ -18,3 +18,6 @@ export const proposeFailureVariant: typeof import('./server/failure-learning-pub
 export const resolveAdviceCauseForQuestion: typeof import('./server/cause-context').resolveAdviceCauseForQuestion =
   async (...args) =>
     (await import('./server/cause-context')).resolveAdviceCauseForQuestion(...args);
+
+export { causeCategoryUndoGuard } from './server/cause-category-undo-guard';
+export { knowledgeNodesWithMisconceptionEdges } from './server/undo-usage';

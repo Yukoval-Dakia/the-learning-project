@@ -18,4 +18,5 @@ export {
   createReviewSession,
   transitionReviewSession,
 } from './server/session-operations/review-session';
+export { learningItemsWithAnswerDrafts } from './server/undo-usage';
 export { readWorksheetExport } from './server/worksheet/export-store';

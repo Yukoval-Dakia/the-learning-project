@@ -40,6 +40,16 @@ export {
 // 组合根 facts seam 聚合进 GET /api/admin/config keys[].effective。
 export { practiceConfigEffectiveFacts } from './server/config-effective-facts';
 export {
+  causeCategoryUndoGuard,
+  knowledgeNodesWithMisconceptionEdges,
+} from './failure-learning/public';
+export { learningItemsWithAnswerDrafts } from './session/public';
+export {
+  knowledgeNodesWithLearningRecords,
+  learningItemsWithLearningRecords,
+} from './settlement/public';
+export { knowledgeNodesWithPlacementClaims } from './supply/public';
+export {
   DEDUP_OVERLAP_THRESHOLD,
   claimHttpSourceDuplicate,
   findVectorNearDuplicate,
