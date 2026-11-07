@@ -11,15 +11,28 @@ import type { BlockIssueT } from '../../schema/blocks/issues';
 import type { BlockSurface } from '../../schema/blocks/surfaces';
 import { type ExprNode, evaluateExpression, parseExpression } from '../expr';
 
-/** 512 intervals across the view, plus adaptive bisection (depth <= 6). */
+/** Base grid across the whole x viewport; continuity verdicts bisect on top. */
 const SAMPLE_INTERVALS = 512;
-const ADAPTIVE_DEPTH = 6;
-const ADAPTIVE_Y_FRACTION = 0.04;
-const BREAK_Y_FRACTION = 0.5;
+/** Balanced interior scan per visible interval; catches narrow poles between samples. */
+const SCAN_LEVELS = 3;
+/** A scan accepts continuity when the largest sub-gap shrank to this fraction of the interval gap. */
+const SCAN_CONVERGENCE = 0.5;
+/** Bisection chain levels per suspicious interval; a jump's cling streak fires well below this. */
+const MAX_CHAIN_LEVELS = 26;
+/** A midpoint within this fraction of the gap from one endpoint holds that endpoint's level. */
+const CLING_FRACTION = 0.02;
+/** Consecutive clinging midpoints that declare a jump; atan(1000*x) clings ~9 levels before turning interior. */
+const JUMP_CLING_LEVELS = 14;
+/** Chain gaps shrinking to this fraction twice in a row accept continuity. */
+const CHAIN_CONVERGENCE = 0.75;
+/** A value this factor past both its neighbours is a pole, not a steep continuous climb. */
+const POLE_FACTOR = 8;
+/** Each midpoint magnitude must outrun the one two levels back by this factor for a divergence tick. */
+const DIVERGENCE_FACTOR = 1.8;
 /** Bounds one pathological interval so a pole cannot consume the whole curve budget. */
 const MAX_EVALUATIONS_PER_INTERVAL = 64;
 /** Bounds a single pathological expression during a drag. */
-const MAX_EVALUATIONS_PER_ITEM = 4_096;
+const MAX_EVALUATIONS_PER_ITEM = 8_192;
 const MAX_TICKS = 200;
 const MAX_PARAM_STEPS = 1_000;
 const MAX_ISSUES = 12;
@@ -255,12 +268,24 @@ function parseItems(block: PlotBlockT): {
   return { asts, issues };
 }
 
-type CurvePoint = { readonly x: number; readonly y: number; readonly index: number };
+/** Verdict for one base interval: connect or break, plus interior sample points. */
+type IntervalVerdict = {
+  readonly continuous: boolean;
+  readonly points: ReadonlyArray<readonly [number, number]>;
+};
 
 /**
- * Sample one expression into drawable segments. A segment ends at a non-finite
- * value, a pole, or an oscillatory jump; the next finite sample starts a new
- * segment, so no line is ever drawn across an asymptote.
+ * Sample one expression into drawable segments.
+ *
+ * The base grid always covers the whole x viewport. Each visible base interval
+ * then gets a continuity verdict from bisection behaviour alone — never from
+ * the y viewport and never from what the budget happened to allow: a
+ * continuous curve's |Δy| shrinks as the interval halves, a jump keeps one
+ * endpoint level on every midpoint (floor stays Δ=1 at any depth), and a pole
+ * drives |y| up without bound. Offscreen chords cost no evaluations, and
+ * intervals the budget never reached keep their uniform-sample connection,
+ * so the budget can never decide whether a curve exists. Only the one
+ * interval whose verification was actually interrupted is broken.
  */
 function sampleCurve(
   ast: ExprNode,
@@ -268,9 +293,6 @@ function sampleCurve(
   yRange: readonly [number, number],
   params: Readonly<Record<string, number>>,
 ): PlotCurveSegment[] {
-  const spanY = yRange[1] - yRange[0];
-  const adaptiveThreshold = spanY * ADAPTIVE_Y_FRACTION;
-  const breakThreshold = spanY * BREAK_Y_FRACTION;
   const variables: Record<string, number> = { ...params, x: 0 };
   let evaluations = 0;
   const evalAt = (x: number): number => {
@@ -285,6 +307,188 @@ function sampleCurve(
     const x = sampleX(xRange, index);
     xs.push(x);
     ys.push(evalAt(x));
+  }
+
+  const connected: IntervalVerdict = { continuous: true, points: [] };
+  const verdicts: IntervalVerdict[] = [];
+  for (let index = 0; index < SAMPLE_INTERVALS; index += 1) {
+    const fa = ys[index];
+    const fb = ys[index + 1];
+    if (!Number.isFinite(fa) || !Number.isFinite(fb)) {
+      verdicts.push(connected);
+      continue;
+    }
+    // Offscreen chords draw nothing inside the viewport either way; they cost
+    // no evaluations so they can never starve visible intervals.
+    if (Math.min(fa, fb) > yRange[1] || Math.max(fa, fb) < yRange[0]) {
+      verdicts.push(connected);
+      continue;
+    }
+    if (evaluations >= MAX_EVALUATIONS_PER_ITEM) {
+      // The budget ended before this interval was examined: keep the uniform
+      // result instead of deleting a curve the budget happened to miss.
+      verdicts.push(connected);
+      continue;
+    }
+    verdicts.push(classifyInterval(xs[index], fa, xs[index + 1], fb));
+  }
+
+  /** True when a pole signature is present: |y| far past both ends. */
+  function isPoleSpike(value: number, endMax: number): boolean {
+    return endMax > 0 ? Math.abs(value) >= POLE_FACTOR * endMax : Math.abs(value) > 1e6;
+  }
+
+  function classifyInterval(a: number, fa: number, b: number, fb: number): IntervalVerdict {
+    let spent = 0;
+    const canEvaluate = (): boolean =>
+      evaluations < MAX_EVALUATIONS_PER_ITEM && spent < MAX_EVALUATIONS_PER_INTERVAL;
+
+    // Phase 1 — balanced interior scan: one value at every dyadic point down
+    // to SCAN_LEVELS. This catches narrow poles the base grid straddles (equal
+    // or moderate endpoints with a spike between them) and undefined points
+    // inside the interval.
+    const endMax = Math.max(Math.abs(fa), Math.abs(fb));
+    const scanned: Array<[number, number]> = [];
+    for (let level = 1; level <= SCAN_LEVELS; level += 1) {
+      const step = 2 ** level;
+      for (let k = 1; k < step; k += 2) {
+        const x = a + ((b - a) * k) / step;
+        if (x === a || x === b) continue;
+        const previous = scanned[scanned.length - 1];
+        if (previous !== undefined && x === previous[0]) continue;
+        if (!canEvaluate()) return { continuous: false, points: [] };
+        const y = evalAt(x);
+        spent += 1;
+        if (!Number.isFinite(y)) return { continuous: false, points: [] };
+        if (isPoleSpike(y, endMax)) return { continuous: false, points: [] };
+        scanned.push([x, y]);
+      }
+    }
+
+    // Phase 2 — when the scan did not already converge, run a bisection
+    // chain on the widest scanned sub-interval until the gap provably shrinks
+    // (steep continuous curves), a jump signature persists (floor), or a pole
+    // signature appears (divergence, or |y| past both ends).
+    const grid: ReadonlyArray<readonly [number, number]> = [[a, fa], ...scanned, [b, fb]];
+    let widest = 0;
+    for (let index = 1; index < grid.length; index += 1) {
+      if (
+        Math.abs(grid[index][1] - grid[index - 1][1]) >
+        Math.abs(grid[widest + 1][1] - grid[widest][1])
+      ) {
+        widest = index - 1;
+      }
+    }
+    const intervalGap = Math.abs(fb - fa);
+    const widestGap = Math.abs(grid[widest + 1][1] - grid[widest][1]);
+    if (widestGap <= SCAN_CONVERGENCE * intervalGap || intervalGap <= floatNoise(endMax)) {
+      return { continuous: true, points: scanned };
+    }
+    return runChain(grid[widest][0], grid[widest][1], grid[widest + 1][0], grid[widest + 1][1]);
+
+    function runChain(
+      chainA: number,
+      chainFa: number,
+      chainB: number,
+      chainFb: number,
+    ): IntervalVerdict {
+      let a = chainA;
+      let fa = chainFa;
+      let b = chainB;
+      let fb = chainFb;
+      let previousGap = Math.abs(fb - fa);
+      let shrinkStreak = 0;
+      let clingStreak = 0;
+      let divergenceTicks = 0;
+      const chain: Array<[number, number]> = [];
+      for (let level = 1; level <= MAX_CHAIN_LEVELS; level += 1) {
+        if (!canEvaluate()) {
+          // The one interval whose continuity is left unconfirmed.
+          return { continuous: false, points: [] };
+        }
+        const gap = Math.abs(fb - fa);
+        const noise = floatNoise(Math.max(Math.abs(fa), Math.abs(fb)));
+        const middle = (a + b) / 2;
+        if (middle === a || middle === b) {
+          // x is at float resolution: a persistent gap can only be a jump.
+          return {
+            continuous: gap <= noise,
+            points: gap <= noise ? [...scanned, ...chain] : [],
+          };
+        }
+        const middleY = evalAt(middle);
+        spent += 1;
+        if (!Number.isFinite(middleY)) return { continuous: false, points: [] };
+        if (isPoleSpike(middleY, Math.max(Math.abs(fa), Math.abs(fb)))) {
+          return { continuous: false, points: [] };
+        }
+        // Divergence means overshooting BOTH current ends, not just leaning
+        // toward the bigger one: x^9's bisection towards its steep end keeps
+        // raising mid |y| toward the endpoint value without ever passing it,
+        // while a pole keeps the midpoint past both ends level after level.
+        // A bounded bump/oscillation can fire once at most, since the next
+        // level's endMax already includes the peak.
+        divergenceTicks =
+          Math.abs(middleY) >= DIVERGENCE_FACTOR * Math.max(Math.abs(fa), Math.abs(fb))
+            ? divergenceTicks + 1
+            : 0;
+        if (divergenceTicks >= 2) return { continuous: false, points: [] };
+        if (gap <= noise) {
+          return { continuous: true, points: [...scanned, ...chain, [middle, middleY]] };
+        }
+        shrinkStreak = gap <= CHAIN_CONVERGENCE * previousGap ? shrinkStreak + 1 : 0;
+        if (shrinkStreak >= 2) {
+          return { continuous: true, points: [...scanned, ...chain, [middle, middleY]] };
+        }
+        previousGap = gap;
+        const low = Math.min(fa, fb);
+        const high = Math.max(fa, fb);
+        const band = CLING_FRACTION * gap;
+        const leftGap = Math.abs(middleY - fa);
+        const rightGap = Math.abs(fb - middleY);
+        const inside = middleY >= low - band && middleY <= high + band;
+        if (inside) {
+          const nearLeft = leftGap <= band;
+          const nearRight = rightGap <= band;
+          if (nearLeft !== nearRight) {
+            // The midpoint holds one endpoint's level: a jump keeps doing
+            // this at every depth, while a steep continuous curve starts
+            // producing interior values once the bisection reaches its
+            // transition width.
+            clingStreak += 1;
+            if (clingStreak >= JUMP_CLING_LEVELS) return { continuous: false, points: [] };
+          }
+        } else {
+          // Outside both endpoint levels: a pole candidate (same-side poles
+          // like 1/(x-a)^2 grow inward) or a local extremum between samples.
+          // A bump falls back inside the band on the next midpoint and
+          // resolves through the convergence test above.
+          clingStreak = 0;
+        }
+        chain.push([middle, middleY]);
+        // Follow the child that keeps the suspicious behaviour: the larger
+        // sub-gap while inside (the jump or the steep transition lives
+        // there), the larger-|y| end once outside (the pole side).
+        let takeLeft: boolean;
+        if (inside) {
+          takeLeft = leftGap > rightGap;
+        } else {
+          const leftMax = Math.max(Math.abs(fa), Math.abs(middleY));
+          const rightMax = Math.max(Math.abs(middleY), Math.abs(fb));
+          takeLeft = leftMax > rightMax || (leftMax === rightMax && leftGap >= rightGap);
+        }
+        if (takeLeft) {
+          b = middle;
+          fb = middleY;
+        } else {
+          a = middle;
+          fa = middleY;
+        }
+      }
+      // Depth exhausted without a discontinuity signature: wandering
+      // behaviour (oscillation) is not evidence of a break; keep the curve.
+      return { continuous: true, points: [...scanned, ...chain] };
+    }
   }
 
   const segments: PlotCurveSegment[] = [];
@@ -302,113 +506,41 @@ function sampleCurve(
     const last = current[current.length - 1];
     if (last[0] !== point[0] || last[1] !== point[1]) current.push(point);
   };
+  const lastX = (): number =>
+    current === null ? Number.NEGATIVE_INFINITY : current[current.length - 1][0];
 
-  const refine = (
-    left: CurvePoint,
-    right: CurvePoint,
-    depth: number,
-    intervalStart: number,
-  ): boolean => {
-    if (evaluations >= MAX_EVALUATIONS_PER_ITEM) return false;
-    if (evaluations - intervalStart >= MAX_EVALUATIONS_PER_INTERVAL) return false;
-    const middleX = (left.x + right.x) / 2;
-    const middleY = evalAt(middleX);
-    if (!Number.isFinite(middleY)) return false;
-    const leftGap = Math.abs(middleY - left.y);
-    const rightGap = Math.abs(right.y - middleY);
-    const middle: CurvePoint = { x: middleX, y: middleY, index: left.index };
-    // A value far outside both endpoints is a pole the fixed grid skipped.
-    const outside =
-      middleY > Math.max(left.y, right.y) + spanY || middleY < Math.min(left.y, right.y) - spanY;
-    if (outside && Math.abs(middleY) > Math.abs(left.y) && Math.abs(middleY) > Math.abs(right.y)) {
-      return false;
-    }
-    if (leftGap <= adaptiveThreshold && rightGap <= adaptiveThreshold) {
-      push(middleX, middleY);
-      return true;
-    }
-    // An unresolved jump at the depth limit is a discontinuity, not a licence
-    // to draw a straight connector through values the function never takes. A
-    // strictly interior midpoint is the signature of a steep continuous curve
-    // (1000*x); a step function keeps the midpoint on one endpoint level.
-    if (depth >= ADAPTIVE_DEPTH) {
-      const low = Math.min(left.y, right.y);
-      const high = Math.max(left.y, right.y);
-      if (middleY > low + adaptiveThreshold && middleY < high - adaptiveThreshold) {
-        push(middleX, middleY);
-        return true;
-      }
-      return false;
-    }
-    if (!refine(left, middle, depth + 1, intervalStart)) return false;
-    push(middleX, middleY);
-    return refine(middle, right, depth + 1, intervalStart);
-  };
-
-  const connect = (left: CurvePoint, right: CurvePoint): boolean => {
-    const gap = Math.abs(right.y - left.y);
-    if (gap > breakThreshold) {
-      const opposite = Math.sign(left.y) !== Math.sign(right.y);
-      if (opposite && Math.abs(left.y) > spanY && Math.abs(right.y) > spanY) return false;
-      // A high-frequency turn just past the sampling grid: break rather than
-      // draw a vertical connector through it.
-      const previous = left.index >= 1 ? ys[left.index - 1] : Number.NaN;
-      const next = right.index + 1 <= SAMPLE_INTERVALS ? ys[right.index + 1] : Number.NaN;
-      if (Number.isFinite(previous) && Number.isFinite(next)) {
-        const before = left.y - previous;
-        const after = next - right.y;
-        if (before * after < 0) return false;
-      }
-    }
-    if (gap > adaptiveThreshold) {
-      if (evaluations >= MAX_EVALUATIONS_PER_ITEM) return false;
-      if (!refine(left, right, 0, evaluations)) return false;
-      push(right.x, right.y);
-      return true;
-    }
-    // Equal endpoints do not prove continuity: 1/(x-a)^2 can sit at the same
-    // large value on both samples while the pole between them is higher. Always
-    // inspect the interior before connecting a small step.
-    if (evaluations >= MAX_EVALUATIONS_PER_ITEM) {
-      push(right.x, right.y);
-      return true;
-    }
-    const middleX = (left.x + right.x) / 2;
-    const middleY = evalAt(middleX);
-    if (!Number.isFinite(middleY)) return false;
-    const outside =
-      middleY > Math.max(left.y, right.y) + spanY || middleY < Math.min(left.y, right.y) - spanY;
-    if (outside && Math.abs(middleY) > Math.abs(left.y) && Math.abs(middleY) > Math.abs(right.y)) {
-      return false;
-    }
-    push(right.x, right.y);
-    return true;
-  };
-
-  let previous: CurvePoint | null = null;
   for (let index = 0; index <= SAMPLE_INTERVALS; index += 1) {
     const y = ys[index];
     if (!Number.isFinite(y)) {
       finish();
-      previous = null;
       continue;
     }
-    const point: CurvePoint = { x: xs[index], y, index };
-    if (previous === null) {
-      finish();
-      push(point.x, point.y);
-    } else if (connect(previous, point)) {
-      // connect pushed the point (and any refined interior points).
+    if (index === 0) {
+      push(xs[index], y);
+      continue;
+    }
+    const verdict = verdicts[index - 1];
+    if (verdict.continuous) {
+      for (const point of [...verdict.points].sort((p, q) => p[0] - q[0])) {
+        if (point[0] <= lastX()) continue;
+        push(point[0], point[1]);
+      }
+      push(xs[index], y);
     } else {
       finish();
-      push(point.x, point.y);
+      push(xs[index], y);
     }
-    previous = point;
   }
   finish();
   return segments;
 }
 
+/** 8 ulps of the given magnitude: gaps below this are float noise. */
+function floatNoise(magnitude: number): number {
+  if (!(magnitude > 0)) return 8 * Number.MIN_VALUE;
+  const exponent = Math.ceil(Math.log2(magnitude));
+  return 8 * 2 ** exponent * Number.EPSILON;
+}
 type AutoYResult =
   | { readonly ok: true; readonly range: [number, number] }
   | { readonly ok: false; readonly reason: 'empty' | 'unbounded' };

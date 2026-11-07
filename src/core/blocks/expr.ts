@@ -394,8 +394,22 @@ function evaluateCall(name: ExprFunctionName, args: readonly number[]): number {
       return Math.sin(args[0]);
     case 'cos':
       return Math.cos(args[0]);
-    case 'tan':
-      return Math.tan(args[0]);
+    case 'tan': {
+      // Math.tan at the float nearest an odd multiple of π/2 returns ~1.6e16
+      // because π/2 is not exactly representable. The value is mathematically
+      // undefined there — and at tick values rounded to 12 decimals — so map
+      // the singularities to NaN instead of a huge finite number.
+      const arg = args[0];
+      if (!Number.isFinite(arg)) return arg;
+      const halfPi = Math.PI / 2;
+      const multiples = Math.round(arg / halfPi);
+      if (Math.abs(multiples % 2) === 1) {
+        const singular = multiples * halfPi;
+        const tolerance = 1e-12 * Math.max(1, Math.abs(singular));
+        if (Math.abs(arg - singular) <= tolerance) return Number.NaN;
+      }
+      return Math.tan(arg);
+    }
     case 'asin':
       return Math.asin(args[0]);
     case 'acos':
