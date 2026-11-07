@@ -375,6 +375,10 @@
       color var(--un-t-feedback) var(--un-ease-glide);
   }
 
+  & .nt-ol-item[data-depth="1"] {
+    padding-inline-start: var(--un-sp-5);
+  }
+
   & .nt-ol-item:hover {
     background: var(--un-bg-hover);
     color: var(--un-text-1);
@@ -530,6 +534,14 @@
     line-height: var(--un-lh-prose);
   }
 
+  /* The block handles sit in the margin, so the text lines up with the title. Touch keeps them
+     on screen, and a narrow page has no margin to hold them. */
+  @media (hover: hover) and (min-width: 881px) {
+    & .nt-body {
+      margin-inline-start: calc(-28px - var(--un-sp-2));
+    }
+  }
+
   & .nt-quiet {
     padding: var(--un-sp-4) 0;
     color: var(--un-text-3);
@@ -546,6 +558,10 @@
     align-items: start;
     gap: var(--un-sp-2);
     padding: 2px 0;
+    scroll-margin-top: 84px;
+  }
+
+  & .nt-sem-body :is(h1, h2, h3, h4) {
     scroll-margin-top: 84px;
   }
 

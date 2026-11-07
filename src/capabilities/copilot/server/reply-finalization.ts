@@ -257,10 +257,16 @@ function proposalDisclosure(
     return output?.auto_apply === true;
   };
   const allAutoApply = pending.length > 0 && pending.every(autoApplies);
+  const duplicatePending = proposals.some((entry) => {
+    const output = isRecord(entry.domain_output) ? entry.domain_output : undefined;
+    return output?.status === 'skipped:duplicate_pending';
+  });
   return [
     '<!--copilot-proposal-disclosure:start-->',
     pending.length === 0
-      ? '本轮没有产生可供确认的建议，未执行目标变更。'
+      ? duplicatePending
+        ? '同样的建议之前已提交，这轮没有新建，未执行目标变更。'
+        : '本轮没有产生可供确认的建议，未执行目标变更。'
       : allAutoApply
         ? '本轮建议已记下，会自动生效；还没被用到的可以撤销。'
         : '本轮建议已提交，等待你确认后才会应用到目标。',

@@ -11,7 +11,10 @@
  */
 
 [data-ui-next] :where(.un-read) {
+  /* Body a step softer than headings, so structure reads first. */
+  color: color-mix(in srgb, var(--un-md-sys-color-on-surface) 88%, transparent);
   font-size: var(--un-read-fs);
+  letter-spacing: 0.01em;
   line-height: var(--un-read-lh);
   overflow-wrap: break-word;
   /* CJK ↔ Latin: a quarter-em gap between scripts where supported; strict CJK line breaking. */
@@ -22,16 +25,16 @@
 
 [data-ui-next] :where(.un-read[data-read="compact"]) {
   --un-read-fs: var(--un-fs-2);
-  --un-read-lh: 1.8;
+  --un-read-lh: 1.78;
   --un-read-gap: 1.05em;
   --un-read-gap-item: 0.65em;
-  --un-read-gap-section: 2.1em;
+  --un-read-gap-section: 2.2em;
   /* A clear step per level (about 1.2×): chat replies pick heading levels freely (### / #### are
      common), so the bottom of the scale still stands above body text. */
-  --un-read-h1: 1.8em;
-  --un-read-h2: 1.52em;
-  --un-read-h3: 1.3em;
-  --un-read-h4: 1.14em;
+  --un-read-h1: 1.42em;
+  --un-read-h2: 1.24em;
+  --un-read-h3: 1.08em;
+  --un-read-h4: 1em;
 }
 
 /* Flow: one gap between any two blocks. */
@@ -41,11 +44,17 @@
 
 /* Headings: a size step per level, a larger gap above than below, so a heading binds to its text. */
 [data-ui-next] :where(.un-read) :where(h1, h2, h3, h4) {
-  color: var(--un-text-1);
-  font-weight: var(--un-fw-semibold);
+  color: var(--un-md-sys-color-on-surface);
+  font-weight: 700;
   line-height: var(--un-read-heading-lh);
-  letter-spacing: var(--un-ls-tight);
+  letter-spacing: 0;
   text-wrap: balance;
+}
+/* The smaller headings step back in size, so colour keeps them a level of the outline. */
+[data-ui-next] :where(.un-read) :where(h3, h4) {
+  color: var(--un-md-sys-color-primary);
+  font-weight: var(--un-fw-semibold);
+  letter-spacing: 0.01em;
 }
 [data-ui-next] :where(.un-read) :where(h1) {
   font-size: var(--un-read-h1);
@@ -87,21 +96,28 @@
   margin-top: var(--un-read-gap-item);
 }
 [data-ui-next] :where(.un-read) :where(li)::marker {
-  color: var(--un-text-3);
+  color: var(--un-md-sys-color-primary);
+  font-weight: var(--un-fw-semibold);
 }
 [data-ui-next] :where(.un-read) :where(li > p + p) {
   margin-top: var(--un-read-gap-item);
 }
-[data-ui-next] :where(.un-read) :where(.contains-task-list) {
-  padding-inline-start: 0;
+/* A checkbox takes the bullet's place, so a task and a plain item can share a list. */
+[data-ui-next] :where(.un-read) :where(.task-list-item) {
+  margin-inline-start: -1.25em;
   list-style: none;
 }
 
 /* Quote, rule, links, emphasis. */
 [data-ui-next] :where(.un-read) :where(blockquote) {
-  padding-inline-start: 0.9em;
-  border-inline-start: 3px solid var(--un-read-quote-rule);
-  color: var(--un-text-2);
+  padding: 0.85em 1.05em;
+  border-radius: var(--un-read-card-radius);
+  background: color-mix(
+    in srgb,
+    var(--un-md-sys-color-tertiary, var(--un-md-sys-color-primary)) 9%,
+    var(--un-md-sys-color-surface)
+  );
+  color: var(--un-md-sys-color-on-surface);
 }
 [data-ui-next] :where(.un-read) :where(blockquote > * + *) {
   margin-top: var(--un-read-gap);
@@ -118,8 +134,17 @@
   text-decoration-thickness: from-font;
   text-underline-offset: 0.2em;
 }
+/* A key phrase looks marked with a highlighter, not only bolder. */
 [data-ui-next] :where(.un-read) :where(strong, b) {
+  background: linear-gradient(
+    transparent 62%,
+    color-mix(in srgb, var(--un-md-sys-color-primary) 22%, transparent) 62%
+  );
+  color: var(--un-md-sys-color-on-surface);
   font-weight: var(--un-fw-semibold);
+}
+[data-ui-next] :where(.un-read) :where(del, s) {
+  text-decoration: line-through;
 }
 
 /* Code. */
@@ -146,6 +171,12 @@
   font-size: 1em;
 }
 
+[data-ui-next] :where(.un-md-table) {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
 /* Tables: scroll sideways instead of squeezing, small text, rules between rows only. */
 [data-ui-next] :where(.un-read) :where(table) {
   display: block;
@@ -163,8 +194,8 @@
   vertical-align: top;
 }
 [data-ui-next] :where(.un-read) :where(th) {
-  background: var(--un-read-code-bg);
-  color: var(--un-text-1);
+  background: var(--un-md-sys-color-surface-container-low);
+  color: var(--un-md-sys-color-on-surface);
   font-weight: var(--un-fw-semibold);
   white-space: nowrap;
 }
@@ -173,16 +204,22 @@
   white-space: nowrap;
 }
 
-/* Formulas. */
+/* Formulas. A short one stays on a line with its punctuation (see tieMathPunctuation). */
+[data-ui-next] :where(.un-math-tie) {
+  white-space: nowrap;
+}
 [data-ui-next] :where(.un-read) :where(.katex) {
   font-size: 1.08em;
   letter-spacing: normal;
 }
+/* A display formula gets its own quiet block, centred, with room around it. */
 [data-ui-next] :where(.un-read) :where(.katex-display) {
-  margin-block: var(--un-read-gap);
+  margin-block: 1.3em;
   overflow-x: auto;
   overflow-y: hidden;
-  padding-block: 0.2em;
+  padding: 0.95em 1em;
+  border-radius: var(--un-read-card-radius);
+  background: var(--un-md-sys-color-surface-container-low);
 }
 [data-ui-next] :where(.un-read) :where(.katex-display > .katex) {
   font-size: 1.12em;

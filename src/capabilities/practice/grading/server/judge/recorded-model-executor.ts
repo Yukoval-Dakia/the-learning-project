@@ -121,7 +121,12 @@ export function createRecordedModelExecutor(
       });
     let outcome: ModelUnitOutcomeT;
     try {
-      outcome = ModelUnitOutcome.parse(await execute(request, signal, taskRunId));
+      const executed = await execute(request, signal, taskRunId);
+      outcome = ModelUnitOutcome.parse(
+        executed.kind === 'scored' && request.photo_judgement
+          ? { ...executed, photo_judgement: request.photo_judgement }
+          : executed,
+      );
     } catch {
       outcome = held('claimed execution did not return a valid result; explicit recovery required');
     }

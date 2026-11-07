@@ -7,10 +7,12 @@
 // kernel port installed here — once per host process, before serving or mounting
 // jobs.
 //
-// Adding a batch-undoable kind therefore means writing its guard beside its
-// accept/retract appliers and naming it here; adding a reference (a new row type
-// that can point at an auto-applied effect) means adding a probe to the owning
-// capability's public surface and passing it in below.
+// Adding a batch-undoable kind means flipping its strength to A in
+// `src/core/schema/proposal.ts`; this file's guard set type then requires one
+// entry per strength-A kind, and installation fails at startup if one is
+// missing. Adding a reference (a new row type that can point at an auto-applied
+// effect) means adding a probe to the owning capability's public surface and
+// passing it in below.
 
 import {
   createLearningItemUndoGuard,
@@ -33,32 +35,29 @@ import {
 } from '@/capabilities/practice/public';
 import {
   type AutoAppliedUndoGuardRegistry,
+  type AutoAppliedUndoGuardSet,
+  createAutoAppliedUndoGuardRegistry,
   installAutoAppliedUndoGuardRegistry,
 } from '@/kernel/proposals/auto-applied-undo';
 
 export function buildProposalUndoGuards(): AutoAppliedUndoGuardRegistry {
-  return new Map([
-    [
-      'knowledge_node',
-      createKnowledgeNodeUndoGuard({
-        learningRecords: knowledgeNodesWithLearningRecords,
-        learningItems: knowledgeNodesWithLearningItems,
-        noteLabels: knowledgeNodesWithNoteLabels,
-        goalScopes: knowledgeNodesWithGoalScopes,
-        placementClaims: knowledgeNodesWithPlacementClaims,
-        misconceptionEdges: knowledgeNodesWithMisconceptionEdges,
-      }),
-    ],
-    ['cause_category', causeCategoryUndoGuard],
-    [
-      'learning_item',
-      createLearningItemUndoGuard({
-        learningRecords: learningItemsWithLearningRecords,
-        answerDrafts: learningItemsWithAnswerDrafts,
-        notes: { readProposalNoteUndoFacts, lockProposalNoteArtifacts },
-      }),
-    ],
-  ]);
+  const guards: AutoAppliedUndoGuardSet = {
+    knowledge_node: createKnowledgeNodeUndoGuard({
+      learningRecords: knowledgeNodesWithLearningRecords,
+      learningItems: knowledgeNodesWithLearningItems,
+      noteLabels: knowledgeNodesWithNoteLabels,
+      goalScopes: knowledgeNodesWithGoalScopes,
+      placementClaims: knowledgeNodesWithPlacementClaims,
+      misconceptionEdges: knowledgeNodesWithMisconceptionEdges,
+    }),
+    learning_item: createLearningItemUndoGuard({
+      learningRecords: learningItemsWithLearningRecords,
+      answerDrafts: learningItemsWithAnswerDrafts,
+      notes: { readProposalNoteUndoFacts, lockProposalNoteArtifacts },
+    }),
+    cause_category: causeCategoryUndoGuard,
+  };
+  return createAutoAppliedUndoGuardRegistry(guards);
 }
 
 export function installProposalUndoGuards(): void {

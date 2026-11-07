@@ -12,7 +12,7 @@ import type {
   ScoringUnitResultT,
   SubmissionRecordT,
 } from './judgment';
-import { EvaluationInputSnapshot } from './judgment';
+import { EvaluationInputSnapshot, photoJudgingNoticeFromUnitResults } from './judgment';
 import { SharedMaterialKind, isPublicSharedMaterial } from './materials';
 import { prunePresentation } from './presentation';
 import { LifecycleQualification, PublishDecision } from './publish';
@@ -364,6 +364,7 @@ export const FeedbackUnitResultView = z.object({
 export type FeedbackUnitResultViewT = z.infer<typeof FeedbackUnitResultView>;
 
 export const AssessmentFeedbackDto = z.strictObject({
+  photo_judging_notice: z.literal('AI 判、未校准').optional(),
   /** Actual execution labels; no assertion that a model result is calibrated. */
   grading_provenance: z.array(GradingProvenanceEntry).optional(),
   evaluation_group_id: z.string().min(1).optional(),
@@ -695,6 +696,9 @@ export function projectFeedback(
     status: pending ? 'pending' : 'completed',
     aggregate,
     unit_results: unitResults,
+    ...(photoJudgingNoticeFromUnitResults(evaluation.unit_results)
+      ? { photo_judging_notice: photoJudgingNoticeFromUnitResults(evaluation.unit_results) }
+      : {}),
     answer_keys: answerKeys,
     rubric_explanations: rubricExplanations,
   });
