@@ -11600,7 +11600,7 @@ export interface operations {
                                 image_status: "none" | "text_available" | "unavailable";
                                 input_digest: string;
                                 /** @enum {string} */
-                                insight_version: "attempt-insight-v1";
+                                insight_version: "attempt-insight-v2";
                                 mechanism: {
                                     quote?: string;
                                     quote_verified: boolean;
@@ -11610,7 +11610,10 @@ export interface operations {
                                 } | null;
                                 method: {
                                     core_idea_md: string;
+                                    evidence_quotes: string[];
                                     key_step_md: string;
+                                    /** @enum {string} */
+                                    provenance: "evidence" | "inferred";
                                     steps: {
                                         k: string;
                                         quote?: string;
@@ -11641,13 +11644,17 @@ export interface operations {
                             answer_md: string;
                             attempt_event_id: string;
                             created_at: string;
+                            evidence: {
+                                now: string;
+                                prior: string;
+                            } | null;
                             insight: {
                                 backfill_run_id?: string;
                                 /** @enum {string} */
                                 image_status: "none" | "text_available" | "unavailable";
                                 input_digest: string;
                                 /** @enum {string} */
-                                insight_version: "attempt-insight-v1";
+                                insight_version: "attempt-insight-v2";
                                 mechanism: {
                                     quote?: string;
                                     quote_verified: boolean;
@@ -11657,7 +11664,10 @@ export interface operations {
                                 } | null;
                                 method: {
                                     core_idea_md: string;
+                                    evidence_quotes: string[];
                                     key_step_md: string;
+                                    /** @enum {string} */
+                                    provenance: "evidence" | "inferred";
                                     steps: {
                                         k: string;
                                         quote?: string;
@@ -11705,6 +11715,10 @@ export interface operations {
                             specificity: "specific" | "broad";
                             why_md: string;
                         }[];
+                        failure?: {
+                            cost_upper_usd: number | null;
+                            reason_md: string;
+                        };
                         judgement: {
                             event_id: string;
                             judged_at: string;
@@ -11720,7 +11734,7 @@ export interface operations {
                                 image_status: "none" | "text_available" | "unavailable";
                                 input_digest: string;
                                 /** @enum {string} */
-                                insight_version: "attempt-insight-v1";
+                                insight_version: "attempt-insight-v2";
                                 mechanism: {
                                     quote?: string;
                                     quote_verified: boolean;
@@ -11730,7 +11744,10 @@ export interface operations {
                                 } | null;
                                 method: {
                                     core_idea_md: string;
+                                    evidence_quotes: string[];
                                     key_step_md: string;
+                                    /** @enum {string} */
+                                    provenance: "evidence" | "inferred";
                                     steps: {
                                         k: string;
                                         quote?: string;
@@ -11761,13 +11778,17 @@ export interface operations {
                             answer_md: string;
                             attempt_event_id: string;
                             created_at: string;
+                            evidence: {
+                                now: string;
+                                prior: string;
+                            } | null;
                             insight: {
                                 backfill_run_id?: string;
                                 /** @enum {string} */
                                 image_status: "none" | "text_available" | "unavailable";
                                 input_digest: string;
                                 /** @enum {string} */
-                                insight_version: "attempt-insight-v1";
+                                insight_version: "attempt-insight-v2";
                                 mechanism: {
                                     quote?: string;
                                     quote_verified: boolean;
@@ -11777,7 +11798,10 @@ export interface operations {
                                 } | null;
                                 method: {
                                     core_idea_md: string;
+                                    evidence_quotes: string[];
                                     key_step_md: string;
+                                    /** @enum {string} */
+                                    provenance: "evidence" | "inferred";
                                     steps: {
                                         k: string;
                                         quote?: string;
@@ -11829,13 +11853,17 @@ export interface operations {
                             answer_md: string;
                             attempt_event_id: string;
                             created_at: string;
+                            evidence: {
+                                now: string;
+                                prior: string;
+                            } | null;
                             insight: {
                                 backfill_run_id?: string;
                                 /** @enum {string} */
                                 image_status: "none" | "text_available" | "unavailable";
                                 input_digest: string;
                                 /** @enum {string} */
-                                insight_version: "attempt-insight-v1";
+                                insight_version: "attempt-insight-v2";
                                 mechanism: {
                                     quote?: string;
                                     quote_verified: boolean;
@@ -11845,7 +11873,10 @@ export interface operations {
                                 } | null;
                                 method: {
                                     core_idea_md: string;
+                                    evidence_quotes: string[];
                                     key_step_md: string;
+                                    /** @enum {string} */
+                                    provenance: "evidence" | "inferred";
                                     steps: {
                                         k: string;
                                         quote?: string;
@@ -11894,7 +11925,7 @@ export interface operations {
                             why_md: string;
                         }[];
                         /** @enum {string} */
-                        status: "unavailable" | "buffered" | "pending_insight" | "judging" | "ready" | "needs_reconciliation";
+                        status: "unavailable" | "buffered" | "pending_insight" | "judging" | "ready" | "needs_reconciliation" | "failed";
                     };
                 };
             };

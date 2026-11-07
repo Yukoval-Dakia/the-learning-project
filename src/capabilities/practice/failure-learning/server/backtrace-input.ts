@@ -22,6 +22,7 @@ export async function loadBacktraceInput(db: Db | Tx, id: string) {
   // Feedback release is presentation state and must not cause a second paid extraction.
   return {
     input,
+    // Keep evidence identity stable: a task/schema upgrade must not bypass unresolved sends.
     digest: backtraceDigest({ version: 'attempt-insight-v1', input }),
     visible: row.visible,
   };

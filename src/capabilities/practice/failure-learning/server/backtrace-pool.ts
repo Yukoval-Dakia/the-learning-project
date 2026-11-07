@@ -1,5 +1,6 @@
 import { eq } from 'drizzle-orm';
 import { EMBED_VERSION } from '@/core/embed-source';
+import { BACKTRACE_JUDGE_VERSION } from '@/core/schema/backtrace';
 import type { Db, Tx } from '@/db/client';
 import { attempt_insight_vector } from '@/db/schema';
 import { batchResolveAncestorIds } from '@/kernel/read-models/knowledge-tree';
@@ -58,7 +59,8 @@ export async function backtracePool(
     .sort((a, b) => b.scores.mechanism - a.scores.mechanism)
     .slice(0, 12);
   const methods = unique.filter(
-    (x) => x.insight.method !== null && x.insight.verdict_seen.outcome !== 'failure',
+    (x) =>
+      x.insight.method?.provenance === 'evidence' && x.insight.verdict_seen.outcome === 'success',
   );
   const used = [...methods].sort((a, b) => b.scores.method - a.scores.method).slice(0, 8);
   const needed = [...methods]
@@ -88,7 +90,10 @@ export async function backtracePool(
   const pool = union.map((x) => ({
     attempt_event_id: x.row.subject_id,
     insight_event_id: x.row.id,
-    insight: x.insight,
+    insight: {
+      ...x.insight,
+      method: x.insight.method?.provenance === 'evidence' ? x.insight.method : null,
+    },
     answer_md: x.basis.input.answer_md,
     prompt_md: x.basis.input.prompt_md?.slice(0, 200) ?? null,
     created_at: x.basis.input.created_at,
@@ -97,6 +102,6 @@ export async function backtracePool(
   }));
   return {
     pool,
-    digest: backtraceDigest({ version: 'backtrace-judge-v1', anchor: anchor.row.id, pool }),
+    digest: backtraceDigest({ version: BACKTRACE_JUDGE_VERSION, anchor: anchor.row.id, pool }),
   };
 }

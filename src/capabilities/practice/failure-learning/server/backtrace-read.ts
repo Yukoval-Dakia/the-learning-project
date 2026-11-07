@@ -75,13 +75,26 @@ export async function readBacktrace(
         (x.state === 'needs_reconciliation' ||
           (x.state === 'sending' && Date.now() - x.created_at.getTime() > 600_000)),
     );
+  const failed = basis && work.find((x) => x.input_digest === basis.digest && x.state === 'failed');
   const insight = await currentInsight(db, attempt.id);
   if (!insight)
     return {
-      status:
-        basis && unresolved([basis.digest])
+      status: failed
+        ? ('failed' as const)
+        : basis && unresolved([basis.digest])
           ? ('needs_reconciliation' as const)
           : ('pending_insight' as const),
+      ...(failed
+        ? {
+            failure: {
+              reason_md: String(failed.result?.reason_md ?? '描述任务失败'),
+              cost_upper_usd:
+                typeof failed.result?.cost_upper_usd === 'number'
+                  ? failed.result.cost_upper_usd
+                  : null,
+            },
+          }
+        : {}),
       anchor,
       same_question: sameQuestion,
       similar_mistakes: [],
@@ -91,6 +104,7 @@ export async function readBacktrace(
     };
   const { pool, digest } = await backtracePool(db, insight);
   const judged = await currentJudgement(db, attempt.id, digest);
+  const failure = failed || work.find((x) => x.input_digest === digest && x.state === 'failed');
   const historyByQuestion = new Map<string, Array<{ created_at: string; outcome: string }>>();
   for (const questionId of new Set(pool.map((x) => x.insight.question_id))) {
     const rows = await db
@@ -166,9 +180,22 @@ export async function readBacktrace(
   return {
     status: judged
       ? ('ready' as const)
-      : unresolved([digest, insight.basis.digest])
-        ? ('needs_reconciliation' as const)
-        : ('judging' as const),
+      : failure
+        ? ('failed' as const)
+        : unresolved([digest, insight.basis.digest])
+          ? ('needs_reconciliation' as const)
+          : ('judging' as const),
+    ...(failure
+      ? {
+          failure: {
+            reason_md: String(failure.result?.reason_md ?? '历史比较失败'),
+            cost_upper_usd:
+              typeof failure.result?.cost_upper_usd === 'number'
+                ? failure.result.cost_upper_usd
+                : null,
+          },
+        }
+      : {}),
     anchor: { ...anchor, insight: insight.insight },
     same_question: sameQuestion,
     similar_mistakes: matches.filter(
@@ -176,7 +203,10 @@ export async function readBacktrace(
     ),
     similar_solutions: matches.filter(
       (x) =>
-        x.specificity === 'specific' && ['same_method', 'needs_this_method'].includes(x.relation),
+        x.specificity === 'specific' &&
+        x.outcome === 'success' &&
+        x.insight.method?.provenance === 'evidence' &&
+        ['same_method', 'needs_this_method'].includes(x.relation),
     ),
     broader: matches.filter((x) => x.specificity === 'broad'),
     judgement: judged
@@ -197,19 +227,18 @@ export async function backtraceContext(
   if (view.status !== 'ready') return null;
   return JSON.stringify({
     anchor: view.anchor?.attempt_event_id,
-    similar_mistakes: view.similar_mistakes.slice(0, 2).map((x) => ({
+    similar_mistakes: view.similar_mistakes.slice(0, 1).map((x) => ({
       attempt_event_id: x.attempt_event_id,
-      why_md: x.why_md,
+      why_md: x.why_md.slice(0, 180),
       outcome: x.outcome,
-      date: x.created_at,
-      method: x.insight.method,
+      key_step_md: x.insight.method?.key_step_md.slice(0, 160),
+      mechanism_md: x.insight.mechanism?.what_went_wrong_md.slice(0, 180),
     })),
-    similar_solutions: view.similar_solutions.slice(0, 2).map((x) => ({
+    similar_solutions: view.similar_solutions.slice(0, 1).map((x) => ({
       attempt_event_id: x.attempt_event_id,
-      why_md: x.why_md,
+      why_md: x.why_md.slice(0, 180),
       outcome: x.outcome,
-      date: x.created_at,
-      method: x.insight.method,
+      key_step_md: x.insight.method?.key_step_md.slice(0, 160),
     })),
-  }).slice(0, 2000);
+  });
 }

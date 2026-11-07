@@ -1,11 +1,16 @@
 import { z } from 'zod';
 
+export const ATTEMPT_INSIGHT_VERSION = 'attempt-insight-v2';
+export const BACKTRACE_JUDGE_VERSION = 'backtrace-judge-v2';
+
 const MethodCore = z
   .object({ core_idea_md: z.string().max(200), key_step_md: z.string().max(200) })
   .strict();
 export const AttemptDescription = z
   .object({
     method: MethodCore.extend({
+      provenance: z.enum(['evidence', 'inferred']),
+      evidence_quotes: z.array(z.string().min(1).max(200)).max(8),
       steps: z
         .array(
           z
@@ -44,6 +49,11 @@ export const BacktraceDecisions = z
             specificity: z.enum(['specific', 'broad']),
             shared_step: z.object({ now_k: z.string(), then_k: z.string() }).strict().nullable(),
             why_md: z.string().max(160),
+            outcome: z.enum(['success', 'partial', 'failure']),
+            evidence: z
+              .object({ now: z.string().min(1).max(200), prior: z.string().min(1).max(200) })
+              .strict()
+              .nullable(),
           })
           .strict(),
       )
@@ -51,7 +61,7 @@ export const BacktraceDecisions = z
   })
   .strict();
 export const InsightPayload = AttemptDescription.extend({
-  insight_version: z.literal('attempt-insight-v1'),
+  insight_version: z.literal(ATTEMPT_INSIGHT_VERSION),
   question_id: z.string(),
   input_digest: z.string(),
   source_event_ids: z.array(z.string()),
@@ -67,7 +77,7 @@ export const InsightPayload = AttemptDescription.extend({
   backfill_run_id: z.string().optional(),
 }).strict();
 export const JudgementPayload = BacktraceDecisions.extend({
-  judgement_version: z.literal('backtrace-judge-v1'),
+  judgement_version: z.literal(BACKTRACE_JUDGE_VERSION),
   pool_digest: z.string(),
   anchor_insight_id: z.string(),
   source_event_ids: z.array(z.string()),
@@ -91,6 +101,7 @@ const MatchRow = BacktraceRow.extend({
   specificity: z.enum(['specific', 'broad']),
   shared_step: z.object({ now_k: z.string(), then_k: z.string() }).nullable(),
   why_md: z.string(),
+  evidence: BacktraceDecisions.shape.matches.element.shape.evidence,
   signals: z.object({
     basis: z.literal('same_question_history'),
     count: z.number(),
@@ -110,7 +121,9 @@ export const BacktraceView = z.object({
     'judging',
     'ready',
     'needs_reconciliation',
+    'failed',
   ]),
+  failure: z.object({ reason_md: z.string(), cost_upper_usd: z.number().nullable() }).optional(),
   anchor: z
     .object({
       attempt_event_id: z.string(),

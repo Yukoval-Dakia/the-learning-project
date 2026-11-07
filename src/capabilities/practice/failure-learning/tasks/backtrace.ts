@@ -16,7 +16,7 @@ export const attemptInsightTaskSpec = {
     structuredOutputSchema: AttemptDescription,
     prompt: {
       kind: 'inline',
-      text: '只依据提供的本人作答与过程描述方法；参考解只用于 needed_method，绝不能冒充本人方法。看不到过程则 method=null，写明原因。错法须点名具体公式、关系、步骤及其适用条件，不预设分类。用户错因优先且保留原话。没有错误则 mechanism=null。quote 仅逐字引用本人文本。调用 submit 一次提交整个描述。',
+      text: '只据reasoning_trace；没过程则null。本人明写标evidence，evidence_quotes/steps.quote逐字摘原文；没明说的算法仅标inferred，不冒充本人方法。参考解只放needed_method。具体错法点名步骤和条件，用户错因保留原话；无错则mechanism=null。submit整个描述。',
     },
   },
   outputSchema: AttemptDescription,
@@ -37,7 +37,7 @@ export const backtraceJudgeTaskSpec = {
     structuredOutputSchema: BacktraceDecisions,
     prompt: {
       kind: 'inline',
-      text: '对每个候选给一条判定。点名共享的具体公式、关系、步骤和适用条件才是 specific。审题、单位、粗心等泛化习惯只能 broad。same_mechanism 为同一错法；same_method 为本人用过同一方法；needs_this_method 为过去本人用过当前参考所需方法；无关为 not_similar。不重新判分，不隐藏宽泛匹配。shared_step 只能引用输入已有步骤键，无可指认步骤则 null。一次 submit 提交全部 matches。',
+      text: '每候选一条带outcome。same_method须本人原文方法，失败不是成功解法；needs_this_method限过去成功的方法；inferred不作依据。具体公式/条件相同才specific，审题单位粗心只能broad。evidence.now/prior逐字摘insight的方法证据、错误或needed_method，why不加新算法。shared_step仅已有步骤键，无依据null/not_similar。不判分，submit全部matches。',
     },
   },
   outputSchema: BacktraceDecisions,
