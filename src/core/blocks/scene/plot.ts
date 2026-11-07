@@ -15,6 +15,8 @@ import { type ExprNode, evaluateExpression, parseExpression } from '../expr';
 const SAMPLE_INTERVALS = 512;
 /** Balanced interior scan per visible interval; catches narrow poles between samples. */
 const SCAN_LEVELS = 3;
+/** Guaranteed per-interval scan budget — 7 dyadic points used, headroom for duplicates. */
+const SCAN_EVALUATIONS = 16;
 /** A scan accepts continuity when the largest sub-gap shrank to this fraction of the interval gap. */
 const SCAN_CONVERGENCE = 0.5;
 /** Bisection chain levels per suspicious interval; a jump's cling streak fires well below this. */
@@ -23,16 +25,20 @@ const MAX_CHAIN_LEVELS = 26;
 const CLING_FRACTION = 0.02;
 /** Consecutive clinging midpoints that declare a jump; atan(1000*x) clings ~9 levels before turning interior. */
 const JUMP_CLING_LEVELS = 14;
+/** An ordinary lineage still wandering after this many levels is bounded oscillation, not a break. */
+const WANDER_LEVELS = 6;
 /** Chain gaps shrinking to this fraction twice in a row accept continuity. */
 const CHAIN_CONVERGENCE = 0.75;
-/** A value this factor past both its neighbours is a pole, not a steep continuous climb. */
-const POLE_FACTOR = 8;
-/** Each midpoint magnitude must outrun the one two levels back by this factor for a divergence tick. */
+/** A midpoint magnitude must exceed both current ends by this factor for a divergence tick. */
 const DIVERGENCE_FACTOR = 1.8;
-/** Bounds one pathological interval so a pole cannot consume the whole curve budget. */
-const MAX_EVALUATIONS_PER_INTERVAL = 64;
-/** Bounds a single pathological expression during a drag. */
-const MAX_EVALUATIONS_PER_ITEM = 8_192;
+/** Bounds one pathological interval (scan + all its suspect-pair chains). */
+const MAX_EVALUATIONS_PER_INTERVAL = 128;
+/**
+ * Shared refinement pool per item: covers a fully-oscillatory curve's chains
+ * (~33k measured) with margin; scans have their own guaranteed per-interval
+ * budget on top.
+ */
+const MAX_EVALUATIONS_PER_ITEM = 64_000;
 const MAX_TICKS = 200;
 const MAX_PARAM_STEPS = 1_000;
 const MAX_ISSUES = 12;
@@ -99,13 +105,15 @@ function issue(
   };
 }
 
-function roundTo(value: number, decimals: number): number {
+/**
+ * Snap binary noise (0.1 + 0.2) to 15 significant digits. Fixed-decimal
+ * rounding collapses small magnitudes to 0 and overflows at large ones, so
+ * significance, not decimals, is the right scale for params and ticks alike.
+ */
+function snapValue(value: number): number {
   if (!Number.isFinite(value)) return value;
-  const factor = 10 ** decimals;
-  const scaled = value * factor;
-  if (!Number.isFinite(scaled)) return value;
-  const rounded = Math.round(scaled) / factor;
-  return Object.is(rounded, -0) ? 0 : rounded;
+  const snapped = Number(value.toPrecision(15));
+  return Object.is(snapped, -0) ? 0 : snapped;
 }
 
 /** A view must be resolvable at its own magnitude: mid must differ from both ends. */
@@ -139,7 +147,7 @@ export function resolveParamValues(
       value = param.min + Math.round((value - param.min) / param.step) * param.step;
       value = Math.min(param.max, Math.max(param.min, value));
     }
-    resolved[param.name] = roundTo(value, 9);
+    resolved[param.name] = snapValue(value);
   }
   return resolved;
 }
@@ -156,13 +164,13 @@ function niceStep(span: number): number {
 }
 
 function decimalsForStep(step: number): number {
-  for (let decimals = 0; decimals <= 6; decimals += 1) {
-    const scaled = step * 10 ** decimals;
-    if (Math.abs(scaled - Math.round(scaled)) <= 1e-9 * Math.max(1, Math.abs(scaled))) {
-      return decimals;
-    }
-  }
-  return 6;
+  // Decimals needed to write one step at its own magnitude: the exponent of
+  // its leading digit plus its mantissa decimals. A fixed cap rounds small
+  // steps (5e-9) to zero — the label must stay at the step's scale.
+  const [mantissa, exponentText] = step.toExponential().split('e');
+  const mantissaDecimals = mantissa.includes('.') ? mantissa.split('.')[1].length : 0;
+  // toFixed accepts at most 100 decimals; denormal steps clamp there.
+  return Math.min(100, Math.max(0, mantissaDecimals - Number(exponentText)));
 }
 
 function formatTickValue(value: number, step: number): string {
@@ -233,7 +241,7 @@ function makeTicks(
     const start = Math.ceil(min / step - 1e-9);
     const end = Math.floor(max / step + 1e-9);
     return buildTicks(start, end, (index) => ({
-      value: roundTo(index * step, 12),
+      value: snapValue(index * step),
       label: formatPiTick(index * multiplier),
     }));
   }
@@ -242,7 +250,7 @@ function makeTicks(
   const start = Math.ceil(min / step - 1e-9);
   const end = Math.floor(max / step + 1e-9);
   return buildTicks(start, end, (index) => ({
-    value: roundTo(index * step, 12),
+    value: snapValue(index * step),
     label: formatTickValue(index * step, step),
   }));
 }
@@ -277,15 +285,15 @@ type IntervalVerdict = {
 /**
  * Sample one expression into drawable segments.
  *
- * The base grid always covers the whole x viewport. Each visible base interval
- * then gets a continuity verdict from bisection behaviour alone — never from
- * the y viewport and never from what the budget happened to allow: a
- * continuous curve's |Δy| shrinks as the interval halves, a jump keeps one
- * endpoint level on every midpoint (floor stays Δ=1 at any depth), and a pole
- * drives |y| up without bound. Offscreen chords cost no evaluations, and
- * intervals the budget never reached keep their uniform-sample connection,
- * so the budget can never decide whether a curve exists. Only the one
- * interval whose verification was actually interrupted is broken.
+ * The base grid always covers the whole x viewport. Every visible base
+ * interval then gets a guaranteed interior scan (its own fixed budget, never
+ * starved by earlier intervals), and every sub-gap that did not converge is
+ * verified by its own bisection chain out of the shared pool: a continuous
+ * curve's |Δy| shrinks as the interval halves, a jump keeps one endpoint
+ * level on every midpoint (floor stays Δ=1 at any depth), and a pole drives
+ * |y| past both ends and keeps going. Offscreen chords cost no evaluations;
+ * an interval whose verification is interrupted by the pool breaks rather
+ * than connecting unverified.
  */
 function sampleCurve(
   ast: ExprNode,
@@ -324,22 +332,17 @@ function sampleCurve(
       verdicts.push(connected);
       continue;
     }
-    if (evaluations >= MAX_EVALUATIONS_PER_ITEM) {
-      // The budget ended before this interval was examined: keep the uniform
-      // result instead of deleting a curve the budget happened to miss.
-      verdicts.push(connected);
-      continue;
-    }
     verdicts.push(classifyInterval(xs[index], fa, xs[index + 1], fb));
-  }
-
-  /** True when a pole signature is present: |y| far past both ends. */
-  function isPoleSpike(value: number, endMax: number): boolean {
-    return endMax > 0 ? Math.abs(value) >= POLE_FACTOR * endMax : Math.abs(value) > 1e6;
   }
 
   function classifyInterval(a: number, fa: number, b: number, fb: number): IntervalVerdict {
     let spent = 0;
+    // The scan is the fixed per-interval check: every visible base interval
+    // always gets it, no matter what earlier intervals already spent. Only
+    // its own small cap bounds it.
+    const canScan = (): boolean => spent < SCAN_EVALUATIONS;
+    // Refinement chains share the item pool; a pair that cannot be chained
+    // stays unverified, and unverified intervals never connect.
     const canEvaluate = (): boolean =>
       evaluations < MAX_EVALUATIONS_PER_ITEM && spent < MAX_EVALUATIONS_PER_INTERVAL;
 
@@ -356,139 +359,225 @@ function sampleCurve(
         if (x === a || x === b) continue;
         const previous = scanned[scanned.length - 1];
         if (previous !== undefined && x === previous[0]) continue;
-        if (!canEvaluate()) return { continuous: false, points: [] };
+        if (!canScan()) return { continuous: false, points: [] };
         const y = evalAt(x);
         spent += 1;
         if (!Number.isFinite(y)) return { continuous: false, points: [] };
-        if (isPoleSpike(y, endMax)) return { continuous: false, points: [] };
         scanned.push([x, y]);
       }
     }
 
-    // Phase 2 — when the scan did not already converge, run a bisection
-    // chain on the widest scanned sub-interval until the gap provably shrinks
-    // (steep continuous curves), a jump signature persists (floor), or a pole
-    // signature appears (divergence, or |y| past both ends).
-    const grid: ReadonlyArray<readonly [number, number]> = [[a, fa], ...scanned, [b, fb]];
-    let widest = 0;
-    for (let index = 1; index < grid.length; index += 1) {
-      if (
-        Math.abs(grid[index][1] - grid[index - 1][1]) >
-        Math.abs(grid[widest + 1][1] - grid[widest][1])
-      ) {
-        widest = index - 1;
-      }
-    }
+    // Phase 2 — every sub-gap that did not converge is verified by its own
+    // bisection chain: a pole always makes ITS OWN pair the outlier, so
+    // chaining only the widest pair can miss it entirely (1/(x-0.3)^2 over
+    // [-1000,1000] hid behind a steeper neighbour pair). x-sorted — scan
+    // pushes dyadic points in evaluation order, which is not x order.
+    const grid: ReadonlyArray<readonly [number, number]> = [
+      [a, fa],
+      ...[...scanned].sort((p, q) => p[0] - q[0]),
+      [b, fb],
+    ];
     const intervalGap = Math.abs(fb - fa);
-    const widestGap = Math.abs(grid[widest + 1][1] - grid[widest][1]);
-    if (widestGap <= SCAN_CONVERGENCE * intervalGap || intervalGap <= floatNoise(endMax)) {
-      return { continuous: true, points: scanned };
+    const noise = floatNoise(endMax);
+    // Values already seen inside this interval; a lineage whose ends stay
+    // bounded at this scale is wandering (oscillation), not diverging.
+    let wanderBound = endMax;
+    const suspects: number[] = [];
+    for (let index = 0; index + 1 < grid.length; index += 1) {
+      const gap = Math.abs(grid[index + 1][1] - grid[index][1]);
+      if (gap > SCAN_CONVERGENCE * intervalGap && gap > noise) suspects.push(index);
+      wanderBound = Math.max(wanderBound, Math.abs(grid[index][1]), Math.abs(grid[index + 1][1]));
     }
-    return runChain(grid[widest][0], grid[widest][1], grid[widest + 1][0], grid[widest + 1][1]);
-
-    function runChain(
-      chainA: number,
-      chainFa: number,
-      chainB: number,
-      chainFb: number,
-    ): IntervalVerdict {
-      let a = chainA;
-      let fa = chainFa;
-      let b = chainB;
-      let fb = chainFb;
-      let previousGap = Math.abs(fb - fa);
-      let shrinkStreak = 0;
-      let clingStreak = 0;
-      let divergenceTicks = 0;
-      const chain: Array<[number, number]> = [];
-      for (let level = 1; level <= MAX_CHAIN_LEVELS; level += 1) {
-        if (!canEvaluate()) {
-          // The one interval whose continuity is left unconfirmed.
+    wanderBound *= DIVERGENCE_FACTOR;
+    if (suspects.length === 0) return { continuous: true, points: scanned };
+    // Widest first: spend the shared pool on the pairs most likely to break.
+    suspects.sort(
+      (p, q) => Math.abs(grid[q + 1][1] - grid[q][1]) - Math.abs(grid[p + 1][1] - grid[p][1]),
+    );
+    const points: Array<[number, number]> = [...scanned];
+    // One lineage per suspicious pair; a midpoint outside both ends marks the
+    // lineage as pole-suspect, and suspect lineages must verify BOTH children
+    // — the pole can sit past a dip on either side of an outlier and behind a
+    // smaller-gap child (1/(x-0.3)^2 over [-1000,1000] hides exactly there).
+    type Lineage = {
+      a: number;
+      fa: number;
+      b: number;
+      fb: number;
+      depth: number;
+      cling: number;
+      div: number;
+      prevGap: number;
+      shrink: number;
+      /** 0 = ordinary; >0 = pole-suspect until both ends fall back below it. */
+      release: number;
+    };
+    const stack: Lineage[] = [];
+    for (const index of [...suspects].reverse()) {
+      stack.push({
+        a: grid[index][0],
+        fa: grid[index][1],
+        b: grid[index + 1][0],
+        fb: grid[index + 1][1],
+        depth: 0,
+        cling: 0,
+        div: 0,
+        prevGap: intervalGap,
+        shrink: 0,
+        release: 0,
+      });
+    }
+    while (stack.length > 0) {
+      const s = stack.pop() as Lineage;
+      // Depth exhausted: a still-suspect lineage never verified, so break;
+      // ordinary wandering (oscillation) is not evidence of a break.
+      if (s.depth >= MAX_CHAIN_LEVELS) {
+        if (s.release > 0 && Math.max(Math.abs(s.fa), Math.abs(s.fb)) > s.release) {
           return { continuous: false, points: [] };
         }
-        const gap = Math.abs(fb - fa);
-        const noise = floatNoise(Math.max(Math.abs(fa), Math.abs(fb)));
-        const middle = (a + b) / 2;
-        if (middle === a || middle === b) {
-          // x is at float resolution: a persistent gap can only be a jump.
-          return {
-            continuous: gap <= noise,
-            points: gap <= noise ? [...scanned, ...chain] : [],
-          };
-        }
-        const middleY = evalAt(middle);
-        spent += 1;
-        if (!Number.isFinite(middleY)) return { continuous: false, points: [] };
-        if (isPoleSpike(middleY, Math.max(Math.abs(fa), Math.abs(fb)))) {
-          return { continuous: false, points: [] };
-        }
-        // Divergence means overshooting BOTH current ends, not just leaning
-        // toward the bigger one: x^9's bisection towards its steep end keeps
-        // raising mid |y| toward the endpoint value without ever passing it,
-        // while a pole keeps the midpoint past both ends level after level.
-        // A bounded bump/oscillation can fire once at most, since the next
-        // level's endMax already includes the peak.
-        divergenceTicks =
-          Math.abs(middleY) >= DIVERGENCE_FACTOR * Math.max(Math.abs(fa), Math.abs(fb))
-            ? divergenceTicks + 1
-            : 0;
-        if (divergenceTicks >= 2) return { continuous: false, points: [] };
-        if (gap <= noise) {
-          return { continuous: true, points: [...scanned, ...chain, [middle, middleY]] };
-        }
-        shrinkStreak = gap <= CHAIN_CONVERGENCE * previousGap ? shrinkStreak + 1 : 0;
-        if (shrinkStreak >= 2) {
-          return { continuous: true, points: [...scanned, ...chain, [middle, middleY]] };
-        }
-        previousGap = gap;
-        const low = Math.min(fa, fb);
-        const high = Math.max(fa, fb);
-        const band = CLING_FRACTION * gap;
-        const leftGap = Math.abs(middleY - fa);
-        const rightGap = Math.abs(fb - middleY);
-        const inside = middleY >= low - band && middleY <= high + band;
-        if (inside) {
-          const nearLeft = leftGap <= band;
-          const nearRight = rightGap <= band;
-          if (nearLeft !== nearRight) {
-            // The midpoint holds one endpoint's level: a jump keeps doing
-            // this at every depth, while a steep continuous curve starts
-            // producing interior values once the bisection reaches its
-            // transition width.
-            clingStreak += 1;
-            if (clingStreak >= JUMP_CLING_LEVELS) return { continuous: false, points: [] };
-          }
-        } else {
-          // Outside both endpoint levels: a pole candidate (same-side poles
-          // like 1/(x-a)^2 grow inward) or a local extremum between samples.
-          // A bump falls back inside the band on the next midpoint and
-          // resolves through the convergence test above.
-          clingStreak = 0;
-        }
-        chain.push([middle, middleY]);
-        // Follow the child that keeps the suspicious behaviour: the larger
-        // sub-gap while inside (the jump or the steep transition lives
-        // there), the larger-|y| end once outside (the pole side).
-        let takeLeft: boolean;
-        if (inside) {
-          takeLeft = leftGap > rightGap;
-        } else {
-          const leftMax = Math.max(Math.abs(fa), Math.abs(middleY));
-          const rightMax = Math.max(Math.abs(middleY), Math.abs(fb));
-          takeLeft = leftMax > rightMax || (leftMax === rightMax && leftGap >= rightGap);
-        }
-        if (takeLeft) {
-          b = middle;
-          fb = middleY;
-        } else {
-          a = middle;
-          fa = middleY;
-        }
+        continue;
       }
-      // Depth exhausted without a discontinuity signature: wandering
-      // behaviour (oscillation) is not evidence of a break; keep the curve.
-      return { continuous: true, points: [...scanned, ...chain] };
+      const gap = Math.abs(s.fb - s.fa);
+      const endMax = Math.max(Math.abs(s.fa), Math.abs(s.fb));
+      const noise = floatNoise(endMax);
+      if (gap <= noise) continue;
+      const shrink = gap <= CHAIN_CONVERGENCE * s.prevGap ? s.shrink + 1 : 0;
+      if (shrink >= 2) continue;
+      // Bounded interior wandering — never clings to an endpoint, stays
+      // within magnitudes the scan already saw, never left the band — is
+      // oscillation, not a break (sin(10000*x) would otherwise burn the
+      // whole per-interval cap wandering to MAX_CHAIN_LEVELS).
+      if (s.depth >= WANDER_LEVELS && s.cling === 0 && s.release === 0 && endMax <= wanderBound) {
+        continue;
+      }
+      const middle = (s.a + s.b) / 2;
+      if (middle === s.a || middle === s.b) {
+        // x is at float resolution: a persistent gap can only be a jump.
+        return { continuous: false, points: [] };
+      }
+      if (!canEvaluate()) {
+        // The pool ran out mid-verification: unconfirmed, so break.
+        return { continuous: false, points: [] };
+      }
+      const middleY = evalAt(middle);
+      spent += 1;
+      if (!Number.isFinite(middleY)) return { continuous: false, points: [] };
+      // A spike above both ends is only a suspect, never a verdict: a finite
+      // narrow bump (exp(-k*(x-c)^2)) also overshoots once, then its children
+      // fall back below the release level and the lineage clears. Divergence
+      // means overshooting BOTH current ends, not just leaning toward the
+      // bigger one: x^9's bisection towards its steep end keeps raising mid
+      // |y| toward the endpoint value without ever passing it, while a pole
+      // keeps the midpoint past both ends level after level.
+      const div = Math.abs(middleY) >= DIVERGENCE_FACTOR * endMax ? s.div + 1 : 0;
+      if (div >= 2) return { continuous: false, points: [] };
+      points.push([middle, middleY]);
+      const low = Math.min(s.fa, s.fb);
+      const high = Math.max(s.fa, s.fb);
+      const band = CLING_FRACTION * gap;
+      const leftGap = Math.abs(middleY - s.fa);
+      const rightGap = Math.abs(s.fb - middleY);
+      const inside = middleY >= low - band && middleY <= high + band;
+      const depth = s.depth + 1;
+      if (!inside) {
+        // Outside both endpoint levels: a pole candidate (same-side poles
+        // like 1/(x-a)^2 grow inward) or a local extremum. The pole can hide
+        // past a dip on either side of the outlier, so both children stay
+        // suspect until their ends fall below the release level — a bounded
+        // bump's children clear it immediately; a pole's neighbours do not.
+        const release = Math.max(s.release, DIVERGENCE_FACTOR * endMax);
+        stack.push({
+          a: s.a,
+          fa: s.fa,
+          b: middle,
+          fb: middleY,
+          depth,
+          cling: 0,
+          div,
+          prevGap: gap,
+          shrink: 0,
+          release,
+        });
+        stack.push({
+          a: middle,
+          fa: middleY,
+          b: s.b,
+          fb: s.fb,
+          depth,
+          cling: 0,
+          div,
+          prevGap: gap,
+          shrink: 0,
+          release,
+        });
+        continue;
+      }
+      const nearLeft = leftGap <= band;
+      const nearRight = rightGap <= band;
+      // The midpoint holds one endpoint's level: a jump keeps doing this
+      // at every depth, while a steep continuous curve starts producing
+      // interior values once the bisection reaches its transition width.
+      const cling = nearLeft !== nearRight ? s.cling + 1 : 0;
+      if (cling >= JUMP_CLING_LEVELS) return { continuous: false, points: [] };
+      // A suspect lineage clears once its ends are back below the release
+      // level — the outlier was a bounded bump, not a pole.
+      const suspect = s.release > 0 && endMax > s.release;
+      if (suspect) {
+        stack.push({
+          a: s.a,
+          fa: s.fa,
+          b: middle,
+          fb: middleY,
+          depth,
+          cling: 0,
+          div,
+          prevGap: gap,
+          shrink,
+          release: s.release,
+        });
+        stack.push({
+          a: middle,
+          fa: middleY,
+          b: s.b,
+          fb: s.fb,
+          depth,
+          cling: 0,
+          div,
+          prevGap: gap,
+          shrink,
+          release: s.release,
+        });
+      } else if (leftGap >= rightGap) {
+        // Pursue the child keeping the larger sub-gap — inside the band a
+        // single line of suspicion is enough (oscillation stays cheap).
+        stack.push({
+          a: s.a,
+          fa: s.fa,
+          b: middle,
+          fb: middleY,
+          depth,
+          cling,
+          div: 0,
+          prevGap: gap,
+          shrink,
+          release: 0,
+        });
+      } else {
+        stack.push({
+          a: middle,
+          fa: middleY,
+          b: s.b,
+          fb: s.fb,
+          depth,
+          cling,
+          div: 0,
+          prevGap: gap,
+          shrink,
+          release: 0,
+        });
+      }
     }
+    return { continuous: true, points };
   }
 
   const segments: PlotCurveSegment[] = [];
@@ -918,7 +1007,7 @@ export function samplesForTable(
       if (!parsed.ok) return null;
       variables.x = tick.value;
       const value = evaluateExpression(parsed.ast, variables);
-      return Number.isFinite(value) ? roundTo(value, 4) : null;
+      return Number.isFinite(value) ? snapValue(value) : null;
     });
     rows.push({ x: tick.value, x_label: tick.label, y });
   }
