@@ -34,7 +34,7 @@ rows/schema/readers and pending queue recovery. No deployment or production data
 
 ## Consequences
 
-One root remains the sole reply author. No format-only paid retry and no repeated reviewer context.
+One root remains the sole reply author. A deterministic correction clarification is server-owned and is published without a model call, so a missing model terminal or a provider failure does not replace it. No format-only paid retry and no repeated reviewer context.
 Semantic learning gates and deterministic effect contracts still bind final bytes. Normalized replies
 invalidate the SDK cursor for next-turn cold recovery. Actual synthetic measurements establish only
 sample-specific savings, not production-wide quality or cost claims.

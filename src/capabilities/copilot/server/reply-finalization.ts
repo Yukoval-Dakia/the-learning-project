@@ -400,7 +400,13 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
     failure?: ProviderFailureInfo,
     context: { streamedText?: string; retainedTail?: string } = {},
   ): Promise<CopilotReplyFinalizationResult> {
-    if (failure !== undefined) {
+    // A server-owned clarification is the candidate. An empty model terminal
+    // or a provider failure must not replace it.
+    const authored =
+      options.authoritativeReply !== undefined && options.authoritativeReply.reply.trim().length > 0
+        ? options.authoritativeReply.reply
+        : undefined;
+    if (failure !== undefined && authored === undefined) {
       return publishUnsealed(
         terminalText ||
           context.streamedText ||
@@ -412,13 +418,14 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
     const startVersion = traceVersion;
     const startTraceSha = digestTrace(trace);
     try {
-      if (terminalText.trim().length === 0)
+      const terminal = authored ?? terminalText;
+      if (terminal.trim().length === 0)
         return publishUnsealed(terminalText, 'missing_terminal', context);
       if (trace.some((entry) => entry.status === 'in_flight' || entry.output_sha256 === null)) {
-        return publishUnsealed(terminalText, 'incomplete_tool_trace', context);
+        return publishUnsealed(terminal, 'incomplete_tool_trace', context);
       }
-      const candidateSha = sha256Text(terminalText);
-      const presentedText = options.authoritativeReply?.reply ?? terminalText;
+      const candidateSha = sha256Text(terminal);
+      const presentedText = terminal;
       const correction = resolveCorrectionReply(presentedText, options.correctionContract);
       if (correction.reply.trim().length === 0) {
         return publishUnsealed('', 'missing_terminal', context);
@@ -462,7 +469,7 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
         accepted: true,
       };
     } catch {
-      return publishUnsealed(terminalText, 'finalization_error', context);
+      return publishUnsealed(authored ?? terminalText, 'finalization_error', context);
     }
   }
 
