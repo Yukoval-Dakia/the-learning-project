@@ -29,7 +29,7 @@
 // covers the presentation that ships.
 
 import { canonicalHash } from '@/core/migration/canonical';
-import type { PaidEffectIdentity } from '@/core/migration/paid-effect-protocol';
+import type { PaidEffectIdentity } from '@/core/paid-work/public';
 import { LEGACY_DRAFT_STATUS } from '@/core/schema/assessment/lifecycle';
 import {
   type PresentationBlockT,

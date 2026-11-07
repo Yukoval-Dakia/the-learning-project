@@ -35,12 +35,12 @@ import {
   paidEffectGateLockKey,
   paidEffectIdentitySchema,
   paidEffectJsonEquals,
-} from '@/core/migration/paid-effect-protocol';
-import type { Db, Tx } from '@/db/client';
+} from '@/core/paid-work/protocol/paid-effect-protocol';
 import {
   admitPaidEffectDeliveryControl,
   lockPaidEffectControlFamily,
-} from '@/db/paid-effect-control';
+} from '@/core/paid-work/server/paid-effect-control';
+import type { Db, Tx } from '@/db/client';
 import {
   event,
   event_subscription_delivery,
