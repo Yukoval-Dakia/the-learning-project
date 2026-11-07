@@ -490,7 +490,9 @@ export default function NoteReaderPage({
                   data-depth={heading.level > top ? 1 : 0}
                   onClick={() => {
                     const block = document.getElementById(anchorId);
-                    const target = block?.querySelectorAll('h1, h2, h3, h4')[index] ?? block;
+                    // Only the Markdown's own headings: a section label is also a heading in this block.
+                    const target =
+                      block?.querySelectorAll('.nt-sem-body :is(h1, h2, h3, h4)')[index] ?? block;
                     target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
                   }}
                 >

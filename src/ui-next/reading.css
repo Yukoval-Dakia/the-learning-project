@@ -199,7 +199,7 @@
 }
 
 /* Formulas. A short one stays on a line with its punctuation (see tieMathPunctuation). */
-.un-math-tie {
+[data-ui-next] :where(.un-math-tie) {
   white-space: nowrap;
 }
 [data-ui-next] :where(.un-read) :where(.katex) {
