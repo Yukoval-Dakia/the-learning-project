@@ -73,18 +73,8 @@ export async function readGradedAttempt(db: Db | Tx, id: string) {
       (x) => x.kind === 'open' && x.evidence.length > 0,
     ) ?? false;
   let visible = legacy?.effective?.verdict.visible_to_user !== false;
-  if (native) {
-    const releases = await db
-      .select()
-      .from(event)
-      .where(
-        and(
-          eq(event.action, 'experimental:assessment_feedback_released'),
-          eq(event.subject_id, id),
-        ),
-      );
-    visible = (await filterActiveRows(db, releases)).length > 0;
-  } else if (!visible && raw.session_id) {
+  // The canonical native resolver already withholds buffered paper evaluations.
+  if (!native && !visible && raw.session_id) {
     const [session] = await db
       .select()
       .from(learning_session)
