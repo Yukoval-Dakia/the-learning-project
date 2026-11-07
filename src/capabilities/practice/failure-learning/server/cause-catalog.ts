@@ -212,9 +212,9 @@ export async function maybeProposeCauseCategoryFromOthers(params: {
         ...(learnerSummary !== undefined ? { learner_summary: learnerSummary } : {}),
         reason_md:
           (output.rationale_md ??
-            `没能归到现有类别的错误反复出现了 ${scopedCauses.length} 次，看起来是同一种错因。`) +
+            `${profile.displayName}里没能归到现有类别的错误反复出现了 ${scopedCauses.length} 次，看起来是同一种错因。`) +
           (unresolvedCount > 0
-            ? `\n\n另有 ${unresolvedCount} 条 other 失败因 KC 不可解析未计入本桶（bucket=unresolved）。`
+            ? `\n\n另有 ${unresolvedCount} 条错误找不到对应的知识点，没有算进这次判断。`
             : ''),
         // evidence_refs 标 event_role：effective event 对 user 源是
         // user_cause event、对 agent 源是 judge event，reviewer 不回查即分辨。
