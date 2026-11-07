@@ -1,5 +1,5 @@
 import { createId } from '@paralleldrive/cuid2';
-import { and, desc, eq, gte, inArray, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, isNull, sql } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
 import { learning_session } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
@@ -7,6 +7,8 @@ import { writeJobEvent } from '@/kernel/job-events';
 import { assertFromState } from '@/kernel/learning-session-guard';
 import { COPILOT_REUSE_WINDOW_MS } from '@/kernel/limits';
 import { lockCopilotSessionSelection } from '@/kernel/locks/copilot-session-selection-lock';
+import { requestCopilotRunCancellation } from './copilot-run-cancellation';
+import { listOpenCopilotRunIds } from './durable-dispatch';
 
 // Conversation session lifecycle for Copilot and teaching.
 //
@@ -24,13 +26,43 @@ const SESSION_TABLE = 'learning_session' as const;
 async function loadConversationSessionForUpdate(
   tx: Db | Tx,
   sessionId: string,
-): Promise<{ status: string; goal_id: string | null; version: number } | null> {
-  const rows = await tx.execute<{ status: string; goal_id: string | null; version: number }>(
-    sql`SELECT status, goal_id, version FROM learning_session WHERE id = ${sessionId} AND type = 'conversation' FOR UPDATE`,
+): Promise<{
+  status: string;
+  goal_id: string | null;
+  version: number;
+  entrypoint: string | null;
+  deletion_requested_at: Date | null;
+  deleted_at: Date | null;
+} | null> {
+  const rows = await tx.execute<{
+    status: string;
+    goal_id: string | null;
+    version: number;
+    entrypoint: string | null;
+    deletion_requested_at: Date | null;
+    deleted_at: Date | null;
+  }>(
+    sql`SELECT status, goal_id, version, entrypoint, deletion_requested_at, deleted_at FROM learning_session WHERE id = ${sessionId} AND type = 'conversation' FOR UPDATE`,
   );
   const row = rows[0];
   if (!row) return null;
-  return { status: row.status, goal_id: row.goal_id, version: row.version };
+  return {
+    status: row.status,
+    goal_id: row.goal_id,
+    version: row.version,
+    entrypoint: row.entrypoint,
+    deletion_requested_at: row.deletion_requested_at,
+    deleted_at: row.deleted_at,
+  };
+}
+
+function assertNotDeleted(
+  sessionId: string,
+  row: { deletion_requested_at: Date | null; deleted_at: Date | null },
+): void {
+  if (row.deletion_requested_at || row.deleted_at) {
+    throw new ApiError('conflict', `Copilot conversation ${sessionId} is deleted`, 409);
+  }
 }
 
 // ---------- startConversation ----------
@@ -118,6 +150,8 @@ export async function findReusableCopilotConversation(
         eq(learning_session.entrypoint, 'copilot'),
         inArray(learning_session.status, ['active', 'idle']),
         gte(learning_session.updated_at, cutoff),
+        isNull(learning_session.deletion_requested_at),
+        isNull(learning_session.deleted_at),
       ),
     )
     .orderBy(desc(learning_session.updated_at))
@@ -196,7 +230,12 @@ export async function listCopilotConversations(
     })
     .from(learning_session)
     .where(
-      and(eq(learning_session.type, 'conversation'), eq(learning_session.entrypoint, 'copilot')),
+      and(
+        eq(learning_session.type, 'conversation'),
+        eq(learning_session.entrypoint, 'copilot'),
+        isNull(learning_session.deletion_requested_at),
+        isNull(learning_session.deleted_at),
+      ),
     )
     .orderBy(desc(learning_session.updated_at), desc(learning_session.id))
     .limit(limit);
@@ -219,6 +258,8 @@ export async function getCopilotConversation(
         eq(learning_session.id, sessionId),
         eq(learning_session.type, 'conversation'),
         eq(learning_session.entrypoint, 'copilot'),
+        isNull(learning_session.deletion_requested_at),
+        isNull(learning_session.deleted_at),
       ),
     )
     .limit(1);
@@ -240,6 +281,8 @@ export async function isLiveCopilotConversation(
         eq(learning_session.type, 'conversation'),
         eq(learning_session.entrypoint, 'copilot'),
         inArray(learning_session.status, ['active', 'idle']),
+        isNull(learning_session.deletion_requested_at),
+        isNull(learning_session.deleted_at),
       ),
     );
   const rows = lock ? await query.for('update') : await query;
@@ -256,7 +299,12 @@ export async function findOrCreateCopilotConversation(
     await lockCopilotSessionSelection(tx);
     if (opts.sessionId) {
       const selected = await tx
-        .select({ id: learning_session.id, status: learning_session.status })
+        .select({
+          id: learning_session.id,
+          status: learning_session.status,
+          deletion_requested_at: learning_session.deletion_requested_at,
+          deleted_at: learning_session.deleted_at,
+        })
         .from(learning_session)
         .where(
           and(
@@ -268,6 +316,7 @@ export async function findOrCreateCopilotConversation(
         .limit(1);
       const current = selected[0];
       if (!current) throw new ApiError('not_found', 'Copilot conversation not found', 404);
+      assertNotDeleted(current.id, current);
       if (current.status !== 'active' && current.status !== 'idle') {
         throw new ApiError('conflict', `Copilot conversation is ${current.status}`, 409);
       }
@@ -549,6 +598,7 @@ export async function assertAcceptingTurns(
         404,
       );
     }
+    assertNotDeleted(sessionId, current);
     if (current.status !== 'active' && current.status !== 'idle') {
       throw new ApiError(
         'conflict',
@@ -590,7 +640,12 @@ export async function assertAcceptingTurns(
  */
 export async function assertActive(db: Db, sessionId: string): Promise<{ goalId: string | null }> {
   const rows = await db
-    .select({ status: learning_session.status, goal_id: learning_session.goal_id })
+    .select({
+      status: learning_session.status,
+      goal_id: learning_session.goal_id,
+      deletion_requested_at: learning_session.deletion_requested_at,
+      deleted_at: learning_session.deleted_at,
+    })
     .from(learning_session)
     .where(eq(learning_session.id, sessionId))
     .limit(1);
@@ -602,6 +657,7 @@ export async function assertActive(db: Db, sessionId: string): Promise<{ goalId:
       404,
     );
   }
+  assertNotDeleted(sessionId, row);
   if (row.status !== 'active') {
     throw new ApiError(
       'conflict',
@@ -610,4 +666,130 @@ export async function assertActive(db: Db, sessionId: string): Promise<{ goalId:
     );
   }
   return { goalId: row.goal_id };
+}
+
+// ---------- requestCopilotConversationDeletion (hard delete) ----------
+//
+// Durable sequence: revoke access (deletion_requested_at commits first, so a
+// crash after this point is still recoverable) → cancel every open durable run
+// → persist the tombstone (deleted_at) only when no open run remains. The
+// workspace sweep reads these two columns and removes the owner's directory;
+// copilot code never touches agent-workspace state directly.
+// Stop/close never enters this path — they keep their cancel/subscription
+// semantics.
+
+export type CopilotConversationDeletionResult = {
+  session_id: string;
+  status: 'deleting' | 'deleted';
+};
+
+/**
+ * First phase commits the revocation; later phases are idempotent so a retry
+ * after a crash simply re-cancels and re-checks. `deleting` means in-flight
+ * runs have not settled yet — `finalizePendingConversationDeletions` (called
+ * by the reconcile job) completes the tombstone once they do.
+ */
+export async function requestCopilotConversationDeletion(
+  db: Db,
+  sessionId: string,
+): Promise<CopilotConversationDeletionResult> {
+  const now = new Date();
+  await db.transaction(async (tx) => {
+    await lockCopilotSessionSelection(tx);
+    const current = await loadConversationSessionForUpdate(tx, sessionId);
+    if (current?.entrypoint !== 'copilot') {
+      throw new ApiError('not_found', 'Copilot conversation not found', 404);
+    }
+    if (current.deleted_at || current.deletion_requested_at) return;
+    await tx
+      .update(learning_session)
+      .set({
+        deletion_requested_at: now,
+        updated_at: now,
+        version: sql`${learning_session.version} + 1`,
+      })
+      .where(eq(learning_session.id, sessionId));
+    await writeJobEvent(tx, {
+      business_table: SESSION_TABLE,
+      business_id: sessionId,
+      event_type: 'conversation.deletion_requested',
+      payload: { requested_at: now.toISOString(), surface: 'copilot' },
+    });
+  });
+
+  for (const runId of await listOpenCopilotRunIds(db, sessionId)) {
+    try {
+      await requestCopilotRunCancellation(db, runId);
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) continue;
+      throw error;
+    }
+  }
+
+  if ((await listOpenCopilotRunIds(db, sessionId)).length === 0) {
+    await markCopilotConversationDeleted(db, sessionId);
+    return { session_id: sessionId, status: 'deleted' };
+  }
+  return { session_id: sessionId, status: 'deleting' };
+}
+
+/** Persist the tombstone. Requires the revocation to exist; safe to repeat. */
+export async function markCopilotConversationDeleted(db: Db, sessionId: string): Promise<boolean> {
+  return db.transaction(async (tx) => {
+    await lockCopilotSessionSelection(tx);
+    const current = await loadConversationSessionForUpdate(tx, sessionId);
+    if (current?.entrypoint !== 'copilot') {
+      throw new ApiError('not_found', 'Copilot conversation not found', 404);
+    }
+    if (current.deleted_at) return false;
+    if (!current.deletion_requested_at) {
+      throw new ApiError('conflict', 'Copilot conversation deletion was not requested', 409);
+    }
+    const now = new Date();
+    await tx
+      .update(learning_session)
+      .set({
+        deleted_at: now,
+        updated_at: now,
+        version: sql`${learning_session.version} + 1`,
+      })
+      .where(eq(learning_session.id, sessionId));
+    await writeJobEvent(tx, {
+      business_table: SESSION_TABLE,
+      business_id: sessionId,
+      event_type: 'conversation.deleted',
+      payload: { deleted_at: now.toISOString(), surface: 'copilot' },
+    });
+    return true;
+  });
+}
+
+/**
+ * Drain-complete pass for the reconcile job: tombstone every revoking
+ * conversation whose runs have all settled. Bounded and idempotent — a slow
+ * run simply keeps the session in `deleting` until a later pass.
+ */
+export async function finalizePendingConversationDeletions(
+  db: Db,
+  { limit = 20 }: { limit?: number } = {},
+): Promise<number> {
+  const pending = await db
+    .select({ id: learning_session.id })
+    .from(learning_session)
+    .where(
+      and(
+        eq(learning_session.type, 'conversation'),
+        eq(learning_session.entrypoint, 'copilot'),
+        sql`${learning_session.deletion_requested_at} IS NOT NULL`,
+        isNull(learning_session.deleted_at),
+      ),
+    )
+    .orderBy(learning_session.deletion_requested_at)
+    .limit(limit);
+  let finalized = 0;
+  for (const { id } of pending) {
+    if ((await listOpenCopilotRunIds(db, id)).length > 0) continue;
+    if (await markCopilotConversationDeleted(db, id)) finalized += 1;
+  }
+  return finalized;
 }

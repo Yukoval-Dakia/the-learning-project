@@ -393,6 +393,11 @@ export async function readCopilotSessionHead(
       AND (q.payload->>'session_id') = ${sessionId}
       AND ask.action IN (${COPILOT_ASK_ACTIONS_SQL})
       AND NOT EXISTS (
+        SELECT 1 FROM learning_session s
+        WHERE s.id = ${sessionId}
+          AND (s.deletion_requested_at IS NOT NULL OR s.deleted_at IS NOT NULL)
+      )
+      AND NOT EXISTS (
         SELECT 1 FROM job_events t
         WHERE t.business_table = q.business_table AND t.business_id = q.business_id
           AND ${copilotRunTerminalSql(sql.raw('t.event_type'), sql.raw('t.payload'))}
@@ -422,6 +427,28 @@ export async function readCopilotSessionHead(
     ...(typeof protocolVersion === 'number' ? { protocolVersion } : {}),
     ...(jobData ? { jobData } : {}),
   };
+}
+
+/**
+ * Every accepted-but-unsettled run of a session. Unlike readCopilotSessionHead
+ * this deliberately ignores the session deletion tombstone — the delete owner
+ * needs the list to cancel them.
+ */
+export async function listOpenCopilotRunIds(db: Db | Tx, sessionId: string): Promise<string[]> {
+  const rows = await db.execute<{ run_id: string }>(sql`
+    SELECT q.business_id AS run_id
+    FROM job_events q
+    WHERE q.business_table = ${COPILOT_RUN_TABLE}
+      AND q.event_type = ${COPILOT_RUN_EVENTS.QUEUED}
+      AND (q.payload->>'session_id') = ${sessionId}
+      AND NOT EXISTS (
+        SELECT 1 FROM job_events t
+        WHERE t.business_table = q.business_table AND t.business_id = q.business_id
+          AND ${copilotRunTerminalSql(sql.raw('t.event_type'), sql.raw('t.payload'))}
+      )
+    ORDER BY q.id ASC
+  `);
+  return rows.map((row) => row.run_id);
 }
 
 export async function hasCopilotRunDispatched(db: Db | Tx, runId: string): Promise<boolean> {

@@ -431,6 +431,10 @@ export type TableName = (typeof FK_ORDER)[number];
 // only transient / derived / operational state belongs here, never authored or
 // slow-accumulated cognitive data.
 export const BACKUP_EXCLUDED_TABLES: ReadonlySet<string> = new Set<string>([
+  // Sandbox workspace leases are bound to a local executor volume that a learner
+  // archive cannot restore; restoring rows would resurrect stale fencing while
+  // the directories they fence are already gone.
+  'agent_workspace',
   // YUK-1771: derived vectors, rebuilt from question_solution_prior by embed_backfill.
   'question_solution_prior_vector',
   // YUK-1771: one-off backfill ledger; losing it costs at most one more paid call per group.
