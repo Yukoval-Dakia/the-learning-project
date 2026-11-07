@@ -113,54 +113,100 @@ export interface LastKnowledgePractice {
   outcome: AnswerOutcome | null;
 }
 
+// Newest-first page width for the practice walk; one page usually answers the read.
+const PRACTICE_PAGE = 32;
+
 /**
- * The newest learner answer touching the node, with its effective outcome. Native
- * attempts reach the node through their question (answered part or revision group);
- * legacy attempt/review rows carry referenced_knowledge_ids in the payload. Reads
- * the same action set and verdict mapping as the activity readers above.
+ * Superset filter for native attempts: the frozen submission receipt's learning
+ * scope mentions this knowledge point somewhere. The exact issued membership is
+ * decided below by `issuedLearningKnowledgeIds`, never by live question tags.
+ */
+function nativeScopeMentions(kc: string) {
+  return sql`EXISTS (
+    SELECT 1 FROM ${event} receipt
+    CROSS JOIN LATERAL jsonb_array_elements(
+      CASE WHEN jsonb_typeof(receipt.payload->'learning_scope'->'questions') = 'array'
+        THEN receipt.payload->'learning_scope'->'questions' ELSE '[]'::jsonb END
+    ) q
+    WHERE receipt.action = 'experimental:assessment_submission'
+      AND receipt.subject_kind = 'submission'
+      AND receipt.subject_id = ${event.payload}->>'submission_id'
+      AND q->'knowledge_ids' @> ${kc}::jsonb
+  )`;
+}
+
+/**
+ * The newest learner answer touching the node, with its effective outcome. Only
+ * derivation-allowed answers count, so restricted material never reaches a card.
+ * Native attempts are attributed by the frozen learning scope and the issued
+ * parts, never by mutable question tags; a denied candidate walks on instead of
+ * ending the read. Legacy attempt/review rows carry `referenced_knowledge_ids`.
  */
 export async function loadLastKnowledgePractice(
   db: DbLike,
   knowledgeId: string,
 ): Promise<LastKnowledgePractice | null> {
   const kc = JSON.stringify([knowledgeId]);
-  const [row]: EventRow[] = await db
-    .select()
-    .from(event)
-    .where(
-      and(
-        eq(event.actor_kind, 'user'),
-        inArray(event.action, [...LEARNER_ANSWER_ACTIONS]),
-        eq(event.subject_kind, 'question'),
-        sql`(
-          (${event.action} = ${NATIVE_ATTEMPT_ACTION} AND EXISTS (
-            SELECT 1 FROM ${question} q
-            WHERE q.knowledge_ids @> ${kc}::jsonb
-              AND (
-                q.id = ${event.subject_id}
-                OR q.id = (
-                  SELECT qr.group_id FROM ${question_revision} qr
-                  WHERE qr.revision_id = ${event.payload}->>'revision_id'
-                )
+  let cursor: { at: Date; id: string } | undefined;
+  for (;;) {
+    const rows: EventRow[] = await db
+      .select()
+      .from(event)
+      .where(
+        and(
+          eq(event.actor_kind, 'user'),
+          inArray(event.action, [...LEARNER_ANSWER_ACTIONS]),
+          eq(event.subject_kind, 'question'),
+          sql`(
+            (${event.action} = ${NATIVE_ATTEMPT_ACTION} AND ${nativeScopeMentions(kc)})
+            OR (${event.action} <> ${NATIVE_ATTEMPT_ACTION}
+                AND ${event.payload}->'referenced_knowledge_ids' @> ${kc}::jsonb)
+          )`,
+          cursor
+            ? or(
+                lt(event.created_at, cursor.at),
+                and(eq(event.created_at, cursor.at), lt(event.id, cursor.id)),
               )
-          ))
-          OR (${event.action} <> ${NATIVE_ATTEMPT_ACTION}
-              AND ${event.payload}->'referenced_knowledge_ids' @> ${kc}::jsonb)
-        )`,
-      ),
-    )
-    .orderBy(desc(event.created_at), desc(event.id))
-    .limit(1);
-  if (!row) return null;
-  const isNative = row.action === NATIVE_ATTEMPT_ACTION;
-  const [nativeOutcomes, legacyOutcomes] = await Promise.all([
-    loadNativeAttemptOutcomes(db, isNative ? [row.id] : []),
-    loadLegacyAnswerOutcomes(db, isNative ? [] : [row]),
-  ]);
-  return {
-    at: row.created_at.toISOString(),
-    outcome: nativeOutcomes.get(row.id) ?? legacyOutcomes.get(row.id) ?? null,
-  };
+            : undefined,
+        ),
+      )
+      .orderBy(desc(event.created_at), desc(event.id))
+      .limit(PRACTICE_PAGE);
+    if (rows.length === 0) return null;
+
+    const allowed = await allowedEventIds(
+      db,
+      rows.map((row) => row.id),
+    );
+    const authorized = rows.filter((row) => allowed.has(row.id));
+    if (authorized.length > 0) {
+      const nativeRows = authorized.filter((row) => row.action === NATIVE_ATTEMPT_ACTION);
+      const legacyRows = authorized.filter((row) => row.action !== NATIVE_ATTEMPT_ACTION);
+      const [nativeVerdicts, legacyOutcomes] = await Promise.all([
+        nativeRows.length > 0 ? resolveVerdictsForNativeAttempts(db, nativeRows) : null,
+        loadLegacyAnswerOutcomes(db, legacyRows),
+      ]);
+      for (const row of authorized) {
+        if (row.action === NATIVE_ATTEMPT_ACTION) {
+          const verdict = nativeVerdicts?.get(row.id);
+          if (!verdict?.knowledge_ids.includes(knowledgeId)) continue;
+          const outcome = nativeAttemptOutcome(verdict);
+          return {
+            at: row.created_at.toISOString(),
+            outcome:
+              outcome === 'success' || outcome === 'failure' || outcome === 'partial'
+                ? outcome
+                : null,
+          };
+        }
+        return { at: row.created_at.toISOString(), outcome: legacyOutcomes.get(row.id) ?? null };
+      }
+    }
+
+    if (rows.length < PRACTICE_PAGE) return null;
+    const last = rows[rows.length - 1];
+    cursor = { at: last.created_at, id: last.id };
+  }
 }
 
 export interface KnowledgeFailureStreak {
