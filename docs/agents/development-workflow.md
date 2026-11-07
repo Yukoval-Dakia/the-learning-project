@@ -49,6 +49,16 @@ candidate head and let the exact-head GitHub `CI Gate` run the complete suite.
 Local verification is typecheck, lint, audits, and build, plus the invariant
 tests your change touches (if any).
 
+### Dependency release age
+
+Install resolution (`minimumReleaseAge` in `pnpm-workspace.yaml`) and
+Dependabot version-update PRs (`cooldown` in `.github/dependabot.yml`) both
+wait 3 days after a version is published. The weekly Dependabot schedule is
+only how often the check runs. Dependabot security updates ignore `cooldown`.
+To install a younger version with pnpm, add `name@version` to
+`minimumReleaseAgeExclude`. To let a Dependabot version-update PR open inside
+the window, add the dependency name under that ecosystem's `cooldown.exclude`.
+
 ### When to write a test (YUK-1401, owner 2026-10-10)
 
 Tests are **not written by default**. Write or update one only when the change
