@@ -859,7 +859,7 @@ export interface CentralQueueLiteralShape {
 export interface QueueOwnershipInput {
   readonly declarations: readonly QueueDeclarationShape[];
   readonly centralLiterals: readonly CentralQueueLiteralShape[];
-  /** Central book housekeeping queues (echo / prune_* / promote_* / verify-dispatch net). */
+  /** Central book housekeeping queues (prune_* / promote_* / verify-dispatch net). */
   readonly housekeepingQueues: readonly string[];
   /** Module-owned infrastructure queues outside the capability manifests (memory_*). */
   readonly moduleOwnedQueues: readonly string[];
@@ -1485,7 +1485,6 @@ async function runCli(): Promise<void> {
       declarations: queueDeclarations,
       centralLiterals,
       housekeepingQueues: [
-        'echo',
         'prune_job_events',
         'prune_orphan_review_sessions',
         'prune_orphan_placement_sessions',

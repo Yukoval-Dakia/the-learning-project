@@ -21562,7 +21562,7 @@ export interface operations {
             };
             path: {
                 id: string;
-                kind: "ingestion_session" | "copilot_run" | "echo_jobs" | "question_block" | "learning_session" | "ingestion_operation" | "judge_run";
+                kind: "ingestion_session" | "copilot_run" | "question_block" | "learning_session" | "ingestion_operation" | "judge_run";
             };
             cookie?: never;
         };

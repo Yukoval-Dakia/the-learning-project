@@ -42,18 +42,6 @@ export const job_events = pgTable(
   ],
 );
 
-// Echo job 用作 Sub 0c golden E2E（acceptance gate #1）：HTTP enqueue → pg-boss
-// worker → DB update → SSE delivers full-state event。Step 4 实现
-export const echo_jobs = pgTable('echo_jobs', {
-  id: text('id').primaryKey(),
-  input: text('input').notNull(),
-  output: text('output'),
-  status: text('status').notNull().default('queued'),
-  error_md: text('error_md'),
-  created_at: timestamp('created_at', { withTimezone: true }).notNull(),
-  updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
-});
-
 export const event = pgTable(
   'event',
   {

@@ -1037,6 +1037,13 @@
       "when": 1794080849568,
       "tag": "0148_yuk1982_agent_workspace",
       "breakpoints": true
+    },
+    {
+      "idx": 149,
+      "version": "7",
+      "when": 1794085534619,
+      "tag": "0149_yuk1768_drop_echo_jobs",
+      "breakpoints": true
     }
   ]
 }
