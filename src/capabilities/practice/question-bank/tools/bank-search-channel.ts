@@ -3,14 +3,18 @@ import { readBankServableParts } from './bank-ref';
 
 /** Physical scan bound, separate from the eligible channel pool bound. */
 export const BANK_SEARCH_SCAN_BUDGET = 2000;
-const SCAN_BATCH = 200;
+const SCAN_BATCH = BANK_SEARCH_SCAN_BUDGET;
 
 /** Keep stable SQL order while refilling past unavailable groups. The serving
  * predicate stays owned by issuance; this module never recreates its labels. */
 export async function collectBankSearchChannel<Row extends { id: string }>(
   db: Db | Tx,
   queryBatch: (offset: number, count: number) => Promise<Row[]>,
-  options: { admitted: boolean; cap: number },
+  options: {
+    admitted: boolean;
+    cap: number;
+    readParts?: (ids: string[]) => Promise<Map<string, string[]>>;
+  },
 ): Promise<{ rows: Row[]; scanned: number; truncated: boolean; stop: string }> {
   const accepted: Row[] = [];
   let scanned = 0;
@@ -19,8 +23,7 @@ export async function collectBankSearchChannel<Row extends { id: string }>(
     const batch = await queryBatch(scanned, size);
     scanned += batch.length;
     const parts = options.admitted
-      ? await readBankServableParts(
-          db,
+      ? await (options.readParts ?? ((ids) => readBankServableParts(db, ids)))(
           batch.map((row) => row.id),
         )
       : null;

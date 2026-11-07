@@ -190,6 +190,10 @@ export const ProposalInboxRowResponseSchema = z.object({
       'missing_continuity',
     ])
     .nullable(),
+  // Server-derived: the pending row may join a batch confirmation (reversible
+  // kind with an owner retract path). Always false for non-pending rows; the
+  // client must not keep its own kind whitelist.
+  batch_confirm_eligible: z.boolean(),
   signals: z.record(z.string(), z.unknown()).nullable(),
   presentation: ProposalPresentationResponseSchema.nullable(),
 });
@@ -207,6 +211,50 @@ export const ProposalPageResponseSchema = z.object({
 });
 
 export const ProposalDecisionResponseSchema = ProposalDecisionResource;
+
+export const ProposalBatchAcceptItemSchema = z.object({
+  proposal_id: z.string(),
+  kind: z.string(),
+  status: z.enum(['accepted', 'already_accepted', 'rejected', 'failed']),
+  code: z.string().nullable(),
+  reason_md: z.string().nullable(),
+});
+
+export const ProposalBatchAcceptResponseSchema = z.object({
+  // Durable batch identity derived from the requested id set; the same set
+  // always replays to the same batch. Null only when nothing ended accepted
+  // and no result anchor exists (there is nothing to revoke).
+  batch_id: z.string().nullable(),
+  items: z.array(ProposalBatchAcceptItemSchema),
+  summary: z.object({
+    requested: z.number().int().nonnegative(),
+    accepted: z.number().int().nonnegative(),
+    already_accepted: z.number().int().nonnegative(),
+    rejected: z.number().int().nonnegative(),
+    failed: z.number().int().nonnegative(),
+  }),
+});
+
+// Recent batch-confirm anchors so a confirmed set can be revoked after the
+// inbox refreshes; revocation itself reuses the single retract path per item.
+// 'open' means membership was persisted before effects but no accepted set was
+// recorded yet — a retry of the same id set completes it as 'closed'.
+export const ProposalBatchAcceptListResponseSchema = z.object({
+  batches: z.array(
+    z.object({
+      batch_id: z.string(),
+      state: z.enum(['open', 'closed']),
+      member_ids: z.array(z.string()),
+      // The accepted set as recorded by the result anchors; empty while 'open'.
+      proposal_ids: z.array(z.string()),
+      // Members already revoked through the single-item retract — the
+      // still-revocable remainder is proposal_ids minus revoked_ids.
+      revoked_ids: z.array(z.string()),
+      items: z.array(ProposalBatchAcceptItemSchema),
+      created_at: z.string(),
+    }),
+  ),
+});
 
 export const LegacyProposalDecisionBodySchema = z
   .object({

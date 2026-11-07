@@ -4,10 +4,10 @@
 //
 // A document without a policy resolves to 'allow' (legacy behavior).
 
-import { type SQL, type SQLWrapper, and, eq, inArray, sql } from 'drizzle-orm';
+import { type SQL, type SQLWrapper, eq, sql } from 'drizzle-orm';
 import { type DerivationPolicyT, readDerivationPolicy } from '@/core/schema/derivation-policy';
 import type { Db, Tx } from '@/db/client';
-import { learning_session, question, source_document } from '@/db/schema';
+import { learning_session, source_document } from '@/db/schema';
 
 /** `source_document.provenance` key holding the learner's consented usage. */
 export const USAGE_POLICY_PROVENANCE_KEY = 'usage_policy';
@@ -94,18 +94,7 @@ export type PurposeSource = {
   id: string | SQLWrapper;
 };
 
-/** Exact provenance closure, including legacy promotion proposals. UNION bounds cycles;
- * every referenced row participates, so a second restricted source cannot be hidden.
- * The seed is parameterised so the scoped global veto walks the IDENTICAL edge
- * closure and node checks — a dangling reference becomes a node and fails its
- * own existence check exactly the way a bound-source traversal fails it.
- */
-function purposeLineageSeeded(seed: SQL) {
-  return sql`WITH RECURSIVE purpose_lineage(kind, id) AS (
-    ${seed}
-    UNION
-    SELECT edge.kind, edge.id FROM purpose_lineage n
-    CROSS JOIN LATERAL (
+const PURPOSE_EDGES_SQL = sql`
       SELECT v.kind, v.id FROM question q
       CROSS JOIN LATERAL (VALUES
         ('document', q.metadata->>'source_document_id'),
@@ -150,7 +139,20 @@ function purposeLineageSeeded(seed: SQL) {
       UNION ALL
       SELECT 'document', s.source_document_id FROM learning_session s
       WHERE n.kind = 'session' AND s.id = n.id
-    ) edge WHERE edge.id IS NOT NULL
+`;
+
+/** Exact provenance closure, including legacy promotion proposals. UNION bounds cycles;
+ * every referenced row participates, so a second restricted source cannot be hidden.
+ * The seed is parameterised so the scoped global veto walks the IDENTICAL edge
+ * closure and node checks — a dangling reference becomes a node and fails its
+ * own existence check exactly the way a bound-source traversal fails it.
+ */
+function purposeLineageSeeded(seed: SQL) {
+  return sql`WITH RECURSIVE purpose_lineage(kind, id) AS (
+    ${seed}
+    UNION
+    SELECT edge.kind, edge.id FROM purpose_lineage n
+    CROSS JOIN LATERAL (${PURPOSE_EDGES_SQL}) edge WHERE edge.id IS NOT NULL
   )`;
 }
 
@@ -397,15 +399,12 @@ export async function allowedQuestionIds(
   ids: readonly string[],
 ): Promise<Set<string>> {
   if (!ids.length) return new Set();
-  const rows = await db
-    .select({ id: question.id })
-    .from(question)
-    .where(
-      and(
-        inArray(question.id, [...new Set(ids)]),
-        sourceAllowsDerivationSql({ kind: 'question', id: question.id }),
-      ),
-    );
+  const rows = await db.execute<{ id: string }>(sql`
+    SELECT question_id AS id FROM public.tlp_allowed_question_ids(ARRAY[${sql.join(
+      [...new Set(ids)].map((id) => sql`${id}`),
+      sql`, `,
+    )}]::text[])
+  `);
   return new Set(rows.map((row) => row.id));
 }
 
@@ -430,5 +429,26 @@ SET search_path = pg_catalog, public, pg_temp SET jit = off AS $purpose$
 SELECT public.tlp_source_allows_derivation('question', question_id);
 $purpose$;
 REVOKE ALL ON FUNCTION public.tlp_question_allows_derivation(text) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.tlp_question_allows_derivation(text) TO PUBLIC;`;
+GRANT EXECUTE ON FUNCTION public.tlp_question_allows_derivation(text) TO PUBLIC;
+--> statement-breakpoint
+CREATE OR REPLACE FUNCTION public.tlp_allowed_question_ids(question_ids text[])
+RETURNS TABLE(question_id text) LANGUAGE sql STABLE STRICT SECURITY DEFINER
+SET search_path = pg_catalog, public, pg_temp SET jit = off AS $purpose$
+WITH RECURSIVE purpose_lineage(root_id, kind, id) AS (
+  SELECT DISTINCT id, 'question'::text, id FROM unnest(question_ids) seed(id) WHERE id IS NOT NULL
+  UNION
+  SELECT n.root_id, edge.kind, edge.id FROM purpose_lineage n
+  CROSS JOIN LATERAL (${PURPOSE_EDGES_SQL}) edge WHERE edge.id IS NOT NULL
+), node_verdicts AS MATERIALIZED (
+  SELECT n.kind, n.id, ${NODE_VIOLATION_SQL} AS denied
+  FROM (SELECT DISTINCT kind, id FROM purpose_lineage) n
+)
+SELECT DISTINCT seed.id FROM unnest(question_ids) seed(id)
+WHERE seed.id IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM purpose_lineage l JOIN node_verdicts v USING(kind, id)
+  WHERE l.root_id = seed.id AND v.denied
+);
+$purpose$;
+REVOKE ALL ON FUNCTION public.tlp_allowed_question_ids(text[]) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.tlp_allowed_question_ids(text[]) TO PUBLIC;`;
 }

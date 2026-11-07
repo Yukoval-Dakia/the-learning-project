@@ -225,6 +225,27 @@ export async function getCopilotConversation(
   return rows[0] ?? null;
 }
 
+/** Admission may lock the lifecycle row against end/abandon through its own commit. */
+export async function isLiveCopilotConversation(
+  db: Db | Tx,
+  sessionId: string,
+  lock = false,
+): Promise<boolean> {
+  const query = db
+    .select({ id: learning_session.id })
+    .from(learning_session)
+    .where(
+      and(
+        eq(learning_session.id, sessionId),
+        eq(learning_session.type, 'conversation'),
+        eq(learning_session.entrypoint, 'copilot'),
+        inArray(learning_session.status, ['active', 'idle']),
+      ),
+    );
+  const rows = lock ? await query.for('update') : await query;
+  return rows.length > 0;
+}
+
 export async function findOrCreateCopilotConversation(
   db: Db,
   opts: { now?: Date; sessionId?: string } = {},

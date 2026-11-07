@@ -37,6 +37,31 @@ export function projectReviewAnswerResponse(body: CreateAttemptBody, result: Rev
         effect: committed.status === 'effective' ? committed.activation.effect : null,
       },
       review_event: { id: committed.attempt_id },
+      // Server-computed evidence split: exposure (sealed receipt), judged
+      // outcome, and the learner's own claim stay separate — a correct or
+      // confident assisted answer is still not independent.
+      // self_claim echoes what the learner asserted in THIS request: rating is
+      // only a claim when they chose it themselves (self_report or a manual
+      // rating); under auto_rate the rating is the judge's suggestion, so the
+      // claim stays null. A replayed submission sealed its claim with the
+      // original response — this request's rating/confidence is not evidence
+      // of anything, so the claim reads null rather than echoing unsealed input.
+      evidence: {
+        assistance: committed.assistance
+          ? {
+              status: committed.assistance.status,
+              max_dose: committed.assistance.max_dose,
+              kinds: committed.assistance.kinds,
+              phase: committed.assistance.phase,
+            }
+          : null,
+        verdict: body.self_report ? null : { outcome: judged.coarse_outcome, score: judged.score },
+        self_claim: committed.replayed
+          ? null
+          : body.self_report || !body.auto_rate
+            ? { rating: body.rating, confidence: body.self_confidence ?? null }
+            : { rating: null, confidence: body.self_confidence ?? null },
+      },
       judge: body.self_report
         ? null
         : {

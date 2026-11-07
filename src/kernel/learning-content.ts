@@ -45,3 +45,23 @@ export function redactInteractiveArtifactToolInput(
   }
   return redacted;
 }
+
+/** Receipt assessments and gap claims may quote answer-layer evidence. Only
+ * identity and counts belong in learner-facing activity, never caller prose. */
+export function projectLearnerToolInput(
+  toolName: string,
+  input: Record<string, unknown>,
+): Record<string, unknown> {
+  if ('assessments' in input || 'demand' in input) {
+    return {
+      ...(typeof input.search_id === 'string' ? { search_id: input.search_id } : {}),
+      assessments_count: Array.isArray(input.assessments) ? input.assessments.length : 0,
+    };
+  }
+  if (toolName === 'compose_block' || toolName.endsWith('__compose_block')) {
+    return { args_bytes: new TextEncoder().encode(JSON.stringify(input)).byteLength };
+  }
+  return INTERACTIVE_ARTIFACT_TOOL_NAMES.has(toolName)
+    ? redactInteractiveArtifactToolInput(input)
+    : input;
+}
