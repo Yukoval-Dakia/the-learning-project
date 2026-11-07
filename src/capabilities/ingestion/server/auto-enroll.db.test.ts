@@ -17,6 +17,7 @@ import {
   question,
   question_block,
   source_asset,
+  source_document,
 } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { type RunAutoEnrollParams, runAutoEnrollForSession } from './auto-enroll';
@@ -41,11 +42,20 @@ async function seed(
     version: 0,
   });
   const sessionId = createId();
+  const documentId = createId();
+  await db.insert(source_document).values({
+    id: documentId,
+    source_asset_ids: ['asset_1'],
+    provenance: { usage_policy: { derivation_policy: 'allow' } },
+    created_at: now,
+    updated_at: now,
+    version: 0,
+  });
   await db.insert(learning_session).values({
     id: sessionId,
     type: 'ingestion',
     status: 'extracted',
-    source_document_id: createId(),
+    source_document_id: documentId,
     source_asset_ids: ['asset_1'],
     entrypoint: 'vision_paper',
     warnings: [],
@@ -166,11 +176,20 @@ describe('runAutoEnrollForSession', () => {
     const db = testDb();
     const now = new Date();
     const sessionId = createId();
+    const documentId = createId();
+    await db.insert(source_document).values({
+      id: documentId,
+      source_asset_ids: ['asset_1'],
+      provenance: { usage_policy: { derivation_policy: 'allow' } },
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
     await db.insert(learning_session).values({
       id: sessionId,
       type: 'ingestion',
       status: 'partial',
-      source_document_id: createId(),
+      source_document_id: documentId,
       source_asset_ids: ['asset_1'],
       entrypoint: 'vision_paper',
       warnings: [],
