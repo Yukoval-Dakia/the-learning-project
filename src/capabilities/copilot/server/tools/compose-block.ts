@@ -23,6 +23,8 @@ import { lintMermaidSource } from '@/kernel/blocks/mermaid-lint';
 import { parseMermaidSource } from '@/kernel/blocks/mermaid-validate';
 import { rebuildSvgFigure } from '@/kernel/blocks/svg-rebuild';
 import { getR2 } from '@/kernel/object-storage';
+import { isKnowledgeCardVisible } from '@/kernel/read-models/knowledge-card';
+import { isNoteCardVisible } from '@/kernel/read-models/note-card';
 import { readQuestionCard } from '@/kernel/read-models/question-card';
 import { createAssessmentAssetLoader } from '@/kernel/records/assessment-assets';
 import { ImmutableAssetError, persistImmutableAsset } from '@/kernel/records/asset-store';
@@ -265,6 +267,36 @@ export function createComposeBlockTool(
                 },
               ]);
             }
+          }
+          stored = block;
+          break;
+        }
+        case 'entity_card': {
+          const expectedAlt = block.entity_kind === 'knowledge' ? '知识点' : '笔记';
+          if (block.alt !== expectedAlt || block.label !== '打开' || block.caption !== undefined) {
+            return invalid([
+              {
+                code: 'block_text_reveals_key',
+                path: '',
+                detail:
+                  'entity cards carry ids only: alt must match entity_kind (知识点 or 笔记), label must be 打开, and caption must be absent',
+              },
+            ]);
+          }
+          // One visibility answer for both missing and hidden targets so the tool
+          // result reveals no difference.
+          const visible =
+            block.entity_kind === 'knowledge'
+              ? await isKnowledgeCardVisible(ctx.db, block.entity_id)
+              : await isNoteCardVisible(ctx.db, block.entity_id);
+          if (!visible) {
+            return invalid([
+              {
+                code: 'entity_card_not_servable',
+                path: '/entity_id',
+                detail: 'entity must exist and be visible; knowledge-point and note ids only',
+              },
+            ]);
           }
           stored = block;
           break;

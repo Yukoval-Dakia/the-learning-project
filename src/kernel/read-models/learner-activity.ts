@@ -2,7 +2,7 @@
 // such an event belongs to, and when the learner last did any of it. Consumers
 // read these sets instead of spelling their own action lists.
 
-import { and, desc, eq, inArray, isNull, lt, or } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, lt, or, sql } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
 import {
   evaluation,
@@ -27,7 +27,7 @@ import { batchResolveSubjectIds } from './subject-resolution';
 
 type DbLike = Db | Tx;
 type EventRow = typeof event.$inferSelect;
-type AnswerOutcome = 'success' | 'failure' | 'partial';
+export type AnswerOutcome = 'success' | 'failure' | 'partial';
 
 const NATIVE_ATTEMPT_ACTION = 'experimental:assessment_attempt';
 const RECORD_CAPTURE_ACTION = 'experimental:record_capture';
@@ -104,6 +104,144 @@ export async function loadNativeAttemptOutcomes(
       out.set(eventId, outcome);
   }
   return out;
+}
+
+export interface LastKnowledgePractice {
+  /** When the learner answered. */
+  at: string;
+  /** null when the newest answer has no usable verdict (pending, self-report, unsupported). */
+  outcome: AnswerOutcome | null;
+}
+
+// Newest-first page width for the practice walk; one page usually answers the read.
+const PRACTICE_PAGE = 32;
+// A card read never needs the learner's whole history; once restricted or
+// non-matching rows fill this many pages, report no practice instead of walking on.
+const PRACTICE_MAX_PAGES = 32;
+
+/**
+ * Superset filter for native attempts: the frozen submission receipt's learning
+ * scope mentions this knowledge point somewhere. The exact issued membership is
+ * decided below by `issuedLearningKnowledgeIds`, never by live question tags.
+ */
+function nativeScopeMentions(kc: string) {
+  return sql`EXISTS (
+    SELECT 1 FROM ${event} receipt
+    CROSS JOIN LATERAL jsonb_array_elements(
+      CASE WHEN jsonb_typeof(receipt.payload->'learning_scope'->'questions') = 'array'
+        THEN receipt.payload->'learning_scope'->'questions' ELSE '[]'::jsonb END
+    ) q
+    WHERE receipt.action = 'experimental:assessment_submission'
+      AND receipt.subject_kind = 'submission'
+      AND receipt.subject_id = ${event.payload}->>'submission_id'
+      AND q->'knowledge_ids' @> ${kc}::jsonb
+  )`;
+}
+
+function mapCoarseVerdict(value: unknown): AnswerOutcome | null {
+  return value === 'correct'
+    ? 'success'
+    : value === 'incorrect'
+      ? 'failure'
+      : value === 'partial'
+        ? 'partial'
+        : null;
+}
+
+function mapStoredOutcome(value: unknown): AnswerOutcome | null {
+  return value === 'success' || value === 'failure' || value === 'partial' ? value : null;
+}
+
+/**
+ * Card outcome for one legacy answer. A judge record that currently yields no
+ * effective verdict (retracted, superseded) means "no usable verdict", not the
+ * first outcome the row happened to store; a pure legacy attempt with no judge
+ * rows keeps its own outcome. `loadLegacyAnswerOutcomes` below remains the
+ * activity-wide reader and is deliberately untouched.
+ */
+async function loadCardLegacyOutcome(db: DbLike, row: EventRow): Promise<AnswerOutcome | null> {
+  if (isUnsupportedAttemptPayload(row.payload)) return null;
+  const verdict = (await resolveVerdictsForAttempts(db, [row.id])).get(row.id);
+  const effective = verdict?.effective?.verdict.coarse_outcome;
+  const mapped = mapCoarseVerdict(effective);
+  if (mapped) return mapped;
+  if (effective === 'unsupported') return null;
+  // `original` non-null means judge rows exist for this attempt; with no effective
+  // verdict they were all retracted or superseded.
+  if (verdict?.original) return null;
+  return mapStoredOutcome(row.outcome);
+}
+
+/**
+ * The newest learner answer touching the node, with its effective outcome. Only
+ * derivation-allowed answers count, so restricted material never reaches a card.
+ * Native attempts are attributed by the frozen learning scope and the issued
+ * parts, never by mutable question tags; a denied candidate walks on instead of
+ * ending the read. Legacy attempt/review rows carry `referenced_knowledge_ids`.
+ */
+export async function loadLastKnowledgePractice(
+  db: DbLike,
+  knowledgeId: string,
+): Promise<LastKnowledgePractice | null> {
+  const kc = JSON.stringify([knowledgeId]);
+  let cursor: { at: Date; id: string } | undefined;
+  for (let page = 0; ; page += 1) {
+    if (page >= PRACTICE_MAX_PAGES) return null;
+    const rows: EventRow[] = await db
+      .select()
+      .from(event)
+      .where(
+        and(
+          eq(event.actor_kind, 'user'),
+          inArray(event.action, [...LEARNER_ANSWER_ACTIONS]),
+          eq(event.subject_kind, 'question'),
+          sql`(
+            (${event.action} = ${NATIVE_ATTEMPT_ACTION} AND ${nativeScopeMentions(kc)})
+            OR (${event.action} <> ${NATIVE_ATTEMPT_ACTION}
+                AND ${event.payload}->'referenced_knowledge_ids' @> ${kc}::jsonb)
+          )`,
+          cursor
+            ? or(
+                lt(event.created_at, cursor.at),
+                and(eq(event.created_at, cursor.at), lt(event.id, cursor.id)),
+              )
+            : undefined,
+        ),
+      )
+      .orderBy(desc(event.created_at), desc(event.id))
+      .limit(PRACTICE_PAGE);
+    if (rows.length === 0) return null;
+
+    const allowed = await allowedEventIds(
+      db,
+      rows.map((row) => row.id),
+    );
+    const authorized = rows.filter((row) => allowed.has(row.id));
+    if (authorized.length > 0) {
+      const nativeRows = authorized.filter((row) => row.action === NATIVE_ATTEMPT_ACTION);
+      const nativeVerdicts =
+        nativeRows.length > 0 ? await resolveVerdictsForNativeAttempts(db, nativeRows) : null;
+      for (const row of authorized) {
+        if (row.action === NATIVE_ATTEMPT_ACTION) {
+          const verdict = nativeVerdicts?.get(row.id);
+          if (!verdict?.knowledge_ids.includes(knowledgeId)) continue;
+          const outcome = nativeAttemptOutcome(verdict);
+          return {
+            at: row.created_at.toISOString(),
+            outcome:
+              outcome === 'success' || outcome === 'failure' || outcome === 'partial'
+                ? outcome
+                : null,
+          };
+        }
+        return { at: row.created_at.toISOString(), outcome: await loadCardLegacyOutcome(db, row) };
+      }
+    }
+
+    if (rows.length < PRACTICE_PAGE) return null;
+    const last = rows[rows.length - 1];
+    cursor = { at: last.created_at, id: last.id };
+  }
 }
 
 export interface KnowledgeFailureStreak {

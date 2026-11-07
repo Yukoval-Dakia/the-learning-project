@@ -220,3 +220,41 @@ export const CopilotNudgeCompanionResponseSchema = z.union([
   z.object({ ok: z.literal(true), event_id: z.string() }),
   z.object({ ok: z.literal(true), deduped: z.literal(true) }),
 ]);
+
+export const EntityCardKindSchema = z.enum(['knowledge', 'note']);
+
+export const EntityCardParamsSchema = z.object({
+  kind: EntityCardKindSchema,
+  id: z.string().trim().min(1),
+});
+
+const EntityCardLastPracticeSchema = z.object({
+  at: z.string().datetime(),
+  outcome: z.enum(['correct', 'partial', 'wrong']).nullable(),
+});
+
+// The card body is read from the owning data at request time; a gone target is a
+// normal answer, not an error, and never carries the hidden name or content.
+export const EntityCardResponseSchema = z.union([
+  z.object({
+    entity_kind: z.literal('knowledge'),
+    entity_id: z.string(),
+    state: z.literal('ok'),
+    name: z.string(),
+    mastery_band: z.number().int().min(0).max(3).nullable(),
+    last_practice: EntityCardLastPracticeSchema.nullable(),
+  }),
+  z.object({
+    entity_kind: z.literal('note'),
+    entity_id: z.string(),
+    state: z.literal('ok'),
+    title: z.string(),
+    summary: z.string(),
+    updated_at: z.string().datetime(),
+  }),
+  z.object({
+    entity_kind: EntityCardKindSchema,
+    entity_id: z.string(),
+    state: z.literal('gone'),
+  }),
+]);

@@ -1,5 +1,10 @@
 // Stable server contract for consumers outside the notes capability.
 
+export type { NoteEntityCard } from '@/kernel/read-models/note-card';
+export {
+  isNoteCardVisible,
+  readNoteEntityCard,
+} from '@/kernel/read-models/note-card';
 export {
   EditArtifactBodyBlocksBodySchema,
   NoteIdParamsSchema,
