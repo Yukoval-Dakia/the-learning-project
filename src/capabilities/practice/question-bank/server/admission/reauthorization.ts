@@ -18,14 +18,14 @@ import {
   type PaidEffectInput,
   type PaidEffectVoidAuthorization,
   computePaidEffectIdentity,
-} from '@/core/migration/paid-effect-protocol';
+} from '@/core/paid-work/protocol/paid-effect-protocol';
+import { voidPaidEffectWithSuccessor } from '@/core/paid-work/server/paid-effect-store';
 import {
   QUESTION_ADMISSION_CONTRACT_VERSION,
   QUESTION_ADMISSION_PAID_UNIT,
   QUESTION_ADMISSION_POLICY_IDS,
 } from '@/core/question-admission-policy';
 import type { Db, Tx } from '@/db/client';
-import { voidPaidEffectWithSuccessor } from '@/db/paid-effect-store';
 import { fromPgBossDrizzleTx } from '@/db/pg-boss-drizzle';
 import type { getStartedBoss } from '@/server/boss/client';
 
@@ -481,7 +481,7 @@ export async function releaseAdmissionVoidSuccessor(
   boss: PracticeBoss,
 ): Promise<AdmissionVoidRelease> {
   const { lockPaidEffectControlFamily, readPaidEffectControl } = await import(
-    '@/db/paid-effect-control'
+    '@/core/paid-work/server/paid-effect-control'
   );
   const { publishQuestionGroup } = await import('@/kernel/records/assessment-publication');
   const { getR2 } = await import('@/kernel/object-storage');

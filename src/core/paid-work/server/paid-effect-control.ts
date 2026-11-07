@@ -10,7 +10,7 @@ import {
   type PaidEffectDeliveryRef,
   decidePaidEffectControlAdmission,
   paidEffectControlLockKey,
-} from '@/core/migration/paid-effect-protocol';
+} from '@/core/paid-work/protocol/paid-effect-protocol';
 import type { Db, Tx } from '@/db/client';
 import { paid_effect_control } from '@/db/schema';
 
