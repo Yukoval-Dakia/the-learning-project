@@ -115,6 +115,9 @@ export interface LastKnowledgePractice {
 
 // Newest-first page width for the practice walk; one page usually answers the read.
 const PRACTICE_PAGE = 32;
+// A card read never needs the learner's whole history; once restricted or
+// non-matching rows fill this many pages, report no practice instead of walking on.
+const PRACTICE_MAX_PAGES = 32;
 
 /**
  * Superset filter for native attempts: the frozen submission receipt's learning
@@ -135,6 +138,40 @@ function nativeScopeMentions(kc: string) {
   )`;
 }
 
+function mapCoarseVerdict(value: unknown): AnswerOutcome | null {
+  return value === 'correct'
+    ? 'success'
+    : value === 'incorrect'
+      ? 'failure'
+      : value === 'partial'
+        ? 'partial'
+        : null;
+}
+
+function mapStoredOutcome(value: unknown): AnswerOutcome | null {
+  return value === 'success' || value === 'failure' || value === 'partial' ? value : null;
+}
+
+/**
+ * Card outcome for one legacy answer. A judge record that currently yields no
+ * effective verdict (retracted, superseded) means "no usable verdict", not the
+ * first outcome the row happened to store; a pure legacy attempt with no judge
+ * rows keeps its own outcome. `loadLegacyAnswerOutcomes` below remains the
+ * activity-wide reader and is deliberately untouched.
+ */
+async function loadCardLegacyOutcome(db: DbLike, row: EventRow): Promise<AnswerOutcome | null> {
+  if (isUnsupportedAttemptPayload(row.payload)) return null;
+  const verdict = (await resolveVerdictsForAttempts(db, [row.id])).get(row.id);
+  const effective = verdict?.effective?.verdict.coarse_outcome;
+  const mapped = mapCoarseVerdict(effective);
+  if (mapped) return mapped;
+  if (effective === 'unsupported') return null;
+  // `original` non-null means judge rows exist for this attempt; with no effective
+  // verdict they were all retracted or superseded.
+  if (verdict?.original) return null;
+  return mapStoredOutcome(row.outcome);
+}
+
 /**
  * The newest learner answer touching the node, with its effective outcome. Only
  * derivation-allowed answers count, so restricted material never reaches a card.
@@ -148,7 +185,8 @@ export async function loadLastKnowledgePractice(
 ): Promise<LastKnowledgePractice | null> {
   const kc = JSON.stringify([knowledgeId]);
   let cursor: { at: Date; id: string } | undefined;
-  for (;;) {
+  for (let page = 0; ; page += 1) {
+    if (page >= PRACTICE_MAX_PAGES) return null;
     const rows: EventRow[] = await db
       .select()
       .from(event)
@@ -181,11 +219,8 @@ export async function loadLastKnowledgePractice(
     const authorized = rows.filter((row) => allowed.has(row.id));
     if (authorized.length > 0) {
       const nativeRows = authorized.filter((row) => row.action === NATIVE_ATTEMPT_ACTION);
-      const legacyRows = authorized.filter((row) => row.action !== NATIVE_ATTEMPT_ACTION);
-      const [nativeVerdicts, legacyOutcomes] = await Promise.all([
-        nativeRows.length > 0 ? resolveVerdictsForNativeAttempts(db, nativeRows) : null,
-        loadLegacyAnswerOutcomes(db, legacyRows),
-      ]);
+      const nativeVerdicts =
+        nativeRows.length > 0 ? await resolveVerdictsForNativeAttempts(db, nativeRows) : null;
       for (const row of authorized) {
         if (row.action === NATIVE_ATTEMPT_ACTION) {
           const verdict = nativeVerdicts?.get(row.id);
@@ -199,7 +234,7 @@ export async function loadLastKnowledgePractice(
                 : null,
           };
         }
-        return { at: row.created_at.toISOString(), outcome: legacyOutcomes.get(row.id) ?? null };
+        return { at: row.created_at.toISOString(), outcome: await loadCardLegacyOutcome(db, row) };
       }
     }
 
