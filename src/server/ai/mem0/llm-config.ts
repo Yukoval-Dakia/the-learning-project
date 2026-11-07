@@ -1,5 +1,5 @@
-import { DEFAULT_TASK_MODEL } from '@/ai/task-spec';
 import { assertModelEndpointHostAllowed } from '@/core/config/model-endpoint-allowlist';
+import { DEFAULT_TASK_MODEL } from '@/core/config/model-overrides';
 import { getLaneOverride } from '@/core/config/store';
 import { resolveModelProfile } from '@/server/ai/model-profiles';
 import { executablePiModel } from '@/server/ai/pi-provider-catalog';

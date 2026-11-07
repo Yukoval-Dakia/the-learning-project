@@ -54,7 +54,7 @@ import {
 } from '@/capabilities/copilot/server/reply-finalization';
 import type { CopilotPrimaryView } from '@/capabilities/copilot/server/turns';
 import type { Db, Tx } from '@/db/client';
-import { job_events } from '@/db/schema';
+import { job_events, learning_session } from '@/db/schema';
 import { writeJobEvent } from '@/kernel/job-events';
 import {
   type BossJobObservation,
@@ -209,6 +209,49 @@ export async function claimCopilotExecutionFence(
       payload: { execution_fence: 'at_most_once' },
     });
     return { outcome: 'claimed' };
+  });
+}
+
+/**
+ * Belt for the session-queue admission gate: a run that was already accepted
+ * before the revocation commit still arrives at pickup. Under the same
+ * dispatch lock that serializes STARTED/EXECUTION_STARTED, a deleting session
+ * settles the run through the shared pre-start terminal — identical frame to
+ * Stop — so deletion can converge and no paid work starts behind a tombstone.
+ */
+export async function settleCopilotRunIfSessionDeleted(
+  db: Db,
+  runId: string,
+  sessionId: string,
+  options: { writeJobEventFn?: WriteJobEventFn } = {},
+): Promise<
+  | { outcome: 'open' }
+  | { outcome: 'deleted' }
+  | { outcome: 'terminal'; events: TerminalProjectionEvent[] }
+> {
+  const write = options.writeJobEventFn ?? writeJobEvent;
+  return withCopilotDurableDispatchLock(db, runId, async (tx) => {
+    const [session] = await tx
+      .select({
+        deletion_requested_at: learning_session.deletion_requested_at,
+        deleted_at: learning_session.deleted_at,
+      })
+      .from(learning_session)
+      .where(eq(learning_session.id, sessionId))
+      .limit(1);
+    if (!session || (session.deletion_requested_at == null && session.deleted_at == null)) {
+      return { outcome: 'open' as const };
+    }
+    const events = await tx
+      .select({ id: job_events.id, event_type: job_events.event_type, payload: job_events.payload })
+      .from(job_events)
+      .where(
+        and(eq(job_events.business_table, COPILOT_RUN_TABLE), eq(job_events.business_id, runId)),
+      )
+      .orderBy(asc(job_events.id));
+    if (hasCopilotSettlementTerminal(events)) return { outcome: 'terminal' as const, events };
+    await writeCancelledBeforeStartTerminal(tx, runId, { writeJobEventFn: write });
+    return { outcome: 'deleted' as const };
   });
 }
 
