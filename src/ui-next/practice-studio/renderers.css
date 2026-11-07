@@ -19,7 +19,6 @@
   box-shadow: none;
 }
 [data-ui-next] .un-st-question .un-blk-text {
-  color: var(--st-ink);
   font-size: 18px;
   line-height: 1.8;
 }
@@ -169,10 +168,6 @@
   color: var(--st-ink);
   padding: 12px 14px;
   box-shadow: none;
-}
-[data-ui-next] .un-st-support .un-cp-md {
-  /* Size and rhythm come from the reading layer (YUK-1548); see .un-cp-rich-text below. */
-  color: var(--st-ink);
 }
 [data-ui-next] .un-st-support .un-cp-today {
   background: transparent;
