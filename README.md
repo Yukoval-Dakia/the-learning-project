@@ -189,10 +189,10 @@ reuses the same database and only applies new migrations. Docker/OrbStack must b
 
 | 进程 | 端口 | 命令 | 角色 |
 | --- | --- | --- | --- |
-| API + Start 前门 | 自动选择（8788 起，`DEV_PORT` 固定） | `pnpm rw:api`（`tsx watch server/index.ts`，`RW_WORKER=1` 同进程启 pg-boss worker；dev-local 另设 `RW_FRONTDOOR=dev`） | Hono 组合根 + in-process worker；Vite dev server 以 middleware 模式跑在同一进程、同一端口（`server/dev-frontdoor.ts`），页面与 `/api/*` 同源，**页面改动热更新（HMR），不需要构建**；改 `server/`、`src/server/` 等服务端文件由 tsx watch 重启 API |
-| Worker | — | `pnpm worker:dev`（`tsx scripts/worker.ts`） | 独立 pg-boss worker 进程 |
+| API + Start 前门 | 自动选择（8788 起，`DEV_PORT` 固定） | `pnpm exec tsx watch server/index.ts`（`RW_WORKER=0`，另设 `RW_FRONTDOOR=dev`） | Hono 组合根，不消费队列；Vite dev server 以 middleware 模式跑在同一进程、同一端口（`server/dev-frontdoor.ts`），页面与 `/api/*` 同源，**页面改动热更新（HMR），不需要构建**；改 `server/`、`src/server/` 等服务端文件由 tsx watch 重启 API |
+| Worker | — | `pnpm worker:dev`（`tsx scripts/worker.ts`） | 独立 pg-boss worker 进程，`dev:local` 里唯一的队列消费者 |
 
-dev 拓扑必须 api（含 Vite 前门）+ worker 两进程齐活（YUK-321 M5 双进程拓扑）：`LISTEN loop 不消费 boss job`，dev 也必须有独立 worker 进程；同进程 worker 是 RW_WORKER=1 的兜底，不替代独立 worker。
+dev 拓扑必须 api（含 Vite 前门）+ worker 两进程齐活（YUK-321 M5 双进程拓扑）：`LISTEN loop 不消费 boss job`，队列只由独立 worker 消费。单独跑 `pnpm rw:api` 仍带 `RW_WORKER=1`，是不另起 worker 时的单进程兜底。
 
 `pnpm dev` 是 `pnpm dev:local` 的别名。单独运行 `pnpm rw:api` 时 `API_PORT` 缺省也是 8787，本机 dev（`NODE_ENV` 非 `production`、非容器）会在绑定前退出（8787 是本机 NAS 中继的 TEST 端口；生产入口与容器由 Dockerfile 显式设 `API_PORT=8787`，照常监听）。dev 的 `DATABASE_URL` 由 dev-local 固定指向 dev Postgres（:5434）中本 worktree 自己的库（`loom_dev_<worktree>_<hash>`），忽略 `.env` / `.env.local` 里的 `DATABASE_URL` 与 `POSTGRES_*`。
 
