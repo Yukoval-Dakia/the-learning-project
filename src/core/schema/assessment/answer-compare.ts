@@ -11,9 +11,10 @@
 //   - Versions are frozen per revision: answer_head@2 / blank-norm@2 /
 //     numeric-norm@2 are the current contracts; answer_head / blank-norm@1 /
 //     numeric-norm@1 (and a missing numeric version) keep their historical
-//     NFKC semantics byte-for-byte. Integer identity past the float64 exact
-//     range, and a numeric minus or decimal point under ignore_punctuation,
-//     are grader correctness rules on every version — not a new fold.
+//     NFKC semantics byte-for-byte. A numeric literal keeps its float64 reading
+//     when its exact value matches that float's round-trip spelling; a neighbor
+//     integer does not. ignore_punctuation keeps a numeric minus and decimal
+//     point. Neither rule is a new normalization version.
 //   - A comparison that cannot decide (unparseable, ambiguous, beyond the
 //     comparator contract) is reported as undecidable with a reason; callers
 //     turn that into pending, never a fake zero.
@@ -730,10 +731,10 @@ const MAX_EXACT_INTEGER_DIGITS = 400;
 
 /**
  * Plain-number read shared by grading and cross-kind key agreement.
- * `finite` keeps the float64 reading used for ordinary decimals such as 10.24.
- * `displaced` is a literal Number() moves by at least 1/2
- * (9007199254740993 → 9007199254740992, and 9007199254740992.5 onto that integer).
- * Callers compare a displaced literal as a rational and never use the collapsed float.
+ * `finite` is a round-trip spelling of its float64 (`1e23`, `10.24`, `2^53`).
+ * The stored key is that same float, so the old tolerance read must stand.
+ * `displaced` is a different value that Number() collapsed onto the float
+ * (`9007199254740993` → `9007199254740992`). Callers compare it as a rational.
  */
 type ExactRational = { n: bigint; d: bigint };
 
@@ -788,12 +789,8 @@ function floatToRational(value: number): ExactRational | null {
   return { n: sign * significand, d: 2n ** BigInt(-power) };
 }
 
-/** True when the literal and the float differ by at least one half. */
-function rationalDiffAtLeastHalf(literal: ExactRational, floatValue: ExactRational): boolean {
-  const left = literal.n * floatValue.d;
-  const right = floatValue.n * literal.d;
-  const diff = left >= right ? left - right : right - left;
-  return diff * 2n >= literal.d * floatValue.d;
+function sameRational(left: ExactRational, right: ExactRational): boolean {
+  return left.n * right.d === right.n * left.d;
 }
 
 function classifyPlainNumber(text: string): FrozenPlainNumber {
@@ -801,11 +798,14 @@ function classifyPlainNumber(text: string): FrozenPlainNumber {
   const exact = readExactRational(text);
   if (exact.kind === 'unsupported') return { kind: 'unreadable' };
   const asNumber = Number(text);
-  const asRational = Number.isFinite(asNumber) ? floatToRational(asNumber) : null;
-  if (asRational == null || rationalDiffAtLeastHalf(exact.value, asRational)) {
-    return { kind: 'displaced', literal: exact.value };
+  if (!Number.isFinite(asNumber)) return { kind: 'unreadable' };
+  // The key stores this float. Its round-trip spelling (`Number(text).toString()`)
+  // is the same answer; a collapsed neighbor has a different exact value.
+  const canonical = readExactRational(asNumber.toString());
+  if (canonical.kind === 'rational' && sameRational(exact.value, canonical.value)) {
+    return { kind: 'finite', value: asNumber };
   }
-  return { kind: 'finite', value: asNumber };
+  return { kind: 'displaced', literal: exact.value };
 }
 
 function readFrozenPlainNumber(raw: string, identity: NumericKeyIdentity): FrozenPlainNumber {
@@ -821,7 +821,7 @@ function readFrozenPlainNumber(raw: string, identity: NumericKeyIdentity): Froze
 /**
  * 纯数值读取：冻结 Unicode 策略 + trim + PLAIN_NUMBER + finite，不解释表达式。
  * 同一个确定性 parse 既用于判分，也用于准入双解的跨 kind 一致性；新键用宽度折叠，
- * 缺省版本保留旧 NFKC。超出 float64 精确范围的整数不返回折叠值。
+ * 缺省版本保留旧 NFKC。对不上往返写法的字面量不返回折叠值。
  */
 export function parseFrozenNumericAnswer(raw: string, identity: NumericKeyIdentity): number | null {
   const read = readFrozenPlainNumber(raw, identity);
@@ -940,8 +940,8 @@ export async function compareNumericBlankAnswer(
     }
   }
   if (PLAIN_NUMBER.test(text)) return 0;
-  // A coefficient Number() moves by at least 1/2 must not become a full mark
-  // through mathjs toNumber(). Conversion of that literal stays undecided.
+  // A coefficient that is not its float's round-trip spelling must not become
+  // a full mark through mathjs toNumber(). That conversion stays undecided.
   const coefficient = leadingPlainNumber(text);
   if (coefficient != null && classifyPlainNumber(coefficient).kind !== 'finite') return null;
   const { unit: parseUnit } = await import('mathjs');
