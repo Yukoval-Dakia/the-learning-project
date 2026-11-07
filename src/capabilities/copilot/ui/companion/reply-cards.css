@@ -120,6 +120,10 @@
 [data-ui-next] .un-cp-block .un-blk:has(.un-blk-opts-list) .un-blk-head {
   display: none;
 }
+/* Inline math sets fractions small, and an option may be nothing else. */
+[data-ui-next] .un-cp-block .un-blk-opt-text .katex {
+  font-size: 1.3em;
+}
 [data-ui-next] .un-cp-block-gone {
   color: var(--un-md-sys-color-on-surface-variant);
   font-size: var(--un-fs-2);

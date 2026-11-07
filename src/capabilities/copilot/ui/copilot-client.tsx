@@ -54,6 +54,10 @@ export type CopilotClient = {
   fetchRunEvents: (input: string, init?: RequestInit) => Promise<Response>;
   cancelRun: (runId: string) => Promise<CopilotCancelResult>;
   revertCheckpoint: (checkpointEventId: string) => Promise<unknown>;
+  getEntityCard: (
+    kind: 'knowledge' | 'note',
+    id: string,
+  ) => Promise<ApiOperationJsonResponse<'getEntityCard'>>;
 };
 
 export function buildCopilotTurnsQuery(sessionId: string, limit: number): string {
@@ -92,6 +96,10 @@ export const httpCopilotClient: CopilotClient = {
     apiJson(`/api/copilot/checkpoints/${encodeURIComponent(checkpointEventId)}/revert`, {
       method: 'POST',
     }),
+  getEntityCard: (kind, id) =>
+    apiJson<ApiOperationJsonResponse<'getEntityCard'>>(
+      `/api/copilot/cards/${kind}/${encodeURIComponent(id)}`,
+    ),
 };
 
 const CopilotClientContext = createContext<CopilotClient | undefined>(undefined);

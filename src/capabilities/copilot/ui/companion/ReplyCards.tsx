@@ -1,7 +1,7 @@
 // Cards a reply places between its paragraphs. Each card shows what the system read for an id; the
 // question card is only the frame, because the question and its answering belong to practice.
 import { ArrowRight, FileText, ListChecks, LoaderCircle, Network } from 'lucide-react';
-import { A5_BANDS, UNKNOWN_BAND_LABEL } from '@/core/mastery-band';
+import { A5_BANDS } from '@/core/mastery-band';
 import type { QuestionCardFrameProps } from '../question-card';
 import './reply-cards.css';
 
@@ -16,7 +16,7 @@ function OpenLabel() {
 
 export function KnowledgeCard(p: {
   name: string;
-  /** Index into the mastery bands; null when there is no evidence yet. */
+  /** Index into the mastery bands; null when there is no evidence yet, and the card then omits it. */
   band: number | null;
   lastPractice: string | null;
   onOpen: () => void;
@@ -28,14 +28,16 @@ export function KnowledgeCard(p: {
         知识点
       </span>
       <span className="un-cp-block-title">{p.name}</span>
-      <span className="un-cp-block-band">
-        <span className="un-cp-block-meter" aria-hidden="true">
-          {A5_BANDS.map((word, index) => (
-            <span key={word} data-on={p.band !== null && index <= p.band ? '' : undefined} />
-          ))}
+      {p.band === null ? null : (
+        <span className="un-cp-block-band">
+          <span className="un-cp-block-meter" aria-hidden="true">
+            {A5_BANDS.map((word, index) => (
+              <span key={word} data-on={p.band !== null && index <= p.band ? '' : undefined} />
+            ))}
+          </span>
+          {A5_BANDS[p.band]}
         </span>
-        {p.band === null ? UNKNOWN_BAND_LABEL : A5_BANDS[p.band]}
-      </span>
+      )}
       <span className="un-cp-block-foot">
         <span>{p.lastPractice ? `最近一次练习：${p.lastPractice}` : '还没练过'}</span>
         <OpenLabel />

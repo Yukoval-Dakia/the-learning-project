@@ -130,10 +130,21 @@ export async function readStartNoteList(
   }
 }
 
+export async function readStartNoteEntityCard(id: string) {
+  try {
+    const { readNoteEntityCard } = await import('@/capabilities/notes/public');
+    const { db } = await import('@/db/client');
+    return await readNoteEntityCard(db, id);
+  } catch (error) {
+    throw errorResponse(error);
+  }
+}
+
 export const notesAdapters = {
   blurStartNoteEditing,
   heartbeatStartNoteEditing,
   readStartNoteAiChanges,
+  readStartNoteEntityCard,
   readStartNoteList,
   readStartNotePage,
   saveStartNoteBody,

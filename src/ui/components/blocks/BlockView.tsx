@@ -8,6 +8,7 @@ import { useContext, useMemo } from 'react';
 import { type BlockV1T, parseBlockFence } from '@/core/schema/blocks';
 import { BlockUnavailable } from './BlockFrame';
 import { DiagramBlock } from './DiagramBlock';
+import { EntityCardSlotContext } from './entity-card-slot';
 import { FigureBlock } from './FigureBlock';
 import { QuestionRefSlotContext } from './question-ref-slot';
 
@@ -28,6 +29,17 @@ function QuestionRefBlock({ block }: { block: Extract<BlockV1T, { kind: 'questio
   );
 }
 
+function EntityCardView({ block }: { block: Extract<BlockV1T, { kind: 'entity_card' }> }) {
+  const Slot = useContext(EntityCardSlotContext);
+  if (Slot) return <Slot entityKind={block.entity_kind} entityId={block.entity_id} />;
+  const base = block.entity_kind === 'knowledge' ? '/knowledge' : '/notes';
+  return (
+    <p>
+      <a href={`${base}/${encodeURIComponent(block.entity_id)}`}>{block.label}</a>
+    </p>
+  );
+}
+
 export function BlockView({ block }: { block: BlockV1T | undefined }): ReactElement {
   if (!block) return <BlockUnavailable />;
   switch (block.kind) {
@@ -37,6 +49,8 @@ export function BlockView({ block }: { block: BlockV1T | undefined }): ReactElem
       return <FigureBlock block={block} />;
     case 'question_ref':
       return <QuestionRefBlock block={block} />;
+    case 'entity_card':
+      return <EntityCardView block={block} />;
     default:
       return <BlockUnavailable alt={block.alt} />;
   }
