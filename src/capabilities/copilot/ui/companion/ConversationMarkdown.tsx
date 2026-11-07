@@ -1,6 +1,5 @@
 import type { ComponentProps, ReactNode } from 'react';
 import { useId, useMemo, useRef, useState } from 'react';
-import remarkGfm from 'remark-gfm';
 import type { MarkdownRendererProps } from '@/ui/lib/markdown-renderer';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 
@@ -81,7 +80,7 @@ function pageImagesToLinks(node: MarkdownNode) {
 }
 const remarkPageImagesAsLinks = () => pageImagesToLinks;
 
-const extensions = [remarkGfm, remarkPageImagesAsLinks];
+const extensions = [remarkPageImagesAsLinks];
 
 /** Conversation content supports math explicitly, independent of the page's current subject. */
 export function ConversationMarkdown({
