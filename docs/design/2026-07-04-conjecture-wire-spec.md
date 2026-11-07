@@ -188,7 +188,7 @@ owner 手评不合理（conjecture 的 `baseline_p`/`predicted_p` 是机器算�
 ## 8. 不做（defer）
 
 - **Q4 翻 `MISCONCEPTION_PROMOTE_ENABLED` flag**——owner 运维决策 + runbook，超本波 scope（defer-flip-not-build）。
-- **hard-confirm wire**（`MISCONCEPTION_HARD_CONFIRM_ENABLED`）——仍 dark，挂 YUK-536 Tier-1 promote。
+- **hard-confirm wire**——开关与 `HARD_CONFIRM` 返回已删除（ADR-0050 §(b2)）。夜间排序不铸造 soft→hard。
 - **retire path**（park producer behind allowlist）——owner 拍 wire 不 retire，retire 路径不建。
 - **calibration 窗口 aggregate**（`skill_score_point` → claim-survival flip）——ADR-0046 Rust kernel 的活，本波只建单点 reader。
 - **answer retire resolution**（probe 主动 retire）——本波 answer route 固定 `resolution: 'confirmed'`；retire 走 admin 另一个 route 或 defer。

@@ -322,18 +322,6 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     exposure: 'operator',
     flag: OPT_OUT_FLAG,
   },
-  MISCONCEPTION_HARD_CONFIRM_ENABLED: {
-    schema: z.boolean(),
-    codeDefault: false,
-    envName: 'MISCONCEPTION_HARD_CONFIRM_ENABLED',
-    envParse: flagEnv,
-    tier: 'A',
-    description: '允许证据驱动的 soft→hard 确认轨',
-    consumers: ['agency.conjecture-accountability'],
-    reload: 'per-call',
-    exposure: 'operator',
-    flag: OPT_IN_FLAG,
-  },
   QUESTION_SUPPLY_REFILL_ENABLED: {
     schema: z.boolean(),
     codeDefault: false,

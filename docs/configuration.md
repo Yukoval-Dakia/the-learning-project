@@ -138,7 +138,6 @@ PATCH /api/admin/config   # x-internal-token
 | `JUDGE_DURABLE_ENABLED` | app、worker | `false` | `registry` |
 | `JUDGE_FALLBACK_PROVIDER` | app、worker | `anthropic-sub`；空串 = 显式关闭兜底 | `registry` |
 | `MISCONCEPTION_PROMOTE_ENABLED` | app、worker | `true` | `registry` |
-| `MISCONCEPTION_HARD_CONFIRM_ENABLED` | app、worker | `false` | `registry` |
 | `QUESTION_SUPPLY_REFILL_ENABLED` | app、worker | `false` | `registry` |
 | `JUDGE_CALIBRATION_SAMPLING_ENABLED` | worker | `false` | `registry` |
 | `WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED` | worker | `true` | `registry` |

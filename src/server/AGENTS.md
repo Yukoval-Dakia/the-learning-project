@@ -20,7 +20,7 @@
 | `revert/` | 级联撤销与 state_snapshot 恢复 |
 | `../capabilities/agency/server/memory/` | Agency 的 Mem0 摄取与 per-scope brief 管线（见该目录 AGENTS.md）|
 | `../capabilities/ingestion/server/` | 录入状态操作、OCR / Vision rescue 与 DOCX 文本初始化（见该域 AGENTS.md）|
-| `../capabilities/agency/server/conjecture/` | 预测问责排序、硬确认事实读取与判定、probe 记账及纠错回放；typed ledger 与共享单探针评分归 `@/kernel/records/` |
+| `../capabilities/agency/server/conjecture/` | 预测问责排序、解离事实读取、probe 记账及纠错回放；typed ledger 与共享单探针评分归 `@/kernel/records/` |
 | `../kernel/object-storage.ts` | 共享 R2/S3 对象 I/O 与首次调用时构造的 client；资产引用、锁、恢复及付费策略归业务 owner |
 
 ## CONVENTIONS

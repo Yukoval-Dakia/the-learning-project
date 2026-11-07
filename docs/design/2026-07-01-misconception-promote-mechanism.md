@@ -1,7 +1,7 @@
 # MISCONCEPTION_PROMOTE：更科学的晋升机制设计
 
 - **日期**：2026-07-01
-- **状态**：设计完成 / 提案（待 owner 拍 Tier + 4 旋钮）。是 `2026-07-01-misconception-model-investigation-and-implementation.md` open-question #4（"翻 `MISCONCEPTION_PROMOTE_ENABLED` 吗、何时、怎么翻"）的**深答**。
+- **状态**：设计完成 / 提案（待 owner 拍 Tier + 4 旋钮）。是 `2026-07-01-misconception-model-investigation-and-implementation.md` open-question #4（"翻 `MISCONCEPTION_PROMOTE_ENABLED` 吗、何时、怎么翻"）的**深答**。其中 hard 确认开关与 `HARD_CONFIRM` 返回已删除，见 ADR-0050 §(b2)。
 - **相关**：YUK-531（RT1 身份基建，已 dark-ship）、YUK-440（kc_typed_state）、YUK-454（cause/misconception 系统）、YUK-468（probe）；ADR-0035（软轨红线）、ADR-0036（三层分离）、ADR-0046（proper-scoring Rust-first + FLIP deferred）
 - **方法**：11-agent 设计工作流（4 正交科学视角 measurement/falsification/dynamics/pragmatic → synthesis → 3 视角对抗 review 科学严谨/红线可行/n=1 反过度工程 → 和解 tiered）。全部代码事实基于 origin/main `b0ceac0b`，主 session 直读复核。
 
@@ -108,7 +108,7 @@
 **Rust-deferral 边界（ADR-0046）：**
 - **Tier 1 全 JS 且合法 live**——计数 + 枚举 + 时间戳，**无数值核 → 零 ADR-0046 张力**。这是"单 ship Tier 1"的决定性优势。
 - **Tier 2 B₁ = 净新数值核 → Rust-first**（§4），与 `scoring.ts` 窗口均值替换一起，或 prototype→port→delete（§5）。
-- **Rust-gated + dark**：Brier**窗口均值**（C2），`source: soft→hard` 标签翻转（behind `MISCONCEPTION_HARD_CONFIRM_ENABLED`）。
+- **Rust-gated + dark**：Brier**窗口均值**（C2）。`source: soft→hard` 标签翻转已随死开关删除（ADR-0050 §(b2)）。
 - **Live（非确认标签翻转）**：retire → `weight` 衰减/`fading`；复活即 un-archive（立即、无门）。
 
 **新 schema 列？** **Tier 1 & Tier 2 各 0 列**——两轨翻转、后验、retire、recency、归档全是读时投影 + `experimental:*` log 事件 + 现有 `evidence` jsonb。**唯一可选列** `resolution_class` 只在 Tier 3 想要 Opus 分类器覆盖时——触发 5-surface 税（schema/migration/audit:schema/export FK_ORDER+SCHEMA_VERSION bump/db.ts ALL_TABLES）。默认走 `cause_category → resolution_class` **读时映射**。

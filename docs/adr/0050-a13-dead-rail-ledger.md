@@ -86,7 +86,7 @@ A13 问责轨上有四条同型债（「建成不通电」/「结构死格」/�
 4. honest Rust window mean 仍 deferred；本规则只消费单点 score 的符号，不写
    mastery、typed-state 或 FSRS。
 
-### (b2) `hard-confirm.ts` + `misconceptionHardConfirmEnabled()`
+### (b2) hard-confirm 轨
 
 - YUK-795 前，`src/server/conjectures/hard-confirm.ts` 与
   `misconceptionHardConfirmEnabled()` 均无生产 caller。
@@ -96,11 +96,8 @@ A13 问责轨上有四条同型债（「建成不通电」/「结构死格」/�
 **裁定：owner 2026-07-25 — 同 (b1)，并入 YUK-795 一并通电。**
 （本票初稿建议 knowingly-deferred，被推翻。）
 
-**YUK-795 落地**：`loadPredictionAccountabilityByKey()` 批量读取有效 score，
-调用 `summarizeDissociation()` / `decideDissociation()`，并把
-`INSUFFICIENT/EMERGING` 消费进 rank multiplier（hard flag 开启时，
-`EMERGING` 的持续命中为 1.25×；flag 关闭仍保持基础 1.15×）。
-这是真实 nightly caller，不再是 test-only export。
+**YUK-795 落地**：`loadPredictionAccountabilityByKey()` 批量读取有效 score，并在
+top-K 前重排。这是真实 nightly caller。连续命中 1.15×，连续失手 0.25×。
 
 v2 的第二道独立 probe 没有自己的校准概率，因此仍只写 score-free
 `probe_result_projected`，绝不借用首题概率伪造第二个 score。该 projection 会保留
@@ -114,10 +111,10 @@ score 时间排序，两条时间轴不得互相覆盖。
 `context`，reader 在显式 symbolic/transfer 等分类到位前保守回退到同一
 `knowledge_id`，避免两道同表征题伪造 context spread。
 
-`MISCONCEPTION_HARD_CONFIRM_ENABLED` 继续默认 OFF，理由不是 defer 问责，而是两条
-仍未满足的诚实门：当前 Judge 没有明确 `target_error_match`，且 soft→hard 必须
-owner 当刻新确认。nightly caller 强制 `ownerFreshlyConfirmed=false`，所以即使 flag
-误开也不能执行 hard mutation；它只能看到 `EMERGING`。普通答错计为普通作答证据，后台 job 计为后台来源证据。flag ledger 已同步为 live caller。
+`MISCONCEPTION_HARD_CONFIRM_ENABLED` 与 `decideDissociation` 的 `HARD_CONFIRM` 返回已删除。
+唯一 caller 固定 `ownerFreshlyConfirmed=false`，没有第二个 caller，hard 标签结构性不可达。
+flag 打开也只把连续命中从 1.15× 改成 1.25×，不能铸造 hard。夜间排序不再读这个开关，
+倍率固定为连续命中 1.15×、连续失手 0.25×。soft→hard 不由这条排序铸造。
 
 ---
 
@@ -179,7 +176,7 @@ planner/critic/judge fan-out 不恢复。
 |------|--------------------------|--------|----------|
 | (a) `typed_state='confused-with-X'` | **要通电**（推翻初稿 DEFERRED） | **YUK-794** | 本 ADR §(a)（含门槛四面分析）+ 各文件头注释 + 面板「本轨待通电」标注 |
 | (b1) `prediction_score` | **现在接** FLIP 消费者，不等 Rust 节奏（推翻初稿 DEFERRED） | **YUK-795** | 本 ADR §(b1) |
-| (b2) hard-confirm 轨 | **同上，并入 YUK-795**（推翻初稿 knowingly-deferred） | **YUK-795** | 本 ADR §(b2) + `scripts/audit-flags-ledger.json` → `MISCONCEPTION_HARD_CONFIRM_ENABLED.notes` |
+| (b2) hard-confirm 轨 | **删除死开关与 HARD_CONFIRM**；夜间排序保持 1.15× / 0.25×，不铸造 hard | **YUK-2004**（读者由 YUK-795 接入） | 本 ADR §(b2) |
 | (c) pedagogy 8 法 palette | **LIVE**；作为 deterministic shortlist，由同波次 recommendation + QuestionAuthor 真实消费，不承担最终推荐 | **YUK-796 → YUK-791** | 本 ADR §(c) + YUK-796 design |
 | (d) Planning Panel | **要审议能力，不建独立 Panel**；Agency 同波次内部审议 + Teaching Brief 控制区 | **YUK-796 → YUK-791** | 本 ADR §(d) + YUK-796 design |
 
