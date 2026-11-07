@@ -873,10 +873,18 @@ async function readPracticeCandidatesInSnapshot(
       input.snapshotId != null &&
       decoded?.snapshotId !== input.snapshotId
     ) {
-      return terminalRead(db, asOf, scope, 'snapshot_changed', 'cursor_snapshot_mismatch', pageSize, {
-        snapshotId,
-        expected: input.snapshotId,
-      });
+      return terminalRead(
+        db,
+        asOf,
+        scope,
+        'snapshot_changed',
+        'cursor_snapshot_mismatch',
+        pageSize,
+        {
+          snapshotId,
+          expected: input.snapshotId,
+        },
+      );
     }
     expectedSnapshotId = input.snapshotId ?? decoded?.snapshotId ?? null;
     if (expectedSnapshotId !== null && expectedSnapshotId !== snapshotId) {

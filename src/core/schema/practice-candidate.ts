@@ -55,12 +55,7 @@ export const PracticeCandidateQuerySchema = z.strictObject({
    * Rows per page. Defaults to PRACTICE_CANDIDATE_PAGE_SIZE: the Coach reads this straight
    * into its context, so the default stays small and paging is the wide-read path.
    */
-  pageSize: z
-    .number()
-    .int()
-    .min(1)
-    .max(PRACTICE_CANDIDATE_PAGE_SIZE_MAX)
-    .optional(),
+  pageSize: z.number().int().min(1).max(PRACTICE_CANDIDATE_PAGE_SIZE_MAX).optional(),
 });
 export type PracticeCandidateQuery = z.infer<typeof PracticeCandidateQuerySchema>;
 
