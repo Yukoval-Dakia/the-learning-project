@@ -99,7 +99,7 @@ export interface Block {
   ingestion_enrollment: {
     state: 'in_library' | 'not_enrolled' | 'ignored';
     /** pending is still on its way in; only publish_failed is a failure. */
-    reason: 'needs_text' | 'pending' | 'publish_failed' | null;
+    reason: 'needs_text' | 'pending' | 'publish_failed' | 'reverted' | null;
     knowledge: 'attributed' | 'missing' | null;
     library_visible: boolean | null;
   };
@@ -258,6 +258,18 @@ export async function answerAsk(id: string, askId: string, answer: AskAnswerBody
     },
   );
 }
+
+/** Takes one question in: only this one, and a knowledge point isn't needed. Safe to press twice. */
+export const enrollBlock = (
+  id: string,
+  blockId: string,
+  body: { expected_version: number; prompt_md?: string },
+) =>
+  apiOperationJson('enrollIngestionBlock', {
+    url: `/api/ingestion/${encodeURIComponent(id)}/blocks/${encodeURIComponent(blockId)}/enroll`,
+    method: 'POST',
+    body,
+  });
 
 /**
  * Reads one recognised question again from its page with a stronger reader (paid, learner-pressed).

@@ -1,7 +1,7 @@
 import { isLowJudgeConfidence } from '@/core/judge-confidence';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { BlockFigures } from './BlockFigures';
-import { RevertButton } from './BlockTools';
+import { EnrollButton, PromptFill, RescueButton, RevertButton } from './BlockTools';
 import { figuresOf, hasOptionsWithoutFigure, lineText, promptOf } from './block-text';
 import type { Block } from './record-api';
 import { servingNote } from './record-copy';
@@ -19,6 +19,7 @@ function enrollmentWords(block: Block): { text: string; tone: Tone } {
   // Waiting in line is not a failure: only publish_failed says it didn't go in.
   if (reason === 'pending') return { text: '正在进题库', tone: 'working' };
   if (reason === 'needs_text') return { text: '没认出题目', tone: 'caution' };
+  if (reason === 'reverted') return { text: '已撤回', tone: 'neutral' };
   return { text: '没进题库', tone: 'caution' };
 }
 
@@ -28,6 +29,8 @@ export function BlockLine({
   block,
   no,
   serving,
+  open,
+  photos,
   onHoverPage,
 }: {
   sessionId: string;
@@ -36,13 +39,18 @@ export function BlockLine({
   no: string;
   /** Today's serving state, once history has been read. */
   serving: BlockServing | null;
+  /** The recording can still take this question in. */
+  open: boolean;
+  /** The material is pages, which a question can be read again from. */
+  photos: boolean;
   onHoverPage: (page: number | null) => void;
 }) {
   const enrollment = block.ingestion_enrollment;
   const inLibrary = enrollment.state === 'in_library';
   // A question still waiting here has no recorded judgement yet, only how sure the reading was.
   const lowConfidence = isLowJudgeConfidence(
-    block.workflow_judge_confidence ?? block.extraction_confidence,
+    // A question taken in by hand or read again records 0 here: that isn't a judgement.
+    block.workflow_judge_confidence || block.extraction_confidence,
   );
   const emptyOptions = hasOptionsWithoutFigure(block);
   const noKnowledge = inLibrary && enrollment.knowledge === 'missing';
@@ -78,6 +86,20 @@ export function BlockLine({
           {block.status === 'auto_enrolled' && (
             <RevertButton sessionId={sessionId} blockId={block.id} />
           )}
+          {open && enrollment.reason === 'publish_failed' && (
+            <EnrollButton sessionId={sessionId} block={block} label="再试一次" />
+          )}
+          {open && enrollment.reason === 'reverted' && (
+            <EnrollButton sessionId={sessionId} block={block} label="再收进去" />
+          )}
+          {open && enrollment.reason === 'needs_text' && (
+            <PromptFill sessionId={sessionId} block={block} />
+          )}
+          {open &&
+            photos &&
+            (enrollment.reason === 'needs_text' || enrollment.reason === 'publish_failed') && (
+              <RescueButton sessionId={sessionId} block={block} />
+            )}
         </div>
       </div>
       <span className="rc-state rc-line-state" data-tone={state.tone}>
