@@ -266,7 +266,7 @@ async function applyOneMove(
     .where(
       and(
         eq(question.parent_question_id, row.id),
-        sql`${question.knowledge_ids} = jsonb_build_array(${candidate.rootId})`,
+        sql`${question.knowledge_ids} = ${JSON.stringify([candidate.rootId])}::jsonb`,
       ),
     )
     .orderBy(asc(question.id))
