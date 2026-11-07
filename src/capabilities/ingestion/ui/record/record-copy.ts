@@ -87,6 +87,7 @@ export function stopWords(code: string | null, scope: 'session' | 'item'): strin
 
 const HOLD_WORDS: Record<string, string> = {
   admission_failed: '两次独立解出的答案对不上，先不出。',
+  admission_undecided: '暂时没查成，先不出。',
   source_check_failed: '和原题对不上，先不出。',
   verify_hold: '等你确认之后再出。',
   no_input_renderer: '这种作答方式暂时还不支持。',
