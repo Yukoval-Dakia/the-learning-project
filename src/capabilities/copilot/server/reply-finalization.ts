@@ -475,19 +475,15 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
       if (correction.reply.trim().length === 0) {
         return publishUnsealed('', 'missing_terminal', context);
       }
-      const prepared = prepareReplyText(correction.reply);
-      // Strip any previous disclosure while its markers are still present, before
-      // the internal-comment stream can turn it into visible prose. Then remove
-      // other internal comments and add exactly one new disclosure.
+      // Strip old disclosure markers while they are still comments, then clear
+      // other internal comments, and only then parse block placements. A card
+      // hidden inside an HTML comment must not count as placed.
       const withoutOldDisclosure = stripCopilotInternalComments(
-        applyProposalDisclosure(prepared.text),
+        applyProposalDisclosure(correction.reply),
       ).trimEnd();
-      const disclosure = proposalDisclosure(
-        trace,
-        withoutOldDisclosure,
-        prepared.inlineCardQuestionIds,
-      );
-      const disclosed = applyProposalDisclosure(withoutOldDisclosure, disclosure);
+      const prepared = prepareReplyText(withoutOldDisclosure);
+      const disclosure = proposalDisclosure(trace, prepared.text, prepared.inlineCardQuestionIds);
+      const disclosed = applyProposalDisclosure(prepared.text, disclosure);
       const fixed = truncateCopilotReply(disclosed, COPILOT_REPLY_CHAR_LIMIT, context.retainedTail);
       const truncated = fixed !== disclosed;
       if (
