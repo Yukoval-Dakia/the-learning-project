@@ -5,7 +5,7 @@
 // kind/anchor 合理性），通过后才进入 QuizGenTask 生成。handler 挂只读领域工具，不挂
 // 检索——规划选考什么，不选拉什么素材。
 //
-// docs/adr/0038-unified-verify-contract-plan-then-generate.md
+// ADR-0038
 
 import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
 import { QuizGenPlan, type QuizGenPlanT } from '@/core/schema/quiz_gen';
