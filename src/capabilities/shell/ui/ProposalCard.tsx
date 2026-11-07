@@ -56,16 +56,16 @@ import { useWorkbenchClient } from './workbench-client';
 
 /** Same cap as a new proposal's one sentence. */
 const LEGACY_BODY_MAX = 80;
-// These cards do not say what they act on; without the reason there is nothing to decide from.
-const REASON_NAMES_THE_TARGET: ReadonlySet<string> = new Set([
+// There is nothing to decide from without the reason: these cards do not say what they act on, and
+// a conjecture's reason is the very claim being decided.
+const REASON_STAYS_IN_VIEW: ReadonlySet<string> = new Set([
   'knowledge_mutation',
   'record_links',
   'record_promotion',
   'completion',
   'relearn',
-  'defer',
-  'archive',
   'note_update',
+  'conjecture',
 ]);
 
 const EV_ICON: Record<string, LucideIcon> = {
@@ -458,10 +458,18 @@ export function ProposalCard({ p, resolved, navigate, onResolve, onError }: Prop
   );
   const CardIcon = kindIcon(cardIcon);
   // Without a sentence of its own, a card leaves its reason, which is internal text, under the fold
-  // and is read from its title and change details. Only a card that names no target keeps the reason
-  // in view, cut to two lines when long.
+  // and is read from its title and change details. A card those cannot decide keeps the reason in
+  // view, cut to two lines when long. So does a relation whose end has no name: the server then
+  // sends the start of the id as its label.
   const ownSummary = p.payload.learner_summary ? p.presentation?.learner_summary : undefined;
-  const reasonInView = !ownSummary && REASON_NAMES_THE_TARGET.has(p.kind);
+  const edgeLabels = p.presentation?.knowledge_edge;
+  const edgeUnnamed =
+    isEdge &&
+    (edgeLabels?.from_label === undefined ||
+      edgeLabels.to_label === undefined ||
+      edgeLabels.from_label === edgeFrom?.slice(0, 8) ||
+      edgeLabels.to_label === edgeTo?.slice(0, 8));
+  const reasonInView = !ownSummary && (REASON_STAYS_IN_VIEW.has(p.kind) || edgeUnnamed);
   const legacySegments = splitReasonIds(p.presentation?.learner_summary ?? p.payload.reason_md);
   // The first thing read holds no ids: a known block keeps its name, anything else waits in the fold.
   const legacyBody = reasonWithoutIds(

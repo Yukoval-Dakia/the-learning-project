@@ -58,13 +58,13 @@ export function isAcceptSupported(kind: string): boolean {
   return acceptSupported.has(kind);
 }
 
-// 关系类型白话（设计稿 REL_LABEL 原文）。
+// 关系类型白话；字段名不给学习者看。
 export const REL_LABEL: Record<string, string> = {
-  prerequisite: '前置 prerequisite',
-  related_to: '相关 related_to',
-  contrasts_with: '对比 contrasts_with',
-  applied_in: '应用 applied_in',
-  derived_from: '派生 derived_from',
+  prerequisite: '前置',
+  related_to: '相关',
+  contrasts_with: '对比',
+  applied_in: '应用',
+  derived_from: '派生',
 };
 
 // The API boundary is generated from the provider-owned manifest. The view
