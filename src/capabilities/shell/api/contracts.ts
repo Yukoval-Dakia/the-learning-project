@@ -190,6 +190,10 @@ export const ProposalInboxRowResponseSchema = z.object({
       'missing_continuity',
     ])
     .nullable(),
+  // Server-derived: the pending row may join a batch confirmation (reversible
+  // kind with an owner retract path). Always false for non-pending rows; the
+  // client must not keep its own kind whitelist.
+  batch_confirm_eligible: z.boolean(),
   signals: z.record(z.string(), z.unknown()).nullable(),
   presentation: ProposalPresentationResponseSchema.nullable(),
 });
@@ -207,6 +211,41 @@ export const ProposalPageResponseSchema = z.object({
 });
 
 export const ProposalDecisionResponseSchema = ProposalDecisionResource;
+
+export const ProposalBatchAcceptItemSchema = z.object({
+  proposal_id: z.string(),
+  kind: z.string(),
+  status: z.enum(['accepted', 'already_accepted', 'rejected', 'failed']),
+  code: z.string().nullable(),
+  reason_md: z.string().nullable(),
+});
+
+export const ProposalBatchAcceptResponseSchema = z.object({
+  // Durable anchor (experimental:proposal_batch_accept) for undoing the set
+  // later; null when no new accept landed (a pure replay already has its anchor).
+  batch_id: z.string().nullable(),
+  items: z.array(ProposalBatchAcceptItemSchema),
+  summary: z.object({
+    requested: z.number().int().nonnegative(),
+    accepted: z.number().int().nonnegative(),
+    already_accepted: z.number().int().nonnegative(),
+    rejected: z.number().int().nonnegative(),
+    failed: z.number().int().nonnegative(),
+  }),
+});
+
+// Recent batch-confirm anchors so a confirmed set can be revoked after the
+// inbox refreshes; revocation itself reuses the single retract path per item.
+export const ProposalBatchAcceptListResponseSchema = z.object({
+  batches: z.array(
+    z.object({
+      batch_id: z.string(),
+      proposal_ids: z.array(z.string()),
+      items: z.array(ProposalBatchAcceptItemSchema),
+      created_at: z.string(),
+    }),
+  ),
+});
 
 export const LegacyProposalDecisionBodySchema = z
   .object({

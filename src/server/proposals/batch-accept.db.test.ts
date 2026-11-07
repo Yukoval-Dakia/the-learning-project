@@ -1,0 +1,235 @@
+// 批量确认（proposal batch-accept）DB 测试（db 分区；testcontainer + resetDb）。
+// 断言契约：准入集合是 B 档且已确认后仍可经 canonical retract 撤销的 kind；
+// 单条失败不回滚他条，重放不写第二条 decision，被拒/未找到的项不写 decision；
+// 批量锚持久化 batch_id -> proposal_ids，经锚读回后可走单条 retract 真撤销效果。
+
+import { and, eq } from 'drizzle-orm';
+import { beforeEach, describe, expect, it } from 'vitest';
+import type { StructuredQuestionT } from '@/core/schema/structured_question';
+import { event, learning_item, question } from '@/db/schema';
+import { getCorrectionStatuses } from '@/kernel/events';
+import { PROPOSAL_BATCH_ACCEPT_ACTION } from '@/kernel/proposals/batch-confirm';
+import { getProposalInboxRow } from '@/kernel/proposals/inbox';
+import { writeAiProposal } from '@/kernel/proposals/writer';
+import { migrateCanonicalProjections } from '../../../scripts/migrate-canonical-projections';
+import { resetDb, testDb } from '../../../tests/helpers/db';
+import { batchAcceptProposals, installBatchConfirmEligibility } from './batch-accept';
+import { retractAiProposal } from './retract-action';
+
+const NOW = new Date('2026-11-08T00:00:00Z');
+
+async function seedLearningItem(id: string): Promise<void> {
+  await testDb()
+    .insert(learning_item)
+    .values({
+      id,
+      source: 'manual',
+      title: `学习项 ${id}`,
+      status: 'pending',
+      created_at: NOW,
+      updated_at: NOW,
+    });
+}
+
+async function seedCompletionProposal(proposalId: string, learningItemId: string): Promise<void> {
+  await writeAiProposal(testDb(), {
+    id: proposalId,
+    actor_ref: 'agent:copilot',
+    payload: {
+      kind: 'completion',
+      target: { subject_kind: 'learning_item', subject_id: learningItemId },
+      reason_md: 'copilot 判定可以标记完成',
+      evidence_refs: [],
+      proposed_change: { learning_item_id: learningItemId },
+    },
+  });
+}
+
+// question_edit declares a retract path but refuses once the edit is applied —
+// it is the boundary proof that "declared retract" alone is not undoability.
+async function seedQuestionEditProposal(proposalId: string, questionId: string): Promise<void> {
+  await testDb()
+    .insert(question)
+    .values({
+      id: questionId,
+      kind: 'short_answer',
+      prompt_md: '阅读下面文段，回答问题。',
+      reference_md: '代词。',
+      knowledge_ids: [],
+      difficulty: 3,
+      source: 'manual',
+      draft_status: 'active',
+      structured: {
+        id: 'n_stem',
+        role: 'stem',
+        prompt_text: '阅读下面文段，回答问题。',
+        sub_questions: [
+          {
+            id: 'n_short',
+            role: 'sub',
+            question_no: '1',
+            prompt_text: '解释「之」的用法。',
+            answers: ['代词。'],
+          },
+        ],
+      } satisfies StructuredQuestionT,
+      created_at: NOW,
+      updated_at: NOW,
+      version: 0,
+    });
+  await writeAiProposal(testDb(), {
+    id: proposalId,
+    actor_ref: 'agent:copilot',
+    payload: {
+      kind: 'question_edit',
+      target: { subject_kind: 'question', subject_id: questionId },
+      reason_md: 'copilot 提议修订题面',
+      evidence_refs: [{ kind: 'question', id: questionId }],
+      proposed_change: {
+        question_id: questionId,
+        edit: { op: 'edit_node_text', node_id: 'n_stem', prompt_text: '题面修订' },
+      },
+    },
+  });
+}
+
+async function rateCount(proposalId: string): Promise<number> {
+  return (
+    await testDb()
+      .select({ id: event.id })
+      .from(event)
+      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, proposalId)))
+  ).length;
+}
+
+describe('proposal batch confirmation', () => {
+  beforeEach(resetDb);
+  // @invariant data: replaying a batch-accept writes no second
+  // decision, rejected or missing proposals write none, and the durable anchor
+  // keeps the accepted set revocable through the canonical single-item retract
+  // @fails-if a replay mints another rate event or anchor, a rejected item gains
+  // a decision, the anchor loses the accepted ids, or a batch-accepted proposal
+  // stops responding to the single retract path
+  it('accepts eligible proposals once, rejects the rest, and stays revocable', async () => {
+    const db = testDb();
+    installBatchConfirmEligibility();
+    await seedLearningItem('li_b1');
+    await seedLearningItem('li_b2');
+    // learning_item mutations run on canonical projections; the fixture models
+    // persisted rows entering a migrated deployment. Anchors must land before
+    // the proposal events or migration rejects the items' orphaned history.
+    await migrateCanonicalProjections(db);
+    await seedCompletionProposal('lc_b1', 'li_b1');
+    await seedCompletionProposal('lc_b2', 'li_b2');
+    // judge_retraction is grading-adjacent and declares no retract — excluded.
+    await writeAiProposal(db, {
+      id: 'jr_b3',
+      actor_ref: 'agent:copilot',
+      payload: {
+        kind: 'judge_retraction',
+        target: { subject_kind: 'evaluation', subject_id: 'ev_x' },
+        reason_md: 'copilot 提议纠正判分',
+        evidence_refs: [],
+        proposed_change: { evaluation_id: 'ev_x' },
+      },
+    });
+    await seedQuestionEditProposal('qe_b4', 'q_batch');
+
+    expect((await getProposalInboxRow(db, 'lc_b1'))?.batch_confirm_eligible).toBe(true);
+    expect((await getProposalInboxRow(db, 'jr_b3'))?.batch_confirm_eligible).toBe(false);
+    expect((await getProposalInboxRow(db, 'qe_b4'))?.batch_confirm_eligible).toBe(false);
+
+    const ids = ['lc_b1', 'lc_b2', 'jr_b3', 'qe_b4', 'p_missing'];
+    const first = await batchAcceptProposals(db, { proposal_ids: ids });
+    expect(first.batch_id).toMatch(/^proposal_batch_/);
+    expect(first.items).toEqual([
+      {
+        proposal_id: 'lc_b1',
+        kind: 'completion',
+        status: 'accepted',
+        code: null,
+        reason_md: null,
+      },
+      {
+        proposal_id: 'lc_b2',
+        kind: 'completion',
+        status: 'accepted',
+        code: null,
+        reason_md: null,
+      },
+      {
+        proposal_id: 'jr_b3',
+        kind: 'judge_retraction',
+        status: 'rejected',
+        code: 'kind_not_batchable',
+        reason_md: expect.any(String),
+      },
+      {
+        proposal_id: 'qe_b4',
+        kind: 'question_edit',
+        status: 'rejected',
+        code: 'kind_not_batchable',
+        reason_md: expect.any(String),
+      },
+      {
+        proposal_id: 'p_missing',
+        kind: 'unknown',
+        status: 'failed',
+        code: 'proposal_not_found',
+        reason_md: expect.any(String),
+      },
+    ]);
+    expect(first.summary).toMatchObject({
+      requested: 5,
+      accepted: 2,
+      already_accepted: 0,
+      rejected: 2,
+      failed: 1,
+    });
+    expect(await rateCount('lc_b1')).toBe(1);
+    expect(await rateCount('lc_b2')).toBe(1);
+    expect(await rateCount('jr_b3')).toBe(0);
+    expect(await rateCount('qe_b4')).toBe(0);
+    expect(await rateCount('p_missing')).toBe(0);
+    const [done] = await db.select().from(learning_item).where(eq(learning_item.id, 'li_b1'));
+    expect(done.status).toBe('done');
+
+    const replay = await batchAcceptProposals(db, { proposal_ids: ids });
+    expect(replay.batch_id).toBeNull();
+    expect(replay.items.map((entry) => entry.status)).toEqual([
+      'already_accepted',
+      'already_accepted',
+      'rejected',
+      'rejected',
+      'failed',
+    ]);
+    expect(await rateCount('lc_b1')).toBe(1);
+    expect(await rateCount('lc_b2')).toBe(1);
+    expect(await rateCount('jr_b3')).toBe(0);
+    expect(await rateCount('qe_b4')).toBe(0);
+
+    const anchors = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, PROPOSAL_BATCH_ACCEPT_ACTION));
+    expect(anchors).toHaveLength(1);
+    expect(anchors[0]).toMatchObject({
+      subject_kind: 'proposal_batch',
+      subject_id: first.batch_id,
+      outcome: 'success',
+      payload: { proposal_ids: ['lc_b1', 'lc_b2'] },
+    });
+
+    // The anchored set revokes through the canonical per-item retract path and
+    // the owner applier restores the prior learning state — the confirm was real.
+    await retractAiProposal(db, 'lc_b1');
+    expect((await getCorrectionStatuses(db, ['lc_b1'])).get('lc_b1')?.state).toBe('retracted');
+    const [restored] = await db.select().from(learning_item).where(eq(learning_item.id, 'li_b1'));
+    expect(restored.status).toBe('pending');
+    // A revoked member keeps its single decision trail — a later batch run still
+    // reports it as decided rather than accepting it again.
+    const third = await batchAcceptProposals(db, { proposal_ids: ['lc_b1'] });
+    expect(third.items).toMatchObject([{ proposal_id: 'lc_b1', status: 'rejected' }]);
+    expect(await rateCount('lc_b1')).toBe(1);
+  });
+});

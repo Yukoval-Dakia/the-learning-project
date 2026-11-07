@@ -37,6 +37,24 @@ export function projectReviewAnswerResponse(body: CreateAttemptBody, result: Rev
         effect: committed.status === 'effective' ? committed.activation.effect : null,
       },
       review_event: { id: committed.attempt_id },
+      // Server-computed evidence split: exposure (sealed receipt), judged
+      // outcome, and the learner's own claim stay separate — a correct or
+      // confident assisted answer is still not independent.
+      evidence: {
+        assistance: committed.assistance
+          ? {
+              status: committed.assistance.status,
+              max_dose: committed.assistance.max_dose,
+              kinds: committed.assistance.kinds,
+              phase: committed.assistance.phase,
+            }
+          : null,
+        verdict: body.self_report ? null : { outcome: judged.coarse_outcome, score: judged.score },
+        self_claim:
+          body.self_report || !body.auto_rate
+            ? { rating: body.rating, confidence: body.self_confidence ?? null }
+            : { rating: null, confidence: body.self_confidence ?? null },
+      },
       judge: body.self_report
         ? null
         : {
