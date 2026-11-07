@@ -20,9 +20,11 @@ import {
 } from '@/core/schema/note-patch';
 import type { Db, Tx } from '@/db/client';
 import { artifact, event } from '@/db/schema';
+import { downgradeUnboundChartFences } from '@/kernel/blocks/markdown-chart-fence';
 import { costUsdToMicroUsd } from '@/kernel/cost';
 import { writeEvent } from '@/kernel/events';
 import { noteBlockSource } from '../shared/note-block-source';
+import { downgradeUnboundChartFencesInBlockTree } from '../shared/note-chart-fence-downgrade';
 
 type DbLike = Db | Tx;
 
@@ -96,9 +98,16 @@ function withDerivedSourceMirror(patch: NotePatchT): NotePatchT {
   const derive = (op: NotePatchOpT): NotePatchOpT => {
     if (!('block' in op) || MIRROR_EXEMPT_BLOCK_TYPES.has(String(op.block.type))) return op;
     try {
-      const block = op.block as Record<string, unknown>;
+      const block = downgradeUnboundChartFencesInBlockTree(op.block as Record<string, unknown>);
       const attrs = { ...(block.attrs as Record<string, unknown> | undefined) };
-      attrs.source_markdown = noteBlockSource(block);
+      const derived = noteBlockSource(block);
+      const mirror = downgradeUnboundChartFences(derived);
+      if (mirror !== derived) {
+        throw new Error(
+          'unbound recorded-data chart fence spans multiple blocks; resubmit it as one paragraph or code block',
+        );
+      }
+      attrs.source_markdown = mirror;
       return { ...op, block: { ...block, attrs } };
     } catch (err) {
       throw new NoteRefineApplyError(
