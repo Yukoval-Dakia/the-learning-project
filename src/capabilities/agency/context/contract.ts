@@ -3,7 +3,7 @@
 //     渲染学习者原话（learner_words）+ 时间窗 + 未对应范围，普通 goal 渲染
 //     「当前目标：title」（未开始的 steering goal 不占当前目标位）
 //   - 掌握度：readLearnerJudgments 的白话档，含不确定度，uncalibrated 照实标注
-//   - 错因：现有 top 错因口径（P4 的 readCauseJudgment 落地后从这里换读）
+//   - 错因：readCauseJudgment 的最近失败窗口，与单知识点工具同一排序
 //   - 信号：判断批次的不确定备注；昨夜交班句
 // 所有确定性数字带 n；n 不够写「样本少」，不给数字。
 
@@ -21,21 +21,14 @@ import {
   type ActiveGoal,
   listActiveGoalsWithResolvedScope,
 } from '@/kernel/read-models/active-goal-scope';
-import {
-  effectiveCauseCategoryForFailureAttempt,
-  effectiveCauseForFailureAttempt,
-} from '@/kernel/read-models/cause-policy';
-import type { FailureAttempt } from '@/kernel/read-models/failure-attempts';
-import { getFailureAttemptsForDerivation } from '@/kernel/read-models/failure-attempts';
+import { readCauseJudgment } from '@/kernel/read-models/cause-judgment';
 import { readLearnerJudgments } from '@/kernel/read-models/learner-judgment';
 import type { MasteryProjection } from '@/kernel/read-models/mastery-projection';
-import { resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
 import { shanghaiLabel } from './delta';
 import type { ContractSection } from './types';
 
 type DbLike = Db | Tx;
 
-const FAILURE_SCAN_LIMIT = 40;
 const MIN_SAMPLE = 5;
 /** 启动段只带最近几条失败原因，只有时间戳和归因标签。 */
 const FAILURE_DETAIL_MAX = 3;
@@ -145,22 +138,6 @@ function summarizeJudgment(batch: LearnerJudgmentBatch): {
   };
 }
 
-function rankTopCauseCategories(
-  failures: FailureAttempt[],
-  n: number,
-): { cause: string; count: number }[] {
-  const counts = new Map<string, number>();
-  for (const fa of failures) {
-    const cause = effectiveCauseCategoryForFailureAttempt(fa);
-    if (!cause) continue;
-    counts.set(cause, (counts.get(cause) ?? 0) + 1);
-  }
-  return [...counts.entries()]
-    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-    .slice(0, n)
-    .map(([cause, count]) => ({ cause, count }));
-}
-
 // steering goal 的一行：学习者原话 + 时间窗（开始/截止/倒计时）+ 未对应范围。
 // learner_words 上限 500 字，启动段按 120 字截断防占满预算。
 function steeringLineForGoal(g: ActiveGoal, today: string): string {
@@ -196,9 +173,9 @@ export async function readContractSection(
   db: DbLike,
   opts: { now: Date },
 ): Promise<ContractSection> {
-  const [goals, failures] = await Promise.all([
+  const [goals, causes] = await Promise.all([
     listActiveGoalsWithResolvedScope(db as Db),
-    getFailureAttemptsForDerivation(db, { limit: FAILURE_SCAN_LIMIT }),
+    readCauseJudgment(db, { knowledge_ids: [], as_of: opts.now }),
   ]);
 
   const today = learnerLocalDay(opts.now);
@@ -241,32 +218,19 @@ export async function readContractSection(
     masteryMd = `${masteryMd} ${sum.coreSentence}`;
   }
 
-  const causes = rankTopCauseCategories(failures, 2);
-  if (causes.length > 0) {
+  if (causes.recent_top_causes.length > 0) {
     causesMd =
-      failures.length < MIN_SAMPLE
+      causes.recent_failure_count < MIN_SAMPLE
         ? '近期高频误区：样本少'
-        : `近期高频误区：${causes.map((c) => `${c.cause}（n=${c.count}）`).join('、')}`;
+        : `近期高频误区：${causes.recent_top_causes.map((c) => `${c.category}（n=${c.count}）`).join('、')}`;
   }
 
   // 最近几条失败的逐条原因：只有时间戳 + 错因类别标签（misc_ 显示回填），
-  // 未归因照实标注。analysis_md 是错答与参考答案的差异、user_notes 是学习者
-  // 原话——两者都不进常驻启动上下文（对到期题也泄题），明细不带摘要。
-  // failures 已按用途过滤（getFailureAttemptsForDerivation）。明细独立成
+  // 未归因照实标注。错答正文和学习者原话不进常驻启动上下文。明细独立成
   // unit，预算紧时先于基础段被裁（见 budget.ts dropRank）。
-  const recentFailures = failures.slice(0, FAILURE_DETAIL_MAX);
-  const miscLabels = await resolveMiscCauseLabels(
-    db,
-    recentFailures
-      .map((failure) => effectiveCauseForFailureAttempt(failure)?.primary_category)
-      .filter((id): id is string => typeof id === 'string'),
-  );
-  const failureLines = recentFailures.map((failure) => {
-    const cause = effectiveCauseForFailureAttempt(failure);
-    const label = cause
-      ? (miscLabels.get(cause.primary_category) ?? cause.primary_category)
-      : '未归因';
-    return `· ${shanghaiLabel(failure.created_at)} ${label}`;
+  const failureLines = causes.recent_failures.slice(0, FAILURE_DETAIL_MAX).map((failure) => {
+    const label = failure.label ?? failure.category ?? '未归因';
+    return `· ${shanghaiLabel(failure.at)} ${label}`;
   });
   const failureDetailsMd = failureLines.length > 0 ? failureLines.join('\n') : null;
 

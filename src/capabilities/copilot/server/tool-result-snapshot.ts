@@ -26,6 +26,7 @@ const POLICIES: Record<string, ResultPolicy> = {
   query_context: 'reader',
   get_subject_graph_overview: 'reader',
   query_knowledge: 'reader',
+  get_knowledge_state: 'reader',
   expand_knowledge_subgraph: 'reader',
   find_knowledge_paths: 'reader',
   query_records: 'reader',

@@ -49,6 +49,7 @@ export const fastTestInclude = [
   'src/capabilities/practice/grading/server/judge/steps-judge.test.ts',
   'src/capabilities/practice/supply/server/jyeoo-spawn.test.ts',
   'src/kernel/placement-starter-outcome.unit.test.ts',
+  'src/kernel/read-models/knowledge-state.unit.test.ts',
   'src/capabilities/practice/question-bank/server/quiz/verify-framework.test.ts',
   'src/capabilities/practice/ui/blocks/custom-sandbox.test.ts',
   'src/capabilities/shell/server/overnight-digest-summary.unit.test.ts',
@@ -87,6 +88,7 @@ export const fastTestInclude = [
 
 export const dbTestInclude = [
   'src/capabilities/practice/failure-learning/server/backtrace.db.test.ts',
+  'src/server/ai/provider-stream-guards.db.test.ts',
   'src/capabilities/practice/grading/server/photo-gate.db.test.ts',
   'src/capabilities/shell/api/proposal-reason-privacy.db.test.ts',
   'src/server/boss/isolated-runtime.db.test.ts',
