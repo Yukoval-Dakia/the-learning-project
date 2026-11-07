@@ -228,8 +228,12 @@ export function PlotBlock({ block }: { block: PlotBlockT }): ReactElement {
   ]
     .filter(Boolean)
     .join('，');
+  // A segment is continuous, so it can cross the view between two of its points.
   const empty = !scene.curves.some((curve) =>
-    curve.segments.some((segment) => segment.some(([, y]) => y >= y0 && y <= y1)),
+    curve.segments.some((segment) => {
+      const ys = segment.map(([, y]) => y);
+      return Math.min(...ys) <= y1 && Math.max(...ys) >= y0;
+    }),
   );
 
   return (
