@@ -27,6 +27,7 @@ import {
   type EvidenceCitationT,
   type GroupEvidenceT,
   ModelObservation,
+  PhotoJudgement,
   ScoringUnitResult,
   type ScoringUnitResultT,
   type SubmissionRecordT,
@@ -122,6 +123,7 @@ export const ModelUnitOutcome = z.discriminatedUnion('kind', [
      * 缺省 = 无观察；绝不补造。
      */
     model_observations: z.array(ModelObservation).optional(),
+    photo_judgement: PhotoJudgement.optional(),
     /** 分布形状信号（非 accuracy）；缺失不得补造（OpenRouter 核验 D12）。 */
     confidence: z.number().min(0).max(1).optional(),
     /** 掌握证据。聚合不读它。 */
@@ -168,6 +170,8 @@ export interface ModelExecutorRequest {
   slot_responses: SlotResponseT[];
   /** Whole-submission image totals survive per-unit slot/evidence projection; never sent to the model. */
   submission_images?: { count: number; bytes: number };
+  /** Server-verified photo evidence; excluded from model wire. */
+  photo_judgement?: z.infer<typeof PhotoJudgement>;
   /** 该 unit 命中的 group 级证据（all_units 或显式子集）。 */
   group_evidence: GroupEvidenceT[];
   /** 该 unit 声明的共享材料（判分与学生所见同版资产）。 */
@@ -763,6 +767,10 @@ export async function evaluateSubmissionCore(
         mismatch = `asserted result for '${result.scoring_unit_id}' fails ScoringUnitResult schema`;
         break;
       }
+      if (parsed.data.status === 'scored' && parsed.data.photo_judgement !== undefined) {
+        mismatch = 'manual assertions cannot claim photo exam evidence';
+        break;
+      }
       if (!inScopeUnitIds.has(result.scoring_unit_id)) {
         mismatch = `asserted result for unknown/out-of-scope unit '${result.scoring_unit_id}'`;
         break;
@@ -1214,6 +1222,7 @@ export async function evaluateSubmissionCore(
             ? { kc_mastery_evidence: outcome.kc_mastery_evidence }
             : {}),
           evidence_citations: outcome.evidence_citations,
+          ...(outcome.photo_judgement ? { photo_judgement: outcome.photo_judgement } : {}),
           ...(outcome.model_observations !== undefined
             ? { model_observations: outcome.model_observations }
             : {}),

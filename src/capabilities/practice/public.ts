@@ -178,6 +178,12 @@ export const recoverHeldServingRechecks: typeof import('./question-bank/public')
   async (...args) => (await import('./question-bank/public')).recoverHeldServingRechecks(...args);
 
 export {
+  freezePhotoJudgeExamInput,
+  photoJudgeExamConfiguration,
+  runPhotoJudgeExam,
+  verifyPhotoJudgeExam,
+} from './grading/public';
+export {
   PlacementOrphanStateError,
   abandonOrphanPlacementTx,
   placementProbeEnabled,
