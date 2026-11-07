@@ -15,6 +15,7 @@ import {
 import type { Db } from '@/db/client';
 import { isEmbedRevisionCurrent } from '@/db/embed-currency';
 import { knowledge, knowledge_edge } from '@/db/schema';
+import { markAiTaskRunOutputInvalid } from '@/server/ai/log';
 import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
 import { createKnowledgeTagEmbedder } from './knowledge-namer';
 import { redactIngestionText } from './privacy-guard';
@@ -30,7 +31,7 @@ export type TaggingRunTaskFn = (
   kind: string,
   input: TaggingInputT,
   ctx: unknown,
-) => Promise<{ text: string }>;
+) => Promise<{ text: string; task_run_id?: string }>;
 
 /** The embedder seam used only when the candidate grid needs relevance ranking. */
 export interface TaggingGridEmbedder {
@@ -299,9 +300,11 @@ export async function runTaggingTask(params: RunTaggingTaskParams): Promise<Tagg
 
   const runTaskFn = params.runTaskFn ?? makeRunTaskTextFn(params.db);
   let llmText: string;
+  let taskRunId: string | undefined;
   try {
     const result = await runTaskFn('TaggingTask', input, params.ctx ?? {});
     llmText = result.text;
+    taskRunId = result.task_run_id;
   } catch (err) {
     throw new TaggingTaskError('TaggingTask LLM call failed', { cause: err });
   }
@@ -310,6 +313,7 @@ export async function runTaggingTask(params: RunTaggingTaskParams): Promise<Tagg
   try {
     parsed = parseTaggingOutput(llmText);
   } catch (err) {
+    await markInvalidOutput(params.db, taskRunId, err);
     if (err instanceof TaggingTaskError) throw err;
     throw new TaggingTaskError('TaggingTask output did not match TaggingOutput schema', {
       cause: err,
@@ -330,4 +334,22 @@ export async function runTaggingTask(params: RunTaggingTaskParams): Promise<Tagg
   const suggestions = parsed.suggestions.filter((s) => existingIds.has(s.knowledge_id));
 
   return { ...parsed, suggestions, grid_truncated };
+}
+
+/** A settled task run must not claim success when its text was unusable; best effort. */
+async function markInvalidOutput(
+  db: Db,
+  taskRunId: string | undefined,
+  err: unknown,
+): Promise<void> {
+  if (taskRunId === undefined) return;
+  try {
+    await markAiTaskRunOutputInvalid(
+      db,
+      taskRunId,
+      err instanceof Error ? err.message : String(err),
+    );
+  } catch (markErr) {
+    console.error('[tagging] failed to mark invalid task output', markErr);
+  }
 }

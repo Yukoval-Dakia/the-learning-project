@@ -390,6 +390,16 @@ export const ingestionCapability = defineCapability({
         queue: 'llm',
         load: () => import('./jobs/auto_enroll').then((m) => m.buildAutoEnrollHandler),
       },
+      // Background knowledge + solution annotation owner (YUK-1994 slice 3). The
+      // auto_enroll delivery sends an immediate batch; this cron is the durable
+      // sweep for anything that send lost. Bounded per-row attempts live on the row.
+      {
+        name: 'ingestion_annotation_backfill',
+        queue: 'llm',
+        schedule: { cron: '*/15 * * * *', tz: 'Asia/Shanghai' },
+        load: () =>
+          import('./jobs/annotation_backfill').then((m) => m.buildAnnotationBackfillHandler),
+      },
       // AGENT tier; one durable run per session spans deliveries, and ask
       // suspension exits the job until an answer or timeout re-dispatches.
       {

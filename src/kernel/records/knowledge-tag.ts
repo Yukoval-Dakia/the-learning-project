@@ -15,8 +15,13 @@
 // projected in the same transaction. The caller binds the embedding provider; kernel
 // records do not import server/ai.
 
-import { eq } from 'drizzle-orm';
-import { questionEmbedText } from '@/core/embed-source';
+import { and, eq, isNull, sql } from 'drizzle-orm';
+import {
+  EMBED_VERSION,
+  embedHash,
+  knowledgeEmbedText,
+  questionEmbedText,
+} from '@/core/embed-source';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { ai_task_runs, knowledge } from '@/db/schema';
@@ -29,6 +34,7 @@ import {
   matchThreshold,
 } from '@/kernel/read-models/knowledge-similarity';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
+import { isLearnerVisibleKnowledgeId } from '@/kernel/read-models/learner-knowledge-visibility';
 import { resolveSessionDerivationPolicy } from '@/kernel/read-models/usage-policy';
 import { getKnownSubjects } from '@/subjects/profile';
 // Projection parity assert: throws in dev/test, warns in prod.
@@ -169,6 +175,74 @@ function batchCacheKey(subjectRootId: string, kcName: string): string {
   return `${subjectRootId}::${kcName.trim().toLowerCase()}`;
 }
 
+/** Punctuation-insensitive comparison form; CJK-safe (case folding only helps latin). */
+function normalizeKcName(name: string): string {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/[\s，。、；：！？,.!?;:（）()[\]【】「」『』《》<>"'`]/g, '');
+}
+
+/**
+ * Deterministic safety net for the propose branch: the model may re-propose a concept
+ * whose wording differs only in spacing/punctuation from a live KC in the same subject
+ * (the cosine gate can also miss it when the KC vector is not current). Reuse the
+ * existing node instead of minting a near-duplicate (YUK-1990).
+ *
+ * Deliberately conservative: exact normalized-name equality inside the same effective
+ * domain only. Semantic near-duplicates are the embedder's job, not a name heuristic's.
+ */
+async function findSameNamedKnowledge(
+  db: Db,
+  params: { name: string; effectiveDomain: string | null },
+): Promise<{ id: string; name: string } | null> {
+  if (params.effectiveDomain === null) return null;
+  const target = normalizeKcName(params.name);
+  if (target.length === 0) return null;
+  const rows = await db
+    .select({ id: knowledge.id, name: knowledge.name })
+    .from(knowledge)
+    .where(and(isNull(knowledge.archived_at), eq(knowledge.role, 'kc')));
+  for (const row of rows) {
+    if (!isLearnerVisibleKnowledgeId(row.id)) continue;
+    if (normalizeKcName(row.name) !== target) continue;
+    const domain = await getEffectiveDomain(db, row.id);
+    if (domain === params.effectiveDomain) return row;
+  }
+  return null;
+}
+
+/**
+ * Stamp a freshly proposed KC's vector immediately so the next question can match it.
+ * Without this the node is invisible to cosine retrieval until the nightly embed
+ * backfill, and each sibling question mints another near-duplicate (YUK-1990).
+ * Best effort: a failed embed leaves the row NULL for that same backfill.
+ */
+async function stampFreshKnowledgeEmbedding(
+  db: Db,
+  embedder: KnowledgeTagEmbedder,
+  params: { id: string; name: string; effectiveDomain: string | null },
+): Promise<void> {
+  try {
+    const text = knowledgeEmbedText({ name: params.name, effectiveDomain: params.effectiveDomain });
+    const vector = await embedder.embed(text);
+    if (vector.length === 0) return;
+    await db
+      .update(knowledge)
+      .set({
+        embedding: vector,
+        embed_model: embedder.model,
+        embed_version: EMBED_VERSION,
+        embed_content_hash: embedHash(text),
+        embed_source_revision: sql`${knowledge.version}`,
+      })
+      // Only fill a missing vector: a concurrent backfill that won the race is kept.
+      .where(and(eq(knowledge.id, params.id), isNull(knowledge.embedding)));
+  } catch (err) {
+    console.warn(`[tag_knowledge] fresh KC ${params.id} left without an embedding`, err);
+  }
+}
+
 /** Match-or-propose tagging; a proposal reuses the batch cache before naming. */
 export async function tagKnowledge(
   deps: TagKnowledgeDeps,
@@ -298,6 +372,58 @@ export async function tagKnowledge(
     }
   }
 
+  // Second safety net after the cosine gate: an existing live KC in this subject whose
+  // name differs only in spacing/punctuation is the same concept, not a new node.
+  const sameNamed = await findSameNamedKnowledge(db, {
+    name: kc_name,
+    effectiveDomain: targetDomain,
+  });
+  if (sameNamed) {
+    if (deps.batchCache) {
+      deps.batchCache.set(batchCacheKey(input.subjectRootId, kc_name), sameNamed.id);
+      deps.batchCache.set(batchCacheKey(input.subjectRootId, sameNamed.name), sameNamed.id);
+    }
+    try {
+      await writeEvent(db, {
+        id: newId(),
+        session_id: sessionId,
+        actor_kind: 'agent',
+        actor_ref: 'tag_knowledge',
+        action: 'experimental:auto_tag_kc_matched',
+        subject_kind: 'knowledge',
+        subject_id: sameNamed.id,
+        outcome: 'success',
+        payload: {
+          source: 'tag_knowledge',
+          subject_root_id: input.subjectRootId,
+          source_ref: input.sourceRef ?? null,
+          ...policyField,
+          threshold,
+          primary_knowledge_id: sameNamed.id,
+          match_basis: 'normalized_name',
+          proposed_name: kc_name,
+          matched_name: sameNamed.name,
+          classification: {
+            revision: TAG_CLASSIFICATION_REVISION,
+            semantic_role: 'kc',
+            original_quote: originalQuote,
+            mapping: {
+              kind: 'match',
+              confidence: 1,
+              threshold,
+            },
+          },
+        },
+        caused_by_event_id: null,
+        task_run_id: null,
+        cost_micro_usd: null,
+      });
+    } catch (err) {
+      console.error('[tag_knowledge] name-reuse audit event write failed (reuse unaffected)', err);
+    }
+    return { kind: 'propose', knowledge_ids: [sameNamed.id], kc_name: sameNamed.name };
+  }
+
   // YUK-1604 — classify the placement before minting: a new KC whose effective domain
   // is unresolved or whose parent is a goal/container is exactly the population the
   // owner ruled must await confirmation (待确认), never silently pass. The parent-role
@@ -383,6 +509,14 @@ export async function tagKnowledge(
   if (deps.batchCache) {
     deps.batchCache.set(batchCacheKey(input.subjectRootId, kc_name), newKcId);
   }
+
+  // Make the new node matchable right away; otherwise the next question sees an
+  // unembedded KC and mints a near-duplicate. Failure is repaired by embed_backfill.
+  await stampFreshKnowledgeEmbedding(db, embedder, {
+    id: newKcId,
+    name: kc_name,
+    effectiveDomain: targetDomain,
+  });
 
   return { kind: 'propose', knowledge_ids: [newKcId], kc_name };
 }

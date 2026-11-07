@@ -4,15 +4,12 @@ import {
   type BlockAssemblyRunTaskFn,
   runBlockAssemblyForSession,
 } from '@/capabilities/ingestion/server/block-assembly';
+import type { ColdStartBridgeRunTaskFn } from '@/capabilities/ingestion/server/cold-start-bridge';
 import {
-  type ColdStartBridgeRunTaskFn,
-  runColdStartBridge,
-} from '@/capabilities/ingestion/server/cold-start-bridge';
-import {
-  createKnowledgeNamer,
-  createKnowledgeTagEmbedder,
-  rethrowKnowledgeTagInvariant,
-} from '@/capabilities/ingestion/server/knowledge-namer';
+  type AttributeIngestionKnowledgeParams,
+  attributeIngestionKnowledge,
+} from '@/capabilities/ingestion/server/knowledge-attribution';
+import { rethrowKnowledgeTagInvariant } from '@/capabilities/ingestion/server/knowledge-namer';
 import { runWorkflowJudge } from '@/capabilities/ingestion/server/workflow-judge';
 import { AUTO_ENROLL_MAX_BLOCKS_PER_RUN } from '@/capabilities/ingestion/server/workflow-judge-config';
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
@@ -32,8 +29,7 @@ import { learning_session, question, question_block } from '@/db/schema';
  * the session.
  */
 import { resolveSessionDerivationPolicy } from '@/kernel/read-models/usage-policy';
-import { type NameKcFn, tagKnowledge } from '@/kernel/records/knowledge-tag';
-import { getKnownSubjects } from '@/subjects/profile';
+import { tagKnowledge } from '@/kernel/records/knowledge-tag';
 import { captureIngestionOriginal } from './assessment-capture';
 import {
   capturedQuestionShape,
@@ -41,7 +37,6 @@ import {
   settleCapturedBlock,
 } from './capture/captured-question';
 import { blockHasPrompt, blockQuestionMarkdown } from './capture/question-text';
-import { redactIngestionText } from './privacy-guard';
 
 export type AutoEnrollSkipReason = 'session_not_found' | 'wrong_status';
 
@@ -73,6 +68,8 @@ export interface RunAutoEnrollResult {
 export interface AutoEnrollmentMarkers {
   enrolled_by: 'workflow_judge';
   knowledge: 'attributed' | 'missing';
+  /** Solution annotation is always generated in the background, never inline. */
+  solution: 'annotated' | 'missing';
   /** Combined extraction/tagging confidence; a signal, never a gate. */
   confidence: number;
   figures_attached: number;
@@ -82,7 +79,7 @@ export interface AutoEnrollmentMarkers {
 export interface RunAutoEnrollParams {
   db: Db;
   sessionId: string;
-  providerAttempt?: Parameters<typeof createKnowledgeTagEmbedder>[0];
+  providerAttempt?: AttributeIngestionKnowledgeParams['providerAttempt'];
   /** Restrict TaggingTask's candidate grid to one subject. */
   subjectId?: string;
   /**
@@ -218,72 +215,32 @@ export async function runAutoEnrollForSession(
     // for the judge, student images, and stored answer refs to limit inter-page bleed.
     const scopedPageRefs = pageScopedQuestionImageRefs(block);
 
-    // Enroll keeps tagKnowledge as the attribution writer, but a failed or empty
-    // attribution is a marker, never an enrollment condition (YUK-1994): the question
-    // still enters the bank and the background knowledge backfill repairs the label.
+    // Attribution is a marker, never an enrollment condition (YUK-1994): a failed or
+    // empty result still enters the bank and the background backfill repairs it.
     let tagging: TaggingOutputT;
     try {
-      // Resolve the PROPOSE parent. The production job passes no subjectId (subject is a
-      // derived view), so classify it per block through the cold-start bridge, then reuse
-      // that name for tagKnowledge so no second model call is made. Without this, a
-      // missing subjectId would build `seed:undefined:root` and route every block to review.
-      let subjectRootId: string;
-      let bridgeNameKc: NameKcFn | undefined;
-      if (params.subjectId) {
-        subjectRootId = `seed:${params.subjectId}:root`;
-      } else {
-        const bridge = await runColdStartBridge({
-          db: params.db,
-          questionMd,
-          // Placeholder forces the ECHO path; only the classified subject_id is used.
-          existingReferenceMd: '(reference answer not needed for tagging)',
-          knowledgeHint: block.knowledge_hint,
-          knownSubjects: getKnownSubjects(),
-          runTaskFn: params.runColdStartBridgeFn,
-          ctx: params.ctx ?? { db: params.db },
-        });
-        subjectRootId = `seed:${bridge.subject_id}:root`;
-        // Reuse the classified name so a PROPOSE makes no second model call, and
-        // forward the bridge run's provenance for the tag audit event (YUK-1604).
-        bridgeNameKc = async () => ({
-          kc_name: bridge.kc_name,
-          ...(bridge.task_run_id !== undefined ? { task_run_id: bridge.task_run_id } : {}),
-          ...(bridge.cost_usd !== undefined ? { cost_usd: bridge.cost_usd } : {}),
-        });
-      }
-      const tag = await tagKnowledgeFn(
-        {
-          db: params.db,
-          embedder: createKnowledgeTagEmbedder(params.providerAttempt),
-          nameKcFn:
-            bridgeNameKc ??
-            createKnowledgeNamer({
-              db: params.db,
-              runTaskFn: params.runColdStartBridgeFn,
-              ctx: params.ctx ?? { db: params.db },
-            }),
-          batchCache: tagBatchCache,
-        },
-        {
-          // Redact identifiers at the model boundary; redact the hint too so audit
-          // events match the model-facing contract. sessionId binds the events to this
-          // session for the live derivation policy.
-          questionText: redactIngestionText(questionMd).text,
-          knowledgeHint: block.knowledge_hint
-            ? redactIngestionText(block.knowledge_hint).text
-            : block.knowledge_hint,
-          sessionId: params.sessionId,
-          subjectRootId,
-          sourceRef: { kind: 'question_block', id: block.id },
-        },
-      );
-      tagging = synthesizeTaggingOutput(tag.knowledge_ids);
+      const attributed = await attributeIngestionKnowledge({
+        db: params.db,
+        questionMd,
+        knowledgeHint: block.knowledge_hint,
+        ...(params.subjectId !== undefined ? { subjectId: params.subjectId } : {}),
+        providerAttempt: params.providerAttempt,
+        ...(params.runColdStartBridgeFn !== undefined
+          ? { runTaskFn: params.runColdStartBridgeFn }
+          : {}),
+        tagKnowledgeFn,
+        batchCache: tagBatchCache,
+        sessionId: params.sessionId,
+        sourceRef: { kind: 'question_block', id: block.id },
+        ctx: params.ctx ?? { db: params.db },
+      });
+      tagging = synthesizeTaggingOutput(attributed.knowledgeIds);
     } catch (err) {
       rethrowKnowledgeTagInvariant(err);
       // A data-integrity invariant still aborts; ordinary tagging faults (missing
       // seed root, provider outage) leave the question unattributed but enrolled.
       console.error(
-        `[auto_enroll] tagKnowledge failed for block ${block.id}; enrolling without knowledge`,
+        `[auto_enroll] knowledge attribution failed for block ${block.id}; enrolling without knowledge`,
         err,
       );
       tagging = synthesizeTaggingOutput([]);
@@ -299,6 +256,7 @@ export async function runAutoEnrollForSession(
     const markers: AutoEnrollmentMarkers = {
       enrolled_by: 'workflow_judge',
       knowledge: knowledgeIds.length > 0 ? 'attributed' : 'missing',
+      solution: 'missing',
       confidence: verdict.confidence,
       figures_attached: block.figures.length,
       student_work: detectStudentWork(block),

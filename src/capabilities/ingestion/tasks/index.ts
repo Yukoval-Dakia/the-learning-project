@@ -4,6 +4,7 @@ import { coldStartPlacementBridgeTaskSpec } from './cold-start-bridge';
 import { ingestionAgentTaskSpec } from './ingestion-agent';
 import { mistakeEnrollTaskSpec } from './mistake-enroll';
 import { profileCriticTaskSpec } from './profile-critic';
+import { ingestionSolutionAnnotationTaskSpec } from './solution-annotation';
 import { structureTaskSpec } from './structure';
 import { taggingTaskSpec } from './tagging';
 import { visionExtractTaskHeavySpec, visionExtractTaskSpec } from './vision';
@@ -18,4 +19,5 @@ export const ingestionTaskSpecs = defineOwnedTaskSpecs('ingestion', {
   BlockAssemblyTask: blockAssemblyTaskSpec,
   ProfileCriticTask: profileCriticTaskSpec,
   IngestionAgentTask: ingestionAgentTaskSpec,
+  IngestionSolutionAnnotationTask: ingestionSolutionAnnotationTaskSpec,
 });

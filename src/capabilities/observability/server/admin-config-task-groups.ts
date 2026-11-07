@@ -77,6 +77,7 @@ const GROUP_BY_KIND: Readonly<Record<string, string>> = {
   ProfileCriticTask: 'ingestion',
   MistakeEnrollTask: 'ingestion',
   ColdStartPlacementBridgeTask: 'ingestion',
+  IngestionSolutionAnnotationTask: 'ingestion',
   // 记忆整理 — learner-model memory: briefs, mind-model induction, conjectures.
   MemoryBriefTask: 'memory',
   MindModelInductionTask: 'memory',
@@ -156,6 +157,8 @@ const LABEL_BY_KIND: Readonly<Record<string, string>> = {
   MistakeEnrollTask: '错题登记草稿：给已作答的题草拟对错、题型、难度和错因供确认',
   ColdStartPlacementBridgeTask:
     '冷启动过桥：图谱还没有可挂节点时，给题定科目、起概念名、补参考答案',
+  IngestionSolutionAnnotationTask:
+    '解法标注：给录入的题写「这类题怎么想、怎么做」的方法与关键步骤，不给答案',
   // 记忆整理 — learner-model memory: briefs, mind-model induction, conjectures.
   MemoryBriefTask: '记忆简报：把一个学习范围的活动整理成近一周、近月、长期三段小结',
   MindModelInductionTask: '思维猜想：从反复出现的错因证据里归纳一条关于学习者思维方式的猜想',

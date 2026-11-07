@@ -94,6 +94,9 @@ export async function readQuestionDetail(
       reference_md: null,
       rubric_json: null,
       source_ref: null,
+      // Method annotations can reveal the solution path: strip them alongside the
+      // other answer-bearing material before the learner's verdict.
+      solution_annotation: null,
       // Diagnostic metadata contains the response-aware judge contract
       // (`probe_spec`), including gold and target-error signatures. The
       // learner surface needs none of it; expose no metadata rather than
@@ -113,6 +116,7 @@ export async function readQuestionDetail(
       rubric_json: null,
       metadata: {},
       source_ref: null,
+      solution_annotation: null,
       backlinks: [],
       backlinks_by_intent_source: {},
       serving,
