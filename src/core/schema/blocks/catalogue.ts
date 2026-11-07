@@ -38,10 +38,17 @@ export function renderBlockCatalogue(surface: BlockSurface): string {
     'question_ref',
     'entity_card',
     'chart',
+    'plot',
   ] as const) {
     if (!allowed.has(kind)) continue;
     if (!implemented.has(kind)) {
       lines.push(`- ${kind}：本版本尚未开放，不要调用。`);
+      continue;
+    }
+    if (kind === 'plot') {
+      lines.push(
+        '- plot：函数曲线用 plot，chart 折线只给离散数据。view.x=[min,max]、view.y="auto"|[min,max]、items[{type:"function",expr,label?,color?,dashed?}]、params≤4{name,min,max,value,step?}。入参：{"block":{"v":1,"kind":"plot","view":{"x":[-3,3],"y":"auto"},"items":[{"type":"function","expr":"x^2"}],"alt":"…"}}',
+      );
       continue;
     }
     if (kind === 'diagram') {
