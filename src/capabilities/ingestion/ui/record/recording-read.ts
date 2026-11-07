@@ -71,6 +71,9 @@ export function useRecording(id: string): RecordingRead {
     queryKey: recordKeys.blocks(id),
     queryFn: () => listBlocks(id),
     enabled: hasBlocks,
+    // Questions go into the library by themselves: keep reading until none is on its way.
+    refetchInterval: (q) =>
+      q.state.data?.some((b) => b.ingestion_enrollment.reason === 'pending') ? 2500 : false,
   });
   const blocksRead = !hasBlocks
     ? 'none'

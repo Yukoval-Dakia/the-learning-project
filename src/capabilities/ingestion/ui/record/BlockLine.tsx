@@ -1,201 +1,93 @@
-import { useState } from 'react';
 import { isLowJudgeConfidence } from '@/core/judge-confidence';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { BlockFigures } from './BlockFigures';
 import { RescueButton, RevertButton } from './BlockTools';
 import { figuresOf, hasOptionsWithoutFigure, lineText, promptOf } from './block-text';
-import type { QuestionEdit, Readiness } from './import-draft';
-import { readiness } from './import-draft';
-import { KnowledgePick } from './KnowledgePick';
 import type { Block } from './record-api';
+import { servingNote } from './record-copy';
+import type { BlockServing } from './recording-model';
+import type { Tone } from './status-words';
 
-const READY_WORDS: Record<Readiness, { text: string; tone: string }> = {
-  ready: { text: '可以收', tone: 'positive' },
-  needs_knowledge: { text: '还差知识点', tone: 'caution' },
-  needs_answer: { text: '还差你的答案', tone: 'caution' },
-  needs_text: { text: '没有题目文字', tone: 'caution' },
-  skipped: { text: '不收', tone: 'neutral' },
-};
+function enrollmentWords(block: Block): { text: string; tone: Tone } {
+  const { state, reason, library_visible: visible } = block.ingestion_enrollment;
+  if (state === 'in_library') {
+    return visible === false
+      ? { text: '还没放进题库', tone: 'neutral' }
+      : { text: '已进题库', tone: 'positive' };
+  }
+  if (state === 'ignored') return { text: '没收', tone: 'neutral' };
+  // Waiting in line is not a failure: only publish_failed says it didn't go in.
+  if (reason === 'pending') return { text: '正在进题库', tone: 'working' };
+  if (reason === 'needs_text') return { text: '没认出题目', tone: 'caution' };
+  return { text: '没进题库', tone: 'caution' };
+}
 
-/** One recognised question: its text, and only what the library still needs from the learner. */
+/** One recognised question: its text, how sure the reading was, and where it stands. */
 export function BlockLine({
   sessionId,
   block,
   no,
-  edit,
-  onEdit,
-  locked,
-  closed,
+  serving,
   rescuable,
-  onRead,
   onHoverPage,
-  check,
 }: {
   sessionId: string;
   block: Block;
   /** The number to show: the printed one when it was read, so it can be checked against the book. */
   no: string;
-  edit: QuestionEdit;
-  onEdit: (patch: Partial<QuestionEdit>) => void;
-  locked: boolean;
-  /** The recording no longer takes questions in; a left-over draft just reads as not taken. */
-  closed: boolean;
+  /** Today's serving state, once history has been read. */
+  serving: BlockServing | null;
   /** The recording still lets a question be read again from its page. */
   rescuable: boolean;
-  onRead: () => void;
   onHoverPage: (page: number | null) => void;
-  /** The learner's own「看过了」mark, while a partly read recording is being checked. */
-  check?: { marked: boolean; disabled: boolean; onToggle: () => void };
 }) {
-  const [editing, setEditing] = useState(false);
+  const enrollment = block.ingestion_enrollment;
+  const inLibrary = enrollment.state === 'in_library';
   // A question still waiting here has no recorded judgement yet, only how sure the reading was.
   const lowConfidence = isLowJudgeConfidence(
     block.workflow_judge_confidence ?? block.extraction_confidence,
   );
   const emptyOptions = hasOptionsWithoutFigure(block);
+  const noKnowledge = inLibrary && enrollment.knowledge === 'missing';
+  const held = inLibrary ? servingNote(serving) : null;
   // A question that is only pictures has no words to miss.
   const noWords = figuresOf(block).length > 0 ? '' : '（没认出文字）';
-  const notes =
-    lowConfidence || emptyOptions ? (
-      <p className="rc-line-note">
-        {lowConfidence && <span>这道题认得把握不高，对照原页看一下。</span>}
-        {emptyOptions && <span>选项可能是图，对照原页看。</span>}
-      </p>
-    ) : null;
   const first = block.page_spans?.[0];
   const page = first ? first.page_index + 1 : null;
-  const hover = {
-    onPointerEnter: () => onHoverPage(page),
-    onPointerLeave: () => onHoverPage(null),
-  };
-
-  if (block.status !== 'draft' || closed) {
-    const done =
-      block.status === 'imported'
-        ? { text: '已进题库', tone: 'positive' }
-        : block.status === 'auto_enrolled'
-          ? { text: '已自动进题库', tone: 'positive' }
-          : block.status === 'draft'
-            ? { text: '还没收', tone: 'neutral' }
-            : { text: '没收', tone: 'neutral' };
-    return (
-      <li className="rc-line" data-checked={check?.marked} {...hover}>
-        <span className="rc-line-no un-num" title={no === '–' ? '没认出题号' : undefined}>
-          {no}
-        </span>
-        <div className="rc-line-main">
-          <MathMarkdown className="rc-line-text">
-            {lineText(promptOf(block), block) || noWords}
-          </MathMarkdown>
-          <BlockFigures block={block} />
-          {notes}
-          <div className="rc-line-tools">
-            {check && (
-              <label className="rc-switch rc-switch-sm">
-                <input
-                  type="checkbox"
-                  checked={check.marked}
-                  disabled={check.disabled}
-                  onChange={check.onToggle}
-                />
-                <span>看过了</span>
-              </label>
-            )}
-            {block.status === 'auto_enrolled' && (
-              <RevertButton sessionId={sessionId} blockId={block.id} disabled={locked} />
-            )}
-            {block.status === 'draft' && rescuable && (
-              <RescueButton sessionId={sessionId} block={block} disabled={locked} onRead={onRead} />
-            )}
-          </div>
-        </div>
-        <span className="rc-state rc-line-state" data-tone={done.tone}>
-          {done.text}
-        </span>
-      </li>
-    );
-  }
-
-  const ready = READY_WORDS[readiness(edit)];
+  const state = enrollmentWords(block);
   return (
-    <li className="rc-line" data-skip={edit.skip} {...hover}>
+    <li
+      className="rc-line"
+      onPointerEnter={() => onHoverPage(page)}
+      onPointerLeave={() => onHoverPage(null)}
+    >
       <span className="rc-line-no un-num" title={no === '–' ? '没认出题号' : undefined}>
         {no}
       </span>
       <div className="rc-line-main">
-        {editing ? (
-          <textarea
-            className="rc-area rc-area-sm"
-            rows={4}
-            value={edit.prompt}
-            aria-label={no === '–' ? '这道题的文字' : `第 ${no} 题的文字`}
-            disabled={locked}
-            onChange={(e) => onEdit({ prompt: e.target.value })}
-          />
-        ) : (
-          <MathMarkdown className="rc-line-text">
-            {lineText(edit.prompt, block) || noWords}
-          </MathMarkdown>
-        )}
+        <MathMarkdown className="rc-line-text">
+          {lineText(promptOf(block), block) || noWords}
+        </MathMarkdown>
         <BlockFigures block={block} />
-        {notes}
-        {!edit.skip && (
-          <KnowledgePick
-            value={edit.knowledgeIds}
-            onChange={(ids) => onEdit({ knowledgeIds: ids })}
-            disabled={locked}
-          />
-        )}
+        {lowConfidence || emptyOptions || noKnowledge || held ? (
+          <p className="rc-line-note">
+            {lowConfidence && <span>这道题认得把握不高，对照原页看一下。</span>}
+            {emptyOptions && <span>选项可能是图，对照原页看。</span>}
+            {noKnowledge && <span>知识点还没标。</span>}
+            {held && <span>{held}</span>}
+          </p>
+        ) : null}
         <div className="rc-line-tools">
-          {!edit.skip && (
-            <label className="rc-switch rc-switch-sm">
-              <input
-                type="checkbox"
-                checked={edit.wrong}
-                disabled={locked}
-                onChange={(e) => onEdit({ wrong: e.target.checked })}
-              />
-              <span>这题我做错了</span>
-            </label>
+          {block.status === 'auto_enrolled' && (
+            <RevertButton sessionId={sessionId} blockId={block.id} />
           )}
-          {!edit.skip && (
-            <button
-              type="button"
-              className="rc-link"
-              disabled={locked}
-              onClick={() => setEditing(!editing)}
-            >
-              {editing ? '改好了' : '改字'}
-            </button>
-          )}
-          <button
-            type="button"
-            className="rc-link"
-            disabled={locked}
-            onClick={() => onEdit({ skip: !edit.skip })}
-          >
-            {edit.skip ? '还是收' : '不收这道'}
-          </button>
-          {rescuable && !edit.skip && (
-            <RescueButton sessionId={sessionId} block={block} disabled={locked} onRead={onRead} />
+          {block.status === 'draft' && rescuable && enrollment.reason !== 'pending' && (
+            <RescueButton sessionId={sessionId} block={block} />
           )}
         </div>
-        {edit.wrong && !edit.skip && (
-          <label className="rc-field">
-            <span className="rc-field-label">我当时的答案</span>
-            <textarea
-              className="rc-area rc-area-sm"
-              rows={2}
-              value={edit.answer}
-              placeholder="照着当时写的抄下来，错的也照抄"
-              disabled={locked}
-              onChange={(e) => onEdit({ answer: e.target.value })}
-            />
-          </label>
-        )}
       </div>
-      <span className="rc-state rc-line-state" data-tone={ready.tone}>
-        {ready.text}
+      <span className="rc-state rc-line-state" data-tone={state.tone}>
+        {state.text}
       </span>
     </li>
   );

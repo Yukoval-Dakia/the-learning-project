@@ -13,7 +13,6 @@ import { GAP_WORDS, materialWords, receiptWords, warningWords, whenWords } from 
 import { useStartState } from './record-start';
 import { useRecording } from './recording-read';
 import { recordingTitle } from './recording-title';
-import { reviewOffered } from './review-check';
 import { StartTrouble } from './StartTrouble';
 import { statusWords } from './status-words';
 
@@ -25,10 +24,13 @@ import { statusWords } from './status-words';
 export function RecordingSheet({
   sessionId,
   onClose,
+  onOpen,
   navigate,
 }: {
   sessionId: string;
   onClose: () => void;
+  /** Opens another recording, for the earlier upload of the same material. */
+  onOpen: (sessionId: string) => void;
   navigate: (to: string) => void;
 }) {
   const {
@@ -61,7 +63,7 @@ export function RecordingSheet({
   const receipt = detail.usage_receipt;
   const inBank =
     rec.items.some((i) => i.status === 'withheld' || i.status === 'admitted' || i.now !== null) ||
-    rec.blocks.some((b) => b.status === 'imported' || b.status === 'auto_enrolled');
+    rec.blocks.some((b) => b.ingestion_enrollment.state === 'in_library');
   const working = rec.phase === 'working';
   const photos = facts.entrypoint === 'vision_single' || facts.entrypoint === 'vision_paper';
   const warning =
@@ -99,6 +101,20 @@ export function RecordingSheet({
       </p>
       {status.detail && <p className="rc-quiet">{status.detail}</p>}
       {warning && <p className="rc-quiet">{warning}</p>}
+      {facts.duplicate_of && (
+        <p className="rc-quiet">
+          这份材料 {whenWords(Date.parse(facts.duplicate_of.uploaded_at), now)} 传过一次。
+          {facts.duplicate_of.session_id && (
+            <button
+              type="button"
+              className="rc-link"
+              onClick={() => onOpen(facts.duplicate_of?.session_id ?? '')}
+            >
+              看那次
+            </button>
+          )}
+        </p>
+      )}
       {working && (
         <div className="rc-meter" data-indeterminate={meter === null} aria-hidden="true">
           <span
@@ -152,10 +168,9 @@ export function RecordingSheet({
           sessionId={rec.id}
           status={rec.status}
           blocks={rec.blocks}
+          serving={rec.blockServing}
           photos={photos}
           onHoverPage={setLitPage}
-          navigate={navigate}
-          reviewable={reviewOffered(rec)}
         />
       )}
 
