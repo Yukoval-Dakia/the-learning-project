@@ -170,6 +170,9 @@ export async function preparerFinish(
   outcome: 'done' | 'no_progress' | 'awaiting_admission',
   summary: string,
   retryable = false,
+  inventory?: import('zod').infer<
+    typeof import('./question-preparer-contract').preparerInventoryObservation
+  >,
 ) {
   const terminal = preparerTerminal.parse({
     ticket: data.ticket,
@@ -178,6 +181,7 @@ export async function preparerFinish(
     outcome,
     summary,
     retryable,
+    ...(inventory ? { inventory } : {}),
   });
   await preparerRecord(db, jobId, data, 'finished', { terminal });
   return terminal;

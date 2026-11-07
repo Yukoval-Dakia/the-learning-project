@@ -161,11 +161,6 @@ export interface TaskParseContext<Input> {
   subjectProfile: SubjectProfile;
 }
 
-export const DEFAULT_TASK_MODEL = Object.freeze({
-  defaultProvider: 'opencode-go',
-  defaultModel: 'deepseek-v4.1-flash',
-} as const);
-
 export type TaskDefinitionInput = Omit<TaskDefinition, 'defaultProvider' | 'defaultModel'> &
   Partial<Pick<TaskDefinition, 'defaultProvider' | 'defaultModel'>>;
 

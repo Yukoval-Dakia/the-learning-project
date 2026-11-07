@@ -1,3 +1,4 @@
+import { projectLearnerToolInput } from '@/kernel/learning-content';
 // YUK-81 + YUK-82 — engine-neutral bridge from registry DomainTools to the
 // `mcp__<server>__<tool>` wire names agents see. YUK-1025 — pi is the only engine;
 // pi-tools.ts compiles mounts into AgentTools over this shared pipeline.
@@ -722,7 +723,7 @@ function notifyToolComplete(
     try {
       opts.onToolComplete({
         toolName: dt.name,
-        input: (execInput ?? {}) as Record<string, unknown>,
+        input: projectLearnerToolInput(dt.name, (execInput ?? {}) as Record<string, unknown>),
         summary,
         ...(errorReason ? { errorReason } : {}),
         ...(correlatedToolUseId ? { toolUseId: correlatedToolUseId } : {}),
@@ -797,7 +798,7 @@ async function mirrorToolUse(
     const mirrorPayload: Record<string, unknown> = {
       tool_name: dt.name,
       derivation_policy: ctx.derivationPolicy ?? 'allow',
-      args: (parsedInput ?? {}) as Record<string, unknown>,
+      args: projectLearnerToolInput(dt.name, (parsedInput ?? {}) as Record<string, unknown>),
     };
     if (summary) mirrorPayload.result_summary = summary;
     if (errorReason) mirrorPayload.error_reason = errorReason;

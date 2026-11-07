@@ -59,8 +59,6 @@ export const KEY_CONSUMERS: Readonly<Record<string, string | null>> = {
   QUESTION_SUPPLY_REFILL_ENABLED: 'src/capabilities/practice/supply/server/refill.ts',
   JUDGE_CALIBRATION_SAMPLING_ENABLED:
     'src/capabilities/practice/grading/jobs/judge_calibration_sample.ts',
-  WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED: 'src/capabilities/ingestion/server/workflow-judge-config.ts',
-  WORKFLOW_JUDGE_OBSERVE_ENABLED: 'src/capabilities/ingestion/server/workflow-judge-config.ts',
   WORKFLOW_JUDGE_STUDENT_ANSWER_GRADING_ENABLED:
     'src/capabilities/ingestion/server/workflow-judge-config.ts',
   WAVE6_TRIGGER_MARK_WRONG_ENABLED: 'src/capabilities/notes/server/note-refine-triggers.ts',

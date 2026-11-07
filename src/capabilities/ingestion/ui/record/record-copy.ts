@@ -109,6 +109,24 @@ export function holdWords(reason: string | null): string | null {
   return reason;
 }
 
+/**
+ * Being in the library is not being served: why a question there isn't given out yet, or null.
+ * A question recorded before admission ran reads as undecided, which is what it is.
+ */
+export function servingNote(
+  serving: {
+    servable: boolean;
+    hold_reason: string | null;
+    admission?: { status: string } | null;
+  } | null,
+): string | null {
+  if (!serving || serving.servable) return null;
+  const status = serving.admission?.status;
+  if (status === 'pending') return '还在检查，查完才会出给你练。';
+  if (status === 'failed' || status === 'undecided') return '暂时没查成，这道先不出给你练。';
+  return holdWords(serving.hold_reason);
+}
+
 export const START_WORDS: Record<StartProblem, { title: string; body: string }> = {
   quota_used: {
     title: '这周的录入助手启动额度用完了',
@@ -229,25 +247,4 @@ export function materialWords(entrypoint: string | null, pages: number): string 
   if (entrypoint === 'docx') return 'Word 文件';
   if (entrypoint === 'vision_single') return '一张照片';
   return pages > 0 ? `${pages} 页材料` : '一份材料';
-}
-
-/** The line beside「都看过了」on a classic recording that was only partly read. */
-export function reviewLine(r: {
-  problem: 'no_version' | 'changed' | 'unknown' | 'refused' | null;
-  sending: boolean;
-  done: boolean;
-  marked: number;
-  total: number;
-}): string {
-  if (r.problem === 'no_version') return '这些题少了版本信息，现在没法确认看过。刷新页面后再试。';
-  if (r.sending) return '正在记下你都看过了…';
-  if (r.done) return '记下了，正在刷新。';
-  if (r.problem === 'unknown')
-    return '没收到结果，不知道记下没有。按「查一下结果」查回刚才那次，不会重复记。';
-  if (r.problem === 'changed') return '有题刚刚变了，已经重新读出来，请再逐道看一遍。';
-  if (r.problem === 'refused') return '这次没能记成看过了。可以再试一次；还是不行，刷新页面看看。';
-  const left = r.total - r.marked;
-  return left > 0
-    ? `逐道看过后点「看过了」，还剩 ${left} 道。没收的、已自动进题库的也算。`
-    : '都看过了，确认之后就可以收了，缺的要先补。';
 }

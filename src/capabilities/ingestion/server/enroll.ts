@@ -49,6 +49,12 @@ export interface EnrollCapturedBlockInput {
   generatedBy?: EnrollProvenance;
   /** Native activation already owns this immutable participation anchor. */
   nativeAttemptEventId?: string;
+  /**
+   * Captured work already committed its immutable attempt; link it without grading or
+   * creating a second attempt. Kept separate from `nativeAttemptEventId` because the
+   * record stays an unanswered item-bank capture.
+   */
+  capturedAttemptEventId?: string;
 }
 
 export interface EnrollCapturedBlockResult {
@@ -97,9 +103,11 @@ export async function enrollCapturedBlock(
       ? (crisisDerivationPayload(input.answerMd) ?? {})
       : { derivation_policy: derivationPolicy };
 
-  // Unanswered: material only, no attempt event.
+  // Unanswered: material only, no graded attempt. Captured work may already own an
+  // immutable attempt event; link it so revert can withdraw the occurrence.
   if (input.outcome === 'unanswered') {
     const recordId = createId();
+    const capturedAttemptEventId = input.capturedAttemptEventId ?? null;
     // Trace the item-bank capture without fabricating an attempt.
     const captureEventId = createId();
     await writeEvent(tx, {
@@ -138,7 +146,7 @@ export async function enrollCapturedBlock(
       origin_event_id: captureEventId,
       knowledge_ids: input.knowledgeIds,
       question_id: input.questionId,
-      attempt_event_id: null,
+      attempt_event_id: capturedAttemptEventId,
       source_document_id: input.sourceDocumentId,
       asset_refs: [...input.imageRefs, ...input.answerImageRefs],
       payload: {
@@ -148,7 +156,7 @@ export async function enrollCapturedBlock(
       },
     });
 
-    return { attemptEventId: null, recordId, needsAttribution: false };
+    return { attemptEventId: capturedAttemptEventId, recordId, needsAttribution: false };
   }
 
   // Failure / success / partial: a real attempt event. Success feeds mastery but

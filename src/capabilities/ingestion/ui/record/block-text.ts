@@ -6,7 +6,6 @@ import {
   type FigureRefT,
   type StructuredQuestionT,
   structuredToPromptMarkdown,
-  structuredToReferenceMarkdown,
 } from '@/core/schema/structured_question';
 import type { Block } from './record-api';
 
@@ -14,13 +13,6 @@ import type { Block } from './record-api';
 export function promptOf(block: Block): string {
   if (block.extracted_prompt_md) return block.extracted_prompt_md;
   return block.structured ? structuredToPromptMarkdown(block.structured) : '';
-}
-
-/** A block's reference answer, the same way; null when there is none. */
-export function referenceOf(block: Block): string | null {
-  if (block.reference_md) return block.reference_md;
-  const derived = block.structured ? structuredToReferenceMarkdown(block.structured) : '';
-  return derived.trim() ? derived : null;
 }
 
 /** The number printed in the book, when it was read. */

@@ -145,9 +145,13 @@ export const interventionPackageReviewTaskSpec = {
     kind: 'InterventionPackageReviewTask',
     description:
       'Compares a complete intervention package with three sealed outputs from the shared independent question validator. Returns bounded diagnostic/package checks and never repairs or partially activates the package.',
-    // Receives three worked blind solutions plus the package; keep the measured
-    // 180s envelope.
-    budget: { ...DEFAULT_BUDGET, maxIterations: 2, timeout: 180_000 },
+    // Receives three worked blind solutions plus the package. Measured tail:
+    // paid review runs were killed mid-generation at the old 180s cap
+    // (~40.7k output tokens, still generating); a completed run needed 163s for
+    // ~25.8k output tokens. 360s leaves a ≥100s structured-output landing
+    // margin over the extrapolated tail; the cap stays a loop guard, not a
+    // cost lever.
+    budget: { ...DEFAULT_BUDGET, maxIterations: 2, timeout: 360_000 },
     needsToolCall: false,
     isMultimodal: false,
     allowedTools: [],

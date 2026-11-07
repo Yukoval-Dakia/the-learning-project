@@ -1,347 +1,336 @@
-// D1 — search_bank DomainTool（引擎在 bank-search.ts）。
-// 找候选：自然语言 query + 结构化硬过滤；FTS + 向量并行召回 RRF 融合；返回
-// 版本化 ref 候选卡片 + 诚实覆盖信息。返回的是候选，不保证每个语义条件已满
-// 足（requirements.not_verified 回显）；「没搜到」不构成「库中没有」。
-// 取代 query_questions 的查重职责：draft 默认包含（include_drafts=true 语义
-// 延续），出题前先搜库防重复。工具只读，不碰 learner state，不做教学决策。
-
-import { z } from 'zod';
+import { randomUUID } from 'node:crypto';
+import { type SQL, inArray, notInArray, sql } from 'drizzle-orm';
+import { canonicalHash } from '@/core/migration/canonical';
+import type { Db } from '@/db/client';
+import { item_calibration, question } from '@/db/schema';
+import { getFailureAttemptsForDerivation } from '@/kernel/read-models/failure-attempts';
+import { getAttemptedQuestionIds } from '@/kernel/read-models/question-activity';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
+import { EMBED_MODEL, embedText } from '@/server/ai/embed';
+import { resolveBankRefs } from './bank-ref';
+import { type BankSearchScope, runSearchBank } from './bank-search';
 import {
-  BankSearchV2Error,
-  BankSearchV2ErrorSchema,
-  BankSearchV2NewSchema,
-  type BankSearchV2Output,
-  BankSearchV2OutputSchema,
-} from './bank-requirements';
+  type BankDocument,
+  BankSearchOutputSchema,
+  type BankSearchOutputV3,
+  type SearchBankInput,
+  SearchBankInputSchema,
+} from './bank-search-contract';
+import { readBankDocuments } from './bank-search-evidence';
+import { resolveBankHistoryRootIds, resolveBankSearchScope } from './bank-search-scope';
 import {
-  BankDifficultyFilterSchema,
-  BankGapRequestSchema,
-  BankSimilarToSchema,
-  BankUnsatisfiedConstraintsSchema,
-  runSearchBank,
-} from './bank-search';
-import { resumeBankSearchSnapshot } from './bank-search-snapshot';
-import { runBankSemanticSearch } from './bank-semantic-search';
+  type BankReceipt,
+  type BankSnapshotBinding,
+  captureBankSnapshotBindings,
+  resumeBankSearchSnapshot,
+  saveBankReceipt,
+} from './bank-search-snapshot';
+import { bankReadRoleForActor } from './read-bank';
 
-const SearchBankNewFormSchema = z
-  .object({
-    /** 自然语言检索（中文直接可用；不要求知识点 ID / 题型枚举 / 难度数字）。 */
-    query: z
-      .string()
-      .trim()
-      .min(1)
-      .max(400)
-      .describe('新搜索必填；cursor 续页也带上原 query（服务端仍按 cursor 续页）。'),
-    /** Subject profile id（如 'yuwen'）；省略 = 全学科。 */
-    subject: z.string().min(1).optional(),
-    /** 规范题型 label（choice / reading / computation …）。 */
-    kind: z.string().min(1).optional(),
-    source: z.string().min(1).optional(),
-    within_refs: z.array(z.string().min(1)).max(200).optional(),
-    /** 知识点硬过滤：全部 id 必须是真实（live、未归档）科目 KC，未知 id 显式报错。 */
-    knowledge_ids: z.array(z.string().min(1)).min(1).max(50).optional(),
-    /** 'any'（默认）= 含任一 KC；'all' = 含全部 KC。仅在 knowledge_ids 存在时生效。 */
-    knowledge_mode: z.enum(['any', 'all']).optional(),
-    /** 难度硬过滤。authored = 作者难度 1–5 整数；calibrated = 标定难度 logit b
-     * （校准未知的题被排除，绝不混入作者难度）。两基准互斥，不可同时给。 */
-    difficulty: BankDifficultyFilterSchema.optional(),
-    /** 调用方自带的「已见过」ref 列表（如学习者已作答题）；按 question 身份跨所有
-     * revision 排除。本工具不查 learner state——名单只来自本输入。 */
-    exclude_refs: z.array(z.string().min(1)).min(1).max(200).optional(),
-    /** 以某道题的内容向量为向量通道查询（锚必须是 current revision 的 ref）。 */
-    similar_to: BankSimilarToSchema.optional(),
-    /** 'all'（默认，含未发布 draft——查重需要）| 'active' | 'draft'。 */
-    draft_state: z.enum(['all', 'active', 'draft']).default('all'),
-    /** 'any'（默认）| 'admitted'（自动可判且可服务）| 'withheld'。 */
-    admission_state: z.enum(['any', 'admitted', 'withheld']).default('any'),
-    limit: z.number().int().min(1).max(50).default(20),
-  })
-  .strict();
-
-// Pi's bridge needs an object root, so the wire document is one flat key set even
-// though the runtime has three forms (v1 new search, v2 new search, cursor). The
-// branch checks below name cross-form fields per key instead of one root-level
-// "Unrecognized keys" the model cannot map back to a form. The provider wire
-// separately marks query required for a new search; the bridge still accepts a
-// cursor-only resume, and ignores query if a required-wire resume carries it.
-const V1_ONLY_KEYS = [
-  'subject',
-  'kind',
-  'source',
-  'within_refs',
-  'knowledge_ids',
-  'knowledge_mode',
-  'difficulty',
-  'exclude_refs',
-  'similar_to',
-  'draft_state',
-  'admission_state',
-  'limit',
-] as const;
-const V2_ONLY_KEYS = [
-  'requirements',
-  'scope',
-  'use',
-  'need',
-  'anchors',
-  'supersedes_search_id',
-  'page_size',
-] as const;
-const v1OnlyKeys = new Set<string>(V1_ONLY_KEYS);
-const v2OnlyKeys = new Set<string>(V2_ONLY_KEYS);
-
-/** The v2 branch's own key set; v1-only keys are reported separately. */
-function v2FormOf(input: Record<string, unknown>): Record<string, unknown> {
-  return Object.fromEntries(Object.entries(input).filter(([key]) => !v1OnlyKeys.has(key)));
+const queryVectors = new WeakMap<Db, Map<string, { value: number[]; expires: number }>>();
+/** Benchmark cold cohorts clear only query reuse, never change retrieval or provider routing. */
+export function clearBankQueryCache(db: Db) {
+  queryVectors.delete(db);
 }
-
-export const SearchBankInputSchema = SearchBankNewFormSchema.extend({
-  query: SearchBankNewFormSchema.shape.query.optional(),
-  draft_state: z.enum(['all', 'active', 'draft']).optional(),
-  admission_state: z.enum(['any', 'admitted', 'withheld']).optional(),
-  limit: z.number().int().min(1).max(50).optional(),
-  cursor: z
-    .string()
-    .min(1)
-    .optional()
-    .describe('续页时传 cursor 和 contract_version=2，不要改条件。'),
-  contract_version: z.union([z.literal(1), z.literal(2)]).optional(),
-  requirements: BankSearchV2NewSchema.shape.requirements,
-  scope: BankSearchV2NewSchema.shape.scope,
-  use: BankSearchV2NewSchema.shape.use
-    .optional()
-    .describe('contract_version=2 的新搜索必填：inspect 或 practice。cursor 续页可省略。'),
-  need: BankSearchV2NewSchema.shape.need,
-  anchors: BankSearchV2NewSchema.shape.anchors,
-  supersedes_search_id: BankSearchV2NewSchema.shape.supersedes_search_id,
-  page_size: z.number().int().min(1).max(50).optional(),
-}).superRefine((input, ctx) => {
-  const presentKeys = Object.keys(input);
-  if (input.cursor !== undefined) {
-    for (const key of presentKeys) {
-      if (key === 'cursor' || key === 'contract_version' || key === 'query') continue;
-      ctx.addIssue({
-        code: 'custom',
-        path: [key],
-        message:
-          'a cursor continuation carries the stored search unchanged; remove this field or start a new search',
-      });
-    }
-    return;
-  }
-  if (input.contract_version === 2) {
-    for (const key of presentKeys) {
-      if (!v1OnlyKeys.has(key)) continue;
-      ctx.addIssue({
-        code: 'custom',
-        path: [key],
-        message:
-          key === 'limit'
-            ? 'limit is a v1-only field; contract_version=2 pages with page_size'
-            : `${key} is a v1-only top-level field; contract_version=2 takes the same filter under scope.${key}`,
-      });
-    }
-    const parsed = BankSearchV2NewSchema.safeParse(v2FormOf(input));
-    if (!parsed.success)
-      for (const issue of parsed.error.issues)
-        ctx.addIssue({ code: 'custom', path: issue.path, message: issue.message });
-    return;
-  }
-  const v2KeysPresent = presentKeys.filter((key) => v2OnlyKeys.has(key));
-  if (v2KeysPresent.length > 0) {
-    for (const key of v2KeysPresent)
-      ctx.addIssue({
-        code: 'custom',
-        path: [key],
-        message: `${key} is a v2 field and requires contract_version=2`,
-      });
-  } else if (input.query === undefined) {
-    ctx.addIssue({
-      code: 'custom',
-      path: ['query'],
-      message: 'query is required for a new search',
-    });
-  }
-});
-
-const SearchBankLegacyOutputSchema = z.object({
-  contract_version: z.literal(1),
-  semantic_status: z.literal('legacy_candidate_only'),
-  scope_applied: z.object({
-    subject: z.object({ profile: z.string(), knowledge_id_count: z.number().int() }).optional(),
-    kind: z.object({ canonical: z.string(), persisted_forms: z.array(z.string()) }).optional(),
-    source: z.string().optional(),
-    within_refs: z.array(z.string()).optional(),
-    knowledge: z
-      .object({
-        ids: z.array(z.string()),
-        mode: z.enum(['any', 'all']),
-        resolved_count: z.number().int(),
-      })
-      .optional(),
-    difficulty: z
-      .object({
-        basis: z.enum(['authored', 'calibrated']),
-        range: z.tuple([z.number(), z.number()]),
-        scale: z.enum(['authored_1_5', 'calibrated_logit_b']),
-      })
-      .optional(),
-    exclude_refs: z
-      .object({ refs: z.array(z.string()), excluded_question_ids: z.number().int() })
-      .optional(),
-    similar_to: z
-      .object({
-        question_ref: z.string(),
-        aspect: z.literal('content'),
-        vector_available: z.boolean(),
-      })
-      .optional(),
-    draft_state: z.enum(['all', 'active', 'draft']),
-    admission_state: z.enum(['any', 'admitted', 'withheld']),
-  }),
-  requirements: z.object({
-    enforced: z.array(z.string()),
-    not_verified: z.array(z.string()),
-  }),
-  hits: z.array(
-    z.object({
-      ref: z.string().nullable(),
-      kind: z.enum(['question', 'group']),
-      question_id: z.string(),
-      group_id: z.string(),
-      title: z.string(),
-      draft_status: z.string().nullable(),
-      admission: z
-        .object({ state: z.enum(['admitted', 'withheld']), withheld_reason: z.string().nullable() })
-        .nullable(),
-      availability: z.enum(['general_pool', 'container_only']).nullable(),
-      suspended: z.boolean(),
-      source: z.string(),
-      automatically_servable_part_ids: z.array(z.string()),
-      source_tier: z.object({ tier: z.number().int(), name: z.string() }),
-      difficulty: z.number().int(),
-      knowledge_ids: z.array(z.string()),
-      match_evidence: z.array(
-        z.object({
-          channel: z.enum(['fts', 'vector']),
-          excerpt: z.string(),
-          /** fts 命中强度：'strong' 计入 verdict；'weak' 只在候选列表展示。 */
-          strength: z.enum(['strong', 'weak']).optional(),
-          /** vector 专有：命中时该题向量与查询向量的 cosine 距离（越小越近）。 */
-          distance: z.number().optional(),
-          /** vector 专有：是否通过 检索计入规则（天花板 + top-1 margin）；
-           * false = 只在候选列表展示，不抬 verdict（同 fts weak 语义）。 */
-          counted: z.boolean().optional(),
-          /** vector 专有（YUK-1603）：该题向量所依据的行 revision（对账用）。 */
-          source_revision: z.number().int().nullable().optional(),
-        }),
-      ),
-      missing: z.array(z.string()),
-    }),
-  ),
-  coverage: z.object({
-    verdict: z.enum(['enough', 'sparse', 'none']),
-    unsatisfied_constraints: z.array(BankUnsatisfiedConstraintsSchema),
-    gap_request: BankGapRequestSchema.nullable(),
-    candidate_pool_size: z.number().int(),
-    /** 计入 verdict 的候选数（fts 强命中 ∪ 通过检索规则的向量命中）；weak 词法命中
-     * 与 counted=false 的向量命中不计入。 */
-    counted_pool_size: z.number().int(),
-    retrieval_truncated: z.boolean(),
-    page_has_more: z.boolean(),
-    next_cursor: z.string().nullable(),
-    unavailable_channels: z.array(z.enum(['fts', 'vector'])),
-    complete: z.boolean(),
-    recall_scan: z
-      .array(z.object({ channel: z.string(), scanned: z.number().int(), stop: z.string() }))
-      .optional(),
-  }),
-});
-
-export const SearchBankOutputSchema = z.union([
-  SearchBankLegacyOutputSchema,
-  BankSearchV2OutputSchema,
-  BankSearchV2ErrorSchema,
-]);
-
-type SearchBankInput = z.infer<typeof SearchBankInputSchema>;
-type SearchBankLegacyOutput = z.infer<typeof SearchBankLegacyOutputSchema>;
-type SearchBankOutput = z.infer<typeof SearchBankOutputSchema>;
-// Overloads let a statically-v1 input (contract_version absent or 1) read the
-// legacy output shape directly; an input carrying contract_version:2 yields
-// the v2 result. The DomainTool storage signature still exposes the union.
-async function executeSearchBank(
-  ctx: ToolContext,
-  rawInput: SearchBankInput & { contract_version: 2 },
-): Promise<BankSearchV2Output | z.infer<typeof BankSearchV2ErrorSchema>>;
-async function executeSearchBank(
-  ctx: ToolContext,
-  rawInput: SearchBankInput,
-): Promise<SearchBankLegacyOutput>;
-async function executeSearchBank(
-  ctx: ToolContext,
-  rawInput: SearchBankInput,
-): Promise<SearchBankOutput> {
-  const form = SearchBankInputSchema.parse(rawInput);
-  if (form.contract_version === 2) {
-    try {
-      return form.cursor
-        ? await resumeBankSearchSnapshot(ctx, form.cursor)
-        : await runBankSemanticSearch(ctx, BankSearchV2NewSchema.parse(form));
-    } catch (error) {
-      if (error instanceof BankSearchV2Error)
-        return { contract_version: 2, status: 'error', code: error.code, detail: error.message };
-      throw error;
-    }
-  }
-  const { contract_version: _version, ...legacyForm } = form;
-  const input =
-    form.cursor !== undefined ? { cursor: form.cursor } : SearchBankNewFormSchema.parse(legacyForm);
-  const request =
-    'cursor' in input
-      ? { form: 'cursor' as const, cursor: input.cursor }
-      : {
-          form: 'new' as const,
-          query: input.query,
-          limit: input.limit,
-          scope: {
-            subject: input.subject,
-            kind: input.kind,
-            source: input.source,
-            within_refs: input.within_refs,
-            knowledge_ids: input.knowledge_ids,
-            knowledge_mode: input.knowledge_mode,
-            difficulty: input.difficulty,
-            exclude_refs: input.exclude_refs,
-            similar_to: input.similar_to,
-            draft_state: input.draft_state,
-            admission_state: input.admission_state,
-          },
-        };
-  const output = await runSearchBank(ctx.db, request);
-  return SearchBankLegacyOutputSchema.parse({
-    ...output,
-    contract_version: 1,
-    semantic_status: 'legacy_candidate_only',
+async function queryVector(ctx: ToolContext, text: string) {
+  const cache = queryVectors.get(ctx.db) ?? new Map<string, { value: number[]; expires: number }>();
+  queryVectors.set(ctx.db, cache);
+  const key = JSON.stringify([
+    EMBED_MODEL,
+    process.env.MEM0_EMBEDDING_BASE_URL ?? '',
+    text.normalize('NFKC').trim(),
+  ]);
+  const cached = cache.get(key);
+  if (cached && cached.expires > Date.now()) return cached.value;
+  const value = await embedText(text, {
+    db: ctx.db,
+    caller: 'api',
+    deadlineAt: new Date(ctx.providerSessionDeadlineAt ?? Date.now() + 20_000),
+    signal: ctx.signal,
   });
+  if (cache.size >= 256) cache.delete(cache.keys().next().value as string);
+  cache.set(key, { value, expires: Date.now() + 60 * 60_000 });
+  return value;
 }
+export async function collectBankSearchReceipt(
+  ctx: ToolContext,
+  raw: SearchBankInput,
+  ablation?: {
+    embedFn?: (text: string) => Promise<number[]>;
+    vectors: 'off' | 'content' | 'prior';
+  },
+): Promise<Omit<BankReceipt, 'version' | 'policy' | 'owner_run'>> {
+  const input = SearchBankInputSchema.parse(raw);
+  if (input.cursor) throw new Error('Evidence collection needs a new query');
+  input.use ??=
+    ctx.callerActor.ref.replace(/^agent:/, '') === 'question_preparer' ? 'inventory' : 'practice';
+  input.page_size ??= input.use === 'inventory' ? 10 : 5;
+  const demand = input.use === 'inventory' ? ctx.supplyDemand : undefined;
+  if (demand) {
+    if (input.count !== undefined && input.count !== demand.inventory_goal.eligible_count)
+      throw new Error('Inventory count must match the bound ticket');
+    input.count = demand.inventory_goal.eligible_count;
+    const f = input.filters ?? {};
+    const same = (a: string[], b: string[]) =>
+      JSON.stringify([...new Set(a)].sort()) === JSON.stringify([...new Set(b)].sort());
+    if (f.subject !== undefined && f.subject !== demand.subject_id)
+      throw new Error('Inventory subject differs from ticket');
+    if (f.knowledge_ids && !same(f.knowledge_ids, demand.claim.knowledge_ids))
+      throw new Error('Inventory KCs differ from ticket');
+    if (f.knowledge_mode === 'any' && demand.claim.knowledge_ids.length > 1)
+      throw new Error('Inventory ticket requires every KC on the same question');
+    if (
+      !demand.task.kinds.includes('any') &&
+      (f.kind !== undefined || (f.kinds && !same(f.kinds, demand.task.kinds)))
+    )
+      throw new Error('Inventory kinds must preserve the ticket union');
+    input.filters = {
+      ...f,
+      subject: demand.subject_id,
+      knowledge_ids: demand.claim.knowledge_ids,
+      knowledge_mode: 'all',
+      ...(demand.task.kinds.includes('any') ? {} : { kinds: demand.task.kinds }),
+    };
+  }
+  const query = input.query?.trim();
+  if (!query) throw new Error('query is required');
+  const { terms, history, ...filters } = input.filters ?? {};
+  const scope: BankSearchScope = {
+    ...filters,
+    knowledge_mode: filters.knowledge_mode ?? (input.use === 'inventory' ? 'all' : 'any'),
+    draft_state: input.use === 'inspect' || input.use === 'dedup' ? 'all' : 'active',
+    admission_state: input.use === 'inspect' || input.use === 'dedup' ? 'any' : 'admitted',
+    ...(input.like_ref
+      ? { similar_to: { question_ref: input.like_ref, aspect: 'content' as const } }
+      : {}),
+  };
+  const predicates: SQL[] = (terms ?? []).map(
+    (term) => sql`position(lower(${term}) in lower(${question.prompt_md})) > 0`,
+  );
+  if (history && history !== 'any') {
+    if (ctx.ticketEventId) throw new Error('Ticket-bound preparation cannot query learner history');
+    const memberIds =
+      history === 'wrong'
+        ? [
+            ...new Set(
+              (await getFailureAttemptsForDerivation(ctx.db, { limit: null })).map(
+                (r) => r.question_id,
+              ),
+            ),
+          ]
+        : await getAttemptedQuestionIds(ctx.db);
+    const ids = await resolveBankHistoryRootIds(ctx.db, memberIds);
+    predicates.push(
+      history === 'wrong'
+        ? ids.size
+          ? inArray(question.id, [...ids])
+          : sql`false`
+        : ids.size
+          ? notInArray(question.id, [...ids])
+          : sql`true`,
+    );
+  }
+  const boundCondition = demand
+    ? `${demand.claim.statement}\nTicket constraints: ${JSON.stringify({ task: demand.task, difficulty: demand.difficulty, observables: demand.evidence.observables })}`
+    : '';
+  const requirements = demand
+    ? [
+        { text: boundCondition, required: true },
+        ...(input.conditions ?? []).filter(
+          (c) => c.text !== demand.claim.statement && c.text !== boundCondition,
+        ),
+      ]
+    : (input.conditions ?? [{ text: query, required: true }]);
+  if (requirements.length > 10)
+    throw new Error('Bound ticket plus extra conditions exceeds 10; do not drop conditions');
+  if (
+    (input.use === 'practice' || input.use === 'inventory') &&
+    !requirements.some((c) => c.required)
+  )
+    throw new Error('Practice and inventory need at least one required condition');
+  let bindings: BankSnapshotBinding[] = [];
+  let scopeDigest = '';
+  let documents: BankDocument[] = [];
+  let calibratedValues = new Map<string, number | null>();
+  const recall = await runSearchBank(
+    ctx.db,
+    { form: 'new', query, scope, limit: input.page_size ?? 5 },
+    {
+      fullPool: true,
+      priorFacets: ablation?.vectors !== 'content' && ablation?.vectors !== 'off',
+      disableVectors: ablation?.vectors === 'off',
+      predicates,
+      publicOnly: bankReadRoleForActor(ctx.callerActor) === 'restricted',
+      embedFn: ablation?.embedFn ?? ((text) => queryVector(ctx, text)),
+      onPoolFrozen: async (tx, pool, servable) => {
+        const calibrated =
+          scope.difficulty?.basis === 'calibrated' && pool.hits.length
+            ? await tx
+                .select({
+                  id: item_calibration.question_id,
+                  value: sql<
+                    number | null
+                  >`coalesce(${item_calibration.b_post},${item_calibration.b_anchor},${item_calibration.b})`,
+                })
+                .from(item_calibration)
+                .where(
+                  sql`${item_calibration.track}='hard' AND ${inArray(
+                    item_calibration.question_id,
+                    pool.hits.map((h) => h.question_id),
+                  )}`,
+                )
+            : [];
+        calibratedValues = new Map(calibrated.map((c) => [c.id, c.value]));
 
-export const searchBankTool = {
+        scopeDigest = canonicalHash(await resolveBankSearchScope(tx, scope));
+        const [anchor] = input.like_ref ? await resolveBankRefs(tx, [input.like_ref]) : [];
+        const anchors =
+          anchor?.status === 'ok'
+            ? [{ question_id: anchor.revision.group_id, ref: anchor.raw }]
+            : [];
+        bindings = await captureBankSnapshotBindings(
+          tx,
+          [
+            ...anchors,
+            ...pool.hits.flatMap((h) => [
+              h,
+              ...h.automatically_servable_part_ids
+                .filter((id) => id !== h.question_id)
+                .map((id) => ({ question_id: id, ref: h.ref })),
+            ]),
+          ],
+          ctx.callerActor,
+          scope.difficulty?.basis === 'calibrated',
+          servable,
+        );
+        documents = await readBankDocuments(
+          tx,
+          ctx,
+          pool.hits.flatMap((h) => (h.ref ? [h.ref] : [])),
+        );
+      },
+    },
+  );
+  const conditions = requirements.map((c, i) => ({
+    id: `r${i + 1}`,
+    ...c,
+  }));
+  const factsFor = (hit: (typeof recall.hits)[number]) => ({
+    source: `facts:${hit.question_id}`,
+    kind: hit.question_kind,
+    draft_status: hit.draft_status,
+    admission: hit.admission?.state ?? null,
+    withheld_reason: hit.admission?.withheld_reason ?? null,
+    suspended: hit.suspended,
+    knowledge_ids: hit.knowledge_ids,
+    difficulty:
+      scope.difficulty?.basis === 'calibrated'
+        ? { basis: 'calibrated' as const, value: calibratedValues.get(hit.question_id) ?? null }
+        : { basis: 'authored' as const, value: hit.difficulty },
+  });
+  for (const hit of recall.hits)
+    if (hit.ref) {
+      const facts = factsFor(hit);
+      documents.push({
+        ref: hit.ref,
+        source: facts.source,
+        text: JSON.stringify(facts),
+        parts: hit.automatically_servable_part_ids,
+      });
+    }
+  const output = BankSearchOutputSchema.parse({
+    contract_version: 3,
+    search_id: randomUUID(),
+    goal: { use: input.use, count: input.count ?? null },
+    conditions,
+    decision_source: 'caller_assessed',
+    hits: recall.hits.map((hit) => ({
+      id: hit.question_id,
+      ref: hit.ref,
+      title: hit.title,
+      parts: hit.automatically_servable_part_ids,
+      available: hit.automatically_servable_part_ids.length > 0,
+      missing: [
+        ...documents
+          .filter((d) => d.ref === hit.ref)
+          .flatMap((d) =>
+            (d.missing ?? []).flatMap((reason) => d.parts.map((part) => ({ part, reason }))),
+          ),
+        ...hit.automatically_servable_part_ids
+          .filter(
+            (part) => !documents.some((d) => d.ref === hit.ref && d.source === `part:${part}`),
+          )
+          .map((part) => ({ part, reason: 'part_text_unread' })),
+      ],
+      facts: factsFor(hit),
+      evidence: documents
+        .filter(
+          (d) =>
+            d.ref === hit.ref && (d.source.startsWith('part:') || d.source.startsWith('prior:')),
+        )
+        .slice(0, 2)
+        .map((d) => ({
+          source: d.source,
+          text: d.text.slice(0, 180),
+          complete: d.complete !== false && d.text.length <= 180,
+        })),
+    })),
+    coverage: {
+      candidates: recall.hits.length,
+      complete:
+        !recall.coverage.retrieval_truncated && !recall.coverage.unavailable_channels.length,
+      unavailable: recall.coverage.unavailable_channels,
+      prior: {
+        requested:
+          ablation?.vectors !== 'off' &&
+          ablation?.vectors !== 'content' &&
+          bankReadRoleForActor(ctx.callerActor) !== 'restricted',
+        missing_channels: ['method', 'pitfall'].filter(
+          (channel) => !recall.coverage.recall_scan?.some((c) => c.channel === channel),
+        ),
+        missing_refs: recall.hits.flatMap((h) =>
+          h.ref && !documents.some((d) => d.ref === h.ref && d.source.startsWith('prior:'))
+            ? [h.ref]
+            : [],
+        ),
+      },
+      enforced: [
+        ...recall.requirements.enforced,
+        ...(terms?.length ? ['literal_prompt_terms'] : []),
+        ...(history && history !== 'any' ? [`history:${history}`] : []),
+      ],
+      absence: 'not_established',
+    },
+    next_cursor: null,
+  });
+  return {
+    request: input,
+    scope,
+    scope_digest: scopeDigest,
+    demand_digest: ctx.supplyDemand ? canonicalHash(ctx.supplyDemand) : null,
+    output,
+    bindings,
+    documents,
+  };
+}
+export async function runBankSearchV3(
+  ctx: ToolContext,
+  raw: SearchBankInput,
+  ablation?: { vectors: 'off' | 'content' | 'prior' },
+) {
+  const input = SearchBankInputSchema.parse(raw);
+  if (input.cursor) return resumeBankSearchSnapshot(ctx, input.cursor);
+  return saveBankReceipt(ctx, await collectBankSearchReceipt(ctx, input, ablation));
+}
+export const searchBankTool: DomainTool<SearchBankInput, BankSearchOutputV3> = {
   name: 'search_bank',
   description:
-    'The only question-bank search entrance. Prefer contract_version=2 with original query, explicit requirements[{id,statement,importance:required|preferred}], use:inspect|practice, optional deterministic scope, optional need:{count}, and independent page_size (1–50). Query-only v2 uses a configured interpretation task and returns original spans/ambiguities. V2 checks each authorized immutable revision against every condition and same-task joint requirements; exact source citations are validated. Only all-required supported + joint supported + selected parts available can count as matched. Missing media, incomplete reads, task/parse failures remain unknown. Inspect preserves unpublished drafts as unverified; practice reuses the real issuance gate before each channel cap. Restricted roles use public-text FTS only: existing answer-bearing vectors are unavailable until visibility projections ship. Private/owner use FTS + vector/RRF; vector recall only counts vectors current for the row revision (embed_source_revision; each vector hit echoes that source_revision, null = pre-column legacy vector); recall thresholds do not decide semantic matches. No need means fulfillment=not_assessed. Results disclose scan/verification budgets, before/after rank, task/cost evidence and incomplete recall; no hits never proves bank absence. V2 cursor is server-signed and actor/role/request/result-bound, continues the stored 15-minute snapshot without embedding/model calls; changed/withdrawn versions explicitly stale. Use only {contract_version:2,cursor} to continue. Anchors accept exact question_ref plus preserve/change statements. This slice cannot redeem search evidence for file_bank_gap or versioned quiz/issuance; registered demand and predecessor bindings explicitly reject until their authority is connected. No gap writes, generation, learner-state reads, goal changes or issuance. V1 flat query/limit/scope fields remain legacy_candidate_only; a similar_to anchor whose vector is missing or not current for its content/EMBED_VERSION/row revision degrades honestly to FTS; old enough/sparse/none and limit are candidate recall quantities, never v2 fulfillment. New v2 fields never silently downgrade to v1. Holdout-only groups (container_only + withheld/owner_hold) never appear in any recall channel, scope, or cursor page; deliberate owner-held items are findable only by exact id/revision outside this tool.',
+    'Question preparation comes first. inventory searches admitted/servable stock for a gap ticket; dedup searches active, pending/withheld and draft candidates before adding a question. Defaults: question_preparer uses inventory (10/page), other callers practice (5/page); explicit page_size overrides only pagination, never the inventory goal. Copy the ticket goal into count, its subject/KCs/kinds into filters; inventory KCs default to all on ONE question. kinds is an allowed-type union, not one question of every kind. For dedup broaden KC/kind filters to avoid missing mislabeled duplicates; ref=null means an unread unpublished draft, never proof of no duplicate. scan_coverage_gaps owns pending-stock reservations; submit_question retains authoritative exact/source/vector dedup and admission. This tool does no interpretation/verification model calls. query is the retrieval text; conditions preserve required/preferred ticket semantics, judged by the caller with same-question joint evidence. Numeric difficulty filters need a known scale/range; do not invent a range from a relative band. Read content/materials, answers/rubric and solution_prior by returned ref as needed. Practice/inventory require at least one required condition. missing lists per-part blockers; server forces their judgments unknown. Excerpts mark complete; truncated/unread/unknown/contradicted never qualify. Facts describe inventory status, not semantic suitability; cite facts.source with exact value text for structured evidence. Cursor-only continues this snapshot. search_id plus cited assessments connects file_bank_gap/write_quiz; file_bank_gap creates the preparer ticket and is not recursively called by the preparer. Incomplete/empty recall never proves corpus absence. Do not reveal answers/methods to the learner before their judgment',
   effect: 'read',
   inputSchema: SearchBankInputSchema,
-  outputSchema: SearchBankOutputSchema,
+  outputSchema: BankSearchOutputSchema,
   costClass: 'cheap_llm',
-  execute: executeSearchBank,
-  summarize(_input, output) {
-    if (output.contract_version === 2)
-      return output.status === 'error'
-        ? `search_bank · ${output.code}`
-        : `search_bank · ${output.matched_count} confirmed · ${output.fulfillment}`;
-    return `search_bank · ${output.hits.length}/${output.coverage.candidate_pool_size} · legacy candidates`;
-  },
-  mirrorEvent: 'never',
-} satisfies DomainTool<SearchBankInput, SearchBankOutput>;
+  execute: runBankSearchV3,
+  summarize: (_input, output) => `找题 · ${output.hits.length} 道候选`,
+  mirrorEvent: 'when_user_visible',
+};

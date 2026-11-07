@@ -810,6 +810,18 @@ function findingsFor(path: string, code: string, facts: SourceFacts): ProviderWi
     if (path === 'scripts/preflight-vision-one-shot.ts' && code.includes('/chat/completions')) {
       return [{ kind: 'vision-preflight-openai-fetch', call, path }];
     }
+    // This operator observer forwards the original URL/init, records usage and can
+    // deny a send; embed.ts remains the only embedding wire owner. New forwarding
+    // calls or a request rewrite lose the exception instead of opening a new lane.
+    if (
+      path === 'scripts/bench/search-bank-paid-gate.ts' &&
+      call === 'fetch' &&
+      facts.calls.filter((candidate) => candidate === 'fetch').length === 2 &&
+      code.includes('const realFetch = globalThis.fetch;') &&
+      (code.match(/realFetch\(url, init\)/g)?.length ?? 0) === 2 &&
+      !/init\.[a-zA-Z_]+\s*=|url\s*=/.test(code)
+    )
+      return [];
     if (code.includes('/embeddings')) return [{ kind: 'dashscope-embedding-fetch', call, path }];
     if (code.includes('layout_parsing'))
       return [{ kind: 'glm-ocr-layout-parsing-fetch', call, path }];

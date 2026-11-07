@@ -43,7 +43,15 @@ export const QuestionPreparerJobData = z.object({
   recovery: z.object({ prior_job_id: z.string().min(1) }).optional(),
 });
 export type QuestionPreparerData = z.infer<typeof QuestionPreparerJobData>;
+export const preparerInventoryObservation = z.object({
+  search_id: z.string(),
+  source: z.literal('caller_assessed'),
+  accepted_refs: z.array(z.string()),
+  count: z.number().int().nonnegative(),
+  goal: z.number().int().nonnegative(),
+});
 export const preparerTerminal = z.object({
+  inventory: preparerInventoryObservation.optional(),
   ticket: EvidenceDemandV1,
   /** Durable ticket binding; a continuation may not cross from an unbound segment. */
   ticket_event_id: z.string().min(1).optional(),
