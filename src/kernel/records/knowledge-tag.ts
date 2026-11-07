@@ -33,7 +33,10 @@ import {
   matchKnowledgeBySimilarity,
   matchThreshold,
 } from '@/kernel/read-models/knowledge-similarity';
-import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
+import {
+  batchResolveEffectiveDomains,
+  getEffectiveDomain,
+} from '@/kernel/read-models/knowledge-tree';
 import { isLearnerVisibleKnowledgeId } from '@/kernel/read-models/learner-knowledge-visibility';
 import { resolveSessionDerivationPolicy } from '@/kernel/read-models/usage-policy';
 import { getKnownSubjects } from '@/subjects/profile';
@@ -204,13 +207,17 @@ async function findSameNamedKnowledge(
     .select({ id: knowledge.id, name: knowledge.name })
     .from(knowledge)
     .where(and(isNull(knowledge.archived_at), eq(knowledge.role, 'kc')));
-  for (const row of rows) {
-    if (!isLearnerVisibleKnowledgeId(row.id)) continue;
-    if (normalizeKcName(row.name) !== target) continue;
-    const domain = await getEffectiveDomain(db, row.id);
-    if (domain === params.effectiveDomain) return row;
-  }
-  return null;
+  // Name-normalize first so the domain walk only pays for real candidates; the
+  // batch resolver climbs one loaded tree instead of a per-row ancestry query.
+  const candidates = rows.filter(
+    (row) => isLearnerVisibleKnowledgeId(row.id) && normalizeKcName(row.name) === target,
+  );
+  if (candidates.length === 0) return null;
+  const domains = await batchResolveEffectiveDomains(
+    db,
+    candidates.map((c) => c.id),
+  );
+  return candidates.find((row) => domains.get(row.id) === params.effectiveDomain) ?? null;
 }
 
 /**

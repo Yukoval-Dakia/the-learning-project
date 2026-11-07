@@ -33,7 +33,7 @@ export function buildAnnotationBackfillHandler(db: Db) {
           },
         });
         console.log(
-          `[annotation_backfill] ${questionIds?.length ?? 'sweep'} → scanned=${result.scanned} knowledge=${result.knowledge_filled}/${result.knowledge_failed} solution=${result.solution_filled}/${result.solution_failed} exhausted=${result.exhausted}`,
+          `[annotation_backfill] ${questionIds?.length ?? 'sweep'} → scanned=${result.scanned} knowledge=${result.knowledge_filled}/${result.knowledge_failed} solution=${result.solution_filled}/${result.solution_failed} infra=${result.infra_failures} policy_blocked=${result.policy_blocked} exhausted=${result.exhausted}`,
         );
       } catch (err) {
         // Per-row faults are absorbed inside the runner; an escape is infrastructure.

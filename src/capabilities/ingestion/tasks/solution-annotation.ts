@@ -29,8 +29,9 @@ export const ingestionSolutionAnnotationTaskSpec = {
     kind: 'IngestionSolutionAnnotationTask',
     description:
       'YUK-1994 slice 3 — background solution-method annotation for an ingested question. Output = { method_md, steps_md, confidence }: how the question is solved, never the final answer, never an answer key and never a grading input. Stored on question.metadata.solution_annotation by the ingestion annotation backfill.',
-    // Single short structured reply; no measured tail yet. 180s clears the
-    // per-question annotation latency seen in the acceptance run.
+    // Single short structured reply; no real-model latency measurement exists yet
+    // (the model path is unverified), so 180s is an untuned ceiling, not a
+    // measured tail.
     budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1, timeout: 180_000 },
     needsToolCall: false,
     isMultimodal: false,

@@ -22,14 +22,40 @@
  * @invariant data: a task run whose model text cannot be parsed is not recorded as
  *   success; it is settled as a failure so observability and retry logic see the truth.
  * @fails-if the ai_task_runs row keeps status='success'.
+ *
+ * @invariant security: learner text sent to the annotation model is redacted and
+ *   receipted, and a document whose derivation policy restricts model use is never
+ *   sent at all.
+ * @fails-if the provider seam receives the raw prompt, no usage receipt is written,
+ *   or an answer_only document's content reaches the model.
+ *
+ * @invariant data: a metadata-only annotation write keeps a current embedding
+ *   current — the vector stays retrievable instead of going revision-stale.
+ * @fails-if embed_source_revision lags the bumped version or a stale revision is
+ *   re-blessed by metadata churn.
+ *
+ * @invariant concurrency: paid-call accounting survives CAS contention — a won
+ *   write records the attempt, and a lost write still merges the counter back.
+ * @fails-if a transient provider refusal consumes the model-attempt budget, or a
+ *   billed call whose CAS lost leaves the attempt counter unchanged.
  */
 import { createId } from '@paralleldrive/cuid2';
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, isNull, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { AgentRunError } from '@/ai/agent-run-error';
 import { EMBED_VERSION, embedHash, knowledgeEmbedText } from '@/core/embed-source';
 import { SOLUTION_ANNOTATION_CONTRACT } from '@/core/schema/solution-annotation';
-import { ai_task_runs, knowledge, question } from '@/db/schema';
+import { embedCurrencyPredicate } from '@/db/embed-currency';
+import {
+  ai_task_runs,
+  event,
+  knowledge,
+  learning_session,
+  question,
+  question_block,
+  source_document,
+} from '@/db/schema';
 import { tagKnowledge } from '@/kernel/records/knowledge-tag';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
@@ -38,6 +64,7 @@ import {
   runAnnotationBackfill,
 } from './annotation-backfill';
 import { ColdStartBridgeError, runColdStartBridge } from './cold-start-bridge';
+import { SolutionAnnotationPolicyError, generateSolutionAnnotation } from './solution-annotation';
 
 const DIMS = 1024;
 
@@ -296,6 +323,439 @@ describe('tagKnowledge duplicate prevention', () => {
       .from(knowledge)
       .where(and(eq(knowledge.parent_id, 'seed:physics:root'), isNull(knowledge.archived_at)));
     expect(leaves).toHaveLength(1);
+  });
+});
+
+describe('AI-boundary privacy', () => {
+  async function seedIngestedQuestion(
+    db: ReturnType<typeof testDb>,
+    input: { policy: 'allow' | 'answer_only'; promptMd: string },
+  ): Promise<{ questionId: string; sessionId: string; documentId: string }> {
+    const now = new Date();
+    const documentId = createId();
+    const sessionId = createId();
+    const blockId = createId();
+    const questionId = createId();
+    await db.insert(source_document).values({
+      id: documentId,
+      source_asset_ids: ['asset_1'],
+      provenance: { usage_policy: { derivation_policy: input.policy } },
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+    await db.insert(learning_session).values({
+      id: sessionId,
+      type: 'ingestion',
+      status: 'extracted',
+      source_document_id: documentId,
+      source_asset_ids: ['asset_1'],
+      entrypoint: 'vision_paper',
+      warnings: [],
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+    await db.insert(question_block).values({
+      id: blockId,
+      ingestion_session_id: sessionId,
+      source_document_id: documentId,
+      source_asset_ids: ['asset_1'],
+      page_spans: [],
+      figures: [],
+      image_refs: ['asset_1'],
+      status: 'auto_enrolled',
+      knowledge_hint: '二次函数',
+      merged_from_block_ids: [],
+      imported_question_id: questionId,
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+    await db.insert(question).values({
+      id: questionId,
+      kind: 'short_answer',
+      prompt_md: input.promptMd,
+      knowledge_ids: [],
+      difficulty: 3,
+      source: 'vision_paper',
+      draft_status: 'active',
+      metadata: {
+        source_document_id: documentId,
+        ingestion_session_id: sessionId,
+        question_block_id: blockId,
+        ingestion_enrollment: { knowledge: 'attributed', solution: 'missing' },
+      },
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+    return { questionId, sessionId, documentId };
+  }
+
+  // @invariant security: the model only ever sees the redacted prompt, every send writes a policy-bound usage receipt, and an answer_only document is never sent
+  // @fails-if the raw prompt reaches the provider seam, the receipt is missing/unbound, or the restricted document's content is sent
+  it('sends only redacted text with a usage receipt; a restricted document is never sent', async () => {
+    const db = testDb();
+    const allowed = await seedIngestedQuestion(db, {
+      policy: 'allow',
+      promptMd: '姓名：张倩 考号：G2023001 求函数 f(x)=x²-2x+1 的最小值。',
+    });
+    const restricted = await seedIngestedQuestion(db, {
+      policy: 'answer_only',
+      promptMd: '姓名：李蕾 考号：G2023002 求该函数的零点。',
+    });
+
+    const seenInputs: unknown[] = [];
+    const runTaskFn = vi.fn(async (_kind: string, input: unknown) => {
+      seenInputs.push(input);
+      return { text: '{"method_md":"配方法求最值","steps_md":["化为顶点式"],"confidence":0.8}' };
+    });
+    // Real entry: only the provider seam is substituted.
+    const annotateFn = (p: Parameters<typeof generateSolutionAnnotation>[0]) =>
+      generateSolutionAnnotation({ ...p, runTaskFn });
+
+    const result = await runAnnotationBackfill({
+      db,
+      questionIds: [allowed.questionId, restricted.questionId],
+      annotateFn,
+    });
+
+    expect(result.solution_filled).toBe(1);
+    expect(result.policy_blocked).toBe(1);
+    // Exactly one send happened — the allowed document only.
+    expect(runTaskFn).toHaveBeenCalledTimes(1);
+    const sent = seenInputs[0] as { prompt_md: string };
+    expect(sent.prompt_md).not.toContain('张倩');
+    expect(sent.prompt_md).not.toContain('G2023001');
+    expect(sent.prompt_md).toContain('[已隐去]');
+
+    const [annotated] = await db.select().from(question).where(eq(question.id, allowed.questionId));
+    expect(annotated?.metadata).toMatchObject({
+      ingestion_enrollment: { solution: 'annotated' },
+      solution_annotation: { method_md: '配方法求最值' },
+    });
+
+    const [blocked] = await db
+      .select()
+      .from(question)
+      .where(eq(question.id, restricted.questionId));
+    const blockedEnrollment = ((blocked?.metadata ?? {}) as Record<string, unknown>)
+      .ingestion_enrollment as Record<string, unknown>;
+    expect(blockedEnrollment.solution).toBe('missing');
+    expect(blockedEnrollment.solution_last_error).toBe('usage_policy_restricted');
+    expect(blockedEnrollment.solution_attempts).toBeUndefined();
+
+    const receipts = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:ingestion_usage_receipt'));
+    expect(receipts).toHaveLength(1);
+    expect(receipts[0]).toMatchObject({
+      session_id: allowed.sessionId,
+      subject_id: allowed.documentId,
+    });
+    expect(receipts[0]?.payload).toMatchObject({
+      derivation_policy: 'allow',
+      engine: 'ingestion_solution_annotation',
+      channels: { page_images: 'none', extracted_text: 'redacted' },
+    });
+    const fields = ((receipts[0]?.payload ?? {}) as Record<string, unknown>)
+      .redacted_fields as string[];
+    expect(fields).toEqual(expect.arrayContaining(['labeled_identity', 'id_number']));
+
+    // The boundary gate itself: a direct call with restricted usage rejects
+    // before any send, even if the sweep gate were bypassed.
+    await expect(
+      generateSolutionAnnotation({
+        db,
+        promptMd: '姓名：李蕾 考号：G2023002 求该函数的零点。',
+        kind: 'short_answer',
+        knowledgeLabel: null,
+        usage: {
+          sessionId: restricted.sessionId,
+          sourceDocumentId: restricted.documentId,
+        },
+        runTaskFn,
+      }),
+    ).rejects.toBeInstanceOf(SolutionAnnotationPolicyError);
+    expect(runTaskFn).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('embed currency on metadata-only writes', () => {
+  // @invariant data: the annotation write keeps a current vector current and never re-blesses a stale one
+  // @fails-if the stored revision lags the version bump after repair, or a stale revision is carried forward
+  it('carries embed_source_revision across the annotation write', async () => {
+    const db = testDb();
+    const annotateFn = vi.fn(async () => ({
+      contract: SOLUTION_ANNOTATION_CONTRACT,
+      method_md: '一种解法',
+      steps_md: ['一步'],
+      confidence: 0.9,
+      task_run_id: null,
+      provider: 'stub',
+      model: 'stub',
+      generated_at: new Date().toISOString(),
+    }));
+
+    const currency = embedCurrencyPredicate({
+      version: question.version,
+      embed_version: question.embed_version,
+      embed_source_revision: question.embed_source_revision,
+    });
+    const retrievable = async (id: string) =>
+      (
+        await db
+          .select({ id: question.id })
+          .from(question)
+          .where(and(eq(question.id, id), sql`${question.embedding} IS NOT NULL`, currency))
+      ).length === 1;
+
+    // Row A: vector stamped from the current revision — must stay retrievable.
+    const currentId = createId();
+    await db.insert(question).values({
+      id: currentId,
+      kind: 'short_answer',
+      prompt_md: '一条形磁铁穿过线圈时，感应电流方向如何判断？',
+      knowledge_ids: [],
+      difficulty: 3,
+      source: 'vision_paper',
+      draft_status: 'active',
+      metadata: {
+        ingestion_enrollment: { knowledge: 'attributed', solution: 'missing' },
+      },
+      embedding: unitVec(0),
+      embed_version: EMBED_VERSION,
+      embed_source_revision: 0,
+      created_at: new Date(),
+      updated_at: new Date(),
+      version: 0,
+    });
+    expect(await retrievable(currentId)).toBe(true);
+
+    // Row B: already stale (vector predates two edits) — metadata churn must not
+    // re-bless it.
+    const staleId = createId();
+    await db.insert(question).values({
+      id: staleId,
+      kind: 'short_answer',
+      prompt_md: '一条形磁铁穿过线圈时，感应电流方向如何判断？',
+      knowledge_ids: [],
+      difficulty: 3,
+      source: 'vision_paper',
+      draft_status: 'active',
+      metadata: {
+        ingestion_enrollment: { knowledge: 'attributed', solution: 'missing' },
+      },
+      embedding: unitVec(0),
+      embed_version: EMBED_VERSION,
+      embed_source_revision: 0,
+      created_at: new Date(),
+      updated_at: new Date(),
+      version: 2,
+    });
+    expect(await retrievable(staleId)).toBe(false);
+
+    await runAnnotationBackfill({
+      db,
+      questionIds: [currentId, staleId],
+      annotateFn,
+    });
+    expect(annotateFn).toHaveBeenCalledTimes(2);
+
+    expect(await retrievable(currentId)).toBe(true);
+    expect(await retrievable(staleId)).toBe(false);
+    const [a] = await db.select().from(question).where(eq(question.id, currentId));
+    expect(a?.embed_source_revision).toBe(a?.version);
+  });
+});
+
+describe('sweep scope and retry accounting', () => {
+  // @invariant data: the cron sweep only spends on post-slice-3 enrollments — pre-marker inventory and drafts are out of reach of the paid path
+  // @fails-if a global sweep selects a legacy marker row or a draft question
+  it('selects only marker-carrying non-draft rows in the global sweep', async () => {
+    const db = testDb();
+    const now = new Date();
+    const mk = async (id: string, metadata: Record<string, unknown>, draft: string) =>
+      db.insert(question).values({
+        id,
+        kind: 'short_answer',
+        prompt_md: '一条形磁铁穿过线圈时，感应电流方向如何判断？',
+        knowledge_ids: [],
+        difficulty: 3,
+        source: 'vision_paper',
+        draft_status: draft,
+        metadata,
+        created_at: now,
+        updated_at: now,
+        version: 0,
+      });
+    // Pre-slice-3 inventory: enrolled before the `solution` marker existed.
+    await mk(createId(), { ingestion_enrollment: { knowledge: 'missing' } }, 'active');
+    // A draft that carries the new marker is still not a paid target.
+    await mk(
+      createId(),
+      { ingestion_enrollment: { knowledge: 'missing', solution: 'missing' } },
+      'draft',
+    );
+    // The only eligible row.
+    const eligible = createId();
+    await mk(
+      eligible,
+      { ingestion_enrollment: { knowledge: 'attributed', solution: 'missing' } },
+      'active',
+    );
+
+    const annotateFn = vi.fn(async () => ({
+      contract: SOLUTION_ANNOTATION_CONTRACT,
+      method_md: '一种解法',
+      steps_md: ['一步'],
+      confidence: 0.9,
+      task_run_id: null,
+      provider: 'stub',
+      model: 'stub',
+      generated_at: new Date().toISOString(),
+    }));
+    const attributeFn = vi.fn(async () => ({ knowledgeIds: [] }));
+
+    const result = await runAnnotationBackfill({ db, annotateFn, attributeFn });
+    expect(result.scanned).toBe(1);
+    expect(annotateFn).toHaveBeenCalledTimes(1);
+    expect(attributeFn).not.toHaveBeenCalled();
+  });
+
+  // @invariant concurrency: a provably unbilled provider refusal never consumes the paid attempt budget, while a billed call whose CAS lost is still counted once
+  // @fails-if a 5xx burns a model attempt, or the CAS-loss merge leaves attempts unchanged
+  it('transient refusals keep the paid budget; a CAS-lost paid call still counts once', async () => {
+    const db = testDb();
+    const now = new Date();
+    const transientId = createId();
+    const contendedId = createId();
+    const seed = async (id: string, prompt: string) =>
+      db.insert(question).values({
+        id,
+        kind: 'short_answer',
+        prompt_md: prompt,
+        knowledge_ids: [],
+        difficulty: 3,
+        source: 'vision_paper',
+        draft_status: 'active',
+        metadata: {
+          ingestion_enrollment: { knowledge: 'attributed', solution: 'missing' },
+        },
+        created_at: now,
+        updated_at: now,
+        version: 0,
+      });
+    await seed(transientId, 'transient 行题面：一条形磁铁穿过线圈时感应电流方向如何判断？');
+    await seed(contendedId, 'contended 行题面：求二次函数最小值。');
+
+    const annotateFn = vi.fn(async (p: { db: unknown; promptMd: string }) => {
+      if (p.promptMd === 'transient 行题面：一条形磁铁穿过线圈时感应电流方向如何判断？') {
+        // Provably-unbilled provider refusal: a bound 5xx.
+        throw new AgentRunError({
+          kind: 'IngestionSolutionAnnotationTask',
+          taskRunId: 'tr_stub',
+          subtype: 'api_error_result',
+          apiErrorStatus: 502,
+          errors: ['bad gateway'],
+        });
+      }
+      // Simulate a concurrent editor winning the CAS between select and write.
+      await db
+        .update(question)
+        .set({ version: sql`${question.version} + 1` })
+        .where(eq(question.id, contendedId));
+      return {
+        contract: SOLUTION_ANNOTATION_CONTRACT,
+        method_md: '一种解法',
+        steps_md: ['一步'],
+        confidence: 0.9,
+        task_run_id: null,
+        provider: 'stub',
+        model: 'stub',
+        generated_at: now.toISOString(),
+      };
+    });
+
+    await runAnnotationBackfill({
+      db,
+      questionIds: [transientId, contendedId],
+      annotateFn,
+    });
+    expect(annotateFn).toHaveBeenCalledTimes(2);
+
+    const enrollmentOf = async (id: string) => {
+      const [row] = await db.select().from(question).where(eq(question.id, id));
+      return ((row?.metadata ?? {}) as Record<string, unknown>).ingestion_enrollment as Record<
+        string,
+        unknown
+      >;
+    };
+
+    // Unbilled refusal: infra counter moved, paid budget untouched, still missing.
+    const transient = await enrollmentOf(transientId);
+    expect(transient.solution).toBe('missing');
+    expect(transient.solution_infra_failures).toBe(1);
+    expect(transient.solution_attempts).toBeUndefined();
+
+    // Billed call whose write lost: the attempt is merged back — paid once, so
+    // counted once, and the row stays eligible for the next sweep.
+    const contended = await enrollmentOf(contendedId);
+    expect(contended.solution).toBe('missing');
+    expect(contended.solution_attempts).toBe(1);
+    expect(contended.solution_last_error).toBe('write_contended_after_paid_call');
+  });
+});
+
+describe('figure-dependent questions', () => {
+  // @invariant data: a question whose text cannot carry it without its figure is marked skipped, never annotated from partial text
+  // @fails-if the text-only task produces an annotation for a figure-dependent question
+  it('marks a figure-dependent question skipped instead of annotating from partial text', async () => {
+    const db = testDb();
+    const questionId = createId();
+    await db.insert(question).values({
+      id: questionId,
+      kind: 'short_answer',
+      prompt_md: '见图',
+      knowledge_ids: [],
+      difficulty: 3,
+      source: 'vision_paper',
+      draft_status: 'active',
+      metadata: {
+        ingestion_enrollment: { knowledge: 'attributed', solution: 'missing' },
+      },
+      figures: [
+        {
+          asset_id: 'asset_fig',
+          role: 'diagram',
+          source_page_index: 0,
+          source_bbox: { x: 0, y: 0, width: 0.5, height: 0.5 },
+          attached_to_index: 'root',
+          attach_confidence: 'high',
+        },
+      ],
+      created_at: new Date(),
+      updated_at: new Date(),
+      version: 0,
+    });
+
+    const annotateFn = vi.fn();
+    const result = await runAnnotationBackfill({ db, questionIds: [questionId], annotateFn });
+    expect(annotateFn).not.toHaveBeenCalled();
+    expect(result.solution_filled).toBe(0);
+
+    const [row] = await db.select().from(question).where(eq(question.id, questionId));
+    expect(row?.metadata).toMatchObject({
+      ingestion_enrollment: {
+        solution: 'skipped',
+        solution_skipped_reason: 'figure_dependent',
+      },
+    });
+    // Terminal: the sweep never selects a skipped row again.
+    const sweep = await runAnnotationBackfill({ db, annotateFn });
+    expect(sweep.scanned).toBe(0);
   });
 });
 

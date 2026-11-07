@@ -220,33 +220,40 @@ export async function runAutoEnrollForSession(
 
     // Attribution is a marker, never an enrollment condition (YUK-1994): a failed or
     // empty result still enters the bank and the background backfill repairs it.
+    // A restricted usage policy forbids every model send of this document's content
+    // — the bridge, the naming call and the tag embedder alike — so the block still
+    // enrolls but stays `knowledge: 'missing'` for the policy-gated backfill.
     let tagging: TaggingOutputT;
-    try {
-      const attributed = await attributeIngestionKnowledge({
-        db: params.db,
-        questionMd,
-        knowledgeHint: block.knowledge_hint,
-        ...(params.subjectId !== undefined ? { subjectId: params.subjectId } : {}),
-        providerAttempt: params.providerAttempt,
-        ...(params.runColdStartBridgeFn !== undefined
-          ? { runTaskFn: params.runColdStartBridgeFn }
-          : {}),
-        tagKnowledgeFn,
-        batchCache: tagBatchCache,
-        sessionId: params.sessionId,
-        sourceRef: { kind: 'question_block', id: block.id },
-        ctx: params.ctx ?? { db: params.db },
-      });
-      tagging = synthesizeTaggingOutput(attributed.knowledgeIds);
-    } catch (err) {
-      rethrowKnowledgeTagInvariant(err);
-      // A data-integrity invariant still aborts; ordinary tagging faults (missing
-      // seed root, provider outage) leave the question unattributed but enrolled.
-      console.error(
-        `[auto_enroll] knowledge attribution failed for block ${block.id}; enrolling without knowledge`,
-        err,
-      );
+    if (sessionDocUsage.policy !== 'allow') {
       tagging = synthesizeTaggingOutput([]);
+    } else {
+      try {
+        const attributed = await attributeIngestionKnowledge({
+          db: params.db,
+          questionMd,
+          knowledgeHint: block.knowledge_hint,
+          ...(params.subjectId !== undefined ? { subjectId: params.subjectId } : {}),
+          providerAttempt: params.providerAttempt,
+          ...(params.runColdStartBridgeFn !== undefined
+            ? { runTaskFn: params.runColdStartBridgeFn }
+            : {}),
+          tagKnowledgeFn,
+          batchCache: tagBatchCache,
+          sessionId: params.sessionId,
+          sourceRef: { kind: 'question_block', id: block.id },
+          ctx: params.ctx ?? { db: params.db },
+        });
+        tagging = synthesizeTaggingOutput(attributed.knowledgeIds);
+      } catch (err) {
+        rethrowKnowledgeTagInvariant(err);
+        // A data-integrity invariant still aborts; ordinary tagging faults (missing
+        // seed root, provider outage) leave the question unattributed but enrolled.
+        console.error(
+          `[auto_enroll] knowledge attribution failed for block ${block.id}; enrolling without knowledge`,
+          err,
+        );
+        tagging = synthesizeTaggingOutput([]);
+      }
     }
 
     // Deterministic confidence signal; it never decides the route.
@@ -301,8 +308,6 @@ export async function runAutoEnrollForSession(
       routedToReview += 1;
       continue;
     }
-    if (result === null) continue;
-
     // A concurrent runner already enrolled this block.
     if (result === null) continue;
 

@@ -184,7 +184,9 @@ function toEnrollmentProjection(
   }
   if (block.status !== 'draft') {
     const markers = enrolled?.metadata?.ingestion_enrollment as { knowledge?: unknown } | undefined;
-    const knowledgeIds = enrolled?.knowledge_ids ?? [];
+    // Synthetic ids (pending proposals, system nodes) are never learner-visible;
+    // the read must not leak them as labels either.
+    const knowledgeIds = learnerVisibleKnowledgeIds(enrolled?.knowledge_ids ?? []);
     const annotation = readStoredSolutionAnnotation(enrolled?.metadata?.solution_annotation);
     return {
       state: 'in_library' as const,
