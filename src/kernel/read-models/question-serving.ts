@@ -331,8 +331,6 @@ function servingFactsQuery(filters: SQL[]): SQL {
                 or ${admissionReasonPresentSql('no_admitted_executor')}
                 or ${admissionReasonPresentSql('system_grading_slice_unadmitted')}
                 then 'admission_failed'
-              // Preserve the existing waiting-path hold; admissionRead decides whether the
-              // receipt is still within its retry grace (pending) or expired (undecided).
               when admission.result_json->'result'->>'status' = 'waiting'
                 then 'admission_failed'
               when ${infrastructureAdmissionSql()}
