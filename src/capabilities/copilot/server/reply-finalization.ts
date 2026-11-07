@@ -199,7 +199,11 @@ const NO_EXECUTOR_ADMISSION =
   '这类题目前没有可用的自动判分器，暂时不能作答；可以换一道选择、填空、配对、断句或排序题。';
 const PENDING_ADMISSION = '自动检查通过后才能作答；当前状态和原因可在题库查看。';
 
-function proposalDisclosure(trace: readonly TraceEntry[], reply: string): string | undefined {
+function proposalDisclosure(
+  trace: readonly TraceEntry[],
+  reply: string,
+  inlineCardQuestionIds: ReadonlySet<string> = new Set(),
+): string | undefined {
   // One disclosure per question, never a cross-question dedupe: a different
   // question must not swallow this question's warning.
   const seenBankPaths = new Set<string>();
@@ -229,6 +233,11 @@ function proposalDisclosure(trace: readonly TraceEntry[], reply: string): string
     if (seenBankPaths.has(out.bank_path)) return [];
     seenBankPaths.add(out.bank_path);
     const bankPath = out.bank_path;
+    const bankQuestionId = bankPath.startsWith('/questions/')
+      ? bankPath.slice('/questions/'.length)
+      : undefined;
+    const inlineCardShown =
+      bankQuestionId !== undefined && inlineCardQuestionIds.has(bankQuestionId);
     const admission = isRecord(out.admission) ? out.admission : undefined;
     const noExecutor =
       Array.isArray(admission?.per_unit) &&
@@ -251,9 +260,11 @@ function proposalDisclosure(trace: readonly TraceEntry[], reply: string): string
       if (!warningStated) facts.push(`题已存入[题库](${bankPath})，但${admissionSentence}`);
     } else {
       // Admission state is server-owned: append one deterministic sentence per
-      // reply instead of matching whatever wording the model chose.
+      // reply instead of matching whatever wording the model chose. A visible
+      // inline question card already carries the status, so do not repeat it;
+      // the bank link stays because those card states do not open the question.
       if (!linkStated) facts.push(`题已存入[题库](${bankPath})。`);
-      if (!admitted) pendingStatus = true;
+      if (!admitted && !inlineCardShown) pendingStatus = true;
     }
     return facts.length > 0 ? [facts.join('\n')] : [];
   });
@@ -287,7 +298,7 @@ function proposalDisclosure(trace: readonly TraceEntry[], reply: string): string
     pending.length === 0
       ? '本轮没有产生可供确认的建议，未执行目标变更。'
       : allAutoApply
-        ? '本轮建议已记下，会自动应用，随时可以撤销。'
+        ? '本轮建议已记下，会自动生效；还没被用到的可以撤销。'
         : '本轮建议已提交，等待你确认后才会应用到目标。',
     // The companion reads these hidden rows to retain its inbox notice.
     ...(pending.length > 0
@@ -308,8 +319,8 @@ function proposalDisclosure(trace: readonly TraceEntry[], reply: string): string
 function applyProposalDisclosure(text: string, disclosure?: string): string {
   const stripped = text
     .replace(
-      /\n*<!--copilot-proposal-disclosure:start-->[\s\S]*?<!--copilot-proposal-disclosure:end-->\s*$/,
-      '',
+      /\n*<!--copilot-proposal-disclosure:start-->[\s\S]*?<!--copilot-proposal-disclosure:end-->\n*/g,
+      '\n\n',
     )
     .trimEnd();
   return disclosure ? `${stripped}\n\n${disclosure}` : stripped;
@@ -460,17 +471,19 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
         text: presentedText,
         ...(resolvedNomination ? { primaryView: resolvedNomination } : {}),
       };
-      const correction = resolveCorrectionReply(
-        presented.text,
-        options.correctionContract,
-        stripCopilotInternalComments,
-      );
+      const correction = resolveCorrectionReply(presented.text, options.correctionContract);
       if (correction.reply.trim().length === 0) {
         return publishUnsealed('', 'missing_terminal', context);
       }
-      const disclosure = proposalDisclosure(trace, correction.reply);
-      const { text: composed, blocksReceipt } = prepareReplyText(correction.reply);
-      const disclosed = applyProposalDisclosure(composed, disclosure);
+      // Strip old disclosure markers while they are still comments, then clear
+      // other internal comments, and only then parse block placements. A card
+      // hidden inside an HTML comment must not count as placed.
+      const withoutOldDisclosure = stripCopilotInternalComments(
+        applyProposalDisclosure(correction.reply),
+      ).trimEnd();
+      const prepared = prepareReplyText(withoutOldDisclosure);
+      const disclosure = proposalDisclosure(trace, prepared.text, prepared.inlineCardQuestionIds);
+      const disclosed = applyProposalDisclosure(prepared.text, disclosure);
       const fixed = truncateCopilotReply(disclosed, COPILOT_REPLY_CHAR_LIMIT, context.retainedTail);
       const truncated = fixed !== disclosed;
       if (
@@ -495,7 +508,7 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
         proposal_disclosure: disclosure ? 'server_composed' : 'none',
         primary_view:
           successfulControls.length > 0 ? (primaryView ? 'retained' : 'dropped') : 'absent',
-        ...(blocksReceipt ? { blocks: blocksReceipt } : {}),
+        ...(prepared.blocksReceipt ? { blocks: prepared.blocksReceipt } : {}),
       };
       return {
         replyText: fixed,
@@ -584,11 +597,28 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
     }
     const appendedFences = appended.map((b) => serializeBlockFence(b.block as never)).join('\n\n');
     const composed = appendedFences ? `${withPlaced.trimEnd()}\n\n${appendedFences}` : withPlaced;
+    const inlineCardQuestionIds = new Set<string>();
+    for (const { block } of [...readyBlocks.filter((b) => placedRefs.has(b.ref)), ...appended]) {
+      const candidate = block as {
+        kind?: unknown;
+        display?: unknown;
+        question_ids?: unknown;
+      };
+      if (
+        candidate.kind !== 'question_ref' ||
+        candidate.display !== 'inline' ||
+        !Array.isArray(candidate.question_ids)
+      )
+        continue;
+      for (const id of candidate.question_ids) {
+        if (typeof id === 'string') inlineCardQuestionIds.add(id);
+      }
+    }
     const blocksReceipt =
       readyBlocks.length > 0 || dropped > 0
         ? { placed: placedRefs.size, appended: appended.length, dropped, unplaced }
         : undefined;
-    return { text: composed, blocksReceipt };
+    return { text: composed, blocksReceipt, inlineCardQuestionIds };
   }
 
   function publishUnsealed(
@@ -596,15 +626,17 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
     reason: NonNullable<CopilotReplyFinalizationReceipt['unsealed_reason']>,
     context: { streamedText?: string; retainedTail?: string },
   ): CopilotReplyFinalizationResult {
-    const candidateBody = stripCopilotInternalComments(candidate);
-    const streamedBody = stripCopilotInternalComments(context.streamedText ?? '');
+    const candidateBody = stripCopilotInternalComments(applyProposalDisclosure(candidate));
+    const streamedBody = stripCopilotInternalComments(
+      applyProposalDisclosure(context.streamedText ?? ''),
+    );
     const body = candidateBody.trim()
       ? candidateBody
       : streamedBody.trim()
         ? streamedBody
         : FINALIZATION_FAILURE_REPLY;
-    const disclosure = proposalDisclosure(trace, body);
     const prepared = prepareReplyText(body);
+    const disclosure = proposalDisclosure(trace, prepared.text, prepared.inlineCardQuestionIds);
     const replyText = truncateCopilotReply(
       applyProposalDisclosure(prepared.text, disclosure),
       COPILOT_REPLY_CHAR_LIMIT,

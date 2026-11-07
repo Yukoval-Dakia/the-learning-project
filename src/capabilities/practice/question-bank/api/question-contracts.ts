@@ -47,6 +47,7 @@ export const QuestionListQuerySchema = QuestionListQueryFieldsSchema.refine(
 export const QuestionHoldReasonSchema = z.enum([
   'awaiting_admission',
   'admission_failed',
+  'admission_undecided',
   'source_check_failed',
   'verify_hold',
   'retraction_hold',

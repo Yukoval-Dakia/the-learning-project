@@ -34168,7 +34168,7 @@ export interface operations {
                                     } | null;
                                     held_since: string | null;
                                     /** @enum {string|null} */
-                                    hold_reason: "awaiting_admission" | "admission_failed" | "source_check_failed" | "verify_hold" | "retraction_hold" | "no_input_renderer" | "invalid_presentation" | "withdrawn" | null;
+                                    hold_reason: "awaiting_admission" | "admission_failed" | "admission_undecided" | "source_check_failed" | "verify_hold" | "retraction_hold" | "no_input_renderer" | "invalid_presentation" | "withdrawn" | null;
                                     next_action: {
                                         /** @enum {string} */
                                         command: "reverify" | "recheck_source" | "release_verify_hold";
@@ -34216,7 +34216,7 @@ export interface operations {
                                 } | null;
                                 held_since: string | null;
                                 /** @enum {string|null} */
-                                hold_reason: "awaiting_admission" | "admission_failed" | "source_check_failed" | "verify_hold" | "retraction_hold" | "no_input_renderer" | "invalid_presentation" | "withdrawn" | null;
+                                hold_reason: "awaiting_admission" | "admission_failed" | "admission_undecided" | "source_check_failed" | "verify_hold" | "retraction_hold" | "no_input_renderer" | "invalid_presentation" | "withdrawn" | null;
                                 next_action: {
                                     /** @enum {string} */
                                     command: "reverify" | "recheck_source" | "release_verify_hold";
@@ -34269,7 +34269,7 @@ export interface operations {
                                         } | null;
                                         held_since: string | null;
                                         /** @enum {string|null} */
-                                        hold_reason: "awaiting_admission" | "admission_failed" | "source_check_failed" | "verify_hold" | "retraction_hold" | "no_input_renderer" | "invalid_presentation" | "withdrawn" | null;
+                                        hold_reason: "awaiting_admission" | "admission_failed" | "admission_undecided" | "source_check_failed" | "verify_hold" | "retraction_hold" | "no_input_renderer" | "invalid_presentation" | "withdrawn" | null;
                                         next_action: {
                                             /** @enum {string} */
                                             command: "reverify" | "recheck_source" | "release_verify_hold";
@@ -34317,7 +34317,7 @@ export interface operations {
                                     } | null;
                                     held_since: string | null;
                                     /** @enum {string|null} */
-                                    hold_reason: "awaiting_admission" | "admission_failed" | "source_check_failed" | "verify_hold" | "retraction_hold" | "no_input_renderer" | "invalid_presentation" | "withdrawn" | null;
+                                    hold_reason: "awaiting_admission" | "admission_failed" | "admission_undecided" | "source_check_failed" | "verify_hold" | "retraction_hold" | "no_input_renderer" | "invalid_presentation" | "withdrawn" | null;
                                     next_action: {
                                         /** @enum {string} */
                                         command: "reverify" | "recheck_source" | "release_verify_hold";
@@ -34375,7 +34375,7 @@ export interface operations {
                                         } | null;
                                         held_since: string | null;
                                         /** @enum {string|null} */
-                                        hold_reason: "awaiting_admission" | "admission_failed" | "source_check_failed" | "verify_hold" | "retraction_hold" | "no_input_renderer" | "invalid_presentation" | "withdrawn" | null;
+                                        hold_reason: "awaiting_admission" | "admission_failed" | "admission_undecided" | "source_check_failed" | "verify_hold" | "retraction_hold" | "no_input_renderer" | "invalid_presentation" | "withdrawn" | null;
                                         next_action: {
                                             /** @enum {string} */
                                             command: "reverify" | "recheck_source" | "release_verify_hold";
@@ -34423,7 +34423,7 @@ export interface operations {
                                     } | null;
                                     held_since: string | null;
                                     /** @enum {string|null} */
-                                    hold_reason: "awaiting_admission" | "admission_failed" | "source_check_failed" | "verify_hold" | "retraction_hold" | "no_input_renderer" | "invalid_presentation" | "withdrawn" | null;
+                                    hold_reason: "awaiting_admission" | "admission_failed" | "admission_undecided" | "source_check_failed" | "verify_hold" | "retraction_hold" | "no_input_renderer" | "invalid_presentation" | "withdrawn" | null;
                                     next_action: {
                                         /** @enum {string} */
                                         command: "reverify" | "recheck_source" | "release_verify_hold";
@@ -34478,7 +34478,7 @@ export interface operations {
                                     } | null;
                                     held_since: string | null;
                                     /** @enum {string|null} */
-                                    hold_reason: "awaiting_admission" | "admission_failed" | "source_check_failed" | "verify_hold" | "retraction_hold" | "no_input_renderer" | "invalid_presentation" | "withdrawn" | null;
+                                    hold_reason: "awaiting_admission" | "admission_failed" | "admission_undecided" | "source_check_failed" | "verify_hold" | "retraction_hold" | "no_input_renderer" | "invalid_presentation" | "withdrawn" | null;
                                     next_action: {
                                         /** @enum {string} */
                                         command: "reverify" | "recheck_source" | "release_verify_hold";
@@ -34526,7 +34526,7 @@ export interface operations {
                                 } | null;
                                 held_since: string | null;
                                 /** @enum {string|null} */
-                                hold_reason: "awaiting_admission" | "admission_failed" | "source_check_failed" | "verify_hold" | "retraction_hold" | "no_input_renderer" | "invalid_presentation" | "withdrawn" | null;
+                                hold_reason: "awaiting_admission" | "admission_failed" | "admission_undecided" | "source_check_failed" | "verify_hold" | "retraction_hold" | "no_input_renderer" | "invalid_presentation" | "withdrawn" | null;
                                 next_action: {
                                     /** @enum {string} */
                                     command: "reverify" | "recheck_source" | "release_verify_hold";
@@ -34968,7 +34968,7 @@ export interface operations {
                             } | null;
                             held_since: string | null;
                             /** @enum {string|null} */
-                            hold_reason: "awaiting_admission" | "admission_failed" | "source_check_failed" | "verify_hold" | "retraction_hold" | "no_input_renderer" | "invalid_presentation" | "withdrawn" | null;
+                            hold_reason: "awaiting_admission" | "admission_failed" | "admission_undecided" | "source_check_failed" | "verify_hold" | "retraction_hold" | "no_input_renderer" | "invalid_presentation" | "withdrawn" | null;
                             next_action: {
                                 /** @enum {string} */
                                 command: "reverify" | "recheck_source" | "release_verify_hold";
@@ -35692,7 +35692,7 @@ export interface operations {
                             } | null;
                             held_since: string | null;
                             /** @enum {string|null} */
-                            hold_reason: "awaiting_admission" | "admission_failed" | "source_check_failed" | "verify_hold" | "retraction_hold" | "no_input_renderer" | "invalid_presentation" | "withdrawn" | null;
+                            hold_reason: "awaiting_admission" | "admission_failed" | "admission_undecided" | "source_check_failed" | "verify_hold" | "retraction_hold" | "no_input_renderer" | "invalid_presentation" | "withdrawn" | null;
                             next_action: {
                                 /** @enum {string} */
                                 command: "reverify" | "recheck_source" | "release_verify_hold";
@@ -35976,7 +35976,7 @@ export interface operations {
                             } | null;
                             held_since: string | null;
                             /** @enum {string|null} */
-                            hold_reason: "awaiting_admission" | "admission_failed" | "source_check_failed" | "verify_hold" | "retraction_hold" | "no_input_renderer" | "invalid_presentation" | "withdrawn" | null;
+                            hold_reason: "awaiting_admission" | "admission_failed" | "admission_undecided" | "source_check_failed" | "verify_hold" | "retraction_hold" | "no_input_renderer" | "invalid_presentation" | "withdrawn" | null;
                             next_action: {
                                 /** @enum {string} */
                                 command: "reverify" | "recheck_source" | "release_verify_hold";
