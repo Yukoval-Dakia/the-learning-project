@@ -28,6 +28,7 @@ import {
 import { resolveContextBudget } from '@/kernel/tools/budgets';
 import { ContextBudgetTracker } from '@/kernel/tools/context-throttle';
 import { ANSWER_ONLY_TOOL_NAMES, derivationToolDenial } from '@/kernel/tools/derivation-policy';
+import { TurnSourceLedger } from '@/kernel/tools/source-ledger';
 import type { ModelBinding } from '@/server/ai/execution-adapter';
 import { type StreamCollectResult, runAgentTask, streamTaskCollecting } from '@/server/ai/runner';
 import { isToolArgumentContractFailure } from '@/server/ai/tool-param-contract';
@@ -312,6 +313,33 @@ export function createCopilotExecutionOwner(
     const baseContextBudget = resolveContextBudget(surface);
     const budgetTracker = new ContextBudgetTracker(baseContextBudget);
     const proposalFlowGate = createCopilotProposalFlowGate();
+    // YUK-1548 — the source ledger is the authoritative record of the learner
+    // sources this turn could have touched: the bound history window, the ask
+    // event, a bound review answer, and an ambient focus. Aggregate context the
+    // server cannot bind to ids (learner-state header, proposal feedback) marks
+    // the ledger incomplete, so compose_block's drawing path refuses honestly.
+    const sourceLedger = new TurnSourceLedger();
+    if (turn.sourceEventId) sourceLedger.note({ kind: 'event', id: turn.sourceEventId });
+    for (const id of input.bound_turn_event_ids ?? []) sourceLedger.note({ kind: 'event', id });
+    if (reviewAnswer) sourceLedger.note({ kind: 'event', id: reviewAnswer.originalRef });
+    const focused = input.ambient_context?.focused_entity;
+    if (focused) {
+      const FOCUS_SOURCE_KINDS: Record<string, 'question' | 'record' | 'event' | 'session'> = {
+        question: 'question',
+        record: 'record',
+        event: 'event',
+        learning_session: 'session',
+      };
+      const focusedKind = FOCUS_SOURCE_KINDS[focused.kind];
+      if (focusedKind) sourceLedger.note({ kind: focusedKind, id: focused.id });
+      else sourceLedger.noteUnknown(`ambient_focus:${focused.kind}`);
+    }
+    // Whole-state projections carry a provable scope, not enumerable ids:
+    // derivation consumers run the global restricted-source check (scoped)
+    // instead of pretending the header's inputs bind to named rows.
+    if (input.learner_state_header && input.learner_state_header.length > 0)
+      sourceLedger.noteScoped('learner_state_header');
+    if (input.proposal_feedback.length > 0) sourceLedger.noteScoped('proposal_feedback');
     // One mount-options literal feeds the pi AgentTool bridge
     // (`ctx.piToolMounts` → piDomainMount); the loop's native toolCall.id
     // supplies correlation via `correlatedToolUseId` (see pi-tools.ts).
@@ -327,6 +355,8 @@ export function createCopilotExecutionOwner(
         ...(deadlineAt !== undefined ? { providerSessionDeadlineAt: deadlineAt } : {}),
         callerActor,
         ...(turn.sourceEventId ? { causedByEventId: turn.sourceEventId } : {}),
+        sourceLedger,
+        answerOnly,
       },
       serverName: DOMAIN_TOOL_MCP_SERVER_NAME,
       toolNames: answerOnly ? [...ANSWER_ONLY_TOOL_NAMES] : resolveDomainToolNames(surface),

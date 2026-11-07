@@ -16,6 +16,7 @@ import { readEventDerivationPolicy } from '@/kernel/events/derivation-policy';
 import { createAssessmentAssetLoader } from '@/kernel/records/assessment-assets';
 import { setToolCallLogMirroredEventId, writeToolCallLog } from '@/kernel/tools/call-evidence';
 import { derivationToolDenial } from '@/kernel/tools/derivation-policy';
+import { recordToolReadSources } from '@/kernel/tools/source-ledger';
 import {
   type ToolOperationRecord,
   type ToolOperations,
@@ -624,6 +625,8 @@ async function runExecute(call: ToolCallContext, phase: InputPhase): Promise<Exe
     const parsed = enforceOutputSchema(dt, rawOutput);
     if (!parsed.ok) return result(parsed);
     output = parsed.value;
+    if (dt.effect === 'read' && ctx.sourceLedger)
+      recordToolReadSources(dt.name, execInput, output, ctx.sourceLedger);
     effectContract = proposalEffectContract(dt.name, dt.effect, output);
     return result({ ok: true, value: undefined });
   } catch (error) {

@@ -13,6 +13,7 @@ import {
 import type { RetentionReading } from '@/core/schema/scheduling-state';
 import type { Db, Tx } from '@/db/client';
 import { event, material_fsrs_state } from '@/db/schema';
+import { allowedEventIds } from '@/kernel/events/derivation-policy';
 import { HostOperationNotInstalledError } from '@/kernel/host-operation';
 import { lastKnowledgeActivityAt } from '@/kernel/read-models/knowledge-activity';
 import { getNonKcKnowledgeIds } from '@/kernel/read-models/knowledge-roles';
@@ -408,11 +409,16 @@ async function durationsByEventId(
   const ids = [...new Set(eventIds)];
   const found = new Map<string, number | null>();
   if (ids.length === 0) return found;
+  // Durations are a derived-input read too — a restricted event contributes no
+  // signal (its duration is simply absent), never a peek past consent.
+  const allowed = await allowedEventIds(db, ids);
   const rows = await db
     .select({ id: event.id, payload: event.payload })
     .from(event)
     .where(inArray(event.id, ids));
-  for (const row of rows) found.set(row.id, recordedDurationMs(row.payload));
+  for (const row of rows) {
+    if (allowed.has(row.id)) found.set(row.id, recordedDurationMs(row.payload));
+  }
   return found;
 }
 
