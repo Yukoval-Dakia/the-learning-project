@@ -88,7 +88,6 @@ export const EventDetailResponseSchema = z.object({
 export const JOB_EVENT_KINDS = [
   'ingestion_session',
   'copilot_run',
-  'echo_jobs',
   'question_block',
   'learning_session',
   'ingestion_operation',
