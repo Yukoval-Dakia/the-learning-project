@@ -4,6 +4,7 @@
 
 import { canonicalProviderName } from '@/ai/task-spec';
 import { type ConfigValue, getConfig } from '@/core/config/store';
+import { TaskConfigError, readProviderId, resolveTaskBinding } from '@/server/ai/providers';
 import type { JudgeCalibrationConfig } from '../server/judge-calibration-sample-core';
 
 /** Opt-in dark-ship flag. Handler reads it through the shared runtime-flag grammar. */
@@ -33,30 +34,45 @@ function requireConfigString(key: string, value: ConfigValue | undefined): strin
   return value;
 }
 
+/** Executed pair for the configured override. The binding reads the process
+ * pin, which replaces this per-call override (`anthropic-sub` with no model
+ * runs its built-in model). An unresolvable pin keeps that provider; the gate
+ * still fail-closes. */
+function executedRejudgePair(provider: string, model: string): { provider: string; model: string } {
+  const known = readProviderId(provider);
+  if (!known) return { provider, model };
+  try {
+    const binding = resolveTaskBinding('SemanticJudgeTask', { provider: known, model });
+    return { provider: canonicalProviderName(binding.provider), model: binding.model };
+  } catch (error) {
+    if (!(error instanceof TaskConfigError)) throw error;
+    // Binding reads the process pin. An unresolvable pin still names that
+    // provider so the gate's preflight fails on the pin, not the configured pair.
+    const pin = process.env.AI_PROVIDER_OVERRIDE;
+    if (!pin) return { provider, model };
+    return { provider: canonicalProviderName(pin), model };
+  }
+}
+
 export function readJudgeCalibrationConfig(
   env: NodeJS.ProcessEnv = process.env,
 ): JudgeCalibrationConfig {
   // 四键 DB > env > code-default；clamp 仍在 reader 侧（registry
   // schema 校验 DB 写入，但 env 层经 numberEnv 来值仍需本地 clamp，与原
   // readIntInRange 逐位一致）。
-  // Project the operator chat pin into sample provenance; the handler's existing
-  // resolveTaskProvider preflight validates it before any paid request.
-  const pin = env.AI_PROVIDER_OVERRIDE
-    ? { provider: env.AI_PROVIDER_OVERRIDE, model: env.AI_PROVIDER_MODEL }
-    : undefined;
   const batchMax = getConfig('JUDGE_CALIBRATION_BATCH_MAX', env);
   const windowDays = getConfig('JUDGE_CALIBRATION_WINDOW_DAYS', env);
   const rejudgeProvider = getConfig('JUDGE_CALIBRATION_REJUDGE_PROVIDER', env);
   const rejudgeModel = getConfig('JUDGE_CALIBRATION_REJUDGE_MODEL', env);
-  return {
-    rejudgeProvider: canonicalProviderName(
-      pin?.provider
-        ? pin.provider
-        : requireConfigString('JUDGE_CALIBRATION_REJUDGE_PROVIDER', rejudgeProvider),
+  const executed = executedRejudgePair(
+    canonicalProviderName(
+      requireConfigString('JUDGE_CALIBRATION_REJUDGE_PROVIDER', rejudgeProvider),
     ),
-    rejudgeModel: pin?.model
-      ? pin.model
-      : requireConfigString('JUDGE_CALIBRATION_REJUDGE_MODEL', rejudgeModel),
+    requireConfigString('JUDGE_CALIBRATION_REJUDGE_MODEL', rejudgeModel),
+  );
+  return {
+    rejudgeProvider: executed.provider,
+    rejudgeModel: executed.model,
     batchMax:
       typeof batchMax === 'number'
         ? Math.min(50, Math.max(1, batchMax))

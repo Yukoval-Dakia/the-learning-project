@@ -231,7 +231,7 @@ await writeEvent(db, {
     original_provider: 'unknown',
     vision_judge_provider_at_sample: process.env.VISION_JUDGE_PROVIDER ?? null,
     ai_provider_override_at_sample: process.env.AI_PROVIDER_OVERRIDE ?? null,
-    same_lane_suspected,   // 推断原判 lane（vision 路由: VISION_JUDGE_PROVIDER ?? AI_PROVIDER_OVERRIDE ?? 'xiaomi'；semantic: AI_PROVIDER_OVERRIDE ?? 'xiaomi'）=== REJUDGE_PROVIDER
+    same_lane_suspected,   // 推断原判 lane。进程 pin（AI_PROVIDER_OVERRIDE）压过视觉 lane；无进程 pin 时 vision 路由用 VISION_JUDGE_PROVIDER ?? lane.global ?? 注册默认，semantic 用 lane.global ?? 注册默认。与 REJUDGE 实际执行的 provider 比较
     sampled_at: iso,
   },
   caused_by_event_id: originalJudgeEventId,
@@ -277,7 +277,7 @@ skipped / skipped_unsupported / errors **不写 per-sample 行**（进 handler l
 | token 失效不静默 | **handler batch 级 pre-flight 在路由 try/catch 之外裸调 `resolveTaskProvider` → throw 使整个 handler 失败（pg-boss 可见）**；复判 unsupported 一律 skipped、绝不写 agreed=false（r1「缺失 loud throw」声明已照实修正为「路由内吞、handler 外抓」两段式） |
 | 观测事件不污染记忆 | `ingest_at=now` opt out memory outbox |
 | 幂等 | **partial unique index ON event(caused_by_event_id) WHERE action='experimental:judge_calibration_sample'（DB 强制）** + 23505 捕获跳过；SELECT 查重仅性能层；action 过滤防 appeal caused_by 串键 |
-| lane 隔离 | per-call `ctx.override`（spread 序钉死：override 在 `...ctx` 后）；不设不读全局 env 做路由；同源坍缩以 lane 快照 + `same_lane_suspected` 标记，headline 剔除 |
+| lane 隔离 | per-call `ctx.override`（spread 序钉死：override 在 `...ctx` 后，压过视觉 lane 注入）；进程 pin 仍在 `resolveTaskProvider` 内压过该 override。同源坍缩以 lane 快照 + `same_lane_suspected` 标记，headline 剔除 |
 | token 安全 | `CLAUDE_CODE_OAUTH_TOKEN` 只经 `resolveTaskProvider` → runner subprocess env，绝不入库不打印 |
 
 ---

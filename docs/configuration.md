@@ -167,8 +167,8 @@ PATCH /api/admin/config   # x-internal-token
 | `AI_RATE_LIMIT_WINDOW_MS` | app | `10000` | `registry`；`src/kernel/request-rate-limit.ts` |
 | `JUDGE_CALIBRATION_BATCH_MAX` | worker | `20`；范围 1–50 | `registry` |
 | `JUDGE_CALIBRATION_WINDOW_DAYS` | worker | `7`；范围 1–90 | `registry` |
-| `JUDGE_CALIBRATION_REJUDGE_PROVIDER` | worker | `anthropic-sub` | `registry` |
-| `JUDGE_CALIBRATION_REJUDGE_MODEL` | worker | `claude-opus-4-8` | `registry` |
+| `JUDGE_CALIBRATION_REJUDGE_PROVIDER` | worker | `anthropic-sub`；进程 pin 在场时改为该 pin 实际执行的 provider | `registry`；`src/capabilities/practice/grading/jobs/judge-calibration-config.ts` |
+| `JUDGE_CALIBRATION_REJUDGE_MODEL` | worker | `claude-opus-4-8`；进程 pin 在场时改为该 pin 实际执行的 model（`anthropic-sub` 且未设 `AI_PROVIDER_MODEL` 时为内置 `claude-opus-4-8`，不沿用本键） | `registry`；`src/capabilities/practice/grading/jobs/judge-calibration-config.ts` |
 | `KC_DEDUP_DISTANCE_MAX` | worker（夜间去重） | `0.1` | `registry` |
 | `KC_DEDUP_WINDOW_DAYS` | worker（夜间去重） | `7` | `registry` |
 | `KC_DEDUP_MAX_PAIRS` | worker（夜间去重） | `50` | `registry` |
