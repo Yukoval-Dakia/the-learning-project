@@ -22,6 +22,8 @@ import {
   source_asset,
   source_document,
 } from '@/db/schema';
+import { getFailureAttempts } from '@/kernel/read-models/failure-attempts';
+import { readNativeMistakeEvidence } from '@/kernel/read-models/native-mistake-evidence';
 import { issuanceRowToContract, revisionRowToContract } from '@/kernel/records/assessment-issuance';
 import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -313,5 +315,208 @@ describe('native ingestion originals and reversible enrollment', () => {
       .where(eq(event.action, 'experimental:assessment_settlement'));
     expect(receipts.filter((row) => row.payload.replay_of)).toHaveLength(1);
     expect(await testDb().select().from(assessment_submission)).toHaveLength(2);
+  });
+
+  // @invariant security: per-question handwriting stays attempt evidence and never becomes the answer key
+  // @fails-if the capture writes handwriting into reference/answers, drops the red mark, or the handwriting text fails to reach the response set
+  it('keeps per-question handwriting as attempt evidence and out of the answer key', async () => {
+    const db = testDb();
+    const input = await fixture('');
+    const structured = input.block.structured;
+    if (!structured) throw new Error('missing fixture structure');
+    const [block] = await db
+      .insert(question_block)
+      .values({
+        ...input.block,
+        id: 'handwriting-block',
+        structured: {
+          ...structured,
+          student_answer_present: true,
+          extraction_evidence: {
+            handwriting: [
+              {
+                text: '7 × 6 = 42',
+                bbox: { x: 0.12, y: 0.4, width: 0.3, height: 0.08 },
+                red_ink: 'check',
+                confidence: 0.9,
+              },
+            ],
+          },
+        },
+        wrong_answer_md: '',
+      })
+      .returning();
+    const capture = await captureIngestionOriginal(db, { ...input, block });
+    if (!capture) throw new Error('missing handwriting capture');
+    const [questionRow] = await db
+      .select()
+      .from(question)
+      .where(eq(question.id, capture.questionId));
+    expect({
+      reference: questionRow?.reference_md,
+      answers: questionRow?.structured?.answers,
+    }).toEqual({ reference: '42', answers: undefined });
+    expect(capture.request.response_set.entries).toMatchObject([
+      { kind: 'text', text_md: '7 × 6 = 42' },
+    ]);
+    const [attempt] = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:assessment_attempt'));
+    expect(
+      attempt?.payload as {
+        response_md?: string;
+        ingestion?: { unit_captures?: unknown };
+      },
+    ).toMatchObject({ response_md: '7 × 6 = 42' });
+    expect(
+      (
+        attempt?.payload as {
+          ingestion?: { unit_captures?: unknown };
+        }
+      )?.ingestion?.unit_captures,
+    ).toMatchObject([
+      {
+        entry_kind: 'text',
+        state: 'answered',
+        ink: null,
+        red_ink_mark: 'check',
+        trace: {
+          source: 'handwriting_trace_v1',
+          bbox: { x: 0.12, y: 0.4, width: 0.3, height: 0.08 },
+          confidence: 0.9,
+        },
+      },
+    ]);
+    // Capture is evidence only; nothing was graded or committed to mastery.
+    expect(await db.select().from(evaluation)).toHaveLength(0);
+    expect(await db.select().from(mastery_state)).toHaveLength(0);
+  });
+
+  // @invariant security: detected handwriting with no readable per-question trace is explicit unknown, never omitted and never guessed
+  // @fails-if the capture records every unit as omitted or fabricates a blank answer for the detected handwriting
+  it('records detected handwriting without a trace as unknown rather than omitted', async () => {
+    const db = testDb();
+    const input = await fixture('');
+    const structured = input.block.structured;
+    if (!structured) throw new Error('missing fixture structure');
+    const [block] = await db
+      .insert(question_block)
+      .values({
+        ...input.block,
+        id: 'unknown-handwriting-block',
+        structured: { ...structured, student_answer_present: true },
+        wrong_answer_md: '',
+      })
+      .returning();
+    const capture = await captureIngestionOriginal(db, { ...input, block });
+    if (!capture) throw new Error('missing unknown-handwriting capture');
+    const [attempt] = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:assessment_attempt'));
+    const unitCaptures = (
+      attempt?.payload as { ingestion?: { unit_captures?: Array<{ state: string }> } }
+    )?.ingestion?.unit_captures;
+    expect(unitCaptures).toMatchObject([{ state: 'unknown' }]);
+    expect(unitCaptures?.some((item) => item.state === 'omitted')).toBe(false);
+    expect(await db.select().from(evaluation)).toHaveLength(0);
+  });
+
+  // @invariant security: a whole photographed page never reaches learner-visible attempt evidence
+  // @fails-if group evidence hands the learner a source page that may carry another question's handwriting, or the red mark is lost/graduated into a verdict
+  it('withholds whole photographed pages from learner-visible attempt evidence', async () => {
+    const db = testDb();
+    const input = await fixture('43');
+    const structured = input.block.structured;
+    if (!structured) throw new Error('missing fixture structure');
+    const [block] = await db
+      .insert(question_block)
+      .values({
+        ...input.block,
+        id: 'privacy-capture-block',
+        structured: {
+          ...structured,
+          student_answer_present: true,
+          extraction_evidence: {
+            handwriting: [
+              {
+                text: '43',
+                bbox: { x: 0.2, y: 0.5, width: 0.2, height: 0.06 },
+                red_ink: 'cross',
+              },
+            ],
+          },
+        },
+        wrong_answer_md: '',
+      })
+      .returning();
+    const capture = await captureIngestionOriginal(db, { ...input, block });
+    if (!capture) throw new Error('missing privacy capture');
+    await admit(capture.questionId);
+    expect(await enrollNativeCapture(db, { ...input, block })).not.toBeNull();
+    const failures = await getFailureAttempts(db, { questionIds: [capture.questionId] });
+    expect(failures).toHaveLength(1);
+    const evidence = (await readNativeMistakeEvidence(db, failures)).get(
+      failures[0]?.attempt_event_id ?? '',
+    );
+    expect(evidence?.wrong_answer_image_refs).toEqual([]);
+    expect(evidence?.wrong_answer_md).toContain('43');
+    expect(evidence?.wrong_answer_md).toContain('红笔标记：✗');
+  });
+
+  // @invariant data: a handwriting-derived capture and its attempt evidence revert atomically
+  // @fails-if withdrawal leaves mastery/effective evaluation or the block enrollment pointing at the reverted attempt
+  it('keeps a handwriting capture revertible', async () => {
+    const db = testDb();
+    const input = await fixture('42');
+    const structured = input.block.structured;
+    if (!structured) throw new Error('missing fixture structure');
+    const [block] = await db
+      .insert(question_block)
+      .values({
+        ...input.block,
+        id: 'revert-handwriting-block',
+        structured: {
+          ...structured,
+          student_answer_present: true,
+          extraction_evidence: {
+            handwriting: [
+              {
+                text: '42',
+                bbox: { x: 0.3, y: 0.3, width: 0.2, height: 0.06 },
+                red_ink: 'check',
+              },
+            ],
+          },
+        },
+        wrong_answer_md: '',
+      })
+      .returning();
+    const capture = await captureIngestionOriginal(db, { ...input, block });
+    if (!capture) throw new Error('missing revert capture');
+    await admit(capture.questionId);
+    expect(await enrollNativeCapture(db, { ...input, block })).not.toBeNull();
+    expect(
+      (await db.select().from(mastery_state)).find((row) => row.subject_id === 'capture-kc')
+        ?.evidence_count,
+    ).toBe(1);
+    await revertAutoEnrolledBlock(db, {
+      blockId: block.id,
+      sessionId: block.ingestion_session_id,
+    });
+    expect(
+      (await db.select().from(mastery_state)).find((row) => row.subject_id === 'capture-kc')
+        ?.evidence_count ?? 0,
+    ).toBe(0);
+    const [reverted] = await db
+      .select()
+      .from(question_block)
+      .where(eq(question_block.id, block.id));
+    expect(reverted).toMatchObject({
+      status: 'draft',
+      imported_question_id: null,
+      imported_attempt_event_id: null,
+    });
   });
 });

@@ -252,3 +252,92 @@ it('retains clean and unverified option crops but withholds known handwriting', 
     ]).toEqual([expected.withheld, expected.unverified, false]);
   }
 });
+
+// @invariant security: per-question handwriting from extraction stays in answer evidence and never becomes an answer key
+// @fails-if the trace pass writes handwriting into answers/reference or drops the red-pen mark before capture
+it('writes per-question handwriting evidence and keeps it out of answers', async () => {
+  const { sessionId } = await seedIngestionSession(1);
+  const handler = buildTencentOcrHandler({
+    db,
+    r2: await createImageR2(),
+    engine: 'glm',
+    glmOcrFn: async () => ({
+      id: 'handwriting-layout',
+      request_id: 'handwriting-layout',
+      md_results: '1. Solve 7 x 6.',
+      data_info: { num_pages: 1, pages: [{ width: 80, height: 120 }] },
+      usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+      layout_details: [
+        [
+          {
+            index: 0,
+            label: 'text',
+            native_label: 'paragraph',
+            bbox_2d: [0, 0, 80, 30],
+            width: 80,
+            height: 120,
+            content: '1. Solve 7 x 6.',
+          },
+        ],
+      ],
+    }),
+    runStructureFn: (params) =>
+      runStructureTask({
+        ...params,
+        runTaskFn: async () => ({
+          text: JSON.stringify({
+            layout_quality: 'structured',
+            extraction_confidence: 0.9,
+            content_lost: false,
+            questions: [
+              {
+                role: 'standalone',
+                prompt_text: '1. Solve 7 x 6.',
+                student_answer_present: false,
+                answers: null,
+              },
+            ],
+          }),
+        }),
+      }),
+    runHandwritingTraceFn: async () => ({
+      traces: [
+        {
+          leaf_index: 0,
+          text: '42',
+          red_mark: 'check',
+          red_text: false,
+          bbox: { page_index: 0, x: 0.5, y: 0.2, width: 0.2, height: 0.1 },
+          confidence: 0.9,
+        },
+      ],
+      unresolved: [],
+      warnings: [],
+      task_run_id: 'trace-run',
+      cost_usd: 0.001,
+    }),
+  });
+  await handler([
+    {
+      id: `handwriting-${sessionId}`,
+      data: { sessionId },
+      retryCount: 0,
+      retryLimit: 0,
+      startedOn: new Date(),
+    },
+  ] as never);
+  const [block] = await db
+    .select()
+    .from(question_block)
+    .where(eq(question_block.ingestion_session_id, sessionId));
+  const node = block?.structured;
+  expect(node?.extraction_evidence?.handwriting?.[0]).toMatchObject({
+    text: '42',
+    red_ink: 'check',
+    bbox: { x: 0.5, y: 0.2, width: 0.2, height: 0.1 },
+  });
+  expect(node?.student_answer_present).toBe(true);
+  // The trace is answer evidence, not the key: answers stay as extracted (null here).
+  expect(node?.answers).toBeUndefined();
+  expect(block?.reference_md ?? null).toBeNull();
+});
