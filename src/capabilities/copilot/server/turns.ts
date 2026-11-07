@@ -500,10 +500,28 @@ async function projectCopilotTurnRows(
   // Anchor ⇔ every effect is event-chain-compensable (materializing-tools.ts). Suppress for a
   // teaching_check draft or a materializing domain tool, on both the ask and reply rows.
   const anchorSuppressed = (askId: string): boolean =>
+    replacedRuns.has(askId) ||
     asksWithMaterializingTool.has(askId) ||
     structuredQuestionAskIds.has(askId) ||
     checkpointUnsafeAskIds.has(askId);
 
+  const [latestRoot] = forModel
+    ? []
+    : await dbArg
+        .select({ id: event.id })
+        .from(event)
+        .where(
+          and(eq(event.session_id, sessionId), inArray(event.action, [...COPILOT_ASK_ACTIONS])),
+        )
+        .orderBy(desc(event.dispatch_seq))
+        .limit(1);
+  const latestRetryable =
+    latestRoot &&
+    rows.some(
+      (row) => row.action === COPILOT_REPLY_ACTION && row.caused_by_event_id === latestRoot.id,
+    )
+      ? (await copilotRetryRefusal(dbArg, latestRoot.id)) === null
+      : false;
   const turns: CopilotTurn[] = [];
   for (const row of rows) {
     const checkpointEventId =
@@ -573,9 +591,7 @@ async function projectCopilotTurnRows(
       const primaryView = replyPrimaryView(payload);
       const turn: CopilotTurn = {
         role: 'ai',
-        retryable: row.caused_by_event_id
-          ? (await copilotRetryRefusal(dbArg, row.caused_by_event_id)) === null
-          : false,
+        retryable: row.caused_by_event_id === latestRoot?.id && latestRetryable,
         derivation_policy:
           row.caused_by_event_id && restrictedRootPolicies.has(row.caused_by_event_id)
             ? (restrictedRootPolicies.get(row.caused_by_event_id) as DerivationPolicyT)

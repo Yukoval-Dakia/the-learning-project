@@ -329,8 +329,7 @@ export async function writeFailedTerminalProjection(
       payload: {
         retryable:
           (await copilotRetryRefusal(tx, projection.runId, {
-            reason: projection.reason,
-            public_prose: projection.publicProse,
+            terminal: { reason: projection.reason, public_prose: projection.publicProse },
           })) === null,
         reason: projection.reason,
         error: projection.publicProse

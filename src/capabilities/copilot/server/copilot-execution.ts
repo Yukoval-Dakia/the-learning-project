@@ -370,8 +370,16 @@ export function createCopilotExecutionOwner(
         proposalFlowGate.beforeExecute(tool) ??
         budgetTracker.beforeExecute(tool),
       onExecuteStart: async (tool) => {
-        if (turn.sourceEventId) await recordRetryToolEffect(db, turn.sourceEventId, tool.effect);
         policy.cancellation.onToolExecutionStarted(tool);
+        try {
+          if (turn.sourceEventId) await recordRetryToolEffect(db, turn.sourceEventId, tool.effect);
+          const denial = await policy.cancellation.beforeTool();
+          if (denial) throw new Error(denial);
+        } catch (error) {
+          // The bridge takes over settlement only after this hook returns.
+          policy.cancellation.onToolExecutionSettled();
+          throw error;
+        }
       },
       onExecuteSettled: () => policy.cancellation.onToolExecutionSettled(),
       interceptInput: (tool, args) => {

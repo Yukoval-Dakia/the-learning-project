@@ -2,16 +2,20 @@ import { createHash } from 'node:crypto';
 import { and, asc, eq, sql } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
 import { event, job_events } from '@/db/schema';
-import { writeEvent } from '@/kernel/events';
+import { shouldEnqueueBackgroundJobs } from '@/kernel/background-job-enqueue';
+import { getCorrectionStatuses, writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import { writeJobEvent } from '@/kernel/job-events';
+import { checkRateLimit } from '@/kernel/request-rate-limit';
 import { parseCopilotPublicProse } from '../public-prose-contract';
+import { isLiveCopilotConversation } from './conversation-lifecycle';
 import {
   COPILOT_RUN_EVENTS,
   COPILOT_RUN_TABLE,
   isCopilotRunTerminalEvent,
 } from './copilot-run-status';
 import { copilotRunTerminalSql } from './copilot-run-terminal-sql';
+import { MAX_OUTSTANDING_DURABLE_RUNS, countOutstandingDurableRuns } from './durable-backlog';
 import {
   type CopilotBossTransactionAdapter,
   type CopilotDispatchBoss,
@@ -28,6 +32,8 @@ import {
 } from './run-retry-contract';
 
 export type CopilotRetryRefusal =
+  | 'conversation_inactive'
+  | 'question_retracted'
   | 'not_failed'
   | 'not_latest'
   | 'session_busy'
@@ -49,13 +55,16 @@ async function runEvents(db: Store, runId: string) {
 export async function copilotRetryRefusal(
   db: Store,
   runId: string,
-  prospective?: { reason: string; public_prose?: unknown },
+  options: {
+    terminal?: { reason: string; public_prose?: unknown };
+    lockConversation?: boolean;
+  } = {},
 ): Promise<CopilotRetryRefusal | null> {
   const events = await runEvents(db, runId);
   const queued = events.find((e) => e.event_type === COPILOT_RUN_EVENTS.QUEUED);
   const terminal = events.filter(isCopilotRunTerminalEvent).at(-1);
   const failure =
-    prospective ??
+    options.terminal ??
     (terminal?.event_type === COPILOT_RUN_EVENTS.FAILED ? terminal.payload : undefined);
   if (!failure) return 'not_failed';
   const prose = parseCopilotPublicProse(failure.public_prose);
@@ -70,8 +79,15 @@ export async function copilotRetryRefusal(
     return 'failure_not_retryable';
   const sessionId = queued?.payload.session_id;
   if (typeof sessionId !== 'string') return 'safety_unknown';
+  if (!(await isLiveCopilotConversation(db, sessionId, options.lockConversation)))
+    return 'conversation_inactive';
   const [root] = await db.select().from(event).where(eq(event.id, runId));
   if (!root) return 'safety_unknown';
+  const originalAskId =
+    typeof root.payload.original_ask_id === 'string' ? root.payload.original_ask_id : runId;
+  const corrections = await getCorrectionStatuses(db, [runId, originalAskId]);
+  if ([runId, originalAskId].some((id) => corrections.get(id)?.state === 'retracted'))
+    return 'question_retracted';
   const replacement = await db
     .select({ id: event.id })
     .from(event)
@@ -163,11 +179,23 @@ export async function retryCopilotRun(
       if (!replay) throw new Error('Retry acceptance integrity failure');
       return replay;
     }
-    const reason = await copilotRetryRefusal(tx, runId);
+    if (!shouldEnqueueBackgroundJobs())
+      throw new ApiError('copilot_queue_disabled', 'Copilot queue is disabled', 503);
+    const reason = await copilotRetryRefusal(tx, runId, { lockConversation: true });
     if (reason)
       throw new ApiError('retry_not_allowed', 'This run cannot be retried', 409, undefined, {
         reason,
       });
+    // Replays do not consume admission capacity; each new generation does.
+    if ((await countOutstandingDurableRuns(tx)) >= MAX_OUTSTANDING_DURABLE_RUNS) {
+      throw new ApiError(
+        'copilot_backlog_full',
+        `Copilot backlog is full (max ${MAX_OUTSTANDING_DURABLE_RUNS})`,
+        429,
+        { 'Retry-After': '30' },
+      );
+    }
+    checkRateLimit();
     const queued = (await runEvents(tx, runId)).find(
       (e) => e.event_type === COPILOT_RUN_EVENTS.QUEUED,
     );
