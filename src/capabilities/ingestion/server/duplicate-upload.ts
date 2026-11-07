@@ -62,10 +62,7 @@ export async function findDuplicateUpload(
     .where(inArray(source_asset.id, [...input.assetIds]));
   if (newAssets.length !== input.assetIds.length) return null;
   const shaById = new Map(newAssets.map((row) => [row.id, row.sha256]));
-  const targetIds = evidencePageIds(
-    newAssets,
-    input.assetIds,
-  );
+  const targetIds = evidencePageIds(newAssets, input.assetIds);
   const target = targetIds.map((id) => shaById.get(id));
   // An unresolvable asset identity must not turn into a false duplicate claim.
   if (target.some((sha) => sha === undefined)) return null;
@@ -95,9 +92,7 @@ export async function findDuplicateUpload(
           .from(source_asset)
           .where(inArray(source_asset.id, candidateAssetIds));
   const candidateSha = new Map(candidateAssets.map((row) => [row.id, row.sha256]));
-  const candidateById = new Map(
-    [...newAssets, ...candidateAssets].map((row) => [row.id, row]),
-  );
+  const candidateById = new Map([...newAssets, ...candidateAssets].map((row) => [row.id, row]));
   const samePageCount = candidates.filter((doc) => {
     const ids = evidencePageIds(
       (doc.assetIds ?? []).map((id) => candidateById.get(id)).filter((row) => row !== undefined),

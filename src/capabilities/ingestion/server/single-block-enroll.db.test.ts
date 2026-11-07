@@ -89,9 +89,7 @@ describe('enrollIngestionBlock', () => {
     const blockId = blockIds[0];
     const siblingId = blockIds[1];
     if (!blockId || !siblingId) throw new Error('seed blocks missing');
-    const body = prompt
-      ? { expectedVersion: 0 }
-      : { expectedVersion: 0, promptMd: '用户补的题面' };
+    const body = prompt ? { expectedVersion: 0 } : { expectedVersion: 0, promptMd: '用户补的题面' };
 
     const first = await enrollIngestionBlock(db, { sessionId, blockId, ...body });
     expect(first.status).toBe('enrolled');

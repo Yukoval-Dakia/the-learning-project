@@ -97,7 +97,7 @@ export async function enrollIngestionBlock(
     .select()
     .from(learning_session)
     .where(eq(learning_session.id, params.sessionId));
-  if (!session || session.type !== 'ingestion') {
+  if (session?.type !== 'ingestion') {
     throw new ApiError('not_found', `ingestion session ${params.sessionId} not found`, 404);
   }
   if (session.status !== 'extracted' && session.status !== 'partial') {
@@ -198,7 +198,8 @@ export async function enrollIngestionBlock(
   }
 
   const knowledgeIds = await resolveExactKnowledge(db, current.knowledge_hint);
-  const knowledgeState: 'attributed' | 'missing' = knowledgeIds.length > 0 ? 'attributed' : 'missing';
+  const knowledgeState: 'attributed' | 'missing' =
+    knowledgeIds.length > 0 ? 'attributed' : 'missing';
   const now = new Date();
   const questionId = createId();
   const sourceDocumentId = session.source_document_id;
