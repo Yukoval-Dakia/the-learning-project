@@ -1,15 +1,24 @@
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
+import { createCopilotConversation } from '@/capabilities/copilot/server/conversation-lifecycle';
+import { previewReviewAdvice } from '@/capabilities/practice/scheduling/public';
+import { serializeBlockFence } from '@/core/schema/blocks';
 import { JudgeWorkflowInput } from '@/core/schema/event/judge-operational-events';
 import { NativeJudgePendingSubmitInput } from '@/core/schema/event/judge-pending-events';
 import {
+  assessment_issuance,
   assessment_submission,
+  evaluation,
   evaluation_effective_head,
   event,
   mastery_state,
   material_fsrs_state,
 } from '@/db/schema';
+import { blockDigest, blockRefForDigest } from '@/kernel/blocks/digest';
+import { writeEvent } from '@/kernel/events';
+import { readQuestionCard } from '@/kernel/read-models/question-card';
+import { STUDY_ASSISTANCE_ACTION } from '@/kernel/records/study-reference';
 import {
   nativeHttpRequest,
   nativeSoloHttpFixture,
@@ -18,6 +27,12 @@ import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { CreateAttemptBodySchema } from '../../api/contracts';
 import { createAttempt } from '../api/submit';
 import { runJudgeRun } from '../jobs/judge_run';
+import {
+  getIssuanceState,
+  requestAssessmentIssuance,
+  requestResponseDraftSave,
+  requestReviewAnswer,
+} from '../public';
 import { dispatchNativeAttempt, executeNativeAttempt } from './assessment/durable-attempt';
 import * as evaluationService from './judge/evaluate-submission';
 import { createRecordedModelExecutor } from './judge/recorded-model-executor';
@@ -109,5 +124,212 @@ describe('request independent review operation on business tables', () => {
     expect(await effects()).toEqual(before);
     expect(f.execute).toHaveBeenCalledTimes(1);
     expect(await testDb().select().from(assessment_submission)).toHaveLength(1);
+  });
+});
+
+async function countEvents(action: string): Promise<number> {
+  const rows = await testDb().select({ id: event.id }).from(event).where(eq(event.action, action));
+  return rows.length;
+}
+
+describe('conversation question card confirmation', () => {
+  // @invariant grading: a chat-card answer stays a recoverable submission plus one assisted candidate until the learner confirms, and repeated identical confirmation converges on one attempt, one activation and one schedule
+  // @fails-if preview writes an attempt/activation/settlement, the second confirmation advances the head or writes another attempt/activation/settlement, or the final card/attempt loses the conversation binding or its unknown-help snapshot
+  it('defers settlement until confirmation and settles one attempt across repeated confirmation', async () => {
+    const db = testDb();
+    const subjectRoot = 'seed:math:root';
+    const f = await nativeSoloHttpFixture(db, { knowledgeIds: [subjectRoot] });
+    const { sessionId } = await createCopilotConversation(db);
+    const cardBlock = {
+      v: 1 as const,
+      kind: 'question_ref' as const,
+      display: 'inline' as const,
+      question_ids: [f.id],
+      alt: '题目',
+      label: '打开题目',
+    };
+    const blockRef = blockRefForDigest(blockDigest(cardBlock));
+    const replyId = `reply_${sessionId}`;
+    await writeEvent(db, {
+      id: replyId,
+      session_id: sessionId,
+      actor_kind: 'agent',
+      actor_ref: 'agent:copilot',
+      action: 'experimental:copilot_reply',
+      subject_kind: 'query',
+      subject_id: replyId,
+      outcome: null,
+      payload: {
+        surface: 'copilot',
+        session_id: sessionId,
+        reply_md: `试试这张卡：\n\n${serializeBlockFence(cardBlock)}`,
+      },
+    });
+
+    const issue = () =>
+      requestAssessmentIssuance(db, async () => ({
+        group_id: f.id,
+        chat_card: { session_id: sessionId, block_ref: blockRef },
+      }));
+    const firstIssue = await issue();
+    const retriedIssue = await issue();
+    expect(firstIssue).toMatchObject({ status: 'issued' });
+    expect(retriedIssue).toMatchObject({ status: 'replayed' });
+    expect(retriedIssue.issuance.issuance_id).toBe(firstIssue.issuance.issuance_id);
+    const issuanceId = firstIssue.issuance.issuance_id;
+    const [issuanceRow] = await db
+      .select()
+      .from(assessment_issuance)
+      .where(eq(assessment_issuance.issuance_id, issuanceId));
+    expect(issuanceRow?.container_occurrence_ref).toBe(`copilot-card:${sessionId}:${blockRef}`);
+    const assistance = await db
+      .select()
+      .from(event)
+      .where(
+        and(
+          eq(event.action, STUDY_ASSISTANCE_ACTION),
+          eq(event.subject_kind, 'issuance'),
+          eq(event.subject_id, issuanceId),
+        ),
+      );
+    expect(assistance).toHaveLength(1);
+    expect(assistance[0]?.payload).toMatchObject({ kind: 'chat_context', impact: 'unknown' });
+
+    const baseline = await effects();
+    const coordinates = {
+      issuance_id: issuanceId,
+      evaluation_group_id: `eg_chat_card_${f.id}`,
+      idempotency_key: `chat_card_${f.id}`,
+      response_set: f.assessment.response_set,
+      group_evidence: [],
+    };
+    const adviceBody = (extra: Record<string, unknown> = {}) => ({
+      question_id: f.id,
+      response_md: '',
+      assessment: coordinates,
+      ...extra,
+    });
+
+    await requestResponseDraftSave(db, issuanceId, async () => ({
+      response_set: coordinates.response_set,
+      group_evidence: [],
+    }));
+    const preview = await previewReviewAdvice(
+      db,
+      adviceBody({ commit: { session_id: sessionId }, accept_pending: true }),
+      new AbortController().signal,
+    );
+    if ('verdict' in preview) throw new Error('advice preview diverted to durable judging');
+    expect(preview.automatic_commit).toBe(false);
+    expect(preview).not.toHaveProperty('committed');
+    expect(preview.judge.suggested_rating).not.toBeNull();
+    expect(preview.activation_intent.evaluation_id).toBe(preview.candidate_id);
+
+    const afterPreview = await effects();
+    expect(afterPreview.mastery).toEqual(baseline.mastery);
+    expect(afterPreview.fsrs).toEqual(baseline.fsrs);
+    expect(afterPreview.events).toEqual(baseline.events);
+    expect(
+      afterPreview.head.every(
+        (row) => row.effective_evaluation_id === null && row.generation === 0,
+      ),
+    ).toBe(true);
+    expect(await countEvents('experimental:assessment_attempt')).toBe(0);
+    expect(await countEvents('experimental:assessment_settlement')).toBe(0);
+    const [candidate] = await db
+      .select()
+      .from(evaluation)
+      .where(eq(evaluation.submission_id, preview.submission_id));
+    expect(candidate?.status).toBe('completed');
+    expect(candidate?.provenance?.assisted).toBe(true);
+    expect(await db.select().from(assessment_submission)).toHaveLength(1);
+
+    const recovered = await getIssuanceState(db, issuanceId);
+    expect(recovered.submissions).toHaveLength(1);
+    expect(recovered.submissions[0]?.response_set).toEqual(coordinates.response_set);
+    expect((await readQuestionCard(db, f.id, sessionId)).latest_attempt).toMatchObject({
+      issuance_id: issuanceId,
+      status: 'graded_unconfirmed',
+    });
+    expect((await readQuestionCard(db, f.id)).latest_attempt).toBeNull();
+
+    const restored = await previewReviewAdvice(db, adviceBody(), new AbortController().signal);
+    if ('verdict' in restored) throw new Error('advice restore diverted to durable judging');
+    expect(restored.candidate_id).toBe(preview.candidate_id);
+    expect(restored.judge.suggested_rating).toBe(preview.judge.suggested_rating);
+    expect(restored.activation_intent).toEqual(preview.activation_intent);
+    expect(await db.select().from(evaluation)).toHaveLength(1);
+    expect(await countEvents('experimental:assessment_attempt')).toBe(0);
+
+    const confirm = (rating: 'again' | 'hard' | 'good' | 'easy') =>
+      requestReviewAnswer(
+        db,
+        async () => ({
+          question_id: f.id,
+          session_id: sessionId,
+          rating,
+          auto_rate: false,
+          assessment: coordinates,
+          activation_intent: restored.activation_intent,
+          response_md: '',
+        }),
+        { durableEnabled: false },
+      );
+    const rating = preview.judge.suggested_rating;
+    if (rating === null) throw new Error('deterministic fixture did not recommend a rating');
+    const firstConfirm = await confirm(rating);
+    if (firstConfirm.kind !== 'committed') throw new Error('confirmation stayed pending');
+    expect(firstConfirm.body.status).toBe('effective');
+    expect(firstConfirm.body.assessment.effect).toBe('applied');
+    expect(firstConfirm.body.assessment.candidate_id).toBe(preview.candidate_id);
+
+    const afterFirst = await effects();
+    expect(afterFirst.events).toHaveLength(1);
+    expect(afterFirst.events[0]?.payload).toMatchObject({ generation: 1, user_rating: rating });
+    expect(afterFirst.mastery).toHaveLength(0);
+    expect(afterFirst.fsrs).toMatchObject([{ subject_kind: 'question', subject_id: f.id }]);
+    expect(await countEvents('experimental:assessment_attempt')).toBe(1);
+    expect(await countEvents('experimental:assessment_settlement')).toBe(1);
+
+    const attempts = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:assessment_attempt'));
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0]?.payload).toMatchObject({
+      submission_id: preview.submission_id,
+      source: { kind: 'conversation', session_id: sessionId, block_ref: blockRef },
+    });
+    expect(attempts[0]?.payload).not.toHaveProperty('stream_item_id');
+    const [submissionReceipt] = await db
+      .select()
+      .from(event)
+      .where(
+        and(
+          eq(event.action, 'experimental:assessment_submission'),
+          eq(event.subject_kind, 'submission'),
+          eq(event.subject_id, preview.submission_id),
+        ),
+      );
+    expect(submissionReceipt?.payload.assistance).toMatchObject({ status: 'unknown' });
+    expect(
+      (submissionReceipt?.payload.assistance as { event_ids?: string[] } | undefined)?.event_ids,
+    ).toContain(assistance[0]?.id);
+
+    const secondConfirm = await confirm(rating);
+    if (secondConfirm.kind !== 'committed') throw new Error('repeat confirmation stayed pending');
+    expect(secondConfirm.body.review_event.id).toBe(firstConfirm.body.review_event.id);
+    expect(secondConfirm.body.assessment.effect).toBe('idempotent_replay');
+    expect(await effects()).toEqual(afterFirst);
+    expect(await countEvents('experimental:assessment_attempt')).toBe(1);
+    expect(await countEvents('experimental:assessment_settlement')).toBe(1);
+    expect(await countEvents('experimental:assessment_activation')).toBe(1);
+    expect((await readQuestionCard(db, f.id, sessionId)).latest_attempt).toMatchObject({
+      issuance_id: issuanceId,
+      status: 'submitted',
+    });
+    const finalState = await getIssuanceState(db, issuanceId);
+    expect(finalState.submissions).toHaveLength(1);
+    expect(finalState.settled).toMatchObject({ kind: 'terminal' });
   });
 });

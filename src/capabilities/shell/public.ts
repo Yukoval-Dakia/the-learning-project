@@ -1,4 +1,4 @@
-export { TeachingBriefAckBodySchema } from './api/contracts';
+export { AiNoticeDismissBodySchema, TeachingBriefAckBodySchema } from './api/contracts';
 export type {
   WorkbenchHeatDay,
   WorkbenchSessionRow,
@@ -27,3 +27,9 @@ export type {
   BriefSeenPayload,
   PrimaryActionStartedPayload,
 } from './server/teaching-brief-interactions';
+
+export const listDismissedAiNotices: typeof import('./server/ai-notice-dismissals').listDismissedAiNotices =
+  async (...args) =>
+    (await import('./server/ai-notice-dismissals')).listDismissedAiNotices(...args);
+export const dismissAiNotices: typeof import('./server/ai-notice-dismissals').dismissAiNotices =
+  async (...args) => (await import('./server/ai-notice-dismissals')).dismissAiNotices(...args);
