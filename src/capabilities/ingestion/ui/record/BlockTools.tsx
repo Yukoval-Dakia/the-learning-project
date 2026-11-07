@@ -7,16 +7,7 @@ import { useRecordClient } from './record-client';
 import { recordKeys } from './recording-read';
 
 /** Takes a question the helper put in automatically back out, after one confirm. */
-export function RevertButton({
-  sessionId,
-  blockId,
-  disabled = false,
-}: {
-  sessionId: string;
-  blockId: string;
-  /** Held while a review is being recorded, like 再认一次. */
-  disabled?: boolean;
-}) {
+export function RevertButton({ sessionId, blockId }: { sessionId: string; blockId: string }) {
   const { revertBlock } = useRecordClient();
   const [asking, setAsking] = useState(false);
   const qc = useQueryClient();
@@ -31,7 +22,7 @@ export function RevertButton({
         <button
           type="button"
           className="rc-link"
-          disabled={disabled || undo.isPending}
+          disabled={undo.isPending}
           onClick={() => undo.mutate()}
         >
           再撤回一次
@@ -43,7 +34,7 @@ export function RevertButton({
     <button
       type="button"
       className="rc-link"
-      disabled={disabled || undo.isPending}
+      disabled={undo.isPending}
       onClick={() => (asking ? undo.mutate() : setAsking(true))}
       onBlur={() => setAsking(false)}
     >
@@ -57,17 +48,7 @@ export function RevertButton({
  * reader; after it, a slower and more careful read is offered. One key per try: a retry after a
  * lost answer replays the same read, a try the server turned down gets a new key.
  */
-export function RescueButton({
-  sessionId,
-  block,
-  disabled,
-  onRead,
-}: {
-  sessionId: string;
-  block: Block;
-  disabled: boolean;
-  onRead: () => void;
-}) {
+export function RescueButton({ sessionId, block }: { sessionId: string; block: Block }) {
   const qc = useQueryClient();
   const [key, setKey] = useState(randomId);
   const [tier, setTier] = useState<2 | 3>(2);
@@ -77,7 +58,6 @@ export function RescueButton({
     onSuccess: () => {
       setKey(randomId());
       setTier(3);
-      onRead();
       void qc.invalidateQueries({ queryKey: recordKeys.blocks(sessionId) });
     },
     onError: (err) => {
@@ -92,10 +72,16 @@ export function RescueButton({
       <button
         type="button"
         className="rc-link"
-        disabled={disabled || read.isPending}
+        disabled={read.isPending}
         onClick={() => read.mutate(tier)}
       >
-        {read.isPending ? '正在重新认…' : tier === 2 ? '没认对？再认一次' : '认得更仔细些'}
+        {read.isPending
+          ? '正在重新认…'
+          : tier === 3
+            ? '认得更仔细些'
+            : block.ingestion_enrollment.reason === 'needs_text'
+              ? '再认一次'
+              : '没认对？再认一次'}
       </button>
       {read.isError && <span className="rc-problem">这次没认出来，原来的文字没变。</span>}
     </>
