@@ -18171,7 +18171,7 @@ export interface operations {
                                 knowledge: "attributed" | "missing" | null;
                                 library_visible: boolean | null;
                                 /** @enum {string|null} */
-                                reason: "needs_text" | "pending" | "publish_failed" | null;
+                                reason: "needs_text" | "pending" | "publish_failed" | "reverted" | null;
                                 /** @enum {string} */
                                 state: "in_library" | "not_enrolled" | "ignored";
                             };

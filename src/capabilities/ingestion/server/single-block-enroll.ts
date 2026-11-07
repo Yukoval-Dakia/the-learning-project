@@ -23,6 +23,8 @@ export interface EnrollIngestionBlockParams {
   blockId: string;
   expectedVersion: number;
   promptMd?: string;
+  /** Rescue is an explicit one-block user action; it may proceed while a batch job waits. */
+  source?: 'user' | 'rescue';
 }
 
 export type EnrollIngestionBlockStatus = 'enrolled' | 'already_enrolled';
@@ -189,7 +191,7 @@ export async function enrollIngestionBlock(
   // The automatic worker may still be tagging this page. Let it finish rather than
   // running a second attribution/tag pass; its outcome leaves the block enrolled or
   // draft, and a retry after it settles is the supported path.
-  if (await hasInflightAutoEnroll(db, params.sessionId)) {
+  if (params.source !== 'rescue' && (await hasInflightAutoEnroll(db, params.sessionId))) {
     throw new ApiError(
       'enroll_in_progress',
       `session ${params.sessionId} still has an auto_enroll delivery in flight`,
