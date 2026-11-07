@@ -78,6 +78,8 @@ export interface Block {
   page_spans: PageSpan[] | null;
   extracted_prompt_md: string | null;
   structured: StructuredQuestionT | null;
+  /** The recorded confidence, a label on the question and never a gate. */
+  workflow_judge_confidence?: number | null;
   reference_md: string | null;
   wrong_answer_md: string | null;
   image_refs: string[] | null;

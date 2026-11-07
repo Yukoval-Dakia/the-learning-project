@@ -1,5 +1,6 @@
 import type { MouseEvent } from 'react';
 import { useState } from 'react';
+import { isLowJudgeConfidence } from '@/core/judge-confidence';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { FoldList } from '@/ui-next/primitives/FoldList';
 import { Expand } from '@/ui-next/public';
@@ -51,6 +52,11 @@ export function QuestionPaper({
       <MathMarkdown className="qd-stem un-read" notation={detail.notation}>
         {detail.prompt_md.trim() || '（这道题没有文字题面）'}
       </MathMarkdown>
+      {isLowJudgeConfidence(detail.ingestion_judge_confidence) && (
+        <p className="qd-low-confidence">
+          这道题录入时认得把握不高，文字可能有错，不对的话可以修改。
+        </p>
+      )}
       <QuestionFigures detail={detail} />
 
       {choices.length > 0 && (
