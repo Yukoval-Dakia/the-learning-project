@@ -52,6 +52,11 @@ export interface RunTaggingTaskParams {
   runTaskFn?: TaggingRunTaskFn;
   /** Inject in tests; defaults to the production knowledge-tag embedder. */
   embedder?: TaggingGridEmbedder;
+  /**
+   * Provider attempt context for the default embedder (deadline + operation anchor).
+   * Required whenever the grid has to call the embedding provider; no silent fallback.
+   */
+  providerAttempt?: Parameters<typeof createKnowledgeTagEmbedder>[0];
   /** Forwarded to runTask ctx (db / subjectProfile). */
   ctx?: unknown;
 }
@@ -280,7 +285,7 @@ export async function runTaggingTask(params: RunTaggingTaskParams): Promise<Tagg
   const { grid, grid_truncated } = await buildTaggingGrid(params.db, {
     subjectId: params.subjectId,
     questionMd,
-    embedder: params.embedder ?? createKnowledgeTagEmbedder(),
+    embedder: params.embedder ?? createKnowledgeTagEmbedder(params.providerAttempt),
   });
 
   const input: TaggingInputT = TaggingInputSchema.parse({

@@ -310,6 +310,7 @@ export async function runAutoEnrollForSession(
           questionMd,
           knowledgeHint: block.knowledge_hint,
           subjectId: params.subjectId,
+          providerAttempt: params.providerAttempt,
           ctx: params.ctx,
         });
       } catch (err) {
