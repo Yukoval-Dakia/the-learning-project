@@ -1,3 +1,4 @@
+import type { IngestionExtractionNoticesT } from '@/core/schema/ingestion-extraction';
 // Ingestion extraction domain-event writer.
 //
 // `writeSessionEvent` owns the extraction event envelope for the ingestion lifecycle
@@ -30,6 +31,7 @@ export type WriteSessionEventInput = {
     structured_block_ids: string[];
     layout_quality: 'structured' | 'partial' | 'text_only';
     warnings: string[];
+    notices?: IngestionExtractionNoticesT;
     /**
      * YUK-1408 — resolved from the session's usage policy automatically; pass
      * explicitly only when the caller already holds it (avoids lookup in loops).
