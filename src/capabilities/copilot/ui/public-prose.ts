@@ -1,5 +1,6 @@
 /** Public-channel text is independent of authoritative replies and tool receipts. */
 import { longQuotaRecoveryTextFromSeconds, quotaWaitDurationText } from '@/ai/help-provider-fault';
+import { publicProseFailureMessage } from '../public-prose-contract';
 
 export type PublicProseFailureKind =
   | 'provider_rejected'
@@ -111,9 +112,18 @@ function retryAfterText(seconds: number | undefined): string {
   return `${retryWait(seconds)}后可以再试。`;
 }
 
+/**
+ * What the run itself wrote. A run that wrote nothing is stored with the failure's own sentence as
+ * its text, and the status line already says that sentence.
+ */
+export function publicProseBody(prose: PublicProse): string {
+  if (!prose.text.trim()) return '';
+  return prose.failure && prose.text === publicProseFailureMessage(prose.failure) ? '' : prose.text;
+}
+
 /** Partial text the failed run already produced stays above the status line. */
 function keptText(prose: PublicProse): string {
-  return prose.text ? '已生成的部分保留在上方。' : '';
+  return publicProseBody(prose) ? '已生成的部分保留在上方。' : '';
 }
 
 type Failure = NonNullable<PublicProse['failure']>;
@@ -184,7 +194,7 @@ export function publicProseStatusText(prose: PublicProse): string | undefined {
     case 'execution_unknown':
       return '回复已中断，尚不能确认本次操作的最终结果。';
     case 'finalization_failed':
-      return prose.text
+      return publicProseBody(prose)
         ? '本次回复未能完成确认，已生成的内容保留在上方。'
         : '本次回复未能完成确认。';
     case 'execution_failed':

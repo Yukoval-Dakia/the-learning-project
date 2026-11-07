@@ -11,7 +11,7 @@ import type { ConfirmationAction } from './turn-sender';
 import { memo } from 'react';
 import { Chip } from '@/ui-next/public';
 import { type ChatMessage, composeStreamingReply } from '../message-projection';
-import { publicProseFailureBadge, publicProseStatusText } from '../public-prose';
+import { publicProseBody, publicProseFailureBadge, publicProseStatusText } from '../public-prose';
 import { ConversationMarkdown } from './ConversationMarkdown';
 import { HeroBlock } from './HeroBlock';
 import { ProposalNotice } from './ProposalNotice';
@@ -61,8 +61,11 @@ export const MessageRow = memo(function MessageRow(props: MessageRowProps) {
   const publicProse = m.public_prose;
   const incomplete = publicProse?.status === 'failed' || publicProse?.status === 'interrupted';
   // Successful terminal text retains its sealed corrections and disclosures.
-  const body =
-    incomplete || publicProse?.status === 'streaming' ? publicProse.text : canonical.text;
+  const body = incomplete
+    ? publicProseBody(publicProse)
+    : publicProse?.status === 'streaming'
+      ? publicProse.text
+      : canonical.text;
   const generationStatus = publicProse ? publicProseStatusText(publicProse) : undefined;
   // A sealed help exit completes with its exit copy as the body; the badge says why it exited.
   const failureBadge = publicProse ? publicProseFailureBadge(publicProse) : undefined;
