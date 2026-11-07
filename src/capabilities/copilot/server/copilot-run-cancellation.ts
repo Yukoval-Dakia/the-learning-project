@@ -3,7 +3,6 @@ import type { PiBeforeToolCall } from '@/core/tool-call-contract';
 import type { Db, Tx } from '@/db/client';
 import { event, job_events, tool_operation } from '@/db/schema';
 import {
-  COPILOT_ASK_ACTIONS,
   COPILOT_CHIP_TRIGGER_ACTION,
   COPILOT_REPLY_ACTION,
   COPILOT_USER_ASK_ACTION,
@@ -26,6 +25,7 @@ import {
 } from './durable-dispatch';
 import { MATERIALIZING_TOOL_NAMES, durableCheckpointPayload } from './materializing-tools';
 import type { CopilotReplyFinalizationReceipt, PreparedCopilotReply } from './reply-finalization';
+import { COPILOT_RUN_ROOT_ACTIONS as COPILOT_ASK_ACTIONS } from './run-retry-contract';
 import { cancelSubagentsForParentTx } from './subagent-mailbox';
 
 export const COPILOT_CANCEL_POLL_INTERVAL_MS = 500;
@@ -169,6 +169,7 @@ export async function writeCancelledBeforeStartTerminal(
     business_id: runId,
     event_type: COPILOT_RUN_EVENTS.FAILED,
     payload: {
+      retryable: false,
       reason: 'cancelled',
       cancelled_before_start: true,
       ...(marker?.publicProse

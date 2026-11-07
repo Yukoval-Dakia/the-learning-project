@@ -103,6 +103,7 @@ export const dbTestInclude = [
   'src/capabilities/agency/server/misconception-promote.db.test.ts',
   'src/capabilities/agency/server/proposal-appliers.db.test.ts',
   'src/capabilities/copilot/api/cancel-run.db.test.ts',
+  'src/capabilities/copilot/api/retry-run.db.test.ts',
   'src/capabilities/copilot/api/nudges.db.test.ts',
   'src/capabilities/copilot/api/revert-checkpoint.db.test.ts',
   'src/capabilities/copilot/api/review-answer.db.test.ts',
@@ -310,6 +311,10 @@ export const dbTestInclude = [
 ];
 
 export const migrationSmokeInclude = ['tests/integration/migration-smoke.test.ts'];
+
+// Node's runner inside the worker image owns these real-container invariants.
+// pnpm test:workspace consumes this partition; Vitest cannot supply that OS boundary.
+export const containerBoundaryInclude = ['scripts/workspace/boundary.test.ts'];
 
 export const allTestInclude = [...fastTestInclude, ...dbTestInclude, ...migrationSmokeInclude];
 
