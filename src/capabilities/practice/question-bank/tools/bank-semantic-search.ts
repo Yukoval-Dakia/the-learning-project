@@ -267,6 +267,18 @@ export async function runBankSemanticSearch(
       );
       continue;
     }
+    // Every nonempty part selection would be forced to unknown by verification.
+    if (
+      candidate.blockers.some((blocker) => blocker.part_ids.length === 0) ||
+      candidate.parts.every((part) =>
+        candidate.blockers.some((blocker) => blocker.part_ids.includes(part.part_id)),
+      )
+    ) {
+      hits.push(
+        unverifiedBankHit(candidate, requirements, index + 1, 'no_unblocked_part_selection'),
+      );
+      continue;
+    }
     const passages = [...candidate.passages];
     for (const [anchorIndex, anchor] of anchors.entries()) {
       for (const passage of anchor.passages)
