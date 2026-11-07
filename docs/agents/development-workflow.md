@@ -42,7 +42,18 @@ pnpm test:unit:watch <test-file>
 pnpm test:db:watch <test-file>
 pnpm test:migration
 pnpm build
+pnpm hooks:install
+pnpm hooks:uninstall
 ```
+
+`pnpm hooks:install` is opt-in and idempotent. It writes this repo's
+`.git/hooks/pre-commit` and does not change global or local `core.hooksPath`;
+if that key is already set, install refuses. The hook runs `biome check` on
+staged blobs only: it does not `git add` or edit the worktree, so partial
+staging, paths with spaces, and unstaged edits stay put.
+Full-repo `pnpm typecheck` stays an explicit preflight plus CI. It reads the
+working tree, so a commit or push hook would flag unstaged errors and miss
+index-only errors. A local root `tsrs --noEmit` checked 6542 files in 1.4s.
 
 Do **not** run the complete `pnpm test` suite on the local machine. Push the
 candidate head and let the exact-head GitHub `CI Gate` run the complete suite.
