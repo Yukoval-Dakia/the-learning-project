@@ -215,7 +215,7 @@ async function reopen(receiptPath: string, manifestPath: string) {
   const { db } = await import('@/db/client');
   const { paid_effect, question_revision } = await import('@/db/schema');
   const { lockPaidEffectControlFamily, readPaidEffectControl } = await import(
-    '@/db/paid-effect-control'
+    '@/core/paid-work/server/paid-effect-control'
   );
   const { getStartedBoss } = await import('@/server/boss/client');
   const { fromPgBossDrizzleTx } = await import('@/db/pg-boss-drizzle');

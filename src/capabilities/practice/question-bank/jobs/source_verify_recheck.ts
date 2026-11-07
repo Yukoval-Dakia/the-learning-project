@@ -13,14 +13,14 @@ import { and, eq } from 'drizzle-orm';
 import {
   type PaidEffectIdentity,
   computePaidEffectIdentity,
-} from '@/core/migration/paid-effect-protocol';
-import type { Db, Tx } from '@/db/client';
+} from '@/core/paid-work/protocol/paid-effect-protocol';
 import {
   admitPaidEffectIntent,
   claimPaidEffectSend,
   recordPaidEffectApplication,
   recordPaidEffectResult,
-} from '@/db/paid-effect-store';
+} from '@/core/paid-work/server/paid-effect-store';
+import type { Db, Tx } from '@/db/client';
 import { paid_effect } from '@/db/schema';
 
 export type SourceVerifyRecheckClaim = {

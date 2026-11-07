@@ -9,14 +9,14 @@ import { canonicalHash } from '@/core/migration/canonical';
 import {
   type PaidEffectIdentity,
   computePaidEffectIdentity,
-} from '@/core/migration/paid-effect-protocol';
-import type { Db, Tx } from '@/db/client';
+} from '@/core/paid-work/protocol/paid-effect-protocol';
 import {
   markPaidEffectUnknown,
   recordPaidEffectApplication,
   recordPaidEffectResult,
   reservePaidEffect,
-} from '@/db/paid-effect-store';
+} from '@/core/paid-work/server/paid-effect-store';
+import type { Db, Tx } from '@/db/client';
 import { ai_task_runs, paid_effect } from '@/db/schema';
 import { assertModelProfileCapabilityFit } from '@/server/ai/model-profiles';
 import {
@@ -29,7 +29,7 @@ import type { BoundRunTaskTextFn } from '@/server/ai/runner-fn';
 export type AdmissionStageReceiptRef = { identity: PaidEffectIdentity; receipt_digest: string };
 
 export const AdmissionRecovery = z.object({
-  reason: z.enum(['quota', 'login']),
+  reason: z.enum(['quota', 'login', 'not_sent']),
   retry_at: z.string().datetime().nullable(),
   evidence_ref: z.string().min(1),
 });
@@ -46,9 +46,11 @@ export class AdmissionWaiting extends Error {
     readonly route?: { provider: string; model: string },
   ) {
     super(
-      recovery.reason === 'quota'
-        ? 'Admission adjudicator quota is exhausted'
-        : 'Admission adjudicator login needs renewal',
+      recovery.reason === 'not_sent'
+        ? 'Admission provider connection is waiting for recovery'
+        : recovery.reason === 'quota'
+          ? 'Admission adjudicator quota is exhausted'
+          : 'Admission adjudicator login needs renewal',
     );
   }
 }
@@ -79,6 +81,7 @@ export class AdmissionInterrupted extends Error {
 
 export const ADMISSION_STAGE_FAMILY = 'question_admission_stage';
 const FAMILY = ADMISSION_STAGE_FAMILY;
+const NOT_SENT_WINDOW_MS = 24 * 60 * 60_000;
 
 const ProviderFailureEvidenceSchema = z.object({
   http_status: z.number().optional(),
@@ -114,6 +117,8 @@ const StageReceipt = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('waiting'),
     recovery: AdmissionRecovery,
+    not_sent_started_at: z.string().datetime().optional(),
+    not_sent_waits: z.number().int().positive().optional(),
     quota_failures: z.number().int().nonnegative().optional(),
     inherited_login_wait: z.boolean().optional(),
     /** Set when the wait follows an exhausted in-run transient chain (429 lane). */
@@ -270,8 +275,10 @@ export function admissionStageRunner(input: {
           )
           .orderBy(desc(sql`(${paid_effect.input_json}->>'attempt')::int`));
         const previous = history[0];
-        // Granted retry receipts are the durable budget, including a successor
-        // not yet claimed. Quota wakes and redelivery never reset this ledger.
+        // Grants consume this burst's budget even before the successor is claimed.
+        // Only an exhausted network wait starts another burst; quota never resets it.
+        let notSentStartedAt: string | undefined;
+        let notSentWaits = 0;
         let notSentRetries = 0;
         let notSentWaitedMs = 0;
         let previousTransientWait = 0;
@@ -279,6 +286,14 @@ export function admissionStageRunner(input: {
         for (const row of [...history].reverse()) {
           if (row.state !== 'receipt_ready' && row.state !== 'applied') continue;
           const saved = StageReceipt.parse(row.result_json);
+          if (saved.kind === 'waiting' && saved.recovery.reason === 'not_sent') {
+            if (!saved.not_sent_started_at || !saved.not_sent_waits)
+              throw new Error('Admission network wait has no durable window; no resend');
+            notSentStartedAt ??= saved.not_sent_started_at;
+            notSentWaits = saved.not_sent_waits;
+            notSentRetries = 0;
+            notSentWaitedMs = 0;
+          }
           if (saved.kind !== 'transient') {
             previousTransientWait = 0;
             continue;
@@ -391,6 +406,9 @@ export function admissionStageRunner(input: {
               throw new AdmissionSafeRetryExhausted();
             if (receipt.kind === 'failure')
               throw new AgentRunError(receipt.fields as AgentRunErrorFields);
+            // Successful/terminal legacy receipts above retain their original replay.
+            if (notSentStartedAt && Date.now() >= Date.parse(notSentStartedAt) + NOT_SENT_WINDOW_MS)
+              throw new AdmissionSafeRetryExhausted();
             if (receipt.kind === 'transient') {
               // The transient chain stays bounded by the same policy the caller
               // applies: beyond the retry bound the frozen failure is terminal.
@@ -424,10 +442,12 @@ export function admissionStageRunner(input: {
                 frozen.recovery_confirmation !== input.deliveryId &&
                 (receipt.recovery.reason !== 'login' || !loginWait || loginProbeConfirmed);
               const due =
-                receipt.recovery.reason === 'quota' &&
+                receipt.recovery.reason !== 'login' &&
                 receipt.recovery.retry_at != null &&
                 Date.parse(receipt.recovery.retry_at) <= Date.now();
               const loginRecovered = receipt.recovery.reason === 'login' && loginWait == null;
+              if (receipt.recovery.reason === 'not_sent' && !due)
+                throw new AdmissionWaiting(receipt.recovery, previous.unit, route);
               if (
                 !due &&
                 !confirmed &&
@@ -440,6 +460,8 @@ export function admissionStageRunner(input: {
             }
           }
         }
+        if (notSentStartedAt && Date.now() >= Date.parse(notSentStartedAt) + NOT_SENT_WINDOW_MS)
+          throw new AdmissionSafeRetryExhausted();
         // Purpose/control guards and aborts retain their original identity.
         await input.beforeSend?.();
         const unit = `call:${index}:attempt:${attempt}`;
@@ -552,7 +574,28 @@ export function admissionStageRunner(input: {
                 error.subtype === 'error_max_structured_output_retries' ||
                 error.helpProviderFault?.kind === 'parse' ||
                 error.helpProviderFault?.kind === 'bad_gateway');
-            if (recovery && !input.interrupted?.() && plan === undefined) {
+            if (
+              verdict?.class === 'not_sent' &&
+              plan === undefined &&
+              !input.interrupted?.() &&
+              (!notSentStartedAt || Date.now() < Date.parse(notSentStartedAt) + NOT_SENT_WINDOW_MS)
+            ) {
+              const now = Date.now();
+              const startedAt = notSentStartedAt ?? new Date(now).toISOString();
+              const expiresAt = Date.parse(startedAt) + NOT_SENT_WINDOW_MS;
+              const waits = notSentWaits + 1;
+              const minutes = [5, 15, 30][waits - 1] ?? 60;
+              receipt = {
+                kind: 'waiting',
+                not_sent_started_at: startedAt,
+                not_sent_waits: waits,
+                recovery: {
+                  reason: 'not_sent',
+                  evidence_ref: error instanceof AgentRunError ? error.taskRunId : '',
+                  retry_at: new Date(Math.min(now + minutes * 60_000, expiresAt)).toISOString(),
+                },
+              };
+            } else if (recovery && !input.interrupted?.() && plan === undefined) {
               const parsed = AdmissionRecovery.pick({ reason: true, evidence_ref: true }).parse(
                 recovery,
               );

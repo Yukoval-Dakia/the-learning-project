@@ -156,7 +156,7 @@ export async function resolveTeachingDraftPlacement(
     learner_topic: input.learner_topic,
     placement_note: refileEnabled
       ? `请求的主题还没有合适的知识节点，这道题先放在「${row.name}」下；建好对应知识点后会自动归过去。`
-      : `请求的主题还没有合适的知识节点，这道题先放在「${row.name}」下。`,
+      : `请求的主题还没有合适的知识节点，这道题放在「${row.name}」下。`,
     ...(placedSubject ? { subject: placedSubject } : {}),
   };
 }

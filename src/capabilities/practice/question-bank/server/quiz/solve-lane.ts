@@ -25,6 +25,7 @@
 // swap and is passed through as-is.
 
 import type { TaskKind } from '@/capabilities/task-registry';
+import { selectScopedLaneOverride } from '@/core/config/model-overrides';
 import { getLaneOverride } from '@/core/config/store';
 import {
   type Provider,
@@ -73,14 +74,21 @@ export function resolveSolveOverrideFromEnv(
   opts?: { checkCredentials?: boolean },
 ): SolveOverride {
   // DB 层> env 层（VERIFY_SOLVE_*
-  // env fallback）。getLaneOverride 每 key 已合并两层。
+  // env fallback）。getLaneOverride 每 key 已合并两层；scoped 值的激活规则
+  // （provider 在场整对生效 / 合法 model-only 换模）由 pure 选择链统一拥有。
   const resolved = getLaneOverride('verify_solve');
-  const provider = resolved?.provider?.trim() || undefined;
-  const model = resolved?.model?.trim() || undefined;
+  const lane = selectScopedLaneOverride({
+    lane: {
+      provider: resolved?.provider?.trim() || undefined,
+      model: resolved?.model?.trim() || undefined,
+    },
+    activation: 'model',
+  });
+  if (!lane) return {};
 
-  if (!provider && !model) return {};
-
-  if (provider) {
+  if (lane.provider) {
+    const provider = lane.provider;
+    const model = lane.model;
     // Every fail-open branch below drops the WHOLE override (incl. any model, which was chosen
     // FOR this provider and could 404 on the default lane) and runs solve_check on the default
     // lane. Ordered cheapest-first; all reuse providers.ts predicates (no second hard-coded copy).
@@ -120,5 +128,5 @@ export function resolveSolveOverrideFromEnv(
   }
 
   // Model-only override (no provider): a same-provider model swap on the default lane.
-  return { model };
+  return lane.model !== undefined ? { model: lane.model } : {};
 }

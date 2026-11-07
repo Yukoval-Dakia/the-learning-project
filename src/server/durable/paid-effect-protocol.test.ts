@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest';
 import {
   canonicalizePaidEffectJson,
   computePaidEffectInputDigest,
-} from '@/core/migration/paid-effect-protocol';
+} from '@/core/paid-work/protocol/paid-effect-protocol';
 
 const INPUT = {
   artifact_id: 'a1',

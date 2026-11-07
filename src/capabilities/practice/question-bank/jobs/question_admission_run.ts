@@ -6,13 +6,10 @@ import { and, eq, inArray, or, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import { AgentRunError } from '@/ai/agent-run-error';
 import { canonicalProviderName } from '@/ai/task-spec';
-import { QUESTION_ADMISSION_POLICY_IDS } from '@/core/question-admission-policy';
-import { declaredShapesAllSupported } from '@/core/schema/assessment/blank-answer-compare';
-import type { Db, Tx } from '@/db/client';
 import {
   admitPaidEffectDeliveryControl,
   lockPaidEffectControlFamily,
-} from '@/db/paid-effect-control';
+} from '@/core/paid-work/server/paid-effect-control';
 import {
   markPaidEffectUnknown,
   notePaidEffectApplicationFailure,
@@ -20,7 +17,10 @@ import {
   recordPaidEffectApplication,
   recordPaidEffectResult,
   settleExpiredPaidEffectSends,
-} from '@/db/paid-effect-store';
+} from '@/core/paid-work/server/paid-effect-store';
+import { QUESTION_ADMISSION_POLICY_IDS } from '@/core/question-admission-policy';
+import { declaredShapesAllSupported } from '@/core/schema/assessment/blank-answer-compare';
+import type { Db, Tx } from '@/db/client';
 import { fromPgBossDrizzleTx } from '@/db/pg-boss-drizzle';
 import {
   event,
@@ -749,7 +749,7 @@ export async function runAdmissionForQuestion(
           },
         });
         const boss =
-          (error.recovery.reason === 'quota' && error.recovery.retry_at) ||
+          (error.recovery.reason !== 'login' && error.recovery.retry_at) ||
           (error.recovery.reason === 'login' && error.route)
             ? await getStartedBoss()
             : null;
@@ -760,7 +760,7 @@ export async function runAdmissionForQuestion(
             await recordPaidEffectResult(tx, batch.identity, delivery.id, waitingReceipt, {
               fence: batchFence,
             });
-          if (boss && error.recovery.reason === 'quota' && error.recovery.retry_at) {
+          if (boss && error.recovery.reason !== 'login' && error.recovery.retry_at) {
             const wakeData = {
               ...data,
               admission_version: 4 as const,

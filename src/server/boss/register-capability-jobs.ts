@@ -167,6 +167,10 @@ export async function registerCapabilityJobs(
   installProposalAutoApplyAcceptPort(async (db, { proposalId, actor }) => {
     await acceptAiProposal(db, proposalId, { actor });
   });
+  // Batch-undo guards for the API-less worker process: jobs read the digest and the
+  // retract lane through the same kernel port the API host installs.
+  const { installProposalUndoGuards } = await import('@/server/proposals/undo-guards');
+  installProposalUndoGuards();
   const decls = capabilities
     .flatMap((cap) => cap.jobs?.handlers ?? [])
     .filter((d) => d.load || d.backend === 'dbos');

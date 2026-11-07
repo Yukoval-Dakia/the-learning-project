@@ -8,7 +8,7 @@ import { z } from 'zod';
 import type { ItemPriorPaidEffectAdapter } from '@/capabilities/practice/question-bank/server/item-prior-paid-effect-adapter';
 import { aggregateItemPriorDrafts, parseItemPriorDraft } from '@/core/item-prior-estimation';
 import { canonicalHash } from '@/core/migration/canonical';
-import { computePaidEffectInputDigest } from '@/core/migration/paid-effect-protocol';
+import { computePaidEffectInputDigest } from '@/core/paid-work/protocol/paid-effect-protocol';
 import type { ItemPriorDraftT } from '@/core/schema/item_prior';
 import type { Db, Tx } from '@/db/client';
 import { item_calibration, knowledge, question } from '@/db/schema';

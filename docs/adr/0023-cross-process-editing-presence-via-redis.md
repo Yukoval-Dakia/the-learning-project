@@ -3,8 +3,10 @@
 **Status:** Accepted
 **Date:** 2026-05-30 (accepted via PR for YUK-148)
 **Supersedes:** —
-**Superseded by:** 部分迁移 — YUK-321 M5（2026-06-13）：共享后端 Redis → PG 表 `editing_presence`，见文末「M5 迁移注」
+**Superseded by:** YUK-321 M5（2026-06-13）：Redis 后端已全部删除，presence 走 PG 表 `editing_presence`，见文末「M5 迁移注」
 **Related:** ADR-0007（single-user assumption — reaffirmed）/ ADR-0020（block-tree note rebuild）/ ADR-0022（TipTap PM node schema）
+
+> **2026-11-07 现状：** 仓库已无 Redis/ioredis 依赖或 `src/server/redis/`；presence 由 PG 表 `editing_presence`（`src/db/schema/artifacts.ts`）承载，consumer 在 `src/capabilities/notes/server/artifacts/presence/pg.ts`。本文的 Redis key/Lua/容器设计只作历史；继续成立的是 M5 迁移注列出的状态机语义与单写入者边界。
 
 ## Context
 
