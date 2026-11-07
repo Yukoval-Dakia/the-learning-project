@@ -465,7 +465,8 @@ postman/          # api-endpoints.json 真相源 + gen:postman manifest 对账�
 
 TEST runs on the NAS (`bancho-nb2.local`) at `/volume1/docker/tlp-test/` — project `the-learning-project` with a private `compose.private.json`, memory/CPU-limited containers, restart `unless-stopped`; `app` and Postgres bind `127.0.0.1:18787` / `127.0.0.1:15433` on the NAS only, never `0.0.0.0`. The NAS sshd forbids TCP forwarding, so the Mac reaches TEST through LaunchAgent `studio.yukoval.tlp-nas-tunnel`: a relay on `127.0.0.1:8787` where each connection is an ssh exec channel running a Python forwarder on the NAS (with a few warm channels parked, a request normally skips the ssh setup). The relay's Postgres ports (`5433`/`5544` → NAS `15433`) were closed on 2026-11-06 — dev scripts used to default to 5433, so those ports must not reach TEST; query TEST data over `ssh yukoval@bancho-nb2.local docker exec … psql` instead. `studio.yukoval.tlp-nas-watch` restarts the NAS memory watchdog after NAS reboots and alerts on a memory stop or unhealthy TEST. With the Mac off, TEST keeps running but is unreachable from outside, the Tailscale entry is down, and that day's backup does not run. Relay/watch reinstall steps and token/health rules are in [operations.md](/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/operations.md#网络与访问). Specific private addresses stay in owner private records, not this repo.
 
-AI tasks inherit `opencode-go/deepseek-v4.1-flash` from `DEFAULT_TASK_MODEL` with
+AI tasks inherit `opencode-go/deepseek-v4.1-flash` from `DEFAULT_TASK_MODEL`
+(`src/core/config/model-overrides.ts`) with
 `lane.global.reasoning={"level":"high"}`. Set `task.<kind>.reasoning={"level":"max"}`
 for a task override. `AI_PROVIDER_OVERRIDE` / `AI_PROVIDER_MODEL` remain process-wide
 provider/model emergency pins; clear both to exercise the defaults. Removed `mimo-v2.5*` stored
