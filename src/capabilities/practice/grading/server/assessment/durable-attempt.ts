@@ -40,6 +40,7 @@ import { readJudgeRunPermanent } from '../judge-run-observation';
 import type { NativeJudgeRunJobData } from '../judge-run-payload';
 import { NativeJudgeResolutionPayload } from '../judge-run-payload';
 import { JUDGE_RUN_EVENTS, nativeJudgeRunId } from '../judge-run-status';
+import { projectAttemptEvidence } from '../review-answer-response';
 import {
   type FormalAttemptCapture,
   commitFormalAttempt,
@@ -47,6 +48,7 @@ import {
   previewFormalAttempt,
   recordFormalAttemptCapture,
 } from './attempt';
+import { readSealedSelfClaim } from './self-claim';
 import type { SaveSubmissionRequest } from './submit';
 
 export const NATIVE_JUDGE_RESOLUTION = 'experimental:assessment_judge_resolution';
@@ -334,6 +336,16 @@ export async function executeNativeAttempt(
         'effective worker result requires a model-derived rating',
         500,
       );
+    // The pending payload is itself a first-write-wins seal of the accepted
+    // rating operation (a retry that changes it fails coordinate_mismatch), and
+    // the durable commit settles the judge-derived rating without re-sealing
+    // user_rating — so the frozen input fills what the receipts never wrote.
+    const sealedClaim = await readSealedSelfClaim(
+      tx,
+      input.submission_id,
+      input.evaluation_group_id,
+      candidateId,
+    );
     const wanted = {
       id: job.run_id,
       session_id: input.capture.session_id ?? null,
@@ -351,6 +363,17 @@ export async function executeNativeAttempt(
         judge_event_id: null,
         ...(finalRating ? { final_rating: finalRating } : {}),
         ...prepared.candidate.result,
+        evidence: projectAttemptEvidence({
+          assistance: prepared.assistance,
+          verdict: {
+            outcome: prepared.candidate.result.coarse_outcome,
+            score: prepared.candidate.result.score,
+          },
+          self_claim: {
+            rating: sealedClaim.rating ?? input.user_rating ?? null,
+            confidence: sealedClaim.confidence ?? input.capture.self_confidence ?? null,
+          },
+        }),
         assessment: {
           submission_id: input.submission_id,
           evaluation_group_id: input.evaluation_group_id,
@@ -368,6 +391,9 @@ export async function executeNativeAttempt(
       const {
         grading_provenance: _derived,
         feedback_md: _copy,
+        // Receipts sealed before this field shipped carry none; the read side
+        // degrades to "no evidence" instead of minting a mismatch on redeploy.
+        evidence: _evidence,
         ...rest
       } = payload as Record<string, unknown>;
       return rest;
