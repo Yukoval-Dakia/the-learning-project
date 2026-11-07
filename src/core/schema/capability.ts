@@ -88,6 +88,7 @@ const JudgeResultV2Base = z.object({
   feedback_md: z.string(),
   evidence_json: z.record(z.string(), z.unknown()),
   grading_provenance: z.array(GradingProvenanceEntry).optional(),
+  photo_judging_notice: z.literal('AI 判、未校准').optional(),
 });
 
 export const PartialUnknownJudgeResult = JudgeResultV2Base.extend({
