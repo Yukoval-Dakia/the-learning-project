@@ -227,6 +227,11 @@ export async function backtraceContext(
   if (view.status !== 'ready') return null;
   return JSON.stringify({
     anchor: view.anchor?.attempt_event_id,
+    current_error_md: view.anchor?.insight?.mechanism?.what_went_wrong_md.slice(0, 200),
+    current_key_step_md:
+      view.anchor?.insight?.method?.provenance === 'evidence'
+        ? view.anchor.insight.method.key_step_md.slice(0, 160)
+        : null,
     similar_mistakes: view.similar_mistakes.slice(0, 1).map((x) => ({
       attempt_event_id: x.attempt_event_id,
       why_md: x.why_md.slice(0, 180),
