@@ -249,7 +249,7 @@ export const question = pgTable(
     // `metadata.prompt_image_refs` is the legacy simple-image-ref path (still
     // written by ingestion for backwards-compatible readers; new code SHOULD
     // read from `image_refs` instead). See docs/archive/superpowers/specs/2026-05-21-
-    // math-mvp-vision-design.md §4 + docs/adr/0002 revision 2026-05-21.
+    // math-mvp-vision-design.md §4 + ADR-0002 revision 2026-05-21.
     figures: jsonb('figures').$type<FigureRefT[]>().notNull().default([]),
     image_refs: jsonb('image_refs').$type<string[]>().notNull().default([]),
     // `structured` is the recursive StructuredQuestion tree (stem/sub/standalone);

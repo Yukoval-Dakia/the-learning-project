@@ -55,6 +55,8 @@ export function providerFailureToPublicFailure(
 }
 
 export const COPILOT_PROVIDER_REJECTION_REPLY = '这次没答成，可以换个说法再试一次。';
+/** Stored as the reply when a run ended with nothing written and no provider failure to name. */
+export const COPILOT_FINALIZATION_FAILURE_REPLY = '这次回复未能完成，已有内容已保留。';
 
 function retryAfterSentence(seconds: number | undefined): string {
   if (seconds === undefined || seconds <= 0) return '';

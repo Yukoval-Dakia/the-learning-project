@@ -1,7 +1,7 @@
-// YUK-577 — copilot_nudge_evaluate handler: write + idempotency + shadow + red-line. design §3.3/§3.7.
+// YUK-577 — copilot_nudge_evaluate handler: write + idempotency + red-line. design §3.3.
 
 import { eq } from 'drizzle-orm';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { newId } from '@/core/ids';
 import { event, question_block, source_document } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
@@ -46,20 +46,8 @@ async function countNudges(): Promise<number> {
 }
 
 describe('runCopilotNudgeEvaluate', () => {
-  const savedEnv = process.env.COPILOT_NUDGE_ENABLED;
   beforeEach(async () => {
     await resetDb();
-    process.env.COPILOT_NUDGE_ENABLED = undefined;
-    // biome-ignore lint/performance/noDelete: env must be genuinely absent for the default-OFF test
-    delete process.env.COPILOT_NUDGE_ENABLED;
-  });
-  afterEach(() => {
-    if (savedEnv === undefined) {
-      // biome-ignore lint/performance/noDelete: restore absent state
-      delete process.env.COPILOT_NUDGE_ENABLED;
-    } else {
-      process.env.COPILOT_NUDGE_ENABLED = savedEnv;
-    }
   });
 
   it('is idempotent: two runs for the same completion → one nudge row', async () => {

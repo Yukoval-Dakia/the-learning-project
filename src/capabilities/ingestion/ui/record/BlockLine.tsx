@@ -1,7 +1,9 @@
 import { useState } from 'react';
+import { isLowJudgeConfidence } from '@/core/judge-confidence';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
+import { BlockFigures } from './BlockFigures';
 import { RescueButton, RevertButton } from './BlockTools';
-import { hasEmptyOptions, promptOf, withoutPrintedNumber } from './block-text';
+import { figuresOf, hasOptionsWithoutFigure, lineText, promptOf } from './block-text';
 import type { QuestionEdit, Readiness } from './import-draft';
 import { readiness } from './import-draft';
 import { KnowledgePick } from './KnowledgePick';
@@ -46,9 +48,20 @@ export function BlockLine({
   check?: { marked: boolean; disabled: boolean; onToggle: () => void };
 }) {
   const [editing, setEditing] = useState(false);
-  const emptyOptions = hasEmptyOptions(block) ? (
-    <p className="rc-line-note">选项的文字没读出来，可能是图，对照原页看。</p>
-  ) : null;
+  // A question still waiting here has no recorded judgement yet, only how sure the reading was.
+  const lowConfidence = isLowJudgeConfidence(
+    block.workflow_judge_confidence ?? block.extraction_confidence,
+  );
+  const emptyOptions = hasOptionsWithoutFigure(block);
+  // A question that is only pictures has no words to miss.
+  const noWords = figuresOf(block).length > 0 ? '' : '（没认出文字）';
+  const notes =
+    lowConfidence || emptyOptions ? (
+      <p className="rc-line-note">
+        {lowConfidence && <span>这道题认得把握不高，对照原页看一下。</span>}
+        {emptyOptions && <span>选项可能是图，对照原页看。</span>}
+      </p>
+    ) : null;
   const first = block.page_spans?.[0];
   const page = first ? first.page_index + 1 : null;
   const hover = {
@@ -72,9 +85,10 @@ export function BlockLine({
         </span>
         <div className="rc-line-main">
           <MathMarkdown className="rc-line-text">
-            {withoutPrintedNumber(promptOf(block), block) || '（没认出文字）'}
+            {lineText(promptOf(block), block) || noWords}
           </MathMarkdown>
-          {emptyOptions}
+          <BlockFigures block={block} />
+          {notes}
           <div className="rc-line-tools">
             {check && (
               <label className="rc-switch rc-switch-sm">
@@ -120,10 +134,11 @@ export function BlockLine({
           />
         ) : (
           <MathMarkdown className="rc-line-text">
-            {withoutPrintedNumber(edit.prompt, block) || '（没认出文字）'}
+            {lineText(edit.prompt, block) || noWords}
           </MathMarkdown>
         )}
-        {emptyOptions}
+        <BlockFigures block={block} />
+        {notes}
         {!edit.skip && (
           <KnowledgePick
             value={edit.knowledgeIds}

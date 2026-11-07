@@ -1,11 +1,9 @@
 // copilot 主动开口触发线：pg-boss handler（FAST 队列，按需 job）。
 //
 // producer post-commit `boss.send(COPILOT_NUDGE_EVALUATE_QUEUE, {kind, session_id})`
-// → 本 handler 在 worker 进程跑确定性判定 + 写触发留痕 event。**无 kill-switch 首行
-// early-return**——SHADOW 模型下 flag OFF 仍照跑照写（shadow=true），surfacing 由
-// event.shadow + 读模型 gate，不 gate 判定/写入。FAST 档无 DLQ 无 retryLimit，但
-// expire/crash 仍 redeliver + 无 singleton 并发 → partial unique index
-// （caused_by_event_id）+ 23505 捕获是 per-source 幂等保证。
+// → 本 handler 在 worker 进程跑确定性判定 + 写触发留痕 event（写出即可见）。
+// FAST 档无 DLQ 无 retryLimit，但 expire/crash 仍 redeliver + 无 singleton 并发
+// → partial unique index（caused_by_event_id）+ 23505 捕获是 per-source 幂等保证。
 
 import type { Job } from 'pg-boss';
 import { z } from 'zod';
@@ -64,9 +62,7 @@ export async function runCopilotNudgeEvaluate(db: Db, input: NudgeEvaluateInput)
       // observe-only：opt out memory outbox。
       ingest_at: new Date(),
     });
-    console.log(
-      `[copilot_nudge_evaluate] ${inputRef} fired kind=${decision.event.payload.kind} shadow=${decision.event.payload.shadow}`,
-    );
+    console.log(`[copilot_nudge_evaluate] ${inputRef} fired kind=${decision.event.payload.kind}`);
   } catch (err) {
     if (isUniqueViolation(err)) {
       console.log(`[copilot_nudge_evaluate] ${inputRef} duplicate (unique index) — skipped`);

@@ -13,6 +13,7 @@ import {
   validateResponseSpec,
   validateScoringBasis,
   validateStructure,
+  wrongResponseFullMarksIssues,
 } from '@/core/schema/assessment/index';
 import type { Db, Tx } from '@/db/client';
 import { source_asset } from '@/db/schema';
@@ -414,7 +415,7 @@ async function runCheckBankInSnapshot(
 
     if (check.kind === 'contract_valid') {
       const interpretation =
-        '对每个 ref 的已存版本重跑发布期纯校验器（structure / response_spec / scoring_basis 三层，validateStructure/validateResponseSpec/validateScoringBasis）';
+        '对每个 ref 的已存版本重跑发布期纯校验器（structure / response_spec / scoring_basis 三层，再查错答不得满分）';
       if (badInCheck.length > 0 || resolved.length !== check.refs.length) {
         results.push(
           unknownResult(
@@ -438,6 +439,7 @@ async function runCheckBankInSnapshot(
           ...validateStructure(structure),
           ...validateResponseSpec(spec, structure),
           ...validateScoringBasis(basis, spec, structure),
+          ...wrongResponseFullMarksIssues(basis),
         ];
         if (issues.length > 0) allValid = false;
         evidence.push({

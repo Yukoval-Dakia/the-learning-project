@@ -40,7 +40,7 @@ interface Shared {
   onAttemptChanged(): void;
 }
 
-const RATING_WORDS = { again: '再练', hard: '模糊', good: '掌握' } as const;
+const RATING_WORDS = { again: '再练', hard: '模糊', good: '会了' } as const;
 const SOURCE_NOTE = '记入复习，来源是这次对话。';
 
 function Feedback({

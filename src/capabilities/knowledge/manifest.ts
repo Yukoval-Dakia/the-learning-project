@@ -287,6 +287,10 @@ export const knowledgeCapability = defineCapability({
         load: () => import('./server/tools/knowledge-readers').then((m) => m.queryKnowledgeTool),
       },
       {
+        name: 'get_knowledge_state',
+        load: () => import('./server/tools/knowledge-state').then((m) => m.getKnowledgeStateTool),
+      },
+      {
         name: 'get_subject_graph_overview',
         load: () =>
           import('./server/tools/knowledge-readers').then((m) => m.getSubjectGraphOverviewTool),

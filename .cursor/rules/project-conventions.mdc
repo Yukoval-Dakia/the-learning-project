@@ -6,7 +6,7 @@ alwaysApply: true
 
 # loom — project conventions
 
-> Authoritative details: `CLAUDE.md`, `AGENTS.md`, `docs/architecture.md`, `docs/adr/`.
+> Authoritative details: `CLAUDE.md`, `AGENTS.md`, `/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/architecture.md`, `/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/adr/`.
 > This file is a Cursor-mirror digest; when they disagree, the source docs win.
 
 ## Scope / session discipline
