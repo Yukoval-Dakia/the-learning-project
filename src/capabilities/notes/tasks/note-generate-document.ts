@@ -1,6 +1,4 @@
-import { TLP_BLOCK_FENCE_INFO } from '@/core/schema/blocks/fence';
 import type { ArtifactBodyBlocksT } from '@/core/schema/business';
-import { downgradeUnboundChartFenceBody } from '@/kernel/blocks/markdown-chart-fence';
 import { type NoteArtifactType, isNoteArtifactType } from '../server/note-artifact-types';
 
 // NoteGenerate used to ask the model for TipTap JSON. Math notes write LaTeX
@@ -441,15 +439,10 @@ function compileBlocks(src: string): PmNode[] {
         i += 1;
       }
       if (!closed) fail('unclosed code fence');
-      const body = code.join('\n');
-      const text =
-        language.split(/\s+/)[0] === TLP_BLOCK_FENCE_INFO
-          ? (downgradeUnboundChartFenceBody(body) ?? body)
-          : body;
       blocks.push({
         type: 'codeBlock',
         ...(language ? { attrs: { language } } : {}),
-        ...(text.length > 0 ? { content: [{ type: 'text', text }] } : {}),
+        ...(code.length > 0 ? { content: [{ type: 'text', text: code.join('\n') }] } : {}),
       });
       continue;
     }
