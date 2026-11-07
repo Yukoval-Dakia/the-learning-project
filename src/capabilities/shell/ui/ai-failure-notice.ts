@@ -10,9 +10,11 @@ const LEARNER_FELT_TASKS: ReadonlySet<string> = new Set([
   // Grading what the learner answered.
   'AssessmentRubricJudgeTask',
   'AssessmentRuleJudgeTask',
+  'JevScoringDecisionTask',
   'MultimodalDirectJudgeTask',
   'SemanticJudgeTask',
   'StepsJudgeTask',
+  'UnitDimensionFallback',
   // Material the learner brought in.
   'IngestionAgentTask',
   'StructureTask',
@@ -32,9 +34,24 @@ interface Alert {
   rule: string;
 }
 
+/**
+ * What closing also covers: an alert's failures land in the next night's digest under another key,
+ * and without this the same failures would show again the next morning.
+ */
+export function failureNoticeCloseKeys(input: {
+  digest?: { window: { to: string } };
+  alerts?: readonly Alert[];
+}): string[] {
+  const nextWindow = input.digest?.window.to;
+  if (!nextWindow) return [];
+  return (input.alerts ?? [])
+    .filter((alert) => alert.rule !== 'unsealed' && LEARNER_FELT_TASKS.has(alert.task_kind))
+    .map((alert) => `digest:${nextWindow}:${alert.task_kind}`);
+}
+
 /** A digest failure is one key per kind per night; an alert id already names its episode. */
 export function failureNoticeKeys(input: {
-  digest?: { window: { from: string }; degraded_kinds: readonly DegradedKind[] };
+  digest?: { window: { from: string; to: string }; degraded_kinds: readonly DegradedKind[] };
   alerts?: readonly Alert[];
 }): string[] {
   const digest = input.digest;
@@ -49,17 +66,14 @@ export function failureNoticeKeys(input: {
   ];
 }
 
-const WEEK_MS = 7 * 86_400_000;
-
 /**
  * A dependency notice has no episode id, and its `since` only moves once an outage outlasts the
- * read's 7-day window. Keying by the week of `since` keeps one outage to at most a weekly reminder.
+ * read's 7-day window. Keyed by that day, so a long outage reminds at most daily.
  */
 export function dependencyNoticeKey(notice: {
   dependency: string;
   category: string;
   since: string;
 }): string {
-  const week = Math.floor(Date.parse(notice.since) / WEEK_MS);
-  return `dep:${notice.dependency}:${notice.category}:${week}`;
+  return `dep:${notice.dependency}:${notice.category}:${notice.since.slice(0, 10)}`;
 }

@@ -33,7 +33,11 @@ import { SkeletonLines } from '@/ui-next/primitives/SkeletonLines';
 import { Button } from '@/ui-next/public';
 import { TodayHeader } from '@/ui-next/today/TodayHeader';
 import { AreaGate, type AreaStatus } from './AreaGate';
-import { dependencyNoticeKey, failureNoticeKeys } from './ai-failure-notice';
+import {
+  dependencyNoticeKey,
+  failureNoticeCloseKeys,
+  failureNoticeKeys,
+} from './ai-failure-notice';
 import { AiChangesStrip } from './blocks/AiChangesStrip';
 import { KpiRow } from './blocks/KpiRow';
 import { type PlacementProfileReader, ProfileBand } from './blocks/ProfileBand';
@@ -278,7 +282,7 @@ function buildDigestChips(d: OvernightDigest): DigestChip[] {
   return chips;
 }
 
-// Single source for the ['overnight-digest'] query config — DegradedKindsFlags and
+// Single source for the ['overnight-digest'] query config — AiFailureNotice and
 // OvernightDigestBand both read it; react-query dedupes the shared key (zero extra
 // network) and this hook keeps their queryFn/key from drifting apart.
 function useOvernightDigest() {
@@ -295,15 +299,17 @@ const AI_NOTICE_DISMISSALS_KEY = ['ai-notice-dismissals'] as const;
 function AiFailureNotice() {
   const client = useWorkbenchClient();
   const queryClient = useQueryClient();
-  const digest = useOvernightDigest().data;
-  const alerts = useQuery({
+  const digestQuery = useOvernightDigest();
+  const alertsQuery = useQuery({
     queryKey: TASK_FAILURE_ALERTS_KEY,
     queryFn: client.getTaskFailureAlerts,
-  }).data;
-  const dismissed = useQuery({
+  });
+  const dismissedQuery = useQuery({
     queryKey: AI_NOTICE_DISMISSALS_KEY,
     queryFn: client.listAiNoticeDismissals,
-  }).data;
+  });
+  const digest = digestQuery.data;
+  const alerts = alertsQuery.data;
   // Two notices can close at once, so each close only adds or takes back its own keys.
   const updateDismissed = (update: (keys: string[]) => string[]) =>
     queryClient.setQueryData<{ keys: string[] }>(AI_NOTICE_DISMISSALS_KEY, (current) => ({
@@ -316,8 +322,10 @@ function AiFailureNotice() {
       updateDismissed((current) => current.filter((key) => !keys.includes(key))),
     onSuccess: (saved) => updateDismissed((current) => [...new Set([...current, ...saved.keys])]),
   });
-  if (!dismissed) return null;
-  const closed = new Set(dismissed.keys);
+  // Wait for every source, so 知道了 closes all of it and a closed notice never flashes back. If
+  // the closed list can't be read, the failures still show.
+  if (digestQuery.isPending || alertsQuery.isPending || dismissedQuery.isPending) return null;
+  const closed = new Set(dismissedQuery.data?.keys ?? []);
   const failing = failureNoticeKeys({ digest, alerts: alerts?.alerts }).filter(
     (key) => !closed.has(key),
   );
@@ -341,7 +349,10 @@ function AiFailureNotice() {
           <CircleAlert size={16} aria-hidden="true" className="td-flag-ic" />
           <span className="td-flag-t">有些 AI 工作没做完</span>
           <span className="td-flag-s">相关的结果可能晚点到。</span>
-          {close(failing, '知道了')}
+          {close(
+            [...failing, ...failureNoticeCloseKeys({ digest, alerts: alerts?.alerts })],
+            '知道了',
+          )}
         </p>
       ) : null}
       {dependencies.map((notice) => (
@@ -410,7 +421,7 @@ export function OvernightDigestBand({ navigate }: { navigate: (to: string) => vo
           errorText="夜链交班暂不可用。"
           loading={<SkeletonLines rows={2} label="正在读取昨夜交班" />}
         >
-          {/* degraded_kinds red flags moved to <DegradedKindsFlags/> (position 1, [裁决 1]).
+          {/* AI failures show in <AiFailureNotice/>, above the brief.
               A quiet night (no overnight activity) shows the calm empty line. A served probe
               is NOT overnight activity, so it never suppresses this line — it renders in its
               own sibling below, independent of this digest query's state. */}

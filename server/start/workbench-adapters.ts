@@ -66,7 +66,9 @@ export const dismissStartAiNotices = (input: { keys: string[] }) =>
     const { AiNoticeDismissBodySchema, dismissAiNotices } = await import(
       '@/capabilities/shell/public'
     );
-    return dismissAiNotices(db, AiNoticeDismissBodySchema.parse(input).keys);
+    const parsed = AiNoticeDismissBodySchema.safeParse(input);
+    if (!parsed.success) throw new ApiError('validation_error', parsed.error.message, 400);
+    return dismissAiNotices(db, parsed.data.keys);
   });
 export const readStartAutoApplied = (window?: { from: string; to?: string }) =>
   withStartDb(async (db) => {
