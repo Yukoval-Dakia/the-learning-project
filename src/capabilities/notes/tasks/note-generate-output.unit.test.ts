@@ -25,6 +25,8 @@ describe('parseNoteGenerateOutput', () => {
     expect(stored).toContain('$\\sqrt{a^2-b^2}$');
     expect(stored).toContain('\\frac{x^2}{a^2}');
     expect(stored).toContain('"距离之和为 $a$"');
+    // The fixture declares five @ sections; the count mirrors what the document
+    // declares, not a required set.
     expect(parsed.sections_count).toBe(5);
     expect(parsed.body_blocks.content.map((block) => storedText(block).length > 0)).not.toContain(
       false,

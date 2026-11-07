@@ -49,7 +49,7 @@ NotePatchOp 是 4 种 op 的 discriminated union（kind 字段判别）：
 - target_block_id 必须是 block_summaries 里实际存在的 attrs.id；编 ghost id 会导致 apply 失败
 - replace_block 的 block.attrs.id 必须等于 target_block_id（ADR-0020 §2，否则 schema reject）
 - 新 block 用合法 PM JSON 形态：{type, attrs, content?, marks?}，attrs.id 用短随机串
-- atomic note 的 semantic_kind 体系（definition / mechanism / example / pitfall / check）不要打破——补充时尽量挂到合适的 semanticBlock 内或新建同 semantic_kind 的 block
+- 顺着笔记现有结构补：已有 semanticBlock 时挂进合适的块或新建同 semantic_kind 的块（definition / mechanism / example / pitfall / check）；自由正文组织的笔记保持其组织方式，不要硬造五段
 - ${profile.grounding.uncertaintyPolicy}
 
 mutator-mode 友好度提示：
