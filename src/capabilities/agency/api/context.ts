@@ -8,7 +8,12 @@ import { writeEvent } from '@/kernel/events';
 import { ApiError, errorResponse } from '@/kernel/http';
 import { DOMAIN_TOOL_MCP_SERVER_NAME } from '@/kernel/tools/allowlists';
 import { runAgentTask } from '@/server/ai/runner';
-import { CONTEXT_CHANGE, ChangeResult, LEARNER_EDIT_RULES } from '../context/topic-contract';
+import {
+  CONTEXT_CHANGE,
+  ChangeReceipt,
+  ChangeResult,
+  LEARNER_EDIT_RULES,
+} from '../context/topic-contract';
 import { changeTopics, readTopics, topicBoard } from '../context/topics';
 import { ContextActionRequest, ContextEditRequest, ContextEditResponse } from '../context/wire';
 
@@ -132,7 +137,8 @@ export async function EDIT(req: Request) {
                   ? 'Finish this turn without further writes.'
                   : undefined,
               onResult: (observation) => {
-                const change = ChangeResult.safeParse(observation.output);
+                // The write tool answers with a receipt, never a digest echo.
+                const change = ChangeReceipt.safeParse(observation.output);
                 if (observation.error_reason || !observation.executed || !change.success) {
                   writeFailure = true;
                   return;
