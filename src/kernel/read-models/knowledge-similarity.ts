@@ -20,6 +20,7 @@ import type { Db } from '@/db/client';
 import { embedCurrencyPredicate } from '@/db/embed-currency';
 import { knowledge } from '@/db/schema';
 import { toSqlVector } from '@/db/vector';
+import { HIDDEN_KNOWLEDGE_ID_PREFIXES } from './learner-knowledge-visibility';
 
 /**
  * Cosine distance ceiling for a match. The query embeds the full question while KCs
@@ -81,6 +82,13 @@ export async function matchKnowledgeBySimilarity(
   // sorted value.
   const distanceExpr = sql<number>`${knowledge.embedding} <=> ${toSqlVector(queryEmbedding)}::vector`;
 
+  // A synthetic fixture/canary node is internal scaffolding: it must never be
+  // attributed as a real question's knowledge point (YUK-1990). Same prefix list
+  // the learner read surface hides, so the two cannot drift.
+  const visibleId = HIDDEN_KNOWLEDGE_ID_PREFIXES.map(
+    (prefix) => sql`${knowledge.id} NOT LIKE ${`${prefix}%`}`,
+  );
+
   return (
     db
       .select({
@@ -103,6 +111,7 @@ export async function matchKnowledgeBySimilarity(
           eq(knowledge.role, 'kc'),
           sql`${knowledge.embedding} IS NOT NULL`,
           embedCurrencyPredicate(knowledge),
+          ...visibleId,
         ),
       )
       .orderBy(distanceExpr)

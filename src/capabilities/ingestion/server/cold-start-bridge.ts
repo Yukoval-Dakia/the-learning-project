@@ -15,6 +15,7 @@ import {
   type ColdStartBridgeOutputT,
 } from '@/core/schema/cold-start-bridge';
 import type { Db } from '@/db/client';
+import { markAiTaskRunOutputInvalid } from '@/server/ai/log';
 import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
 import { redactIngestionText } from './privacy-guard';
 
@@ -92,6 +93,7 @@ export async function runColdStartBridge(
   try {
     parsed = parseColdStartBridgeOutput(llmText);
   } catch (err) {
+    await markInvalid(params.db, taskRunId, err);
     if (err instanceof ColdStartBridgeError) throw err;
     throw new ColdStartBridgeError(
       'ColdStartPlacementBridgeTask output did not match ColdStartBridgeOutput schema',
@@ -103,9 +105,11 @@ export async function runColdStartBridge(
   // pick would create the child KC under a non-existent / wrong seed root.
   // 闭集校验机制保留：对象数组下按 id 判（display_name 只用于分类不作校验轴）。
   if (!knownSubjects.some((s) => s.id === parsed.subject_id)) {
-    throw new ColdStartBridgeError(
+    const err = new ColdStartBridgeError(
       `ColdStartPlacementBridgeTask returned out-of-vocabulary subject_id="${parsed.subject_id}" (allowed: ${knownSubjects.map((s) => s.id).join(', ')})`,
     );
+    await markInvalid(params.db, taskRunId, err);
+    throw err;
   }
 
   return {
@@ -113,4 +117,19 @@ export async function runColdStartBridge(
     ...(taskRunId !== undefined ? { task_run_id: taskRunId } : {}),
     ...(costUsd !== undefined ? { cost_usd: costUsd } : {}),
   };
+}
+
+/** A settled task run must not claim success when its text was unusable; best effort. */
+async function markInvalid(db: Db, taskRunId: string | undefined, err: unknown): Promise<void> {
+  if (taskRunId === undefined) return;
+  try {
+    await markAiTaskRunOutputInvalid(
+      db,
+      taskRunId,
+      err instanceof Error ? err.message : String(err),
+    );
+  } catch (markErr) {
+    // Marking is observability truth, not a reason to mask the parse failure.
+    console.error('[cold_start_bridge] failed to mark invalid task output', markErr);
+  }
 }
