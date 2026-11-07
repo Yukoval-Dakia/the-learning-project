@@ -1058,6 +1058,13 @@
       "when": 1794090346731,
       "tag": "0151_mute_mikhail_rasputin",
       "breakpoints": true
+    },
+    {
+      "idx": 152,
+      "version": "7",
+      "when": 1794090812454,
+      "tag": "0152_majestic_captain_universe",
+      "breakpoints": true
     }
   ]
 }
