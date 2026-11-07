@@ -415,7 +415,7 @@ async function runCheckBankInSnapshot(
 
     if (check.kind === 'contract_valid') {
       const interpretation =
-        '对每个 ref 的已存版本重跑发布期纯校验器（structure / response_spec / scoring_basis 三层，validateStructure/validateResponseSpec/validateScoringBasis）';
+        '对每个 ref 的已存版本重跑发布期纯校验器（structure / response_spec / scoring_basis 三层，再查错答不得满分）';
       if (badInCheck.length > 0 || resolved.length !== check.refs.length) {
         results.push(
           unknownResult(

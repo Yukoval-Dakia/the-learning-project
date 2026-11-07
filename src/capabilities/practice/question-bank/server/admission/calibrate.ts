@@ -116,7 +116,10 @@ function ruleExpectation(facts: RuleFacts, rule: ScoringUnitT['rule']): ProbeExp
 // typical_wrong 的期望是「低于满分」，不是规则自身的结果（规则自洽会把错答
 // 满分合法化）。规则对错答声明 unknown 同样未给满分 —— 不误伤 unknown 分支。
 function wrongAnswerExpectation(unit: ScoringUnitT, facts: RuleFacts): ProbeExpected {
-  if (unit.rule == null || unit.points == null) return ruleExpectation(facts, unit.rule);
+  // A zero-point unit has no marks to fall below; the rule's own result is the expectation.
+  if (unit.rule == null || unit.points == null || unit.points <= 0) {
+    return ruleExpectation(facts, unit.rule);
+  }
   return { kind: 'scored_below', max: unit.points };
 }
 
@@ -218,10 +221,15 @@ export async function freezeProbes(
         skip('typical_wrong', 'solver emitted an item id outside the declared universe');
         continue;
       }
+      const wrongFacts = setFacts(wrong.item_ids, keyIds);
+      if (wrongFacts.kind === 'set' && wrongFacts.wrong === 0 && wrongFacts.miss === 0) {
+        skip('typical_wrong', 'solver labelled the key itself as a wrong answer');
+        continue;
+      }
       push(
         'typical_wrong',
         { slot_id: slotId, kind: 'select', state: 'answered', item_ids: wrong.item_ids },
-        wrongAnswerExpectation(unit, setFacts(wrong.item_ids, keyIds)),
+        wrongAnswerExpectation(unit, wrongFacts),
         wrong.reason_md,
       );
     }

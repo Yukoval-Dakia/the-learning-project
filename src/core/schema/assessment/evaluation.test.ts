@@ -339,6 +339,21 @@ it('entry check rejects wrong-answer-full-marks rules; the shared barrier and ju
       judged: 5,
     },
     {
+      name: 'a rule that only zeroes one wrong pick still gives several wrong picks full marks',
+      slot: selectSlot,
+      criterion: selectCriterion(['a', 'b']),
+      rule: {
+        version: 1,
+        cases: [{ when: { picked: { eq: 1 } }, award: { points: 0 } }],
+        otherwise: { points: 5 },
+      },
+      points: 5,
+      comparator: 'set_compare',
+      entry: { slot_id: 'p1::r', kind: 'select', state: 'answered', item_ids: ['c'] },
+      entryIssues: ['rule_wrong_response_full_marks'],
+      judged: 0,
+    },
+    {
       name: 'degenerate select rule likewise',
       slot: selectSlot,
       criterion: selectCriterion(['a']),

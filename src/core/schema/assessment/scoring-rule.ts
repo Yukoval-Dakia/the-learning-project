@@ -283,7 +283,7 @@ export function validateScoringRule(
 
 /**
  * 仅提交/准入入口的加查（YUK-1468）：完全错误的作答 —— set 为只选非 key
- * 项（hit=0），single 为 correct=0 —— 在规则下不得拿满分。拿满分 = 规则
+ * 项（hit=0，选 1 到 4 个），single 为 correct=0 —— 在规则下不得拿满分。拿满分 = 规则
  * 写错（典型形态：cases:[] + otherwise:{points} 把兜底写成满分，错答也全给）。
  * unknown / 0 / 部分分都是合法错答结果，不误伤。
  *
@@ -295,24 +295,27 @@ export function validateScoringRuleWrongResponse(
   rule: ScoringRuleT,
   context: ScoringRuleContext,
 ): ScoringRuleIssue[] {
-  const wrongFacts: RuleFacts =
+  // hit=0 pins every set metric except picked, so several picked counts are checked.
+  const wrongFacts: RuleFacts[] =
     context.facts === 'set'
-      ? {
-          kind: 'set',
+      ? [1, 2, 3, 4].map((picked) => ({
+          kind: 'set' as const,
           hit: 0,
-          wrong: 1,
+          wrong: picked,
           miss: context.keyIds.length,
-          picked: 1,
+          picked,
           expected: context.keyIds.length,
           hit_ids: [],
-        }
-      : { kind: 'single', correct: 0 };
-  const wrongResult = evaluateScoringRule(rule, wrongFacts);
-  if (
-    context.points > 0 &&
-    wrongResult.kind === 'points' &&
-    context.points - wrongResult.points <= 1e-9 * Math.max(1, context.points)
-  ) {
+        }))
+      : [{ kind: 'single', correct: 0 }];
+  const wrongResult = wrongFacts
+    .map((facts) => evaluateScoringRule(rule, facts))
+    .find(
+      (result) =>
+        result.kind === 'points' &&
+        context.points - result.points <= 1e-9 * Math.max(1, context.points),
+    );
+  if (context.points > 0 && wrongResult?.kind === 'points') {
     return [
       {
         code: 'rule_wrong_response_full_marks',
