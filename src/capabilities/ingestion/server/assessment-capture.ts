@@ -1,6 +1,11 @@
 import { eq } from 'drizzle-orm';
 import { canonicalHash } from '@/core/migration/canonical';
 import type { ResponseSetT, ResponseSlotT, ScoringBasisT } from '@/core/schema/assessment';
+import type {
+  BBoxT,
+  HandwritingRedMarkT,
+  StructuredQuestionT,
+} from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
 import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
 import {
@@ -46,6 +51,14 @@ export interface CapturedUnitAnswer {
   text?: string;
   /** 该区域观测到红笔。 */
   red_ink_observed?: boolean;
+  /** 学习者自己标的红笔勾叉（证据，不代替判分）。 */
+  red_ink_mark?: HandwritingRedMarkT;
+  /** 手写转写的位置/版本来源；缺省 = 旧路径没有位置证据。 */
+  trace?: {
+    source: 'handwriting_trace_v1';
+    bbox: BBoxT;
+    confidence?: number;
+  };
 }
 
 interface CaptureInput {
@@ -71,6 +84,14 @@ interface UnitCaptureRecord {
   entry_kind: string;
   state: 'answered' | 'blank' | 'unknown' | 'omitted';
   ink: RedInkClassification | null;
+  /** 学习者红笔勾叉；只作作答证据，判分链不读本字段。 */
+  red_ink_mark?: HandwritingRedMarkT;
+  /** 转写版本与页内位置；证据可追溯，不作答案键。 */
+  trace?: {
+    source: 'handwriting_trace_v1';
+    bbox: BBoxT;
+    confidence?: number;
+  };
 }
 
 /** 红笔归类：观测到红笔才分类；post_correction 内容不计入作答。 */
@@ -80,6 +101,88 @@ function classifyInk(
 ): RedInkClassification | null {
   if (capture?.red_ink_observed !== true) return null;
   return preference ?? 'post_correction';
+}
+
+/** 叶题上的红笔勾/叉合并；同题勾叉都有 → mixed。 */
+function mergeRedMarks(
+  traces: ReadonlyArray<{ red_ink?: HandwritingRedMarkT }>,
+): HandwritingRedMarkT | undefined {
+  const marks = new Set(traces.map((trace) => trace.red_ink).filter(Boolean));
+  if (marks.size === 0) return undefined;
+  if (marks.has('mixed') || (marks.has('check') && marks.has('cross'))) return 'mixed';
+  return marks.has('check') ? 'check' : 'cross';
+}
+
+export interface LeafHandwritingCapture {
+  leaf_id: string;
+  capture: CapturedUnitAnswer;
+}
+
+/**
+ * 把每个叶题上的手写证据转成逐题捕获。只读 `extraction_evidence.handwriting`，
+ * 不读题面/答案字段；容器题（stem）的手写不归属到任何 leaf，避免串题。
+ */
+function collectHandwritingCaptures(
+  structured: StructuredQuestionT | null,
+): LeafHandwritingCapture[] {
+  if (!structured) return [];
+  const out: LeafHandwritingCapture[] = [];
+  const walk = (node: StructuredQuestionT) => {
+    const subs = node.sub_questions ?? [];
+    if (subs.length > 0) {
+      for (const sub of subs) walk(sub);
+      return;
+    }
+    const traces = node.extraction_evidence?.handwriting ?? [];
+    const text = traces
+      .map((trace) => trace.text.trim())
+      .filter((value) => value.length > 0)
+      .join('\n');
+    const redMark = mergeRedMarks(traces);
+    const redText = traces.some((trace) => trace.red_text === true);
+    const located = traces.find((trace) => trace.bbox.width > 0 && trace.bbox.height > 0);
+    if (text.length > 0 || redMark !== undefined || redText) {
+      out.push({
+        leaf_id: node.id,
+        capture: {
+          state: text.length > 0 ? 'answered' : 'unknown',
+          ...(text.length > 0 ? { text } : {}),
+          ...(redText ? { red_ink_observed: true } : {}),
+          ...(redMark !== undefined ? { red_ink_mark: redMark } : {}),
+          ...(located?.bbox !== undefined
+            ? {
+                trace: {
+                  source: 'handwriting_trace_v1' as const,
+                  bbox: located.bbox,
+                  ...(located.confidence !== undefined ? { confidence: located.confidence } : {}),
+                },
+              }
+            : {}),
+        },
+      });
+      return;
+    }
+    if (node.student_answer_present === true) {
+      // 结构看到手写，但没有可归属的文本：显式 unknown，不冒充空白。
+      out.push({ leaf_id: node.id, capture: { state: 'unknown' } });
+    }
+  };
+  walk(structured);
+  return out;
+}
+
+/** 任意节点报告了学生手写（容器手写也算，只是不归属到 leaf）。 */
+function hasStudentWorkSignal(structured: StructuredQuestionT | null): boolean {
+  if (!structured) return false;
+  const stack: StructuredQuestionT[] = [structured];
+  while (stack.length > 0) {
+    const node = stack.pop();
+    if (!node) continue;
+    if (node.student_answer_present === true) return true;
+    if ((node.extraction_evidence?.handwriting?.length ?? 0) > 0) return true;
+    for (const sub of node.sub_questions ?? []) stack.push(sub);
+  }
+  return false;
 }
 
 /** select 标签 → item_id：匹配 label_md 前导 token（"A. xxx" 取 "A"）。 */
@@ -121,7 +224,14 @@ function capturedEntryFor(
 ): import('@/core/schema/assessment').SlotResponseT | undefined {
   const ink = classifyInk(capture, ctx.redInkPreference);
   const record = (state: UnitCaptureRecord['state'], entry_kind: string = slot.kind) =>
-    ctx.records.push({ slot_id: slot.slot_id, entry_kind, state, ink });
+    ctx.records.push({
+      slot_id: slot.slot_id,
+      entry_kind,
+      state,
+      ink,
+      ...(capture?.red_ink_mark !== undefined ? { red_ink_mark: capture.red_ink_mark } : {}),
+      ...(capture?.trace !== undefined ? { trace: capture.trace } : {}),
+    });
   // post_correction：订正内容不算作答 —— 读不出原始作答即显式 unknown。
   const postCorrected = ink === 'post_correction';
   const unreadable = capture?.state === 'unknown' || postCorrected;
@@ -139,6 +249,15 @@ function capturedEntryFor(
               : null;
         } else if (capture?.item_labels != null) {
           const resolved = resolveSelectLabels(slot, capture.item_labels);
+          itemIds = resolved.ok ? resolved.item_ids : null;
+        } else if (capture?.text != null && capture.text.trim().length > 0) {
+          // 手写捕获可能只给了 "B" / "BD"；按标签解析，与 flat 回退同语义。
+          const labels = capture.text
+            .trim()
+            .toUpperCase()
+            .split(/[\s,，、]+/)
+            .filter(Boolean);
+          const resolved = resolveSelectLabels(slot, labels);
           itemIds = resolved.ok ? resolved.item_ids : null;
         } else if (ctx.allowFlat && ctx.flatText.trim().length > 0) {
           // flat 回退：圈选字母 → item（与旧 single/multi 的 label 解析同语义）。
@@ -224,7 +343,8 @@ function capturedEntryFor(
   // ---- legacy 槽位（旧题保持原行为；逐单元捕获可作用于选择/文本槽） ----
   const text = capture?.text ?? (ctx.allowFlat ? ctx.flatText : '');
   if (capture != null && capture.state === 'unknown') {
-    record('omitted', `${slot.kind}:unknown`);
+    // 旧槽位没有 unknown 响应态；但证据层仍需如实记未知，不能写成 omitted。
+    record('unknown', `${slot.kind}:unknown`);
     return undefined;
   }
   if (slot.kind === 'single_choice' || slot.kind === 'multi_choice') {
@@ -396,6 +516,36 @@ export async function captureIngestionOriginal(db: Db, input: CaptureInput) {
       const slotId = capture.slot_id ?? slotByUnitId.get(capture.scoring_unit_id ?? '');
       if (slotId != null && !captureBySlot.has(slotId)) captureBySlot.set(slotId, capture);
     }
+    // 逐题手写证据来自抽取阶段写进 structured 的 extraction_evidence。按 leaf
+    // (= part) 定位槽：一叶一槽才落文本；一叶多槽属于跨槽不确定，只记 unknown，
+    // 不把一段手写分给多个槽（不串题）。
+    const slotsByPart = new Map<string, string[]>();
+    for (const slot of slots) {
+      const list = slotsByPart.get(slot.part_id) ?? [];
+      list.push(slot.slot_id);
+      slotsByPart.set(slot.part_id, list);
+    }
+    for (const { leaf_id, capture } of collectHandwritingCaptures(current.structured)) {
+      const partSlots = slotsByPart.get(leaf_id) ?? [];
+      if (partSlots.length === 1) {
+        const slotId = partSlots[0];
+        if (slotId != null && !captureBySlot.has(slotId)) captureBySlot.set(slotId, capture);
+      } else if (partSlots.length > 1) {
+        for (const slotId of partSlots) {
+          if (!captureBySlot.has(slotId)) {
+            captureBySlot.set(slotId, {
+              state: 'unknown',
+              ...(capture.red_ink_mark !== undefined ? { red_ink_mark: capture.red_ink_mark } : {}),
+            });
+          }
+        }
+      }
+    }
+    // 容器（stem）报告了手写但没有可归属的叶题证据：整组槽显式 unknown，
+    // 不用空白或猜测填充。
+    if (captureBySlot.size === 0 && hasStudentWorkSignal(current.structured)) {
+      for (const slot of slots) captureBySlot.set(slot.slot_id, { state: 'unknown' });
+    }
     const entries: ResponseSetT['entries'] = [];
     // flat 文本只在全组单槽时可归属（旧行为）；逐单元捕获按槽精确落位。
     const allowFlat = slots.length === 1;
@@ -424,8 +574,14 @@ export async function captureIngestionOriginal(db: Db, input: CaptureInput) {
     const saved = await saveSubmission(tx, { ...request, actorRef: 'ingestion:capture' });
     if (!('submission' in saved))
       throw new ApiError(saved.status, 'capture original was not accepted', 409);
+    // Legacy flat response: keep the extracted text when present, else the
+    // per-question handwriting transcript. This is learner evidence, never a key.
+    const capturedResponseMd = entries
+      .flatMap((entry) => (entry.kind === 'text' || entry.kind === 'open' ? [entry.text_md] : []))
+      .filter((value) => value.trim().length > 0)
+      .join('\n');
     await recordFormalAttemptCapture(tx, 'ingestion_grading', questionId, saved.submission, null, {
-      response_md: text,
+      response_md: text.trim().length > 0 ? text : capturedResponseMd,
       session_id: session.id,
       ingestion: {
         block_id: block.id,
@@ -457,6 +613,10 @@ export async function enrollNativeCapture(
   db: Db,
   input: CaptureInput,
 ): Promise<AutoEnrolledBlock | null> {
+  // Deliberately retained: this is the only admission-gated commit path for a
+  // captured original. Slice 5 (grading) consumes it; deleting it would move the
+  // same logic there and drop the revert/withdrawal coverage below. It is NOT the
+  // production auto-enroll path — that one captures evidence without grading.
   const captured = await captureIngestionOriginal(db, input);
   if (!captured?.admitted || !input.canEnroll || captured.knowledgeIds.length === 0) return null;
   let enrolled: AutoEnrolledBlock | null = null;

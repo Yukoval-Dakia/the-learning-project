@@ -40,9 +40,20 @@ export type FigureRefT = z.infer<typeof FigureRef>;
 
 // ---------- StructuredQuestion 抽取证据 ----------
 
+// 学习者手写的红笔勾叉：是学习者自己标的记号，只作作答证据，不进入判分。
+// jsonb-internal，同 kind / student_answer_present 先例，不是 DDL 列。
+export const HandwritingRedMark = z.enum(['check', 'cross', 'mixed']);
+export type HandwritingRedMarkT = z.infer<typeof HandwritingRedMark>;
+
 export const HandwriteInfo = z.object({
   text: z.string(),
   bbox: BBox,
+  /** 该题作答区域的红色勾/叉；'mixed' = 同时有勾和叉。缺省 = 未观测到红笔勾叉。 */
+  red_ink: HandwritingRedMark.optional(),
+  /** 转写文本本身是红笔（例如红笔订正），不是黑/蓝笔作答。 */
+  red_text: z.boolean().optional(),
+  /** 转写置信度；缺省 = 未知，不冒充高置信。 */
+  confidence: z.number().min(0).max(1).optional(),
 });
 
 export const TencentGrading = z.object({
