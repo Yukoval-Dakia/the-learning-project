@@ -18,6 +18,7 @@ import {
 } from '@/core/paid-work/server/paid-effect-store';
 import type { Db, Tx } from '@/db/client';
 import { ai_task_runs, paid_effect } from '@/db/schema';
+import { classifyLoginFailure } from '@/server/ai/login-failure';
 import { assertModelProfileCapabilityFit } from '@/server/ai/model-profiles';
 import {
   planProviderTransientRetry,
@@ -159,7 +160,9 @@ function existingRecovery(
   if (error.helpProviderFault?.kind === 'quota')
     return { reason: 'quota', evidence_ref: error.taskRunId };
   if (httpStatus === 429) return { reason: 'quota', evidence_ref: error.taskRunId };
-  if (httpStatus === 401 && kind === 'QuestionAdmissionAdjudicateTask')
+  // Typed login evidence (credential-store failure or bound 401), never
+  // message text. Still adjudicator-gated: only its waits have a probe clock.
+  if (kind === 'QuestionAdmissionAdjudicateTask' && classifyLoginFailure(error))
     return { reason: 'login', evidence_ref: error.taskRunId };
   return null;
 }

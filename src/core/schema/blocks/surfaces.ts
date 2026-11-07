@@ -6,7 +6,16 @@ import type { BlockKind } from './block';
 export type BlockSurface = 'chat' | 'note' | 'question_material';
 
 export const BLOCK_SURFACE_KINDS: Record<BlockSurface, readonly BlockKind[]> = {
-  chat: ['diagram', 'figure', 'chart', 'plot', 'interactive', 'question_ref', 'entity_card'],
+  chat: [
+    'diagram',
+    'figure',
+    'chart',
+    'plot',
+    'interactive',
+    'question_ref',
+    'entity_card',
+    'drawing',
+  ],
   note: ['diagram', 'figure', 'chart', 'plot', 'interactive', 'question_ref'],
   // Never interactive, question_ref or entity_card on a frozen question surface.
   question_material: ['diagram', 'figure', 'chart', 'plot'],
