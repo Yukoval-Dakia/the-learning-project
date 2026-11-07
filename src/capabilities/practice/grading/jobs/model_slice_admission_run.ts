@@ -108,8 +108,8 @@ export function holdoutItemFromOutcome(
     agreed,
     severe_error: severe,
     run_refs: outcome.run_refs,
-    // 判分理由原样随证据落账，不进 output_digest / 参考比较 / slice 身份；
-    // 那些结构只看分数与定夺 outcome。
+    // outcome 本就含 feedback_md/evidence_citations，这里只复制到证据 item；
+    // 不改 output_digest 的计算与比较字段，也不进参考比较或 slice 身份。
     ...(outcome.feedback_md !== undefined ? { feedback_md: outcome.feedback_md } : {}),
     evidence_citations: outcome.evidence_citations,
     ...(outcome.cost_usd_micros !== undefined ? { cost_usd_micros: outcome.cost_usd_micros } : {}),
