@@ -143,8 +143,20 @@ it('retains clean and unverified option crops but withholds known handwriting', 
     withheld: boolean;
     unverified: boolean;
   }> = [
-    { handwriting: false, optionLabel: 'A', figures: [['A', false]], withheld: false, unverified: false },
-    { handwriting: null, optionLabel: 'A', figures: [['A', true]], withheld: false, unverified: true },
+    {
+      handwriting: false,
+      optionLabel: 'A',
+      figures: [['A', false]],
+      withheld: false,
+      unverified: false,
+    },
+    {
+      handwriting: null,
+      optionLabel: 'A',
+      figures: [['A', true]],
+      withheld: false,
+      unverified: true,
+    },
     { handwriting: true, optionLabel: 'A', figures: [], withheld: true, unverified: false },
     // A model that omits the judgment leaves that crop unknown; it must not fail
     // the whole StructureOutput parse and fall back to OCR for every page.
