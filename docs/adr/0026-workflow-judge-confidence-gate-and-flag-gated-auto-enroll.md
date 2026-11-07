@@ -1,11 +1,14 @@
 # ADR-0026 — WorkflowJudge 置信闸门 + flag-gated 保守自动入库（OC-4 / OC-5）
 
-**状态**：accepted（§1–2 partially superseded — 见下方 2026-06-23 amendment）
+**状态**：accepted（§1–2 partially superseded — 见下方 2026-06-23 amendment；2026-11-07 现状见注记）
 **日期**：2026-05-30 (T-OC slice 3 / YUK-145)
 **Supersedes**：—
 **Superseded by**：ADR-0045（§1–2 tagging 机制；§3–4 仍有效）
 
 > **Amendment 2026-06-23 (YUK-489)** — §1（TaggingTask = 题面+网格→{suggestions,confidence}）与 §2（WorkflowJudge `min(extraction,tagging)` 置信门驱动 KC 归属）**已被取代**：标注轴现走统一 `tagKnowledge`（embedding cosine match-or-propose，跑全部题目创建入口），auto-enroll ENROLL 路径不再用 grid-tagging 的 confidence 驱动归属（合成一个 full-confidence TaggingOutput 喂 judge 以保结构不变），死的 `knowledge_ids:[]` 零匹配门已删。详见 `docs/design/2026-06-22-unified-tagging-axis.md` + ADR-0045。**§3（flag-gated 保守 rollout）+ §4（`enrollCapturedBlock` 唯一入库 owner）仍完全有效**——本 amendment 只取代 tagging/judge 前半，不动入库 owner 与 flag rollout。OBSERVE 模式仍跑原 TaggingTask（零-mutation 探针）。
+
+> **2026-11-07 现状：** WorkflowJudge 的 `min(extraction, tagging)` 置信门仍在分流——`src/capabilities/ingestion/server/workflow-judge.ts:41-58` 仍按 `confidence >= threshold && hasSuggestions` 返回 `auto | review`。YUK-1782（C5）要把它改为「置信度落库为信号、不再路由」，**待做**，未落地；本 ADR §2 在代码上仍承重，不能当已退役读。另：`WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED` 的代码默认已在 YUK-1777（PR #2455）改为开启（`src/capabilities/ingestion/server/workflow-judge-config.ts:1-6`），§3 的「默认 OFF」是当时决策，现由 config 快照与 `/admin/config` 控制。
+
 **Related**：ADR-0024（泛化捕获 — outcome 是 signal；本 ADR 复用其 `enrollCapturedBlock` 作为唯一入库 owner）/ ADR-0012（mastery as derived view）/ ADR-0014（generalized activity & capability registry）/ ADR-0002（VLM-owns-structure 方向，slice 2 已实装）
 
 > 起源：T-OC OCR/录入 pipeline 重建 design
