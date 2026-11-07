@@ -7,13 +7,18 @@
 //      which the accept applier answers softly rather than with the typed 409;
 //   4. page facts are unambiguous: page_spans form a strict +1 sequence in stored
 //      order, and the chain is not entirely the page-0 placeholder stamped by the
-//      docx/Tencent fallbacks;
+//      docx/Tencent fallbacks. A chain entirely on one page is provable only
+//      when its page is unambiguous (one shared source asset for page 0), and
+//      then reads adjacency from stored ordinals instead;
 //   5. adjacent pages follow the order mergeQuestions will mutate (caller mergeIds
-//      order, never re-sorted), each next block starting at prev.max + 1;
+//      order, never re-sorted), each next block starting at prev.max + 1. For a
+//      same-page chain, ordinals must be strictly increasing and contiguous
+//      among the session's live blocks;
 //   6. each adjacent pair has deterministic continuity: the next block has no own
-//      question number, or a same-style sub-number continues by one. A conflicting
-//      own number fails closed, and an unreadable own number is not treated as
-//      absent.
+//      question number, or a same-style sub-number continues by one — and on one
+//      page, even a sub-number continuation is not enough; the follower must
+//      carry no own number at all. A conflicting number fails closed, and an
+//      unreadable own number is not treated as absent.
 //
 // Check the draft arm before the proof arms so a chain that is both non-draft and
 // proof-deficient reports stale. Fail closed on every unknown; model confidence,
@@ -49,6 +54,10 @@ export interface BlockMergeAdmissionFacts {
     bbox: { x: number; y: number; width: number; height: number };
     role?: string;
   }>;
+  /** 0-based reading order inside the session — proves same-page adjacency. */
+  ordinal: number;
+  /** Source assets the block was cut from; one shared asset proves a one-page session. */
+  source_asset_ids: string[];
   structured: StructuredQuestionT | null;
 }
 
@@ -56,6 +65,14 @@ export interface BlockMergeAdmissionContext {
   factsById: ReadonlyMap<string, BlockMergeAdmissionFacts>;
   /** source_document ids that actually resolve (unknown docs fail closed). */
   knownDocumentIds: ReadonlySet<string>;
+  /**
+   * Every block's reading order in the chain's session(s), including non-draft
+   * rows — proves no live block sits between two same-page chain members.
+   */
+  sessionBlocks: ReadonlyMap<
+    string,
+    ReadonlyArray<{ id: string; ordinal: number; status: string }>
+  >;
 }
 
 export interface BlockMergeAdmissionInput {
@@ -318,6 +335,55 @@ export function evaluateBlockMergeAdmission(
     if (pages === null) return fail('ambiguous_page_index');
     provenRanges.push({ block: b, min: pages[0], max: pages[pages.length - 1] });
   }
+  // One photographed page can still split a question into adjacent fragments.
+  // The cross-page proof below cannot see that (page facts are degenerate), so
+  // a same-page chain proves adjacency from stored reading order instead, and
+  // proves continuity more strictly: the follower must carry no own number at
+  // all — two numbered blocks on one page are provably different questions.
+  const samePage = provenRanges.every((r) => r.min === r.max && r.min === provenRanges[0].min);
+  if (samePage) {
+    const page = provenRanges[0].min;
+    const sharedAssets = new Set(blocks.flatMap((b) => b.source_asset_ids));
+    // Page-0 spans on a multi-asset chain cannot be told from the docx/Tencent
+    // placeholder stamp, and a page >0 needs more than one asset to exist.
+    if (page === 0 ? sharedAssets.size !== 1 : sharedAssets.size < 2) {
+      return fail('ambiguous_page_index');
+    }
+    const chainIds = new Set(blocks.map((b) => b.id));
+    const siblings = ctx.sessionBlocks.get(blocks[0].ingestion_session_id) ?? [];
+    for (let i = 1; i < blocks.length; i += 1) {
+      const prev = blocks[i - 1];
+      const next = blocks[i];
+      if (next.ordinal <= prev.ordinal) return fail('pages_not_adjacent');
+      const interrupted = siblings.some(
+        (b) =>
+          !chainIds.has(b.id) &&
+          b.status !== 'ignored' &&
+          b.ordinal > prev.ordinal &&
+          b.ordinal < next.ordinal,
+      );
+      if (interrupted) return fail('pages_not_adjacent');
+      const lead = leadingQuestionNo(next);
+      if (lead !== null) {
+        return fail(lead.kind === 'unknown' ? 'missing_continuity' : 'conflicting_question_number');
+      }
+      // A numberless block can still be a whole question that merely lost its
+      // printed number (a real extraction failure mode), so the follower must
+      // be a bare text fragment — own options/answers/analysis/sub-questions
+      // would make it a different question and fail closed.
+      const root = next.structured;
+      if (
+        root === null ||
+        (root.options?.length ?? 0) > 0 ||
+        (root.answers?.length ?? 0) > 0 ||
+        (root.analysis?.length ?? 0) > 0 ||
+        (root.sub_questions?.length ?? 0) > 0
+      ) {
+        return fail('missing_continuity');
+      }
+    }
+    return { eligible: true, reason: undefined, ...base };
+  }
   if (provenRanges.every((r) => r.min === 0)) return fail('ambiguous_page_index');
 
   // Pages follow the mutation order, each block starting exactly one page after
@@ -361,10 +427,31 @@ export async function loadBlockMergeAdmissionContext(
             source_document_id: question_block.source_document_id,
             status: question_block.status,
             page_spans: question_block.page_spans,
+            ordinal: question_block.ordinal,
+            source_asset_ids: question_block.source_asset_ids,
             structured: question_block.structured,
           })
           .from(question_block)
           .where(inArray(question_block.id, ids));
+
+  const sessionBlocks = new Map<string, Array<{ id: string; ordinal: number; status: string }>>();
+  const sessionIds = [...new Set(rows.map((row) => row.ingestion_session_id))];
+  if (sessionIds.length > 0) {
+    const siblings = await db
+      .select({
+        id: question_block.id,
+        ingestion_session_id: question_block.ingestion_session_id,
+        ordinal: question_block.ordinal,
+        status: question_block.status,
+      })
+      .from(question_block)
+      .where(inArray(question_block.ingestion_session_id, sessionIds));
+    for (const row of siblings) {
+      const list = sessionBlocks.get(row.ingestion_session_id) ?? [];
+      list.push({ id: row.id, ordinal: row.ordinal, status: row.status });
+      sessionBlocks.set(row.ingestion_session_id, list);
+    }
+  }
 
   const docIds = [
     ...new Set(
@@ -384,6 +471,7 @@ export async function loadBlockMergeAdmissionContext(
   return {
     factsById: new Map(rows.map((row) => [row.id, row])),
     knownDocumentIds: new Set(docs.map((doc) => doc.id)),
+    sessionBlocks,
   };
 }
 

@@ -23,7 +23,7 @@ import {
   structuredToPromptMarkdown,
 } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
-
+import { parseQuestionNo } from '@/kernel/proposals/block-merge-admission';
 import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
 import { redactIngestionText } from './privacy-guard';
 import type { LayoutQuality } from './tencent_mark_parser';
@@ -50,6 +50,8 @@ export type StructureResult = {
   figureHandwriting?: StructureOutputT['figure_handwriting'];
   /** Absent when no preFigures were supplied or none were assigned. */
   figureAssignments?: FigureAssignment[];
+  /** Durable run id of the StructureTask call — binds its cost to the session. */
+  task_run_id?: string;
 };
 
 // ---------- Tencent text hint rendering ----------
@@ -110,6 +112,21 @@ function canonicalizeExplicitMathDelimiters(text: string): string {
   );
 }
 
+// Deterministic repair for the two observed contamination modes: the model left
+// the printed number or a standalone section header line inside prompt_text.
+// Moving them into their own fields preserves the printed numbering and keeps
+// section text out of the stem. Only a strictly-shaped leading token moves —
+// anything ambiguous stays in prompt_text, and a head number conflicting with
+// the node's own question_no stays (it may be genuine content).
+const PROMPT_HEAD_NUMBER_RE =
+  /^\s*(?:第\s*(\d{1,3})\s*题|(\d{1,3})\s*[.、．]|[（(]\s*(\d{1,3})\s*[)）]|(\d{1,3})\s*[)）])/u;
+
+// A leading line that is nothing but a Chinese-ordinal section header, e.g.
+// 「一、选择题」. Requires the line to end (newline or string end) right after
+// a section-y word so prose beginning 「一、…」 does not qualify.
+const SECTION_HEAD_LINE_RE =
+  /^\s*([一二三四五六七八九十]+、[^\n]{1,15}(?:题|卷|部分|篇|章|节|板块))[ \t]*(?:\n|$)/u;
+
 /**
  * Walks the VLM tree, assigns ids, and collects figure assignments into
  * `assignmentsOut` so the recursive walk needs no return value.
@@ -124,13 +141,36 @@ function nodeToStructured(
     isStem && node.sub_questions
       ? node.sub_questions.map((s) => nodeToStructured(s, assignmentsOut))
       : undefined;
+  let promptText = canonicalizeExplicitMathDelimiters(node.prompt_text);
+  let section = node.section?.trim() || undefined;
+  let questionNo = node.question_no?.trim() || undefined;
+
+  const sectionMatch = SECTION_HEAD_LINE_RE.exec(promptText);
+  if (sectionMatch && promptText.slice(sectionMatch[0].length).trim().length > 0) {
+    section = section ?? sectionMatch[1].trim();
+    promptText = promptText.slice(sectionMatch[0].length);
+  }
+
+  const numberMatch = PROMPT_HEAD_NUMBER_RE.exec(promptText);
+  if (numberMatch) {
+    const headDigits = numberMatch[1] ?? numberMatch[2] ?? numberMatch[3] ?? numberMatch[4];
+    const rest = promptText.slice(numberMatch[0].length).replace(/^[ \t]+/, '');
+    const own = questionNo === undefined ? null : parseQuestionNo(questionNo);
+    const sameNumber = own !== null && own.kind !== 'unknown' && own.value === Number(headDigits);
+    if (rest.trim().length > 0 && (own === null || sameNumber)) {
+      questionNo = questionNo ?? headDigits;
+      promptText = rest;
+    }
+  }
+
   const out: StructuredQuestionT = {
     id,
     role: node.role,
-    prompt_text: canonicalizeExplicitMathDelimiters(node.prompt_text),
+    prompt_text: promptText,
     source: 'vlm_structure',
   };
-  if (node.question_no) out.question_no = node.question_no;
+  if (questionNo) out.question_no = questionNo;
+  if (section) out.section = section;
   if (node.kind) out.kind = node.kind;
   if (node.options && node.options.length > 0)
     out.options = node.options.map((option) => ({
@@ -177,7 +217,7 @@ export type StructureRunTaskFn = (
   kind: string,
   input: { text: string; images: Array<{ data: string; mediaType: string }> },
   ctx: unknown,
-) => Promise<{ text: string }>;
+) => Promise<{ text: string; task_run_id?: string }>;
 
 export type RunStructureTaskParams = {
   /** Page images in page order (page 0 first). base64 data, no data: prefix. */
@@ -226,6 +266,7 @@ export async function runStructureTask(params: RunStructureTaskParams): Promise<
   }
   const runTaskFn = params.runTaskFn ?? makeRunTaskTextFn(params.db as Db);
   let llmText: string;
+  let taskRunId: string | undefined;
   try {
     const result = await runTaskFn(
       'StructureTask',
@@ -233,6 +274,7 @@ export async function runStructureTask(params: RunStructureTaskParams): Promise<
       params.ctx ?? {},
     );
     llmText = result.text;
+    taskRunId = result.task_run_id;
   } catch (err) {
     throw new StructureTaskError('StructureTask LLM call failed', { cause: err });
   }
@@ -263,5 +305,6 @@ export async function runStructureTask(params: RunStructureTaskParams): Promise<
     content_lost: parsed.content_lost ?? null,
     figureHandwriting: parsed.figure_handwriting,
     ...(assignmentsOut && assignmentsOut.length > 0 ? { figureAssignments: assignmentsOut } : {}),
+    ...(taskRunId !== undefined ? { task_run_id: taskRunId } : {}),
   };
 }

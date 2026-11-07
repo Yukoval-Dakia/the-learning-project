@@ -96,6 +96,12 @@ export type StructuredQuestionT = {
   id: string;
   role: 'stem' | 'sub' | 'standalone';
   question_no?: string;
+  /**
+   * 印刷栏目/大题区段名（如「一、选择题」「三、解答题」）。VLM StructureTask
+   * 或确定性后处理把它放进这个字段，绝不并入 prompt_text。jsonb-internal —
+   * NOT a DDL column（同 `kind`/`student_answer_present` 先例）。
+   */
+  section?: string;
   prompt_text: string;
   options?: { label: string; text: string }[];
   answers?: string[];
@@ -156,6 +162,7 @@ export const StructuredQuestion: z.ZodType<StructuredQuestionT> = z.lazy(() =>
       id: z.string().min(1),
       role: QuestionRole,
       question_no: z.string().optional(),
+      section: z.string().optional(),
       prompt_text: z.string(),
       options: z.array(QuestionOption).optional(),
       answers: z.array(z.string()).optional(),
@@ -281,6 +288,7 @@ export interface AddressableStructuredQuestion {
   id: string;
   role: 'stem' | 'sub' | 'standalone';
   question_no?: string;
+  section?: string;
   prompt_text: string;
   options?: { label: string; text: string }[];
   answers?: string[];
@@ -307,6 +315,7 @@ export function projectAddressableNode(q: StructuredQuestionT): AddressableStruc
     prompt_text: q.prompt_text,
   };
   if (q.question_no != null) node.question_no = q.question_no;
+  if (q.section != null) node.section = q.section;
   if (q.options != null) node.options = q.options.map((o) => ({ label: o.label, text: o.text }));
   if (q.answers != null) node.answers = [...q.answers];
   if (q.analysis != null) node.analysis = q.analysis;

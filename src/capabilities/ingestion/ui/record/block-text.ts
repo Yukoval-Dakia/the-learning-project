@@ -21,6 +21,12 @@ export function printedNumber(block: Block): string | null {
   return no ? no : null;
 }
 
+/** The column head printed over this question in the book, e.g. 一、选择题. */
+export function sectionOf(block: Block): string | null {
+  const section = block.structured?.section?.trim();
+  return section ? section : null;
+}
+
 function leaves(question: StructuredQuestionT): StructuredQuestionT[] {
   return question.sub_questions?.length ? question.sub_questions.flatMap(leaves) : [question];
 }

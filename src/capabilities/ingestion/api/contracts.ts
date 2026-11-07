@@ -617,8 +617,9 @@ export const IngestionHistoryPriorRunSchema = z
   .strict();
 
 const IngestionCostIdentitySchema = z.object({
-  kind: z.enum(['agent_task', 'ocr']),
-  task_run_id: z.string(),
+  kind: z.enum(['agent_task', 'extract_task', 'ocr']),
+  /** Null on extract-lane OCR operations: bound by derived operation id, not a run. */
+  task_run_id: z.string().nullable(),
   attempt_id: z.string().nullable(),
   operation_id: z.string().nullable(),
 });
@@ -626,7 +627,7 @@ const IngestionCostIdentitySchema = z.object({
 /** Session-owned observed evidence only; never the full package/admission bill. */
 export const IngestionSessionCostEvidenceSchema = z
   .object({
-    scope: z.literal('ingestion_agent_observed'),
+    scope: z.literal('ingestion_session_observed'),
     coverage: z.literal('partial'),
     /** DB snapshot time of cost identities + canonical costs, not all history. */
     as_of: z.iso.datetime(),

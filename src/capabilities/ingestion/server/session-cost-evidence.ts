@@ -8,6 +8,7 @@ import {
   IngestionSessionCostEvidenceSchema,
 } from '../api/contracts';
 import { AGENT_TASK_KIND, readAgentBudget } from './agent/budget-state';
+import { extractCostIdentitiesOf } from './extract-cost-identity';
 
 type Evidence = IngestionSessionCostEvidence;
 type Identity = Pick<
@@ -133,6 +134,34 @@ export async function readSessionCostEvidence(db: Db, sessionId: string): Promis
           if (binding == null && !missing.includes('historical_ocr_attribution_unproven'))
             missing.push('historical_ocr_attribution_unproven');
         }
+        // Extract lane: the job/enroll writers record their paid identities under
+        // the same envelope's own key. Task runs prove themselves by id; OCR page
+        // operations carry only the derived operation id — still unique to this
+        // session's extract operation anchor, so a match cannot cross sessions.
+        const extractIds = extractCostIdentitiesOf(budget);
+        for (const id of extractIds.task_run_ids) {
+          checked(identitySchema, id);
+          if (tasks.has(id)) unavailable('invalid_evidence');
+          tasks.set(id, {
+            kind: 'extract_task',
+            task_run_id: id,
+            operation_id: null,
+            attempt_id: null,
+          });
+        }
+        const extractOps = new Set<string>();
+        for (const operationId of extractIds.ocr_operation_ids) {
+          checked(uuidSchema, operationId);
+          if (operations.has(operationId)) unavailable('invalid_evidence');
+          const identity: Identity = {
+            kind: 'ocr',
+            task_run_id: null,
+            operation_id: operationId,
+            attempt_id: null,
+          };
+          operations.set(operationId, identity);
+          extractOps.add(operationId);
+        }
         if (tasks.size === 0 && operations.size === 0) missing.push('no_durable_identities');
 
         // No date/model/prefix/week ownership inference and no alternate SUM over
@@ -154,13 +183,19 @@ export async function readSessionCostEvidence(db: Db, sessionId: string): Promis
               sql` OR `,
             )}))`
           : sql`false`;
+        const extractOpFilter = extractOps.size
+          ? sql`(p.source = 'provider_attempt' AND p.operation_id IN (${sql.join(
+              [...extractOps].map((id) => sql`${id}`),
+              sql`, `,
+            )}))`
+          : sql`false`;
         const rawCosts =
-          taskIds.length || attemptIds.length
+          taskIds.length || attemptIds.length || extractOps.size
             ? await tx.execute(sql`
               ${providerCostProjectedCte(new Date(0))}
               SELECT p.ref, p.operation_id, p.task_kind, p.source, p.entry_kind,
                 p.cost_basis, p.cost_ref, p.currency, p.cost, p.provider, p.model
-              FROM projected p WHERE ${taskFilter} OR ${ocrFilter}
+              FROM projected p WHERE ${taskFilter} OR ${ocrFilter} OR ${extractOpFilter}
               ORDER BY p.source, p.ref, p.operation_id, p.provider, p.model,
                 p.currency, p.entry_kind, p.cost_basis, p.cost_ref, p.cost
             `)
@@ -207,14 +242,22 @@ export async function readSessionCostEvidence(db: Db, sessionId: string): Promis
           }),
         );
         for (const identity of tasks.values()) {
+          if (identity.task_run_id === null) unavailable('invalid_evidence');
           const state = taskStates.get(identity.task_run_id);
           if (state == null) note(identity, 'missing_task_run');
-          else if (state.task_kind !== AGENT_TASK_KIND) unavailable('invalid_evidence');
+          else if (identity.kind === 'agent_task' && state.task_kind !== AGENT_TASK_KIND)
+            unavailable('invalid_evidence');
           else if (state.status === 'running' || !state.finished)
             note(identity, 'task_in_progress');
         }
         for (const identity of operations.values()) {
-          if (identity.attempt_id == null) note(identity, 'missing_attempt_binding');
+          // Extract OCR operations bind by derived operation id alone; no attempt
+          // id is recorded for them, so the binding is not a gap.
+          if (
+            identity.attempt_id == null &&
+            !(identity.operation_id != null && extractOps.has(identity.operation_id))
+          )
+            note(identity, 'missing_attempt_binding');
         }
 
         const observed = new Set<Identity>();
@@ -222,7 +265,10 @@ export async function readSessionCostEvidence(db: Db, sessionId: string): Promis
         const currencies = new Map<string, Evidence['by_currency'][number]>();
         for (const raw of rawCosts) {
           const row = checked(projectedRowSchema, raw);
-          const identity = tasks.get(row.ref) ?? ocr.get(row.ref);
+          const identity =
+            tasks.get(row.ref) ??
+            ocr.get(row.ref) ??
+            (row.operation_id !== null ? operations.get(row.operation_id) : undefined);
           if (identity == null) unavailable('invalid_evidence');
           if (identity.kind === 'agent_task' && row.task_kind !== AGENT_TASK_KIND)
             unavailable('invalid_evidence');
@@ -289,7 +335,7 @@ export async function readSessionCostEvidence(db: Db, sessionId: string): Promis
         }
         // Identity arrays are liabilities/evidence gaps, never provider call counts.
         return checked(IngestionSessionCostEvidenceSchema, {
-          scope: 'ingestion_agent_observed',
+          scope: 'ingestion_session_observed',
           coverage: 'partial',
           as_of: time.toISOString(),
           total: null,

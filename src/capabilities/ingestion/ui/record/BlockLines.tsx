@@ -1,5 +1,6 @@
+import { Fragment } from 'react';
 import { BlockLine } from './BlockLine';
-import { printedNumber } from './block-text';
+import { printedNumber, sectionOf } from './block-text';
 import type { Block } from './record-api';
 import type { BlockServing } from './recording-model';
 
@@ -29,20 +30,29 @@ export function BlockLines({
   const anyPrinted = blocks.some((block) => printedNumber(block) !== null);
   const lineNumber = (block: Block, index: number) =>
     printedNumber(block) ?? (anyPrinted ? '–' : String(index + 1));
+  let lastSection: string | null = null;
   return (
     <ol className="rc-lines" aria-label="认出的题">
-      {blocks.map((block, i) => (
-        <BlockLine
-          key={block.id}
-          sessionId={sessionId}
-          block={block}
-          no={lineNumber(block, i)}
-          serving={serving.get(block.id) ?? null}
-          open={STILL_OPEN.has(status)}
-          photos={photos}
-          onHoverPage={onHoverPage}
-        />
-      ))}
+      {blocks.map((block, i) => {
+        // The book prints a column head once over its questions; show it where it starts.
+        const section = sectionOf(block);
+        const head = section !== lastSection ? section : null;
+        lastSection = section;
+        return (
+          <Fragment key={block.id}>
+            {head !== null && <li className="rc-line-sec">{head}</li>}
+            <BlockLine
+              sessionId={sessionId}
+              block={block}
+              no={lineNumber(block, i)}
+              serving={serving.get(block.id) ?? null}
+              open={STILL_OPEN.has(status)}
+              photos={photos}
+              onHoverPage={onHoverPage}
+            />
+          </Fragment>
+        );
+      })}
     </ol>
   );
 }
