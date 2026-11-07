@@ -341,6 +341,12 @@ export async function captureIngestionOriginal(db: Db, input: CaptureInput) {
           capture_block_version: block.version,
           capture_input_digest: sourceDigest,
           source_asset_ids: block.source_asset_ids,
+          // The judge confidence rides with the question as a signal; grading tiers
+          // are not derived from it here.
+          workflow_judge: {
+            confidence: input.confidence,
+            extraction_confidence: block.extraction_confidence,
+          },
         },
         actorRef: 'ingestion:capture',
         now,

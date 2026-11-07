@@ -10,7 +10,6 @@ import {
   DURABLE_COPILOT_EXECUTION_BUDGET,
   copilotConfigEffectiveFacts,
 } from '@/capabilities/copilot/public';
-import { ingestionConfigEffectiveFacts } from '@/capabilities/ingestion/public';
 import { knowledgeConfigEffectiveFacts } from '@/capabilities/knowledge/public';
 import { notesConfigEffectiveFacts } from '@/capabilities/notes/public';
 import type {
@@ -170,7 +169,6 @@ function buildEffectiveValues(): AdminConfigRuntimeFacts['effective_values'] {
   return {
     ...observabilityConfigEffectiveFacts(),
     ...practiceConfigEffectiveFacts(),
-    ...ingestionConfigEffectiveFacts(),
     ...knowledgeConfigEffectiveFacts(),
     ...copilotConfigEffectiveFacts(),
     ...notesConfigEffectiveFacts(),

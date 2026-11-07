@@ -1,13 +1,14 @@
 // GET /api/ingestion/[id]/blocks
 //
-// Returns the session's question_block rows for the review/import UI, including a
-// tolerant projection of the judge's auto-enroll observation when present.
+// Returns the session's question_block rows for the review/import UI, including the
+// stored judge confidence and a tolerant projection of the auto-enroll observation
+// when present.
 
 import { and, asc, eq, inArray } from 'drizzle-orm';
 
 import { MistakeEnrollOutcome } from '@/core/schema/mistake_enroll';
 import type { Db } from '@/db/client';
-import { event, question_block } from '@/db/schema';
+import { event, question, question_block } from '@/db/schema';
 import { learnerVisibleKnowledgeIds } from '@/kernel/read-models/learner-knowledge-visibility';
 
 export async function readIngestionSessionBlocks(db: Db, params: { id: string }) {
@@ -62,13 +63,34 @@ export async function readIngestionSessionBlocks(db: Db, params: { id: string })
   const observationByBlockId = new Map<string, (typeof observations)[number]>();
   for (const obs of observations) observationByBlockId.set(obs.subject_id, obs);
 
+  // The judge confidence is stored on the enrolled question's metadata. Read it
+  // back per block so the review surface can show the honest "把握不高" signal.
+  const importedQuestionIds = [
+    ...new Set(rows.map((r) => r.imported_question_id).filter((id): id is string => id !== null)),
+  ];
+  const judgeConfidenceByQuestionId = new Map<string, number | null>();
+  if (importedQuestionIds.length > 0) {
+    const questionRows = await db
+      .select({ id: question.id, metadata: question.metadata })
+      .from(question)
+      .where(inArray(question.id, importedQuestionIds));
+    for (const row of questionRows) {
+      judgeConfidenceByQuestionId.set(row.id, readWorkflowJudgeConfidence(row.metadata));
+    }
+  }
+
   return {
     rows: rows.map((r) => {
       const observation = observationByBlockId.get(r.id);
+      const projectedObservation = observation ? toAutoEnrollObservation(observation) : null;
+      const recordedConfidence = r.imported_question_id
+        ? (judgeConfidenceByQuestionId.get(r.imported_question_id) ?? null)
+        : null;
       return {
         ...r,
         created_at: Math.floor(r.created_at.getTime() / 1000),
-        auto_enroll_observation: observation ? toAutoEnrollObservation(observation) : null,
+        workflow_judge_confidence: recordedConfidence ?? projectedObservation?.confidence ?? null,
+        auto_enroll_observation: projectedObservation,
       };
     }),
   };
@@ -88,6 +110,9 @@ function toAutoEnrollObservation(row: {
     route: stringOrNull(payload.route),
     confidence: numberOrNull(payload.confidence),
     threshold: numberOrNull(payload.threshold),
+    // Only the TaggingTask observes a candidate grid, so only derive-mode events
+    // carry this. Enroll-mode blocks have no grid to truncate.
+    grid_truncated: booleanOrNull(payload.grid_truncated),
     reasoning: stringOrNull(payload.reasoning),
     suggested_knowledge_ids: learnerVisibleKnowledgeIds(
       stringArray(payload.suggested_knowledge_ids),
@@ -145,6 +170,17 @@ function wrongAnswerOrNull(value: unknown): WrongAnswer | null {
 
 function stringOrNull(value: unknown): string | null {
   return typeof value === 'string' ? value : null;
+}
+
+function booleanOrNull(value: unknown): boolean | null {
+  return typeof value === 'boolean' ? value : null;
+}
+
+/** The enrolled question's stored judge confidence, or null for older/other rows. */
+function readWorkflowJudgeConfidence(metadata: Record<string, unknown> | null): number | null {
+  const judge = metadata?.workflow_judge;
+  if (judge === null || typeof judge !== 'object' || Array.isArray(judge)) return null;
+  return numberOrNull((judge as Record<string, unknown>).confidence);
 }
 
 function numberOrNull(value: unknown): number | null {

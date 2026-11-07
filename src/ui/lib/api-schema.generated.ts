@@ -17213,6 +17213,7 @@ export interface operations {
                             auto_enroll_observation: {
                                 confidence: number | null;
                                 event_id: string;
+                                grid_truncated: boolean | null;
                                 mistake_draft: {
                                     cause: {
                                         analysis_md: string | null;
@@ -17458,6 +17459,7 @@ export interface operations {
                                 sub_questions?: unknown[];
                             } | null;
                             version: number;
+                            workflow_judge_confidence: number | null;
                             wrong_answer_md: string | null;
                         } & {
                             [key: string]: unknown;

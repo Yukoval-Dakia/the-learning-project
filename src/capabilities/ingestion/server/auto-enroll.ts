@@ -29,7 +29,6 @@ import {
   AUTO_ENROLL_MAX_BLOCKS_PER_RUN,
   type FlagEnv,
   autoEnrollEnabled,
-  autoEnrollThreshold,
   observeEnabled,
   studentAnswerGradingEnabled,
 } from '@/capabilities/ingestion/server/workflow-judge-config';
@@ -47,9 +46,10 @@ import type { WriteEventInput } from '@/kernel/events';
  * WorkflowJudge auto-enroll path.
  *
  * On by default; when switched off, blocks stay draft for human review. It tags and
- * judges at most AUTO_ENROLL_MAX_BLOCKS_PER_RUN draft blocks; 'auto' blocks are
- * enrolled through the same enrollCapturedBlock owner as the human path (only
- * provenance differs), and 'review' blocks stay untouched. It runs between
+ * judges at most AUTO_ENROLL_MAX_BLOCKS_PER_RUN draft blocks. The judge confidence
+ * is stored as a signal, not used to route: every structurally usable block enrolls
+ * through the same enrollCapturedBlock owner as the human path (only provenance
+ * differs). Blocks that fail tagging or enrollment stay draft. It runs between
  * extraction and review and never closes the session.
  */
 import { writeEvent } from '@/kernel/events';
@@ -94,7 +94,9 @@ export interface RunAutoEnrollParams {
   /** Restrict TaggingTask's candidate grid to one subject. */
   subjectId?: string;
   /** Test seam for observe-mode TaggingTask; enroll mode uses tagKnowledgeFn. */
-  runTaggingFn?: (params: RunTaggingTaskParams) => Promise<TaggingOutputT>;
+  runTaggingFn?: (
+    params: RunTaggingTaskParams,
+  ) => Promise<TaggingOutputT & { grid_truncated?: boolean }>;
   /**
    * Enroll-path tagging. Defaults to `tagKnowledge` (embedding match-or-propose); a throw
    * routes the block to review.
@@ -108,7 +110,7 @@ export interface RunAutoEnrollParams {
   runBlockAssemblyFn?: BlockAssemblyRunTaskFn;
   /** Naming seam passed to `tagKnowledge`; lets tests reuse a bridge result. */
   runColdStartBridgeFn?: ColdStartBridgeRunTaskFn;
-  /** Override env for flag and threshold reads. */
+  /** Override env for flag reads. */
   env?: FlagEnv;
   /** Shared wall-clock for the batch. */
   now?: Date;
@@ -133,8 +135,6 @@ export async function runAutoEnrollForSession(
     return { status: 'skipped:flag_off', enrolled: 0, routed_to_review: 0, blocks: [] };
   }
 
-  // Routing confidence does not grant native scoring admission.
-  const threshold = autoEnrollThreshold(env);
   const now = params.now ?? new Date();
   const runTaggingFn = params.runTaggingFn ?? runTaggingTask;
   const tagKnowledgeFn = params.tagKnowledgeFn ?? tagKnowledge;
@@ -229,9 +229,9 @@ export async function runAutoEnrollForSession(
     const scopedPageRefs = pageScopedQuestionImageRefs(block);
 
     // Enroll uses tagKnowledge, which always attributes at least one KC, so tagging is no
-    // longer a routing uncertainty. Synthesizing TaggingOutputT keeps the existing judge
+    // longer a routing uncertainty. Synthesizing TaggingOutputT keeps the judge shape
     // unchanged. Observe keeps the read-only TaggingTask because tagKnowledge mutates KCs.
-    let tagging: TaggingOutputT;
+    let tagging: TaggingOutputT & { grid_truncated?: boolean };
     if (mode === 'enroll') {
       try {
         // Resolve the PROPOSE parent. The production job passes no subjectId (subject is a
@@ -318,12 +318,11 @@ export async function runAutoEnrollForSession(
       }
     }
 
-    // Deterministic confidence gate.
+    // Deterministic confidence signal; it never decides the route.
     const verdict = runWorkflowJudge({
       defaultQuestionKind: capturedQuestionShape(block.structured).kind,
       extractionConfidence: block.extraction_confidence,
       tagging,
-      threshold,
     });
 
     const hasCapturedAnswer =
@@ -335,7 +334,8 @@ export async function runAutoEnrollForSession(
           knowledgeIds: verdict.prefilled.knowledge_ids,
           difficulty: verdict.prefilled.difficulty,
           confidence: verdict.confidence,
-          canEnroll: verdict.route === 'auto',
+          // Structural minimum only: a question needs at least one knowledge id.
+          canEnroll: verdict.prefilled.knowledge_ids.length > 0,
           pageRefs: scopedPageRefs,
           docUsage: sessionDocUsage,
           now,
@@ -349,12 +349,12 @@ export async function runAutoEnrollForSession(
       continue;
     }
 
-    // For an answered block routed auto, draft the mistake metadata once and share it:
+    // For an answered block, draft the mistake metadata once and share it:
     // observe attaches it to the audit event, enroll uses its outcome. A draft failure
     // leaves it undefined; non-draft faults re-raise so the job retries.
     let mistakeDraft: MistakeEnrollOutputT | undefined;
     const studentAnswer = block.wrong_answer_md?.trim() ?? '';
-    if (mode === 'observe' && verdict.route === 'auto' && studentAnswer.length > 0) {
+    if (mode === 'observe' && studentAnswer.length > 0) {
       // The enroll vocabulary must include owner-accepted overlay categories, or clamping
       // would push them all back to 'other'.
       const profile = await withActiveCauseCategoryOverlays(
@@ -377,7 +377,7 @@ export async function runAutoEnrollForSession(
       }
     }
 
-    // Observe writes one audit event per block for both routes, mutating no domain rows.
+    // Observe writes one audit event per block, mutating no domain rows.
     // A failed audit write logs and continues so one bad write never aborts the batch.
     if (mode === 'observe') {
       try {
@@ -391,16 +391,17 @@ export async function runAutoEnrollForSession(
           action: 'experimental:auto_enroll_observed',
           subject_kind: 'question_block',
           subject_id: block.id,
-          outcome: verdict.route === 'auto' ? 'success' : 'skipped',
+          outcome: 'success',
           payload: {
             mode: 'observe',
             generated_by: 'workflow_judge',
-            route: verdict.route,
             confidence: verdict.confidence,
-            threshold,
             reasoning: verdict.reasoning,
             extraction_confidence: block.extraction_confidence,
             tagging_overall_confidence: tagging.overall_confidence,
+            ...(tagging.grid_truncated !== undefined
+              ? { grid_truncated: tagging.grid_truncated }
+              : {}),
             suggested_knowledge_ids: verdict.prefilled.knowledge_ids,
             ingestion_session_id: params.sessionId,
             ...(mistakeDraft ? { mistake_draft: mistakeDraft } : {}),
@@ -416,13 +417,6 @@ export async function runAutoEnrollForSession(
       } catch (err) {
         console.error(`[auto_enroll:observe] writeEvent failed for block ${block.id}`, err);
       }
-      continue;
-    }
-
-    // tagKnowledge always attributes at least one KC, so a review route here means a
-    // genuinely low-confidence extraction: leave it draft for human review.
-    if (verdict.route !== 'auto') {
-      routedToReview += 1;
       continue;
     }
 
@@ -489,11 +483,11 @@ export async function runAutoEnrollForSession(
         // Placement excludes only 'draft'; null and 'active' both pass.
         draftStatus,
         extraMetadata: {
-          // Judge decision for traceability; this path is reached only on auto.
+          // The judge confidence is a signal stored with the question, not a route.
           workflow_judge: {
-            route: verdict.route,
-            judge_route: verdict.route,
             confidence: verdict.confidence,
+            extraction_confidence: block.extraction_confidence,
+            tagging_overall_confidence: tagging.overall_confidence,
             reasoning: verdict.reasoning,
           },
         },
@@ -558,8 +552,8 @@ export function observeEventId(sessionId: string, blockId: string): string {
 }
 
 /**
- * Adapts tagKnowledge ids to the TaggingOutputT the existing judge consumes. Attribution
- * is always structurally valid, so every suggestion is full-confidence.
+ * Adapts tagKnowledge ids to the TaggingOutputT the judge consumes. Attribution is
+ * always structurally valid, so every suggestion is full-confidence.
  */
 function synthesizeTaggingOutput(knowledgeIds: string[]): TaggingOutputT {
   return {

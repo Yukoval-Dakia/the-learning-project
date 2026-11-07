@@ -8,8 +8,6 @@ export {
   ColdStartBridgeError,
   runColdStartBridge,
 } from './server/cold-start-bridge';
-// Ingestion-owned config keys expose consumer-effective facts to the admin config seam.
-export { ingestionConfigEffectiveFacts } from './server/config-effective-facts';
 export { createManualMistake } from './server/create-manual-mistake';
 export { createIngestionSession } from './server/create-session';
 export type {
