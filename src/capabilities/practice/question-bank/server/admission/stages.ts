@@ -3,7 +3,12 @@ import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { AgentRunError, type AgentRunErrorFields } from '@/ai/agent-run-error';
 import { type HelpProviderFault, isHelpProviderFault } from '@/ai/help-provider-fault';
-import { boundTerminalHttpStatus, providerTransientVerdict } from '@/ai/provider-failure';
+import {
+  type ProviderTransientClass,
+  boundTerminalHttpStatus,
+  providerTransientResendable,
+  providerTransientVerdict,
+} from '@/ai/provider-failure';
 import { type TaskKind, resolveTaskBudget } from '@/capabilities/task-registry';
 import { getTaskOverride } from '@/core/config/store';
 import { canonicalHash } from '@/core/migration/canonical';
@@ -24,6 +29,7 @@ import { assertModelProfileCapabilityFit } from '@/server/ai/model-profiles';
 import {
   planProviderTransientRetry,
   providerTransientRetryPolicy,
+  settledAttemptEvidence,
   sleepMs,
 } from '@/server/ai/provider-transient-retry';
 import type { BoundRunTaskTextFn } from '@/server/ai/runner-fn';
@@ -304,20 +310,24 @@ export function admissionStageRunner(input: {
           }
           let retryClass = saved.retry_class;
           if (retryClass === undefined) {
-            // Old receipts carry no retry class; only the sealed task-run
-            // transport can establish not_sent. Missing evidence fails closed.
-            const [run] = await input.db
-              .select()
-              .from(ai_task_runs)
-              .where(eq(ai_task_runs.id, saved.fields.taskRunId));
+            // Old receipts carry no retry class — replay them under the same
+            // rules a live resend obeys: the sealed attempt must be settled,
+            // carry the unbilled-rejection receipt, and classify resendable.
+            // Paid/unknown attempts and quota fail closed like new data.
+            const evidence = await settledAttemptEvidence(input.db, saved.fields.taskRunId);
             retryClass =
-              run?.finished_at != null
+              evidence.settled && evidence.unbilled
                 ? providerTransientVerdict({
                     error: new AgentRunError(saved.fields as AgentRunErrorFields),
-                    transport: run.usage_json.transport,
+                    transport: evidence.transport,
                   })?.class
                 : undefined;
           }
+          if (
+            retryClass !== undefined &&
+            !providerTransientResendable(retryClass as ProviderTransientClass)
+          )
+            retryClass = undefined;
           if (row === previous) latestRetryClass = retryClass;
           if (retryClass === undefined) {
             notSentRetries++;
@@ -460,6 +470,18 @@ export function admissionStageRunner(input: {
                 !automaticLoginProbe
               )
                 throw new AdmissionWaiting(receipt.recovery, previous.unit, route);
+              // A waited resend re-issues the WHOLE call — earlier turns'
+              // billed work would be bought again. Same gate as a live resend:
+              // the evidence attempt must carry the unbilled-rejection
+              // receipt; a paid or unknown attempt never resends.
+              const resendEvidence = await settledAttemptEvidence(
+                input.db,
+                receipt.recovery.evidence_ref,
+              );
+              if (!resendEvidence.settled || !resendEvidence.unbilled)
+                throw new Error(
+                  'Admission wait resend lacks unbilled-rejection evidence; no resend',
+                );
               attempt = frozen.attempt + 1;
             }
           }
@@ -624,9 +646,11 @@ export function admissionStageRunner(input: {
             } else if (plan !== undefined && error instanceof AgentRunError) {
               receipt = {
                 kind: 'transient',
-                ...(plan.verdict.class === 'not_sent'
-                  ? { retry_class: plan.verdict.class, retry_delay_ms: plan.delayMs }
-                  : {}),
+                // Every class rides the receipt: replay reads it directly instead
+                // of re-deriving from the frozen error, and the not_sent ledger
+                // still owns its independent delay accounting.
+                retry_class: plan.verdict.class,
+                ...(plan.verdict.class === 'not_sent' ? { retry_delay_ms: plan.delayMs } : {}),
                 waited_ms: priorWaitedMs + plan.delayMs,
                 retry_not_before: new Date(Date.now() + plan.delayMs).toISOString(),
                 fields: {
