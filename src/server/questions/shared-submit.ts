@@ -41,6 +41,7 @@ import {
 import { newId } from '@/core/ids';
 import { encodeDraftRef, parseDraftRef } from '@/core/question-draft-ref';
 import { AgentRef } from '@/core/schema/business';
+import { QUESTION_EDIT_ACTION } from '@/core/schema/event/experimental';
 import {
   QuestionDraftDocument,
   type QuestionDraftDocumentT,
@@ -59,6 +60,7 @@ import {
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { getR2 } from '@/kernel/object-storage';
+import { SUBMIT_ATTRIBUTION_REASON } from '@/kernel/proposals/node-question-attachments';
 import { withAnswerClass } from '@/kernel/records/answer-class-write';
 import { publishedContractSeal } from '@/kernel/records/assessment-normalization';
 import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
@@ -620,7 +622,12 @@ export async function submitDraftQuestionInTx(
   const choicesMd = identity.choicesMd;
   // Row presence drives insert vs update; an empty lifecycle does not mean no row.
   const [existingRow] = await tx
-    .select({ id: question.id, source: question.source })
+    .select({
+      id: question.id,
+      source: question.source,
+      knowledge_ids: question.knowledge_ids,
+      version: question.version,
+    })
     .from(question)
     .where(eq(question.id, groupId))
     .limit(1);
@@ -868,6 +875,36 @@ export async function submitDraftQuestionInTx(
           version: sql`${question.version} + 1`,
         })
         .where(eq(question.id, groupId));
+      // The resubmit write bumps version but is otherwise silent about
+      // attribution; when it actually rewrites knowledge_ids the
+      // auto-ownership proof needs the change on record or a stale draft
+      // could masquerade as machine placement.
+      if (
+        existingRow != null &&
+        JSON.stringify(existingRow.knowledge_ids ?? []) !== JSON.stringify(doc.knowledge_ids)
+      ) {
+        await writeEvent(tx, {
+          id: newId(),
+          session_id: ctx.sessionId ?? null,
+          actor_kind: ctx.actorKind === 'system' ? 'system' : ctx.actorKind,
+          actor_ref: ctx.actorRef,
+          action: QUESTION_EDIT_ACTION,
+          subject_kind: 'question',
+          subject_id: groupId,
+          outcome: 'success',
+          payload: {
+            question_id: groupId,
+            previous_version: existingRow.version,
+            next_version: existingRow.version + 1,
+            before: { knowledge_ids: existingRow.knowledge_ids ?? [] },
+            after: { knowledge_ids: doc.knowledge_ids },
+            reason: SUBMIT_ATTRIBUTION_REASON,
+          },
+          caused_by_event_id: ctx.causedByEventId ?? null,
+          task_run_id: ctx.taskRunId ?? null,
+          created_at: now,
+        });
+      }
     } else if (lifecycle?.scoring_admission_state === 'admitted') {
       await tx
         .update(question)

@@ -16,8 +16,9 @@ import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import { findExistingRateEvent } from '@/kernel/proposals/applier-helpers';
 import {
+  KNOWLEDGE_UNDO_REFILE_REASON,
   isAutoOwnedAttachment,
-  loadRefileProofMap,
+  loadAttachmentChangeMap,
   selectNodeAttachedQuestions,
 } from '@/kernel/proposals/node-question-attachments';
 import { batchResolveAncestorIds } from '@/kernel/read-models/knowledge-tree';
@@ -94,11 +95,13 @@ export async function retractKnowledgeCreate(
     throw new Error('knowledge retraction requires the correction event id');
   }
 
-  // Question refiling below takes question rows FOR UPDATE. Every writer that
-  // can hold a question row (edit accepts, duplicate merges, the placement
-  // refile) enters the global learning-state lock first, so this archive takes
-  // it before any row locks — question holders then serialize behind the whole
-  // retract instead of meeting it mid-flight.
+  // Question refiling below takes question rows FOR UPDATE after the node
+  // lock. Writers that lock a node row before a question row (merge accepts,
+  // duplicate merges, the placement refile) share this learning-state lock, so
+  // they serialize whole-transaction behind it instead of meeting the retract
+  // mid-flight. Single-row editors that only hold the question lock (PATCH,
+  // resubmit) never take a node lock, so the node→question order cannot
+  // deadlock against them — the FOR UPDATE below just waits for their commit.
   await acquireLearningStateWriteLock(tx);
 
   const archiveEventId = newId();
@@ -182,22 +185,23 @@ export async function retractKnowledgeCreate(
       )[0]?.id
     : undefined;
 
-  // Only attachments the automation itself placed may be rewritten. A question
-  // a learner attached by hand — or edited after the automation moved it —
-  // blocks the whole retract instead of being silently re-rooted; every
-  // retract entry (inbox single, batch undo) lands here so the guard cannot
-  // be bypassed by skipping the batch classifier.
+  // Only attachments the automation itself placed may be rewritten. The shared
+  // event-history proof requires exactly one attribution change — the refile
+  // that put the question on this node; born-here rows, learner placements,
+  // merge rewrites and post-move edits all fail it and block the whole
+  // retract instead of being silently re-rooted. Every retract entry (inbox
+  // single, batch undo) lands here so the guard cannot be bypassed by
+  // skipping the batch classifier.
   const refs = await selectNodeAttachedQuestions(tx, nodeId, { forUpdate: true });
-  const refileProofs = await loadRefileProofMap(
+  const changes = await loadAttachmentChangeMap(
     tx,
-    nodeId,
     refs.map((row) => row.id),
   );
-  const foreign = refs.filter((row) => !isAutoOwnedAttachment(row, nodeId, refileProofs));
+  const foreign = refs.filter((row) => !isAutoOwnedAttachment(row, nodeId, changes));
   if (foreign.length > 0) {
     throw new ApiError(
       'conflict',
-      `knowledge_node retract blocked: ${foreign.length} question(s) still reference node ${nodeId} without auto-ownership proof`,
+      '已经有题目挂在这个知识点上，撤销会让它们失去归属，所以先保留了。',
       409,
     );
   }
@@ -229,7 +233,7 @@ export async function retractKnowledgeCreate(
         next_version: nextVersion,
         before: { knowledge_ids: row.knowledgeIds },
         after: { knowledge_ids: next },
-        reason: 'knowledge_undo_refile',
+        reason: KNOWLEDGE_UNDO_REFILE_REASON,
         archived_node_id: nodeId,
         refile_root_id: refileRoot ?? null,
       },

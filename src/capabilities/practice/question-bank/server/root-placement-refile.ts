@@ -9,14 +9,18 @@
 // Apply mode serializes under the shared learning-state write lock, then
 // FOR SHAREs the matched node before the question row FOR UPDATE — the same
 // node→question order the retract path uses, so a concurrent archive/undo
-// cannot leave the question pointing at a dead id. Only version=0 rows are
-// candidates: every edit path bumps question.version, so an untouched row is
-// the provable "no human ever chose this attachment" marker, and the move's
-// own version bump makes it a once-ever relocation. Each run writes a
-// QUESTION_EDIT_ACTION event with before/after attribution (the undo path
-// later uses it as the auto-ownership proof); draft questions never enroll
-// scheduling. Report mode performs no writes — the flag gate is checked by
-// the job wrapper, not inside the move.
+// cannot leave the question pointing at a dead id. Eligibility is
+// event-chronology, not version: only a row with zero attribution-changing
+// QUESTION_EDIT_ACTION events is a candidate — the first recorded change is
+// this move itself (once-ever), so a manual PATCH, a resubmit rewrite, a
+// merge, or an earlier refile/undo all permanently disqualify the row.
+// version is deliberately ignored: admission bumps it without choosing an
+// attachment. The apply-time CAS still pins the observed knowledge_ids and
+// version under FOR UPDATE. Each move writes a QUESTION_EDIT_ACTION event
+// with before/after attribution (the undo path later uses it as the
+// auto-ownership proof); draft questions never enroll scheduling. Report
+// mode performs no writes — the flag gate is checked by the job wrapper,
+// not inside the move.
 
 import { createId } from '@paralleldrive/cuid2';
 import { and, asc, eq, isNull, sql } from 'drizzle-orm';
@@ -27,6 +31,10 @@ import type { Db, Tx } from '@/db/client';
 import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
 import { knowledge, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events/index';
+import {
+  ROOT_PLACEMENT_REFILE_REASON,
+  loadAttachmentChangeMap,
+} from '@/kernel/proposals/node-question-attachments';
 import { SYNTHETIC_SUBJECT_ROOT_RE } from '@/kernel/read-models/placement-scope';
 import { enrollAddedKnowledgeScheduling } from './question-scheduling-enrollment';
 
@@ -121,10 +129,12 @@ function rootSubject(rootId: string): string | null {
 }
 
 async function scanCandidates(db: Db): Promise<{ candidates: CandidateRow[]; truncated: boolean }> {
-  // The full root-attached predicate lives in SQL: single-element knowledge_ids
-  // matching the synthetic subject-root shape, a recorded learner_topic, and
-  // version=0 (no human ever touched the row — see the module header). Moved
-  // questions leave this set entirely, so the scan page is not held by them.
+  // The root-attached predicate lives in SQL: single-element knowledge_ids
+  // matching the synthetic subject-root shape plus a recorded learner_topic.
+  // Ownership is then proven by event chronology: any attribution-changing
+  // QUESTION_EDIT_ACTION event — a manual PATCH, a resubmit rewrite, a merge,
+  // an earlier refile or undo — permanently removes the row from candidacy
+  // (each question moves at most once, and only before anyone chose for it).
   // random() ordering is the fairness mechanism: questions that can never
   // match (no live node / ambiguous name) stay in the set, and a fixed id
   // order would let enough of them starve every later candidate out of the
@@ -143,14 +153,13 @@ async function scanCandidates(db: Db): Promise<{ candidates: CandidateRow[]; tru
       and(
         sql`jsonb_array_length(${question.knowledge_ids}) = 1`,
         sql`${question.knowledge_ids} ->> 0 ~ '^seed:[^:]+:root$'`,
-        eq(question.version, 0),
         sql`${question.metadata} -> 'teaching_draft' ->> 'learner_topic' is not null`,
       ),
     )
     .orderBy(sql`random()`)
     .limit(REFILE_SCAN_LIMIT + 1);
   const truncated = rows.length > REFILE_SCAN_LIMIT;
-  const candidates: CandidateRow[] = [];
+  const shaped: CandidateRow[] = [];
   for (const row of rows.slice(0, REFILE_SCAN_LIMIT)) {
     const [only] = row.knowledgeIds;
     if (typeof only !== 'string' || !SYNTHETIC_SUBJECT_ROOT_RE.test(only)) continue;
@@ -159,9 +168,16 @@ async function scanCandidates(db: Db): Promise<{ candidates: CandidateRow[]; tru
     const learnerTopic = row.learnerTopic ?? '';
     const normTopic = normalizeKnowledgeNodeName(learnerTopic);
     if (!normTopic) continue;
-    candidates.push({ id: row.id, rootId: only, subject, learnerTopic, normTopic });
+    shaped.push({ id: row.id, rootId: only, subject, learnerTopic, normTopic });
   }
-  return { candidates, truncated };
+  const changes = await loadAttachmentChangeMap(
+    db,
+    shaped.map((row) => row.id),
+  );
+  return {
+    candidates: shaped.filter((row) => (changes.get(row.id)?.length ?? 0) === 0),
+    truncated,
+  };
 }
 
 function countStatuses(rows: RefileRow[]): Record<RefileStatus, number> {
@@ -214,12 +230,6 @@ async function applyOneMove(
     .limit(1)
     .for('update');
   if (row == null) return { status: 'skip:changed', detail: 'question gone' };
-  // Any edit — learner, editor, an earlier move — bumps version; a nonzero
-  // version means a human may have chosen this attachment and is never
-  // overridden.
-  if (row.version !== 0) {
-    return { status: 'skip:changed', detail: 'row touched' };
-  }
   // Edits — learner, editor, an earlier move — must stick: only rows still
   // root-attached in the same tree are eligible.
   if (row.knowledgeIds.length !== 1 || row.knowledgeIds[0] !== candidate.rootId) {
@@ -233,15 +243,10 @@ async function applyOneMove(
     return { status: 'skip:changed', detail: 'learner_topic changed' };
   }
 
-  const nextVersion = row.version + 1;
-  await tx
-    .update(question)
-    .set({ knowledge_ids: [node.id], updated_at: now, version: nextVersion })
-    .where(eq(question.id, row.id));
-
   // Generated parts snapshot the parent's persisted labels at materialization;
-  // a part still pointing at the same synthetic root follows the parent, while
-  // one edited to other ids counts as a deliberate placement and stays.
+  // a part still pointing at the same synthetic root may follow the parent —
+  // but only when its own history is just as untouched (checked per part
+  // below, never assumed from the parent's proof).
   const parts = await tx
     .select({
       id: question.id,
@@ -258,6 +263,27 @@ async function applyOneMove(
     )
     .orderBy(asc(question.id))
     .for('update');
+
+  // Re-prove ownership under the row locks: the candidate scan ran outside
+  // this transaction, and every attribution writer serializes on these rows.
+  const changes = await loadAttachmentChangeMap(tx, [row.id, ...parts.map((part) => part.id)]);
+  if ((changes.get(row.id)?.length ?? 0) > 0) {
+    return { status: 'skip:changed', detail: 'attribution history exists' };
+  }
+  const movableParts = parts.filter((part) => (changes.get(part.id)?.length ?? 0) === 0);
+
+  const updated = await tx
+    .update(question)
+    .set({ knowledge_ids: [node.id], updated_at: now, version: row.version + 1 })
+    .where(
+      and(
+        eq(question.id, row.id),
+        eq(question.version, row.version),
+        sql`${question.knowledge_ids} = ${JSON.stringify(row.knowledgeIds)}::jsonb`,
+      ),
+    )
+    .returning({ id: question.id });
+  if (updated.length === 0) return { status: 'skip:changed', detail: 'row changed under CAS' };
 
   const eventId = createId();
   const enrolledKnowledgeIds = new Set<string>();
@@ -292,18 +318,26 @@ async function applyOneMove(
         next_version: previousVersion + 1,
         before: { knowledge_ids: beforeIds },
         after: { knowledge_ids: [node.id] },
-        reason: 'root_placement_refile',
+        reason: ROOT_PLACEMENT_REFILE_REASON,
         learner_topic: row.learnerTopic,
         matched_node_name: node.name,
         ...extra,
       },
     });
 
-  for (const part of parts) {
-    await tx
+  for (const part of movableParts) {
+    const moved = await tx
       .update(question)
       .set({ knowledge_ids: [node.id], updated_at: now, version: part.version + 1 })
-      .where(eq(question.id, part.id));
+      .where(
+        and(
+          eq(question.id, part.id),
+          eq(question.version, part.version),
+          sql`${question.knowledge_ids} = ${JSON.stringify(part.knowledgeIds)}::jsonb`,
+        ),
+      )
+      .returning({ id: question.id });
+    if (moved.length === 0) continue;
     await enroll(part.draftStatus);
     await writeRefileEvent(part.id, part.knowledgeIds, part.version, {
       part_of_question_id: row.id,

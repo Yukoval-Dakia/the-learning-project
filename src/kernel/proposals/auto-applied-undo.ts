@@ -37,7 +37,7 @@ import { findExistingRateEvent } from './applier-helpers';
 import { PROPOSAL_AUTOAPPLY_ACTION } from './auto-apply';
 import {
   isAutoOwnedAttachment,
-  loadRefileProofMap,
+  loadAttachmentChangeMap,
   selectNodeAttachedQuestions,
 } from './node-question-attachments';
 
@@ -504,21 +504,20 @@ async function classifyKnowledgeNodes(
 
   // Auto-ownership replaces birth-metadata counting: an attachment blocks the
   // undo unless it is provably still the automation's own placement — the same
-  // rule the retract applier enforces, so the card verdict and the backend
-  // cannot disagree.
+  // event-history rule the retract applier enforces, so the card verdict and
+  // the backend cannot disagree.
   const questionCounts = new Map<string, number>();
   const foreignQuestionCounts = new Map<string, number>();
   for (const nodeId of nodeIds) {
     const attached = await selectNodeAttachedQuestions(db, nodeId);
-    const proofs = await loadRefileProofMap(
+    const changes = await loadAttachmentChangeMap(
       db,
-      nodeId,
       attached.map((row) => row.id),
     );
     questionCounts.set(nodeId, attached.length);
     foreignQuestionCounts.set(
       nodeId,
-      attached.filter((row) => !isAutoOwnedAttachment(row, nodeId, proofs)).length,
+      attached.filter((row) => !isAutoOwnedAttachment(row, nodeId, changes)).length,
     );
   }
 

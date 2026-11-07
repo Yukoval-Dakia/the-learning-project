@@ -22,12 +22,14 @@ async function main(): Promise<number> {
 
   const { db } = await import('@/db/client');
   const { getConfigFlag } = await import('@/core/config/store');
+  const { hydrateConfigFromDb } = await import('@/server/config/hydrate');
   const { runRootPlacementRefile } = await import(
     '@/capabilities/practice/question-bank/server/root-placement-refile'
   );
 
-  // --apply honours the same flag as the cron wrapper: with the flag off there
-  // is no write path, here or in the worker.
+  // --apply honours the same flag as the cron wrapper: hydrate first so the
+  // DB-managed value is what the check sees (same order as worker startup).
+  await hydrateConfigFromDb(db);
   if (mode === 'apply' && !getConfigFlag('QUESTION_ROOT_PLACEMENT_REFILE_ENABLED')) {
     console.error(
       '[root_placement_refile] --apply refused: QUESTION_ROOT_PLACEMENT_REFILE_ENABLED is off',
