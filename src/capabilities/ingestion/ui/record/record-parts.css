@@ -216,10 +216,25 @@
     font-weight: var(--un-fw-medium);
   }
 
+  /* A question's start keeps its formulas, on the two lines this row has. */
+  & .rc-row-md,
+  & .rc-row-md > * {
+    display: inline;
+    margin: 0;
+  }
+
   & .rc-row-clip {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  /* The list row's title, not the sheet's: that one shows in full. */
+  & .rc-row-title.rc-row-clip {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    white-space: normal;
   }
 
   & .rc-bar-sticky {

@@ -1,5 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
+import type { ReactNode } from 'react';
 import { useAssetUrl } from '@/ui/lib/assets';
+import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { RetryLine } from '@/ui-next/primitives/RetryLine';
 import { SectionHead } from '@/ui-next/primitives/SectionHead';
 import { SkeletonLines } from '@/ui-next/primitives/SkeletonLines';
@@ -28,6 +30,21 @@ function Thumb({ assetId }: { assetId: string | undefined }) {
   );
 }
 
+/**
+ * The start of a question on a row that is one button: 「1. 过点…」 must not turn into a list, and
+ * nothing inside can be its own link or picture.
+ */
+function titleSource(title: string): string {
+  return title
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/^(\s*)(\d+)([.)])/, '$1$2\\$3')
+    .replace(/^(\s*)([-+*#>])/, '$1\\$2');
+}
+
+const TITLE_COMPONENTS = {
+  a: ({ children }: { children?: ReactNode }) => <span>{children}</span>,
+};
+
 function Row({ row, onOpen, now }: { row: SessionRow; onOpen: () => void; now: number }) {
   const state = STATUS_WORDS[row.status] ?? { text: '', tone: 'neutral' };
   const count = row.item_count ?? row.block_count ?? 0;
@@ -39,7 +56,13 @@ function Row({ row, onOpen, now }: { row: SessionRow; onOpen: () => void; now: n
         <Thumb assetId={row.source_asset_ids[0]} />
         <span className="rc-row-main">
           <span className="rc-row-title rc-row-clip">
-            {[when, row.title].filter(Boolean).join(' · ')}
+            {when}
+            {when && row.title ? ' · ' : null}
+            {row.title ? (
+              <MathMarkdown className="rc-row-md" components={TITLE_COMPONENTS}>
+                {titleSource(row.title)}
+              </MathMarkdown>
+            ) : null}
           </span>
           <span className="rc-quiet">
             {materialWords(row.entrypoint, row.source_asset_ids.length)}
