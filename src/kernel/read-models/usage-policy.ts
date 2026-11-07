@@ -85,7 +85,14 @@ export async function resolveDocumentUsage(
   };
 }
 
-export type PurposeSource = { kind: 'question' | 'record' | 'event'; id: string | SQLWrapper };
+// `document`/`session` are first-class node kinds in the purpose lineage (and
+// the generated `tlp_source_allows_derivation` predicate) even though most
+// callers only bind the three item kinds; the shared predicates handle all
+// five and fail closed on anything else.
+export type PurposeSource = {
+  kind: 'question' | 'record' | 'event' | 'document' | 'session';
+  id: string | SQLWrapper;
+};
 
 /** Exact provenance closure, including legacy promotion proposals. UNION bounds cycles;
  * every referenced row participates, so a second restricted source cannot be hidden.

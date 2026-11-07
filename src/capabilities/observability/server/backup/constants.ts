@@ -144,7 +144,12 @@
 // (revision, part). It came from paid solves and cannot be rebuilt for free; FK →
 // question_revision, so it restores right after the verification rows.
 // NEW FK_ORDER table → bump 4.33 → 4.34 (migration 0138).
-export const SCHEMA_VERSION = '4.34';
+// YUK-1548: + drawing — durable learner-visible Sol drawing lines (provenance +
+// last-ready asset ref). Authored output, not transient worker state; restore
+// must carry it or placed `block:` refs in the restored conversation dangle.
+// No enforced FK (loose text-ref to session/task_run/event/asset). NEW
+// FK_ORDER table → bump SCHEMA_VERSION (4.34 → 4.35).
+export const SCHEMA_VERSION = '4.35';
 
 export const SUBSCRIPTION_PROGRESS_TABLES = [
   'event_subscription_checkpoint',
@@ -403,6 +408,12 @@ export const FK_ORDER = [
   // 三表之后、paid-effect 之前，使尾部仍是 paid_effect_control → paid_effect →
   // provider_attempt。NEW FK_ORDER table → SCHEMA_VERSION 4.28 / migration 0122。
   'model_admission_slice',
+  // YUK-1548 — drawing: durable Sol drawing lines (status machine + authoritative
+  // source set + last-ready asset ref). Learner-visible authored output backed
+  // up with the conversation it belongs to; no enforced FK (loose text refs),
+  // position unconstrained. Keeps the paid-effect tail order intact.
+  // NEW FK_ORDER table → bump SCHEMA_VERSION (4.34 → 4.35).
+  'drawing',
   // No hard FK: restore owning backend/generation before its immutable effects.
   // Missing either table would turn an unknown paid outcome into bootstrap state.
   ...PAID_EFFECT_BACKUP_TABLES,

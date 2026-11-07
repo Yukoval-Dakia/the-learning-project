@@ -29,6 +29,7 @@ import { isNoteCardVisible } from '@/kernel/read-models/note-card';
 import { readQuestionCard } from '@/kernel/read-models/question-card';
 import { createAssessmentAssetLoader } from '@/kernel/records/assessment-assets';
 import { ImmutableAssetError, persistImmutableAsset } from '@/kernel/records/asset-store';
+import { drawingRequestPort } from '@/kernel/tools/drawing-request';
 import type { DomainTool, ToolContext, ToolImageOutput } from '@/kernel/tools/types';
 
 const BLOCK_CANONICAL_MAX_BYTES = 64 * 1024;
@@ -327,6 +328,33 @@ export function createComposeBlockTool(
             ]);
           }
           stored = block;
+          break;
+        }
+        case 'drawing': {
+          // The dedicated lane draws in the background; the stored block is
+          // the drawing pointer and the reply gets its placeholder immediately.
+          const request = drawingRequestPort();
+          const outcome = await request(
+            {
+              db: ctx.db,
+              sessionId: ctx.sessionId,
+              taskRunId: ctx.logTaskRunId ?? ctx.taskRunId,
+              ...(ctx.causedByEventId !== undefined
+                ? { causedByEventId: ctx.causedByEventId }
+                : {}),
+              actorRef: ctx.callerActor.ref,
+              ...(ctx.sourceLedger !== undefined ? { ledger: ctx.sourceLedger } : {}),
+            },
+            {
+              brief: block.brief,
+              alt: block.alt,
+              ...(block.caption !== undefined ? { caption: block.caption } : {}),
+            },
+          );
+          if (outcome.status !== 'ready') {
+            return { status: 'unavailable', issues: outcome.issues };
+          }
+          stored = { ...block, drawing_id: outcome.drawing_id };
           break;
         }
         case 'diagram': {

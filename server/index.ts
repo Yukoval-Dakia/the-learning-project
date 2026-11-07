@@ -126,6 +126,8 @@ async function installPracticeOperationsBeforeServe(): Promise<void> {
     '@/capabilities/observability/public'
   );
   await installObservabilityHostOperations();
+  const { installDrawingHostOperations } = await import('@/capabilities/drawing/public');
+  installDrawingHostOperations();
 }
 
 async function installSettlementPortsBeforeServe(): Promise<void> {

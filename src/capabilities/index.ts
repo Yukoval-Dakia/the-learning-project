@@ -5,6 +5,7 @@
 import type { CapabilityManifest } from '@/kernel/manifest';
 import { agencyCapability } from './agency/manifest';
 import { copilotCapability } from './copilot/manifest';
+import { drawingCapability } from './drawing/manifest';
 import { ingestionCapability } from './ingestion/manifest';
 import { knowledgeCapability } from './knowledge/manifest';
 import { notesCapability } from './notes/manifest';
@@ -20,6 +21,7 @@ export const capabilities: CapabilityManifest[] = [
   knowledgeCapability,
   notesCapability,
   copilotCapability,
+  drawingCapability,
   observabilityCapability,
   onboardingCapability,
   shellCapability,

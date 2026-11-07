@@ -6,6 +6,7 @@ import { z } from 'zod';
 import {
   type BlockKind,
   DiagramBlock,
+  DrawingBlockInput,
   FigureBlockInput,
   InteractiveBlockInput,
   QuestionRefBlock,
@@ -38,6 +39,15 @@ const MEMBER_META: Record<
       kind: 'figure',
       svg: '<svg viewBox="0 0 120 80"><rect x="10" y="10" width="40" height="60"/></svg>',
       alt: '加热固体的试管装置',
+    },
+  },
+  drawing: {
+    schema: DrawingBlockInput,
+    example: {
+      v: 1,
+      kind: 'drawing',
+      brief: '滴定实验装置：铁架台固定酸式滴定管，下置锥形瓶，瓶内指示剂变色',
+      alt: '酸碱滴定装置示意',
     },
   },
   question_ref: {
@@ -83,7 +93,7 @@ export function renderBlockCatalogue(surface: BlockSurface): string {
   ];
   for (const kind of [
     'diagram',
-    'figure',
+    'drawing',
     'interactive',
     'question_ref',
     'entity_card',
@@ -122,7 +132,7 @@ export function renderBlockCatalogue(surface: BlockSurface): string {
     '- 化学式/方程式：用行内数学 `$\\ce{…}$`，如 `$\\ce{2H2 + O2 -> 2H2O}$`、`$\\ce{CuSO4 * 5H2O}$`。',
   );
   lines.push(
-    '- figure 的 images 是位图自检：先看图确认装置连接无误，再写 place；画错修 SVG 重提。',
+    '- drawing 返回即占位：图在后台绘制，勿等待或改写；无法核验来源时返回 unavailable，如实告诉学习者不能画。',
   );
   return lines.join('\n');
 }
