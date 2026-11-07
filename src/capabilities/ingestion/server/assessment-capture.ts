@@ -64,6 +64,8 @@ interface CaptureInput {
   red_ink_preference?: RedInkClassification;
   /** Enrollment markers written onto the created question (auto-enroll caller). */
   enrollmentMetadata?: Record<string, unknown>;
+  /** Who originated this entry; evidence provenance only, never a grading decision. */
+  generatedBy?: 'workflow_judge' | 'ingestion_capture';
 }
 
 interface UnitCaptureRecord {
@@ -432,7 +434,7 @@ export async function captureIngestionOriginal(db: Db, input: CaptureInput) {
         block_version: block.version,
         source_document_id: session.source_document_id ?? '',
         source_asset_ids: block.source_asset_ids,
-        generated_by: 'workflow_judge',
+        generated_by: input.generatedBy ?? 'workflow_judge',
         // 逐单元读入的落位/未决与红笔归类留痕（不判分）。
         ...(captureRecords.length > 0
           ? {

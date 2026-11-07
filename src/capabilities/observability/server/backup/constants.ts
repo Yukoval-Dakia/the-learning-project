@@ -431,6 +431,10 @@ export type TableName = (typeof FK_ORDER)[number];
 // only transient / derived / operational state belongs here, never authored or
 // slow-accumulated cognitive data.
 export const BACKUP_EXCLUDED_TABLES: ReadonlySet<string> = new Set<string>([
+  // Sandbox workspace leases are bound to a local executor volume that a learner
+  // archive cannot restore; restoring rows would resurrect stale fencing while
+  // the directories they fence are already gone.
+  'agent_workspace',
   // YUK-1771: derived vectors, rebuilt from question_solution_prior by embed_backfill.
   'question_solution_prior_vector',
   // YUK-1771: one-off backfill ledger; losing it costs at most one more paid call per group.
@@ -524,6 +528,9 @@ export const BACKUP_EXCLUDED_TABLES: ReadonlySet<string> = new Set<string>([
 // Cascading children of backed-up parents need no separate entry here.
 // Subscription progress is durable and lives in FK_ORDER; restore clears only its claims.
 export const RESTORE_WIPE_ONLY_TABLES: readonly string[] = [
+  // Rows kept in the live DB through a restore would fence directories bound
+  // to the pre-restore executor volume — wipe them and let owners re-claim.
+  'agent_workspace',
   // A learner archive restore must invalidate even unexpired pre-restore cursors.
   'bank_search_snapshot',
   // YUK-851: clear pre-restore owners before durable provider_attempt rows are replaced.

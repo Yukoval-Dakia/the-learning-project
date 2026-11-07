@@ -8,6 +8,7 @@ import {
 import { findOutstandingCopilotDurableRuns } from '@/capabilities/copilot/server/durable-run-observation';
 import type { Db } from '@/db/client';
 import { fromPgBossDrizzleTx, getStartedBoss } from '@/server/boss/client';
+import { finalizePendingConversationDeletions } from '../server/conversation-lifecycle';
 import { reconcileNativeSubagentsForParent } from '../server/subagent-mailbox';
 
 import {
@@ -142,5 +143,11 @@ export async function reconcileOutstandingCopilotRuns(
 export function buildCopilotRunReconcileHandler(
   db: Db,
 ): (jobs: Job[]) => Promise<CopilotRunReconcileReport> {
-  return async () => reconcileOutstandingCopilotRuns(db);
+  return async () => {
+    const report = await reconcileOutstandingCopilotRuns(db);
+    // Hard-delete drain: the API path cannot wait on in-flight runs, so the
+    // tombstone completes here once every open run of the session has settled.
+    await finalizePendingConversationDeletions(db);
+    return report;
+  };
 }

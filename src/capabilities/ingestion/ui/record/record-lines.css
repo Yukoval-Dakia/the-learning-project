@@ -12,13 +12,6 @@
     box-shadow: inset 0 0 0 var(--un-hairline) var(--un-line);
   }
 
-  /* Same rhythm as the sheet's own grid; also the sticky bar's containing block. */
-  & .rc-lines-scope {
-    display: grid;
-    gap: var(--un-sp-4);
-    min-width: 0;
-  }
-
   & .rc-sheet-head {
     display: flex;
     align-items: baseline;
@@ -146,11 +139,6 @@
 
   & .rc-line:last-child {
     box-shadow: none;
-  }
-
-  & .rc-line[data-skip="true"] .rc-line-text {
-    color: var(--un-text-4);
-    text-decoration: line-through;
   }
 
   & .rc-line-no {

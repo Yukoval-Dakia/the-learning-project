@@ -41,6 +41,12 @@ export type HistoryPriorRun = SessionHistory['prior_runs'][number];
 export interface SessionFacts {
   id: string;
   status: string;
+  /** The same material was uploaded before; session_id is null when that recording is gone. */
+  duplicate_of?: {
+    session_id: string | null;
+    source_document_id: string;
+    uploaded_at: string;
+  } | null;
   entrypoint: string | null;
   source_asset_ids: string[];
   warnings?: string[];
@@ -90,31 +96,19 @@ export interface Block {
   image_refs: string[] | null;
   layout_quality: 'structured' | 'partial' | 'text_only';
   status: 'draft' | 'imported' | 'ignored' | 'auto_enrolled';
-  auto_enroll_observation: {
-    suggested_knowledge_ids?: string[];
-    mistake_draft?: { wrong_answer?: string | null } | null;
-  } | null;
+  ingestion_enrollment: {
+    state: 'in_library' | 'not_enrolled' | 'ignored';
+    /** pending is still on its way in; only publish_failed is a failure. */
+    reason: 'needs_text' | 'pending' | 'publish_failed' | null;
+    knowledge: 'attributed' | 'missing' | null;
+    library_visible: boolean | null;
+  };
 }
 
 export interface KnowledgeNode {
   id: string;
   name: string;
   effective_domain?: string | null;
-}
-
-export interface ImportBlockBody {
-  block_id: string;
-  source_block_ids: string[];
-  page_spans: PageSpan[];
-  image_refs: string[];
-  final_prompt_md: string;
-  final_reference_md: string | null;
-  final_wrong_answer_md: string;
-  outcome: 'failure' | 'unanswered';
-  knowledge_ids: string[];
-  cause: null;
-  difficulty: number;
-  question_kind: string;
 }
 
 export type AskAnswerBody =
@@ -264,27 +258,6 @@ export async function answerAsk(id: string, askId: string, answer: AskAnswerBody
     },
   );
 }
-
-/** Puts recognised questions into the library; resolves once the server finished. */
-export const importBlocks = (id: string, blocks: ImportBlockBody[]) =>
-  runIngestionOperation(id, { kind: 'import', input: { blocks } });
-
-export interface CheckedBlock {
-  block_id: string;
-  version: number;
-}
-
-/**
- * Records that the learner checked every question of a classic recording (YUK-1522). Resolves
- * only once the operation finished; the caller owns the key so an unknown outcome is looked up
- * with the same key and body instead of sending a second one.
- */
-export const reviewBlocks = (id: string, checked: CheckedBlock[], key: string) =>
-  runIngestionOperation<{ status?: string }>(
-    id,
-    { kind: 'review', input: { checked_blocks: checked } },
-    { idempotencyKey: key },
-  );
 
 /**
  * Reads one recognised question again from its page with a stronger reader (paid, learner-pressed).

@@ -30,7 +30,7 @@ import {
   type BankSearchOutputV3,
   type SearchBankInput,
 } from './bank-search-contract';
-import { resolveBankSearchScope } from './bank-search-scope';
+import { resolveBankHistoryRootIds, resolveBankSearchScope } from './bank-search-scope';
 import { bankReadRoleForActor } from './read-bank';
 
 export type BankSnapshotBinding = { question_id: string; ref: string | null; state_digest: string };
@@ -193,7 +193,8 @@ async function validateReceipt(
     throw new BankSearchError('Bank evidence stale: hard scope changed');
   const history = receipt.request.filters?.history;
   if (history && history !== 'any') {
-    const ids = new Set(
+    const ids = await resolveBankHistoryRootIds(
+      db,
       history === 'wrong'
         ? (await getFailureAttemptsForDerivation(db, { limit: null })).map((r) => r.question_id)
         : await getAttemptedQuestionIds(db),
