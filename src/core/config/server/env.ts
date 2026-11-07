@@ -152,8 +152,14 @@ const server = {
  *            system_config and never exposed to the browser.
  *   test   — read only by tests, CI, or the local dev wrappers.
  *   script — read only by scripts/CLI/deployment tooling; the API and worker never read it.
- * audit:flags checks this map covers the schema exactly, that `hot` matches the registry
- * envName set, and that no STAY_IN_PLACE_ENV entry is tagged hot.
+ * audit:flags checks this map covers the schema exactly, that `hot` matches the set of
+ * registry envNames declared inside the schema, and that no STAY_IN_PLACE_ENV entry is
+ * tagged hot. 8 existing registry envNames live outside the schema — they get no owner
+ * class here and keep only their getConfig env fallback (audit reports them
+ * registry-only): ADMISSION_PROVIDER_RETRY_{BASE_DELAY_MS,MAX_RETRIES,MAX_WAIT_MS},
+ * INGESTION_AGENT_WEEKLY_BUDGET_USD, NOTES_MASTERY_SUBSCRIPTION_ENABLED,
+ * PROVIDER_STREAM_IDLE_MS, QUESTION_ROOT_PLACEMENT_REFILE_ENABLED,
+ * SUPPLY_NIGHTLY_SPEND_CAP_USD.
  */
 export type BootEnvOwner = 'boot' | 'secret' | 'test' | 'script' | 'hot';
 

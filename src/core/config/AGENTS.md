@@ -6,8 +6,13 @@
 ## 五张表
 
 `src/core/config/server/env.ts` 的 `BOOT_ENV_OWNERS` 给每个 boot schema 键一个类别；
-`audit:flags` 校验它覆盖 schema、`hot` 与 registry envName 逐名相等、`STAY_IN_PLACE_ENV`
-不标 hot。
+`audit:flags` 校验它覆盖 schema、`hot` 与 schema 内的 registry envName 逐名相等、
+`STAY_IN_PLACE_ENV` 不标 hot。8 个存量 registry envName 在 schema 外（无归属类、不进
+`.env.example`，仍走各自 `getConfig` env fallback，census 报 registry-only）：
+`ADMISSION_PROVIDER_RETRY_BASE_DELAY_MS` / `_MAX_RETRIES` / `_MAX_WAIT_MS`、
+`INGESTION_AGENT_WEEKLY_BUDGET_USD`、`NOTES_MASTERY_SUBSCRIPTION_ENABLED`、
+`PROVIDER_STREAM_IDLE_MS`、`QUESTION_ROOT_PLACEMENT_REFILE_ENABLED`、
+`SUPPLY_NIGHTLY_SPEND_CAP_USD`。
 
 | 类别 | 谁读 / 放哪 | 新增时改什么 |
 |---|---|---|

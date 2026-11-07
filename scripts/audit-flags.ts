@@ -18,7 +18,12 @@
  *     getConfig，只有 provider/第三方凭据与启动前必读进 stay 清单；
  *   - 新增动态 process.env[...] 读；新增 registry envName 缺 boot schema；
  *   - boot schema 的归属表（BOOT_ENV_OWNERS）必须与 schema 键一一对应：hot 键集合与
- *     registry envName 集合逐名相等，STAY_IN_PLACE_ENV 条目不得标 hot；
+ *     schema 内的 registry envName 集合逐名相等（schema 外的 8 个存量 registry
+ *     envName 不进本表，仍走各自 getConfig env fallback，census 报 registry-only：
+ *     ADMISSION_PROVIDER_RETRY_{BASE_DELAY_MS,MAX_RETRIES,MAX_WAIT_MS}、
+ *     INGESTION_AGENT_WEEKLY_BUDGET_USD、NOTES_MASTERY_SUBSCRIPTION_ENABLED、
+ *     PROVIDER_STREAM_IDLE_MS、QUESTION_ROOT_PLACEMENT_REFILE_ENABLED、
+ *     SUPPLY_NIGHTLY_SPEND_CAP_USD），STAY_IN_PLACE_ENV 条目不得标 hot；
  *   - `.env.example` 与 boot schema 的漂移（schema 键未进样例 / 样例键不在 schema）
  *     只汇报，不阻断。
  *   - 非 family 键（number/string、无 env 的 json/enum）新增键缺 metadata/reader 或新增直读。
@@ -264,14 +269,26 @@ function readEnvExampleDrift(bootKeys: ReadonlySet<string>): EnvExampleReport {
   } catch {
     text = '';
   }
-  const exampleKeys = new Set<string>();
+  // A `# KEY=` line documents the knob without setting it — copied `.env` leaves the key
+  // unset. ''-sensitive keys (JUDGE_FALLBACK_PROVIDER, JYEOO_SPAWN_*) live there on
+  // purpose, so 已写值与注释必须分开数。
+  const assigned = new Set<string>();
+  const commented = new Set<string>();
   for (const line of text.split('\n')) {
-    const match = /^\s*#?\s*([A-Z][A-Z0-9_]*)=/.exec(line);
-    if (match) exampleKeys.add(match[1]);
+    const set = /^\s*([A-Z][A-Z0-9_]*)=/.exec(line);
+    if (set) {
+      assigned.add(set[1]);
+      continue;
+    }
+    const comment = /^\s*#+\s*([A-Z][A-Z0-9_]*)=/.exec(line);
+    if (comment) commented.add(comment[1]);
   }
+  const exampleKeys = new Set([...assigned, ...commented]);
   return {
     missingFromExample: [...bootKeys].filter((key) => !exampleKeys.has(key)).sort(),
     notInSchema: [...exampleKeys].filter((key) => !bootKeys.has(key)).sort(),
+    assignedCount: assigned.size,
+    commentedOnly: [...commented].filter((key) => !assigned.has(key)).sort(),
   };
 }
 
@@ -450,7 +467,7 @@ export function auditFlags(comparisonBase?: string): FlagAuditResult {
   }
 
   // Boot ownership ledger: each schema key declares one class, hot must be exactly the
-  // registry envName set, and a stay-in-place name must never be hot.
+  // in-schema registry envName set, and a stay-in-place name must never be hot.
   const ownerKeys = Object.keys(BOOT_ENV_OWNERS);
   for (const key of ownerKeys.filter((name) => !runtimeBootKeys.has(name)).sort()) {
     violations.push({
@@ -754,14 +771,24 @@ function printNonFamily(report: NonFamilyReport): void {
   console.log('');
 }
 
+/** 样例中非 schema 键的实际归属；不在表里的键裸列名字。 */
+const NON_SCHEMA_EXAMPLE_OWNERS: Record<string, string> = {
+  DEV_ALLOW_TEST_DB: '本机 dev wrapper（scripts/dev-local.ts、scripts/local-db-env.ts）',
+  DEV_PORT: '本机 dev wrapper（scripts/dev-local.ts）',
+};
+
 function printEnvExample(report: EnvExampleReport): void {
   console.log('  ENV EXAMPLE — .env.example 与 boot schema 漂移（report-only）');
+  console.log(
+    `    样例键：已写值 ${report.assignedCount}；仅注释（不设值）${report.commentedOnly.length}`,
+  );
+  for (const key of report.commentedOnly) console.log(`      # ${key}`);
   console.log(`    schema 键未进样例：${report.missingFromExample.length}`);
   for (const key of report.missingFromExample) console.log(`      ${key}`);
   console.log(`    样例键不在 schema：${report.notInSchema.length}`);
-  for (const key of report.notInSchema) console.log(`      ${key}`);
-  if (report.notInSchema.length > 0) {
-    console.log('      （DEV_ALLOW_TEST_DB / DEV_PORT 由本机 dev wrapper 读取，不在 boot schema）');
+  for (const key of report.notInSchema) {
+    const owner = NON_SCHEMA_EXAMPLE_OWNERS[key];
+    console.log(`      ${key}${owner ? ` — ${owner}` : ''}`);
   }
   console.log('');
 }

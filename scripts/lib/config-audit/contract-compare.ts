@@ -105,6 +105,10 @@ export interface EnvExampleReport {
   missingFromExample: string[];
   /** `.env.example` keys the boot schema does not own (report-only). */
   notInSchema: string[];
+  /** Sample keys with a real `KEY=` assignment line. */
+  assignedCount: number;
+  /** Sample keys present only as `# KEY=` comments — documented but never set. */
+  commentedOnly: string[];
 }
 
 export interface FlagAuditResult {
