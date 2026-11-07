@@ -289,6 +289,9 @@ const ALL_TABLES = [
   // 切片（同 mastery_state 一族的 footgun：残留 active 切片会让后续用例的服务门
   // 误判已准入）。
   'model_admission_slice',
+  // YUK-1548 — generative-UI drawing 持久行。loose text-ref 无 FK，不列入则
+  // resetDb 漏清 → 跨测泄漏 dedupe/state（同 mastery_state 一族的 footgun）。
+  'drawing',
 ] as const;
 
 export async function resetDb() {

@@ -29,6 +29,7 @@ import {
   selectReasoningRequest,
 } from '@/core/config/model-overrides';
 import { getLaneOverride, getTaskOverride, resolveConfigValue } from '@/core/config/store';
+import { ChatGPTOAuthFileError } from './chatgpt-oauth-store';
 import { catalogEndpointHostKeys } from './model-catalog';
 import {
   DASHSCOPE_EMBEDDING_ENDPOINT_KEYS,
@@ -1094,7 +1095,12 @@ export function resolveTaskProvider(
   }
   if (credentialPath) {
     if (!existsSync(credentialPath)) {
-      throw new TaskConfigError(
+      // Typed login evidence, not a generic config error: a missing ChatGPT-
+      // login file is the common NAS failure and consumers that understand
+      // waits (drawing waiting_login, admission recovery) must see the typed
+      // cause on the chain, not a message string.
+      throw new ChatGPTOAuthFileError(
+        'missing_file',
         `${authFileEnv} points at '${credentialPath}' which does not exist — the ChatGPT-login credential file is required to run task ${kind} (provider=${providerName}); it is mounted only into the worker and read only through pi-ai.`,
       );
     }
