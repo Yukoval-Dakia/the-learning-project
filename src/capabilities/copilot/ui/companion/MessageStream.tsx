@@ -1,6 +1,10 @@
 import { useMemo } from 'react';
 import type { NotePageClient } from '@/capabilities/notes/ui-public';
 import {
+  EntityCardSlotContext,
+  type EntityCardSlotProps,
+} from '@/ui/components/blocks/entity-card-slot';
+import {
   QuestionRefSlotContext,
   type QuestionRefSlotProps,
 } from '@/ui/components/blocks/question-ref-slot';
@@ -11,6 +15,7 @@ import { conversationReady } from './companion-state';
 // every turn. The scroller keeps the newest line in view while the reader is at the bottom.
 
 import type { CompanionController } from './companion-controller';
+import { EntityCard } from './EntityCard';
 import { MessageRow } from './MessageRow';
 import { QuestionCard } from './ReplyCards';
 import { SummaryCard } from './SummaryCard';
@@ -52,6 +57,13 @@ export function MessageStream({
       );
     };
   }, [questionCardRenderer, sessionId, controller]);
+  const entitySlot = useMemo(
+    () =>
+      function EntitySlot(props: EntityCardSlotProps) {
+        return <EntityCard {...props} navigate={navigate} />;
+      },
+    [navigate],
+  );
   const correctionTurnId = useCompanion(controller, (s) => s.correctionTarget?.turnId ?? null);
   const revertPendingId = useCompanion(controller, (s) => s.revertPendingId);
   const chipPending = useCompanion(controller, (s) => s.chipPending);
@@ -87,65 +99,68 @@ export function MessageStream({
   return (
     <div className="un-cp-scroll" ref={stick.attach}>
       <QuestionRefSlotContext.Provider value={questionSlot}>
-        <div className="un-cp-stream">
-          <SummaryCard empty={messages.length === 0} navigate={navigate} />
-          {messages.map((message) => {
-            if (message.role === 'ai') replies += 1;
-            if (message.role === 'user') currentRunId = message.id;
-            const questionId = message.skill_turn?.structured_question?.id;
-            return (
-              <MessageRow
-                key={message.id}
-                message={message}
-                thinkingText={
-                  message.role === 'ai'
-                    ? thinkingByRun[message.run_id ?? currentRunId ?? '']
-                    : undefined
-                }
-                confirmationRenderer={confirmationRenderer}
-                readNotePage={readNotePage}
-                showConfirmation={
-                  !!message.confirmation &&
-                  firstOccurrence.get(message.confirmation.occurrence.occurrence_id) === message.id
-                }
-                confirmationDisabled={
-                  disabled ||
-                  (!!message.confirmation &&
-                    message.confirmation.occurrence.sequence !==
-                      latestSequence.get(message.confirmation.occurrence.occurrence_id))
-                }
-                onConfirmation={(action) =>
-                  message.confirmation
-                    ? controller.sender.sendConfirmation(message.confirmation.occurrence, action)
-                    : Promise.resolve()
-                }
-                onRefreshConfirmation={() =>
-                  void controller.runs.refetchTurns().catch(() =>
-                    controller.store.setState({
-                      refreshFailed: true,
-                      error: '确认题记录读取失败，请重试读取。',
-                    }),
-                  )
-                }
-                turnNumber={message.role === 'ai' ? replies : undefined}
-                correctionSelected={
-                  message.reply_event_id !== undefined &&
-                  message.reply_event_id === correctionTurnId
-                }
-                revertPending={
-                  message.checkpoint_event_id !== undefined &&
-                  message.checkpoint_event_id === revertPendingId
-                }
-                chipPending={questionId !== undefined && questionId === chipPending}
-                chipAcked={questionId !== undefined && questionId === chipAcked}
-                navigate={navigate}
-                onSelectCorrection={actions.selectCorrection}
-                onRevert={actions.revert}
-                onAcceptCorrective={actions.acceptCorrectiveChip}
-              />
-            );
-          })}
-        </div>
+        <EntityCardSlotContext.Provider value={entitySlot}>
+          <div className="un-cp-stream">
+            <SummaryCard empty={messages.length === 0} navigate={navigate} />
+            {messages.map((message) => {
+              if (message.role === 'ai') replies += 1;
+              if (message.role === 'user') currentRunId = message.id;
+              const questionId = message.skill_turn?.structured_question?.id;
+              return (
+                <MessageRow
+                  key={message.id}
+                  message={message}
+                  thinkingText={
+                    message.role === 'ai'
+                      ? thinkingByRun[message.run_id ?? currentRunId ?? '']
+                      : undefined
+                  }
+                  confirmationRenderer={confirmationRenderer}
+                  readNotePage={readNotePage}
+                  showConfirmation={
+                    !!message.confirmation &&
+                    firstOccurrence.get(message.confirmation.occurrence.occurrence_id) ===
+                      message.id
+                  }
+                  confirmationDisabled={
+                    disabled ||
+                    (!!message.confirmation &&
+                      message.confirmation.occurrence.sequence !==
+                        latestSequence.get(message.confirmation.occurrence.occurrence_id))
+                  }
+                  onConfirmation={(action) =>
+                    message.confirmation
+                      ? controller.sender.sendConfirmation(message.confirmation.occurrence, action)
+                      : Promise.resolve()
+                  }
+                  onRefreshConfirmation={() =>
+                    void controller.runs.refetchTurns().catch(() =>
+                      controller.store.setState({
+                        refreshFailed: true,
+                        error: '确认题记录读取失败，请重试读取。',
+                      }),
+                    )
+                  }
+                  turnNumber={message.role === 'ai' ? replies : undefined}
+                  correctionSelected={
+                    message.reply_event_id !== undefined &&
+                    message.reply_event_id === correctionTurnId
+                  }
+                  revertPending={
+                    message.checkpoint_event_id !== undefined &&
+                    message.checkpoint_event_id === revertPendingId
+                  }
+                  chipPending={questionId !== undefined && questionId === chipPending}
+                  chipAcked={questionId !== undefined && questionId === chipAcked}
+                  navigate={navigate}
+                  onSelectCorrection={actions.selectCorrection}
+                  onRevert={actions.revert}
+                  onAcceptCorrective={actions.acceptCorrectiveChip}
+                />
+              );
+            })}
+          </div>
+        </EntityCardSlotContext.Provider>
       </QuestionRefSlotContext.Provider>
     </div>
   );

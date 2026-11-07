@@ -61,9 +61,20 @@ export const readStartKnowledgeNodePage = async (id: string) => {
   }
 };
 
+export const readStartKnowledgeEntityCard = async (id: string) => {
+  try {
+    const { readKnowledgeEntityCard } = await import('@/capabilities/knowledge/public');
+    const { db } = await import('@/db/client');
+    return await readKnowledgeEntityCard(db, id);
+  } catch (error) {
+    throw errorResponse(error);
+  }
+};
+
 export const knowledgeAdapters = {
   createStartKnowledgeEdge,
   readStartKnowledgeEdges,
+  readStartKnowledgeEntityCard,
   readStartKnowledgeMisconceptions,
   readStartKnowledgeNodePage,
 };
