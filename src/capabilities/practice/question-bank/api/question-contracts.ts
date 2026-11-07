@@ -65,9 +65,18 @@ export const QuestionServingActionRefSchema = z.object({
   method: z.literal('POST'),
   path: z.string(),
 });
+export const QuestionAdmissionWaitSchema = z.object({
+  reason: z.enum(['quota', 'login', 'not_sent', 'provider']),
+  retry_at: z.string().nullable(),
+  recovery_action: z.enum(['wait_for_retry', 'reauthenticate', 'confirm_recovery']),
+});
 export const QuestionAdmissionReadSchema = z.object({
   status: z.enum(['pending', 'admitted', 'failed', 'undecided']),
   reason: z.string().nullable(),
+  /** Provider/quota/login wait facts while the check is pending. */
+  wait: QuestionAdmissionWaitSchema.nullable().optional(),
+  /** Why an undecided admission is undecided (unknown outcome vs denied purpose). */
+  cause: z.enum(['outcome_unconfirmed', 'purpose_denied']).nullable().optional(),
 });
 export const QuestionServingSchema = z.object({
   servable: z.boolean(),

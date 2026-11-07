@@ -176,6 +176,7 @@ export const dbTestInclude = [
   'src/capabilities/practice/jobs/jyeoo_staged_asset_reap.db.test.ts',
   'src/capabilities/practice/grading/jobs/model_slice_admission_run.db.test.ts',
   'src/capabilities/practice/jobs/quiz_gen.test.ts',
+  'src/capabilities/practice/question-bank/jobs/question_admission_recovery.db.test.ts',
   'src/capabilities/practice/question-bank/jobs/quiz_verify.test.ts',
   'src/capabilities/practice/settlement/jobs/rejudge.db.test.ts',
   'src/capabilities/practice/question-bank/jobs/source_verify.test.ts',
