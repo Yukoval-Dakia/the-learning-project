@@ -968,18 +968,107 @@ function isPublicEntrypointSite(site: PassThroughSite): boolean {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Schema table entrypoints. `src/db/schema.ts` is the one formal Drizzle schema
+// entry (drizzle-kit and `@/db/schema` consumers read it); the table definitions
+// live in `src/db/schema/<domain>.ts`. A named forward of one of those tables out
+// of its domain module is that entry's declared job, the same way a named
+// re-export inside a capability `public.ts` is. The exemption is keyed on the
+// target being a real `pgTable(...)` binding in the named domain module, so an
+// alias, an `export *`, a domain-to-domain forward, a source outside `./schema/`,
+// or a non-table export stays a new shell.
+// ---------------------------------------------------------------------------
+
+const SCHEMA_ENTRY_FILE = 'src/db/schema.ts';
+const SCHEMA_DOMAIN_MODULE_RE = /^src\/db\/schema\/[^/]+\.ts$/;
+const PG_TABLE_SOURCE = 'drizzle-orm/pg-core';
+const PG_TABLE_FACTORY = 'pgTable';
+
+/** `file\0symbol` keys of the `pgTable(...)` bindings defined in
+ *  `src/db/schema/*.ts`. Only these targets qualify for the schema entry
+ *  exemption — the factory must be the value imported from drizzle pg-core. */
+export function collectPgTableDefinitions(sources: readonly ScannedSource[]): Set<string> {
+  const definitions = new Set<string>();
+  for (const { path, code } of sources) {
+    if (!SCHEMA_DOMAIN_MODULE_RE.test(path)) continue;
+    const ast = parse(code, {
+      sourceType: 'module',
+      sourceFilename: path,
+      plugins: ['typescript'],
+    });
+    const factories = new Set<string>();
+    for (const statement of ast.program.body) {
+      if (!isRecord(statement) || statement.type !== 'ImportDeclaration') continue;
+      if (literalString(statement.source) !== PG_TABLE_SOURCE) continue;
+      if (statement.importKind === 'type' || !Array.isArray(statement.specifiers)) continue;
+      for (const specifier of statement.specifiers) {
+        if (!isRecord(specifier) || specifier.type !== 'ImportSpecifier') continue;
+        if (specifier.importKind === 'type') continue;
+        const imported = isRecord(specifier.imported)
+          ? (nodeName(specifier.imported) ?? literalString(specifier.imported))
+          : undefined;
+        if (imported !== PG_TABLE_FACTORY) continue;
+        const local = nodeName(specifier.local);
+        if (local) factories.add(local);
+      }
+    }
+    if (factories.size === 0) continue;
+    for (const statement of ast.program.body) {
+      if (!isRecord(statement)) continue;
+      const declaration =
+        statement.type === 'ExportNamedDeclaration' && isRecord(statement.declaration)
+          ? statement.declaration
+          : statement;
+      if (declaration.type !== 'VariableDeclaration') continue;
+      if (!Array.isArray(declaration.declarations)) continue;
+      for (const declarator of declaration.declarations) {
+        if (!isRecord(declarator)) continue;
+        const name = nodeName(declarator.id);
+        if (!name) continue;
+        const init = unwrapValueExpression(declarator.init);
+        if (!isRecord(init) || init.type !== 'CallExpression') continue;
+        const callee = init.callee;
+        if (!isRecord(callee) || callee.type !== 'Identifier') continue;
+        if (!factories.has(nodeName(callee) ?? '')) continue;
+        definitions.add(`${path}\u0000${name}`);
+      }
+    }
+  }
+  return definitions;
+}
+
+/** `src/db/schema.ts` forwarding one `pgTable` definition: named re-export only,
+ *  no alias, target inside `./schema/<domain>`, target is that file's table. */
+export function isSchemaTableEntrypointSite(
+  site: PassThroughSite,
+  pgTableDefinitions: ReadonlySet<string>,
+): boolean {
+  if (site.file !== SCHEMA_ENTRY_FILE) return false;
+  if (site.kind !== 'module' && site.kind !== 'site') return false;
+  if (site.detail.startsWith('var-export:')) return false;
+  if (site.symbol === '*' || site.targetSymbol === '*') return false;
+  if (!site.targetSymbol || site.symbol !== site.targetSymbol) return false;
+  if (!SCHEMA_DOMAIN_MODULE_RE.test(site.targetModule)) return false;
+  return pgTableDefinitions.has(`${site.targetModule}\u0000${site.targetSymbol}`);
+}
+
 export function auditPassThroughNewSites(input: {
   newSites: readonly PassThroughSite[];
+  /** `collectPgTableDefinitions` output; omitted means no schema-table exemption. */
+  pgTableDefinitions?: ReadonlySet<string>;
 }): PassThroughViolation[] {
+  const pgTables = input.pgTableDefinitions ?? new Set<string>();
   const violations: PassThroughViolation[] = [];
   for (const site of input.newSites) {
     if (isPublicEntrypointSite(site)) continue;
+    if (isSchemaTableEntrypointSite(site, pgTables)) continue;
     violations.push({
       path: site.file,
       source: describeSite(site),
       reason:
-        'new pass-through shell — remove it, or forward a named symbol through ' +
-        'the owning capability public.ts (public entrypoints are not debt)',
+        'new pass-through shell — remove it, or forward a named symbol through a ' +
+        'declared entrypoint (a capability public.ts, or src/db/schema.ts for a ' +
+        'pgTable definition)',
     });
   }
   return violations;

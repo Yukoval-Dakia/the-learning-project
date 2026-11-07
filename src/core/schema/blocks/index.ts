@@ -2,7 +2,16 @@
 // Named re-exports only: each entry is classified stable_contract in
 // scripts/pass-through-classifications.jsonl.
 
-export type { BlockInputV1T, BlockKind, BlockV1T, FigureBlockT } from './block';
+export type {
+  BlockInputV1T,
+  BlockKind,
+  BlockV1T,
+  FigureBlockT,
+  PlotBlockInputT,
+  PlotBlockT,
+  PlotFunctionItemT,
+  PlotParamT,
+} from './block';
 export {
   BlockInputV1,
   BlockV1,
