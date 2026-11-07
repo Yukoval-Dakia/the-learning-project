@@ -152,6 +152,7 @@ export const shellCapability = defineCapability({
         path: '/api/workbench/ai-notices/dismissals',
         operationId: 'listAiNoticeDismissals',
         responses: { 200: AiNoticeDismissalsResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
         load: () => import('./api/ai-notice-dismissals').then((m) => m.GET),
       },
       {
@@ -160,6 +161,7 @@ export const shellCapability = defineCapability({
         operationId: 'dismissAiNotices',
         request: { body: AiNoticeDismissBodySchema },
         responses: { 200: AiNoticeDismissalsResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
         load: () => import('./api/ai-notice-dismissals').then((m) => m.POST),
       },
       // Retires a delivered outcome from brief eligibility; writes no derived

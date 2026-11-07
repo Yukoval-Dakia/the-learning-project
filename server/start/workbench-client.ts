@@ -10,7 +10,9 @@ import { startProbeAnswerClient } from './probe-answer-client';
 import {
   acknowledgeStartTeachingBriefOutcome,
   decideStartProposal,
+  dismissStartAiNoticesFn,
   getStartActiveProbes,
+  getStartAiNoticeDismissals,
   getStartAutoApplied,
   getStartConjectures,
   getStartKnowledgeFrontier,
@@ -19,8 +21,6 @@ import {
   getStartOvernightDigest,
   getStartProposalInbox,
   getStartRecentAiChanges,
-  dismissStartAiNoticesFn,
-  getStartAiNoticeDismissals,
   getStartTaskFailureAlerts,
   getStartTeachingBrief,
   getStartTodayCost,

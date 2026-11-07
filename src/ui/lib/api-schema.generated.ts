@@ -40659,7 +40659,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description HTTP 200 response */
+            /** @description Successful response */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -40785,7 +40785,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description HTTP 200 response */
+            /** @description Successful response */
             200: {
                 headers: {
                     [name: string]: unknown;
