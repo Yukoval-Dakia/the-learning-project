@@ -319,6 +319,7 @@ async function runSolveHintAttempt(params: PlanSolveHintParams): Promise<SolveHi
       kind: 'hint',
       impact: 'unknown',
       contentDigest: `sha256:${canonicalHash(sealed.text_md)}`,
+      dose: hintIndex,
     });
   return {
     text_md: sealed.text_md,
@@ -652,6 +653,7 @@ async function buildSolveHintFallback(params: {
       kind: 'hint',
       impact: 'unknown',
       contentDigest: `sha256:${canonicalHash(helpText)}`,
+      dose: hintIndex,
     });
   }
   return {

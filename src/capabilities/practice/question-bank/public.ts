@@ -103,3 +103,6 @@ export async function installInterventionAuthorStages(): Promise<void> {
 }
 
 export { checkSourceConsistency, checkStructureCompleteness } from './jobs/source_verify_prechecks';
+export { encodeBankRef } from './tools/bank-ref';
+export { BankAssessmentSchema, BankSearchError } from './tools/bank-search-contract';
+export { bankReceiptGapEvidence, selectBankReceipt } from './tools/bank-search-snapshot';

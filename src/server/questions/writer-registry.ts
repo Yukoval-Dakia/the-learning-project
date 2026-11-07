@@ -102,6 +102,11 @@ export const QUESTION_CONTENT_WRITER_REGISTRY: Record<string, QuestionContentWri
     tickets: ['YUK-1043'],
     note: 'seed 每题 INSERT 后同事务铸首版 revision（withheld/unverified_rules；synthetic 答案非官方 —— provenance system_proposed 如实入契约；幂等：digest 不变 noop）。§2 矩阵 seeds 行收敛。',
   },
+  'scripts/bench/search-bank-fixture.ts': {
+    status: 'publisher-converged',
+    tickets: ['YUK-1986'],
+    note: '检索验收合成语料 seeder（仅 loom_dev_* 自有库、sb1986: 前缀）：前 101 题 INSERT 后经 publishQuestionGroup 铸 admitted revision（official provenance、固定答案键）；其余模板扩增行保持 draft 不铸 revision（无判分消费者，同 deferred 草稿纪律）。',
+  },
 
   // ─── 待收敛（工作副本直写；显式 pendingClass，不许笼统 pending） ───
   // 注：quiz_verify / source_verify / verify-and-promote 的 promote 分支虽非内容列

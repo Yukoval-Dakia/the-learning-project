@@ -105,6 +105,11 @@ changes are required by this switch.
 Only `llm.call` leaves carry additive token/cost attributes. Attempt aggregates are
 reconciliation metadata and include child usage, so do not add them to leaf totals.
 Pi catalog costs are estimates, not invoices; absent usage remains unknown.
+Typed decision runs use the same chain: one `task.run`, one `task.attempt` per wire
+attempt, and one `llm.call` for the systemone request. That leaf copies the attempt's
+settled tokens and cost once, and it does not carry the request or response. Jev
+amounts stay on the reported or pricebook basis. A transient retry is a failed
+attempt beside the next attempt under the same `task.run`.
 Worker pickup starts a new `job.run` root, with logical-run correlation on Copilot;
 queue trace headers and payloads are unchanged. Flush runs only after shutdown drain
 and waits at most 500 ms. Trace export is best effort and cannot retry application work.

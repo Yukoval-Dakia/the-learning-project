@@ -113,6 +113,7 @@ export async function authorInterventionPackage(
       attempt,
       author_task_run_id: authored.package.author_task_run_id,
       failure_code: reviewGuard.status,
+      package: authored.package,
     });
   }
 
@@ -138,6 +139,7 @@ export async function authorInterventionPackage(
       author_task_run_id: authored.package.author_task_run_id,
       ...(reviewed.taskRunIds.length > 0 ? { validator_task_run_ids: reviewed.taskRunIds } : {}),
       failure_code: reviewed.failureCode,
+      package: authored.package,
     });
   }
   const deterministicFailures = validateInterventionPackageDeterministically(

@@ -147,6 +147,35 @@ const LegacyAttemptResponseSchema = z.object({
   judge: AttemptJudgeResponseSchema.nullable(),
 });
 
+/**
+ * Server-computed evidence split (YUK-2009): exposure to help, judged outcome,
+ * and the learner's self-claim are separate facts. `null` members are honest
+ * unknowns — a historical receipt or a self-report has no such fact and the
+ * client must not fabricate one.
+ */
+export const AttemptEvidenceSchema = z.object({
+  assistance: z
+    .object({
+      status: z.enum(['independent', 'assisted', 'unknown']),
+      max_dose: z.number().int().nonnegative().nullable(),
+      kinds: z.array(z.enum(['hint', 'solution', 'chat_context'])),
+      phase: z.enum(['before_submit', 'after_submit']).nullable(),
+    })
+    .nullable(),
+  verdict: z
+    .object({
+      outcome: z.enum(['correct', 'partial', 'incorrect', 'unsupported', 'partial_unknown']),
+      score: z.number().nullable(),
+    })
+    .nullable(),
+  self_claim: z
+    .object({
+      rating: FsrsRating.nullable(),
+      confidence: z.number().int().min(1).max(5).nullable(),
+    })
+    .nullable(),
+});
+
 export const FormalAttemptResponseSchema = z.object({
   status: z.enum(['effective', 'review_required']),
   assessment: z.object({
@@ -158,6 +187,7 @@ export const FormalAttemptResponseSchema = z.object({
   }),
   // The immutable native receipt is an occurrence anchor, not an FSRS snapshot.
   review_event: z.object({ id: z.string() }),
+  evidence: AttemptEvidenceSchema,
   judge: AttemptJudgeResponseSchema.nullable(),
 });
 export const AttemptResponseSchema = z.union([
