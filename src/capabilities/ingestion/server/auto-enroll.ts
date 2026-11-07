@@ -183,7 +183,8 @@ export async function runAutoEnrollForSession(
         eq(question_block.status, 'draft'),
       ),
     )
-    .orderBy(question_block.id)
+    // Adjacency is the array order, so it must be reading order (ordinal), not id.
+    .orderBy(question_block.ordinal, question_block.id)
     .limit(AUTO_ENROLL_MAX_BLOCKS_PER_RUN);
 
   // Block-assembly merge proposals run in both modes before any enroll import, while
