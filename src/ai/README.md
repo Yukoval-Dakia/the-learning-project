@@ -2,7 +2,7 @@
 
 Task 层抽象。**不是 chat()** —— 每种产物一个 Task；tool-calling 循环交给 server-side runner，不在浏览器执行。
 
-详见 [docs/architecture.md § 五 AI 任务层](../../docs/architecture.md#五ai-任务层llm-task-layer)。
+详见 [architecture.md § 五 AI 任务层](/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/architecture.md#五ai-任务层llm-task-layer)。
 
 ## 边界
 
@@ -34,7 +34,7 @@ Task 层抽象。**不是 chat()** —— 每种产物一个 Task；tool-calling
 
 ## Tool 设计
 
-产品内 tool 的长期领域设计见 [Agent Context Tools Design](../../docs/archive/superpowers/specs/2026-05-17-agent-context-tools-design.md)。当前实现走统一 Domain Tool Registry + MCP bridge：KnowledgeReviewTask 的私有 `write_proposal` custom mount 已删除（YUK-1553），所有 propose 工具经 registry 注册。
+产品内 tool 的长期领域设计见 [Agent Context Tools Design](/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/archive/superpowers/specs/2026-05-17-agent-context-tools-design.md)。当前实现走统一 Domain Tool Registry + MCP bridge：KnowledgeReviewTask 的私有 `write_proposal` custom mount 已删除（YUK-1553），所有 propose 工具经 registry 注册。
 
 当前已落地的 MCP/tool-call 状态：
 
