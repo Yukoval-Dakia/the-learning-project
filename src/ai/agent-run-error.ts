@@ -66,6 +66,19 @@ export interface ProviderFailureEvidence {
   stream_error?: true;
 }
 
+/**
+ * Typed login/auth failure evidence — the only basis for a `waiting_login`
+ * pause. `credential` marks a credential-store/file failure observed before or
+ * during the run (e.g. ChatGPTOAuthFileError anywhere on the cause chain);
+ * `provider_auth` marks a bound HTTP 401 on the failed request. Absent means
+ * the failure is NOT classified as login — never inferred from error text.
+ */
+export interface LoginFailureEvidence {
+  kind: 'credential' | 'provider_auth';
+  /** Credential-store reason when known (e.g. 'missing_file', 'invalid_json'). */
+  reason?: string;
+}
+
 export interface AgentRunErrorFields {
   kind: string;
   taskRunId: string;
@@ -82,6 +95,8 @@ export interface AgentRunErrorFields {
   helpLatency?: SealedHelpLatency;
   /** Bound provider wire evidence on a failed terminal; absent when unobserved. */
   providerFailure?: ProviderFailureEvidence;
+  /** Typed login evidence; absent ⇒ not a login failure. */
+  loginFailure?: LoginFailureEvidence;
 }
 
 /**
@@ -99,6 +114,7 @@ export class AgentRunError extends Error {
   readonly helpProviderFault?: HelpProviderFault;
   readonly helpLatency?: SealedHelpLatency;
   readonly providerFailure?: ProviderFailureEvidence;
+  readonly loginFailure?: LoginFailureEvidence;
 
   constructor(fields: AgentRunErrorFields) {
     const http =
@@ -115,6 +131,7 @@ export class AgentRunError extends Error {
     this.helpProviderFault = fields.helpProviderFault;
     this.helpLatency = fields.helpLatency;
     this.providerFailure = fields.providerFailure;
+    this.loginFailure = fields.loginFailure;
   }
 }
 
