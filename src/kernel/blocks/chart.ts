@@ -115,10 +115,17 @@ export function chartPublishedAfterBinding(block: unknown): boolean {
   );
 }
 
+function recordedChartCaption(output: unknown): string | undefined {
+  if (output === null || typeof output !== 'object') return undefined;
+  const caption = (output as { chart_caption?: unknown }).chart_caption;
+  return typeof caption === 'string' ? caption : undefined;
+}
+
 /**
  * Replace the model's series with the recorded value at the binding path. The
  * recorded value must already be a series array (`[{name, points:[[x,y],…]}]`);
- * anything else leaves the block unbound so the finalizer drops it.
+ * anything else leaves the block unbound so the finalizer drops it. The caption
+ * also comes from the record, so a chart can't claim a window its rows don't cover.
  */
 export function bindChartSeries(
   block: ChartBlockT,
@@ -147,7 +154,9 @@ export function bindChartSeries(
       },
     };
   }
-  const bound: ChartBlockT = { ...block, series: series.data };
+  const { caption: _modelCaption, ...rest } = block;
+  const caption = recordedChartCaption(output);
+  const bound: ChartBlockT = { ...rest, series: series.data, ...(caption ? { caption } : {}) };
   const issues = chartSeriesIssues(bound);
   return issues.length > 0 ? { ok: false, issue: issues[0] } : { ok: true, block: bound };
 }

@@ -102,7 +102,7 @@ export function renderBlockCatalogue(surface: BlockSurface): string {
     }
     if (kind === 'chart') {
       lines.push(
-        '- chart：chart=bar|line|scatter|pie、x{label,scale}、y{label}、series[{name,points}]；data_source={kind:"model"} 仅学习内容，学习者统计用 {kind:"tool_result",tool_use_id,path}（query_mistakes 聚合）。',
+        '- chart：chart=bar|line|scatter|pie、x{label,scale}、y{label}、series[{name,points}]；line 只连离散数据点，不用 chart 画函数图像；data_source={kind:"model"} 仅学习内容，学习者统计用 {kind:"tool_result",tool_use_id,path}（query_mistakes 聚合，caption 由服务端写）。',
       );
       continue;
     }

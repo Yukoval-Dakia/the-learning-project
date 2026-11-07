@@ -110,6 +110,8 @@ const OutputSchema = z.object({
   aggregates: AggregatesSchema,
   /** JSON Pointer paths this result declares as chart-bindable (producer allowlist). */
   chart_bindings: z.array(z.string()).max(8),
+  /** What a bound chart covers, in the learner's words; replaces any caption the model wrote. */
+  chart_caption: z.string().max(200),
   claim_boundaries: z.object({
     zero_rows_scope: z.literal('matching_failure_attempt_rows_only'),
     supports_entity_inventory_claim: z.literal(false),
@@ -145,6 +147,7 @@ const DESCRIPTION = [
   'by_cause is absent when includeAttribution=false (no cause was loaded).',
   'Bind a chart to them with data_source.path=/aggregates/by_cause or /aggregates/by_knowledge.',
   'chart_bindings lists the paths this result declares as chart-bindable.',
+  'chart_caption is the coverage line the server puts under a bound chart, replacing any caption you wrote.',
 ].join('\n');
 
 async function loadQuestionPrompts(db: Db, questionIds: string[]): Promise<Map<string, string>> {
@@ -421,6 +424,15 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
     return row;
   });
 
+  const aggregates = buildAggregates({
+    final,
+    knowledgeById,
+    miscLabels,
+    includeCause: wantsCause,
+    // Windowed aggregates: with no post-filter the reader stopped at
+    // limit+1 raw rows, so any extra row means the window is partial.
+    truncated: hasPostFilter ? byDue.length > limit : candidates.length > limit,
+  });
   return OutputSchema.parse({
     mistakes,
     total: mistakes.length,
@@ -431,18 +443,15 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
       since_days: filter.sinceDays ?? null,
       limit,
     },
-    aggregates: buildAggregates({
-      final,
-      knowledgeById,
-      miscLabels,
-      includeCause: wantsCause,
-      // Windowed aggregates: with no post-filter the reader stopped at
-      // limit+1 raw rows, so any extra row means the window is partial.
-      truncated: hasPostFilter ? byDue.length > limit : candidates.length > limit,
-    }),
+    aggregates,
     chart_bindings: wantsCause
       ? ['/aggregates/by_cause', '/aggregates/by_knowledge']
       : ['/aggregates/by_knowledge'],
+    // A window is only named when the rows really reach back across all of it.
+    chart_caption:
+      filter.sinceDays && !aggregates.truncated
+        ? `近 ${filter.sinceDays} 天`
+        : `本次查询的 ${aggregates.counted} 条`,
     claim_boundaries: {
       zero_rows_scope: 'matching_failure_attempt_rows_only',
       supports_entity_inventory_claim: false,
