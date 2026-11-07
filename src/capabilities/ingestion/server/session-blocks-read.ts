@@ -99,9 +99,7 @@ export async function readIngestionSessionBlocks(db: Db, params: { id: string })
         auto_enroll_observation: projectedObservation,
         ingestion_enrollment: toEnrollmentProjection(
           r,
-          r.imported_question_id !== null
-            ? questionById.get(r.imported_question_id)
-            : undefined,
+          r.imported_question_id !== null ? questionById.get(r.imported_question_id) : undefined,
         ),
       };
     }),
@@ -123,9 +121,7 @@ function toEnrollmentProjection(
       library_visible: null,
     };
   }
-  const markers = enrolled?.metadata?.ingestion_enrollment as
-    | { knowledge?: unknown }
-    | undefined;
+  const markers = enrolled?.metadata?.ingestion_enrollment as { knowledge?: unknown } | undefined;
   return {
     state: 'in_library' as const,
     reason: null,

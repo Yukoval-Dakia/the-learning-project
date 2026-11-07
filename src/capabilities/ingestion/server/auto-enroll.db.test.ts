@@ -14,6 +14,7 @@ import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import { knowledge, learning_session, question, question_block } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { type RunAutoEnrollParams, runAutoEnrollForSession } from './auto-enroll';
+import { revertAutoEnrolledBlock } from './revert-auto-enroll';
 
 const FLAG = 'WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED';
 
@@ -151,5 +152,88 @@ describe('runAutoEnrollForSession', () => {
       .from(question_block)
       .where(eq(question_block.ingestion_session_id, sessionId));
     expect(blocks.every((b) => b.status === 'auto_enrolled')).toBe(true);
+  });
+
+  // YUK-1994 — a degraded (partial) page and an unattributed block must not be a
+  // reason to withhold the question, and the automatic enrollment must stay reversible.
+  // @invariant data: an unattributed block from a partial session enters the library
+  //   and its automatic enrollment can be reverted without losing the question row
+  // @fails-if the block stays draft, the question is hidden from the library
+  //   (draft_status 'draft'), or revert cannot restore the block
+  it('enrolls an unattributed block from a partial session and keeps it revertible', async () => {
+    const db = testDb();
+    const now = new Date();
+    const sessionId = createId();
+    await db.insert(learning_session).values({
+      id: sessionId,
+      type: 'ingestion',
+      status: 'partial',
+      source_document_id: createId(),
+      source_asset_ids: ['asset_1'],
+      entrypoint: 'vision_paper',
+      warnings: [],
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+    const blockId = createId();
+    await db.insert(question_block).values({
+      id: blockId,
+      ingestion_session_id: sessionId,
+      source_document_id: null,
+      source_asset_ids: ['asset_1'],
+      page_spans: [],
+      structured: structured('下列句中「之」的用法'),
+      figures: [],
+      layout_quality: 'partial',
+      image_refs: ['asset_1'],
+      crop_refs: [],
+      visual_complexity: 'low',
+      extraction_confidence: 0.2,
+      status: 'draft',
+      knowledge_hint: null,
+      merged_from_block_ids: [],
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+
+    const result = await runAutoEnrollForSession({
+      db,
+      sessionId,
+      subjectId: 'yuwen',
+      env: { [FLAG]: 'true' },
+      // Attribution failure is ordinary (provider outage / no candidate): the block
+      // still enters the library with `knowledge: 'missing'`.
+      tagKnowledgeFn: async () => {
+        throw new Error('tag provider unavailable');
+      },
+    });
+    expect(result.status).toBe('completed');
+    expect(result.enrolled).toBe(1);
+
+    const [block] = await db.select().from(question_block).where(eq(question_block.id, blockId));
+    expect(block?.status).toBe('auto_enrolled');
+    if (!block?.imported_question_id) throw new Error('block has no imported question');
+    const [enrolledQuestion] = await db
+      .select()
+      .from(question)
+      .where(eq(question.id, block.imported_question_id));
+    expect(enrolledQuestion?.knowledge_ids).toEqual([]);
+    expect(enrolledQuestion?.draft_status).toBe('active');
+    expect(enrolledQuestion?.metadata).toMatchObject({
+      ingestion_enrollment: { knowledge: 'missing' },
+    });
+
+    await revertAutoEnrolledBlock(db, { blockId, sessionId });
+    const [reverted] = await db.select().from(question_block).where(eq(question_block.id, blockId));
+    expect(reverted).toMatchObject({
+      status: 'draft',
+      imported_question_id: null,
+      imported_attempt_event_id: null,
+    });
+    expect(
+      await db.select().from(question).where(eq(question.id, block.imported_question_id)),
+    ).toHaveLength(1);
   });
 });

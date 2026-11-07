@@ -397,7 +397,7 @@ export async function runAutoEnrollForSession(
           pageRefs: scopedPageRefs,
           docUsage: sessionDocUsage,
           now,
-          enrollmentMetadata: markers,
+          enrollmentMetadata: { ...markers },
         });
         if (!captured) {
           routedToReview += 1;

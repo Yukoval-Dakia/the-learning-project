@@ -56,9 +56,9 @@ export async function findDuplicateUpload(
   );
   if (samePageCount.length === 0) return null;
 
-  const candidateAssetIds = [
-    ...new Set(samePageCount.flatMap((doc) => doc.assetIds ?? [])),
-  ].filter((id) => shaById.get(id) === undefined);
+  const candidateAssetIds = [...new Set(samePageCount.flatMap((doc) => doc.assetIds ?? []))].filter(
+    (id) => shaById.get(id) === undefined,
+  );
   const candidateAssets =
     candidateAssetIds.length === 0
       ? []
