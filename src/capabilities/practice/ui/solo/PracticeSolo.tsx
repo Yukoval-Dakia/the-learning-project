@@ -1,5 +1,5 @@
 // YUK-1473 — existing practice engine and lifecycle, rendered by the cleanroom M3E surface.
-import { type Ref, useCallback, useId, useState } from 'react';
+import { type Ref, useCallback, useState } from 'react';
 import type { PracticeIssuanceDtoT } from '@/core/schema/assessment';
 import { REASONING_TRACE_MAX_LEN } from '@/kernel/limits';
 import { useSubjects } from '@/ui/hooks/useSubjects';
@@ -171,8 +171,6 @@ export function PracticeSolo({
   // While a layer covers the page (hint drawer, figure zoom), ⌘Enter and the number keys pause.
   const hotkeysSuspended = coachOpen || zoomed !== null;
   const quoteSel = useQuotableSelection();
-  const uid = useId();
-  const id = (name: string) => `${uid}-${name}`;
 
   const quoteToCopilot = (text: string, _from: DOMRect | null) => {
     const clipped = clipQuote(text);
