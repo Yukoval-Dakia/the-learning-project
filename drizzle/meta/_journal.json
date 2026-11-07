@@ -1037,6 +1037,13 @@
       "when": 1794080849568,
       "tag": "0148_yuk1982_agent_workspace",
       "breakpoints": true
+    },
+    {
+      "idx": 149,
+      "version": "7",
+      "when": 1794087965666,
+      "tag": "0149_short_giant_man",
+      "breakpoints": true
     }
   ]
 }

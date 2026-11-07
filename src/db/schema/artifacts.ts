@@ -332,77 +332,9 @@ export const memory_reconciliation_log = pgTable(
   ],
 );
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Edge reconciliation log（YUK-344 调和环增量 2，ADR-0034 §3）：知识边写入期
-// 调和层 AUDIT / PROVENANCE 日志（**不是 write-ahead replay 游标**）。
-//
-// 与 memory_reconciliation_log（mem0 个性化轴）**结构正交**——OWNER RULING：另立
-// 新表，**不复用** memory 表（结构轴 ≠ 记忆轴，无 user_id 哨兵）。每条知识边提议
-// 通过拓扑闸后，reconcile handler 用 GLM 判定该候选边与既有相邻 live 边的关系
-// （KEEP_BOTH / SUPERSEDE，结构边二动作空间，edge-reconcile.ts）。SUPERSEDE 的整段
-// apply（落本表 planned 行 → 写新 live 边 → 归档旧边 → correction event → 盖
-// applied_at）跑在**单个 db.transaction**（propose_edge.ts applyEdgeSupersede）里：
-// 崩溃整体回滚（连本表行一起），**没有半途状态可重放**。本表只是 SUPERSEDE 决策的
-// 审计记录（planned_at / applied_at 标注 apply 是否在该 tx 内走完）。防双写靠
-// knowledge_edge UNIQUE(from,to,relation_type) 约束 + skipped_duplicate_edge
-// （重复候选在 apply 前就跳过），**不靠确定性 id**——每个 event/edge id 都是 fresh
-// createId()。
-//
-// SUPERSEDE 的实际移除走 knowledge_edge.archived_at 软归档（ADR-0034 §4 load-bearing
-// 移除）；本表 + 一条 CorrectionKind correction event 只记 epistemic 来由 provenance。
-//
-// action 二值枚举（KEEP_BOTH/SUPERSEDE），不套 memory 侧四值——结构边无文本可
-// MERGE、RETRACT_NEW 由上游拓扑/语义闸承接（edge-reconcile.ts 模块头）。
-// 行堆积：单用户量级可忽略，不做清理 job（YAGNI），与 memory 表同纪律。
-// YUK-1664：GLM 判定器（edge-reconcile.ts）与夜间边提议者已退役；本表现在只记录
-// 用户接受存量 supersede 提议时的 apply（propose_edge.ts applyApprovedEdgeSupersede）。
-// ─────────────────────────────────────────────────────────────────────────────
-export const edge_reconciliation_log = pgTable(
-  'edge_reconciliation_log',
-  {
-    id: text('id').primaryKey(),
-    // 候选边键三元组（from|to|relation_type）——审计锚，记录这条 SUPERSEDE 针对的
-    // 候选边（候选边落库前无自身 UUID，故用三元组而非 edge id）。
-    candidate_from_knowledge_id: text('candidate_from_knowledge_id').notNull(),
-    candidate_to_knowledge_id: text('candidate_to_knowledge_id').notNull(),
-    candidate_relation_type: text('candidate_relation_type').notNull(),
-    // 调和判定结果。SUPERSEDE 时 superseded_edge_id 指向被归档的旧 live 边。
-    action: text('action').$type<'KEEP_BOTH' | 'SUPERSEDE'>().notNull(),
-    // 被取代的旧 knowledge_edge.id（仅 SUPERSEDE 非空）。
-    superseded_edge_id: text('superseded_edge_id'),
-    // 判定置信度（applyConfidenceThreshold 后；低置信已降级为 KEEP_BOTH）。
-    confidence: real('confidence').notNull(),
-    reason: text('reason').notNull(),
-    // GLM 原始决策（审计；KEEP_BOTH 短路无 GLM 调用 / 降级时可为 null）。
-    llm_raw: jsonb('llm_raw'),
-    // 审计时间戳：planned_at = 决策落本表时；applied_at = 同一 apply tx 末尾盖戳
-    //（NULL 只会出现在 apply tx 内部的瞬时，提交后总是非 NULL——崩溃则整行回滚）。
-    planned_at: timestamp('planned_at', { withTimezone: true }).notNull(),
-    applied_at: timestamp('applied_at', { withTimezone: true }),
-  },
-  (t) => [
-    index('edge_recon_candidate_idx').on(
-      t.candidate_from_knowledge_id,
-      t.candidate_to_knowledge_id,
-      t.candidate_relation_type,
-    ),
-    index('edge_recon_unapplied_idx').on(t.applied_at),
-    // action ↔ superseded_edge_id consistency invariant, enforced at the DB layer
-    // (not just the application layer): a SUPERSEDE row MUST name the archived old
-    // edge (superseded_edge_id non-null), and a KEEP_BOTH row MUST NOT (null).
-    // Mirrors the decision builder in edge-reconcile.ts (SUPERSEDE → neighbor.edge_id,
-    // KEEP_BOTH → null) so the DB can never persist a contradictory audit row.
-    check(
-      'edge_recon_action_superseded_ck',
-      sql`(${t.action} = 'SUPERSEDE' AND ${t.superseded_edge_id} IS NOT NULL) OR (${t.action} = 'KEEP_BOTH' AND ${t.superseded_edge_id} IS NULL)`,
-    ),
-  ],
-);
-
 // YUK-531 (A5 S4 / ADR-0036 RT1) — write-time reconciliation AUDIT log for the
-// HETEROGENEOUS misconception_edge ring. The misconception-side parallel to
-// edge_reconciliation_log (structural knowledge-edge ring), kept SEPARATE because
-// the misconception ring is IMPERATIVE (archived_at soft-archive + upsert), NOT
+// HETEROGENEOUS misconception_edge ring, kept SEPARATE because the misconception
+// ring is IMPERATIVE (archived_at soft-archive + upsert), NOT
 // event-sourced/fold-replayed — misconception has no fold/projection (see
 // misconception-reconcile.ts). This table is decision AUDIT / provenance only:
 // the actual SUPERSEDE removal is archiveMisconceptionEdge (archived_at). Candidate
