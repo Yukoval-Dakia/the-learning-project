@@ -7,6 +7,7 @@ import { getCorrectionStatuses, writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import { writeJobEvent } from '@/kernel/job-events';
 import { checkRateLimit } from '@/kernel/request-rate-limit';
+import type { ToolExecutionGateInput } from '@/kernel/tools/types';
 import { parseCopilotPublicProse } from '../public-prose-contract';
 import { isLiveCopilotConversation } from './conversation-lifecycle';
 import {
@@ -43,6 +44,31 @@ export type CopilotRetryRefusal =
   | 'already_retried';
 
 type Store = Db | Tx;
+
+// These objects have learner-facing dismissal/undo. Steering remains available
+// because dropping it would defeat explicit plan requests; its checkpoint is deferred.
+const RETRY_WRITE_TOOLS = new Set([
+  'propose_knowledge_edge',
+  'propose_knowledge_mutation',
+  'propose_learning_item_completion',
+  'propose_learning_item_relearn',
+  'propose_learning_item_defer',
+  'propose_learning_item_archive',
+  'propose_grading_correction',
+  'edit_question',
+  'remember_learner',
+  'record_steering',
+]);
+
+/** Unknown effects and newly registered writes require an audited undo contract. */
+export function retryToolDenial(tool: { name: string; effect?: ToolExecutionGateInput['effect'] }) {
+  return tool.effect === 'read' ||
+    (['propose', 'write', 'control'].includes(tool.effect ?? '') &&
+      RETRY_WRITE_TOOLS.has(tool.name))
+    ? undefined
+    : '重发回合不能执行这个写入操作；请重新提出请求。';
+}
+
 async function runEvents(db: Store, runId: string) {
   return db
     .select()

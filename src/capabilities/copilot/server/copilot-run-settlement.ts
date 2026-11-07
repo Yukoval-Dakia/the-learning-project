@@ -322,15 +322,27 @@ export async function writeFailedTerminalProjection(
       ? {}
       : await durableCheckpointPayload(db, projection.runId);
   await withinExistingOrNewTransaction(db, async (tx) => {
+    let retryable = false;
+    try {
+      // A failed SQL probe must not poison the transaction that publishes FAILED.
+      retryable = await tx.transaction(
+        async (probe) =>
+          (await copilotRetryRefusal(probe, projection.runId, {
+            terminal: { reason: projection.reason, public_prose: projection.publicProse },
+          })) === null,
+      );
+    } catch (error) {
+      console.error('[copilot_run] retry eligibility probe failed', {
+        runId: projection.runId,
+        error,
+      });
+    }
     await write(tx, {
       business_table: COPILOT_RUN_TABLE,
       business_id: projection.runId,
       event_type: COPILOT_RUN_EVENTS.FAILED,
       payload: {
-        retryable:
-          (await copilotRetryRefusal(tx, projection.runId, {
-            terminal: { reason: projection.reason, public_prose: projection.publicProse },
-          })) === null,
+        retryable,
         reason: projection.reason,
         error: projection.publicProse
           ? publicProseFailureMessage(projection.publicProse.failure)

@@ -505,23 +505,31 @@ async function projectCopilotTurnRows(
     structuredQuestionAskIds.has(askId) ||
     checkpointUnsafeAskIds.has(askId);
 
-  const [latestRoot] = forModel
-    ? []
-    : await dbArg
-        .select({ id: event.id })
-        .from(event)
-        .where(
-          and(eq(event.session_id, sessionId), inArray(event.action, [...COPILOT_ASK_ACTIONS])),
-        )
-        .orderBy(desc(event.dispatch_seq))
-        .limit(1);
-  const latestRetryable =
-    latestRoot &&
-    rows.some(
-      (row) => row.action === COPILOT_REPLY_ACTION && row.caused_by_event_id === latestRoot.id,
-    )
-      ? (await copilotRetryRefusal(dbArg, latestRoot.id)) === null
-      : false;
+  let retryableRunId: string | undefined;
+  if (!forModel) {
+    try {
+      retryableRunId = await dbArg.transaction(async (probe) => {
+        const [latestRoot] = await probe
+          .select({ id: event.id })
+          .from(event)
+          .where(
+            and(eq(event.session_id, sessionId), inArray(event.action, [...COPILOT_ASK_ACTIONS])),
+          )
+          .orderBy(desc(event.dispatch_seq))
+          .limit(1);
+        return latestRoot &&
+          rows.some(
+            (row) =>
+              row.action === COPILOT_REPLY_ACTION && row.caused_by_event_id === latestRoot.id,
+          ) &&
+          (await copilotRetryRefusal(probe, latestRoot.id)) === null
+          ? latestRoot.id
+          : undefined;
+      });
+    } catch (error) {
+      console.error('[copilot_turns] retry eligibility probe failed', { sessionId, error });
+    }
+  }
   const turns: CopilotTurn[] = [];
   for (const row of rows) {
     const checkpointEventId =
@@ -591,7 +599,7 @@ async function projectCopilotTurnRows(
       const primaryView = replyPrimaryView(payload);
       const turn: CopilotTurn = {
         role: 'ai',
-        retryable: row.caused_by_event_id === latestRoot?.id && latestRetryable,
+        retryable: retryableRunId !== undefined && row.caused_by_event_id === retryableRunId,
         derivation_policy:
           row.caused_by_event_id && restrictedRootPolicies.has(row.caused_by_event_id)
             ? (restrictedRootPolicies.get(row.caused_by_event_id) as DerivationPolicyT)
