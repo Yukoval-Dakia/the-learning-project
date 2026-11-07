@@ -1,7 +1,7 @@
 import { isLowJudgeConfidence } from '@/core/judge-confidence';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { BlockFigures } from './BlockFigures';
-import { RescueButton, RevertButton } from './BlockTools';
+import { RevertButton } from './BlockTools';
 import { figuresOf, hasOptionsWithoutFigure, lineText, promptOf } from './block-text';
 import type { Block } from './record-api';
 import { servingNote } from './record-copy';
@@ -15,7 +15,7 @@ function enrollmentWords(block: Block): { text: string; tone: Tone } {
       ? { text: '还没放进题库', tone: 'neutral' }
       : { text: '已进题库', tone: 'positive' };
   }
-  if (state === 'ignored') return { text: '没收', tone: 'neutral' };
+  if (state === 'ignored') return { text: '没收进题库', tone: 'neutral' };
   // Waiting in line is not a failure: only publish_failed says it didn't go in.
   if (reason === 'pending') return { text: '正在进题库', tone: 'working' };
   if (reason === 'needs_text') return { text: '没认出题目', tone: 'caution' };
@@ -28,7 +28,6 @@ export function BlockLine({
   block,
   no,
   serving,
-  rescuable,
   onHoverPage,
 }: {
   sessionId: string;
@@ -37,8 +36,6 @@ export function BlockLine({
   no: string;
   /** Today's serving state, once history has been read. */
   serving: BlockServing | null;
-  /** The recording still lets a question be read again from its page. */
-  rescuable: boolean;
   onHoverPage: (page: number | null) => void;
 }) {
   const enrollment = block.ingestion_enrollment;
@@ -80,9 +77,6 @@ export function BlockLine({
         <div className="rc-line-tools">
           {block.status === 'auto_enrolled' && (
             <RevertButton sessionId={sessionId} blockId={block.id} />
-          )}
-          {block.status === 'draft' && rescuable && enrollment.reason !== 'pending' && (
-            <RescueButton sessionId={sessionId} block={block} />
           )}
         </div>
       </div>

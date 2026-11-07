@@ -51,9 +51,23 @@ export function useRecording(id: string): RecordingRead {
         : false,
   });
   const status = detailQ.data?.session.status ?? '';
+  const hasBlocks = HAS_BLOCKS.has(status);
+  const blocksQ = useQuery({
+    queryKey: recordKeys.blocks(id),
+    queryFn: () => listBlocks(id),
+    enabled: hasBlocks,
+    // Questions go into the library by themselves: keep reading until none is on its way. The job
+    // is queued just after the recording settles, so a first read can call one failed for a moment.
+    refetchInterval: (q) => {
+      const reasons = q.state.data?.map((b) => b.ingestion_enrollment.reason) ?? [];
+      if (reasons.includes('pending')) return 2500;
+      return reasons.includes('publish_failed') && q.state.dataUpdateCount < 6 ? 2500 : false;
+    },
+  });
+  const taken = blocksQ.data?.filter((b) => b.ingestion_enrollment.state === 'in_library').length;
   const historyQ = useQuery({
     // The status is part of the key: every move (finished, imported, failed) re-reads the record.
-    queryKey: [...recordKeys.history(id), status],
+    queryKey: [...recordKeys.history(id), status, taken ?? 0],
     queryFn: () => getHistory(id),
     enabled: status !== '',
     placeholderData: (prev) => (prev?.session.id === id ? prev : undefined),
@@ -66,15 +80,6 @@ export function useRecording(id: string): RecordingRead {
     runState === 'in_progress' ||
     runState === 'waiting';
   const stream = useIngestionSSE(going ? id : null);
-  const hasBlocks = HAS_BLOCKS.has(status);
-  const blocksQ = useQuery({
-    queryKey: recordKeys.blocks(id),
-    queryFn: () => listBlocks(id),
-    enabled: hasBlocks,
-    // Questions go into the library by themselves: keep reading until none is on its way.
-    refetchInterval: (q) =>
-      q.state.data?.some((b) => b.ingestion_enrollment.reason === 'pending') ? 2500 : false,
-  });
   const blocksRead = !hasBlocks
     ? 'none'
     : blocksQ.data

@@ -52,7 +52,7 @@ export function statusWords(rec: Recording, start: StartState | null): StatusWor
   if (rec.read === 'loading') return { text: '正在找回这次录入…', tone: 'neutral' };
   if (rec.read === 'unreadable') return { text: '这次录入的过程暂时读不出来', tone: 'caution' };
 
-  if (rec.lane === 'agent') {
+  if (rec.lane === 'agent' && rec.blocks.length === 0) {
     if (rec.items.length === 0 && rec.gaps.length > 0) {
       return { text: '整理完了，但找到的题没有留下记录', tone: 'neutral' };
     }
@@ -77,9 +77,13 @@ export function statusWords(rec: Recording, start: StartState | null): StatusWor
   if (rec.blocksRead === 'failed') return { text: '认出的题暂时读不出来', tone: 'caution' };
   const count = (test: (e: Recording['blocks'][number]['ingestion_enrollment']) => boolean) =>
     rec.blocks.filter((b) => test(b.ingestion_enrollment)).length;
-  const inBank = count((e) => e.state === 'in_library');
+  // A plain reading can follow a helper run that stopped; its questions count here too.
+  const helperIn = rec.items.filter((i) => i.status === 'withheld' || i.status === 'admitted');
+  const helperFailed = rec.items.filter((i) => i.status === 'failed').length;
+  const inBank =
+    count((e) => e.state === 'in_library' && e.library_visible !== false) + helperIn.length;
   const pending = count((e) => e.reason === 'pending');
-  const failed = count((e) => e.reason === 'publish_failed');
+  const failed = count((e) => e.reason === 'publish_failed') + helperFailed;
   const noText = count((e) => e.reason === 'needs_text');
   const partly =
     rec.status === 'partial'
@@ -89,7 +93,7 @@ export function statusWords(rec: Recording, start: StartState | null): StatusWor
     return {
       text:
         inBank > 0
-          ? `${inBank} 道题已进题库，还有 ${pending} 道正在进`
+          ? `${inBank} 道题已进题库，另外 ${pending} 道正在进题库`
           : `${pending} 道题正在进题库`,
       tone: 'working',
       detail: partly,

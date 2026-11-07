@@ -65,7 +65,6 @@ export function RecordingSheet({
     rec.items.some((i) => i.status === 'withheld' || i.status === 'admitted' || i.now !== null) ||
     rec.blocks.some((b) => b.ingestion_enrollment.state === 'in_library');
   const working = rec.phase === 'working';
-  const photos = facts.entrypoint === 'vision_single' || facts.entrypoint === 'vision_paper';
   const warning =
     rec.phase === 'failed'
       ? null
@@ -166,10 +165,8 @@ export function RecordingSheet({
       {rec.blocks.length > 0 && (
         <BlockLines
           sessionId={rec.id}
-          status={rec.status}
           blocks={rec.blocks}
           serving={rec.blockServing}
-          photos={photos}
           onHoverPage={setLitPage}
         />
       )}
