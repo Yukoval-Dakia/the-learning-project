@@ -1,6 +1,6 @@
 // SelectionOrchestratorTask LLM 输出形状。
 //
-// 档2（ADR-0042 编排档2, docs/adr/0042-mfi-selection-signal-three-layer-engine.md:46-68）：LLM 是**主脑**。
+// 档2（ADR-0042 编排档2, ADR-0042:46-68）：LLM 是**主脑**。
 // 它对每个**非到期**候选输出 { weight≥0, role, arrangement?, reason }——选哪些、怎么排、
 // 为什么。一个薄 tempered-softmax sampler 把 weight → π_i（inclusion prob）。
 // 只要 T>0，每个正权重候选 π_i>0（满足 positivity）。

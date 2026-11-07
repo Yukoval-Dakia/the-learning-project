@@ -20,8 +20,8 @@
  *       this probe cannot exercise
  *
  * Output: pass/fail summary + raw model response saved to
- *   docs/preflight/YYYY-MM-DD-vision-preflight.json (gitignored expected; commit
- *   on first run only as artifact of M0 exit gate).
+ *   $TLP_DOCS_ROOT/audit/preflight/YYYY-MM-DD-vision-preflight.json
+ *   (default TLP_DOCS_ROOT: /Volumes/YukovalSBak/yukoval-projects/tlp-docs).
  */
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -35,7 +35,8 @@ import { preflightVisionOneShot, preflightVisionOpenAiOneShot } from './prefligh
 
 config({ path: '.env' });
 
-const OUT_DIR = resolve(process.cwd(), 'docs/preflight');
+const DOCS_ROOT = process.env.TLP_DOCS_ROOT ?? '/Volumes/YukovalSBak/yukoval-projects/tlp-docs';
+const OUT_DIR = resolve(DOCS_ROOT, 'audit/preflight');
 const today = new Date().toISOString().slice(0, 10);
 const OUT_FILE = resolve(OUT_DIR, `${today}-vision-preflight.json`);
 
