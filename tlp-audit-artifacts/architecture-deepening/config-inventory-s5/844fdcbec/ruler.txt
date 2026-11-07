@@ -1,0 +1,4 @@
+ruler scenarios (same hypothetical edit applied to base and head git-archive trees)
+A add a provider key variable: base 3 files, head 3 files (providers.ts, server/env.ts, .env.example)
+B change QuestionAdmissionAdjudicateTask default pair: base 1 file, head 1 file
+C change the global task default pair: base 1 file (src/ai/task-spec.ts), head 1 file (src/core/config/model-overrides.ts)

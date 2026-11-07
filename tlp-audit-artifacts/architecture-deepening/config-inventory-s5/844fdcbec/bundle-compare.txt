@@ -1,0 +1,15 @@
+bundle comparison (base 4497ab0bb vs head 844fdcbec, same build commands)
+
+dist file list (756 files each):
+  only difference: ./start/server/assets/_tanstack-start-manifest_v-<hash>.js filename (content differs only by absolute build path)
+
+dist SHA256 differences (5 of 756): migrate.cjs server.cjs worker.cjs start/server/server.js start/server/assets/_tanstack-start-manifest_v-*.js
+
+esbuild module-header sets:
+  migrate.cjs        base=7580 head=7580 identical
+  server.cjs         base=8419 head=8419 identical
+  worker.cjs         base=8326 head=8326 identical
+  start/server/server.js base=43 head=43 identical
+
+client assets: 333 files, byte-identical
+manifest: byte-identical after replacing each tree root with <BUILD>
