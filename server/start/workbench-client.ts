@@ -19,6 +19,8 @@ import {
   getStartOvernightDigest,
   getStartProposalInbox,
   getStartRecentAiChanges,
+  dismissStartAiNoticesFn,
+  getStartAiNoticeDismissals,
   getStartTaskFailureAlerts,
   getStartTeachingBrief,
   getStartTodayCost,
@@ -45,6 +47,8 @@ export const startWorkbenchClient: WorkbenchClient = {
   getOvernightDigest: () => getStartOvernightDigest(transport),
   getTodayCost: () => getStartTodayCost(transport),
   getTaskFailureAlerts: () => getStartTaskFailureAlerts(transport),
+  listAiNoticeDismissals: () => getStartAiNoticeDismissals(transport),
+  dismissAiNotices: (keys) => dismissStartAiNoticesFn({ ...transport, data: { keys } }),
   listDecisionProposalPage: (cursor) =>
     getStartProposalInbox({
       ...transport,

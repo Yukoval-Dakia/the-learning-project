@@ -309,6 +309,16 @@ export const OvernightDigestResponseSchema = z.object({
   ),
 });
 
+export const AiNoticeDismissalsResponseSchema = z.object({
+  keys: z.array(z.string()),
+});
+
+export const AiNoticeDismissBodySchema = z
+  .object({
+    keys: z.array(z.string().min(1).max(240)).min(1).max(40),
+  })
+  .strict();
+
 export const PrepDeskConjecturesResponseSchema = z.object({
   conjectures: z.array(
     z.object({

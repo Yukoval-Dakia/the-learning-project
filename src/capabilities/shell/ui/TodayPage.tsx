@@ -3,7 +3,7 @@
 // today-m3e.css; design record docs/design/2026-11-03-today-finish-m3e.md. Queries, keys,
 // counts, navigation targets and the cold-start gate are unchanged.
 
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowRight,
   ChevronDown,
@@ -32,6 +32,7 @@ import { queryKeys } from '@/ui/lib/write-invalidation';
 import { SkeletonLines } from '@/ui-next/primitives/SkeletonLines';
 import { Button } from '@/ui-next/public';
 import { TodayHeader } from '@/ui-next/today/TodayHeader';
+import { dependencyNoticeKey, failureNoticeKeys } from './ai-failure-notice';
 import { AreaGate, type AreaStatus } from './AreaGate';
 import { AiChangesStrip } from './blocks/AiChangesStrip';
 import { KpiRow } from './blocks/KpiRow';
@@ -157,29 +158,6 @@ export function aiTaskLabel(taskKind: string): string {
     return '学习辅导';
   }
   return '其他 AI 工作';
-}
-
-export function learnerFailureSummary(messages: readonly string[]): string {
-  const detail = messages.join(' ');
-  if (/timeout|timed out|deadline exceeded/i.test(detail)) {
-    return 'AI 处理超时，任务没有完成。';
-  }
-  if (/rate.?limit|too many requests|\b429\b/i.test(detail)) {
-    return 'AI 服务当前繁忙，任务没有完成。';
-  }
-  if (/unauthori[sz]ed|forbidden|invalid api.?key|\b(?:401|403)\b/i.test(detail)) {
-    return 'AI 服务连接配置异常，任务没有完成。';
-  }
-  if (/network|fetch failed|econn|socket|tls/i.test(detail)) {
-    return 'AI 服务连接中断，任务没有完成。';
-  }
-  if (/process exited|exit code|terminated|killed|signal/i.test(detail)) {
-    return 'AI 运行环境中断，任务没有完成。';
-  }
-  if (/parse|invalid json|structured output/i.test(detail)) {
-    return 'AI 返回的内容无法读取，任务没有完成。';
-  }
-  return 'AI 运行失败；技术详情已保留在管理页。';
 }
 
 function CostRibbon() {
@@ -308,62 +286,79 @@ function useOvernightDigest() {
   return useQuery({ queryKey: queryKeys.overnightDigest, queryFn: getOvernightDigest });
 }
 
-// YUK-707 · [裁决 1] — degraded_kinds silent-failure red flags, HOISTED out of the
-// overnight band to workbench position 1 (above the teaching brief), so they stay
-// directly visible and are never hidden behind the narrative card. Same ['overnight-
-// digest'] query (via useOvernightDigest) as OvernightDigestBand → react-query dedupes it
-// (zero extra network). Silent degrade: it renders null — no skeleton, no error surface —
-// until real degraded facts exist; the red strip is a cross-cutting flag, not a primary
-// surface. Reuses the module-level learnerFailureSummary / aiTaskLabel (unchanged). M3E: one
-// critical-tone line per failed task kind; the plain-language reason, once only a hover title,
-// is now visible text so touch users can read it too.
-function DegradedKindsFlags() {
-  const q = useOvernightDigest();
-  const d = q.data;
-  if (!d || d.degraded_kinds.length === 0) return null;
-  return (
-    <div className="td-flags">
-      {d.degraded_kinds.map((dk) => (
-        <p key={dk.task_kind} className="td-flag">
-          <CircleAlert size={16} aria-hidden="true" className="td-flag-ic" />
-          <span className="td-flag-t">
-            {aiTaskLabel(dk.task_kind)}失败 {dk.error_count} 次
-          </span>
-          <span className="td-flag-s">{learnerFailureSummary(dk.recent_error_messages)}</span>
-        </p>
-      ))}
-    </div>
-  );
-}
-
-// YUK-1738 — one generic line when some AI task kind keeps failing (observability's read).
-// Learner copy only: never the task kind, counts or run ids — those live at the top of
-// /admin/runs. Silent while loading, on error, and when there is no alert. An `unsealed` alert
-// stays off this line: the reply reached the learner, only its closing record is incomplete.
-// A dependency notice is its own line: replies keep succeeding without that dependency, so it is
-// not a failed task, and its words come from the server.
+// The AI failure notice, above the teaching brief. Learner words only: never a task kind, count or
+// run id, which live on /admin/runs. Silent until the closed list is known, so a closed notice
+// never flashes back; 知道了 is written to the server, and a new failure episode shows again.
 const TASK_FAILURE_ALERTS_KEY = ['task-failure-alerts'] as const;
-function TaskFailureNotice() {
-  const { getTaskFailureAlerts } = useWorkbenchClient();
-  const q = useQuery({ queryKey: TASK_FAILURE_ALERTS_KEY, queryFn: getTaskFailureAlerts });
-  if (!q.data) return null;
-  const tasksFailing = q.data.alerts.some((alert) => alert.rule !== 'unsealed');
+const AI_NOTICE_DISMISSALS_KEY = ['ai-notice-dismissals'] as const;
+
+function AiFailureNotice() {
+  const client = useWorkbenchClient();
+  const queryClient = useQueryClient();
+  const digest = useOvernightDigest().data;
+  const alerts = useQuery({
+    queryKey: TASK_FAILURE_ALERTS_KEY,
+    queryFn: client.getTaskFailureAlerts,
+  }).data;
+  const dismissed = useQuery({
+    queryKey: AI_NOTICE_DISMISSALS_KEY,
+    queryFn: client.listAiNoticeDismissals,
+  }).data;
+  const dismiss = useMutation({
+    mutationFn: (keys: string[]) => client.dismissAiNotices(keys),
+    onMutate: (keys) => {
+      const previous = queryClient.getQueryData<{ keys: string[] }>(AI_NOTICE_DISMISSALS_KEY);
+      queryClient.setQueryData(AI_NOTICE_DISMISSALS_KEY, {
+        keys: [...(previous?.keys ?? []), ...keys],
+      });
+      return { previous };
+    },
+    onError: (_error, _keys, context) => {
+      queryClient.setQueryData(AI_NOTICE_DISMISSALS_KEY, context?.previous);
+    },
+    onSuccess: (saved) => queryClient.setQueryData(AI_NOTICE_DISMISSALS_KEY, saved),
+  });
+  if (!dismissed) return null;
+  const closed = new Set(dismissed.keys);
+  const failing = failureNoticeKeys({ digest, alerts: alerts?.alerts }).filter(
+    (key) => !closed.has(key),
+  );
+  const dependencies = (alerts?.dependency_notices ?? []).filter(
+    (notice) => !closed.has(dependencyNoticeKey(notice)),
+  );
+  const close = (keys: string[], label: string) => (
+    <Button
+      variant="quiet"
+      size="sm"
+      className="td-flag-close"
+      onClick={() => dismiss.mutate(keys)}
+    >
+      {label}
+    </Button>
+  );
   return (
     <>
-      {tasksFailing ? (
+      {failing.length > 0 ? (
         <p className="td-flag td-flag-caution" role="status">
           <CircleAlert size={16} aria-hidden="true" className="td-flag-ic" />
-          <span className="td-flag-t">有一部分 AI 工作最近连续没有成功</span>
-          <span className="td-flag-s">相关的结果可能暂时缺失或来得慢一些。</span>
+          <span className="td-flag-t">有些 AI 工作没做完</span>
+          <span className="td-flag-s">相关的结果可能晚点到。</span>
+          {close(failing, '知道了')}
         </p>
       ) : null}
-      {q.data.dependency_notices.map((notice) => (
+      {dependencies.map((notice) => (
         <p key={notice.dependency} className="td-flag td-flag-caution" role="status">
           <CircleAlert size={16} aria-hidden="true" className="td-flag-ic" />
           <span className="td-flag-t">{notice.learner_title}</span>
           <span className="td-flag-s">{notice.learner_detail}</span>
+          {close([dependencyNoticeKey(notice)], '知道了')}
         </p>
       ))}
+      {dismiss.isError ? (
+        <p className="td-flag td-flag-caution" role="alert">
+          <span className="td-flag-s">刚才没有关掉，再点一次试试。</span>
+        </p>
+      ) : null}
     </>
   );
 }
@@ -575,10 +570,7 @@ export default function TodayPage({
         >
           {s && (
             <>
-              {/* YUK-707 · workbench 位置 1 — degraded_kinds 红旗上提，永在 brief 之前直显
-                ([裁决 1])；无 degraded 事实时渲 null。 */}
-              <DegradedKindsFlags />
-              <TaskFailureNotice />
+              <AiFailureNotice />
 
               {/* YUK-707 · workbench 位置 2 — 唯一「为你而备」主 handoff 交付，default-visible
                 ([裁决 主]，contract §0/§5）。navigate 供 YUK-709 confirmed → KC-scoped

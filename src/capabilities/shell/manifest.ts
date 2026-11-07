@@ -4,6 +4,8 @@ import { API_ERROR_RESPONSES, ApiIdParamsSchema } from '@/kernel/http-contracts'
 import { defineCapability } from '@/kernel/manifest';
 import { uiPagesFor } from '@/kernel/ui-surfaces';
 import {
+  AiNoticeDismissBodySchema,
+  AiNoticeDismissalsResponseSchema,
   AutoAppliedBatchRetractResponseSchema,
   AutoAppliedProposalDigestSchema,
   OvernightDigestResponseSchema,
@@ -143,6 +145,22 @@ export const shellCapability = defineCapability({
         responses: { 200: TeachingBriefResponseSchema, ...API_ERROR_RESPONSES },
         successStatus: 200,
         load: () => import('./api/prep-desk-brief').then((m) => m.GET),
+      },
+      // AI failure notices the learner closed; appended on close, so another device agrees.
+      {
+        method: 'GET',
+        path: '/api/workbench/ai-notices/dismissals',
+        operationId: 'listAiNoticeDismissals',
+        responses: { 200: AiNoticeDismissalsResponseSchema, ...API_ERROR_RESPONSES },
+        load: () => import('./api/ai-notice-dismissals').then((m) => m.GET),
+      },
+      {
+        method: 'POST',
+        path: '/api/workbench/ai-notices/dismissals',
+        operationId: 'dismissAiNotices',
+        request: { body: AiNoticeDismissBodySchema },
+        responses: { 200: AiNoticeDismissalsResponseSchema, ...API_ERROR_RESPONSES },
+        load: () => import('./api/ai-notice-dismissals').then((m) => m.POST),
       },
       // Retires a delivered outcome from brief eligibility; writes no derived
       // status back onto proposal/question/result.

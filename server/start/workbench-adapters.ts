@@ -56,6 +56,18 @@ export const readStartTaskFailureAlerts = () =>
     const { loadTaskFailureAlerts } = await import('@/capabilities/observability/public');
     return loadTaskFailureAlerts(db);
   });
+export const readStartAiNoticeDismissals = () =>
+  withStartDb(async (db) => {
+    const { listDismissedAiNotices } = await import('@/capabilities/shell/public');
+    return { keys: await listDismissedAiNotices(db) };
+  });
+export const dismissStartAiNotices = (input: { keys: string[] }) =>
+  withStartDb(async (db) => {
+    const { AiNoticeDismissBodySchema, dismissAiNotices } = await import(
+      '@/capabilities/shell/public'
+    );
+    return dismissAiNotices(db, AiNoticeDismissBodySchema.parse(input).keys);
+  });
 export const readStartAutoApplied = (window?: { from: string; to?: string }) =>
   withStartDb(async (db) => {
     const { getAutoAppliedDigest } = await import('@/capabilities/shell/public');
@@ -189,6 +201,8 @@ export const workbenchAdapters = {
   readStartProposalInbox,
   readStartRecentAiChanges,
   readStartTaskFailureAlerts,
+  readStartAiNoticeDismissals,
+  dismissStartAiNotices,
   readStartTeachingBrief,
   readStartTodayCost,
   readStartWorkbenchSummary,
