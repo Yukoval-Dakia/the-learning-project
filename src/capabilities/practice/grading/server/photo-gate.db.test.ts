@@ -641,6 +641,16 @@ it('verifies photo evidence before claims and persists the accepted binding', as
       model_executor: createFormalModelExecutor(db),
     });
     console.info('enabled photo raw evaluation', JSON.stringify(graded));
+    await expect(
+      evaluateSubmission(db, {
+        submission_id: 'photo-original',
+        evaluation_group_id: 'photo-group',
+        evaluation_key: 'manual-photo-spoof',
+        mode: 'manual_assert',
+        provenance: { source: 'manual', assisted: false },
+        asserted_unit_results: graded.record.unit_results,
+      }),
+    ).rejects.toThrow('manual assertions cannot claim photo exam evidence');
     const { evaluation } = await import('@/db/schema');
     expect(await db.select().from(evaluation)).toMatchObject([
       { unit_results: [{ photo_judgement: { evidence_ref: evidenceRef } }] },

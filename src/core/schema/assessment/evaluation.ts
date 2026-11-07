@@ -767,6 +767,10 @@ export async function evaluateSubmissionCore(
         mismatch = `asserted result for '${result.scoring_unit_id}' fails ScoringUnitResult schema`;
         break;
       }
+      if (parsed.data.status === 'scored' && parsed.data.photo_judgement !== undefined) {
+        mismatch = 'manual assertions cannot claim photo exam evidence';
+        break;
+      }
       if (!inScopeUnitIds.has(result.scoring_unit_id)) {
         mismatch = `asserted result for unknown/out-of-scope unit '${result.scoring_unit_id}'`;
         break;
