@@ -11,6 +11,7 @@ import type {
 export type { ContractAttemptOutcome, GradingEntryPoint } from '@/core/schema/assessment';
 
 import { gradingProvenanceFromUnitResults } from '@/core/schema/assessment/dto';
+import { photoJudgingNoticeFromUnitResults } from '@/core/schema/assessment/judgment';
 import {
   VERDICT_CORRECT_THRESHOLD,
   deriveCoarseVerdict,
@@ -134,6 +135,11 @@ export function projectEvaluationToJudgeResult(
   // AI 判分标签随判词上每个读面（同步 judge 块、durable DONE payload、
   // issuance settled）——由 unit_results 的 judged_by 盖章派生，不补造历史。
   const gradingProvenance = gradingProvenanceFromUnitResults(record.unit_results);
+  const photoNotice = photoJudgingNoticeFromUnitResults(record.unit_results);
+  const executionLabels = {
+    ...(gradingProvenance ? { grading_provenance: gradingProvenance } : {}),
+    ...(photoNotice ? { photo_judging_notice: photoNotice } : {}),
+  };
   const pendingEvidence = {
     evaluation_id: record.evaluation_id,
     pending_units: record.unit_results
@@ -147,7 +153,7 @@ export function projectEvaluationToJudgeResult(
       coarse_outcome: 'unsupported',
       confidence: 0,
       capability_ref: CONTRACT_CAPABILITY_REF,
-      ...(gradingProvenance ? { grading_provenance: gradingProvenance } : {}),
+      ...executionLabels,
       feedback_md: '这次判定还没完成，稍后再看看。',
       evidence_json: pendingEvidence,
     };
@@ -160,7 +166,7 @@ export function projectEvaluationToJudgeResult(
       coarse_outcome: 'unsupported',
       confidence: 0,
       capability_ref: CONTRACT_CAPABILITY_REF,
-      ...(gradingProvenance ? { grading_provenance: gradingProvenance } : {}),
+      ...executionLabels,
       feedback_md: '这次判定没有完成，暂时不能给分。',
       evidence_json: {
         ...pendingEvidence,
@@ -176,7 +182,7 @@ export function projectEvaluationToJudgeResult(
       coarse_outcome: 'partial_unknown',
       confidence: 1,
       capability_ref: CONTRACT_CAPABILITY_REF,
-      ...(gradingProvenance ? { grading_provenance: gradingProvenance } : {}),
+      ...executionLabels,
       feedback_md: `部分正确（${aggregate.partial_units
         .map((unit) => `${unit.correct_count}/${unit.total_count}`)
         .join('、')}），分数未知`,
@@ -196,7 +202,7 @@ export function projectEvaluationToJudgeResult(
       coarse_outcome: 'unsupported',
       confidence: 0,
       capability_ref: CONTRACT_CAPABILITY_REF,
-      ...(gradingProvenance ? { grading_provenance: gradingProvenance } : {}),
+      ...executionLabels,
       feedback_md: '这次判定还没有公布分值，暂时不能给分。',
       evidence_json: pendingEvidence,
     };
@@ -232,7 +238,7 @@ export function projectEvaluationToJudgeResult(
       coarse_outcome: 'unsupported',
       confidence: 0,
       capability_ref: CONTRACT_CAPABILITY_REF,
-      ...(gradingProvenance ? { grading_provenance: gradingProvenance } : {}),
+      ...executionLabels,
       feedback_md: '这次判定缺少总分，暂时不能给分。',
       evidence_json: { ...evidence_json, verdict_reason: verdict.reason },
     };
@@ -244,7 +250,7 @@ export function projectEvaluationToJudgeResult(
       coarse_outcome: 'incorrect',
       confidence: 1,
       capability_ref: CONTRACT_CAPABILITY_REF,
-      ...(gradingProvenance ? { grading_provenance: gradingProvenance } : {}),
+      ...executionLabels,
       feedback_md:
         scoredUnitFeedback ?? (onlyBlankZero ? '这次没有作答。' : '这次作答和参考答案不一致。'),
       evidence_json,
@@ -257,7 +263,7 @@ export function projectEvaluationToJudgeResult(
       coarse_outcome: 'correct',
       confidence: 1,
       capability_ref: CONTRACT_CAPABILITY_REF,
-      ...(gradingProvenance ? { grading_provenance: gradingProvenance } : {}),
+      ...executionLabels,
       feedback_md: scoredUnitFeedback ?? '',
       evidence_json,
     };
@@ -268,7 +274,7 @@ export function projectEvaluationToJudgeResult(
     coarse_outcome: 'partial',
     confidence: 1,
     capability_ref: CONTRACT_CAPABILITY_REF,
-    ...(gradingProvenance ? { grading_provenance: gradingProvenance } : {}),
+    ...executionLabels,
     feedback_md: scoredUnitFeedback ?? '这题部分答对了。',
     evidence_json,
   };

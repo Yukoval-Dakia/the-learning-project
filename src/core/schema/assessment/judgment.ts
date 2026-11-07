@@ -112,6 +112,17 @@ export const ModelObservation = z.object({
 });
 export type ModelObservationT = z.infer<typeof ModelObservation>;
 
+/** Verified photo-exam binding retained on each automatic photo score. */
+export const PhotoJudgement = z.object({
+  provider: z.string().min(1),
+  applied_reasoning: z.string().optional(),
+  evidence_ref: z.string().min(1),
+  task_kind: z.string().min(1),
+  model: z.string().min(1),
+  model_version: z.string().min(1),
+  notice: z.literal('AI 判、未校准'),
+});
+
 /**
  * 单元已判分。scored_because 显式区分“作答判得”与“空白按声明 marking 计零”
  * （blank_marked_zero 只在 basis.blank_scores_zero=true 时合法 —— 由
@@ -202,6 +213,7 @@ export const ScoredUnitResult = z.object({
    * 缺省 = 没有观察（含全部文本作答与历史行）。
    */
   model_observations: z.array(ModelObservation).optional(),
+  photo_judgement: PhotoJudgement.optional(),
   /**
    * 掌握证据。不参与 points_awarded，也不进入聚合。缺省 = 结算侧自行归属。
    */
@@ -232,6 +244,12 @@ export const ScoringUnitResult = z.discriminatedUnion('status', [
   PendingUnitResult,
 ]);
 export type ScoringUnitResultT = z.infer<typeof ScoringUnitResult>;
+
+export function photoJudgingNoticeFromUnitResults(results: readonly ScoringUnitResultT[]) {
+  return results.some((result) => result.status === 'scored' && result.photo_judgement)
+    ? ('AI 判、未校准' as const)
+    : undefined;
+}
 
 // ---------- 聚合结果 ----------
 
