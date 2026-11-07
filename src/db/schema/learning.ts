@@ -202,7 +202,11 @@ export const learning_session = pgTable('learning_session', {
   // Write path = ingestion/server/agent/budget-state.ts 的路径级写入；
   // operation-identity.ts / agent/{budget,spend}.ts 分别持有身份/授权/费用职责。
   agent_budget: jsonb('agent_budget'),
-  // conversation-only fields
+  // conversation-only fields — hard delete tombstones, owned by
+  // copilot/server/conversation-lifecycle.ts. Workspace expiry derives user
+  // activity from the event stream instead of a stored column.
+  deletion_requested_at: timestamp('deletion_requested_at', { withTimezone: true }),
+  deleted_at: timestamp('deleted_at', { withTimezone: true }),
   summary_md: text('summary_md'),
   // YUK-936 — Agent SDK session id for foreground inline Copilot resume (ADR-0054).
   // Product session_id stays learning_session.id; this is server-owned SDK transcript

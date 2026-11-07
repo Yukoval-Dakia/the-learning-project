@@ -112,6 +112,14 @@ export const CopilotCreateSessionResponseSchema = z.object({
   session: CopilotSessionSchema,
 });
 
+export const CopilotDeleteSessionResponseSchema = z.object({
+  session_id: z.string(),
+  // 'deleting' = revocation committed, in-flight runs still settling; the
+  // reconcile job persists the tombstone and the workspace sweep removes the
+  // owner's directory. 'deleted' = conversation tombstone already persisted.
+  status: z.enum(['deleting', 'deleted']),
+});
+
 const CopilotStructuredQuestionSchema = z.object({
   id: z.string(),
   kind: z.string(),

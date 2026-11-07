@@ -12,6 +12,7 @@
 // inferred types (not the schemas) keeps these modules zod-free at runtime;
 // generated.ts wraps these tables with drizzle-zod for validation.
 
+export { agent_workspace } from './schema/agent-workspace';
 export {
   ai_task_runs,
   bank_search_snapshot,
