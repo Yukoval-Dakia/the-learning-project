@@ -21,6 +21,8 @@ await installAgencyHostOperations();
 const { installObservabilityHostOperations } = await import('@/capabilities/observability/public');
 await installObservabilityHostOperations();
 installSettlementCascadeRevert(orchestrateCascadeRevert);
+const { installProposalUndoGuards } = await import('@/server/proposals/undo-guards');
+installProposalUndoGuards();
 const [{ buildAdminConfigRuntimeFacts }, { setAdminConfigRuntimeFacts }] = await Promise.all([
   import('@/server/config/admin-config-facts'),
   import('@/capabilities/observability/public'),

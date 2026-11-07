@@ -2,7 +2,12 @@
 
 import { loadReviewDueReader } from './scheduling/public';
 
-export { type VariantProposalResult, proposeFailureVariant } from './failure-learning/public';
+export {
+  type VariantProposalResult,
+  causeCategoryUndoGuard,
+  knowledgeNodesWithMisconceptionEdges,
+  proposeFailureVariant,
+} from './failure-learning/public';
 export {
   JUDGE_DBOS_QUEUE,
   JUDGE_DBOS_WORKFLOW,
@@ -35,14 +40,19 @@ export {
   runQuestionAdmissionChecks,
   writeVerifyDispatchIntent,
 } from './question-bank/public';
-
 // practice 拥有配置键的 consumer-effective 事实（真实 reader 调用）：
 // 组合根 facts seam 聚合进 GET /api/admin/config keys[].effective。
 export { practiceConfigEffectiveFacts } from './server/config-effective-facts';
+export { learningItemsWithAnswerDrafts } from './session/public';
+export {
+  knowledgeNodesWithLearningRecords,
+  learningItemsWithLearningRecords,
+} from './settlement/public';
 export {
   DEDUP_OVERLAP_THRESHOLD,
   claimHttpSourceDuplicate,
   findVectorNearDuplicate,
+  knowledgeNodesWithPlacementClaims,
   maxNgramOverlap,
   vectorNearHoldMetadata,
 } from './supply/public';
