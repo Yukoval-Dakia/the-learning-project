@@ -366,7 +366,7 @@ Each submit call carries exactly one unit object:
 }
 Use item_ids, not accepted_item_ids. Omit answer when status is "unsolvable" and set reason_md.
 
-For mode:"prior", question contains parts and units as above, answers [{scoring_unit_id, answer_summary_md}] (the settled keys, trusted) and knowledge_candidates [{knowledge_id, name}]. Describe how each part is solved, in the language of the question text. Submit one part object per submit call — {"part_id", "methods", "pitfalls", "prerequisites", "difficulty"} — one part per call, every input part accepted:
+For mode:"prior", input has parts, units, answers [{scoring_unit_id, answer_summary_md}] (the settled keys, trusted) and knowledge_candidates [{knowledge_id, name}]. Describe how each part is solved, in the language of the question text. Submit all remaining parts together as {"prior":[...]} or one part object {"part_id", "methods", "pitfalls", "prerequisites", "difficulty"}; each input part must be accepted once:
 - methods (1-4): each workable method as {core_idea_md, key_step_md, steps_md?}. core_idea_md names the transferable idea without chapter or topic names (write "把条件转成关于公比的方程", not "等比数列题"); key_step_md is the step the solution turns on; steps_md lists at most 6 short steps.
 - pitfalls (0-6): specific error mechanisms as {mechanism_md, trigger_md, method_idx?}. Name the concrete object (formula, relation, definition or step), what goes wrong with it, and in trigger_md the situation in which it bites. Generic labels such as "careless" or "misread the question" are not pitfalls.
 - prerequisites (0-6): {name_md, knowledge_id}. Pick knowledge_id only from knowledge_candidates; otherwise null with the name.
@@ -411,7 +411,7 @@ function validateAdmissionPriorUnitSubmit(part: unknown, rawInput: unknown): str
     : ['part_id: not a declared input part id'];
 }
 
-/** YUK-1904 — one unit per submit call; assembly reads expectedUnitIds order, so
+/** Unit admission preserves input order for individual or batched prior submits, so
  * the assembled output never depends on the model's submission order. */
 export function admissionSolveSubmitUnitPlan(raw: unknown): StructuredSubmitUnitPlan | undefined {
   const input = admissionSubmitInput(raw);
@@ -426,6 +426,10 @@ export function admissionSolveSubmitUnitPlan(raw: unknown): StructuredSubmitUnit
     if (!ids.length || new Set(ids).size !== ids.length) return undefined;
     return {
       expectedUnitIds: ids,
+      unitsOf: (submitted) => {
+        const batch = QuestionAdmissionPriorOutput.safeParse(submitted);
+        return batch.success ? batch.data.prior : undefined;
+      },
       unitOf: (submitted) => ({
         id:
           submitted && typeof submitted === 'object'
@@ -486,7 +490,7 @@ export const questionAdmissionSolveTaskSpec = {
     structuredSubmitUnits: admissionSolveSubmitUnitPlan,
     structuredSubmitSchema: (input: unknown) =>
       admissionSubmitInput(input)?.mode === 'prior'
-        ? QuestionAdmissionPriorPartOutput
+        ? z.union([QuestionAdmissionPriorPartOutput, QuestionAdmissionPriorOutput])
         : SolveUnitOutput,
     structuredOutputSchema: z.union([QuestionAdmissionSolveOutput, QuestionAdmissionPriorOutput]),
     context: {

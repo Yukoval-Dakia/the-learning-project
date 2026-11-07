@@ -579,7 +579,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       : undefined;
     if (structuredOutput) {
       systemPrompt += unitPlan
-        ? structuredSubmitUnitSuffix(submitPolicy?.forced ?? true)
+        ? structuredSubmitUnitSuffix(submitPolicy?.forced ?? true, Boolean(unitPlan.unitsOf))
         : structuredSubmitSystemSuffix(submitPolicy?.forced ?? true);
     }
     const context: AgentContext = {
@@ -1021,13 +1021,17 @@ export class PiAgentAdapter implements ExecutionAdapter {
           'structured_output',
           'submit',
           unitPlan
-            ? 'Submit ONE unit object as arguments. Correct the reported field/shape errors for a rejected unit and resubmit that unit; never resubmit an accepted unit.'
+            ? unitPlan.unitsOf
+              ? 'Submit remaining units individually or in the declared batch envelope. Never repeat accepted units.'
+              : 'Submit ONE unit object as arguments. Correct the reported field/shape errors for a rejected unit and resubmit that unit; never resubmit an accepted unit.'
             : 'Submit the complete output object as arguments. Correct rejected field/shape errors and resubmit until accepted.',
           outputSchema,
           async (output) => {
             const parsed = outputSchema.safeParse(output);
             const errors = parsed.success
-              ? [...(unitPlan?.validateUnit?.(parsed.data, args.structuredSubmitInput) ?? [])]
+              ? (unitPlan?.unitsOf?.(parsed.data) ?? [parsed.data]).flatMap((unit) => [
+                  ...(unitPlan?.validateUnit?.(unit, args.structuredSubmitInput) ?? []),
+                ])
               : ['Submit arguments must satisfy the declared output schema.'];
             if (errors.length) throw new Error(errors.join('\n'));
             return {

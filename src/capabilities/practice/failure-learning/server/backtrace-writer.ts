@@ -17,6 +17,7 @@ import { lockAssessmentEvaluationGroup } from '@/kernel/locks/assessment-evaluat
 import { readSourceUsageEpochs } from '@/kernel/read-models/usage-policy';
 import { EMBED_MODEL, embedMany } from '@/server/ai/embed';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
+import { backtraceJudgeTimeoutMs } from '../tasks/backtrace';
 import { backtraceDigest, loadBacktraceInput } from './backtrace-input';
 import { backtracePool } from './backtrace-pool';
 import { activeBacktraceEvents, currentInsight } from './backtrace-store';
@@ -105,6 +106,9 @@ async function paid(
   try {
     result = await runTaskFn(stage, input, {
       taskRunId: attemptTaskId,
+      ...(stage === 'BacktraceJudgeTask'
+        ? { budgetOverride: { timeoutMs: backtraceJudgeTimeoutMs(input) } }
+        : {}),
       beforeProviderQuery: async () => {
         const current = await loadBacktraceInput(db, id);
         if (!current || (stage === 'AttemptInsightTask' && current.digest !== digest))
