@@ -8,8 +8,8 @@ import {
   type PaidEffectState,
   computePaidEffectIdentity,
   computePaidEffectInputDigest,
-} from '@/core/migration/paid-effect-protocol';
-import { reservePaidEffect } from '@/db/paid-effect-store';
+} from '@/core/paid-work/protocol/paid-effect-protocol';
+import { reservePaidEffect } from '@/core/paid-work/server/paid-effect-store';
 import { paid_effect, paid_effect_control } from '@/db/schema';
 import { hydrateConfigFromDb } from '@/server/config/hydrate';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';

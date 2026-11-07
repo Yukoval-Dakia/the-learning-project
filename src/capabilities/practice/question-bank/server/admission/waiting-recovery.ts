@@ -8,12 +8,15 @@ import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import type { JobWithMetadata, PgBoss } from 'pg-boss';
 import { z } from 'zod';
 import {
+  lockPaidEffectControlFamily,
+  readPaidEffectControl,
+} from '@/core/paid-work/server/paid-effect-control';
+import {
   QUESTION_ADMISSION_CONTRACT_VERSION,
   QUESTION_ADMISSION_PAID_UNIT,
   QUESTION_ADMISSION_PAID_UNITS,
 } from '@/core/question-admission-policy';
 import type { Db, Tx } from '@/db/client';
-import { lockPaidEffectControlFamily, readPaidEffectControl } from '@/db/paid-effect-control';
 import { fromPgBossDrizzleTx } from '@/db/pg-boss-drizzle';
 import { paid_effect, question_revision } from '@/db/schema';
 import { writeEvent } from '@/kernel/events/index';

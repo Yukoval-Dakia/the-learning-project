@@ -18,6 +18,16 @@ import {
   isProviderKeyEnvBound,
   setProviderKeyEndpointBindingsSource,
 } from '@/core/config/model-endpoint-allowlist';
+import {
+  THINKING_LEVELS,
+  type TaskSelectionRule,
+  type ThinkingLevelName,
+  planTaskSelection,
+  selectChatModelRoute,
+  selectChatProviderRoute,
+  selectGlobalPin,
+  selectReasoningRequest,
+} from '@/core/config/model-overrides';
 import { getLaneOverride, getTaskOverride, resolveConfigValue } from '@/core/config/store';
 import { catalogEndpointHostKeys } from './model-catalog';
 import {
@@ -36,7 +46,9 @@ import { executablePiModel, nativePiModelApi, piProviderId } from './pi-provider
 // YUK-608 — re-export the provider union so override consumers (solve-lane, verify-framework)
 // type `override.provider` as `Provider` (matching the runner's RunTaskCallCtx) without each
 // reaching back into the registry.
-export type { Provider };
+// Selection-chain vocabulary lives in the pure model-overrides owner; keep the
+// public name stable for run receipts, admin wire and existing callers.
+export type { Provider, TaskSelectionRule };
 
 /** A key-auth provider: bearer/x-api-key value read from `apiKeyEnv`. */
 interface KeyProviderConfig {
@@ -530,18 +542,6 @@ export function crossoverModelForProvider(provider: Provider, kind: TaskKind): s
  * the level vocabulary is a config error. Wire emission is pi's (`reasoning`
  * + the model's thinkingLevelMap); loom never assembles vendor wire fields.
  */
-export type PiThinkingLevelName = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
-
-export const PI_THINKING_LEVEL_ORDER: readonly PiThinkingLevelName[] = [
-  'off',
-  'minimal',
-  'low',
-  'medium',
-  'high',
-  'xhigh',
-  'max',
-];
-
 export interface ResolvedTaskReasoning {
   /** Level name stored in task.<kind>.reasoning (legacy reasoning_effort value). */
   readonly source: 'task' | 'global' | 'catalog';
@@ -563,14 +563,10 @@ export interface TaskReasoningConfig {
  * resolution time and recorded on the run record (`model_profile_resolved`
  * `selection_rule`) + reopen preflight receipt, so a paid effect can be
  * proven against the layer that actually selected it.
+ *
+ * The six-value vocabulary is owned by src/core/config/model-overrides.ts
+ * (re-exported above); this module only fills it from runtime facts.
  */
-export type TaskSelectionRule =
-  | 'env_pin' // AI_PROVIDER_OVERRIDE env pin replaced the binding
-  | 'task_pair_priority' // task.<kind>.override_global_pin opt-in: complete task pair beat the global pin
-  | 'call_override' // explicit per-call override/provider arg (solver2 env, modelBinding)
-  | 'global_pin' // globalSwitch: AI_PROVIDER_* env or DB lane.global.*
-  | 'task_config' // DB task.<kind>.provider with no pin present
-  | 'registry_default'; // tasks[kind].defaultProvider
 
 /**
  * Resolved provider binding handed to the runner. Discriminated on `authMode`:
@@ -673,15 +669,26 @@ export function resolveGlobalProviderSwitch(
   db: { provider?: string; model?: string } | undefined,
 ): { provider: Provider; model?: string } | undefined {
   const env = readEnvOverride(envValues);
-  if (env) return env;
-  if (!db?.provider) return undefined;
-  const provider = readProviderId(db.provider);
+  const selection = env
+    ? selectGlobalPin({ value: env.provider, source: 'env' }, { value: env.model, source: 'env' })
+    : selectGlobalPin(
+        // The transactional caller treats an empty stored provider as absence
+        // (the DB write path never stores ''), matching the legacy `!db.provider`
+        // gate; the read face's type-keeping gate stays in its own projection.
+        { value: db?.provider || undefined, source: 'db' },
+        { value: db?.model, source: 'db' },
+      );
+  if (!selection) return undefined;
+  if (env) {
+    return { provider: env.provider, model: selection.model };
+  }
+  const provider = readProviderId(selection.provider);
   if (!provider) {
     throw new TaskConfigError(
-      `lane.global.provider='${db.provider}' (DB config) is not a known provider; expected one of ${Object.keys(PROVIDERS).join(' | ')}`,
+      `lane.global.provider='${db?.provider}' (DB config) is not a known provider; expected one of ${Object.keys(PROVIDERS).join(' | ')}`,
     );
   }
-  return { provider, model: db.model };
+  return { provider, model: selection.model };
 }
 
 /**
@@ -741,9 +748,19 @@ export function resolveTaskBinding(
   // an opted task with an incomplete or unservable pair is a config error —
   // never a silent paid fallback to the pinned/default model. Tasks without
   // the flag keep the old layering byte-for-byte.
-  const taskPairBeatsGlobalPin = dbTaskOverride?.overrideGlobalPin === true && !typed;
-  const ignoresGlobalPin = def.ignoreGlobalPin === true;
-  if ((dbTaskOverride?.overrideGlobalPin === true || ignoresGlobalPin) && typed) {
+  //
+  // The plan resolves typed/opt-in/dedicated decisions BEFORE any env or DB pin
+  // is read: a broken opted pair must fail before an invalid env pin does, and
+  // an opted pair must never observe the pin layers.
+  const plan = planTaskSelection({
+    taskKind: kind,
+    typed,
+    ignoreGlobalPin: def.ignoreGlobalPin === true,
+    task: dbTaskOverride,
+    call: override,
+    defaults: { provider: def.defaultProvider, model: def.defaultModel },
+  });
+  if (plan.mode === 'error') {
     throw new TaskConfigError(
       `task.${kind}.override_global_pin=true is meaningless on a typed-execution task — there is no chat lane to repoint. Clear the flag.`,
     );
@@ -753,24 +770,19 @@ export function resolveTaskBinding(
   // a typed lane either). Mirror that pin here so `resolveConfiguredTaskModel`
   // answers the model that actually executes; stored task/lane rows and a
   // stale global pair never reach the typed wire.
-  if (typed) {
+  if (plan.mode === 'typed') {
     return {
-      provider: override?.provider ?? def.defaultProvider,
-      model: override?.model ?? def.defaultModel,
+      provider: plan.provider as Provider,
+      model: plan.model,
       reasoning: dbTaskOverride?.reasoning,
-      selectionRule:
-        override?.provider !== undefined || override?.model !== undefined
-          ? 'call_override'
-          : 'registry_default',
+      selectionRule: plan.selectionRule,
     };
   }
-  if (taskPairBeatsGlobalPin) assertOptedTaskPair(kind, dbTaskOverride);
+  if (plan.taskPairBeatsGlobalPin) assertOptedTaskPair(kind, dbTaskOverride);
   // Product-wide incident pin must also cover explicit caller/modelBinding routes.
   // Typed primitives and explicitly dedicated lanes have their own wire contract.
-  const skipsGlobalPin = taskPairBeatsGlobalPin || ignoresGlobalPin;
-  const envPin = skipsGlobalPin ? undefined : readEnvOverride(process.env);
-  if (envPin) override = envPin;
-  const globalSwitch = skipsGlobalPin ? undefined : readGlobalProviderSwitch();
+  const envPin = plan.skipsPins ? undefined : readEnvOverride(process.env);
+  const globalSwitch = plan.skipsPins ? undefined : readGlobalProviderSwitch();
 
   // Chat env pin > explicit arg > DB global > DB per-task > registry —
   // with the opt-in: explicit arg > task pair > registry (global pin skipped).
@@ -778,13 +790,16 @@ export function resolveTaskBinding(
   const dbTaskProvider = dbTaskOverride?.provider
     ? readProviderId(dbTaskOverride.provider)
     : undefined;
-  if (
-    !override?.provider &&
-    !globalSwitch?.provider &&
-    dbTaskOverride?.provider &&
-    !dbTaskProvider
-  ) {
-    const configured = dbTaskOverride.provider;
+  const route = selectChatProviderRoute({
+    call: override,
+    envPin,
+    globalSwitch,
+    taskProvider: { raw: dbTaskOverride?.provider, known: dbTaskProvider },
+    defaultProvider: def.defaultProvider,
+    taskPairBeatsGlobalPin: plan.taskPairBeatsGlobalPin,
+  });
+  if ('error' in route) {
+    const configured = route.error.rawProvider;
     // A deleted custom provider is the common way to land here: say what
     // actually happened instead of pointing at the legacy zhipu id.
     throw new TaskConfigError(
@@ -793,45 +808,28 @@ export function resolveTaskBinding(
         : `task.${kind}.provider='${configured}' is not a native provider; migrate legacy 'zhipu' to 'zhipuai-coding-plan' and choose a model from its pi catalog.`,
     );
   }
-  const providerName: Provider =
-    override?.provider ?? globalSwitch?.provider ?? dbTaskProvider ?? def.defaultProvider;
-  const selectionRule: TaskSelectionRule = envPin
-    ? 'env_pin'
-    : taskPairBeatsGlobalPin && !override?.provider
-      ? 'task_pair_priority'
-      : override?.provider !== undefined || override?.model !== undefined
-        ? 'call_override'
-        : globalSwitch?.provider
-          ? 'global_pin'
-          : dbTaskProvider
-            ? 'task_config'
-            : 'registry_default';
+  const providerName = route.provider as Provider;
 
   // A provider switch cannot borrow a model from another provider's defaults.
   // Subscription has its own default; every other global switch names a model.
-  const cameFromGlobalSwitch =
-    envPin !== undefined || (!override?.provider && globalSwitch?.provider !== undefined);
-  if (
-    cameFromGlobalSwitch &&
-    providerRequiresExplicitModel(providerName) &&
-    !override?.model &&
-    !globalSwitch?.model &&
-    !dbTaskOverride?.model
-  ) {
-    const source = process.env.AI_PROVIDER_OVERRIDE
-      ? 'AI_PROVIDER_OVERRIDE'
-      : 'DB lane.global.provider';
+  const subDefaultModel =
+    providerName === 'anthropic-sub' ? ANTHROPIC_SUB_DEFAULT_MODEL : def.defaultModel;
+  const modelRoute = selectChatModelRoute({
+    call: envPin ?? override,
+    envPinActive: envPin !== undefined,
+    globalSwitch,
+    taskModel: dbTaskOverride?.model,
+    defaultModel: subDefaultModel,
+    providerRequiresExplicitModel: providerRequiresExplicitModel(providerName),
+  });
+  if ('error' in modelRoute) {
+    const source =
+      modelRoute.error.source === 'env' ? 'AI_PROVIDER_OVERRIDE' : 'DB lane.global.provider';
     throw new TaskConfigError(
       `${source}='${providerName}' selects a provider without an explicit model. Choose a model for '${providerName}'. Set AI_PROVIDER_MODEL or DB lane.global.model to a model the '${providerName}' endpoint serves, or use 'anthropic-sub' (defaults to ${ANTHROPIC_SUB_DEFAULT_MODEL}).`,
     );
   }
-
-  // When the subscription lane is selected and no model is named anywhere, use
-  // its Opus 4.8 default. Otherwise the layered model wins (chat env pin > arg > DB global > db task > registry).
-  const subDefaultModel =
-    providerName === 'anthropic-sub' ? ANTHROPIC_SUB_DEFAULT_MODEL : def.defaultModel;
-  const modelId =
-    override?.model ?? globalSwitch?.model ?? dbTaskOverride?.model ?? subDefaultModel;
+  const modelId = modelRoute.model;
   if (modelId.startsWith('mimo-v2.5')) {
     throw new TaskConfigError(
       `Removed model '${providerName}/${modelId}' in task.${kind}.model or lane configuration. Choose a supported provider/model pair or clear the stored override to use the product default; no automatic model substitution is performed.`,
@@ -841,7 +839,7 @@ export function resolveTaskBinding(
     provider: providerName,
     model: modelId,
     reasoning: dbTaskOverride?.reasoning,
-    selectionRule,
+    selectionRule: route.selectionRule,
   };
 }
 
@@ -904,24 +902,23 @@ export function resolveTaskReasoning(
   model: string,
   params: TaskReasoningConfig | undefined,
 ): ResolvedTaskReasoning | undefined {
-  const taskLevel = params?.level ?? params?.reasoning_effort;
-  const globalLevel = resolveConfigValue('lane.global.reasoning').value as
+  const globalRaw = resolveConfigValue('lane.global.reasoning').value as
     | TaskReasoningConfig
     | undefined;
-  const rawRequested = taskLevel ?? globalLevel?.level ?? globalLevel?.reasoning_effort;
-  if (rawRequested === undefined) return undefined;
-  const source = taskLevel !== undefined ? ('task' as const) : ('global' as const);
-  const sourceKey = taskLevel !== undefined ? `task.${kind}.reasoning` : 'lane.global.reasoning';
-  // Legacy catalog wrote reasoning_options 'none' (hy3/hy4-preview lanes) —
-  // it maps to the same disable intent as 'off' and follows the off rule.
-  // The receipt still records the stored 'none' as requested.
-  const requested = rawRequested === 'none' ? 'off' : rawRequested;
-  if (!(PI_THINKING_LEVEL_ORDER as readonly string[]).includes(requested)) {
+  // Precedence + stored-level vocabulary live in the pure selection owner; the
+  // catalog mapping below is this adapter's wire responsibility.
+  const selection = selectReasoningRequest({
+    taskKind: kind,
+    task: params,
+    global: globalRaw,
+  });
+  if (selection.kind === 'none') return undefined;
+  if (selection.kind === 'error') {
     throw new TaskConfigError(
-      `${sourceKey} level='${requested}' is not a thinking level. Pass one of [${PI_THINKING_LEVEL_ORDER.join(', ')}].`,
+      `${selection.error.sourceKey} level='${selection.error.level}' is not a thinking level. Pass one of [${THINKING_LEVELS.join(', ')}].`,
     );
   }
-  const level = requested as PiThinkingLevelName;
+  const { source, sourceKey, requested: rawRequested, level } = selection.request;
   const { reasoning: profile } = resolveModelProfile(provider, model);
   // 'off' needs a protocol that can express a disable — decided by the
   // model's protocol facts, not by reasoning mode. pi emits the disable
@@ -946,24 +943,23 @@ export function resolveTaskReasoning(
   if (profile.mode === 'effort' || profile.mode === 'budget_tokens') {
     const supported =
       profile.mode === 'effort'
-        ? profile.supportedEfforts.filter((effort): effort is PiThinkingLevelName =>
-            (PI_THINKING_LEVEL_ORDER as readonly string[]).includes(effort),
+        ? profile.supportedEfforts.filter((effort): effort is ThinkingLevelName =>
+            (THINKING_LEVELS as readonly string[]).includes(effort),
           )
-        : PI_THINKING_LEVEL_ORDER.filter((name) => name !== 'off');
+        : THINKING_LEVELS.filter((name) => name !== 'off');
     if (supported.length === 0) {
       throw new TaskConfigError(
         `${sourceKey} level='${level}' cannot be served by task '${kind}' on pair '${provider}/${model}': its ${profile.mode} reasoning options name no pi level. Clear the ${sourceKey.startsWith('task.') ? 'task override' : 'global reasoning row'}.`,
       );
     }
     const rounded =
-      supported.find(
-        (name) => PI_THINKING_LEVEL_ORDER.indexOf(name) >= PI_THINKING_LEVEL_ORDER.indexOf(level),
-      ) ?? supported[supported.length - 1];
+      supported.find((name) => THINKING_LEVELS.indexOf(name) >= THINKING_LEVELS.indexOf(level)) ??
+      supported[supported.length - 1];
     // Budget lanes clamp every level above high to the same top budget —
     // pi sends 16,384 for high/xhigh/max alike. applied records the wire.
     const applied =
       profile.mode === 'budget_tokens' &&
-      PI_THINKING_LEVEL_ORDER.indexOf(rounded) > PI_THINKING_LEVEL_ORDER.indexOf('high')
+      THINKING_LEVELS.indexOf(rounded) > THINKING_LEVELS.indexOf('high')
         ? 'high'
         : rounded;
     return {
@@ -973,7 +969,7 @@ export function resolveTaskReasoning(
       level: applied === 'off' ? undefined : applied,
     };
   }
-  return { source, requested, applied: 'none' };
+  return { source, requested: level, applied: 'none' };
 }
 
 /**

@@ -9,14 +9,14 @@ import { canonicalHash } from '@/core/migration/canonical';
 import {
   type PaidEffectIdentity,
   computePaidEffectIdentity,
-} from '@/core/migration/paid-effect-protocol';
-import type { Db, Tx } from '@/db/client';
+} from '@/core/paid-work/protocol/paid-effect-protocol';
 import {
   markPaidEffectUnknown,
   recordPaidEffectApplication,
   recordPaidEffectResult,
   reservePaidEffect,
-} from '@/db/paid-effect-store';
+} from '@/core/paid-work/server/paid-effect-store';
+import type { Db, Tx } from '@/db/client';
 import { ai_task_runs, paid_effect } from '@/db/schema';
 import { assertModelProfileCapabilityFit } from '@/server/ai/model-profiles';
 import {

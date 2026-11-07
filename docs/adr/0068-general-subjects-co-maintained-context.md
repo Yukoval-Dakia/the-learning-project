@@ -4,10 +4,12 @@ status: accepted
 
 # ADR-0068 — 通用学科：共同维护的学科语境与证据准入的能力
 
-**Status:** Accepted（设计方向，2026-10-10）；尚未实施。
+**Status:** Accepted（设计方向，2026-10-10）；部分实施——学科 profile 数据层已运行，语境存储/能力矩阵/共同维护回路未实施。
 **Decision source:** owner 2026-10-10 21:45「学科我的希望是能够完全 general，由人与 ai 共同维护 context。」
 **Tracking:** [YUK-1452](https://linear.app/yukoval-studios/issue/YUK-1452)。
 **Related:** ADR-0066（TypeScript 全栈与实时自适应学习）、ADR-0067（教研白板与事件例会）；[YUK-1434](https://linear.app/yukoval-studios/issue/YUK-1434)（学科合同与诚实状态）、[YUK-1445](https://linear.app/yukoval-studios/issue/YUK-1445)（判分准入地基）、[YUK-1404](https://linear.app/yukoval-studios/issue/YUK-1404)（录入结构化）、[YUK-1448](https://linear.app/yukoval-studios/issue/YUK-1448)（题库即题源）、[YUK-1449](https://linear.app/yukoval-studios/issue/YUK-1449)（教研白板）；设计草案（细节真相源，绝对 artifact 路径）`/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/yuk1388/stage4/final/general-subjects-design-draft.md`。
+
+> **2026-11-07 现状：** `src/subjects/*/profile.ts`（general/math/physics/yuwen）已作为跨能力共享的学科语境层被 grading / supply / notes / copilot 消费。D1–D7 的目标形态——DB 存储的语境、按准入证据点亮的能力矩阵、共同维护回路与 SKILL.md 容器迁移——尚未实施；本文是设计方向，不是现状描述。
 
 ## 背景与问题
 

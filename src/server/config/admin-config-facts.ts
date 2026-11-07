@@ -38,6 +38,7 @@ import {
   tasks,
 } from '@/capabilities/task-registry';
 import type { ConfigEffectiveFact } from '@/core/config/effective';
+import { selectGlobalPin } from '@/core/config/model-overrides';
 import { getTaskOverride, resolveConfigValue } from '@/core/config/store';
 import { DB_POOL_MAX } from '@/db/pool';
 import { projectDagMembers } from '@/kernel/manifest';
@@ -483,20 +484,24 @@ export function resolveAdminGlobalEffective(
   } catch (e) {
     error = scrubFsPaths(e instanceof Error ? e.message : String(e));
   }
-  const providerSource = resolveConfigValue('lane.global.provider', env).source;
-  const source = providerSource === 'env' || providerSource === 'db' ? providerSource : null;
-  // The model field has its own layer: env AI_PROVIDER_MODEL rides next to a
-  // DB provider (envMode 'priority' on lane.global.model), while an env pin
-  // suppresses the DB model entirely.
-  const modelSource = resolveConfigValue('lane.global.model', env).source;
-  const model_source =
-    model === null
-      ? null
-      : source === 'env'
-        ? 'env'
-        : modelSource === 'env' || modelSource === 'db'
-          ? modelSource
-          : null;
+  // Layer provenance comes from the same pure gate the runtime switch uses:
+  // an env provider pin replaces the whole pair, and a model-only DB row is
+  // inert. The values above still come from readGlobalProviderSwitch, so an
+  // unknown provider surfaces as `error` rather than a silent layer guess.
+  const resolvedProvider = resolveConfigValue('lane.global.provider', env);
+  const resolvedModel = resolveConfigValue('lane.global.model', env);
+  const pin = selectGlobalPin(
+    {
+      value: typeof resolvedProvider.value === 'string' ? resolvedProvider.value : undefined,
+      source: resolvedProvider.source,
+    },
+    {
+      value: typeof resolvedModel.value === 'string' ? resolvedModel.value : undefined,
+      source: resolvedModel.source,
+    },
+  );
+  const source = pin?.source ?? null;
+  const model_source = model === null ? null : (pin?.modelSource ?? null);
   const reasoning = resolveConfigValue('lane.global.reasoning', env);
   const level = (reasoning.value as { level?: string } | undefined)?.level ?? null;
   return {

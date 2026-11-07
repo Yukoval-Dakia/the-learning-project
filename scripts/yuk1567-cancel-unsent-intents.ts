@@ -49,13 +49,13 @@ import { open, readFile } from 'node:fs/promises';
 import { sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { practiceCapability } from '@/capabilities/practice/manifest';
-import type { PaidEffectIdentity } from '@/core/migration/paid-effect-protocol';
-import { lockPaidEffectControlFamily } from '@/db/paid-effect-control';
+import type { PaidEffectIdentity } from '@/core/paid-work/public';
+import { lockPaidEffectControlFamily } from '@/core/paid-work/server/paid-effect-control';
 import {
   cancelPaidEffectUnsentIntent,
   evaluatePaidEffectCancelEligibility,
   readPaidEffect,
-} from '@/db/paid-effect-store';
+} from '@/core/paid-work/server/paid-effect-store';
 
 const digest = z.string().regex(/^sha256:[0-9a-f]{64}$/);
 

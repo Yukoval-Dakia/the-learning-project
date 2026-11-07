@@ -8,7 +8,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   computePaidEffectIdentity,
   computePaidEffectInputDigest,
-} from '@/core/migration/paid-effect-protocol';
+} from '@/core/paid-work/protocol/paid-effect-protocol';
 import type { Db } from '@/db/client';
 import { item_calibration, knowledge, question } from '@/db/schema';
 import { applyItemPrior } from '@/kernel/records/item-calibration';
