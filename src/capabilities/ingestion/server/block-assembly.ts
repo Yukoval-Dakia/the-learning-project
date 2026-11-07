@@ -141,65 +141,6 @@ export interface RunBlockAssemblyForSessionResult {
 // may resolve when available.
 const PROMPT_HEAD_CHARS = 400;
 
-const OPAQUE_BLOCK_REF_RE = /block-[a-z0-9]{12,}|[a-z]+:[a-z0-9:_-]{8,}|\b[a-z0-9]{20,}\b/g;
-
-// Deterministic page-claim cleanup, no model calls. A field-anchored page_index
-// becomes 「第 n+1 页」 only when n is a real session page; otherwise it degrades to
-// 「某页」. All-placeholder sessions suppress every specific page claim because the
-// model never saw page numbers. Bare page_index tokens lose the internal field name.
-const PAGE_INDEX_FIELD_VALUE_RE = /page_index\s*(?:均为|都是|等于|是|为|[:：=])\s*(\d{1,4})/g;
-const ENUMERATED_PAGE_CLAIM_RE = /第\s*\d{1,4}(?:\s*[、,，到]\s*\d{1,4})+\s*页/g;
-const SINGLE_PAGE_CLAIM_RE = /第\s*\d{1,4}\s*页/g;
-const PAGE_INDEX_TOKEN_RE = /page_index/g;
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function readableBlockLabel(block: BlockAssemblySourceBlock, index: number): string {
-  const questionNo = block.structured?.question_no?.trim();
-  return questionNo ? `第 ${index + 1} 块（题号 ${questionNo}）` : `第 ${index + 1} 块`;
-}
-
-/**
- * Proposal reasons are learner-facing prose, not an audit surface: replace block
- * ids with session positions and mask unknown opaque ids, then drop page claims the
- * session cannot ground. Typed ids stay in proposed_change/evidence_refs.
- */
-export function humanizeBlockMergeReason(
-  reason: string,
-  blocks: BlockAssemblySourceBlock[],
-): string {
-  let readable = reason;
-  for (const [index, block] of blocks.entries()) {
-    const token = new RegExp(`(?<![A-Za-z0-9_-])${escapeRegExp(block.id)}(?![A-Za-z0-9_-])`, 'g');
-    readable = readable.replace(token, () => readableBlockLabel(block, index));
-  }
-  readable = readable.replace(OPAQUE_BLOCK_REF_RE, '某题块');
-
-  const knownPageIndices = new Set<number>();
-  if (!isAllPlaceholderPageIndex(blocks)) {
-    for (const block of blocks) {
-      const firstSpan = block.page_spans?.[0];
-      if (firstSpan) knownPageIndices.add(firstSpan.page_index);
-    }
-  }
-  readable = readable.replace(PAGE_INDEX_FIELD_VALUE_RE, (_match, raw: string) => {
-    const value = Number(raw);
-    if (knownPageIndices.size > 0 && knownPageIndices.has(value)) {
-      return `第 ${value + 1} 页`;
-    }
-    return '某页';
-  });
-  if (knownPageIndices.size === 0) {
-    // Page numbers were never in the model input. Replace the enumerated form
-    // first so a leftover single form cannot leave dangling punctuation.
-    readable = readable.replace(ENUMERATED_PAGE_CLAIM_RE, '页面');
-    readable = readable.replace(SINGLE_PAGE_CLAIM_RE, '页面');
-  }
-  return readable.replace(PAGE_INDEX_TOKEN_RE, '页码');
-}
-
 /**
  * True when every block has a placeholder first page_index of 0 (or no spans), so
  * spatial projection is skipped and the model reasons semantically. A single real
@@ -289,7 +230,9 @@ export async function runBlockAssemblyForSession(
       merge_block_ids: candidate.merge_block_ids,
       confidence: candidate.confidence,
       continuity_signal: candidate.signal,
-      reason_md: humanizeBlockMergeReason(candidate.reason_md, params.blocks),
+      // Verbatim model reason. Page evidence stays separate: the inbox resolves
+      // each evidence block's page from question_block.page_spans for display.
+      reason_md: candidate.reason_md,
     });
     proposalIds.push(id);
   }

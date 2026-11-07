@@ -382,13 +382,6 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     exposure: 'operator',
     flag: OPT_IN_FLAG,
   },
-  WORKFLOW_JUDGE_AUTO_ENROLL_THRESHOLD: {
-    schema: z.number().min(0).max(1),
-    codeDefault: 0.85,
-    envName: 'WORKFLOW_JUDGE_AUTO_ENROLL_THRESHOLD',
-    envParse: numberEnv,
-    tier: 'A',
-  },
   WORKFLOW_JUDGE_STUDENT_ANSWER_GRADING_ENABLED: {
     schema: z.boolean(),
     codeDefault: false,

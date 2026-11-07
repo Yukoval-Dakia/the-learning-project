@@ -173,6 +173,13 @@ export const runQuestionSupplyNightly: typeof import('./supply/public').runQuest
   async (...args) => (await import('./supply/public')).runQuestionSupplyNightly(...args);
 export const recoverHeldServingRechecks: typeof import('./question-bank/public').recoverHeldServingRechecks =
   async (...args) => (await import('./question-bank/public')).recoverHeldServingRechecks(...args);
+
+export {
+  freezePhotoJudgeExamInput,
+  photoJudgeExamConfiguration,
+  runPhotoJudgeExam,
+  verifyPhotoJudgeExam,
+} from './grading/public';
 export {
   PlacementOrphanStateError,
   abandonOrphanPlacementTx,
@@ -184,5 +191,4 @@ export {
   abandonOrphanReviewSession,
   selectOrphanReviewCandidates,
 } from './session/public';
-
 export { submitCopilotAuthoredDraft } from './supply/public';
