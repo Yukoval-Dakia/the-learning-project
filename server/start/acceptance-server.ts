@@ -25,11 +25,16 @@ installDrawingHostOperations();
 installSettlementCascadeRevert(orchestrateCascadeRevert);
 const { installProposalUndoGuards } = await import('@/server/proposals/undo-guards');
 installProposalUndoGuards();
-const [{ buildAdminConfigRuntimeFacts }, { setAdminConfigRuntimeFacts }] = await Promise.all([
-  import('@/server/config/admin-config-facts'),
+const [
+  { buildAdminConfigRuntimeFacts },
+  { adminConfigFactsPorts },
+  { setAdminConfigRuntimeFacts },
+] = await Promise.all([
+  import('@/core/config/server/admin-config-facts'),
+  import('@/server/admin/config-facts-host'),
   import('@/capabilities/observability/public'),
 ]);
-setAdminConfigRuntimeFacts(buildAdminConfigRuntimeFacts);
+setAdminConfigRuntimeFacts(() => buildAdminConfigRuntimeFacts(adminConfigFactsPorts()));
 assertComposedRoutesDeclared(capabilities);
 assertProposalKindsOwned(capabilities);
 const fetch = await createFrontdoor(buildHonoApp(capabilities));

@@ -1,8 +1,11 @@
-// Runtime facts for GET /api/admin/config. This module may import truth sources
-// directly and is re-invoked per request so env/hot-reload changes stay fresh.
-// Effective values come from the real readers (never copied rules); non-scalar
-// keys return a note, and provider rows carry presence booleans, env names and
-// the auth-status projection (never credential values).
+/**
+ * 管理面配置读面的真相源宿主（组合根侧）。
+ *
+ * 配置 owner（core/config/server/admin-config-facts）只认识 AdminConfigFactsPorts；
+ * 这里把 provider 目录/认证、任务 catalog、cron 声明、运行常量与 consumer-effective
+ * 值绑定成端口，组合根每请求调用一次保持 env/热加载新鲜。事实只读：不发请求、
+ * 不序列化凭据值。
+ */
 
 import { capabilities } from '@/capabilities';
 import { MEMORY_INFRA_SCHEDULES } from '@/capabilities/agency/public';
@@ -12,17 +15,6 @@ import {
 } from '@/capabilities/copilot/public';
 import { knowledgeConfigEffectiveFacts } from '@/capabilities/knowledge/public';
 import { notesConfigEffectiveFacts } from '@/capabilities/notes/public';
-import type {
-  AdminConfigCatalogModelRow,
-  AdminConfigGlobalEffective,
-  AdminConfigProviderAuth,
-  AdminConfigProviderRow,
-  AdminConfigRuntimeFacts,
-  AdminConfigScheduleRow,
-  AdminConfigTaskCredential,
-  AdminConfigTaskEffectiveBinding,
-  AdminConfigTaskFacts,
-} from '@/capabilities/observability/public';
 import { observabilityConfigEffectiveFacts } from '@/capabilities/observability/public';
 import {
   MODEL_SLICE_PINNED_TASK_KINDS,
@@ -36,6 +28,20 @@ import {
   taskBudgetFacts,
   tasks,
 } from '@/capabilities/task-registry';
+import type {
+  AdminConfigCatalogModelRow,
+  AdminConfigFactsPorts,
+  AdminConfigGlobalEffective,
+  AdminConfigProviderAuth,
+  AdminConfigProviderRow,
+  AdminConfigRuntimeFacts,
+  AdminConfigRuntimeSection,
+  AdminConfigScheduleRow,
+  AdminConfigTaskCredential,
+  AdminConfigTaskEffectiveBinding,
+  AdminConfigTaskFacts,
+  AdminConfigWriterPorts,
+} from '@/core/config/contracts/admin';
 import type { ConfigEffectiveFact } from '@/core/config/effective';
 import { selectGlobalPin } from '@/core/config/model-overrides';
 import { resolveApiPort } from '@/core/config/server/env';
@@ -547,9 +553,10 @@ function manifestScheduleRows(): AdminConfigScheduleRow[] {
     }));
 }
 
-export function buildAdminConfigRuntimeFacts(): AdminConfigRuntimeFacts {
+/** One provider row; credential facts are key presence, env NAME and auth status only. */
+function providerRows(): AdminConfigProviderRow[] {
   const typedBindings = registeredTypedTaskBindings();
-  const providers: AdminConfigProviderRow[] = providerAuthSurface().map((row) => {
+  return providerAuthSurface().map((row) => {
     const authFileEnv = providerAuthFileEnvName(row.name);
     // Key + auth-file envs both set is a run-time hard error (the lanes are
     // mutually exclusive) — report 'conflict', not a live lane.
@@ -580,8 +587,11 @@ export function buildAdminConfigRuntimeFacts(): AdminConfigRuntimeFacts {
       auth: providerAuthFacts(row.name),
     };
   });
+}
 
-  const infraSchedules: AdminConfigScheduleRow[] = [
+/** Server infra cron declarations (static, read-only). */
+function infraScheduleRows(): AdminConfigScheduleRow[] {
+  return [
     {
       ...EVENT_SUBSCRIPTION_DISPATCH_SCHEDULE,
       owner: 'server/events/subscriptions',
@@ -606,7 +616,10 @@ export function buildAdminConfigRuntimeFacts(): AdminConfigRuntimeFacts {
       ...(decl.note !== undefined ? { note: decl.note } : {}),
     })),
   ];
+}
 
+/** Runtime constants, all from their single declaration points. */
+function runtimeSection(): AdminConfigRuntimeSection {
   // resolveApiPort throws on invalid values (boot-visible); degrade to null so a
   // bad env does not take down the whole read surface.
   let port: number | null;
@@ -615,45 +628,49 @@ export function buildAdminConfigRuntimeFacts(): AdminConfigRuntimeFacts {
   } catch {
     port = null;
   }
-
-  const effectiveValues = buildEffectiveValues();
-  const globalProvider = effectiveValues['lane.global.provider']?.value;
-  const globalModel = effectiveValues['lane.global.model']?.value;
   return {
-    global_pin:
-      typeof globalProvider === 'string'
-        ? {
-            provider: globalProvider,
-            ...(typeof globalModel === 'string' ? { model: globalModel } : {}),
-          }
-        : null,
-    global: resolveAdminGlobalEffective(process.env),
-    task_bindings: Object.fromEntries(
-      Object.keys(tasks).map((kind) => [kind, resolveAdminTaskEffective(kind as TaskKind)]),
-    ),
-    task_catalog: taskCatalogFacts(),
-    providers,
-    manifest_schedules: manifestScheduleRows(),
-    infra_schedules: infraSchedules,
-    runtime: {
-      port,
-      db_pool_max: DB_POOL_MAX,
-      queue_tiers: {
-        expire_seconds: { fast: EXPIRE_FAST, llm: EXPIRE_LLM, agent: EXPIRE_AGENT },
-        retention_seconds: RETENTION_7D,
-      },
-      orchestration: {
-        anchor_cron: ORCHESTRATOR_CRON,
-        tz: ORCHESTRATOR_TZ,
-        queue: ORCHESTRATOR_QUEUE,
-        catchup_window_seconds: ORCHESTRATOR_CATCHUP_WINDOW_SECONDS,
-        tick_interval_seconds: TICK_INTERVAL_SECONDS,
-        node_timeout_seconds: NODE_TIMEOUT_SECONDS,
-        layer_stagger_seconds: LAYER_STAGGER_SECONDS,
-        // Orchestrator DAG members have no cron; schedules[] lists only cron rows.
-        dag_members: projectDagMembers(capabilities).map((member) => member.name),
-      },
+    port,
+    db_pool_max: DB_POOL_MAX,
+    queue_tiers: {
+      expire_seconds: { fast: EXPIRE_FAST, llm: EXPIRE_LLM, agent: EXPIRE_AGENT },
+      retention_seconds: RETENTION_7D,
     },
-    effective_values: effectiveValues,
+    orchestration: {
+      anchor_cron: ORCHESTRATOR_CRON,
+      tz: ORCHESTRATOR_TZ,
+      queue: ORCHESTRATOR_QUEUE,
+      catchup_window_seconds: ORCHESTRATOR_CATCHUP_WINDOW_SECONDS,
+      tick_interval_seconds: TICK_INTERVAL_SECONDS,
+      node_timeout_seconds: NODE_TIMEOUT_SECONDS,
+      layer_stagger_seconds: LAYER_STAGGER_SECONDS,
+      // Orchestrator DAG members have no cron; schedules[] lists only cron rows.
+      dag_members: projectDagMembers(capabilities).map((member) => member.name),
+    },
+  };
+}
+
+/** Read-face truth sources, recomputed per call so hot reload stays fresh. */
+export function adminConfigFactsPorts(): AdminConfigFactsPorts {
+  return {
+    taskCatalog: taskCatalogFacts(),
+    resolveTaskEffective: (kind) => resolveAdminTaskEffective(kind as TaskKind),
+    resolveGlobalEffective: (env) => resolveAdminGlobalEffective(env),
+    providers: providerRows(),
+    manifestSchedules: manifestScheduleRows(),
+    infraSchedules: infraScheduleRows(),
+    runtime: runtimeSection(),
+    effectiveValues: buildEffectiveValues(),
+  };
+}
+
+/** Writer-side ports: scope expansion plus the post-write effective projection. */
+export function adminConfigWriterPorts(): AdminConfigWriterPorts {
+  return {
+    taskKinds: Object.keys(tasks),
+    hasTask: (kind) => Object.hasOwn(tasks, kind),
+    resolveTaskEffective: (kind) => resolveAdminTaskEffective(kind as TaskKind),
+    resolveGlobalEffective: () => resolveAdminGlobalEffective(),
+    solveLaneTaskKinds: SOLVE_LANE_TASK_KINDS,
+    visionJudgeTaskKinds: VISION_JUDGE_TASK_KINDS,
   };
 }

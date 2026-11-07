@@ -13,6 +13,24 @@ export async function installObservabilityHostOperations(): Promise<void> {
   installSubjectCreateOperation(thinCreateSubject);
 }
 
+export type {
+  AdminConfigCatalogModelRow,
+  AdminConfigGlobalEffective,
+  AdminConfigProviderAuth,
+  AdminConfigProviderAuthMode,
+  AdminConfigProviderRow,
+  AdminConfigRuntimeFacts,
+  AdminConfigRuntimeFactsSource,
+  AdminConfigRuntimeSection,
+  AdminConfigScheduleRow,
+  AdminConfigTaskCredential,
+  AdminConfigTaskEffectiveBinding,
+  AdminConfigTaskEffectiveReasoning,
+  AdminConfigTaskFacts,
+  AdminConfigTaskSelectionRule,
+  AdminConfigWriteResult,
+  AdminConfigWriter,
+} from '@/core/config/contracts/admin';
 export { readProviderCostWindow } from '@/kernel/read-models/provider-cost-projection';
 // Config consumers share the snapshot builder and the existing injected mutation writer.
 export { type AdminConfigResponse, AdminConfigResponseSchema } from './api/admin-config-contracts';
@@ -38,22 +56,6 @@ export {
   EventDetailResponseSchema,
   EventParamsSchema,
 } from './api/event-contracts';
-export type {
-  AdminConfigCatalogModelRow,
-  AdminConfigGlobalEffective,
-  AdminConfigProviderAuth,
-  AdminConfigProviderAuthMode,
-  AdminConfigProviderRow,
-  AdminConfigRuntimeFacts,
-  AdminConfigRuntimeFactsSource,
-  AdminConfigRuntimeSection,
-  AdminConfigScheduleRow,
-  AdminConfigTaskCredential,
-  AdminConfigTaskEffectiveBinding,
-  AdminConfigTaskEffectiveReasoning,
-  AdminConfigTaskFacts,
-  AdminConfigTaskSelectionRule,
-} from './server/admin-config-facts';
 export {
   __resetAdminConfigRuntimeFactsForTests,
   getAdminConfigRuntimeFacts,
@@ -65,7 +67,6 @@ export {
   patchAdminConfig,
   resetAdminConfig,
 } from './server/admin-config-operations';
-export type { AdminConfigWriteResult, AdminConfigWriter } from './server/admin-config-writer';
 export { setAdminConfigWriter } from './server/admin-config-writer';
 export {
   type AdminRequestOutcome,
