@@ -112,8 +112,8 @@
 **Q4a（持续 report-only sweep）裁决**：**A，但价值命题诚实改写**。weekly report-only job，范围只覆盖当前 ON 实体，两条腿（值级 diff + 只读双向 rowset 对称），**绝不自动修**。**依 §0 表，其价值命题 = 「探测绕过投影的外部写入 + rowset 存在性异常」，不是「证明 fold 没漂移」**（Lens A m4/m5 修入）。core 约束：
 1. **hasXGenesisAnchor 适用性门必须复用**（Lens A M3）：两条腿都跳过 un-anchored 活行（复用 `parity.ts` 的 `hasXGenesisAnchor`/`XsWithGenesisAnchor` 批量门），或在 job 前置断言「该实体活行 100% anchored」；否则 live prod 上 §9.3 data-fix 新插行/漏 backfill 历史行会报假 GHOST/DRIFT，report-only 不豁免假阳（没人信的报告不是 oracle）。
 2. **单快照读一致性**（Lens A M4 / Lens B M5）：整个 sweep 包在**一个** `REPEATABLE READ` 事务，行与事件读同一时点快照；否则 live 并发写（含 merge_attribution_sweep 04:00 的尾写）在行读/事件读之间落地会造假 FIELD_DRIFT/MISSING。非快照读的非-CLEAN 判定**不admissible as drift evidence**（写进 doc）。
-3. **queue `'llm'` 非 `'fast'`**（Lens B M4）：oracle **写** forensic 证据，是 codebase 最 evidence-first-mandated 的 job；`'fast'` 跳 DLQ（`queue-config.ts:29-32`），dropped run 静默消失=证据轨迹一周盲区。与 `kc_dedup_nightly`/`merge_attribution_sweep`（`manifest.ts:145-148,164-166` 均 `'llm'`）对齐。
-4. **forensic drift 写 fold-inert sink**（Lens B m6 / Lens A m2）：结构化日志（镜像 `[projection-parity]` tag）为**主**证据轨迹（不可能自污）；forensic event 为**可选**，且必须用**任何 gather 都不消费的 `subject_kind`/`action`**（结构保证 fold-inert，非「碰巧 reducer 忽略未知 action」），并 **one open record per id**（非 per run，防无界累积 + 回灌自扫）。若 event schema 约束 subject_kind，退回专用审计日志表。
+3. **queue `'llm'` 非 `'fast'`**（Lens B M4）：失败的 sweep 仍要进 DLQ；`'fast'` 跳 DLQ（`queue-config.ts:29-32`），dropped run 静默消失=一周盲区。与 `kc_dedup_nightly`/`merge_attribution_sweep`（`manifest.ts:145-148,164-166` 均 `'llm'`）对齐。
+4. **漂移只进结构化日志**（Lens B m6 / Lens A m2）：`[projection-parity]` 日志是唯一证据轨迹，不写事件，因此不会被 gather 回灌。
 5. **审 ON-in-any-process，非 worker 本地读**（Lens B m8）：sweep 依 **git-tracked flag 清单**（单一真相）判定谁 ON，而非 worker 本进程 `projectionIsWriter()`——避免混态下 worker 看 OFF 而漏审 app 正在 fold-写的实体。
 6. 不自动开 Linear issue（既有纪律）。
 
@@ -202,7 +202,7 @@ export async function runProjectionOracleSweep(db: Db, allowlist: ProjectionAllo
       if (!isTrackedWriter(kind)) continue;
       const valueDrift = await auditProjectionKind(tx, kind, allowlist);       // 组件 3（跳 un-anchored）
       const symmetric  = await auditProjectionKindSymmetric(tx, kind, allowlist); // 组件 4
-      // 非 CLEAN → 结构化日志 [projection-parity] + 可选 fold-inert forensic（B-m6：one-per-id）。
+      // 非 CLEAN → 结构化日志 [projection-parity]。不写事件。
       // 绝不写实体表本身任何一行。
     }
   }, { isolationLevel: 'repeatable read' });
@@ -275,7 +275,7 @@ Slice 6 明确**非本次交付**——本 spec 交付「翻转的 oracle 机制
 - **回滚 ≠ 数据修复（Lens B M2，诚实记录）**：回滚 = unset flag + 停机重建，命令式写者**从此刻起**恢复为行写者（`sot-flag.ts:3-5`：imperative writer 从未消失，ON 期只是没被调用）。但 ON 窗口内 fold 写的行**保持原样**——回滚不重写它们。**采纳 lane (a)**：ON 窗口 fold-written 行**按定义即权威**，回滚只是**写路径回退**，不声称「restores full verification」。**无 events→imperative 的独立重建工具**（唯一 rebuild 走同一 fold reducer，`rebuild-projection.ts:80-90`）——这是被 Q1 拒绝的 N-version 独立写路径的对偶，**接受为残留**。若 ON 窗口检出 fold bug 导致的行损坏：回滚止血（停未来 fold 写）+ 该实体 Q4b golden-reaudit 定位 + 人工逐行修（evidence-first，非自动）。compose 注释「the double-write never stopped… zero data loss」**校正**：ON 期是**单**（fold）写非双写，且「zero data loss」仅对**删除**成立，不对**值漂移**成立。
 - **反向回滚序（Lens B M3）**：learning_item ON 后若需**单独**回滚 artifact，先回滚 learning_item（顺序依赖：W3 retract 耦合，runbook §2 line 28）。`warnFlipOrder` 只 WARN 不 brick，不阻断 boot。**任何硬护栏前须先 code-ground 真实耦合函数**（组件 6）。runbook §4「不要一次翻全部」纪律保留。
 - **Q5 演练**：本 spec 落地后对 question_block（风险最低）做一次真实停机 unset + 重建 + 确认 OFF 路径恢复，结果记入本 runbook，把 dossier 缺口 7（回滚只有文档承诺）实证清零。
-- **oracle 运维预期**：Q4a weekly report-only，owner 每周过日志；非 CLEAN 唯一自动动作 = 写日志/inert forensic（Q4a-4），无任何实体表写、无告警外自动化。Q4b 按 reducer/gather 变更触发（pre-PR checklist），非 cron。
+- **oracle 运维预期**：Q4a weekly report-only，owner 每周过日志；非 CLEAN 的自动动作只有结构化日志，无事件写入、无实体表写、无告警外自动化。Q4b 按 reducer/gather 变更触发（pre-PR checklist），非 cron。
 
 ---
 

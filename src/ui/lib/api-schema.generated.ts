@@ -21259,22 +21259,7 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        data: {
-                            archived_at: string | null;
-                            created_at: string;
-                            created_by?: unknown;
-                            from_knowledge_id: string;
-                            id: string;
-                            reasoning: string | null;
-                            relation_type: ("prerequisite" | "related_to" | "contrasts_with" | "applied_in" | "derived_from") | string;
-                            to_knowledge_id: string;
-                            weight: number;
-                        }[];
                         next_cursor: string | null;
-                        page: {
-                            limit: number;
-                            next_cursor: string | null;
-                        };
                         rows: {
                             archived_at: string | null;
                             created_at: string;
@@ -21286,8 +21271,6 @@ export interface operations {
                             to_knowledge_id: string;
                             weight: number;
                         }[];
-                    } & {
-                        [key: string]: unknown;
                     };
                 };
             };
