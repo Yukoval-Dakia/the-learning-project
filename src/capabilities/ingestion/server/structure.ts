@@ -37,6 +37,7 @@ export type FigureAssignment = {
   figure_index: number;
   attached_to_question_id: string;
   confidence: 'high' | 'low';
+  option_label?: string;
 };
 
 export type StructureResult = {
@@ -45,6 +46,8 @@ export type StructureResult = {
   /** Overall confidence in the extracted structure; persisted on each emitted block. */
   extraction_confidence?: number;
   warnings: string[];
+  content_lost?: boolean | null;
+  figureHandwriting?: StructureOutputT['figure_handwriting'];
   /** Absent when no preFigures were supplied or none were assigned. */
   figureAssignments?: FigureAssignment[];
 };
@@ -155,6 +158,16 @@ function nodeToStructured(
     }
   }
 
+  for (const option of node.options ?? []) {
+    for (const figure_index of option.figure_ids ?? []) {
+      assignmentsOut?.push({
+        figure_index,
+        attached_to_question_id: id,
+        confidence: 'high',
+        option_label: option.label,
+      });
+    }
+  }
   return out;
 }
 
@@ -247,6 +260,8 @@ export async function runStructureTask(params: RunStructureTaskParams): Promise<
     layout_quality: parsed.layout_quality,
     extraction_confidence: parsed.extraction_confidence,
     warnings: parsed.warnings,
+    content_lost: parsed.content_lost ?? null,
+    figureHandwriting: parsed.figure_handwriting,
     ...(assignmentsOut && assignmentsOut.length > 0 ? { figureAssignments: assignmentsOut } : {}),
   };
 }

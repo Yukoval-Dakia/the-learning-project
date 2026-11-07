@@ -57,7 +57,9 @@ export const supplyPlanTaskSpec = {
     kind: 'SupplyPlanTask',
     description:
       'YUK-987 supply planner (985/E2): the demand-layer agent. Nightly reads raw pool signals (knowledge frontier + per-KC availability + mastery + pending placement claims + jyeoo budget) and emits a SupplyPlanV1 demand plan — which knowledge cells need how many questions of what kind/band via which route preference. The deterministic machine gate (supply-plan-gate.ts: schema + live knowledge ids + vocabulary + dedupe + budget declaration) accepts or rejects; bounded regeneration (≤2), fail-closed. Accepted items emit demand events and the accepted plan is enqueued to supply_execute (deterministic executor); scanner stays the safety net.',
-    budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 4, timeout: 90_000 },
+    // TEST longest 118s (tlp-audit-artifacts/test-to-nas/route-c-plus-counts-20261106.txt);
+    // 300s clears it and stays under the 1h stuck-run bound.
+    budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 4, timeout: 300_000 },
     needsToolCall: true,
     isMultimodal: false,
     allowedTools: [],
