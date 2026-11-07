@@ -18,11 +18,9 @@ import { createHash } from 'node:crypto';
 import { eq, like } from 'drizzle-orm';
 import type { Provider } from '@/ai/task-spec';
 import { tasks } from '@/capabilities/task-registry';
-import {
-  type CustomProviderDefinition,
-  type CustomProviderProtocol,
-  customProviderDefinitions,
-  customProvidersRegistryHydrated,
+import type {
+  CustomProviderDefinition,
+  CustomProviderProtocol,
 } from '@/core/config/custom-providers';
 import {
   endpointKeyOf,
@@ -31,6 +29,7 @@ import {
 import type { Db, Tx } from '@/db/client';
 import { model_catalog_cache, system_config } from '@/db/schema';
 import { withinSessionAdvisoryLock } from '@/db/session-advisory-lock';
+import { readCustomProviderDefinitions } from '@/server/config/custom-providers-read';
 import rawSnapshot from './model-catalog.snapshot.json' with { type: 'json' };
 import {
   BUILTIN_MODEL_ENDPOINT_HOSTS,
@@ -402,6 +401,9 @@ function customModelFactsEntry(
 
 /**
  * Synthesize every live custom provider's bucket from its /models listing.
+ * `definitions` is the caller's table read from the same transaction that holds
+ * the write lock (YUK-1960): a process whose in-memory registry predates a
+ * committed definition write must not rebuild the buckets without it.
  * Same merge semantics as models.dev buckets: an id that left a successful
  * listing keeps its previous entry (absence then surfaces through the
  * provider-check reconciliation as a provider_list finding), and a pinned
@@ -412,14 +414,15 @@ function customModelFactsEntry(
  */
 function mergeCustomProviderBuckets(input: {
   previous: ProviderMap;
-  definitions: readonly CustomProviderDefinition[];
+  /** `undefined` = the definitions table could not be read this transaction. */
+  definitions: readonly CustomProviderDefinition[] | undefined;
   listed: ReadonlyMap<string, { status: string; ids?: readonly string[] }>;
   index: ReturnType<typeof buildCustomModelFactsIndex>;
   pinned: ReadonlySet<string>;
 }): { providers: ProviderMap; findings: CatalogFinding[] } {
-  // A failed boot hydrate must not look like "every provider was deleted":
-  // keep the stored buckets until the watch retries the table read.
-  if (!customProvidersRegistryHydrated()) {
+  // An unreadable definitions table must not look like "every provider was
+  // deleted": keep the stored buckets until a later refresh reads it.
+  if (!input.definitions) {
     return { providers: input.previous, findings: [] };
   }
   const providers: ProviderMap = {};
@@ -1110,6 +1113,10 @@ export async function refreshModelCatalog(
         const planned = await lockedDb.transaction(async (tx) => {
           const locked = await lockCatalogRow(tx);
           const pinned = await readPinnedModelIds(tx);
+          // Definitions, like the row above, come from this transaction: the
+          // in-memory registry may lag a write another process committed after
+          // this process hydrated (YUK-1960).
+          const definitions = await readCustomProviderDefinitions(tx);
           const base = locked.providers ?? active.providers;
           // Custom buckets are synthesized, never fetched: partition them out
           // so a models.dev pull cannot record their models as absent.
@@ -1119,7 +1126,7 @@ export async function refreshModelCatalog(
             : { providers: partitioned.known, findings: locked.findings };
           const custom = mergeCustomProviderBuckets({
             previous: partitioned.custom,
-            definitions: customProviderDefinitions(),
+            definitions,
             listed,
             index: buildCustomModelFactsIndex(mergedKnown.providers),
             pinned,
