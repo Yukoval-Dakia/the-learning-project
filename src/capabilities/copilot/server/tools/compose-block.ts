@@ -6,6 +6,7 @@
 
 import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
+import { compilePlotBlock } from '@/core/blocks/scene/plot';
 import {
   BLOCK_IMPLEMENTED_KINDS,
   BLOCK_REF_SCHEME,
@@ -176,7 +177,7 @@ export function createComposeBlockTool(
   return {
     name: 'compose_block',
     description:
-      'Compose one generative-UI block for the reply. Mandatory channel for diagrams, figures and charts — never write tlp-block fences yourself. Pass one block object; invalid input returns typed issues (code/path/line/expected) to repair and resubmit. On ready, place the block in prose with the returned place string `![alt](block:ref)`. A figure returns its raster under images for visual self-check before you cite it. A chart binds to recorded data with data_source.kind="tool_result" (tool_use_id + JSON Pointer path); the server replaces your series with those recorded values.',
+      'Compose one generative-UI block for the reply. Mandatory channel for diagrams, figures, charts and function plots — never write tlp-block fences yourself. Pass one block object; invalid input returns typed issues (code/path/line/expected) to repair and resubmit. On ready, place the block in prose with the returned place string `![alt](block:ref)`. A figure returns its raster under images for visual self-check before you cite it. A chart binds to recorded data with data_source.kind="tool_result" (tool_use_id + JSON Pointer path); the server replaces your series with those recorded values. A plot takes expressions and ranges, never sampled points; the curve is computed by the server and the client from the same expression.',
     effect: 'write',
     inputSchema: ComposeBlockInput,
     outputSchema: ComposeBlockOutput,
@@ -300,6 +301,12 @@ export function createComposeBlockTool(
             ]);
           }
           stored = block;
+          break;
+        }
+        case 'plot': {
+          const compiled = compilePlotBlock(block, surface);
+          if (!compiled.ok) return invalid([...compiled.issues]);
+          stored = compiled.block;
           break;
         }
         case 'chart': {
