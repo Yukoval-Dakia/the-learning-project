@@ -26,34 +26,18 @@ import {
   uniqueIndex,
 } from 'drizzle-orm/pg-core';
 
-export const DRAWING_STATUSES = [
-  'queued',
-  'running',
-  'ready',
-  'waiting_quota',
-  'waiting_login',
-  'failed',
-  'cancelled',
-  'expired',
-] as const;
-export type DrawingStatus = (typeof DRAWING_STATUSES)[number];
-
-/** Live statuses: a same-content request dedupes onto this row. */
-export const DRAWING_LIVE_STATUSES = [
-  'queued',
-  'running',
-  'ready',
-  'waiting_quota',
-  'waiting_login',
-] as const satisfies readonly DrawingStatus[];
-
-/** Terminal states a manual redraw may leave. */
-export const DRAWING_REDRAWABLE_STATUSES = [
-  'ready',
-  'failed',
-  'cancelled',
-  'expired',
-] as const satisfies readonly DrawingStatus[];
+// Status sets live in the owning capability (server/drawing-state.ts) — the
+// architecture rule only lets schema.ts forward real pgTable symbols, so this
+// column type is declared literally here and the arrays derive from it there.
+export type DrawingStatus =
+  | 'queued'
+  | 'running'
+  | 'ready'
+  | 'waiting_quota'
+  | 'waiting_login'
+  | 'failed'
+  | 'cancelled'
+  | 'expired';
 
 export interface DrawingSourceRef {
   kind: 'document' | 'question' | 'record' | 'event' | 'session';
@@ -62,7 +46,8 @@ export interface DrawingSourceRef {
 
 export interface DrawingSourceEpoch {
   document_id: string;
-  usage_epoch: number;
+  /** Frozen `source_document.provenance.usage_epoch` string, verbatim. */
+  usage_epoch: string;
 }
 
 export const drawing = pgTable(

@@ -232,6 +232,78 @@ function sourceDerivationPredicateSql(source: {
   )`;
 }
 
+/**
+ * Scoped-scope verdict (the whole-learner projection, e.g. the Copilot state
+ * header): is there ANY row whose own node check fails? Lineage only adds
+ * nodes to a bound set, so the complete veto set is every row failing its own
+ * check — the same per-kind conditions as the bound predicate, applied
+ * globally instead of from a seed. A scoped request refuses when this is true.
+ */
+export async function anyRestrictedLearnerSource(db: Db | Tx): Promise<boolean> {
+  const rows = await db.execute<{ restricted: boolean }>(sql`SELECT (
+    EXISTS (SELECT 1 FROM source_document d WHERE coalesce((
+      (d.provenance ? 'usage_policy' AND jsonb_typeof(d.provenance->'usage_policy') IS DISTINCT FROM 'object')
+      OR (d.provenance->'usage_policy' ? 'derivation_policy'
+        AND d.provenance->'usage_policy'->>'derivation_policy' IS DISTINCT FROM 'allow')
+      OR (d.provenance ? 'usage_epoch' AND (jsonb_typeof(d.provenance->'usage_epoch') IS DISTINCT FROM 'string'
+        OR d.provenance->>'usage_epoch' = ''))
+    ), false))
+    OR EXISTS (SELECT 1 FROM learning_session s
+      WHERE s.type = 'ingestion' AND s.source_document_id IS NULL)
+    OR EXISTS (SELECT 1 FROM question q WHERE coalesce((
+      (q.metadata ? 'source_usage_epochs' AND (
+        jsonb_typeof(q.metadata->'source_usage_epochs') IS DISTINCT FROM 'object'
+        OR EXISTS (SELECT 1 FROM jsonb_each_text(CASE WHEN jsonb_typeof(q.metadata->'source_usage_epochs') = 'object'
+          THEN q.metadata->'source_usage_epochs' ELSE '{}'::jsonb END) epoch
+          LEFT JOIN source_document bound_doc ON bound_doc.id = epoch.key
+          WHERE bound_doc.id IS NULL OR epoch.value IS DISTINCT FROM coalesce(bound_doc.provenance->>'usage_epoch', 'legacy'))))
+      OR (q.metadata ? 'derivation_policy' AND q.metadata->>'derivation_policy' IS DISTINCT FROM 'allow')
+      OR (q.metadata ? 'source_document_id' AND q.metadata->>'source_document_id' IS NULL)
+      OR (q.metadata->'quiz_gen' ? 'material_source_document_id' AND (
+        jsonb_typeof(q.metadata->'quiz_gen'->'material_source_document_id') IS DISTINCT FROM 'string'
+        OR length(q.metadata->'quiz_gen'->>'material_source_document_id') = 0))
+      OR (q.metadata ? 'source_record_id' AND q.metadata->>'source_record_id' IS NULL)
+      OR (q.source IN ('ingestion', 'photo', 'pdf', 'docx', 'camera', 'import', 'vision_single', 'vision_paper', 'reverse_mark')
+        AND COALESCE(q.metadata->>'source_document_id', q.metadata->>'ingestion_session_id') IS NULL)
+      OR (q.source = 'dreaming' AND q.metadata->>'source_record_id' IS NULL AND NOT EXISTS (
+        SELECT 1 FROM event promotion WHERE promotion.id = q.source_ref
+          AND promotion.action = 'experimental:proposal' AND COALESCE(promotion.payload->'ai_proposal', promotion.payload)->>'kind' = 'record_promotion'
+          AND COALESCE(promotion.payload->'ai_proposal', promotion.payload)->'proposed_change'->>'record_id' IS NOT NULL))
+      OR (q.source = 'mistake_variant' AND COALESCE(q.parent_variant_id, q.root_question_id) IS NULL)
+    ), false) OFFSET 0)
+    OR EXISTS (SELECT 1 FROM learning_record r WHERE coalesce((
+      (r.payload ? 'derivation_policy' AND r.payload->>'derivation_policy' IS DISTINCT FROM 'allow')
+      OR COALESCE(r.source_document_id, r.question_id, r.origin_event_id, r.attempt_event_id) IS NULL
+    ), false))
+    OR EXISTS (SELECT 1 FROM event e
+      LEFT JOIN event b ON b.id = 'ingestion-usage:' || e.id
+        AND b.action = 'experimental:ingestion_usage_binding'
+        AND b.actor_kind = 'system' AND b.actor_ref = 'ingestion-usage'
+      LEFT JOIN learning_session es ON es.id = e.session_id
+      LEFT JOIN source_document ed ON ed.id = COALESCE(b.payload->>'document_id', es.source_document_id)
+      WHERE coalesce((
+        (e.action = 'experimental:agent_note' AND (
+          (e.caused_by_event_id IS NULL AND NOT EXISTS (
+            SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(e.payload->'refs') = 'array'
+              THEN e.payload->'refs' ELSE '[]'::jsonb END) ref
+            WHERE ref->>'kind' IN ('source_document', 'question', 'record', 'event') AND length(ref->>'id') > 0))
+          OR (e.payload ? 'refs' AND jsonb_typeof(e.payload->'refs') IS DISTINCT FROM 'array')
+          OR EXISTS (
+            SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(e.payload->'refs') = 'array'
+              THEN e.payload->'refs' ELSE '[]'::jsonb END) ref
+            WHERE NOT coalesce(ref->>'kind' IN ('source_document', 'question', 'record', 'event', 'knowledge'), false)
+              OR jsonb_typeof(ref->'id') IS DISTINCT FROM 'string' OR length(ref->>'id') = 0)))
+        OR (e.payload ? 'derivation_policy' AND e.payload->>'derivation_policy' IS DISTINCT FROM 'allow')
+        OR (b.id IS NOT NULL AND (b.payload->>'source_policy' IS DISTINCT FROM 'allow'
+          OR NOT (b.payload ?& ARRAY['document_id', 'epoch', 'source_policy'])))
+        OR (ed.id IS NOT NULL AND coalesce(b.payload->>'epoch', 'legacy') <> coalesce(ed.provenance->>'usage_epoch', 'legacy'))
+        OR (COALESCE(e.payload->'ai_proposal'->>'kind', CASE WHEN e.action = 'experimental:proposal' THEN e.payload->>'kind' END) = 'record_promotion'
+          AND COALESCE(e.payload->'ai_proposal', e.payload)->'proposed_change'->>'record_id' IS NULL)
+      ), false) OFFSET 0)
+  ) AS restricted`);
+  return rows[0]?.restricted === true;
+}
+
 export async function sourceAllowsDerivation(db: Db | Tx, source: PurposeSource): Promise<boolean> {
   const rows = await db.execute<{ allowed: boolean }>(
     sql`SELECT ${sourceAllowsDerivationSql(source)} AS allowed`,

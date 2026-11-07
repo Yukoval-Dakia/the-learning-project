@@ -351,6 +351,7 @@ export function createComposeBlockTool(
                 : {}),
               actorRef: ctx.callerActor.ref,
               ...(ctx.sourceLedger !== undefined ? { ledger: ctx.sourceLedger } : {}),
+              ...(ctx.answerOnly !== undefined ? { answerOnly: ctx.answerOnly } : {}),
             },
             {
               brief: block.brief,
@@ -361,7 +362,16 @@ export function createComposeBlockTool(
           if (outcome.status !== 'ready') {
             return { status: 'unavailable', issues: outcome.issues };
           }
-          stored = { ...block, drawing_id: outcome.drawing_id };
+          // The learner-visible block is a pointer only — the brief stays
+          // server-side on the drawing row (it may quote source content the
+          // learner has not been judged on yet).
+          stored = {
+            v: block.v,
+            kind: 'drawing',
+            alt: block.alt,
+            ...(block.caption !== undefined ? { caption: block.caption } : {}),
+            drawing_id: outcome.drawing_id,
+          };
           break;
         }
         case 'diagram': {

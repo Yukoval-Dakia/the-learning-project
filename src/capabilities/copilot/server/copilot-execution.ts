@@ -333,9 +333,12 @@ export function createCopilotExecutionOwner(
       if (focusedKind) sourceLedger.note({ kind: focusedKind, id: focused.id });
       else sourceLedger.noteUnknown(`ambient_focus:${focused.kind}`);
     }
+    // Whole-state projections carry a provable scope, not enumerable ids:
+    // derivation consumers run the global restricted-source check (scoped)
+    // instead of pretending the header's inputs bind to named rows.
     if (input.learner_state_header && input.learner_state_header.length > 0)
-      sourceLedger.noteUnknown('learner_state_header');
-    if (input.proposal_feedback.length > 0) sourceLedger.noteUnknown('proposal_feedback');
+      sourceLedger.noteScoped('learner_state_header');
+    if (input.proposal_feedback.length > 0) sourceLedger.noteScoped('proposal_feedback');
     // One mount-options literal feeds the pi AgentTool bridge
     // (`ctx.piToolMounts` → piDomainMount); the loop's native toolCall.id
     // supplies correlation via `correlatedToolUseId` (see pi-tools.ts).
@@ -352,6 +355,7 @@ export function createCopilotExecutionOwner(
         callerActor,
         ...(turn.sourceEventId ? { causedByEventId: turn.sourceEventId } : {}),
         sourceLedger,
+        answerOnly,
       },
       serverName: DOMAIN_TOOL_MCP_SERVER_NAME,
       toolNames: answerOnly ? [...ANSWER_ONLY_TOOL_NAMES] : resolveDomainToolNames(surface),

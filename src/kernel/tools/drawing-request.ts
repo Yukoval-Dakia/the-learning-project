@@ -30,6 +30,12 @@ export interface DrawingRequestInput {
   actorRef: string;
   /** Server-bound source ledger; the drawing refuses unless its snapshot completes. */
   ledger?: TurnSourceLedger;
+  /**
+   * Server-bound: the turn is a restricted answer-reveal surface
+   * (post-judgment answers legitimately visible), so bound question sources
+   * are not re-gated on judged attempts.
+   */
+  answerOnly?: boolean;
 }
 
 export type DrawingRequestPort = (

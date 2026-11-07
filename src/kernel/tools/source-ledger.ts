@@ -22,15 +22,24 @@ export interface SourceLedgerSnapshot {
   readonly sources: readonly BoundSource[];
   /** false ⇒ at least one thing the model saw is not bound to an id. */
   readonly complete: boolean;
+  /**
+   * Scoped projections the ledger cannot enumerate row-by-row but CAN verify
+   * globally (e.g. the learner-state header reads the whole state surface —
+   * the provable closure is "no restricted source exists", not a row set).
+   * Consumers run the scoped global check; they do not guess ids.
+   */
+  readonly scoped: readonly string[];
   /** Bounded audit trail of what could not be bound (kinds/reasons, no content). */
   readonly unknowns: readonly string[];
 }
 
 const MAX_SOURCES = 128;
 const MAX_UNKNOWNS = 16;
+const MAX_SCOPED = 8;
 
 export class TurnSourceLedger {
   private readonly sources = new Map<string, BoundSource>();
+  private readonly scoped = new Set<string>();
   private readonly unknowns: string[] = [];
 
   note(source: BoundSource): void {
@@ -41,6 +50,19 @@ export class TurnSourceLedger {
     this.sources.set(`${source.kind}:${source.id}`, source);
   }
 
+  /**
+   * Mark a provably-scoped aggregate input (the whole-learner projection the
+   * caller assembled). Stays `complete`: the verifier checks the scope's veto
+   * set globally rather than enumerating every contributing row.
+   */
+  noteScoped(label: string): void {
+    if (this.scoped.size >= MAX_SCOPED && !this.scoped.has(label)) {
+      this.noteUnknown(`scoped_overflow:${label}`);
+      return;
+    }
+    this.scoped.add(label);
+  }
+
   noteUnknown(why: string): void {
     if (this.unknowns.length < MAX_UNKNOWNS) this.unknowns.push(why);
   }
@@ -49,6 +71,7 @@ export class TurnSourceLedger {
     return {
       sources: [...this.sources.values()],
       complete: this.unknowns.length === 0,
+      scoped: [...this.scoped],
       unknowns: [...this.unknowns],
     };
   }
@@ -107,8 +130,6 @@ const BINDABLE_READ_TOOLS: Record<string, { bareId?: SourceKind }> = {
   query_events: { bareId: 'event' },
   get_attempt_context: {},
   get_review_due: {},
-  get_learning_item_context: {},
-  query_context: {},
   search_bank: { bareId: 'question' },
   read_bank: { bareId: 'question' },
   check_bank: { bareId: 'question' },

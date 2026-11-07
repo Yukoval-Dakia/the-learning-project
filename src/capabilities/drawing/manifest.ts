@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { API_ERROR_RESPONSES, ApiIdParamsSchema } from '@/kernel/http-contracts';
 import { defineCapability } from '@/kernel/manifest';
 import { DrawingSessionQuerySchema, DrawingStatusResponseSchema } from './api/contracts';
@@ -18,6 +19,15 @@ export const drawingCapability = defineCapability({
         responses: { 200: DrawingStatusResponseSchema, ...API_ERROR_RESPONSES },
         successStatus: 200,
         load: () => import('./api/drawing-status').then((m) => m.GET),
+      },
+      {
+        method: 'GET',
+        path: '/api/drawings/[id]/asset',
+        operationId: 'getDrawingAsset',
+        request: { params: ApiIdParamsSchema, query: DrawingSessionQuerySchema },
+        responses: { 200: z.unknown(), ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        load: () => import('./api/drawing-asset').then((m) => m.GET),
       },
       {
         method: 'POST',

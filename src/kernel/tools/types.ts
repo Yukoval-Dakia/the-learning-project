@@ -149,6 +149,12 @@ export interface ToolContext {
    * only, never from model arguments; derivations bind its snapshot.
    */
   sourceLedger?: TurnSourceLedger;
+  /**
+   * Server-bound: the turn runs the restricted answer-reveal surface
+   * (derivationPolicy !== 'allow' ⇒ post-judgment answers are legitimately
+   * visible). Never populated from model arguments.
+   */
+  answerOnly?: boolean;
 }
 
 /**

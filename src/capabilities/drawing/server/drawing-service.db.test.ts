@@ -1,11 +1,24 @@
-import { eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { eq, sql } from 'drizzle-orm';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { resetTestConfig, setTestConfig } from '@/core/config/store';
 import { newId } from '@/core/ids';
 import { db } from '@/db/client';
 import { drawing, event } from '@/db/schema';
 import { TurnSourceLedger } from '@/kernel/tools/source-ledger';
+import {
+  type ExecutionAdapter,
+  type PreparedExecutionQuery,
+  __setPiAdapterForTests,
+} from '@/server/ai/execution-adapter';
+import { _resetBossForTests, getStartedBoss } from '@/server/boss/client';
+import { EXPIRE_LLM, createJobQueue } from '@/server/boss/queue-config';
 import { resetDb } from '../../../../tests/helpers/db';
+import { memR2 } from '../../../../tests/helpers/r2';
+import { buildDrawingGenerateHandler } from '../jobs/drawing_generate';
 import {
   type DrawingBoss,
   cancelDrawing,
@@ -14,6 +27,16 @@ import {
   requestDrawing,
 } from './drawing-service';
 
+const r2 = memR2();
+r2.putIfAbsent = async (key, body) => {
+  if (r2._store.has(key)) return 'exists';
+  r2._store.set(key, body);
+  return 'created';
+};
+vi.mock('@/kernel/object-storage', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  getR2: () => r2,
+}));
 function sessionId(): string {
   return `sess_${newId()}`;
 }
@@ -197,5 +220,149 @@ describe('drawing service invariants', () => {
     );
     expect(refused.status).toBe('unavailable');
     expect(sends).toHaveLength(0);
+  });
+});
+
+const READY_SVG =
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 400">' +
+  '<rect x="10" y="10" width="40" height="60" fill="none" stroke="#000"/></svg>';
+
+describe('drawing_generate handler invariants', () => {
+  const adapterStats = { startups: 0, queries: 0 };
+  const scriptQueue: Array<{ frames?: unknown[]; error?: unknown }> = [];
+
+  const fakeAdapter: ExecutionAdapter = {
+    id: 'pi' as const,
+    startup: async () => {
+      adapterStats.startups += 1;
+      const prepared: PreparedExecutionQuery = {
+        query: () =>
+          (async function* () {
+            adapterStats.queries += 1;
+            const next = scriptQueue.shift() ?? { error: new Error('no scripted attempt') };
+            if (next.error) throw next.error;
+            for (const frame of next.frames ?? []) yield frame as never;
+          })(),
+        close: async () => {},
+      };
+      return prepared;
+    },
+  };
+
+  function pushSvg() {
+    scriptQueue.push({
+      frames: [
+        {
+          type: 'assistant',
+          message: { role: 'assistant', content: [{ type: 'text', text: READY_SVG }] },
+        },
+        { type: 'result', subtype: 'success', is_error: false, result: READY_SVG },
+      ],
+    });
+  }
+
+  beforeAll(async () => {
+    // Synthetic ChatGPT-login file; the Sol route resolves against it.
+    const authPath = join(mkdtempSync(join(tmpdir(), 'yuk1548-test-auth-')), 'auth.json');
+    writeFileSync(
+      authPath,
+      JSON.stringify({
+        openai: { type: 'oauth', access: 'stub-access', refresh: 'stub-refresh' },
+      }),
+    );
+    process.env.OPENAI_CHATGPT_AUTH_FILE = authPath;
+    delete process.env.OPENAI_API_KEY;
+    _resetBossForTests();
+    const boss = await getStartedBoss();
+    await createJobQueue(boss, 'drawing_generate', EXPIRE_LLM);
+    __setPiAdapterForTests(fakeAdapter);
+    setTestConfig({
+      'task.DrawingTask.provider': 'openai',
+      'task.DrawingTask.model': 'gpt-6.1-sol',
+      'task.DrawingTask.reasoning': { level: 'high' },
+      'task.DrawingTask.override_global_pin': true,
+    });
+  });
+
+  afterAll(() => {
+    __setPiAdapterForTests(undefined);
+    resetTestConfig();
+  });
+
+  beforeEach(async () => {
+    await resetDb();
+    adapterStats.startups = 0;
+    adapterStats.queries = 0;
+    scriptQueue.length = 0;
+  });
+
+  // @invariant concurrency: a running row whose lease predates the task timeout
+  // is presumed dead — the next delivery claims it under the same CAS and the
+  // generation completes instead of wedging forever.
+  // @fails-if a crashed worker leaves a drawing stuck in running forever.
+  it('stale running lease is reclaimed by the next delivery', async () => {
+    const [row] = await seedRow({
+      status: 'running',
+      expires_at: new Date(Date.now() + 60_000),
+      updated_at: new Date(Date.now() - 21 * 60 * 1000), // > DRAWING_TIMEOUT_MS
+    });
+    pushSvg();
+    await buildDrawingGenerateHandler(db)([{ data: { drawing_id: row.id } }]);
+    const [stored] = await db.select().from(drawing).where(eq(drawing.id, row.id));
+    expect(stored.status).toBe('ready');
+    expect(stored.last_ready_asset_id).not.toBeNull();
+    expect(adapterStats.queries).toBe(1);
+  });
+
+  // @invariant concurrency: a redelivered job for a completed generation burns
+  // no second provider call — the claim CAS rejects the duplicate delivery.
+  // @fails-if a duplicate delivery re-runs the paid Sol call.
+  it('duplicate delivery of a finished generation runs nothing', async () => {
+    const [row] = await seedRow({
+      status: 'ready',
+      last_ready_asset_id: 'ast_x',
+      last_ready_asset_digest: 'sha256:x',
+      expires_at: new Date(Date.now() + 60_000),
+    });
+    await buildDrawingGenerateHandler(db)([{ data: { drawing_id: row.id } }]);
+    const [stored] = await db.select().from(drawing).where(eq(drawing.id, row.id));
+    expect(stored.status).toBe('ready');
+    expect(adapterStats.queries).toBe(0);
+    expect(adapterStats.startups).toBe(0);
+  });
+
+  // @invariant concurrency: the dispatch insert commits inside the same
+  // transaction as the drawing row — a rolled-back request leaves no orphan job.
+  // @fails-if the job send escapes the admission transaction.
+  it('the dispatch job is written through the admission transaction', async () => {
+    const session = sessionId();
+    const ledger = new TurnSourceLedger();
+    ledger.note({ kind: 'event', id: await seedDerivableEvent() });
+    // A boss stub that genuinely writes through the provided tx adapter —
+    // proving send's db option lands inside the admission transaction.
+    const boss: DrawingBoss = {
+      send: async (name: string, data: unknown, options: { id: string; db: unknown }) => {
+        const adapter = options.db as {
+          executeSql: (text: string, values: unknown[]) => Promise<unknown>;
+        };
+        await adapter.executeSql('INSERT INTO pgboss.job (id, name, data) VALUES ($1, $2, $3)', [
+          options.id,
+          name,
+          JSON.stringify(data),
+        ]);
+        return options.id;
+      },
+      getJobById: async () => null,
+    } as unknown as DrawingBoss;
+    const outcome = await requestDrawing(
+      { db, sessionId: session, taskRunId: `run_${newId()}`, actorRef: 'test', ledger },
+      { brief: '事务入队', alt: 'tx' },
+      { boss: async () => boss },
+    );
+    expect(outcome.status).toBe('ready');
+    const jobs = await db.execute<{ n: number }>(
+      sql`SELECT count(*)::int AS n FROM pgboss.job WHERE name = 'drawing_generate'`,
+    );
+    expect(jobs[0]?.n).toBe(1);
   });
 });

@@ -46,6 +46,15 @@ export async function GET(req: Request, params: Record<string, string>): Promise
       .limit(1);
     if (!row) throw new ApiError('not_found', `asset ${id} not found`, 404);
 
+    // Drawing-owned assets are learner-scoped and lifecycle-fenced (retraction,
+    // expiry, cancel) — they must not bypass those checks here, 304 included.
+    // They are served only through GET /api/drawings/[id]/asset, which runs
+    // the full owner/derivation gate before any byte or cache hit. Absence is
+    // indistinguishable: 404, no oracle.
+    if (typeof row.provenance?.drawing_id === 'string') {
+      throw new ApiError('not_found', `asset ${id} not found`, 404);
+    }
+
     const etag = `"${row.sha256}"`;
     const cacheHeaders = {
       ETag: etag,

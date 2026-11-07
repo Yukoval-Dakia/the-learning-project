@@ -63,12 +63,7 @@ export {
   selection_observation,
 } from './schema/calibration';
 export type { DrawingSourceEpoch, DrawingSourceRef, DrawingStatus } from './schema/drawing';
-export {
-  DRAWING_LIVE_STATUSES,
-  DRAWING_REDRAWABLE_STATUSES,
-  DRAWING_STATUSES,
-  drawing,
-} from './schema/drawing';
+export { drawing } from './schema/drawing';
 export {
   dag_orchestration_node,
   dag_orchestration_run,

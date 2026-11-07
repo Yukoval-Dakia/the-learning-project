@@ -89,9 +89,17 @@ export const DrawingBlockInput = z
   .strict()
   .meta({ description: DRAWING_DESCRIPTION });
 
-export const DrawingBlock = DrawingBlockInput.extend({
-  drawing_id: z.string().regex(/^drw_[a-z0-9]{10,40}$/),
-}).strict();
+// The persisted form is a pointer: brief is model-to-Sol input and may carry
+// answer-layer content, so it lives only on the drawing row, never in the
+// learner-visible block. alt/caption stay (model-visible text the prompt bars
+// from containing unjudged answers).
+export const DrawingBlock = z
+  .object({
+    ...Common,
+    kind: z.literal('drawing'),
+    drawing_id: z.string().regex(/^drw_[a-z0-9]{10,40}$/),
+  })
+  .strict();
 export type DrawingBlockT = z.infer<typeof DrawingBlock>;
 
 export const ChartBlock = z
