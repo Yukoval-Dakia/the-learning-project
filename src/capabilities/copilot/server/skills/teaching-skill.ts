@@ -137,6 +137,7 @@ export async function runTeachingSkill(
     learning_item: context.learning_item,
     parent_hub_summary: context.parent_hub_summary,
     atomic_sections: context.atomic_sections,
+    atomic_body_excerpt: context.atomic_body_excerpt,
     messages: [{ role: 'user' as const, text_md: userMessage }],
   };
 
