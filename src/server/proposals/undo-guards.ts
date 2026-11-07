@@ -39,6 +39,7 @@ import {
   createAutoAppliedUndoGuardRegistry,
   installAutoAppliedUndoGuardRegistry,
 } from '@/kernel/proposals/auto-applied-undo';
+import { installBatchConfirmEligibility } from './batch-accept';
 
 export function buildProposalUndoGuards(): AutoAppliedUndoGuardRegistry {
   const guards: AutoAppliedUndoGuardSet = {
@@ -62,4 +63,9 @@ export function buildProposalUndoGuards(): AutoAppliedUndoGuardRegistry {
 
 export function installProposalUndoGuards(): void {
   installAutoAppliedUndoGuardRegistry(buildProposalUndoGuards());
+  // Sibling proposal port installed at the same composition seam: the
+  // batch-confirm kind set is derived from the lifecycle registry here, so the
+  // kernel inbox projection can mark batch_confirm_eligible without importing
+  // a capability manifest.
+  installBatchConfirmEligibility();
 }
