@@ -132,6 +132,8 @@ export interface BuildBackupArchiveOpts {
   db: Db;
   r2: R2Client;
   includeAssets?: boolean;
+  /** Aborted when the HTTP client disconnects; cancels the stream and rolls back the snapshot. */
+  signal?: AbortSignal;
 }
 
 export interface BuildBackupArchiveResult {
@@ -146,104 +148,335 @@ export interface BuildBackupArchiveResult {
   dateStamp: string;
 }
 
+// Rows for these tables are retained after their dump chunks are emitted:
+// mistakes.csv and review_events.csv are denormalized projections that join
+// across whole tables, so they can only be built once every row has been seen.
+// Every other table streams through the ZIP without being retained.
+const CSV_TABLES = new Set<string>([
+  'event',
+  'knowledge',
+  'question',
+  'material_fsrs_state',
+  'learning_session',
+  'assessment_issuance',
+  'assessment_submission',
+  'evaluation',
+  'evaluation_effective_head',
+  'evaluation_group',
+  'question_revision',
+]);
+
+// Server-side cursors keep every row read inside the single repeatable-read
+// transaction (and on tx.execute, the interception point the snapshot invariant
+// observes) while bounding how many rows sit on the heap at once.
+const FETCH_BATCH = 1000;
+
+const exportEncoder = new TextEncoder();
+
+type ZipEntry =
+  | { name: string; input: string | Uint8Array }
+  | { name: string; input: AsyncIterable<Uint8Array> };
+
+// Reproduce the exact bytes of `JSON.stringify({ table: rows }, null, 2)`: a
+// top-level array element prints at indent depth 2, so each serialized row is
+// re-indented by four columns.
+function prettyRow(row: Record<string, unknown>): string {
+  return `    ${JSON.stringify(row, null, 2).replace(/\n/g, '\n    ')}`;
+}
+
+async function* streamTableRows(
+  tx: Tx,
+  selectSql: string,
+  cursorName: string,
+  keep: Array<Record<string, unknown>> | null,
+): AsyncGenerator<Uint8Array> {
+  await tx.execute(sql.raw(`declare "${cursorName}" no scroll cursor for ${selectSql}`));
+  let open = false;
+  for (;;) {
+    const batch = await tx.execute<Record<string, unknown>>(
+      sql.raw(`fetch forward ${FETCH_BATCH} from "${cursorName}"`),
+    );
+    if (batch.length === 0) break;
+    let chunk = '';
+    for (const row of batch) {
+      chunk += `${open ? ',\n' : '[\n'}${prettyRow(row)}`;
+      open = true;
+    }
+    if (keep) keep.push(...batch);
+    yield exportEncoder.encode(chunk);
+    if (batch.length < FETCH_BATCH) break;
+  }
+  // The portal dies with the transaction anyway; closing only frees it sooner.
+  await tx.execute(sql.raw(`close "${cursorName}"`));
+  yield exportEncoder.encode(open ? '\n  ]' : '[]');
+}
+
+async function* streamDataJson(
+  tx: Tx,
+  mem0Table: string | null,
+  csvTables: Record<string, Array<Record<string, unknown>>>,
+  settle: { release(): void; abort(reason: unknown): void },
+): AsyncGenerator<Uint8Array> {
+  let finished = false;
+  try {
+    yield exportEncoder.encode('{\n');
+    let sep = '';
+    let cursorSeq = 0;
+    for (const t of FK_ORDER) {
+      yield exportEncoder.encode(`${sep}  ${JSON.stringify(t)}: `);
+      sep = ',\n';
+      let keep: Array<Record<string, unknown>> | null = null;
+      if (CSV_TABLES.has(t)) {
+        keep = [];
+        csvTables[t] = keep;
+      }
+      const columnList = [...COLUMN_ALLOWLIST[t]].map((c) => `"${c}"`).join(', ');
+      yield* streamTableRows(
+        tx,
+        `select ${columnList} from "${t}"`,
+        `backup_rows_${cursorSeq++}`,
+        keep,
+      );
+    }
+    if (mem0Table) {
+      yield exportEncoder.encode(`${sep}  ${JSON.stringify(mem0Table)}: `);
+      yield* streamTableRows(
+        tx,
+        `select id, vector::text as vector, payload from "${mem0Table}"`,
+        'backup_rows_mem0',
+        null,
+      );
+    }
+    yield exportEncoder.encode('\n}');
+    finished = true;
+  } catch (err) {
+    settle.abort(err);
+    throw err;
+  } finally {
+    // A generator closed early by the consumer lands here with finished unset —
+    // the snapshot must roll back, not commit.
+    if (finished) settle.release();
+    else settle.abort(EXPORT_ABORTED);
+  }
+}
+
+function lazyCsvEntry(build: () => string): AsyncIterable<Uint8Array> {
+  return {
+    async *[Symbol.asyncIterator]() {
+      const bytes = exportEncoder.encode(build());
+      const SLICE = 1 << 20;
+      for (let offset = 0; offset < bytes.length; offset += SLICE) {
+        yield bytes.subarray(offset, offset + SLICE);
+      }
+    },
+  };
+}
+
+// Sentinel for consumer-side aborts so a routine disconnect is not logged as an error.
+const EXPORT_ABORTED = new Error('backup export aborted');
+
+// client-zip does not propagate cancellation into entry input streams, so the
+// snapshot lifecycle is guarded on the outer ZIP body: normal completion or a
+// mid-flight error/disconnect both surface here. `abort` is for a caller-side
+// AbortSignal — `stream.cancel()` throws while the stream is locked by a reader,
+// so the signal path must cancel the inner reader directly instead.
+function guardedZipStream(
+  zip: ReadableStream<Uint8Array>,
+  settle: { release(): void; abort(reason: unknown): void },
+  onAbort?: () => void,
+): { stream: ReadableStream<Uint8Array>; abort: (reason?: unknown) => void } {
+  const reader = zip.getReader();
+  let settled = false;
+  const finish = (completed: boolean, reason?: unknown) => {
+    if (settled) return;
+    settled = true;
+    if (completed) settle.release();
+    else {
+      settle.abort(reason ?? EXPORT_ABORTED);
+      onAbort?.();
+    }
+  };
+  const abort = (reason?: unknown) => {
+    // finish first: a pending pull resolves done=true once the inner reader is
+    // cancelled, and must not reinterpret the abort as stream completion.
+    finish(false, reason);
+    void reader.cancel(reason).catch(() => {});
+  };
+  const stream = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const { done, value } = await reader.read();
+        if (done) {
+          controller.close();
+          finish(true);
+        } else {
+          controller.enqueue(value);
+        }
+      } catch (err) {
+        finish(false, err);
+        throw err;
+      }
+    },
+    async cancel(reason) {
+      try {
+        await reader.cancel(reason);
+      } finally {
+        finish(false, reason);
+      }
+    },
+  });
+  return { stream, abort };
+}
+
 export async function buildBackupArchive({
   db,
   r2,
   includeAssets = false,
+  signal,
 }: BuildBackupArchiveOpts): Promise<BuildBackupArchiveResult> {
   const exportedAt = Math.floor(Date.now() / 1000);
+  const dateStamp = new Date(exportedAt * 1000).toISOString().slice(0, 10);
 
-  const tableRows: Record<string, Array<Record<string, unknown>>> = {};
-  const rowCounts: Record<string, number> = {};
-
-  // Event, progress, effects and business parents must describe one committed point.
-  // Release the read-only snapshot before fetching external R2 objects/streaming the ZIP.
-  await db.transaction(
-    async (tx) => {
-      for (const t of FK_ORDER) {
-        const rows = await tx.execute<Record<string, unknown>>(
-          sql.raw(`select ${[...COLUMN_ALLOWLIST[t]].map((c) => `"${c}"`).join(', ')} from "${t}"`),
-        );
-        tableRows[t] = rows;
-        rowCounts[t] = rows.length;
+  type Ready =
+    | {
+        ok: true;
+        stream: ReadableStream<Uint8Array>;
+        abort: (reason?: unknown) => void;
       }
+    | { ok: false; error: NonNullable<BuildBackupArchiveResult['error']> };
+  let resolveReady!: (ready: Ready) => void;
+  let rejectReady!: (reason: unknown) => void;
+  const ready = new Promise<Ready>((resolve, reject) => {
+    resolveReady = resolve;
+    rejectReady = reject;
+  });
+  let releaseSnapshot!: () => void;
+  let abortSnapshot!: (reason: unknown) => void;
+  const snapshotDone = new Promise<void>((resolve, reject) => {
+    releaseSnapshot = resolve;
+    abortSnapshot = reject;
+  });
+  const settle = {
+    release: () => releaseSnapshot(),
+    abort: (reason: unknown) => abortSnapshot(reason),
+  };
 
-      const mem0Table = mem0CollectionTable();
-      assertSafeMem0CollectionName(mem0Table);
-      if (await mem0CollectionExists(tx, mem0Table)) {
-        const rows = await tx.execute<Record<string, unknown>>(
-          sql.raw(`select id, vector::text as vector, payload from "${mem0Table}"`),
+  const csvTables: Record<string, Array<Record<string, unknown>>> = {};
+
+  const txDone = db.transaction(
+    async (tx) => {
+      try {
+        // The snapshot stays open while data.json streams, so a consumer that
+        // stalls between pulls would otherwise pin a pool connection and an
+        // MVCC snapshot indefinitely.
+        await tx.execute(sql`set local idle_in_transaction_session_timeout = '5min'`);
+
+        const rowCounts: Record<string, number> = {};
+        for (const t of FK_ORDER) {
+          const rows = await tx.execute<{ count: string | number | bigint }>(
+            sql.raw(`select count(*) from "${t}"`),
+          );
+          rowCounts[t] = Number(rows[0]?.count ?? 0);
+        }
+
+        const mem0Table = mem0CollectionTable();
+        assertSafeMem0CollectionName(mem0Table);
+        const mem0Exists = await mem0CollectionExists(tx, mem0Table);
+        if (mem0Exists) {
+          const rows = await tx.execute<{ count: string | number | bigint }>(
+            sql.raw(`select count(*) from "${mem0Table}"`),
+          );
+          rowCounts[mem0Table] = Number(rows[0]?.count ?? 0);
+        }
+
+        if (includeAssets && (rowCounts.source_asset ?? 0) > MAX_INLINE_ASSETS) {
+          resolveReady({
+            ok: false,
+            error: {
+              error: 'too_many_assets',
+              count: rowCounts.source_asset,
+              limit: MAX_INLINE_ASSETS,
+              suggestion: 'export with ?include_assets=0 then copy per storage_key (see README)',
+            },
+          });
+          return;
+        }
+
+        const assetEntries: ZipEntry[] = [];
+        const missingAssets: string[] = [];
+
+        // Asset bytes are not part of the DB snapshot, but the manifest must
+        // already know which keys are missing before data.json streams, so the
+        // (≤ MAX_INLINE_ASSETS) fetches happen inside the snapshot window.
+        if (includeAssets) {
+          const keys = await tx.execute<{ storage_key: string }>(
+            sql.raw('select storage_key from "source_asset"'),
+          );
+          for (const { storage_key } of keys) {
+            const bytes = await r2.get(storage_key);
+            if (!bytes) {
+              missingAssets.push(storage_key);
+              continue;
+            }
+            assetEntries.push({ name: `assets/${storage_key}`, input: bytes });
+          }
+        }
+
+        const manifest: Manifest = {
+          schema_version: SCHEMA_VERSION,
+          exported_at: exportedAt,
+          include_assets: includeAssets,
+          row_counts: rowCounts,
+          asset_count: includeAssets ? rowCounts.source_asset - missingAssets.length : 0,
+          missing_assets: missingAssets,
+        };
+
+        const dataJson = streamDataJson(tx, mem0Exists ? mem0Table : null, csvTables, settle);
+        const entries: ZipEntry[] = [
+          { name: 'manifest.json', input: JSON.stringify(manifest, null, 2) },
+          { name: 'data.json', input: dataJson },
+          { name: 'mistakes.csv', input: lazyCsvEntry(() => buildMistakesCsv(csvTables)) },
+          {
+            name: 'review_events.csv',
+            input: lazyCsvEntry(() => buildReviewEventsCsv(csvTables)),
+          },
+          { name: 'README.md', input: buildReadme(manifest) },
+          ...assetEntries,
+        ];
+
+        const guarded = guardedZipStream(
+          downloadZip(entries).body as ReadableStream<Uint8Array>,
+          settle,
+          () => void dataJson.return(undefined).catch(() => {}),
         );
-        tableRows[mem0Table] = rows;
-        rowCounts[mem0Table] = rows.length;
+        resolveReady({ ok: true, stream: guarded.stream, abort: guarded.abort });
+        // data.json is still streaming: hold the snapshot transaction open until
+        // the generator completes (commit) or the guarded stream aborts (rollback).
+        await snapshotDone;
+      } catch (err) {
+        rejectReady(err);
+        throw err;
       }
     },
     { isolationLevel: 'repeatable read', accessMode: 'read only' },
   );
 
-  type Entry = { name: string; input: string | Uint8Array | ReadableStream; lastModified?: Date };
-  const entries: Entry[] = [];
-
-  const missingAssets: string[] = [];
-
-  if (includeAssets) {
-    const assets = tableRows.source_asset as Array<{ storage_key: string }>;
-    if (assets.length > MAX_INLINE_ASSETS) {
-      const dateStamp = new Date(exportedAt * 1000).toISOString().slice(0, 10);
-      return {
-        stream: new ReadableStream(), // unused
-        error: {
-          error: 'too_many_assets',
-          count: assets.length,
-          limit: MAX_INLINE_ASSETS,
-          suggestion: 'export with ?include_assets=0 then copy per storage_key (see README)',
-        },
-        dateStamp,
-      };
+  txDone.catch((err) => {
+    if (err !== EXPORT_ABORTED) {
+      console.error('[backup_export] snapshot transaction failed', err);
     }
+  });
 
-    for (const asset of assets) {
-      const bytes = await r2.get(asset.storage_key);
-      if (!bytes) {
-        missingAssets.push(asset.storage_key);
-        continue;
-      }
-      entries.push({
-        name: `assets/${asset.storage_key}`,
-        input: bytes,
-      });
-    }
+  const outcome = await ready;
+  if (!outcome.ok) {
+    return { stream: new ReadableStream(), error: outcome.error, dateStamp };
   }
-
-  const manifest: Manifest = {
-    schema_version: SCHEMA_VERSION,
-    exported_at: exportedAt,
-    include_assets: includeAssets,
-    row_counts: rowCounts,
-    asset_count: includeAssets ? rowCounts.source_asset - missingAssets.length : 0,
-    missing_assets: missingAssets,
-  };
-
-  const mistakesCsv = buildMistakesCsv(
-    tableRows as unknown as Record<string, Array<Record<string, unknown>>>,
-  );
-  const reviewEventsCsv = buildReviewEventsCsv(
-    tableRows as unknown as Record<string, Array<Record<string, unknown>>>,
-  );
-  const readme = buildReadme(manifest);
-
-  entries.unshift(
-    { name: 'manifest.json', input: JSON.stringify(manifest, null, 2) },
-    { name: 'data.json', input: JSON.stringify(tableRows, null, 2) },
-    { name: 'mistakes.csv', input: mistakesCsv },
-    { name: 'review_events.csv', input: reviewEventsCsv },
-    { name: 'README.md', input: readme },
-  );
-
-  const dateStamp = new Date(exportedAt * 1000).toISOString().slice(0, 10);
-  const stream = downloadZip(entries).body as ReadableStream<Uint8Array>;
-
-  return { stream, dateStamp };
+  if (signal?.aborted) {
+    outcome.abort(EXPORT_ABORTED);
+  } else {
+    signal?.addEventListener('abort', () => outcome.abort(EXPORT_ABORTED), { once: true });
+  }
+  return { stream: outcome.stream, dateStamp };
 }
 
 // ─── Import ────────────────────────────────────────────────────────────────
