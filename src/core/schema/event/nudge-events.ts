@@ -28,7 +28,8 @@ export const NudgePayload = z.object({
   // `.datetime()` keeps the fail-loud barrier at parseEvent — a malformed stamp must not reach the
   // PG `::timestamptz` cast in nudge-read (that would 500 the whole GET /nudges, not just one row).
   expires_at: z.string().datetime(),
-  // 承重：surfacing gate（§3.7）。true = shadow 期证据行，GET /nudges 必须排除；owner 读它校准参数。
+  // 承重：surfacing gate（§3.7）。新写恒 false；开启前 shadow 期写的证据行（true）
+  // GET /nudges 必须继续排除，不回放给学习者。
   shadow: z.boolean(),
   // 承重：静默窗读模型 backstop（§3.2）。判定时的 open-practice-session 态，供读模型 defer interrupt-sensitive kind。
   in_active_session: z.boolean(),

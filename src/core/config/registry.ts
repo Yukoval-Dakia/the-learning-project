@@ -477,18 +477,6 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     exposure: 'operator',
     flag: OPT_OUT_FLAG,
   },
-  COPILOT_NUDGE_ENABLED: {
-    schema: z.boolean(),
-    codeDefault: false,
-    envName: 'COPILOT_NUDGE_ENABLED',
-    envParse: flagEnv,
-    tier: 'A',
-    description: 'Copilot 主动开口对用户可见（关闭时只写 shadow 证据）',
-    consumers: ['copilot.nudge'],
-    reload: 'per-call',
-    exposure: 'operator',
-    flag: OPT_IN_FLAG,
-  },
   COPILOT_NUDGE_DAILY_MAX: {
     schema: z.number().int().positive(),
     codeDefault: 3,

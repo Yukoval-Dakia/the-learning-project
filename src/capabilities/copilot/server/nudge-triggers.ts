@@ -74,41 +74,35 @@ export async function evaluateNudgeTrigger(
   const blockCount = Number(countRows[0]?.n ?? 0);
   if (blockCount === 0) return { fire: false, reason: 'no_blocks' };
 
-  const shadow = !config.enabled;
+  // 每日上限只数当日可见（非 shadow）nudge——开启前的 shadow 证据行不占今日额度。
+  const capRows = await db
+    .select({ n: sql<number>`count(*)` })
+    .from(event)
+    .where(
+      and(
+        eq(event.action, NUDGE_ACTION),
+        sql`${event.payload}->>'shadow' = 'false'`,
+        sameShanghaiDay(event.created_at, now),
+      ),
+    );
+  if (Number(capRows[0]?.n ?? 0) >= config.dailyMax) return { fire: false, reason: 'daily_cap' };
 
-  // surfacing 护栏只在 enabled（写可见 nudge）时施加：shadow 期跳过 dailyMax / dismiss-fuse，
-  // 以便观测真实触发率；COUNT 也只数非 shadow 行。
-  if (!shadow) {
-    // 每日上限只数当日可见（非 shadow）nudge。
-    const capRows = await db
-      .select({ n: sql<number>`count(*)` })
-      .from(event)
-      .where(
-        and(
-          eq(event.action, NUDGE_ACTION),
-          sql`${event.payload}->>'shadow' = 'false'`,
-          sameShanghaiDay(event.created_at, now),
-        ),
-      );
-    if (Number(capRows[0]?.n ?? 0) >= config.dailyMax) return { fire: false, reason: 'daily_cap' };
-
-    // dismiss 熔断（kind-wide）：当日 dismiss 过 ingestion_complete → 该 kind 当日不再发。
-    const dismissed = alias(event, 'nudge_dismissed');
-    const nudge = alias(event, 'nudge_src');
-    const fusedRows = await db
-      .select({ one: sql<number>`1` })
-      .from(dismissed)
-      .innerJoin(nudge, eq(nudge.id, dismissed.caused_by_event_id))
-      .where(
-        and(
-          eq(dismissed.action, NUDGE_DISMISSED_ACTION),
-          sameShanghaiDay(dismissed.created_at, now),
-          sql`${nudge.payload}->>'kind' = 'ingestion_complete'`,
-        ),
-      )
-      .limit(1);
-    if (fusedRows.length > 0) return { fire: false, reason: 'dismiss_fused' };
-  }
+  // dismiss 熔断（kind-wide）：当日 dismiss 过 ingestion_complete → 该 kind 当日不再发。
+  const dismissed = alias(event, 'nudge_dismissed');
+  const nudge = alias(event, 'nudge_src');
+  const fusedRows = await db
+    .select({ one: sql<number>`1` })
+    .from(dismissed)
+    .innerJoin(nudge, eq(nudge.id, dismissed.caused_by_event_id))
+    .where(
+      and(
+        eq(dismissed.action, NUDGE_DISMISSED_ACTION),
+        sameShanghaiDay(dismissed.created_at, now),
+        sql`${nudge.payload}->>'kind' = 'ingestion_complete'`,
+      ),
+    )
+    .limit(1);
+  if (fusedRows.length > 0) return { fire: false, reason: 'dismiss_fused' };
 
   // 开口时是否在练习中：只冻结进 payload 作审计位，读侧不据此过滤或延迟呈现。
   const inActiveSession = await isInActivePracticeSession(db);
@@ -133,7 +127,8 @@ export async function evaluateNudgeTrigger(
       ? `我处理完《${title}》，提取到 ${blockCount} 个题目片段`
       : `我处理完你上传的材料，提取到 ${blockCount} 个题目片段`,
     expires_at: expiresAt,
-    shadow,
+    // 新写恒 false；开启前留下的 shadow=true 证据行由读模型继续排除，不回放给学习者。
+    shadow: false,
     in_active_session: inActiveSession,
     evidence: { session_id: input.session_id, block_count: blockCount, title },
   };
