@@ -35,12 +35,12 @@ import { resolveSessionDerivationPolicy } from '@/kernel/read-models/usage-polic
 import { type NameKcFn, tagKnowledge } from '@/kernel/records/knowledge-tag';
 import { getKnownSubjects } from '@/subjects/profile';
 import { captureIngestionOriginal } from './assessment-capture';
+import { readRevertedBlockIds } from './block-revert-state';
 import {
   capturedQuestionShape,
   recordCapturedQuestion,
   settleCapturedBlock,
 } from './capture/captured-question';
-import { readRevertedBlockIds } from './block-revert-state';
 import { blockHasPrompt, blockQuestionMarkdown } from './capture/question-text';
 import { redactIngestionText } from './privacy-guard';
 

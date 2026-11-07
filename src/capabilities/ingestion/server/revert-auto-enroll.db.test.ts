@@ -17,11 +17,11 @@ import {
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { captureIngestionOriginal } from './assessment-capture';
 import { runAutoEnrollForSession } from './auto-enroll';
-import { readIngestionSessionBlocks } from './session-blocks-read';
-import { enrollIngestionBlock } from './single-block-enroll';
 import { settleCapturedBlock } from './capture/captured-question';
 import { enrollCapturedBlock } from './enroll';
 import { revertAutoEnrolledBlock } from './revert-auto-enroll';
+import { readIngestionSessionBlocks } from './session-blocks-read';
+import { enrollIngestionBlock } from './single-block-enroll';
 
 const FAILURE_DRAFT: MistakeEnrollOutputT = {
   wrong_answer: 'failure',
