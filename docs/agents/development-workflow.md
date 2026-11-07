@@ -6,8 +6,8 @@ deployment, and the directory map.
 
 ## Task state and handoff
 
-Linear owns shared task scope, ownership, progress, blockers, and follow-ups.
-`PLAN.md` and `.remember/now.md` are optional, ignored notes for the current
+Shared task scope, ownership, progress, blockers, and follow-ups live outside the
+repo; the repo only takes the lane brief. `PLAN.md` and `.remember/now.md` are optional, ignored notes for the current
 worktree; keep them local. Commit durable requirements, approved designs,
 decisions, and delivery conclusions in the appropriate versioned documents.
 

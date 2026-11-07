@@ -466,7 +466,6 @@ ADR-0014 配套：[7 轮讨论 + 10 决议 summary](../../discussion/summary.md)
 | Phase 计划 + 收尾记录 | `docs/archive/superpowers/plans/*.md` + `docs/archive/superpowers/brainstorms/*.md`（MVP 防漂移） |
 | 工具命令 | `pnpm` script 见 `package.json`；`pnpm audit:schema` 防 schema 漂移 |
 | 下次会话从哪接 | `RESUME.md`（一次性 scratch） |
-| Linear 文档迁移规则 | [`docs/agents/linear-doc-migration.md`](../../agents/linear-doc-migration.md)) + `pnpm docs:linear-manifest` |
 
 ---
 

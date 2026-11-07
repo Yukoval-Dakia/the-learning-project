@@ -14,18 +14,25 @@
 - 只实现用户明确要求的范围；最小充分方案；明显 scope creep 直接裁掉；真正的产品/偏差权衡同时给 LIGHT 与 FULL 标推荐项由 owner 决定。
 - 新 abstraction / layer / registry / subsystem 必须同一 PR 有 live consumer。
 - pre-AI 确定性功能（rewrite-prep §9 八项）是承重能力，删除/替换/降级须 owner 明确批准；设计/架构方向反转前先复核 owner 已表达需求和已锁决策。
-- 对 owner 交付文本用成果名（不用 W0/I05 等内部代码，票号可作后注）；每个 PR 写明服务的审计根项/契约及交付阶段，不属于任何阶段的工作只限新 P0 或 owner 明确要求；交付顺序与验收以 Linear 票及 `tlp-audit-artifacts/yuk1388/` 台账为准。
+- 对 owner 交付文本用成果名（不用 W0/I05 等内部代码，票号可作后注）；每个 PR 写明服务的审计根项/契约及交付阶段，不属于任何阶段的工作只限新 P0 或 owner 明确要求；交付顺序与验收以本线 brief 及 `tlp-audit-artifacts/yuk1388/` 台账为准。
 - S13 DELETE/SIMPLIFY 对象随 consumer 迁入新路径的 PR 删除，不做独立大扫除，新代码不得继续扩展这些对象；新旧路径共用的 domain/kernel 逻辑直接修，路由/页面入口修复只落新架构路径（TanStack Start / DBOS / 同路由 ui-next），旧路径不重复修复（迁移前新 P0 除外）。
 - 开放想法与 PARKED 契约只在真实使用达到预注册样本量后开工。
 
+## 任务归属
+
+- 任务、归属、进度、阻塞和 follow-up 不在 git 文档里维护：这些内容不写进 `AGENTS.md`、`docs/`、`README.md` 或 nested `AGENTS.md`，也不在文档里记票号历史与状态。
+- 任务和进度看仓库外：本线 brief 与仓库外任务面是唯一活指针，仓库只承接 brief。文档只留可验证的代码事实、决策和证据——决策落 ADR / `docs/design/`，agent 操作规则落 `docs/agents/`，证据落 `tlp-audit-artifacts/`。
+- branch、commit、PR 标题/正文仍带 `YUK-NN` 关联；一个 commit/PR 涉多票时每票单起一行 `Closes YUK-NN`。票号只作关联与出处，不在文档里记状态；写法见 `docs/agents/issue-tracker.md`。
+- 收尾发现的 follow-up 交 lead 登记；已验证的可执行 follow-up 不留在最终回复/TODO/scratch 里当唯一记录，也不写进文档清单。
+
 ## Session discipline
 
-- 涉及 ≥3 个独立步骤或多轮工具调用时维护 task plan；外部 SaaS / 本机权限 / 第三方 CLI 先做 30 秒 pre-flight（executable、version、env/auth、target resolution）。Session start 先核当前 Linear 任务；本 worktree 的 `PLAN.md`、`.remember/now.md` 存在时读取，缺失按当前任务需要创建、不从其他线复制状态。单 session 只推动一条 active 线。
+- 涉及 ≥3 个独立步骤或多轮工具调用时维护 task plan；外部 SaaS / 本机权限 / 第三方 CLI 先做 30 秒 pre-flight（executable、version、env/auth、target resolution）。Session start 先核当前任务（本线 brief）；本 worktree 的 `PLAN.md`、`.remember/now.md` 存在时读取，缺失按当前任务需要创建、不从其他线复制状态。单 session 只推动一条 active 线。
 - 切分支前 `git fetch origin` 并核对 `git rev-list --count HEAD..origin/main`，非 0 从最新 `origin/main` 切；并行实施每 lane 独立 branch + worktree，同一 diff 只有一个写入者。
 - **微问题禁止委派。** 单文件、单字面量、单条 git/CI 状态查询由父线程自己用 Read/grep/gh 当场回答，不为此 spawn 子 agent；委派仅限：跨 ≥3 文件的综合调查、需要对抗独立性的 review、预计 ≥10 分钟的连续实施。委派任务 title 带切片标识（issue 号 + attempt_n），禁止同题裸重复派发。
 - subagent 按当前工具已注册角色与任务性质分流，角色不可用时先收敛任务再交可用执行者；模型 fallback 质量不达标时重新判断任务与角色。
-- 中途发现的 bug/follow-up 当场登记 Linear，已验证 follow-up 不留在最终回复/TODO/scratch；收尾时对齐 Linear 状态与开放 PR/worktree/workflow，协调线随 stage 生命周期退役（被取代的旧线当周归档）。
-- 全局任务、归属、进度、阻塞以 Linear 为准；per-PR 进度只写 Linear/GitHub。`PLAN.md` / `.remember/now.md` 仅是本 worktree 私有状态：不提交、不跨分支合并、不当全局真相源、不要求其他线更新。
+- 中途发现的 bug/follow-up 当场上报 lead（仓库外任务面），已验证 follow-up 不留在最终回复/TODO/scratch；收尾时对齐任务状态与开放 PR/worktree/workflow，协调线随 stage 生命周期退役（被取代的旧线当周归档）。
+- `PLAN.md` / `.remember/now.md` 仅是本 worktree 私有状态：不提交、不跨分支合并、不当全局真相源、不要求其他线更新。
 
 ## Architecture boundaries（必须保持）
 
@@ -48,14 +55,14 @@
 - 只写代码表达不了的 why：约束、取舍、外部契约、非显然的坑；代码本身能说清的 what 不写，不逐段复述代码在做什么。
 - 保持简短：一般 1–3 行；超过 5 行的说明放 ADR / docs，注释里留链接。
 - 改代码时同一 PR 内更新或删除受影响的注释，注释与代码矛盾按缺陷处理；不引用已删除的函数、文件或已退役的组件（如 Redis、Next.js）。
-- 不写票号历史、review 轮次（R1/P1-x/FINDING #n）、迁移日记或「X 曾在这里/已删除」的墓碑注释；这些属于 commit / PR / Linear。
+- 不写票号历史、review 轮次（R1/P1-x/FINDING #n）、迁移日记或「X 曾在这里/已删除」的墓碑注释；这些属于 commit / PR。
 - 文件头注释只说明本模块职责与关键不变量，不写变更日志。
 
 ## Review, merge, and delivery
 
 - authoring 与独立 review 分离，review agent 必须能读真实 diff。
 - **Review 分级。** Tier A：diff 触及 `src/core/`、schema/migration、鉴权、`src/server/ai/`、quota/付费、worker job，或 >500 行——走完整多 lane 独立审。Tier B（其余默认）：一轮独立初审 + exact-head CI Gate。两个 Tier 都是每 PR 最多初审一轮 + P0/P1 修复后验证审一轮，不启第三轮（owner 明确要求除外）。
-- 只修经验证的 P0/P1（security、data loss、correctness failure、release blocker）；P2/minor/nit/hygiene/refactor/performance 不阻塞，回复 skip rationale 后 resolve；实质可执行 follow-up 去重后进 Linear，不一条 nit 开一票。
+- 只修经验证的 P0/P1（security、data loss、correctness failure、release blocker）；P2/minor/nit/hygiene/refactor/performance 不阻塞，回复 skip rationale 后 resolve；实质可执行 follow-up 去重后交 lead 登记，不一条 nit 开一票。
 - **无合并等待窗。** 本地现行验证、独立 review、exact-head `CI Gate` 全绿且已出现的 P0/P1 全部裁决后，即可按固定 head 合并；不等待、不重跑 pending/failed/cancelled 的 advisory review check，不创建等待窗计时任务。
 - **PR 栈深 ≤3。** 第 3 轮 rebase 仍不可合并即弃栈，从最新 `origin/main` 重切；追 main 用 `gh pr update-branch` 一条命令完成，不委派 agent 任务。
 - 修完 review 后先 commit + push 再回复/resolve 对应 threads；全绿后可自主 merge 并按 owner 已授权流程部署（owner 可随时指定人工合并）。
@@ -65,7 +72,6 @@
 
 - 架构/设计决策写 ADR 或 `docs/design/`；过程性的规划、清单、审计和回执写到仓库外的 `/Volumes/YukovalSBak/yukoval-projects/tlp-docs/`（planning/、audit/），不进 git；README 随 runtime 形态同步；domain layout 用根 `CONTEXT.md` 与 `docs/adr/`。
 - 批量证据外置 `tlp-audit-artifacts/<line-or-issue>/<head>/`（架构线必须落在 `architecture-deepening/` 子路径）；git 只留结论、命令、revision、外部路径与 SHA256 摘要；git 历史不重写；把既有批量证据从 HEAD 删除前必须先外置复制、hash 核验、建 git 指针并经协调线逐批确认。
-- Linear（Yukoval Studios / YUK）是权威 tracker，GitHub Issues 仅历史。branch/commit/PR 用 `YUK-NN`；多票逐个 `Closes YUK-NN`；任务收尾执行 capture gate（先查重再建/更新 actionable follow-up，没有则说明原因）；触及的 issue 状态当场与代码现实对齐。流程见 `docs/agents/issue-tracker.md`，标签见 `docs/agents/triage-labels.md`。
 - 代码检索：概念/未知位置先 `ykv-code-index.search_code`；已知符号/引用用 LSP 或 grep；已知字面量/regex/文件名用 grep，无结果不断言不存在；索引偏靶时查 index health 再交叉验证。
 - UI 实施在 2026-10-07 [自主交付授权](docs/planning/2026-10-07-autonomous-delivery-charter.md) 范围内自主进行：pre-flight 引用 design doc 原文（路径+行号）、声明组件类型（drawer/route/modal/page）、列出创建与修改文件；遵循既有 design tokens/primitives/design-system。
 - TEST 跑在 NAS（`bancho-nb2.local`，`/volume1/docker/tlp-test/`，compose 项目 `the-learning-project` + 私有 `compose.private.json`，容器内存/CPU 限额，`unless-stopped`）；Mac 经 LaunchAgent `studio.yukoval.tlp-nas-tunnel` 本机中继访问（只留 `127.0.0.1:8787`，每条连接一个 ssh exec channel 在 NAS 跑 Python 转发——NAS sshd 禁 TCP 转发；数据库中继端口 5433/5544 已于 2026-11-06 关闭），`studio.yukoval.tlp-nas-watch` 维护 NAS memory watchdog 并告警；本机脚本没有全域保证：`scripts/local-db-env.ts` 的共用判定只覆盖解析本地目标的 `dev:local`/`dev:reset`/`db:migrate:local`/`drizzle.config.local.ts`/delivery/spike 脚本，与直读 `DATABASE_URL` 的 `db:generate`/`db:push`/`db:migrate`/`worker:dev`/`seed:*`/`db:backfill:*`/`db:recompute:*`（回环上的 TEST 端口或库名 `loom`）；这些入口的显式通道只有 `DEV_ALLOW_TEST_DB=1`，其余本机脚本（`ops-*`、`prune-backend` 等）没有判定。本机 dev API 在 `NODE_ENV` 非 `production` 时也拒绝 TEST 形态 `DATABASE_URL`；8787 端口护栏另按非容器判断。`NODE_ENV=production` 可显式跳过数据库判定（不是安全边界），生产入口与容器内的 `API_PORT=8787` 照常。Mac 关机时 TEST 仍跑但外部不可达、Tailscale 入口断、当日 dump 不跑。回滚期 Mac 容器 stopped 不删（≥7 天且经过一个成功 release）。release 构建不再在 Mac 跑，方式待定。入口见 `README.md` 与授权 charter；数据恢复、独立审查与验收要求保留。

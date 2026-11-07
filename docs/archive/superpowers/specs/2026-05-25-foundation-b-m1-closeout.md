@@ -272,7 +272,7 @@ phase 结束（user push 之后）必须满足：
 | Lane B 解析 squash SHA 失败（PR squash 后 SHA 改变） | 低 | §3 已钉死 6 个 SHA（已 verify 见 §0.4 表）；lane B 第一步用 `git cat-file -e <sha>` 复查存在 |
 | User 沉默不确认方案 | 低 | rev 4 改成默认 A，sphase 启动不阻塞；user 显式 override 才走 B |
 | Lane A 改 architecture/status/README 与他人在飞分支冲突 | 低 | 这 3 个 doc 当前 `main` HEAD 干净（`git status` clean），lane A 在 worktree 内独立 commit；chain-merge 时 ff-merge 校验拓扑 |
-| Lane B `pnpm docs:linear-manifest` 在 sandbox 失败 EPERM | 中 | [linear-doc-migration.md:96](../../agents/linear-doc-migration.md:96) 已有 rerun guidance；lane B subagent 若首次失败按文档 rerun 并把 retry 记录写进 audit |
+| Lane B `pnpm docs:linear-manifest` 在 sandbox 失败 EPERM | 中 | 该脚本在 sandbox 外重跑同一条命令即可；lane B subagent 若首次失败按此 rerun 并把 retry 记录写进 audit |
 
 ## 7. Follow-ups（**不**在本 phase 实施）
 
