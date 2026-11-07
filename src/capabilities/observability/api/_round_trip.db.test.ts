@@ -4,10 +4,12 @@
  * Verifies that data exported from a seeded DB is fully restored after a wipe.
  */
 
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { unzipSync } from 'fflate';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { recordJudgeOperationalReceipt } from '@/capabilities/practice/public';
 import { hydrateConfigFromDb } from '@/core/config/server/hydrate';
+import type { JudgeOperationalEventT } from '@/core/schema/event/judge-operational-events';
 import {
   difficulty_calibration_label,
   event,
@@ -318,6 +320,242 @@ describe('round-trip: export → import → DB state mirrored', () => {
     expect(
       (after.item_calibration[0].cdm_json as { profile: { nested: string[] } }).profile.nested,
     ).toEqual(['深', '层']);
+  });
+
+  // Judge operational receipts are immutable to ordinary writers but live on the
+  // `event` table inside the restore wipe scope — an archive carrying them used to
+  // die on the first `delete from "event"`. The seed writes one receipt per
+  // trigger-guarded action through the production writer (zod-validated), the same
+  // rows a real judge run leaves; the wipe-then-reinsert may only pass inside the
+  // restore transaction's narrow channel, which ends with that transaction.
+  // @invariant data: wipe-and-reload restores every guarded receipt row byte-equal
+  // @invariant security: after restore, ordinary UPDATE/DELETE on any guarded
+  //   receipt action is still rejected — the channel does not leak
+  // @fails-if drop the channel check or weaken the guard: import returns 500
+  //   'judge operational receipts are immutable', or a post-restore ordinary
+  //   update/delete no longer rejects
+  it('restores immutable judge operational receipts and keeps them fenced afterwards', async () => {
+    const db = testDb();
+    const now = new Date('2024-03-03T00:00:00Z');
+    const at = now.toISOString();
+    const digest = '0'.repeat(64);
+    const pendingId = 'jrt_pending';
+    const owner = {
+      incarnation: '11111111-2222-4333-8444-555555555555',
+      epoch: 0,
+      backend: 'pg-boss' as const,
+    };
+    const runEnvelope = {
+      actor_kind: 'system' as const,
+      actor_ref: 'judge:operational' as const,
+      subject_kind: 'event' as const,
+      subject_id: pendingId,
+      caused_by_event_id: pendingId,
+      outcome: null,
+      task_run_id: null,
+      cost_micro_usd: null,
+    };
+    const familyEnvelope = {
+      ...runEnvelope,
+      subject_kind: 'durable_family' as const,
+      subject_id: 'judge_run' as const,
+      caused_by_event_id: null,
+    };
+    const coordinate = {
+      coordinate: 'native' as const,
+      run_id: 'jrt_run',
+      pending_id: pendingId,
+      pending_digest: digest,
+    };
+    const receipts: JudgeOperationalEventT[] = [
+      {
+        ...runEnvelope,
+        action: 'experimental:judge_execution_binding',
+        payload: {
+          ...coordinate,
+          version: 1,
+          evaluation_group_id: 'jrt_group',
+          submission_id: 'jrt_submission',
+          execution_key: 'jrt_execution',
+          member_submission_ids: ['jrt_submission'],
+          input_digest: digest,
+          intent_digest: 'jrt_intent',
+          attempt: 1,
+          admission_snapshot: null,
+          execution_policy: { version: 1, paid_retry: 'none', evaluation: {} },
+        },
+      },
+      {
+        ...runEnvelope,
+        action: 'experimental:judge_ownership',
+        payload: {
+          ...coordinate,
+          version: 1,
+          from: null,
+          to: owner,
+          submitted_at: at,
+          source_digest: digest,
+          mapped_deliveries: [],
+          recovery_history: { kind: 'known', accepted_recovery_ids: [] },
+          evidence_refs: [pendingId],
+        },
+      },
+      {
+        ...runEnvelope,
+        action: 'experimental:judge_delivery_reserved',
+        payload: {
+          ...coordinate,
+          version: 1,
+          slot: 0,
+          ownership: owner,
+          delivery_id: 'jrt_delivery',
+          reserved_at: at,
+        },
+      },
+      {
+        ...runEnvelope,
+        action: 'experimental:judge_delivery_send',
+        payload: {
+          ...coordinate,
+          version: 1,
+          reservation_id: 'jrt_reservation',
+          send_no: 1,
+          ownership: owner,
+          gate_checked_at: at,
+          authorization_version: 1,
+          authorization_digest: digest,
+        },
+      },
+      {
+        ...runEnvelope,
+        action: 'experimental:judge_delivery_rejected',
+        payload: {
+          ...coordinate,
+          version: 1,
+          send_id: 'jrt_send_rejected',
+          reason: 'producer_fenced',
+          observed_at: at,
+          evidence_digest: digest,
+        },
+      },
+      {
+        ...runEnvelope,
+        action: 'experimental:judge_delivery_accepted',
+        payload: {
+          ...coordinate,
+          version: 1,
+          reservation_id: 'jrt_reservation',
+          ownership: owner,
+          delivery_id: 'jrt_delivery',
+          accepted_send_id: 'jrt_send',
+          evidence: 'enqueue_ack',
+          observed_at: at,
+        },
+      },
+      {
+        ...runEnvelope,
+        action: 'experimental:judge_delivery_started',
+        payload: {
+          ...coordinate,
+          version: 1,
+          reservation_id: 'jrt_reservation',
+          ownership: owner,
+          started_at: at,
+        },
+      },
+      {
+        ...runEnvelope,
+        action: 'experimental:judge_disposition',
+        payload: {
+          ...coordinate,
+          version: 1,
+          kind: 'manual',
+          reason: 'explicit_disposal',
+          actor_ref: 'owner:test',
+          decided_at: at,
+          observed_ownership: owner,
+          evidence_refs: [pendingId],
+          evidence_digest: digest,
+        },
+      },
+      {
+        ...familyEnvelope,
+        action: 'experimental:judge_family_transition',
+        payload: {
+          version: 1,
+          incarnation: owner.incarnation,
+          prior_phase: 'pg-boss',
+          next_phase: 'draining-pg-boss',
+          prior_epoch: 0,
+          next_epoch: 1,
+          actor_ref: 'owner:test',
+          evidence_refs: [pendingId],
+          evidence_digest: digest,
+          recorded_at: at,
+        },
+      },
+      {
+        ...familyEnvelope,
+        action: 'experimental:judge_reconcile_observation',
+        payload: {
+          version: 1,
+          tick_id: 'jrt_tick',
+          ownership: owner,
+          sequence: 0,
+          admission: 'admitted',
+          pending_ids: [pendingId],
+          cursor: null,
+          recorded_at: at,
+        },
+      },
+    ];
+    await db.transaction(async (tx) => {
+      for (const [index, receipt] of receipts.entries()) {
+        await recordJudgeOperationalReceipt(tx, `jrt_receipt_${index}`, receipt, now);
+      }
+    });
+
+    const before = await db.select().from(event).orderBy(event.id);
+    expect(before).toHaveLength(receipts.length);
+
+    const exportRes = await GET(new Request('http://localhost/api/_/export'));
+    expect(exportRes.status).toBe(200);
+    const ab = await exportRes.arrayBuffer();
+
+    await resetDb();
+    expect(await db.select().from(event)).toHaveLength(0);
+
+    const importRes = await POST(
+      new Request('http://localhost/api/_/import?confirm=wipe-and-reload', {
+        method: 'POST',
+        body: new Uint8Array(ab),
+        headers: { 'content-type': 'application/zip' },
+      }),
+    );
+    if (importRes.status !== 200) {
+      console.error('Import failed:', JSON.stringify(await importRes.clone().json(), null, 2));
+    }
+    expect(importRes.status).toBe(200);
+
+    // Row count + ordered id/row identity: the restored receipts must be the
+    // backed-up rows verbatim, not just the same actions.
+    const after = await db.select().from(event).orderBy(event.id);
+    expect(after).toEqual(before);
+
+    // The restore channel ended with its transaction: ordinary writes on every
+    // guarded action are still fenced.
+    const immutableReceiptError = {
+      cause: { code: 'P0001', message: 'judge operational receipts are immutable' },
+    };
+    for (const row of after) {
+      await expect(
+        db.execute(sql`update event set payload = payload || '{}'::jsonb where id = ${row.id}`),
+      ).rejects.toMatchObject(immutableReceiptError);
+      await expect(db.delete(event).where(eq(event.id, row.id))).rejects.toMatchObject(
+        immutableReceiptError,
+      );
+    }
+    expect(await db.select().from(event).orderBy(event.id)).toEqual(before);
   });
 
   async function exportZipBytes(): Promise<Uint8Array> {
