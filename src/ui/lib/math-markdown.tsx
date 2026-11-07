@@ -377,10 +377,22 @@ const INLINE_MATH = /(?<![\\$])\$(?!\s)[^$\n]*?[^\s\\]\$(?!\d)/g;
 function protectTableMathPipes(source: string): string {
   if (!source.includes('|')) return source;
   const lines = source.split('\n');
+  // Code is shown and copied as written, so only the text between code spans is touched.
   const inRow = (line: string) =>
-    line.replace(INLINE_MATH, (math) => math.replace(/(?<!\\)\|/g, '\\vert '));
-  for (let index = 1; index < lines.length; index += 1) {
+    line
+      .split(/(`[^`]*`)/)
+      .map((part, index) =>
+        index % 2 === 1
+          ? part
+          : part.replace(INLINE_MATH, (math) => math.replace(/(?<!\\)\|/g, '\\vert ')),
+      )
+      .join('');
+  let fence: string | null = null;
+  for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index] as string;
+    const marker = line.match(/^\s*(```+|~~~+)/)?.[1]?.slice(0, 3);
+    if (marker) fence = fence === null ? marker : fence === marker ? null : fence;
+    if (fence !== null || marker || index === 0) continue;
     if (!line.includes('|') || !TABLE_DELIMITER_ROW.test(line)) continue;
     if (!lines[index - 1]?.includes('|')) continue;
     lines[index - 1] = inRow(lines[index - 1] as string);
