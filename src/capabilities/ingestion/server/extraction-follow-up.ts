@@ -1,14 +1,8 @@
 import { COPILOT_NUDGE_EVALUATE_QUEUE } from '@/server/boss/queue-names';
 import { AUTO_ENROLL_SINGLETON_SECONDS } from './workflow-judge-config';
 
-/** Dispatch after extraction commits so workers can see the rows. */
-export async function dispatchExtractionFollowUps(
-  sessionId: string,
-  source: 'tencent_ocr_extract' | 'docx_text',
-): Promise<void> {
-  // Enrollment is automatic and has no feature switch. Enqueue failures are logged,
-  // never fatal to a committed extraction; the dedicated auto_enroll queue isolates
-  // its failures, and a failed send leaves the blocks draft (visible as publish_failed).
+/** Post-commit auto_enroll dispatch. Failures are logged, never fatal to the caller. */
+export async function enqueueAutoEnroll(sessionId: string, source: string): Promise<void> {
   try {
     const { getStartedBoss } = await import('@/server/boss/client');
     const boss = await getStartedBoss();
@@ -23,6 +17,17 @@ export async function dispatchExtractionFollowUps(
   } catch (err) {
     console.error(`[${source}] failed to enqueue auto_enroll`, err);
   }
+}
+
+/** Dispatch after extraction commits so workers can see the rows. */
+export async function dispatchExtractionFollowUps(
+  sessionId: string,
+  source: 'tencent_ocr_extract' | 'docx_text',
+): Promise<void> {
+  // Enrollment is automatic and has no feature switch. Enqueue failures are logged,
+  // never fatal to a committed extraction; the dedicated auto_enroll queue isolates
+  // its failures, and a failed send leaves the blocks draft (visible as publish_failed).
+  await enqueueAutoEnroll(sessionId, source);
 
   // Post-commit, observe-only nudge evaluation. Isolated from auto_enroll so
   // neither enqueue failure masks the other or fails the extraction.

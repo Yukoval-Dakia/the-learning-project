@@ -20,6 +20,8 @@ import { runAutoEnrollForSession } from './auto-enroll';
 import { settleCapturedBlock } from './capture/captured-question';
 import { enrollCapturedBlock } from './enroll';
 import { revertAutoEnrolledBlock } from './revert-auto-enroll';
+import { readIngestionSessionBlocks } from './session-blocks-read';
+import { enrollIngestionBlock } from './single-block-enroll';
 
 const FAILURE_DRAFT: MistakeEnrollOutputT = {
   wrong_answer: 'failure',
@@ -260,7 +262,7 @@ describe('revertAutoEnrolledBlock', () => {
   //   while the question survives as reusable content
   // @fails-if a captured-answer enrollment's attempt stays live (timeline keeps it), or the
   //   block's imported links survive the revert
-  it.each(['historical_attempt', 'captured_answer'] as const)(
+  it.each(['historical_attempt', 'captured_answer', 'reverted_read'] as const)(
     'retracts an auto-enrollment (%s): retract event + archived record + reset block + question kept',
     async (mode) => {
       const db = testDb();
@@ -323,6 +325,37 @@ describe('revertAutoEnrolledBlock', () => {
       // Question row preserved (evidence-first, reusable).
       const q = await db.select().from(question).where(eq(question.id, res.questionId));
       expect(q).toHaveLength(1);
+
+      if (mode === 'reverted_read') {
+        const blocks = await readIngestionSessionBlocks(db, { id: sessionId });
+        expect(blocks.rows[0]?.ingestion_enrollment).toMatchObject({
+          state: 'not_enrolled',
+          reason: 'reverted',
+        });
+        const auto = await runAutoEnrollForSession({
+          db,
+          sessionId,
+          subjectId: 'yuwen',
+          tagKnowledgeFn: async () => ({ kind: 'match' as const, knowledge_ids: ['k1'] }),
+        });
+        expect(auto.enrolled).toBe(0);
+        const [stillDraft] = await db
+          .select()
+          .from(question_block)
+          .where(eq(question_block.id, blockId));
+        expect(stillDraft?.status).toBe('draft');
+        const manual = await enrollIngestionBlock(db, {
+          sessionId,
+          blockId,
+          expectedVersion: stillDraft?.version ?? 0,
+        });
+        expect(manual.status).toBe('enrolled');
+        const [reentered] = await db
+          .select()
+          .from(question_block)
+          .where(eq(question_block.id, blockId));
+        expect(reentered?.status).toBe('auto_enrolled');
+      }
     },
   );
 });

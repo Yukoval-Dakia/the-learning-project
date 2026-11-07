@@ -35,6 +35,7 @@ import { resolveSessionDerivationPolicy } from '@/kernel/read-models/usage-polic
 import { type NameKcFn, tagKnowledge } from '@/kernel/records/knowledge-tag';
 import { getKnownSubjects } from '@/subjects/profile';
 import { captureIngestionOriginal } from './assessment-capture';
+import { readRevertedBlockIds } from './block-revert-state';
 import {
   capturedQuestionShape,
   recordCapturedQuestion,
@@ -154,7 +155,7 @@ export async function runAutoEnrollForSession(
   // `next_after_block` when a batch fills, so a long page still completes. The cursor is
   // `(ordinal, id)` — the same total order used for reading adjacency — so no block is
   // skipped when a later batch shares an ordinal with an earlier one.
-  const blocks = await params.db
+  const selected = await params.db
     .select()
     .from(question_block)
     .where(
@@ -175,6 +176,15 @@ export async function runAutoEnrollForSession(
     // Adjacency is the array order, so it must be reading order (ordinal), not id.
     .orderBy(question_block.ordinal, question_block.id)
     .limit(AUTO_ENROLL_MAX_BLOCKS_PER_RUN);
+
+  // A learner-reverted block is draft with a prompt, but must never be re-enrolled by
+  // any automatic delivery (retry, batch continuation, or a rescue follow-up). The
+  // manual single-block endpoint is the explicit re-entry path.
+  const reverted = await readRevertedBlockIds(
+    params.db,
+    selected.map((block) => block.id),
+  );
+  const blocks = selected.filter((block) => !reverted.has(block.id));
 
   // Block-assembly merge proposals run before any enroll import, while blocks are still
   // draft (mergeQuestions on user accept requires draft). AI only proposes; an outage is
@@ -469,14 +479,16 @@ export async function runAutoEnrollForSession(
     // durable subscription, so this producer has no queue dependency.
   }
 
-  const last = blocks[blocks.length - 1];
+  // Cursor progress is measured on the selected page, not the filtered set: a batch
+  // made only of reverted blocks must still advance to the next page slice.
+  const last = selected[selected.length - 1];
   return {
     status: 'completed',
     enrolled: enrolled.length,
     routed_to_review: routedToReview,
     blocks: enrolled,
     next_after_block:
-      blocks.length === AUTO_ENROLL_MAX_BLOCKS_PER_RUN && last !== undefined
+      selected.length === AUTO_ENROLL_MAX_BLOCKS_PER_RUN && last !== undefined
         ? { ordinal: last.ordinal, id: last.id }
         : null,
   };
