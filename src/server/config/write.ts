@@ -28,6 +28,7 @@ import type { TaskKind } from '@/capabilities/task-registry';
 import { tasks } from '@/capabilities/task-registry';
 import { selectPairModel, selectPairProvider } from '@/core/config/model-overrides';
 import type { ConfigMutation, ConfigMutationResult } from '@/core/config/mutations';
+import { hydrateConfigFromDb } from '@/core/config/server/hydrate';
 import type { ConfigValue } from '@/core/config/store';
 import { matchDynamicConfigKey, resolveKeyDef } from '@/core/config/store';
 import { type Db, type Tx, db as defaultDb } from '@/db/client';
@@ -49,7 +50,6 @@ import {
   resolveTaskReasoning,
 } from '@/server/ai/providers';
 import { VISION_JUDGE_TASK_KINDS } from '@/server/ai/vision-judge-config';
-import { hydrateConfigFromDb } from './hydrate';
 
 export type ConfigActor = 'owner' | 'panel:admin' | 'migrate' | 'cli';
 

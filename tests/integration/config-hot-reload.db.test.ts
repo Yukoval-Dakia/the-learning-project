@@ -14,9 +14,8 @@
  */
 import { sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-
+import { hydrateConfigFromDb } from '@/core/config/server/hydrate';
 import { getConfig, replaceConfigSnapshot, resetTestConfig } from '@/core/config/store';
-import { hydrateConfigFromDb } from '@/server/config/hydrate';
 import { setConfig } from '@/server/config/write';
 
 import { resetDb, testDb } from '../helpers/db';

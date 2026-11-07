@@ -19,7 +19,7 @@
 | `sdk-types.ts` | YUK-1025 vendored 帧类型：SDKMessage 线形（assistant/result/user/task_*）是 pi 事件的归一化目标形状——纯类型，零运行时依赖 |
 | `sdk-terminal.ts` | 把归一化 assistant/result 帧适配为 lifecycle usage、thinking 元数据与终态证据；不持久化原始 CoT |
 | `providers.ts` | provider 认证、任务选模与 execution policy；`task.<kind>.reasoning` 存 pi 思考层级名，按 models.dev `reasoning_options` 决议（effort 向上取整、toggle 映射、空档不发参数），`requested→applied` 记入 run 回执，`task.<kind>.override_global_pin` 优先级不变；`resolveTaskReasoning` 同时是 admin 配置读面投影与配置写校验的唯一 resolver（YUK-1808） |
-| `@/core/config/custom-providers` | YUK-1563 ④ 自定义 provider 定义的纯真相源：类型、校验（slug/https URL/env 名/协议）、进程内注册表 + 目录联动端口；凭据只存 env 变量名（DB 水合/CRUD 在 `src/server/config/custom-providers-hydrate.ts` 与 observability 写面） |
+| `@/core/config/custom-providers` | YUK-1563 ④ 自定义 provider 定义的纯真相源：类型、校验（slug/https URL/env 名/协议）、进程内注册表 + 目录联动端口；凭据只存 env 变量名（DB 水合/CRUD 在 `src/core/config/server/custom-providers-hydrate.ts` 与 observability 写面；目录联动端口由 `src/core/ai-runtime/server/custom-provider-config-integration.ts` 绑定，AI 实现在 `custom-provider-catalog-ports.ts`） |
 | `model-catalog-overrides.ts` | 唯一手写模型事实例外源。按 provider/model 记原因，仅补目录缺项或实测差异，不接管选模 |
 | `model-profiles.ts` + `model-catalog.ts` + `provider-models-check.ts` + `model-catalog.snapshot.json` | ModelProfile 读取运行时 models.dev 缓存和有据例外；缺项 unknown。已有 `/models` 核对、鉴权探针和刷新锁不变。`pnpm gen:model-catalog` 只重写离线快照。自定义 provider 的模型 bucket 在 `model-catalog.ts` 刷新时从其自身 /models 合成（`mergeCustomProviderBuckets`），合成前在刷新事务内重读定义表、不信任进程内 registry（YUK-1960），不进快照 |
 | `log.ts` | run / event 留痕 |
