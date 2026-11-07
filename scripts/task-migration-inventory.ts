@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import ts from 'typescript';
 
@@ -185,8 +185,11 @@ const output = {
   dynamicDispatchSources: [...dynamicDispatchSources].sort(),
   internalQueues: ['__pgboss__send-it is owned by pg-boss, not a business family'],
 };
+const DOCS_ROOT = process.env.TLP_DOCS_ROOT ?? '/Volumes/YukovalSBak/yukoval-projects/tlp-docs';
+const OUT_DIR = join(DOCS_ROOT, 'repo-docs/docs/planning');
+mkdirSync(OUT_DIR, { recursive: true });
 writeFileSync(
-  'docs/planning/2026-10-07-yuk1355-task-inventory.json',
+  join(OUT_DIR, '2026-10-07-yuk1355-task-inventory.json'),
   `${JSON.stringify(output, null, 2)}\n`,
 );
 console.log(

@@ -19,7 +19,7 @@
  *   1 — --live-r2 probe failed (creds present but R2 unreachable/wrong)
  *   2 — one or more REQUIRED vars missing or still a placeholder
  *
- * See: docs/deploy/real-ingestion-provisioning.md (the end-to-end runbook).
+ * See: the real-ingestion provisioning runbook (real-ingestion-provisioning.md).
  */
 import { HeadBucketCommand, S3Client } from '@aws-sdk/client-s3';
 import { config } from 'dotenv';
@@ -260,7 +260,7 @@ async function main(): Promise<void> {
       `Result: FAIL — ${failures.length} required var(s) missing/misconfigured: ${failures.join(', ')}`,
     );
     console.log(
-      'Next: set them in the worker .env (see docs/deploy/real-ingestion-provisioning.md), then re-run.',
+      'Next: set them in the worker .env (see the real-ingestion provisioning runbook), then re-run.',
     );
     process.exit(2);
   }
@@ -278,7 +278,7 @@ async function main(): Promise<void> {
   console.log(`Result: PASS — all required ingestion creds present${warnNote}.`);
   const r2Hint = liveR2 ? '' : ', `pnpm preflight:ingestion -- --live-r2` (R2 connectivity)';
   console.log(`Live checks: \`pnpm preflight:vision\` (VLM round-trip)${r2Hint}.`);
-  console.log('Then ingest your first worksheet — see docs/deploy/real-ingestion-provisioning.md.');
+  console.log('Then ingest your first worksheet — see the real-ingestion provisioning runbook.');
   process.exit(0);
 }
 

@@ -7,7 +7,7 @@
 // genuine cross-check, because the reference is never a re-interpretation of the current fold.
 //
 // TRIGGER: run whenever `src/core/projections/**` or the `src/server/projections/gather.ts` branch of
-// an ALREADY-ON entity changes (a pre-PR checklist item — see docs/design/… §7; the register's
+// an ALREADY-ON entity changes (a pre-PR checklist item — see the design doc §7; the register's
 // "reducer-code-hash-triggered" is landed as a path-triggered manual gate, n=1 sufficient; hash
 // automation left optional). PURE — no DB (folds the golden's own captured events in memory).
 //

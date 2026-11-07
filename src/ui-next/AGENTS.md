@@ -1,7 +1,7 @@
 # src/ui-next — scoped design-system base
 
 Stable-layer base for the UI rewrite (YUK-1354). Source of truth for every rule:
-`docs/design/2026-10-07-ui-visual-direction.md` (§0 stable vs pending layer, §0.1 I1–I5).
+`/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/design/2026-10-07-ui-visual-direction.md` (§0 stable vs pending layer, §0.1 I1–I5).
 
 - Everything renders inside `<UiNextRoot>` (`[data-ui-next]`). Styles nest under that scope and
   stay unlayered, so they outrank the app's unlayered global element rules.

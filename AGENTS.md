@@ -1,6 +1,6 @@
 # Project agent guidance
 
-本文件是本仓库跨工具的 agent 指令真相源（Claude Code 经根 `CLAUDE.md` 导入），只放承重规则：多步骤流程在 skills，路径规则在 nested `AGENTS.md` / `.claude/rules`，机械约束在 hooks，命令矩阵与测试细则在 `docs/agents/development-workflow.md`。
+本文件是本仓库跨工具的 agent 指令真相源（Claude Code 经根 `CLAUDE.md` 导入），只放承重规则：多步骤流程在 skills，路径规则在 nested `AGENTS.md` / `.claude/rules`，机械约束在 hooks，命令矩阵与测试细则在本文件「Development and verification」。文档不在 git 内，扩展说明在 `/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/`（见「Planning, docs, and tracking」）。
 
 ## Owner rules
 
@@ -38,8 +38,10 @@
 
 ## Development and verification
 
-- 使用 pnpm，不引入 npm/yarn lockfile。常用：`pnpm dev:local`、`pnpm vitest run --config vitest.unit.config.ts <file>`、`pnpm vitest run --config vitest.db.config.ts <file>`、`pnpm test:migration`、`pnpm typecheck`、`pnpm lint`、`pnpm build`。
-- 本机只跑改动触及的不变量测试（若有）+ typecheck/lint/build；`pnpm build` 是 pre-PR gate。watch loop 只用于 scoped file（`pnpm test:unit:watch` / `pnpm test:db:watch`）。
+- 使用 pnpm，不引入 npm/yarn lockfile。dev 唯一入口 `pnpm dev:local`：起 dev Postgres（:5434，与 TEST 隔离）+ 本 worktree 独立库 `loom_dev_<name>_<hash>` + 与生产同一个 `scripts/migrate.ts` 迁移 + API/Start 前门（自动选 8788 起空闲端口）+ worker；全新 dev 库自带 7 道 `devseed:q:*` 种子题。重置本 worktree 库用 `pnpm dev:reset`（不要 `down -v`，卷里有全部 worktree 的库）；独立 worker 用 `pnpm worker:dev`。
+- 本机只跑改动触及的不变量测试（若有）+ typecheck/lint/build。scoped 测试：`pnpm vitest run --config vitest.unit.config.ts <file>`、`pnpm vitest run --config vitest.db.config.ts <file>`、`pnpm test:migration`；watch loop 只用于 scoped file（`pnpm test:unit:watch` / `pnpm test:db:watch`）。
+- Pre-PR gate：先跑 diff 触及的不变量测试，再跑 `pnpm typecheck`、`pnpm lint`、`pnpm audit:schema`、`pnpm audit:partition`、`pnpm audit:api-client`、`pnpm audit:capability-boundaries`、`pnpm audit:provider-lanes`、`pnpm audit:profile`、`pnpm audit:task-census`、`pnpm audit:draft-status`、`pnpm build`。audit 机制、allowlist 与完整命令表见 `audits-reference` skill 和外部 `/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/agents/development-workflow.md`。
+- exact-head GitHub `CI Gate` 是权威：static/audit/unit/DB/migration/build/parity 分 lane，DB 用真 Postgres testcontainer，unit/DB 文件清单由 `vitest.shared.ts` 与 `audit:partition` 强制；planner 输出缺失按跑全量、planner 失败即 lane 失败，只有已验证的 docs-only 变更可跳过 lane。
 - 涉及 agent/model 实际输出或学习效果的验收，用真实 provider actual-output 或学习者结果对账，封存 exact revision、输入/输出 digest、task-run ID、provider/model/cost。
 - 文件权限尊重 umask，不硬编码 mode bits。
 
@@ -63,10 +65,10 @@
 
 ## Planning, docs, and tracking
 
-- 架构/设计决策写 ADR 或 `docs/design/`；过程性的规划、清单、审计和回执写到仓库外的 `/Volumes/YukovalSBak/yukoval-projects/tlp-docs/`（planning/、audit/），不进 git；README 随 runtime 形态同步；domain layout 用根 `CONTEXT.md` 与 `docs/adr/`。
+- 文档不在 git 内，统一放仓库外：`/Volumes/YukovalSBak/yukoval-projects/tlp-docs/`。原 `docs/` 与 `PLANNING.md` 的副本在 `repo-docs/`（逐文件清单 `MANIFEST.tsv`、hash `SHA256SUMS`）；架构/设计决策写 `repo-docs/docs/adr/` 或 `tlp-docs/design/`；过程性规划、清单、审计和回执写 `tlp-docs/planning/`、`tlp-docs/audit/`。README 随 runtime 形态同步；domain layout 用根 `CONTEXT.md` 与外部 ADR 目录。
 - 批量证据外置 `tlp-audit-artifacts/<line-or-issue>/<head>/`（架构线必须落在 `architecture-deepening/` 子路径）；git 只留结论、命令、revision、外部路径与 SHA256 摘要；git 历史不重写；把既有批量证据从 HEAD 删除前必须先外置复制、hash 核验、建 git 指针并经协调线逐批确认。
-- Linear（Yukoval Studios / YUK）是权威 tracker，GitHub Issues 仅历史。branch/commit/PR 用 `YUK-NN`；多票逐个 `Closes YUK-NN`；任务收尾执行 capture gate（先查重再建/更新 actionable follow-up，没有则说明原因）；触及的 issue 状态当场与代码现实对齐。流程见 `docs/agents/issue-tracker.md`，标签见 `docs/agents/triage-labels.md`。
+- Linear（Yukoval Studios / YUK，https://linear.app/yukoval-studios）是权威 tracker，GitHub Issues 仅历史。branch/commit/PR 用 `YUK-NN`；branch 用 Linear 的 `gitBranchName` 形态；多票逐个 `Closes YUK-NN`（每个 issue 一个 keyword，禁止 `A + B` 简写）；commit message 必须带 `Closes YUK-NN`，只写 PR body 不会 link；只引用真正推进/关闭的 issue（open/merge 会自动流转状态）。新 issue 挂 live Project + 一个 `area:*` 标签（matcher/kg/practice/copilot/memory/ui）与 triage 标签（`ready-for-agent`、`needs-info`、`needs-triage`、`ready-for-human`、`drift`、`wontfix`）；状态用 Linear status，不用标签复述；不用 Linear 原生 coding session（按 credits 计费），委派走本地 coding tool。任务收尾执行 capture gate（先查重再建/更新 actionable follow-up，没有则说明原因）；触及的 issue 状态当场与代码现实对齐。扩展流程见外部 `/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/agents/issue-tracker.md` 与 `/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/agents/triage-labels.md`。
 - 代码检索：概念/未知位置先 `ykv-code-index.search_code`；已知符号/引用用 LSP 或 grep；已知字面量/regex/文件名用 grep，无结果不断言不存在；索引偏靶时查 index health 再交叉验证。
-- UI 实施在 2026-10-07 [自主交付授权](docs/planning/2026-10-07-autonomous-delivery-charter.md) 范围内自主进行：pre-flight 引用 design doc 原文（路径+行号）、声明组件类型（drawer/route/modal/page）、列出创建与修改文件；遵循既有 design tokens/primitives/design-system。
+- UI 实施在 2026-10-07 自主交付授权（`/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/planning/2026-10-07-autonomous-delivery-charter.md`）范围内自主进行：pre-flight 引用 design doc 原文（路径+行号）、声明组件类型（drawer/route/modal/page）、列出创建与修改文件；遵循既有 design tokens/primitives/design-system。
 - TEST 跑在 NAS（`bancho-nb2.local`，`/volume1/docker/tlp-test/`，compose 项目 `the-learning-project` + 私有 `compose.private.json`，容器内存/CPU 限额，`unless-stopped`）；Mac 经 LaunchAgent `studio.yukoval.tlp-nas-tunnel` 本机中继访问（只留 `127.0.0.1:8787`，每条连接一个 ssh exec channel 在 NAS 跑 Python 转发——NAS sshd 禁 TCP 转发；数据库中继端口 5433/5544 已于 2026-11-06 关闭），`studio.yukoval.tlp-nas-watch` 维护 NAS memory watchdog 并告警；本机脚本没有全域保证：`scripts/local-db-env.ts` 的共用判定只覆盖解析本地目标的 `dev:local`/`dev:reset`/`db:migrate:local`/`drizzle.config.local.ts`/delivery/spike 脚本，与直读 `DATABASE_URL` 的 `db:generate`/`db:push`/`db:migrate`/`worker:dev`/`seed:*`/`db:backfill:*`/`db:recompute:*`（回环上的 TEST 端口或库名 `loom`）；这些入口的显式通道只有 `DEV_ALLOW_TEST_DB=1`，其余本机脚本（`ops-*`、`prune-backend` 等）没有判定。本机 dev API 在 `NODE_ENV` 非 `production` 时也拒绝 TEST 形态 `DATABASE_URL`；8787 端口护栏另按非容器判断。`NODE_ENV=production` 可显式跳过数据库判定（不是安全边界），生产入口与容器内的 `API_PORT=8787` 照常。Mac 关机时 TEST 仍跑但外部不可达、Tailscale 入口断、当日 dump 不跑。回滚期 Mac 容器 stopped 不删（≥7 天且经过一个成功 release）。release 构建不再在 Mac 跑，方式待定。入口见 `README.md` 与授权 charter；数据恢复、独立审查与验收要求保留。
 - MCP/tool/plugin 配置 session start 快照，新增换名需新 session 验证；不在项目任务中改用户级 provider/auth/telemetry；用户级 Claude settings 若受 self-modification 保护，给用户精确 diff，项目级 `.claude/settings.json` 可直接修改；hooks 负责确定性约束，不在提示词里要求忽略 hook、工具结果或运行时 context。

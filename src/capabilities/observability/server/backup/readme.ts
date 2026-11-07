@@ -69,8 +69,8 @@ Only an absent contract is legacy; legacy enqueued and reserved rows are not
 treated as outstanding. Restoring the ledger does not recreate a missing queue job.
 Do not delete effect records or replay terminal deliveries to force recovery: that
 can repeat completed side effects or paid work. After a job failure, a deferred drain,
-or a receipt-write failure, the owner must reconcile persisted evidence using
-docs/sub5-restore-cli.md before exporting a new ZIP. Unknown results remain blocked.
+or a receipt-write failure, the owner must reconcile persisted evidence using the
+sub5 restore runbook (sub5-restore-cli.md) before exporting a new ZIP. Unknown results remain blocked.
 The existing intervention preparation recovery is not a general queue restore.
 Event memory-ingest state is restored as archived, so already-extracted and opted-out
 events are not re-sent to paid extraction. Learner events dispatched at export without
