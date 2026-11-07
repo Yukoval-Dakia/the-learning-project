@@ -112,7 +112,7 @@ export const ChartBlock = z
         .strict()
         .meta({
           description:
-            'Model-authored data for learning content (e.g., a function value table). Learner statistics must use tool_result.',
+            'Model-authored discrete values for learning content, never a function graph. Learner statistics must use tool_result.',
         }),
       z
         .object({
