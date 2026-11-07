@@ -172,3 +172,6 @@ drizzle/.snapshots/
 /docs/
 /PLANNING.md
 postman/learning-api.postman_collection.json
+
+# 批量证据在仓库外，不提交
+/tlp-audit-artifacts/
