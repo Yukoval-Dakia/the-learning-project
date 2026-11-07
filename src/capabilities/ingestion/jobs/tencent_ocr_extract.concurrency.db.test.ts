@@ -5,9 +5,11 @@ import { reserveIngestionOperation } from '@/capabilities/ingestion/server/opera
 import { TencentSubmitInProgressError } from '@/capabilities/ingestion/server/provider-attempts';
 import type { DescribeResponse } from '@/capabilities/ingestion/server/tencent_mark';
 import { db } from '@/db/client';
-import { learning_session, provider_attempt } from '@/db/schema';
+import { learning_session, provider_attempt, question_block } from '@/db/schema';
 import tencentDone from '../../../../tests/fixtures/tencent_mark_agent_cloze_sample.json';
 import { resetDb } from '../../../../tests/helpers/db';
+import { readIngestionSessionDetail } from '../server/session-detail';
+import { runStructureTask } from '../server/structure';
 import { createImageR2, seedIngestionSession } from './ingestion-test-support';
 import { buildTencentOcrHandler } from './tencent_ocr_extract';
 
@@ -127,4 +129,87 @@ describe('Tencent OCR concurrent delivery fencing', () => {
       .where(eq(provider_attempt.operation_kind, 'ocr_page_submit'));
     expect(submitAttempts).toHaveLength(1);
   });
+});
+
+// @invariant security: crop handwriting evidence controls publication without exposing known student work
+// @fails-if known handwriting is attached or unknown handwriting is hidden or loses its durable warning
+it('retains clean and unverified option crops but withholds known handwriting', async () => {
+  for (const handwriting of [false, null, true]) {
+    const { sessionId } = await seedIngestionSession(1);
+    const handler = buildTencentOcrHandler({
+      db,
+      r2: await createImageR2(),
+      engine: 'glm',
+      glmOcrFn: async () => ({
+        id: 'crop-layout',
+        request_id: 'crop-layout',
+        md_results: '1. Choose A.',
+        data_info: { num_pages: 1, pages: [{ width: 80, height: 120 }] },
+        usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+        layout_details: [
+          [
+            {
+              index: 0,
+              label: 'text',
+              native_label: 'paragraph',
+              bbox_2d: [0, 0, 80, 30],
+              width: 80,
+              height: 120,
+              content: '1. Choose A.',
+            },
+            {
+              index: 1,
+              label: 'image',
+              native_label: 'image',
+              bbox_2d: [10, 40, 50, 80],
+              width: 80,
+              height: 120,
+            },
+          ],
+        ],
+      }),
+      runStructureFn: (params) =>
+        runStructureTask({
+          ...params,
+          runTaskFn: async () => ({
+            text: JSON.stringify({
+              layout_quality: 'structured',
+              extraction_confidence: 0.9,
+              content_lost: false,
+              figure_handwriting: [{ figure_index: 0, student_answer_present: handwriting }],
+              questions: [
+                {
+                  role: 'standalone',
+                  prompt_text: 'Choose A.',
+                  student_answer_present: false,
+                  options: [{ label: 'A', text: '', figure_ids: [0] }],
+                },
+              ],
+            }),
+          }),
+        }),
+    });
+    await handler([
+      {
+        id: `crop-${sessionId}`,
+        data: { sessionId },
+        retryCount: 0,
+        retryLimit: 0,
+        startedOn: new Date(),
+      },
+    ] as never);
+    const [block] = await db
+      .select()
+      .from(question_block)
+      .where(eq(question_block.ingestion_session_id, sessionId));
+    expect(
+      block.figures?.map((figure) => [figure.option_label, figure.handwriting_unverified]),
+    ).toEqual(handwriting === true ? [] : [['A', handwriting === null]]);
+    const { session } = await readIngestionSessionDetail(sessionId);
+    expect([
+      session.figures_withheld,
+      session.figure_handwriting_unverified,
+      session.content_lost,
+    ]).toEqual([handwriting === true, handwriting === null, false]);
+  }
 });
