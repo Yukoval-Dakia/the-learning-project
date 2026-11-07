@@ -37,11 +37,17 @@ export function guardSearchBenchmarkEmbedding(output: string, budgetUsd: number)
   if (!ledgerPath)
     throw Error('Shared SEARCH_BENCH_SPEND_FILE required for the cumulative $1.50 cap');
   const ledger = existsSync(ledgerPath)
-    ? (JSON.parse(readFileSync(ledgerPath, 'utf8')) as { spent_usd_ceiling: number })
+    ? (JSON.parse(readFileSync(ledgerPath, 'utf8')) as {
+        spent_usd_ceiling: number;
+        cap_usd?: number;
+      })
     : { spent_usd_ceiling: Number(process.env.SEARCH_BENCH_PRIOR_SPEND_USD) };
   if (!Number.isFinite(ledger.spent_usd_ceiling) || ledger.spent_usd_ceiling < 0)
     throw Error('Known cumulative prior spend required; never reset it to zero');
   const prior = ledger.spent_usd_ceiling;
+  const ceiling = Math.min(1.5, ledger.cap_usd ?? 1.5);
+  if (!Number.isFinite(ceiling) || ceiling < prior)
+    throw Error('Invalid cumulative benchmark spending ceiling');
   let spent = 0;
   let reserved = 0;
   let blocked = false;
@@ -55,7 +61,7 @@ export function guardSearchBenchmarkEmbedding(output: string, budgetUsd: number)
       throw Error('Unexpected embedding model/dimensions');
     const bytes = Buffer.byteLength(JSON.stringify(body.input));
     const hold = bytes / 1e6;
-    if (spent + reserved + hold > budgetUsd || prior + spent + reserved + hold > 1.5) {
+    if (spent + reserved + hold > budgetUsd || prior + spent + reserved + hold > ceiling) {
       blocked = true;
       throw Error('Embedding benchmark budget ceiling reached before send');
     }
@@ -80,7 +86,7 @@ export function guardSearchBenchmarkEmbedding(output: string, budgetUsd: number)
         JSON.stringify(
           {
             spent_usd_ceiling: prior + spent,
-            cap_usd: 1.5,
+            cap_usd: ceiling,
             includes_prior: true,
             price_basis: 'conservative reserve, not invoice',
           },

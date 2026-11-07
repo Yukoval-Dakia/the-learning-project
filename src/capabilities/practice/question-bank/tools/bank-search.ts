@@ -639,6 +639,9 @@ export async function runSearchBank(
       const output = await runSearchBankInSnapshot(tx, request, {
         fullPool: deps.fullPool,
         publicOnly: deps.publicOnly,
+        predicates: deps.predicates,
+        priorFacets: deps.priorFacets,
+        disableVectors: deps.disableVectors,
         embedFn: async () => {
           if (embedded === undefined) throw new Error('cursor continuation must not embed');
           if ('error' in embedded) throw embedded.error;
@@ -897,7 +900,7 @@ async function runSearchBankInSnapshot(
 
     if (deps.priorFacets && vectorResult.vector) {
       const facetDistance = sql<number>`(${question_solution_prior_vector.embedding} <=> ${toSqlVector(vectorResult.vector)}::vector)`;
-      const facetText = sql<string>`CASE WHEN ${question_solution_prior_vector.facet} = 'method' THEN concat(${question_solution_prior.prior}->'methods'->${question_solution_prior_vector.idx}->>'core_idea_md', ${'\n'}, ${question_solution_prior.prior}->'methods'->${question_solution_prior_vector.idx}->>'key_step_md') ELSE concat(${question_solution_prior.prior}->'pitfalls'->${question_solution_prior_vector.idx}->>'mechanism_md', ${'\n'}, ${question_solution_prior.prior}->'pitfalls'->${question_solution_prior_vector.idx}->>'trigger_md') END`;
+      const facetText = sql<string>`CASE WHEN ${question_solution_prior_vector.facet} = 'method' THEN concat(${question_solution_prior.prior}->'methods'->${question_solution_prior_vector.idx}->>'core_idea_md', ${'\n'}::text, ${question_solution_prior.prior}->'methods'->${question_solution_prior_vector.idx}->>'key_step_md') ELSE concat(${question_solution_prior.prior}->'pitfalls'->${question_solution_prior_vector.idx}->>'mechanism_md', ${'\n'}::text, ${question_solution_prior.prior}->'pitfalls'->${question_solution_prior_vector.idx}->>'trigger_md') END`;
       const ranked = db
         .select({
           id: question.id,

@@ -10,6 +10,7 @@ import type { SearchBankInput } from '@/capabilities/practice/question-bank/tool
 import type { Db } from '@/db/client';
 import * as schema from '@/db/schema';
 import { EvidenceDemandV1 } from '@/kernel/supply-contracts';
+import { searchBenchmarkActor } from './search-bank-fixture-access';
 import {
   assertSearchBenchmarkPaidGate,
   guardSearchBenchmarkEmbedding,
@@ -63,7 +64,7 @@ async function main() {
   const consumer = process.env.SEARCH_BENCH_ACTOR ?? 'question_preparer';
   if (!['question_preparer', 'copilot'].includes(consumer))
     throw Error('Unsupported product consumer');
-  const actor = { kind: 'agent' as const, ref: consumer };
+  const actor = await searchBenchmarkActor(db, consumer);
   if (bankReadRoleForActor(actor) === 'restricted')
     throw Error(
       'Copilot answer-access PR is not present: refusing a FTS-only substitute for full-vector acceptance',
@@ -147,7 +148,8 @@ async function main() {
     dimensions: 1024,
     endpoint:
       process.env.MEM0_EMBEDDING_BASE_URL || 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-    actor: consumer,
+    actor,
+    product_consumer_role_measured: actor.kind === 'agent',
     freeze:
       'SHARE locks on question, lifecycle, prior and vectors; fail immediately if a writer is active',
     timing:
@@ -266,6 +268,8 @@ async function main() {
         (s) => s.n > 0 && s.p95_ms < 1000 && s.failed === 0 && s.degraded === 0,
       ),
       consumer,
+      actor,
+      product_consumer_role_measured: actor.kind === 'agent',
       real_preparer_queries_measured: rows.some((r) => r.origin === 'preparer_tool_query'),
       real_utterances_measured: rows.some((r) => r.origin === 'real_utterance'),
       origin_policy:

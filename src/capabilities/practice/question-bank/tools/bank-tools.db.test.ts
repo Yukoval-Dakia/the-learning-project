@@ -191,6 +191,16 @@ describe('bank tools boundary invariants (search_bank / read_bank / check_bank)'
     });
     expect(served.hits.map((h) => h.question_id)).toEqual(['bt_admitted']);
     expect(served.hits[0].ref).toMatch(/^qrev1:/);
+    const literal = await searchBankTool.execute(ctx, {
+      query: '电容器',
+      filters: { terms: ['已准入'] },
+    });
+    expect(literal.hits.map((h) => h.id)).toEqual(['bt_admitted']);
+    const wrong = await searchBankTool.execute(ctx, {
+      query: '电容器',
+      filters: { history: 'wrong' },
+    });
+    expect(wrong.hits).toEqual([]);
 
     const dedup = await searchHits({ query: '电容器 充放电' });
     const ids = dedup.hits.map((h) => h.question_id);
