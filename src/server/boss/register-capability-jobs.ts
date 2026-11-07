@@ -157,6 +157,8 @@ export async function registerCapabilityJobs(
     '@/capabilities/observability/public'
   );
   await installObservabilityHostOperations();
+  const { installDrawingHostOperations } = await import('@/capabilities/drawing/public');
+  installDrawingHostOperations();
   // Bind the generic auto-apply executor to the canonical accept dispatcher before
   // any job (including the sweep) can run. Kernel owns the sweep; the server owns
   // capability dispatch, so boot wires the port once.

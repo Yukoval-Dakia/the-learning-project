@@ -15,6 +15,7 @@ import type {
   ToolExecutionResultObservation,
 } from '@/kernel/tools/types';
 import {
+  COPILOT_FINALIZATION_FAILURE_REPLY,
   providerFailureToPublicFailure,
   publicProseFailureMessage,
 } from '../public-prose-contract';
@@ -29,7 +30,6 @@ import { stripCopilotInternalComments } from './prose-stream';
 export const COPILOT_REPLY_TRACE_MAX_CALLS = Number.MAX_SAFE_INTEGER;
 
 export const COPILOT_REPLY_CHAR_LIMIT = 64_000;
-const FINALIZATION_FAILURE_REPLY = '这次回复未能完成，已有内容已保留。';
 
 export function truncateCopilotReply(
   text: string,
@@ -598,7 +598,7 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
       ? candidateBody
       : streamedBody.trim()
         ? streamedBody
-        : FINALIZATION_FAILURE_REPLY;
+        : COPILOT_FINALIZATION_FAILURE_REPLY;
     const prepared = prepareReplyText(body);
     const disclosure = proposalDisclosure(trace, prepared.text, prepared.inlineCardQuestionIds);
     const replyText = truncateCopilotReply(

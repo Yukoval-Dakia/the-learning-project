@@ -1,6 +1,6 @@
 # src/server — server-only modules
 
-> Server-only 业务层（route handler + worker 共用）。浏览器**不**直接 import。架构权威见 [docs/architecture.md](../../docs/architecture.md)；领域词条见 [CONTEXT.md](../../CONTEXT.md)。
+> Server-only 业务层（route handler + worker 共用）。浏览器**不**直接 import。架构权威见 `/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/architecture.md`；领域词条见 [CONTEXT.md](../../CONTEXT.md)。
 
 ## WHERE TO LOOK
 | 子模块 | 职责 |
