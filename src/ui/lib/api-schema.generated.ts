@@ -32535,7 +32535,7 @@ export interface operations {
                                 };
                                 knowledge_mutation?: {
                                     /** @enum {string|null} */
-                                    blocked: "to_top" | "node_unreadable" | "node_retired" | null;
+                                    blocked: "to_top" | "node_unreadable" | "node_retired" | "version_changed" | null;
                                     from: {
                                         label: string | null;
                                         /** @enum {string} */
@@ -32550,7 +32550,7 @@ export interface operations {
                                     mutation: "merge";
                                 } | {
                                     /** @enum {string|null} */
-                                    blocked: "to_top" | "node_unreadable" | "node_retired" | null;
+                                    blocked: "to_top" | "node_unreadable" | "node_retired" | "version_changed" | null;
                                     /** @enum {string} */
                                     mutation: "reparent";
                                     node: {
@@ -32565,7 +32565,7 @@ export interface operations {
                                     } | null;
                                 } | {
                                     /** @enum {string|null} */
-                                    blocked: "to_top" | "node_unreadable" | "node_retired" | null;
+                                    blocked: "to_top" | "node_unreadable" | "node_retired" | "version_changed" | null;
                                     from: {
                                         label: string | null;
                                         /** @enum {string} */
@@ -33717,7 +33717,7 @@ export interface operations {
                                 };
                                 knowledge_mutation?: {
                                     /** @enum {string|null} */
-                                    blocked: "to_top" | "node_unreadable" | "node_retired" | null;
+                                    blocked: "to_top" | "node_unreadable" | "node_retired" | "version_changed" | null;
                                     from: {
                                         label: string | null;
                                         /** @enum {string} */
@@ -33732,7 +33732,7 @@ export interface operations {
                                     mutation: "merge";
                                 } | {
                                     /** @enum {string|null} */
-                                    blocked: "to_top" | "node_unreadable" | "node_retired" | null;
+                                    blocked: "to_top" | "node_unreadable" | "node_retired" | "version_changed" | null;
                                     /** @enum {string} */
                                     mutation: "reparent";
                                     node: {
@@ -33747,7 +33747,7 @@ export interface operations {
                                     } | null;
                                 } | {
                                     /** @enum {string|null} */
-                                    blocked: "to_top" | "node_unreadable" | "node_retired" | null;
+                                    blocked: "to_top" | "node_unreadable" | "node_retired" | "version_changed" | null;
                                     from: {
                                         label: string | null;
                                         /** @enum {string} */

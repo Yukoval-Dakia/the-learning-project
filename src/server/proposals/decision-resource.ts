@@ -12,10 +12,13 @@ import { getProposalInboxRow } from '@/kernel/proposals/inbox';
 import { wakeHubSyncAfterCommit } from '@/server/boss/hub-sync-wake';
 import { acceptAiProposal, dismissAiProposal, retractAiProposal } from '@/server/proposals/actions';
 
-function conflict(proposalId: string, existingDecision: string): ApiError {
+const STALE_PROPOSAL_MESSAGE = '相关内容后来改过，这张建议已经过时了。';
+
+// Shown to the learner as is; the code is for programs. A stale accept is recorded as a rollback.
+function conflict(existingDecision: string): ApiError {
   return new ApiError(
     'conflict',
-    `proposal ${proposalId} already decided as ${existingDecision}`,
+    existingDecision === 'rollback' ? STALE_PROPOSAL_MESSAGE : '这张建议已经处理过了。',
     409,
   );
 }
@@ -32,11 +35,14 @@ function normalizeDomainError(err: unknown): never {
   if (/not.*pending|already rated/i.test(message)) {
     throw new ApiError('not_pending', message, 409);
   }
+  // Before the not-found test: a stale merge says its target was "not found or archived".
+  if (/^stale/i.test(message)) {
+    // The code is for programs and the domain text, with its ids, for the log.
+    console.warn('[proposal-decision] stale', message);
+    throw new ApiError('stale', STALE_PROPOSAL_MESSAGE, 409);
+  }
   if (/not found/i.test(message)) {
     throw new ApiError('not_found', message, 404);
-  }
-  if (/^stale/i.test(message)) {
-    throw new ApiError('stale', message, 409);
   }
   throw err;
 }
@@ -78,7 +84,7 @@ export async function createProposalDecision(
 
   const correction = await getCorrectionStatus(db, proposalId);
   if (correction.state === 'retracted') {
-    if (input.decision !== 'retract') throw conflict(proposalId, 'retract');
+    if (input.decision !== 'retract') throw conflict('retract');
     return {
       proposal_id: proposalId,
       proposal_kind: proposal.kind,
@@ -95,7 +101,7 @@ export async function createProposalDecision(
     const existingRate = await findExistingRateEvent(db, proposalId);
     if (existingRate) {
       if (existingRate.decision !== input.decision) {
-        throw conflict(proposalId, existingRate.decision);
+        throw conflict(existingRate.decision);
       }
       // Only accept re-enters the per-kind applier, which re-drives best-effort
       // note_generate on re-accept; accept appliers self-guard idempotency.
@@ -117,7 +123,7 @@ export async function createProposalDecision(
     // marked_wrong / superseded with no rate yet: the template would write none, so refuse
     // here instead of failing below with decision_event_missing.
     if (!existingRate && correction.state !== 'active') {
-      throw conflict(proposalId, correction.state);
+      throw conflict(correction.state);
     }
   }
 
