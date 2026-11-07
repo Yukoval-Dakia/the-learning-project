@@ -16,11 +16,11 @@
 //
 // 纯同步、零 DB：route 调用点在快照之上，hydrate 由 boot/refresh 周期负责。
 
+import { selectGlobalPin } from '@/core/config/model-overrides';
 import type { ConfigSource, ConfigValue } from '@/core/config/store';
 import {
   CONFIG_REGISTRY,
   getConfigSnapshot,
-  getLaneOverride,
   getTaskOverride,
   isConfigEntryExpired,
   resolveConfigValue,
@@ -217,24 +217,24 @@ function normalizeValue(value: ConfigValue | null | undefined): AdminConfigValue
 }
 
 /**
- * 全局 pin 的 caller 语义合成（不是逐字段合成）：
- * readGlobalProviderSwitch（src/server/ai/providers.ts，运行时唯一真相源）在
- * env provider pin 在场时整体返回 env 对；env 缺席时才用 DB 对，且 DB 支路以
- * provider 在场为门——只有 lane.global.model 而无 lane.global.provider 的行在
- * 运行时不消费。此处镜像这两道门，避免读面虚报 runtime 不消费的 DB 值。
+ * 全局 pin 的 caller 语义合成（不是逐字段合成）：选择门在 pure
+ * `selectGlobalPin`（src/core/config/model-overrides.ts，运行时唯一真相源
+ * readGlobalProviderSwitch 也走同一函数）——env provider pin 在场时整体返回
+ * env 对；env 缺席时才用 DB 对，且 DB 支路以 provider 在场为门（只有
+ * lane.global.model 的行在运行时不消费）。此处只投影 key 的解析值与来源。
  */
 function resolveGlobalPin(env: NodeJS.ProcessEnv): { provider?: string; model?: string } | null {
   const provider = resolveConfigValue('lane.global.provider', env);
-  if (provider.source === 'env') {
-    const model = resolveConfigValue('lane.global.model', env);
-    return {
-      provider: provider.value as string,
-      ...(model.source === 'env' && typeof model.value === 'string' ? { model: model.value } : {}),
-    };
-  }
-  // Caller gate（providers.ts readGlobalProviderSwitch）：model-only DB 行惰性。
-  const lanePair = getLaneOverride('global', env);
-  return lanePair?.provider !== undefined ? lanePair : null;
+  const model = resolveConfigValue('lane.global.model', env);
+  const pin = selectGlobalPin(
+    {
+      value: typeof provider.value === 'string' ? provider.value : undefined,
+      source: provider.source,
+    },
+    { value: typeof model.value === 'string' ? model.value : undefined, source: model.source },
+  );
+  if (!pin) return null;
+  return { provider: pin.provider, ...(pin.model !== undefined ? { model: pin.model } : {}) };
 }
 
 const SCHEDULES_READ_ONLY_NOTE =

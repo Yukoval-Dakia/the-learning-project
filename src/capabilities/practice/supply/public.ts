@@ -163,6 +163,7 @@ export {
   checkSupplyPlanStructure,
   parseSupplyPlanOutput,
 } from './server/supply-plan-gate';
+export { knowledgeNodesWithPlacementClaims } from './server/undo-usage';
 export {
   EditQuestionInput,
   type EditQuestionInputT,

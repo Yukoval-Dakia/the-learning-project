@@ -34,10 +34,20 @@ function requiresReplan(result: ToolExecutionResultObservation): boolean {
   if (!isRecord(result.output)) return false;
   const status = result.output.status;
   // skipped:invalid_payload is in-execute input validation (same class as a
-  // Zod issues error): the tree is untouched. All other skipped:* statuses are
-  // genuine world-state rejections (duplicate/cross-subject/rubric/…) that keep
-  // the replan contract.
-  if (status === 'skipped:invalid_payload') return false;
+  // Zod issues error): the tree is untouched. skipped:duplicate_pending means
+  // the identical proposal is already inbox-pending and skipped:already_exists
+  // means a live object already satisfies the intent (the output carries its
+  // id) — both CONFIRM the world state the plan assumed, so no re-read is owed
+  // and downstream writes may proceed. All other skipped:* statuses are
+  // genuine world-state rejections (cross-subject/rubric/cooldown/not-found/…)
+  // that keep the replan contract.
+  if (
+    status === 'skipped:invalid_payload' ||
+    status === 'skipped:duplicate_pending' ||
+    status === 'skipped:already_exists'
+  ) {
+    return false;
+  }
   return typeof status === 'string' && (status === 'failed' || status.startsWith('skipped:'));
 }
 

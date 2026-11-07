@@ -324,6 +324,9 @@ const KnowledgeMutationOutputSchema = z.object({
   cooldown_key: z.string().optional(),
   cooldown_until: z.string().optional(),
   reason: z.string().optional(),
+  // skipped:duplicate_pending / skipped:already_exists — the deterministic next
+  // step the result already enables, so the model can continue without re-reading.
+  next_step: z.string().optional(),
 });
 
 type KnowledgeMutationInput = z.infer<typeof KnowledgeMutationInputSchema>;
@@ -442,6 +445,8 @@ async function proposeKnowledgeMutationExecute(
           status: 'skipped:already_exists',
           node_id: existing.id,
           reason: `a live node already exists here with the normalized name '${normalizeKnowledgeNodeName(change.name)}'`,
+          next_step:
+            'attach content directly to the returned node_id (e.g. author_question knowledge_ids=[node_id]); do not wait for any apply',
         };
       }
     }
@@ -452,6 +457,14 @@ async function proposeKnowledgeMutationExecute(
         proposal_id: skip.proposal_id,
         cooldown_key: skip.cooldown_key,
         cooldown_until: skip.cooldown_until,
+        ...(skip.status === 'skipped:duplicate_pending'
+          ? {
+              next_step:
+                change.mutation === 'propose_new'
+                  ? 'an identical node proposal is already pending — do not propose it again; author_question needs no node id, submit under the subject root with knowledge_ids=[], subject_id, and the learner wording as learner_topic; report its placement only as placement_note says'
+                  : 'the identical change is already pending — do not retry it; continue with the rest of the plan',
+            }
+          : {}),
       };
     }
     const proposalId = await writeProposal(tx);
@@ -471,7 +484,7 @@ export const proposeKnowledgeMutationTool: DomainTool<
 > = {
   name: 'propose_knowledge_mutation',
   description:
-    "Propose one knowledge tree mutation. Creating a new node (propose_new) is auto-applied by the automated lane shortly after this call returns — no user confirmation step; the node is still reversible from the inbox undo window. reparent/merge/split/archive remain human-reviewed. Input: {change, learner_summary, reasoning, evidence_event_ids?}. change.mutation picks the branch: propose_new {name, parent_id} — parent_id=null + domain proposes a NEW subject root; a child uses an existing node id and omits domain. reparent {node_id, new_parent_id, expected_version}. merge {from_ids, into_id, expected_versions:{id:version} for every from_id}. split {from_id, into:[{name,parent_id}], expected_version}. archive {node_id, expected_version}. expected_version(s) are CAS tokens — copy the node's current `version` from query_knowledge / the tree input. Results starting with skipped: mean the proposal was NOT written — do not retry the same change. For propose_new, 'skipped:already_exists' returns node_id of a live same-name node — attach content directly to it (e.g. author_question knowledge_ids) instead of waiting for an apply. When you propose a node because the topic has none, name it with the learner's own topic wording verbatim (whitespace aside): author_question records that wording as learner_topic and the placement sweep later matches the node by exact name equality, so a renamed node would leave the question at the subject root. learner_summary is one plain Chinese sentence (max 80 chars) for the learner — state WHAT this proposal will do and WHY. Never put node ids, tool names, or English field names (for example propose_knowledge_mutation, expected_version, children=0) in learner_summary; technical evidence belongs in reasoning/evidence_event_ids. A hard failure beginning with learner_summary_rejected means only that sentence must be rewritten before retrying.",
+    "Propose one knowledge tree mutation. Creating a new node (propose_new) is auto-applied by the automated lane shortly after this call returns — no user confirmation step; the node is still reversible from the inbox undo window. reparent/merge/split/archive remain human-reviewed. Input: {change, learner_summary, reasoning, evidence_event_ids?}. change.mutation picks the branch: propose_new {name, parent_id} — parent_id=null + domain proposes a NEW subject root; a child uses an existing node id and omits domain. reparent {node_id, new_parent_id, expected_version}. merge {from_ids, into_id, expected_versions:{id:version} for every from_id}. split {from_id, into:[{name,parent_id}], expected_version}. archive {node_id, expected_version}. expected_version(s) are CAS tokens — copy the node's current `version` from query_knowledge / the tree input. Results starting with skipped: mean the proposal was NOT written — do not retry the same change. For propose_new, 'skipped:already_exists' returns node_id of a live same-name node — attach content directly to it (e.g. author_question knowledge_ids) instead of waiting for an apply. When you propose a node because the topic has none, name it with the learner's own topic wording verbatim (whitespace aside): author_question records that wording as learner_topic for exact-name matching, so a renamed node will not match. learner_summary is one plain Chinese sentence (max 80 chars) for the learner — state WHAT this proposal will do and WHY. Never put node ids, tool names, or English field names (for example propose_knowledge_mutation, expected_version, children=0) in learner_summary; technical evidence belongs in reasoning/evidence_event_ids. A hard failure beginning with learner_summary_rejected means only that sentence must be rewritten before retrying.",
   effect: 'propose',
   inputSchema: KnowledgeMutationInputSchema,
   outputSchema: KnowledgeMutationOutputSchema,
