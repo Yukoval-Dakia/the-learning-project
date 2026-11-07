@@ -21,14 +21,32 @@ const SECTION_NAMES = new Set<string>([...SEMANTIC_KINDS, 'body']);
 type SectionDraft = { name: string; lines: string[] };
 
 /**
- * Prose before the first @section. note_long / note_hub are one free body, so a
- * title and intro with no @body are that body. note_atomic has no free body.
+ * Prose before the first @section. note_long and note_hub share one free @body,
+ * so a title and intro with no @body are that body. note_atomic has no free body.
  */
-const LEADING_PROSE: Record<NoteArtifactType, 'body' | 'reject'> = {
+type LeadingProse = 'body' | 'reject';
+
+const LEADING_PROSE: Record<NoteArtifactType, LeadingProse> = {
   note_atomic: 'reject',
   note_long: 'body',
   note_hub: 'body',
 };
+
+type LeadingLineKind = 'blank' | 'opener' | 'prose';
+
+/**
+ * A whole line that only announces the note. Subject text on the same line is prose:
+ * "好的，以下是这篇长笔记：" is an opener; "以下是椭圆的两个定义" is the note.
+ */
+const LEADING_OPENER =
+  /^(?:(?:好的|好|当然|没问题|明白了?)[，,\s]*)?(?:下面|以下|如下)(?:是|给出)(?:(?:这篇|本篇|这份|一则|一篇)?(?:长篇|长|枢纽)?(?:笔记内容|笔记|内容))?(?:[：:。.!！]|…|\.{2,3})?$/u;
+
+function classifyLeadingLine(line: string): LeadingLineKind {
+  const trimmed = line.trim();
+  if (trimmed.length === 0) return 'blank';
+  if (trimmed.length > 40 || /[$\\#`]/.test(trimmed)) return 'prose';
+  return LEADING_OPENER.test(trimmed) ? 'opener' : 'prose';
+}
 
 function ensureSection(current: SectionDraft | null, declared: NoteArtifactType): SectionDraft {
   if (current) return current;
@@ -586,7 +604,10 @@ export function compileNoteGenerateDocument(
       fail('text after @end');
     }
     if (!current) {
-      if (trimmed === '') continue;
+      const leading = classifyLeadingLine(line);
+      if (leading === 'blank' || (leading === 'opener' && LEADING_PROSE[declared] === 'body')) {
+        continue;
+      }
       current = ensureSection(current, declared);
     }
     current.lines.push(line);
@@ -598,10 +619,16 @@ export function compileNoteGenerateDocument(
   }
 
   const content: PmNode[] = [];
+  let hasBody = false;
   for (const section of sections) {
     const blocks = compileBlocks(section.body);
-    if (blocks.length === 0) fail(`empty @${section.name}`);
+    if (blocks.length === 0) {
+      // The prose already kept as body is the note; a later empty @body must not reject it.
+      if (section.name === 'body' && hasBody) continue;
+      fail(`empty @${section.name}`);
+    }
     if (section.name === 'body') {
+      hasBody = true;
       content.push(...blocks);
       continue;
     }
