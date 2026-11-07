@@ -392,7 +392,7 @@ FSRS 投影表 `material_fsrs_state` 从 event 流派生，每次 `action='revie
 
 **其他 runtime context tools**：事件、学习记录、错题、复习队列、LearningItem 也通过语义化 reader 进入 agent 上下文：
 
-- `query_events` / `get_question_context` / `query_mistakes` / `get_attempt_context`：读取 event timeline、题目生命周期和 failure attempt view
+- `query_events` / `get_question_context` / `query_mistakes` / `get_attempt_context`：读取 event timeline、题目生命周期和 failure attempt view。`get_question_context` 一次返回能不能出、最近判分和错因、FSRS 到期（有知识点时取知识点卡片）、知识点名称和掌握、题锚与家族两套难度；`reading.faulty` 只留在 agent 结果里，学习者快照去掉它。
 - `query_records` / `get_record_context`：读取用户活动物化出的错题、例题、疑问、顿悟、反思、资源摘录
 - `get_review_due`：读取 FSRS due queue，不提交 review
 - `get_learning_item_context`：给 Teaching / Coach / Copilot 提供学习项上下文

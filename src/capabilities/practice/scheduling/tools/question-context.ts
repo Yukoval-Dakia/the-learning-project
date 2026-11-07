@@ -41,6 +41,12 @@ import { miscCauseLabelMap, resolveMiscCauseLabels } from '@/kernel/read-models/
 import { getQuestionTimeline, getRecentReviewEvents } from '@/kernel/read-models/question-activity';
 import { derivableLearningRecords } from '@/kernel/records/queries';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
+import {
+  type LatestAttemptScore,
+  QuestionIssueReadingSchema,
+  readQuestionIssue,
+  unobservedQuestionIssue,
+} from '../server/question-issue-read';
 
 function iso(value: Date | null | undefined): string | null {
   return value ? value.toISOString() : null;
@@ -145,6 +151,10 @@ const GetQuestionContextOutputSchema = z.object({
   // D6-R6 — addressable StructuredQuestion tree (only when
   // include:['structure'] and the question carries a `structured` jsonb).
   structure: AddressableStructureSchema.optional(),
+  // Always present. One question id is enough: issuance, latest score and
+  // wrong-cause, the live FSRS card, knowledge name and mastery, both
+  // difficulty baselines, and the latest faulty-item inference.
+  reading: QuestionIssueReadingSchema,
 });
 
 type GetQuestionContextInput = z.infer<typeof GetQuestionContextInputSchema>;
@@ -179,6 +189,7 @@ async function executeGetQuestionContext(
         last_review_event_id: null,
         linked_record_ids: [],
       },
+      reading: unobservedQuestionIssue(new Date()),
     });
   }
   const records = include.has('records')
@@ -220,6 +231,35 @@ async function executeGetQuestionContext(
     else if (attempt.outcome === 'partial') attemptCounts.partial += 1;
     else attemptCounts.failure += 1;
   }
+  const latest = attempts[0];
+  const latestAttempt: LatestAttemptScore | null = latest
+    ? {
+        event_id: latest.event_id,
+        created_at: latest.created_at,
+        outcome: latest.outcome,
+        cause: latest.cause
+          ? {
+              primary: latest.cause.primary,
+              primary_label: latest.cause.primary_label,
+              confidence: latest.cause.confidence,
+              secondary: latest.cause.secondary,
+            }
+          : null,
+      }
+    : null;
+  const asOf = new Date();
+  const reading = await readQuestionIssue(ctx.db, {
+    questionId: q.id,
+    parentQuestionId: q.parent_question_id,
+    knowledgeIds: q.knowledge_ids ?? [],
+    difficulty: q.difficulty,
+    kind: q.kind,
+    source: q.source,
+    draftStatus: q.draft_status,
+    questionDueAt: fsrs?.due_at ?? null,
+    latestAttempt,
+    asOf,
+  });
 
   const output: GetQuestionContextOutput = {
     availability: 'found',
@@ -244,10 +284,11 @@ async function executeGetQuestionContext(
       first_reviewed_at: iso(reviewEntries.at(-1)?.created_at ?? reviews.at(-1)?.created_at),
       last_reviewed_at: iso(reviewEntries[0]?.created_at ?? reviews[0]?.created_at),
       review_count: reviews.length,
-      due_at: iso(fsrs?.due_at),
+      due_at: reading.fsrs.due_at.known ? reading.fsrs.due_at.value : null,
       last_review_event_id: fsrs?.last_review_event_id ?? null,
       linked_record_ids: records.map((row) => row.id),
     },
+    reading,
   };
   if (include.has('attempts')) {
     output.attempts = attempts.map((entry) => ({
@@ -286,7 +327,13 @@ async function executeGetQuestionContext(
     }));
   }
   if (include.has('knowledge_context') && q) {
-    output.knowledge_context = await knowledgeContext(ctx.db, q.knowledge_ids ?? []);
+    const masteryById = new Map(reading.knowledge.map((row) => [row.id, row.mastery]));
+    output.knowledge_context = (await knowledgeContext(ctx.db, q.knowledge_ids ?? [])).map(
+      (row) => {
+        const mastery = masteryById.get(row.knowledge_id);
+        return { ...row, mastery: mastery?.known ? mastery.value : null };
+      },
+    );
   }
   if (include.has('assets') && q) {
     output.source_assets = [
@@ -870,7 +917,7 @@ export const getQuestionContextTool: DomainTool<GetQuestionContextInput, GetQues
   {
     name: 'get_question_context',
     description:
-      'Learner-state context for one question: attempts, reviews, FSRS state, linked records, variants, knowledge paths, and assets. ADR-0072: bank CONTENT reads go through read_bank (versioned refs from search_bank) — this tool remains the learner-side read (its content projection stays for the coach/dreaming/maintenance faces; final home decided with the learner-brain line). Check availability first: lifecycle zeros with observation_status=not_observed are compatibility placeholders for missing or protected diagnostic questions, not observed facts.',
+      'One call for one question. reading covers whether it can be issued, the latest score and wrong-cause, the live FSRS due (knowledge card when the question has knowledge points; lifecycle.due_at matches it), each knowledge name and mastery, and two difficulty baselines (item anchor and family offset). reading.faulty is the latest experimental:question_or_answer_may_be_faulty inference plus its evidence; it is agent-only — do not tell the learner the question or answer may be faulty. Do not follow up with get_knowledge_state or get_attempt_context for those fields. ADR-0072: bank CONTENT reads go through read_bank. Check availability first: lifecycle zeros with observation_status=not_observed are placeholders for missing or protected diagnostic questions, not observed facts.',
     effect: 'read',
     inputSchema: GetQuestionContextInputSchema,
     outputSchema: GetQuestionContextOutputSchema,
