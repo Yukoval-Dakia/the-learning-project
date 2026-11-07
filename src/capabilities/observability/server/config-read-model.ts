@@ -1,7 +1,7 @@
 // GET /api/admin/config 的装配层：只做装配与分类，不做解析决策。
 // 分层（env pin > DB > env fallback > code default / compose-forced 跳 DB）由
 // src/core/config 的 resolveConfigValue 单一真相源决定；effective 值与
-// tasks/providers/schedules/runtime 来自组合根注入的真实事实（admin-config-facts.ts）；
+// tasks/providers/schedules/runtime 来自组合根注入的真实事实（core/config/server/admin-config-facts）；
 // 本模块不 import 组合根（capabilities 清单 / task registry）。
 // 输出直接是 wire 形状（AdminConfigResponseSchema）。
 //
@@ -16,6 +16,15 @@
 //
 // 纯同步、零 DB：route 调用点在快照之上，hydrate 由 boot/refresh 周期负责。
 
+import type {
+  AdminConfigGlobalEffective,
+  AdminConfigProviderRow,
+  AdminConfigRuntimeFacts,
+  AdminConfigRuntimeSection,
+  AdminConfigScheduleRow,
+  AdminConfigTaskEffectiveBinding,
+  AdminConfigTaskFacts,
+} from '@/core/config/contracts/admin';
 import { selectGlobalPin } from '@/core/config/model-overrides';
 import type { ConfigSource, ConfigValue } from '@/core/config/store';
 import {
@@ -25,16 +34,6 @@ import {
   isConfigEntryExpired,
   resolveConfigValue,
 } from '@/core/config/store';
-
-import type {
-  AdminConfigGlobalEffective,
-  AdminConfigProviderRow,
-  AdminConfigRuntimeFacts,
-  AdminConfigRuntimeSection,
-  AdminConfigScheduleRow,
-  AdminConfigTaskEffectiveBinding,
-  AdminConfigTaskFacts,
-} from './admin-config-facts';
 import {
   ADMIN_CONFIG_OTHER_TASK_GROUP,
   ADMIN_CONFIG_TASK_GROUPS,

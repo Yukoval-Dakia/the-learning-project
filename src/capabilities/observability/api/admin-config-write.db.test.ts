@@ -1,11 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { capabilities } from '@/capabilities';
 import { tasks } from '@/capabilities/task-registry';
+import { createAdminConfigWriter } from '@/core/config/server/admin-config-write';
 import { __hydratePublishGate } from '@/core/config/server/hydrate';
+import { installConfigWritePorts } from '@/core/config/server/write';
 import { replaceConfigSnapshot } from '@/core/config/store';
 import { system_config_journal } from '@/db/schema';
+import { adminConfigWriterPorts } from '@/server/admin/config-facts-host';
+import { configWritePorts } from '@/server/ai/config-write-ports';
 import { resolveTaskProvider } from '@/server/ai/providers';
-import { createAdminConfigWriter } from '@/server/config/admin-config-write';
 import { buildHonoApp } from '../../../../server/app';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
@@ -39,7 +42,8 @@ beforeEach(async () => {
   vi.stubEnv('AI_PROVIDER_MODEL', '');
   vi.stubEnv('OPENCODE_API_KEY', 'local-go-credential-canary');
   vi.stubEnv('XIAOMI_API_KEY', 'local-xiaomi-credential-canary');
-  setAdminConfigWriter(createAdminConfigWriter(testDb()));
+  installConfigWritePorts(configWritePorts());
+  setAdminConfigWriter(createAdminConfigWriter(adminConfigWriterPorts(), testDb()));
 });
 afterEach(() => {
   __hydratePublishGate.hook = undefined;

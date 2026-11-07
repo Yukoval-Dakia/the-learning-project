@@ -1,4 +1,7 @@
-// YUK-1007 — 配置写面（server-only）。grounding §1.4/§6.3：
+// YUK-1007 — 配置写面（配置 owner，core/config/server）。grounding §1.4/§6.3：
+// provider 注册表/catalog/任务 catalog/推理档属于 AI 与任务 owner，经
+// ConfigWritePorts 在组合根注入；本模块只拥有校验、事务、epoch/journal 与并发语义。
+//
 //   setConfig(key, value, {actor, note?})  — 单 key upsert + journal + epoch 同 tx，
 //                                            commit 后即时 hydrate（本进程 0 延迟）。
 //   clearConfig(key, {actor, note?})       — 删行（=「恢复默认」按钮落点），
@@ -20,12 +23,7 @@
 // journal 是 append-only 的真持久轴；取 system_config 行 revision 会在
 // clear 删行后倒回 1，撞上 journal 的 (key,revision) PK）。
 
-import type { MutableModels as PiMutableModels } from '@earendil-works/pi-ai';
 import { eq, inArray, sql } from 'drizzle-orm';
-import type { TaskDefinition } from '@/ai/task-spec';
-import { SOLVE_LANE_TASK_KINDS } from '@/capabilities/practice/public';
-import type { TaskKind } from '@/capabilities/task-registry';
-import { tasks } from '@/capabilities/task-registry';
 import { selectPairModel, selectPairProvider } from '@/core/config/model-overrides';
 import type { ConfigMutation, ConfigMutationResult } from '@/core/config/mutations';
 import { hydrateConfigFromDb } from '@/core/config/server/hydrate';
@@ -34,26 +32,93 @@ import { matchDynamicConfigKey, resolveKeyDef } from '@/core/config/store';
 import { type Db, type Tx, db as defaultDb } from '@/db/client';
 import { system_config, system_config_journal } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
-import { assertModelProfileCapabilityFit } from '@/server/ai/model-profiles';
-import { createLoomPiModels } from '@/server/ai/pi-models';
-import { piProviderId } from '@/server/ai/pi-provider-catalog';
-import { PROVIDER_ATTEMPT_ADMISSION_LANES } from '@/server/ai/provider-attempt-admission-config';
-import {
-  ANTHROPIC_SUB_DEFAULT_MODEL,
-  type Provider,
-  type TaskReasoningConfig,
-  isProviderImplemented,
-  isProviderImplementedForTask,
-  providerRequiresExplicitModel,
-  readProviderId,
-  resolveGlobalProviderSwitch,
-  resolveTaskReasoning,
-} from '@/server/ai/providers';
-import { VISION_JUDGE_TASK_KINDS } from '@/server/ai/vision-judge-config';
 
 export type ConfigActor = 'owner' | 'panel:admin' | 'migrate' | 'cli';
 
 const EPOCH_ROW_ID = 'global';
+
+/** 任务 catalog 的写面事实：只含序列化字段，不把 TaskDefinition 行为带进 core。 */
+export interface ConfigWriteTaskFacts {
+  readonly execution?: string;
+  readonly ignoreGlobalPin?: boolean;
+  readonly defaultProvider: string;
+  readonly defaultModel: string;
+}
+
+/** tx 内终态校验用的成对模型查找（pi adapter 的真实实现）。 */
+export interface ConfigWritePairModels {
+  getModel(providerId: string, model: string): unknown;
+}
+
+/**
+ * 写面需要的 AI 事实与已声明验证接口。配置 owner 不认识 provider 注册表、
+ * catalog 或 pi SDK；组合根在 boot 时绑定真实实现
+ * （src/server/ai/config-write-ports.ts）。
+ */
+export interface ConfigWritePorts {
+  /** Registry order; iteration order is observable in lane/global validation. */
+  readonly tasks: Readonly<Record<string, ConfigWriteTaskFacts>>;
+  readonly solveLaneTaskKinds: readonly string[];
+  readonly visionJudgeTaskKinds: readonly string[];
+  readonly providerAttemptAdmissionLanes: readonly string[];
+  readonly anthropicSubDefaultModel: string;
+  readonly readProviderId: (raw: string) => string | undefined;
+  readonly isProviderImplemented: (provider: string) => boolean;
+  readonly isProviderImplementedForTask: (provider: string, taskKind: string) => boolean;
+  readonly providerRequiresExplicitModel: (provider: string) => boolean;
+  readonly resolveGlobalProviderSwitch: (
+    env: NodeJS.ProcessEnv,
+    db: { provider?: string; model?: string } | undefined,
+  ) => { provider: string; model?: string } | undefined;
+  /** Throws the resolver's readable config error; the return value is unused here. */
+  readonly resolveTaskReasoning: (
+    kind: string,
+    provider: string,
+    model: string,
+    stored: unknown,
+  ) => unknown;
+  /** Throws the same readable config error the execution path would. */
+  readonly assertModelProfileCapabilityFit: (kind: string, provider: string, model: string) => void;
+  readonly createPairModels: () => Promise<ConfigWritePairModels>;
+  readonly piProviderId: (provider: string) => string;
+}
+
+let writePorts: ConfigWritePorts | undefined;
+
+/** Bound by the composition root before any config write. */
+export function installConfigWritePorts(ports: ConfigWritePorts): void {
+  writePorts = ports;
+}
+
+function ports(): ConfigWritePorts {
+  if (!writePorts)
+    throw new Error(
+      'config write ports are not installed — the composition root must call installConfigWritePorts() before any config write',
+    );
+  return writePorts;
+}
+
+/** Port surface under the names the validation code already uses. */
+function writeFacts() {
+  const p = ports();
+  return {
+    tasks: p.tasks,
+    solveLaneTaskKinds: p.solveLaneTaskKinds,
+    visionJudgeTaskKinds: p.visionJudgeTaskKinds,
+    providerAttemptAdmissionLanes: p.providerAttemptAdmissionLanes,
+    anthropicSubDefaultModel: p.anthropicSubDefaultModel,
+    readProviderId: p.readProviderId,
+    isProviderImplemented: p.isProviderImplemented,
+    isProviderImplementedForTask: p.isProviderImplementedForTask,
+    providerRequiresExplicitModel: p.providerRequiresExplicitModel,
+    resolveGlobalProviderSwitch: p.resolveGlobalProviderSwitch,
+    resolveTaskReasoning: p.resolveTaskReasoning,
+    assertModelProfileCapabilityFit: (kind: string, provider: string, model: string) =>
+      p.assertModelProfileCapabilityFit(kind, provider, model),
+    createPairModels: p.createPairModels,
+    piProviderId: p.piProviderId,
+  };
+}
 
 export interface ConfigWriteResult {
   key: string;
@@ -91,6 +156,7 @@ function parseExpiresAt(expiresAt: string | null | undefined): Date | null | und
 
 /** Set and reset share the same registered, live keyspace. */
 function validateWritableKey(key: string) {
+  const { tasks } = writeFacts();
   const def = resolveKeyDef(key);
   const dynamic = matchDynamicConfigKey(key);
   if (dynamic?.kind === 'task' && !Object.hasOwn(tasks, dynamic.scope)) {
@@ -115,6 +181,14 @@ function validateWritableKey(key: string) {
 
 /** tx 外的纯值谓词（不读兄弟行）：JUDGE_FALLBACK / task-kind 存在性 / provider 已知+已实现。 */
 function validateStaticSemantics(key: string, value: ConfigValue): void {
+  const {
+    tasks,
+    providerAttemptAdmissionLanes,
+    readProviderId,
+    isProviderImplemented,
+    isProviderImplementedForTask,
+    providerRequiresExplicitModel,
+  } = writeFacts();
   // JUDGE_FALLBACK_PROVIDER：'' = 显式关（合法）；非空必须是已知 + implemented
   // + 可裸跑（该 lane 不递 model）。
   if (key === 'JUDGE_FALLBACK_PROVIDER') {
@@ -152,7 +226,7 @@ function validateStaticSemantics(key: string, value: ConfigValue): void {
     if (!provider) {
       throw new ApiError('invalid_config_value', `${key}='${value}' is not a known provider`, 422);
     }
-    if (!isProviderImplementedForTask(provider, scope as TaskKind)) {
+    if (!isProviderImplementedForTask(provider, scope)) {
       throw new ApiError(
         'invalid_config_value',
         `${key}='${provider}' is reserved but not implemented for task '${scope}'`,
@@ -185,10 +259,10 @@ function validateStaticSemantics(key: string, value: ConfigValue): void {
   if (key === 'AI_PROVIDER_ATTEMPT_ADMISSION_POLICIES_JSON') {
     if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
       for (const lane of Object.keys(value)) {
-        if (!(PROVIDER_ATTEMPT_ADMISSION_LANES as readonly string[]).includes(lane)) {
+        if (!(providerAttemptAdmissionLanes as readonly string[]).includes(lane)) {
           throw new ApiError(
             'invalid_config_value',
-            `${key} contains unknown lane '${lane}' (allowed: ${PROVIDER_ATTEMPT_ADMISSION_LANES.join(', ')})`,
+            `${key} contains unknown lane '${lane}' (allowed: ${providerAttemptAdmissionLanes.join(', ')})`,
             422,
           );
         }
@@ -198,7 +272,7 @@ function validateStaticSemantics(key: string, value: ConfigValue): void {
   }
   if (key === 'AI_PROVIDER_SESSION_ADMISSION_POLICIES_JSON') {
     if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
-      const seen = new Set<Provider>();
+      const seen = new Set<string>();
       for (const lane of Object.keys(value)) {
         const provider = readProviderId(lane);
         if (!provider) {
@@ -287,7 +361,7 @@ function valueAsNonEmptyString(v: unknown): string | undefined {
  * API surfaces them as its usual readable 422 instead of an opaque 500. */
 function resolveGlobalSwitch422(db: { provider?: string; model?: string } | undefined) {
   try {
-    return resolveGlobalProviderSwitch(process.env, db);
+    return writeFacts().resolveGlobalProviderSwitch(process.env, db);
   } catch (error) {
     throw new ApiError(
       'invalid_config_value',
@@ -298,7 +372,7 @@ function resolveGlobalSwitch422(db: { provider?: string; model?: string } | unde
 }
 
 /** YUK-1658 — prebuilt outside the write tx so the epoch row lock never waits on registry assembly. */
-type ConfigPairModels = Pick<PiMutableModels, 'getModel'>;
+type ConfigPairModels = ConfigWritePairModels;
 
 /**
  * YUK-1808 — a stored task.<kind>.reasoning row resolves against the FINAL
@@ -309,14 +383,14 @@ type ConfigPairModels = Pick<PiMutableModels, 'getModel'>;
  */
 function validateTaskReasoning(
   label: string,
-  kind: TaskKind,
-  provider: Provider,
+  kind: string,
+  provider: string,
   model: string,
   stored: unknown,
 ): void {
   if (typeof stored !== 'object' || stored === null) return;
   try {
-    resolveTaskReasoning(kind, provider, model, stored as TaskReasoningConfig);
+    writeFacts().resolveTaskReasoning(kind, provider, model, stored);
   } catch (error) {
     throw new ApiError(
       'invalid_config_value',
@@ -347,12 +421,24 @@ async function validateFinalProviderPairs(
   mutatedKeys: ReadonlySet<string>,
   setKeys: ReadonlySet<string>,
 ): Promise<void> {
+  const {
+    tasks,
+    solveLaneTaskKinds: solveTasks,
+    visionJudgeTaskKinds: visionTasks,
+    anthropicSubDefaultModel,
+    readProviderId,
+    isProviderImplemented,
+    isProviderImplementedForTask,
+    providerRequiresExplicitModel,
+    assertModelProfileCapabilityFit,
+    piProviderId,
+  } = writeFacts();
   const scopes = new Map(touchedScopes);
   // A global reset exposes task-level configuration previously hidden by the pin.
   // Validate every resulting chat binding, including when the global pair dissolves.
   if (scopes.has('lane.global.provider')) {
     for (const [kind, task] of Object.entries(tasks)) {
-      if ((task as TaskDefinition).execution === 'typed') continue;
+      if (task.execution === 'typed') continue;
       const scope = pairScopeFor(`task.${kind}.provider`);
       if (scope) scopes.set(scope.providerKey, scope);
     }
@@ -369,25 +455,25 @@ async function validateFinalProviderPairs(
   const globalReasoningMutated = mutatedKeys.has('lane.global.reasoning');
   const lanePairMutated = (providerKey: string, modelKey: string): boolean =>
     mutatedKeys.has(providerKey) || mutatedKeys.has(modelKey) || globalPairMutated;
-  const pairChanged = (kind: TaskKind): boolean =>
+  const pairChanged = (kind: string): boolean =>
     globalPairMutated ||
     lanePairMutated(`task.${kind}.provider`, `task.${kind}.model`) ||
     mutatedKeys.has(`task.${kind}.override_global_pin`) ||
     (lanePairMutated('lane.verify_solve.provider', 'lane.verify_solve.model') &&
-      (SOLVE_LANE_TASK_KINDS as readonly string[]).includes(kind)) ||
+      (solveTasks as readonly string[]).includes(kind)) ||
     (lanePairMutated('lane.vision_judge.provider', 'lane.vision_judge.model') &&
-      (VISION_JUDGE_TASK_KINDS as readonly string[]).includes(kind));
+      (visionTasks as readonly string[]).includes(kind));
   // A stored task level outranks the global one — a global reasoning write
   // does not change the level of kinds that carry their own row (rowByKey is
   // populated before any of these predicates run).
-  const reasoningChanged = (kind: TaskKind): boolean =>
+  const reasoningChanged = (kind: string): boolean =>
     mutatedKeys.has(`task.${kind}.reasoning`) ||
     (globalReasoningMutated && rowByKey.get(`task.${kind}.reasoning`) === undefined);
-  const pairBroken = (provider: Provider, model: string | undefined, kind?: TaskKind): boolean => {
+  const pairBroken = (provider: string, model: string | undefined, kind?: string): boolean => {
     if (!model || !models.getModel(piProviderId(provider), model)) return true;
     if (kind) {
       try {
-        assertModelProfileCapabilityFit(tasks[kind], provider, model);
+        assertModelProfileCapabilityFit(kind, provider, model);
       } catch {
         return true;
       }
@@ -396,9 +482,9 @@ async function validateFinalProviderPairs(
   };
   function validateNativeModel(
     label: string,
-    provider: Provider,
+    provider: string,
     model: string,
-    taskKind?: TaskKind,
+    taskKind?: string,
   ): void {
     // The adapter uses this same lookup, including template presence and required catalog facts.
     if (!models.getModel(piProviderId(provider), model)) {
@@ -410,7 +496,7 @@ async function validateFinalProviderPairs(
     }
     if (taskKind) {
       try {
-        assertModelProfileCapabilityFit(tasks[taskKind], provider, model);
+        assertModelProfileCapabilityFit(taskKind, provider, model);
       } catch (error) {
         throw new ApiError(
           'invalid_config_value',
@@ -420,8 +506,6 @@ async function validateFinalProviderPairs(
       }
     }
   }
-  const solveTasks = SOLVE_LANE_TASK_KINDS;
-  const visionTasks = VISION_JUDGE_TASK_KINDS;
   if (
     scopes.has('lane.global.provider') ||
     [...solveTasks, ...visionTasks].some((kind) => scopes.has(`task.${kind}.provider`))
@@ -473,7 +557,7 @@ async function validateFinalProviderPairs(
   // lane-pair check in the scoped branch below. Model-only counts for
   // verify_solve (same-provider model swap), while vision_judge needs a
   // provider to activate.
-  const scopedServedKinds = new Set<TaskKind>();
+  const scopedServedKinds = new Set<string>();
   {
     const configuredLaneValue = (key: string): string | undefined => {
       const def = resolveKeyDef(key);
@@ -501,9 +585,7 @@ async function validateFinalProviderPairs(
     const providerPriority = (providerDef?.envMode ?? 'fallback') === 'priority';
     const modelPriority = (modelDef?.envMode ?? 'fallback') === 'priority';
 
-    const taskKind = /^task\.([^.]+)\.provider$/.exec(scope.providerKey)?.[1] as
-      | TaskKind
-      | undefined;
+    const taskKind = /^task\.([^.]+)\.provider$/.exec(scope.providerKey)?.[1] as string | undefined;
     const configuredProvider = providerPriority
       ? (valueAsNonEmptyString(envProvider) ?? dbProvider)
       : (dbProvider ?? valueAsNonEmptyString(envProvider));
@@ -551,7 +633,7 @@ async function validateFinalProviderPairs(
           task: { model: valueAsNonEmptyString(rowByKey.get(`task.${kind}.model`)) },
           defaults: {
             model:
-              provider === 'anthropic-sub' ? ANTHROPIC_SUB_DEFAULT_MODEL : tasks[kind].defaultModel,
+              provider === 'anthropic-sub' ? anthropicSubDefaultModel : tasks[kind].defaultModel,
           },
         }).value;
         // The pair this kind rides ON the lane changed only if the lane keys
@@ -625,7 +707,7 @@ async function validateFinalProviderPairs(
     }
 
     const isGlobal = scope.providerKey === 'lane.global.provider';
-    const typed = taskKind && (tasks[taskKind] as TaskDefinition).execution === 'typed';
+    const typed = taskKind && tasks[taskKind]?.execution === 'typed';
     // Typed kinds run their own wire contract — stored provider/model rows and
     // the global pair never reach it (the binding mirrors def.default*), so a
     // chat-pair assertion on this scope can only 422 a legitimate write — e.g.
@@ -734,8 +816,7 @@ async function validateFinalProviderPairs(
     // A task declared ignoreGlobalPin never runs on the global pair: its
     // effective pair is its own stored/default rows, so the pin must not
     // shadow them here either.
-    const dedicated =
-      taskKind != null && (tasks[taskKind] as TaskDefinition).ignoreGlobalPin === true;
+    const dedicated = taskKind != null && tasks[taskKind]?.ignoreGlobalPin === true;
     // Same per-field chain as the runtime binding: global pin > configured
     // task/lane rows > registry default. `ignoreGlobalPin` and the global scope
     // opt out of the global layer; defaults remain the task's own pair.
@@ -761,7 +842,7 @@ async function validateFinalProviderPairs(
       const model =
         effModel ??
         (provider === 'anthropic-sub'
-          ? ANTHROPIC_SUB_DEFAULT_MODEL
+          ? anthropicSubDefaultModel
           : taskKind
             ? tasks[taskKind].defaultModel
             : undefined);
@@ -814,7 +895,7 @@ async function validateFinalProviderPairs(
       }
       if (isGlobal && isProviderImplemented(provider)) {
         for (const [kind, definition] of Object.entries(tasks)) {
-          if ((definition as TaskDefinition).execution === 'typed') continue;
+          if (definition.execution === 'typed') continue;
           // YUK-1658 — an opted-out task never runs on the global pair (its own
           // pair is validated in its task scope above, including when a global
           // reset exposes it), so validating it here 422'd global saves on
@@ -822,7 +903,7 @@ async function validateFinalProviderPairs(
           // has the same property by definition.
           if (
             rowByKey.get(`task.${kind}.override_global_pin`) === true ||
-            (definition as TaskDefinition).ignoreGlobalPin === true
+            definition.ignoreGlobalPin === true
           )
             continue;
           const effectiveModel = selectPairModel({
@@ -830,23 +911,21 @@ async function validateFinalProviderPairs(
             task: { model: valueAsNonEmptyString(rowByKey.get(`task.${kind}.model`)) },
             defaults: {
               model:
-                provider === 'anthropic-sub'
-                  ? ANTHROPIC_SUB_DEFAULT_MODEL
-                  : definition.defaultModel,
+                provider === 'anthropic-sub' ? anthropicSubDefaultModel : definition.defaultModel,
             },
           }).value;
-          if (pairChanged(kind as TaskKind)) {
-            validateNativeModel(scope.label, provider, effectiveModel, kind as TaskKind);
-          } else if (pairBroken(provider, effectiveModel, kind as TaskKind)) {
+          if (pairChanged(kind)) {
+            validateNativeModel(scope.label, provider, effectiveModel, kind);
+          } else if (pairBroken(provider, effectiveModel, kind)) {
             continue;
           }
           // The pin becomes this task's effective pair; its stored level must
           // survive it — unless a scoped lane drives the kind (the lane
           // overrides the pin for it, and the lane scope validates that pair).
-          if (!scopedServedKinds.has(kind as TaskKind))
+          if (!scopedServedKinds.has(kind))
             validateTaskReasoning(
               scope.label,
-              kind as TaskKind,
+              kind,
               provider,
               effectiveModel,
               rowByKey.get(`task.${kind}.reasoning`) ??
@@ -943,7 +1022,7 @@ export async function mutateConfigs(
   // re-reads catalog facts on every lookup), so build it BEFORE the transaction:
   // assembling it inside held the epoch row lock — which serializes every config
   // batch — hostage to a dynamic import + provider-registry construction.
-  const models = touchedPairs.size > 0 ? await createLoomPiModels() : undefined;
+  const models = touchedPairs.size > 0 ? await writeFacts().createPairModels() : undefined;
   const results = await db.transaction(async (tx) => {
     // This epoch row lock serializes all config batches before any key or journal write.
     const epoch = await bumpEpoch(tx);
