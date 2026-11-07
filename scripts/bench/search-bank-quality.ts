@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import { z } from 'zod';
+import { DEFAULT_TASK_MODEL } from '@/ai/task-spec';
 import { runSearchBank } from '@/capabilities/practice/question-bank/tools/bank-search';
 import { SearchBankInputSchema } from '@/capabilities/practice/question-bank/tools/bank-search-contract';
 import { bankReadRoleForActor } from '@/capabilities/practice/question-bank/tools/read-bank';
@@ -16,6 +17,7 @@ import * as schema from '@/db/schema';
 import { EvidenceDemandV1 } from '@/kernel/supply-contracts';
 import { EMBED_MODEL, embedText } from '@/server/ai/embed';
 import { createProviderAttemptLifecycle } from '@/server/ai/provider-attempt-lifecycle';
+import { DASHSCOPE_EMBED_MODEL_ID, providerAuthProbeModel } from '@/server/ai/providers';
 import {
   assertSearchBenchmarkPaidGate,
   guardSearchBenchmarkEmbedding,
@@ -110,12 +112,17 @@ async function main() {
       throw Error(
         'Real model-agreed gold needs the frozen snapshot and two independent model routes',
       );
+    // The preregistered judge pair is the product default task model plus the
+    // token-plan lane's catalog model; resolve both so a re-pin fails here instead of drifting.
+    const judgeRoutes = [
+      DEFAULT_TASK_MODEL.defaultModel,
+      providerAuthProbeModel('xiaomi-token-plan'),
+    ];
     if (
       gold.label_tier === 'two_model_independent' &&
-      (!gold.model_routes?.some((r) => r.model === 'deepseek-v4.1-flash') ||
-        !gold.model_routes.some((r) => r.model === 'mimo-v2.6-pro'))
+      judgeRoutes.some((route) => !gold.model_routes?.some((r) => r.model === route))
     )
-      throw Error('Real gold requires independent flash and mimo-v2.6-pro routes');
+      throw Error(`Real gold requires independent ${judgeRoutes.join(' and ')} routes`);
     for (const q of gold.requests) {
       if (!q.utterance && !q.query) throw Error('Original query or utterance required');
       if (
@@ -145,7 +152,7 @@ async function main() {
       if (ftsOnly) throw Error('Free FTS run cannot request an embedding');
       const old = cached.get(text);
       if (old) return old;
-      if (EMBED_MODEL !== 'text-embedding-v4' || !process.env.DASHSCOPE_API_KEY)
+      if (EMBED_MODEL !== DASHSCOPE_EMBED_MODEL_ID || !process.env.DASHSCOPE_API_KEY)
         throw Error('Confirmed DashScope v4 route required');
       const vector = await embedText(text, {
         caller: 'api',

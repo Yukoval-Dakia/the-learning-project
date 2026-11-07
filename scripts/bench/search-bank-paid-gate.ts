@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { EMBED_DIMS, EMBED_MODEL } from '@/server/ai/embed';
 
 /** Mandatory before any paid benchmark work; it does not shorten product deadlines. */
 export function assertSearchBenchmarkPaidGate(output: string) {
@@ -9,7 +10,7 @@ export function assertSearchBenchmarkPaidGate(output: string) {
     at: new Date().toISOString(),
     platform: process.platform,
     provider: 'dashscope',
-    model: process.env.MEM0_EMBEDDING_MODEL || 'text-embedding-v4',
+    model: EMBED_MODEL,
     endpoint: process.env.MEM0_EMBEDDING_BASE_URL,
     dimensions: 1024,
   };
@@ -58,7 +59,7 @@ export function guardSearchBenchmarkEmbedding(output: string, budgetUsd: number)
     if (!endpoint.endsWith('/embeddings')) return realFetch(url, init);
     assertSearchBenchmarkPaidGate(output);
     const body = JSON.parse(String(init?.body));
-    if (body.model !== 'text-embedding-v4' || body.dimensions !== 1024)
+    if (body.model !== EMBED_MODEL || body.dimensions !== EMBED_DIMS)
       throw Error('Unexpected embedding model/dimensions');
     const bytes = Buffer.byteLength(JSON.stringify(body.input));
     const hold = bytes / 1e6;

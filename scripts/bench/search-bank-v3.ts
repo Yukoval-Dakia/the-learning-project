@@ -10,6 +10,8 @@ import type { SearchBankInput } from '@/capabilities/practice/question-bank/tool
 import type { Db } from '@/db/client';
 import * as schema from '@/db/schema';
 import { EvidenceDemandV1 } from '@/kernel/supply-contracts';
+import { EMBED_MODEL } from '@/server/ai/embed';
+import { DASHSCOPE_EMBED_MODEL_ID } from '@/server/ai/providers';
 import {
   assertSearchBenchmarkPaidGate,
   guardSearchBenchmarkEmbedding,
@@ -36,8 +38,8 @@ async function main() {
     throw new Error('Writer mode permits only an isolated local dev database');
   if (nas && process.env.NODE_ENV !== 'production')
     throw new Error('--nas is for the migration operator inside the production worker environment');
-  const model = process.env.MEM0_EMBEDDING_MODEL?.trim() || 'text-embedding-v4';
-  if (model !== 'text-embedding-v4' || !process.env.DASHSCOPE_API_KEY)
+  const model = EMBED_MODEL;
+  if (model !== DASHSCOPE_EMBED_MODEL_ID || !process.env.DASHSCOPE_API_KEY)
     throw new Error(
       'Requires the confirmed DashScope v4 route/key; no alternate embedding model is evidence',
     );

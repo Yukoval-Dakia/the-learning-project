@@ -7,6 +7,7 @@ import postgres from 'postgres';
 import type { Db } from '@/db/client';
 import * as schema from '@/db/schema';
 import { EMBED_DIMS, EMBED_MODEL, embedText } from '@/server/ai/embed';
+import { DASHSCOPE_EMBED_MODEL_ID } from '@/server/ai/providers';
 import {
   assertSearchBenchmarkPaidGate,
   guardSearchBenchmarkEmbedding,
@@ -20,7 +21,7 @@ async function main() {
     !url.pathname.startsWith('/loom_dev_')
   )
     throw Error('Only an isolated local dev database is allowed');
-  if (EMBED_MODEL !== 'text-embedding-v4' || !process.env.DASHSCOPE_API_KEY)
+  if (EMBED_MODEL !== DASHSCOPE_EMBED_MODEL_ID || !process.env.DASHSCOPE_API_KEY)
     throw Error('Confirmed v4 credentials required');
   const output = process.env.SEARCH_BENCH_OUTPUT;
   if (!output) throw Error('External SEARCH_BENCH_OUTPUT required');

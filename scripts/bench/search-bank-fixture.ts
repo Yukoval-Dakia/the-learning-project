@@ -10,6 +10,7 @@ import { encodeBankRef } from '@/capabilities/practice/question-bank/tools/bank-
 import { EMBED_VERSION, embedHash, questionEmbedText } from '@/core/embed-source';
 import type { Db } from '@/db/client';
 import * as schema from '@/db/schema';
+import { question_solution_prior, question_solution_prior_vector } from '@/db/schema';
 import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
 import {
   contractIntegrityDigest,
@@ -17,6 +18,7 @@ import {
 } from '@/kernel/records/assessment-normalization';
 import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
 import { EMBED_MODEL, embedMany } from '@/server/ai/embed';
+import { DASHSCOPE_EMBED_MODEL_ID } from '@/server/ai/providers';
 import {
   assertSearchBenchmarkPaidGate,
   guardSearchBenchmarkEmbedding,
@@ -323,7 +325,7 @@ async function main() {
               prerequisites: [{ name_md: families[i % 12], knowledge_id: `sb1986:kc:${i % 12}` }],
               difficulty: null,
             });
-            await db.insert(schema.question_solution_prior).values({
+            await db.insert(question_solution_prior).values({
               revision_id: pub.revision_id,
               part_id: id,
               prior_version: 'solution-prior-v1',
@@ -348,13 +350,13 @@ async function main() {
     }
     const reuseUrl = process.env.SEARCH_BENCH_REUSE_DATABASE_URL;
     if (!reuseUrl) assertSearchBenchmarkPaidGate(output);
-    if (EMBED_MODEL !== 'text-embedding-v4' || (!reuseUrl && !process.env.DASHSCOPE_API_KEY))
+    if (EMBED_MODEL !== DASHSCOPE_EMBED_MODEL_ID || (!reuseUrl && !process.env.DASHSCOPE_API_KEY))
       throw Error('Real v4 route/key required for vector filling');
     const rows = await db.select().from(schema.question);
     const questionTexts = rows.filter(
       (q) => !['sb1986:470', 'sb1986:471', 'sb1986:472', 'sb1986:473', 'sb1986:474'].includes(q.id),
     );
-    const priorRows = await db.select().from(schema.question_solution_prior);
+    const priorRows = await db.select().from(question_solution_prior);
     const facets = priorRows.flatMap((p) =>
       solutionPriorFacetTexts(SolutionPriorPart.parse(p.prior)).map((f) => ({
         ...f,
@@ -452,7 +454,7 @@ async function main() {
     for (let i = 0; i < facets.length; i += 10) {
       const batch = facets.slice(i, i + 10),
         vectors = await vectorsFor(batch.map((f) => f.text));
-      await db.insert(schema.question_solution_prior_vector).values(
+      await db.insert(question_solution_prior_vector).values(
         batch.map((f, j) => ({
           revision_id: f.revision_id,
           part_id: f.part_id,
