@@ -112,7 +112,7 @@ const ProposalKnowledgeNodeLabelResponseSchema = z.object({
 
 // Why accepting would fail right now, decided on the server; null when nothing stands in its way.
 const ProposalKnowledgeMutationBlockResponseSchema = z
-  .enum(['to_top', 'node_unreadable', 'node_retired'])
+  .enum(['to_top', 'node_unreadable', 'node_retired', 'version_changed'])
   .nullable();
 
 const ProposalKnowledgeMutationResponseSchema = z.discriminatedUnion('mutation', [

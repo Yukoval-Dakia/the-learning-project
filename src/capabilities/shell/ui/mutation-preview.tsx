@@ -36,6 +36,7 @@ const BLOCKED_WORDS: Readonly<Record<NonNullable<MutationPresentation['blocked']
   // The read may have failed, so this does not say the node was deleted.
   node_unreadable: '有知识点现在找不到，也可能只是暂时读不到。可以过会儿再看，或者忽略这张。',
   node_retired: '有知识点已经归档或并到别处了，这张用不上了，可以忽略。',
+  version_changed: '这个知识点后来改过，这张建议可能过时了，可以忽略。',
 };
 
 /** The server decides whether this can run; these are the words for its answer. */
