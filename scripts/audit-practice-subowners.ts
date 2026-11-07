@@ -3,9 +3,9 @@
  *
  * - owner 归属：已迁入 `practice/<owner>/` 的文件按目录；仍在根目录的文件按 OWNER_RULES
  *   映射到迁移目标，未命中的归练习面 face（根目录的最终形态）。
- * - 边集合只减不增：非测试、非组合文件发出的跨 owner import 记为 owner 对。上限是不可变的
- *   比较基（`--base <sha>` / `CAPABILITY_BASE_SHA`，否则与 origin/main 的 merge-base）：
- *   同一套映射在基提交的树上重算 owner 对，HEAD 出现基上没有的对即失败。存量对只按
+ * - 非测试、非组合文件发出的跨 owner import 记为 owner 对；新对只能向下且经目标 public.ts。
+ *   不可变的比较基（`--base <sha>` / `CAPABILITY_BASE_SHA`，否则与 origin/main 的 merge-base）：
+ *   同一套映射在基提交的树上重算 owner 对，HEAD 新增的对校验方向和入口。存量对只按
  *   base 实测 grandfather，无台账。
  * - 已建子 owner 目录只能经 `<owner>/public.ts` 被目录外引用；根 `manifest.ts` 另可引用
  *   `<owner>/manifest-part.ts`，根 `tasks/index.ts` 另可引用 `<owner>/tasks/*`（任务目录组合
@@ -209,24 +209,45 @@ function sortPairs(pairs: Iterable<string>): string[] {
   });
 }
 
-// The question solution prior reveals the solution path. Tools, routes and UI reach
-// learners, so none may touch it directly; a learner-facing read must gate on the attempt.
-// The practice root barrel is covered too: exporting from it opens every other capability.
+// Agent tools may read priors at any attempt stage. Learner transport must not carry
+// them, and independent solving/judging must not read stored solution evidence.
 const SOLUTION_PRIOR_RE =
   /readSolutionPriorForServer|nearestQuestionsByMethod|question_solution_prior|admission\/solution-prior/;
+const PRIOR_FIELD_RE = /\b(?:solution_prior|solutionPrior|SolutionPrior|StoredSolutionPrior)\w*\b/;
 const LEARNER_SURFACE_RE =
-  /(?:^|\/)(?:tools|api|ui)\/|^src\/capabilities\/practice\/(?:ui-)?public\.tsx?$|^server\//;
+  /^src\/ui-next\/|^web\/src\/|(?:^|\/)(?:api|ui)\/|(?:^|\/)ui-public\.tsx?$|^server\/|^src\/core\/schema\/|(?:^|\/)[^/]*(?:contracts?|dto)[^/]*\.tsx?$/i;
+const INDEPENDENT_IMPORT_RE =
+  /(?:^|\/)grading\/|(?:^|\/)tasks\/[^/]*(?:solve|adjudicat|grad|judg)[^/]*\.tsx?$|(?:^|\/)admission\/adjudicate\.ts$/;
+const INDEPENDENT_RE =
+  /(?:^|\/)grading\/|(?:^|\/)tasks\/[^/]*(?:solve|adjudicat|grad|judg)[^/]*\.tsx?$|(?:^|\/)admission\/(?:solve|adjudicate)\.ts$/;
+// solve.ts also produces priors after settling keys; generating a prior is not a read.
+const PRIOR_READ_RE = /readSolutionPriorForServer|nearestQuestionsByMethod|question_solution_prior/;
 
 export function scanSolutionPriorExposure(projectRoot: string): string[] {
   const files: string[] = [];
-  for (const dir of ['src/capabilities', 'server']) {
+  for (const dir of ['src', 'server', 'web/src']) {
     const root = resolve(projectRoot, dir);
     if (existsSync(root)) walk(root, files);
   }
-  return files
-    .map((file) => relative(projectRoot, file).split(sep).join('/'))
-    .filter((path) => LEARNER_SURFACE_RE.test(path))
-    .filter((path) => SOLUTION_PRIOR_RE.test(readFileSync(resolve(projectRoot, path), 'utf8')));
+  const violations: string[] = [];
+  for (const file of files) {
+    const path = relative(projectRoot, file).split(sep).join('/');
+    const code = readFileSync(file, 'utf8');
+    if (
+      LEARNER_SURFACE_RE.test(path) &&
+      (SOLUTION_PRIOR_RE.test(code) || PRIOR_FIELD_RE.test(code))
+    ) {
+      violations.push(`learner surface carries or reads the solution prior: ${path}`);
+    }
+    if (
+      INDEPENDENT_RE.test(path) &&
+      (PRIOR_READ_RE.test(code) ||
+        (INDEPENDENT_IMPORT_RE.test(path) && SOLUTION_PRIOR_RE.test(code)))
+    ) {
+      violations.push(`independent solve/adjudication/grading reads the solution prior: ${path}`);
+    }
+  }
+  return violations;
 }
 
 export function main(argv = process.argv.slice(2), projectRoot = process.cwd()): void {
@@ -243,15 +264,20 @@ export function main(argv = process.argv.slice(2), projectRoot = process.cwd()):
 
   const failures: string[] = [];
   for (const pair of addedSinceBase) {
-    failures.push(
-      `owner edge ${pair} is absent at base ${baseSha.slice(0, 12)}:\n    ${(edges.get(pair) ?? []).join('\n    ')}`,
-    );
+    const [from, to] = rank(pair);
+    const target = pair.split(' -> ')[1];
+    const imports = edges.get(pair) ?? [];
+    if (to > from || imports.some((edge) => edge.split(' -> ')[1] !== `${target}/public.ts`)) {
+      failures.push(
+        `new owner edge ${pair} must point down through target public.ts (base ${baseSha.slice(0, 12)}):\n    ${imports.join('\n    ')}`,
+      );
+    }
   }
   for (const violation of publicOnlyViolations) {
     failures.push(`sub-owner entered outside its public.ts: ${violation}`);
   }
-  for (const path of scanSolutionPriorExposure(projectRoot)) {
-    failures.push(`learner-reachable path touches the solution prior: ${path}`);
+  for (const violation of scanSolutionPriorExposure(projectRoot)) {
+    failures.push(violation);
   }
   const fileEdges = [...edges.values()].reduce((sum, list) => sum + list.length, 0);
   const upward = current.filter((pair) => {
@@ -264,7 +290,7 @@ export function main(argv = process.argv.slice(2), projectRoot = process.cwd()):
     return;
   }
   console.log(
-    `audit:practice-subowners OK — ${current.length} owner pairs (${upward} against the design order, ${fileEdges} file edges) within the ${baseEdges.size} pairs at base ${baseSha.slice(0, 12)}; sub-owner directories entered only through public.ts.`,
+    `audit:practice-subowners OK — ${current.length} owner pairs (${upward} against the design order, ${fileEdges} file edges) compared with ${baseEdges.size} pairs at base ${baseSha.slice(0, 12)}; new pairs point down through public.ts; sub-owner entries obey public-only rules.`,
   );
   if (argv.includes('--list')) {
     for (const pair of current) console.log(`  ${pair}  ${edges.get(pair)?.length ?? 0}`);
