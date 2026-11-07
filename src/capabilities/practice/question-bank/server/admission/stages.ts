@@ -54,8 +54,14 @@ export class AdmissionWaiting extends Error {
 }
 
 export class AdmissionNotSent extends Error {
+  constructor(message = 'Admission provider query did not start') {
+    super(message);
+  }
+}
+
+export class AdmissionSafeRetryExhausted extends AdmissionNotSent {
   constructor() {
-    super('Admission provider query did not start');
+    super('Admission provider safe retry budget is exhausted');
   }
 }
 
@@ -115,6 +121,7 @@ const StageReceipt = z.discriminatedUnion('kind', [
   }),
   z.object({
     kind: z.literal('failure'),
+    safe_retry_exhausted: z.literal(true).optional(),
     fields: StageErrorFields,
   }),
   /**
@@ -127,6 +134,8 @@ const StageReceipt = z.discriminatedUnion('kind', [
    */
   z.object({
     kind: z.literal('transient'),
+    retry_class: z.string().optional(),
+    retry_delay_ms: z.number().nonnegative().optional(),
     waited_ms: z.number().nonnegative().optional(),
     retry_not_before: z.string().optional(),
     fields: StageErrorFields,
@@ -259,9 +268,49 @@ export function admissionStageRunner(input: {
               sql`${paid_effect.input_json}->>'call_index' = ${String(index)}`,
             ),
           )
-          .orderBy(desc(sql`(${paid_effect.input_json}->>'attempt')::int`))
-          .limit(1);
+          .orderBy(desc(sql`(${paid_effect.input_json}->>'attempt')::int`));
         const previous = history[0];
+        // Granted retry receipts are the durable budget, including a successor
+        // not yet claimed. Quota wakes and redelivery never reset this ledger.
+        let notSentRetries = 0;
+        let notSentWaitedMs = 0;
+        let previousTransientWait = 0;
+        let latestRetryClass: string | undefined;
+        for (const row of [...history].reverse()) {
+          if (row.state !== 'receipt_ready' && row.state !== 'applied') continue;
+          const saved = StageReceipt.parse(row.result_json);
+          if (saved.kind !== 'transient') {
+            previousTransientWait = 0;
+            continue;
+          }
+          let retryClass = saved.retry_class;
+          if (retryClass === undefined) {
+            // Old receipts carry no retry class; only the sealed task-run
+            // transport can establish not_sent. Missing evidence fails closed.
+            const [run] = await input.db
+              .select()
+              .from(ai_task_runs)
+              .where(eq(ai_task_runs.id, saved.fields.taskRunId));
+            retryClass =
+              run?.finished_at != null
+                ? providerTransientVerdict({
+                    error: new AgentRunError(saved.fields as AgentRunErrorFields),
+                    transport: run.usage_json.transport,
+                  })?.class
+                : undefined;
+          }
+          if (row === previous) latestRetryClass = retryClass;
+          if (retryClass === undefined) {
+            notSentRetries++;
+            notSentWaitedMs = transientPolicy.maxWaitMs;
+          } else if (retryClass === 'not_sent') {
+            notSentRetries++;
+            notSentWaitedMs +=
+              saved.retry_delay_ms ??
+              Math.max(0, (saved.waited_ms ?? transientPolicy.maxWaitMs) - previousTransientWait);
+          }
+          previousTransientWait = saved.waited_ms ?? 0;
+        }
         let attempt = 0;
         let quotaFailures = 0;
         let priorWaitedMs = 0;
@@ -338,12 +387,22 @@ export function admissionStageRunner(input: {
             if (receipt.kind === 'result') return receipt.result;
             if (receipt.kind === 'not_sent') throw new AdmissionNotSent();
             if (receipt.kind === 'interrupted') throw new AdmissionInterrupted(receipt.reason);
+            if (receipt.kind === 'failure' && receipt.safe_retry_exhausted)
+              throw new AdmissionSafeRetryExhausted();
             if (receipt.kind === 'failure')
               throw new AgentRunError(receipt.fields as AgentRunErrorFields);
             if (receipt.kind === 'transient') {
               // The transient chain stays bounded by the same policy the caller
               // applies: beyond the retry bound the frozen failure is terminal.
-              if (frozen.attempt >= transientPolicy.maxRetries)
+              if (latestRetryClass === undefined)
+                throw new Error('Admission retry has no sealed evidence; no resend');
+              if (latestRetryClass === 'not_sent') {
+                if (
+                  notSentRetries > transientPolicy.maxRetries ||
+                  notSentWaitedMs > transientPolicy.maxWaitMs
+                )
+                  throw new AdmissionSafeRetryExhausted();
+              } else if (frozen.attempt >= transientPolicy.maxRetries)
                 throw new AgentRunError(receipt.fields as AgentRunErrorFields);
               attempt = frozen.attempt + 1;
               priorWaitedMs = receipt.waited_ms ?? 0;
@@ -467,18 +526,18 @@ export function admissionStageRunner(input: {
               error instanceof AgentRunError && run?.finished_at != null
                 ? providerTransientVerdict({ error, transport: run.usage_json.transport })
                 : undefined;
-            // `attempt` is this send's index in the chain — retries consumed so
-            // far. The planner is the one bound owner: a granted plan defers the
-            // scheduled quota wait; exhaustion (or no verdict) lets recovery
-            // proceed so a recoverable quota failure never hardens into a
-            // terminal stage error.
+            // HTTP retry cadence keeps its historical attempt budget. Only
+            // positively proven not_sent uses the independent receipt ledger.
             const plan =
               verdict !== undefined && error instanceof AgentRunError
                 ? await planProviderTransientRetry({
                     db: input.db,
                     error,
                     policy: transientPolicy,
-                    budget: { retries: attempt, waitedMs: priorWaitedMs },
+                    budget:
+                      verdict.class === 'not_sent'
+                        ? { retries: notSentRetries, waitedMs: notSentWaitedMs }
+                        : { retries: attempt, waitedMs: priorWaitedMs },
                     ...(input.deadlineAt !== undefined ? { deadlineAt: input.deadlineAt } : {}),
                   })
                 : undefined;
@@ -514,6 +573,9 @@ export function admissionStageRunner(input: {
             } else if (plan !== undefined && error instanceof AgentRunError) {
               receipt = {
                 kind: 'transient',
+                ...(plan.verdict.class === 'not_sent'
+                  ? { retry_class: plan.verdict.class, retry_delay_ms: plan.delayMs }
+                  : {}),
                 waited_ms: priorWaitedMs + plan.delayMs,
                 retry_not_before: new Date(Date.now() + plan.delayMs).toISOString(),
                 fields: {
@@ -534,6 +596,7 @@ export function admissionStageRunner(input: {
             } else if (knownFailure && error instanceof AgentRunError)
               receipt = {
                 kind: 'failure',
+                ...(verdict?.class === 'not_sent' ? { safe_retry_exhausted: true as const } : {}),
                 fields: {
                   kind: error.kind,
                   taskRunId: error.taskRunId,
@@ -593,6 +656,8 @@ export function admissionStageRunner(input: {
           );
         if (receipt.kind === 'waiting') throw new AdmissionWaiting(receipt.recovery, unit, route);
         if (receipt.kind === 'not_sent') throw new AdmissionNotSent();
+        if (receipt.kind === 'failure' && receipt.safe_retry_exhausted)
+          throw new AdmissionSafeRetryExhausted();
         if (receipt.kind === 'failure')
           throw new AgentRunError(receipt.fields as AgentRunErrorFields);
         // Transient chains loop back through the history read, which owns the

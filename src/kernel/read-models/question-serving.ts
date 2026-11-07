@@ -318,7 +318,7 @@ function servingFactsQuery(filters: SQL[]): SQL {
       order by v.recorded_at desc limit 1
     ) verification on true
     left join lateral (
-      select p.entity_id, p.application_json->>'status' as status
+      select p.entity_id, p.application_json, p.application_json->>'status' as status
       from ${paid_effect} p
       where p.entity_id = l.group_id and p.entity_revision = r.integrity_digest
         and p.family = ${PAID_EFFECT_ADMISSION_FAMILY}
@@ -366,6 +366,10 @@ function servingFactsQuery(filters: SQL[]): SQL {
                 or ${admissionReasonPresentSql('no_admitted_executor')}
                 or ${admissionReasonPresentSql('system_grading_slice_unadmitted')}
                 then 'admission_failed'
+              when exists (select 1 from jsonb_array_elements(
+                coalesce(applied.application_json->'per_unit', '[]'::jsonb)
+              ) unit where unit->>'reason' = 'admission_provider_safe_retry_exhausted')
+                then 'admission_undecided'
               when admission.result_json->'result'->>'status' = 'waiting'
                 then 'admission_failed'
               when ${admissionFailureVerdictSql()} = 'failed'
