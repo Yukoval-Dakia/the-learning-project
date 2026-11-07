@@ -124,8 +124,8 @@ export async function evaluateNudgeTrigger(
     kind: 'ingestion_complete',
     // 措辞断言 extraction 产出（不随 auto-enroll flag 漂移），绝不「收进 N 题」。
     headline: title
-      ? `我处理完《${title}》，提取到 ${blockCount} 个题目片段`
-      : `我处理完你上传的材料，提取到 ${blockCount} 个题目片段`,
+      ? `我看完《${title}》了，里面有 ${blockCount} 段题目，要看看吗？`
+      : `我看完你传的材料了，里面有 ${blockCount} 段题目，要看看吗？`,
     expires_at: expiresAt,
     // 新写恒 false；开启前留下的 shadow=true 证据行由读模型继续排除，不回放给学习者。
     shadow: false,

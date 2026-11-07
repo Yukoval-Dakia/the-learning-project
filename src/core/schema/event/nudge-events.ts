@@ -22,7 +22,7 @@ export type NudgeKindT = z.infer<typeof NudgeKind>;
 export const NudgePayload = z.object({
   // 承重：读模型分派 + 频控 scope + dismiss-fuse scope。
   kind: NudgeKind,
-  // 承重：badge 展示文案（确定性模板渲染，零 LLM；ingestion 用 flag-invariant「提取到 N 个题目片段」）。
+  // 承重：badge 展示文案（确定性模板渲染，零 LLM；ingestion 用 flag-invariant「里面有 N 段题目」）。
   headline: z.string(),
   // 承重：读模型过期 filter（ISO 8601）。过期 nudge 静默自沉（A3「可静默消失」），不删行。
   // `.datetime()` keeps the fail-loud barrier at parseEvent — a malformed stamp must not reach the
