@@ -60,9 +60,8 @@ export function customProviderCatalogFacts(
           auth: ports.authLabelOf(definition.id),
           runnableModels: runnable,
           unknownModels: unknown,
-          findings: catalog.findings.filter(
-            (finding) => finding.catalogProvider === definition.id,
-          ).length,
+          findings: catalog.findings.filter((finding) => finding.catalogProvider === definition.id)
+            .length,
         },
       ];
     }),

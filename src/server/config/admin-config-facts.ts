@@ -38,6 +38,7 @@ import {
 } from '@/capabilities/task-registry';
 import type { ConfigEffectiveFact } from '@/core/config/effective';
 import { selectGlobalPin } from '@/core/config/model-overrides';
+import { resolveApiPort } from '@/core/config/server/env';
 import { getTaskOverride, resolveConfigValue } from '@/core/config/store';
 import { DB_POOL_MAX } from '@/db/pool';
 import { projectDagMembers } from '@/kernel/manifest';
@@ -78,7 +79,6 @@ import {
 } from '@/server/ai/vision-judge-config';
 import { INFRA_HOUSEKEEPING_SCHEDULES } from '@/server/boss/infra-schedules';
 import { EXPIRE_AGENT, EXPIRE_FAST, EXPIRE_LLM, RETENTION_7D } from '@/server/boss/queue-config';
-import { resolveApiPort } from '@/core/config/server/env';
 import { EVENT_SUBSCRIPTION_DISPATCH_SCHEDULE } from '@/server/events/subscriptions/dispatch-mount';
 import {
   LAYER_STAGGER_SECONDS,

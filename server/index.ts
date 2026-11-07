@@ -6,11 +6,11 @@
 
 import { serve } from '@hono/node-server';
 import { capabilities } from '@/capabilities';
+import { resolveApiPort } from '@/core/config/server/env';
 import { assertProposalKindsOwned } from '@/kernel/manifest';
 import { warnFlipOrder } from '@/kernel/projection-writer-policy';
 import { installSettlementCascadeRevert } from '@/kernel/settlement-cascade-revert';
 import { initializeLaminarTracing } from '@/server/ai/laminar-tracing';
-import { resolveApiPort } from '@/core/config/server/env';
 import { guardDatabaseUrl, guardDevApiPort, isProductionRuntime } from '../scripts/local-db-env';
 import { buildHonoApp } from './app';
 import { assertComposedRoutesDeclared } from './composed-routes';
@@ -97,11 +97,13 @@ async function hydrateModelCatalogBeforeServe(): Promise<void> {
     // YUK-1563 part 4 — panel facts + post-write catalog refresh wiring (API process).
     // The catalog and its auth labels are AI facts; the composition root binds them
     // into the config owner's integration so core never imports server.
-    const [{ registerCustomProviderCatalogIntegration }, { customProviderCatalogIntegrationPorts }] =
-      await Promise.all([
-        import('@/core/ai-runtime/server/custom-provider-config-integration'),
-        import('@/server/ai/custom-provider-catalog-ports'),
-      ]);
+    const [
+      { registerCustomProviderCatalogIntegration },
+      { customProviderCatalogIntegrationPorts },
+    ] = await Promise.all([
+      import('@/core/ai-runtime/server/custom-provider-config-integration'),
+      import('@/server/ai/custom-provider-catalog-ports'),
+    ]);
     registerCustomProviderCatalogIntegration(db, customProviderCatalogIntegrationPorts());
     customProvidersWatch = hydrateModule.startCustomProvidersWatch(db);
     const { hydrateModelCatalog, startModelCatalogWatch } = await import(
