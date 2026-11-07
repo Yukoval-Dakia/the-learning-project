@@ -58,13 +58,13 @@ function methodologySection(profile: SubjectProfile): string {
 }
 
 function noteTemplateTable(profile: SubjectProfile): string {
-  return `| kind | 内容 |
+  return `| 维度 | 用到时写到什么程度 |
 |---|---|
-| definition | ${profile.noteTemplate.definition} |
-| mechanism | ${profile.noteTemplate.mechanism} |
-| example | ${profile.noteTemplate.example} |
-| pitfall | ${profile.noteTemplate.pitfall} |
-| check | ${profile.noteTemplate.check} |`;
+| @definition | ${profile.noteTemplate.definition} |
+| @mechanism | ${profile.noteTemplate.mechanism} |
+| @example | ${profile.noteTemplate.example} |
+| @pitfall | ${profile.noteTemplate.pitfall} |
+| @check | ${profile.noteTemplate.check} |`;
 }
 
 function buildNoteGeneratePrompt(profile: SubjectProfile): string {
@@ -79,7 +79,7 @@ artifact_type 只能是 note_atomic / note_long / note_hub。
 NOTE v1
 @type <与输入 artifact_type 完全相同>
 
-note_atomic 的正文结构跟着材料组织走——概念材料沿它的引入链条写，题解材料沿条件、思路、步骤写，实验材料沿目的、操作、现象与结论写；不套用固定分段。正文可以直接写（等价于写在 @body 里），材料需要时也可以挂 @definition / @mechanism / @example / @pitfall / @check 段——这五个维度是写作参考，用不用、写几段由材料决定，不为凑齐而写；挂 @ 段之后想回到自由正文再写一行 @body。声明的每个 @ 段都要有正文。
+note_atomic 的正文结构跟着材料组织走——概念材料沿它的引入链条写，题解材料沿条件、思路、步骤写，实验材料沿目的、操作、现象与结论写；不套用固定分段。正文可以直接写（等价于写在 @body 里），用 # 标题、小节和列表按材料自身的展开组织。某个维度值得单独成段时再另起一行 @<维度名> 挂语义段（可选维度见下方自查表）；挂 @ 段之后想回到自由正文再写一行 @body。声明的每个 @ 段都要有正文。
 
 note_long 与 note_hub 用一段自由正文，不要假装成单知识点 atomic：
 @body
@@ -91,7 +91,7 @@ note_long 与 note_hub 用一段自由正文，不要假装成单知识点 atomi
 
 读到读者可能卡住的地方——材料依赖却没有展开的先行概念、记号约定、被省略的依据——可以就地补一小段背景，帮读者自己过卡点；只补理解这份材料必需的内容，不写成与材料无关的百科条目。
 
-per-subject 写作参考（definition/mechanism/example/pitfall/check 五个维度按材料取舍，领域规范见 note skill）：
+成稿自查（这是查漏清单，不是分段模板）：按材料写完正文后对照下表问自己——少了哪一维，读者理解这份材料会卡住？会卡的维度就地补上（可挂对应 @ 段，也可并进相邻正文）；五个维度都用不到就一维不加，材料本身已讲透的维度也不重复写。领域规范见 note skill：
 
 ${noteTemplateTable(profile)}
 
