@@ -1012,13 +1012,10 @@ The `habit` branch in `mapEventActionToKind` (triggers.ts) is dead by design, no
 
 No correctness path touches this (per file-header contract, it never mutates due/mastery/FSRS) — a wrong value only biases which memories surface, never scores/scheduling. Nothing here warrants a deep look.
 
-KEEP — all three pieces are explicitly documented, reasoned design decisions, not silent landmines.
+KEEP — both pieces are explicitly documented, reasoned design decisions, not silent landmines.
 
-- **`check` semantic-kind**: not vestigial. The coverage requirement (`ATOMIC_REQUIRED_SEMANTIC_KINDS` incl. `check`) still drives a live per-subject content template (`profile.noteTemplate.check`, e.g. "give a small question to verify true understanding") and is enforced symmetrically with the other 4 kinds — it's a self-check prose prompt, independent of the actually-dead gradeable-quiz linkage. The truly dead code is `setNoteSectionEmbeddedCheck`/`setNoteSectionEmbeddedCheckArtifactRef` in `body-blocks.ts` (zero production callers on `main`, orphaned since `embedded_check_generate.ts` was deleted per YUK-358 decision 3, kept alive only by one unit test) — that's a narrow, low-stakes dead-code trim, not the invariant the anchors point at.
-- **Implicit-verified-on-edit** (`body-blocks.ts:341-377`): intentional, named in-code (`C1a, YUK-358, ADR-0040 决定1`) — any human edit promotes to `user_verified` so AI must propose not silently overwrite. A deliberate, documented tradeoff (yes, even typo fixes lock the block), not an oversight.
+- **`check` semantic-kind**: not vestigial. The coverage requirement (`ATOMIC_REQUIRED_SEMANTIC_KINDS` incl. `check`) still drives a live per-subject content template (`profile.noteTemplate.check`, e.g. "give a small question to verify true understanding") and is enforced symmetrically with the other 4 kinds — it's a self-check prose prompt, independent of the gradeable-quiz linkage.
 - **No PG-unavailability fallback** (`pg.ts:1-20`): explicitly documented top-of-file as a *decided-against* fail-safe — PG is the business DB, so an idle-fallback wrapper would be pointless since `persistNoteRefineApply` would fail too; errors are thrown directly (not silently dropped), matching the rest of the repo's DB-dependency posture. Not "silent drop."
-
-No new Linear issue needed for the escalation framing; optional micro-cleanup (remove the 2 dead `setNoteSectionEmbeddedCheck*` exports + their test) is trivial enough to fold into any future notes-domain touch, not worth a standalone ticket.
 
 ESCALATE — this isn't hypothetical, it's already live: `tool_quiz` sits in `artifacts-search.ts`'s `CROSS_LINKABLE_TYPES` (so the `@` picker in `NoteEditor.tsx` lets you insert a `crossLinkBlock` pointing at a quiz artifact) but is deliberately excluded from `note-page.ts`'s `READER_TYPES` (`src/capabilities/notes/server/note-page.ts:40,98`, "tool_quiz / other artifact kinds are not NoteReader pages").
 

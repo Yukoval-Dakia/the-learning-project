@@ -781,22 +781,6 @@
     ]
   },
   {
-    "path": "/api/hubs/:id/dismiss-link",
-    "methods": [
-      {
-        "method": "POST",
-        "summary": "从 hub 的 AutoLinksContainer 中压制（dismiss）一条系统维护的 auto-link",
-        "query": [],
-        "contentType": "application/json",
-        "bodyExample": {
-          "suppressed_artifact_id": "artifact_xyz789",
-          "relation": "subtopic"
-        },
-        "notes": "relation 可选，枚举：subtopic|prerequisite|derived_from|contrasts_with；suppressed_artifact_id 不能等于 hub id；操作幂等；单事务原子"
-      }
-    ]
-  },
-  {
     "path": "/api/knowledge/:id/misconceptions",
     "methods": [
       {
