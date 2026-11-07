@@ -38,18 +38,6 @@ function ensureSection(current: SectionDraft | null, declared: NoteArtifactType)
 
 const COMPLETE_STOP = new Set(['end_turn', 'stop']);
 const CALLOUT_TONES = new Set(['note', 'tip', 'warning']);
-const TRAILING_CHATTER = [
-  '以上就是这篇',
-  '以上就是本篇',
-  '希望对你有帮助',
-  '希望对你有用',
-  '希望这对你',
-  '如有问题',
-  '如有疑问',
-  '欢迎继续提问',
-  '祝你学习',
-  '祝学习进步',
-];
 
 function fail(message: string): never {
   throw new Error(`parseNoteGenerateOutput: ${message}`);
@@ -522,24 +510,6 @@ function isSemanticKind(name: string): name is SemanticKind {
   return (SEMANTIC_KINDS as readonly string[]).includes(name);
 }
 
-function isTrailingChatter(line: string): boolean {
-  const trimmed = line.trim();
-  if (trimmed.length === 0 || trimmed.length > 80) return false;
-  if (trimmed.includes('$') || trimmed.includes('\\')) return false;
-  return TRAILING_CHATTER.some((phrase) => trimmed.includes(phrase));
-}
-
-/** Drop closing pleasantries that the model appends to the last section, above @end. */
-function stripTrailingChatter(lines: string[]): string[] {
-  const kept = [...lines];
-  while (kept.length > 0 && kept[kept.length - 1]?.trim() === '') kept.pop();
-  while (kept.length > 0 && isTrailingChatter(kept[kept.length - 1] ?? '')) {
-    kept.pop();
-    while (kept.length > 0 && kept[kept.length - 1]?.trim() === '') kept.pop();
-  }
-  return kept;
-}
-
 /** Compile one model-authored NOTE v1 document into a body the Notes owner materializes. */
 export function compileNoteGenerateDocument(
   text: string,
@@ -599,10 +569,7 @@ export function compileNoteGenerateDocument(
       if (header[1] === 'end') {
         if (ended) fail('text after @end');
         if (current) {
-          sections.push({
-            name: current.name,
-            body: stripTrailingChatter(current.lines).join('\n'),
-          });
+          sections.push({ name: current.name, body: current.lines.join('\n') });
         }
         current = null;
         ended = true;

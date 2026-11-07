@@ -1,5 +1,6 @@
 import type { ComponentProps, HTMLAttributes, ReactElement } from 'react';
 import { useSyncExternalStore } from 'react';
+import remarkGfm from 'remark-gfm';
 import { useAssetUrl } from './assets';
 import { MarkdownRenderer, type MarkdownRendererProps } from './markdown-renderer';
 
@@ -75,13 +76,81 @@ function remarkLoneDisplayMath() {
   };
 }
 
+const LEADING_CLOSING = /^[，。；：！？、）》」』】,.;:!?)]+/;
+const TRAILING_OPENING = /[（《「『【(]+$/;
+/** A longer formula has to be free to wrap, so it can't be held on one line with its punctuation. */
+const TIE_MAX_LATEX = 40;
+
+interface HastLike {
+  type: string;
+  tagName?: string;
+  value?: string;
+  properties?: { className?: unknown };
+  children?: HastLike[];
+}
+
+function isInlineFormula(node: HastLike | undefined): boolean {
+  const names = node?.properties?.className;
+  return node?.type === 'element' && Array.isArray(names) && names.includes('katex');
+}
+
+function latexLength(node: HastLike): number | null {
+  if (node.tagName === 'annotation') return node.children?.[0]?.value?.length ?? null;
+  for (const child of node.children ?? []) {
+    const length = latexLength(child);
+    if (length !== null) return length;
+  }
+  return null;
+}
+
+/**
+ * A browser may break on either side of a formula, even right before 「，」 or after 「（」. A short
+ * formula goes in one no-wrap span with the punctuation that belongs to it.
+ */
+function tieMathPunctuation(node: HastLike): void {
+  const children = node.children;
+  if (!children) return;
+  const tied: HastLike[] = [];
+  for (let index = 0; index < children.length; index += 1) {
+    const child = children[index] as HastLike;
+    if (!isInlineFormula(child)) {
+      tieMathPunctuation(child);
+      tied.push(child);
+      continue;
+    }
+    const previous = tied[tied.length - 1];
+    const next = children[index + 1];
+    const opening = previous?.type === 'text' ? previous.value?.match(TRAILING_OPENING)?.[0] : null;
+    const closing = next?.type === 'text' ? next.value?.match(LEADING_CLOSING)?.[0] : null;
+    if ((!opening && !closing) || (latexLength(child) ?? TIE_MAX_LATEX + 1) > TIE_MAX_LATEX) {
+      tied.push(child);
+      continue;
+    }
+    if (opening && previous?.value) previous.value = previous.value.slice(0, -opening.length);
+    if (closing && next?.value) next.value = next.value.slice(closing.length);
+    tied.push({
+      type: 'element',
+      tagName: 'span',
+      properties: { className: ['un-math-tie'] },
+      children: [
+        ...(opening ? [{ type: 'text', value: opening }] : []),
+        child,
+        ...(closing ? [{ type: 'text', value: closing }] : []),
+      ],
+    });
+  }
+  node.children = tied;
+}
+
+const rehypeTieMathPunctuation = () => tieMathPunctuation;
+
 function cacheMathPlugins(
   remarkMath: MathPlugins['remarkPlugins'][number],
   rehypeKatex: MathPlugins['rehypePlugins'][number],
 ): MathPlugins {
   loadedMathPlugins = {
     remarkPlugins: [remarkMath, remarkLoneDisplayMath],
-    rehypePlugins: [rehypeKatex],
+    rehypePlugins: [rehypeKatex, rehypeTieMathPunctuation],
   };
   return loadedMathPlugins;
 }
@@ -142,6 +211,12 @@ if (import.meta.env.SSR) {
 }
 
 const NO_MATH_PLUGINS: MathPlugins = { remarkPlugins: [], rehypePlugins: [] };
+
+/** Tables and the rest of GFM on every reading surface. One tilde stays text: 「约 ~3」 is not a strike. */
+const GFM_PLUGIN: [typeof remarkGfm, { singleTilde: boolean }] = [
+  remarkGfm,
+  { singleTilde: false },
+];
 
 /** A mounted KaTeX render subscribes; the first one after a cold start or a failed chunk loads. */
 function subscribeMathPlugins(listener: () => void): () => void {
@@ -219,6 +294,11 @@ export function assetIdFromContentUrl(src: string | undefined): string | null {
   }
 }
 
+/** Not every surface has the reading styles, and a wide table must scroll rather than break its card. */
+function MarkdownTable({ node: _node, ...props }: ComponentProps<'table'> & { node?: unknown }) {
+  return <table {...props} className="un-md-table" />;
+}
+
 type MarkdownImageProps = ComponentProps<'img'> & { node?: unknown };
 
 /** Resolve protected source_asset URLs through apiFetch before handing bytes to <img>. */
@@ -286,6 +366,43 @@ const FALLBACK_DOLLARS = new RegExp(
   'g',
 );
 
+const TABLE_DELIMITER_ROW = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
+/** `$` … `$` as Pandoc reads it: no space inside either end, and no digit right after, so 「$5 | $10」 is two prices. */
+const INLINE_MATH = /(?<![\\$])\$(?!\s)[^$\n]*?[^\s\\]\$(?!\d)/g;
+
+/**
+ * A table row is split at every `|` before any formula is read, so `$|x|$` in a cell would fall
+ * apart and cost the row its later cells. Inside a formula, `\vert` draws the same bar.
+ */
+function protectTableMathPipes(source: string): string {
+  if (!source.includes('|')) return source;
+  const lines = source.split('\n');
+  // Code is shown and copied as written, so only the text between code spans is touched.
+  const inRow = (line: string) =>
+    line
+      .split(/(`[^`]*`)/)
+      .map((part, index) =>
+        index % 2 === 1
+          ? part
+          : part.replace(INLINE_MATH, (math) => math.replace(/(?<!\\)\|/g, '\\vert ')),
+      )
+      .join('');
+  let fence: string | null = null;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index] as string;
+    const marker = line.match(/^\s*(```+|~~~+)/)?.[1]?.slice(0, 3);
+    if (marker) fence = fence === null ? marker : fence === marker ? null : fence;
+    if (fence !== null || marker || index === 0) continue;
+    if (!line.includes('|') || !TABLE_DELIMITER_ROW.test(line)) continue;
+    if (!lines[index - 1]?.includes('|')) continue;
+    lines[index - 1] = inRow(lines[index - 1] as string);
+    for (let row = index + 1; row < lines.length && lines[row]?.includes('|'); row += 1) {
+      lines[row] = inRow(lines[row] as string);
+    }
+  }
+  return lines.join('\n');
+}
+
 function escapeLooseDollars(source: string): string {
   return source.replace(
     FALLBACK_DOLLARS,
@@ -344,13 +461,15 @@ export function MathMarkdown({
   const source =
     active === NO_MATH_PLUGINS
       ? children
-      : normalizeMathDelimiters(fallback ? escapeLooseDollars(children) : children);
+      : protectTableMathPipes(
+          normalizeMathDelimiters(fallback ? escapeLooseDollars(children) : children),
+        );
   return (
     <MarkdownRenderer
       {...divProps}
-      remarkPlugins={[...active.remarkPlugins, ...(remarkPlugins ?? [])]}
+      remarkPlugins={[...active.remarkPlugins, GFM_PLUGIN, ...(remarkPlugins ?? [])]}
       rehypePlugins={active.rehypePlugins}
-      components={{ ...components, img: MarkdownImage }}
+      components={{ table: MarkdownTable, ...components, img: MarkdownImage }}
       remarkRehypeOptions={remarkRehypeOptions}
     >
       {source}

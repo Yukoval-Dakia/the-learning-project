@@ -23,7 +23,6 @@ import {
   FULL_STAGE_INDEX,
   HINT_LADDER,
   type HintStage,
-  LADDER_RANGE_LABEL,
   isFullSolutionAvailable,
   nextHintStage,
   positionLabel,
@@ -195,7 +194,7 @@ export function HintLadder({
         <div className="un-hl-rail-head">
           <span className="un-hl-rail-l">
             <Layers size={16} aria-hidden="true" />
-            自主程度 · {LADDER_RANGE_LABEL}
+            提示从轻到重
           </span>
           <span className="un-hl-rail-r">{positionLabel(reached, revealedFull)}</span>
         </div>
@@ -215,11 +214,11 @@ export function HintLadder({
               <div
                 key={s.key}
                 className={cls}
-                title={`${s.key} · ${s.label} — ${s.gives}`}
-                aria-label={`第 ${s.key} 阶（${s.label}）：${s.gives}${isCurrent ? ' · 当前' : ''}`}
+                title={`${s.label} — ${s.gives}`}
+                aria-label={`第 ${i + 1} 个提示（${s.label}）：${s.gives}${isCurrent ? ' · 当前' : ''}`}
               >
                 <span className="un-hl-dot" />
-                <span className="un-hl-stop-l">{s.key}</span>
+                <span className="un-hl-stop-l">{s.label}</span>
               </div>
             );
           })}
@@ -259,7 +258,7 @@ export function HintLadder({
       {loading && (
         <div className="un-hl-loading">
           <span className="un-hl-spin" />
-          正在想下一阶提示…
+          正在想下一个提示…
         </div>
       )}
 
@@ -274,7 +273,7 @@ export function HintLadder({
               onClick={() => void advance(unavailable.stage)}
             >
               <RefreshCw size={18} aria-hidden="true" />
-              重试这一阶
+              重试这个提示
             </button>
             {unavailable.canSkip && (
               <button
@@ -283,7 +282,7 @@ export function HintLadder({
                 onClick={() => setUnavailable(null)}
                 style={{ marginLeft: 0 }}
               >
-                这一阶先不要
+                这个提示先不要
               </button>
             )}
           </div>
@@ -295,8 +294,7 @@ export function HintLadder({
         <div className="un-hl-fail">
           <div className="un-hl-fail-msg">
             <CircleAlert size={18} aria-hidden="true" />
-            这一阶（{HINT_LADDER[failAt]?.key}）没生成出来 ——
-            不是装作好了，是真没成。可以重试，或换条路。
+            这个提示没生成出来。可以重试，或换条路。
           </div>
           <div className="un-hl-fail-acts">
             <button
@@ -305,7 +303,7 @@ export function HintLadder({
               onClick={() => void advance(failAt)}
             >
               <RefreshCw size={18} aria-hidden="true" />
-              重试这一阶
+              重试这个提示
             </button>
             {fullAvailable && (
               <button
@@ -333,7 +331,7 @@ export function HintLadder({
         <div className="un-hl-confirm">
           <div className="un-hl-confirm-msg">
             <CircleAlert size={18} aria-hidden="true" />
-            看完整解 = 这题记为<b>非独立完成</b>。中间阶可以跳过 —— 确认要直接看吗？
+            看完整解 = 这题记为<b>非独立完成</b>。中间的提示可以跳过。确认要直接看吗？
           </div>
           <div className="un-hl-confirm-acts">
             <button
@@ -362,7 +360,7 @@ export function HintLadder({
         <div className="un-hl-acts-wrap">
           {next && (
             <p className="un-hl-next-note">
-              下一阶 · {next.key} {next.label}：{next.gives}
+              下一个提示 · {next.label}：{next.gives}
             </p>
           )}
           <div className="un-hl-acts">
@@ -373,7 +371,7 @@ export function HintLadder({
                 onClick={() => void advance(reached + 1)}
               >
                 <ChevronDown size={18} aria-hidden="true" />
-                {reached < 0 ? '给我第一阶' : '再给一阶'} · {next.key} {next.label}
+                {reached < 0 ? '给我第一个提示' : '再给一个提示'} · {next.label}
               </button>
             )}
             {fullAvailable ? (
@@ -398,7 +396,7 @@ export function HintLadder({
           </div>
           {!fullAvailable && (
             <p className="un-hl-empty-s">
-              这道题暂时没有可展示的完整解（自动生成失败或尚未就绪）。前几阶提示仍可用，或回题面自己作答。
+              这道题暂时没有可展示的完整解（自动生成失败或尚未就绪）。前面的提示仍可用，或回题面自己作答。
             </p>
           )}
         </div>
@@ -443,9 +441,7 @@ function HintStageCard({
     return (
       <div className={isReference ? 'un-hl-card full' : 'un-hl-card'}>
         <div className="un-hl-card-top">
-          <span className="un-hl-badge">
-            {stage.key} · {isReference ? '参考解答' : '固定的下一步'}
-          </span>
+          <span className="un-hl-badge">{isReference ? '参考解答' : '固定的下一步'}</span>
           {isReference && (
             <span className="un-hl-noindep">
               <CircleAlert size={14} aria-hidden="true" />
@@ -473,9 +469,7 @@ function HintStageCard({
   return (
     <div className="un-hl-card">
       <div className="un-hl-card-top">
-        <span className="un-hl-badge">
-          {stage.key} · {stage.weight}
-        </span>
+        <span className="un-hl-badge">{stage.weight}</span>
         <span className="un-hl-gives">{stage.label}</span>
       </div>
       <div className="un-hl-body">
