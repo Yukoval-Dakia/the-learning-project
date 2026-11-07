@@ -4,7 +4,7 @@
 // whether the retry instant has arrived. Candidates are paged in retry order and the
 // excludable classes (live delivery, spent window budget) are filtered before LIMIT so a
 // blocked prefix cannot starve later waits.
-import { and, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import type { JobWithMetadata, PgBoss } from 'pg-boss';
 import { z } from 'zod';
 import {
@@ -116,8 +116,8 @@ function windowAttemptsSql(window: number) {
 }
 
 /**
- * Latest live coordinator receipt and its latest quota-waiting stage receipt per
- * group. The coordinator supplies the frozen input; the stage receipt is the clock
+ * Only an unapplied coordinator whose latest stage still waits may resume.
+ * The coordinator supplies the frozen input; the stage receipt is the clock
  * the stage runner compares `retry_at` against. Live deliveries and a spent window
  * budget are excluded here (before LIMIT); the truth is re-read under the locks.
  */
@@ -169,28 +169,28 @@ async function readCandidates(
       FROM paid_effect c
       WHERE c.family = ${ADMISSION_FAMILY}
         AND c.unit = ${QUESTION_ADMISSION_PAID_UNIT}
-        AND c.state IN ('receipt_ready', 'applied')
       ORDER BY c.entity_id, c.entity_revision, c.unit, c.created_at DESC
-    ), waits AS (
+    ), latest_stage AS (
       SELECT DISTINCT ON (s.entity_id, s.entity_revision)
         s.entity_id, s.entity_revision, s.unit, s.input_digest, s.state,
         s.result_json, s.result_recorded_at
       FROM paid_effect s
       WHERE s.family = ${ADMISSION_STAGE_FAMILY}
-        AND s.state IN ('receipt_ready', 'applied')
-        AND s.result_json->>'kind' = 'waiting'
-        AND s.result_json->'recovery'->>'reason' = 'quota'
-      ORDER BY s.entity_id, s.entity_revision, s.result_recorded_at DESC
+      ORDER BY s.entity_id, s.entity_revision, s.created_at DESC, s.unit DESC, s.input_digest DESC
     )
     SELECT c.entity_id AS group_id, c.entity_revision, c.input_digest, c.input_json,
       c.result_json, w.unit AS stage_unit, w.input_digest AS stage_input_digest,
       w.result_json->'recovery' AS stage_recovery,
       w.result_json->'recovery'->>'retry_at' AS stage_retry_at
     FROM latest c
-    JOIN waits w ON w.entity_id = c.entity_id AND w.entity_revision = c.entity_revision
+    JOIN latest_stage w ON w.entity_id = c.entity_id AND w.entity_revision = c.entity_revision
     JOIN question_group_lifecycle l ON l.group_id = c.entity_id
     JOIN question_revision r ON r.revision_id = l.current_revision_id
-    WHERE c.result_json->'result'->>'status' = 'waiting'
+    WHERE c.state = 'receipt_ready'
+      AND c.result_json->'result'->>'status' = 'waiting'
+      AND w.state IN ('receipt_ready', 'applied')
+      AND w.result_json->>'kind' = 'waiting'
+      AND w.result_json->'recovery'->>'reason' = 'quota'
       AND r.integrity_digest = c.entity_revision
       AND l.scoring_admission_state = 'withheld'
       AND l.scoring_admission_withheld_reason = 'unverified_rules'
@@ -439,7 +439,7 @@ export async function recoverExpiredAdmissionWaits(
           )
           .for('update')
           .limit(1);
-        if (row == null || (row.state !== 'receipt_ready' && row.state !== 'applied')) {
+        if (row?.state !== 'receipt_ready') {
           return { kind: 'skipped', reason: 'receipt_gone' };
         }
         const receipt = AdmissionResultReceipt.safeParse(row.result_json);
@@ -454,13 +454,21 @@ export async function recoverExpiredAdmissionWaits(
               eq(paid_effect.family, ADMISSION_STAGE_FAMILY),
               eq(paid_effect.entity_id, candidate.groupId),
               eq(paid_effect.entity_revision, row.entity_revision),
-              eq(paid_effect.unit, candidate.stageUnit),
-              eq(paid_effect.input_digest, candidate.stageInputDigest),
             ),
+          )
+          .orderBy(
+            desc(paid_effect.created_at),
+            desc(paid_effect.unit),
+            desc(paid_effect.input_digest),
           )
           .for('update')
           .limit(1);
-        if (stage == null || (stage.state !== 'receipt_ready' && stage.state !== 'applied')) {
+        if (
+          stage == null ||
+          stage.unit !== candidate.stageUnit ||
+          stage.input_digest !== candidate.stageInputDigest ||
+          (stage.state !== 'receipt_ready' && stage.state !== 'applied')
+        ) {
           return { kind: 'skipped', reason: 'wait_changed' };
         }
         const stageReceipt = WaitingStage.safeParse(stage.result_json);

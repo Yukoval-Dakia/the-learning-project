@@ -343,6 +343,7 @@ export const questionBankManifestPart: Omit<CapabilityManifest, 'name' | 'descri
       {
         name: 'question_admission_waiting_recovery',
         queue: 'fast',
+        batchSize: 200,
         includeMetadata: true,
         schedule: { cron: '* * * * *', tz: 'UTC' },
         load: () =>
