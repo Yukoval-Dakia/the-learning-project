@@ -298,7 +298,7 @@ function proposalDisclosure(
     pending.length === 0
       ? '本轮没有产生可供确认的建议，未执行目标变更。'
       : allAutoApply
-        ? '本轮建议已记下，会自动应用，随时可以撤销。'
+        ? '本轮建议已记下，会自动生效；还没被用到的可以撤销。'
         : '本轮建议已提交，等待你确认后才会应用到目标。',
     // The companion reads these hidden rows to retain its inbox notice.
     ...(pending.length > 0
@@ -319,8 +319,8 @@ function proposalDisclosure(
 function applyProposalDisclosure(text: string, disclosure?: string): string {
   const stripped = text
     .replace(
-      /\n*<!--copilot-proposal-disclosure:start-->[\s\S]*?<!--copilot-proposal-disclosure:end-->\s*$/,
-      '',
+      /\n*<!--copilot-proposal-disclosure:start-->[\s\S]*?<!--copilot-proposal-disclosure:end-->\n*/g,
+      '\n\n',
     )
     .trimEnd();
   return disclosure ? `${stripped}\n\n${disclosure}` : stripped;
@@ -471,17 +471,23 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
         text: presentedText,
         ...(resolvedNomination ? { primaryView: resolvedNomination } : {}),
       };
-      const correction = resolveCorrectionReply(
-        presented.text,
-        options.correctionContract,
-        stripCopilotInternalComments,
-      );
+      const correction = resolveCorrectionReply(presented.text, options.correctionContract);
       if (correction.reply.trim().length === 0) {
         return publishUnsealed('', 'missing_terminal', context);
       }
       const prepared = prepareReplyText(correction.reply);
-      const disclosure = proposalDisclosure(trace, prepared.text, prepared.inlineCardQuestionIds);
-      const disclosed = applyProposalDisclosure(prepared.text, disclosure);
+      // Strip any previous disclosure while its markers are still present, before
+      // the internal-comment stream can turn it into visible prose. Then remove
+      // other internal comments and add exactly one new disclosure.
+      const withoutOldDisclosure = stripCopilotInternalComments(
+        applyProposalDisclosure(prepared.text),
+      ).trimEnd();
+      const disclosure = proposalDisclosure(
+        trace,
+        withoutOldDisclosure,
+        prepared.inlineCardQuestionIds,
+      );
+      const disclosed = applyProposalDisclosure(withoutOldDisclosure, disclosure);
       const fixed = truncateCopilotReply(disclosed, COPILOT_REPLY_CHAR_LIMIT, context.retainedTail);
       const truncated = fixed !== disclosed;
       if (
@@ -624,8 +630,10 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
     reason: NonNullable<CopilotReplyFinalizationReceipt['unsealed_reason']>,
     context: { streamedText?: string; retainedTail?: string },
   ): CopilotReplyFinalizationResult {
-    const candidateBody = stripCopilotInternalComments(candidate);
-    const streamedBody = stripCopilotInternalComments(context.streamedText ?? '');
+    const candidateBody = stripCopilotInternalComments(applyProposalDisclosure(candidate));
+    const streamedBody = stripCopilotInternalComments(
+      applyProposalDisclosure(context.streamedText ?? ''),
+    );
     const body = candidateBody.trim()
       ? candidateBody
       : streamedBody.trim()
