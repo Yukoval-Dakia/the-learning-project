@@ -1,8 +1,10 @@
 import { and, eq, isNull } from 'drizzle-orm';
+import { getConfigFlag } from '@/core/config/store';
 import type { Db } from '@/db/client';
 import { event, knowledge, learning_session, subject } from '@/db/schema';
 import { createSubjectThroughPort } from '@/kernel/subject-create';
 import { learnerStatedSubject } from './learner-subject-claim';
+import { QUESTION_ROOT_PLACEMENT_REFILE_ENABLED_KEY } from './root-placement-refile';
 
 interface PlacementInput {
   knowledge_ids: string[];
@@ -145,11 +147,16 @@ export async function resolveTeachingDraftPlacement(
       ...(placedSubject ? { subject: placedSubject } : {}),
     };
   }
+  // The relocation promise is true only while the mover actually writes: with
+  // the flag off the sweep is report-only and the question stays at the root.
+  const refileEnabled = getConfigFlag(QUESTION_ROOT_PLACEMENT_REFILE_ENABLED_KEY);
   return {
     ok: true,
     knowledge_ids: [root.id],
     learner_topic: input.learner_topic,
-    placement_note: `请求的主题还没有合适的知识节点，这道题先放在「${row.name}」下。`,
+    placement_note: refileEnabled
+      ? `请求的主题还没有合适的知识节点，这道题先放在「${row.name}」下；建好对应知识点后会自动归过去。`
+      : `请求的主题还没有合适的知识节点，这道题先放在「${row.name}」下。`,
     ...(placedSubject ? { subject: placedSubject } : {}),
   };
 }

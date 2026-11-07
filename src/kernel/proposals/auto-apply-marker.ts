@@ -33,3 +33,16 @@ export function proposalAutoApplyMarker(
 ): ProposalAutoApplyMarker | undefined {
   return kindStrength(kind) === 'A' ? { eligible: true, policy: AUTO_APPLY_POLICY } : undefined;
 }
+
+/**
+ * The exact predicate writeAiProposal applies before stamping the marker
+ * (producer opt-out aside): a proposal of this kind written right now gets
+ * the marker. Callers that need the fact without writing (tool output, reply
+ * finalization) read this instead of re-deriving flag + strength.
+ */
+export function proposalAutoApplies(
+  kind: AiProposalPayloadT['kind'],
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return proposalAutoApplyEnabled(env) && proposalAutoApplyMarker(kind) !== undefined;
+}
