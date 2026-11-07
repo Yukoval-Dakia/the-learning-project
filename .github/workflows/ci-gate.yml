@@ -876,7 +876,7 @@ jobs:
           selected=true
           if [ -n "$BASE_SHA" ]; then
             git diff --name-only "$BASE_SHA" HEAD > /tmp/workspace-changed
-            if ! grep -Eq '^(Dockerfile$|src/capabilities/agent-workspace/|src/ai/pi-tool-mount.ts$|src/server/ai/tools/|src/kernel/tools/|src/db/|scripts/workspace/|vitest.shared.ts$|package.json$|pnpm-lock.yaml$|.github/workflows/ci-gate.yml$)' /tmp/workspace-changed; then
+            if ! grep -Eq '^(Dockerfile$|\.node-version$|\.npmrc$|pnpm-workspace\.yaml$|tsconfig|scripts/local-heavy\.mjs$|src/kernel/|src/ai/|src/core/schema/derivation-policy\.ts$|src/capabilities/agent-workspace/|src/ai/pi-tool-mount.ts$|src/server/ai/tools/|src/kernel/tools/|src/db/|scripts/workspace/|vitest.shared.ts$|package.json$|pnpm-lock.yaml$|.github/workflows/ci-gate.yml$)' /tmp/workspace-changed; then
               selected=false
             fi
           fi

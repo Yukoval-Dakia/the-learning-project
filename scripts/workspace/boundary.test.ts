@@ -39,7 +39,7 @@ test('mounted workspace denies worker credentials and records remaining OS acces
       code: `
 import os,json,socket,struct,sys
 runtime={'python':sys.version,'kernel':os.uname().release}
-r={'uid':os.getuid(),'environment':dict(os.environ),'runtime':runtime}
+r={'uid':os.getuid(),'gid':os.getgid(),'groups':os.getgroups(),'environment':dict(os.environ),'runtime':runtime}
 r['privileges']=[s.strip() for s in open('/proc/self/status') if s.startswith(('CapEff:', 'CapPrm:', 'CapInh:', 'CapAmb:', 'NoNewPrivs:'))]
 for name,path in [('proc','/proc/1/environ'),('login','/var/lib/tlp/chatgpt-auth/canary'),('outside','/etc/os-release')]:
  try:
@@ -82,6 +82,8 @@ print(json.dumps(r))
   assert.equal(typeof output.output, 'string');
   const probe = JSON.parse(String(output.output));
   assert.equal(probe.uid, 29082);
+  assert.equal(probe.gid, 29082);
+  assert.deepEqual(probe.groups, []);
   assert.equal(probe.environment.DATABASE_URL, undefined);
   assert.equal(JSON.stringify(probe.environment).includes('WORKSPACE_SYNTHETIC_CANARY'), false);
   assert.equal(probe.proc.read, false);
@@ -96,7 +98,7 @@ print(json.dumps(r))
     { runtime: 'bash', code: 'id -u; printf bash_ok' },
     new AbortController().signal,
   );
-  console.log('bash', JSON.stringify(bash));
+  console.log('bash', JSON.stringify(bash).length);
   assert.notEqual(bash.isError, true);
   assert.match(JSON.stringify(bash.content), /29082/);
   const bounded = await tool.execute(
@@ -114,7 +116,7 @@ print(json.dumps(r))
       { runtime: 'bash', code: 'sleep 600 & wait' },
       controller.signal,
     );
-    console.log('cancelled', JSON.stringify(cancelled));
+    console.log('cancelled', JSON.stringify(cancelled).length);
     assert.match(JSON.stringify(cancelled.content), /cancelled/);
   } finally {
     clearTimeout(timer);
