@@ -16,6 +16,7 @@ import {
   ORCHESTRATOR_ANCHOR_MINUTE,
   ORCHESTRATOR_CATCHUP_WINDOW_SECONDS,
   ORCHESTRATOR_QUEUE,
+  ORCHESTRATOR_SEND_IN_FLIGHT_MS,
   ORCHESTRATOR_TZ,
   TICK_INTERVAL_SECONDS,
 } from './constants';
@@ -326,9 +327,14 @@ async function pollInflightNode(
   } else if (jobState === 'running' && node.status !== 'running') {
     await updateNodeStatus(deps.db, node.id, { status: 'running', now });
   } else if (jobState === null || jobState === 'enqueued') {
-    // No row: re-send the reserved id until the node times out. A shorter window would
-    // fail a job that never existed after a slow restart; retention far exceeds it.
-    if (jobState === null && node.boss_job_id && !isNodeTimedOut(node, now, timeoutMs)) {
+    // No row yet: re-send only once the claim is past the in-flight window, until timeout.
+    // A younger gap is the other replica's insert, not a lost send.
+    if (
+      jobState === null &&
+      node.boss_job_id &&
+      !isNodeTimedOut(node, now, timeoutMs) &&
+      reservedJobGap(node, now) === 'lost'
+    ) {
       console.warn(
         `[orchestrator] node '${node.job_name}' (${node.id}) has no pg-boss job for reserved id ${node.boss_job_id} — re-sending idempotently (send never landed)`,
       );
@@ -441,6 +447,17 @@ async function cancelRunInflightJobs(
 function isNodeTimedOut(node: NodeRow, now: Date, timeoutMs: number): boolean {
   if (!node.enqueued_at) return false;
   return now.getTime() - node.enqueued_at.getTime() > timeoutMs;
+}
+
+/** `in_flight`: the claim is visible and the sender's insert may still be committing. */
+type ReservedJobGap = 'in_flight' | 'lost';
+
+function reservedJobGap(node: NodeRow, now: Date): ReservedJobGap {
+  const claimedAt = node.enqueued_at?.getTime();
+  if (claimedAt === undefined) return 'lost';
+  const ageMs = now.getTime() - claimedAt;
+  if (ageMs >= 0 && ageMs < ORCHESTRATOR_SEND_IN_FLIGHT_MS) return 'in_flight';
+  return 'lost';
 }
 
 function summarize(nodes: Map<string, NodeRow>): AdvanceSummary {
