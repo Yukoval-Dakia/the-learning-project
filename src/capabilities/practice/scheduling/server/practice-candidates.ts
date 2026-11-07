@@ -43,24 +43,28 @@ import {
   question_revision,
 } from '@/db/schema';
 import { getCorrectionStatuses } from '@/kernel/events';
-import { readCauseJudgment } from '@/kernel/read-models/cause-judgment';
-import { getNonKcKnowledgeIds, withoutNonKcKnowledgeIds } from '@/kernel/read-models/knowledge-roles';
-import { projectKnowledgeState } from '@/kernel/read-models/knowledge-state';
-import {
-  readLearnerJudgments,
-  readQuestionCardReviewTiming,
-} from '@/kernel/read-models/learner-judgment';
 import {
   type ActiveGoal,
   listActiveGoalsWithResolvedScope,
 } from '@/kernel/read-models/active-goal-scope';
+import { readCauseJudgment } from '@/kernel/read-models/cause-judgment';
+import {
+  getNonKcKnowledgeIds,
+  withoutNonKcKnowledgeIds,
+} from '@/kernel/read-models/knowledge-roles';
+import { projectKnowledgeState } from '@/kernel/read-models/knowledge-state';
+import { learnableFrontierResolved } from '@/kernel/read-models/learnable-frontier';
+import {
+  readLearnerJudgments,
+  readQuestionCardReviewTiming,
+} from '@/kernel/read-models/learner-judgment';
 import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
 import { EVIDENCE_DEMAND_VERSION } from '@/kernel/supply-contracts';
 import { getPracticeList } from '../../session/public';
 import { type CandidateInput, collectCandidateSignals } from './candidate-signals';
 import { REVIEW_DUE_LIMIT_MAX, queryReviewDue } from './due-list';
 import { knowledgeLabels } from './knowledge-labels';
-import { FRONTIER_MAX_ITEMS, learnableFrontierResolved } from './learnable-frontier';
+import { FRONTIER_MAX_ITEMS } from './learnable-frontier';
 import { readQuestionPace } from './question-pace';
 import { VARIANT_INPUT_LIMIT } from './stream-inputs';
 
@@ -74,8 +78,7 @@ const EXAM_RELEVANCE_SOURCE =
   'practice/scheduling/server/candidate-signals:examRelevanceForKnowledgeIds';
 const RECURRENCE_SOURCE =
   'practice/scheduling/server/candidate-signals:batchAggregateMisconceptionRecurrence';
-const DIFFICULTY_SOURCE =
-  'kernel/read-models/question-difficulty:prepareCandidateDifficultyRead';
+const DIFFICULTY_SOURCE = 'kernel/read-models/question-difficulty:prepareCandidateDifficultyRead';
 
 /** Newest attempt rows scanned per question for the recent-attempt window. */
 const ATTEMPT_WINDOW = 6;
@@ -214,9 +217,12 @@ type ResolvedScope = {
   unresolved: string | null;
 };
 
-async function resolveScope(db: DbLike, query: PracticeCandidateQuery): Promise<ResolvedScope> {
+async function resolveScope(
+  db: DbLike,
+  scopeInput: PracticeCandidateQuery['scope'],
+): Promise<ResolvedScope> {
   const goals = await listActiveGoalsWithResolvedScope(db as Db);
-  if (query.scope.kind === 'all') {
+  if (scopeInput.kind === 'all') {
     return {
       kind: 'all',
       knowledgeIds: [],
@@ -226,8 +232,8 @@ async function resolveScope(db: DbLike, query: PracticeCandidateQuery): Promise<
       unresolved: null,
     };
   }
-  if (query.scope.kind === 'knowledge') {
-    const ids = [...new Set(query.scope.knowledgeIds)];
+  if (scopeInput.kind === 'knowledge') {
+    const ids = [...new Set(scopeInput.knowledgeIds)];
     const idSet = new Set(ids);
     return {
       kind: 'knowledge',
@@ -238,7 +244,7 @@ async function resolveScope(db: DbLike, query: PracticeCandidateQuery): Promise<
       unresolved: null,
     };
   }
-  const target = goals.find((entry) => entry.id === query.scope.goalId) ?? null;
+  const target = goals.find((entry) => entry.id === scopeInput.goalId) ?? null;
   if (target === null) {
     return {
       kind: 'goal',
@@ -246,7 +252,7 @@ async function resolveScope(db: DbLike, query: PracticeCandidateQuery): Promise<
       knowledgeIdSet: new Set(),
       goals: [],
       unscoped: false,
-      unresolved: `goal ${query.scope.goalId} is not an active goal; its scope cannot be resolved`,
+      unresolved: `goal ${scopeInput.goalId} is not an active goal; its scope cannot be resolved`,
     };
   }
   const ids = [...new Set(target.scope_knowledge_ids)];
@@ -298,9 +304,7 @@ async function readQuestionRows(
     })
     .from(question)
     .where(inArray(question.id, unique));
-  return new Map(
-    rows.map((row) => [row.id, { ...row, knowledge_ids: row.knowledge_ids ?? [] }]),
-  );
+  return new Map(rows.map((row) => [row.id, { ...row, knowledge_ids: row.knowledge_ids ?? [] }]));
 }
 
 async function readRevisions(
@@ -364,7 +368,10 @@ async function readAttemptWindows(
         ) as rn
       from ${event} e
       where e.subject_kind = 'question'
-        and e.subject_id in (${sql.join(ids.map((id) => sql`${id}`), sql`, `)})
+        and e.subject_id in (${sql.join(
+          ids.map((id) => sql`${id}`),
+          sql`, `,
+        )})
         and e.action in ('attempt', 'experimental:assessment_attempt')
     ) ranked
     where rn <= ${ATTEMPT_WINDOW}
@@ -454,7 +461,7 @@ async function readPracticeCandidatesInSnapshot(
   input: PracticeCandidateQuery,
 ): Promise<PracticeCandidateRead> {
   const asOf = new Date();
-  const scope = await resolveScope(db, input);
+  const scope = await resolveScope(db, input.scope);
   if (scope.unresolved !== null) {
     return terminalRead(asOf, scope, 'scope_unresolved', scope.unresolved);
   }
@@ -570,10 +577,9 @@ async function readPracticeCandidatesInSnapshot(
         .orderBy(question.id);
       perKid.push({ kid, ids: candidates.map((row) => row.id) });
     }
-    const admitted = await readAutomaticallyServableQuestionIds(
-      db,
-      [...new Set(perKid.flatMap((entry) => entry.ids))],
-    );
+    const admitted = await readAutomaticallyServableQuestionIds(db, [
+      ...new Set(perKid.flatMap((entry) => entry.ids)),
+    ]);
     let index = 0;
     for (const entry of perKid) {
       const picked = entry.ids.find((id) => admitted.has(id));
@@ -616,10 +622,9 @@ async function readPracticeCandidatesInSnapshot(
         .orderBy(question.id);
       perKc.push({ kid, ids: candidates.map((row) => row.id) });
     }
-    const admitted = await readAutomaticallyServableQuestionIds(
-      db,
-      [...new Set(perKc.flatMap((entry) => entry.ids))],
-    );
+    const admitted = await readAutomaticallyServableQuestionIds(db, [
+      ...new Set(perKc.flatMap((entry) => entry.ids)),
+    ]);
     let index = 0;
     for (const entry of perKc) {
       const picked = entry.ids.find((id) => admitted.has(id));
@@ -872,7 +877,14 @@ async function readPracticeCandidatesInSnapshot(
     .filter((row) => row.refKind === 'question')
     .map((row) => row.refId);
   const pageKnowledgeIds = [
-    ...new Set(pageQuestionIds.flatMap((id) => questionRows.get(id)?.knowledge_ids ?? [])),
+    ...new Set([
+      ...pageQuestionIds.flatMap((id) => questionRows.get(id)?.knowledge_ids ?? []),
+      ...pageRows
+        .filter((row) => row.refKind === 'paper')
+        .flatMap(
+          (row) => paperRows.find((item) => item.artifactId === row.refId)?.knowledgeIds ?? [],
+        ),
+    ]),
   ];
   const nonKc = new Set(await getNonKcKnowledgeIds(db, pageKnowledgeIds));
   const judgments = await readLearnerJudgments(db, {
@@ -972,10 +984,7 @@ async function readPracticeCandidatesInSnapshot(
           admission_reason: null,
           hold_reason: null,
         },
-        recent_attempts: emptyAttemptWindow(
-          asOf,
-          'paper_container_has_no_question_attempt_stream',
-        ),
+        recent_attempts: emptyAttemptWindow(asOf, 'paper_container_has_no_question_attempt_stream'),
         due: [],
         exam_relevance: unknownSignal<number>(
           EXAM_RELEVANCE_SOURCE,
@@ -1153,11 +1162,15 @@ async function readPracticeCandidatesInSnapshot(
   // ── 11. Gaps: deterministic empty-pool facts (no model needed to see the hole).
   const gaps: CandidateGap[] = [];
   if (scope.kind !== 'all') {
-    const covered = new Set(
-      candidates.flatMap((row) =>
-        row.knowledge_ids.filter((kc) => scope.knowledgeIdSet.has(kc)),
-      ),
-    );
+    // Coverage is measured over the whole union, not just this page.
+    const covered = new Set<string>();
+    for (const row of ordered) {
+      const knowledgeIds =
+        row.refKind === 'paper'
+          ? (paperRows.find((item) => item.artifactId === row.refId)?.knowledgeIds ?? [])
+          : (questionRows.get(row.refId)?.knowledge_ids ?? []);
+      for (const kc of knowledgeIds) covered.add(kc);
+    }
     const uncovered = scope.knowledgeIds.filter((kc) => !covered.has(kc));
     for (const kc of uncovered.slice(0, GAP_DETAIL_LIMIT)) {
       gaps.push({
@@ -1213,11 +1226,13 @@ async function readPracticeCandidatesInSnapshot(
       ordered.filter((row) => row.roles.has(role)).length,
     ]),
   ) as Record<PracticeCandidateRole, number>;
-  const byContainer = {
-    question: candidates.filter((row) => row.container === 'question').length,
-    intervention: candidates.filter((row) => row.container === 'intervention').length,
-    paper: candidates.filter((row) => row.container === 'paper').length,
-  };
+  const byContainer = { question: 0, intervention: 0, paper: 0 };
+  for (const row of ordered) {
+    if (row.refKind === 'paper') byContainer.paper += 1;
+    else if (questionRows.get(row.refId)?.source === INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE)
+      byContainer.intervention += 1;
+    else byContainer.question += 1;
+  }
 
   return {
     status: 'ok',
@@ -1271,7 +1286,12 @@ async function readGoalVersions(
   const rows = await db
     .select({ id: goal.id, version: goal.version, updated_at: goal.updated_at })
     .from(goal)
-    .where(inArray(goal.id, goals.map((entry) => entry.id)));
+    .where(
+      inArray(
+        goal.id,
+        goals.map((entry) => entry.id),
+      ),
+    );
   const byId = new Map(rows.map((row) => [row.id, row]));
   return goals.map((entry) => {
     const row = byId.get(entry.id);
@@ -1333,7 +1353,12 @@ async function terminalRead(
       by_container: { question: 0, intervention: 0, paper: 0 },
       source_caps: [],
     },
-    page: { cursor: null, next_cursor: null, page_size: PRACTICE_CANDIDATE_PAGE_SIZE, has_more: false },
+    page: {
+      cursor: null,
+      next_cursor: null,
+      page_size: PRACTICE_CANDIDATE_PAGE_SIZE,
+      has_more: false,
+    },
     candidates: [],
     gaps: [
       {

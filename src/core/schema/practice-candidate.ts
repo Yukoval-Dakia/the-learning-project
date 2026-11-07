@@ -63,8 +63,6 @@ export type CandidateTopCause = {
   last_at: string;
 };
 
-const UnknownReason = z.string().min(1);
-
 /**
  * Signal envelope shared with YUK-1969 (`core/schema/knowledge-signal`). `known:false` means
  * the read did not produce a value and `missingReason` says why; `known:true, value:null` is a
@@ -81,7 +79,7 @@ export function knowledgeSignalSchema<T extends z.ZodTypeAny>(value: T) {
 }
 
 const MasteryBandSchema = z.enum(A5_BANDS);
-const DecayBandSchema = z.enum(['fresh', 'mild', 'stale']);
+const DecayBandSchema = z.enum(['untrained', 'fresh', 'mild', 'stale']);
 
 export const CandidateKnowledgeSignalSchema = z.object({
   knowledge_id: z.string(),

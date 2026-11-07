@@ -141,8 +141,7 @@ export const schedulingManifestPart: Omit<CapabilityManifest, 'name' | 'descript
       },
       {
         name: 'read_practice_candidates',
-        load: () =>
-          import('./tools/practice-candidates').then((m) => m.readPracticeCandidatesTool),
+        load: () => import('./tools/practice-candidates').then((m) => m.readPracticeCandidatesTool),
       },
     ],
   },

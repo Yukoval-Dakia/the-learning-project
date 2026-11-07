@@ -8,8 +8,9 @@ import type { Db, Tx } from '@/db/client';
 import type { LearnerContextResult } from '@/kernel/read-models/learner-context';
 import { trimUnitsToBudget } from './budget';
 import { readContractSection } from './contract';
-import { type DeltaSection, readDeltaSection, shanghaiLabel } from './delta';
+import { readDeltaSection, shanghaiLabel } from './delta';
 import { readSteadySection } from './steady';
+import type { DeltaSection } from './types';
 
 type DbLike = Db | Tx;
 
@@ -32,7 +33,8 @@ function renderActivity(delta: DeltaSection): string {
     tail.push(`连续答错：${delta.failureStreak.knowledge_name}（${delta.failureStreak.count} 次）`);
   }
   if (delta.lastActivityAt) tail.push(`最近活动 ${shanghaiLabel(delta.lastActivityAt)}`);
-  const head = parts.length > 0 ? `${parts.join('，')}${windowLabel}` : `未见新学习动态${windowLabel}`;
+  const head =
+    parts.length > 0 ? `${parts.join('，')}${windowLabel}` : `未见新学习动态${windowLabel}`;
   return `${head}\n${tail.join('；')}`;
 }
 
@@ -58,7 +60,10 @@ export async function assembleCoachContext(
         markdown: steady.portraitMd ? `画像：${steady.portraitMd}` : null,
       },
     ],
-    { ...COACH_VIEW_BUDGET, maxEstimatedTokens: opts.budget ?? COACH_VIEW_BUDGET.maxEstimatedTokens },
+    {
+      ...COACH_VIEW_BUDGET,
+      maxEstimatedTokens: opts.budget ?? COACH_VIEW_BUDGET.maxEstimatedTokens,
+    },
   );
   return {
     view: 'coach',
