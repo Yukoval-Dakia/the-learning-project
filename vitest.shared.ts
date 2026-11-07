@@ -177,6 +177,7 @@ export const dbTestInclude = [
   'src/capabilities/practice/jobs/quiz_gen.test.ts',
   'src/capabilities/practice/question-bank/jobs/quiz_verify.test.ts',
   'src/capabilities/practice/settlement/jobs/rejudge.db.test.ts',
+  'src/capabilities/practice/question-bank/jobs/restricted-derivation-lanes.db.test.ts',
   'src/capabilities/practice/question-bank/jobs/source_verify.test.ts',
   'src/capabilities/practice/grading/server/assessment/material-recovery.db.test.ts',
   'src/capabilities/practice/grading/server/assessment/submission-persistence.db.test.ts',

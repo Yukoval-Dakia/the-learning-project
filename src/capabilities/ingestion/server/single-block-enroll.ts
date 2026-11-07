@@ -11,6 +11,7 @@ import type { Db, Tx } from '@/db/client';
 import { knowledge, learning_session, question, question_block } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { readQuestionServing } from '@/kernel/read-models/question-serving';
+import { resolveSessionDerivationPolicy } from '@/kernel/read-models/usage-policy';
 import { setMissingPrompt, updatePrompt } from './block-structured-edit';
 import { detectStudentWork } from './capture/block-answer-evidence';
 import { blockHasPrompt } from './capture/question-text';
@@ -216,7 +217,13 @@ export async function enrollIngestionBlock(
     );
   }
 
-  const knowledgeIds = await resolveExactKnowledge(db, current.knowledge_hint);
+  // Attribution is a derivation step over restricted content: answer_only/crisis
+  // documents enroll without knowledge_ids (same 'missing' outcome as auto-enroll),
+  // which also keeps the knowledge_ids>0 gates of the nightly model lanes unarmed.
+  const knowledgeIds =
+    (await resolveSessionDerivationPolicy(db, params.sessionId)) === 'allow'
+      ? await resolveExactKnowledge(db, current.knowledge_hint)
+      : [];
   const knowledgeState: 'attributed' | 'missing' =
     knowledgeIds.length > 0 ? 'attributed' : 'missing';
   const sourceDocumentId = session.source_document_id;
