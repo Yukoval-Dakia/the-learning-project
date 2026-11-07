@@ -16,7 +16,7 @@ import {
   createMem0OpaqueOperationContext,
   readMemoryFacts,
 } from '@/server/ai/mem0/read';
-import { readLegacyFacts } from './legacy-facts';
+import { readLegacyFacts, unwithdrawnLegacyFacts } from './legacy-facts';
 import { readMemoryBriefNote } from './memory-brief';
 import { Topic } from './topic-contract';
 
@@ -70,6 +70,9 @@ const BriefNoteSchema = z.object({
   long_term_freshness_score: z.number().nullable(),
   refreshed_at: z.string().nullable(),
   version: z.number().int(),
+  // The provenance binding for this scope's prose: which event ids the brief
+  // cites. Readers taking a scope over need these ids to keep the binding.
+  evidence_ids: z.array(z.string()),
 });
 
 const QueryContextOutputSchema = z.object({
@@ -179,6 +182,13 @@ export function buildQueryContextTool(
                   long_term_freshness_score: read.note.long_term_freshness_score,
                   refreshed_at: iso(read.note.refreshed_at),
                   version: read.note.version,
+                  evidence_ids: [
+                    ...new Set([
+                      ...read.note.recent_week_evidence_ids,
+                      ...read.note.recent_months_evidence_ids,
+                      ...read.note.long_term_evidence_ids,
+                    ]),
+                  ],
                 }
               : null,
             freshness: read.freshness,
@@ -238,7 +248,7 @@ export function buildQueryContextTool(
 
     let legacyFactsRead: QueryContextOutput['legacy_facts'];
     if (input.legacyFacts) {
-      const all = await readLegacyFacts(ctx.db);
+      const all = unwithdrawnLegacyFacts(await readLegacyFacts(ctx.db), withheld);
       const afterId = input.legacyFacts.afterId;
       const remaining = afterId ? all.filter((fact) => fact.id > afterId) : all;
       const limit = input.legacyFacts.limit ?? 20;

@@ -9,7 +9,12 @@ import { advisoryLockRegistry } from '@/kernel/locks/registry';
 import { readOvernightHandoffSentence } from '@/kernel/read-models/overnight-digest';
 import { DOMAIN_TOOL_MCP_SERVER_NAME } from '@/kernel/tools/allowlists';
 import { runAgentTask } from '@/server/ai/runner';
-import { type CuratorLegacyScope, readCuratorLegacyScopes } from './curator-evidence';
+import {
+  type CuratorLegacyScope,
+  curatorEvidenceCoverage,
+  curatorWatermarkAdvance,
+  readCuratorLegacyScopes,
+} from './curator-evidence';
 import { buildCuratorPayload } from './curator-payload';
 import { loadLearnerContext } from './index';
 import { refreshTopicMetadata } from './topics';
@@ -52,12 +57,16 @@ async function runCuratorTurn(db: Db, reason: 'nightly' | 'activity', runTimeout
     readOvernightHandoffSentence(db),
   ]);
   const legacyScopes: CuratorLegacyScope[] = await readCuratorLegacyScopes(db);
-  const { payload, blocks } = await buildCuratorPayload(db, {
+  const { payload, blocks, evidence } = await buildCuratorPayload(db, {
     anchorId: id,
     now,
     contextMarkdown: context.markdown,
     legacyScopes,
   });
+  // Coverage bookkeeping for the watermark: a window event counts as presented
+  // once the model actually saw it — printed in the index (excerpt) or returned
+  // by a tool call. Everything else stays below the watermark.
+  const presentedIds = new Set(evidence.shownIds);
   const toolNames = ['curate_context', 'query_context', 'query_events'];
   let noProgress = false;
   let writeFailed = false;
@@ -111,6 +120,18 @@ async function runCuratorTurn(db: Db, reason: 'nightly' | 'activity', runTimeout
             }
             seen.add(signature);
             if (
+              observation.name === 'query_events' &&
+              observation.output &&
+              typeof observation.output === 'object'
+            ) {
+              const list = (observation.output as { events?: { id?: unknown }[] }).events;
+              if (Array.isArray(list)) {
+                for (const row of list) {
+                  if (row && typeof row.id === 'string') presentedIds.add(row.id);
+                }
+              }
+            }
+            if (
               observation.name === 'curate_context' &&
               observation.output &&
               typeof observation.output === 'object' &&
@@ -144,15 +165,21 @@ async function runCuratorTurn(db: Db, reason: 'nightly' | 'activity', runTimeout
     }).catch(() => {});
     throw error;
   }
-  const watermarkAdvanced =
+  // With no covered prefix the watermark does not move; an incomplete window
+  // retries on the next run and stays visible through the coverage block on
+  // this scan record rather than silently dropping unread events.
+  const advanceTo = curatorWatermarkAdvance(evidence.rows, presentedIds, now);
+  const coverage = curatorEvidenceCoverage(evidence.rows, presentedIds);
+  const refreshed =
     !writeFailed &&
     !repeated &&
     (await refreshTopicMetadata(db, {
       taskRunId: result.task_run_id,
-      asOf: now.toISOString(),
+      asOf: advanceTo?.toISOString(),
       overnight,
       legacyGlobalVersion: legacyScopes.find((scope) => scope.scope === 'global')?.note?.version,
     }));
+  const watermarkAdvanced = advanceTo !== null && refreshed;
   await writeEvent(db, {
     id: newId(),
     action: 'experimental:dreaming_scan',
@@ -160,13 +187,20 @@ async function runCuratorTurn(db: Db, reason: 'nightly' | 'activity', runTimeout
     actor_ref: 'dreaming',
     subject_kind: 'query',
     subject_id: id,
-    outcome: watermarkAdvanced ? 'success' : 'degraded',
+    outcome:
+      watermarkAdvanced && coverage.complete
+        ? 'success'
+        : watermarkAdvanced
+          ? 'partial'
+          : 'degraded',
     payload: {
       task_run_id: result.task_run_id,
       cost_usd: result.cost_usd,
       no_progress: noProgress,
       write_failed: writeFailed,
+      coverage,
       watermark_advanced: watermarkAdvanced,
+      watermark_to: watermarkAdvanced ? advanceTo?.toISOString() : null,
       input_blocks: blocks,
       model_input_tokens: result.usage.inputTokens,
       model_output_tokens: result.usage.outputTokens,

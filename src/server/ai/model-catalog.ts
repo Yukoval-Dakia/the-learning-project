@@ -116,6 +116,10 @@ export interface ParsedCatalogModel {
   contextWindowTokens?: number;
   maxInputTokens?: number;
   maxOutputTokens?: number;
+  /** Loom's pre-send estimate margin for this route — a declared policy fact
+   *  (catalog override only), not an upstream capability. Present only where
+   *  estimator↔provider reconciliation evidence exists. */
+  inputSafetyRatio?: number;
   reasoningMode?: 'effort' | 'budget_tokens' | 'toggle';
   supportedEfforts?: readonly string[];
 }
@@ -153,6 +157,10 @@ function asBoolean(value: unknown): boolean | undefined {
 
 function asPositiveInteger(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : undefined;
+}
+
+function asPositiveNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined;
 }
 
 function sha256(text: string): string {
@@ -214,6 +222,7 @@ export function parseCatalogModelEntry(
     parsed.maxInputTokens = asPositiveInteger(limit.input);
     parsed.maxOutputTokens = asPositiveInteger(limit.output);
   }
+  parsed.inputSafetyRatio = asPositiveNumber(model.input_safety_ratio);
 
   const options = model.reasoning_options;
   if (Array.isArray(options) && options.length > 0) {
@@ -258,6 +267,7 @@ function capabilityDelta(previous: unknown, next: unknown): string[] {
     'contextWindowTokens',
     'maxInputTokens',
     'maxOutputTokens',
+    'inputSafetyRatio',
     'reasoningMode',
   ] as const;
   for (const key of keys) {

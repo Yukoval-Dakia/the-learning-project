@@ -423,13 +423,12 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
   let thinkingObserved = false;
   let completeArtifact = false;
   const outputStats = emptyStreamTextStats();
-  const settleUnobservedUsage = async () => {
-    // YUK-1557 — a cut stream with no usage frame still submitted a prompt:
-    // persist a bounded estimate, never a null cost. A reported frame wins.
+  const settleUnobservedUsage = async (cause: unknown) => {
     await args.lifecycle.recordEstimatedUsage({
       promptText: args.usagePrompt?.() ?? '',
       output: outputStats,
       priceOrigin: args.lifecycle.aborted ? 'timeout-estimate' : 'failure-estimate',
+      cause,
     });
   };
 
@@ -600,7 +599,7 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
       break;
     }
   } catch (error) {
-    await settleUnobservedUsage();
+    await settleUnobservedUsage(error);
     throw error;
   } finally {
     const endedAt = Date.now();
@@ -627,7 +626,7 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
 
   if (!args.lifecycle.sawTerminalResult) {
     if (args.lifecycle.aborted) {
-      await settleUnobservedUsage();
+      await settleUnobservedUsage(new Error(args.abortedWithoutTerminalMessage));
       throw new Error(args.abortedWithoutTerminalMessage);
     }
     throw new AgentRunError({
@@ -736,6 +735,7 @@ async function runTaskAttempt(args: {
       promptText: usagePrompt(),
       output: emptyStreamTextStats(),
       priceOrigin: 'failure-estimate',
+      cause: error,
     });
     throw error;
   }

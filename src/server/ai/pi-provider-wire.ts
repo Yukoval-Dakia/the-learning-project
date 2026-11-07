@@ -16,7 +16,11 @@ import type {
 import { getConfig } from '@/core/config/store';
 import { tracePiStream } from './laminar-tracing';
 import { createPiLlmMessageConverter, estimatePiTokens } from './pi-context-policy';
-import { type PiUsageCalibration, decidePiInputFit } from './pi-input-guard';
+import {
+  PiInputBudgetRejectedError,
+  type PiUsageCalibration,
+  decidePiInputFit,
+} from './pi-input-guard';
 import type { LoomPiModel } from './pi-models';
 import { withPiUsageEvidence } from './pi-usage-evidence';
 import { createProviderErrorCaptureFetch } from './provider-error-evidence';
@@ -266,10 +270,11 @@ export class PiProviderWire {
           estimatedTokens: inputTokens,
           contextWindow: model.contextWindow,
           maxInputTokens: model.maxInputTokens,
+          inputSafetyRatio: model.inputSafetyRatio,
           lastUsage: this.lastUsageCalibration,
         });
         if (!fit.fits) {
-          throw new Error(
+          throw new PiInputBudgetRejectedError(
             `Model '${model.provider}/${model.id}' input exceeds its catalog token limit ` +
               `(${fit.reason}: estimated ${fit.estimatedTokens} × ${fit.safetyRatio.toFixed(2)} = ` +
               `${fit.projectedTokens} > budget ${fit.budget})`,

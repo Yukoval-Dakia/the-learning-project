@@ -8,6 +8,7 @@ import { z } from 'zod';
 import { event } from '@/db/schema';
 import { getCorrectionStatuses } from '@/kernel/events';
 import { eventAllowsDerivationSql } from '@/kernel/events/derivation-policy';
+import { curatorEvidenceScope } from '@/kernel/read-models/curator-evidence-scope';
 // Courtesy default (20) lives in budgets.ts.
 import { QUERY_EVENTS_PAYLOAD_CAPS, TOOL_COURTESY_DEFAULTS } from '@/kernel/tools/budgets';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
@@ -264,6 +265,14 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
         : undefined;
 
   const conditions = [eventAllowsDerivationSql()];
+  // A Dreaming run may only read inside its evidence window — the same rule the
+  // canonical curator reader owns, shared through the host port so this tool
+  // never drifts from it. The window's anchor is the run's causal event; other
+  // callers keep the unrestricted read surface.
+  const curatorScoped = ctx.callerActor.kind === 'agent' && ctx.callerActor.ref === 'dreaming';
+  if (curatorScoped) {
+    conditions.push(await curatorEvidenceScope(ctx.db, ctx.causedByEventId));
+  }
   if (filter.eventId) conditions.push(eq(event.id, filter.eventId));
   if (filter.actorKind) conditions.push(eq(event.actor_kind, filter.actorKind));
   if (filter.actorRef) conditions.push(eq(event.actor_ref, filter.actorRef));
@@ -440,6 +449,7 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
       siblingOfEventId: filter.siblingOfEventId ?? null,
       sinceAt: filter.sinceAt ?? null,
       sinceDays: filter.sinceDays ?? null,
+      curator_evidence_scope: curatorScoped,
       limit,
     },
     subject_scope: {

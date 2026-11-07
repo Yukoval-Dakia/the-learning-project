@@ -1,5 +1,5 @@
-import { and, asc, eq, gt, inArray, lte, notInArray } from 'drizzle-orm';
-import type { Db } from '@/db/client';
+import { type SQL, and, asc, eq, gt, inArray, lte, notInArray } from 'drizzle-orm';
+import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { eventAllowsDerivationSql } from '@/kernel/events/derivation-policy';
 import { learnerEvidenceSql } from '../server/memory/learner-evidence';
@@ -9,7 +9,12 @@ import { readTopics, withdrawnTopicEvidence } from './topics';
 // The run anchor freezes the upper bound. Later user turns never become implicit
 // evidence for a Curator run already in flight. Synchronous edits are already
 // reflected in the projection; replaying their requests would undo a later undo.
-export async function readCuratorEvidence(db: Db, anchorId?: string) {
+//
+// The one owner of the evidence-window rule: derivation policy ∩ learner
+// evidence ∩ user actor ∩ activity/goal actions ∩ withdrawal exclusion ∩
+// (as_of, anchor] window. Any read that must stay inside that window composes
+// this scope instead of restating the clauses.
+export async function curatorEvidenceScope(db: Db | Tx, anchorId?: string): Promise<SQL> {
   if (!anchorId) throw new Error('Curator run anchor missing');
   const [anchor] = await db
     .select({ at: event.created_at })
@@ -17,6 +22,26 @@ export async function readCuratorEvidence(db: Db, anchorId?: string) {
     .where(eq(event.id, anchorId));
   if (!anchor) throw new Error('Curator run anchor unknown');
   const { digest } = await readTopics(db);
+  return and(
+    eventAllowsDerivationSql(),
+    digest.withdrawals.some((w) => w.evidence_ids.length)
+      ? notInArray(event.id, [...withdrawnTopicEvidence(digest)])
+      : undefined,
+    learnerEvidenceSql(),
+    eq(event.actor_kind, 'user'),
+    inArray(event.action, [
+      ...CURATOR_ACTIVITY_ACTIONS,
+      'rate',
+      'experimental:goal_status_update',
+      'experimental:goal_scope_update',
+    ]),
+    lte(event.created_at, anchor.at),
+    gt(event.created_at, new Date(digest.as_of ?? anchor.at.getTime() - 30 * 86400000)),
+  ) as SQL;
+}
+
+export async function readCuratorEvidence(db: Db, anchorId?: string) {
+  const scope = await curatorEvidenceScope(db, anchorId);
   return db
     .select({
       id: event.id,
@@ -28,25 +53,41 @@ export async function readCuratorEvidence(db: Db, anchorId?: string) {
       at: event.created_at,
     })
     .from(event)
-    .where(
-      and(
-        eventAllowsDerivationSql(),
-        digest.withdrawals.some((w) => w.evidence_ids.length)
-          ? notInArray(event.id, [...withdrawnTopicEvidence(digest)])
-          : undefined,
-        learnerEvidenceSql(),
-        eq(event.actor_kind, 'user'),
-        inArray(event.action, [
-          ...CURATOR_ACTIVITY_ACTIONS,
-          'rate',
-          'experimental:goal_status_update',
-          'experimental:goal_scope_update',
-        ]),
-        lte(event.created_at, anchor.at),
-        gt(event.created_at, new Date(digest.as_of ?? anchor.at.getTime() - 30 * 86400000)),
-      ),
-    )
+    .where(scope)
     .orderBy(asc(event.created_at), asc(event.id));
+}
+
+/**
+ * How far a run's watermark may move given what the model was shown. `rows` is
+ * the evidence window ascending; `presentedIds` holds every row the model saw
+ * (index excerpt or tool result). The watermark may only pass events the model
+ * saw, so the advance is the instant just before the oldest unseen row — the
+ * covered prefix retires, the unread row and everything after stay in the next
+ * window. Null when nothing is retired; `now` when coverage is complete.
+ */
+export function curatorWatermarkAdvance(
+  rows: { id: string; at: Date }[],
+  presentedIds: ReadonlySet<string>,
+  now: Date,
+): Date | null {
+  const firstUnread = rows.find((row) => !presentedIds.has(row.id));
+  if (!firstUnread) return now;
+  const coveredPrefixEnd = new Date(firstUnread.at.getTime() - 1);
+  return coveredPrefixEnd >= rows[0].at ? coveredPrefixEnd : null;
+}
+
+/** Coverage receipt for a run's scan event: how much of the window the model saw. */
+export function curatorEvidenceCoverage(
+  rows: { id: string; at: Date }[],
+  presentedIds: ReadonlySet<string>,
+) {
+  const firstUnread = rows.find((row) => !presentedIds.has(row.id));
+  return {
+    window_events: rows.length,
+    presented_events: rows.filter((row) => presentedIds.has(row.id)).length,
+    complete: firstUnread === undefined,
+    first_unread_at: firstUnread?.at.toISOString() ?? null,
+  };
 }
 
 export async function readCuratorLegacyScopes(db: Db) {

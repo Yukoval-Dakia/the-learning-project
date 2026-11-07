@@ -269,6 +269,11 @@ export const OPENDESIGN_CATALOG_MODELS = {
     id: 'deepseek-v4.1-flash',
     name: 'DeepSeek V4.1 Flash',
     limit: { context: 1_048_000, input: 328_000, output: 128_000 },
+    // YUK-1776: pre-send margin for this route only. yuk1984 evidence bounds
+    // estimator bias at ≈1.0–1.14 for Dreaming-class payloads; 1.15 sits just
+    // outside the band. Other models keep ratio 1 (no added blocking) until
+    // their own reconciliation exists.
+    input_safety_ratio: 1.15,
     modalities: { input: ['text', 'image'], output: ['text'] },
     tool_call: true,
     structured_output: true,

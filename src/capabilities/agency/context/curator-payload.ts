@@ -8,7 +8,7 @@
 // everything" without the model saying so.
 import type { Db } from '@/db/client';
 import { type CuratorLegacyScope, readCuratorEvidence } from './curator-evidence';
-import { readLegacyFacts } from './legacy-facts';
+import { readLegacyFacts, unwithdrawnLegacyFacts } from './legacy-facts';
 import { readTopics, topicBoard, withdrawnTopicEvidence } from './topics';
 
 /** Newest event index lines included in the starting payload. */
@@ -54,16 +54,28 @@ export async function buildCuratorPayload(
     contextMarkdown: string;
     legacyScopes: CuratorLegacyScope[];
   },
-): Promise<{ payload: Record<string, unknown>; blocks: CuratorPayloadBlocks }> {
+): Promise<{
+  payload: Record<string, unknown>;
+  blocks: CuratorPayloadBlocks;
+  /** Coverage bookkeeping for the run's watermark decision. */
+  evidence: {
+    /** Every window row, ascending — the coverage universe, not just the index. */
+    rows: Awaited<ReturnType<typeof readCuratorEvidence>>;
+    /** Rows actually printed in the index; the model saw their excerpts. */
+    shownIds: Set<string>;
+    /** The watermark this window was cut from (null before the first digest). */
+    asOf: string | null;
+  };
+}> {
   const [contextDigest, evidenceRows, board, legacyFacts] = await Promise.all([
     readTopics(db),
     readCuratorEvidence(db, input.anchorId),
     topicBoard(db, input.now),
     readLegacyFacts(db),
   ]);
-  const withheld = withdrawnTopicEvidence(contextDigest.digest);
-  const visibleLegacyFacts = legacyFacts.filter(
-    (fact) => !fact.evidence_ids.some((id) => withheld.has(id)),
+  const visibleLegacyFacts = unwithdrawnLegacyFacts(
+    legacyFacts,
+    withdrawnTopicEvidence(contextDigest.digest),
   );
 
   const topics = {
@@ -167,5 +179,13 @@ export async function buildCuratorPayload(
     evidence_events_shown: shownRows.length,
     legacy_facts_total: visibleLegacyFacts.length,
   };
-  return { payload, blocks };
+  return {
+    payload,
+    blocks,
+    evidence: {
+      rows: evidenceRows,
+      shownIds: new Set(shownRows.map((row) => row.id)),
+      asOf: contextDigest.digest.as_of || null,
+    },
+  };
 }

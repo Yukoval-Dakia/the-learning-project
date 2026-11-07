@@ -46,6 +46,7 @@ import {
   resolveModelProfile,
 } from './model-profiles';
 import { piCatalogCostUsd } from './pi-catalog-cost';
+import { isPiInputBudgetRejected } from './pi-input-guard';
 import { type TokenCounts, isJevModel } from './pricing';
 import { acquireProviderSession } from './provider-session-admission';
 import {
@@ -342,7 +343,15 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
     promptText: string;
     output: Parameters<typeof estimateAbortedUsage>[1];
     priceOrigin: 'timeout-estimate' | 'failure-estimate';
+    /** The thrown error when billing for a failed attempt. A pre-send input
+     *  budget rejection consumed nothing — it marks the provably-unbilled row
+     *  instead of fabricating an estimate. */
+    cause?: unknown;
   }): Promise<void> {
+    if (input.cause !== undefined && isPiInputBudgetRejected(input.cause)) {
+      this.noteUnbilledProviderRejection();
+      return;
+    }
     const terminalHasUsableUsage =
       this.terminal !== undefined &&
       (this.terminal.tokenUsageObserved === true ||
