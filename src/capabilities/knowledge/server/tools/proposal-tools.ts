@@ -289,7 +289,13 @@ const KnowledgeMutationChangeSchema = z.discriminatedUnion('mutation', [
     node_id: z.string().min(1),
     new_parent_id: z.string().min(1),
     // CAS token: the node's current `version`.
-    expected_version: z.number().int().min(0).describe("CAS token: the node's current `version`."),
+    expected_version: z
+      .number()
+      .int()
+      .min(0)
+      .describe(
+        "CAS token: copy the node's current `version` from query_knowledge / the tree input.",
+      ),
   }),
   z.object({
     mutation: z.literal('merge'),
@@ -298,7 +304,9 @@ const KnowledgeMutationChangeSchema = z.discriminatedUnion('mutation', [
     // CAS tokens for every absorbed node; accept rejects a drifted base version.
     expected_versions: z
       .record(z.string(), z.number().int().min(0))
-      .describe('CAS token per absorbed node id: its current `version`.'),
+      .describe(
+        "CAS token per absorbed node id: copy each node's current `version` from query_knowledge / the tree input.",
+      ),
   }),
   z.object({
     mutation: z.literal('split'),
@@ -306,12 +314,24 @@ const KnowledgeMutationChangeSchema = z.discriminatedUnion('mutation', [
     into: z
       .array(z.object({ name: z.string().min(1).max(120), parent_id: z.string().min(1) }))
       .min(1),
-    expected_version: z.number().int().min(0).describe("CAS token: the node's current `version`."),
+    expected_version: z
+      .number()
+      .int()
+      .min(0)
+      .describe(
+        "CAS token: copy the node's current `version` from query_knowledge / the tree input.",
+      ),
   }),
   z.object({
     mutation: z.literal('archive'),
     node_id: z.string().min(1),
-    expected_version: z.number().int().min(0).describe("CAS token: the node's current `version`."),
+    expected_version: z
+      .number()
+      .int()
+      .min(0)
+      .describe(
+        "CAS token: copy the node's current `version` from query_knowledge / the tree input.",
+      ),
   }),
 ]);
 

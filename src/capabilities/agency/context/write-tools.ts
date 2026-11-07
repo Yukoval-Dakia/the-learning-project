@@ -29,7 +29,7 @@ const RememberInput = TopicPatch.omit({ replaces: true }).extend({
   name: TopicPatch.shape.name.describe('Learner-visible topic name in plain language.'),
   description: TopicPatch.shape.description.describe('One-line learner-visible topic summary.'),
   body: TopicPatch.shape.body.describe(
-    'One learner-visible fact in plain language: state the fact itself — no source labels, internal names, or "not yet told" filler; keep concrete experiences, counts and order.',
+    'One learner-visible fact in plain language: state the fact itself — never source labels, priority or execution notes, who/when said it, or whether it corrects an older fact; translate internal component names into learner terms; when unsure keep the uncertainty instead of inventing details; keep concrete experiences, successes, failures, counts and order — never drop a whole passage just to erase system terms.',
   ),
   memory_kind: TopicPatch.shape.memory_kind.describe('Fact kind.'),
   knowledge_ids: TopicPatch.shape.knowledge_ids.describe('Related knowledge node ids.'),

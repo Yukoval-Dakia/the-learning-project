@@ -438,7 +438,9 @@ const DESCRIPTION = [
   'evidence_refs are provenance, not caused_by edges; question_availability distinguishes',
   'missing data from protected diagnostic redaction. Read lookup.status, correction_state,',
   'payload_projection_status, coverage and claim_support literals before claiming absence,',
-  'causality or completeness.',
+  'causality or completeness. intervention_activated diagnostics carry canonical question',
+  'ids — to prove a downstream learner response/review, query exact action=review +',
+  'subjectKind=question + that subjectId (query_events).',
 ].join('\n');
 
 function causedByEventId(value: EnvelopedEvent): string | null {
