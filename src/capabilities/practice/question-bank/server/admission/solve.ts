@@ -1,6 +1,7 @@
 // Two isolated blind solves produce candidate keys; disagreements go to adjudication.
 import { eq } from 'drizzle-orm';
 import type { TaskTextResult } from '@/ai/task-result';
+import { getConfig } from '@/core/config/store';
 import { canonicalHash } from '@/core/migration/canonical';
 import { rawArgumentsEvidence } from '@/core/raw-arguments-evidence';
 import {
@@ -1006,6 +1007,13 @@ export function settledKeysFromDefinition(
   return keys;
 }
 
+/**
+ * system_config key for the prior pass's caller-side execution cap; blind
+ * solves keep task.<kind>.budget. Values ≲60s leave no structured-submit
+ * correction window, so multi-part priors can never complete.
+ */
+export const SOLUTION_PRIOR_TIMEOUT_CONFIG_KEY = 'practice.question_admission_prior_timeout_ms';
+
 export interface SolutionPriorPassResult {
   record: SolutionPriorRecordT | null;
   receipt: AdmissionSolveReceipt | null;
@@ -1054,9 +1062,15 @@ export async function runSolutionPriorPass(
       knowledge_candidates: candidates,
     });
     const wire = admissionWireInput(payload, deps.images);
+    const configured = getConfig(SOLUTION_PRIOR_TIMEOUT_CONFIG_KEY);
     const result = await deps.runTask(QUESTION_ADMISSION_TASK_KIND, wire, {
       judgeRetryPolicy: 'none',
-      budgetOverride: { maxIterations: 1 },
+      budgetOverride: {
+        maxIterations: 1,
+        ...(typeof configured === 'number' && Number.isFinite(configured)
+          ? { timeoutMs: configured }
+          : {}),
+      },
       ...(deps.subjectProfile != null ? { subjectProfile: deps.subjectProfile } : {}),
     });
     taskRunId = result.task_run_id ?? null;
