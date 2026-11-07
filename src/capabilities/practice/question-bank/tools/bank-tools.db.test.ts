@@ -875,7 +875,6 @@ describe('bank tools boundary invariants (search_bank / read_bank / check_bank)'
     const output = await checkBankTool.execute(
       ctx,
       checkBankTool.inputSchema.parse({
-        allow_model: true,
         checks: [
           { id: 'current', kind: 'ref_state', refs: [ref] },
           {
