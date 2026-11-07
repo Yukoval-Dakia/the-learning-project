@@ -173,9 +173,14 @@ export interface ScoringRuleIssue {
     | 'rule_outcome_not_applicable'
     | 'rule_item_not_in_key'
     | 'rule_exceeds_unit_points'
-    | 'rule_key_response_not_full_marks';
+    | 'rule_key_response_not_full_marks'
+    | 'rule_wrong_response_full_marks';
   detail: string;
 }
+
+export type ScoringRuleContext =
+  | { unitId: string; points: number; facts: 'set'; keyIds: readonly string[] }
+  | { unitId: string; points: number; facts: 'single' };
 
 function collectMetrics(condition: RuleConditionT, into: Set<RuleMetricT>): void {
   if ('all' in condition && Array.isArray(condition.all)) {
@@ -208,13 +213,7 @@ function outcomeCeiling(outcome: RuleOutcomeT, keyIds: readonly string[]): numbe
  */
 export function validateScoringRule(
   rule: ScoringRuleT,
-  context:
-    | { unitId: string; points: number; facts: 'set'; keyIds: readonly string[] }
-    | {
-        unitId: string;
-        points: number;
-        facts: 'single';
-      },
+  context: ScoringRuleContext,
 ): ScoringRuleIssue[] {
   const issues: ScoringRuleIssue[] = [];
   const outcomes = [...rule.cases.map((ruleCase) => ruleCase.award), rule.otherwise];
@@ -280,4 +279,48 @@ export function validateScoringRule(
     });
   }
   return issues;
+}
+
+/**
+ * 仅提交/准入入口的加查（YUK-1468）：完全错误的作答 —— set 为只选非 key
+ * 项（hit=0），single 为 correct=0 —— 在规则下不得拿满分。拿满分 = 规则
+ * 写错（典型形态：cases:[] + otherwise:{points} 把兜底写成满分，错答也全给）。
+ * unknown / 0 / 部分分都是合法错答结果，不误伤。
+ *
+ * 本检查不进 validateScoringRule 本体：判分（evaluation.ts）与迁移保真
+ * （snapshot-fidelity.ts）共用同一校验器，存量含此形状的已发布规则必须照
+ * 冻结契约原样判分；入口路径经 scoring.ts 的 wrongResponseFullMarksIssues 调用。
+ */
+export function validateScoringRuleWrongResponse(
+  rule: ScoringRuleT,
+  context: ScoringRuleContext,
+): ScoringRuleIssue[] {
+  const wrongFacts: RuleFacts =
+    context.facts === 'set'
+      ? {
+          kind: 'set',
+          hit: 0,
+          wrong: 1,
+          miss: context.keyIds.length,
+          picked: 1,
+          expected: context.keyIds.length,
+          hit_ids: [],
+        }
+      : { kind: 'single', correct: 0 };
+  const wrongResult = evaluateScoringRule(rule, wrongFacts);
+  if (
+    context.points > 0 &&
+    wrongResult.kind === 'points' &&
+    context.points - wrongResult.points <= 1e-9 * Math.max(1, context.points)
+  ) {
+    return [
+      {
+        code: 'rule_wrong_response_full_marks',
+        detail: `unit '${context.unitId}' rule gives a completely wrong answer (${
+          context.facts === 'set' ? 'no key item picked' : 'incorrect blank'
+        }) ${wrongResult.points} >= full marks ${context.points} — a wrong response must score below full marks; put printed partial credit in cases and let otherwise award 0 or {unknown}`,
+      },
+    ];
+  }
+  return [];
 }

@@ -7,10 +7,17 @@ import type {
   ExecutionPlanT,
   PublishedQuestionRevisionT,
   ScoringBasisT,
+  ScoringRuleT,
+  ScoringUnitCriterionT,
   SubmissionRecordT,
 } from './index';
-import { ResponseSpec } from './response';
-import { BlankNormalization, ScoringUnit } from './scoring';
+import { type ResponseSlotT, ResponseSpec } from './response';
+import {
+  BlankNormalization,
+  ScoringUnit,
+  validateScoringBasis,
+  wrongResponseFullMarksIssues,
+} from './scoring';
 
 // ---------- fixtures ----------
 
@@ -274,5 +281,161 @@ it('preserves frozen grading semantics and rejects compatibility collisions in n
       scored?.status === 'scored' ? scored.points_awarded : scored?.pending.reason,
       JSON.stringify({ kind, version, accepted, given, scored }),
     ).toBe(expected);
+  }
+});
+
+// @invariant grading: entry barriers reject rules awarding full marks to a completely wrong response, while judging of already-published degenerate rules scores exactly as frozen
+// @fails-if a wrong-answer-full-marks rule slips through the entry check, a legitimate zero/partial/unknown wrong-answer rule is flagged, or evaluateSubmissionCore changes its verdict on a published degenerate rule
+it('entry check rejects wrong-answer-full-marks rules; the shared barrier and judging of frozen rules are unchanged', async () => {
+  const selectSlot = ResponseSpec.parse({
+    slots: [
+      {
+        slot_id: 'p1::r',
+        part_id: 'p1',
+        kind: 'select',
+        items: [
+          { item_id: 'a', label_md: 'A' },
+          { item_id: 'b', label_md: 'B' },
+          { item_id: 'c', label_md: 'C' },
+        ],
+      },
+    ],
+  }).slots[0];
+  const blankSlot = ResponseSpec.parse({
+    slots: [{ slot_id: 'p1::r', part_id: 'p1', kind: 'blank' }],
+  }).slots[0];
+  const blankCriterion: ScoringUnitCriterionT = {
+    kind: 'blank_key',
+    key: {
+      kind: 'text',
+      accepted: ['yes'],
+      normalization: BlankNormalization.parse({ version: 'blank-norm@1' }),
+    },
+  };
+  const selectCriterion = (key: string[]): ScoringUnitCriterionT => ({
+    kind: 'select_key',
+    accepted_item_ids: key,
+  });
+  const rows: {
+    name: string;
+    slot: ResponseSlotT | undefined;
+    criterion: ScoringUnitCriterionT;
+    rule: ScoringRuleT;
+    points: number;
+    comparator: 'set_compare' | 'blank_exact';
+    entry: SubmissionRecordT['response_set']['entries'][number];
+    entryIssues: string[];
+    judged: number | null;
+  }[] = [
+    {
+      name: 'degenerate blank rule (cases:[], otherwise=full) is entry-rejected yet judged as frozen',
+      slot: blankSlot,
+      criterion: blankCriterion,
+      rule: { version: 1, cases: [], otherwise: { points: 5 } },
+      points: 5,
+      comparator: 'blank_exact',
+      entry: { slot_id: 'p1::r', kind: 'blank', state: 'answered', text: 'nope' },
+      entryIssues: ['rule_wrong_response_full_marks'],
+      judged: 5,
+    },
+    {
+      name: 'degenerate select rule likewise',
+      slot: selectSlot,
+      criterion: selectCriterion(['a']),
+      rule: { version: 1, cases: [], otherwise: { points: 5 } },
+      points: 5,
+      comparator: 'set_compare',
+      entry: { slot_id: 'p1::r', kind: 'select', state: 'answered', item_ids: ['b'] },
+      entryIssues: ['rule_wrong_response_full_marks'],
+      judged: 5,
+    },
+    {
+      name: 'all-or-nothing blank rule passes entry and zeroes the wrong answer',
+      slot: blankSlot,
+      criterion: blankCriterion,
+      rule: {
+        version: 1,
+        cases: [{ when: { correct: { eq: 1 } }, award: { points: 5 } }],
+        otherwise: { points: 0 },
+      },
+      points: 5,
+      comparator: 'blank_exact',
+      entry: { slot_id: 'p1::r', kind: 'blank', state: 'answered', text: 'nope' },
+      entryIssues: [],
+      judged: 0,
+    },
+    {
+      name: 'unknown-otherwise blank rule is not flagged and scores unknown',
+      slot: blankSlot,
+      criterion: blankCriterion,
+      rule: {
+        version: 1,
+        cases: [{ when: { correct: { eq: 1 } }, award: { points: 5 } }],
+        otherwise: { unknown: 'points_not_printed' },
+      },
+      points: 5,
+      comparator: 'blank_exact',
+      entry: { slot_id: 'p1::r', kind: 'blank', state: 'answered', text: 'nope' },
+      entryIssues: [],
+      judged: null,
+    },
+    {
+      name: 'partial-credit select rule passes entry and zeroes the all-wrong pick',
+      slot: selectSlot,
+      criterion: selectCriterion(['a', 'b']),
+      rule: {
+        version: 1,
+        cases: [
+          { when: { hit: { eq: 2 }, wrong: { eq: 0 } }, award: { points: 6 } },
+          { when: { hit: { eq: 1 }, wrong: { eq: 0 } }, award: { points: 3 } },
+        ],
+        otherwise: { points: 0 },
+      },
+      points: 6,
+      comparator: 'set_compare',
+      entry: { slot_id: 'p1::r', kind: 'select', state: 'answered', item_ids: ['c'] },
+      entryIssues: [],
+      judged: 0,
+    },
+  ];
+  for (const row of rows) {
+    if (row.slot == null) throw new Error('slot fixture missing');
+    const unit = ScoringUnit.parse({
+      scoring_unit_id: 'p1::u',
+      slot_refs: [row.slot.slot_id],
+      material_refs: [],
+      evidence_slot_refs: [],
+      requires_group_evidence: false,
+      criterion: row.criterion,
+      points: row.points,
+      rule: row.rule,
+    });
+    const revision = revisionFor({
+      slots: [row.slot],
+      units: [unit],
+      assignments: [
+        {
+          scoring_unit_ids: ['p1::u'],
+          executor: { kind: 'deterministic', comparator: row.comparator },
+        },
+      ],
+    });
+    // 共享 barrier 不收窄：存量冻结规则（含错答满分形状）照常通过 validateScoringBasis。
+    expect(
+      validateScoringBasis(revision.scoring_basis, revision.response_spec, revision.structure),
+      row.name,
+    ).toEqual([]);
+    // 入口加查（submit_question / edit_question / check_bank / 准入）才报新 issue。
+    expect(
+      wrongResponseFullMarksIssues(revision.scoring_basis).map((issue) => issue.code),
+      row.name,
+    ).toEqual(row.entryIssues);
+    // 判分确定性不变：已发布的退化规则照样按冻结契约判出原分。
+    const out = await evaluateSubmissionCore(inputFor(submissionFor([row.entry]), revision));
+    const scored = out.record.unit_results[0];
+    expect(
+      scored?.status === 'scored' ? scored.points_awarded : scored?.pending.reason,
+      row.name,
+    ).toBe(row.judged);
   }
 });

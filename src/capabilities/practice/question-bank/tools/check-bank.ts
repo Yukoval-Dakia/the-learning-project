@@ -13,6 +13,7 @@ import {
   validateResponseSpec,
   validateScoringBasis,
   validateStructure,
+  wrongResponseFullMarksIssues,
 } from '@/core/schema/assessment/index';
 import type { Db, Tx } from '@/db/client';
 import { source_asset } from '@/db/schema';
@@ -438,6 +439,7 @@ async function runCheckBankInSnapshot(
           ...validateStructure(structure),
           ...validateResponseSpec(spec, structure),
           ...validateScoringBasis(basis, spec, structure),
+          ...wrongResponseFullMarksIssues(basis),
         ];
         if (issues.length > 0) allValid = false;
         evidence.push({

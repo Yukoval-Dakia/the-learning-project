@@ -4,7 +4,9 @@
 // grader, no heuristic re-implementation. Probe classes (design step 4):
 // - reference : the agreed key itself must score full marks
 // - equivalent : claimed-equivalent forms must score identically
-// - typical_wrong : common wrong answers must NOT score full marks
+// - typical_wrong : common wrong answers must NOT score full marks (explicit
+//   expectation — deriving it from the rule under test would legalize rules
+//   that award full marks to wrong answers)
 // - over_select : (select) key ∪ one wrong item must not score full marks
 // - blank_state : explicit blank obeys basis.blank_scores_zero policy
 // - unknown_state : unreadable must land pending, never a fake zero
@@ -32,6 +34,7 @@ import type { AdmissionKey } from './solve';
 
 export type ProbeExpected =
   | { kind: 'scored'; points: number }
+  | { kind: 'scored_below'; max: number }
   | { kind: 'scored_unknown_points' }
   | { kind: 'pending'; reason: string };
 
@@ -108,6 +111,13 @@ function ruleExpectation(facts: RuleFacts, rule: ScoringUnitT['rule']): ProbeExp
   return result.kind === 'points'
     ? { kind: 'scored', points: result.points }
     : { kind: 'scored_unknown_points' };
+}
+
+// typical_wrong 的期望是「低于满分」，不是规则自身的结果（规则自洽会把错答
+// 满分合法化）。规则对错答声明 unknown 同样未给满分 —— 不误伤 unknown 分支。
+function wrongAnswerExpectation(unit: ScoringUnitT, facts: RuleFacts): ProbeExpected {
+  if (unit.rule == null || unit.points == null) return ruleExpectation(facts, unit.rule);
+  return { kind: 'scored_below', max: unit.points };
 }
 
 function setFacts(picked: readonly string[], key: readonly string[]): RuleFacts {
@@ -187,7 +197,7 @@ export async function freezeProbes(
       push(
         'typical_wrong',
         { slot_id: slotId, kind: 'select', state: 'answered', item_ids: [wrongId] },
-        ruleExpectation(setFacts([wrongId], keyIds), rule),
+        wrongAnswerExpectation(unit, setFacts([wrongId], keyIds)),
       );
     }
     const firstNonKey = nonKey[0];
@@ -211,7 +221,7 @@ export async function freezeProbes(
       push(
         'typical_wrong',
         { slot_id: slotId, kind: 'select', state: 'answered', item_ids: wrong.item_ids },
-        ruleExpectation(setFacts(wrong.item_ids, keyIds), rule),
+        wrongAnswerExpectation(unit, setFacts(wrong.item_ids, keyIds)),
         wrong.reason_md,
       );
     }
@@ -314,7 +324,7 @@ export async function freezeProbes(
       push(
         'typical_wrong',
         { slot_id: slotId, kind: 'blank', state: 'answered', text: wrong.text },
-        ruleExpectation(blankFacts(0), rule),
+        wrongAnswerExpectation(unit, blankFacts(0)),
         wrong.reason,
       );
     }
@@ -376,6 +386,14 @@ function overSelectAllowed(slot: SelectSlotT, keyIds: readonly string[], extraId
 }
 
 function matchesExpected(actual: ProbeOutcome['actual'], expected: ProbeExpected): boolean {
+  if (expected.kind === 'scored_below') {
+    // 规则对错答声明 unknown（points_awarded=null）同样不是给满分 —— 放行。
+    return (
+      actual.kind === 'scored' &&
+      (actual.points_awarded === null ||
+        actual.points_awarded < expected.max - 1e-9 * Math.max(1, Math.abs(expected.max)))
+    );
+  }
   if (expected.kind === 'scored') {
     return (
       actual.kind === 'scored' &&
