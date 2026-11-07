@@ -52,6 +52,7 @@ import {
   splitReasonIds,
 } from './inbox-api';
 import { inboxTone, kindIcon } from './inbox-look';
+import { MutationPreview, mutationBlockedWords, mutationFullyNamed } from './mutation-preview';
 import { useWorkbenchClient } from './workbench-client';
 
 /** Same cap as a new proposal's one sentence. */
@@ -415,6 +416,11 @@ export function ProposalCard({ p, resolved, navigate, onResolve, onError }: Prop
   const mergeBlockedWords = p.not_acceptable_reason
     ? (MERGE_BLOCKED_WORDS[p.not_acceptable_reason] ?? '存下来的信息证明不了这是同一道题。')
     : null;
+  const knowledgeChange = p.presentation?.knowledge_mutation;
+  const changeBlockedWords = knowledgeChange ? mutationBlockedWords(knowledgeChange) : null;
+  const blockedWords = mergeBlockedWords ?? changeBlockedWords;
+  // Merging knowledge cannot be undone either, so it asks first, like merging question blocks.
+  const mergesKnowledge = knowledgeChange?.mutation === 'merge';
   // ADR-0032 D4-E1 / YUK-332 — legacy proposals have no discriminator and are creates.
   // Archive proposals are destructive and only support accept/dismiss server-side, so their
   // operation, CTA copy, and available controls must not masquerade as create semantics.
@@ -426,7 +432,7 @@ export function ProposalCard({ p, resolved, navigate, onResolve, onError }: Prop
   let acceptButtonLabel = '接受';
   let acceptedLabel = '已接受';
   let edgeOperationLabel = '将新增';
-  if (p.kind === 'block_merge') {
+  if (p.kind === 'block_merge' || mergesKnowledge) {
     acceptButtonLabel = '接受合并';
   } else if (isArchiveEdge) {
     cardLabel = '归档知识关系';
@@ -469,7 +475,11 @@ export function ProposalCard({ p, resolved, navigate, onResolve, onError }: Prop
       edgeLabels.to_label === undefined ||
       edgeLabels.from_label === edgeFrom?.slice(0, 8) ||
       edgeLabels.to_label === edgeTo?.slice(0, 8));
-  const reasonInView = !ownSummary && (REASON_STAYS_IN_VIEW.has(p.kind) || edgeUnnamed);
+  const reasonInView =
+    !ownSummary &&
+    (edgeUnnamed ||
+      (REASON_STAYS_IN_VIEW.has(p.kind) &&
+        !(knowledgeChange && mutationFullyNamed(knowledgeChange))));
   const legacySegments = splitReasonIds(p.presentation?.learner_summary ?? p.payload.reason_md);
   // The first thing read holds no ids: a known block keeps its name, anything else waits in the fold.
   const legacyBody = reasonWithoutIds(
@@ -540,7 +550,9 @@ export function ProposalCard({ p, resolved, navigate, onResolve, onError }: Prop
         </div>
       ) : null}
 
-      {p.presentation && p.presentation.change_summary.length > 0 && (
+      {knowledgeChange ? <MutationPreview mutation={knowledgeChange} /> : null}
+
+      {!knowledgeChange && p.presentation && p.presentation.change_summary.length > 0 && (
         <dl className="ib-prop-summary">
           {p.presentation.change_summary.map((item) => (
             <div key={`${item.label}:${item.value}`}>
@@ -630,17 +642,23 @@ export function ProposalCard({ p, resolved, navigate, onResolve, onError }: Prop
         </div>
       )}
 
-      {confirmingMerge && !resolved && !mergeBlockedWords && (
+      {confirmingMerge && !resolved && !blockedWords && (
         <div className="ib-confirm" role="alert">
           <b>合并后无法撤销</b>
-          <span>并进来的题会成为保留那道题的一部分，之后不能再拆开。</span>
+          <span>
+            {knowledgeChange?.mutation === 'merge'
+              ? `被并走的知识点不再单独存在，只保留「${knowledgeChange.into.label}」。`
+              : '并进来的题会成为保留那道题的一部分，之后不能再拆开。'}
+          </span>
           <div className="ib-acts">
             <Button
               ref={focusWhenShown}
               size="sm"
               className="ib-btn-critical"
               disabled={locked}
-              onClick={() => void decide('accept', acceptedLabel, { confirmLossy: true })}
+              onClick={() =>
+                void decide('accept', acceptedLabel, mergesKnowledge ? {} : { confirmLossy: true })
+              }
             >
               <Check size={14} aria-hidden="true" />
               确认合并
@@ -657,13 +675,13 @@ export function ProposalCard({ p, resolved, navigate, onResolve, onError }: Prop
         </div>
       )}
 
-      {mergeBlockedWords && !resolved && (
+      {blockedWords && !resolved && (
         <div className="ib-prop-blocked">
           <b>
             <TriangleAlert size={14} aria-hidden="true" />
-            不能合并
+            {mergeBlockedWords ? '不能合并' : '现在接受不了'}
           </b>
-          <span>{mergeBlockedWords}</span>
+          <span>{blockedWords}</span>
         </div>
       )}
 
@@ -701,13 +719,13 @@ export function ProposalCard({ p, resolved, navigate, onResolve, onError }: Prop
         <div className="ib-acts ib-prop-acts">
           {/* M4 review fix (codex P2)：defer/archive/judge_retraction 的 accept
               在 dispatchAccept 是 400（unsupported_proposal_kind），不渲 CTA。 */}
-          {isAcceptSupported(p.kind) && !confirmingMerge && !mergeBlockedWords && (
+          {isAcceptSupported(p.kind) && !confirmingMerge && !blockedWords && (
             <Button
               size="sm"
               className={isArchiveEdge ? 'ib-btn-critical' : undefined}
               disabled={locked || archiveTargetMissing}
               onClick={() =>
-                p.kind === 'block_merge'
+                p.kind === 'block_merge' || mergesKnowledge
                   ? setConfirmingMerge(true)
                   : void decide('accept', acceptedLabel)
               }

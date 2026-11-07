@@ -32534,6 +32534,8 @@ export interface operations {
                                     to_label: string;
                                 };
                                 knowledge_mutation?: {
+                                    /** @enum {string|null} */
+                                    blocked: "to_top" | "node_unreadable" | "node_retired" | null;
                                     from: {
                                         label: string | null;
                                         /** @enum {string} */
@@ -32547,6 +32549,8 @@ export interface operations {
                                     /** @enum {string} */
                                     mutation: "merge";
                                 } | {
+                                    /** @enum {string|null} */
+                                    blocked: "to_top" | "node_unreadable" | "node_retired" | null;
                                     /** @enum {string} */
                                     mutation: "reparent";
                                     node: {
@@ -32560,6 +32564,8 @@ export interface operations {
                                         state: "live" | "archived" | "merged" | "missing";
                                     } | null;
                                 } | {
+                                    /** @enum {string|null} */
+                                    blocked: "to_top" | "node_unreadable" | "node_retired" | null;
                                     from: {
                                         label: string | null;
                                         /** @enum {string} */
@@ -33710,6 +33716,8 @@ export interface operations {
                                     to_label: string;
                                 };
                                 knowledge_mutation?: {
+                                    /** @enum {string|null} */
+                                    blocked: "to_top" | "node_unreadable" | "node_retired" | null;
                                     from: {
                                         label: string | null;
                                         /** @enum {string} */
@@ -33723,6 +33731,8 @@ export interface operations {
                                     /** @enum {string} */
                                     mutation: "merge";
                                 } | {
+                                    /** @enum {string|null} */
+                                    blocked: "to_top" | "node_unreadable" | "node_retired" | null;
                                     /** @enum {string} */
                                     mutation: "reparent";
                                     node: {
@@ -33736,6 +33746,8 @@ export interface operations {
                                         state: "live" | "archived" | "merged" | "missing";
                                     } | null;
                                 } | {
+                                    /** @enum {string|null} */
+                                    blocked: "to_top" | "node_unreadable" | "node_retired" | null;
                                     from: {
                                         label: string | null;
                                         /** @enum {string} */
