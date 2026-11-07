@@ -732,7 +732,7 @@ export function collectDirectEnvReads(tree: SourceTree): DirectEnvRead[] {
 
 /** Allowed homes for direct env reads of registered keys (definitions, not readers). */
 function isAllowedDirectEnvFile(path: string): boolean {
-  return path.startsWith('src/core/config/') || path === 'src/server/config/env.ts';
+  return path.startsWith('src/core/config/');
 }
 
 // ── definition fingerprints ─────────────────────────────────────────────────────────────────

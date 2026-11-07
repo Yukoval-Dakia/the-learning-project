@@ -141,7 +141,7 @@ async function routing(): Promise<{
   if (process.env.DATABASE_URL) {
     const { db } = await import('@/db/client');
     try {
-      const { hydrateConfigFromDb } = await import('@/server/config/hydrate');
+      const { hydrateConfigFromDb } = await import('@/core/config/server/hydrate');
       const report = await hydrateConfigFromDb(db);
       // Hydration is deliberately never-throws for app/worker refresh. A
       // failed DB read returns a report, so catch alone cannot guard a paid

@@ -5,6 +5,12 @@ import { orchestrateCascadeRevert } from '@/server/revert/cascade-revert';
 
 import type { PgBoss } from 'pg-boss';
 import { capabilities } from '@/capabilities';
+import {
+  CUSTOM_PROVIDERS_WATCH_INTERVAL_MS,
+  hydrateCustomProviders,
+  startCustomProvidersWatch,
+} from '@/core/config/server/custom-providers-hydrate';
+import { hydrateConfigFromDb, startConfigRefresh } from '@/core/config/server/hydrate';
 import type { Db } from '@/db/client';
 import { hydrateSubjectRegistryFromDb } from '@/kernel/read-models/subject-hydration';
 import { recoverToolOperationsOnBoot } from '@/kernel/tools/tool-operations';
@@ -21,16 +27,10 @@ import { registerHandlers } from '@/server/boss/handlers';
 import { reconcileStuckAiTaskRuns } from '@/server/boss/handlers/ai_task_run_reconcile';
 import { registerCapabilityJobs } from '@/server/boss/register-capability-jobs';
 import { sendVerifyDispatchStartupRecovery } from '@/server/boss/verify-dispatch-recovery';
-import {
-  CUSTOM_PROVIDERS_WATCH_INTERVAL_MS,
-  hydrateCustomProviders,
-  startCustomProvidersWatch,
-} from '@/server/config/custom-providers-hydrate';
-import { hydrateConfigFromDb, startConfigRefresh } from '@/server/config/hydrate';
-import { startSubjectRefresh } from '@/server/config/subject-refresh';
 import { mountSubscriptionDispatch } from '@/server/events/subscriptions/dispatch-mount';
 import { waitForRunnableEpoch } from '@/server/migration/contract-epoch/epoch';
 import { registerOrchestrator } from '@/server/orchestration/register';
+import { startSubjectRefresh } from '@/subjects/server/refresh';
 
 export type StartBossWorkerOptions = {
   /** Epoch-gate poll interval. Tests pass a short value. */

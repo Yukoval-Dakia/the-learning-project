@@ -103,7 +103,7 @@ export function MessageStream({
           <div className="un-cp-stream">
             <SummaryCard empty={messages.length === 0} navigate={navigate} />
             {messages.map((message) => {
-              if (message.role === 'ai') replies += 1;
+              if (message.role === 'ai' && !message.nudge_line) replies += 1;
               if (message.role === 'user') currentRunId = message.id;
               const questionId = message.skill_turn?.structured_question?.id;
               return (
@@ -111,7 +111,7 @@ export function MessageStream({
                   key={message.id}
                   message={message}
                   thinkingText={
-                    message.role === 'ai'
+                    message.role === 'ai' && !message.nudge_line
                       ? thinkingByRun[message.run_id ?? currentRunId ?? '']
                       : undefined
                   }
