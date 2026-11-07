@@ -315,7 +315,7 @@ export const AiNoticeDismissalsResponseSchema = z.object({
 
 export const AiNoticeDismissBodySchema = z
   .object({
-    keys: z.array(z.string().min(1).max(240)).min(1).max(40),
+    keys: z.array(z.string().min(1).max(240)).min(1).max(120),
   })
   .strict();
 

@@ -2,6 +2,8 @@
 // per failure episode. Background work (question preparation, verification, knowledge upkeep) stays
 // on /admin/runs, since a learner can neither feel it nor do anything about it.
 
+import { learnerLocalDay } from '@/core/learner-day';
+
 const LEARNER_FELT_TASKS: ReadonlySet<string> = new Set([
   // The companion.
   'CopilotTask',
@@ -69,12 +71,12 @@ export function failureNoticeKeys(input: {
 
 /**
  * A dependency notice has no episode id, and its `since` only moves once an outage outlasts the
- * read's 7-day window. Keyed by that day, so a long outage reminds at most daily.
+ * read's 7-day window. Keyed by the learner's day, so a long outage reminds at most daily.
  */
 export function dependencyNoticeKey(notice: {
   dependency: string;
   category: string;
   since: string;
 }): string {
-  return `dep:${notice.dependency}:${notice.category}:${notice.since.slice(0, 10)}`;
+  return `dep:${notice.dependency}:${notice.category}:${learnerLocalDay(new Date(notice.since))}`;
 }

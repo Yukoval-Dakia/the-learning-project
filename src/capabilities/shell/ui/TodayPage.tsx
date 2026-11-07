@@ -291,7 +291,7 @@ function useOvernightDigest() {
 }
 
 // The AI failure notice, above the teaching brief. Learner words only: never a task kind, count or
-// run id, which live on /admin/runs. Silent until the closed list is known, so a closed notice
+// run id, which live on /admin/runs. Silent until every source has answered, so a closed notice
 // never flashes back; 知道了 is written to the server, and a new failure episode shows again.
 const TASK_FAILURE_ALERTS_KEY = ['task-failure-alerts'] as const;
 const AI_NOTICE_DISMISSALS_KEY = ['ai-notice-dismissals'] as const;
@@ -350,7 +350,13 @@ function AiFailureNotice() {
           <span className="td-flag-t">有些 AI 工作没做完</span>
           <span className="td-flag-s">相关的结果可能晚点到。</span>
           {close(
-            [...failing, ...failureNoticeCloseKeys({ digest, alerts: alerts?.alerts })],
+            [
+              ...failing,
+              ...failureNoticeCloseKeys({
+                digest,
+                alerts: alerts?.alerts.filter((alert) => !closed.has(alert.id)),
+              }),
+            ],
             '知道了',
           )}
         </p>
