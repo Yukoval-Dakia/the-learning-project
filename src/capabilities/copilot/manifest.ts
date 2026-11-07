@@ -25,6 +25,8 @@ import {
   CopilotSummaryResponseSchema,
   CopilotTurnsQuerySchema,
   CopilotTurnsResponseSchema,
+  EntityCardParamsSchema,
+  EntityCardResponseSchema,
 } from './api/contracts';
 
 // copilot 包：单人格对话面。
@@ -159,6 +161,16 @@ export const copilotCapability = defineCapability({
         responses: { 200: AcceptTeachingChipResponseSchema, ...API_ERROR_RESPONSES },
         successStatus: 200,
         load: () => import('./api/accept-chip').then((m) => m.POST),
+      },
+      {
+        method: 'GET',
+        path: '/api/copilot/cards/[kind]/[id]',
+        operationId: 'getEntityCard',
+        request: { params: EntityCardParamsSchema },
+        responses: { 200: EntityCardResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        pagination: 'none',
+        load: () => import('./api/entity-card').then((m) => m.GET),
       },
       // 主动开口 nudge 面：读（排 shadow/过期/已处置 + 静默窗 backstop）+ 处置（× / 看看）。
       {

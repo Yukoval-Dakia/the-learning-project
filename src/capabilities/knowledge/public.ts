@@ -16,6 +16,14 @@ export {
   getFailureAttemptsWithReasoningTrace,
   getJudgeForAttempt,
 } from '@/kernel/read-models/failure-attempts';
+export type {
+  KnowledgeCardPractice,
+  KnowledgeEntityCard,
+} from '@/kernel/read-models/knowledge-card';
+export {
+  isKnowledgeCardVisible,
+  readKnowledgeEntityCard,
+} from '@/kernel/read-models/knowledge-card';
 export {
   batchResolveEffectiveDomains,
   getEffectiveDomain,

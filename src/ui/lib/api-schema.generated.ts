@@ -756,6 +756,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/copilot/cards/{kind}/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getEntityCard"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/copilot/chat": {
         parameters: {
             query?: never;
@@ -11541,6 +11557,157 @@ export interface operations {
                         status: ("evidence_for" | "confirmed" | "retired") | "inconclusive";
                         /** @enum {string|null} */
                         target_error_match: "matched" | "not_matched" | "ambiguous" | null;
+                    };
+                };
+            };
+            /** @description Malformed request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description State or version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Semantic validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Rate limited */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    getEntityCard: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                kind: "knowledge" | "note";
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        entity_id: string;
+                        /** @enum {string} */
+                        entity_kind: "knowledge";
+                        last_practice: {
+                            /** Format: date-time */
+                            at: string;
+                            /** @enum {string|null} */
+                            outcome: "correct" | "partial" | "wrong" | null;
+                        } | null;
+                        mastery_band: number | null;
+                        name: string;
+                        /** @enum {string} */
+                        state: "ok";
+                    } | {
+                        entity_id: string;
+                        /** @enum {string} */
+                        entity_kind: "note";
+                        /** @enum {string} */
+                        state: "ok";
+                        summary: string;
+                        title: string;
+                        /** Format: date-time */
+                        updated_at: string;
+                    } | {
+                        entity_id: string;
+                        /** @enum {string} */
+                        entity_kind: "knowledge" | "note";
+                        /** @enum {string} */
+                        state: "gone";
                     };
                 };
             };
