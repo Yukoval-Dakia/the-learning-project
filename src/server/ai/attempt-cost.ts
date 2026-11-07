@@ -12,10 +12,6 @@ import {
 } from './pricing';
 
 export type { AttemptCostBasis, AttemptCostTruth } from '@/ai/task-result';
-export {
-  failureSpendChargeUsd,
-  UNBILLED_PROVIDER_REJECTION_REF_PREFIX,
-} from '@/ai/task-result';
 
 /**
  * cost_ref prefix marking a catalog estimate produced on a subscription route

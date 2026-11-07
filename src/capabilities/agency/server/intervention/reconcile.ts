@@ -300,11 +300,7 @@ export async function rearmInterventionPreparationWait(
     await lockInterventionCorrectionsAll(tx);
     await lockInterventionSource(tx, row.source_probe_result_event_id);
     const current = await loadInterventionVersion(tx, input.interventionId, input.version);
-    if (
-      !current ||
-      current.status !== 'preparing' ||
-      current.preparation_job_id !== input.supersededJobId
-    ) {
+    if (current?.status !== 'preparing' || current.preparation_job_id !== input.supersededJobId) {
       return 'raced' as const;
     }
     const sent = await boss.send(

@@ -32,11 +32,7 @@ import {
   settledAttemptEvidence,
   sleepMs,
 } from '@/server/ai/provider-transient-retry';
-import {
-  PROVIDER_WAIT_MAX,
-  providerWaitDelayMs,
-  providerWaitEligible,
-} from '@/server/ai/provider-wait';
+import { PROVIDER_WAIT_MAX, providerWaitDelayMs } from '@/server/ai/provider-wait';
 import type { BoundRunTaskTextFn } from '@/server/ai/runner-fn';
 
 export type AdmissionStageReceiptRef = { identity: PaidEffectIdentity; receipt_digest: string };
@@ -625,7 +621,7 @@ export function admissionStageRunner(input: {
               error instanceof AgentRunError &&
               verdict !== undefined &&
               plan === undefined &&
-              providerWaitEligible(verdict.class)
+              providerTransientResendable(verdict.class)
                 ? await settledAttemptEvidence(input.db, error.taskRunId)
                 : undefined;
             const knownFailure =

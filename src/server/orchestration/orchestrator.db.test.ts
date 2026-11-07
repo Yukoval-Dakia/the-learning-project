@@ -754,6 +754,8 @@ describe('YUK-2030 — provider-wait redelivery', () => {
 
   const waitOutput = { provider_wait: { retry_class: 'server_error', detail: 'ev=run_1' } };
 
+  // @invariant data: a proven-unbilled provider refusal redelivers the node instead of losing the run — waits counted, identity repointed, timeout window preserved
+  // @fails-if the wait branch settles the node, drops the waits increment, reuses the old job id, or resets enqueued_at so a stranding or a doubled charge slips through
   it('W1 a member leaving provider_wait output waits instead of settling', async () => {
     const boss = new FakeBoss();
     const dag = dagOf(member('a'), member('b', ['a']));
@@ -785,6 +787,8 @@ describe('YUK-2030 — provider-wait redelivery', () => {
     expect((await nodeRow(run.id, 'b'))?.status).toBe('pending');
   });
 
+  // @invariant data: a node that burns its wait budget lands terminal with an auditable reason — no silent park and no extra paid send
+  // @fails-if the exhaustion path leaves the node non-terminal, drops the provider_wait_exhausted detail, or sends another delivery after the last wait
   it('W2 exhausting the wait budget fails the node with an explicit reason', async () => {
     const boss = new FakeBoss();
     const dag = dagOf(member('a'));

@@ -26346,7 +26346,7 @@ export interface operations {
                             admission_waits?: {
                                 question_id: string;
                                 /** @enum {string} */
-                                reason: "quota" | "login" | "not_sent";
+                                reason: "quota" | "login" | "not_sent" | "provider";
                                 /** @enum {string} */
                                 recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                 /** Format: date-time */
@@ -27007,7 +27007,7 @@ export interface operations {
                             admission_waits?: {
                                 question_id: string;
                                 /** @enum {string} */
-                                reason: "quota" | "login" | "not_sent";
+                                reason: "quota" | "login" | "not_sent" | "provider";
                                 /** @enum {string} */
                                 recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                 /** Format: date-time */
@@ -27041,7 +27041,7 @@ export interface operations {
                             admission_waits?: {
                                 question_id: string;
                                 /** @enum {string} */
-                                reason: "quota" | "login" | "not_sent";
+                                reason: "quota" | "login" | "not_sent" | "provider";
                                 /** @enum {string} */
                                 recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                 /** Format: date-time */
@@ -27087,7 +27087,7 @@ export interface operations {
                             admission_waits?: {
                                 question_id: string;
                                 /** @enum {string} */
-                                reason: "quota" | "login" | "not_sent";
+                                reason: "quota" | "login" | "not_sent" | "provider";
                                 /** @enum {string} */
                                 recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                 /** Format: date-time */
@@ -27120,7 +27120,7 @@ export interface operations {
                             admission_waits?: {
                                 question_id: string;
                                 /** @enum {string} */
-                                reason: "quota" | "login" | "not_sent";
+                                reason: "quota" | "login" | "not_sent" | "provider";
                                 /** @enum {string} */
                                 recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                 /** Format: date-time */
@@ -27166,7 +27166,7 @@ export interface operations {
                             admission_waits?: {
                                 question_id: string;
                                 /** @enum {string} */
-                                reason: "quota" | "login" | "not_sent";
+                                reason: "quota" | "login" | "not_sent" | "provider";
                                 /** @enum {string} */
                                 recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                 /** Format: date-time */
@@ -27347,7 +27347,7 @@ export interface operations {
                             admission_waits?: {
                                 question_id: string;
                                 /** @enum {string} */
-                                reason: "quota" | "login" | "not_sent";
+                                reason: "quota" | "login" | "not_sent" | "provider";
                                 /** @enum {string} */
                                 recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                 /** Format: date-time */
@@ -27381,7 +27381,7 @@ export interface operations {
                             admission_waits?: {
                                 question_id: string;
                                 /** @enum {string} */
-                                reason: "quota" | "login" | "not_sent";
+                                reason: "quota" | "login" | "not_sent" | "provider";
                                 /** @enum {string} */
                                 recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                 /** Format: date-time */
@@ -27427,7 +27427,7 @@ export interface operations {
                             admission_waits?: {
                                 question_id: string;
                                 /** @enum {string} */
-                                reason: "quota" | "login" | "not_sent";
+                                reason: "quota" | "login" | "not_sent" | "provider";
                                 /** @enum {string} */
                                 recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                 /** Format: date-time */
@@ -27460,7 +27460,7 @@ export interface operations {
                             admission_waits?: {
                                 question_id: string;
                                 /** @enum {string} */
-                                reason: "quota" | "login" | "not_sent";
+                                reason: "quota" | "login" | "not_sent" | "provider";
                                 /** @enum {string} */
                                 recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                 /** Format: date-time */
@@ -27506,7 +27506,7 @@ export interface operations {
                             admission_waits?: {
                                 question_id: string;
                                 /** @enum {string} */
-                                reason: "quota" | "login" | "not_sent";
+                                reason: "quota" | "login" | "not_sent" | "provider";
                                 /** @enum {string} */
                                 recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                 /** Format: date-time */
@@ -27851,7 +27851,7 @@ export interface operations {
                                 admission_waits?: {
                                     question_id: string;
                                     /** @enum {string} */
-                                    reason: "quota" | "login" | "not_sent";
+                                    reason: "quota" | "login" | "not_sent" | "provider";
                                     /** @enum {string} */
                                     recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                     /** Format: date-time */
@@ -27885,7 +27885,7 @@ export interface operations {
                                 admission_waits?: {
                                     question_id: string;
                                     /** @enum {string} */
-                                    reason: "quota" | "login" | "not_sent";
+                                    reason: "quota" | "login" | "not_sent" | "provider";
                                     /** @enum {string} */
                                     recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                     /** Format: date-time */
@@ -27931,7 +27931,7 @@ export interface operations {
                                 admission_waits?: {
                                     question_id: string;
                                     /** @enum {string} */
-                                    reason: "quota" | "login" | "not_sent";
+                                    reason: "quota" | "login" | "not_sent" | "provider";
                                     /** @enum {string} */
                                     recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                     /** Format: date-time */
@@ -27964,7 +27964,7 @@ export interface operations {
                                 admission_waits?: {
                                     question_id: string;
                                     /** @enum {string} */
-                                    reason: "quota" | "login" | "not_sent";
+                                    reason: "quota" | "login" | "not_sent" | "provider";
                                     /** @enum {string} */
                                     recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                     /** Format: date-time */
@@ -28010,7 +28010,7 @@ export interface operations {
                                 admission_waits?: {
                                     question_id: string;
                                     /** @enum {string} */
-                                    reason: "quota" | "login" | "not_sent";
+                                    reason: "quota" | "login" | "not_sent" | "provider";
                                     /** @enum {string} */
                                     recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                     /** Format: date-time */
@@ -28067,7 +28067,7 @@ export interface operations {
                                 admission_waits?: {
                                     question_id: string;
                                     /** @enum {string} */
-                                    reason: "quota" | "login" | "not_sent";
+                                    reason: "quota" | "login" | "not_sent" | "provider";
                                     /** @enum {string} */
                                     recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                     /** Format: date-time */
@@ -28727,7 +28727,7 @@ export interface operations {
                                 admission_waits?: {
                                     question_id: string;
                                     /** @enum {string} */
-                                    reason: "quota" | "login" | "not_sent";
+                                    reason: "quota" | "login" | "not_sent" | "provider";
                                     /** @enum {string} */
                                     recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                     /** Format: date-time */
@@ -28761,7 +28761,7 @@ export interface operations {
                                 admission_waits?: {
                                     question_id: string;
                                     /** @enum {string} */
-                                    reason: "quota" | "login" | "not_sent";
+                                    reason: "quota" | "login" | "not_sent" | "provider";
                                     /** @enum {string} */
                                     recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                     /** Format: date-time */
@@ -28807,7 +28807,7 @@ export interface operations {
                                 admission_waits?: {
                                     question_id: string;
                                     /** @enum {string} */
-                                    reason: "quota" | "login" | "not_sent";
+                                    reason: "quota" | "login" | "not_sent" | "provider";
                                     /** @enum {string} */
                                     recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                     /** Format: date-time */
@@ -28840,7 +28840,7 @@ export interface operations {
                                 admission_waits?: {
                                     question_id: string;
                                     /** @enum {string} */
-                                    reason: "quota" | "login" | "not_sent";
+                                    reason: "quota" | "login" | "not_sent" | "provider";
                                     /** @enum {string} */
                                     recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                     /** Format: date-time */
@@ -28886,7 +28886,7 @@ export interface operations {
                                 admission_waits?: {
                                     question_id: string;
                                     /** @enum {string} */
-                                    reason: "quota" | "login" | "not_sent";
+                                    reason: "quota" | "login" | "not_sent" | "provider";
                                     /** @enum {string} */
                                     recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                     /** Format: date-time */
@@ -29081,7 +29081,7 @@ export interface operations {
                             admission_waits?: {
                                 question_id: string;
                                 /** @enum {string} */
-                                reason: "quota" | "login" | "not_sent";
+                                reason: "quota" | "login" | "not_sent" | "provider";
                                 /** @enum {string} */
                                 recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                 /** Format: date-time */
@@ -29115,7 +29115,7 @@ export interface operations {
                             admission_waits?: {
                                 question_id: string;
                                 /** @enum {string} */
-                                reason: "quota" | "login" | "not_sent";
+                                reason: "quota" | "login" | "not_sent" | "provider";
                                 /** @enum {string} */
                                 recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                 /** Format: date-time */
@@ -29161,7 +29161,7 @@ export interface operations {
                             admission_waits?: {
                                 question_id: string;
                                 /** @enum {string} */
-                                reason: "quota" | "login" | "not_sent";
+                                reason: "quota" | "login" | "not_sent" | "provider";
                                 /** @enum {string} */
                                 recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                 /** Format: date-time */
@@ -29194,7 +29194,7 @@ export interface operations {
                             admission_waits?: {
                                 question_id: string;
                                 /** @enum {string} */
-                                reason: "quota" | "login" | "not_sent";
+                                reason: "quota" | "login" | "not_sent" | "provider";
                                 /** @enum {string} */
                                 recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                 /** Format: date-time */
@@ -29240,7 +29240,7 @@ export interface operations {
                             admission_waits?: {
                                 question_id: string;
                                 /** @enum {string} */
-                                reason: "quota" | "login" | "not_sent";
+                                reason: "quota" | "login" | "not_sent" | "provider";
                                 /** @enum {string} */
                                 recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                 /** Format: date-time */
@@ -29297,7 +29297,7 @@ export interface operations {
                             admission_waits?: {
                                 question_id: string;
                                 /** @enum {string} */
-                                reason: "quota" | "login" | "not_sent";
+                                reason: "quota" | "login" | "not_sent" | "provider";
                                 /** @enum {string} */
                                 recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                 /** Format: date-time */
@@ -29957,7 +29957,7 @@ export interface operations {
                             admission_waits?: {
                                 question_id: string;
                                 /** @enum {string} */
-                                reason: "quota" | "login" | "not_sent";
+                                reason: "quota" | "login" | "not_sent" | "provider";
                                 /** @enum {string} */
                                 recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                 /** Format: date-time */
@@ -29991,7 +29991,7 @@ export interface operations {
                             admission_waits?: {
                                 question_id: string;
                                 /** @enum {string} */
-                                reason: "quota" | "login" | "not_sent";
+                                reason: "quota" | "login" | "not_sent" | "provider";
                                 /** @enum {string} */
                                 recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                 /** Format: date-time */
@@ -30037,7 +30037,7 @@ export interface operations {
                             admission_waits?: {
                                 question_id: string;
                                 /** @enum {string} */
-                                reason: "quota" | "login" | "not_sent";
+                                reason: "quota" | "login" | "not_sent" | "provider";
                                 /** @enum {string} */
                                 recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                 /** Format: date-time */
@@ -30070,7 +30070,7 @@ export interface operations {
                             admission_waits?: {
                                 question_id: string;
                                 /** @enum {string} */
-                                reason: "quota" | "login" | "not_sent";
+                                reason: "quota" | "login" | "not_sent" | "provider";
                                 /** @enum {string} */
                                 recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                 /** Format: date-time */
@@ -30116,7 +30116,7 @@ export interface operations {
                             admission_waits?: {
                                 question_id: string;
                                 /** @enum {string} */
-                                reason: "quota" | "login" | "not_sent";
+                                reason: "quota" | "login" | "not_sent" | "provider";
                                 /** @enum {string} */
                                 recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                 /** Format: date-time */

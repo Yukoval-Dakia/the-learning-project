@@ -27,6 +27,7 @@ import {
 import { type ProviderFailureInfo, classifyProviderFailure } from '@/ai/provider-failure';
 import { installTaskOperationObserver } from '@/ai/task-observation';
 import type { RunTaskResult } from '@/ai/task-result';
+import { failureSpendChargeUsd } from '@/ai/task-result';
 import type { TaskBudget, TaskDefinition } from '@/ai/task-spec';
 import {
   type TaskKind,
@@ -38,7 +39,6 @@ import {
 import { isSpawnToolName } from '@/core/subagent-contract';
 import { resolveProviderSessionDeadlineAt } from '../http/provider-session-deadline';
 import { bindAgentRunError, isApiErrorSuccessResult } from './agent-run-error';
-import { failureSpendChargeUsd } from './attempt-cost';
 import {
   type ModelBinding,
   type PreparedExecutionQuery,
@@ -1075,15 +1075,10 @@ export function streamTask(kind: string, input: unknown, initialCtx: StreamTaskC
                 shouldClose = false;
                 return;
               }
-              // The run id rides the marker so worker-side consumers (the
-              // knowledge-maintenance job) can read back the settled evidence
-              // row — the marker text alone cannot prove the failure class.
-              const markerRunId = lifecycle.taskRunId;
-              const message =
-                (error instanceof Error
-                  ? `[streamTask] ${error.message}`
-                  : '[streamTask] unknown error') +
-                (markerRunId ? ` (task_run_id=${markerRunId})` : '');
+              // Run id rides the marker so workers can read back the settled row.
+              const message = `[streamTask] ${
+                error instanceof Error ? error.message : 'unknown error'
+              } (task_run_id=${lifecycle.taskRunId})`;
               controller.enqueue(encoder.encode(`\n\n${message}\n`));
             } finally {
               lifecycle.dispose();

@@ -33,15 +33,6 @@ const PROVIDER_WAIT_LADDER_MS = [5, 15, 30, 60].map((m) => m * 60_000);
  */
 export const PROVIDER_WAIT_MAX = 8;
 
-/**
- * Classes eligible for a job-level wait. `quota_exhausted` is deliberately out:
- * quota is a day-scale budget with its own admission waiting path, not a route
- * outage this wait exists to bridge.
- */
-export function providerWaitEligible(cls: ProviderTransientClass): boolean {
-  return providerTransientResendable(cls);
-}
-
 export function providerWaitDelayMs(waits: number): number {
   return PROVIDER_WAIT_LADDER_MS[
     Math.min(Math.max(waits - 1, 0), PROVIDER_WAIT_LADDER_MS.length - 1)
@@ -67,7 +58,7 @@ export async function planJobProviderWait(
 ): Promise<ProviderWaitDecision | null> {
   if (!(error instanceof AgentRunError) || !error.taskRunId) return null;
   const verdict = providerTransientVerdict({ error });
-  if (!verdict || !providerWaitEligible(verdict.class)) return null;
+  if (!verdict || !providerTransientResendable(verdict.class)) return null;
   const evidence = await settledAttemptEvidence(db, error.taskRunId);
   if (!evidence.settled || !evidence.unbilled) return null;
   return { retryClass: verdict.class, evidenceRef: error.taskRunId };
@@ -90,7 +81,7 @@ export async function planJobProviderWaitForRun(
   const cls = providerWaitClassForTransport(evidence.transport, {
     errorEvidence: [...(input.errorEvidence ?? []), evidence.errorMessage ?? ''],
   });
-  if (cls === undefined || !providerWaitEligible(cls)) return null;
+  if (cls === undefined || !providerTransientResendable(cls)) return null;
   return { retryClass: cls, evidenceRef: taskRunId };
 }
 
