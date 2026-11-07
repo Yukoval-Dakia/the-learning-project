@@ -565,7 +565,11 @@ export async function applyRescue(tx: Db | Tx, params: ApplyRescueParams): Promi
 
   const now = new Date();
   const blockExists = await tx
-    .select({ id: question_block.id, version: question_block.version })
+    .select({
+      id: question_block.id,
+      version: question_block.version,
+      status: question_block.status,
+    })
     .from(question_block)
     .where(
       and(
@@ -578,6 +582,16 @@ export async function applyRescue(tx: Db | Tx, params: ApplyRescueParams): Promi
       'not_found',
       `question_block ${params.blockId} not found in session ${params.sessionId}`,
       404,
+    );
+  }
+  const blockStatus = blockExists[0]?.status;
+  if (blockStatus !== 'draft') {
+    throw new ApiError(
+      'block_not_rescuable',
+      `question_block ${params.blockId} is '${blockStatus}'; rescue only applies to draft blocks`,
+      409,
+      undefined,
+      { block_id: params.blockId, block_status: blockStatus },
     );
   }
 

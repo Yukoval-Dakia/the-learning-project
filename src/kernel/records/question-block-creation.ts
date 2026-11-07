@@ -1,4 +1,4 @@
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { newId } from '@/core/ids';
 import type { QuestionBlockRowSnapshotT } from '@/core/schema/event/genesis';
 import type { QuestionDraftDocumentT } from '@/core/schema/question-draft';
@@ -11,6 +11,7 @@ import {
 import type { Db, Tx } from '@/db/client';
 import { question_block } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { ApiError } from '@/kernel/http';
 import { resolveSessionDerivationPolicy } from '@/kernel/read-models/usage-policy';
 import { projectQuestionBlockGuarded } from './question-block-projection';
 
@@ -146,6 +147,10 @@ export async function persistCapturedQuestionBlock(
       return;
     }
     case 'rescue': {
+      // Rescue only rewrites a draft block. The status CAS is the atomic guard
+      // against a concurrent enrollment: once the block is in the bank its
+      // question holds the enrolled snapshot, and overwriting structured here
+      // would silently desync them.
       const [row] = await db
         .update(question_block)
         .set({
@@ -156,8 +161,17 @@ export async function persistCapturedQuestionBlock(
           updated_at: now,
           version: sql<number>`${question_block.version} + 1`,
         })
-        .where(eq(question_block.id, command.blockId))
+        .where(and(eq(question_block.id, command.blockId), eq(question_block.status, 'draft')))
         .returning();
+      if (!row) {
+        throw new ApiError(
+          'block_not_rescuable',
+          `question_block ${command.blockId} left 'draft' before the rescue write committed`,
+          409,
+          undefined,
+          { block_id: command.blockId },
+        );
+      }
       // A second full-snapshot create for this blockId preserves last-write-wins.
       await writeQuestionBlockCreateEvent(db, {
         row,

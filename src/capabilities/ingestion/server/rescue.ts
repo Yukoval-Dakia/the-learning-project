@@ -65,6 +65,19 @@ export async function runRescue(
       400,
     );
   }
+  // Rescue only rewrites draft blocks: an enrolled block already published its
+  // question snapshot, and overwriting structured here would leave the block and
+  // the banked question disagreeing with no surface signal. Refuse before the
+  // paid call; applyRescue + the rescue UPDATE's status CAS re-check after it.
+  if (block.status !== 'draft') {
+    throw new ApiError(
+      'block_not_rescuable',
+      `question_block ${params.blockId} is '${block.status}'; rescue only applies to draft blocks`,
+      409,
+      undefined,
+      { block_id: params.blockId, block_status: block.status },
+    );
+  }
   const [session] = await params.db
     .select({
       status: learning_session.status,
@@ -122,14 +135,28 @@ export async function runRescue(
   }
 
   const structured: StructuredQuestionT = visionBlockToStructured(first);
-  await params.db.transaction((tx) =>
-    Ingestion.applyRescue(tx, {
-      sessionId: params.sessionId,
-      blockId: params.blockId,
-      structured,
-      figures: [],
-    }),
-  );
+  try {
+    await params.db.transaction((tx) =>
+      Ingestion.applyRescue(tx, {
+        sessionId: params.sessionId,
+        blockId: params.blockId,
+        structured,
+        figures: [],
+      }),
+    );
+  } catch (err) {
+    // The block left 'draft' between the pre-flight check and the write (a
+    // concurrent enrollment won the block). The paid vision output is returned
+    // with the refusal rather than dropped: the caller sees the recognized
+    // content and can re-enter it through the question edit path.
+    if (err instanceof ApiError && err.code === 'block_not_rescuable') {
+      throw new ApiError(err.code, err.message, err.status, err.headers, {
+        ...err.details,
+        paid_result: { structured },
+      });
+    }
+    throw err;
+  }
   // Rescue enters through the explicit one-block owner, so only this block is touched.
   // The session batch job would re-enroll other reverted blocks on the page; it is not
   // used here. Failure never rolls back the committed rescue.
