@@ -19,6 +19,7 @@ import { SuggestionKind } from '@/core/schema/event/known';
 import { LearnerSummarySchema, type ProposalEvidenceRefT } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
 import { knowledge } from '@/db/schema';
+import { proposalAutoApplies } from '@/kernel/proposals/auto-apply-marker';
 import { withProposalGateLock } from '@/kernel/proposals/signals';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
 import { sanitizeProposedNodeDomain } from '@/subjects/profile';
@@ -316,6 +317,10 @@ const KnowledgeMutationOutputSchema = z.object({
   proposal_id: z.string().optional(),
   // skipped:already_exists — the existing live node's id, attachable directly.
   node_id: z.string().optional(),
+  // Present only when the written proposal carries the auto-apply marker —
+  // the automated lane applies it shortly, so the caller must not ask the
+  // learner to confirm. Absent means ordinary human review.
+  auto_apply: z.literal(true).optional(),
   cooldown_key: z.string().optional(),
   cooldown_until: z.string().optional(),
   reason: z.string().optional(),
@@ -449,7 +454,13 @@ async function proposeKnowledgeMutationExecute(
       };
     }
     const proposalId = await writeProposal(tx);
-    return { status: 'proposed', proposal_id: proposalId };
+    return {
+      status: 'proposed',
+      proposal_id: proposalId,
+      ...(change.mutation === 'propose_new' && proposalAutoApplies('knowledge_node')
+        ? { auto_apply: true as const }
+        : {}),
+    };
   });
 }
 
