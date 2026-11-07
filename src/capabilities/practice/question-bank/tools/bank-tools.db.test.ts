@@ -961,7 +961,10 @@ describe('bank tools boundary invariants (search_bank / read_bank / check_bank)'
       as_of: new Date(Date.now() - 20 * 60_000),
       expires_at: new Date(Date.now() - 5 * 60_000),
     });
-    const replay = await fileBankGapTool.execute(owner, input);
+    const replay = await fileBankGapTool.execute(
+      { ...owner, taskRunId: 'retry-after-response-loss' },
+      input,
+    );
     expect(replay.deduplicated).toBe(true);
     expect(replay.status).toBe('held');
   });

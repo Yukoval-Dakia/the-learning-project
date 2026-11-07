@@ -307,7 +307,7 @@ function dispatchReceipt(result: {
 async function executeFileBankGap(ctx: ToolContext, rawInput: FileBankGapInput) {
   const request = FileBankGapInputSchema.parse(rawInput);
   return ctx.db.transaction(async (tx) => {
-    const inputDigest = canonicalHash({ request, actor: ctx.callerActor, run: ctx.taskRunId });
+    const inputDigest = canonicalHash({ request, actor: ctx.callerActor });
     const stored = await readStoredFiling(tx as unknown as Db, `fbgap|${request.request_id}`);
     if (stored) {
       const terminal =
