@@ -9,7 +9,7 @@ import {
   PartialUnknownJudgeResult,
 } from '@/kernel/capability-contract-schemas';
 import { REASONING_TRACE_MAX_LEN } from '@/kernel/limits';
-import { CreateSubmissionBodySchema } from './assessment-contracts';
+import { AttemptEvidenceSchema, CreateSubmissionBodySchema } from './assessment-contracts';
 
 /** Bound text copied into judge prompts and immutable attempt events. */
 export const MAX_REVIEW_RESPONSE_CHARS = 12_000;
@@ -145,35 +145,6 @@ const LegacyAttemptResponseSchema = z.object({
     correction_state: AttemptCorrectionStateSchema,
   }),
   judge: AttemptJudgeResponseSchema.nullable(),
-});
-
-/**
- * Server-computed evidence split (YUK-2009): exposure to help, judged outcome,
- * and the learner's self-claim are separate facts. `null` members are honest
- * unknowns — a historical receipt or a self-report has no such fact and the
- * client must not fabricate one.
- */
-export const AttemptEvidenceSchema = z.object({
-  assistance: z
-    .object({
-      status: z.enum(['independent', 'assisted', 'unknown']),
-      max_dose: z.number().int().nonnegative().nullable(),
-      kinds: z.array(z.enum(['hint', 'solution', 'chat_context'])),
-      phase: z.enum(['before_submit', 'after_submit']).nullable(),
-    })
-    .nullable(),
-  verdict: z
-    .object({
-      outcome: z.enum(['correct', 'partial', 'incorrect', 'unsupported', 'partial_unknown']),
-      score: z.number().nullable(),
-    })
-    .nullable(),
-  self_claim: z
-    .object({
-      rating: FsrsRating.nullable(),
-      confidence: z.number().int().min(1).max(5).nullable(),
-    })
-    .nullable(),
 });
 
 export const FormalAttemptResponseSchema = z.object({
