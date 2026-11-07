@@ -10,6 +10,7 @@ import {
   InterventionQuestionContentValidationAudit,
   MAX_INTERVENTION_PACKAGE_ATTEMPTS,
   buildInterventionQuestionContentValidationTaskInput,
+  compareInterventionIndependentSolution,
   validateInterventionPackageDeterministically,
 } from '@/core/schema/intervention';
 import type { Db } from '@/db/client';
@@ -286,6 +287,18 @@ async function bindAttemptToRecord(
       }
       if (diagnostic.task_input.subject_id !== subjectProfile.id) {
         failures.push(`agency:${diagnostic.kind}:independent_solution_subject_mismatch`);
+      }
+      const agreement = compareInterventionIndependentSolution({
+        goldResponseSignature: packageDiagnostic.probe_spec.gold_response_signature,
+        solverFinalAnswer: diagnostic.solver_output.reference_solution.final_answer,
+        solverAnswerEquivalents: diagnostic.solver_output.reference_solution.answer_equivalents,
+      });
+      if (agreement.status !== 'agree') {
+        failures.push(
+          agreement.status === 'disagree'
+            ? `agency:${diagnostic.kind}:independent_solution_disagrees`
+            : `agency:${diagnostic.kind}:independent_solution_uncomparable`,
+        );
       }
       for (const taskRunId of diagnostic.solver_attempt_task_run_ids) {
         expectedRuns.push({

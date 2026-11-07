@@ -523,9 +523,53 @@ async function recordMockAiRun(
   });
 }
 
+function solverAnswerForPrompt(promptMd: string): string {
+  const n = /[xt]²\+(\d+)/.exec(promptMd)?.[1] ?? '1';
+  if (promptMd.includes('球半径')) return `8πt(t²+${n})²`;
+  if (promptMd.includes('ln(')) return `6x/(3x²+${n})`;
+  return `2x exp(x²+${n})`;
+}
+
+// answer_with_reason signatures carry no deterministic solver-key form, so the
+// package cannot prove solver-gold agreement and must fail closed.
+function answerWithReasonAuthorOutput(attempt: number) {
+  const base = authorOutput(attempt);
+  const signature = (responseMd: string | undefined, featuresMd: string) => ({
+    kind: 'answer_with_reason' as const,
+    answer_md: responseMd ?? '',
+    required_reason_features_md: [featuresMd],
+  });
+  const mapDiagnostic = <T extends (typeof base.diagnostics)[keyof typeof base.diagnostics]>(
+    diagnostic: T,
+  ): T => ({
+    ...diagnostic,
+    probe_spec: {
+      ...diagnostic.probe_spec,
+      response_mode: 'answer_with_reason' as const,
+      gold_response_signature: signature(
+        diagnostic.probe_spec.gold_response_signature.response_md,
+        '理由必须写清外层导数乘以内层导数。',
+      ),
+      target_error_response_signature: signature(
+        diagnostic.probe_spec.target_error_response_signature.response_md,
+        '理由把外层与内层写成相加。',
+      ),
+    },
+  });
+  return {
+    ...base,
+    diagnostics: {
+      immediate: mapDiagnostic(base.diagnostics.immediate),
+      delayed: mapDiagnostic(base.diagnostics.delayed),
+      transfer: mapDiagnostic(base.diagnostics.transfer),
+    },
+  };
+}
+
 function successfulRunTask(
   db: ReturnType<typeof testDb>,
   packageOutput: (attempt: number) => ReturnType<typeof authorOutput> = authorOutput,
+  solverAnswer: (promptMd: string, ordinal: number) => string = solverAnswerForPrompt,
 ): {
   fn: TaskTextRunFn;
   calls: string[];
@@ -560,13 +604,17 @@ function successfulRunTask(
       const ordinal = calls.filter((value) => value === kind).length;
       const taskRunId = `independent_solution_run_${ordinal}`;
       await recordMockAiRun(db, kind, input, taskRunId);
+      const promptMd =
+        input !== null && typeof input === 'object' && 'prompt_md' in input
+          ? String(input.prompt_md)
+          : '';
       return {
         text: '',
         task_run_id: taskRunId,
         structured_output: {
           reference_solution: {
             expected_signals: ['识别题目实际要求的量或结论', '只按题面条件完成学科推导并核对结果'],
-            final_answer: `independent solution ${ordinal}`,
+            final_answer: solverAnswer(promptMd, ordinal),
             answer_equivalents: [],
           },
           worked_solution_md: '独立求解题面，不读取作者 reference 或干预材料。',
@@ -1558,6 +1606,67 @@ describe('YUK-791 intervention preparation closed loop', () => {
       .from(event)
       .where(eq(event.action, 'experimental:intervention_activated'));
     expect(activated[0]?.value).toBe(0);
+  });
+
+  // @invariant grading: the deterministic blind-solve vs gold agreement gates activation — a solver-consistent package activates while contradictory or non-keyable signatures fail closed and never materialize diagnostics
+  // @fails-if drop the solver-vs-gold comparison, count an uncomparable signature as consistent, or let a rejected candidate reach learners; the status, reason_code and diagnostic question-row assertions fail
+  it.each([
+    {
+      name: 'solver-consistent',
+      solverAnswer: undefined as ((promptMd: string, ordinal: number) => string) | undefined,
+      packageOutput: authorOutput,
+      expectedStatus: 'active' as const,
+      failurePart: null,
+      expectedDiagnostics: 3,
+    },
+    {
+      name: 'contradictory',
+      solverAnswer: () => 'CONTROLLED CONTRADICTORY ANSWER',
+      packageOutput: authorOutput,
+      expectedStatus: 'preparation_failed' as const,
+      failurePart: 'independent_solution_disagrees',
+      expectedDiagnostics: 0,
+    },
+    {
+      name: 'non-keyable',
+      solverAnswer: undefined as ((promptMd: string, ordinal: number) => string) | undefined,
+      packageOutput: answerWithReasonAuthorOutput,
+      expectedStatus: 'preparation_failed' as const,
+      failurePart: 'independent_solution_uncomparable',
+      expectedDiagnostics: 0,
+    },
+  ])('gates a $name solver-gold pair at admission ($expectedStatus)', async (row) => {
+    const db = testDb();
+    const seeded = await seedEvidenceFor(`solver_gold_${row.name}`);
+    await handleProbeResultInterventionDelivery(db, delivery(seeded.probeResultId), {
+      env: { AUTO_INTERVENTION_EXPANSION_ENABLED: 'true' },
+      bossSend: async (_name, _data, options) => options.id,
+    });
+    const [opened] = await db.select().from(intervention);
+    const { fn } = successfulRunTask(
+      db,
+      row.packageOutput,
+      row.solverAnswer ?? solverAnswerForPrompt,
+    );
+    const result = await prepareInterventionWave(
+      db,
+      {
+        interventionId: opened.id,
+        version: opened.version,
+        idempotencyKey: opened.idempotency_key,
+        preparationJobId: preparationJobIdOf(opened),
+      },
+      { runTaskFn: fn, authorPackageFn: authorInterventionPackage },
+    );
+    expect(result.status).toBe(row.expectedStatus);
+    if (row.failurePart != null && result.status === 'preparation_failed') {
+      expect(result.reason_code).toContain(row.failurePart);
+    }
+    const diagnosticRows = await db
+      .select({ id: question.id })
+      .from(question)
+      .where(eq(question.source, 'intervention_diagnostic'));
+    expect(diagnosticRows).toHaveLength(row.expectedDiagnostics);
   });
 
   it('rechecks liveness under the shared source lock before enqueueing recovery', async () => {

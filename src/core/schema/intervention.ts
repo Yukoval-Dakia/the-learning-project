@@ -13,6 +13,12 @@
 import { z } from 'zod';
 import { PedagogyMethodId, PrecisionBand, ThetaBand } from '@/core/pedagogy/method-library';
 import {
+  type AnswerKeyT,
+  CURRENT_BLANK_NORMALIZATION,
+  type FrozenKeyAgreementUnit,
+  compareAnswerKeys,
+} from '@/core/schema/assessment/answer-compare';
+import {
   ConjectureDiagnosticSpec,
   ConjectureProbeSpecV2,
   ConjectureProbeSpecV2Base,
@@ -476,7 +482,8 @@ function normalizeInterventionIdentity(value: string): string {
 function interventionAnswerLeaks(prompt: string, answer: string): boolean {
   const normalizedAnswer = normalizeInterventionIdentity(answer);
   // Very short tokens occur frequently in prose, so substring matching would
-  // produce excessive false positives. Their leakage remains a comparator check.
+  // produce excessive false positives. Sub-3-char leakage used to fall to the
+  // same-model review; release-strict grounding validation is now the only guard.
   if (normalizedAnswer.length < 3) return false;
   return normalizeInterventionIdentity(prompt).includes(normalizedAnswer);
 }
@@ -531,6 +538,57 @@ export function validateInterventionPackageDeterministically(
     failures.push('transfer:context_change_missing');
   }
   return [...new Set(failures)].sort();
+}
+
+export type InterventionIndependentSolutionAgreement =
+  | { status: 'agree'; detail?: string }
+  | { status: 'disagree'; detail: string }
+  | { status: 'uncomparable'; detail: string };
+
+/**
+ * Deterministic blind-solve vs gold comparison — the half of the retired
+ * same-model review that has no model replacement. A 'text' gold mints a
+ * single-alias blank_text key; the solver is consistent when any of its
+ * declared forms (final answer plus equivalents) agrees with that key under
+ * the current blank-key normalization (no declared answer shape exists on a
+ * probe spec, so none is passed). Signatures with no deterministic key form
+ * (choice option ids the blind solver never sees, reason features, rubric
+ * criteria) are 'uncomparable'; the caller decides the fail policy.
+ */
+export function compareInterventionIndependentSolution(input: {
+  goldResponseSignature: InterventionPackageT['diagnostics']['immediate']['probe_spec']['gold_response_signature'];
+  solverFinalAnswer: string | null | undefined;
+  solverAnswerEquivalents: readonly string[] | null | undefined;
+}): InterventionIndependentSolutionAgreement {
+  const gold = input.goldResponseSignature;
+  if (gold.kind !== 'text') {
+    return {
+      status: 'uncomparable',
+      detail: `gold signature kind '${gold.kind}' has no deterministic solver-key form`,
+    };
+  }
+  const responseMd = gold.response_md;
+  if (responseMd == null || responseMd.trim().length === 0) {
+    return { status: 'uncomparable', detail: 'text gold signature carries no response_md' };
+  }
+  const solverForms = [input.solverFinalAnswer, ...(input.solverAnswerEquivalents ?? [])]
+    .map((form) => (typeof form === 'string' ? form.trim() : ''))
+    .filter((form) => form.length > 0);
+  if (solverForms.length === 0) {
+    return { status: 'uncomparable', detail: 'solver emitted no answer forms' };
+  }
+  const unit: FrozenKeyAgreementUnit = {
+    blank_normalization: CURRENT_BLANK_NORMALIZATION,
+    declared_shape: null,
+  };
+  const goldKey: AnswerKeyT = { kind: 'blank_text', accepted: [responseMd] };
+  let detail = 'solver-derived forms disagree with the gold signature';
+  for (const form of solverForms) {
+    const agreement = compareAnswerKeys(goldKey, { kind: 'blank_text', accepted: [form] }, unit);
+    if (agreement.agree) return { status: 'agree', detail: agreement.detail };
+    if (agreement.detail) detail = agreement.detail;
+  }
+  return { status: 'disagree', detail };
 }
 
 export const InterventionPreparationAttempt = z.discriminatedUnion('kind', [
