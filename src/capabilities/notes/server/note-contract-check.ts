@@ -3,8 +3,12 @@
 // generation round or persist as the note's known issues.
 
 import type { z } from 'zod';
-import { noteClosingLine } from '@/capabilities/notes/server/body-blocks';
-import { NoteKnownIssues, type NoteVerificationIssueT } from '@/core/schema/business';
+import { blockText, noteClosingLine } from '@/capabilities/notes/server/body-blocks';
+import {
+  ArtifactBodyBlocks,
+  NoteKnownIssues,
+  type NoteVerificationIssueT,
+} from '@/core/schema/business';
 
 // Closing pleasantries are reported, never silently trimmed: the note keeps what
 // the model wrote and the issue rides back for a same-round revision.
@@ -39,8 +43,41 @@ function closingChatterIssues(bodyBlocks: unknown): NoteVerificationIssueT[] {
   ];
 }
 
+// Headings only outline and ref blocks only point at material; a body made
+// solely of those carries nothing to learn from.
+const STRUCTURAL_ONLY_TYPES = new Set([
+  'heading',
+  'crossLinkBlock',
+  'artifactRefBlock',
+  'questionRefBlock',
+]);
+
+function missingSubstanceIssues(bodyBlocks: unknown): NoteVerificationIssueT[] {
+  const parsed = ArtifactBodyBlocks.safeParse(bodyBlocks);
+  if (!parsed.success) return [];
+  const substantive = (parsed.data.content ?? []).some(
+    (node) =>
+      node !== null &&
+      typeof node === 'object' &&
+      !STRUCTURAL_ONLY_TYPES.has(String((node as Record<string, unknown>).type)) &&
+      blockText(node as Record<string, unknown>).trim().length > 0,
+  );
+  if (substantive) return [];
+  return [
+    {
+      block_id: null,
+      severity: 'error',
+      category: 'coverage',
+      message:
+        'The note body has no substantive block: it is only headings and/or reference links.',
+      suggested_fix_md:
+        'Write at least one real content block (paragraph, list, or semantic section) that carries the material.',
+    },
+  ];
+}
+
 export function noteBodyContractIssues(bodyBlocks: unknown): NoteVerificationIssueT[] {
-  return closingChatterIssues(bodyBlocks);
+  return [...missingSubstanceIssues(bodyBlocks), ...closingChatterIssues(bodyBlocks)];
 }
 
 export type NoteKnownIssuesT = z.infer<typeof NoteKnownIssues>;

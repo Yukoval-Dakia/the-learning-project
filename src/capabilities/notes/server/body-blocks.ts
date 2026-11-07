@@ -35,7 +35,7 @@ function paragraphNode(text: string): Record<string, unknown> {
   };
 }
 
-function blockText(node: Record<string, unknown>): string {
+export function blockText(node: Record<string, unknown>): string {
   if (typeof node.text === 'string') return node.text;
   const content = Array.isArray(node.content) ? node.content : [];
   const parts = content
