@@ -32,7 +32,11 @@ import type { Db, Tx } from '@/db/client';
 import { model_catalog_cache, system_config } from '@/db/schema';
 import { withinSessionAdvisoryLock } from '@/db/session-advisory-lock';
 import rawSnapshot from './model-catalog.snapshot.json' with { type: 'json' };
-import { BUILTIN_MODEL_ENDPOINT_HOSTS, OPENDESIGN_CATALOG_MODELS } from './model-catalog-overrides';
+import {
+  BUILTIN_MODEL_ENDPOINT_HOSTS,
+  OPENDESIGN_CATALOG_MODELS,
+  OPENDESIGN_ENDPOINT_KEYS,
+} from './model-catalog-overrides';
 import { CATALOG_PROVIDER_BY_INTERNAL, catalogProviderFor } from './model-profiles';
 import {
   type PaidProbePosting,
@@ -383,7 +387,8 @@ function customModelFactsEntry(
 ): Json | undefined {
   // OpenDesign's rate card and admitted facts are route-specific; borrowing a
   // same-id model would silently bill with another provider's rates.
-  if (definition.id === 'custom:opendesign') {
+  const endpointKey = endpointKeyOf(definition.baseUrl);
+  if (endpointKey !== undefined && OPENDESIGN_ENDPOINT_KEYS.has(endpointKey)) {
     return Object.hasOwn(OPENDESIGN_CATALOG_MODELS, modelId)
       ? OPENDESIGN_CATALOG_MODELS[modelId as keyof typeof OPENDESIGN_CATALOG_MODELS]
       : undefined;
