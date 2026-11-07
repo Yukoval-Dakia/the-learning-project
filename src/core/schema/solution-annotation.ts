@@ -5,7 +5,7 @@
  * plus the key moves. It is deliberately not an answer key: it has no final-answer
  * field and never feeds the grader. The answer key stays `question.reference_md`,
  * the grading reference stays `question.rubric_json.reference_solution`, and the
- * admission-owned `question_solution_prior` stays private — none of them is written
+ * admission-owned solution-prior record stays private — none of them is written
  * by this contract.
  */
 import { z } from 'zod';
