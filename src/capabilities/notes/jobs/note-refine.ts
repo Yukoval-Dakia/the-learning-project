@@ -345,7 +345,7 @@ export function buildNoteRefineHandler(
           } catch (err) {
             // A missing receipt blocks logical restore, but must not replay paid work.
             console.error(
-              `[note_refine] result receipt failed for ${data.effect_id} (${result.status}); owner reconciliation required: docs/sub5-restore-cli.md`,
+              `[note_refine] result receipt failed for ${data.effect_id} (${result.status}); owner reconciliation required: /Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/sub5-restore-cli.md`,
               err,
             );
           }
@@ -356,7 +356,7 @@ export function buildNoteRefineHandler(
         );
       } catch (err) {
         console.error(
-          `[note_refine] ${data.artifact_id} failed (effect ${data.effect_id ?? 'none'}); after retries, reconcile via docs/sub5-restore-cli.md`,
+          `[note_refine] ${data.artifact_id} failed (effect ${data.effect_id ?? 'none'}); after retries, reconcile via /Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/sub5-restore-cli.md`,
           err,
         );
         throw err;

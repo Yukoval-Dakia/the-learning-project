@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { AgentRunError, type AgentRunErrorFields } from '@/ai/agent-run-error';
 import { type HelpProviderFault, isHelpProviderFault } from '@/ai/help-provider-fault';
 import { boundTerminalHttpStatus, providerTransientVerdict } from '@/ai/provider-failure';
+import { type TaskKind, resolveTaskBudget } from '@/capabilities/task-registry';
 import { getTaskOverride } from '@/core/config/store';
 import { canonicalHash } from '@/core/migration/canonical';
 import {
@@ -18,6 +19,7 @@ import {
 } from '@/core/paid-work/server/paid-effect-store';
 import type { Db, Tx } from '@/db/client';
 import { ai_task_runs, paid_effect } from '@/db/schema';
+import { classifyLoginFailure } from '@/server/ai/login-failure';
 import { assertModelProfileCapabilityFit } from '@/server/ai/model-profiles';
 import {
   planProviderTransientRetry,
@@ -159,7 +161,9 @@ function existingRecovery(
   if (error.helpProviderFault?.kind === 'quota')
     return { reason: 'quota', evidence_ref: error.taskRunId };
   if (httpStatus === 429) return { reason: 'quota', evidence_ref: error.taskRunId };
-  if (httpStatus === 401 && kind === 'QuestionAdmissionAdjudicateTask')
+  // Typed login evidence (credential-store failure or bound 401), never
+  // message text. Still adjudicator-gated: only its waits have a probe clock.
+  if (kind === 'QuestionAdmissionAdjudicateTask' && classifyLoginFailure(error))
     return { reason: 'login', evidence_ref: error.taskRunId };
   return null;
 }
@@ -487,7 +491,11 @@ export function admissionStageRunner(input: {
             backend: 'pg-boss',
             deliveryId: input.deliveryId,
             generation: 0,
-            leaseExpiresAt: new Date(Date.now() + 15 * 60_000),
+            // Derived so a system_config timeout override cannot outlive the lease and get a
+            // live call settled as expired; crash recovery pays the 5min margin.
+            leaseExpiresAt: new Date(
+              Date.now() + resolveTaskBudget(kind as TaskKind).timeout + 5 * 60_000,
+            ),
           },
         );
         if (reservation.kind !== 'winner')

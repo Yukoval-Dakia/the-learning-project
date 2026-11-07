@@ -1,7 +1,7 @@
 // Record page transport (YUK-1473). Thin calls over the ingestion routes in
 // src/capabilities/ingestion/manifest.ts; no learner rules live here.
 
-import type { StructuredQuestionT } from '@/core/schema/structured_question';
+import type { FigureRefT, StructuredQuestionT } from '@/core/schema/structured_question';
 import {
   ApiError,
   type ApiOperationJsonResponse,
@@ -44,6 +44,9 @@ export interface SessionFacts {
   entrypoint: string | null;
   source_asset_ids: string[];
   warnings?: string[];
+  /** true: there is evidence of it. false: there is none. null: never checked, or an older run. */
+  figures_withheld?: boolean | null;
+  content_lost?: boolean | null;
   error_message?: string | null;
   created_at?: string;
   updated_at?: string;
@@ -78,6 +81,7 @@ export interface Block {
   page_spans: PageSpan[] | null;
   extracted_prompt_md: string | null;
   structured: StructuredQuestionT | null;
+  figures?: FigureRefT[];
   /** The recorded confidence, a label on the question and never a gate. */
   workflow_judge_confidence?: number | null;
   extraction_confidence?: number;

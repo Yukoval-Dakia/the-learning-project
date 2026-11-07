@@ -13,7 +13,7 @@
 | `ui/RecordPage.tsx` | 录入面（`/record`） |
 
 ## CONVENTIONS
-- 抽取与付费边界见 [ADR-0002 的 2026-05-30 修订及 2026-07-07 成本更新](../../../docs/adr/0002-structured-extraction-vs-llm-analysis.md)：OCR 提供文字 hint，自动 `StructureTask` VLM 拥有结构；上传授权 baseline 抽取，额外付费 rescue 仍须显式授权。
+- 抽取与付费边界见 ADR-0002 的 2026-05-30 修订及 2026-07-07 成本更新（`/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/adr/0002-structured-extraction-vs-llm-analysis.md`）：OCR 提供文字 hint，自动 `StructureTask` VLM 拥有结构；上传授权 baseline 抽取，额外付费 rescue 仍须显式授权。
 - ingestion session 是 `learning_session(type='ingestion')`，状态操作归 [`server/session-lifecycle.ts`](server/session-lifecycle.ts)；DOCX 文本初始化见 `server/docx/text-session-lifecycle.ts`。
 - multipart 上传走 Web 标准 `req.formData()`；SSE 事件流走 `/api/ingestion/[id]/events`。
 

@@ -3,6 +3,7 @@
 // text directly. Both read the same here, with the server's own builders.
 
 import {
+  type FigureRefT,
   type StructuredQuestionT,
   structuredToPromptMarkdown,
   structuredToReferenceMarkdown,
@@ -28,24 +29,95 @@ export function printedNumber(block: Block): string | null {
   return no ? no : null;
 }
 
-/**
- * A question's text for its line, which shows the printed number in its own column: the built text
- * starts with that number too. Only for reading; what gets saved keeps the text as it is.
- */
-export function withoutPrintedNumber(text: string, block: Block): string {
-  const no = printedNumber(block);
-  const prefix = `${no}. `;
-  return no && text.startsWith(prefix) ? text.slice(prefix.length) : text;
-}
-
 function leaves(question: StructuredQuestionT): StructuredQuestionT[] {
   return question.sub_questions?.length ? question.sub_questions.flatMap(leaves) : [question];
 }
 
-/** Options read as a letter with no words: often a picture this page can't show. Rows aren't validated on read. */
-export function hasEmptyOptions(block: Block): boolean {
-  if (!block.structured) return false;
-  return leaves(block.structured).some((question) =>
-    question.options?.some((option) => !option.text?.trim()),
+function nodes(question: StructuredQuestionT): StructuredQuestionT[] {
+  return [question, ...(question.sub_questions ?? []).flatMap(nodes)];
+}
+
+/** Rows aren't validated on read, so an old one can have no text at all. */
+function picturedOptions(question: StructuredQuestionT) {
+  return (question.options ?? []).filter((option) => !option.text?.trim());
+}
+
+/**
+ * A question's text for its line. The line shows the printed number in its own column and an
+ * option's figure under its letter, and the built text has both again: the number, and a bare「A.」
+ * per pictured option. Only for reading; what gets saved keeps the text as it is.
+ */
+export function lineText(text: string, block: Block): string {
+  const no = printedNumber(block);
+  const prefix = `${no}. `;
+  const body = no && text.startsWith(prefix) ? text.slice(prefix.length) : text;
+  if (!block.structured) return body;
+  const bare = new Set(
+    leaves(block.structured).flatMap((q) => picturedOptions(q).map((o) => `${o.label}.`)),
   );
+  return body
+    .split('\n')
+    .filter((line) => !bare.has(line.trim()))
+    .join('\n');
+}
+
+/** An option with no words and no figure either: a picture that didn't reach this question. */
+export function hasOptionsWithoutFigure(block: Block): boolean {
+  if (!block.structured) return false;
+  const figures = block.figures ?? [];
+  return leaves(block.structured).some((question) =>
+    picturedOptions(question).some(
+      (option) =>
+        !figures.some(
+          (f) => f.attached_to_index === question.id && f.option_label === option.label,
+        ),
+    ),
+  );
+}
+
+export interface LineFigure {
+  key: string;
+  assetId: string;
+  /** What the learner reads under it: the option's letter, or the sub-question it belongs to. */
+  label: string | null;
+  alt: string;
+  handwriting: boolean;
+}
+
+/** A question's figures in reading order: a node's own, then its options by their letter's place. */
+export function figuresOf(block: Block): LineFigure[] {
+  const figures = block.figures ?? [];
+  const tree = block.structured ? nodes(block.structured) : [];
+  const line = (
+    figure: FigureRefT,
+    node: StructuredQuestionT | undefined,
+    isRoot: boolean,
+  ): LineFigure => {
+    const sub = !isRoot && node?.question_no ? `第 ${node.question_no} 小题` : null;
+    const option = figure.option_label;
+    return {
+      key: `${figure.asset_id}:${figure.attached_to_index}:${option ?? ''}`,
+      assetId: figure.asset_id,
+      label: [sub, option].filter(Boolean).join(' ') || null,
+      alt: option ? `${sub ?? ''}选项 ${option} 的图` : `${sub ?? '这道题'}的图`,
+      handwriting: figure.handwriting_unverified === true,
+    };
+  };
+  const placed = tree.flatMap((node) => {
+    const own = figures.filter((f) => f.attached_to_index === node.id);
+    const isRoot = node === block.structured;
+    const plain = own.filter((f) => !f.option_label);
+    const lettered = (node.options ?? []).flatMap((o) =>
+      own.filter((f) => f.option_label === o.label),
+    );
+    // Moved here from a question whose options this one doesn't have: still its figure.
+    const rest = own.filter((f) => f.option_label && !lettered.includes(f));
+    return [...plain, ...lettered, ...rest].map((f) => line(f, node, isRoot));
+  });
+  // A figure pointing at a node this question no longer has still belongs to the question.
+  const known = new Set(tree.map((node) => node.id));
+  const loose = figures
+    .filter((f) => !known.has(f.attached_to_index))
+    .map((f) => line(f, undefined, true));
+  return [...placed, ...loose];
 }

@@ -186,6 +186,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       emitFrame: (frame) => this.emitFrame(frame),
     });
     this.wire = new PiProviderWire({
+      kind: args.kind,
       runId: args.runId,
       resolved: args.resolved,
       options: args.options,
@@ -222,8 +223,9 @@ class PiPreparedQuery implements PreparedExecutionQuery {
    */
   private makeBeforeToolCall(agentType?: string): AgentLoopConfig['beforeToolCall'] {
     const piHooks = this.args.piHooks;
-    if (!piHooks?.beforeToolCall?.length) return undefined;
     return async ({ toolCall, args: callArgs }: BeforeToolCallContext, signal) => {
+      this.wire.throwIfFailed();
+      if (!piHooks?.beforeToolCall?.length) return undefined;
       const effectiveSignal = signal ?? this.abort.signal;
       return runPiBeforeToolCall(
         piHooks,
@@ -880,6 +882,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     const lastRequestStatus = lastRequest?.loop === 'root' ? lastRequest.http_status : undefined;
     const terminalRequestStatus =
       lastRequestStatus !== undefined && lastRequestStatus >= 400 ? lastRequestStatus : undefined;
+    this.wire.applyFailure(lastAssistantMessage(finalMessages));
     const terminal = piTerminalResultFrame({
       messages: finalMessages,
       model: this.model,

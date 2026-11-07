@@ -8,7 +8,7 @@ import {
   loadCopilotDerivationPreference,
   loadPersistedPendingCopilotTurns,
 } from '../durable-reconnect-storage';
-import { type CompanionCtx, nextMessageId } from './companion-context';
+import type { CompanionCtx } from './companion-context';
 import { selectionValidated } from './companion-state';
 import { RESTORED_PENDING_COPY } from './plain-errors';
 import { canResendUnasked } from './turn-sender';
@@ -60,12 +60,25 @@ export function handleOpenRequest(
       request.skill_context?.ref.kind === 'knowledge' ? request.skill_context.ref.id : null,
   });
   if (request.nudge) {
-    // The nudge headline is the companion's opening line (never a learner bubble), seeded only
-    // into an empty conversation; its ingestion session is the first reply's ambient focus.
-    const { headline, session_id } = request.nudge;
+    // The nudge headline is the companion's next line (never a learner bubble), also in a
+    // conversation with history: 看看 clears the nudge, so this is the only place it stays.
+    // Its ingestion session is the first reply's ambient focus.
+    const { headline, session_id, nudge_event_id } = request.nudge;
     internals.nudgeSession = session_id;
+    const id = `nudge_${nudge_event_id}`;
     ctx.updateMessages((previous) =>
-      previous.length === 0 ? [{ id: nextMessageId(), role: 'ai', text: headline }] : previous,
+      previous.some((m) => m.id === id)
+        ? previous
+        : [
+            ...previous,
+            {
+              id,
+              role: 'ai',
+              text: headline,
+              nudge_line: true,
+              session_id: ctx.get().currentSessionId ?? undefined,
+            },
+          ],
     );
   }
   requestOpen();

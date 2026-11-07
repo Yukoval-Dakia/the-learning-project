@@ -1,4 +1,4 @@
-// Proactive prompts (off by default on the server): each a headline with 看看 and ×. 看看 marks it
+// Proactive prompts: each a headline with 看看 and ×. 看看 marks it
 // opened and makes the headline the companion's opening line; × dismisses that kind for the day.
 
 import { Sparkles, X } from 'lucide-react';

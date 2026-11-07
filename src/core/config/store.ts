@@ -1,7 +1,7 @@
 // YUK-1007 — 热加载配置的同步读面（grounding §1.3/§2.1）。
 //
 // 架构：模块级 in-memory 快照 + 周期 refresh（subject hydrate 先例）。
-//   - 快照由 src/server/config/hydrate.ts 的 hydrateConfigFromDb 整块替换
+//   - 快照由 src/core/config/server/hydrate.ts 的 hydrateConfigFromDb 整块替换
 //     （atomic swap，= replaceSubjectTraitResolutions 先例）；DB 缺席/坏行 →
 //     保留 last-good / 空快照（纯 env 行为 = 迁移前 byte-identical 回滚位）。
 //   - 读值 = Map.get + env fallback——零 DB、同步、可在构造函数/hot path 调用

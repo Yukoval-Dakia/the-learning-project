@@ -28,9 +28,11 @@ import {
 import { resolveContextBudget } from '@/kernel/tools/budgets';
 import { ContextBudgetTracker } from '@/kernel/tools/context-throttle';
 import { ANSWER_ONLY_TOOL_NAMES, derivationToolDenial } from '@/kernel/tools/derivation-policy';
+import { TurnSourceLedger } from '@/kernel/tools/source-ledger';
 import type { ModelBinding } from '@/server/ai/execution-adapter';
 import { type StreamCollectResult, runAgentTask, streamTaskCollecting } from '@/server/ai/runner';
 import { isToolArgumentContractFailure } from '@/server/ai/tool-param-contract';
+import { getTool } from '@/server/ai/tools/registry';
 import { shouldEmitToolUseForCaller } from '@/server/ai/tools/tool-mirror-policy';
 import { resolveCopilotSkillDocs } from '@/subjects/copilot-skills';
 import type { CopilotThinkingEndResult } from '../thinking-lane-contract';
@@ -67,6 +69,7 @@ import {
   prependCopilotPiFinalizationHooks,
 } from './reply-finalization';
 import { resolveCopilotReviewAnswer } from './review-answer-consumer';
+import { recordRetryToolEffect, retryToolDenial } from './run-retry';
 import { bindSubagentParentCancellation, handleNativeSubagentTaskEvent } from './subagent-mailbox';
 import {
   type CopilotSubtaskEvent,
@@ -131,8 +134,10 @@ export interface CopilotExecutionTurn {
   input: CopilotRunInput;
   sessionId: string;
   taskRunId: string;
-  /** User ask/chip event that owns tool mirrors and native child records. */
+  /** Execution root that owns tool mirrors, fences and native child records. */
   sourceEventId?: string;
+  /** Original learner ask used only by the memory/steering quote gates. */
+  learnerAskEventId?: string;
 }
 
 export interface CopilotExecutionPolicy {
@@ -327,9 +332,39 @@ export function createCopilotExecutionOwner(
     const baseContextBudget = resolveContextBudget(surface);
     const budgetTracker = new ContextBudgetTracker(baseContextBudget);
     const proposalFlowGate = createCopilotProposalFlowGate();
+    // YUK-1548 — the source ledger is the authoritative record of the learner
+    // sources this turn could have touched: the bound history window, the ask
+    // event, a bound review answer, and an ambient focus. Aggregate context the
+    // server cannot bind to ids (learner-state header, proposal feedback) marks
+    // the ledger incomplete, so compose_block's drawing path refuses honestly.
+    const sourceLedger = new TurnSourceLedger();
+    if (turn.sourceEventId) sourceLedger.note({ kind: 'event', id: turn.sourceEventId });
+    for (const id of input.bound_turn_event_ids ?? []) sourceLedger.note({ kind: 'event', id });
+    if (reviewAnswer) sourceLedger.note({ kind: 'event', id: reviewAnswer.originalRef });
+    const focused = input.ambient_context?.focused_entity;
+    if (focused) {
+      const FOCUS_SOURCE_KINDS: Record<string, 'question' | 'record' | 'event' | 'session'> = {
+        question: 'question',
+        record: 'record',
+        event: 'event',
+        learning_session: 'session',
+      };
+      const focusedKind = FOCUS_SOURCE_KINDS[focused.kind];
+      if (focusedKind) sourceLedger.note({ kind: focusedKind, id: focused.id });
+      else sourceLedger.noteUnknown(`ambient_focus:${focused.kind}`);
+    }
+    // Whole-state projections carry a provable scope, not enumerable ids:
+    // derivation consumers run the global restricted-source check (scoped)
+    // instead of pretending the header's inputs bind to named rows.
+    if (input.learner_state_header && input.learner_state_header.length > 0)
+      sourceLedger.noteScoped('learner_state_header');
+    if (input.proposal_feedback.length > 0) sourceLedger.noteScoped('proposal_feedback');
     // One mount-options literal feeds the pi AgentTool bridge
     // (`ctx.piToolMounts` → piDomainMount); the loop's native toolCall.id
     // supplies correlation via `correlatedToolUseId` (see pi-tools.ts).
+    const isRetry =
+      turn.learnerAskEventId !== undefined && turn.learnerAskEventId !== turn.sourceEventId;
+    const toolNames = answerOnly ? [...ANSWER_ONLY_TOOL_NAMES] : resolveDomainToolNames(surface);
     const domainMountOptions = {
       ctx: {
         db,
@@ -342,19 +377,38 @@ export function createCopilotExecutionOwner(
         ...(deadlineAt !== undefined ? { providerSessionDeadlineAt: deadlineAt } : {}),
         callerActor,
         ...(turn.sourceEventId ? { causedByEventId: turn.sourceEventId } : {}),
+        ...(turn.learnerAskEventId ? { learnerAskEventId: turn.learnerAskEventId } : {}),
+        sourceLedger,
+        answerOnly,
       },
       serverName: DOMAIN_TOOL_MCP_SERVER_NAME,
-      toolNames: answerOnly ? [...ANSWER_ONLY_TOOL_NAMES] : resolveDomainToolNames(surface),
+      toolNames: isRetry
+        ? toolNames.filter(
+            (name) => retryToolDenial({ name, effect: getTool(name)?.effect }) === undefined,
+          )
+        : toolNames,
       taskKind: 'CopilotTask',
       presentResult: (envelope) => learnerToolResult(db, envelope),
       cancellationSignals,
       beforeExecute: async (tool) =>
+        (isRetry ? retryToolDenial(tool) : undefined) ??
         derivationToolDenial(derivationPolicy, tool) ??
         (await policy.cancellation.beforeTool()) ??
         finalizer.beforeDomainTool(tool) ??
         proposalFlowGate.beforeExecute(tool) ??
         budgetTracker.beforeExecute(tool),
-      onExecuteStart: (tool) => policy.cancellation.onToolExecutionStarted(tool),
+      onExecuteStart: async (tool) => {
+        policy.cancellation.onToolExecutionStarted(tool);
+        try {
+          if (turn.sourceEventId) await recordRetryToolEffect(db, turn.sourceEventId, tool.effect);
+          const denial = await policy.cancellation.beforeTool();
+          if (denial) throw new Error(denial);
+        } catch (error) {
+          // The bridge takes over settlement only after this hook returns.
+          policy.cancellation.onToolExecutionSettled();
+          throw error;
+        }
+      },
       onExecuteSettled: () => policy.cancellation.onToolExecutionSettled(),
       interceptInput: (tool, args) => {
         const { args: capped, contextBudget, softStop } = budgetTracker.capInput(tool.name, args);
