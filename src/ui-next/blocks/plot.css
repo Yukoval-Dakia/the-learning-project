@@ -50,10 +50,24 @@
 
   & .un-plot-slider {
     display: grid;
-    grid-template-columns: minmax(62px, auto) minmax(0, 1fr) 40px;
+    grid-template-columns: minmax(62px, auto) minmax(0, 1fr) minmax(40px, auto);
     align-items: center;
     gap: var(--un-sp-2);
     min-height: 32px;
+  }
+
+  & .un-plot-slider label {
+    display: contents;
+  }
+
+  & .un-plot-table-note {
+    display: none;
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+
+  & .un-blk-chart[data-table-open] .un-plot-table-note {
+    display: block;
   }
 
   & .un-plot-slider-name {
@@ -137,6 +151,10 @@
   }
 
   @media print {
+    & .un-plot-table-note {
+      display: block;
+    }
+
     & .un-plot-actions,
     & .un-plot-slider input[type="range"] {
       display: none;

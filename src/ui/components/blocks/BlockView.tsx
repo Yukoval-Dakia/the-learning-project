@@ -52,7 +52,8 @@ export function BlockView({ block }: { block: BlockV1T | undefined }): ReactElem
     case 'chart':
       return <ChartBlock block={block} />;
     case 'plot':
-      return <PlotBlock block={block} />;
+      // A changed block starts over from its own defaults; the same block keeps the learner's sliders.
+      return <PlotBlock key={JSON.stringify(block)} block={block} />;
     case 'question_ref':
       return <QuestionRefBlock block={block} />;
     case 'entity_card':
