@@ -48,7 +48,9 @@ export const solutionGenerateTaskSpec = {
     kind: 'SolutionGenerateTask',
     description:
       'YUK-193 — Generate a reference solution + worked solution for a bare question that has no rubric_json.reference_solution. Output = RubricReferenceSolution (expected_signals + final_answer + answer_equivalents) + worked_solution_md. The solve orchestrator writes it merge-preserving into rubric_json + reference_md so the shipped StepsJudge/SemanticJudge can grade real ingested questions. Single structured-output call, text-only (the question prompt is already text; figures are passed as a textual hint, not images — vision extraction is out of scope).',
-    budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1, timeout: 90_000 },
+    // TEST longest 273s (tlp-audit-artifacts/test-to-nas/route-c-plus-counts-20261106.txt);
+    // 600s clears it and stays under the 1h stuck-run bound.
+    budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1, timeout: 600_000 },
     needsToolCall: false,
     isMultimodal: false,
     allowedTools: [],

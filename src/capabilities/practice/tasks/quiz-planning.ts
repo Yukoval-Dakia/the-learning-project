@@ -43,7 +43,9 @@ export const quizPlanTaskSpec = {
     kind: 'QuizPlanTask',
     description:
       'Plan-then-generate Phase 1 (ADR-0038 决定#2): produces the machine-checkable question PLAN — which knowledge point, what kind, difficulty, and the standard-answer anchor for objective kinds — as strict QuizGenPlan JSON. The Q3 handler deterministically gates it (schema + real knowledge-point existence + kind/anchor sanity; bounded regeneration, fail-closed) before the QuizGenTask generation call consumes the accepted plan. Read-only domain MCP mounted by the handler; no Tavily.',
-    budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 4, timeout: 90_000 },
+    // TEST longest 930s, p95 13.3s (tlp-audit-artifacts/test-to-nas/route-c-plus-counts-20261106.txt);
+    // 1500s clears the tail and stays under the 1h stuck-run bound.
+    budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 4, timeout: 1_500_000 },
     needsToolCall: true,
     isMultimodal: false,
     allowedTools: [],

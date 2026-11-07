@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { IngestionExtractionNotices } from '@/core/schema/ingestion-extraction';
 import {
   CauseCategory,
   FigureRef,
@@ -95,6 +96,7 @@ export type IngestionSessionTitleSource = z.infer<typeof IngestionSessionTitleSo
 
 export const IngestionSessionSchema = z
   .object({
+    ...IngestionExtractionNotices.partial().shape,
     id: z.string(),
     status: z.string(),
     entrypoint: z.string().nullable(),
@@ -652,6 +654,7 @@ export const IngestionSessionHistoryResponseSchema = z
         updated_at: z.string(),
         error_message: z.string().nullable(),
         warnings: z.array(z.string()),
+        ...IngestionExtractionNotices.partial().shape,
       })
       .strict(),
     run: IngestionHistoryRunSchema.nullable(),

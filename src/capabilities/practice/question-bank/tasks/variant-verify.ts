@@ -36,7 +36,7 @@ export const variantVerifyTaskSpec = {
     kind: 'VariantVerifyTask',
     description:
       'YUK-17 / ADR-0018 — second-pass content alignment check for an accepted mistake variant. Decides whether the variant still targets the original failure cause; verdict="fail" flips mistake_variant.status to "broken".',
-    budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1, timeout: 60_000 },
+    budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1 },
     needsToolCall: false,
     isMultimodal: false,
     allowedTools: [],

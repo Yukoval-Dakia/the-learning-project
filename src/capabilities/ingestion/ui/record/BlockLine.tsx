@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { isLowJudgeConfidence } from '@/core/judge-confidence';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { RescueButton, RevertButton } from './BlockTools';
 import { hasEmptyOptions, promptOf, withoutPrintedNumber } from './block-text';
@@ -46,9 +47,18 @@ export function BlockLine({
   check?: { marked: boolean; disabled: boolean; onToggle: () => void };
 }) {
   const [editing, setEditing] = useState(false);
-  const emptyOptions = hasEmptyOptions(block) ? (
-    <p className="rc-line-note">选项的文字没读出来，可能是图，对照原页看。</p>
-  ) : null;
+  // A question still waiting here has no recorded judgement yet, only how sure the reading was.
+  const lowConfidence = isLowJudgeConfidence(
+    block.workflow_judge_confidence ?? block.extraction_confidence,
+  );
+  const emptyOptions = hasEmptyOptions(block);
+  const notes =
+    lowConfidence || emptyOptions ? (
+      <p className="rc-line-note">
+        {lowConfidence && <span>这道题认得把握不高，对照原页看一下。</span>}
+        {emptyOptions && <span>选项的文字没读出来，可能是图，对照原页看。</span>}
+      </p>
+    ) : null;
   const first = block.page_spans?.[0];
   const page = first ? first.page_index + 1 : null;
   const hover = {
@@ -74,7 +84,7 @@ export function BlockLine({
           <MathMarkdown className="rc-line-text">
             {withoutPrintedNumber(promptOf(block), block) || '（没认出文字）'}
           </MathMarkdown>
-          {emptyOptions}
+          {notes}
           <div className="rc-line-tools">
             {check && (
               <label className="rc-switch rc-switch-sm">
@@ -123,7 +133,7 @@ export function BlockLine({
             {withoutPrintedNumber(edit.prompt, block) || '（没认出文字）'}
           </MathMarkdown>
         )}
-        {emptyOptions}
+        {notes}
         {!edit.skip && (
           <KnowledgePick
             value={edit.knowledgeIds}

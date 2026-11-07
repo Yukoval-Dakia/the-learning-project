@@ -15606,8 +15606,11 @@ export interface operations {
                 content: {
                     "application/json": {
                         data: ({
+                            content_lost?: boolean | null;
                             ended_at?: number | null;
                             entrypoint: string | null;
+                            figure_handwriting_unverified?: boolean | null;
+                            figures_withheld?: boolean | null;
                             id: string;
                             item_count?: number;
                             /** @enum {string|null} */
@@ -16104,8 +16107,11 @@ export interface operations {
                 content: {
                     "application/json": {
                         data: ({
+                            content_lost?: boolean | null;
                             ended_at?: number | null;
                             entrypoint: string | null;
+                            figure_handwriting_unverified?: boolean | null;
+                            figures_withheld?: boolean | null;
                             id: string;
                             item_count?: number;
                             /** @enum {string|null} */
@@ -16412,8 +16418,11 @@ export interface operations {
                 content: {
                     "application/json": {
                         session: {
+                            content_lost?: boolean | null;
                             ended_at?: number | null;
                             entrypoint: string | null;
+                            figure_handwriting_unverified?: boolean | null;
+                            figures_withheld?: boolean | null;
                             id: string;
                             item_count?: number;
                             /** @enum {string|null} */
@@ -16946,10 +16955,13 @@ export interface operations {
                             started_at: string | null;
                         } | null;
                         session: {
+                            content_lost?: boolean | null;
                             created_at: string;
                             ended_at: string | null;
                             entrypoint: string | null;
                             error_message: string | null;
+                            figure_handwriting_unverified?: boolean | null;
+                            figures_withheld?: boolean | null;
                             id: string;
                             /** @enum {string|null} */
                             path: "agent" | "extract" | null;
@@ -17906,8 +17918,10 @@ export interface operations {
                                 /** @enum {string} */
                                 attach_confidence: "high" | "low" | "manual";
                                 attached_to_index: string;
+                                handwriting_unverified?: boolean;
                                 /** Format: date-time */
                                 last_reassigned_at?: string;
+                                option_label?: string;
                                 /** @enum {string} */
                                 role: "diagram";
                                 source_bbox: {
