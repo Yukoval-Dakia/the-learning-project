@@ -40,9 +40,9 @@ import { projectQuestionBlockGuarded } from '@/kernel/records/question-block-pro
 import {
   applyScoringEditPlan,
   draftDocumentToContract,
-  questionMaterialPlotParamIssues,
   revisionToDraftDocument,
 } from '@/kernel/records/question-draft-contract';
+import { questionMaterialPlotParamIssues } from '@/kernel/records/question-material-gate';
 import { OpaqueJsonInput } from '@/kernel/tools/types';
 import {
   type InvalidatedScope,

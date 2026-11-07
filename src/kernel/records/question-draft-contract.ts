@@ -21,7 +21,6 @@ import {
 } from '@/core/schema/assessment';
 import { CURRENT_NUMERIC_NORMALIZATION_VERSION } from '@/core/schema/assessment/answer-compare';
 import type { BlankNormalizationT } from '@/core/schema/assessment/scoring';
-import { findPlotParamFences } from '@/core/schema/blocks/plot-fence';
 import { deterministicDisplayOrder } from '@/core/schema/display-order';
 import type {
   DraftBlankTextKeyT,
@@ -36,6 +35,7 @@ import {
   isDraftDocumentV2,
 } from '@/core/schema/question-draft';
 import { contractIntegrityDigest } from '@/kernel/records/assessment-normalization';
+import { questionMaterialPlotParamIssues } from '@/kernel/records/question-material-gate';
 
 // v2 draft document ↔ four-layer assessment contract.
 //
@@ -344,24 +344,6 @@ function executorFor(unit: DraftUnitT): ExecutorAssignmentT['executor'] {
     case 'human_review':
       return { kind: 'human_review' };
   }
-}
-
-/** `plot` fences with params cannot appear in a frozen question material. */
-export function questionMaterialPlotParamIssues(
-  doc: QuestionDraftDocumentT,
-): DraftConversionIssue[] {
-  const issues: DraftConversionIssue[] = [];
-  for (const material of doc.materials) {
-    if (material.content_md == null || material.content_md.length === 0) continue;
-    const fences = findPlotParamFences(material.content_md);
-    if (fences.length > 0) {
-      issues.push({
-        code: 'question_material_plot_params',
-        detail: `material '${material.material_id}' has plot fence(s) ${fences.join(', ')} with params; params are forbidden in a frozen question material`,
-      });
-    }
-  }
-  return issues;
 }
 
 /**
