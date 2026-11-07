@@ -254,6 +254,7 @@ export async function saveBankReceipt(
   };
   await ctx.db.transaction(
     async (tx) => {
+      const asOf = new Date();
       await tx.insert(bank_search_snapshot).values({
         search_id: full.output.search_id,
         actor_key: actorKey(ctx),
@@ -261,8 +262,8 @@ export async function saveBankReceipt(
         request_digest: canonicalHash(full.request),
         result_digest: canonicalHash(full),
         payload: { receipt: full, decisions: {} },
-        as_of: new Date(),
-        expires_at: new Date(Date.now() + TTL),
+        as_of: asOf,
+        expires_at: new Date(asOf.getTime() + TTL),
       });
       await tx.execute(
         sql`DELETE FROM ${bank_search_snapshot} WHERE search_id IN (SELECT search_id FROM ${bank_search_snapshot} WHERE expires_at <= now() - interval '1 day' ORDER BY expires_at LIMIT 10)`,

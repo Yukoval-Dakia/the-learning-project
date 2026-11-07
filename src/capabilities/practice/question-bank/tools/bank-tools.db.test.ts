@@ -1,4 +1,3 @@
-import { selectBankReceipt } from '../public';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/postgres-js';
@@ -23,6 +22,7 @@ import { fileBankGapTool } from '../../server/tools/file-bank-gap';
 import { assertPaperOpenable } from '../../session/server/assessment/paper-issuance';
 import { writeQuizTool } from '../../session/tools/write-quiz';
 import { runEmbedBackfill } from '../jobs/embed_backfill';
+import { selectBankReceipt } from '../public';
 import { archiveQuestion, editQuestion } from '../server/question-bank-write';
 import { encodeBankRef } from './bank-ref';
 import { BankSearchScopeSchema, runSearchBank } from './bank-search';
@@ -219,6 +219,19 @@ describe('bank tools boundary invariants (search_bank / read_bank / check_bank)'
       filters: { history: 'wrong' },
     });
     expect(failedHistory.hits.map((h) => h.id)).toEqual(['bt_admitted']);
+    await db.insert(schema.item_calibration).values({
+      id: 'bank-calibration',
+      question_id: 'bt_admitted',
+      source: 'fixed_anchor',
+      b_post: 0.7,
+    });
+    const calibrated = await searchBankTool.execute(ctx, {
+      query: '电容器',
+      filters: { difficulty: { basis: 'calibrated', range: [0.6, 0.8] } },
+    });
+    expect(calibrated.hits.map((h) => h.id)).toEqual(['bt_admitted']);
+    expect(calibrated.hits[0].facts.difficulty.basis).toBe('calibrated');
+    expect(calibrated.hits[0].facts.difficulty.value).toBeCloseTo(0.7);
 
     const dedup = await searchHits({ query: '电容器 充放电' });
     const ids = dedup.hits.map((h) => h.question_id);

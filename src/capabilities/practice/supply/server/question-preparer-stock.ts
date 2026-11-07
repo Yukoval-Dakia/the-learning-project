@@ -1,8 +1,8 @@
-import { canonicalKindToPersistedForms } from '@/subjects/question-kind';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { Db } from '@/db/client';
 import { question, question_group_lifecycle } from '@/db/schema';
 import type { EvidenceDemandV1T } from '@/kernel/supply-contracts';
+import { canonicalKindToPersistedForms } from '@/subjects/question-kind';
 import { isPendingAdmission } from '../../question-bank/public';
 
 /** Pending publication reserves supply; it is never reported as usable/admitted stock. */

@@ -280,7 +280,9 @@ export async function collectBankSearchReceipt(
       unavailable: recall.coverage.unavailable_channels,
       prior: {
         requested:
-          ablation?.vectors !== 'off' && bankReadRoleForActor(ctx.callerActor) !== 'restricted',
+          ablation?.vectors !== 'off' &&
+          ablation?.vectors !== 'content' &&
+          bankReadRoleForActor(ctx.callerActor) !== 'restricted',
         missing_channels: ['method', 'pitfall'].filter(
           (channel) => !recall.coverage.recall_scan?.some((c) => c.channel === channel),
         ),

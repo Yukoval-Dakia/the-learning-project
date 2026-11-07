@@ -5,6 +5,8 @@ import type { ToolContext } from '@/kernel/tools/types';
 import type { BankDocument } from './bank-search-contract';
 import { bankReadRoleForActor, runReadBank } from './read-bank';
 
+const UNREAD_INLINE_MEDIA = /!\[|<(?:img|svg|audio|video|picture|source|iframe|object|embed)\b/i;
+
 /** Reuse the bank reader's authorization; search never upgrades its caller. */
 export async function readBankDocuments(
   db: Db | Tx,
@@ -42,9 +44,7 @@ export async function readBankDocuments(
             complete: part.extent?.complete !== false,
             missing: [
               ...(part.extent?.complete === false ? ['part_text_incomplete'] : []),
-              ...(/!\[[^\]]*\]\(|<(?:img|svg|video|audio)\b/i.test(part.prompt_md)
-                ? ['media_not_read']
-                : []),
+              ...(UNREAD_INLINE_MEDIA.test(part.prompt_md) ? ['media_not_read'] : []),
               ...part.material_ids.flatMap((id) => {
                 const material = item.materials?.find((m) => m.material_id === id);
                 if (
@@ -57,7 +57,7 @@ export async function readBankDocuments(
                   return [`material_text_incomplete:${id}`];
                 if (
                   ['figure', 'image', 'audio', 'video', 'pdf'].includes(material.kind) ||
-                  /!\[[^\]]*\]\(|<(?:img|svg|video|audio)\b/i.test(material.content_md)
+                  UNREAD_INLINE_MEDIA.test(material.content_md)
                 )
                   return [`media_not_read:${id}`];
                 return [];
@@ -68,6 +68,7 @@ export async function readBankDocuments(
           documents.push({
             ref,
             source: `slot:${slot.slot_id}`,
+            missing: UNREAD_INLINE_MEDIA.test(JSON.stringify(slot)) ? ['media_not_read'] : [],
             text: JSON.stringify(slot),
             parts: [slot.part_id],
           });

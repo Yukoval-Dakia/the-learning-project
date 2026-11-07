@@ -2,10 +2,10 @@
 // The existing claim ledger and paid dispatch share one transaction; unknown or
 // incomplete evidence never establishes bank absence or bypasses supply controls.
 
-import { canonicalHash } from '@/core/migration/canonical';
 import { createHash, randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
+import { canonicalHash } from '@/core/migration/canonical';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
