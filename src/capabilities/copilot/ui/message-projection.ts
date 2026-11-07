@@ -22,6 +22,8 @@ import type {
 export type ToolCallRecord = CopilotToolCallRecord;
 
 export interface ChatMessage extends Omit<ReplayChatMessage, 'tool_calls'> {
+  /** A nudge's headline shown as the companion's line. Only here: no snapshot carries it. */
+  nudge_line?: true;
   streaming?: boolean;
   subtasks?: CopilotSubtaskView[];
   tool_calls?: ToolCallRecord[];
@@ -460,12 +462,29 @@ export function reconcileCopilotSnapshotMessages(
     seenIds.add(message.id);
     output.push(message);
   };
+  // A nudge line stays right after the row it followed.
+  const nudgeLinesAfter = new Map<string | null, ChatMessage[]>();
+  let before: string | null = null;
+  for (const message of previous) {
+    if (message.nudge_line) {
+      if (message.session_id !== sessionId) continue;
+      nudgeLinesAfter.set(before, [...(nudgeLinesAfter.get(before) ?? []), message]);
+    } else {
+      before = message.id;
+    }
+  }
+  const replayedIds = new Set(replayed.map((message) => message.id));
+  for (const message of nudgeLinesAfter.get(null) ?? []) append(message);
   for (const message of replayed) {
     append(message);
+    for (const line of nudgeLinesAfter.get(message.id) ?? []) append(line);
     if (message.role === 'user') {
       const liveReply = transientAiByRun.get(message.id);
       if (liveReply) append(liveReply);
     }
+  }
+  for (const [anchor, lines] of nudgeLinesAfter) {
+    if (anchor !== null && !replayedIds.has(anchor)) for (const line of lines) append(line);
   }
   for (const message of transientRunMessages) append(message);
   for (const message of pendingMessages) append(message);
