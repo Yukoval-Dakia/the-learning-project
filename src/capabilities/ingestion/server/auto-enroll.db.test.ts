@@ -1,21 +1,28 @@
 /**
  * Tests for runAutoEnrollForSession — T-OC slice 3 (YUK-145, OC-4 / OC-5).
  *
- * DB-backed. Injected TaggingTask fn so no real LLM runs. The headline test is
- * the CRITICAL SAFETY one: with the flag OFF (default), NOTHING auto-enrolls and
- * every block stays 'draft' for the existing human review flow. See ADR-0026 +
- * docs/archive/superpowers/plans/2026-05-30-yuk145-toc-slice3-lane.md §4.
+ * DB-backed. Injected tagging fn so no real LLM runs. Auto-enroll has no off switch
+ * (YUK-1994); the safety contract is revertibility plus "no prompt / failed write stays
+ * draft".
  */
 import { createId } from '@paralleldrive/cuid2';
-import { eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { and, eq } from 'drizzle-orm';
+import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
+import { installPracticeHost } from '@/capabilities/practice/public';
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
-import { knowledge, learning_session, question, question_block } from '@/db/schema';
+import {
+  event,
+  knowledge,
+  learning_session,
+  question,
+  question_block,
+  source_asset,
+  source_document,
+} from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { type RunAutoEnrollParams, runAutoEnrollForSession } from './auto-enroll';
-
-const FLAG = 'WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED';
+import { revertAutoEnrolledBlock } from './revert-auto-enroll';
 
 function structured(prompt: string): StructuredQuestionT {
   return { id: createId(), role: 'standalone', prompt_text: prompt, source: 'vlm_structure' };
@@ -36,11 +43,20 @@ async function seed(
     version: 0,
   });
   const sessionId = createId();
+  const documentId = createId();
+  await db.insert(source_document).values({
+    id: documentId,
+    source_asset_ids: ['asset_1'],
+    provenance: { usage_policy: { derivation_policy: 'allow' } },
+    created_at: now,
+    updated_at: now,
+    version: 0,
+  });
   await db.insert(learning_session).values({
     id: sessionId,
     type: 'ingestion',
     status: 'extracted',
-    source_document_id: createId(),
+    source_document_id: documentId,
     source_asset_ids: ['asset_1'],
     entrypoint: 'vision_paper',
     warnings: [],
@@ -86,6 +102,7 @@ const matchK1: RunAutoEnrollParams['tagKnowledgeFn'] = async () => ({
 });
 
 describe('runAutoEnrollForSession', () => {
+  beforeAll(installPracticeHost);
   beforeEach(async () => {
     await resetDb();
   });
@@ -99,6 +116,10 @@ describe('runAutoEnrollForSession', () => {
   // claim is the structural guarantee). This is the observable contract; the truly-concurrent
   // race needs a timing seam to exercise.
   // ===========================================================================
+  // @invariant concurrency: a duplicate/retried auto_enroll delivery never double-inserts
+  //   a question for an already-enrolled block
+  // @fails-if removing the draft re-read or FOR UPDATE claim lets a redelivered batch
+  //   enroll the same block twice and creates duplicate questions
   it('YUK-486 idempotent re-run: a duplicate/retry auto_enroll does not double-enroll', async () => {
     const db = testDb();
     const { sessionId } = await seed(db);
@@ -107,7 +128,6 @@ describe('runAutoEnrollForSession', () => {
       db,
       sessionId,
       subjectId: 'yuwen',
-      env: { [FLAG]: 'true' },
       tagKnowledgeFn: matchK1,
     });
     expect(first.status).toBe('completed');
@@ -128,7 +148,6 @@ describe('runAutoEnrollForSession', () => {
       db,
       sessionId,
       subjectId: 'yuwen',
-      env: { [FLAG]: 'true' },
       tagKnowledgeFn: matchK1,
     });
     expect(second.status).toBe('completed');
@@ -151,5 +170,216 @@ describe('runAutoEnrollForSession', () => {
       .from(question_block)
       .where(eq(question_block.ingestion_session_id, sessionId));
     expect(blocks.every((b) => b.status === 'auto_enrolled')).toBe(true);
+  });
+
+  // YUK-1994 — a degraded (partial) page and an unattributed block must not be a
+  // reason to withhold the question, and the automatic enrollment must stay reversible.
+  // @invariant data: an unattributed block from a partial session enters the library
+  //   and its automatic enrollment can be reverted without losing the question row
+  // @fails-if the block stays draft, the question is hidden from the library
+  //   (draft_status 'draft'), or revert cannot restore the block
+  it('enrolls an unattributed block from a partial session and keeps it revertible', async () => {
+    const db = testDb();
+    const now = new Date();
+    const sessionId = createId();
+    const documentId = createId();
+    await db.insert(source_document).values({
+      id: documentId,
+      source_asset_ids: ['asset_1'],
+      provenance: { usage_policy: { derivation_policy: 'allow' } },
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+    await db.insert(learning_session).values({
+      id: sessionId,
+      type: 'ingestion',
+      status: 'partial',
+      source_document_id: documentId,
+      source_asset_ids: ['asset_1'],
+      entrypoint: 'vision_paper',
+      warnings: [],
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+    const blockId = createId();
+    const answeredBlockId = createId();
+    const promptFallbackBlockId = createId();
+    await db.insert(source_asset).values({
+      id: 'asset_1',
+      kind: 'image',
+      storage_key: 'offline/page-1',
+      mime_type: 'image/png',
+      byte_size: 4096,
+      sha256: 'b'.repeat(64),
+      created_at: now,
+    });
+    await db.insert(question_block).values([
+      {
+        id: blockId,
+        ingestion_session_id: sessionId,
+        source_document_id: null,
+        source_asset_ids: ['asset_1'],
+        page_spans: [],
+        structured: structured('下列句中「之」的用法'),
+        figures: [],
+        layout_quality: 'partial',
+        image_refs: ['asset_1'],
+        crop_refs: [],
+        visual_complexity: 'low',
+        extraction_confidence: 0.2,
+        status: 'draft',
+        knowledge_hint: null,
+        merged_from_block_ids: [],
+        created_at: now,
+        updated_at: now,
+        version: 0,
+      },
+      {
+        id: answeredBlockId,
+        ingestion_session_id: sessionId,
+        source_document_id: null,
+        source_asset_ids: ['asset_1'],
+        page_spans: [],
+        structured: {
+          id: createId(),
+          role: 'standalone',
+          kind: 'choice',
+          source: 'vlm_structure',
+          prompt_text: '1. Solve 3x + 5 = 20.',
+          options: [
+            { label: 'A', text: '3' },
+            { label: 'B', text: '5' },
+          ],
+          student_answer_present: true,
+        },
+        figures: [],
+        layout_quality: 'partial',
+        image_refs: ['asset_1'],
+        crop_refs: [],
+        visual_complexity: 'low',
+        extraction_confidence: 0.2,
+        wrong_answer_md: 'B',
+        status: 'draft',
+        knowledge_hint: null,
+        merged_from_block_ids: [],
+        created_at: now,
+        updated_at: now,
+        version: 0,
+      },
+      {
+        // VLM emitted options with an empty prompt; the OCR text holds the stem. The one
+        // prompt selector must write the stem AND keep the options.
+        id: promptFallbackBlockId,
+        ingestion_session_id: sessionId,
+        source_document_id: null,
+        source_asset_ids: ['asset_1'],
+        page_spans: [],
+        structured: {
+          id: createId(),
+          role: 'standalone',
+          kind: 'choice',
+          source: 'vlm_structure',
+          prompt_text: '',
+          options: [
+            { label: 'A', text: '1' },
+            { label: 'B', text: '2' },
+          ],
+        },
+        extracted_prompt_md: 'What is 1+1?',
+        figures: [],
+        layout_quality: 'partial',
+        image_refs: ['asset_1'],
+        crop_refs: [],
+        visual_complexity: 'low',
+        extraction_confidence: 0.2,
+        status: 'draft',
+        knowledge_hint: null,
+        merged_from_block_ids: [],
+        created_at: now,
+        updated_at: now,
+        version: 0,
+      },
+    ]);
+
+    const result = await runAutoEnrollForSession({
+      db,
+      sessionId,
+      subjectId: 'yuwen',
+      // Attribution failure is ordinary (provider outage / no candidate): the block
+      // still enters the library with `knowledge: 'missing'`.
+      tagKnowledgeFn: async () => {
+        throw new Error('tag provider unavailable');
+      },
+    });
+    expect(result.status).toBe('completed');
+    // The unattributed block and the answered block (partial page) both enter the bank;
+    // the answered one keeps its captured work as evidence without grading it.
+    expect(result.enrolled).toBe(3);
+
+    const [block] = await db.select().from(question_block).where(eq(question_block.id, blockId));
+    expect(block?.status).toBe('auto_enrolled');
+    if (!block?.imported_question_id) throw new Error('block has no imported question');
+    const [enrolledQuestion] = await db
+      .select()
+      .from(question)
+      .where(eq(question.id, block.imported_question_id));
+    expect(enrolledQuestion?.knowledge_ids).toEqual([]);
+    expect(enrolledQuestion?.draft_status).toBe('active');
+    expect(enrolledQuestion?.metadata).toMatchObject({
+      ingestion_enrollment: { knowledge: 'missing' },
+    });
+    // The publication event must carry the ingestion session: that is the lineage the
+    // admission gate proves its source purpose from.
+    const [published] = await db
+      .select({ sessionId: event.session_id, payload: event.payload })
+      .from(event)
+      .where(
+        and(
+          eq(event.action, 'experimental:assessment_publish'),
+          eq(event.subject_id, block.imported_question_id),
+        ),
+      );
+    expect(published?.sessionId).toBe(sessionId);
+
+    const [answered] = await db
+      .select()
+      .from(question_block)
+      .where(eq(question_block.id, answeredBlockId));
+    expect(answered?.status).toBe('auto_enrolled');
+    if (!answered?.imported_question_id) throw new Error('answered block has no question');
+    const [answeredQuestion] = await db
+      .select()
+      .from(question)
+      .where(eq(question.id, answered.imported_question_id));
+    // Whole pages stay machine prompt input; no answer key or grading is produced here.
+    expect(answeredQuestion?.image_refs).toEqual(['asset_1']);
+    expect(answeredQuestion?.reference_md).toBeNull();
+
+    const [fallback] = await db
+      .select()
+      .from(question_block)
+      .where(eq(question_block.id, promptFallbackBlockId));
+    expect(fallback?.status).toBe('auto_enrolled');
+    if (!fallback?.imported_question_id) throw new Error('fallback block has no question');
+    const [fallbackQuestion] = await db
+      .select()
+      .from(question)
+      .where(eq(question.id, fallback.imported_question_id));
+    expect(fallbackQuestion?.prompt_md).toContain('What is 1+1?');
+    expect(fallbackQuestion?.prompt_md).toContain('A. 1');
+    expect(fallbackQuestion?.choices_md).toEqual(['1', '2']);
+
+    await revertAutoEnrolledBlock(db, { blockId, sessionId });
+    const [reverted] = await db.select().from(question_block).where(eq(question_block.id, blockId));
+    expect(reverted).toMatchObject({
+      status: 'draft',
+      imported_question_id: null,
+      imported_attempt_event_id: null,
+    });
+    expect(
+      await db.select().from(question).where(eq(question.id, block.imported_question_id)),
+    ).toHaveLength(1);
   });
 });
