@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto';
 import type { AfterToolCallResult } from '@earendil-works/pi-agent-core';
 import { z } from 'zod';
-import { BLOCK_PLACE_PATTERN, serializeBlockFence } from '@/core/schema/blocks';
+import { BLOCK_PLACE_PATTERN, ChartBlock, serializeBlockFence } from '@/core/schema/blocks';
 import type { PiAfterToolCall, PiBeforeToolCall, PiHookBridge } from '@/core/tool-call-contract';
+import { bindChartSeries, chartSeriesIssues } from '@/kernel/blocks/chart';
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
 
 export { CopilotPrimaryViewSchema } from '../primary-view-contract';
@@ -370,6 +371,27 @@ async function resolvePrimaryViewNomination(
   }
 }
 
+/**
+ * The recorded value behind a chart's tool_result binding. Same gate as the hero
+ * nomination: a successful root domain call whose stored output still matches
+ * its trace hash. An unresolvable binding drops the block instead of rendering
+ * the model's numbers.
+ */
+function chartBindingOutput(trace: readonly TraceEntry[], toolUseId: string): unknown | undefined {
+  const entry = trace.find(
+    (candidate) =>
+      candidate.tool_use_id === toolUseId &&
+      candidate.root_call &&
+      candidate.status === 'succeeded' &&
+      candidate.domain_executed === true &&
+      candidate.effect !== 'control',
+  );
+  if (!entry) return undefined;
+  return entry.output_sha256 === sha256CanonicalJson(entry.domain_output)
+    ? entry.domain_output
+    : undefined;
+}
+
 export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizerOptions) {
   const trace: TraceEntry[] = [];
   const byId = new Map<string, TraceEntry>();
@@ -560,9 +582,24 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
         const output = entry.domain_output as
           | { status?: string; ref?: string; block?: unknown }
           | undefined;
-        return output?.status === 'ready' && typeof output.ref === 'string'
-          ? [{ ref: output.ref, block: output.block }]
-          : [];
+        if (output?.status !== 'ready' || typeof output.ref !== 'string') return [];
+        const raw = output.block;
+        if (!raw || typeof raw !== 'object' || (raw as { kind?: unknown }).kind !== 'chart') {
+          return [{ ref: output.ref, block: raw }];
+        }
+        // A chart is published only with the recorded values behind its binding;
+        // the model's own series are never the authority for tool_result data.
+        // The fence carries no ref: the compose ref is a draft placement token,
+        // so re-deriving the block here cannot leave a stale persisted ref.
+        const chart = ChartBlock.safeParse(raw);
+        if (!chart.success || chartSeriesIssues(chart.data).length > 0) return [];
+        if (chart.data.data_source.kind === 'model') {
+          return [{ ref: output.ref, block: chart.data }];
+        }
+        const recorded = chartBindingOutput(trace, chart.data.data_source.tool_use_id);
+        if (recorded === undefined) return [];
+        const bound = bindChartSeries(chart.data, recorded);
+        return bound.ok ? [{ ref: output.ref, block: bound.block }] : [];
       });
     const blocksByRef = new Map(readyBlocks.map((b) => [b.ref, b.block]));
     const placedRefs = new Set<string>();
