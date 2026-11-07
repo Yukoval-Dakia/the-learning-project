@@ -17,7 +17,7 @@ import {
   SearchBankInputSchema,
 } from './bank-search-contract';
 import { readBankDocuments } from './bank-search-evidence';
-import { resolveBankSearchScope } from './bank-search-scope';
+import { resolveBankHistoryRootIds, resolveBankSearchScope } from './bank-search-scope';
 import {
   type BankReceipt,
   type BankSnapshotBinding,
@@ -109,7 +109,7 @@ export async function collectBankSearchReceipt(
   );
   if (history && history !== 'any') {
     if (ctx.ticketEventId) throw new Error('Ticket-bound preparation cannot query learner history');
-    const ids =
+    const memberIds =
       history === 'wrong'
         ? [
             ...new Set(
@@ -119,13 +119,14 @@ export async function collectBankSearchReceipt(
             ),
           ]
         : await getAttemptedQuestionIds(ctx.db);
+    const ids = await resolveBankHistoryRootIds(ctx.db, memberIds);
     predicates.push(
       history === 'wrong'
-        ? ids.length
-          ? inArray(question.id, ids)
+        ? ids.size
+          ? inArray(question.id, [...ids])
           : sql`false`
-        : ids.length
-          ? notInArray(question.id, ids)
+        : ids.size
+          ? notInArray(question.id, [...ids])
           : sql`true`,
     );
   }
