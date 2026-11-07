@@ -1,6 +1,7 @@
 import { and, desc, eq } from 'drizzle-orm';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
+import { getCorrectionStatuses } from '@/kernel/events';
 import { PROPOSAL_BATCH_ACCEPT_ACTION } from '@/kernel/proposals/batch-confirm';
 
 const BATCH_ACCEPT_LIST_LIMIT = 20;
@@ -71,12 +72,22 @@ export async function listProposalBatchAccepts(db: Db) {
     }
     byBatch.set(batchId, existing);
   }
+  // `proposal_ids` is the historical accepted set; members already revoked
+  // through the single-item path are surfaced separately so the set's
+  // remaining revocable part is honest.
+  const allAccepted = [...new Set([...byBatch.values()].flatMap((b) => [...b.accepted]))];
+  const corrections = allAccepted.length
+    ? await getCorrectionStatuses(db, allAccepted)
+    : new Map<string, { state: string }>();
   return {
     batches: [...byBatch.values()].slice(0, BATCH_ACCEPT_LIST_LIMIT).map((batch) => ({
       batch_id: batch.batch_id,
       state: batch.state,
       member_ids: batch.member_ids.length > 0 ? batch.member_ids : [...batch.accepted].sort(),
       proposal_ids: [...batch.accepted].sort(),
+      revoked_ids: [...batch.accepted]
+        .filter((id) => (corrections.get(id)?.state ?? 'active') !== 'active')
+        .sort(),
       items: batch.items,
       created_at: batch.created_at,
     })),

@@ -43,8 +43,9 @@ export function projectReviewAnswerResponse(body: CreateAttemptBody, result: Rev
       // self_claim echoes what the learner asserted in THIS request: rating is
       // only a claim when they chose it themselves (self_report or a manual
       // rating); under auto_rate the rating is the judge's suggestion, so the
-      // claim stays null. A replayed submission repeats the original request,
-      // so the echoed claim matches the one sealed with the submit.
+      // claim stays null. A replayed submission sealed its claim with the
+      // original response — this request's rating/confidence is not evidence
+      // of anything, so the claim reads null rather than echoing unsealed input.
       evidence: {
         assistance: committed.assistance
           ? {
@@ -55,8 +56,9 @@ export function projectReviewAnswerResponse(body: CreateAttemptBody, result: Rev
             }
           : null,
         verdict: body.self_report ? null : { outcome: judged.coarse_outcome, score: judged.score },
-        self_claim:
-          body.self_report || !body.auto_rate
+        self_claim: committed.replayed
+          ? null
+          : body.self_report || !body.auto_rate
             ? { rating: body.rating, confidence: body.self_confidence ?? null }
             : { rating: null, confidence: body.self_confidence ?? null },
       },

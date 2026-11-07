@@ -35290,6 +35290,7 @@ export interface operations {
                             }[];
                             member_ids: string[];
                             proposal_ids: string[];
+                            revoked_ids: string[];
                             /** @enum {string} */
                             state: "open" | "closed";
                         }[];

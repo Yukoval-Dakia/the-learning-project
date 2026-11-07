@@ -4,7 +4,7 @@
 // 批量锚持久化 batch_id -> proposal_ids，经锚读回后可走单条 retract 真撤销效果。
 
 import { and, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import { event, learning_item, question } from '@/db/schema';
 import { getCorrectionStatuses, writeEvent } from '@/kernel/events';
@@ -13,6 +13,7 @@ import { getProposalInboxRow } from '@/kernel/proposals/inbox';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { migrateCanonicalProjections } from '../../../scripts/migrate-canonical-projections';
 import { resetDb, testDb } from '../../../tests/helpers/db';
+import * as acceptAction from './accept-action';
 import { acceptAiProposal } from './accept-action';
 import {
   batchAcceptProposals,
@@ -139,6 +140,10 @@ describe('proposal batch confirmation', () => {
       },
     });
     await seedQuestionEditProposal('qe_b4', 'q_batch');
+    // qe_b4 accepted through the single path: an already-accepted but
+    // non-revocable kind must still read rejected and stay out of the anchor,
+    // or revoke-by-set would claim it can undo what the owner refuses to.
+    await acceptAiProposal(db, 'qe_b4');
 
     expect((await getProposalInboxRow(db, 'lc_b1'))?.batch_confirm_eligible).toBe(true);
     expect((await getProposalInboxRow(db, 'jr_b3'))?.batch_confirm_eligible).toBe(false);
@@ -194,7 +199,8 @@ describe('proposal batch confirmation', () => {
     expect(await rateCount('lc_b1')).toBe(1);
     expect(await rateCount('lc_b2')).toBe(1);
     expect(await rateCount('jr_b3')).toBe(0);
-    expect(await rateCount('qe_b4')).toBe(0);
+    // The single-path accept decision stands; the batch only refuses to claim it.
+    expect(await rateCount('qe_b4')).toBe(1);
     expect(await rateCount('p_missing')).toBe(0);
     const [done] = await db.select().from(learning_item).where(eq(learning_item.id, 'li_b1'));
     expect(done.status).toBe('done');
@@ -211,7 +217,7 @@ describe('proposal batch confirmation', () => {
     expect(await rateCount('lc_b1')).toBe(1);
     expect(await rateCount('lc_b2')).toBe(1);
     expect(await rateCount('jr_b3')).toBe(0);
-    expect(await rateCount('qe_b4')).toBe(0);
+    expect(await rateCount('qe_b4')).toBe(1);
 
     const anchors = await db
       .select()
@@ -296,5 +302,75 @@ describe('proposal batch confirmation', () => {
     await retractAiProposal(db, 'lc_c1');
     const [restored] = await db.select().from(learning_item).where(eq(learning_item.id, 'li_c1'));
     expect(restored.status).toBe('pending');
+  });
+
+  // @invariant data: batch membership is durable before the first accept is
+  // attempted — a run whose accepts all fail still leaves the replayable
+  // identity behind instead of recording nothing
+  // @fails-if the members anchor is written only after accepts or only when
+  // something accepted: a crash between two failed accepts would strand the
+  // committed effects of an earlier member with no recoverable set
+  it('persists batch membership even when every accept fails', async () => {
+    const db = testDb();
+    installBatchConfirmEligibility();
+    await migrateCanonicalProjections(db);
+    // The target learning_item does not exist, so the canonical accept throws
+    // before any effect — the request still resolves the full batch identity.
+    await seedCompletionProposal('lc_f1', 'li_missing');
+
+    const res = await batchAcceptProposals(db, { proposal_ids: ['lc_f1', 'p_gone'] });
+    expect(res.items.map((entry) => entry.status)).toEqual(['failed', 'failed']);
+    expect(res.batch_id).toBeNull();
+    expect(await rateCount('lc_f1')).toBe(0);
+
+    const anchors = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, PROPOSAL_BATCH_ACCEPT_ACTION));
+    const members = anchors.find((row) => row.payload.stage === 'members');
+    const result = anchors.find((row) => row.payload.stage === 'result');
+    expect(members).toMatchObject({
+      subject_id: proposalBatchId(['lc_f1', 'p_gone']),
+      payload: { proposal_ids: ['lc_f1', 'p_gone'] },
+    });
+    // A fully failed batch still closes: revoke-by-set simply has no members.
+    expect(result).toMatchObject({
+      subject_id: proposalBatchId(['lc_f1', 'p_gone']),
+      payload: { proposal_ids: [] },
+    });
+  });
+
+  // @invariant data: the members anchor is durable before the first accept
+  // runs — observed inside the accept itself, so this fails if the anchor
+  // write ever moves behind the accept loop
+  // @fails-if the first accept finds no members anchor in the event table:
+  // a crash inside the first effect would strand committed accepts with no
+  // recoverable batch identity
+  it('persists the members anchor before the first accept runs', async () => {
+    const db = testDb();
+    installBatchConfirmEligibility();
+    await seedLearningItem('li_o1');
+    await migrateCanonicalProjections(db);
+    await seedCompletionProposal('lc_o1', 'li_o1');
+
+    // Read the event table at the moment the accept executes — a throw then
+    // plays the role of a crashed first effect. If the anchor write moved
+    // after the accepts, the table would still be empty here.
+    let membersBeforeFirstAccept = false;
+    vi.spyOn(acceptAction, 'acceptAiProposal').mockImplementation(async () => {
+      const anchors = await db
+        .select({ payload: event.payload })
+        .from(event)
+        .where(eq(event.action, PROPOSAL_BATCH_ACCEPT_ACTION));
+      membersBeforeFirstAccept = anchors.some(
+        (row) => (row.payload as { stage?: unknown }).stage === 'members',
+      );
+      throw new Error('simulated crash inside the accept');
+    });
+
+    const res = await batchAcceptProposals(db, { proposal_ids: ['lc_o1'] });
+    vi.restoreAllMocks();
+    expect(res.items.map((entry) => entry.status)).toEqual(['failed']);
+    expect(membersBeforeFirstAccept).toBe(true);
   });
 });

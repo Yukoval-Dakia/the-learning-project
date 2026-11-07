@@ -10,7 +10,10 @@
 //      stays undoable through the canonical single-item retract. `question_edit`
 //      declares retract only to guard an unapplied edit_request and refuses
 //      once applied — the owner requires a new edit proposal — so it is not in
-//      the set. Attempts, grading, settlement, block_merge and every kind
+//      the set. `note_update` is out too: its undo restores the pre-apply body
+//      without checking whether later edits landed, and a batch revoke has no
+//      time window — one click would silently roll back every edit since the
+//      apply. Attempts, grading, settlement, block_merge and every kind
 //      without a retract declaration are rejected per item, never accepted.
 //   2. A per-item report: one failure or rejection never rolls back another
 //      item's committed accept.
@@ -93,7 +96,6 @@ const ITEM_REASONS = {
 const BATCH_CONFIRMABLE_KINDS: ReadonlySet<string> = new Set([
   'completion',
   'goal_scope',
-  'note_update',
   'relearn',
   'variant_question',
 ]);
@@ -173,6 +175,8 @@ function item(
 
 interface BatchAnchors {
   members: typeof event.$inferSelect | null;
+  /** At least one result anchor exists — the batch is closed (even when empty). */
+  hasResult: boolean;
   /** Union of every result anchor's accepted set — the revocable batch. */
   acceptedIds: ReadonlySet<string>;
 }
@@ -184,13 +188,16 @@ async function loadBatchAnchors(db: Db, batchId: string): Promise<BatchAnchors> 
     .where(and(eq(event.action, PROPOSAL_BATCH_ACCEPT_ACTION), eq(event.subject_id, batchId)))
     .orderBy(event.created_at);
   const acceptedIds = new Set<string>();
-  const anchors: BatchAnchors = { members: null, acceptedIds };
+  const anchors: BatchAnchors = { members: null, hasResult: false, acceptedIds };
   for (const row of rows) {
     const payload = row.payload as { stage?: unknown; proposal_ids?: unknown };
     if (payload.stage === 'members') anchors.members ??= row;
-    if (payload.stage === 'result' && Array.isArray(payload.proposal_ids)) {
-      for (const id of payload.proposal_ids) {
-        if (typeof id === 'string') acceptedIds.add(id);
+    if (payload.stage === 'result') {
+      anchors.hasResult = true;
+      if (Array.isArray(payload.proposal_ids)) {
+        for (const id of payload.proposal_ids) {
+          if (typeof id === 'string') acceptedIds.add(id);
+        }
       }
     }
   }
@@ -219,6 +226,9 @@ async function ensureMembersAnchor(db: Db, batchId: string, ids: string[]): Prom
       stage: 'members',
       proposal_ids: ids,
     },
+    // Internal bookkeeping anchor, not learner activity — a non-null stamp
+    // keeps it out of memory extraction and brief scopes (auto-apply precedent).
+    ingest_at: new Date(),
   });
   const { members } = await loadBatchAnchors(db, batchId);
   if (!members) {
@@ -251,6 +261,8 @@ async function writeResultAnchor(
       proposal_ids: [...acceptedIds].sort(),
       items,
     },
+    // Same opt-out as the members anchor: audit trail, not memory-worthy activity.
+    ingest_at: new Date(),
   });
 }
 
@@ -333,13 +345,17 @@ export async function batchAcceptProposals(db: Db, input: unknown): Promise<Batc
       items.push(item(id, payload.kind, 'rejected', 'already_decided'));
       continue;
     }
+    // Eligibility precedes the accepted-state read: a kind that cannot be
+    // batch-revoked must not enter the anchor even when it was already
+    // accepted through the single path — the set would claim it as revocable
+    // while its retract refuses.
+    if (!eligible.has(payload.kind)) {
+      items.push(item(id, payload.kind, 'rejected', 'kind_not_batchable'));
+      continue;
+    }
     if (terminal === 'accept') {
       items.push(item(id, payload.kind, 'already_accepted', null));
       acceptedIds.push(id);
-      continue;
-    }
-    if (!eligible.has(payload.kind)) {
-      items.push(item(id, payload.kind, 'rejected', 'kind_not_batchable'));
       continue;
     }
     try {
@@ -375,14 +391,17 @@ export async function batchAcceptProposals(db: Db, input: unknown): Promise<Batc
     }
   }
 
-  // The result anchors are what revoke-by-batch consumes. One is written
-  // whenever this run's accepted set adds members beyond what is already
-  // recorded — covering both crash recovery (an earlier run committed accepts
-  // and died before recording them; its members anchor is still here, so this
-  // retry completes the same batch instead of minting a second one) and a
-  // retry that newly accepted a member the first run could not.
+  // The result anchors are what revoke-by-batch consumes. The first run to
+  // reach this point always writes one — even with an empty accepted set, so a
+  // fully rejected batch reads `closed` instead of staying `open` forever. A
+  // later run writes another only when its accepted set adds members beyond
+  // the recorded union — covering both crash recovery (an earlier run
+  // committed accepts and died before recording them; its members anchor is
+  // still here, so this retry completes the same batch instead of minting a
+  // second one) and a retry that newly accepted a member the first run could
+  // not.
   const effectiveAccepted = [...new Set([...anchorsBefore.acceptedIds, ...acceptedIds])];
-  if (acceptedIds.length > 0 && effectiveAccepted.length > anchorsBefore.acceptedIds.size) {
+  if (!anchorsBefore.hasResult || effectiveAccepted.length > anchorsBefore.acceptedIds.size) {
     await writeResultAnchor(db, batchId, effectiveAccepted, items);
   }
   const { acceptedIds: recordedAccepted } = await loadBatchAnchors(db, batchId);

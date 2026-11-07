@@ -98,6 +98,13 @@ export async function prepareFormalAttemptSubmission(
     scopedBasis,
     scopedUnitIds,
     submission: saved.submission,
+    // A replayed submission sealed its claim with the original accept; the
+    // response projection must not re-echo this request's rating/confidence.
+    // The durable-divert probe seals the row with this request's own `now`, so
+    // only a submitted_at that differs was sealed by an earlier request — the
+    // sealed claim belongs to that earlier accept, not this one.
+    replayed:
+      saved.status === 'replayed' && saved.submission.submitted_at !== request.now?.toISOString(),
     assisted,
     assistance,
   };
@@ -120,8 +127,16 @@ export async function previewFormalAttempt(
     hold?: PendingStateT;
   } = {},
 ): Promise<FormalAttemptPreview> {
-  const { issuance, revision, scopedBasis, scopedUnitIds, submission, assisted, assistance } =
-    await prepareFormalAttemptSubmission(database, entry, questionId, request);
+  const {
+    issuance,
+    revision,
+    scopedBasis,
+    scopedUnitIds,
+    submission,
+    replayed,
+    assisted,
+    assistance,
+  } = await prepareFormalAttemptSubmission(database, entry, questionId, request);
   const hold = options.hold;
   const candidate = await evaluateAttempt({
     db: database,
@@ -178,6 +193,7 @@ export async function previewFormalAttempt(
     revision,
     candidate,
     submission: submission,
+    replayed,
     assistance,
     automatic_commit:
       !options.selfReport &&

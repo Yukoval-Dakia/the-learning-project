@@ -245,8 +245,11 @@ export const ProposalBatchAcceptListResponseSchema = z.object({
       batch_id: z.string(),
       state: z.enum(['open', 'closed']),
       member_ids: z.array(z.string()),
-      // The accepted (revocable) set; empty while 'open'.
+      // The accepted set as recorded by the result anchors; empty while 'open'.
       proposal_ids: z.array(z.string()),
+      // Members already revoked through the single-item retract — the
+      // still-revocable remainder is proposal_ids minus revoked_ids.
+      revoked_ids: z.array(z.string()),
       items: z.array(ProposalBatchAcceptItemSchema),
       created_at: z.string(),
     }),
