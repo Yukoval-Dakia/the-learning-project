@@ -13790,7 +13790,7 @@ export interface operations {
                                 failure?: {
                                     http_status?: number;
                                     /** @enum {string} */
-                                    kind: "provider_rejected" | "rate_limited" | "provider_error" | "timeout" | "connection" | "execution_failed" | "finalization_failed" | "cancelled" | "execution_unknown";
+                                    kind: "provider_rejected" | "rate_limited" | "quota" | "provider_error" | "timeout" | "connection" | "execution_failed" | "finalization_failed" | "cancelled" | "execution_unknown";
                                     retry_after_seconds?: number;
                                 };
                                 last_event_id: number;
@@ -20891,6 +20891,26 @@ export interface operations {
                                     };
                                     coarse_outcome?: string;
                                     confidence?: number;
+                                    evidence?: {
+                                        assistance: {
+                                            kinds: ("hint" | "solution" | "chat_context")[];
+                                            max_dose: number | null;
+                                            /** @enum {string|null} */
+                                            phase: "before_submit" | "after_submit" | null;
+                                            /** @enum {string} */
+                                            status: "independent" | "assisted" | "unknown";
+                                        } | null;
+                                        self_claim: {
+                                            confidence: number | null;
+                                            /** @enum {string|null} */
+                                            rating: "again" | "hard" | "good" | null;
+                                        } | null;
+                                        verdict: {
+                                            /** @enum {string} */
+                                            outcome: "correct" | "partial" | "incorrect" | "unsupported" | "partial_unknown";
+                                            score: number | null;
+                                        } | null;
+                                    };
                                     evidence_json?: unknown;
                                     feedback_md?: string;
                                     final_rating?: string | null;
@@ -21623,6 +21643,26 @@ export interface operations {
                             };
                             coarse_outcome?: string;
                             confidence?: number;
+                            evidence?: {
+                                assistance: {
+                                    kinds: ("hint" | "solution" | "chat_context")[];
+                                    max_dose: number | null;
+                                    /** @enum {string|null} */
+                                    phase: "before_submit" | "after_submit" | null;
+                                    /** @enum {string} */
+                                    status: "independent" | "assisted" | "unknown";
+                                } | null;
+                                self_claim: {
+                                    confidence: number | null;
+                                    /** @enum {string|null} */
+                                    rating: "again" | "hard" | "good" | null;
+                                } | null;
+                                verdict: {
+                                    /** @enum {string} */
+                                    outcome: "correct" | "partial" | "incorrect" | "unsupported" | "partial_unknown";
+                                    score: number | null;
+                                } | null;
+                            };
                             evidence_json?: unknown;
                             feedback_md?: string;
                             final_rating?: string | null;
@@ -26814,6 +26854,26 @@ export interface operations {
                                                 };
                                                 coarse_outcome?: string;
                                                 confidence?: number;
+                                                evidence?: {
+                                                    assistance: {
+                                                        kinds: ("hint" | "solution" | "chat_context")[];
+                                                        max_dose: number | null;
+                                                        /** @enum {string|null} */
+                                                        phase: "before_submit" | "after_submit" | null;
+                                                        /** @enum {string} */
+                                                        status: "independent" | "assisted" | "unknown";
+                                                    } | null;
+                                                    self_claim: {
+                                                        confidence: number | null;
+                                                        /** @enum {string|null} */
+                                                        rating: "again" | "hard" | "good" | null;
+                                                    } | null;
+                                                    verdict: {
+                                                        /** @enum {string} */
+                                                        outcome: "correct" | "partial" | "incorrect" | "unsupported" | "partial_unknown";
+                                                        score: number | null;
+                                                    } | null;
+                                                };
                                                 evidence_json?: unknown;
                                                 feedback_md?: string;
                                                 final_rating?: string | null;
@@ -28535,6 +28595,26 @@ export interface operations {
                                                     };
                                                     coarse_outcome?: string;
                                                     confidence?: number;
+                                                    evidence?: {
+                                                        assistance: {
+                                                            kinds: ("hint" | "solution" | "chat_context")[];
+                                                            max_dose: number | null;
+                                                            /** @enum {string|null} */
+                                                            phase: "before_submit" | "after_submit" | null;
+                                                            /** @enum {string} */
+                                                            status: "independent" | "assisted" | "unknown";
+                                                        } | null;
+                                                        self_claim: {
+                                                            confidence: number | null;
+                                                            /** @enum {string|null} */
+                                                            rating: "again" | "hard" | "good" | null;
+                                                        } | null;
+                                                        verdict: {
+                                                            /** @enum {string} */
+                                                            outcome: "correct" | "partial" | "incorrect" | "unsupported" | "partial_unknown";
+                                                            score: number | null;
+                                                        } | null;
+                                                    };
                                                     evidence_json?: unknown;
                                                     feedback_md?: string;
                                                     final_rating?: string | null;
@@ -29765,6 +29845,26 @@ export interface operations {
                                                 };
                                                 coarse_outcome?: string;
                                                 confidence?: number;
+                                                evidence?: {
+                                                    assistance: {
+                                                        kinds: ("hint" | "solution" | "chat_context")[];
+                                                        max_dose: number | null;
+                                                        /** @enum {string|null} */
+                                                        phase: "before_submit" | "after_submit" | null;
+                                                        /** @enum {string} */
+                                                        status: "independent" | "assisted" | "unknown";
+                                                    } | null;
+                                                    self_claim: {
+                                                        confidence: number | null;
+                                                        /** @enum {string|null} */
+                                                        rating: "again" | "hard" | "good" | null;
+                                                    } | null;
+                                                    verdict: {
+                                                        /** @enum {string} */
+                                                        outcome: "correct" | "partial" | "incorrect" | "unsupported" | "partial_unknown";
+                                                        score: number | null;
+                                                    } | null;
+                                                };
                                                 evidence_json?: unknown;
                                                 feedback_md?: string;
                                                 final_rating?: string | null;
@@ -39419,6 +39519,26 @@ export interface operations {
                             status: "effective" | "review_required";
                         };
                         evaluation_group_id: string;
+                        evidence: {
+                            assistance: {
+                                kinds: ("hint" | "solution" | "chat_context")[];
+                                max_dose: number | null;
+                                /** @enum {string|null} */
+                                phase: "before_submit" | "after_submit" | null;
+                                /** @enum {string} */
+                                status: "independent" | "assisted" | "unknown";
+                            } | null;
+                            self_claim: {
+                                confidence: number | null;
+                                /** @enum {string|null} */
+                                rating: "again" | "hard" | "good" | null;
+                            } | null;
+                            verdict: {
+                                /** @enum {string} */
+                                outcome: "correct" | "partial" | "incorrect" | "unsupported" | "partial_unknown";
+                                score: number | null;
+                            } | null;
+                        };
                         judge: {
                             capability_ref: {
                                 id: string;
