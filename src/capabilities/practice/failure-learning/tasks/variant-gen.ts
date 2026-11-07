@@ -77,7 +77,7 @@ export const variantGenTaskSpec = {
     kind: 'VariantGenTask',
     description:
       'Phase 2 — 给一道错题 + cause 生成 1 条 variant_question proposal。spec §3.4.1 cause-targeted；接受后再物化 question/draft_status',
-    budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1, timeout: 60_000 },
+    budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1 },
     needsToolCall: false,
     isMultimodal: false,
     allowedTools: [],

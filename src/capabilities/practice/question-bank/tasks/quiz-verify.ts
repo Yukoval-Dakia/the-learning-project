@@ -64,7 +64,7 @@ export const quizVerifyTaskSpec = {
     kind: 'QuizVerifyTask',
     description:
       "Search-grounded QuizGen (T-SQ, docs/archive/superpowers/specs/2026-06-02-quizgen-search-grounded-design.md §1 / §5 Q5). Single-shot, CLOSED-BOOK verifier built on the VariantVerify skeleton: trusts the QuizGen agent's self-reported source_refs (no own Tavily loop this wave) and runs three checks — fact/grounding vs source_refs, plagiarism/copy_safety, knowledge-hit — rolling them into a two-axis QuizVerificationResult. The quiz_verify handler (Q5) gates Option B on the output: overall='pass' (and copy_safety not flagged by the deterministic n-gram gate; a model-only too_close routes to review) promotes draft→active + FSRS-enrolls; otherwise the draft stays out of the pool (needs_review / fail).",
-    budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1, timeout: 60_000 },
+    budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1 },
     needsToolCall: false,
     isMultimodal: false,
     allowedTools: [],

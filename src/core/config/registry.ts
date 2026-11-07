@@ -850,7 +850,10 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
   },
   ADMISSION_PROVIDER_RETRY_MAX_WAIT_MS: {
     schema: z.number().int().positive().max(600_000),
-    codeDefault: 60_000,
+    // YUK-1983: a hang guard, not a time saver (owner 2026-11-07). 180s lets a
+    // <=3min Retry-After be honored in-run instead of skipping the resend and
+    // falling back to the 24h durable wait; sleeping costs no tokens.
+    codeDefault: 180_000,
     envName: 'ADMISSION_PROVIDER_RETRY_MAX_WAIT_MS',
     envParse: posNumFloorEnv,
     tier: 'A',

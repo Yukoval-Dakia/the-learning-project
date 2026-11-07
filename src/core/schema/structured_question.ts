@@ -30,6 +30,8 @@ export const FigureRef = z.object({
   // attached_to_index 指向某个 StructuredQuestion.id；root-attached 时可能是 stem id
   attached_to_index: z.string().min(1),
   attach_confidence: AttachConfidence,
+  option_label: z.string().min(1).optional(),
+  handwriting_unverified: z.boolean().optional(),
   // 用户手动改归属时记录时间戳；ISO 字符串或 Date（z.coerce.date）
   last_reassigned_at: z.coerce.date().optional(),
 });

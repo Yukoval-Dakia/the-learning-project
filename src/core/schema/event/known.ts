@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { DerivationPolicy } from '@/core/schema/derivation-policy';
+import { IngestionExtractionNotices } from '@/core/schema/ingestion-extraction';
 import { REASONING_TRACE_MAX_LEN } from '../../limits';
 import { ActivityRef } from '../activity';
 import { AttemptPayload } from '../attempt-payload';
@@ -574,6 +575,7 @@ export const ExtractSourceDocument = z.object({
     structured_block_ids: z.array(z.string()),
     layout_quality: z.enum(['structured', 'partial', 'text_only']),
     warnings: z.array(z.string()),
+    notices: IngestionExtractionNotices.optional(),
   }),
   ...baseOptionalFields,
 });
