@@ -18,7 +18,7 @@ compose 的 `migrate` / `app` / `worker` 都从 `.env` 取环境，`cloudflared`
 | `API_PORT` | app | `8787`；非正整数抛错；本机 dev（`NODE_ENV` 非 `production`、非容器）绑定 8787（本机 TEST 中继端口）前退出，生产入口与容器内照常 | `src/server/config/env.ts`；`server/index.ts` |
 | `DEV_PORT` | `pnpm dev:local` | 未设时自动探测 8788 起在 127.0.0.1 与 IPv6 都空闲的首个端口；作为 `API_PORT` 传给 dev 的 API 进程，并把 dev worker 的 `WORKSHEET_RENDER_APP_ORIGIN` 指到同一端口。8787 是本机 TEST 中继端口：自动探测会跳过它，显式设为 8787 时 dev:local 恒在绑定前退出（不受 `NODE_ENV`/容器标记影响） | `scripts/dev-local.ts` |
 | `DEV_DB_NAME` | `pnpm dev:local`、`pnpm dev:reset` | 未设时按 worktree 根路径派生 `loom_dev_<name>_<sha1(path)前8>`；覆盖后 dev:local 用该库名，dev:reset 仍只接受 `loom_dev_*` | `scripts/dev-worktree-db.ts` |
-| `RW_WORKER` | app | `1` 时同进程启动 pg-boss worker | `server/index.ts` |
+| `RW_WORKER` | app | `1` 时同进程启动 pg-boss worker。`dev:local` 的 API 子进程固定 `0`，队列只由 `worker:dev` 消费；单独 `pnpm rw:api` 仍写 `1` | `server/index.ts`；`scripts/dev-local.ts`；`package.json` |
 | `RW_FRONTDOOR` | app | `1` 时启用 Start 前门（需要 `dist/start`）；`dev` 仅 `dev:local` 使用，经 API 进程内的 Vite dev server 提供同一前门（HMR，不需要 `dist/start`）；未设时 app 只服务 Hono API | `server/index.ts`；`server/dev-frontdoor.ts` |
 | `RW_BOSS_AUTOMATION` | app、worker | `enabled`；`disabled` 关闭 pg-boss 自带 automation | `src/server/config/env.ts`；`src/server/boss/client.ts` |
 | `POSTGRES_USER` | 脚本（`DEV_ALLOW_TEST_DB=1` 下的连接串、备份） | 本地脚本 dev 目标固定 `loom_dev`；仅 `DEV_ALLOW_TEST_DB=1` 时才读它，缺省 `loom` | `scripts/local-db-env.ts` |

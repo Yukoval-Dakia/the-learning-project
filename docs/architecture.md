@@ -9,7 +9,7 @@
 - **app**：`server/index.ts`（`pnpm build:server` → `dist/server.cjs`），`@hono/node-server` 监听 `API_PORT`（默认 8787，`src/server/config/env.ts` 的 `resolveApiPort`）。启动关键步骤：`loadEnv` → 科目 / 配置 / 模型目录水合 → capability tools 注册 → `recoverToolOperationsOnBoot` → admin config 注入 → `startListenLoop` → serve。
 - **worker**：`scripts/worker.ts`（`pnpm build:worker` → `dist/worker.cjs`）。`bootWorker()`（`src/server/boss/worker-boot.ts`）先注册 tools，再调 `startBossWorker` 挂 pg-boss、capability jobs、夜间 orchestrator 与 DBOS。worker 不启动 HTTP，也不开 LISTEN loop（`scripts/worker.ts` 注释）。
 - **migrate**：`scripts/migrate.ts` → `dist/migrate.cjs`，以 `node dist/migrate.cjs` 在 app / worker 之前跑 Drizzle migration。
-- **dev**：`pnpm dev:local`（`scripts/dev-local.ts`）spawn 两进程：`rw:api`（`tsx watch server/index.ts`，脚本自带 `RW_WORKER=1`，dev-local 另设 `RW_FRONTDOOR=dev`：Vite dev server 以 middleware 模式跑在 API 进程内，页面同源在自动探测的端口——8788 起首个空闲，`DEV_PORT` 固定，只绑 127.0.0.1，`DEV_HOST` 可改——并支持 HMR，`server/dev-frontdoor.ts` 用与生产前门相同的 request context 调 Hono app，不需要 `build:start`）、`worker:dev`（`tsx scripts/worker.ts`）。因此 dev 里 app 进程与独立 worker 都会消费队列。dev Postgres 是共享容器（:5434）内每 worktree 一个库（`loom_dev_<name>_<hash>`，`scripts/dev-worktree-db.ts`），多个 worktree 并行开发互不共享数据；重置本 worktree 库用 `pnpm dev:reset`。
+- **dev**：`pnpm dev:local`（`scripts/dev-local.ts`）spawn 两进程：API（`pnpm exec tsx watch server/index.ts`，`RW_WORKER=0`，另设 `RW_FRONTDOOR=dev`：Vite dev server 以 middleware 模式跑在 API 进程内，页面同源在自动探测的端口——8788 起首个空闲，`DEV_PORT` 固定，只绑 127.0.0.1，`DEV_HOST` 可改——并支持 HMR，`server/dev-frontdoor.ts` 用与生产前门相同的 request context 调 Hono app，不需要 `build:start`）、`worker:dev`（`tsx scripts/worker.ts`）。队列只由 `worker:dev` 消费。单独 `pnpm rw:api` 仍带 `RW_WORKER=1`，是不另起 worker 时的单进程兜底。dev Postgres 是共享容器（:5434）内每 worktree 一个库（`loom_dev_<name>_<hash>`，`scripts/dev-worktree-db.ts`），多个 worktree 并行开发互不共享数据；重置本 worktree 库用 `pnpm dev:reset`。
 - **prod**：`docker-compose.yml` 的 `migrate` / `app`（`node dist/server.cjs`，镜像 target `runner`）/ `worker`（`node dist/worker.cjs`，target `worker`，额外带 headless Chromium 供 `worksheet_render`）/ `postgres`（pgvector）/ `mem0-init` / `cloudflared`。app 与 worker 共用 `DATABASE_URL`；worker 是 mem0 SQLite history 的唯一写者。
 - **静态面**：未设 `RW_FRONTDOOR=1` 时 app 只服务 Hono API；设了（镜像内默认设）则走 `server/frontdoor.ts` 的 Start 前门（需要 `dist/start` 构建产物），见下文。
 
@@ -39,7 +39,7 @@
 
 ### pg-boss 作业与夜间 DAG
 
-- 进程：独立 worker（prod `dist/worker.cjs`，dev `scripts/worker.ts`）；dev 的 app 进程因 `RW_WORKER=1` 也会挂一份。启动配方在 `src/server/boss/start-worker.ts`：基础设施队列 `registerHandlers` → capability jobs `registerCapabilityJobs` → verify 补发 → event subscription → orchestrator。
+- 进程：独立 worker（prod `dist/worker.cjs`，dev `scripts/worker.ts`）。`dev:local` 的 API 以 `RW_WORKER=0` 启动，不挂 pg-boss；单独 `pnpm rw:api`（`RW_WORKER=1`）仍在 API 进程内挂一份。启动配方在 `src/server/boss/start-worker.ts`：基础设施队列 `registerHandlers` → capability jobs `registerCapabilityJobs` → verify 补发 → event subscription → orchestrator。
 - 每个 job 独立队列；manifest 的 `queue` 只是档位（`llm` / `agent` / `fast`）。llm / agent 有 `<name>_dlq`、`retryLimit=2`、30s 退避；fast 无 DLQ（`src/server/boss/queue-config.ts`）。
 - 调度有两种：带 `schedule` 的是裸 cron（`boss.schedule`，按 `tz`）；带 `dependsOn`（含 `[]`）的是夜间 DAG 成员，自身不注册 cron。DAG 只有一根锚点 `nightly_orchestrator`，`30 2 * * *` Asia/Shanghai，启动补跑窗口 5h，tick 60s 自续；硬边失败跳过下游，soft 边照跑并记 stale（`src/server/orchestration/constants.ts`、`src/kernel/job-dag.ts`）。
 - DAG 成员与根以各 capability `manifest.ts` 的 `dependsOn` 为准，例如 `dreaming_nightly`、`knowledge_maintenance_nightly`、`item_prior_backfill`、`recalibration_nightly`、`embed_backfill`、`answer_class_backfill`。
