@@ -349,6 +349,16 @@ export const questionBankManifestPart: Omit<CapabilityManifest, 'name' | 'descri
             (m) => m.buildAdmissionWaitingRecoveryHandler,
           ),
       },
+      // Companion-authored questions land on the synthetic subject root until
+      // their topic node exists; this sweep refiles unique normalized-name
+      // matches. Dry-run unless QUESTION_ROOT_PLACEMENT_REFILE_ENABLED is set.
+      {
+        name: 'question_root_placement_refile',
+        queue: 'fast',
+        schedule: { cron: '* * * * *', tz: 'UTC' },
+        load: () =>
+          import('./server/root-placement-refile').then((m) => m.buildRootPlacementRefileHandler),
+      },
     ],
   },
   // M4-T4 (YUK-319)：proposal kind 归属声明。variant_question / question_draft
