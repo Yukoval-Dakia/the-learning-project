@@ -5,7 +5,7 @@
 // excludable classes (live delivery, spent window budget) are filtered before LIMIT so a
 // blocked prefix cannot starve later waits.
 import { and, eq, sql } from 'drizzle-orm';
-import type { PgBoss } from 'pg-boss';
+import type { JobWithMetadata, PgBoss } from 'pg-boss';
 import { z } from 'zod';
 import {
   QUESTION_ADMISSION_CONTRACT_VERSION,
@@ -606,7 +606,10 @@ export async function recoverExpiredAdmissionWaits(
 }
 
 export function buildAdmissionWaitingRecoveryHandler(db: Db) {
-  return async () => {
+  return async (jobs: JobWithMetadata[]) => {
+    // Missed minute ticks must not replay scans in a burst after a worker outage.
+    if (!jobs.some((job) => Date.now() - job.createdOn.getTime() < 60_000))
+      return { skipped: 'expired_tick' };
     const report = await recoverExpiredAdmissionWaits(db);
     if (report.rearmed.length > 0) {
       console.log(
