@@ -53,7 +53,10 @@
 ## 1. 覆盖口径
 
 文本扫描 `pg_advisory_xact_lock|pg_try_advisory_lock|pg_try_advisory_xact_lock|
-pg_advisory_unlock|pg_advisory_lock`（`-g '*.ts'`，排除 `*.test.ts`/`*.spec.ts`/`tests/`）：
+pg_advisory_unlock|pg_advisory_lock`（`-g '*.ts'`，排除 `*.test.ts`/`*.spec.ts`/`tests/`）。
+Mem0 建表不在这份扫描里：`patches/mem0ai@3.0.13.patch` 在目标库连接上对固定键
+`mem0:pgvector-init` 取会话级 `pg_advisory_lock(hashtext(...))`，只包住 extension
+与两张运行时表的 DDL，用完即放，不进入业务事务。
 
 | 类别 | 站点数 |
 |---|---|
