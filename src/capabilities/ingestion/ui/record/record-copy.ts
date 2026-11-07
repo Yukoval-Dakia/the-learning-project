@@ -167,7 +167,8 @@ const WARNING_WORDS: Record<string, string> = {
 /** A figure was cut out of the page but not attached to its question. */
 const FIGURE_WITHHELD = /^Figure .* retained in source; assignment withheld$/;
 /** The reader's own wording when it says part of a question didn't come through. */
-const MAY_BE_INCOMPLETE = /丢弃|缺失|未能|无法|看不清|遮挡|模糊|截断|上一页|下一页/;
+const MAY_BE_INCOMPLETE =
+  /丢弃|缺失|不完整|未能|无法|看不清|遮挡|模糊|截断|上一页|下一页|fell back to|only image\/empty/;
 
 /**
  * The recording's stored notes (session.warnings) as one plain line, or null when none of them
@@ -232,5 +233,5 @@ export function reviewLine(r: {
   const left = r.total - r.marked;
   return left > 0
     ? `逐道看过后点「看过了」，还剩 ${left} 道。没收的、已自动进题库的也算。`
-    : '都看过了。确认之后，就能把题收进题库。';
+    : '都看过了，确认之后就可以收了，缺的要先补。';
 }

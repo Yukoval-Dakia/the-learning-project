@@ -28,14 +28,24 @@ export function printedNumber(block: Block): string | null {
   return no ? no : null;
 }
 
+/**
+ * A question's text for its line, which shows the printed number in its own column: the built text
+ * starts with that number too. Only for reading; what gets saved keeps the text as it is.
+ */
+export function withoutPrintedNumber(text: string, block: Block): string {
+  const no = printedNumber(block);
+  const prefix = `${no}. `;
+  return no && text.startsWith(prefix) ? text.slice(prefix.length) : text;
+}
+
 function leaves(question: StructuredQuestionT): StructuredQuestionT[] {
   return question.sub_questions?.length ? question.sub_questions.flatMap(leaves) : [question];
 }
 
-/** Options that were read as a letter with no words: usually a picture this page can't show. */
+/** Options read as a letter with no words: often a picture this page can't show. Rows aren't validated on read. */
 export function hasEmptyOptions(block: Block): boolean {
   if (!block.structured) return false;
   return leaves(block.structured).some((question) =>
-    question.options?.some((option) => !option.text.trim()),
+    question.options?.some((option) => !option.text?.trim()),
   );
 }

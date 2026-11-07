@@ -6,7 +6,7 @@ import './record-cost.css';
 type CostEvidence = NonNullable<Recording['cost']['evidence']>;
 
 const MISSING = {
-  outside_agent_scope: '后续入库处理的费用没有算在内。',
+  outside_agent_scope: '单独跑的处理和后续入库的费用没有算在内。',
   no_budget: '这次的处理记录还没对上，算不出金额。',
   no_durable_identities: '这次的处理记录还没对上，算不出金额。',
   historical_ocr_attribution_unproven: '以前的文字识别费用，算不清是否属于这次。',
@@ -61,7 +61,7 @@ export function CostSection({
                 ? '费用记录暂时读取失败，无法确认金额。'
                 : cost.state === 'unavailable'
                   ? '这次没有费用信息，算不出金额。'
-                  : evidence?.by_currency.length
+                  : evidence?.by_currency.some((entry) => entry.known_subtotal !== null)
                     ? '费用还没算全，下面是已知的部分。'
                     : '这次的费用暂时算不出来，这不表示没有花钱。'}
       </p>
