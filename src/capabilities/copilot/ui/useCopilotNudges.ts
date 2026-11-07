@@ -35,7 +35,7 @@ export function useCopilotNudges(): UseCopilotNudgesResult {
   const q = useQuery({
     queryKey: NUDGES_KEY,
     queryFn: () => getNudges(),
-    // nudge 极稀（一次 ingestion / streak 才一条）；低频轮询即可，不给后端压力。
+    // nudge 极稀（一次 ingestion 才一条）；低频轮询即可，不给后端压力。
     refetchInterval: 60_000,
   });
 

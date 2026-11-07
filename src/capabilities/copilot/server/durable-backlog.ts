@@ -4,13 +4,13 @@ import {
   COPILOT_RUN_TABLE,
 } from '@/capabilities/copilot/server/copilot-run-status';
 import { copilotRunTerminalSql } from '@/capabilities/copilot/server/copilot-run-terminal-sql';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 
 /** Hard backlog ceiling for paid durable Copilot runs. */
 export const MAX_OUTSTANDING_DURABLE_RUNS = 5;
 
 /** Count runs with a QUEUED event and no successful/failed terminal event. */
-export async function countOutstandingDurableRuns(db: Db): Promise<number> {
+export async function countOutstandingDurableRuns(db: Db | Tx): Promise<number> {
   const terminalPredicate = copilotRunTerminalSql(
     sql.raw('terminal.event_type'),
     sql.raw('terminal.payload'),

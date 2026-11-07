@@ -2,6 +2,7 @@ import { and, eq, inArray, or, sql } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { COPILOT_USER_ASK_ACTION } from '@/kernel/events/copilot-actions';
+import { COPILOT_RETRY_ACTION } from './run-retry-contract';
 
 // INVARIANT: a copilot turn may expose a revert checkpoint anchor only when every
 // effect of the turn is event-chain-compensable. These tools materialize state outside
@@ -83,6 +84,12 @@ export async function durableCheckpointPayload(
       .where(eq(event.id, runId))
       .limit(1);
     if (root?.action !== COPILOT_USER_ASK_ACTION) return {};
+    const [retry] = await db
+      .select({ id: event.id })
+      .from(event)
+      .where(and(eq(event.action, COPILOT_RETRY_ACTION), eq(event.caused_by_event_id, runId)))
+      .limit(1);
+    if (retry) return {};
     turnMaterialized = (await selectAsksWithMaterializingToolCall(db, [runId])).has(runId);
   } catch (probeErr) {
     console.error('[copilot_run] materializing-tool probe failed; suppressing revert anchor', {

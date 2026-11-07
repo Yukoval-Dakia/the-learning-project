@@ -59,7 +59,7 @@ export const learning_item = pgTable(
     // learning_item only *references* it. primary_artifact_id stays as a nullable
     // "primary/representative" pointer (no longer DB-unique; one artifact may be the
     // primary of more than one item). A plain index is kept for owner-lookup reads.
-    // See docs/adr/0027-note-artifact-decouple-from-learning-item-ownership.md.
+    // See ADR-0027 (note artifact decoupled from learning item ownership).
     index('learning_item_primary_artifact_idx').on(t.primary_artifact_id),
     // YUK-733: indexes the `knowledge_ids @> '["<kc>"]'::jsonb` containment read on the
     // user-facing note page related-items query (note-page.ts) + KC-merge rewrites.

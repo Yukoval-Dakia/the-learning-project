@@ -2,6 +2,7 @@
 import { composeTaskCatalog } from '@/ai/task-catalog';
 import { agencyTaskSpecs } from '@/capabilities/agency/task-public';
 import { copilotTaskSpecs } from '@/capabilities/copilot/task-public';
+import { drawingTaskSpecs } from '@/capabilities/drawing/task-public';
 import { ingestionTaskSpecs } from '@/capabilities/ingestion/task-public';
 import { knowledgeTaskSpecs } from '@/capabilities/knowledge/task-public';
 import { notesTaskSpecs } from '@/capabilities/notes/task-public';
@@ -19,6 +20,7 @@ export const taskCatalog = composeTaskCatalog(
     { owner: 'notes', specs: notesTaskSpecs },
     { owner: 'agency', specs: agencyTaskSpecs },
     { owner: 'copilot', specs: copilotTaskSpecs },
+    { owner: 'drawing', specs: drawingTaskSpecs },
   ] as const,
-  59,
+  60,
 );

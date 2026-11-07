@@ -1,10 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { installConfigWritePorts, setConfigs } from '@/core/config/server/write';
 import { replaceConfigSnapshot } from '@/core/config/store';
 import { system_config, system_config_epoch, system_config_journal } from '@/db/schema';
-import { setConfigs } from '@/server/config/write';
+import { configWritePorts } from '@/server/ai/config-write-ports';
 import { resetDb, testDb } from '../helpers/db';
 
-beforeEach(resetDb);
+beforeEach(() => {
+  installConfigWritePorts(configWritePorts());
+  return resetDb();
+});
 afterEach(() => {
   replaceConfigSnapshot({ epoch: 0, entries: new Map(), hydratedAt: '' });
   vi.unstubAllEnvs();

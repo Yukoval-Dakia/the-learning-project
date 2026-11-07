@@ -189,6 +189,42 @@
     overflow-wrap: anywhere;
   }
 
+  & .rc-figs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--un-sp-3);
+    align-items: flex-end;
+  }
+
+  & .rc-fig {
+    display: grid;
+    gap: var(--un-sp-1);
+    max-width: 100%;
+    margin: 0;
+    color: var(--un-text-2);
+    font-size: var(--un-fs-1);
+  }
+
+  & .rc-fig a {
+    display: block;
+    max-width: 100%;
+  }
+
+  & .rc-fig img {
+    display: block;
+    max-width: 100%;
+    max-height: 160px;
+    border-radius: var(--un-r-1);
+  }
+
+  & .rc-fig-blank {
+    display: block;
+    width: 96px;
+    height: 72px;
+    background: var(--un-line);
+    border-radius: var(--un-r-1);
+  }
+
   & .rc-line-note {
     display: flex;
     flex-wrap: wrap;

@@ -31,7 +31,7 @@ type Engine = ReturnType<typeof usePracticeSubmit>;
 type Frozen = Extract<Engine['issuance'], { status: 'ready' }>['frozen'];
 type Figure = Frozen['materials'][number];
 const ratings: readonly Rating[] = ['again', 'hard', 'good'];
-const ratingLabels = { again: '再练', hard: '模糊', good: '掌握' };
+const ratingLabels = { again: '再练', hard: '模糊', good: '会了' };
 // About 30 s of successful reads at the poller's backoff; a loose first number, no timer needed.
 const LONG_WAIT_POLLS = 8;
 const APPEAL_REASON_MAX = 2000;
