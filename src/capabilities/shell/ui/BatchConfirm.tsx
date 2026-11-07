@@ -11,6 +11,7 @@ import {
   invalidateAfterProposalRetract,
   queryKeys,
 } from '@/ui/lib/write-invalidation';
+import { RetryLine } from '@/ui-next/primitives/RetryLine';
 import { Button } from '@/ui-next/public';
 import type { ProposalBatchAcceptWire, ProposalBatchSummaryWire } from './inbox-api';
 import { useWorkbenchClient } from './workbench-client';
@@ -26,10 +27,8 @@ const dayFmt = new Intl.DateTimeFormat('zh-CN', {
 function acceptWords(s: ProposalBatchAcceptWire['summary']): string {
   const done = s.accepted + s.already_accepted;
   const left = s.rejected + s.failed;
-  if (left === 0) return `确认了 ${done} 条，下面可以撤销。`;
-  return done > 0
-    ? `确认了 ${done} 条，${left} 条没确认成，还留在下面。`
-    : `这 ${left} 条没确认成，还留在下面。`;
+  if (left === 0) return `确认了 ${done} 条，还能撤销。`;
+  return done > 0 ? `确认了 ${done} 条，${left} 条没确认成。` : `这 ${left} 条没确认成。`;
 }
 
 function RecentBatch({ batch }: { batch: ProposalBatchSummaryWire }) {
@@ -50,7 +49,7 @@ function RecentBatch({ batch }: { batch: ProposalBatchSummaryWire }) {
           ),
         );
       }
-      return results.filter(Boolean).length;
+      return { undone: results.filter(Boolean).length, tried: remaining.length };
     },
     onSettled: () => {
       setAsking(false);
@@ -61,7 +60,7 @@ function RecentBatch({ batch }: { batch: ProposalBatchSummaryWire }) {
       ]);
     },
   });
-  const undone = undo.data;
+  const result = undo.data;
   return (
     <div className={asking ? 'ib-aa-confirm' : 'ib-batch-recent'}>
       <p>
@@ -89,10 +88,12 @@ function RecentBatch({ batch }: { batch: ProposalBatchSummaryWire }) {
           </Button>
         </div>
       )}
-      {undone !== undefined && undone < remaining.length ? (
-        <p role="status">有的已经被用到了，撤不了，会留着。</p>
+      {result && result.undone < result.tried ? (
+        <p role="status">
+          {result.undone > 0 ? `撤了 ${result.undone} 条，` : ''}
+          {result.tried - result.undone} 条没撤成。已经被用到的撤不了，其余的可以再试一次。
+        </p>
       ) : null}
-      {undo.isError ? <p role="alert">这次没撤成，可以再试一次。</p> : null}
     </div>
   );
 }
@@ -165,6 +166,12 @@ export function BatchConfirm({ eligibleIds }: { eligibleIds: readonly string[] }
         <p className="ib-aa-result" role="alert">
           这次没确认成，可以再试一次。
         </p>
+      ) : null}
+      {batches.isError ? (
+        <RetryLine
+          message="一起确认过的记录暂时读不出来。"
+          onRetry={() => void batches.refetch()}
+        />
       ) : null}
       {recent.map((batch) => (
         <RecentBatch key={batch.batch_id} batch={batch} />

@@ -556,6 +556,13 @@ export default function InboxPage({ navigate }: InboxPageProps) {
           </p>
         </header>
 
+        {/* Outside the gate: a batch that empties the inbox can still be undone. */}
+        <BatchConfirm
+          eligibleIds={decide
+            .filter((p) => p.batch_confirm_eligible && !resolved[p.id])
+            .map((p) => p.id)}
+        />
+
         <InboxGate
           status={status}
           onRetry={() => {
@@ -671,11 +678,6 @@ export default function InboxPage({ navigate }: InboxPageProps) {
           {/* ── B 档 · 逐条人审 ── */}
           <section className="ib-tier" aria-labelledby="ib-tier-b">
             <TierHead tier="B" count={decideRemaining} id="ib-tier-b" />
-            <BatchConfirm
-              eligibleIds={decide
-                .filter((p) => p.batch_confirm_eligible && !resolved[p.id])
-                .map((p) => p.id)}
-            />
             {backlog.isFetchingNextPage && (
               <TierNote>
                 <output aria-live="polite">
