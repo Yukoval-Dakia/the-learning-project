@@ -324,6 +324,9 @@ const KnowledgeMutationOutputSchema = z.object({
   cooldown_key: z.string().optional(),
   cooldown_until: z.string().optional(),
   reason: z.string().optional(),
+  // skipped:duplicate_pending / skipped:already_exists — the deterministic next
+  // step the result already enables, so the model can continue without re-reading.
+  next_step: z.string().optional(),
 });
 
 type KnowledgeMutationInput = z.infer<typeof KnowledgeMutationInputSchema>;
@@ -442,6 +445,8 @@ async function proposeKnowledgeMutationExecute(
           status: 'skipped:already_exists',
           node_id: existing.id,
           reason: `a live node already exists here with the normalized name '${normalizeKnowledgeNodeName(change.name)}'`,
+          next_step:
+            'attach content directly to the returned node_id (e.g. author_question knowledge_ids=[node_id]); do not wait for any apply',
         };
       }
     }
@@ -452,6 +457,14 @@ async function proposeKnowledgeMutationExecute(
         proposal_id: skip.proposal_id,
         cooldown_key: skip.cooldown_key,
         cooldown_until: skip.cooldown_until,
+        ...(skip.status === 'skipped:duplicate_pending'
+          ? {
+              next_step:
+                change.mutation === 'propose_new'
+                  ? 'an identical node proposal is already pending — do not propose it again; author_question needs no node id, submit under the subject root with knowledge_ids=[], subject_id, and the learner wording as learner_topic (the placement sweep moves it onto the node after the proposal applies)'
+                  : 'the identical change is already pending — do not retry it; continue with the rest of the plan',
+            }
+          : {}),
       };
     }
     const proposalId = await writeProposal(tx);
