@@ -161,11 +161,17 @@ async function installProposalUndoGuardsBeforeServe(): Promise<void> {
 // DATABASE_URL），须在 loadApiEnv() 之后加载。
 async function injectAdminConfigFactsBeforeServe(): Promise<void> {
   try {
-    const [{ buildAdminConfigRuntimeFacts }, { setAdminConfigRuntimeFacts }] = await Promise.all([
-      import('@/server/config/admin-config-facts'),
+    const [
+      { buildAdminConfigRuntimeFacts },
+      { adminConfigFactsPorts },
+      { setAdminConfigRuntimeFacts },
+    ] = await Promise.all([
+      import('@/core/config/server/admin-config-facts'),
+      import('@/server/admin/config-facts-host'),
       import('@/capabilities/observability/public'),
     ]);
-    setAdminConfigRuntimeFacts(buildAdminConfigRuntimeFacts);
+    // The ports are rebuilt per request, so env/hot-reload changes stay fresh.
+    setAdminConfigRuntimeFacts(() => buildAdminConfigRuntimeFacts(adminConfigFactsPorts()));
   } catch (err) {
     // 注入失败不拖死 API 面：读面照常服务（facts 分区如实标未注入）。
     console.warn('[rw:api] admin config facts injection failed — read face serves uninjected', err);
@@ -174,11 +180,21 @@ async function injectAdminConfigFactsBeforeServe(): Promise<void> {
 
 async function injectAdminConfigWriterBeforeServe(): Promise<void> {
   try {
-    const [{ createAdminConfigWriter }, { setAdminConfigWriter }] = await Promise.all([
-      import('@/server/config/admin-config-write'),
+    const [
+      { createAdminConfigWriter },
+      { configWritePorts },
+      { adminConfigWriterPorts },
+      { installConfigWritePorts },
+      { setAdminConfigWriter },
+    ] = await Promise.all([
+      import('@/core/config/server/admin-config-write'),
+      import('@/server/ai/config-write-ports'),
+      import('@/server/admin/config-facts-host'),
+      import('@/core/config/server/write'),
       import('@/capabilities/observability/public'),
     ]);
-    setAdminConfigWriter(createAdminConfigWriter());
+    installConfigWritePorts(configWritePorts());
+    setAdminConfigWriter(createAdminConfigWriter(adminConfigWriterPorts()));
   } catch (error) {
     console.warn('[rw:api] config writer unavailable — writes return 503', error);
   }

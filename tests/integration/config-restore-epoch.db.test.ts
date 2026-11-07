@@ -30,6 +30,7 @@ import {
   restoreFromArchive as restoreArchive,
 } from '@/capabilities/observability/server/backup/archive';
 import { hydrateConfigFromDb } from '@/core/config/server/hydrate';
+import { installConfigWritePorts, setConfig } from '@/core/config/server/write';
 import {
   type ConfigSnapshot,
   getConfig,
@@ -38,7 +39,7 @@ import {
   resetTestConfig,
 } from '@/core/config/store';
 import { system_config_epoch } from '@/db/schema';
-import { setConfig } from '@/server/config/write';
+import { configWritePorts } from '@/server/ai/config-write-ports';
 import { resetDb, testDb } from '../helpers/db';
 import { memR2 } from '../helpers/r2';
 
@@ -71,6 +72,7 @@ function publishDivergedSnapshot(epoch: number, value: number): void {
 
 describe('restoreFromArchive — config epoch (P1-6)', () => {
   beforeEach(async () => {
+    installConfigWritePorts(configWritePorts());
     await resetDb();
   });
 
