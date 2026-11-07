@@ -3,6 +3,7 @@ import { eq, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { projectCopilotActivity } from '@/capabilities/copilot/server/tool-activity';
 import { generateReferenceSolution } from '@/capabilities/practice/question-bank/server/reference-solution';
 import * as schema from '@/db/schema';
 import { artifact, event, material_fsrs_state, question, source_asset } from '@/db/schema';
@@ -15,6 +16,7 @@ import {
   publishQuestionGroupFromRow,
 } from '@/kernel/records/assessment-publication';
 import type { ToolContext } from '@/kernel/tools/types';
+import { executeDomainToolCall } from '@/server/ai/tools/mcp-bridge';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { fileBankGapTool } from '../../server/tools/file-bank-gap';
 import { assertPaperOpenable } from '../../session/server/assessment/paper-issuance';
@@ -722,6 +724,46 @@ describe('bank tools boundary invariants (search_bank / read_bank / check_bank)'
       session_meta: { bank_decision_source: 'caller_assessed' },
     });
     expect(JSON.stringify(paper.tool_state)).not.toContain(assessment.joint.evidence[0].quote);
+  });
+
+  // @invariant security: private receipt quotes never reach learner tool activity or mirrored events
+  // @fails-if assessment quotes or demand prose survive the live, persisted or tool_use projection
+  it('keeps receipt evidence out of learner-visible tool activity', async () => {
+    const { owner, search, assessment } = await receiptFixture('receipt-private');
+    const marker = 'PRIVATE_REFERENCE_RUBRIC_SENTINEL';
+    const input = {
+      search_id: search.search_id,
+      assessments: [
+        {
+          ...assessment,
+          joint: {
+            verdict: 'supported',
+            evidence: [{ source: 'criterion:private', quote: marker }],
+          },
+        },
+      ],
+    };
+    const visible: unknown[] = [];
+    const start = projectCopilotActivity({ kind: 'tool_started', toolName: 'write_quiz', input });
+    visible.push(start);
+    await executeDomainToolCall(writeQuizTool, input, {
+      ctx: { ...owner, callerActor: { kind: 'agent', ref: 'copilot' } },
+      onToolComplete: (call) => {
+        visible.push(call);
+        visible.push(projectCopilotActivity({ kind: 'tool_finished', ...call }));
+      },
+    });
+    visible.push(...(await db.select().from(event).where(eq(event.action, 'tool_use'))));
+    expect(visible.length).toBeGreaterThan(3);
+    expect(JSON.stringify(visible)).not.toContain(marker);
+    expect(start?.input).toEqual({ search_id: search.search_id, assessments_count: 1 });
+    expect(
+      projectCopilotActivity({
+        kind: 'tool_started',
+        toolName: 'file_bank_gap',
+        input: { ...input, demand: { claim: { statement: marker } } },
+      })?.input,
+    ).toEqual({ search_id: search.search_id, assessments_count: 1 });
   });
 
   // @invariant concurrency: receipt-based paper selection serializes and never issues another revision @fails-if concurrent same-run calls create two papers or a later current revision silently replaces the selected one at paper opening

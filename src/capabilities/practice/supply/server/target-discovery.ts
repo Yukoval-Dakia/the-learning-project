@@ -300,7 +300,6 @@ export function computePriority(gapKind: SupplyGapKind, evidenceCount: number): 
   return Math.min(1, base * noveltyBoost);
 }
 
-
 // recall-style 题型（重背，原题复用）——据 rotationClassForKind 复用既有 ADR-0030 路由分类，
 // 不在此重定义题型→class 映射（单一真相）。
 function isRecallKind(kind: QuestionKindT): boolean {

@@ -477,14 +477,6 @@ export const CJK_FTS_SPLIT = '([一-鿿])';
  * 的 legacy 八进制转义陷阱（cooked 值会变 undefined）。 */
 const CJK_FTS_REPLACEMENT = '\\1 ';
 
-/** FTS 文档表达式：prompt + reference + choices 的 JSON 文本，统一逐字切分。 */
-function ftsDocumentExpr(publicOnly = false): SQL {
-  const doc = publicOnly
-    ? sql`concat_ws(' ', ${question.prompt_md}, ${question.choices_md}::text)`
-    : sql`concat_ws(' ', ${question.prompt_md}, ${question.reference_md}, ${question.choices_md}::text)`;
-  return sql`regexp_replace(${doc}, ${CJK_FTS_SPLIT}, ${CJK_FTS_REPLACEMENT}, 'g')`;
-}
-
 /** tsquery 词项上限：长查询只取前 N 个词项，防巨型 OR（query 上限 400 字 → 数百 bigram）。 */
 const FTS_QUERY_TERM_CAP = 32;
 
@@ -682,9 +674,24 @@ async function runSearchBankInSnapshot(
   const filters = buildBankSearchFilters(resolved);
   const where = and(...filters, ...(deps.predicates ?? []));
 
+  const scopeRows = await db
+    .select({ id: question.id })
+    .from(question)
+    .leftJoin(question_group_lifecycle, eq(question_group_lifecycle.group_id, question.id))
+    .where(where)
+    .limit(2001);
+  const cachedParts =
+    scopeRows.length <= 2000
+      ? await readBankServableParts(
+          db,
+          scopeRows.map((row) => row.id),
+        )
+      : null;
+  const readParts = async (ids: string[]) => cachedParts ?? readBankServableParts(db, ids);
+
   // FTS 词法表达式对新检索与 cursor 续页都可用（续页按 cursor.q 重算 strength；
   // 内容若被改过，snapshot_hash 校验会显式让 cursor 过期）。
-  const tsvec = sql`to_tsvector('simple', ${ftsDocumentExpr(deps.publicOnly)})`;
+  const tsvec = sql`${deps.publicOnly ? question.search_public_document : question.search_document}`;
   const fts = ftsChannelExprs(effectiveQuery, tsvec);
 
   let fused: RrfFused[];
@@ -732,7 +739,7 @@ async function runSearchBankInSnapshot(
           )
           .limit(count)
           .offset(offset),
-      { admitted: scope.admission_state === 'admitted', cap: BANK_SEARCH_CHANNEL_CAP },
+      { readParts, admitted: scope.admission_state === 'admitted', cap: BANK_SEARCH_CHANNEL_CAP },
     );
 
     // ── 通道 B：暴力 pgvector cosine（embed 失败 → 通道不可用，不阻塞 FTS）──
@@ -844,7 +851,11 @@ async function runSearchBankInSnapshot(
               .orderBy(sql`${distanceExpr} ASC`, desc(question.id))
               .limit(count)
               .offset(offset),
-          { admitted: scope.admission_state === 'admitted', cap: BANK_SEARCH_CHANNEL_CAP },
+          {
+            readParts,
+            admitted: scope.admission_state === 'admitted',
+            cap: BANK_SEARCH_CHANNEL_CAP,
+          },
         ),
         db
           .select({
@@ -964,10 +975,7 @@ async function runSearchBankInSnapshot(
 
   // Revalidate the complete bounded pool before slicing. A changed/withdrawn card
   // expires the cursor explicitly; immutable refs are never silently replaced.
-  const servableParts = await readBankServableParts(
-    db,
-    fused.map((hit) => hit.id),
-  );
+  const servableParts = await readParts(fused.map((hit) => hit.id));
   if (scope.admission_state === 'admitted') {
     fused = fused.filter((hit) => (servableParts.get(hit.id)?.length ?? 0) > 0);
   }

@@ -56,6 +56,7 @@ export function guardSearchBenchmarkEmbedding(output: string, budgetUsd: number)
     if (/\/chat\/completions|\/messages(?:\?|$)/.test(endpoint))
       throw Error('This benchmark must not run a reasoning model');
     if (!endpoint.endsWith('/embeddings')) return realFetch(url, init);
+    assertSearchBenchmarkPaidGate(output);
     const body = JSON.parse(String(init?.body));
     if (body.model !== 'text-embedding-v4' || body.dimensions !== 1024)
       throw Error('Unexpected embedding model/dimensions');
