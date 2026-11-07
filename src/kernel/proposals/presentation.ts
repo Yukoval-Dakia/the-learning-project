@@ -89,7 +89,19 @@ export interface ProposalKnowledgeNodeLabel {
  * Names of the nodes a knowledge_mutation acts on. Resolution happens on read;
  * the stored proposal payload keeps its ids only.
  */
-export type ProposalKnowledgeMutationPresentation =
+export type ProposalKnowledgeMutationPresentation = KnowledgeMutationTargets & {
+  /** Why accepting would fail right now; null when nothing here stands in its way. */
+  blocked: ProposalKnowledgeMutationBlock | null;
+};
+
+/**
+ * to_top: the knowledge appliers do not move or split a node to the tree root.
+ * node_unreadable: no row was read, which may only mean the read failed.
+ * node_retired: a node is archived or merged, and the appliers require live ones.
+ */
+export type ProposalKnowledgeMutationBlock = 'to_top' | 'node_unreadable' | 'node_retired';
+
+type KnowledgeMutationTargets =
   | {
       mutation: 'merge';
       /** Nodes folded away, in payload order. */
@@ -1135,10 +1147,38 @@ function mutationNodeLabel(
   return { label: row.name, state: 'live' };
 }
 
+function knowledgeMutationBlock(
+  targets: KnowledgeMutationTargets,
+): ProposalKnowledgeMutationBlock | null {
+  const parents =
+    targets.mutation === 'reparent'
+      ? [targets.parent]
+      : targets.mutation === 'split'
+        ? targets.into.map((piece) => piece.parent)
+        : [];
+  if (parents.includes(null)) return 'to_top';
+  const nodes = [
+    ...parents.filter((parent) => parent !== null),
+    ...(targets.mutation === 'merge' ? [...targets.from, targets.into] : []),
+    ...(targets.mutation === 'reparent' ? [targets.node] : []),
+    ...(targets.mutation === 'split' ? [targets.from] : []),
+  ];
+  if (nodes.some((node) => node.state === 'missing')) return 'node_unreadable';
+  return nodes.some((node) => node.state !== 'live') ? 'node_retired' : null;
+}
+
 function knowledgeMutationPresentation(
   change: KnowledgeMutationChange,
   labelOf: (id: string) => ProposalKnowledgeNodeLabel,
 ): ProposalKnowledgeMutationPresentation {
+  const targets = knowledgeMutationTargets(change, labelOf);
+  return { ...targets, blocked: knowledgeMutationBlock(targets) };
+}
+
+function knowledgeMutationTargets(
+  change: KnowledgeMutationChange,
+  labelOf: (id: string) => ProposalKnowledgeNodeLabel,
+): KnowledgeMutationTargets {
   switch (change.mutation) {
     case 'merge':
       return {
