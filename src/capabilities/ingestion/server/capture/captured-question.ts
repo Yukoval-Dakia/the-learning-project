@@ -88,6 +88,9 @@ export async function recordCapturedQuestion(tx: Tx, input: CapturedQuestionInpu
   const metadata = {
     ...(input.reuse?.metadata ?? {}),
     ...input.extraMetadata,
+    // A block's image_refs are the photographed source pages, not this question's
+    // picture. Keep them as machine prompt input but keep them off learner reads.
+    ...(input.content.from === 'block' ? { prompt_images_are_source_pages: true } : {}),
     source_document_id: input.sourceDocumentId,
     ingestion_session_id: input.sessionId,
     question_block_id: input.blockId,
@@ -161,7 +164,11 @@ async function resolveContent(tx: Tx, content: CapturedQuestionContent) {
       sourceAssetIds: block.source_asset_ids,
       assets: figureAssets,
     }),
-    imageRefs: block.image_refs,
+    // block.image_refs are whole source pages. A page carries other questions'
+    // handwriting, so it is not this question's visible content; only verified crops
+    // (figures) may render next to the prompt. Page images stay on the block, the
+    // capture submission and the learning record as private evidence.
+    imageRefs: [],
   };
 }
 

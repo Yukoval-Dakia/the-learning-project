@@ -7,7 +7,7 @@ import { and, asc, eq, inArray } from 'drizzle-orm';
 
 import { MistakeEnrollOutcome } from '@/core/schema/mistake_enroll';
 import type { Db } from '@/db/client';
-import { event, question_block } from '@/db/schema';
+import { event, question, question_block } from '@/db/schema';
 import { learnerVisibleKnowledgeIds } from '@/kernel/read-models/learner-knowledge-visibility';
 
 export async function readIngestionSessionBlocks(db: Db, params: { id: string }) {
@@ -39,6 +39,27 @@ export async function readIngestionSessionBlocks(db: Db, params: { id: string })
     .orderBy(asc(question_block.ordinal), asc(question_block.id));
 
   const blockIds = rows.map((r) => r.id);
+  const enrolledQuestionIds = [
+    ...new Set(
+      rows
+        .map((r) => r.imported_question_id)
+        .filter((id): id is string => typeof id === 'string' && id.length > 0),
+    ),
+  ];
+  // The recording page must not re-derive enrollment state on the client: one server
+  // projection names what happened to each block and why it is still not in the library.
+  const enrolledQuestions =
+    enrolledQuestionIds.length === 0
+      ? []
+      : await db
+          .select({
+            id: question.id,
+            draft_status: question.draft_status,
+            metadata: question.metadata,
+          })
+          .from(question)
+          .where(inArray(question.id, enrolledQuestionIds));
+  const questionById = new Map(enrolledQuestions.map((row) => [row.id, row]));
   const observations =
     blockIds.length === 0
       ? []
@@ -69,8 +90,40 @@ export async function readIngestionSessionBlocks(db: Db, params: { id: string })
         ...r,
         created_at: Math.floor(r.created_at.getTime() / 1000),
         auto_enroll_observation: observation ? toAutoEnrollObservation(observation) : null,
+        ingestion_enrollment: toEnrollmentProjection(r, questionById.get(r.imported_question_id ?? '')),
       };
     }),
+  };
+}
+
+/** How to read one block's enrollment without re-implementing the server gates. */
+function toEnrollmentProjection(
+  block: { status: string; extracted_prompt_md: string | null; structured: unknown },
+  enrolled: { draft_status: string | null; metadata: Record<string, unknown> | null } | undefined,
+) {
+  if (block.status !== 'auto_enrolled') {
+    const hasPrompt =
+      (block.structured != null) || (block.extracted_prompt_md ?? '').trim().length > 0;
+    return {
+      state: 'not_enrolled' as const,
+      reason: hasPrompt ? null : ('needs_text' as const),
+      knowledge: null,
+      low_confidence: null,
+      library_visible: null,
+    };
+  }
+  const markers = enrolled?.metadata?.ingestion_enrollment as
+    | { knowledge?: unknown; low_confidence?: unknown }
+    | undefined;
+  return {
+    state: 'in_library' as const,
+    reason: null,
+    knowledge:
+      markers?.knowledge === 'attributed' || markers?.knowledge === 'missing'
+        ? markers.knowledge
+        : null,
+    low_confidence: typeof markers?.low_confidence === 'boolean' ? markers.low_confidence : null,
+    library_visible: enrolled ? enrolled.draft_status !== 'draft' : null,
   };
 }
 

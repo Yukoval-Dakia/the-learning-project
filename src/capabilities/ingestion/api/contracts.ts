@@ -46,6 +46,13 @@ export const CreationReceiptHeadersSchema = z.object({
   'Idempotency-Key': z.string().trim().min(1).max(200).optional(),
 });
 
+/** Exact duplicate of an earlier upload: same pages in the same order. */
+export const DuplicateUploadSchema = z.strictObject({
+  source_document_id: z.string().min(1),
+  session_id: z.string().min(1).nullable(),
+  uploaded_at: z.string().datetime(),
+});
+
 export const IngestionSessionCreationResponseSchema = z.strictObject({
   session: z.strictObject({
     id: z.string().min(1),
@@ -53,6 +60,8 @@ export const IngestionSessionCreationResponseSchema = z.strictObject({
     status: z.literal('uploaded'),
     source_asset_ids: z.array(z.string().min(1)).min(1),
     entrypoint: IngestionEntrypoint,
+    /** Present when these bytes already entered an earlier session; never silent. */
+    duplicate_of: DuplicateUploadSchema.nullable().optional(),
   }),
 });
 
@@ -291,6 +300,15 @@ const AutoEnrollObservationSchema = z.object({
   observed_at: z.string().datetime(),
 });
 
+/** Server-owned reading of one block's enrollment; the page never re-derives gates. */
+export const IngestionBlockEnrollmentSchema = z.object({
+  state: z.enum(['in_library', 'not_enrolled']),
+  reason: z.enum(['needs_text']).nullable(),
+  knowledge: z.enum(['attributed', 'missing']).nullable(),
+  low_confidence: z.boolean().nullable(),
+  library_visible: z.boolean().nullable(),
+});
+
 export const IngestionBlockSchema = z
   .object({
     id: z.string(),
@@ -311,6 +329,7 @@ export const IngestionBlockSchema = z
     imported_question_id: z.string().nullable(),
     imported_attempt_event_id: z.string().nullable(),
     auto_enroll_observation: AutoEnrollObservationSchema.nullable(),
+    ingestion_enrollment: IngestionBlockEnrollmentSchema,
     created_at: z.number().int().nonnegative(),
   })
   .passthrough();
@@ -394,6 +413,14 @@ export const IngestionHistoryCurrentSchema = z
     held_since: z.string().nullable(),
     next_action: z.object({ command: z.string(), method: z.string(), path: z.string() }).nullable(),
     pending_action: z.object({ command: z.string(), since: z.string() }).nullable(),
+    // Scoring admission is a separate axis from serving: a question can be in the
+    // library while its automatic check is still running.
+    admission: z
+      .object({
+        status: z.enum(['pending', 'admitted', 'failed', 'undecided']),
+        reason: z.string().nullable(),
+      })
+      .nullable(),
   })
   .strict();
 
