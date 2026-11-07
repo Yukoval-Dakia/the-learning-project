@@ -4,7 +4,7 @@
 // stored judge confidence and a tolerant projection of the auto-enroll observation
 // when present.
 
-import { and, asc, eq, inArray } from 'drizzle-orm';
+import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 
 import { MistakeEnrollOutcome } from '@/core/schema/mistake_enroll';
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
@@ -43,6 +43,7 @@ export async function readIngestionSessionBlocks(db: Db, params: { id: string })
     .orderBy(asc(question_block.ordinal), asc(question_block.id));
 
   const blockIds = rows.map((r) => r.id);
+  const enrollmentInFlight = await hasInflightAutoEnroll(db, sessionId);
   const observations =
     blockIds.length === 0
       ? []
@@ -102,10 +103,32 @@ export async function readIngestionSessionBlocks(db: Db, params: { id: string })
         ingestion_enrollment: toEnrollmentProjection(
           r,
           r.imported_question_id !== null ? questionById.get(r.imported_question_id) : undefined,
+          enrollmentInFlight,
         ),
       };
     }),
   };
+}
+
+/**
+ * True while the session still has a queued/running auto_enroll delivery. pgboss.job is
+ * pg-boss owned; to_regclass keeps this honest on databases that never reached it. A
+ * missing/in-flight job is the only "waiting" signal — anything else means the session's
+ * enrollment has finished and a still-draft block is a failure.
+ */
+async function hasInflightAutoEnroll(db: Db, sessionId: string): Promise<boolean> {
+  const probe = await db.execute<{ reg: string | null }>(
+    sql`select to_regclass('pgboss.job') as reg`,
+  );
+  if (probe[0]?.reg == null) return false;
+  const rows = await db.execute<{ one: number }>(sql`
+    select 1 as one from pgboss.job
+    where name = 'auto_enroll'
+      and state in ('created','retry','active')
+      and data->>'sessionId' = ${sessionId}
+    limit 1
+  `);
+  return rows.length > 0;
 }
 
 /** How to read one block's enrollment without re-implementing the server gates. */
@@ -116,6 +139,7 @@ function toEnrollmentProjection(
     structured: StructuredQuestionT | null;
   },
   enrolled: { draft_status: string | null; metadata: Record<string, unknown> | null } | undefined,
+  enrollmentInFlight: boolean,
 ) {
   // The block status is the ground truth about what happened to this capture:
   // imported/submitted/auto_enrolled all carry a question, ignored was an explicit
@@ -140,12 +164,16 @@ function toEnrollmentProjection(
       library_visible: enrolled ? enrolled.draft_status !== 'draft' : null,
     };
   }
-  // Enrollment is automatic, so a draft block with a prompt means publication did not
-  // complete (job retries exhausted, publish rejected, or a failed per-block write).
-  // It must be distinguishable from a block that never had a prompt at all.
+  // Enrollment is automatic. A draft block with a prompt is still waiting while its
+  // session has a queued/running auto_enroll delivery; once that has finished, the same
+  // row is a failure. A block with no printed prompt never had anything to publish.
   return {
     state: 'not_enrolled' as const,
-    reason: blockHasPrompt(block) ? ('publish_failed' as const) : ('needs_text' as const),
+    reason: blockHasPrompt(block)
+      ? enrollmentInFlight
+        ? ('pending' as const)
+        : ('publish_failed' as const)
+      : ('needs_text' as const),
     knowledge: null,
     library_visible: null,
   };

@@ -9,11 +9,31 @@ import { inArray } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
 import { learning_session, source_document } from '@/db/schema';
 
+/** Question sources that come from a photographed/uploaded page. */
+export const INGESTION_QUESTION_SOURCES: ReadonlySet<string> = new Set([
+  'ingestion',
+  'vision_paper',
+  'vision_single',
+  'camera',
+  'import',
+  'pdf',
+  'docx',
+  'photo',
+  'reverse_mark',
+]);
+
 export interface LearnerImagePageIndex {
   /** Whole-page asset ids per source document id. */
   pageAssetsByDocument: Map<string, Set<string>>;
   /** Document id per ingestion session id, for questions missing the document id. */
   documentIdBySession: Map<string, string>;
+}
+
+export interface LearnerImageQuestion {
+  image_refs?: readonly string[] | null;
+  metadata?: unknown;
+  /** question.source; ingestion sources fail closed when the page identity is unknown. */
+  source?: string | null;
 }
 
 function metadataOf(metadata: unknown): Record<string, unknown> | null {
@@ -27,9 +47,8 @@ function stringOf(value: unknown): string | null {
 }
 
 /**
- * Batch-loads the page identity needed by `learnerVisibleImageRefs`. Missing
- * documents/sessions stay absent from the maps; that is an unknown, not an empty page
- * set, so the caller keeps the refs instead of guessing.
+ * Batch-loads the page identity needed by `learnerVisibleImageRefs`. Only documents
+ * that exist are indexed; an id absent from `pageAssetsByDocument` is an unknown.
  */
 export async function loadLearnerImagePageIndex(
   db: Db | Tx,
@@ -76,22 +95,46 @@ export async function loadLearnerImagePageIndex(
   return { pageAssetsByDocument, documentIdBySession };
 }
 
-/** `image_refs` minus whole source pages; verified figure crops are unaffected. */
+/**
+ * Tries metadata.source_document_id first, then the ingestion session's document. A
+ * stale/unresolvable id never masks the fallback. Returns null when neither resolves to
+ * an existing document.
+ */
+function resolvePageAssets(
+  q: LearnerImageQuestion,
+  index: LearnerImagePageIndex,
+): Set<string> | null {
+  const meta = metadataOf(q.metadata);
+  const documentCandidates = [
+    stringOf(meta?.source_document_id),
+    stringOf(meta?.ingestion_session_id)
+      ? (index.documentIdBySession.get(stringOf(meta?.ingestion_session_id) as string) ?? null)
+      : null,
+  ];
+  for (const documentId of documentCandidates) {
+    if (!documentId) continue;
+    const pages = index.pageAssetsByDocument.get(documentId);
+    if (pages !== undefined) return pages;
+  }
+  return null;
+}
+
+/**
+ * `image_refs` minus whole source pages; verified figure crops are unaffected.
+ *
+ * When the page identity cannot be resolved, ingestion-sourced questions fail closed
+ * (no `image_refs`; `figures` remain), because a whole photographed page may carry other
+ * learners' questions/handwriting. Non-ingestion questions keep their refs unchanged.
+ */
 export function learnerVisibleImageRefs(
-  q: {
-    image_refs?: readonly string[] | null;
-    metadata?: unknown;
-  },
+  q: LearnerImageQuestion,
   index: LearnerImagePageIndex,
 ): string[] {
   const refs = [...(q.image_refs ?? [])];
-  const meta = metadataOf(q.metadata);
-  const documentId =
-    stringOf(meta?.source_document_id) ??
-    (stringOf(meta?.ingestion_session_id)
-      ? (index.documentIdBySession.get(stringOf(meta?.ingestion_session_id) as string) ?? null)
-      : null);
-  const pages = documentId ? index.pageAssetsByDocument.get(documentId) : undefined;
-  if (!pages || pages.size === 0) return refs;
+  const pages = resolvePageAssets(q, index);
+  if (pages === null) {
+    return q.source != null && INGESTION_QUESTION_SOURCES.has(q.source) ? [] : refs;
+  }
+  if (pages.size === 0) return refs;
   return refs.filter((ref) => !pages.has(ref));
 }

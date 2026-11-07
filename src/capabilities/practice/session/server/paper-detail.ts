@@ -290,6 +290,7 @@ export async function getPaperDetail(
         part_index: question.part_index,
         image_refs: question.image_refs,
         metadata: question.metadata,
+        source: question.source,
         reference_md: question.reference_md,
         // Server-side only: feeds the display-subject bridge for notation; not
         // exposed on the learner-facing face.

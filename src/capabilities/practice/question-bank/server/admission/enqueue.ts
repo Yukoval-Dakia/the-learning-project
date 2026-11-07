@@ -354,8 +354,37 @@ export async function enqueuePublishedQuestionAdmission(
       if (
         (await readEventDerivationPolicy(tx, usageSourceId)) !== 'allow' ||
         (await readEventDerivationPolicy(tx, source.id)) !== 'allow'
-      )
+      ) {
+        // No job will exist for this publication, so the serving read model needs a
+        // durable terminal fact here too (otherwise it stays "still checking" forever).
+        // Deterministic id keeps repeated publication notifications idempotent.
+        const now = new Date();
+        await writeEvent(tx, {
+          id: createHash('sha256')
+            .update(`question_admission_purpose_denied:enqueue:${source.id}`)
+            .digest('hex'),
+          session_id: null,
+          actor_kind: 'system',
+          actor_ref: 'practice:question_admission',
+          action: 'experimental:question_admission_purpose_denied',
+          subject_kind: 'question',
+          subject_id: root.id,
+          outcome: 'skipped',
+          payload: {
+            group_id: root.id,
+            revision_id: revision.revision_id,
+            revision_digest: revision.integrity_digest,
+            purpose_state: 'restricted',
+            source_event_id: source.id,
+          },
+          caused_by_event_id: null,
+          task_run_id: null,
+          cost_micro_usd: null,
+          ingest_at: now,
+          created_at: now,
+        });
         return { status: 'skipped', reason: 'original publication source purpose restricted' };
+      }
     }
     const enqueued = await boss.send(
       ADMISSION_FAMILY,
