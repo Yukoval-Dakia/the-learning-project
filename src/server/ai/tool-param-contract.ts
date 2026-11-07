@@ -64,17 +64,44 @@ export function isToolArgumentContractFailure(result: {
   content?: unknown;
 }): boolean {
   if (result.isError !== true) return false;
-  const text = toolResultText(result.content);
-  // pi 1.5 reports a wholly unparseable arguments payload as "Invalid arguments
-  // for tool"; schema rejection stays "Validation failed for tool". The MCP
-  // bridge reports a rejected bridge-owned schema as a JSON error body.
-  return (
-    text.includes(TOOL_PARAM_CONTRACT_MARKER) ||
-    text.startsWith('Validation failed for tool') ||
-    text.startsWith('Invalid arguments for tool') ||
-    text.includes('"error":"Tool input does not match the declared schema:') ||
-    text.includes('"error": "Tool input does not match the declared schema:')
-  );
+  return toolResultTexts(result.content).some(isArgumentContractFailureText);
+}
+
+/** Text form of every text block, so callers inspect each result instead of one concatenation. */
+function toolResultTexts(content: unknown): string[] {
+  if (typeof content === 'string') return [content];
+  if (!Array.isArray(content)) return [];
+  const out: string[] = [];
+  for (const block of content) {
+    if (
+      block !== null &&
+      typeof block === 'object' &&
+      (block as { type?: unknown }).type === 'text' &&
+      typeof (block as { text?: unknown }).text === 'string'
+    ) {
+      out.push((block as { text: string }).text);
+    }
+  }
+  return out;
+}
+
+/** Only protocol-shaped rejection text counts; a business error carrying these
+ *  words in prose must not get the retryable-validation exemption. */
+function isArgumentContractFailureText(text: string): boolean {
+  const trimmed = text.trim();
+  if (trimmed.startsWith('Validation failed for tool ')) return true;
+  if (trimmed.startsWith('Invalid arguments for tool ')) return true;
+  if (trimmed.startsWith(TOOL_PARAM_CONTRACT_MARKER)) return true;
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    return (
+      isNode(parsed) &&
+      typeof parsed.error === 'string' &&
+      parsed.error.startsWith('Tool input does not match the declared schema:')
+    );
+  } catch {
+    return false;
+  }
 }
 
 /** True when the result is OUR contract rejection — the one correction-eligible failure. */

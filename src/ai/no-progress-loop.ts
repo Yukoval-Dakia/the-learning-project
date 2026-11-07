@@ -303,9 +303,12 @@ export function createNoProgressLoop(policy?: {
   /** Same invalid arguments may be retried once; a third call is blocked without
    *  closing the loop, so a different tool still gets its turn. */
   const invalidArgumentAttempts = new Map<string, number>();
+  const gateDeniedCalls = new Set<string>();
   const INVALID_ARGUMENT_ATTEMPT_LIMIT = 2;
+  const VALIDATION_FAILURE_LIMIT = 5;
   const INVALID_ARGUMENT_BLOCK_REASON =
     'the same invalid arguments were rejected twice; correct them or answer from what was collected';
+  let validationFailureCount = 0;
 
   function close(reason: NoProgressCloseReason): void {
     if (phase.status === 'closed') return;
@@ -348,6 +351,8 @@ export function createNoProgressLoop(policy?: {
     if (phase.status === 'closed') return deny(phase.reason);
     const signature = signatureOf(call.name, args);
     if ((invalidArgumentAttempts.get(signature) ?? 0) >= INVALID_ARGUMENT_ATTEMPT_LIMIT) {
+      // A gate denial is not a tool result: exclude it from settled/fingerprint.
+      gateDeniedCalls.add(call.id);
       return { block: true, reason: INVALID_ARGUMENT_BLOCK_REASON };
     }
     if (
@@ -365,6 +370,7 @@ export function createNoProgressLoop(policy?: {
   };
 
   const afterToolCall: PiAfterToolCall = (observation) => {
+    if (gateDeniedCalls.delete(observation.call.id)) return undefined;
     if (observation.interrupted) return undefined;
     const tool = domainToolName(observation.call.name);
     if (observation.isError && policy?.validationError?.(observation)) {
@@ -373,6 +379,11 @@ export function createNoProgressLoop(policy?: {
         invalidSignature,
         (invalidArgumentAttempts.get(invalidSignature) ?? 0) + 1,
       );
+      validationFailureCount += 1;
+      // Five protocol-validation rejections across the run is far more than a
+      // model needs to correct one call, and stops an unbounded retry loop.
+      // Copilot has no turn or cost ceiling, so this is its deterministic exit.
+      if (validationFailureCount >= VALIDATION_FAILURE_LIMIT) close('no_progress');
       // Validation is repairable by the model and proves nothing about the
       // question, so it must not enter the settled-signature/fingerprint sets.
       return undefined;
