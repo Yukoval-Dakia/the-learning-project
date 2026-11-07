@@ -50,6 +50,7 @@ export interface BankRetrievalConstraints {
   within_refs?: string[];
   source?: string;
   kind?: string;
+  kinds?: string[];
   difficulty?: BankSearchScope['difficulty'];
   knowledge?: { ids: string[]; mode: 'any' | 'all' };
   exclude_refs?: string[];
@@ -62,6 +63,7 @@ function deriveRetrievalConstraints(scope: BankSearchScope): BankRetrievalConstr
     ...(scope.within_refs !== undefined ? { within_refs: scope.within_refs } : {}),
     ...(scope.source !== undefined ? { source: scope.source } : {}),
     ...(scope.kind !== undefined ? { kind: scope.kind } : {}),
+    ...(scope.kinds ? { kinds: scope.kinds } : {}),
     ...(scope.difficulty !== undefined ? { difficulty: scope.difficulty } : {}),
     ...(scope.knowledge_ids !== undefined
       ? { knowledge: { ids: scope.knowledge_ids, mode: scope.knowledge_mode ?? 'any' } }
@@ -95,6 +97,7 @@ const FileBankGapOutputSchema = z.object({
       within_refs: z.array(z.string()).optional(),
       source: z.string().optional(),
       kind: z.string().optional(),
+      kinds: z.array(z.string()).optional(),
       difficulty: z.unknown().optional(),
       knowledge: z.object({ ids: z.array(z.string()), mode: z.enum(['any', 'all']) }).optional(),
       exclude_refs: z.array(z.string()).optional(),
@@ -119,6 +122,13 @@ function scopeTargetKind(scopeKind: string, demandKinds: string[]): string | nul
   if (demandKinds.includes('any'))
     return forms.includes(scopeKind) ? scopeKind : (forms[0] ?? null);
   return demandKinds.find((kind) => forms.includes(kind)) ?? null;
+}
+
+function scopeTargetKinds(scope: BankSearchScope, demandKinds: string[]): string[] | null {
+  if (!scope.kinds) return null;
+  if (scope.kinds.includes('any')) return demandKinds;
+  const forms = [...new Set(scope.kinds.flatMap(canonicalKindToPersistedForms))];
+  return demandKinds.includes('any') ? forms : demandKinds.filter((kind) => forms.includes(kind));
 }
 
 function checkHonourableConstraints(scope: BankSearchScope, demand: EvidenceDemandV1T): string[] {
@@ -159,9 +169,9 @@ function checkHonourableConstraints(scope: BankSearchScope, demand: EvidenceDema
         `knowledge: search KC scope exceeds demand.claim.knowledge_ids (${outside.join(', ')}); dispatching would silently narrow the demand`,
       );
     }
-    if (scope.knowledge_mode === 'all' && new Set(scope.knowledge_ids).size > 1) {
+    if (scope.knowledge_mode !== 'all' && new Set(scope.knowledge_ids).size > 1) {
       unsupported.push(
-        "knowledge: mode 'all' needs every KC on one question; supply routes anchor on a single KC and cannot guarantee co-coverage",
+        'knowledge: an any-KC union cannot become an all-KC preparer ticket; file separate demands or use a same-question all scope',
       );
     }
   }
@@ -170,6 +180,12 @@ function checkHonourableConstraints(scope: BankSearchScope, demand: EvidenceDema
       `kind: no persisted form of search kind '${scope.kind}' is within demand.task.kinds [${demand.task.kinds.join(', ')}]`,
     );
   }
+  if (
+    scope.kinds &&
+    !scope.kinds.includes('any') &&
+    scope.kinds.some((kind) => scopeTargetKind(kind, demand.task.kinds) === null)
+  )
+    unsupported.push('kinds: search and ticket allowed-type sets do not intersect');
   return unsupported;
 }
 
@@ -181,23 +197,19 @@ function buildBankGapTarget(
   requestId: string,
 ): QuestionSupplyTarget {
   const scope = evidence.constraints.scope;
-  const [firstKind] = demand.task.kinds;
   // scope.kind 已由 checkHonourableConstraints 验证可落实；作为硬题型约束派出。
   const scopeKind =
     scope.kind !== undefined ? scopeTargetKind(scope.kind, demand.task.kinds) : null;
-  const kind =
-    scopeKind ?? (demand.task.kinds.length === 1 && firstKind !== undefined ? firstKind : 'any');
-  // 检索 KC 集合原样派出（mode 'all' 多 KC 已 held）；mode 'any' 时路由锚定集合中
-  // 首个 KC，产出的题仍落在该集合内。
+  const kindSet = scopeTargetKinds(scope, demand.task.kinds) ?? demand.task.kinds;
+  const kind = scopeKind ?? (kindSet.length === 1 ? kindSet[0] : 'any');
   const knowledgeIds =
     scope.knowledge_ids !== undefined
       ? [...new Set(scope.knowledge_ids)]
       : demand.claim.knowledge_ids;
-  // eligible_count 是库存目标；requested_count 是本次检索的期望量——取较大者，
-  // 并夹到 [1,10]（executor/quiz_gen 载荷的 count 上限）。
-  const desiredCount = Math.min(
-    10,
-    Math.max(1, demand.inventory_goal.eligible_count, evidence.constraints.requested_count),
+  const desiredCount = Math.max(
+    1,
+    demand.inventory_goal.eligible_count,
+    evidence.constraints.requested_count,
   );
   return {
     id: `bankgap:${demand.demand_id}`,
@@ -205,6 +217,7 @@ function buildBankGapTarget(
       subjectId: demand.subject_id,
       knowledgeIds,
       kind,
+      kindSet: kindSet.length > 1 ? kindSet : undefined,
       difficultyBand: demand.difficulty.band as DifficultyBand,
       gapKind: 'frontier_zero',
       minSourceTier: 2,
@@ -215,7 +228,7 @@ function buildBankGapTarget(
     kind,
     difficultyBand: demand.difficulty.band as DifficultyBand,
     desiredCount,
-    // bank gap = 找既有题失败的缺口：先 web 找现成题（tier 2），退而闭卷生成。
+    // Legacy cooldown identity remains stable; the full ticket lets the preparer choose sourcing order.
     minSourceTier: 2,
     routePreference: ['sourcing_web', 'quiz_gen'],
     priority: 50,
@@ -253,7 +266,11 @@ function narrowDemandToSignedScope(
         ),
       ].join('\n'),
     },
-    task: { ...demand.task, kinds: kind !== null ? [kind] : demand.task.kinds },
+    task: {
+      ...demand.task,
+      kinds:
+        scopeTargetKinds(scope, demand.task.kinds) ?? (kind !== null ? [kind] : demand.task.kinds),
+    },
   });
 }
 

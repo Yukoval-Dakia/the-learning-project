@@ -89,6 +89,7 @@ export const BankSearchScopeSchema = z
   .object({
     subject: z.string().min(1).optional(),
     kind: z.string().min(1).optional(),
+    kinds: z.array(z.string().min(1)).min(1).max(10).optional(),
     source: z.string().min(1).optional(),
     within_refs: z.array(z.string().min(1)).max(200).optional(),
     /** 知识点硬过滤：按真实（live、未归档）科目 KC 解析；未知/已归档 id 显式报错。 */
@@ -308,6 +309,7 @@ export interface BankSearchOutput {
   scope_applied: {
     subject?: { profile: string; knowledge_id_count: number };
     kind?: { canonical: string; persisted_forms: string[] };
+    kinds?: { canonical: string[]; persisted_forms: string[] };
     source?: string;
     within_refs?: string[];
     knowledge?: { ids: string[]; mode: 'any' | 'all'; resolved_count: number };
@@ -1142,7 +1144,9 @@ async function runSearchBankInSnapshot(
     );
   }
   if (resolved.kindForms !== undefined) {
-    enforced.push(`kind=${scope.kind} (persisted forms: ${resolved.kindForms.join(', ')})`);
+    enforced.push(
+      `kind=${scope.kind ?? scope.kinds?.join('|')} (persisted forms: ${resolved.kindForms.join(', ')})`,
+    );
   }
   if (scope.source !== undefined) enforced.push(`source=${scope.source}`);
   if (scope.within_refs !== undefined)
@@ -1234,8 +1238,12 @@ async function runSearchBankInSnapshot(
             }
           : undefined,
       kind:
-        resolved.kindForms !== undefined
-          ? { canonical: scope.kind as string, persisted_forms: resolved.kindForms }
+        resolved.kindForms !== undefined && scope.kind !== undefined
+          ? { canonical: scope.kind, persisted_forms: resolved.kindForms }
+          : undefined,
+      kinds:
+        scope.kinds && resolved.kindForms
+          ? { canonical: scope.kinds, persisted_forms: resolved.kindForms }
           : undefined,
       source: scope.source,
       within_refs: scope.within_refs,

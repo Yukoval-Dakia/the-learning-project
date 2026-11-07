@@ -158,6 +158,7 @@ function writeGoldProposal(output: string, corpus: CorpusRow[]) {
     join(output, 'golden-proposed.json'),
     JSON.stringify(
       {
+        consumer: 'copilot',
         label_tier: 'lead_judged_synthetic',
         judged_by: 'coordinating lead, 2026-11-07 instruction',
         definitions: {

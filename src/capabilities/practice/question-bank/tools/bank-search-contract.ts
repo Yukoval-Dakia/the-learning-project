@@ -5,13 +5,15 @@ const Verdict = z.enum(['supported', 'contradicted', 'unknown']);
 export const SearchBankInputSchema = z
   .object({
     query: z.string().max(400).optional(),
-    use: z.enum(['practice', 'inspect']).optional(),
-    count: z.number().int().min(1).max(50).optional(),
+    use: z.enum(['inventory', 'dedup', 'practice', 'inspect']).optional(),
+    count: z.number().int().min(0).optional(),
     page_size: z.number().int().min(1).max(20).optional(),
     filters: z
       .object({
         subject: z.string().optional(),
         knowledge_ids: z.array(z.string()).max(50).optional(),
+        knowledge_mode: z.enum(['all', 'any']).optional(),
+        kinds: z.array(z.string().min(1)).min(1).max(10).optional(),
         kind: z.string().optional(),
         difficulty: z
           .object({
@@ -58,7 +60,12 @@ export const BankHitSchema = z.object({
   parts: z.array(z.string()),
   available: z.boolean(),
   facts: z.object({
+    source: z.string(),
     kind: z.string(),
+    draft_status: z.string().nullable(),
+    admission: z.enum(['admitted', 'withheld']).nullable(),
+    withheld_reason: z.string().nullable(),
+    suspended: z.boolean(),
     knowledge_ids: z.array(z.string()),
     difficulty: z.object({ basis: z.literal('authored'), value: z.number() }),
   }),
@@ -67,6 +74,10 @@ export const BankHitSchema = z.object({
 export const BankSearchOutputSchema = z.object({
   contract_version: z.literal(3),
   search_id: z.string(),
+  goal: z.object({
+    use: z.enum(['inventory', 'dedup', 'practice', 'inspect']),
+    count: z.number().int().nonnegative().nullable(),
+  }),
   conditions: z.array(z.object({ id: z.string(), text: z.string(), required: z.boolean() })),
   decision_source: z.literal('caller_assessed'),
   hits: z.array(BankHitSchema),

@@ -13,6 +13,7 @@ import { collectBankSearchReceipt } from '@/capabilities/practice/question-bank/
 import { canonicalHash } from '@/core/migration/canonical';
 import type { Db } from '@/db/client';
 import * as schema from '@/db/schema';
+import { EvidenceDemandV1 } from '@/kernel/supply-contracts';
 import { EMBED_MODEL, embedText } from '@/server/ai/embed';
 import { createProviderAttemptLifecycle } from '@/server/ai/provider-attempt-lifecycle';
 import {
@@ -21,6 +22,7 @@ import {
 } from './search-bank-paid-gate';
 
 const Gold = z.object({
+  consumer: z.enum(['question_preparer', 'copilot']).default('question_preparer'),
   label_tier: z.enum(['lead_judged_synthetic', 'two_model_independent']),
   judged_by: z.string().optional(),
   snapshot_digest: z.string().optional(),
@@ -31,8 +33,13 @@ const Gold = z.object({
         id: z.string().optional(),
         query: z.string().optional(),
         utterance: z.string().optional(),
-        origin: z.enum(['real_utterance', 'design_example']).default('design_example'),
+        origin: z
+          .enum(['preparer_tool_query', 'real_utterance', 'design_example'])
+          .default('design_example'),
         source_record_digest: z.string().optional(),
+        task_kind: z.string().optional(),
+        demand: EvidenceDemandV1.optional(),
+        ticket_event_id: z.string().optional(),
         class: z.enum(['present', 'absent', 'unknown']).optional(),
         relevant_refs: z.array(z.string()).optional(),
         relevant_ids: z.array(z.string()).optional(),
@@ -110,16 +117,26 @@ async function main() {
     )
       throw Error('Real gold requires independent flash and mimo-v2.6-pro routes');
     for (const q of gold.requests) {
-      if (!q.utterance && !q.query) throw Error('Original utterance required');
+      if (!q.utterance && !q.query) throw Error('Original query or utterance required');
       if (
-        q.origin === 'real_utterance' &&
+        q.origin !== 'design_example' &&
         (!q.source_record_digest || !q.class || !q.relevant_refs)
       )
         throw Error('Real utterances require source digest, three-way class and versioned refs');
-      if (gold.label_tier === 'lead_judged_synthetic' && q.origin === 'real_utterance')
+      if (gold.label_tier === 'lead_judged_synthetic' && q.origin !== 'design_example')
         throw Error('Synthetic labels cannot become real-utterance acceptance');
     }
-    const actor = { kind: 'agent' as const, ref: 'copilot' };
+    if (
+      gold.requests.some(
+        (q) =>
+          q.origin === 'preparer_tool_query' &&
+          (gold.consumer !== 'question_preparer' ||
+            q.task_kind !== 'QuestionPreparerTask' ||
+            !q.demand),
+      )
+    )
+      throw Error('Real preparer queries require their actual task kind and validated ticket');
+    const actor = { kind: 'agent' as const, ref: gold.consumer };
     if (!ftsOnly && bankReadRoleForActor(actor) === 'restricted')
       throw Error('Answer-access PR absent: no full-vector acceptance');
     process.env.BANK_GAP_EVIDENCE_SECRET = randomBytes(32).toString('hex');
@@ -146,6 +163,16 @@ async function main() {
       return vector;
     };
     if (!ftsOnly) {
+      console.log(
+        JSON.stringify({
+          provider: 'dashscope',
+          model: EMBED_MODEL,
+          dimensions: 1024,
+          endpoint:
+            process.env.MEM0_EMBEDDING_BASE_URL ||
+            'https://dashscope.aliyuncs.com/compatible-mode/v1',
+        }),
+      );
       assertSearchBenchmarkPaidGate(output);
       guard = guardSearchBenchmarkEmbedding(output, 0.02);
     } else
@@ -217,6 +244,8 @@ async function main() {
                   db: connection,
                   taskRunId: `read-only-quality-${mode}-${index}`,
                   callerActor: actor,
+                  supplyDemand: q.demand,
+                  ticketEventId: q.ticket_event_id,
                 },
                 input,
                 {
@@ -254,43 +283,45 @@ async function main() {
       { isolationLevel: 'repeatable read', accessMode: 'read only' },
     );
     const mean = (v: number[]) => (v.length ? v.reduce((a, b) => a + b, 0) / v.length : null);
-    const summaries = ['real_utterance', 'design_example'].flatMap((origin) =>
-      modes.map((mode) => {
-        const group = rows.filter((r) => r.origin === origin && r.mode === mode),
-          scored = group.filter((r) => r.status === 'SCORED'),
-          absent = scored.filter((r) => r.label === 'absent'),
-          empty = scored.filter((r) => r.empty);
-        return {
-          origin,
-          mode,
-          n: group.length,
-          scored: scored.length,
-          unknown: group.filter((r) => r.status === 'UNKNOWN_EXCLUDED').length,
-          baseline_unsupported: group.filter((r) => r.status === 'BASELINE_UNSUPPORTED_INPUT')
-            .length,
-          corpus_present: scored.filter((r) => r.label === 'present').length,
-          corpus_absent: absent.length,
-          corpus_absent_fraction: scored.length ? absent.length / scored.length : null,
-          recall_at_5: mean(
-            scored.flatMap((r) => (typeof r.recall_at_5 === 'number' ? [r.recall_at_5] : [])),
-          ),
-          precision_at_5: mean(scored.map((r) => r.precision_at_5 ?? 0)),
-          easy_recall_at_5: mean(
-            scored.flatMap((r) =>
-              typeof r.easy_recall_at_5 === 'number' ? [r.easy_recall_at_5] : [],
+    const summaries = ['preparer_tool_query', 'real_utterance', 'design_example'].flatMap(
+      (origin) =>
+        modes.map((mode) => {
+          const group = rows.filter((r) => r.origin === origin && r.mode === mode),
+            scored = group.filter((r) => r.status === 'SCORED'),
+            absent = scored.filter((r) => r.label === 'absent'),
+            empty = scored.filter((r) => r.empty);
+          return {
+            origin,
+            mode,
+            n: group.length,
+            scored: scored.length,
+            unknown: group.filter((r) => r.status === 'UNKNOWN_EXCLUDED').length,
+            baseline_unsupported: group.filter((r) => r.status === 'BASELINE_UNSUPPORTED_INPUT')
+              .length,
+            corpus_present: scored.filter((r) => r.label === 'present').length,
+            corpus_absent: absent.length,
+            corpus_absent_fraction: scored.length ? absent.length / scored.length : null,
+            recall_at_5: mean(
+              scored.flatMap((r) => (typeof r.recall_at_5 === 'number' ? [r.recall_at_5] : [])),
             ),
-          ),
-          absent_empty_rate: mean(absent.map((r) => Number(r.empty))),
-          no_result_precision: empty.length
-            ? empty.filter((r) => r.label === 'absent').length / empty.length
-            : null,
-          absence_detection_accuracy: mean(
-            scored.map((r) => Number(r.empty === (r.label === 'absent'))),
-          ),
-        };
-      }),
+            precision_at_5: mean(scored.map((r) => r.precision_at_5 ?? 0)),
+            easy_recall_at_5: mean(
+              scored.flatMap((r) =>
+                typeof r.easy_recall_at_5 === 'number' ? [r.easy_recall_at_5] : [],
+              ),
+            ),
+            absent_empty_rate: mean(absent.map((r) => Number(r.empty))),
+            no_result_precision: empty.length
+              ? empty.filter((r) => r.label === 'absent').length / empty.length
+              : null,
+            absence_detection_accuracy: mean(
+              scored.map((r) => Number(r.empty === (r.label === 'absent'))),
+            ),
+          };
+        }),
     );
     const summary = {
+      consumer: gold.consumer,
       label_tier: gold.label_tier,
       snapshot_digest: frozen,
       read_only: true,

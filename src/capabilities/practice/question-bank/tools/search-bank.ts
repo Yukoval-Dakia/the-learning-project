@@ -62,13 +62,44 @@ export async function collectBankSearchReceipt(
 ): Promise<Omit<BankReceipt, 'version' | 'policy' | 'owner_run'>> {
   const input = SearchBankInputSchema.parse(raw);
   if (input.cursor) throw new Error('Evidence collection needs a new query');
+  input.use ??=
+    ctx.callerActor.ref.replace(/^agent:/, '') === 'question_preparer' ? 'inventory' : 'practice';
+  input.page_size ??= input.use === 'inventory' ? 10 : 5;
+  const demand = input.use === 'inventory' ? ctx.supplyDemand : undefined;
+  if (demand) {
+    if (input.count !== undefined && input.count !== demand.inventory_goal.eligible_count)
+      throw new Error('Inventory count must match the bound ticket');
+    input.count = demand.inventory_goal.eligible_count;
+    const f = input.filters ?? {};
+    const same = (a: string[], b: string[]) =>
+      JSON.stringify([...new Set(a)].sort()) === JSON.stringify([...new Set(b)].sort());
+    if (f.subject !== undefined && f.subject !== demand.subject_id)
+      throw new Error('Inventory subject differs from ticket');
+    if (f.knowledge_ids && !same(f.knowledge_ids, demand.claim.knowledge_ids))
+      throw new Error('Inventory KCs differ from ticket');
+    if (f.knowledge_mode === 'any' && demand.claim.knowledge_ids.length > 1)
+      throw new Error('Inventory ticket requires every KC on the same question');
+    if (
+      !demand.task.kinds.includes('any') &&
+      (f.kind !== undefined || (f.kinds && !same(f.kinds, demand.task.kinds)))
+    )
+      throw new Error('Inventory kinds must preserve the ticket union');
+    input.filters = {
+      ...f,
+      subject: demand.subject_id,
+      knowledge_ids: demand.claim.knowledge_ids,
+      knowledge_mode: 'all',
+      ...(demand.task.kinds.includes('any') ? {} : { kinds: demand.task.kinds }),
+    };
+  }
   const query = input.query?.trim();
   if (!query) throw new Error('query is required');
   const { terms, history, ...filters } = input.filters ?? {};
   const scope: BankSearchScope = {
     ...filters,
-    draft_state: input.use === 'inspect' ? 'all' : 'active',
-    admission_state: input.use === 'inspect' ? 'any' : 'admitted',
+    knowledge_mode: filters.knowledge_mode ?? (input.use === 'inventory' ? 'all' : 'any'),
+    draft_state: input.use === 'inspect' || input.use === 'dedup' ? 'all' : 'active',
+    admission_state: input.use === 'inspect' || input.use === 'dedup' ? 'any' : 'admitted',
     ...(input.like_ref
       ? { similar_to: { question_ref: input.like_ref, aspect: 'content' as const } }
       : {}),
@@ -140,13 +171,47 @@ export async function collectBankSearchReceipt(
       },
     },
   );
-  const conditions = (input.conditions ?? [{ text: query, required: true }]).map((c, i) => ({
+  const boundCondition = demand
+    ? `${demand.claim.statement}\nTicket constraints: ${JSON.stringify({ task: demand.task, difficulty: demand.difficulty, observables: demand.evidence.observables })}`
+    : '';
+  const requirements = demand
+    ? [
+        { text: boundCondition, required: true },
+        ...(input.conditions ?? []).filter(
+          (c) => c.text !== demand.claim.statement && c.text !== boundCondition,
+        ),
+      ]
+    : (input.conditions ?? [{ text: query, required: true }]);
+  if (requirements.length > 10)
+    throw new Error('Bound ticket plus extra conditions exceeds 10; do not drop conditions');
+  const conditions = requirements.map((c, i) => ({
     id: `r${i + 1}`,
     ...c,
   }));
+  const factsFor = (hit: (typeof recall.hits)[number]) => ({
+    source: `facts:${hit.question_id}`,
+    kind: hit.question_kind,
+    draft_status: hit.draft_status,
+    admission: hit.admission?.state ?? null,
+    withheld_reason: hit.admission?.withheld_reason ?? null,
+    suspended: hit.suspended,
+    knowledge_ids: hit.knowledge_ids,
+    difficulty: { basis: 'authored' as const, value: hit.difficulty },
+  });
+  for (const hit of recall.hits)
+    if (hit.ref) {
+      const facts = factsFor(hit);
+      documents.push({
+        ref: hit.ref,
+        source: facts.source,
+        text: JSON.stringify(facts),
+        parts: hit.automatically_servable_part_ids,
+      });
+    }
   const output = BankSearchOutputSchema.parse({
     contract_version: 3,
     search_id: randomUUID(),
+    goal: { use: input.use, count: input.count ?? null },
     conditions,
     decision_source: 'caller_assessed',
     hits: recall.hits.map((hit) => ({
@@ -155,11 +220,7 @@ export async function collectBankSearchReceipt(
       title: hit.title,
       parts: hit.automatically_servable_part_ids,
       available: hit.automatically_servable_part_ids.length > 0,
-      facts: {
-        kind: hit.question_kind,
-        knowledge_ids: hit.knowledge_ids,
-        difficulty: { basis: 'authored', value: hit.difficulty },
-      },
+      facts: factsFor(hit),
       evidence: documents
         .filter(
           (d) =>
@@ -190,6 +251,7 @@ export async function collectBankSearchReceipt(
     request: input,
     scope,
     scope_digest: scopeDigest,
+    demand_digest: ctx.supplyDemand ? canonicalHash(ctx.supplyDemand) : null,
     output,
     bindings,
     documents,
@@ -207,7 +269,7 @@ export async function runBankSearchV3(
 export const searchBankTool: DomainTool<SearchBankInput, BankSearchOutputV3> = {
   name: 'search_bank',
   description:
-    'Find question-bank candidates and same-revision evidence; no interpretation or verification model runs here. query preserves the learner request. count is the requested qualifying quantity when known; page_size independently controls the small evidence page (default 5). Never infer demand from page size. filters enforce exact KC/kind/difficulty, literal prompt terms and current learner history; like_ref reuses a current version vector. conditions list required/preferred semantics; omitted conditions preserve the query as required. Read answers/rubric and include:solution_prior by returned ref when needed, and judge each required plus same-question joint yourself. Excerpts mark complete; an incomplete excerpt is not negative evidence. Unread/unknown/contradicted never counts as qualified. Results are caller_assessed, not server semantic facts; do not show answers or methods to the learner before their judgment. Continue with only the unchanged cursor. Use search_id and cited assessments in write_quiz/file_bank_gap; those consumers revalidate versions and eligibility. Empty or truncated results never prove bank absence.',
+    'Question preparation comes first. inventory searches admitted/servable stock for a gap ticket; dedup searches active, pending/withheld and draft candidates before adding a question. Defaults: question_preparer uses inventory (10/page), other callers practice (5/page); explicit page_size overrides only pagination, never the inventory goal. Copy the ticket goal into count, its subject/KCs/kinds into filters; inventory KCs default to all on ONE question. kinds is an allowed-type union, not one question of every kind. For dedup broaden KC/kind filters to avoid missing mislabeled duplicates; ref=null means an unread unpublished draft, never proof of no duplicate. scan_coverage_gaps owns pending-stock reservations; submit_question retains authoritative exact/source/vector dedup and admission. This tool does no interpretation/verification model calls. query is the retrieval text; conditions preserve required/preferred ticket semantics, judged by the caller with same-question joint evidence. Numeric difficulty filters need a known scale/range; do not invent a range from a relative band. Read content/materials, answers/rubric and solution_prior by returned ref as needed. Excerpts mark complete; truncated/unread/unknown/contradicted never qualify. Facts describe inventory status, not semantic suitability; cite facts.source with exact value text for structured evidence. Cursor-only continues this snapshot. search_id plus cited assessments connects file_bank_gap/write_quiz; file_bank_gap creates the preparer ticket and is not recursively called by the preparer. Incomplete/empty recall never proves corpus absence. Do not reveal answers/methods to the learner before their judgment',
   effect: 'read',
   inputSchema: SearchBankInputSchema,
   outputSchema: BankSearchOutputSchema,

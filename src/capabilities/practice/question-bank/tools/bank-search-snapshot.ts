@@ -41,6 +41,7 @@ export type BankReceipt = {
   request: SearchBankInput;
   scope: BankSearchScope;
   scope_digest: string;
+  demand_digest: string | null;
   output: BankSearchOutputV3;
   bindings: BankSnapshotBinding[];
   documents: BankDocument[];
@@ -160,7 +161,7 @@ export async function captureBankSnapshotBindings(
 
 async function validateReceipt(
   db: Db | Tx,
-  ctx: Pick<ToolContext, 'callerActor' | 'taskRunId'>,
+  ctx: Pick<ToolContext, 'callerActor' | 'taskRunId' | 'supplyDemand'>,
   receipt: BankReceipt,
   lock: boolean,
 ) {
@@ -206,7 +207,7 @@ async function validateReceipt(
 /** Consumers call under their write transaction, so referenced rows stay locked through issuance/claim. */
 async function readBankReceipt(
   db: Db | Tx,
-  ctx: Pick<ToolContext, 'callerActor' | 'taskRunId'>,
+  ctx: Pick<ToolContext, 'callerActor' | 'taskRunId' | 'supplyDemand'>,
   id: string,
   lock = false,
 ): Promise<BankReceipt> {
@@ -224,6 +225,7 @@ async function readBankReceipt(
   if (
     receipt.version !== 3 ||
     receipt.policy !== BANK_SEARCH_POLICY ||
+    receipt.demand_digest !== (ctx.supplyDemand ? canonicalHash(ctx.supplyDemand) : null) ||
     receipt.owner_run !== ctx.taskRunId ||
     canonicalHash(receipt) !== row.result_digest ||
     canonicalHash(receipt.request) !== row.request_digest
@@ -294,6 +296,7 @@ function assessBankReceipt(receipt: BankReceipt, raw: BankAssessment[]) {
   if (new Set(assessments.map((a) => a.ref)).size !== assessments.length)
     throw new BankSearchError('Duplicate candidate assessment');
   const accepted: string[] = [];
+  const acceptedRefs: string[] = [];
   for (const assessment of assessments) {
     const hit = receipt.output.hits.find((h) => h.ref === assessment.ref);
     if (!hit?.available || assessment.parts.some((p) => !hit.parts.includes(p)))
@@ -327,20 +330,27 @@ function assessBankReceipt(receipt: BankReceipt, raw: BankAssessment[]) {
       receipt.output.conditions
         .filter((c) => c.required)
         .every((c) => checks.find((v) => v.condition === c.id)?.verdict === 'supported')
-    )
+    ) {
       accepted.push(...assessment.parts);
+      acceptedRefs.push(assessment.ref);
+    }
   }
-  return { source: 'caller_assessed' as const, accepted_ids: accepted, assessments };
+  return {
+    source: 'caller_assessed' as const,
+    accepted_ids: accepted,
+    accepted_refs: acceptedRefs,
+    assessments,
+  };
 }
 
 export async function bankReceiptGapEvidence(
   db: Db | Tx,
-  ctx: Pick<ToolContext, 'callerActor' | 'taskRunId'>,
+  ctx: Pick<ToolContext, 'callerActor' | 'taskRunId' | 'supplyDemand'>,
   searchId: string,
   assessments: BankAssessment[],
 ) {
   const receipt = await readBankReceipt(db, ctx, searchId, true);
-  if (receipt.request.use === 'inspect')
+  if (receipt.request.use === 'inspect' || receipt.request.use === 'dedup')
     throw new BankSearchError('Supply evidence needs a practice search');
   const decision = assessBankReceipt(receipt, assessments);
   const known = receipt.output.hits
@@ -355,7 +365,7 @@ export async function bankReceiptGapEvidence(
             .every((c) => a.checks.some((v) => v.condition === c.id && v.verdict !== 'unknown')),
       ),
     );
-  const count = new Set(decision.accepted_ids).size;
+  const count = new Set(decision.accepted_refs).size;
   const needed = receipt.request.count;
   if (needed === undefined)
     throw new BankSearchError('Gap authorization requires an explicit requested count');
@@ -422,7 +432,7 @@ async function recordBankDecision(
 
 export async function selectBankReceipt(
   db: Db | Tx,
-  ctx: Pick<ToolContext, 'callerActor' | 'taskRunId'>,
+  ctx: Pick<ToolContext, 'callerActor' | 'taskRunId' | 'supplyDemand'>,
   searchId: string,
   assessments: BankAssessment[],
   lock = false,
@@ -432,6 +442,9 @@ export async function selectBankReceipt(
   if (lock) await recordBankDecision(db, searchId, selection);
   return {
     source: selection.source,
+    use: receipt.request.use,
+    goal: receipt.request.count,
+    accepted_refs: selection.accepted_refs,
     accepted_ids: selection.accepted_ids,
     part_refs: Object.fromEntries(
       assessments

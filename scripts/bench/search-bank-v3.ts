@@ -6,8 +6,10 @@ import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
+import type { SearchBankInput } from '@/capabilities/practice/question-bank/tools/bank-search-contract';
 import type { Db } from '@/db/client';
 import * as schema from '@/db/schema';
+import { EvidenceDemandV1 } from '@/kernel/supply-contracts';
 import {
   assertSearchBenchmarkPaidGate,
   guardSearchBenchmarkEmbedding,
@@ -58,12 +60,23 @@ async function main() {
   const { bankReadRoleForActor } = await import(
     '@/capabilities/practice/question-bank/tools/read-bank'
   );
-  const actor = { kind: 'agent' as const, ref: 'copilot' };
+  const consumer = process.env.SEARCH_BENCH_ACTOR ?? 'question_preparer';
+  if (!['question_preparer', 'copilot'].includes(consumer))
+    throw Error('Unsupported product consumer');
+  const actor = { kind: 'agent' as const, ref: consumer };
   if (bankReadRoleForActor(actor) === 'restricted')
     throw Error(
       'Copilot answer-access PR is not present: refusing a FTS-only substitute for full-vector acceptance',
     );
-  const sentences = process.env.SEARCH_BENCH_SENTENCES
+  const sentences: Array<{
+    id: string;
+    text: string;
+    origin: 'preparer_tool_query' | 'real_utterance' | 'design_example';
+    input?: SearchBankInput;
+    demand?: import('@/kernel/supply-contracts').EvidenceDemandV1T;
+    ticket_event_id?: string;
+    task_kind?: string;
+  }> = process.env.SEARCH_BENCH_SENTENCES
     ? readFileSync(process.env.SEARCH_BENCH_SENTENCES, 'utf8')
         .trim()
         .split('\n')
@@ -72,7 +85,11 @@ async function main() {
             JSON.parse(line) as {
               id: string;
               text: string;
-              origin: 'real_utterance' | 'design_example';
+              origin: 'preparer_tool_query' | 'real_utterance' | 'design_example';
+              input?: SearchBankInput;
+              demand?: import('@/kernel/supply-contracts').EvidenceDemandV1T;
+              ticket_event_id?: string;
+              task_kind?: string;
             },
         )
     : prompts.map((text, i) => ({
@@ -83,10 +100,23 @@ async function main() {
   if (
     !sentences.length ||
     sentences.some(
-      (s) => !s.id || !s.text || !['real_utterance', 'design_example'].includes(s.origin),
+      (s) =>
+        !s.id ||
+        !s.text ||
+        !['preparer_tool_query', 'real_utterance', 'design_example'].includes(s.origin),
     )
   )
     throw Error('Invalid preregistered sentence JSONL');
+  if (sentences.length > 25)
+    throw Error('Freeze at most 25 distinct cases for the four 25-request cohorts');
+  if (
+    sentences.some(
+      (s) =>
+        s.origin === 'preparer_tool_query' &&
+        (consumer !== 'question_preparer' || s.task_kind !== 'QuestionPreparerTask' || !s.demand),
+    )
+  )
+    throw Error('Real preparer samples require the original ticket and task kind');
   if (nas && !process.env.SEARCH_BENCH_SENTENCES)
     throw Error('--nas requires the frozen sentence JSONL, with original/design provenance');
   const rows: Array<{
@@ -108,21 +138,22 @@ async function main() {
     requests: 100,
     per_cohort: 25,
     cohorts: ['cold-serial', 'hot-serial', 'cold-4', 'hot-4'],
-    page_size: 5,
+    pagination: 'preserve explicit input; product default inventory=10, other=5',
     sentences: sentences.map(({ id, origin }) => ({ id, origin })),
     sentences_digest: createHash('sha256').update(JSON.stringify(sentences)).digest('hex'),
     target: { host: target.hostname, port: target.port, database: target.pathname.slice(1) },
     provider: 'dashscope',
     model,
+    dimensions: 1024,
     endpoint:
       process.env.MEM0_EMBEDDING_BASE_URL || 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-    actor: 'copilot',
+    actor: consumer,
     freeze:
       'SHARE locks on question, lifecycle, prior and vectors; fail immediately if a writer is active',
     timing:
       'before product input validation through complete JSON serialization; no HTTP/browser/model-turn claim',
     token_estimate: 'ceil(UTF8 bytes/4), not provider usage',
-    warmup_requests: 10,
+    warmup_requests: sentences.length * 2,
     started_at: new Date().toISOString(),
   };
   writeFileSync(join(output, 'protocol.json'), JSON.stringify(protocol, null, 2));
@@ -142,11 +173,14 @@ async function main() {
           db,
           taskRunId: `bank-bench-${randomUUID()}`,
           callerActor: actor,
+          supplyDemand: sentences[index % sentences.length].demand
+            ? EvidenceDemandV1.parse(sentences[index % sentences.length].demand)
+            : undefined,
+          ticketEventId: sentences[index % sentences.length].ticket_event_id,
         };
         const input = {
+          ...sentences[index % sentences.length].input,
           query: sentences[index % sentences.length].text,
-          page_size: 5,
-          use: 'practice' as const,
         };
         const start = performance.now();
         let row: (typeof rows)[number];
@@ -231,10 +265,12 @@ async function main() {
       speed_pass: summaries.every(
         (s) => s.n > 0 && s.p95_ms < 1000 && s.failed === 0 && s.degraded === 0,
       ),
+      consumer,
+      real_preparer_queries_measured: rows.some((r) => r.origin === 'preparer_tool_query'),
       real_utterances_measured: rows.some((r) => r.origin === 'real_utterance'),
       origin_policy:
-        'P50/P95/max reported separately; design examples never stand in for real utterances',
-      note: 'Degradation is never hidden; retrieval quality and model overconfidence require the separate human gold set. No TEST contents are printed.',
+        'P50/P95/max reported separately; design examples never stand in for real preparer calls or learner utterances',
+      note: 'Degradation is never hidden; retrieval quality and model overconfidence require the separate independent-label set. No TEST contents are printed.',
     };
     writeFileSync(join(output, 'summary.json'), JSON.stringify(result, null, 2));
     console.log(JSON.stringify(result));

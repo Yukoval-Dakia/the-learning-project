@@ -113,7 +113,7 @@ async function searchHits(input: Record<string, unknown>) {
   );
 }
 
-async function receiptFixture(run: string) {
+async function receiptFixture(run: string, kinds?: string[]) {
   vi.stubEnv('BANK_GAP_EVIDENCE_SECRET', 'bank-boundary-fixture-signing-key-at-least-32-chars');
   await seedQuestion('receipt-question', {
     prompt_md: '边界样本：已知二次方程，判断根的个数。',
@@ -125,7 +125,11 @@ async function receiptFixture(run: string) {
     taskRunId: run,
     callerActor: { kind: 'user', ref: 'receipt-owner' },
   };
-  const search = await searchBankTool.execute(owner, { query: '边界样本', count: 2 });
+  const search = await searchBankTool.execute(owner, {
+    query: '边界样本',
+    count: 2,
+    ...(kinds ? { filters: { kinds } } : {}),
+  });
   const hit = search.hits[0];
   const evidence = [{ source: hit.evidence[0].source, quote: hit.evidence[0].text }];
   if (!hit.ref) throw new Error('Published fixture has no revision ref');
@@ -697,7 +701,10 @@ describe('bank tools boundary invariants (search_bank / read_bank / check_bank)'
 
   // @invariant concurrency: a filing binds the original receipt and concurrent identical content is idempotent @fails-if stale evidence can file, a repeated request creates multiple ledger claims, or changed judgments replay as identical
   it('revalidates gap evidence and deduplicates concurrent filings without upgrading caller judgments', async () => {
-    const { owner, search, assessment } = await receiptFixture('receipt-gap-race');
+    const { owner, search, assessment } = await receiptFixture('receipt-gap-race', [
+      'choice',
+      'fill_blank',
+    ]);
     const negative = {
       ...assessment,
       checks: assessment.checks.map((c) => ({ ...c, verdict: 'contradicted' as const })),
@@ -710,12 +717,41 @@ describe('bank tools boundary invariants (search_bank / read_bank / check_bank)'
       subject_id: 'math',
       claim: { kind: 'content_coverage' as const, knowledge_ids: ['math'], statement: '边界样本' },
       evidence: { observables: ['correct response'], minimum_observations: 1 },
-      task: { kinds: ['any'], allowed_uses: ['practice' as const] },
+      task: { kinds: ['choice', 'fill_blank'], allowed_uses: ['practice' as const] },
       difficulty: { band: 'near' as const, scale: 'authored', target_value: null },
       inventory_goal: { eligible_count: 2, horizon_days: 7 },
       control: { needed_by: null, max_budget_micro_usd: 0, max_attempts: 1 },
       causes: [{ kind: 'coverage_gap' as const }],
     };
+    await db.insert(schema.knowledge).values({
+      id: 'math',
+      name: '数学',
+      domain: 'math',
+      created_at: new Date(),
+      updated_at: new Date(),
+    });
+    const ticket = { ...demand, inventory_goal: { ...demand.inventory_goal, eligible_count: 12 } };
+    const preparer = { ...owner, supplyDemand: ticket };
+    await expect(
+      searchBankTool.execute(preparer, { query: '边界样本', use: 'inventory', count: 2 }),
+    ).rejects.toThrow('bound ticket');
+    const stock = await searchBankTool.execute(preparer, {
+      query: '边界样本',
+      use: 'inventory',
+      page_size: 1,
+    });
+    expect(stock.goal).toEqual({ use: 'inventory', count: 12 });
+    expect(stock.hits.map((h) => h.id)).toEqual(['receipt-question']);
+    expect(stock.conditions[0].text).toContain('correct response');
+    await expect(
+      writeQuizTool.execute(
+        { ...owner, supplyDemand: { ...ticket, demand_id: 'other-ticket' } },
+        {
+          search_id: stock.search_id,
+          assessments: [assessment],
+        },
+      ),
+    ).rejects.toThrow();
     const input = {
       request_id: 'receipt-gap-request',
       demand,
@@ -726,7 +762,9 @@ describe('bank tools boundary invariants (search_bank / read_bank / check_bank)'
       fileBankGapTool.execute(owner, input),
       fileBankGapTool.execute(owner, input),
     ]);
-    expect(filings.every((f) => f.status === 'held')).toBe(true);
+    expect(
+      filings.every((f) => f.status === 'held' && f.reason.startsWith('budget_exhausted')),
+    ).toBe(true);
     expect(filings.filter((f) => f.deduplicated)).toHaveLength(1);
     expect(
       await db.select().from(event).where(eq(event.id, 'fbgap|receipt-gap-request')),
