@@ -293,7 +293,7 @@ function servingFactsQuery(filters: SQL[]): SQL {
         where stage.entity_id = l.group_id and stage.entity_revision = r.integrity_digest
           and stage.family = 'question_admission_stage' and stage.state = 'unknown')
         as admission_unknown_stage,
-      admission_purpose.denied as admission_purpose_denied,
+      admission_purpose.auto_blocked as admission_auto_blocked,
       l.group_id is null as legacy_unpublished,
       applied.entity_id is null as may_reverify,
       case
@@ -365,7 +365,20 @@ function servingFactsQuery(filters: SQL[]): SQL {
             order by published.created_at desc, published.id desc
             limit 1
           )
-      ) as denied
+      ) or (
+        -- Legacy ingestion rows (published before the source binding) cannot ever
+        -- pass the purpose gate: their publication carries no session. Report the
+        -- terminal state now instead of an endless "still checking".
+        (select published.session_id from ${event} published
+         where published.action = 'experimental:assessment_publish'
+           and published.subject_id = l.group_id
+           and published.payload->>'revision_id' = r.revision_id
+         order by published.created_at desc, published.id desc
+         limit 1) is null
+        and (select root.source from ${question} root where root.id = l.group_id) in (
+          'ingestion', 'vision_paper', 'vision_single', 'camera', 'import', 'pdf', 'docx', 'photo', 'reverse_mark'
+        )
+      ) as auto_blocked
     ) admission_purpose on true
     cross join lateral (
       select case
@@ -379,7 +392,7 @@ function servingFactsQuery(filters: SQL[]): SQL {
         when l.scoring_admission_state = 'withheld' then case
           when verification.policy_id = 'source_verify@1' and verification.outcome = 'failed'
             then 'source_check_failed'
-          when admission_purpose.denied
+          when admission_purpose.auto_blocked
             then 'admission_undecided'
           when applied.status = 'withheld'
             or l.scoring_admission_withheld_reason in ('verification_failed', 'no_admitted_executor')
@@ -420,7 +433,7 @@ interface AdmissionReadFacts extends Record<string, unknown> {
   admission_wait_retry_at: string | null;
   admission_failure_reason: string | null;
   admission_unknown_stage: boolean;
-  admission_purpose_denied: boolean;
+  admission_auto_blocked: boolean;
 }
 
 function admissionRead(
@@ -445,7 +458,7 @@ function admissionRead(
   }
   // A queued admission that could not prove its source purpose never spends. It is a
   // terminal fact for this publication, not an in-flight check.
-  if (fact.admission_purpose_denied) {
+  if (fact.admission_auto_blocked) {
     return {
       status: 'undecided',
       reason: '自动检查没能完成，题目暂不能作答。',
