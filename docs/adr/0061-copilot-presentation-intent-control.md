@@ -1,5 +1,7 @@
 # Copilot presentation intent is an explicit control, not reply syntax
 
+> **2026-11-07 现状：** `present_primary_view` 写入已于 #2651（`2a15d26a5`，YUK-1957）退役：工具从 copilot manifest 与 allowlist 删除，`reply-finalization` 只剥除遗留 marker，不再授予展示权限。`primary_view` DTO 仍保留为历史读取/回放形状。本文其余契约（呈现不由回复语法推断）不变。
+
 The owner chose the full-capability option on 2026-09-06: allow an optional short
 tool interaction after observing results so the agent can nominate a deliverable.
 This supersedes only the YUK-939 prohibition on new MCP tools/rounds for presentation;
