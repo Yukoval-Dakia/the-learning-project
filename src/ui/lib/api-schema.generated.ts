@@ -23997,6 +23997,10 @@ export interface operations {
                 content: {
                     "application/json": {
                         alerts: {
+                            /** @enum {string} */
+                            category?: "authorization" | "network";
+                            /** @enum {string} */
+                            dependency?: "web_search";
                             failures: number;
                             id: string;
                             /** Format: date-time */
@@ -24005,11 +24009,13 @@ export interface operations {
                             last_success_at: string | null;
                             latest_finish_reason: string | null;
                             latest_run_id: string;
+                            learner_detail?: string;
+                            learner_title?: string;
                             /** Format: date-time */
                             recorded_at: string | null;
                             recorded_event_id: string | null;
                             /** @enum {string} */
-                            rule: "consecutive" | "rate" | "unsealed";
+                            rule: "consecutive" | "rate" | "unsealed" | "optional_dependency";
                             runs: number;
                             /** Format: date-time */
                             since: string;

@@ -741,6 +741,7 @@ async function executeAcceptedCopilotRun(
     if (result.partial) {
       return await handleDurableFailure(db, {
         err: new Error(result.error ?? 'run failed'),
+        ...(result.failureDiagnostics ? { failureDiagnostics: result.failureDiagnostics } : {}),
         publicProseFailure: result.providerFailure
           ? providerFailureToPublicFailure(result.providerFailure)
           : { kind: 'execution_failed' },

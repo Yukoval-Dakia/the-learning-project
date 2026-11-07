@@ -19,12 +19,12 @@
 // by kind + learner day. The read surface evaluates live and never writes; the
 // hourly job is the only writer.
 
-import { and, desc, eq, gte, inArray, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, isNotNull, lte, sql } from 'drizzle-orm';
 import { STUCK_RUN_THRESHOLD_MS } from '@/core/ai-run-limits';
 import { CONFIG_REGISTRY, getConfig } from '@/core/config/store';
 import { learnerLocalDay } from '@/core/learner-day';
 import type { Db, Tx } from '@/db/client';
-import { event } from '@/db/schema';
+import { ai_task_runs, event } from '@/db/schema';
 import {
   CONFIG_INCOMPLETE_EVENT_ACTION,
   ConfigIncompletePayloadSchema,
@@ -50,7 +50,7 @@ export interface TaskFailureAlert {
   /** Deterministic alert id; equals the recorded event id. */
   id: string;
   task_kind: string;
-  rule: 'consecutive' | 'rate' | 'unsealed';
+  rule: 'consecutive' | 'rate' | 'unsealed' | 'optional_dependency';
   failures: number;
   /** Terminal runs counted by the rule (consecutive: equals failures). */
   runs: number;
@@ -61,6 +61,13 @@ export interface TaskFailureAlert {
   last_success_at: string | null;
   latest_run_id: string;
   latest_finish_reason: string | null;
+  /** optional_dependency only: which optional capability degraded. */
+  dependency?: 'web_search';
+  /** optional_dependency only: unknown causes count as network. */
+  category?: 'authorization' | 'network';
+  /** optional_dependency only: learner copy; never names the provider or host. */
+  learner_title?: string;
+  learner_detail?: string;
 }
 
 export interface TaskFailureAlertRead extends TaskFailureAlert {
@@ -101,6 +108,107 @@ export function readTaskFailureAlertThresholds(): TaskFailureAlertThresholds {
 
 function iso(value: Date | string): string {
   return (value instanceof Date ? value : new Date(value)).toISOString();
+}
+
+/**
+ * Optional web search degrading does not fail the Copilot run, so it never enters
+ * the task-failure rules above. A streak of this many consecutive CopilotTask
+ * runs whose Exa startup failed raises instead; any later run without the
+ * recorded failure ends it. Three keeps a single blip quiet while a wrong key or
+ * a dead endpoint surfaces within one learner turn or two.
+ */
+export const OPTIONAL_DEPENDENCY_STREAK = 3;
+const OPTIONAL_DEPENDENCY_SCAN_LIMIT = 100;
+
+const OPTIONAL_DEPENDENCY_COPY = {
+  authorization: {
+    title: '网页搜索的授权失效了',
+    detail: '需要重新配置后才能恢复，学伴先不查网页，其他学习功能照常。',
+  },
+  network: {
+    title: '网页搜索连不上了',
+    detail: '学伴先不查网页，其他学习功能照常。',
+  },
+} as const;
+
+function finishedIso(value: Date | string | null): string {
+  if (value === null) throw new Error('terminal ai_task_runs row without finished_at');
+  return iso(value);
+}
+
+function searchFailureCategory(
+  usage: (typeof ai_task_runs.$inferSelect)['usage_json'],
+): 'authorization' | 'network' | undefined {
+  const failures = usage.transport?.startup_dependency_failures;
+  if (!Array.isArray(failures) || failures.length === 0) return undefined;
+  const unauthorized = failures.some((failure) => {
+    const causes = Array.isArray(failure.cause) ? failure.cause : [];
+    return causes.some(
+      (link: { code?: string | number }) => link.code === 401 || link.code === 403,
+    );
+  });
+  return unauthorized ? 'authorization' : 'network';
+}
+
+async function evaluateOptionalDependencyAlerts(
+  db: Db | Tx,
+  now: Date,
+): Promise<TaskFailureAlert[]> {
+  const rows = await db
+    .select({
+      id: ai_task_runs.id,
+      status: ai_task_runs.status,
+      finish_reason: ai_task_runs.finish_reason,
+      finished_at: ai_task_runs.finished_at,
+      usage_json: ai_task_runs.usage_json,
+    })
+    .from(ai_task_runs)
+    .where(
+      and(
+        eq(ai_task_runs.task_kind, 'CopilotTask'),
+        inArray(ai_task_runs.status, ['success', 'failure']),
+        isNotNull(ai_task_runs.finished_at),
+        lte(ai_task_runs.finished_at, now),
+      ),
+    )
+    .orderBy(desc(ai_task_runs.finished_at), desc(ai_task_runs.id))
+    .limit(OPTIONAL_DEPENDENCY_SCAN_LIMIT);
+
+  // Walk the newest-first list while every run carries a search startup failure.
+  // A run without the key (success or no Exa mount) ends the streak.
+  let streakLength = 0;
+  while (
+    streakLength < rows.length &&
+    searchFailureCategory(rows[streakLength].usage_json) !== undefined
+  ) {
+    streakLength += 1;
+  }
+  if (streakLength < OPTIONAL_DEPENDENCY_STREAK) return [];
+
+  const streak = rows.slice(0, streakLength);
+  const latest = streak[0];
+  const oldest = streak[streakLength - 1];
+  const endedBy = rows[streakLength];
+  const category = searchFailureCategory(latest.usage_json) ?? 'network';
+  const copy = OPTIONAL_DEPENDENCY_COPY[category];
+  return [
+    {
+      id: `task_failure_alert:optional_dependency:web_search:${oldest.id}`,
+      task_kind: 'CopilotTask',
+      rule: 'optional_dependency',
+      dependency: 'web_search',
+      category,
+      learner_title: copy.title,
+      learner_detail: copy.detail,
+      failures: streakLength,
+      runs: streakLength,
+      since: finishedIso(oldest.finished_at),
+      last_failure_at: finishedIso(latest.finished_at),
+      last_success_at: endedBy?.status === 'success' ? finishedIso(endedBy.finished_at) : null,
+      latest_run_id: latest.id,
+      latest_finish_reason: latest.finish_reason,
+    },
+  ];
 }
 
 function nullableIso(value: Date | string | null): string | null {
@@ -260,6 +368,8 @@ export async function evaluateTaskFailureAlerts(
       latest_finish_reason: 'reply_unsealed',
     });
   }
+
+  alerts.push(...(await evaluateOptionalDependencyAlerts(db, now)));
 
   return alerts.sort(
     (left, right) =>

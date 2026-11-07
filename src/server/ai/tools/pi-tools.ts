@@ -118,7 +118,8 @@ function isOptionalSearch(mount: Extract<PiToolMount, { type: 'remote-mcp' }>, k
 
 /**
  * Bridge a hosted MCP server into pi AgentTools. The client connects at startup so
- * `tools/list` failures surface before any paid token.
+ * `tools/list` failures surface before any paid token. Required mounts rethrow;
+ * `connectTaskRemoteMcp` catches the Copilot optional Exa search instead.
  */
 export async function connectPiRemoteMcp(
   mount: Extract<PiToolMount, { type: 'remote-mcp' }>,

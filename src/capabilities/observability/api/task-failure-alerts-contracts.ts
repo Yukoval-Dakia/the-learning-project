@@ -4,7 +4,7 @@ export const TaskFailureAlertSchema = z.object({
   /** Deterministic alert id; equals the recorded event id once written. */
   id: z.string(),
   task_kind: z.string(),
-  rule: z.enum(['consecutive', 'rate', 'unsealed']),
+  rule: z.enum(['consecutive', 'rate', 'unsealed', 'optional_dependency']),
   failures: z.number().int().nonnegative(),
   /** Terminal runs counted by the rule (consecutive: equals failures). */
   runs: z.number().int().nonnegative(),
@@ -16,6 +16,13 @@ export const TaskFailureAlertSchema = z.object({
   /** Open in /admin/runs for the error detail. */
   latest_run_id: z.string(),
   latest_finish_reason: z.string().nullable(),
+  /** optional_dependency only: which optional capability degraded. */
+  dependency: z.literal('web_search').optional(),
+  /** optional_dependency only: unknown causes count as network. */
+  category: z.enum(['authorization', 'network']).optional(),
+  /** optional_dependency only: learner copy; never names the provider or host. */
+  learner_title: z.string().optional(),
+  learner_detail: z.string().optional(),
   /** Null until the hourly job has written this episode's event. */
   recorded_event_id: z.string().nullable(),
   recorded_at: z.string().datetime().nullable(),

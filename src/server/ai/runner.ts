@@ -13,6 +13,12 @@ import type { ContentBlock } from '@anthropic-ai/sdk/resources/messages';
 import { createId } from '@paralleldrive/cuid2';
 import { AgentRunError, RETRY_ELAPSED_CAP_MS } from '@/ai/agent-run-error';
 import {
+  type FailureDiagnostics,
+  failureDiagnostics,
+  failureDiagnosticsCarryEvidence,
+  failureDiagnosticsFromLinks,
+} from '@/ai/failure-diagnostics';
+import {
   helpFinishReason,
   helpProviderFaultFromSdkResult,
   renderHelpExitMarkdown,
@@ -1109,6 +1115,8 @@ export interface StreamCollectResult extends RunTaskResult {
   partial?: boolean;
   /** Present on a partial result — the underlying error message. */
   error?: string;
+  /** Whitelisted cause chain of the original stream error, for durable_failure. */
+  failureDiagnostics?: FailureDiagnostics;
   /**
    * Safe classification of a proven provider failure, with the provider's
    * Retry-After when it sent one. Absent when no provider fault is proven.
@@ -1343,6 +1351,18 @@ async function streamTaskCollectingImpl(
           throw boundError;
         }
         const transport = lifecycle.transportEvidence.snapshot();
+        // pi flattens a provider exception to its message, so the thrown error often
+        // loses the wire cause; the transport collector captured it first. Prefer the
+        // thrown chain when it still carries evidence (e.g. MCP 401 + hostname).
+        const thrownDiagnostics = failureDiagnostics(error);
+        const transportDiagnostics = failureDiagnosticsFromLinks(
+          transport.last_failure?.error ?? transport.last_transport_error?.error,
+          'baseUrl' in lifecycle.resolved ? lifecycle.resolved.baseUrl : undefined,
+        );
+        const failureDiagnosticsForResult =
+          failureDiagnosticsCarryEvidence(thrownDiagnostics) || transportDiagnostics === undefined
+            ? thrownDiagnostics
+            : transportDiagnostics;
         // Reject the policy's broader 5xx verdicts and any earlier accepted/unknown send.
         // A bound 429 alone cannot erase a successful turn hidden earlier in this loop.
         const noEffect =
@@ -1411,6 +1431,7 @@ async function streamTaskCollectingImpl(
           cost_ref: lifecycle.costRef,
           partial: true,
           error: error instanceof Error ? error.message : String(error),
+          failureDiagnostics: failureDiagnosticsForResult,
           ...(providerFailure ? { providerFailure } : {}),
         };
       } finally {
