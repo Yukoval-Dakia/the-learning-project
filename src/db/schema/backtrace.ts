@@ -1,4 +1,5 @@
-import { integer, jsonb, pgTable, primaryKey, text, timestamp } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
+import { check, integer, jsonb, pgTable, primaryKey, text, timestamp } from 'drizzle-orm/pg-core';
 import { vector } from '../vector';
 
 export const attempt_insight_vector = pgTable(
@@ -14,7 +15,13 @@ export const attempt_insight_vector = pgTable(
     embed_version: integer('embed_version').notNull(),
     content_hash: text('content_hash').notNull(),
   },
-  (t) => [primaryKey({ columns: [t.insight_event_id, t.facet] })],
+  (t) => [
+    primaryKey({ columns: [t.insight_event_id, t.facet] }),
+    check(
+      'attempt_insight_vector_facet_check',
+      sql`${t.facet} IN ('mechanism', 'method', 'needed_method')`,
+    ),
+  ],
 );
 
 /** Durable pre-send claims survive crashes; an unresolved claim never authorizes another paid send. */

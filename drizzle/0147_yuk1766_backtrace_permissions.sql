@@ -128,8 +128,7 @@ SELECT NOT EXISTS (WITH RECURSIVE purpose_lineage(kind, id) AS (
           OR (ed.id IS NOT NULL AND coalesce(b.payload->>'epoch', 'legacy') <> coalesce(ed.provenance->>'usage_epoch', 'legacy'))
           OR (COALESCE(e.payload->'ai_proposal'->>'kind', CASE WHEN e.action = 'experimental:proposal' THEN e.payload->>'kind' END) = 'record_promotion' AND COALESCE(e.payload->'ai_proposal', e.payload)->'proposed_change'->>'record_id' IS NULL)
         ), false) OFFSET 0)
-      ELSE true END
-  );
+      ELSE true END);
 $purpose$;
 REVOKE ALL ON FUNCTION public.tlp_source_allows_derivation(text, text) FROM PUBLIC;
 --> statement-breakpoint

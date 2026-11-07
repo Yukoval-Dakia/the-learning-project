@@ -3,6 +3,7 @@
 
 import { AgentRunError } from '@/ai/agent-run-error';
 import type { SealedHelpLatency } from '@/ai/help-latency';
+import { classifyLoginFailure } from './login-failure';
 import { ProviderSessionAdmissionError } from './provider-session-admission-policy';
 import type { SDKMessage } from './sdk-types';
 
@@ -39,6 +40,7 @@ export function bindAgentRunError(input: {
         ? { helpLatency: input.helpLatency ?? input.error.helpLatency }
         : {}),
       ...(input.error.providerFailure ? { providerFailure: input.error.providerFailure } : {}),
+      ...(input.error.loginFailure ? { loginFailure: input.error.loginFailure } : {}),
     });
   }
   if (input.error instanceof ProviderSessionAdmissionError) {
@@ -50,6 +52,7 @@ export function bindAgentRunError(input: {
       ...(input.helpLatency ? { helpLatency: input.helpLatency } : {}),
     });
   }
+  const loginFailure = classifyLoginFailure(input.error);
   return new AgentRunError({
     kind: input.kind,
     taskRunId: input.taskRunId,
@@ -57,6 +60,7 @@ export function bindAgentRunError(input: {
     subtype: input.aborted ? 'budget_timeout' : 'runner_error',
     errors: [input.error instanceof Error ? input.error.message : String(input.error)],
     ...(input.helpLatency ? { helpLatency: input.helpLatency } : {}),
+    ...(loginFailure ? { loginFailure } : {}),
   });
 }
 

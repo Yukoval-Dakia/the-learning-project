@@ -73,6 +73,12 @@ export interface CopilotRunInput {
   backtrace_digest?: string;
   correction_contract: CopilotCorrectionContract;
   ambient_context?: CopilotAmbientContext;
+  /**
+   * Event ids of the turn rows this history window was projected from. Server
+   * provenance only — the prompt compiler never reads it, and derivations bind
+   * it as the authoritative read set (drawing source ledger, YUK-1548).
+   */
+  bound_turn_event_ids?: string[];
 }
 
 // Assemble bounded, history-only conversation_history from the session-scoped
@@ -267,6 +273,9 @@ export async function assembleCopilotRunInput(
     ...(chipKind ? { chip_kind: chipKind } : {}),
     proposal_feedback: learnerState.proposal_feedback,
     conversation_history: conversationHistory,
+    // The whole fetched window, not the char-truncated survivor set: binding a
+    // few extra turn ids is fail-closed, binding fewer would be a leak.
+    bound_turn_event_ids: rawTurns.flatMap((t) => (t.event_id ? [t.event_id] : [])),
     learner_state_header: learnerState.header_md,
     correction_contract: {
       ...(restrictedCorrectionTarget ? { restricted_target: true } : {}),

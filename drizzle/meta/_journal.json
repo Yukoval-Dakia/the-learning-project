@@ -1006,15 +1006,29 @@
     {
       "idx": 144,
       "version": "7",
-      "when": 1794046748542,
-      "tag": "0144_yuk1766_backtrace",
+      "when": 1794050380064,
+      "tag": "0144_yuk1548_drawing",
       "breakpoints": true
     },
     {
       "idx": 145,
       "version": "7",
-      "when": 1794047906399,
-      "tag": "0145_yuk1766_backtrace_permissions",
+      "when": 1794061309420,
+      "tag": "0145_yuk1548_drawing_source_scoped",
+      "breakpoints": true
+    },
+    {
+      "idx": 146,
+      "version": "7",
+      "when": 1794064741453,
+      "tag": "0146_yuk1766_backtrace",
+      "breakpoints": true
+    },
+    {
+      "idx": 147,
+      "version": "7",
+      "when": 1794064757975,
+      "tag": "0147_yuk1766_backtrace_permissions",
       "breakpoints": true
     }
   ]

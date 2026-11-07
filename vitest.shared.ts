@@ -126,6 +126,7 @@ export const dbTestInclude = [
   'src/capabilities/ingestion/server/assessment-capture.db.test.ts',
   'src/capabilities/ingestion/server/auto-enroll.db.test.ts',
   'src/capabilities/ingestion/server/make-paper.db.test.ts',
+  'src/capabilities/drawing/server/drawing-service.db.test.ts',
   'src/capabilities/ingestion/server/operation-store.db.test.ts',
   'src/capabilities/ingestion/server/proposal-appliers.db.test.ts',
   'src/capabilities/ingestion/server/provider-attempts.db.test.ts',
