@@ -31,10 +31,15 @@ import {
 } from '@/db/schema/knowledge';
 import { goal, placement_starter_claim } from '@/db/schema/learner-state';
 import { answer, learning_item, learning_record } from '@/db/schema/learning';
-import { question } from '@/db/schema/question';
 import { getCorrectionStatuses } from '@/kernel/events';
+import { batchResolveAncestorIds } from '@/kernel/read-models/knowledge-tree';
 import { findExistingRateEvent } from './applier-helpers';
 import { PROPOSAL_AUTOAPPLY_ACTION } from './auto-apply';
+import {
+  isAutoOwnedAttachment,
+  loadAttachmentChangeMap,
+  selectNodeAttachedQuestions,
+} from './node-question-attachments';
 
 type DbLike = Db | Tx;
 
@@ -387,7 +392,8 @@ function isBatchUndoKind(kind: string): kind is AutoAppliedBatchUndoKind {
 /**
  * Take the owner row locks the retract appliers will need, before the batch guard
  * reads owner state. Lock order is fixed by the caller: proposal decision lock →
- * owner rows (ascending id) → the applier's own locks, which are already held.
+ * shared learning-state write lock → owner rows (ascending id) → the applier's
+ * own locks, which are already held or re-entrant.
  *
  * Only the row set the applier will mutate is locked. Content that references the
  * target through JSONB (questions, records, goals, note labels) has no row to lock;
@@ -497,13 +503,67 @@ async function classifyKnowledgeNodes(
     .groupBy(knowledge.parent_id)) as Array<{ nodeId: string; count: number }>;
   const childCounts = new Map(childRows.map((row) => [row.nodeId, Number(row.count)]));
 
-  const questionRows = (await db
-    .select({ nodeId: knowledge.id, count: sql<number>`count(*)::int` })
-    .from(knowledge)
-    .innerJoin(question, sql`${question.knowledge_ids} @> jsonb_build_array(${knowledge.id})`)
-    .where(inArray(knowledge.id, nodeIds))
-    .groupBy(knowledge.id)) as Array<{ nodeId: string; count: number }>;
-  const questionCounts = new Map(questionRows.map((row) => [row.nodeId, Number(row.count)]));
+  // Auto-ownership replaces birth-metadata counting: an attachment blocks the
+  // undo unless it is provably still the automation's own placement — the same
+  // event-history rule the retract applier enforces, so the card verdict and
+  // the backend cannot disagree.
+  const questionCounts = new Map<string, number>();
+  const foreignQuestionCounts = new Map<string, number>();
+  for (const nodeId of nodeIds) {
+    const attached = await selectNodeAttachedQuestions(db, nodeId);
+    const changes = await loadAttachmentChangeMap(
+      db,
+      attached.map((row) => row.id),
+    );
+    questionCounts.set(nodeId, attached.length);
+    foreignQuestionCounts.set(
+      nodeId,
+      attached.filter((row) => !isAutoOwnedAttachment(row, nodeId, changes)).length,
+    );
+  }
+
+  // Auto-owned attachments (companion teaching drafts, refiled moves) return to
+  // the tree's live root on retraction instead of blocking the undo. Nodes
+  // whose only questions are auto-owned still need somewhere to send them:
+  // the ancestor walk must end at a live root row.
+  const refileRootByNode = new Map<string, string>();
+  const refileCandidateIds = checks
+    .filter(
+      (check) =>
+        (questionCounts.get(check.nodeId) ?? 0) > 0 &&
+        (foreignQuestionCounts.get(check.nodeId) ?? 0) === 0,
+    )
+    .map((check) => check.nodeId);
+  if (refileCandidateIds.length > 0) {
+    const chains = await batchResolveAncestorIds(db, refileCandidateIds);
+    const topIds = [
+      ...new Set(
+        [...chains.values()]
+          .map((chain) => chain[chain.length - 1])
+          .filter((id): id is string => typeof id === 'string'),
+      ),
+    ];
+    const liveRoots = new Set(
+      topIds.length === 0
+        ? []
+        : (
+            await db
+              .select({ id: knowledge.id })
+              .from(knowledge)
+              .where(
+                and(
+                  inArray(knowledge.id, topIds),
+                  isNull(knowledge.parent_id),
+                  isNull(knowledge.archived_at),
+                ),
+              )
+          ).map((row) => row.id),
+    );
+    for (const [nodeId, chain] of chains) {
+      const top = chain[chain.length - 1];
+      if (top && liveRoots.has(top)) refileRootByNode.set(nodeId, top);
+    }
+  }
 
   const recordRows = (await db
     .select({ nodeId: knowledge.id, count: sql<number>`count(*)::int` })
@@ -601,8 +661,17 @@ async function classifyKnowledgeNodes(
       continue;
     }
     if ((questionCounts.get(check.nodeId) ?? 0) > 0) {
-      decisions.set(check.proposalId, blocked('knowledge_has_questions', check.appliedAt));
-      continue;
+      // Any non-companion attachment (a learner's own placement, a sourcing
+      // merge) keeps blocking — retracting under it would silently refile work
+      // the owner did not ask to move. Companion-authored questions are
+      // undoable only while a live root ancestor exists to refile onto.
+      if (
+        (foreignQuestionCounts.get(check.nodeId) ?? 0) > 0 ||
+        !refileRootByNode.has(check.nodeId)
+      ) {
+        decisions.set(check.proposalId, blocked('knowledge_has_questions', check.appliedAt));
+        continue;
+      }
     }
     if ((recordCounts.get(check.nodeId) ?? 0) > 0) {
       decisions.set(check.proposalId, blocked('knowledge_has_records', check.appliedAt));

@@ -285,14 +285,30 @@ function proposalDisclosure(
       !status.startsWith('skipped:')
     );
   });
+  // auto_apply is the tool's own fact about the proposal it just wrote — a
+  // creation-time marker, not a later lookup. Every pending proposal must
+  // carry it before the headline may say the change applies itself.
+  const autoApplies = (entry: (typeof pending)[number]) => {
+    const output = isRecord(entry.domain_output) ? entry.domain_output : undefined;
+    return output?.auto_apply === true;
+  };
+  const allAutoApply = pending.length > 0 && pending.every(autoApplies);
   return [
     '<!--copilot-proposal-disclosure:start-->',
-    pending.length > 0
-      ? '本轮建议已提交，等待你确认后才会应用到目标。'
-      : '本轮没有产生可供确认的建议，未执行目标变更。',
+    pending.length === 0
+      ? '本轮没有产生可供确认的建议，未执行目标变更。'
+      : allAutoApply
+        ? '本轮建议已记下，会自动应用，随时可以撤销。'
+        : '本轮建议已提交，等待你确认后才会应用到目标。',
     // The companion reads these hidden rows to retain its inbox notice.
     ...(pending.length > 0
-      ? ['<!--', ...pending.map(() => '- `建议`: status=pending'), '-->']
+      ? [
+          '<!--',
+          ...pending.map(
+            (entry) => `- \`建议\`: status=${autoApplies(entry) ? 'auto_apply' : 'pending'}`,
+          ),
+          '-->',
+        ]
       : []),
     ...(retainedDrafts > 0 ? ['生成的草稿已经保存；暂不采纳建议也不会删除草稿。'] : []),
     '<!--copilot-proposal-disclosure:end-->',
