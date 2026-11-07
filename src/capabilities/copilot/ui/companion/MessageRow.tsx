@@ -83,7 +83,9 @@ export const MessageRow = memo(function MessageRow(props: MessageRowProps) {
       {/* YUK-1664 — settled: the reply's steps fold into one summary line above the text. */}
       {settled ? <StepActivity steps={steps} /> : null}
       {settled && props.thinkingText ? <ThinkingDone text={props.thinkingText} /> : null}
-      <ConversationMarkdown className="un-cp-md un-cp-reply">{shown}</ConversationMarkdown>
+      {shown ? (
+        <ConversationMarkdown className="un-cp-md un-cp-reply">{shown}</ConversationMarkdown>
+      ) : null}
       {failureBadge ? (
         <p className="un-cp-reply-badge">
           <Chip tone="caution">{failureBadge}</Chip>
