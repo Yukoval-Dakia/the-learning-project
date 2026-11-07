@@ -186,7 +186,7 @@ const output = {
   internalQueues: ['__pgboss__send-it is owned by pg-boss, not a business family'],
 };
 const DOCS_ROOT = process.env.TLP_DOCS_ROOT ?? '/Volumes/YukovalSBak/yukoval-projects/tlp-docs';
-const OUT_DIR = join(DOCS_ROOT, 'repo-docs/docs/planning');
+const OUT_DIR = join(DOCS_ROOT, 'planning');
 mkdirSync(OUT_DIR, { recursive: true });
 writeFileSync(
   join(OUT_DIR, '2026-10-07-yuk1355-task-inventory.json'),

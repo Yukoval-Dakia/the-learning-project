@@ -169,6 +169,6 @@ drizzle/.snapshots/
 # PLANNING.md is /Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/
 # (manifest: MANIFEST.tsv, per-file hashes: SHA256SUMS). Process planning notes,
 # audits and design work continue under /Volumes/YukovalSBak/yukoval-projects/tlp-docs/.
-docs/
+/docs/
 /PLANNING.md
 postman/learning-api.postman_collection.json

@@ -16,7 +16,7 @@
  *   whatever credential the resolved StepsJudgeTask lane declares
  *   (OPENCODE_API_KEY for the flash default) — resolution names it
  *
- * Output: JSON saved to $TLP_DOCS_ROOT/repo-docs/docs/preflight/YYYY-MM-DD-vision-rejudge.json
+ * Output: JSON saved to $TLP_DOCS_ROOT/audit/preflight/YYYY-MM-DD-vision-rejudge.json
  * (default TLP_DOCS_ROOT: /Volumes/YukovalSBak/yukoval-projects/tlp-docs; run locally
  * at phase exit, do not commit output).
  */
@@ -36,7 +36,7 @@ import { resolveSubjectProfile } from '../src/subjects/profile';
 config({ path: '.env' });
 
 const DOCS_ROOT = process.env.TLP_DOCS_ROOT ?? '/Volumes/YukovalSBak/yukoval-projects/tlp-docs';
-const OUT_DIR = resolve(DOCS_ROOT, 'repo-docs/docs/preflight');
+const OUT_DIR = resolve(DOCS_ROOT, 'audit/preflight');
 const OUT_FILE = resolve(OUT_DIR, `${new Date().toISOString().slice(0, 10)}-vision-rejudge.json`);
 
 async function main() {
