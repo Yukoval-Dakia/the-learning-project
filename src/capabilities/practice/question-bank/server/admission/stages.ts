@@ -493,7 +493,9 @@ export function admissionStageRunner(input: {
             generation: 0,
             // Derived so a system_config timeout override cannot outlive the lease and get a
             // live call settled as expired; crash recovery pays the 5min margin.
-            leaseExpiresAt: new Date(Date.now() + resolveTaskBudget(kind as TaskKind).timeout + 5 * 60_000),
+            leaseExpiresAt: new Date(
+              Date.now() + resolveTaskBudget(kind as TaskKind).timeout + 5 * 60_000,
+            ),
           },
         );
         if (reservation.kind !== 'winner')
