@@ -25,3 +25,7 @@ export {
   withdrawCapturedOccurrence,
 } from './server/settle';
 export type { SettlementObservers } from './server/settle-apply';
+export {
+  knowledgeNodesWithLearningRecords,
+  learningItemsWithLearningRecords,
+} from './server/undo-usage';
