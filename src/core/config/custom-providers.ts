@@ -4,9 +4,9 @@
 // holds its key, and a wire protocol. This module is the DB-free core: types,
 // validation, the in-memory registry every resolution surface reads
 // synchronously, and two injection ports (catalog facts + change handler) the
-// server composition root wires at boot. DB hydration/CRUD live at the edges
-// (server/config/custom-providers-hydrate.ts, the observability admin route),
-// mirroring core/config/store ↔ server/config/hydrate.
+// composition root wires at boot. DB hydration/CRUD live at the edges
+// (core/config/server/custom-providers-hydrate.ts, the observability admin
+// route), mirroring core/config/store ↔ core/config/server/hydrate.
 //
 // Credential honesty: only the env var NAME is ever stored or projected. The
 // key value stays in the operator's env and never reaches the DB or logs.

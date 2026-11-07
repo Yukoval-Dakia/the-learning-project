@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { capabilities } from '@/capabilities';
 import { tasks } from '@/capabilities/task-registry';
+import { __hydratePublishGate } from '@/core/config/server/hydrate';
 import { replaceConfigSnapshot } from '@/core/config/store';
 import { system_config_journal } from '@/db/schema';
 import { resolveTaskProvider } from '@/server/ai/providers';
 import { createAdminConfigWriter } from '@/server/config/admin-config-write';
-import { __hydratePublishGate } from '@/server/config/hydrate';
 import { buildHonoApp } from '../../../../server/app';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
