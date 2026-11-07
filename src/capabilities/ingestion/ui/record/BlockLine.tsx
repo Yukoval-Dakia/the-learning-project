@@ -3,7 +3,7 @@ import { isLowJudgeConfidence } from '@/core/judge-confidence';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { BlockFigures } from './BlockFigures';
 import { RescueButton, RevertButton } from './BlockTools';
-import { hasOptionsWithoutFigure, lineText, promptOf } from './block-text';
+import { figuresOf, hasOptionsWithoutFigure, lineText, promptOf } from './block-text';
 import type { QuestionEdit, Readiness } from './import-draft';
 import { readiness } from './import-draft';
 import { KnowledgePick } from './KnowledgePick';
@@ -53,11 +53,13 @@ export function BlockLine({
     block.workflow_judge_confidence ?? block.extraction_confidence,
   );
   const emptyOptions = hasOptionsWithoutFigure(block);
+  // A question that is only pictures has no words to miss.
+  const noWords = figuresOf(block).length > 0 ? '' : '（没认出文字）';
   const notes =
     lowConfidence || emptyOptions ? (
       <p className="rc-line-note">
         {lowConfidence && <span>这道题认得把握不高，对照原页看一下。</span>}
-        {emptyOptions && <span>选项可能是图，这里没显示出来，对照原页看。</span>}
+        {emptyOptions && <span>选项可能是图，对照原页看。</span>}
       </p>
     ) : null;
   const first = block.page_spans?.[0];
@@ -83,7 +85,7 @@ export function BlockLine({
         </span>
         <div className="rc-line-main">
           <MathMarkdown className="rc-line-text">
-            {lineText(promptOf(block), block) || '（没认出文字）'}
+            {lineText(promptOf(block), block) || noWords}
           </MathMarkdown>
           <BlockFigures block={block} />
           {notes}
@@ -132,7 +134,7 @@ export function BlockLine({
           />
         ) : (
           <MathMarkdown className="rc-line-text">
-            {lineText(edit.prompt, block) || '（没认出文字）'}
+            {lineText(edit.prompt, block) || noWords}
           </MathMarkdown>
         )}
         <BlockFigures block={block} />

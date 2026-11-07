@@ -13,7 +13,13 @@ function Figure({ figure }: { figure: LineFigure }) {
     .join(' · ');
   return (
     <figure className="rc-fig">
-      {url ? <img src={url} alt={figure.alt} /> : <span className="rc-fig-blank" />}
+      {url ? (
+        <a href={url} target="_blank" rel="noreferrer" aria-label={`${figure.alt}，打开原图`}>
+          <img src={url} alt={figure.alt} />
+        </a>
+      ) : (
+        <span className="rc-fig-blank" />
+      )}
       {words && <figcaption>{words}</figcaption>}
     </figure>
   );

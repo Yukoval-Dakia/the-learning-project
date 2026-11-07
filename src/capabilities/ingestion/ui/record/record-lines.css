@@ -205,6 +205,11 @@
     font-size: var(--un-fs-1);
   }
 
+  & .rc-fig a {
+    display: block;
+    max-width: 100%;
+  }
+
   & .rc-fig img {
     display: block;
     max-width: 100%;

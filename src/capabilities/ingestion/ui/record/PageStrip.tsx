@@ -14,7 +14,13 @@ function Page({
   const { url } = useAssetUrl(assetId);
   return (
     <li className="rc-tile" data-lit={lit}>
-      {url ? <img src={url} alt={`第 ${index + 1} 页`} /> : <span className="rc-tile-blank" />}
+      {url ? (
+        <a href={url} target="_blank" rel="noreferrer" aria-label={`打开第 ${index + 1} 页原图`}>
+          <img src={url} alt={`第 ${index + 1} 页`} />
+        </a>
+      ) : (
+        <span className="rc-tile-blank" />
+      )}
       {numbered && <span className="rc-tile-no un-num">{index + 1}</span>}
     </li>
   );

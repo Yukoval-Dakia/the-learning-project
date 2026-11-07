@@ -167,8 +167,8 @@ const WARNING_WORDS: Record<string, string> = {
 /**
  * What the learner should know about how complete this recording is, or null. It reads the server's
  * typed findings; the stored notes are internal reader messages and are never shown as they are.
- * A finding nobody checked is said as that, never as fine. Only photos and pages get checked, so a
- * Word file with no finding says nothing, and neither does a recording still being read.
+ * A finding nobody checked is said as that, never as fine. Only questions read from page images
+ * get checked, so a Word file read as text says nothing, and neither does an unfinished recording.
  */
 export function warningWords(
   facts: {
@@ -176,24 +176,30 @@ export function warningWords(
     figures_withheld?: boolean | null;
     content_lost?: boolean | null;
   },
-  { photos, finished }: { photos: boolean; finished: boolean },
+  { readPages, finished }: { readPages: boolean; finished: boolean },
 ): string | null {
   const warnings = facts.warnings ?? [];
   const known = [...new Set(warnings.flatMap((w) => (WARNING_WORDS[w] ? [WARNING_WORDS[w]] : [])))];
   const withheld = facts.figures_withheld === true;
   const lost = facts.content_lost === true;
+  const figuresUnknown = facts.figures_withheld == null;
+  const contentUnknown = facts.content_lost == null;
   const unchecked =
-    photos &&
-    finished &&
-    !withheld &&
-    !lost &&
-    (facts.figures_withheld == null || facts.content_lost == null);
+    !readPages || !finished
+      ? null
+      : figuresUnknown && contentUnknown
+        ? '这次没查过题和图全不全'
+        : figuresUnknown
+          ? '这次没查过图挂全了没有'
+          : contentUnknown
+            ? '这次没查过题认全了没有'
+            : null;
   return (
     [
       ...known,
       withheld ? '有的图没挂到题上，看题时对照原页。' : null,
       lost ? '有的题可能不完整，对照原页看一下。' : null,
-      unchecked ? '这次没查过题和图全不全，看题时对照原页。' : null,
+      unchecked && (withheld || lost ? `${unchecked}。` : `${unchecked}，看题时对照原页。`),
     ]
       .filter(Boolean)
       .join(' ') || null

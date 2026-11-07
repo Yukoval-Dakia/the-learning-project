@@ -110,7 +110,9 @@ export function figuresOf(block: Block): LineFigure[] {
     const lettered = (node.options ?? []).flatMap((o) =>
       own.filter((f) => f.option_label === o.label),
     );
-    return [...plain, ...lettered].map((f) => line(f, node, isRoot));
+    // Moved here from a question whose options this one doesn't have: still its figure.
+    const rest = own.filter((f) => f.option_label && !lettered.includes(f));
+    return [...plain, ...lettered, ...rest].map((f) => line(f, node, isRoot));
   });
   // A figure pointing at a node this question no longer has still belongs to the question.
   const known = new Set(tree.map((node) => node.id));

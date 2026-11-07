@@ -65,7 +65,12 @@ export function RecordingSheet({
   const working = rec.phase === 'working';
   const photos = facts.entrypoint === 'vision_single' || facts.entrypoint === 'vision_paper';
   const warning =
-    rec.phase === 'failed' ? null : warningWords(facts, { photos, finished: !working });
+    rec.phase === 'failed'
+      ? null
+      : warningWords(facts, {
+          readPages: rec.blocks.some((block) => block.structured?.source !== 'docx_text'),
+          finished: rec.phase === 'finished',
+        });
   const agentAllowed = receipt?.derivation_policy !== 'answer_only';
   const meter =
     working && rec.pages && rec.pages.total > 0 ? rec.pages.done / rec.pages.total : null;
