@@ -305,8 +305,8 @@ const AutoEnrollObservationSchema = z.object({
 
 /** Server-owned reading of one block's enrollment; the page never re-derives gates. */
 export const IngestionBlockEnrollmentSchema = z.object({
-  state: z.enum(['in_library', 'not_enrolled']),
-  reason: z.enum(['needs_text']).nullable(),
+  state: z.enum(['in_library', 'not_enrolled', 'ignored']),
+  reason: z.enum(['needs_text', 'publish_failed']).nullable(),
   knowledge: z.enum(['attributed', 'missing']).nullable(),
   library_visible: z.boolean().nullable(),
 });

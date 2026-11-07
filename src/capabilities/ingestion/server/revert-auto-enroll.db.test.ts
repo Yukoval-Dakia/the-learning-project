@@ -18,8 +18,6 @@ import { runAutoEnrollForSession } from './auto-enroll';
 import { enrollCapturedBlock } from './enroll';
 import { revertAutoEnrolledBlock } from './revert-auto-enroll';
 
-const FLAG = 'WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED';
-
 const highConfidenceTagging = async () => ({
   suggestions: [{ knowledge_id: 'k1', confidence: 0.95, reasoning: 'ok' }],
   overall_confidence: 0.95,

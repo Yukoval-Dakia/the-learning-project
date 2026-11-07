@@ -7,10 +7,12 @@
 import { and, asc, eq, inArray } from 'drizzle-orm';
 
 import { MistakeEnrollOutcome } from '@/core/schema/mistake_enroll';
+import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
 import { event, question, question_block } from '@/db/schema';
 import { learnerVisibleKnowledgeIds } from '@/kernel/read-models/learner-knowledge-visibility';
 import { readWorkflowJudgeConfidence } from '@/kernel/read-models/workflow-judge-confidence';
+import { blockHasPrompt } from './capture/question-text';
 
 export async function readIngestionSessionBlocks(db: Db, params: { id: string }) {
   const sessionId = params.id;
@@ -108,33 +110,44 @@ export async function readIngestionSessionBlocks(db: Db, params: { id: string })
 
 /** How to read one block's enrollment without re-implementing the server gates. */
 function toEnrollmentProjection(
-  block: { status: string; extracted_prompt_md: string | null; structured: unknown },
+  block: {
+    status: string;
+    extracted_prompt_md: string | null;
+    structured: StructuredQuestionT | null;
+  },
   enrolled: { draft_status: string | null; metadata: Record<string, unknown> | null } | undefined,
 ) {
-  if (block.status !== 'auto_enrolled') {
-    const structuredPrompt =
-      block.structured != null && typeof block.structured === 'object'
-        ? (block.structured as { prompt_text?: unknown }).prompt_text
-        : undefined;
-    const hasPrompt =
-      (typeof structuredPrompt === 'string' && structuredPrompt.trim().length > 0) ||
-      (block.extracted_prompt_md ?? '').trim().length > 0;
+  // The block status is the ground truth about what happened to this capture:
+  // imported/submitted/auto_enrolled all carry a question, ignored was an explicit
+  // learner choice, and only draft means "not in the library (yet)".
+  if (block.status === 'ignored') {
     return {
-      state: 'not_enrolled' as const,
-      reason: hasPrompt ? null : ('needs_text' as const),
+      state: 'ignored' as const,
+      reason: null,
       knowledge: null,
-      library_visible: null,
+      library_visible: false,
     };
   }
-  const markers = enrolled?.metadata?.ingestion_enrollment as { knowledge?: unknown } | undefined;
+  if (block.status !== 'draft') {
+    const markers = enrolled?.metadata?.ingestion_enrollment as { knowledge?: unknown } | undefined;
+    return {
+      state: 'in_library' as const,
+      reason: null,
+      knowledge:
+        markers?.knowledge === 'attributed' || markers?.knowledge === 'missing'
+          ? markers.knowledge
+          : null,
+      library_visible: enrolled ? enrolled.draft_status !== 'draft' : null,
+    };
+  }
+  // Enrollment is automatic, so a draft block with a prompt means publication did not
+  // complete (job retries exhausted, publish rejected, or a failed per-block write).
+  // It must be distinguishable from a block that never had a prompt at all.
   return {
-    state: 'in_library' as const,
-    reason: null,
-    knowledge:
-      markers?.knowledge === 'attributed' || markers?.knowledge === 'missing'
-        ? markers.knowledge
-        : null,
-    library_visible: enrolled ? enrolled.draft_status !== 'draft' : null,
+    state: 'not_enrolled' as const,
+    reason: blockHasPrompt(block) ? ('publish_failed' as const) : ('needs_text' as const),
+    knowledge: null,
+    library_visible: null,
   };
 }
 

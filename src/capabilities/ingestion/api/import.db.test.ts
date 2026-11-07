@@ -284,7 +284,6 @@ describe('POST /api/ingestion/[id]/import', () => {
       db,
       sessionId,
       subjectId: 'yuwen',
-      env: { WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED: 'true' },
       tagKnowledgeFn: async () => ({ kind: 'match', knowledge_ids: ['k1'] }),
     }).finally(() => {
       autoFinished = true;

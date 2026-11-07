@@ -88,9 +88,6 @@ export async function recordCapturedQuestion(tx: Tx, input: CapturedQuestionInpu
   const metadata = {
     ...(input.reuse?.metadata ?? {}),
     ...input.extraMetadata,
-    // A block's image_refs are the photographed source pages, not this question's
-    // picture. Keep them as machine prompt input but keep them off learner reads.
-    ...(input.content.from === 'block' ? { prompt_images_are_source_pages: true } : {}),
     source_document_id: input.sourceDocumentId,
     ingestion_session_id: input.sessionId,
     question_block_id: input.blockId,
@@ -129,9 +126,13 @@ export async function recordCapturedQuestion(tx: Tx, input: CapturedQuestionInpu
     }),
   );
   // First revision in the same transaction; admission state is the publisher's call.
+  // Binding the capture's session on the publication event is what lets the admission
+  // gate prove this question's source (readAdmissionPurpose); without it every captured
+  // question waits as unknown/purpose-denied.
   await publishQuestionGroupFromRow(tx, {
     rootId: input.questionId,
     actorRef: input.actorRef,
+    sessionId: input.sessionId,
     now: input.now,
   });
 }

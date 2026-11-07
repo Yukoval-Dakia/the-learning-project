@@ -1,22 +1,26 @@
 /**
  * Tests for runAutoEnrollForSession — T-OC slice 3 (YUK-145, OC-4 / OC-5).
  *
- * DB-backed. Injected TaggingTask fn so no real LLM runs. The headline test is
- * the CRITICAL SAFETY one: with the flag OFF (default), NOTHING auto-enrolls and
- * every block stays 'draft' for the existing human review flow. See ADR-0026 +
- * docs/archive/superpowers/plans/2026-05-30-yuk145-toc-slice3-lane.md §4.
+ * DB-backed. Injected tagging fn so no real LLM runs. Auto-enroll has no off switch
+ * (YUK-1994); the safety contract is revertibility plus "no prompt / failed write stays
+ * draft".
  */
 import { createId } from '@paralleldrive/cuid2';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
-import { knowledge, learning_session, question, question_block } from '@/db/schema';
+import {
+  event,
+  knowledge,
+  learning_session,
+  question,
+  question_block,
+  source_asset,
+} from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { type RunAutoEnrollParams, runAutoEnrollForSession } from './auto-enroll';
 import { revertAutoEnrolledBlock } from './revert-auto-enroll';
-
-const FLAG = 'WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED';
 
 function structured(prompt: string): StructuredQuestionT {
   return { id: createId(), role: 'standalone', prompt_text: prompt, source: 'vlm_structure' };
@@ -108,7 +112,6 @@ describe('runAutoEnrollForSession', () => {
       db,
       sessionId,
       subjectId: 'yuwen',
-      env: { [FLAG]: 'true' },
       tagKnowledgeFn: matchK1,
     });
     expect(first.status).toBe('completed');
@@ -129,7 +132,6 @@ describe('runAutoEnrollForSession', () => {
       db,
       sessionId,
       subjectId: 'yuwen',
-      env: { [FLAG]: 'true' },
       tagKnowledgeFn: matchK1,
     });
     expect(second.status).toBe('completed');
@@ -177,32 +179,75 @@ describe('runAutoEnrollForSession', () => {
       version: 0,
     });
     const blockId = createId();
-    await db.insert(question_block).values({
-      id: blockId,
-      ingestion_session_id: sessionId,
-      source_document_id: null,
-      source_asset_ids: ['asset_1'],
-      page_spans: [],
-      structured: structured('下列句中「之」的用法'),
-      figures: [],
-      layout_quality: 'partial',
-      image_refs: ['asset_1'],
-      crop_refs: [],
-      visual_complexity: 'low',
-      extraction_confidence: 0.2,
-      status: 'draft',
-      knowledge_hint: null,
-      merged_from_block_ids: [],
+    const answeredBlockId = createId();
+    await db.insert(source_asset).values({
+      id: 'asset_1',
+      kind: 'image',
+      storage_key: 'offline/page-1',
+      mime_type: 'image/png',
+      byte_size: 4096,
+      sha256: 'b'.repeat(64),
       created_at: now,
-      updated_at: now,
-      version: 0,
     });
+    await db.insert(question_block).values([
+      {
+        id: blockId,
+        ingestion_session_id: sessionId,
+        source_document_id: null,
+        source_asset_ids: ['asset_1'],
+        page_spans: [],
+        structured: structured('下列句中「之」的用法'),
+        figures: [],
+        layout_quality: 'partial',
+        image_refs: ['asset_1'],
+        crop_refs: [],
+        visual_complexity: 'low',
+        extraction_confidence: 0.2,
+        status: 'draft',
+        knowledge_hint: null,
+        merged_from_block_ids: [],
+        created_at: now,
+        updated_at: now,
+        version: 0,
+      },
+      {
+        id: answeredBlockId,
+        ingestion_session_id: sessionId,
+        source_document_id: null,
+        source_asset_ids: ['asset_1'],
+        page_spans: [],
+        structured: {
+          id: createId(),
+          role: 'standalone',
+          kind: 'choice',
+          source: 'vlm_structure',
+          prompt_text: '1. Solve 3x + 5 = 20.',
+          options: [
+            { label: 'A', text: '3' },
+            { label: 'B', text: '5' },
+          ],
+          student_answer_present: true,
+        },
+        figures: [],
+        layout_quality: 'partial',
+        image_refs: ['asset_1'],
+        crop_refs: [],
+        visual_complexity: 'low',
+        extraction_confidence: 0.2,
+        wrong_answer_md: 'B',
+        status: 'draft',
+        knowledge_hint: null,
+        merged_from_block_ids: [],
+        created_at: now,
+        updated_at: now,
+        version: 0,
+      },
+    ]);
 
     const result = await runAutoEnrollForSession({
       db,
       sessionId,
       subjectId: 'yuwen',
-      env: { [FLAG]: 'true' },
       // Attribution failure is ordinary (provider outage / no candidate): the block
       // still enters the library with `knowledge: 'missing'`.
       tagKnowledgeFn: async () => {
@@ -210,7 +255,9 @@ describe('runAutoEnrollForSession', () => {
       },
     });
     expect(result.status).toBe('completed');
-    expect(result.enrolled).toBe(1);
+    // The unattributed block and the answered block (partial page) both enter the bank;
+    // the answered one keeps its captured work as evidence without grading it.
+    expect(result.enrolled).toBe(2);
 
     const [block] = await db.select().from(question_block).where(eq(question_block.id, blockId));
     expect(block?.status).toBe('auto_enrolled');
@@ -224,6 +271,32 @@ describe('runAutoEnrollForSession', () => {
     expect(enrolledQuestion?.metadata).toMatchObject({
       ingestion_enrollment: { knowledge: 'missing' },
     });
+    // The publication event must carry the ingestion session: that is the lineage the
+    // admission gate proves its source purpose from.
+    const [published] = await db
+      .select({ sessionId: event.session_id, payload: event.payload })
+      .from(event)
+      .where(
+        and(
+          eq(event.action, 'experimental:assessment_publish'),
+          eq(event.subject_id, block.imported_question_id),
+        ),
+      );
+    expect(published?.sessionId).toBe(sessionId);
+
+    const [answered] = await db
+      .select()
+      .from(question_block)
+      .where(eq(question_block.id, answeredBlockId));
+    expect(answered?.status).toBe('auto_enrolled');
+    if (!answered?.imported_question_id) throw new Error('answered block has no question');
+    const [answeredQuestion] = await db
+      .select()
+      .from(question)
+      .where(eq(question.id, answered.imported_question_id));
+    // Whole pages stay machine prompt input; no answer key or grading is produced here.
+    expect(answeredQuestion?.image_refs).toEqual(['asset_1']);
+    expect(answeredQuestion?.reference_md).toBeNull();
 
     await revertAutoEnrolledBlock(db, { blockId, sessionId });
     const [reverted] = await db.select().from(question_block).where(eq(question_block.id, blockId));
