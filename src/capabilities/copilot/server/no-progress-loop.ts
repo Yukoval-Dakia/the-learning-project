@@ -1,8 +1,10 @@
 import { type HelpProviderFault, helpExitLead } from '@/ai/help-provider-fault';
 import type { EvidenceFact, NoProgressCloseReason, NoProgressClosure } from '@/ai/no-progress-loop';
+import { BLOCK_PLACE_PATTERN } from '@/core/schema/blocks';
 import type { Db, Tx } from '@/db/client';
 import { writeEvaluationCorrectionProposal } from '@/kernel/proposals/producers';
 import { getQuestionTimeline } from '@/kernel/read-models/question-activity';
+import { stripCopilotInternalComments } from './prose-stream';
 
 export type {
   EvidenceFact,
@@ -199,6 +201,7 @@ function helpFaultOfReason(reason: NoProgressCloseReason): HelpProviderFault | u
 export function renderNoProgressClosure(
   closure: NoProgressClosure,
   fallback: VerifiedFallback,
+  options: { emptyReply?: boolean } = {},
 ): string {
   const helpFault = helpFaultOfReason(closure.reason);
   const why = helpFault
@@ -212,5 +215,29 @@ export function renderNoProgressClosure(
         ? '已经按这次对话里说明的判词异议登记了一条判分复核提案；接受后按冻结作答重判，不改写原来的评价。'
         : '如果对这次判分有疑问，直接在这条对话里说明，可以发起一次判分复核：复核按冻结作答重判，不改写原来的评价。'
       : '可以在这次对话里直接继续，说明下一步要看哪一题或哪一次作答。';
+  if (
+    closure.reason === 'no_progress' &&
+    fallback.kind !== 'grading_correction' &&
+    options.emptyReply
+  )
+    return '这次先停在这里。你可以直接告诉我下一步想看哪道题，或者哪一次作答。';
   return [why, '', '下一步', next].join('\n');
+}
+
+/** A visible answer is one the learner can read after internal comments and block
+ *  placements are removed. An empty answer still needs one human sentence. */
+export function hasVisibleModelAnswer(text: string): boolean {
+  return stripCopilotInternalComments(text).replace(BLOCK_PLACE_PATTERN, '').trim().length > 0;
+}
+
+/** A normal no-progress stop after the model already answered needs no second
+ *  system-voice explanation; budget/help failures and grading corrections do. */
+export function shouldAppendNoProgressClosure(
+  closure: NoProgressClosure,
+  fallback: VerifiedFallback,
+  modelReply: string,
+): boolean {
+  if (closure.reason !== 'no_progress') return true;
+  if (fallback.kind === 'grading_correction') return true;
+  return !hasVisibleModelAnswer(modelReply);
 }

@@ -53,8 +53,10 @@ import {
   type SealedCorrectionFiling,
   assistantProse,
   chooseVerifiedFallback,
+  hasVisibleModelAnswer,
   mergeNoProgressReply,
   renderNoProgressClosure,
+  shouldAppendNoProgressClosure,
 } from './no-progress-loop';
 import { createCopilotProposalFlowGate } from './proposal-flow-gate';
 import { createCopilotProseStream } from './prose-stream';
@@ -741,15 +743,32 @@ export function createCopilotExecutionOwner(
           })
         : undefined;
       // Keep the assistant prose; the closure is appended, not a replacement.
+      const modelReply = assistantProse(result.text, terminalText);
+      const appendClosure =
+        sealedClosure !== undefined &&
+        planned !== undefined &&
+        shouldAppendNoProgressClosure(sealedClosure, planned.fallback, modelReply);
+      const closureCopy = appendClosure
+        ? renderNoProgressClosure(sealedClosure, planned.fallback, {
+            emptyReply: !hasVisibleModelAnswer(modelReply),
+          })
+        : undefined;
       const closureText =
-        sealedClosure && planned
-          ? mergeNoProgressReply(
-              assistantProse(result.text, terminalText),
-              renderNoProgressClosure(sealedClosure, planned.fallback),
-            )
-          : undefined;
-      const partial = closureText !== undefined ? false : result.partial === true;
-      const executionError = closureText !== undefined ? undefined : result.error;
+        closureCopy !== undefined ? mergeNoProgressReply(modelReply, closureCopy) : undefined;
+      // A sealed no-progress closure without its copy still owns the full
+      // accumulated prose. Cancellation keeps the published terminal bytes
+      // unchanged, so it stays on `result.text`/`terminalText`.
+      const sealedExit = sealedClosure !== undefined;
+      const partial = sealedExit ? false : result.partial === true;
+      const sealedNoProgressWithoutCopy =
+        sealedClosure?.reason === 'no_progress' &&
+        !cancelled &&
+        !result.partial &&
+        closureCopy === undefined;
+      const finalText =
+        closureText ??
+        (sealedNoProgressWithoutCopy ? modelReply : partial ? result.text : terminalText);
+      const executionError = sealedExit ? undefined : result.error;
       const finishReason = sealedClosure
         ? sealedClosure.reason
         : (result.finishReason ?? 'unknown');
@@ -757,14 +776,11 @@ export function createCopilotExecutionOwner(
         { operation: 'finalize', taskKind: 'CopilotTask', taskRunId: result.task_run_id },
         async (reportOutcome) => {
           const finalized = await finalizer.finalizeTerminal(
-            closureText ?? (partial ? result.text : terminalText),
-            closureText === undefined && partial ? result.providerFailure : undefined,
+            finalText,
+            !sealedExit && partial ? result.providerFailure : undefined,
             {
               streamedText: streamedProse,
-              retainedTail:
-                sealedClosure && planned
-                  ? renderNoProgressClosure(sealedClosure, planned.fallback)
-                  : undefined,
+              retainedTail: closureCopy,
             },
           );
           if (finalized.receipt.assurance === 'unsealed') {
