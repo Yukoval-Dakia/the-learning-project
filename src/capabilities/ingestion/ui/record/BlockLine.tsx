@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { isLowJudgeConfidence } from '@/core/judge-confidence';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { RescueButton, RevertButton } from './BlockTools';
-import { hasEmptyOptions, promptOf, withoutPrintedNumber } from './block-text';
+import { BlockFigures } from './BlockFigures';
+import { hasOptionsWithoutFigure, lineText, promptOf } from './block-text';
 import type { QuestionEdit, Readiness } from './import-draft';
 import { readiness } from './import-draft';
 import { KnowledgePick } from './KnowledgePick';
@@ -48,12 +49,12 @@ export function BlockLine({
 }) {
   const [editing, setEditing] = useState(false);
   const lowConfidence = isLowJudgeConfidence(block.workflow_judge_confidence);
-  const emptyOptions = hasEmptyOptions(block);
+  const emptyOptions = hasOptionsWithoutFigure(block);
   const notes =
     lowConfidence || emptyOptions ? (
       <p className="rc-line-note">
         {lowConfidence && <span>这道题认得把握不高，对照原页看一下。</span>}
-        {emptyOptions && <span>选项的文字没读出来，可能是图，对照原页看。</span>}
+        {emptyOptions && <span>选项可能是图，这里没显示出来，对照原页看。</span>}
       </p>
     ) : null;
   const first = block.page_spans?.[0];
@@ -79,8 +80,9 @@ export function BlockLine({
         </span>
         <div className="rc-line-main">
           <MathMarkdown className="rc-line-text">
-            {withoutPrintedNumber(promptOf(block), block) || '（没认出文字）'}
+            {lineText(promptOf(block), block) || '（没认出文字）'}
           </MathMarkdown>
+          <BlockFigures block={block} />
           {notes}
           <div className="rc-line-tools">
             {check && (
@@ -127,9 +129,10 @@ export function BlockLine({
           />
         ) : (
           <MathMarkdown className="rc-line-text">
-            {withoutPrintedNumber(edit.prompt, block) || '（没认出文字）'}
+            {lineText(edit.prompt, block) || '（没认出文字）'}
           </MathMarkdown>
         )}
+        <BlockFigures block={block} />
         {notes}
         {!edit.skip && (
           <KnowledgePick
