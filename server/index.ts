@@ -134,6 +134,14 @@ async function installSettlementPortsBeforeServe(): Promise<void> {
   installSettlementCascadeRevert(orchestrateCascadeRevert);
 }
 
+// Batch-undo guards are installed from the composition root (kernel cannot import a
+// capability; the shell read model cannot import the platform). Both the digest
+// route and the batch retract entry read them through the kernel port.
+async function installProposalUndoGuardsBeforeServe(): Promise<void> {
+  const { installProposalUndoGuards } = await import('@/server/proposals/undo-guards');
+  installProposalUndoGuards();
+}
+
 // YUK-1007 — admin config 读面的运行时事实注入（providers[] / infra schedules /
 // runtime 常量 / consumer-effective 值）。组合根（本进程）聚合一切真相源后经
 // observability/public setter 注入**工厂**：route 每请求重调，跟随 env/热加载
@@ -218,6 +226,7 @@ void (async () => {
   await registerToolsBeforeServe();
   await installPracticeOperationsBeforeServe();
   await installSettlementPortsBeforeServe();
+  await installProposalUndoGuardsBeforeServe();
   await recoverToolOperationsBeforeServe();
   await injectAdminConfigFactsBeforeServe();
   await injectAdminConfigWriterBeforeServe();
