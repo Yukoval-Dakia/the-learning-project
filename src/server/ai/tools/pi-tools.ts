@@ -102,9 +102,13 @@ export interface PiRemoteMcpMountHandle {
   close(): Promise<void>;
 }
 
-// Optional search must not hold a learner's reply hostage; TEST's unreachable
-// endpoint took about 10–12s to fail. Share this budget across connect and tools/list.
-const OPTIONAL_SEARCH_STARTUP_TIMEOUT_MS = 12_000;
+// Optional search must not hold a learner's reply hostage, but the limit is a
+// hang guard, not a way to save time (owner 2026-11-07, YUK-1983): TEST's
+// unreachable endpoint took about 10–12s to fail (#2632), leaving zero margin
+// for a merely slow handshake — the run then degrades and loses search. 30s is
+// ~2.5× that observed worst failure latency; a working handshake measures
+// ~1–2s (YUK-1983 dev probes). Share this budget across connect and tools/list.
+const OPTIONAL_SEARCH_STARTUP_TIMEOUT_MS = 30_000;
 
 function isOptionalSearch(mount: Extract<PiToolMount, { type: 'remote-mcp' }>, kind?: string) {
   return kind === 'CopilotTask' && mount.serverName === 'exa' && mount.optional === true;

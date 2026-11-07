@@ -1,5 +1,6 @@
 import { and, eq } from 'drizzle-orm';
 import { piDomainMount, piToolWireName } from '@/ai/pi-tool-mount';
+import { resolveTaskBudget } from '@/capabilities/task-registry';
 import { classifyCrisisExpression, crisisTemplateForClass } from '@/core/crisis/classify';
 import { newId } from '@/core/ids';
 import { db } from '@/db/client';
@@ -166,7 +167,9 @@ export async function EDIT(req: Request) {
                 db,
                 taskRunId: id,
                 providerAttemptCaller: 'api',
-                providerSessionDeadlineAt: Date.now() + 120_000,
+                // Same budget as the DreamingTask run; a fixed shorter window
+                // fails deep query_context reads while the run continues.
+                providerSessionDeadlineAt: Date.now() + resolveTaskBudget('DreamingTask').timeout,
                 callerActor: { kind: 'agent', ref: 'dreaming' },
                 causedByEventId: id,
                 derivationPolicy: 'allow',

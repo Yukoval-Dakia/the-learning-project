@@ -1,6 +1,6 @@
 // One Curator turn owns consolidation. The job only supplies its trigger.
 import { piDomainMount, piToolWireName } from '@/ai/pi-tool-mount';
-import { DEFAULT_TASK_BUDGET } from '@/ai/task-spec';
+import { resolveTaskBudget } from '@/capabilities/task-registry';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { withinSessionAdvisoryLock } from '@/db/session-advisory-lock';
@@ -14,19 +14,25 @@ import { loadLearnerContext } from './index';
 import { readLegacyFacts } from './legacy-facts';
 import { readTopics, refreshTopicMetadata, topicBoard, withdrawnTopicEvidence } from './topics';
 
+/** Let a holder that just hit its run timer finish cleanup before calling it busy. */
+const LOCK_WAIT_MARGIN_MS = 60_000;
+
 export async function runCurator(db: Db, reason: 'nightly' | 'activity') {
+  const runTimeoutMs = resolveTaskBudget('DreamingTask').timeout;
   return withinSessionAdvisoryLock(
     db,
     {
       key: advisoryLockRegistry.curatorConsolidation.key,
       busy: () => new Error('Curator consolidation busy'),
     },
-    new Date(Date.now() + DEFAULT_TASK_BUDGET.timeout),
-    () => runCuratorTurn(db, reason),
+    // The holder is one Dreaming run: wait its full budget (+ cleanup margin) so
+    // an activity trigger is deferred, not dropped while the nightly run is live.
+    new Date(Date.now() + runTimeoutMs + LOCK_WAIT_MARGIN_MS),
+    () => runCuratorTurn(db, reason, runTimeoutMs),
   );
 }
 
-async function runCuratorTurn(db: Db, reason: 'nightly' | 'activity') {
+async function runCuratorTurn(db: Db, reason: 'nightly' | 'activity', runTimeoutMs: number) {
   const id = newId();
   const now = new Date();
   await writeEvent(db, {
@@ -86,7 +92,9 @@ async function runCuratorTurn(db: Db, reason: 'nightly' | 'activity') {
             db,
             taskRunId: id,
             providerAttemptCaller: 'worker',
-            providerSessionDeadlineAt: Date.now() + 120_000,
+            // A shorter window fails query_context deep reads (hard_deadline_exceeded)
+            // while the run continues; match the run's own budget.
+            providerSessionDeadlineAt: Date.now() + runTimeoutMs,
             callerActor: { kind: 'agent', ref: 'dreaming' },
             causedByEventId: id,
             derivationPolicy: 'allow',

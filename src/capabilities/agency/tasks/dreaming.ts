@@ -17,7 +17,16 @@ export const dreamingTaskSpec = {
   definition: {
     kind: 'DreamingTask',
     description: 'Curator consolidates learner context through reversible versioned DomainTools.',
-    budget: { ...DEFAULT_BUDGET, maxIterations: Number(DEFAULT_BUDGET.maxIterations) },
+    // Own timeout, above the tier default (YUK-1983): TEST measured 18 runs
+    // 2026-10-07→11-05 with max 212s / p95 142s
+    // (tlp-audit-artifacts/test-to-nas/route-c-plus-counts-20261106.txt) —
+    // 13/18 exceeded 60s, so this agent task must not sit on the short-tier
+    // default. Bounded above by the 1h no-progress closeout.
+    budget: {
+      ...DEFAULT_BUDGET,
+      maxIterations: Number(DEFAULT_BUDGET.maxIterations),
+      timeout: 300_000,
+    },
     needsToolCall: true,
     isMultimodal: false,
     // The nightly handler supplies the surface-specific DomainTool allowlist

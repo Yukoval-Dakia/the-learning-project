@@ -50,7 +50,7 @@ export const mistakeEnrollTaskSpec = {
     kind: 'MistakeEnrollTask',
     description:
       'T-OC slice A1 (YUK-145, OC-5) — 给一道已作答的录入题草拟错题元数据：判定 outcome（failure/partial/success/unanswered）+ 题型 + 难度 + （错答时）错因。单次结构化输出，非 multimodal。observe-only：草稿挂到 auto_enroll_observed 审计事件，不写 domain 行（enroll flag OFF）。',
-    budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1, timeout: 60_000 },
+    budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1 },
     needsToolCall: false,
     isMultimodal: false,
     allowedTools: [],
