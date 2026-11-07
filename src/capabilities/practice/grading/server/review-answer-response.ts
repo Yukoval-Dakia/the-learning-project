@@ -40,6 +40,11 @@ export function projectReviewAnswerResponse(body: CreateAttemptBody, result: Rev
       // Server-computed evidence split: exposure (sealed receipt), judged
       // outcome, and the learner's own claim stay separate — a correct or
       // confident assisted answer is still not independent.
+      // self_claim echoes what the learner asserted in THIS request: rating is
+      // only a claim when they chose it themselves (self_report or a manual
+      // rating); under auto_rate the rating is the judge's suggestion, so the
+      // claim stays null. A replayed submission repeats the original request,
+      // so the echoed claim matches the one sealed with the submit.
       evidence: {
         assistance: committed.assistance
           ? {

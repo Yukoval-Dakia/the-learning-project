@@ -35288,7 +35288,10 @@ export interface operations {
                                 /** @enum {string} */
                                 status: "accepted" | "already_accepted" | "rejected" | "failed";
                             }[];
+                            member_ids: string[];
                             proposal_ids: string[];
+                            /** @enum {string} */
+                            state: "open" | "closed";
                         }[];
                     };
                 };

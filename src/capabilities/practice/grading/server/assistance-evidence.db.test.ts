@@ -161,6 +161,8 @@ describe('assistance evidence separation', () => {
     const db = testDb();
     const f = await nativeSoloHttpFixture(db);
     const issuanceId = f.body().assessment.issuance_id;
+    // harmless_clarification is the strictest fold: impact alone would read
+    // independent, but a v1 row can never prove the exposure boundary.
     await writeEvent(db, {
       id: 'v1_hint_exposure',
       actor_kind: 'user',
@@ -172,7 +174,7 @@ describe('assistance evidence separation', () => {
       payload: {
         version: 1,
         kind: 'hint',
-        impact: 'unknown',
+        impact: 'harmless_clarification',
         content_digest: HINT_DIGEST,
       },
       created_at: new Date(),

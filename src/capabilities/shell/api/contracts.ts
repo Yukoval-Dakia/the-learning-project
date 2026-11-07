@@ -221,8 +221,9 @@ export const ProposalBatchAcceptItemSchema = z.object({
 });
 
 export const ProposalBatchAcceptResponseSchema = z.object({
-  // Durable anchor (experimental:proposal_batch_accept) for undoing the set
-  // later; null when no new accept landed (a pure replay already has its anchor).
+  // Durable batch identity derived from the requested id set; the same set
+  // always replays to the same batch. Null only when nothing ended accepted
+  // and no result anchor exists (there is nothing to revoke).
   batch_id: z.string().nullable(),
   items: z.array(ProposalBatchAcceptItemSchema),
   summary: z.object({
@@ -236,10 +237,15 @@ export const ProposalBatchAcceptResponseSchema = z.object({
 
 // Recent batch-confirm anchors so a confirmed set can be revoked after the
 // inbox refreshes; revocation itself reuses the single retract path per item.
+// 'open' means membership was persisted before effects but no accepted set was
+// recorded yet — a retry of the same id set completes it as 'closed'.
 export const ProposalBatchAcceptListResponseSchema = z.object({
   batches: z.array(
     z.object({
       batch_id: z.string(),
+      state: z.enum(['open', 'closed']),
+      member_ids: z.array(z.string()),
+      // The accepted (revocable) set; empty while 'open'.
       proposal_ids: z.array(z.string()),
       items: z.array(ProposalBatchAcceptItemSchema),
       created_at: z.string(),

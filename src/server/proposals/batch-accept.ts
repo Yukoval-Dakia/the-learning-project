@@ -14,18 +14,29 @@
 //      without a retract declaration are rejected per item, never accepted.
 //   2. A per-item report: one failure or rejection never rolls back another
 //      item's committed accept.
-//   3. Idempotent replay: an item already carrying an accept decision is
-//      reported as such without a second decision write; an item decided any
-//      other way is rejected.
-//   4. A durable batch anchor (`batch_id -> proposal_ids`) written only when a
-//      new accept lands, so a confirmed set can be revoked through the
-//      canonical single retract path after the inbox refreshes.
+//   3. Idempotent replay: `batch_id` is derived from the id set, so a retry is
+//      the same batch, not a new one. An item already carrying an accept
+//      decision — whether from an earlier run of this batch or the single
+//      path — reports `already_accepted` without a second decision write.
+//   4. Durable identity BEFORE the first effect: the members anchor
+//      (`stage:'members'`) is persisted before any accept runs, so a crash or
+//      failed result write can never strand committed accepts without a
+//      recoverable batch. Result anchors (`stage:'result'`) record the
+//      accepted set for revoke-by-batch; a retry that finds members-only — or
+//      members whose accepts grew since the recorded set — writes another
+//      result anchor, and readers fold the union of all of them.
+//
+// No request rate limiter: input is bounded (<=200 ids), every item goes
+// through the canonical per-proposal decision lock so replays are no-ops, and
+// the id-derived batch_id makes concurrent duplicates collapse onto one
+// anchor — the worst-case cost of a spammed call equals the same accepts sent
+// individually through the existing single path, which is already unthrottled.
 //
 // Install note: `installBatchConfirmEligibility` publishes the derived kind
 // set through the kernel port so inbox rows carry `batch_confirm_eligible`
 // without kernel importing a capability manifest.
 
-import { createId } from '@paralleldrive/cuid2';
+import { createHash } from 'node:crypto';
 import { and, desc, eq, inArray } from 'drizzle-orm';
 import {
   type AiProposalPayloadT,
@@ -103,6 +114,25 @@ export function installBatchConfirmEligibility(): void {
   installBatchConfirmEligibleKinds([...batchConfirmEligibleKinds()]);
 }
 
+/** The batch is the id set: a retry re-derives the same identity. */
+export function proposalBatchId(ids: readonly string[]): string {
+  const digest = createHash('sha256')
+    .update([...ids].sort().join('\n'))
+    .digest('hex')
+    .slice(0, 24);
+  return `proposal_batch_${digest}`;
+}
+
+const MEMBERS_EVENT_ID = (batchId: string) => `evt_${batchId}`;
+// Content-keyed so a concurrent write of the SAME accepted set dedupes on the
+// primary key while a set that grew between runs lands as a second anchor —
+// revoke-by-batch folds the union, it does not overwrite history.
+const RESULT_EVENT_ID = (batchId: string, acceptedIds: readonly string[]) =>
+  `${MEMBERS_EVENT_ID(batchId)}:result:${createHash('sha256')
+    .update([...acceptedIds].sort().join('\n'))
+    .digest('hex')
+    .slice(0, 12)}`;
+
 function parseInput(input: unknown) {
   const parsed = ProposalBatchAcceptInput.safeParse(input);
   if (!parsed.success) {
@@ -141,6 +171,89 @@ function item(
   };
 }
 
+interface BatchAnchors {
+  members: typeof event.$inferSelect | null;
+  /** Union of every result anchor's accepted set — the revocable batch. */
+  acceptedIds: ReadonlySet<string>;
+}
+
+async function loadBatchAnchors(db: Db, batchId: string): Promise<BatchAnchors> {
+  const rows = await db
+    .select()
+    .from(event)
+    .where(and(eq(event.action, PROPOSAL_BATCH_ACCEPT_ACTION), eq(event.subject_id, batchId)))
+    .orderBy(event.created_at);
+  const acceptedIds = new Set<string>();
+  const anchors: BatchAnchors = { members: null, acceptedIds };
+  for (const row of rows) {
+    const payload = row.payload as { stage?: unknown; proposal_ids?: unknown };
+    if (payload.stage === 'members') anchors.members ??= row;
+    if (payload.stage === 'result' && Array.isArray(payload.proposal_ids)) {
+      for (const id of payload.proposal_ids) {
+        if (typeof id === 'string') acceptedIds.add(id);
+      }
+    }
+  }
+  return anchors;
+}
+
+/**
+ * Persist the recoverable identity before the first effect. `writeEvent`
+ * ignores duplicate ids, so a concurrent run writing the same deterministic
+ * anchor is a no-op — but if no anchor can be read back afterwards, nothing
+ * may run: an accept committed without a durable batch would be unrecoverable
+ * for revoke-by-set.
+ */
+async function ensureMembersAnchor(db: Db, batchId: string, ids: string[]): Promise<void> {
+  await writeEvent(db, {
+    id: MEMBERS_EVENT_ID(batchId),
+    actor_kind: 'user',
+    actor_ref: 'self',
+    action: PROPOSAL_BATCH_ACCEPT_ACTION,
+    subject_kind: 'proposal_batch',
+    subject_id: batchId,
+    outcome: 'success',
+    payload: {
+      version: 2,
+      batch_id: batchId,
+      stage: 'members',
+      proposal_ids: ids,
+    },
+  });
+  const { members } = await loadBatchAnchors(db, batchId);
+  if (!members) {
+    throw new ApiError(
+      'batch_anchor_unavailable',
+      'proposal batch identity could not be persisted; no accept was attempted',
+      500,
+    );
+  }
+}
+
+async function writeResultAnchor(
+  db: Db,
+  batchId: string,
+  acceptedIds: readonly string[],
+  items: BatchAcceptItem[],
+): Promise<void> {
+  await writeEvent(db, {
+    id: RESULT_EVENT_ID(batchId, acceptedIds),
+    actor_kind: 'user',
+    actor_ref: 'self',
+    action: PROPOSAL_BATCH_ACCEPT_ACTION,
+    subject_kind: 'proposal_batch',
+    subject_id: batchId,
+    outcome: 'success',
+    payload: {
+      version: 2,
+      batch_id: batchId,
+      stage: 'result',
+      proposal_ids: [...acceptedIds].sort(),
+      items,
+    },
+  });
+}
+
 /**
  * Confirm a set of pending proposals. `input` is the raw HTTP body; the
  * canonical schema owns validation so the route and future callers share one
@@ -149,7 +262,13 @@ function item(
 export async function batchAcceptProposals(db: Db, input: unknown): Promise<BatchAcceptResult> {
   const parsed = parseInput(input);
   const ids = [...new Set(parsed.proposal_ids)];
+  const batchId = proposalBatchId(ids);
   const eligible = batchConfirmEligibleKinds();
+
+  // Identity and membership must outlive this call before the first effect
+  // lands; a finished batch keeps its result anchor and only replays items.
+  await ensureMembersAnchor(db, batchId, ids);
+  const anchorsBefore = await loadBatchAnchors(db, batchId);
 
   const proposalRows = await db
     .select({ id: event.id, payload: event.payload })
@@ -216,6 +335,7 @@ export async function batchAcceptProposals(db: Db, input: unknown): Promise<Batc
     }
     if (terminal === 'accept') {
       items.push(item(id, payload.kind, 'already_accepted', null));
+      acceptedIds.push(id);
       continue;
     }
     if (!eligible.has(payload.kind)) {
@@ -223,10 +343,13 @@ export async function batchAcceptProposals(db: Db, input: unknown): Promise<Batc
       continue;
     }
     try {
-      await acceptAiProposal(db, id, {
+      const accepted = await acceptAiProposal(db, id, {
         ...(parsed.user_note ? { user_note: parsed.user_note } : {}),
       });
-      items.push(item(id, payload.kind, 'accepted', null));
+      // The canonical replay flag distinguishes a fresh decision from an
+      // accept that raced in via the single path or an earlier batch run.
+      const status = accepted.idempotent === true ? 'already_accepted' : 'accepted';
+      items.push(item(id, payload.kind, status, null));
       acceptedIds.push(id);
     } catch (err) {
       if (err instanceof ApiError) {
@@ -252,29 +375,20 @@ export async function batchAcceptProposals(db: Db, input: unknown): Promise<Batc
     }
   }
 
-  // The anchor exists to revoke this set later, so it is written only when a
-  // new accept actually landed — a fully replayed batch already has its anchor.
-  let batchId: string | null = null;
-  if (acceptedIds.length > 0) {
-    batchId = `proposal_batch_${createId()}`;
-    await writeEvent(db, {
-      id: `evt_${batchId}`,
-      actor_kind: 'user',
-      actor_ref: 'self',
-      action: PROPOSAL_BATCH_ACCEPT_ACTION,
-      subject_kind: 'proposal_batch',
-      subject_id: batchId,
-      outcome: 'success',
-      payload: {
-        version: 1,
-        proposal_ids: acceptedIds,
-        items,
-      },
-    });
+  // The result anchors are what revoke-by-batch consumes. One is written
+  // whenever this run's accepted set adds members beyond what is already
+  // recorded — covering both crash recovery (an earlier run committed accepts
+  // and died before recording them; its members anchor is still here, so this
+  // retry completes the same batch instead of minting a second one) and a
+  // retry that newly accepted a member the first run could not.
+  const effectiveAccepted = [...new Set([...anchorsBefore.acceptedIds, ...acceptedIds])];
+  if (acceptedIds.length > 0 && effectiveAccepted.length > anchorsBefore.acceptedIds.size) {
+    await writeResultAnchor(db, batchId, effectiveAccepted, items);
   }
+  const { acceptedIds: recordedAccepted } = await loadBatchAnchors(db, batchId);
 
   return {
-    batch_id: batchId,
+    batch_id: recordedAccepted.size > 0 ? batchId : null,
     items,
     summary: {
       requested: ids.length,

@@ -7,13 +7,18 @@ import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import { event, learning_item, question } from '@/db/schema';
-import { getCorrectionStatuses } from '@/kernel/events';
+import { getCorrectionStatuses, writeEvent } from '@/kernel/events';
 import { PROPOSAL_BATCH_ACCEPT_ACTION } from '@/kernel/proposals/batch-confirm';
 import { getProposalInboxRow } from '@/kernel/proposals/inbox';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { migrateCanonicalProjections } from '../../../scripts/migrate-canonical-projections';
 import { resetDb, testDb } from '../../../tests/helpers/db';
-import { batchAcceptProposals, installBatchConfirmEligibility } from './batch-accept';
+import { acceptAiProposal } from './accept-action';
+import {
+  batchAcceptProposals,
+  installBatchConfirmEligibility,
+  proposalBatchId,
+} from './batch-accept';
 import { retractAiProposal } from './retract-action';
 
 const NOW = new Date('2026-11-08T00:00:00Z');
@@ -195,7 +200,7 @@ describe('proposal batch confirmation', () => {
     expect(done.status).toBe('done');
 
     const replay = await batchAcceptProposals(db, { proposal_ids: ids });
-    expect(replay.batch_id).toBeNull();
+    expect(replay.batch_id).toBe(first.batch_id);
     expect(replay.items.map((entry) => entry.status)).toEqual([
       'already_accepted',
       'already_accepted',
@@ -212,8 +217,16 @@ describe('proposal batch confirmation', () => {
       .select()
       .from(event)
       .where(eq(event.action, PROPOSAL_BATCH_ACCEPT_ACTION));
-    expect(anchors).toHaveLength(1);
-    expect(anchors[0]).toMatchObject({
+    expect(anchors).toHaveLength(2);
+    const members = anchors.find((row) => row.payload.stage === 'members');
+    const result = anchors.find((row) => row.payload.stage === 'result');
+    expect(members).toMatchObject({
+      subject_kind: 'proposal_batch',
+      subject_id: first.batch_id,
+      outcome: 'success',
+      payload: { proposal_ids: ids },
+    });
+    expect(result).toMatchObject({
       subject_kind: 'proposal_batch',
       subject_id: first.batch_id,
       outcome: 'success',
@@ -231,5 +244,57 @@ describe('proposal batch confirmation', () => {
     const third = await batchAcceptProposals(db, { proposal_ids: ['lc_b1'] });
     expect(third.items).toMatchObject([{ proposal_id: 'lc_b1', status: 'rejected' }]);
     expect(await rateCount('lc_b1')).toBe(1);
+  });
+
+  // @invariant data: a run interrupted after committing accepts but before
+  // recording the batch result still leaves a recoverable batch — the retry
+  // completes the SAME batch id and revoke-by-set works through the canonical
+  // single retract path
+  // @fails-if a retry reports batch_id=null or mints a second batch, the
+  // recovered batch is missing the accepted members, or revoke-by-set loses
+  // the canonical retract trail
+  it('recovers a batch interrupted between the accepted effect and its result', async () => {
+    const db = testDb();
+    installBatchConfirmEligibility();
+    await seedLearningItem('li_c1');
+    await migrateCanonicalProjections(db);
+    await seedCompletionProposal('lc_c1', 'li_c1');
+
+    // Crash state: the members anchor persisted before the first effect and
+    // the accept committed, but no result anchor exists — exactly what a dead
+    // process between the two writes leaves behind.
+    const ids = ['lc_c1'];
+    const batchId = proposalBatchId(ids);
+    await writeEvent(db, {
+      id: `evt_${batchId}`,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: PROPOSAL_BATCH_ACCEPT_ACTION,
+      subject_kind: 'proposal_batch',
+      subject_id: batchId,
+      outcome: 'success',
+      payload: { version: 2, batch_id: batchId, stage: 'members', proposal_ids: ids },
+    });
+    await acceptAiProposal(db, 'lc_c1');
+
+    const recovered = await batchAcceptProposals(db, { proposal_ids: ids });
+    expect(recovered.batch_id).toBe(batchId);
+    expect(recovered.items).toMatchObject([{ proposal_id: 'lc_c1', status: 'already_accepted' }]);
+    expect(await rateCount('lc_c1')).toBe(1);
+
+    const anchors = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, PROPOSAL_BATCH_ACCEPT_ACTION));
+    expect(anchors).toHaveLength(2);
+    const result = anchors.find((row) => row.payload.stage === 'result');
+    expect(result).toMatchObject({
+      subject_id: batchId,
+      payload: { proposal_ids: ['lc_c1'] },
+    });
+
+    await retractAiProposal(db, 'lc_c1');
+    const [restored] = await db.select().from(learning_item).where(eq(learning_item.id, 'li_c1'));
+    expect(restored.status).toBe('pending');
   });
 });

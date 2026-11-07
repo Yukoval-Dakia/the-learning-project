@@ -98,8 +98,9 @@ export async function readSubmissionAssistanceReceipt(
 
 /**
  * Fold assistance events into the sealed receipt. A v1 event has no dose and
- * no phase: it keeps `max_dose`/`phase` unprovable (null) and can never be
- * upgraded to independent.
+ * no phase: it keeps `max_dose`/`phase` unprovable (null), and its mere
+ * presence bars `independent` — a historical event can never prove the
+ * exposure boundary a v2 receipt can.
  */
 function projectAssistanceRows(
   rows: Array<{ id: string; payload: Record<string, unknown> }>,
@@ -127,7 +128,7 @@ function projectAssistanceRows(
   return {
     status: impacts.includes('answer_help')
       ? ('assisted' as const)
-      : impacts.some((impact) => impact !== 'harmless_clarification')
+      : unknownVersion || impacts.some((impact) => impact !== 'harmless_clarification')
         ? ('unknown' as const)
         : ('independent' as const),
     event_ids: rows.map((row) => row.id).sort(),
