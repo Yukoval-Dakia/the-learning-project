@@ -278,8 +278,19 @@ describe('knowledge reader statistical signals', () => {
     const expandView = buildCopilotToolResultSnapshot('expand_knowledge_subgraph', expanded);
     expect(learnerView.state).toBe('available');
     expect(expandView.state).toBe('available');
-    expect(JSON.stringify(learnerView)).not.toContain('evidence_event_ids');
-    expect(JSON.stringify(expandView)).not.toContain('readings');
-    expect(JSON.stringify(queried)).toContain('evidence_event_ids');
+    expect(hasKey(learnerView, 'evidence_event_ids')).toBe(false);
+    expect(hasKey(expandView, 'readings')).toBe(false);
+    expect(hasKey(expandView, 'consecutive_errors')).toBe(false);
+    expect(queried.edges.some((edge) => edge.evidence_event_ids.known)).toBe(true);
   });
 });
+
+function hasKey(value: unknown, key: string): boolean {
+  if (Array.isArray(value)) return value.some((item) => hasKey(item, key));
+  if (value !== null && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    if (Object.hasOwn(record, key)) return true;
+    return Object.values(record).some((child) => hasKey(child, key));
+  }
+  return false;
+}
