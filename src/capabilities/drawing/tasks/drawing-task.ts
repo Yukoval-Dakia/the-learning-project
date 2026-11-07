@@ -12,8 +12,6 @@ import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
 import { rebuildSvgFigure } from '@/kernel/blocks/svg-rebuild';
 
 export const DRAWING_TASK_KIND = 'DrawingTask';
-export const SOL_PROVIDER = 'openai';
-export const SOL_MODEL = 'gpt-6.1-sol';
 export const SOL_REASONING_LEVEL = 'high';
 
 // Loop guard only — above the longest real single-round draw, never a speed knob.
@@ -68,8 +66,10 @@ export const drawingTaskSpec = {
   definition: {
     kind: DRAWING_TASK_KIND,
     description: 'Single-round Sol free-form SVG drawing for generative-UI blocks (slice 1).',
-    defaultProvider: SOL_PROVIDER,
-    defaultModel: SOL_MODEL,
+    // Dedicated Sol drawing lane — the model id lives only here (the legal
+    // tasks/** defaultModel site); route asserts read this pair back, never a literal.
+    defaultProvider: 'openai',
+    defaultModel: 'gpt-6.1-sol',
     budget: {
       ...DEFAULT_TASK_BUDGET,
       maxIterations: 1,

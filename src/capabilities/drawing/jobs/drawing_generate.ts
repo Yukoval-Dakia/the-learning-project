@@ -22,13 +22,8 @@ import {
   drawingBossJobId,
   recheckSources,
 } from '../server/drawing-service';
-import { assertSolRoute } from '../server/route-assert';
-import {
-  DRAWING_TASK_KIND,
-  SOL_MODEL,
-  SOL_PROVIDER,
-  parseDrawingOutput,
-} from '../tasks/drawing-task';
+import { SOL_LANE, assertSolRoute } from '../server/route-assert';
+import { DRAWING_TASK_KIND, parseDrawingOutput } from '../tasks/drawing-task';
 
 type DrawingRow = typeof drawing.$inferSelect;
 
@@ -162,9 +157,9 @@ async function processDrawing(db: Db, drawingId: string, boss: DrawingBoss): Pro
         // Literal wire assert: closes the gap between the claim-time resolve
         // and the actual provider request (a repin mid-run cannot slip through).
         beforeProviderQuery: async ({ provider, model }) => {
-          if (provider !== SOL_PROVIDER || model !== SOL_MODEL) {
+          if (provider !== SOL_LANE.provider || model !== SOL_LANE.model) {
             throw new TaskConfigError(
-              `DrawingTask wire pair '${provider}/${model}' is not ${SOL_PROVIDER}/${SOL_MODEL} — refusing to send.`,
+              `DrawingTask wire pair '${provider}/${model}' is not ${SOL_LANE.provider}/${SOL_LANE.model} — refusing to send.`,
             );
           }
         },
