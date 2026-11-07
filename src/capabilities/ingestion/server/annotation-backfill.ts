@@ -116,6 +116,9 @@ export async function runAnnotationBackfill(
     const now = params.now ?? new Date();
     let current: QuestionRow = row;
     let metadata = readMetadata(current.metadata);
+    // Only ingestion-enrolled questions carry the repair markers. An explicit-id
+    // payload must not annotate arbitrary bank rows.
+    if (!('ingestion_enrollment' in metadata)) continue;
     let enrollment: EnrollmentMetadata = {
       ...readRecord(metadata.ingestion_enrollment),
     };

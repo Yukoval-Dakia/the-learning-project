@@ -236,8 +236,15 @@ async function stampFreshKnowledgeEmbedding(
         embed_content_hash: embedHash(text),
         embed_source_revision: sql`${knowledge.version}`,
       })
-      // Only fill a missing vector: a concurrent backfill that won the race is kept.
-      .where(and(eq(knowledge.id, params.id), isNull(knowledge.embedding)));
+      // Only fill a missing vector: a concurrent backfill that won the race is kept,
+      // and a rename/reparent in the window rejects a vector computed for the old name.
+      .where(
+        and(
+          eq(knowledge.id, params.id),
+          isNull(knowledge.embedding),
+          sql`${knowledge.name} IS NOT DISTINCT FROM ${params.name}`,
+        ),
+      );
   } catch (err) {
     console.warn(`[tag_knowledge] fresh KC ${params.id} left without an embedding`, err);
   }

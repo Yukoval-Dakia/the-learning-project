@@ -13,6 +13,7 @@ import {
 } from '@/core/schema/solution-annotation';
 import type { Db } from '@/db/client';
 import { ai_task_runs } from '@/db/schema';
+import { parseTaskOutput } from '@/kernel/parse-task-output';
 import { markAiTaskRunOutputInvalid } from '@/server/ai/log';
 import { type RunTaskCallCtx, makeRunTaskTextFn } from '@/server/ai/runner-fn';
 
@@ -68,7 +69,7 @@ export async function generateSolutionAnnotation(
 
   let parsed: SolutionAnnotationOutputT;
   try {
-    parsed = SolutionAnnotationOutput.parse(extractJsonObject(text));
+    parsed = parseTaskOutput(text, 'IngestionSolutionAnnotationTask', SolutionAnnotationOutput);
   } catch (err) {
     if (taskRunId !== undefined) {
       try {
@@ -97,15 +98,6 @@ export async function generateSolutionAnnotation(
     generated_at: new Date().toISOString(),
     ...(costUsd !== undefined ? { cost_usd: costUsd } : {}),
   };
-}
-
-function extractJsonObject(text: string): unknown {
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
-  if (start === -1 || end === -1 || end < start) {
-    throw new Error('IngestionSolutionAnnotationTask output did not contain a JSON object');
-  }
-  return JSON.parse(text.slice(start, end + 1));
 }
 
 async function runFacts(
