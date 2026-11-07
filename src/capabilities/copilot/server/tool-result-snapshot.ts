@@ -150,6 +150,20 @@ function bare(name: string): string {
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
+
+// Recurrence counts and evidence-id lists stay in the model tool result.
+// The learner snapshot drops them so a saved hero cannot show the tally.
+const MODEL_ONLY_COUNT_KEYS = new Set(['recurrence_count', 'evidence_event_ids', 'readings']);
+
+function omitModelOnlyCounts(value: unknown): void {
+  if (Array.isArray(value)) {
+    for (const item of value) omitModelOnlyCounts(item);
+    return;
+  }
+  if (!record(value)) return;
+  for (const key of MODEL_ONLY_COUNT_KEYS) delete value[key];
+  for (const child of Object.values(value)) omitModelOnlyCounts(child);
+}
 function select(
   value: Record<string, unknown>,
   fields: readonly string[],
@@ -267,6 +281,7 @@ export function buildCopilotToolResultSnapshot(
         .record(z.string(), z.union([z.string(), z.number(), z.null()]))
         .parse(select(projected.filter_applied, FILTER_FIELDS));
     }
+    omitModelOnlyCounts(projected);
     if (policy !== 'generated' && record(output) && output.context_budget !== undefined)
       projected.context_budget = CONTEXT_BUDGET.parse(output.context_budget);
     const omissions: ToolResultOmission[] = [];

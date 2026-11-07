@@ -238,7 +238,7 @@ Must include:
 - root clusters from `SubjectGraphGuide`
 - relation type direction and subject-specific meaning
 - current graph counts per root
-- weak/failure counts if cheap
+- weak/failure counts if cheap. A node is weak when any known reading says so: mastery below 0.55, a consecutive-error run of at least 2, an error rate of at least 0.5 on two or more graded outcomes, a worsening last theta move, a stale practice gap (the existing 30-day bucket), or one cause at least twice in 30 days. A missing reading is null, not zero
 - one `reading_hint` string
 
 The agent should call this before broad graph reasoning, especially Copilot and Maintenance.
@@ -250,8 +250,9 @@ Must include:
 - `path` from root to node
 - `role` or cluster classification from the active guide
 - local neighbor edges
-- recent failures with short excerpts
+- recent failures with short excerpts and the effective cause (the learner's attribution when present, otherwise the judge). The cause is a signal; unknown stays null
 - nullable mastery / weakness stats
+- mesh-edge evidence event ids from the proposal that created the edge. No proposal lineage is unknown, not an empty list. Recurrence counts and those evidence ids are for the model; the learner-facing snapshot omits them
 
 It should not return the full graph unless explicitly bounded and small.
 
