@@ -4,6 +4,7 @@ import type { FailureDiagnostics } from '@/ai/failure-diagnostics';
 import type { TaskTimeoutSource } from '@/ai/task-budget';
 import type {
   ProviderRequestEvidence,
+  ProviderStartupDependencyEvidence,
   ProviderTransportEvidence,
   RequestSendState,
   TransportAbortInitiator,
@@ -101,14 +102,22 @@ export interface ProviderTransportCollectorInit {
 }
 
 export class ProviderTransportCollector {
+  private optionalDependency: ProviderStartupDependencyEvidence | undefined;
   private optionalDependencyFailure: FailureDiagnostics | undefined;
 
   get optionalDependencyUnavailable(): boolean {
-    return this.optionalDependencyFailure !== undefined;
+    return this.optionalDependency?.status === 'unavailable';
   }
 
-  noteOptionalDependencyFailure(diagnostics: FailureDiagnostics): void {
+  noteOptionalDependencyFailure(name: 'web_search', diagnostics: FailureDiagnostics): void {
+    this.optionalDependency = { name, status: 'unavailable' };
     this.optionalDependencyFailure = diagnostics;
+  }
+
+  /** Positive evidence: the dependency was mounted and its handshake succeeded. */
+  noteOptionalDependencyConnected(name: 'web_search'): void {
+    this.optionalDependency = { name, status: 'connected' };
+    this.optionalDependencyFailure = undefined;
   }
 
   private readonly budget: MutableBudgetReceipt;
@@ -447,6 +456,7 @@ export class ProviderTransportCollector {
                 'not_sent'
               : 'unknown';
     return {
+      ...(this.optionalDependency ? { startup_dependency: this.optionalDependency } : {}),
       ...(this.optionalDependencyFailure
         ? { startup_dependency_failures: [this.optionalDependencyFailure] }
         : {}),

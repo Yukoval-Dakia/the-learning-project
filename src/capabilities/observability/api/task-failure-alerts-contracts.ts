@@ -4,7 +4,7 @@ export const TaskFailureAlertSchema = z.object({
   /** Deterministic alert id; equals the recorded event id once written. */
   id: z.string(),
   task_kind: z.string(),
-  rule: z.enum(['consecutive', 'rate', 'unsealed', 'optional_dependency']),
+  rule: z.enum(['consecutive', 'rate', 'unsealed']),
   failures: z.number().int().nonnegative(),
   /** Terminal runs counted by the rule (consecutive: equals failures). */
   runs: z.number().int().nonnegative(),
@@ -16,16 +16,22 @@ export const TaskFailureAlertSchema = z.object({
   /** Open in /admin/runs for the error detail. */
   latest_run_id: z.string(),
   latest_finish_reason: z.string().nullable(),
-  /** optional_dependency only: which optional capability degraded. */
-  dependency: z.literal('web_search').optional(),
-  /** optional_dependency only: unknown causes count as network. */
-  category: z.enum(['authorization', 'network']).optional(),
-  /** optional_dependency only: learner copy; never names the provider or host. */
-  learner_title: z.string().optional(),
-  learner_detail: z.string().optional(),
   /** Null until the hourly job has written this episode's event. */
   recorded_event_id: z.string().nullable(),
   recorded_at: z.string().datetime().nullable(),
+});
+
+const DependencyNoticeSchema = z.object({
+  dependency: z.literal('web_search'),
+  /** Unknown causes count as network. */
+  category: z.enum(['authorization', 'network']),
+  /** Learner copy; never names the provider, host, key or cause. */
+  learner_title: z.string(),
+  learner_detail: z.string(),
+  failures: z.number().int().nonnegative(),
+  since: z.string().datetime(),
+  last_failure_at: z.string().datetime(),
+  latest_run_id: z.string(),
 });
 
 export const TaskFailureAlertsResponseSchema = z.object({
@@ -38,6 +44,12 @@ export const TaskFailureAlertsResponseSchema = z.object({
     stale_after_days: z.number().int(),
   }),
   alerts: z.array(TaskFailureAlertSchema),
+  /**
+   * Optional dependencies that keep failing without failing the task. Kept out
+   * of `alerts` so a healthy reply is never shown as a failed task, and never
+   * written as an event (the hourly job records task failures only).
+   */
+  dependency_notices: z.array(DependencyNoticeSchema),
   /** Processes running without a required setting; names only, never values. */
   config_incomplete: z.array(
     z.object({

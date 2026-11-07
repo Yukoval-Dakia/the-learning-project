@@ -142,3 +142,16 @@ export function failureDiagnosticsFromLinks(
 export function failureDiagnosticsCarryEvidence(diagnostics: FailureDiagnostics): boolean {
   return diagnostics.cause.some((link) => link.code !== undefined || link.hostname !== undefined);
 }
+
+/**
+ * A bare hostname from an endpoint URL (`https://h:8443/v1` → `h`). Unparsable
+ * input yields undefined; diagnostics never throw on the path that reports a failure.
+ */
+export function hostnameFromUrl(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  try {
+    return new URL(raw).hostname;
+  } catch {
+    return undefined;
+  }
+}

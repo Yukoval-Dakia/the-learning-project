@@ -229,7 +229,18 @@ export interface ProviderTransportBudgetReceipt {
   readonly http_margin_ms?: number;
 }
 
+export interface ProviderStartupDependencyEvidence {
+  readonly name: 'web_search';
+  readonly status: 'connected' | 'unavailable';
+}
+
 export interface ProviderTransportEvidence {
+  /**
+   * Positive/negative evidence for an optional startup dependency (web search).
+   * A run without this key never mounted the dependency; the dependency alert
+   * read skips it instead of treating it as recovery.
+   */
+  startup_dependency?: ProviderStartupDependencyEvidence;
   /** Optional startup dependency failure; separate from provider send/cost truth. */
   startup_dependency_failures?: readonly FailureDiagnostics[];
   readonly v: 1;

@@ -17,6 +17,7 @@ import {
   failureDiagnostics,
   failureDiagnosticsCarryEvidence,
   failureDiagnosticsFromLinks,
+  hostnameFromUrl,
 } from '@/ai/failure-diagnostics';
 import {
   helpFinishReason,
@@ -1357,7 +1358,7 @@ async function streamTaskCollectingImpl(
         const thrownDiagnostics = failureDiagnostics(error);
         const transportDiagnostics = failureDiagnosticsFromLinks(
           transport.last_failure?.error ?? transport.last_transport_error?.error,
-          'baseUrl' in lifecycle.resolved ? lifecycle.resolved.baseUrl : undefined,
+          hostnameFromUrl('baseUrl' in lifecycle.resolved ? lifecycle.resolved.baseUrl : undefined),
         );
         const failureDiagnosticsForResult =
           failureDiagnosticsCarryEvidence(thrownDiagnostics) || transportDiagnostics === undefined
