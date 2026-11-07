@@ -5,6 +5,7 @@ import type { ToolExecutionGateInput } from './types';
 /** Reviewed existing data reads only. A future read tool is not implicitly admitted. */
 export const ANSWER_ONLY_TOOL_NAMES = [
   'query_knowledge',
+  'get_knowledge_state',
   'get_subject_graph_overview',
   'get_question_context',
   'search_bank',
