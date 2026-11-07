@@ -29,6 +29,7 @@ import { ContextBudgetTracker } from '@/kernel/tools/context-throttle';
 import { ANSWER_ONLY_TOOL_NAMES, derivationToolDenial } from '@/kernel/tools/derivation-policy';
 import type { ModelBinding } from '@/server/ai/execution-adapter';
 import { type StreamCollectResult, runAgentTask, streamTaskCollecting } from '@/server/ai/runner';
+import { isToolArgumentContractFailure } from '@/server/ai/tool-param-contract';
 import { shouldEmitToolUseForCaller } from '@/server/ai/tools/tool-mirror-policy';
 import { resolveCopilotSkillDocs } from '@/subjects/copilot-skills';
 import type { CopilotThinkingEndResult } from '../thinking-lane-contract';
@@ -493,7 +494,13 @@ export function createCopilotExecutionOwner(
     // gate's `{block:false}` allow short-circuit requires it to run after every
     // other deny. No-progress is prepended so a repeat is blocked before the
     // finalizer records it and before the spawn gate can allow it.
-    const noProgress = createNoProgressLoop();
+    const noProgress = createNoProgressLoop({
+      validationError: (observation) =>
+        isToolArgumentContractFailure({
+          isError: observation.isError,
+          content: observation.error ?? observation.output,
+        }),
+    });
     const budgetLandingTimer = setTimeout(
       () => noProgress.landBeforeBudget(),
       Math.max(
