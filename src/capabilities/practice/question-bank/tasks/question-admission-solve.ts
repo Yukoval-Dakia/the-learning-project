@@ -476,7 +476,9 @@ export const questionAdmissionSolveTaskSpec = {
     kind: 'QuestionAdmissionSolveTask',
     description:
       'Independent blind solutions of a frozen question; settled-key solution prior in a separate mode.',
-    budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1, timeout: 120_000 },
+    // TEST longest 131s (tlp-audit-artifacts/test-to-nas/route-c-plus-counts-20261106.txt);
+    // 300s clears it. Prompt, judge identity and maxCost stay unchanged.
+    budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1, timeout: 300_000 },
     needsToolCall: true,
     isMultimodal: false,
     allowedTools: ['mcp__structured_output__submit'],

@@ -42,7 +42,7 @@ export const taggingTaskSpec = {
     kind: 'TaggingTask',
     description:
       'T-OC slice 3 (YUK-145, OC-4) — 给一道抽取出的题（题面文字 + 可选 knowledge_hint）+ 一份知识网格快照（节点 + mesh 边），建议它覆盖哪些 knowledge_id（每条带 confidence + reasoning）+ 一个 overall_confidence。单次结构化输出，非多模态（题面已是文字）。下游 WorkflowJudge 把 confidence 聚合成随题落库的把握信号，不做路由。',
-    budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1, timeout: 60_000 },
+    budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1 },
     needsToolCall: false,
     isMultimodal: false,
     allowedTools: [],

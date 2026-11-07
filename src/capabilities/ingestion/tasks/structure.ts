@@ -7,6 +7,7 @@ import { parseTaskJsonObject } from './parse-json';
 const QuestionOptionOut = z.object({
   label: z.string(),
   text: z.string(),
+  figure_ids: z.array(z.number().int().min(0)).nullable().optional(),
 });
 
 export type StructureNodeT = {
@@ -14,7 +15,7 @@ export type StructureNodeT = {
   role: 'stem' | 'sub' | 'standalone';
   question_no?: string | null;
   prompt_text: string;
-  options?: { label: string; text: string }[] | null;
+  options?: { label: string; text: string; figure_ids?: number[] | null }[] | null;
   answers?: string[] | null;
   analysis?: string | null;
   page_index?: number | null;
@@ -44,6 +45,15 @@ export const StructureOutput = z.object({
   extraction_confidence: z.number().min(0).max(1).default(0),
   warnings: z.array(z.string()).default([]),
   questions: z.array(StructureNode),
+  content_lost: z.boolean().nullable().optional(),
+  figure_handwriting: z
+    .array(
+      z.object({
+        figure_index: z.number().int().min(0),
+        student_answer_present: z.boolean().nullable(),
+      }),
+    )
+    .optional(),
 });
 
 export type StructureOutputT = z.infer<typeof StructureOutput>;
@@ -70,21 +80,22 @@ function buildStructurePrompt(profile: SubjectProfile): string {
   return `你是${profile.displayName}试卷结构化助手（多模态）。输入：
 - user message 里按页顺序附了 N 张试卷/作业页面图片（第 1 张 = page_index 0，依次类推）
 - 一段文字 { tencent_hint_md, page_count[, figures] } —— tencent_hint_md 是腾讯字符级 OCR 的**文字提示**（已按页用 "=== page K ===" 分隔），仅作参考，**不是**结构真相；figures（若存在）是裁剪图列表 [{index, page_index, position, bbox}]：index 是整批裁剪图序号（不是题号），page_index 是所在页，bbox 是归一化裁剪范围 {x,y,width,height}，position 是页面 3×3 区域位置摘要。同页多张图须按 bbox 区分，不能只靠 position。题号 question_no 与 figure index 是不同身份。
-科目上下文：${profile.displayName}。${profile.languageStyle}
+科目上下文：${profile.displayName}。学科风格不适用于源材料转写：题面、选项、阅读材料必须保留图片中的原文和原语言。
 
-任务：以**图片为准**、腾讯文字为辅，输出一棵**规范化的题目结构树**。你对结构有完全裁量权，可以覆盖腾讯文字 hint 暗示的任何切分。
+任务：以**图片为准**、腾讯文字为辅，忠实转写为题目结构树。只调整字段与跨页分组，绝不翻译、改写、概括或解题。英语逐字保留英语，中文逐字保留中文，混合语言原样保留；不要把英语题面译成中文。
 关键能力：
 1. **跨页大题组装**：一道大题（passage / 阅读理解 / 完形 / 大题带多个小问）如果横跨多页，必须组装成**一个** stem 节点，它的 sub_questions 收齐所有页的小问。不要因为换页就把同一大题拆成两个顶层节点。
 2. **布局规范**：把题面、选项、答案规整到结构字段里；passage 进 stem 的 prompt_text，小问进 sub。
 3. 不抽取手写涂改 / 批改痕迹作为结构（那是作答证据，下游处理）。但要**判断每个节点上是否存在学生的手写作答 / 批改痕迹**：在该 StructureNode 上填 student_answer_present（true / false）。**绝不转写手写内容**——只报「有没有」这个布尔，像素留给下游判分（手写永远是像素，不做 OCR 转写）。整页都没有学生作答 → 全部省略或填 false。
-4. **图片归属（仅当输入含 figures 字段时）**：按 page_index 和 bbox 对照页面图片，把确定属于题面的裁剪图 index 填在对应 StructureNode.figure_ids。跨页大题共享图归 stem；明确只属于某小问的图归该 sub。同一 index 只能由一个节点声明；不要把整页或整批图复制给每道题。学生手写作答、解题过程、批改痕迹不是公开题图，不填入 figure_ids。拿不准归属、裁剪内容或是否含学生作答时省略；运行时保留源图并 withheld，不猜首题/最近题。
+4. **图片归属（仅当输入含 figures 字段时）**：按 page_index 和 bbox 对照页面图片，把确定属于题面的裁剪图 index 填在对应节点 figure_ids；图形选项的图填入对应 options[].figure_ids，不再重复填到节点。同一 index 只声明一次，归属不明就省略，不猜最近题。跨页共享图归 stem，某小问独有图归 sub。选项 label 只存印刷标签，text 只存该选项印刷原文；选项本身是图且无正文时 text 必须为 ""，图由 figure_ids 表达。禁止编写「图A所示的」「见配图」「[图像选项]」或图像细节描述；没有图时也不要用文字冒充图。
+   对输入每个裁剪 index，在顶层 figure_handwriting 中独立报告 {figure_index,student_answer_present}：只检查该 bbox 内实际像素，有学生手写/批改痕迹填 true，明确没有填 false，不确定填 null；同页别题手写不代表这张裁剪含手写。即使图含手写也可以报告它所属题/选项，是否挂载由运行时决定，绝不转写手写文字。
 5. **数学公式定界**：prompt_text、options[].text 以及 sub_questions 题面里出现的数学公式，必须带明确的 LaTeX 定界符：行内公式用「$...$」，独立成行的展示公式用「$$...$$」。已带定界符的公式（$...$、$$...$$、\\(...\\)、\\[...\\]）原样保留，不要改写公式内容。代码片段（含 Python、缩进、反斜杠转义）与普通文字**不要**包进 $；拿不准是不是公式的文字保持原样，宁可不包也不要猜。answers / analysis 字段不适用本条。
 
 输出严格 JSON（不带 markdown 代码块包裹），shape 名 StructureOutput：
-{"layout_quality":"structured"|"partial"|"text_only","extraction_confidence":0.0-1.0,"warnings":["..."],"questions":[StructureNode, ...]}
+{"layout_quality":"structured"|"partial"|"text_only","extraction_confidence":0.0-1.0,"warnings":["..."],"content_lost":true|false|null,"figure_handwriting":[{"figure_index":0,"student_answer_present":true|false|null}],"questions":[StructureNode, ...]}
 
 StructureNode（递归，**不要**输出 id，运行时会补）：
-{"kind":"choice|true_false|fill_blank|short_answer|essay|computation|reading|translation|derivation 或原题题型","role":"stem"|"sub"|"standalone","question_no":"1"|null,"prompt_text":"...","options":[{"label":"A","text":"..."}]|null,"answers":["..."]|null,"analysis":"..."|null,"page_index":0,"sub_questions":[StructureNode, ...]|null,"figure_ids":[0,1]|null,"student_answer_present":true|false|null}
+{"kind":"choice|true_false|fill_blank|short_answer|essay|computation|reading|translation|derivation 或原题题型","role":"stem"|"sub"|"standalone","question_no":"1"|null,"prompt_text":"...","options":[{"label":"A","text":"","figure_ids":[0]}]|null,"answers":["..."]|null,"analysis":"..."|null,"page_index":0,"sub_questions":[StructureNode, ...]|null,"figure_ids":[0,1]|null,"student_answer_present":true|false|null}
 
 约束：
 - kind 是原题的题型标签，依据题面填写；选择题的选项必须进入 options，不能只拼进 prompt_text。题型标签不是评分准入，不据此生成参考答案。
@@ -95,7 +106,8 @@ StructureNode（递归，**不要**输出 id，运行时会补）：
 - 顶层 questions 至少 1 个；如果整页无法识别出任何题，questions 给空数组并把 layout_quality 设 "text_only"。
 - layout_quality：结构清晰完整 → "structured"；能出题但版式残缺/有疑点 → "partial"；几乎认不出结构 → "text_only"。
 - extraction_confidence：你对整棵结构树与原图一致性的置信度（0 到 1）。跨页归属、题号、选项或层级有疑点时必须降低；不要把字段固定写成 1。
-- options / answers / analysis 没有就给 null 或省略，不要编。
+- content_lost：原图可见的题、选项或内容有丢弃/无法转写时必须为 true 并写明 warning；全部保留填 false，无法判断填 null。不能只在 warning 报丢失。
+- answers / analysis 只转写印刷的参考答案/解析；不求解，不把手写当答案键。没有就给 null 或省略。
 - 禁止：输出 JSON 之外的文字、把跨页同一大题拆成多个顶层节点、把腾讯文字 hint 当成不可改的结构。`;
 }
 
@@ -105,7 +117,7 @@ export const structureTaskSpec = {
     kind: 'StructureTask',
     description:
       'T-OC slice 2 (YUK-145, OC-1/OC-2) — VLM 全权拥有结构。输入 N 页图片 + 腾讯文字 OCR hint → 规范结构树（跨页大题组装 + 布局规范）。腾讯结构降为 hint，VLM 可完全覆盖。题图匹配 (assignFigures 替换) DEFERRED 到 slice 2b。自动调用（作为 extraction 一环，类比 StepsJudgeTask），非 manual rescue。',
-    budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1, timeout: 120_000 },
+    budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1 },
     needsToolCall: false,
     isMultimodal: true,
     allowedTools: [],

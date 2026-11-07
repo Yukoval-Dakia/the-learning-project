@@ -2,6 +2,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, asc, eq, sql } from 'drizzle-orm';
 import type { PgBoss } from 'pg-boss';
 import type { DerivationPolicyT } from '@/core/schema/derivation-policy';
+import type { IngestionExtractionNoticesT } from '@/core/schema/ingestion-extraction';
 import type { BBoxT, FigureRefT, StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db, Tx } from '@/db/client';
 import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
@@ -280,6 +281,7 @@ export type ApplyExtractionResultParams = {
   blocks: ExtractionBlockInput[];
   layoutQuality: 'structured' | 'partial' | 'text_only';
   warnings: string[];
+  notices?: IngestionExtractionNoticesT;
   sourceDocumentId: string;
 };
 
@@ -379,6 +381,7 @@ export async function applyExtractionResult(
       block_count: params.blocks.length,
       layout_quality: params.layoutQuality,
       warnings: params.warnings,
+      ...(params.notices ? { notices: params.notices } : {}),
     },
   });
 
@@ -395,6 +398,7 @@ export async function applyExtractionResult(
       structured_block_ids: insertedBlockIds,
       layout_quality: params.layoutQuality,
       warnings: params.warnings,
+      ...(params.notices ? { notices: params.notices } : {}),
     },
     created_at: now,
   });

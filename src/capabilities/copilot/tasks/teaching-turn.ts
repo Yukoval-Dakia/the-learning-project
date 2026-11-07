@@ -183,7 +183,7 @@ export const teachingTurnTaskSpec = {
     kind: 'TeachingTurnTask',
     description:
       'Phase 2C — Active Teaching turn. 输入 { learning_item, parent_hub_summary, atomic_sections, messages } → 输出 { kind, text_md, suggested_next }',
-    budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },
+    budget: { ...DEFAULT_BUDGET, maxIterations: 1 },
     needsToolCall: false,
     isMultimodal: false,
     allowedTools: [],

@@ -43,7 +43,7 @@ export const visionExtractTaskSpec = {
   definition: {
     kind: 'VisionExtractTask',
     description: '错题图片 → 切块 + 题面 + 答案 + bbox（manual rescue only after Sub 0c）',
-    budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1, timeout: 60_000 },
+    budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1 },
     needsToolCall: false,
     isMultimodal: true,
     allowedTools: [],
