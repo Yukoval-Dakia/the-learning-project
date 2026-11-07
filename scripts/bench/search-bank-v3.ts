@@ -219,7 +219,7 @@ async function main() {
         if (measured) {
           rows.push(row);
           appendFileSync(join(output, 'requests.jsonl'), `${JSON.stringify(row)}\n`);
-        }
+        } else appendFileSync(join(output, 'warmups.jsonl'), `${JSON.stringify(row)}\n`);
         budgetGuard.assertHealthy();
         return row;
       };
