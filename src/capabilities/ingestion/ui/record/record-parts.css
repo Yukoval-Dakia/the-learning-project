@@ -29,6 +29,12 @@
       box-shadow var(--un-t-small) var(--un-ease-glide);
   }
 
+  & .rc-tile a {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+
   & .rc-tile img {
     width: 100%;
     height: 100%;

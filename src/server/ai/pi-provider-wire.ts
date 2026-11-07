@@ -8,10 +8,12 @@
 
 import type { AgentLoopConfig, AgentTool, StreamFn } from '@earendil-works/pi-agent-core';
 import type {
+  AssistantMessage,
   Api as PiApi,
   Model as PiModel,
   MutableModels as PiMutableModels,
 } from '@earendil-works/pi-ai';
+import { getConfig } from '@/core/config/store';
 import { tracePiStream } from './laminar-tracing';
 import { createPiLlmMessageConverter, estimatePiTokens } from './pi-context-policy';
 import type { LoomPiModel } from './pi-models';
@@ -22,6 +24,7 @@ import {
   PROVIDER_HTTP_TIMEOUT_MARGIN_MS,
   providerHttpTimeoutMs,
 } from './provider-http-timeout';
+import { watchProviderStream } from './provider-stream-watchdog';
 import { createBudgetedProviderFetch } from './provider-transport';
 import type { ResolvedProvider } from './providers';
 import { reasoningModelView } from './reasoning-wire';
@@ -34,6 +37,7 @@ import {
 
 export interface PiProviderWireInput {
   runId: string;
+  kind: string;
   resolved: ResolvedProvider;
   options: Pick<Options, 'providerTimeoutMs' | 'transportEvidence' | 'effort' | 'judgeRetryPolicy'>;
   streamSimple: PiMutableModels['streamSimple'];
@@ -52,7 +56,50 @@ export class PiProviderWire {
   /** YUK-1559 (C6) — non-2xx capture fetch, created lazily in loopConfig. */
   private providerErrorCapture: ReturnType<typeof createProviderErrorCaptureFetch> | undefined;
 
-  constructor(private readonly input: PiProviderWireInput) {}
+  private failure: Error | undefined;
+  private outputTokens = 0;
+  private readonly counted = new WeakSet<AssistantMessage>();
+  private readonly outputCap: number | undefined;
+  private readonly idleMs: number;
+
+  constructor(private readonly input: PiProviderWireInput) {
+    const cap = getConfig(`task.${input.kind}.output_cap_tokens`);
+    this.outputCap = typeof cap === 'number' && cap > 0 ? cap : undefined;
+    this.idleMs = getConfig('PROVIDER_STREAM_IDLE_MS') as number;
+  }
+
+  private capFailure(): Error {
+    this.failure ??= new Error(
+      `output_cap_exceeded: task output reached ${this.outputCap} tokens; automatic resend forbidden`,
+    );
+    return this.failure;
+  }
+
+  throwIfFailed(): void {
+    if (this.failure) throw this.failure;
+  }
+
+  applyFailure(message: AssistantMessage | undefined): void {
+    if (message && this.failure) {
+      message.stopReason = 'error';
+      message.errorMessage = this.failure.message;
+    }
+  }
+
+  private settleOutput(message: AssistantMessage, capOnWire: boolean): AssistantMessage {
+    if (!this.counted.has(message)) {
+      this.counted.add(message);
+      this.outputTokens += message.usage.output;
+      if (
+        this.outputCap !== undefined &&
+        (this.outputTokens >= this.outputCap || (capOnWire && message.stopReason === 'length'))
+      ) {
+        this.capFailure();
+      }
+    }
+    this.applyFailure(message);
+    return message;
+  }
 
   private secrets(): string[] {
     const { resolved } = this.input;
@@ -98,6 +145,7 @@ export class PiProviderWire {
       // The request's resolved credential — redacted at the shared boundary.
       secrets: this.secrets(),
     });
+    const captureFetch = this.providerErrorCapture.fetch;
     return {
       // All prompts are standard LLM messages; UI-only AgentMessages never reach
       // this lane (loom owns the durable transcript).
@@ -124,7 +172,13 @@ export class PiProviderWire {
       ...(options.effort !== undefined ? { reasoning: options.effort } : {}),
       ...(resolved.reasoning?.level !== undefined ? { reasoning: resolved.reasoning.level } : {}),
       ...(http.timeoutMs !== undefined ? { timeoutMs: http.timeoutMs } : {}),
-      fetch: this.providerErrorCapture.fetch,
+      fetch: async (...args) => {
+        if (this.failure) throw this.failure;
+        const response = await captureFetch(...args);
+        return watchProviderStream(response, this.idleMs, (error) => {
+          this.failure ??= error;
+        });
+      },
     };
   }
 
@@ -143,7 +197,7 @@ export class PiProviderWire {
     return resolveStructuredSubmitPolicy(this.input.resolved.provider, this.input.resolved.model);
   }
 
-  readonly streamFn: StreamFn = (model: LoomPiModel, llmContext, streamOptions) => {
+  readonly streamFn: StreamFn = async (model: LoomPiModel, llmContext, streamOptions) => {
     const wireParameters = this.input.wireParameters;
     const wireContext =
       wireParameters.size === 0
@@ -168,14 +222,24 @@ export class PiProviderWire {
     const effort = this.input.options.effort;
     const inputTokens = estimatePiTokens(wireContext.messages);
     const remaining = model.contextWindow - inputTokens;
+    const remainingOutput =
+      this.outputCap === undefined ? Infinity : this.outputCap - this.outputTokens;
+    const catalogOutput = Math.min(
+      streamOptions?.maxTokens ?? model.maxTokens,
+      model.maxTokens,
+      remaining,
+    );
+    const capOnWire = remainingOutput <= catalogOutput;
     streamOptions = {
       ...streamOptions,
-      maxTokens: Math.min(streamOptions?.maxTokens ?? model.maxTokens, model.maxTokens, remaining),
+      maxTokens: Math.max(1, Math.min(catalogOutput, remainingOutput)),
     };
     const submitPolicy = this.submitPolicy(model);
     const streamOptionsWithPayload = {
       ...streamOptions,
       onPayload: async (payload: unknown, requestModel: PiModel<PiApi>) => {
+        if (this.failure) throw this.failure;
+        if (remainingOutput <= 0) throw this.capFailure();
         // Pi converts onPayload failures into terminal errors; throwing from streamFn crashes its loop.
         if (
           effort !== undefined &&
@@ -206,7 +270,7 @@ export class PiProviderWire {
         };
       },
     };
-    return tracePiStream(
+    const stream = await tracePiStream(
       (m, context, options) =>
         withPiUsageEvidence(
           (innerModel, innerContext, innerOptions) =>
@@ -221,6 +285,25 @@ export class PiProviderWire {
       wireContext,
       streamOptionsWithPayload,
     );
+    // Convert the terminal before agentLoop can execute any tool from it. Keep
+    // the original content/usage for failure accounting; no partial submit lands.
+    const iterate = stream[Symbol.asyncIterator].bind(stream);
+    stream[Symbol.asyncIterator] = async function* (this: PiProviderWire) {
+      for await (const event of { [Symbol.asyncIterator]: iterate }) {
+        if (event.type === 'done') {
+          const message = this.settleOutput(event.message, capOnWire);
+          if (message.stopReason === 'error')
+            yield { type: 'error' as const, reason: 'error' as const, error: message };
+          else yield event;
+        } else {
+          if (event.type === 'error') this.settleOutput(event.error, capOnWire);
+          yield event;
+        }
+      }
+    }.bind(this);
+    const result = stream.result.bind(stream);
+    stream.result = async () => this.settleOutput(await result(), capOnWire);
+    return stream;
   };
 
   /** Last non-2xx this query's capture fetch saw, if any (C6 terminal evidence). */
