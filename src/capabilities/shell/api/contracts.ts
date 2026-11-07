@@ -110,19 +110,27 @@ const ProposalKnowledgeNodeLabelResponseSchema = z.object({
   state: z.enum(['live', 'archived', 'merged', 'missing']),
 });
 
+// Why accepting would fail right now, decided on the server; null when nothing stands in its way.
+const ProposalKnowledgeMutationBlockResponseSchema = z
+  .enum(['to_top', 'node_unreadable', 'node_retired'])
+  .nullable();
+
 const ProposalKnowledgeMutationResponseSchema = z.discriminatedUnion('mutation', [
   z.object({
     mutation: z.literal('merge'),
+    blocked: ProposalKnowledgeMutationBlockResponseSchema,
     from: z.array(ProposalKnowledgeNodeLabelResponseSchema),
     into: ProposalKnowledgeNodeLabelResponseSchema,
   }),
   z.object({
     mutation: z.literal('reparent'),
+    blocked: ProposalKnowledgeMutationBlockResponseSchema,
     node: ProposalKnowledgeNodeLabelResponseSchema,
     parent: ProposalKnowledgeNodeLabelResponseSchema.nullable(),
   }),
   z.object({
     mutation: z.literal('split'),
+    blocked: ProposalKnowledgeMutationBlockResponseSchema,
     from: ProposalKnowledgeNodeLabelResponseSchema,
     into: z.array(
       z.object({

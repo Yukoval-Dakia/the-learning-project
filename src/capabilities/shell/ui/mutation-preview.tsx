@@ -1,5 +1,4 @@
-// What a proposed change to the knowledge tree acts on, in names read from the server. A node can
-// be gone or unreadable by the time the learner looks, and such a card cannot be carried out.
+// What a proposed change to the knowledge tree acts on, in names and states read from the server.
 import { ArrowRight } from 'lucide-react';
 import type { ProposalInboxRow } from './inbox-api';
 
@@ -32,20 +31,16 @@ export function mutationFullyNamed(mutation: MutationPresentation): boolean {
   return nodesOf(mutation).every((node) => node.label !== null);
 }
 
-/** Why accepting would fail, or null. A missing node may only be unreadable right now. */
+const BLOCKED_WORDS: Readonly<Record<NonNullable<MutationPresentation['blocked']>, string>> = {
+  to_top: '它要把知识点放到最顶层，现在还不支持。可以忽略这张。',
+  // The read may have failed, so this does not say the node was deleted.
+  node_unreadable: '有知识点现在找不到，也可能只是暂时读不到。可以过会儿再看，或者忽略这张。',
+  node_retired: '有知识点已经归档或并到别处了，这张用不上了，可以忽略。',
+};
+
+/** The server decides whether this can run; these are the words for its answer. */
 export function mutationBlockedWords(mutation: MutationPresentation): string | null {
-  const toTop =
-    (mutation.mutation === 'reparent' && mutation.parent === null) ||
-    (mutation.mutation === 'split' && mutation.into.some((piece) => piece.parent === null));
-  if (toTop) return '它要把知识点放到最顶层，现在还不支持。可以忽略这张。';
-  const nodes = nodesOf(mutation);
-  if (nodes.some((node) => node.state === 'missing')) {
-    return '有知识点现在找不到，也可能只是暂时读不到。可以过会儿再看，或者忽略这张。';
-  }
-  if (nodes.some((node) => node.state !== 'live')) {
-    return '有知识点已经归档或并到别处了，这张用不上了，可以忽略。';
-  }
-  return null;
+  return mutation.blocked ? BLOCKED_WORDS[mutation.blocked] : null;
 }
 
 function Node({ node }: { node: NodeLabel }) {
@@ -64,6 +59,13 @@ function Node({ node }: { node: NodeLabel }) {
         : null}
     </span>
   );
+}
+
+/** A piece's parent is shown only when it is what stops the card. */
+function pieceParentWords(parent: NodeLabel | null): string | null {
+  if (parent === null) return '放到最顶层';
+  if (parent.state === 'missing') return '上级找不到';
+  return parent.state === 'live' ? null : `上级${STATE_WORDS[parent.state]}`;
 }
 
 function Arrow() {
@@ -102,11 +104,16 @@ export function MutationPreview({ mutation }: { mutation: MutationPresentation }
           <Node node={mutation.from} />
           <Arrow />
           <span className="ib-kicker">拆成</span>
-          {mutation.into.map((piece) => (
-            <span key={piece.name} className="ib-edge-node">
-              {piece.name}
-            </span>
-          ))}
+          {mutation.into.map((piece, index) => {
+            const note = pieceParentWords(piece.parent);
+            return (
+              // biome-ignore lint/suspicious/noArrayIndexKey: a fixed list, and two pieces can share a name.
+              <span key={index} className="ib-edge-node" data-off={note ? '' : undefined}>
+                {piece.name}
+                {note ? ` · ${note}` : null}
+              </span>
+            );
+          })}
         </div>
       );
   }
