@@ -16,7 +16,6 @@ import * as schema from '@/db/schema';
 import { EvidenceDemandV1 } from '@/kernel/supply-contracts';
 import { EMBED_MODEL, embedText } from '@/server/ai/embed';
 import { createProviderAttemptLifecycle } from '@/server/ai/provider-attempt-lifecycle';
-import { searchBenchmarkActor } from './search-bank-fixture-access';
 import {
   assertSearchBenchmarkPaidGate,
   guardSearchBenchmarkEmbedding,
@@ -137,7 +136,7 @@ async function main() {
       )
     )
       throw Error('Real preparer queries require their actual task kind and validated ticket');
-    const actor = await searchBenchmarkActor(db, gold.consumer);
+    const actor = { kind: 'agent' as const, ref: gold.consumer };
     if (!ftsOnly && bankReadRoleForActor(actor) === 'restricted')
       throw Error('Answer-access PR absent: no full-vector acceptance');
     process.env.BANK_GAP_EVIDENCE_SECRET = randomBytes(32).toString('hex');

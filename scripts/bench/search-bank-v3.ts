@@ -10,7 +10,6 @@ import type { SearchBankInput } from '@/capabilities/practice/question-bank/tool
 import type { Db } from '@/db/client';
 import * as schema from '@/db/schema';
 import { EvidenceDemandV1 } from '@/kernel/supply-contracts';
-import { searchBenchmarkActor } from './search-bank-fixture-access';
 import {
   assertSearchBenchmarkPaidGate,
   guardSearchBenchmarkEmbedding,
@@ -64,7 +63,7 @@ async function main() {
   const consumer = process.env.SEARCH_BENCH_ACTOR ?? 'question_preparer';
   if (!['question_preparer', 'copilot'].includes(consumer))
     throw Error('Unsupported product consumer');
-  const actor = await searchBenchmarkActor(db, consumer);
+  const actor = { kind: 'agent' as const, ref: consumer };
   if (bankReadRoleForActor(actor) === 'restricted')
     throw Error(
       'Copilot answer-access PR is not present: refusing a FTS-only substitute for full-vector acceptance',
