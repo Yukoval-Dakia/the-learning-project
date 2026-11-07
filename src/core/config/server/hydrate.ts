@@ -1,4 +1,4 @@
-// YUK-1007 — 配置水合（server-only：唯一允许碰 db 的文件；读面 store.ts 纯内存）。
+// YUK-1007 — 配置水合（配置 owner 的 server adapter；纯读面 store.ts 在内存）。
 //
 // 模式 = src/kernel/read-models/subject-hydration.ts 先例：
 //   - never-throws：表未建（42P01）/ DB down / 坏行 → WARN + 保留 last-good

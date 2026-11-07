@@ -18,7 +18,7 @@ import {
   selection_observation,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { hydrateConfigFromDb } from '@/server/config/hydrate';
+import { hydrateConfigFromDb } from '@/core/config/server/hydrate';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { memR2 } from '../../../../tests/helpers/r2';
 import { setBackupConfigHydrator } from '../server/backup/config-hydrator';

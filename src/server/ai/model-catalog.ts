@@ -29,7 +29,7 @@ import {
 import type { Db, Tx } from '@/db/client';
 import { model_catalog_cache, system_config } from '@/db/schema';
 import { withinSessionAdvisoryLock } from '@/db/session-advisory-lock';
-import { readCustomProviderDefinitions } from '@/server/config/custom-providers-read';
+import { readCustomProviderDefinitions } from '@/core/config/server/custom-providers-read';
 import rawSnapshot from './model-catalog.snapshot.json' with { type: 'json' };
 import {
   BUILTIN_MODEL_ENDPOINT_HOSTS,

@@ -2,25 +2,25 @@
 
 ## 加载方式
 
-API（`server/index.ts`）与独立 worker（`scripts/worker.ts`）都先调用 `server/env.ts` 的 `loadEnv()`：按 `.env.local` → `.env` 顺序逐行读取，只填 `process.env` 中尚未设置的键，真实环境/compose 注入的值优先，引号值与行尾注释会被剥离（`server/env.ts`）。之后 `src/server/config/env.ts` 用 `@t3-oss/env-core` + `zod` 校验 server schema，`runtimeEnv` 即 `process.env`，空串按未设置处理；`DATABASE_URL` 是 schema 唯一必填项，`INTERNAL_TOKEN` 由 API 在监听前单独校验（`src/server/config/env.ts`）。
+API（`server/index.ts`）与独立 worker（`scripts/worker.ts`）都先调用 `server/env.ts` 的 `loadEnv()`：按 `.env.local` → `.env` 顺序逐行读取，只填 `process.env` 中尚未设置的键，真实环境/compose 注入的值优先，引号值与行尾注释会被剥离（`server/env.ts`）。之后 `src/core/config/server/env.ts` 用 `@t3-oss/env-core` + `zod` 校验 server schema，`runtimeEnv` 即 `process.env`，空串按未设置处理；`DATABASE_URL` 是 schema 唯一必填项，`INTERNAL_TOKEN` 由 API 在监听前单独校验（`src/core/config/server/env.ts`）。
 
-compose 的 `migrate` / `app` / `worker` 都从 `.env` 取环境，`cloudflared` 只接收 `TUNNEL_TOKEN`（`docker-compose.yml`）。本机 `pnpm dev:local` 也先加载 `.env.local` / `.env` 再传给两个子进程，但 `INTERNAL_TOKEN` 例外：dev:local 不读文件值，每次启动生成随机 token（显式导出的进程环境优先）并打印在启动日志里，两个子进程与前门共用同一值；`DATABASE_URL` 固定指向 dev 专用 Postgres 中本 worktree 的库（`postgres://loom_dev:…@127.0.0.1:5434/loom_dev_<worktree>_<hash>`，忽略 `.env` 的 `DATABASE_URL` / `POSTGRES_*`；`scripts/dev-local.ts`、`scripts/dev-worktree-db.ts`；`docker-compose.dev.yml`）。直读 `.env` 里 `DATABASE_URL` 的本机脚本（`drizzle.config.ts`、`worker:dev`、`scripts/load-env.ts` 的全部 CLI）共用 `scripts/local-db-env.ts` 的 TEST 拒绝：对 URL authority、逗号多 host、`?host=`/`?port=`、`PGHOST`/`PGPORT` 的全部候选取并集，任一为回环上的 TEST 端口或库名 `loom` 即在连接前拒绝；生产运行时（`NODE_ENV=production`）跳过数据库判定（显式切换，不是安全边界），容器/发版的非回环 host 照常。本机 dev API 在 `NODE_ENV` 非 `production` 时跑同一 `DATABASE_URL` 判定；8787 端口护栏另按非容器判断。`.env.example` 只覆盖 schema 130 个键中的 41 个；仓库里唯一的 `VITE_*` 是 `src/vite-env.d.ts` 的 `VITE_API_BASE` 类型声明、没有消费点，因此不设 client schema；Vitest 下 `skipValidation` 跳过启动校验（`src/vite-env.d.ts`；`src/server/config/env.ts`）。
+compose 的 `migrate` / `app` / `worker` 都从 `.env` 取环境，`cloudflared` 只接收 `TUNNEL_TOKEN`（`docker-compose.yml`）。本机 `pnpm dev:local` 也先加载 `.env.local` / `.env` 再传给两个子进程，但 `INTERNAL_TOKEN` 例外：dev:local 不读文件值，每次启动生成随机 token（显式导出的进程环境优先）并打印在启动日志里，两个子进程与前门共用同一值；`DATABASE_URL` 固定指向 dev 专用 Postgres 中本 worktree 的库（`postgres://loom_dev:…@127.0.0.1:5434/loom_dev_<worktree>_<hash>`，忽略 `.env` 的 `DATABASE_URL` / `POSTGRES_*`；`scripts/dev-local.ts`、`scripts/dev-worktree-db.ts`；`docker-compose.dev.yml`）。直读 `.env` 里 `DATABASE_URL` 的本机脚本（`drizzle.config.ts`、`worker:dev`、`scripts/load-env.ts` 的全部 CLI）共用 `scripts/local-db-env.ts` 的 TEST 拒绝：对 URL authority、逗号多 host、`?host=`/`?port=`、`PGHOST`/`PGPORT` 的全部候选取并集，任一为回环上的 TEST 端口或库名 `loom` 即在连接前拒绝；生产运行时（`NODE_ENV=production`）跳过数据库判定（显式切换，不是安全边界），容器/发版的非回环 host 照常。本机 dev API 在 `NODE_ENV` 非 `production` 时跑同一 `DATABASE_URL` 判定；8787 端口护栏另按非容器判断。`.env.example` 只覆盖 schema 130 个键中的 41 个；仓库里唯一的 `VITE_*` 是 `src/vite-env.d.ts` 的 `VITE_API_BASE` 类型声明、没有消费点，因此不设 client schema；Vitest 下 `skipValidation` 跳过启动校验（`src/vite-env.d.ts`；`src/core/config/server/env.ts`）。
 
 ## 环境变量
 
-表中出处写 `registry` 的键都登记在 `src/core/config/registry.ts`，默认值即该键的 `codeDefault`，并且可被 `system_config` 覆盖（优先级见下文）。`NODE_ENV` 与 `VITEST` 只影响运行时判断（测试下跳过校验、不向 pg-boss 入队），不进下表；`HOME` / `PATH` / `TMPDIR` 作为 jyeoo 子进程环境透传，列入 OCR/录入组（`src/kernel/background-job-enqueue.ts`；`src/server/config/env.ts`；`src/capabilities/practice/server/question-supply/jyeoo-spawn.ts`）。
+表中出处写 `registry` 的键都登记在 `src/core/config/registry.ts`，默认值即该键的 `codeDefault`，并且可被 `system_config` 覆盖（优先级见下文）。`NODE_ENV` 与 `VITEST` 只影响运行时判断（测试下跳过校验、不向 pg-boss 入队），不进下表；`HOME` / `PATH` / `TMPDIR` 作为 jyeoo 子进程环境透传，列入 OCR/录入组（`src/kernel/background-job-enqueue.ts`；`src/core/config/server/env.ts`；`src/capabilities/practice/server/question-supply/jyeoo-spawn.ts`）。
 
 ### 数据库与进程
 
 | 键 | 谁读 | 未设置时 | 出处 |
 | --- | --- | --- | --- |
-| `DATABASE_URL` | app、worker、脚本 | 必填；缺失时 `src/db/client.ts` 启动即抛错 | `src/server/config/env.ts`；`src/db/client.ts` |
-| `API_PORT` | app | `8787`；非正整数抛错；本机 dev（`NODE_ENV` 非 `production`、非容器）绑定 8787（本机 TEST 中继端口）前退出，生产入口与容器内照常 | `src/server/config/env.ts`；`server/index.ts` |
+| `DATABASE_URL` | app、worker、脚本 | 必填；缺失时 `src/db/client.ts` 启动即抛错 | `src/core/config/server/env.ts`；`src/db/client.ts` |
+| `API_PORT` | app | `8787`；非正整数抛错；本机 dev（`NODE_ENV` 非 `production`、非容器）绑定 8787（本机 TEST 中继端口）前退出，生产入口与容器内照常 | `src/core/config/server/env.ts`；`server/index.ts` |
 | `DEV_PORT` | `pnpm dev:local` | 未设时自动探测 8788 起在 127.0.0.1 与 IPv6 都空闲的首个端口；作为 `API_PORT` 传给 dev 的 API 进程，并把 dev worker 的 `WORKSHEET_RENDER_APP_ORIGIN` 指到同一端口。8787 是本机 TEST 中继端口：自动探测会跳过它，显式设为 8787 时 dev:local 恒在绑定前退出（不受 `NODE_ENV`/容器标记影响） | `scripts/dev-local.ts` |
 | `DEV_DB_NAME` | `pnpm dev:local`、`pnpm dev:reset` | 未设时按 worktree 根路径派生 `loom_dev_<name>_<sha1(path)前8>`；覆盖后 dev:local 用该库名，dev:reset 仍只接受 `loom_dev_*` | `scripts/dev-worktree-db.ts` |
 | `RW_WORKER` | app | `1` 时同进程启动 pg-boss worker | `server/index.ts` |
 | `RW_FRONTDOOR` | app | `1` 时启用 Start 前门（需要 `dist/start`）；`dev` 仅 `dev:local` 使用，经 API 进程内的 Vite dev server 提供同一前门（HMR，不需要 `dist/start`）；未设时 app 只服务 Hono API | `server/index.ts`；`server/dev-frontdoor.ts` |
-| `RW_BOSS_AUTOMATION` | app、worker | `enabled`；`disabled` 关闭 pg-boss 自带 automation | `src/server/config/env.ts`；`src/server/boss/client.ts` |
+| `RW_BOSS_AUTOMATION` | app、worker | `enabled`；`disabled` 关闭 pg-boss 自带 automation | `src/core/config/server/env.ts`；`src/server/boss/client.ts` |
 | `POSTGRES_USER` | 脚本（`DEV_ALLOW_TEST_DB=1` 下的连接串、备份） | 本地脚本 dev 目标固定 `loom_dev`；仅 `DEV_ALLOW_TEST_DB=1` 时才读它，缺省 `loom` | `scripts/local-db-env.ts` |
 | `POSTGRES_PASSWORD` | 脚本（`DEV_ALLOW_TEST_DB=1` 下的连接串、备份） | 本地脚本 dev 目标固定 `loom_dev`；仅 `DEV_ALLOW_TEST_DB=1` 时才读它，缺省 `loom` | `scripts/local-db-env.ts` |
 | `POSTGRES_DB` | 脚本（dev 连接串的库名选择器、备份） | 本 worktree 的 dev 库（`loom_dev_<name>_<hash>`）；设为 `loom`（TEST 库名）即解析为 TEST 目标，连接前被拒绝；仅 `DEV_ALLOW_TEST_DB=1` 放行 | `scripts/local-db-env.ts`；`scripts/dev-worktree-db.ts` |
@@ -34,7 +34,7 @@ compose 的 `migrate` / `app` / `worker` 都从 `.env` 取环境，`cloudflared`
 
 | 键 | 谁读 | 未设置时 | 出处 |
 | --- | --- | --- | --- |
-| `INTERNAL_TOKEN` | app（`/api/*`） | 必填非空，否则 API 启动失败；`/api/health`、`/api/ready` 豁免。`pnpm dev:local` 不读 `.env` / `.env.local` 的值：显式导出 `INTERNAL_TOKEN` 时沿用，否则每次启动生成随机值并打印（复制到 TokenGate；`pnpm api:smoke` 用 `INTERNAL_TOKEN=<启动日志里的值>`），API、worker 与前门子进程共用同一值 | `src/server/config/env.ts`；`server/app.ts`；`scripts/dev-local.ts` |
+| `INTERNAL_TOKEN` | app（`/api/*`） | 必填非空，否则 API 启动失败；`/api/health`、`/api/ready` 豁免。`pnpm dev:local` 不读 `.env` / `.env.local` 的值：显式导出 `INTERNAL_TOKEN` 时沿用，否则每次启动生成随机值并打印（复制到 TokenGate；`pnpm api:smoke` 用 `INTERNAL_TOKEN=<启动日志里的值>`），API、worker 与前门子进程共用同一值 | `src/core/config/server/env.ts`；`server/app.ts`；`scripts/dev-local.ts` |
 | `JUDGE_PROVENANCE_SECRET` | app | 未设、短于 32 字符或等于 `INTERNAL_TOKEN` 时 provenance 签发/校验关闭；worker 不读 | `src/capabilities/practice/grading/server/judge/preview-provenance-token.ts`；`.env.example` |
 | `BANK_GAP_EVIDENCE_SECRET` | app、worker（必须同值；`openssl rand -hex 32` 生成；`dev:local` 未设时按本 worktree 库名派生一个稳定值，只限 dev 库，`DEV_ALLOW_TEST_DB=1` 时不派生） | 未设、短于 32 字符或等于 `INTERNAL_TOKEN` 时一律视为未设：`search_bank` 不签 MAC，`file_bank_gap` 拒绝 filing | `src/capabilities/practice/question-bank/tools/bank-search.ts`；`src/capabilities/practice/server/tools/file-bank-gap.ts` |
 
@@ -104,7 +104,7 @@ PATCH /api/admin/config   # x-internal-token
 | `MEM0_HISTORY_DB_PATH` | app、worker | `/var/lib/mem0/history.db`；compose 覆盖 app 为 `/tmp/mem0/history.db`、worker 为 `/var/lib/mem0/history.db` | `src/server/ai/mem0/client.ts`；`docker-compose.yml` |
 | `MEM0_LLM_MODEL` | app、worker | 无全局 pin 时 `glm-5.2` | `src/server/ai/mem0/llm-config.ts`；`src/server/ai/providers.ts` |
 | `MEM0_LLM_BASE_URL` | app、worker | 无全局 pin 时 `https://open.bigmodel.cn/api/coding/paas/v4`；host 须过模型端点 allowlist | `src/server/ai/mem0/llm-config.ts` |
-| `MEM0_TELEMETRY` | app、worker（`mem0ai` SDK） | SDK 默认可向外报 PostHog；compose 强制 `false`；非 compose 部署也应显式 `false` | `docker-compose.yml`；`src/server/config/env.ts` |
+| `MEM0_TELEMETRY` | app、worker（`mem0ai` SDK） | SDK 默认可向外报 PostHog；compose 强制 `false`；非 compose 部署也应显式 `false` | `docker-compose.yml`；`src/core/config/server/env.ts` |
 
 ### OCR、录入与外部检索
 
@@ -192,7 +192,7 @@ PATCH /api/admin/config   # x-internal-token
 | 键 | 谁读 | 未设置时 | 出处 |
 | --- | --- | --- | --- |
 | `API_SMOKE_BASE_URL` | 脚本（`api:smoke`） | `http://localhost:3001` | `scripts/api-smoke.ts` |
-| `AUDIT_READ_DATABASE_URL` | 脚本（`ops:threshold-calibration`） | 回落到 `DATABASE_URL`；session 固定只读 | `scripts/ops-threshold-calibration.ts`；`src/server/config/env.ts` |
+| `AUDIT_READ_DATABASE_URL` | 脚本（`ops:threshold-calibration`） | 回落到 `DATABASE_URL`；session 固定只读 | `scripts/ops-threshold-calibration.ts`；`src/core/config/server/env.ts` |
 | `B3_GATE_CONFIRM_CLONE` | 脚本（`b3:gate`） | 不等于 `1` 时拒绝运行 | `scripts/b3-gate.ts` |
 | `DELIVERY_API_PORT` | 脚本（`delivery:evidence`） | `8787` | `scripts/delivery-evidence.ts` |
 | `DELIVERY_API_BASE` | 脚本（`delivery:evidence`） | `http://127.0.0.1:<DELIVERY_API_PORT>` | `scripts/delivery-evidence.ts` |
@@ -204,13 +204,13 @@ PATCH /api/admin/config   # x-internal-token
 
 ### schema 中声明、未见读取
 
-`ANTHROPIC_AUTH_TOKEN`、`ANTHROPIC_BASE_URL`（`src/server/config/env.ts`）。
+`ANTHROPIC_AUTH_TOKEN`、`ANTHROPIC_BASE_URL`（`src/core/config/server/env.ts`）。
 
 ## DB 配置层 `system_config`
 
 `system_config` 按 registry 登记的 key 存 jsonb 值，并带 `revision`、`source_note`、`updated_by` 与时间戳；`system_config_journal` 是 append-only 账本（`(key, revision)` 主键，`action` 为 `set`/`clear`/`seed`，payload 记 `prev`/`next`/`note`）；`system_config_epoch` 只有 `id='global'` 一行（`src/db/schema.ts`）。key 空间是 registry 的静态键、动态 `task.<kind>.{provider,model,budget,reasoning,override_global_pin}`，以及已登记的 `lane.{verify_solve,vision_judge,global}.{provider,model}`；secret、boot 输入和 env schema 自身不在表内（`src/core/config/registry.ts`）。
 
-app 与 worker 启动时各 hydrate 一次，之后每 `15_000` ms 刷新；刷新先探测 epoch，同号则跳过全量 SELECT，新快照整块替换内存快照；表缺失、DB 不可用或坏行时保留 last-good 或退回 env + code default（`src/server/config/hydrate.ts`；`server/index.ts`；`src/server/boss/start-worker.ts`）。`pinned` 键的 DB 行会被跳过并告警（`src/server/config/hydrate.ts`）。
+app 与 worker 启动时各 hydrate 一次，之后每 `15_000` ms 刷新；刷新先探测 epoch，同号则跳过全量 SELECT，新快照整块替换内存快照；表缺失、DB 不可用或坏行时保留 last-good 或退回 env + code default（`src/core/config/server/hydrate.ts`；`server/index.ts`；`src/server/boss/start-worker.ts`）。`pinned` 键的 DB 行会被跳过并告警（`src/core/config/server/hydrate.ts`）。
 
 写面是 `PATCH /api/admin/config` 与 `POST /api/admin/config/reset`，页面为 `/admin/config`；同一事务内 upsert/删除行、追加 journal、bump epoch，提交后本进程立即 hydrate，响应分别报告提交 epoch 与本进程快照 epoch（`src/capabilities/observability/manifest.ts`；`src/server/config/write.ts`；`src/server/config/admin-config-write.ts`；`src/kernel/ui-surfaces.ts`）。
 

@@ -49,7 +49,7 @@ import {
   resolveTaskReasoning,
 } from '@/server/ai/providers';
 import { VISION_JUDGE_TASK_KINDS } from '@/server/ai/vision-judge-config';
-import { hydrateConfigFromDb } from './hydrate';
+import { hydrateConfigFromDb } from '@/core/config/server/hydrate';
 
 export type ConfigActor = 'owner' | 'panel:admin' | 'migrate' | 'cli';
 

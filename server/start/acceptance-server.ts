@@ -5,7 +5,7 @@ import { serve } from '@hono/node-server';
 import { capabilities } from '@/capabilities';
 import { assertProposalKindsOwned } from '@/kernel/manifest';
 import { installSettlementCascadeRevert } from '@/kernel/settlement-cascade-revert';
-import { getServerEnv, requireApiInternalToken, resolveApiPort } from '@/server/config/env';
+import { getServerEnv, requireApiInternalToken, resolveApiPort } from '@/core/config/server/env';
 import { orchestrateCascadeRevert } from '@/server/revert/cascade-revert';
 import { buildHonoApp } from '../app';
 import { assertComposedRoutesDeclared } from '../composed-routes';

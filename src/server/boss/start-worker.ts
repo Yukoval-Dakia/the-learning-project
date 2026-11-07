@@ -25,9 +25,9 @@ import {
   CUSTOM_PROVIDERS_WATCH_INTERVAL_MS,
   hydrateCustomProviders,
   startCustomProvidersWatch,
-} from '@/server/config/custom-providers-hydrate';
-import { hydrateConfigFromDb, startConfigRefresh } from '@/server/config/hydrate';
-import { startSubjectRefresh } from '@/server/config/subject-refresh';
+} from '@/core/config/server/custom-providers-hydrate';
+import { hydrateConfigFromDb, startConfigRefresh } from '@/core/config/server/hydrate';
+import { startSubjectRefresh } from '@/subjects/server/refresh';
 import { mountSubscriptionDispatch } from '@/server/events/subscriptions/dispatch-mount';
 import { waitForRunnableEpoch } from '@/server/migration/contract-epoch/epoch';
 import { registerOrchestrator } from '@/server/orchestration/register';

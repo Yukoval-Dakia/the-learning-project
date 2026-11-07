@@ -14,7 +14,7 @@ import {
   event,
   knowledge,
 } from '@/db/schema';
-import { hydrateConfigFromDb } from '@/server/config/hydrate';
+import { hydrateConfigFromDb } from '@/core/config/server/hydrate';
 import { loadEventSubscriptionRegistry } from '@/server/events/subscriptions/registry';
 import {
   bootstrapSubscription,

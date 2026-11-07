@@ -37,7 +37,7 @@ import {
   resetTestConfig,
 } from '@/core/config/store';
 import { system_config_epoch } from '@/db/schema';
-import { hydrateConfigFromDb } from '@/server/config/hydrate';
+import { hydrateConfigFromDb } from '@/core/config/server/hydrate';
 import { setConfig } from '@/server/config/write';
 import { resetDb, testDb } from '../helpers/db';
 import { memR2 } from '../helpers/r2';

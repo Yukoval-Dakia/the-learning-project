@@ -10,7 +10,7 @@ import { assertProposalKindsOwned } from '@/kernel/manifest';
 import { warnFlipOrder } from '@/kernel/projection-writer-policy';
 import { installSettlementCascadeRevert } from '@/kernel/settlement-cascade-revert';
 import { initializeLaminarTracing } from '@/server/ai/laminar-tracing';
-import { resolveApiPort } from '@/server/config/env';
+import { resolveApiPort } from '@/core/config/server/env';
 import { guardDatabaseUrl, guardDevApiPort, isProductionRuntime } from '../scripts/local-db-env';
 import { buildHonoApp } from './app';
 import { assertComposedRoutesDeclared } from './composed-routes';
@@ -22,7 +22,7 @@ const env = loadApiEnv();
 // YUK-548: boot-time SoT-flip flag vector + flip-order WARN (never throws — see warnFlipOrder).
 warnFlipOrder();
 
-// YUK-345 / YUK-1007：API_PORT 解析单一真源在 src/server/config/env.ts resolveApiPort
+// YUK-345 / YUK-1007：API_PORT 解析单一真源在 src/core/config/server/env.ts resolveApiPort
 // （trim → 空→默认 8787 → 非正整数 throw；admin config 读面 runtime 分区同源）。
 const port = resolveApiPort(env.API_PORT);
 // Local dev only: 8787 is the TEST app relay on this Mac, and a dev API that
@@ -48,7 +48,7 @@ async function hydrateSubjectsBeforeServe(): Promise<void> {
     const [{ db }, { hydrateSubjectRegistryFromDb }, { startSubjectRefresh }] = await Promise.all([
       import('@/db/client'),
       import('@/kernel/read-models/subject-hydration'),
-      import('@/server/config/subject-refresh'),
+      import('@/subjects/server/refresh'),
     ]);
     const report = await hydrateSubjectRegistryFromDb(db);
     // 60s level-triggered reconcile, same as the worker: subject edits made by another
@@ -72,7 +72,7 @@ async function hydrateConfigBeforeServe(): Promise<void> {
   try {
     const [{ db }, { hydrateConfigFromDb, startConfigRefresh }] = await Promise.all([
       import('@/db/client'),
-      import('@/server/config/hydrate'),
+      import('@/core/config/server/hydrate'),
     ]);
     const report = await hydrateConfigFromDb(db);
     console.log(
@@ -88,14 +88,21 @@ async function hydrateModelCatalogBeforeServe(): Promise<void> {
   try {
     const [{ db }, hydrateModule] = await Promise.all([
       import('@/db/client'),
-      import('@/server/config/custom-providers-hydrate'),
+      import('@/core/config/server/custom-providers-hydrate'),
     ]);
     const definitions = await hydrateModule.hydrateCustomProviders(db);
     if (definitions.length > 0) {
       console.log(`[rw:api] custom providers hydrated: ${definitions.length}`);
     }
     // YUK-1563 part 4 — panel facts + post-write catalog refresh wiring (API process).
-    hydrateModule.registerCustomProviderCatalogIntegration(db);
+    // The catalog and its auth labels are AI facts; the composition root binds them
+    // into the config owner's integration so core never imports server.
+    const [{ registerCustomProviderCatalogIntegration }, { customProviderCatalogIntegrationPorts }] =
+      await Promise.all([
+        import('@/core/ai-runtime/server/custom-provider-config-integration'),
+        import('@/server/ai/custom-provider-catalog-ports'),
+      ]);
+    registerCustomProviderCatalogIntegration(db, customProviderCatalogIntegrationPorts());
     customProvidersWatch = hydrateModule.startCustomProvidersWatch(db);
     const { hydrateModelCatalog, startModelCatalogWatch } = await import(
       '@/server/ai/model-catalog'
@@ -178,7 +185,7 @@ async function injectAdminConfigWriterBeforeServe(): Promise<void> {
 async function injectBackupConfigHydratorBeforeServe(): Promise<void> {
   try {
     const [{ hydrateConfigFromDb }, { setBackupConfigHydrator }] = await Promise.all([
-      import('@/server/config/hydrate'),
+      import('@/core/config/server/hydrate'),
       import('@/capabilities/observability/public'),
     ]);
     setBackupConfigHydrator(hydrateConfigFromDb);

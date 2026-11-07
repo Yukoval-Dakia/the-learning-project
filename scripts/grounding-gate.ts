@@ -24,7 +24,7 @@ import { source_asset } from '@/db/schema';
 import type { R2Client } from '@/kernel/object-storage';
 import { installSettlementCascadeRevert } from '@/kernel/settlement-cascade-revert';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
-import { hydrateConfigFromDb } from '@/server/config/hydrate';
+import { hydrateConfigFromDb } from '@/core/config/server/hydrate';
 import { orchestrateCascadeRevert } from '@/server/revert/cascade-revert';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import {

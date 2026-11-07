@@ -6,7 +6,7 @@
 
 ## 运行时与进程拓扑
 
-- **app**：`server/index.ts`（`pnpm build:server` → `dist/server.cjs`），`@hono/node-server` 监听 `API_PORT`（默认 8787，`src/server/config/env.ts` 的 `resolveApiPort`）。启动关键步骤：`loadEnv` → 科目 / 配置 / 模型目录水合 → capability tools 注册 → `recoverToolOperationsOnBoot` → admin config 注入 → `startListenLoop` → serve。
+- **app**：`server/index.ts`（`pnpm build:server` → `dist/server.cjs`），`@hono/node-server` 监听 `API_PORT`（默认 8787，`src/core/config/server/env.ts` 的 `resolveApiPort`）。启动关键步骤：`loadEnv` → 科目 / 配置 / 模型目录水合 → capability tools 注册 → `recoverToolOperationsOnBoot` → admin config 注入 → `startListenLoop` → serve。
 - **worker**：`scripts/worker.ts`（`pnpm build:worker` → `dist/worker.cjs`）。`bootWorker()`（`src/server/boss/worker-boot.ts`）先注册 tools，再调 `startBossWorker` 挂 pg-boss、capability jobs、夜间 orchestrator 与 DBOS。worker 不启动 HTTP，也不开 LISTEN loop（`scripts/worker.ts` 注释）。
 - **migrate**：`scripts/migrate.ts` → `dist/migrate.cjs`，以 `node dist/migrate.cjs` 在 app / worker 之前跑 Drizzle migration。
 - **dev**：`pnpm dev:local`（`scripts/dev-local.ts`）spawn 两进程：`rw:api`（`tsx watch server/index.ts`，脚本自带 `RW_WORKER=1`，dev-local 另设 `RW_FRONTDOOR=dev`：Vite dev server 以 middleware 模式跑在 API 进程内，页面同源在自动探测的端口——8788 起首个空闲，`DEV_PORT` 固定，只绑 127.0.0.1，`DEV_HOST` 可改——并支持 HMR，`server/dev-frontdoor.ts` 用与生产前门相同的 request context 调 Hono app，不需要 `build:start`）、`worker:dev`（`tsx scripts/worker.ts`）。因此 dev 里 app 进程与独立 worker 都会消费队列。dev Postgres 是共享容器（:5434）内每 worktree 一个库（`loom_dev_<name>_<hash>`，`scripts/dev-worktree-db.ts`），多个 worktree 并行开发互不共享数据；重置本 worktree 库用 `pnpm dev:reset`。

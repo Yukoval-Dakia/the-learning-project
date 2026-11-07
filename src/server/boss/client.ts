@@ -1,7 +1,7 @@
 import { PgBoss } from 'pg-boss';
 import { DB_POOL_OVERRIDE } from '@/db/pool';
 
-import { getServerEnv, resolveBossAutomationMode } from '@/server/config/env';
+import { getServerEnv, resolveBossAutomationMode } from '@/core/config/server/env';
 
 // Callers that own a queue import the singleton and the transaction adapter from here.
 export { fromPgBossDrizzleTx } from '@/db/pg-boss-drizzle';
