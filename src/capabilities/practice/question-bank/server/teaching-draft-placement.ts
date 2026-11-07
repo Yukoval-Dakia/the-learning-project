@@ -149,7 +149,7 @@ export async function resolveTeachingDraftPlacement(
     ok: true,
     knowledge_ids: [root.id],
     learner_topic: input.learner_topic,
-    placement_note: `请求的主题还没有合适的知识节点，这道题先放在「${row.name}」下。`,
+    placement_note: `请求的主题还没有合适的知识节点，这道题先放在「${row.name}」下；建好对应知识点后会自动归过去。`,
     ...(placedSubject ? { subject: placedSubject } : {}),
   };
 }
