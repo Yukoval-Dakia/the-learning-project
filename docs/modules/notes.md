@@ -36,7 +36,7 @@ Tool 互动型分支当前唯一实例是 `tool_quiz`（见 [`quiz.md`](quiz.md)
 - 错题归因发现缺口（AI propose："你似乎在 X 上有缺口，要生成笔记吗？"）
 - Dreaming 主动 propose
 
-当前已落地的是 `learning_intent` 来源：用户声明 topic → 同一在途请求只派一次 `LearningIntentOutlineTask`（并发和断连重试回到这一次；费用未知或结果丢失不自动重派；提案被接受或驳回后，同一主题可以再声明一次）→ 产出 1 hub + N atomic outline → 用户 accept 后**同步创建 LearningItem 层级**与 `note_hub` / `note_atomic` artifact stubs → 入队 `NoteGenerateTask` 填 atomic sections。
+当前已落地的是 `learning_intent` 来源：用户声明 topic → 同一在途请求只派一次 `LearningIntentOutlineTask`（并发请求等待这一次；费用未知的失败收成终态回执，不为了补价格再派；结果丢失的那一次不重派，下一次声明先核销该未知义务再开始新尝试；提案接受、驳回或撤回时补上创建回执）→ 产出 1 hub + N atomic outline → 用户 accept 后**同步创建 LearningItem 层级**与 `note_hub` / `note_atomic` artifact stubs → 入队 `NoteGenerateTask` 填 atomic sections。
 
 Living Note v0 的更新触发接到同一个 `note_refine` 队列，四类信号：artifact block `mark_wrong`、`mastery_change`、`dreaming`、`verify`。每类有独立 `WAVE6_TRIGGER_*_ENABLED` kill switch；队列入口做 1h debounce，避免同一 artifact 被同类信号刷屏。
 

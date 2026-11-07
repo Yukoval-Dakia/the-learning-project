@@ -1,9 +1,11 @@
 // One paid outline dispatch for an in-flight learning-intent request.
 //
-// Identity is (topic, attempt), not topic alone. A known terminal receipt or a
-// decided proposal opens the next attempt, so a later intent for the same words
-// can still be created. sending/unknown never starts another provider call.
-// Unknown cost stays on the attempt and is not retried to obtain a price.
+// Identity is (topic, attempt). A live send is joined. A known domain result,
+// including unknown cost, is a terminal receipt and is not retried to obtain a
+// price. A lost send (lease expired, no proposal) is voided and replaced by one
+// successor attempt; that lost delivery is never claimed again. Accept, dismiss,
+// and retract seal the create receipt so a later decision cannot leave the topic
+// pinned on `unknown`.
 
 import { and, eq } from 'drizzle-orm';
 import { AgentRunError } from '@/ai/agent-run-error';
@@ -20,6 +22,7 @@ import {
   recordPaidEffectApplication,
   recordPaidEffectResult,
   settleExpiredPaidEffectSends,
+  voidPaidEffectWithSuccessor,
 } from '@/core/paid-work/server/paid-effect-store';
 import type { Db, Tx } from '@/db/client';
 import { event, paid_effect } from '@/db/schema';
@@ -56,6 +59,8 @@ interface LearningIntentReceipt {
   readonly proposal_id: string | null;
   readonly code: string | null;
   readonly message: string | null;
+  /** True when the provider attempt finished without a trustworthy price. The attempt is still terminal. */
+  readonly cost_unknown: boolean;
 }
 
 interface TopicAttempt {
@@ -76,14 +81,19 @@ type SlotDecision =
       readonly fence: number;
       readonly deliveryId: string;
     }
-  | { readonly kind: 'join'; readonly identity: PaidEffectIdentity };
+  | { readonly kind: 'join'; readonly identity: PaidEffectIdentity }
+  | { readonly kind: 'closed_known'; readonly receipt: LearningIntentReceipt };
 
-const OPEN_RANK: Record<string, number> = {
-  unknown: 0,
-  sending: 1,
-  receipt_ready: 2,
-  pending: 3,
-};
+/** Open slot of one outline attempt. Closed rows (applied / voided / cancelled) are absent. */
+type OpenAttempt =
+  | { readonly kind: 'unsent'; readonly row: TopicAttempt }
+  | { readonly kind: 'in_flight'; readonly row: TopicAttempt }
+  | { readonly kind: 'lost'; readonly row: TopicAttempt }
+  | { readonly kind: 'receipt'; readonly row: TopicAttempt };
+
+const SUCCESSOR_REASON = 'new_intent_after_unknown_outline';
+const SUCCESSOR_OPERATOR = 'learner';
+const SUCCESSOR_BASIS = 'learning_intent_outline';
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -103,14 +113,23 @@ function nextAttempt(rows: readonly TopicAttempt[]): number {
   return rows.reduce((max, row) => Math.max(max, attemptNumber(row.revision)), 0) + 1;
 }
 
-function pickOpen(rows: readonly TopicAttempt[]): TopicAttempt | null {
-  let open: TopicAttempt | null = null;
-  for (const row of rows) {
-    const rank = OPEN_RANK[row.state];
-    if (rank === undefined) continue;
-    if (!open || rank < (OPEN_RANK[open.state] ?? Number.POSITIVE_INFINITY)) open = row;
+function leaseEnded(row: TopicAttempt, now: number): boolean {
+  return row.leaseExpiresAt !== null && row.leaseExpiresAt.getTime() <= now;
+}
+
+function classifyAttempt(row: TopicAttempt, now: number): OpenAttempt | null {
+  switch (row.state) {
+    case 'pending':
+      return { kind: 'unsent', row };
+    case 'sending':
+      return leaseEnded(row, now) ? { kind: 'lost', row } : { kind: 'in_flight', row };
+    case 'unknown':
+      return { kind: 'lost', row };
+    case 'receipt_ready':
+      return { kind: 'receipt', row };
+    default:
+      return null;
   }
-  return open;
 }
 
 function receiptFrom(value: unknown): LearningIntentReceipt | null {
@@ -135,6 +154,7 @@ function receiptFrom(value: unknown): LearningIntentReceipt | null {
     proposal_id: typeof row.proposal_id === 'string' ? row.proposal_id : null,
     code: typeof row.code === 'string' ? row.code : null,
     message: typeof row.message === 'string' ? row.message : null,
+    cost_unknown: row.cost_unknown === true,
   };
 }
 
@@ -144,11 +164,21 @@ function taskRunFromReason(reason: string | null): string | null {
   return match?.[1] && match[1] !== 'none' ? match[1] : null;
 }
 
-function domainFromReason(reason: string | null): { code: string; outcome: string } | null {
+function domainFromReason(reason: string | null): { code: string; outcome: ReceiptOutcome } | null {
   if (!reason) return null;
   const match = /^domain:([a-z_]+) code:([a-z0-9_]+)/.exec(reason);
-  if (!match?.[1] || !match[2]) return null;
-  return { outcome: match[1], code: match[2] };
+  const outcome = match?.[1];
+  const code = match?.[2];
+  if (
+    !outcome ||
+    !code ||
+    (outcome !== 'outline_rejected' &&
+      outcome !== 'proposal_failed' &&
+      outcome !== 'provider_failed')
+  ) {
+    return null;
+  }
+  return { outcome, code };
 }
 
 function statusForCode(code: string): number {
@@ -169,34 +199,6 @@ function domainError(
     task_run_id: taskRunId,
     outcome,
   });
-}
-
-function unknownError(
-  requestId: string | null,
-  taskRunId: string | null,
-  reason: string | null,
-): ApiError {
-  const domain = domainFromReason(reason);
-  if (domain) {
-    return domainError(
-      domain.code,
-      'learning intent failed before a known-cost result was recorded',
-      requestId,
-      taskRunId ?? taskRunFromReason(reason),
-      domain.outcome,
-    );
-  }
-  return new ApiError(
-    'learning_intent_result_unknown',
-    'learning intent result is unknown and will not be dispatched again',
-    409,
-    undefined,
-    {
-      request_id: requestId,
-      task_run_id: taskRunId ?? taskRunFromReason(reason),
-      state: 'unknown',
-    },
-  );
 }
 
 async function loadTopicAttempts(db: Db | Tx, topic: string): Promise<TopicAttempt[]> {
@@ -276,6 +278,7 @@ async function proposedReceipt(
     proposal_id: proposalId,
     code: null,
     message: null,
+    cost_unknown: false,
   };
 }
 
@@ -292,18 +295,174 @@ async function recordReceipt(
   });
 }
 
-async function healProposedReceipt(db: Db, topic: string, proposalId: string): Promise<void> {
-  const rows = await loadTopicAttempts(db, topic);
-  for (const row of rows) {
-    if (row.state === 'applied' || row.state === 'cancelled' || row.state === 'voided') continue;
-    if (row.state === 'pending' || !row.deliveryId) continue;
-    const receipt = await proposedReceipt(db, proposalId, row.deliveryId);
-    try {
-      await recordReceipt(db, row.identity, row.deliveryId, row.fence, receipt);
-    } catch (err) {
-      console.error('[learning-intent] proposal receipt record failed', proposalId, err);
+async function writeReceipt(
+  tx: Tx,
+  row: TopicAttempt,
+  receipt: LearningIntentReceipt,
+): Promise<void> {
+  if (!row.deliveryId) return;
+  await recordPaidEffectResult(tx, row.identity, row.deliveryId, receipt, { fence: row.fence });
+  await recordPaidEffectApplication(tx, row.identity, receipt);
+}
+
+async function sealOutlineReceipt(tx: Tx, topic: string, proposalId: string): Promise<void> {
+  const now = Date.now();
+  for (const row of await loadTopicAttempts(tx, topic)) {
+    const open = classifyAttempt(row, now);
+    if (!open || open.kind === 'unsent' || !row.deliveryId) continue;
+    await writeReceipt(tx, row, await proposedReceipt(tx, proposalId, row.deliveryId));
+  }
+}
+
+/** Close a create receipt once the proposal exists. Failures are logged; the decision already stands. */
+export async function sealLearningIntentOutlineReceipt(
+  db: Db,
+  topic: string,
+  proposalId: string,
+): Promise<void> {
+  try {
+    await db.transaction(async (tx) => {
+      await lockPaidEffectControlFamily(tx, FAMILY);
+      await sealOutlineReceipt(tx, topic, proposalId);
+    });
+  } catch (err) {
+    console.error('[learning-intent] outline receipt seal failed', proposalId, err);
+  }
+}
+
+/** Same seal inside the caller's transaction (retract already holds the decision lock). */
+export async function sealLearningIntentOutlineReceiptTx(
+  tx: Tx,
+  topic: string,
+  proposalId: string,
+): Promise<void> {
+  await lockPaidEffectControlFamily(tx, FAMILY);
+  await sealOutlineReceipt(tx, topic, proposalId);
+}
+
+export function learningIntentTopic(payload: {
+  readonly kind: string;
+  readonly proposed_change: unknown;
+}): string | null {
+  if (
+    payload.kind !== 'learning_item' ||
+    !payload.proposed_change ||
+    typeof payload.proposed_change !== 'object'
+  ) {
+    return null;
+  }
+  const topic = (payload.proposed_change as { topic?: unknown }).topic;
+  return typeof topic === 'string' && topic.length > 0 ? topic : null;
+}
+
+async function newestDecidedIntent(db: Db | Tx, topic: string): Promise<string | null> {
+  let newest: { id: string; at: number } | null = null;
+  for (const status of ['accepted', 'dismissed', 'stale'] as const) {
+    const rows = await listProposalInboxRows(db, { status, kind: 'learning_item' });
+    for (const row of rows) {
+      if (storedIntentTopic(row.payload) !== topic) continue;
+      const at = row.proposed_at.getTime();
+      if (!newest || at > newest.at) newest = { id: row.id, at };
     }
   }
+  return newest?.id ?? null;
+}
+
+function freshInput(topic: string, rows: readonly TopicAttempt[]) {
+  return {
+    family: FAMILY,
+    entityId: topic,
+    entityRevision: String(nextAttempt(rows)),
+    unit: UNIT,
+    input: { topic },
+  };
+}
+
+async function claimDelivery(
+  tx: Tx,
+  identity: PaidEffectIdentity,
+  deliveryId: string,
+): Promise<SlotDecision> {
+  const claim = await claimPaidEffectSend(tx, identity, {
+    backend: 'pg-boss',
+    deliveryId,
+    leaseExpiresAt: new Date(Date.now() + LEASE_MS),
+  });
+  if (claim.kind !== 'claimed') return { kind: 'join', identity };
+  return { kind: 'winner', identity, fence: claim.fence, deliveryId };
+}
+
+async function admitFresh(
+  tx: Tx,
+  topic: string,
+  rows: readonly TopicAttempt[],
+): Promise<SlotDecision> {
+  const deliveryId = newId();
+  const input = freshInput(topic, rows);
+  const identity = computePaidEffectIdentity(input);
+  const admitted = await admitPaidEffectIntent(tx, input);
+  if (admitted.kind === 'existing' && admitted.state !== 'pending') {
+    return { kind: 'join', identity };
+  }
+  return claimDelivery(tx, identity, deliveryId);
+}
+
+async function retireLost(
+  tx: Tx,
+  topic: string,
+  rows: readonly TopicAttempt[],
+  lost: TopicAttempt,
+): Promise<SlotDecision> {
+  const decided = await newestDecidedIntent(tx, topic);
+  if (decided && lost.deliveryId) {
+    await writeReceipt(tx, lost, await proposedReceipt(tx, decided, lost.deliveryId));
+    return admitFresh(tx, topic, rows);
+  }
+  const domain = domainFromReason(lost.unresolvedReason);
+  if (domain && lost.deliveryId) {
+    const receipt: LearningIntentReceipt = {
+      outcome: domain.outcome,
+      request_id: lost.deliveryId,
+      task_run_id: taskRunFromReason(lost.unresolvedReason),
+      proposal_id: null,
+      code: domain.code,
+      message: null,
+      cost_unknown: true,
+    };
+    await writeReceipt(tx, lost, receipt);
+    return { kind: 'closed_known', receipt };
+  }
+  if (lost.state === 'sending') {
+    if (!lost.deliveryId) {
+      throw new ApiError('inconsistent_state', 'expired outline send has no delivery', 500);
+    }
+    await markPaidEffectUnknown(tx, lost.identity, lost.deliveryId, 'send_lease_expired', {
+      fence: lost.fence,
+    });
+  }
+  const deliveryId = newId();
+  const successorInput = freshInput(topic, rows);
+  const voided = await voidPaidEffectWithSuccessor(tx, lost.identity, {
+    expectedFence: lost.fence,
+    authorization: {
+      authorizationId: newId(),
+      reason: SUCCESSOR_REASON,
+      operator: SUCCESSOR_OPERATOR,
+      basis: SUCCESSOR_BASIS,
+      successorInput,
+      successorDelivery: { backend: 'pg-boss', deliveryId },
+    },
+  });
+  // The successor is a new attempt. The voided delivery cannot record or send again.
+  const claim = await claimDelivery(tx, voided.successor, deliveryId);
+  if (claim.kind !== 'winner') {
+    throw new ApiError(
+      'inconsistent_state',
+      'learning intent successor was not claimed by its bound delivery',
+      500,
+    );
+  }
+  return claim;
 }
 
 async function claimSlot(db: Db, topic: string): Promise<SlotDecision> {
@@ -311,40 +470,20 @@ async function claimSlot(db: Db, topic: string): Promise<SlotDecision> {
     // The read and the claim share the family lock. Two creates that both saw an
     // empty slot would otherwise admit two attempts before either row existed.
     await lockPaidEffectControlFamily(tx, FAMILY);
+    const now = Date.now();
     const rows = await loadTopicAttempts(tx, topic);
-    const open = pickOpen(rows);
-    if (open && open.state !== 'pending') return { kind: 'join', identity: open.identity };
-
-    const deliveryId = newId();
-    const delivery = {
-      backend: 'pg-boss' as const,
-      deliveryId,
-      leaseExpiresAt: new Date(Date.now() + LEASE_MS),
-    };
-    const identity =
-      open?.identity ??
-      computePaidEffectIdentity({
-        family: FAMILY,
-        entityId: topic,
-        entityRevision: String(nextAttempt(rows)),
-        unit: UNIT,
-        input: { topic },
-      });
-    if (!open) {
-      const admitted = await admitPaidEffectIntent(tx, {
-        family: FAMILY,
-        entityId: topic,
-        entityRevision: identity.entityRevision,
-        unit: UNIT,
-        input: { topic },
-      });
-      if (admitted.kind === 'existing' && admitted.state !== 'pending') {
-        return { kind: 'join', identity };
-      }
-    }
-    const claim = await claimPaidEffectSend(tx, identity, delivery);
-    if (claim.kind !== 'claimed') return { kind: 'join', identity };
-    return { kind: 'winner', identity, fence: claim.fence, deliveryId };
+    const open = rows
+      .map((row) => classifyAttempt(row, now))
+      .filter((row): row is OpenAttempt => row !== null);
+    const inFlight = open.find((row) => row.kind === 'in_flight');
+    if (inFlight) return { kind: 'join', identity: inFlight.row.identity };
+    const lost = open.find((row) => row.kind === 'lost');
+    if (lost) return retireLost(tx, topic, rows, lost.row);
+    const receipt = open.find((row) => row.kind === 'receipt');
+    if (receipt) return { kind: 'join', identity: receipt.row.identity };
+    const unsent = open.find((row) => row.kind === 'unsent');
+    if (unsent) return claimDelivery(tx, unsent.row.identity, newId());
+    return admitFresh(tx, topic, rows);
   });
 }
 
@@ -387,18 +526,23 @@ async function waitForTerminal(
   }
 }
 
+type JoinOutcome =
+  | { readonly kind: 'proposal'; readonly proposal: LearningIntentProposal }
+  | { readonly kind: 'retry' };
+
 async function answerSnapshot(
   db: Db,
   topic: string,
   row: PaidEffectSnapshot,
-): Promise<LearningIntentProposal> {
-  if (row.state === 'unknown' || row.state === 'voided') {
-    throw unknownError(row.delivery.deliveryId, null, row.unresolvedReason);
+): Promise<JoinOutcome> {
+  if (row.state === 'unknown' || row.state === 'voided' || row.state === 'cancelled') {
+    return { kind: 'retry' };
   }
   const receipt = receiptFrom(row.state === 'applied' ? row.application : row.result);
+  if (row.state === 'applied' && receipt?.outcome === 'not_sent') return { kind: 'retry' };
   if (row.state === 'applied' && receipt?.outcome === 'proposed') {
     const replay = await replayPendingLearningIntent(db, topic);
-    if (replay) return replay;
+    if (replay) return { kind: 'proposal', proposal: replay };
     throw new ApiError(
       'inconsistent_state',
       `proposal ${receipt.proposal_id ?? ''} is not a pending learning intent`,
@@ -407,7 +551,7 @@ async function answerSnapshot(
       { request_id: receipt.request_id, task_run_id: receipt.task_run_id },
     );
   }
-  if (row.state === 'applied' && receipt && receipt.outcome !== 'not_sent') {
+  if (row.state === 'applied' && receipt) {
     throw domainError(
       receipt.code ?? 'learning_intent_failed',
       receipt.message ?? 'learning intent failed',
@@ -415,6 +559,13 @@ async function answerSnapshot(
       receipt.task_run_id,
       receipt.outcome,
     );
+  }
+  if (
+    row.state === 'sending' &&
+    row.sendLeaseExpiresAt &&
+    row.sendLeaseExpiresAt.getTime() <= Date.now()
+  ) {
+    return { kind: 'retry' };
   }
   throw new ApiError(
     'learning_intent_in_flight',
@@ -429,21 +580,17 @@ async function joinAttempt(
   db: Db,
   topic: string,
   identity: PaidEffectIdentity,
-): Promise<LearningIntentProposal> {
+): Promise<JoinOutcome> {
   const current = await readPaidEffect(db, identity);
   if (!current) {
     throw new ApiError('inconsistent_state', 'learning intent request disappeared', 500);
   }
-  if (current.state === 'unknown' || current.state === 'voided') {
-    throw unknownError(current.delivery.deliveryId, null, current.unresolvedReason);
+  if (current.state === 'unknown' || current.state === 'voided' || current.state === 'cancelled') {
+    return { kind: 'retry' };
   }
   const deadline = (current.sendLeaseExpiresAt?.getTime() ?? Date.now() + LEASE_MS) + JOIN_GRACE_MS;
   const finished = await waitForTerminal(db, identity, deadline);
   return answerSnapshot(db, topic, finished);
-}
-
-function failureReason(fact: LearningIntentFailureFact): string {
-  return `domain:${fact.domainOutcome} code:${fact.code} task_run_id=${fact.taskRunId ?? 'none'}`;
 }
 
 function knownReceipt(fact: LearningIntentFailureFact, requestId: string): LearningIntentReceipt {
@@ -454,6 +601,7 @@ function knownReceipt(fact: LearningIntentFailureFact, requestId: string): Learn
     proposal_id: null,
     code: fact.code,
     message: fact.message.slice(0, 500),
+    cost_unknown: fact.costBasis === 'unknown',
   };
 }
 
@@ -473,32 +621,12 @@ async function settleWinnerFailure(
       proposal_id: null,
       code: null,
       message: null,
+      cost_unknown: false,
     });
     throw err;
   }
-  const unknownCost =
-    (fact && fact.costBasis === 'unknown') ||
-    (err instanceof AgentRunError && err.costUsd === undefined);
-  if (unknownCost) {
-    const reason = fact
-      ? failureReason(fact)
-      : `domain:provider_failed code:provider_failed task_run_id=${
-          err instanceof AgentRunError ? err.taskRunId : 'none'
-        }`;
-    await db.transaction(async (tx) => {
-      await markPaidEffectUnknown(tx, won.identity, won.deliveryId, reason, { fence: won.fence });
-    });
-    if (fact) {
-      throw domainError(
-        fact.code,
-        fact.message,
-        won.deliveryId,
-        fact.taskRunId,
-        fact.domainOutcome,
-      );
-    }
-    throw unknownError(won.deliveryId, err instanceof AgentRunError ? err.taskRunId : null, reason);
-  }
+  // Unknown cost is still a known domain outcome: record it and stop. A later
+  // create is a new attempt; this one is not dispatched again to discover a price.
   if (fact) {
     await recordReceipt(
       db,
@@ -517,6 +645,7 @@ async function settleWinnerFailure(
     proposal_id: null,
     code: 'provider_failed',
     message: 'provider attempt failed',
+    cost_unknown: err instanceof AgentRunError && err.costUsd === undefined,
   });
   throw domainError(
     'provider_failed',
@@ -553,6 +682,7 @@ async function dispatchWinner(
         proposal_id: null,
         code: null,
         message: null,
+        cost_unknown: false,
       });
       throw err;
     }
@@ -568,11 +698,28 @@ export async function runLearningIntentRequest(
 ): Promise<LearningIntentProposal> {
   const replay = await replayPendingLearningIntent(database, topic);
   if (replay) {
-    await healProposedReceipt(database, topic, replay.proposal_id);
+    await sealLearningIntentOutlineReceipt(database, topic, replay.proposal_id);
     return replay;
   }
   await settleExpiredPaidEffectSends(database, { family: FAMILY });
-  const slot = await claimSlot(database, topic);
-  if (slot.kind === 'join') return joinAttempt(database, topic, slot.identity);
-  return dispatchWinner(database, topic, runTaskFn, slot);
+  for (let step = 0; step < 4; step += 1) {
+    const slot = await claimSlot(database, topic);
+    if (slot.kind === 'closed_known') {
+      throw domainError(
+        slot.receipt.code ?? 'learning_intent_failed',
+        slot.receipt.message ?? 'learning intent failed',
+        slot.receipt.request_id,
+        slot.receipt.task_run_id,
+        slot.receipt.outcome,
+      );
+    }
+    if (slot.kind === 'winner') return dispatchWinner(database, topic, runTaskFn, slot);
+    const joined = await joinAttempt(database, topic, slot.identity);
+    if (joined.kind === 'proposal') return joined.proposal;
+  }
+  throw new ApiError(
+    'learning_intent_in_flight',
+    'learning intent request is still in flight',
+    409,
+  );
 }
