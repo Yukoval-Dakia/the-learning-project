@@ -868,6 +868,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/copilot/runs/{id}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["retryCopilotRun"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/copilot/sessions": {
         parameters: {
             query?: never;
@@ -2134,6 +2150,38 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["batchRetractAutoAppliedProposals"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/proposals/batch-accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["batchAcceptProposals"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/proposals/batch-accepts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listProposalBatchAccepts"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -11278,6 +11326,26 @@ export interface operations {
                             evaluation_group_id: string;
                             submission_id: string;
                         };
+                        evidence: {
+                            assistance: {
+                                kinds: ("hint" | "solution" | "chat_context")[];
+                                max_dose: number | null;
+                                /** @enum {string|null} */
+                                phase: "before_submit" | "after_submit" | null;
+                                /** @enum {string} */
+                                status: "independent" | "assisted" | "unknown";
+                            } | null;
+                            self_claim: {
+                                confidence: number | null;
+                                /** @enum {string|null} */
+                                rating: "again" | "hard" | "good" | null;
+                            } | null;
+                            verdict: {
+                                /** @enum {string} */
+                                outcome: "correct" | "partial" | "incorrect" | "unsupported" | "partial_unknown";
+                                score: number | null;
+                            } | null;
+                        };
                         judge: (({
                             auto_rated: boolean;
                             capability_ref: {
@@ -13076,6 +13144,134 @@ export interface operations {
             };
         };
     };
+    retryCopilotRun: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        checkpoint_event_id?: string;
+                        /** @enum {string} */
+                        derivation_policy?: "allow" | "answer_only" | "crisis";
+                        run_id: string;
+                        session_id: string;
+                    };
+                };
+            };
+            /** @description Malformed request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description State or version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Semantic validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Rate limited */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
     listCopilotSessions: {
         parameters: {
             query?: never;
@@ -13449,6 +13645,7 @@ export interface operations {
                                 version: 1;
                             };
                             reply_event_id?: string;
+                            retryable?: boolean;
                             /** @enum {string} */
                             role: "user" | "ai" | "tombstone";
                             run_id?: string;
@@ -32106,6 +32303,7 @@ export interface operations {
                         auto_apply_enabled: boolean;
                         data: {
                             actor_ref: string;
+                            batch_confirm_eligible: boolean;
                             cost_micro_usd: number | null;
                             decided_at: string | null;
                             id: string;
@@ -33288,6 +33486,7 @@ export interface operations {
                         };
                         rows: {
                             actor_ref: string;
+                            batch_confirm_eligible: boolean;
                             cost_micro_usd: number | null;
                             decided_at: string | null;
                             id: string;
@@ -34962,6 +35161,284 @@ export interface operations {
                             from: string;
                             to: string;
                         } | null;
+                    };
+                };
+            };
+            /** @description Malformed request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description State or version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Semantic validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Rate limited */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    batchAcceptProposals: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    proposal_ids: string[];
+                    user_note?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        batch_id: string | null;
+                        items: {
+                            code: string | null;
+                            kind: string;
+                            proposal_id: string;
+                            reason_md: string | null;
+                            /** @enum {string} */
+                            status: "accepted" | "already_accepted" | "rejected" | "failed";
+                        }[];
+                        summary: {
+                            accepted: number;
+                            already_accepted: number;
+                            failed: number;
+                            rejected: number;
+                            requested: number;
+                        };
+                    };
+                };
+            };
+            /** @description Malformed request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description State or version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Semantic validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Rate limited */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    listProposalBatchAccepts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        batches: {
+                            batch_id: string;
+                            created_at: string;
+                            items: {
+                                code: string | null;
+                                kind: string;
+                                proposal_id: string;
+                                reason_md: string | null;
+                                /** @enum {string} */
+                                status: "accepted" | "already_accepted" | "rejected" | "failed";
+                            }[];
+                            member_ids: string[];
+                            proposal_ids: string[];
+                            revoked_ids: string[];
+                            /** @enum {string} */
+                            state: "open" | "closed";
+                        }[];
                     };
                 };
             };
@@ -38529,6 +39006,26 @@ export interface operations {
                                 effect: "applied" | "ineligible" | "failed_pending" | "idempotent_replay" | null;
                                 evaluation_group_id: string;
                                 submission_id: string;
+                            };
+                            evidence: {
+                                assistance: {
+                                    kinds: ("hint" | "solution" | "chat_context")[];
+                                    max_dose: number | null;
+                                    /** @enum {string|null} */
+                                    phase: "before_submit" | "after_submit" | null;
+                                    /** @enum {string} */
+                                    status: "independent" | "assisted" | "unknown";
+                                } | null;
+                                self_claim: {
+                                    confidence: number | null;
+                                    /** @enum {string|null} */
+                                    rating: "again" | "hard" | "good" | null;
+                                } | null;
+                                verdict: {
+                                    /** @enum {string} */
+                                    outcome: "correct" | "partial" | "incorrect" | "unsupported" | "partial_unknown";
+                                    score: number | null;
+                                } | null;
                             };
                             judge: (({
                                 auto_rated: boolean;

@@ -26,7 +26,10 @@ import type {
   ScoringUnitCriterionT,
   ScoringUnitT,
 } from '@/core/schema/assessment/scoring';
-import { validateScoringBasis } from '@/core/schema/assessment/scoring';
+import {
+  validateScoringBasis,
+  wrongResponseFullMarksIssues,
+} from '@/core/schema/assessment/scoring';
 import type { ScoringRuleT } from '@/core/schema/assessment/scoring-rule';
 import { validateStructure } from '@/core/schema/assessment/structure';
 import type { Db } from '@/db/client';
@@ -657,6 +660,7 @@ export async function runQuestionAdmission(
     ...validateStructure(definition.structure),
     ...validateResponseSpec(assembled.spec),
     ...validateScoringBasis(assembled.basis, assembled.spec, definition.structure),
+    ...wrongResponseFullMarksIssues(assembled.basis),
     ...validateExecutionPlan(assembled.plan, assembled.basis).filter(
       (i) => i.code !== 'unadmitted_model_executor',
     ),

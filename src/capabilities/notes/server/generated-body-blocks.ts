@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { ArtifactBodyBlocksT } from '@/core/schema/business';
 import { downgradeUnboundChartFences } from '@/kernel/blocks/markdown-chart-fence';
-import { noteBlockSource } from '../shared/note-block-source';
+import { noteBlockSource } from '@/kernel/read-models/note-block-source';
 import { downgradeUnboundChartFencesInBlockTree } from '../shared/note-chart-fence-downgrade';
 
 const ANCHORED_TYPES = new Set([

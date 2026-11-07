@@ -1,7 +1,7 @@
 // 原生 solve 提交路由 DB 测试（db 分区；testcontainer + resetDb）。
 // 断言契约：提交与会话转移原子提交、replay 幂等、revealed 答案只来自冻结 revision。
 
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ResponseSetT } from '@/core/schema/assessment';
 import {
@@ -20,10 +20,13 @@ import {
   normalizeQuestionRowToContract,
 } from '@/kernel/records/assessment-normalization';
 import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
+import { STUDY_ASSISTANCE_ACTION } from '@/kernel/records/study-reference';
 import { resetDb, testDb } from '../../../../../../tests/helpers/db';
 import { createSolveSubmissionResource } from '../../../api/resource-routes';
 import { startSolveSession } from '../../../server/solve-session';
 import * as Tutor from '../../../server/tutor-session';
+import { revealAnswerTool } from '../../tools/reveal-answer';
+import { snapshotIssuanceAssistance } from './assistance';
 
 const NOW = new Date('2026-09-25T00:00:00Z');
 
@@ -217,5 +220,83 @@ describe('formal manual candidate and atomic activation', () => {
         })
       ).status,
     ).toBe(409);
+  });
+});
+
+describe('reveal_answer assistance recording', () => {
+  beforeEach(resetDb);
+  // @invariant security: the copilot give-answer path commits a solution/answer_help exposure on the issuance before the reference reaches the learner, so the later submission is excluded from independent mastery evidence @fails-if reference_md is returned without a committed assistance event, or an unissued question yields a reveal anyway
+  it('reveals only against an open issuance and leaves an assisted record', async () => {
+    const db = testDb();
+    const pub = await publishAdmitted('reveal_assist');
+    const toolCtx = {
+      db,
+      taskRunId: 'reveal-test',
+      callerActor: { kind: 'agent' as const, ref: 'agent:copilot' },
+    };
+
+    expect(await revealAnswerTool.execute(toolCtx, { question_id: pub.groupId })).toMatchObject({
+      status: 'no_open_issuance',
+    });
+    expect(await revealAnswerTool.execute(toolCtx, { question_id: 'never-seen' })).toMatchObject({
+      status: 'unknown_question',
+    });
+
+    const issued = await issueAssessment(db, { group_id: pub.groupId });
+    if (issued.status !== 'issued') throw new Error(issued.status);
+
+    const revealed = await revealAnswerTool.execute(toolCtx, { question_id: pub.groupId });
+    expect(revealed).toMatchObject({
+      status: 'revealed',
+      issuance_id: issued.issuance.issuance_id,
+    });
+    if (revealed.status !== 'revealed') throw new Error(revealed.status);
+    expect(revealed.reference_md).toContain('B');
+    expect(revealed.prompt_md.length).toBeGreaterThan(0);
+    expect(revealed.practice_dto.issuance_id).toBe(issued.issuance.issuance_id);
+
+    const exposures = await db
+      .select()
+      .from(event)
+      .where(
+        and(
+          eq(event.action, STUDY_ASSISTANCE_ACTION),
+          eq(event.subject_kind, 'issuance'),
+          eq(event.subject_id, issued.issuance.issuance_id),
+        ),
+      );
+    expect(exposures).toHaveLength(1);
+    expect(exposures[0].payload).toMatchObject({ kind: 'solution', impact: 'answer_help' });
+    expect(await snapshotIssuanceAssistance(db, issued.issuance.issuance_id)).toMatchObject({
+      status: 'assisted',
+    });
+
+    const secondReveal = await revealAnswerTool.execute(toolCtx, {
+      question_id: issued.issuance.binding.part_ids[0],
+    });
+    expect(secondReveal).toMatchObject({
+      status: 'revealed',
+      issuance_id: issued.issuance.issuance_id,
+    });
+    expect(
+      (
+        await db
+          .select()
+          .from(event)
+          .where(
+            and(
+              eq(event.action, STUDY_ASSISTANCE_ACTION),
+              eq(event.subject_kind, 'issuance'),
+              eq(event.subject_id, issued.issuance.issuance_id),
+            ),
+          )
+      ).length,
+    ).toBe(1);
+
+    const secondIssued = await issueAssessment(db, { group_id: pub.groupId });
+    if (secondIssued.status !== 'issued') throw new Error(secondIssued.status);
+    expect(await revealAnswerTool.execute(toolCtx, { question_id: pub.groupId })).toMatchObject({
+      status: 'ambiguous',
+    });
   });
 });

@@ -21,19 +21,12 @@ const SECTION_NAMES = new Set<string>([...SEMANTIC_KINDS, 'body']);
 type SectionDraft = { name: string; lines: string[] };
 
 /**
- * Prose before the first @section. note_long / note_hub are one free body, so a
- * title and intro with no @body are that body. note_atomic has no free body.
+ * Prose before the first @section is free body for every note type: atomic
+ * notes organize around their material instead of a fixed section set, and a
+ * title plus intro with no @body is that body.
  */
-const LEADING_PROSE: Record<NoteArtifactType, 'body' | 'reject'> = {
-  note_atomic: 'reject',
-  note_long: 'body',
-  note_hub: 'body',
-};
-
-function ensureSection(current: SectionDraft | null, declared: NoteArtifactType): SectionDraft {
-  if (current) return current;
-  if (LEADING_PROSE[declared] === 'body') return { name: 'body', lines: [] };
-  fail('text before the first section');
+function ensureSection(current: SectionDraft | null): SectionDraft {
+  return current ?? { name: 'body', lines: [] };
 }
 
 const COMPLETE_STOP = new Set(['end_turn', 'stop']);
@@ -540,26 +533,26 @@ export function compileNoteGenerateDocument(
     const line = lines[i] ?? '';
     const trimmed = line.trim();
     if (inFence) {
-      current = ensureSection(current, declared);
+      current = ensureSection(current);
       current.lines.push(line);
       if (trimmed.startsWith('```')) inFence = false;
       continue;
     }
     if (trimmed.startsWith('```')) {
-      current = ensureSection(current, declared);
+      current = ensureSection(current);
       inFence = true;
       current.lines.push(line);
       continue;
     }
     const dollars = dollarPairCount(line);
     if (inDisplay) {
-      current = ensureSection(current, declared);
+      current = ensureSection(current);
       current.lines.push(line);
       if (dollars % 2 === 1) inDisplay = false;
       continue;
     }
     if (dollars % 2 === 1) {
-      current = ensureSection(current, declared);
+      current = ensureSection(current);
       inDisplay = true;
       current.lines.push(line);
       continue;
@@ -587,15 +580,12 @@ export function compileNoteGenerateDocument(
     }
     if (!current) {
       if (trimmed === '') continue;
-      current = ensureSection(current, declared);
+      current = ensureSection(current);
     }
     current.lines.push(line);
   }
   if (!ended) fail('missing @end');
   if (sections.length === 0) fail('document has no sections');
-  if (declared === 'note_atomic' && sections.some((section) => section.name === 'body')) {
-    fail('note_atomic cannot use @body');
-  }
 
   const content: PmNode[] = [];
   for (const section of sections) {

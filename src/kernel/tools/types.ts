@@ -135,6 +135,8 @@ export interface ToolContext {
   callerActor: ToolCallerActor;
   /** When set, mirror events use this as `caused_by_event_id`. */
   causedByEventId?: string;
+  /** Server-bound original learner ask for quote authorization, separate from execution causality. */
+  learnerAskEventId?: string;
   /**
    * Server-bound publication anchor for a run whose content provenance is its ticket rather
    * than a learner session (the question preparer). Never accepted from model arguments:

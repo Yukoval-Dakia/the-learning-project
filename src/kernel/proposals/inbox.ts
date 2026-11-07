@@ -28,6 +28,7 @@ import type { Db, Tx } from '@/db/client';
 import { event, proposal_signals } from '@/db/schema';
 import { getCorrectionStatuses } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
+import { batchConfirmEligibleKind } from '@/kernel/proposals/batch-confirm';
 import {
   type BlockMergeIneligibilityReason,
   blockMergeAdmissionInputFromPayload,
@@ -71,6 +72,12 @@ export interface ProposalInboxRow {
    * on the same proof; this field only explains why the card cannot be accepted.
    */
   not_acceptable_reason: BlockMergeIneligibilityReason | null;
+  /**
+   * Server-derived: this pending row may join a batch confirmation. Only true
+   * for B-strength kinds with an owner retract path; the UI must not keep its
+   * own whitelist.
+   */
+  batch_confirm_eligible: boolean;
   signals: ProposalSignalSnapshot | null;
   presentation: ProposalPresentation | null;
 }
@@ -809,6 +816,7 @@ async function projectLoadedProposalRows(
       source_action: row.action,
       source_subject_kind: row.subject_kind,
       not_acceptable_reason: null,
+      batch_confirm_eligible: rowStatus === 'pending' && batchConfirmEligibleKind(payload.kind),
       signals: null,
       presentation: null,
     });
@@ -890,12 +898,13 @@ export async function getProposalInboxRow(
   const correction = correctionDecisionByProposal.get(proposalId);
   const payload = safeDeriveLegacyAiProposal(proposalRow);
   if (!payload) return null;
+  const status = deriveProposalStatus(proposalRow, correction, rate);
   const row: ProposalInboxRow = {
     id: proposalRow.id,
     kind: payload.kind,
     target: payload.target,
     payload,
-    status: deriveProposalStatus(proposalRow, correction, rate),
+    status,
     proposed_at: proposalRow.created_at,
     decided_at: correction?.decided_at ?? rate?.created_at ?? null,
     actor_ref: proposalRow.actor_ref,
@@ -904,6 +913,7 @@ export async function getProposalInboxRow(
     source_action: proposalRow.action,
     source_subject_kind: proposalRow.subject_kind,
     not_acceptable_reason: null,
+    batch_confirm_eligible: status === 'pending' && batchConfirmEligibleKind(payload.kind),
     signals: null,
     presentation: null,
   };
