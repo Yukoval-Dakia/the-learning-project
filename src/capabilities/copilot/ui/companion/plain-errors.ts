@@ -47,7 +47,10 @@ const RETRY_REFUSALS: Readonly<Record<string, string>> = {
 /** Unknown acceptance is safe to click again: one failed run has only one resend on the server. */
 export function plainRetryError(cause: unknown): string {
   if (cause instanceof ApiError && cause.code === 'retry_not_allowed') {
-    const reason = cause.details?.reason;
+    // The server's own envelope is { error, details: { reason } }, kept whole in ApiError.details.
+    const envelope = cause.details?.details;
+    const reason =
+      envelope && typeof envelope === 'object' && 'reason' in envelope ? envelope.reason : undefined;
     return (
       (typeof reason === 'string' ? RETRY_REFUSALS[reason] : undefined) ??
       '这一轮不能直接再发，把这句话重新发一下吧。'

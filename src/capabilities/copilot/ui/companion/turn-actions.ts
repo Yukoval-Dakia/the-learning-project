@@ -54,7 +54,7 @@ export function createTurnActions(ctx: CompanionCtx): TurnActions {
   }
 
   async function retryFailedRun(runId: string, sessionId: string) {
-    if (ctx.get().retryPendingRunId) return;
+    if (ctx.get().retryPendingRunId === runId) return;
     ctx.set({ retryPendingRunId: runId, error: null, refreshFailed: false });
     try {
       let accepted: Awaited<ReturnType<typeof readAcceptance>>;
@@ -72,6 +72,9 @@ export function createTurnActions(ctx: CompanionCtx): TurnActions {
         return;
       }
       if (ctx.get().currentSessionId === sessionId) {
+        // A read sent before this answer still holds the failed reply; it must not put it back.
+        const { snapshotRequestSeq, snapshotAppliedSeq } = ctx.internals;
+        snapshotAppliedSeq.set(sessionId, snapshotRequestSeq.get(sessionId) ?? 0);
         ctx.updateMessages((previous) =>
           previous.filter((m) => !(m.role === 'ai' && m.run_id === runId)),
         );
