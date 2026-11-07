@@ -93,6 +93,7 @@ function parseCauseCategoryChange(input: ProposalAcceptInput): PreparedCauseCate
 
 // Shown to the learner as is; programs branch on the `conflict` code, never on this text.
 const CATEGORY_ID_TAKEN_MESSAGE = '已经有同样的错因类别了，这张可以忽略。';
+const CATEGORY_ID_RETRACTED_MESSAGE = '这个错因类别之前撤销过，这张可以忽略。';
 
 // Rate was written but the row did not materialize — caller should retract +
 // re-run, not silently fix up (variant_question precedent).
@@ -150,13 +151,17 @@ export const causeCategoryProposalAcceptApplier: ProposalAcceptApplier = async (
       const now = new Date();
       const existing = (
         await tx
-          .select({ id: cause_category_overlay.id })
+          .select({ archived_at: cause_category_overlay.archived_at })
           .from(cause_category_overlay)
           .where(eq(cause_category_overlay.id, prepared.categoryId))
           .limit(1)
       )[0];
       if (existing) {
-        throw new ApiError('conflict', CATEGORY_ID_TAKEN_MESSAGE, 409);
+        throw new ApiError(
+          'conflict',
+          existing.archived_at === null ? CATEGORY_ID_TAKEN_MESSAGE : CATEGORY_ID_RETRACTED_MESSAGE,
+          409,
+        );
       }
       const inserted = await tx
         .insert(cause_category_overlay)
