@@ -61,3 +61,9 @@ Security invariant proposal: through the real save/resolve boundary, accept the
 exact OpenDesign pair and reject wrong host, wrong credential, alternate port
 and suffix impersonation before any credential-bearing request. Four negative
 save requests were manually observed as HTTP 422; no automated case was authored.
+
+Implementation receipt: base `2b957bcb9e5c58c9c8030816419f54a2e9604607`, source
+commit `9252ce603` (final static checks). External `final-source.patch` SHA256:
+`ed76d9877c4e8eacf734439e34a8074cbe11002009f137e51f843ec5a319886f`. Paid dev runs preceded the final forced-choice provenance
+annotation; no paid exact-final-commit rerun. See external `receipt.md` for the
+interrupted third ask, pending costs and the unsuccessful trace-link lookup.
