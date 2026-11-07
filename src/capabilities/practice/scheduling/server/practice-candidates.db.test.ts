@@ -217,4 +217,19 @@ describe('read_practice_candidates authorization boundary', () => {
     const notAdmitted = result.exclusions.find((entry) => entry.reason === 'not_admitted');
     expect(notAdmitted?.count).toBeGreaterThanOrEqual(1);
   });
+
+  // @invariant authorization: a scope that cannot be resolved is not an empty candidate set.
+  // @fails-if an unresolved goal scope reports status 'ok' with zero rows instead of
+  // status 'scope_unresolved' + a typed gap.
+  it('separates an unresolvable scope from a genuinely empty pool', async () => {
+    const db = testDb();
+    const result = await readPracticeCandidates(db, {
+      scope: { kind: 'goal', goalId: 'no-such-goal' },
+    });
+
+    expect(result.status).toBe('scope_unresolved');
+    expect(result.candidates).toEqual([]);
+    expect(result.counts.returned).toBe(0);
+    expect(result.gaps.map((gap) => gap.reason)).toEqual(['scope_unresolved']);
+  });
 });

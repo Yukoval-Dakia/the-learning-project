@@ -56,7 +56,7 @@ import { projectKnowledgeState } from '@/kernel/read-models/knowledge-state';
 import { learnableFrontierResolved } from '@/kernel/read-models/learnable-frontier';
 import {
   readLearnerJudgments,
-  readQuestionCardReviewTiming,
+  readQuestionCardReviewTimings,
 } from '@/kernel/read-models/learner-judgment';
 import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
 import { EVIDENCE_DEMAND_VERSION } from '@/kernel/supply-contracts';
@@ -86,6 +86,8 @@ const ATTEMPT_WINDOW = 6;
 const PROMPT_EXCERPT_CHARS = 600;
 const VARIANT_WINDOW_DAYS = 7;
 const NEW_CHECK_LIMIT = 3;
+/** Knowledge points one new-check scan may look at; the discovered set is reported as a cap. */
+const NEW_CHECK_KC_SCAN_CAP = 24;
 const UNATTEMPTED_SCAN_CAP = 40;
 const PAPER_LIMIT = 50;
 const GAP_DETAIL_LIMIT = 8;
@@ -443,6 +445,51 @@ function emptyAttemptWindow(asOf: Date, reason: string): CandidateAttemptWindow 
   };
 }
 
+/**
+ * The first servable question per knowledge point, for every point at once. The single-KC
+ * loop this replaces ran one query per point inside the snapshot transaction; the containment
+ * OR is the same membership test, and the admitted set decides servability once for all rows.
+ */
+async function pickFirstServablePerKnowledge(
+  db: DbLike,
+  knowledgeIds: readonly string[],
+): Promise<Map<string, string | undefined>> {
+  const first = new Map<string, string | undefined>();
+  for (const knowledgeId of knowledgeIds) first.set(knowledgeId, undefined);
+  if (knowledgeIds.length === 0) return first;
+  const containment = sql`(${sql.join(
+    knowledgeIds.map(
+      (knowledgeId) => sql`${question.knowledge_ids} @> ${JSON.stringify([knowledgeId])}::jsonb`,
+    ),
+    sql` or `,
+  )})`;
+  const rows = await db
+    .select({ id: question.id, knowledge_ids: question.knowledge_ids })
+    .from(question)
+    .where(
+      and(
+        containment,
+        notDraftPredicate(question.draft_status),
+        questionSuspendedPredicate(question),
+      ),
+    )
+    // Deterministic pick; the composer's sibling omits this, this read does not.
+    .orderBy(question.id);
+  const admitted = await readAutomaticallyServableQuestionIds(
+    db,
+    rows.map((row) => row.id),
+  );
+  for (const row of rows) {
+    if (!admitted.has(row.id)) continue;
+    for (const knowledgeId of row.knowledge_ids ?? []) {
+      if (first.has(knowledgeId) && first.get(knowledgeId) === undefined) {
+        first.set(knowledgeId, row.id);
+      }
+    }
+  }
+  return first;
+}
+
 export async function readPracticeCandidates(
   db: Db | Tx,
   input: PracticeCandidateQuery,
@@ -462,8 +509,9 @@ async function readPracticeCandidatesInSnapshot(
 ): Promise<PracticeCandidateRead> {
   const asOf = new Date();
   const scope = await resolveScope(db, input.scope);
+  const pageSize = input.pageSize ?? PRACTICE_CANDIDATE_PAGE_SIZE;
   if (scope.unresolved !== null) {
-    return terminalRead(asOf, scope, 'scope_unresolved', scope.unresolved);
+    return terminalRead(db, asOf, scope, 'scope_unresolved', scope.unresolved, pageSize);
   }
 
   const caps: CapFact[] = [];
@@ -561,28 +609,11 @@ async function readPracticeCandidatesInSnapshot(
       );
     const trackedSet = new Set(tracked.map((row) => row.kid));
     const untracked = candidateKids.filter((kid) => !trackedSet.has(kid));
-    const perKid: Array<{ kid: string; ids: string[] }> = [];
-    for (const kid of untracked) {
-      const candidates = await db
-        .select({ id: question.id })
-        .from(question)
-        .where(
-          and(
-            sql`${question.knowledge_ids} @> ${JSON.stringify([kid])}::jsonb`,
-            notDraftPredicate(question.draft_status),
-            questionSuspendedPredicate(question),
-          ),
-        )
-        // Deterministic pick; the composer's sibling omits this, this read does not.
-        .orderBy(question.id);
-      perKid.push({ kid, ids: candidates.map((row) => row.id) });
-    }
-    const admitted = await readAutomaticallyServableQuestionIds(db, [
-      ...new Set(perKid.flatMap((entry) => entry.ids)),
-    ]);
+    const scannedKids = untracked.slice(0, NEW_CHECK_KC_SCAN_CAP);
+    const firstServable = await pickFirstServablePerKnowledge(db, scannedKids);
     let index = 0;
-    for (const entry of perKid) {
-      const picked = entry.ids.find((id) => admitted.has(id));
+    for (const kid of scannedKids) {
+      const picked = firstServable.get(kid);
       if (picked === undefined) continue;
       newCheckEntries.push({
         refKind: 'question',
@@ -594,6 +625,12 @@ async function readPracticeCandidatesInSnapshot(
       index += 1;
       if (newCheckEntries.length >= NEW_CHECK_LIMIT) break;
     }
+    caps.push({
+      source: 'practice/scheduling/server/practice-candidates:new_check_scan',
+      cap: NEW_CHECK_KC_SCAN_CAP,
+      observed: untracked.length,
+      hit: untracked.length > NEW_CHECK_KC_SCAN_CAP,
+    });
   }
   caps.push({
     source: 'practice/scheduling/server/stream-inputs:new_check',
@@ -607,27 +644,11 @@ async function readPracticeCandidatesInSnapshot(
   const frontier = await learnableFrontierResolved(db);
   const frontierEntries: SourceEntry[] = [];
   {
-    const perKc: Array<{ kid: string; ids: string[] }> = [];
-    for (const kid of frontier.ids.slice(0, FRONTIER_MAX_ITEMS)) {
-      const candidates = await db
-        .select({ id: question.id })
-        .from(question)
-        .where(
-          and(
-            sql`${question.knowledge_ids} @> ${JSON.stringify([kid])}::jsonb`,
-            notDraftPredicate(question.draft_status),
-            questionSuspendedPredicate(question),
-          ),
-        )
-        .orderBy(question.id);
-      perKc.push({ kid, ids: candidates.map((row) => row.id) });
-    }
-    const admitted = await readAutomaticallyServableQuestionIds(db, [
-      ...new Set(perKc.flatMap((entry) => entry.ids)),
-    ]);
+    const frontierKids = frontier.ids.slice(0, FRONTIER_MAX_ITEMS);
+    const firstServable = await pickFirstServablePerKnowledge(db, frontierKids);
     let index = 0;
-    for (const entry of perKc) {
-      const picked = entry.ids.find((id) => admitted.has(id));
+    for (const kid of frontierKids) {
+      const picked = firstServable.get(kid);
       if (picked === undefined) continue;
       frontierEntries.push({
         refKind: 'question',
@@ -842,7 +863,7 @@ async function readPracticeCandidatesInSnapshot(
   if (input.cursor != null || input.snapshotId != null) {
     const decoded = input.cursor != null ? decodeCursor(input.cursor) : null;
     if (input.cursor != null && decoded === null) {
-      return terminalRead(asOf, scope, 'snapshot_changed', 'invalid_cursor', {
+      return terminalRead(db, asOf, scope, 'snapshot_changed', 'invalid_cursor', pageSize, {
         snapshotId,
         expected: input.snapshotId ?? null,
       });
@@ -852,23 +873,23 @@ async function readPracticeCandidatesInSnapshot(
       input.snapshotId != null &&
       decoded?.snapshotId !== input.snapshotId
     ) {
-      return terminalRead(asOf, scope, 'snapshot_changed', 'cursor_snapshot_mismatch', {
+      return terminalRead(db, asOf, scope, 'snapshot_changed', 'cursor_snapshot_mismatch', pageSize, {
         snapshotId,
         expected: input.snapshotId,
       });
     }
     expectedSnapshotId = input.snapshotId ?? decoded?.snapshotId ?? null;
     if (expectedSnapshotId !== null && expectedSnapshotId !== snapshotId) {
-      return terminalRead(asOf, scope, 'snapshot_changed', 'candidate_set_changed', {
+      return terminalRead(db, asOf, scope, 'snapshot_changed', 'candidate_set_changed', pageSize, {
         snapshotId,
         expected: expectedSnapshotId,
       });
     }
     offset = decoded?.offset ?? 0;
   }
-  const pageRows = ordered.slice(offset, offset + PRACTICE_CANDIDATE_PAGE_SIZE);
-  const hasMore = offset + PRACTICE_CANDIDATE_PAGE_SIZE < ordered.length;
-  for (let index = offset + PRACTICE_CANDIDATE_PAGE_SIZE; index < ordered.length; index += 1) {
+  const pageRows = ordered.slice(offset, offset + pageSize);
+  const hasMore = offset + pageSize < ordered.length;
+  for (let index = offset + pageSize; index < ordered.length; index += 1) {
     bumpBucket(exclusions, 'page_overflow', roleList(ordered[index].roles), ordered[index].refId);
   }
 
@@ -879,6 +900,11 @@ async function readPracticeCandidatesInSnapshot(
   const pageKnowledgeIds = [
     ...new Set([
       ...pageQuestionIds.flatMap((id) => questionRows.get(id)?.knowledge_ids ?? []),
+      // A due row's card can name a KC the question's own knowledge_ids omit; the due
+      // fact still needs its judgment, so those ids join the same batch.
+      ...pageRows.flatMap((row) =>
+        [...row.dueKnowledgeIds].filter((id): id is string => id !== null),
+      ),
       ...pageRows
         .filter((row) => row.refKind === 'paper')
         .flatMap(
@@ -898,6 +924,16 @@ async function readPracticeCandidatesInSnapshot(
   const labels = await knowledgeLabels(db, pageKnowledgeIds);
   const pace = await readQuestionPace(db, asOf);
   const attemptWindows = await readAttemptWindows(db, pageQuestionIds, asOf);
+  // Legacy question-level due cards (due fact with knowledge_id=null) are read once for the
+  // whole page, not once per row: the card read is a batch loader underneath.
+  const legacyDueQuestionIds = [
+    ...new Set(
+      pageRows
+        .filter((row) => row.refKind === 'question' && row.dueKnowledgeIds.has(null))
+        .map((row) => row.refId),
+    ),
+  ];
+  const legacyDueTiming = await readQuestionCardReviewTimings(db, legacyDueQuestionIds, asOf);
   const signalInputs: CandidateInput[] = pageQuestionIds.flatMap((id) => {
     const row = questionRows.get(id);
     if (row === undefined) return [];
@@ -1030,7 +1066,7 @@ async function readPracticeCandidatesInSnapshot(
     for (const knowledgeId of row.dueKnowledgeIds) {
       if (knowledgeId === null) {
         // Legacy question-level card: its own read model owns due/retention.
-        const timing = await readQuestionCardReviewTiming(db, row.refId, asOf);
+        const timing = legacyDueTiming.get(row.refId) ?? null;
         const dueAt =
           timing !== null
             ? dueSignal(timing.freshness.due_at, asOf, QUESTION_CARD_SOURCE)
@@ -1123,11 +1159,20 @@ async function readPracticeCandidatesInSnapshot(
                   : 'b_unavailable',
               ),
         b_source: signal?.bSource ?? 'none',
-        estimated_minutes: knownSignal(
-          pace.minutes,
-          `practice/scheduling/server/question-pace:${pace.source}(n=${pace.sample_count})`,
-          asOf,
-        ),
+        // A default pace is a placeholder for planning, not a measurement: the candidate
+        // read must not present it as an observed fact.
+        estimated_minutes:
+          pace.source === 'observed'
+            ? knownSignal(
+                pace.minutes,
+                `practice/scheduling/server/question-pace:observed(n=${pace.sample_count})`,
+                asOf,
+              )
+            : unknownSignal<number>(
+                `practice/scheduling/server/question-pace:default(n=${pace.sample_count})`,
+                asOf,
+                'insufficient_pace_samples; the 2-minute default is a planning placeholder, not a measurement',
+              ),
       },
       serving: {
         servable: true,
@@ -1261,8 +1306,8 @@ async function readPracticeCandidatesInSnapshot(
     },
     page: {
       cursor: input.cursor ?? null,
-      next_cursor: hasMore ? encodeCursor(snapshotId, offset + PRACTICE_CANDIDATE_PAGE_SIZE) : null,
-      page_size: PRACTICE_CANDIDATE_PAGE_SIZE,
+      next_cursor: hasMore ? encodeCursor(snapshotId, offset + pageSize) : null,
+      page_size: pageSize,
       has_more: hasMore,
     },
     candidates,
@@ -1314,20 +1359,22 @@ function steeringVersionSignal(goals: readonly ActiveGoal[], asOf: Date): Knowle
 /**
  * A read that cannot enumerate candidates (unresolved scope, changed snapshot). It returns
  * a typed gap instead of an empty list, so a caller can never read "no candidates" out of
- * a failed resolution.
+ * a failed resolution: status mirrors the reason.
  */
 async function terminalRead(
+  db: DbLike,
   asOf: Date,
   scope: ResolvedScope,
   reason: 'scope_unresolved' | 'snapshot_changed',
   detail: string,
+  pageSize: number,
   snapshot?: { snapshotId: string; expected: string | null },
 ): Promise<PracticeCandidateRead> {
   const emptyScopeDigest = sha256(
     canonical({ kind: scope.kind, knowledgeIds: [...scope.knowledgeIds].sort() }),
   );
   return {
-    status: reason === 'snapshot_changed' ? 'snapshot_changed' : 'ok',
+    status: reason,
     snapshot_id: snapshot?.snapshotId ?? emptyScopeDigest,
     as_of: asOf.toISOString(),
     expected_snapshot_id: snapshot?.expected ?? null,
@@ -1338,7 +1385,8 @@ async function terminalRead(
       unscoped: scope.unscoped,
     },
     versions: {
-      goals: [],
+      // A terminal read still reports the containing goal versions it could resolve.
+      goals: await readGoalVersions(db, scope.goals),
       scope_digest: emptyScopeDigest,
       steering: steeringVersionSignal(scope.goals, asOf),
     },
@@ -1356,7 +1404,7 @@ async function terminalRead(
     page: {
       cursor: null,
       next_cursor: null,
-      page_size: PRACTICE_CANDIDATE_PAGE_SIZE,
+      page_size: pageSize,
       has_more: false,
     },
     candidates: [],
@@ -1375,6 +1423,9 @@ async function terminalRead(
 
 /** One deterministic sentence over the read result, for the tool summary. */
 export function summarizeCandidateRead(result: PracticeCandidateRead): string {
+  if (result.status === 'scope_unresolved') {
+    return `candidates · scope unresolved (${result.gaps[0]?.detail ?? 'no detail'})`;
+  }
   if (result.status === 'snapshot_changed') {
     return `candidates · snapshot changed (${result.expected_snapshot_id ?? 'unknown'} -> ${result.snapshot_id})`;
   }

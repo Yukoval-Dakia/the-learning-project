@@ -26,7 +26,9 @@ export const PRACTICE_CANDIDATE_CONTAINERS = ['question', 'intervention', 'paper
 export type PracticeCandidateContainer = (typeof PRACTICE_CANDIDATE_CONTAINERS)[number];
 
 /** One deterministic page. First page must cover a planning turn; paging is the overflow path. */
-export const PRACTICE_CANDIDATE_PAGE_SIZE = 30;
+export const PRACTICE_CANDIDATE_PAGE_SIZE = 8;
+/** A caller may ask for a wider page; 30 is the largest first-page the design allows. */
+export const PRACTICE_CANDIDATE_PAGE_SIZE_MAX = 30;
 
 /**
  * Candidate scope. `all` applies no knowledge restriction; `knowledge` is a hard membership
@@ -49,6 +51,16 @@ export const PracticeCandidateQuerySchema = z.strictObject({
   cursor: z.string().min(1).nullish(),
   /** Set identity every page must share; a changed set returns status='snapshot_changed'. */
   snapshotId: z.string().min(1).nullish(),
+  /**
+   * Rows per page. Defaults to PRACTICE_CANDIDATE_PAGE_SIZE: the Coach reads this straight
+   * into its context, so the default stays small and paging is the wide-read path.
+   */
+  pageSize: z
+    .number()
+    .int()
+    .min(1)
+    .max(PRACTICE_CANDIDATE_PAGE_SIZE_MAX)
+    .optional(),
 });
 export type PracticeCandidateQuery = z.infer<typeof PracticeCandidateQuerySchema>;
 
@@ -206,7 +218,6 @@ export const CandidateGapSchema = z.object({
   knowledge_ids: z.array(z.string()),
   reason: z.enum([
     'no_servable_candidate',
-    'not_admitted',
     'frontier_sparse',
     'frontier_overflow',
     'scope_unresolved',
@@ -219,18 +230,13 @@ export const CandidateGapSchema = z.object({
   demand_version: z.string(),
 });
 
+/**
+ * Why a collected source entry is not in `candidates`. Only reasons the read actually
+ * produces are listed: an enumerated value that never appears would read as "checked and
+ * none", which is exactly the silent-completeness claim this read refuses to make.
+ */
 export const CandidateExclusionSchema = z.object({
-  reason: z.enum([
-    'out_of_scope',
-    'not_admitted',
-    'draft_or_suspended',
-    'steering_deferred',
-    'untracked_knowledge',
-    'already_attempted',
-    'duplicate_ref',
-    'page_overflow',
-    'cap_reached',
-  ]),
+  reason: z.enum(['out_of_scope', 'not_admitted', 'duplicate_ref', 'page_overflow']),
   roles: z.array(z.enum(PRACTICE_CANDIDATE_ROLES)),
   count: z.number(),
   /** A bounded sample so the reader can audit the count without a full dump. */
@@ -238,8 +244,12 @@ export const CandidateExclusionSchema = z.object({
 });
 
 export const PracticeCandidateReadSchema = z.object({
-  /** 'snapshot_changed' means the candidate set moved; no rows are returned for that page. */
-  status: z.enum(['ok', 'snapshot_changed']),
+  /**
+   * 'ok' means the set was enumerated (possibly empty). 'scope_unresolved' means the scope
+   * could not be resolved, so no enumeration happened: it is NOT an empty candidate set.
+   * 'snapshot_changed' means the candidate set moved; no rows are returned for that page.
+   */
+  status: z.enum(['ok', 'snapshot_changed', 'scope_unresolved']),
   snapshot_id: z.string(),
   as_of: z.string(),
   /** Set on 'snapshot_changed' only: the page the caller was continuing. */

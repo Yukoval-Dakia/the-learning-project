@@ -80,34 +80,27 @@ async function installPracticeHostOperationPorts(): Promise<void> {
   const [
     { installReviewAnswerBindingOperations },
     { installReviewDueReader },
-    { installPracticeCandidateReader },
     { installConversationConfirmationAssessment },
     { installJudgeOperations },
     { captureReviewAnswerBinding, consumeReviewAnswerBinding, withdrawCapturedOccurrence },
     grading,
     executeGetReviewDue,
     { issueConversationConfirmation, readConversationConfirmation, submitConversationConfirmation },
-    { readPracticeCandidates },
   ] = await Promise.all([
     import('@/kernel/records/review-answer-binding'),
     import('@/kernel/read-models/review-due'),
-    import('@/kernel/read-models/practice-candidates'),
     import('@/kernel/records/conversation-confirmation-assessment'),
     import('@/kernel/judge'),
     import('./settlement/public'),
     import('./grading/public'),
     loadReviewDueReader(),
     import('./server/conversation-confirmation'),
-    import('./scheduling/public'),
   ]);
   installReviewAnswerBindingOperations({
     capture: captureReviewAnswerBinding,
     consume: consumeReviewAnswerBinding,
   });
   installReviewDueReader(executeGetReviewDue);
-  // YUK-1790 LIGHT — the candidate union read behind the kernel port (Coach reads it
-  // without importing a session implementation).
-  installPracticeCandidateReader(readPracticeCandidates);
   installConversationConfirmationAssessment({
     issue: issueConversationConfirmation,
     submit: submitConversationConfirmation,
