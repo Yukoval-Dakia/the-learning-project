@@ -1,10 +1,15 @@
 import { z } from 'zod';
-import { normalizeNumericAnswer } from '../answer-normalization';
 import {
   ConjectureProbeSignatureMatch,
   classifyConjectureProbeResponseFromJudgeMatch,
 } from '../conjecture-probe-response';
-import { extractAnswerHead, extractFinalAnswer, isProcessLikeAnswer } from '../judge-routing';
+import {
+  compareTextKeyAnswer,
+  normalizeNumericUnitInput,
+  numericAnswerWithinTolerance,
+  numericUnitSuffixesAgree,
+  resolveNumericToleranceValue,
+} from './answer-compare';
 import type { BlankAnswerShapeT } from './blank-answer-shape';
 import {
   type DeterministicComparatorIdT,
@@ -12,12 +17,7 @@ import {
   type ModelExecutorT,
   validateExecutionPlan,
 } from './execution';
-import {
-  gradeBlankExactUnit,
-  gradeSelectUnit,
-  normalizeBlankText,
-  parseBlankNumericText,
-} from './grade';
+import { gradeBlankExactUnit, gradeSelectUnit } from './grade';
 import { type EvaluationInputMember, combineEvaluationMembers } from './group-input';
 import {
   type AggregateOutcomeT,
@@ -40,7 +40,6 @@ import type { ResponseSlotT, ResponseSpecT, SlotResponseT } from './response';
 import { isBlankSlotResponse, validateResponseSet } from './response';
 import type { PublishedQuestionRevisionT } from './revision';
 import { type ScoringBasisT, type ScoringUnitT, validateScoringBasis } from './scoring';
-import { evaluateScoringRule } from './scoring-rule';
 import type { QuestionPartT } from './structure';
 
 // ====================================================================
@@ -284,26 +283,7 @@ function unitInScope(unit: ScoringUnitT, slotById: Map<string, ResponseSlotT>): 
   );
 }
 
-/** 归一化文本（text_key.normalization 的冻结版本）。 */
-function normalizeText(
-  value: string,
-  mode: 'exact' | 'trim' | 'trim_casefold_nfc' | 'answer_head' | 'answer_head@2',
-): string {
-  switch (mode) {
-    case 'exact':
-      return value;
-    case 'trim':
-      return value.trim();
-    case 'trim_casefold_nfc':
-      return value.normalize('NFKC').trim().toLowerCase();
-    case 'answer_head@2':
-      return extractAnswerHead(value, mode).trim().toLowerCase();
-    case 'answer_head':
-      // 与 legacy exact 判分同语义：先抽答案头（"答：B"→"B"、答案+解析→答案），
-      // 再 NFKC + trim + lowercase。
-      return extractAnswerHead(value).normalize('NFKC').trim().toLowerCase();
-  }
-}
+/** 归一化文本（text_key.normalization 的冻结版本；版本映射归 answer-compare）。 */
 
 /**
  * numeric 槽的单位截取：剥掉头部数值 token 后剩余的非空后缀视为单位候选。
@@ -351,80 +331,27 @@ async function runDeterministicComparator(
       if (textValue == null || unit.criterion.kind !== 'text_key') {
         return unjudgeableMismatch(unit, 'slot/entry kind mismatch for text_key');
       }
-      const normalization = unit.criterion.normalization;
-      const given = normalizeText(textValue, normalization);
-      const hit = unit.criterion.accepted_texts.some(
-        (accepted) => normalizeText(accepted, normalization) === given,
-      );
-      if (hit) {
+      // 冻结版本、整段折叠、过程作答终态提取与「判不动」边界全部归
+      // answer-compare；这里只把判定结果落成 points/证据。
+      const comparison = compareTextKeyAnswer(unit.criterion, textValue);
+      if (comparison.outcome === 'correct') {
         return {
           status: 'scored',
           scoring_unit_id: unit.scoring_unit_id,
           points_awarded: full,
           scored_because: 'response',
+          ...(comparison.finalAnswer != null
+            ? { comparison: { final_answer: comparison.finalAnswer } }
+            : {}),
           evidence_citations: [{ slot_id: entry.slot_id }],
         };
       }
-      // YUK-1407 — 整段比较 miss 后，对过程作答再确定性抽一次【明示终态答案】：
-      // "推导…S5=11" 的 head 是整段（无解析 tail），与 "11" 不等 ⇒ 旧路径判 0。
-      // 提取规则见 judge-routing.ts：只认答/答案/所以/故/即/∴ 声明或末行等式。
-      const finalAnswer = extractFinalAnswer(
-        textValue,
-        normalization === 'answer_head@2' ? normalization : undefined,
-      );
-      const extractionEvidence =
-        finalAnswer.kind === 'found'
-          ? { value: finalAnswer.values[0] ?? '', marker: finalAnswer.marker }
-          : undefined;
-      if (finalAnswer.kind === 'found') {
-        const finalHit = unit.criterion.accepted_texts.some((accepted) =>
-          finalAnswer.values.some(
-            (candidate) =>
-              normalizeText(candidate, normalization) === normalizeText(accepted, normalization),
-          ),
-        );
-        if (finalHit) {
-          return {
-            status: 'scored',
-            scoring_unit_id: unit.scoring_unit_id,
-            points_awarded: full,
-            scored_because: 'response',
-            comparison: { final_answer: extractionEvidence },
-            evidence_citations: [{ slot_id: entry.slot_id }],
-          };
-        }
-        // 明示结论与参考答案不一致：单句明示结论（"答：12"）= 确定性判错；
-        // 过程文本的 miss 可能是单位/等价形式 —— 超出本比较器合同，交复核，
-        // 绝不把"没看懂"落成 0。
-        if (isProcessLikeAnswer(textValue)) {
-          return withUnit(
-            pending({
-              reason: 'needs_review',
-              trigger: 'flagged',
-              detail:
-                'extracted final answer does not match any accepted key — equivalence beyond the exact-text comparator contract; review required (no fake zero)',
-            }),
-            unit.scoring_unit_id,
-          );
-        }
-        return {
-          status: 'scored',
-          scoring_unit_id: unit.scoring_unit_id,
-          points_awarded: 0,
-          scored_because: 'response',
-          comparison: { final_answer: extractionEvidence },
-          evidence_citations: [{ slot_id: entry.slot_id }],
-        };
-      }
-      if (isProcessLikeAnswer(textValue)) {
+      if (comparison.outcome === 'undecidable') {
         return withUnit(
           pending({
             reason: 'needs_review',
             trigger: 'flagged',
-            detail:
-              finalAnswer.kind === 'ambiguous'
-                ? `conflicting explicit final answers (${finalAnswer.candidates.join(' / ')}) — the exact-text comparator cannot adjudicate; review required`
-                : 'worked/process answer carries no unambiguous final answer — beyond the exact-text comparator contract; review required (no fake zero)',
+            detail: comparison.detail,
           }),
           unit.scoring_unit_id,
         );
@@ -434,6 +361,9 @@ async function runDeterministicComparator(
         scoring_unit_id: unit.scoring_unit_id,
         points_awarded: 0,
         scored_because: 'response',
+        ...(comparison.finalAnswer != null
+          ? { comparison: { final_answer: comparison.finalAnswer } }
+          : {}),
         evidence_citations: [{ slot_id: entry.slot_id }],
       };
     }
@@ -449,10 +379,8 @@ async function runDeterministicComparator(
         );
       }
       const { expected, tolerance, expected_unit } = unit.criterion;
-      if (
-        unit.criterion.normalization_version === 'numeric-norm@2' &&
-        normalizeNumericAnswer(entry.raw_input ?? '', true) == null
-      ) {
+      const raw = normalizeNumericUnitInput(entry.raw_input ?? '', unit.criterion);
+      if (raw == null) {
         return withUnit(
           pending({
             reason: 'unparseable_response',
@@ -462,11 +390,9 @@ async function runDeterministicComparator(
           unit.scoring_unit_id,
         );
       }
-      const raw =
-        unit.criterion.normalization_version === 'numeric-norm@2'
-          ? normalizeNumericAnswer(entry.raw_input ?? '', true)
-          : entry.raw_input?.trim();
-      if (!raw) return unjudgeableMismatch(unit, 'unit conversion requires original raw input');
+      if (raw.length === 0) {
+        return unjudgeableMismatch(unit, 'unit conversion requires original raw input');
+      }
       const { unit: parseUnit } = await import('mathjs');
       let referenceUnit: import('mathjs').Unit;
       try {
@@ -488,16 +414,8 @@ async function runDeterministicComparator(
           unit.scoring_unit_id,
         );
       }
-      const difference =
-        converted === null ? Number.POSITIVE_INFINITY : Math.abs(converted - expected);
       const hit =
-        converted !== null &&
-        Number.isFinite(converted) &&
-        (tolerance.kind === 'absolute'
-          ? difference <= tolerance.value
-          : expected === 0
-            ? difference === 0
-            : difference / Math.abs(expected) <= tolerance.ratio);
+        converted !== null && numericAnswerWithinTolerance(converted, expected, tolerance);
       return {
         status: 'scored',
         scoring_unit_id: unit.scoring_unit_id,
@@ -510,12 +428,8 @@ async function runDeterministicComparator(
       if (entry.kind !== 'numeric' || unit.criterion.kind !== 'numeric_key') {
         return unjudgeableMismatch(unit, 'slot/entry kind mismatch for numeric_key');
       }
-      const value =
-        unit.criterion.normalization_version === 'numeric-norm@2'
-          ? (parseBlankNumericText(entry.raw_input ?? '', unit.criterion.normalization_version) ??
-            Number.NaN)
-          : (entry.value ?? Number.NaN);
-      if (unit.criterion.normalization_version === 'numeric-norm@2' && !Number.isFinite(value)) {
+      const resolved = resolveNumericToleranceValue(entry.raw_input, entry.value, unit.criterion);
+      if (resolved.unparseable) {
         return withUnit(
           pending({
             reason: 'unparseable_response',
@@ -526,14 +440,8 @@ async function runDeterministicComparator(
         );
       }
       const { expected, tolerance, expected_unit } = unit.criterion;
-      const diff = Math.abs(value - expected);
-      const inTolerance =
-        Number.isFinite(value) &&
-        (tolerance.kind === 'absolute'
-          ? diff <= tolerance.value
-          : expected === 0
-            ? diff === 0
-            : diff / Math.abs(expected) <= tolerance.ratio);
+      const value = resolved.value;
+      const inTolerance = numericAnswerWithinTolerance(value, expected, tolerance);
       if (!inTolerance) {
         return {
           status: 'scored',
@@ -545,7 +453,7 @@ async function runDeterministicComparator(
       }
       if (expected_unit != null) {
         const suffix = entry.raw_input == null ? null : extractUnitSuffix(entry.raw_input);
-        if (suffix == null || suffix.normalize('NFKC') !== expected_unit.normalize('NFKC')) {
+        if (suffix == null || !numericUnitSuffixesAgree(suffix, expected_unit)) {
           return {
             status: 'scored',
             scoring_unit_id: unit.scoring_unit_id,
@@ -679,73 +587,8 @@ async function runDeterministicComparator(
       if (entry.kind !== 'blank') {
         return unjudgeableMismatch(unit, 'slot/entry kind mismatch for blank_key');
       }
-      // YUK-1407 — 文本空也会收到整段过程作答（"…，S5=11"）：整段归一化比较
-      // 必然 miss ⇒ 旧路径按规则判 0。对过程文本先确定性抽明示终态再比；
-      // 提取不到/矛盾/过程文本 miss ⇒ pending needs_review，绝不伪零分。
-      // 数值空已由 numericCorrect 的 unparseable → pending 覆盖，不动。
-      // 本拦截只在分发点运行，不改 grade.ts。
-      // YUK-1568 合入适配：带声明 answer_shape 的槽走共享比较核心
-      // （compareDeclaredBlank），本拦截仅作用于未声明文本空。
-      const criterion = unit.criterion;
-      const key = criterion.kind === 'blank_key' ? criterion.key : null;
-      if (
-        declaredShape == null &&
-        key !== null &&
-        key.kind === 'text' &&
-        unit.rule != null &&
-        entry.state === 'answered' &&
-        isProcessLikeAnswer(entry.text)
-      ) {
-        const norm = (value: string) => normalizeBlankText(value, key.normalization);
-        if (!key.accepted.map(norm).includes(norm(entry.text))) {
-          const finalAnswer = extractFinalAnswer(
-            entry.text,
-            key.normalization.version === 'blank-norm@2' ? 'answer_head@2' : undefined,
-          );
-          if (finalAnswer.kind === 'found') {
-            const finalHit = finalAnswer.values.some((candidate) =>
-              key.accepted.map(norm).includes(norm(candidate)),
-            );
-            if (finalHit) {
-              const ruleResult = evaluateScoringRule(unit.rule, { kind: 'single', correct: 1 });
-              return {
-                status: 'scored',
-                scoring_unit_id: unit.scoring_unit_id,
-                scored_because: 'response',
-                comparison: {
-                  correct: 1,
-                  rule_case: ruleResult.rule_case,
-                  final_answer: { value: finalAnswer.values[0] ?? '', marker: finalAnswer.marker },
-                },
-                ...(ruleResult.kind === 'points'
-                  ? { points_awarded: ruleResult.points }
-                  : {
-                      points_awarded: null,
-                      partial_unknown_points: {
-                        correct_count: 1,
-                        total_count: 1,
-                        reason: ruleResult.reason,
-                      },
-                    }),
-                evidence_citations: [{ slot_id: entry.slot_id }],
-              };
-            }
-          }
-          return withUnit(
-            pending({
-              reason: 'needs_review',
-              trigger: 'flagged',
-              detail:
-                finalAnswer.kind === 'found'
-                  ? 'extracted final answer does not match any accepted key — equivalence beyond the blank-exact comparator contract; review required (no fake zero)'
-                  : finalAnswer.kind === 'ambiguous'
-                    ? `conflicting explicit final answers (${finalAnswer.candidates.join(' / ')}) — the blank-exact comparator cannot adjudicate; review required`
-                    : 'worked/process answer carries no unambiguous final answer — beyond the blank-exact comparator contract; review required (no fake zero)',
-            }),
-            unit.scoring_unit_id,
-          );
-        }
-      }
+      // 文本空的过程作答终态提取、冻结归一化与「判不动」边界全部归
+      // grade/answer-compare（与 numeric 的 unparseable → pending 同一处）。
       return gradeBlankExactUnit(unit, entry, declaredShape);
     }
   }

@@ -71,4 +71,9 @@ export {
 export { loadReviewDueSummary } from './server/review-due-summary';
 export type { RubricGate } from './server/rubric-validator';
 export { seedKnowledge } from './server/seed';
+export {
+  type KnowledgeNodeUndoDependencies,
+  type KnowledgeNodeUsageProbe,
+  createKnowledgeNodeUndoGuard,
+} from './server/undo-guard';
 export { knowledgeTaskSpecs } from './task-public';
