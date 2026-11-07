@@ -248,6 +248,10 @@ describe('POST /api/ingestion/[id]/import', () => {
     expect(session.status).toBe('imported');
   });
 
+  // @invariant concurrency: manual import and auto-enroll cannot both consume the same
+  //   source block; exactly one wins and the other sees the claimed block
+  // @fails-if dropping the session/block serialization lets both paths create a question
+  //   from one source block
   it('manual import and auto-enroll cannot consume the same source block concurrently', async () => {
     const db = testDb();
     const { sessionId, sourceDocId } = await setupSession(db);
