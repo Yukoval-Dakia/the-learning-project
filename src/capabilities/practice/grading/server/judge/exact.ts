@@ -1,8 +1,7 @@
 import {
-  extractAnswerHead,
-  extractFinalAnswer,
-  isProcessLikeAnswer,
-} from '@/core/schema/judge-routing';
+  compareLegacyExactAnswer,
+  foldLegacyExactAnswer,
+} from '@/core/schema/assessment/answer-compare';
 
 export interface JudgeInput {
   reference: string;
@@ -26,106 +25,42 @@ export interface JudgeResult {
 }
 export type JudgeResultV1 = JudgeResult;
 
-const normalize = (s: string) => s.normalize('NFKC').trim().toLowerCase();
-
 export function judgeExact(question: JudgeInput, answer: AnswerInput): JudgeResult {
-  // choice questions — the student UI submits the letter ("A", multi
-  // "BC") while the reference may store option TEXT (or vice versa, depending on
-  // the sourcing line). Resolve both sides to choice indices when possible and
-  // compare as sets; fall back to plain text equality so non-choice exact
-  // judging is unchanged. Kept isomorphic with the V2 capability judge in
-  // src/core/capability/judges/exact.ts.
-  const choices = question.choices_md ?? [];
-  const resolveChoiceIndices = (value: string): number[] | null => {
-    if (choices.length === 0) return null;
-    const t = value.normalize('NFKC').trim();
-    if (t.length === 0) return null;
-    // `t` is already NFKC + trim; normalize(t) would only re-add toLowerCase.
-    const tLower = t.toLowerCase();
-
-    // (1) Exact option-text equality first — so an option whose text happens to
-    // be pure Latin letters (e.g. ['True','False'], or a math option 'a + b')
-    // matches by text rather than being mis-parsed as a letter index.
-    const exact = choices.findIndex((c) => normalize(c) === tLower);
-    if (exact !== -1) return [exact];
-
-    // (2) Pure letter string(s): "A" / "BC" / "B、C". Only accept when every
-    // resolved index is in range; otherwise fall through to prefix parsing.
-    const lettersOnly = t.toUpperCase().replace(/[\s,，、和与]/g, '');
-    if (/^[A-Z]+$/.test(lettersOnly)) {
-      const idx = [...new Set(lettersOnly.split('').map((c) => c.charCodeAt(0) - 65))].sort(
-        (a, b) => a - b,
-      );
-      if (idx.length > 0 && idx.every((i) => i < choices.length)) return idx;
-    }
-
-    // (3) Leading-letter prefix: reference_md per the reading-comprehension skill
-    // is "正确项字母 + 依据" (e.g. "C。原文依据…"), and choices_md options may carry
-    // a label prefix ("A. 修八尺有余…"). : jyeoo/web-sourced references
-    // also use the parenthesised form "（C）选项原文（+解析）" — allow an optional
-    // full/half-width open paren before the letter. Parse the leading letter
-    // when followed by a separator so 'C' answer ↔ "C。…" / "（C）…" reference
-    // are judged equal.
-    const prefix = t
-      .toUpperCase()
-      .match(/^[（(]([A-Z]{1,4})(?:[\s.．。、,，:：)）]|$)|^([A-Z])(?:[\s.．。、,，:：)）]|$)/);
-    if (prefix) {
-      const indices = [...(prefix[1] ?? prefix[2])].map((ch) => ch.charCodeAt(0) - 65);
-      if (indices.every((i) => i < choices.length)) return indices;
-    }
-
-    return null;
-  };
-  // web-sourced reference_md stores "<bare answer>\n\n解析：…" — the
-  // judgeable surface is the extracted answer head. Same for the learner's
-  // answer ("答：X" / trailing self-written explanation is still a correct
-  // answer). resolveChoiceIndices and the text compare both run on heads.
-  const answerHead = extractAnswerHead(answer.content);
-  const referenceHead = extractAnswerHead(question.reference);
-  const answerIdx = resolveChoiceIndices(answerHead);
-  const referenceIdx = resolveChoiceIndices(referenceHead);
-  const choiceMatch =
-    answerIdx !== null &&
-    referenceIdx !== null &&
-    answerIdx.length === referenceIdx.length &&
-    answerIdx.every((v, i) => v === referenceIdx[i]);
-
-  const match = choiceMatch || normalize(answerHead) === normalize(referenceHead);
-  // 头比较 miss 后确定性抽明示终态再比一次（与 V2 判官及 native
-  // exact_text comparator 同形）。V1 没有 pending/unsupported 语义：过程文本
-  // 仍回落 incorrect，但 evidence 如实标注 process_answer_unresolvable —
+  // 比较本身归 answer-compare（与 V2 exact judge 同一实现）：选项字母↔选项
+  // 文本、答案头、过程作答的明示终态。V1 没有 pending/unsupported 语义：
+  // 过程文本仍回落 incorrect，但 evidence 如实标注 process_answer_unresolvable —
   // 消费面（calibration 对照）能据此区分"真错"与"exact 判不动"。
-  const finalAnswer = match ? null : extractFinalAnswer(answer.content);
-  const finalMatch =
-    finalAnswer?.kind === 'found' &&
-    finalAnswer.values.some((candidate) => normalize(candidate) === normalize(referenceHead));
-  const effectiveMatch = match || finalMatch === true;
-  const processUnresolvable = !effectiveMatch && isProcessLikeAnswer(answer.content);
+  const comparison = compareLegacyExactAnswer({
+    reference: question.reference,
+    answer: answer.content,
+    choices: question.choices_md ?? [],
+  });
+  const finalAnswer = comparison.finalAnswer;
   return {
-    verdict: effectiveMatch ? 'correct' : 'incorrect',
-    score: effectiveMatch ? 1 : 0,
-    feedback_md: effectiveMatch
+    verdict: comparison.match ? 'correct' : 'incorrect',
+    score: comparison.match ? 1 : 0,
+    feedback_md: comparison.match
       ? `正确答案：${question.reference}。`
       : `参考答案：${question.reference}。你的答案：${answer.content}。`,
     evidence_json: {
-      match: effectiveMatch,
-      normalized_reference: normalize(question.reference),
+      match: comparison.match,
+      normalized_reference: foldLegacyExactAnswer(question.reference),
       // when either side embedded an explanation tail the compare ran
       // on extracted heads — record them, otherwise a stripped verdict reads
       // self-contradictory (normalized texts visibly differ).
-      ...(answerHead !== answer.content.normalize('NFKC').trim()
-        ? { answer_head: answerHead }
+      ...(comparison.answerHead !== answer.content.normalize('NFKC').trim()
+        ? { answer_head: comparison.answerHead }
         : {}),
-      ...(referenceHead !== question.reference.normalize('NFKC').trim()
-        ? { reference_answer_head: referenceHead }
+      ...(comparison.referenceHead !== question.reference.normalize('NFKC').trim()
+        ? { reference_answer_head: comparison.referenceHead }
         : {}),
       ...(finalAnswer?.kind === 'found'
         ? { final_answer: { value: finalAnswer.values[0] ?? '', marker: finalAnswer.marker } }
         : {}),
-      ...(processUnresolvable ? { process_answer_unresolvable: true } : {}),
-      match_type: finalMatch === true ? 'final_answer' : choiceMatch ? 'choice_index' : 'text',
-      answer_choice_indices: answerIdx,
-      reference_choice_indices: referenceIdx,
+      ...(comparison.processUnresolvable ? { process_answer_unresolvable: true } : {}),
+      match_type: comparison.matchType,
+      answer_choice_indices: comparison.answerChoiceIndices,
+      reference_choice_indices: comparison.referenceChoiceIndices,
     },
   };
 }

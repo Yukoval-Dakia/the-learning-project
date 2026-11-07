@@ -576,7 +576,10 @@ export function PracticePresentation(props: PracticePresentationProps) {
         subject: '练习',
         progressLabel: `第 ${pos} / ${total} 题`,
         estimatedTime: item.estimated_minutes ? `约 ${item.estimated_minutes} 分钟` : undefined,
-        source: practiceSourceLabel(item.source),
+        source:
+          item.source === 'on_demand' || item.source === 'import'
+            ? undefined
+            : practiceSourceLabel(item.source),
         attemptLabel:
           ready.accepted || submit.autoCommitted
             ? '已提交'
