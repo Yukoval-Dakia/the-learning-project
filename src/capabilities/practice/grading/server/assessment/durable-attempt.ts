@@ -326,26 +326,28 @@ export async function executeNativeAttempt(
   ) => {
     await lockJudgeRun(tx, job.run_id);
     const candidateId = prepared.candidate.evaluation.record.evaluation_id;
-    const finalRating =
-      status === 'effective'
-        ? ratingFromCoarseOutcome(prepared.candidate.result.coarse_outcome)
-        : null;
-    if (status === 'effective' && finalRating === null)
-      throw new ApiError(
-        'corrupt_state',
-        'effective worker result requires a model-derived rating',
-        500,
-      );
     // The pending payload is itself a first-write-wins seal of the accepted
-    // rating operation (a retry that changes it fails coordinate_mismatch), and
-    // the durable commit settles the judge-derived rating without re-sealing
-    // user_rating — so the frozen input fills what the receipts never wrote.
+    // rating operation (a retry that changes it fails coordinate_mismatch). The
+    // activation receipt seals user_rating in this same transaction; the frozen
+    // input only backfills the claim for held paths and pre-seal receipts.
     const sealedClaim = await readSealedSelfClaim(
       tx,
       input.submission_id,
       input.evaluation_group_id,
       candidateId,
     );
+    const derivedRating = ratingFromCoarseOutcome(prepared.candidate.result.coarse_outcome);
+    if (status === 'effective' && derivedRating === null)
+      throw new ApiError(
+        'corrupt_state',
+        'effective worker result requires a model-derived rating',
+        500,
+      );
+    // final_rating is what the activation actually settled. Settlement and the
+    // receipt read the same sealed user_rating inside one transaction, so the
+    // seal is the honest source; a pre-seal receipt (old runs) means settlement
+    // was verdict-derived, never a learner rating the seal did not record.
+    const finalRating = status === 'effective' ? (sealedClaim.rating ?? derivedRating) : null;
     const wanted = {
       id: job.run_id,
       session_id: input.capture.session_id ?? null,
@@ -509,6 +511,10 @@ export async function executeNativeAttempt(
         capture: input.capture,
         modelAdmission: 'durable',
         judgeExecution: authority,
+        // The accepted rating operation froze its learner choice into the
+        // pending input; activation seals it exactly like a synchronous commit.
+        // auto_rate submits freeze none, so they stay judge-derived.
+        userRating: input.user_rating,
         requireUnassistedModelEvidence: input.require_unassisted_model_evidence,
         onActivated: async (tx, prepared) => {
           await writeResolution(tx, prepared, 'effective');
