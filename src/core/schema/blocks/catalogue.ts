@@ -102,7 +102,7 @@ export function renderBlockCatalogue(surface: BlockSurface): string {
     }
     if (kind === 'chart') {
       lines.push(
-        '- chart：bar/line/scatter/pie；data_source=model 仅学习内容数据，学习者统计必须 tool_result 指向 query_mistakes 的 /aggregates/by_cause|by_knowledge。',
+        '- chart：chart=bar|line|scatter|pie、x{label,scale}、y{label}、series[{name,points}]；data_source={kind:"model"} 仅学习内容，学习者统计用 {kind:"tool_result",tool_use_id,path}（query_mistakes 聚合）。',
       );
       continue;
     }
