@@ -98,8 +98,14 @@ export type ProposalKnowledgeMutationPresentation = KnowledgeMutationTargets & {
  * to_top: the knowledge appliers do not move or split a node to the tree root.
  * node_unreadable: no row was read, which may only mean the read failed.
  * node_retired: a node is archived or merged, and the appliers require live ones.
+ * version_changed: a node moved past the version the proposal was written against. This is
+ * only for display; the appliers' own version check stays the last defense.
  */
-export type ProposalKnowledgeMutationBlock = 'to_top' | 'node_unreadable' | 'node_retired';
+export type ProposalKnowledgeMutationBlock =
+  | 'to_top'
+  | 'node_unreadable'
+  | 'node_retired'
+  | 'version_changed';
 
 type KnowledgeMutationTargets =
   | {
@@ -1070,9 +1076,10 @@ interface KnowledgeMutationNodeRow {
   id: string;
   name: string;
   archived_at: Date | null;
+  version: number;
 }
 
-/** Names and archive state of every node a page's mutation cards name, batched. */
+/** Names, archive state and versions of every node a page's mutation cards name, batched. */
 async function loadKnowledgeMutationNodeRows(
   db: DbLike,
   ids: readonly string[],
@@ -1080,7 +1087,12 @@ async function loadKnowledgeMutationNodeRows(
   const rows = new Map<string, KnowledgeMutationNodeRow>();
   for (const chunk of chunksOf(ids.filter(isLearnerVisibleKnowledgeId))) {
     const found = await db
-      .select({ id: knowledge.id, name: knowledge.name, archived_at: knowledge.archived_at })
+      .select({
+        id: knowledge.id,
+        name: knowledge.name,
+        archived_at: knowledge.archived_at,
+        version: knowledge.version,
+      })
       .from(knowledge)
       .where(inArray(knowledge.id, chunk));
     for (const row of found) rows.set(row.id, row);
@@ -1147,8 +1159,28 @@ function mutationNodeLabel(
   return { label: row.name, state: 'live' };
 }
 
+/** The nodes whose versions the appliers check, against what the proposal expects of them. */
+function knowledgeMutationVersionChanged(
+  change: KnowledgeMutationChange,
+  rows: ReadonlyMap<string, KnowledgeMutationNodeRow>,
+): boolean {
+  const differs = (id: string, expected: number | undefined) => {
+    const row = rows.get(id);
+    return row !== undefined && row.version !== expected;
+  };
+  switch (change.mutation) {
+    case 'merge':
+      return change.from_ids.some((id) => differs(id, change.expected_versions[id]));
+    case 'reparent':
+      return differs(change.node_id, change.expected_version);
+    case 'split':
+      return differs(change.from_id, change.expected_version);
+  }
+}
+
 function knowledgeMutationBlock(
   targets: KnowledgeMutationTargets,
+  versionChanged: boolean,
 ): ProposalKnowledgeMutationBlock | null {
   const parents =
     targets.mutation === 'reparent'
@@ -1164,15 +1196,20 @@ function knowledgeMutationBlock(
     ...(targets.mutation === 'split' ? [targets.from] : []),
   ];
   if (nodes.some((node) => node.state === 'missing')) return 'node_unreadable';
-  return nodes.some((node) => node.state !== 'live') ? 'node_retired' : null;
+  if (nodes.some((node) => node.state !== 'live')) return 'node_retired';
+  return versionChanged ? 'version_changed' : null;
 }
 
 function knowledgeMutationPresentation(
   change: KnowledgeMutationChange,
   labelOf: (id: string) => ProposalKnowledgeNodeLabel,
+  rows: ReadonlyMap<string, KnowledgeMutationNodeRow>,
 ): ProposalKnowledgeMutationPresentation {
   const targets = knowledgeMutationTargets(change, labelOf);
-  return { ...targets, blocked: knowledgeMutationBlock(targets) };
+  return {
+    ...targets,
+    blocked: knowledgeMutationBlock(targets, knowledgeMutationVersionChanged(change, rows)),
+  };
 }
 
 function knowledgeMutationTargets(
@@ -1337,6 +1374,7 @@ export async function loadProposalPresentations(
       presentation.knowledge_mutation = knowledgeMutationPresentation(
         proposal.payload.proposed_change,
         labelOf,
+        nodeRows,
       );
     }
   }
