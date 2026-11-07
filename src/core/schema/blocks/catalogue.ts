@@ -34,7 +34,6 @@ export function renderBlockCatalogue(surface: BlockSurface): string {
   for (const kind of [
     'diagram',
     'figure',
-    'plot',
     'interactive',
     'question_ref',
     'entity_card',
@@ -54,12 +53,6 @@ export function renderBlockCatalogue(surface: BlockSurface): string {
     if (kind === 'figure') {
       lines.push(
         '- figure：模型自绘 SVG（装置/受力/几何/电路），服务端按白名单重建、存只读资产并返回位图自检。入参：{"block":{"v":1,"kind":"figure","svg":"<svg viewBox=\'0 0 120 80\'><rect x=\'10\' y=\'10\' width=\'40\' height=\'60\'/></svg>","alt":"…"}}',
-      );
-      continue;
-    }
-    if (kind === 'plot') {
-      lines.push(
-        '- plot：函数曲线用 plot，chart 折线只给离散数据。view.x=[min,max]、view.y="auto"|[min,max]、items[{type:"function",expr,label?,color?,dashed?}]、params≤4{name,min,max,value,step?}。入参：{"block":{"v":1,"kind":"plot","view":{"x":[-3,3],"y":"auto"},"items":[{"type":"function","expr":"x^2"}],"alt":"…"}}',
       );
       continue;
     }

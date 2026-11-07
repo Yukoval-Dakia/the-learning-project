@@ -16,12 +16,15 @@ const SAMPLE_INTERVALS = 512;
 const ADAPTIVE_DEPTH = 6;
 const ADAPTIVE_Y_FRACTION = 0.04;
 const BREAK_Y_FRACTION = 0.5;
+/** Bounds one pathological interval so a pole cannot consume the whole curve budget. */
+const MAX_EVALUATIONS_PER_INTERVAL = 64;
 /** Bounds a single pathological expression during a drag. */
 const MAX_EVALUATIONS_PER_ITEM = 4_096;
 const MAX_TICKS = 200;
 const MAX_PARAM_STEPS = 1_000;
 const MAX_ISSUES = 12;
 const RESERVED_PARAM_NAMES = new Set(['x', 'y', 't', 'e', 'pi']);
+const DECIMAL_DIGIT_RE = /\p{Nd}/u;
 const NICE_MULTIPLIERS = [1, 2, 2.5, 5, 10] as const;
 const PI_MULTIPLIERS = [1, 2, 4, 5, 10] as const;
 
@@ -92,8 +95,11 @@ function roundTo(value: number, decimals: number): number {
   return Object.is(rounded, -0) ? 0 : rounded;
 }
 
-function roundCoordinate(value: number): number {
-  return roundTo(value, 2);
+/** A view must be resolvable at its own magnitude: mid must differ from both ends. */
+function isSpanRepresentable(start: number, end: number): boolean {
+  if (!Number.isFinite(start) || !Number.isFinite(end) || !(end > start)) return false;
+  const middle = start + (end - start) / 2;
+  return middle > start && middle < end;
 }
 
 function sampleX(range: readonly [number, number], index: number): number {
@@ -170,6 +176,29 @@ function formatPiTick(halfPiMultiples: number): string {
   return magnitude === 1 ? `${sign}π/2` : `${sign}${magnitude}π/2`;
 }
 
+function buildTicks(start: number, end: number, make: (index: number) => PlotTick): PlotTick[] {
+  // The offset loop is zero-based and bounded; index + 1 can equal index at
+  // large magnitudes, which would make a "for (index = start; index <= end)"
+  // loop spin forever. Safe-integer indices are the admission condition.
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || end < start) return [];
+  const count = end - start + 1;
+  if (!(count > 0) || count > MAX_TICKS) return [];
+  const ticks: PlotTick[] = [];
+  let previous: number | null = null;
+  for (let offset = 0; offset < count; offset += 1) {
+    const index = start + offset;
+    if (!Number.isSafeInteger(index)) return [];
+    const tick = make(index);
+    if (!Number.isFinite(tick.value)) return [];
+    // Reject a tick that cannot advance; drawing the same coordinate twice is
+    // never meaningful and would also hide the overflow above.
+    if (previous !== null && !(tick.value > previous)) return [];
+    previous = tick.value;
+    ticks.push(tick);
+  }
+  return ticks;
+}
+
 function makeTicks(
   min: number,
   max: number,
@@ -177,7 +206,6 @@ function makeTicks(
   piTicks: boolean,
 ): PlotTick[] {
   if (!Number.isFinite(min) || !Number.isFinite(max) || !(max > min)) return [];
-  const ticks: PlotTick[] = [];
   if (piTicks && stepOverride === undefined) {
     const halfPi = Math.PI / 2;
     const raw = (max - min) / 6 / halfPi;
@@ -191,25 +219,19 @@ function makeTicks(
     const step = halfPi * multiplier;
     const start = Math.ceil(min / step - 1e-9);
     const end = Math.floor(max / step + 1e-9);
-    if (end - start + 1 > MAX_TICKS) return [];
-    for (let index = start; index <= end; index += 1) {
-      ticks.push({
-        value: roundTo(index * step, 12),
-        label: formatPiTick(index * multiplier),
-      });
-    }
-    return ticks;
+    return buildTicks(start, end, (index) => ({
+      value: roundTo(index * step, 12),
+      label: formatPiTick(index * multiplier),
+    }));
   }
   const step = stepOverride ?? niceStep(max - min);
   if (!(step > 0) || !Number.isFinite(step)) return [];
   const start = Math.ceil(min / step - 1e-9);
   const end = Math.floor(max / step + 1e-9);
-  if (end - start + 1 > MAX_TICKS) return [];
-  for (let index = start; index <= end; index += 1) {
-    const value = index * step;
-    ticks.push({ value: roundTo(value, 12), label: formatTickValue(value, step) });
-  }
-  return ticks;
+  return buildTicks(start, end, (index) => ({
+    value: roundTo(index * step, 12),
+    label: formatTickValue(index * step, step),
+  }));
 }
 
 function parseItems(block: PlotBlockT): {
@@ -272,7 +294,7 @@ function sampleCurve(
     current = null;
   };
   const push = (x: number, y: number): void => {
-    const point: readonly [number, number] = [roundCoordinate(x), roundCoordinate(y)];
+    const point: readonly [number, number] = [x, y];
     if (current === null) {
       current = [point];
       return;
@@ -281,8 +303,14 @@ function sampleCurve(
     if (last[0] !== point[0] || last[1] !== point[1]) current.push(point);
   };
 
-  const refine = (left: CurvePoint, right: CurvePoint, depth: number): boolean => {
-    if (evaluations >= MAX_EVALUATIONS_PER_ITEM) return true;
+  const refine = (
+    left: CurvePoint,
+    right: CurvePoint,
+    depth: number,
+    intervalStart: number,
+  ): boolean => {
+    if (evaluations >= MAX_EVALUATIONS_PER_ITEM) return false;
+    if (evaluations - intervalStart >= MAX_EVALUATIONS_PER_INTERVAL) return false;
     const middleX = (left.x + right.x) / 2;
     const middleY = evalAt(middleX);
     if (!Number.isFinite(middleY)) return false;
@@ -295,16 +323,26 @@ function sampleCurve(
     if (outside && Math.abs(middleY) > Math.abs(left.y) && Math.abs(middleY) > Math.abs(right.y)) {
       return false;
     }
-    if (
-      depth >= ADAPTIVE_DEPTH ||
-      (leftGap <= adaptiveThreshold && rightGap <= adaptiveThreshold)
-    ) {
+    if (leftGap <= adaptiveThreshold && rightGap <= adaptiveThreshold) {
       push(middleX, middleY);
       return true;
     }
-    if (!refine(left, middle, depth + 1)) return false;
+    // An unresolved jump at the depth limit is a discontinuity, not a licence
+    // to draw a straight connector through values the function never takes. A
+    // strictly interior midpoint is the signature of a steep continuous curve
+    // (1000*x); a step function keeps the midpoint on one endpoint level.
+    if (depth >= ADAPTIVE_DEPTH) {
+      const low = Math.min(left.y, right.y);
+      const high = Math.max(left.y, right.y);
+      if (middleY > low + adaptiveThreshold && middleY < high - adaptiveThreshold) {
+        push(middleX, middleY);
+        return true;
+      }
+      return false;
+    }
+    if (!refine(left, middle, depth + 1, intervalStart)) return false;
     push(middleX, middleY);
-    return refine(middle, right, depth + 1);
+    return refine(middle, right, depth + 1, intervalStart);
   };
 
   const connect = (left: CurvePoint, right: CurvePoint): boolean => {
@@ -322,7 +360,27 @@ function sampleCurve(
         if (before * after < 0) return false;
       }
     }
-    if (gap > adaptiveThreshold && !refine(left, right, 0)) return false;
+    if (gap > adaptiveThreshold) {
+      if (evaluations >= MAX_EVALUATIONS_PER_ITEM) return false;
+      if (!refine(left, right, 0, evaluations)) return false;
+      push(right.x, right.y);
+      return true;
+    }
+    // Equal endpoints do not prove continuity: 1/(x-a)^2 can sit at the same
+    // large value on both samples while the pole between them is higher. Always
+    // inspect the interior before connecting a small step.
+    if (evaluations >= MAX_EVALUATIONS_PER_ITEM) {
+      push(right.x, right.y);
+      return true;
+    }
+    const middleX = (left.x + right.x) / 2;
+    const middleY = evalAt(middleX);
+    if (!Number.isFinite(middleY)) return false;
+    const outside =
+      middleY > Math.max(left.y, right.y) + spanY || middleY < Math.min(left.y, right.y) - spanY;
+    if (outside && Math.abs(middleY) > Math.abs(left.y) && Math.abs(middleY) > Math.abs(right.y)) {
+      return false;
+    }
     push(right.x, right.y);
     return true;
   };
@@ -382,8 +440,8 @@ function autoYRange(
     max += 0.5;
   }
   const padding = (max - min) * 0.05;
-  const low = roundCoordinate(min - padding);
-  const high = roundCoordinate(max + padding);
+  const low = min - padding;
+  const high = max + padding;
   if (!Number.isFinite(low) || !Number.isFinite(high) || !(high > low)) {
     return { ok: false, reason: 'unbounded' };
   }
@@ -396,16 +454,28 @@ function hasVisiblePoint(
   xRange: readonly [number, number],
   yRange: readonly [number, number],
 ): boolean {
-  const epsilon = Math.max(1e-9, (yRange[1] - yRange[0]) * 1e-9);
+  // Check adjacent samples for a viewport crossing, not only samples that land
+  // inside the y range: 1000*x over x[-512,512], y[100,200] crosses between
+  // grid points. A jump may be a false positive here; withholding a valid
+  // figure is worse than showing one whose clamped view is empty.
   const variables: Record<string, number> = { ...params, x: 0 };
   for (const ast of asts) {
     if (ast === null) continue;
+    let previous: number | null = null;
     for (let index = 0; index <= SAMPLE_INTERVALS; index += 1) {
       variables.x = sampleX(xRange, index);
       const value = evaluateExpression(ast, variables);
-      if (Number.isFinite(value) && value >= yRange[0] - epsilon && value <= yRange[1] + epsilon) {
-        return true;
+      if (!Number.isFinite(value)) {
+        previous = null;
+        continue;
       }
+      if (value >= yRange[0] && value <= yRange[1]) return true;
+      if (previous !== null) {
+        if (Math.min(previous, value) <= yRange[1] && Math.max(previous, value) >= yRange[0]) {
+          return true;
+        }
+      }
+      previous = value;
     }
   }
   return false;
@@ -460,14 +530,24 @@ function parameterIssues(params: readonly PlotParamT[]): BlockIssueT[] {
 function viewIssues(input: PlotBlockInputT): BlockIssueT[] {
   const issues: BlockIssueT[] = [];
   const [x0, x1] = input.view.x;
-  if (!Number.isFinite(x0) || !Number.isFinite(x1) || !(x1 > x0)) {
-    issues.push(issue('plot_view_invalid', '/view/x', 'x range must be finite and increasing'));
+  if (!isSpanRepresentable(x0, x1)) {
+    issues.push(
+      issue(
+        'plot_view_invalid',
+        '/view/x',
+        'x range must be finite, increasing, and resolvable at its magnitude',
+      ),
+    );
   }
   const y = input.view.y;
-  if (y !== undefined && y !== 'auto') {
-    if (!Number.isFinite(y[0]) || !Number.isFinite(y[1]) || !(y[1] > y[0])) {
-      issues.push(issue('plot_view_invalid', '/view/y', 'y range must be finite and increasing'));
-    }
+  if (y !== undefined && y !== 'auto' && !isSpanRepresentable(y[0], y[1])) {
+    issues.push(
+      issue(
+        'plot_view_invalid',
+        '/view/y',
+        'y range must be finite, increasing, and resolvable at its magnitude',
+      ),
+    );
   }
   const tickSteps = input.axes?.ticks;
   if (tickSteps !== undefined) {
@@ -496,14 +576,16 @@ function labelIssues(input: PlotBlockInputT): BlockIssueT[] {
   if (params.length === 0) return [];
   const issues: BlockIssueT[] = [];
   const entries: Array<readonly [string, string | undefined]> = [
+    ['/alt', input.alt],
     ['/title', input.title],
     ['/caption', input.caption],
     ['/axes/x_label', input.axes?.x_label],
     ['/axes/y_label', input.axes?.y_label],
     ...input.items.map((item, index) => [`/items/${index}/label`, item.label] as const),
+    ...params.map((param, index) => [`/params/${index}/label`, param.label] as const),
   ];
   for (const [path, text] of entries) {
-    if (text !== undefined && /[0-9]/.test(text)) {
+    if (text !== undefined && DECIMAL_DIGIT_RE.test(text)) {
       issues.push(
         issue(
           'plot_label_hardcodes_value',
@@ -561,8 +643,16 @@ export function compilePlotBlock(input: PlotBlockInputT, surface: BlockSurface):
   if (issues.length === 0 && resolvedY === null) {
     const defaults = resolveParamValues(params);
     const auto = autoYRange(input.view.x, asts, defaults);
-    if (auto.ok) {
+    if (auto.ok && isSpanRepresentable(auto.range[0], auto.range[1])) {
       resolvedY = auto.range;
+    } else if (auto.ok) {
+      issues.push(
+        issue(
+          'plot_view_invalid',
+          '/view/y',
+          'auto y range cannot be resolved at this magnitude; give view.y explicitly',
+        ),
+      );
     } else if (auto.reason === 'empty') {
       issues.push(
         issue(
@@ -583,7 +673,7 @@ export function compilePlotBlock(input: PlotBlockInputT, surface: BlockSurface):
         issue(
           'plot_nothing_visible',
           '/view/y',
-          'every sampled point lies outside the explicit y range; widen view.y or fix the expression',
+          'no segment crosses or enters the explicit y range; widen view.y or fix the expression',
         ),
       );
     }
@@ -614,15 +704,15 @@ export function computeScene(block: PlotBlockT, paramValues: PlotParamValues = {
   const { asts, issues } = parseItems(block);
   const [x0, x1] = block.view.x;
   const [y0, y1] = block.view.y;
-  const validView =
-    Number.isFinite(x0) &&
-    Number.isFinite(x1) &&
-    x1 > x0 &&
-    Number.isFinite(y0) &&
-    Number.isFinite(y1) &&
-    y1 > y0;
+  const validView = isSpanRepresentable(x0, x1) && isSpanRepresentable(y0, y1);
   if (!validView) {
-    issues.push(issue('plot_view_invalid', '/view', 'view ranges must be finite and increasing'));
+    issues.push(
+      issue(
+        'plot_view_invalid',
+        '/view',
+        'view ranges must be finite, increasing, and resolvable at their magnitude',
+      ),
+    );
   }
 
   const ticks = validView

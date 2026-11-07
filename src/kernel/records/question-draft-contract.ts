@@ -20,6 +20,7 @@ import {
   declaredShapeSupport,
 } from '@/core/schema/assessment';
 import type { BlankNormalizationT } from '@/core/schema/assessment/scoring';
+import { findPlotParamFences } from '@/core/schema/blocks/plot-fence';
 import { deterministicDisplayOrder } from '@/core/schema/display-order';
 import type {
   DraftBlankTextKeyT,
@@ -56,7 +57,8 @@ export interface DraftConversionIssue {
     | 'duplicate_id'
     | 'unresolved_material_ref'
     | 'unresolved_key_item'
-    | 'rule_invalid';
+    | 'rule_invalid'
+    | 'question_material_plot_params';
   part_id?: string;
   unit_id?: string;
   detail: string;
@@ -343,6 +345,24 @@ function executorFor(unit: DraftUnitT): ExecutorAssignmentT['executor'] {
   }
 }
 
+/** `plot` fences with params cannot appear in a frozen question material. */
+export function questionMaterialPlotParamIssues(
+  doc: QuestionDraftDocumentT,
+): DraftConversionIssue[] {
+  const issues: DraftConversionIssue[] = [];
+  for (const material of doc.materials) {
+    if (material.content_md == null || material.content_md.length === 0) continue;
+    const fences = findPlotParamFences(material.content_md);
+    if (fences.length > 0) {
+      issues.push({
+        code: 'question_material_plot_params',
+        detail: `material '${material.material_id}' has plot fence(s) ${fences.join(', ')} with params; params are forbidden in a frozen question material`,
+      });
+    }
+  }
+  return issues;
+}
+
 /**
  * Draft document → four-layer contract plus unresolved issues. Pure; a non-empty
  * issue list means submit will not mint a revision.
@@ -356,6 +376,7 @@ export function draftDocumentToContract(
   if (new Set(doc.materials.map((m) => m.material_id)).size !== doc.materials.length) {
     issues.push({ code: 'duplicate_id', detail: 'duplicate material_id in document' });
   }
+  issues.push(...questionMaterialPlotParamIssues(doc));
   const partIds = new Set<string>();
   const unitIds = new Set<string>();
   const slotIds = new Set<string>();

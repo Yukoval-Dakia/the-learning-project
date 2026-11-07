@@ -40,6 +40,7 @@ import { projectQuestionBlockGuarded } from '@/kernel/records/question-block-pro
 import {
   applyScoringEditPlan,
   draftDocumentToContract,
+  questionMaterialPlotParamIssues,
   revisionToDraftDocument,
 } from '@/kernel/records/question-draft-contract';
 import { OpaqueJsonInput } from '@/kernel/tools/types';
@@ -755,6 +756,22 @@ export async function saveDraftEditInTx(
     // 草稿的 doc.base 回填（首次针对已发布题的草稿）。
     if (docAfter.base == null && importedQuestionId != null) {
       docAfter.base = { question_id: importedQuestionId, revision_id: currentRevisionId };
+    }
+
+    // A frozen question material must never carry a plot with learner params.
+    // Reject before the draft row is written; validate/submit surface the same
+    // typed issue through draftDocumentToContract.
+    const materialGateIssues = questionMaterialPlotParamIssues(docAfter);
+    if (materialGateIssues.length > 0) {
+      throw new TxAbort({
+        status: 'rejected',
+        reason: 'question_material_params_forbidden',
+        issues: materialGateIssues.map((gateIssue) => ({
+          code: gateIssue.code,
+          detail: gateIssue.detail,
+        })),
+        request_id: requestId,
+      });
     }
 
     // 还没有行：终态直接铸成 create 快照。不再同事务写编辑事件。

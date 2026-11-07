@@ -83,6 +83,7 @@ const BINARY_PRECEDENCE: Record<BinaryOperator, number> = {
 const PREFIX_PRECEDENCE = 3;
 const MAX_AST_NODES = 256;
 const MAX_POWER_DEPTH = 3;
+const MAX_SOURCE_LENGTH = 200;
 
 class ParseFailure {
   constructor(readonly issue: ExprIssue) {}
@@ -164,6 +165,14 @@ class Parser {
     const node = this.parseExpression(1);
     const rest = this.peek();
     if (rest.kind !== 'end') {
+      if (rest.kind === 'operator' && rest.op === '(') {
+        fail(
+          'expr_parse_error',
+          "implicit multiplication only covers 2x and (...) (...), write '*' explicitly",
+          rest.start + 1,
+          ['*'],
+        );
+      }
       fail('expr_parse_error', 'unexpected token after the expression', rest.start + 1, [
         'operator',
         'end of expression',
@@ -223,6 +232,14 @@ class Parser {
     if (token.kind === 'identifier') {
       const next = this.peek();
       if (next.kind === 'operator' && next.op === '(') {
+        if (this.variables.has(token.name)) {
+          fail(
+            'expr_parse_error',
+            `'${token.name}' is a variable, not a function; write ${token.name}*(...) to multiply`,
+            token.start + 1,
+            ['*'],
+          );
+        }
         return this.parseCall(token);
       }
       if (token.name === 'pi') return { type: 'number', value: Math.PI };
@@ -254,20 +271,23 @@ class Parser {
   }
 
   private parseCall(nameToken: Extract<Token, { kind: 'identifier' }>): ExprNode {
-    const name = nameToken.name as ExprFunctionName;
-    const spec = FUNCTIONS[name];
-    if (!spec) {
+    const name = nameToken.name;
+    if (!Object.hasOwn(FUNCTIONS, name)) {
       fail(
         'expr_unknown_identifier',
-        `'${nameToken.name}' is not a supported function`,
+        `'${name}' is not a supported function`,
         nameToken.start + 1,
         Object.keys(FUNCTIONS),
       );
     }
+    const functionName = name as ExprFunctionName;
+    const spec = FUNCTIONS[functionName];
     this.index += 1; // consume '('
     const first = this.peek();
     if (first.kind === 'operator' && first.op === ')') {
-      fail('expr_parse_error', `${name} needs arguments`, nameToken.start + 1, ['argument']);
+      fail('expr_parse_error', `${functionName} needs arguments`, nameToken.start + 1, [
+        'argument',
+      ]);
     }
     const args: ExprNode[] = [];
     for (;;) {
@@ -284,12 +304,12 @@ class Parser {
       const expected = spec.min === spec.max ? `${spec.min}` : `${spec.min}..${spec.max}`;
       fail(
         'expr_parse_error',
-        `${name} expects ${expected} argument(s), received ${args.length}`,
+        `${functionName} expects ${expected} argument(s), received ${args.length}`,
         nameToken.start + 1,
         [expected],
       );
     }
-    return { type: 'call', name, args };
+    return { type: 'call', name: functionName, args };
   }
 }
 
@@ -329,6 +349,16 @@ function powerDepth(node: ExprNode): number {
  * variables.
  */
 export function parseExpression(source: string, variables: ReadonlySet<string>): ExprParseResult {
+  if (source.length > MAX_SOURCE_LENGTH) {
+    return {
+      ok: false,
+      issue: {
+        code: 'expr_too_complex',
+        detail: `expression exceeds ${MAX_SOURCE_LENGTH} characters`,
+        column: MAX_SOURCE_LENGTH + 1,
+      },
+    };
+  }
   try {
     const ast = new Parser(tokenize(source), variables).parse();
     if (countNodes(ast) > MAX_AST_NODES) {
@@ -387,11 +417,15 @@ function evaluateCall(name: ExprFunctionName, args: readonly number[]): number {
     case 'exp':
       return Math.exp(args[0]);
     case 'ln':
-      return Math.log(args[0]);
+      return args[0] > 0 ? Math.log(args[0]) : Number.NaN;
     case 'log10':
-      return Math.log10(args[0]);
-    case 'log':
-      return args.length === 1 ? Math.log(args[0]) : Math.log(args[1]) / Math.log(args[0]);
+      return args[0] > 0 ? Math.log10(args[0]) : Number.NaN;
+    case 'log': {
+      if (args.length === 1) return args[0] > 0 ? Math.log(args[0]) : Number.NaN;
+      const [base, value] = args;
+      if (!(base > 0) || base === 1 || !(value > 0)) return Number.NaN;
+      return Math.log(value) / Math.log(base);
+    }
     case 'floor':
       return Math.floor(args[0]);
     case 'ceil':

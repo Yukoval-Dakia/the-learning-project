@@ -17,7 +17,6 @@ export const BLOCK_IMPLEMENTED_KINDS: readonly BlockKind[] = [
   'diagram',
   'figure',
   'chart',
-  'plot',
   'question_ref',
   'entity_card',
 ];
