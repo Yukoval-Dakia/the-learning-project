@@ -143,7 +143,11 @@ function mergeRanges(ranges: Array<[number, number]>): Array<[number, number]> {
  * top-level `data_source` value and `caption` property are touched; all other
  * JSON bytes (key order, number spelling, escapes, whitespace) stay as written.
  */
-export function downgradeUnboundChartFenceBody(body: string): string | null {
+export function downgradeUnboundChartFenceBody(fenceBody: string): string | null {
+  // The reader trims before parsing, so BOM or Unicode padding must not hide a chart here.
+  const body = fenceBody.trim();
+  const leading = fenceBody.slice(0, fenceBody.length - fenceBody.trimStart().length);
+  const trailing = fenceBody.slice(fenceBody.trimEnd().length);
   const block = parseBlockFence(body);
   if (block?.kind !== 'chart' || block.data_source.kind !== 'tool_result') return null;
   const properties = topLevelProperties(body);
@@ -181,7 +185,7 @@ export function downgradeUnboundChartFenceBody(body: string): string | null {
   ) {
     throw new Error('chart fence downgrade did not produce a model chart without caption');
   }
-  return output;
+  return `${leading}${output}${trailing}`;
 }
 
 interface RawLine {
