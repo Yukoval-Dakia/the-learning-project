@@ -6,6 +6,7 @@ import { type TaskKind, resolveTaskBudget } from '@/capabilities/task-registry';
 import { assessmentRubricInvocationWindowMs } from '@/core/assessment-rubric-timeout';
 import { canonicalHash } from '@/core/migration/canonical';
 import {
+  type EvidenceCitationT,
   GroupEvidence,
   type ModelExecutorRequest,
   type ModelUnitOutcomeT,
@@ -107,6 +108,10 @@ export function holdoutItemFromOutcome(
     agreed,
     severe_error: severe,
     run_refs: outcome.run_refs,
+    // 判分理由原样随证据落账，不进 output_digest / 参考比较 / slice 身份；
+    // 那些结构只看分数与定夺 outcome。
+    ...(outcome.feedback_md !== undefined ? { feedback_md: outcome.feedback_md } : {}),
+    evidence_citations: outcome.evidence_citations,
     ...(outcome.cost_usd_micros !== undefined ? { cost_usd_micros: outcome.cost_usd_micros } : {}),
   };
 }
@@ -291,6 +296,10 @@ export interface ModelSliceAdmissionItemResult {
     error_message: string | null;
   }>;
   run_refs: string[];
+  /** 模型原话理由；仅证据展示，不参与任何 digest、门槛或准入身份。 */
+  feedback_md?: string;
+  /** 执行器已验证的 slot/evidence 引用与原文引语；同样只作证据。 */
+  evidence_citations?: EvidenceCitationT[];
   cost_usd_micros?: number;
 }
 
