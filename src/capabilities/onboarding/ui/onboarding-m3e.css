@@ -158,6 +158,11 @@
   gap: 6px;
 }
 
+/* A chip's sunken fill is the panel's own colour, so on a panel it needs to stand up to be seen. */
+[data-ui-next] .un-ob-panel .un-chip-toggle:not([aria-pressed="true"]) {
+  background: var(--un-md-sys-color-surface-container-lowest);
+}
+
 [data-ui-next] .un-ob-field .un-seg {
   width: fit-content;
   max-width: 100%;
@@ -926,6 +931,55 @@
 
   [data-ui-next] .un-ob-heading .un-mascot {
     display: none;
+  }
+
+  /* A long lead takes the full width; the page's action moves under it. */
+  [data-ui-next] .un-ob-heading {
+    flex-wrap: wrap;
+    gap: 8px 24px;
+  }
+
+  [data-ui-next] .un-ob-heading > div:has(> p) {
+    flex-basis: 100%;
+  }
+
+  /* All four steps stay on one line. */
+  [data-ui-next] .un-ob-steps {
+    flex-wrap: nowrap;
+    gap: 6px;
+  }
+
+  [data-ui-next] .un-ob-step {
+    gap: 6px;
+  }
+
+  [data-ui-next] .un-ob-step + .un-ob-step::before {
+    width: clamp(6px, 3vw, 16px);
+    margin-inline-end: 0;
+  }
+
+  @media (max-width: 340px) {
+    [data-ui-next] .un-ob-step + .un-ob-step::before {
+      display: none;
+    }
+  }
+
+  /* Each pace reads as two lines: its name, then its minutes. */
+  [data-ui-next] .un-ob-field .un-seg {
+    width: 100%;
+    grid-template-columns: repeat(var(--un-seg-n), minmax(0, 1fr));
+  }
+
+  [data-ui-next] .un-ob-field .un-seg-option {
+    flex-direction: column;
+    gap: 0;
+    height: auto;
+    padding: 6px 2px;
+  }
+
+  [data-ui-next] .un-ob-pace-sub {
+    margin-inline-start: 0;
+    white-space: nowrap;
   }
 
   [data-ui-next] .un-ob-panel {

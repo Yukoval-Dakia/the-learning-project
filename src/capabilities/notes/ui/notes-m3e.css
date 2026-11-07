@@ -542,6 +542,17 @@
     }
   }
 
+  /* The gutter only shows on hover: with no hover, or no room, the text takes its width. */
+  @media (hover: none), (max-width: 880px) {
+    & .nt-body .nt-blk {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    & .nt-body .nt-blk-gutter {
+      display: none;
+    }
+  }
+
   & .nt-quiet {
     padding: var(--un-sp-4) 0;
     color: var(--un-text-3);
@@ -1224,6 +1235,14 @@
   }
 
   @media (max-width: 880px) {
+    & .nt-rows {
+      margin-inline: 0;
+    }
+
+    & .nt-row {
+      padding-inline: 0;
+    }
+
     & .nt-list-main {
       padding: var(--un-sp-6) var(--un-sp-4) calc(var(--un-sp-8) + var(--un-sp-6));
     }
