@@ -135,6 +135,8 @@ async function installPracticeOperationsBeforeServe(): Promise<void> {
     '@/capabilities/observability/public'
   );
   await installObservabilityHostOperations();
+  const { installCopilotJobStreamGate } = await import('@/capabilities/copilot/public');
+  installCopilotJobStreamGate();
   const { installDrawingHostOperations } = await import('@/capabilities/drawing/public');
   installDrawingHostOperations();
 }
