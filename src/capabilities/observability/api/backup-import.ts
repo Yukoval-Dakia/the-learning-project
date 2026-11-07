@@ -9,12 +9,13 @@ import { db } from '@/db/client';
 import { getR2 } from '@/kernel/object-storage';
 import { restoreFromArchive } from '../server/backup/archive';
 import { getBackupConfigHydrator } from '../server/backup/config-hydrator';
+import { UploadTooLargeError } from '../server/backup/restore-stream';
 import { BackupImportQuerySchema } from './backup-contracts';
 
 // OOM tripwire, not a backup-validity limit: exports have no byte bound, so only a
-// sanity ceiling is defensible. The body is buffered whole before the destructive
-// restore, so stop an accidental giant upload here. ~1 GB default, tunable via
-// config; the 413 points at that knob. Streaming is out of scope for this tool.
+// sanity ceiling is defensible. The body streams to a staging area on disk now,
+// so the cap exists to stop an accidental giant upload, not to fit memory.
+// ~1 GB default, tunable via config; the 413 points at that knob.
 const DEFAULT_BACKUP_IMPORT_MAX_BYTES = 1_000_000_000;
 // Any real backup is over ~1 MB; a lower cap is almost certainly a typo that would
 // reject every restore, so warn and use the default.
@@ -67,29 +68,46 @@ export async function POST(req: Request): Promise<Response> {
     );
   }
 
-  // Check a declared length before buffering. An absent header falls through to the
-  // post-read check; use explicit NaN rather than relying on Number(null).
+  // Check a declared length before streaming. An absent header falls through to
+  // the counted-stream check below; use explicit NaN rather than relying on
+  // Number(null).
   const rawContentLength = req.headers.get('content-length');
   const declaredBytes = rawContentLength ? Number(rawContentLength) : Number.NaN;
   if (Number.isFinite(declaredBytes) && declaredBytes > maxBackupUploadBytes()) {
     return payloadTooLargeResponse();
   }
 
-  const bytes = new Uint8Array(await req.arrayBuffer());
-
-  // Chunked bodies skip the declared-length check. They are already resident here,
-  // so this only refuses to feed an oversized body into the destructive restore.
-  if (bytes.byteLength > maxBackupUploadBytes()) {
-    return payloadTooLargeResponse();
-  }
+  // Chunked bodies skip the declared-length check, so the stream itself enforces
+  // the tripwire: the count aborts the moment the upload crosses it rather than
+  // after the whole body has been written through.
+  const countedBody = async function* (stream: ReadableStream<Uint8Array> | null) {
+    if (!stream) return;
+    const reader = stream.getReader();
+    let total = 0;
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) return;
+        total += value.byteLength;
+        if (total > maxBackupUploadBytes()) {
+          throw new UploadTooLargeError('upload exceeds the configured byte ceiling');
+        }
+        yield value;
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  };
 
   const { status, body } = await restoreFromArchive({
     db,
     r2: getR2(),
-    bytes,
+    bytes: countedBody(req.body),
+    maxExtractedBytes: maxBackupUploadBytes(),
     retireInterventionPreparationJobs,
     reopenUnstartedMemoryIngests,
     hydrateConfig,
   });
+  if (status === 413) return payloadTooLargeResponse();
   return Response.json(body, { status });
 }

@@ -95,11 +95,11 @@ export function BlockLine({
           {open && enrollment.reason === 'needs_text' && (
             <PromptFill sessionId={sessionId} block={block} />
           )}
-          {open &&
-            photos &&
-            (enrollment.reason === 'needs_text' || enrollment.reason === 'publish_failed') && (
-              <RescueButton sessionId={sessionId} block={block} />
-            )}
+          {/* Reading again is paid: it is for a question read without its text, not one that only
+              didn't go in. */}
+          {open && photos && enrollment.reason === 'needs_text' && (
+            <RescueButton sessionId={sessionId} block={block} />
+          )}
         </div>
       </div>
       <span className="rc-state rc-line-state" data-tone={state.tone}>
