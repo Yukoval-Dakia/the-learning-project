@@ -15,14 +15,21 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { type SQL, and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
+import { EMBED_VERSION, embedHash } from '@/core/embed-source';
 import { stableStringify } from '@/core/migration/canonical';
 import { deriveSourceTier } from '@/core/schema/provenance';
 import type { Db, Tx } from '@/db/client';
 import { embedCurrencyPredicate } from '@/db/embed-currency';
-import { question, question_group_lifecycle, question_revision } from '@/db/schema';
+import {
+  question,
+  question_group_lifecycle,
+  question_revision,
+  question_solution_prior,
+  question_solution_prior_vector,
+} from '@/db/schema';
 import { toSqlVector } from '@/db/vector';
 import { EvidenceDemandV1 } from '@/kernel/supply-contracts';
-import { embedText } from '@/server/ai/embed';
+import { EMBED_MODEL, embedText } from '@/server/ai/embed';
 import { questionVectorInvalidReason } from '../jobs/embed_backfill';
 import { encodeBankRef, readBankServableParts } from './bank-ref';
 import { collectBankSearchChannel } from './bank-search-channel';
@@ -130,6 +137,13 @@ export const BankGapRequestSchema = z.object({
   // hand-written complete:true) to trigger paid dispatch. Absent only when the secret
   // is unconfigured, in which case filing fails closed.
   evidence_mac: z.string().optional(),
+  search_id: z.string().optional(),
+  assessment_digest: z.string().optional(),
+  decision_source: z.literal('caller_assessed').optional(),
+  unsupported_constraints: z.array(z.string()).optional(),
+  semantic_conditions: z
+    .array(z.object({ id: z.string(), text: z.string(), required: z.boolean() }))
+    .optional(),
 });
 export type BankGapRequest = z.infer<typeof BankGapRequestSchema>;
 
@@ -214,6 +228,10 @@ export interface BankSearchDeps {
   embedFn?: (text: string) => Promise<number[]>;
   /** Internal v2 consumer freezes the entire bounded pool before verification. */
   fullPool?: boolean;
+  /** V3 fuses same-revision method/pitfall vectors using the single query vector. */
+  priorFacets?: boolean;
+  disableVectors?: boolean;
+  predicates?: SQL[];
   /** Existing vectors include private answers; restricted v2 recall cannot use them. */
   publicOnly?: boolean;
   deadlineAt?: number;
@@ -223,7 +241,7 @@ export interface BankSearchDeps {
 }
 
 export interface BankSearchMatchEvidence {
-  channel: 'fts' | 'vector';
+  channel: 'fts' | 'vector' | 'method' | 'pitfall';
   /** prompt_md 原文前缀（定位摘录；截断以 … 标记，绝不改写原文）。 */
   excerpt: string;
   /** fts 命中的强度：'strong' 计入 coverage.verdict；'weak'（只共享个别词项）留在
@@ -258,6 +276,7 @@ export interface BankSearchHit {
   source: string;
   automatically_servable_part_ids: string[];
   source_tier: { tier: number; name: string };
+  question_kind: string;
   difficulty: number;
   knowledge_ids: string[];
   match_evidence: BankSearchMatchEvidence[];
@@ -590,7 +609,12 @@ export async function runSearchBank(
   // search reuses the anchor question's stored content vector instead of
   // embedding the query text, so no provider call is made either way.
   let embedded: { vector: number[] } | { error: unknown } | undefined;
-  if (request.form === 'new' && request.scope.similar_to === undefined && !deps.publicOnly) {
+  if (
+    request.form === 'new' &&
+    request.scope.similar_to === undefined &&
+    !deps.publicOnly &&
+    !deps.disableVectors
+  ) {
     const embedFn =
       deps.embedFn ??
       ((text: string) =>
@@ -651,7 +675,7 @@ async function runSearchBankInSnapshot(
 
   const resolved = await resolveBankSearchScope(db, scope);
   const filters = buildBankSearchFilters(resolved);
-  const where = and(...filters);
+  const where = and(...filters, ...(deps.predicates ?? []));
 
   // FTS 词法表达式对新检索与 cursor 续页都可用（续页按 cursor.q 重算 strength；
   // 内容若被改过，snapshot_hash 校验会显式让 cursor 过期）。
@@ -739,25 +763,26 @@ async function runSearchBankInSnapshot(
             });
       anchorVector = anchorInvalidReason === null ? (anchorRow?.embedding ?? null) : null;
     }
-    const vectorPromise: Promise<{ vector: number[] | null; error?: string }> = deps.publicOnly
-      ? Promise.resolve({
-          vector: null,
-          error: 'private_answer_vector_projection_unavailable_for_role',
-        })
-      : resolved.similarToGroupId !== undefined
-        ? anchorVector != null
-          ? Promise.resolve({ vector: anchorVector })
-          : Promise.resolve({
-              vector: null,
-              error: `similar_to anchor content vector unusable (${anchorInvalidReason}): never embedded, embedded under an older EMBED_VERSION, stamped from an older row revision, or invalidated by a content edit; awaiting embed_backfill`,
-            })
-        : deps
-            .embedFn(effectiveQuery)
-            .then((vector) => ({ vector }))
-            .catch((err: unknown) => ({
-              vector: null,
-              error: err instanceof Error ? err.message : String(err),
-            }));
+    const vectorPromise: Promise<{ vector: number[] | null; error?: string }> =
+      deps.publicOnly || deps.disableVectors
+        ? Promise.resolve({
+            vector: null,
+            error: 'private_answer_vector_projection_unavailable_for_role',
+          })
+        : resolved.similarToGroupId !== undefined
+          ? anchorVector != null
+            ? Promise.resolve({ vector: anchorVector })
+            : Promise.resolve({
+                vector: null,
+                error: `similar_to anchor content vector unusable (${anchorInvalidReason}): never embedded, embedded under an older EMBED_VERSION, stamped from an older row revision, or invalidated by a content edit; awaiting embed_backfill`,
+              })
+          : deps
+              .embedFn(effectiveQuery)
+              .then((vector) => ({ vector }))
+              .catch((err: unknown) => ({
+                vector: null,
+                error: err instanceof Error ? err.message : String(err),
+              }));
 
     const [ftsAll, vectorResult] = await Promise.all([ftsRowsPromise, vectorPromise]);
 
@@ -864,6 +889,63 @@ async function runSearchBankInSnapshot(
       unavailable.push('vector');
     }
 
+    if (deps.priorFacets && vectorResult.vector) {
+      const facetDistance = sql<number>`(${question_solution_prior_vector.embedding} <=> ${toSqlVector(vectorResult.vector)}::vector)`;
+      const facetText = sql<string>`CASE WHEN ${question_solution_prior_vector.facet} = 'method' THEN concat(${question_solution_prior.prior}->'methods'->${question_solution_prior_vector.idx}->>'core_idea_md', ${'\n'}, ${question_solution_prior.prior}->'methods'->${question_solution_prior_vector.idx}->>'key_step_md') ELSE concat(${question_solution_prior.prior}->'pitfalls'->${question_solution_prior_vector.idx}->>'mechanism_md', ${'\n'}, ${question_solution_prior.prior}->'pitfalls'->${question_solution_prior_vector.idx}->>'trigger_md') END`;
+      const facets = await db
+        .select({
+          id: question.id,
+          facet: question_solution_prior_vector.facet,
+          text: facetText,
+          hash: question_solution_prior_vector.content_hash,
+          distance: facetDistance,
+        })
+        .from(question)
+        .innerJoin(question_group_lifecycle, eq(question_group_lifecycle.group_id, question.id))
+        .innerJoin(
+          question_solution_prior_vector,
+          eq(
+            question_solution_prior_vector.revision_id,
+            question_group_lifecycle.current_revision_id,
+          ),
+        )
+        .innerJoin(
+          question_solution_prior,
+          and(
+            eq(question_solution_prior.revision_id, question_solution_prior_vector.revision_id),
+            eq(question_solution_prior.part_id, question_solution_prior_vector.part_id),
+          ),
+        )
+        .where(
+          and(
+            where,
+            eq(question_solution_prior_vector.embed_model, EMBED_MODEL),
+            eq(question_solution_prior_vector.embed_version, EMBED_VERSION),
+            sql`${facetDistance} <= ${BANK_VECTOR_RETRIEVAL_MAX_DISTANCE}`,
+          ),
+        )
+        .orderBy(facetDistance, question.id)
+        .limit(BANK_SEARCH_CHANNEL_CAP + 1);
+      if (facets.length > BANK_SEARCH_CHANNEL_CAP) vectorTruncated = true;
+      for (const facet of ['method', 'pitfall'] as const) {
+        const seen = new Set<string>();
+        const rows = facets
+          .slice(0, BANK_SEARCH_CHANNEL_CAP)
+          .filter(
+            (r) =>
+              r.facet === facet &&
+              r.hash === embedHash(r.text) &&
+              !seen.has(r.id) &&
+              !!seen.add(r.id),
+          );
+        channels.push({ name: facet, hits: rows.map((r, rank) => ({ id: r.id, rank })) });
+        recallScan.push({
+          channel: facet,
+          scanned: facets.length,
+          stop: facets.length > BANK_SEARCH_CHANNEL_CAP ? 'eligible_pool_cap' : 'channel_exhausted',
+        });
+      }
+    }
     retrievalTruncated = ftsTruncated || vectorTruncated;
     fused = rrfFuse(channels);
   }
@@ -971,6 +1053,8 @@ async function runSearchBankInSnapshot(
               source_revision: row.embed_source_revision ?? null,
             };
           }
+          if (channel === 'method' || channel === 'pitfall')
+            return { channel, excerpt: preview(row.prompt_md, 160) };
           return {
             channel: 'fts',
             excerpt: preview(row.prompt_md, 160),
@@ -1003,6 +1087,7 @@ async function runSearchBankInSnapshot(
         source: row.source,
         automatically_servable_part_ids: servableParts.get(row.id) ?? [],
         source_tier: { tier, name },
+        question_kind: row.kind,
         difficulty: row.difficulty,
         knowledge_ids: row.knowledge_ids ?? [],
         match_evidence: evidence,

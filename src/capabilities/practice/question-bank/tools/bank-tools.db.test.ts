@@ -5,7 +5,7 @@ import postgres from 'postgres';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { generateReferenceSolution } from '@/capabilities/practice/question-bank/server/reference-solution';
 import * as schema from '@/db/schema';
-import { event, material_fsrs_state, question, source_asset } from '@/db/schema';
+import { artifact, event, material_fsrs_state, question, source_asset } from '@/db/schema';
 import {
   contractIntegrityDigest,
   normalizeQuestionGroupToContract,
@@ -16,9 +16,14 @@ import {
 } from '@/kernel/records/assessment-publication';
 import type { ToolContext } from '@/kernel/tools/types';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
+import { fileBankGapTool } from '../../server/tools/file-bank-gap';
+import { assertPaperOpenable } from '../../session/server/assessment/paper-issuance';
+import { writeQuizTool } from '../../session/tools/write-quiz';
 import { runEmbedBackfill } from '../jobs/embed_backfill';
 import { archiveQuestion, editQuestion } from '../server/question-bank-write';
 import { encodeBankRef } from './bank-ref';
+import { BankSearchScopeSchema, runSearchBank } from './bank-search';
+import type { BankAssessment } from './bank-search-contract';
 import { checkBankTool } from './check-bank';
 import { readBankTool } from './read-bank';
 import { searchBankTool } from './search-bank';
@@ -90,12 +95,54 @@ async function publishAdmitted(id: string) {
 }
 
 async function searchHits(input: Record<string, unknown>) {
-  const output = await searchBankTool.execute(ctx, searchBankTool.inputSchema.parse(input));
-  return output;
+  const { query, limit, cursor, ...scope } = input;
+  return runSearchBank(
+    db,
+    cursor
+      ? { form: 'cursor', cursor: String(cursor) }
+      : {
+          form: 'new',
+          query: String(query ?? ''),
+          limit: Number(limit ?? 20),
+          scope: BankSearchScopeSchema.parse({
+            draft_state: 'all',
+            admission_state: 'any',
+            ...scope,
+          }),
+        },
+  );
+}
+
+async function receiptFixture(run: string) {
+  vi.stubEnv('BANK_GAP_EVIDENCE_SECRET', 'bank-boundary-fixture-signing-key-at-least-32-chars');
+  await seedQuestion('receipt-question', {
+    prompt_md: '边界样本：已知二次方程，判断根的个数。',
+    knowledge_ids: ['math'],
+  });
+  await publishAdmitted('receipt-question');
+  const owner: ToolContext = {
+    ...ctx,
+    taskRunId: run,
+    callerActor: { kind: 'user', ref: 'receipt-owner' },
+  };
+  const search = await searchBankTool.execute(owner, { query: '边界样本', count: 2 });
+  const hit = search.hits[0];
+  const evidence = [{ source: hit.evidence[0].source, quote: hit.evidence[0].text }];
+  if (!hit.ref) throw new Error('Published fixture has no revision ref');
+  const assessment: BankAssessment = {
+    ref: hit.ref,
+    parts: hit.parts,
+    checks: [{ condition: 'r1', verdict: 'supported', evidence }],
+    joint: { verdict: 'supported', evidence },
+  };
+  return { owner, search, assessment };
 }
 
 describe('bank tools boundary invariants (search_bank / read_bank / check_bank)', () => {
-  beforeEach(resetDb);
+  beforeEach(async () => {
+    vi.stubEnv('BANK_GAP_EVIDENCE_SECRET', 'bank-boundary-fixture-signing-key-at-least-32-chars');
+    await resetDb();
+  });
 
   // @invariant data: served-face search returns only eligible items (withdrawn never; drafts/withheld only on the explicit dedup face) @fails-if a hard filter is dropped or ignored in SQL so withdrawn/withheld/draft items leak into the admitted+active served hits
   it('hard filters cannot be bypassed: withdrawn never served; draft/admission filters hold', async () => {
@@ -465,13 +512,16 @@ describe('bank tools boundary invariants (search_bank / read_bank / check_bank)'
           `GRANT SELECT ON question, question_revision, question_group_lifecycle, source_asset TO "${role}"`,
         ),
       );
+      await db.execute(
+        sql.raw(`GRANT SELECT, INSERT, DELETE ON bank_search_snapshot TO "${role}"`),
+      );
       await bankDb.execute(sql.raw(`SET ROLE "${role}"`));
       const bankCtx = { ...ctx, db: bankDb } satisfies ToolContext;
       const read = await readBankTool.execute(
         bankCtx,
         readBankTool.inputSchema.parse({
           refs: [ref],
-          include: ['content', 'answers', 'metadata'],
+          include: ['content', 'answers', 'metadata', 'solution_prior'],
         }),
       );
       // The real PG role can see revisions only inside one read-only RR snapshot.
@@ -591,5 +641,112 @@ describe('bank tools boundary invariants (search_bank / read_bank / check_bank)'
     expect(output.checks[1].interpretation).toBe(
       'This question proves the learner has mastered reading.',
     );
+  });
+
+  // @invariant security: caller judgments keep their provenance and unknown/contradicted required never qualify @fails-if a caller opinion is stored as a verified fact, uncited support is accepted or unknown/contradicted enters a paper
+  it('requires cited supported conditions and joint while retaining caller attribution', async () => {
+    const { owner, search, assessment } = await receiptFixture('receipt-judgment');
+    for (const verdict of ['unknown', 'contradicted'] as const) {
+      const rejected = { ...assessment, checks: assessment.checks.map((c) => ({ ...c, verdict })) };
+      await expect(
+        writeQuizTool.execute(owner, { search_id: search.search_id, assessments: [rejected] }),
+      ).rejects.toThrow('supported required and joint');
+    }
+    await expect(
+      writeQuizTool.execute(owner, {
+        search_id: search.search_id,
+        assessments: [
+          {
+            ...assessment,
+            joint: { verdict: 'supported', evidence: [{ source: 'foreign', quote: 'forged' }] },
+          },
+        ],
+      }),
+    ).rejects.toThrow('authorized selected content');
+    expect(await db.select().from(artifact)).toHaveLength(0);
+    await writeQuizTool.execute(owner, { search_id: search.search_id, assessments: [assessment] });
+    const [paper] = await db.select().from(artifact);
+    expect(paper.tool_state).toMatchObject({
+      session_meta: { bank_decision_source: 'caller_assessed' },
+    });
+    expect(JSON.stringify(paper.tool_state)).not.toContain(assessment.joint.evidence[0].quote);
+  });
+
+  // @invariant concurrency: receipt-based paper selection serializes and never issues another revision @fails-if concurrent same-run calls create two papers or a later current revision silently replaces the selected one at paper opening
+  it('serializes receipt consumption and rejects replacement revisions when opening the paper', async () => {
+    const { owner, search, assessment } = await receiptFixture('receipt-paper-race');
+    const results = await Promise.allSettled(
+      [1, 2].map(() =>
+        writeQuizTool.execute(owner, { search_id: search.search_id, assessments: [assessment] }),
+      ),
+    );
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    const papers = await db.select().from(artifact);
+    expect(papers).toHaveLength(1);
+    await editQuestion(
+      db,
+      'receipt-question',
+      0,
+      { prompt_md: '边界样本：修改后的另一份题面。' },
+      'receipt-edit',
+    );
+    await expect(db.transaction((tx) => assertPaperOpenable(tx, papers[0].id))).rejects.toThrow(
+      'searched question revision changed',
+    );
+  });
+
+  // @invariant concurrency: a filing binds the original receipt and concurrent identical content is idempotent @fails-if stale evidence can file, a repeated request creates multiple ledger claims, or changed judgments replay as identical
+  it('revalidates gap evidence and deduplicates concurrent filings without upgrading caller judgments', async () => {
+    const { owner, search, assessment } = await receiptFixture('receipt-gap-race');
+    const negative = {
+      ...assessment,
+      checks: assessment.checks.map((c) => ({ ...c, verdict: 'contradicted' as const })),
+      joint: { ...assessment.joint, verdict: 'contradicted' as const },
+    };
+    const demand = {
+      version: 1 as const,
+      demand_id: 'receipt-gap',
+      policy_version: 'supply-v2-phase-a',
+      subject_id: 'math',
+      claim: { kind: 'content_coverage' as const, knowledge_ids: ['math'], statement: '边界样本' },
+      evidence: { observables: ['correct response'], minimum_observations: 1 },
+      task: { kinds: ['any'], allowed_uses: ['practice' as const] },
+      difficulty: { band: 'near' as const, scale: 'authored', target_value: null },
+      inventory_goal: { eligible_count: 2, horizon_days: 7 },
+      control: { needed_by: null, max_budget_micro_usd: 0, max_attempts: 1 },
+      causes: [{ kind: 'coverage_gap' as const }],
+    };
+    const input = {
+      request_id: 'receipt-gap-request',
+      demand,
+      search_id: search.search_id,
+      assessments: [negative],
+    };
+    const filings = await Promise.all([
+      fileBankGapTool.execute(owner, input),
+      fileBankGapTool.execute(owner, input),
+    ]);
+    expect(filings.every((f) => f.status === 'held')).toBe(true);
+    expect(filings.filter((f) => f.deduplicated)).toHaveLength(1);
+    expect(
+      await db.select().from(event).where(eq(event.id, 'fbgap|receipt-gap-request')),
+    ).toHaveLength(1);
+    const changed = await fileBankGapTool.execute(owner, {
+      ...input,
+      assessments: [
+        {
+          ...negative,
+          checks: negative.checks.map((c) => ({ ...c, verdict: 'unknown' as const })),
+        },
+      ],
+    });
+    expect(changed.status).toBe('rejected');
+    await editQuestion(db, 'receipt-question', 0, { prompt_md: '新题面' }, 'receipt-edit');
+    await expect(
+      fileBankGapTool.execute(owner, { ...input, request_id: 'stale-gap-request' }),
+    ).rejects.toThrow('stale');
+    expect(
+      await db.select().from(event).where(eq(event.id, 'fbgap|stale-gap-request')),
+    ).toHaveLength(0);
   });
 });

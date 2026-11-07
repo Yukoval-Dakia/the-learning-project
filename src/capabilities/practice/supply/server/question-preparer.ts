@@ -331,7 +331,6 @@ export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown, r
   const runIds = new Set<string>();
   const versions = new Set<string>();
   const defects = new Set<string>();
-  let inventorySatisfied = false;
   let bankEvidenceObserved = false;
   let pendingStockObserved = false;
   let started = false;
@@ -464,7 +463,6 @@ export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown, r
                 onResult: async (observation) => {
                   const value = z
                     .object({
-                      fulfillment: z.string().optional(),
                       pending_stock: z.array(z.json()).optional(),
                     })
                     .safeParse(observation.output);
@@ -473,8 +471,6 @@ export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown, r
                     bankEvidenceObserved = true;
                   if (observation.name === 'scan_coverage_gaps' && value.data.pending_stock?.length)
                     pendingStockObserved = true;
-                  if (observation.name === 'search_bank' && value.data.fulfillment === 'met')
-                    inventorySatisfied = true;
                   if (
                     observation.name === 'submit_question' &&
                     observation.executed &&
@@ -527,13 +523,11 @@ export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown, r
   return finish(
     published.size
       ? 'awaiting_admission'
-      : inventorySatisfied
-        ? 'done'
-        : report.success && report.data.outcome === 'done' && bankEvidenceObserved
-          ? pendingStockObserved
-            ? 'awaiting_admission'
-            : 'done'
-          : 'no_progress',
+      : report.success && report.data.outcome === 'done' && bankEvidenceObserved
+        ? pendingStockObserved
+          ? 'awaiting_admission'
+          : 'done'
+        : 'no_progress',
     report.success
       ? report.data.summary
       : result.text || loop.closure()?.reason || 'no_terminal_report',

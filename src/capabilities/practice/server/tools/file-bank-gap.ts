@@ -1,36 +1,6 @@
-// (Stage 1 batch D / 统一问题定级设计+) — `file_bank_gap` DomainTool
-// (effect:'write')。search_bank 检索不足（verdict sparse/none）时落缺口供题需求：
-// 1. 检索证据防伪：search_evidence 必须携带 search_bank 服务端签发的
-// evidence_mac（BANK_GAP_EVIDENCE_SECRET keyed HMAC-SHA256，覆盖除
-// evidence_mac 外全部 gap 字段的 canonical JSON）。缺失或不符 → rejected /
-// evidence_not_from_search_bank——调用方伪造 complete=true 也触发不了付费
-// dispatch。secret 未配置时 filing 整体 fail closed。
-// 2. 幂等登记 + claim-first 派发：request_id 派生确定性事件 id。派发付费 job
-// 前先写 'claimed' 占位行（experimental:question_supply，状态 'claimed'/'filed'/
-// 'held'）。writeEvent first-write-wins，filing_nonce 回读相等者独占派发权；
-// 输掉并发的调用走重放/拒绝，绝不 dispatch。派发结果追加到
-// `fbgap|<request_id>|receipt` 回执事件（台账只增不改）。同 request_id + 同内容
-// → 重放已存回执（deduplicated=true）；同 id + 不同内容 → 显式 rejected。
-// 入队成功的缺口单另写一条 dispatcher 兼容的 'dispatched' 事件（带窄化后的
-// target fingerprint），供同一 7d 指纹 cooldown 判据使用。
-// 3. retrieval_constraints（within_refs / source / kind / difficulty / KC，含
-// subject / exclude_refs / similar_to）随需求一并存档——缺口上下文完整可追溯。
-// 4. 检索不完整（池截断 / 通道不可用）→ held/retrieval_incomplete：只证明没搜全，
-// 不能立成「全库不存在」。
-// 5. 需求控制先于派发 enforcing：max_budget_micro_usd <= 0 → held/
-// budget_exhausted；needed_by 已过期 → held/deadline_passed。零预算/过期
-// 需求绝不触发付费 job。
-// 6. 入备题员队列（`question_preparer_run`）：同一事务写 server-only 缺口单事件 +
-//    发 job；事件 id 成为提交的因果锚点，准入用它证明供给血缘（不把
-//    `submit_question:*` 当管线发布者）。无法落实的检索限制 → held/
-//    unsupported_constraint，绝不静默丢字段后假装已供题。
-// 已知限制（claim-first 的诚实形态）：winner 在 claim 落账后、receipt 落账前崩溃
-// 时，该 request_id 永久停在 claimed_not_dispatched——同内容重试只重放 held 回执、
-// 绝不再派发（付费 job 可能已入队也可能没有，两者无法区分，fail closed）。须由
-// operator 人工对账（查 question_supply 台账里该 target fingerprint 是否有
-// 'dispatched' 记录），确认未派后用新 request_id 重新落需求。
-// 硬边界：不碰 learner state；不做教学决策；本工具自身零 LLM 调用（付费发生在
-// 备题员 job 内，受同一 7d 指纹 cooldown 与统一供给 spend 策略约束）。
+// Same-revision bank evidence and attributed caller judgments authorize a supply claim.
+// The existing claim ledger and paid dispatch share one transaction; unknown or
+// incomplete evidence never establishes bank absence or bypasses supply controls.
 
 import { createHash, randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
@@ -46,8 +16,10 @@ import {
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 import { canonicalKindToPersistedForms } from '@/subjects/question-kind';
 import {
+  BankAssessmentSchema,
   BankGapRequestSchema,
   type BankSearchScope,
+  bankReceiptGapEvidence,
   verifyBankGapEvidenceMac,
 } from '../../question-bank/public';
 import {
@@ -64,12 +36,11 @@ const FileBankGapInputSchema = z
   .object({
     /** 调用方生成的幂等键。同 id + 同内容重试回同一回执；同 id + 不同内容被拒。 */
     request_id: z.string().trim().min(1).max(200),
-    /** 完整 EvidenceDemandV1（search_bank 的 gap_request 只是种子——agent 需补齐
-     * demand_id / policy_version / subject_id / claim / evidence / task / difficulty /
-     * inventory_goal.horizon_days / control 后提交）。 */
+    /** Complete demand with the original request and explicit inventory target. */
     demand: EvidenceDemandV1,
-    /** search_bank 返回的固定检索证据（gap_request 原样）。 */
-    search_evidence: BankGapRequestSchema,
+    /** Server receipt identity; the caller cannot mint retrieval evidence. */
+    search_id: z.string(),
+    assessments: z.array(BankAssessmentSchema).max(200),
   })
   .strict();
 
@@ -272,13 +243,25 @@ function narrowDemandToSignedScope(
   const kind = scope.kind !== undefined ? scopeTargetKind(scope.kind, demand.task.kinds) : null;
   return EvidenceDemandV1.parse({
     ...demand,
-    claim: { ...demand.claim, knowledge_ids: knowledgeIds },
+    claim: {
+      ...demand.claim,
+      knowledge_ids: knowledgeIds,
+      statement: [
+        demand.claim.statement,
+        ...(evidence.semantic_conditions ?? []).map(
+          (c) => `${c.required ? 'required' : 'preferred'}: ${c.text}`,
+        ),
+      ].join('\n'),
+    },
     task: { ...demand.task, kinds: kind !== null ? [kind] : demand.task.kinds },
   });
 }
 
 interface StoredFilingPayload {
   kind: 'bank_gap_filing';
+  decision_source?: 'caller_assessed';
+  search_id?: string;
+  assessment_digest?: string;
   /** 台账存储态。claimed = dispatch 路径的占位行（写在 `fbgap|<request_id>`，
    * first-write-wins 充当原子占位）；filed = 已派出 / held = 挂起（hold 路径的
    * 终态直接写 `fbgap|<request_id>`；dispatch 路径的终态追加到
@@ -338,7 +321,40 @@ function dispatchReceipt(result: {
 }
 
 async function executeFileBankGap(ctx: ToolContext, rawInput: FileBankGapInput) {
-  const input = FileBankGapInputSchema.parse(rawInput);
+  const request = FileBankGapInputSchema.parse(rawInput);
+  return ctx.db.transaction(async (tx) => {
+    const observation = await bankReceiptGapEvidence(
+      tx,
+      ctx,
+      request.search_id,
+      request.assessments,
+    );
+    if (
+      request.demand.inventory_goal.eligible_count !==
+      observation.evidence.constraints.requested_count
+    )
+      throw new Error('file_bank_gap: inventory goal must match the searched requested count');
+    if (request.demand.claim.statement !== observation.evidence.claim.statement)
+      throw new Error('file_bank_gap: demand statement must preserve the searched request');
+    // Drizzle's transaction implements the same query/write surface used by this operation.
+    return fileBankGapWithEvidence(
+      { ...ctx, db: tx as unknown as Db },
+      {
+        request_id: request.request_id,
+        demand: request.demand,
+        search_evidence: observation.evidence,
+      },
+    );
+  });
+}
+async function fileBankGapWithEvidence(
+  ctx: ToolContext,
+  input: {
+    request_id: string;
+    demand: FileBankGapInput['demand'];
+    search_evidence: z.infer<typeof BankGapRequestSchema>;
+  },
+) {
   const demand = EvidenceDemandV1.parse(input.demand);
   const evidence = BankGapRequestSchema.parse(input.search_evidence);
   const digest = contentDigest(demand, evidence);
@@ -356,7 +372,7 @@ async function executeFileBankGap(ctx: ToolContext, rawInput: FileBankGapInput) 
       deduplicated: false,
       status: 'rejected',
       reason:
-        'evidence_not_from_search_bank: search_evidence lacks a valid server-minted evidence_mac — pass coverage.gap_request from search_bank verbatim (fabricated evidence, e.g. a hand-written complete:true, can never trigger paid dispatch)',
+        'evidence_not_from_search_bank: search_evidence lacks a valid server-minted evidence_mac — pass a valid v3 search_id and cited assessments (fabricated evidence, e.g. a hand-written complete:true, can never trigger paid dispatch)',
       receipt: {
         filing_event_id: eventId,
         content_digest: digest,
@@ -429,6 +445,9 @@ async function executeFileBankGap(ctx: ToolContext, rawInput: FileBankGapInput) 
       caused_by_event_id: ctx.causedByEventId ?? null,
       payload: {
         kind: 'bank_gap_filing',
+        decision_source: 'caller_assessed',
+        search_id: evidence.search_id,
+        assessment_digest: evidence.assessment_digest,
         demand_id: demand.demand_id,
         content_digest: digest,
         filing_nonce: filingNonce,
@@ -446,7 +465,10 @@ async function executeFileBankGap(ctx: ToolContext, rawInput: FileBankGapInput) 
     });
   };
 
-  const unsupported = checkHonourableConstraints(scope, demand);
+  const unsupported = [
+    ...checkHonourableConstraints(scope, demand),
+    ...(evidence.unsupported_constraints ?? []),
+  ];
   const retrievalComplete = evidence.complete && evidence.unavailable_channels.length === 0;
   // 需求控制先于任何派发：零/负预算或已过期的需求绝不触发付费 job。
   const budgetExhausted =
@@ -589,7 +611,7 @@ async function executeFileBankGap(ctx: ToolContext, rawInput: FileBankGapInput) 
 export const fileBankGapTool: DomainTool<FileBankGapInput, FileBankGapOutput> = {
   name: 'file_bank_gap',
   description:
-    "File a question-supply demand for a bank search gap (search_bank coverage.verdict sparse/none). Input: request_id (your idempotency key), the full EvidenceDemandV1 (search_bank's gap_request is only a seed — you must add demand_id/policy_version/subject_id/claim/evidence/task/difficulty/inventory_goal.horizon_days/control), and the search evidence — the gap_request object VERBATIM, including its server-minted evidence_mac (a missing or mismatched MAC is rejected as evidence_not_from_search_bank; fabricated evidence can never trigger paid dispatch). Idempotent: same request_id + same content replays the stored receipt; same request_id + different content is rejected. Demand controls are enforced BEFORE any dispatch: max_budget_micro_usd<=0 is held as budget_exhausted and an already-past needed_by is held as deadline_passed. The demand plus its retrieval constraints (within_refs/source/kind/difficulty/KC) are ledgered; the signed scope narrows the demand's KCs and task kind, then a question_preparer_run job is enqueued with that effective demand. A same-fingerprint dispatch within the 7-day cooldown is skipped (status skipped, no job). Dispatch is claim-first: a 'claimed' ledger row (first-write-wins) is written BEFORE any paid job is enqueued, so concurrent same-request_id calls can never double-dispatch — only the claim winner dispatches, and its outcome is appended as a separate receipt event. If the search was incomplete (gap_request.complete=false or a channel unavailable) the result is held/retrieval_incomplete — an incomplete search never proves the bank lacks the question. If the entry cannot honour a constraint (including a subject that differs from demand.subject_id, or knowledge_mode 'all' over several KCs) the result is held/unsupported_constraint — fields are never silently dropped. If an earlier call claimed the request_id but left no receipt (crash between claim and dispatch), the result is held/claimed_not_dispatched and never redispatches — reconcile manually and re-file under a NEW request_id only if no job went out. Output: demand_id, deduplicated, queued|held|rejected, reason, business receipt (ledger event id + dispatch outcome).",
+    'File a supply demand using a v3 search_id, original demand statement and cited per-ref assessments. The server loads its own signed snapshot and rechecks actor, versions, serving state, scope and required/joint judgments; caller_assessed never becomes a database semantic fact. unknown, incomplete recall or unsupported supply filters are held, not evidence that the bank has no question. Pass request_id for idempotency and the full EvidenceDemandV1 controls/context. Same id+content replays; changed content is rejected. Budget, deadline, cooldown and transactional ticket/job lineage remain enforced before paid work. No raw search_evidence or model-authored MAC is accepted.',
   effect: 'write',
   inputSchema: FileBankGapInputSchema,
   outputSchema: FileBankGapOutputSchema,
