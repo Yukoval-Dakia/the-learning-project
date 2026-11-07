@@ -16,7 +16,10 @@ import type { SourcedQuestionT } from '@/core/schema/sourcing';
 import type { Tx } from '@/db/client';
 import { question } from '@/db/schema';
 import { withAnswerClass } from '@/kernel/records/answer-class-write';
-import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
+import {
+  type PublishQuestionGroupResult,
+  publishQuestionGroupFromRow,
+} from '@/kernel/records/assessment-publication';
 import { type SupplyTraceV1T, withSupplyTraceDifficultyEvidence } from '@/kernel/supply-contracts';
 import { sanitizeSourcedMarkup } from '@/server/questions/sourced-markup';
 
@@ -52,6 +55,9 @@ export type InsertSourcedDraftResult =
       status: 'inserted';
       difficultyEvidence: DifficultyEvidenceT;
       supplyTrace: SupplyTraceV1T | undefined;
+      /** First publication minted in this same transaction; the caller's later seam may
+       *  be a noop, so the receipt must use this result when that happens. */
+      firstPublication: PublishQuestionGroupResult;
     }
   // A concurrent insert won the canonical-hash race; the winner absorbed the target KCs
   // (YUK-720 cross-KC merge). No new row was created.
@@ -187,7 +193,7 @@ export async function insertSourcedDraft(
   if (inserted.length > 0) {
     // Mint the first revision in the same transaction. Unverified drafts stay withheld;
     // verify/promote republishes them as admitted after source_verify passes.
-    await publishQuestionGroupFromRow(tx, {
+    const firstPublication = await publishQuestionGroupFromRow(tx, {
       rootId: id,
       admission: { state: 'withheld', reason: 'unverified_rules' },
       availability: 'general_pool',
@@ -195,7 +201,7 @@ export async function insertSourcedDraft(
       actorRef: `sourced-draft:${sourceRoute}`,
       now,
     });
-    return { status: 'inserted', difficultyEvidence, supplyTrace };
+    return { status: 'inserted', difficultyEvidence, supplyTrace, firstPublication };
   }
 
   // A concurrent insert won the hash race: merge into it, or release and retry.
@@ -214,7 +220,7 @@ export async function insertSourcedDraft(
     if (retry.length === 0) {
       throw new Error(`insertSourcedDraft: canonical hash retry still conflicted for ${id}`);
     }
-    await publishQuestionGroupFromRow(tx, {
+    const firstPublication = await publishQuestionGroupFromRow(tx, {
       rootId: id,
       admission: { state: 'withheld', reason: 'unverified_rules' },
       availability: 'general_pool',
@@ -222,7 +228,7 @@ export async function insertSourcedDraft(
       actorRef: `sourced-draft:${sourceRoute}`,
       now,
     });
-    return { status: 'inserted', difficultyEvidence, supplyTrace };
+    return { status: 'inserted', difficultyEvidence, supplyTrace, firstPublication };
   }
   return {
     status: 'raced_merged',

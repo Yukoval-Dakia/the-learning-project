@@ -20,6 +20,10 @@ import { knowledge, question, source_asset } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { lockQuestionSubmitRequest } from '@/kernel/locks/question-supply';
 import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
+import {
+  type PublicationIdentity,
+  replayedPublication,
+} from '@/kernel/records/publication-receipt';
 import { draftCanonicalIdentity } from '@/kernel/records/question-draft-contract';
 import type { PlacementVerificationAuthority } from '@/kernel/supply-contracts';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
@@ -29,6 +33,7 @@ import {
   canonicalJson,
   claimSubmitRequestId,
   declaredCandidateDocument,
+  declaredCandidateReceipt,
   findSubmitReceipt,
   insertSourcedDraft,
   persistDeclaredQuestionGroup,
@@ -44,6 +49,7 @@ import {
   questionEmbedStamp,
   writeVerifyDispatchIntent,
 } from '../../question-bank/public';
+import { flatCandidatePublication, publicationDisplay } from './submit-publication';
 
 export type {
   EditQuestionInputT,
@@ -185,6 +191,8 @@ const outputSchema = z.object({
   revision_ref: z.string().optional(),
   revision_ordinal: z.number().optional(),
   publish_status: z.string().optional(),
+  /** Assessment publish event written by this submission; null for noop/withheld. */
+  publication_event_id: z.string().optional(),
   published: z.boolean().optional(),
   per_unit: z.array(unitOutcomeSchema).optional(),
   verify_enqueued: z.boolean().optional(),
@@ -398,6 +406,7 @@ async function executeCandidateSubmit(
         causedByEventId: ctx.causedByEventId ?? null,
       },
       new Date(),
+      { demand_id: input.demand_id ?? null },
     );
     return result;
   });
@@ -763,16 +772,23 @@ async function runCandidateSubmit(
       // The flat candidate's receipt belongs to the same commit as its question,
       // publication and verify intent. Recovery must not lose the original id
       // and treat an already committed submission as a new duplicate candidate.
+      // The row-insert seam already minted the first revision in this transaction, so
+      // this post-metadata republish is normally a noop: the receipt must reflect what
+      // the transaction published, not the second seam's status. A genuine noop with no
+      // first publication stays unrecorded. `published` is display only.
+      const publicationInTx =
+        publication.status === 'noop' ? inserted.firstPublication : publication;
+      const publicationReceipt = flatCandidatePublication(publicationInTx, {
+        demand_id: input.demand_id ?? null,
+        request_id: input.request_id,
+        task_run_id: ctx.taskRunId ?? null,
+      });
       const receipt: Output = {
         status: 'pending',
         question_id: questionId,
-        published: ['published', 'noop', 'admission_updated'].includes(publication.status),
+        published: publicationReceipt != null,
         publish_status: publication.status,
-        ...('revision_id' in publication
-          ? { revision_id: publication.revision_id }
-          : 'current_revision_id' in publication && publication.current_revision_id
-            ? { revision_id: publication.current_revision_id }
-            : {}),
+        ...publicationDisplay(publicationReceipt),
         request_id: input.request_id,
         difficulty_evidence: inserted.difficultyEvidence,
       };
@@ -790,6 +806,7 @@ async function runCandidateSubmit(
           causedByEventId: ctx.causedByEventId ?? null,
         },
         now,
+        { demand_id: input.demand_id ?? null, receipt: publicationReceipt },
       );
       return { ...inserted, publication: receipt };
     });
@@ -897,79 +914,38 @@ interface DeclaredCandidateRun {
   now: Date;
 }
 
+/** Tool response for a declared candidate. The canonical caller receipt and its owner
+ *  publication come from the submit facade; `published` only renders that receipt. */
 function declaredCandidateOutcome(
   outcome: DeclaredGroupDomainOutcome,
   requestId: string,
   difficultyEvidence: unknown,
+  identity: PublicationIdentity,
 ): Output {
-  if (outcome.status === 'declaration_failed') {
-    return {
-      status: 'conflict',
-      reason: 'invalid_declaration',
-      detail: 'declared identity binding failed',
-      issues: outcome.issues,
-      request_id: requestId,
-    };
-  }
-  const save = outcome.save;
-  if (outcome.status === 'save_failed' || (save.status !== 'saved' && save.status !== 'noop')) {
-    if (save.status === 'conflict') {
-      return {
-        status: 'conflict',
-        reason: save.reason,
-        detail: save.detail,
-        request_id: requestId,
-      };
-    }
-    if (save.status === 'rejected') {
-      return {
-        status: 'conflict',
-        reason: 'invalid_declaration',
-        detail: save.reason,
-        issues: save.issues,
-        request_id: requestId,
-      };
-    }
-    return {
-      status: 'conflict',
-      reason: 'invalid_request',
-      detail: `unexpected draft save status '${save.status}'`,
-      request_id: requestId,
-    };
-  }
-  const submit = outcome.submit;
-  if (submit.status === 'conflict') {
-    return {
-      status: 'conflict',
-      reason: submit.reason,
-      detail: submit.detail,
-      ...(submit.existing_question_id != null
-        ? { existing_question_id: submit.existing_question_id }
-        : {}),
-      request_id: requestId,
-    };
-  }
-  if ('published' in submit) {
-    return {
-      status: 'withheld',
-      reason: 'draft_unpublishable',
-      detail: submit.detail,
-      issues: submit.issues,
-      current_draft_ref: save.draft_ref,
-      current_draft_version: save.draft_version,
-      request_id: requestId,
-    };
-  }
+  const { receipt, publication } = declaredCandidateReceipt(outcome, requestId, identity);
+  // Unpublishable and conflict receipts keep their own status. A successfully submitted
+  // candidate keeps the tool contract: `pending` means "committed, awaiting admission /
+  // verify", even when the inner SubmitResult reports the admission state as withheld.
+  const submitted = !('published' in receipt) && receipt.status !== 'conflict';
+  const replay = receipt.replayed === true ? replayedPublication(receipt) : null;
+  const display = !submitted
+    ? {}
+    : replay
+      ? {
+          published: replay.published,
+          ...(replay.revision_id != null ? { revision_id: replay.revision_id } : {}),
+          ...(replay.publication_event_id != null
+            ? { publication_event_id: replay.publication_event_id }
+            : {}),
+        }
+      : { published: publication != null, ...publicationDisplay(publication) };
   return {
-    status: 'pending',
-    published: true,
-    publish_status: submit.publish_status,
-    revision_id: submit.revision_id,
-    question_id: submit.question_id,
-    verify_enqueued: submit.verify_enqueued === true,
+    ...receipt,
+    ...(submitted ? { status: 'pending' as const } : {}),
+    ...display,
     difficulty_evidence: difficultyEvidence,
     request_id: requestId,
-  };
+  } as Output;
 }
 
 async function runDeclaredCandidateSubmit(
@@ -981,6 +957,11 @@ async function runDeclaredCandidateSubmit(
   const { candidate } = input;
   const q = candidate.question;
   const requestId = input.request_id;
+  const publicationIdentity: PublicationIdentity = {
+    demand_id: input.demand_id ?? null,
+    request_id: requestId,
+    task_run_id: ctx.taskRunId ?? null,
+  };
   const { knowledgeIds, canonicalHash, vectorNear, ingestVector, questionText, now } = run;
   const { document, markupSanitized } = run;
   const routeConfig = COMMIT_ROUTE_CONFIG[input.source_route];
@@ -1060,6 +1041,7 @@ async function runDeclaredCandidateSubmit(
       // xact lock 在真实插入前放掉，并发同页候选双双漏过。
       source_claim: { source_url: q.source_url, actor_ref: routeConfig.mergeActorRef },
     },
+    ...(input.demand_id != null ? { demandId: input.demand_id } : {}),
     ctx: {
       actorRef: routeConfig.mergeActorRef,
       actorKind: 'agent',
@@ -1075,7 +1057,12 @@ async function runDeclaredCandidateSubmit(
       requestId,
       fingerprint: candidateSubmitFingerprint(input),
       receipt: (outcome) => {
-        const receipt = declaredCandidateOutcome(outcome, requestId, difficultyEvidence);
+        const receipt = declaredCandidateOutcome(
+          outcome,
+          requestId,
+          difficultyEvidence,
+          publicationIdentity,
+        );
         return {
           subject: {
             kind: 'question',
@@ -1111,7 +1098,12 @@ async function runDeclaredCandidateSubmit(
       request_id: requestId,
     };
   }
-  const candidateResult = declaredCandidateOutcome(committed, requestId, difficultyEvidence);
+  const candidateResult = declaredCandidateOutcome(
+    committed,
+    requestId,
+    difficultyEvidence,
+    publicationIdentity,
+  );
   if (committed.status !== 'completed') return candidateResult;
   const { save, submit } = committed;
   if (submit.status === 'conflict' || 'published' in submit) return candidateResult;
@@ -1346,6 +1338,7 @@ async function execute(ctx: ToolContext, raw: ExecInput): Promise<Output> {
           : {}),
         request_id: input.request_id,
         ...(input.knowledge_ids != null ? { knowledge_ids: input.knowledge_ids } : {}),
+        ...(input.demand_id != null ? { demand_id: input.demand_id } : {}),
         ...(input.availability != null ? { availability: input.availability } : {}),
       },
       {
