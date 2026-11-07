@@ -71,69 +71,12 @@ const InterventionPackageReviewReverseCauseRelation = z.enum([
   'common_cause_or_other_or_unclear',
 ]);
 
-const InterventionPackageComparatorReverseCauseRelation =
+const InterventionPackageReviewReverseCauseRelationExcludingNone =
   InterventionPackageReviewReverseCauseRelation.exclude(['none']);
-
-const InterventionPackageComparatorReverseCauseClaimRelation = z
-  .object({
-    claim_index: z
-      .number()
-      .int()
-      .min(0)
-      .max(MAX_INTERVENTION_REVERSE_CAUSATION_CLAIMS - 1),
-    relation: InterventionPackageComparatorReverseCauseRelation,
-    decision_basis_md: z.string().trim().min(1).max(320),
-  })
-  .strict();
-
-const InterventionPackageComparatorCausalDirectionCheckFields = {
-  applies: z.boolean(),
-  exposure_x_md: z.string().trim().max(160),
-  observed_outcome_y_md: z.string().trim().max(160),
-  reference_reverse_causation_claim_relations: z
-    .array(InterventionPackageComparatorReverseCauseClaimRelation)
-    .max(MAX_INTERVENTION_REVERSE_CAUSATION_CLAIMS),
-} as const;
-
-type InterventionPackageComparatorCausalDirectionCheckT = {
-  applies: boolean;
-  exposure_x_md: string;
-  observed_outcome_y_md: string;
-  reference_reverse_causation_claim_relations: Array<{
-    claim_index: number;
-    relation: z.infer<typeof InterventionPackageComparatorReverseCauseRelation>;
-    decision_basis_md: string;
-  }>;
-};
-
-function refineComparatorCausalDirectionCheck(
-  value: InterventionPackageComparatorCausalDirectionCheckT,
-  context: z.RefinementCtx,
-): void {
-  const hasX = value.exposure_x_md.length > 0;
-  const hasY = value.observed_outcome_y_md.length > 0;
-  if (value.applies !== hasX || value.applies !== hasY) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: 'causal X and observed Y must both be present exactly when applies=true',
-    });
-  }
-  if (!value.applies && value.reference_reverse_causation_claim_relations.length > 0) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: 'a non-causal diagnostic cannot classify reverse-causation claims',
-    });
-  }
-}
-
-const InterventionPackageComparatorCausalDirectionCheck = z
-  .object(InterventionPackageComparatorCausalDirectionCheckFields)
-  .strict()
-  .superRefine(refineComparatorCausalDirectionCheck);
 
 const InterventionPackageReviewReverseCausationClaimCheck =
   InterventionReferenceReverseCausationClaim.extend({
-    relation: InterventionPackageComparatorReverseCauseRelation,
+    relation: InterventionPackageReviewReverseCauseRelationExcludingNone,
     decision_basis_md: z.string().trim().min(1).max(320),
     claimed_cause_is_observed_y_causing_x: z.boolean(),
   })
@@ -237,19 +180,8 @@ const InterventionPackageReviewRequiredOperationCheck = z
   })
   .strict();
 
-const InterventionPackageComparatorRequiredOperationCheck =
-  InterventionPackageReviewRequiredOperationCheck.omit({
-    operation_md: true,
-    operation_sha256: true,
-  }).strict();
-
 export const InterventionPackageReviewRequiredOperationChecks = z
   .array(InterventionPackageReviewRequiredOperationCheck)
-  .min(1)
-  .max(12);
-
-const InterventionPackageComparatorRequiredOperationChecks = z
-  .array(InterventionPackageComparatorRequiredOperationCheck)
   .min(1)
   .max(12);
 
@@ -317,33 +249,6 @@ const InterventionPackageReviewFullDiagnosticChecks = z
     }
   });
 
-const InterventionPackageComparatorDiagnosticCheck = InterventionPackageReviewDiagnosticCheck.omit({
-  independent_solution_sha256: true,
-  independently_derived_answer_md: true,
-  required_operations_md: true,
-  required_operation_checks: true,
-})
-  .extend({
-    required_operation_checks: InterventionPackageComparatorRequiredOperationChecks,
-    causal_direction_check: InterventionPackageComparatorCausalDirectionCheck,
-  })
-  .strict();
-
-const InterventionPackageComparatorDiagnosticChecks = z
-  .array(InterventionPackageComparatorDiagnosticCheck)
-  .length(InterventionDiagnosticKind.options.length)
-  .superRefine((checks, context) => {
-    const kinds = checks.map((check) => check.kind);
-    for (const kind of InterventionDiagnosticKind.options) {
-      if (kinds.filter((value) => value === kind).length !== 1) {
-        context.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: `diagnostic_checks must contain exactly one ${kind} check`,
-        });
-      }
-    }
-  });
-
 export const InterventionPackageReviewPackageChecks = z
   .object({
     material_grounded: z.boolean(),
@@ -362,31 +267,6 @@ export const InterventionPackageReviewPackageChecks = z
   .strict();
 export type InterventionPackageReviewPackageChecksT = z.infer<
   typeof InterventionPackageReviewPackageChecks
->;
-
-/**
- * Provider-facing package checks: the comparator no longer judges
- * `tested_claims_match` / `target_errors_match`. Those two bits are a plain
- * string equality between the frozen snapshot claim identity and the
- * server-normalized diagnostic fields, so the server derives them at bind time.
- * Strip-mode on purpose: outputs that still carry the retired keys (older
- * persisted fixtures, text-fallback completions) parse instead of failing —
- * the provider's value for a server-owned bit was never authority anyway.
- */
-export const InterventionPackageComparatorPackageChecks = z.object({
-  material_grounded: z.boolean(),
-  method_followed: z.boolean(),
-  answers_unique: z.boolean(),
-  answers_gradable: z.boolean(),
-  no_answer_leak: z.boolean(),
-  diagnostics_same_construct: z.boolean(),
-  transfer_context_changed: z.boolean(),
-  target_error_identifiable: z.boolean(),
-  serious_factual_error_absent: z.boolean(),
-  safe_material: z.boolean(),
-});
-export type InterventionPackageComparatorPackageChecksT = z.infer<
-  typeof InterventionPackageComparatorPackageChecks
 >;
 
 const InterventionPackageReviewProtocolV2Fields = {
@@ -474,31 +354,6 @@ export const InterventionPackageReviewModelOutputFull = z
   });
 export type InterventionPackageReviewModelOutputFullT = z.infer<
   typeof InterventionPackageReviewModelOutputFull
->;
-
-/** Flat provider schema; the V2 canonical reader enforces pass/fail branch rules. */
-export const InterventionPackageReviewStructuredOutput = z
-  .object({
-    review_protocol_version: z.literal(2),
-    // Advisory only. The server derives the canonical decision from granular
-    // checks; accepting a bounded unknown string prevents a correct comparison
-    // from being discarded solely because the provider invented a label.
-    verdict: z.string().trim().min(1).max(40).optional(),
-    failure_codes: z
-      .array(z.string().trim().min(1).max(160))
-      .max(InterventionPackageReviewFailureCode.options.length)
-      .optional(),
-    // The comparator does not author blind-solve evidence. Those two fields are
-    // server-owned and joined from the sealed independent-solution audit after
-    // this provider response parses.
-    diagnostic_checks: InterventionPackageComparatorDiagnosticChecks,
-    package_checks: InterventionPackageComparatorPackageChecks,
-    summary_md: z.string().trim().min(1).max(2000),
-  })
-  .strict();
-
-export type InterventionPackageReviewStructuredOutputT = z.infer<
-  typeof InterventionPackageReviewStructuredOutput
 >;
 
 const InterventionIndependentRequiredOperation = z
