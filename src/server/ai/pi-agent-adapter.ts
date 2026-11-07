@@ -13,7 +13,6 @@
 import { randomUUID } from 'node:crypto';
 import type {
   AgentContext,
-  AgentEvent,
   AgentLoopConfig,
   AgentMessage,
   AgentTool,
@@ -42,17 +41,14 @@ import type {
   PreparedExecutionQuery,
   RunnerMessage,
 } from './execution-adapter';
-import { startTraceSpan, traceOperation, tracePiStream } from './laminar-tracing';
-import {
-  createPiContextCompactionPolicy,
-  createPiLlmMessageConverter,
-  estimatePiTokens,
-} from './pi-context-policy';
+import { traceOperation } from './laminar-tracing';
+import { createPiContextCompactionPolicy, estimatePiTokens } from './pi-context-policy';
 import { MAX_BUDGET_STOP_REASON, createPiCostCeiling } from './pi-cost-ceiling';
 import { emitPiAfterToolCall, runPiBeforeToolCall } from './pi-hooks';
 import { completedChildReport, installLoopProgress, turnLimiter } from './pi-loop-progress';
 import { type LoomPiModel, createLoomPiModels } from './pi-models';
 import { piProviderId } from './pi-provider-catalog';
+import { PiProviderWire } from './pi-provider-wire';
 import {
   type PiToolResultMessage,
   collectPromptMessages,
@@ -70,36 +66,17 @@ import {
   piUserMessage,
 } from './pi-runner-frames';
 import { composePiSystemPrompt } from './pi-system-prompt';
-import { withPiUsageEvidence } from './pi-usage-evidence';
-import {
-  createProviderErrorCaptureFetch,
-  sanitizeArgumentsEvidence,
-  sanitizeArgumentsEvidenceText,
-} from './provider-error-evidence';
-import {
-  OPENAI_SDK_DEFAULT_TIMEOUT_MS,
-  PROVIDER_HTTP_TIMEOUT_MARGIN_MS,
-  providerHttpTimeoutMs,
-} from './provider-http-timeout';
-import { createBudgetedProviderFetch } from './provider-transport';
+import { PiToolSurface } from './pi-tool-surface';
+import { sanitizeArgumentsEvidenceText } from './provider-error-evidence';
 import { TaskConfigError } from './providers';
-import { reasoningModelView } from './reasoning-wire';
-import { createRunMonitor } from './run-monitor';
 import type { SDKUserMessage } from './sdk-types';
 import {
   STRUCTURED_OUTPUT_SUBMIT_TOOL,
   createStructuredSubmitLoop,
-  resolveStructuredSubmitPolicy,
   structuredSubmitSystemSuffix,
   structuredSubmitUnitSuffix,
-  structuredSubmitWireFields,
 } from './structured-submit';
-import {
-  type ToolParamCoercion,
-  isToolArgumentContractFailure,
-  isToolParamContractRejection,
-  repairToolArguments,
-} from './tool-param-contract';
+import { isToolParamContractRejection } from './tool-param-contract';
 import { type PiSubagentHost, buildPiSpawnAgentTools } from './tools/pi-subagent';
 import {
   type PiRemoteMcpMountHandle,
@@ -118,7 +95,6 @@ export interface PiAdapterDeps {
   connectRemoteMcp?: typeof connectPiRemoteMcp;
 }
 
-const OPENCODE_SESSION_HEADER = 'x-opencode-session';
 const STRUCTURED_OUTPUT_TOOL = STRUCTURED_OUTPUT_SUBMIT_TOOL;
 
 function toolOutputSchema(kind: ExecutionAdapterStartupArgs['kind'], input?: unknown) {
@@ -158,24 +134,10 @@ class PiPreparedQuery implements PreparedExecutionQuery {
   private readonly abort = new AbortController();
   private readonly externalSignal: AbortSignal | undefined;
   private readonly sessionId: string;
-  private readonly allTools: AgentTool[];
-  private readonly bridgeWireParameters = new Map<string, AgentTool['parameters']>();
+  private readonly toolSurface: PiToolSurface;
+  private readonly wire: PiProviderWire;
   private readonly queuedFrames: RunnerMessage[] = [];
   private readonly childUsage = emptyPiChildUsage();
-  private readonly executedToolCalls = new Map<string, number>();
-  private readonly runMonitor = createRunMonitor();
-  /**
-   * YUK-1547/YUK-1559 (C1/C6) — `pendingCoercions` queues adopted string→JSON
-   * repairs per tool (prepareArguments runs before validation, so a call that
-   * never reaches execute still lands its `coerced` evidence); `pendingArgs`
-   * holds original arguments captured at tool_execution_start for contract
-   * rejection evidence.
-   */
-  private readonly pendingCoercions = new Map<string, ToolParamCoercion[][]>();
-  private readonly pendingArgs = new Map<string, { toolName: string; args: unknown }>();
-  /** Latest adopted repair per tool — the structured-submit terminal hands the
-   *  capability what validation actually accepted. */
-  private readonly repairedToolArgs = new Map<string, unknown>();
   /**
    * YUK-1547 (C1) — ONE run-scoped parameter-contract correction allowance,
    * shared by the root loop and every nested child loop: a second rejection
@@ -183,75 +145,6 @@ class PiPreparedQuery implements PreparedExecutionQuery {
    * lane uses its own progress closure instead.
    */
   private paramContractCorrectionUsed = false;
-  private providerHttp: { fetch: typeof fetch; close: () => Promise<void> } | undefined;
-
-  /**
-   * Per-loop streamed-arguments tracker: `rawByIndex` accumulates this turn's
-   * deltas, `byCallId` binds them at message_end. Each loop owns its own pair so
-   * a child's turn_start cannot erase a parent's evidence.
-   */
-  private trackStreamedArgs(
-    event: AgentEvent,
-    rawByIndex: Map<number, string>,
-    byCallId: Map<string, string>,
-  ): void {
-    if (event.type === 'turn_start') {
-      rawByIndex.clear();
-      byCallId.clear();
-      return;
-    }
-    if (
-      event.type === 'message_update' &&
-      event.message.role === 'assistant' &&
-      event.assistantMessageEvent.type === 'toolcall_delta'
-    ) {
-      const delta = event.assistantMessageEvent;
-      rawByIndex.set(delta.contentIndex, (rawByIndex.get(delta.contentIndex) ?? '') + delta.delta);
-      return;
-    }
-    if (event.type === 'message_end' && event.message.role === 'assistant') {
-      event.message.content.forEach((block, index) => {
-        if (block.type !== 'toolCall') return;
-        const raw = rawByIndex.get(index);
-        if (raw !== undefined) byCallId.set(block.id, raw);
-      });
-    }
-  }
-
-  /**
-   * YUK-1548 §5 — emit bounded tool-args progress while arguments stream.
-   * Only the tool identity, cumulative bytes and a short prefix leave the
-   * loop; partial payloads (SVG/HTML source) never do. toolcall_start's
-   * partial assistant message usually already carries id + name.
-   */
-  private observeToolArgsProgress(event: AgentEvent, rawByIndex: Map<number, string>): void {
-    if (
-      event.type !== 'message_update' ||
-      event.message.role !== 'assistant' ||
-      event.assistantMessageEvent.type !== 'toolcall_delta'
-    ) {
-      return;
-    }
-    const { contentIndex, partial } = event.assistantMessageEvent;
-    const block = partial.content[contentIndex];
-    if (block?.type !== 'toolCall' || block.name.length === 0) return;
-    const raw = rawByIndex.get(contentIndex);
-    if (raw === undefined) return;
-    this.emitFrame({
-      source: 'pi',
-      type: 'system',
-      subtype: 'tool_args_progress',
-      tool_name: block.name,
-      tool_call_id: block.id,
-      received_bytes: raw.length,
-      args_prefix: raw.slice(0, PiPreparedQuery.TOOL_ARGS_PROGRESS_PREFIX_CHARS),
-      uuid: randomUUID(),
-      session_id: this.sessionId,
-    });
-  }
-  /** YUK-1559 (C6) — non-2xx capture fetch, created lazily in baseLoopConfig. */
-  private providerErrorCapture: ReturnType<typeof createProviderErrorCaptureFetch> | undefined;
-  private static readonly TOOL_ARGS_PROGRESS_PREFIX_CHARS = 2048;
 
   constructor(
     private readonly args: ExecutionAdapterStartupArgs,
@@ -281,147 +174,26 @@ class PiPreparedQuery implements PreparedExecutionQuery {
         : [];
     const visibleSpawn =
       allowed === undefined ? spawnTools : spawnTools.filter((tool) => allowed.has(tool.name));
-    this.allTools = [...tools, ...visibleSpawn].map((tool) => {
-      const bridgeValidates = 'inputValidation' in tool && tool.inputValidation === 'bridge';
-      if (bridgeValidates) this.bridgeWireParameters.set(tool.name, tool.parameters);
-      // The bridge owns this input's complete validation. The provider still receives its canonical schema.
-      const parameters = bridgeValidates
-        ? ({ type: 'object', additionalProperties: true } as AgentTool['parameters'])
-        : tool.parameters;
-      return {
-        ...tool,
-        parameters,
-        // YUK-1547/YUK-1559 (C1) — every mounted tool gets the parameter-contract
-        // repair ahead of pi's validateToolArguments (prepareArguments is the only
-        // seam that runs first). Unrepaired inputs go to their validation owner;
-        // neither pi nor the bridge reaches domain execution with invalid input.
-        prepareArguments: (rawArgs: unknown) => {
-          const prepared = tool.prepareArguments ? tool.prepareArguments(rawArgs) : rawArgs;
-          const repaired = repairToolArguments(
-            tool.parameters,
-            prepared,
-            bridgeValidates ? 'bridge' : 'pi',
-          );
-          if (repaired.coercions.length > 0) {
-            this.repairedToolArgs.set(tool.name, repaired.args);
-            const queue = this.pendingCoercions.get(tool.name) ?? [];
-            queue.push(repaired.coercions);
-            this.pendingCoercions.set(tool.name, queue);
-          }
-          return repaired.args;
-        },
-        execute: (...args: Parameters<AgentTool['execute']>) => {
-          this.executedToolCalls.set(args[0], (this.executedToolCalls.get(args[0]) ?? 0) + 1);
-          // Root and nested loops share these wrappers. Observe only actual
-          // execute crossings, with the prepared arguments passed to the delegate.
-          const observation = this.runMonitor.observeExecutedTool({
-            toolName: tool.name,
-            callId: args[0],
-            args: args[1],
-          });
-          return traceOperation(
-            'tool.execute',
-            {
-              task_run_id: this.args.runId,
-              tool_name: tool.name,
-              tool_call_id: args[0],
-              executed: true,
-              ...observation,
-            },
-            () => tool.execute(...args),
-            {
-              signal: args[2],
-              outcome: (result) => (result.isError ? 'error' : 'success'),
-              transcript: { input: () => args[1], output: (result) => result },
-            },
-          );
-        },
-      };
+    this.toolSurface = new PiToolSurface({
+      tools: [...tools, ...visibleSpawn],
+      sessionId: this.sessionId,
+      runId: args.runId,
+      secrets:
+        args.resolved.authMode !== 'oauth-file' && args.resolved.apiKey
+          ? [args.resolved.apiKey]
+          : [],
+      emitFrame: (frame) => this.emitFrame(frame),
     });
-  }
-
-  private observeToolAttempt(
-    event: AgentEvent,
-    streamedArgsByCallId: ReadonlyMap<string, string>,
-  ): void {
-    if (event.type === 'tool_execution_start') {
-      // Capture original arguments BEFORE prepareArguments repair and validation
-      // normalization — the C6 evidence baseline.
-      this.pendingArgs.set(event.toolCallId, { toolName: event.toolName, args: event.args });
-      return;
-    }
-    if (event.type !== 'tool_execution_end') return;
-    const executions = this.executedToolCalls.get(event.toolCallId) ?? 0;
-    if (executions > 0) {
-      if (executions === 1) this.executedToolCalls.delete(event.toolCallId);
-      else this.executedToolCalls.set(event.toolCallId, executions - 1);
-    }
-    const pending = this.pendingArgs.get(event.toolCallId);
-    this.pendingArgs.delete(event.toolCallId);
-    // Drain adopted repairs for this call: the `coerced` event carries
-    // tool/field metadata only, never the payload.
-    const coercedFields = this.pendingCoercions.get(event.toolName)?.shift();
-    if (coercedFields && this.pendingCoercions.get(event.toolName)?.length === 0) {
-      this.pendingCoercions.delete(event.toolName);
-    }
-    if (coercedFields && coercedFields.length > 0) {
-      this.emitFrame({
-        source: 'pi',
-        type: 'system',
-        subtype: 'tool_args_coerced',
-        tool_name: event.toolName,
-        tool_call_id: event.toolCallId,
-        fields: coercedFields,
-        uuid: randomUUID(),
-        session_id: this.sessionId,
-      });
-    }
-    // YUK-1559 (C6) — persist the sanitized ≤4KiB original arguments for any
-    // argument-contract rejection, including a bridge-owned schema rejection
-    // (the bridge executes, then rejects before domain work).
-    if (
-      pending !== undefined &&
-      isToolArgumentContractFailure({ isError: event.isError, content: event.result?.content })
-    ) {
-      const secrets =
-        this.args.resolved.authMode !== 'oauth-file' && this.args.resolved.apiKey
-          ? [this.args.resolved.apiKey]
-          : [];
-      // Fidelity: prefer this call's exact streamed bytes (sanitized — the
-      // recursive pass redacts credentials inside embedded JSON fields). When no
-      // deltas arrived, event.args is a pi-parsed object → label 'reconstructed'.
-      const streamed = streamedArgsByCallId.get(event.toolCallId);
-      const args_source = streamed !== undefined ? 'streamed' : 'reconstructed';
-      const sanitizedText =
-        streamed !== undefined
-          ? sanitizeArgumentsEvidenceText(streamed, { secrets })
-          : JSON.stringify(sanitizeArgumentsEvidence(pending.args ?? null, { secrets }));
-      this.emitFrame({
-        source: 'pi',
-        type: 'system',
-        subtype: 'tool_args_contract_failed',
-        tool_name: event.toolName,
-        tool_call_id: event.toolCallId,
-        args_source,
-        ...rawArgumentsEvidence(sanitizedText),
-        uuid: randomUUID(),
-        session_id: this.sessionId,
-      });
-    }
-    if (executions > 0) return;
-    // Pi emits start/end even for validation, missing-tool and hook-blocked calls.
-    // None crossed AgentTool.execute; do not label them executed or copy errors/args.
-    const span = startTraceSpan('tool.attempt', {
-      task_run_id: this.args.runId,
-      tool_name: event.toolName,
-      tool_call_id: event.toolCallId,
-      executed: false,
+    this.wire = new PiProviderWire({
+      runId: args.runId,
+      resolved: args.resolved,
+      options: args.options,
+      model: this.model,
+      streamSimple: (m, context, options) => this.deps.models.streamSimple(m, context, options),
+      wireParameters: this.toolSurface.wireParameters(),
+      structuredOutput: toolOutputSchema(args.kind) !== undefined,
+      readMaxRetries: () => piMaxRetries(),
     });
-    span.transcript('input', () => ({
-      arguments: '[omitted: arguments unavailable on terminal event]',
-    }));
-    span.transcript('output', () => event.result);
-    span.end(this.abort.signal.aborted ? 'cancelled' : event.isError ? 'error' : 'success');
   }
 
   private emitFrame(frame: RunnerMessage): void {
@@ -531,173 +303,6 @@ class PiPreparedQuery implements PreparedExecutionQuery {
   }
 
   /**
-   * YUK-1630 — every provider request runs through the attempt's controlled
-   * transport (budget-derived connect/headers/body timers). Unset timeoutMs
-   * derives from the SDK's 10-minute default so undici stays consistent with it.
-   */
-  private providerTransport(): { timeoutMs?: number; fetch: typeof fetch } {
-    const timeoutMs = this.args.options.providerTimeoutMs;
-    const collector = this.args.options.transportEvidence;
-    this.providerHttp ??= createBudgetedProviderFetch({
-      httpTimeoutMs: timeoutMs ?? providerHttpTimeoutMs(OPENAI_SDK_DEFAULT_TIMEOUT_MS),
-      marginMs: PROVIDER_HTTP_TIMEOUT_MARGIN_MS,
-      secrets:
-        this.args.resolved.authMode !== 'oauth-file' && this.args.resolved.apiKey
-          ? [this.args.resolved.apiKey]
-          : [],
-      ...(collector !== undefined ? { collector } : {}),
-    });
-    collector?.noteSdkTimeout(
-      timeoutMs !== undefined
-        ? { sdkTimeoutMs: timeoutMs, source: 'task_budget' }
-        : { sdkTimeoutMs: OPENAI_SDK_DEFAULT_TIMEOUT_MS, source: 'sdk_default' },
-    );
-    return {
-      ...(timeoutMs !== undefined ? { timeoutMs } : {}),
-      fetch: this.providerHttp.fetch,
-    };
-  }
-
-  /** Shared config fields every loop level (root + nested) reuses. */
-  private baseLoopConfig(): Pick<
-    AgentLoopConfig,
-    'convertToLlm' | 'headers' | 'apiKey' | 'reasoning' | 'timeoutMs' | 'fetch'
-  > {
-    const { options, resolved, runId } = this.args;
-    const http = this.providerTransport();
-    // YUK-1559 (C6) — every provider request funnels through a capture fetch so a
-    // non-2xx leaves a bounded, sanitized body + status + request id for the
-    // terminal error evidence. Passthrough otherwise; it only reads a clone.
-    this.providerErrorCapture ??= createProviderErrorCaptureFetch(
-      http.fetch,
-      // The request's resolved credential — redacted at the shared boundary.
-      { secrets: resolved.authMode !== 'oauth-file' && resolved.apiKey ? [resolved.apiKey] : [] },
-    );
-    return {
-      // All prompts are standard LLM messages; UI-only AgentMessages never reach
-      // this lane (loom owns the durable transcript).
-      convertToLlm: createPiLlmMessageConverter(),
-      // opencode-go requires this header (400 MissingSessionID without it); it
-      // is scoped to that lane so no stray header reaches other providers
-      // (YUK-1027).
-      ...(resolved.provider === 'opencode-go'
-        ? { headers: { [OPENCODE_SESSION_HEADER]: runId } }
-        : {}),
-      // Per-request credential resolved once in resolveTaskProvider for all auth
-      // modes (oauth carries the sk-ant-oat* token → Bearer; oauth-file carries
-      // no apiKey — auth resolves through the file-backed credential store).
-      apiKey: resolved.authMode !== 'oauth-file' ? resolved.apiKey : undefined,
-      // YUK-590 parity: cap provider retries so a persistent 5xx returns control
-      // to loom's deliberate retry layer. An explicit operator '0' is preserved.
-      ...(options.judgeRetryPolicy === 'none'
-        ? { maxRetries: 0 }
-        : piMaxRetries() !== undefined
-          ? { maxRetries: piMaxRetries() }
-          : {}),
-      // options.effort is the caller channel; task.<kind>.reasoning resolves to
-      // exactly one pi level — startup rejects both being set (one wire writer).
-      ...(options.effort !== undefined ? { reasoning: options.effort } : {}),
-      ...(resolved.reasoning?.level !== undefined ? { reasoning: resolved.reasoning.level } : {}),
-      ...(http.timeoutMs !== undefined ? { timeoutMs: http.timeoutMs } : {}),
-      fetch: this.providerErrorCapture.fetch,
-    };
-  }
-
-  /**
-   * YUK-1547 — submit wire policy for this lane. 'forced' pins the named
-   * tool_choice; a lane that records the forced choice as wire-rejected degrades
-   * to 'auto' + the single closing reminder wired in iterate().
-   */
-  private structuredSubmitPolicy(model: PiModel<PiApi>) {
-    if (
-      toolOutputSchema(this.args.kind) === undefined ||
-      (model.api !== 'openai-completions' && model.api !== 'openai-responses')
-    ) {
-      return undefined;
-    }
-    return resolveStructuredSubmitPolicy(this.args.resolved.provider, this.args.resolved.model);
-  }
-
-  private readonly streamFn: StreamFn = (model: LoomPiModel, llmContext, streamOptions) => {
-    const wireContext =
-      this.bridgeWireParameters.size === 0
-        ? llmContext
-        : {
-            ...llmContext,
-            messages: llmContext.messages.map((message) =>
-              message.role === 'system' && message.toolsAdded
-                ? {
-                    ...message,
-                    toolsAdded: message.toolsAdded.map((tool) => {
-                      const parameters = this.bridgeWireParameters.get(tool.name);
-                      return parameters ? { ...tool, parameters } : tool;
-                    }),
-                  }
-                : message,
-            ),
-          };
-    // The catalog check guards options.effort only: task.<kind>.reasoning levels
-    // are already validated/carried by resolveTaskReasoning (toggle carriers are
-    // not effort names on the model's list).
-    const effort = this.args.options.effort;
-    const inputTokens = estimatePiTokens(wireContext.messages);
-    const remaining = model.contextWindow - inputTokens;
-    streamOptions = {
-      ...streamOptions,
-      maxTokens: Math.min(streamOptions?.maxTokens ?? model.maxTokens, model.maxTokens, remaining),
-    };
-    const submitPolicy = this.structuredSubmitPolicy(model);
-    const streamOptionsWithPayload = {
-      ...streamOptions,
-      onPayload: async (payload: unknown, requestModel: PiModel<PiApi>) => {
-        // Pi converts onPayload failures into terminal errors; throwing from streamFn crashes its loop.
-        if (
-          effort !== undefined &&
-          model.catalogReasoning &&
-          !model.catalogReasoning.supportedEfforts.includes(effort)
-        ) {
-          throw new Error(
-            `Model '${model.provider}/${model.id}' does not declare reasoning effort '${effort}' in the runtime catalog`,
-          );
-        }
-        if (inputTokens > (model.maxInputTokens ?? model.contextWindow) || remaining <= 0) {
-          throw new Error(
-            `Model '${model.provider}/${model.id}' input exceeds its catalog token limit`,
-          );
-        }
-        const transformed = await streamOptions?.onPayload?.(payload, requestModel);
-        const body = transformed ?? payload;
-        if (submitPolicy === undefined) return body;
-        if (body == null || typeof body !== 'object' || Array.isArray(body)) {
-          throw new Error('structured output requires an object provider payload');
-        }
-        return {
-          ...body,
-          ...structuredSubmitWireFields(
-            submitPolicy,
-            model.api === 'openai-responses' ? 'openai-responses' : 'openai-completions',
-          ),
-        };
-      },
-    };
-    return tracePiStream(
-      (m, context, options) =>
-        withPiUsageEvidence(
-          (innerModel, innerContext, innerOptions) =>
-            this.deps.models.streamSimple(innerModel, innerContext, innerOptions),
-          m,
-          context,
-          options,
-        ),
-      // Request-scoped model view: unconfigured reasoning must not emit
-      // thinking:{disabled}; an explicit 'off' must stay expressible.
-      reasoningModelView(model, this.args.resolved.reasoning, effort),
-      wireContext,
-      streamOptionsWithPayload,
-    );
-  };
-
-  /**
    * YUK-1547 (C1) — the run-scoped parameter-contract correction gate for every
    * loop level: a rejection may continue ONCE so the model can re-issue the
    * call; a second one ends the loop regardless of the turn ceiling. Clean turns
@@ -718,7 +323,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
    * disallowedTools, minus spawn aliases (depth-one is structural).
    */
   private childToolsFor(spec: PiSubagentSpec): AgentTool[] {
-    const parentTools = this.allTools.filter((tool) => !isSpawnToolName(tool.name));
+    const parentTools = this.toolSurface.tools.filter((tool) => !isSpawnToolName(tool.name));
     const allowlisted =
       spec.tools === undefined
         ? parentTools
@@ -770,7 +375,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
           let lastToolName: string | undefined;
           const childConfig: AgentLoopConfig = {
             model: childModel,
-            ...this.baseLoopConfig(),
+            ...this.wire.loopConfig(),
             ...(childTools.length > 0 ? { toolExecution: 'sequential' as const } : {}),
             finishTurn: this.contractCorrectionFinishTurn(
               childMaxTurns !== undefined
@@ -824,11 +429,15 @@ class PiPreparedQuery implements PreparedExecutionQuery {
               childContext,
               childConfig,
               childSignal,
-              this.streamFn,
+              this.wire.streamFn,
             );
             for await (const event of stream) {
-              this.trackStreamedArgs(event, childRawArgs, childStreamedArgs);
-              this.observeToolAttempt(event, childStreamedArgs);
+              this.toolSurface.trackStreamedArgs(event, childRawArgs, childStreamedArgs);
+              this.toolSurface.observeToolAttempt(
+                event,
+                childStreamedArgs,
+                this.abort.signal.aborted,
+              );
               if (event.type === 'tool_execution_start') {
                 toolUses += 1;
                 lastToolName = event.toolName;
@@ -944,7 +553,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       this.args.options.transportEvidence?.optionalDependencyUnavailable,
     );
     const structuredOutput = toolOutputSchema(this.args.kind) !== undefined;
-    const submitPolicy = structuredOutput ? this.structuredSubmitPolicy(this.model) : undefined;
+    const submitPolicy = structuredOutput ? this.wire.submitPolicy(this.model) : undefined;
     const definition: TaskDefinition = tasks[this.args.kind];
     // YUK-1904 — a unit plan switches the submit contract to one unit per call.
     const unitPlan = structuredOutput
@@ -953,7 +562,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     const submitLoop = structuredOutput
       ? createStructuredSubmitLoop({
           schema: toolOutputSchema(this.args.kind, this.args.structuredSubmitInput),
-          parameters: this.allTools.find((tool) => tool.name === STRUCTURED_OUTPUT_TOOL)
+          parameters: this.toolSurface.tools.find((tool) => tool.name === STRUCTURED_OUTPUT_TOOL)
             ?.parameters,
           taskInput: this.args.structuredSubmitInput,
           ...(unitPlan ? { units: unitPlan } : {}),
@@ -978,7 +587,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
         { role: 'system', content: systemPrompt, timestamp: Date.now() },
         ...piReplayTurnsToMessages(this.args.piSessionReplay ?? [], this.model),
       ],
-      ...(this.allTools.length > 0 ? { tools: this.allTools } : {}),
+      ...(this.toolSurface.tools.length > 0 ? { tools: this.toolSurface.tools } : {}),
     };
     // options.maxTurns is the runner's agentic-turn ceiling; pi has no built-in
     // equivalent, so finishTurn counts turns and the terminal reports
@@ -1015,10 +624,10 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     let acknowledgeStructuredMessage: ((message: PiAssistantMessage) => void) | undefined;
     const config: AgentLoopConfig = {
       model: this.model,
-      ...this.baseLoopConfig(),
+      ...this.wire.loopConfig(),
       // SDK in-process MCP tools run serially — pin the same mode so ordering and
       // the tool_call_log sequence cannot diverge by engine.
-      ...(this.allTools.length > 0 ? { toolExecution: 'sequential' as const } : {}),
+      ...(this.toolSurface.tools.length > 0 ? { toolExecution: 'sequential' as const } : {}),
       ...(structuredOutput
         ? {
             finishTurn: (async ({ message, toolResults }) => {
@@ -1045,7 +654,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
               return submitLoop?.finishTurn(
                 { message, toolResults },
                 invalidStructuredArguments,
-                this.repairedToolArgs.get(STRUCTURED_OUTPUT_TOOL),
+                this.toolSurface.repairedArguments(STRUCTURED_OUTPUT_TOOL),
                 message.content
                   .filter((block) => block.type === 'toolCall')
                   .map((call) => streamedArgsByCallId.get(call.id)),
@@ -1099,7 +708,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     yield piInitFrame({
       sessionId: this.sessionId,
       model: this.model,
-      tools: this.allTools,
+      tools: this.toolSurface.tools,
     });
     // Only this root invocation sees the observed fetch. Children keep the
     // original streamFn; neither their responses nor query.latest prove root failure.
@@ -1110,7 +719,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       const originalFetch = streamOptions?.fetch;
       let fetchCount = 0;
       let rootResponse: Response | undefined;
-      const responseStream = await this.streamFn(
+      const responseStream = await this.wire.streamFn(
         model,
         llmContext,
         originalFetch
@@ -1177,20 +786,22 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       return responseStream;
     };
     if (!structuredOutput)
-      installLoopProgress(config, this.allTools, this.args.piHooks, { loopId: this.sessionId });
+      installLoopProgress(config, this.toolSurface.tools, this.args.piHooks, {
+        loopId: this.sessionId,
+      });
     const stream = this.deps.agentLoop(prompts, context, config, this.abort.signal, rootStreamFn);
     let textStreamed = false;
     for await (const event of stream) {
       // A new assistant turn restarts the raw-arguments window: content indexes
       // repeat per message, so without the reset a rejected submit's bytes would
       // concatenate with the corrected call's and corrupt the strict-JSON check.
-      this.trackStreamedArgs(event, rawToolArguments, streamedArgsByCallId);
+      this.toolSurface.trackStreamedArgs(event, rawToolArguments, streamedArgsByCallId);
       if (event.type === 'turn_start') {
         invalidStructuredArguments = false;
-        this.repairedToolArgs.delete(STRUCTURED_OUTPUT_TOOL);
+        this.toolSurface.clearRepairedArguments(STRUCTURED_OUTPUT_TOOL);
       }
-      this.observeToolAttempt(event, streamedArgsByCallId);
-      this.observeToolArgsProgress(event, rawToolArguments);
+      this.toolSurface.observeToolAttempt(event, streamedArgsByCallId, this.abort.signal.aborted);
+      this.toolSurface.observeToolArgsProgress(event, rawToolArguments);
       // Frames queued inside the loop surface before the engine event that
       // follows them, matching the SDK wire order (lifecycle frame → tool_result).
       yield* this.drainFrames();
@@ -1292,7 +903,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       structuredAssembledOutput: structuredOutput ? submitLoop?.assembled() : undefined,
       // What validation/execute actually saw after the shared repair — the
       // capability receives this, not the still-stringified raw fields.
-      repairedSubmitArguments: this.repairedToolArgs.get(STRUCTURED_OUTPUT_TOOL),
+      repairedSubmitArguments: this.toolSurface.repairedArguments(STRUCTURED_OUTPUT_TOOL),
       structuredSubmitEvidence:
         structuredOutput && rawToolArguments.size > 0
           ? {
@@ -1314,14 +925,14 @@ class PiPreparedQuery implements PreparedExecutionQuery {
             }
           : undefined,
       // YUK-1559 (C6) — last non-2xx this query's capture fetch saw, if any.
-      providerError: this.providerErrorCapture?.latest(),
+      providerError: this.wire.latestProviderError(),
       providerRequestRejection: boundRootRejection === 400 ? { http_status: 400 } : undefined,
       providerHttpStatus: boundRootStatus ?? terminalRequestStatus,
       helpProviderFault:
         boundRootRejection === undefined ? undefined : helpFaultForRootStatus(boundRootRejection),
       // Same shared boundary on errors[0] — pi's errorMessage can carry the
       // full unsanitized provider body and must not bypass redaction/cap.
-      sanitizeErrorMessage: this.providerErrorCapture?.sanitize,
+      sanitizeErrorMessage: this.wire.sanitizeErrorMessage(),
       childUsage: this.childUsage,
     });
     if (terminal) {
@@ -1335,9 +946,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     this.closed = true;
     // Cooperative stop that mirrors SDK query.close().
     this.abort.abort();
-    const providerHttp = this.providerHttp;
-    this.providerHttp = undefined;
-    await providerHttp?.close().catch(() => {});
+    await this.wire.close();
     // Remote MCP clients hold sockets — release them with the session.
     for (const handle of this.remoteMcpHandles) {
       try {
