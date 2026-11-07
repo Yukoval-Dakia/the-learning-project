@@ -39,6 +39,22 @@ export function timeoutPromptText(input: TimeoutPromptInput): string {
   return `${system}\n${input.userPrompt}`;
 }
 
+/** Read at settle time: skill bodies and a late search-unavailable line are included. */
+export function lazyTimeoutPrompt(
+  systemPrompt: unknown,
+  userPrompt: unknown,
+  skillDocs: readonly PiSkillDoc[] | undefined,
+  searchUnavailable: () => boolean,
+): () => string {
+  return () =>
+    timeoutPromptText({
+      systemPrompt: typeof systemPrompt === 'string' ? systemPrompt : '',
+      userPrompt: typeof userPrompt === 'string' ? userPrompt : '',
+      skillDocs,
+      searchUnavailable: searchUnavailable(),
+    });
+}
+
 export function emptyStreamTextStats(): StreamTextStats {
   return { chars: 0, cjk: 0 };
 }

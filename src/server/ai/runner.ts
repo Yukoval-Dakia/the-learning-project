@@ -67,7 +67,7 @@ import {
 import { createSdkTerminalEvidenceCollector } from './sdk-terminal';
 import type { Options, SDKAssistantMessage, SDKMessage, SDKUserMessage } from './sdk-types';
 import { currentTaskSpendScope, withinTaskSpendFrame } from './task-spend-scope';
-import { addStreamText, emptyStreamTextStats, timeoutPromptText } from './timeout-usage';
+import { addStreamText, emptyStreamTextStats, lazyTimeoutPrompt } from './timeout-usage';
 
 // The runner is loaded before capability execution. Keep the shared observation
 // contract backend-free while using the same async trace context as task/model spans.
@@ -258,21 +258,6 @@ function promptFromInput(input: unknown): string | AsyncIterable<SDKUserMessage>
   return JSON.stringify(input);
 }
 
-/** Submitted system prompt (after skill injection) plus the user turn. */
-function timeoutEstimatePrompt(
-  ctx: RunTaskCtx,
-  systemPrompt: unknown,
-  userPrompt: string | AsyncIterable<SDKUserMessage>,
-  searchUnavailable: boolean,
-): string {
-  return timeoutPromptText({
-    systemPrompt: typeof systemPrompt === 'string' ? systemPrompt : '',
-    userPrompt: typeof userPrompt === 'string' ? userPrompt : '',
-    skillDocs: ctx.piSkillDocs,
-    searchUnavailable,
-  });
-}
-
 /**
  * Build the per-attempt call spec for the adapter so the three entry points stay
  * consistent on tools-from-registry default, turn ceiling and session resume.
@@ -425,10 +410,7 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
   apiErrorMessages?: (msg: SDKSuccessResultMessage) => string[];
   onResultError?: (msg: Exclude<SDKResultMessage, SDKSuccessResultMessage>) => void;
   abortedWithoutTerminalMessage: string;
-  /**
-   * Read at settle time so skill docs and a late search-unavailable line are
-   * in the text that was actually submitted.
-   */
+  /** Submitted prompt, read at settle time. */
   usagePrompt?: () => string;
 }): Promise<void> {
   const terminal = createSdkTerminalEvidenceCollector();
@@ -690,13 +672,12 @@ async function runTaskAttempt(args: {
     budget,
     lifecycle.transportEvidence,
   );
-  const usagePrompt = () =>
-    timeoutEstimatePrompt(
-      ctx,
-      callOptions.systemPrompt,
-      promptText,
-      lifecycle.transportEvidence.optionalDependencyUnavailable,
-    );
+  const usagePrompt = lazyTimeoutPrompt(
+    callOptions.systemPrompt,
+    promptText,
+    ctx.piSkillDocs,
+    () => lifecycle.transportEvidence.optionalDependencyUnavailable,
+  );
   lifecycle.recordNotePhases({
     prompt_build_ms: Date.now() - promptStarted,
     retry_count: args.retryCount ?? 0,
@@ -739,16 +720,25 @@ async function runTaskAttempt(args: {
       usagePrompt,
     });
   };
-  await withPreparedExecutionQuery(
-    lifecycle,
-    modelBinding,
-    actualInput,
-    promptText,
-    callOptions,
-    consumePreparedQuery,
-    ctx.beforeProviderQuery,
-    ctx,
-  );
+  try {
+    await withPreparedExecutionQuery(
+      lifecycle,
+      modelBinding,
+      actualInput,
+      promptText,
+      callOptions,
+      consumePreparedQuery,
+      ctx.beforeProviderQuery,
+      ctx,
+    );
+  } catch (error) {
+    await lifecycle.recordEstimatedUsage({
+      promptText: usagePrompt(),
+      output: emptyStreamTextStats(),
+      priceOrigin: 'failure-estimate',
+    });
+    throw error;
+  }
 
   // The provider permit is released before attempt settlement / afterRun. A DB
   // observation write must never occupy scarce upstream session capacity.
@@ -888,27 +878,6 @@ async function runTaskImpl(
       // It has an admission row but no YUK-841 cost attempt and is never retried
       // by the runner's provider-transient loop.
       if (!lifecycle.started) throw err;
-      // Failures outside consumeProviderAttempt (startup/transport) still need
-      // non-null estimated cost evidence, from the same submitted prompt.
-      const userPrompt = ctx.compiledModelPrompt?.text ?? promptFromInput(actualInput);
-      const callOptions = buildQueryOptions(
-        kind,
-        ctx,
-        lifecycle.abortController,
-        lifecycle.resolved,
-        budget,
-        lifecycle.transportEvidence,
-      );
-      await lifecycle.recordEstimatedUsage({
-        promptText: timeoutEstimatePrompt(
-          ctx,
-          callOptions.systemPrompt,
-          userPrompt,
-          lifecycle.transportEvidence.optionalDependencyUnavailable,
-        ),
-        output: emptyStreamTextStats(),
-        priceOrigin: 'failure-estimate',
-      });
       const boundError = bindAgentRunError({
         error: err,
         kind,
@@ -1018,13 +987,12 @@ export function streamTask(kind: string, input: unknown, initialCtx: StreamTaskC
                 budget,
                 lifecycle.transportEvidence,
               );
-              readUsagePrompt = () =>
-                timeoutEstimatePrompt(
-                  ctx,
-                  callOptions.systemPrompt,
-                  promptText,
-                  lifecycle.transportEvidence.optionalDependencyUnavailable,
-                );
+              readUsagePrompt = lazyTimeoutPrompt(
+                callOptions.systemPrompt,
+                promptText,
+                ctx.piSkillDocs,
+                () => lifecycle.transportEvidence.optionalDependencyUnavailable,
+              );
               const consumePreparedQuery = async (q: AsyncIterable<RunnerMessage>) => {
                 await consumeProviderAttempt({
                   query: q,
@@ -1272,13 +1240,12 @@ async function streamTaskCollectingImpl(
           lifecycle.transportEvidence,
         );
         if (kind === 'CopilotTask') callOptions.judgeRetryPolicy = 'none';
-        readUsagePrompt = () =>
-          timeoutEstimatePrompt(
-            ctx,
-            callOptions.systemPrompt,
-            promptText,
-            lifecycle.transportEvidence.optionalDependencyUnavailable,
-          );
+        readUsagePrompt = lazyTimeoutPrompt(
+          callOptions.systemPrompt,
+          promptText,
+          ctx.piSkillDocs,
+          () => lifecycle.transportEvidence.optionalDependencyUnavailable,
+        );
         const consumePreparedQuery = async (q: AsyncIterable<RunnerMessage>) => {
           await consumeProviderAttempt({
             query: q,
