@@ -53,8 +53,10 @@ import {
   type SealedCorrectionFiling,
   assistantProse,
   chooseVerifiedFallback,
+  hasVisibleModelAnswer,
   mergeNoProgressReply,
   renderNoProgressClosure,
+  shouldAppendNoProgressClosure,
 } from './no-progress-loop';
 import { createCopilotProposalFlowGate } from './proposal-flow-gate';
 import { createCopilotProseStream } from './prose-stream';
@@ -741,13 +743,18 @@ export function createCopilotExecutionOwner(
           })
         : undefined;
       // Keep the assistant prose; the closure is appended, not a replacement.
+      const modelReply = assistantProse(result.text, terminalText);
+      const appendClosure =
+        sealedClosure !== undefined &&
+        planned !== undefined &&
+        shouldAppendNoProgressClosure(sealedClosure, planned.fallback, modelReply);
+      const closureCopy = appendClosure
+        ? renderNoProgressClosure(sealedClosure, planned.fallback, {
+            emptyReply: !hasVisibleModelAnswer(modelReply),
+          })
+        : undefined;
       const closureText =
-        sealedClosure && planned
-          ? mergeNoProgressReply(
-              assistantProse(result.text, terminalText),
-              renderNoProgressClosure(sealedClosure, planned.fallback),
-            )
-          : undefined;
+        closureCopy !== undefined ? mergeNoProgressReply(modelReply, closureCopy) : undefined;
       const partial = closureText !== undefined ? false : result.partial === true;
       const executionError = closureText !== undefined ? undefined : result.error;
       const finishReason = sealedClosure
@@ -761,10 +768,7 @@ export function createCopilotExecutionOwner(
             closureText === undefined && partial ? result.providerFailure : undefined,
             {
               streamedText: streamedProse,
-              retainedTail:
-                sealedClosure && planned
-                  ? renderNoProgressClosure(sealedClosure, planned.fallback)
-                  : undefined,
+              retainedTail: closureCopy,
             },
           );
           if (finalized.receipt.assurance === 'unsealed') {
