@@ -84,6 +84,7 @@ export const fastTestInclude = [
 ];
 
 export const dbTestInclude = [
+  'src/capabilities/practice/grading/server/photo-gate.db.test.ts',
   'src/capabilities/shell/api/proposal-reason-privacy.db.test.ts',
   'src/server/boss/isolated-runtime.db.test.ts',
   'server/start/admin-control-reader.db.test.ts',
