@@ -9,11 +9,15 @@ import { BlockFrame } from './BlockFrame';
 import {
   type ChartBlockT,
   axisLabel,
+  axisX,
+  chartRows,
   fitLabel,
+  formatExact,
   formatValue,
   formatX,
   niceTicks,
   position,
+  rowKey,
   valueRange,
   xValues,
 } from './chart-scale';
@@ -25,8 +29,16 @@ function seriesSlot(index: number): number {
   return index % SERIES_COLORS;
 }
 
-function valueAt(series: ChartBlockT['series'][number], x: string | number): number | undefined {
-  return series.points.find(([px]) => px === x)?.[1];
+/** How far a stacked row reaches on each side of zero; positives and negatives stack apart. */
+function stackExtent(values: ReadonlyArray<number | undefined>): [number, number] {
+  let up = 0;
+  let down = 0;
+  for (const value of values) {
+    if (value === undefined) continue;
+    if (value >= 0) up += value;
+    else down += value;
+  }
+  return [up, down];
 }
 
 function BarChart({ block }: { block: ChartBlockT }) {
@@ -37,99 +49,104 @@ function BarChart({ block }: { block: ChartBlockT }) {
   const groups = stacked ? 1 : block.series.length;
   const barHeight = groups === 1 ? 16 : 12;
   const rowHeight = groups * barHeight + (groups - 1) * 2 + 12;
-  const xs = xValues(block);
+  const rows = chartRows(block);
   const values = stacked
-    ? xs.map((x) => block.series.reduce((sum, series) => sum + (valueAt(series, x) ?? 0), 0))
+    ? rows.flatMap((row) => stackExtent(row.values))
     : block.series.flatMap((series) => series.points.map(([, y]) => y));
   const range = valueRange(values, block.y);
   const zero = position(0, range, plot);
-  const height = rowHeight * xs.length + 4;
+  const height = rowHeight * rows.length + 4;
   return (
-    <svg
-      className="un-blk-chart-svg"
-      viewBox={`0 0 ${WIDTH} ${height}`}
-      role="img"
-      aria-label={block.alt}
-    >
-      {xs.map((x, row) => {
-        const label = formatX(x, block.x.scale);
-        const top = row * rowHeight + 6;
-        let stackedAt = 0;
-        return (
-          <g key={String(x)}>
-            <text
-              className="un-blk-chart-label"
-              x={labelWidth - 8}
-              y={top + (rowHeight - 12) / 2 + 4}
-              textAnchor="end"
-            >
-              <title>{label}</title>
-              {fitLabel(label, 6.5)}
-            </text>
-            {block.series.map((series, index) => {
-              const value = valueAt(series, x);
-              if (value === undefined) return null;
-              if (stacked) {
-                const from = position(stackedAt, range, plot);
-                stackedAt += value;
-                const to = position(stackedAt, range, plot);
-                return (
-                  <rect
-                    key={series.name}
-                    data-series={seriesSlot(index)}
-                    x={labelWidth + from}
-                    y={top}
-                    width={Math.max(0, to - from)}
-                    height={barHeight}
-                  >
-                    <title>{`${series.name} ${label}：${formatValue(value)}`}</title>
-                  </rect>
-                );
-              }
-              const end = position(value, range, plot);
-              const y = top + index * (barHeight + 2);
-              return (
-                <g key={series.name}>
-                  <rect
-                    data-series={seriesSlot(index)}
-                    x={labelWidth + Math.min(zero, end)}
-                    y={y}
-                    width={Math.abs(end - zero)}
-                    height={barHeight}
-                    rx={2}
-                  >
-                    <title>{`${series.name} ${label}：${formatValue(value)}`}</title>
-                  </rect>
-                  <text
-                    className="un-blk-chart-value"
-                    x={labelWidth + Math.max(zero, end) + 4}
-                    y={y + barHeight / 2 + 4}
-                  >
-                    {formatValue(value)}
-                  </text>
-                </g>
-              );
-            })}
-            {stacked ? (
+    <div className="un-blk-chart-scroll">
+      <svg
+        className="un-blk-chart-svg"
+        viewBox={`0 0 ${WIDTH} ${height}`}
+        role="img"
+        aria-label={block.alt}
+      >
+        {rows.map((row, rowIndex) => {
+          const label = formatX(row.x, block.x.scale);
+          const top = rowIndex * rowHeight + 6;
+          let up = 0;
+          let down = 0;
+          return (
+            <g key={rowKey(row)}>
               <text
-                className="un-blk-chart-value"
-                x={labelWidth + position(stackedAt, range, plot) + 4}
-                y={top + barHeight / 2 + 4}
+                className="un-blk-chart-label"
+                x={labelWidth - 8}
+                y={top + (rowHeight - 12) / 2 + 4}
+                textAnchor="end"
               >
-                {formatValue(stackedAt)}
+                <title>{label}</title>
+                {fitLabel(label, 6.5)}
               </text>
-            ) : null}
-          </g>
-        );
-      })}
-      <line
-        className="un-blk-chart-axis"
-        x1={labelWidth + zero}
-        x2={labelWidth + zero}
-        y1={2}
-        y2={height - 2}
-      />
-    </svg>
+              {block.series.map((series, index) => {
+                const value = row.values[index];
+                if (value === undefined) return null;
+                const tooltip = `${series.name} ${label}：${formatExact(value)}`;
+                if (stacked) {
+                  const from = position(value >= 0 ? up : down, range, plot);
+                  if (value >= 0) up += value;
+                  else down += value;
+                  const to = position(value >= 0 ? up : down, range, plot);
+                  return (
+                    <rect
+                      key={seriesSlot(index)}
+                      data-series={seriesSlot(index)}
+                      x={labelWidth + Math.min(from, to)}
+                      y={top}
+                      width={Math.abs(to - from)}
+                      height={barHeight}
+                    >
+                      <title>{tooltip}</title>
+                    </rect>
+                  );
+                }
+                const end = position(value, range, plot);
+                const y = top + index * (barHeight + 2);
+                return (
+                  <g key={seriesSlot(index)}>
+                    <rect
+                      data-series={seriesSlot(index)}
+                      x={labelWidth + Math.min(zero, end)}
+                      y={y}
+                      width={Math.abs(end - zero)}
+                      height={barHeight}
+                      rx={2}
+                    >
+                      <title>{tooltip}</title>
+                    </rect>
+                    <text
+                      className="un-blk-chart-value"
+                      x={labelWidth + Math.max(zero, end) + 4}
+                      y={y + barHeight / 2 + 4}
+                    >
+                      {formatValue(value)}
+                    </text>
+                  </g>
+                );
+              })}
+              {stacked ? (
+                <text
+                  className="un-blk-chart-value"
+                  x={labelWidth + position(up, range, plot) + 4}
+                  y={top + barHeight / 2 + 4}
+                >
+                  {formatValue(up + down)}
+                </text>
+              ) : null}
+            </g>
+          );
+        })}
+        <line
+          className="un-blk-chart-axis"
+          x1={labelWidth + zero}
+          x2={labelWidth + zero}
+          y1={2}
+          y2={height - 2}
+        />
+      </svg>
+    </div>
   );
 }
 
@@ -154,7 +171,9 @@ function PlotChart({ block }: { block: ChartBlockT }) {
     if (numeric) {
       return xMax > xMin ? ((Number(x) - xMin) / (xMax - xMin)) * plotW : plotW / 2;
     }
-    return xs.length > 1 ? (xs.indexOf(x) / (xs.length - 1)) * plotW : plotW / 2;
+    return xs.length > 1
+      ? (xs.indexOf(axisX(x, block.x.scale)) / (xs.length - 1)) * plotW
+      : plotW / 2;
   };
   const yPosition = (y: number) => plotH - position(y, range, plotH);
   const xTicks: Array<string | number> =
@@ -182,7 +201,7 @@ function PlotChart({ block }: { block: ChartBlockT }) {
               y2={yPosition(tick)}
             />
             <text className="un-blk-chart-tick" x={-6} y={yPosition(tick) + 3.5} textAnchor="end">
-              {formatValue(tick)}
+              {formatExact(tick)}
             </text>
           </g>
         ))}
@@ -194,15 +213,13 @@ function PlotChart({ block }: { block: ChartBlockT }) {
             y={plotH + 15}
             textAnchor="middle"
           >
-            {fitLabel(formatX(x, block.x.scale), 4)}
+            {numeric ? formatX(x, block.x.scale) : fitLabel(formatX(x, block.x.scale), 4)}
           </text>
         ))}
         {block.series.map((series, index) => {
-          const points = numeric
-            ? [...series.points].sort(([a], [b]) => Number(a) - Number(b))
-            : series.points;
+          const points = [...series.points].sort(([a], [b]) => xPosition(a) - xPosition(b));
           return (
-            <g key={series.name} data-series={seriesSlot(index)}>
+            <g key={seriesSlot(index)} data-series={seriesSlot(index)}>
               {block.chart === 'line' ? (
                 <polyline
                   className="un-blk-chart-line"
@@ -217,7 +234,7 @@ function PlotChart({ block }: { block: ChartBlockT }) {
                   cy={yPosition(y)}
                   r={block.chart === 'line' ? 2.5 : 3.5}
                 >
-                  <title>{`${series.name} ${formatX(x, block.x.scale)}：${formatValue(y)}`}</title>
+                  <title>{`${series.name} ${formatX(x, block.x.scale)}：${formatExact(y)}`}</title>
                 </circle>
               ))}
             </g>
@@ -233,7 +250,6 @@ function PieChart({ block, total }: { block: ChartBlockT; total: number }) {
   const center = size / 2;
   const radius = 74;
   let angle = -Math.PI / 2;
-  const points = block.series[0]?.points ?? [];
   return (
     <svg
       className="un-blk-chart-svg un-blk-chart-pie"
@@ -241,15 +257,16 @@ function PieChart({ block, total }: { block: ChartBlockT; total: number }) {
       role="img"
       aria-label={block.alt}
     >
-      {points.map(([x, y], index) => {
+      {chartRows(block).map((row, index) => {
+        const y = row.values[0] ?? 0;
         const sweep = (y / total) * Math.PI * 2;
         const start = angle;
         angle += sweep;
-        const label = `${formatX(x, block.x.scale)}：${formatValue(y)}`;
+        const label = `${formatX(row.x, block.x.scale)}：${formatExact(y)}`;
         if (sweep >= Math.PI * 2 - 1e-6) {
           return (
             <circle
-              key={String(x)}
+              key={rowKey(row)}
               data-series={seriesSlot(index)}
               cx={center}
               cy={center}
@@ -262,7 +279,7 @@ function PieChart({ block, total }: { block: ChartBlockT; total: number }) {
         const large = sweep > Math.PI ? 1 : 0;
         const path = `M${center} ${center} L${center + radius * Math.cos(start)} ${center + radius * Math.sin(start)} A${radius} ${radius} 0 ${large} 1 ${center + radius * Math.cos(angle)} ${center + radius * Math.sin(angle)} Z`;
         return (
-          <path key={String(x)} data-series={seriesSlot(index)} d={path}>
+          <path key={rowKey(row)} data-series={seriesSlot(index)} d={path}>
             <title>{label}</title>
           </path>
         );
@@ -275,12 +292,15 @@ function Legend({ block, total }: { block: ChartBlockT; total: number }) {
   if (block.chart === 'pie') {
     return (
       <ul className="un-blk-chart-legend" aria-hidden="true">
-        {(block.series[0]?.points ?? []).map(([x, y], index) => (
-          <li key={String(x)}>
-            <span className="un-blk-chart-key" data-series={seriesSlot(index)} />
-            {formatX(x, block.x.scale)} {formatValue(y)}（{Math.round((y / total) * 100)}%）
-          </li>
-        ))}
+        {chartRows(block).map((row, index) => {
+          const y = row.values[0] ?? 0;
+          return (
+            <li key={rowKey(row)}>
+              <span className="un-blk-chart-key" data-series={seriesSlot(index)} />
+              {formatX(row.x, block.x.scale)} {formatValue(y)}（{Math.round((y / total) * 100)}%）
+            </li>
+          );
+        })}
       </ul>
     );
   }
@@ -288,7 +308,7 @@ function Legend({ block, total }: { block: ChartBlockT; total: number }) {
   return (
     <ul className="un-blk-chart-legend" aria-hidden="true">
       {block.series.map((series, index) => (
-        <li key={series.name}>
+        <li key={seriesSlot(index)}>
           <span className="un-blk-chart-key" data-series={seriesSlot(index)} />
           {series.name}
         </li>
@@ -311,13 +331,13 @@ function DataTable({ block, id, total }: { block: ChartBlockT; id: string; total
           </tr>
         </thead>
         <tbody>
-          {block.series.flatMap((series) =>
+          {block.series.flatMap((series, slot) =>
             series.points.map(([x, y], index) => (
               // biome-ignore lint/suspicious/noArrayIndexKey: a scatter series can repeat a point.
-              <tr key={`${series.name}:${index}`}>
+              <tr key={`${slot}:${index}`}>
                 <td>{series.name}</td>
                 <td>{formatX(x, block.x.scale)}</td>
-                <td>{formatValue(y)}</td>
+                <td>{formatExact(y)}</td>
               </tr>
             )),
           )}
@@ -336,13 +356,16 @@ function DataTable({ block, id, total }: { block: ChartBlockT; id: string; total
           </tr>
         </thead>
         <tbody>
-          {(block.series[0]?.points ?? []).map(([x, y]) => (
-            <tr key={String(x)}>
-              <td>{formatX(x, block.x.scale)}</td>
-              <td>{formatValue(y)}</td>
-              <td>{Math.round((y / total) * 100)}%</td>
-            </tr>
-          ))}
+          {chartRows(block).map((row) => {
+            const y = row.values[0] ?? 0;
+            return (
+              <tr key={rowKey(row)}>
+                <td>{formatX(row.x, block.x.scale)}</td>
+                <td>{formatExact(y)}</td>
+                <td>{Math.round((y / total) * 100)}%</td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     );
@@ -352,21 +375,20 @@ function DataTable({ block, id, total }: { block: ChartBlockT; id: string; total
       <thead>
         <tr>
           <th scope="col">{axisLabel(block.x)}</th>
-          {block.series.map((series) => (
-            <th key={series.name} scope="col">
+          {block.series.map((series, index) => (
+            <th key={seriesSlot(index)} scope="col">
               {block.series.length > 1 ? series.name : yName}
             </th>
           ))}
         </tr>
       </thead>
       <tbody>
-        {xValues(block).map((x) => (
-          <tr key={String(x)}>
-            <td>{formatX(x, block.x.scale)}</td>
-            {block.series.map((series) => {
-              const value = valueAt(series, x);
-              return <td key={series.name}>{value === undefined ? '—' : formatValue(value)}</td>;
-            })}
+        {chartRows(block).map((row) => (
+          <tr key={rowKey(row)}>
+            <td>{formatX(row.x, block.x.scale)}</td>
+            {row.values.map((value, index) => (
+              <td key={seriesSlot(index)}>{value === undefined ? '—' : formatExact(value)}</td>
+            ))}
           </tr>
         ))}
       </tbody>

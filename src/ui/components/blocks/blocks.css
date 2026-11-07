@@ -202,6 +202,12 @@
     overflow: visible;
   }
 
+  /* Up to 500 bars can arrive; the reply keeps moving past them. */
+  & .un-blk-chart-scroll {
+    max-height: 440px;
+    overflow-y: auto;
+  }
+
   & .un-blk-chart-pie {
     max-width: 180px;
     justify-self: center;
@@ -254,6 +260,8 @@
   & .un-blk-chart-pie [data-series] {
     stroke: var(--un-bg-raised);
     stroke-width: 1.5;
+    /* A very small segment keeps its colour instead of disappearing under its own edge. */
+    paint-order: stroke fill;
   }
 
   & .un-blk-chart-line {
@@ -353,6 +361,11 @@
   @media print {
     & .un-blk-chart-toggle {
       display: none;
+    }
+
+    & .un-blk-chart-scroll {
+      max-height: none;
+      overflow: visible;
     }
 
     & .un-blk-chart-table {
