@@ -533,8 +533,7 @@ export async function retryUnsentBacktraceWork(
       !run?.finished_at ||
       run.status === 'running' ||
       (!(work.result?.provider_query_started === false && !transport) &&
-        (!transport ||
-          transport.send_state !== 'not_sent' ||
+        (transport?.send_state !== 'not_sent' ||
           !totals?.requests ||
           transport.requests_dropped !== 0 ||
           totals.by_state.not_sent !== totals.requests ||
