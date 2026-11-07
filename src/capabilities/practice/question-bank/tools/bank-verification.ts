@@ -12,7 +12,7 @@ import { resolveBankRefs } from './bank-ref';
 import type { BankRequirement, BankSemanticHit, BankTaskReceipt } from './bank-requirements';
 import type { BankSearchHit } from './bank-search';
 import { freezeBankResponseSlots } from './bank-slot-evidence';
-import { bankReadRoleForActor, runReadBank } from './read-bank';
+import { runReadBank } from './read-bank';
 
 export type BankPassage = {
   locator: string;
@@ -72,16 +72,14 @@ export async function freezeBankCandidate(
     frozen.hit = { ...hit, group_id: frozen.group_id, question_id: frozen.group_id };
   frozen.revision_id = resolved.revision.revision_id;
   frozen.integrity_digest = resolved.revision.integrity_digest;
-  const role = bankReadRoleForActor(actor);
   const read = await runReadBank(
     db,
     {
       refs: [hit.ref],
-      include:
-        role === 'restricted' ? ['content', 'materials'] : ['content', 'materials', 'answers'],
+      include: ['content', 'materials'],
       extent: { chars: 200000 },
     },
-    { role, callerRef: actor.ref },
+    { role: 'restricted', callerRef: actor.ref },
   );
   const item = read.items[0];
   if (item?.status !== 'ok' || !item.current || !item.content) {
@@ -184,24 +182,6 @@ export async function freezeBankCandidate(
       asset_digest: material.asset.digest,
     });
   }
-  const leafTexts = (value: unknown, locator: string, part_ids: string[]) => {
-    if (typeof value === 'string') add({ locator, text: value, part_ids });
-    else if (Array.isArray(value))
-      value.forEach((v, i) => {
-        leafTexts(v, `${locator}/${i}`, part_ids);
-      });
-    else if (value && typeof value === 'object')
-      for (const [key, v] of Object.entries(value))
-        leafTexts(v, `${locator}/${key.replaceAll('~', '~0').replaceAll('/', '~1')}`, part_ids);
-  };
-  for (const unit of item.answers?.units ?? []) {
-    const owners = item.content.slots
-      .filter((s) => unit.slot_refs.includes(s.slot_id))
-      .map((s) => s.part_id);
-    leafTexts(unit.criterion, `scoring:${unit.scoring_unit_id}:criterion`, [
-      ...new Set(owners.length ? owners : frozen.parts.map((p) => p.part_id)),
-    ]);
-  }
   // Unbound or unread content cannot be made into proof by a model assertion.
   if (frozen.parts.length === 0)
     frozen.blockers.push({ part_ids: [], reason: 'no_readable_parts' });
@@ -210,7 +190,49 @@ export async function freezeBankCandidate(
 
 /** The canonical runner owns config resolution, attempts and cost. A receipt
  * refers to that actual durable row, including failed/unknown outcomes. */
-export async function callBankSemanticTask(
+const verificationCalls = new WeakMap<
+  Db,
+  Map<string, Map<string, ReturnType<typeof executeBankSemanticTask>>>
+>();
+
+export function callBankSemanticTask(
+  ctx: ToolContext,
+  kind: 'BankRequirementInterpretTask' | 'BankConditionVerifyTask',
+  input: unknown,
+  deadline: number,
+): ReturnType<typeof executeBankSemanticTask> {
+  if (kind !== 'BankConditionVerifyTask')
+    return executeBankSemanticTask(ctx, kind, input, deadline);
+  let runs = verificationCalls.get(ctx.db);
+  if (!runs) {
+    runs = new Map();
+    verificationCalls.set(ctx.db, runs);
+  }
+  let calls = runs.get(ctx.taskRunId);
+  if (!calls) {
+    calls = new Map();
+    runs.set(ctx.taskRunId, calls);
+    // Keep only this owner's paid observations, never a cross-run answer cache.
+    const expiry = ctx.providerSessionDeadlineAt ?? Date.now() + 45 * 60_000;
+    const ownedRuns = runs;
+    const ownedCalls = calls;
+    const timer = setTimeout(
+      () => {
+        if (ownedRuns.get(ctx.taskRunId) === ownedCalls) ownedRuns.delete(ctx.taskRunId);
+      },
+      Math.max(0, expiry - Date.now()),
+    );
+    timer.unref();
+  }
+  const digest = canonicalHash(input);
+  const prior = calls.get(digest);
+  if (prior) return prior;
+  const call = executeBankSemanticTask(ctx, kind, input, deadline);
+  calls.set(digest, call);
+  return call;
+}
+
+async function executeBankSemanticTask(
   ctx: ToolContext,
   kind: 'BankRequirementInterpretTask' | 'BankConditionVerifyTask',
   input: unknown,

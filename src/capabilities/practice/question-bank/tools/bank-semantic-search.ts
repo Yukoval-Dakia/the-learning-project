@@ -243,42 +243,29 @@ export async function runBankSemanticSearch(
       ? 'interpretation_needs_clarification'
       : 'candidate_pool_processed';
   let halted = interpretation.status !== 'ready';
-  for (const [index, candidate] of frozen.entries()) {
-    if (!halted && (Date.now() >= deadline || ctx.signal?.aborted)) {
-      halted = true;
-      stop = 'wall_clock_or_cancelled';
-    }
-    if (!halted && index >= BANK_VERIFICATION_CAP) {
-      halted = true;
-      stop = 'verification_budget';
-    }
-    if (!halted && input.need && matched >= input.need.count) {
-      halted = true;
-      stop = 'need_met';
-    }
-    if (halted || !candidate.revision_id || !candidate.parts.length) {
-      hits.push(
-        unverifiedBankHit(
+  const verifyCandidate = async (
+    candidate: FrozenBankCandidate,
+    index: number,
+  ): Promise<{ hit: BankSemanticHit; receipt?: BankTaskReceipt }> => {
+    if (!candidate.revision_id || !candidate.parts.length)
+      return {
+        hit: unverifiedBankHit(
           candidate,
           requirements,
           index + 1,
-          halted ? stop : 'no_readable_immutable_revision',
+          'no_readable_immutable_revision',
         ),
-      );
-      continue;
-    }
-    // Every nonempty part selection would be forced to unknown by verification.
+      };
+    // Every nonempty public part selection would be forced to unknown.
     if (
-      candidate.blockers.some((blocker) => blocker.part_ids.length === 0) ||
+      candidate.blockers.some((b) => b.part_ids.length === 0) ||
       candidate.parts.every((part) =>
-        candidate.blockers.some((blocker) => blocker.part_ids.includes(part.part_id)),
+        candidate.blockers.some((b) => b.part_ids.includes(part.part_id)),
       )
-    ) {
-      hits.push(
-        unverifiedBankHit(candidate, requirements, index + 1, 'no_unblocked_part_selection'),
-      );
-      continue;
-    }
+    )
+      return {
+        hit: unverifiedBankHit(candidate, requirements, index + 1, 'no_unblocked_part_selection'),
+      };
     const passages = [...candidate.passages];
     for (const [anchorIndex, anchor] of anchors.entries()) {
       for (const passage of anchor.passages)
@@ -308,19 +295,16 @@ export async function runBankSemanticSearch(
         JSON.stringify(anchorInput).length >
       120000
     ) {
-      hits.push(
-        unverifiedBankHit(
+      return {
+        hit: unverifiedBankHit(
           candidate,
           requirements,
           index + 1,
           'verification_input_character_budget',
         ),
-      );
-      stop = 'verification_input_character_budget';
-      continue;
+      };
     }
     const candidateInput = { ...candidate, passages };
-    checked++;
     const call = await callBankSemanticTask(
       ctx,
       'BankConditionVerifyTask',
@@ -340,7 +324,6 @@ export async function runBankSemanticSearch(
       },
       deadline,
     );
-    receipts.push(call.receipt);
     let result: BankSemanticHit;
     try {
       if (call.receipt.status !== 'success') throw new Error(call.receipt.reason ?? 'task_failed');
@@ -357,12 +340,50 @@ export async function runBankSemanticSearch(
       result.verification_status = 'failed';
       call.receipt.status = 'failed';
       call.receipt.reason = reason;
-      halted = true;
-      stop = 'verification_failed_no_retry';
     }
     result.task_run_ids = call.receipt.task_run_id ? [call.receipt.task_run_id] : [];
-    if (result.group === 'matched') matched++;
-    hits.push(result);
+    return { hit: result, receipt: call.receipt };
+  };
+  let index = 0;
+  while (index < frozen.length) {
+    if (Date.now() >= deadline || ctx.signal?.aborted) {
+      halted = true;
+      stop = 'wall_clock_or_cancelled';
+    }
+    if (!halted && index >= BANK_VERIFICATION_CAP) {
+      halted = true;
+      stop = 'verification_budget';
+    }
+    const target = input.need?.count ?? input.page_size;
+    if (!halted && matched >= target) {
+      halted = true;
+      stop = 'need_met';
+    }
+    if (halted) {
+      for (; index < frozen.length; index++)
+        hits.push(unverifiedBankHit(frozen[index], requirements, index + 1, stop));
+      break;
+    }
+    // Start only a small ranked window. Results and receipts commit in recall order,
+    // independent of completion order; no new window starts after the need is met.
+    const width = Math.min(4, Math.max(1, (target - matched) * 2), BANK_VERIFICATION_CAP - index);
+    const batch = frozen.slice(index, index + width);
+    const results = await Promise.all(
+      batch.map((candidate, offset) => verifyCandidate(candidate, index + offset)),
+    );
+    for (const result of results) {
+      if (result.receipt) {
+        receipts.push(result.receipt);
+        checked++;
+      }
+      hits.push(result.hit);
+      if (result.hit.group === 'matched') matched++;
+      if (result.receipt?.status === 'failed') {
+        halted = true;
+        stop = Date.now() >= deadline ? 'wall_clock_or_cancelled' : 'verification_failed_no_retry';
+      }
+    }
+    index += batch.length;
   }
   const order = { matched: 0, unverified: 1, contradicted: 2, unavailable: 3 };
   hits.sort(
@@ -445,7 +466,9 @@ export async function runBankSemanticSearch(
       candidate_count: hits.length,
       checked_count: checked,
       retrieval_truncated: recall.coverage.retrieval_truncated,
-      verification_truncated: hits.some((h) => h.verification_status === 'not_run'),
+      verification_truncated: hits.some(
+        (h) => h.verification_status === 'not_run' || h.verification_status === 'failed',
+      ),
       unavailable_channels: recall.coverage.unavailable_channels,
       vector_reason:
         bankReadRoleForActor(ctx.callerActor) === 'restricted'

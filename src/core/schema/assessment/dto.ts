@@ -21,6 +21,7 @@ import { ResponseSpec, slotsInDefaultOrder } from './response';
 import type { AssessmentIssuanceT, PublishedQuestionRevisionT } from './revision';
 import { PublishedQuestionRevision, validateIssuanceBinding } from './revision';
 import type { ScoringBasisT } from './scoring';
+import type { QuestionGroupStructureT } from './structure';
 
 // ====================================================================
 // YUK-1046 — 统一评估契约 · 公私 DTO 边界（grounding §7.1）
@@ -99,6 +100,25 @@ export const PracticeIssuanceDto = z.strictObject({
 });
 export type PracticeIssuanceDtoT = z.infer<typeof PracticeIssuanceDto>;
 
+export function projectPublicQuestionStructure(
+  structure: QuestionGroupStructureT,
+): QuestionGroupStructureT {
+  const privateIds = new Set(
+    structure.materials
+      .filter((material) => !isPublicSharedMaterial(material))
+      .map((m) => m.material_id),
+  );
+  return {
+    ...structure,
+    materials: structure.materials.filter(isPublicSharedMaterial),
+    // Unknown references remain required: hiding a private layer must not hide real loss.
+    parts: structure.parts.map((part) => ({
+      ...part,
+      material_ids: part.material_ids.filter((id) => !privateIds.has(id)),
+    })),
+  };
+}
+
 /**
  * 纯投影：published revision + issuance → 公开作答 DTO。只从公开字段构造；
  * scoring_basis / execution_plan / 私有 metadata 无从进入。
@@ -159,7 +179,8 @@ export function projectPracticeIssuance(
   // YUK-1568：声明了 blank_order 的 part，其 blank 槽在 DTO 里按默认逻辑序
   // 呈现（只在各自位置内重排；未声明的旧题完全保持数组序）。作答 envelope
   // 仍按 slot_id 关联，不按序数。
-  const issuedParts = revision.structure.parts.filter((part) => boundParts.has(part.part_id));
+  const publicStructure = projectPublicQuestionStructure(revision.structure);
+  const issuedParts = publicStructure.parts.filter((part) => boundParts.has(part.part_id));
   const orderedSlots = slotsInDefaultOrder(projectedSlots, issuedParts);
   // 发出集合内不得出现悬空表格（单元格不在发出集内）——
   // 宁可抛错也不产出不可作答/不可校验的 DTO。
@@ -176,7 +197,7 @@ export function projectPracticeIssuance(
   }
   // Binding keeps all frozen evidence, including old private-rubric references, for
   // immutable replay. Only the public projection removes private material and face refs.
-  const publicMaterials = revision.structure.materials.filter(
+  const publicMaterials = publicStructure.materials.filter(
     (material) =>
       isPublicSharedMaterial(material) &&
       digestByMaterial.get(material.material_id) === material.asset.digest,
