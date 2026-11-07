@@ -67,7 +67,7 @@ import {
 import { createSdkTerminalEvidenceCollector } from './sdk-terminal';
 import type { Options, SDKAssistantMessage, SDKMessage, SDKUserMessage } from './sdk-types';
 import { currentTaskSpendScope, withinTaskSpendFrame } from './task-spend-scope';
-import { addStreamText, emptyStreamTextStats } from './timeout-usage';
+import { addStreamText, emptyStreamTextStats, timeoutPromptText } from './timeout-usage';
 
 // The runner is loaded before capability execution. Keep the shared observation
 // contract backend-free while using the same async trace context as task/model spans.
@@ -258,6 +258,21 @@ function promptFromInput(input: unknown): string | AsyncIterable<SDKUserMessage>
   return JSON.stringify(input);
 }
 
+/** Submitted system prompt (after skill injection) plus the user turn. */
+function timeoutEstimatePrompt(
+  ctx: RunTaskCtx,
+  systemPrompt: unknown,
+  userPrompt: string | AsyncIterable<SDKUserMessage>,
+  searchUnavailable: boolean,
+): string {
+  return timeoutPromptText({
+    systemPrompt: typeof systemPrompt === 'string' ? systemPrompt : '',
+    userPrompt: typeof userPrompt === 'string' ? userPrompt : '',
+    skillDocs: ctx.piSkillDocs,
+    searchUnavailable,
+  });
+}
+
 /**
  * Build the per-attempt call spec for the adapter so the three entry points stay
  * consistent on tools-from-registry default, turn ceiling and session resume.
@@ -410,14 +425,19 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
   apiErrorMessages?: (msg: SDKSuccessResultMessage) => string[];
   onResultError?: (msg: Exclude<SDKResultMessage, SDKSuccessResultMessage>) => void;
   abortedWithoutTerminalMessage: string;
-  /** System prompt plus user prompt, used only when an abort has no provider usage. */
-  usagePrompt?: string;
+  /**
+   * Read at settle time so skill docs and a late search-unavailable line are
+   * in the text that was actually submitted.
+   */
+  usagePrompt?: () => string;
 }): Promise<void> {
   const terminal = createSdkTerminalEvidenceCollector();
   let iteration = 0;
   let stepStartTime = Date.now();
   const modelStarted = Date.now();
-  let firstTokenAt: number | undefined;
+  let firstOutputAt: number | undefined;
+  let firstTextAt: number | undefined;
+  let firstThinkingAt: number | undefined;
   let thinkingObserved = false;
   let completeArtifact = false;
   const outputStats = emptyStreamTextStats();
@@ -425,7 +445,7 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
     // YUK-1557 — a cut stream with no usage frame still submitted a prompt:
     // persist a bounded estimate, never a null cost. A reported frame wins.
     await args.lifecycle.recordEstimatedUsage({
-      promptText: args.usagePrompt ?? '',
+      promptText: args.usagePrompt?.() ?? '',
       output: outputStats,
       priceOrigin: args.lifecycle.aborted ? 'timeout-estimate' : 'failure-estimate',
     });
@@ -446,7 +466,10 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
       if (msg.type === 'text_delta' || msg.type === 'thinking_delta') {
         if (msg.text) {
           addStreamText(outputStats, msg.text);
-          firstTokenAt ??= Date.now();
+          const at = Date.now();
+          firstOutputAt ??= at;
+          if (msg.type === 'text_delta') firstTextAt ??= at;
+          else firstThinkingAt ??= at;
         }
         if (msg.type === 'text_delta' && !args.lifecycle.abortController.signal.aborted) {
           await args.onTextDelta?.(msg.text);
@@ -601,13 +624,14 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
     const endedAt = Date.now();
     args.lifecycle.noteHelpProviderClock({
       endedAt,
-      ...(firstTokenAt !== undefined ? { firstTokenAt } : {}),
+      ...(firstOutputAt !== undefined ? { firstTokenAt: firstOutputAt } : {}),
       completeArtifact,
     });
     args.lifecycle.recordNotePhases({
       model_total_ms: endedAt - modelStarted,
-      model_ttft_ms: firstTokenAt === undefined ? null : firstTokenAt - modelStarted,
-      stream_ms: firstTokenAt === undefined ? 0 : endedAt - firstTokenAt,
+      model_ttft_ms: firstTextAt === undefined ? null : firstTextAt - modelStarted,
+      model_thinking_ttft_ms: firstThinkingAt === undefined ? null : firstThinkingAt - modelStarted,
+      stream_ms: firstTextAt === undefined ? 0 : endedAt - firstTextAt,
     });
     try {
       await args.ctx.onThinkingSettled?.({
@@ -666,7 +690,13 @@ async function runTaskAttempt(args: {
     budget,
     lifecycle.transportEvidence,
   );
-  const usagePrompt = `${typeof callOptions.systemPrompt === 'string' ? callOptions.systemPrompt : ''}\n${typeof promptText === 'string' ? promptText : ''}`;
+  const usagePrompt = () =>
+    timeoutEstimatePrompt(
+      ctx,
+      callOptions.systemPrompt,
+      promptText,
+      lifecycle.transportEvidence.optionalDependencyUnavailable,
+    );
   lifecycle.recordNotePhases({
     prompt_build_ms: Date.now() - promptStarted,
     retry_count: args.retryCount ?? 0,
@@ -858,11 +888,24 @@ async function runTaskImpl(
       // It has an admission row but no YUK-841 cost attempt and is never retried
       // by the runner's provider-transient loop.
       if (!lifecycle.started) throw err;
-      // YUK-1557 — failures outside consumeProviderAttempt (startup/transport)
-      // still need non-null estimated cost evidence.
-      const fallbackPrompt = promptFromInput(actualInput);
+      // Failures outside consumeProviderAttempt (startup/transport) still need
+      // non-null estimated cost evidence, from the same submitted prompt.
+      const userPrompt = ctx.compiledModelPrompt?.text ?? promptFromInput(actualInput);
+      const callOptions = buildQueryOptions(
+        kind,
+        ctx,
+        lifecycle.abortController,
+        lifecycle.resolved,
+        budget,
+        lifecycle.transportEvidence,
+      );
       await lifecycle.recordEstimatedUsage({
-        promptText: typeof fallbackPrompt === 'string' ? fallbackPrompt : '',
+        promptText: timeoutEstimatePrompt(
+          ctx,
+          callOptions.systemPrompt,
+          userPrompt,
+          lifecycle.transportEvidence.optionalDependencyUnavailable,
+        ),
         output: emptyStreamTextStats(),
         priceOrigin: 'failure-estimate',
       });
@@ -960,14 +1003,13 @@ export function streamTask(kind: string, input: unknown, initialCtx: StreamTaskC
             const encoder = new TextEncoder();
             let resultText = '';
             let shouldClose = true;
-            let usagePromptText = '';
+            let readUsagePrompt: () => string = () => '';
 
             try {
               const actualInput = ctx.middleware?.beforeRun
                 ? await ctx.middleware.beforeRun(kind, input, ctx)
                 : input;
               const promptText = ctx.compiledModelPrompt?.text ?? promptFromInput(actualInput);
-              usagePromptText = typeof promptText === 'string' ? promptText : '';
               const callOptions = buildQueryOptions(
                 kind,
                 ctx,
@@ -976,6 +1018,13 @@ export function streamTask(kind: string, input: unknown, initialCtx: StreamTaskC
                 budget,
                 lifecycle.transportEvidence,
               );
+              readUsagePrompt = () =>
+                timeoutEstimatePrompt(
+                  ctx,
+                  callOptions.systemPrompt,
+                  promptText,
+                  lifecycle.transportEvidence.optionalDependencyUnavailable,
+                );
               const consumePreparedQuery = async (q: AsyncIterable<RunnerMessage>) => {
                 await consumeProviderAttempt({
                   query: q,
@@ -1002,6 +1051,7 @@ export function streamTask(kind: string, input: unknown, initialCtx: StreamTaskC
                     }
                   },
                   abortedWithoutTerminalMessage: `[${kind}] Agent SDK run aborted with no terminal result`,
+                  usagePrompt: readUsagePrompt,
                 });
               };
               await withPreparedExecutionQuery(
@@ -1029,7 +1079,7 @@ export function streamTask(kind: string, input: unknown, initialCtx: StreamTaskC
             } catch (error) {
               if (lifecycle.started) {
                 await lifecycle.recordEstimatedUsage({
-                  promptText: usagePromptText,
+                  promptText: readUsagePrompt(),
                   output: emptyStreamTextStats(),
                   priceOrigin: 'failure-estimate',
                 });
@@ -1210,10 +1260,9 @@ async function streamTaskCollectingImpl(
       | undefined;
 
     const outcome = await lifecycle.withTracing(async () => {
-      let usagePromptText = '';
+      let readUsagePrompt: () => string = () => '';
       try {
         const promptText = ctx.compiledModelPrompt?.text ?? promptFromInput(actualInput);
-        usagePromptText = typeof promptText === 'string' ? promptText : '';
         const callOptions = buildQueryOptions(
           kind,
           ctx,
@@ -1223,6 +1272,13 @@ async function streamTaskCollectingImpl(
           lifecycle.transportEvidence,
         );
         if (kind === 'CopilotTask') callOptions.judgeRetryPolicy = 'none';
+        readUsagePrompt = () =>
+          timeoutEstimatePrompt(
+            ctx,
+            callOptions.systemPrompt,
+            promptText,
+            lifecycle.transportEvidence.optionalDependencyUnavailable,
+          );
         const consumePreparedQuery = async (q: AsyncIterable<RunnerMessage>) => {
           await consumeProviderAttempt({
             query: q,
@@ -1290,6 +1346,7 @@ async function streamTaskCollectingImpl(
                 providerFailureEvidence = msg.provider_failure;
             },
             abortedWithoutTerminalMessage: `[${kind}] Agent SDK run aborted with no terminal result`,
+            usagePrompt: readUsagePrompt,
           });
         };
         await withPreparedExecutionQuery(
@@ -1318,7 +1375,7 @@ async function streamTaskCollectingImpl(
       } catch (error) {
         if (!lifecycle.started) throw error;
         await lifecycle.recordEstimatedUsage({
-          promptText: usagePromptText,
+          promptText: readUsagePrompt(),
           output: emptyStreamTextStats(),
           priceOrigin: 'failure-estimate',
         });

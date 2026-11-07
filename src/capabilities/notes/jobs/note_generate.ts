@@ -99,6 +99,7 @@ function logNoteGeneratePhases(input: {
       prompt_build_ms: input.promptBuildMs,
       model_wait_ms: input.modelWaitMs,
       model_ttft_ms: input.runnerPhases?.model_ttft_ms ?? null,
+      model_thinking_ttft_ms: input.runnerPhases?.model_thinking_ttft_ms ?? null,
       model_total_ms: input.runnerPhases?.model_total_ms ?? null,
       stream_ms: input.runnerPhases?.stream_ms ?? null,
       parse_ms: input.parseMs,
