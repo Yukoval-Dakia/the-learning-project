@@ -126,6 +126,18 @@ async function paid(
 export async function writeAttemptInsight(db: Db, id: string, backfillRunId?: string) {
   const before = await loadBacktraceInput(db, id);
   if (!before) return;
+  const [terminal] = await db
+    .select()
+    .from(backtrace_work)
+    .where(
+      and(
+        eq(backtrace_work.attempt_event_id, id),
+        eq(backtrace_work.input_digest, before.digest),
+        eq(backtrace_work.state, 'failed'),
+      ),
+    )
+    .limit(1);
+  if (terminal) return;
   let active = await currentInsight(db, id);
   if (!active) {
     const result = await paid(db, id, 'AttemptInsightTask', before.digest, before.input);
