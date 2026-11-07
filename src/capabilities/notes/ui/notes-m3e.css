@@ -542,38 +542,6 @@
     }
   }
 
-  /* With no hover, or no room, the text takes the gutter's width. A section's collapse button
-     moves to the end of its heading; the per-block links go. */
-  @media (hover: none), (max-width: 880px) {
-    & .nt-body .nt-blk {
-      grid-template-columns: minmax(0, 1fr);
-    }
-
-    & .nt-body .nt-blk:not(.nt-blk-section) .nt-blk-gutter {
-      display: none;
-    }
-
-    & .nt-body .nt-blk-section {
-      position: relative;
-    }
-
-    & .nt-body .nt-blk-section .nt-blk-gutter {
-      position: absolute;
-      top: 0;
-      right: 0;
-      padding-top: 0;
-    }
-
-    & .nt-body .nt-blk-section .nt-blk-btn {
-      width: 32px;
-      height: 32px;
-    }
-
-    & .nt-body .nt-blk-section .nt-blk-h {
-      padding-inline-end: 36px;
-    }
-  }
-
   & .nt-quiet {
     padding: var(--un-sp-4) 0;
     color: var(--un-text-3);
@@ -1313,6 +1281,38 @@
     & .nt-blk-btn:hover {
       background: transparent;
       color: var(--un-text-4);
+    }
+  }
+
+  /* With no hover, or no room, the text takes the gutter's width. A section's collapse button
+     moves to the end of its heading; the per-block links go. */
+  @media (hover: none), (max-width: 880px) {
+    & .nt-body .nt-blk {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    & .nt-body .nt-blk:not(.nt-blk-section) .nt-blk-gutter {
+      display: none;
+    }
+
+    & .nt-body .nt-blk-section {
+      position: relative;
+    }
+
+    & .nt-body .nt-blk-section .nt-blk-gutter {
+      position: absolute;
+      top: 0;
+      right: 0;
+      padding-top: 0;
+    }
+
+    & .nt-body .nt-blk-section .nt-blk-btn {
+      width: 32px;
+      height: 32px;
+    }
+
+    & .nt-body .nt-blk-section .nt-blk-h {
+      padding-inline-end: 36px;
     }
   }
 }
