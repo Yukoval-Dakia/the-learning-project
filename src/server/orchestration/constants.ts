@@ -31,6 +31,13 @@ export const ORCHESTRATOR_CATCHUP_WINDOW_SECONDS = 5 * 60 * 60;
 export const TICK_INTERVAL_SECONDS = 60;
 
 /**
+ * Missing job row younger than this is the claimer's insert still in flight.
+ * A second replica must not re-send that id. Stays under the tick interval so
+ * the next tick still recovers a send that never landed.
+ */
+export const ORCHESTRATOR_SEND_IN_FLIGHT_MS = 15_000;
+
+/**
  * Node timeout. A node still enqueued/running after this fails, so hard downstreams
  * skip with a trace. It covers the full retry budget: (1 + JOB_RETRY_LIMIT) ×
  * EXPIRE_AGENT + backoff ≈ 6h. `enqueued_at` is written once at claim, so a shorter
