@@ -22,6 +22,7 @@ import {
 } from '@/kernel/events/derivation-policy';
 import { writeEvent } from '@/kernel/events/index';
 import type { EventSubscriptionDelivery, EventSubscriptionOutcome } from '@/kernel/manifest';
+import { admissionSourceEventIdSql } from '@/kernel/read-models/admission-source';
 import { getStartedBoss } from '@/server/boss/client';
 
 import { placementAuthority } from '../../../supply/public';
@@ -329,35 +330,59 @@ export async function enqueuePublishedQuestionAdmission(
       lifecycle.scoring_admission_generation,
     );
     // Exact immutable first-publication receipt only. Multiple receipts, no-op
-    // submissions and legacy unbound envelopes cannot supply a guessed source.
-    const receipts = await tx
-      .select()
+    // submissions and legacy unbound envelopes cannot supply a guessed source. The
+    // predicate is shared with the serving read model so both agree on "has a source".
+    const [binding] = await tx
+      .select({
+        id: admissionSourceEventIdSql({
+          publicationEventId: sql`${source.id}`,
+          publicationSessionId: sql`${source.session_id}`,
+          publicationCausedByEventId: sql`${source.caused_by_event_id}`,
+          publicationActorRef: sql`${source.actor_ref}`,
+          groupId: sql`${root.id}`,
+          revisionId: sql`${revision.revision_id}`,
+        }),
+      })
       .from(event)
-      .where(
-        and(
-          eq(event.action, 'experimental:question_draft_submit'),
-          eq(event.outcome, 'success'),
-          sql`${event.payload}->'receipt'->>'revision_id' = ${revision.revision_id}`,
-          sql`coalesce(${event.payload}->'receipt'->>'group_id', ${event.payload}->'receipt'->>'question_id') = ${root.id}`,
-          sql`${event.payload}->'receipt'->>'publish_status' = 'published'`,
-          sql`${event.payload}->'receipt'->>'status' IN ('admitted', 'withheld', 'pending')`,
-          sql`'submit_question:' || ${event.actor_ref} = ${source.actor_ref}`,
-        ),
-      )
-      .limit(2);
-    const usageSourceId =
-      source.session_id || source.caused_by_event_id
-        ? source.id
-        : receipts.length === 1
-          ? receipts[0].id
-          : null;
+      .where(eq(event.id, source.id))
+      .limit(1);
+    const usageSourceId = binding?.id ?? null;
     if (usageSourceId) {
       await lockEventDerivationSources(tx, usageSourceId);
       if (
         (await readEventDerivationPolicy(tx, usageSourceId)) !== 'allow' ||
         (await readEventDerivationPolicy(tx, source.id)) !== 'allow'
-      )
+      ) {
+        // No job will exist for this publication, so the serving read model needs a
+        // durable terminal fact here too (otherwise it stays "still checking" forever).
+        // Deterministic id keeps repeated publication notifications idempotent.
+        const now = new Date();
+        await writeEvent(tx, {
+          id: createHash('sha256')
+            .update(`question_admission_purpose_denied:enqueue:${source.id}`)
+            .digest('hex'),
+          session_id: null,
+          actor_kind: 'system',
+          actor_ref: 'practice:question_admission',
+          action: 'experimental:question_admission_purpose_denied',
+          subject_kind: 'question',
+          subject_id: root.id,
+          outcome: 'skipped',
+          payload: {
+            group_id: root.id,
+            revision_id: revision.revision_id,
+            revision_digest: revision.integrity_digest,
+            purpose_state: 'restricted',
+            source_event_id: source.id,
+          },
+          caused_by_event_id: null,
+          task_run_id: null,
+          cost_micro_usd: null,
+          ingest_at: now,
+          created_at: now,
+        });
         return { status: 'skipped', reason: 'original publication source purpose restricted' };
+      }
     }
     const enqueued = await boss.send(
       ADMISSION_FAMILY,
