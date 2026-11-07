@@ -1,3 +1,4 @@
+import { retryHistoryAnchor } from '../server/run-retry';
 // Copilot's single persistent execution owner (ADR-0062). HTTP admission commits
 // the input and queues its session head; this worker owns execution, Stop, native
 // session reuse and the live paid/tool loop. Closing a subscriber never cancels it.
@@ -420,7 +421,7 @@ async function executeAcceptedCopilotRun(
       ? { correctionTargetTurnId: data.correction_target_turn_id }
       : {}),
     now: new Date(),
-    historyAnchorEventId: runId,
+    historyAnchorEventId: await retryHistoryAnchor(db, runId),
   });
   const resumeSessionId = await selectResumableWorkerSession(db, data.session_id, answerOnly);
   let streamedProse = '';

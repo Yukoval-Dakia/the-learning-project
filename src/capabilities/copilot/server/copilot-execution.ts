@@ -67,6 +67,7 @@ import {
   prependCopilotPiFinalizationHooks,
 } from './reply-finalization';
 import { resolveCopilotReviewAnswer } from './review-answer-consumer';
+import { recordRetryToolEffect } from './run-retry';
 import { bindSubagentParentCancellation, handleNativeSubagentTaskEvent } from './subagent-mailbox';
 import {
   type CopilotSubtaskEvent,
@@ -338,7 +339,10 @@ export function createCopilotExecutionOwner(
         finalizer.beforeDomainTool(tool) ??
         proposalFlowGate.beforeExecute(tool) ??
         budgetTracker.beforeExecute(tool),
-      onExecuteStart: (tool) => policy.cancellation.onToolExecutionStarted(tool),
+      onExecuteStart: async (tool) => {
+        if (turn.sourceEventId) await recordRetryToolEffect(db, turn.sourceEventId, tool.effect);
+        policy.cancellation.onToolExecutionStarted(tool);
+      },
       onExecuteSettled: () => policy.cancellation.onToolExecutionSettled(),
       interceptInput: (tool, args) => {
         const { args: capped, contextBudget, softStop } = budgetTracker.capInput(tool.name, args);

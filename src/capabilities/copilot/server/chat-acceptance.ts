@@ -127,7 +127,11 @@ async function dispatchAcceptedRun(
           business_table: COPILOT_RUN_TABLE,
           business_id: acceptance.runId,
           event_type: COPILOT_RUN_EVENTS.FAILED,
-          payload: { reason: 'enqueue_failed', checkpoint_event_id: acceptance.runId },
+          payload: {
+            retryable: false,
+            reason: 'enqueue_failed',
+            checkpoint_event_id: acceptance.runId,
+          },
         });
         await writeCopilotReply(tx, {
           sessionId: acceptance.sessionId,
