@@ -354,10 +354,11 @@ export async function runBankSemanticSearch(
       halted = true;
       stop = 'verification_budget';
     }
-    const target = input.need?.count ?? input.page_size;
+    // Pagination does not authorize verifying an entire page.
+    const target = input.need?.count ?? 1;
     if (!halted && matched >= target) {
       halted = true;
-      stop = 'need_met';
+      stop = input.need ? 'need_met' : 'verification_budget';
     }
     if (halted) {
       for (; index < frozen.length; index++)
