@@ -19,6 +19,7 @@ import {
   ScoringBasis,
   declaredShapeSupport,
 } from '@/core/schema/assessment';
+import { CURRENT_NUMERIC_NORMALIZATION_VERSION } from '@/core/schema/assessment/answer-compare';
 import type { BlankNormalizationT } from '@/core/schema/assessment/scoring';
 import { deterministicDisplayOrder } from '@/core/schema/display-order';
 import type {
@@ -252,7 +253,7 @@ function criterionFor(
         kind: 'blank_key',
         key: {
           kind: 'numeric',
-          normalization_version: key.normalization_version ?? 'numeric-norm@2',
+          normalization_version: key.normalization_version ?? CURRENT_NUMERIC_NORMALIZATION_VERSION,
           expected: key.value,
           tolerance: key.tolerance ?? { kind: 'absolute', value: 0 },
           ...(key.unit != null ? { expected_unit: key.unit } : {}),

@@ -101,7 +101,8 @@ ${noteTemplateTable(profile)}
 - 正文写给人读的段落和列表，不嵌 HTML，不用代码围栏包住整篇
 - ${profile.promptFragments.noteExamplePolicy}
 - ${profile.grounding.uncertaintyPolicy}
-- 禁止：套话、营销话语、emoji / 颜文字`;
+- 正文结尾停在最后一个知识点上，不写收尾套话：不要「以上就是这篇/本篇笔记」「希望对你有帮助/有用」「如有问题/疑问」「欢迎继续提问」「祝你学习」「祝学习进步」之类的客气话或邀请提问
+- 禁止：营销话语、emoji / 颜文字`;
 }
 
 function artifactTypeFromGenerateInput(input: unknown): string | undefined {

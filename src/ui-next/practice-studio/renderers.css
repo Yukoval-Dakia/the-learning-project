@@ -138,19 +138,6 @@
   font-size: 13px;
   margin-top: 8px;
 }
-[data-ui-next] .un-st-page .un-ps-history {
-  margin-top: 32px;
-  padding: 0 4px;
-  background: transparent;
-  border: 0;
-}
-[data-ui-next] .un-st-page .un-ps-history h3 {
-  font-family: var(--un-font-sans);
-  font-size: 16px;
-}
-[data-ui-next] .un-st-page .un-ps-history li {
-  min-height: 44px;
-}
 [data-ui-next] .un-st-supplement details {
   margin-top: 12px;
 }
