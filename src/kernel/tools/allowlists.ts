@@ -53,6 +53,9 @@ export const READ_TOOLS = [
   // `ingestion` surface below (same containment as the draft-structure reader).
   'read_source',
   'view_image',
+  // 科目经验文档库（subject_doc）：目录/正文/搜索三合一。设计读权限默认放开，
+  // 授权面在下方各 surface 逐个声明；job 侧挂载走显式 toolNames 不经 surface。
+  'read_subject_doc',
 ] as const;
 
 export const PROPOSE_WRITE_TOOLS = [
@@ -265,6 +268,9 @@ export const COPILOT_TOOLS = [
   'edit_question',
   'read_agent_notes',
   'write_agent_note',
+  // 科目经验文档库：教学/笔记/出题规范与范例按 doc_key 按需读；copilot 是
+  // 设计定的共享消费面之一。
+  'read_subject_doc',
   // YUK-1407 — 判分纠错提案（对话中发现疑似误判时可落地；accept 仍人审）。
   'propose_grading_correction',
   // YUK-1548 — generative-UI blocks (diagram/figure in slice 1).
@@ -393,6 +399,7 @@ export const QUESTION_PREPARER_TOOLS = [
   'scan_coverage_gaps',
   'web_fetch_candidates',
   'jyeoo_fetch_candidates',
+  'read_subject_doc',
   'edit_question',
   'compose_presentation',
   'compose_block',

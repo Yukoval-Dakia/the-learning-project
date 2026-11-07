@@ -658,4 +658,12 @@ export const observabilityCapability = defineCapability({
   // lattice.md §6 决策记录（loom app.jsx 的「separate shell」原型已被 SPA 单一 RootShell 取代，
   // owner 已收编）。
   ui: { pages: uiPagesFor('observability') },
+  copilotTools: {
+    tools: [
+      {
+        name: 'read_subject_doc',
+        load: () => import('./server/tools/read-subject-doc').then((m) => m.readSubjectDocTool),
+      },
+    ],
+  },
 });

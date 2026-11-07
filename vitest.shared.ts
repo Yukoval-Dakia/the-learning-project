@@ -152,6 +152,7 @@ export const dbTestInclude = [
   'src/capabilities/observability/api/admin-config-write.db.test.ts',
   'src/capabilities/observability/api/admin-config.db.test.ts',
   'src/capabilities/observability/api/restore_column_allowlist.db.test.ts',
+  'src/capabilities/observability/server/builtin-doc-reconcile.db.test.ts',
   'src/capabilities/observability/server/builtin-trait-reconcile.db.test.ts',
   'src/capabilities/observability/server/subject-control-operations.db.test.ts',
   'src/capabilities/observability/server/subject-control-write.db.test.ts',

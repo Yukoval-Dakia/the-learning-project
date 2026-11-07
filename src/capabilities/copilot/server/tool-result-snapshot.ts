@@ -42,6 +42,8 @@ const POLICIES: Record<string, ResultPolicy> = {
   file_bank_gap: ['demand_id', 'status', 'deduplicated', 'reason'],
   // YUK-1986 — 快照只留「这次记受助给答了」这个事实；参考解走模型正文给，不进公共投影。
   reveal_answer: ['status', 'issuance_id', 'question_id'],
+  // 科目经验文档读取本身就是学习者可读的教学资料（规范/范例），整体当 reader 证据。
+  read_subject_doc: 'reader',
   get_record_context: 'record',
   get_review_due: 'review',
   query_events: 'events',

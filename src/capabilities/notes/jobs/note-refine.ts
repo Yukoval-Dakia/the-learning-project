@@ -6,7 +6,7 @@
 import { createId } from '@paralleldrive/cuid2';
 import { eq, inArray } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
-
+import { type BuildMcpServerOptions, piDomainMount } from '@/ai/pi-tool-mount';
 import { enqueueOrApplyNoteRefinePatch } from '@/capabilities/notes/server/artifacts/editing-session';
 import { bodyBlocksToBlockSummaries } from '@/capabilities/notes/server/body-blocks';
 import { recordMasteryRefineEffectResult } from '@/capabilities/notes/server/mastery-refine-effect';
@@ -28,9 +28,10 @@ import { type NotePatchT, summarizeNotePatch } from '@/core/schema/note-patch';
 import type { Db } from '@/db/client';
 import { artifact, knowledge } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { subjectDocCatalogPiSkillDoc } from '@/kernel/read-models/subject-docs';
+import { DOMAIN_TOOL_MCP_SERVER_NAME, toMcpAllowedToolName } from '@/kernel/tools/allowlists';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
-import { resolveNoteSkillDoc } from '@/subjects/note-skills';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
 export { type ParsedNoteRefineOutput, parseNoteRefineOutput };
@@ -166,7 +167,21 @@ export async function runNoteRefine(params: RunNoteRefineParams): Promise<RunNot
   const subjectProfile = resolveSubjectProfile(kNode?.domain);
   const taskResult = await runTaskFn('NoteRefineTask', input, {
     subjectProfile,
-    piSkillDocs: await resolveNoteSkillDoc(subjectProfile.id),
+    // 启动带文档目录；笔记规范正文由模型用 read_subject_doc 按需读。
+    piSkillDocs: await subjectDocCatalogPiSkillDoc(db, subjectProfile.id),
+    piToolMounts: [
+      piDomainMount({
+        ctx: {
+          db,
+          taskRunId: `note_refine_tool_${createId()}`,
+          callerActor: { kind: 'agent', ref: 'note_refine' },
+        },
+        serverName: DOMAIN_TOOL_MCP_SERVER_NAME,
+        toolNames: ['read_subject_doc'],
+        taskKind: 'NoteRefineTask',
+      } satisfies BuildMcpServerOptions),
+    ],
+    allowedTools: [toMcpAllowedToolName('read_subject_doc')],
   });
   const { patch: modelPatch } = parseNoteRefineOutput(taskResult.text);
 

@@ -22,6 +22,7 @@ import type { Db, Tx } from '@/db/client';
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
 import { type TaskTextRunFn, sumAllKnownCostUsd } from '@/server/ai/provenance';
 import type { Provider } from '@/server/ai/providers';
+import type { RunTaskCallCtx } from '@/server/ai/runner-fn';
 import type { SubjectProfile } from '@/subjects/profile';
 
 // admission lane 经本模块复导出 Provider；TaskTextResult 直接取共享结果契约。
@@ -191,6 +192,8 @@ export async function runQuestionContentValidation(
     subjectProfile: SubjectProfile;
     db?: Db;
     piSkillDocs?: readonly { name: string; body: string }[];
+    piToolMounts?: RunTaskCallCtx['piToolMounts'];
+    allowedTools?: RunTaskCallCtx['allowedTools'];
     afterTaskRun?: (result: TaskTextResult) => Promise<void>;
   },
 ): Promise<QuestionContentValidationRun> {
@@ -198,6 +201,8 @@ export async function runQuestionContentValidation(
     ...(options.db ? { db: options.db } : {}),
     subjectProfile: options.subjectProfile,
     ...(options.piSkillDocs ? { piSkillDocs: options.piSkillDocs } : {}),
+    ...(options.piToolMounts ? { piToolMounts: options.piToolMounts } : {}),
+    ...(options.allowedTools ? { allowedTools: options.allowedTools } : {}),
   });
   await options.afterTaskRun?.(taskResult);
   const parsed = parseQuestionContentValidationOutput(taskResult, {

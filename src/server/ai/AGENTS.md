@@ -40,10 +40,10 @@
   thinking/tool-stream compat；输入模态与 toolCalling 取运行时 models.dev，不能从 SDK 快照或模型名推断。
   Claude 订阅只改变认证，复用原生 anthropic 的目录/协议/compat。
   原始 CoT 不持久化；每次 lifecycle attempt 独占 terminal evidence collector。
-- skill 注入面（YUK-1022/P4）：pi 无文件系统 skill loader——调用方把 SKILL.md
-  正文（`resolveCopilotSkillDocs`/`resolveNoteSkillDocs`/`resolveQuizGenSkillDocs`，
-  命名空间名 `<subjectDir>--<pack>`）经 `piSkillDocs` 注入 system prompt；缺包时
-  传 undefined，never throws。
+- skill 注入面（YUK-1022/P4）：pi 无文件系统 skill loader——Copilot 仍由
+  `resolveCopilotSkillDocs` 读 `_shared` SKILL.md 正文经 `piSkillDocs` 注入
+  system prompt；学科文档已入库（`subject_doc`），任务启动只注入
+  `subjectDocCatalogPiSkillDoc` 目录、正文由 `read_subject_doc` 按需读。
 - Read tool 返回语义化上下文（graph path / relation meaning / recent failure evidence）。
 - 工具参数契约：string→JSON 修复只采纳严格解析且通过子 schema 的结果。structured-submit 的坏 JSON、漏提交、形状拒绝交给同 run 提交循环；同错误且输出 hash 重复立即终态，同错误但输出变化累计三次终态，墙钟余量与任务财务上限也收口。非 structured 的 root 与嵌套 loop 保留一次共享 contract correction。采纳修复记录 `tool_args_coerced`（仅 tool/path/length）；拒绝记录 `tool_args_contract_failed` 与递归脱敏后 ≤4KiB 参数，`args_source` 区分流式原文与解析重建。bridge-owned 工具先 execute 再拒绝，契约证据不能排在 executed-call 返回之后。
 - Proposal tool 写 `event(action='propose')`；action/write tool 只包装已有 owner service（AttributionTask / VariantGenTask），不能让 LLM 传任意 mutation payload。

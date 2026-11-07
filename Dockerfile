@@ -116,9 +116,10 @@ RUN mkdir -p /var/lib/mem0 && chown node:node /var/lib/mem0
 FROM runtime-os AS runner
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/drizzle ./drizzle
-# Agent Skill assets — the pi skill-doc resolvers read
-# src/subjects/<id>/skills/ at runtime via readFile/readdirSync (not imported),
-# so a missing COPY is a silent prod degradation (resolver falls back to prose).
+# Agent Skill assets — _shared packs are still runtime-injected for Copilot via
+# readFile/readdirSync (not imported); per-subject packs are the builtin seed
+# sources the migrate container reads into subject_doc. A missing COPY is a
+# silent prod degradation (copilot falls back to prose / docs never seeded).
 # Coverage is asserted by src/subjects/skills-image-coverage.test.ts (YUK-610).
 COPY --from=builder /app/src/subjects/math/skills ./src/subjects/math/skills
 COPY --from=builder /app/src/subjects/yuwen/skills ./src/subjects/yuwen/skills
