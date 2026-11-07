@@ -104,6 +104,35 @@ const ProposalBlockPreviewResponseSchema = z.object({
   options: z.array(ProposalBlockOptionPreviewResponseSchema),
 });
 
+const ProposalKnowledgeNodeLabelResponseSchema = z.object({
+  // null = the node row is gone (or learner-hidden); an id is never substituted.
+  label: z.string().nullable(),
+  state: z.enum(['live', 'archived', 'merged', 'missing']),
+});
+
+const ProposalKnowledgeMutationResponseSchema = z.discriminatedUnion('mutation', [
+  z.object({
+    mutation: z.literal('merge'),
+    from: z.array(ProposalKnowledgeNodeLabelResponseSchema),
+    into: ProposalKnowledgeNodeLabelResponseSchema,
+  }),
+  z.object({
+    mutation: z.literal('reparent'),
+    node: ProposalKnowledgeNodeLabelResponseSchema,
+    parent: ProposalKnowledgeNodeLabelResponseSchema.nullable(),
+  }),
+  z.object({
+    mutation: z.literal('split'),
+    from: ProposalKnowledgeNodeLabelResponseSchema,
+    into: z.array(
+      z.object({
+        name: z.string(),
+        parent: ProposalKnowledgeNodeLabelResponseSchema.nullable(),
+      }),
+    ),
+  }),
+]);
+
 const ProposalPresentationResponseSchema = z.object({
   title: z.string(),
   // Always present on the wire: new proposals use the validated learner summary,
@@ -112,6 +141,9 @@ const ProposalPresentationResponseSchema = z.object({
   change_summary: z.array(z.object({ label: z.string(), value: z.string() })),
   evidence_labels: z.record(z.string(), z.string()),
   knowledge_edge: z.object({ from_label: z.string(), to_label: z.string() }).optional(),
+  // Read-time names of the nodes a knowledge_mutation acts on; the stored payload
+  // keeps its ids only.
+  knowledge_mutation: ProposalKnowledgeMutationResponseSchema.optional(),
   block_merge: z
     .object({
       primary: ProposalBlockPreviewResponseSchema.nullable(),
