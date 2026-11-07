@@ -124,7 +124,7 @@ export function blockMergeAdmissionInputFromPayload(
 // Question-number parsing (deterministic, stored-structure only)
 // ---------------------------------------------------------------------------
 
-type ParsedQuestionNo =
+export type ParsedQuestionNo =
   | { kind: 'top'; value: number; style: 'digits' | 'cn' | 'prefixed' }
   | { kind: 'sub'; value: number; style: 'paren' | 'suffix' | 'circled' | 'letter' }
   | { kind: 'unknown' };
@@ -205,17 +205,56 @@ export function parseQuestionNo(raw: string | null | undefined): ParsedQuestionN
   return { kind: 'unknown' };
 }
 
+/**
+ * A printed question-number head: 第N题 / N. / （N）/ N). The dotted form
+ * requires a digit NOT to follow the punctuation — `0.75`, `3.14×2`, `12.5 米`
+ * are decimals inside the stem, not numbers, in both ASCII and full-width
+ * digits. The dotted form also requires non-space content after it.
+ */
+const PROMPT_HEAD_QUESTION_NO_RE =
+  /^\s*(?:第\s*(?:\d+|[零一二三四五六七八九十百两]+)\s*题|\d{1,3}\s*[.、．](?![0-9０-９])(?=\s*\S)|[（(]\s*\d{1,3}\s*[)）]|\d{1,3}\s*[)）])/u;
+
+/**
+ * Another paren-family number token later in the stem, anchored on a
+ * separator (sentence punctuation / whitespace / start) so function-style
+ * `f(2)` or prose references like 「由（2）式」 do not count — a head paren
+ * number followed by one is an inline enumeration like 「（1）…；（2）…」.
+ */
+const INLINE_ENUM_NEXT_NO_RE =
+  /(?:^|[\s；;，,、。:：])(?:[（(]\s*\d{1,3}\s*[)）]|\d{1,3}\s*[)）])/u;
+
+export type PromptHeadQuestionNoMatch = {
+  /**
+   * The parsed head number; `{ kind: 'unknown' }` when a paren-family head is
+   * really an inline enumeration like 「（1）…（2）…」 — not a movable own
+   * number and not proof of its absence, so both callers stay conservative.
+   */
+  parsed: ParsedQuestionNo;
+  /** Characters consumed by the head token, leading whitespace included. */
+  matchLength: number;
+};
+
+/**
+ * The single parser for a printed question number leading prompt text, shared
+ * by the structure move (which relocates it into question_no) and merge
+ * admission (which reads it as the block's own number).
+ */
+export function matchPromptHeadQuestionNo(
+  promptText: string | null | undefined,
+): PromptHeadQuestionNoMatch | null {
+  const m = PROMPT_HEAD_QUESTION_NO_RE.exec(promptText ?? '');
+  if (!m) return null;
+  const head = m[0];
+  const rest = (promptText ?? '').slice(head.length);
+  if (/[)）]\s*$/u.test(head) && INLINE_ENUM_NEXT_NO_RE.test(rest)) {
+    return { parsed: { kind: 'unknown' }, matchLength: head.length };
+  }
+  return { parsed: parseQuestionNo(head) ?? { kind: 'unknown' }, matchLength: head.length };
+}
+
 /** A visible question number leading the prompt text (question_no absent). */
 function promptHeadQuestionNo(promptText: string | undefined): ParsedQuestionNo | null {
-  const head = promptText?.slice(0, 24);
-  if (!head) return null;
-  let m = /^\s*(第\s*\d+\s*题|第\s*[零一二三四五六七八九十百两]+\s*题)/u.exec(head);
-  if (m) return parseQuestionNo(m[1]);
-  m = /^\s*(\d{1,3})\s*[.、．]\s*\S/u.exec(head);
-  if (m) return parseQuestionNo(m[1]);
-  m = /^\s*([（(]\s*\d{1,3}\s*[)）])/u.exec(head) ?? /^\s*(\d{1,3}[)）])/u.exec(head);
-  if (m) return parseQuestionNo(m[1]);
-  return null;
+  return matchPromptHeadQuestionNo(promptText)?.parsed ?? null;
 }
 
 // ---------------------------------------------------------------------------

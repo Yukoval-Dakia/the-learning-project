@@ -23,7 +23,10 @@ import {
   structuredToPromptMarkdown,
 } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
-import { parseQuestionNo } from '@/kernel/proposals/block-merge-admission';
+import {
+  matchPromptHeadQuestionNo,
+  parseQuestionNo,
+} from '@/kernel/proposals/block-merge-admission';
 import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
 import { redactIngestionText } from './privacy-guard';
 import type { LayoutQuality } from './tencent_mark_parser';
@@ -117,9 +120,10 @@ function canonicalizeExplicitMathDelimiters(text: string): string {
 // Moving them into their own fields preserves the printed numbering and keeps
 // section text out of the stem. Only a strictly-shaped leading token moves —
 // anything ambiguous stays in prompt_text, and a head number conflicting with
-// the node's own question_no stays (it may be genuine content).
-const PROMPT_HEAD_NUMBER_RE =
-  /^\s*(?:第\s*(\d{1,3})\s*题|(\d{1,3})\s*[.、．]|[（(]\s*(\d{1,3})\s*[)）]|(\d{1,3})\s*[)）])/u;
+// the node's own question_no stays (it may be genuine content). The head shape
+// itself is matchPromptHeadQuestionNo's — the same parser merge admission uses
+// — so a decimal like `0.75` or an inline 「（1）（2）」 enumeration never
+// moves.
 
 // A leading line that is nothing but a Chinese-ordinal section header, e.g.
 // 「一、选择题」. Requires the line to end (newline or string end) right after
@@ -151,14 +155,14 @@ function nodeToStructured(
     promptText = promptText.slice(sectionMatch[0].length);
   }
 
-  const numberMatch = PROMPT_HEAD_NUMBER_RE.exec(promptText);
-  if (numberMatch) {
-    const headDigits = numberMatch[1] ?? numberMatch[2] ?? numberMatch[3] ?? numberMatch[4];
-    const rest = promptText.slice(numberMatch[0].length).replace(/^[ \t]+/, '');
+  const numberMatch = matchPromptHeadQuestionNo(promptText);
+  if (numberMatch && numberMatch.parsed.kind !== 'unknown') {
+    const headNo = numberMatch.parsed.value;
+    const rest = promptText.slice(numberMatch.matchLength).replace(/^[ \t]+/, '');
     const own = questionNo === undefined ? null : parseQuestionNo(questionNo);
-    const sameNumber = own !== null && own.kind !== 'unknown' && own.value === Number(headDigits);
+    const sameNumber = own !== null && own.kind !== 'unknown' && own.value === headNo;
     if (rest.trim().length > 0 && (own === null || sameNumber)) {
-      questionNo = questionNo ?? headDigits;
+      questionNo = questionNo ?? String(headNo);
       promptText = rest;
     }
   }

@@ -75,6 +75,36 @@ describe('runStructureTask prompt normalization', () => {
     expect(result.questions[1].prompt_text).toBe('证明恒等式。');
   });
 
+  // @invariant data: a leading decimal or inline enumeration is stem text, never a number; a real printed number still moves
+  // @fails-if the shared head parser strips a decimal/enumeration-leading stem or stops moving a true printed number
+  it('keeps decimal- and enumeration-leading stems intact while a real number still moves', async () => {
+    const cases = [
+      { in: '0.75 化成分数是____', no: null, out: '0.75 化成分数是____' },
+      { in: '3.14×2 等于多少？', no: null, out: '3.14×2 等于多少？' },
+      {
+        in: '12.5 米的绳子剪去 3 米，还剩多少米？',
+        no: null,
+        out: '12.5 米的绳子剪去 3 米，还剩多少米？',
+      },
+      {
+        in: '（1）求 x 的值；（2）求 y 的值',
+        no: null,
+        out: '（1）求 x 的值；（2）求 y 的值',
+      },
+      { in: '3. 计算下列各式。', no: '3', out: '计算下列各式。' },
+    ];
+    for (const row of cases) {
+      const result = await runStructureTask({
+        pageImages,
+        tencentHintMd: '',
+        pageCount: 1,
+        runTaskFn: fakeRunTask(baseOutput([{ role: 'standalone', prompt_text: row.in }])),
+      });
+      expect(result.questions[0].question_no ?? null).toBe(row.no);
+      expect(result.questions[0].prompt_text).toBe(row.out);
+    }
+  });
+
   // @invariant data: ambiguous leading text must stay in the stem rather than be silently dropped
   // @fails-if normalization strips a head that is not provably a number or section header
   it('keeps an ambiguous head inside prompt_text (conservative direction)', async () => {

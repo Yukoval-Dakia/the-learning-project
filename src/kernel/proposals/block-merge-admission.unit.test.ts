@@ -406,6 +406,46 @@ describe('evaluateBlockMergeAdmission', () => {
     expectIneligible([primary, member], [member.id], 'conflicting_question_number');
   });
 
+  // @invariant data: a decimal-leading fragment carries no own number, an inline enumeration fails closed, a real printed head still vetoes
+  // @fails-if the shared head parser re-arms the decimal veto or admits a 「（1）（2）」 enumeration as a proven number
+  it('treats decimal heads as numberless but fails closed on inline enumerations', () => {
+    const rows = [
+      { in: '3.14×2 等于多少？', eligible: true, reason: undefined },
+      { in: '0.75 化成分数是____', eligible: true, reason: undefined },
+      {
+        in: '（1）求 x 的值；（2）求 y 的值',
+        eligible: false,
+        reason: 'missing_continuity' as const,
+      },
+      {
+        in: '3. 计算下列各式。',
+        eligible: false,
+        reason: 'conflicting_question_number' as const,
+      },
+    ];
+    for (const row of rows) {
+      const primary = facts({
+        id: 'p',
+        ordinal: 0,
+        page_spans: [{ page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 } }],
+        source_asset_ids: ['asset-1'],
+      });
+      const member = facts({
+        id: 'm',
+        ordinal: 1,
+        page_spans: [{ page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 } }],
+        source_asset_ids: ['asset-1'],
+        structured: { id: 'nm', role: 'standalone', prompt_text: row.in },
+      });
+      const verdict = evaluateBlockMergeAdmission(
+        { primaryBlockId: 'p', mergeBlockIds: [member.id], ingestionSessionId: SESSION },
+        ctxFor([primary, member]),
+      );
+      expect(verdict.eligible).toBe(row.eligible);
+      expect(verdict.reason).toBe(row.reason);
+    }
+  });
+
   it('rejects a stem fragment starting a fresh sub sequence (new question)', () => {
     const primary = facts({
       id: 'p',
