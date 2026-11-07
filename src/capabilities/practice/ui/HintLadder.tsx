@@ -72,18 +72,19 @@ export function HintLadder({
   // owner 点了「我自己来」—— 控制权回到作答。
   const [returned, setReturned] = useState(false);
 
-  // YUK-1051 — 注入 requestFullSolution 时完整解按需取：可用性由 seam 决定（null=不可用），
-  // 确认门照常；未注入退回 question.reference_md（现状）。
+  // YUK-1051 — 注入 requestFullSolution 时完整解按需取：可用性由 seam 决定（null=不可用）；
+  // 未注入退回 question.reference_md（现状）。
   const fullAvailable = requestFullSolution ? true : isFullSolutionAvailable(question.reference_md);
   const fullBody = requestFullSolution ? fetchedFull : (question.reference_md ?? null);
   const next = nextHintStage(reached);
 
   // 取某一 hint 阶（H0-H4）。session 懒建；空 text_md 视作该阶生成缺失（可重试，非静默 exhaust）。
   const advance = async (targetIdx: number) => {
-    if (loading) return;
+    if (loading || fetchingFull) return;
     setLoading(true);
     setFailAt(-1);
     setUnavailable(null);
+    setFullError(null);
     try {
       let sid = sessionId;
       if (!sid) {
@@ -129,7 +130,7 @@ export function HintLadder({
 
   // reveal 完整解：一步到 H5，跳过中间阶。
   // YUK-1051 — 注入 requestFullSolution 时按需拉取（显式揭示授权后才取），
-  // 拉取失败不假装揭示（停确认门，可重试）；未注入则退回 question.reference_md。
+  // 拉取失败不假装揭示（可重试）；未注入则退回 question.reference_md。
   const revealFull = async () => {
     if (requestFullSolution && fetchedFull === null) {
       if (fetchingFull) return;
@@ -176,6 +177,7 @@ export function HintLadder({
 
   const atFull = revealedFull;
   const pick = (stage: HintStage, index: number) => {
+    if (loading || fetchingFull) return;
     if (stage.isFull) void revealFull();
     else if (!hints[index]) void advance(index);
   };
@@ -193,7 +195,8 @@ export function HintLadder({
         </div>
         <div className="un-hl-stops">
           {HINT_LADDER.map((s, i) => {
-            const isReached = atFull ? true : i <= reached;
+            // Only what was really looked at reads as seen: stops jumped over stay empty.
+            const isReached = s.isFull ? atFull : !!hints[i];
             const isCurrent = atFull ? s.isFull : i === reached;
             const cls = [
               'un-hl-stop',
@@ -211,7 +214,8 @@ export function HintLadder({
                 title={`${s.label} — ${s.gives}`}
                 aria-label={`第 ${i + 1} 个提示（${s.label}）：${s.gives}`}
                 aria-current={isCurrent ? 'step' : undefined}
-                disabled={loading || fetchingFull || (s.isFull && !fullAvailable)}
+                aria-disabled={loading || fetchingFull || undefined}
+                disabled={atFull || (s.isFull && !fullAvailable)}
                 onClick={() => pick(s, i)}
               >
                 <span className="un-hl-dot" />
@@ -261,7 +265,7 @@ export function HintLadder({
         </p>
       )}
       {loading && (
-        <div className="un-hl-loading">
+        <div className="un-hl-loading" role="status">
           <span className="un-hl-spin" />
           正在想下一个提示…
         </div>
@@ -345,6 +349,7 @@ export function HintLadder({
               <button
                 type="button"
                 className="un-hl-advance un-hit"
+                disabled={fetchingFull}
                 onClick={() => void advance(reached + 1)}
               >
                 <ChevronDown size={18} aria-hidden="true" />

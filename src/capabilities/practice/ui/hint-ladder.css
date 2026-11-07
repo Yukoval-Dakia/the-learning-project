@@ -11,7 +11,7 @@
   color: var(--un-md-sys-color-on-surface);
 }
 
-/* ── Autonomy rail: six stops H0…H5, position only (never clickable) ── */
+/* ── The rail: six stops H0…H5, each one picks that hint ── */
 [data-ui-next] .un-hl-rail {
   margin-bottom: 16px;
 }
@@ -54,10 +54,13 @@
   align-items: center;
   gap: 6px;
   min-width: 0;
+  padding: 0;
   cursor: pointer;
 }
-[data-ui-next] .un-hl-stop:disabled {
+[data-ui-next] .un-hl-stop:is(:disabled, [aria-disabled="true"]) {
   cursor: default;
+}
+[data-ui-next] .un-hl-stop.is-full:disabled:not(.reached) {
   opacity: 0.6;
 }
 [data-ui-next] .un-hl-stop:focus-visible {
@@ -111,7 +114,7 @@
   background: var(--un-caution);
   box-shadow: 0 0 0 4px var(--un-caution-soft);
 }
-[data-ui-next] .un-hl-stop:hover:not(:disabled) .un-hl-dot {
+[data-ui-next] .un-hl-stop:hover:not(:disabled, [aria-disabled="true"]) .un-hl-dot {
   border-color: var(--un-md-sys-color-primary);
 }
 [data-ui-next] .un-hl-stop-l {
