@@ -23,15 +23,39 @@ const PROMPT_SNIPPET_MAX = MISTAKE_PROMPT_SNIPPET_MAX;
 const InputSchema = z.object({
   filter: z
     .object({
-      causeCategoryId: z.string().optional(),
-      knowledgeId: z.string().optional(),
-      dueWithinDays: z.number().int().nonnegative().max(90).optional(),
-      sinceDays: z.number().int().positive().max(180).optional(),
-      limit: z.number().int().min(1).max(50).optional(),
+      causeCategoryId: z
+        .string()
+        .optional()
+        .describe('Only mistakes whose effective cause (user > agent) matches.'),
+      knowledgeId: z
+        .string()
+        .optional()
+        .describe('Only mistakes whose attempt event referenced this knowledge node.'),
+      dueWithinDays: z
+        .number()
+        .int()
+        .nonnegative()
+        .max(90)
+        .optional()
+        .describe('Only mistakes whose FSRS card is due within N days.'),
+      sinceDays: z
+        .number()
+        .int()
+        .positive()
+        .max(180)
+        .optional()
+        .describe('Only attempts created within the last N days.'),
+      limit: z.number().int().min(1).max(50).optional().describe('Default 20.'),
     })
     .optional(),
-  includeVariants: z.boolean().optional(),
-  includeAttribution: z.boolean().optional(),
+  includeVariants: z
+    .boolean()
+    .optional()
+    .describe('true also lists mistake_variant rows per question.'),
+  includeAttribution: z
+    .boolean()
+    .optional()
+    .describe('false skips cause-policy resolution (cheaper; aggregates.by_cause absent).'),
 });
 
 const CauseSchema = z.object({
@@ -123,31 +147,14 @@ type Input = z.infer<typeof InputSchema>;
 type Output = z.infer<typeof OutputSchema>;
 
 const DESCRIPTION = [
-  'Read recent failure attempts (mistakes) with optional cause / review-state / variant joins.',
-  'Use this instead of scanning the event table when the user asks "what am I getting wrong" or',
-  'when Dreaming / Coach orchestrators need a ranked candidate list.',
-  '',
-  'Filters compose AND-style:',
-  '- filter.causeCategoryId: keep only mistakes whose effective cause (user > agent) matches.',
-  '- filter.knowledgeId: keep only mistakes whose attempt event referenced this knowledge node.',
-  '- filter.dueWithinDays: keep only mistakes whose FSRS card is due within N days (≤90).',
-  '- filter.sinceDays: only consider attempts created within the last N days (≤180).',
-  '- filter.limit: 1–50, default 20.',
-  '',
-  'Set includeVariants=true to also list mistake_variant rows per question.',
-  'Set includeAttribution=false to skip the cause-policy resolution (cheaper).',
-  'A zero-row result only describes matching failure-attempt rows. It cannot prove a current queue',
-  'or entity failed-status count of zero, and cannot override get_review_due.queue_assertion nulls.',
-  '',
-  'aggregates.by_cause and aggregates.by_knowledge are ChartBlock series over the returned rows:',
-  'x is the human cause label / knowledge-point name, y is the number of failed attempts.',
-  '`counted` is how many attempts the series cover; `truncated` means more matching attempts exist',
-  'beyond the returned limit, so the series describe a recent window, not the whole history.',
-  'These are wrong-answer counts, never the due-review queue size.',
-  'by_cause is absent when includeAttribution=false (no cause was loaded).',
-  'Bind a chart to them with data_source.path=/aggregates/by_cause or /aggregates/by_knowledge.',
-  'chart_bindings lists the paths this result declares as chart-bindable.',
-  'chart_caption is the coverage line the server puts under a bound chart, replacing any caption you wrote.',
+  'Read recent failure attempts (mistakes) with optional cause / review-state / variant joins —',
+  'use this instead of scanning the event table. Filters compose AND-style. A zero-row result',
+  'describes only matching failure-attempt rows: it cannot prove a queue or entity failed-count',
+  'of zero or override get_review_due.queue_assertion nulls. aggregates.* are wrong-answer-count',
+  'ChartBlock series over the returned window (truncated = partial), never the due queue size;',
+  'by_cause is absent when includeAttribution=false. Bind a chart via data_source.path=',
+  '/aggregates/by_cause or /aggregates/by_knowledge (chart_bindings lists declared paths);',
+  'chart_caption is the server coverage line and replaces any caption you wrote.',
 ].join('\n');
 
 async function loadQuestionPrompts(db: Db, questionIds: string[]): Promise<Map<string, string>> {

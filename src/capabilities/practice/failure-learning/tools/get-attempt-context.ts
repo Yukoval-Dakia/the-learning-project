@@ -42,9 +42,21 @@ import { TOOL_COURTESY_DEFAULTS } from '@/kernel/tools/budgets';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 
 const InputSchema = z.object({
-  attemptEventId: z.string().min(1),
-  timelineLimit: z.number().int().positive().max(50).optional(),
-  causalLimit: z.number().int().positive().max(50).optional(),
+  attemptEventId: z.string().min(1).describe('Exact event id to fetch evidence for.'),
+  timelineLimit: z
+    .number()
+    .int()
+    .positive()
+    .max(50)
+    .optional()
+    .describe('Same-question history page size; context only, not causality.'),
+  causalLimit: z
+    .number()
+    .int()
+    .positive()
+    .max(50)
+    .optional()
+    .describe('Direct-children page size for causal_neighborhood.'),
 });
 
 const LegacyFsrsStateEvidenceSchema = z.object({
@@ -416,34 +428,17 @@ type Input = z.infer<typeof InputSchema>;
 type Output = z.infer<typeof OutputSchema>;
 
 const DESCRIPTION = [
-  'Fetch exact event evidence. Answer activity is enriched for attempt/review, including successful reviews.',
-  'Event lookup and answer_activity_status are independent; found non-answer events still carry usable typed evidence.',
-  '',
-  '- lookup.status distinguishes found, not_found, and inactive; payload_projection_status describes payload support.',
-  '- attempt is the compatible answer-activity field and includes exact action/outcome/dispatch_seq.',
-  '- causal_neighborhood contains the exact parent and direct children only. It does not call',
-  '  same-question history causal. Check coverage and each event correction_state before treating',
-  '  any parent/child evidence as current.',
-  '- observed_edges pairs returned causes/effects. different_subject_ids compares event target ids,',
-  '  not school subjects or causal roots; null means a target id is unknown.',
-  '- payload_present reports whether persisted JSON exists. evidence is only a typed safe projection:',
-  '  evidence=null never means the stored payload was null. payload_projection_exhaustive=false is',
-  '  explicit for every event. Inspect payload_projection_status and redacted_payload_groups;',
-  '  groups are coarse and non-exhaustive, so never claim an unprojected',
-  '  field was absent from storage. Unknown keys are denied by default and never reflected.',
-  '- Inside evidence, an omitted optional key means the validated payload did not carry that known',
-  '  safe key. null is emitted only when that canonical key was explicitly persisted as null; [] is',
-  '  emitted only for an explicitly persisted empty array. None describes redacted/unknown keys.',
-  '- sequential roots or siblings are not a caused_by chain. Only explicit caused_by_event_id edges',
-  '  establish parent/child causality.',
-  '- proposal evidence_refs are supporting provenance only, never caused_by edges. The reader does',
-  '  not expose the complete activation policy, so observed fields cannot be promoted to necessary',
-  '  conditions, a minimum sufficient set, or proof that every trigger condition was satisfied.',
-  '- intervention_activated diagnostics carry canonical question ids. To prove downstream learner',
-  '  response/review, query exact action=review + subjectKind=question + that subjectId.',
-  '- timeline is same-question context only, explicitly non-causal, with bounded coverage.',
-  '- review evidence includes FSRS rating, subject provenance, and per-subject schedule states.',
-  '- question_availability distinguishes missing data from protected diagnostic redaction.',
+  'Fetch exact event evidence by event id (attempt/review answer activity is enriched; other',
+  'found events still carry usable typed evidence). Semantics are bounded:',
+  'causal_neighborhood covers the exact parent and direct children only, and timeline is',
+  'same-question context — never causality; observed_edges compares event target ids, not',
+  'school subjects. evidence is a typed safe projection: evidence=null never means the stored',
+  'payload was null, an omitted optional key means the payload lacked that known safe key, and',
+  'unprojected or redacted fields are never absent. Sequential roots/siblings and proposal',
+  'evidence_refs are provenance, not caused_by edges; question_availability distinguishes',
+  'missing data from protected diagnostic redaction. Read lookup.status, correction_state,',
+  'payload_projection_status, coverage and claim_support literals before claiming absence,',
+  'causality or completeness.',
 ].join('\n');
 
 function causedByEventId(value: EnvelopedEvent): string | null {

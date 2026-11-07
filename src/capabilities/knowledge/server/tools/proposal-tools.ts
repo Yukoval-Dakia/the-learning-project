@@ -30,6 +30,9 @@ type DbLike = Db | Tx;
 // Cap model input so a malformed call cannot amplify into unbounded evidence reads.
 const EvidenceEventIdsSchema = z.array(z.string().min(1)).max(20);
 
+const LEARNER_SUMMARY_DESCRIPTION =
+  'One plain Chinese sentence (max 80 chars) for the learner: WHAT this proposal does and WHY — never knowledge/edge/node ids, tool names, or English field names; technical evidence belongs in reasoning/evidence_event_ids. A failure beginning learner_summary_rejected means only this sentence must be rewritten before retrying.';
+
 function evidenceRefsFromEventIds(ids: string[]): ProposalEvidenceRefT[] {
   return [...new Set(ids)].map((id) => ({ kind: 'event', id }));
 }
@@ -72,18 +75,25 @@ async function getSharedKnowledgeDomain(db: Db, ids: string[]): Promise<string |
 const ProposeKnowledgeEdgeInputSchema = z.object({
   // Optional keeps the Input type a clean z.object; absence means 'create' and is
   // applied in execute(). A .default() would break the DomainTool input type.
-  op: z.enum(['create', 'archive']).optional(),
+  op: z
+    .enum(['create', 'archive'])
+    .optional()
+    .describe(
+      'create (default) proposes a NEW edge between two active same-subject nodes; archive proposes soft-deleting an EXISTING live edge named by edge_id — no evidence required (archiving is the inverse of proposing).',
+    ),
   // create-op endpoints; optional on the schema, required by op in execute().
-  from_knowledge_id: z.string().min(1).optional(),
-  to_knowledge_id: z.string().min(1).optional(),
-  relation_type: RelationTypeSchema.optional(),
+  from_knowledge_id: z.string().min(1).optional().describe('create: source node id.'),
+  to_knowledge_id: z.string().min(1).optional().describe('create: target node id.'),
+  relation_type: RelationTypeSchema.optional().describe('create: edge kind.'),
   weight: z.number().min(0).max(1).optional(),
   // archive-op target: the live knowledge_edge.id to soft-delete.
-  edge_id: z.string().min(1).optional(),
+  edge_id: z.string().min(1).optional().describe('archive: the live knowledge_edge.id.'),
   // Learner-facing line; technical evidence stays in reasoning/evidence_event_ids.
-  learner_summary: LearnerSummarySchema,
-  reasoning: z.string().min(1).max(2000),
-  evidence_event_ids: EvidenceEventIdsSchema.optional(),
+  learner_summary: LearnerSummarySchema.describe(LEARNER_SUMMARY_DESCRIPTION),
+  reasoning: z.string().min(1).max(2000).describe('Technical reasoning for the reviewer.'),
+  evidence_event_ids: EvidenceEventIdsSchema.optional().describe(
+    'Supporting attempt/event ids — a create requires at least one (skipped:no_evidence → fix and retry); the user judges sufficiency at accept, not a write-time gate.',
+  ),
   // P5.6 / YUK-178 — optional model label: 'corrective' only when this edge
   // repairs an observed failure; omit means proactive. No deterministic coercion.
   suggestion_kind: SuggestionKind.optional(),
@@ -240,7 +250,7 @@ export const proposeKnowledgeEdgeTool: DomainTool<
 > = {
   name: 'propose_knowledge_edge',
   description:
-    'Propose one knowledge mesh edge change. op="create" (default) proposes a NEW edge from {from_knowledge_id, to_knowledge_id, relation_type, weight?} — validates active same-subject nodes, self loops, duplicate live/pending edges, and parent-only related_to redundancy. A create must name at least one supporting attempt/event id in evidence_event_ids (else skipped:no_evidence — fix and retry); evidence sufficiency is decided by the user at accept, not by a write-time gate. op="archive" proposes soft-deleting an EXISTING live edge named by edge_id (no failure evidence required — archiving is the inverse of proposing). Both ops are proposal-only: the user accepts in the inbox; archive sets archived_at, never a hard delete. Results starting with skipped: mean the proposal was NOT written — do not retry the same change. Every call also requires learner_summary: one plain Chinese sentence (max 80 chars) for the learner — state WHAT this proposal will do and WHY. Never put knowledge/edge ids, tool names, or English field names (for example propose_knowledge_edge, evidence_event_ids, children=0) in learner_summary; technical evidence belongs in reasoning/evidence_event_ids. A hard failure beginning with learner_summary_rejected means only that sentence must be rewritten before retrying.',
+    'Propose one knowledge mesh edge change; the user accepts in the inbox — archive sets archived_at, never a hard delete. Self loops, duplicate live/pending edges and parent-only related_to redundancy are skipped. A status starting skipped: means the proposal was NOT written — do not retry the same change.',
   effect: 'propose',
   inputSchema: ProposeKnowledgeEdgeInputSchema,
   outputSchema: ProposeKnowledgeEdgeOutputSchema,
@@ -256,10 +266,22 @@ export const proposeKnowledgeEdgeTool: DomainTool<
 const KnowledgeMutationChangeSchema = z.discriminatedUnion('mutation', [
   z.object({
     mutation: z.literal('propose_new'),
-    name: z.string().min(1).max(120),
+    name: z
+      .string()
+      .min(1)
+      .max(120)
+      .describe(
+        "Use the learner's own topic wording verbatim (whitespace aside): author_question records it as learner_topic for exact-name matching — a renamed node will not match.",
+      ),
     // null = new domain ROOT and requires `domain` (validated in execute);
     // a string parent_id proposes a child node.
-    parent_id: z.string().min(1).nullable(),
+    parent_id: z
+      .string()
+      .min(1)
+      .nullable()
+      .describe(
+        'null proposes a NEW subject root (requires domain); a string id proposes a child.',
+      ),
     domain: z.string().min(1).optional(),
   }),
   z.object({
@@ -267,14 +289,16 @@ const KnowledgeMutationChangeSchema = z.discriminatedUnion('mutation', [
     node_id: z.string().min(1),
     new_parent_id: z.string().min(1),
     // CAS token: the node's current `version`.
-    expected_version: z.number().int().min(0),
+    expected_version: z.number().int().min(0).describe("CAS token: the node's current `version`."),
   }),
   z.object({
     mutation: z.literal('merge'),
     from_ids: z.array(z.string().min(1)).min(1),
     into_id: z.string().min(1),
     // CAS tokens for every absorbed node; accept rejects a drifted base version.
-    expected_versions: z.record(z.string(), z.number().int().min(0)),
+    expected_versions: z
+      .record(z.string(), z.number().int().min(0))
+      .describe('CAS token per absorbed node id: its current `version`.'),
   }),
   z.object({
     mutation: z.literal('split'),
@@ -282,21 +306,25 @@ const KnowledgeMutationChangeSchema = z.discriminatedUnion('mutation', [
     into: z
       .array(z.object({ name: z.string().min(1).max(120), parent_id: z.string().min(1) }))
       .min(1),
-    expected_version: z.number().int().min(0),
+    expected_version: z.number().int().min(0).describe("CAS token: the node's current `version`."),
   }),
   z.object({
     mutation: z.literal('archive'),
     node_id: z.string().min(1),
-    expected_version: z.number().int().min(0),
+    expected_version: z.number().int().min(0).describe("CAS token: the node's current `version`."),
   }),
 ]);
 
 const KnowledgeMutationInputSchema = z.object({
-  change: KnowledgeMutationChangeSchema,
+  change: KnowledgeMutationChangeSchema.describe(
+    'mutation picks the branch shape: propose_new {name,parent_id}; reparent {node_id,new_parent_id,expected_version}; merge {from_ids,into_id,expected_versions:{id:version} for every from_id}; split {from_id,into:[{name,parent_id}],expected_version}; archive {node_id,expected_version}.',
+  ),
   // Learner-facing line; technical evidence stays in reasoning/evidence_event_ids.
-  learner_summary: LearnerSummarySchema,
-  reasoning: z.string().min(1).max(2000),
-  evidence_event_ids: EvidenceEventIdsSchema.optional(),
+  learner_summary: LearnerSummarySchema.describe(LEARNER_SUMMARY_DESCRIPTION),
+  reasoning: z.string().min(1).max(2000).describe('Technical reasoning for the reviewer.'),
+  evidence_event_ids: EvidenceEventIdsSchema.optional().describe(
+    'Supporting attempt/event ids (provenance only, never caused_by edges).',
+  ),
   // P5.6 — optional model label; omit unless this mutation repairs an observed failure.
   suggestion_kind: SuggestionKind.optional(),
 });
@@ -484,7 +512,7 @@ export const proposeKnowledgeMutationTool: DomainTool<
 > = {
   name: 'propose_knowledge_mutation',
   description:
-    "Propose one knowledge tree mutation. Creating a new node (propose_new) is auto-applied by the automated lane shortly after this call returns — no user confirmation step; the node is still reversible from the inbox undo window. reparent/merge/split/archive remain human-reviewed. Input: {change, learner_summary, reasoning, evidence_event_ids?}. change.mutation picks the branch: propose_new {name, parent_id} — parent_id=null + domain proposes a NEW subject root; a child uses an existing node id and omits domain. reparent {node_id, new_parent_id, expected_version}. merge {from_ids, into_id, expected_versions:{id:version} for every from_id}. split {from_id, into:[{name,parent_id}], expected_version}. archive {node_id, expected_version}. expected_version(s) are CAS tokens — copy the node's current `version` from query_knowledge / the tree input. Results starting with skipped: mean the proposal was NOT written — do not retry the same change. For propose_new, 'skipped:already_exists' returns node_id of a live same-name node — attach content directly to it (e.g. author_question knowledge_ids) instead of waiting for an apply. When you propose a node because the topic has none, name it with the learner's own topic wording verbatim (whitespace aside): author_question records that wording as learner_topic for exact-name matching, so a renamed node will not match. learner_summary is one plain Chinese sentence (max 80 chars) for the learner — state WHAT this proposal will do and WHY. Never put node ids, tool names, or English field names (for example propose_knowledge_mutation, expected_version, children=0) in learner_summary; technical evidence belongs in reasoning/evidence_event_ids. A hard failure beginning with learner_summary_rejected means only that sentence must be rewritten before retrying.",
+    'Propose one knowledge tree mutation; the user accepts in the inbox — propose_new auto-applies shortly via the automated lane (no confirmation step; still reversible from the inbox undo window), reparent/merge/split/archive stay human-reviewed. Statuses starting skipped: mean the proposal was NOT written — do not retry the same change; skipped:already_exists returns a live same-name node_id to attach content to directly (e.g. author_question knowledge_ids) instead of waiting for an apply.',
   effect: 'propose',
   inputSchema: KnowledgeMutationInputSchema,
   outputSchema: KnowledgeMutationOutputSchema,

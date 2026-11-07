@@ -16,14 +16,31 @@ import {
 import { changeTopics, readTopics } from './topics';
 
 const RememberInput = TopicPatch.omit({ replaces: true }).extend({
-  learner_words: z.string().min(1).max(500),
+  learner_words: z
+    .string()
+    .min(1)
+    .max(500)
+    .describe(
+      "Verbatim quote from the learner's CURRENT message (server-checked; paraphrases rejected).",
+    ),
+  key: TopicPatch.shape.key.describe(
+    'Topic key, freely named. Communication preferences (address, tone, persona) belong to the "communication" topic — each write rewrites its complete merged summary, keeping still-valid older preferences.',
+  ),
+  name: TopicPatch.shape.name.describe('Learner-visible topic name in plain language.'),
+  description: TopicPatch.shape.description.describe('One-line learner-visible topic summary.'),
+  body: TopicPatch.shape.body.describe(
+    'One learner-visible fact in plain language: state the fact itself — no source labels, internal names, or "not yet told" filler; keep concrete experiences, counts and order.',
+  ),
+  memory_kind: TopicPatch.shape.memory_kind.describe('Fact kind.'),
+  knowledge_ids: TopicPatch.shape.knowledge_ids.describe('Related knowledge node ids.'),
 });
 export const rememberLearnerTool: DomainTool<
   z.infer<typeof RememberInput>,
   z.infer<typeof ChangeResult>
 > = {
   name: 'remember_learner',
-  description: `学习者说出希望记住的偏好、称呼、语气、persona 或个人事实时，回复前调用，确认只用工具实际返回值。learner_words 必须逐字引用本轮原话。${COMMUNICATION_RULES}${FACT_PRESENTATION_RULES}其他主题自由命名。只记事实，不推断掌握度。不用于学习安排（用 record_steering）。`,
+  description:
+    'Record a preference, form of address, tone, persona or personal fact the learner asked remembered — call before replying and confirm only from the returned value. Facts only, never inferred mastery; for study scheduling use record_steering.',
   effect: 'write',
   costClass: 'local',
   mirrorEvent: 'when_causal',

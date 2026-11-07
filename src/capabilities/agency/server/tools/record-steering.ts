@@ -37,9 +37,19 @@ const RecordSteeringInputSchema = z.object({
   /** The goal being revised/ended. Optional when exactly ONE steering goal is
    *  active (the common follow-up case: the confirmation text carries no id);
    * required when several are active. */
-  goal_id: z.string().min(1).optional(),
+  goal_id: z
+    .string()
+    .min(1)
+    .optional()
+    .describe('The steering goal to revise/end; omit only when exactly one is active.'),
   /** Verbatim quote from the learner's message this turn (≤500 chars). */
-  learner_words: z.string().min(1).max(500),
+  learner_words: z
+    .string()
+    .min(1)
+    .max(500)
+    .describe(
+      "Verbatim quote from the learner's CURRENT message (server-checked; paraphrases rejected).",
+    ),
   /** Plain restatement of the instruction; the guidance-facing summary. */
   instruction_md: z.string().min(1).max(280).optional(),
   subject_id: z.string().min(1).max(80).optional(),
@@ -282,7 +292,7 @@ async function resolveSingleSteeringGoalId(
 export const recordSteeringTool: DomainTool<RecordSteeringToolInput, RecordSteeringToolOutput> = {
   name: 'record_steering',
   description:
-    "MUST be called FIRST — before any advice or proposal — whenever the learner states an exam/quiz date or scope (期中/期末/测验), a study deadline, a priority change (这周主攻/别排物理), or cancels a prior arrangement (考试取消了). Writes directly, no proposal: learner_words MUST quote the learner's words verbatim from the current message (server-checked; paraphrases are rejected); unmappable scope stays as text. Build the confirmation ONLY from the result's echo/issues/preparing. Never substitute a knowledge-tree proposal or a spoken-only recap for this call.",
+    "MUST be called FIRST — before any advice or proposal — whenever the learner states an exam/quiz date or scope, a study deadline, a priority change, or cancels a prior arrangement. Writes directly, no proposal; never substitute a knowledge-tree proposal or a spoken-only recap for this call. Build the confirmation ONLY from the result's echo/issues/preparing; unmappable scope stays as text.",
   effect: 'write',
   inputSchema: RecordSteeringInputSchema,
   outputSchema: RecordSteeringOutputSchema,

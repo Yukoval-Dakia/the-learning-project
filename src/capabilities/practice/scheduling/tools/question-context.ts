@@ -318,10 +318,10 @@ async function executeGetQuestionContext(
 }
 
 const GetReviewDueInputSchema = z.object({
-  limit: z.number().int().min(1).max(50).optional(),
-  knowledgeIds: z.array(z.string()).optional(),
-  causes: z.array(z.string()).optional(),
-  includeReason: z.boolean().optional(),
+  limit: z.number().int().min(1).max(50).optional().describe('1–50.'),
+  knowledgeIds: z.array(z.string()).optional().describe('Restrict to these knowledge nodes.'),
+  causes: z.array(z.string()).optional().describe('Restrict to these cause categories.'),
+  includeReason: z.boolean().optional().describe('Include per-row reason detail.'),
 });
 
 const GetReviewDueOutputSchema = z.object({
@@ -881,7 +881,7 @@ export const getQuestionContextTool: DomainTool<GetQuestionContextInput, GetQues
   {
     name: 'get_question_context',
     description:
-      'Learner-state context for one question: attempts, reviews, FSRS state, linked records, variants, knowledge paths, and assets. ADR-0072: bank CONTENT reads go through read_bank (versioned refs from search_bank) — this tool remains the learner-side read (its content projection stays for the coach/dreaming/maintenance faces; final home decided with the learner-brain line). Check availability first: lifecycle zeros with observation_status=not_observed are compatibility placeholders for missing or protected diagnostic questions, not observed facts.',
+      'Learner-state context for one question: attempts, reviews, FSRS state, linked records, variants, knowledge paths and assets. Bank CONTENT reads go through read_bank (versioned refs from search_bank); this tool is the learner-side read. lifecycle zeros with observation_status=not_observed are compatibility placeholders for missing or protected diagnostic questions, not observed facts.',
     effect: 'read',
     inputSchema: GetQuestionContextInputSchema,
     outputSchema: GetQuestionContextOutputSchema,
@@ -902,7 +902,7 @@ export const getQuestionContextTool: DomainTool<GetQuestionContextInput, GetQues
 export const getReviewDueTool: DomainTool<GetReviewDueInput, GetReviewDueOutput> = {
   name: 'get_review_due',
   description:
-    'Read returned actionable due-now rows (never-reviewed failures, then overdue FSRS cards) plus bounded future FSRS projections. rows=[] means this call returned zero actionable rows, NOT that the queue is empty. Use queue_assertion as the authoritative claim surface: cleared=false is supported by at least one returned actionable row; every null is unobserved and must never be converted to 0 or true. Report due returned rows, material due-state count, due completeness, and future returned/total/completeness separately. queue_coverage.completeness=unknown and supports_exhaustive_zero_claim=false forbid complete/cleared/global-zero claims. entity_status_coverage=not_observed forbids pending/in-progress entity counts. Never mutates FSRS.',
+    'Read returned actionable due-now rows (never-reviewed failures, then overdue FSRS cards) plus bounded future FSRS projections. rows=[] means zero returned actionable rows, not an empty queue: queue_assertion is the claim surface — cleared=false is supported by a returned row; every null is unobserved and must never become 0 or true. Report due returned/state/completeness and future returned/total/completeness separately; completeness=unknown, supports_exhaustive_zero_claim=false and entity_status_coverage=not_observed forbid complete/cleared/entity-count claims. Never mutates FSRS.',
   effect: 'read',
   inputSchema: GetReviewDueInputSchema,
   outputSchema: GetReviewDueOutputSchema,
