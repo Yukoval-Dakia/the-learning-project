@@ -40,18 +40,7 @@ function assertTaskLanesResolvable(kinds: readonly TaskKind[], label: string): v
 
 const SHADOW_TASK_KINDS: readonly TaskKind[] = ['MindModelInductionTask', 'ConjectureGroupingTask'];
 
-const INTERVENTION_REVIEW_EVAL_TASK_KINDS: readonly TaskKind[] = [
-  'InterventionPackageReviewTask',
-  'SolutionGenerateTask',
-  'QuizVerifyTask',
-];
-
 export function validateShadowProviderEnv(env: NodeJS.ProcessEnv): void {
   assertNoGlobalProviderPin(env, 'shadow provider');
   assertTaskLanesResolvable(SHADOW_TASK_KINDS, 'shadow provider');
-}
-
-export function validateInterventionReviewEvalProviderEnv(env: NodeJS.ProcessEnv): void {
-  assertNoGlobalProviderPin(env, 'intervention review eval');
-  assertTaskLanesResolvable(INTERVENTION_REVIEW_EVAL_TASK_KINDS, 'intervention review eval');
 }

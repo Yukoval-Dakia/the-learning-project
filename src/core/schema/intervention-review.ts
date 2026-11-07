@@ -1,11 +1,14 @@
-// Intervention review/audit protocol — shared check vocabulary plus the
-// current (V3) audit binding.
+// Intervention admission-audit protocol — shared check vocabulary, the sealed
+// independent-solution and content-validation audits, plus the comparator-era
+// review vocabulary that persisted attempts still carry.
 //
 // Internal module of the intervention schema family. The public surface is
 // re-exported through ./intervention.ts; because that file must stay acyclic,
 // this module also owns the shared protocol anchors (contract versions, the
 // diagnostic-kind enum, the reference reverse-causation claim shape) that the
-// review readers and the public contract both bind to.
+// review readers and the public contract both bind to. The same-model package
+// comparator that consumed most of this vocabulary is retired; the review
+// schemas below now exist to decode attempts persisted while it ran.
 import { z } from 'zod';
 import { QuizVerificationResult } from '@/core/schema/quiz_gen';
 import { SolutionGenerateOutput } from '@/core/schema/solution';
@@ -912,8 +915,3 @@ export const InterventionPackageReviewAuditV3 = z
       }
     }
   });
-
-export const CurrentInterventionPackageReviewAudit = InterventionPackageReviewAuditV3;
-export type CurrentInterventionPackageReviewAuditT = z.infer<
-  typeof CurrentInterventionPackageReviewAudit
->;

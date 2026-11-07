@@ -3,32 +3,19 @@ import type { TaskTextResult } from '@/ai/task-result';
 import { getLearnerLocale } from '@/capabilities/task-registry';
 import { parseJsonObjectLoose } from '@/core/json-extract';
 import {
-  CurrentInterventionPackageReviewAudit,
   INTERVENTION_CONTRACT_VERSION,
-  INTERVENTION_REVIEW_AUDIT_PROTOCOL_VERSION,
   type InterventionAuthoringContextT,
   InterventionIndependentSolutionAudit,
   type InterventionIndependentSolutionAuditT,
   InterventionPackage,
   InterventionPackageModelOutput,
   type InterventionPackageModelOutputT,
-  type InterventionPackageReviewAuditT,
-  InterventionPackageReviewModelOutputFull,
-  type InterventionPackageReviewModelOutputFullT,
-  InterventionPackageReviewModelOutputV2,
-  type InterventionPackageReviewModelOutputV2T,
-  InterventionPackageReviewStructuredOutput,
-  type InterventionPackageReviewStructuredOutputT,
-  type InterventionPackageReviewTaskInputT,
   type InterventionPackageT,
   type InterventionPreparationAttemptT,
   InterventionQuestionContentValidationAudit,
   type InterventionQuestionContentValidationAuditT,
-  MAX_INTERVENTION_REVIEW_ATTEMPTS,
   MAX_INTERVENTION_SOLVER_ATTEMPTS_PER_DIAGNOSTIC,
-  buildInterventionPackageReviewTaskInput,
   buildInterventionQuestionContentValidationTaskInput,
-  extractInterventionReferenceReverseCausationClaims,
   interventionRequiredOperationDigest,
 } from '@/core/schema/intervention';
 import type { Db } from '@/db/client';
@@ -36,10 +23,7 @@ import { sha256CanonicalJson } from '@/kernel/canonical-json';
 import { authorInterventionPackage as runInterventionAuthorSequence } from '@/kernel/records/intervention-package-author';
 import { type TaskTextRunFn, taskPromptFingerprint } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
-import {
-  persistValidatorRunBinding,
-  runConfirmedStructuredReview,
-} from '@/server/ai/sealed-validation';
+import { persistValidatorRunBinding } from '@/server/ai/sealed-validation';
 import type { SubjectProfile } from '@/subjects/profile';
 import {
   type IndependentSolutionResult,
@@ -63,8 +47,8 @@ function parseTaskOutput<T>(
   }
   const extracted = parseJsonObjectLoose(result.text, label, {
     riskyRepair: 'reject',
-    // Both author/review outputs are immediately validated by closed strict
-    // schemas below, so an exactly-boundary partial batch cannot be admitted.
+    // Task outputs are immediately validated by closed strict schemas below, so
+    // an exactly-boundary partial batch cannot be admitted.
     containerClosure: 'schema_validated',
     latexEscapes: 'markdown_math',
   });
@@ -125,68 +109,6 @@ export function normalizeInterventionPackageModelOutput(
   }
 
   return InterventionPackageModelOutput.parse({ ...value, diagnostics });
-}
-
-/**
- * Bind the reviewer's auditable per-diagnostic findings to the closed verdict.
- * This never repairs package content. It only prevents a contradictory bare
- * `pass` from overriding the reviewer's own reference/scope/grounding checks.
- */
-export function enforceInterventionPackageReviewDecision(
-  review: InterventionPackageReviewModelOutputV2T,
-): InterventionPackageReviewModelOutputV2T {
-  // Provider verdict/failure labels are not authority. Recompute the complete
-  // closed decision from granular observations every time so an invented code,
-  // omitted code or contradictory bare `pass` cannot affect activation.
-  const failureCodes = new Set<InterventionPackageReviewModelOutputV2T['failure_codes'][number]>();
-  for (const check of review.diagnostic_checks) {
-    const rejectedReverseCausationClaim =
-      check.causal_direction_check.applies &&
-      check.causal_direction_check.reference_claims_reverse_causation &&
-      ((check.causal_direction_check.reference_reverse_causation_claim_checks?.some(
-        (claim) => !claim.claimed_cause_is_observed_y_causing_x,
-      ) ??
-        false) ||
-        check.causal_direction_check.claimed_cause_is_observed_y_causing_x === false);
-    if (!check.reference_correct || !check.discipline_grounded || rejectedReverseCausationClaim) {
-      failureCodes.add('reference_incorrect');
-    }
-    if (!check.within_frozen_scope) {
-      failureCodes.add('claim_scope_expansion');
-    }
-    for (const operation of check.required_operation_checks ?? []) {
-      if (!operation.reference_covers_operation) failureCodes.add('reference_incorrect');
-      if (!operation.within_frozen_scope) failureCodes.add('claim_scope_expansion');
-    }
-  }
-  const packageChecks = review.package_checks;
-  if (packageChecks) {
-    if (!packageChecks.material_grounded) failureCodes.add('material_not_grounded');
-    if (!packageChecks.method_followed) failureCodes.add('method_not_followed');
-    if (!packageChecks.tested_claims_match) failureCodes.add('tested_claim_mismatch');
-    if (!packageChecks.target_errors_match) failureCodes.add('target_error_mismatch');
-    if (!packageChecks.answers_unique) failureCodes.add('answer_not_unique');
-    if (!packageChecks.answers_gradable) failureCodes.add('answer_not_gradable');
-    if (!packageChecks.no_answer_leak) failureCodes.add('answer_leak');
-    if (!packageChecks.diagnostics_same_construct) {
-      failureCodes.add('diagnostics_not_same_construct');
-    }
-    if (!packageChecks.transfer_context_changed) {
-      failureCodes.add('transfer_context_not_changed');
-    }
-    if (!packageChecks.target_error_identifiable) {
-      failureCodes.add('target_error_not_identifiable');
-    }
-    if (!packageChecks.serious_factual_error_absent) {
-      failureCodes.add('serious_factual_error');
-    }
-    if (!packageChecks.safe_material) failureCodes.add('unsafe_material');
-  }
-  return InterventionPackageReviewModelOutputV2.parse({
-    ...review,
-    verdict: failureCodes.size === 0 ? 'pass' : 'fail',
-    failure_codes: [...failureCodes].sort(),
-  });
 }
 
 const INTERVENTION_DIAGNOSTIC_KINDS = ['immediate', 'delayed', 'transfer'] as const;
@@ -492,177 +414,6 @@ async function runInterventionQuestionContentValidations(input: {
   };
 }
 
-/** Join comparator judgments with the immutable blind-solve evidence. */
-export function bindInterventionPackageReviewDecision(
-  value: unknown,
-  reviewTaskInput: InterventionPackageReviewTaskInputT,
-  independentAudit: InterventionIndependentSolutionAuditT,
-  questionContentValidationAudit: InterventionQuestionContentValidationAuditT,
-  packageValue: InterventionPackageT,
-): InterventionPackageReviewModelOutputFullT {
-  const modelValue: InterventionPackageReviewStructuredOutputT =
-    InterventionPackageReviewStructuredOutput.parse(value);
-  const {
-    review_requirements: requirements,
-    snapshot: { conjecture },
-  } = reviewTaskInput;
-  const auditByKind = new Map(
-    independentAudit.diagnostics.map((diagnostic) => [diagnostic.kind, diagnostic]),
-  );
-  if (
-    questionContentValidationAudit.package_digest_sha256 !== independentAudit.package_digest_sha256
-  ) {
-    throw new Error('question-content validation package digest does not match blind solve');
-  }
-  const contentValidationByKind = new Map(
-    questionContentValidationAudit.diagnostics.map((diagnostic) => [diagnostic.kind, diagnostic]),
-  );
-  const claimsByKind = new Map(
-    INTERVENTION_DIAGNOSTIC_KINDS.map((kind) => [
-      kind,
-      extractInterventionReferenceReverseCausationClaims(packageValue, kind),
-    ]),
-  );
-  const {
-    verdict: _providerVerdict,
-    failure_codes: _providerFailureCodes,
-    ...providerObservations
-  } = modelValue;
-  // claim/target-error identity is a plain string equality between
-  // the frozen snapshot and the (already server-normalized) diagnostic fields.
-  // The comparator no longer votes on these two bits.
-  const testedClaimsMatch = INTERVENTION_DIAGNOSTIC_KINDS.every(
-    (kind) => packageValue.diagnostics[kind].tested_claim_md === conjecture.claim_md,
-  );
-  const targetErrorsMatch = INTERVENTION_DIAGNOSTIC_KINDS.every(
-    (kind) =>
-      packageValue.diagnostics[kind].target_error_rule_md === conjecture.target_error_rule_md,
-  );
-  const bound = InterventionPackageReviewModelOutputV2.parse({
-    ...providerObservations,
-    package_checks: {
-      ...modelValue.package_checks,
-      tested_claims_match: testedClaimsMatch,
-      target_errors_match: targetErrorsMatch,
-    },
-    verdict: 'pass',
-    failure_codes: [],
-    diagnostic_checks: modelValue.diagnostic_checks.map((check) => {
-      const sealed = auditByKind.get(check.kind);
-      if (!sealed) throw new Error(`missing sealed independent solution for ${check.kind}`);
-      const contentValidation = contentValidationByKind.get(check.kind);
-      if (!contentValidation) {
-        throw new Error(`missing sealed question-content validation for ${check.kind}`);
-      }
-      const claims = claimsByKind.get(check.kind) ?? [];
-      if (
-        (requirements.causal_direction_required || claims.length > 0) &&
-        !check.causal_direction_check.applies
-      ) {
-        throw new Error(`comparator omitted required causal-direction review for ${check.kind}`);
-      }
-      const claimRelations =
-        check.causal_direction_check.reference_reverse_causation_claim_relations;
-      if (claimRelations.length !== claims.length) {
-        throw new Error(
-          `comparator omitted server-owned reverse-causation claims for ${check.kind}`,
-        );
-      }
-      for (const [index, relation] of claimRelations.entries()) {
-        if (relation.claim_index !== claims[index]?.claim_index) {
-          throw new Error(
-            `comparator referenced the wrong reverse-causation claim ${index} for ${check.kind}`,
-          );
-        }
-      }
-      if (check.required_operation_checks.length !== sealed.required_operations.length) {
-        throw new Error(`comparator omitted required solution operations for ${check.kind}`);
-      }
-      const requiredOperationChecks = check.required_operation_checks.map(
-        (operationCheck, index) => {
-          const sealedOperation = sealed.required_operations[index];
-          if (
-            !sealedOperation ||
-            operationCheck.operation_index !== sealedOperation.operation_index
-          ) {
-            throw new Error(
-              `comparator referenced the wrong sealed operation ${index} for ${check.kind}`,
-            );
-          }
-          return {
-            ...operationCheck,
-            operation_sha256: sealedOperation.operation_sha256,
-            operation_md: sealedOperation.operation_md,
-          };
-        },
-      );
-      const aggregateRelation =
-        claimRelations.length === 0
-          ? ('none' as const)
-          : claimRelations.every((claim) => claim.relation === 'same_outcome_construct_y')
-            ? ('same_outcome_construct_y' as const)
-            : claimRelations.some(
-                  (claim) => claim.relation === 'baseline_or_prior_different_construct',
-                )
-              ? ('baseline_or_prior_different_construct' as const)
-              : ('common_cause_or_other_or_unclear' as const);
-      const referenceClaimText = boundedAuditText(
-        claims.map((claim) => `${claim.source_path}: ${claim.claim_md}`).join('\n'),
-        2000,
-      );
-      return {
-        ...check,
-        // release_strict grounding is an independent, server-sealed hard gate.
-        // Comparator agreement can only make this stricter, never override an
-        // unclear/fail factuality result from the shared question validator.
-        discipline_grounded:
-          check.discipline_grounded && contentValidation.result.grounding.verdict === 'pass',
-        independent_solution_sha256: sealed.solver_output_sha256,
-        independently_derived_answer_md: sealed.independently_derived_answer_md,
-        required_operations_md: sealed.required_operations_md,
-        required_operation_checks: requiredOperationChecks,
-        causal_direction_check: {
-          applies: check.causal_direction_check.applies,
-          exposure_x_md: check.causal_direction_check.exposure_x_md,
-          observed_outcome_y_md: check.causal_direction_check.observed_outcome_y_md,
-          reference_claims_reverse_causation: claims.length > 0,
-          reference_claimed_reverse_cause_md: referenceClaimText,
-          reference_claimed_reverse_cause_relation: aggregateRelation,
-          reference_reverse_causation_claim_checks: claims.map((claim, index) => {
-            const providerRelation = claimRelations[index];
-            if (!providerRelation) {
-              throw new Error(`missing bound reverse-causation claim ${index} for ${check.kind}`);
-            }
-            return {
-              ...claim,
-              relation: providerRelation.relation,
-              decision_basis_md: providerRelation.decision_basis_md,
-              claimed_cause_is_observed_y_causing_x:
-                providerRelation.relation === 'same_outcome_construct_y',
-            };
-          }),
-          claimed_cause_is_observed_y_causing_x:
-            claims.length > 0 && aggregateRelation === 'same_outcome_construct_y',
-        },
-      };
-    }),
-  });
-  const enforced = enforceInterventionPackageReviewDecision(bound);
-  const providerRaisedUnboundFailure =
-    enforced.verdict === 'pass' &&
-    ((_providerVerdict !== undefined && _providerVerdict !== 'pass') ||
-      (_providerFailureCodes?.length ?? 0) > 0);
-  return InterventionPackageReviewModelOutputFull.parse(
-    providerRaisedUnboundFailure
-      ? {
-          ...enforced,
-          verdict: 'fail',
-          failure_codes: ['review_output_invalid'],
-        }
-      : enforced,
-  );
-}
-
 async function runPackageAuthor(
   runTaskFn: TaskTextRunFn,
   context: InterventionAuthoringContextT,
@@ -720,272 +471,42 @@ async function runPackageAuthor(
   };
 }
 
-async function runPackageReview(
-  db: Db,
-  runTaskFn: TaskTextRunFn,
-  context: InterventionAuthoringContextT,
-  packageValue: InterventionPackageT,
-  subjectProfile: ResolvedSubjectProfile,
-  independentAudit: InterventionIndependentSolutionAuditT,
-  questionContentValidationAudit: InterventionQuestionContentValidationAuditT,
-  beforeEachPaidCall: () => Promise<string | null>,
-  reviewRunBindingPolicy: 'require_now' | 'defer_to_preparation_record',
-  learnerLocale: 'zh-CN' | 'en',
-): Promise<
-  | { status: 'ok'; review: InterventionPackageReviewAuditT }
-  | { status: 'invalid'; failureCode: string; taskRunIds: string[]; failureDetail?: string }
-> {
-  const packageDigest = sha256CanonicalJson(packageValue);
-  if (independentAudit.package_digest_sha256 !== packageDigest) {
-    return {
-      status: 'invalid',
-      failureCode: 'independent_solution_package_digest_mismatch',
-      taskRunIds: [],
-    };
-  }
-  if (questionContentValidationAudit.package_digest_sha256 !== packageDigest) {
-    return {
-      status: 'invalid',
-      failureCode: 'question_content_validation_package_digest_mismatch',
-      taskRunIds: [],
-    };
-  }
-  const reviewTaskInput = buildInterventionPackageReviewTaskInput({
-    context,
-    packageValue,
-    independentAudit,
-    questionContentValidationAudit,
-  });
-  const reviewTaskInputSha256 = sha256CanonicalJson(reviewTaskInput);
-  const promptFingerprint = taskPromptFingerprint(
-    'InterventionPackageReviewTask',
-    subjectProfile,
-    learnerLocale,
-  );
-  const reviewAttemptTaskRunIds: string[] = [];
-  let failureDetail = '';
-  let fatal: { failureCode: string; taskRunIds: string[]; failureDetail?: string } | undefined;
-  const confirmed = await runConfirmedStructuredReview<InterventionPackageReviewModelOutputFullT>({
-    maxAttempts: MAX_INTERVENTION_REVIEW_ATTEMPTS,
-    runAttempt: async (reviewAttempt) => {
-      if (fatal) return { outcome: 'contract_invalid', detail: fatal.failureCode };
-      const guardFailure = await beforeEachPaidCall();
-      if (guardFailure) {
-        fatal = {
-          failureCode: guardFailure,
-          taskRunIds: [...reviewAttemptTaskRunIds],
-          ...(failureDetail ? { failureDetail } : {}),
-        };
-        return { outcome: 'contract_invalid', detail: guardFailure };
-      }
-      let result: TaskTextResult;
-      try {
-        result = await runTaskFn('InterventionPackageReviewTask', reviewTaskInput, {
-          subjectProfile,
-        });
-      } catch (error) {
-        const failedTaskRunIds = [...reviewAttemptTaskRunIds];
-        if (error instanceof AgentRunError && !failedTaskRunIds.includes(error.taskRunId)) {
-          failedTaskRunIds.push(error.taskRunId);
-        }
-        fatal = {
-          failureCode: 'review_runner_failure',
-          taskRunIds: failedTaskRunIds,
-          failureDetail: error instanceof Error ? error.message : String(error),
-        };
-        return { outcome: 'contract_invalid', detail: 'review_runner_failure' };
-      }
-      if (!result.task_run_id) {
-        fatal = {
-          failureCode: 'review_task_run_id_missing',
-          taskRunIds: [...reviewAttemptTaskRunIds],
-        };
-        return { outcome: 'contract_invalid', detail: 'review_task_run_id_missing' };
-      }
-      reviewAttemptTaskRunIds.push(result.task_run_id);
-
-      let review: InterventionPackageReviewModelOutputFullT;
-      try {
-        review = parseTaskOutput(result, 'intervention package review', (value) =>
-          bindInterventionPackageReviewDecision(
-            value,
-            reviewTaskInput,
-            independentAudit,
-            questionContentValidationAudit,
-            packageValue,
-          ),
-        );
-      } catch (error) {
-        const issues =
-          isRecord(error) && Array.isArray(error.issues)
-            ? error.issues
-                .slice(0, 4)
-                .map((issue) =>
-                  isRecord(issue)
-                    ? `${Array.isArray(issue.path) ? issue.path.join('.') : '<root>'}:${String(issue.code ?? 'invalid')}`
-                    : 'invalid',
-                )
-                .join(', ')
-            : error instanceof Error
-              ? error.name
-              : 'invalid';
-        failureDetail = `comparator output did not satisfy the FULL review contract (${issues})`;
-        console.warn('[intervention-author] comparator contract rejected', {
-          attempt: reviewAttempt,
-          issues,
-        });
-        try {
-          await persistValidatorRunBinding(db, {
-            taskRunId: result.task_run_id,
-            taskKind: 'InterventionPackageReviewTask',
-            taskInputSha256: reviewTaskInputSha256,
-            promptFingerprint,
-            resultDigest: null,
-          });
-        } catch (bindingError) {
-          const bindingDetail =
-            bindingError instanceof Error ? bindingError.message : String(bindingError);
-          // The comparator output is already contract-invalid, so binding is a
-          // secondary provenance defect rather than a replacement failure
-          // category. Preserve the established bounded-review result.
-          failureDetail = `${failureDetail}; reported comparator run could not be bound (${bindingDetail})`;
-        }
-        return {
-          outcome: 'contract_invalid',
-          task_run_id: result.task_run_id,
-          detail: issues,
-        };
-      }
-
-      try {
-        await persistValidatorRunBinding(db, {
-          taskRunId: result.task_run_id,
-          taskKind: 'InterventionPackageReviewTask',
-          taskInputSha256: reviewTaskInputSha256,
-          promptFingerprint,
-          resultDigest: sha256CanonicalJson(review),
-        });
-      } catch (bindingError) {
-        const bindingDetail =
-          bindingError instanceof Error ? bindingError.message : String(bindingError);
-        if (reviewRunBindingPolicy === 'require_now') {
-          fatal = {
-            failureCode: 'review_binding_failed',
-            taskRunIds: [...reviewAttemptTaskRunIds],
-            failureDetail: bindingDetail,
-          };
-          return {
-            outcome: 'contract_invalid',
-            task_run_id: result.task_run_id,
-            detail: 'review_binding_failed',
-          };
-        }
-        // Preparation has a second, authoritative provenance boundary in
-        // bindAttemptToRecord. Let it retain the full reviewed audit and emit
-        // agency:review_task_run_invalid instead of collapsing the attempt to
-        // an author failure. All other callers require the bind immediately.
-        console.warn('[intervention-author] deferring comparator run binding failure', {
-          task_run_id: result.task_run_id,
-          detail: bindingDetail,
-        });
-      }
-      return {
-        outcome: 'valid',
-        task_run_id: result.task_run_id,
-        verdict: review.verdict,
-        result: review,
-      };
-    },
-  });
-  if (fatal) return { status: 'invalid', ...fatal };
-  if (confirmed.status === 'invalid') {
-    return {
-      status: 'invalid',
-      failureCode: 'review_output_invalid',
-      taskRunIds: reviewAttemptTaskRunIds,
-      failureDetail:
-        failureDetail || 'a valid pass was not confirmed within the bounded comparator attempts',
-    };
-  }
-
-  const finalAttempt = [...confirmed.attempts]
-    .reverse()
-    .find((attempt) => attempt.outcome === 'valid');
-  if (!finalAttempt || finalAttempt.outcome !== 'valid') {
-    throw new Error('confirmed intervention review lacks a valid final attempt');
-  }
-  const reviewAttempts = confirmed.attempts.map((attempt) =>
-    attempt.outcome === 'valid'
-      ? { task_run_id: attempt.task_run_id, outcome: 'valid' as const, result: attempt.result }
-      : { task_run_id: attempt.task_run_id ?? 'missing', outcome: 'contract_invalid' as const },
-  );
-  return {
-    status: 'ok',
-    review: CurrentInterventionPackageReviewAudit.parse({
-      audit_protocol_version: INTERVENTION_REVIEW_AUDIT_PROTOCOL_VERSION,
-      review_version: INTERVENTION_CONTRACT_VERSION,
-      package_digest_sha256: packageDigest,
-      review_task_run_id: finalAttempt.task_run_id,
-      review_attempt_task_run_ids: reviewAttemptTaskRunIds,
-      review_task_input_sha256: reviewTaskInputSha256,
-      independent_solution_audit: independentAudit,
-      question_content_validation_audit: questionContentValidationAudit,
-      review_attempts: reviewAttempts,
-      result: confirmed.result,
-    }),
-  };
-}
-
-type InterventionPackageCandidateReviewInput = {
+interface InterventionPackageAdmissionInput {
   db: Db;
   runTaskFn: TaskTextRunFn;
   context: InterventionAuthoringContextT;
   packageValue: InterventionPackageT;
   subjectProfile: ResolvedSubjectProfile;
-  beforeEachPaidCall?: () => Promise<string | null>;
-  learnerLocale?: 'zh-CN' | 'en';
-};
+  beforeEachPaidCall: () => Promise<string | null>;
+}
 
-type InterventionPackageCandidateReviewResult =
-  | { status: 'ok'; review: InterventionPackageReviewAuditT }
+type InterventionPackageAdmissionResult =
+  | {
+      status: 'ok';
+      independentSolutionAudit: InterventionIndependentSolutionAuditT;
+      questionContentValidationAudit: InterventionQuestionContentValidationAuditT;
+    }
   | { status: 'invalid'; failureCode: string; taskRunIds: string[]; failureDetail?: string };
 
 /**
- * FULL validator for an already-authored package: three strict blind solves and
- * three release-strict grounding checks via the shared question validators,
- * followed by a bounded sealed-output comparator/confirmation.
+ * Shared admission validators for an already-authored package: three strict
+ * blind solves plus three release-strict grounding checks via the shared
+ * question validators. The same-model package comparator that used to consume
+ * their sealed output is retired; activation reads the audits directly.
  */
-async function reviewInterventionPackageCandidateWithPolicy(
-  input: InterventionPackageCandidateReviewInput & {
-    reviewRunBindingPolicy: 'require_now' | 'defer_to_preparation_record';
-  },
-): Promise<InterventionPackageCandidateReviewResult> {
-  const learnerLocale = input.learnerLocale ?? getLearnerLocale();
+async function validateInterventionPackageAdmission(
+  input: InterventionPackageAdmissionInput,
+): Promise<InterventionPackageAdmissionResult> {
+  const learnerLocale = getLearnerLocale();
   const runTaskFn: TaskTextRunFn = (kind, taskInput, ctx) =>
     input.runTaskFn(kind, taskInput, { ...ctx, learnerLocale });
-  const beforeEachPaidCall = input.beforeEachPaidCall ?? (async () => null);
-  // Claim discovery is deterministic and bounded. Run it before any paid solve
-  // so an adversarially repetitive answer surface cannot spend six calls and
-  // then escape as an uncaught preparation-job retry.
-  try {
-    for (const kind of INTERVENTION_DIAGNOSTIC_KINDS) {
-      extractInterventionReferenceReverseCausationClaims(input.packageValue, kind);
-    }
-  } catch (error) {
-    return {
-      status: 'invalid',
-      failureCode: 'reverse_causation_claim_extraction_invalid',
-      taskRunIds: [],
-      failureDetail: error instanceof Error ? error.message : String(error),
-    };
-  }
   const independentlySolved = await runInterventionIndependentSolutions({
     db: input.db,
     runTaskFn,
     packageValue: input.packageValue,
     subjectProfile: input.subjectProfile,
     learnerLocale,
-    beforeEachPaidCall,
+    beforeEachPaidCall: input.beforeEachPaidCall,
   });
   if (independentlySolved.status === 'invalid') return independentlySolved;
 
@@ -996,7 +517,7 @@ async function reviewInterventionPackageCandidateWithPolicy(
     packageValue: input.packageValue,
     subjectProfile: input.subjectProfile,
     learnerLocale,
-    beforeEachPaidCall,
+    beforeEachPaidCall: input.beforeEachPaidCall,
   });
   if (contentValidated.status === 'invalid') {
     return {
@@ -1009,58 +530,16 @@ async function reviewInterventionPackageCandidateWithPolicy(
       ],
     };
   }
-
-  const reviewed = await runPackageReview(
-    input.db,
-    runTaskFn,
-    input.context,
-    input.packageValue,
-    input.subjectProfile,
-    independentlySolved.audit,
-    contentValidated.audit,
-    beforeEachPaidCall,
-    input.reviewRunBindingPolicy,
-    learnerLocale,
-  );
-  if (reviewed.status === 'invalid') {
-    return {
-      ...reviewed,
-      taskRunIds: [
-        ...independentlySolved.audit.diagnostics.flatMap(
-          (diagnostic) => diagnostic.solver_attempt_task_run_ids,
-        ),
-        ...contentValidated.audit.diagnostics.map((diagnostic) => diagnostic.task_run_id),
-        ...reviewed.taskRunIds,
-      ],
-    };
-  }
-  return reviewed;
-}
-
-export async function reviewInterventionPackageCandidate(
-  input: InterventionPackageCandidateReviewInput,
-): Promise<InterventionPackageCandidateReviewResult> {
-  return reviewInterventionPackageCandidateWithPolicy({
-    ...input,
-    reviewRunBindingPolicy: 'require_now',
-  });
+  return {
+    status: 'ok',
+    independentSolutionAudit: independentlySolved.audit,
+    questionContentValidationAudit: contentValidated.audit,
+  };
 }
 
 export const interventionAuthorStages = {
   authorPackage: runPackageAuthor,
-  reviewPackage: (input: {
-    db: Db;
-    runTaskFn: TaskTextRunFn;
-    context: InterventionAuthoringContextT;
-    packageValue: InterventionPackageT;
-    subjectProfile: SubjectProfile;
-    beforeEachPaidCall: () => Promise<string | null>;
-  }) =>
-    reviewInterventionPackageCandidateWithPolicy({
-      ...input,
-      // Rebinding happens on the intervention record before activation.
-      reviewRunBindingPolicy: 'defer_to_preparation_record',
-    }),
+  validatePackage: validateInterventionPackageAdmission,
 };
 
 /**
@@ -1068,7 +547,8 @@ export const interventionAuthorStages = {
  *
  * The only domain identifier supplied by the caller is `interventionId`.
  * The attempt sequence (guards, subject profile, deterministic check) lives in
- * the kernel. This module supplies the paid author and review stages.
+ * the kernel. This module supplies the paid author and admission-validator
+ * stages.
  */
 export async function authorInterventionPackage(
   db: Db,

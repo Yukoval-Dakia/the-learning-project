@@ -1,15 +1,17 @@
 // Author sequence for one intervention preparation attempt: preparation guard,
-// subject profile, paid author stage, preparation guard again, paid review
-// stage, then the deterministic package check. Practice owns the two paid
+// subject profile, paid author stage, preparation guard again, then the shared
+// admission validators (three sealed blind solves plus three release-strict
+// content checks) and the deterministic package check. Practice owns the paid
 // stages. This module does not call them as a single forwarded author.
 
 import type { TaskTextResult } from '@/ai/task-result';
 import {
   type InterventionAuthoringContextT,
-  type InterventionPackageReviewAuditT,
+  type InterventionIndependentSolutionAuditT,
   type InterventionPackageT,
   InterventionPreparationAttempt,
   type InterventionPreparationAttemptT,
+  type InterventionQuestionContentValidationAuditT,
   validateInterventionPackageDeterministically,
 } from '@/core/schema/intervention';
 import type { Db } from '@/db/client';
@@ -26,8 +28,12 @@ type AuthorStageResult =
   | { status: 'ok'; package: InterventionPackageT }
   | { status: 'invalid'; taskRunId?: string; failureCode: string };
 
-type ReviewStageResult =
-  | { status: 'ok'; review: InterventionPackageReviewAuditT }
+type ValidateStageResult =
+  | {
+      status: 'ok';
+      independentSolutionAudit: InterventionIndependentSolutionAuditT;
+      questionContentValidationAudit: InterventionQuestionContentValidationAuditT;
+    }
   | { status: 'invalid'; failureCode: string; taskRunIds: string[] };
 
 export interface InterventionAuthorStages {
@@ -36,14 +42,14 @@ export interface InterventionAuthorStages {
     context: InterventionAuthoringContextT,
     subjectProfile: SubjectProfile,
   ) => Promise<AuthorStageResult>;
-  reviewPackage: (input: {
+  validatePackage: (input: {
     db: Db;
     runTaskFn: PackageAuthorRun;
     context: InterventionAuthoringContextT;
     packageValue: InterventionPackageT;
     subjectProfile: SubjectProfile;
     beforeEachPaidCall: () => Promise<string | null>;
-  }) => Promise<ReviewStageResult>;
+  }) => Promise<ValidateStageResult>;
 }
 
 export interface InterventionAuthorCall {
@@ -117,7 +123,7 @@ export async function authorInterventionPackage(
   }
 
   let nextGuard: Awaited<ReturnType<typeof guardInterventionPreparationStage>> | null = reviewGuard;
-  const reviewed = await stages.reviewPackage({
+  const validated = await stages.validatePackage({
     db,
     runTaskFn,
     context: reviewGuard.context,
@@ -131,24 +137,25 @@ export async function authorInterventionPackage(
       return guard.status === 'ready' ? null : guard.status;
     },
   });
-  if (reviewed.status === 'invalid') {
+  if (validated.status === 'invalid') {
     return InterventionPreparationAttempt.parse({
       kind: 'author_failed',
       attempt,
       author_task_run_id: authored.package.author_task_run_id,
-      ...(reviewed.taskRunIds.length > 0 ? { validator_task_run_ids: reviewed.taskRunIds } : {}),
-      failure_code: reviewed.failureCode,
+      ...(validated.taskRunIds.length > 0 ? { validator_task_run_ids: validated.taskRunIds } : {}),
+      failure_code: validated.failureCode,
     });
   }
   const deterministicFailures = validateInterventionPackageDeterministically(
-    context,
+    reviewGuard.context,
     authored.package,
   );
   return InterventionPreparationAttempt.parse({
-    kind: 'reviewed_package',
+    kind: 'validated_package',
     attempt,
     package: authored.package,
-    review: reviewed.review,
+    independent_solution_audit: validated.independentSolutionAudit,
+    question_content_validation_audit: validated.questionContentValidationAudit,
     deterministic_failure_codes: deterministicFailures,
   });
 }

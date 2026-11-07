@@ -501,85 +501,6 @@ function authorOutput(attempt: number) {
   };
 }
 
-function reviewDiagnosticChecks(
-  overrides: Partial<{
-    reference_correct: boolean;
-    within_frozen_scope: boolean;
-    discipline_grounded: boolean;
-  }> = {},
-) {
-  return (['immediate', 'delayed', 'transfer'] as const).map((kind) => ({
-    kind,
-    independently_derived_answer_md: `${kind} independently solved answer`,
-    required_operations_md: '应用冻结 claim 内的链式法则。',
-    reference_correct: overrides.reference_correct ?? true,
-    within_frozen_scope: overrides.within_frozen_scope ?? true,
-    discipline_grounded: overrides.discipline_grounded ?? true,
-    decision_basis_md: '独立答案与 reference 一致；操作在冻结范围内；结论可独立复算。',
-    causal_direction_check: {
-      applies: false,
-      exposure_x_md: '',
-      observed_outcome_y_md: '',
-      reference_reverse_causation_claim_relations: [],
-    },
-  }));
-}
-
-function reviewPackageChecks(overrides: Partial<ReturnType<typeof reviewPackageChecksBase>> = {}) {
-  return { ...reviewPackageChecksBase(), ...overrides };
-}
-
-function reviewPackageChecksBase() {
-  return {
-    material_grounded: true,
-    method_followed: true,
-    tested_claims_match: true,
-    target_errors_match: true,
-    answers_unique: true,
-    answers_gradable: true,
-    no_answer_leak: true,
-    diagnostics_same_construct: true,
-    transfer_context_changed: true,
-    target_error_identifiable: true,
-    serious_factual_error_absent: true,
-    safe_material: true,
-  };
-}
-
-function comparatorDiagnosticChecks(input: unknown, checks = reviewDiagnosticChecks()) {
-  const sealed = (
-    input as {
-      sealed_independent_solutions?: Array<{
-        kind: string;
-        solver_output_sha256: string;
-        required_operations: Array<{
-          operation_index: number;
-          operation_sha256: string;
-        }>;
-      }>;
-    }
-  ).sealed_independent_solutions;
-  if (sealed?.length !== 3) throw new Error('missing sealed independent solutions');
-  const solutionByKind = new Map(sealed.map((solution) => [solution.kind, solution]));
-  return checks.map(
-    ({
-      independently_derived_answer_md: _answer,
-      required_operations_md: _operations,
-      ...check
-    }) => ({
-      ...check,
-      required_operation_checks: solutionByKind
-        .get(check.kind)
-        ?.required_operations.map((operation) => ({
-          operation_index: operation.operation_index,
-          reference_covers_operation: check.reference_correct,
-          within_frozen_scope: check.within_frozen_scope,
-          decision_basis_md: '该原子步骤已逐项对照 reference 与冻结 scope，结论与诊断级判据一致。',
-        })),
-    }),
-  );
-}
-
 async function recordMockAiRun(
   db: ReturnType<typeof testDb>,
   kind: string,
@@ -673,23 +594,6 @@ function successfulRunTask(
           overall: 'pass',
           summary_md: '复杂链式法则题面、答案和构念均通过共享内容 validator。',
           confidence: 0.96,
-        },
-      };
-    }
-    if (kind === 'InterventionPackageReviewTask') {
-      const attempt = calls.filter((value) => value === kind).length;
-      const taskRunId = `review_run_${attempt}`;
-      await recordMockAiRun(db, kind, input, taskRunId);
-      return {
-        text: '',
-        task_run_id: taskRunId,
-        structured_output: {
-          review_protocol_version: 2,
-          verdict: 'pass',
-          failure_codes: [],
-          diagnostic_checks: comparatorDiagnosticChecks(input),
-          package_checks: reviewPackageChecks(),
-          summary_md: '材料、三题和目标错误均对齐，答案可判定且迁移情境已更换。',
         },
       };
     }

@@ -18,10 +18,7 @@ export {
 export { readPracticeDraftList } from './server/draft-list-read';
 export { enablePracticeDraft, forceEnablePracticeDraft } from './server/draft-promotion-operations';
 export { readDraftReviewDetail } from './server/draft-review';
-export {
-  authorInterventionPackage,
-  reviewInterventionPackageCandidate,
-} from './server/intervention-author';
+export { authorInterventionPackage } from './server/intervention-author';
 export {
   DEFAULT_MAX_PER_RUN,
   type ItemPriorCandidateFrozen,

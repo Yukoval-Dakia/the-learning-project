@@ -6,7 +6,6 @@ import { dreamingTaskSpec } from './dreaming';
 import { goalScopeTaskSpec } from './goal-scope';
 import {
   interventionPackageAuthorTaskSpec,
-  interventionPackageReviewTaskSpec,
   interventionRecommendationTaskSpec,
 } from './intervention';
 import { learningIntentOutlineTaskSpec } from './learning-intent';
@@ -21,7 +20,6 @@ export const agencyTaskSpecs = defineOwnedTaskSpecs('agency', {
   ConjectureProbeReviewTask: conjectureProbeReviewTaskSpec,
   InterventionRecommendationTask: interventionRecommendationTaskSpec,
   InterventionPackageAuthorTask: interventionPackageAuthorTaskSpec,
-  InterventionPackageReviewTask: interventionPackageReviewTaskSpec,
   DreamingTask: dreamingTaskSpec,
   CoachTask: coachTaskSpec,
   MemoryBriefTask: memoryBriefTaskSpec,

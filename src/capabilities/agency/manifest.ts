@@ -243,8 +243,9 @@ export const agencyCapability = defineCapability({
       },
       {
         // On-demand, intervention-scoped preparation wave. One recommendation is
-        // immediately consumed by QuestionAuthor, then a separate same-model review gates
-        // atomic activation. No cron and no ordinary KC fallback.
+        // immediately consumed by QuestionAuthor, then the shared admission
+        // validators (three blind solves plus three release-strict grounding
+        // checks) gate atomic activation. No cron and no ordinary KC fallback.
         name: 'prepare_intervention',
         queue: 'llm',
         load: () =>

@@ -1,13 +1,14 @@
 import { inArray } from 'drizzle-orm';
 import type {
-  InterventionPackageT,
+  InterventionIndependentSolutionAuditT,
   InterventionPreparationAttemptT,
+  InterventionQuestionContentValidationAuditT,
 } from '@/core/schema/intervention';
 import {
-  CurrentInterventionPackageReviewAudit,
+  InterventionIndependentSolutionAudit,
   InterventionPreparationAttempt,
+  InterventionQuestionContentValidationAudit,
   MAX_INTERVENTION_PACKAGE_ATTEMPTS,
-  buildInterventionPackageReviewTaskInput,
   buildInterventionQuestionContentValidationTaskInput,
   validateInterventionPackageDeterministically,
 } from '@/core/schema/intervention';
@@ -173,6 +174,41 @@ async function revalidateForPaidPreparationStage(
   };
 }
 
+/**
+ * Admission evidence for one attempt. Current attempts carry the two sealed
+ * audits directly; comparator-era `reviewed_package` rows embed them in the
+ * persisted review object (V3 rows carry both, earlier eras carry only the
+ * independent-solution audit or none — those cannot prove admission).
+ */
+function admissionAuditsOf(attempt: InterventionPreparationAttemptT): {
+  independentSolutionAudit: InterventionIndependentSolutionAuditT | null;
+  questionContentValidationAudit: InterventionQuestionContentValidationAuditT | null;
+} {
+  if (attempt.kind === 'validated_package') {
+    return {
+      independentSolutionAudit: attempt.independent_solution_audit,
+      questionContentValidationAudit: attempt.question_content_validation_audit,
+    };
+  }
+  if (attempt.kind === 'author_failed') {
+    return { independentSolutionAudit: null, questionContentValidationAudit: null };
+  }
+  const review = attempt.review;
+  // Only audits that satisfy the current strict contract count as admission
+  // evidence; comparator-era rows whose embedded audits parse against a looser
+  // historical shape cannot prove admission and fail closed.
+  const independent = InterventionIndependentSolutionAudit.safeParse(
+    'independent_solution_audit' in review ? review.independent_solution_audit : null,
+  );
+  const content = InterventionQuestionContentValidationAudit.safeParse(
+    'question_content_validation_audit' in review ? review.question_content_validation_audit : null,
+  );
+  return {
+    independentSolutionAudit: independent.success ? independent.data : null,
+    questionContentValidationAudit: content.success ? content.data : null,
+  };
+}
+
 async function bindAttemptToRecord(
   db: Db,
   record: InterventionRecord,
@@ -188,7 +224,7 @@ async function bindAttemptToRecord(
       : [];
   const expectedRuns: Array<{
     id: string;
-    taskKind: 'SolutionGenerateTask' | 'QuizVerifyTask' | 'InterventionPackageReviewTask';
+    taskKind: 'SolutionGenerateTask' | 'QuizVerifyTask';
     inputHash: string;
     promptFingerprints: Record<'zh-CN' | 'en', string>;
     resultDigest?: string | null;
@@ -208,18 +244,20 @@ async function bindAttemptToRecord(
   ) {
     failures.push('agency:method_mismatch');
   }
-  if (attempt.review.package_digest_sha256 !== sha256CanonicalJson(attempt.package)) {
-    failures.push('agency:review_package_digest_mismatch');
+  const packageDigest = sha256CanonicalJson(attempt.package);
+  if (attempt.kind === 'reviewed_package') {
+    // Integrity of the persisted comparator-era wrapper; its verdict no longer
+    // gates activation.
+    if (attempt.review.package_digest_sha256 !== packageDigest) {
+      failures.push('agency:review_package_digest_mismatch');
+    }
   }
-  const currentReviewAudit = CurrentInterventionPackageReviewAudit.safeParse(attempt.review);
-  if (!currentReviewAudit.success) {
-    failures.push('agency:current_full_review_required');
-  }
-  if (!('independent_solution_audit' in attempt.review)) {
-    failures.push('agency:independent_solution_audit_missing');
-  } else if (currentReviewAudit.success) {
-    const currentReview = currentReviewAudit.data;
-    const independentAudit = currentReview.independent_solution_audit;
+  const audits = admissionAuditsOf(attempt);
+  if (!audits.independentSolutionAudit || !audits.questionContentValidationAudit) {
+    failures.push('agency:admission_evidence_missing');
+  } else {
+    const independentAudit = audits.independentSolutionAudit;
+    const contentAudit = audits.questionContentValidationAudit;
     const subjectProfile = await resolveSubjectProfileForKnowledgeIdsStrict(db, [
       record.snapshot.conjecture.knowledge_id,
     ]);
@@ -228,9 +266,8 @@ async function bindAttemptToRecord(
       en: taskPromptFingerprint(taskKind, subjectProfile, 'en'),
     });
     const solverPromptFingerprints = promptFingerprints('SolutionGenerateTask');
-    const reviewPromptFingerprints = promptFingerprints('InterventionPackageReviewTask');
     const contentPromptFingerprints = promptFingerprints('QuizVerifyTask');
-    if (independentAudit.package_digest_sha256 !== sha256CanonicalJson(attempt.package)) {
+    if (independentAudit.package_digest_sha256 !== packageDigest) {
       failures.push('agency:independent_solution_package_digest_mismatch');
     }
     for (const diagnostic of independentAudit.diagnostics) {
@@ -263,15 +300,16 @@ async function bindAttemptToRecord(
         });
       }
     }
-    if (record.recommendation?.kind === 'recommendation') {
-      const questionContentValidationAudit = currentReview.question_content_validation_audit;
-      if (
-        questionContentValidationAudit.package_digest_sha256 !==
-        sha256CanonicalJson(attempt.package)
-      ) {
-        failures.push('agency:question_content_validation_package_digest_mismatch');
+    if (contentAudit.package_digest_sha256 !== packageDigest) {
+      failures.push('agency:question_content_validation_package_digest_mismatch');
+    }
+    for (const diagnostic of contentAudit.diagnostics) {
+      // The shared release-strict grounding verdict is the admission decision;
+      // an unclear or fail result must keep the package unactivated.
+      if (diagnostic.result.grounding.verdict !== 'pass') {
+        failures.push(`agency:${diagnostic.kind}:admission_grounding_failed`);
       }
-      for (const diagnostic of questionContentValidationAudit.diagnostics) {
+      if (record.recommendation?.kind === 'recommendation') {
         const expectedInput = buildInterventionQuestionContentValidationTaskInput({
           context: { snapshot: record.snapshot, recommendation: record.recommendation },
           packageValue: attempt.package,
@@ -285,9 +323,6 @@ async function bindAttemptToRecord(
         ) {
           failures.push(`agency:${diagnostic.kind}:question_content_validation_input_mismatch`);
         }
-        if (diagnostic.result_sha256 !== sha256CanonicalJson(diagnostic.result)) {
-          failures.push(`agency:${diagnostic.kind}:question_content_validation_output_mismatch`);
-        }
         expectedRuns.push({
           id: diagnostic.task_run_id,
           taskKind: 'QuizVerifyTask',
@@ -295,28 +330,6 @@ async function bindAttemptToRecord(
           promptFingerprints: contentPromptFingerprints,
           resultDigest: diagnostic.result_sha256,
           failureCode: `agency:${diagnostic.kind}:question_content_validation_task_run_invalid`,
-        });
-      }
-      const reviewTaskInputSha256 = sha256CanonicalJson(
-        buildInterventionPackageReviewTaskInput({
-          context: { snapshot: record.snapshot, recommendation: record.recommendation },
-          packageValue: attempt.package,
-          independentAudit,
-          questionContentValidationAudit,
-        }),
-      );
-      if (currentReview.review_task_input_sha256 !== reviewTaskInputSha256) {
-        failures.push('agency:review_task_input_digest_mismatch');
-      }
-      for (const reviewAttempt of currentReview.review_attempts) {
-        expectedRuns.push({
-          id: reviewAttempt.task_run_id,
-          taskKind: 'InterventionPackageReviewTask',
-          inputHash: reviewTaskInputSha256,
-          promptFingerprints: reviewPromptFingerprints,
-          resultDigest:
-            reviewAttempt.outcome === 'valid' ? sha256CanonicalJson(reviewAttempt.result) : null,
-          failureCode: 'agency:review_task_run_invalid',
         });
       }
     }
@@ -372,22 +385,27 @@ async function bindAttemptToRecord(
   });
 }
 
+/**
+ * An attempt activates when its two sealed admission audits match the package
+ * digest and every deterministic check passes — including the release-strict
+ * grounding admission recorded by bindAttemptToRecord. The comparator-era
+ * `review` verdict is deliberately not consulted.
+ */
 function passingAttempt(
   attempts: InterventionPreparationAttemptT[],
-): Extract<InterventionPreparationAttemptT, { kind: 'reviewed_package' }> | null {
+): Extract<
+  InterventionPreparationAttemptT,
+  { kind: 'validated_package' | 'reviewed_package' }
+> | null {
   for (const attempt of attempts) {
-    const packageDigest =
-      attempt.kind === 'reviewed_package' ? sha256CanonicalJson(attempt.package) : null;
-    const currentReview =
-      attempt.kind === 'reviewed_package'
-        ? CurrentInterventionPackageReviewAudit.safeParse(attempt.review)
-        : null;
+    if (attempt.kind === 'author_failed') continue;
+    const packageDigest = sha256CanonicalJson(attempt.package);
+    const audits = admissionAuditsOf(attempt);
     if (
-      attempt.kind === 'reviewed_package' &&
-      currentReview?.success &&
-      currentReview.data.package_digest_sha256 === packageDigest &&
-      currentReview.data.independent_solution_audit.package_digest_sha256 === packageDigest &&
-      currentReview.data.result.verdict === 'pass' &&
+      (attempt.kind === 'validated_package' ||
+        attempt.review.package_digest_sha256 === packageDigest) &&
+      audits.independentSolutionAudit?.package_digest_sha256 === packageDigest &&
+      audits.questionContentValidationAudit?.package_digest_sha256 === packageDigest &&
       attempt.deterministic_failure_codes.length === 0
     ) {
       return attempt;
@@ -399,6 +417,11 @@ function passingAttempt(
 function terminalAttemptFailure(attempt: InterventionPreparationAttemptT | undefined): string {
   if (!attempt) return 'package_attempt_missing';
   if (attempt.kind === 'author_failed') return attempt.failure_code;
+  if (attempt.kind === 'validated_package') {
+    return attempt.deterministic_failure_codes.length > 0
+      ? `package_quality:${[...new Set(attempt.deterministic_failure_codes)].sort().join(',')}`
+      : 'package_failed';
+  }
   const codes = [...attempt.review.result.failure_codes, ...attempt.deterministic_failure_codes];
   return codes.length > 0
     ? `package_quality:${[...new Set(codes)].sort().join(',')}`

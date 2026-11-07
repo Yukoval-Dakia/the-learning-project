@@ -45,10 +45,7 @@ import {
   type GroundingGateCandidateReport,
   collectGroundingGateCandidates,
 } from './grounding-gate/candidates';
-import {
-  validateInterventionReviewEvalProviderEnv,
-  validateShadowProviderEnv,
-} from './grounding-gate/preflight';
+import { validateShadowProviderEnv } from './grounding-gate/preflight';
 
 const BackupManifestSchema = z.object({
   schema_version: z.string().min(1),
@@ -58,13 +55,7 @@ const BackupManifestSchema = z.object({
 });
 
 type BackupManifest = z.infer<typeof BackupManifestSchema>;
-type Command =
-  | 'inspect'
-  | 'shadow'
-  | 'review-intervention'
-  | 'score-blind'
-  | 'init-canary'
-  | 'score-canary';
+type Command = 'inspect' | 'shadow' | 'score-blind' | 'init-canary' | 'score-canary';
 
 interface ParsedArgs {
   command: Command;
@@ -94,7 +85,6 @@ function usage(): string {
 Commands:
   pnpm grounding:gate inspect --backup <loom-backup.zip> [--out <dir>] [--sample-size 8]
   pnpm grounding:gate shadow --backup <loom-backup.zip> [--out <dir>] [--sample-size 8] [--env-file <path>]
-  pnpm grounding:gate review-intervention --cases <sanitized-cases.json> [--out <result.json>] [--env-file <path>]
   pnpm grounding:gate score-blind --review <blind/review.json> [--out <score.json>]
   pnpm grounding:gate init-canary --blind-score <score.json> [--out <canary-review.json>]
   pnpm grounding:gate score-canary --review <canary-review.json> [--out <canary-score.json>]
@@ -102,21 +92,13 @@ Commands:
 Safety:
   - inspect/shadow restore only into an automatically removed pgvector Testcontainer.
   - shadow writes AI provenance only inside that disposable DB; it never writes product proposals/events.
-  - review-intervention runs the real 3x blind-solver + sealed-comparator validator against sanitized fixtures in a disposable DB; it is development evidence and never satisfies the Gate C canary.
   - raw backups and generated packets belong under .tmp/yuk-814 and must never be committed.
   - synthetic fixtures validate this harness only and never satisfy the real gate.`;
 }
 
 function parseArgs(argv: string[]): ParsedArgs {
   const [rawCommand, ...rest] = argv;
-  const commands: Command[] = [
-    'inspect',
-    'shadow',
-    'review-intervention',
-    'score-blind',
-    'init-canary',
-    'score-canary',
-  ];
+  const commands: Command[] = ['inspect', 'shadow', 'score-blind', 'init-canary', 'score-canary'];
   if (!commands.includes(rawCommand as Command)) {
     throw new Error(`missing or invalid command\n\n${usage()}`);
   }
@@ -450,59 +432,6 @@ function loadShadowEnv(options: Map<string, string>): void {
   validateShadowProviderEnv(process.env);
 }
 
-function loadInterventionReviewEvalEnv(options: Map<string, string>): void {
-  const envFile = options.get('--env-file');
-  loadDotenv({ path: envFile ? resolve(envFile) : resolve('.env'), override: false, quiet: true });
-  validateInterventionReviewEvalProviderEnv(process.env);
-}
-
-async function runReviewIntervention(options: Map<string, string>): Promise<number> {
-  loadInterventionReviewEvalEnv(options);
-  const codeRevision = currentRevision();
-  const casesPath = resolve(requiredOption(options, '--cases'));
-  const casesBytes = new Uint8Array(await readFile(casesPath));
-  const inputHash = sha256(casesBytes);
-  const outPath = resolve(
-    options.get('--out') ??
-      join('.tmp', 'yuk-829', `intervention-review-actual-${inputHash.slice(0, 12)}.json`),
-  );
-  if (existsSync(outPath)) {
-    throw new Error(`refusing to overwrite intervention review result: ${outPath}`);
-  }
-  const { InterventionReviewRegressionPacket, runInterventionReviewActualOutputEval } =
-    await import('./grounding-gate/intervention-review-eval');
-  const packet = InterventionReviewRegressionPacket.parse(
-    JSON.parse(new TextDecoder().decode(casesBytes)),
-  );
-  const artifact = await withDisposableDb((db) =>
-    runInterventionReviewActualOutputEval({
-      db,
-      packet,
-      runTaskFn: makeRunTaskFn(db),
-      codeRevision,
-    }),
-  );
-  const finalRevision = currentRevision();
-  if (finalRevision !== codeRevision) {
-    throw new Error('git revision changed during the reviewer eval; refusing to seal artifacts');
-  }
-  await writeJson(outPath, artifact);
-  console.log(
-    JSON.stringify(
-      {
-        wrote: outPath,
-        code_revision: codeRevision,
-        cases: artifact.cases.length,
-        passed: artifact.passed,
-        satisfies_yuk_814_canary: artifact.satisfies_yuk_814_canary,
-      },
-      null,
-      2,
-    ),
-  );
-  return artifact.passed ? 0 : 1;
-}
-
 async function runShadow(options: Map<string, string>): Promise<number> {
   loadShadowEnv(options);
   const codeRevision = currentRevision();
@@ -632,7 +561,6 @@ export async function runCli(argv: string[] = process.argv.slice(2)): Promise<nu
   installSchedulingCandidateRebuild();
   if (command === 'inspect') return runInspect(options);
   if (command === 'shadow') return runShadow(options);
-  if (command === 'review-intervention') return runReviewIntervention(options);
   if (command === 'score-blind') return runScoreBlind(options);
   if (command === 'init-canary') return runInitCanary(options);
   return runScoreCanary(options);
