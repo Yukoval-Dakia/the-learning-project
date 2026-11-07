@@ -15,8 +15,8 @@ import {
   source_document,
 } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { runAutoEnrollForSession } from './auto-enroll';
 import { captureIngestionOriginal } from './assessment-capture';
+import { runAutoEnrollForSession } from './auto-enroll';
 import { settleCapturedBlock } from './capture/captured-question';
 import { enrollCapturedBlock } from './enroll';
 import { revertAutoEnrolledBlock } from './revert-auto-enroll';
@@ -207,8 +207,9 @@ async function seedCapturedEnrollment(db: ReturnType<typeof testDb>): Promise<{
     version: 0,
   });
   const [block] = await db.select().from(question_block).where(eq(question_block.id, blockId));
+  if (!block) throw new Error('capture block missing');
   const captured = await captureIngestionOriginal(db, {
-    block: block!,
+    block,
     knowledgeIds: ['k1'],
     difficulty: 3,
     confidence: 0.8,
@@ -221,7 +222,7 @@ async function seedCapturedEnrollment(db: ReturnType<typeof testDb>): Promise<{
     await settleCapturedBlock(tx, {
       transition: 'auto_enroll',
       blockId,
-      guard: { kind: 'version_cas', version: block!.version },
+      guard: { kind: 'version_cas', version: block.version },
       enroll: {
         questionId: captured.questionId,
         outcome: 'unanswered',
@@ -255,13 +256,21 @@ describe('revertAutoEnrolledBlock', () => {
     await resetDb();
   });
 
+  // @invariant data: a revert retracts the enrollment origin and withdraws captured work,
+  //   while the question survives as reusable content
+  // @fails-if a captured-answer enrollment's attempt stays live (timeline keeps it), or the
+  //   block's imported links survive the revert
   it.each(['historical_attempt', 'captured_answer'] as const)(
     'retracts an auto-enrollment (%s): retract event + archived record + reset block + question kept',
     async (mode) => {
       const db = testDb();
       const seeded =
         mode === 'historical_attempt'
-          ? { ...(await seedAndAutoEnroll(db, FAILURE_DRAFT)), questionId: null, attemptEventId: null }
+          ? {
+              ...(await seedAndAutoEnroll(db, FAILURE_DRAFT)),
+              questionId: null,
+              attemptEventId: null,
+            }
           : await seedCapturedEnrollment(db);
       const { sessionId, blockId } = seeded;
 
