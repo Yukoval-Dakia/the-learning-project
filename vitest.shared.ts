@@ -34,6 +34,7 @@ export const fastTestInclude = [
   'src/capabilities/notes/tasks/note-generate-output.unit.test.ts',
   'src/core/blocks/scene/plot.test.ts',
   'src/capabilities/observability/api/backup-import.unit.test.ts',
+  'src/capabilities/observability/server/backup/restore-stream.unit.test.ts',
   'src/capabilities/practice/grading/jobs/model_slice_admission_run.test.ts',
   'src/capabilities/practice/grading/server/calibration-sample-durable-operation.test.ts',
   'src/capabilities/practice/grading/server/assessment/durable-attempt-dispatch.unit.test.ts',
