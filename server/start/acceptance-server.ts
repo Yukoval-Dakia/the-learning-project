@@ -20,6 +20,8 @@ const { installAgencyHostOperations } = await import('@/capabilities/agency/publ
 await installAgencyHostOperations();
 const { installObservabilityHostOperations } = await import('@/capabilities/observability/public');
 await installObservabilityHostOperations();
+const { installCopilotJobStreamGate } = await import('@/capabilities/copilot/public');
+installCopilotJobStreamGate();
 const { installDrawingHostOperations } = await import('@/capabilities/drawing/public');
 installDrawingHostOperations();
 installSettlementCascadeRevert(orchestrateCascadeRevert);

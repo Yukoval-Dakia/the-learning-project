@@ -174,7 +174,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends python3 libcap2
     && groupadd --gid 29082 agent-sandbox \
     && useradd --uid 29082 --gid 29082 --no-create-home --shell /usr/sbin/nologin agent-sandbox \
     && mkdir -p /var/lib/tlp/workspaces \
-    && chmod 1733 /var/lib/tlp/workspaces
+    && chown node:agent-sandbox /var/lib/tlp/workspaces \
+    && chmod 1730 /var/lib/tlp/workspaces
+COPY scripts/workspace/files.py /usr/local/libexec/workspace-files.py
 COPY --from=workspace-launcher /workspace-launch /usr/local/libexec/workspace-launch
 RUN chown root:node /usr/local/libexec/workspace-launch \
     && chmod 0750 /usr/local/libexec/workspace-launch \
