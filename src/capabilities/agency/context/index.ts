@@ -9,6 +9,7 @@ import type {
   LearnerContextInput,
   LearnerContextResult,
 } from '@/kernel/read-models/learner-context';
+import { assembleCoachContext } from './coach';
 import { assembleCompanionContext } from './companion';
 
 type DbLike = Db | Tx;
@@ -28,6 +29,9 @@ export async function loadLearnerContext(
         })),
         view,
       };
+    case 'coach':
+      // YUK-1790 LIGHT — the planner's own view; it does not borrow companion/curator.
+      return assembleCoachContext(db, { now: input.now ?? new Date() });
     default:
       // Every declared view must have an assembler here.
       throw new Error(`learner-context: unregistered view '${String(view)}'`);

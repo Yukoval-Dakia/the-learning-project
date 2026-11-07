@@ -16,6 +16,12 @@ export {
 } from './server/stream-operations';
 export { rotationClassForKind } from './server/variant-rotation';
 
+// YUK-1790 LIGHT — the candidate union read. Other owners (the kernel port) reach it through
+// this seam or the port; scheduling/server stays private. Lazy like queryReviewDue so the
+// root barrel's static load chain does not grow.
+export const readPracticeCandidates: typeof import('./server/practice-candidates').readPracticeCandidates =
+  async (...args) => (await import('./server/practice-candidates')).readPracticeCandidates(...args);
+
 export const queryReviewDue: typeof import('./server/due-list').queryReviewDue = async (...args) =>
   (await import('./server/due-list')).queryReviewDue(...args);
 
