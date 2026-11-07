@@ -8,6 +8,7 @@ import { CostSection } from './CostSection';
 import { PageStrip } from './PageStrip';
 import { PriorRuns } from './PriorRuns';
 import { PurposeSection } from './PurposeSection';
+import { RecordTitle } from './RecordTitle';
 import { GAP_WORDS, materialWords, receiptWords, warningWords, whenWords } from './record-copy';
 import { useStartState } from './record-start';
 import { useRecording } from './recording-read';
@@ -72,9 +73,10 @@ export function RecordingSheet({
       <header className="rc-sheet-head">
         <div className="rc-sheet-title">
           <h2 className="rc-row-title">
-            {[rec.createdAt !== null ? whenWords(rec.createdAt, now) : null, title]
-              .filter(Boolean)
-              .join(' · ')}
+            <RecordTitle
+              when={rec.createdAt !== null ? whenWords(rec.createdAt, now) : null}
+              title={title}
+            />
           </h2>
           <p className="rc-sheet-meta">
             {materialWords(facts.entrypoint, facts.source_asset_ids.length)}

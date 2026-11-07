@@ -1,5 +1,6 @@
 import { Button } from '@/ui-next/public';
 import { BlockLine } from './BlockLine';
+import { printedNumber } from './block-text';
 import { IMPORTABLE_STATUS, useImportDraft } from './import-draft';
 import type { Block } from './record-api';
 import { reviewLine } from './record-copy';
@@ -41,6 +42,11 @@ export function BlockLines({
   const waiting = draft.waiting.length;
 
   if (blocks.length === 0) return null;
+  // A position number would read as the book's number and send the learner to the wrong question,
+  // so where others have their printed number, one without it shows none.
+  const anyPrinted = blocks.some((block) => printedNumber(block) !== null);
+  const lineNumber = (block: Block, index: number) =>
+    printedNumber(block) ?? (anyPrinted ? '–' : String(index + 1));
   // The sticky 收进题库 bar sticks only while this list is on screen: its own containing block
   // keeps it off the 后续用途 options above (it covered them on phones).
   return (
@@ -51,7 +57,7 @@ export function BlockLines({
             key={block.id}
             sessionId={sessionId}
             block={block}
-            no={i + 1}
+            no={lineNumber(block, i)}
             edit={draft.editOf(block)}
             onEdit={(patch) => draft.update(block, patch)}
             locked={locked}
