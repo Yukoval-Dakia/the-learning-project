@@ -91,16 +91,16 @@
      timeline, formula card). Sizes are em-relative to --un-read-fs so a block or a denser surface
      only resets the body size and line height (see [data-read="compact"] in reading.css). */
   --un-read-fs: var(--un-fs-3);
-  --un-read-lh: var(--un-lh-prose);
+  --un-read-lh: 1.8;
   --un-read-measure: var(--un-w-prose);
-  --un-read-gap: 1.05em; /* between paragraphs, lists, tables, code, formulas */
-  --un-read-gap-item: 0.6em; /* between list items */
-  --un-read-gap-section: 2.1em; /* above a section heading */
-  --un-read-gap-heading: 0.7em; /* below a heading */
-  --un-read-h1: 1.8em;
-  --un-read-h2: 1.48em;
-  --un-read-h3: 1.24em;
-  --un-read-h4: 1.08em;
+  --un-read-gap: 1.15em; /* between paragraphs, lists, tables, code, formulas */
+  --un-read-gap-item: 0.55em; /* between list items */
+  --un-read-gap-section: 2.6em; /* above a section heading */
+  --un-read-gap-heading: 0.75em; /* below a heading */
+  --un-read-h1: 1.72em;
+  --un-read-h2: 1.36em;
+  --un-read-h3: 1.1em;
+  --un-read-h4: 1.02em;
   --un-read-heading-lh: var(--un-lh-tight);
   --un-read-indent: 1.5em; /* list and quote indent */
   --un-read-code-fs: 0.88em;
@@ -109,6 +109,7 @@
   --un-read-cell-pad: 0.8em 0.9em;
   --un-read-table-lh: 1.8;
   --un-read-radius: var(--un-r-1);
+  --un-read-card-radius: 14px; /* quote and display formula blocks */
   --un-read-rule: var(--un-line);
   --un-read-quote-rule: var(--un-line-strong);
 
