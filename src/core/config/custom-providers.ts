@@ -188,21 +188,9 @@ export function validateCustomProviderInput(
 // ─── in-memory registry ─────────────────────────────────────────────────────
 
 let registry: ReadonlyMap<string, CustomProviderDefinition> = new Map();
-let registryStamp: string | undefined;
-let registryHydrated = false;
 
 function stampOf(records: readonly CustomProviderRecord[]): string {
   return records.map((record) => `${record.id}@${record.updatedAt}`).join('|');
-}
-
-/**
- * False until a DB read succeeded (including an empty table). The catalog
- * merge must not read an un-hydrated registry as "every custom provider was
- * deleted"; a failed boot hydrate keeps the stored buckets until the watch
- * retries.
- */
-export function customProvidersRegistryHydrated(): boolean {
-  return registryHydrated;
 }
 
 /** Atomic registry swap (hydrate, write, and watch paths all come through here). */
@@ -219,8 +207,6 @@ export function installCustomProviders(records: readonly CustomProviderRecord[])
       },
     ]),
   );
-  registryStamp = stampOf(records);
-  registryHydrated = true;
 }
 
 /** Drizzle row (snake_case columns, Date timestamps) → registry record. Shared by both IO faces. */
