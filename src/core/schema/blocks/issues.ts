@@ -24,6 +24,14 @@ export const BLOCK_ISSUE_CODES = [
   // Chart
   'chart_series_invalid',
   'chart_tool_result_unresolved',
+  // Plot
+  'expr_parse_error',
+  'expr_unknown_identifier',
+  'expr_too_complex',
+  'plot_view_invalid',
+  'plot_param_invalid',
+  'plot_nothing_visible',
+  'plot_label_hardcodes_value',
   // Math
   'math_parse_error',
   // Interactive

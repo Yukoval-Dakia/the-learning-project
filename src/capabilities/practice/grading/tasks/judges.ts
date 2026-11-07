@@ -119,7 +119,7 @@ const judgeTaskDefinitions = {
     description:
       'Judge v2 light — semantic answer scoring for prose embedded checks using rubric_json.required_points',
     structuredOutputSchema: SemanticJudgeOutput,
-    budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },
+    budget: { ...DEFAULT_BUDGET, maxIterations: 1 },
     needsToolCall: false,
     isMultimodal: false,
     allowedTools: [],
@@ -135,7 +135,7 @@ const judgeTaskDefinitions = {
     description:
       'Judge v2 physics fallback — parse natural-language units/dimensions when mathjs accelerator cannot parse',
     structuredOutputSchema: LlmFallbackOutput,
-    budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },
+    budget: { ...DEFAULT_BUDGET, maxIterations: 1 },
     needsToolCall: false,
     isMultimodal: false,
     allowedTools: [],

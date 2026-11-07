@@ -64,7 +64,7 @@ export const sessionSummaryTaskSpec = {
   definition: {
     kind: 'SessionSummaryTask',
     description: '复习 session 结束后写观察与建议；可引用服务端给出的本场真实计数',
-    budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },
+    budget: { ...DEFAULT_BUDGET, maxIterations: 1 },
     needsToolCall: false,
     isMultimodal: false,
     allowedTools: [],

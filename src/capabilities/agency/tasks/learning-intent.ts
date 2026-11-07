@@ -112,7 +112,7 @@ export const learningIntentOutlineTaskSpec = {
   definition: {
     kind: 'LearningIntentOutlineTask',
     description: 'Phase 2B — 看 topic + 已有知识图谱节点 + 子节点摘要，提议 1 hub + N atomic 拆分',
-    budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },
+    budget: { ...DEFAULT_BUDGET, maxIterations: 1 },
     needsToolCall: false,
     isMultimodal: false,
     allowedTools: [],

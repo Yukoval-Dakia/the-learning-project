@@ -4,8 +4,9 @@
 //
 // Table definitions live in src/db/schema/*.ts by domain. This file is the
 // one formal entry: a single named re-export layer for drizzle-kit and the
-// @/db/schema consumers. No layering below the domain files; each re-export
-// here is classified stable_contract in scripts/pass-through-classifications.jsonl.
+// @/db/schema consumers. No layering below the domain files; a named re-export
+// of a pgTable definition from ./schema/<domain> is acknowledged by
+// scripts/lib/pass-through-sites.ts as an entrypoint, not a pass-through shell.
 //
 // JSON column types come from src/core/schema/business.ts. Importing the
 // inferred types (not the schemas) keeps these modules zod-free at runtime;

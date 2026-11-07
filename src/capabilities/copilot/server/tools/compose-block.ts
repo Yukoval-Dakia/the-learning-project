@@ -6,6 +6,7 @@
 
 import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
+import { compilePlotBlock } from '@/core/blocks/scene/plot';
 import {
   BLOCK_IMPLEMENTED_KINDS,
   BLOCK_REF_SCHEME,
@@ -209,7 +210,7 @@ export function createComposeBlockTool(
           {
             code: 'kind_not_allowed_on_surface',
             path: '/kind',
-            detail: `kind '${block.kind}' is not supported by this build yet (diagram and figure ship first)`,
+            detail: `kind '${block.kind}' is not supported by this build yet`,
             expected: [...BLOCK_IMPLEMENTED_KINDS],
           },
         ]);
@@ -300,6 +301,12 @@ export function createComposeBlockTool(
             ]);
           }
           stored = block;
+          break;
+        }
+        case 'plot': {
+          const compiled = compilePlotBlock(block, surface);
+          if (!compiled.ok) return invalid([...compiled.issues]);
+          stored = compiled.block;
           break;
         }
         case 'chart': {

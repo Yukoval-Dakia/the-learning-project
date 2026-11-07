@@ -28,11 +28,14 @@ export interface ProviderTransientRetryPolicy {
  * unchanged.
  */
 export function providerTransientRetryPolicy(): ProviderTransientRetryPolicy {
+  // Registered keys always resolve (env > db > code-default), so the registry
+  // owns these defaults; a fallback here would silently shadow it. YUK-1983's
+  // 180s wait budget lives at ADMISSION_PROVIDER_RETRY_MAX_WAIT_MS.
   return {
-    maxRetries: (getConfig('ADMISSION_PROVIDER_RETRY_MAX_RETRIES') as number | undefined) ?? 3,
-    maxWaitMs: (getConfig('ADMISSION_PROVIDER_RETRY_MAX_WAIT_MS') as number | undefined) ?? 60_000,
-    baseDelayMs:
-      (getConfig('ADMISSION_PROVIDER_RETRY_BASE_DELAY_MS') as number | undefined) ?? 2_000,
+    maxRetries: getConfig('ADMISSION_PROVIDER_RETRY_MAX_RETRIES') as number,
+    // Sleeping costs no tokens; the streaming path keeps its own 15s cap (runner.ts).
+    maxWaitMs: getConfig('ADMISSION_PROVIDER_RETRY_MAX_WAIT_MS') as number,
+    baseDelayMs: getConfig('ADMISSION_PROVIDER_RETRY_BASE_DELAY_MS') as number,
   };
 }
 
