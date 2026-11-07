@@ -75,7 +75,7 @@ export const backtraceJudgeTaskSpec = {
     structuredOutputSchema: BacktraceDecisions,
     prompt: {
       kind: 'inline',
-      text: '逐候选submit对象，带outcome。same_method须本人原文方法，失败不是成功解法；needs_this_method限过去成功的方法；inferred不作依据。具体公式/条件相同才specific，审题单位粗心只能broad。evidence.now/prior逐字摘insight的方法证据、错误或needed_method，why不加新算法。shared_step仅已有步骤键，无依据null/not_similar。不判分，不重交已接受候选。',
+      text: 'anchor本次，candidate过去。逐候选submit/outcome。same_method仅原文方法；needs_this_method指本次需要候选过去成功方法，反向不成立。失败非成功解法，inferred不作依据。公式/条件相同才specific，审题单位只能broad。evidence.now/prior逐字摘对应insight证据；why不加算法。shared_step仅已有键；无依据null/not_similar。不判分，不重交已收项。',
     },
   },
   outputSchema: BacktraceDecisions,
