@@ -20,6 +20,8 @@ function conflict(proposalId: string, existingDecision: string): ApiError {
   );
 }
 
+const STALE_PROPOSAL_MESSAGE = '相关内容后来改过，这张建议已经过时了。';
+
 function normalizeDomainError(err: unknown): never {
   if (err instanceof ApiError) throw err;
   const message = err instanceof Error ? err.message : String(err);
@@ -36,7 +38,9 @@ function normalizeDomainError(err: unknown): never {
     throw new ApiError('not_found', message, 404);
   }
   if (/^stale/i.test(message)) {
-    throw new ApiError('stale', message, 409);
+    // The code is for programs and the domain text, with its ids, for the log.
+    console.warn('[proposal-decision] stale', message);
+    throw new ApiError('stale', STALE_PROPOSAL_MESSAGE, 409);
   }
   throw err;
 }
