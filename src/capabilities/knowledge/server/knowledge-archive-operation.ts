@@ -183,7 +183,7 @@ export async function retractKnowledgeCreate(
       version: question.version,
     })
     .from(question)
-    .where(sql`${question.knowledge_ids} @> jsonb_build_array(${nodeId})`)
+    .where(sql`${question.knowledge_ids} @> ${JSON.stringify([nodeId])}::jsonb`)
     .orderBy(asc(question.id))
     .for('update');
 
