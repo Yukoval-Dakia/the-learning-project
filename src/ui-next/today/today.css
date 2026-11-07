@@ -10,6 +10,7 @@
 }
 [data-ui-next] .un-today-heading {
   display: flex;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 24px;
   margin-bottom: 32px;

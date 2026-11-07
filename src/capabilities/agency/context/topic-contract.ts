@@ -60,18 +60,97 @@ export const TopicPatch = z.object({
   knowledge_ids: z.array(z.string()).default([]),
 });
 export type TopicPatchT = z.infer<typeof TopicPatch>;
+export const ChangeIssues = z.array(
+  z.object({
+    kind: z.enum(['unmergeable', 'correction_protected', 'edit_scope_exceeded']),
+    detail: z.string(),
+  }),
+);
 export const ChangeResult = z.object({
   status: z.enum(['changed', 'unchanged', 'issue']),
   change_id: z.string().nullable(),
   version: z.number().int(),
   before: z.array(Topic),
   after: z.array(Topic),
-  issues: z.array(
-    z.object({
-      kind: z.enum(['unmergeable', 'correction_protected', 'edit_scope_exceeded']),
-      detail: z.string(),
-    }),
-  ),
+  issues: ChangeIssues,
   remaining_changes: z.array(z.string()).default([]),
   request_complete: z.boolean().default(false),
 });
+export type ChangeResultT = z.infer<typeof ChangeResult>;
+/**
+ * What a context write tool tells the model (YUK-1984). The full before/after
+ * snapshot has one owner — the `context_change` event ledger — and the learner
+ * HTTP responses that read it. Echoing it into the tool result put the whole
+ * digest into the prompt a second and third time on every write turn; this
+ * carries only the outcome, the version the next CAS write needs, repair
+ * issues, and the facts this write actually added or replaced.
+ */
+export const ChangeReceipt = z.object({
+  status: z.enum(['changed', 'unchanged', 'issue']),
+  version: z.number().int(),
+  issues: ChangeIssues,
+  remaining_changes: z.array(z.string()).default([]),
+  request_complete: z.boolean().default(false),
+  changed_topics: z
+    .array(
+      z.object({
+        key: z.string(),
+        name: z.string(),
+        /** Facts in the topic after this write. */
+        facts: z.number().int(),
+        added: z.array(z.object({ id: z.string(), body: z.string() })),
+        /** Fact ids this write superseded or dropped. */
+        replaced: z.array(z.string()),
+      }),
+    )
+    .default([]),
+});
+export type ChangeReceiptT = z.infer<typeof ChangeReceipt>;
+
+/** Only a committed change lists written topics; rejected batches wrote nothing. */
+export function changeReceipt(change: ChangeResultT): ChangeReceiptT {
+  const receipt: ChangeReceiptT = {
+    status: change.status,
+    version: change.version,
+    issues: change.issues,
+    remaining_changes: change.remaining_changes,
+    request_complete: change.request_complete,
+    changed_topics: [],
+  };
+  if (change.status !== 'changed') return receipt;
+  const before = new Map(change.before.map((topic) => [topic.key, topic]));
+  for (const topic of change.after) {
+    const old = before.get(topic.key);
+    before.delete(topic.key);
+    const oldBodies = new Map((old?.facts ?? []).map((fact) => [fact.id, fact.body]));
+    const bodies = new Map(topic.facts.map((fact) => [fact.id, fact.body]));
+    const added = topic.facts
+      .filter((fact) => oldBodies.get(fact.id) !== fact.body)
+      .map((fact) => ({ id: fact.id, body: fact.body }));
+    const replaced = (old?.facts ?? [])
+      .filter((fact) => bodies.get(fact.id) !== fact.body)
+      .map((fact) => fact.id);
+    const metadataChanged =
+      old !== undefined &&
+      (old.name !== topic.name ||
+        old.description !== topic.description ||
+        old.scope_key !== topic.scope_key);
+    if (old === undefined || added.length > 0 || replaced.length > 0 || metadataChanged)
+      receipt.changed_topics.push({
+        key: topic.key,
+        name: topic.name,
+        facts: topic.facts.length,
+        added,
+        replaced,
+      });
+  }
+  for (const topic of before.values())
+    receipt.changed_topics.push({
+      key: topic.key,
+      name: topic.name,
+      facts: 0,
+      added: [],
+      replaced: topic.facts.map((fact) => fact.id),
+    });
+  return receipt;
+}

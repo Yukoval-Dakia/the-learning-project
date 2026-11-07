@@ -386,6 +386,7 @@ FSRS 投影表 `material_fsrs_state` 从 event 流派生，每次 `action='revie
 
 - `get_subject_graph_overview`：subject 图例、root clusters、relation type 语义
 - `query_knowledge`：按 query/id 找节点，返回 path、neighbors、stats、recent failures
+- `get_knowledge_state`：按 id 或精确名称一次读取掌握带、证据量、衰减、到期、连续错、主要错因和保留度。口径是 `readLearnerJudgments`（`src/kernel/read-models/learner-judgment.ts`）和 `readCauseJudgment`（`src/kernel/read-models/cause-judgment.ts`）
 - `expand_knowledge_subgraph`：围绕中心节点展开 bounded local subgraph
 - `find_knowledge_paths`：解释两个节点之间的路径和关系
 

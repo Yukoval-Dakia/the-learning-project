@@ -9,36 +9,16 @@ import {
   type CustomProviderRecord,
   type CustomProviderRefreshOutcome,
   customProviderDefinitions,
-  customProviderRecordFromRow,
   installCustomProviders,
   registryStampOf,
   setCustomProviderCatalogFactsSource,
   setCustomProviderChangeHandler,
 } from '@/core/config/custom-providers';
 import { type Db, db as defaultDb } from '@/db/client';
-import { custom_provider } from '@/db/schema';
 import { currentModelCatalog } from '@/server/ai/model-catalog';
 import { executablePiModelIds } from '@/server/ai/pi-models';
 import { providerAuthLabel } from '@/server/ai/provider-models-check';
-
-const SELECTION = {
-  id: custom_provider.id,
-  display_name: custom_provider.display_name,
-  base_url: custom_provider.base_url,
-  api_key_env: custom_provider.api_key_env,
-  protocol: custom_provider.protocol,
-  created_at: custom_provider.created_at,
-  updated_at: custom_provider.updated_at,
-} as const;
-
-export async function selectCustomProviderRecords(
-  db: Db = defaultDb,
-): Promise<readonly CustomProviderRecord[]> {
-  const rows = await db.select(SELECTION).from(custom_provider);
-  return rows
-    .map(customProviderRecordFromRow)
-    .sort((left, right) => left.id.localeCompare(right.id));
-}
+import { selectCustomProviderRecords } from './custom-providers-read';
 
 let lastInstalled: readonly CustomProviderRecord[] = [];
 
