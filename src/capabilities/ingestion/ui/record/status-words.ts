@@ -1,5 +1,6 @@
 // The one sentence at the top of a recording (YUK-1473): where it is, in plain words.
 
+import { promptOf } from './block-text';
 import { STAGE_WORDS } from './record-copy';
 import type { StartState } from './record-start';
 import type { Recording } from './recording-model';
@@ -95,7 +96,19 @@ export function statusWords(rec: Recording, start: StartState | null): StatusWor
     };
   }
   if (drafts > 0 && rec.status === 'extracted') {
-    return { text: `认出 ${drafts} 道题，看一眼就能收进题库`, tone: 'caution' };
+    const complete = rec.blocks
+      .filter((b) => b.status === 'draft')
+      .every(
+        (b) =>
+          promptOf(b).trim() &&
+          (b.auto_enroll_observation?.suggested_knowledge_ids ?? []).length > 0,
+      );
+    return {
+      text: complete
+        ? `认出 ${drafts} 道题，看一眼就能收进题库`
+        : `认出 ${drafts} 道题，补好每道缺的就能收进题库`,
+      tone: 'caution',
+    };
   }
   if (inBank.length > 0) return { text: `${inBank.length} 道题已进题库`, tone: 'positive' };
   if (rec.blocks.length > 0) return { text: '这次的题没有收进题库', tone: 'neutral' };

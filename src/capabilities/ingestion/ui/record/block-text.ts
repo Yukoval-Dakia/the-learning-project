@@ -3,6 +3,7 @@
 // text directly. Both read the same here, with the server's own builders.
 
 import {
+  type StructuredQuestionT,
   structuredToPromptMarkdown,
   structuredToReferenceMarkdown,
 } from '@/core/schema/structured_question';
@@ -19,4 +20,22 @@ export function referenceOf(block: Block): string | null {
   if (block.reference_md) return block.reference_md;
   const derived = block.structured ? structuredToReferenceMarkdown(block.structured) : '';
   return derived.trim() ? derived : null;
+}
+
+/** The number printed in the book, when it was read. */
+export function printedNumber(block: Block): string | null {
+  const no = block.structured?.question_no?.trim();
+  return no ? no : null;
+}
+
+function leaves(question: StructuredQuestionT): StructuredQuestionT[] {
+  return question.sub_questions?.length ? question.sub_questions.flatMap(leaves) : [question];
+}
+
+/** Options that were read as a letter with no words: usually a picture this page can't show. */
+export function hasEmptyOptions(block: Block): boolean {
+  if (!block.structured) return false;
+  return leaves(block.structured).some((question) =>
+    question.options?.some((option) => !option.text.trim()),
+  );
 }
