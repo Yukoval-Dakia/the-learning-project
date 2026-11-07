@@ -12,6 +12,7 @@ import {
 } from '@/core/schema/derivation-policy';
 import type { Db, Tx } from '@/db/client';
 import { event, job_events } from '@/db/schema';
+import { ApiError } from '@/kernel/http';
 import { writeJobEvent } from '@/kernel/job-events';
 import type { ReviewAnswerAttachment } from '@/kernel/tools/review-answer';
 import { ConfirmationCommand, type ConfirmationCommandT } from '../confirmation-contract';
@@ -266,6 +267,7 @@ export async function reserveCopilotDurableAcceptance(
   const transactionDb = input.jobData ? deps.transactionDb : undefined;
   return db.transaction(async (tx) => {
     await acquireCopilotSessionQueueLock(tx, input.sessionId);
+    await assertCopilotSessionNotDeleted(tx, input.sessionId);
     const deterministicRunId = input.idempotencyKey
       ? copilotRunIdForIdempotencyKey(input.idempotencyKey)
       : undefined;
@@ -370,6 +372,22 @@ export async function acquireCopilotSessionQueueLock(tx: Tx, sessionId: string):
   await tx.execute(
     sql`SELECT pg_advisory_xact_lock(hashtext(${'copilot-session-queue'}), hashtext(${sessionId}))`,
   );
+}
+
+/**
+ * Hard-delete admission gate. Every queue-lock holder must call this before
+ * writing acceptance evidence: the deletion path takes the same lock before
+ * tombstoning, so an admission either commits before the revoke (and is then
+ * cancelled) or sees the tombstone here and never produces an unsettleable run.
+ */
+export async function assertCopilotSessionNotDeleted(tx: Tx, sessionId: string): Promise<void> {
+  const rows = await tx.execute<{ deleting: boolean }>(sql`
+    SELECT (deletion_requested_at IS NOT NULL OR deleted_at IS NOT NULL) AS deleting
+    FROM learning_session WHERE id = ${sessionId} AND type = 'conversation'
+  `);
+  if (rows[0]?.deleting) {
+    throw new ApiError('conflict', 'Copilot conversation is deleted', 409);
+  }
 }
 
 // Inlined as SQL literals, not bind params, so the statement text stays byte-identical.

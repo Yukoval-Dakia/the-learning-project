@@ -8,7 +8,7 @@ import { assertFromState } from '@/kernel/learning-session-guard';
 import { COPILOT_REUSE_WINDOW_MS } from '@/kernel/limits';
 import { lockCopilotSessionSelection } from '@/kernel/locks/copilot-session-selection-lock';
 import { requestCopilotRunCancellation } from './copilot-run-cancellation';
-import { listOpenCopilotRunIds } from './durable-dispatch';
+import { acquireCopilotSessionQueueLock, listOpenCopilotRunIds } from './durable-dispatch';
 
 // Conversation session lifecycle for Copilot and teaching.
 //
@@ -696,6 +696,11 @@ export async function requestCopilotConversationDeletion(
   const now = new Date();
   await db.transaction(async (tx) => {
     await lockCopilotSessionSelection(tx);
+    // The session-queue lock is the same one admission holds while writing a
+    // run's acceptance evidence. Taking it before the session row means a
+    // racing send either commits first (visible to our open-runs list, then
+    // cancelled) or blocks until the revoke lands and is rejected at the gate.
+    await acquireCopilotSessionQueueLock(tx, sessionId);
     const current = await loadConversationSessionForUpdate(tx, sessionId);
     if (current?.entrypoint !== 'copilot') {
       throw new ApiError('not_found', 'Copilot conversation not found', 404);
@@ -733,10 +738,13 @@ export async function requestCopilotConversationDeletion(
   return { session_id: sessionId, status: 'deleting' };
 }
 
-/** Persist the tombstone. Requires the revocation to exist; safe to repeat. */
+/** Persist the tombstone. Requires the revocation to exist; safe to repeat.
+ *  Under the queue lock the open-runs recheck is authoritative: a still-open
+ *  run simply keeps the session `deleting` instead of stranding it. */
 export async function markCopilotConversationDeleted(db: Db, sessionId: string): Promise<boolean> {
   return db.transaction(async (tx) => {
     await lockCopilotSessionSelection(tx);
+    await acquireCopilotSessionQueueLock(tx, sessionId);
     const current = await loadConversationSessionForUpdate(tx, sessionId);
     if (current?.entrypoint !== 'copilot') {
       throw new ApiError('not_found', 'Copilot conversation not found', 404);
@@ -745,6 +753,7 @@ export async function markCopilotConversationDeleted(db: Db, sessionId: string):
     if (!current.deletion_requested_at) {
       throw new ApiError('conflict', 'Copilot conversation deletion was not requested', 409);
     }
+    if ((await listOpenCopilotRunIds(tx, sessionId)).length > 0) return false;
     const now = new Date();
     await tx
       .update(learning_session)
@@ -788,7 +797,16 @@ export async function finalizePendingConversationDeletions(
     .limit(limit);
   let finalized = 0;
   for (const { id } of pending) {
-    if ((await listOpenCopilotRunIds(db, id)).length > 0) continue;
+    // Re-cancel every pass: a run admitted just before the revoke commit is
+    // also why the tombstone waits, so convergence must keep pushing it.
+    for (const runId of await listOpenCopilotRunIds(db, id)) {
+      try {
+        await requestCopilotRunCancellation(db, runId);
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 404) continue;
+        throw error;
+      }
+    }
     if (await markCopilotConversationDeleted(db, id)) finalized += 1;
   }
   return finalized;

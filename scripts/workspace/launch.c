@@ -76,13 +76,24 @@ int main(int argc, char **argv) {
         return 0;
     }
     int dir = open(argv[2], O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
-    if (dir < 0) { if (errno == ENOENT && !strcmp(argv[1], "remove")) return 0; fail("directory"); }
+    if (dir < 0) {
+        if (errno == ENOENT && !strcmp(argv[1], "remove")) return 0;
+        // A script can chmod its own workspace to 0 to dodge accounting. The
+        // sandbox identity owns the directory, so heal the mode and retry once
+        // instead of letting one owner wedge quota or deletion for everyone.
+        if (errno != EACCES || chmod(argv[2], 0700)) fail("directory");
+        dir = open(argv[2], O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
+        if (dir < 0) fail("directory");
+    }
     struct stat st;
     if (fstat(dir, &st) || st.st_uid != UID || (st.st_mode & 077) != 0) return 125;
     if (!strcmp(argv[1], "remove")) {
-        close(dir);
-        char *args[] = {"/usr/bin/python3", "-I", "-c",
-            "import shutil,sys; shutil.rmtree(sys.argv[1])", argv[2], NULL};
+        // The fd pins the verified inode: empty it, then rmdir the name under
+        // its parent. Deleting by path after close would let a rename swap a
+        // different directory into the path mid-delete.
+        if (fchdir(dir)) fail("cwd");
+        char *args[] = {"/usr/bin/python3", "-I", "/usr/local/libexec/workspace-files.py",
+            argv[1], argv[2], NULL};
         char *env[] = {"PATH=/usr/bin:/bin", "LANG=C.UTF-8", NULL};
         execve(args[0], args, env);
         fail("remove");

@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { constants } from 'node:fs';
-import { access, mkdir, open, readFile, readdir } from 'node:fs/promises';
+import { access, mkdir, open, readFile, readdir, stat } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import { invokeWorkspace } from './executor';
 
@@ -67,20 +67,45 @@ export async function workspaceBytes(id: string): Promise<number> {
   return bytes;
 }
 
+export interface PoolUsage {
+  bytes: number;
+  /** Entries that are not a scannable workspace dir (foreign file, sandbox-
+   * planted junk, undescendable dir). Isolated per entry: one anomaly must not
+   * poison quota for every other owner. Bytes under a dir we cannot descend
+   * are inherently undercounted — the launcher heal and the 64 MiB file cap
+   * bound what a script can hide. */
+  anomalies: string[];
+}
+
 /**
- * Pool usage is summed over launcher-scanned directories only. An unrecognized
- * entry fails closed: quota checks then refuse new writes rather than ignore
- * bytes a sandboxed script may have planted at the root.
+ * Pool usage is summed over launcher-scanned directories plus whatever anomaly
+ * bytes are directly stat-able. A sandbox can plant entries at the group-
+ * writable root, so an unrecognized entry is isolated — counted and reported —
+ * never a reason to fail every owner's quota check.
  */
-export async function poolBytes(): Promise<number> {
+export async function poolBytes(): Promise<PoolUsage> {
   let bytes = 0;
+  const anomalies: string[] = [];
   for (const entry of await readdir(root, { withFileTypes: true })) {
     if (entry.name === '.identity') continue;
-    if (!/^[a-f0-9]{64}$/.test(entry.name) || !entry.isDirectory() || entry.isSymbolicLink())
-      throw new Error('workspace_pool_unrecognized_entry');
-    bytes += await workspaceBytes(entry.name);
+    let scannable =
+      /^[a-f0-9]{64}$/.test(entry.name) && entry.isDirectory() && !entry.isSymbolicLink();
+    if (scannable) {
+      try {
+        bytes += await workspaceBytes(entry.name);
+        continue;
+      } catch {
+        scannable = false;
+      }
+    }
+    anomalies.push(entry.name);
+    try {
+      bytes += (await stat(`${root}/${entry.name}`)).size;
+    } catch {
+      /* vanished between readdir and stat — nothing to count */
+    }
   }
-  return bytes;
+  return { bytes, anomalies };
 }
 
 /**

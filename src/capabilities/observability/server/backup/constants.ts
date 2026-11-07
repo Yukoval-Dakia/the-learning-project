@@ -528,6 +528,9 @@ export const BACKUP_EXCLUDED_TABLES: ReadonlySet<string> = new Set<string>([
 // Cascading children of backed-up parents need no separate entry here.
 // Subscription progress is durable and lives in FK_ORDER; restore clears only its claims.
 export const RESTORE_WIPE_ONLY_TABLES: readonly string[] = [
+  // Rows kept in the live DB through a restore would fence directories bound
+  // to the pre-restore executor volume — wipe them and let owners re-claim.
+  'agent_workspace',
   // A learner archive restore must invalidate even unexpired pre-restore cursors.
   'bank_search_snapshot',
   // YUK-851: clear pre-restore owners before durable provider_attempt rows are replaced.

@@ -2,7 +2,6 @@ import { randomBytes } from 'node:crypto';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
 import { agent_workspace, ai_task_runs, learning_session } from '@/db/schema';
-import { COPILOT_ASK_ACTIONS } from '@/kernel/events/copilot-actions';
 import { lockAgentWorkspacePool } from '@/kernel/locks/agent-workspace-lock';
 import { invokeWorkspace } from './executor';
 import {
@@ -25,6 +24,11 @@ export type DeleteReason = 'expired' | 'deleted' | 'completed';
 export const WORKSPACE_SESSION_BYTES = 64 * 1024 * 1024;
 export const WORKSPACE_POOL_BYTES = 1024 * 1024 * 1024;
 export const WORKSPACE_IDLE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+// Heartbeat-renewed fencing window. 30x the probe cadence: only a holder that
+// stopped renewing (crashed or DB-partitioned — both of which abort its exec
+// on the holder side) lets it lapse, so expiry is a reclaim proof that does
+// not depend on runtime identity matching across container reincarnation.
+export const WORKSPACE_EXECUTION_LEASE_MS = 15_000;
 const CURRENT_STATES = ['active', 'revoking', 'tombstoned'] as const;
 
 function ownerWhere(owner: WorkspaceOwner) {
@@ -71,24 +75,21 @@ async function requireOwner(tx: Tx, owner: WorkspaceOwner): Promise<void> {
 }
 
 /**
- * Last user activity on a copilot conversation: its asks/chips, floored at
- * creation so an un-asked session is not instantly stale. Derived from the
- * event stream on read — never written back to learning_session.
+ * Last learner activity on a copilot conversation: any `actor_kind='user'`
+ * event — the same predicate promote_conversation_idle uses — floored at
+ * started_at so an untouched session is not instantly stale. Derived from
+ * the event stream on read; never written back to learning_session.
  */
 export async function conversationUserActivityAt(
   tx: Db | Tx,
   sessionId: string,
 ): Promise<Date | null> {
-  const askActions = sql.raw(COPILOT_ASK_ACTIONS.map((a) => `'${a}'`).join(', '));
   const rows = await tx.execute<{ last_activity: string | Date }>(sql`
-    SELECT greatest(
-      s.created_at,
-      coalesce((
+    SELECT coalesce((
         SELECT max(e.created_at) FROM event e
         WHERE e.session_id = s.id
-          AND e.action IN (${askActions})
-      ), s.created_at)
-    ) AS last_activity
+          AND e.actor_kind = 'user'
+      ), s.started_at) AS last_activity
     FROM learning_session s WHERE s.id = ${sessionId}
   `);
   const activity = rows[0]?.last_activity;
@@ -147,6 +148,18 @@ export async function requestWorkspaceDeletion(
   });
 }
 
+/**
+ * A live claimant always keeps its lease fresh, so an expired lease means the
+ * holder is dead or DB-partitioned — either way its exec already aborted on
+ * the holder side. A same-runtime liveness proof still wins first: it reclaims
+ * immediately instead of waiting out the lease window.
+ */
+export async function workspaceClaimEnded(row: WorkspaceRow): Promise<boolean> {
+  if (await previousClaimEnded(row.execution_runtime ?? '')) return true;
+  const lease = row.execution_lease_until;
+  return lease != null && lease.getTime() < Date.now();
+}
+
 async function claim(db: Db, owner: WorkspaceOwner, mode: 'read' | 'write', reservation: number) {
   if (!(await launcherAvailable())) throw new Error('workspace_unavailable');
   return db.transaction(async (tx) => {
@@ -156,8 +169,18 @@ async function claim(db: Db, owner: WorkspaceOwner, mode: 'read' | 'write', rese
     let row: Awaited<ReturnType<typeof readWorkspace>> = await readWorkspace(tx, owner);
     if (row && row.volume_id !== volume) {
       // Never rebind a directory from another volume; retire the record and
-      // start a new generation on this one.
-      if (row.execution_token) throw new Error('workspace_execution_outcome_unknown');
+      // start a new generation on this one. A provably ended claim is cleared
+      // first; a still-live claim means another host may be writing — the
+      // outcome is genuinely unknown and blocks the new generation honestly.
+      if (row.execution_token) {
+        if (!(await workspaceClaimEnded(row))) {
+          throw new Error('workspace_execution_outcome_unknown');
+        }
+        await tx
+          .update(agent_workspace)
+          .set({ execution_token: null, execution_runtime: null, execution_lease_until: null })
+          .where(eq(agent_workspace.id, row.id));
+      }
       await tx
         .update(agent_workspace)
         .set({ state: 'retired', last_error: 'workspace_not_restored' })
@@ -166,7 +189,7 @@ async function claim(db: Db, owner: WorkspaceOwner, mode: 'read' | 'write', rese
     }
     if (!row) {
       if (mode !== 'write') throw new Error('workspace_not_found');
-      if ((await poolBytes()) >= WORKSPACE_POOL_BYTES) throw new Error('workspace_pool_full');
+      if ((await poolBytes()).bytes >= WORKSPACE_POOL_BYTES) throw new Error('workspace_pool_full');
       const [{ max }] = await tx
         .select({ max: sql<number>`coalesce(max(${agent_workspace.generation}), 0)` })
         .from(agent_workspace)
@@ -188,13 +211,13 @@ async function claim(db: Db, owner: WorkspaceOwner, mode: 'read' | 'write', rese
     if (row.state !== 'active') throw new Error('workspace_owner_closed');
     if (row.execution_token) {
       // A token from a provably ended claimant is fencing garbage, not a lease.
-      if (!(await previousClaimEnded(row.execution_runtime ?? '')))
-        throw new Error('workspace_busy');
+      if (!(await workspaceClaimEnded(row))) throw new Error('workspace_busy');
       await tx
         .update(agent_workspace)
         .set({
           execution_token: null,
           execution_runtime: null,
+          execution_lease_until: null,
           last_error: 'workspace_claim_orphaned',
         })
         .where(eq(agent_workspace.id, row.id));
@@ -202,7 +225,7 @@ async function claim(db: Db, owner: WorkspaceOwner, mode: 'read' | 'write', rese
     if (mode === 'write') {
       if (row.bytes + reservation > WORKSPACE_SESSION_BYTES)
         throw new Error('workspace_quota_exceeded');
-      if ((await poolBytes()) + reservation >= WORKSPACE_POOL_BYTES)
+      if ((await poolBytes()).bytes + reservation >= WORKSPACE_POOL_BYTES)
         throw new Error('workspace_pool_full');
     }
     const token = randomBytes(32).toString('hex');
@@ -212,6 +235,7 @@ async function claim(db: Db, owner: WorkspaceOwner, mode: 'read' | 'write', rese
       .set({
         execution_token: token,
         execution_runtime: runtime,
+        execution_lease_until: new Date(Date.now() + WORKSPACE_EXECUTION_LEASE_MS),
         last_activity_at: new Date(),
         last_error: null,
       })
@@ -221,11 +245,12 @@ async function claim(db: Db, owner: WorkspaceOwner, mode: 'read' | 'write', rese
 }
 
 /**
- * Serial lease for one filesystem operation in the owner's directory. The row
- * is re-read on a probe: revocation or a foreign token aborts the run instead
- * of letting a cancelled turn keep writing past a committed delete. The claim
- * is only cleared by this holder's CAS or by proof the claimant's runtime is
- * dead — a watchdog tick is never itself permission to delete.
+ * Serial lease for one filesystem operation in the owner's directory. The
+ * probe doubles as the fencing heartbeat: it CAS-renews the lease under this
+ * token, so a revoked row or a cleared token returns zero rows and aborts the
+ * run instead of letting a cancelled turn write past a committed delete. The
+ * claim is only cleared by this holder's release CAS, a same-runtime death
+ * proof, or the lease expiring — never by a stale timestamp alone.
  */
 export async function withWorkspace<T>(
   db: Db,
@@ -245,9 +270,18 @@ export async function withWorkspace<T>(
     if (probing) return;
     probing = true;
     try {
-      const current = await readWorkspace(db, owner);
-      if (current?.execution_token !== row.token || current.state !== 'active')
-        controller.abort(new Error('workspace_access_revoked'));
+      const renewed = await db
+        .update(agent_workspace)
+        .set({ execution_lease_until: new Date(Date.now() + WORKSPACE_EXECUTION_LEASE_MS) })
+        .where(
+          and(
+            eq(agent_workspace.id, row.id),
+            eq(agent_workspace.execution_token, row.token),
+            eq(agent_workspace.state, 'active'),
+          ),
+        )
+        .returning({ id: agent_workspace.id });
+      if (renewed.length === 0) controller.abort(new Error('workspace_access_revoked'));
     } catch {
       controller.abort(new Error('workspace_database_unavailable'));
     } finally {
@@ -267,11 +301,12 @@ export async function withWorkspace<T>(
     try {
       await db
         .update(agent_workspace)
-        .set({ execution_token: null, execution_runtime: null })
+        .set({ execution_token: null, execution_runtime: null, execution_lease_until: null })
         .where(and(eq(agent_workspace.id, row.id), eq(agent_workspace.execution_token, row.token)));
     } catch {
-      // A DB outage leaves a stale token; the sweep reclaims it by proving the
-      // claimant runtime ended. It must never mask the caller's real outcome.
+      // A DB outage leaves a stale token; the sweep reclaims it once the lease
+      // the holder can no longer renew expires. It must never mask the
+      // caller's real outcome.
     }
     // Best-effort actuals for the next quota check; a revoked delete may remove
     // the directory first, and a failed usage scan must not lose the release.
@@ -302,10 +337,9 @@ export async function finalizeWorkspaceRowDeletion(db: Db, id: string) {
   const row = await db.transaction(async (tx) => {
     await lockAgentWorkspacePool(tx);
     const current = await readById(tx);
-    // Retired rows also reach this: their directories still occupy the volume.
     if (!current || current.state === 'active' || current.state === 'deleted') return current;
     if (current.execution_token) {
-      if (!(await previousClaimEnded(current.execution_runtime ?? ''))) {
+      if (!(await workspaceClaimEnded(current))) {
         await tx
           .update(agent_workspace)
           .set({ last_error: 'workspace_execution_not_drained' })
@@ -314,18 +348,22 @@ export async function finalizeWorkspaceRowDeletion(db: Db, id: string) {
       }
       await tx
         .update(agent_workspace)
-        .set({ execution_token: null, execution_runtime: null })
+        .set({ execution_token: null, execution_runtime: null, execution_lease_until: null })
         .where(eq(agent_workspace.id, current.id));
     }
-    if (current.state === 'revoking' || current.state === 'retired') {
+    // Retired rows skip the tombstone: it would collide with the owner's new
+    // generation under the partial unique index. 'retired' already carries the
+    // durable delete intent — it exists only because the row must never be
+    // rebound — so the filesystem step may proceed directly.
+    if (current.state === 'revoking') {
       await tx
         .update(agent_workspace)
-        .set({ state: 'tombstoned', tombstoned_at: new Date() })
+        .set({ state: 'tombstoned', tombstoned_at: new Date(), last_error: null })
         .where(eq(agent_workspace.id, current.id));
     }
     return readById(tx);
   });
-  if (row?.state !== 'tombstoned') return row;
+  if (row?.state !== 'tombstoned' && row?.state !== 'retired') return row;
   // The tombstone is already durable; the volume check only gates the
   // filesystem effect, so a foreign volume stays tombstoned with the error.
   if (row.volume_id !== (await volumeIdentity())) {
@@ -341,7 +379,12 @@ export async function finalizeWorkspaceRowDeletion(db: Db, id: string) {
     await db
       .update(agent_workspace)
       .set({ state: 'deleted', bytes: 0, deleted_at: new Date(), last_error: null })
-      .where(and(eq(agent_workspace.id, row.id), eq(agent_workspace.state, 'tombstoned')));
+      .where(
+        and(
+          eq(agent_workspace.id, row.id),
+          inArray(agent_workspace.state, ['tombstoned', 'retired']),
+        ),
+      );
   } catch (error) {
     await db
       .update(agent_workspace)

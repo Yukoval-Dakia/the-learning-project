@@ -1,6 +1,6 @@
 {
-  "id": "d1d8747e-1754-4a93-8435-11a5bacdf548",
-  "prevId": "5a37d612-fd99-4062-b686-df852a6d1e39",
+  "id": "74cb4f48-4db9-4ba0-ace1-009efdaca37c",
+  "prevId": "3e90c85b-5485-4ce8-bf8b-ba087837e937",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -69,6 +69,12 @@
         "execution_runtime": {
           "name": "execution_runtime",
           "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "execution_lease_until": {
+          "name": "execution_lease_until",
+          "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
         },
@@ -11310,6 +11316,26 @@
           "primaryKey": false,
           "notNull": false
         },
+        "search_document": {
+          "name": "search_document",
+          "type": "tsvector",
+          "primaryKey": false,
+          "notNull": false,
+          "generated": {
+            "as": "to_tsvector('simple'::regconfig, regexp_replace(coalesce(prompt_md,'') || ' ' || coalesce(reference_md,'') || ' ' || coalesce(choices_md::text,''), '([一-鿿])', '\\1 ', 'g'))",
+            "type": "stored"
+          }
+        },
+        "search_public_document": {
+          "name": "search_public_document",
+          "type": "tsvector",
+          "primaryKey": false,
+          "notNull": false,
+          "generated": {
+            "as": "to_tsvector('simple'::regconfig, regexp_replace(coalesce(prompt_md,'') || ' ' || coalesce(choices_md::text,''), '([一-鿿])', '\\1 ', 'g'))",
+            "type": "stored"
+          }
+        },
         "rubric_json": {
           "name": "rubric_json",
           "type": "jsonb",
@@ -11492,6 +11518,36 @@
         }
       },
       "indexes": {
+        "question_search_document_gin": {
+          "name": "question_search_document_gin",
+          "columns": [
+            {
+              "expression": "search_document",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "gin",
+          "with": {}
+        },
+        "question_search_public_document_gin": {
+          "name": "question_search_public_document_gin",
+          "columns": [
+            {
+              "expression": "search_public_document",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "gin",
+          "with": {}
+        },
         "question_knowledge_ids_gin": {
           "name": "question_knowledge_ids_gin",
           "columns": [

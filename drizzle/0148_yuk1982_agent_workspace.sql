@@ -9,6 +9,7 @@ CREATE TABLE "agent_workspace" (
 	"last_activity_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"execution_token" text,
 	"execution_runtime" text,
+	"execution_lease_until" timestamp with time zone,
 	"delete_reason" text,
 	"tombstoned_at" timestamp with time zone,
 	"deleted_at" timestamp with time zone,

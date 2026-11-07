@@ -22,6 +22,9 @@ export const agent_workspace = pgTable(
     last_activity_at: timestamp('last_activity_at', { withTimezone: true }).notNull().defaultNow(),
     execution_token: text('execution_token'),
     execution_runtime: text('execution_runtime'),
+    // Fencing lease renewed by the holder's heartbeat probe; expiry is the
+    // reclaim proof that survives hostname/container reincarnation.
+    execution_lease_until: timestamp('execution_lease_until', { withTimezone: true }),
     delete_reason: text('delete_reason').$type<'expired' | 'deleted' | 'completed'>(),
     tombstoned_at: timestamp('tombstoned_at', { withTimezone: true }),
     deleted_at: timestamp('deleted_at', { withTimezone: true }),

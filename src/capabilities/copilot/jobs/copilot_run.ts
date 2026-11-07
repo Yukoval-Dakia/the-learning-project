@@ -53,6 +53,7 @@ import {
   hasCopilotSettlementTerminal,
   markCopilotRunStarted,
   projectCopilotOutcomeMarker,
+  settleCopilotRunIfSessionDeleted,
   terminalRunResult,
   withCopilotExecutionSettlementLock,
   writeFailedTerminalProjection,
@@ -314,6 +315,19 @@ async function executeAcceptedCopilotRun(
       throw new DurableTerminalProjectionError(runId, 'failure', projectionErr);
     }
   }
+  // Session tombstone gate: a run accepted before the revocation commit can
+  // still arrive here. Settle it through the shared pre-start terminal under
+  // the dispatch lock so the delete pass can converge — paid work never starts
+  // behind a tombstone. Placed after outcome-marker repair: a reply that was
+  // already persisted before the revoke still owes its public projection.
+  const sessionGate = await settleCopilotRunIfSessionDeleted(db, runId, data.session_id);
+  if (sessionGate.outcome === 'terminal') {
+    return terminalRunResult(sessionGate.events, taskRunId);
+  }
+  if (sessionGate.outcome === 'deleted') {
+    return { status: 'cancelled' };
+  }
+
   // Crisis 回合的确定性终局：不逃模型、不调工具、不进执行 fence。分类在接纳点
   // 完成（chat.ts），策略经投递链验证送达（acceptedCopilotDerivationPolicy）；此处
   // 用同一确定性词法重选模板。回复经 persistReply 写入并继承 ask 的 crisis 策略；
