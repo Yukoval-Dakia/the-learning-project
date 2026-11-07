@@ -23,7 +23,9 @@
       "!**/.cache",
       "!**/.pnpm-store",
       "!**/.ykv",
-      "!**/.claude",
+      // Root only. `**/.claude` matches any absolute path containing `/.claude/`,
+      // including a checkout nested at `.claude/worktrees/`.
+      "!.claude",
       "!**/.omc",
       "!**/.omx",
       "!**/.omo",
