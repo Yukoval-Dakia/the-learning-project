@@ -36,6 +36,7 @@ import { GET as pollStatus } from '../api/judge-run-status-route';
 import { createAttempt } from '../api/submit';
 import { RECONCILE_STALL_MS, reconcileStalledJudgeAttempts } from '../jobs/judge_pending_reconcile';
 import { runJudgeRun } from '../jobs/judge_run';
+import { recordAssistanceExposure } from './assessment/assistance';
 import * as formalAttempts from './assessment/attempt';
 import { commitFormalAttempt } from './assessment/attempt';
 import {
@@ -295,10 +296,23 @@ beforeEach(async () => {
 afterEach(() => vi.restoreAllMocks());
 
 describe('native durable assessment', () => {
-  // @invariant data: the native resolution receipt is committed atomically with activation and settlement in one transaction, uses the model-derived rating, and stays byte-identical across redelivery
-  // @fails-if write the receipt outside the activation transaction or let a redelivery rewrite it; the other-connection zero-visibility, resolutionWrites-1 and toEqual(receipts)/nativeEffects assertions fail
+  // @invariant data: the native resolution receipt is committed atomically with activation and settlement in one transaction, uses the model-derived rating, carries the sealed evidence split the poller reads, and stays byte-identical across redelivery
+  // @fails-if write the receipt outside the activation transaction, drop the exposure/claim evidence from the terminal result, or let a redelivery rewrite it; the other-connection zero-visibility, resolutionWrites-1, evidence and toEqual(receipts)/nativeEffects assertions fail
   it('writes the immutable resolution in the activation transaction and uses the model-derived rating', async () => {
     const f = await fixture();
+    // Exposures the learner took before submitting fold into the sealed receipt
+    // (harmless clarifications stay independent but still list dose and kinds);
+    // the terminal result the poller reads must carry them as evidence, not
+    // lose them in the queue.
+    for (const exposure of [{ kind: 'hint' as const, dose: 3 }, { kind: 'solution' as const }]) {
+      await recordAssistanceExposure(f.db, {
+        issuanceId: f.request.issuance_id,
+        questionId: f.id,
+        impact: 'harmless_clarification',
+        contentDigest: `sha256:${'7'.repeat(64)}`,
+        ...exposure,
+      });
+    }
     const run = await dispatchNativeAttempt(
       f.db,
       f.id,
@@ -342,6 +356,18 @@ describe('native durable assessment', () => {
       score: 1,
       coarse_outcome: 'correct',
       assessment: { activation_intent: { expected_effective_id: null, expected_generation: 0 } },
+      evidence: {
+        assistance: {
+          status: 'independent',
+          max_dose: 3,
+          kinds: ['hint', 'solution'],
+          phase: 'before_submit',
+        },
+        verdict: { outcome: 'correct', score: 1 },
+        // The frozen pending input carries the accepted rating operation's
+        // claim; the durable commit settles the judge-derived rating.
+        self_claim: { rating: 'hard', confidence: null },
+      },
     });
     expect(receipts[0]).toMatchObject({
       session_id: 'served-session',
@@ -1239,6 +1265,13 @@ describe('native durable assessment', () => {
         const [receipt] = await f.db.select().from(event).where(eq(event.id, run));
         const resolution = NativeJudgeResolutionPayload.parse(receipt.payload);
         expect(resolution.status).toBe('review_required');
+        // A superseded result still reports the sealed split honestly: no
+        // rating of this operation ever sealed, and the frozen claim stays empty.
+        expect(resolution.evidence).toMatchObject({
+          assistance: { status: 'independent' },
+          verdict: { outcome: 'unsupported' },
+          self_claim: { rating: null, confidence: null },
+        });
         expect(resolution.assessment.candidate_id).not.toBe(newer);
         const permanent = await readJudgeRunPermanent(f.db, run);
         expect(permanent.kind).toBe('resolved');
