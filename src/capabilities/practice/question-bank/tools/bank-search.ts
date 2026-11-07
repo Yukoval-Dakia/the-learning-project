@@ -724,14 +724,11 @@ async function runSearchBankInSnapshot(
     // 弱命中排通道尾部：RRF 位置靠后 → 融合序也落在强命中之下（向量救回的除外）。
     const ftsRowsPromise = collectBankSearchChannel(
       db,
+      // The channel consumes ids + positions only; the ordering keys stay in
+      // ORDER BY. Projecting prompt_md/rank/created_at detoasts every matched row.
       (offset, count) =>
         db
-          .select({
-            id: question.id,
-            prompt_md: question.prompt_md,
-            created_at: question.created_at,
-            rank: sql<number>`ts_rank_cd(${tsvec}, ${fts.tsq})`,
-          })
+          .select({ id: question.id })
           .from(question)
           .leftJoin(question_group_lifecycle, eq(question_group_lifecycle.group_id, question.id))
           .where(and(where, sql`${tsvec} @@ ${fts.tsq}`))
