@@ -20,6 +20,10 @@ import {
   getQuestionTimeline,
 } from '@/kernel/read-models/question-activity';
 import { declaredAdmissionOwned } from '@/kernel/read-models/question-admission-ownership';
+import {
+  learnerVisibleImageRefs,
+  loadLearnerImagePageIndex,
+} from '@/kernel/read-models/question-images';
 import { loadFamilyMembers } from '@/kernel/read-models/questions';
 import { reviewTimingJson } from '@/kernel/read-models/review-timing';
 import {
@@ -228,6 +232,7 @@ export async function loadQuestionDetail(
   const backlinks = await loadBacklinks(db, questionId);
   const effectiveLimit = Math.min(Math.max(timelineLimit, 1), MAX_TIMELINE_LIMIT);
   const timelineEntries = await getQuestionTimeline(db, questionId, effectiveLimit);
+  const imagePageIndex = await loadLearnerImagePageIndex(db, [q]);
 
   return {
     id: q.id,
@@ -245,7 +250,8 @@ export async function loadQuestionDetail(
     source_tier: { tier: sourceTier.tier, name: sourceTier.name },
     visual_complexity: q.visual_complexity ?? null,
     figures: q.figures ?? [],
-    image_refs: q.image_refs ?? [],
+    // Whole photographed pages never render next to the prompt; only verified figures do.
+    image_refs: learnerVisibleImageRefs(q, imagePageIndex),
     variant_depth: q.variant_depth,
     root_question_id: q.root_question_id ?? null,
     parent_variant_id: q.parent_variant_id ?? null,

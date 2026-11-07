@@ -37,10 +37,7 @@ export {
 } from './server/tools/record-tool-support';
 
 // Public port, replacing a central deep import.
-export {
-  AUTO_ENROLL_SINGLETON_SECONDS,
-  autoEnrollJobEnabled,
-} from './server/workflow-judge-config';
+export { AUTO_ENROLL_SINGLETON_SECONDS } from './server/workflow-judge-config';
 
 // Task composition uses the narrow task-public entry directly.
 export { ingestionTaskSpecs } from './task-public';

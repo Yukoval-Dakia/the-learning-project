@@ -66,7 +66,7 @@
 ## Planning, docs, and tracking
 
 - 文档不在 git 内，统一放仓库外：`/Volumes/YukovalSBak/yukoval-projects/tlp-docs/`。原 `docs/` 与 `PLANNING.md` 的副本在 `repo-docs/`（逐文件清单 `MANIFEST.tsv`、hash `SHA256SUMS`）；架构/设计决策写 `repo-docs/docs/adr/` 或 `tlp-docs/design/`；过程性规划、清单、审计和回执写 `tlp-docs/planning/`、`tlp-docs/audit/`。README 随 runtime 形态同步；domain layout 用根 `CONTEXT.md` 与外部 ADR 目录。
-- 批量证据外置 `tlp-audit-artifacts/<line-or-issue>/<head>/`（架构线必须落在 `architecture-deepening/` 子路径）；git 只留结论、命令、revision、外部路径与 SHA256 摘要；git 历史不重写；把既有批量证据从 HEAD 删除前必须先外置复制、hash 核验、建 git 指针并经协调线逐批确认。
+- 批量证据外置到仓库外 `/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/<line-or-issue>/<head>/`（架构线必须落在 `architecture-deepening/` 子路径），不提交进仓库（镜像内容检查会拦）；git 只留结论、命令、revision、外部路径与 SHA256 摘要；git 历史不重写；把既有批量证据从 HEAD 删除前必须先外置复制、hash 核验、建 git 指针并经协调线逐批确认。
 - Linear（Yukoval Studios / YUK）是权威 tracker，GitHub Issues 仅历史。branch/commit/PR 用 `YUK-NN`；多票逐个 `Closes YUK-NN`；任务收尾执行 capture gate（先查重再建/更新 actionable follow-up，没有则说明原因）；触及的 issue 状态当场与代码现实对齐。流程见 `/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/agents/issue-tracker.md`，标签见 `/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/agents/triage-labels.md`。
 - 代码检索：概念/未知位置先 `ykv-code-index.search_code`；已知符号/引用用 LSP 或 grep；已知字面量/regex/文件名用 grep，无结果不断言不存在；索引偏靶时查 index health 再交叉验证。
 - UI 实施在 2026-10-07 自主交付授权（`/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/planning/2026-10-07-autonomous-delivery-charter.md`）范围内自主进行：pre-flight 引用 design doc 原文（路径+行号）、声明组件类型（drawer/route/modal/page）、列出创建与修改文件；遵循既有 design tokens/primitives/design-system。

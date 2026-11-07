@@ -1,6 +1,5 @@
-import { createHash } from 'node:crypto';
 import { createId } from '@paralleldrive/cuid2';
-import { and, eq, inArray, isNull } from 'drizzle-orm';
+import { and, eq, gt, or } from 'drizzle-orm';
 import {
   type BlockAssemblyRunTaskFn,
   runBlockAssemblyForSession,
@@ -14,59 +13,37 @@ import {
   createKnowledgeTagEmbedder,
   rethrowKnowledgeTagInvariant,
 } from '@/capabilities/ingestion/server/knowledge-namer';
-import {
-  MistakeEnrollTaskError,
-  type RunMistakeEnrollTaskParams,
-  runMistakeEnrollTask,
-} from '@/capabilities/ingestion/server/mistake_enroll';
-import {
-  type RunTaggingTaskParams,
-  TaggingTaskError,
-  runTaggingTask,
-} from '@/capabilities/ingestion/server/tagging';
 import { runWorkflowJudge } from '@/capabilities/ingestion/server/workflow-judge';
-import {
-  AUTO_ENROLL_MAX_BLOCKS_PER_RUN,
-  type FlagEnv,
-  autoEnrollEnabled,
-  observeEnabled,
-  studentAnswerGradingEnabled,
-} from '@/capabilities/ingestion/server/workflow-judge-config';
-import type { MistakeEnrollOutputT } from '@/core/schema/mistake_enroll';
-import {
-  type StructuredQuestionT,
-  structuredToPromptMarkdown,
-} from '@/core/schema/structured_question';
+import { AUTO_ENROLL_MAX_BLOCKS_PER_RUN } from '@/capabilities/ingestion/server/workflow-judge-config';
+import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import type { TaggingOutputT } from '@/core/schema/tagging';
 import type { Db } from '@/db/client';
 import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
-import { knowledge, learning_session, question_block } from '@/db/schema';
-import type { WriteEventInput } from '@/kernel/events';
+import { learning_session, question, question_block } from '@/db/schema';
 /**
  * WorkflowJudge auto-enroll path.
  *
- * On by default; when switched off, blocks stay draft for human review. It tags and
- * judges at most AUTO_ENROLL_MAX_BLOCKS_PER_RUN draft blocks. The judge confidence
- * is stored as a signal, not used to route: every structurally usable block enrolls
- * through the same enrollCapturedBlock owner as the human path (only provenance
- * differs). Blocks that fail tagging or enrollment stay draft. It runs between
- * extraction and review and never closes the session.
+ * Always on (Owner: "收进题库要的是自动"; there is no off switch). It tags and enrolls
+ * at most AUTO_ENROLL_MAX_BLOCKS_PER_RUN draft blocks per delivery; the job re-enqueues
+ * with a cursor so a longer page still finishes. The judge confidence is stored as a
+ * signal, never used to route: every block with a printed prompt enrolls through the
+ * same enrollCapturedBlock owner as the human path (only provenance differs). Blocks
+ * without a prompt stay draft. It runs between extraction and review and never closes
+ * the session.
  */
-import { writeEvent } from '@/kernel/events';
-import { withActiveCauseCategoryOverlays } from '@/kernel/read-models/cause-overlay';
-import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
 import { resolveSessionDerivationPolicy } from '@/kernel/read-models/usage-policy';
 import { type NameKcFn, tagKnowledge } from '@/kernel/records/knowledge-tag';
 import { getKnownSubjects } from '@/subjects/profile';
-import { enrollNativeCapture } from './assessment-capture';
+import { captureIngestionOriginal } from './assessment-capture';
 import {
   capturedQuestionShape,
   recordCapturedQuestion,
   settleCapturedBlock,
 } from './capture/captured-question';
+import { blockHasPrompt, blockQuestionMarkdown } from './capture/question-text';
 import { redactIngestionText } from './privacy-guard';
 
-export type AutoEnrollSkipReason = 'flag_off' | 'session_not_found' | 'wrong_status';
+export type AutoEnrollSkipReason = 'session_not_found' | 'wrong_status';
 
 export interface AutoEnrolledBlock {
   block_id: string;
@@ -81,10 +58,25 @@ export interface AutoEnrolledBlock {
 export interface RunAutoEnrollResult {
   status: 'completed' | `skipped:${AutoEnrollSkipReason}`;
   enrolled: number;
-  /** Blocks left 'draft' for human review. */
+  /** Blocks left 'draft' (no usable prompt, or the per-block write failed). */
   routed_to_review: number;
   /** Per-block detail for enrolled blocks. */
   blocks: AutoEnrolledBlock[];
+  /**
+   * Set when this run consumed a full batch; the caller re-enqueues with this
+   * cursor so a page with more blocks than the per-run ceiling still finishes.
+   */
+  next_after_block: AutoEnrollCursor | null;
+}
+
+/** Facts recorded on the question for a block auto-enrolled below the line. */
+export interface AutoEnrollmentMarkers {
+  enrolled_by: 'workflow_judge';
+  knowledge: 'attributed' | 'missing';
+  /** Combined extraction/tagging confidence; a signal, never a gate. */
+  confidence: number;
+  figures_attached: number;
+  student_work: boolean;
 }
 
 export interface RunAutoEnrollParams {
@@ -93,56 +85,34 @@ export interface RunAutoEnrollParams {
   providerAttempt?: Parameters<typeof createKnowledgeTagEmbedder>[0];
   /** Restrict TaggingTask's candidate grid to one subject. */
   subjectId?: string;
-  /** Test seam for observe-mode TaggingTask; enroll mode uses tagKnowledgeFn. */
-  runTaggingFn?: (
-    params: RunTaggingTaskParams,
-  ) => Promise<TaggingOutputT & { grid_truncated?: boolean }>;
   /**
    * Enroll-path tagging. Defaults to `tagKnowledge` (embedding match-or-propose); a throw
-   * routes the block to review.
+   * still enrolls the question with `knowledge: 'missing'`.
    */
   tagKnowledgeFn?: typeof tagKnowledge;
-  /** Test seam for observe-mode audit writes; a throw must affect only that block. */
-  writeEventFn?: (db: Db, input: WriteEventInput) => Promise<string>;
-  /** Test seam for observe-mode mistake metadata on answered blocks. */
-  runMistakeEnrollFn?: (params: RunMistakeEnrollTaskParams) => Promise<MistakeEnrollOutputT>;
   /** Test seam for the per-session block-merge proposal pass. */
   runBlockAssemblyFn?: BlockAssemblyRunTaskFn;
   /** Naming seam passed to `tagKnowledge`; lets tests reuse a bridge result. */
   runColdStartBridgeFn?: ColdStartBridgeRunTaskFn;
-  /** Override env for flag reads. */
-  env?: FlagEnv;
   /** Shared wall-clock for the batch. */
   now?: Date;
   /** Forwarded to runTask ctx (subjectProfile). */
   ctx?: unknown;
+  /** Continue after this reading-order position (oversized-session cursor). */
+  afterBlock?: { ordinal: number; id: string };
 }
 
-/** Runs the gated auto-enroll path for one ingestion session. */
+export interface AutoEnrollCursor {
+  ordinal: number;
+  id: string;
+}
+
+/** Runs the auto-enroll path for one ingestion session. */
 export async function runAutoEnrollForSession(
   params: RunAutoEnrollParams,
 ): Promise<RunAutoEnrollResult> {
-  const env = params.env ?? process.env;
-
-  // Enroll writes the imported question; observe only tags/judges for audit; the
-  // default (both flags off) is a hard no-op.
-  const mode: 'enroll' | 'observe' | 'off' = autoEnrollEnabled(env)
-    ? 'enroll'
-    : observeEnabled(env)
-      ? 'observe'
-      : 'off';
-  if (mode === 'off') {
-    return { status: 'skipped:flag_off', enrolled: 0, routed_to_review: 0, blocks: [] };
-  }
-
   const now = params.now ?? new Date();
-  const runTaggingFn = params.runTaggingFn ?? runTaggingTask;
   const tagKnowledgeFn = params.tagKnowledgeFn ?? tagKnowledge;
-  const writeEventFn = params.writeEventFn ?? writeEvent;
-  const runMistakeEnrollFn = params.runMistakeEnrollFn ?? runMistakeEnrollTask;
-  // Student-answer grading is a separate opt-in and only writes durable data in
-  // enroll mode.
-  const studentGrading = mode === 'enroll' && studentAnswerGradingEnabled(env);
 
   // This session must be an ingestion session in an extractable state.
   const sessionRows = await params.db
@@ -151,13 +121,24 @@ export async function runAutoEnrollForSession(
     .where(and(eq(learning_session.id, params.sessionId), eq(learning_session.type, 'ingestion')));
   const session = sessionRows[0];
   if (!session) {
-    return { status: 'skipped:session_not_found', enrolled: 0, routed_to_review: 0, blocks: [] };
+    return {
+      status: 'skipped:session_not_found',
+      enrolled: 0,
+      routed_to_review: 0,
+      blocks: [],
+      next_after_block: null,
+    };
   }
-  // Both modes accept 'partial' here, but enroll later narrows to 'extracted':
-  // enroll flips blocks to imported, while the manual import guard rejects partial,
-  // which would create a 409 mismatch. Observing a partial session is harmless.
+  // A degraded page layout ('partial') is a block-level fact, not a reason to skip the
+  // session (YUK-1994). Blocks with a printed prompt still enroll.
   if (session.status !== 'extracted' && session.status !== 'partial') {
-    return { status: 'skipped:wrong_status', enrolled: 0, routed_to_review: 0, blocks: [] };
+    return {
+      status: 'skipped:wrong_status',
+      enrolled: 0,
+      routed_to_review: 0,
+      blocks: [],
+      next_after_block: null,
+    };
   }
 
   // Resolve document usage once per run; every enrolled block inherits it instead of
@@ -166,14 +147,13 @@ export async function runAutoEnrollForSession(
     policy: await resolveSessionDerivationPolicy(params.db, params.sessionId),
     sessionId: params.sessionId,
   };
-  if (mode === 'enroll' && session.status !== 'extracted') {
-    return { status: 'skipped:wrong_status', enrolled: 0, routed_to_review: 0, blocks: [] };
-  }
   const sourceDocumentId = session.source_document_id ?? '';
   const sessionEntrypoint = session.entrypoint ?? 'vision_paper';
 
-  // Bound the paid fan-out before assembly/tagging/judging/grading. Extraction enqueues
-  // this job once per session; excess blocks stay draft for human review.
+  // Bound the paid fan-out per delivery. The caller re-enqueues with
+  // `next_after_block` when a batch fills, so a long page still completes. The cursor is
+  // `(ordinal, id)` — the same total order used for reading adjacency — so no block is
+  // skipped when a later batch shares an ordinal with an earlier one.
   const blocks = await params.db
     .select()
     .from(question_block)
@@ -181,15 +161,24 @@ export async function runAutoEnrollForSession(
       and(
         eq(question_block.ingestion_session_id, params.sessionId),
         eq(question_block.status, 'draft'),
+        params.afterBlock !== undefined
+          ? or(
+              gt(question_block.ordinal, params.afterBlock.ordinal),
+              and(
+                eq(question_block.ordinal, params.afterBlock.ordinal),
+                gt(question_block.id, params.afterBlock.id),
+              ),
+            )
+          : undefined,
       ),
     )
     // Adjacency is the array order, so it must be reading order (ordinal), not id.
     .orderBy(question_block.ordinal, question_block.id)
     .limit(AUTO_ENROLL_MAX_BLOCKS_PER_RUN);
 
-  // Block-assembly merge proposals run in both modes before any enroll import, while
-  // blocks are still draft (mergeQuestions on user accept requires draft). AI only
-  // proposes; an outage is logged and swallowed because it must not abort enrollment.
+  // Block-assembly merge proposals run before any enroll import, while blocks are still
+  // draft (mergeQuestions on user accept requires draft). AI only proposes; an outage is
+  // logged and swallowed because it must not abort enrollment.
   try {
     await runBlockAssemblyForSession(params.db, {
       sessionId: params.sessionId,
@@ -216,11 +205,11 @@ export async function runAutoEnrollForSession(
   const tagBatchCache = new Map<string, string>();
 
   for (const block of blocks) {
-    // The structured tree is the canonical prompt source.
-    const questionMd = block.structured
-      ? structuredToPromptMarkdown(block.structured)
-      : (block.extracted_prompt_md ?? '');
-    if (questionMd.trim().length === 0) {
+    const questionMd = blockQuestionMarkdown(block);
+    // "Complete enough to enter the library" means the block carries a printed prompt.
+    // Options or a model-written note are not a substitute: an orphan option block stays
+    // draft and the response says why (YUK-1994).
+    if (!blockHasPrompt(block)) {
       routedToReview += 1;
       continue;
     }
@@ -229,95 +218,75 @@ export async function runAutoEnrollForSession(
     // for the judge, student images, and stored answer refs to limit inter-page bleed.
     const scopedPageRefs = pageScopedQuestionImageRefs(block);
 
-    // Enroll uses tagKnowledge, which always attributes at least one KC, so tagging is no
-    // longer a routing uncertainty. Synthesizing TaggingOutputT keeps the judge shape
-    // unchanged. Observe keeps the read-only TaggingTask because tagKnowledge mutates KCs.
-    let tagging: TaggingOutputT & { grid_truncated?: boolean };
-    if (mode === 'enroll') {
-      try {
-        // Resolve the PROPOSE parent. The production job passes no subjectId (subject is a
-        // derived view), so classify it per block through the cold-start bridge, then reuse
-        // that name for tagKnowledge so no second model call is made. Without this, a
-        // missing subjectId would build `seed:undefined:root` and route every block to review.
-        let subjectRootId: string;
-        let bridgeNameKc: NameKcFn | undefined;
-        if (params.subjectId) {
-          subjectRootId = `seed:${params.subjectId}:root`;
-        } else {
-          const bridge = await runColdStartBridge({
-            db: params.db,
-            questionMd,
-            // Placeholder forces the ECHO path; only the classified subject_id is used.
-            existingReferenceMd: '(reference answer not needed for tagging)',
-            knowledgeHint: block.knowledge_hint,
-            knownSubjects: getKnownSubjects(),
-            runTaskFn: params.runColdStartBridgeFn,
-            ctx: params.ctx ?? { db: params.db },
-          });
-          subjectRootId = `seed:${bridge.subject_id}:root`;
-          // Reuse the classified name so a PROPOSE makes no second model call, and
-          // forward the bridge run's provenance for the tag audit event (YUK-1604).
-          bridgeNameKc = async () => ({
-            kc_name: bridge.kc_name,
-            ...(bridge.task_run_id !== undefined ? { task_run_id: bridge.task_run_id } : {}),
-            ...(bridge.cost_usd !== undefined ? { cost_usd: bridge.cost_usd } : {}),
-          });
-        }
-        const tag = await tagKnowledgeFn(
-          {
-            db: params.db,
-            embedder: createKnowledgeTagEmbedder(params.providerAttempt),
-            nameKcFn:
-              bridgeNameKc ??
-              createKnowledgeNamer({
-                db: params.db,
-                runTaskFn: params.runColdStartBridgeFn,
-                ctx: params.ctx ?? { db: params.db },
-              }),
-            batchCache: tagBatchCache,
-          },
-          {
-            // Redact identifiers at the model boundary; redact the hint too so audit
-            // events match the model-facing contract. sessionId binds the events to this
-            // session for the live derivation policy.
-            questionText: redactIngestionText(questionMd).text,
-            knowledgeHint: block.knowledge_hint
-              ? redactIngestionText(block.knowledge_hint).text
-              : block.knowledge_hint,
-            sessionId: params.sessionId,
-            subjectRootId,
-            sourceRef: { kind: 'question_block', id: block.id },
-          },
-        );
-        tagging = synthesizeTaggingOutput(tag.knowledge_ids);
-      } catch (err) {
-        rethrowKnowledgeTagInvariant(err);
-        // Tagging failures must never auto-enroll, including plain errors from a missing
-        // seed root. Swallow and log every non-invariant throw: aborting the batch would
-        // retry forever, while human review is the backstop for anything not enrolled.
-        console.error(
-          `[auto_enroll] tagKnowledge failed for block ${block.id}; routing to review`,
-          err,
-        );
-        routedToReview += 1;
-        continue;
-      }
-    } else {
-      // Observe uses the zero-mutation TaggingTask; an outage leaves the block draft.
-      try {
-        tagging = await runTaggingFn({
+    // Enroll keeps tagKnowledge as the attribution writer, but a failed or empty
+    // attribution is a marker, never an enrollment condition (YUK-1994): the question
+    // still enters the bank and the background knowledge backfill repairs the label.
+    let tagging: TaggingOutputT;
+    try {
+      // Resolve the PROPOSE parent. The production job passes no subjectId (subject is a
+      // derived view), so classify it per block through the cold-start bridge, then reuse
+      // that name for tagKnowledge so no second model call is made. Without this, a
+      // missing subjectId would build `seed:undefined:root` and route every block to review.
+      let subjectRootId: string;
+      let bridgeNameKc: NameKcFn | undefined;
+      if (params.subjectId) {
+        subjectRootId = `seed:${params.subjectId}:root`;
+      } else {
+        const bridge = await runColdStartBridge({
           db: params.db,
           questionMd,
+          // Placeholder forces the ECHO path; only the classified subject_id is used.
+          existingReferenceMd: '(reference answer not needed for tagging)',
           knowledgeHint: block.knowledge_hint,
-          subjectId: params.subjectId,
-          providerAttempt: params.providerAttempt,
-          ctx: params.ctx,
+          knownSubjects: getKnownSubjects(),
+          runTaskFn: params.runColdStartBridgeFn,
+          ctx: params.ctx ?? { db: params.db },
         });
-      } catch (err) {
-        if (!(err instanceof TaggingTaskError)) throw err;
-        routedToReview += 1;
-        continue;
+        subjectRootId = `seed:${bridge.subject_id}:root`;
+        // Reuse the classified name so a PROPOSE makes no second model call, and
+        // forward the bridge run's provenance for the tag audit event (YUK-1604).
+        bridgeNameKc = async () => ({
+          kc_name: bridge.kc_name,
+          ...(bridge.task_run_id !== undefined ? { task_run_id: bridge.task_run_id } : {}),
+          ...(bridge.cost_usd !== undefined ? { cost_usd: bridge.cost_usd } : {}),
+        });
       }
+      const tag = await tagKnowledgeFn(
+        {
+          db: params.db,
+          embedder: createKnowledgeTagEmbedder(params.providerAttempt),
+          nameKcFn:
+            bridgeNameKc ??
+            createKnowledgeNamer({
+              db: params.db,
+              runTaskFn: params.runColdStartBridgeFn,
+              ctx: params.ctx ?? { db: params.db },
+            }),
+          batchCache: tagBatchCache,
+        },
+        {
+          // Redact identifiers at the model boundary; redact the hint too so audit
+          // events match the model-facing contract. sessionId binds the events to this
+          // session for the live derivation policy.
+          questionText: redactIngestionText(questionMd).text,
+          knowledgeHint: block.knowledge_hint
+            ? redactIngestionText(block.knowledge_hint).text
+            : block.knowledge_hint,
+          sessionId: params.sessionId,
+          subjectRootId,
+          sourceRef: { kind: 'question_block', id: block.id },
+        },
+      );
+      tagging = synthesizeTaggingOutput(tag.knowledge_ids);
+    } catch (err) {
+      rethrowKnowledgeTagInvariant(err);
+      // A data-integrity invariant still aborts; ordinary tagging faults (missing
+      // seed root, provider outage) leave the question unattributed but enrolled.
+      console.error(
+        `[auto_enroll] tagKnowledge failed for block ${block.id}; enrolling without knowledge`,
+        err,
+      );
+      tagging = synthesizeTaggingOutput([]);
     }
 
     // Deterministic confidence signal; it never decides the route.
@@ -326,98 +295,52 @@ export async function runAutoEnrollForSession(
       extractionConfidence: block.extraction_confidence,
       tagging,
     });
+    const knowledgeIds = verdict.prefilled.knowledge_ids;
+    const markers: AutoEnrollmentMarkers = {
+      enrolled_by: 'workflow_judge',
+      knowledge: knowledgeIds.length > 0 ? 'attributed' : 'missing',
+      confidence: verdict.confidence,
+      figures_attached: block.figures.length,
+      student_work: detectStudentWork(block),
+    };
 
-    const hasCapturedAnswer =
-      Boolean(block.wrong_answer_md?.trim()) || (studentGrading && shouldGradeStudentWork(block));
-    if (mode === 'enroll' && hasCapturedAnswer) {
+    // Captured work keeps its private answer evidence (submission + participation
+    // anchor) but is not graded here — scoring is slice 5. The question still enters
+    // the item bank like any other block.
+    const hasCapturedAnswer = Boolean(block.wrong_answer_md?.trim()) || detectStudentWork(block);
+    if (hasCapturedAnswer) {
       try {
-        const result = await enrollNativeCapture(params.db, {
+        const captured = await captureIngestionOriginal(params.db, {
           block,
-          knowledgeIds: verdict.prefilled.knowledge_ids,
+          knowledgeIds,
           difficulty: verdict.prefilled.difficulty,
           confidence: verdict.confidence,
-          // Structural minimum only: a question needs at least one knowledge id.
-          canEnroll: verdict.prefilled.knowledge_ids.length > 0,
+          canEnroll: true,
           pageRefs: scopedPageRefs,
           docUsage: sessionDocUsage,
           now,
+          enrollmentMetadata: { ...markers },
         });
-        if (result) enrolled.push(result);
-        else routedToReview += 1;
-      } catch (error) {
-        console.error(`[auto_enroll:capture] block ${block.id} requires review`, error);
-        routedToReview += 1;
-      }
-      continue;
-    }
-
-    // For an answered block, draft the mistake metadata once and share it:
-    // observe attaches it to the audit event, enroll uses its outcome. A draft failure
-    // leaves it undefined; non-draft faults re-raise so the job retries.
-    let mistakeDraft: MistakeEnrollOutputT | undefined;
-    const studentAnswer = block.wrong_answer_md?.trim() ?? '';
-    if (mode === 'observe' && studentAnswer.length > 0) {
-      // The enroll vocabulary must include owner-accepted overlay categories, or clamping
-      // would push them all back to 'other'.
-      const profile = await withActiveCauseCategoryOverlays(
-        params.db,
-        await resolveSubjectProfileForKnowledgeIds(params.db, verdict.prefilled.knowledge_ids),
-      );
-      try {
-        mistakeDraft = await runMistakeEnrollFn({
-          questionMd,
-          referenceMd: block.reference_md ?? null,
-          studentAnswerMd: block.wrong_answer_md ?? null,
-          knowledgeIds: verdict.prefilled.knowledge_ids,
-          profile,
+        if (!captured) {
+          routedToReview += 1;
+          continue;
+        }
+        const result = await settleItemBankEnrollment({
           db: params.db,
-          ctx: { subjectProfile: profile },
+          block,
+          questionId: captured.questionId,
+          knowledgeIds: captured.knowledgeIds,
+          confidence: verdict.confidence,
+          docUsage: sessionDocUsage,
+          sourceDocumentId: sourceDocumentId || captured.sourceDocumentId,
+          capturedAttemptEventId: captured.attemptEventId,
+          now,
         });
-      } catch (err) {
-        if (!(err instanceof MistakeEnrollTaskError)) throw err;
-        console.error(`[auto_enroll] mistake_enroll draft failed for block ${block.id}`, err);
-      }
-    }
-
-    // Observe writes one audit event per block, mutating no domain rows.
-    // A failed audit write logs and continues so one bad write never aborts the batch.
-    if (mode === 'observe') {
-      try {
-        await writeEventFn(params.db, {
-          id: observeEventId(params.sessionId, block.id),
-          // Bind to the session so the derivation filter applies the live document policy
-          // on reads; the verdict embeds document-derived text in `reasoning`.
-          session_id: params.sessionId,
-          actor_kind: 'agent',
-          actor_ref: 'workflow_judge',
-          action: 'experimental:auto_enroll_observed',
-          subject_kind: 'question_block',
-          subject_id: block.id,
-          outcome: 'success',
-          payload: {
-            mode: 'observe',
-            generated_by: 'workflow_judge',
-            confidence: verdict.confidence,
-            reasoning: verdict.reasoning,
-            extraction_confidence: block.extraction_confidence,
-            tagging_overall_confidence: tagging.overall_confidence,
-            ...(tagging.grid_truncated !== undefined
-              ? { grid_truncated: tagging.grid_truncated }
-              : {}),
-            suggested_knowledge_ids: verdict.prefilled.knowledge_ids,
-            ingestion_session_id: params.sessionId,
-            ...(mistakeDraft ? { mistake_draft: mistakeDraft } : {}),
-          },
-          caused_by_event_id: null,
-          task_run_id: null,
-          cost_micro_usd: null,
-          // Opt out of memory ingestion: a non-null ingest_at makes the outbox poller
-          // skip this row. This does not claim ingestion already ran.
-          ingest_at: now,
-          created_at: now,
-        });
-      } catch (err) {
-        console.error(`[auto_enroll:observe] writeEvent failed for block ${block.id}`, err);
+        if (result === null) routedToReview += 1;
+        else enrolled.push(result);
+      } catch (error) {
+        console.error(`[auto_enroll:capture] block ${block.id} left draft`, error);
+        routedToReview += 1;
       }
       continue;
     }
@@ -427,106 +350,115 @@ export async function runAutoEnrollForSession(
     const answerMd = '';
     const answerImageRefs: string[] = [];
     const captureMode = block.image_refs.length > 0 ? 'image' : 'text';
-    const result = await params.db.transaction(async (tx) => {
-      // Same tx-entry order as every learning-state writer and the cascade revert.
-      await acquireLearningStateWriteLock(tx);
-      // Concurrent consumers can both pass the draft SELECT above and insert duplicate
-      // questions. Re-read this block FOR UPDATE and skip unless it is still draft; this
-      // row lock is the structural double-consume guard. Singleton keys only reduce the
-      // number of duplicate jobs and do not bear correctness.
-      const claimRows = await tx
-        .select({ status: question_block.status })
-        .from(question_block)
-        .where(eq(question_block.id, block.id))
-        .for('update');
-      if (claimRows[0]?.status !== 'draft') {
-        return null; // already enrolled by a concurrent runner
-      }
-
-      // Attributed KCs are exactly what tagKnowledge returned pre-tx. Any KC it minted
-      // is committed in its own tx, so a rollback here can orphan it; that is benign
-      // (valid leaf under the subject root, reconciled by dedup-on-maintenance), and the
-      // naming call must never sit inside this transaction.
-      const enrollKnowledgeIds = verdict.prefilled.knowledge_ids;
-
-      // A question is active only with a non-empty prompt, a valid kind, and at least one
-      // live KC matching the attributed count. Structurally incomplete rows always land
-      // draft; never force them active.
-      let draftStatus: 'active' | 'draft';
-      {
-        let liveKnowledgeCount = 0;
-        if (enrollKnowledgeIds.length > 0) {
-          const liveKnowledge = await tx
-            .select({ id: knowledge.id })
-            .from(knowledge)
-            .where(and(inArray(knowledge.id, enrollKnowledgeIds), isNull(knowledge.archived_at)));
-          liveKnowledgeCount = liveKnowledge.length;
+    let result: AutoEnrolledBlock | null;
+    try {
+      result = await params.db.transaction(async (tx) => {
+        // Same tx-entry order as every learning-state writer and the cascade revert.
+        await acquireLearningStateWriteLock(tx);
+        // Concurrent consumers can both pass the draft SELECT above and insert duplicate
+        // questions. Re-read this block FOR UPDATE and skip unless it is still draft; this
+        // row lock is the structural double-consume guard. Singleton keys only reduce the
+        // number of duplicate jobs and do not bear correctness.
+        const claimRows = await tx
+          .select({ status: question_block.status, version: question_block.version })
+          .from(question_block)
+          .where(eq(question_block.id, block.id))
+          .for('update');
+        const [claimSession] = await tx
+          .select({ status: learning_session.status })
+          .from(learning_session)
+          .where(eq(learning_session.id, params.sessionId))
+          .limit(1);
+        // The row can stay `draft` while the learner edits it (version bump). Enrolling
+        // the pre-edit snapshot silently would close the editor's draft with stale
+        // content, so the same checks the capture owner runs gate this path too.
+        if (
+          claimRows[0]?.status !== 'draft' ||
+          claimRows[0].version !== block.version ||
+          (claimSession?.status !== 'extracted' && claimSession?.status !== 'partial')
+        ) {
+          return null; // edited or superseded by a concurrent runner
         }
-        const structurallyVerified =
-          questionMd.trim().length > 0 &&
-          Boolean(verdict.prefilled.question_kind) &&
-          liveKnowledgeCount === enrollKnowledgeIds.length &&
-          liveKnowledgeCount > 0;
-        draftStatus = structurallyVerified ? 'active' : 'draft';
-      }
 
-      const questionId = createId();
-      await recordCapturedQuestion(tx, {
-        questionId,
-        sessionId: params.sessionId,
-        blockId: block.id,
-        sourceDocumentId,
-        source: sessionEntrypoint,
-        // OCR-extracted answer only; reference generation is out of scope.
-        content: { from: 'block', block },
-        kind: verdict.prefilled.question_kind,
-        knowledgeIds: enrollKnowledgeIds,
-        difficulty: verdict.prefilled.difficulty,
-        // Placement excludes only 'draft'; null and 'active' both pass.
-        draftStatus,
-        extraMetadata: {
-          // The judge confidence is a signal stored with the question, not a route.
-          workflow_judge: {
-            confidence: verdict.confidence,
-            extraction_confidence: block.extraction_confidence,
-            tagging_overall_confidence: tagging.overall_confidence,
-            reasoning: verdict.reasoning,
-          },
-        },
-        // A missing OCR answer is withheld; student work goes through the attempt event,
-        // never the answer key.
-        actorRef: 'auto-enroll:question',
-        now,
-      });
+        // Attributed KCs are exactly what tagKnowledge returned pre-tx. Any KC it minted
+        // is committed in its own tx, so a rollback here can orphan it; that is benign
+        // (valid leaf under the subject root, reconciled by dedup-on-maintenance), and the
+        // naming call must never sit inside this transaction.
+        const enrollKnowledgeIds = knowledgeIds;
 
-      // Same enrollment owner as the human path; only provenance and answer differ.
-      const enroll = await settleCapturedBlock(tx, {
-        transition: 'auto_enroll',
-        blockId: block.id,
-        guard: { kind: 'row_locked' },
-        enroll: {
+        // Library visibility needs a non-empty prompt and a valid kind. Knowledge ids are
+        // deliberately not part of this decision (YUK-1994): an unattributed question
+        // enters the bank and is marked for the background knowledge backfill.
+        const draftStatus: 'active' | 'draft' =
+          questionMd.trim().length > 0 && verdict.prefilled.question_kind.length > 0
+            ? 'active'
+            : 'draft';
+
+        const questionId = createId();
+        await recordCapturedQuestion(tx, {
           questionId,
-          outcome,
-          answerMd,
-          answerImageRefs,
-          knowledgeIds: enrollKnowledgeIds,
-          imageRefs: block.image_refs,
-          captureMode,
+          sessionId: params.sessionId,
+          blockId: block.id,
           sourceDocumentId,
+          source: sessionEntrypoint,
+          // OCR-extracted answer only; reference generation is out of scope.
+          content: { from: 'block', block },
+          kind: verdict.prefilled.question_kind,
+          knowledgeIds: enrollKnowledgeIds,
+          difficulty: verdict.prefilled.difficulty,
+          // Placement excludes only 'draft'; null and 'active' both pass.
+          draftStatus,
+          extraMetadata: {
+            // The judge confidence is a signal stored with the question, not a route.
+            workflow_judge: {
+              confidence: verdict.confidence,
+              extraction_confidence: block.extraction_confidence,
+              tagging_overall_confidence: tagging.overall_confidence,
+              reasoning: verdict.reasoning,
+            },
+            ingestion_enrollment: markers,
+          },
+          // A missing OCR answer is withheld; student work goes through the attempt event,
+          // never the answer key.
+          actorRef: 'auto-enroll:question',
           now,
-          generatedBy: 'workflow_judge',
-        },
-      });
+        });
 
-      return {
-        block_id: block.id,
-        question_id: questionId,
-        attempt_event_id: enroll.attemptEventId,
-        record_id: enroll.recordId,
-        confidence: verdict.confidence,
-        knowledge_ids: enrollKnowledgeIds,
-      } satisfies AutoEnrolledBlock;
-    });
+        // Same enrollment owner as the human path; only provenance and answer differ.
+        const enroll = await settleCapturedBlock(tx, {
+          transition: 'auto_enroll',
+          blockId: block.id,
+          guard: { kind: 'version_cas', version: block.version },
+          enroll: {
+            questionId,
+            outcome,
+            answerMd,
+            answerImageRefs,
+            knowledgeIds: enrollKnowledgeIds,
+            imageRefs: block.image_refs,
+            captureMode,
+            sourceDocumentId,
+            now,
+            generatedBy: 'workflow_judge',
+          },
+        });
+
+        return {
+          block_id: block.id,
+          question_id: questionId,
+          attempt_event_id: enroll.attemptEventId,
+          record_id: enroll.recordId,
+          confidence: verdict.confidence,
+          knowledge_ids: enrollKnowledgeIds,
+        } satisfies AutoEnrolledBlock;
+      });
+    } catch (error) {
+      // One unusable block must not fail the whole page (and burn paid retries);
+      // it stays draft for review while the rest of the batch continues.
+      console.error(`[auto_enroll:item-bank] block ${block.id} left draft`, error);
+      routedToReview += 1;
+      continue;
+    }
 
     // A concurrent runner already enrolled this block.
     if (result === null) continue;
@@ -537,20 +469,94 @@ export async function runAutoEnrollForSession(
     // durable subscription, so this producer has no queue dependency.
   }
 
+  const last = blocks[blocks.length - 1];
   return {
     status: 'completed',
     enrolled: enrolled.length,
     routed_to_review: routedToReview,
     blocks: enrolled,
+    next_after_block:
+      blocks.length === AUTO_ENROLL_MAX_BLOCKS_PER_RUN && last !== undefined
+        ? { ordinal: last.ordinal, id: last.id }
+        : null,
   };
 }
 
 /**
- * Deterministic observe-event id: a stable sha256 so a job redelivery writes no
- * duplicate event and keeps the original `ingest_at`.
+ * Links one captured block to the item bank. The capture owner already created and
+ * published the question (which enqueues scoring admission); this only flips the block
+ * to `auto_enrolled` and marks the question library-visible. No grading is committed.
  */
-export function observeEventId(sessionId: string, blockId: string): string {
-  return createHash('sha256').update(`auto_enroll_observed:${sessionId}:${blockId}`).digest('hex');
+async function settleItemBankEnrollment(params: {
+  db: Db;
+  block: typeof question_block.$inferSelect;
+  questionId: string;
+  knowledgeIds: string[];
+  confidence: number;
+  docUsage: Parameters<typeof settleCapturedBlock>[1]['enroll']['docUsage'];
+  sourceDocumentId: string;
+  capturedAttemptEventId?: string;
+  now: Date;
+}): Promise<AutoEnrolledBlock | null> {
+  return params.db.transaction(async (tx) => {
+    await acquireLearningStateWriteLock(tx);
+    const claimRows = await tx
+      .select({ status: question_block.status, version: question_block.version })
+      .from(question_block)
+      .where(eq(question_block.id, params.block.id))
+      .for('update');
+    const [claimSession] = await tx
+      .select({ status: learning_session.status })
+      .from(learning_session)
+      .where(eq(learning_session.id, params.block.ingestion_session_id))
+      .limit(1);
+    if (
+      claimRows[0]?.status !== 'draft' ||
+      claimRows[0].version !== params.block.version ||
+      (claimSession?.status !== 'extracted' && claimSession?.status !== 'partial')
+    ) {
+      // The block was edited/superseded after the capture committed: leave it draft.
+      // The capture question and its attempt event stay as private evidence (draft,
+      // not library-visible) and are never linked as an enrollment.
+      return null;
+    }
+
+    const enroll = await settleCapturedBlock(tx, {
+      transition: 'auto_enroll',
+      blockId: params.block.id,
+      guard: { kind: 'version_cas', version: params.block.version },
+      enroll: {
+        questionId: params.questionId,
+        // No verdict exists yet: the captured work stays evidence, never an answer key
+        // and never a fabricated right/wrong bit.
+        outcome: 'unanswered',
+        capturedAttemptEventId: params.capturedAttemptEventId,
+        answerMd: '',
+        answerImageRefs: [],
+        knowledgeIds: params.knowledgeIds,
+        imageRefs: params.block.image_refs,
+        captureMode: params.block.image_refs.length > 0 ? 'image' : 'text',
+        sourceDocumentId: params.sourceDocumentId,
+        docUsage: params.docUsage,
+        now: params.now,
+        generatedBy: 'workflow_judge',
+      },
+    });
+
+    await tx
+      .update(question)
+      .set({ draft_status: 'active', updated_at: params.now })
+      .where(eq(question.id, params.questionId));
+
+    return {
+      block_id: params.block.id,
+      question_id: params.questionId,
+      attempt_event_id: enroll.attemptEventId,
+      record_id: enroll.recordId,
+      confidence: params.confidence,
+      knowledge_ids: params.knowledgeIds,
+    };
+  });
 }
 
 /**
@@ -592,42 +598,7 @@ export function detectStudentWork(block: { structured: StructuredQuestionT | nul
 }
 
 /**
- * Whether this extraction source reliably assessed handwriting, so a false
- * detectStudentWork is trustworthy. Only the VLM StructureTask and Tencent QuestionMark
- * do; glm_ocr never assesses and vision_rescue only opportunistically.
- */
-export function extractionAssessedHandwriting(block: {
-  structured: StructuredQuestionT | null;
-}): boolean {
-  const source = block.structured?.source;
-  return source === 'vlm_structure' || source === 'tencent_ocr';
-}
-
-/**
- * Sources where handwriting is physically possible, so a degraded "no handwriting"
- * reading may be wrong. Text/manual sources have no whole-page handwriting to miss.
- */
-const SCAN_SOURCES: ReadonlySet<string> = new Set([
-  'glm_ocr',
-  'vlm_structure',
-  'tencent_ocr',
-  'vision_rescue',
-]);
-
-/**
- * Grades when handwriting was detected, or when a scan source did not reliably assess it
- * (fail-open; StructureTask down must not skip grading). The fail-open stays scoped to
- * scan sources: elsewhere it would divert an auto-enrollable block into review, and text
- * sources have no handwriting to miss. An assessed scan with none skips to save cost.
- */
-export function shouldGradeStudentWork(block: { structured: StructuredQuestionT | null }): boolean {
-  if (detectStudentWork(block)) return true;
-  const source = block.structured?.source;
-  return source != null && SCAN_SOURCES.has(source) && !extractionAssessedHandwriting(block);
-}
-
-/**
- * Narrows the images fed to the student-answer judge to the pages this question spans,
+ * Narrows the images fed to the judge to the pages this question spans,
  * avoiding cross-page bleed on multi-page uploads. Every page comes from the structured
  * subtree's page_index mapped into source_asset_ids (stored in page order).
  *

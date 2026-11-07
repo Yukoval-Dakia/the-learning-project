@@ -26,6 +26,10 @@ import {
   question_group_lifecycle,
   question_revision,
 } from '@/db/schema';
+import {
+  admissionSourceEventIdSql,
+  ingestionQuestionSourceListSql,
+} from '@/kernel/read-models/admission-source';
 import { revisionRowToContract } from '@/kernel/records/assessment-issuance';
 
 export const SERVING_HOLD_REASONS = [
@@ -293,6 +297,7 @@ function servingFactsQuery(filters: SQL[]): SQL {
         where stage.entity_id = l.group_id and stage.entity_revision = r.integrity_digest
           and stage.family = 'question_admission_stage' and stage.state = 'unknown')
         as admission_unknown_stage,
+      admission_purpose.auto_blocked as admission_auto_blocked,
       l.group_id is null as legacy_unpublished,
       applied.entity_id is null as may_reverify,
       case
@@ -300,7 +305,7 @@ function servingFactsQuery(filters: SQL[]): SQL {
         when l.suspended then l.updated_at
         when l.group_id is null then null
         when l.scoring_admission_state = 'withheld' then
-          case when diagnosis.state in ('source_check_failed', 'admission_failed')
+          case when diagnosis.state in ('source_check_failed', 'admission_failed', 'admission_undecided')
             then coalesce(verification.recorded_at, l.updated_at)
             else l.updated_at end
         when not ${notDraftPredicate(question.draft_status)} then null
@@ -350,6 +355,43 @@ function servingFactsQuery(filters: SQL[]): SQL {
         and s.family = 'question_admission_stage'
       order by s.created_at desc, s.unit desc limit 1
     ) stage_wait on true
+    left join lateral (
+      select exists (
+        select 1 from ${event} denied
+        where denied.action = 'experimental:question_admission_purpose_denied'
+          and denied.subject_id = l.group_id
+          and denied.payload->>'revision_id' = r.revision_id
+          and denied.payload->>'source_event_id' = (
+            select published.id from ${event} published
+            where published.action = 'experimental:assessment_publish'
+              and published.subject_id = l.group_id
+              and published.payload->>'revision_id' = r.revision_id
+            order by published.created_at desc, published.id desc
+            limit 1
+          )
+      ) or exists (
+        -- Legacy ingestion rows without a source binding can never pass the purpose
+        -- gate. Use the same binding the enqueue owner uses (publication cause/session,
+        -- else the first-publication receipt) so edited ingestion questions that are
+        -- actually being checked are not reported terminal here.
+        select 1 from ${event} published
+        where published.action = 'experimental:assessment_publish'
+          and published.subject_id = l.group_id
+          and published.payload->>'revision_id' = r.revision_id
+          and (${admissionSourceEventIdSql({
+            publicationEventId: sql`published.id`,
+            publicationSessionId: sql`published.session_id`,
+            publicationCausedByEventId: sql`published.caused_by_event_id`,
+            publicationActorRef: sql`published.actor_ref`,
+            groupId: sql`l.group_id`,
+            revisionId: sql`r.revision_id`,
+          })}) is null
+          and (select root.source from ${question} root where root.id = l.group_id)
+            in ${ingestionQuestionSourceListSql()}
+        order by published.created_at desc, published.id desc
+        limit 1
+      ) as auto_blocked
+    ) admission_purpose on true
     cross join lateral (
       select case
         when l.withdrawn then 'withdrawn'
@@ -362,6 +404,8 @@ function servingFactsQuery(filters: SQL[]): SQL {
         when l.scoring_admission_state = 'withheld' then case
           when verification.policy_id = 'source_verify@1' and verification.outcome = 'failed'
             then 'source_check_failed'
+          when admission_purpose.auto_blocked
+            then 'admission_undecided'
           when applied.status = 'withheld'
             or l.scoring_admission_withheld_reason in ('verification_failed', 'no_admitted_executor')
             then case
@@ -401,6 +445,7 @@ interface AdmissionReadFacts extends Record<string, unknown> {
   admission_wait_retry_at: string | null;
   admission_failure_reason: string | null;
   admission_unknown_stage: boolean;
+  admission_auto_blocked: boolean;
 }
 
 function admissionRead(
@@ -422,6 +467,14 @@ function admissionRead(
       fact.verification_policy === 'question_admission_unknown_close@1')
   ) {
     return { status: 'undecided', reason: '自动检查的结果尚未确认，题目暂不能作答。' };
+  }
+  // A queued admission that could not prove its source purpose never spends. It is a
+  // terminal fact for this publication, not an in-flight check.
+  if (fact.admission_auto_blocked) {
+    return {
+      status: 'undecided',
+      reason: '自动检查没能完成，题目暂不能作答。',
+    };
   }
   // A recorded provider wait is only credible while its durable wake-up is still
   // within the gate's own retry cadence; a lost delivery must not promise a retry.
