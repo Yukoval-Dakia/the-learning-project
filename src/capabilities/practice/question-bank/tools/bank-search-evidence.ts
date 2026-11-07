@@ -39,6 +39,30 @@ export async function readBankDocuments(
             source: `part:${part.part_id}`,
             text: part.prompt_md,
             parts: [part.part_id],
+            complete: part.extent?.complete !== false,
+            missing: [
+              ...(part.extent?.complete === false ? ['part_text_incomplete'] : []),
+              ...(/!\[[^\]]*\]\(|<(?:img|svg|video|audio)\b/i.test(part.prompt_md)
+                ? ['media_not_read']
+                : []),
+              ...part.material_ids.flatMap((id) => {
+                const material = item.materials?.find((m) => m.material_id === id);
+                if (
+                  !material ||
+                  material.content_md === undefined ||
+                  !material.asset.digest_verified
+                )
+                  return [`missing_or_denied:${id}`];
+                if (material.text_extent?.complete === false)
+                  return [`material_text_incomplete:${id}`];
+                if (
+                  ['figure', 'image', 'audio', 'video', 'pdf'].includes(material.kind) ||
+                  /!\[[^\]]*\]\(|<(?:img|svg|video|audio)\b/i.test(material.content_md)
+                )
+                  return [`media_not_read:${id}`];
+                return [];
+              }),
+            ],
           });
         for (const slot of item.content.slots)
           documents.push({

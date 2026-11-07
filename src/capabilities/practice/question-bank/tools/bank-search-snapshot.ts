@@ -210,13 +210,19 @@ async function readBankReceipt(
   ctx: Pick<ToolContext, 'callerActor' | 'taskRunId' | 'supplyDemand'>,
   id: string,
   lock = false,
+  taskCompletion = false,
 ): Promise<BankReceipt> {
   const [row] = await db
     .select()
     .from(bank_search_snapshot)
     .where(eq(bank_search_snapshot.search_id, id))
     .limit(1);
-  if (!row || row.expires_at.getTime() <= Date.now())
+  const ownedTaskCompletion =
+    taskCompletion &&
+    ctx.supplyDemand &&
+    ctx.callerActor.kind === 'agent' &&
+    ctx.callerActor.ref === 'question_preparer';
+  if (!row || (!ownedTaskCompletion && row.expires_at.getTime() <= Date.now()))
     throw new BankSearchError('Bank evidence expired or absent');
   if (row.actor_key !== actorKey(ctx) || row.read_role !== bankReadRoleForActor(ctx.callerActor))
     throw new BankSearchError('Bank evidence belongs to a different actor or read role');
@@ -259,7 +265,7 @@ export async function saveBankReceipt(
         expires_at: new Date(Date.now() + TTL),
       });
       await tx.execute(
-        sql`DELETE FROM ${bank_search_snapshot} WHERE search_id IN (SELECT search_id FROM ${bank_search_snapshot} WHERE expires_at <= now() ORDER BY expires_at LIMIT 10)`,
+        sql`DELETE FROM ${bank_search_snapshot} WHERE search_id IN (SELECT search_id FROM ${bank_search_snapshot} WHERE expires_at <= now() - interval '1 day' ORDER BY expires_at LIMIT 10)`,
       );
     },
     { isolationLevel: 'repeatable read' },
@@ -301,6 +307,11 @@ function assessBankReceipt(receipt: BankReceipt, raw: BankAssessment[]) {
     const hit = receipt.output.hits.find((h) => h.ref === assessment.ref);
     if (!hit?.available || assessment.parts.some((p) => !hit.parts.includes(p)))
       throw new BankSearchError('Assessment selects unavailable candidate or foreign part');
+    // Missing input is a deterministic unknown, regardless of a caller's opinion.
+    if (hit.missing.some((m) => assessment.parts.includes(m.part))) {
+      assessment.checks = assessment.checks.map((c) => ({ ...c, verdict: 'unknown' as const }));
+      assessment.joint = { ...assessment.joint, verdict: 'unknown' };
+    }
     const checks = assessment.checks;
     if (
       new Set(checks.map((c) => c.condition)).size !== checks.length ||
@@ -326,6 +337,7 @@ function assessBankReceipt(receipt: BankReceipt, raw: BankAssessment[]) {
     checks.forEach(validate);
     validate(assessment.joint);
     if (
+      receipt.output.conditions.some((c) => c.required) &&
       assessment.joint.verdict === 'supported' &&
       receipt.output.conditions
         .filter((c) => c.required)
@@ -356,7 +368,7 @@ export async function bankReceiptGapEvidence(
   const known = receipt.output.hits
     .filter((h) => h.available)
     .every((h) =>
-      assessments.some(
+      decision.assessments.some(
         (a) =>
           a.ref === h.ref &&
           a.joint.verdict !== 'unknown' &&
@@ -436,8 +448,11 @@ export async function selectBankReceipt(
   searchId: string,
   assessments: BankAssessment[],
   lock = false,
+  taskCompletion = false,
 ) {
-  const receipt = await readBankReceipt(db, ctx, searchId, lock);
+  const receipt = await readBankReceipt(db, ctx, searchId, lock, taskCompletion);
+  if (receipt.request.use === 'inspect' || receipt.request.use === 'dedup')
+    throw new BankSearchError('Paper and stock selection require practice or inventory evidence');
   const selection = assessBankReceipt(receipt, assessments);
   if (lock) await recordBankDecision(db, searchId, selection);
   return {

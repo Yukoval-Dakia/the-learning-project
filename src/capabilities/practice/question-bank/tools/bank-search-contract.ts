@@ -59,6 +59,7 @@ export const BankHitSchema = z.object({
   title: z.string(),
   parts: z.array(z.string()),
   available: z.boolean(),
+  missing: z.array(z.object({ part: z.string(), reason: z.string() })),
   facts: z.object({
     source: z.string(),
     kind: z.string(),
@@ -67,7 +68,10 @@ export const BankHitSchema = z.object({
     withheld_reason: z.string().nullable(),
     suspended: z.boolean(),
     knowledge_ids: z.array(z.string()),
-    difficulty: z.object({ basis: z.literal('authored'), value: z.number() }),
+    difficulty: z.object({
+      basis: z.enum(['authored', 'calibrated']),
+      value: z.number().nullable(),
+    }),
   }),
   evidence: z.array(z.object({ source: z.string(), text: z.string(), complete: z.boolean() })),
 });
@@ -83,6 +87,11 @@ export const BankSearchOutputSchema = z.object({
   hits: z.array(BankHitSchema),
   coverage: z.object({
     candidates: z.number(),
+    prior: z.object({
+      requested: z.boolean(),
+      missing_refs: z.array(z.string()),
+      missing_channels: z.array(z.string()),
+    }),
     complete: z.boolean(),
     unavailable: z.array(z.string()),
     enforced: z.array(z.string()),
@@ -91,5 +100,12 @@ export const BankSearchOutputSchema = z.object({
   next_cursor: z.string().nullable(),
 });
 export type BankSearchOutputV3 = z.infer<typeof BankSearchOutputSchema>;
-export type BankDocument = { ref: string; source: string; text: string; parts: string[] };
+export type BankDocument = {
+  ref: string;
+  source: string;
+  text: string;
+  parts: string[];
+  complete?: boolean;
+  missing?: string[];
+};
 export class BankSearchError extends Error {}

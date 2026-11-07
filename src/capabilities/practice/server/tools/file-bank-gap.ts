@@ -2,6 +2,7 @@
 // The existing claim ledger and paid dispatch share one transaction; unknown or
 // incomplete evidence never establishes bank absence or bypasses supply controls.
 
+import { canonicalHash } from '@/core/migration/canonical';
 import { createHash, randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
@@ -244,6 +245,7 @@ interface StoredFilingPayload {
   decision_source?: 'caller_assessed';
   search_id?: string;
   assessment_digest?: string;
+  input_digest?: string;
   /** 台账存储态。claimed = dispatch 路径的占位行（写在 `fbgap|<request_id>`，
    * first-write-wins 充当原子占位）；filed = 已派出 / held = 挂起（hold 路径的
    * 终态直接写 `fbgap|<request_id>`；dispatch 路径的终态追加到
@@ -305,6 +307,33 @@ function dispatchReceipt(result: {
 async function executeFileBankGap(ctx: ToolContext, rawInput: FileBankGapInput) {
   const request = FileBankGapInputSchema.parse(rawInput);
   return ctx.db.transaction(async (tx) => {
+    const inputDigest = canonicalHash({ request, actor: ctx.callerActor, run: ctx.taskRunId });
+    const stored = await readStoredFiling(tx as unknown as Db, `fbgap|${request.request_id}`);
+    if (stored) {
+      const terminal =
+        stored.status === 'claimed'
+          ? await readStoredFiling(tx as unknown as Db, `fbgap|${request.request_id}|receipt`)
+          : null;
+      const prior = terminal ?? stored;
+      if (stored.input_digest !== inputDigest)
+        return FileBankGapOutputSchema.parse({
+          demand_id: request.demand.demand_id,
+          deduplicated: false,
+          status: 'rejected',
+          reason: 'request_id already filed with DIFFERENT content or owner',
+          receipt: prior.receipt,
+        });
+      return FileBankGapOutputSchema.parse({
+        demand_id: prior.demand_id,
+        deduplicated: true,
+        status: prior.status === 'filed' ? 'queued' : 'held',
+        reason:
+          prior.status === 'claimed'
+            ? 'claimed_not_dispatched: existing claim has no terminal receipt; no redispatch'
+            : prior.reason,
+        receipt: prior.receipt,
+      });
+    }
     const observation = await bankReceiptGapEvidence(
       tx,
       ctx,
@@ -325,6 +354,7 @@ async function executeFileBankGap(ctx: ToolContext, rawInput: FileBankGapInput) 
         request_id: request.request_id,
         demand: request.demand,
         search_evidence: observation.evidence,
+        input_digest: inputDigest,
       },
     );
   });
@@ -333,6 +363,7 @@ async function fileBankGapWithEvidence(
   ctx: ToolContext,
   input: {
     request_id: string;
+    input_digest: string;
     demand: FileBankGapInput['demand'];
     search_evidence: z.infer<typeof BankGapRequestSchema>;
   },
@@ -427,9 +458,10 @@ async function fileBankGapWithEvidence(
       caused_by_event_id: ctx.causedByEventId ?? null,
       payload: {
         kind: 'bank_gap_filing',
-        decision_source: 'caller_assessed',
+        input_digest: input.input_digest,
         search_id: evidence.search_id,
         assessment_digest: evidence.assessment_digest,
+        decision_source: 'caller_assessed',
         demand_id: demand.demand_id,
         content_digest: digest,
         filing_nonce: filingNonce,
@@ -503,6 +535,9 @@ async function fileBankGapWithEvidence(
     caused_by_event_id: ctx.causedByEventId ?? null,
     payload: {
       kind: 'bank_gap_filing',
+      input_digest: input.input_digest,
+      search_id: evidence.search_id,
+      assessment_digest: evidence.assessment_digest,
       status: 'claimed',
       reason: 'claimed: dispatch pending; the receipt event carries the final outcome',
       demand_id: demand.demand_id,
@@ -573,6 +608,9 @@ async function fileBankGapWithEvidence(
     caused_by_event_id: ctx.causedByEventId ?? null,
     payload: {
       kind: 'bank_gap_filing',
+      input_digest: input.input_digest,
+      search_id: evidence.search_id,
+      assessment_digest: evidence.assessment_digest,
       status: queued ? 'filed' : 'held',
       reason,
       demand_id: demand.demand_id,

@@ -137,6 +137,7 @@ export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown, r
               inventoryReport.search_id,
               BankAssessmentSchema.array().parse(inventoryReport.assessments),
               true,
+              true,
             );
             const count = new Set(stock.accepted_refs).size;
             inventoryObservation = {

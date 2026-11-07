@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { type SQL, inArray, notInArray, sql } from 'drizzle-orm';
 import { canonicalHash } from '@/core/migration/canonical';
 import type { Db } from '@/db/client';
-import { question } from '@/db/schema';
+import { item_calibration, question } from '@/db/schema';
 import { getFailureAttemptsForDerivation } from '@/kernel/read-models/failure-attempts';
 import { getAttemptedQuestionIds } from '@/kernel/read-models/question-activity';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
@@ -129,9 +129,28 @@ export async function collectBankSearchReceipt(
           : sql`true`,
     );
   }
+  const boundCondition = demand
+    ? `${demand.claim.statement}\nTicket constraints: ${JSON.stringify({ task: demand.task, difficulty: demand.difficulty, observables: demand.evidence.observables })}`
+    : '';
+  const requirements = demand
+    ? [
+        { text: boundCondition, required: true },
+        ...(input.conditions ?? []).filter(
+          (c) => c.text !== demand.claim.statement && c.text !== boundCondition,
+        ),
+      ]
+    : (input.conditions ?? [{ text: query, required: true }]);
+  if (requirements.length > 10)
+    throw new Error('Bound ticket plus extra conditions exceeds 10; do not drop conditions');
+  if (
+    (input.use === 'practice' || input.use === 'inventory') &&
+    !requirements.some((c) => c.required)
+  )
+    throw new Error('Practice and inventory need at least one required condition');
   let bindings: BankSnapshotBinding[] = [];
   let scopeDigest = '';
   let documents: BankDocument[] = [];
+  let calibratedValues = new Map<string, number | null>();
   const recall = await runSearchBank(
     ctx.db,
     { form: 'new', query, scope, limit: input.page_size ?? 5 },
@@ -143,6 +162,25 @@ export async function collectBankSearchReceipt(
       publicOnly: bankReadRoleForActor(ctx.callerActor) === 'restricted',
       embedFn: ablation?.embedFn ?? ((text) => queryVector(ctx, text)),
       onPoolFrozen: async (tx, pool) => {
+        const calibrated =
+          scope.difficulty?.basis === 'calibrated' && pool.hits.length
+            ? await tx
+                .select({
+                  id: item_calibration.question_id,
+                  value: sql<
+                    number | null
+                  >`coalesce(${item_calibration.b_post},${item_calibration.b_anchor},${item_calibration.b})`,
+                })
+                .from(item_calibration)
+                .where(
+                  sql`${item_calibration.track}='hard' AND ${inArray(
+                    item_calibration.question_id,
+                    pool.hits.map((h) => h.question_id),
+                  )}`,
+                )
+            : [];
+        calibratedValues = new Map(calibrated.map((c) => [c.id, c.value]));
+
         scopeDigest = canonicalHash(await resolveBankSearchScope(tx, scope));
         const [anchor] = input.like_ref ? await resolveBankRefs(tx, [input.like_ref]) : [];
         const anchors =
@@ -171,19 +209,6 @@ export async function collectBankSearchReceipt(
       },
     },
   );
-  const boundCondition = demand
-    ? `${demand.claim.statement}\nTicket constraints: ${JSON.stringify({ task: demand.task, difficulty: demand.difficulty, observables: demand.evidence.observables })}`
-    : '';
-  const requirements = demand
-    ? [
-        { text: boundCondition, required: true },
-        ...(input.conditions ?? []).filter(
-          (c) => c.text !== demand.claim.statement && c.text !== boundCondition,
-        ),
-      ]
-    : (input.conditions ?? [{ text: query, required: true }]);
-  if (requirements.length > 10)
-    throw new Error('Bound ticket plus extra conditions exceeds 10; do not drop conditions');
   const conditions = requirements.map((c, i) => ({
     id: `r${i + 1}`,
     ...c,
@@ -196,7 +221,10 @@ export async function collectBankSearchReceipt(
     withheld_reason: hit.admission?.withheld_reason ?? null,
     suspended: hit.suspended,
     knowledge_ids: hit.knowledge_ids,
-    difficulty: { basis: 'authored' as const, value: hit.difficulty },
+    difficulty:
+      scope.difficulty?.basis === 'calibrated'
+        ? { basis: 'calibrated' as const, value: calibratedValues.get(hit.question_id) ?? null }
+        : { basis: 'authored' as const, value: hit.difficulty },
   });
   for (const hit of recall.hits)
     if (hit.ref) {
@@ -220,6 +248,18 @@ export async function collectBankSearchReceipt(
       title: hit.title,
       parts: hit.automatically_servable_part_ids,
       available: hit.automatically_servable_part_ids.length > 0,
+      missing: [
+        ...documents
+          .filter((d) => d.ref === hit.ref)
+          .flatMap((d) =>
+            (d.missing ?? []).flatMap((reason) => d.parts.map((part) => ({ part, reason }))),
+          ),
+        ...hit.automatically_servable_part_ids
+          .filter(
+            (part) => !documents.some((d) => d.ref === hit.ref && d.source === `part:${part}`),
+          )
+          .map((part) => ({ part, reason: 'part_text_unread' })),
+      ],
       facts: factsFor(hit),
       evidence: documents
         .filter(
@@ -230,7 +270,7 @@ export async function collectBankSearchReceipt(
         .map((d) => ({
           source: d.source,
           text: d.text.slice(0, 180),
-          complete: d.text.length <= 180,
+          complete: d.complete !== false && d.text.length <= 180,
         })),
     })),
     coverage: {
@@ -238,6 +278,18 @@ export async function collectBankSearchReceipt(
       complete:
         !recall.coverage.retrieval_truncated && !recall.coverage.unavailable_channels.length,
       unavailable: recall.coverage.unavailable_channels,
+      prior: {
+        requested:
+          ablation?.vectors !== 'off' && bankReadRoleForActor(ctx.callerActor) !== 'restricted',
+        missing_channels: ['method', 'pitfall'].filter(
+          (channel) => !recall.coverage.recall_scan?.some((c) => c.channel === channel),
+        ),
+        missing_refs: recall.hits.flatMap((h) =>
+          h.ref && !documents.some((d) => d.ref === h.ref && d.source.startsWith('prior:'))
+            ? [h.ref]
+            : [],
+        ),
+      },
       enforced: [
         ...recall.requirements.enforced,
         ...(terms?.length ? ['literal_prompt_terms'] : []),
@@ -269,7 +321,7 @@ export async function runBankSearchV3(
 export const searchBankTool: DomainTool<SearchBankInput, BankSearchOutputV3> = {
   name: 'search_bank',
   description:
-    'Question preparation comes first. inventory searches admitted/servable stock for a gap ticket; dedup searches active, pending/withheld and draft candidates before adding a question. Defaults: question_preparer uses inventory (10/page), other callers practice (5/page); explicit page_size overrides only pagination, never the inventory goal. Copy the ticket goal into count, its subject/KCs/kinds into filters; inventory KCs default to all on ONE question. kinds is an allowed-type union, not one question of every kind. For dedup broaden KC/kind filters to avoid missing mislabeled duplicates; ref=null means an unread unpublished draft, never proof of no duplicate. scan_coverage_gaps owns pending-stock reservations; submit_question retains authoritative exact/source/vector dedup and admission. This tool does no interpretation/verification model calls. query is the retrieval text; conditions preserve required/preferred ticket semantics, judged by the caller with same-question joint evidence. Numeric difficulty filters need a known scale/range; do not invent a range from a relative band. Read content/materials, answers/rubric and solution_prior by returned ref as needed. Excerpts mark complete; truncated/unread/unknown/contradicted never qualify. Facts describe inventory status, not semantic suitability; cite facts.source with exact value text for structured evidence. Cursor-only continues this snapshot. search_id plus cited assessments connects file_bank_gap/write_quiz; file_bank_gap creates the preparer ticket and is not recursively called by the preparer. Incomplete/empty recall never proves corpus absence. Do not reveal answers/methods to the learner before their judgment',
+    'Question preparation comes first. inventory searches admitted/servable stock for a gap ticket; dedup searches active, pending/withheld and draft candidates before adding a question. Defaults: question_preparer uses inventory (10/page), other callers practice (5/page); explicit page_size overrides only pagination, never the inventory goal. Copy the ticket goal into count, its subject/KCs/kinds into filters; inventory KCs default to all on ONE question. kinds is an allowed-type union, not one question of every kind. For dedup broaden KC/kind filters to avoid missing mislabeled duplicates; ref=null means an unread unpublished draft, never proof of no duplicate. scan_coverage_gaps owns pending-stock reservations; submit_question retains authoritative exact/source/vector dedup and admission. This tool does no interpretation/verification model calls. query is the retrieval text; conditions preserve required/preferred ticket semantics, judged by the caller with same-question joint evidence. Numeric difficulty filters need a known scale/range; do not invent a range from a relative band. Read content/materials, answers/rubric and solution_prior by returned ref as needed. Practice/inventory require at least one required condition. missing lists per-part blockers; server forces their judgments unknown. Excerpts mark complete; truncated/unread/unknown/contradicted never qualify. Facts describe inventory status, not semantic suitability; cite facts.source with exact value text for structured evidence. Cursor-only continues this snapshot. search_id plus cited assessments connects file_bank_gap/write_quiz; file_bank_gap creates the preparer ticket and is not recursively called by the preparer. Incomplete/empty recall never proves corpus absence. Do not reveal answers/methods to the learner before their judgment',
   effect: 'read',
   inputSchema: SearchBankInputSchema,
   outputSchema: BankSearchOutputSchema,

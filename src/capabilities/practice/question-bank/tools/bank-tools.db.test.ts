@@ -1,3 +1,4 @@
+import { selectBankReceipt } from '../public';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/postgres-js';
@@ -203,6 +204,21 @@ describe('bank tools boundary invariants (search_bank / read_bank / check_bank)'
       filters: { history: 'wrong' },
     });
     expect(wrong.hits).toEqual([]);
+    await db.insert(event).values({
+      id: 'bank-real-failure',
+      actor_kind: 'user',
+      actor_ref: 'learner',
+      action: 'attempt',
+      subject_kind: 'question',
+      subject_id: 'bt_admitted',
+      outcome: 'failure',
+      payload: { answer_md: 'incorrect' },
+    });
+    const failedHistory = await searchBankTool.execute(ctx, {
+      query: '电容器',
+      filters: { history: 'wrong' },
+    });
+    expect(failedHistory.hits.map((h) => h.id)).toEqual(['bt_admitted']);
 
     const dedup = await searchHits({ query: '电容器 充放电' });
     const ids = dedup.hits.map((h) => h.question_id);
@@ -700,6 +716,40 @@ describe('bank tools boundary invariants (search_bank / read_bank / check_bank)'
   // @invariant security: caller judgments keep their provenance and unknown/contradicted required never qualify @fails-if a caller opinion is stored as a verified fact, uncited support is accepted or unknown/contradicted enters a paper
   it('requires cited supported conditions and joint while retaining caller attribution', async () => {
     const { owner, search, assessment } = await receiptFixture('receipt-judgment');
+    await expect(
+      searchBankTool.execute(owner, { query: '边界样本', conditions: [] }),
+    ).rejects.toThrow('required');
+    const inspection = await searchBankTool.execute(owner, {
+      query: '边界样本',
+      use: 'inspect',
+      conditions: [],
+    });
+    await expect(
+      writeQuizTool.execute(owner, { search_id: inspection.search_id, assessments: [] }),
+    ).rejects.toThrow('practice or inventory');
+    await seedQuestion('unread-part', { prompt_md: '未读图样本 ![图](missing.png)' });
+    await publishAdmitted('unread-part');
+    const unread = await searchBankTool.execute(owner, {
+      query: '未读图样本',
+      filters: { terms: ['未读图样本'] },
+    });
+    const hit = unread.hits[0];
+    expect(hit.missing.some((m) => m.reason === 'media_not_read')).toBe(true);
+    const evidence = [{ source: hit.evidence[0].source, quote: hit.evidence[0].text }];
+    await expect(
+      writeQuizTool.execute(owner, {
+        search_id: unread.search_id,
+        assessments: [
+          {
+            ref: hit.ref!,
+            parts: hit.parts,
+            checks: [{ condition: 'r1', verdict: 'supported', evidence }],
+            joint: { verdict: 'supported', evidence },
+          },
+        ],
+      }),
+    ).rejects.toThrow('supported required and joint');
+
     for (const verdict of ['unknown', 'contradicted'] as const) {
       const rejected = { ...assessment, checks: assessment.checks.map((c) => ({ ...c, verdict })) };
       await expect(
@@ -821,7 +871,11 @@ describe('bank tools boundary invariants (search_bank / read_bank / check_bank)'
       updated_at: new Date(),
     });
     const ticket = { ...demand, inventory_goal: { ...demand.inventory_goal, eligible_count: 12 } };
-    const preparer = { ...owner, supplyDemand: ticket };
+    const preparer = {
+      ...owner,
+      callerActor: { kind: 'agent' as const, ref: 'question_preparer' },
+      supplyDemand: ticket,
+    };
     await expect(
       searchBankTool.execute(preparer, { query: '边界样本', use: 'inventory', count: 2 }),
     ).rejects.toThrow('bound ticket');
@@ -833,6 +887,20 @@ describe('bank tools boundary invariants (search_bank / read_bank / check_bank)'
     expect(stock.goal).toEqual({ use: 'inventory', count: 12 });
     expect(stock.hits.map((h) => h.id)).toEqual(['receipt-question']);
     expect(stock.conditions[0].text).toContain('correct response');
+    await db
+      .update(schema.bank_search_snapshot)
+      .set({
+        as_of: new Date(Date.now() - 20 * 60_000),
+        expires_at: new Date(Date.now() - 5 * 60_000),
+      })
+      .where(eq(schema.bank_search_snapshot.search_id, stock.search_id));
+    await expect(
+      selectBankReceipt(db, preparer, stock.search_id, [assessment], true, true),
+    ).resolves.toMatchObject({ accepted_refs: [assessment.ref] });
+    await expect(
+      writeQuizTool.execute(preparer, { search_id: stock.search_id, assessments: [assessment] }),
+    ).rejects.toThrow('expired');
+
     await expect(
       writeQuizTool.execute(
         { ...owner, supplyDemand: { ...ticket, demand_id: 'other-ticket' } },
@@ -876,5 +944,12 @@ describe('bank tools boundary invariants (search_bank / read_bank / check_bank)'
     expect(
       await db.select().from(event).where(eq(event.id, 'fbgap|stale-gap-request')),
     ).toHaveLength(0);
+    await db.update(schema.bank_search_snapshot).set({
+      as_of: new Date(Date.now() - 20 * 60_000),
+      expires_at: new Date(Date.now() - 5 * 60_000),
+    });
+    const replay = await fileBankGapTool.execute(owner, input);
+    expect(replay.deduplicated).toBe(true);
+    expect(replay.status).toBe('held');
   });
 });

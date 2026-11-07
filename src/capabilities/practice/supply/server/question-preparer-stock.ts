@@ -1,3 +1,4 @@
+import { canonicalKindToPersistedForms } from '@/subjects/question-kind';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { Db } from '@/db/client';
 import { question, question_group_lifecycle } from '@/db/schema';
@@ -22,7 +23,11 @@ export async function questionPreparerPendingStock(db: Db, ticket: EvidenceDeman
         isNull(question.parent_question_id),
         eq(question_group_lifecycle.availability, 'general_pool'),
         sql`${question_group_lifecycle.current_revision_id} IS NOT NULL`,
-        ticket.task.kinds.includes('any') ? undefined : inArray(question.kind, ticket.task.kinds),
+        ticket.task.kinds.includes('any')
+          ? undefined
+          : inArray(question.kind, [
+              ...new Set(ticket.task.kinds.flatMap(canonicalKindToPersistedForms)),
+            ]),
         sql`${question.knowledge_ids} @> ${JSON.stringify(ticket.claim.knowledge_ids)}::jsonb`,
       ),
     );
