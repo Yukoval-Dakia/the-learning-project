@@ -322,6 +322,8 @@ export const QuestionDetailResponseSchema = z
       .nullable()
       .optional(),
     metadata: z.record(z.string(), z.unknown()).nullable(),
+    /** Auto-enroll judge confidence (0..1); null for questions that were not auto-enrolled. */
+    ingestion_judge_confidence: z.number().nullable(),
     created_at_sec: z.number(),
     updated_at_sec: z.number(),
     computed_at_sec: z.number(),
