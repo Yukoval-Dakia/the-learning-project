@@ -13,20 +13,33 @@ export function formatValue(value: number): string {
   );
 }
 
-/** The figure as given, for the data table, tooltips and round ticks; 15 digits drop only float noise. */
+/** The figure as given, for the data table, tooltips and round ticks. A whole number keeps every
+ * digit; otherwise 15 significant digits drop only float noise. */
 export function formatExact(value: number): string {
   if (value === 0) return '0';
-  return value.toLocaleString('zh-CN', { maximumSignificantDigits: 15 });
+  return value.toLocaleString(
+    'zh-CN',
+    Number.isInteger(value) ? { maximumFractionDigits: 0 } : { maximumSignificantDigits: 15 },
+  );
 }
 
-/** Time x values are epoch milliseconds. */
+/** The x as given, for the data table and tooltips. Time x values are epoch milliseconds. */
 export function formatX(x: string | number, scale: ChartBlockT['x']['scale']): string {
   if (typeof x === 'string') return x;
   if (scale === 'time') {
     const date = new Date(x);
-    if (!Number.isNaN(date.getTime())) return `${date.getMonth() + 1}/${date.getDate()}`;
+    if (!Number.isNaN(date.getTime())) return date.toLocaleString('zh-CN');
   }
   return formatExact(x);
+}
+
+/** The x as it fits on the chart: month and day for time, which the table and tooltip spell out. */
+export function formatXShort(x: string | number, scale: ChartBlockT['x']['scale']): string {
+  if (scale === 'time' && typeof x === 'number') {
+    const date = new Date(x);
+    if (!Number.isNaN(date.getTime())) return `${date.getMonth() + 1}/${date.getDate()}`;
+  }
+  return formatX(x, scale);
 }
 
 export function axisLabel(axis: { label: string; unit?: string }): string {
@@ -49,7 +62,7 @@ export function niceTicks(min: number, max: number, count: number): number[] {
     // Floating steps drift (0.30000000000000004); labels and positions read the rounded value.
     ticks.add(Number((first + index * step).toPrecision(15)));
   }
-  return ticks.size > 0 ? [...ticks] : [min, max];
+  return ticks.size > 1 ? [...ticks] : [min, max];
 }
 
 /** Cut a label to a width in em, counting a CJK character as 1 and anything else as about half. */

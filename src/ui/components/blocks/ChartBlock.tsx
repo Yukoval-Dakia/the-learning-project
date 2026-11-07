@@ -15,6 +15,7 @@ import {
   formatExact,
   formatValue,
   formatX,
+  formatXShort,
   niceTicks,
   position,
   rowKey,
@@ -78,7 +79,7 @@ function BarChart({ block }: { block: ChartBlockT }) {
                 textAnchor="end"
               >
                 <title>{label}</title>
-                {fitLabel(label, 6.5)}
+                {fitLabel(formatXShort(row.x, block.x.scale), 6.5)}
               </text>
               {block.series.map((series, index) => {
                 const value = row.values[index];
@@ -213,7 +214,7 @@ function PlotChart({ block }: { block: ChartBlockT }) {
             y={plotH + 15}
             textAnchor="middle"
           >
-            {numeric ? formatX(x, block.x.scale) : fitLabel(formatX(x, block.x.scale), 4)}
+            {numeric ? formatXShort(x, block.x.scale) : fitLabel(formatXShort(x, block.x.scale), 4)}
           </text>
         ))}
         {block.series.map((series, index) => {
@@ -297,7 +298,8 @@ function Legend({ block, total }: { block: ChartBlockT; total: number }) {
           return (
             <li key={rowKey(row)}>
               <span className="un-blk-chart-key" data-series={seriesSlot(index)} />
-              {formatX(row.x, block.x.scale)} {formatValue(y)}（{Math.round((y / total) * 100)}%）
+              {formatXShort(row.x, block.x.scale)} {formatValue(y)}（{Math.round((y / total) * 100)}
+              %）
             </li>
           );
         })}
