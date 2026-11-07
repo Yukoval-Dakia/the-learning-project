@@ -1,5 +1,5 @@
 import type { ComponentProps, HTMLAttributes, ReactElement } from 'react';
-import { useSyncExternalStore } from 'react';
+import { type CSSProperties, type ElementType, useMemo, useSyncExternalStore } from 'react';
 import remarkGfm from 'remark-gfm';
 import { useAssetUrl } from './assets';
 import { MarkdownRenderer, type MarkdownRendererProps } from './markdown-renderer';
@@ -155,6 +155,9 @@ function cacheMathPlugins(
   return loadedMathPlugins;
 }
 
+/** The last load failed: a formula reads better as its source than as a placeholder that never ends. */
+let mathLoadFailed = false;
+
 function loadMathPlugins(): Promise<MathPlugins> {
   if (loadedMathPlugins) return Promise.resolve(loadedMathPlugins);
   // The stylesheet travels with the plugins: rehype-katex emits MathML for screen readers next to
@@ -164,6 +167,10 @@ function loadMathPlugins(): Promise<MathPlugins> {
   // rehype-katex renders with: 0.19 renamed .inner/.fix, so \neq drew as "/ =" (YUK-1446).
   // mhchem (`$\ce{…}$`, `$\pu{…}$`, YUK-1548 §3.3) registers its macros into the katex module it
   // imports; that is the same katex@0.16.47 rehype-katex renders with, so it rides in the same load.
+  if (!mathPluginsPromise && mathLoadFailed) {
+    mathLoadFailed = false;
+    for (const listener of mathPluginListeners) listener();
+  }
   mathPluginsPromise ??= Promise.all([
     import('remark-math'),
     import('rehype-katex'),
@@ -178,8 +185,10 @@ function loadMathPlugins(): Promise<MathPlugins> {
     .catch((error: unknown) => {
       // Don't cache a rejected load (e.g. transient chunk-fetch failure) — clear
       // the memo so the next math render retries the import instead of failing
-      // forever. The plain-markdown fallback stays readable meanwhile.
+      // forever. Mounted renders show the formulas' source until then.
       mathPluginsPromise = null;
+      mathLoadFailed = true;
+      for (const listener of mathPluginListeners) listener();
       throw error;
     });
   return mathPluginsPromise;
@@ -199,8 +208,7 @@ export function preloadMathPlugins(): Promise<void> {
 // Warm the plugin cache at module evaluation there so KaTeX renders synchronously
 // on the first (only) render. `import.meta.env.SSR` is a build-time constant: the
 // client build inlines it to `false`, so this top-level-await block is dead-code
-// eliminated from every client chunk — the browser never eagerly loads katex and
-// reaches it only through the on-demand loadMathPlugins() path.
+// eliminated from every client chunk; the browser reaches katex through loadMathPlugins().
 if (import.meta.env.SSR) {
   const [remarkMath, rehypeKatex] = await Promise.all([
     import('remark-math'),
@@ -212,9 +220,9 @@ if (import.meta.env.SSR) {
 
 const NO_MATH_PLUGINS: MathPlugins = { remarkPlugins: [], rehypePlugins: [] };
 
-// Formulas are on most pages that show questions, and the renderer only starts loading when the
-// first one mounts, after the page's data has arrived. Start it once the page is idle instead, so
-// on a slow link it is already there; it is one cached file, fetched once.
+// Formulas are on most pages that show questions, and the renderer used to start loading only when
+// the first one mounted, after the page's data had arrived. It starts once the page is idle instead,
+// so on a slow link it is already there. Pages without formulas pay for it once; it is then cached.
 if (!import.meta.env.SSR && typeof window !== 'undefined') {
   const start = () => void loadMathPlugins().catch(() => {});
   if ('requestIdleCallback' in window) window.requestIdleCallback(start, { timeout: 3000 });
@@ -233,6 +241,42 @@ function holdFormulas(source: string): string {
 }
 
 type CodeProps = ComponentProps<'code'> & { node?: unknown };
+
+/** Inline so the placeholder shows even where the reading styles aren't loaded. */
+const WAIT_STYLE: CSSProperties = {
+  display: 'inline-block',
+  width: '2.4em',
+  height: '1em',
+  margin: '0 0.1em',
+  borderRadius: 4,
+  background: 'color-mix(in srgb, currentColor 10%, transparent)',
+  verticalAlign: '-0.12em',
+};
+
+/** Renders the formula placeholder; any other code goes to the caller's own `code`, if it has one. */
+function waitingCode(Code: NonNullable<MarkdownRendererProps['components']>['code']) {
+  return function WaitingCode(props: CodeProps) {
+    if (props.children === FORMULA_WAIT) {
+      return (
+        <span className="un-math-wait" style={WAIT_STYLE} role="img" aria-label="公式加载中" />
+      );
+    }
+    if (Code === undefined) {
+      const { node: _node, ...rest } = props;
+      return <code {...rest} />;
+    }
+    const Caller = Code as ElementType;
+    return <Caller {...props} />;
+  };
+}
+
+function getMathLoadFailed(): boolean {
+  return mathLoadFailed;
+}
+
+function getNoFailure(): boolean {
+  return false;
+}
 
 /** Tables and the rest of GFM on every reading surface. One tilde stays text: 「约 ~3」 is not a strike. */
 const GFM_PLUGIN: [typeof remarkGfm, { singleTilde: boolean }] = [
@@ -257,7 +301,7 @@ function getLoadedMathPlugins(): MathPlugins | null {
   return loadedMathPlugins;
 }
 
-// Non-math notation never subscribes, so the katex chunk is never requested.
+// Non-math notation never subscribes; the katex chunk arrives only through the idle start above.
 function subscribeWithoutMath(): () => void {
   return () => {};
 }
@@ -445,7 +489,7 @@ export function looksLikeMath(source: string): boolean {
  *
  * When notation is `katex` (or legacy `latex`) on the browser, the KaTeX plugin chain is loaded
  * lazily (started when the page is idle): until it arrives each formula shows as a quiet
- * placeholder, then the content re-renders with math (a warm module cache makes later
+ * placeholder (its source again if the load fails), then the content re-renders with math (a warm module cache makes later
  * math mounts synchronous). Server-side renders resolve KaTeX synchronously (see
  * the module warm-up above). Non-math renders never touch the katex chunk.
  *
@@ -480,8 +524,13 @@ export function MathMarkdown({
   );
 
   const active = isKatex && mathPlugins ? mathPlugins : NO_MATH_PLUGINS;
+  const failed = useSyncExternalStore(
+    isKatex ? subscribeMathPlugins : subscribeWithoutMath,
+    isKatex ? getMathLoadFailed : getNoFailure,
+    getNoFailure,
+  );
   // Waiting for the renderer: each formula is a quiet placeholder, not its source text.
-  const waiting = isKatex && !mathPlugins;
+  const waiting = isKatex && !mathPlugins && !failed;
   const source = waiting
     ? holdFormulas(children)
     : active === NO_MATH_PLUGINS
@@ -489,17 +538,11 @@ export function MathMarkdown({
       : protectTableMathPipes(
           normalizeMathDelimiters(fallback ? escapeLooseDollars(children) : children),
         );
-  const Code = components?.code;
-  const code = waiting
-    ? ({ node: _node, children: text, ...props }: CodeProps) =>
-        text === FORMULA_WAIT ? (
-          <span className="un-math-wait" role="img" aria-label="公式加载中" />
-        ) : typeof Code === 'function' ? (
-          <Code {...props}>{text}</Code>
-        ) : (
-          <code {...props}>{text}</code>
-        )
-    : components?.code;
+  const callerCode = components?.code;
+  const code = useMemo(
+    () => (waiting ? waitingCode(callerCode) : callerCode),
+    [waiting, callerCode],
+  );
   return (
     <MarkdownRenderer
       {...divProps}
