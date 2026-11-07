@@ -8,7 +8,7 @@
 | `manifest.ts` | Notes-owned API、jobs、event subscription、proposal kind、copilot tools 与 todayBlock 的权威注册面 |
 | `api/*.ts` | note-page、artifacts search/recent-ai-changes、body-blocks、sections、backlinks、correct、ai-changes/undo、hub-dismiss-link、editing-session heartbeat/blur |
 | `server/` | note-page reader、body-blocks、sections、artifact-corrections 读模型、refine、handoff、Notes boss port |
-| `server/tools/` | copilot 工具（`write_note` = YUK-1769 伙伴 Markdown 直写；`check_note` = YUK-1772 只读检查） |
+| `server/tools/` | copilot 工具（`write_note` = 伙伴 Markdown 直写；`check_note` = 只读结构检查；`read_note` = 正文加标错次数、上次学习者精确编辑、待复核条数、refine 应用次数） |
 | `jobs/` | `hub_auto_sync_nightly`、`hub_sync_recovery`、`hub_sync_mutation_wake`、`note_refine`、`note_generate` handler |
 | `server/note-handoff.ts` | generation intent/completion 的 append-only 记录与 deterministic pg-boss dispatch/readback；由 `hub_sync_recovery` floor 收敛 |
 | `tasks/` | NoteGenerateTask / NoteRefineTask 的 prompt、profile builder、provider 与 budget 真相 |
@@ -21,6 +21,7 @@
 - `note_generate` 只经同事务 intent + 提交后 dispatcher 衔接；completion 表示 queue dispatch 已确认，不表示模型业务完成。生成后不再有独立 AI 复审（YUK-1772）：确定性块契约检查在落盘前跑一次，发现问题交回同一条生成链做一次有界修订，未解决的 issue 写入 `verification_summary`（`kind='known_issues'`，仅在有未解决 issue 时非空）。
 - `note_generate` 失败显式落 `failed`，pg-boss redelivery 用 CAS 重开为 `pending`；已 `ready` 的成功重投跳过。
 - `check_note` copilotTool 对指定笔记跑同一套确定性检查，返回 issues 列表，不做 pass/fail，不拦截写入。
+- `read_note` 按笔记 id 或标题读正文和四项统计。上次精确编辑只认学习者写入的 history，不认 `updated_at`。标错次数数 `mark_wrong` 事件，不看更正后的当前状态。待复核条数读 `verification_summary`（生成时仍写入；干净则为空）。整篇撤回或被替代的笔记不返回标题和正文。
 - `hub_sync_recovery` 是唯一 Notes 定时 recovery floor；hub reconcile 与 handoff/claim 分支隔离执行，claim batch 也会处理完其余项后聚合抛错，任一失败最终仍供 pg-boss 重试。
 - `NotePatch ≤3 ops AND ≤2 new blocks` 走 mutator，否则 propose。
 

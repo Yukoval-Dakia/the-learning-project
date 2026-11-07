@@ -38,7 +38,7 @@
   `copilot_run_reconcile` 只依据 pg-boss 权威状态、持久化 outcome marker 与 execution
   fence / legacy worker-touch evidence 做有界修复；只有 QUEUED-only dead delivery 才能标成
   pre-execution loss。不得用 wall-clock 或 heartbeat timestamp 猜测 live queue run 已死。
-- 工具归属以 `manifest.ts` 为准；artifact 创建/更新属于 [Notes manifest](../notes/manifest.ts)，Copilot 仅持调用授权与呈现控制。YUK-1769：伙伴写 Markdown 笔记走 notes 的 `write_note`（create / append / note_generate 交接）。
+- 工具归属以 `manifest.ts` 为准；artifact 创建/更新属于 [Notes manifest](../notes/manifest.ts)，Copilot 仅持调用授权与呈现控制。伙伴写 Markdown 笔记走 notes 的 `write_note`（create / append / note_generate 交接）；读正文和笔记统计走 notes 的 `read_note`。
 - 根任务实时流式发送正文，并以 terminal Markdown 权威替换草稿；服务端在 runner terminal 后绑定实际 root trace、更正、proposal 披露与呈现授权。
   `present_primary_view` 已退役；旧会话保存的主视图继续只读显示，新回复不再写入。统计展示用 chart 积木（[ADR-0061](../../../docs/adr/0061-copilot-presentation-intent-control.md) 仅作历史背景）。
 - chip 是 Copilot 回复里的可点击动作卡片，accept-chip 把用户选择物化为教学事件。

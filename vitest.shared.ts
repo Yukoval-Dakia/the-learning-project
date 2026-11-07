@@ -144,6 +144,7 @@ export const dbTestInclude = [
   'src/capabilities/notes/server/note-handoff-boss-contract.db.test.ts',
   'src/capabilities/notes/server/note-handoff.db.test.ts',
   'src/capabilities/notes/server/sections.db.test.ts',
+  'src/capabilities/notes/server/tools/read-note.db.test.ts',
   'src/capabilities/observability/api/_round_trip.db.test.ts',
   'src/capabilities/observability/api/admin-config-write.db.test.ts',
   'src/capabilities/observability/api/admin-config.db.test.ts',
