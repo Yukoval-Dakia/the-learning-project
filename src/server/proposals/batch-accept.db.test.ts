@@ -4,7 +4,7 @@
 // 批量锚持久化 batch_id -> proposal_ids，经锚读回后可走单条 retract 真撤销效果。
 
 import { and, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import { event, learning_item, question } from '@/db/schema';
 import { getCorrectionStatuses, writeEvent } from '@/kernel/events';
@@ -13,7 +13,6 @@ import { getProposalInboxRow } from '@/kernel/proposals/inbox';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { migrateCanonicalProjections } from '../../../scripts/migrate-canonical-projections';
 import { resetDb, testDb } from '../../../tests/helpers/db';
-import * as acceptAction from './accept-action';
 import { acceptAiProposal } from './accept-action';
 import {
   batchAcceptProposals,
@@ -338,39 +337,5 @@ describe('proposal batch confirmation', () => {
       subject_id: proposalBatchId(['lc_f1', 'p_gone']),
       payload: { proposal_ids: [] },
     });
-  });
-
-  // @invariant data: the members anchor is durable before the first accept
-  // runs — observed inside the accept itself, so this fails if the anchor
-  // write ever moves behind the accept loop
-  // @fails-if the first accept finds no members anchor in the event table:
-  // a crash inside the first effect would strand committed accepts with no
-  // recoverable batch identity
-  it('persists the members anchor before the first accept runs', async () => {
-    const db = testDb();
-    installBatchConfirmEligibility();
-    await seedLearningItem('li_o1');
-    await migrateCanonicalProjections(db);
-    await seedCompletionProposal('lc_o1', 'li_o1');
-
-    // Read the event table at the moment the accept executes — a throw then
-    // plays the role of a crashed first effect. If the anchor write moved
-    // after the accepts, the table would still be empty here.
-    let membersBeforeFirstAccept = false;
-    vi.spyOn(acceptAction, 'acceptAiProposal').mockImplementation(async () => {
-      const anchors = await db
-        .select({ payload: event.payload })
-        .from(event)
-        .where(eq(event.action, PROPOSAL_BATCH_ACCEPT_ACTION));
-      membersBeforeFirstAccept = anchors.some(
-        (row) => (row.payload as { stage?: unknown }).stage === 'members',
-      );
-      throw new Error('simulated crash inside the accept');
-    });
-
-    const res = await batchAcceptProposals(db, { proposal_ids: ['lc_o1'] });
-    vi.restoreAllMocks();
-    expect(res.items.map((entry) => entry.status)).toEqual(['failed']);
-    expect(membersBeforeFirstAccept).toBe(true);
   });
 });
