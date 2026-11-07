@@ -7,6 +7,7 @@
 import { eq } from 'drizzle-orm';
 import { unzipSync } from 'fflate';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { hydrateConfigFromDb } from '@/core/config/server/hydrate';
 import {
   difficulty_calibration_label,
   edge_reconciliation_log,
@@ -18,7 +19,6 @@ import {
   selection_observation,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { hydrateConfigFromDb } from '@/server/config/hydrate';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { memR2 } from '../../../../tests/helpers/r2';
 import { setBackupConfigHydrator } from '../server/backup/config-hydrator';

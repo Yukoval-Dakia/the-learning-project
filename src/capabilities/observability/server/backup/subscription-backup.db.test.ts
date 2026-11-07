@@ -5,6 +5,7 @@ import { unzipSync, zipSync } from 'fflate';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { capabilities } from '@/capabilities';
 import { reserveAndEnqueueMasteryRefineEffect } from '@/capabilities/notes/server/mastery-refine-effect';
+import { hydrateConfigFromDb } from '@/core/config/server/hydrate';
 import type { Db, Tx } from '@/db/client';
 import {
   artifact,
@@ -14,7 +15,6 @@ import {
   event,
   knowledge,
 } from '@/db/schema';
-import { hydrateConfigFromDb } from '@/server/config/hydrate';
 import { loadEventSubscriptionRegistry } from '@/server/events/subscriptions/registry';
 import {
   bootstrapSubscription,

@@ -454,6 +454,19 @@
     ]
   },
   {
+    "path": "/api/copilot/runs/:id/retry",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "安全重发失败的学伴回答，沿用原学习者消息",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": null,
+        "notes": "无需 body。需 x-internal-token 和 Idempotency-Key。202 返回 run_id/session_id/derivation_policy，Location 为新 run events。同失败 run 连点或重放沿用唯一后继。409 details.reason：not_failed/not_latest/session_busy/failure_not_retryable/write_tool_started/safety_unknown/conversation_inactive/question_retracted。已接受后继的重放不受会话关闭或新接纳闸门影响；新接纳队列禁用503、backlog或速率限制429。重发后不再提供原checkpoint。"
+      }
+    ]
+  },
+  {
     "path": "/api/copilot/runs/:id/cancel",
     "methods": [
       {
@@ -657,7 +670,9 @@
         "summary": "关闭 AI 失败提示，写一条追加事件（YUK-1965）",
         "query": [],
         "contentType": "application/json",
-        "bodyExample": { "keys": ["task_failure_alert:consecutive:CopilotTask:run_1"] },
+        "bodyExample": {
+          "keys": ["task_failure_alert:consecutive:CopilotTask:run_1"]
+        },
         "notes": "不改任务和告警记录；返回关闭后的完整 key 列表。"
       }
     ]
@@ -1955,7 +1970,16 @@
       {
         "method": "GET",
         "summary": "分页读取有持久证据的录入会话及冻结来源标题（YUK-1522）",
-        "query": [{ "name": "limit", "example": 20 }, { "name": "cursor", "example": "" }],
+        "query": [
+          {
+            "name": "limit",
+            "example": 20
+          },
+          {
+            "name": "cursor",
+            "example": ""
+          }
+        ],
         "contentType": null,
         "bodyExample": null,
         "notes": "200 {data, page, rows, next_cursor}。保持证据筛选、created_at/id 倒序与 keyset cursor，先选本页（最多 100）再批量读标题。title_source=source_document|agent_item_preview|extracted_prompt_md|question_block_create|null：source_document.title 非 null 优先（含空串）；否则当前 execution_owner.run_ref/event_floor 可证明的合法冻结 snapshot/item 事件预览，按 parseInt(question_no)||0 稳定升序选首个非空白文本；否则独立 immutable extracted_prompt_md（actor draft 按 created_at/id，然后 session block 按 ordinal/id）。再无文本时，仅从同 session/block 的原始 OCR/DOCX canonical create 事件完整合法快照，经既有 structuredToPromptMarkdown 派生冻结题文（question_block_create）；不读当前 structured、rescue 或 genesis。选中文字原样返回；无可读证据时 title/title_source 均 null。标题 owner 在单个 REPEATABLE READ/READ ONLY 事务内读取，不重建完整 history、不写入、不调用 provider。需 x-internal-token。"
@@ -2109,6 +2133,55 @@
           "asset_ids": ["REPLACE_uploaded_asset"]
         },
         "notes": "201 {session} + Location；可选 Idempotency-Key，同 key 原输入重放原创建终态/IDs/Location 并带 Idempotency-Replayed:true；异输入409 idempotency_conflict，坏/未知版本/不可用回执503 creation_receipt_unavailable。同事务 materialize 失败时先提交 failed session 与固定安全500 ingestion_source_package_failed（details.session_id/source_document_id）及 Location，重放不再次 materialize；无法提交则回滚或 unknown，不做全局补偿，沿原 key+原输入重试。未提供 key 保留兼容创建。session subject omitted/null 等价，derivation_policy omitted/explicit allow 不同。legacy /api/ingestion 共用 key scope，成功200+弃用header、失败原样透传。回执冻结创建结果；当前状态由原 GET 判断。不授权启动 agent；DOCX 不在此保证内。"
+      }
+    ]
+  },
+  {
+    "path": "/api/drawings/:id",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "查询一张 generative-UI 图的状态与就绪资产",
+        "query": [
+          {
+            "name": "session_id",
+            "required": true,
+            "example": "sess_…"
+          }
+        ],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "归属校验：session_id 与行内归属不匹配一律 404（跨学习者不泄漏）。返回 {status, alt, caption, asset{asset_id,digest,mime_type}|null, error, retry_at, attempt, version, expires_at}；来源被撤回的行返回 expired 且不再给资产。需 x-internal-token。"
+      }
+    ]
+  },
+  {
+    "path": "/api/drawings/:id/cancel",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "取消一张后台绘制（幂等）",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "session_id": "sess_…"
+        },
+        "notes": "body 仅 {session_id} 做归属校验。live 状态 → cancelled；终态原样返回（幂等）。跨学习者一律 404。需 x-internal-token。"
+      }
+    ]
+  },
+  {
+    "path": "/api/drawings/:id/redraw",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "手动重画：终态行回到 queued，attempt+1，保留上一张成功图",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "session_id": "sess_…"
+        },
+        "notes": "body 仅 {session_id}。live 行重复调用幂等返回当前态；来源被撤回返回 422 restricted_source。跨学习者一律 404。需 x-internal-token。"
       }
     ]
   }

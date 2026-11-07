@@ -42,6 +42,7 @@ export const copilotCapability = defineCapability({
       COPILOT_USER_ASK_ACTION,
       COPILOT_CHIP_TRIGGER_ACTION,
       COPILOT_REPLY_ACTION,
+      'experimental:copilot_run_retry',
       'experimental:conversation_confirmation',
       'experimental:confirmation_command',
       'experimental:confirmation_command_result',
@@ -90,6 +91,15 @@ export const copilotCapability = defineCapability({
         },
         successStatus: 200,
         load: () => import('./api/revert-checkpoint').then((m) => m.POST),
+      },
+      {
+        method: 'POST',
+        path: '/api/copilot/runs/[id]/retry',
+        operationId: 'retryCopilotRun',
+        request: { params: CopilotRunParamsSchema, headers: CopilotChatHeadersSchema },
+        responses: { 202: CopilotDurableRunResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 202,
+        load: () => import('./api/retry-run').then((m) => m.POST),
       },
       {
         method: 'POST',

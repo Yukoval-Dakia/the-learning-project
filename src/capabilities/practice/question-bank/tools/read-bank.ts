@@ -320,12 +320,16 @@ export type ReadRole = 'owner' | 'private' | 'restricted';
 /**
  * 允许读私有层（answers 键值 / rubric / scoring / execution / private 材料 /
  * metadata 工作副本）的 agent refs（bare）。user 面与 system 作业默认有私有层；
- * 其余 agent 面按 allowlist。in-answer Copilot（'copilot'）保持 restricted ——
- * 练习对话面不可读答案键。
+ * 其余 agent 面按 allowlist。copilot 两面由 Owner 放开（作答中同权）：答案层
+ * 供模型判断与讲解，不向学习者泄露的边界在提示词输出规则，不在读取。
  */
 const PRIVATE_LAYER_READERS = new Set([
+  // 学习伙伴两面（chat / chip）；派出的 copilot-researcher 复用同一 callerActor。
+  'copilot',
+  'copilot_chip',
   // 备题/校正/判分与维护面（author + maintenance 面 → private）。
   'ingestion_block_edit',
+  'question_preparer',
   'supply_executor',
   'quiz_verify',
   'judge',

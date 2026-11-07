@@ -117,6 +117,10 @@ export function assignFiguresFromVlm(
       return [];
     const matchingNodes = nodes.filter((node) => node.id === claim.attached_to_question_id);
     if (matchingNodes.length !== 1 || hasStudentWork(matchingNodes[0])) return [];
+    // FigureRef.option_label requires a non-empty value. An empty option label
+    // cannot be represented, so leave the crop withheld instead of writing a row
+    // the block read schema rejects.
+    if (claim.option_label !== undefined && claim.option_label.length === 0) return [];
     if (
       claim.option_label !== undefined &&
       matchingNodes[0].options?.filter((option) => option.label === claim.option_label).length !== 1
