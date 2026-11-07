@@ -45,6 +45,7 @@ export function buildQuestionPreparerTarget(
       subjectId: parsed.subject_id,
       knowledgeIds,
       kind,
+      kindSet: parsed.task.kinds.length > 1 ? parsed.task.kinds : undefined,
       difficultyBand: parsed.difficulty.band as DifficultyBand,
       gapKind: 'frontier_zero',
       minSourceTier: 2,

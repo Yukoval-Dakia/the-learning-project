@@ -1755,6 +1755,13 @@
       margin-left: calc(30px + var(--un-sp-3));
     }
 
+    /* A subject row has only its arrow here: it stays on the row. */
+    & .kn-tree-row[data-container] .kn-tree-end {
+      justify-content: flex-end;
+      width: auto;
+      margin-left: auto;
+    }
+
     & .kn-tree-meta {
       min-width: 0;
     }

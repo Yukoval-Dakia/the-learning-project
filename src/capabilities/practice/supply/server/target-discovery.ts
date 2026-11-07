@@ -26,7 +26,7 @@
 //     映射成本引擎的 3 档获取尺度（见 acquisitionTierForQuestion 文档）。
 //   - subject profile sourcingRoutePreference：subjectProfiles（src/subjects/profile.ts）。
 
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, inArray, sql } from 'drizzle-orm';
 import { OBJECTIVE_ANSWER_KINDS } from '@/core/schema/answer-class';
 import { LearningItemOpenStatus } from '@/core/schema/business';
 import {

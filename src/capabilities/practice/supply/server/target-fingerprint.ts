@@ -4,6 +4,7 @@ import type { DifficultyBand, SupplyGapKind } from './target-discovery';
 
 /** Stable fingerprint (subjectId+knowledgeIds+kind+difficultyBand+gapKind+minSourceTier). */
 export function targetFingerprint(parts: {
+  kindSet?: readonly string[];
   subjectId: string;
   knowledgeIds: string[];
   kind: string;
@@ -15,7 +16,7 @@ export function targetFingerprint(parts: {
   return [
     parts.subjectId,
     kids,
-    parts.kind,
+    parts.kindSet?.length ? JSON.stringify([...new Set(parts.kindSet)].sort()) : parts.kind,
     parts.difficultyBand,
     parts.gapKind,
     `t${parts.minSourceTier}`,

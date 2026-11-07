@@ -16101,6 +16101,12 @@ export interface operations {
                 content: {
                     "application/json": {
                         session: {
+                            duplicate_of?: {
+                                session_id: string | null;
+                                source_document_id: string;
+                                /** Format: date-time */
+                                uploaded_at: string;
+                            } | null;
                             /** @enum {string} */
                             entrypoint: "vision_single" | "vision_paper" | "docx";
                             id: string;
@@ -16602,6 +16608,12 @@ export interface operations {
                 content: {
                     "application/json": {
                         session: {
+                            duplicate_of?: {
+                                session_id: string | null;
+                                source_document_id: string;
+                                /** Format: date-time */
+                                uploaded_at: string;
+                            } | null;
                             /** @enum {string} */
                             entrypoint: "vision_single" | "vision_paper" | "docx";
                             id: string;
@@ -17149,6 +17161,11 @@ export interface operations {
                         };
                         items: {
                             current: {
+                                admission: {
+                                    reason: string | null;
+                                    /** @enum {string} */
+                                    status: "pending" | "admitted" | "failed" | "undecided";
+                                } | null;
                                 draft_status: string | null;
                                 held_since: string | null;
                                 hold_reason: string | null;
@@ -18273,6 +18290,15 @@ export interface operations {
                             image_refs: string[];
                             imported_attempt_event_id: string | null;
                             imported_question_id: string | null;
+                            ingestion_enrollment: {
+                                /** @enum {string|null} */
+                                knowledge: "attributed" | "missing" | null;
+                                library_visible: boolean | null;
+                                /** @enum {string|null} */
+                                reason: "needs_text" | "pending" | "publish_failed" | null;
+                                /** @enum {string} */
+                                state: "in_library" | "not_enrolled" | "ignored";
+                            };
                             ingestion_session_id: string;
                             knowledge_hint: string | null;
                             /** @enum {string} */
