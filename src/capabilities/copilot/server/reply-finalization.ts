@@ -202,7 +202,6 @@ const PENDING_ADMISSION = '自动检查通过后才能作答；当前状态和�
 function proposalDisclosure(
   trace: readonly TraceEntry[],
   reply: string,
-  cardQuestionIds: ReadonlySet<string> = new Set(),
   inlineCardQuestionIds: ReadonlySet<string> = new Set(),
 ): string | undefined {
   // One disclosure per question, never a cross-question dedupe: a different
@@ -237,7 +236,6 @@ function proposalDisclosure(
     const bankQuestionId = bankPath.startsWith('/questions/')
       ? bankPath.slice('/questions/'.length)
       : undefined;
-    const cardShown = bankQuestionId !== undefined && cardQuestionIds.has(bankQuestionId);
     const inlineCardShown =
       bankQuestionId !== undefined && inlineCardQuestionIds.has(bankQuestionId);
     const admission = isRecord(out.admission) ? out.admission : undefined;
@@ -263,8 +261,9 @@ function proposalDisclosure(
     } else {
       // Admission state is server-owned: append one deterministic sentence per
       // reply instead of matching whatever wording the model chose. A visible
-      // inline question card already carries the status, so do not repeat it.
-      if (!linkStated && !cardShown) facts.push(`题已存入[题库](${bankPath})。`);
+      // inline question card already carries the status, so do not repeat it;
+      // the bank link stays because those card states do not open the question.
+      if (!linkStated) facts.push(`题已存入[题库](${bankPath})。`);
       if (!admitted && !inlineCardShown) pendingStatus = true;
     }
     return facts.length > 0 ? [facts.join('\n')] : [];
@@ -465,12 +464,7 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
         return publishUnsealed('', 'missing_terminal', context);
       }
       const prepared = prepareReplyText(correction.reply);
-      const disclosure = proposalDisclosure(
-        trace,
-        prepared.text,
-        prepared.cardQuestionIds,
-        prepared.inlineCardQuestionIds,
-      );
+      const disclosure = proposalDisclosure(trace, prepared.text, prepared.inlineCardQuestionIds);
       const disclosed = applyProposalDisclosure(prepared.text, disclosure);
       const fixed = truncateCopilotReply(disclosed, COPILOT_REPLY_CHAR_LIMIT, context.retainedTail);
       const truncated = fixed !== disclosed;
@@ -585,7 +579,6 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
     }
     const appendedFences = appended.map((b) => serializeBlockFence(b.block as never)).join('\n\n');
     const composed = appendedFences ? `${withPlaced.trimEnd()}\n\n${appendedFences}` : withPlaced;
-    const cardQuestionIds = new Set<string>();
     const inlineCardQuestionIds = new Set<string>();
     for (const { block } of [...readyBlocks.filter((b) => placedRefs.has(b.ref)), ...appended]) {
       const candidate = block as {
@@ -593,18 +586,21 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
         display?: unknown;
         question_ids?: unknown;
       };
-      if (candidate.kind !== 'question_ref' || !Array.isArray(candidate.question_ids)) continue;
+      if (
+        candidate.kind !== 'question_ref' ||
+        candidate.display !== 'inline' ||
+        !Array.isArray(candidate.question_ids)
+      )
+        continue;
       for (const id of candidate.question_ids) {
-        if (typeof id !== 'string') continue;
-        cardQuestionIds.add(id);
-        if (candidate.display === 'inline') inlineCardQuestionIds.add(id);
+        if (typeof id === 'string') inlineCardQuestionIds.add(id);
       }
     }
     const blocksReceipt =
       readyBlocks.length > 0 || dropped > 0
         ? { placed: placedRefs.size, appended: appended.length, dropped, unplaced }
         : undefined;
-    return { text: composed, blocksReceipt, cardQuestionIds, inlineCardQuestionIds };
+    return { text: composed, blocksReceipt, inlineCardQuestionIds };
   }
 
   function publishUnsealed(
@@ -620,12 +616,7 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
         ? streamedBody
         : FINALIZATION_FAILURE_REPLY;
     const prepared = prepareReplyText(body);
-    const disclosure = proposalDisclosure(
-      trace,
-      prepared.text,
-      prepared.cardQuestionIds,
-      prepared.inlineCardQuestionIds,
-    );
+    const disclosure = proposalDisclosure(trace, prepared.text, prepared.inlineCardQuestionIds);
     const replyText = truncateCopilotReply(
       applyProposalDisclosure(prepared.text, disclosure),
       COPILOT_REPLY_CHAR_LIMIT,

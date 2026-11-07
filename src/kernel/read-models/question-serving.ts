@@ -68,73 +68,106 @@ export const AWAITING_ADMISSION_REVERIFY_AFTER_MS = 6 * 60 * 60 * 1000;
  *  longer promise that another automatic attempt will happen. */
 const ADMISSION_WAIT_RETRY_GRACE_MS = 2 * 60 * 60 * 1000;
 
-// Reasons that mean the check did not reach a verdict about the question. They
-// stay undecided rather than blaming the question's content. `calibration_failed`
-// is deliberately absent: probes ran and disagreed, which is a check failure.
-const INFRA_ADMISSION_REASONS = [
-  'adjudication_attempts_exhausted',
-  'no_probes_executed',
-  'unsupported_slot_shape',
-  'no_resolvable_units',
-  'unreadable_figure',
-  'unresolved',
-  'unit_level_withhold',
-  'unjudgeable',
-] as const;
-const INFRA_ADMISSION_PREFIX = 'dual solve failed before a verdict:';
-const QUESTION_ADMISSION_FAILURE_REASONS = [
+// Unit facts outrank the aggregate reason: `unit_level_withhold` only says some
+// units were withheld, never why. A repair object is a concrete fix direction,
+// so it is content evidence even when its free-text reason is unfamiliar.
+const CONTENT_ADMISSION_REASONS = [
   'question_text_invalid',
   'points_not_printed',
   'calibration_failed',
   'solve_conflict',
   'solve_unsolvable',
   'solve_seed_mismatch',
+  'missing_marking',
+  'ambiguity',
+  'missing_figure',
+  'unsupported_slot_shape',
+  'declared_answer_shape_unsupported',
+  'no_resolvable_units',
+] as const;
+const CONTENT_ADMISSION_PREFIXES = ['declared_answer_shape_unsupported:'] as const;
+const INFRA_ADMISSION_REASONS = [
+  'adjudication_attempts_exhausted',
+  'no_probes_executed',
+  'unreadable_figure',
+  'unresolved',
+  'unjudgeable',
+] as const;
+const INFRA_ADMISSION_PREFIX = 'dual solve failed before a verdict:';
+const STRUCTURAL_CONTENT_PREFIXES = [
+  'material_id ',
+  'part_id ',
+  "part '",
+  'Empty prompt:',
+  'option_list block ',
+  'matching_columns block ',
+  'break_tap block ',
+  'ordering block ',
+  'table block ',
+  'figure block ',
+  'passage_layout block ',
+  'text_math block ',
+  'custom block ',
+  'block ',
+  'slot ',
+  'unit ',
+  'option_order ',
 ] as const;
 
-function isInfrastructureAdmissionReason(reason: string | null): boolean {
-  if (reason == null) return false;
-  return (
-    reason.startsWith(INFRA_ADMISSION_PREFIX) ||
-    (INFRA_ADMISSION_REASONS as readonly string[]).includes(reason)
+function reasonListSql(reasons: readonly string[]): SQL {
+  return sql.join(
+    reasons.map((reason) => sql`${reason}`),
+    sql`, `,
   );
 }
 
-const INFRA_REASON_LIST = sql.join(
-  INFRA_ADMISSION_REASONS.map((reason) => sql`${reason}`),
-  sql`, `,
-);
-const QUESTION_FAILURE_REASON_LIST = sql.join(
-  QUESTION_ADMISSION_FAILURE_REASONS.map((reason) => sql`${reason}`),
-  sql`, `,
-);
+const CONTENT_REASON_LIST = reasonListSql(CONTENT_ADMISSION_REASONS);
+const INFRA_REASON_LIST = reasonListSql(INFRA_ADMISSION_REASONS);
 
-/** SQL twin of isInfrastructureAdmissionReason; reads the applied admission result. */
-function infrastructureAdmissionSql(): SQL {
+/** SQL twin of the reason vocabulary; free-text structural details are named above. */
+function structuralContentSql(reason: SQL): SQL {
+  return sql.join(
+    STRUCTURAL_CONTENT_PREFIXES.map((prefix) => sql`${reason} like ${`${prefix}%`}`),
+    sql` or `,
+  );
+}
+
+function contentReasonSql(reason: SQL): SQL {
   return sql`(
-    coalesce(admission.result_json->'result'->'transient' = 'true'::jsonb, false)
-    or coalesce(admission.result_json->'result'->>'reason', '') in (${INFRA_REASON_LIST})
-    or coalesce(admission.result_json->'result'->>'reason', '') like ${`${INFRA_ADMISSION_PREFIX}%`}
-    or exists (
-      select 1 from jsonb_array_elements(
-        coalesce(admission.result_json->'result'->'per_unit', '[]'::jsonb)
-      ) unit
-      where coalesce(unit->>'reason', '') in (${INFRA_REASON_LIST})
-        or coalesce(unit->>'reason', '') like ${`${INFRA_ADMISSION_PREFIX}%`}
-    )
+    ${reason} in (${CONTENT_REASON_LIST})
+    or ${sql.join(
+      CONTENT_ADMISSION_PREFIXES.map((prefix) => sql`${reason} like ${`${prefix}%`}`),
+      sql` or `,
+    )}
+    or ${structuralContentSql(reason)}
   )`;
 }
 
-/** A known content/check failure; everything else with no reason stays undecided. */
-function knownQuestionFailureSql(): SQL {
+function infraReasonSql(reason: SQL): SQL {
   return sql`(
-    coalesce(admission.result_json->'result'->>'reason', '') in (${QUESTION_FAILURE_REASON_LIST})
-    or exists (
-      select 1 from jsonb_array_elements(
-        coalesce(admission.result_json->'result'->'per_unit', '[]'::jsonb)
-      ) unit
-      where coalesce(unit->>'reason', '') in (${QUESTION_FAILURE_REASON_LIST})
-    )
+    ${reason} in (${INFRA_REASON_LIST})
+    or ${reason} like ${`${INFRA_ADMISSION_PREFIX}%`}
   )`;
+}
+
+/** One verdict for the read model and the list projection. Units first, aggregate last. */
+export function admissionFailureVerdictSql(): SQL {
+  const units = sql`jsonb_array_elements(
+    coalesce(admission.result_json->'result'->'per_unit', '[]'::jsonb)
+  ) unit`;
+  const unitReason = sql`coalesce(unit->>'reason', '')`;
+  const topReason = sql`coalesce(admission.result_json->'result'->>'reason', '')`;
+  return sql`case
+    when exists (select 1 from ${units} where (unit ? 'repair') or ${contentReasonSql(unitReason)}) then 'failed'
+    when exists (select 1 from ${units} where not (
+      (unit ? 'repair') or ${contentReasonSql(unitReason)} or ${infraReasonSql(unitReason)}
+    )) then 'undecided'
+    when exists (select 1 from ${units}) then 'undecided'
+    when ${contentReasonSql(topReason)} then 'failed'
+    when ${infraReasonSql(topReason)}
+      or coalesce(admission.result_json->'result'->'transient' = 'true'::jsonb, false)
+      then 'undecided'
+    else 'undecided' end`;
 }
 
 function admissionReasonPresentSql(reason: string): SQL {
@@ -245,9 +278,11 @@ function servingFactsQuery(filters: SQL[]): SQL {
       l.scoring_admission_state as admission_state,
       l.scoring_admission_withheld_reason as admission_withheld_reason,
       verification.policy_id as verification_policy,
+      verification.outcome as verification_outcome,
       admission.state as admission_paid_state,
       admission.result_json->'result'->>'status' as admission_result_status,
       admission.result_json->'result'->>'reason' as admission_result_reason,
+      ${admissionFailureVerdictSql()} as admission_failure_verdict,
       coalesce(admission.result_json->'result'->'transient' = 'true'::jsonb, false)
         as admission_result_transient,
       stage_wait.retry_at as admission_wait_retry_at,
@@ -333,9 +368,7 @@ function servingFactsQuery(filters: SQL[]): SQL {
                 then 'admission_failed'
               when admission.result_json->'result'->>'status' = 'waiting'
                 then 'admission_failed'
-              when ${infrastructureAdmissionSql()}
-                then 'admission_undecided'
-              when ${knownQuestionFailureSql()}
+              when ${admissionFailureVerdictSql()} = 'failed'
                 then 'admission_failed'
               else 'admission_undecided' end
           when l.scoring_admission_withheld_reason = 'owner_hold' then 'owner_hold'
@@ -352,9 +385,11 @@ interface AdmissionReadFacts extends Record<string, unknown> {
   admission_state: string | null;
   admission_withheld_reason: string | null;
   verification_policy: string | null;
+  verification_outcome: string | null;
   admission_paid_state: string | null;
   admission_result_status: string | null;
   admission_result_reason: string | null;
+  admission_failure_verdict: 'failed' | 'undecided' | null;
   admission_result_transient: boolean;
   admission_wait_retry_at: string | null;
   admission_failure_reason: string | null;
@@ -368,13 +403,11 @@ function admissionRead(
 ): QuestionServing['admission'] {
   if (fact.admission_state == null) return null;
   if (fact.admission_state === 'admitted') return { status: 'admitted', reason: null };
-  // Source verification has its own hold; do not turn it into an admission
-  // failure merely because the admission result is absent or generic.
-  if (fact.verification_policy === 'source_verify@1') return null;
-  const infrastructure =
-    fact.admission_result_transient === true ||
-    isInfrastructureAdmissionReason(fact.admission_result_reason) ||
-    isInfrastructureAdmissionReason(fact.admission_failure_reason);
+  // A passed source check is not a source-verification hold: keep the pending
+  // admission projection so the card keeps polling. Only a failed source check
+  // owns the independent `source_check_failed` hold.
+  if (fact.verification_policy === 'source_verify@1' && fact.verification_outcome === 'failed')
+    return null;
   if (
     fact.admission_paid_state === 'unknown' ||
     fact.admission_unknown_stage ||
@@ -412,27 +445,25 @@ function admissionRead(
     fact.admission_result_status === 'withheld' ||
     fact.admission_withheld_reason === 'verification_failed'
   ) {
-    if (
-      infrastructure ||
-      reason == null ||
-      reason === 'verification_failed' ||
-      reason === 'unverified_rules' ||
-      !(QUESTION_ADMISSION_FAILURE_REASONS as readonly string[]).includes(reason)
-    )
+    // The SQL verdict owns the unit-first / aggregate-last priority. JS must not
+    // reclassify the same facts with a second reason list.
+    if (fact.admission_failure_verdict !== 'failed')
       return { status: 'undecided', reason: '自动检查的结果尚未确认，题目暂不能作答。' };
     // Provider exceptions can contain internal request details; only expose fixed learner copy.
-    const message = reason?.startsWith('dual solve failed')
-      ? '自动求解未能完成，题目暂不能作答。'
-      : reason === 'calibration_failed' || reason === 'no_probes_executed'
-        ? '自动判分检查未通过，题目暂不能作答。'
-        : reason === 'adjudication_attempts_exhausted'
-          ? '复核未能完成，题目暂不能作答。'
-          : '自动检查未通过，题目暂不能作答。';
+    const message =
+      reason == null
+        ? '自动检查未通过，题目暂不能作答。'
+        : reason.startsWith('dual solve failed')
+          ? '自动求解未能完成，题目暂不能作答。'
+          : reason === 'calibration_failed' || reason === 'no_probes_executed'
+            ? '自动判分检查未通过，题目暂不能作答。'
+            : reason === 'adjudication_attempts_exhausted'
+              ? '复核未能完成，题目暂不能作答。'
+              : '自动检查未通过，题目暂不能作答。';
     return { status: 'failed', reason: message };
   }
   return { status: 'pending', reason: '题目已进入题库，自动检查通过后才能作答。' };
 }
-
 function stateHoldReason(state: ServingState): ServingHoldReason | null {
   switch (state) {
     case 'revision_check':
