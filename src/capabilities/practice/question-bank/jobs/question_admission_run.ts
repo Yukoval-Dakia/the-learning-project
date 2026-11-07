@@ -567,7 +567,10 @@ export async function runAdmissionForQuestion(
       });
     };
     try {
-      const providerSessionDeadlineAt = Date.now() + 15 * 60_000;
+      // Owner: timeouts only guard loops and faults. 50min covers serial solve A+B (2×20min)
+      // plus adjudication (5min) with margin, and stays under the 60min coordinator send
+      // lease (receipt.ts) and the 1h llm job lease.
+      const providerSessionDeadlineAt = Date.now() + 50 * 60_000;
       const executeTask =
         deps.runTask ??
         makeRunTaskTextFn(db, {

@@ -538,7 +538,7 @@ let bossHandle: Awaited<ReturnType<typeof getStartedBoss>> | undefined;
 let configEpoch = 0;
 async function dbBoot(): Promise<Db> {
   const { db } = await import('@/db/client');
-  const { hydrateConfigFromDb } = await import('@/server/config/hydrate');
+  const { hydrateConfigFromDb } = await import('@/core/config/server/hydrate');
   const hydration = await hydrateConfigFromDb(db);
   // Paid preflight semantics: a failed/stale hydrate must not read as success.
   if (hydration.outcome === 'failed' || hydration.outcome === 'stale') {

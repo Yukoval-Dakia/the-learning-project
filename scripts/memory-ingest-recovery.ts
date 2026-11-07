@@ -22,7 +22,7 @@ async function main(): Promise<void> {
       );
       return;
     }
-    const { hydrateConfigFromDb } = await import('../src/server/config/hydrate');
+    const { hydrateConfigFromDb } = await import('../src/core/config/server/hydrate');
     await hydrateConfigFromDb(db);
     const grant = await authorizeMemoryIngestReplay(db, command.request);
     const { createBoss, getStartedBoss } = await import('../src/server/boss/client');
