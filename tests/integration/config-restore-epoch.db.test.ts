@@ -29,6 +29,7 @@ import {
   buildBackupArchive,
   restoreFromArchive as restoreArchive,
 } from '@/capabilities/observability/server/backup/archive';
+import { hydrateConfigFromDb } from '@/core/config/server/hydrate';
 import {
   type ConfigSnapshot,
   getConfig,
@@ -37,7 +38,6 @@ import {
   resetTestConfig,
 } from '@/core/config/store';
 import { system_config_epoch } from '@/db/schema';
-import { hydrateConfigFromDb } from '@/core/config/server/hydrate';
 import { setConfig } from '@/server/config/write';
 import { resetDb, testDb } from '../helpers/db';
 import { memR2 } from '../helpers/r2';

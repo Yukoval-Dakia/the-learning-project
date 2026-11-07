@@ -18,13 +18,13 @@ import type { ConjectureEvidenceImageSource } from '@/capabilities/agency/public
 import { induceConjecture } from '@/capabilities/agency/public';
 import { restoreFromArchive } from '@/capabilities/observability/server/backup/archive';
 import { installSchedulingCandidateRebuild } from '@/capabilities/practice/settlement/public';
+import { hydrateConfigFromDb } from '@/core/config/server/hydrate';
 import type { Db } from '@/db/client';
 import * as schema from '@/db/schema';
 import { source_asset } from '@/db/schema';
 import type { R2Client } from '@/kernel/object-storage';
 import { installSettlementCascadeRevert } from '@/kernel/settlement-cascade-revert';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
-import { hydrateConfigFromDb } from '@/core/config/server/hydrate';
 import { orchestrateCascadeRevert } from '@/server/revert/cascade-revert';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import {
