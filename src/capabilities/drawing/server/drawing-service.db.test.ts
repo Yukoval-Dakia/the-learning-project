@@ -13,7 +13,7 @@ import {
   sourceAllowsDerivation,
 } from '@/kernel/read-models/usage-policy';
 import { persistImmutableAsset } from '@/kernel/records/asset-store';
-import { TurnSourceLedger } from '@/kernel/tools/source-ledger';
+import { TurnSourceLedger, recordToolReadSources } from '@/kernel/tools/source-ledger';
 import {
   type ExecutionAdapter,
   type PreparedExecutionQuery,
@@ -407,6 +407,37 @@ describe('drawing service invariants', () => {
     expect(ordinary.status).toBe(200);
   });
 
+  // @invariant security: a question surfaced through a bank read enters the
+  // ledger via group_id/ref — an unjudged one blocks drawing, and a ref that
+  // resolves to nothing keeps the turn incomplete.
+  // @fails-if bank tool outputs leak a question the ledger never bound, or an
+  // unresolvable ref still counts as a complete turn.
+  it('bank-read questions bind through group_id and unresolvable refs stay incomplete', async () => {
+    const session = sessionId();
+    const questionId = await seedQuestion();
+    const ledger = new TurnSourceLedger();
+    recordToolReadSources(
+      'read_bank',
+      { refs: ['qrev1-abc'] },
+      { items: [{ ref: 'qrev1-abc', status: 'ok', group_id: questionId }] },
+      ledger,
+    );
+    expect(ledger.snapshot().complete).toBe(true);
+    expect(ledger.snapshot().sources).toContainEqual({ kind: 'question', id: questionId });
+    const sends: string[] = [];
+    const refused = await requestDrawing(
+      { db, sessionId: session, taskRunId: `run_${newId()}`, actorRef: 'test', ledger },
+      { brief: '画这道题', alt: '题图' },
+      { boss: async () => stubBoss(sends) },
+    );
+    expect(refused.status).toBe('unavailable');
+    expect(sends).toHaveLength(0);
+
+    const bad = new TurnSourceLedger();
+    recordToolReadSources('read_bank', { refs: ['qrev1-missing'] }, { items: [] }, bad);
+    expect(bad.snapshot().complete).toBe(false);
+  });
+
   // @invariant security: an answer-bound question in the source lineage blocks
   // drawing until an outcome attempt on it is judged — then the same turn
   // proceeds.
@@ -478,11 +509,13 @@ const READY_SVG =
 describe('drawing_generate handler invariants', () => {
   const adapterStats = { startups: 0, queries: 0 };
   const scriptQueue: Array<{ frames?: unknown[]; error?: unknown }> = [];
+  const adapterHooks: { beforeStartup?: () => Promise<void> } = {};
 
   const fakeAdapter: ExecutionAdapter = {
     id: 'pi' as const,
     startup: async () => {
       adapterStats.startups += 1;
+      await adapterHooks.beforeStartup?.();
       const prepared: PreparedExecutionQuery = {
         query: () =>
           (async function* () {
@@ -542,6 +575,7 @@ describe('drawing_generate handler invariants', () => {
     adapterStats.startups = 0;
     adapterStats.queries = 0;
     scriptQueue.length = 0;
+    adapterHooks.beforeStartup = undefined;
   });
 
   // @invariant concurrency: a running row whose lease predates the task timeout
@@ -577,6 +611,59 @@ describe('drawing_generate handler invariants', () => {
     expect(stored.status).toBe('ready');
     expect(adapterStats.queries).toBe(0);
     expect(adapterStats.startups).toBe(0);
+  });
+
+  // @invariant security: a cancel/timeout/retraction landing while the
+  // delivery waits on provider admission aborts the send — the brief never
+  // reaches the provider and the winning terminal state is kept.
+  // @fails-if a mid-admission lifecycle change still sends the brief, or the
+  // abort is reclassified as a provider failure.
+  it.each([
+    {
+      name: 'cancelled during admission',
+      mutate: async (id: string) => {
+        await db
+          .update(drawing)
+          .set({ status: 'cancelled', version: sql`${drawing.version} + 1` })
+          .where(eq(drawing.id, id));
+      },
+      expect: 'cancelled',
+    },
+    {
+      name: 'lease clock ran out',
+      mutate: async (id: string) => {
+        await db
+          .update(drawing)
+          .set({ expires_at: new Date(Date.now() - 1000) })
+          .where(eq(drawing.id, id));
+      },
+      expect: 'expired',
+    },
+    {
+      name: 'scoped source restricted',
+      mutate: async () => {
+        await db.insert(source_document).values({
+          id: `doc_${newId()}`,
+          title: 'restricted',
+          provenance: { usage_policy: { derivation_policy: 'answer_only' } },
+          created_at: new Date(),
+          updated_at: new Date(),
+        });
+      },
+      expect: 'expired',
+    },
+  ])('pre-send fence aborts without a provider call ($name)', async ({ mutate, expect: wants }) => {
+    const [row] = await seedRow({
+      status: 'queued',
+      expires_at: new Date(Date.now() + 60_000),
+      source_scoped: ['learner_state_header'],
+    });
+    adapterHooks.beforeStartup = () => mutate(row.id);
+    pushSvg();
+    await buildDrawingGenerateHandler(db)([{ data: { drawing_id: row.id } }]);
+    expect(adapterStats.queries).toBe(0);
+    const [stored] = await db.select().from(drawing).where(eq(drawing.id, row.id));
+    expect(stored.status).toBe(wants);
   });
 
   // @invariant concurrency: the dispatch insert commits inside the same

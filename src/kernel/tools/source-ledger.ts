@@ -122,7 +122,7 @@ const ARRAY_FIELD_KINDS: Record<string, SourceKind> = {
  * under-binding is the leak. Read tools NOT in this map mark the turn
  * incomplete: unbindable projections must refuse, not guess.
  */
-const BINDABLE_READ_TOOLS: Record<string, { bareId?: SourceKind }> = {
+const BINDABLE_READ_TOOLS: Record<string, { bareId?: SourceKind; bankRefs?: boolean }> = {
   get_question_context: { bareId: 'question' },
   get_record_context: { bareId: 'record' },
   query_records: {},
@@ -130,10 +130,78 @@ const BINDABLE_READ_TOOLS: Record<string, { bareId?: SourceKind }> = {
   query_events: { bareId: 'event' },
   get_attempt_context: {},
   get_review_due: {},
-  search_bank: { bareId: 'question' },
-  read_bank: { bareId: 'question' },
-  check_bank: { bareId: 'question' },
+  search_bank: { bareId: 'question', bankRefs: true },
+  read_bank: { bareId: 'question', bankRefs: true },
+  check_bank: { bareId: 'question', bankRefs: true },
 };
+
+/**
+ * Bank payloads address questions two ways the generic harvest cannot map:
+ * `group_id` (question_group_lifecycle.group_id IS question.id — bank reads
+ * join them 1:1) and `ref` (a bank ref naming one published revision, hence
+ * exactly one group). Every ref-family value must correlate to a bound group;
+ * an unresolvable ref stays unproven and the turn is not complete.
+ */
+const BANK_REF_KEYS = new Set(['ref', 'refs', 'input_refs', 'inputs']);
+/** Revision pointers inside an already-bound group — same question lineage. */
+const BANK_LINEAGE_KEYS = new Set([
+  'current_revision_ref',
+  'supersedes_revision_id',
+  'revision_id',
+]);
+
+function bindBankRefs(input: unknown, output: unknown, ledger: TurnSourceLedger): void {
+  const refToGroup = new Map<string, string>();
+  const collectGroups = (value: unknown) => {
+    if (Array.isArray(value)) {
+      for (const item of value) collectGroups(item);
+      return;
+    }
+    if (value === null || typeof value !== 'object') return;
+    const record = value as Record<string, unknown>;
+    const groupId =
+      typeof record.group_id === 'string' && record.group_id.length > 0 ? record.group_id : null;
+    if (groupId) {
+      ledger.note({ kind: 'question', id: groupId });
+      if (typeof record.ref === 'string' && record.ref.length > 0)
+        refToGroup.set(record.ref, groupId);
+    }
+    for (const entry of Object.values(record)) collectGroups(entry);
+  };
+  collectGroups(input);
+  collectGroups(output);
+
+  let unresolved = 0;
+  const collectRefs = (value: unknown, groupCtx: string | null) => {
+    if (Array.isArray(value)) {
+      for (const item of value) collectRefs(item, groupCtx);
+      return;
+    }
+    if (value === null || typeof value !== 'object') return;
+    const record = value as Record<string, unknown>;
+    const ctx =
+      typeof record.group_id === 'string' && record.group_id.length > 0
+        ? record.group_id
+        : groupCtx;
+    for (const [key, entry] of Object.entries(record)) {
+      if (BANK_REF_KEYS.has(key)) {
+        const values = Array.isArray(entry) ? entry : [entry];
+        for (const v of values) {
+          if (typeof v === 'string' && v.length > 0 && !refToGroup.has(v)) unresolved += 1;
+        }
+        continue;
+      }
+      if (BANK_LINEAGE_KEYS.has(key)) {
+        if (ctx === null && typeof entry === 'string' && entry.length > 0) unresolved += 1;
+        continue;
+      }
+      collectRefs(entry, ctx);
+    }
+  };
+  collectRefs(input, null);
+  collectRefs(output, null);
+  for (let i = 0; i < unresolved; i += 1) ledger.noteUnknown('bank_ref');
+}
 
 function harvest(value: unknown, ledger: TurnSourceLedger, bareId: SourceKind | undefined): void {
   if (Array.isArray(value)) {
@@ -182,4 +250,5 @@ export function recordToolReadSources(
   // The input params also carry ids the model addressed (e.g. question_id).
   harvest(input, ledger, spec.bareId);
   harvest(output, ledger, spec.bareId);
+  if (spec.bankRefs) bindBankRefs(input, output, ledger);
 }

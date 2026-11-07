@@ -85,6 +85,13 @@ async function expireDrawing(db: Db, row: DrawingRow, detail: string): Promise<v
   await transition(db, row, 'expired', { error_kind: 'retracted', error_detail: detail });
 }
 
+/**
+ * Pre-send abort: the row's terminal closure was already written (cancelled by
+ * the learner, expired by the fence, or lost to another delivery). The throw
+ * only stops the provider call — the outer catch must not reclassify it.
+ */
+class DrawingAbortedError extends Error {}
+
 async function waitAndRearm(
   db: Db,
   row: DrawingRow,
@@ -299,6 +306,26 @@ async function processDrawing(
               `DrawingTask wire pair '${provider}/${model}' is not ${SOL_LANE.provider}/${SOL_LANE.model} — refusing to send.`,
             );
           }
+          // Last fence before the brief leaves the process: provider admission
+          // can park this delivery for minutes after the claim-time gate, and
+          // a multi-query run re-checks before every send. The row must still
+          // be this delivery's running version, inside its clock, authorized.
+          const [current] = await db.select().from(drawing).where(eq(drawing.id, row.id));
+          if (!current || current.version !== row.version || current.status !== 'running') {
+            throw new DrawingAbortedError('cancelled');
+          }
+          if (current.expires_at.getTime() <= Date.now()) {
+            await transition(db, current, 'expired', { error_kind: 'expired' });
+            throw new DrawingAbortedError('expired');
+          }
+          if (!(await drawingSourcesAuthorized(db, current))) {
+            await expireDrawing(
+              db,
+              current,
+              'a bound source stopped allowing derivation or changed usage epoch before send',
+            );
+            throw new DrawingAbortedError('expired');
+          }
         },
       },
     );
@@ -363,6 +390,8 @@ async function processDrawing(
       return;
     }
   } catch (error) {
+    // The pre-send fence wrote its own closure — do not overwrite it.
+    if (error instanceof DrawingAbortedError) return;
     const login =
       classifyLoginFailure(error) ??
       (error instanceof ChatGPTOAuthFileError ? { kind: 'credential' as const } : undefined);
