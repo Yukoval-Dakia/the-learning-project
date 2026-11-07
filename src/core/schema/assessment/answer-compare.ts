@@ -489,16 +489,38 @@ function isDecimalDigit(char: string | undefined): boolean {
   return char != null && /\p{Nd}/u.test(char);
 }
 
+function isSpace(char: string | undefined): boolean {
+  return char != null && /\s/u.test(char);
+}
+
+/** Index of a number start at or after `index`, skipping spaces. Null when there is none. */
+function numberStartAt(source: string, index: number): number | null {
+  let cursor = index;
+  while (isSpace(source[cursor])) cursor += 1;
+  const char = source[cursor];
+  if (isDecimalDigit(char)) return cursor;
+  if (char != null && NUMERIC_DECIMAL.has(char) && isDecimalDigit(source[cursor + 1]))
+    return cursor;
+  return null;
+}
+
+function previousNonSpaceIsDigit(source: string, index: number): boolean {
+  let cursor = index - 1;
+  while (isSpace(source[cursor])) cursor -= 1;
+  return isDecimalDigit(source[cursor]);
+}
+
 /**
  * `\p{P}` includes the hyphen-minus and the decimal point. Dropping them makes
- * `-5` match `5` and `10.24` match `1024`. Keep a unary minus and a dot that
- * starts a fractional digit; word hyphens and sentence periods still drop.
+ * `-5` match `5`, `-.5` match `.5`, and `10.24` match `1024`. Keep a unary
+ * minus (including `-.5` and `- 5`) and a dot that starts a fractional digit.
+ * Word hyphens and sentence periods still drop.
  */
 function keepsNumericPunctuation(source: string, index: number): boolean {
   const char = source[index];
   if (char == null) return false;
   if (NUMERIC_MINUS.has(char)) {
-    return isDecimalDigit(source[index + 1]) && !isDecimalDigit(source[index - 1]);
+    return numberStartAt(source, index + 1) != null && !previousNonSpaceIsDigit(source, index);
   }
   return NUMERIC_DECIMAL.has(char) && isDecimalDigit(source[index + 1]);
 }
@@ -708,23 +730,23 @@ const MAX_EXACT_INTEGER_DIGITS = 400;
 
 /**
  * Plain-number read shared by grading and cross-kind key agreement.
- * `finite` is an exact float64. `unsafe_integer` is an integer Number() would
- * collapse (9007199254740993 → 9007199254740992). `unreadable` is not a
- * supported plain number.
+ * `finite` keeps the float64 reading used for ordinary decimals such as 10.24.
+ * `displaced` is a literal Number() moves by at least 1/2
+ * (9007199254740993 → 9007199254740992, and 9007199254740992.5 onto that integer).
+ * Callers compare a displaced literal as a rational and never use the collapsed float.
  */
+type ExactRational = { n: bigint; d: bigint };
+
 type FrozenPlainNumber =
   | { kind: 'finite'; value: number }
-  | { kind: 'unsafe_integer'; value: bigint }
+  | { kind: 'displaced'; literal: ExactRational }
   | { kind: 'unreadable' };
 
-type ExactIntegerRead =
-  | { kind: 'integer'; value: bigint }
-  | { kind: 'fraction' }
-  | { kind: 'unsupported' };
+type ExactRationalRead = { kind: 'rational'; value: ExactRational } | { kind: 'unsupported' };
 
-function readExactInteger(text: string): ExactIntegerRead {
+function readExactRational(text: string): ExactRationalRead {
   const match = /^([+-]?)(?:(\d+)(?:\.(\d+))?|\.(\d+))(?:[eE]([+-]?\d+))?$/u.exec(text);
-  if (match == null) return { kind: 'fraction' };
+  if (match == null) return { kind: 'unsupported' };
   const fraction = match[3] ?? match[4] ?? '';
   const exponentText = match[5];
   if (exponentText != null && exponentText.replace(/^[+-]/u, '').length > 4) {
@@ -742,20 +764,48 @@ function readExactInteger(text: string): ExactIntegerRead {
   ) {
     return { kind: 'unsupported' };
   }
-  let magnitude = BigInt(digits);
+  const magnitude = BigInt(digits);
+  const signed = match[1] === '-' ? -magnitude : magnitude;
   if (scale >= 0) {
-    magnitude *= 10n ** BigInt(scale);
-  } else {
-    const divisor = 10n ** BigInt(-scale);
-    if (magnitude % divisor !== 0n) return { kind: 'fraction' };
-    magnitude /= divisor;
+    return { kind: 'rational', value: { n: signed * 10n ** BigInt(scale), d: 1n } };
   }
-  return { kind: 'integer', value: match[1] === '-' ? -magnitude : magnitude };
+  return { kind: 'rational', value: { n: signed, d: 10n ** BigInt(-scale) } };
 }
 
-function integerCollapses(value: bigint): boolean {
-  const asNumber = Number(value);
-  return !Number.isFinite(asNumber) || BigInt(asNumber) !== value;
+function floatToRational(value: number): ExactRational | null {
+  if (!Number.isFinite(value)) return null;
+  if (value === 0) return { n: 0n, d: 1n };
+  const sign = value < 0 ? -1n : 1n;
+  const bytes = new DataView(new ArrayBuffer(8));
+  bytes.setFloat64(0, Math.abs(value));
+  const bits = bytes.getBigUint64(0);
+  const exponent = Number((bits >> 52n) & 0x7ffn);
+  const mantissa = bits & ((1n << 52n) - 1n);
+  const subnormal = exponent === 0;
+  const significand = subnormal ? mantissa : (1n << 52n) | mantissa;
+  const power = subnormal ? -1074 : exponent - 1075;
+  if (power >= 0) return { n: sign * significand * 2n ** BigInt(power), d: 1n };
+  return { n: sign * significand, d: 2n ** BigInt(-power) };
+}
+
+/** True when the literal and the float differ by at least one half. */
+function rationalDiffAtLeastHalf(literal: ExactRational, floatValue: ExactRational): boolean {
+  const left = literal.n * floatValue.d;
+  const right = floatValue.n * literal.d;
+  const diff = left >= right ? left - right : right - left;
+  return diff * 2n >= literal.d * floatValue.d;
+}
+
+function classifyPlainNumber(text: string): FrozenPlainNumber {
+  if (!PLAIN_NUMBER.test(text)) return { kind: 'unreadable' };
+  const exact = readExactRational(text);
+  if (exact.kind === 'unsupported') return { kind: 'unreadable' };
+  const asNumber = Number(text);
+  const asRational = Number.isFinite(asNumber) ? floatToRational(asNumber) : null;
+  if (asRational == null || rationalDiffAtLeastHalf(exact.value, asRational)) {
+    return { kind: 'displaced', literal: exact.value };
+  }
+  return { kind: 'finite', value: asNumber };
 }
 
 function readFrozenPlainNumber(raw: string, identity: NumericKeyIdentity): FrozenPlainNumber {
@@ -764,20 +814,8 @@ function readFrozenPlainNumber(raw: string, identity: NumericKeyIdentity): Froze
       ? normalizeNumericAnswer(raw, false)
       : raw.normalize('NFKC')
   )?.trim();
-  if (text == null || !PLAIN_NUMBER.test(text)) return { kind: 'unreadable' };
-  const exact = readExactInteger(text);
-  switch (exact.kind) {
-    case 'unsupported':
-      return { kind: 'unreadable' };
-    case 'integer':
-      return integerCollapses(exact.value)
-        ? { kind: 'unsafe_integer', value: exact.value }
-        : { kind: 'finite', value: Number(exact.value) };
-    case 'fraction': {
-      const value = Number(text);
-      return Number.isFinite(value) ? { kind: 'finite', value } : { kind: 'unreadable' };
-    }
-  }
+  if (text == null) return { kind: 'unreadable' };
+  return classifyPlainNumber(text);
 }
 
 /**
@@ -790,34 +828,52 @@ export function parseFrozenNumericAnswer(raw: string, identity: NumericKeyIdenti
   return read.kind === 'finite' ? read.value : null;
 }
 
-function absoluteIntegerDiffVerdict(diff: bigint, tolerance: number): 0 | 1 {
-  if (!Number.isFinite(tolerance) || tolerance < 0) return 0;
-  // Every finite float at or above 2^53 is an integer, so a non-integer
-  // tolerance is below that and cannot cover a diff past the safe range.
-  if (Number.isInteger(tolerance)) return diff <= BigInt(tolerance) ? 1 : 0;
-  if (diff <= BigInt(Number.MAX_SAFE_INTEGER)) return Number(diff) <= tolerance ? 1 : 0;
-  return 0;
+function absoluteCross(literal: ExactRational, expected: ExactRational): bigint {
+  const left = literal.n * expected.d;
+  const right = expected.n * literal.d;
+  return left >= right ? left - right : right - left;
 }
 
-/**
- * An unsafe integer is never equal to a float64. Absolute tolerance against an
- * integer-valued key is exact bigint distance. Anything else stays undecided
- * so a wide tolerance cannot be scored by the collapsed Number().
- */
-function unsafeIntegerWithinTolerance(
-  student: bigint,
+/** |literal - expected| <= tolerance, with every value an exact rational. */
+function withinAbsolute(
+  literal: ExactRational,
+  expected: ExactRational,
+  tolerance: ExactRational,
+): boolean {
+  return absoluteCross(literal, expected) * tolerance.d <= tolerance.n * literal.d * expected.d;
+}
+
+/** |literal - expected| / |expected| <= ratio. A zero expected matches only itself. */
+function withinRelative(
+  literal: ExactRational,
+  expected: ExactRational,
+  ratio: ExactRational,
+): boolean {
+  if (expected.n === 0n) return literal.n === 0n;
+  const expAbs = expected.n < 0n ? -expected.n : expected.n;
+  return absoluteCross(literal, expected) * ratio.d <= ratio.n * expAbs * literal.d;
+}
+
+function displacedWithinTolerance(
+  literal: ExactRational,
   expected: number,
   tolerance: NumericTolerance,
-): 0 | 1 | null {
+): 0 | 1 {
   if (!Number.isFinite(expected)) return 0;
-  if (tolerance.kind === 'relative') {
-    return tolerance.ratio === 0 || expected === 0 ? 0 : null;
+  const expectedRational = floatToRational(expected);
+  if (expectedRational == null) return 0;
+  const span = tolerance.kind === 'absolute' ? tolerance.value : tolerance.ratio;
+  if (!Number.isFinite(span) || span < 0) return 0;
+  if (tolerance.kind === 'relative' && (span === 0 || expectedRational.n === 0n)) {
+    return literal.n * expectedRational.d === expectedRational.n * literal.d ? 1 : 0;
   }
-  if (tolerance.value === 0) return 0;
-  if (!Number.isInteger(expected)) return null;
-  const expectedInteger = BigInt(expected);
-  const diff = student >= expectedInteger ? student - expectedInteger : expectedInteger - student;
-  return absoluteIntegerDiffVerdict(diff, tolerance.value);
+  const spanRational = floatToRational(span);
+  if (spanRational == null) return 0;
+  const hit =
+    tolerance.kind === 'absolute'
+      ? withinAbsolute(literal, expectedRational, spanRational)
+      : withinRelative(literal, expectedRational, spanRational);
+  return hit ? 1 : 0;
 }
 
 function leadingPlainNumber(text: string): string | null {
@@ -877,21 +933,17 @@ export async function compareNumericBlankAnswer(
     switch (read.kind) {
       case 'finite':
         return numericAnswerWithinTolerance(read.value, key.expected, key.tolerance) ? 1 : 0;
-      case 'unsafe_integer':
-        return unsafeIntegerWithinTolerance(read.value, key.expected, key.tolerance);
+      case 'displaced':
+        return displacedWithinTolerance(read.literal, key.expected, key.tolerance);
       case 'unreadable':
         return null;
     }
   }
   if (PLAIN_NUMBER.test(text)) return 0;
-  // A unit coefficient past the exact integer range must not become a full
-  // mark through mathjs toNumber(). Conversion of that integer stays undecided.
+  // A coefficient Number() moves by at least 1/2 must not become a full mark
+  // through mathjs toNumber(). Conversion of that literal stays undecided.
   const coefficient = leadingPlainNumber(text);
-  if (coefficient != null) {
-    const exact = readExactInteger(coefficient);
-    if (exact.kind === 'unsupported') return null;
-    if (exact.kind === 'integer' && integerCollapses(exact.value)) return null;
-  }
+  if (coefficient != null && classifyPlainNumber(coefficient).kind !== 'finite') return null;
   const { unit: parseUnit } = await import('mathjs');
   let reference: import('mathjs').Unit;
   try {
