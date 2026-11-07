@@ -20,6 +20,7 @@ const LEARNER_FELT_TASKS: ReadonlySet<string> = new Set([
   'StructureTask',
   'BlockAssemblyTask',
   'VisionExtractTask',
+  'VisionExtractTaskHeavy',
   // Notes the learner asked for.
   'NoteGenerateTask',
   'NoteRefineTask',
