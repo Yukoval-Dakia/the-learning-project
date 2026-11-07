@@ -136,6 +136,7 @@ export const dbTestInclude = [
   'src/capabilities/knowledge/server/misconception-edges.db.test.ts',
   'src/capabilities/knowledge/server/proposals.db.test.ts',
   'src/capabilities/knowledge/server/seed.db.test.ts',
+  'src/capabilities/knowledge/server/tools/knowledge-readers.db.test.ts',
   'src/capabilities/notes/api/hub-dismiss-link.db.test.ts',
   'src/capabilities/notes/jobs/note_generate.db.test.ts',
   'src/capabilities/notes/server/block-refs.db.test.ts',
