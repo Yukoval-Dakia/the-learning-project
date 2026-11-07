@@ -28,7 +28,6 @@ const server = {
   CLAUDE_CODE_MAX_RETRIES: optionalString,
   CLAUDE_CODE_OAUTH_TOKEN: optionalString,
   COPILOT_NUDGE_DAILY_MAX: optionalString,
-  COPILOT_NUDGE_ENABLED: optionalString,
   COPILOT_NUDGE_EXPIRES_HOURS: optionalString,
   COPILOT_SUBAGENT_ENABLED: optionalString,
   DASHSCOPE_API_KEY: optionalString,

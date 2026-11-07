@@ -72,7 +72,6 @@ export const KEY_CONSUMERS: Readonly<Record<string, string | null>> = {
   AUTO_INTERVENTION_EXPANSION_ENABLED: 'src/capabilities/agency/server/intervention/snapshot.ts',
   INTERVENTION_DISABLED_METHOD_IDS: 'src/capabilities/agency/server/intervention/snapshot.ts',
   COPILOT_SUBAGENT_ENABLED: 'src/capabilities/copilot/server/subagents.ts',
-  COPILOT_NUDGE_ENABLED: 'src/capabilities/copilot/server/nudge-config.ts',
   COPILOT_NUDGE_DAILY_MAX: 'src/capabilities/copilot/server/nudge-config.ts',
   COPILOT_NUDGE_EXPIRES_HOURS: 'src/capabilities/copilot/server/nudge-config.ts',
   SELECTION_POLICY: 'src/capabilities/practice/scheduling/server/stream-store.ts',
