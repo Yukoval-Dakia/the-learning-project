@@ -305,7 +305,14 @@ const AutoEnrollObservationSchema = z.object({
 
 /** Server-owned reading of one block's solution-method annotation. */
 export const IngestionBlockSolutionSchema = z.object({
-  state: z.enum(['annotated', 'missing']),
+  /**
+   * 'skipped' is terminal honest state: the question needs its figure and the
+   * text-only annotator cannot answer for it — no annotation will ever arrive,
+   * and nothing re-enters it for this question row.
+   */
+  state: z.enum(['annotated', 'missing', 'skipped']),
+  /** Why annotation was skipped; only meaningful when state = 'skipped'. */
+  reason: z.enum(['figure_dependent']).nullable(),
   method_md: z.string().nullable(),
   steps_md: z.array(z.string()),
   confidence: z.number().nullable(),

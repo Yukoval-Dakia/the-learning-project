@@ -10,10 +10,14 @@
  * Retry contract: each paid call counts one bounded attempt on the question
  * metadata (`knowledge_attempts` / `solution_attempts`), and only model-output or
  * permanent failures consume it — a failure the provider-failure verdict names as
- * a provably unbilled refusal (5xx, 429, not-sent, etc.) is counted separately in
- * `*_infra_failures`, never against the model budget, and is retried on a later
- * sweep. Infra failures have their own cap so a permanently broken lane cannot
- * send forever; every resend is provably unbilled, so nothing can spend without
+ * a provably unbilled refusal (5xx, 429, request-rejected, not-sent transport) is
+ * counted separately in `*_infra_failures`, never against the model budget. The
+ * verdict needs the settled `ai_task_runs` transport as evidence: a send whose
+ * disposition is unknown (timeout, sent-without-response, caller-cancelled)
+ * still counts as a paid attempt. Infra resends run at sweep cadence up to the
+ * burst cap, then back off via `*_infra_next_at` (4h → 8h → 16h → 24h cap, so a
+ * downed lane is retried roughly once a day instead of every sweep and recovers
+ * on its own); every resend is provably unbilled, so nothing can spend without
  * bound. A paid call that loses its CAS write still cost money — the counter is
  * merged back in a one-shot second write.
  *
@@ -32,6 +36,7 @@
  * send). Both call this function; the sweep is the durable owner.
  */
 import { and, asc, eq, inArray, or, sql } from 'drizzle-orm';
+import { AgentRunError } from '@/ai/agent-run-error';
 import { providerTransientVerdict } from '@/ai/provider-failure';
 import { readStoredSolutionAnnotation } from '@/core/schema/solution-annotation';
 import type { Db } from '@/db/client';
@@ -41,26 +46,36 @@ import {
   resolveDocumentDerivationPolicy,
   resolveSessionDerivationPolicy,
 } from '@/kernel/read-models/usage-policy';
+import { settledAttemptEvidence } from '@/server/ai/provider-transient-retry';
 import {
   type AttributeIngestionKnowledgeParams,
   attributeIngestionKnowledge,
 } from './knowledge-attribution';
+import { IngestionUsagePolicyError, type ResolvedDerivationGate } from './privacy-guard';
 import {
   type GenerateSolutionAnnotationParams,
-  SolutionAnnotationPolicyError,
   generateSolutionAnnotation,
 } from './solution-annotation';
 
 export const ANNOTATION_MAX_ATTEMPTS = 3;
 /**
- * Provider-refusal retries per phase. Verdict classes are provably unbilled, so
- * this caps futile sends, not spend; twelve sweeps is ~3h of a down lane.
+ * Provider-refusal retries per phase at sweep cadence. Past this burst budget
+ * each refusal pushes `*_infra_next_at` out geometrically (4h → 8h → 16h → 24h
+ * cap), so a lane down for hours stops being re-hit every sweep and recovers
+ * on its own: steady state is at most ~1 resend/day/phase. `quota_exhausted`
+ * always waits at least INFRA_BACKOFF_MIN_MS — an account-level refusal is
+ * never worth a 15-minute re-poll. Verdict classes are provably unbilled, so
+ * this bounds futile sends, not spend.
  */
 export const ANNOTATION_MAX_INFRA_FAILURES = 12;
+const INFRA_BACKOFF_MIN_MS = 4 * 60 * 60 * 1000;
+const INFRA_BACKOFF_MAX_MS = 24 * 60 * 60 * 1000;
 export const ANNOTATION_MAX_PER_RUN = 10;
 /**
  * A prompt shorter than this plus an attached figure cannot carry the question:
  * the figure is load-bearing and a text-only annotation would pretend otherwise.
+ * Unmeasured heuristic — no corpus readout exists; it only errs toward
+ * 'skipped', the honest terminal, never toward a fabricated annotation.
  */
 const FIGURE_DEPENDENT_PROMPT_MAX_CHARS = 30;
 
@@ -77,6 +92,9 @@ interface EnrollmentMetadata {
   solution_attempts?: number;
   knowledge_infra_failures?: number;
   solution_infra_failures?: number;
+  /** ISO timestamp gating the next infra retry; absent means retryable now. */
+  knowledge_infra_next_at?: string;
+  solution_infra_next_at?: string;
   knowledge_last_error?: string | null;
   solution_last_error?: string | null;
   solution_skipped_reason?: string;
@@ -105,6 +123,8 @@ export interface AnnotationBackfillResult {
   solution_failed: number;
   /** Rows whose derivation policy currently forbids model use (re-evaluated per run). */
   policy_blocked: number;
+  /** Rows marked `solution: 'skipped'` — terminal, never re-selected. */
+  solution_skipped: number;
   /** Provider-refusal failures that did not consume the paid attempt budget. */
   infra_failures: number;
   /** Rows whose remaining phases are all at the attempt cap. */
@@ -137,6 +157,7 @@ export async function runAnnotationBackfill(
   const attributeFn = params.attributeFn ?? attributeIngestionKnowledge;
   const annotateFn = params.annotateFn ?? generateSolutionAnnotation;
 
+  const sweepNowIso = (params.now ?? new Date()).toISOString();
   const selected = await params.db
     .select({
       id: question.id,
@@ -153,7 +174,7 @@ export async function runAnnotationBackfill(
     .where(
       params.questionIds !== undefined
         ? inArray(question.id, params.questionIds)
-        : sweepPredicate(),
+        : sweepPredicate(sweepNowIso),
     )
     .orderBy(asc(question.created_at), asc(question.id))
     .limit(limit);
@@ -166,6 +187,7 @@ export async function runAnnotationBackfill(
     solution_filled: 0,
     solution_failed: 0,
     policy_blocked: 0,
+    solution_skipped: 0,
     infra_failures: 0,
     exhausted: 0,
   };
@@ -301,15 +323,18 @@ export async function runAnnotationBackfill(
     };
 
     // The origin block owns the ingest context: knowledge hint, bound session and
-    // (through it) the source document and its live derivation policy.
+    // (through it) the source document and its live derivation policy. No anchor
+    // at all fails closed — an unresolvable policy is restricted, never 'allow'.
     const origin = await readQuestionOrigin(params.db, current.id, metadata);
-    const derivationPolicy = origin.sessionId
+    const derivationPolicy: ResolvedDerivationGate = origin.sessionId
       ? await resolveSessionDerivationPolicy(params.db, origin.sessionId)
       : origin.sourceDocumentId
         ? await resolveDocumentDerivationPolicy(params.db, origin.sourceDocumentId)
-        : 'allow';
+        : 'unresolvable';
     const policyRestricted = derivationPolicy !== 'allow';
     if (policyRestricted) result.policy_blocked += 1;
+
+    const nowIso = now.toISOString();
 
     /**
      * Attempt accounting shared by both phases: a verdict-named provider refusal
@@ -321,20 +346,36 @@ export async function runAnnotationBackfill(
       err: unknown;
     }): Promise<void> => {
       const errText = errorText(input.err);
-      if (input.err instanceof SolutionAnnotationPolicyError) {
+      if (input.err instanceof IngestionUsagePolicyError) {
         await write({
           enrollment: { ...enrollment, [`${input.phase}_last_error`]: POLICY_BLOCKED_ERROR },
         });
         return;
       }
-      const verdict = transientVerdict(input.err);
+      const verdict = await transientVerdict(params.db, input.err);
       if (verdict !== undefined) {
         result.infra_failures += 1;
+        const failures = readCount(enrollment[`${input.phase}_infra_failures`]) + 1;
+        // Past the burst budget, resends back off geometrically (24h cap →
+        // ~1/day); quota_exhausted always waits — its class never resends.
+        const delayMs =
+          verdict.class === 'quota_exhausted'
+            ? INFRA_BACKOFF_MIN_MS
+            : failures <= ANNOTATION_MAX_INFRA_FAILURES
+              ? 0
+              : Math.min(
+                  INFRA_BACKOFF_MIN_MS * 2 ** (failures - 1 - ANNOTATION_MAX_INFRA_FAILURES),
+                  INFRA_BACKOFF_MAX_MS,
+                );
         await write({
           enrollment: {
             ...enrollment,
-            [`${input.phase}_infra_failures`]:
-              readCount(enrollment[`${input.phase}_infra_failures`]) + 1,
+            [`${input.phase}_infra_failures`]: failures,
+            ...(delayMs > 0
+              ? {
+                  [`${input.phase}_infra_next_at`]: new Date(now.getTime() + delayMs).toISOString(),
+                }
+              : {}),
             [`${input.phase}_last_error`]: `provider:${verdict.class} ${errText}`.slice(
               0,
               ERROR_MAX_CHARS,
@@ -352,9 +393,13 @@ export async function runAnnotationBackfill(
       });
     };
 
-    const phaseRetryable = (phase: 'knowledge' | 'solution'): boolean =>
-      readCount(enrollment[`${phase}_attempts`]) < ANNOTATION_MAX_ATTEMPTS &&
-      readCount(enrollment[`${phase}_infra_failures`]) < ANNOTATION_MAX_INFRA_FAILURES;
+    const phaseRetryable = (phase: 'knowledge' | 'solution'): boolean => {
+      const nextAt = enrollment[`${phase}_infra_next_at`];
+      return (
+        readCount(enrollment[`${phase}_attempts`]) < ANNOTATION_MAX_ATTEMPTS &&
+        (typeof nextAt !== 'string' || nextAt <= nowIso)
+      );
+    };
 
     // ---- knowledge phase -------------------------------------------------
     if (enrollment.knowledge !== 'attributed') {
@@ -370,6 +415,14 @@ export async function runAnnotationBackfill(
             knowledgeHint: origin.knowledgeHint,
             providerAttempt: params.providerAttempt,
             sessionId: origin.sessionId,
+            ...(origin.sourceDocumentId !== null
+              ? {
+                  usage: {
+                    sourceDocumentId: origin.sourceDocumentId,
+                    derivationPolicy,
+                  },
+                }
+              : {}),
             sourceRef: { kind: 'question', id: current.id },
             ctx: { db: params.db },
           });
@@ -419,14 +472,18 @@ export async function runAnnotationBackfill(
     } else if (isFigureDependent(current)) {
       // The task is text-only; a figure-dependent prompt would be annotated from
       // text that cannot carry the question. 'skipped' is the honest terminal.
-      await write({
-        enrollment: {
-          ...enrollment,
-          solution: 'skipped',
-          solution_skipped_reason: 'figure_dependent',
-          solution_last_error: null,
-        },
-      });
+      if (
+        await write({
+          enrollment: {
+            ...enrollment,
+            solution: 'skipped',
+            solution_skipped_reason: 'figure_dependent',
+            solution_last_error: null,
+          },
+        })
+      ) {
+        result.solution_skipped += 1;
+      }
     } else if (phaseRetryable('solution')) {
       try {
         const knowledgeLabel = await readKnowledgeLabel(params.db, current.knowledge_ids);
@@ -458,14 +515,18 @@ export async function runAnnotationBackfill(
       }
     }
 
-    // A row is exhausted when a still-missing label has burned its attempt budget.
+    // A row is exhausted only when a still-missing label has burned its PAID
+    // attempt budget — a row merely waiting on infra backoff keeps its budget
+    // and retries when the timestamp passes, so it is pending, not exhausted.
+    const paidBudgetLeft = (phase: 'knowledge' | 'solution'): boolean =>
+      readCount(enrollment[`${phase}_attempts`]) < ANNOTATION_MAX_ATTEMPTS;
     const knowledgeDone = enrollment.knowledge === 'attributed' || current.knowledge_ids.length > 0;
     const solutionDone =
       readStoredSolutionAnnotation(metadata.solution_annotation) !== null ||
       enrollment.solution === 'skipped';
     if (
-      (!knowledgeDone && !phaseRetryable('knowledge')) ||
-      (!solutionDone && !policyRestricted && !phaseRetryable('solution'))
+      (!knowledgeDone && !paidBudgetLeft('knowledge')) ||
+      (!solutionDone && !policyRestricted && !paidBudgetLeft('solution'))
     ) {
       result.exhausted += 1;
     }
@@ -480,12 +541,10 @@ export async function runAnnotationBackfill(
  * `? 'solution'` is exactly "enrolled after the marker shipped". Historical
  * rows are reached only by an explicit `questionIds` run — never the cron.
  */
-function sweepPredicate() {
+function sweepPredicate(nowIso: string) {
   const enrollment = sql`${question.metadata}->'ingestion_enrollment'`;
   const knowledgeAttempts = sql`(case when jsonb_typeof(${enrollment}->'knowledge_attempts') = 'number' then (${enrollment}->>'knowledge_attempts')::int else 0 end)`;
   const solutionAttempts = sql`(case when jsonb_typeof(${enrollment}->'solution_attempts') = 'number' then (${enrollment}->>'solution_attempts')::int else 0 end)`;
-  const knowledgeInfra = sql`(case when jsonb_typeof(${enrollment}->'knowledge_infra_failures') = 'number' then (${enrollment}->>'knowledge_infra_failures')::int else 0 end)`;
-  const solutionInfra = sql`(case when jsonb_typeof(${enrollment}->'solution_infra_failures') = 'number' then (${enrollment}->>'solution_infra_failures')::int else 0 end)`;
   return and(
     sql`${question.metadata} ? 'ingestion_enrollment'`,
     sql`${enrollment} ? 'solution'`,
@@ -494,10 +553,10 @@ function sweepPredicate() {
       (${enrollment}->>'knowledge' = 'missing'
         and (jsonb_array_length(${question.knowledge_ids}) > 0
           or (${knowledgeAttempts} < ${ANNOTATION_MAX_ATTEMPTS}
-            and ${knowledgeInfra} < ${ANNOTATION_MAX_INFRA_FAILURES})))
+            and coalesce(${enrollment}->>'knowledge_infra_next_at', '') <= ${nowIso})))
       or (coalesce(${enrollment}->>'solution', 'missing') = 'missing'
         and ${solutionAttempts} < ${ANNOTATION_MAX_ATTEMPTS}
-        and ${solutionInfra} < ${ANNOTATION_MAX_INFRA_FAILURES})
+        and coalesce(${enrollment}->>'solution_infra_next_at', '') <= ${nowIso})
     )`,
   );
 }
@@ -554,11 +613,25 @@ async function readQuestionOrigin(
   return { sessionId, knowledgeHint: null, sourceDocumentId };
 }
 
-/** A verdict-named provider refusal — the provably unbilled class — or undefined. */
-function transientVerdict(err: unknown) {
+/**
+ * A verdict-named provider refusal — the provably unbilled class — or undefined.
+ * The verdict is transport-aware: the settled `ai_task_runs` row's usage_json
+ * transport is the only evidence that a connection failure never reached the
+ * provider (`send_state: 'not_sent'`). An unsettled or absent run, or a send
+ * whose disposition is unknown, yields no verdict and the failure counts as a
+ * paid attempt — the safe side of an uncertain bill.
+ */
+async function transientVerdict(db: Db, err: unknown) {
   let cur: unknown = err;
   for (let depth = 0; depth < 3 && cur != null; depth += 1) {
-    const verdict = providerTransientVerdict({ error: cur });
+    const transport =
+      cur instanceof AgentRunError
+        ? (await settledAttemptEvidence(db, cur.taskRunId)).transport
+        : undefined;
+    const verdict = providerTransientVerdict({
+      error: cur,
+      ...(transport !== undefined ? { transport } : {}),
+    });
     if (verdict !== undefined) return verdict;
     cur = cur instanceof Error ? cur.cause : undefined;
   }

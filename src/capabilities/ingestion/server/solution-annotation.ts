@@ -21,10 +21,17 @@ import {
 import type { Db } from '@/db/client';
 import { ai_task_runs } from '@/db/schema';
 import { parseTaskOutput } from '@/kernel/parse-task-output';
-import { resolveSessionDerivationPolicy } from '@/kernel/read-models/usage-policy';
+import {
+  resolveDocumentDerivationPolicy,
+  resolveSessionDerivationPolicy,
+} from '@/kernel/read-models/usage-policy';
 import { markAiTaskRunOutputInvalid } from '@/server/ai/log';
 import { type RunTaskCallCtx, makeRunTaskTextFn } from '@/server/ai/runner-fn';
-import { redactIngestionText, writeIngestionUsageReceipt } from './privacy-guard';
+import {
+  IngestionUsagePolicyError,
+  redactIngestionText,
+  writeIngestionUsageReceipt,
+} from './privacy-guard';
 
 export class SolutionAnnotationError extends Error {
   constructor(message: string, options?: { cause?: unknown }) {
@@ -34,16 +41,13 @@ export class SolutionAnnotationError extends Error {
 }
 
 /**
- * Thrown before anything is sent when the source document's live derivation
- * policy restricts model use. Carries the resolved policy so the caller can mark
- * the reason without paying a send or an attempt.
+ * Thrown before anything is sent when the resolved derivation policy forbids
+ * model use — or no session/document anchor exists to resolve one (fail closed).
  */
-export class SolutionAnnotationPolicyError extends Error {
-  readonly policy: DerivationPolicyT;
-  constructor(policy: DerivationPolicyT) {
-    super(`derivation policy '${policy}' forbids model use of this document's content`);
+export class SolutionAnnotationPolicyError extends IngestionUsagePolicyError {
+  constructor(policy: DerivationPolicyT | 'unresolvable') {
+    super(policy);
     this.name = 'SolutionAnnotationPolicyError';
-    this.policy = policy;
   }
 }
 
@@ -60,10 +64,11 @@ export interface GenerateSolutionAnnotationParams {
   /** First attributed knowledge name, or null when the question is still unlabelled. */
   knowledgeLabel: string | null;
   /**
-   * The question's bound ingestion session and source document. Resolving the live
-   * derivation policy and writing the usage receipt need both; when absent (a
-   * legacy row) the send proceeds under the implicit 'allow' of a document that
-   * never declared a policy and no receipt can be anchored.
+   * The question's bound ingestion session and source document. Session resolves
+   * policy first; document is the fallback anchor; when neither resolves the
+   * send is refused (fail closed). The usage receipt anchors on whichever ids
+   * exist — a doc-less session send proceeds under that session's resolved
+   * policy but leaves no receipt.
    */
   usage?: { sessionId: string | null; sourceDocumentId: string | null };
   /** Inject in tests; defaults to the production runner. */
@@ -76,12 +81,17 @@ export async function generateSolutionAnnotation(
 ): Promise<StoredSolutionAnnotationT & { cost_usd?: number }> {
   const runTaskFn = params.runTaskFn ?? makeRunTaskTextFn(params.db);
 
-  // Policy first: a restricted document is never sent. Resolution happens per call
-  // so a consent change between sweeps takes effect on the very next attempt.
+  // Policy first, fail closed: session → document → no anchor at all means
+  // nothing can prove this send is allowed, so it does not happen. Resolution
+  // happens per call so a consent change takes effect on the very next attempt.
   const sessionId = params.usage?.sessionId ?? null;
-  const derivationPolicy = sessionId
-    ? await resolveSessionDerivationPolicy(params.db, sessionId)
-    : 'allow';
+  const sourceDocumentId = params.usage?.sourceDocumentId ?? null;
+  const derivationPolicy =
+    sessionId !== null
+      ? await resolveSessionDerivationPolicy(params.db, sessionId)
+      : sourceDocumentId !== null
+        ? await resolveDocumentDerivationPolicy(params.db, sourceDocumentId)
+        : 'unresolvable';
   if (derivationPolicy !== 'allow') {
     throw new SolutionAnnotationPolicyError(derivationPolicy);
   }
@@ -89,8 +99,7 @@ export async function generateSolutionAnnotation(
   // Deterministic redaction at the boundary; the stored prompt is never sent raw.
   const redacted = redactIngestionText(params.promptMd);
   const recordUsage = async () => {
-    const sourceDocumentId = params.usage?.sourceDocumentId;
-    if (sessionId === null || !sourceDocumentId) return;
+    if (sessionId === null || sourceDocumentId === null) return;
     try {
       await writeIngestionUsageReceipt(params.db, {
         sourceDocumentId,

@@ -134,10 +134,13 @@ export async function runAutoEnrollForSession(
   }
 
   // Resolve document usage once per run; every enrolled block inherits it instead of
-  // paying an unindexed lookup per block.
+  // paying an unindexed lookup per block. The policy gates every model send below
+  // (assembly, attribution bridge/naming/embedder) — restricted documents still
+  // enroll but never reach a provider.
   const sessionDocUsage = {
     policy: await resolveSessionDerivationPolicy(params.db, params.sessionId),
     sessionId: params.sessionId,
+    sourceDocumentId: session.source_document_id ?? null,
   };
   const sourceDocumentId = session.source_document_id ?? '';
 
@@ -178,23 +181,37 @@ export async function runAutoEnrollForSession(
 
   // Block-assembly merge proposals run before any enroll import, while blocks are still
   // draft (mergeQuestions on user accept requires draft). AI only proposes; an outage is
-  // logged and swallowed because it must not abort enrollment.
-  try {
-    await runBlockAssemblyForSession(params.db, {
-      sessionId: params.sessionId,
-      blocks: blocks.map((b) => ({
-        id: b.id,
-        structured: b.structured,
-        layout_quality: b.layout_quality,
-        // page_spans lets projectBlock keep real page_index for VLM-path sessions;
-        // Tencent-path blocks carry placeholder page_index=0.
-        page_spans: b.page_spans,
-      })),
-      runTaskFn: params.runBlockAssemblyFn,
-      ctx: params.ctx ?? { db: params.db },
-    });
-  } catch (err) {
-    console.error(`[auto_enroll:block_assembly] pass failed for session ${params.sessionId}`, err);
+  // logged and swallowed because it must not abort enrollment. A restricted usage
+  // policy forbids the send entirely — the inner gate enforces the same.
+  if (sessionDocUsage.policy === 'allow') {
+    try {
+      await runBlockAssemblyForSession(params.db, {
+        sessionId: params.sessionId,
+        blocks: blocks.map((b) => ({
+          id: b.id,
+          structured: b.structured,
+          layout_quality: b.layout_quality,
+          // page_spans lets projectBlock keep real page_index for VLM-path sessions;
+          // Tencent-path blocks carry placeholder page_index=0.
+          page_spans: b.page_spans,
+        })),
+        usage: {
+          sourceDocumentId: sessionDocUsage.sourceDocumentId,
+          derivationPolicy: sessionDocUsage.policy,
+        },
+        runTaskFn: params.runBlockAssemblyFn,
+        ctx: params.ctx ?? { db: params.db },
+      });
+    } catch (err) {
+      console.error(
+        `[auto_enroll:block_assembly] pass failed for session ${params.sessionId}`,
+        err,
+      );
+    }
+  } else {
+    console.info(
+      `[auto_enroll] block assembly skipped for ${params.sessionId}: derivation policy '${sessionDocUsage.policy}'`,
+    );
   }
 
   const enrolled: AutoEnrolledBlock[] = [];
@@ -240,6 +257,14 @@ export async function runAutoEnrollForSession(
           tagKnowledgeFn,
           batchCache: tagBatchCache,
           sessionId: params.sessionId,
+          ...(sessionDocUsage.sourceDocumentId !== null
+            ? {
+                usage: {
+                  sourceDocumentId: sessionDocUsage.sourceDocumentId,
+                  derivationPolicy: sessionDocUsage.policy,
+                },
+              }
+            : {}),
           sourceRef: { kind: 'question_block', id: block.id },
           ctx: params.ctx ?? { db: params.db },
         });

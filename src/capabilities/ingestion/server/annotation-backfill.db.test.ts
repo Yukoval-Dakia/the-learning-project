@@ -44,6 +44,7 @@ import { and, eq, isNull, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AgentRunError } from '@/ai/agent-run-error';
+import type { ProviderTransportEvidence } from '@/ai/task-result';
 import { EMBED_VERSION, embedHash, knowledgeEmbedText } from '@/core/embed-source';
 import { SOLUTION_ANNOTATION_CONTRACT } from '@/core/schema/solution-annotation';
 import { embedCurrencyPredicate } from '@/db/embed-currency';
@@ -523,6 +524,7 @@ describe('embed currency on metadata-only writes', () => {
       source: 'vision_paper',
       draft_status: 'active',
       metadata: {
+        ingestion_session_id: 'sess_1',
         ingestion_enrollment: { knowledge: 'attributed', solution: 'missing' },
       },
       embedding: unitVec(0),
@@ -546,6 +548,7 @@ describe('embed currency on metadata-only writes', () => {
       source: 'vision_paper',
       draft_status: 'active',
       metadata: {
+        ingestion_session_id: 'sess_1',
         ingestion_enrollment: { knowledge: 'attributed', solution: 'missing' },
       },
       embedding: unitVec(0),
@@ -586,7 +589,9 @@ describe('sweep scope and retry accounting', () => {
         difficulty: 3,
         source: 'vision_paper',
         draft_status: draft,
-        metadata,
+        // A session anchor is what resolves policy to 'allow' here; unanchored
+        // rows fail closed by design.
+        metadata: { ingestion_session_id: 'sess_1', ...metadata },
         created_at: now,
         updated_at: now,
         version: 0,
@@ -642,6 +647,7 @@ describe('sweep scope and retry accounting', () => {
         source: 'vision_paper',
         draft_status: 'active',
         metadata: {
+          ingestion_session_id: 'sess_1',
           ingestion_enrollment: { knowledge: 'attributed', solution: 'missing' },
         },
         created_at: now,
@@ -724,6 +730,7 @@ describe('figure-dependent questions', () => {
       source: 'vision_paper',
       draft_status: 'active',
       metadata: {
+        ingestion_session_id: 'sess_1',
         ingestion_enrollment: { knowledge: 'attributed', solution: 'missing' },
       },
       figures: [
@@ -791,5 +798,212 @@ describe('invalid task output settlement', () => {
     const [run] = await db.select().from(ai_task_runs).where(eq(ai_task_runs.id, taskRunId));
     expect(run?.status).toBe('failure');
     expect(run?.finish_reason).toBe('model_output_invalid');
+  });
+});
+
+describe('infra transport evidence and backoff', () => {
+  const enrollmentOf = async (db: ReturnType<typeof testDb>, id: string) => {
+    const [row] = await db.select().from(question).where(eq(question.id, id));
+    return ((row?.metadata ?? {}) as Record<string, unknown>).ingestion_enrollment as Record<
+      string,
+      unknown
+    >;
+  };
+
+  const mkQuestion = async (db: ReturnType<typeof testDb>, enrollment: Record<string, unknown>) => {
+    const id = createId();
+    await db.insert(question).values({
+      id,
+      kind: 'short_answer',
+      // The id suffix lets the stub annotateFn pick this row's task-run error.
+      prompt_md: `infra 行题面：计算圆的面积公式。${id}`,
+      knowledge_ids: [],
+      difficulty: 3,
+      source: 'vision_paper',
+      draft_status: 'active',
+      metadata: {
+        ingestion_session_id: 'sess_1',
+        ingestion_enrollment: { knowledge: 'attributed', solution: 'missing', ...enrollment },
+      },
+      created_at: new Date(),
+      updated_at: new Date(),
+      version: 0,
+    });
+    return id;
+  };
+
+  const transportEvidence = (
+    sendState: 'not_sent' | 'sent_without_response',
+  ): ProviderTransportEvidence => ({
+    v: 1,
+    budget: { task_timeout_ms: 180_000 },
+    lane: 'undici_agent',
+    send_state: sendState,
+    totals: {
+      requests: 1,
+      dispatches: 1,
+      by_state: {
+        not_sent: sendState === 'not_sent' ? 1 : 0,
+        sent_without_response: sendState === 'sent_without_response' ? 1 : 0,
+        response_received: 0,
+        unknown: 0,
+        in_flight: 0,
+      },
+    },
+    requests: [
+      {
+        seq: 1,
+        loop: 'root',
+        lane: 'undici_agent',
+        fetch_invoked_at: new Date().toISOString(),
+        send_state: sendState,
+      },
+    ],
+    requests_seen: 1,
+    requests_dropped: 0,
+    captured_at: new Date().toISOString(),
+  });
+
+  const seedFailedRun = async (
+    db: ReturnType<typeof testDb>,
+    transport: ProviderTransportEvidence,
+  ) => {
+    const taskRunId = createId();
+    await db.insert(ai_task_runs).values({
+      id: taskRunId,
+      task_kind: 'IngestionSolutionAnnotationTask',
+      provider: 'stub',
+      model: 'stub',
+      input_hash: 'hash',
+      status: 'failure',
+      finish_reason: 'provider_error',
+      started_at: new Date(),
+      finished_at: new Date(),
+      usage_json: { inputTokens: 0, outputTokens: 0, transport },
+    });
+    return taskRunId;
+  };
+
+  // @invariant concurrency: only positively-evidenced unbilled failures spare the
+  //   paid budget — a settled not_sent wire is infra, while a send whose
+  //   disposition is unknown still counts as a paid attempt
+  // @fails-if a sent_without_response transport escapes the attempt counter, or a
+  //   proven not_sent failure consumes it
+  it('not_sent transport is infra; sent_without_response still pays an attempt', async () => {
+    const db = testDb();
+    const notSentRunId = await seedFailedRun(db, transportEvidence('not_sent'));
+    const uncertainRunId = await seedFailedRun(db, transportEvidence('sent_without_response'));
+    const notSentQ = await mkQuestion(db, {});
+    const uncertainQ = await mkQuestion(db, {});
+
+    const annotateFn = vi.fn(async (p: { promptMd: string }) => {
+      const taskRunId = p.promptMd.endsWith(notSentQ) ? notSentRunId : uncertainRunId;
+      // Connection-class failure: no bound status, transport is the only proof.
+      throw new AgentRunError({
+        kind: 'IngestionSolutionAnnotationTask',
+        taskRunId,
+        subtype: 'api_error_result',
+        apiErrorStatus: null,
+        errors: ['connect ECONNREFUSED'],
+      });
+    });
+    await runAnnotationBackfill({ db, questionIds: [notSentQ, uncertainQ], annotateFn });
+
+    const notSent = await enrollmentOf(db, notSentQ);
+    expect(notSent.solution_infra_failures).toBe(1);
+    expect(notSent.solution_attempts).toBeUndefined();
+
+    const uncertain = await enrollmentOf(db, uncertainQ);
+    expect(uncertain.solution_infra_failures).toBeUndefined();
+    expect(uncertain.solution_attempts).toBe(1);
+  });
+
+  // @invariant concurrency: after the burst budget a downed lane stops being
+  //   retried every sweep — the next resend is scheduled ≈ +4h instead
+  // @fails-if the thirteenth infra failure leaves the row eligible for the next
+  //   sweep, or no next_at is scheduled
+  it('past the burst budget a refusal schedules the next resend ≈ +4h', async () => {
+    const db = testDb();
+    const runId = await seedFailedRun(db, transportEvidence('not_sent'));
+    const questionId = await mkQuestion(db, { solution_infra_failures: 12 });
+    const now = new Date('2026-01-01T00:00:00Z');
+
+    await runAnnotationBackfill({
+      db,
+      questionIds: [questionId],
+      now,
+      annotateFn: async () => {
+        throw new AgentRunError({
+          kind: 'IngestionSolutionAnnotationTask',
+          taskRunId: runId,
+          subtype: 'api_error_result',
+          apiErrorStatus: null,
+          errors: ['connect ECONNREFUSED'],
+        });
+      },
+    });
+
+    const enrollment = await enrollmentOf(db, questionId);
+    expect(enrollment.solution_infra_failures).toBe(13);
+    expect(enrollment.solution_attempts).toBeUndefined();
+    const nextAt = new Date(enrollment.solution_infra_next_at as string).getTime();
+    expect(nextAt).toBe(now.getTime() + 4 * 60 * 60 * 1000);
+
+    // The sweep honors the timestamp: an hour later the row still waits.
+    const early = await runAnnotationBackfill({
+      db,
+      now: new Date(now.getTime() + 60 * 60 * 1000),
+      annotateFn: vi.fn(),
+    });
+    expect(early.scanned).toBe(0);
+    // And it becomes eligible again once the timestamp passes.
+    const later = await runAnnotationBackfill({
+      db,
+      questionIds: [questionId],
+      now: new Date(now.getTime() + 5 * 60 * 60 * 1000),
+      annotateFn: async () => {
+        throw new AgentRunError({
+          kind: 'IngestionSolutionAnnotationTask',
+          taskRunId: runId,
+          subtype: 'api_error_result',
+          apiErrorStatus: null,
+          errors: ['connect ECONNREFUSED'],
+        });
+      },
+    });
+    expect(later.scanned).toBe(1);
+    expect(later.infra_failures).toBe(1);
+  });
+
+  // @invariant concurrency: a quota_exhausted refusal always waits at least four
+  //   hours — an account-level refusal is never re-polled at sweep cadence
+  // @fails-if a quota refusal is retried on the next sweep or burns a paid attempt
+  it('quota_exhausted waits at least four hours from the first refusal', async () => {
+    const db = testDb();
+    const questionId = await mkQuestion(db, {});
+    const now = new Date('2026-01-02T00:00:00Z');
+
+    await runAnnotationBackfill({
+      db,
+      questionIds: [questionId],
+      now,
+      annotateFn: async () => {
+        // No seeded ai_task_runs row: the bound 429 + the provider's own quota
+        // signature carry the verdict without transport evidence.
+        throw new AgentRunError({
+          kind: 'IngestionSolutionAnnotationTask',
+          taskRunId: 'tr_quota',
+          subtype: 'api_error_result',
+          apiErrorStatus: 429,
+          errors: ['GoUsageLimitError'],
+        });
+      },
+    });
+
+    const enrollment = await enrollmentOf(db, questionId);
+    expect(enrollment.solution_infra_failures).toBe(1);
+    expect(enrollment.solution_attempts).toBeUndefined();
+    const nextAt = new Date(enrollment.solution_infra_next_at as string).getTime();
+    expect(nextAt).toBe(now.getTime() + 4 * 60 * 60 * 1000);
   });
 });

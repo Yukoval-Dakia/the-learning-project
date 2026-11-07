@@ -18320,8 +18320,10 @@ export interface operations {
                                 solution: {
                                     confidence: number | null;
                                     method_md: string | null;
+                                    /** @enum {string|null} */
+                                    reason: "figure_dependent" | null;
                                     /** @enum {string} */
-                                    state: "annotated" | "missing";
+                                    state: "annotated" | "missing" | "skipped";
                                     steps_md: string[];
                                 } | null;
                                 /** @enum {string} */

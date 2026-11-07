@@ -75,6 +75,7 @@
     "db:backfill:genesis": "tsx scripts/backfill-genesis-events.ts",
     "db:backfill:solution-prior": "tsx scripts/backfill-solution-prior.ts",
     "db:backfill:lost-attribution": "tsx scripts/backfill-lost-attribution.ts",
+    "db:backfill:annotation-legacy": "tsx scripts/backfill-annotation-legacy.ts",
     "jyeoo:backfill": "tsx scripts/jyeoo-backfill.ts",
     "embed:inventory": "tsx scripts/embed-inventory.ts",
     "supply:execute": "tsx scripts/supply-execute.ts",
