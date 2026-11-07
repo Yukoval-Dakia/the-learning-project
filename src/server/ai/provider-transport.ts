@@ -103,21 +103,18 @@ export interface ProviderTransportCollectorInit {
 
 export class ProviderTransportCollector {
   private optionalDependency: ProviderStartupDependencyEvidence | undefined;
-  private optionalDependencyFailure: FailureDiagnostics | undefined;
 
   get optionalDependencyUnavailable(): boolean {
     return this.optionalDependency?.status === 'unavailable';
   }
 
   noteOptionalDependencyFailure(name: 'web_search', diagnostics: FailureDiagnostics): void {
-    this.optionalDependency = { name, status: 'unavailable' };
-    this.optionalDependencyFailure = diagnostics;
+    this.optionalDependency = { name, status: 'unavailable', failure: diagnostics };
   }
 
   /** Positive evidence: the dependency was mounted and its handshake succeeded. */
   noteOptionalDependencyConnected(name: 'web_search'): void {
     this.optionalDependency = { name, status: 'connected' };
-    this.optionalDependencyFailure = undefined;
   }
 
   private readonly budget: MutableBudgetReceipt;
@@ -457,9 +454,6 @@ export class ProviderTransportCollector {
               : 'unknown';
     return {
       ...(this.optionalDependency ? { startup_dependency: this.optionalDependency } : {}),
-      ...(this.optionalDependencyFailure
-        ? { startup_dependency_failures: [this.optionalDependencyFailure] }
-        : {}),
       v: 1,
       budget: {
         ...this.budget,

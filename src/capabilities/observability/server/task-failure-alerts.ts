@@ -167,15 +167,18 @@ type UsageJson = (typeof ai_task_runs.$inferSelect)['usage_json'];
 
 /** Positive startup evidence: the key exists only when the dependency was mounted. */
 function dependencyEvidence(usage: UsageJson): DependencyEvidence | undefined {
-  const status = usage.transport?.startup_dependency?.status;
-  if (status === 'connected' || status === 'unavailable') return status;
-  // Rows written before connected evidence existed: a recorded failure still counts.
-  const failures = usage.transport?.startup_dependency_failures;
-  return Array.isArray(failures) && failures.length > 0 ? 'unavailable' : undefined;
+  const dependency = usage.transport?.startup_dependency;
+  if (dependency?.status === 'connected' || dependency?.status === 'unavailable') {
+    return dependency.status;
+  }
+  // Rows written before the merged shape: a recorded failure still counts.
+  const legacy = usage.transport?.startup_dependency_failures;
+  return Array.isArray(legacy) && legacy.length > 0 ? 'unavailable' : undefined;
 }
 
 function dependencyFailureCategory(usage: UsageJson): 'authorization' | 'network' {
-  const failures = usage.transport?.startup_dependency_failures;
+  const merged = usage.transport?.startup_dependency?.failure;
+  const failures = merged ? [merged] : usage.transport?.startup_dependency_failures;
   if (!Array.isArray(failures)) return 'network';
   const unauthorized = failures.some((failure) => {
     const causes = Array.isArray(failure.cause) ? failure.cause : [];
@@ -216,15 +219,18 @@ async function evaluateDependencyNotices(db: Db | Tx, now: Date): Promise<Depend
     )
     .orderBy(desc(ai_task_runs.finished_at), desc(ai_task_runs.id));
 
-  // Walk newest-first. A connected handshake ends the streak; a real failed run
-  // extends it; a retried attempt, sweeper convergence, unsealed reply or
+  // Walk newest-first. A connected handshake ends the streak; a run whose
+  // dependency failed counts regardless of whether the Copilot turn itself
+  // succeeded — a degraded reply that still answers is exactly the case this
+  // notice exists for. A retried attempt, sweeper convergence, unsealed reply or
   // cancelled help attempt is skipped without counting or resetting.
   const streak: { id: string; finished_at: Date | string; usage_json: UsageJson }[] = [];
   for (const row of rows) {
     if (row.finished_at === null) continue;
     if (!row.is_failure && !row.is_success) continue;
-    if (dependencyEvidence(row.usage_json) === 'connected') break;
-    if (!row.is_failure) continue;
+    const evidence = dependencyEvidence(row.usage_json);
+    if (evidence === 'connected') break;
+    if (evidence !== 'unavailable') continue;
     streak.push({ id: row.id, finished_at: row.finished_at, usage_json: row.usage_json });
   }
   if (streak.length < DEPENDENCY_NOTICE_STREAK) return [];
