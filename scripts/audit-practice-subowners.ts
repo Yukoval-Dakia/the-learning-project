@@ -215,7 +215,7 @@ const SOLUTION_PRIOR_RE =
   /readSolutionPriorForServer|nearestQuestionsByMethod|question_solution_prior|admission\/solution-prior/;
 const PRIOR_FIELD_RE = /\b(?:solution_prior|solutionPrior|SolutionPrior|StoredSolutionPrior)\w*\b/;
 const LEARNER_SURFACE_RE =
-  /(?:^|\/)(?:api|ui)\/|(?:^|\/)ui-public\.tsx?$|^server\/|^src\/core\/schema\/|(?:^|\/)[^/]*(?:contracts?|dto)[^/]*\.tsx?$/i;
+  /^src\/ui-next\/|^web\/src\/|(?:^|\/)(?:api|ui)\/|(?:^|\/)ui-public\.tsx?$|^server\/|^src\/core\/schema\/|(?:^|\/)[^/]*(?:contracts?|dto)[^/]*\.tsx?$/i;
 const INDEPENDENT_IMPORT_RE =
   /(?:^|\/)grading\/|(?:^|\/)tasks\/[^/]*(?:solve|adjudicat|grad|judg)[^/]*\.tsx?$|(?:^|\/)admission\/adjudicate\.ts$/;
 const INDEPENDENT_RE =
