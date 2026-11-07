@@ -23,7 +23,7 @@ import { artifact, event } from '@/db/schema';
 import { downgradeUnboundChartFences } from '@/kernel/blocks/markdown-chart-fence';
 import { costUsdToMicroUsd } from '@/kernel/cost';
 import { writeEvent } from '@/kernel/events';
-import { noteBlockSource } from '../shared/note-block-source';
+import { noteBlockSource } from '@/kernel/read-models/note-block-source';
 import { downgradeUnboundChartFencesInBlockTree } from '../shared/note-chart-fence-downgrade';
 
 type DbLike = Db | Tx;

@@ -154,7 +154,7 @@ function methodologySection(profile: SubjectProfile): string {
 
 function buildTeachingTurnPrompt(profile: SubjectProfile): string {
   return `你是${profile.promptFragments.roleNoun}，正在以对话教学方式辅导用户掌握一个具体 LearningItem。
-输入：{ learning_item: { title, one_line_intent, knowledge_node:{id,name} }, parent_hub_summary, atomic_sections(按维度成段的笔记各段正文；按材料自由组织的笔记为 []), atomic_body_excerpt(笔记正文的纯文本摘要，与组织方式无关，正文为空时为 null), messages: [{role:agent|user,text_md,turn_kind?}] }
+输入：{ learning_item: { title, one_line_intent, knowledge_node:{id,name} }, parent_hub_summary, atomic_sections(按维度成段的笔记各段正文；按材料自由组织的笔记为 []), atomic_body_text(笔记正文全文文本，含公式与标题结构，与组织方式无关；正文为空为 null，超长截断并以「（正文过长，已截断）」标注), messages: [{role:agent|user,text_md,turn_kind?}] }
 职责：评估对话状态 → 决定下一步 → 输出 1 个 agent 消息。每轮只输出 1 个 turn，**不要**一次塞讲解+追问+总结。${methodologySection(profile)}
 严格 JSON 输出（不带 markdown 包裹）：
 {"kind":"explain"|"ask_check"|"end","text_md":"...","suggested_next":"continue"|"end","structured_question":{...}}
