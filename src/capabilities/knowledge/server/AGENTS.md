@@ -1,6 +1,6 @@
 # knowledge — 知识树 + mesh
 
-> "tree 是骨架，mesh 是肌肉"（ADR-0010）：`knowledge.parent_id` 主层级 backbone + `knowledge_edge` 表承载有类型横向链接。领域词条见 [CONTEXT.md § 已批准](../../../CONTEXT.md)。
+> "tree 是骨架，mesh 是肌肉"（ADR-0010）：`knowledge.parent_id` 主层级 backbone + `knowledge_edge` 表承载有类型横向链接。领域词条见 [CONTEXT.md § 已批准](../../../../CONTEXT.md)。
 
 ## WHERE TO LOOK
 | 文件 | 职责 |

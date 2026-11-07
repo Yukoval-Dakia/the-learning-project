@@ -14,6 +14,7 @@ export const meta = {
 }
 
 const REPO = '/Users/yukoval/yukoval-projects/the-learning-project'
+const DOCS = '/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs'
 const SCOUT = '.omc/research/backlog-engine-scout.md'
 const INV = '.omc/research/backlog-engine-linear-inventory.md'
 const TEAM = 'YUK'
@@ -48,10 +49,10 @@ This file is the shared grounding + rules for downstream scanners. Write it with
 - Header: repo root ${REPO}; Linear team "${TEAM}"; today's date (run \`date +%Y-%m-%d\`); default branch main; pointer to ${INV} for dedup.
 - IRON RULE: every finding cites concrete evidence (file:line / PR#+comment-url / YUK-id); no speculation.
 - Active Linear projects: list them by running the Linear list_projects tool for team ${TEAM} (ToolSearch "select:mcp__claude_ai_Linear__list_projects") — name + status + which is the current product direction; mark Completed projects as "do not add to".
-- Linear staleness caveat: updatedAt polluted by reorgs → use createdAt + status + supersession. Point to the graveyard doc docs/archive/superpowers/specs/2026-06-18-rethink-abandoned-directions-archive.md (if it exists) for abandoned directions.
+- Linear staleness caveat: updatedAt polluted by reorgs → use createdAt + status + supersession. Point to the graveyard doc ${DOCS}/archive/superpowers/specs/2026-06-18-rethink-abandoned-directions-archive.md (if it exists) for abandoned directions.
 - Stack reality (read CLAUDE.md "Stack note"): Hono API + Vite SPA + pg-boss (Next.js retired YUK-321 M5); PG presence (not Redis); capability manifests in src/capabilities/*/manifest.ts composed in server/app.ts. ADRs predating this may be legitimately superseded.
 - Codebase TODO facts: run \`rg -n -e 'TODO|FIXME|HACK|XXX' -g '*.ts' -g '*.tsx' src server web scripts | head -40\` and summarize; note that the real value is ADR drift + non-TODO debt (501/not_implemented stubs, it.todo, FUTURE_* declared-unimplemented, @deprecated).
-- docs/ map: run \`find docs -name '*.md' | wc -l\` and \`ls docs docs/design docs/archive/superpowers/specs docs/archive/superpowers/plans docs/planning\`; note distinguish genuinely-open-and-untracked from historical/shipped/intentional-deferred.
+- docs map (docs live outside the repo at ${DOCS}): run \`find ${DOCS} -name '*.md' | wc -l\` and \`ls ${DOCS} ${DOCS}/design ${DOCS}/archive/superpowers/specs ${DOCS}/archive/superpowers/plans ${DOCS}/planning\`; note distinguish genuinely-open-and-untracked from historical/shipped/intentional-deferred.
 - Issue body template (read an existing issue's shape, e.g. via Linear get_issue on a recent Bug issue): sections 现象 / 机制 / 代码证据(file:line, mandatory) / 影响 / 修法(give BOTH 轻量 minimal AND 完整 thorough options) / 验收. Labels from existing set; priority 1-4.
 - Dedup rule (MANDATORY): before proposing any NEW issue, check it against ${INV}; classify NEW / TRACKED(cite YUK) / LINEAR-HYGIENE(merge/close existing). Only NEW gets drafted.
 Return ONLY the file path written.`,
@@ -73,7 +74,7 @@ const DISCOVERY_SCHEMA = {
 }
 const disc = await agent(
   `cd ${REPO}. Enumerate inputs for the backlog scan. Return a structured object:
-- adrs: every ADR id from \`ls docs/adr/*.md\` (just the leading number string, e.g. "0001","0034"; one per file).
+- adrs: every ADR id from \`ls ${DOCS}/adr/*.md\` (just the leading number string, e.g. "0001","0034"; one per file).
 - reviewPRs: open PRs likely to carry UNADDRESSED review comments. From \`gh pr list --state open --json number,title,headRefName,isDraft,author --limit 80\`: include PRs that are NOT \`audit-drift/*\` branches and NOT dependabot, especially bot-authored (devin/codex) or human PRs with review threads. For each add {number,title,note} (note = why it's a review candidate). Cap ~15.
 - auditDriftPRs: the numbers of all open \`audit-drift/YYYY-MM-DD\` draft PRs (process-hygiene pile).
 - depPRs: open dependabot PRs as {number,title}.
@@ -109,7 +110,7 @@ function adrTask(key, adrs) {
     key, label: `scan:${key}`,
     prompt: `${preamble(key)}
 
-YOUR AREA — ADR implementation drift. For each ADR below (docs/adr/), read it, extract the DECISION, then check whether current code implements it. Report DRIFT ("ADR decided X, code does Y (file:line)") and silently-reversed-without-supersession-marker cases. If an ADR is correctly marked superseded and code matches, do NOT report.
+YOUR AREA — ADR implementation drift. For each ADR below (${DOCS}/adr/), read it, extract the DECISION, then check whether current code implements it. Report DRIFT ("ADR decided X, code does Y (file:line)") and silently-reversed-without-supersession-marker cases. If an ADR is correctly marked superseded and code matches, do NOT report.
 ADRs: ${adrs.join(',')}
 Stack note (scout): Next.js→Hono+Vite+pg-boss, Redis→PG, routes→capability manifests. ADRs predating that may be legitimately superseded — only report if the supersession is UNDOCUMENTED or code half-migrated.`,
   }
@@ -123,10 +124,10 @@ const TASKS = [
 
 YOUR AREA — non-ADR code debt across src/ server/ web/ scripts/: \`throw ... not_implemented\` / HTTP 501 stubs; \`it.todo(\`/\`describe.todo\` placeholder tests; declared-but-unimplemented routes/maps (e.g. FUTURE_* dispatch tables); \`@deprecated\` symbols still referenced (check the deprecation notice is accurate vs callers); TODO/FIXME/HACK/XXX without a YUK ref. Use rg for markers, LSP or grep to confirm reachability. Report only actionable + untracked (check ${INV}).`,
   },
-  { key: 'DOCSADR', label: 'scan:DOCSADR', prompt: `${preamble('DOCSADR')}\n\nYOUR AREA — unfinished DECISIONS inside docs/adr/: ADRs in Proposed/Draft/Accepted-but-unimplemented with no tracking issue; unresolved "open question"/"TBD"/"未决" that still matter; ADRs contradicting a newer ADR without a supersession note. Cite adr:line + quote. Skip implemented/tracked.` },
-  { key: 'DOCSSPEC', label: 'scan:DOCSSPEC', prompt: `${preamble('DOCSSPEC')}\n\nYOUR AREA — docs/archive/superpowers/specs/ + docs/archive/superpowers/plans/. Find genuinely-open, still-relevant, UNTRACKED items: unresolved open questions, deferred items with no YUK, specced capability never built. Weight toward recent docs + current direction. Ignore shipped phases + intentional deferrals carrying a tracking ref. Cite doc:line + quote.` },
-  { key: 'DOCSDES', label: 'scan:DOCSDES', prompt: `${preamble('DOCSDES')}\n\nYOUR AREA — docs/design/ + docs/planning/ (roadmaps v0.4/v0.5/copilot-arch). Find roadmap items planned-never-started/tracked; design decisions left TBD that still matter; gap-analysis/decisions-ledger docs listing unresolved items. Cite doc:line + quote. Skip shipped/tracked.` },
-  { key: 'DOCSMISC', label: 'scan:DOCSMISC', prompt: `${preamble('DOCSMISC')}\n\nYOUR AREA — docs/discussion/, docs/modules/, docs/architecture.md, docs/agents/, docs/preflight/, docs/deploy/, root docs/*.md. Find unresolved threads, stale architecture/module claims that contradict current code, deploy/runbook gaps. Cite doc:line + quote. Skip tracked/shipped.` },
+  { key: 'DOCSADR', label: 'scan:DOCSADR', prompt: `${preamble('DOCSADR')}\n\nYOUR AREA — unfinished DECISIONS inside ${DOCS}/adr/: ADRs in Proposed/Draft/Accepted-but-unimplemented with no tracking issue; unresolved "open question"/"TBD"/"未决" that still matter; ADRs contradicting a newer ADR without a supersession note. Cite adr:line + quote. Skip implemented/tracked.` },
+  { key: 'DOCSSPEC', label: 'scan:DOCSSPEC', prompt: `${preamble('DOCSSPEC')}\n\nYOUR AREA — ${DOCS}/archive/superpowers/specs/ + ${DOCS}/archive/superpowers/plans/. Find genuinely-open, still-relevant, UNTRACKED items: unresolved open questions, deferred items with no YUK, specced capability never built. Weight toward recent docs + current direction. Ignore shipped phases + intentional deferrals carrying a tracking ref. Cite doc:line + quote.` },
+  { key: 'DOCSDES', label: 'scan:DOCSDES', prompt: `${preamble('DOCSDES')}\n\nYOUR AREA — ${DOCS}/design/ + ${DOCS}/planning/ (roadmaps v0.4/v0.5/copilot-arch). Find roadmap items planned-never-started/tracked; design decisions left TBD that still matter; gap-analysis/decisions-ledger docs listing unresolved items. Cite doc:line + quote. Skip shipped/tracked.` },
+  { key: 'DOCSMISC', label: 'scan:DOCSMISC', prompt: `${preamble('DOCSMISC')}\n\nYOUR AREA — ${DOCS}/discussion/, ${DOCS}/modules/, ${DOCS}/architecture.md, ${DOCS}/agents/, ${DOCS}/preflight/, ${DOCS}/deploy/, ${DOCS}/*.md. Find unresolved threads, stale architecture/module claims that contradict current code, deploy/runbook gaps. Cite doc:line + quote. Skip tracked/shipped.` },
   {
     key: 'PRREVIEW', label: 'scan:PRREVIEW',
     prompt: `${preamble('PRREVIEW')}
@@ -146,7 +147,7 @@ Cite PR numbers + dates + advisory linkage.`,
     key: 'LINEAR', label: 'scan:LINEAR',
     prompt: `${preamble('LINEAR')}
 
-YOUR AREA — stale & duplicate Linear issues. Read ${INV} (full inventory + dormancy candidates) AND the graveyard doc docs/archive/superpowers/specs/2026-06-18-rethink-abandoned-directions-archive.md (if present).
+YOUR AREA — stale & duplicate Linear issues. Read ${INV} (full inventory + dormancy candidates) AND the graveyard doc ${DOCS}/archive/superpowers/specs/2026-06-18-rethink-abandoned-directions-archive.md (if present).
 DUPLICATES: scan the OPEN set for near-identical or strongly-overlapping titles/scope. For each genuine cluster, read both issues (Linear get_issue — ToolSearch the tool) and confirm real overlap; recommend which to keep + which to set duplicateOf/close. Do NOT flag legitimate sequential decompositions (Step 0-N families, T-D*/S2-* sub-task families, follow-up chains).
 STALE/SUPERSEDED: from OPEN (esp. dormancy candidates), find issues whose direction is abandoned/demoted per the graveyard, or superseded by a newer issue, or describing shipped work. Cite YUK-id + createdAt + supersession evidence. Be conservative — backlog ≠ stale.
 Output standard F-LINEAR-<n> blocks; include both YUK-ids for dups.`,
