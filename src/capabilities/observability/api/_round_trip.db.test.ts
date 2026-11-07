@@ -10,7 +10,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { hydrateConfigFromDb } from '@/core/config/server/hydrate';
 import {
   difficulty_calibration_label,
-  edge_reconciliation_log,
   event,
   item_calibration,
   item_family_calibration,
@@ -130,7 +129,7 @@ describe('round-trip: export → import → DB state mirrored', () => {
   // YUK-356: the round-trip above only proves the knowledge single-table path. The
   // newly-backed-up slow-warming calibration / telemetry / reconciliation tables
   // added to FK_ORDER (mastery_state, item_calibration, item_family_calibration,
-  // difficulty_calibration_label, selection_observation, edge_reconciliation_log)
+  // difficulty_calibration_label, selection_observation)
   // carry the failure-prone column shapes: `real` (float4 — precision must survive
   // JS-number → JSON → ::real re-insert) and `jsonb` (nested objects/arrays/unicode
   // must round-trip byte-equal through restoreValue()'s JSON.stringify + bind). None
@@ -143,6 +142,8 @@ describe('round-trip: export → import → DB state mirrored', () => {
   // equal it. Seeded literals deliberately include precision-sensitive reals (0.1,
   // negatives, many-digit fractions) and richly-nested jsonb (objects, arrays,
   // unicode, null leaves) so a precision truncation or an object-shape mangle fails.
+  // @invariant data: slow-warming FK_ORDER rows survive export → wipe → import byte-equal, including float4 precision and nested jsonb shape
+  // @fails-if a real column loses float4 precision or a jsonb column serialises to a string / reorders or drops keys through dump → restore; the byte-equal deep-equality assertions then fail
   it('round-trips jsonb objects + real precision for the slow-warming FK_ORDER tables', async () => {
     const db = testDb();
     const now = new Date('2024-02-02T00:00:00Z');
@@ -232,22 +233,6 @@ describe('round-trip: export → import → DB state mirrored', () => {
       created_at: now,
     });
 
-    // edge_reconciliation_log: 1 real col + 1 jsonb (llm_raw). KEEP_BOTH so the DB
-    // CHECK (action ↔ superseded_edge_id) is satisfied with a null superseded id.
-    await db.insert(edge_reconciliation_log).values({
-      id: 'erl1',
-      candidate_from_knowledge_id: 'k-from',
-      candidate_to_knowledge_id: 'k-to',
-      candidate_relation_type: 'related_to',
-      action: 'KEEP_BOTH',
-      superseded_edge_id: null,
-      confidence: 0.65,
-      reason: 'low-confidence keep both',
-      llm_raw: { decision: 'KEEP_BOTH', scores: [0.6, 0.65], rationale: { lang: '中文' } },
-      planned_at: now,
-      applied_at: now,
-    });
-
     // ── Snapshot DB state BEFORE export (already float4-rounded by Postgres) ──
     const before = {
       mastery_state: await db.select().from(mastery_state),
@@ -255,7 +240,6 @@ describe('round-trip: export → import → DB state mirrored', () => {
       item_family_calibration: await db.select().from(item_family_calibration),
       difficulty_calibration_label: await db.select().from(difficulty_calibration_label),
       selection_observation: await db.select().from(selection_observation),
-      edge_reconciliation_log: await db.select().from(edge_reconciliation_log),
     };
 
     // ── Export ──
@@ -319,7 +303,6 @@ describe('round-trip: export → import → DB state mirrored', () => {
       item_family_calibration: await db.select().from(item_family_calibration),
       difficulty_calibration_label: await db.select().from(difficulty_calibration_label),
       selection_observation: await db.select().from(selection_observation),
-      edge_reconciliation_log: await db.select().from(edge_reconciliation_log),
     };
     for (const t of Object.keys(before) as Array<keyof typeof before>) {
       expect(after[t], `${t} restored row count`).toHaveLength(1);
