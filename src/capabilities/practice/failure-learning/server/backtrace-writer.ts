@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray } from 'drizzle-orm';
+import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { EMBED_VERSION } from '@/core/embed-source';
 import {
   ATTEMPT_INSIGHT_VERSION,
@@ -10,7 +10,7 @@ import {
 } from '@/core/schema/backtrace';
 import type { Db, Tx } from '@/db/client';
 import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
-import { attempt_insight_vector, backtrace_work, source_document } from '@/db/schema';
+import { ai_task_runs, attempt_insight_vector, backtrace_work, source_document } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { lockEventCorrectionsAll } from '@/kernel/events/correction-lock';
 import { lockAssessmentEvaluationGroup } from '@/kernel/locks/assessment-evaluation-group-lock';
@@ -75,6 +75,16 @@ async function paid(
         ),
       );
     if (blocked.some((x) => x.id !== workId)) return [];
+    const [retry] = await tx
+      .select()
+      .from(backtrace_work)
+      .where(and(eq(backtrace_work.id, workId), eq(backtrace_work.state, 'ready')));
+    if (retry)
+      return tx
+        .update(backtrace_work)
+        .set({ state: 'sending' })
+        .where(and(eq(backtrace_work.id, workId), eq(backtrace_work.state, 'ready')))
+        .returning();
     return tx
       .insert(backtrace_work)
       .values({ id: workId, attempt_event_id: id, stage, input_digest: digest, state: 'sending' })
@@ -86,11 +96,14 @@ async function paid(
     const [old] = await db.select().from(backtrace_work).where(eq(backtrace_work.id, workId));
     return old?.state === 'completed' ? old.result : null;
   }
+  const attemptNo =
+    typeof claimed[0]?.result?.attempt_no === 'number' ? claimed[0].result.attempt_no : 0;
+  const attemptTaskId = attemptNo ? `${workId}:retry${attemptNo}` : workId;
   const runTaskFn = makeRunTaskFn(db);
   let result: Awaited<ReturnType<typeof runTaskFn>>;
   try {
     result = await runTaskFn(stage, input, {
-      taskRunId: workId,
+      taskRunId: attemptTaskId,
       beforeProviderQuery: async () => {
         const current = await loadBacktraceInput(db, id);
         if (!current || (stage === 'AttemptInsightTask' && current.digest !== digest))
@@ -105,11 +118,20 @@ async function paid(
   } catch (error) {
     await db
       .update(backtrace_work)
-      .set({ state: 'needs_reconciliation', result: { reason_md: '发送结果未确认，需对账后收口' } })
+      .set({
+        state: 'needs_reconciliation',
+        result: {
+          reason_md: '发送结果未确认，需对账后收口',
+          attempt_no: attemptNo,
+          last_task_run_id: attemptTaskId,
+        },
+      })
       .where(eq(backtrace_work.id, workId));
     throw error;
   }
   const stored = {
+    attempt_no: attemptNo,
+    last_task_run_id: attemptTaskId,
     output: result.structured_output,
     text: result.text,
     task_run_id: result.task_run_id,
@@ -449,7 +471,10 @@ export async function reconcileBacktraceFailure(
     };
     const changed = await tx
       .update(backtrace_work)
-      .set({ state: 'failed', result })
+      .set({
+        state: 'failed',
+        result: sql`coalesce(${backtrace_work.result}, '{}'::jsonb) || ${JSON.stringify(result)}::jsonb`,
+      })
       .where(
         and(
           eq(backtrace_work.id, opts.work_id),
@@ -461,7 +486,10 @@ export async function reconcileBacktraceFailure(
     if (changed[0])
       await tx
         .update(backtrace_work)
-        .set({ state: 'failed', result })
+        .set({
+          state: 'failed',
+          result: sql`coalesce(${backtrace_work.result}, '{}'::jsonb) || ${JSON.stringify(result)}::jsonb`,
+        })
         .where(
           and(
             eq(backtrace_work.attempt_event_id, changed[0].attempt_event_id),
@@ -473,4 +501,66 @@ export async function reconcileBacktraceFailure(
     return changed;
   });
   return { resolved: rows.length === 1 };
+}
+
+/** Only positive transport evidence can reopen a failed claim; absence of output is not evidence. */
+export async function retryUnsentBacktraceWork(
+  db: Db,
+  opts: { work_id: string; input_digest: string },
+) {
+  return db.transaction(async (tx) => {
+    const [work] = await tx
+      .select()
+      .from(backtrace_work)
+      .where(
+        and(
+          eq(backtrace_work.id, opts.work_id),
+          eq(backtrace_work.input_digest, opts.input_digest),
+        ),
+      )
+      .for('update');
+    if (!work || !['failed', 'needs_reconciliation', 'sending'].includes(work.state))
+      return { ready: false };
+    const runId =
+      typeof work.result?.last_task_run_id === 'string' ? work.result.last_task_run_id : work.id;
+    const [run] = await tx.select().from(ai_task_runs).where(eq(ai_task_runs.id, runId));
+    const transport = run?.usage_json.transport;
+    const totals = transport?.totals;
+    if (
+      !run?.finished_at ||
+      run.status === 'running' ||
+      !transport ||
+      transport.send_state !== 'not_sent' ||
+      !totals?.requests ||
+      transport.requests_dropped !== 0 ||
+      totals.by_state.not_sent !== totals.requests ||
+      transport.requests_seen !== totals.requests
+    )
+      return { ready: false };
+    const attemptNo = typeof work.result?.attempt_no === 'number' ? work.result.attempt_no + 1 : 1;
+    await tx
+      .update(backtrace_work)
+      .set({
+        state: 'ready',
+        result: {
+          ...work.result,
+          attempt_no: attemptNo,
+          last_task_run_id: runId,
+          not_sent_proof_task_run_id: runId,
+        },
+      })
+      .where(eq(backtrace_work.id, work.id));
+    await tx
+      .update(backtrace_work)
+      .set({ state: 'ready' })
+      .where(
+        and(
+          eq(backtrace_work.attempt_event_id, work.attempt_event_id),
+          eq(backtrace_work.input_digest, work.input_digest),
+          eq(backtrace_work.stage, 'preparation'),
+          inArray(backtrace_work.state, ['failed', 'needs_reconciliation']),
+        ),
+      );
+    return { ready: true };
+  });
 }

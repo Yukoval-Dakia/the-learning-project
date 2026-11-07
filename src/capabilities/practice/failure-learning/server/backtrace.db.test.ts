@@ -11,7 +11,11 @@ import {
 import { loadBacktraceInput } from './backtrace-input';
 import { readBacktrace } from './backtrace-read';
 import { currentInsight } from './backtrace-store';
-import { reconcileBacktraceFailure, writeAttemptInsight } from './backtrace-writer';
+import {
+  reconcileBacktraceFailure,
+  retryUnsentBacktraceWork,
+  writeAttemptInsight,
+} from './backtrace-writer';
 
 describe('Backtrace derived-source authorization', () => {
   beforeEach(beginTestTransaction);
@@ -201,6 +205,12 @@ describe('Backtrace work redelivery', () => {
     expect(await currentInsight(db, 'replay_done')).not.toBeNull();
     const descriptions = await db.select().from(event).where(eq(event.subject_id, 'replay_done'));
     expect(descriptions.filter((x) => x.action === 'experimental:attempt_insight')).toHaveLength(1);
+    expect(
+      await retryUnsentBacktraceWork(db, {
+        work_id: 'old_unknown_claim',
+        input_digest: unknown.digest,
+      }),
+    ).toEqual({ ready: false });
     await writeAttemptInsight(db, 'replay_unknown');
     expect(await currentInsight(db, 'replay_unknown')).toBeNull();
     expect(

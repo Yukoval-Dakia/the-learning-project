@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 if (!process.env.DATABASE_URL) throw new Error('explicit DATABASE_URL required');
 const { db } = await import('@/db/client');
-const { reconcileBacktraceFailure } = await import(
+const { reconcileBacktraceFailure, retryUnsentBacktraceWork } = await import(
   '@/capabilities/practice/failure-learning/server/backtrace-writer'
 );
 const { backfillBacktrace, revertBacktraceBackfill } = await import(
@@ -20,7 +20,16 @@ const afterTime = value('--after-time');
 if (!!afterId !== !!afterTime || (afterTime && !Number.isFinite(Date.parse(afterTime))))
   throw new Error('cursor requires a valid --after-time and --after-id');
 try {
-  if (value('--reconcile-failed'))
+  if (value('--retry-not-sent'))
+    console.log(
+      JSON.stringify(
+        await retryUnsentBacktraceWork(db, {
+          work_id: value('--retry-not-sent') ?? '',
+          input_digest: value('--input-digest') ?? '',
+        }),
+      ),
+    );
+  else if (value('--reconcile-failed'))
     console.log(
       JSON.stringify(
         await reconcileBacktraceFailure(db, {
