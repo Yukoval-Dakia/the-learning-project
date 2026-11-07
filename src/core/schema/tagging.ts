@@ -7,8 +7,8 @@
  * looks at an extracted question's text + an optional knowledge_hint + a
  * knowledge-grid snapshot, and suggests which knowledge_ids the question covers,
  * each with a confidence. These are pure I/O contracts; the runtime invoker
- * lives in `src/capabilities/ingestion/server/tagging.ts` and the route decision in
- * `src/capabilities/ingestion/server/workflow-judge.ts`.
+ * lives in `src/capabilities/ingestion/server/tagging.ts` and the confidence
+ * aggregation in `src/capabilities/ingestion/server/workflow-judge.ts`.
  */
 import { z } from 'zod';
 
@@ -59,7 +59,7 @@ export type TaggingSuggestionT = z.infer<typeof TaggingSuggestion>;
 
 export const TaggingOutput = z.object({
   suggestions: z.array(TaggingSuggestion).default([]),
-  /** Overall confidence in the tagging as a whole (gates the WorkflowJudge). */
+  /** Overall confidence in the tagging as a whole (a signal, never a gate). */
   overall_confidence: z.number().min(0).max(1),
   reasoning: z.string().default(''),
 });
@@ -69,17 +69,15 @@ export type TaggingOutputT = z.infer<typeof TaggingOutput>;
 //
 // WorkflowJudge is NOT a second LLM (spec §7 Q1 — single-user). It is a
 // deterministic aggregator over extraction_confidence (from extraction) +
-// TaggingTask confidence, producing a route decision + prefilled fields the
-// auto-enroll path consumes. See src/capabilities/ingestion/server/workflow-judge.ts.
-
-export const WorkflowJudgeRoute = z.enum(['auto', 'review']);
-export type WorkflowJudgeRouteT = z.infer<typeof WorkflowJudgeRoute>;
+// TaggingTask confidence. The combined confidence is a stored signal, not a
+// route: every judged block keeps its prefilled fields. See
+// src/capabilities/ingestion/server/workflow-judge.ts.
 
 /**
- * The fields the auto-enroll path prefills when routing 'auto'. `outcome`
- * defaults to 'unanswered' (item/material) — the SAFEST signal: a captured exam
- * question with no graded answer is item-bank, never a fabricated attempt. The
- * full outcome-judging (grading the handwritten answer) is out of scope here.
+ * The fields the auto-enroll path prefills. `outcome` defaults to 'unanswered'
+ * (item/material) — the SAFEST signal: a captured exam question with no graded
+ * answer is item-bank, never a fabricated attempt. The full outcome-judging
+ * (grading the handwritten answer) is out of scope here.
  */
 export const WorkflowJudgePrefilled = z.object({
   knowledge_ids: z.array(z.string().min(1)),
@@ -90,7 +88,6 @@ export const WorkflowJudgePrefilled = z.object({
 export type WorkflowJudgePrefilledT = z.infer<typeof WorkflowJudgePrefilled>;
 
 export const WorkflowJudgeResult = z.object({
-  route: WorkflowJudgeRoute,
   /** Combined confidence (weakest-link of extraction + tagging). */
   confidence: z.number().min(0).max(1),
   prefilled: WorkflowJudgePrefilled,

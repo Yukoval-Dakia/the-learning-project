@@ -285,6 +285,7 @@ const AutoEnrollObservationSchema = z.object({
   route: z.string().nullable(),
   confidence: z.number().nullable(),
   threshold: z.number().nullable(),
+  grid_truncated: z.boolean().nullable(),
   reasoning: z.string().nullable(),
   suggested_knowledge_ids: z.array(z.string()),
   mistake_draft: AutoEnrollMistakeDraftSchema.nullable(),
@@ -310,6 +311,12 @@ export const IngestionBlockSchema = z
     knowledge_hint: z.string().nullable(),
     imported_question_id: z.string().nullable(),
     imported_attempt_event_id: z.string().nullable(),
+    /**
+     * Judge confidence stored with this block's enrolled question, or the observe
+     * event's confidence while no enrollment exists. Null when neither is known.
+     * A learner surface labels it honestly instead of hiding low confidence.
+     */
+    workflow_judge_confidence: z.number().nullable(),
     auto_enroll_observation: AutoEnrollObservationSchema.nullable(),
     created_at: z.number().int().nonnegative(),
   })
