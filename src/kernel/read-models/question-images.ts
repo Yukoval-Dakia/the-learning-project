@@ -8,7 +8,7 @@ import { inArray, sql } from 'drizzle-orm';
 
 import type { Db, Tx } from '@/db/client';
 import { learning_session, source_asset, source_document } from '@/db/schema';
-import { INGESTION_QUESTION_SOURCES, isIngestionQuestionSource } from './admission-source';
+import { isIngestionQuestionSource } from './admission-source';
 
 export interface LearnerImagePageIndex {
   /** Whole-page asset ids per source document id. */
