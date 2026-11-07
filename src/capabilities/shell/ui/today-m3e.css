@@ -126,6 +126,11 @@ main[data-ui-next].un-today-page {
 
   /* YUK-1738 — a system-side notice (some AI work keeps failing), not a learner error:
      caution, not critical. */
+  & .td-flow > .td-flags + .td-flag,
+  & .td-flow > .td-flag + .td-flag {
+    margin-block-start: var(--un-sp-2);
+  }
+
   & .td-flag.td-flag-caution {
     background: var(--un-caution-soft);
     color: var(--un-caution);
