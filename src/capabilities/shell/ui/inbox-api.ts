@@ -58,13 +58,13 @@ export function isAcceptSupported(kind: string): boolean {
   return acceptSupported.has(kind);
 }
 
-// 关系类型白话（设计稿 REL_LABEL 原文）。
+// 关系类型白话；字段名不给学习者看。
 export const REL_LABEL: Record<string, string> = {
-  prerequisite: '前置 prerequisite',
-  related_to: '相关 related_to',
-  contrasts_with: '对比 contrasts_with',
-  applied_in: '应用 applied_in',
-  derived_from: '派生 derived_from',
+  prerequisite: '前置',
+  related_to: '相关',
+  contrasts_with: '对比',
+  applied_in: '应用',
+  derived_from: '派生',
 };
 
 // The API boundary is generated from the provider-owned manifest. The view
@@ -357,14 +357,21 @@ const WRITTEN_FOR_LEARNER_ID_RE = /(block-[a-z0-9]{12,}|[a-z]+:[a-z0-9:_-]{8,}|\
 const INTERNAL_REASON_ID_RE =
   /(block-[a-z0-9]{12,}|[a-z]+:[a-z0-9:_-]{8,}|\b(?=[a-z0-9]*[a-z])[a-z0-9]{4,}…|\b[a-z0-9]+_[a-z0-9_]{4,}…|\b[a-z][a-z0-9]*\.[a-z0-9]+(?:_[a-z0-9]+)+|\b[a-z][a-z0-9]{2,}(?:_[0-9]{2,})*_(?=[a-z0-9]*[a-z])[a-z0-9]{2,}(?:_[a-z0-9]{2,})*\b|\b[a-z0-9]{20,}\b)/g;
 
+// Stands in for a removed id, so brackets it leaves empty go too while a blank in a quoted question
+// such as （ ） stays.
+const REMOVED_ID = '\uE000';
+const EMPTIED_BRACKETS = /[（(]\s*\uE000\s*[）)]/g;
+
 /** A reason as the first thing read: ids gone (a known one keeps its name), no stray spaces. */
 export function reasonWithoutIds(
   text: string,
   nameOf?: (id: string) => string | undefined,
 ): string {
   return splitReasonIds(text)
-    .map((seg) => (seg.raw ? (nameOf?.(seg.text) ?? '') : seg.text))
+    .map((seg) => (seg.raw ? (nameOf?.(seg.text) ?? REMOVED_ID) : seg.text))
     .join('')
+    .replace(EMPTIED_BRACKETS, '')
+    .replaceAll(REMOVED_ID, '')
     .replace(/[ \t]{2,}/g, ' ')
     .replace(/[ \t]+(?=[（）「」，。；：、])/g, '')
     .trim();
