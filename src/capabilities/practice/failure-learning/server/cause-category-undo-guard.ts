@@ -13,8 +13,10 @@ import type { Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { cause_category_overlay } from '@/db/schema/knowledge';
 import {
+  AUTO_APPLIED_UNDO_CLEAR,
   type AutoAppliedUndoBlock,
   type AutoAppliedUndoGuardInput,
+  type AutoAppliedUndoGuardVerdict,
   type AutoAppliedUndoOwnerGuard,
   type DbLike,
   genericUndoBlock,
@@ -52,18 +54,18 @@ interface CauseCheck {
 async function inspectCauseCategories(
   db: DbLike,
   inputs: readonly AutoAppliedUndoGuardInput[],
-): Promise<Map<string, AutoAppliedUndoBlock>> {
-  const blocks = new Map<string, AutoAppliedUndoBlock>();
+): Promise<Map<string, AutoAppliedUndoGuardVerdict>> {
+  const verdicts = new Map<string, AutoAppliedUndoGuardVerdict>();
   const checks: CauseCheck[] = [];
   for (const input of inputs) {
     const categoryId = categoryIdOf(input.payload);
     if (!categoryId) {
-      blocks.set(input.proposalId, genericUndoBlock('failed', 'apply_record_missing'));
+      verdicts.set(input.proposalId, genericUndoBlock('failed', 'apply_record_missing'));
       continue;
     }
     checks.push({ proposalId: input.proposalId, categoryId });
   }
-  if (checks.length === 0) return blocks;
+  if (checks.length === 0) return verdicts;
 
   const categoryIds = [...new Set(checks.map((check) => check.categoryId))];
   const rows = await db
@@ -101,26 +103,29 @@ async function inspectCauseCategories(
   for (const check of checks) {
     const row = rowById.get(check.categoryId);
     if (!row) {
-      blocks.set(check.proposalId, block('cause_not_found'));
+      verdicts.set(check.proposalId, block('cause_not_found'));
       continue;
     }
     if (row.proposalEventId !== check.proposalId) {
-      blocks.set(check.proposalId, block('cause_not_owned'));
+      verdicts.set(check.proposalId, block('cause_not_owned'));
       continue;
     }
     if (row.archivedAt !== null) {
-      blocks.set(check.proposalId, block('cause_already_archived'));
+      verdicts.set(check.proposalId, block('cause_already_archived'));
       continue;
     }
     if (row.status !== 'active') {
-      blocks.set(check.proposalId, block('cause_not_active'));
+      verdicts.set(check.proposalId, block('cause_not_active'));
       continue;
     }
     if (usedCategoryIds.has(check.categoryId)) {
-      blocks.set(check.proposalId, block('cause_used_in_attribution'));
+      verdicts.set(check.proposalId, block('cause_used_in_attribution'));
+    }
+    if (!verdicts.has(check.proposalId)) {
+      verdicts.set(check.proposalId, AUTO_APPLIED_UNDO_CLEAR);
     }
   }
-  return blocks;
+  return verdicts;
 }
 
 async function lockCauseCategory(tx: Tx, input: AutoAppliedUndoGuardInput): Promise<void> {

@@ -10,7 +10,9 @@ import { startProbeAnswerClient } from './probe-answer-client';
 import {
   acknowledgeStartTeachingBriefOutcome,
   decideStartProposal,
+  dismissStartAiNoticesFn,
   getStartActiveProbes,
+  getStartAiNoticeDismissals,
   getStartAutoApplied,
   getStartConjectures,
   getStartKnowledgeFrontier,
@@ -45,6 +47,8 @@ export const startWorkbenchClient: WorkbenchClient = {
   getOvernightDigest: () => getStartOvernightDigest(transport),
   getTodayCost: () => getStartTodayCost(transport),
   getTaskFailureAlerts: () => getStartTaskFailureAlerts(transport),
+  listAiNoticeDismissals: () => getStartAiNoticeDismissals(transport),
+  dismissAiNotices: (keys) => dismissStartAiNoticesFn({ ...transport, data: { keys } }),
   listDecisionProposalPage: (cursor) =>
     getStartProposalInbox({
       ...transport,
