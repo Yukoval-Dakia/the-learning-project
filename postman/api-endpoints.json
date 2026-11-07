@@ -454,6 +454,19 @@
     ]
   },
   {
+    "path": "/api/copilot/runs/:id/retry",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "安全重发失败的学伴回答，沿用原学习者消息",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": null,
+        "notes": "无需 body。需 x-internal-token 和 Idempotency-Key。202 返回 run_id/session_id/derivation_policy，Location 为新 run events。同失败 run 连点或重放沿用唯一后继。409 details.reason：not_failed/not_latest/session_busy/failure_not_retryable/write_tool_started/safety_unknown/conversation_inactive/question_retracted。已接受后继的重放不受会话关闭或新接纳闸门影响；新接纳队列禁用503、backlog或速率限制429。重发后不再提供原checkpoint。"
+      }
+    ]
+  },
+  {
     "path": "/api/copilot/runs/:id/cancel",
     "methods": [
       {

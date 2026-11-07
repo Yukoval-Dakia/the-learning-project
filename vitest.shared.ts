@@ -103,6 +103,7 @@ export const dbTestInclude = [
   'src/capabilities/agency/server/misconception-promote.db.test.ts',
   'src/capabilities/agency/server/proposal-appliers.db.test.ts',
   'src/capabilities/copilot/api/cancel-run.db.test.ts',
+  'src/capabilities/copilot/api/retry-run.db.test.ts',
   'src/capabilities/copilot/api/nudges.db.test.ts',
   'src/capabilities/copilot/api/revert-checkpoint.db.test.ts',
   'src/capabilities/copilot/api/review-answer.db.test.ts',
