@@ -6,6 +6,8 @@ import {
   NoteRefineUndoExperimental,
 } from './artifact-events';
 import {
+  AttemptInsightExperimental,
+  BacktraceJudgementExperimental,
   ExperimentalEvent,
   MasteryProgressExperimental,
   MemoryBriefRefreshExperimental,
@@ -115,6 +117,8 @@ export * from './subagent-events';
 
 export const Event = z.union([
   KnownEvent,
+  AttemptInsightExperimental,
+  BacktraceJudgementExperimental,
   UserCauseExperimental,
   RecordCaptureExperimental,
   MemoryBriefRefreshExperimental,

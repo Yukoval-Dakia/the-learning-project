@@ -55,6 +55,7 @@ export {
   question_solution_prior_backfill_attempt,
   question_solution_prior_vector,
 } from './schema/assessment';
+export { attempt_insight_vector, backtrace_work } from './schema/backtrace';
 export {
   difficulty_calibration_evidence,
   difficulty_calibration_label,

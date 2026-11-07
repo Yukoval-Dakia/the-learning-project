@@ -150,7 +150,7 @@
 // No enforced FK (loose text-ref to session/task_run/event/asset). NEW
 // FK_ORDER table → bump SCHEMA_VERSION (4.34 → 4.35).
 // drawing.source_scoped column → the backup row shape changes → 4.35 → 4.36.
-export const SCHEMA_VERSION = '4.36';
+export const SCHEMA_VERSION = '4.37';
 
 export const SUBSCRIPTION_PROGRESS_TABLES = [
   'event_subscription_checkpoint',
@@ -207,6 +207,7 @@ export const MAX_INLINE_ASSETS = 45;
 // NOT in the CSV export body, but they are physical tables that need wipe/insert sweep
 // ordering, so they DO belong in FK_ORDER (CSV-body membership and FK_ORDER membership are orthogonal).
 export const FK_ORDER = [
+  'backtrace_work',
   'knowledge',
   'mastery_state',
   // YUK-454 inc-1 (ADR-0036 身份层): misconception — AI-proposed/authored 认知身份实体。
@@ -433,6 +434,7 @@ export type TableName = (typeof FK_ORDER)[number];
 export const BACKUP_EXCLUDED_TABLES: ReadonlySet<string> = new Set<string>([
   // YUK-1771: derived vectors, rebuilt from question_solution_prior by embed_backfill.
   'question_solution_prior_vector',
+  'attempt_insight_vector',
   // YUK-1771: one-off backfill ledger; losing it costs at most one more paid call per group.
   'question_solution_prior_backfill_attempt',
   // YUK-1448: 15-minute actor/role-bound pagination evidence; no durable gap/issuance authority.

@@ -2,8 +2,10 @@ import { randomUUID } from 'node:crypto';
 import { and, eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildMemoryEventIngestHandler } from '@/capabilities/agency/server/memory/triggers';
+import { backtraceContext } from '@/capabilities/practice/failure-learning/public';
 import { event, job_events, learning_session } from '@/db/schema';
 import { writeJobEvent } from '@/kernel/job-events';
+import { installBacktraceContextReader } from '@/kernel/read-models/backtrace';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { memoryClientMock } from '../../../../tests/helpers/memory-client-mock';
 import { reconcileCopilotDurableRun, runCopilotRun } from '../jobs/copilot_run';
@@ -78,6 +80,7 @@ async function assertRestrictedLifecycle(runId: string) {
 }
 
 beforeEach(async () => {
+  installBacktraceContextReader(backtraceContext);
   await resetDb();
   await testDb().delete(job_events);
   await testDb()

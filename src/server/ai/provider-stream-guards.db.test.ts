@@ -228,3 +228,50 @@ it('accepts slow continuous structured data but rejects capped structured output
   expect(await testDb().select().from(ai_task_runs)).toHaveLength(2);
   expect(await testDb().select().from(cost_ledger)).toHaveLength(2);
 });
+
+// @invariant concurrency: Individual and batch submits cannot replace an accepted prior unit.
+// @fails-if A repeated id overwrites sealed progress or completion omits a declared part.
+it('retains accepted prior parts while a remaining batch completes in input order', async () => {
+  const part = (id: string, value: string) => ({
+    part_id: id,
+    methods: [{ core_idea_md: value, key_step_md: value }],
+    pitfalls: [],
+    prerequisites: [],
+    difficulty: { b_logit: 0, sd_logit: 1, basis_md: 'synthetic' },
+  });
+  const b = part('b', 'retained');
+  const a = part('a', 'first');
+  const c = part('c', 'last');
+  await serve((response, body) => {
+    const tools = body.tools as { function: { name: string } }[];
+    const name = tools.find((tool) => tool.function.name.endsWith('__submit'))?.function.name;
+    if (!name) throw new Error('submit missing from actual wire');
+    const args =
+      sends === 1 ? b : sends === 2 ? { prior: [part('b', 'overwrite'), a] } : { prior: [c, a] };
+    event(response, {
+      role: 'assistant',
+      tool_calls: [
+        {
+          index: 0,
+          id: `batch-${sends}`,
+          type: 'function',
+          function: { name, arguments: JSON.stringify(args) },
+        },
+      ],
+    });
+    event(response, {}, 'tool_calls');
+    response.end('data: [DONE]\n\n');
+  });
+  const result = await runTask(
+    kind,
+    {
+      mode: 'prior',
+      parts: ['a', 'b', 'c'].map((part_id) => ({ part_id, prompt_md: 'synthetic' })),
+      units: [],
+      answers: [],
+      knowledge_candidates: [],
+    },
+    { db: testDb(), allowedTools: ['mcp__structured_output__submit'] },
+  );
+  expect(result.structured_output).toEqual({ prior: [a, b, c] });
+});

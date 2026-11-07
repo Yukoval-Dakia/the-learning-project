@@ -72,7 +72,9 @@ export const STRUCTURED_SUBMIT_REMINDER =
   'with the complete output object as arguments (no result envelope).';
 
 /** YUK-1904 — unit-mode contract: one unit per submit call, accepted units are not rewritten. */
-export function structuredSubmitUnitSuffix(_forced: boolean): string {
+export function structuredSubmitUnitSuffix(_forced: boolean, batches = false): string {
+  if (batches)
+    return `\nSubmit remaining units through ${STRUCTURED_OUTPUT_SUBMIT_TOOL}, individually or in the declared batch envelope. Never repeat accepted units. Each unit is validated and retained separately; completion requires every declared unit accepted.`;
   return `\nSubmit ONE unit per ${STRUCTURED_OUTPUT_SUBMIT_TOOL} call: the call's arguments are a single unit object, never the whole array and never a JSON-encoded string. A rejected unit is corrected from the reported field/shape errors and resubmitted on its own; a unit whose acceptance receipt you already received must not be resubmitted. Completion requires every input unit accepted; repetition without progress, time and financial budgets end an unsuccessful run.`;
 }
 
@@ -342,7 +344,7 @@ export function createStructuredSubmitLoop(input: {
       '[structured_submit_turn]',
       JSON.stringify({
         task_run_id: input.runId,
-        turn: ++turns,
+        turn: turns,
         input_tokens: message.usage.input,
         output_tokens: message.usage.output,
         cache_read_tokens: message.usage.cacheRead,
@@ -379,6 +381,7 @@ export function createStructuredSubmitLoop(input: {
       repairedArguments: unknown,
       rawArguments: readonly (string | undefined)[],
     ) {
+      turns += 1;
       const calls = message.content.filter((block) => block.type === 'toolCall');
       const verdict = classifySubmitTurn(
         { stopReason: message.stopReason, toolCallNames: calls.map((call) => call.name) },
@@ -397,8 +400,11 @@ export function createStructuredSubmitLoop(input: {
 
       // ── YUK-1904 unit mode: accept/seal per unit, assemble on full coverage. ──
       if (plan) {
-        const landUnit = (id: string): { action: 'end' } | { action: 'continue' } => {
-          acceptedUnits.set(id, parsed.data);
+        const landUnit = (
+          id: string,
+          unit: unknown,
+        ): { action: 'end' } | { action: 'continue' } => {
+          acceptedUnits.set(id, unit);
           // Unit progress re-arms the run-level abandonment watch (missing
           // submit / raw JSON / unknown id): steady unit progress is not a
           // no-progress run.
@@ -557,78 +563,105 @@ export function createStructuredSubmitLoop(input: {
             'missing_submit',
           );
         }
-        const { id } = plan.unitOf(candidate);
-        if (typeof id !== 'string') {
-          const stableErrors = parsed.success
-            ? ['unit id: missing from the submitted object']
-            : structuredSubmitShapeErrors(input.parameters, parsed.error.issues);
-          const detailErrors = parsed.success
-            ? stableErrors
-            : structuredSubmitShapeErrors(input.parameters, parsed.error.issues, candidate);
-          return rejectUnit(
-            undefined,
-            stableErrors.join('\n'),
-            detailErrors.sort().join('\n'),
-            'unit_id_missing',
-          );
-        }
-        if (!expected.includes(id)) {
-          const feedback = `Unknown unit id. Submit only declared input unit ids. Remaining units: ${remainingIds().join(', ')}.`;
-          return rejectUnit(undefined, 'unknown_unit_id', feedback, 'unknown_unit_id');
-        }
-        if (acceptedUnits.has(id)) {
-          // Accepted units are never rewritten; the wasted call counts toward the
-          // run-level terminal-resubmit cap (P1), not any unit's shape-error budget.
-          const feedback = `Unit ${id} was already accepted and was not rewritten. Do not resubmit it. Remaining units: ${remainingIds().join(', ')}.`;
-          return rejectTerminalResubmit(id, 'already_accepted', feedback);
-        }
-        if (sealedUnits.has(id)) {
-          const feedback = `Unit ${id} is sealed after repeated identical shape errors and can no longer be accepted. Continue with: ${remainingIds().join(', ')}.`;
-          return rejectTerminalResubmit(id, 'sealed_resubmit', feedback);
-        }
-        if (!parsed.success) {
-          // Counter key stays stable: candidate-derived JSON offsets and supplied
-          // value details belong only in the correction feedback.
-          const stableErrors = structuredSubmitShapeErrors(input.parameters, parsed.error.issues);
-          const detailErrors = structuredSubmitShapeErrors(
-            input.parameters,
-            parsed.error.issues,
-            candidate,
-          );
-          return rejectUnit(
-            id,
-            stableErrors.join('\n'),
-            detailErrors.sort().join('\n'),
-            'shape_rejected',
-          );
-        }
-        const unitErrors = [...(plan.validateUnit?.(parsed.data, input.taskInput) ?? [])];
-        if (unitErrors.length > 0) {
-          return rejectUnit(
-            id,
-            unitErrors.join('\n'),
-            unitErrors.sort().join('\n'),
-            'validate_rejected',
-          );
-        }
-        if (toolResults.length !== 1 || toolResults[0]?.isError) {
-          // Whole-output parity: a tool gate (e.g. the cost ceiling's
-          // beforeToolCall) can refuse the call after the args parse. Never
-          // accept a unit from an error receipt or rewrite it to success.
-          const receiptText = toolResults
-            .flatMap((result) =>
-              result.content
-                .filter((block): block is { type: 'text'; text: string } => block.type === 'text')
-                .map((block) => block.text),
+        const batch = parsed.success ? plan.unitsOf?.(parsed.data) : undefined;
+        if (batch?.length) {
+          const ids = batch.map((unit) => plan.unitOf(unit).id);
+          if (
+            new Set(ids).size !== ids.length ||
+            ids.some(
+              (id) =>
+                typeof id !== 'string' ||
+                !expected.includes(id) ||
+                acceptedUnits.has(id) ||
+                sealedUnits.has(id),
             )
-            .join('\n')
-            .trim();
-          const feedback = `Submit tool did not return a successful receipt${
-            receiptText ? `: ${oneLine(receiptText)}` : ''
-          }. The unit was not accepted; resubmit it only if the tool is available.`;
-          return rejectUnit(id, 'tool_receipt_error', feedback, 'tool_receipt_error');
+          ) {
+            return rejectUnit(
+              undefined,
+              'invalid_batch_coverage',
+              'Batch must contain unique, declared, remaining unit ids only.',
+              'invalid_batch_coverage',
+            );
+          }
         }
-        return landUnit(id);
+        for (const unitCandidate of batch?.length ? batch : [candidate]) {
+          const candidate = unitCandidate;
+          const parsed = schema.safeParse(candidate);
+          const { id } = plan.unitOf(candidate);
+          if (typeof id !== 'string') {
+            const stableErrors = parsed.success
+              ? ['unit id: missing from the submitted object']
+              : structuredSubmitShapeErrors(input.parameters, parsed.error.issues);
+            const detailErrors = parsed.success
+              ? stableErrors
+              : structuredSubmitShapeErrors(input.parameters, parsed.error.issues, candidate);
+            return rejectUnit(
+              undefined,
+              stableErrors.join('\n'),
+              detailErrors.sort().join('\n'),
+              'unit_id_missing',
+            );
+          }
+          if (!expected.includes(id)) {
+            const feedback = `Unknown unit id. Submit only declared input unit ids. Remaining units: ${remainingIds().join(', ')}.`;
+            return rejectUnit(undefined, 'unknown_unit_id', feedback, 'unknown_unit_id');
+          }
+          if (acceptedUnits.has(id)) {
+            // Accepted units are never rewritten; the wasted call counts toward the
+            // run-level terminal-resubmit cap (P1), not any unit's shape-error budget.
+            const feedback = `Unit ${id} was already accepted and was not rewritten. Do not resubmit it. Remaining units: ${remainingIds().join(', ')}.`;
+            return rejectTerminalResubmit(id, 'already_accepted', feedback);
+          }
+          if (sealedUnits.has(id)) {
+            const feedback = `Unit ${id} is sealed after repeated identical shape errors and can no longer be accepted. Continue with: ${remainingIds().join(', ')}.`;
+            return rejectTerminalResubmit(id, 'sealed_resubmit', feedback);
+          }
+          if (!parsed.success) {
+            // Counter key stays stable: candidate-derived JSON offsets and supplied
+            // value details belong only in the correction feedback.
+            const stableErrors = structuredSubmitShapeErrors(input.parameters, parsed.error.issues);
+            const detailErrors = structuredSubmitShapeErrors(
+              input.parameters,
+              parsed.error.issues,
+              candidate,
+            );
+            return rejectUnit(
+              id,
+              stableErrors.join('\n'),
+              detailErrors.sort().join('\n'),
+              'shape_rejected',
+            );
+          }
+          const unitErrors = [...(plan.validateUnit?.(parsed.data, input.taskInput) ?? [])];
+          if (unitErrors.length > 0) {
+            return rejectUnit(
+              id,
+              unitErrors.join('\n'),
+              unitErrors.sort().join('\n'),
+              'validate_rejected',
+            );
+          }
+          if (toolResults.length !== 1 || toolResults[0]?.isError) {
+            // Whole-output parity: a tool gate (e.g. the cost ceiling's
+            // beforeToolCall) can refuse the call after the args parse. Never
+            // accept a unit from an error receipt or rewrite it to success.
+            const receiptText = toolResults
+              .flatMap((result) =>
+                result.content
+                  .filter((block): block is { type: 'text'; text: string } => block.type === 'text')
+                  .map((block) => block.text),
+              )
+              .join('\n')
+              .trim();
+            const feedback = `Submit tool did not return a successful receipt${
+              receiptText ? `: ${oneLine(receiptText)}` : ''
+            }. The unit was not accepted; resubmit it only if the tool is available.`;
+            return rejectUnit(id, 'tool_receipt_error', feedback, 'tool_receipt_error');
+          }
+          const landed = landUnit(id, parsed.data);
+          if (landed.action === 'end') return landed;
+        }
+        return { action: 'continue' as const };
       }
 
       // ── Whole-output mode (#2533 semantics, unchanged). ──
