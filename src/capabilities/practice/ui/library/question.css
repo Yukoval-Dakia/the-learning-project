@@ -123,9 +123,7 @@
 
   & .qd-stem {
     max-width: var(--un-w-prose);
-    color: var(--un-text-1);
     font-size: var(--un-fs-3);
-    line-height: var(--un-lh-prose);
   }
 
   & .qd-stem img,
