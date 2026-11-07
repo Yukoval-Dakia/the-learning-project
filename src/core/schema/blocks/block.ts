@@ -107,7 +107,13 @@ export const ChartBlock = z
       .min(1)
       .max(8),
     data_source: z.discriminatedUnion('kind', [
-      z.object({ kind: z.literal('model') }).strict(),
+      z
+        .object({ kind: z.literal('model') })
+        .strict()
+        .meta({
+          description:
+            'Model-authored data for learning content (e.g., a function value table). Learner statistics must use tool_result.',
+        }),
       z
         .object({
           kind: z.literal('tool_result'),

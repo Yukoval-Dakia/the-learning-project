@@ -105,6 +105,16 @@ export function chartSeriesIssues(block: ChartBlockT): BlockIssueT[] {
   return issues.slice(0, MAX_ISSUES);
 }
 
+/** chart blocks whose series are authoritative only after commit binding. */
+export function chartPublishedAfterBinding(block: unknown): boolean {
+  return (
+    block !== null &&
+    typeof block === 'object' &&
+    (block as { kind?: unknown }).kind === 'chart' &&
+    (block as { data_source?: { kind?: unknown } }).data_source?.kind === 'tool_result'
+  );
+}
+
 /**
  * Replace the model's series with the recorded value at the binding path. The
  * recorded value must already be a series array (`[{name, points:[[x,y],…]}]`);

@@ -373,11 +373,15 @@ async function resolvePrimaryViewNomination(
 
 /**
  * The recorded value behind a chart's tool_result binding. Same gate as the hero
- * nomination: a successful root domain call whose stored output still matches
- * its trace hash. An unresolvable binding drops the block instead of rendering
- * the model's numbers.
+ * nomination, plus the producer's declared chart_bindings: a successful call is
+ * not statistical evidence just because its JSON looks like a series. compose_block
+ * output carries no chart_bindings, so it can never launder its own series.
  */
-function chartBindingOutput(trace: readonly TraceEntry[], toolUseId: string): unknown | undefined {
+function chartBindingOutput(
+  trace: readonly TraceEntry[],
+  toolUseId: string,
+  path: string,
+): unknown | undefined {
   const entry = trace.find(
     (candidate) =>
       candidate.tool_use_id === toolUseId &&
@@ -387,6 +391,12 @@ function chartBindingOutput(trace: readonly TraceEntry[], toolUseId: string): un
       candidate.effect !== 'control',
   );
   if (!entry) return undefined;
+  const output = entry.domain_output;
+  const declared =
+    isRecord(output) && Array.isArray(output.chart_bindings)
+      ? output.chart_bindings.filter((value): value is string => typeof value === 'string')
+      : [];
+  if (!declared.includes(path)) return undefined;
   return entry.output_sha256 === sha256CanonicalJson(entry.domain_output)
     ? entry.domain_output
     : undefined;
@@ -596,7 +606,11 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
         if (chart.data.data_source.kind === 'model') {
           return [{ ref: output.ref, block: chart.data }];
         }
-        const recorded = chartBindingOutput(trace, chart.data.data_source.tool_use_id);
+        const recorded = chartBindingOutput(
+          trace,
+          chart.data.data_source.tool_use_id,
+          chart.data.data_source.path,
+        );
         if (recorded === undefined) return [];
         const bound = bindChartSeries(chart.data, recorded);
         return bound.ok ? [{ ref: output.ref, block: bound.block }] : [];
