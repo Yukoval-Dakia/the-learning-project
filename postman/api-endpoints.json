@@ -642,6 +642,27 @@
     ]
   },
   {
+    "path": "/api/workbench/ai-notices/dismissals",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "学习者已关闭的 AI 失败提示（今日页，YUK-1965）",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "近 60 天的关闭记录展开成 key 列表。"
+      },
+      {
+        "method": "POST",
+        "summary": "关闭 AI 失败提示，写一条追加事件（YUK-1965）",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": { "keys": ["task_failure_alert:consecutive:CopilotTask:run_1"] },
+        "notes": "不改任务和告警记录；返回关闭后的完整 key 列表。"
+      }
+    ]
+  },
+  {
     "path": "/api/workbench/overnight-digest",
     "methods": [
       {

@@ -105,7 +105,7 @@ main[data-ui-next].un-today-page {
     font-weight: var(--un-fw-semibold);
   }
 
-  /* ═══ AI failure flags (position 1, above the brief) ═══ */
+  /* ═══ AI failure notice (position 1, above the brief) ═══ */
   & .td-flags {
     display: grid;
     gap: var(--un-sp-2);
@@ -139,6 +139,10 @@ main[data-ui-next].un-today-page {
 
   & .td-flag-ic {
     flex: none;
+  }
+
+  & .td-flag-close {
+    margin-inline-start: auto;
   }
 
   & .td-flag-t {

@@ -1,5 +1,5 @@
 import { createContext, useContext } from 'react';
-import { type ApiOperationJsonResponse, apiJson } from '@/ui/lib/api';
+import { type ApiOperationJsonResponse, apiJson, apiOperationJson } from '@/ui/lib/api';
 import { undoAiChange } from '@/ui/lib/undo-ai-change';
 import {
   decideProposal,
@@ -20,6 +20,8 @@ export type WorkbenchClient = {
   getTodayCost: () => Promise<ApiOperationJsonResponse<'getTodayCost'>>;
   /** YUK-1738 — task kinds that keep failing (read-only; the hourly job records them). */
   getTaskFailureAlerts: () => Promise<ApiOperationJsonResponse<'getTaskFailureAlerts'>>;
+  listAiNoticeDismissals: () => Promise<ApiOperationJsonResponse<'listAiNoticeDismissals'>>;
+  dismissAiNotices: (keys: string[]) => Promise<ApiOperationJsonResponse<'dismissAiNotices'>>;
   listDecisionProposalPage: typeof listDecisionProposalPage;
   listObservationProposalPreview: typeof listObservationProposalPreview;
   listAutoApplied: typeof listAutoApplied;
@@ -42,6 +44,16 @@ export const httpWorkbenchClient: WorkbenchClient = {
     apiJson<ApiOperationJsonResponse<'getTaskFailureAlerts'>>(
       '/api/observability/task-failure-alerts',
     ),
+  listAiNoticeDismissals: () =>
+    apiJson<ApiOperationJsonResponse<'listAiNoticeDismissals'>>(
+      '/api/workbench/ai-notices/dismissals',
+    ),
+  dismissAiNotices: (keys) =>
+    apiOperationJson('dismissAiNotices', {
+      url: '/api/workbench/ai-notices/dismissals',
+      method: 'POST',
+      body: { keys },
+    }),
   listDecisionProposalPage: (...args) => listDecisionProposalPage(...args),
   listObservationProposalPreview: () => listObservationProposalPreview(),
   listAutoApplied: (...args) => listAutoApplied(...args),

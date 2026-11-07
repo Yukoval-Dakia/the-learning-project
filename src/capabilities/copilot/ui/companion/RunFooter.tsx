@@ -253,7 +253,16 @@ export function RunFooter({ controller }: { controller: CompanionController }) {
           已经撤回了，但对话没刷新出来。
         </Notice>
       ) : error ? (
-        <Notice tone="critical">{error}</Notice>
+        <Notice
+          tone="critical"
+          actions={
+            <Button variant="ghost" size="sm" onClick={actions.dismissError}>
+              知道了
+            </Button>
+          }
+        >
+          {error}
+        </Notice>
       ) : null}
       <ReadOnlyNotice controller={controller} />
     </div>
