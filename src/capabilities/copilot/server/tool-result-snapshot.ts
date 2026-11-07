@@ -81,6 +81,7 @@ const POLICIES: Record<string, ResultPolicy> = {
   write_quiz: ['artifact_id', 'question_count', 'knowledge_ids', 'practice_path'],
   write_note: ['status', 'artifact_id', 'title', 'version'],
   check_note: ['artifact_id', 'artifact_type', 'issues'],
+  read_note: 'reader',
 } satisfies Record<PublicResultTool, ResultPolicy>;
 const INTERNAL = new Set([
   'read_agent_notes',

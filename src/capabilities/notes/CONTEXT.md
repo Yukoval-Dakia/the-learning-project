@@ -1,6 +1,6 @@
 # notes — 笔记域（M3 采伐，YUK-317）
 
-笔记旅程的承载包：artifact 笔记的读路径（note-page 单页聚合 / notes-read 按知识点标签）、
+笔记旅程的承载包：artifact 笔记的读路径（note-page 单页聚合 / notes-read 按知识点标签 / `read_note` 给模型的正文与统计）、
 写路径（body-blocks-edit 乐观锁块编辑 / sections / block-refs L2 反链 write-through /
 hub-dismiss）、generate durable handoff 与 Living Note refine 链（note-refine-{triggers,policy,proposals,apply}：
 触发入队 pg-boss `note_refine` → 阈值门控 → 小改 mutator 直落（undo event）/ 大改 propose）。
