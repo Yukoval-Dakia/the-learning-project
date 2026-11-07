@@ -1,7 +1,7 @@
 /** Product tool boundary benchmark. No learner/model turn or question write is performed. */
 
 import { createHash, randomUUID } from 'node:crypto';
-import { appendFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { drizzle } from 'drizzle-orm/postgres-js';
@@ -39,6 +39,10 @@ async function main() {
     throw new Error(
       'Requires the confirmed DashScope v4 route/key; no alternate embedding model is evidence',
     );
+  if (nas && !/^\/loom_eval_yuk1986_[a-z0-9_]+$/.test(target.pathname))
+    throw Error(
+      '--nas requires a named loom_eval_yuk1986_* replica; the TEST database loom is forbidden',
+    );
   const output = process.env.SEARCH_BENCH_OUTPUT;
   if (!output) throw new Error('SEARCH_BENCH_OUTPUT must name an external evidence directory');
   mkdirSync(output, { recursive: true });
@@ -59,8 +63,36 @@ async function main() {
     throw Error(
       'Copilot answer-access PR is not present: refusing a FTS-only substitute for full-vector acceptance',
     );
+  const sentences = process.env.SEARCH_BENCH_SENTENCES
+    ? readFileSync(process.env.SEARCH_BENCH_SENTENCES, 'utf8')
+        .trim()
+        .split('\n')
+        .map(
+          (line) =>
+            JSON.parse(line) as {
+              id: string;
+              text: string;
+              origin: 'real_utterance' | 'design_example';
+            },
+        )
+    : prompts.map((text, i) => ({
+        id: `protocol-${i + 1}`,
+        text,
+        origin: 'design_example' as const,
+      }));
+  if (
+    !sentences.length ||
+    sentences.some(
+      (s) => !s.id || !s.text || !['real_utterance', 'design_example'].includes(s.origin),
+    )
+  )
+    throw Error('Invalid preregistered sentence JSONL');
+  if (nas && !process.env.SEARCH_BENCH_SENTENCES)
+    throw Error('--nas requires the frozen sentence JSONL, with original/design provenance');
   const rows: Array<{
     cohort: string;
+    origin: string;
+    sentence_id: string;
     index: number;
     ms: number;
     bytes: number;
@@ -76,7 +108,8 @@ async function main() {
     per_cohort: 25,
     cohorts: ['cold-serial', 'hot-serial', 'cold-4', 'hot-4'],
     page_size: 5,
-    prompts,
+    sentences: sentences.map(({ id, origin }) => ({ id, origin })),
+    sentences_digest: createHash('sha256').update(JSON.stringify(sentences)).digest('hex'),
     target: { host: target.hostname, port: target.port, database: target.pathname.slice(1) },
     provider: 'dashscope',
     model,
@@ -110,7 +143,7 @@ async function main() {
           callerActor: actor,
         };
         const input = {
-          query: prompts[index % prompts.length],
+          query: sentences[index % sentences.length].text,
           page_size: 5,
           use: 'practice' as const,
         };
@@ -121,6 +154,8 @@ async function main() {
           const body = JSON.stringify(result);
           row = {
             cohort,
+            origin: sentences[index % sentences.length].origin,
+            sentence_id: sentences[index % sentences.length].id,
             index,
             ms: performance.now() - start,
             bytes: Buffer.byteLength(body),
@@ -133,6 +168,8 @@ async function main() {
         } catch (error) {
           row = {
             cohort,
+            origin: sentences[index % sentences.length].origin,
+            sentence_id: sentences[index % sentences.length].id,
             index,
             ms: performance.now() - start,
             bytes: 0,
@@ -151,7 +188,7 @@ async function main() {
       };
       for (const cohort of protocol.cohorts) {
         if (cohort.startsWith('hot'))
-          for (let i = 0; i < prompts.length; i++) await invoke('warmup', i, false);
+          for (let i = 0; i < sentences.length; i++) await invoke('warmup', i, false);
         const width = cohort.endsWith('-4') ? 4 : 1;
         for (let i = 0; i < 25; i += width)
           await Promise.all(
@@ -161,26 +198,36 @@ async function main() {
           );
       }
     });
-    const summaries = protocol.cohorts.map((cohort) => {
-      const group = rows.filter((r) => r.cohort === cohort);
-      const times = group.map((r) => r.ms).sort((a, b) => a - b);
-      const p = (fraction: number) => times[Math.ceil(times.length * fraction) - 1];
-      return {
-        cohort,
-        n: group.length,
-        p50_ms: p(0.5),
-        p95_ms: p(0.95),
-        max_ms: times.at(-1),
-        failed: group.filter((r) => r.failed).length,
-        degraded: group.filter((r) => r.degraded).length,
-        body_bytes_p50: [...group.map((r) => r.bytes)].sort((a, b) => a - b)[12],
-        estimated_tokens_p50: [...group.map((r) => r.estimated_tokens)].sort((a, b) => a - b)[12],
-      };
-    });
+    const summaries = protocol.cohorts.flatMap((cohort) =>
+      [...new Set(rows.map((r) => r.origin))].map((origin) => {
+        const group = rows.filter((r) => r.cohort === cohort && r.origin === origin);
+        const times = group.map((r) => r.ms).sort((a, b) => a - b);
+        const p = (fraction: number) => times[Math.ceil(times.length * fraction) - 1];
+        return {
+          cohort,
+          origin,
+          n: group.length,
+          p50_ms: p(0.5),
+          p95_ms: p(0.95),
+          max_ms: times.at(-1),
+          failed: group.filter((r) => r.failed).length,
+          degraded: group.filter((r) => r.degraded).length,
+          body_bytes_p50: [...group.map((r) => r.bytes)].sort((a, b) => a - b)[
+            Math.ceil(group.length / 2) - 1
+          ],
+          estimated_tokens_p50: [...group.map((r) => r.estimated_tokens)].sort((a, b) => a - b)[
+            Math.ceil(group.length / 2) - 1
+          ],
+        };
+      }),
+    );
     const result = {
       completed: rows.length === 100,
       summaries,
-      speed_pass: summaries.every((s) => s.n === 25 && s.p95_ms < 1000 && s.failed === 0),
+      speed_pass: summaries.every((s) => s.n > 0 && s.p95_ms < 1000 && s.failed === 0),
+      real_utterances_measured: rows.some((r) => r.origin === 'real_utterance'),
+      origin_policy:
+        'P50/P95/max reported separately; design examples never stand in for real utterances',
       note: 'Degradation is never hidden; retrieval quality and model overconfidence require the separate human gold set. No TEST contents are printed.',
     };
     writeFileSync(join(output, 'summary.json'), JSON.stringify(result, null, 2));

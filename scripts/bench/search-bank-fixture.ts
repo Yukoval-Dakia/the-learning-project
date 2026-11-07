@@ -10,12 +10,12 @@ import { encodeBankRef } from '@/capabilities/practice/question-bank/tools/bank-
 import { EMBED_VERSION, embedHash, questionEmbedText } from '@/core/embed-source';
 import type { Db } from '@/db/client';
 import * as schema from '@/db/schema';
-import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
+import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
 import {
   contractIntegrityDigest,
   normalizeQuestionGroupToContract,
 } from '@/kernel/records/assessment-normalization';
-import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
+import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
 import { EMBED_MODEL, embedMany } from '@/server/ai/embed';
 import {
   assertSearchBenchmarkPaidGate,
@@ -427,7 +427,7 @@ async function main() {
       reuseUrl
         ? texts.map((text) => {
             const v = reused.get(embedHash(text));
-            if (!v || v.length !== 1024)
+            if (v?.length !== 1024)
               throw Error('Exact-input real vector missing; never invent or restamp one');
             return v;
           })

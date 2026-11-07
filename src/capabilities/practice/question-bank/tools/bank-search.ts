@@ -747,6 +747,7 @@ async function runSearchBankInSnapshot(
           reference_md: question.reference_md,
           choices_md: question.choices_md,
           version: question.version,
+          embed_model: question.embed_model,
           embed_version: question.embed_version,
           embed_content_hash: question.embed_content_hash,
           embed_source_revision: question.embed_source_revision,
@@ -755,12 +756,14 @@ async function runSearchBankInSnapshot(
         .where(eq(question.id, resolved.similarToGroupId))
         .limit(1);
       anchorInvalidReason =
-        anchorRow == null
+        anchorRow == null || anchorRow.embedding == null
           ? 'no_vector'
-          : questionVectorInvalidReason({
-              ...anchorRow,
-              dimension: anchorRow.embedding?.length ?? null,
-            });
+          : anchorRow.embed_model !== EMBED_MODEL
+            ? 'embedding_model_mismatch'
+            : questionVectorInvalidReason({
+                ...anchorRow,
+                dimension: anchorRow.embedding?.length ?? null,
+              });
       anchorVector = anchorInvalidReason === null ? (anchorRow?.embedding ?? null) : null;
     }
     const vectorPromise: Promise<{ vector: number[] | null; error?: string }> =
@@ -829,6 +832,7 @@ async function runSearchBankInSnapshot(
                   where,
                   sql`${question.embedding} IS NOT NULL`,
                   embedCurrencyPredicate(question),
+                  eq(question.embed_model, EMBED_MODEL),
                   sql`${distanceExpr} <= ${BANK_VECTOR_RETRIEVAL_MAX_DISTANCE}`,
                 ),
               )
@@ -849,7 +853,7 @@ async function runSearchBankInSnapshot(
           })
           .from(question)
           .leftJoin(question_group_lifecycle, eq(question_group_lifecycle.group_id, question.id))
-          .where(and(...bankVectorBaselinePredicates()))
+          .where(and(...bankVectorBaselinePredicates(), eq(question.embed_model, EMBED_MODEL)))
           .orderBy(sql`${distanceExpr} ASC`)
           .limit(bankVectorBaselineLimit(BANK_VECTOR_RETRIEVAL_PARAMS)),
       ]);

@@ -19,6 +19,7 @@ import {
 import { readBankDocuments } from './bank-search-evidence';
 import { resolveBankSearchScope } from './bank-search-scope';
 import {
+  type BankReceipt,
   type BankSnapshotBinding,
   captureBankSnapshotBindings,
   resumeBankSearchSnapshot,
@@ -51,13 +52,16 @@ async function queryVector(ctx: ToolContext, text: string) {
   cache.set(key, { value, expires: Date.now() + 60 * 60_000 });
   return value;
 }
-export async function runBankSearchV3(
+export async function collectBankSearchReceipt(
   ctx: ToolContext,
   raw: SearchBankInput,
-  ablation?: { vectors: 'off' | 'content' | 'prior' },
-): Promise<BankSearchOutputV3> {
+  ablation?: {
+    embedFn?: (text: string) => Promise<number[]>;
+    vectors: 'off' | 'content' | 'prior';
+  },
+): Promise<Omit<BankReceipt, 'version' | 'policy' | 'owner_run'>> {
   const input = SearchBankInputSchema.parse(raw);
-  if (input.cursor) return resumeBankSearchSnapshot(ctx, input.cursor);
+  if (input.cursor) throw new Error('Evidence collection needs a new query');
   const query = input.query?.trim();
   if (!query) throw new Error('query is required');
   const { terms, history, ...filters } = input.filters ?? {};
@@ -106,7 +110,7 @@ export async function runBankSearchV3(
       disableVectors: ablation?.vectors === 'off',
       predicates,
       publicOnly: bankReadRoleForActor(ctx.callerActor) === 'restricted',
-      embedFn: (text) => queryVector(ctx, text),
+      embedFn: ablation?.embedFn ?? ((text) => queryVector(ctx, text)),
       onPoolFrozen: async (tx, pool) => {
         scopeDigest = canonicalHash(await resolveBankSearchScope(tx, scope));
         const [anchor] = input.like_ref ? await resolveBankRefs(tx, [input.like_ref]) : [];
@@ -178,14 +182,23 @@ export async function runBankSearchV3(
     },
     next_cursor: null,
   });
-  return saveBankReceipt(ctx, {
+  return {
     request: input,
     scope,
     scope_digest: scopeDigest,
     output,
     bindings,
     documents,
-  });
+  };
+}
+export async function runBankSearchV3(
+  ctx: ToolContext,
+  raw: SearchBankInput,
+  ablation?: { vectors: 'off' | 'content' | 'prior' },
+) {
+  const input = SearchBankInputSchema.parse(raw);
+  if (input.cursor) return resumeBankSearchSnapshot(ctx, input.cursor);
+  return saveBankReceipt(ctx, await collectBankSearchReceipt(ctx, input, ablation));
 }
 export const searchBankTool: DomainTool<SearchBankInput, BankSearchOutputV3> = {
   name: 'search_bank',
@@ -194,10 +207,8 @@ export const searchBankTool: DomainTool<SearchBankInput, BankSearchOutputV3> = {
   effect: 'read',
   inputSchema: SearchBankInputSchema,
   outputSchema: BankSearchOutputSchema,
-  costClass: 'local',
+  costClass: 'cheap_llm',
   execute: runBankSearchV3,
-  summarize: (_input, output) =>
-    `search_bank · ${output.hits.length}/${output.coverage.candidates} candidates · caller assessment needed`,
+  summarize: (_input, output) => `找题 · ${output.hits.length} 道候选`,
   mirrorEvent: 'when_user_visible',
 };
-export { SearchBankInputSchema };
