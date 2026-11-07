@@ -70,13 +70,18 @@ export async function readIngestionSessionBlocks(db: Db, params: { id: string })
     ...new Set(rows.map((r) => r.imported_question_id).filter((id): id is string => id !== null)),
   ];
   const judgeConfidenceByQuestionId = new Map<string, number | null>();
+  const questionById = new Map<
+    string,
+    { draft_status: string | null; metadata: Record<string, unknown> | null }
+  >();
   if (importedQuestionIds.length > 0) {
     const questionRows = await db
-      .select({ id: question.id, metadata: question.metadata })
+      .select({ id: question.id, metadata: question.metadata, draft_status: question.draft_status })
       .from(question)
       .where(inArray(question.id, importedQuestionIds));
     for (const row of questionRows) {
       judgeConfidenceByQuestionId.set(row.id, readWorkflowJudgeConfidence(row.metadata));
+      questionById.set(row.id, { draft_status: row.draft_status, metadata: row.metadata });
     }
   }
 
@@ -92,8 +97,43 @@ export async function readIngestionSessionBlocks(db: Db, params: { id: string })
         created_at: Math.floor(r.created_at.getTime() / 1000),
         workflow_judge_confidence: recordedConfidence ?? projectedObservation?.confidence ?? null,
         auto_enroll_observation: projectedObservation,
+        ingestion_enrollment: toEnrollmentProjection(
+          r,
+          r.imported_question_id !== null
+            ? questionById.get(r.imported_question_id)
+            : undefined,
+        ),
       };
     }),
+  };
+}
+
+/** How to read one block's enrollment without re-implementing the server gates. */
+function toEnrollmentProjection(
+  block: { status: string; extracted_prompt_md: string | null; structured: unknown },
+  enrolled: { draft_status: string | null; metadata: Record<string, unknown> | null } | undefined,
+) {
+  if (block.status !== 'auto_enrolled') {
+    const hasPrompt =
+      block.structured != null || (block.extracted_prompt_md ?? '').trim().length > 0;
+    return {
+      state: 'not_enrolled' as const,
+      reason: hasPrompt ? null : ('needs_text' as const),
+      knowledge: null,
+      library_visible: null,
+    };
+  }
+  const markers = enrolled?.metadata?.ingestion_enrollment as
+    | { knowledge?: unknown }
+    | undefined;
+  return {
+    state: 'in_library' as const,
+    reason: null,
+    knowledge:
+      markers?.knowledge === 'attributed' || markers?.knowledge === 'missing'
+        ? markers.knowledge
+        : null,
+    library_visible: enrolled ? enrolled.draft_status !== 'draft' : null,
   };
 }
 

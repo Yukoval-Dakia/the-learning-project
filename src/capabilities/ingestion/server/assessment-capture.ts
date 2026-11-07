@@ -61,6 +61,8 @@ interface CaptureInput {
   unit_captures?: CapturedUnitAnswer[];
   /** 学习者红笔偏好（缺省保守 post_correction）。 */
   red_ink_preference?: RedInkClassification;
+  /** Enrollment markers written onto the created question (auto-enroll caller). */
+  enrollmentMetadata?: Record<string, unknown>;
 }
 
 interface UnitCaptureRecord {
@@ -306,11 +308,13 @@ export async function captureIngestionOriginal(db: Db, input: CaptureInput) {
       .select()
       .from(learning_session)
       .where(eq(learning_session.id, block.ingestion_session_id));
+    // A degraded page layout ('partial') is a block-level fact: captured work on a
+    // structurally usable block still gets its private evidence (YUK-1994).
     if (
       current?.status !== 'draft' ||
       current.version !== block.version ||
       session?.type !== 'ingestion' ||
-      session.status !== 'extracted'
+      (session.status !== 'extracted' && session.status !== 'partial')
     )
       return null;
     if (input.pageRefs.some((id) => !current.source_asset_ids.includes(id)))
@@ -347,6 +351,9 @@ export async function captureIngestionOriginal(db: Db, input: CaptureInput) {
             confidence: input.confidence,
             extraction_confidence: block.extraction_confidence,
           },
+          ...(input.enrollmentMetadata !== undefined
+            ? { ingestion_enrollment: input.enrollmentMetadata }
+            : {}),
         },
         actorRef: 'ingestion:capture',
         now,

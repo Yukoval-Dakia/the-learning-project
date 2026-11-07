@@ -12,6 +12,7 @@ import {
   hasAgentEvidence,
   readAgentRunHistory,
 } from './agent/history';
+import { readExtractionNotices } from './extraction-notices';
 import { readSessionCostEvidence } from './session-cost-evidence';
 import { readSessionTitles } from './session-titles';
 
@@ -165,6 +166,7 @@ export async function readIngestionSessionHistory(
       held_since: s.held_since,
       next_action: s.next_action,
       pending_action: s.pending_action,
+      admission: s.admission ?? null,
     };
   };
 
@@ -432,6 +434,7 @@ export async function readIngestionSessionHistory(
       updated_at: session.updated_at.toISOString(),
       error_message: session.error_message,
       warnings: session.warnings ?? [],
+      ...(await readExtractionNotices(db, sessionId)),
     },
     run,
     prior_runs,

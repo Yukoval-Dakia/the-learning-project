@@ -15,10 +15,14 @@
 import type { Job } from 'pg-boss';
 
 import { runAutoEnrollForSession } from '@/capabilities/ingestion/server/auto-enroll';
+import { AUTO_ENROLL_SINGLETON_SECONDS } from '@/capabilities/ingestion/server/workflow-judge-config';
 import type { Db } from '@/db/client';
+import { getStartedBoss } from '@/server/boss/client';
 
 export interface AutoEnrollJobData {
   sessionId: string;
+  /** Cursor for the next batch of an oversized session; absent on the first delivery. */
+  afterBlock?: { ordinal: number; id: string };
 }
 
 export function buildAutoEnrollHandler(db: Db): (jobs: Job<AutoEnrollJobData>[]) => Promise<void> {
@@ -34,6 +38,7 @@ export function buildAutoEnrollHandler(db: Db): (jobs: Job<AutoEnrollJobData>[])
           db,
           sessionId,
           ctx: { db },
+          ...(job.data.afterBlock !== undefined ? { afterBlock: job.data.afterBlock } : {}),
           providerAttempt: {
             db,
             caller: 'worker',
@@ -44,6 +49,25 @@ export function buildAutoEnrollHandler(db: Db): (jobs: Job<AutoEnrollJobData>[])
         console.log(
           `[auto_enroll] ${sessionId} → ${result.status} (enrolled=${result.enrolled}, routed_to_review=${result.routed_to_review})`,
         );
+        // One job keeps its per-delivery paid ceiling; a page longer than it continues
+        // in a fresh delivery from the returned cursor. The cursor is part of the
+        // singleton key so the follow-up is not collapsed into this delivery.
+        if (result.next_after_block !== null) {
+          try {
+            const boss = await getStartedBoss();
+            await boss.send(
+              'auto_enroll',
+              { sessionId, afterBlock: result.next_after_block },
+              {
+                singletonKey: `${sessionId}:${result.next_after_block.id}`,
+                singletonSeconds: AUTO_ENROLL_SINGLETON_SECONDS,
+              },
+            );
+          } catch (sendErr) {
+            // Blocks past the cursor stay draft; the page can still finish them by hand.
+            console.error(`[auto_enroll] ${sessionId} failed to enqueue next batch`, sendErr);
+          }
+        }
       } catch (err) {
         // A genuinely-escaping fault (per-block AI/missing-key/observe-write are
         // already swallowed upstream). Re-throw so pg-boss retries this cheap
