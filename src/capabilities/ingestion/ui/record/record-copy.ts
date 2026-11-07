@@ -164,17 +164,29 @@ const WARNING_WORDS: Record<string, string> = {
   已忽略外部链接: 'Word 里的外部链接没有带进来。',
 };
 
+/** A figure was cut out of the page but not attached to its question. */
+const FIGURE_WITHHELD = /^Figure .* retained in source; assignment withheld$/;
+/** The reader's own wording when it says part of a question didn't come through. */
+const MAY_BE_INCOMPLETE = /丢弃|缺失|未能|无法|看不清|遮挡|模糊|截断|上一页|下一页/;
+
 /**
- * The recording's stored notes (session.warnings) as one plain line, or null when there are none.
- * Most notes are internal reader messages, so they are never shown as they are.
+ * The recording's stored notes (session.warnings) as one plain line, or null when none of them
+ * tells the learner anything. Most are internal reader messages, never shown as they are: a line
+ * on every recording says nothing, so only what the learner should act on gets one.
  */
 export function warningWords(warnings: string[]): string | null {
-  if (warnings.length === 0) return null;
   const known = [...new Set(warnings.flatMap((w) => (WARNING_WORDS[w] ? [WARNING_WORDS[w]] : [])))];
-  const other = warnings.some((w) => !WARNING_WORDS[w]);
-  return [...known, other ? '部分内容识别质量不高，建议逐题核对。' : null]
-    .filter(Boolean)
-    .join(' ');
+  const figures = warnings.some((w) => FIGURE_WITHHELD.test(w));
+  const incomplete = warnings.some((w) => MAY_BE_INCOMPLETE.test(w));
+  return (
+    [
+      ...known,
+      figures ? '题里的图还没挂到题上，看题时对照原页。' : null,
+      incomplete ? '有的题可能不完整，对照原页看一下。' : null,
+    ]
+      .filter(Boolean)
+      .join(' ') || null
+  );
 }
 
 export function answerRejectWords(status: number, code: string | undefined): string {
