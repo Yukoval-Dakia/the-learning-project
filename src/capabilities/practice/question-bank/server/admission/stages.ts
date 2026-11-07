@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { AgentRunError, type AgentRunErrorFields } from '@/ai/agent-run-error';
 import { type HelpProviderFault, isHelpProviderFault } from '@/ai/help-provider-fault';
 import { boundTerminalHttpStatus, providerTransientVerdict } from '@/ai/provider-failure';
-import { resolveTaskBudget } from '@/capabilities/task-registry';
+import { type TaskKind, resolveTaskBudget } from '@/capabilities/task-registry';
 import { getTaskOverride } from '@/core/config/store';
 import { canonicalHash } from '@/core/migration/canonical';
 import {
@@ -493,7 +493,7 @@ export function admissionStageRunner(input: {
             generation: 0,
             // Derived so a system_config timeout override cannot outlive the lease and get a
             // live call settled as expired; crash recovery pays the 5min margin.
-            leaseExpiresAt: new Date(Date.now() + resolveTaskBudget(kind).timeout + 5 * 60_000),
+            leaseExpiresAt: new Date(Date.now() + resolveTaskBudget(kind as TaskKind).timeout + 5 * 60_000),
           },
         );
         if (reservation.kind !== 'winner')
