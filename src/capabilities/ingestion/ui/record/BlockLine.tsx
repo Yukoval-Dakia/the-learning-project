@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { RescueButton, RevertButton } from './BlockTools';
-import { promptOf } from './block-text';
+import { hasEmptyOptions, promptOf, withoutPrintedNumber } from './block-text';
 import type { QuestionEdit, Readiness } from './import-draft';
 import { readiness } from './import-draft';
 import { KnowledgePick } from './KnowledgePick';
@@ -31,7 +31,8 @@ export function BlockLine({
 }: {
   sessionId: string;
   block: Block;
-  no: number;
+  /** The number to show: the printed one when it was read, so it can be checked against the book. */
+  no: string;
   edit: QuestionEdit;
   onEdit: (patch: Partial<QuestionEdit>) => void;
   locked: boolean;
@@ -45,6 +46,9 @@ export function BlockLine({
   check?: { marked: boolean; disabled: boolean; onToggle: () => void };
 }) {
   const [editing, setEditing] = useState(false);
+  const emptyOptions = hasEmptyOptions(block) ? (
+    <p className="rc-line-note">选项的文字没读出来，可能是图，对照原页看。</p>
+  ) : null;
   const first = block.page_spans?.[0];
   const page = first ? first.page_index + 1 : null;
   const hover = {
@@ -63,11 +67,14 @@ export function BlockLine({
             : { text: '没收', tone: 'neutral' };
     return (
       <li className="rc-line" data-checked={check?.marked} {...hover}>
-        <span className="rc-line-no un-num">{no}</span>
+        <span className="rc-line-no un-num" title={no === '–' ? '没认出题号' : undefined}>
+          {no}
+        </span>
         <div className="rc-line-main">
           <MathMarkdown className="rc-line-text">
-            {promptOf(block) || '（没认出文字）'}
+            {withoutPrintedNumber(promptOf(block), block) || '（没认出文字）'}
           </MathMarkdown>
+          {emptyOptions}
           <div className="rc-line-tools">
             {check && (
               <label className="rc-switch rc-switch-sm">
@@ -98,20 +105,25 @@ export function BlockLine({
   const ready = READY_WORDS[readiness(edit)];
   return (
     <li className="rc-line" data-skip={edit.skip} {...hover}>
-      <span className="rc-line-no un-num">{no}</span>
+      <span className="rc-line-no un-num" title={no === '–' ? '没认出题号' : undefined}>
+        {no}
+      </span>
       <div className="rc-line-main">
         {editing ? (
           <textarea
             className="rc-area rc-area-sm"
             rows={4}
             value={edit.prompt}
-            aria-label={`第 ${no} 题的文字`}
+            aria-label={no === '–' ? '这道题的文字' : `第 ${no} 题的文字`}
             disabled={locked}
             onChange={(e) => onEdit({ prompt: e.target.value })}
           />
         ) : (
-          <MathMarkdown className="rc-line-text">{edit.prompt || '（没认出文字）'}</MathMarkdown>
+          <MathMarkdown className="rc-line-text">
+            {withoutPrintedNumber(edit.prompt, block) || '（没认出文字）'}
+          </MathMarkdown>
         )}
+        {emptyOptions}
         {!edit.skip && (
           <KnowledgePick
             value={edit.knowledgeIds}

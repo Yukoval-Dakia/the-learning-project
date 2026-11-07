@@ -1,4 +1,5 @@
 import { unit as parseUnit } from 'mathjs';
+import { findPlotParamFences } from '@/core/schema/blocks/plot-fence';
 import {
   DECLARED_BLANK_COMPARE_VERSION,
   declaredBlankGradeReadiness,
@@ -440,6 +441,24 @@ export function decideAutomaticServing(
   const materialById = new Map(
     revision.structure.materials.map((material) => [material.material_id, material]),
   );
+  // A frozen question material may carry a static plot, never learner params.
+  // This also catches rows published before the write-side gate existed.
+  for (const part of revision.structure.parts) {
+    if (!selected.has(part.part_id)) continue;
+    for (const materialId of part.material_ids) {
+      const material = materialById.get(materialId);
+      if (material != null && isPublicSharedMaterial(material) && material.content_md != null) {
+        const fences = findPlotParamFences(material.content_md);
+        if (fences.length > 0) {
+          return {
+            kind: 'unavailable',
+            reason: 'invalid_presentation',
+            detail: `part ${part.part_id} material '${materialId}' has plot fence(s) ${fences.join(', ')} with params; a frozen question material cannot expose learner-adjustable values`,
+          };
+        }
+      }
+    }
+  }
   const verifiedFigureIds = new Set(
     revision.structure.materials
       .filter(
