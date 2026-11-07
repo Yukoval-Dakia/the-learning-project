@@ -1002,6 +1002,20 @@
       "when": 1793873714151,
       "tag": "0143_bitter_toro",
       "breakpoints": true
+    },
+    {
+      "idx": 144,
+      "version": "7",
+      "when": 1794046748542,
+      "tag": "0144_yuk1766_backtrace",
+      "breakpoints": true
+    },
+    {
+      "idx": 145,
+      "version": "7",
+      "when": 1794047906399,
+      "tag": "0145_yuk1766_backtrace_permissions",
+      "breakpoints": true
     }
   ]
 }

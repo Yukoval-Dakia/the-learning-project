@@ -2127,5 +2127,18 @@
         "notes": "201 {session} + Location；可选 Idempotency-Key，同 key 原输入重放原创建终态/IDs/Location 并带 Idempotency-Replayed:true；异输入409 idempotency_conflict，坏/未知版本/不可用回执503 creation_receipt_unavailable。同事务 materialize 失败时先提交 failed session 与固定安全500 ingestion_source_package_failed（details.session_id/source_document_id）及 Location，重放不再次 materialize；无法提交则回滚或 unknown，不做全局补偿，沿原 key+原输入重试。未提供 key 保留兼容创建。session subject omitted/null 等价，derivation_policy omitted/explicit allow 不同。legacy /api/ingestion 共用 key scope，成功200+弃用header、失败原样透传。回执冻结创建结果；当前状态由原 GET 判断。不授权启动 agent；DOCX 不在此保证内。"
       }
     ]
+  },
+  {
+    "path": "/api/backtrace/attempts/:attemptEventId",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "读取有效作答的相似错法与本人解法缓存",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "内部 token 保护；buffered 不返回判分或历史；pending_insight/judging 返回已可用同题历史。"
+      }
+    ]
   }
 ]

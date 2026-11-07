@@ -3,7 +3,10 @@ import { createHash } from 'node:crypto';
 export const ATTRIBUTION_FOLLOWUP_QUEUE = 'attribution_followup' as const;
 export const VARIANT_GEN_QUEUE = 'variant_gen' as const;
 
-export type FailureLearningQueue = typeof ATTRIBUTION_FOLLOWUP_QUEUE | typeof VARIANT_GEN_QUEUE;
+export type FailureLearningQueue =
+  | typeof ATTRIBUTION_FOLLOWUP_QUEUE
+  | typeof VARIANT_GEN_QUEUE
+  | 'attempt_backtrace';
 
 /** Stable RFC 9562 UUIDv8 for one attempt and one versioned workflow stage. */
 export function failureLearningJobId(queue: FailureLearningQueue, attemptEventId: string): string {

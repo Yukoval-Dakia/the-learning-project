@@ -10,6 +10,7 @@ type TurnContext = {
    *  across days never anchors 「下周五」 to a stale date. */
   readonly today: string;
   readonly learner_state?: string;
+  readonly backtrace?: string;
   readonly proposal_feedback?: CopilotRunInput['proposal_feedback'];
   readonly review_answer?: CopilotRunInput['review_answer'];
   readonly ambient?: CopilotRunInput['ambient_context'];
@@ -64,6 +65,7 @@ function compileTurnContext(input: CopilotRunInput, includeProposalFeedback: boo
   const context: TurnContext = {
     v: 1,
     today: input.today,
+    ...(input.backtrace_digest ? { backtrace: input.backtrace_digest } : {}),
     ...(input.review_answer ? { review_answer: input.review_answer } : {}),
     ...(input.learner_state_header ? { learner_state: input.learner_state_header } : {}),
     ...(includeProposalFeedback && input.proposal_feedback.length > 0

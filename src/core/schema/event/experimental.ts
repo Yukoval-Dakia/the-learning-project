@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { InsightPayload, JudgementPayload } from '../backtrace';
 import {
   LearningRecordActivityKind,
   LearningRecordCaptureMode,
@@ -147,6 +148,8 @@ export type MasteryProgressExperimentalT = z.infer<typeof MasteryProgressExperim
 // Adding a new specialised experimental schema? Add its action literal here too.
 
 export const RESERVED_EXPERIMENTAL_ACTIONS = new Set<string>([
+  'experimental:attempt_insight',
+  'experimental:backtrace_judgement',
   'experimental:user_cause',
   'experimental:record_capture',
   'experimental:memory_brief_refresh',
@@ -298,3 +301,21 @@ export const ExperimentalEvent = z.object({
   payload: z.record(z.string(), z.unknown()),
 });
 export type ExperimentalEventT = z.infer<typeof ExperimentalEvent>;
+
+const BacktraceEnvelope = z.object({
+  actor_kind: z.literal('agent'),
+  actor_ref: z.string(),
+  subject_kind: z.literal('event'),
+  subject_id: z.string(),
+  caused_by_event_id: z.string(),
+  task_run_id: z.string().optional(),
+  cost_micro_usd: z.number().int().optional(),
+});
+export const AttemptInsightExperimental = BacktraceEnvelope.extend({
+  action: z.literal('experimental:attempt_insight'),
+  payload: InsightPayload,
+});
+export const BacktraceJudgementExperimental = BacktraceEnvelope.extend({
+  action: z.literal('experimental:backtrace_judgement'),
+  payload: JudgementPayload,
+});

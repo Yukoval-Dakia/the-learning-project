@@ -30,6 +30,7 @@ const POLICIES: Record<string, ResultPolicy> = {
   find_knowledge_paths: 'reader',
   query_records: 'reader',
   query_mistakes: 'reader',
+  backtrace: 'reader',
   get_question_context: 'reader',
   get_attempt_context: 'reader',
   get_learning_item_context: 'reader',

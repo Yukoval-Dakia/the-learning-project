@@ -77,6 +77,9 @@ export {
 // Binds the operations Practice owns behind kernel ports that API routes and worker
 // jobs both call. Hosts call this before serving or mounting handlers.
 async function installPracticeHostOperationPorts(): Promise<void> {
+  const { installBacktraceContextReader } = await import('@/kernel/read-models/backtrace');
+  const { backtraceContext } = await import('./failure-learning/public');
+  installBacktraceContextReader(backtraceContext);
   const [
     { installReviewAnswerBindingOperations },
     { installReviewDueReader },
@@ -173,6 +176,7 @@ export const runQuestionSupplyNightly: typeof import('./supply/public').runQuest
   async (...args) => (await import('./supply/public')).runQuestionSupplyNightly(...args);
 export const recoverHeldServingRechecks: typeof import('./question-bank/public').recoverHeldServingRechecks =
   async (...args) => (await import('./question-bank/public')).recoverHeldServingRechecks(...args);
+
 export {
   PlacementOrphanStateError,
   abandonOrphanPlacementTx,
@@ -184,5 +188,4 @@ export {
   abandonOrphanReviewSession,
   selectOrphanReviewCandidates,
 } from './session/public';
-
 export { submitCopilotAuthoredDraft } from './supply/public';

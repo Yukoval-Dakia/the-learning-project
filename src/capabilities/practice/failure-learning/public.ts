@@ -19,5 +19,8 @@ export const resolveAdviceCauseForQuestion: typeof import('./server/cause-contex
   async (...args) =>
     (await import('./server/cause-context')).resolveAdviceCauseForQuestion(...args);
 
+export const backtraceContext: typeof import('./server/backtrace-read').backtraceContext = async (
+  ...args
+) => (await import('./server/backtrace-read')).backtraceContext(...args);
 export { causeCategoryUndoGuard } from './server/cause-category-undo-guard';
 export { knowledgeNodesWithMisconceptionEdges } from './server/undo-usage';

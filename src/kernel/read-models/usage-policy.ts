@@ -138,8 +138,14 @@ function purposeLineage(source: {
         ref->>'id' FROM event note
       CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(note.payload->'refs') = 'array'
         THEN note.payload->'refs' ELSE '[]'::jsonb END) ref
-      WHERE n.kind = 'event' AND note.id = n.id AND note.action = 'experimental:agent_note'
+      WHERE n.kind = 'event' AND note.id = n.id AND note.action IN ('experimental:agent_note', 'experimental:attempt_insight', 'experimental:backtrace_judgement')
         AND ref->>'kind' IN ('source_document', 'question', 'record', 'event')
+      UNION ALL
+      SELECT 'event', ref #>> '{}' FROM event derived
+      CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(derived.payload->'source_event_ids') = 'array'
+        THEN derived.payload->'source_event_ids' ELSE '[]'::jsonb END) ref
+      WHERE n.kind = 'event' AND derived.id = n.id
+        AND derived.action IN ('experimental:attempt_insight', 'experimental:backtrace_judgement')
       UNION ALL
       SELECT 'document', s.source_document_id FROM learning_session s
       WHERE n.kind = 'session' AND s.id = n.id
@@ -215,6 +221,11 @@ function sourceDerivationPredicateSql(source: {
                 THEN e.payload->'refs' ELSE '[]'::jsonb END) ref
               WHERE NOT coalesce(ref->>'kind' IN ('source_document', 'question', 'record', 'event', 'knowledge'), false)
                 OR jsonb_typeof(ref->'id') IS DISTINCT FROM 'string' OR length(ref->>'id') = 0)))
+          OR (e.action IN ('experimental:attempt_insight', 'experimental:backtrace_judgement') AND (
+            jsonb_typeof(e.payload->'source_event_ids') IS DISTINCT FROM 'array'
+            OR jsonb_array_length(CASE WHEN jsonb_typeof(e.payload->'source_event_ids') = 'array' THEN e.payload->'source_event_ids' ELSE '[]'::jsonb END) = 0
+            OR EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(e.payload->'source_event_ids') = 'array' THEN e.payload->'source_event_ids' ELSE '[]'::jsonb END) ref
+              WHERE jsonb_typeof(ref) IS DISTINCT FROM 'string' OR length(ref #>> '{}') = 0)))
           OR (e.payload ? 'derivation_policy' AND e.payload->>'derivation_policy' IS DISTINCT FROM 'allow')
           OR (b.id IS NOT NULL AND (b.payload->>'source_policy' IS DISTINCT FROM 'allow'
             OR NOT (b.payload ?& ARRAY['document_id', 'epoch', 'source_policy'])))

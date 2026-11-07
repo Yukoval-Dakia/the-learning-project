@@ -20,5 +20,5 @@ export const taskCatalog = composeTaskCatalog(
     { owner: 'agency', specs: agencyTaskSpecs },
     { owner: 'copilot', specs: copilotTaskSpecs },
   ] as const,
-  59,
+  61,
 );

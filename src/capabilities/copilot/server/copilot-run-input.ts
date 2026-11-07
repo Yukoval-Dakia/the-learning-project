@@ -9,6 +9,7 @@ import { learnerDayWithWeekday } from '@/core/steering';
 import type { Db } from '@/db/client';
 import { readEventDerivationPolicy } from '@/kernel/events/derivation-policy';
 import { HostOperationNotInstalledError } from '@/kernel/host-operation';
+import { readBacktraceContext } from '@/kernel/read-models/backtrace';
 import type { DomainToolSurface } from '@/kernel/tools/allowlists';
 import { COPILOT_HISTORY_BUDGET, type CopilotHistoryBudget } from '@/kernel/tools/budgets';
 import type { CopilotCorrectionContract } from './correction-contract';
@@ -69,6 +70,7 @@ export interface CopilotRunInput {
   proposal_feedback: ScopedProposalFeedbackCell[];
   conversation_history: CopilotHistoryTurn[];
   learner_state_header?: string;
+  backtrace_digest?: string;
   correction_contract: CopilotCorrectionContract;
   ambient_context?: CopilotAmbientContext;
 }
@@ -246,7 +248,17 @@ export async function assembleCopilotRunInput(
   const restrictedCorrectionTarget = params.correctionTargetTurnId
     ? (await readEventDerivationPolicy(db, params.correctionTargetTurnId)) !== 'allow'
     : false;
+  const focused = ambient?.focused_entity;
+  const backtrace = await readBacktraceContext(db, {
+    ...(focused?.kind === 'question'
+      ? { question_id: focused.id }
+      : focused?.kind === 'event' || focused?.kind === 'attempt'
+        ? { attempt_event_id: focused.id }
+        : {}),
+    session_id: !focused ? sessionId : undefined,
+  });
   return {
+    ...(backtrace ? { backtrace_digest: backtrace } : {}),
     derivation_policy: params.derivationPolicy ?? 'allow',
     surface: selectSurface(triggeredBy),
     triggered_by: triggeredBy,

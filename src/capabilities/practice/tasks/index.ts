@@ -5,6 +5,10 @@ import {
   causeCategoryProposeTaskSpec,
   variantGenTaskSpec,
 } from '../failure-learning/public';
+import {
+  attemptInsightTaskSpec,
+  backtraceJudgeTaskSpec,
+} from '../failure-learning/tasks/backtrace';
 import { assessmentRubricTaskSpec } from '../grading/tasks/assessment-rubric';
 import { assessmentRuleTaskSpec } from '../grading/tasks/assessment-rule';
 import { jevScoringDecisionTaskSpec } from '../grading/tasks/jev-typed';
@@ -36,6 +40,8 @@ import { supplyPlanTaskSpec } from './supply-planning';
 import { teachingQualityTaskSpec } from './teaching-quality';
 
 export const practiceTaskSpecs = defineOwnedTaskSpecs('practice', {
+  AttemptInsightTask: attemptInsightTaskSpec,
+  BacktraceJudgeTask: backtraceJudgeTaskSpec,
   QuestionPreparerTask: questionPreparerTaskSpec,
   BankRequirementInterpretTask: bankRequirementInterpretTaskSpec,
   BankConditionVerifyTask: bankConditionVerifyTaskSpec,
