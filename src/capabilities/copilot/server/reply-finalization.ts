@@ -199,7 +199,12 @@ const NO_EXECUTOR_ADMISSION =
   '这类题目前没有可用的自动判分器，暂时不能作答；可以换一道选择、填空、配对、断句或排序题。';
 const PENDING_ADMISSION = '自动检查通过后才能作答；当前状态和原因可在题库查看。';
 
-function proposalDisclosure(trace: readonly TraceEntry[], reply: string): string | undefined {
+function proposalDisclosure(
+  trace: readonly TraceEntry[],
+  reply: string,
+  cardQuestionIds: ReadonlySet<string> = new Set(),
+  inlineCardQuestionIds: ReadonlySet<string> = new Set(),
+): string | undefined {
   // One disclosure per question, never a cross-question dedupe: a different
   // question must not swallow this question's warning.
   const seenBankPaths = new Set<string>();
@@ -229,6 +234,12 @@ function proposalDisclosure(trace: readonly TraceEntry[], reply: string): string
     if (seenBankPaths.has(out.bank_path)) return [];
     seenBankPaths.add(out.bank_path);
     const bankPath = out.bank_path;
+    const bankQuestionId = bankPath.startsWith('/questions/')
+      ? bankPath.slice('/questions/'.length)
+      : undefined;
+    const cardShown = bankQuestionId !== undefined && cardQuestionIds.has(bankQuestionId);
+    const inlineCardShown =
+      bankQuestionId !== undefined && inlineCardQuestionIds.has(bankQuestionId);
     const admission = isRecord(out.admission) ? out.admission : undefined;
     const noExecutor =
       Array.isArray(admission?.per_unit) &&
@@ -251,9 +262,10 @@ function proposalDisclosure(trace: readonly TraceEntry[], reply: string): string
       if (!warningStated) facts.push(`题已存入[题库](${bankPath})，但${admissionSentence}`);
     } else {
       // Admission state is server-owned: append one deterministic sentence per
-      // reply instead of matching whatever wording the model chose.
-      if (!linkStated) facts.push(`题已存入[题库](${bankPath})。`);
-      if (!admitted) pendingStatus = true;
+      // reply instead of matching whatever wording the model chose. A visible
+      // inline question card already carries the status, so do not repeat it.
+      if (!linkStated && !cardShown) facts.push(`题已存入[题库](${bankPath})。`);
+      if (!admitted && !inlineCardShown) pendingStatus = true;
     }
     return facts.length > 0 ? [facts.join('\n')] : [];
   });
@@ -452,9 +464,14 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
       if (correction.reply.trim().length === 0) {
         return publishUnsealed('', 'missing_terminal', context);
       }
-      const disclosure = proposalDisclosure(trace, correction.reply);
-      const { text: composed, blocksReceipt } = prepareReplyText(correction.reply);
-      const disclosed = applyProposalDisclosure(composed, disclosure);
+      const prepared = prepareReplyText(correction.reply);
+      const disclosure = proposalDisclosure(
+        trace,
+        prepared.text,
+        prepared.cardQuestionIds,
+        prepared.inlineCardQuestionIds,
+      );
+      const disclosed = applyProposalDisclosure(prepared.text, disclosure);
       const fixed = truncateCopilotReply(disclosed, COPILOT_REPLY_CHAR_LIMIT, context.retainedTail);
       const truncated = fixed !== disclosed;
       if (
@@ -479,7 +496,7 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
         proposal_disclosure: disclosure ? 'server_composed' : 'none',
         primary_view:
           successfulControls.length > 0 ? (primaryView ? 'retained' : 'dropped') : 'absent',
-        ...(blocksReceipt ? { blocks: blocksReceipt } : {}),
+        ...(prepared.blocksReceipt ? { blocks: prepared.blocksReceipt } : {}),
       };
       return {
         replyText: fixed,
@@ -568,11 +585,26 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
     }
     const appendedFences = appended.map((b) => serializeBlockFence(b.block as never)).join('\n\n');
     const composed = appendedFences ? `${withPlaced.trimEnd()}\n\n${appendedFences}` : withPlaced;
+    const cardQuestionIds = new Set<string>();
+    const inlineCardQuestionIds = new Set<string>();
+    for (const { block } of [...readyBlocks.filter((b) => placedRefs.has(b.ref)), ...appended]) {
+      const candidate = block as {
+        kind?: unknown;
+        display?: unknown;
+        question_ids?: unknown;
+      };
+      if (candidate.kind !== 'question_ref' || !Array.isArray(candidate.question_ids)) continue;
+      for (const id of candidate.question_ids) {
+        if (typeof id !== 'string') continue;
+        cardQuestionIds.add(id);
+        if (candidate.display === 'inline') inlineCardQuestionIds.add(id);
+      }
+    }
     const blocksReceipt =
       readyBlocks.length > 0 || dropped > 0
         ? { placed: placedRefs.size, appended: appended.length, dropped, unplaced }
         : undefined;
-    return { text: composed, blocksReceipt };
+    return { text: composed, blocksReceipt, cardQuestionIds, inlineCardQuestionIds };
   }
 
   function publishUnsealed(
@@ -587,8 +619,13 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
       : streamedBody.trim()
         ? streamedBody
         : FINALIZATION_FAILURE_REPLY;
-    const disclosure = proposalDisclosure(trace, body);
     const prepared = prepareReplyText(body);
+    const disclosure = proposalDisclosure(
+      trace,
+      prepared.text,
+      prepared.cardQuestionIds,
+      prepared.inlineCardQuestionIds,
+    );
     const replyText = truncateCopilotReply(
       applyProposalDisclosure(prepared.text, disclosure),
       COPILOT_REPLY_CHAR_LIMIT,

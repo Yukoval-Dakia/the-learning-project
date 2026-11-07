@@ -31,6 +31,7 @@ import { revisionRowToContract } from '@/kernel/records/assessment-issuance';
 export const SERVING_HOLD_REASONS = [
   'awaiting_admission',
   'admission_failed',
+  'admission_undecided',
   'source_check_failed',
   'verify_hold',
   'retraction_hold',
@@ -66,6 +67,87 @@ export const AWAITING_ADMISSION_REVERIFY_AFTER_MS = 6 * 60 * 60 * 1000;
  *  missed hourly wake plus scheduling jitter, a stored waiting receipt can no
  *  longer promise that another automatic attempt will happen. */
 const ADMISSION_WAIT_RETRY_GRACE_MS = 2 * 60 * 60 * 1000;
+
+// Reasons that mean the check did not reach a verdict about the question. They
+// stay undecided rather than blaming the question's content. `calibration_failed`
+// is deliberately absent: probes ran and disagreed, which is a check failure.
+const INFRA_ADMISSION_REASONS = [
+  'adjudication_attempts_exhausted',
+  'no_probes_executed',
+  'unsupported_slot_shape',
+  'no_resolvable_units',
+  'unreadable_figure',
+  'unresolved',
+  'unit_level_withhold',
+  'unjudgeable',
+] as const;
+const INFRA_ADMISSION_PREFIX = 'dual solve failed before a verdict:';
+const QUESTION_ADMISSION_FAILURE_REASONS = [
+  'question_text_invalid',
+  'points_not_printed',
+  'calibration_failed',
+  'solve_conflict',
+  'solve_unsolvable',
+  'solve_seed_mismatch',
+] as const;
+
+function isInfrastructureAdmissionReason(reason: string | null): boolean {
+  if (reason == null) return false;
+  return (
+    reason.startsWith(INFRA_ADMISSION_PREFIX) ||
+    (INFRA_ADMISSION_REASONS as readonly string[]).includes(reason)
+  );
+}
+
+const INFRA_REASON_LIST = sql.join(
+  INFRA_ADMISSION_REASONS.map((reason) => sql`${reason}`),
+  sql`, `,
+);
+const QUESTION_FAILURE_REASON_LIST = sql.join(
+  QUESTION_ADMISSION_FAILURE_REASONS.map((reason) => sql`${reason}`),
+  sql`, `,
+);
+
+/** SQL twin of isInfrastructureAdmissionReason; reads the applied admission result. */
+function infrastructureAdmissionSql(): SQL {
+  return sql`(
+    coalesce(admission.result_json->'result'->'transient' = 'true'::jsonb, false)
+    or coalesce(admission.result_json->'result'->>'reason', '') in (${INFRA_REASON_LIST})
+    or coalesce(admission.result_json->'result'->>'reason', '') like ${`${INFRA_ADMISSION_PREFIX}%`}
+    or exists (
+      select 1 from jsonb_array_elements(
+        coalesce(admission.result_json->'result'->'per_unit', '[]'::jsonb)
+      ) unit
+      where coalesce(unit->>'reason', '') in (${INFRA_REASON_LIST})
+        or coalesce(unit->>'reason', '') like ${`${INFRA_ADMISSION_PREFIX}%`}
+    )
+  )`;
+}
+
+/** A known content/check failure; everything else with no reason stays undecided. */
+function knownQuestionFailureSql(): SQL {
+  return sql`(
+    coalesce(admission.result_json->'result'->>'reason', '') in (${QUESTION_FAILURE_REASON_LIST})
+    or exists (
+      select 1 from jsonb_array_elements(
+        coalesce(admission.result_json->'result'->'per_unit', '[]'::jsonb)
+      ) unit
+      where coalesce(unit->>'reason', '') in (${QUESTION_FAILURE_REASON_LIST})
+    )
+  )`;
+}
+
+function admissionReasonPresentSql(reason: string): SQL {
+  return sql`(
+    coalesce(admission.result_json->'result'->>'reason', '') = ${reason}
+    or exists (
+      select 1 from jsonb_array_elements(
+        coalesce(admission.result_json->'result'->'per_unit', '[]'::jsonb)
+      ) unit
+      where coalesce(unit->>'reason', '') = ${reason}
+    )
+  )`;
+}
 
 export interface QuestionServingActionRef {
   command: ServingActionCommand;
@@ -165,6 +247,9 @@ function servingFactsQuery(filters: SQL[]): SQL {
       verification.policy_id as verification_policy,
       admission.state as admission_paid_state,
       admission.result_json->'result'->>'status' as admission_result_status,
+      admission.result_json->'result'->>'reason' as admission_result_reason,
+      coalesce(admission.result_json->'result'->'transient' = 'true'::jsonb, false)
+        as admission_result_transient,
       stage_wait.retry_at as admission_wait_retry_at,
       (select unit->>'reason'
         from jsonb_array_elements(coalesce(admission.result_json->'result'->'per_unit', '[]'::jsonb)) unit
@@ -236,12 +321,22 @@ function servingFactsQuery(filters: SQL[]): SQL {
             then 'source_check_failed'
           else 'verify_hold' end
         when l.group_id is null then 'legacy_unpublished'
+        when admission.result_json->'result'->>'status' = 'waiting' then 'awaiting_admission'
         when l.scoring_admission_state = 'withheld' then case
           when verification.policy_id = 'source_verify@1' and verification.outcome = 'failed'
             then 'source_check_failed'
           when applied.status = 'withheld'
             or l.scoring_admission_withheld_reason in ('verification_failed', 'no_admitted_executor')
-            then 'admission_failed'
+            then case
+              when l.scoring_admission_withheld_reason = 'no_admitted_executor'
+                or ${admissionReasonPresentSql('no_admitted_executor')}
+                or ${admissionReasonPresentSql('system_grading_slice_unadmitted')}
+                then 'admission_failed'
+              when ${infrastructureAdmissionSql()}
+                then 'admission_undecided'
+              when ${knownQuestionFailureSql()}
+                then 'admission_failed'
+              else 'admission_undecided' end
           when l.scoring_admission_withheld_reason = 'owner_hold' then 'owner_hold'
           else 'awaiting_admission' end
         when not ${notDraftPredicate(question.draft_status)} then 'draft'
@@ -258,6 +353,8 @@ interface AdmissionReadFacts extends Record<string, unknown> {
   verification_policy: string | null;
   admission_paid_state: string | null;
   admission_result_status: string | null;
+  admission_result_reason: string | null;
+  admission_result_transient: boolean;
   admission_wait_retry_at: string | null;
   admission_failure_reason: string | null;
   admission_unknown_stage: boolean;
@@ -270,6 +367,13 @@ function admissionRead(
 ): QuestionServing['admission'] {
   if (fact.admission_state == null) return null;
   if (fact.admission_state === 'admitted') return { status: 'admitted', reason: null };
+  // Source verification has its own hold; do not turn it into an admission
+  // failure merely because the admission result is absent or generic.
+  if (fact.verification_policy === 'source_verify@1') return null;
+  const infrastructure =
+    fact.admission_result_transient === true ||
+    isInfrastructureAdmissionReason(fact.admission_result_reason) ||
+    isInfrastructureAdmissionReason(fact.admission_failure_reason);
   if (
     fact.admission_paid_state === 'unknown' ||
     fact.admission_unknown_stage ||
@@ -287,7 +391,8 @@ function admissionRead(
       return { status: 'pending', reason: '还在检查，系统会自动再试。' };
     return { status: 'undecided', reason: '自动检查的结果尚未确认，题目暂不能作答。' };
   }
-  const reason = fact.admission_failure_reason ?? fact.admission_withheld_reason;
+  const reason =
+    fact.admission_failure_reason ?? fact.admission_result_reason ?? fact.admission_withheld_reason;
   if (
     reason === 'no_admitted_executor' ||
     reason === 'system_grading_slice_unadmitted' ||
@@ -306,6 +411,14 @@ function admissionRead(
     fact.admission_result_status === 'withheld' ||
     fact.admission_withheld_reason === 'verification_failed'
   ) {
+    if (
+      infrastructure ||
+      reason == null ||
+      reason === 'verification_failed' ||
+      reason === 'unverified_rules' ||
+      !(QUESTION_ADMISSION_FAILURE_REASONS as readonly string[]).includes(reason)
+    )
+      return { status: 'undecided', reason: '自动检查的结果尚未确认，题目暂不能作答。' };
     // Provider exceptions can contain internal request details; only expose fixed learner copy.
     const message = reason?.startsWith('dual solve failed')
       ? '自动求解未能完成，题目暂不能作答。'
