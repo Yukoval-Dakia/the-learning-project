@@ -1,8 +1,9 @@
 /**
  * Deterministic single-pass confidence aggregator, not another model. It combines
- * extraction and tagging confidence to route a block to auto-enroll or human
- * review. Combined confidence is the weakest link, so either shaky input forces
- * review. The threshold is configurable, and the auto path is off by default.
+ * extraction and tagging confidence into one signal stored with the captured
+ * question; it does not route. A low-confidence result is still delivered, with
+ * the confidence available to the learner-facing surface as an honest "把握不高"
+ * signal. Whether a human must confirm it is YUK-1667's tiering decision.
  */
 import type { z } from 'zod';
 
@@ -14,10 +15,8 @@ type QuestionKindT = z.infer<typeof QuestionKind>;
 export interface RunWorkflowJudgeInput {
   /** question_block.extraction_confidence (0..1), reported by StructureTask. */
   extractionConfidence: number;
-  /** TaggingTask output for this block (already grid-filtered by the invoker). */
+  /** TaggingTask output for this block (already existence-filtered by the invoker). */
   tagging: TaggingOutputT;
-  /** Route 'auto' only when combined confidence >= this (autoEnrollThreshold). */
-  threshold: number;
   /**
    * Default difficulty for the prefilled question (1-5). The route is deferred
    * difficulty-judging out of scope; the import default is 3.
@@ -31,8 +30,8 @@ export interface RunWorkflowJudgeInput {
 }
 
 /**
- * Runs the deterministic WorkflowJudge. Returns the route decision + the fields
- * the auto-enroll path prefills when routing 'auto'.
+ * Runs the deterministic WorkflowJudge. Returns the confidence signal + the
+ * fields the auto-enroll path prefills.
  *
  * `outcome` is always `'unanswered'` (item/material) — the SAFEST signal: a
  * captured exam question with no graded answer is item-bank, never a fabricated
@@ -41,26 +40,12 @@ export interface RunWorkflowJudgeInput {
 export function runWorkflowJudge(input: RunWorkflowJudgeInput): WorkflowJudgeResultT {
   const extraction = clamp01(input.extractionConfidence);
   const tagging = clamp01(input.tagging.overall_confidence);
-  // Weakest-link: the route is only as confident as its shakiest input.
+  // Weakest-link: the signal is only as confident as its shakiest input.
   const confidence = Math.min(extraction, tagging);
 
   const knowledgeIds = input.tagging.suggestions.map((s) => s.knowledge_id);
-  const hasSuggestions = knowledgeIds.length > 0;
-
-  // 'auto' requires BOTH: combined confidence over the bar AND at least one
-  // surviving knowledge suggestion (nothing to enroll against otherwise).
-  const route: WorkflowJudgeResultT['route'] =
-    confidence >= input.threshold && hasSuggestions ? 'auto' : 'review';
-
-  const reasoning =
-    route === 'auto'
-      ? `auto: combined confidence ${confidence.toFixed(2)} >= ${input.threshold} with ${knowledgeIds.length} knowledge suggestion(s)`
-      : !hasSuggestions
-        ? 'review: no surviving knowledge suggestions'
-        : `review: combined confidence ${confidence.toFixed(2)} < ${input.threshold}`;
 
   return {
-    route,
     confidence,
     prefilled: {
       knowledge_ids: knowledgeIds,
@@ -69,7 +54,9 @@ export function runWorkflowJudge(input: RunWorkflowJudgeInput): WorkflowJudgeRes
       difficulty: clampDifficulty(input.defaultDifficulty ?? 3),
       question_kind: input.defaultQuestionKind ?? 'reading',
     },
-    reasoning,
+    reasoning:
+      `combined confidence ${confidence.toFixed(2)} from extraction ${extraction.toFixed(2)} ` +
+      `and tagging ${tagging.toFixed(2)} with ${knowledgeIds.length} knowledge suggestion(s)`,
   };
 }
 

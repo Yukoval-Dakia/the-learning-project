@@ -142,7 +142,6 @@ PATCH /api/admin/config   # x-internal-token
 | `QUESTION_SUPPLY_REFILL_ENABLED` | app、worker | `false` | `registry` |
 | `JUDGE_CALIBRATION_SAMPLING_ENABLED` | worker | `false` | `registry` |
 | `WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED` | worker | `true` | `registry` |
-| `WORKFLOW_JUDGE_AUTO_ENROLL_THRESHOLD` | worker | `0.85` | `registry` |
 | `WORKFLOW_JUDGE_OBSERVE_ENABLED` | worker | `false` | `registry` |
 | `WORKFLOW_JUDGE_STUDENT_ANSWER_GRADING_ENABLED` | worker | `false` | `registry` |
 | `WAVE6_TRIGGER_MARK_WRONG_ENABLED` | app、worker | `true` | `registry` |
