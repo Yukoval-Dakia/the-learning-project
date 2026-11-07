@@ -218,7 +218,7 @@ describe('read_practice_candidates authorization boundary', () => {
     expect(notAdmitted?.count).toBeGreaterThanOrEqual(1);
   });
 
-  // @invariant authorization: a scope that cannot be resolved is not an empty candidate set.
+  // @invariant security: a scope that cannot be resolved is not an empty candidate set.
   // @fails-if an unresolved goal scope reports status 'ok' with zero rows instead of
   // status 'scope_unresolved' + a typed gap.
   it('separates an unresolvable scope from a genuinely empty pool', async () => {
