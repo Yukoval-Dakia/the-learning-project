@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { ArtifactBodyBlocksT } from '@/core/schema/business';
+import { downgradeUnboundChartFences } from '@/kernel/blocks/markdown-chart-fence';
 import { noteBlockSource } from '../shared/note-block-source';
 
 const ANCHORED_TYPES = new Set([
@@ -41,7 +42,9 @@ export function materializeGeneratedBodyBlocks(body: ArtifactBodyBlocksT): Artif
       !['crossLinkBlock', 'artifactRefBlock', 'questionRefBlock'].includes(String(node.type))
     ) {
       if (!mirror.trim()) throw new Error('parseNoteGenerateOutput: empty generated content block');
-      attrs.source_markdown = mirror;
+      // The model never authors this mirror; a chart fence claiming recorded data
+      // has no binding on this path, so store it downgraded.
+      attrs.source_markdown = downgradeUnboundChartFences(mirror);
     }
     return {
       ...node,

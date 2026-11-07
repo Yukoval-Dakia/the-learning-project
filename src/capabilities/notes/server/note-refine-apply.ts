@@ -20,6 +20,10 @@ import {
 } from '@/core/schema/note-patch';
 import type { Db, Tx } from '@/db/client';
 import { artifact, event } from '@/db/schema';
+import {
+  downgradeUnboundChartFences,
+  downgradeUnboundChartFencesInBlockTree,
+} from '@/kernel/blocks/markdown-chart-fence';
 import { costUsdToMicroUsd } from '@/kernel/cost';
 import { writeEvent } from '@/kernel/events';
 import { noteBlockSource } from '../shared/note-block-source';
@@ -96,9 +100,9 @@ function withDerivedSourceMirror(patch: NotePatchT): NotePatchT {
   const derive = (op: NotePatchOpT): NotePatchOpT => {
     if (!('block' in op) || MIRROR_EXEMPT_BLOCK_TYPES.has(String(op.block.type))) return op;
     try {
-      const block = op.block as Record<string, unknown>;
+      const block = downgradeUnboundChartFencesInBlockTree(op.block as Record<string, unknown>);
       const attrs = { ...(block.attrs as Record<string, unknown> | undefined) };
-      attrs.source_markdown = noteBlockSource(block);
+      attrs.source_markdown = downgradeUnboundChartFences(noteBlockSource(block));
       return { ...op, block: { ...block, attrs } };
     } catch (err) {
       throw new NoteRefineApplyError(
