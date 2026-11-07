@@ -62,7 +62,7 @@ export const BankHitSchema = z.object({
     knowledge_ids: z.array(z.string()),
     difficulty: z.object({ basis: z.literal('authored'), value: z.number() }),
   }),
-  evidence: z.array(z.object({ source: z.string(), text: z.string() })),
+  evidence: z.array(z.object({ source: z.string(), text: z.string(), complete: z.boolean() })),
 });
 export const BankSearchOutputSchema = z.object({
   contract_version: z.literal(3),

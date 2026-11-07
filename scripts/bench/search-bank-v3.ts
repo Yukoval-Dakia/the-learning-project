@@ -99,6 +99,7 @@ async function main() {
     estimated_tokens: number;
     failed: boolean;
     degraded: boolean;
+    coverage_complete: boolean;
     search_id?: string;
     result_sha256?: string;
     error?: string;
@@ -161,7 +162,8 @@ async function main() {
             bytes: Buffer.byteLength(body),
             estimated_tokens: Math.ceil(Buffer.byteLength(body) / 4),
             failed: false,
-            degraded: !result.coverage.complete,
+            degraded: result.coverage.unavailable.length > 0,
+            coverage_complete: result.coverage.complete,
             search_id: result.search_id,
             result_sha256: createHash('sha256').update(body).digest('hex'),
           };
@@ -176,6 +178,7 @@ async function main() {
             estimated_tokens: 0,
             failed: true,
             degraded: true,
+            coverage_complete: false,
             error: error instanceof Error ? error.message : String(error),
           };
         }
@@ -212,6 +215,7 @@ async function main() {
           max_ms: times.at(-1),
           failed: group.filter((r) => r.failed).length,
           degraded: group.filter((r) => r.degraded).length,
+          coverage_incomplete: group.filter((r) => !r.coverage_complete).length,
           body_bytes_p50: [...group.map((r) => r.bytes)].sort((a, b) => a - b)[
             Math.ceil(group.length / 2) - 1
           ],
@@ -224,7 +228,9 @@ async function main() {
     const result = {
       completed: rows.length === 100,
       summaries,
-      speed_pass: summaries.every((s) => s.n > 0 && s.p95_ms < 1000 && s.failed === 0),
+      speed_pass: summaries.every(
+        (s) => s.n > 0 && s.p95_ms < 1000 && s.failed === 0 && s.degraded === 0,
+      ),
       real_utterances_measured: rows.some((r) => r.origin === 'real_utterance'),
       origin_policy:
         'P50/P95/max reported separately; design examples never stand in for real utterances',

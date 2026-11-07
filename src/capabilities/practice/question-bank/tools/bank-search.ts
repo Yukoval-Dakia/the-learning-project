@@ -15,7 +15,7 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { type SQL, and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { EMBED_VERSION, embedHash } from '@/core/embed-source';
+import { EMBED_VERSION } from '@/core/embed-source';
 import { stableStringify } from '@/core/migration/canonical';
 import { deriveSourceTier } from '@/core/schema/provenance';
 import type { Db, Tx } from '@/db/client';
@@ -896,13 +896,14 @@ async function runSearchBankInSnapshot(
     if (deps.priorFacets && vectorResult.vector) {
       const facetDistance = sql<number>`(${question_solution_prior_vector.embedding} <=> ${toSqlVector(vectorResult.vector)}::vector)`;
       const facetText = sql<string>`CASE WHEN ${question_solution_prior_vector.facet} = 'method' THEN concat(${question_solution_prior.prior}->'methods'->${question_solution_prior_vector.idx}->>'core_idea_md', ${'\n'}, ${question_solution_prior.prior}->'methods'->${question_solution_prior_vector.idx}->>'key_step_md') ELSE concat(${question_solution_prior.prior}->'pitfalls'->${question_solution_prior_vector.idx}->>'mechanism_md', ${'\n'}, ${question_solution_prior.prior}->'pitfalls'->${question_solution_prior_vector.idx}->>'trigger_md') END`;
-      const facets = await db
+      const ranked = db
         .select({
           id: question.id,
           facet: question_solution_prior_vector.facet,
-          text: facetText,
-          hash: question_solution_prior_vector.content_hash,
-          distance: facetDistance,
+          distance: facetDistance.as('distance'),
+          rank: sql<number>`row_number() over(partition by ${question.id},${question_solution_prior_vector.facet} order by ${facetDistance},${question_solution_prior_vector.part_id},${question_solution_prior_vector.idx})`.as(
+            'candidate_rank',
+          ),
         })
         .from(question)
         .innerJoin(question_group_lifecycle, eq(question_group_lifecycle.group_id, question.id))
@@ -926,27 +927,29 @@ async function runSearchBankInSnapshot(
             eq(question_solution_prior_vector.embed_model, EMBED_MODEL),
             eq(question_solution_prior_vector.embed_version, EMBED_VERSION),
             sql`${facetDistance} <= ${BANK_VECTOR_RETRIEVAL_MAX_DISTANCE}`,
+            sql`${question_solution_prior_vector.content_hash}=encode(sha256(convert_to(${facetText},'UTF8')),'hex')`,
           ),
         )
-        .orderBy(facetDistance, question.id)
-        .limit(BANK_SEARCH_CHANNEL_CAP + 1);
-      if (facets.length > BANK_SEARCH_CHANNEL_CAP) vectorTruncated = true;
-      for (const facet of ['method', 'pitfall'] as const) {
-        const seen = new Set<string>();
-        const rows = facets
-          .slice(0, BANK_SEARCH_CHANNEL_CAP)
-          .filter(
-            (r) =>
-              r.facet === facet &&
-              r.hash === embedHash(r.text) &&
-              !seen.has(r.id) &&
-              !!seen.add(r.id),
-          );
+        .as('bank_prior_ranked');
+      const facets = await Promise.all(
+        (['method', 'pitfall'] as const).map(async (facet) => ({
+          facet,
+          rows: await db
+            .select({ id: ranked.id, distance: ranked.distance })
+            .from(ranked)
+            .where(and(eq(ranked.facet, facet), sql`${ranked.rank}=1`))
+            .orderBy(ranked.distance, ranked.id)
+            .limit(BANK_SEARCH_CHANNEL_CAP + 1),
+        })),
+      );
+      for (const { facet, rows: all } of facets) {
+        if (all.length > BANK_SEARCH_CHANNEL_CAP) vectorTruncated = true;
+        const rows = all.slice(0, BANK_SEARCH_CHANNEL_CAP);
         channels.push({ name: facet, hits: rows.map((r, rank) => ({ id: r.id, rank })) });
         recallScan.push({
           channel: facet,
-          scanned: facets.length,
-          stop: facets.length > BANK_SEARCH_CHANNEL_CAP ? 'eligible_pool_cap' : 'channel_exhausted',
+          scanned: all.length,
+          stop: all.length > BANK_SEARCH_CHANNEL_CAP ? 'eligible_pool_cap' : 'channel_exhausted',
         });
       }
     }

@@ -166,7 +166,11 @@ export async function collectBankSearchReceipt(
             d.ref === hit.ref && (d.source.startsWith('part:') || d.source.startsWith('prior:')),
         )
         .slice(0, 2)
-        .map((d) => ({ source: d.source, text: d.text.slice(0, 180) })),
+        .map((d) => ({
+          source: d.source,
+          text: d.text.slice(0, 180),
+          complete: d.text.length <= 180,
+        })),
     })),
     coverage: {
       candidates: recall.hits.length,
@@ -203,7 +207,7 @@ export async function runBankSearchV3(
 export const searchBankTool: DomainTool<SearchBankInput, BankSearchOutputV3> = {
   name: 'search_bank',
   description:
-    'Find question-bank candidates and same-revision evidence; no interpretation or verification model runs here. query preserves the learner request. count is the requested qualifying quantity when known; page_size independently controls the small evidence page (default 5). Never infer demand from page size. filters enforce exact KC/kind/difficulty, literal prompt terms and current learner history; like_ref reuses a current version vector. conditions list required/preferred semantics; omitted conditions preserve the query as required. Read answers/rubric and include:solution_prior by returned ref when needed, and judge each required plus same-question joint yourself. Unread/unknown/contradicted never counts as qualified. Results are caller_assessed, not server semantic facts; do not show answers or methods to the learner before their judgment. Continue with only the unchanged cursor. Use search_id and cited assessments in write_quiz/file_bank_gap; those consumers revalidate versions and eligibility. Empty or truncated results never prove bank absence.',
+    'Find question-bank candidates and same-revision evidence; no interpretation or verification model runs here. query preserves the learner request. count is the requested qualifying quantity when known; page_size independently controls the small evidence page (default 5). Never infer demand from page size. filters enforce exact KC/kind/difficulty, literal prompt terms and current learner history; like_ref reuses a current version vector. conditions list required/preferred semantics; omitted conditions preserve the query as required. Read answers/rubric and include:solution_prior by returned ref when needed, and judge each required plus same-question joint yourself. Excerpts mark complete; an incomplete excerpt is not negative evidence. Unread/unknown/contradicted never counts as qualified. Results are caller_assessed, not server semantic facts; do not show answers or methods to the learner before their judgment. Continue with only the unchanged cursor. Use search_id and cited assessments in write_quiz/file_bank_gap; those consumers revalidate versions and eligibility. Empty or truncated results never prove bank absence.',
   effect: 'read',
   inputSchema: SearchBankInputSchema,
   outputSchema: BankSearchOutputSchema,

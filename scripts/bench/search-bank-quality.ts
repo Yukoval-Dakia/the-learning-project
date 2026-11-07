@@ -103,6 +103,12 @@ async function main() {
       throw Error(
         'Real model-agreed gold needs the frozen snapshot and two independent model routes',
       );
+    if (
+      gold.label_tier === 'two_model_independent' &&
+      (!gold.model_routes?.some((r) => r.model === 'deepseek-v4.1-flash') ||
+        !gold.model_routes.some((r) => r.model === 'mimo-v2.6-pro'))
+    )
+      throw Error('Real gold requires independent flash and mimo-v2.6-pro routes');
     for (const q of gold.requests) {
       if (!q.utterance && !q.query) throw Error('Original utterance required');
       if (
