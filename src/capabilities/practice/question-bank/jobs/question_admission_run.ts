@@ -92,6 +92,7 @@ import {
   AdmissionInterrupted,
   AdmissionNotSent,
   type AdmissionRecoveryReader,
+  AdmissionSafeRetryExhausted,
   type AdmissionStageReceiptRef,
   AdmissionWaiting,
   admissionStageRunner,
@@ -790,23 +791,34 @@ export async function runAdmissionForQuestion(
         };
       }
       if (error instanceof AdmissionNotSent && !interrupted) {
+        const exhausted = error instanceof AdmissionSafeRetryExhausted;
+        const reason = exhausted
+          ? 'admission_provider_safe_retry_exhausted'
+          : 'admission_provider_query_not_started';
         receipt = AdmissionResultReceipt.parse({
           version: 1,
           recorded_at: new Date().toISOString(),
           result: {
             status: 'withheld',
-            reason: 'admission_provider_query_not_started',
+            reason,
             per_unit: batch.input.contract.scoring_basis.units.map((unit) => ({
               scoring_unit_id: unit.scoring_unit_id,
               status: 'withheld',
-              reason: 'admission_provider_query_not_started',
+              reason,
             })),
             verification: {
               policy_id: batch.input.policy_id,
               outcome: 'suspended',
               evidence: {
-                pack: 'question_admission_not_sent',
-                repair_delivery: { kind: 'system_closed', reason: 'provider_query_not_started' },
+                pack: exhausted
+                  ? 'question_admission_safe_retry_exhausted'
+                  : 'question_admission_not_sent',
+                repair_delivery: {
+                  kind: 'system_closed',
+                  reason: exhausted
+                    ? 'provider_safe_retry_exhausted'
+                    : 'provider_query_not_started',
+                },
                 paid_stage_receipts: stageReceiptRefs,
               },
             },

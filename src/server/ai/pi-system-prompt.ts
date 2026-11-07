@@ -8,13 +8,13 @@ export interface PiSkillDoc {
   readonly body: string;
 }
 
-/** Append SKILL.md bodies to the system prompt; no docs means byte-identical pass-through. */
+/** Append SKILL.md bodies; no docs and search available means byte-identical pass-through. */
 export function composePiSystemPrompt(
   systemPrompt: string,
   skillDocs?: readonly PiSkillDoc[],
   searchUnavailable = false,
 ): string {
-  const unavailable = searchUnavailable ? '\n搜索暂不可用，不得声称已搜索。' : '';
+  const unavailable = searchUnavailable ? '\n网页搜索暂不可用，不得声称已搜过网页。' : '';
   if (!skillDocs || skillDocs.length === 0) return systemPrompt + unavailable;
   const docs = skillDocs
     .map((doc) => `<skill name="${doc.name}">\n${doc.body}\n</skill>`)

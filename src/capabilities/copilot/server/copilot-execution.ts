@@ -4,6 +4,7 @@ import {
   EXA_SCOPED_TOOL_NAMES,
   buildExaMcpServer,
 } from '@/ai/exa-mcp';
+import type { FailureDiagnostics } from '@/ai/failure-diagnostics';
 import { NO_PROGRESS_BUDGET_LANDING_MARGIN_MS, createNoProgressLoop } from '@/ai/no-progress-loop';
 import {
   type BuildMcpServerOptions,
@@ -152,6 +153,8 @@ export interface CopilotExecutionResult {
   finalization: CopilotReplyFinalizationResult;
   partial: boolean;
   error?: string;
+  /** Whitelisted cause chain of the mid-flight stream error, for durable_failure. */
+  failureDiagnostics?: FailureDiagnostics;
   /** Proven provider failure (category + bound status + provider Retry-After). */
   providerFailure?: ProviderFailureInfo;
   sdkSessionId?: string;
@@ -175,7 +178,13 @@ export type ExecuteCopilotTurn = (
 type AgentResult = Pick<RunTaskResult, 'task_run_id' | 'text'> & { finishReason?: string };
 type StreamResult = Pick<
   StreamCollectResult,
-  'task_run_id' | 'text' | 'terminalText' | 'partial' | 'error' | 'providerFailure'
+  | 'task_run_id'
+  | 'text'
+  | 'terminalText'
+  | 'partial'
+  | 'error'
+  | 'failureDiagnostics'
+  | 'providerFailure'
 > & { finishReason?: string };
 
 /** Process-level adapters. Product callers use ExecuteCopilotTurn, never this seam. */
@@ -554,8 +563,8 @@ export function createCopilotExecutionOwner(
       allowedTools: authoritativeReply ? [] : allowedTools,
       ...(piSpawnContract ? { onTaskEvent } : {}),
       // An explicit empty allowlist (authoritativeReply) must not connect
-      // remote mounts — piRemoteMcpMount talks to Exa at buildTools time and
-      // an outage would fail an intentionally tool-less turn.
+      // remote mounts — piRemoteMcpMount reaches Exa at buildTools time, and an
+      // outage would spend the optional-search startup budget on a tool-less turn.
       piToolMounts: authoritativeReply ? [] : piToolMounts,
       piHooks,
       ...(piSpawnContract ? { piAgents: piSpawnContract.piAgents } : {}),
@@ -777,6 +786,9 @@ export function createCopilotExecutionOwner(
         finalization,
         partial,
         ...(executionError ? { error: executionError } : {}),
+        ...(executionError && result.failureDiagnostics
+          ? { failureDiagnostics: result.failureDiagnostics }
+          : {}),
         ...(finalization.accepted && planned?.filing ? { correctionFiling: planned.filing } : {}),
         ...(result.providerFailure ? { providerFailure: result.providerFailure } : {}),
         ...(observedSdkSessionId && retainSdkSession ? { sdkSessionId: observedSdkSessionId } : {}),

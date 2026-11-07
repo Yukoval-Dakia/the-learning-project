@@ -24191,6 +24191,20 @@ export interface operations {
                             /** Format: date-time */
                             seen_at: string;
                         }[];
+                        dependency_notices: {
+                            /** @enum {string} */
+                            category: "authorization" | "network";
+                            /** @enum {string} */
+                            dependency: "web_search";
+                            failures: number;
+                            /** Format: date-time */
+                            last_failure_at: string;
+                            latest_run_id: string;
+                            learner_detail: string;
+                            learner_title: string;
+                            /** Format: date-time */
+                            since: string;
+                        }[];
                         thresholds: {
                             consecutive_failures: number;
                             failure_rate_above: number;
@@ -32519,6 +32533,49 @@ export interface operations {
                                     from_label: string;
                                     to_label: string;
                                 };
+                                knowledge_mutation?: {
+                                    from: {
+                                        label: string | null;
+                                        /** @enum {string} */
+                                        state: "live" | "archived" | "merged" | "missing";
+                                    }[];
+                                    into: {
+                                        label: string | null;
+                                        /** @enum {string} */
+                                        state: "live" | "archived" | "merged" | "missing";
+                                    };
+                                    /** @enum {string} */
+                                    mutation: "merge";
+                                } | {
+                                    /** @enum {string} */
+                                    mutation: "reparent";
+                                    node: {
+                                        label: string | null;
+                                        /** @enum {string} */
+                                        state: "live" | "archived" | "merged" | "missing";
+                                    };
+                                    parent: {
+                                        label: string | null;
+                                        /** @enum {string} */
+                                        state: "live" | "archived" | "merged" | "missing";
+                                    } | null;
+                                } | {
+                                    from: {
+                                        label: string | null;
+                                        /** @enum {string} */
+                                        state: "live" | "archived" | "merged" | "missing";
+                                    };
+                                    into: {
+                                        name: string;
+                                        parent: {
+                                            label: string | null;
+                                            /** @enum {string} */
+                                            state: "live" | "archived" | "merged" | "missing";
+                                        } | null;
+                                    }[];
+                                    /** @enum {string} */
+                                    mutation: "split";
+                                };
                                 learner_summary: string;
                                 title: string;
                             } | null;
@@ -33651,6 +33708,49 @@ export interface operations {
                                 knowledge_edge?: {
                                     from_label: string;
                                     to_label: string;
+                                };
+                                knowledge_mutation?: {
+                                    from: {
+                                        label: string | null;
+                                        /** @enum {string} */
+                                        state: "live" | "archived" | "merged" | "missing";
+                                    }[];
+                                    into: {
+                                        label: string | null;
+                                        /** @enum {string} */
+                                        state: "live" | "archived" | "merged" | "missing";
+                                    };
+                                    /** @enum {string} */
+                                    mutation: "merge";
+                                } | {
+                                    /** @enum {string} */
+                                    mutation: "reparent";
+                                    node: {
+                                        label: string | null;
+                                        /** @enum {string} */
+                                        state: "live" | "archived" | "merged" | "missing";
+                                    };
+                                    parent: {
+                                        label: string | null;
+                                        /** @enum {string} */
+                                        state: "live" | "archived" | "merged" | "missing";
+                                    } | null;
+                                } | {
+                                    from: {
+                                        label: string | null;
+                                        /** @enum {string} */
+                                        state: "live" | "archived" | "merged" | "missing";
+                                    };
+                                    into: {
+                                        name: string;
+                                        parent: {
+                                            label: string | null;
+                                            /** @enum {string} */
+                                            state: "live" | "archived" | "merged" | "missing";
+                                        } | null;
+                                    }[];
+                                    /** @enum {string} */
+                                    mutation: "split";
                                 };
                                 learner_summary: string;
                                 title: string;

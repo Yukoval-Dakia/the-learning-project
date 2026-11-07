@@ -229,8 +229,25 @@ export interface ProviderTransportBudgetReceipt {
   readonly http_margin_ms?: number;
 }
 
+export interface ProviderStartupDependencyEvidence {
+  readonly name: 'web_search';
+  readonly status: 'connected' | 'unavailable';
+  /** Present when unavailable: the same whitelisted diagnostics as other failures. */
+  readonly failure?: FailureDiagnostics;
+}
+
 export interface ProviderTransportEvidence {
-  /** Optional startup dependency failure; separate from provider send/cost truth. */
+  /**
+   * Positive/negative evidence for an optional startup dependency (web search).
+   * A run without this key never mounted the dependency; the dependency notice
+   * read skips it instead of treating it as recovery.
+   */
+  startup_dependency?: ProviderStartupDependencyEvidence;
+  /**
+   * Legacy (#2632) split failure write; read-only compatibility until the notice
+   * window ages those rows out. New writes carry the diagnostics in
+   * `startup_dependency.failure`.
+   */
   startup_dependency_failures?: readonly FailureDiagnostics[];
   readonly v: 1;
   readonly budget: ProviderTransportBudgetReceipt;

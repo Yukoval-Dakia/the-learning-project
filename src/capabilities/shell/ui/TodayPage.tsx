@@ -340,17 +340,31 @@ function DegradedKindsFlags() {
 // Learner copy only: never the task kind, counts or run ids — those live at the top of
 // /admin/runs. Silent while loading, on error, and when there is no alert. An `unsealed` alert
 // stays off this line: the reply reached the learner, only its closing record is incomplete.
+// A dependency notice is its own line: replies keep succeeding without that dependency, so it is
+// not a failed task, and its words come from the server.
 const TASK_FAILURE_ALERTS_KEY = ['task-failure-alerts'] as const;
 function TaskFailureNotice() {
   const { getTaskFailureAlerts } = useWorkbenchClient();
   const q = useQuery({ queryKey: TASK_FAILURE_ALERTS_KEY, queryFn: getTaskFailureAlerts });
-  if (!q.data?.alerts.some((alert) => alert.rule !== 'unsealed')) return null;
+  if (!q.data) return null;
+  const tasksFailing = q.data.alerts.some((alert) => alert.rule !== 'unsealed');
   return (
-    <p className="td-flag td-flag-caution" role="status">
-      <CircleAlert size={16} aria-hidden="true" className="td-flag-ic" />
-      <span className="td-flag-t">有一部分 AI 工作最近连续没有成功</span>
-      <span className="td-flag-s">相关的结果可能暂时缺失或来得慢一些。</span>
-    </p>
+    <>
+      {tasksFailing ? (
+        <p className="td-flag td-flag-caution" role="status">
+          <CircleAlert size={16} aria-hidden="true" className="td-flag-ic" />
+          <span className="td-flag-t">有一部分 AI 工作最近连续没有成功</span>
+          <span className="td-flag-s">相关的结果可能暂时缺失或来得慢一些。</span>
+        </p>
+      ) : null}
+      {q.data.dependency_notices.map((notice) => (
+        <p key={notice.dependency} className="td-flag td-flag-caution" role="status">
+          <CircleAlert size={16} aria-hidden="true" className="td-flag-ic" />
+          <span className="td-flag-t">{notice.learner_title}</span>
+          <span className="td-flag-s">{notice.learner_detail}</span>
+        </p>
+      ))}
+    </>
   );
 }
 

@@ -21,6 +21,19 @@ export const TaskFailureAlertSchema = z.object({
   recorded_at: z.string().datetime().nullable(),
 });
 
+const DependencyNoticeSchema = z.object({
+  dependency: z.literal('web_search'),
+  /** Unknown causes count as network. */
+  category: z.enum(['authorization', 'network']),
+  /** Learner copy; never names the provider, host, key or cause. */
+  learner_title: z.string(),
+  learner_detail: z.string(),
+  failures: z.number().int().nonnegative(),
+  since: z.string().datetime(),
+  last_failure_at: z.string().datetime(),
+  latest_run_id: z.string(),
+});
+
 export const TaskFailureAlertsResponseSchema = z.object({
   checked_at: z.string().datetime(),
   thresholds: z.object({
@@ -31,6 +44,12 @@ export const TaskFailureAlertsResponseSchema = z.object({
     stale_after_days: z.number().int(),
   }),
   alerts: z.array(TaskFailureAlertSchema),
+  /**
+   * Optional dependencies that keep failing without failing the task. Kept out
+   * of `alerts` so a healthy reply is never shown as a failed task, and never
+   * written as an event (the hourly job records task failures only).
+   */
+  dependency_notices: z.array(DependencyNoticeSchema),
   /** Processes running without a required setting; names only, never values. */
   config_incomplete: z.array(
     z.object({
