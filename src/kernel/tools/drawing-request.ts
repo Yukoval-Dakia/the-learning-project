@@ -31,9 +31,9 @@ export interface DrawingRequestInput {
   /** Server-bound source ledger; the drawing refuses unless its snapshot completes. */
   ledger?: TurnSourceLedger;
   /**
-   * Server-bound: the turn is a restricted answer-reveal surface
-   * (post-judgment answers legitimately visible), so bound question sources
-   * are not re-gated on judged attempts.
+   * Server-bound: the turn itself is answer-bound (an answer_only-restricted
+   * surface where the reply already IS the answer layer), so bound questions
+   * are not re-gated on a separate judged-attempt check.
    */
   answerOnly?: boolean;
 }

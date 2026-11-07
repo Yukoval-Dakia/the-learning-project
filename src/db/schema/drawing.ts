@@ -70,6 +70,11 @@ export const drawing = pgTable(
     sources: jsonb('sources').$type<DrawingSourceRef[]>().notNull(),
     /** false ⇒ admission proved the read set unbindable; row is audit-only. */
     source_complete: boolean('source_complete').notNull(),
+    /**
+     * Scoped projection labels bound at admission (learner_state_header etc).
+     * Non-empty ⇒ every authorization check also runs the whole-learner veto.
+     */
+    source_scoped: jsonb('source_scoped').$type<string[]>().notNull().default([]),
     /** Frozen source_document usage epochs at admission (retraction fence). */
     source_epochs: jsonb('source_epochs').$type<DrawingSourceEpoch[]>().notNull(),
     /** Last SUCCESSFUL result; survives a failed/cancelled redraw. */

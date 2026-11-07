@@ -14,6 +14,7 @@ import type { Db, Tx } from '@/db/client';
 import { fromPgBossDrizzleTx } from '@/db/pg-boss-drizzle';
 import { type DrawingStatus, drawing } from '@/db/schema';
 import { getR2 } from '@/kernel/object-storage';
+import { lockDerivationSources } from '@/kernel/read-models/usage-policy';
 import { persistImmutableAsset } from '@/kernel/records/asset-store';
 import { ChatGPTOAuthFileError } from '@/server/ai/chatgpt-oauth-store';
 import { classifyLoginFailure } from '@/server/ai/login-failure';
@@ -24,12 +25,13 @@ import {
   DRAWING_JOB_NAME,
   DRAWING_LOGIN_RETRY_MS,
   DRAWING_QUOTA_RETRY_MS,
+  DrawingAuthorizationError,
   type DrawingBoss,
   drawingBossJobId,
-  recheckSources,
-  sourceEpochsIntact,
+  drawingSourcesAuthorized,
+  sendDrawingJob,
 } from '../server/drawing-service';
-import { DRAWING_LIVE_STATUSES } from '../server/drawing-state';
+import { DRAWING_EXPIRABLE_STATUSES } from '../server/drawing-state';
 import { SOL_LANE, assertSolRoute } from '../server/route-assert';
 import { DRAWING_TASK_KIND, DRAWING_TIMEOUT_MS, parseDrawingOutput } from '../tasks/drawing-task';
 
@@ -66,7 +68,7 @@ async function claimDrawing(db: Db, id: string): Promise<DrawingRow | null> {
 }
 
 async function transition(
-  db: Db,
+  db: Db | Tx,
   row: DrawingRow,
   status: DrawingStatus,
   fields: Partial<typeof drawing.$inferInsert> = {},
@@ -90,6 +92,7 @@ async function waitAndRearm(
   retryAt: Date,
   detail: string,
   boss: DrawingBoss,
+  deliveryJobId?: string,
 ): Promise<void> {
   await db.transaction(async (tx) => {
     const [updated] = await tx
@@ -110,14 +113,10 @@ async function waitAndRearm(
       // One route-scoped probe per lane — waiting drawings never self-probe
       // hourly. The probe wakes every wait on success, re-arms while any wait
       // remains (the same dedupe keeps only one live probe per route).
-      await ensureLoginProbe(tx, boss, adapter);
+      await ensureLoginProbe(tx, boss, adapter, { retryAt, excludeJobId: deliveryJobId });
       return;
     }
-    await boss.send(
-      DRAWING_JOB_NAME,
-      { drawing_id: row.id },
-      { id: drawingBossJobId(row.id, row.version + 1), startAfter: retryAt, db: adapter },
-    );
+    await sendDrawingJob(tx, boss, row.id, row.version + 1, retryAt);
   });
 }
 
@@ -125,29 +124,45 @@ async function waitAndRearm(
  * Single login probe per route: a delayed drawing_generate job carrying
  * `login_probe` instead of a drawing id. Deduped inside pgboss.job so N
  * waiting drawings share one probe — the same shape admission uses
- * (`login_probe_route` on its family queue).
+ * (`login_probe_route` on its family queue). The currently-delivering job is
+ * excluded from the dedupe or a probe re-arming itself would find its own
+ * active row and never schedule the next probe; the probe id derives from the
+ * cycle's retryAt so each generation is a fresh dispatch.
  */
 async function ensureLoginProbe(
   tx: Tx,
   boss: DrawingBoss,
   adapter: ReturnType<typeof fromPgBossDrizzleTx>,
+  opts: { retryAt: Date; excludeJobId?: string },
 ): Promise<void> {
   const existing = await tx.execute<{ id: string }>(sql`
     SELECT id FROM pgboss.job WHERE name = ${DRAWING_JOB_NAME}
       AND state IN ('created', 'retry', 'active')
+      AND (${opts.excludeJobId ?? null}::text IS NULL OR id::text <> ${opts.excludeJobId ?? ''})
       AND data ? 'login_probe' LIMIT 1`);
   if (existing.length > 0) return;
-  await boss.send(
+  const probeId = drawingBossJobId(
+    `login_probe:${SOL_LANE.provider}/${SOL_LANE.model}:${opts.retryAt.getTime()}`,
+    1,
+  );
+  const sent = await boss.send(
     DRAWING_JOB_NAME,
     {
       login_probe: { provider: SOL_LANE.provider, model: SOL_LANE.model },
     },
-    {
-      id: drawingBossJobId(`login_probe:${SOL_LANE.provider}/${SOL_LANE.model}`, 1),
-      startAfter: new Date(Date.now() + DRAWING_LOGIN_RETRY_MS),
-      db: adapter,
-    },
+    { id: probeId, startAfter: opts.retryAt, db: adapter },
   );
+  if (sent) return;
+  const existingJob = await boss.getJobById(DRAWING_JOB_NAME, probeId, { db: adapter });
+  const data = existingJob?.data as
+    | { login_probe?: { provider?: string; model?: string } }
+    | undefined;
+  if (
+    data?.login_probe?.provider !== SOL_LANE.provider ||
+    data?.login_probe?.model !== SOL_LANE.model
+  ) {
+    throw new Error(`drawing login-probe dispatch id ${probeId} collides with a foreign job`);
+  }
 }
 
 /** Cheap credential probe: route resolves and the auth file exists/parses. */
@@ -163,7 +178,7 @@ function probeSolCredentials(): { ok: boolean; reason?: string } {
 }
 
 /** Probe delivery: on recovery every waiting_login row wakes at once. */
-async function runLoginProbe(db: Db, boss: DrawingBoss): Promise<void> {
+async function runLoginProbe(db: Db, boss: DrawingBoss, deliveryJobId?: string): Promise<void> {
   const probe = probeSolCredentials();
   if (probe.ok) {
     await db.transaction(async (tx) => {
@@ -172,13 +187,8 @@ async function runLoginProbe(db: Db, boss: DrawingBoss): Promise<void> {
         .set({ retry_at: new Date(), version: sql`${drawing.version} + 1`, updated_at: new Date() })
         .where(and(eq(drawing.status, 'waiting_login'), sql`${drawing.expires_at} > now()`))
         .returning({ id: drawing.id, version: drawing.version });
-      const adapter = fromPgBossDrizzleTx(tx);
       for (const row of rows) {
-        await boss.send(
-          DRAWING_JOB_NAME,
-          { drawing_id: row.id },
-          { id: drawingBossJobId(row.id, row.version), db: adapter },
-        );
+        await sendDrawingJob(tx, boss, row.id, row.version);
       }
     });
     return;
@@ -191,7 +201,10 @@ async function runLoginProbe(db: Db, boss: DrawingBoss): Promise<void> {
     .limit(1);
   if (!remaining) return;
   await db.transaction(async (tx) => {
-    await ensureLoginProbe(tx, boss, fromPgBossDrizzleTx(tx));
+    await ensureLoginProbe(tx, boss, fromPgBossDrizzleTx(tx), {
+      retryAt: new Date(Date.now() + DRAWING_LOGIN_RETRY_MS),
+      excludeJobId: deliveryJobId,
+    });
   });
 }
 
@@ -208,14 +221,20 @@ function classifyQuota(error: unknown): { retryAfterMs?: number } | undefined {
   return undefined;
 }
 
-async function processDrawing(db: Db, drawingId: string, boss: DrawingBoss): Promise<void> {
+async function processDrawing(
+  db: Db,
+  drawingId: string,
+  boss: DrawingBoss,
+  deliveryJobId?: string,
+): Promise<void> {
   const claimed = await claimDrawing(db, drawingId);
   if (!claimed) {
-    // Nothing to claim: flip a live-but-expired row so the state stays honest.
+    // Nothing to claim: flip an expirable-but-expired row so the state stays
+    // honest. `ready` is not expirable on the clock — only retraction ends it.
     const [row] = await db.select().from(drawing).where(eq(drawing.id, drawingId));
     if (
       row &&
-      (DRAWING_LIVE_STATUSES as readonly string[]).includes(row.status) &&
+      (DRAWING_EXPIRABLE_STATUSES as readonly string[]).includes(row.status) &&
       row.expires_at.getTime() <= Date.now()
     ) {
       await transition(db, row, 'expired', { error_kind: 'expired' });
@@ -224,15 +243,14 @@ async function processDrawing(db: Db, drawingId: string, boss: DrawingBoss): Pro
   }
   let row = claimed;
 
-  // Re-check every bound source AND every frozen usage epoch before the send;
-  // a moved epoch is treated exactly like retraction.
-  const sourceVerdict = await recheckSources(db, row.sources);
-  if (!sourceVerdict.ok) {
-    await expireDrawing(db, row, 'a bound source stopped allowing derivation');
-    return;
-  }
-  if (!(await sourceEpochsIntact(db, row.source_epochs))) {
-    await expireDrawing(db, row, 'a bound source changed usage epoch');
+  // The same authorization gate as admission/read paths — concrete sources,
+  // frozen epochs, and the scoped whole-learner veto — before any send.
+  if (!(await drawingSourcesAuthorized(db, row))) {
+    await expireDrawing(
+      db,
+      row,
+      'a bound source stopped allowing derivation or changed usage epoch',
+    );
     return;
   }
 
@@ -253,6 +271,7 @@ async function processDrawing(db: Db, drawingId: string, boss: DrawingBoss): Pro
         new Date(Date.now() + DRAWING_LOGIN_RETRY_MS),
         `login failure (${login.kind}${'reason' in login && login.reason ? `:${login.reason}` : ''})`,
         boss,
+        deliveryJobId,
       );
       return;
     }
@@ -294,50 +313,73 @@ async function processDrawing(db: Db, drawingId: string, boss: DrawingBoss): Pro
       });
       return;
     }
-    let asset: { id: string; sha256: string };
     try {
-      const persisted = await persistImmutableAsset(db, getR2(), {
-        profile: 'svg_figure',
-        bytes: new TextEncoder().encode(output.svg),
-        provenance: {
-          source_kind: 'svg_figure',
-          actor_ref: 'drawing_generate',
-          task_run_id: result.task_run_id,
-          drawing_id: row.id,
-        },
-        authorize: async () => {},
+      // Publication is atomic: the drawing_svg asset row and the ready
+      // transition commit in ONE transaction. The authorize hook re-locks the
+      // bound source documents and re-runs the full gate inside that tx, so a
+      // source withdrawn or an epoch moved DURING generation lands before
+      // ready is ever written.
+      const published = await db.transaction(async (tx) => {
+        const persisted = await persistImmutableAsset(tx, getR2(), {
+          profile: 'drawing_svg',
+          bytes: new TextEncoder().encode(output.svg),
+          provenance: {
+            source_kind: 'drawing_svg',
+            actor_ref: 'drawing_generate',
+            task_run_id: result.task_run_id,
+            drawing_id: row.id,
+          },
+          authorize: async (atx) => {
+            for (const source of row.sources) await lockDerivationSources(atx, source);
+            if (!(await drawingSourcesAuthorized(atx, row))) {
+              throw new DrawingAuthorizationError(
+                'a bound source stopped allowing derivation or changed usage epoch during generation',
+              );
+            }
+          },
+        });
+        const ready = await transition(tx, row, 'ready', {
+          last_ready_asset_id: persisted.row.id,
+          last_ready_asset_digest: `sha256:${persisted.row.sha256}`,
+          last_ready_task_run_id: result.task_run_id,
+          sol_task_run_id: result.task_run_id,
+          error_kind: null,
+          error_detail: null,
+          retry_at: null,
+        });
+        if (!ready) return null; // a cancel/expiry won the CAS — keep its state
+        return ready;
       });
-      asset = persisted.row;
+      if (published) row = published;
     } catch (error) {
+      if (error instanceof DrawingAuthorizationError) {
+        await expireDrawing(db, row, error.message);
+        return;
+      }
       await transition(db, row, 'failed', {
         error_kind: 'asset',
         error_detail: (error instanceof Error ? error.message : String(error)).slice(0, 500),
       });
       return;
     }
-    await transition(db, row, 'ready', {
-      last_ready_asset_id: asset.id,
-      last_ready_asset_digest: `sha256:${asset.sha256}`,
-      last_ready_task_run_id: result.task_run_id,
-      sol_task_run_id: result.task_run_id,
-      error_kind: null,
-      error_detail: null,
-      retry_at: null,
-    });
   } catch (error) {
-    const login = classifyLoginFailure(error);
+    const login =
+      classifyLoginFailure(error) ??
+      (error instanceof ChatGPTOAuthFileError ? { kind: 'credential' as const } : undefined);
     if (login) {
       await waitAndRearm(
         db,
         row,
         'waiting_login',
         new Date(Date.now() + DRAWING_LOGIN_RETRY_MS),
-        `login failure (${login.kind}${login.reason ? `:${login.reason}` : ''})`,
+        `login failure (${login.kind}${'reason' in login && login.reason ? `:${login.reason}` : ''})`,
         boss,
+        deliveryJobId,
       );
       return;
     }
     const quota = classifyQuota(error);
+
     if (quota) {
       await waitAndRearm(
         db,
@@ -346,6 +388,7 @@ async function processDrawing(db: Db, drawingId: string, boss: DrawingBoss): Pro
         new Date(Date.now() + (quota.retryAfterMs ?? DRAWING_QUOTA_RETRY_MS)),
         'provider quota exhausted (bound 429)',
         boss,
+        deliveryJobId,
       );
       return;
     }
@@ -359,15 +402,17 @@ async function processDrawing(db: Db, drawingId: string, boss: DrawingBoss): Pro
 }
 
 export function buildDrawingGenerateHandler(db: Db) {
-  return async (jobs: Array<{ data: { drawing_id?: string; login_probe?: unknown } }>) => {
+  return async (
+    jobs: Array<{ id?: string; data: { drawing_id?: string; login_probe?: unknown } }>,
+  ) => {
     const boss = await getStartedBoss();
     for (const job of jobs) {
       if (job.data?.login_probe) {
-        await runLoginProbe(db, boss);
+        await runLoginProbe(db, boss, job.id);
         continue;
       }
       const drawingId = job.data?.drawing_id;
-      if (typeof drawingId === 'string') await processDrawing(db, drawingId, boss);
+      if (typeof drawingId === 'string') await processDrawing(db, drawingId, boss, job.id);
     }
   };
 }

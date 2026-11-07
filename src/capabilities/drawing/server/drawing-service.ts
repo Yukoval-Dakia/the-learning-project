@@ -5,14 +5,26 @@
 // state the learner cancelled.
 
 import { createHash } from 'node:crypto';
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, sql } from 'drizzle-orm';
 import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
 import { fromPgBossDrizzleTx } from '@/db/pg-boss-drizzle';
-import { type DrawingSourceEpoch, type DrawingStatus, drawing, source_asset } from '@/db/schema';
+import {
+  type DrawingSourceEpoch,
+  type DrawingStatus,
+  drawing,
+  event,
+  source_asset,
+} from '@/db/schema';
+import {
+  nativeAttemptOutcome,
+  resolveVerdictsForAttempts,
+  resolveVerdictsForNativeAttempts,
+} from '@/kernel/read-models/assessment-verdict';
 import {
   type PurposeSource,
   anyRestrictedLearnerSource,
+  lineageQuestionIds,
   lockDerivationSources,
   readSourceUsageEpochs,
   sourceAllowsDerivation,
@@ -107,25 +119,97 @@ export async function sourceEpochsIntact(
 }
 
 /**
- * Answer-layer gate: a bound question the learner has not been judged on may
- * not drive a drawing — the model could leak its answer into brief/alt/caption.
- * `answerOnly` turns are the post-judgment reveal surface and skip this gate.
+ * The single authorization gate every post-admission path runs: concrete
+ * sources re-checked, frozen usage epochs compared verbatim, and — when the
+ * turn carried scoped projections — the whole-learner veto. Admission,
+ * pre-send, publish, status reads, asset reads and redraw all funnel here so
+ * no path can drift from the others.
+ */
+export async function drawingSourcesAuthorized(
+  db: Db | Tx,
+  row: Pick<DrawingRow, 'sources' | 'source_epochs' | 'source_scoped'>,
+): Promise<boolean> {
+  if (row.sources.length > 0 && !(await recheckSources(db, row.sources)).ok) return false;
+  if (row.source_epochs.length > 0 && !(await sourceEpochsIntact(db, row.source_epochs))) {
+    return false;
+  }
+  if (row.source_scoped.length > 0 && (await anyRestrictedLearnerSource(db))) return false;
+  return true;
+}
+
+/** Publish-time authorization failed inside the asset+ready transaction. */
+export class DrawingAuthorizationError extends Error {
+  constructor(detail: string) {
+    super(detail);
+    this.name = 'DrawingAuthorizationError';
+  }
+}
+
+/**
+ * Answer-leak gate: a question the learner has no committed judgment on may
+ * not drive a drawing — brief/alt/caption could carry its answer. The question
+ * set follows the provenance closure of every bound source, not only top-level
+ * question nodes. Judged means: a real attempt event (`outcome` column set)
+ * whose judgment survives — an effective (or execution-embedded) judge event
+ * anchored by subject_id/caused_by_event_id — or a native
+ * `experimental:assessment_attempt` whose group head projects an effective
+ * verdict. `answerOnly` marks the turn itself as answer-bound (the reply is
+ * already on the answer surface), so the gate would only re-derive it.
  */
 async function unjudgedQuestionIds(
   db: Db | Tx,
   sources: readonly PurposeSource[],
 ): Promise<string[]> {
-  const questionIds = sources.filter((s) => s.kind === 'question').map((s) => s.id as string);
+  const questionIds = await lineageQuestionIds(db, sources);
   if (questionIds.length === 0) return [];
-  const rows = await db.execute<{ id: string }>(sql`
-    SELECT q.id FROM question q WHERE q.id IN (${sql.join(
-      questionIds.map((id) => sql`${id}`),
-      sql`, `,
-    )}) AND NOT EXISTS (
-      SELECT 1 FROM event e WHERE e.subject_kind = 'question' AND e.subject_id = q.id
-        AND (e.action = 'judge' OR (e.action = 'attempt' AND e.payload->>'outcome' IS NOT NULL))
-    )`);
-  return rows.map((row) => row.id);
+  const judged = new Set<string>();
+  const CHUNK = 64;
+  for (let i = 0; i < questionIds.length; i += CHUNK) {
+    const ids = questionIds.slice(i, i + CHUNK);
+    const attempts = await db
+      .select({ id: event.id, subject_id: event.subject_id })
+      .from(event)
+      .where(
+        and(
+          eq(event.action, 'attempt'),
+          eq(event.subject_kind, 'question'),
+          inArray(event.subject_id, ids),
+          isNotNull(event.outcome),
+        ),
+      );
+    const verdicts = await resolveVerdictsForAttempts(
+      db,
+      attempts.map((a) => a.id),
+    );
+    for (const attempt of attempts) {
+      if (attempt.subject_id === null) continue;
+      const verdict = verdicts.get(attempt.id);
+      if (verdict?.effective !== null && verdict?.effective !== undefined) {
+        judged.add(attempt.subject_id);
+      } else if (verdict?.embedded !== null && verdict?.embedded !== undefined) {
+        judged.add(attempt.subject_id);
+      }
+    }
+    const native = await db
+      .select()
+      .from(event)
+      .where(
+        and(
+          eq(event.action, 'experimental:assessment_attempt'),
+          eq(event.subject_kind, 'question'),
+          inArray(event.subject_id, ids),
+        ),
+      );
+    const nativeVerdicts = await resolveVerdictsForNativeAttempts(db, native);
+    for (const row of native) {
+      if (row.subject_id === null) continue;
+      const outcome = nativeAttemptOutcome(nativeVerdicts.get(row.id));
+      if (outcome === 'success' || outcome === 'failure' || outcome === 'partial') {
+        judged.add(row.subject_id);
+      }
+    }
+  }
+  return questionIds.filter((id) => !judged.has(id));
 }
 
 /**
@@ -133,7 +217,7 @@ async function unjudgedQuestionIds(
  * repeated send inside one tx collapses and a null result is adopted only
  * when the existing job carries this drawing.
  */
-async function sendDrawingJob(
+export async function sendDrawingJob(
   tx: Tx,
   boss: DrawingBoss,
   drawingId: string,
@@ -221,24 +305,21 @@ export async function requestDrawing(
       }
     }
 
-    // Same live drawing for the same content → dedupe onto it (idempotent by
-    // content); a terminal or past-TTL row frees the key.
-    const [existing] = await tx
-      .select({ id: drawing.id })
-      .from(drawing)
-      .where(
-        and(
-          eq(drawing.dedupe_key, key),
-          inArray(drawing.status, [...DRAWING_LIVE_STATUSES]),
-          sql`${drawing.expires_at} > now()`,
-        ),
-      );
-    if (existing) return { status: 'ready', drawing_id: existing.id };
-
+    // Same-content dedupe: a `ready` row holds the key without a TTL (it is
+    // served, not waited on); an expired wait row still occupies the partial
+    // unique index, so it is flipped to `expired` in the same atomic pass —
+    // after which the index slot is free for this insert.
+    await tx.execute(sql`
+      UPDATE drawing SET status = 'expired', version = version + 1,
+        error_kind = 'expired', updated_at = now()
+      WHERE dedupe_key = ${key}
+        AND status IN ('queued', 'running', 'waiting_quota', 'waiting_login')
+        AND expires_at <= now()`);
     const id = `drw_${newId()}`;
     const expiresAt = new Date(Date.now() + DRAWING_TTL_MS);
-    try {
-      await tx.insert(drawing).values({
+    const [inserted] = await tx
+      .insert(drawing)
+      .values({
         id,
         session_id: sessionId,
         dedupe_key: key,
@@ -250,25 +331,27 @@ export async function requestDrawing(
         ...(input.caption !== undefined ? { caption: input.caption } : {}),
         sources: [...snapshot.sources],
         source_complete: true,
+        source_scoped: [...snapshot.scoped],
         source_epochs,
         copilot_task_run_id: ctx.taskRunId,
         ...(ctx.causedByEventId !== undefined ? { source_event_id: ctx.causedByEventId } : {}),
         expires_at: expiresAt,
-      });
-    } catch (error) {
-      // Concurrent same-content request won the partial unique index — adopt it.
-      if ((error as { code?: string }).code !== '23505') throw error;
+      })
+      .onConflictDoNothing({
+        target: drawing.dedupe_key,
+        where: sql`${drawing.status} IN ('queued','running','ready','waiting_quota','waiting_login')`,
+      })
+      .returning({ id: drawing.id });
+    if (!inserted) {
+      // A concurrent same-content request (or a live ready row past its wait
+      // TTL) won the dedupe index — adopt that winner, no failure-path read.
       const [winner] = await tx
         .select({ id: drawing.id })
         .from(drawing)
         .where(
-          and(
-            eq(drawing.dedupe_key, key),
-            inArray(drawing.status, [...DRAWING_LIVE_STATUSES]),
-            sql`${drawing.expires_at} > now()`,
-          ),
+          and(eq(drawing.dedupe_key, key), inArray(drawing.status, [...DRAWING_LIVE_STATUSES])),
         );
-      if (!winner) throw error;
+      if (!winner) throw new Error('drawing dedupe conflict resolved to no live row');
       return { status: 'ready', drawing_id: winner.id };
     }
     await sendDrawingJob(tx, boss, id, 1);
@@ -350,16 +433,13 @@ async function fenceExpiry(db: Db, row: DrawingRow): Promise<DrawingRow> {
 }
 
 /**
- * Retraction + epoch fence shared by every learner-facing read/serve: a bound
- * source that stopped allowing derivation — or whose usage epoch moved — ends
- * the row and the asset is never served again. Returns the row to serve.
+ * Authorization fence shared by every learner-facing read/serve — the same
+ * `drawingSourcesAuthorized` gate as admission/publish (sources + epochs +
+ * scoped veto). A deny ends the row and the asset is never served again.
  */
 async function fenceSourceAndEpoch(db: Db, row: DrawingRow): Promise<DrawingRow> {
   if (row.status === 'expired') return row;
-  const sourceDenied = row.sources.length > 0 && !(await recheckSources(db, row.sources)).ok;
-  const epochMoved =
-    row.source_epochs.length > 0 && !(await sourceEpochsIntact(db, row.source_epochs));
-  if (!sourceDenied && !epochMoved) return row;
+  if (await drawingSourcesAuthorized(db, row)) return row;
   const [updated] = await db
     .update(drawing)
     .set({
@@ -477,10 +557,7 @@ export async function redrawDrawing(
   if (!(DRAWING_REDRAWABLE_STATUSES as readonly string[]).includes(row.status)) {
     return project(row);
   }
-  if (
-    !(await recheckSources(db, row.sources)).ok ||
-    !(await sourceEpochsIntact(db, row.source_epochs))
-  ) {
+  if (!(await drawingSourcesAuthorized(db, row))) {
     return {
       status: 'refused',
       issues: [{ code: 'restricted_source', path: '', detail: RESTRICTED_DETAIL }],

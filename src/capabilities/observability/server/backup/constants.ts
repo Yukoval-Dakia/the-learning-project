@@ -149,7 +149,8 @@
 // must carry it or placed `block:` refs in the restored conversation dangle.
 // No enforced FK (loose text-ref to session/task_run/event/asset). NEW
 // FK_ORDER table → bump SCHEMA_VERSION (4.34 → 4.35).
-export const SCHEMA_VERSION = '4.35';
+// drawing.source_scoped column → the backup row shape changes → 4.35 → 4.36.
+export const SCHEMA_VERSION = '4.36';
 
 export const SUBSCRIPTION_PROGRESS_TABLES = [
   'event_subscription_checkpoint',

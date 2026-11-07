@@ -46,12 +46,17 @@ export async function GET(req: Request, params: Record<string, string>): Promise
       .limit(1);
     if (!row) throw new ApiError('not_found', `asset ${id} not found`, 404);
 
-    // Drawing-owned assets are learner-scoped and lifecycle-fenced (retraction,
-    // expiry, cancel) — they must not bypass those checks here, 304 included.
-    // They are served only through GET /api/drawings/[id]/asset, which runs
-    // the full owner/derivation gate before any byte or cache hit. Absence is
-    // indistinguishable: 404, no oracle.
-    if (typeof row.provenance?.drawing_id === 'string') {
+    // Drawing-owned assets carry their own spec identity (source_kind, drg_
+    // id prefix, reserved storage prefix, drawing_id provenance) — refuse any
+    // of them before the 304/bytes path so the generic surface can never
+    // bypass the owner/lifecycle/source gate on GET /api/drawings/[id]/asset.
+    // Absence is indistinguishable: 404, no oracle.
+    if (
+      row.provenance?.source_kind === 'drawing_svg' ||
+      row.id.startsWith('drg_') ||
+      row.storage_key.startsWith('assets/drawing-svg/') ||
+      typeof row.provenance?.drawing_id === 'string'
+    ) {
       throw new ApiError('not_found', `asset ${id} not found`, 404);
     }
 

@@ -3,11 +3,16 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { eq, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-
+import { GET as genericAssetContentGET } from '@/capabilities/ingestion/api/asset-content';
 import { resetTestConfig, setTestConfig } from '@/core/config/store';
 import { newId } from '@/core/ids';
 import { db } from '@/db/client';
-import { drawing, event } from '@/db/schema';
+import { drawing, event, question, source_document } from '@/db/schema';
+import {
+  anyRestrictedLearnerSource,
+  sourceAllowsDerivation,
+} from '@/kernel/read-models/usage-policy';
+import { persistImmutableAsset } from '@/kernel/records/asset-store';
 import { TurnSourceLedger } from '@/kernel/tools/source-ledger';
 import {
   type ExecutionAdapter,
@@ -70,6 +75,76 @@ async function seedDerivableEvent(): Promise<string> {
     created_at: new Date(),
   });
   return id;
+}
+
+/** Minimal authored question (standalone — passes its own derivation check). */
+async function seedQuestion(over: Partial<typeof question.$inferInsert> = {}): Promise<string> {
+  const id = `q_${newId()}`;
+  await db.insert(question).values({
+    id,
+    kind: 'short_answer',
+    prompt_md: '题干',
+    source: 'manual',
+    created_at: new Date(),
+    updated_at: new Date(),
+    ...over,
+  });
+  return id;
+}
+
+/** A routine system event carrying a derivation policy stamp. */
+async function seedPolicyEvent(action: string, policy: string): Promise<string> {
+  const id = `evt_${newId()}`;
+  await db.insert(event).values({
+    id,
+    session_id: null,
+    actor_kind: 'system',
+    actor_ref: 'test',
+    action,
+    subject_kind: 'event',
+    subject_id: id,
+    outcome: 'success',
+    payload: { derivation_policy: policy },
+    caused_by_event_id: null,
+    task_run_id: null,
+    cost_micro_usd: null,
+    created_at: new Date(),
+  });
+  return id;
+}
+
+async function seedAttemptAndJudge(questionId: string): Promise<void> {
+  const attemptId = `evt_${newId()}`;
+  await db.insert(event).values({
+    id: attemptId,
+    session_id: null,
+    actor_kind: 'user',
+    actor_ref: 'learner',
+    action: 'attempt',
+    subject_kind: 'question',
+    subject_id: questionId,
+    outcome: 'failure',
+    payload: {},
+    caused_by_event_id: null,
+    task_run_id: null,
+    cost_micro_usd: null,
+    created_at: new Date(),
+  });
+  await db.insert(event).values({
+    id: `evt_${newId()}`,
+    session_id: null,
+    actor_kind: 'agent',
+    actor_ref: 'judge',
+    action: 'judge',
+    subject_kind: 'event',
+    subject_id: attemptId,
+    outcome: 'success',
+    payload: { coarse_outcome: 'incorrect' },
+    caused_by_event_id: attemptId,
+    task_run_id: null,
+    cost_micro_usd: null,
+    created_at: new Date(),
+  });
 }
 
 function seedRow(over: Partial<typeof drawing.$inferInsert> = {}) {
@@ -221,6 +296,179 @@ describe('drawing service invariants', () => {
     expect(refused.status).toBe('unavailable');
     expect(sends).toHaveLength(0);
   });
+
+  // @invariant security: the scoped veto covers the four non-event source
+  // tables plus dangling edges but ignores routine answer_only system events —
+  // normal turns are never refused for rows the header cannot even read.
+  // @fails-if a stock answer_only event vetoes a turn, or a dangling/restricted
+  // non-event source slips past the global check.
+  it('routine answer_only events pass while dangling or restricted non-event rows veto', async () => {
+    const session = sessionId();
+    const t0 = performance.now();
+    expect(await anyRestrictedLearnerSource(db)).toBe(false);
+    console.info(`anyRestrictedLearnerSource false-path: ${(performance.now() - t0).toFixed(1)}ms`);
+    for (const action of [
+      'question_admission_purpose',
+      'memory_brief_purpose',
+      'ingestion_usage_binding',
+      'context_change',
+    ]) {
+      await seedPolicyEvent(action, 'answer_only');
+    }
+    const sends: string[] = [];
+    const deps = { boss: async () => stubBoss(sends) };
+    const clean = new TurnSourceLedger();
+    clean.noteScoped('learner_state_header');
+    const outcome = await requestDrawing(
+      { db, sessionId: session, taskRunId: `run_${newId()}`, actorRef: 'test', ledger: clean },
+      { brief: '画一个滴定装置', alt: '滴定' },
+      deps,
+    );
+    expect(outcome.status).toBe('ready');
+    expect(await anyRestrictedLearnerSource(db)).toBe(false);
+
+    const danglingQ = await seedQuestion({
+      source: 'ingestion',
+      metadata: { source_document_id: 'doc_gone' },
+    });
+    expect(await sourceAllowsDerivation(db, { kind: 'question', id: danglingQ })).toBe(false);
+    expect(await anyRestrictedLearnerSource(db)).toBe(true);
+    await db.delete(question).where(eq(question.id, danglingQ));
+
+    await db.insert(source_document).values({
+      id: `doc_${newId()}`,
+      title: 'restricted',
+      provenance: { usage_policy: { derivation_policy: 'answer_only' } },
+      created_at: new Date(),
+      updated_at: new Date(),
+    });
+    expect(await anyRestrictedLearnerSource(db)).toBe(true);
+  });
+
+  // @invariant security: the scoped projection label persists on the row and
+  // the non-event veto still applies at read time — a later-restricted source
+  // flips the row expired instead of serving.
+  // @fails-if source_scoped is dropped at insert or a restricted projection
+  // keeps serving status/asset reads.
+  it('persists the scoped label and applies the veto on later reads', async () => {
+    const session = sessionId();
+    const ledger = new TurnSourceLedger();
+    const eventId = await seedDerivableEvent();
+    ledger.note({ kind: 'event', id: eventId });
+    ledger.noteScoped('learner_state_header');
+    const accepted = await requestDrawing(
+      { db, sessionId: session, taskRunId: `run_${newId()}`, actorRef: 'test', ledger },
+      { brief: '受力分析', alt: '受力分析' },
+      { boss: async () => stubBoss([]) },
+    );
+    expect(accepted.status).toBe('ready');
+    const id = (accepted as { drawing_id: string }).drawing_id;
+    const [row] = await db.select().from(drawing).where(eq(drawing.id, id));
+    expect(row?.source_scoped).toEqual(['learner_state_header']);
+    expect(row?.sources).toEqual([{ kind: 'event', id: eventId }]);
+
+    await seedQuestion({ source: 'ingestion', metadata: { source_document_id: 'doc_gone' } });
+    const fenced = await readDrawingStatus(db, id, session);
+    expect(fenced?.status).toBe('expired');
+    expect(fenced?.asset).toBeNull();
+  });
+
+  // @invariant security: drawing bytes live under their own asset identity —
+  // the generic content route refuses them (before any caching) while an
+  // ordinary figure asset with identical bytes still serves.
+  // @fails-if a drawing asset is fetchable via /api/assets/:id/content, or a
+  // figure asset is shadowed by a drawing row sharing its bytes.
+  it('drawing assets carry a separate identity refused by the generic route', async () => {
+    const bytes = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>', 'utf8');
+    const drawingAsset = await persistImmutableAsset(db, r2, {
+      profile: 'drawing_svg',
+      bytes,
+      provenance: { source_kind: 'drawing_svg' },
+      authorize: async () => {},
+    });
+    const figureAsset = await persistImmutableAsset(db, r2, {
+      profile: 'svg_figure',
+      bytes,
+      provenance: { source_kind: 'svg_figure' },
+      authorize: async () => {},
+    });
+    expect(drawingAsset.row.id.startsWith('drg_')).toBe(true);
+    expect(drawingAsset.row.storage_key.startsWith('assets/drawing-svg/')).toBe(true);
+    expect(figureAsset.row.id.startsWith('svf_')).toBe(true);
+    expect(figureAsset.row.id).not.toBe(drawingAsset.row.id);
+
+    const generic = await genericAssetContentGET(new Request('http://t/x'), {
+      id: drawingAsset.row.id,
+    });
+    expect(generic.status).toBe(404);
+    const ordinary = await genericAssetContentGET(new Request('http://t/x'), {
+      id: figureAsset.row.id,
+    });
+    expect(ordinary.status).toBe(200);
+  });
+
+  // @invariant security: an answer-bound question in the source lineage blocks
+  // drawing until an outcome attempt on it is judged — then the same turn
+  // proceeds.
+  // @fails-if an unjudged lineage question yields a drawing, or a judged one
+  // keeps blocking after the verdict is committed.
+  it('unjudged lineage questions block until an attempt is judged', async () => {
+    const session = sessionId();
+    const questionId = await seedQuestion();
+    const ledger = new TurnSourceLedger();
+    ledger.note({ kind: 'question', id: questionId });
+    const ctx = { db, sessionId: session, taskRunId: `run_${newId()}`, actorRef: 'test', ledger };
+    const sends: string[] = [];
+    const deps = { boss: async () => stubBoss(sends) };
+    const refused = await requestDrawing(ctx, { brief: '画这道题', alt: '题图' }, deps);
+    expect(refused.status).toBe('unavailable');
+    expect(sends).toHaveLength(0);
+
+    await seedAttemptAndJudge(questionId);
+    const accepted = await requestDrawing(ctx, { brief: '画这道题', alt: '题图' }, deps);
+    expect(accepted.status).toBe('ready');
+    expect(sends).toHaveLength(1);
+  });
+
+  // @invariant concurrency: a ready row dedupes regardless of its wait TTL,
+  // while an expired live row releases its key atomically so the next insert
+  // wins a fresh drawing.
+  // @fails-if ready expires under the wait TTL, or a stale queued row pins the
+  // dedupe key forever.
+  it('ready rows dedupe past the wait TTL and expired live rows release the key', async () => {
+    const session = sessionId();
+    const ledger = new TurnSourceLedger();
+    ledger.note({ kind: 'event', id: await seedDerivableEvent() });
+    const sends: string[] = [];
+    const deps = { boss: async () => stubBoss(sends) };
+    const ctx = { db, sessionId: session, taskRunId: `run_${newId()}`, actorRef: 'test', ledger };
+    const input = { brief: '电路图', alt: '电路' };
+    const first = await requestDrawing(ctx, input, deps);
+    const firstId = (first as { drawing_id: string }).drawing_id;
+    const past = new Date(Date.now() - 60_000);
+    await db
+      .update(drawing)
+      .set({ status: 'ready', expires_at: past })
+      .where(eq(drawing.id, firstId));
+    const again = await requestDrawing(ctx, input, deps);
+    expect((again as { drawing_id: string }).drawing_id).toBe(firstId);
+    expect(sends).toHaveLength(1);
+
+    const session2 = sessionId();
+    const ctx2 = { ...ctx, sessionId: session2 };
+    const second = await requestDrawing(ctx2, input, deps);
+    const secondId = (second as { drawing_id: string }).drawing_id;
+    await db
+      .update(drawing)
+      .set({ status: 'queued', expires_at: past })
+      .where(eq(drawing.id, secondId));
+    const redraw = await requestDrawing(ctx2, input, deps);
+    const redrawId = (redraw as { drawing_id: string }).drawing_id;
+    expect(redrawId).not.toBe(secondId);
+    const [oldRow] = await db.select().from(drawing).where(eq(drawing.id, secondId));
+    expect(oldRow?.status).toBe('expired');
+    expect(sends).toHaveLength(3);
+  });
 });
 
 const READY_SVG =
@@ -364,5 +612,45 @@ describe('drawing_generate handler invariants', () => {
       sql`SELECT count(*)::int AS n FROM pgboss.job WHERE name = 'drawing_generate'`,
     );
     expect(jobs[0]?.n).toBe(1);
+  });
+
+  // @invariant concurrency: if the dispatch write throws inside the admission
+  // transaction, the whole request rolls back — neither the drawing row nor a
+  // pgboss job survives.
+  // @fails-if a failed send leaves a drawing row claiming a job that does not
+  // exist, or an orphan job for a drawing that was never inserted.
+  it('a failed dispatch rolls back both the row and the job', async () => {
+    const session = sessionId();
+    const ledger = new TurnSourceLedger();
+    ledger.note({ kind: 'event', id: await seedDerivableEvent() });
+    let sentJobId: string | null = null;
+    const boss: DrawingBoss = {
+      send: async (name: string, data: unknown, options: { id: string; db: unknown }) => {
+        const adapter = options.db as {
+          executeSql: (text: string, values: unknown[]) => Promise<unknown>;
+        };
+        await adapter.executeSql('INSERT INTO pgboss.job (id, name, data) VALUES ($1, $2, $3)', [
+          options.id,
+          name,
+          JSON.stringify(data),
+        ]);
+        sentJobId = options.id;
+        throw new Error('dispatch exploded after job write');
+      },
+      getJobById: async () => null,
+    } as unknown as DrawingBoss;
+    await expect(
+      requestDrawing(
+        { db, sessionId: session, taskRunId: `run_${newId()}`, actorRef: 'test', ledger },
+        { brief: '回滚', alt: '回滚' },
+        { boss: async () => boss },
+      ),
+    ).rejects.toThrow('dispatch exploded after job write');
+    expect(await db.select().from(drawing).where(eq(drawing.session_id, session))).toHaveLength(0);
+    const jobs = await db.execute<{ n: number }>(
+      sql`SELECT count(*)::int AS n FROM pgboss.job WHERE id = ${sentJobId ?? ''}`,
+    );
+    expect(sentJobId).not.toBeNull();
+    expect(jobs[0]?.n).toBe(0);
   });
 });

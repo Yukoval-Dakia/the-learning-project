@@ -96,13 +96,13 @@ export type PurposeSource = {
 
 /** Exact provenance closure, including legacy promotion proposals. UNION bounds cycles;
  * every referenced row participates, so a second restricted source cannot be hidden.
+ * The seed is parameterised so the scoped global veto walks the IDENTICAL edge
+ * closure and node checks — a dangling reference becomes a node and fails its
+ * own existence check exactly the way a bound-source traversal fails it.
  */
-function purposeLineage(source: {
-  kind: PurposeSource['kind'] | SQLWrapper;
-  id: string | SQLWrapper;
-}) {
+function purposeLineageSeeded(seed: SQL) {
   return sql`WITH RECURSIVE purpose_lineage(kind, id) AS (
-    SELECT ${source.kind}::text, ${source.id}::text
+    ${seed}
     UNION
     SELECT edge.kind, edge.id FROM purpose_lineage n
     CROSS JOIN LATERAL (
@@ -154,17 +154,25 @@ function purposeLineage(source: {
   )`;
 }
 
-/** Restriction and malformed policies veto before provenance can authorize use.
- * Standalone authored questions remain valid; ingestion/derived rows need evidence.
- * OFFSET 0 keeps node checks correlated: hashed EXISTS plans scan every source
- * table once per authorization call instead of looking up the referenced ids.
- */
-function sourceDerivationPredicateSql(source: {
+function purposeLineage(source: {
   kind: PurposeSource['kind'] | SQLWrapper;
   id: string | SQLWrapper;
 }) {
-  return sql`NOT EXISTS (${purposeLineage(source)}
-    SELECT 1 FROM purpose_lineage n WHERE CASE n.kind
+  return purposeLineageSeeded(sql`SELECT ${source.kind}::text, ${source.id}::text`);
+}
+
+function purposeLineageSources(sources: readonly PurposeSource[]) {
+  return purposeLineageSeeded(sql`
+    SELECT v.kind, v.id FROM (VALUES ${sql.join(
+      sources.map((s) => sql`(${s.kind}::text, ${s.id}::text)`),
+      sql`, `,
+    )}) AS v(kind, id)`);
+}
+
+/** Per-node authorization check shared by the bound predicate and the global
+ * scoped veto. A node fails when its row is absent (dangling reference) or its
+ * own row violates — identical semantics in both callers. */
+const NODE_VIOLATION_SQL = sql`CASE n.kind
       WHEN 'document' THEN NOT EXISTS (
         SELECT 1 FROM source_document d WHERE d.id = n.id AND NOT coalesce((
           (d.provenance ? 'usage_policy' AND jsonb_typeof(d.provenance->'usage_policy') IS DISTINCT FROM 'object')
@@ -228,16 +236,31 @@ function sourceDerivationPredicateSql(source: {
           OR (ed.id IS NOT NULL AND coalesce(b.payload->>'epoch', 'legacy') <> coalesce(ed.provenance->>'usage_epoch', 'legacy'))
           OR (COALESCE(e.payload->'ai_proposal'->>'kind', CASE WHEN e.action = 'experimental:proposal' THEN e.payload->>'kind' END) = 'record_promotion' AND COALESCE(e.payload->'ai_proposal', e.payload)->'proposed_change'->>'record_id' IS NULL)
         ), false) OFFSET 0)
-      ELSE true END
-  )`;
+      ELSE true END`;
+
+/** Restriction and malformed policies veto before provenance can authorize use.
+ * Standalone authored questions remain valid; ingestion/derived rows need evidence.
+ * OFFSET 0 keeps node checks correlated: hashed EXISTS plans scan every source
+ * table once per authorization call instead of looking up the referenced ids.
+ */
+function sourceDerivationPredicateSql(source: {
+  kind: PurposeSource['kind'] | SQLWrapper;
+  id: string | SQLWrapper;
+}) {
+  return sql`NOT EXISTS (${purposeLineage(source)}
+    SELECT 1 FROM purpose_lineage n WHERE ${NODE_VIOLATION_SQL})`;
 }
 
 /**
  * Scoped-scope verdict (the whole-learner projection, e.g. the Copilot state
- * header): is there ANY row whose own node check fails? Lineage only adds
- * nodes to a bound set, so the complete veto set is every row failing its own
- * check — the same per-kind conditions as the bound predicate, applied
- * globally instead of from a seed. A scoped request refuses when this is true.
+ * header): any row in the four non-event source tables whose own check fails,
+ * OR that references a row which does not exist (a dangling edge is a
+ * provenance hole regardless of target kind — bound traversals fail the same
+ * node). Event rows are deliberately NOT inspected: normal system writers
+ * stamp `derivation_policy='answer_only'` on hundreds of routine events, and
+ * event sources the header could have touched are already filtered at read
+ * time (allowedEventIds et al) — an event-table veto would refuse every turn
+ * for rows the projection never read.
  */
 export async function anyRestrictedLearnerSource(db: Db | Tx): Promise<boolean> {
   const rows = await db.execute<{ restricted: boolean }>(sql`SELECT (
@@ -248,8 +271,11 @@ export async function anyRestrictedLearnerSource(db: Db | Tx): Promise<boolean> 
       OR (d.provenance ? 'usage_epoch' AND (jsonb_typeof(d.provenance->'usage_epoch') IS DISTINCT FROM 'string'
         OR d.provenance->>'usage_epoch' = ''))
     ), false))
-    OR EXISTS (SELECT 1 FROM learning_session s
-      WHERE s.type = 'ingestion' AND s.source_document_id IS NULL)
+    OR EXISTS (SELECT 1 FROM learning_session s WHERE coalesce((
+      (s.type = 'ingestion' AND s.source_document_id IS NULL)
+      OR (s.source_document_id IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM source_document sd WHERE sd.id = s.source_document_id))
+    ), false))
     OR EXISTS (SELECT 1 FROM question q WHERE coalesce((
       (q.metadata ? 'source_usage_epochs' AND (
         jsonb_typeof(q.metadata->'source_usage_epochs') IS DISTINCT FROM 'object'
@@ -270,38 +296,55 @@ export async function anyRestrictedLearnerSource(db: Db | Tx): Promise<boolean> 
           AND promotion.action = 'experimental:proposal' AND COALESCE(promotion.payload->'ai_proposal', promotion.payload)->>'kind' = 'record_promotion'
           AND COALESCE(promotion.payload->'ai_proposal', promotion.payload)->'proposed_change'->>'record_id' IS NOT NULL))
       OR (q.source = 'mistake_variant' AND COALESCE(q.parent_variant_id, q.root_question_id) IS NULL)
+      OR (q.metadata->>'source_document_id' IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM source_document sd WHERE sd.id = q.metadata->>'source_document_id'))
+      OR (q.metadata->'quiz_gen'->>'material_source_document_id' IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM source_document md WHERE md.id = q.metadata->'quiz_gen'->>'material_source_document_id'))
+      OR (q.metadata->>'ingestion_session_id' IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM learning_session isess WHERE isess.id = q.metadata->>'ingestion_session_id'))
+      OR (q.metadata->>'source_record_id' IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM learning_record sr WHERE sr.id = q.metadata->>'source_record_id'))
+      OR (q.parent_question_id IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM question pq WHERE pq.id = q.parent_question_id))
+      OR (q.parent_variant_id IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM question pv WHERE pv.id = q.parent_variant_id))
+      OR (NULLIF(q.root_question_id, q.id) IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM question rq WHERE rq.id = q.root_question_id))
+      OR (q.metadata->>'source_attempt_event_id' IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM event ae WHERE ae.id = q.metadata->>'source_attempt_event_id'))
+      OR (q.source = 'dreaming' AND q.source_ref IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM event de WHERE de.id = q.source_ref))
     ), false) OFFSET 0)
     OR EXISTS (SELECT 1 FROM learning_record r WHERE coalesce((
       (r.payload ? 'derivation_policy' AND r.payload->>'derivation_policy' IS DISTINCT FROM 'allow')
       OR COALESCE(r.source_document_id, r.question_id, r.origin_event_id, r.attempt_event_id) IS NULL
-    ), false))
-    OR EXISTS (SELECT 1 FROM event e
-      LEFT JOIN event b ON b.id = 'ingestion-usage:' || e.id
-        AND b.action = 'experimental:ingestion_usage_binding'
-        AND b.actor_kind = 'system' AND b.actor_ref = 'ingestion-usage'
-      LEFT JOIN learning_session es ON es.id = e.session_id
-      LEFT JOIN source_document ed ON ed.id = COALESCE(b.payload->>'document_id', es.source_document_id)
-      WHERE coalesce((
-        (e.action = 'experimental:agent_note' AND (
-          (e.caused_by_event_id IS NULL AND NOT EXISTS (
-            SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(e.payload->'refs') = 'array'
-              THEN e.payload->'refs' ELSE '[]'::jsonb END) ref
-            WHERE ref->>'kind' IN ('source_document', 'question', 'record', 'event') AND length(ref->>'id') > 0))
-          OR (e.payload ? 'refs' AND jsonb_typeof(e.payload->'refs') IS DISTINCT FROM 'array')
-          OR EXISTS (
-            SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(e.payload->'refs') = 'array'
-              THEN e.payload->'refs' ELSE '[]'::jsonb END) ref
-            WHERE NOT coalesce(ref->>'kind' IN ('source_document', 'question', 'record', 'event', 'knowledge'), false)
-              OR jsonb_typeof(ref->'id') IS DISTINCT FROM 'string' OR length(ref->>'id') = 0)))
-        OR (e.payload ? 'derivation_policy' AND e.payload->>'derivation_policy' IS DISTINCT FROM 'allow')
-        OR (b.id IS NOT NULL AND (b.payload->>'source_policy' IS DISTINCT FROM 'allow'
-          OR NOT (b.payload ?& ARRAY['document_id', 'epoch', 'source_policy'])))
-        OR (ed.id IS NOT NULL AND coalesce(b.payload->>'epoch', 'legacy') <> coalesce(ed.provenance->>'usage_epoch', 'legacy'))
-        OR (COALESCE(e.payload->'ai_proposal'->>'kind', CASE WHEN e.action = 'experimental:proposal' THEN e.payload->>'kind' END) = 'record_promotion'
-          AND COALESCE(e.payload->'ai_proposal', e.payload)->'proposed_change'->>'record_id' IS NULL)
-      ), false) OFFSET 0)
+      OR (r.source_document_id IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM source_document rd WHERE rd.id = r.source_document_id))
+      OR (r.question_id IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM question rq2 WHERE rq2.id = r.question_id))
+      OR (r.origin_event_id IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM event oe WHERE oe.id = r.origin_event_id))
+      OR (r.attempt_event_id IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM event ae2 WHERE ae2.id = r.attempt_event_id))
+    ), false) OFFSET 0)
   ) AS restricted`);
   return rows[0]?.restricted === true;
+}
+
+/**
+ * Every question id in the provenance closure of the bound sources — the
+ * answer-leak gate must consider questions the model could have reached
+ * through a bound event/record/session, not only the top-level question nodes.
+ */
+export async function lineageQuestionIds(
+  db: Db | Tx,
+  sources: readonly PurposeSource[],
+): Promise<string[]> {
+  if (sources.length === 0) return [];
+  const rows = await db.execute<{ id: string }>(sql`${purposeLineageSources(sources)}
+    SELECT DISTINCT n.id FROM purpose_lineage n
+    JOIN question q ON q.id = n.id WHERE n.kind = 'question'`);
+  return rows.map((row) => row.id);
 }
 
 export async function sourceAllowsDerivation(db: Db | Tx, source: PurposeSource): Promise<boolean> {
