@@ -37,6 +37,28 @@ export function plainRevertError(cause: unknown): string {
   return plainError(cause, '撤回没有成功，稍后再试。');
 }
 
+const RETRY_REFUSALS: Readonly<Record<string, string>> = {
+  session_busy: '还有一条在回答，等它答完再试。',
+  not_latest: '后面已经有新的消息了，这条不用再发。',
+  conversation_inactive: '这段对话已经结束了，开个新对话再问吧。',
+  question_retracted: '这条消息已经撤回了。',
+};
+
+/** Unknown acceptance is safe to click again: one failed run has only one resend on the server. */
+export function plainRetryError(cause: unknown): string {
+  if (cause instanceof ApiError && cause.code === 'retry_not_allowed') {
+    const reason = cause.details?.reason;
+    return (
+      (typeof reason === 'string' ? RETRY_REFUSALS[reason] : undefined) ??
+      '这一轮不能直接再发，把这句话重新发一下吧。'
+    );
+  }
+  if (cause instanceof ApiError || cause instanceof ApiAuthError) {
+    return plainError(cause, '这次没有发出去，稍后再试。');
+  }
+  return ACCEPTANCE_UNKNOWN_COPY;
+}
+
 /** Automatic resends ran out, or the message is too old to resend unasked. Sending again is safe. */
 export const ACCEPTANCE_UNKNOWN_COPY = '刚才网络断了一下，要再发一次吗？';
 
