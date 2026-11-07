@@ -12,10 +12,12 @@ export interface PiSkillDoc {
 export function composePiSystemPrompt(
   systemPrompt: string,
   skillDocs?: readonly PiSkillDoc[],
+  searchUnavailable = false,
 ): string {
-  if (!skillDocs || skillDocs.length === 0) return systemPrompt;
+  const unavailable = searchUnavailable ? '\n搜索暂不可用，不得声称已搜索。' : '';
+  if (!skillDocs || skillDocs.length === 0) return systemPrompt + unavailable;
   const docs = skillDocs
     .map((doc) => `<skill name="${doc.name}">\n${doc.body}\n</skill>`)
     .join('\n\n');
-  return `${systemPrompt}\n\n${docs}`;
+  return `${systemPrompt}\n\n${docs}${unavailable}`;
 }

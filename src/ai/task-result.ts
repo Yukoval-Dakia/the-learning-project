@@ -1,5 +1,6 @@
 import type { SealedHelpLatency } from '@/ai/help-latency';
 import type { TaskTimeoutSource } from '@/ai/task-budget';
+import type { FailureDiagnostics } from './failure-diagnostics';
 
 export interface TaskTextResult {
   text: string;
@@ -229,6 +230,8 @@ export interface ProviderTransportBudgetReceipt {
 }
 
 export interface ProviderTransportEvidence {
+  /** Optional startup dependency failure; separate from provider send/cost truth. */
+  startup_dependency_failures?: readonly FailureDiagnostics[];
   readonly v: 1;
   readonly budget: ProviderTransportBudgetReceipt;
   /** Transport(s) this attempt's requests actually used. */

@@ -1,5 +1,6 @@
 import type { Dispatcher } from 'undici';
 import { EnvHttpProxyAgent, Pool } from 'undici';
+import type { FailureDiagnostics } from '@/ai/failure-diagnostics';
 import type { TaskTimeoutSource } from '@/ai/task-budget';
 import type {
   ProviderRequestEvidence,
@@ -100,6 +101,16 @@ export interface ProviderTransportCollectorInit {
 }
 
 export class ProviderTransportCollector {
+  private optionalDependencyFailure: FailureDiagnostics | undefined;
+
+  get optionalDependencyUnavailable(): boolean {
+    return this.optionalDependencyFailure !== undefined;
+  }
+
+  noteOptionalDependencyFailure(diagnostics: FailureDiagnostics): void {
+    this.optionalDependencyFailure = diagnostics;
+  }
+
   private readonly budget: MutableBudgetReceipt;
   private secrets: readonly string[] = [];
   private records: MutableRequestRecord[] = [];
@@ -436,6 +447,9 @@ export class ProviderTransportCollector {
                 'not_sent'
               : 'unknown';
     return {
+      ...(this.optionalDependencyFailure
+        ? { startup_dependency_failures: [this.optionalDependencyFailure] }
+        : {}),
       v: 1,
       budget: {
         ...this.budget,

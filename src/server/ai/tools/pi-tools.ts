@@ -13,12 +13,18 @@
 // through as `correlatedToolUseId`.
 
 import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
+import {
+  type FailureDiagnostics,
+  annotateFailure,
+  failureDiagnostics,
+} from '@/ai/failure-diagnostics';
 import { type BuildMcpServerOptions, type PiToolMount, piToolWireName } from '@/ai/pi-tool-mount';
 import { writeToolCallLog, writeUnpricedToolCost } from '@/kernel/tools/call-evidence';
 import {
   ensureToolParametersObjectRoot,
   zodToToolParametersSchema,
 } from '@/kernel/zod-json-schema';
+import type { ExecutionAdapterStartupArgs } from '../execution-adapter';
 import { executeDomainToolCall } from './mcp-bridge';
 import { getTool } from './registry';
 
@@ -102,6 +108,14 @@ export interface PiRemoteMcpMountHandle {
   close(): Promise<void>;
 }
 
+// Optional search must not hold a learner's reply hostage; TEST's unreachable
+// endpoint took about 10–12s to fail. Share this budget across connect and tools/list.
+const OPTIONAL_SEARCH_STARTUP_TIMEOUT_MS = 12_000;
+
+function isOptionalSearch(mount: Extract<PiToolMount, { type: 'remote-mcp' }>, kind?: string) {
+  return kind === 'CopilotTask' && mount.serverName === 'exa' && mount.optional === true;
+}
+
 /**
  * Bridge a hosted MCP server into pi AgentTools. The client connects at startup so
  * `tools/list` failures surface before any paid token.
@@ -121,11 +135,47 @@ export async function connectPiRemoteMcp(
   const transport = new StreamableHTTPClientTransport(new URL(mount.config.url), {
     requestInit: { headers: mount.config.headers ?? {} },
   });
+  let stage: 'remote_mcp_connect' | 'remote_mcp_list_tools' | 'remote_mcp_schema' =
+    'remote_mcp_connect';
+  const deadline = isOptionalSearch(mount, run?.taskKind)
+    ? Date.now() + OPTIONAL_SEARCH_STARTUP_TIMEOUT_MS
+    : undefined;
+  const startupAbort = deadline === undefined ? undefined : new AbortController();
+  const timeoutError = Object.assign(new Error('Optional search startup timed out'), {
+    name: 'TimeoutError',
+    code: 'ETIMEDOUT',
+  });
+  let closing: Promise<void> | undefined;
+  const timer =
+    deadline === undefined
+      ? undefined
+      : setTimeout(
+          () => {
+            startupAbort?.abort(timeoutError);
+            // Closing the transport aborts fetches as well as the SDK's pending RPCs.
+            closing = client
+              .close()
+              .catch(() => transport.close())
+              .catch(() => {});
+          },
+          Math.max(0, deadline - Date.now()),
+        );
+  const startupOptions = () =>
+    deadline === undefined
+      ? undefined
+      : {
+          signal: startupAbort?.signal,
+          timeout: Math.max(1, Math.min(timeoutMs, deadline - Date.now())),
+        };
   try {
     // Connect AND list inside the same cleanup scope so a transport failure
     // still releases the client socket.
-    await client.connect(transport, { timeout: timeoutMs });
-    const listed = await client.listTools();
+    await client.connect(transport, { timeout: timeoutMs, ...startupOptions() });
+    if (deadline !== undefined && Date.now() >= deadline) throw timeoutError;
+    stage = 'remote_mcp_list_tools';
+    const listed = await client.listTools(undefined, startupOptions());
+    if (deadline !== undefined && Date.now() >= deadline) throw timeoutError;
+    stage = 'remote_mcp_schema';
     const wanted = new Set(mount.toolNames);
     const tools = listed.tools
       .filter((remote) => wanted.has(remote.name))
@@ -230,7 +280,52 @@ export async function connectPiRemoteMcp(
       });
     return { tools, close: () => client.close() };
   } catch (err) {
-    await client.close().catch(() => {});
-    throw err;
+    const failure = startupAbort?.signal.aborted ? timeoutError : err;
+    annotateFailure(failure, stage, new URL(mount.config.url).hostname);
+    await (closing ??
+      client
+        .close()
+        .catch(() => transport.close())
+        .catch(() => {}));
+    throw failure;
+  } finally {
+    clearTimeout(timer);
+    await closing;
   }
+}
+
+// The same mount descriptor survives provider retries; a new logical run creates another.
+const unavailableSearchMounts = new WeakMap<PiToolMount, FailureDiagnostics>();
+
+export async function connectTaskRemoteMcp(
+  mount: Extract<PiToolMount, { type: 'remote-mcp' }>,
+  startup: Pick<ExecutionAdapterStartupArgs, 'kind' | 'runId' | 'initializeTimeoutMs' | 'options'>,
+  connect: typeof connectPiRemoteMcp,
+): Promise<PiRemoteMcpMountHandle | undefined> {
+  const optionalSearch = isOptionalSearch(mount, startup.kind);
+  let unavailable = optionalSearch ? unavailableSearchMounts.get(mount) : undefined;
+  if (!unavailable) {
+    try {
+      return await connect(mount, startup.initializeTimeoutMs, {
+        taskRunId: startup.runId,
+        taskKind: startup.kind,
+      });
+    } catch (error) {
+      const diagnostics = failureDiagnostics(error);
+      if (
+        !optionalSearch ||
+        (diagnostics.stage !== 'remote_mcp_connect' &&
+          diagnostics.stage !== 'remote_mcp_list_tools')
+      )
+        throw error;
+      unavailable = diagnostics;
+      unavailableSearchMounts.set(mount, diagnostics);
+      console.warn('[pi-adapter] optional_search_unavailable', {
+        task_run_id: startup.runId,
+        ...diagnostics,
+      });
+    }
+  }
+  startup.options.transportEvidence?.noteOptionalDependencyFailure(unavailable);
+  return undefined;
 }
