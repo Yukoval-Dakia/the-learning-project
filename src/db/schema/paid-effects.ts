@@ -15,7 +15,7 @@ import {
 } from 'drizzle-orm/pg-core';
 
 // YUK-1355 Lane B — shared durable paid-effect protocol (fixed interface in
-// src/core/migration/paid-effect-protocol.ts; semantics + parent-owned SQL
+// src/core/paid-work/protocol/paid-effect-protocol.ts; semantics + parent-owned SQL
 // draft in docs/planning/2026-10-11-yuk1355-paid-effect-protocol.md).
 // paid_effect_control: family-scoped backend ownership. ABSENCE of a row is
 // meaningful — it is the bootstrap default owner (pg-boss, generation 0), so
@@ -23,7 +23,7 @@ import {
 export const paid_effect_control = pgTable('paid_effect_control', {
   family: text('family').primaryKey(),
   backend: text('backend')
-    .$type<import('../../core/migration/paid-effect-protocol').PaidEffectBackend>()
+    .$type<import('../../core/paid-work/public').PaidEffectBackend>()
     .notNull(),
   generation: integer('generation').notNull().default(0),
   created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -51,15 +51,11 @@ export const paid_effect = pgTable(
     unit: text('unit').notNull(),
     input_digest: text('input_digest').notNull(),
     input_json: jsonb('input_json').notNull(),
-    state: text('state')
-      .$type<import('../../core/migration/paid-effect-protocol').PaidEffectState>()
-      .notNull(),
+    state: text('state').$type<import('../../core/paid-work/public').PaidEffectState>().notNull(),
     fence: integer('fence').notNull().default(0),
     delivery_id: text('delivery_id'),
     delivery_backend:
-      text('delivery_backend').$type<
-        import('../../core/migration/paid-effect-protocol').PaidEffectBackend
-      >(),
+      text('delivery_backend').$type<import('../../core/paid-work/public').PaidEffectBackend>(),
     delivery_tick: text('delivery_tick'),
     send_lease_expires_at: timestamp('send_lease_expires_at', { withTimezone: true }),
     result_json: jsonb('result_json'),
@@ -125,7 +121,7 @@ export const paid_effect_authorization = pgTable(
     successor_unit: text('successor_unit').notNull(),
     successor_input_digest: text('successor_input_digest').notNull(),
     successor_delivery_backend: text('successor_delivery_backend')
-      .$type<import('../../core/migration/paid-effect-protocol').PaidEffectBackend>()
+      .$type<import('../../core/paid-work/public').PaidEffectBackend>()
       .notNull(),
     successor_delivery_id: text('successor_delivery_id').notNull(),
     reason: text('reason').notNull(),

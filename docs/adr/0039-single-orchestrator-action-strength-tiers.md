@@ -1,9 +1,11 @@
 # ADR-0039 — 单编排者 D14 + 全局出手强度表 A/B/C + 上下文两层契约（形态层统一出手契约）
 
-**Status**: Accepted (2026-06-14)
+**Status**: Accepted (2026-06-14)；A/B/C 分档现行状态见 2026-11-07 注记
 **Part of**: YUK-203（领域模型重构）· 「整个产品重新想」形态轴 A3/A4。
 **Decision source**: `docs/design/2026-06-14-product-rethink-decisions-ledger.md`（决策总账，最高权威）§0「全局出手强度表」+ §2 A3/A4；`docs/design/2026-06-14-product-rethink-phase2-synthesis.md`（Phase 2 综合）§2.3/§2.4/§4.2 + §7 硬决策 H6（编排者输出永不进 extraction）/ H8（到期项 hard constraint）/ §6.3 C3（confirmation loop 五防破口）。
 **Related**: ADR-0025 ND-5（proposal-only 正主，只管破坏性改动——本 ADR 把它从「单一裁决 lane」扩成 A/B/C 三档落点，不改其破坏性走提案的内核）· ADR-0017（memory = mem0 facts + brief layer，记忆是 attention prior 非 SoT——本 ADR 的「长时 attention prior 只读旁路」直接继承其 §read pattern / one-line summary）· ADR-0032（DomainTool 面 = copilot 全集并 + 面级 allowlist——本 ADR 把「前台 copilot 面 / 后台 task 窄面」重述为单编排者的不同召唤姿势，actor_ref 分轨；ADR-0032 D0-2「面-copilot 原则」是本契约的工具面前提）· **ADR-0029（Coach → ReviewPlanTask 两级流水线 + review_plan 独立 surface）—— 本 ADR §决定 1 把 review_plan 等 4 个后台 job 收编进同一 D14 编排者，ReviewPlanTask 不再是独立人格，故 partial-supersede ADR-0029 §决定 4 的「Coach 不进热循环 + ReviewPlanTask 独立边界」叙事中『四个 agent 各有独立人格 surface』那一面；其窄工具面 / 不读记忆 / FSRS when 独立的约束保留**。
+
+> **2026-11-07 现状（A/B/C 表）：** `src/core/schema/proposal.ts:247-283` 的 `aiProposalKindStrength` 已有 3 个 A 档 kind——`knowledge_node`（`:258`）、`learning_item`（`:262`）、`cause_category`（`:280`）；#2591 起 A 档自动应用链路（marker + sweep + 撤销窗）上线，总开关 `PROPOSAL_AUTO_APPLY_ENABLED` 代码默认关（`src/core/config/registry.ts:278-289`）。下方 2026-06-15 amendment 的「15 B + 3 C + 0 A」及逐 kind 表是当时快照，不再是现行分级；具体分档与迁移由 YUK-1667 裁定。
 
 ---
 

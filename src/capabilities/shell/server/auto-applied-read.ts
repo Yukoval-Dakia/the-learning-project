@@ -2,9 +2,10 @@
 //
 // 数据源：通用 `experimental:auto_apply` 锚（strength A 自动通道写入）+
 // 历史 `experimental:completion_autoapply` 锚（YUK-525 后不再有新写入，仍可读）。
-// 每条锚的 proposal_id 交给 kernel 的批量撤销分类器，一次得到「已撤销 / 可撤 /
+// 每条锚的 proposal_id 交给 kernel 的批量撤销编排器，一次得到「已撤销 / 可撤 /
 // 被后续内容挡住」以及挡住的白话原因——页面不自己拼撤销条件，批量撤销入口也
-// 用同一个分类器在事务内复核。
+// 用同一编排在事务内复核。各 kind 的「什么算后来的内容」由该 kind 的 owner 提供
+// （knowledge / failure-learning / agency + notes / practice 的公开接口）。
 //
 // 同时透传当前裁决速率快照（checkAutoApplyBreaker）供 A 块 meter/banner 渲染。
 //
@@ -145,7 +146,7 @@ function undoView(decision: AutoAppliedUndoDecision): AutoAppliedUndoView {
   };
 }
 
-/** A 档列表行；撤销状态由 kernel 分类器统一给出。 */
+/** A 档列表行；撤销状态由 kernel 编排、各 kind owner 判定。 */
 async function loadAutoAppliedRows(db: DbLike, windowStart: Date, windowEnd: Date) {
   return db
     .select({

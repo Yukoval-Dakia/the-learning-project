@@ -10,10 +10,8 @@ import {
   paidEffectDispatchRefSchema,
   paidEffectIdentitySchema,
   paidEffectJsonEquals,
-} from '@/core/migration/paid-effect-protocol';
-import { ItemPriorDraft } from '@/core/schema/item_prior';
-import type { Db, Tx } from '@/db/client';
-import { lockPaidEffectControlFamily } from '@/db/paid-effect-control';
+} from '@/core/paid-work/protocol/paid-effect-protocol';
+import { lockPaidEffectControlFamily } from '@/core/paid-work/server/paid-effect-control';
 import {
   type PaidEffectSnapshot,
   admitPaidEffectIntent,
@@ -23,7 +21,9 @@ import {
   recordPaidEffectApplication,
   recordPaidEffectResult,
   reservePaidEffect,
-} from '@/db/paid-effect-store';
+} from '@/core/paid-work/server/paid-effect-store';
+import { ItemPriorDraft } from '@/core/schema/item_prior';
+import type { Db, Tx } from '@/db/client';
 import {
   ItemPriorApplicationError,
   type ItemPriorPreparedWork,

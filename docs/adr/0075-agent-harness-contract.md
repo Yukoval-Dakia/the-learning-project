@@ -4,10 +4,12 @@ status: accepted
 
 # ADR-0075 — Agent harness 契约：工作单、边界契约、领域写入者、需求门控
 
-**Status:** Accepted（设计方向，2026-10-18，含 owner 当日 19:48 三项决定与 20:20 协调线对照补充 §10）；**尚未实施**——本文是决策落档。
+**Status:** Accepted（设计方向，2026-10-18，含 owner 当日 19:48 三项决定与 20:20 协调线对照补充 §10）；部分实施——工具面与 report-only run monitor 已落，工作单/需求门控/领域写入者未落。本文是决策落档。
 **Decision source:** owner 2026-10-18「原地打转需要治本」「harness的优化是个系统工程，不是一个guard可解决。没人学习时后台自适应降频。你给的修复票治标不治本」；同日 19:48 原话「**两件都允许 空闲按推荐 主席层也现在做**」（设计稿 §9）；同日 20:20 协调线并入对照补充、20:23 owner 指示 auto-compact（设计稿 §10，含 owner 20:11「工具没做统一吗」、20:16 skills/MCP/按需加载、20:23「auto-compact 也要做，先看开源」）。**normative 真相源（仓库外绝对路径）**：`/Volumes/YukovalSBak/yukoval-projects/tlp-status/discussions/agent-harness-redesign.md`（SHA256 `3b82bd872f16bef1c3cd6111a7538983e0ca9158bc8f48f9761c31df4e820ef5`，622 行，代码基准 `origin/main` @ `9ce433fa2`）。**§9 与 §10 是最新决定，优先级高于正文中的推荐/推迟表述；§10 对 §2/§5 的修订以 §10 条文为准**（本文已消除相互矛盾的有效门槛）；本文与设计稿冲突处，以设计稿（含 §9、§10）为准。
 **Tracking:** [YUK-1559](https://linear.app/yukoval-studios/issue/YUK-1559)（本文档落档）；受处置票据见「票据处置」。
 **Related:** [ADR-0004](0004-pattern-c-two-type-agent-architecture.md)、[ADR-0039](0039-single-orchestrator-action-strength-tiers.md)（A/B/C 出手档）、[ADR-0053](0053-copilot-durable-subagent-mailbox.md)、[ADR-0056](0056-native-task-tool-result-into-live-parent.md)、[ADR-0065](0065-pi-execution-and-conversation-replay.md)、[ADR-0067](0067-teaching-team-whiteboard-and-event-meetings.md)（**Amendment 2026-10-18**，随本文生效）、[ADR-0069](0069-single-supply-agent.md)、[ADR-0072](0072-question-bank-agent-tools.md)；YUK-572 spec `docs/design/2026-07-06-yuk572-agent-meeting-lane-spec.md`；TT 草案（ADR-0067 指定的细节真相源）；工具面清单 `tlp-status/discussions/agent-tools-inventory.md`（INV）；运行审查证据 `tlp-status/review/loom-runs-20261018/`（summary / AR / IR / DJ / TB，本文证据缩写同设计稿）；工具对照 `tlp-status/review/harness-benchmark-20261018/`（tools-vs-notion-linear.md、harness-vs-codex-cli.md @ `8c076942`，§10 的依据；context-management-survey.md，§10.5 的依据与其 A1–A9 验收节）。
+
+> **2026-11-07 现状：** 部分实施。已在跑：DomainTool 注册表与面级 allowlist、上下文预算/节流（`src/kernel/tools/`），以及 report-only 的重复执行观察（`src/server/ai/run-monitor.ts`，YUK-1661 / YUK-1559 第一切片）。未落：D2 的工作单与 RunMonitor 状态机（stalled/landing/landed）、D6 需求门控、D3 的领域单写入者与全局快照完整形态；本文仍作为设计契约，不能把已落片段当作全文已实施。
 
 ## 背景与问题：记账单位是「一次调用有没有返回」，不是「一件工作有没有交付」
 

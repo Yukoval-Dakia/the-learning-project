@@ -10,12 +10,11 @@ import {
   computePaidEffectInputDigest,
   paidEffectDispatchRefSchema,
   paidEffectJsonEquals,
-} from '@/core/migration/paid-effect-protocol';
-import type { Db, Tx } from '@/db/client';
+} from '@/core/paid-work/protocol/paid-effect-protocol';
 import {
   admitPaidEffectDeliveryControl,
   lockPaidEffectControlFamily,
-} from '@/db/paid-effect-control';
+} from '@/core/paid-work/server/paid-effect-control';
 import {
   type PaidEffectSnapshot,
   admitPaidEffectIntent,
@@ -26,7 +25,8 @@ import {
   readPaidEffect,
   recordPaidEffectApplication,
   recordPaidEffectResult,
-} from '@/db/paid-effect-store';
+} from '@/core/paid-work/server/paid-effect-store';
+import type { Db, Tx } from '@/db/client';
 import { paid_effect } from '@/db/schema';
 
 const FAMILY = 'judge_calibration_sample';
