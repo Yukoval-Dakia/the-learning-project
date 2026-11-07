@@ -22,6 +22,7 @@ import { getLaneOverride, getTaskOverride, resolveConfigValue } from '@/core/con
 import { catalogEndpointHostKeys } from './model-catalog';
 import {
   DASHSCOPE_EMBEDDING_ENDPOINT_KEYS,
+  OPENDESIGN_ENDPOINT_KEYS,
   TOKEN_PLAN_ENDPOINT_KEYS,
   builtinEndpointKeysFor,
 } from './model-catalog-overrides';
@@ -316,6 +317,7 @@ function providerKeyEndpointBindings(): ProviderKeyEndpointBindings {
   for (const key of builtinEndpointKeysFor('zhipuai-coding-plan')) glmKeys.add(key);
   bind('ZHIPU_API_KEY', glmKeys);
   bind('DASHSCOPE_API_KEY', DASHSCOPE_EMBEDDING_ENDPOINT_KEYS);
+  bind('OPENDESIGN_API_KEY', OPENDESIGN_ENDPOINT_KEYS);
   return { byEnv, byHost };
 }
 

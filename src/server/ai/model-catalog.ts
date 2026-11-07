@@ -32,7 +32,7 @@ import type { Db, Tx } from '@/db/client';
 import { model_catalog_cache, system_config } from '@/db/schema';
 import { withinSessionAdvisoryLock } from '@/db/session-advisory-lock';
 import rawSnapshot from './model-catalog.snapshot.json' with { type: 'json' };
-import { BUILTIN_MODEL_ENDPOINT_HOSTS } from './model-catalog-overrides';
+import { BUILTIN_MODEL_ENDPOINT_HOSTS, OPENDESIGN_CATALOG_MODELS } from './model-catalog-overrides';
 import { CATALOG_PROVIDER_BY_INTERNAL, catalogProviderFor } from './model-profiles';
 import {
   type PaidProbePosting,
@@ -381,6 +381,13 @@ function customModelFactsEntry(
   definition: CustomProviderDefinition,
   index: ReturnType<typeof buildCustomModelFactsIndex>,
 ): Json | undefined {
+  // OpenDesign's rate card and admitted facts are route-specific; borrowing a
+  // same-id model would silently bill with another provider's rates.
+  if (definition.id === 'custom:opendesign') {
+    return Object.hasOwn(OPENDESIGN_CATALOG_MODELS, modelId)
+      ? OPENDESIGN_CATALOG_MODELS[modelId as keyof typeof OPENDESIGN_CATALOG_MODELS]
+      : undefined;
+  }
   // Prefer a source bucket that speaks the provider's protocol; fall back to
   // any bucket carrying the id. Endpoint and protocol are never taken from
   // the source — restampCustomEntry rewrites them from the definition.
