@@ -223,6 +223,11 @@
   }
 
   /* ── Sections ── */
+  & .qd-low-confidence {
+    color: var(--un-text-2);
+    font-size: var(--un-fs-1);
+  }
+
   & .qd-section {
     display: grid;
     gap: var(--un-sp-3);
