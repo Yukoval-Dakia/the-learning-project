@@ -755,8 +755,12 @@ export function createCopilotExecutionOwner(
         : undefined;
       const closureText =
         closureCopy !== undefined ? mergeNoProgressReply(modelReply, closureCopy) : undefined;
-      const partial = closureText !== undefined ? false : result.partial === true;
-      const executionError = closureText !== undefined ? undefined : result.error;
+      // A sealed closure always owns the terminal outcome: when its copy is
+      // omitted, the model's accumulated prose is still the full reply.
+      const sealedExit = sealedClosure !== undefined;
+      const finalText = closureText ?? (sealedExit ? modelReply : terminalText);
+      const partial = sealedExit ? false : result.partial === true;
+      const executionError = sealedExit ? undefined : result.error;
       const finishReason = sealedClosure
         ? sealedClosure.reason
         : (result.finishReason ?? 'unknown');
@@ -764,8 +768,8 @@ export function createCopilotExecutionOwner(
         { operation: 'finalize', taskKind: 'CopilotTask', taskRunId: result.task_run_id },
         async (reportOutcome) => {
           const finalized = await finalizer.finalizeTerminal(
-            closureText ?? (partial ? result.text : terminalText),
-            closureText === undefined && partial ? result.providerFailure : undefined,
+            finalText,
+            !sealedExit && partial ? result.providerFailure : undefined,
             {
               streamedText: streamedProse,
               retainedTail: closureCopy,
