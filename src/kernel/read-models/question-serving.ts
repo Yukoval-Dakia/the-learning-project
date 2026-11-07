@@ -330,7 +330,10 @@ function servingFactsQuery(filters: SQL[]): SQL {
       order by p.created_at desc limit 1
     ) applied on true
     left join lateral (
-      select p.state, p.result_json
+      select p.state, case
+        when p.state = 'applied' and p.result_json->'result'->>'status' = 'waiting'
+          then jsonb_build_object('result', p.application_json)
+        else p.result_json end as result_json
       from ${paid_effect} p
       where p.entity_id = l.group_id and p.entity_revision = r.integrity_digest
         and p.family = ${PAID_EFFECT_ADMISSION_FAMILY}
@@ -420,7 +423,7 @@ function admissionRead(
   ) {
     return { status: 'undecided', reason: '自动检查的结果尚未确认，题目暂不能作答。' };
   }
-  // A recorded quota wait is only credible while its durable wake-up is still
+  // A recorded provider wait is only credible while its durable wake-up is still
   // within the gate's own retry cadence; a lost delivery must not promise a retry.
   if (fact.admission_result_status === 'waiting') {
     const retryAt = fact.admission_wait_retry_at;

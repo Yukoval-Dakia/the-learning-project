@@ -453,54 +453,32 @@
   min-height: calc(2 * var(--un-ps-line));
 }
 
-/* ── 作答记录: a quiet timeline at the end of the sheet (a hairline with one dot per entry) ── */
-[data-ui-next] .un-ps-history-section {
-  padding-top: var(--un-sp-4);
-  border-top: var(--un-hairline) dashed var(--un-line);
+/* ── 作答记录: folded by default; the closed row already says how the last try went ── */
+[data-ui-next] .un-ps-history-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 var(--un-sp-2);
+  min-width: 0;
+}
+[data-ui-next] .un-ps-history-last {
+  color: var(--un-text-2);
+  font-weight: var(--un-fw-regular);
 }
 [data-ui-next] .un-ps-history {
-  position: relative;
   display: grid;
   gap: var(--un-sp-2);
   margin: 0;
-  padding: 0 0 0 var(--un-sp-5);
+  padding: 0;
   list-style: none;
 }
-[data-ui-next] .un-ps-history::before {
-  content: "";
-  position: absolute;
-  left: 4px;
-  top: 8px;
-  bottom: 8px;
-  width: var(--un-hairline);
-  background: var(--un-line-strong);
-}
 [data-ui-next] .un-ps-history li {
-  position: relative;
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--un-sp-1) var(--un-sp-3);
+  gap: 0 var(--un-sp-3);
   font-size: var(--un-fs-1);
 }
-[data-ui-next] .un-ps-history-dot {
-  position: absolute;
-  left: calc(-1 * var(--un-sp-5));
-  top: 0.45em;
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: var(--un-bg-raised);
-  box-shadow: inset 0 0 0 1.5px var(--un-text-3);
-}
-[data-ui-next] .un-ps-history li[data-tone="positive"] .un-ps-history-dot {
-  box-shadow: inset 0 0 0 5px var(--un-positive);
-}
-[data-ui-next] .un-ps-history li[data-tone="caution"] .un-ps-history-dot {
-  box-shadow: inset 0 0 0 1.5px var(--un-caution);
-}
 [data-ui-next] .un-ps-history-day {
-  min-width: 3.5em;
+  min-width: 3em;
   color: var(--un-text-4);
   font-variant-numeric: tabular-nums;
 }
@@ -510,13 +488,11 @@
 [data-ui-next] .un-ps-history li[data-tone="caution"] .un-ps-history-outcome {
   color: var(--un-caution);
 }
-/* The fold toggle lines up with the entries' text, right of the timeline's dots (L5). Two classes,
-   so it outranks FoldList's own margin in components.css whatever order the sheets load in. */
-[data-ui-next] button.un-fold-toggle.un-ps-history-toggle {
-  margin-left: calc(var(--un-sp-5) - var(--un-sp-2));
-}
 [data-ui-next] .un-ps-history-cause {
   color: var(--un-text-2);
+}
+[data-ui-next] .un-ps-history-body {
+  padding-block-end: var(--un-sp-3);
 }
 /* The same cause again: stuck on the same misconception (YUK-617). Caution, never critical (R4). */
 [data-ui-next] .un-ps-history-cause[data-repeated] {

@@ -1,4 +1,4 @@
-// Re-arm a quota wait whose scheduled wake-up delivery was lost, without paying twice.
+// Re-arm a provider wait whose scheduled wake-up delivery was lost, without paying twice.
 // The scan only re-sends a delivery. It reads the frozen coordinator receipt, replays
 // its paid stage receipts through the normal claim, and lets the stage runner decide
 // whether the retry instant has arrived. Candidates are paged in retry order and the
@@ -60,7 +60,7 @@ const EXHAUSTED_EVENT_ACTION = 'experimental:question_admission_waiting_recovery
 const RECOVERY_ACTOR_REF = 'practice:question_admission';
 
 const QuotaWait = AdmissionRecovery.extend({
-  reason: z.literal('quota'),
+  reason: z.enum(['quota', 'not_sent']),
   retry_at: z.string().datetime(),
 });
 const WaitingStage = z.object({ kind: z.literal('waiting'), recovery: QuotaWait });
@@ -78,7 +78,7 @@ interface WaitCandidate {
   inputDigest: string;
   input: unknown;
   result: unknown;
-  /** Latest quota-waiting stage receipt: the sleep clock the stage runner reads. */
+  /** Latest provider-waiting stage receipt: the sleep clock the stage runner reads. */
   stageUnit: string;
   stageInputDigest: string;
   stageRetryAt: string;
@@ -120,7 +120,7 @@ function windowAttemptsSql(window: number) {
 
 /**
  * An unapplied coordinator may still owe publication after its stages finish.
- * The coordinator supplies the frozen input; its latest quota wait is the clock
+ * The coordinator supplies the frozen input; its latest provider wait is the clock
  * the stage runner compares `retry_at` against. Live deliveries and a spent window
  * budget are excluded here (before LIMIT); the truth is re-read under the locks.
  */
@@ -181,7 +181,7 @@ async function readCandidates(
       WHERE s.family = ${ADMISSION_STAGE_FAMILY}
         AND s.state IN ('receipt_ready', 'applied')
         AND s.result_json->>'kind' = 'waiting'
-        AND s.result_json->'recovery'->>'reason' = 'quota'
+        AND s.result_json->'recovery'->>'reason' IN ('quota', 'not_sent')
       ORDER BY s.entity_id, s.entity_revision, s.result_recorded_at DESC, s.unit DESC, s.input_digest DESC
     )
     SELECT c.entity_id AS group_id, c.entity_revision, c.input_digest, c.input_json,
@@ -196,7 +196,7 @@ async function readCandidates(
       AND c.result_json->'result'->>'status' = 'waiting'
       AND w.state IN ('receipt_ready', 'applied')
       AND w.result_json->>'kind' = 'waiting'
-      AND w.result_json->'recovery'->>'reason' = 'quota'
+      AND w.result_json->'recovery'->>'reason' IN ('quota', 'not_sent')
       AND r.integrity_digest = c.entity_revision
       AND l.scoring_admission_state = 'withheld'
       AND l.scoring_admission_withheld_reason = 'unverified_rules'
@@ -378,7 +378,7 @@ async function recordExhaustedWaits(
 }
 
 /**
- * Scan for recorded quota waits whose wake-up is gone and re-queue one delivery each.
+ * Scan for recorded provider waits whose wake-up is gone and re-queue one delivery each.
  * Idempotent under concurrent scans: the family advisory lock serializes the check, and
  * the pg-boss id carries the send sequence, so a repeat scan of the same send collides
  * while a settled (failed/completed) delivery no longer blocks the next one. No paid
@@ -462,7 +462,7 @@ export async function recoverExpiredAdmissionWaits(
               eq(paid_effect.entity_revision, row.entity_revision),
               inArray(paid_effect.state, ['receipt_ready', 'applied']),
               sql`${paid_effect.result_json}->>'kind' = 'waiting'`,
-              sql`${paid_effect.result_json}->'recovery'->>'reason' = 'quota'`,
+              sql`${paid_effect.result_json}->'recovery'->>'reason' IN ('quota', 'not_sent')`,
             ),
           )
           .orderBy(

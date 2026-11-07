@@ -117,6 +117,27 @@ export function bodyBlocksHaveSemanticKinds(
   return { ok: missing.length === 0, missing };
 }
 
+/**
+ * Last non-empty text line of a note body, trimmed; null when the document does
+ * not parse or carries no text. Generation-time checks read how a note ends
+ * without scanning (or rewriting) its whole prose.
+ */
+export function noteClosingLine(value: unknown): string | null {
+  const parsed = ArtifactBodyBlocks.safeParse(value);
+  if (!parsed.success) return null;
+  const nodes = parsed.data.content ?? [];
+  for (let i = nodes.length - 1; i >= 0; i -= 1) {
+    const node = nodes[i];
+    if (node === null || typeof node !== 'object') continue;
+    const lines = blockText(node as Record<string, unknown>).split('\n');
+    for (let j = lines.length - 1; j >= 0; j -= 1) {
+      const line = lines[j]?.trim() ?? '';
+      if (line.length > 0) return line;
+    }
+  }
+  return null;
+}
+
 function artifactRefTarget(value: unknown): ArtifactRefTarget | undefined {
   const target = recordOrEmpty(value);
   return typeof target.artifact_id === 'string' && typeof target.kind === 'string'

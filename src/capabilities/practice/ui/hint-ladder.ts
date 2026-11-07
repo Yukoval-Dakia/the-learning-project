@@ -37,7 +37,7 @@ export interface HintStage {
 export const HINT_LADDER: readonly HintStage[] = [
   {
     key: 'H0',
-    label: '元认知',
+    label: '怎么下手',
     weight: '最轻',
     gives: '只问你卡在哪一步、这类题一般怎么下手 —— 不碰题目内容',
     independence: 'independent',
@@ -61,7 +61,7 @@ export const HINT_LADDER: readonly HintStage[] = [
   },
   {
     key: 'H3',
-    label: '错因',
+    label: '卡点',
     weight: '偏重',
     gives: '针对你当前思路指出卡点 / 常见误区',
     independence: 'independent',
@@ -69,7 +69,7 @@ export const HINT_LADDER: readonly HintStage[] = [
   },
   {
     key: 'H4',
-    label: '部分示范',
+    label: '示范一步',
     weight: '重',
     gives: '演示关键一步怎么做，剩下留给你收尾',
     independence: 'semi',
@@ -97,23 +97,20 @@ export const FULL_STAGE_INDEX = HINT_LADDER.findIndex((s) => s.isFull);
  */
 export const LAST_HINT_INDEX = FULL_STAGE_INDEX - 1;
 
-/** 阶梯量程标签（rail head 用），如「H0–H5」。 */
-export const LADDER_RANGE_LABEL = `${HINT_LADDER[0].key}–${HINT_LADDER[FULL_STAGE_INDEX].key}`;
-
 /** 取指定索引的阶（越界 → undefined）。 */
 export function stageAt(index: number): HintStage | undefined {
   return HINT_LADDER[index];
 }
 
 /**
- * rail 右侧的位置标签：「尚未开始」/「第 H2 阶」/「已看完整解」。
+ * rail 右侧的位置标签：「尚未开始」/「看到第 3 个提示」/「已看完整解」。
  * reached < 0 ≡ 尚未要任何提示；revealedFull ≡ 已 reveal 完整解（H5）。
  */
 export function positionLabel(reached: number, revealedFull: boolean): string {
   if (revealedFull) return '已看完整解';
   if (reached < 0) return '尚未开始';
   const stage = HINT_LADDER[reached];
-  return stage ? `第 ${stage.key} 阶` : '尚未开始';
+  return stage ? `看到第 ${reached + 1} 个提示` : '尚未开始';
 }
 
 /**
