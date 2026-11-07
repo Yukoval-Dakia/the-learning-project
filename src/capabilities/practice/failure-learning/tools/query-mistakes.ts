@@ -4,12 +4,13 @@
 import { and, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Db } from '@/db/client';
-import { knowledge, material_fsrs_state, mistake_variant, question } from '@/db/schema';
+import { material_fsrs_state, mistake_variant, question } from '@/db/schema';
 import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
 import {
   type FailureAttempt,
   getFailureAttemptsForDerivation,
 } from '@/kernel/read-models/failure-attempts';
+import { loadFailureLearningKnowledgeContext } from '@/kernel/read-models/failure-learning-context';
 import { miscCauseLabelMap, resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
 // P5.1 / — snippet cap + courtesy default sourced from budgets.ts.
 // Both are byte-unchanged from the prior file-local literals (160 / 20).
@@ -241,7 +242,7 @@ function aggregatePoints(labels: readonly string[]): Array<[string, number]> {
 function causeLabel(input: {
   cause: { primary_category: string } | null;
   knowledgeIds: readonly string[];
-  knowledgeById: ReadonlyMap<string, { name: string; domain: string | null }>;
+  knowledgeById: ReadonlyMap<string, { name: string; effective_domain: string | null }>;
   miscLabels: ReadonlyMap<string, string>;
 }): string {
   if (!input.cause) return '未分类';
@@ -250,7 +251,7 @@ function causeLabel(input: {
   // Built-in cause ids are per-subject vocabulary; the knowledge domain picks
   // the profile whose label is the learner-facing word for this row.
   for (const knowledgeId of input.knowledgeIds) {
-    const domain = input.knowledgeById.get(knowledgeId)?.domain ?? null;
+    const domain = input.knowledgeById.get(knowledgeId)?.effective_domain ?? null;
     const label = resolveSubjectProfile(domain).causeCategories.find(
       (category) => category.id === input.cause?.primary_category,
     )?.label;
@@ -268,7 +269,7 @@ function buildAggregates(input: {
     fa: { referenced_knowledge_ids: string[] };
     cause: { primary_category: string } | null;
   }>;
-  knowledgeById: ReadonlyMap<string, { name: string; domain: string | null }>;
+  knowledgeById: ReadonlyMap<string, { name: string; effective_domain: string | null }>;
   miscLabels: ReadonlyMap<string, string>;
   truncated: boolean;
   includeCause: boolean;
@@ -380,11 +381,8 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
       ),
     ),
     finalKnowledgeIds.length > 0
-      ? ctx.db
-          .select({ id: knowledge.id, name: knowledge.name, domain: knowledge.domain })
-          .from(knowledge)
-          .where(inArray(knowledge.id, finalKnowledgeIds))
-      : Promise.resolve([] as Array<{ id: string; name: string; domain: string | null }>),
+      ? loadFailureLearningKnowledgeContext(ctx.db, finalKnowledgeIds)
+      : Promise.resolve([] as Awaited<ReturnType<typeof loadFailureLearningKnowledgeContext>>),
   ]);
   const knowledgeById = new Map(knowledgeRows.map((row) => [row.id, row]));
 
