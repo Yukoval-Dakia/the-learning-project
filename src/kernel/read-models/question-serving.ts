@@ -420,9 +420,9 @@ function admissionRead(
   ) {
     return { status: 'undecided', reason: '自动检查的结果尚未确认，题目暂不能作答。' };
   }
-  // A recorded quota wait is only credible while its durable wake-up is still
+  // A recorded provider wait is only credible while its durable wake-up is still
   // within the gate's own retry cadence; a lost delivery must not promise a retry.
-  if (fact.admission_result_status === 'waiting') {
+  if (fact.admission_result_status === 'waiting' && fact.admission_paid_state !== 'applied') {
     const retryAt = fact.admission_wait_retry_at;
     const retryAtMs = retryAt == null ? Number.NaN : Date.parse(retryAt);
     if (Number.isFinite(retryAtMs) && now.getTime() <= retryAtMs + ADMISSION_WAIT_RETRY_GRACE_MS)
