@@ -426,8 +426,8 @@ export function projectCopilotRunUpdate(
 
 /**
  * Replace persisted history while retaining only client rows that still have a
- * concrete pending key or run handle. A run reply from history wins over its
- * live placeholder by causal run identity.
+ * concrete pending key or run handle, and nudge lines, which only exist here. A run
+ * reply from history wins over its live placeholder by causal run identity.
  */
 export function reconcileCopilotSnapshotMessages(
   previous: ChatMessage[],
@@ -462,7 +462,8 @@ export function reconcileCopilotSnapshotMessages(
     seenIds.add(message.id);
     output.push(message);
   };
-  // A nudge line stays right after the row it followed.
+  // A nudge line stays right after the row it followed. One whose row isn't in the snapshot (history
+  // still loading, a send still pending) goes last, so it never lands above a newer message.
   const nudgeLinesAfter = new Map<string | null, ChatMessage[]>();
   let before: string | null = null;
   for (const message of previous) {
@@ -474,7 +475,6 @@ export function reconcileCopilotSnapshotMessages(
     }
   }
   const replayedIds = new Set(replayed.map((message) => message.id));
-  for (const message of nudgeLinesAfter.get(null) ?? []) append(message);
   for (const message of replayed) {
     append(message);
     for (const line of nudgeLinesAfter.get(message.id) ?? []) append(line);
@@ -483,11 +483,11 @@ export function reconcileCopilotSnapshotMessages(
       if (liveReply) append(liveReply);
     }
   }
-  for (const [anchor, lines] of nudgeLinesAfter) {
-    if (anchor !== null && !replayedIds.has(anchor)) for (const line of lines) append(line);
-  }
   for (const message of transientRunMessages) append(message);
   for (const message of pendingMessages) append(message);
+  for (const [anchor, lines] of nudgeLinesAfter) {
+    if (anchor === null || !replayedIds.has(anchor)) for (const line of lines) append(line);
+  }
   return output;
 }
 
