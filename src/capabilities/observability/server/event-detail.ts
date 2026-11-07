@@ -64,6 +64,24 @@ function eventDto(envelope: EnvelopedEvent): Record<string, unknown> {
   ) {
     dto.payload = stripArtifactAttrsHtml(dto.payload);
   }
+  if (
+    envelope.action === 'experimental:copilot_reply' &&
+    dto.payload &&
+    typeof dto.payload === 'object' &&
+    !Array.isArray(dto.payload)
+  ) {
+    const payload = dto.payload as Record<string, unknown>;
+    if (
+      payload.durable_failure &&
+      typeof payload.durable_failure === 'object' &&
+      !Array.isArray(payload.durable_failure)
+    ) {
+      const failure = { ...(payload.durable_failure as Record<string, unknown>) };
+      delete failure.cause;
+      delete failure.stage;
+      dto.payload = { ...payload, durable_failure: failure };
+    }
+  }
   return dto;
 }
 

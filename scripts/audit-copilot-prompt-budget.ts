@@ -96,7 +96,9 @@ async function main(): Promise<void> {
     composed = next;
   }
 
-  const total = composed.length;
+  const degraded = composePiSystemPrompt(base, skillDocs, true);
+  const total = degraded.length;
+  segments.push({ label: '搜索不可用（仅降级时）', chars: degraded.length - composed.length });
   const overBudget = total > OWNER_PROMPT_BUDGET_CHARS;
   const delta = total - OWNER_PROMPT_BUDGET_CHARS;
 

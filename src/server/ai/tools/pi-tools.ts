@@ -13,12 +13,18 @@
 // through as `correlatedToolUseId`.
 
 import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
+import {
+  type FailureDiagnostics,
+  annotateFailure,
+  failureDiagnostics,
+} from '@/ai/failure-diagnostics';
 import { type BuildMcpServerOptions, type PiToolMount, piToolWireName } from '@/ai/pi-tool-mount';
 import { writeToolCallLog, writeUnpricedToolCost } from '@/kernel/tools/call-evidence';
 import {
   ensureToolParametersObjectRoot,
   zodToToolParametersSchema,
 } from '@/kernel/zod-json-schema';
+import type { ExecutionAdapterStartupArgs } from '../execution-adapter';
 import { executeDomainToolCall } from './mcp-bridge';
 import { getTool } from './registry';
 
@@ -121,11 +127,15 @@ export async function connectPiRemoteMcp(
   const transport = new StreamableHTTPClientTransport(new URL(mount.config.url), {
     requestInit: { headers: mount.config.headers ?? {} },
   });
+  let stage: 'remote_mcp_connect' | 'remote_mcp_list_tools' | 'remote_mcp_schema' =
+    'remote_mcp_connect';
   try {
     // Connect AND list inside the same cleanup scope so a transport failure
     // still releases the client socket.
     await client.connect(transport, { timeout: timeoutMs });
+    stage = 'remote_mcp_list_tools';
     const listed = await client.listTools();
+    stage = 'remote_mcp_schema';
     const wanted = new Set(mount.toolNames);
     const tools = listed.tools
       .filter((remote) => wanted.has(remote.name))
@@ -230,7 +240,45 @@ export async function connectPiRemoteMcp(
       });
     return { tools, close: () => client.close() };
   } catch (err) {
+    annotateFailure(err, stage, new URL(mount.config.url).hostname);
     await client.close().catch(() => {});
     throw err;
   }
+}
+
+// The same mount descriptor survives provider retries; a new logical run creates another.
+const unavailableSearchMounts = new WeakMap<PiToolMount, FailureDiagnostics>();
+
+export async function connectTaskRemoteMcp(
+  mount: Extract<PiToolMount, { type: 'remote-mcp' }>,
+  startup: Pick<ExecutionAdapterStartupArgs, 'kind' | 'runId' | 'initializeTimeoutMs' | 'options'>,
+  connect: typeof connectPiRemoteMcp,
+): Promise<PiRemoteMcpMountHandle | undefined> {
+  const optionalSearch =
+    startup.kind === 'CopilotTask' && mount.serverName === 'exa' && mount.optional === true;
+  let unavailable = optionalSearch ? unavailableSearchMounts.get(mount) : undefined;
+  if (!unavailable) {
+    try {
+      return await connect(mount, startup.initializeTimeoutMs, {
+        taskRunId: startup.runId,
+        taskKind: startup.kind,
+      });
+    } catch (error) {
+      const diagnostics = failureDiagnostics(error);
+      if (
+        !optionalSearch ||
+        (diagnostics.stage !== 'remote_mcp_connect' &&
+          diagnostics.stage !== 'remote_mcp_list_tools')
+      )
+        throw error;
+      unavailable = diagnostics;
+      unavailableSearchMounts.set(mount, diagnostics);
+      console.warn('[pi-adapter] optional_search_unavailable', {
+        task_run_id: startup.runId,
+        ...diagnostics,
+      });
+    }
+  }
+  startup.options.transportEvidence?.noteOptionalDependencyFailure(unavailable);
+  return undefined;
 }

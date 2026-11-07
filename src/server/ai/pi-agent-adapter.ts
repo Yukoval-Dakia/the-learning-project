@@ -105,6 +105,7 @@ import {
   type PiRemoteMcpMountHandle,
   buildPiDomainAgentTools,
   connectPiRemoteMcp,
+  connectTaskRemoteMcp,
 } from './tools/pi-tools';
 
 type PiModels = Pick<PiMutableModels, 'getModel' | 'streamSimple'>;
@@ -940,6 +941,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
             );
           })(),
       this.args.piSkillDocs,
+      this.args.options.transportEvidence?.optionalDependencyUnavailable,
     );
     const structuredOutput = toolOutputSchema(this.args.kind) !== undefined;
     const submitPolicy = structuredOutput ? this.structuredSubmitPolicy(this.model) : undefined;
@@ -1430,12 +1432,11 @@ export class PiAgentAdapter implements ExecutionAdapter {
         } else if (mount.type === 'custom') {
           tools.push(...mount.tools);
         } else {
-          const handle = await deps.connectRemoteMcp(mount, args.initializeTimeoutMs, {
-            taskRunId: args.runId,
-            taskKind: args.kind,
-          });
-          remoteHandles.push(handle);
-          tools.push(...handle.tools);
+          const handle = await connectTaskRemoteMcp(mount, args, deps.connectRemoteMcp);
+          if (handle) {
+            remoteHandles.push(handle);
+            tools.push(...handle.tools);
+          }
         }
       }
     } catch (err) {

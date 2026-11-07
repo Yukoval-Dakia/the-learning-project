@@ -14,6 +14,7 @@
 // job_events itself.
 
 import { and, asc, eq, inArray } from 'drizzle-orm';
+import { failureDiagnostics } from '@/ai/failure-diagnostics';
 import { isDurableWorkerTouchEvent } from '@/capabilities/copilot/durable-pickup';
 import type {
   CopilotModeState,
@@ -628,6 +629,8 @@ export async function handleDurableFailure(
     createCancelledMarker,
   } = args;
   const message = String((err as Error)?.message ?? err);
+  const diagnostics = failureDiagnostics(err);
+  console.error('[copilot_run] execution_failed', { run_id: runId, ...diagnostics });
   const failureTaskRunId = taskRunId ?? `copilot_run_exhausted_${runId}`;
   // Preserve the finalizer's exact body and receipt; an unsealed draft cannot win.
   const replyText =
@@ -651,7 +654,7 @@ export async function handleDurableFailure(
           taskRunId: failureTaskRunId,
           ...(replyFinalization ? { replyFinalization } : {}),
           outcome: 'failure',
-          durableFailure: { reason: 'exhausted', error: message },
+          durableFailure: { reason: 'exhausted', error: message, ...diagnostics },
           publicProseFailure: args.publicProseFailure ?? { kind: 'execution_failed' },
           now: new Date(),
         });
