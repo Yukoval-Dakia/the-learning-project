@@ -558,10 +558,13 @@ export interface RestoreFromArchiveOpts {
    */
   maxExtractedBytes?: number;
   /**
-   * Operational fence for archived intervention preparation jobs. Required on a live
-   * restore when the archive contains a preparation_job_id.
+   * Operational cleanup for archived intervention preparation jobs. Runs after the
+   * restore transaction commits — the restored aggregates lose their
+   * preparation_job_id in the same transaction, so the job-id fence already
+   * provides the atomic invalidation and this call only retires transport rows.
+   * Required on a live restore when the archive contains a preparation_job_id.
    */
-  retireInterventionPreparationJobs?: (tx: Tx, jobIds: string[]) => Promise<void>;
+  retireInterventionPreparationJobs?: (jobIds: string[]) => Promise<void>;
   /**
    * Memory-ingest owner's reopen of outbox rows whose job was lost with pg-boss. Without
    * it those rows stay stamped and are never extracted.
@@ -935,6 +938,22 @@ export async function restoreFromArchive({
     // mem0) must not re-enter paid extraction. Rows dispatched but not yet ingested at export
     // lost their pg-boss job; the memory owner reopens them inside the restore transaction.
     const archivedInterventionPreparationJobIds = [...collectors.interventionJobIds];
+    // The archived delivery identities are retired after commit; only wiring is
+    // required here, before the wipe transaction starts.
+    if (
+      archivedInterventionPreparationJobIds.length > 0 &&
+      !retireInterventionPreparationJobs &&
+      operationalRestoreTarget !== 'fresh_disposable'
+    ) {
+      return {
+        status: 500,
+        body: {
+          error: 'restore_failed_mid_flight',
+          message:
+            'Restore aborted before any write: the archive contains intervention preparation job ids but no operational job retirer was provided — the database is left UNCHANGED.',
+        },
+      };
+    }
 
     const mem0Staged = staged.tables.get(mem0Table);
 
@@ -1082,15 +1101,6 @@ export async function restoreFromArchive({
         ) as pre_max
       `);
         const preRestoreConfigMax = Math.max(Number(preMaxRows[0]?.pre_max ?? 0), localConfigEpoch);
-        if (archivedInterventionPreparationJobIds.length > 0) {
-          if (retireInterventionPreparationJobs) {
-            await retireInterventionPreparationJobs(tx, archivedInterventionPreparationJobIds);
-          } else if (operationalRestoreTarget !== 'fresh_disposable') {
-            throw new Error(
-              'restore contains intervention preparation job ids but no operational job retirer was provided',
-            );
-          }
-        }
 
         // Discard excluded process/queue ownership before restoring durable business rows.
         for (const t of RESTORE_WIPE_ONLY_TABLES) {
@@ -1312,6 +1322,18 @@ export async function restoreFromArchive({
           partial_stats: stats,
         },
       };
+    }
+
+    // The restore committed; the aggregate job-id fence (restored rows carry no
+    // preparation_job_id) already invalidated these deliveries atomically. The
+    // post-commit cancel only cleans the transport layer — a failure is logged,
+    // not fatal, because the fence and the recovery floor still hold.
+    if (archivedInterventionPreparationJobIds.length > 0 && retireInterventionPreparationJobs) {
+      try {
+        await retireInterventionPreparationJobs(archivedInterventionPreparationJobIds);
+      } catch (err) {
+        console.error('[archive] post-commit retirement of archived preparation jobs failed', err);
+      }
     }
 
     // The transaction wrote a strictly newer epoch, so this hydrate must re-read; other

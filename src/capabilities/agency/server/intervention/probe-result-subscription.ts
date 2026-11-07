@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { Db, Tx } from '@/db/client';
-import { fromPgBossDrizzleTx } from '@/db/pg-boss-drizzle';
+import type { Db } from '@/db/client';
 import { getEventById } from '@/kernel/events';
 import type {
   EventSubscriptionDelivery,
@@ -10,6 +9,10 @@ import type {
 import { getEffectiveProbeResultStatuses } from '@/kernel/read-models/probe-evidence';
 import { getStartedBoss } from '@/server/boss/client';
 import { lockInterventionCorrectionsAll, lockInterventionSource } from './intervention-lock';
+import {
+  type InterventionPreparationBoss,
+  drainInterventionPreparationDispatch,
+} from './preparation-dispatch';
 import {
   InterventionSourceProbeResultPayload,
   buildInterventionSnapshotFromProbeResult,
@@ -22,32 +25,8 @@ import {
   updatePreparationJobId,
 } from './store';
 
-export const PREPARE_INTERVENTION_JOB = 'prepare_intervention';
-
-export interface PrepareInterventionJobData {
-  intervention_id: string;
-  version: number;
-  idempotency_key: string;
-  /**
-   * Provider-wait count carried on redeliveries (YUK-2030). Every resend —
-   * rearm, recovery floor, subscription replay — echoes the aggregate's
-   * `preparation_waits` so a lost pg-boss row never resets the ladder.
-   */
-  provider_waits?: number;
-}
-
-export type PrepareInterventionBossSend = (
-  name: typeof PREPARE_INTERVENTION_JOB,
-  data: PrepareInterventionJobData,
-  options: {
-    db: ReturnType<typeof fromPgBossDrizzleTx>;
-    id: string;
-    startAfter?: Date;
-  },
-) => Promise<string | null>;
-
 interface ProbeResultSubscriptionDeps {
-  bossSend?: PrepareInterventionBossSend;
+  boss?: InterventionPreparationBoss;
   env?: NodeJS.ProcessEnv;
   now?: () => Date;
 }
@@ -56,24 +35,6 @@ function recordPayload(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
-}
-
-async function enqueuePreparation(
-  tx: Tx,
-  send: PrepareInterventionBossSend,
-  data: PrepareInterventionJobData,
-  reservedJobId: string,
-  startAfter?: Date,
-): Promise<string> {
-  const jobId = await send(PREPARE_INTERVENTION_JOB, data, {
-    db: fromPgBossDrizzleTx(tx),
-    id: reservedJobId,
-    ...(startAfter ? { startAfter } : {}),
-  });
-  // pg-boss returns null when this exact id already exists. That is the desired
-  // duplicate-delivery result, not an enqueue failure: the aggregate already owns
-  // the stable reserved id and must not spin the subscription forever.
-  return jobId ?? reservedJobId;
 }
 
 export async function handleProbeResultInterventionDelivery(
@@ -107,39 +68,25 @@ export async function handleProbeResultInterventionDelivery(
     };
   }
 
-  let send = deps.bossSend;
-  if (!send) {
-    const boss = await getStartedBoss();
-    send = boss.send.bind(boss) as PrepareInterventionBossSend;
-  }
   const now = deps.now?.() ?? new Date();
   const identity = interventionIdentityForProbeResult(delivery.sourceEventId);
 
+  // The business transaction binds the durable delivery identity on the
+  // aggregate. No engine call happens inside it: a commit leaves the obligation
+  // durable, a rollback leaves nothing at all.
   const record = await db.transaction(async (tx) => {
     await lockInterventionCorrectionsAll(tx);
     await lockInterventionSource(tx, delivery.sourceEventId);
     const existing = await loadInterventionBySourceProbeResult(tx, delivery.sourceEventId);
     if (existing) {
-      if (existing.status !== 'preparing') return existing;
-      // A subscription replay (including post-restore recovery) may need to
-      // recreate the operational pg-boss row. Business idempotency stays on the
-      // persisted intervention aggregate; singleton throttling only reduces
-      // duplicate queue traffic and never bears correctness.
-      const reservedJobId = existing.preparation_job_id ?? randomUUID();
-      const jobId = await enqueuePreparation(
-        tx,
-        send,
-        {
-          intervention_id: existing.id,
-          version: existing.version,
-          idempotency_key: existing.idempotency_key,
-          ...(existing.preparation_waits > 0 ? { provider_waits: existing.preparation_waits } : {}),
-        },
-        reservedJobId,
-        existing.preparation_wait_until ?? undefined,
-      );
-      await updatePreparationJobId(tx, existing.id, existing.version, jobId, now);
-      return { ...existing, preparation_job_id: jobId, updated_at: now };
+      if (existing.status !== 'preparing' || existing.preparation_job_id) {
+        // Already bound (or already decided): the drain owns the engine side.
+        return existing;
+      }
+      // A replay over a restored aggregate binds a fresh delivery identity.
+      const minted = randomUUID();
+      await updatePreparationJobId(tx, existing.id, existing.version, minted, now);
+      return { ...existing, preparation_job_id: minted, updated_at: now };
     }
 
     const snapshot = await buildInterventionSnapshotFromProbeResult(tx, {
@@ -149,17 +96,6 @@ export async function handleProbeResultInterventionDelivery(
       now,
       env: deps.env,
     });
-    const reservedJobId = randomUUID();
-    const jobId = await enqueuePreparation(
-      tx,
-      send,
-      {
-        intervention_id: identity.interventionId,
-        version: 1,
-        idempotency_key: identity.idempotencyKey,
-      },
-      reservedJobId,
-    );
     return insertInterventionVersion(tx, {
       id: identity.interventionId,
       version: 1,
@@ -167,11 +103,24 @@ export async function handleProbeResultInterventionDelivery(
       conjectureEventId: snapshot.conjecture.conjecture_id,
       deliveryMode: interventionDeliveryMode(deps.env ?? process.env),
       idempotencyKey: identity.idempotencyKey,
-      preparationJobId: jobId,
+      preparationJobId: randomUUID(),
       snapshot,
       now,
     });
   });
+
+  // Engine delivery happens after the aggregate commits, through the same
+  // drain the recovery floor uses. A throw retries the delivery; the replay is
+  // idempotent on the aggregate and the persisted job id.
+  if (record.status === 'preparing') {
+    const boss = deps.boss ?? ((await getStartedBoss()) as InterventionPreparationBoss);
+    await drainInterventionPreparationDispatch(
+      db,
+      boss,
+      { interventionId: record.id, version: record.version },
+      now,
+    );
+  }
 
   return {
     status: 'succeeded',
