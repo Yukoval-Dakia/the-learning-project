@@ -11,7 +11,9 @@
 //   - Versions are frozen per revision: answer_head@2 / blank-norm@2 /
 //     numeric-norm@2 are the current contracts; answer_head / blank-norm@1 /
 //     numeric-norm@1 (and a missing numeric version) keep their historical
-//     NFKC semantics byte-for-byte.
+//     NFKC semantics byte-for-byte. Integer identity past the float64 exact
+//     range, and a numeric minus or decimal point under ignore_punctuation,
+//     are grader correctness rules on every version — not a new fold.
 //   - A comparison that cannot decide (unparseable, ambiguous, beyond the
 //     comparator contract) is reported as undecidable with a reason; callers
 //     turn that into pending, never a fake zero.
@@ -480,6 +482,27 @@ function textKeyHeadPolicy(normalization: TextKeyNormalizationT): AnswerHeadPoli
   return normalization === 'answer_head@2' ? 'answer_head@2' : 'legacy';
 }
 
+const NUMERIC_MINUS = new Set(['-', '\uFF0D']);
+const NUMERIC_DECIMAL = new Set(['.', '\uFF0E']);
+
+function isDecimalDigit(char: string | undefined): boolean {
+  return char != null && /\p{Nd}/u.test(char);
+}
+
+/**
+ * `\p{P}` includes the hyphen-minus and the decimal point. Dropping them makes
+ * `-5` match `5` and `10.24` match `1024`. Keep a unary minus and a dot that
+ * starts a fractional digit; word hyphens and sentence periods still drop.
+ */
+function keepsNumericPunctuation(source: string, index: number): boolean {
+  const char = source[index];
+  if (char == null) return false;
+  if (NUMERIC_MINUS.has(char)) {
+    return isDecimalDigit(source[index + 1]) && !isDecimalDigit(source[index - 1]);
+  }
+  return NUMERIC_DECIMAL.has(char) && isDecimalDigit(source[index + 1]);
+}
+
 /** Fold a raw blank answer under a frozen blank normalization. */
 export function normalizeBlankAnswerText(text: string, normalization: BlankNormalizationT): string {
   let value = text;
@@ -493,7 +516,11 @@ export function normalizeBlankAnswerText(text: string, normalization: BlankNorma
   }
   for (const [from, to] of normalization.character_variants) value = value.split(from).join(to);
   if (normalization.casefold) value = value.toLowerCase();
-  if (normalization.ignore_punctuation) value = value.replace(/\p{P}/gu, '');
+  if (normalization.ignore_punctuation) {
+    value = value.replace(/\p{P}/gu, (char, index) =>
+      keepsNumericPunctuation(value, index) ? char : '',
+    );
+  }
   if (normalization.collapse_whitespace) value = value.replace(/\s+/gu, ' ');
   if (normalization.trim_outer) value = value.trim();
   return value;
@@ -675,21 +702,126 @@ export function normalizeNumericUnitInput(
 }
 
 const PLAIN_NUMBER = /^[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?$/u;
+const PLAIN_NUMBER_PREFIX = /^[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?/u;
+/** float64 tops out near 1e308; longer materialization is not a grading input. */
+const MAX_EXACT_INTEGER_DIGITS = 400;
 
 /**
- * 纯数值读取：冻结 Unicode 策略 + trim + PLAIN_NUMBER + finite，不解释表达式。
- * 同一个确定性 parse 既用于判分（numericCorrect），也用于准入双解的跨 kind
- * 一致性；新键用宽度折叠，缺省版本保留旧 NFKC。
+ * Plain-number read shared by grading and cross-kind key agreement.
+ * `finite` is an exact float64. `unsafe_integer` is an integer Number() would
+ * collapse (9007199254740993 → 9007199254740992). `unreadable` is not a
+ * supported plain number.
  */
-export function parseFrozenNumericAnswer(raw: string, identity: NumericKeyIdentity): number | null {
+type FrozenPlainNumber =
+  | { kind: 'finite'; value: number }
+  | { kind: 'unsafe_integer'; value: bigint }
+  | { kind: 'unreadable' };
+
+type ExactIntegerRead =
+  | { kind: 'integer'; value: bigint }
+  | { kind: 'fraction' }
+  | { kind: 'unsupported' };
+
+function readExactInteger(text: string): ExactIntegerRead {
+  const match = /^([+-]?)(?:(\d+)(?:\.(\d+))?|\.(\d+))(?:[eE]([+-]?\d+))?$/u.exec(text);
+  if (match == null) return { kind: 'fraction' };
+  const fraction = match[3] ?? match[4] ?? '';
+  const exponentText = match[5];
+  if (exponentText != null && exponentText.replace(/^[+-]/u, '').length > 4) {
+    return { kind: 'unsupported' };
+  }
+  const exponent = exponentText != null ? Number(exponentText) : 0;
+  if (!Number.isSafeInteger(exponent) || Math.abs(exponent) > MAX_EXACT_INTEGER_DIGITS) {
+    return { kind: 'unsupported' };
+  }
+  const digits = `${match[2] ?? ''}${fraction}`.replace(/^0+(?=\d)/u, '') || '0';
+  const scale = exponent - fraction.length;
+  if (
+    digits.length > MAX_EXACT_INTEGER_DIGITS ||
+    digits.length + Math.max(scale, 0) > MAX_EXACT_INTEGER_DIGITS
+  ) {
+    return { kind: 'unsupported' };
+  }
+  let magnitude = BigInt(digits);
+  if (scale >= 0) {
+    magnitude *= 10n ** BigInt(scale);
+  } else {
+    const divisor = 10n ** BigInt(-scale);
+    if (magnitude % divisor !== 0n) return { kind: 'fraction' };
+    magnitude /= divisor;
+  }
+  return { kind: 'integer', value: match[1] === '-' ? -magnitude : magnitude };
+}
+
+function integerCollapses(value: bigint): boolean {
+  const asNumber = Number(value);
+  return !Number.isFinite(asNumber) || BigInt(asNumber) !== value;
+}
+
+function readFrozenPlainNumber(raw: string, identity: NumericKeyIdentity): FrozenPlainNumber {
   const text = (
     identity.normalization_version === 'numeric-norm@2'
       ? normalizeNumericAnswer(raw, false)
       : raw.normalize('NFKC')
   )?.trim();
-  if (text == null || !PLAIN_NUMBER.test(text)) return null;
-  const value = Number(text);
-  return Number.isFinite(value) ? value : null;
+  if (text == null || !PLAIN_NUMBER.test(text)) return { kind: 'unreadable' };
+  const exact = readExactInteger(text);
+  switch (exact.kind) {
+    case 'unsupported':
+      return { kind: 'unreadable' };
+    case 'integer':
+      return integerCollapses(exact.value)
+        ? { kind: 'unsafe_integer', value: exact.value }
+        : { kind: 'finite', value: Number(exact.value) };
+    case 'fraction': {
+      const value = Number(text);
+      return Number.isFinite(value) ? { kind: 'finite', value } : { kind: 'unreadable' };
+    }
+  }
+}
+
+/**
+ * 纯数值读取：冻结 Unicode 策略 + trim + PLAIN_NUMBER + finite，不解释表达式。
+ * 同一个确定性 parse 既用于判分，也用于准入双解的跨 kind 一致性；新键用宽度折叠，
+ * 缺省版本保留旧 NFKC。超出 float64 精确范围的整数不返回折叠值。
+ */
+export function parseFrozenNumericAnswer(raw: string, identity: NumericKeyIdentity): number | null {
+  const read = readFrozenPlainNumber(raw, identity);
+  return read.kind === 'finite' ? read.value : null;
+}
+
+function absoluteIntegerDiffVerdict(diff: bigint, tolerance: number): 0 | 1 {
+  if (!Number.isFinite(tolerance) || tolerance < 0) return 0;
+  // Every finite float at or above 2^53 is an integer, so a non-integer
+  // tolerance is below that and cannot cover a diff past the safe range.
+  if (Number.isInteger(tolerance)) return diff <= BigInt(tolerance) ? 1 : 0;
+  if (diff <= BigInt(Number.MAX_SAFE_INTEGER)) return Number(diff) <= tolerance ? 1 : 0;
+  return 0;
+}
+
+/**
+ * An unsafe integer is never equal to a float64. Absolute tolerance against an
+ * integer-valued key is exact bigint distance. Anything else stays undecided
+ * so a wide tolerance cannot be scored by the collapsed Number().
+ */
+function unsafeIntegerWithinTolerance(
+  student: bigint,
+  expected: number,
+  tolerance: NumericTolerance,
+): 0 | 1 | null {
+  if (!Number.isFinite(expected)) return 0;
+  if (tolerance.kind === 'relative') {
+    return tolerance.ratio === 0 || expected === 0 ? 0 : null;
+  }
+  if (tolerance.value === 0) return 0;
+  if (!Number.isInteger(expected)) return null;
+  const expectedInteger = BigInt(expected);
+  const diff = student >= expectedInteger ? student - expectedInteger : expectedInteger - student;
+  return absoluteIntegerDiffVerdict(diff, tolerance.value);
+}
+
+function leadingPlainNumber(text: string): string | null {
+  return PLAIN_NUMBER_PREFIX.exec(text)?.[0] ?? null;
 }
 
 /**
@@ -741,11 +873,25 @@ export async function compareNumericBlankAnswer(
   if (text == null) return null;
   const expectedUnit = key.expected_unit;
   if (expectedUnit == null) {
-    const value = parseFrozenNumericAnswer(raw, key);
-    if (value == null) return null;
-    return numericAnswerWithinTolerance(value, key.expected, key.tolerance) ? 1 : 0;
+    const read = readFrozenPlainNumber(raw, key);
+    switch (read.kind) {
+      case 'finite':
+        return numericAnswerWithinTolerance(read.value, key.expected, key.tolerance) ? 1 : 0;
+      case 'unsafe_integer':
+        return unsafeIntegerWithinTolerance(read.value, key.expected, key.tolerance);
+      case 'unreadable':
+        return null;
+    }
   }
   if (PLAIN_NUMBER.test(text)) return 0;
+  // A unit coefficient past the exact integer range must not become a full
+  // mark through mathjs toNumber(). Conversion of that integer stays undecided.
+  const coefficient = leadingPlainNumber(text);
+  if (coefficient != null) {
+    const exact = readExactInteger(coefficient);
+    if (exact.kind === 'unsupported') return null;
+    if (exact.kind === 'integer' && integerCollapses(exact.value)) return null;
+  }
   const { unit: parseUnit } = await import('mathjs');
   let reference: import('mathjs').Unit;
   try {
