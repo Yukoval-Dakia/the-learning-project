@@ -163,7 +163,7 @@ capability 深入它们内部文件。
 CI 的静态 `audits_architecture` job 必须提供 `CAPABILITY_BASE_SHA`；手动 workflow 使用已有的 `test_policy_base` 输入。
 CircleCI 的事件可能缺少 PR base 和 push before，因此该 job 复用
 `scripts/ci/resolve-circle-audit-base.mjs`，将其验证后的 SHA 输出传给 `CAPABILITY_BASE_SHA`。
-分支 push 可能早于 GitHub 把提交关联到 PR；等到截止仍是同一个 open PR 才采用，中途出现第二个或身份变了立刻失败，截止时仍是 0 也失败。
+分支 push 可能早于 GitHub 把提交关联到 PR；等到截止仍是同一个 open PR 才采用，中途出现第二个或身份变了立刻失败。截止时没有 open PR，比较基是当时 GitHub 上 `main` 的提交 SHA（`verified-main-tip`），与指向 main 的 open PR 的 `base.sha` 相同。不用更旧的 merge-base（那会把 main 已经收紧的上限放宽），也不回退到移动分支。
 main push 缺少 before 时，双父 merge 取第一父；单父提交只有在关联的已合并 PR 的
 `merge_commit_sha` 等于 HEAD 且 base 为 `main`（squash merge）时才取其唯一父提交。
 无法确认 base 时仍失败，不回退到移动分支或猜测父提交；GitHub 保留原有 event/input 来源。
