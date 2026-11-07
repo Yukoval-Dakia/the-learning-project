@@ -327,11 +327,7 @@ export default function KnowledgeDetailPage({
 
             {!primary && otherNotes.length === 0 ? (
               <div className="kn-card">
-                <KnowledgeEmpty
-                  icon={<FileText size={22} />}
-                  title="还没有带此标签的笔记"
-                  text="可以在笔记编辑器中关联这个知识点；这里暂不提供自动起草。"
-                />
+                <p className="kn-quiet">还没有带此标签的笔记。可以在笔记编辑器中关联这个知识点。</p>
               </div>
             ) : (
               <>

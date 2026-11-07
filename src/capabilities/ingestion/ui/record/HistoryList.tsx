@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { useAssetUrl } from '@/ui/lib/assets';
+import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { RetryLine } from '@/ui-next/primitives/RetryLine';
 import { SectionHead } from '@/ui-next/primitives/SectionHead';
 import { SkeletonLines } from '@/ui-next/primitives/SkeletonLines';
@@ -28,6 +29,11 @@ function Thumb({ assetId }: { assetId: string | undefined }) {
   );
 }
 
+/** The start of a question, shown on one line: 「1. 过点…」 must not turn into a Markdown list. */
+function titleSource(title: string): string {
+  return title.replace(/^(\s*)(\d+)([.)])/, '$1$2\\$3').replace(/^(\s*)([-+*#>])/, '$1\\$2');
+}
+
 function Row({ row, onOpen, now }: { row: SessionRow; onOpen: () => void; now: number }) {
   const state = STATUS_WORDS[row.status] ?? { text: '', tone: 'neutral' };
   const count = row.item_count ?? row.block_count ?? 0;
@@ -39,7 +45,11 @@ function Row({ row, onOpen, now }: { row: SessionRow; onOpen: () => void; now: n
         <Thumb assetId={row.source_asset_ids[0]} />
         <span className="rc-row-main">
           <span className="rc-row-title rc-row-clip">
-            {[when, row.title].filter(Boolean).join(' · ')}
+            {when}
+            {when && row.title ? ' · ' : null}
+            {row.title ? (
+              <MathMarkdown className="rc-row-md">{titleSource(row.title)}</MathMarkdown>
+            ) : null}
           </span>
           <span className="rc-quiet">
             {materialWords(row.entrypoint, row.source_asset_ids.length)}

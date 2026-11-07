@@ -242,19 +242,24 @@ export default function KnowledgePage({
             {!isContainer && (
               <span className="kn-tree-meta un-num">{n.evidence_count} 条学习依据</span>
             )}
-            {meshCount > 0 && (
-              <span className="kn-tag un-num" title={`${meshCount} 条关系`}>
-                <Link2 size={12} aria-hidden="true" />
-                {meshCount}
-              </span>
-            )}
+            {/* Fixed slots, so the same column lines up down the list when a row has nothing here. */}
+            <span className="kn-tree-slot">
+              {meshCount > 0 && (
+                <span className="kn-tag un-num" title={`${meshCount} 条关系`}>
+                  <Link2 size={12} aria-hidden="true" />
+                  {meshCount}
+                </span>
+              )}
+            </span>
             {/* YUK-617 mode-1 — 本 KC 到期复习卡数（overdue，含=now）。有到期才出，红色提醒。 */}
-            {!isContainer && (dueSummary[n.id]?.overdue ?? 0) > 0 && (
-              <span className="kn-tag kn-tag-critical un-num" title="到期待复习的知识卡数">
-                <RotateCcw size={12} aria-hidden="true" />
-                到期 {dueSummary[n.id]?.overdue}
-              </span>
-            )}
+            <span className="kn-tree-slot">
+              {!isContainer && (dueSummary[n.id]?.overdue ?? 0) > 0 && (
+                <span className="kn-tag kn-tag-critical un-num" title="到期待复习的知识卡数">
+                  <RotateCcw size={12} aria-hidden="true" />
+                  到期 {dueSummary[n.id]?.overdue}
+                </span>
+              )}
+            </span>
             <ChevronRight size={16} aria-hidden="true" className="kn-row-arrow" />
           </span>
         </button>
