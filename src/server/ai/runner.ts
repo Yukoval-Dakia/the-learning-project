@@ -893,7 +893,8 @@ async function runTaskImpl(
         firstAttemptStartedAt,
         error: boundError,
         transport: lifecycle.armedTransport(),
-        attemptCostUsd: lifecycle.costTruth.amountUsd ?? null,
+        attemptCostTruth: lifecycle.costTruth,
+        aborted: lifecycle.aborted,
       });
       // Settle the full truth before another provider call is allowed. The
       // actual-retry marker is a later, conservative transition performed only
@@ -1367,6 +1368,7 @@ async function streamTaskCollectingImpl(
               apiErrorStatus: boundError.apiErrorStatus,
               httpStatus: providerFailureEvidence?.http_status,
               retryAfterMs: providerFailureEvidence?.retry_after_ms,
+              errorEvidence: boundError.errors,
               streamErrorTerminal: providerFailureEvidence?.stream_error === true,
               transport: lifecycle.transportEvidence.snapshot(),
             });

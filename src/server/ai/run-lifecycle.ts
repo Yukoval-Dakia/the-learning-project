@@ -27,6 +27,7 @@ import { writeToolCallLog } from '@/kernel/tools/call-evidence';
 import {
   type AttemptCostTruth,
   UNBILLED_PROVIDER_REJECTION_REF_PREFIX,
+  failureSpendChargeUsd,
   resolveAttemptCostTruth,
   unknownAttemptCostTruth,
 } from './attempt-cost';
@@ -1048,8 +1049,14 @@ export function classifyLifecycleRetry(input: {
    * which would claim not_sent on a lane that observed nothing.
    */
   transport?: ProviderTransportEvidence;
-  /** The attempt's recorded cost; 0 is the only resendable amount. */
-  attemptCostUsd?: number | null;
+  /**
+   * The attempt's settled cost truth. Only the unbilled-rejection receipt
+   * (estimated 0 + `unbilled-provider-rejection:` ref) authorizes a resend —
+   * a bare zero on a free-at-margin lane is not proof nothing ran.
+   */
+  attemptCostTruth?: AttemptCostTruth;
+  /** Caller/lifecycle cancellation — a cancelled attempt never resends. */
+  aborted?: boolean;
   now?: number;
 }): LifecycleAttemptDecision {
   const elapsedMs = (input.now ?? Date.now()) - input.firstAttemptStartedAt;
@@ -1058,7 +1065,8 @@ export function classifyLifecycleRetry(input: {
     willRetry:
       input.attempt < input.maxAttempts &&
       isTransientAgentFailure(input.error, input.transport) &&
-      input.attemptCostUsd === 0 &&
+      input.aborted !== true &&
+      failureSpendChargeUsd(input.attemptCostTruth) === 0 &&
       elapsedMs < RETRY_ELAPSED_CAP_MS,
   };
 }

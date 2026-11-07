@@ -1,9 +1,12 @@
 // Provider-failure classification for truthful learner-facing failure wire.
 //
-// Categories derive only from structured evidence — the bound HTTP status,
-// AgentRunError subtype, and the transport collector's armed timers — never
-// from error-message string matching. `retry_after_ms` is the provider's own
-// Retry-After when the response carried one; absent means unknown, not zero.
+// Categories derive from structured evidence — the bound HTTP status,
+// AgentRunError subtype, and the transport collector's armed timers. One
+// narrow exception: separating a short 429 congestion from an account-level
+// quota reads the provider's OWN quota code words inside the sanitized
+// failure body — free-prose message matching never decides anything else.
+// `retry_after_ms` is the provider's own Retry-After when the response
+// carried one; absent means unknown, not zero.
 
 import { type AgentFailureSubtype, AgentRunError } from './agent-run-error';
 import type { ProviderTransportEvidence } from './task-result';
@@ -11,6 +14,8 @@ import type { ProviderTransportEvidence } from './task-result';
 export type ProviderFailureCategory =
   /** Bound HTTP 429 (quota / rate limit). */
   | 'rate_limited'
+  /** Bound HTTP 429 whose body carries the provider's own quota/limit signature. */
+  | 'quota'
   /** Bound 4xx refusal, including the 400 request rejection. */
   | 'provider_rejected'
   /** Bound 5xx, or a provider-side error after a delivered response. */
@@ -48,6 +53,12 @@ export function classifyProviderFailure(input: {
    */
   httpStatus?: number;
   retryAfterMs?: number;
+  /**
+   * Sanitized provider failure evidence lines — where the quota signature
+   * lives. Only consulted on a bound 429: the provider's own code words split
+   * account-level quota from brief congestion.
+   */
+  errorEvidence?: readonly string[];
   /** Terminal carried the provider stream-error shape (stopReason 'error'). */
   streamErrorTerminal?: boolean;
   transport?: ProviderTransportEvidence;
@@ -56,7 +67,10 @@ export function classifyProviderFailure(input: {
   const bound = input.apiErrorStatus ?? input.httpStatus;
   if (bound !== undefined && bound !== null && bound >= 400 && bound <= 599) {
     return {
-      category: providerFailureCategoryForStatus(bound),
+      category:
+        bound === 429 && providerQuotaLimitSigned(input.errorEvidence ?? [])
+          ? 'quota'
+          : providerFailureCategoryForStatus(bound),
       http_status: bound,
       ...retry,
     };
@@ -159,6 +173,39 @@ export type ProviderTransientClass =
 const PROVIDER_QUOTA_LIMIT_SIGNATURE =
   /GoUsageLimitError|usage[_ -]?limit|quota[_ -]?exceeded|billing[_ -]?limit|insufficient[_ -]?(?:quota|balance|credit)|(?:weekly|monthly|daily|hourly)[_ -]?(?:usage|quota|limit)/i;
 
+/** Do any evidence lines carry the provider's own quota/usage-limit code words? */
+export function providerQuotaLimitSigned(entries: readonly string[]): boolean {
+  return entries.some((entry) => PROVIDER_QUOTA_LIMIT_SIGNATURE.test(entry));
+}
+
+/**
+ * Status-level verdict for lanes that fail a request outside AgentRunError
+ * (raw provider fetches like GLM OCR). Same owner, same classes — a bound
+ * status is positive provider evidence; everything else stays unclassified.
+ */
+export function providerTransientClassForStatus(input: {
+  httpStatus: number;
+  /** Sanitized provider error evidence lines the quota signature may read. */
+  errorEvidence?: readonly string[];
+  retryAfterMs?: number;
+}): ProviderTransientVerdict | undefined {
+  const retryAfter = input.retryAfterMs !== undefined ? { retryAfterMs: input.retryAfterMs } : {};
+  if (input.httpStatus === 429) {
+    return {
+      class: providerQuotaLimitSigned(input.errorEvidence ?? [])
+        ? 'quota_exhausted'
+        : 'rate_limited',
+      httpStatus: 429,
+      ...retryAfter,
+    };
+  }
+  if (input.httpStatus === 408 || input.httpStatus === 409)
+    return { class: 'request_rejected', httpStatus: input.httpStatus, ...retryAfter };
+  if (input.httpStatus >= 500)
+    return { class: 'server_error', httpStatus: input.httpStatus, ...retryAfter };
+  return undefined;
+}
+
 /**
  * May a verdict's class re-issue the request inside the bounded budget? Every
  * class except quota_exhausted is a complete, provably unbilled refusal.
@@ -196,18 +243,12 @@ export function providerTransientVerdict(input: {
       : {};
   if (error.helpProviderFault?.kind === 'bad_gateway')
     return { class: 'bad_gateway', httpStatus: 502, ...retryAfter };
-  if (bound === 429) {
-    const quotaSigned = error.errors.some((entry) => PROVIDER_QUOTA_LIMIT_SIGNATURE.test(entry));
-    return {
-      class: quotaSigned ? 'quota_exhausted' : 'rate_limited',
-      httpStatus: 429,
-      ...retryAfter,
-    };
-  }
-  if (bound === 408 || bound === 409)
-    return { class: 'request_rejected', httpStatus: bound, ...retryAfter };
-  if (bound != null && bound >= 500)
-    return { class: 'server_error', httpStatus: bound, ...retryAfter };
+  if (bound != null)
+    return providerTransientClassForStatus({
+      httpStatus: bound,
+      errorEvidence: error.errors,
+      ...(retryAfter.retryAfterMs !== undefined ? { retryAfterMs: retryAfter.retryAfterMs } : {}),
+    });
   if (input.transport?.send_state === 'not_sent') return { class: 'not_sent' };
   return undefined;
 }

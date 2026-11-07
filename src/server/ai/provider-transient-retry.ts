@@ -12,10 +12,11 @@ import {
   providerTransientResendable,
   providerTransientVerdict,
 } from '@/ai/provider-failure';
-import type { ProviderTransportEvidence } from '@/ai/task-result';
+import type { AttemptCostTruth, ProviderTransportEvidence } from '@/ai/task-result';
 import { getConfig } from '@/core/config/store';
 import type { Db } from '@/db/client';
 import { ai_task_runs } from '@/db/schema';
+import { failureSpendChargeUsd } from './attempt-cost';
 
 export interface ProviderTransientRetryPolicy {
   /** Extra wire sends allowed after the first bound failure. */
@@ -77,10 +78,13 @@ export interface SettledAttemptEvidence {
   /** False while the attempt may still be running — never resend alongside it. */
   readonly settled: boolean;
   /**
-   * The settled row's recorded cost. 0 is positive proof the attempt billed
-   * nothing; null means unknown — never read as zero.
+   * True only when the settled row carries the unbilled-rejection receipt —
+   * `estimated` basis, amount 0, `unbilled-provider-rejection:` ref. A bare
+   * `cost_usd === 0` is NOT proof: free-at-margin lanes (subscription routes,
+   * zero-price catalog cards) record 0 for work that actually ran and may
+   * have side effects; resending them can duplicate paid-or-written effects.
    */
-  readonly costUsd: number | null;
+  readonly unbilled: boolean;
   /** Armed-lane transport when the attempt produced one; absent on the typed lane. */
   readonly transport?: ProviderTransportEvidence;
 }
@@ -95,31 +99,37 @@ export async function settledAttemptEvidence(
       finished_at: ai_task_runs.finished_at,
       usage_json: ai_task_runs.usage_json,
       cost_usd: ai_task_runs.cost_usd,
+      cost_basis: ai_task_runs.cost_basis,
+      cost_ref: ai_task_runs.cost_ref,
     })
     .from(ai_task_runs)
     .where(eq(ai_task_runs.id, taskRunId));
+  const truth: AttemptCostTruth =
+    (row?.cost_basis === 'reported' || row?.cost_basis === 'estimated') && row.cost_usd != null
+      ? { basis: row.cost_basis, amountUsd: row.cost_usd, ref: row.cost_ref ?? '' }
+      : { basis: 'unknown', amountUsd: null, ref: row?.cost_ref ?? '' };
   return {
     settled: row?.finished_at != null && row.status !== 'running',
-    costUsd: row?.cost_usd ?? null,
+    unbilled: failureSpendChargeUsd(truth) === 0,
     ...(row?.usage_json?.transport !== undefined ? { transport: row.usage_json.transport } : {}),
   };
 }
 
 /**
- * One settled-failure consultation: verdict + recorded cost. A resend is only
- * honest when the failed attempt provably billed nothing — `cost_usd === 0`
- * is the unbilled-rejection receipt; an unknown or positive amount means a
- * resend could double-pay work that already ran.
+ * One settled-failure consultation: verdict + the unbilled receipt. A resend
+ * is only honest when the failed attempt provably billed nothing — the
+ * persisted `unbilled-provider-rejection:` ref is that proof; an unknown,
+ * positive, or merely-zero amount never authorizes another send.
  */
 async function settledTransientFacts(
   db: Db,
   error: unknown,
-): Promise<{ verdict: ProviderTransientVerdict; costUsd: number | null } | undefined> {
+): Promise<{ verdict: ProviderTransientVerdict; unbilled: boolean } | undefined> {
   if (!(error instanceof AgentRunError)) return undefined;
   const evidence = await settledAttemptEvidence(db, error.taskRunId);
   if (!evidence.settled) return undefined;
   const verdict = providerTransientVerdict({ error, transport: evidence.transport });
-  return verdict === undefined ? undefined : { verdict, costUsd: evidence.costUsd };
+  return verdict === undefined ? undefined : { verdict, unbilled: evidence.unbilled };
 }
 
 export interface ProviderTransientRetryBudget {
@@ -131,9 +141,9 @@ export interface ProviderTransientRetryBudget {
 
 /**
  * One owner for "may this settled failure re-issue, and after how long?":
- * settled row → verdict → recorded-zero-cost → class bound → count/wait/
- * deadline fit. undefined means terminal; the caller treats that as the
- * definitive provider failure it is.
+ * settled row → verdict → unbilled-rejection receipt → class bound →
+ * count/wait/deadline fit. undefined means terminal; the caller treats that
+ * as the definitive provider failure it is.
  */
 export async function planProviderTransientRetry(input: {
   db: Db;
@@ -145,7 +155,7 @@ export async function planProviderTransientRetry(input: {
 }): Promise<{ verdict: ProviderTransientVerdict; delayMs: number } | undefined> {
   const facts = await settledTransientFacts(input.db, input.error);
   if (facts === undefined) return undefined;
-  if (facts.costUsd !== 0) return undefined;
+  if (!facts.unbilled) return undefined;
   const { verdict } = facts;
   const bound = transientClassBound(verdict, input.policy);
   if (input.budget.retries >= bound.maxRetries) return undefined;

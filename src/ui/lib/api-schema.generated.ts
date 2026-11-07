@@ -13634,7 +13634,7 @@ export interface operations {
                                 failure?: {
                                     http_status?: number;
                                     /** @enum {string} */
-                                    kind: "provider_rejected" | "rate_limited" | "provider_error" | "timeout" | "connection" | "execution_failed" | "finalization_failed" | "cancelled" | "execution_unknown";
+                                    kind: "provider_rejected" | "rate_limited" | "quota" | "provider_error" | "timeout" | "connection" | "execution_failed" | "finalization_failed" | "cancelled" | "execution_unknown";
                                     retry_after_seconds?: number;
                                 };
                                 last_event_id: number;

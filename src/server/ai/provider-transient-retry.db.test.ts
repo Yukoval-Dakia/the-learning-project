@@ -1,4 +1,5 @@
 import { createId } from '@paralleldrive/cuid2';
+import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { type AgentFailureSubtype, AgentRunError } from '@/ai/agent-run-error';
 import type { ProviderTransportEvidence, RequestSendState } from '@/ai/task-result';
@@ -7,7 +8,9 @@ import { resetDb, testDb } from '../../../tests/helpers/db';
 import {
   type ProviderTransientRetryPolicy,
   planProviderTransientRetry,
+  settledAttemptEvidence,
 } from './provider-transient-retry';
+import { createRunLifecycle } from './run-lifecycle';
 
 const POLICY: ProviderTransientRetryPolicy = {
   maxRetries: 3,
@@ -62,6 +65,8 @@ const transport = (
 async function insertRun(input: {
   settled: boolean;
   costUsd?: number | null;
+  costBasis?: string;
+  costRef?: string;
   transport?: ProviderTransportEvidence;
 }): Promise<string> {
   const id = createId();
@@ -82,8 +87,10 @@ async function insertRun(input: {
       ...(input.costUsd !== undefined && input.costUsd !== null
         ? {
             cost_usd: input.costUsd,
-            cost_basis: input.costUsd === 0 ? 'estimated' : 'reported',
-            cost_ref: input.costUsd === 0 ? 'unbilled-provider-rejection:test' : 'pricebook:test',
+            cost_basis: input.costBasis ?? (input.costUsd === 0 ? 'estimated' : 'reported'),
+            cost_ref:
+              input.costRef ??
+              (input.costUsd === 0 ? 'unbilled-provider-rejection:test' : 'pricebook:test'),
           }
         : {}),
       started_at: new Date(),
@@ -100,6 +107,7 @@ const runError = (
     errors: string[];
     httpStatus: number;
     retryAfterMs: number;
+    badGateway: boolean;
   }> = {},
 ) =>
   new AgentRunError({
@@ -116,6 +124,9 @@ const runError = (
           },
         }
       : {}),
+    ...(fields.badGateway === true
+      ? { helpProviderFault: { kind: 'bad_gateway' as const, httpStatus: 502 as const } }
+      : {}),
   });
 
 interface Row {
@@ -124,8 +135,10 @@ interface Row {
   readonly errorStatus?: number | null;
   readonly errorBody?: string[];
   readonly boundStatus?: number;
+  readonly badGateway?: boolean;
   readonly retryAfterMs?: number;
   readonly costUsd?: number | null | 'unset';
+  readonly costRef?: string;
   readonly settled?: boolean;
   readonly transport?: ProviderTransportEvidence;
   readonly resend: boolean;
@@ -170,6 +183,41 @@ const rows: Row[] = [
     boundStatus: 500,
     costUsd: null,
     resend: false,
+  },
+  {
+    name: 'a recorded zero without the unbilled receipt never resends (free-at-margin lane)',
+    boundStatus: 500,
+    costUsd: 0,
+    costRef: 'anthropic-sub:contract',
+    resend: false,
+  },
+  {
+    name: 'a catalog zero without the unbilled receipt never resends',
+    boundStatus: 500,
+    costUsd: 0,
+    costRef: 'pi-catalog:opencode-go/deepseek-v4.1-flash',
+    resend: false,
+  },
+  {
+    name: 'bound 502 resends as server_error without a help fault',
+    boundStatus: 502,
+    costUsd: 0,
+    resend: true,
+    retryClass: 'server_error',
+  },
+  {
+    name: 'bound 504 resends as server_error',
+    boundStatus: 504,
+    costUsd: 0,
+    resend: true,
+    retryClass: 'server_error',
+  },
+  {
+    name: 'a bound pi bad-gateway fault resends within budget',
+    badGateway: true,
+    costUsd: 0,
+    resend: true,
+    retryClass: 'bad_gateway',
   },
   {
     name: 'bound 429 congestion resends with its own hint',
@@ -239,6 +287,12 @@ const rows: Row[] = [
     resend: false,
   },
   {
+    name: 'an in-flight request never resends',
+    transport: transport('unknown', [request('in_flight')], { in_flight: 1 }),
+    costUsd: 0,
+    resend: false,
+  },
+  {
     name: 'api_error_result with no bound status (connection class) never resends',
     errorStatus: null,
     costUsd: 0,
@@ -271,6 +325,7 @@ describe('planProviderTransientRetry — one table for every settled failure', (
       const taskRunId = await insertRun({
         settled: row.settled ?? true,
         ...(row.costUsd !== 'unset' ? { costUsd: row.costUsd ?? undefined } : {}),
+        ...(row.costRef !== undefined ? { costRef: row.costRef } : {}),
         ...(row.transport ? { transport: row.transport } : {}),
       });
       const error =
@@ -287,6 +342,7 @@ describe('planProviderTransientRetry — one table for every settled failure', (
               ...(row.boundStatus !== undefined
                 ? { httpStatus: row.boundStatus, retryAfterMs: row.retryAfterMs }
                 : {}),
+              ...(row.badGateway === true ? { badGateway: true } : {}),
             });
       const plan = await planProviderTransientRetry({
         db: testDb(),
@@ -336,5 +392,66 @@ describe('planProviderTransientRetry — one table for every settled failure', (
         budget: { retries: 0, waitedMs: POLICY.maxWaitMs - POLICY.baseDelayMs + 1 },
       }),
     ).toBeUndefined();
+  });
+
+  // @invariant data: the unbilled receipt the retry gate reads is the one the real lifecycle writes — an armed transport whose only request settled as a bound non-2xx persists estimated-0 cost with the unbilled-provider-rejection ref plus the transport snapshot
+  // @fails-if finishFailure stops persisting the unbilled truth or transport evidence, or the gate stops reading the written row
+  it('a real lifecycle settle writes the unbilled receipt the plan consumes', async () => {
+    // Provider resolution requires only the key's presence — no wire call is made.
+    const priorKey = process.env.OPENCODE_API_KEY;
+    process.env.OPENCODE_API_KEY = 'test-key';
+    const lifecycle = createRunLifecycle({
+      db: testDb(),
+      kind: 'QuestionAdmissionSolveTask',
+      timeoutMs: 60_000,
+      logScope: 'yuk2030-db-test',
+    });
+    try {
+      await lifecycle.start({ question: 'write-side probe' });
+      lifecycle.transportEvidence.noteArmed();
+      lifecycle.transportEvidence.noteFetchLoop('root');
+      const record = lifecycle.transportEvidence.beginFetch();
+      lifecycle.transportEvidence.recordFetchSettled(record, 500);
+      const boundError = new AgentRunError({
+        kind: 'QuestionAdmissionSolveTask',
+        taskRunId: lifecycle.taskRunId,
+        subtype: 'api_error_result',
+        apiErrorStatus: 500,
+        errors: ['[code=internal_error] failed to evaluate membership entitlement'],
+        providerFailure: { http_status: 500 },
+      });
+      const settled = await lifecycle.finishFailure(boundError);
+      expect(settled).toBe(true);
+
+      const [row] = await testDb()
+        .select({
+          cost_usd: ai_task_runs.cost_usd,
+          cost_basis: ai_task_runs.cost_basis,
+          cost_ref: ai_task_runs.cost_ref,
+        })
+        .from(ai_task_runs)
+        .where(eq(ai_task_runs.id, lifecycle.taskRunId));
+      expect(row?.cost_usd).toBe(0);
+      expect(row?.cost_basis).toBe('estimated');
+      expect(row?.cost_ref?.startsWith('unbilled-provider-rejection:')).toBe(true);
+
+      const evidence = await settledAttemptEvidence(testDb(), lifecycle.taskRunId);
+      expect(evidence.settled).toBe(true);
+      expect(evidence.unbilled).toBe(true);
+      expect(evidence.transport?.requests.at(-1)?.http_status).toBe(500);
+
+      const plan = await planProviderTransientRetry({
+        db: testDb(),
+        error: boundError,
+        policy: POLICY,
+        budget: { retries: 0, waitedMs: 0 },
+      });
+      expect(plan?.verdict.class).toBe('server_error');
+      expect(plan?.delayMs).toBeGreaterThan(0);
+    } finally {
+      lifecycle.dispose();
+      if (priorKey === undefined) delete process.env.OPENCODE_API_KEY;
+      else process.env.OPENCODE_API_KEY = priorKey;
+    }
   });
 });
