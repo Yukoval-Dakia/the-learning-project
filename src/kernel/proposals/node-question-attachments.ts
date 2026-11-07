@@ -44,7 +44,10 @@ export async function selectNodeAttachedQuestions(
     })
     .from(question)
     .where(sql`${question.knowledge_ids} @> ${JSON.stringify([nodeId])}::jsonb`)
-    .orderBy(asc(question.id));
+    // Parents before parts: editQuestion FOR UPDATEs the group root before it
+    // updates a part, so a FOR UPDATE batch must take the same rows in the
+    // same order or a child-first sort deadlocks against an in-flight edit.
+    .orderBy(sql`${question.parent_question_id} is not null`, asc(question.id));
   const rows = await (opts.forUpdate ? query.for('update') : query);
   return rows;
 }

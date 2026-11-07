@@ -99,9 +99,10 @@ export async function retractKnowledgeCreate(
   // lock. Writers that lock a node row before a question row (merge accepts,
   // duplicate merges, the placement refile) share this learning-state lock, so
   // they serialize whole-transaction behind it instead of meeting the retract
-  // mid-flight. Single-row editors that only hold the question lock (PATCH,
-  // resubmit) never take a node lock, so the node→question order cannot
-  // deadlock against them — the FOR UPDATE below just waits for their commit.
+  // mid-flight. Editors that take no node lock still order question locks
+  // parent→part (editQuestion FOR UPDATEs the group root before updating a
+  // part, no global lock); the FOR UPDATE batch below must take the same rows
+  // parents-first or a part sorted before its parent deadlocks against one.
   await acquireLearningStateWriteLock(tx);
 
   const archiveEventId = newId();
