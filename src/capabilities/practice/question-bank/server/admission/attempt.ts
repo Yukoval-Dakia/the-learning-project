@@ -23,7 +23,7 @@ export class AdmissionParseFailure extends Error {}
 /**
  * Invoke the durable stage once and validate its result. Provider-transient
  * re-issue lives inside the stage's `call:N:attempt:M` chain (stages.ts), where
- * the paid_effect attempt counter is the durable retry bound — a second invoke
+ * the paid_effect receipt history is the durable retry budget — a second invoke
  * here would authorize a new call_index and double-pay on replay. This layer
  * only maps a settled terminal failure into the caller's exhausted outcome.
  */
