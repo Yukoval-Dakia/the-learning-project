@@ -52,6 +52,8 @@ describe('runProjectionOracleSweep', () => {
     }
   });
 
+  // @invariant concurrency: one repeatable-read snapshot hides a commit that lands after the census
+  // @fails-if the sweep transaction reads the title committed on another connection, or that commit changes the anomaly count
   it('M4: the REPEATABLE READ snapshot does not see a concurrent commit made mid-sweep', async () => {
     const db = testDb();
     await insertGoal('g1', 'Original');
