@@ -98,25 +98,6 @@ export function artifactRefBlock(
   };
 }
 
-export function bodyBlocksHaveSemanticKinds(
-  value: unknown,
-  requiredKinds: string[],
-): { ok: boolean; missing: string[] } {
-  const parsed = ArtifactBodyBlocks.safeParse(value);
-  const found = new Set<string>();
-
-  if (parsed.success) {
-    for (const node of parsed.data.content ?? []) {
-      if (node.type !== SEMANTIC_BLOCK_TYPE) continue;
-      const attrs = recordOrEmpty(node.attrs);
-      if (typeof attrs.semantic_kind === 'string') found.add(attrs.semantic_kind);
-    }
-  }
-
-  const missing = requiredKinds.filter((kind) => !found.has(kind));
-  return { ok: missing.length === 0, missing };
-}
-
 /**
  * Last non-empty text line of a note body, trimmed; null when the document does
  * not parse or carries no text. Generation-time checks read how a note ends

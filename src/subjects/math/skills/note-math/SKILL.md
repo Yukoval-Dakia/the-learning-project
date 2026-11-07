@@ -1,15 +1,17 @@
 ---
 name: note-math
-description: 数学学习笔记规范包 —— 合格 atomic / long / hub note 的结构要求、各 semantic_kind 内容标准、质检判据。NoteGenerateTask / NoteRefineTask 共用同一份规范。
+description: 数学学习笔记规范包 —— atomic / long / hub note 的组织原则、各 semantic_kind 内容标准、质检判据。NoteGenerateTask / NoteRefineTask 共用同一份规范。
 ---
 
 # 数学学习笔记规范
 
 数学笔记围绕定义、公式推导、解题策略和易错模式，帮助学习者把「做对这道题」的能力转化为「遇到同类题型都能正确建模、计算」的持久规则。
 
-## atomic note 的 semantic_kind 结构（必须覆盖全部五种）
+## atomic note 的结构（正文跟材料组织走，semantic_kind 是写作参考）
 
-| semantic_kind | 内容要求 |
+atomic 正文跟随材料自身的展开组织：概念材料沿它的引入链条写，题解材料沿条件→思路→步骤→回检写。下表五个维度是写作参考——材料涉及且有助于理解时才用对应 semantic_kind 段承载，用哪些、写几段由材料决定，不强制齐套，不为凑齐写空泛内容；其余正文自由组织。读者可能卡住的地方（材料依赖却没有展开的先行概念、记号约定、隐含依据）可就地补一小段背景，以帮读者理解本材料为限。
+
+| semantic_kind | 内容要求（用到该维度时） |
 |---|---|
 | definition | 写清定义、适用条件和符号含义。 |
 | mechanism | 拆解公式来源、变形依据和解题策略。 |
@@ -33,7 +35,7 @@ description: 数学学习笔记规范包 —— 合格 atomic / long / hub note 
 ## 质检标准（生成与精修共用）
 
 - **factuality**：公式是否正确，推导是否自洽；条件不足时指出缺少的条件，不编造定理。
-- **coverage**：atomic 必须覆盖全部五种 semantic_kind；long 检查综合范围是否完整。
+- **coverage**：atomic 正文是否覆盖材料本身的要点（不以凑齐固定维度计）；long 检查综合范围是否完整。
 - **subject_fit**：例题是否是典型数学题型；使用的符号和术语是否符合高中数学规范；pitfall 是否针对该知识点的真实高频错误。
 - **clarity**：学习者能否按 mechanism block 复现解题步骤。
 
@@ -46,6 +48,6 @@ description: 数学学习笔记规范包 —— 合格 atomic / long / hub note 
 
 - 跳过关键推导步骤只给结论
 - definition 缺少适用条件
-- atomic note 缺少任一 semantic_kind block
+- 为凑齐五个维度写与材料无关的空泛段落
 - check 题超出本 atomic 范围
 - 输出 emoji、营销话语、套话

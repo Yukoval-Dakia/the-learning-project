@@ -3,19 +3,8 @@
 // generation round or persist as the note's known issues.
 
 import type { z } from 'zod';
-import {
-  bodyBlocksHaveSemanticKinds,
-  noteClosingLine,
-} from '@/capabilities/notes/server/body-blocks';
+import { noteClosingLine } from '@/capabilities/notes/server/body-blocks';
 import { NoteKnownIssues, type NoteVerificationIssueT } from '@/core/schema/business';
-
-const ATOMIC_REQUIRED_SEMANTIC_KINDS = [
-  'definition',
-  'mechanism',
-  'example',
-  'pitfall',
-  'check',
-] as const;
 
 // Closing pleasantries are reported, never silently trimmed: the note keeps what
 // the model wrote and the issue rides back for a same-round revision.
@@ -50,26 +39,8 @@ function closingChatterIssues(bodyBlocks: unknown): NoteVerificationIssueT[] {
   ];
 }
 
-export function noteBodyContractIssues(
-  artifactType: string,
-  bodyBlocks: unknown,
-): NoteVerificationIssueT[] {
-  const issues = closingChatterIssues(bodyBlocks);
-  if (artifactType !== 'note_atomic') return issues;
-  const semanticCheck = bodyBlocksHaveSemanticKinds(bodyBlocks, [
-    ...ATOMIC_REQUIRED_SEMANTIC_KINDS,
-  ]);
-  if (semanticCheck.ok) return issues;
-  const missingKinds = semanticCheck.missing.join(', ');
-  issues.push({
-    block_id: null,
-    severity: 'error',
-    category: 'coverage',
-    message: `Missing semantic_kind blocks: ${missingKinds}.`,
-    suggested_fix_md:
-      'Regenerate or edit body_blocks so definition, mechanism, example, pitfall, and check each appear at least once.',
-  });
-  return issues;
+export function noteBodyContractIssues(bodyBlocks: unknown): NoteVerificationIssueT[] {
+  return closingChatterIssues(bodyBlocks);
 }
 
 export type NoteKnownIssuesT = z.infer<typeof NoteKnownIssues>;

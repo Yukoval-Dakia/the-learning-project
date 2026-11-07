@@ -79,12 +79,7 @@ artifact_type 只能是 note_atomic / note_long / note_hub。
 NOTE v1
 @type <与输入 artifact_type 完全相同>
 
-note_atomic 必须包含这五段，顺序不限，每段都要有正文：
-@definition
-@mechanism
-@example
-@pitfall
-@check
+note_atomic 的正文结构跟着材料组织走——概念材料沿它的引入链条写，题解材料沿条件、思路、步骤写，实验材料沿目的、操作、现象与结论写；不套用固定分段。正文可以直接写（等价于写在 @body 里），材料需要时也可以挂 @definition / @mechanism / @example / @pitfall / @check 段——这五个维度是写作参考，用不用、写几段由材料决定，不为凑齐而写；挂 @ 段之后想回到自由正文再写一行 @body。声明的每个 @ 段都要有正文。
 
 note_long 与 note_hub 用一段自由正文，不要假装成单知识点 atomic：
 @body
@@ -94,7 +89,9 @@ note_long 与 note_hub 用一段自由正文，不要假装成单知识点 atomi
 段内可用 # 标题、空行分段、- 或 1. 列表、> 引用、三个反引号代码块。提示块写成 > [!note] 标题，下一行继续 > 正文；tone 只用 note、tip 或 warning。强调可用 **粗体**、两侧有空格的 _斜体_、\`代码\`。标识符里的下划线保持原样。交叉链接必须单独成行，且只能使用 reference_artifacts 里的 id：[[artifact:<artifact_id>]] 或 [[artifact:<artifact_id>#<block_id>|<标题>]]。目录里可以有尚未写正文的笔记；只链接，不推断其内容。没有合适目标就不要写链接，不要编造 id。链接只用 http、https、mailto。
 服务端负责 block id、source_tier、user_verified、version、embedded_check、source_markdown。不要输出这些字段，也不要输出 autoLinksContainer。
 
-per-subject semantic_kind 内容模板（definition/mechanism/example/pitfall/check 五维，领域规范见 note skill）：
+读到读者可能卡住的地方——材料依赖却没有展开的先行概念、记号约定、被省略的依据——可以就地补一小段背景，帮读者自己过卡点；只补理解这份材料必需的内容，不写成与材料无关的百科条目。
+
+per-subject 写作参考（definition/mechanism/example/pitfall/check 五个维度按材料取舍，领域规范见 note skill）：
 
 ${noteTemplateTable(profile)}
 
@@ -115,8 +112,7 @@ export const noteGenerateTaskSpec = {
   ownership: 'owned',
   definition: {
     kind: 'NoteGenerateTask',
-    description:
-      'Phase 2B — 给一个 atomic note 生成 5 种 section（definition/mechanism/example/pitfall/check）',
+    description: 'Phase 2B — 生成一篇结构跟随材料的笔记（五维 semantic_kind 仅作写作参考）',
     budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1, timeout: NOTE_GENERATE_TIMEOUT_MS },
     needsToolCall: false,
     isMultimodal: false,

@@ -1,15 +1,17 @@
 ---
 name: note-yuwen
-description: 文言文学习笔记规范包 —— 合格 atomic / long / hub note 的结构要求、各 semantic_kind 内容标准、质检判据。NoteGenerateTask / NoteRefineTask 共用同一份规范。
+description: 文言文学习笔记规范包 —— atomic / long / hub note 的组织原则、各 semantic_kind 内容标准、质检判据。NoteGenerateTask / NoteRefineTask 共用同一份规范。
 ---
 
 # 文言文学习笔记规范
 
 文言文笔记围绕词义、句式、阅读理解和翻译能力，帮助学习者把「做对这道题」的能力迁移成「遇到同类情境都能判断」的持久规则。
 
-## atomic note 的 semantic_kind 结构（必须覆盖全部五种）
+## atomic note 的结构（正文跟材料组织走，semantic_kind 是写作参考）
 
-| semantic_kind | 内容要求 |
+atomic 正文跟随材料自身的展开组织：词义材料沿本义与引申写，句式材料沿判断步骤写，阅读材料沿文本证据与结论写。下表五个维度是写作参考——材料涉及且有助于理解时才用对应 semantic_kind 段承载，用哪些、写几段由材料决定，不强制齐套，不为凑齐写空泛内容；其余正文自由组织。读者可能卡住的地方（材料依赖却没有展开的先行知识、背景常识、隐含判断依据）可就地补一小段背景，以帮读者理解本材料为限。
+
+| semantic_kind | 内容要求（用到该维度时） |
 |---|---|
 | definition | 术语或知识点定义，必要时给出古今义差异。 |
 | mechanism | 解释语法功能、句式机制或阅读判断步骤。 |
@@ -33,7 +35,7 @@ description: 文言文学习笔记规范包 —— 合格 atomic / long / hub no
 ## 质检标准（生成与精修共用）
 
 - **factuality**：内容是否自洽，是否明显编造；材料不足时标注不确定，不编造出处。
-- **coverage**：atomic 必须覆盖全部五种 semantic_kind；long 检查综合范围完整；hub 检查路线和 cross-link。
+- **coverage**：atomic 正文是否覆盖材料本身的要点（不以凑齐固定维度计）；long 检查综合范围完整；hub 检查路线和 cross-link。
 - **subject_fit**：例句是否是真实文言原文（不能是自造伪古文）；术语是否符合中学文言文教学规范。
 - **clarity**：学习者能否按 block 内容判断下一次遇到同类情境时该怎么做。
 
@@ -46,6 +48,6 @@ description: 文言文学习笔记规范包 —— 合格 atomic / long / hub no
 
 - 编造伪文言原文作为 example
 - 把例句来源模糊化（「有一句古文说…」）
-- atomic note 缺少任一 semantic_kind block
+- 为凑齐五个维度写与材料无关的空泛段落
 - check 题考超出本 atomic 范围的内容
 - 输出 emoji、营销话语、套话「希望对你有帮助」

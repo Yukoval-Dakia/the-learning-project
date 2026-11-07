@@ -296,7 +296,7 @@ export async function runNoteGenerate(
     parseMs = Date.now() - parseStarted;
     const validationStarted = Date.now();
     assertNoteGenerationReferences(parsed.body_blocks, referenceArtifacts);
-    let contractIssues = noteBodyContractIssues(row.type, parsed.body_blocks);
+    let contractIssues = noteBodyContractIssues(parsed.body_blocks);
     // Deterministic contract check rides back into the SAME generation flow:
     // one bounded revision round with the typed issues as revision_context.
     // Unresolved issues are saved on the note as its known issues — never a
@@ -320,7 +320,7 @@ export async function runNoteGenerate(
         result = revised;
         attempt = revised;
         parsed = revisedParsed;
-        contractIssues = noteBodyContractIssues(row.type, parsed.body_blocks);
+        contractIssues = noteBodyContractIssues(parsed.body_blocks);
       } catch (revisionError) {
         // The first version is a usable note: keep it with its known issues instead of paying
         // for a retry. A note that left the pending state must still stop here.
