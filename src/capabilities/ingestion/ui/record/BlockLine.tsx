@@ -54,7 +54,6 @@ export function BlockLine({
   );
   const emptyOptions = hasOptionsWithoutFigure(block);
   const noKnowledge = inLibrary && enrollment.knowledge === 'missing';
-  const restricted = inLibrary && enrollment.knowledge === 'restricted';
   const held = inLibrary ? servingNote(serving) : null;
   // A question that is only pictures has no words to miss.
   const noWords = figuresOf(block).length > 0 ? '' : '（没认出文字）';
@@ -75,12 +74,11 @@ export function BlockLine({
           {lineText(promptOf(block), block) || noWords}
         </MathMarkdown>
         <BlockFigures block={block} />
-        {lowConfidence || emptyOptions || noKnowledge || restricted || held ? (
+        {lowConfidence || emptyOptions || noKnowledge || held ? (
           <p className="rc-line-note">
             {lowConfidence && <span>这道题认得把握不高，对照原页看一下。</span>}
             {emptyOptions && <span>选项可能是图，对照原页看。</span>}
             {noKnowledge && <span>知识点还没标。</span>}
-            {restricted && <span>资料受限，不配知识点。</span>}
             {held && <span>{held}</span>}
           </p>
         ) : null}
