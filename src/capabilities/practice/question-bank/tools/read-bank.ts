@@ -20,6 +20,8 @@
 import { createHash } from 'node:crypto';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
+import { projectPublicQuestionStructure } from '@/core/schema/assessment/dto';
+import { isPublicSharedMaterial } from '@/core/schema/assessment/materials';
 
 import { deriveSourceTier } from '@/core/schema/provenance';
 import type { Db, Tx } from '@/db/client';
@@ -683,7 +685,10 @@ export async function runReadBank(
         continue;
       }
     }
-    const structure = revision.structure;
+    const structure =
+      role === 'restricted'
+        ? projectPublicQuestionStructure(revision.structure)
+        : revision.structure;
     const unavailable: string[] = [];
 
     // 资产诚实：任何 include 都核验（overview 层也要如实报 missing/digest）。
@@ -771,7 +776,7 @@ export async function runReadBank(
       : undefined;
     const privateMaterialsOmitted =
       wantMaterials && role === 'restricted'
-        ? (structure?.materials ?? []).filter((m) => m.visibility === 'private').length
+        ? revision.structure.materials.filter((m) => !isPublicSharedMaterial(m)).length
         : 0;
     if (privateMaterialsOmitted > 0) {
       unavailable.push(
@@ -789,7 +794,7 @@ export async function runReadBank(
     // ── focus：稳定 id 子树（未命中进 unavailable） ──
     const focused: Array<{ target: z.infer<typeof FocusTargetSchema>; node: unknown }> = [];
     for (const f of (input.focus ?? []).filter((t) => t.ref == null || t.ref === resolution.raw)) {
-      const node = focusRevisionNode(revision, f, role);
+      const node = focusRevisionNode({ ...revision, structure }, f, role);
       if (node != null) {
         focused.push({ target: { kind: f.kind, id: f.id }, node });
       } else {

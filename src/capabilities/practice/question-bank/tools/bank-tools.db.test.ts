@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
@@ -15,6 +15,7 @@ import {
   publishQuestionGroupFromRow,
 } from '@/kernel/records/assessment-publication';
 import type { ToolContext } from '@/kernel/tools/types';
+import { __setPiAdapterForTests } from '@/server/ai/execution-adapter';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { runEmbedBackfill } from '../jobs/embed_backfill';
 import { archiveQuestion, editQuestion } from '../server/question-bank-write';
@@ -96,6 +97,191 @@ async function searchHits(input: Record<string, unknown>) {
 
 describe('bank tools boundary invariants (search_bank / read_bank / check_bank)', () => {
   beforeEach(resetDb);
+
+  // @invariant security: Copilot bank reads and semantic verification receive only public question content
+  // @fails-if private reference/rubric bytes or legacy sol_/rub_ assets enter a tool result or the model prompt, or a missing public stimulus is accepted
+  it('keeps private scoring materials out of Copilot reads and verification while retaining public loss blockers', async () => {
+    const marker = 'PRIVATE_BANK_ANSWER_RUBRIC_SENTINEL';
+    const captured: string[] = [];
+    vi.stubEnv('OPENCODE_API_KEY', 'synthetic-provider-key');
+    vi.stubEnv(
+      'BANK_GAP_EVIDENCE_SECRET',
+      'synthetic-bank-snapshot-key-with-more-than-32-characters',
+    );
+    __setPiAdapterForTests({
+      id: 'pi',
+      startup: async (args) => ({
+        query: async function* (prompt) {
+          captured.push(JSON.stringify({ prompt, system: args.options.systemPrompt }));
+          const output = {
+            selected_part_ids: ['privacy-public'],
+            checks: [
+              {
+                requirement_id: 'r1',
+                verdict: 'unknown',
+                reason: '公开题面不足以确定解法',
+                evidence: [],
+              },
+            ],
+            joint: { verdict: 'unknown', reason: '缺少公开解法证据', evidence: [] },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            result: JSON.stringify(output),
+            structured_output: output,
+            stop_reason: 'end_turn',
+            total_cost_usd: 0,
+            usage: {
+              input_tokens: 1,
+              output_tokens: 1,
+              cache_read_input_tokens: 0,
+              cache_creation_input_tokens: 0,
+            },
+            duration_ms: 1,
+            duration_api_ms: 1,
+            is_error: false,
+            num_turns: 1,
+            modelUsage: {},
+            permission_denials: [],
+            uuid: 'synthetic-result',
+            session_id: 'synthetic-session',
+          };
+        },
+        close: async () => {},
+      }),
+    });
+    try {
+      await seedQuestion('privacy-public', {
+        prompt_md: '隐私边界：一元二次方程求根',
+        reference_md: 'B',
+      });
+      const [row] = await db.select().from(question).where(eq(question.id, 'privacy-public'));
+      const contract = normalizeQuestionGroupToContract(row, []);
+      const digest = `sha256:${createHash('sha256').update(marker).digest('hex')}`;
+      for (const material of contract.structure.materials) {
+        material.content_md = marker;
+        material.asset.digest = digest;
+        delete material.visibility;
+      }
+      contract.structure.materials.push({
+        material_id: 'private-rubric',
+        kind: 'plaintext',
+        visibility: 'private',
+        content_md: marker,
+        asset: { asset_id: 'rub_123456789abc', digest },
+      });
+      contract.structure.parts[0].material_ids.push('private-rubric');
+      contract.structure.materials.push({
+        material_id: 'legacy-rubric',
+        kind: 'plaintext',
+        content_md: marker,
+        asset: { asset_id: 'rub_abcdef123456', digest },
+      });
+      contract.structure.parts[0].material_ids.push('legacy-rubric');
+      const publicText = 'PUBLIC_STIMULUS_FOR_VERIFICATION';
+      contract.structure.materials.push({
+        material_id: 'public-stimulus',
+        kind: 'plaintext',
+        content_md: publicText,
+        asset: {
+          asset_id: 'public-text',
+          digest: `sha256:${createHash('sha256').update(publicText).digest('hex')}`,
+        },
+      });
+      contract.structure.parts[0].material_ids.push('public-stimulus');
+      contract.integrity_digest = contractIntegrityDigest(contract);
+      const published = await publishQuestionGroup(db, {
+        group_id: row.id,
+        contract,
+        expectedCurrentRevision: null,
+        expectedAdmissionGeneration: null,
+        availability: 'general_pool',
+        admission: ADMITTED,
+        actorRef: 'test:privacy',
+        now: new Date(),
+      });
+      if (published.status !== 'published') throw new Error('fixture not published');
+      const ref = encodeBankRef(published.revision_id, published.revision_digest);
+      const actor = {
+        ...ctx,
+        taskRunId: randomUUID(),
+        callerActor: { kind: 'agent' as const, ref: 'agent:copilot' },
+      };
+      const read = await readBankTool.execute(
+        actor,
+        readBankTool.inputSchema.parse({
+          refs: [ref],
+          include: ['content', 'materials', 'answers'],
+        }),
+      );
+      const result = await searchBankTool.execute(
+        actor,
+        searchBankTool.inputSchema.parse({
+          contract_version: 2,
+          query: '一元二次方程',
+          use: 'inspect',
+          scope: { within_refs: [ref] },
+          requirements: [{ id: 'r1', statement: '必须用配方法', importance: 'required' }],
+          need: { count: 1 },
+        }),
+      );
+      expect(captured.join()).toContain(publicText);
+      expect(JSON.stringify({ read, result, captured })).not.toContain(marker);
+      expect(result).toMatchObject({ matched_count: 0 });
+      await seedQuestion('privacy-missing', { prompt_md: '一元二次方程：读取所附公开材料' });
+      const [missingRow] = await db
+        .select()
+        .from(question)
+        .where(eq(question.id, 'privacy-missing'));
+      const missing = normalizeQuestionGroupToContract(missingRow, []);
+      await db.insert(source_asset).values({
+        id: 'lost-stimulus',
+        kind: 'image',
+        storage_key: 'test/lost-stimulus',
+        mime_type: 'image/png',
+        byte_size: 1,
+        sha256: 'a'.repeat(64),
+        created_at: new Date(),
+      });
+      missing.structure.materials.push({
+        material_id: 'required-stimulus',
+        kind: 'figure',
+        visibility: 'public',
+        asset: { asset_id: 'lost-stimulus', digest: `sha256:${'a'.repeat(64)}` },
+      });
+      missing.structure.parts[0].material_ids.push('required-stimulus');
+      missing.integrity_digest = contractIntegrityDigest(missing);
+      const lost = await publishQuestionGroup(db, {
+        group_id: missingRow.id,
+        contract: missing,
+        expectedCurrentRevision: null,
+        expectedAdmissionGeneration: null,
+        availability: 'general_pool',
+        admission: ADMITTED,
+        actorRef: 'test:privacy',
+        now: new Date(),
+      });
+      if (lost.status !== 'published') throw new Error('fixture not published');
+      await db.delete(source_asset).where(eq(source_asset.id, 'lost-stimulus'));
+      const blocked = await searchBankTool.execute(
+        actor,
+        searchBankTool.inputSchema.parse({
+          contract_version: 2,
+          query: '一元二次方程',
+          use: 'inspect',
+          scope: { within_refs: [encodeBankRef(lost.revision_id, lost.revision_digest)] },
+          requirements: [{ id: 'r1', statement: '题面完整', importance: 'required' }],
+          need: { count: 1 },
+        }),
+      );
+      expect(blocked).toMatchObject({ matched_count: 0, evidence: { checked_count: 0 } });
+      expect(JSON.stringify(blocked)).toContain('media_not_read');
+    } finally {
+      __setPiAdapterForTests(undefined);
+      vi.unstubAllEnvs();
+    }
+  });
 
   // @invariant data: served-face search returns only eligible items (withdrawn never; drafts/withheld only on the explicit dedup face) @fails-if a hard filter is dropped or ignored in SQL so withdrawn/withheld/draft items leak into the admitted+active served hits
   it('hard filters cannot be bypassed: withdrawn never served; draft/admission filters hold', async () => {
