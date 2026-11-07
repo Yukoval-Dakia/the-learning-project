@@ -476,6 +476,11 @@ export const dag_orchestration_node = pgTable(
     stale: boolean('stale').notNull().default(false),
     // skipped/failed 的可读原因（观测痕迹，如 "upstream 'x' failed"）。
     detail: text('detail'),
+    // Job-level provider waits already spent on this node (YUK-2030). The
+    // orchestrator owns the budget; member jobs only mark eligibility on their
+    // output. enqueued_at is NOT reset on a wait redelivery, so the node timeout
+    // still bounds the whole wait+run window.
+    provider_waits: integer('provider_waits').notNull().default(0),
     enqueued_at: timestamp('enqueued_at', { withTimezone: true }),
     finished_at: timestamp('finished_at', { withTimezone: true }),
     updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),

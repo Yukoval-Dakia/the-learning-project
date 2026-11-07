@@ -1,1 +1,0 @@
-DROP TABLE "echo_jobs" CASCADE;

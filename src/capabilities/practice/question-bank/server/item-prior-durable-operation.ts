@@ -3,7 +3,7 @@
 // adapter. Rep identity is question revision + input digest + rep index. Staged reps resume
 // without provider calls; an unknown paid outcome stays held across deliveries.
 
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { ItemPriorPaidEffectAdapter } from '@/capabilities/practice/question-bank/server/item-prior-paid-effect-adapter';
 import { aggregateItemPriorDrafts, parseItemPriorDraft } from '@/core/item-prior-estimation';
@@ -14,6 +14,7 @@ import type { Db, Tx } from '@/db/client';
 import { item_calibration, knowledge, question } from '@/db/schema';
 import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
 import { applyItemPrior } from '@/kernel/records/item-calibration';
+import { planJobProviderWait } from '@/server/ai/provider-wait';
 import { type BoundRunTaskTextFn, type RunTaskCallCtx, makeRunTaskFn } from '@/server/ai/runner-fn';
 import type { SubjectProfile } from '@/subjects/profile';
 import { MAX_REPS } from './item-prior-limits';
@@ -41,6 +42,12 @@ export interface ItemPriorBackfillResult {
   calibrated: number;
   /** 单题 LLM/parse 失败被跳过的题数（不阻断其余题）。 */
   skipped_failed: number;
+  /**
+   * First provable transient provider rejection seen this round (YUK-2030).
+   * The job asks the DAG to wait for route recovery instead of settling as a
+   * completed-but-degraded round; unproven failures keep the skip-only path.
+   */
+  providerWait?: { retryClass: string; evidenceRef: string };
 }
 
 export const DEFAULT_MAX_PER_RUN = 25;
@@ -66,28 +73,38 @@ export function normalizeMethod(raw: unknown): ItemPriorMethod {
   return raw === 'llasa' ? 'llasa' : 'feature';
 }
 
-/** Pre-LLM read; errors propagate. Preserve the original unordered, capped query. */
+/** Pre-LLM read; errors propagate. Oldest unanchored questions first, id
+ * tiebreak — a capped run that skips failed questions re-picks them ahead of
+ * newer ones next round instead of starving on an unordered scan. */
 export async function selectItemPriorCandidates(
   db: Db | Tx,
   maxPerRun: number,
 ): Promise<ItemPriorCandidateFrozen[]> {
-  return db
-    .select({
-      id: question.id,
-      kind: question.kind,
-      prompt_md: question.prompt_md,
-      reference_md: question.reference_md,
-      choices_md: question.choices_md,
-      knowledge_ids: question.knowledge_ids,
-    })
-    .from(question)
-    .where(
-      sql`NOT EXISTS (
+  return (
+    db
+      .select({
+        id: question.id,
+        kind: question.kind,
+        prompt_md: question.prompt_md,
+        reference_md: question.reference_md,
+        choices_md: question.choices_md,
+        knowledge_ids: question.knowledge_ids,
+      })
+      .from(question)
+      .where(
+        sql`NOT EXISTS (
         SELECT 1 FROM item_calibration ic
         WHERE ic.question_id = ${question.id} AND ic.track = 'hard'
       )`,
-    )
-    .limit(maxPerRun);
+      )
+      // Daily-rotating deterministic order: a permanently failing oldest
+      // question can no longer monopolize the batch every run — each night a
+      // different window of the uncalibrated backlog is attempted, so new
+      // questions surface within ~backlog/25 runs. Same-day redeliveries (the
+      // provider-wait ladder) keep the same window.
+      .orderBy(sql`md5(${question.id} || to_char(current_date, 'YYYY-MM-DD'))`, asc(question.id))
+      .limit(maxPerRun)
+  );
 }
 
 /** 为候选并集一次性解析 knowledge 名（原 union 读，逐字节不变）。 */
@@ -706,6 +723,11 @@ export async function runItemPriorBackfillOperation(
         err,
       });
       result.skipped_failed++;
+      // A provable transient provider rejection means the route is down: keep
+      // scanning the remaining questions (their settled evidence may still
+      // succeed on a sibling lane), but ask the DAG for a recovery wait so the
+      // round is redelivered instead of parked until tomorrow.
+      result.providerWait ??= (await planJobProviderWait(db, err)) ?? undefined;
     }
   }
 

@@ -19,18 +19,17 @@ import type {
   ProviderTransportEvidence,
   TransportAbortInitiator,
 } from '@/ai/task-result';
+import {
+  type AttemptCostTruth,
+  UNBILLED_PROVIDER_REJECTION_REF_PREFIX,
+  failureSpendChargeUsd,
+} from '@/ai/task-result';
 import type { TaskDefinition } from '@/ai/task-spec';
 import { type TaskKind, tasks } from '@/capabilities/task-registry';
 import { taskInputHash } from '@/core/task-input-hash';
 import type { Db } from '@/db/client';
 import { writeToolCallLog } from '@/kernel/tools/call-evidence';
-import {
-  type AttemptCostTruth,
-  UNBILLED_PROVIDER_REJECTION_REF_PREFIX,
-  failureSpendChargeUsd,
-  resolveAttemptCostTruth,
-  unknownAttemptCostTruth,
-} from './attempt-cost';
+import { resolveAttemptCostTruth, unknownAttemptCostTruth } from './attempt-cost';
 import { type ModelBinding, explicitProviderRouting } from './execution-adapter';
 import {
   type TraceSpan,

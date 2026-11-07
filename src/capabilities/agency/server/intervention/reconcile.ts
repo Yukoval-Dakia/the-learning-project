@@ -33,7 +33,11 @@ export interface InterventionPrepareRecoveryBoss {
   send(
     name: typeof PREPARE_INTERVENTION_JOB,
     data: PrepareInterventionJobData,
-    options: { id: string; db: ReturnType<typeof fromPgBossDrizzleTx> },
+    options: {
+      id: string;
+      db: ReturnType<typeof fromPgBossDrizzleTx>;
+      startAfter?: Date;
+    },
   ): Promise<string | null>;
 }
 
@@ -223,14 +227,24 @@ export async function recoverPreparingInterventions(
         if (jobAfterLock) {
           return LIVE_JOB_STATES.has(jobAfterLock.state) ? ('live' as const) : ('raced' as const);
         }
+        // The aggregate's wait receipt survives the lost row: the resent job
+        // carries the spent budget (the handler's next wait counts from it)
+        // and honors the armed instant instead of retrying on the spot.
         const sent = await boss.send(
           PREPARE_INTERVENTION_JOB,
           {
             intervention_id: current.id,
             version: current.version,
             idempotency_key: current.idempotency_key,
+            ...(current.preparation_waits > 0 ? { provider_waits: current.preparation_waits } : {}),
           },
-          { id: replacementJobId, db: fromPgBossDrizzleTx(tx) },
+          {
+            id: replacementJobId,
+            ...(current.preparation_wait_until
+              ? { startAfter: current.preparation_wait_until }
+              : {}),
+            db: fromPgBossDrizzleTx(tx),
+          },
         );
         await updatePreparationJobId(
           tx,
@@ -252,6 +266,74 @@ export async function recoverPreparingInterventions(
     }
   }
   return report;
+}
+
+export interface InterventionProviderWaitRearmInput {
+  interventionId: string;
+  version: number;
+  idempotencyKey: string;
+  /**
+   * The still-running job being superseded. CAS guard: the repoint only lands
+   * while the aggregate still names it, so a raced recovery or a concurrent
+   * terminal flip makes the rearm a no-op instead of a rogue redelivery.
+   */
+  supersededJobId: string;
+  /** Wait count recorded on the replacement job data. */
+  waits: number;
+  delayMs: number;
+}
+
+/**
+ * Provider-wait rearm (YUK-2030): a `prepare_intervention` delivery that hit a
+ * proven transient provider rejection schedules its own replacement instead of
+ * burning pg-boss retries against a dead route. Same lock order and repoint
+ * pattern as `recoverPreparingInterventions` — replacement send and
+ * preparation_job_id repoint commit in one transaction, so a crash leaves no
+ * half-state. The current job then completes normally; the aggregate stays
+ * `preparing` and the recovery floor covers a lost wake.
+ */
+export async function rearmInterventionPreparationWait(
+  db: Db,
+  boss: InterventionPrepareRecoveryBoss,
+  input: InterventionProviderWaitRearmInput,
+  now = new Date(),
+): Promise<'waiting' | 'raced'> {
+  const [row] = await db
+    .select({ source_probe_result_event_id: intervention.source_probe_result_event_id })
+    .from(intervention)
+    .where(and(eq(intervention.id, input.interventionId), eq(intervention.version, input.version)))
+    .limit(1);
+  if (!row) return 'raced';
+
+  const replacementJobId = randomUUID();
+  return db.transaction(async (tx) => {
+    await lockInterventionCorrectionsAll(tx);
+    await lockInterventionSource(tx, row.source_probe_result_event_id);
+    const current = await loadInterventionVersion(tx, input.interventionId, input.version);
+    if (current?.status !== 'preparing' || current.preparation_job_id !== input.supersededJobId) {
+      return 'raced' as const;
+    }
+    const waitUntil = new Date(now.getTime() + input.delayMs);
+    const sent = await boss.send(
+      PREPARE_INTERVENTION_JOB,
+      {
+        intervention_id: current.id,
+        version: current.version,
+        idempotency_key: current.idempotency_key,
+        provider_waits: input.waits,
+      },
+      {
+        id: replacementJobId,
+        startAfter: waitUntil,
+        db: fromPgBossDrizzleTx(tx),
+      },
+    );
+    await updatePreparationJobId(tx, current.id, current.version, sent ?? replacementJobId, now, {
+      waits: input.waits,
+      until: waitUntil,
+    });
+    return 'waiting' as const;
+  });
 }
 
 export function buildInterventionPrepareRecoveryHandler(

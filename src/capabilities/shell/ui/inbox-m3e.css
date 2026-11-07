@@ -320,6 +320,23 @@
     border: 0;
   }
 
+  /* A batch already confirmed: a record with a way back, not something asking for attention. */
+  & .ib-batch-recent {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--un-sp-2) var(--un-sp-4);
+    padding-block: var(--un-sp-2);
+    border-bottom: var(--un-hairline) solid var(--un-line);
+    color: var(--un-text-2);
+    font-size: var(--un-fs-1);
+  }
+
+  & .ib-batch-recent p {
+    margin: 0;
+  }
+
   & .ib-aa-confirm {
     display: grid;
     gap: var(--un-sp-2);
