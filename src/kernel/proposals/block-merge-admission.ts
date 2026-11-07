@@ -215,6 +215,25 @@ const PROMPT_HEAD_QUESTION_NO_RE =
   /^\s*(?:第\s*(?:\d+|[零一二三四五六七八九十百两]+)\s*题|\d{1,3}\s*[.、．](?![0-9０-９])(?=\s*\S)|[（(]\s*\d{1,3}\s*[)）]|\d{1,3}\s*[)）])/u;
 
 /**
+ * A digit run, a dot-family separator, then another digit: a decimal inside
+ * the stem (`0.75`, `12.5 米`, `３.５`, `3、5`, even a spaced `3. 5`), never a
+ * question number. The head regex above already refuses to match these, but
+ * absence is not provable either — a decimal-led block read as "no number"
+ * would merge into the previous question as a bare fragment, a direction the
+ * proof rejected before this parser existed. Flagging it keeps both callers
+ * conservative.
+ */
+const DECIMAL_HEAD_RE = /^\s*[0-9０-９]+\s*[.、．]\s*[0-9０-９]/u;
+
+/**
+ * The 第…题 arm's numbered width. The pre-unification move regex took only
+ * `\d{1,3}` Arabic digits (`第3题`); a Chinese-numeral head (`第三题`) or a
+ * wider number (`第1234题`) is a shape that parser never moved — uncertain,
+ * not a provable own number and not provable absence.
+ */
+const PREFIXED_HEAD_NUMERAL_RE = /第\s*(\d+|[零一二三四五六七八九十百两]+)\s*题/u;
+
+/**
  * Another paren-family number token later in the stem, anchored on a
  * separator (sentence punctuation / whitespace / start) so function-style
  * `f(2)` or prose references like 「由（2）式」 do not count — a head paren
@@ -225,9 +244,12 @@ const INLINE_ENUM_NEXT_NO_RE =
 
 export type PromptHeadQuestionNoMatch = {
   /**
-   * The parsed head number; `{ kind: 'unknown' }` when a paren-family head is
-   * really an inline enumeration like 「（1）…（2）…」 — not a movable own
-   * number and not proof of its absence, so both callers stay conservative.
+   * The head verdict. `top`/`sub` is a provable own number; `{ kind: 'unknown' }`
+   * is the uncertain result — a head-shaped token that proves neither a number
+   * nor its absence: a leading decimal, an inline enumeration like
+   * 「（1）…（2）…」, or a 第…题 head outside the numbered width. Callers treat
+   * uncertain conservatively: the structure move never relocates it, merge
+   * admission fails closed on it.
    */
   parsed: ParsedQuestionNo;
   /** Characters consumed by the head token, leading whitespace included. */
@@ -237,16 +259,25 @@ export type PromptHeadQuestionNoMatch = {
 /**
  * The single parser for a printed question number leading prompt text, shared
  * by the structure move (which relocates it into question_no) and merge
- * admission (which reads it as the block's own number).
+ * admission (which reads it as the block's own number). Three outcomes: a
+ * `top`/`sub` match is a provable number, a `{ kind: 'unknown' }` match is
+ * uncertain, and null means no head-shaped token at all.
  */
 export function matchPromptHeadQuestionNo(
   promptText: string | null | undefined,
 ): PromptHeadQuestionNoMatch | null {
-  const m = PROMPT_HEAD_QUESTION_NO_RE.exec(promptText ?? '');
+  const text = promptText ?? '';
+  const decimal = DECIMAL_HEAD_RE.exec(text);
+  if (decimal) return { parsed: { kind: 'unknown' }, matchLength: decimal[0].length };
+  const m = PROMPT_HEAD_QUESTION_NO_RE.exec(text);
   if (!m) return null;
   const head = m[0];
-  const rest = (promptText ?? '').slice(head.length);
+  const rest = text.slice(head.length);
   if (/[)）]\s*$/u.test(head) && INLINE_ENUM_NEXT_NO_RE.test(rest)) {
+    return { parsed: { kind: 'unknown' }, matchLength: head.length };
+  }
+  const prefixed = PREFIXED_HEAD_NUMERAL_RE.exec(head);
+  if (prefixed && !/^\d{1,3}$/u.test(prefixed[1])) {
     return { parsed: { kind: 'unknown' }, matchLength: head.length };
   }
   return { parsed: parseQuestionNo(head) ?? { kind: 'unknown' }, matchLength: head.length };

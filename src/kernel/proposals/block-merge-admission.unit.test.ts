@@ -406,19 +406,40 @@ describe('evaluateBlockMergeAdmission', () => {
     expectIneligible([primary, member], [member.id], 'conflicting_question_number');
   });
 
-  // @invariant data: a decimal-leading fragment carries no own number, an inline enumeration fails closed, a real printed head still vetoes
-  // @fails-if the shared head parser re-arms the decimal veto or admits a 「（1）（2）」 enumeration as a proven number
-  it('treats decimal heads as numberless but fails closed on inline enumerations', () => {
+  // @invariant data: an ambiguous head (decimal, enumeration, out-of-width 第…题) is neither a number nor its absence — it fails closed like the pre-parser proof did
+  // @fails-if the shared head parser reads an ambiguous head as absent (bare fragment) instead of uncertain
+  it('fails closed on ambiguous heads while a provable number still vetoes', () => {
     const rows = [
-      { in: '3.14×2 等于多少？', eligible: true, reason: undefined },
-      { in: '0.75 化成分数是____', eligible: true, reason: undefined },
+      { in: '3.14×2 等于多少？', eligible: false, reason: 'missing_continuity' as const },
+      { in: '0.75 化成分数是____', eligible: false, reason: 'missing_continuity' as const },
+      {
+        in: '12.5 米的绳子剪去 3 米，还剩多少米？',
+        eligible: false,
+        reason: 'missing_continuity' as const,
+      },
+      { in: '3、5 两数之和', eligible: false, reason: 'missing_continuity' as const },
+      { in: '3. 5倍的绳子剪去一段……', eligible: false, reason: 'missing_continuity' as const },
+      { in: '３.５ 化成分数是____', eligible: false, reason: 'missing_continuity' as const },
       {
         in: '（1）求 x 的值；（2）求 y 的值',
         eligible: false,
         reason: 'missing_continuity' as const,
       },
+      { in: '第三题 计算下列各式。', eligible: false, reason: 'missing_continuity' as const },
+      { in: '第1234题 计算下列各式。', eligible: false, reason: 'missing_continuity' as const },
+      { in: '……接上题最后一问。', eligible: true, reason: undefined },
       {
         in: '3. 计算下列各式。',
+        eligible: false,
+        reason: 'conflicting_question_number' as const,
+      },
+      {
+        in: '第3题 计算下列各式。',
+        eligible: false,
+        reason: 'conflicting_question_number' as const,
+      },
+      {
+        in: '（2）求 y 的值',
         eligible: false,
         reason: 'conflicting_question_number' as const,
       },

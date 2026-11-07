@@ -75,9 +75,9 @@ describe('runStructureTask prompt normalization', () => {
     expect(result.questions[1].prompt_text).toBe('证明恒等式。');
   });
 
-  // @invariant data: a leading decimal or inline enumeration is stem text, never a number; a real printed number still moves
-  // @fails-if the shared head parser strips a decimal/enumeration-leading stem or stops moving a true printed number
-  it('keeps decimal- and enumeration-leading stems intact while a real number still moves', async () => {
+  // @invariant data: an uncertain head (decimal, inline enumeration, out-of-width 第…题) stays in the stem, never a number; a real printed number still moves
+  // @fails-if the shared head parser strips an uncertain head or stops moving a true printed number
+  it('keeps decimal-, enumeration-, and widened-第题-leading stems intact while a real number still moves', async () => {
     const cases = [
       { in: '0.75 化成分数是____', no: null, out: '0.75 化成分数是____' },
       { in: '3.14×2 等于多少？', no: null, out: '3.14×2 等于多少？' },
@@ -86,12 +86,19 @@ describe('runStructureTask prompt normalization', () => {
         no: null,
         out: '12.5 米的绳子剪去 3 米，还剩多少米？',
       },
+      { in: '3. 5倍的绳子剪去一段……', no: null, out: '3. 5倍的绳子剪去一段……' },
+      { in: '3、5 两数之和', no: null, out: '3、5 两数之和' },
+      { in: '３.５ 化成分数是____', no: null, out: '３.５ 化成分数是____' },
       {
         in: '（1）求 x 的值；（2）求 y 的值',
         no: null,
         out: '（1）求 x 的值；（2）求 y 的值',
       },
+      { in: '第三题 计算下列各式。', no: null, out: '第三题 计算下列各式。' },
+      { in: '第1234题 计算下列各式。', no: null, out: '第1234题 计算下列各式。' },
       { in: '3. 计算下列各式。', no: '3', out: '计算下列各式。' },
+      { in: '第3题 计算下列各式。', no: '3', out: '计算下列各式。' },
+      { in: '（2）求 y 的值', no: '2', out: '求 y 的值' },
     ];
     for (const row of cases) {
       const result = await runStructureTask({
