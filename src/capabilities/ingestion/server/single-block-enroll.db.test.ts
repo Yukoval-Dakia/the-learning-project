@@ -225,14 +225,24 @@ describe('enrollIngestionBlock', () => {
   );
 
   // @invariant security: a restricted source document never arms knowledge
-  //   attribution — /enroll on its blocks leaves knowledge 'missing' and
-  //   knowledge_ids empty, so downstream model lanes keyed on knowledge_ids
-  //   are never fed; allowed documents attribute by exact name as before
+  //   attribution — /enroll on its blocks marks knowledge 'restricted' (distinct
+  //   from the 'missing' attribution-failure state) and knowledge_ids empty, so
+  //   downstream model lanes keyed on knowledge_ids are never fed; allowed
+  //   documents attribute by exact name as before
   // @fails-if exact-name attribution runs for answer_only/crisis documents, or
-  //   restricted blocks stop enrolling entirely (enrollment itself must stay)
+  //   restricted blocks stop enrolling entirely (enrollment itself must stay), or
+  //   policy suppression lands indistinguishable from an attribution failure
   it.each([
-    { policy: 'answer_only' as const, expectedKnowledge: 'missing' as const, ids: [] as string[] },
-    { policy: 'crisis' as const, expectedKnowledge: 'missing' as const, ids: [] as string[] },
+    {
+      policy: 'answer_only' as const,
+      expectedKnowledge: 'restricted' as const,
+      ids: [] as string[],
+    },
+    {
+      policy: 'crisis' as const,
+      expectedKnowledge: 'restricted' as const,
+      ids: [] as string[],
+    },
     { policy: 'allow' as const, expectedKnowledge: 'attributed' as const, ids: ['kc-1'] },
   ])(
     'suppresses knowledge attribution by source policy ($policy)',

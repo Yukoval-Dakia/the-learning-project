@@ -22,7 +22,10 @@ export type EnrollmentGeneratedBy = 'workflow_judge' | 'user_retry' | 'rescue';
 
 export interface EnrollmentMarkers {
   enrolled_by: EnrollmentGeneratedBy;
-  knowledge: 'attributed' | 'missing';
+  /** 'missing' = attribution ran and produced nothing (or failed); 'restricted' =
+   *  attribution was suppressed by the document's derivation policy — a distinct,
+   *  learner-visible fact, not a repairable gap. */
+  knowledge: 'attributed' | 'missing' | 'restricted';
   confidence: number;
   figures_attached: number;
   student_work: boolean;

@@ -35,7 +35,7 @@ export interface EnrollIngestionBlockResult {
   question_id: string;
   block_status: string;
   block_version: number;
-  knowledge: 'attributed' | 'missing';
+  knowledge: 'attributed' | 'missing' | 'restricted';
   library_visible: boolean;
   admission_status: 'pending' | 'admitted' | 'failed' | 'undecided';
 }
@@ -56,7 +56,7 @@ async function readCurrent(
   db: Db | Tx,
   block: typeof question_block.$inferSelect,
   status: EnrollIngestionBlockStatus,
-  knowledgeState: 'attributed' | 'missing',
+  knowledgeState: 'attributed' | 'missing' | 'restricted',
 ): Promise<EnrollIngestionBlockResult> {
   const questionId = block.imported_question_id;
   if (!questionId) {
@@ -218,14 +218,15 @@ export async function enrollIngestionBlock(
   }
 
   // Attribution is a derivation step over restricted content: answer_only/crisis
-  // documents enroll without knowledge_ids (same 'missing' outcome as auto-enroll),
+  // documents enroll without knowledge_ids (same 'restricted' marker as auto-enroll),
   // which also keeps the knowledge_ids>0 gates of the nightly model lanes unarmed.
-  const knowledgeIds =
-    (await resolveSessionDerivationPolicy(db, params.sessionId)) === 'allow'
-      ? await resolveExactKnowledge(db, current.knowledge_hint)
-      : [];
-  const knowledgeState: 'attributed' | 'missing' =
-    knowledgeIds.length > 0 ? 'attributed' : 'missing';
+  const restricted = (await resolveSessionDerivationPolicy(db, params.sessionId)) !== 'allow';
+  const knowledgeIds = restricted ? [] : await resolveExactKnowledge(db, current.knowledge_hint);
+  const knowledgeState: 'attributed' | 'missing' | 'restricted' = restricted
+    ? 'restricted'
+    : knowledgeIds.length > 0
+      ? 'attributed'
+      : 'missing';
   const sourceDocumentId = session.source_document_id;
   if (!sourceDocumentId) {
     throw new ApiError('conflict', `session ${params.sessionId} has no source document`, 409);
@@ -279,10 +280,12 @@ export async function enrollIngestionBlock(
   };
 }
 
-function storedKnowledgeState(metadata: unknown): 'attributed' | 'missing' | null {
+function storedKnowledgeState(metadata: unknown): 'attributed' | 'missing' | 'restricted' | null {
   const markers = (metadata as { ingestion_enrollment?: { knowledge?: unknown } } | null)
     ?.ingestion_enrollment;
-  return markers?.knowledge === 'attributed' || markers?.knowledge === 'missing'
+  return markers?.knowledge === 'attributed' ||
+    markers?.knowledge === 'missing' ||
+    markers?.knowledge === 'restricted'
     ? markers.knowledge
     : null;
 }

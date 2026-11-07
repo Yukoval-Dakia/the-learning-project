@@ -3,7 +3,7 @@ import type { Db, Tx } from '@/db/client';
 import { question_solution_prior } from '@/db/schema';
 import type { ToolContext } from '@/kernel/tools/types';
 import type { BankDocument } from './bank-search-contract';
-import { bankReadRoleForActor, runReadBank } from './read-bank';
+import { bankReadRoleForActor, callerIsDerivationSurface, runReadBank } from './read-bank';
 
 const UNREAD_INLINE_MEDIA = /!\[|<(?:img|svg|audio|video|picture|source|iframe|object|embed)\b/i;
 
@@ -27,7 +27,11 @@ export async function readBankDocuments(
             include: ['content', 'materials', 'answers', 'rubric'],
             extent: { chars: 200000 },
           },
-          { role: bankReadRoleForActor(ctx.callerActor), callerRef: ctx.callerActor.ref },
+          {
+            role: bankReadRoleForActor(ctx.callerActor),
+            callerRef: ctx.callerActor.ref,
+            derivationOnly: callerIsDerivationSurface(ctx.callerActor),
+          },
         ),
       ),
     );

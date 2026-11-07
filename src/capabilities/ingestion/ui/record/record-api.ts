@@ -100,7 +100,7 @@ export interface Block {
     state: 'in_library' | 'not_enrolled' | 'ignored';
     /** pending is still on its way in; only publish_failed is a failure. */
     reason: 'needs_text' | 'pending' | 'publish_failed' | 'reverted' | null;
-    knowledge: 'attributed' | 'missing' | null;
+    knowledge: 'attributed' | 'missing' | 'restricted' | null;
     library_visible: boolean | null;
   };
 }
