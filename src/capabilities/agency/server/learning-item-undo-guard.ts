@@ -12,11 +12,13 @@ import type { ProposalNoteUndoFacts } from '@/capabilities/notes/public';
 import type { AiProposalPayloadT } from '@/core/schema/proposal';
 import type { Tx } from '@/db/client';
 import { learning_item } from '@/db/schema';
-import type {
-  AutoAppliedUndoBlock,
-  AutoAppliedUndoGuardInput,
-  AutoAppliedUndoOwnerGuard,
-  DbLike,
+import {
+  AUTO_APPLIED_UNDO_CLEAR,
+  type AutoAppliedUndoBlock,
+  type AutoAppliedUndoGuardInput,
+  type AutoAppliedUndoGuardVerdict,
+  type AutoAppliedUndoOwnerGuard,
+  type DbLike,
 } from '@/kernel/proposals/auto-applied-undo';
 
 /** Item ids (subset of the queried set) that still carry content owned elsewhere. */
@@ -91,10 +93,10 @@ async function inspectLearningItems(
   db: DbLike,
   inputs: readonly AutoAppliedUndoGuardInput[],
   dependencies: LearningItemUndoDependencies,
-): Promise<Map<string, AutoAppliedUndoBlock>> {
-  const blocks = new Map<string, AutoAppliedUndoBlock>();
+): Promise<Map<string, AutoAppliedUndoGuardVerdict>> {
+  const verdicts = new Map<string, AutoAppliedUndoGuardVerdict>();
   const proposalIds = inputs.map((input) => input.proposalId);
-  if (proposalIds.length === 0) return blocks;
+  if (proposalIds.length === 0) return verdicts;
 
   const rows = (await db
     .select({
@@ -161,15 +163,15 @@ async function inspectLearningItems(
     const active = items.filter((item) => item.archivedAt === null);
     const archived = items.filter((item) => item.archivedAt !== null);
     if (items.length === 0) {
-      blocks.set(proposalId, block('learning_item_missing'));
+      verdicts.set(proposalId, block('learning_item_missing'));
       continue;
     }
     if (active.length === 0) {
-      blocks.set(proposalId, block('learning_item_already_archived'));
+      verdicts.set(proposalId, block('learning_item_already_archived'));
       continue;
     }
     if (archived.length > 0) {
-      blocks.set(proposalId, block('learning_item_partially_archived'));
+      verdicts.set(proposalId, block('learning_item_partially_archived'));
       continue;
     }
     const latest = active.reduce(
@@ -177,20 +179,20 @@ async function inspectLearningItems(
       0,
     );
     if (latest > input.appliedAt.getTime()) {
-      blocks.set(proposalId, block('learning_item_later_changes'));
+      verdicts.set(proposalId, block('learning_item_later_changes'));
       continue;
     }
     if (active.some((item) => recordItemIds.has(item.id))) {
-      blocks.set(proposalId, block('learning_item_has_records'));
+      verdicts.set(proposalId, block('learning_item_has_records'));
       continue;
     }
     if (active.some((item) => draftItemIds.has(item.id))) {
-      blocks.set(proposalId, block('learning_item_has_answer_drafts'));
+      verdicts.set(proposalId, block('learning_item_has_answer_drafts'));
       continue;
     }
     const pairedArtifactIds = pairedArtifactIdsByProposal.get(proposalId) ?? new Set<string>();
     if (pairedArtifactIds.size === 0) {
-      blocks.set(proposalId, block('learning_item_artifact_missing'));
+      verdicts.set(proposalId, block('learning_item_artifact_missing'));
       continue;
     }
     const missingOrArchived = [...pairedArtifactIds].some((artifactId) => {
@@ -198,11 +200,11 @@ async function inspectLearningItems(
       return !row || row.archivedAt !== null;
     });
     if (missingOrArchived) {
-      blocks.set(proposalId, block('learning_item_artifact_missing'));
+      verdicts.set(proposalId, block('learning_item_artifact_missing'));
       continue;
     }
     if ([...pairedArtifactIds].some((artifactId) => noteFacts.editedArtifactIds.has(artifactId))) {
-      blocks.set(proposalId, block('learning_item_note_edited'));
+      verdicts.set(proposalId, block('learning_item_note_edited'));
       continue;
     }
     if (
@@ -210,10 +212,13 @@ async function inspectLearningItems(
         referencedArtifactIdsByProposal.get(proposalId)?.has(artifactId),
       )
     ) {
-      blocks.set(proposalId, block('learning_item_artifact_referenced'));
+      verdicts.set(proposalId, block('learning_item_artifact_referenced'));
+    }
+    if (!verdicts.has(proposalId)) {
+      verdicts.set(proposalId, AUTO_APPLIED_UNDO_CLEAR);
     }
   }
-  return blocks;
+  return verdicts;
 }
 
 /** Only the existing-graph plan is retractable; the other plans mint a node. */
