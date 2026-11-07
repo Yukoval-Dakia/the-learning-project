@@ -23,7 +23,10 @@ import {
   IngestionAskAnswerBodySchema,
   IngestionAskAnswerHeadersSchema,
   IngestionAskAnswerResponseSchema,
+  EnrollIngestionBlockBodySchema,
+  EnrollIngestionBlockResponseSchema,
   IngestionAskParamsSchema,
+  IngestionBlockParamsSchema,
   IngestionBlocksResponseSchema,
   IngestionCreationErrorSchema,
   IngestionEventStreamResponseSchema,
@@ -289,6 +292,16 @@ export const ingestionCapability = defineCapability({
         responses: { 200: RevertAutoEnrolledBlockResponseSchema, ...API_ERROR_RESPONSES },
         successStatus: 200,
         load: () => import('./api/revert').then((m) => m.POST),
+      },
+      {
+        // One-block user entry: write a missing prompt and/or retry a failed enrollment.
+        method: 'POST',
+        path: '/api/ingestion/[id]/blocks/[block_id]/enroll',
+        operationId: 'enrollIngestionBlock',
+        request: { params: IngestionBlockParamsSchema, body: EnrollIngestionBlockBodySchema },
+        responses: { 200: EnrollIngestionBlockResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        load: () => import('./api/enroll').then((m) => m.POST),
       },
       {
         // Handled with the standard req.formData() in Hono.

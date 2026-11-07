@@ -50,9 +50,9 @@ export function admissionSourceEventIdSql(
   columns: AdmissionSourceBindingColumns,
 ): SQL<string | null> {
   return sql<string | null>`case
-    when ${columns.publicationSessionId} is not null
-      or ${columns.publicationCausedByEventId} is not null
-      then ${columns.publicationEventId}
+    when (${columns.publicationSessionId})::text is not null
+      or (${columns.publicationCausedByEventId})::text is not null
+      then (${columns.publicationEventId})::text
     else (
       select case when count(*) = 1 then min(receipt.id) end
       from event receipt

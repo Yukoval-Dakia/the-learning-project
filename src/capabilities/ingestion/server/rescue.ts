@@ -7,6 +7,7 @@ import { learning_session, question_block, source_asset } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import type { R2Client } from '@/kernel/object-storage';
 import { type RunTaskCallCtx, makeRunTaskTextFn } from '@/server/ai/runner-fn';
+import { enqueueAutoEnroll } from './extraction-follow-up';
 import { type VisionBlock, runVisionExtract } from './vision';
 
 export type RescueTier = 2 | 3;
@@ -129,6 +130,10 @@ export async function runRescue(
       figures: [],
     }),
   );
+  // The rescued block now has a printed prompt; without a follow-up it would be a
+  // draft with no worker and read as publish_failed. Failure here never rolls back
+  // the committed rescue.
+  await enqueueAutoEnroll(params.sessionId, 'rescue');
   return { structured };
 }
 

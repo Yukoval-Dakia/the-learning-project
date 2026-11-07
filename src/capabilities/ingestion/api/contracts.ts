@@ -377,6 +377,31 @@ export const RevertAutoEnrolledBlockResponseSchema = z.object({
   retractedEventId: z.string(),
 });
 
+// Single-block enrollment (POST /api/ingestion/[id]/blocks/[block_id]/enroll).
+export const IngestionBlockParamsSchema = z.object({
+  id: z.string().min(1),
+  block_id: z.string().min(1),
+});
+
+export const EnrollIngestionBlockBodySchema = z
+  .object({
+    expected_version: z.number().int().nonnegative(),
+    /** Optional printed prompt; required when the block has no prompt yet. */
+    prompt_md: z.string().trim().min(1).max(20_000).optional(),
+  })
+  .strict();
+
+export const EnrollIngestionBlockResponseSchema = z.object({
+  block_id: z.string(),
+  status: z.enum(['enrolled', 'already_enrolled']),
+  question_id: z.string(),
+  block_status: z.string(),
+  block_version: z.number().int().nonnegative(),
+  knowledge: z.enum(['attributed', 'missing']),
+  library_visible: z.boolean(),
+  admission_status: z.enum(['pending', 'admitted', 'failed', 'undecided']),
+});
+
 // Ask answer wire shapes, re-exported from the single agent contract source so
 // this file stays the one-stop wire surface.
 export const IngestionAskAnswerBodySchema = IngestionAskAnswerBody;

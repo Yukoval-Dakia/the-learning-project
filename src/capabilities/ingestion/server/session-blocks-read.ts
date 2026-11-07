@@ -116,7 +116,7 @@ export async function readIngestionSessionBlocks(db: Db, params: { id: string })
  * missing/in-flight job is the only "waiting" signal — anything else means the session's
  * enrollment has finished and a still-draft block is a failure.
  */
-async function hasInflightAutoEnroll(db: Db, sessionId: string): Promise<boolean> {
+export async function hasInflightAutoEnroll(db: Db, sessionId: string): Promise<boolean> {
   const probe = await db.execute<{ reg: string | null }>(
     sql`select to_regclass('pgboss.job') as reg`,
   );
