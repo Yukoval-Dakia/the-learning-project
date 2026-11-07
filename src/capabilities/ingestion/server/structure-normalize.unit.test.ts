@@ -94,11 +94,18 @@ describe('runStructureTask prompt normalization', () => {
         no: null,
         out: '（1）求 x 的值；（2）求 y 的值',
       },
+      { in: '（1）…（2）…', no: null, out: '（1）…（2）…' },
+      { in: '（1）求x（2）求y', no: null, out: '（1）求x（2）求y' },
+      { in: '（1）由（2）式可得 x', no: null, out: '（1）由（2）式可得 x' },
+      { in: '1234. 计算下列各式。', no: null, out: '1234. 计算下列各式。' },
+      { in: '12.', no: null, out: '12.' },
+      { in: '１２. 求 x 的值', no: null, out: '１２. 求 x 的值' },
       { in: '第三题 计算下列各式。', no: null, out: '第三题 计算下列各式。' },
       { in: '第1234题 计算下列各式。', no: null, out: '第1234题 计算下列各式。' },
       { in: '3. 计算下列各式。', no: '3', out: '计算下列各式。' },
       { in: '第3题 计算下列各式。', no: '3', out: '计算下列各式。' },
       { in: '（2）求 y 的值', no: '2', out: '求 y 的值' },
+      { in: '（1）求 f(2) 的值', no: '1', out: '求 f(2) 的值' },
     ];
     for (const row of cases) {
       const result = await runStructureTask({
