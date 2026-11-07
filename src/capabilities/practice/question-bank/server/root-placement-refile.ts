@@ -285,26 +285,29 @@ async function applyOneMove(
     .returning({ id: question.id });
   if (updated.length === 0) return { status: 'skip:changed', detail: 'row changed under CAS' };
 
-  const eventId = createId();
   const enrolledKnowledgeIds = new Set<string>();
-  const enroll = async (draftStatus: string | null) => {
+  const enroll = async (draftStatus: string | null, evidenceEventId: string) => {
     if (draftStatus === 'draft') return;
     for (const id of await enrollAddedKnowledgeScheduling(tx, {
       knowledgeIds: [node.id],
-      evidenceEventId: eventId,
+      evidenceEventId,
       now,
     })) {
       enrolledKnowledgeIds.add(id);
     }
   };
+  // The evidence id enrolled into material_fsrs_state must be the id of the
+  // refile event actually written for the same question — mint it first, then
+  // enroll, then write the event under that id inside the same transaction.
   const writeRefileEvent = (
+    eventId: string,
     questionId: string,
     beforeIds: string[],
     previousVersion: number,
     extra?: Record<string, unknown>,
   ) =>
     writeEvent(tx, {
-      id: createId(),
+      id: eventId,
       session_id: null,
       actor_kind: 'system',
       actor_ref: 'root_placement_refile',
@@ -338,14 +341,16 @@ async function applyOneMove(
       )
       .returning({ id: question.id });
     if (moved.length === 0) continue;
-    await enroll(part.draftStatus);
-    await writeRefileEvent(part.id, part.knowledgeIds, part.version, {
+    const partEventId = createId();
+    await enroll(part.draftStatus, partEventId);
+    await writeRefileEvent(partEventId, part.id, part.knowledgeIds, part.version, {
       part_of_question_id: row.id,
     });
   }
 
-  await enroll(row.draftStatus);
-  await writeRefileEvent(row.id, row.knowledgeIds, row.version, {
+  const rowEventId = createId();
+  await enroll(row.draftStatus, rowEventId);
+  await writeRefileEvent(rowEventId, row.id, row.knowledgeIds, row.version, {
     ...(enrolledKnowledgeIds.size > 0
       ? { enrolled_knowledge_ids: [...enrolledKnowledgeIds].sort() }
       : {}),

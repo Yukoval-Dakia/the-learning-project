@@ -392,7 +392,8 @@ function isBatchUndoKind(kind: string): kind is AutoAppliedBatchUndoKind {
 /**
  * Take the owner row locks the retract appliers will need, before the batch guard
  * reads owner state. Lock order is fixed by the caller: proposal decision lock →
- * owner rows (ascending id) → the applier's own locks, which are already held.
+ * shared learning-state write lock → owner rows (ascending id) → the applier's
+ * own locks, which are already held or re-entrant.
  *
  * Only the row set the applier will mutate is locked. Content that references the
  * target through JSONB (questions, records, goals, note labels) has no row to lock;

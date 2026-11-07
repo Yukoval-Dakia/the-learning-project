@@ -198,22 +198,22 @@ export async function retractKnowledgeCreate(
     refs.map((row) => row.id),
   );
   const foreign = refs.filter((row) => !isAutoOwnedAttachment(row, nodeId, changes));
-  if (foreign.length > 0) {
-    throw new ApiError(
+  const attachedConflict = () =>
+    new ApiError(
       'conflict',
       '已经有题目挂在这个知识点上，撤销会让它们失去归属，所以先保留了。',
       409,
     );
-  }
+  if (foreign.length > 0) throw attachedConflict();
+  // Auto-owned rows are attached to exactly [nodeId]; without a live root
+  // ancestor there is nowhere to return them, so the retract blocks whole
+  // (same outcome the batch classifier produces) instead of leaving the
+  // questions pointing at an archived node id.
+  if (refs.length > 0 && refileRoot == null) throw attachedConflict();
 
   for (const row of refs) {
     const next = row.knowledgeIds.filter((id) => id !== nodeId);
-    if (next.length === 0) {
-      // Without a live root ancestor there is nowhere to return to; leave the
-      // pointer rather than emptying the attribution.
-      if (!refileRoot) continue;
-      next.push(refileRoot);
-    }
+    if (refileRoot) next.push(refileRoot);
     const nextVersion = row.version + 1;
     await tx
       .update(question)
