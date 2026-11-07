@@ -7,7 +7,6 @@
       "!**/coverage",
       "!**/drizzle",
       "!docs",
-      "!docs/**",
       "!src/ui/lib/api-schema.generated.ts",
       "!server/start/routeTree.gen.ts",
       "!**/getting-started-with-browserbase",
