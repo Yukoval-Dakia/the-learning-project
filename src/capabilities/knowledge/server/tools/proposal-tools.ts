@@ -7,10 +7,12 @@ import {
   checkProposalCooldownGate,
   writeKnowledgeEdgeProposal,
 } from '@/capabilities/knowledge/server/edge-proposal-write';
+import { findLiveSameNameKnowledgeNodes } from '@/capabilities/knowledge/server/knowledge-name-dedup';
 import {
   knowledgeMutationCooldown,
   writeKnowledgeProposeEvent,
 } from '@/capabilities/knowledge/server/proposals';
+import { normalizeKnowledgeNodeName } from '@/core/knowledge-name';
 import { RelationTypeSchema } from '@/core/schema/event/blocks';
 // P5.6 / YUK-178 — model-labeled proactive/corrective discriminator.
 import { SuggestionKind } from '@/core/schema/event/known';
@@ -307,8 +309,13 @@ const KnowledgeMutationOutputSchema = z.object({
     'skipped:duplicate_pending',
     // YUK-1553 — an active dismiss-cooldown covers this key.
     'skipped:cooldown',
+    // A live node already exists under this parent with the same normalized
+    // name; reuse the returned node_id instead of proposing a duplicate.
+    'skipped:already_exists',
   ]),
   proposal_id: z.string().optional(),
+  // skipped:already_exists — the existing live node's id, attachable directly.
+  node_id: z.string().optional(),
   cooldown_key: z.string().optional(),
   cooldown_until: z.string().optional(),
   reason: z.string().optional(),
@@ -414,6 +421,24 @@ async function proposeKnowledgeMutationExecute(
   // YUK-1553 — dedup reads + write in one advisory-locked txn so retries skip
   // instead of stacking inbox rows.
   return await withProposalGateLock(ctx.db, gate.kind, gate.cooldownKeys, async (tx) => {
+    // A live same-named node beats any pending/cooldown state: reuse its id so
+    // the caller can attach content this turn instead of waiting for an apply.
+    if (change.mutation === 'propose_new') {
+      const [existing] = await findLiveSameNameKnowledgeNodes(tx, {
+        name: change.name,
+        parentId: change.parent_id,
+        ...(change.parent_id === null
+          ? { domain: sanitizeProposedNodeDomain(change.domain) ?? undefined }
+          : {}),
+      });
+      if (existing) {
+        return {
+          status: 'skipped:already_exists',
+          node_id: existing.id,
+          reason: `a live node already exists here with the normalized name '${normalizeKnowledgeNodeName(change.name)}'`,
+        };
+      }
+    }
     const skip = await checkProposalCooldownGate(tx, gate.kind, gate.cooldownKeys);
     if (skip) {
       return {
@@ -434,7 +459,7 @@ export const proposeKnowledgeMutationTool: DomainTool<
 > = {
   name: 'propose_knowledge_mutation',
   description:
-    "Propose one knowledge tree mutation. Creating a new node (propose_new) is auto-applied by the automated lane shortly after this call returns — no user confirmation step; the node is still reversible from the inbox undo window. reparent/merge/split/archive remain human-reviewed. Input: {change, learner_summary, reasoning, evidence_event_ids?}. change.mutation picks the branch: propose_new {name, parent_id} — parent_id=null + domain proposes a NEW subject root; a child uses an existing node id and omits domain. reparent {node_id, new_parent_id, expected_version}. merge {from_ids, into_id, expected_versions:{id:version} for every from_id}. split {from_id, into:[{name,parent_id}], expected_version}. archive {node_id, expected_version}. expected_version(s) are CAS tokens — copy the node's current `version` from query_knowledge / the tree input. Results starting with skipped: mean the proposal was NOT written — do not retry the same change. learner_summary is one plain Chinese sentence (max 80 chars) for the learner — state WHAT this proposal will do and WHY. Never put node ids, tool names, or English field names (for example propose_knowledge_mutation, expected_version, children=0) in learner_summary; technical evidence belongs in reasoning/evidence_event_ids. A hard failure beginning with learner_summary_rejected means only that sentence must be rewritten before retrying.",
+    "Propose one knowledge tree mutation. Creating a new node (propose_new) is auto-applied by the automated lane shortly after this call returns — no user confirmation step; the node is still reversible from the inbox undo window. reparent/merge/split/archive remain human-reviewed. Input: {change, learner_summary, reasoning, evidence_event_ids?}. change.mutation picks the branch: propose_new {name, parent_id} — parent_id=null + domain proposes a NEW subject root; a child uses an existing node id and omits domain. reparent {node_id, new_parent_id, expected_version}. merge {from_ids, into_id, expected_versions:{id:version} for every from_id}. split {from_id, into:[{name,parent_id}], expected_version}. archive {node_id, expected_version}. expected_version(s) are CAS tokens — copy the node's current `version` from query_knowledge / the tree input. Results starting with skipped: mean the proposal was NOT written — do not retry the same change. For propose_new, 'skipped:already_exists' returns node_id of a live same-name node — attach content directly to it (e.g. author_question knowledge_ids) instead of waiting for an apply. learner_summary is one plain Chinese sentence (max 80 chars) for the learner — state WHAT this proposal will do and WHY. Never put node ids, tool names, or English field names (for example propose_knowledge_mutation, expected_version, children=0) in learner_summary; technical evidence belongs in reasoning/evidence_event_ids. A hard failure beginning with learner_summary_rejected means only that sentence must be rewritten before retrying.",
   effect: 'propose',
   inputSchema: KnowledgeMutationInputSchema,
   outputSchema: KnowledgeMutationOutputSchema,
