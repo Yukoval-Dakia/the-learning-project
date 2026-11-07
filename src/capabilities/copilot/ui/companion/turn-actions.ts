@@ -9,6 +9,7 @@ import { plainRevertError } from './plain-errors';
 export interface TurnActions {
   revert: (checkpointEventId: string) => Promise<void>;
   retryRefresh: () => Promise<void>;
+  dismissError: () => void;
   acceptCorrectiveChip: (
     sessionId: string,
     questionId: string,
@@ -83,6 +84,7 @@ export function createTurnActions(ctx: CompanionCtx): TurnActions {
   return {
     revert,
     retryRefresh,
+    dismissError: () => ctx.set({ error: null }),
     acceptCorrectiveChip,
     selectCorrection: (turnId, turnNumber) => ctx.set({ correctionTarget: { turnId, turnNumber } }),
     clearCorrection: () => ctx.set({ correctionTarget: null }),

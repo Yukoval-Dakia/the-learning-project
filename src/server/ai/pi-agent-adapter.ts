@@ -32,6 +32,7 @@ import { NO_PROGRESS_BUDGET_LANDING_MARGIN_MS } from '@/ai/no-progress-loop';
 import { type PiToolMount, piCustomTool } from '@/ai/pi-tool-mount';
 import { type TaskDefinition, resolveStructuredSubmitSchema } from '@/ai/task-spec';
 import { tasks } from '@/capabilities/task-registry';
+import { customProviderDefinitions } from '@/core/config/custom-providers';
 import { getConfig } from '@/core/config/store';
 import { rawArgumentsEvidence } from '@/core/raw-arguments-evidence';
 import { type PiSubagentSpec, isSpawnToolName } from '@/core/subagent-contract';
@@ -960,6 +961,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
 export class PiAgentAdapter implements ExecutionAdapter {
   readonly id = 'pi' as const;
   private resolved: Required<PiAdapterDeps> | undefined;
+  private customProvidersStamp: string | undefined;
 
   constructor(private readonly init: PiAdapterDeps = {}) {}
 
@@ -970,6 +972,7 @@ export class PiAgentAdapter implements ExecutionAdapter {
    * the migrate container at load.
    */
   private async resolveDeps(): Promise<Required<PiAdapterDeps>> {
+    const customProvidersStamp = JSON.stringify(customProviderDefinitions());
     if (this.resolved === undefined) {
       // Each import evaluates only when its injected dep is absent.
       this.resolved = {
@@ -979,6 +982,13 @@ export class PiAgentAdapter implements ExecutionAdapter {
         agentLoop: this.init.agentLoop ?? (await import('@earendil-works/pi-agent-core')).agentLoop,
         connectRemoteMcp: this.init.connectRemoteMcp ?? connectPiRemoteMcp,
       };
+      this.customProvidersStamp = customProvidersStamp;
+    } else if (!this.init.models && this.customProvidersStamp !== customProvidersStamp) {
+      // Pi registers provider transports/auth once; live catalog facts alone
+      // cannot add a provider or replace its protocol/credential binding.
+      const models = await createLoomPiModels();
+      this.resolved = { ...this.resolved, models };
+      this.customProvidersStamp = customProvidersStamp;
     }
     return this.resolved;
   }
