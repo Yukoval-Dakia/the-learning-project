@@ -252,35 +252,82 @@ async function applyOneMove(
     .set({ knowledge_ids: [node.id], updated_at: now, version: nextVersion })
     .where(eq(question.id, row.id));
 
+  // Generated parts snapshot the parent's persisted labels at materialization;
+  // a part still pointing at the same synthetic root follows the parent, while
+  // one edited to other ids counts as a deliberate placement and stays.
+  const parts = await tx
+    .select({
+      id: question.id,
+      knowledgeIds: question.knowledge_ids,
+      version: question.version,
+      draftStatus: question.draft_status,
+    })
+    .from(question)
+    .where(
+      and(
+        eq(question.parent_question_id, row.id),
+        sql`${question.knowledge_ids} = jsonb_build_array(${candidate.rootId})`,
+      ),
+    )
+    .orderBy(asc(question.id))
+    .for('update');
+
   const eventId = createId();
-  const enrolledKnowledgeIds =
-    row.draftStatus !== 'draft'
-      ? await enrollAddedKnowledgeScheduling(tx, {
-          knowledgeIds: [node.id],
-          evidenceEventId: eventId,
-          now,
-        })
-      : [];
-  await writeEvent(tx, {
-    id: eventId,
-    session_id: null,
-    actor_kind: 'system',
-    actor_ref: 'root_placement_refile',
-    action: QUESTION_EDIT_ACTION,
-    subject_kind: 'question',
-    subject_id: row.id,
-    outcome: 'success',
-    payload: {
-      question_id: row.id,
-      previous_version: row.version,
-      next_version: nextVersion,
-      before: { knowledge_ids: row.knowledgeIds },
-      after: { knowledge_ids: [node.id] },
-      reason: 'root_placement_refile',
-      learner_topic: row.learnerTopic,
-      matched_node_name: node.name,
-      ...(enrolledKnowledgeIds.length > 0 ? { enrolled_knowledge_ids: enrolledKnowledgeIds } : {}),
-    },
+  const enrolledKnowledgeIds = new Set<string>();
+  const enroll = async (draftStatus: string | null) => {
+    if (draftStatus === 'draft') return;
+    for (const id of await enrollAddedKnowledgeScheduling(tx, {
+      knowledgeIds: [node.id],
+      evidenceEventId: eventId,
+      now,
+    })) {
+      enrolledKnowledgeIds.add(id);
+    }
+  };
+  const writeRefileEvent = (
+    questionId: string,
+    beforeIds: string[],
+    previousVersion: number,
+    extra?: Record<string, unknown>,
+  ) =>
+    writeEvent(tx, {
+      id: createId(),
+      session_id: null,
+      actor_kind: 'system',
+      actor_ref: 'root_placement_refile',
+      action: QUESTION_EDIT_ACTION,
+      subject_kind: 'question',
+      subject_id: questionId,
+      outcome: 'success',
+      payload: {
+        question_id: questionId,
+        previous_version: previousVersion,
+        next_version: previousVersion + 1,
+        before: { knowledge_ids: beforeIds },
+        after: { knowledge_ids: [node.id] },
+        reason: 'root_placement_refile',
+        learner_topic: row.learnerTopic,
+        matched_node_name: node.name,
+        ...extra,
+      },
+    });
+
+  for (const part of parts) {
+    await tx
+      .update(question)
+      .set({ knowledge_ids: [node.id], updated_at: now, version: part.version + 1 })
+      .where(eq(question.id, part.id));
+    await enroll(part.draftStatus);
+    await writeRefileEvent(part.id, part.knowledgeIds, part.version, {
+      part_of_question_id: row.id,
+    });
+  }
+
+  await enroll(row.draftStatus);
+  await writeRefileEvent(row.id, row.knowledgeIds, row.version, {
+    ...(enrolledKnowledgeIds.size > 0
+      ? { enrolled_knowledge_ids: [...enrolledKnowledgeIds].sort() }
+      : {}),
   });
   return { status: 'moved' };
 }
