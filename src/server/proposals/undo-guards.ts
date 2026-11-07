@@ -25,8 +25,8 @@ import {
 } from '@/capabilities/notes/public';
 import {
   causeCategoryUndoGuard,
-  knowledgeNodesWithMisconceptionEdges,
   knowledgeNodesWithLearningRecords,
+  knowledgeNodesWithMisconceptionEdges,
   knowledgeNodesWithPlacementClaims,
   learningItemsWithAnswerDrafts,
   learningItemsWithLearningRecords,
