@@ -15,10 +15,6 @@ import {
   unitDimensionFallbackTaskSpec,
 } from '../grading/tasks/judges';
 import { sourceGroundingVerifyTaskSpec } from '../grading/tasks/source-grounding-verify';
-import {
-  bankConditionVerifyTaskSpec,
-  bankRequirementInterpretTaskSpec,
-} from '../question-bank/tasks/bank-search-semantic';
 import { itemPriorLlasaTaskSpec, itemPriorTaskSpec } from '../question-bank/tasks/item-prior';
 import { questionAdmissionAdjudicateTaskSpec } from '../question-bank/tasks/question-admission-adjudicate';
 import { questionAdmissionSolveTaskSpec } from '../question-bank/tasks/question-admission-solve';
@@ -37,8 +33,6 @@ import { teachingQualityTaskSpec } from './teaching-quality';
 
 export const practiceTaskSpecs = defineOwnedTaskSpecs('practice', {
   QuestionPreparerTask: questionPreparerTaskSpec,
-  BankRequirementInterpretTask: bankRequirementInterpretTaskSpec,
-  BankConditionVerifyTask: bankConditionVerifyTaskSpec,
   AttributionTask: attributionTaskSpec,
   AttributionRerankTask: attributionRerankTaskSpec,
   CauseCategoryProposeTask: causeCategoryProposeTaskSpec,

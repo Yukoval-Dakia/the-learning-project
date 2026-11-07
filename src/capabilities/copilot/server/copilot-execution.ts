@@ -19,6 +19,7 @@ import { readDerivationPolicy } from '@/core/schema/derivation-policy';
 import type { PiAfterToolCall } from '@/core/tool-call-contract';
 import type { Db } from '@/db/client';
 import { chartPublishedAfterBinding } from '@/kernel/blocks/chart';
+import { projectLearnerToolInput } from '@/kernel/learning-content';
 import { recordAiTaskReplyUnsealed } from '@/kernel/records/ai-attempt-facts';
 import {
   DOMAIN_TOOL_MCP_SERVER_NAME,
@@ -447,9 +448,13 @@ export function createCopilotExecutionOwner(
         }
       },
       onToolComplete: (result) => {
-        void Promise.resolve(emitActivity(policy, { kind: 'tool_finished', ...result })).catch(
-          () => undefined,
-        );
+        void Promise.resolve(
+          emitActivity(policy, {
+            kind: 'tool_finished',
+            ...result,
+            input: projectLearnerToolInput(result.toolName, result.input),
+          }),
+        ).catch(() => undefined);
       },
     } satisfies BuildMcpServerOptions;
     const exa = answerOnly ? null : adapters.buildExaMcpServerFn();
@@ -538,7 +543,7 @@ export function createCopilotExecutionOwner(
         emitActivity(policy, {
           kind: 'tool_finished',
           toolName: observation.call.name,
-          input: observation.args,
+          input: projectLearnerToolInput(observation.call.name, observation.args),
           summary: summaryText.slice(0, 180),
           ...(observation.isError
             ? { errorReason: piToolErrorText(observation.error).slice(0, 500) }
@@ -706,9 +711,13 @@ export function createCopilotExecutionOwner(
         if (!shouldEmitToolUseForCaller(call.toolName, DOMAIN_TOOL_MCP_SERVER_NAME, callerActor)) {
           return;
         }
-        void Promise.resolve(emitActivity(policy, { kind: 'tool_started', ...call })).catch(
-          () => undefined,
-        );
+        void Promise.resolve(
+          emitActivity(policy, {
+            kind: 'tool_started',
+            ...call,
+            input: projectLearnerToolInput(call.toolName, call.input),
+          }),
+        ).catch(() => undefined);
       },
       onToolArgsDelta: (delta) => {
         thinkingAnnounced = false;

@@ -28,6 +28,7 @@ import {
   assessment_submission,
   question,
   question_revision,
+  question_solution_prior,
   source_asset,
 } from '@/db/schema';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
@@ -40,6 +41,7 @@ import {
 
 export const READ_BANK_INCLUDE_VALUES = [
   'overview',
+  'solution_prior',
   'content',
   'materials',
   'answers',
@@ -253,6 +255,20 @@ const ReadBankOkItemSchema = z.object({
       escalation: z.record(z.string(), z.unknown()).optional(),
     })
     .optional(),
+  solution_prior: z
+    .array(
+      z.object({
+        part_id: z.string(),
+        source: z.string(),
+        text: z.string(),
+        extent: z.object({
+          complete: z.boolean(),
+          remaining: z.number(),
+          next_cursor: z.string().nullable(),
+        }),
+      }),
+    )
+    .optional(),
   /** focus 命中的子树列表（target 寻址返回；未命中项进 coverage.unavailable）。 */
   focused: z
     .array(
@@ -351,6 +367,7 @@ export function bankReadRoleForActor(actor: ToolContext['callerActor'] | undefin
  * answers 携带 criterion 字面值（select_key/blank_key）；metadata 是未版本化的
  * 工作副本投影 —— 两者对 restricted 同样私有。 */
 const PRIVATE_INCLUDE_LAYERS = new Set<ReadBankInclude>([
+  'solution_prior',
   'answers',
   'rubric',
   'scoring',
@@ -568,6 +585,18 @@ export async function runReadBank(
 
   // ── 批量辅助数据（仅 include 需要的才查）──
   const groupIds = [...new Set(okResolutions.map((r) => r.revision.group_id))];
+
+  const priorRows = include.has('solution_prior')
+    ? await db
+        .select()
+        .from(question_solution_prior)
+        .where(
+          inArray(
+            question_solution_prior.revision_id,
+            okResolutions.map((r) => r.revision.revision_id),
+          ),
+        )
+    : [];
 
   const rootRows =
     include.has('source') || include.has('metadata')
@@ -801,6 +830,37 @@ export async function runReadBank(
       }
     }
 
+    const priorProjection = include.has('solution_prior')
+      ? priorRows
+          .filter((p) => p.revision_id === revision.revision_id)
+          .filter(
+            (p) =>
+              !input.focus?.length ||
+              input.focus.some(
+                (f) =>
+                  (!f.ref || f.ref === resolution.raw) && f.kind === 'part' && f.id === p.part_id,
+              ),
+          )
+          .map((p) => {
+            const source = `prior:${p.part_id}`;
+            const ext = applyExtent(JSON.stringify(p.prior), cursorForRef, extentChars, {
+              pin: revision.revision_id,
+              ref: resolution.raw,
+              layer: source,
+            });
+            takeCursor(ext.next_cursor);
+            return {
+              part_id: p.part_id,
+              source,
+              text: ext.text,
+              extent: {
+                complete: ext.complete,
+                remaining: ext.remaining,
+                next_cursor: ext.next_cursor,
+              },
+            };
+          })
+      : undefined;
     const item: ReadBankOkItem = {
       ref: resolution.raw,
       status: 'ok',
@@ -827,6 +887,7 @@ export async function runReadBank(
               )
             : null,
       },
+      ...(priorProjection ? { solution_prior: priorProjection } : {}),
       ...(include.has('overview')
         ? {
             overview: {
@@ -1008,7 +1069,7 @@ async function executeReadBank(ctx: ToolContext, rawInput: ReadBankInput): Promi
 export const readBankTool: DomainTool<ReadBankInput, ReadBankOutput> = {
   name: 'read_bank',
   description:
-    'Fetch versioned question/group content by bank ref (qrev1:<revision_id>:<digest12> — the `ref` strings search_bank returns). Batch up to 20 refs; each resolves independently (partial success is normal). A ref that cannot be resolved, whose digest no longer matches, or whose group was withdrawn returns an explicit error for that ref — NEVER a silent fallback to latest. Default response is an overview (nav map of part/unit/material/slot stable ids — usable directly as edit_question targets); expand via include layers: content (parts + answer slots) / materials / answers (typed keys) / rubric / scoring (merged answers+rubric+execution) / source / relations / execution / metadata. focus narrows a read to part/unit/material/item/slot subtrees; extent.chars + next_cursor continue long text pinned to the read revision. A withdrawn revision is readable with a bound submission_id (old attempts read their exact frozen revision, marked historical + new_issuance_allowed=false) or a private role. answers/metadata/rubric/scoring/execution and private-visibility materials are role-gated by the server — include can never upgrade a role; denied layers are reported in denied_layers.',
+    'Fetch versioned question/group content by bank ref (qrev1:<revision_id>:<digest12> — the `ref` strings search_bank returns). Batch up to 20 refs; each resolves independently (partial success is normal). A ref that cannot be resolved, whose digest no longer matches, or whose group was withdrawn returns an explicit error for that ref — NEVER a silent fallback to latest. Default response is an overview (nav map of part/unit/material/slot stable ids — usable directly as edit_question targets); expand via include layers: content (parts + answer slots) / materials / answers (typed keys) / rubric / scoring (merged answers+rubric+execution) / source / relations / execution / metadata / solution_prior (same-version method and pitfall evidence with source ids; long text uses extent/cursor). focus narrows a read to part/unit/material/item/slot subtrees; extent.chars + next_cursor continue long text pinned to the read revision. A withdrawn revision is readable with a bound submission_id (old attempts read their exact frozen revision, marked historical + new_issuance_allowed=false) or a private role. answers/metadata/rubric/scoring/execution/solution_prior and private-visibility materials are role-gated by the server — include can never upgrade a role; denied layers are reported in denied_layers.',
   effect: 'read',
   inputSchema: ReadBankInputSchema,
   outputSchema: ReadBankOutputSchema,

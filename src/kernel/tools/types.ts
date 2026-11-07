@@ -13,6 +13,7 @@
 import { z } from 'zod';
 import type { DerivationPolicyT } from '@/core/schema/derivation-policy';
 import type { Db, Tx } from '@/db/client';
+import type { EvidenceDemandV1T } from '@/kernel/supply-contracts';
 import type { TurnSourceLedger } from './source-ledger';
 
 export type ToolEffect = 'read' | 'propose' | 'write' | 'control';
@@ -92,6 +93,8 @@ export interface ToolCallerActor {
 }
 
 export interface ToolContext {
+  /** Validated preparation ticket supplied by the server, never model arguments. */
+  supplyDemand?: EvidenceDemandV1T;
   /** Original execution owner authorizes the actual write transaction. */
   beforeIngestionWrite?: (tx: Tx) => Promise<void>;
   derivationPolicy?: DerivationPolicyT;

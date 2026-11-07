@@ -239,7 +239,9 @@ export function isPendingAdmission(
 ) {
   return (
     lifecycle?.scoring_admission_state === 'withheld' &&
-    lifecycle.scoring_admission_withheld_reason === 'unverified_rules' &&
+    ['unverified_rules', 'verification_pending'].includes(
+      lifecycle.scoring_admission_withheld_reason ?? '',
+    ) &&
     !lifecycle.withdrawn &&
     !lifecycle.suspended
   );

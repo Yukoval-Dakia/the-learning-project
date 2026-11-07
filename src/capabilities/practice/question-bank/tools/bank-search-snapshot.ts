@@ -3,108 +3,79 @@ import { and, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { canonicalHash } from '@/core/migration/canonical';
 import type { Db, Tx } from '@/db/client';
-import { bank_search_snapshot, item_calibration, question, source_asset } from '@/db/schema';
+import {
+  bank_search_snapshot,
+  item_calibration,
+  question,
+  question_group_lifecycle,
+  source_asset,
+} from '@/db/schema';
+import { getFailureAttemptsForDerivation } from '@/kernel/read-models/failure-attempts';
+import { getAttemptedQuestionIds } from '@/kernel/read-models/question-activity';
 import type { ToolContext } from '@/kernel/tools/types';
 import { readBankServableParts, resolveBankRefs } from './bank-ref';
 import {
-  BANK_SEMANTIC_POLICY,
-  BankSearchV2Error,
-  type BankSearchV2New,
-  type BankSearchV2Output,
-  BankSearchV2OutputSchema,
-} from './bank-requirements';
-import { bankGapEvidenceSigningSecret } from './bank-search';
+  BankGapRequestSchema,
+  type BankSearchScope,
+  bankGapEvidenceSigningSecret,
+  mintBankGapEvidenceMac,
+} from './bank-search';
+import {
+  BANK_SEARCH_POLICY,
+  type BankAssessment,
+  BankAssessmentSchema,
+  type BankDocument,
+  BankSearchError,
+  BankSearchOutputSchema,
+  type BankSearchOutputV3,
+  type SearchBankInput,
+} from './bank-search-contract';
 import { resolveBankSearchScope } from './bank-search-scope';
 import { bankReadRoleForActor } from './read-bank';
 
+export type BankSnapshotBinding = { question_id: string; ref: string | null; state_digest: string };
+export type BankReceipt = {
+  version: 3;
+  policy: string;
+  owner_run: string;
+  request: SearchBankInput;
+  scope: BankSearchScope;
+  scope_digest: string;
+  demand_digest: string | null;
+  output: BankSearchOutputV3;
+  bindings: BankSnapshotBinding[];
+  documents: BankDocument[];
+};
 const TTL = 15 * 60_000;
-const BindingSchema = z
-  .object({ question_id: z.string(), ref: z.string().nullable(), state_digest: z.string() })
-  .strict();
-export type BankSnapshotBinding = z.infer<typeof BindingSchema>;
-const PayloadSchema = z
-  .object({
-    output: BankSearchV2OutputSchema,
-    bindings: z.array(BindingSchema),
-    scope_digest: z.string(),
-  })
-  .strict();
-const CursorSchema = z
-  .object({
-    v: z.literal('bank-search-semantic-2'),
-    search_id: z.uuid(),
-    actor: z.string(),
-    role: z.string(),
-    request_digest: z.string().regex(/^[a-f0-9]{64}$/),
-    result_digest: z.string().regex(/^[a-f0-9]{64}$/),
-    offset: z.number().int().nonnegative(),
-    expires: z.number().int().positive(),
-  })
-  .strict();
-function actorKey(ctx: ToolContext): string {
-  return `${ctx.callerActor.kind}:${ctx.callerActor.ref}`;
+const actorKey = (ctx: Pick<ToolContext, 'callerActor'>) =>
+  `${ctx.callerActor.kind}:${ctx.callerActor.ref}`;
+function signingKey() {
+  const key = bankGapEvidenceSigningSecret();
+  if (!key) throw new BankSearchError('Bank evidence signing key unavailable');
+  return key;
 }
-export function requireBankSnapshotSigningKey(): string {
-  const secret = bankGapEvidenceSigningSecret();
-  if (!secret)
-    throw new BankSearchV2Error(
-      'snapshot_signing_unavailable',
-      'Server-only bank evidence signing key is unavailable; no semantic task was started.',
-    );
-  return secret;
+function mac(body: string) {
+  return createHmac('sha256', signingKey()).update(`bank-search:v3:${body}`).digest('hex');
 }
-function sign(body: string, key: string): string {
-  return createHmac('sha256', key).update(`bank-search-semantic-cursor:v2:${body}`).digest('hex');
-}
-function cursorFor(
-  ctx: ToolContext,
-  output: BankSearchV2Output,
-  offset: number,
-  key: string,
-): string {
-  const body = Buffer.from(
-    JSON.stringify({
-      v: 'bank-search-semantic-2',
-      search_id: output.search_id,
-      actor: actorKey(ctx),
-      role: bankReadRoleForActor(ctx.callerActor),
-      request_digest: output.request_digest,
-      result_digest: output.result_digest,
-      offset,
-      expires: Date.parse(output.expires_at),
-    }),
-    'utf8',
-  ).toString('base64url');
-  return `${body}.${sign(body, key)}`;
-}
-function page(
-  ctx: ToolContext,
-  output: BankSearchV2Output,
-  offset: number,
-  key: string,
-): BankSearchV2Output {
-  const size = output.page.page_size;
-  const hits = output.hits.slice(offset, offset + size);
-  const hasMore = offset + hits.length < output.hits.length;
+function page(receipt: BankReceipt, offset: number): BankSearchOutputV3 {
+  const count = receipt.request.page_size ?? 5;
+  const hits = receipt.output.hits.slice(offset, offset + count);
+  const next = offset + hits.length;
+  const body = Buffer.from(JSON.stringify({ id: receipt.output.search_id, offset: next })).toString(
+    'base64url',
+  );
   return {
-    ...output,
+    ...receipt.output,
     hits,
-    page: {
-      page_size: size,
-      offset,
-      has_more: hasMore,
-      next_cursor: hasMore ? cursorFor(ctx, output, offset + size, key) : null,
-    },
+    next_cursor: next < receipt.output.hits.length ? `${body}.${mac(body)}` : null,
   };
 }
-
-/** Current visibility/lifecycle/real-serving state is independent of model
- * claims. Include asset identity so removing a necessary image expires a page. */
 export async function captureBankSnapshotBindings(
   db: Db | Tx,
   identities: Array<{ question_id: string; ref: string | null }>,
   actor: ToolContext['callerActor'],
   calibrated = false,
+  knownServable?: ReadonlyMap<string, string[]>,
 ): Promise<BankSnapshotBinding[]> {
   if (!identities.length) return [];
   const ids = [...new Set(identities.map((h) => h.question_id))];
@@ -129,7 +100,15 @@ export async function captureBankSnapshotBindings(
     identities.flatMap((h) => (h.ref ? [h.ref] : [])),
   );
   const refs = new Map(resolutions.map((r) => [r.raw, r]));
-  const servable = await readBankServableParts(db, ids);
+  // Only issuance decisions from this exact read snapshot may be reused.
+  // Validation calls omit the cache and always read current serving state.
+  const servable = new Map([
+    ...(knownServable ?? []),
+    ...(await readBankServableParts(
+      db,
+      ids.filter((id) => !knownServable?.has(id)),
+    )),
+  ]);
   const calibrations = calibrated
     ? await db
         .select({
@@ -188,160 +167,314 @@ export async function captureBankSnapshotBindings(
     };
   });
 }
-export async function bankSnapshotScopeDigest(
+
+async function validateReceipt(
   db: Db | Tx,
-  input: BankSearchV2New,
-): Promise<string> {
-  try {
-    return canonicalHash(
-      await resolveBankSearchScope(db, {
-        ...input.scope,
-        draft_state: input.scope?.draft_state ?? (input.use === 'practice' ? 'active' : 'all'),
-        admission_state:
-          input.use === 'practice' ? 'admitted' : (input.scope?.admission_state ?? 'any'),
-      }),
-    );
-  } catch {
-    throw new BankSearchV2Error(
-      'snapshot_stale',
-      'The original hard scope or its authorized references changed; start a new search.',
-    );
+  ctx: Pick<ToolContext, 'callerActor' | 'taskRunId' | 'supplyDemand'>,
+  receipt: BankReceipt,
+  lock: boolean,
+) {
+  if (lock && receipt.bindings.length) {
+    const ids = [...new Set(receipt.bindings.map((b) => b.question_id))].sort();
+    await db
+      .select({ id: question.id })
+      .from(question)
+      .where(inArray(question.id, ids))
+      .orderBy(question.id)
+      .for('update');
+    await db
+      .select({ id: question_group_lifecycle.group_id })
+      .from(question_group_lifecycle)
+      .where(inArray(question_group_lifecycle.group_id, ids))
+      .orderBy(question_group_lifecycle.group_id)
+      .for('update');
   }
+  if (canonicalHash(await resolveBankSearchScope(db, receipt.scope)) !== receipt.scope_digest)
+    throw new BankSearchError('Bank evidence stale: hard scope changed');
+  const history = receipt.request.filters?.history;
+  if (history && history !== 'any') {
+    const ids = new Set(
+      history === 'wrong'
+        ? (await getFailureAttemptsForDerivation(db, { limit: null })).map((r) => r.question_id)
+        : await getAttemptedQuestionIds(db),
+    );
+    if (receipt.output.hits.some((h) => (history === 'wrong' ? !ids.has(h.id) : ids.has(h.id))))
+      throw new BankSearchError('Bank evidence stale: learner history changed');
+  }
+  const now = await captureBankSnapshotBindings(
+    db,
+    receipt.bindings,
+    ctx.callerActor,
+    receipt.scope.difficulty?.basis === 'calibrated',
+  );
+  if (canonicalHash(now) !== canonicalHash(receipt.bindings))
+    throw new BankSearchError(
+      'Bank evidence stale: revision, content, materials or serving state changed',
+    );
 }
 
-async function validateBindings(
+/** Consumers call under their write transaction, so referenced rows stay locked through issuance/claim. */
+async function readBankReceipt(
   db: Db | Tx,
-  bindings: BankSnapshotBinding[],
-  ctx: ToolContext,
-  input: BankSearchV2New,
-): Promise<void> {
-  const current = await captureBankSnapshotBindings(
-    db,
-    bindings.map(({ question_id, ref }) => ({ question_id, ref })),
-    ctx.callerActor,
-    input.scope?.difficulty?.basis === 'calibrated',
-  );
-  if (canonicalHash(current) !== canonicalHash(bindings))
-    throw new BankSearchV2Error(
-      'snapshot_stale',
-      'A candidate/anchor revision, visibility, lifecycle, content or serving state changed; start a new search.',
-    );
+  ctx: Pick<ToolContext, 'callerActor' | 'taskRunId' | 'supplyDemand'>,
+  id: string,
+  lock = false,
+  taskCompletion = false,
+): Promise<BankReceipt> {
+  const [row] = await db
+    .select()
+    .from(bank_search_snapshot)
+    .where(eq(bank_search_snapshot.search_id, id))
+    .limit(1);
+  const ownedTaskCompletion =
+    taskCompletion &&
+    ctx.supplyDemand &&
+    ctx.callerActor.kind === 'agent' &&
+    ctx.callerActor.ref === 'question_preparer';
+  if (!row || (!ownedTaskCompletion && row.expires_at.getTime() <= Date.now()))
+    throw new BankSearchError('Bank evidence expired or absent');
+  if (row.actor_key !== actorKey(ctx) || row.read_role !== bankReadRoleForActor(ctx.callerActor))
+    throw new BankSearchError('Bank evidence belongs to a different actor or read role');
+  const receipt = (row.payload as unknown as { receipt: BankReceipt }).receipt;
+  if (!receipt) throw new BankSearchError('Unsupported bank evidence version');
+  if (
+    receipt.version !== 3 ||
+    receipt.policy !== BANK_SEARCH_POLICY ||
+    receipt.demand_digest !== (ctx.supplyDemand ? canonicalHash(ctx.supplyDemand) : null) ||
+    receipt.owner_run !== ctx.taskRunId ||
+    canonicalHash(receipt) !== row.result_digest ||
+    canonicalHash(receipt.request) !== row.request_digest
+  )
+    throw new BankSearchError('Bank evidence integrity, version or owner mismatch');
+  BankSearchOutputSchema.parse(receipt.output);
+  await validateReceipt(db, ctx, receipt, lock);
+  return receipt;
 }
-export async function storeBankSearchSnapshot(
+export async function saveBankReceipt(
   ctx: ToolContext,
-  output: BankSearchV2Output,
-  bindings: BankSnapshotBinding[],
-  scopeDigest: string,
-): Promise<BankSearchV2Output> {
-  const key = requireBankSnapshotSigningKey();
-  output.result_digest = canonicalHash({ ...output, result_digest: '' });
-  const payload = PayloadSchema.parse({ output, bindings, scope_digest: scopeDigest });
+  receipt: Omit<BankReceipt, 'version' | 'policy' | 'owner_run'>,
+): Promise<BankSearchOutputV3> {
+  signingKey();
+  const full: BankReceipt = {
+    ...receipt,
+    version: 3,
+    policy: BANK_SEARCH_POLICY,
+    owner_run: ctx.taskRunId,
+  };
   await ctx.db.transaction(
     async (tx) => {
-      await validateBindings(tx, bindings, ctx, output.original_request);
-      if ((await bankSnapshotScopeDigest(tx, output.original_request)) !== scopeDigest)
-        throw new BankSearchV2Error(
-          'snapshot_stale',
-          'Hard scope changed during verification; start a new search.',
-        );
+      const asOf = new Date();
       await tx.insert(bank_search_snapshot).values({
-        search_id: output.search_id,
+        search_id: full.output.search_id,
         actor_key: actorKey(ctx),
         read_role: bankReadRoleForActor(ctx.callerActor),
-        request_digest: output.request_digest,
-        result_digest: output.result_digest,
-        payload,
-        as_of: new Date(output.as_of),
-        expires_at: new Date(output.expires_at),
+        request_digest: canonicalHash(full.request),
+        result_digest: canonicalHash(full),
+        payload: { receipt: full, decisions: {} },
+        as_of: asOf,
+        expires_at: new Date(asOf.getTime() + TTL),
       });
+      await tx.execute(
+        sql`DELETE FROM ${bank_search_snapshot} WHERE search_id IN (SELECT search_id FROM ${bank_search_snapshot} WHERE expires_at <= now() - interval '1 day' ORDER BY expires_at LIMIT 10)`,
+      );
     },
     { isolationLevel: 'repeatable read' },
   );
-  return page(ctx, output, 0, key);
+  return page(full, 0);
 }
-export async function resumeBankSearchSnapshot(
-  ctx: ToolContext,
-  raw: string,
-): Promise<BankSearchV2Output> {
-  const key = requireBankSnapshotSigningKey();
-  let cursor: z.infer<typeof CursorSchema>;
-  try {
-    if (raw.length > 6000) throw new Error('oversized');
-    const [body, mac, extra] = raw.split('.');
-    if (!body || !mac || extra || !/^[a-f0-9]{64}$/.test(mac)) throw new Error('shape');
-    const expected = Buffer.from(sign(body, key), 'hex');
-    const actual = Buffer.from(mac, 'hex');
-    if (actual.length !== expected.length || !timingSafeEqual(actual, expected))
-      throw new Error('signature');
-    cursor = CursorSchema.parse(JSON.parse(Buffer.from(body, 'base64url').toString('utf8')));
-  } catch {
-    throw new BankSearchV2Error(
-      'denied',
-      'Invalid or tampered semantic cursor; start a new search.',
-    );
-  }
-  if (cursor.actor !== actorKey(ctx) || cursor.role !== bankReadRoleForActor(ctx.callerActor))
-    throw new BankSearchV2Error('denied', 'Cursor belongs to a different actor or read role.');
-  if (cursor.expires <= Date.now())
-    throw new BankSearchV2Error('snapshot_stale', 'Semantic cursor expired; start a new search.');
+export async function resumeBankSearchSnapshot(ctx: ToolContext, cursor: string) {
+  const [body, signature, extra] = cursor.split('.');
+  const expected = Buffer.from(mac(body ?? ''), 'hex');
+  const actual = Buffer.from(signature ?? '', 'hex');
+  if (!body || extra || actual.length !== expected.length || !timingSafeEqual(actual, expected))
+    throw new BankSearchError('Invalid bank cursor');
+  const parsed = z
+    .object({ id: z.uuid(), offset: z.number().int().positive() })
+    .strict()
+    .parse(JSON.parse(Buffer.from(body, 'base64url').toString('utf8')));
   return ctx.db.transaction(
     async (tx) => {
-      const [row] = await tx
-        .select()
-        .from(bank_search_snapshot)
-        .where(eq(bank_search_snapshot.search_id, cursor.search_id))
-        .limit(1);
-      if (!row || row.expires_at.getTime() <= Date.now())
-        throw new BankSearchV2Error(
-          'snapshot_stale',
-          'Semantic snapshot is expired, cleared or unavailable.',
-        );
+      const receipt = await readBankReceipt(tx, ctx, parsed.id);
       if (
-        row.actor_key !== cursor.actor ||
-        row.read_role !== cursor.role ||
-        row.request_digest !== cursor.request_digest ||
-        row.result_digest !== cursor.result_digest ||
-        row.expires_at.getTime() !== cursor.expires
+        parsed.offset >= receipt.output.hits.length ||
+        parsed.offset % (receipt.request.page_size ?? 5)
       )
-        throw new BankSearchV2Error('denied', 'Cursor does not bind this snapshot/request/result.');
-      const parsed = PayloadSchema.safeParse(row.payload);
-      if (!parsed.success)
-        throw new BankSearchV2Error('snapshot_unavailable', 'Stored semantic snapshot is invalid.');
-      const { output, bindings, scope_digest } = parsed.data;
-      if (output.policy_version !== BANK_SEMANTIC_POLICY)
-        throw new BankSearchV2Error(
-          'snapshot_stale',
-          'Verification policy changed; start a new search.',
-        );
-      if (
-        canonicalHash({ ...output, result_digest: '' }) !== row.result_digest ||
-        output.request_digest !== row.request_digest ||
-        output.search_id !== row.search_id ||
-        cursor.offset >= output.hits.length ||
-        cursor.offset % output.page.page_size !== 0
-      )
-        throw new BankSearchV2Error(
-          'snapshot_unavailable',
-          'Stored snapshot integrity or page offset is invalid.',
-        );
-      await validateBindings(tx, bindings, ctx, output.original_request);
-      if ((await bankSnapshotScopeDigest(tx, output.original_request)) !== scope_digest)
-        throw new BankSearchV2Error(
-          'snapshot_stale',
-          'Hard scope changed after search; start a new search.',
-        );
-      return page(ctx, output, cursor.offset, key);
+        throw new BankSearchError('Invalid bank page offset');
+      return page(receipt, parsed.offset);
     },
     { isolationLevel: 'repeatable read', accessMode: 'read only' },
   );
 }
 
-/** Opportunistic bounded expiry; not a new scheduler or background service. */
-export async function pruneBankSearchSnapshots(db: Db): Promise<void> {
-  await db.execute(
-    sql`DELETE FROM ${bank_search_snapshot} WHERE search_id IN (SELECT search_id FROM ${bank_search_snapshot} WHERE expires_at <= now() ORDER BY expires_at LIMIT 100)`,
-  );
+/** Caller judgments remain attributed opinions; validation proves provenance and scope, not semantic truth. */
+function assessBankReceipt(receipt: BankReceipt, raw: BankAssessment[]) {
+  const assessments = BankAssessmentSchema.array().parse(raw);
+  if (new Set(assessments.map((a) => a.ref)).size !== assessments.length)
+    throw new BankSearchError('Duplicate candidate assessment');
+  const accepted: string[] = [];
+  const acceptedRefs: string[] = [];
+  for (const assessment of assessments) {
+    const hit = receipt.output.hits.find((h) => h.ref === assessment.ref);
+    if (!hit?.available || assessment.parts.some((p) => !hit.parts.includes(p)))
+      throw new BankSearchError('Assessment selects unavailable candidate or foreign part');
+    // Missing input is a deterministic unknown, regardless of a caller's opinion.
+    if (hit.missing.some((m) => assessment.parts.includes(m.part))) {
+      assessment.checks = assessment.checks.map((c) => ({ ...c, verdict: 'unknown' as const }));
+      assessment.joint = { ...assessment.joint, verdict: 'unknown' };
+    }
+    const checks = assessment.checks;
+    if (
+      new Set(checks.map((c) => c.condition)).size !== checks.length ||
+      checks.length !== receipt.output.conditions.length ||
+      checks.some((c) => !receipt.output.conditions.some((r) => r.id === c.condition))
+    )
+      throw new BankSearchError('Each original condition needs exactly one judgment');
+    const validate = (decision: BankAssessment['joint']) => {
+      if (decision.verdict === 'unknown') return;
+      if (!decision.evidence.length)
+        throw new BankSearchError('Judgment needs same-revision evidence');
+      for (const e of decision.evidence) {
+        const doc = receipt.documents.find(
+          (d) => d.ref === assessment.ref && d.source === e.source,
+        );
+        if (
+          !doc?.text.includes(e.quote) ||
+          (doc.parts.length && !doc.parts.some((p) => assessment.parts.includes(p)))
+        )
+          throw new BankSearchError('Judgment citation is outside authorized selected content');
+      }
+    };
+    checks.forEach(validate);
+    validate(assessment.joint);
+    if (
+      receipt.output.conditions.some((c) => c.required) &&
+      assessment.joint.verdict === 'supported' &&
+      receipt.output.conditions
+        .filter((c) => c.required)
+        .every((c) => checks.find((v) => v.condition === c.id)?.verdict === 'supported')
+    ) {
+      accepted.push(...assessment.parts);
+      acceptedRefs.push(assessment.ref);
+    }
+  }
+  return {
+    source: 'caller_assessed' as const,
+    accepted_ids: accepted,
+    accepted_refs: acceptedRefs,
+    assessments,
+  };
 }
-export function bankSnapshotExpiry(now: number): string {
-  return new Date(now + TTL).toISOString();
+
+export async function bankReceiptGapEvidence(
+  db: Db | Tx,
+  ctx: Pick<ToolContext, 'callerActor' | 'taskRunId' | 'supplyDemand'>,
+  searchId: string,
+  assessments: BankAssessment[],
+) {
+  const receipt = await readBankReceipt(db, ctx, searchId, true);
+  if (receipt.request.use === 'inspect' || receipt.request.use === 'dedup')
+    throw new BankSearchError('Supply evidence needs a practice search');
+  const decision = assessBankReceipt(receipt, assessments);
+  const known = receipt.output.hits
+    .filter((h) => h.available)
+    .every((h) =>
+      decision.assessments.some(
+        (a) =>
+          a.ref === h.ref &&
+          a.joint.verdict !== 'unknown' &&
+          receipt.output.conditions
+            .filter((c) => c.required)
+            .every((c) => a.checks.some((v) => v.condition === c.id && v.verdict !== 'unknown')),
+      ),
+    );
+  const count = new Set(decision.accepted_refs).size;
+  const needed = receipt.request.count;
+  if (needed === undefined)
+    throw new BankSearchError('Gap authorization requires an explicit requested count');
+  if (count >= needed)
+    throw new BankSearchError('The assessed stock already satisfies the requested count');
+  // Demand dispatch retains its signed legacy internal contract; models only carry the receipt id.
+  const unsigned = BankGapRequestSchema.parse({
+    target_contract: 'EvidenceDemandV1',
+    status: 'needs_agent_context_and_filing_tool',
+    claim: { kind: 'content_coverage', statement: receipt.request.query },
+    inventory_goal: { eligible_count: needed },
+    causes: [{ kind: 'coverage_gap' }],
+    constraints: {
+      query: receipt.request.query,
+      scope: receipt.scope,
+      requested_count: needed,
+      retrieved_count: count,
+      reason: 'insufficient_retrieved_candidates',
+    },
+    required_context: [],
+    complete: receipt.output.coverage.complete && known,
+    retrieval_truncated: !receipt.output.coverage.complete,
+    unavailable_channels: receipt.output.coverage.unavailable,
+  });
+  const observation = {
+    ...unsigned,
+    search_id: searchId,
+    assessment_digest: canonicalHash(decision),
+    decision_source: 'caller_assessed' as const,
+    semantic_conditions: receipt.output.conditions,
+    unsupported_constraints: [] as string[],
+  };
+  observation.unsupported_constraints = [
+    ...(receipt.request.filters?.terms?.length
+      ? [`literal_terms:${JSON.stringify(receipt.request.filters.terms)}`]
+      : []),
+    ...(receipt.request.filters?.history && receipt.request.filters.history !== 'any'
+      ? [`history:${receipt.request.filters.history}`]
+      : []),
+  ];
+  const evidence = {
+    ...observation,
+    evidence_mac: mintBankGapEvidenceMac(observation) ?? undefined,
+  };
+  await recordBankDecision(db, searchId, decision);
+  return { evidence, search_id: searchId };
+}
+
+/** Keep quoted answer evidence in the server receipt, never artifact/page metadata. */
+async function recordBankDecision(
+  db: Db | Tx,
+  searchId: string,
+  decision: ReturnType<typeof assessBankReceipt>,
+) {
+  const digest = canonicalHash(decision);
+  await db
+    .update(bank_search_snapshot)
+    .set({
+      payload: sql`jsonb_set(${bank_search_snapshot.payload}, ARRAY['decisions', ${digest}]::text[], ${JSON.stringify(decision)}::jsonb, true)`,
+    })
+    .where(eq(bank_search_snapshot.search_id, searchId));
+  return digest;
+}
+
+export async function selectBankReceipt(
+  db: Db | Tx,
+  ctx: Pick<ToolContext, 'callerActor' | 'taskRunId' | 'supplyDemand'>,
+  searchId: string,
+  assessments: BankAssessment[],
+  lock = false,
+  taskCompletion = false,
+) {
+  const receipt = await readBankReceipt(db, ctx, searchId, lock, taskCompletion);
+  if (receipt.request.use === 'inspect' || receipt.request.use === 'dedup')
+    throw new BankSearchError('Paper and stock selection require practice or inventory evidence');
+  const selection = assessBankReceipt(receipt, assessments);
+  if (lock) await recordBankDecision(db, searchId, selection);
+  return {
+    source: selection.source,
+    use: receipt.request.use,
+    goal: receipt.request.count,
+    accepted_refs: selection.accepted_refs,
+    accepted_ids: selection.accepted_ids,
+    part_refs: Object.fromEntries(
+      assessments
+        .filter((a) => a.parts.every((p) => selection.accepted_ids.includes(p)))
+        .flatMap((a) => a.parts.map((part) => [part, a.ref])),
+    ),
+  };
 }

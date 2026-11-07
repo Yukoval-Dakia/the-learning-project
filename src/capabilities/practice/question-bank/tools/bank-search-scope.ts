@@ -33,7 +33,11 @@ export async function resolveBankSearchScope(
   if (scope.subject !== undefined) {
     resolved.subjectKnowledgeIds = await resolveSubjectKnowledgeIds(db, scope.subject);
   }
-  if (scope.kind !== undefined) {
+  if (scope.kind !== undefined && scope.kinds !== undefined)
+    throw new Error('Use kind or kinds, not both');
+  if (scope.kinds !== undefined && !scope.kinds.includes('any'))
+    resolved.kindForms = [...new Set(scope.kinds.flatMap(canonicalKindToPersistedForms))];
+  if (scope.kind !== undefined && scope.kind !== 'any') {
     resolved.kindForms = canonicalKindToPersistedForms(scope.kind);
   }
   if (scope.within_refs !== undefined) {
