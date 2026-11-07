@@ -9,13 +9,6 @@
 // 阶 H0-H4 直映射成 hint_index 0-4（既有 solveHint 调用的 index），H5「完整解」不是 hint 调用——它是
 // question.reference_md 的 reveal（逃生口），不碰后端 hint 生成逻辑。把每阶 prompt 改成按 H0-H5
 // 生成分阶帮助是后端增量，OUT-OF-SCOPE（见 handoff §不在本增量范围）。
-//
-// independence 列只到 H5 非独立确认门为止落地（逃生口锁定项 entail 的）；H0-H4 的 独立/半独立
-// 三态追踪 infra 是 handoff 提议、owner 未拍（见「锁定范围澄清」callout）→ 本模型只描述语义，
-// 不写库、不接 commit/review 契约。
-
-/** 每阶的独立性语义（display-only — 不持久化、不进判分契约；仅 H5 非独立驱动确认门）。 */
-export type StageIndependence = 'independent' | 'semi' | 'non';
 
 export interface HintStage {
   /** 阶 id H0..H5（owner 锁定的 6 阶）。 */
@@ -26,8 +19,6 @@ export interface HintStage {
   weight: string;
   /** 这一阶给什么「性质」的帮助（非具体内容）—— 用于「下一阶性质可预知、不剧透」预告。 */
   gives: string;
-  /** 该阶独立性语义（display-only；仅 H5='non' 驱动非独立确认门）。 */
-  independence: StageIndependence;
   /** 仅终点完整解阶（H5）为 true —— 它是逃生口的 reveal，非 hint 调用。 */
   isFull: boolean;
 }
@@ -40,7 +31,6 @@ export const HINT_LADDER: readonly HintStage[] = [
     label: '怎么下手',
     weight: '最轻',
     gives: '只问你卡在哪一步、这类题一般怎么下手 —— 不碰题目内容',
-    independence: 'independent',
     isFull: false,
   },
   {
@@ -48,7 +38,6 @@ export const HINT_LADDER: readonly HintStage[] = [
     label: '方向',
     weight: '轻',
     gives: '指一个大方向 / 该调用哪块知识，不给具体步骤',
-    independence: 'independent',
     isFull: false,
   },
   {
@@ -56,7 +45,6 @@ export const HINT_LADDER: readonly HintStage[] = [
     label: '概念',
     weight: '中',
     gives: '点明关键概念 / 定理 / 公式，仍不代入本题',
-    independence: 'independent',
     isFull: false,
   },
   {
@@ -64,7 +52,6 @@ export const HINT_LADDER: readonly HintStage[] = [
     label: '卡点',
     weight: '偏重',
     gives: '针对你当前思路指出卡点 / 常见误区',
-    independence: 'independent',
     isFull: false,
   },
   {
@@ -72,7 +59,6 @@ export const HINT_LADDER: readonly HintStage[] = [
     label: '示范一步',
     weight: '重',
     gives: '演示关键一步怎么做，剩下留给你收尾',
-    independence: 'semi',
     isFull: false,
   },
   {
@@ -80,7 +66,6 @@ export const HINT_LADDER: readonly HintStage[] = [
     label: '完整解',
     weight: '完整解',
     gives: '给出完整解答与理由',
-    independence: 'non',
     isFull: true,
   },
 ];

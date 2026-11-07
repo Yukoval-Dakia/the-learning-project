@@ -3,7 +3,7 @@
 // both copies from the same result, or an edit republishes the fake source.
 
 import { downgradeUnboundChartFences } from '@/kernel/blocks/markdown-chart-fence';
-import { noteBlockSource } from './note-block-source';
+import { noteBlockSource } from '@/kernel/read-models/note-block-source';
 
 function collectText(node: unknown): string {
   if (node === null || typeof node !== 'object') return '';

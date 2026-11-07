@@ -103,6 +103,7 @@ export const dbTestInclude = [
   'src/capabilities/agency/server/misconception-promote.db.test.ts',
   'src/capabilities/agency/server/proposal-appliers.db.test.ts',
   'src/capabilities/copilot/api/cancel-run.db.test.ts',
+  'src/capabilities/copilot/api/retry-run.db.test.ts',
   'src/capabilities/copilot/api/nudges.db.test.ts',
   'src/capabilities/copilot/api/revert-checkpoint.db.test.ts',
   'src/capabilities/copilot/api/review-answer.db.test.ts',
@@ -198,6 +199,7 @@ export const dbTestInclude = [
   'src/capabilities/practice/supply/server/placement-starter-store.db.test.ts',
   'src/capabilities/practice/question-bank/server/quiz/content-fingerprint.db.test.ts',
   'src/capabilities/practice/grading/server/recorded-model-executor.db.test.ts',
+  'src/capabilities/practice/grading/server/assistance-evidence.db.test.ts',
   'src/capabilities/practice/grading/server/review-operation.db.test.ts',
   'src/capabilities/practice/grading/server/review-settlement.db.test.ts',
   'src/capabilities/practice/server/solve-session-media.db.test.ts',
@@ -273,6 +275,7 @@ export const dbTestInclude = [
   'src/server/projections/parity-writers-c3.db.test.ts',
   'src/server/proposals/accept-records-flip.db.test.ts',
   'src/server/proposals/actions.test.ts',
+  'src/server/proposals/batch-accept.db.test.ts',
   'src/server/proposals/edge-decide-advisory-lock.db.test.ts',
   'src/server/proposals/retract-clock.db.test.ts',
   'src/server/proposals/signals.test.ts',
@@ -310,6 +313,10 @@ export const dbTestInclude = [
 ];
 
 export const migrationSmokeInclude = ['tests/integration/migration-smoke.test.ts'];
+
+// Node's runner inside the worker image owns these real-container invariants.
+// pnpm test:workspace consumes this partition; Vitest cannot supply that OS boundary.
+export const containerBoundaryInclude = ['scripts/workspace/boundary.test.ts'];
 
 export const allTestInclude = [...fastTestInclude, ...dbTestInclude, ...migrationSmokeInclude];
 

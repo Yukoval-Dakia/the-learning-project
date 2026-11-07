@@ -35,6 +35,21 @@ const composedRouteLoaders: Readonly<Record<string, () => Promise<RouteHandler>>
       }
     };
   },
+  batchAcceptProposals: async () => {
+    const [{ batchAcceptProposals }, { db }, { errorResponse }] = await Promise.all([
+      import('@/server/proposals/batch-accept'),
+      import('@/db/client'),
+      import('@/kernel/http'),
+    ]);
+    return async (req) => {
+      try {
+        const body = await req.json().catch(() => null);
+        return Response.json(await batchAcceptProposals(db, body));
+      } catch (err) {
+        return errorResponse(err);
+      }
+    };
+  },
 };
 
 /** A declared route that resolves to no handler would 404 while OpenAPI still lists it. */
