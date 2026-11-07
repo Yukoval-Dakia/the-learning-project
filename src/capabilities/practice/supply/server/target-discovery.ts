@@ -55,6 +55,9 @@ import {
 import { resolveSubjectProfile } from '@/subjects/profile';
 import type { SubjectProfile } from '@/subjects/profile-schema';
 import { rotationClassForKind } from '../../scheduling/public';
+// Stable fingerprint lives in a runtime-free module so operator tooling can derive a target
+// without loading this scanner's readers.
+import { targetFingerprint } from './target-fingerprint';
 
 // ── Types（Task 13 Step 1，prompt 字面给定的形状即权威）────────────────────────
 
@@ -295,29 +298,6 @@ export function computePriority(gapKind: SupplyGapKind, evidenceCount: number): 
   // evidence 越少越紧急（新 KC 先补题）；evidence 多了缺口仍在则降一档（已有些题，没那么急）。
   const noveltyBoost = evidenceCount === 0 ? 1.0 : 1 / (1 + Math.log1p(evidenceCount));
   return Math.min(1, base * noveltyBoost);
-}
-
-/**
- * 稳定指纹：同一 (subject, KC 集合, kind, band, gapKind, minSourceTier) 永远算出同一指纹，
- * 让重复扫描更新同一目标而非洪泛新目标（架构 doc §Target Lattice fingerprint 契约）。
- */
-export function targetFingerprint(parts: {
-  subjectId: string;
-  knowledgeIds: string[];
-  kind: string;
-  difficultyBand: DifficultyBand;
-  gapKind: SupplyGapKind;
-  minSourceTier: 1 | 2 | 3;
-}): string {
-  const kids = [...parts.knowledgeIds].sort().join(',');
-  return [
-    parts.subjectId,
-    kids,
-    parts.kind,
-    parts.difficultyBand,
-    parts.gapKind,
-    `t${parts.minSourceTier}`,
-  ].join('|');
 }
 
 // recall-style 题型（重背，原题复用）——据 rotationClassForKind 复用既有 ADR-0030 路由分类，

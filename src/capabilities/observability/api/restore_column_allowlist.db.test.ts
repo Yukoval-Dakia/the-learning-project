@@ -21,8 +21,8 @@
 
 import { zipSync } from 'fflate';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { hydrateConfigFromDb } from '@/core/config/server/hydrate';
 import { knowledge } from '@/db/schema';
-import { hydrateConfigFromDb } from '@/server/config/hydrate';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { memR2 } from '../../../../tests/helpers/r2';
 import { setBackupConfigHydrator } from '../server/backup/config-hydrator';
