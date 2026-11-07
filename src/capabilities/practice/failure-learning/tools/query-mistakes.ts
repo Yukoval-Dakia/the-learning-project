@@ -289,7 +289,9 @@ function chartCaption(input: {
   if (filter.knowledgeId) {
     parts.push(input.knowledgeName ? `知识点「${shortName(input.knowledgeName)}」` : '指定知识点');
   }
-  if (input.causeName) parts.push(`错因「${shortName(input.causeName)}」`);
+  if (filter.causeCategoryId) {
+    parts.push(input.causeName ? `错因「${shortName(input.causeName)}」` : '指定错因');
+  }
   if (filter.dueWithinDays !== undefined) {
     parts.push(filter.dueWithinDays === 0 ? '已到期' : `${filter.dueWithinDays} 天内到期`);
   }
@@ -456,6 +458,21 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
     return row;
   });
 
+  // Subjects can word one cause differently; a single name only when every row agrees.
+  const filterCauseId = filter.causeCategoryId;
+  const filterCauseNames = new Set(
+    filterCauseId
+      ? final.map((row) =>
+          causeLabel({
+            cause: { primary_category: filterCauseId },
+            knowledgeIds: row.fa.referenced_knowledge_ids,
+            knowledgeById,
+            miscLabels,
+          }),
+        )
+      : [],
+  );
+  const filterCauseName = filterCauseNames.size === 1 ? [...filterCauseNames][0] : undefined;
   const aggregates = buildAggregates({
     final,
     knowledgeById,
@@ -484,14 +501,7 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
       counted: aggregates.counted,
       truncated: aggregates.truncated,
       knowledgeName: filter.knowledgeId ? knowledgeById.get(filter.knowledgeId)?.name : undefined,
-      causeName: filter.causeCategoryId
-        ? causeLabel({
-            cause: { primary_category: filter.causeCategoryId },
-            knowledgeIds: final[0]?.fa.referenced_knowledge_ids ?? [],
-            knowledgeById,
-            miscLabels,
-          })
-        : undefined,
+      causeName: filterCauseName,
     }),
     claim_boundaries: {
       zero_rows_scope: 'matching_failure_attempt_rows_only',
