@@ -306,7 +306,7 @@ const AutoEnrollObservationSchema = z.object({
 /** Server-owned reading of one block's enrollment; the page never re-derives gates. */
 export const IngestionBlockEnrollmentSchema = z.object({
   state: z.enum(['in_library', 'not_enrolled', 'ignored']),
-  reason: z.enum(['needs_text', 'pending', 'publish_failed']).nullable(),
+  reason: z.enum(['needs_text', 'pending', 'publish_failed', 'reverted']).nullable(),
   knowledge: z.enum(['attributed', 'missing']).nullable(),
   library_visible: z.boolean().nullable(),
 });
@@ -375,6 +375,31 @@ export const RevertAutoEnrolledBlockResponseSchema = z.object({
   recordId: z.string(),
   retractEventId: z.string(),
   retractedEventId: z.string(),
+});
+
+// Single-block enrollment (POST /api/ingestion/[id]/blocks/[block_id]/enroll).
+export const IngestionBlockParamsSchema = z.object({
+  id: z.string().min(1),
+  block_id: z.string().min(1),
+});
+
+export const EnrollIngestionBlockBodySchema = z
+  .object({
+    expected_version: z.number().int().nonnegative(),
+    /** Optional printed prompt; required when the block has no prompt yet. */
+    prompt_md: z.string().trim().min(1).max(20_000).optional(),
+  })
+  .strict();
+
+export const EnrollIngestionBlockResponseSchema = z.object({
+  block_id: z.string(),
+  status: z.enum(['enrolled', 'already_enrolled']),
+  question_id: z.string(),
+  block_status: z.string(),
+  block_version: z.number().int().nonnegative(),
+  knowledge: z.enum(['attributed', 'missing']),
+  library_visible: z.boolean(),
+  admission_status: z.enum(['pending', 'admitted', 'failed', 'undecided']),
 });
 
 // Ask answer wire shapes, re-exported from the single agent contract source so
