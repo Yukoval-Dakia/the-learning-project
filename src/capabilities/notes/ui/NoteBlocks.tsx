@@ -54,6 +54,21 @@ export function blockText(b: BodyBlock): string {
   return b.attrs?.source_markdown ?? '';
 }
 
+/** A note is often one long block, so its outline is the headings inside, in document order. */
+export function blockHeadings(b: BodyBlock): Array<{ level: number; text: string }> {
+  const headings: Array<{ level: number; text: string }> = [];
+  let inFence = false;
+  for (const line of blockText(b).split('\n')) {
+    if (/^\s*(```|~~~)/.test(line)) inFence = !inFence;
+    const match = inFence ? null : line.match(/^(#{1,4})\s+(.+?)\s*#*\s*$/);
+    if (match) {
+      const text = (match[2] ?? '').replace(/[*_`$]/g, '').trim();
+      headings.push({ level: match[1]?.length ?? 1, text });
+    }
+  }
+  return headings;
+}
+
 export function blockOutlineLabel(b: BodyBlock): string {
   if (b.type === 'crossLinkBlock') return b.attrs?.title ?? '交叉链';
   if (b.type === 'questionRefBlock') return b.attrs?.prompt_preview?.slice(0, 16) ?? '题目引用';

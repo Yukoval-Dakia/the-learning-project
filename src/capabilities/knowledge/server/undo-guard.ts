@@ -16,8 +16,10 @@ import type { Tx } from '@/db/client';
 import { knowledge, knowledge_edge } from '@/db/schema';
 import { findExistingRateEvent } from '@/kernel/proposals/applier-helpers';
 import {
+  AUTO_APPLIED_UNDO_CLEAR,
   type AutoAppliedUndoBlock,
   type AutoAppliedUndoGuardInput,
+  type AutoAppliedUndoGuardVerdict,
   type AutoAppliedUndoOwnerGuard,
   type DbLike,
   genericUndoBlock,
@@ -116,18 +118,18 @@ async function inspectKnowledgeNodes(
   db: DbLike,
   inputs: readonly AutoAppliedUndoGuardInput[],
   dependencies: KnowledgeNodeUndoDependencies,
-): Promise<Map<string, AutoAppliedUndoBlock>> {
-  const blocks = new Map<string, AutoAppliedUndoBlock>();
+): Promise<Map<string, AutoAppliedUndoGuardVerdict>> {
+  const verdicts = new Map<string, AutoAppliedUndoGuardVerdict>();
   const checks: KnowledgeCheck[] = [];
   for (const input of inputs) {
     const nodeId = appliedKnowledgeNodeId(input.ratePayload);
     if (!nodeId) {
-      blocks.set(input.proposalId, genericUndoBlock('failed', 'apply_record_missing'));
+      verdicts.set(input.proposalId, genericUndoBlock('failed', 'apply_record_missing'));
       continue;
     }
     checks.push({ proposalId: input.proposalId, nodeId });
   }
-  if (checks.length === 0) return blocks;
+  if (checks.length === 0) return verdicts;
 
   const nodeIds = [...new Set(checks.map((check) => check.nodeId))];
   const nodeRows = await db
@@ -236,24 +238,24 @@ async function inspectKnowledgeNodes(
   for (const check of checks) {
     const node = nodeById.get(check.nodeId);
     if (!node) {
-      blocks.set(check.proposalId, block('knowledge_not_found'));
+      verdicts.set(check.proposalId, block('knowledge_not_found'));
       continue;
     }
     if (node.archivedAt !== null) {
-      blocks.set(check.proposalId, block('knowledge_already_archived'));
+      verdicts.set(check.proposalId, block('knowledge_already_archived'));
       continue;
     }
     if (node.version > 0) {
-      blocks.set(check.proposalId, block('knowledge_later_edit'));
+      verdicts.set(check.proposalId, block('knowledge_later_edit'));
       continue;
     }
     if ((childCounts.get(check.nodeId) ?? 0) > 0) {
       // An earlier item of the same batch may retract the child first.
-      blocks.set(check.proposalId, block('knowledge_has_children', true));
+      verdicts.set(check.proposalId, block('knowledge_has_children', true));
       continue;
     }
     if ((edgeCounts.get(check.nodeId) ?? 0) > 0) {
-      blocks.set(check.proposalId, block('knowledge_has_edges'));
+      verdicts.set(check.proposalId, block('knowledge_has_edges'));
       continue;
     }
     if ((questionCounts.get(check.nodeId) ?? 0) > 0) {
@@ -265,35 +267,38 @@ async function inspectKnowledgeNodes(
         (foreignQuestionCounts.get(check.nodeId) ?? 0) > 0 ||
         !refileRootByNode.has(check.nodeId)
       ) {
-        blocks.set(check.proposalId, block('knowledge_has_questions'));
+        verdicts.set(check.proposalId, block('knowledge_has_questions'));
         continue;
       }
     }
     if (recordNodes.has(check.nodeId)) {
-      blocks.set(check.proposalId, block('knowledge_has_records'));
+      verdicts.set(check.proposalId, block('knowledge_has_records'));
       continue;
     }
     if (itemNodes.has(check.nodeId)) {
-      blocks.set(check.proposalId, block('knowledge_has_learning_items'));
+      verdicts.set(check.proposalId, block('knowledge_has_learning_items'));
       continue;
     }
     if (artifactNodes.has(check.nodeId)) {
-      blocks.set(check.proposalId, block('knowledge_has_artifacts'));
+      verdicts.set(check.proposalId, block('knowledge_has_artifacts'));
       continue;
     }
     if (goalNodes.has(check.nodeId)) {
-      blocks.set(check.proposalId, block('knowledge_has_goals'));
+      verdicts.set(check.proposalId, block('knowledge_has_goals'));
       continue;
     }
     if (claimNodes.has(check.nodeId)) {
-      blocks.set(check.proposalId, block('knowledge_has_placement_claims'));
+      verdicts.set(check.proposalId, block('knowledge_has_placement_claims'));
       continue;
     }
     if (misconceptionNodes.has(check.nodeId)) {
-      blocks.set(check.proposalId, block('knowledge_has_misconception_edges'));
+      verdicts.set(check.proposalId, block('knowledge_has_misconception_edges'));
+    }
+    if (!verdicts.has(check.proposalId)) {
+      verdicts.set(check.proposalId, AUTO_APPLIED_UNDO_CLEAR);
     }
   }
-  return blocks;
+  return verdicts;
 }
 
 /** Locks the node row the archive applier will mutate. */

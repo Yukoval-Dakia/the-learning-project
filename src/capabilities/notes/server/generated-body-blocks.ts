@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import type { ArtifactBodyBlocksT } from '@/core/schema/business';
+import { downgradeUnboundChartFences } from '@/kernel/blocks/markdown-chart-fence';
 import { noteBlockSource } from '../shared/note-block-source';
+import { downgradeUnboundChartFencesInBlockTree } from '../shared/note-chart-fence-downgrade';
 
 const ANCHORED_TYPES = new Set([
   'semanticBlock',
@@ -11,6 +13,7 @@ const ANCHORED_TYPES = new Set([
 
 /** Model owns content; Notes owns anchors and trust, so generated blocks get fresh ids. */
 export function materializeGeneratedBodyBlocks(body: ArtifactBodyBlocksT): ArtifactBodyBlocksT {
+  const sanitized = downgradeUnboundChartFencesInBlockTree(body);
   const visit = (node: Record<string, unknown>, topLevel = false): Record<string, unknown> => {
     const attrs = { ...(node.attrs as Record<string, unknown> | undefined) };
     for (const owned of [
@@ -41,7 +44,14 @@ export function materializeGeneratedBodyBlocks(body: ArtifactBodyBlocksT): Artif
       !['crossLinkBlock', 'artifactRefBlock', 'questionRefBlock'].includes(String(node.type))
     ) {
       if (!mirror.trim()) throw new Error('parseNoteGenerateOutput: empty generated content block');
-      attrs.source_markdown = mirror;
+      // The model never authors this mirror; a chart fence claiming recorded data
+      // has no binding on this path. A shape the tree walker could not rewrite
+      // (a fence split across blocks) must fail instead of storing a fake label.
+      const safeMirror = downgradeUnboundChartFences(mirror);
+      if (safeMirror !== mirror) {
+        throw new Error('parseNoteGenerateOutput: unbound chart fence spans multiple blocks');
+      }
+      attrs.source_markdown = safeMirror;
     }
     return {
       ...node,
@@ -54,5 +64,5 @@ export function materializeGeneratedBodyBlocks(body: ArtifactBodyBlocksT): Artif
         : {}),
     };
   };
-  return { ...body, content: body.content.map((node) => visit(node, true)) };
+  return { ...sanitized, content: sanitized.content.map((node) => visit(node, true)) };
 }

@@ -4,10 +4,12 @@
 // eligibility (auto-applied, batchable kind, applied, not superseded), the
 // four-state report and the reverse-causal ordering (batch-retract). The
 // domain question — "has later content used this effect?" — belongs to the owner
-// of that content, so each batchable kind is dispatched to a guard its owner
-// installed through `installAutoAppliedUndoGuardRegistry` at host startup. A new
-// auto-apply kind adds its guard beside its accept/retract appliers; the kernel
-// is untouched.
+// of that content, so each strength-A kind is dispatched to a guard its owner
+// installed through `installAutoAppliedUndoGuardRegistry` at host startup. The
+// batchable set is the auto-apply lane's own strength-A declaration, not a
+// second list; installation refuses to start when a strength-A kind has no
+// guard. A new auto-apply kind adds its guard beside its accept/retract
+// appliers; the kernel is untouched.
 //
 //   revertable — the owner reported no dependent content; the retract applier
 //                restores the pre-apply state
@@ -22,7 +24,13 @@
 
 import { and, desc, eq, inArray } from 'drizzle-orm';
 
-import { type AiProposalPayloadT, parseAiProposalPayload } from '@/core/schema/proposal';
+import {
+  type AiProposalKindT,
+  type AiProposalPayloadT,
+  aiProposalKindStrength,
+  aiProposalKinds,
+  parseAiProposalPayload,
+} from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { getCorrectionStatuses } from '@/kernel/events';
@@ -37,6 +45,14 @@ import { PROPOSAL_AUTOAPPLY_ACTION } from './auto-apply';
 export type DbLike = Db | Tx;
 
 export type AutoAppliedUndoStatus = 'revertable' | 'blocked' | 'reverted' | 'failed';
+
+/** One owner guard's explicit "no later content" verdict for one applied item. */
+export interface AutoAppliedUndoClear {
+  readonly status: 'clear';
+}
+
+/** Shared clear verdict; guards must return one for every input they let through. */
+export const AUTO_APPLIED_UNDO_CLEAR: AutoAppliedUndoClear = { status: 'clear' };
 
 /** One owner guard's refusal for one applied item. */
 export interface AutoAppliedUndoBlock {
@@ -63,14 +79,18 @@ export interface AutoAppliedUndoGuardInput {
   readonly appliedAt: Date;
 }
 
+/** Clear or refuse one item; every input must receive an explicit verdict. */
+export type AutoAppliedUndoGuardVerdict = AutoAppliedUndoClear | AutoAppliedUndoBlock;
+
 /**
- * Inspect a batch of same-kind items. Missing ids mean "no later content"; an
- * owner that cannot read its apply facts reports `failed` instead.
+ * Inspect a batch of same-kind items. Every input must get a verdict; an owner
+ * that cannot read its apply facts reports `failed`, and the kernel reports a
+ * missing verdict as blocked instead of reading it as "no later content".
  */
 export type AutoAppliedUndoInspect = (
   db: DbLike,
   inputs: readonly AutoAppliedUndoGuardInput[],
-) => Promise<Map<string, AutoAppliedUndoBlock>>;
+) => Promise<Map<string, AutoAppliedUndoGuardVerdict>>;
 
 /** Later-content rules for one batchable proposal kind, owned with the content. */
 export interface AutoAppliedUndoOwnerGuard {
@@ -87,7 +107,49 @@ export interface AutoAppliedUndoOwnerGuard {
   readonly lock?: (tx: Tx, input: AutoAppliedUndoGuardInput) => Promise<void>;
 }
 
+/**
+ * Batch-undoable kinds: exactly the strength-A (auto-apply) kinds at
+ * `src/core/schema/proposal.ts`. Deriving the union keeps the auto-apply lane and
+ * the undo lane on one declaration, so flipping a kind to A without a guard is a
+ * type error here and a startup error at installation.
+ */
+export type AutoAppliedUndoKind = {
+  [K in AiProposalKindT]: (typeof aiProposalKindStrength)[K] extends 'A' ? K : never;
+}[AiProposalKindT];
+
+export function autoAppliedUndoKinds(): readonly AutoAppliedUndoKind[] {
+  return aiProposalKinds.filter(
+    (kind): kind is AutoAppliedUndoKind => aiProposalKindStrength[kind] === 'A',
+  );
+}
+
 export type AutoAppliedUndoGuardRegistry = ReadonlyMap<string, AutoAppliedUndoOwnerGuard>;
+
+/** One guard per strength-A kind; the object literal is the compile-time gate. */
+export type AutoAppliedUndoGuardSet = Record<AutoAppliedUndoKind, AutoAppliedUndoOwnerGuard>;
+
+function assertUndoGuardCoverage(keys: Iterable<string>): void {
+  const expected = new Set<string>(autoAppliedUndoKinds());
+  const present = new Set(keys);
+  const missing = [...expected].filter((kind) => !present.has(kind));
+  const unexpected = [...present].filter((kind) => !expected.has(kind));
+  if (missing.length > 0 || unexpected.length > 0) {
+    throw new Error(
+      `proposal undo guards must cover exactly the strength-A proposal kinds; missing [${missing.join(', ')}], unexpected [${unexpected.join(', ')}]`,
+    );
+  }
+}
+
+/** Build the installed registry from one guard per strength-A kind. */
+export function createAutoAppliedUndoGuardRegistry(
+  guards: AutoAppliedUndoGuardSet,
+): AutoAppliedUndoGuardRegistry {
+  assertUndoGuardCoverage(Object.keys(guards));
+  const registry: Map<string, AutoAppliedUndoOwnerGuard> = new Map(
+    autoAppliedUndoKinds().map((kind) => [kind, guards[kind]] as const),
+  );
+  return registry;
+}
 
 export interface AutoAppliedUndoDecision {
   readonly status: AutoAppliedUndoStatus;
@@ -111,6 +173,7 @@ const GENERIC_REASONS = {
   not_applied: '这条改动还没有被应用，不需要撤销。',
   superseded: '这条改动已经被后续更正取代，不能再撤销。',
   apply_record_missing: '这条改动缺少应用记录，暂时不能撤销。',
+  guard_result_missing: '这次撤销判断没有返回结果，暂时不能撤销。',
 } as const;
 
 export type GenericUndoCode = keyof typeof GENERIC_REASONS;
@@ -131,6 +194,9 @@ const GUARD_REGISTRY_SLOT = 'kernel/proposals/auto-applied-undo:guards';
  * cannot import the platform, so the registry is a process-wide port.
  */
 export function installAutoAppliedUndoGuardRegistry(registry: AutoAppliedUndoGuardRegistry): void {
+  // Startup gate: a kind flipped to A without a guard must fail here, before any
+  // batch can turn its missing verdict into a silent "revertable".
+  assertUndoGuardCoverage(registry.keys());
   installHostOperation(GUARD_REGISTRY_SLOT, registry);
 }
 
@@ -348,17 +414,23 @@ export async function classifyAutoAppliedUndoBatch(
   for (const [kind, inputs] of byKind) {
     const guard = guards.get(kind);
     if (!guard) continue;
-    const blocks = await guard.inspect(db, inputs);
+    const verdicts = await guard.inspect(db, inputs);
     for (const input of inputs) {
-      const block = blocks.get(input.proposalId);
-      if (!block) continue;
+      const verdict = verdicts.get(input.proposalId);
+      if (!verdict) {
+        // A guard that omits an input has not cleared it. Fail closed so a
+        // forgotten id cannot become a silent "revertable" and write.
+        decisions.set(input.proposalId, blocked('guard_result_missing', input.appliedAt));
+        continue;
+      }
+      if (verdict.status === 'clear') continue;
       decisions.set(input.proposalId, {
-        status: block.status,
-        code: block.code,
-        reason_md: block.reason_md,
+        status: verdict.status,
+        code: verdict.code,
+        reason_md: verdict.reason_md,
         correction_event_id: null,
         applied_at: input.appliedAt,
-        clears_in_batch: block.clears_in_batch === true,
+        clears_in_batch: verdict.clears_in_batch === true,
       });
     }
   }
