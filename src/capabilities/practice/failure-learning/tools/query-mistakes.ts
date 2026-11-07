@@ -10,11 +10,13 @@ import {
   type FailureAttempt,
   getFailureAttemptsForDerivation,
 } from '@/kernel/read-models/failure-attempts';
+import { loadFailureLearningKnowledgeContext } from '@/kernel/read-models/failure-learning-context';
 import { miscCauseLabelMap, resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
 // P5.1 / — snippet cap + courtesy default sourced from budgets.ts.
 // Both are byte-unchanged from the prior file-local literals (160 / 20).
 import { MISTAKE_PROMPT_SNIPPET_MAX, TOOL_COURTESY_DEFAULTS } from '@/kernel/tools/budgets';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
+import { resolveSubjectProfile } from '@/subjects/profile';
 
 const PROMPT_SNIPPET_MAX = MISTAKE_PROMPT_SNIPPET_MAX;
 
@@ -57,6 +59,32 @@ const VariantSchema = z.object({
   status: z.string(),
 });
 
+// Exactly the ChartBlock.series shape so data_source.path can point straight at
+// an aggregate. One series keeps the wire small; points are [human label, count].
+const AggregateSeriesSchema = z
+  .array(
+    z
+      .object({
+        name: z.string().min(1).max(40),
+        points: z.array(z.tuple([z.string(), z.number().int().nonnegative()])).max(500),
+      })
+      .strict(),
+  )
+  .max(1);
+
+const AggregatesSchema = z
+  .object({
+    /** Failed attempts the series cover (the returned row window). */
+    counted: z.number().int().nonnegative(),
+    /** More matching attempts exist beyond the returned limit. */
+    truncated: z.boolean(),
+    /** Human cause labels; no cause is 「未分类」. Absent when attribution was not loaded. */
+    by_cause: AggregateSeriesSchema.optional(),
+    /** Knowledge-point names, one count per referenced point on a failed attempt. */
+    by_knowledge: AggregateSeriesSchema,
+  })
+  .strict();
+
 const MistakeRowSchema = z.object({
   event_id: z.string(),
   question_id: z.string(),
@@ -78,6 +106,10 @@ const OutputSchema = z.object({
     since_days: z.number().nullable(),
     limit: z.number().int(),
   }),
+  /** ChartBlock.series aggregates over the returned window; coverage is explicit. */
+  aggregates: AggregatesSchema,
+  /** JSON Pointer paths this result declares as chart-bindable (producer allowlist). */
+  chart_bindings: z.array(z.string()).max(8),
   claim_boundaries: z.object({
     zero_rows_scope: z.literal('matching_failure_attempt_rows_only'),
     supports_entity_inventory_claim: z.literal(false),
@@ -104,6 +136,15 @@ const DESCRIPTION = [
   'Set includeAttribution=false to skip the cause-policy resolution (cheaper).',
   'A zero-row result only describes matching failure-attempt rows. It cannot prove a current queue',
   'or entity failed-status count of zero, and cannot override get_review_due.queue_assertion nulls.',
+  '',
+  'aggregates.by_cause and aggregates.by_knowledge are ChartBlock series over the returned rows:',
+  'x is the human cause label / knowledge-point name, y is the number of failed attempts.',
+  '`counted` is how many attempts the series cover; `truncated` means more matching attempts exist',
+  'beyond the returned limit, so the series describe a recent window, not the whole history.',
+  'These are wrong-answer counts, never the due-review queue size.',
+  'by_cause is absent when includeAttribution=false (no cause was loaded).',
+  'Bind a chart to them with data_source.path=/aggregates/by_cause or /aggregates/by_knowledge.',
+  'chart_bindings lists the paths this result declares as chart-bindable.',
 ].join('\n');
 
 async function loadQuestionPrompts(db: Db, questionIds: string[]): Promise<Map<string, string>> {
@@ -190,6 +231,85 @@ async function loadVariants(
   return map;
 }
 
+function aggregatePoints(labels: readonly string[]): Array<[string, number]> {
+  const counts = new Map<string, number>();
+  for (const label of labels) counts.set(label, (counts.get(label) ?? 0) + 1);
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+    .slice(0, 500);
+}
+
+function causeLabel(input: {
+  cause: { primary_category: string } | null;
+  knowledgeIds: readonly string[];
+  knowledgeById: ReadonlyMap<string, { name: string; effective_domain: string | null }>;
+  miscLabels: ReadonlyMap<string, string>;
+}): string {
+  if (!input.cause) return '未分类';
+  const misc = input.miscLabels.get(input.cause.primary_category);
+  if (misc) return misc;
+  // Built-in cause ids are per-subject vocabulary; the knowledge domain picks
+  // the profile whose label is the learner-facing word for this row.
+  for (const knowledgeId of input.knowledgeIds) {
+    const domain = input.knowledgeById.get(knowledgeId)?.effective_domain ?? null;
+    const label = resolveSubjectProfile(domain).causeCategories.find(
+      (category) => category.id === input.cause?.primary_category,
+    )?.label;
+    if (label) return label;
+  }
+  return (
+    resolveSubjectProfile(null).causeCategories.find(
+      (category) => category.id === input.cause?.primary_category,
+    )?.label ?? '其他'
+  );
+}
+
+function buildAggregates(input: {
+  final: Array<{
+    fa: { referenced_knowledge_ids: string[] };
+    cause: { primary_category: string } | null;
+  }>;
+  knowledgeById: ReadonlyMap<string, { name: string; effective_domain: string | null }>;
+  miscLabels: ReadonlyMap<string, string>;
+  truncated: boolean;
+  includeCause: boolean;
+}): {
+  counted: number;
+  truncated: boolean;
+  by_cause?: Array<{ name: string; points: Array<[string, number]> }>;
+  by_knowledge: Array<{ name: string; points: Array<[string, number]> }>;
+} {
+  const counted = input.final.length;
+  const byCause = input.includeCause
+    ? [
+        {
+          name: '错次',
+          points: aggregatePoints(
+            input.final.map((row) =>
+              causeLabel({
+                cause: row.cause,
+                knowledgeIds: row.fa.referenced_knowledge_ids,
+                knowledgeById: input.knowledgeById,
+                miscLabels: input.miscLabels,
+              }),
+            ),
+          ),
+        },
+      ]
+    : undefined;
+  const knowledgeLabels = input.final.flatMap((row) =>
+    row.fa.referenced_knowledge_ids.map(
+      (knowledgeId) => input.knowledgeById.get(knowledgeId)?.name ?? '未知知识点',
+    ),
+  );
+  return {
+    counted,
+    truncated: input.truncated,
+    ...(byCause ? { by_cause: counted > 0 ? byCause : [] } : {}),
+    by_knowledge: counted > 0 ? [{ name: '错次', points: aggregatePoints(knowledgeLabels) }] : [],
+  };
+}
+
 async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
   const input = InputSchema.parse(raw);
   const filter = input.filter ?? {};
@@ -203,7 +323,8 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
     filter.causeCategoryId !== undefined ||
     filter.dueWithinDays !== undefined;
   const candidates = await getFailureAttemptsForDerivation(ctx.db, {
-    limit: hasPostFilter ? null : limit,
+    // +1 detects truncation without an unbounded scan when no post-filter is set.
+    limit: hasPostFilter ? null : limit + 1,
     since,
   });
 
@@ -243,9 +364,12 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
   // Apply final limit.
   const final = byDue.slice(0, limit);
   const finalQids = Array.from(new Set(final.map((x) => x.fa.question_id)));
-  // 三个独立读并行（/1020 misc_ primary + secondary id 的 title 回填含在内，
+  const finalKnowledgeIds = Array.from(
+    new Set(final.flatMap((x) => x.fa.referenced_knowledge_ids)),
+  );
+  // 四个独立读并行（/1020 misc_ primary + secondary id 的 title 回填含在内，
   // 同一批查询）。
-  const [promptMap, variantsMap, miscLabels] = await Promise.all([
+  const [promptMap, variantsMap, miscLabels, knowledgeRows] = await Promise.all([
     loadQuestionPrompts(ctx.db, finalQids),
     input.includeVariants
       ? loadVariants(ctx.db, finalQids)
@@ -256,7 +380,11 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
         x.cause ? [x.cause.primary_category, ...x.cause.secondary_categories] : [],
       ),
     ),
+    finalKnowledgeIds.length > 0
+      ? loadFailureLearningKnowledgeContext(ctx.db, finalKnowledgeIds)
+      : Promise.resolve([] as Awaited<ReturnType<typeof loadFailureLearningKnowledgeContext>>),
   ]);
+  const knowledgeById = new Map(knowledgeRows.map((row) => [row.id, row]));
 
   const now = Date.now();
   const mistakes = final.map(({ fa, cause }) => {
@@ -303,6 +431,18 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
       since_days: filter.sinceDays ?? null,
       limit,
     },
+    aggregates: buildAggregates({
+      final,
+      knowledgeById,
+      miscLabels,
+      includeCause: wantsCause,
+      // Windowed aggregates: with no post-filter the reader stopped at
+      // limit+1 raw rows, so any extra row means the window is partial.
+      truncated: hasPostFilter ? byDue.length > limit : candidates.length > limit,
+    }),
+    chart_bindings: wantsCause
+      ? ['/aggregates/by_cause', '/aggregates/by_knowledge']
+      : ['/aggregates/by_knowledge'],
     claim_boundaries: {
       zero_rows_scope: 'matching_failure_attempt_rows_only',
       supports_entity_inventory_claim: false,

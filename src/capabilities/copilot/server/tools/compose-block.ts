@@ -18,6 +18,7 @@ import {
   canonicalBlockJson,
 } from '@/core/schema/blocks';
 import { tool_call_log } from '@/db/schema';
+import { chartSeriesIssues, isJsonPointer } from '@/kernel/blocks/chart';
 import { blockDigest, blockRefForDigest } from '@/kernel/blocks/digest';
 import { lintMermaidSource } from '@/kernel/blocks/mermaid-lint';
 import { parseMermaidSource } from '@/kernel/blocks/mermaid-validate';
@@ -175,7 +176,7 @@ export function createComposeBlockTool(
   return {
     name: 'compose_block',
     description:
-      'Compose one generative-UI block for the reply. Mandatory channel for diagrams and figures — never write tlp-block fences yourself. Pass one block object; invalid input returns typed issues (code/path/line/expected) to repair and resubmit. On ready, place the block in prose with the returned place string `![alt](block:ref)`. A figure returns its raster under images for visual self-check before you cite it.',
+      'Compose one generative-UI block for the reply. Mandatory channel for diagrams, figures and charts — never write tlp-block fences yourself. Pass one block object; invalid input returns typed issues (code/path/line/expected) to repair and resubmit. On ready, place the block in prose with the returned place string `![alt](block:ref)`. A figure returns its raster under images for visual self-check before you cite it. A chart binds to recorded data with data_source.kind="tool_result" (tool_use_id + JSON Pointer path); the server replaces your series with those recorded values.',
     effect: 'write',
     inputSchema: ComposeBlockInput,
     outputSchema: ComposeBlockOutput,
@@ -295,6 +296,33 @@ export function createComposeBlockTool(
                 code: 'entity_card_not_servable',
                 path: '/entity_id',
                 detail: 'entity must exist and be visible; knowledge-point and note ids only',
+              },
+            ]);
+          }
+          stored = block;
+          break;
+        }
+        case 'chart': {
+          // Only the chat surface is wired in this slice; the note and
+          // question_material allowlists are declared for later surfaces but
+          // have no compose instance yet.
+          if (surface !== 'chat') {
+            return invalid([
+              {
+                code: 'kind_not_allowed_on_surface',
+                path: '/kind',
+                detail: `kind 'chart' is not wired for the '${surface}' surface`,
+              },
+            ]);
+          }
+          const issues = chartSeriesIssues(block);
+          if (issues.length > 0) return invalid(issues);
+          if (block.data_source.kind === 'tool_result' && !isJsonPointer(block.data_source.path)) {
+            return invalid([
+              {
+                code: 'chart_tool_result_unresolved',
+                path: '/data_source/path',
+                detail: 'path must be a JSON Pointer such as /mistakes/0/count',
               },
             ]);
           }

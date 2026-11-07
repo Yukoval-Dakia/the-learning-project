@@ -16,6 +16,7 @@ export const BLOCK_SURFACE_KINDS: Record<BlockSurface, readonly BlockKind[]> = {
 export const BLOCK_IMPLEMENTED_KINDS: readonly BlockKind[] = [
   'diagram',
   'figure',
+  'chart',
   'question_ref',
   'entity_card',
 ];

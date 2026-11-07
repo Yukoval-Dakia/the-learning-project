@@ -18,6 +18,7 @@ import type { RunTaskResult } from '@/ai/task-result';
 import { readDerivationPolicy } from '@/core/schema/derivation-policy';
 import type { PiAfterToolCall } from '@/core/tool-call-contract';
 import type { Db } from '@/db/client';
+import { chartPublishedAfterBinding } from '@/kernel/blocks/chart';
 import { recordAiTaskReplyUnsealed } from '@/kernel/records/ai-attempt-facts';
 import {
   DOMAIN_TOOL_MCP_SERVER_NAME,
@@ -359,6 +360,10 @@ export function createCopilotExecutionOwner(
               }
             | undefined;
           if (result.error_reason === null && output?.status === 'ready' && output.ref) {
+            // A tool_result chart's authoritative series exist only after commit
+            // binding; publishing the compose draft would expose model numbers on
+            // the public stream first.
+            if (chartPublishedAfterBinding(output.block)) return;
             void Promise.resolve(
               emitActivity(policy, {
                 kind: 'block_ready',

@@ -107,18 +107,34 @@ export const ChartBlock = z
       .min(1)
       .max(8),
     data_source: z.discriminatedUnion('kind', [
-      z.object({ kind: z.literal('model') }).strict(),
+      z
+        .object({ kind: z.literal('model') })
+        .strict()
+        .meta({
+          description:
+            'Model-authored data for learning content (e.g., a function value table). Learner statistics must use tool_result.',
+        }),
       z
         .object({
           kind: z.literal('tool_result'),
-          tool_use_id: z.string(),
-          path: z.string().max(200),
+          tool_use_id: z.string().meta({
+            description:
+              'The successful root tool call this chart reads, copied from its `tool_use_id=…` follow-up note.',
+          }),
+          path: z.string().max(200).meta({
+            description:
+              'JSON Pointer (RFC 6901) into that tool output, resolving to [{name, points:[[x,y],…]}]. The server copies these recorded values and replaces `series`.',
+          }),
         })
         .strict(),
     ]),
   })
   .strict()
-  .meta({ description: 'A bar/line/scatter/pie chart from declared data.' });
+  .meta({
+    description:
+      'A bar/line/scatter/pie chart from declared data. data_source=model is model-authored; data_source=tool_result binds series to a recorded tool result and the server replaces the submitted series with those values.',
+  });
+export type ChartBlockT = z.infer<typeof ChartBlock>;
 
 const InteractiveField = z
   .object({

@@ -5,7 +5,6 @@
 import { z } from 'zod';
 import {
   type BlockKind,
-  ChartBlock,
   DiagramBlock,
   FigureBlockInput,
   InteractiveBlockInput,
@@ -16,10 +15,10 @@ import { BLOCK_IMPLEMENTED_KINDS, BLOCK_SURFACE_KINDS, type BlockSurface } from 
 // Field lists are generated from the MODEL-FACING input schemas so the
 // catalogue matches what compose_block actually accepts (figure `svg`,
 // interactive `html`), never the asset-only stored form.
-// entity_card is deliberately absent: the Copilot system prompt sits at its
-// 12,000-char budget, and the tool's JSON schema already carries the shape.
+// entity_card and chart are deliberately absent: the Copilot system prompt sits at
+// its 12,000-char budget, and the tool's JSON schema already carries the shape.
 const MEMBER_META: Record<
-  Exclude<BlockKind, 'entity_card'>,
+  Exclude<BlockKind, 'entity_card' | 'chart'>,
   { schema: z.ZodType; example: unknown }
 > = {
   diagram: {
@@ -53,7 +52,6 @@ const MEMBER_META: Record<
       label: '打开题目',
     },
   },
-  chart: { schema: ChartBlock, example: { v: 1, kind: 'chart', chart: 'bar' } },
   interactive: {
     schema: InteractiveBlockInput,
     example: { v: 1, kind: 'interactive', title: '…' },
@@ -84,7 +82,9 @@ export function renderBlockCatalogue(surface: BlockSurface): string {
   const lines: string[] = [
     '【生成式积木】流程图/装置图须用 compose_block；勿手写 tlp-block、mermaid代码块或SVG/ASCII冒充图（页面只显示源码）。成功返ref/place；正文用 `![简短说明](block:<ref>)` 逐块放置；已放一个时，未放者隐藏。失败返回status=invalid和issues[]（code/path/line/expected），修正重提，勿重复原内容。',
   ];
-  for (const kind of ['diagram', 'figure', 'chart', 'interactive', 'question_ref'] as const) {
+  // chart is implemented but omitted from the catalogue for the prompt budget;
+  // the compose_block JSON schema still exposes it.
+  for (const kind of ['diagram', 'figure', 'interactive', 'question_ref'] as const) {
     const meta = MEMBER_META[kind];
     if (!allowed.has(kind)) continue;
     if (!implemented.has(kind)) {
