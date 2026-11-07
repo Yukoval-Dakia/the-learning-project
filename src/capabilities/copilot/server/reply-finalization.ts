@@ -155,7 +155,7 @@ export function piToolErrorText(error: unknown): string {
  *  even when it trims the explanatory prefix, so the learner reads it once. */
 function replyStatesPlacement(reply: string, placementNote: string): boolean {
   if (reply.includes(placementNote)) return true;
-  const placed = placementNote.match(/这道题先放在「[^」]+」下/u)?.[0];
+  const placed = placementNote.match(/这道题先?放在「[^」]+」下/u)?.[0];
   return placed !== undefined && placed.length > 0 && reply.includes(placed);
 }
 

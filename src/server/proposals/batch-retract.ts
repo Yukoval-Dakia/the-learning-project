@@ -21,7 +21,7 @@
 //      that check under the decision lock, so a retried batch never writes a
 //      second correction event.
 //
-// The in-transaction guard re-classifies the item instead of trusting the
+// The in-transaction guard re-asks the kind's owner instead of trusting the
 // pre-scan: state that only the batch itself can change (a dependent child
 // removed earlier in the same run) must be visible at retraction time.
 
@@ -37,10 +37,9 @@ import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
 import { event } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import {
-  AUTO_APPLIED_BATCH_UNDO_KINDS,
   type AutoAppliedUndoDecision,
+  autoAppliedBatchUndoKinds,
   classifyAutoAppliedUndoBatch,
-  isNonTransientUndoBlock,
   lockAutoAppliedUndoOwnerRows,
 } from '@/kernel/proposals/auto-applied-undo';
 import { PROPOSAL_AUTOAPPLY_ACTION } from '@/kernel/proposals/auto-apply';
@@ -144,7 +143,7 @@ async function selectWindowProposalIds(
     .select({ id: event.id, payload: event.payload })
     .from(event)
     .where(inArray(event.id, ids));
-  const allowed = new Set<string>(AUTO_APPLIED_BATCH_UNDO_KINDS);
+  const allowed = new Set<string>(autoAppliedBatchUndoKinds());
   const allowedIds = new Set(
     proposals.filter((row) => allowed.has(kindOf(row.payload))).map((row) => row.id),
   );
@@ -348,7 +347,7 @@ export async function batchRetractAutoAppliedProposals(
       items.push(fromDecision(proposalId, kind, decision));
       continue;
     }
-    if (decision.status === 'blocked' && isNonTransientUndoBlock(decision.code)) {
+    if (decision.status === 'blocked' && !decision.clears_in_batch) {
       items.push(fromDecision(proposalId, kind, decision));
       continue;
     }

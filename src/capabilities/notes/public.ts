@@ -50,5 +50,11 @@ export {
 } from './server/notes-read';
 export type { NoteUpdateAcceptResult } from './server/proposal-accept-applier';
 export { archiveProposalArtifacts } from './server/proposal-artifacts';
+export type { ProposalNoteUndoFacts } from './server/undo-usage';
+export {
+  knowledgeNodesWithNoteLabels,
+  lockProposalNoteArtifacts,
+  readProposalNoteUndoFacts,
+} from './server/undo-usage';
 // Task composition uses the narrow task-public entry, not this barrel.
 export { notesTaskSpecs } from './task-public';

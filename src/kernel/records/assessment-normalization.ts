@@ -31,8 +31,14 @@ import {
   ResponseSpec,
   ScoringBasis,
 } from '@/core/schema/assessment';
+import {
+  CURRENT_NUMERIC_NORMALIZATION_VERSION,
+  CURRENT_TEXT_KEY_NORMALIZATION,
+  extractAnswerHead,
+  extractAnswerHeadForFrozenBasis,
+  isExactCapableReference,
+} from '@/core/schema/assessment/answer-compare';
 import { ConjectureProbeSpec, ConjectureProbeSpecV2 } from '@/core/schema/business';
-import { extractAnswerHead, isExactCapableReference } from '@/core/schema/judge-routing';
 import type { FigureRefT, StructuredQuestionT } from '@/core/schema/structured_question';
 
 import { createProbeV2Criterion } from './assessment-probe-criterion';
@@ -302,7 +308,7 @@ function numericKeyFor(row: {
     return;
   return {
     kind: 'numeric_key',
-    normalization_version: 'numeric-norm@2',
+    normalization_version: CURRENT_NUMERIC_NORMALIZATION_VERSION,
     expected: meta.reference_value,
     expected_unit: meta.reference_unit.trim(),
     tolerance:
@@ -316,10 +322,7 @@ function normalizeLeafScoring(leaf: LeafInput, normalizationBasis?: ScoringBasis
   const frozen = normalizationBasis?.units.find(
     (unit) => unit.scoring_unit_id === `${leaf.partId}::u`,
   )?.criterion;
-  const headVersion =
-    frozen?.kind === 'text_key' && frozen.normalization !== 'answer_head@2'
-      ? undefined
-      : 'answer_head@2';
+  const headNormalization = frozen?.kind === 'text_key' ? frozen.normalization : null;
   const slotId = `${leaf.partId}::r`;
   const answerText = leaf.answerTexts.find((t) => t != null && t.trim().length > 0) ?? null;
 
@@ -405,7 +408,7 @@ function normalizeLeafScoring(leaf: LeafInput, normalizationBasis?: ScoringBasis
 
       acceptedTexts:
         leaf.answerTexts.length > 0
-          ? leaf.answerTexts.map((t) => extractAnswerHead(t, headVersion))
+          ? leaf.answerTexts.map((t) => extractAnswerHeadForFrozenBasis(t, headNormalization))
           : [answerText],
     };
   }
@@ -481,7 +484,9 @@ function buildUnit(leaf: LeafInput, scoring: LeafScoring, normalizationBasis?: S
                 kind: 'text_key' as const,
                 accepted_texts: scoring.acceptedTexts ?? [],
                 normalization:
-                  frozen?.kind === 'text_key' ? frozen.normalization : ('answer_head@2' as const),
+                  frozen?.kind === 'text_key'
+                    ? frozen.normalization
+                    : CURRENT_TEXT_KEY_NORMALIZATION,
               }
             : {
                 kind: 'rule_reference' as const,
