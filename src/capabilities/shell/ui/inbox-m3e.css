@@ -949,6 +949,11 @@
     font-weight: var(--un-fw-medium);
   }
 
+  & .ib-edge-node[data-off] {
+    background: var(--un-caution-soft);
+    color: var(--un-text-2);
+  }
+
   & .ib-edge-arrow {
     flex: none;
     color: var(--un-text-4);
