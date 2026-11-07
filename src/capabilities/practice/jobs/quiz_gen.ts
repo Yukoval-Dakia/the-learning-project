@@ -50,6 +50,10 @@ import { costUsdToMicroUsd } from '@/kernel/cost';
 import { writeEvent } from '@/kernel/events';
 import type { QuizGenJobData, QuizGenTrigger } from '@/kernel/quiz-gen-contract';
 import {
+  listSubjectDocCatalog,
+  subjectDocCatalogPiSkillDoc,
+} from '@/kernel/read-models/subject-docs';
+import {
   type PlacementVerificationAuthority,
   SupplyTraceV1,
   type SupplyTraceV1T,
@@ -61,12 +65,11 @@ import {
 } from '@/kernel/tools/allowlists';
 import { runAgentTask } from '@/server/ai/runner';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
-import { answerClassCompatible } from '@/subjects/question-kind';
 import {
-  resolveQuizGenSkillDocsForSubject,
-  resolveQuizGenSkills,
+  answerClassCompatible,
+  quizGenPackDocKey,
   skillKindToQuestionKind,
-} from '@/subjects/quiz-gen-skills';
+} from '@/subjects/question-kind';
 import {
   EXACT_DUPLICATE_EVENT_SAMPLE_CAP,
   dispatchPendingVerifyIntents,
@@ -136,6 +139,8 @@ export const QUIZ_GEN_READ_TOOLS = [
   'expand_knowledge_subgraph',
   'find_knowledge_paths',
   'get_question_context',
+  // 科目经验文档库：题型规范/坏题反例/few-shot 正文按需读，启动只带目录。
+  'read_subject_doc',
 ] as const satisfies readonly DomainToolName[];
 
 // The handler only consumes { text, task_run_id?, cost_usd? } from the run
@@ -149,8 +154,8 @@ type RunAgentTaskFn = (
     db: Db;
     piToolMounts?: PiToolMount[];
     allowedTools?: string[];
-    // YUK-225 (S2 slice 4) — subject 规范包 bodies + subject context threaded to
-    // the runner so the (subject, kind) packs are injected into the system prompt.
+    // 本科目文档目录（渲染后的目录正文，不含文档正文）经 piSkillDocs 注入
+    // system prompt；正文由 agent 用 read_subject_doc 按需读。
     piSkillDocs?: readonly { name: string; body: string }[];
     subjectProfile?: SubjectProfile;
   },
@@ -423,28 +428,29 @@ async function prepareQuizGeneration(params: RunQuizGenParams) {
   const planPiToolMounts: PiToolMount[] = [piDomainMount(planDomainMountOptions)];
   const planAllowedTools = QUIZ_GEN_READ_TOOLS.map((name) => toMcpAllowedToolName(name));
 
-  // YUK-225 (S2 slice 4) — 规范双轨.
-  // 轨 1: inject the subject's quiz-gen SKILL.md规范包 bodies into the system
-  //       prompt (piSkillDocs). 降级链: resolveQuizGenSkillDocsForSubject returns
-  //       undefined when the subject has no pack → promptFragments fallback.
+  // 规范双轨（YUK-225 结构）.
+  // 轨 1（文档库形态）: 启动只带本科目文档目录（piSkillDocs 注入渲染后的目录，
+  //       不含正文）；出题规范/坏题反例/范例正文由 agent 用 read_subject_doc 按
+  //       doc_key 按需读。目录为空（表未就绪/科目无文档）→ 不注入，提示词照旧。
   // 轨 2: retrieve a few already-pooled同题型 examples (high-tier first) and fold a
   //       few-shot block into the prompt. Best-effort: a retrieval failure must not
   //       block generation, so we log + continue with no block (降级).
-  const subjectSkillDocs = await resolveQuizGenSkillDocsForSubject(subjectProfile.id);
+  const docCatalog = await listSubjectDocCatalog(db, subjectProfile.id);
+  const subjectSkillDocs = await subjectDocCatalogPiSkillDoc(db, subjectProfile.id);
+  const packDocKeys = new Set(
+    [...docCatalog.own, ...docCatalog.shared].map((entry) => entry.doc_key),
+  );
 
   let fewShotBlock = '';
   if (resolved.knowledgeIds.length > 0) {
     // QuizGen runs emit mixed kinds; retrieve few-shot across the subject's
-    // skill-backed kinds (translation / reading_comprehension / calculation …)
+    // pack-backed kinds (translation / reading_comprehension / calculation …)
     // and merge a small set so each kind the model writes has an exemplar.
-    // resolveQuizGenSkills is async now; a sync Array.filter predicate would see a
-    // Promise (always !== undefined) and mark every kind skill-backed. Pre-compute
-    // the resolved values concurrently, then filter on the resolved array.
     const allKinds = subjectProfile.questionKinds ?? [];
-    const skillResolved = await Promise.all(
-      allKinds.map((k) => resolveQuizGenSkills(subjectProfile.id, k)),
-    );
-    const skillBackedKinds = allKinds.filter((_, i) => skillResolved[i] !== undefined);
+    const skillBackedKinds = allKinds.filter((k) => {
+      const packKey = quizGenPackDocKey(k);
+      return packKey !== null && packDocKeys.has(packKey);
+    });
     const collected: FewShotExample[] = [];
     for (const k of skillBackedKinds) {
       try {
@@ -535,6 +541,7 @@ async function planQuizGeneration(
       piToolMounts: planPiToolMounts,
       allowedTools: planAllowedTools,
       subjectProfile,
+      ...(context.subjectSkillDocs ? { piSkillDocs: context.subjectSkillDocs } : {}),
     });
     const parsedPlan = parsePlanOutput(evidence.planRunResult.text);
     if (!parsedPlan.ok) {

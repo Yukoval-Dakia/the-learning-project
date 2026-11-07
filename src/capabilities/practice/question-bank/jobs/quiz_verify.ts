@@ -44,6 +44,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, eq, getTableColumns, ne } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
+import { type BuildMcpServerOptions, piDomainMount } from '@/ai/pi-tool-mount';
 import { type TaskTextResult, aiAgentRef } from '@/ai/task-result';
 import { readDifficultyEvidenceFromMetadata } from '@/core/schema/difficulty-evidence';
 import { deriveSourceTier } from '@/core/schema/provenance';
@@ -60,13 +61,13 @@ import {
 import type { Db } from '@/db/client';
 import { event, knowledge, question, question_group_lifecycle, source_document } from '@/db/schema';
 import { declaredAdmissionOwned } from '@/kernel/read-models/question-admission-ownership';
+import { subjectDocCatalogPiSkillDoc } from '@/kernel/read-models/subject-docs';
 import type { PlacementVerificationAuthority } from '@/kernel/supply-contracts';
 import { SupplyTraceV1 } from '@/kernel/supply-contracts';
+import { DOMAIN_TOOL_MCP_SERVER_NAME, toMcpAllowedToolName } from '@/kernel/tools/allowlists';
 import { type TaskTextRunFn, costUsdToMicroUsd } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { resolveSubjectProfile } from '@/subjects/profile';
-import type { SubjectQuestionKind } from '@/subjects/profile-schema';
-import { resolveQuizGenSkillDocs } from '@/subjects/quiz-gen-skills';
 import {
   PlacementStarterAdmissionError,
   PlacementStarterStaleAuthorityError,
@@ -422,13 +423,28 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
   };
 
   // 验题出题同源: when the tier's check set includes
-  // kind_conformance (tier 3/4), load the SAME (subject, kind) quiz-gen规范包 the
-  // generator used so the verifier judges「题型是否像真题」against the same standard
-  // it was written to. 降级链: resolveQuizGenSkillDocs returns undefined when no pack
-  // exists for (subject, kind) → no piSkillDocs → current behaviour.
+  // kind_conformance (tier 3/4), the verifier sees the subject's doc catalog and
+  // can read the SAME (subject, kind) quiz-gen 规范文档 the generator used via
+  // read_subject_doc — 只读，启动注入目录不注正文。目录空（无文档）时等于旧
+  // 无规范包路径：kind_conformance 字段省略。
   const kindConformanceChecked = tierChecks.includes('kind_conformance');
+  const verifyDocToolRunId = `quiz_verify_tool_${createId()}`;
+  const verifyDocMounts = kindConformanceChecked
+    ? [
+        piDomainMount({
+          ctx: {
+            db,
+            taskRunId: verifyDocToolRunId,
+            callerActor: { kind: 'agent', ref: 'quiz_verify' },
+          },
+          serverName: DOMAIN_TOOL_MCP_SERVER_NAME,
+          toolNames: ['read_subject_doc'],
+          taskKind: 'QuizVerifyTask',
+        } satisfies BuildMcpServerOptions),
+      ]
+    : undefined;
   const verifySkillDocs = kindConformanceChecked
-    ? await resolveQuizGenSkillDocs(subjectProfile.id, row.kind as SubjectQuestionKind)
+    ? await subjectDocCatalogPiSkillDoc(db, subjectProfile.id)
     : undefined;
 
   let taskResult: TaskTextResult | null = null;
@@ -451,6 +467,12 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
       runTaskFn,
       db,
       subjectProfile,
+      ...(verifyDocMounts
+        ? {
+            piToolMounts: verifyDocMounts,
+            allowedTools: [toMcpAllowedToolName('read_subject_doc')],
+          }
+        : {}),
       ...(verifySkillDocs ? { piSkillDocs: verifySkillDocs } : {}),
       afterTaskRun: async (result) => {
         taskResult = result;

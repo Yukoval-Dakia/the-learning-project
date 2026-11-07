@@ -464,3 +464,58 @@ export const subject_name_claim = pgTable(
     uniqueIndex('subject_name_claim_canonical_uq').on(t.subject_id).where(sql`kind = 'canonical'`),
   ],
 );
+
+// 科目经验文档库：同一控制面家族，写事务照旧先取 SUBJECT_CONTROL_PLANE_LOCK，
+// 整面串行化；agent 侧只读（read_subject_doc 按 doc_key 点查、目录列举、搜索）。
+// 文档不复用 trait：trait 是绑定到科目的受控事实（payload 有 per-kind 结构），
+// 文档是任意长正文 + 目录元数据，回滚/编辑粒度是单篇。
+export const subject_doc = pgTable(
+  'subject_doc',
+  {
+    subject_id: text('subject_id').notNull(),
+    // 目录键（guide/teaching、skill/note、skill/quiz-gen-<kind>…）；
+    // 与 subject_id 组成 PK，一科目一键一文档。
+    doc_key: text('doc_key').notNull(),
+    title: text('title').notNull(),
+    // 目录里给 agent 看的一句话用途；正文不进目录。
+    summary: text('summary').notNull(),
+    body: text('body').notNull(),
+    origin: text('origin', { enum: ['builtin', 'custom'] }).notNull(),
+    // 种子血统：migrate 对账的比较对象；custom 恒 null（对账不触达）。
+    seed_version: text('seed_version'),
+    // 文档 CAS（edit/rollback/reconcile 每写 +1）= journal 单调 PK 轴。
+    revision: integer('revision').notNull().default(0),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull(),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.subject_id, t.doc_key] })],
+);
+
+export const subject_doc_journal = pgTable(
+  'subject_doc_journal',
+  {
+    subject_id: text('subject_id').notNull(),
+    doc_key: text('doc_key').notNull(),
+    revision: integer('revision').notNull(),
+    // 每行 = 该 revision 的完整快照，单表即可重建历史状态（trait journal 同款）。
+    title: text('title').notNull(),
+    summary: text('summary').notNull(),
+    body: text('body').notNull(),
+    seed_version: text('seed_version'),
+    action: text('action', {
+      enum: ['create', 'edit', 'rollback', 'reconcile', 'reset_to_seed'],
+    }).notNull(),
+    // create/reconcile → 'migrate'；edit/rollback/reset_to_seed → 'owner'；
+    // 'agent' 保留给 agent 提案落稿（提案 id 走 detail）。
+    actor: text('actor', { enum: ['owner', 'migrate', 'agent'] }).notNull(),
+    // 来源证明：seed 写 {file|fields}，agent 写 {proposal_event_id, task_run_id}；
+    // rollback 的前置 revision 也落 detail（slice 3 带来写者时定形）。
+    detail: jsonb('detail').notNull(),
+    // 与控制面两本 journal 共用全局序列（同一条 as-of 重放轴）。
+    change_seq: bigint('change_seq', { mode: 'number' })
+      .notNull()
+      .default(sql`nextval('subject_change_seq')`),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.subject_id, t.doc_key, t.revision] })],
+);
