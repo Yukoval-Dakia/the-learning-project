@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { eq, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
@@ -7,6 +8,7 @@ import { projectCopilotActivity } from '@/capabilities/copilot/server/tool-activ
 import { generateReferenceSolution } from '@/capabilities/practice/question-bank/server/reference-solution';
 import * as schema from '@/db/schema';
 import { artifact, event, material_fsrs_state, question, source_asset } from '@/db/schema';
+import { allowedQuestionIds } from '@/kernel/read-models/usage-policy';
 import {
   contractIntegrityDigest,
   normalizeQuestionGroupToContract,
@@ -149,6 +151,153 @@ describe('bank tools boundary invariants (search_bank / read_bank / check_bank)'
   beforeEach(async () => {
     vi.stubEnv('BANK_GAP_EVIDENCE_SECRET', 'bank-boundary-fixture-signing-key-at-least-32-chars');
     await resetDb();
+  });
+
+  // @invariant security: batch authorization equals the frozen scalar policy for every root and recursive dependency
+  // @fails-if restricted, dangling, malformed, cyclic or historical lineage is authorized differently by batching
+  it('authorizes each root exactly as the frozen recursive scalar policy', async () => {
+    const now = new Date();
+    await db.insert(schema.source_document).values([
+      { id: 'allowed-doc', created_at: now, updated_at: now, provenance: {} },
+      {
+        id: 'denied-doc',
+        created_at: now,
+        updated_at: now,
+        provenance: { usage_policy: { derivation_policy: 'answer_only' } },
+      },
+      { id: 'epoch-doc', created_at: now, updated_at: now, provenance: { usage_epoch: 'current' } },
+    ]);
+    await db.insert(schema.learning_session).values({
+      id: 'ingestion-session',
+      type: 'ingestion',
+      status: 'active',
+      source_document_id: 'denied-doc',
+    });
+    await db.insert(event).values([
+      {
+        id: 'restricted-event',
+        actor_kind: 'user',
+        actor_ref: 'user',
+        action: 'attempt',
+        subject_kind: 'question',
+        subject_id: 'legacy',
+        outcome: 'failure',
+        payload: { derivation_policy: 'answer_only' },
+      },
+      {
+        id: 'historical-promotion',
+        actor_kind: 'agent',
+        actor_ref: 'legacy',
+        action: 'experimental:proposal',
+        subject_kind: 'record',
+        subject_id: 'historical-record',
+        payload: { kind: 'record_promotion', proposed_change: { record_id: 'historical-record' } },
+      },
+      {
+        id: 'allowed-promotion',
+        actor_kind: 'agent',
+        actor_ref: 'legacy',
+        action: 'experimental:proposal',
+        subject_kind: 'record',
+        subject_id: 'allowed-record',
+        payload: { kind: 'record_promotion', proposed_change: { record_id: 'allowed-record' } },
+      },
+      {
+        id: 'note',
+        actor_kind: 'agent',
+        actor_ref: 'legacy',
+        action: 'experimental:agent_note',
+        subject_kind: 'event',
+        subject_id: 'note',
+        payload: { refs: [{ kind: 'source_document', id: 'denied-doc' }] },
+      },
+    ]);
+    await db.insert(schema.learning_record).values({
+      id: 'historical-record',
+      kind: 'note',
+      source: 'capture',
+      capture_mode: 'text',
+      activity_kind: 'learning',
+      source_document_id: 'denied-doc',
+      created_at: now,
+      updated_at: now,
+    });
+    await db.insert(schema.learning_record).values({
+      id: 'allowed-record',
+      kind: 'note',
+      source: 'capture',
+      capture_mode: 'text',
+      activity_kind: 'learning',
+      source_document_id: 'allowed-doc',
+      created_at: now,
+      updated_at: now,
+    });
+    const fixtures = [
+      ['legacy', {}],
+      ['allow', { metadata: { source_document_id: 'allowed-doc' } }],
+      ['deny', { metadata: { source_document_id: 'denied-doc' } }],
+      ['dangling', { metadata: { source_document_id: 'gone' } }],
+      ['unknown', { metadata: { derivation_policy: 'invalid' } }],
+      ['null-binding', { metadata: { source_document_id: null } }],
+      ['bad-epochs', { metadata: { source_usage_epochs: [] } }],
+      [
+        'old-epoch',
+        {
+          metadata: {
+            source_document_id: 'epoch-doc',
+            source_usage_epochs: { 'epoch-doc': 'legacy' },
+          },
+        },
+      ],
+      ['record', { metadata: { source_record_id: 'historical-record' } }],
+      ['event', { metadata: { source_attempt_event_id: 'restricted-event' } }],
+      ['session', { metadata: { ingestion_session_id: 'ingestion-session' } }],
+      ['promotion', { source: 'dreaming', source_ref: 'historical-promotion' }],
+      ['promotion-allow', { source: 'dreaming', source_ref: 'allowed-promotion' }],
+      ['note-source', { metadata: { source_attempt_event_id: 'note' } }],
+      ['orphan-event', { metadata: { source_attempt_event_id: 'gone' } }],
+      ['cycle-a', {}],
+      ['cycle-b', {}],
+      ['parent-deny', { parent_variant_id: 'deny' }],
+    ] as const;
+    for (const [id, overrides] of fixtures) await seedQuestion(id, overrides);
+    await db
+      .update(question)
+      .set({ parent_variant_id: 'cycle-b' })
+      .where(eq(question.id, 'cycle-a'));
+    await db
+      .update(question)
+      .set({ parent_variant_id: 'cycle-a' })
+      .where(eq(question.id, 'cycle-b'));
+    await db.transaction(async (tx) => {
+      await tx.execute(sql`CREATE TEMP TABLE purpose_baseline_anchor(id text) ON COMMIT DROP`);
+      const frozen = readFileSync('drizzle/0142_yuk1834_purpose_authorization.sql', 'utf8')
+        .replaceAll('public.tlp_', 'pg_temp.old_tlp_')
+        .replaceAll('--> statement-breakpoint', '');
+      await tx.execute(sql.raw(frozen));
+      const ids = [...fixtures.map(([id]) => id), 'missing', 'legacy'];
+      const old = await tx.execute<{ id: string }>(
+        sql`SELECT id FROM question WHERE id IN (${sql.join(
+          ids.map((id) => sql`${id}`),
+          sql`, `,
+        )}) AND pg_temp.old_tlp_question_allows_derivation(id)`,
+      );
+      const batch = await allowedQuestionIds(tx, ids);
+      expect([...batch].sort()).toEqual(old.map((r) => r.id).sort());
+      expect([...batch].sort()).toEqual([
+        'allow',
+        'cycle-a',
+        'cycle-b',
+        'legacy',
+        'promotion-allow',
+      ]);
+      expect(await allowedQuestionIds(tx, [])).toEqual(new Set());
+      await tx
+        .update(schema.source_document)
+        .set({ provenance: { usage_policy: { derivation_policy: 'crisis' } } })
+        .where(eq(schema.source_document.id, 'allowed-doc'));
+      expect(await allowedQuestionIds(tx, ids)).not.toContain('allow');
+    });
   });
 
   // @invariant data: served-face search returns only eligible items (withdrawn never; drafts/withheld only on the explicit dedup face) @fails-if a hard filter is dropped or ignored in SQL so withdrawn/withheld/draft items leak into the admitted+active served hits
