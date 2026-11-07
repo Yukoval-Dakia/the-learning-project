@@ -56,6 +56,17 @@ import { useWorkbenchClient } from './workbench-client';
 
 /** Same cap as a new proposal's one sentence. */
 const LEGACY_BODY_MAX = 80;
+// There is nothing to decide from without the reason: these cards do not say what they act on, and
+// a conjecture's reason is the very claim being decided.
+const REASON_STAYS_IN_VIEW: ReadonlySet<string> = new Set([
+  'knowledge_mutation',
+  'record_links',
+  'record_promotion',
+  'completion',
+  'relearn',
+  'note_update',
+  'conjecture',
+]);
 
 const EV_ICON: Record<string, LucideIcon> = {
   event: Sparkles,
@@ -446,9 +457,19 @@ export function ProposalCard({ p, resolved, navigate, onResolve, onError }: Prop
       : [],
   );
   const CardIcon = kindIcon(cardIcon);
-  // An older proposal has no sentence of its own and falls back to its whole reason, which can run
-  // long: a long one is cut to two lines with the full text under the fold.
+  // Without a sentence of its own, a card leaves its reason, which is internal text, under the fold
+  // and is read from its title and change details. A card those cannot decide keeps the reason in
+  // view, cut to two lines when long. So does a relation whose end has no name: the server then
+  // sends the start of the id as its label.
   const ownSummary = p.payload.learner_summary ? p.presentation?.learner_summary : undefined;
+  const edgeLabels = p.presentation?.knowledge_edge;
+  const edgeUnnamed =
+    isEdge &&
+    (edgeLabels?.from_label === undefined ||
+      edgeLabels.to_label === undefined ||
+      edgeLabels.from_label === edgeFrom?.slice(0, 8) ||
+      edgeLabels.to_label === edgeTo?.slice(0, 8));
+  const reasonInView = !ownSummary && (REASON_STAYS_IN_VIEW.has(p.kind) || edgeUnnamed);
   const legacySegments = splitReasonIds(p.presentation?.learner_summary ?? p.payload.reason_md);
   // The first thing read holds no ids: a known block keeps its name, anything else waits in the fold.
   const legacyBody = reasonWithoutIds(
@@ -456,9 +477,7 @@ export function ProposalCard({ p, resolved, navigate, onResolve, onError }: Prop
     (id) => mergeBlockLabelById.get(id),
   );
   const reasonFolded =
-    Boolean(ownSummary) ||
-    legacyBody.length > LEGACY_BODY_MAX ||
-    legacySegments.some((seg) => seg.raw);
+    !reasonInView || legacyBody.length > LEGACY_BODY_MAX || legacySegments.some((seg) => seg.raw);
   // YUK-264：不透明 ID 不露出来；已加载的题块显示位置身份，其他引用折叠为通用标签，原 ID 只保留在 hover title 供追溯。
   const reasonText = (text: string, learnerSentence = false) =>
     splitReasonIds(text, learnerSentence).map((seg) =>
@@ -511,16 +530,15 @@ export function ProposalCard({ p, resolved, navigate, onResolve, onError }: Prop
         )}
       </div>
 
-      {ownSummary ? (
-        <p className="ib-prop-reason">{reasonText(ownSummary, true)}</p>
-      ) : (
+      {ownSummary ? <p className="ib-prop-reason">{reasonText(ownSummary, true)}</p> : null}
+      {reasonInView ? (
         <div
           className="ib-prop-reason"
           data-clamp={legacyBody.length > LEGACY_BODY_MAX ? '' : undefined}
         >
           {legacyBody || '理由都是技术引用，在下面的依据里。'}
         </div>
-      )}
+      ) : null}
 
       {p.presentation && p.presentation.change_summary.length > 0 && (
         <dl className="ib-prop-summary">

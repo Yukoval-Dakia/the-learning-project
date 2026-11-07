@@ -282,6 +282,8 @@ function disputeReasonOf(record: Record<string, unknown>): string | undefined {
 export function createNoProgressLoop(policy?: {
   normalize?(payload: unknown): unknown;
   progressed?(observation: Parameters<PiAfterToolCall>[0], payload: unknown): boolean;
+  /** Argument-schema rejection: retryable, but never progress evidence. */
+  validationError?(observation: Parameters<PiAfterToolCall>[0]): boolean;
 }): {
   beforeToolCall: PiBeforeToolCall;
   afterToolCall: PiAfterToolCall;
@@ -298,6 +300,15 @@ export function createNoProgressLoop(policy?: {
   let pendingOnly = false;
   const known = new Set<string>();
   const evidence: EvidenceFact[] = [];
+  /** Same invalid arguments may be retried once; a third call is blocked without
+   *  closing the loop, so a different tool still gets its turn. */
+  const invalidArgumentAttempts = new Map<string, number>();
+  const gateDeniedCalls = new Set<string>();
+  const INVALID_ARGUMENT_ATTEMPT_LIMIT = 2;
+  const VALIDATION_FAILURE_LIMIT = 5;
+  const INVALID_ARGUMENT_BLOCK_REASON =
+    'the same invalid arguments were rejected twice; correct them or answer from what was collected';
+  let validationFailureCount = 0;
 
   function close(reason: NoProgressCloseReason): void {
     if (phase.status === 'closed') return;
@@ -338,7 +349,23 @@ export function createNoProgressLoop(policy?: {
 
   const beforeToolCall: PiBeforeToolCall = (call, args) => {
     if (phase.status === 'closed') return deny(phase.reason);
+    if (budgetLandingDue(budget)) {
+      close('budget_landing');
+      return deny('budget_landing');
+    }
     const signature = signatureOf(call.name, args);
+    if ((invalidArgumentAttempts.get(signature) ?? 0) >= INVALID_ARGUMENT_ATTEMPT_LIMIT) {
+      // A gate denial is not a tool result: exclude it from settled/fingerprint.
+      // It still counts toward the run's validation budget; otherwise repeating
+      // the same invalid call could be blocked forever without ever closing.
+      gateDeniedCalls.add(call.id);
+      validationFailureCount += 1;
+      if (validationFailureCount >= VALIDATION_FAILURE_LIMIT) {
+        close('no_progress');
+        return deny('no_progress');
+      }
+      return { block: true, reason: INVALID_ARGUMENT_BLOCK_REASON };
+    }
     if (
       settledAtGeneration.get(signature) === generation &&
       (!pendingSignatures.has(signature) || pendingOnly)
@@ -346,16 +373,28 @@ export function createNoProgressLoop(policy?: {
       close('no_progress');
       return deny('no_progress');
     }
-    if (budgetLandingDue(budget)) {
-      close('budget_landing');
-      return deny('budget_landing');
-    }
     return undefined;
   };
 
   const afterToolCall: PiAfterToolCall = (observation) => {
+    if (gateDeniedCalls.delete(observation.call.id)) return undefined;
     if (observation.interrupted) return undefined;
     const tool = domainToolName(observation.call.name);
+    if (observation.isError && policy?.validationError?.(observation)) {
+      const invalidSignature = signatureOf(observation.call.name, observation.args);
+      invalidArgumentAttempts.set(
+        invalidSignature,
+        (invalidArgumentAttempts.get(invalidSignature) ?? 0) + 1,
+      );
+      validationFailureCount += 1;
+      // Five protocol-validation rejections across the run is far more than a
+      // model needs to correct one call, and stops an unbounded retry loop.
+      // Copilot has no turn or cost ceiling, so this is its deterministic exit.
+      if (validationFailureCount >= VALIDATION_FAILURE_LIMIT) close('no_progress');
+      // Validation is repairable by the model and proves nothing about the
+      // question, so it must not enter the settled-signature/fingerprint sets.
+      return undefined;
+    }
     const payload = parsePayload(observation.isError ? observation.error : observation.output);
     const fingerprint = fingerprintOf(
       policy?.normalize ? policy.normalize(payload) : payload,
