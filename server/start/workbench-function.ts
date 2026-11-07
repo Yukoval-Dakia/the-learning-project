@@ -28,6 +28,20 @@ export const getStartTaskFailureAlerts = createServerFn({ method: 'GET' }).handl
     return readStartTaskFailureAlerts();
   }),
 );
+export const getStartAiNoticeDismissals = createServerFn({ method: 'GET' }).handler(({ context }) =>
+  runAuthenticatedStartWorkbench(context, getRequest(), async () => {
+    const { readStartAiNoticeDismissals } = await context.adapters.workbench();
+    return readStartAiNoticeDismissals();
+  }),
+);
+export const dismissStartAiNoticesFn = createServerFn({ method: 'POST' })
+  .validator((input: { keys: string[] }) => input)
+  .handler(({ context, data }) =>
+    runAuthenticatedStartWorkbench(context, getRequest(), async () => {
+      const { dismissStartAiNotices } = await context.adapters.workbench();
+      return dismissStartAiNotices(data);
+    }),
+  );
 export const getStartAutoApplied = createServerFn({ method: 'GET' })
   .validator((window: { from: string; to?: string } | undefined) => window)
   .handler(({ context, data }) =>

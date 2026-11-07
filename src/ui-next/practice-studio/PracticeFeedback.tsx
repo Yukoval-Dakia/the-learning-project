@@ -1,4 +1,5 @@
 import { Check, CircleHelp, RotateCcw, Sparkles, X } from 'lucide-react';
+import type { ReactNode } from 'react';
 import type { PracticeIntents, PracticeRenderers, Revelation } from './contracts';
 import { IntentButton, NoticeBlock } from './controls';
 import { PracticeField } from './PracticeFields';
@@ -15,10 +16,13 @@ export function PracticeFeedback({
   revelation: r,
   intents,
   renderers,
+  actions,
 }: {
   revelation: Revelation;
   intents: PracticeIntents;
   renderers: PracticeRenderers;
+  /** The way forward closes the card, as it closes the question card before an answer. */
+  actions?: ReactNode;
 }) {
   if (r.kind === 'concealed')
     return r.reason ? <p className="un-st-secondary">{r.reason}</p> : null;
@@ -30,7 +34,9 @@ export function PracticeFeedback({
       {result && (
         <>
           <header className="un-st-verdict" data-verdict={result.verdict}>
-            <VerdictIcon size={24} aria-hidden="true" />
+            <span className="un-st-verdict-mark">
+              <VerdictIcon size={22} aria-hidden="true" />
+            </span>
             <div>
               <h2>{verdicts[result.verdict]}</h2>
               {result.summary && <p>{result.summary}</p>}
@@ -45,18 +51,10 @@ export function PracticeFeedback({
           {result.uncertainty && <p role="status">{result.uncertainty}</p>}
         </>
       )}
-      {r.appeal && (
-        <section className="un-st-appeal">
-          {r.appeal.field && (
-            <PracticeField field={r.appeal.field} intents={intents} renderers={renderers} />
-          )}
-          <NoticeBlock notice={r.appeal.notice} intents={intents} />
-        </section>
-      )}
       {result && (
         <>
           {result.parts.map((part) => (
-            <section key={part.id}>
+            <section key={part.id} className="un-st-feedback-part">
               <h3>
                 {part.label} · {verdicts[part.verdict]}
               </h3>
@@ -101,6 +99,16 @@ export function PracticeFeedback({
           ))}
         </fieldset>
       )}
+      {/* After the answer and its reference: only then can a learner tell a judgment looks wrong. */}
+      {r.appeal && (
+        <section className="un-st-appeal">
+          {r.appeal.field && (
+            <PracticeField field={r.appeal.field} intents={intents} renderers={renderers} />
+          )}
+          <NoticeBlock notice={r.appeal.notice} intents={intents} />
+        </section>
+      )}
+      {actions}
     </section>
   );
 }

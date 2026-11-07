@@ -12,7 +12,7 @@ import type { BlankKeyCriterionT, ScoringBasisT } from './scoring';
 //
 // 单一共享核心（设计 yuk1568-k1-answer-semantics-plan.md §3）：同一份解析/
 // 规范化既服务实际判分（grade.ts gradeBlankExactUnit 经 evaluation 传入冻结
-// slot 声明），也服务准入（solve.ts keysAgree / 作者键核验）、发布保护与
+// slot 声明），也服务准入（answer-compare 候选键比较 / 作者键核验）、发布保护与
 // 发题闸。绝不出现第二套数学判断；不新建通用 CAS、registry 或服务。
 //
 // 纪律（设计 §3，不可弱化）：

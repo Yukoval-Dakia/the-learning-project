@@ -281,6 +281,11 @@
     line-height: var(--un-lh-ui);
   }
 
+  & .un-blk[data-mode="submitted"] .un-blk-status,
+  & .un-blk[data-mode="disabled"] .un-blk-status {
+    display: none;
+  }
+
   & .un-blk-status[data-tone="caution"] {
     color: var(--un-caution);
   }
