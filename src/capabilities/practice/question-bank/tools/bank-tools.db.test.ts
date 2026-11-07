@@ -411,6 +411,42 @@ describe('bank tools boundary invariants (search_bank / read_bank / check_bank)'
     expect(checked.checks[0].verdict).toBe('supported');
   });
 
+  // @invariant security: the copilot actor reads every private layer while an unlisted agent ref stays denied @fails-if the copilot grant regresses to denied_layers or a bare unlisted agent ref gains answers/rubric/private materials
+  it('grants copilot the answer layer and keeps an unlisted actor restricted', async () => {
+    await seedQuestion('bt_copilot_role', { prompt_md: '读层授权边界题' });
+    const pub = await publishAdmitted('bt_copilot_role');
+    const ref = encodeBankRef(pub.revision_id, pub.revision_digest);
+    const privateLayers = ['answers', 'rubric', 'scoring', 'execution', 'metadata'] as const;
+
+    const grantedRead = await readBankTool.execute(
+      { ...ctx, callerActor: { kind: 'agent' as const, ref: 'agent:copilot' } },
+      readBankTool.inputSchema.parse({
+        refs: [ref],
+        include: ['materials', ...privateLayers],
+      }),
+    );
+    const granted = grantedRead.items[0];
+    expect(granted.status).toBe('ok');
+    if (granted.status !== 'ok') return;
+    expect(granted.denied_layers ?? []).toEqual([]);
+    expect(granted.answers?.units.length).toBeGreaterThan(0);
+    expect((granted.materials ?? []).some((m) => m.visibility === 'private')).toBe(true);
+
+    const deniedRead = await readBankTool.execute(
+      ctx,
+      readBankTool.inputSchema.parse({
+        refs: [ref],
+        include: ['materials', ...privateLayers],
+      }),
+    );
+    const denied = deniedRead.items[0];
+    expect(denied.status).toBe('ok');
+    if (denied.status !== 'ok') return;
+    expect(denied.denied_layers).toEqual([...privateLayers]);
+    expect(denied.answers).toBeUndefined();
+    expect((denied.materials ?? []).some((m) => m.visibility === 'private')).toBe(false);
+  });
+
   // @invariant security: bank tools expose no learner-state fields and mutate no learner-state rows while serving @fails-if a tool directly accesses learner tables without bank-role permission, returns learner-state fields, changes persisted learner rows, or evaluates refs outside a read-only repeatable-read snapshot
   it('the tools neither return nor mutate learner state', async () => {
     await seedQuestion('bt_learner', { prompt_md: '等比数列通项公式求解题（带学习者历史）' });
