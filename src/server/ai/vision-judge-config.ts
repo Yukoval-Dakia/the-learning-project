@@ -16,6 +16,7 @@
  */
 
 import type { Provider, TaskKind } from '@/capabilities/task-registry';
+import { selectScopedLaneOverride } from '@/core/config/model-overrides';
 import { getLaneOverride } from '@/core/config/store';
 import { resolveModelProfile } from '@/server/ai/model-profiles';
 import {
@@ -79,10 +80,13 @@ export function visionJudgeProviderOverride(
   opts?: { checkCredentials?: boolean },
 ): { provider: Provider; model?: string } | undefined {
   // YUK-1007 — DB lane config wins over env (the passed env is the fallback),
-  // matching resolveTaskProvider's global override layering.
+  // matching resolveTaskProvider's global override layering. The activation
+  // rule (a provider is required; only-model rows stay dormant) is owned by the
+  // pure selection chain.
   const lane = getLaneOverride('vision_judge', env);
-  const rawProvider = lane?.provider;
-  if (!rawProvider) return undefined;
+  const selected = selectScopedLaneOverride({ lane: lane ?? {}, activation: 'provider' });
+  if (!selected?.provider) return undefined;
+  const rawProvider = selected.provider;
   const provider = readProviderId(rawProvider) ?? (rawProvider as Provider);
 
   const runPath = opts?.checkCredentials !== false;
@@ -94,7 +98,7 @@ export function visionJudgeProviderOverride(
     );
   }
 
-  const model = lane?.model || undefined;
+  const model = selected.model;
   const nameableModel = visionJudgeOverrideModel(provider as Provider, model);
   if (
     runPath &&
@@ -123,5 +127,16 @@ export function applicableVisionJudgeOverride(
   env: VisionJudgeEnv = process.env,
   opts?: { checkCredentials?: boolean },
 ): { provider: Provider; model?: string } | undefined {
-  return env.AI_PROVIDER_OVERRIDE ? undefined : visionJudgeProviderOverride(env, opts);
+  // The pin-suppresses-lane rule is the same scoped override activation rule.
+  const lane = getLaneOverride('vision_judge', env);
+  if (
+    !selectScopedLaneOverride({
+      lane: lane ?? {},
+      envPinActive: env.AI_PROVIDER_OVERRIDE !== undefined && env.AI_PROVIDER_OVERRIDE !== '',
+      activation: 'provider',
+    })
+  ) {
+    return undefined;
+  }
+  return visionJudgeProviderOverride(env, opts);
 }

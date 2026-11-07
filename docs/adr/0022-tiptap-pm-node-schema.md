@@ -1,8 +1,10 @@
 # ADR-0022: TipTap PM Node Schema for Block Tree Notes
 
-**Status**: Accepted for P2-basic
+**Status**: Accepted for P2-basic（实现细节；canonical editor/write path 归 ADR-0064）
 **Date**: 2026-05-27
 **Depends on**: ADR-0020
+
+> **2026-11-07 现状：** TipTap/ProseMirror JSON 仍是 `artifact.body_blocks` 的存储形状，`@tiptap/*` 依赖仍在（`package.json`）。编辑器的 canonical 写路径已由 ADR-0064 接管；本文提到的 `PATCH /api/artifacts/:id/body-blocks` 与 `src/ui/block-tree/pm.ts` 是 P2-basic 时期记录，现分别由 `src/capabilities/notes/api/body-blocks-route.ts` 与 notes 域写路径承接。
 
 ## Context
 
