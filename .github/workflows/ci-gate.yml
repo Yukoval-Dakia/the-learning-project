@@ -897,6 +897,7 @@ jobs:
         if: steps.boundary.outputs.selected == 'true'
         env:
           WORKSPACE_IMAGE: workspace-boundary-ci:owned
+        shell: bash
         run: |
           docker build --target worker -t "$WORKSPACE_IMAGE" . 2>&1 | tee workspace-image.log
           pnpm test:workspace 2>&1 | tee workspace-boundary.log
