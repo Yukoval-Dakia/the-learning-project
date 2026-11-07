@@ -3,8 +3,14 @@ import type { SourcedQuestionT } from '@/core/schema/sourcing';
 import type { Db, Tx } from '@/db/client';
 import type { question } from '@/db/schema';
 import type { PublishQuestionGroupResult } from '@/kernel/records/assessment-publication';
+import {
+  type PublicationIdentity,
+  type PublicationReceiptT,
+  publicationReceiptFromSubmit,
+} from '@/kernel/records/publication-receipt';
 import { DraftSubmitVectorRequired, prepareDraftSubmitVector } from './draft-submit-dedup';
 import {
+  type DeclaredGroupDomainOutcome,
   SubmitTransactionAbort,
   drainSubmitVerifyIntents,
   submitDraftQuestionInTx,
@@ -49,6 +55,8 @@ export interface SubmitDraftInput {
   request_id: string;
   /** 覆盖文档 knowledge_ids（缺省 = 文档自带）。 */
   knowledge_ids?: string[];
+  /** Supply demand that requested this question; recorded on the publication receipt. */
+  demand_id?: string;
   /** 覆盖来源声明（缺省 = 文档 source）。 */
   availability?: 'general_pool' | 'container_only';
   /**
@@ -91,6 +99,9 @@ export type SubmitResult =
       revision_ref?: string;
       revision_ordinal?: number;
       publish_status?: PublishQuestionGroupResult['status'];
+      /** Assessment publish event written in the submit transaction; the publication
+       *  receipt's identity for progress and repair authorization. */
+      publication_event_id?: string;
       /** Per-unit admission outcome with the real withholding reason. */
       per_unit: SubmitUnitOutcome[];
       verify_enqueued?: boolean;
@@ -262,4 +273,109 @@ export function declaredCandidateDocument(
     source: { kind: sourceRoute, ref: q.source_url, note: q.source_title },
   });
   return { document, markupSanitized };
+}
+
+/** The declared path's runtime reason vocabulary is wider than the facade's own
+ *  SubmitResult union (the tool boundary has always cast it); keep the cast in one place. */
+const callerReceipt = (receipt: object): SubmitResult => receipt as SubmitResult;
+
+/** Canonical caller receipt for one declared-group outcome. Publication identity is
+ *  the owner receipt, never a re-derivation from the tool response. */
+export function declaredCandidateReceipt(
+  outcome: DeclaredGroupDomainOutcome,
+  requestId: string,
+  identity: PublicationIdentity,
+): { receipt: SubmitResult; publication: PublicationReceiptT | null } {
+  if (outcome.status === 'declaration_failed') {
+    return {
+      receipt: callerReceipt({
+        status: 'conflict',
+        reason: 'invalid_declaration',
+        detail: 'declared identity binding failed',
+        issues: outcome.issues,
+        request_id: requestId,
+      }),
+      publication: null,
+    };
+  }
+  const save = outcome.save;
+  if (outcome.status === 'save_failed' || (save.status !== 'saved' && save.status !== 'noop')) {
+    if (save.status === 'conflict') {
+      return {
+        receipt: callerReceipt({
+          status: 'conflict',
+          reason: save.reason,
+          detail: save.detail,
+          request_id: requestId,
+        }),
+        publication: null,
+      };
+    }
+    if (save.status === 'rejected') {
+      return {
+        receipt: callerReceipt({
+          status: 'conflict',
+          reason: 'invalid_declaration',
+          detail: save.reason,
+          issues: save.issues,
+          request_id: requestId,
+        }),
+        publication: null,
+      };
+    }
+    return {
+      receipt: callerReceipt({
+        status: 'conflict',
+        reason: 'invalid_request',
+        detail: `unexpected draft save status '${save.status}'`,
+        request_id: requestId,
+      }),
+      publication: null,
+    };
+  }
+  const submit = outcome.submit;
+  if (submit.status === 'conflict') {
+    return {
+      receipt: callerReceipt({
+        status: 'conflict',
+        reason: submit.reason,
+        detail: submit.detail,
+        ...(submit.existing_question_id != null
+          ? { existing_question_id: submit.existing_question_id }
+          : {}),
+        request_id: requestId,
+      }),
+      publication: null,
+    };
+  }
+  if ('published' in submit) {
+    return {
+      receipt: callerReceipt({
+        status: 'withheld',
+        published: false,
+        reason: 'draft_unpublishable',
+        detail: submit.detail,
+        issues: submit.issues,
+        per_unit: submit.per_unit,
+        current_draft_ref: save.draft_ref,
+        current_draft_version: save.draft_version,
+        request_id: requestId,
+      }),
+      publication: null,
+    };
+  }
+  // A replayed :submit receipt refers to an earlier committed publication; the owner
+  // returns no block for it, so the caller receipt never claims a second publication.
+  const publication = publicationReceiptFromSubmit(
+    {
+      publish_status: submit.publish_status,
+      replayed: submit.replayed === true,
+      group_id: submit.group_id,
+      question_id: submit.question_id,
+      revision_id: submit.revision_id,
+      publication_event_id: submit.publication_event_id,
+    },
+    identity,
+  );
+  return { receipt: submit, publication };
 }

@@ -60,7 +60,18 @@ export interface ConfigFlagGrammar {
   polarity: 'opt-in' | 'opt-out';
 }
 
-/** 预算类键的事务读语义由片 2 引入；本片不预建。 */
+/**
+ * 事务读语义（片 2 引入）：只有声明 transactionRead 的键可走
+ * src/core/config/server/read.ts 的 readConfigTx。读面只实现预算键的契约，
+ * 声明其它组合的键被拒绝；不预建未使用的分支。
+ */
+export interface ConfigTransactionReadPolicy {
+  /** 显式但解析不了的 env：'error' = 失败关闭，不回落 codeDefault。 */
+  invalidEnv: 'error' | 'ignore';
+  /** 过期 DB 行：'ignore' = 仍参与解析（不消费 expires_at）；'honor' = 视为无行。 */
+  expiredRow: 'ignore' | 'honor';
+}
+
 export interface ConfigKeyDef {
   /** key → DB 值 zod schema（setConfig 写时校验 + hydrate 逐行 parse）。 */
   schema: z.ZodTypeAny;
@@ -86,6 +97,8 @@ export interface ConfigKeyDef {
   exposure?: 'browser-safe' | 'operator' | 'credential-reference';
   /** 仅 boolean env 开关：字面量域与默认侧。 */
   flag?: ConfigFlagGrammar;
+  /** 事务内读语义；未声明的键 readConfigTx 拒绝。 */
+  transactionRead?: ConfigTransactionReadPolicy;
 }
 
 // ─── env 翻译器（每个 reader 的现 parse 语义） ──────────────────────────────
@@ -951,6 +964,9 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     envName: 'INGESTION_AGENT_WEEKLY_BUDGET_USD',
     envParse: numberEnv,
     tier: 'A',
+    // 资金授权不能拿 operator 的错误输入去顶默认值；预算行过期仍是事实
+    // （早期实现就不消费 expires_at，TTL 生效是独立的资金行为变更）。
+    transactionRead: { invalidEnv: 'error', expiredRow: 'ignore' },
   },
   // ── locale ────────────────────────────────────────────────────────────────
   'locale.learner': {

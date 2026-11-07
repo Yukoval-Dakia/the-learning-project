@@ -2,10 +2,10 @@
 // in operation-identity.ts; pending financial identities/canonical evidence in
 // spend.ts. Execution terminals and financial settlement are independent.
 import { and, eq, sql } from 'drizzle-orm';
-import { resolveKeyDef } from '@/core/config/registry';
+import { ConfigTxReadError, type ResolvedTxConfig, readConfigTx } from '@/core/config/server/read';
 import { learnerLocalWeekWindowUtc } from '@/core/learner-day';
 import type { Db, Tx } from '@/db/client';
-import { learning_session, system_config } from '@/db/schema';
+import { learning_session } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import {
   retainUnprovenAgentReservations,
@@ -46,38 +46,6 @@ const RUN_OVER_SESSION_STATUSES = new Set([
 
 function budgetExceeded(): never {
   throw new ApiError(AGENT_BUDGET_EXCEEDED_CODE, '这周录入助手的额度已用完，请下周再试。', 429);
-}
-
-async function readBudgetLimit(tx: Tx): Promise<{ value: number; revision: number | null }> {
-  const def = resolveKeyDef(BUDGET_CONFIG_KEY);
-  if (!def || def.schema == null) budgetUnavailable('budget_read_unavailable');
-
-  const [row] = await tx
-    .select({ value: system_config.value, revision: system_config.revision })
-    .from(system_config)
-    .where(eq(system_config.key, BUDGET_CONFIG_KEY))
-    .limit(1);
-
-  if (row) {
-    const parsed = def.schema.safeParse(row.value);
-    if (!parsed.success || typeof parsed.data !== 'number') {
-      budgetUnavailable('budget_read_unavailable');
-    }
-    return { value: parsed.data as number, revision: row.revision };
-  }
-
-  // No DB row: use the registry fallback, explicit env first, then code default.
-  const envRaw = def.envName != null ? process.env[def.envName] : undefined;
-  if (envRaw !== undefined) {
-    const envParsed = def.envParse ? def.envParse(envRaw) : envRaw;
-    const validated = def.schema.safeParse(envParsed);
-    if (validated.success && typeof validated.data === 'number') {
-      return { value: validated.data as number, revision: null };
-    }
-    // An explicit but invalid env value fails closed instead of using the default.
-    budgetUnavailable('budget_read_unavailable');
-  }
-  return { value: def.codeDefault as number, revision: null };
 }
 
 async function hasLiveAgentJob(tx: Tx, sessionId: string): Promise<boolean> {
@@ -279,9 +247,19 @@ async function authorizeGrant(
     });
   }
 
-  // Authoritative config, read in-transaction with its revision.
-  const limit = await readBudgetLimit(tx);
-  if (limit.value <= 0) {
+  // Authoritative config, read in-transaction with its revision. Config-layer
+  // failures are denials, not crashes: map them to the existing reason so the
+  // caller still rolls back and journals in the same order as before.
+  let limit: ResolvedTxConfig;
+  try {
+    limit = await readConfigTx(tx, BUDGET_CONFIG_KEY);
+  } catch (error) {
+    if (error instanceof ConfigTxReadError) budgetUnavailable('budget_read_unavailable');
+    throw error;
+  }
+  const limitUsd = limit.value;
+  if (typeof limitUsd !== 'number') budgetUnavailable('budget_read_unavailable');
+  if (limitUsd <= 0) {
     // Explicit 0 is a kill switch: used is always >= 0, so it returns 429.
     budgetExceeded();
   }
@@ -294,7 +272,7 @@ async function authorizeGrant(
       unresolved_records: spend.unresolvedRecords,
     });
   }
-  if (spend.usedUsd >= limit.value) {
+  if (spend.usedUsd >= limitUsd) {
     budgetExceeded();
   }
 
@@ -303,7 +281,7 @@ async function authorizeGrant(
   await persistGrant(tx, input.sessionId, input.operationId, {
     state: 'in_flight',
     week_start: week.from.toISOString(),
-    limit_usd: limit.value,
+    limit_usd: limitUsd,
     used_usd_at_grant: spend.usedUsd,
     config_revision: limit.revision,
     granted_at: now.toISOString(),
