@@ -106,6 +106,23 @@ export async function resolveBankSearchScope(
   return resolved;
 }
 
+/**
+ * Learner history ids name question rows, parts included; candidates and receipt
+ * hits are top-level group roots only. COALESCE(parent_question_id, id) is the
+ * same root rule as publishQuestionGroupFromRow / notHoldoutOnlyPredicate.
+ */
+export async function resolveBankHistoryRootIds(
+  db: Db | Tx,
+  memberIds: string[],
+): Promise<Set<string>> {
+  if (memberIds.length === 0) return new Set();
+  const rows = await db
+    .select({ root: sql<string>`coalesce(${question.parent_question_id}, ${question.id})` })
+    .from(question)
+    .where(inArray(question.id, memberIds));
+  return new Set(rows.map((row) => row.root));
+}
+
 export function buildBankSearchFilters(resolved: ResolvedScope): SQL[] {
   const { scope } = resolved;
   const filters: SQL[] = [

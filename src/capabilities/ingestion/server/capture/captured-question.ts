@@ -6,11 +6,7 @@
  * block's import links, so both are written only here.
  */
 import { eq, inArray } from 'drizzle-orm';
-import {
-  type FigureRefT,
-  type StructuredQuestionT,
-  structuredToPromptMarkdown,
-} from '@/core/schema/structured_question';
+import type { FigureRefT, StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Tx } from '@/db/client';
 import { question, type question_block, source_asset } from '@/db/schema';
 import { withAnswerClass } from '@/kernel/records/answer-class-write';
@@ -22,6 +18,7 @@ import {
   enrollCapturedBlock,
 } from '../enroll';
 import { figuresForQuestion } from '../figure_attach';
+import { blockQuestionMarkdown, blockStructuredContent } from './question-text';
 
 type Block = typeof question_block.$inferSelect;
 
@@ -126,9 +123,13 @@ export async function recordCapturedQuestion(tx: Tx, input: CapturedQuestionInpu
     }),
   );
   // First revision in the same transaction; admission state is the publisher's call.
+  // Binding the capture's session on the publication event is what lets the admission
+  // gate prove this question's source (readAdmissionPurpose); without it every captured
+  // question waits as unknown/purpose-denied.
   await publishQuestionGroupFromRow(tx, {
     rootId: input.questionId,
     actorRef: input.actorRef,
+    sessionId: input.sessionId,
     now: input.now,
   });
 }
@@ -151,16 +152,20 @@ async function resolveContent(tx: Tx, content: CapturedQuestionContent) {
           ),
         )
     : [];
+  const structured = blockStructuredContent(block);
   return {
-    promptMd: block.structured
-      ? structuredToPromptMarkdown(block.structured)
-      : (block.extracted_prompt_md ?? ''),
+    // Same selector as blockHasPrompt and the read projection: a structured tree without
+    // prompt_text must not hide extracted_prompt_md, and the options still render.
+    promptMd: blockQuestionMarkdown(block),
     referenceMd: block.reference_md ?? null,
-    structured: block.structured ?? null,
+    structured,
     figures: figuresForQuestion(block.structured, block.figures, {
       sourceAssetIds: block.source_asset_ids,
       assets: figureAssets,
     }),
+    // Whole source pages stay machine prompt input (vision solving/grading read them);
+    // learner reads drop them by comparing against the source document's page assets at
+    // read time (question-images.ts), so old and new rows share one rule.
     imageRefs: block.image_refs,
   };
 }

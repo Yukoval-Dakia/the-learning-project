@@ -4,13 +4,15 @@
 // stored judge confidence and a tolerant projection of the auto-enroll observation
 // when present.
 
-import { and, asc, eq, inArray } from 'drizzle-orm';
+import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 
 import { MistakeEnrollOutcome } from '@/core/schema/mistake_enroll';
+import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
 import { event, question, question_block } from '@/db/schema';
 import { learnerVisibleKnowledgeIds } from '@/kernel/read-models/learner-knowledge-visibility';
 import { readWorkflowJudgeConfidence } from '@/kernel/read-models/workflow-judge-confidence';
+import { blockHasPrompt } from './capture/question-text';
 
 export async function readIngestionSessionBlocks(db: Db, params: { id: string }) {
   const sessionId = params.id;
@@ -41,6 +43,7 @@ export async function readIngestionSessionBlocks(db: Db, params: { id: string })
     .orderBy(asc(question_block.ordinal), asc(question_block.id));
 
   const blockIds = rows.map((r) => r.id);
+  const enrollmentInFlight = await hasInflightAutoEnroll(db, sessionId);
   const observations =
     blockIds.length === 0
       ? []
@@ -70,13 +73,18 @@ export async function readIngestionSessionBlocks(db: Db, params: { id: string })
     ...new Set(rows.map((r) => r.imported_question_id).filter((id): id is string => id !== null)),
   ];
   const judgeConfidenceByQuestionId = new Map<string, number | null>();
+  const questionById = new Map<
+    string,
+    { draft_status: string | null; metadata: Record<string, unknown> | null }
+  >();
   if (importedQuestionIds.length > 0) {
     const questionRows = await db
-      .select({ id: question.id, metadata: question.metadata })
+      .select({ id: question.id, metadata: question.metadata, draft_status: question.draft_status })
       .from(question)
       .where(inArray(question.id, importedQuestionIds));
     for (const row of questionRows) {
       judgeConfidenceByQuestionId.set(row.id, readWorkflowJudgeConfidence(row.metadata));
+      questionById.set(row.id, { draft_status: row.draft_status, metadata: row.metadata });
     }
   }
 
@@ -92,8 +100,82 @@ export async function readIngestionSessionBlocks(db: Db, params: { id: string })
         created_at: Math.floor(r.created_at.getTime() / 1000),
         workflow_judge_confidence: recordedConfidence ?? projectedObservation?.confidence ?? null,
         auto_enroll_observation: projectedObservation,
+        ingestion_enrollment: toEnrollmentProjection(
+          r,
+          r.imported_question_id !== null ? questionById.get(r.imported_question_id) : undefined,
+          enrollmentInFlight,
+        ),
       };
     }),
+  };
+}
+
+/**
+ * True while the session still has a queued/running auto_enroll delivery. pgboss.job is
+ * pg-boss owned; to_regclass keeps this honest on databases that never reached it. A
+ * missing/in-flight job is the only "waiting" signal — anything else means the session's
+ * enrollment has finished and a still-draft block is a failure.
+ */
+async function hasInflightAutoEnroll(db: Db, sessionId: string): Promise<boolean> {
+  const probe = await db.execute<{ reg: string | null }>(
+    sql`select to_regclass('pgboss.job') as reg`,
+  );
+  if (probe[0]?.reg == null) return false;
+  const rows = await db.execute<{ one: number }>(sql`
+    select 1 as one from pgboss.job
+    where name = 'auto_enroll'
+      and state in ('created','retry','active')
+      and data->>'sessionId' = ${sessionId}
+    limit 1
+  `);
+  return rows.length > 0;
+}
+
+/** How to read one block's enrollment without re-implementing the server gates. */
+function toEnrollmentProjection(
+  block: {
+    status: string;
+    extracted_prompt_md: string | null;
+    structured: StructuredQuestionT | null;
+  },
+  enrolled: { draft_status: string | null; metadata: Record<string, unknown> | null } | undefined,
+  enrollmentInFlight: boolean,
+) {
+  // The block status is the ground truth about what happened to this capture:
+  // imported/submitted/auto_enrolled all carry a question, ignored was an explicit
+  // learner choice, and only draft means "not in the library (yet)".
+  if (block.status === 'ignored') {
+    return {
+      state: 'ignored' as const,
+      reason: null,
+      knowledge: null,
+      library_visible: false,
+    };
+  }
+  if (block.status !== 'draft') {
+    const markers = enrolled?.metadata?.ingestion_enrollment as { knowledge?: unknown } | undefined;
+    return {
+      state: 'in_library' as const,
+      reason: null,
+      knowledge:
+        markers?.knowledge === 'attributed' || markers?.knowledge === 'missing'
+          ? markers.knowledge
+          : null,
+      library_visible: enrolled ? enrolled.draft_status !== 'draft' : null,
+    };
+  }
+  // Enrollment is automatic. A draft block with a prompt is still waiting while its
+  // session has a queued/running auto_enroll delivery; once that has finished, the same
+  // row is a failure. A block with no printed prompt never had anything to publish.
+  return {
+    state: 'not_enrolled' as const,
+    reason: blockHasPrompt(block)
+      ? enrollmentInFlight
+        ? ('pending' as const)
+        : ('publish_failed' as const)
+      : ('needs_text' as const),
+    knowledge: null,
+    library_visible: null,
   };
 }
 

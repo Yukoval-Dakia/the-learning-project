@@ -368,6 +368,34 @@ describe('bank tools boundary invariants (search_bank / read_bank / check_bank)'
       filters: { history: 'wrong' },
     });
     expect(failedHistory.hits.map((h) => h.id)).toEqual(['bt_admitted']);
+    await seedQuestion('bt_group', { prompt_md: '电容器充放电组合题根' });
+    await seedQuestion('bt_group_p1', {
+      prompt_md: '组合题子题',
+      parent_question_id: 'bt_group',
+      part_index: 0,
+    });
+    await db.insert(event).values({
+      id: 'bank-part-failure',
+      actor_kind: 'user',
+      actor_ref: 'learner',
+      action: 'attempt',
+      subject_kind: 'question',
+      subject_id: 'bt_group_p1',
+      outcome: 'failure',
+      payload: { answer_md: 'incorrect' },
+    });
+    const partFailure = await searchBankTool.execute(ctx, {
+      query: '电容器',
+      use: 'dedup',
+      filters: { history: 'wrong' },
+    });
+    expect(partFailure.hits.map((h) => h.id)).toContain('bt_group');
+    const partSeen = await searchBankTool.execute(ctx, {
+      query: '电容器',
+      use: 'dedup',
+      filters: { history: 'unseen' },
+    });
+    expect(partSeen.hits.map((h) => h.id)).not.toContain('bt_group');
     await db.insert(schema.item_calibration).values({
       id: 'bank-calibration',
       question_id: 'bt_admitted',

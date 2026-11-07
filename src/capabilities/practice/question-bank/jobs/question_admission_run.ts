@@ -1,7 +1,7 @@
 // one durable admission batch per group/base digest.
 // The publisher event outbox enqueues pinned revisions. Queue retries replay a
 // complete result receipt, never paid solves. Unknown payments stay fenced after question closure.
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { and, eq, inArray, or, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import { AgentRunError } from '@/ai/agent-run-error';
@@ -32,6 +32,7 @@ import {
   question_solution_prior,
   source_asset,
 } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import {
   type NormalizedContract,
@@ -387,6 +388,38 @@ export async function runAdmissionForQuestion(
     const purpose = delivery.jobData
       ? await readAdmissionPurpose(tx, delivery.id, input, delivery.jobData)
       : { state: 'unknown' as const, sourceId: null };
+    // A queued delivery that cannot prove its source purpose will never spend; record
+    // that terminal fact so the learner surface stops saying "still checking". The
+    // read model matches this event against the group's latest publication for the
+    // same revision, so a later republish with a bound source is not shadowed.
+    if (delivery.jobData && purpose.state !== 'allow') {
+      const now = new Date();
+      await writeEvent(tx, {
+        id: createHash('sha256')
+          .update(`question_admission_purpose_denied:${delivery.id}`)
+          .digest('hex'),
+        session_id: null,
+        actor_kind: 'system',
+        actor_ref: 'practice:question_admission',
+        action: 'experimental:question_admission_purpose_denied',
+        subject_kind: 'question',
+        subject_id: rootId,
+        outcome: 'skipped',
+        payload: {
+          group_id: rootId,
+          revision_id: input.revision_id,
+          revision_digest: input.revision_digest,
+          purpose_state: purpose.state,
+          source_event_id: delivery.jobData.source_event_id ?? null,
+        },
+        caused_by_event_id: null,
+        task_run_id: null,
+        cost_micro_usd: null,
+        // Opt out of memory ingestion; this is an operational fact, not learner content.
+        ingest_at: now,
+        created_at: now,
+      });
+    }
     const claimed = await claimAdmissionBatch(tx, input, delivery, {
       maySend: pinned && eligible && !declaredUnsupported && purpose.state === 'allow',
       historicalTerminal: Boolean(terminal),
