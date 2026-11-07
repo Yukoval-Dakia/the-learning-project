@@ -58,33 +58,35 @@ export async function readCuratorEvidence(db: Db, anchorId?: string) {
 }
 
 /**
- * How far a run's watermark may move given what the model was shown. `rows` is
- * the evidence window ascending; `presentedIds` holds every row the model saw
- * (index excerpt or tool result). The watermark may only pass events the model
- * saw, so the advance is the instant just before the oldest unseen row — the
- * covered prefix retires, the unread row and everything after stay in the next
- * window. Null when nothing is retired; `now` when coverage is complete.
+ * How far a run's watermark may move given what the model actually read.
+ * `rows` is the evidence window ascending; `readIds` holds ids `query_events`
+ * returned during the run — index excerpts are discovery, not reads, and never
+ * retire the watermark. The advance is the instant just before the oldest
+ * unread row: the read prefix retires, the unread row and everything after
+ * stay in the next window. Null when nothing is retired; `now` on full reads.
  */
 export function curatorWatermarkAdvance(
   rows: { id: string; at: Date }[],
-  presentedIds: ReadonlySet<string>,
+  readIds: ReadonlySet<string>,
   now: Date,
 ): Date | null {
-  const firstUnread = rows.find((row) => !presentedIds.has(row.id));
+  const firstUnread = rows.find((row) => !readIds.has(row.id));
   if (!firstUnread) return now;
   const coveredPrefixEnd = new Date(firstUnread.at.getTime() - 1);
   return coveredPrefixEnd >= rows[0].at ? coveredPrefixEnd : null;
 }
 
-/** Coverage receipt for a run's scan event: how much of the window the model saw. */
+/** Coverage receipt for a run's scan event: listed in the index vs read. */
 export function curatorEvidenceCoverage(
   rows: { id: string; at: Date }[],
-  presentedIds: ReadonlySet<string>,
+  readIds: ReadonlySet<string>,
+  listedIds: ReadonlySet<string>,
 ) {
-  const firstUnread = rows.find((row) => !presentedIds.has(row.id));
+  const firstUnread = rows.find((row) => !readIds.has(row.id));
   return {
     window_events: rows.length,
-    presented_events: rows.filter((row) => presentedIds.has(row.id)).length,
+    listed_events: rows.filter((row) => listedIds.has(row.id)).length,
+    read_events: rows.filter((row) => readIds.has(row.id)).length,
     complete: firstUnread === undefined,
     first_unread_at: firstUnread?.at.toISOString() ?? null,
   };

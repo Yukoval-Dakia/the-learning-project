@@ -449,7 +449,7 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
       siblingOfEventId: filter.siblingOfEventId ?? null,
       sinceAt: filter.sinceAt ?? null,
       sinceDays: filter.sinceDays ?? null,
-      curator_evidence_scope: curatorScoped,
+      ...(curatorScoped ? { curator_evidence_scope: true } : {}),
       limit,
     },
     subject_scope: {

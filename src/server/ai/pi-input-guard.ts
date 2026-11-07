@@ -2,14 +2,16 @@
 //
 // The catalog's `maxInputTokens` is an input budget, not the model window, and
 // the local estimator undercounts JSON-shaped payloads (CJK ~1 token/char,
-// other text ~1 token/4 chars vs the provider's ~3). Whether to pre-emptively
-// block on that budget is a per-route policy decision carried as a catalog
-// override fact (`input_safety_ratio`), not a global constant and not an
-// upstream capability: a route declares it only when estimator↔provider
-// reconciliation exists. Today that is opencode-go/deepseek-v4.1-flash alone —
-// a policy margin of 1.15 set just outside the yuk1984-observed bias band
-// (≈1.0–1.14). Models without the declaration see exactly the legacy
-// context-window check and nothing else.
+// other text ~1 token/4 chars vs the provider's ~3). Every model keeps the
+// legacy check — `estimate > (maxInputTokens ?? contextWindow)` — unchanged.
+// Multiplying the estimate by a safety ratio is a per-route policy decision
+// carried as a catalog override fact (`input_safety_ratio`), applied only
+// where estimator↔provider reconciliation exists: deepseek-v4.1-flash on both
+// opencode-go and custom:opendesign (yuk1984 runs cover both), margin 1.15 set
+// just outside the observed ≈1.0–1.14 bias band. Routes serving the same model
+// without a stored declaration (e.g. a custom bucket persisted before the fact
+// existed, pending the next /models refresh) fall back to the legacy check —
+// never blocked earlier than main, never blocked later than it either.
 //
 // Within a run the margin rises to the measured actual/estimate ratio once a
 // response reports usage — the first request has no calibration, so a miss on
@@ -21,50 +23,36 @@ export interface PiUsageCalibration {
   actual: number;
 }
 
-/**
- * The pre-send guard rejected a request before anything reached the provider:
- * zero tokens could have been consumed, so usage accounting must not bill an
- * estimate for it. Detected by marker property rather than instanceof so the
- * signal survives error wrapping between the wire and the runner.
- */
-export class PiInputBudgetRejectedError extends Error {
-  readonly piInputBudgetRejected = true;
-}
-
-export function isPiInputBudgetRejected(error: unknown): boolean {
-  return (
-    typeof error === 'object' &&
-    error !== null &&
-    (error as { piInputBudgetRejected?: unknown }).piInputBudgetRejected === true
-  );
-}
+/** The pre-send guard refused a request before any fetch ran: nothing could
+ *  have been billed. The fact is recorded on the transport collector
+ *  (`pre_send_rejections`) at throw time — do not rely on this class reaching
+ *  the runner intact, pi-ai wraps provider errors into message strings. */
+export class PiInputBudgetRejectedError extends Error {}
 
 export interface PiInputFitInput {
   estimatedTokens: number;
   contextWindow: number;
   maxInputTokens?: number;
   /** Declared pre-send margin for this route (catalog override fact). Without
-   *  it no input budget is enforced, whatever `maxInputTokens` says. */
+   *  it the check is byte-identical to the legacy estimate-vs-budget rule. */
   inputSafetyRatio?: number;
   lastUsage?: PiUsageCalibration;
 }
 
 export interface PiInputFit {
   fits: boolean;
-  /** Estimated tokens after the safety factor / usage calibration. */
-  projectedTokens: number;
-  /** Raw estimator output for the request. */
   estimatedTokens: number;
-  /** The budget the projection is compared against. */
-  budget: number;
+  projectedTokens: number;
   safetyRatio: number;
-  reason?: 'over_input_limit' | 'over_context_window';
+  budget: number;
+  reason?: 'catalog-input-budget' | 'context-window';
 }
 
 /**
- * Decide whether a provider request is worth sending. The input-budget check
- * runs only where the route declares `inputSafetyRatio`; the context-window
- * floor is the unchanged legacy backstop for every model.
+ * Decide whether a provider request is worth sending. `projectedTokens` is the
+ * estimate times the declared margin (1 otherwise); the budget comparison is
+ * main's rule for every model, stricter only where a ratio is declared. The
+ * context-window floor is the unchanged legacy backstop.
  */
 export function decidePiInputFit(input: PiInputFitInput): PiInputFit {
   const { estimatedTokens, contextWindow, maxInputTokens, inputSafetyRatio, lastUsage } = input;
@@ -72,22 +60,17 @@ export function decidePiInputFit(input: PiInputFitInput): PiInputFit {
     lastUsage && lastUsage.estimated > 0 && lastUsage.actual > 0
       ? Math.min(3, Math.max(0.5, lastUsage.actual / lastUsage.estimated))
       : 1;
-  const enforcesInputBudget = inputSafetyRatio !== undefined;
-  const safetyRatio = enforcesInputBudget ? Math.max(inputSafetyRatio, measured) : 1;
+  const safetyRatio = inputSafetyRatio === undefined ? 1 : Math.max(inputSafetyRatio, measured);
   const budget = maxInputTokens ?? contextWindow;
   const projectedTokens = Math.ceil(estimatedTokens * safetyRatio);
-  const overInput = enforcesInputBudget && projectedTokens > budget;
+  const overInput = projectedTokens > budget;
   const overWindow = contextWindow - estimatedTokens <= 0;
   return {
     fits: !overInput && !overWindow,
-    projectedTokens,
     estimatedTokens,
-    budget,
+    projectedTokens,
     safetyRatio,
-    ...(overInput
-      ? { reason: 'over_input_limit' as const }
-      : overWindow
-        ? { reason: 'over_context_window' as const }
-        : {}),
+    budget,
+    reason: overWindow ? 'context-window' : overInput ? 'catalog-input-budget' : undefined,
   };
 }

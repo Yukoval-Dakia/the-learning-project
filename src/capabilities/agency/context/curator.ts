@@ -63,10 +63,10 @@ async function runCuratorTurn(db: Db, reason: 'nightly' | 'activity', runTimeout
     contextMarkdown: context.markdown,
     legacyScopes,
   });
-  // Coverage bookkeeping for the watermark: a window event counts as presented
-  // once the model actually saw it — printed in the index (excerpt) or returned
-  // by a tool call. Everything else stays below the watermark.
-  const presentedIds = new Set(evidence.shownIds);
+  // Coverage bookkeeping for the watermark: only ids a `query_events` call
+  // actually returned count as read. The index's excerpts are discovery — the
+  // model saw them listed, but a row never retires the watermark on a listing.
+  const readIds = new Set<string>();
   const toolNames = ['curate_context', 'query_context', 'query_events'];
   let noProgress = false;
   let writeFailed = false;
@@ -127,7 +127,7 @@ async function runCuratorTurn(db: Db, reason: 'nightly' | 'activity', runTimeout
               const list = (observation.output as { events?: { id?: unknown }[] }).events;
               if (Array.isArray(list)) {
                 for (const row of list) {
-                  if (row && typeof row.id === 'string') presentedIds.add(row.id);
+                  if (row && typeof row.id === 'string') readIds.add(row.id);
                 }
               }
             }
@@ -168,17 +168,25 @@ async function runCuratorTurn(db: Db, reason: 'nightly' | 'activity', runTimeout
   // With no covered prefix the watermark does not move; an incomplete window
   // retries on the next run and stays visible through the coverage block on
   // this scan record rather than silently dropping unread events.
-  const advanceTo = curatorWatermarkAdvance(evidence.rows, presentedIds, now);
-  const coverage = curatorEvidenceCoverage(evidence.rows, presentedIds);
-  const refreshed =
-    !writeFailed &&
-    !repeated &&
-    (await refreshTopicMetadata(db, {
-      taskRunId: result.task_run_id,
-      asOf: advanceTo?.toISOString(),
-      overnight,
-      legacyGlobalVersion: legacyScopes.find((scope) => scope.scope === 'global')?.note?.version,
-    }));
+  const advanceTo = curatorWatermarkAdvance(evidence.rows, readIds, now);
+  const coverage = curatorEvidenceCoverage(evidence.rows, readIds, evidence.listedIds);
+  // refreshTopicMetadata rethrows non-conflict errors — without a scan event
+  // the whole turn would leave no trace. Record degraded, then rethrow so the
+  // job still fails and retries.
+  let refreshed = false;
+  let refreshError: unknown;
+  if (!writeFailed && !repeated) {
+    try {
+      refreshed = await refreshTopicMetadata(db, {
+        taskRunId: result.task_run_id,
+        asOf: advanceTo?.toISOString(),
+        overnight,
+        legacyGlobalVersion: legacyScopes.find((scope) => scope.scope === 'global')?.note?.version,
+      });
+    } catch (error) {
+      refreshError = error;
+    }
+  }
   const watermarkAdvanced = advanceTo !== null && refreshed;
   await writeEvent(db, {
     id: newId(),
@@ -188,9 +196,9 @@ async function runCuratorTurn(db: Db, reason: 'nightly' | 'activity', runTimeout
     subject_kind: 'query',
     subject_id: id,
     outcome:
-      watermarkAdvanced && coverage.complete
+      refreshError === undefined && watermarkAdvanced && coverage.complete
         ? 'success'
-        : watermarkAdvanced
+        : refreshError === undefined && watermarkAdvanced
           ? 'partial'
           : 'degraded',
     payload: {
@@ -198,6 +206,9 @@ async function runCuratorTurn(db: Db, reason: 'nightly' | 'activity', runTimeout
       cost_usd: result.cost_usd,
       no_progress: noProgress,
       write_failed: writeFailed,
+      ...(refreshError !== undefined
+        ? { refresh_failed: refreshError instanceof Error ? refreshError.message : 'unknown' }
+        : {}),
       coverage,
       watermark_advanced: watermarkAdvanced,
       watermark_to: watermarkAdvanced ? advanceTo?.toISOString() : null,
@@ -209,5 +220,6 @@ async function runCuratorTurn(db: Db, reason: 'nightly' | 'activity', runTimeout
     affected_scopes: [],
     ingest_at: new Date(),
   });
+  if (refreshError !== undefined) throw refreshError;
   return result;
 }

@@ -262,6 +262,14 @@ export interface ProviderTransportEvidence {
    * carry positive not-sent evidence with nothing pending.
    */
   readonly send_state: TransportSendState;
+  /**
+   * Provider calls refused before any fetch was invoked (e.g. the pre-send
+   * input budget guard). They leave no request record — this counter is the
+   * positive evidence that a refusal happened with zero wire footprint, so
+   * billing can prove the attempt consumed nothing without trusting error
+   * identity across library wrapping.
+   */
+  readonly pre_send_rejections?: number;
   /** Aggregates over all requests, independent of `requests` truncation. */
   readonly totals: {
     readonly requests: number;

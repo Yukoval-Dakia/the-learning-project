@@ -423,12 +423,11 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
   let thinkingObserved = false;
   let completeArtifact = false;
   const outputStats = emptyStreamTextStats();
-  const settleUnobservedUsage = async (cause: unknown) => {
+  const settleUnobservedUsage = async () => {
     await args.lifecycle.recordEstimatedUsage({
       promptText: args.usagePrompt?.() ?? '',
       output: outputStats,
       priceOrigin: args.lifecycle.aborted ? 'timeout-estimate' : 'failure-estimate',
-      cause,
     });
   };
 
@@ -599,7 +598,7 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
       break;
     }
   } catch (error) {
-    await settleUnobservedUsage(error);
+    await settleUnobservedUsage();
     throw error;
   } finally {
     const endedAt = Date.now();
@@ -626,7 +625,7 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
 
   if (!args.lifecycle.sawTerminalResult) {
     if (args.lifecycle.aborted) {
-      await settleUnobservedUsage(new Error(args.abortedWithoutTerminalMessage));
+      await settleUnobservedUsage();
       throw new Error(args.abortedWithoutTerminalMessage);
     }
     throw new AgentRunError({
@@ -735,7 +734,6 @@ async function runTaskAttempt(args: {
       promptText: usagePrompt(),
       output: emptyStreamTextStats(),
       priceOrigin: 'failure-estimate',
-      cause: error,
     });
     throw error;
   }

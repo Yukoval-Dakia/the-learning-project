@@ -16,6 +16,7 @@ import type {
   LifecycleResult,
   AiTaskUsage as LifecycleUsage,
   NoteGeneratePhaseTimings,
+  ProviderRequestEvidence,
   ProviderTransportEvidence,
   TransportAbortInitiator,
 } from '@/ai/task-result';
@@ -46,7 +47,6 @@ import {
   resolveModelProfile,
 } from './model-profiles';
 import { piCatalogCostUsd } from './pi-catalog-cost';
-import { isPiInputBudgetRejected } from './pi-input-guard';
 import { type TokenCounts, isJevModel } from './pricing';
 import { acquireProviderSession } from './provider-session-admission';
 import {
@@ -343,12 +343,12 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
     promptText: string;
     output: Parameters<typeof estimateAbortedUsage>[1];
     priceOrigin: 'timeout-estimate' | 'failure-estimate';
-    /** The thrown error when billing for a failed attempt. A pre-send input
-     *  budget rejection consumed nothing — it marks the provably-unbilled row
-     *  instead of fabricating an estimate. */
-    cause?: unknown;
   }): Promise<void> {
-    if (input.cause !== undefined && isPiInputBudgetRejected(input.cause)) {
+    // Transport evidence, not error identity: pi-ai wraps provider errors into
+    // message strings, so the unbilled fact must come from the wire record —
+    // a pre-send rejection counter or request states that prove nothing
+    // billable ever left.
+    if (this.unbilledTransportEvidence(this.armedTransport())) {
       this.noteUnbilledProviderRejection();
       return;
     }
@@ -501,24 +501,39 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
     return this.helpLatencySeal;
   }
 
+  /**
+   * Positive proof the attempt's wire produced nothing billable: every request
+   * settled not-sent, or every recorded request was a provider rejection and
+   * the wire refused the rest pre-send. Conservative — `unknown`/`in_flight`
+   * or a dropped record fails the proof.
+   */
+  private unbilledTransportEvidence(transport: ProviderTransportEvidence | undefined): boolean {
+    if (!transport) return false;
+    if (transport.send_state === 'not_sent') return true;
+    const requestsComplete =
+      transport.requests_seen > 0 &&
+      transport.requests_dropped === 0 &&
+      transport.requests.length === transport.requests_seen;
+    const requestUnbilled = (request: ProviderRequestEvidence): boolean =>
+      request.send_state === 'not_sent' ||
+      (request.loop === 'root' &&
+        request.send_state === 'response_received' &&
+        request.http_status != null &&
+        request.http_status >= 400);
+    return (
+      (requestsComplete && transport.requests.every(requestUnbilled)) ||
+      ((transport.pre_send_rejections ?? 0) > 0 &&
+        (transport.requests_seen === 0 ||
+          (requestsComplete && transport.requests.every(requestUnbilled))))
+    );
+  }
+
   get costTruth(): AttemptCostTruth {
     const usage = this.terminal ?? this.observedUsage;
     const transport = this.armedTransport();
     // Never erase usage from an earlier successful turn or an unobserved send.
     const unbilledTransport =
-      this.unbilledProviderRejection ||
-      transport?.send_state === 'not_sent' ||
-      (transport != null &&
-        transport.requests_seen > 0 &&
-        transport.requests_dropped === 0 &&
-        transport.requests.length === transport.requests_seen &&
-        transport.requests.every(
-          (request) =>
-            request.loop === 'root' &&
-            request.send_state === 'response_received' &&
-            request.http_status != null &&
-            request.http_status >= 400,
-        ));
+      this.unbilledProviderRejection || this.unbilledTransportEvidence(transport);
     const noModelUsage =
       !usage ||
       (usage.tokenCounts.outputTokens === 0 &&

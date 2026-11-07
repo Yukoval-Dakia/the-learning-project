@@ -29,6 +29,16 @@ const missingOpenAiEndpoint: CatalogOverride = {
   facts: { baseUrl: 'https://api.openai.com/v1' },
 };
 
+/**
+ * Pre-send estimate margin for deepseek-v4.1-flash — one declared fact shared
+ * by every route serving the model, because the yuk1984 estimator↔provider
+ * reconciliations cover both opencode-go and OpenDesign runs. The bias is a
+ * property of the estimator against this model's payloads (≈1.0–1.14 observed
+ * on Dreaming-class input), so 1.15 sits just outside the band on both routes.
+ * Other models keep no declaration until their own reconciliation exists.
+ */
+export const DEEPSEEK_V41_FLASH_INPUT_SAFETY_RATIO = 1.15;
+
 const overrides: Partial<Record<Provider, Record<string, CatalogOverride>>> = {
   anthropic: Object.fromEntries(
     Object.keys(protocols.anthropic).map((model) => [model, missingAnthropicEndpoint]),
@@ -128,8 +138,11 @@ const overrides: Partial<Record<Provider, Record<string, CatalogOverride>>> = {
     'deepseek-v4.1-flash': {
       when: 'missing',
       reason:
-        'models.dev has no forcedToolChoice field. YUK-1547 actual HTTP 400 with thinking + named tool_choice, request_id 6fde3ba6-8f64-4c84-8a3d-5a5e211b430a.',
-      facts: { forcedToolChoice: false },
+        'models.dev has no forcedToolChoice field. YUK-1547 actual HTTP 400 with thinking + named tool_choice, request_id 6fde3ba6-8f64-4c84-8a3d-5a5e211b430a. inputSafetyRatio shares DEEPSEEK_V41_FLASH_INPUT_SAFETY_RATIO — yuk1984 reconciliation covers this route.',
+      facts: {
+        forcedToolChoice: false,
+        inputSafetyRatio: DEEPSEEK_V41_FLASH_INPUT_SAFETY_RATIO,
+      },
     },
     'mimo-v2.6-pro': {
       when: 'missing',
@@ -269,11 +282,7 @@ export const OPENDESIGN_CATALOG_MODELS = {
     id: 'deepseek-v4.1-flash',
     name: 'DeepSeek V4.1 Flash',
     limit: { context: 1_048_000, input: 328_000, output: 128_000 },
-    // YUK-1776: pre-send margin for this route only. yuk1984 evidence bounds
-    // estimator bias at ≈1.0–1.14 for Dreaming-class payloads; 1.15 sits just
-    // outside the band. Other models keep ratio 1 (no added blocking) until
-    // their own reconciliation exists.
-    input_safety_ratio: 1.15,
+    input_safety_ratio: DEEPSEEK_V41_FLASH_INPUT_SAFETY_RATIO,
     modalities: { input: ['text', 'image'], output: ['text'] },
     tool_call: true,
     structured_output: true,

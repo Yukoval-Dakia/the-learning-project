@@ -274,6 +274,10 @@ export class PiProviderWire {
           lastUsage: this.lastUsageCalibration,
         });
         if (!fit.fits) {
+          // Positive unbilled evidence on the transport record — the Error
+          // itself is wrapped into a message string by pi-ai and cannot carry
+          // the fact to the lifecycle.
+          this.input.options.transportEvidence?.notePreSendRejection();
           throw new PiInputBudgetRejectedError(
             `Model '${model.provider}/${model.id}' input exceeds its catalog token limit ` +
               `(${fit.reason}: estimated ${fit.estimatedTokens} × ${fit.safetyRatio.toFixed(2)} = ` +

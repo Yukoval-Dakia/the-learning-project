@@ -61,8 +61,9 @@ export async function buildCuratorPayload(
   evidence: {
     /** Every window row, ascending — the coverage universe, not just the index. */
     rows: Awaited<ReturnType<typeof readCuratorEvidence>>;
-    /** Rows actually printed in the index; the model saw their excerpts. */
-    shownIds: Set<string>;
+    /** Rows whose 160-char excerpts were printed in the index. Listing is not
+     *  reading: these ids surface in coverage but never retire the watermark. */
+    listedIds: Set<string>;
     /** The watermark this window was cut from (null before the first digest). */
     asOf: string | null;
   };
@@ -184,7 +185,7 @@ export async function buildCuratorPayload(
     blocks,
     evidence: {
       rows: evidenceRows,
-      shownIds: new Set(shownRows.map((row) => row.id)),
+      listedIds: new Set(shownRows.map((row) => row.id)),
       asOf: contextDigest.digest.as_of || null,
     },
   };
