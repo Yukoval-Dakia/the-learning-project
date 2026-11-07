@@ -18,7 +18,15 @@ export async function readCuratorEvidence(db: Db, anchorId?: string) {
   if (!anchor) throw new Error('Curator run anchor unknown');
   const { digest } = await readTopics(db);
   return db
-    .select({ id: event.id, action: event.action, payload: event.payload, at: event.created_at })
+    .select({
+      id: event.id,
+      action: event.action,
+      subject_kind: event.subject_kind,
+      subject_id: event.subject_id,
+      outcome: event.outcome,
+      payload: event.payload,
+      at: event.created_at,
+    })
     .from(event)
     .where(
       and(
@@ -70,3 +78,5 @@ export async function readCuratorLegacyScopes(db: Db) {
       }),
   );
 }
+
+export type CuratorLegacyScope = Awaited<ReturnType<typeof readCuratorLegacyScopes>>[number];

@@ -143,6 +143,14 @@ export type CourtesyDefaultToolName = keyof typeof TOOL_COURTESY_DEFAULTS;
 export const KNOWLEDGE_EXCERPT_MAX = 180;
 export const MISTAKE_PROMPT_SNIPPET_MAX = 160;
 
+// YUK-1776 — `query_events` payload detail caps. The page cap is the bound
+// that keeps one read from re-inflating a Dreaming run; rows past the page
+// budget say so instead of silently dropping text.
+export const QUERY_EVENTS_PAYLOAD_CAPS = {
+  rowChars: 8_000,
+  pageChars: 48_000,
+} as const;
+
 // ── P5.2 brief-refresh budget (BR-9) ────────────────────────────────────────
 //
 // Single tunable source for the activity-gated per-subject brief refresh

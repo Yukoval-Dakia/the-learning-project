@@ -9,10 +9,10 @@ import { advisoryLockRegistry } from '@/kernel/locks/registry';
 import { readOvernightHandoffSentence } from '@/kernel/read-models/overnight-digest';
 import { DOMAIN_TOOL_MCP_SERVER_NAME } from '@/kernel/tools/allowlists';
 import { runAgentTask } from '@/server/ai/runner';
-import { readCuratorEvidence, readCuratorLegacyScopes } from './curator-evidence';
+import { type CuratorLegacyScope, readCuratorLegacyScopes } from './curator-evidence';
+import { buildCuratorPayload } from './curator-payload';
 import { loadLearnerContext } from './index';
-import { readLegacyFacts } from './legacy-facts';
-import { readTopics, refreshTopicMetadata, topicBoard, withdrawnTopicEvidence } from './topics';
+import { refreshTopicMetadata } from './topics';
 
 /** Let a holder that just hit its run timer finish cleanup before calling it busy. */
 const LOCK_WAIT_MARGIN_MS = 60_000;
@@ -47,39 +47,25 @@ async function runCuratorTurn(db: Db, reason: 'nightly' | 'activity', runTimeout
     ingest_at: now,
     created_at: now,
   });
-  const [context, evidence, topics, overnight] = await Promise.all([
+  const [context, overnight] = await Promise.all([
     loadLearnerContext(db, { view: 'curator', now }),
-    readCuratorEvidence(db, id),
-    readTopics(db),
     readOvernightHandoffSentence(db),
   ]);
-  const legacyScopes = await readCuratorLegacyScopes(db);
+  const legacyScopes: CuratorLegacyScope[] = await readCuratorLegacyScopes(db);
+  const { payload, blocks } = await buildCuratorPayload(db, {
+    anchorId: id,
+    now,
+    contextMarkdown: context.markdown,
+    legacyScopes,
+  });
   const toolNames = ['curate_context', 'query_context', 'query_events'];
   let noProgress = false;
   let writeFailed = false;
   let repeated = false;
   const seen = new Set<string>();
-  const result = await runAgentTask(
-    'DreamingTask',
-    {
-      context: context.markdown,
-      evidence,
-      legacy_scopes: legacyScopes,
-      topic_freshness: (await topicBoard(db, now)).topics.map((t) => ({
-        key: t.key,
-        evidence_at: t.evidence_at,
-        memory_weight: t.memory_weight,
-        freshness: t.freshness,
-        stale: t.stale,
-      })),
-      legacy_facts: (await readLegacyFacts(db)).filter(
-        (f) => !f.evidence_ids.some((id) => withdrawnTopicEvidence(topics.digest).has(id)),
-      ),
-      ...topics,
-      instruction:
-        '整理和压缩上下文，不决定做什么。接管 legacy_scopes 中所有 scope 的整理；即使没有新事件也检查陈旧程度，主题保留 scope_key，陈旧不等于错误。legacy-global 是旧摘要原文：第一次整理时把主题名、说明和正文改成学习者能懂的白话，不提迁移、升级或内部系统名；逐条保留所有经历事实及成功/失败、先后和不确定性，不能以清理建议为由丢掉事实。逐条 supersede 原事实，不合并 event/weakness；原文仍保留在旧 scope 和版本日志。只重写内容有变化的主题；没变化就停止。学习者 correction 最高优先。',
-    },
-    {
+  let result: Awaited<ReturnType<typeof runAgentTask>>;
+  try {
+    result = await runAgentTask('DreamingTask', payload, {
       db,
       taskRunId: id,
       allowedTools: toolNames.map((name) => piToolWireName(DOMAIN_TOOL_MCP_SERVER_NAME, name)),
@@ -135,8 +121,29 @@ async function runCuratorTurn(db: Db, reason: 'nightly' | 'activity', runTimeout
           },
         }),
       ],
-    },
-  );
+    });
+  } catch (error) {
+    // A failed run leaves a traceable degraded outcome and never advances the
+    // watermark; the caller still receives the error.
+    await writeEvent(db, {
+      id: newId(),
+      action: 'experimental:dreaming_scan',
+      actor_kind: 'agent',
+      actor_ref: 'dreaming',
+      subject_kind: 'query',
+      subject_id: id,
+      outcome: 'degraded',
+      payload: {
+        task_run_id: id,
+        error_head: error instanceof Error ? error.message.slice(0, 300) : String(error),
+        watermark_advanced: false,
+        input_blocks: blocks,
+      },
+      affected_scopes: [],
+      ingest_at: new Date(),
+    }).catch(() => {});
+    throw error;
+  }
   const watermarkAdvanced =
     !writeFailed &&
     !repeated &&
@@ -160,6 +167,10 @@ async function runCuratorTurn(db: Db, reason: 'nightly' | 'activity', runTimeout
       no_progress: noProgress,
       write_failed: writeFailed,
       watermark_advanced: watermarkAdvanced,
+      input_blocks: blocks,
+      model_input_tokens: result.usage.inputTokens,
+      model_output_tokens: result.usage.outputTokens,
+      model_turns: result.usage.numTurns ?? null,
     },
     affected_scopes: [],
     ingest_at: new Date(),

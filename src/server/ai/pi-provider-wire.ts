@@ -16,6 +16,7 @@ import type {
 import { getConfig } from '@/core/config/store';
 import { tracePiStream } from './laminar-tracing';
 import { createPiLlmMessageConverter, estimatePiTokens } from './pi-context-policy';
+import { type PiUsageCalibration, decidePiInputFit } from './pi-input-guard';
 import type { LoomPiModel } from './pi-models';
 import { withPiUsageEvidence } from './pi-usage-evidence';
 import { createProviderErrorCaptureFetch } from './provider-error-evidence';
@@ -58,6 +59,9 @@ export class PiProviderWire {
 
   private failure: Error | undefined;
   private outputTokens = 0;
+  /** Last request's raw estimate + the previous provider-reported input. */
+  private lastRequestEstimate: number | undefined;
+  private lastUsageCalibration: PiUsageCalibration | undefined;
   private readonly counted = new WeakSet<AssistantMessage>();
   private readonly outputCap: number | undefined;
   private readonly idleMs: number;
@@ -89,6 +93,13 @@ export class PiProviderWire {
   private settleOutput(message: AssistantMessage, capOnWire: boolean): AssistantMessage {
     if (!this.counted.has(message)) {
       this.counted.add(message);
+      // Learn the estimator's local bias from the provider's own count so the
+      // next request's pre-send check does not repeat it (YUK-1776).
+      if (this.lastRequestEstimate !== undefined && message.usage.input > 0)
+        this.lastUsageCalibration = {
+          estimated: this.lastRequestEstimate,
+          actual: message.usage.input,
+        };
       this.outputTokens += message.usage.output;
       if (
         this.outputCap !== undefined &&
@@ -221,6 +232,7 @@ export class PiProviderWire {
     // not effort names on the model's list).
     const effort = this.input.options.effort;
     const inputTokens = estimatePiTokens(wireContext.messages);
+    this.lastRequestEstimate = inputTokens;
     const remaining = model.contextWindow - inputTokens;
     const remainingOutput =
       this.outputCap === undefined ? Infinity : this.outputCap - this.outputTokens;
@@ -250,9 +262,17 @@ export class PiProviderWire {
             `Model '${model.provider}/${model.id}' does not declare reasoning effort '${effort}' in the runtime catalog`,
           );
         }
-        if (inputTokens > (model.maxInputTokens ?? model.contextWindow) || remaining <= 0) {
+        const fit = decidePiInputFit({
+          estimatedTokens: inputTokens,
+          contextWindow: model.contextWindow,
+          maxInputTokens: model.maxInputTokens,
+          lastUsage: this.lastUsageCalibration,
+        });
+        if (!fit.fits) {
           throw new Error(
-            `Model '${model.provider}/${model.id}' input exceeds its catalog token limit`,
+            `Model '${model.provider}/${model.id}' input exceeds its catalog token limit ` +
+              `(${fit.reason}: estimated ${fit.estimatedTokens} × ${fit.safetyRatio.toFixed(2)} = ` +
+              `${fit.projectedTokens} > budget ${fit.budget})`,
           );
         }
         const transformed = await streamOptions?.onPayload?.(payload, requestModel);

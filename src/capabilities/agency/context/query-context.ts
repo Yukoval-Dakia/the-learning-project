@@ -16,7 +16,9 @@ import {
   createMem0OpaqueOperationContext,
   readMemoryFacts,
 } from '@/server/ai/mem0/read';
+import { readLegacyFacts } from './legacy-facts';
 import { readMemoryBriefNote } from './memory-brief';
+import { Topic } from './topic-contract';
 
 const DEFAULT_FACTS_TOP_K = 10;
 
@@ -42,6 +44,22 @@ const QueryContextInputSchema = z.object({
     .min(1)
     .optional()
     .describe('Natural-language retrieval query for the fact layer (depth=deep only).'),
+  topicKeys: z
+    .array(z.string().min(1))
+    .max(5)
+    .optional()
+    .describe(
+      'Read full digest topics (facts with ids, memory_kind, evidence_ids) for these topic keys. Use the topic index to choose; at most 5 per call.',
+    ),
+  legacyFacts: z
+    .object({
+      afterId: z.string().min(1).optional(),
+      limit: z.number().int().min(1).max(50).optional(),
+    })
+    .optional()
+    .describe(
+      'Page the pre-digest legacy fact layer (mem0), ordered by id ascending. Pass the previous next_cursor as afterId; limit is 1-50 (default 20).',
+    ),
 });
 
 const BriefNoteSchema = z.object({
@@ -77,6 +95,29 @@ const QueryContextOutputSchema = z.object({
       count: z.number(),
     })
     .nullable(),
+  topics: z
+    .object({
+      version: z.number().int(),
+      as_of: z.string().nullable(),
+      topics: z.array(Topic),
+      missing_topic_keys: z.array(z.string()).default([]),
+    })
+    .optional(),
+  legacy_facts: z
+    .object({
+      facts: z.array(
+        z.object({
+          id: z.string(),
+          body: z.string(),
+          memory_kind: z.enum(['preference', 'habit', 'weakness', 'event']),
+          evidence_ids: z.array(z.string()),
+        }),
+      ),
+      total: z.number().int().nonnegative(),
+      has_more: z.boolean(),
+      next_cursor: z.string().nullable(),
+    })
+    .optional(),
 });
 
 type QueryContextInput = z.infer<typeof QueryContextInputSchema>;
@@ -88,12 +129,20 @@ export function buildQueryContextTool(
   const readDeps = opts.memoryFactory ? { createClient: opts.memoryFactory } : undefined;
 
   async function execute(ctx: ToolContext, input: QueryContextInput): Promise<QueryContextOutput> {
+    const explicitScope = input.scopeKey !== undefined;
+    // A topic/legacy page read asks for one slice; it must not drag the whole
+    // default global brief (prose digest) back into the prompt.
+    const includeBrief =
+      explicitScope || (input.topicKeys === undefined && input.legacyFacts === undefined);
     const scopeKey = input.scopeKey ?? 'global:digest';
-    let read = await readMemoryBriefNote(ctx.db, scopeKey);
-    const { digest } = await readTopics(ctx.db);
+    let read: Awaited<ReturnType<typeof readMemoryBriefNote>> | null = includeBrief
+      ? await readMemoryBriefNote(ctx.db, scopeKey)
+      : null;
+    const digestRead = await readTopics(ctx.db);
+    const { digest } = digestRead;
     const withheld = withdrawnTopicEvidence(digest);
     if (
-      read.note &&
+      read?.note &&
       [
         ...read.note.recent_week_evidence_ids,
         ...read.note.recent_months_evidence_ids,
@@ -104,25 +153,37 @@ export function buildQueryContextTool(
     const scoped = digest.topics.filter(
       (t) => scopeKey === 'global:digest' || scopeKey === 'global' || t.scope_key === scopeKey,
     );
-    const scopedText = scoped
-      .map((t) => `${t.name}：${t.facts.map((f) => f.body).join('；')}`)
-      .join('\n');
-    if (scopedText && !read.note) read = await readMemoryBriefNote(ctx.db, 'global:digest');
-    const brief = {
-      note: read.note
+    const scopedText = includeBrief
+      ? scoped.map((t) => `${t.name}：${t.facts.map((f) => f.body).join('；')}`).join('\n')
+      : '';
+    if (includeBrief && scopedText && read && !read.note)
+      read = await readMemoryBriefNote(ctx.db, 'global:digest');
+    const brief =
+      includeBrief && read
         ? {
-            scope_key: read.note.scope_key,
-            recent_week_md: scopedText || read.note.recent_week_md,
-            recent_months_md: scopedText ? '' : read.note.recent_months_md,
-            long_term_md:
-              scopedText || (scopeKey === 'global:digest' ? '' : read.note.long_term_md),
-            long_term_freshness_score: read.note.long_term_freshness_score,
-            refreshed_at: iso(read.note.refreshed_at),
-            version: read.note.version,
+            note: read.note
+              ? {
+                  scope_key: read.note.scope_key,
+                  recent_week_md: scopedText || read.note.recent_week_md,
+                  // One body, one field: scoped digest prose used to be copied into
+                  // recent_week_md and long_term_md, doubling a query_context read.
+                  recent_months_md: scopedText
+                    ? ''
+                    : read.note.scope_key === scopeKey
+                      ? read.note.recent_months_md
+                      : '',
+                  long_term_md:
+                    scopeKey === 'global:digest' || read.note.scope_key !== scopeKey
+                      ? ''
+                      : read.note.long_term_md,
+                  long_term_freshness_score: read.note.long_term_freshness_score,
+                  refreshed_at: iso(read.note.refreshed_at),
+                  version: read.note.version,
+                }
+              : null,
+            freshness: read.freshness,
           }
-        : null,
-      freshness: read.freshness,
-    };
+        : null;
 
     let facts: QueryContextOutput['facts'] = null;
     if (input.depth === 'deep') {
@@ -164,13 +225,49 @@ export function buildQueryContextTool(
       facts = { facts: list, count: list.length };
     }
 
-    return QueryContextOutputSchema.parse({ brief, facts });
+    const topicsRead = input.topicKeys?.length
+      ? {
+          version: digestRead.version,
+          as_of: digest.as_of,
+          topics: digest.topics.filter((topic) => input.topicKeys?.includes(topic.key)),
+          missing_topic_keys: input.topicKeys.filter(
+            (key) => !digest.topics.some((topic) => topic.key === key),
+          ),
+        }
+      : undefined;
+
+    let legacyFactsRead: QueryContextOutput['legacy_facts'];
+    if (input.legacyFacts) {
+      const all = await readLegacyFacts(ctx.db);
+      const afterId = input.legacyFacts.afterId;
+      const remaining = afterId ? all.filter((fact) => fact.id > afterId) : all;
+      const limit = input.legacyFacts.limit ?? 20;
+      const page = remaining.slice(0, limit);
+      legacyFactsRead = {
+        facts: page.map((fact) => ({
+          id: fact.id,
+          body: fact.body,
+          memory_kind: fact.memory_kind,
+          evidence_ids: fact.evidence_ids,
+        })),
+        total: all.length,
+        has_more: remaining.length > page.length,
+        next_cursor: page.at(-1)?.id ?? null,
+      };
+    }
+
+    return QueryContextOutputSchema.parse({
+      brief,
+      facts,
+      ...(topicsRead ? { topics: topicsRead } : {}),
+      ...(legacyFactsRead ? { legacy_facts: legacyFactsRead } : {}),
+    });
   }
 
   return {
     name: 'query_context',
     description:
-      "Read the learner Context warm layer: the Dreaming-maintained memory brief at a scope plus, at depth='deep', Mem0 facts matched by `query`. Read-only attention prior (ADR-0017) — never mutates scheduling or mastery. The startup segment already carries the global brief; use this to drill into a scope.",
+      "Read the learner Context warm layer: topic facts (topicKeys), the Dreaming-maintained memory brief at a scope plus, at depth='deep', Mem0 facts matched by `query`, and the pre-digest legacy facts page. Topic-only or legacy-only reads skip the default brief. Read-only attention prior (ADR-0017) — never mutates scheduling or mastery. The startup segment already carries the global brief; use this to drill into a scope or read a topic's full facts.",
     effect: 'read',
     inputSchema: QueryContextInputSchema,
     outputSchema: QueryContextOutputSchema,
@@ -183,7 +280,13 @@ export function buildQueryContextTool(
         ? `brief v${output.brief.note.version} ${output.brief.freshness.state}`
         : `brief ${output.brief?.freshness.state ?? 'missing'}`;
       const facts = output.facts ? ` · ${output.facts.count} facts` : '';
-      return `context · ${input.scopeKey ?? 'global'} · ${brief}${facts}`;
+      const topics = input.topicKeys?.length
+        ? ` · ${output.topics?.topics.length ?? 0}/${input.topicKeys.length} topics`
+        : '';
+      const legacy = input.legacyFacts
+        ? ` · legacy ${output.legacy_facts?.facts.length ?? 0}/${output.legacy_facts?.total ?? 0}`
+        : '';
+      return `context · ${input.scopeKey ?? 'global'} · ${brief}${facts}${topics}${legacy}`;
     },
     // Same policy the brief read always had: a user-facing copilot lookup shows
     // up as a step; coach/dreaming callers stay invisible either way.
