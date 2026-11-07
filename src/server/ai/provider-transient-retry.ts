@@ -28,17 +28,14 @@ export interface ProviderTransientRetryPolicy {
  * unchanged.
  */
 export function providerTransientRetryPolicy(): ProviderTransientRetryPolicy {
+  // Registered keys always resolve (env > db > code-default), so the registry
+  // owns these defaults; a fallback here would silently shadow it. YUK-1983's
+  // 180s wait budget lives at ADMISSION_PROVIDER_RETRY_MAX_WAIT_MS.
   return {
-    maxRetries: (getConfig('ADMISSION_PROVIDER_RETRY_MAX_RETRIES') as number | undefined) ?? 3,
-    // YUK-1983: the captured dev evidence has per-DB 429 counts but no
-    // retry_after_ms values (dev-db-retry-values.txt); the TEST 429s that did
-    // carry a hint were far beyond any sane wait (191817s). This budget only
-    // matters when a provider sends a short hint: 180s honors a ≤3min wait in-run
-    // instead of skipping the resend and falling to the 24h durable wait (#2663).
+    maxRetries: getConfig('ADMISSION_PROVIDER_RETRY_MAX_RETRIES') as number,
     // Sleeping costs no tokens; the streaming path keeps its own 15s cap (runner.ts).
-    maxWaitMs: (getConfig('ADMISSION_PROVIDER_RETRY_MAX_WAIT_MS') as number | undefined) ?? 180_000,
-    baseDelayMs:
-      (getConfig('ADMISSION_PROVIDER_RETRY_BASE_DELAY_MS') as number | undefined) ?? 2_000,
+    maxWaitMs: getConfig('ADMISSION_PROVIDER_RETRY_MAX_WAIT_MS') as number,
+    baseDelayMs: getConfig('ADMISSION_PROVIDER_RETRY_BASE_DELAY_MS') as number,
   };
 }
 
