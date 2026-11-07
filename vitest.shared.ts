@@ -131,6 +131,7 @@ export const dbTestInclude = [
   'src/capabilities/ingestion/server/proposal-appliers.db.test.ts',
   'src/capabilities/ingestion/server/provider-attempts.db.test.ts',
   'src/capabilities/ingestion/server/revert-auto-enroll.db.test.ts',
+  'src/capabilities/ingestion/server/single-block-enroll.db.test.ts',
   'src/capabilities/ingestion/server/tools/question-block-edits.db.test.ts',
   'src/capabilities/knowledge/jobs/kc_dedup_nightly.db.test.ts',
   'src/capabilities/knowledge/jobs/knowledge_maintenance_nightly.db.test.ts',
