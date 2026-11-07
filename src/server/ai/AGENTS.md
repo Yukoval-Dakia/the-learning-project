@@ -58,7 +58,7 @@
 
 ## Switchable AI provider lane (YUK-365, post-P4)
 
-产品默认在 `src/ai/task-spec.ts` 的 `DEFAULT_TASK_MODEL` 唯一定义为 `opencode-go/deepseek-v4.1-flash`，任务装配时补齐；有真实专用协议的任务保留显式绑定。`AI_PROVIDER_OVERRIDE` + `AI_PROVIDER_MODEL` 仍是模型应急 pin，认证变量 `OPENCODE_API_KEY`；它不改变 reasoning。Mem0 跟随全局模型 pair；无 pair 且无显式 MEM0_LLM_MODEL/BASE_URL 时继承 DEFAULT_TASK_MODEL，显式旧 memory 配置保留 GLM 专用路径。app 与 worker 必须看到相同配置。mimo-v2.5 系列已退役：存量 task/lane 模型配置明确报错，需清除或显式选择支持的 pair，不自动替换；mimo-v2.6 仍可选。
+产品默认在 `src/core/config/model-overrides.ts` 的 `DEFAULT_TASK_MODEL` 唯一定义为 `opencode-go/deepseek-v4.1-flash`，任务装配时补齐；有真实专用协议的任务保留显式绑定。`AI_PROVIDER_OVERRIDE` + `AI_PROVIDER_MODEL` 仍是模型应急 pin，认证变量 `OPENCODE_API_KEY`；它不改变 reasoning。Mem0 跟随全局模型 pair；无 pair 且无显式 MEM0_LLM_MODEL/BASE_URL 时继承 DEFAULT_TASK_MODEL，显式旧 memory 配置保留 GLM 专用路径。app 与 worker 必须看到相同配置。mimo-v2.5 系列已退役：存量 task/lane 模型配置明确报错，需清除或显式选择支持的 pair，不自动替换；mimo-v2.6 仍可选。
 
 `lane.global.reasoning` 存 `{level}`，默认 `{level:'high'}`。任务 `task.<kind>.reasoning` > 全局 > 目录默认；所有模型共用 `resolveTaskReasoning` 的向上取整/toggle/none 规则，receipt 带 source 和 requested→applied。flash 目录档位 low/high/max；无 reasoning 配置位的模型记录 none。
 
