@@ -416,7 +416,9 @@ it('verifies photo evidence before claims and persists the accepted binding', as
     'task.AssessmentRuleJudgeTask.reasoning': { level: 'none' },
     'task.AssessmentRuleJudgeTask.override_global_pin': true,
   });
-  const { runPhotoJudgeExam, photoJudgeExamConfiguration } = await import('./photo-judge-exam');
+  const { runPhotoJudgeExam, photoJudgeExamConfiguration, verifyPhotoJudgeExam } = await import(
+    './photo-judge-exam'
+  );
   const { PhotoExamEvidence } = await import('./photo-exam-evidence');
   const { PHOTO_JUDGE_BINDINGS } = await import('./photo-judge-gate');
   const db = testDb(),
@@ -472,6 +474,9 @@ it('verifies photo evidence before claims and persists the accepted binding', as
       materials: [],
     });
   }
+  let judgedHardLimit: number | undefined;
+  let hardSeen = 0;
+  let unclearSeen = 0;
   const streamSimple: NonNullable<PiAdapterDeps['models']>['streamSimple'] = (_model, context) => {
     const text = JSON.stringify(context.messages);
     calls.push(text);
@@ -483,17 +488,22 @@ it('verifies photo evidence before claims and persists the accepted binding', as
           ? 'poor_clarity'
           : 'correct';
     const evidenceId = /(?:correct|equivalent|wrong|partial|poor_clarity)-\d+/.exec(text)?.[0];
-    const answer =
-      kind === 'poor_clarity'
-        ? { kind: 'pending', detail: 'synthetic unreadable image' }
-        : {
-            kind: 'rule',
-            rule_id: 'r1',
-            points_awarded: kind === 'wrong' ? 0 : kind === 'partial' ? 2 : 4,
-            confidence: 1,
-            feedback_md: 'fixture',
-            evidence_citations: [{ evidence_id: evidenceId }],
-          };
+    const pending =
+      judgedHardLimit === undefined
+        ? kind === 'poor_clarity'
+        : kind === 'wrong' || kind === 'partial'
+          ? hardSeen++ >= judgedHardLimit
+          : kind === 'poor_clarity' && unclearSeen++ >= 3;
+    const answer = pending
+      ? { kind: 'pending', detail: 'synthetic unreadable image' }
+      : {
+          kind: 'rule',
+          rule_id: 'r1',
+          points_awarded: kind === 'wrong' ? 0 : kind === 'partial' ? 2 : 4,
+          confidence: 1,
+          feedback_md: 'fixture',
+          evidence_citations: [{ evidence_id: evidenceId }],
+        };
     const message: AssistantMessage = {
       role: 'assistant',
       api: model.api,
@@ -532,6 +542,23 @@ it('verifies photo evidence before claims and persists the accepted binding', as
   expect(calls).toHaveLength(25);
   expect(await runPhotoJudgeExam(db, input)).toEqual(receipt);
   expect(calls).toHaveLength(25);
+  for (const row of [
+    { judged: 0, scored: 13, passed: false },
+    { judged: 5, scored: 18, passed: true },
+  ]) {
+    judgedHardLimit = row.judged;
+    hardSeen = unclearSeen = 0;
+    const runId = `photo-coverage-${row.judged}`;
+    const result = PhotoExamEvidence.parse(
+      await runPhotoJudgeExam(db, { ...input, run_id: runId }),
+    );
+    console.info('photo coverage raw receipt', JSON.stringify(result));
+    expect(result.passed).toBe(row.passed);
+    expect(result.items.filter((item) => item.outcome.kind === 'scored')).toHaveLength(row.scored);
+    expect(await verifyPhotoJudgeExam(db, runId, task)).toMatchObject({ verified: row.passed });
+  }
+  judgedHardLimit = undefined;
+  expect(calls).toHaveLength(75);
   expect(await db.select().from(model_admission_slice)).toHaveLength(1);
   await db.insert(event).values({
     id: 'evt_photo_exam_started_unsealed',
@@ -546,7 +573,7 @@ it('verifies photo evidence before claims and persists the accepted binding', as
   await expect(runPhotoJudgeExam(db, { ...input, run_id: 'unsealed' })).rejects.toThrow(
     'outcome unknown',
   );
-  expect(calls).toHaveLength(25);
+  expect(calls).toHaveLength(75);
   const evidenceRef = 'evt_photo_exam_verified-photo-exam';
   const request: import('@/core/schema/assessment').ModelExecutorRequest = {
     submission_id: 'photo-original',
@@ -577,7 +604,7 @@ it('verifies photo evidence before claims and persists the accepted binding', as
     },
   });
   try {
-    for (const damage of ['bar', 'identity', 'digest'] as const) {
+    for (const damage of ['bar', 'identity', 'digest', 'labels'] as const) {
       const modified = structuredClone(receipt);
       if (damage === 'bar') {
         const wrong = modified.items.find((item) => item.answer_class === 'wrong');
@@ -590,6 +617,9 @@ it('verifies photo evidence before claims and persists the accepted binding', as
         };
       }
       if (damage === 'identity') modified.identity.model = 'another-model';
+      if (damage === 'labels') {
+        for (const item of modified.items) Reflect.deleteProperty(item, 'answer_class');
+      }
       const { digest: _digest, ...body } = modified;
       modified.digest = damage === 'digest' ? 'tampered' : canonicalHash(body);
       await db
@@ -598,7 +628,7 @@ it('verifies photo evidence before claims and persists the accepted binding', as
         .where((await import('drizzle-orm')).eq(event.id, evidenceRef));
       const result = await createFormalModelExecutor(db)(request);
       expect(result).toMatchObject({ kind: 'pending', pending: { reason: 'unjudgeable' } });
-      expect(calls).toHaveLength(25);
+      expect(calls).toHaveLength(75);
     }
     await db
       .update(event)
@@ -673,7 +703,7 @@ it('verifies photo evidence before claims and persists the accepted binding', as
     expect(
       await createFormalModelExecutor(db)({ ...request, submission_id: 'drifted-photo' }),
     ).toMatchObject({ kind: 'pending', pending: { reason: 'unjudgeable' } });
-    expect(calls).toHaveLength(26);
+    expect(calls).toHaveLength(76);
   } finally {
     Reflect.deleteProperty(PHOTO_JUDGE_BINDINGS, '0');
     Reflect.set(PHOTO_JUDGE_BINDINGS, 'length', 0);

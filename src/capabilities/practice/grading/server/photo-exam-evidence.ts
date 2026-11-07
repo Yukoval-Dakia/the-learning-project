@@ -75,6 +75,12 @@ export function photoExamPasses(items: z.infer<typeof PhotoExamEvidence>['items'
       .length *
       2 >=
       items.length &&
+    items.filter(
+      (item) =>
+        (item.answer_class === 'wrong' || item.answer_class === 'partial') &&
+        item.outcome.kind === 'scored' &&
+        item.outcome.points_awarded !== null,
+    ).length >= 5 &&
     !items.some(
       (item) =>
         item.reference_points < item.max_points &&
