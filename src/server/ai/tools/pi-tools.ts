@@ -41,15 +41,11 @@ export function buildPiDomainAgentTools(options: BuildMcpServerOptions): AgentTo
         `buildPiDomainAgentTools: tool '${name}' is not registered. Check capability manifest registration.`,
       );
     }
-    const parameters = zodToToolParametersSchema(
-      dt.inputSchema,
-      {
-        io: 'input',
-        reused: 'inline',
-        target: 'draft-07',
-      },
-      dt.name === 'present_primary_view',
-    ) as AgentTool['parameters'];
+    const parameters = zodToToolParametersSchema(dt.inputSchema, {
+      io: 'input',
+      reused: 'inline',
+      target: 'draft-07',
+    }) as AgentTool['parameters'];
     // The runtime schema keeps query optional so a cursor-only resume still
     // validates; the provider wire must say a new search needs the learner's
     // query. cursor remains a runtime-only alternative (bridge validation).
@@ -66,9 +62,7 @@ export function buildPiDomainAgentTools(options: BuildMcpServerOptions): AgentTo
       // Keep rejection in the bridge so the normal hooks and durable log observe it.
       // search_bank also needs the bridge's cursor-only runtime alternative while
       // its provider wire requires query for a new search.
-      ...(dt.name === 'present_primary_view' || dt.name === 'search_bank'
-        ? { inputValidation: 'bridge' as const }
-        : {}),
+      ...(dt.name === 'search_bank' ? { inputValidation: 'bridge' as const } : {}),
       execute: async (toolCallId, params, signal) => {
         // The loop abort must reach the tool: merge it with the caller's
         // ctx.signal so either source cancels execution.

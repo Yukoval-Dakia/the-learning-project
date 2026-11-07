@@ -31,11 +31,7 @@ import {
   publicProseStatus,
   readCopilotPublicProse,
 } from './public-prose';
-import {
-  type CopilotReplyFinalizationReceipt,
-  type PreparedCopilotReply,
-  sealCommittedPresentationReply,
-} from './reply-finalization';
+import type { CopilotReplyFinalizationReceipt, PreparedCopilotReply } from './reply-finalization';
 import type { TeachingSkillResult } from './skills/teaching-skill';
 import {
   acceptConfirmationCommand,
@@ -43,7 +39,6 @@ import {
   offerConversationConfirmation,
 } from './teaching/confirmation';
 import { materializeAskCheckQuestion } from './teaching/materialize-ask-check';
-import type { CopilotPrimaryView } from './turns';
 
 export type { PreparedCopilotReply } from './reply-finalization';
 
@@ -132,9 +127,8 @@ async function persistCopilotInputEvent(
 /** Seals product-state disclosure and stores one causal reply. */
 export interface WriteCopilotReplyResult {
   replyEventId: string;
-  /** 剥掉 legacy primary_view marker 后的终稿（持久化 / 返回 / 重放历史都用这份）。 */
+  /** 终稿（持久化 / 返回 / 重放历史都用这份）。 */
   cleanedReply: string;
-  primaryView?: CopilotPrimaryView;
   publicProse?: CopilotPublicProse;
 }
 
@@ -258,12 +252,10 @@ export async function writeCopilotReply(
     });
   }
   const receipt = receiptMatches ? params.replyFinalization : undefined;
-  const sealed = sealCommittedPresentationReply(prepared, receipt);
-  const cleanedReply = sealed.preparedReply.text;
-  if (publicProse && sealed.receipt?.assurance === 'unsealed' && cleanedReply.length > 0) {
+  const cleanedReply = prepared.text;
+  if (publicProse && receipt?.assurance === 'unsealed' && cleanedReply.length > 0) {
     publicProse.text = cleanedReply;
   }
-  const primaryView = receipt ? sealed.preparedReply.primaryView : undefined;
   // created_at 严格晚于 ask（now + 1ms）：整轮共享一个 now，无偏移则 ask/reply
   // 在 created_at 上打平，turns 读取器的 (created_at, id) 排序可能把 reply 排到
   // 自己的 ask 之前。
@@ -299,7 +291,7 @@ export async function writeCopilotReply(
       derivation_policy: derivationPolicy,
       task_run_id: params.taskRunId,
       ...(params.evidenceValidation ? { evidence_validation: params.evidenceValidation } : {}),
-      ...(sealed.receipt ? { reply_finalization: sealed.receipt } : {}),
+      ...(receipt ? { reply_finalization: receipt } : {}),
       ...(params.durableFinishReason ? { durable_finish_reason: params.durableFinishReason } : {}),
       ...(params.durableFailure ? { durable_failure: params.durableFailure } : {}),
       ...(thinkingClear ? { thinking_clear: true } : {}),
@@ -313,10 +305,6 @@ export async function writeCopilotReply(
         : {}),
       ...(params.confirmation ? { confirmation: params.confirmation } : {}),
       in_reply_to_event_id: params.userAskEventId ?? null,
-      // Reply METADATA only, persisted so replay can restore it. The {role,text}
-      // history projection keeps it structurally out of every future prompt;
-      // conditional spread keeps absent-nomination payloads byte-identical.
-      ...(primaryView ? { primary_view: primaryView } : {}),
     },
     caused_by_event_id: params.userAskEventId ?? null,
     task_run_id: params.taskRunId,
@@ -325,7 +313,6 @@ export async function writeCopilotReply(
   return {
     replyEventId,
     cleanedReply,
-    ...(primaryView ? { primaryView } : {}),
     ...(publicProse ? { publicProse } : {}),
   };
 }

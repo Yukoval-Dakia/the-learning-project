@@ -845,7 +845,6 @@ async function executeAcceptedCopilotRun(
             taskRunId: result.taskRunId,
             finishReason: result.finishReason,
             ...(modeState ? { modeState } : {}),
-            ...(preparedReply.primaryView ? { primaryView: preparedReply.primaryView } : {}),
           };
         },
         {
