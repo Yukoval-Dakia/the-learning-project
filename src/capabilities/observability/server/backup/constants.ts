@@ -150,7 +150,10 @@
 // No enforced FK (loose text-ref to session/task_run/event/asset). NEW
 // FK_ORDER table → bump SCHEMA_VERSION (4.34 → 4.35).
 // drawing.source_scoped column → the backup row shape changes → 4.35 → 4.36.
-export const SCHEMA_VERSION = '4.37';
+// YUK-1768: edge_reconciliation_log dropped with the supersede write path — a
+// table removal changes the FK_ORDER payload contract the same way an add does
+// → 4.37 → 4.38 (lockstep, per the FK_ORDER rule below).
+export const SCHEMA_VERSION = '4.38';
 
 export const SUBSCRIPTION_PROGRESS_TABLES = [
   'event_subscription_checkpoint',
@@ -309,19 +312,12 @@ export const FK_ORDER = [
   // 软引用 practice_stream_item.id (text ref，no enforced FK)，位置不受 PG FK 约束。
   'selection_observation',
   'memory_reconciliation_log',
-  // YUK-344 调和环增量 2 (ADR-0034 §3): edge_reconciliation_log — 结构轴知识边写入期
-  // 调和的 AUDIT / PROVENANCE 日志 (SUPERSEDE 决策来由)。与 memory_reconciliation_log
-  // (记忆/个性化轴) 结构正交但语义同类 (provenance 值得保留，丢了即灭失 epistemic 来由)，
-  // 故同入 FK_ORDER 备份 (非 BACKUP_EXCLUDED)。软引用 knowledge_edge.id (superseded_edge_id
-  // 是 text ref，无 hard FK)，位置不受 PG FK 约束；置于 memory_reconciliation_log 后保持
-  // 两条 reconciliation 日志相邻可读。
-  'edge_reconciliation_log',
   // YUK-531 (A5 S4 / ADR-0036 RT1): misconception_reconciliation_log — 异构误区边写入期
-  // 调和的 AUDIT / PROVENANCE 日志 (SUPERSEDE 决策来由)，peer of edge_reconciliation_log。
+  // 调和的 AUDIT / PROVENANCE 日志 (SUPERSEDE 决策来由)。
   // provenance 值得保留 (丢了即灭失 epistemic 来由)，故同入 FK_ORDER 备份 (非
   // BACKUP_EXCLUDED)。软引用 misconception_edge.id (superseded_edge_id 是 text ref，无 hard
-  // FK)，位置不受 PG FK 约束；紧邻 edge_reconciliation_log 保持三条 reconciliation 日志相邻
-  // 可读。NEW FK_ORDER table → bump SCHEMA_VERSION (4.12 → 4.13)。
+  // FK)，位置不受 PG FK 约束；置于 memory_reconciliation_log 后保持两条 reconciliation
+  // 日志相邻可读。NEW FK_ORDER table → bump SCHEMA_VERSION (4.12 → 4.13)。
   'misconception_reconciliation_log',
   // YUK-471 W1 PR-A2a (ADR-0044): materialized_id_index — the projection reverse-index
   // (materialized knowledge/knowledge_edge id → anchor event). Cheaply rebuildable from

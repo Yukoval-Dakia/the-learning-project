@@ -32,7 +32,6 @@ export {
   artifact,
   artifact_block_ref,
   artifact_edit_session,
-  edge_reconciliation_log,
   editing_presence,
   hub_sync_reconciliation,
   memory_brief_note,
