@@ -11,8 +11,6 @@ import {
 import { REASONING_TRACE_MAX_LEN } from '@/kernel/limits';
 import { AttemptEvidenceSchema, CreateSubmissionBodySchema } from './assessment-contracts';
 
-export { AttemptAssistanceSchema, AttemptEvidenceSchema } from './assessment-contracts';
-
 /** Bound text copied into judge prompts and immutable attempt events. */
 export const MAX_REVIEW_RESPONSE_CHARS = 12_000;
 
