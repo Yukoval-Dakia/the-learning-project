@@ -5,17 +5,16 @@
 // the same question/enroll owners as the automatic path, so there is exactly one question
 // per block and admission is still enqueued by the publication event.
 
-import { createId } from '@paralleldrive/cuid2';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 
 import type { Db, Tx } from '@/db/client';
-import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
 import { knowledge, learning_session, question, question_block } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { readQuestionServing } from '@/kernel/read-models/question-serving';
-import { updatePrompt } from './block-structured-edit';
-import { recordCapturedQuestion, settleCapturedBlock } from './capture/captured-question';
+import { setMissingPrompt, updatePrompt } from './block-structured-edit';
+import { detectStudentWork } from './capture/block-answer-evidence';
 import { blockHasPrompt } from './capture/question-text';
+import { enrollBlockIntoItemBank } from './item-bank-enrollment';
 import { hasInflightAutoEnroll } from './session-blocks-read';
 
 export interface EnrollIngestionBlockParams {
@@ -137,31 +136,43 @@ export async function enrollIngestionBlock(
       'version_conflict',
       `question_block ${params.blockId} is at version ${block.version}, expected ${params.expectedVersion}`,
       409,
+      undefined,
+      { current_version: block.version },
     );
   }
 
   let current = block;
   if (params.promptMd !== undefined) {
-    if (!current.structured) {
-      throw new ApiError(
-        'prompt_edit_unavailable',
-        `question_block ${params.blockId} has no structured tree to edit`,
-        409,
-      );
-    }
-    const edited = await updatePrompt(db, {
-      blockId: params.blockId,
-      nodeId: current.structured.id,
-      promptText: params.promptMd,
-      expectedVersion: params.expectedVersion,
-      actorRef: 'ingestion:block_enroll',
-      actorKind: 'user',
-    });
-    if (edited.status === 'skipped:version_conflict') {
+    const edited = current.structured
+      ? await updatePrompt(db, {
+          blockId: params.blockId,
+          nodeId: current.structured.id,
+          promptText: params.promptMd,
+          expectedVersion: params.expectedVersion,
+          actorRef: 'ingestion:block_enroll',
+          actorKind: 'user',
+        })
+      : await setMissingPrompt(db, {
+          blockId: params.blockId,
+          promptText: params.promptMd,
+          expectedVersion: params.expectedVersion,
+          actorRef: 'ingestion:block_enroll',
+          actorKind: 'user',
+        });
+    if (
+      edited.status === 'skipped:version_conflict' ||
+      edited.status === 'skipped:structured_exists'
+    ) {
+      const [fresh] = await db
+        .select({ version: question_block.version })
+        .from(question_block)
+        .where(eq(question_block.id, params.blockId));
       throw new ApiError(
         'version_conflict',
         `question_block ${params.blockId} changed while editing its prompt`,
         409,
+        undefined,
+        { current_version: fresh?.version ?? current.version },
       );
     }
     if (edited.status !== 'written') {
@@ -169,6 +180,8 @@ export async function enrollIngestionBlock(
         'prompt_edit_unavailable',
         `question_block ${params.blockId} prompt edit skipped: ${edited.status}`,
         409,
+        undefined,
+        { current_version: current.version },
       );
     }
     const [reloaded] = await db
@@ -186,6 +199,8 @@ export async function enrollIngestionBlock(
       'prompt_missing',
       `question_block ${params.blockId} has no printed prompt; send prompt_md first`,
       409,
+      undefined,
+      { current_version: current.version },
     );
   }
   // The automatic worker may still be tagging this page. Let it finish rather than
@@ -196,114 +211,65 @@ export async function enrollIngestionBlock(
       'enroll_in_progress',
       `session ${params.sessionId} still has an auto_enroll delivery in flight`,
       409,
+      undefined,
+      { current_version: current.version },
     );
   }
 
   const knowledgeIds = await resolveExactKnowledge(db, current.knowledge_hint);
   const knowledgeState: 'attributed' | 'missing' =
     knowledgeIds.length > 0 ? 'attributed' : 'missing';
-  const now = new Date();
-  const questionId = createId();
   const sourceDocumentId = session.source_document_id;
   if (!sourceDocumentId) {
     throw new ApiError('conflict', `session ${params.sessionId} has no source document`, 409);
   }
+  const generatedBy = params.source === 'rescue' ? 'rescue' : 'user_retry';
 
-  try {
-    return await db.transaction(async (tx) => {
-      await acquireLearningStateWriteLock(tx);
-      const [locked] = await tx
-        .select()
-        .from(question_block)
-        .where(eq(question_block.id, params.blockId))
-        .for('update');
-      if (!locked) {
-        throw new ApiError('not_found', `question_block ${params.blockId} not found`, 404);
-      }
-      if (locked.status !== 'draft') {
-        // Lost a race with the worker or a concurrent click; report that row.
-        return readCurrent(tx, locked, 'already_enrolled', 'missing');
-      }
-      if (locked.version !== current.version) {
-        throw new ApiError(
-          'version_conflict',
-          `question_block ${params.blockId} changed during enrollment`,
-          409,
-        );
-      }
-      const [lockedSession] = await tx
-        .select({ status: learning_session.status })
-        .from(learning_session)
-        .where(eq(learning_session.id, params.sessionId));
-      if (lockedSession?.status !== 'extracted' && lockedSession?.status !== 'partial') {
-        throw new ApiError(
-          'conflict',
-          `session ${params.sessionId} left the rescuable state during enrollment`,
-          409,
-        );
-      }
-
-      await recordCapturedQuestion(tx, {
-        questionId,
-        sessionId: params.sessionId,
-        blockId: locked.id,
-        sourceDocumentId,
-        source: session.entrypoint ?? 'vision_paper',
-        content: { from: 'block', block: locked },
-        knowledgeIds,
-        difficulty: 3,
-        draftStatus: 'active',
-        extraMetadata: {
-          ingestion_enrollment: {
-            mode: 'single_block',
-            knowledge: knowledgeState,
-            enrolled_by: 'user_retry',
-          },
-        },
-        actorRef: 'ingestion:block_enroll',
-        now,
-      });
-      await settleCapturedBlock(tx, {
-        transition: 'auto_enroll',
-        blockId: locked.id,
-        guard: { kind: 'version_cas', version: locked.version },
-        enroll: {
-          questionId,
-          outcome: 'unanswered',
-          answerMd: '',
-          answerImageRefs: [],
-          knowledgeIds,
-          imageRefs: locked.image_refs,
-          captureMode: locked.image_refs.length > 0 ? 'image' : 'text',
-          sourceDocumentId,
-          now,
-          generatedBy: 'workflow_judge',
-        },
-      });
-      const serving = await readQuestionServing(tx, [questionId]);
-      return {
-        block_id: locked.id,
-        status: 'enrolled' as const,
-        question_id: questionId,
-        block_status: 'auto_enrolled',
-        block_version: locked.version + 1,
-        knowledge: knowledgeState,
-        library_visible: true,
-        admission_status: serving.byId.get(questionId)?.admission?.status ?? 'pending',
-      };
-    });
-  } catch (error) {
-    // A concurrent writer may have committed between our read and the lock.
-    if (error instanceof ApiError && error.status === 409) throw error;
+  const result = await enrollBlockIntoItemBank({
+    db,
+    block: current,
+    knowledgeIds,
+    difficulty: 3,
+    confidence: 0,
+    markers: {
+      enrolled_by: generatedBy,
+      knowledge: knowledgeState,
+      confidence: 0,
+      figures_attached: current.figures.length,
+      student_work: detectStudentWork(current),
+    },
+    sourceDocumentId,
+    now: new Date(),
+    generatedBy,
+  });
+  if (!result) {
     const [after] = await db
       .select()
       .from(question_block)
       .where(eq(question_block.id, params.blockId));
     if (after && after.status !== 'draft') {
-      return readCurrent(db, after, 'already_enrolled', 'missing');
+      return readCurrent(db, after, 'already_enrolled', knowledgeState);
     }
-    throw error;
+    throw new ApiError(
+      'version_conflict',
+      `question_block ${params.blockId} changed during enrollment`,
+      409,
+      undefined,
+      { current_version: after?.version ?? current.version },
+    );
   }
+
+  const serving = await readQuestionServing(db, [result.question_id]);
+  return {
+    block_id: result.block_id,
+    status: 'enrolled',
+    question_id: result.question_id,
+    block_status: 'auto_enrolled',
+    block_version: result.block_version,
+    knowledge: knowledgeState,
+    library_visible: true,
+    admission_status: serving.byId.get(result.question_id)?.admission?.status ?? 'pending',
+  };
 }
 
 function storedKnowledgeState(metadata: unknown): 'attributed' | 'missing' | null {

@@ -1,12 +1,13 @@
 import { createId } from '@paralleldrive/cuid2';
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { installPracticeHost } from '@/capabilities/practice/public';
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
-import { learning_session, question, question_block, source_document } from '@/db/schema';
+import { event, learning_session, question, question_block, source_document } from '@/db/schema';
 import { persistCapturedQuestionBlock } from '@/kernel/records/question-block-creation';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { captureIngestionOriginal } from './assessment-capture';
 import { enrollIngestionBlock } from './single-block-enroll';
 
 function structured(prompt: string): StructuredQuestionT {
@@ -15,7 +16,12 @@ function structured(prompt: string): StructuredQuestionT {
 
 async function seedSession(
   db: ReturnType<typeof testDb>,
-  options: { sessionStatus?: 'extracted' | 'partial'; prompts: string[] },
+  options: {
+    sessionStatus?: 'extracted' | 'partial';
+    prompts: string[];
+    wrongAnswer?: string;
+    nullStructured?: boolean;
+  },
 ): Promise<{ sessionId: string; docId: string; blockIds: string[] }> {
   const now = new Date();
   const docId = createId();
@@ -62,6 +68,18 @@ async function seedSession(
       },
       now,
     );
+    if (options.nullStructured) {
+      await db
+        .update(question_block)
+        .set({ structured: null })
+        .where(eq(question_block.id, blockId));
+    }
+    if (options.wrongAnswer) {
+      await db
+        .update(question_block)
+        .set({ wrong_answer_md: options.wrongAnswer })
+        .where(eq(question_block.id, blockId));
+    }
   }
   return { sessionId, docId, blockIds };
 }
@@ -80,46 +98,112 @@ describe('enrollIngestionBlock', () => {
     { mode: 'retry_existing_prompt', sessionStatus: 'extracted' as const, prompt: '已识别的题面' },
     { mode: 'write_prompt_then_enroll', sessionStatus: 'extracted' as const, prompt: '' },
     { mode: 'partial_session', sessionStatus: 'partial' as const, prompt: '部分页里的题' },
-  ])('enrolls one block idempotently (%s)', async ({ sessionStatus, prompt }) => {
-    const db = testDb();
-    const { sessionId, blockIds } = await seedSession(db, {
-      sessionStatus,
-      prompts: [prompt, '同页另一题'],
-    });
-    const blockId = blockIds[0];
-    const siblingId = blockIds[1];
-    if (!blockId || !siblingId) throw new Error('seed blocks missing');
-    const body = prompt ? { expectedVersion: 0 } : { expectedVersion: 0, promptMd: '用户补的题面' };
+    {
+      mode: 'captured_answer',
+      sessionStatus: 'extracted' as const,
+      prompt: '带作答的题',
+      wrongAnswer: 'x=42',
+    },
+    {
+      mode: 'capture_committed_retry',
+      sessionStatus: 'extracted' as const,
+      prompt: 'capture 已提交后重试',
+      wrongAnswer: 'x=7',
+    },
+    {
+      mode: 'null_structured_prompt',
+      sessionStatus: 'extracted' as const,
+      prompt: '没有树的题',
+      nullStructured: true,
+    },
+  ])(
+    'enrolls one block idempotently (%s)',
+    async ({ sessionStatus, prompt, wrongAnswer, nullStructured }) => {
+      const db = testDb();
+      const { sessionId, blockIds } = await seedSession(db, {
+        sessionStatus,
+        prompts: [prompt, '同页另一题'],
+        ...(wrongAnswer ? { wrongAnswer } : {}),
+        ...(nullStructured ? { nullStructured } : {}),
+      });
+      const blockId = blockIds[0];
+      const siblingId = blockIds[1];
+      if (!blockId || !siblingId) throw new Error('seed blocks missing');
+      const body =
+        prompt && !nullStructured
+          ? { expectedVersion: 0 }
+          : { expectedVersion: 0, promptMd: '用户补的题面' };
 
-    const first = await enrollIngestionBlock(db, { sessionId, blockId, ...body });
-    expect(first.status).toBe('enrolled');
-    expect(first.library_visible).toBe(true);
+      let capturedQuestionId: string | null = null;
+      if (wrongAnswer) {
+        const [blockRow] = await db
+          .select()
+          .from(question_block)
+          .where(eq(question_block.id, blockId));
+        if (!blockRow) throw new Error('seeded block missing');
+        if (wrongAnswer === 'x=7') {
+          const captured = await captureIngestionOriginal(db, {
+            block: blockRow,
+            knowledgeIds: [],
+            difficulty: 3,
+            confidence: 0,
+            canEnroll: true,
+            pageRefs: [],
+            now: new Date(),
+          });
+          capturedQuestionId = captured?.questionId ?? null;
+        }
+      }
 
-    const second = await enrollIngestionBlock(db, { sessionId, blockId, ...body });
-    expect(second.status).toBe('already_enrolled');
-    expect(second.question_id).toBe(first.question_id);
+      const first = await enrollIngestionBlock(db, { sessionId, blockId, ...body });
+      expect(first.status).toBe('enrolled');
+      expect(first.library_visible).toBe(true);
 
-    const questions = await db
-      .select()
-      .from(question)
-      .where(sql`${question.id} = ${first.question_id}`);
-    expect(questions).toHaveLength(1);
-    if (prompt === '') {
-      expect(questions[0]?.prompt_md).toContain('用户补的题面');
-    }
+      const second = await enrollIngestionBlock(db, { sessionId, blockId, ...body });
+      expect(second.status).toBe('already_enrolled');
+      expect(second.question_id).toBe(first.question_id);
 
-    const [enrolledBlock] = await db
-      .select()
-      .from(question_block)
-      .where(eq(question_block.id, blockId));
-    expect(enrolledBlock?.status).toBe('auto_enrolled');
-    expect(enrolledBlock?.imported_question_id).toBe(first.question_id);
+      const questions = await db
+        .select()
+        .from(question)
+        .where(sql`${question.id} = ${first.question_id}`);
+      expect(questions).toHaveLength(1);
+      if (prompt === '' || nullStructured) {
+        expect(questions[0]?.prompt_md).toContain('用户补的题面');
+      }
+      if (wrongAnswer) {
+        expect(first.question_id.startsWith('q_capture_')).toBe(true);
+        if (capturedQuestionId) expect(first.question_id).toBe(capturedQuestionId);
+        const questionsForBlock = await db
+          .select({ id: question.id })
+          .from(question)
+          .where(sql`${question.metadata}->>'question_block_id' = ${blockId}`);
+        expect(questionsForBlock).toHaveLength(1);
+        const attempts = await db
+          .select({ id: event.id })
+          .from(event)
+          .where(
+            and(
+              eq(event.action, 'experimental:assessment_attempt'),
+              sql`${event.payload}->'ingestion'->>'block_id' = ${blockId}`,
+            ),
+          );
+        expect(attempts.length).toBeGreaterThanOrEqual(1);
+      }
 
-    const [sibling] = await db
-      .select()
-      .from(question_block)
-      .where(eq(question_block.id, siblingId));
-    expect(sibling?.status).toBe('draft');
-    expect(sibling?.imported_question_id).toBeNull();
-  });
+      const [enrolledBlock] = await db
+        .select()
+        .from(question_block)
+        .where(eq(question_block.id, blockId));
+      expect(enrolledBlock?.status).toBe('auto_enrolled');
+      expect(enrolledBlock?.imported_question_id).toBe(first.question_id);
+
+      const [sibling] = await db
+        .select()
+        .from(question_block)
+        .where(eq(question_block.id, siblingId));
+      expect(sibling?.status).toBe('draft');
+      expect(sibling?.imported_question_id).toBeNull();
+    },
+  );
 });
