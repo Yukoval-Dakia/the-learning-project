@@ -112,8 +112,13 @@ function toEnrollmentProjection(
   enrolled: { draft_status: string | null; metadata: Record<string, unknown> | null } | undefined,
 ) {
   if (block.status !== 'auto_enrolled') {
+    const structuredPrompt =
+      block.structured != null && typeof block.structured === 'object'
+        ? (block.structured as { prompt_text?: unknown }).prompt_text
+        : undefined;
     const hasPrompt =
-      block.structured != null || (block.extracted_prompt_md ?? '').trim().length > 0;
+      (typeof structuredPrompt === 'string' && structuredPrompt.trim().length > 0) ||
+      (block.extracted_prompt_md ?? '').trim().length > 0;
     return {
       state: 'not_enrolled' as const,
       reason: hasPrompt ? null : ('needs_text' as const),

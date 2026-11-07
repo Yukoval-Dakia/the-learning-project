@@ -267,7 +267,13 @@ export async function runAutoEnrollForSession(
     const questionMd = block.structured
       ? structuredToPromptMarkdown(block.structured)
       : (block.extracted_prompt_md ?? '');
-    if (questionMd.trim().length === 0) {
+    // "Complete enough to enter the library" means the block carries a printed prompt.
+    // Options or a model-written note are not a substitute: an orphan option block stays
+    // draft and the response says why (YUK-1994).
+    const hasPrompt =
+      (block.structured?.prompt_text ?? '').trim().length > 0 ||
+      (block.extracted_prompt_md ?? '').trim().length > 0;
+    if (!hasPrompt) {
       routedToReview += 1;
       continue;
     }
@@ -498,94 +504,103 @@ export async function runAutoEnrollForSession(
     const answerMd = '';
     const answerImageRefs: string[] = [];
     const captureMode = block.image_refs.length > 0 ? 'image' : 'text';
-    const result = await params.db.transaction(async (tx) => {
-      // Same tx-entry order as every learning-state writer and the cascade revert.
-      await acquireLearningStateWriteLock(tx);
-      // Concurrent consumers can both pass the draft SELECT above and insert duplicate
-      // questions. Re-read this block FOR UPDATE and skip unless it is still draft; this
-      // row lock is the structural double-consume guard. Singleton keys only reduce the
-      // number of duplicate jobs and do not bear correctness.
-      const claimRows = await tx
-        .select({ status: question_block.status })
-        .from(question_block)
-        .where(eq(question_block.id, block.id))
-        .for('update');
-      if (claimRows[0]?.status !== 'draft') {
-        return null; // already enrolled by a concurrent runner
-      }
+    let result: AutoEnrolledBlock | null;
+    try {
+      result = await params.db.transaction(async (tx) => {
+        // Same tx-entry order as every learning-state writer and the cascade revert.
+        await acquireLearningStateWriteLock(tx);
+        // Concurrent consumers can both pass the draft SELECT above and insert duplicate
+        // questions. Re-read this block FOR UPDATE and skip unless it is still draft; this
+        // row lock is the structural double-consume guard. Singleton keys only reduce the
+        // number of duplicate jobs and do not bear correctness.
+        const claimRows = await tx
+          .select({ status: question_block.status })
+          .from(question_block)
+          .where(eq(question_block.id, block.id))
+          .for('update');
+        if (claimRows[0]?.status !== 'draft') {
+          return null; // already enrolled by a concurrent runner
+        }
 
-      // Attributed KCs are exactly what tagKnowledge returned pre-tx. Any KC it minted
-      // is committed in its own tx, so a rollback here can orphan it; that is benign
-      // (valid leaf under the subject root, reconciled by dedup-on-maintenance), and the
-      // naming call must never sit inside this transaction.
-      const enrollKnowledgeIds = knowledgeIds;
+        // Attributed KCs are exactly what tagKnowledge returned pre-tx. Any KC it minted
+        // is committed in its own tx, so a rollback here can orphan it; that is benign
+        // (valid leaf under the subject root, reconciled by dedup-on-maintenance), and the
+        // naming call must never sit inside this transaction.
+        const enrollKnowledgeIds = knowledgeIds;
 
-      // Library visibility needs a non-empty prompt and a valid kind. Knowledge ids are
-      // deliberately not part of this decision (YUK-1994): an unattributed question
-      // enters the bank and is marked for the background knowledge backfill.
-      const draftStatus: 'active' | 'draft' =
-        questionMd.trim().length > 0 && Boolean(verdict.prefilled.question_kind)
-          ? 'active'
-          : 'draft';
+        // Library visibility needs a non-empty prompt and a valid kind. Knowledge ids are
+        // deliberately not part of this decision (YUK-1994): an unattributed question
+        // enters the bank and is marked for the background knowledge backfill.
+        const draftStatus: 'active' | 'draft' =
+          questionMd.trim().length > 0 && verdict.prefilled.question_kind.length > 0
+            ? 'active'
+            : 'draft';
 
-      const questionId = createId();
-      await recordCapturedQuestion(tx, {
-        questionId,
-        sessionId: params.sessionId,
-        blockId: block.id,
-        sourceDocumentId,
-        source: sessionEntrypoint,
-        // OCR-extracted answer only; reference generation is out of scope.
-        content: { from: 'block', block },
-        kind: verdict.prefilled.question_kind,
-        knowledgeIds: enrollKnowledgeIds,
-        difficulty: verdict.prefilled.difficulty,
-        // Placement excludes only 'draft'; null and 'active' both pass.
-        draftStatus,
-        extraMetadata: {
-          // The judge confidence is a signal stored with the question, not a route.
-          workflow_judge: {
-            confidence: verdict.confidence,
-            extraction_confidence: block.extraction_confidence,
-            tagging_overall_confidence: tagging.overall_confidence,
-            reasoning: verdict.reasoning,
-          },
-          ingestion_enrollment: markers,
-        },
-        // A missing OCR answer is withheld; student work goes through the attempt event,
-        // never the answer key.
-        actorRef: 'auto-enroll:question',
-        now,
-      });
-
-      // Same enrollment owner as the human path; only provenance and answer differ.
-      const enroll = await settleCapturedBlock(tx, {
-        transition: 'auto_enroll',
-        blockId: block.id,
-        guard: { kind: 'row_locked' },
-        enroll: {
+        const questionId = createId();
+        await recordCapturedQuestion(tx, {
           questionId,
-          outcome,
-          answerMd,
-          answerImageRefs,
-          knowledgeIds: enrollKnowledgeIds,
-          imageRefs: block.image_refs,
-          captureMode,
+          sessionId: params.sessionId,
+          blockId: block.id,
           sourceDocumentId,
+          source: sessionEntrypoint,
+          // OCR-extracted answer only; reference generation is out of scope.
+          content: { from: 'block', block },
+          kind: verdict.prefilled.question_kind,
+          knowledgeIds: enrollKnowledgeIds,
+          difficulty: verdict.prefilled.difficulty,
+          // Placement excludes only 'draft'; null and 'active' both pass.
+          draftStatus,
+          extraMetadata: {
+            // The judge confidence is a signal stored with the question, not a route.
+            workflow_judge: {
+              confidence: verdict.confidence,
+              extraction_confidence: block.extraction_confidence,
+              tagging_overall_confidence: tagging.overall_confidence,
+              reasoning: verdict.reasoning,
+            },
+            ingestion_enrollment: markers,
+          },
+          // A missing OCR answer is withheld; student work goes through the attempt event,
+          // never the answer key.
+          actorRef: 'auto-enroll:question',
           now,
-          generatedBy: 'workflow_judge',
-        },
-      });
+        });
 
-      return {
-        block_id: block.id,
-        question_id: questionId,
-        attempt_event_id: enroll.attemptEventId,
-        record_id: enroll.recordId,
-        confidence: verdict.confidence,
-        knowledge_ids: enrollKnowledgeIds,
-      } satisfies AutoEnrolledBlock;
-    });
+        // Same enrollment owner as the human path; only provenance and answer differ.
+        const enroll = await settleCapturedBlock(tx, {
+          transition: 'auto_enroll',
+          blockId: block.id,
+          guard: { kind: 'row_locked' },
+          enroll: {
+            questionId,
+            outcome,
+            answerMd,
+            answerImageRefs,
+            knowledgeIds: enrollKnowledgeIds,
+            imageRefs: block.image_refs,
+            captureMode,
+            sourceDocumentId,
+            now,
+            generatedBy: 'workflow_judge',
+          },
+        });
+
+        return {
+          block_id: block.id,
+          question_id: questionId,
+          attempt_event_id: enroll.attemptEventId,
+          record_id: enroll.recordId,
+          confidence: verdict.confidence,
+          knowledge_ids: enrollKnowledgeIds,
+        } satisfies AutoEnrolledBlock;
+      });
+    } catch (error) {
+      // One unusable block must not fail the whole page (and burn paid retries);
+      // it stays draft for review while the rest of the batch continues.
+      console.error(`[auto_enroll:item-bank] block ${block.id} left draft`, error);
+      routedToReview += 1;
+      continue;
+    }
 
     // A concurrent runner already enrolled this block.
     if (result === null) continue;

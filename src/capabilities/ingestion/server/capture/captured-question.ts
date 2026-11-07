@@ -164,11 +164,9 @@ async function resolveContent(tx: Tx, content: CapturedQuestionContent) {
       sourceAssetIds: block.source_asset_ids,
       assets: figureAssets,
     }),
-    // block.image_refs are whole source pages. A page carries other questions'
-    // handwriting, so it is not this question's visible content; only verified crops
-    // (figures) may render next to the prompt. Page images stay on the block, the
-    // capture submission and the learning record as private evidence.
-    imageRefs: [],
+    // Whole source pages stay machine prompt input (vision solving/grading read them);
+    // learner reads drop them via the metadata marker written in recordCapturedQuestion.
+    imageRefs: block.image_refs,
   };
 }
 
