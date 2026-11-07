@@ -106,7 +106,9 @@ export function PracticeStudio(p: ReadingProps) {
           <p className="un-st-eyebrow">{q.progressLabel}</p>
           <h1 ref={lifecycle?.titleRef}>{q.title}</h1>
           <p className="un-st-task-meta">
-            {[q.subject, q.attemptLabel, q.estimatedTime, q.source, q.reason].filter(Boolean).join(' · ')}
+            {[q.subject, q.attemptLabel, q.estimatedTime, q.source, q.reason]
+              .filter(Boolean)
+              .join(' · ')}
           </p>
         </div>
         <div className="un-st-heading-companion">

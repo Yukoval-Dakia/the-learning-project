@@ -121,11 +121,7 @@ export function MatchingColumnsBlock({
   const nameOf = (side: Side, id: string): ReactNode => (
     <>
       {marker(side, id)}「
-      <InlineMd
-        source={labelOf(side, id)}
-        notation={notation}
-      />
-      」
+      <InlineMd source={labelOf(side, id)} notation={notation} />」
     </>
   );
   const pairName = (item: RelationItem): ReactNode => (
