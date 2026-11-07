@@ -7,7 +7,10 @@
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 
 import { MistakeEnrollOutcome } from '@/core/schema/mistake_enroll';
-import type { StructuredQuestionT } from '@/core/schema/structured_question';
+import {
+  HandwritingTraceOutcome,
+  type StructuredQuestionT,
+} from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
 import { event, question, question_block } from '@/db/schema';
 import { learnerVisibleKnowledgeIds } from '@/kernel/read-models/learner-knowledge-visibility';
@@ -97,6 +100,7 @@ export async function readIngestionSessionBlocks(db: Db, params: { id: string })
         : null;
       return {
         ...r,
+        handwriting_trace: r.structured?.extraction_evidence?.handwriting_trace ?? null,
         created_at: Math.floor(r.created_at.getTime() / 1000),
         workflow_judge_confidence: recordedConfidence ?? projectedObservation?.confidence ?? null,
         auto_enroll_observation: projectedObservation,

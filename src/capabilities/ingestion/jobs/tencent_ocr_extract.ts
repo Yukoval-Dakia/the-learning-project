@@ -23,6 +23,7 @@ import {
 import {
   applyHandwritingTraces,
   collectHandwritingLeaves,
+  markHandwritingTraceFailure,
   runHandwritingTrace,
 } from '@/capabilities/ingestion/server/handwriting-trace';
 import { writeIngestionOperationEvent } from '@/capabilities/ingestion/server/operation-store';
@@ -80,6 +81,13 @@ function bboxCenterPosition(bbox: { x: number; y: number; width: number; height:
 }
 
 export type TencentOcrJobData = { sessionId: string; operationId?: string };
+
+/**
+ * In-job attempts for the handwriting pass. A provider wobble must not strand a
+ * page's handwriting until a manual rescue; two attempts bound the paid retry
+ * without inventing a sweep. A real terminal timeout is not shortened here.
+ */
+const HANDWRITING_TRACE_ATTEMPTS = 2;
 
 export type TencentOcrDeps = {
   db: Db;
@@ -494,36 +502,58 @@ async function processOneOcrJob(
     warnings.push(...structure.warnings);
 
     // Per-question handwriting evidence for captured answers (YUK-1994 slice 4).
-    // Runs on every VLM-owned structure: the structure's `student_answer_present`
-    // signal is advisory and can miss faint writing (YUK-1991), so the trace pass
-    // reads the answer areas itself. An outage leaves the question enrollable and
-    // the handwriting as pixels, never as a fabricated answer. Traces land in
-    // extraction_evidence.handwriting before figure binding so a question with
-    // handwriting withholds its figures under the same rule as OCR evidence.
+    // Runs on both VLM-owned and OCR-fallback structures: a provider wobble must not
+    // permanently lose this page's handwriting. The structure's
+    // `student_answer_present` signal is advisory and can miss faint writing
+    // (YUK-1991), so the trace pass reads the answer areas itself. An outage leaves
+    // the question enrollable and the handwriting as pixels, never as a fabricated
+    // answer. Traces land in extraction_evidence.handwriting before figure binding so
+    // a question with handwriting withholds its figures under the same rule as OCR
+    // evidence.
     const runHandwritingTraceFn = deps.runHandwritingTraceFn ?? runHandwritingTrace;
     const traceLeaves = collectHandwritingLeaves(structure.questions);
-    if (usedVlmPath && traceLeaves.length > 0) {
+    if (traceLeaves.length > 0) {
       const leaves = traceLeaves.map(({ index, node }) => ({
         index,
         page_index: node.page_index ?? 0,
         question_no: node.question_no ?? null,
         prompt_text: node.prompt_text.slice(0, 400),
       }));
-      try {
-        const traced = await runHandwritingTraceFn({
-          pageImages,
-          pageCount: assetIds.length,
-          leaves,
-          db: deps.db,
-          ctx: { r2: deps.r2 },
-        });
-        const applied = applyHandwritingTraces(structure.questions, traced);
-        warnings.push(...traced.warnings);
-        warnings.push(...applied.warnings);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
+      if (!usedVlmPath) {
         warnings.push(
-          `HandwritingTraceTask unavailable (${message}); student work stays pixel evidence without per-question text`,
+          `HandwritingTraceTask ran on ${engine === 'glm' ? 'GLM' : 'Tencent'} fallback structure; leaves are page-scoped rather than per-question`,
+        );
+      }
+      let lastTraceError: unknown;
+      for (let attempt = 1; attempt <= HANDWRITING_TRACE_ATTEMPTS; attempt++) {
+        try {
+          const traced = await runHandwritingTraceFn({
+            pageImages,
+            pageCount: assetIds.length,
+            leaves,
+            db: deps.db,
+            ctx: { r2: deps.r2 },
+          });
+          const applied = applyHandwritingTraces(structure.questions, traced);
+          warnings.push(...traced.warnings);
+          warnings.push(...applied.warnings);
+          lastTraceError = undefined;
+          break;
+        } catch (err) {
+          lastTraceError = err;
+          if (attempt < HANDWRITING_TRACE_ATTEMPTS) {
+            warnings.push(
+              `HandwritingTraceTask attempt ${attempt} failed; retrying (${err instanceof Error ? err.message : String(err)})`,
+            );
+          }
+        }
+      }
+      if (lastTraceError !== undefined) {
+        const message =
+          lastTraceError instanceof Error ? lastTraceError.message : String(lastTraceError);
+        markHandwritingTraceFailure(structure.questions, message);
+        warnings.push(
+          `HandwritingTraceTask unavailable after ${HANDWRITING_TRACE_ATTEMPTS} attempts (${message}); student work stays pixel evidence without per-question text`,
         );
       }
     }

@@ -325,6 +325,9 @@ export async function runAutoEnrollForSession(
           routedToReview += 1;
           continue;
         }
+        for (const warning of captured.warnings) {
+          console.warn(`[auto_enroll:capture] ${warning}`);
+        }
         const result = await settleItemBankEnrollment({
           db: params.db,
           block,

@@ -47,7 +47,8 @@ export type HandwritingRedMarkT = z.infer<typeof HandwritingRedMark>;
 
 export const HandwriteInfo = z.object({
   text: z.string(),
-  bbox: BBox,
+  /** Absent when the page-local box could not be validated; never a fake zero box. */
+  bbox: BBox.optional(),
   /** 该题作答区域的红色勾/叉；'mixed' = 同时有勾和叉。缺省 = 未观测到红笔勾叉。 */
   red_ink: HandwritingRedMark.optional(),
   /** 转写文本本身是红笔（例如红笔订正），不是黑/蓝笔作答。 */
@@ -55,6 +56,18 @@ export const HandwriteInfo = z.object({
   /** 转写置信度；缺省 = 未知，不冒充高置信。 */
   confidence: z.number().min(0).max(1).optional(),
 });
+
+/**
+ * Whole-pass trace outcome, written on the block root. `failed` means the
+ * handwriting model never produced usable evidence (provider or parse failure),
+ * which must stay distinguishable from a successful pass that saw no handwriting.
+ * jsonb-internal, same precedent as the per-node evidence above.
+ */
+export const HandwritingTraceOutcome = z.object({
+  status: z.enum(['completed', 'failed']),
+  reason: z.string().optional(),
+});
+export type HandwritingTraceOutcomeT = z.infer<typeof HandwritingTraceOutcome>;
 
 export const TencentGrading = z.object({
   IsCorrect: z.boolean(),
@@ -65,6 +78,8 @@ export const TencentGrading = z.object({
 
 export const ExtractionEvidence = z.object({
   handwriting: z.array(HandwriteInfo).optional(),
+  /** Whole-pass trace outcome on the block root; absent = this path did not run. */
+  handwriting_trace: HandwritingTraceOutcome.optional(),
   tencent_grading: TencentGrading.optional(),
 });
 

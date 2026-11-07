@@ -11,7 +11,7 @@ import { resetDb } from '../../../../tests/helpers/db';
 import { IngestionBlocksResponseSchema } from '../api/contracts';
 import { readIngestionSessionBlocks } from '../server/session-blocks-read';
 import { readIngestionSessionDetail } from '../server/session-detail';
-import { runStructureTask } from '../server/structure';
+import { StructureTaskError, runStructureTask } from '../server/structure';
 import { createImageR2, seedIngestionSession } from './ingestion-test-support';
 import { buildTencentOcrHandler } from './tencent_ocr_extract';
 
@@ -340,4 +340,124 @@ it('writes per-question handwriting evidence and keeps it out of answers', async
   // The trace is answer evidence, not the key: answers stay as extracted (null here).
   expect(node?.answers).toBeUndefined();
   expect(block?.reference_md ?? null).toBeNull();
+});
+
+// @invariant data: a StructureTask outage must not permanently lose handwriting; the OCR fallback still runs the trace
+// @fails-if the trace call is gated on the VLM path or an invalid page-local box is written as a fake zero box
+it('runs handwriting trace on the GLM fallback and omits an invalid box', async () => {
+  const { sessionId } = await seedIngestionSession(1);
+  const traceFn = vi.fn(async () => ({
+    traces: [
+      {
+        leaf_index: 0,
+        text: '42',
+        red_mark: 'none' as const,
+        red_text: false,
+        bbox: { page_index: 0, x: 1.2, y: 0.2, width: 0.2, height: 0.1 },
+        confidence: 0.8,
+      },
+    ],
+    unresolved: [],
+    warnings: [],
+  }));
+  const handler = buildTencentOcrHandler({
+    db,
+    r2: await createImageR2(),
+    engine: 'glm',
+    glmOcrFn: async () => ({
+      id: 'fallback-handwriting',
+      request_id: 'fallback-handwriting',
+      md_results: '1. Solve 7 x 6.',
+      data_info: { num_pages: 1, pages: [{ width: 80, height: 120 }] },
+      usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+      layout_details: [
+        [
+          {
+            index: 0,
+            label: 'text',
+            native_label: 'paragraph',
+            bbox_2d: [0, 0, 80, 30],
+            width: 80,
+            height: 120,
+            content: '1. Solve 7 x 6.',
+          },
+        ],
+      ],
+    }),
+    runStructureFn: async () => {
+      throw new StructureTaskError('provider down');
+    },
+    runHandwritingTraceFn: traceFn,
+  });
+  await handler([
+    {
+      id: `fallback-handwriting-${sessionId}`,
+      data: { sessionId },
+      retryCount: 0,
+      retryLimit: 0,
+      startedOn: new Date(),
+    },
+  ] as never);
+  expect(traceFn).toHaveBeenCalledOnce();
+  const [block] = await db
+    .select()
+    .from(question_block)
+    .where(eq(question_block.ingestion_session_id, sessionId));
+  const node = block?.structured;
+  expect(node?.extraction_evidence?.handwriting_trace).toMatchObject({ status: 'completed' });
+  expect(node?.extraction_evidence?.handwriting?.[0]).toMatchObject({ text: '42' });
+  expect(node?.extraction_evidence?.handwriting?.[0]?.bbox).toBeUndefined();
+});
+
+// @invariant data: a failed handwriting pass is retried in the extraction job, then left as an explicit failed marker
+// @fails-if a provider failure is swallowed without a block-visible failure marker, or the retry never runs
+it('retries a failed handwriting pass and records a readable failed marker', async () => {
+  const { sessionId } = await seedIngestionSession(1);
+  const traceFn = vi.fn(async () => {
+    throw new Error('provider down');
+  });
+  const handler = buildTencentOcrHandler({
+    db,
+    r2: await createImageR2(),
+    engine: 'glm',
+    glmOcrFn: async () => ({
+      id: 'failed-handwriting',
+      request_id: 'failed-handwriting',
+      md_results: '1. Solve 7 x 6.',
+      data_info: { num_pages: 1, pages: [{ width: 80, height: 120 }] },
+      usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+      layout_details: [
+        [
+          {
+            index: 0,
+            label: 'text',
+            native_label: 'paragraph',
+            bbox_2d: [0, 0, 80, 30],
+            width: 80,
+            height: 120,
+            content: '1. Solve 7 x 6.',
+          },
+        ],
+      ],
+    }),
+    runStructureFn: vi.fn(async () => structureResult()),
+    runHandwritingTraceFn: traceFn,
+  });
+  await handler([
+    {
+      id: `failed-handwriting-${sessionId}`,
+      data: { sessionId },
+      retryCount: 0,
+      retryLimit: 0,
+      startedOn: new Date(),
+    },
+  ] as never);
+  expect(traceFn).toHaveBeenCalledTimes(2);
+  const [block] = await db
+    .select()
+    .from(question_block)
+    .where(eq(question_block.ingestion_session_id, sessionId));
+  expect(block?.structured?.extraction_evidence?.handwriting_trace).toMatchObject({
+    status: 'failed',
+  });
 });

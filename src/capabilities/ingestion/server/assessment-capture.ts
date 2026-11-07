@@ -23,6 +23,7 @@ import { freezeImageEvidence } from '@/kernel/records/assessment-evidence';
 import { issueCapturedAssessment } from '@/kernel/records/assessment-issuance';
 import type { AutoEnrolledBlock } from './auto-enroll';
 import { recordCapturedQuestion, settleCapturedBlock } from './capture/captured-question';
+import { collectHandwritingLeaves } from './handwriting-trace';
 
 type Block = typeof question_block.$inferSelect;
 
@@ -59,6 +60,8 @@ export interface CapturedUnitAnswer {
     bbox: BBoxT;
     confidence?: number;
   };
+  /** 为什么这条 capture 只能是 unknown；页面和片 5 靠它区分「没写」和「没读到」。 */
+  reason?: string;
 }
 
 interface CaptureInput {
@@ -92,6 +95,8 @@ interface UnitCaptureRecord {
     bbox: BBoxT;
     confidence?: number;
   };
+  /** 非空时说明为什么这条不是 answered；不把失败写成 omitted。 */
+  reason?: string;
 }
 
 /** 红笔归类：观测到红笔才分类；post_correction 内容不计入作答。 */
@@ -126,6 +131,14 @@ function collectHandwritingCaptures(
   structured: StructuredQuestionT | null,
 ): LeafHandwritingCapture[] {
   if (!structured) return [];
+  // A failed pass is not "no handwriting": every leaf gets an explicit unknown
+  // so the capture never records `omitted` for a page whose trace never ran.
+  if (structured.extraction_evidence?.handwriting_trace?.status === 'failed') {
+    return collectHandwritingLeaves([structured]).map(({ node }) => ({
+      leaf_id: node.id,
+      capture: { state: 'unknown', reason: 'handwriting_trace_failed' },
+    }));
+  }
   const out: LeafHandwritingCapture[] = [];
   const walk = (node: StructuredQuestionT) => {
     const subs = node.sub_questions ?? [];
@@ -140,7 +153,9 @@ function collectHandwritingCaptures(
       .join('\n');
     const redMark = mergeRedMarks(traces);
     const redText = traces.some((trace) => trace.red_text === true);
-    const located = traces.find((trace) => trace.bbox.width > 0 && trace.bbox.height > 0);
+    const located = traces.find(
+      (trace) => trace.bbox !== undefined && trace.bbox.width > 0 && trace.bbox.height > 0,
+    );
     if (text.length > 0 || redMark !== undefined || redText) {
       out.push({
         leaf_id: node.id,
@@ -231,6 +246,7 @@ function capturedEntryFor(
       ink,
       ...(capture?.red_ink_mark !== undefined ? { red_ink_mark: capture.red_ink_mark } : {}),
       ...(capture?.trace !== undefined ? { trace: capture.trace } : {}),
+      ...(capture?.reason !== undefined ? { reason: capture.reason } : {}),
     });
   // post_correction：订正内容不算作答 —— 读不出原始作答即显式 unknown。
   const postCorrected = ink === 'post_correction';
@@ -525,6 +541,7 @@ export async function captureIngestionOriginal(db: Db, input: CaptureInput) {
       list.push(slot.slot_id);
       slotsByPart.set(slot.part_id, list);
     }
+    const warnings: string[] = [];
     for (const { leaf_id, capture } of collectHandwritingCaptures(current.structured)) {
       const partSlots = slotsByPart.get(leaf_id) ?? [];
       if (partSlots.length === 1) {
@@ -535,18 +552,25 @@ export async function captureIngestionOriginal(db: Db, input: CaptureInput) {
           if (!captureBySlot.has(slotId)) {
             captureBySlot.set(slotId, {
               state: 'unknown',
+              reason: 'handwriting_slot_ambiguous',
               ...(capture.red_ink_mark !== undefined ? { red_ink_mark: capture.red_ink_mark } : {}),
             });
           }
         }
+      } else {
+        // A leaf with no response slot cannot carry its handwriting. Dropping it
+        // silently would look like "no handwriting" on the page, so leave a
+        // warning with the block/leaf identity.
+        warnings.push(
+          `handwriting evidence for leaf ${leaf_id} dropped: no response slot in block ${block.id}`,
+        );
       }
     }
     // 容器（stem）报告了手写但没有可归属的叶题证据：整组槽显式 unknown，
     // 不用空白或猜测填充。
     if (captureBySlot.size === 0 && hasStudentWorkSignal(current.structured)) {
       for (const slot of slots) captureBySlot.set(slot.slot_id, { state: 'unknown' });
-    }
-    const entries: ResponseSetT['entries'] = [];
+    }    const entries: ResponseSetT['entries'] = [];
     // flat 文本只在全组单槽时可归属（旧行为）；逐单元捕获按槽精确落位。
     const allowFlat = slots.length === 1;
     for (const slot of slots) {
@@ -605,6 +629,7 @@ export async function captureIngestionOriginal(db: Db, input: CaptureInput) {
       sourceDocumentId: session.source_document_id ?? '',
       knowledgeIds: existing?.knowledge_ids ?? input.knowledgeIds,
       admitted: lifecycle.scoring_admission_state === 'admitted',
+      warnings,
     };
   });
 }

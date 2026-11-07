@@ -15,8 +15,10 @@ export const MakePaperBody = z.object({
 export const RescueBody = z.object({
   block_id: z.string().min(1),
   page: z.number().int().min(0),
-  tier: z.union([z.literal(2), z.literal(3)]),
-  strategy: z.enum(['extract', 'restructure_cloze', 'restructure_compound']).optional(),
+  tier: z.union([z.literal(2), z.literal(3)]).optional(),
+  strategy: z
+    .enum(['extract', 'restructure_cloze', 'restructure_compound', 'handwriting_trace'])
+    .optional(),
 });
 
 /** The complete classic block/version set explicitly checked by the learner. */

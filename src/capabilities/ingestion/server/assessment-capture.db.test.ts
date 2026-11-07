@@ -29,6 +29,8 @@ import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publica
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { captureIngestionOriginal, enrollNativeCapture } from './assessment-capture';
 import { revertAutoEnrolledBlock } from './revert-auto-enroll';
+import { runRescue } from './rescue';
+import { createImageR2 } from '../jobs/ingestion-test-support';
 
 const now = new Date('2026-10-05T01:00:00Z');
 beforeAll(installPracticeHost);
@@ -423,6 +425,45 @@ describe('native ingestion originals and reversible enrollment', () => {
     expect(await db.select().from(evaluation)).toHaveLength(0);
   });
 
+  // @invariant data: a failed handwriting pass is explicit unknown evidence, never the same shape as "no handwriting"
+  // @fails-if a trace failure records unit_captures as omitted (or creates a fake answered entry)
+  it('records a failed handwriting pass as unknown with its reason', async () => {
+    const db = testDb();
+    const input = await fixture('');
+    const structured = input.block.structured;
+    if (!structured) throw new Error('missing fixture structure');
+    const [block] = await db
+      .insert(question_block)
+      .values({
+        ...input.block,
+        id: 'failed-trace-block',
+        structured: {
+          ...structured,
+          extraction_evidence: {
+            handwriting_trace: { status: 'failed', reason: 'provider returned invalid JSON' },
+          },
+        },
+        wrong_answer_md: '',
+      })
+      .returning();
+    const capture = await captureIngestionOriginal(db, { ...input, block });
+    if (!capture) throw new Error('missing failed-trace capture');
+    const [attempt] = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:assessment_attempt'));
+    const unitCaptures = (
+      attempt?.payload as {
+        ingestion?: { unit_captures?: Array<{ state: string; reason?: string }> };
+      }
+    )?.ingestion?.unit_captures;
+    expect(unitCaptures).toMatchObject([
+      { state: 'unknown', reason: 'handwriting_trace_failed' },
+    ]);
+    expect(unitCaptures?.some((item) => item.state === 'omitted')).toBe(false);
+    expect(await db.select().from(evaluation)).toHaveLength(0);
+  });
+
   // @invariant security: a whole photographed page never reaches learner-visible attempt evidence
   // @fails-if group evidence hands the learner a source page that may carry another question's handwriting, or the red mark is lost/graduated into a verdict
   it('withholds whole photographed pages from learner-visible attempt evidence', async () => {
@@ -465,58 +506,47 @@ describe('native ingestion originals and reversible enrollment', () => {
     expect(evidence?.wrong_answer_md).toContain('红笔标记：✗');
   });
 
-  // @invariant data: a handwriting-derived capture and its attempt evidence revert atomically
-  // @fails-if withdrawal leaves mastery/effective evaluation or the block enrollment pointing at the reverted attempt
-  it('keeps a handwriting capture revertible', async () => {
+  // @invariant data: a failed/absent handwriting pass can be re-run for one block without replacing its question text
+  // @fails-if the rescue entry rewrites the prompt/answer key or fails to bump the block version with the new evidence
+  it('re-runs handwriting trace for one block through the rescue entry', async () => {
     const db = testDb();
-    const input = await fixture('42');
-    const structured = input.block.structured;
-    if (!structured) throw new Error('missing fixture structure');
-    const [block] = await db
-      .insert(question_block)
-      .values({
-        ...input.block,
-        id: 'revert-handwriting-block',
-        structured: {
-          ...structured,
-          student_answer_present: true,
-          extraction_evidence: {
-            handwriting: [
-              {
-                text: '42',
-                bbox: { x: 0.3, y: 0.3, width: 0.2, height: 0.06 },
-                red_ink: 'check',
-              },
-            ],
-          },
-        },
-        wrong_answer_md: '',
-      })
-      .returning();
-    const capture = await captureIngestionOriginal(db, { ...input, block });
-    if (!capture) throw new Error('missing revert capture');
-    await admit(capture.questionId);
-    expect(await enrollNativeCapture(db, { ...input, block })).not.toBeNull();
-    expect(
-      (await db.select().from(mastery_state)).find((row) => row.subject_id === 'capture-kc')
-        ?.evidence_count,
-    ).toBe(1);
-    await revertAutoEnrolledBlock(db, {
-      blockId: block.id,
-      sessionId: block.ingestion_session_id,
-    });
-    expect(
-      (await db.select().from(mastery_state)).find((row) => row.subject_id === 'capture-kc')
-        ?.evidence_count ?? 0,
-    ).toBe(0);
-    const [reverted] = await db
+    const input = await fixture('');
+    const [before] = await db
       .select()
       .from(question_block)
-      .where(eq(question_block.id, block.id));
-    expect(reverted).toMatchObject({
-      status: 'draft',
-      imported_question_id: null,
-      imported_attempt_event_id: null,
+      .where(eq(question_block.id, input.block.id));
+    const result = await runRescue({
+      db,
+      r2: (await createImageR2()) as never,
+      sessionId: input.block.ingestion_session_id,
+      blockId: input.block.id,
+      page: 0,
+      strategy: 'handwriting_trace',
+      runHandwritingTraceFn: async () => ({
+        traces: [
+          {
+            leaf_index: 0,
+            text: '42',
+            red_mark: 'check',
+            red_text: false,
+            bbox: { page_index: 0, x: 0.2, y: 0.3, width: 0.2, height: 0.1 },
+            confidence: 0.9,
+          },
+        ],
+        unresolved: [],
+        warnings: [],
+      }),
     });
+    expect(result.structured.extraction_evidence?.handwriting?.[0]).toMatchObject({
+      text: '42',
+      red_ink: 'check',
+    });
+    const [after] = await db
+      .select()
+      .from(question_block)
+      .where(eq(question_block.id, input.block.id));
+    expect(after?.version).toBe((before?.version ?? 0) + 1);
+    expect(after?.extracted_prompt_md).toBe(before?.extracted_prompt_md);
+    expect(after?.reference_md).toBe(before?.reference_md);
   });
 });

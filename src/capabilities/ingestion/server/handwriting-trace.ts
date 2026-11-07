@@ -8,6 +8,7 @@ import {
 } from '@/capabilities/ingestion/tasks/handwriting';
 import type { BBoxT, StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
+import { markAiTaskRunOutputInvalid } from '@/server/ai/log';
 import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
 import { redactIngestionText } from './privacy-guard';
 
@@ -17,9 +18,14 @@ import { redactIngestionText } from './privacy-guard';
 // question's answer/reference fields. A trace that cannot be assigned to exactly
 // one leaf is dropped (no cross-question assignment).
 
+export type HandwritingTraceModelInput = {
+  text: string;
+  images: Array<{ data: string | Uint8Array; mediaType: string }>;
+};
+
 export type HandwritingTraceRunTaskFn = (
   kind: string,
-  input: HandwritingTraceInputT,
+  input: HandwritingTraceModelInput,
   ctx: unknown,
 ) => Promise<TaskTextResult>;
 
@@ -60,6 +66,9 @@ export function collectHandwritingLeaves(
   return leaves;
 }
 
+/** A page-local box from the trace task; `page_index` is its page identity. */
+type TraceBBoxT = BBoxT & { page_index: number };
+
 function clampBBox(bbox: BBoxT): BBoxT {
   const x = Math.min(Math.max(bbox.x, 0), 1);
   const y = Math.min(Math.max(bbox.y, 0), 1);
@@ -69,6 +78,24 @@ function clampBBox(bbox: BBoxT): BBoxT {
     width: Math.min(Math.max(bbox.width, 0), 1 - x),
     height: Math.min(Math.max(bbox.height, 0), 1 - y),
   };
+}
+
+/** A box that cannot name a real page-local region is omitted, never faked as zero. */
+function isUsableBBox(
+  bbox: TraceBBoxT | null | undefined,
+  nodePageIndex: number | undefined,
+): bbox is TraceBBoxT {
+  if (bbox == null) return false;
+  if (bbox.page_index !== (nodePageIndex ?? bbox.page_index)) return false;
+  if (![bbox.x, bbox.y, bbox.width, bbox.height].every(Number.isFinite)) return false;
+  return (
+    bbox.x >= 0 &&
+    bbox.y >= 0 &&
+    bbox.width > 0 &&
+    bbox.height > 0 &&
+    bbox.x + bbox.width <= 1 &&
+    bbox.y + bbox.height <= 1
+  );
 }
 
 /**
@@ -86,6 +113,14 @@ export function applyHandwritingTraces(
   const byIndex = new Map(leaves.map((leaf) => [leaf.index, leaf.node]));
   const seen = new Set<number>();
   let applied = 0;
+  // A successful pass (even with zero traces) is evidence that the pass ran;
+  // the capture path must not confuse it with a failed/absent pass.
+  for (const root of questions) {
+    root.extraction_evidence = {
+      ...(root.extraction_evidence ?? {}),
+      handwriting_trace: { status: 'completed' },
+    };
+  }
   for (const trace of output.traces) {
     const node = byIndex.get(trace.leaf_index);
     if (!node) {
@@ -103,21 +138,13 @@ export function applyHandwritingTraces(
     if (text.length === 0 && redInk === null && !trace.red_text) continue;
     const existing = node.extraction_evidence?.handwriting ?? [];
     if (existing.length > 0) continue;
-    const bbox =
-      trace.bbox &&
-      trace.bbox.page_index === (node.page_index ?? trace.bbox.page_index) &&
-      Number.isFinite(trace.bbox.x) &&
-      Number.isFinite(trace.bbox.y) &&
-      Number.isFinite(trace.bbox.width) &&
-      Number.isFinite(trace.bbox.height)
-        ? clampBBox(trace.bbox)
-        : { x: 0, y: 0, width: 0, height: 0 };
+    const bbox = isUsableBBox(trace.bbox, node.page_index) ? clampBBox(trace.bbox) : undefined;
     node.extraction_evidence = {
       ...(node.extraction_evidence ?? {}),
       handwriting: [
         {
           text,
-          bbox,
+          ...(bbox !== undefined ? { bbox } : {}),
           ...(redInk !== null ? { red_ink: redInk } : {}),
           ...(trace.red_text ? { red_text: true } : {}),
           ...(trace.confidence > 0 ? { confidence: trace.confidence } : {}),
@@ -141,6 +168,23 @@ export function applyHandwritingTraces(
     );
   }
   return { applied, warnings };
+}
+
+/**
+ * Records that the whole-pass trace produced no usable evidence. The marker is
+ * what lets capture record `unknown` instead of silently treating the page as
+ * "no handwriting", and what the page/slice 5 can read to retry.
+ */
+export function markHandwritingTraceFailure(
+  questions: readonly StructuredQuestionT[],
+  reason: string,
+): void {
+  for (const root of questions) {
+    root.extraction_evidence = {
+      ...(root.extraction_evidence ?? {}),
+      handwriting_trace: { status: 'failed', reason: reason.slice(0, 300) },
+    };
+  }
 }
 
 /**
@@ -175,7 +219,14 @@ export async function runHandwritingTrace(
   const runTaskFn = params.runTaskFn ?? makeRunTaskTextFn(params.db as Db);
   let result: TaskTextResult;
   try {
-    result = await runTaskFn('HandwritingTraceTask', input, params.ctx ?? {});
+    // Multimodal envelope: the runner only attaches image blocks when it sees
+    // `{text, images}`. Passing the bare JSON input here silently dropped every
+    // page image, letting the model invent traces from prompt text alone.
+    result = await runTaskFn(
+      'HandwritingTraceTask',
+      { text: JSON.stringify(input), images: params.pageImages },
+      params.ctx ?? {},
+    );
   } catch (err) {
     throw new HandwritingTraceTaskError('HandwritingTraceTask LLM call failed', { cause: err });
   }
@@ -184,6 +235,12 @@ export async function runHandwritingTrace(
     parsed = parseHandwritingTraceOutput(result.text);
   } catch (err) {
     if (err instanceof HandwritingTraceTaskError) throw err;
+    const reason =
+      err instanceof Error ? err.message : 'HandwritingTraceTask output did not match schema';
+    if (params.db !== undefined && result.task_run_id !== undefined) {
+      // The provider call succeeded but its text was not usable: not a success run.
+      await markAiTaskRunOutputInvalid(params.db, result.task_run_id, reason);
+    }
     throw new HandwritingTraceTaskError(
       'HandwritingTraceTask output did not match HandwritingTraceOutput schema',
       { cause: err },

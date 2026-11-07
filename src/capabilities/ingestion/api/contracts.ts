@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { IngestionExtractionNotices } from '@/core/schema/ingestion-extraction';
+import { HandwritingTraceOutcome } from '@/core/schema/structured_question';
 import {
   CauseCategory,
   FigureRef,
@@ -320,6 +321,8 @@ export const IngestionBlockSchema = z
     page_spans: z.array(PageSpan),
     extracted_prompt_md: z.string().nullable(),
     structured: StructuredQuestion.nullable(),
+    /** Whole-pass handwriting outcome; null when the trace path did not run. */
+    handwriting_trace: HandwritingTraceOutcome.nullable(),
     reference_md: z.string().nullable(),
     wrong_answer_md: z.string().nullable(),
     image_refs: z.array(z.string()),
