@@ -364,9 +364,12 @@ export function declaredCandidateReceipt(
       publication: null,
     };
   }
+  // A replayed :submit receipt refers to an earlier committed publication; the owner
+  // returns no block for it, so the caller receipt never claims a second publication.
   const publication = publicationReceiptFromSubmit(
     {
       publish_status: submit.publish_status,
+      replayed: submit.replayed === true,
       group_id: submit.group_id,
       question_id: submit.question_id,
       revision_id: submit.revision_id,

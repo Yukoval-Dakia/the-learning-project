@@ -42,6 +42,10 @@ export interface PublicationIdentity {
 export interface PublicationCarrier {
   status?: string | null;
   publish_status?: string | null;
+  /** Legacy receipts mark a published success with this boolean instead of a status. */
+  published?: boolean | null;
+  /** Set when the receipt was replayed from request-id idempotency, not newly written. */
+  replayed?: boolean | null;
   group_id?: string | null;
   question_id?: string | null;
   revision_id?: string | null;
@@ -52,11 +56,17 @@ export interface PublicationCarrier {
  * Build the owner receipt for one committed submission, or null when the submission
  * wrote no publication event (`noop`/`withdrawn`/`conflict`/withheld). Publishing
  * statuses without full identity throw: the caller's transaction must roll back.
+ *
+ * Replayed receipts are never a new publication: they point at a publication committed
+ * by an earlier transaction (possibly before this owner existed), so they return null
+ * and are not persisted again. Only the explicit `replayed` marker takes this path —
+ * a fresh publishing receipt with missing identity still throws.
  */
 export function publicationReceiptFromSubmit(
   receipt: PublicationCarrier,
   identity: PublicationIdentity,
 ): PublicationReceiptT | null {
+  if (receipt.replayed === true) return null;
   const status = receipt.publish_status;
   if (!PUBLISHING_STATUSES.includes(status as (typeof PUBLISHING_STATUSES)[number])) return null;
   const groupId = receipt.group_id ?? receipt.question_id ?? null;
@@ -76,6 +86,29 @@ export function publicationReceiptFromSubmit(
     request_id: identity.request_id,
     task_run_id: identity.task_run_id ?? null,
   });
+}
+
+export interface ReplayedPublication {
+  /** The stored receipt says the submission was published (legacy boolean or seam status). */
+  published: boolean;
+  revision_id: string | null;
+  publication_event_id: string | null;
+}
+
+/**
+ * Display facts for a replayed receipt. It refers to an earlier committed publication;
+ * this is the legacy interpretation and is reachable only for `replayed` receipts. It
+ * never authorizes writing a new publication block.
+ */
+export function replayedPublication(receipt: PublicationCarrier): ReplayedPublication {
+  const published =
+    receipt.published === true || (receipt.published !== false && receipt.publish_status != null);
+  return {
+    published,
+    revision_id: typeof receipt.revision_id === 'string' ? receipt.revision_id : null,
+    publication_event_id:
+      typeof receipt.publication_event_id === 'string' ? receipt.publication_event_id : null,
+  };
 }
 
 function dedupe(receipts: readonly PublicationReceiptT[]): PublicationReceiptT[] {

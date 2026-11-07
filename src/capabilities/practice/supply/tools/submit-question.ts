@@ -20,7 +20,10 @@ import { knowledge, question, source_asset } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { lockQuestionSubmitRequest } from '@/kernel/locks/question-supply';
 import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
-import type { PublicationIdentity } from '@/kernel/records/publication-receipt';
+import {
+  type PublicationIdentity,
+  replayedPublication,
+} from '@/kernel/records/publication-receipt';
 import { draftCanonicalIdentity } from '@/kernel/records/question-draft-contract';
 import type { PlacementVerificationAuthority } from '@/kernel/supply-contracts';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
@@ -924,10 +927,22 @@ function declaredCandidateOutcome(
   // candidate keeps the tool contract: `pending` means "committed, awaiting admission /
   // verify", even when the inner SubmitResult reports the admission state as withheld.
   const submitted = !('published' in receipt) && receipt.status !== 'conflict';
+  const replay = receipt.replayed === true ? replayedPublication(receipt) : null;
+  const display = !submitted
+    ? {}
+    : replay
+      ? {
+          published: replay.published,
+          ...(replay.revision_id != null ? { revision_id: replay.revision_id } : {}),
+          ...(replay.publication_event_id != null
+            ? { publication_event_id: replay.publication_event_id }
+            : {}),
+        }
+      : { published: publication != null, ...publicationDisplay(publication) };
   return {
     ...receipt,
-    ...(submitted ? { status: 'pending' as const, published: publication != null } : {}),
-    ...publicationDisplay(publication),
+    ...(submitted ? { status: 'pending' as const } : {}),
+    ...display,
     difficulty_evidence: difficultyEvidence,
     request_id: requestId,
   } as Output;
