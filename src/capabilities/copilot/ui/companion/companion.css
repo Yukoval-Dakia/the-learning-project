@@ -1124,6 +1124,7 @@
   letter-spacing: var(--un-md-sys-typescale-body-large-tracking);
   overflow-wrap: anywhere;
 }
+[data-ui-next][data-un-m3e="companion-content"] .un-cp-row-ai[data-streaming] .un-cp-reply,
 [data-ui-next][data-un-m3e="companion-content"] .un-cp-today-focus {
   color: var(--un-md-sys-color-on-surface);
 }
