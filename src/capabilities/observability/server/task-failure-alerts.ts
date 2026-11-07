@@ -18,13 +18,19 @@
 // (a success ends it, the next failure opens a new one); a rate episode is keyed
 // by kind + learner day. The read surface evaluates live and never writes; the
 // hourly job is the only writer.
+//
+// Optional web search (Exa) degrading never fails the Copilot turn, so it is NOT
+// a task-failure alert: it rides its own `dependency_notices` list with learner
+// copy, is never written as an event, and only counts runs that carry positive
+// startup evidence (connected / unavailable). A run that never mounted the
+// dependency is skipped, not treated as recovery.
 
-import { and, desc, eq, gte, inArray, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, isNotNull, lte, sql } from 'drizzle-orm';
 import { STUCK_RUN_THRESHOLD_MS } from '@/core/ai-run-limits';
 import { CONFIG_REGISTRY, getConfig } from '@/core/config/store';
 import { learnerLocalDay } from '@/core/learner-day';
 import type { Db, Tx } from '@/db/client';
-import { event } from '@/db/schema';
+import { ai_task_runs, event } from '@/db/schema';
 import {
   CONFIG_INCOMPLETE_EVENT_ACTION,
   ConfigIncompletePayloadSchema,
@@ -63,6 +69,24 @@ export interface TaskFailureAlert {
   latest_finish_reason: string | null;
 }
 
+/**
+ * An optional dependency degraded across a run streak. Deliberately separate
+ * from task-failure alerts: the Copilot reply still succeeds, so this must never
+ * render as "a task keeps failing" or be recorded as a failure event.
+ */
+export interface DependencyNotice {
+  dependency: 'web_search';
+  /** unknown causes count as network. */
+  category: 'authorization' | 'network';
+  /** Learner copy; never names the provider, host, key or cause. */
+  learner_title: string;
+  learner_detail: string;
+  failures: number;
+  since: string;
+  last_failure_at: string;
+  latest_run_id: string;
+}
+
 export interface TaskFailureAlertRead extends TaskFailureAlert {
   recorded_event_id: string | null;
   recorded_at: string | null;
@@ -80,6 +104,7 @@ export interface TaskFailureAlertsRead {
   checked_at: string;
   thresholds: TaskFailureAlertThresholds;
   alerts: TaskFailureAlertRead[];
+  dependency_notices: DependencyNotice[];
   config_incomplete: ConfigIncompleteAlert[];
 }
 
@@ -101,6 +126,131 @@ export function readTaskFailureAlertThresholds(): TaskFailureAlertThresholds {
 
 function iso(value: Date | string): string {
   return (value instanceof Date ? value : new Date(value)).toISOString();
+}
+
+/**
+ * Optional web search degrading does not fail the Copilot run, so it never enters
+ * the task-failure rules above. A streak of this many consecutive CopilotTask
+ * runs whose dependency failed raises its own notice; a connected run ends it,
+ * and runs without recorded evidence (no Exa mount, older rows) are skipped
+ * rather than treated as recovery. Three keeps a single blip quiet while a wrong
+ * key or a dead endpoint surfaces within one learner turn or two.
+ */
+export const DEPENDENCY_NOTICE_STREAK = 3;
+
+/**
+ * A notice is live only while its streak is recent. The read runs on every /today
+ * load, so the window bounds the scan to ai_task_runs_task_kind_idx and stops a
+ * long-fixed outage from lingering forever.
+ */
+export const DEPENDENCY_NOTICE_WINDOW_DAYS = 7;
+
+const DEPENDENCY_COPY = {
+  authorization: {
+    title: '网页搜索的授权失效了',
+    detail: '需要重新配置后才能恢复，学伴先不查网页，其他学习功能照常。',
+  },
+  network: {
+    title: '网页搜索连不上了',
+    detail: '学伴先不查网页，其他学习功能照常。',
+  },
+} as const;
+
+function finishedIso(value: Date | string | null): string {
+  if (value === null) throw new Error('terminal ai_task_runs row without finished_at');
+  return iso(value);
+}
+
+type DependencyEvidence = 'connected' | 'unavailable';
+
+type UsageJson = (typeof ai_task_runs.$inferSelect)['usage_json'];
+
+/** Positive startup evidence: the key exists only when the dependency was mounted. */
+function dependencyEvidence(usage: UsageJson): DependencyEvidence | undefined {
+  const dependency = usage.transport?.startup_dependency;
+  if (dependency?.status === 'connected' || dependency?.status === 'unavailable') {
+    return dependency.status;
+  }
+  // Rows written before the merged shape: a recorded failure still counts.
+  const legacy = usage.transport?.startup_dependency_failures;
+  return Array.isArray(legacy) && legacy.length > 0 ? 'unavailable' : undefined;
+}
+
+function dependencyFailureCategory(usage: UsageJson): 'authorization' | 'network' {
+  const merged = usage.transport?.startup_dependency?.failure;
+  const failures = merged ? [merged] : usage.transport?.startup_dependency_failures;
+  if (!Array.isArray(failures)) return 'network';
+  const unauthorized = failures.some((failure) => {
+    const causes = Array.isArray(failure.cause) ? failure.cause : [];
+    return causes.some(
+      (link: { code?: string | number }) => link.code === 401 || link.code === 403,
+    );
+  });
+  return unauthorized ? 'authorization' : 'network';
+}
+
+async function evaluateDependencyNotices(db: Db | Tx, now: Date): Promise<DependencyNotice[]> {
+  const windowStart = new Date(now.getTime() - DEPENDENCY_NOTICE_WINDOW_DAYS * DAY_MS);
+  const isFailure = sql<boolean>`${isTaskFailureOutcome(sql`status`, sql`finish_reason`, sql`usage_json`)}`;
+  const isSuccess = sql<boolean>`(status = 'success'
+    and finish_reason is distinct from 'reply_unsealed'
+    and (usage_json -> 'help_latency' ->> 'terminal') is distinct from 'cancelled')`;
+  const hasEvidence = sql<boolean>`((((usage_json -> 'transport' -> 'startup_dependency') ->> 'status')
+      in ('connected', 'unavailable'))
+    or ((usage_json -> 'transport') ? 'startup_dependency_failures'))`;
+  const rows = await db
+    .select({
+      id: ai_task_runs.id,
+      finished_at: ai_task_runs.finished_at,
+      usage_json: ai_task_runs.usage_json,
+      is_failure: isFailure,
+      is_success: isSuccess,
+    })
+    .from(ai_task_runs)
+    .where(
+      and(
+        eq(ai_task_runs.task_kind, 'CopilotTask'),
+        inArray(ai_task_runs.status, ['success', 'failure']),
+        isNotNull(ai_task_runs.finished_at),
+        gte(ai_task_runs.started_at, windowStart),
+        lte(ai_task_runs.finished_at, now),
+        hasEvidence,
+      ),
+    )
+    .orderBy(desc(ai_task_runs.finished_at), desc(ai_task_runs.id));
+
+  // Walk newest-first. A connected handshake ends the streak; a run whose
+  // dependency failed counts regardless of whether the Copilot turn itself
+  // succeeded — a degraded reply that still answers is exactly the case this
+  // notice exists for. A retried attempt, sweeper convergence, unsealed reply or
+  // cancelled help attempt is skipped without counting or resetting.
+  const streak: { id: string; finished_at: Date | string; usage_json: UsageJson }[] = [];
+  for (const row of rows) {
+    if (row.finished_at === null) continue;
+    if (!row.is_failure && !row.is_success) continue;
+    const evidence = dependencyEvidence(row.usage_json);
+    if (evidence === 'connected') break;
+    if (evidence !== 'unavailable') continue;
+    streak.push({ id: row.id, finished_at: row.finished_at, usage_json: row.usage_json });
+  }
+  if (streak.length < DEPENDENCY_NOTICE_STREAK) return [];
+
+  const latest = streak[0];
+  const oldest = streak[streak.length - 1];
+  const category = dependencyFailureCategory(latest.usage_json);
+  const copy = DEPENDENCY_COPY[category];
+  return [
+    {
+      dependency: 'web_search',
+      category,
+      learner_title: copy.title,
+      learner_detail: copy.detail,
+      failures: streak.length,
+      since: finishedIso(oldest.finished_at),
+      last_failure_at: finishedIso(latest.finished_at),
+      latest_run_id: latest.id,
+    },
+  ];
 }
 
 function nullableIso(value: Date | string | null): string | null {
@@ -313,6 +463,7 @@ export async function loadTaskFailureAlerts(
 ): Promise<TaskFailureAlertsRead> {
   const thresholds = readTaskFailureAlertThresholds();
   const alerts = await evaluateTaskFailureAlerts(db, thresholds, now);
+  const dependencyNotices = await evaluateDependencyNotices(db, now);
   const recorded = await recordedAlerts(
     db,
     alerts.map((alert) => alert.id),
@@ -322,6 +473,7 @@ export async function loadTaskFailureAlerts(
     checked_at: now.toISOString(),
     thresholds,
     config_incomplete: configIncomplete,
+    dependency_notices: dependencyNotices,
     alerts: alerts.map((alert) => {
       const recordedAt = recorded.get(alert.id) ?? null;
       return {

@@ -24024,6 +24024,20 @@ export interface operations {
                             /** Format: date-time */
                             seen_at: string;
                         }[];
+                        dependency_notices: {
+                            /** @enum {string} */
+                            category: "authorization" | "network";
+                            /** @enum {string} */
+                            dependency: "web_search";
+                            failures: number;
+                            /** Format: date-time */
+                            last_failure_at: string;
+                            latest_run_id: string;
+                            learner_detail: string;
+                            learner_title: string;
+                            /** Format: date-time */
+                            since: string;
+                        }[];
                         thresholds: {
                             consecutive_failures: number;
                             failure_rate_above: number;

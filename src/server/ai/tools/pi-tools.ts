@@ -118,7 +118,8 @@ function isOptionalSearch(mount: Extract<PiToolMount, { type: 'remote-mcp' }>, k
 
 /**
  * Bridge a hosted MCP server into pi AgentTools. The client connects at startup so
- * `tools/list` failures surface before any paid token.
+ * `tools/list` failures surface before any paid token. Required mounts rethrow;
+ * `connectTaskRemoteMcp` catches the Copilot optional Exa search instead.
  */
 export async function connectPiRemoteMcp(
   mount: Extract<PiToolMount, { type: 'remote-mcp' }>,
@@ -306,10 +307,17 @@ export async function connectTaskRemoteMcp(
   let unavailable = optionalSearch ? unavailableSearchMounts.get(mount) : undefined;
   if (!unavailable) {
     try {
-      return await connect(mount, startup.initializeTimeoutMs, {
+      const handle = await connect(mount, startup.initializeTimeoutMs, {
         taskRunId: startup.runId,
         taskKind: startup.kind,
       });
+      // Positive evidence for the dependency streak: a run that mounted web
+      // search and reached the handshake ends a failure streak even when the
+      // model call itself fails afterwards.
+      if (optionalSearch) {
+        startup.options.transportEvidence?.noteOptionalDependencyConnected('web_search');
+      }
+      return handle;
     } catch (error) {
       const diagnostics = failureDiagnostics(error);
       if (
@@ -326,6 +334,8 @@ export async function connectTaskRemoteMcp(
       });
     }
   }
-  startup.options.transportEvidence?.noteOptionalDependencyFailure(unavailable);
+  if (unavailable) {
+    startup.options.transportEvidence?.noteOptionalDependencyFailure('web_search', unavailable);
+  }
   return undefined;
 }
