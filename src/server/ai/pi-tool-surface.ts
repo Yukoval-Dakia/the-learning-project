@@ -1,4 +1,4 @@
-// Mounted pi tool surface + tool-call evidence (YUK-1677 slice of YUK-921/YUK-1547).
+// Mounted pi tool surface + tool-call evidence.
 //
 // One owner for the wrap every AgentTool gets before pi sees it: the bridge wire
 // schema swap, the parameter-contract repair recorded ahead of validation, and
@@ -226,9 +226,10 @@ export class PiToolSurface {
         session_id: this.input.sessionId,
       });
     }
-    if (executions > 0) return;
-    // YUK-1559 (C6) — a call rejected at the argument-contract seam never reached
-    // execute: persist the sanitized ≤4KiB original arguments as run evidence.
+    // YUK-1559 (C6) — persist the sanitized ≤4KiB original arguments for any
+    // argument-contract rejection. Bridge-owned tools execute before they can
+    // reject the input, so this evidence cannot sit behind the executed-call
+    // return: executions > 0 does not mean the arguments were accepted.
     if (
       pending !== undefined &&
       isToolArgumentContractFailure({ isError: event.isError, content: event.result?.content })
@@ -256,8 +257,9 @@ export class PiToolSurface {
         session_id: this.input.sessionId,
       });
     }
-    // Pi emits start/end even for validation, missing-tool and hook-blocked calls.
-    // None crossed AgentTool.execute; do not label them executed or copy errors/args.
+    if (executions > 0) return;
+    // Validation, missing-tool and hook-blocked calls still emit start/end but
+    // never crossed AgentTool.execute: label them unexecuted, no args or errors.
     const span = startTraceSpan('tool.attempt', {
       task_run_id: this.input.runId,
       tool_name: event.toolName,

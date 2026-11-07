@@ -188,7 +188,6 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       runId: args.runId,
       resolved: args.resolved,
       options: args.options,
-      model: this.model,
       streamSimple: (m, context, options) => this.deps.models.streamSimple(m, context, options),
       wireParameters: this.toolSurface.wireParameters(),
       structuredOutput: toolOutputSchema(args.kind) !== undefined,

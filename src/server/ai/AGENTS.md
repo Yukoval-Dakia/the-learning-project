@@ -7,7 +7,9 @@
 |------|------|
 | `runner.ts` | 统一把所有 task 送进 ExecutionAdapter（唯一实现是 `PiAgentAdapter`）；调用方用 `piToolMounts` / `piHooks` / `piAgents` / `piSkillDocs` / `piSessionReplay` / `nativeCompaction` / `piQueues` + `allowedTools` / `maxTurns`（`runTask`/`runAgentTask`/`streamTask`）|
 | `execution-adapter.ts` | YUK-921 ExecutionAdapter seam：`PreparedExecutionQuery`/`ExecutionAdapter` 接口 + `ModelBinding` per-run 绑定 + `resolveExecutionAdapter` 决议 + 测试 seam `__setPiAdapterForTests`（P4 起 `ExecutionAdapterId` 只有 `'pi'`）|
-| `pi-agent-adapter.ts` | YUK-921/YUK-1025 唯一执行引擎：`@earendil-works/pi-agent-core` `agentLoop` 同进程执行 + `x-opencode-session` header 注入 + `pi:` 会话 id、`transformContext` 压缩、嵌套 agentLoop、`piHooks`/`piQueues` 转发。帧与 prompt 归一调用 `pi-runner-frames.ts` |
+| `pi-agent-adapter.ts` | YUK-921/YUK-1025 唯一执行引擎：`@earendil-works/pi-agent-core` `agentLoop` 同进程执行 + `pi:` 会话 id、`transformContext` 压缩、嵌套 agentLoop、`piHooks`/`piQueues` 转发。帧与 prompt 归一调用 `pi-runner-frames.ts`；工具包装与 provider wire 分别委托 `pi-tool-surface.ts`/`pi-provider-wire.ts` |
+| `pi-tool-surface.ts` | 挂载 AgentTool 的唯一包装 owner：bridge schema 替换、参数契约 `prepareArguments` 修复、`tool_args_progress`/`coerced`/`contract_failed` 帧与 execute/attempt 观测；root 与嵌套 loop 共享同一份证据状态 |
+| `pi-provider-wire.ts` | provider wire 的唯一 owner：auth/header（`x-opencode-session`）/retry/reasoning/timeout、预算 fetch 与非 2xx 捕获、上下文 token 上限、structured-submit wire 字段；root 与嵌套 loop 复用同一 `loopConfig`/`streamFn` |
 | `pi-runner-frames.ts` | pi ↔ runner 协议纯归一：durable replay / SDK prompt → AgentMessage；pi 事件 → SDK-shaped `PiRunnerMessage`（`source:'pi'`，含 init / assistant / tool_result / result / task_* / compact_boundary）与嵌套 child usage 形状。不跑 loop、不发请求 |
 | `pi-models.ts` | 从运行时 ModelProfile 投影执行模型；Pi builtins 只提供协议/compat/auth。`pi-provider-catalog.ts` 提供同源同步读面；订阅复用 anthropic，Token Plan 保留独立 endpoint/auth |
 | `../../core/tool-call-contract.ts` | 共享 hook 契约真身：`PiHookBridge`、before/after 回调与调用/结果观测类型；不持执行体 |
@@ -27,7 +29,7 @@
 | `tools/mcp-bridge.ts` | `executeDomainToolCall` 引擎中立共享管线（`tool_call_log`/`tool_use` mirror/`beforeExecute`/`interceptInput`/cancellation）——DomainTool 执行的唯一通道 |
 | `@/ai/pi-tool-mount` | 完整 mount/options 共享声明、wire 命名与 custom AgentTool 构造；不执行 domain/remote 挂载 |
 | `tools/pi-tools.ts` | DomainTool→AgentTool 编译与远程 MCP→AgentTool 连接/执行/关闭；消费共享挂载契约 |
-| `tool-param-contract.ts` | YUK-1547/YUK-1559 C1/C6 共享工具参数契约：对 schema 期望 array/object 而模型给 string 的字段做恰好一次严格 `JSON.parse`，仅当结构类型匹配且过该子 schema 才采纳；修复失败抛 `[tool_param_contract]` isError（不 reach execute）。runtime 在 `pi-agent-adapter` 的 `prepareArguments` 包装统一挂载（pi 在 validateToolArguments 之前调它），preflight `yuk1547-admission-reopen.ts` 复用同一实现 |
+| `tool-param-contract.ts` | YUK-1547/YUK-1559 C1/C6 共享工具参数契约：对 schema 期望 array/object 而模型给 string 的字段做恰好一次严格 `JSON.parse`，仅当结构类型匹配且过该子 schema 才采纳；修复失败抛 `[tool_param_contract]` isError（不 reach execute）。runtime 在 `pi-tool-surface.ts` 的 `prepareArguments` 包装统一挂载（pi 在 validateToolArguments 之前调它），preflight `yuk1547-admission-reopen.ts` 复用同一实现 |
 | `../../kernel/tools/allowlists.ts` | surface-specific DomainTool 与 MCP allowlist |
 | `../../capabilities/*/manifest.ts` 的 `copilotTools` | 查工具实现与暴露范围的入口；知识读取、练习供给、Copilot 事件读取等由业务模块拥有，runtime 只装配声明 |
 
@@ -43,7 +45,7 @@
   命名空间名 `<subjectDir>--<pack>`）经 `piSkillDocs` 注入 system prompt；缺包时
   传 undefined，never throws。
 - Read tool 返回语义化上下文（graph path / relation meaning / recent failure evidence）。
-- 工具参数契约：string→JSON 修复只采纳严格解析且通过子 schema 的结果。structured-submit 的坏 JSON、漏提交、形状拒绝交给同 run 提交循环；同错误且输出 hash 重复立即终态，同错误但输出变化累计三次终态，墙钟余量与任务财务上限也收口。非 structured 的 root 与嵌套 loop 保留一次共享 contract correction。采纳修复记录 `tool_args_coerced`（仅 tool/path/length）；拒绝记录 `tool_args_contract_failed` 与递归脱敏后 ≤4KiB 参数，`args_source` 区分流式原文与解析重建。
+- 工具参数契约：string→JSON 修复只采纳严格解析且通过子 schema 的结果。structured-submit 的坏 JSON、漏提交、形状拒绝交给同 run 提交循环；同错误且输出 hash 重复立即终态，同错误但输出变化累计三次终态，墙钟余量与任务财务上限也收口。非 structured 的 root 与嵌套 loop 保留一次共享 contract correction。采纳修复记录 `tool_args_coerced`（仅 tool/path/length）；拒绝记录 `tool_args_contract_failed` 与递归脱敏后 ≤4KiB 参数，`args_source` 区分流式原文与解析重建。bridge-owned 工具先 execute 再拒绝，契约证据不能排在 executed-call 返回之后。
 - Proposal tool 写 `event(action='propose')`；action/write tool 只包装已有 owner service（AttributionTask / VariantGenTask），不能让 LLM 传任意 mutation payload。
 - release-critical FULL 审查的通用 confirmed state machine 仍在 `sealed-validation.ts`；
   collecting runner 额外透传 success `result` 为 `terminalText`，但不解释其结构；

@@ -1,4 +1,4 @@
-// Pi provider wire policy (YUK-1677 slice of YUK-1630/YUK-1547/YUK-1559).
+// Pi provider wire policy.
 //
 // One owner for what every loop level (root + nested) puts on the provider wire:
 // auth/headers/retries/reasoning/timeout from the resolved binding, the attempt's
@@ -36,7 +36,6 @@ export interface PiProviderWireInput {
   runId: string;
   resolved: ResolvedProvider;
   options: Pick<Options, 'providerTimeoutMs' | 'transportEvidence' | 'effort' | 'judgeRetryPolicy'>;
-  model: LoomPiModel;
   streamSimple: PiMutableModels['streamSimple'];
   /** Bridge-owned inputs whose canonical schema reaches the provider. */
   wireParameters: ReadonlyMap<string, AgentTool['parameters']>;
