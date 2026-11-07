@@ -4,23 +4,11 @@
 // source document (its `source_asset_ids` are the uploaded pages), so rows written
 // before this rule — and manual imports — take the same path with no data backfill.
 
-import { inArray } from 'drizzle-orm';
+import { inArray, sql } from 'drizzle-orm';
 
 import type { Db, Tx } from '@/db/client';
-import { learning_session, source_document } from '@/db/schema';
-
-/** Question sources that come from a photographed/uploaded page. */
-export const INGESTION_QUESTION_SOURCES: ReadonlySet<string> = new Set([
-  'ingestion',
-  'vision_paper',
-  'vision_single',
-  'camera',
-  'import',
-  'pdf',
-  'docx',
-  'photo',
-  'reverse_mark',
-]);
+import { learning_session, source_asset, source_document } from '@/db/schema';
+import { INGESTION_QUESTION_SOURCES, isIngestionQuestionSource } from './admission-source';
 
 export interface LearnerImagePageIndex {
   /** Whole-page asset ids per source document id. */
@@ -88,8 +76,30 @@ export async function loadLearnerImagePageIndex(
       })
       .from(source_document)
       .where(inArray(source_document.id, [...documentIds]));
+    const allAssetIds = new Set<string>();
+    for (const row of rows) for (const id of row.sourceAssetIds ?? []) allAssetIds.add(id);
+    // Embedded media (Word/PDF package images) is content, not a page: the docx text line
+    // pins it on the session so imports can reference it, but it must stay visible to
+    // learners. Page evidence carries no `role:'media'` provenance (or an explicit
+    // page/pdf provenance), so this read-time split works for old rows without backfill.
+    const mediaIds = new Set<string>();
+    if (allAssetIds.size > 0) {
+      const mediaRows = await db
+        .select({ id: source_asset.id })
+        .from(source_asset)
+        .where(
+          sql`${source_asset.id} in (${sql.join(
+            [...allAssetIds].map((id) => sql`${id}`),
+            sql`, `,
+          )}) and ${source_asset.provenance}->>'role' = 'media'`,
+        );
+      for (const row of mediaRows) mediaIds.add(row.id);
+    }
     for (const row of rows) {
-      pageAssetsByDocument.set(row.id, new Set(row.sourceAssetIds ?? []));
+      pageAssetsByDocument.set(
+        row.id,
+        new Set((row.sourceAssetIds ?? []).filter((id) => !mediaIds.has(id))),
+      );
     }
   }
   return { pageAssetsByDocument, documentIdBySession };
@@ -133,7 +143,7 @@ export function learnerVisibleImageRefs(
   const refs = [...(q.image_refs ?? [])];
   const pages = resolvePageAssets(q, index);
   if (pages === null) {
-    return q.source != null && INGESTION_QUESTION_SOURCES.has(q.source) ? [] : refs;
+    return isIngestionQuestionSource(q.source) ? [] : refs;
   }
   if (pages.size === 0) return refs;
   return refs.filter((ref) => !pages.has(ref));

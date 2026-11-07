@@ -26,6 +26,10 @@ import {
   question_group_lifecycle,
   question_revision,
 } from '@/db/schema';
+import {
+  admissionSourceEventIdSql,
+  ingestionQuestionSourceListSql,
+} from '@/kernel/read-models/admission-source';
 import { revisionRowToContract } from '@/kernel/records/assessment-issuance';
 
 export const SERVING_HOLD_REASONS = [
@@ -365,19 +369,27 @@ function servingFactsQuery(filters: SQL[]): SQL {
             order by published.created_at desc, published.id desc
             limit 1
           )
-      ) or (
-        -- Legacy ingestion rows (published before the source binding) cannot ever
-        -- pass the purpose gate: their publication carries no session. Report the
-        -- terminal state now instead of an endless "still checking".
-        (select published.session_id from ${event} published
-         where published.action = 'experimental:assessment_publish'
-           and published.subject_id = l.group_id
-           and published.payload->>'revision_id' = r.revision_id
-         order by published.created_at desc, published.id desc
-         limit 1) is null
-        and (select root.source from ${question} root where root.id = l.group_id) in (
-          'ingestion', 'vision_paper', 'vision_single', 'camera', 'import', 'pdf', 'docx', 'photo', 'reverse_mark'
-        )
+      ) or exists (
+        -- Legacy ingestion rows without a source binding can never pass the purpose
+        -- gate. Use the same binding the enqueue owner uses (publication cause/session,
+        -- else the first-publication receipt) so edited ingestion questions that are
+        -- actually being checked are not reported terminal here.
+        select 1 from ${event} published
+        where published.action = 'experimental:assessment_publish'
+          and published.subject_id = l.group_id
+          and published.payload->>'revision_id' = r.revision_id
+          and (${admissionSourceEventIdSql({
+            publicationEventId: sql`published.id`,
+            publicationSessionId: sql`published.session_id`,
+            publicationCausedByEventId: sql`published.caused_by_event_id`,
+            publicationActorRef: sql`published.actor_ref`,
+            groupId: sql`l.group_id`,
+            revisionId: sql`r.revision_id`,
+          })}) is null
+          and (select root.source from ${question} root where root.id = l.group_id)
+            in ${ingestionQuestionSourceListSql()}
+        order by published.created_at desc, published.id desc
+        limit 1
       ) as auto_blocked
     ) admission_purpose on true
     cross join lateral (

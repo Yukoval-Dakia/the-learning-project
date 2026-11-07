@@ -333,6 +333,7 @@ export async function runAutoEnrollForSession(
           confidence: verdict.confidence,
           docUsage: sessionDocUsage,
           sourceDocumentId: sourceDocumentId || captured.sourceDocumentId,
+          capturedAttemptEventId: captured.attemptEventId,
           now,
         });
         if (result === null) routedToReview += 1;
@@ -359,12 +360,24 @@ export async function runAutoEnrollForSession(
         // row lock is the structural double-consume guard. Singleton keys only reduce the
         // number of duplicate jobs and do not bear correctness.
         const claimRows = await tx
-          .select({ status: question_block.status })
+          .select({ status: question_block.status, version: question_block.version })
           .from(question_block)
           .where(eq(question_block.id, block.id))
           .for('update');
-        if (claimRows[0]?.status !== 'draft') {
-          return null; // already enrolled by a concurrent runner
+        const [claimSession] = await tx
+          .select({ status: learning_session.status })
+          .from(learning_session)
+          .where(eq(learning_session.id, params.sessionId))
+          .limit(1);
+        // The row can stay `draft` while the learner edits it (version bump). Enrolling
+        // the pre-edit snapshot silently would close the editor's draft with stale
+        // content, so the same checks the capture owner runs gate this path too.
+        if (
+          claimRows[0]?.status !== 'draft' ||
+          claimRows[0].version !== block.version ||
+          (claimSession?.status !== 'extracted' && claimSession?.status !== 'partial')
+        ) {
+          return null; // edited or superseded by a concurrent runner
         }
 
         // Attributed KCs are exactly what tagKnowledge returned pre-tx. Any KC it minted
@@ -415,7 +428,7 @@ export async function runAutoEnrollForSession(
         const enroll = await settleCapturedBlock(tx, {
           transition: 'auto_enroll',
           blockId: block.id,
-          guard: { kind: 'row_locked' },
+          guard: { kind: 'version_cas', version: block.version },
           enroll: {
             questionId,
             outcome,
@@ -482,26 +495,42 @@ async function settleItemBankEnrollment(params: {
   confidence: number;
   docUsage: Parameters<typeof settleCapturedBlock>[1]['enroll']['docUsage'];
   sourceDocumentId: string;
+  capturedAttemptEventId?: string;
   now: Date;
 }): Promise<AutoEnrolledBlock | null> {
   return params.db.transaction(async (tx) => {
     await acquireLearningStateWriteLock(tx);
     const claimRows = await tx
-      .select({ status: question_block.status })
+      .select({ status: question_block.status, version: question_block.version })
       .from(question_block)
       .where(eq(question_block.id, params.block.id))
       .for('update');
-    if (claimRows[0]?.status !== 'draft') return null;
+    const [claimSession] = await tx
+      .select({ status: learning_session.status })
+      .from(learning_session)
+      .where(eq(learning_session.id, params.block.ingestion_session_id))
+      .limit(1);
+    if (
+      claimRows[0]?.status !== 'draft' ||
+      claimRows[0].version !== params.block.version ||
+      (claimSession?.status !== 'extracted' && claimSession?.status !== 'partial')
+    ) {
+      // The block was edited/superseded after the capture committed: leave it draft.
+      // The capture question and its attempt event stay as private evidence (draft,
+      // not library-visible) and are never linked as an enrollment.
+      return null;
+    }
 
     const enroll = await settleCapturedBlock(tx, {
       transition: 'auto_enroll',
       blockId: params.block.id,
-      guard: { kind: 'row_locked' },
+      guard: { kind: 'version_cas', version: params.block.version },
       enroll: {
         questionId: params.questionId,
         // No verdict exists yet: the captured work stays evidence, never an answer key
         // and never a fabricated right/wrong bit.
         outcome: 'unanswered',
+        capturedAttemptEventId: params.capturedAttemptEventId,
         answerMd: '',
         answerImageRefs: [],
         knowledgeIds: params.knowledgeIds,

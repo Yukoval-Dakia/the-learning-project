@@ -54,16 +54,24 @@ export async function createIngestionSession(
         derivationPolicy: body.derivation_policy ?? null,
       });
       // Recognition only: the new upload proceeds untouched. A detection fault must not
-      // discard the learner's file, so it is logged and reported as unknown.
+      // discard the learner's file, so it is logged and reported as unknown. The
+      // savepoint restores the outer tx after a statement error (timeout/abort).
       let duplicateOf: DuplicateUploadMatch | null = null;
       try {
-        duplicateOf = await findDuplicateUpload(tx, {
-          sourceDocumentId,
-          assetIds: body.asset_ids,
+        await tx.transaction(async (duplicateTx) => {
+          const found = await findDuplicateUpload(duplicateTx, {
+            sourceDocumentId,
+            assetIds: body.asset_ids,
+          });
+          if (found !== null) {
+            await recordDuplicateUpload(duplicateTx, {
+              sessionId,
+              sourceDocumentId,
+              duplicate: found,
+            });
+          }
+          duplicateOf = found;
         });
-        if (duplicateOf !== null) {
-          await recordDuplicateUpload(tx, { sessionId, sourceDocumentId, duplicate: duplicateOf });
-        }
       } catch (err) {
         console.error('[ingestion] duplicate upload detection failed', err);
         duplicateOf = null;

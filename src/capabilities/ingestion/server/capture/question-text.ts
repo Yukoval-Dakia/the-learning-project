@@ -20,6 +20,16 @@ export function blockStructuredContent(block: {
 }
 
 /**
+ * A stem can legally have an empty own prompt while its sub-questions carry the printed
+ * stems (`splitStemInTree` produces this; OCR keeps `extracted_prompt_md = null`). Only
+ * options with no prompt anywhere must stay out of the library.
+ */
+function treeHasPrintedPrompt(q: StructuredQuestionT): boolean {
+  if ((q.prompt_text ?? '').trim().length > 0) return true;
+  return (q.sub_questions ?? []).some(treeHasPrintedPrompt);
+}
+
+/**
  * The printed prompt of a captured block, single-sourced for enrollment, the question
  * writer and the read-side projection.
  */
@@ -28,9 +38,7 @@ export function blockQuestionMarkdown(block: {
   extracted_prompt_md: string | null;
 }): string {
   const structured = blockStructuredContent(block);
-  if (structured != null && (structured.prompt_text ?? '').trim().length > 0) {
-    return structuredToPromptMarkdown(structured);
-  }
+  if (structured != null) return structuredToPromptMarkdown(structured);
   return (block.extracted_prompt_md ?? '').trim();
 }
 
@@ -39,5 +47,7 @@ export function blockHasPrompt(block: {
   structured: StructuredQuestionT | null;
   extracted_prompt_md: string | null;
 }): boolean {
-  return blockQuestionMarkdown(block).trim().length > 0;
+  const structured = blockStructuredContent(block);
+  if (structured != null) return treeHasPrintedPrompt(structured);
+  return (block.extracted_prompt_md ?? '').trim().length > 0;
 }

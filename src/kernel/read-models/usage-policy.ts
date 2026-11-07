@@ -8,6 +8,7 @@ import { type SQL, type SQLWrapper, and, eq, inArray, sql } from 'drizzle-orm';
 import { type DerivationPolicyT, readDerivationPolicy } from '@/core/schema/derivation-policy';
 import type { Db, Tx } from '@/db/client';
 import { learning_session, question, source_document } from '@/db/schema';
+import { ingestionQuestionSourceListSql } from './admission-source';
 
 /** `source_document.provenance` key holding the learner's consented usage. */
 export const USAGE_POLICY_PROVENANCE_KEY = 'usage_policy';
@@ -198,7 +199,7 @@ const NODE_VIOLATION_SQL = sql`CASE n.kind
             jsonb_typeof(q.metadata->'quiz_gen'->'material_source_document_id') IS DISTINCT FROM 'string'
             OR length(q.metadata->'quiz_gen'->>'material_source_document_id') = 0))
           OR (q.metadata ? 'source_record_id' AND q.metadata->>'source_record_id' IS NULL)
-          OR (q.source IN ('ingestion', 'photo', 'pdf', 'docx', 'camera', 'import', 'vision_single', 'vision_paper', 'reverse_mark')
+          OR (q.source IN ${ingestionQuestionSourceListSql()}
             AND COALESCE(q.metadata->>'source_document_id', q.metadata->>'ingestion_session_id') IS NULL)
           OR (q.source = 'dreaming' AND q.metadata->>'source_record_id' IS NULL AND NOT EXISTS (
             SELECT 1 FROM event promotion WHERE promotion.id = q.source_ref
@@ -289,7 +290,7 @@ export async function anyRestrictedLearnerSource(db: Db | Tx): Promise<boolean> 
         jsonb_typeof(q.metadata->'quiz_gen'->'material_source_document_id') IS DISTINCT FROM 'string'
         OR length(q.metadata->'quiz_gen'->>'material_source_document_id') = 0))
       OR (q.metadata ? 'source_record_id' AND q.metadata->>'source_record_id' IS NULL)
-      OR (q.source IN ('ingestion', 'photo', 'pdf', 'docx', 'camera', 'import', 'vision_single', 'vision_paper', 'reverse_mark')
+      OR (q.source IN ${ingestionQuestionSourceListSql()}
         AND COALESCE(q.metadata->>'source_document_id', q.metadata->>'ingestion_session_id') IS NULL)
       OR (q.source = 'dreaming' AND q.metadata->>'source_record_id' IS NULL AND NOT EXISTS (
         SELECT 1 FROM event promotion WHERE promotion.id = q.source_ref

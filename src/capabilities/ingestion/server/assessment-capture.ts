@@ -13,6 +13,7 @@ import {
 import { ApiError } from '@/kernel/http';
 import { commitFormalAttempt, recordFormalAttemptCapture, saveSubmission } from '@/kernel/judge';
 import type { DocumentUsage } from '@/kernel/read-models/usage-policy';
+import { assessmentAttemptEventId } from '@/kernel/records/assessment-attempt-identity';
 import { freezeImageEvidence } from '@/kernel/records/assessment-evidence';
 import { issueCapturedAssessment } from '@/kernel/records/assessment-issuance';
 import type { AutoEnrolledBlock } from './auto-enroll';
@@ -444,6 +445,7 @@ export async function captureIngestionOriginal(db: Db, input: CaptureInput) {
     return {
       request,
       questionId,
+      attemptEventId: assessmentAttemptEventId(saved.submission.submission_id),
       sourceDocumentId: session.source_document_id ?? '',
       knowledgeIds: existing?.knowledge_ids ?? input.knowledgeIds,
       admitted: lifecycle.scoring_admission_state === 'admitted',
