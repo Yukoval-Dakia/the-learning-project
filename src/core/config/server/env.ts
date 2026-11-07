@@ -87,7 +87,6 @@ const server = {
   MEM0_TELEMETRY: optionalString,
   MIMO_VISION_BASE_URL: optionalString,
   MIMO_VISION_MODEL: optionalString,
-  MISCONCEPTION_HARD_CONFIRM_ENABLED: optionalString,
   MISCONCEPTION_PROMOTE_ENABLED: optionalString,
   NODE_ENV: optionalString,
   OPENAI_API_KEY: optionalString,
