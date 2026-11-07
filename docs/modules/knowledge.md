@@ -24,7 +24,7 @@
 | `KnowledgeEdgeProposeTask` | ❌ retired | YUK-1664：夜间边提议并入 `KnowledgeReviewTask`；存量 supersede 提议仍经 accept 路径生效 |
 | `KnowledgeReviewTask` | ✅ registered, tool-call | `knowledge_review` surface 经共享 DomainTool bridge 挂 `propose_knowledge_mutation` / `propose_knowledge_edge`（YUK-1553） |
 | Subject Graph Guide runtime | ⚠️ 部分 | guide 实体（可 seed / versioned / enrich 的 `SubjectGraphGuide` §2）仍未落地——无 `subject_graph_guide` 表、无 `seedSubjectGraphGuide()`。graph reader tools 当前用 DB 派生的确定性 fallback（`DEFAULT_RELATIONS` + 固定 reading hint，§62「没有 guide 时」路径），不读 guide 实体 |
-| Graph reader tools | ✅ | 4 个语义化 graph reader 全部上线：`get_subject_graph_overview` / `query_knowledge` / `expand_knowledge_subgraph` / `find_knowledge_paths`，定义在 `src/capabilities/knowledge/server/tools/knowledge-readers.ts`（`DomainTool` + `execute`，YUK-876 起由 knowledge 包拥有），经 `src/capabilities/knowledge/manifest.ts` 的 `copilotTools` 贡献制登记进组合根，进 allowlist/budget，被 copilot / quiz_gen / sourcing 消费。见 [架构基础](../architecture.md) 的「agent 读图路径」 |
+| Graph reader tools | ✅ | 4 个语义化 graph reader 全部上线：`get_subject_graph_overview` / `query_knowledge` / `expand_knowledge_subgraph` / `find_knowledge_paths`，定义在 `src/capabilities/knowledge/server/tools/knowledge-readers.ts`（`DomainTool` + `execute`，YUK-876 起由 knowledge 包拥有），经 `src/capabilities/knowledge/manifest.ts` 的 `copilotTools` 贡献制登记进组合根，进 allowlist/budget，被 copilot / quiz_gen / sourcing 消费。掌握带、证据量、衰减、到期、连续错、主要错因和保留度由 `get_knowledge_state`（`server/tools/knowledge-state.ts`）一次读出，口径在 `readLearnerJudgments` 与 `readCauseJudgment`。见 [架构基础](../architecture.md) 的「agent 读图路径」 |
 
 ---
 
