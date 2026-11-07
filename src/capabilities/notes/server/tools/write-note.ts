@@ -41,6 +41,7 @@ import { z } from 'zod';
 import type { ArtifactBodyBlocksT } from '@/core/schema/business';
 import { artifact } from '@/db/schema';
 import { artifactRowToCreateSnapshot, emitArtifactCreateEvent } from '@/kernel/artifacts';
+import { downgradeUnboundChartFences } from '@/kernel/blocks/markdown-chart-fence';
 import { writeNoteGenerationIntent } from '@/kernel/records/note-handoff-protocol';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 import { syncBlockRefsForArtifact } from '../block-refs';
@@ -58,8 +59,10 @@ const NOTE_BLOCK_SOURCE_TIER = 'llm_only';
 // the raw Markdown lives in attrs.source_markdown (the reader's blockText
 // source) and in a single paragraph child (the editor's PM mirror). The block
 // intentionally carries NO semantic_kind — a free-form prose block renders as
-// the plain nrb block, not one of the five section kinds.
+// the plain nrb block, not one of the five section kinds. This write path has no
+// tool-result binding step, so a recorded-data chart fence is downgraded here.
 function markdownBlock(blockId: string, markdown: string): Record<string, unknown> {
+  const source = downgradeUnboundChartFences(markdown);
   return {
     type: 'semanticBlock',
     attrs: {
@@ -67,9 +70,9 @@ function markdownBlock(blockId: string, markdown: string): Record<string, unknow
       source_tier: NOTE_BLOCK_SOURCE_TIER,
       user_verified: false,
       version: 1,
-      source_markdown: markdown,
+      source_markdown: source,
     },
-    content: [{ type: 'paragraph', content: [{ type: 'text', text: markdown }] }],
+    content: [{ type: 'paragraph', content: [{ type: 'text', text: source }] }],
   };
 }
 

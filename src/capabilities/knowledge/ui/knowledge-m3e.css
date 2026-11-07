@@ -497,9 +497,25 @@
   }
 
   & .kn-tree-meta {
+    min-width: 6.8em;
     color: var(--un-text-3);
     font-size: var(--un-fs-1);
+    text-align: end;
     white-space: nowrap;
+  }
+
+  & .kn-tree-slot {
+    display: inline-flex;
+    justify-content: flex-end;
+  }
+
+  /* Wide enough for their chips, so each column stays put on rows without one. */
+  & .kn-tree-slot[data-slot="mesh"] {
+    min-width: 42px;
+  }
+
+  & .kn-tree-slot[data-slot="due"] {
+    min-width: 68px;
   }
 
   /* ── Graph ── */
@@ -1737,6 +1753,14 @@
       justify-content: flex-start;
       width: 100%;
       margin-left: calc(30px + var(--un-sp-3));
+    }
+
+    & .kn-tree-meta {
+      min-width: 0;
+    }
+
+    & .kn-tree-slot[data-slot]:empty {
+      display: none;
     }
 
     & .kn-graph-stage,

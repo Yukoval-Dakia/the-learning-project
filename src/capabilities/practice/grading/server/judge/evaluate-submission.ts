@@ -75,7 +75,7 @@ import {
   requireJudgeRunOpen,
 } from '../judge-operational';
 import { gradingSliceMatchesLivePin, taskKindHasModelPin } from '../model-slice-registry';
-import { photoJudgeAdmission } from '../photo-judge-gate';
+import { confirmPhotoJudgeAdmission, photoExecutionMatchesBinding } from '../photo-judge-gate';
 import { createPiModelExecutor } from '../pi-model-executor';
 import { createRubricModelExecutor } from '../rubric-model-executor';
 import { createRecordedModelExecutor } from './recorded-model-executor';
@@ -181,37 +181,51 @@ export function createFormalModelExecutor(
   let admitted = false;
   const recorded = createRecordedModelExecutor(
     db,
-    (request, callerSignal, taskRunId) => {
-      if (request.executor.task_kind === 'AssessmentRuleJudgeTask') {
-        return createPiModelExecutor({
+    async (request, callerSignal, taskRunId) => {
+      const execute = () => {
+        if (request.executor.task_kind === 'AssessmentRuleJudgeTask') {
+          return createPiModelExecutor({
+            db,
+            deadlineAt,
+            signal,
+            taskRunId,
+            maxCostUsdMicros: request.executor.max_cost_usd_micros ?? 0,
+            judgeRetryPolicy: admission === 'durable' ? 'none' : undefined,
+          })(request, callerSignal);
+        }
+        // C2 — AI rubric lane（free 单元逐 criterion 评分细则）。
+        if (request.executor.task_kind === 'AssessmentRubricJudgeTask') {
+          return createRubricModelExecutor({
+            db,
+            deadlineAt: formalRubricDeadlineAt(),
+            signal,
+            taskRunId,
+            maxCostUsdMicros: request.executor.max_cost_usd_micros ?? 0,
+            judgeRetryPolicy: admission === 'durable' ? 'none' : undefined,
+            confirmLiveSlice: true,
+          })(request, callerSignal);
+        }
+        return createJevModelExecutor({
           db,
           deadlineAt,
           signal,
           taskRunId,
-          maxCostUsdMicros: request.executor.max_cost_usd_micros ?? 0,
-          judgeRetryPolicy: admission === 'durable' ? 'none' : undefined,
-        })(request, callerSignal);
-      }
-      // C2 — AI rubric lane（free 单元逐 criterion 评分细则）。
-      if (request.executor.task_kind === 'AssessmentRubricJudgeTask') {
-        return createRubricModelExecutor({
-          db,
-          deadlineAt: formalRubricDeadlineAt(),
-          signal,
-          taskRunId,
-          maxCostUsdMicros: request.executor.max_cost_usd_micros ?? 0,
           judgeRetryPolicy: admission === 'durable' ? 'none' : undefined,
           confirmLiveSlice: true,
         })(request, callerSignal);
-      }
-      return createJevModelExecutor({
-        db,
-        deadlineAt,
-        signal,
-        taskRunId,
-        judgeRetryPolicy: admission === 'durable' ? 'none' : undefined,
-        confirmLiveSlice: true,
-      })(request, callerSignal);
+      };
+      const outcome = await execute();
+      if (!(await photoExecutionMatchesBinding(db, request, outcome)))
+        return {
+          kind: 'pending' as const,
+          pending: {
+            reason: 'unjudgeable' as const,
+            detail: 'Photo task identity drifted during execution; no automatic score recorded',
+          },
+          run_refs: outcome.run_refs,
+          cost_usd_micros: outcome.cost_usd_micros,
+        };
+      return outcome;
     },
     {
       fence: execution ? (tx, request) => fenceJudgeUnitClaim(tx, execution, request) : undefined,
@@ -230,7 +244,7 @@ export function createFormalModelExecutor(
   return async (request, signal) => {
     // 带图提交走照片身份，不走文本切片覆盖。无绑定即明确待定，
     // 先于 claim/预留/付费与切片复核（门自身不碰 DB）。
-    const photo = photoJudgeAdmission(request);
+    const photo = await confirmPhotoJudgeAdmission(db, request);
     if (!photo.ok) {
       return {
         kind: 'pending' as const,
@@ -252,7 +266,10 @@ export function createFormalModelExecutor(
         };
       }
     }
-    return recorded(request, signal);
+    return recorded(
+      'photo_judgement' in photo ? { ...request, photo_judgement: photo.photo_judgement } : request,
+      signal,
+    );
   };
 }
 

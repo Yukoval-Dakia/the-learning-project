@@ -10497,6 +10497,8 @@ export interface operations {
                             /** @enum {string} */
                             source: "ai";
                         }[];
+                        /** @enum {string} */
+                        photo_judging_notice?: "AI 判、未校准";
                         score: number;
                         /** @enum {string} */
                         score_meaning: "correctness" | "mastery_estimate" | "rubric_weighted" | "external_verdict" | "steps_v1_weighted" | "unit_dimension_v1";
@@ -10519,6 +10521,8 @@ export interface operations {
                             /** @enum {string} */
                             source: "ai";
                         }[];
+                        /** @enum {string} */
+                        photo_judging_notice?: "AI 判、未校准";
                         score: number;
                         /** @enum {string} */
                         score_meaning: "correctness" | "mastery_estimate" | "rubric_weighted" | "external_verdict" | "steps_v1_weighted" | "unit_dimension_v1";
@@ -10541,6 +10545,8 @@ export interface operations {
                             /** @enum {string} */
                             source: "ai";
                         }[];
+                        /** @enum {string} */
+                        photo_judging_notice?: "AI 判、未校准";
                         /** @enum {number} */
                         score: 0;
                         /** @enum {string} */
@@ -10565,6 +10571,8 @@ export interface operations {
                             /** @enum {string} */
                             source: "ai";
                         }[];
+                        /** @enum {string} */
+                        photo_judging_notice?: "AI 判、未校准";
                         /** @enum {string|null} */
                         score: null;
                         /** @enum {string} */
@@ -10593,6 +10601,8 @@ export interface operations {
                             scoring_unit_id: string;
                             total_count: number;
                         }[];
+                        /** @enum {string} */
+                        photo_judging_notice?: "AI 判、未校准";
                         /** @enum {string|null} */
                         score: null;
                         /** @enum {string} */
@@ -10771,6 +10781,8 @@ export interface operations {
                             /** @enum {string} */
                             source: "ai";
                         }[];
+                        /** @enum {string} */
+                        photo_judging_notice?: "AI 判、未校准";
                         score: number;
                         /** @enum {string} */
                         score_meaning: "correctness" | "mastery_estimate" | "rubric_weighted" | "external_verdict" | "steps_v1_weighted" | "unit_dimension_v1";
@@ -10793,6 +10805,8 @@ export interface operations {
                             /** @enum {string} */
                             source: "ai";
                         }[];
+                        /** @enum {string} */
+                        photo_judging_notice?: "AI 判、未校准";
                         score: number;
                         /** @enum {string} */
                         score_meaning: "correctness" | "mastery_estimate" | "rubric_weighted" | "external_verdict" | "steps_v1_weighted" | "unit_dimension_v1";
@@ -10815,6 +10829,8 @@ export interface operations {
                             /** @enum {string} */
                             source: "ai";
                         }[];
+                        /** @enum {string} */
+                        photo_judging_notice?: "AI 判、未校准";
                         /** @enum {number} */
                         score: 0;
                         /** @enum {string} */
@@ -10839,6 +10855,8 @@ export interface operations {
                             /** @enum {string} */
                             source: "ai";
                         }[];
+                        /** @enum {string} */
+                        photo_judging_notice?: "AI 判、未校准";
                         /** @enum {string|null} */
                         score: null;
                         /** @enum {string} */
@@ -10867,6 +10885,8 @@ export interface operations {
                             scoring_unit_id: string;
                             total_count: number;
                         }[];
+                        /** @enum {string} */
+                        photo_judging_notice?: "AI 判、未校准";
                         /** @enum {string|null} */
                         score: null;
                         /** @enum {string} */
@@ -11045,6 +11065,8 @@ export interface operations {
                             /** @enum {string} */
                             source: "ai";
                         }[];
+                        /** @enum {string} */
+                        photo_judging_notice?: "AI 判、未校准";
                         score: number;
                         /** @enum {string} */
                         score_meaning: "correctness" | "mastery_estimate" | "rubric_weighted" | "external_verdict" | "steps_v1_weighted" | "unit_dimension_v1";
@@ -11067,6 +11089,8 @@ export interface operations {
                             /** @enum {string} */
                             source: "ai";
                         }[];
+                        /** @enum {string} */
+                        photo_judging_notice?: "AI 判、未校准";
                         score: number;
                         /** @enum {string} */
                         score_meaning: "correctness" | "mastery_estimate" | "rubric_weighted" | "external_verdict" | "steps_v1_weighted" | "unit_dimension_v1";
@@ -11089,6 +11113,8 @@ export interface operations {
                             /** @enum {string} */
                             source: "ai";
                         }[];
+                        /** @enum {string} */
+                        photo_judging_notice?: "AI 判、未校准";
                         /** @enum {number} */
                         score: 0;
                         /** @enum {string} */
@@ -11113,6 +11139,8 @@ export interface operations {
                             /** @enum {string} */
                             source: "ai";
                         }[];
+                        /** @enum {string} */
+                        photo_judging_notice?: "AI 判、未校准";
                         /** @enum {string|null} */
                         score: null;
                         /** @enum {string} */
@@ -11141,6 +11169,8 @@ export interface operations {
                             scoring_unit_id: string;
                             total_count: number;
                         }[];
+                        /** @enum {string} */
+                        photo_judging_notice?: "AI 判、未校准";
                         /** @enum {string|null} */
                         score: null;
                         /** @enum {string} */
@@ -17229,6 +17259,7 @@ export interface operations {
                             auto_enroll_observation: {
                                 confidence: number | null;
                                 event_id: string;
+                                grid_truncated: boolean | null;
                                 mistake_draft: {
                                     cause: {
                                         analysis_md: string | null;
@@ -17474,6 +17505,7 @@ export interface operations {
                                 sub_questions?: unknown[];
                             } | null;
                             version: number;
+                            workflow_judge_confidence: number | null;
                             wrong_answer_md: string | null;
                         } & {
                             [key: string]: unknown;
@@ -35050,6 +35082,7 @@ export interface operations {
                         figures?: unknown;
                         id: string;
                         image_refs: string[];
+                        ingestion_judge_confidence: number | null;
                         kind: string;
                         knowledge_ids: string[];
                         labels: {

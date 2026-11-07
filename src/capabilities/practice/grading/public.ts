@@ -162,3 +162,10 @@ export async function executeJudgeWorkflow(
 
 export const reserveJudgeOperationalDelivery: typeof import('./server/judge-operational').reserveJudgeDelivery =
   async (...args) => (await import('./server/judge-operational')).reserveJudgeDelivery(...args);
+
+export {
+  freezePhotoJudgeExamInput,
+  photoJudgeExamConfiguration,
+  runPhotoJudgeExam,
+  verifyPhotoJudgeExam,
+} from './server/photo-judge-exam';
