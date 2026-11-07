@@ -79,7 +79,9 @@ function buildColumnAllowlist(): Record<TableName, ReadonlySet<string>> {
     if (!isTable(value)) continue;
     const sqlName = getTableName(value);
     if (!fkOrderNames.has(sqlName)) continue;
-    const cols = Object.values(getTableColumns(value)).map((c) => c.name);
+    const cols = Object.values(getTableColumns(value))
+      .filter((c) => !c.generated)
+      .map((c) => c.name);
     bySqlName.set(sqlName, new Set(cols));
   }
 
@@ -159,7 +161,9 @@ export async function buildBackupArchive({
   await db.transaction(
     async (tx) => {
       for (const t of FK_ORDER) {
-        const rows = await tx.execute<Record<string, unknown>>(sql.raw(`select * from "${t}"`));
+        const rows = await tx.execute<Record<string, unknown>>(
+          sql.raw(`select ${[...COLUMN_ALLOWLIST[t]].map((c) => `"${c}"`).join(', ')} from "${t}"`),
+        );
         tableRows[t] = rows;
         rowCounts[t] = rows.length;
       }

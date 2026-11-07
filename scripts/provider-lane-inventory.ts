@@ -403,6 +403,7 @@ export const PROVIDER_LANES = [
       { path: 'src/capabilities/practice/question-bank/server/quiz/matcher.ts', kind: 'runtime' },
       // ADR-0072 LIGHT — search_bank 向量通道的查询嵌入（默认 embedFn）。
       { path: 'src/capabilities/practice/question-bank/tools/bank-search.ts', kind: 'runtime' },
+      { path: 'src/capabilities/practice/question-bank/tools/search-bank.ts', kind: 'runtime' },
     ],
     roles: ['api', 'worker'],
     provider: 'DashScope OpenAI-compatible endpoint; MEM0_EMBEDDING_BASE_URL is env-configurable',

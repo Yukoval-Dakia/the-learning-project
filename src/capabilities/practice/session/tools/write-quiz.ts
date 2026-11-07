@@ -26,12 +26,15 @@ import { lockWriteQuizTaskRun } from '@/kernel/locks/practice-session';
 import { acquireProposalDecisionLock } from '@/kernel/proposals/applier-helpers';
 import { listProposalInboxRows } from '@/kernel/proposals/inbox';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
+import { BankAssessmentSchema, selectBankReceipt } from '../../question-bank/public';
 import { writeToolQuizArtifact } from './tool-quiz-core';
 
 const WriteQuizInputSchema = z.object({
   title: z.string().min(1).max(120).optional(),
   // Practice order = array order. max 50 mirrors the practice-session scale.
-  question_ids: z.array(z.string().min(1)).min(1).max(50),
+  question_ids: z.array(z.string().min(1)).min(1).max(50).optional(),
+  search_id: z.string().optional(),
+  assessments: z.array(BankAssessmentSchema).max(20).optional(),
 });
 type WriteQuizInput = z.input<typeof WriteQuizInputSchema>;
 
@@ -68,7 +71,19 @@ async function executeWriteQuiz(
   rawInput: WriteQuizInput,
 ): Promise<WriteQuizOutput> {
   const input = WriteQuizInputSchema.parse(rawInput);
-  const questionIds = input.question_ids;
+  const selection = input.search_id
+    ? await selectBankReceipt(ctx.db, ctx, input.search_id, input.assessments ?? [])
+    : null;
+  const questionIds = input.question_ids ?? selection?.accepted_ids ?? [];
+  if (
+    !questionIds.length ||
+    (selection &&
+      (questionIds.length !== selection.accepted_ids.length ||
+        questionIds.some((id) => !selection.accepted_ids.includes(id))))
+  )
+    throw new Error(
+      'write_quiz: every selected part requires supported required and joint caller assessments',
+    );
 
   // Reject duplicates (write_review_plan discipline: a duplicate is a caller
   // mistake worth surfacing, not something to silently de-dup).
@@ -93,6 +108,9 @@ async function executeWriteQuiz(
     .from(question)
     .where(inArray(question.id, questionIds));
   const byId = new Map(rows.map((r) => [r.id, r]));
+
+  if (!input.search_id && rows.some((row) => row.draft_status !== 'draft'))
+    throw new Error('write_quiz: bank selections require a v3 search_id and cited assessments');
 
   const missing = questionIds.filter((id) => !byId.has(id));
   if (missing.length > 0) {
@@ -213,6 +231,18 @@ async function executeWriteQuiz(
       }
     }
 
+    if (input.search_id) {
+      const current = await selectBankReceipt(
+        tx,
+        ctx,
+        input.search_id,
+        input.assessments ?? [],
+        true,
+      );
+      if (questionIds.some((id) => !current.accepted_ids.includes(id)))
+        throw new Error('write_quiz: bank assessment changed');
+    }
+
     // Lock ALL referenced ids — not just pre-check drafts ((a)): an
     // active row can be re-drafted + archived_at-tombstoned by archiveQuestion
     // in the same check-then-act gap.
@@ -281,6 +311,13 @@ async function executeWriteQuiz(
         session_meta: {
           origin: 'copilot_write_quiz',
           tool_context_task_run_id: ctx.taskRunId,
+          ...(selection
+            ? {
+                bank_search_id: input.search_id,
+                bank_decision_source: selection.source,
+                bank_selection_refs: selection.part_refs,
+              }
+            : {}),
         },
       },
       attrs: { origin: 'copilot_write_quiz' },
@@ -302,7 +339,7 @@ async function executeWriteQuiz(
 export const writeQuizTool: DomainTool<WriteQuizInput, WriteQuizOutput> = {
   name: 'write_quiz',
   description:
-    'Assemble admitted, answerable questions into ONE runnable tool_quiz practice paper and return a /practice/<id> link. New author_question teaching drafts enter the question bank awaiting automatic admission; they cannot enter a runnable paper in the same turn until admission passes. Return their bank links and current status instead. Existing pool questions can be found via search_bank. Retained legacy proposal drafts keep their compatibility path. Every question must carry at least one knowledge_id. Pure local write — call it once after selecting the questions; a second call in the same run is refused.',
+    'Assemble admitted, answerable questions into ONE runnable tool_quiz practice paper and return a /practice/<id> link. New author_question teaching drafts enter the question bank awaiting automatic admission; they cannot enter a runnable paper in the same turn until admission passes. Return their bank links and current status instead. Existing pool questions can be found via search_bank. Retained legacy proposal drafts keep their compatibility path. Every question must carry at least one knowledge_id. For existing bank questions pass search_id plus assessments (ref, selected parts, one verdict per condition and joint with source/quote). unknown or contradicted required/joint cannot issue. question_ids without search evidence is only the retained teaching-draft compatibility path. Pure local write — call it once after selecting the questions; a second call in the same run is refused.',
   effect: 'write',
   inputSchema: WriteQuizInputSchema,
   outputSchema: WriteQuizOutputSchema,

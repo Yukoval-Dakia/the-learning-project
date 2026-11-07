@@ -494,6 +494,8 @@ describe('YUK-766 subscription progress backup', () => {
     expect(await db.select().from(event).where(eq(event.id, 'rollback-canary'))).toHaveLength(1);
   });
 
+  // @invariant concurrency: a writer that commits between two table reads cannot leak into the exported snapshot
+  // @fails-if export returns post-commit rows, or the interleaved write is skipped and the assertion cannot tell
   it('captures business tables and mem0 in one snapshot despite a committed concurrent writer', async () => {
     const db = testDb();
     vi.stubEnv('MEM0_PGVECTOR_COLLECTION', collection);
@@ -528,7 +530,12 @@ describe('YUK-766 subscription progress backup', () => {
           if (property === 'execute')
             return async (query: SQL) => {
               const rows = await target.execute(query);
-              if (!interleaved && dialect.sqlToQuery(query).sql === 'select * from "knowledge"') {
+              const text = dialect.sqlToQuery(query).sql;
+              if (
+                !interleaved &&
+                text.startsWith('select ') &&
+                text.endsWith(' from "knowledge"')
+              ) {
                 interleaved = true;
                 await db.transaction(async (tx) => {
                   await tx
