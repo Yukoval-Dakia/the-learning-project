@@ -1,10 +1,14 @@
 import { useAssetUrl } from '@/ui/lib/assets';
-import { figuresOf, type LineFigure } from './block-text';
+import { type LineFigure, figuresOf } from './block-text';
 import type { Block } from './record-api';
 
 function Figure({ figure }: { figure: LineFigure }) {
   const { url, error } = useAssetUrl(figure.assetId);
-  const words = [figure.label, figure.handwriting ? '可能带手写' : null, error ? '图读不出来' : null]
+  const words = [
+    figure.label,
+    figure.handwriting ? '可能带手写' : null,
+    error ? '图读不出来' : null,
+  ]
     .filter(Boolean)
     .join(' · ');
   return (

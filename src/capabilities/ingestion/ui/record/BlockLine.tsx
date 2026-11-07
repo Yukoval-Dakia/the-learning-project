@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { isLowJudgeConfidence } from '@/core/judge-confidence';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
-import { RescueButton, RevertButton } from './BlockTools';
 import { BlockFigures } from './BlockFigures';
+import { RescueButton, RevertButton } from './BlockTools';
 import { hasOptionsWithoutFigure, lineText, promptOf } from './block-text';
 import type { QuestionEdit, Readiness } from './import-draft';
 import { readiness } from './import-draft';
