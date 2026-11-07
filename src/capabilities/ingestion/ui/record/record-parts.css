@@ -212,9 +212,6 @@
   }
 
   & .rc-row-title {
-    display: -webkit-box;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
     color: var(--un-text-1);
     font-weight: var(--un-fw-medium);
   }
@@ -232,7 +229,11 @@
     white-space: nowrap;
   }
 
+  /* The list row's title, not the sheet's: that one shows in full. */
   & .rc-row-title.rc-row-clip {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
     white-space: normal;
   }
 

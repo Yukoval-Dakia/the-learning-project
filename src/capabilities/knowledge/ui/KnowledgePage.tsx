@@ -243,7 +243,7 @@ export default function KnowledgePage({
               <span className="kn-tree-meta un-num">{n.evidence_count} 条学习依据</span>
             )}
             {/* Fixed slots, so the same column lines up down the list when a row has nothing here. */}
-            <span className="kn-tree-slot">
+            <span className="kn-tree-slot" data-slot="mesh">
               {meshCount > 0 && (
                 <span className="kn-tag un-num" title={`${meshCount} 条关系`}>
                   <Link2 size={12} aria-hidden="true" />
@@ -252,7 +252,7 @@ export default function KnowledgePage({
               )}
             </span>
             {/* YUK-617 mode-1 — 本 KC 到期复习卡数（overdue，含=now）。有到期才出，红色提醒。 */}
-            <span className="kn-tree-slot">
+            <span className="kn-tree-slot" data-slot="due">
               {!isContainer && (dueSummary[n.id]?.overdue ?? 0) > 0 && (
                 <span className="kn-tag kn-tag-critical un-num" title="到期待复习的知识卡数">
                   <RotateCcw size={12} aria-hidden="true" />

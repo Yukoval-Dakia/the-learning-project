@@ -509,8 +509,12 @@
     justify-content: flex-end;
   }
 
-  /* Wide enough for a due count, so the column stays put on rows without one. */
-  & .kn-tree-slot:nth-last-of-type(1) {
+  /* Wide enough for their chips, so each column stays put on rows without one. */
+  & .kn-tree-slot[data-slot="mesh"] {
+    min-width: 42px;
+  }
+
+  & .kn-tree-slot[data-slot="due"] {
     min-width: 68px;
   }
 
@@ -1755,7 +1759,7 @@
       min-width: 0;
     }
 
-    & .kn-tree-slot:empty {
+    & .kn-tree-slot[data-slot]:empty {
       display: none;
     }
 
