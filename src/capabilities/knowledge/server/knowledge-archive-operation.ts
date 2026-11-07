@@ -6,12 +6,15 @@
 // inside the same transaction. The node is archived at its CURRENT valid version, never rewound
 // to the birth version, so later legitimate edits survive.
 
-import { and, eq, inArray, isNull } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { newId } from '@/core/ids';
+import { QUESTION_EDIT_ACTION } from '@/core/schema/event/experimental';
 import type { Tx } from '@/db/client';
-import { event, knowledge } from '@/db/schema';
+import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
+import { event, knowledge, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { findExistingRateEvent } from '@/kernel/proposals/applier-helpers';
+import { batchResolveAncestorIds } from '@/kernel/read-models/knowledge-tree';
 import { projectKnowledgeNodeGuarded } from '@/kernel/records/knowledge-node-materialization';
 import { type RetiredKnowledgeEdge, prepareKnowledgeArchive } from './proposals';
 
@@ -85,6 +88,13 @@ export async function retractKnowledgeCreate(
     throw new Error('knowledge retraction requires the correction event id');
   }
 
+  // Question refiling below takes question rows FOR UPDATE. Every writer that
+  // can hold a question row (edit accepts, duplicate merges, the placement
+  // refile) enters the global learning-state lock first, so this archive takes
+  // it before any row locks — question holders then serialize behind the whole
+  // retract instead of meeting it mid-flight.
+  await acquireLearningStateWriteLock(tx);
+
   const archiveEventId = newId();
   const now = new Date();
   const retiredEdges = await prepareKnowledgeArchive(
@@ -147,5 +157,71 @@ export async function retractKnowledgeCreate(
     created_at: now,
   });
   await projectKnowledgeNodeGuarded(tx, nodeId);
+
+  // Questions pointing at the archived node must not keep a dead reference.
+  // The node row lock above is held through this refile, so a concurrent
+  // root-placement move cannot commit a new reference to this node mid-retract:
+  // its FOR SHARE on the node waits for this commit and then sees it archived.
+  const chains = await batchResolveAncestorIds(tx, [nodeId]);
+  const top = chains.get(nodeId)?.at(-1);
+  const refileRoot = top
+    ? (
+        await tx
+          .select({ id: knowledge.id })
+          .from(knowledge)
+          .where(
+            and(eq(knowledge.id, top), isNull(knowledge.parent_id), isNull(knowledge.archived_at)),
+          )
+          .limit(1)
+      )[0]?.id
+    : undefined;
+
+  const refs = await tx
+    .select({
+      id: question.id,
+      knowledgeIds: question.knowledge_ids,
+      version: question.version,
+    })
+    .from(question)
+    .where(sql`${question.knowledge_ids} @> jsonb_build_array(${nodeId})`)
+    .orderBy(asc(question.id))
+    .for('update');
+
+  for (const row of refs) {
+    const next = row.knowledgeIds.filter((id) => id !== nodeId);
+    if (next.length === 0) {
+      // Without a live root ancestor there is nowhere to return to; leave the
+      // pointer rather than emptying the attribution.
+      if (!refileRoot) continue;
+      next.push(refileRoot);
+    }
+    const nextVersion = row.version + 1;
+    await tx
+      .update(question)
+      .set({ knowledge_ids: next, updated_at: now, version: nextVersion })
+      .where(eq(question.id, row.id));
+    await writeEvent(tx, {
+      id: newId(),
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: QUESTION_EDIT_ACTION,
+      subject_kind: 'question',
+      subject_id: row.id,
+      outcome: 'success',
+      payload: {
+        question_id: row.id,
+        previous_version: row.version,
+        next_version: nextVersion,
+        before: { knowledge_ids: row.knowledgeIds },
+        after: { knowledge_ids: next },
+        reason: 'knowledge_undo_refile',
+        archived_node_id: nodeId,
+        refile_root_id: refileRoot ?? null,
+      },
+      caused_by_event_id: archiveEventId,
+      created_at: now,
+    });
+  }
+
   return { node_id: nodeId };
 }

@@ -33,6 +33,7 @@ import { goal, placement_starter_claim } from '@/db/schema/learner-state';
 import { answer, learning_item, learning_record } from '@/db/schema/learning';
 import { question } from '@/db/schema/question';
 import { getCorrectionStatuses } from '@/kernel/events';
+import { batchResolveAncestorIds } from '@/kernel/read-models/knowledge-tree';
 import { findExistingRateEvent } from './applier-helpers';
 import { PROPOSAL_AUTOAPPLY_ACTION } from './auto-apply';
 
@@ -498,12 +499,62 @@ async function classifyKnowledgeNodes(
   const childCounts = new Map(childRows.map((row) => [row.nodeId, Number(row.count)]));
 
   const questionRows = (await db
-    .select({ nodeId: knowledge.id, count: sql<number>`count(*)::int` })
+    .select({
+      nodeId: knowledge.id,
+      count: sql<number>`count(*)::int`,
+      nonDraft: sql<number>`count(*) filter (where ${question.metadata} -> 'teaching_draft' is null)::int`,
+    })
     .from(knowledge)
     .innerJoin(question, sql`${question.knowledge_ids} @> jsonb_build_array(${knowledge.id})`)
     .where(inArray(knowledge.id, nodeIds))
-    .groupBy(knowledge.id)) as Array<{ nodeId: string; count: number }>;
+    .groupBy(knowledge.id)) as Array<{ nodeId: string; count: number; nonDraft: number }>;
   const questionCounts = new Map(questionRows.map((row) => [row.nodeId, Number(row.count)]));
+  const foreignQuestionCounts = new Map(
+    questionRows.map((row) => [row.nodeId, Number(row.nonDraft)]),
+  );
+
+  // Companion-authored attachments (teaching_draft provenance) return to the
+  // tree's live root on retraction instead of blocking the undo. Nodes whose
+  // only questions are companion-authored still need somewhere to send them:
+  // the ancestor walk must end at a live root row.
+  const refileRootByNode = new Map<string, string>();
+  const refileCandidateIds = checks
+    .filter(
+      (check) =>
+        (questionCounts.get(check.nodeId) ?? 0) > 0 &&
+        (foreignQuestionCounts.get(check.nodeId) ?? 0) === 0,
+    )
+    .map((check) => check.nodeId);
+  if (refileCandidateIds.length > 0) {
+    const chains = await batchResolveAncestorIds(db, refileCandidateIds);
+    const topIds = [
+      ...new Set(
+        [...chains.values()]
+          .map((chain) => chain[chain.length - 1])
+          .filter((id): id is string => typeof id === 'string'),
+      ),
+    ];
+    const liveRoots = new Set(
+      topIds.length === 0
+        ? []
+        : (
+            await db
+              .select({ id: knowledge.id })
+              .from(knowledge)
+              .where(
+                and(
+                  inArray(knowledge.id, topIds),
+                  isNull(knowledge.parent_id),
+                  isNull(knowledge.archived_at),
+                ),
+              )
+          ).map((row) => row.id),
+    );
+    for (const [nodeId, chain] of chains) {
+      const top = chain[chain.length - 1];
+      if (top && liveRoots.has(top)) refileRootByNode.set(nodeId, top);
+    }
+  }
 
   const recordRows = (await db
     .select({ nodeId: knowledge.id, count: sql<number>`count(*)::int` })
@@ -601,8 +652,17 @@ async function classifyKnowledgeNodes(
       continue;
     }
     if ((questionCounts.get(check.nodeId) ?? 0) > 0) {
-      decisions.set(check.proposalId, blocked('knowledge_has_questions', check.appliedAt));
-      continue;
+      // Any non-companion attachment (a learner's own placement, a sourcing
+      // merge) keeps blocking — retracting under it would silently refile work
+      // the owner did not ask to move. Companion-authored questions are
+      // undoable only while a live root ancestor exists to refile onto.
+      if (
+        (foreignQuestionCounts.get(check.nodeId) ?? 0) > 0 ||
+        !refileRootByNode.has(check.nodeId)
+      ) {
+        decisions.set(check.proposalId, blocked('knowledge_has_questions', check.appliedAt));
+        continue;
+      }
     }
     if ((recordCounts.get(check.nodeId) ?? 0) > 0) {
       decisions.set(check.proposalId, blocked('knowledge_has_records', check.appliedAt));
