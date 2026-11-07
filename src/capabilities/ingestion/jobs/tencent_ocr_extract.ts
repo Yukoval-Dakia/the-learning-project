@@ -495,11 +495,16 @@ async function processOneOcrJob(
         allPreFigures,
         structure.figureAssignments,
         structure.questions,
+        { judgments: structure.figureHandwriting, ocrQuestions: ocrFallbackQuestions },
       );
     } else {
       figureRefs = assignFigures(allPreFigures, structure.questions);
     }
-    const boundFigureIds = new Set(figureRefs.map((figure) => figure.asset_id));
+    const boundFigureIds = new Set(
+      structure.questions
+        .flatMap((question) => figuresForQuestion(question, figureRefs))
+        .map((figure) => figure.asset_id),
+    );
     for (const figure of allPreFigures) {
       if (!boundFigureIds.has(figure.asset_id)) {
         warnings.push(`Figure ${figure.asset_id} retained in source; assignment withheld`);
@@ -554,6 +559,14 @@ async function processOneOcrJob(
         blocks,
         layoutQuality: structure.layout_quality,
         warnings,
+        notices: {
+          figures_withheld: boundFigureIds.size < allPreFigures.length,
+          content_lost: structure.content_lost ?? null,
+          figure_handwriting_unverified: figureRefs.some(
+            (figure) =>
+              boundFigureIds.has(figure.asset_id) && figure.handwriting_unverified === true,
+          ),
+        },
       });
       // Usage receipt records the policy, consented usage, channels, and fired
       // redaction categories, never values. Atomic with the block writes.
