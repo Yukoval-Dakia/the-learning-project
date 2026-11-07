@@ -63,6 +63,19 @@ export interface MatchingColumnsBlockProps extends BlockStateProps {
 }
 
 type Armed = { side: Side; id: string } | null;
+
+const CIRCLED_DIGITS = '①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳';
+
+/** 「① Cl⁻」 at position 1 and 「A．稀盐酸」 at A show once. A mark that differs from the position stays. */
+function withoutOwnMark(label: string, marker: string): string {
+  const text = label.trimStart();
+  const circled = CIRCLED_DIGITS.indexOf(text.charAt(0));
+  const typed = text.match(/^[(（]?([0-9]+|[A-Za-z]{1,2})[)）.．、]/);
+  const own = circled >= 0 ? String(circled + 1) : typed?.[1]?.toUpperCase();
+  if (own !== marker.toUpperCase()) return label;
+  const rest = text.slice(circled >= 0 ? 1 : (typed?.[0].length ?? 0)).trimStart();
+  return rest || label;
+}
 type Box = { top: number; bottom: number; left: number; right: number };
 
 export function MatchingColumnsBlock({
@@ -101,13 +114,15 @@ export function MatchingColumnsBlock({
     const index = lists[side].findIndex((entry) => entry.id === id);
     return side === 'a' ? String(index + 1) : (markerText('letter', index) ?? '');
   };
+  const labelOf = (side: Side, id: string) =>
+    withoutOwnMark(lists[side].find((entry) => entry.id === id)?.label_md ?? id, marker(side, id));
   // Names are rendered content (MathMarkdown, whose KaTeX output carries MathML), never the raw
   // label_md source, so screen readers hear the formula rather than its TeX.
   const nameOf = (side: Side, id: string): ReactNode => (
     <>
       {marker(side, id)}「
       <InlineMd
-        source={lists[side].find((entry) => entry.id === id)?.label_md ?? id}
+        source={labelOf(side, id)}
         notation={notation}
       />
       」
@@ -358,7 +373,7 @@ export function MatchingColumnsBlock({
           {marker(side, entry.id)}
         </span>
         <MathMarkdown className="un-blk-match-text" notation={notation}>
-          {entry.label_md}
+          {labelOf(side, entry.id)}
         </MathMarkdown>
         {chips}
         <span className="un-sr-only">{pairText}</span>

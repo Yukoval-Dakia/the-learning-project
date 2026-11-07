@@ -10,9 +10,12 @@ import './renderers.css';
 function SubmissionStatus({
   submission: s,
   intents,
+  judged,
 }: {
   submission: Submission;
   intents: ReadingProps['intents'];
+  /** A verdict on screen already says the answer went through. */
+  judged: boolean;
 }) {
   const recording = {
     idle: '',
@@ -35,7 +38,8 @@ function SubmissionStatus({
       {s.recording.notice ? (
         <NoticeBlock notice={s.recording.notice} intents={intents} />
       ) : (
-        recording[s.recording.kind] && <p>{recording[s.recording.kind]}</p>
+        recording[s.recording.kind] &&
+        !(judged && s.recording.kind === 'saved') && <p>{recording[s.recording.kind]}</p>
       )}
       {s.grading.notice ? (
         <NoticeBlock notice={s.grading.notice} intents={intents} />
@@ -92,7 +96,7 @@ export function PracticeStudio(p: ReadingProps) {
       {primary?.availability.kind !== 'enabled' && primary && (
         <p className="un-st-secondary">{primary.availability.reason}</p>
       )}
-      <SubmissionStatus submission={q.submission} intents={intents} />
+      <SubmissionStatus submission={q.submission} intents={intents} judged={afterFeedback} />
     </div>
   );
   return (
@@ -102,7 +106,7 @@ export function PracticeStudio(p: ReadingProps) {
           <p className="un-st-eyebrow">{q.progressLabel}</p>
           <h1 ref={lifecycle?.titleRef}>{q.title}</h1>
           <p className="un-st-task-meta">
-            {[q.subject, q.attemptLabel, q.estimatedTime, q.reason].filter(Boolean).join(' · ')}
+            {[q.subject, q.attemptLabel, q.estimatedTime, q.source, q.reason].filter(Boolean).join(' · ')}
           </p>
         </div>
         <div className="un-st-heading-companion">
@@ -190,8 +194,12 @@ export function PracticeStudio(p: ReadingProps) {
         {!afterFeedback && actionRow}
       </div>
       <div ref={lifecycle?.resultRef}>
-        <PracticeFeedback revelation={q.revelation} intents={intents} renderers={renderers} />
-        {afterFeedback && actionRow}
+        <PracticeFeedback
+          revelation={q.revelation}
+          intents={intents}
+          renderers={renderers}
+          actions={afterFeedback ? actionRow : undefined}
+        />
       </div>
       <section className="un-st-study-tools" aria-label="辅助工具">
         <div className="un-st-actions">
@@ -214,6 +222,7 @@ export function PracticeStudio(p: ReadingProps) {
             <PracticeField field={q.thought} intents={intents} renderers={renderers} />
           </details>
         )}
+        {surfaces?.history}
         {p.presentation.selection && (
           <aside className="un-st-quote-preview">
             <MessageSquareQuote size={18} />
@@ -224,8 +233,6 @@ export function PracticeStudio(p: ReadingProps) {
           </aside>
         )}
       </section>
-      {surfaces?.history}
-      {q.source && <p className="un-st-source">{q.source}</p>}
       {p.view.feedback && <NoticeBlock notice={p.view.feedback} intents={intents} />}
       {surfaces?.selectionActions}
       {surfaces?.overlays}

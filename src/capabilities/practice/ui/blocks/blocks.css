@@ -247,7 +247,9 @@
   }
 
   & .un-blk[data-mode="submitted"] .un-blk-foot,
-  & .un-blk[data-mode="disabled"] .un-blk-foot {
+  & .un-blk[data-mode="disabled"] .un-blk-foot,
+  & .un-blk[data-mode="submitted"] .un-blk-status,
+  & .un-blk[data-mode="disabled"] .un-blk-status {
     display: none;
   }
 
