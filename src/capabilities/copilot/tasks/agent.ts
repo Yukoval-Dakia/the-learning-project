@@ -17,7 +17,7 @@ export const copilotTaskSpec = {
     // Inert registry fallback: the durable owner overrides it entirely (uncapped
     // iterations; the 45-minute owner timeout is the only execution bound).
     // Startup consumes the route's absolute deadline; 90s is the inline request
-    // envelope, not a separate 60s task cap.
+    // envelope, deliberately its own value rather than the tier default.
     budget: { ...DEFAULT_BUDGET, maxIterations: 6, timeout: 90_000 },
     needsToolCall: true,
     isMultimodal: false,

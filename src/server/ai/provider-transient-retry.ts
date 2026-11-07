@@ -30,7 +30,14 @@ export interface ProviderTransientRetryPolicy {
 export function providerTransientRetryPolicy(): ProviderTransientRetryPolicy {
   return {
     maxRetries: (getConfig('ADMISSION_PROVIDER_RETRY_MAX_RETRIES') as number | undefined) ?? 3,
-    maxWaitMs: (getConfig('ADMISSION_PROVIDER_RETRY_MAX_WAIT_MS') as number | undefined) ?? 60_000,
+    // No retry_after_ms has ever been observed in dev ai_task_runs (YUK-1983
+    // scan, 0 rows across all loom_dev_* DBs) — observed 429s carry no hint and
+    // bind on maxRetries, not this budget. The wait budget only matters when a
+    // provider does send Retry-After: 180s lets a hint up to ~3 minutes be
+    // honored in-run instead of skipping the resend and falling to the 24h
+    // durable wait (#2663). Sleeping costs no tokens; the streaming path keeps
+    // its own 15s cap (runner.ts).
+    maxWaitMs: (getConfig('ADMISSION_PROVIDER_RETRY_MAX_WAIT_MS') as number | undefined) ?? 180_000,
     baseDelayMs:
       (getConfig('ADMISSION_PROVIDER_RETRY_BASE_DELAY_MS') as number | undefined) ?? 2_000,
   };
