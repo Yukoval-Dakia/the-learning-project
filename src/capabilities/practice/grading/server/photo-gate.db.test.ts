@@ -527,6 +527,7 @@ it('verifies photo evidence before claims and persists the accepted binding', as
     per_item_max_cost_usd_micros: 10000,
   };
   const receipt = PhotoExamEvidence.parse(await runPhotoJudgeExam(db, input));
+  console.info('photo evidence raw receipt', JSON.stringify(receipt));
   expect(receipt).toMatchObject({ passed: true, dry_run: true });
   expect(calls).toHaveLength(25);
   expect(await runPhotoJudgeExam(db, input)).toEqual(receipt);
@@ -639,6 +640,7 @@ it('verifies photo evidence before claims and persists the accepted binding', as
       evaluation_group_id: 'photo-group',
       model_executor: createFormalModelExecutor(db),
     });
+    console.info('enabled photo raw evaluation', JSON.stringify(graded));
     const { evaluation } = await import('@/db/schema');
     expect(await db.select().from(evaluation)).toMatchObject([
       { unit_results: [{ photo_judgement: { evidence_ref: evidenceRef } }] },

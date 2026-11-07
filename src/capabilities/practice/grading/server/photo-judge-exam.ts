@@ -92,6 +92,13 @@ export async function verifyPhotoJudgeExam(
 export function freezePhotoJudgeExamInput(raw: unknown) {
   const initial = PhotoJudgeExamInput.parse(raw);
   const configuration = photoJudgeExamConfiguration(initial.identity.task_kind);
+  if (
+    initial.identity.provider !== configuration.identity.provider ||
+    initial.identity.model !== configuration.identity.model
+  )
+    throw new Error(
+      'Photo exam expected route does not match the loaded route; never switch automatically',
+    );
   return {
     ...initial,
     identity: configuration.identity,
