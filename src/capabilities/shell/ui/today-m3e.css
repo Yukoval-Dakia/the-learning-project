@@ -124,6 +124,12 @@ main[data-ui-next].un-today-page {
     color: var(--un-critical);
   }
 
+  /* Flags outside .td-flags are direct children of the flow, which has no gap of its own. */
+  & .td-flow > .td-flags + .td-flag,
+  & .td-flow > .td-flag + .td-flag {
+    margin-block-start: var(--un-sp-2);
+  }
+
   /* YUK-1738 — a system-side notice (some AI work keeps failing), not a learner error:
      caution, not critical. */
   & .td-flag.td-flag-caution {
