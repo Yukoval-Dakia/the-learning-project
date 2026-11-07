@@ -749,7 +749,7 @@ export async function runAdmissionForQuestion(
           },
         });
         const boss =
-          (error.recovery.reason === 'quota' && error.recovery.retry_at) ||
+          (error.recovery.reason !== 'login' && error.recovery.retry_at) ||
           (error.recovery.reason === 'login' && error.route)
             ? await getStartedBoss()
             : null;
@@ -760,7 +760,7 @@ export async function runAdmissionForQuestion(
             await recordPaidEffectResult(tx, batch.identity, delivery.id, waitingReceipt, {
               fence: batchFence,
             });
-          if (boss && error.recovery.reason === 'quota' && error.recovery.retry_at) {
+          if (boss && error.recovery.reason !== 'login' && error.recovery.retry_at) {
             const wakeData = {
               ...data,
               admission_version: 4 as const,
