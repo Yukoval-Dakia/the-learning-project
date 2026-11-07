@@ -22,6 +22,10 @@ import { proposalReasonPlainText } from './reason-text';
 
 type DbLike = Db | Tx;
 type QuestionEditChange = Extract<AiProposalPayloadT, { kind: 'question_edit' }>['proposed_change'];
+type KnowledgeMutationChange = Extract<
+  AiProposalPayloadT,
+  { kind: 'knowledge_mutation' }
+>['proposed_change'];
 
 const TITLE_DETAIL_CAP = 48;
 const BLOCK_EXCERPT_CAP = 120;
@@ -67,6 +71,44 @@ export interface ProposalSummaryItem {
   value: string;
 }
 
+/**
+ * Lifecycle of a knowledge node referenced by a stored proposal, resolved at read
+ * time. `merged` means the node was folded into another node by an accepted merge;
+ * `archived` is a plain soft delete; `missing` means the row (or a learner-hidden
+ * synthetic node) no longer exists. A missing node never carries an id or name.
+ */
+export type ProposalKnowledgeNodeState = 'live' | 'archived' | 'merged' | 'missing';
+
+export interface ProposalKnowledgeNodeLabel {
+  /** Learner-facing name; null when the row is gone or not learner-visible. */
+  label: string | null;
+  state: ProposalKnowledgeNodeState;
+}
+
+/**
+ * Names of the nodes a knowledge_mutation acts on. Resolution happens on read;
+ * the stored proposal payload keeps its ids only.
+ */
+export type ProposalKnowledgeMutationPresentation =
+  | {
+      mutation: 'merge';
+      /** Nodes folded away, in payload order. */
+      from: ProposalKnowledgeNodeLabel[];
+      into: ProposalKnowledgeNodeLabel;
+    }
+  | {
+      mutation: 'reparent';
+      node: ProposalKnowledgeNodeLabel;
+      /** null = the payload names no parent (tree root). */
+      parent: ProposalKnowledgeNodeLabel | null;
+    }
+  | {
+      mutation: 'split';
+      from: ProposalKnowledgeNodeLabel;
+      /** Proposed new pieces; their names exist only in the payload. */
+      into: Array<{ name: string; parent: ProposalKnowledgeNodeLabel | null }>;
+    };
+
 export interface ProposalPresentation {
   title: string;
   /**
@@ -79,6 +121,7 @@ export interface ProposalPresentation {
   change_summary: ProposalSummaryItem[];
   evidence_labels: Record<string, string>;
   knowledge_edge?: { from_label: string; to_label: string };
+  knowledge_mutation?: ProposalKnowledgeMutationPresentation;
   block_merge: {
     primary: ProposalBlockPreview | null;
     merged: ProposalBlockPreview[];
@@ -1011,6 +1054,159 @@ async function loadEdgeKnowledgeNames(
   return names;
 }
 
+interface KnowledgeMutationNodeRow {
+  id: string;
+  name: string;
+  archived_at: Date | null;
+}
+
+/** Names and archive state of every node a page's mutation cards name, batched. */
+async function loadKnowledgeMutationNodeRows(
+  db: DbLike,
+  ids: readonly string[],
+): Promise<Map<string, KnowledgeMutationNodeRow>> {
+  const rows = new Map<string, KnowledgeMutationNodeRow>();
+  for (const chunk of chunksOf(ids.filter(isLearnerVisibleKnowledgeId))) {
+    const found = await db
+      .select({ id: knowledge.id, name: knowledge.name, archived_at: knowledge.archived_at })
+      .from(knowledge)
+      .where(inArray(knowledge.id, chunk));
+    for (const row of found) rows.set(row.id, row);
+  }
+  return rows;
+}
+
+/**
+ * Which of these archived nodes were absorbed by a merge. `merged_from` lives on the
+ * absorber, so archive state alone cannot tell a merge from a plain archive.
+ */
+async function loadMergedAwayKnowledgeIds(
+  db: DbLike,
+  ids: readonly string[],
+): Promise<Set<string>> {
+  const merged = new Set<string>();
+  const visible = ids.filter(isLearnerVisibleKnowledgeId);
+  if (visible.length === 0) return merged;
+  const visibleSet = new Set(visible);
+  for (const chunk of chunksOf(visible)) {
+    const list = sql.join(
+      chunk.map((id) => sql`${id}`),
+      sql`, `,
+    );
+    const rows = await db
+      .select({ merged_from: knowledge.merged_from })
+      .from(knowledge)
+      .where(sql`${knowledge.merged_from} ?| array[${list}]`);
+    for (const row of rows) {
+      for (const id of row.merged_from) {
+        if (visibleSet.has(id)) merged.add(id);
+      }
+    }
+  }
+  return merged;
+}
+
+function knowledgeMutationNodeIds(change: KnowledgeMutationChange): string[] {
+  switch (change.mutation) {
+    case 'merge':
+      return [...change.from_ids, change.into_id];
+    case 'reparent':
+      return change.new_parent_id === null
+        ? [change.node_id]
+        : [change.node_id, change.new_parent_id];
+    case 'split':
+      return [
+        change.from_id,
+        ...change.into.flatMap((entry) => (entry.parent_id === null ? [] : [entry.parent_id])),
+      ];
+  }
+}
+
+function mutationNodeLabel(
+  id: string,
+  rows: ReadonlyMap<string, KnowledgeMutationNodeRow>,
+  mergedAway: ReadonlySet<string>,
+): ProposalKnowledgeNodeLabel {
+  const row = rows.get(id);
+  // A gone (or learner-hidden) row contributes no name and no id.
+  if (!row) return { label: null, state: 'missing' };
+  if (mergedAway.has(id)) return { label: row.name, state: 'merged' };
+  if (row.archived_at !== null) return { label: row.name, state: 'archived' };
+  return { label: row.name, state: 'live' };
+}
+
+function knowledgeMutationPresentation(
+  change: KnowledgeMutationChange,
+  labelOf: (id: string) => ProposalKnowledgeNodeLabel,
+): ProposalKnowledgeMutationPresentation {
+  switch (change.mutation) {
+    case 'merge':
+      return {
+        mutation: 'merge',
+        from: change.from_ids.map(labelOf),
+        into: labelOf(change.into_id),
+      };
+    case 'reparent':
+      return {
+        mutation: 'reparent',
+        node: labelOf(change.node_id),
+        parent: change.new_parent_id === null ? null : labelOf(change.new_parent_id),
+      };
+    case 'split':
+      return {
+        mutation: 'split',
+        from: labelOf(change.from_id),
+        into: change.into.map((entry) => ({
+          name: entry.name,
+          parent: entry.parent_id === null ? null : labelOf(entry.parent_id),
+        })),
+      };
+  }
+}
+
+/**
+ * Run an optional enrichment read inside its own savepoint. Statement-local data or
+ * access errors degrade to the fallback (the card still renders); connection,
+ * transaction, cancellation and resource failures keep the original failure path.
+ */
+async function readPresentationDataOptional<T>(
+  db: DbLike,
+  label: string,
+  fallback: T,
+  read: (tx: Tx) => Promise<T>,
+): Promise<T> {
+  let queryFailure: unknown;
+  try {
+    const run = async (labelTx: Tx) => {
+      try {
+        return await read(labelTx);
+      } catch (error) {
+        queryFailure = error;
+        throw error;
+      }
+    };
+    return '$client' in db
+      ? await db.transaction(run, { accessMode: 'read only' })
+      : await db.transaction(run);
+  } catch (error) {
+    // The driver must finish rollback and rethrow the query error itself. A
+    // different error can be a failed rollback; never report that as recovery.
+    const cause = error instanceof Error ? error.cause : undefined;
+    const pgError = cause ?? error;
+    const code =
+      typeof pgError === 'object' && pgError !== null && 'code' in pgError
+        ? pgError.code
+        : undefined;
+    // Only statement-local data/access errors degrade. Connection, transaction,
+    // cancellation and resource failures remain on the original failure path.
+    if (error !== queryFailure || typeof code !== 'string' || !/^(22|42)[0-9A-Z]{3}$/.test(code)) {
+      throw error;
+    }
+    console.warn(`[proposal_presentation] ${label} unavailable`);
+    return fallback;
+  }
+}
+
 /** Batch-enrich proposal cards without an N+1 query per block-merge card. */
 export async function loadProposalPresentations(
   db: DbLike,
@@ -1021,6 +1217,7 @@ export async function loadProposalPresentations(
   const questionIds = new Set<string>();
   const blockMergeSessionIds = new Set<string>();
   const edgeKnowledgeIds = new Set<string>();
+  const mutationKnowledgeIds = new Set<string>();
   for (const proposal of proposals) {
     presentations.set(proposal.id, {
       title: proposalDisplayTitle(proposal.payload),
@@ -1040,6 +1237,11 @@ export async function loadProposalPresentations(
       edgeKnowledgeIds.add(proposal.payload.proposed_change.from_knowledge_id);
       edgeKnowledgeIds.add(proposal.payload.proposed_change.to_knowledge_id);
     }
+    if (proposal.payload.kind === 'knowledge_mutation') {
+      for (const id of knowledgeMutationNodeIds(proposal.payload.proposed_change)) {
+        mutationKnowledgeIds.add(id);
+      }
+    }
     if (proposal.payload.kind !== 'block_merge') continue;
     blockMergeSessionIds.add(proposal.payload.proposed_change.ingestion_session_id);
     blockIds.add(proposal.payload.proposed_change.primary_block_id);
@@ -1047,42 +1249,12 @@ export async function loadProposalPresentations(
   }
 
   if (edgeKnowledgeIds.size > 0) {
-    let queryFailure: unknown;
-    let names: Map<string, string>;
-    try {
-      const readNames = async (labelTx: Tx) => {
-        try {
-          return await loadEdgeKnowledgeNames(labelTx, [...edgeKnowledgeIds]);
-        } catch (error) {
-          queryFailure = error;
-          throw error;
-        }
-      };
-      names =
-        '$client' in db
-          ? await db.transaction(readNames, { accessMode: 'read only' })
-          : await db.transaction(readNames);
-    } catch (error) {
-      // The driver must finish rollback and rethrow the query error itself. A
-      // different error can be a failed rollback; never report that as recovery.
-      const cause = error instanceof Error ? error.cause : undefined;
-      const pgError = cause ?? error;
-      const code =
-        typeof pgError === 'object' && pgError !== null && 'code' in pgError
-          ? pgError.code
-          : undefined;
-      // Only statement-local data/access errors degrade. Connection, transaction,
-      // cancellation and resource failures remain on the original failure path.
-      if (
-        error !== queryFailure ||
-        typeof code !== 'string' ||
-        !/^(22|42)[0-9A-Z]{3}$/.test(code)
-      ) {
-        throw error;
-      }
-      console.warn('[proposal_presentation] knowledge edge names unavailable');
-      names = new Map();
-    }
+    const names = await readPresentationDataOptional(
+      db,
+      'knowledge edge names',
+      new Map<string, string>(),
+      (tx) => loadEdgeKnowledgeNames(tx, [...edgeKnowledgeIds]),
+    );
     for (const proposal of proposals) {
       if (proposal.payload.kind !== 'knowledge_edge') continue;
       const presentation = presentations.get(proposal.id);
@@ -1092,6 +1264,40 @@ export async function loadProposalPresentations(
         from_label: names.get(change.from_knowledge_id) ?? change.from_knowledge_id.slice(0, 8),
         to_label: names.get(change.to_knowledge_id) ?? change.to_knowledge_id.slice(0, 8),
       };
+    }
+  }
+
+  if (mutationKnowledgeIds.size > 0) {
+    const ids = [...mutationKnowledgeIds];
+    const nodeRows = await readPresentationDataOptional(
+      db,
+      'knowledge mutation node names',
+      new Map<string, KnowledgeMutationNodeRow>(),
+      (tx) => loadKnowledgeMutationNodeRows(tx, ids),
+    );
+    // Only an already-archived target can be merged away; a pending mutation's
+    // targets are normally live, so this second read usually does not run.
+    const archivedIds = [...nodeRows.values()]
+      .filter((row) => row.archived_at !== null)
+      .map((row) => row.id);
+    const mergedAway =
+      archivedIds.length === 0
+        ? new Set<string>()
+        : await readPresentationDataOptional(
+            db,
+            'knowledge mutation merge history',
+            new Set<string>(),
+            (tx) => loadMergedAwayKnowledgeIds(tx, archivedIds),
+          );
+    const labelOf = (id: string) => mutationNodeLabel(id, nodeRows, mergedAway);
+    for (const proposal of proposals) {
+      if (proposal.payload.kind !== 'knowledge_mutation') continue;
+      const presentation = presentations.get(proposal.id);
+      if (!presentation) continue;
+      presentation.knowledge_mutation = knowledgeMutationPresentation(
+        proposal.payload.proposed_change,
+        labelOf,
+      );
     }
   }
 
