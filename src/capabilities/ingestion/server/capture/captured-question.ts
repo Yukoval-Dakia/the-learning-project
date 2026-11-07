@@ -6,7 +6,7 @@
  * block's import links, so both are written only here.
  */
 import { eq, inArray } from 'drizzle-orm';
-import { type FigureRefT, type StructuredQuestionT } from '@/core/schema/structured_question';
+import type { FigureRefT, StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Tx } from '@/db/client';
 import { question, type question_block, source_asset } from '@/db/schema';
 import { withAnswerClass } from '@/kernel/records/answer-class-write';
