@@ -11,7 +11,12 @@
  *   - 定义声明的 env 名/字面量域/大小写/极性/envMode 与真实 envParse 或 base 不一致；
  *   - 已登记 flag 没有活 reader（或只有直接 process.env 读）；
  *   - base 不可得（fail closed）；
- *   - 非 ENABLED 控制项（enum/CSV/JSON）从定义推导 census，新增控制项不登记即失败。
+ *   - 非 ENABLED 控制项（enum/CSV/JSON）从定义推导 census，新增控制项不登记即失败；
+ *   - 产品代码（src/、server/，测试除外）新增命名 process.env 读无法归入
+ *     CONFIG_REGISTRY、boot schema（src/core/config/server/env.ts）或 STAY_IN_PLACE_ENV；
+ *   - 新增动态 process.env[...] 读；新增 registry envName 缺 boot schema；
+ *   - 非 family 键（number/string、无 env 的 json/enum）新增键缺 metadata/reader 或新增直读。
+ *     非 family 与未归类 env 的存量只汇报，按 base 放行。
  *
  * 只报告不改行为：base/head 的 codeDefault、新增/删除键与 reader 集合变化全部打印，
  * 由 review 判断；LITERAL-VARIANCE 仍是 observability only。
@@ -24,35 +29,58 @@
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CONFIG_REGISTRY, type ConfigKeyDef } from '../src/core/config/registry';
+import { SERVER_ENV_KEYS } from '../src/core/config/server/env';
 import {
   type ConstDefinition,
   type DefinitionFingerprint,
   type DiffEntry,
+  type EnvCensusReport,
   type FlagAuditResult,
   type FlagViolation,
+  type NonFamilyReport,
   type ViolationCode,
+  auditNonFamilyKeys,
   compareWithBase,
+  computeEnvCensus,
   computeVariance,
   controlProblems,
   crossCheckHead,
   extractRegistryFingerprints,
+  extractRegistryKeyCensus,
   grammarProblems,
   isFamilyKind,
   metadataProblems,
   schemaKindOf,
 } from './lib/config-audit/contract-compare';
 import {
+  BOOT_ENV_PATH,
   REGISTRY_PATH,
   REPO_ROOT,
   SourceTree,
   collectConstFlags,
   collectDirectEnvReads,
+  collectProductEnvReads,
   collectReaders,
+  extractBootEnvKeys,
   headDefinitions,
   isAllowedDirectEnvFile,
+  isAllowedDynamicEnvFile,
   scanFlagTokens,
 } from './lib/config-audit/source-scan';
 import { resolveAuditBaseSha } from './lib/git-base-scan';
+
+/**
+ * Env names the census allows outside the registry and boot schema, with the owner that
+ * keeps them there (config inventory §2: provider credentials/adapters, tests, deployment).
+ * Anything not listed here must be registered or declared in the boot schema.
+ */
+const STAY_IN_PLACE_ENV: ReadonlyMap<string, string> = new Map([
+  [
+    'OPENAI_CHATGPT_AUTH_FILE',
+    'provider auth file resolved by the pi provider adapter (src/server/ai/pi-models.ts)',
+  ],
+  ['PLAYWRIGHT_BROWSERS_PATH', 'test/deploy browser root for the render runner (chromium-runner)'],
+]);
 
 export function auditFlags(comparisonBase?: string): FlagAuditResult {
   const headTree = SourceTree.head();
@@ -60,6 +88,7 @@ export function auditFlags(comparisonBase?: string): FlagAuditResult {
   const definitions = headDefinitions(headTree, readers);
   const consts = collectConstFlags(headTree);
   const foundTokens = [...scanFlagTokens(headTree)].sort();
+  const allEntries = Object.entries(CONFIG_REGISTRY) as [string, ConfigKeyDef][];
 
   const violations: FlagViolation[] = [];
   const registered = new Map(definitions.map((def) => [def.key, def]));
@@ -196,6 +225,121 @@ export function auditFlags(comparisonBase?: string): FlagAuditResult {
     collectDirectEnvReads(baseTree).map((read) => `${read.key}\u0000${read.file}`),
   );
 
+  // Boot schema: the runtime SERVER_ENV_KEYS set must equal what the AST extractor sees,
+  // and the base must be readable or the env census is unmeasurable (fail closed).
+  const headBootText = headTree.text(BOOT_ENV_PATH);
+  const headBootExtraction = headBootText
+    ? extractBootEnvKeys(headBootText)
+    : { keys: [], problems: [`${BOOT_ENV_PATH} is missing at head`] };
+  for (const problem of headBootExtraction.problems) {
+    violations.push({ code: 'DEFINITION-PROBLEM', name: BOOT_ENV_PATH, detail: problem });
+  }
+  const headBootKeys = new Set(headBootExtraction.keys);
+  const headBootMeasurable = headBootText !== undefined && headBootExtraction.problems.length === 0;
+  const runtimeBootKeys = new Set(SERVER_ENV_KEYS);
+  for (const key of [...runtimeBootKeys].filter((name) => !headBootKeys.has(name)).sort()) {
+    violations.push({
+      code: 'DEFINITION-PROBLEM',
+      name: BOOT_ENV_PATH,
+      detail: `runtime SERVER_ENV_KEYS includes ${key} but the AST extractor does not`,
+    });
+  }
+  for (const key of [...headBootKeys].filter((name) => !runtimeBootKeys.has(name)).sort()) {
+    violations.push({
+      code: 'DEFINITION-PROBLEM',
+      name: BOOT_ENV_PATH,
+      detail: `AST extractor sees ${key} but runtime SERVER_ENV_KEYS does not`,
+    });
+  }
+
+  const baseBootText = baseTree.text(BOOT_ENV_PATH);
+  let baseBootKeys: Set<string> | null = null;
+  if (baseBootText === undefined) {
+    violations.push({
+      code: 'BASE-PROBLEM',
+      name: BOOT_ENV_PATH,
+      detail: `missing at comparison base ${baseSha}`,
+    });
+  } else {
+    const baseBootExtraction = extractBootEnvKeys(baseBootText);
+    for (const problem of baseBootExtraction.problems) {
+      violations.push({ code: 'BASE-PROBLEM', name: BOOT_ENV_PATH, detail: problem });
+    }
+    if (baseBootExtraction.keys.length === 0) {
+      violations.push({
+        code: 'BASE-PROBLEM',
+        name: BOOT_ENV_PATH,
+        detail: `could not extract the boot env schema at comparison base ${baseSha}`,
+      });
+    } else if (baseBootExtraction.problems.length === 0) {
+      baseBootKeys = new Set(baseBootExtraction.keys);
+    }
+  }
+
+  const baseRegistryCensus = extractRegistryKeyCensus(baseRegistryText);
+  for (const problem of baseRegistryCensus.problems) {
+    violations.push({ code: 'BASE-PROBLEM', name: REGISTRY_PATH, detail: problem });
+  }
+  if (baseRegistryCensus.entries.size === 0) {
+    violations.push({
+      code: 'BASE-PROBLEM',
+      name: REGISTRY_PATH,
+      detail: `could not extract every CONFIG_REGISTRY key at comparison base ${baseSha}`,
+    });
+  }
+
+  // Product-code env census: every read must own a table; only new reads/dynamic accesses gate.
+  const envNameOf = (def: ConfigKeyDef): string | null => def.envName ?? null;
+  const registryEnvs = new Set(
+    allEntries.map(([, def]) => envNameOf(def)).filter((name): name is string => name !== null),
+  );
+  const baseRegistryEnvs = new Set(
+    [...baseRegistryCensus.entries.values()]
+      .map((entry) => entry.envName)
+      .filter((name): name is string => name !== null),
+  );
+  const baseRegistryMeasurable =
+    baseRegistryCensus.problems.length === 0 && baseRegistryCensus.entries.size > 0;
+  let envCensus: EnvCensusReport | undefined;
+  let nonFamily: NonFamilyReport | undefined;
+  if (headBootMeasurable && baseBootKeys && baseRegistryMeasurable) {
+    const headProductReads = collectProductEnvReads(headTree);
+    const baseProductReads = collectProductEnvReads(baseTree);
+    const census = computeEnvCensus({
+      registryEnvs,
+      baseRegistryEnvs,
+      bootKeys: headBootKeys,
+      baseBootKeys,
+      stayInPlace: STAY_IN_PLACE_ENV,
+      headNamedReads: headProductReads.named,
+      baseNamedReads: baseProductReads.named,
+      headDynamicReads: headProductReads.dynamic,
+      baseDynamicReads: baseProductReads.dynamic,
+      isAllowedDynamicFile: isAllowedDynamicEnvFile,
+    });
+    envCensus = census.report;
+    violations.push(...census.violations);
+  }
+  if (baseRegistryMeasurable) {
+    const familyKeys = new Set(definitions.map((def) => def.key));
+    const nonFamilyAudit = auditNonFamilyKeys({
+      entries: allEntries
+        .filter(([key]) => !familyKeys.has(key))
+        .map(([key, def]) => ({
+          key,
+          envName: envNameOf(def),
+          metadataProblems: metadataProblems(def, key),
+          readerCount: (readers.get(key) ?? []).length,
+        })),
+      baseKeys: new Set(baseRegistryCensus.entries.keys()),
+      headReads,
+      baseReadIds,
+      isAllowedDirectEnvFile,
+    });
+    nonFamily = nonFamilyAudit.report;
+    violations.push(...nonFamilyAudit.violations);
+  }
+
   // (a) A definition removed at head must not leave direct env reads behind.
   for (const key of baseExtraction.fingerprints.keys()) {
     if (registered.has(key)) continue;
@@ -219,16 +363,28 @@ export function auditFlags(comparisonBase?: string): FlagAuditResult {
   }
 
   // (b) A registered key read directly from process.env bypasses DB/env/default resolution.
-  //     Only new (key, file) pairs relative to base fail; existing reads are grandfathered.
+  //     Match by envName, not key: lane.global.provider is read as AI_PROVIDER_OVERRIDE.
+  //     Only new (env name, file) pairs relative to base fail; existing reads are grandfathered.
+  //     Non-family keys are handled by auditNonFamilyKeys above.
+  const envNameToKeys = new Map<string, string[]>();
+  for (const [key, def] of allEntries) {
+    if (!def.envName) continue;
+    const list = envNameToKeys.get(def.envName) ?? [];
+    list.push(key);
+    envNameToKeys.set(def.envName, list);
+  }
   for (const read of headReads) {
-    if (!registered.has(read.key)) continue;
     if (isAllowedDirectEnvFile(read.file)) continue;
-    if (baseReadIds.has(`${read.key}\u0000${read.file}`)) continue;
-    violations.push({
-      code: 'DIRECT-ENV-READ',
-      name: read.key,
-      detail: `registered key read directly from process.env in ${read.file} (${read.form}); use getConfig/getConfigFlag/getConfigMany`,
-    });
+    const keys = envNameToKeys.get(read.key) ?? (registered.has(read.key) ? [read.key] : []);
+    for (const key of keys) {
+      if (!registered.has(key)) continue;
+      if (baseReadIds.has(`${read.key}\u0000${read.file}`)) continue;
+      violations.push({
+        code: 'DIRECT-ENV-READ',
+        name: key,
+        detail: `registered key '${key}' (env ${read.key}) read directly from process.env in ${read.file} (${read.form}); use getConfig/getConfigFlag/getConfigMany`,
+      });
+    }
   }
 
   return {
@@ -240,6 +396,8 @@ export function auditFlags(comparisonBase?: string): FlagAuditResult {
     violations,
     diff,
     variance: computeVariance(definitions),
+    envCensus,
+    nonFamily,
   };
 }
 
@@ -268,6 +426,9 @@ function printViolations(violations: FlagViolation[]): void {
     'ORPHAN-ENV-READ',
     'DIRECT-ENV-READ',
     'CONST-PROBLEM',
+    'UNCLASSIFIED-ENV-READ',
+    'DYNAMIC-ENV-READ',
+    'REGISTRY-SCHEMA-GAP',
     'BASE-PROBLEM',
     'BASE-DRIFT',
   ] satisfies ViolationCode[]) {
@@ -277,6 +438,76 @@ function printViolations(violations: FlagViolation[]): void {
     for (const violation of list) console.log(`    - ${violation.name}: ${violation.detail}`);
     console.log('');
   }
+}
+
+function printEnvCensus(census: EnvCensusReport): void {
+  const existingRegistryOnly = new Set(census.existingRegistryOnly);
+  console.log('  ENV CENSUS — 产品代码 env 读（src/ + server/，测试排除）');
+  console.log(
+    `    registry envName ${census.registryEnvCount}；boot schema ${census.bootKeyCount}；交集 ${census.overlapCount}`,
+  );
+  console.log(
+    `    命名读 ${census.namedReadCount} 个 (key×file) / ${census.namedFileCount} 文件 / ${census.namedNameCount} 名；动态读 ${census.dynamicReadCount} 处 / ${census.dynamicByFile.length} 文件`,
+  );
+  console.log(
+    `    归属：registry ${census.classified.registry}，boot schema ${census.classified.boot}，stay-in-place ${census.classified.stay}`,
+  );
+
+  console.log(`    schema-only（boot 独占，无 registry envName）：${census.schemaOnly.length}`);
+  for (const key of census.schemaOnly) console.log(`      ${key}`);
+
+  console.log(
+    `    registry-only（registry envName 缺 boot schema）：${census.registryOnly.length}`,
+  );
+  for (const key of census.registryOnly) {
+    console.log(`      ${key}${existingRegistryOnly.has(key) ? ' (existing)' : ''}`);
+  }
+
+  if (census.hidden.length > 0) {
+    console.log(
+      `    hidden（产品代码在读，registry 与 boot schema 都没有）：${census.hidden.length}`,
+    );
+    for (const item of census.hidden) console.log(`      ${item.key} ← ${item.files.join(', ')}`);
+  }
+
+  if (census.existingUnclassified.length > 0) {
+    console.log(
+      `    存量未归类读（report-only，base 已存在的同一 key×file）：${census.existingUnclassified.length}`,
+    );
+    for (const item of census.existingUnclassified) {
+      console.log(`      ${item.key} @ ${item.file}`);
+    }
+  }
+
+  if (census.dynamicByFile.length > 0) {
+    console.log('    动态 env 读（report-only，现有；只有新增会红）：');
+    for (const item of census.dynamicByFile) {
+      console.log(`      ${item.file} × ${item.count}`);
+    }
+  }
+
+  if (census.stayInPlace.length > 0) {
+    console.log(`    stay-in-place（已写明归属的原地读取）：${census.stayInPlace.length}`);
+    for (const item of census.stayInPlace) console.log(`      ${item.key} — ${item.reason}`);
+  }
+  console.log('');
+}
+
+function printNonFamily(report: NonFamilyReport): void {
+  const strip = (key: string, problem: string): string =>
+    problem.startsWith(`${key}: `) ? problem.slice(key.length + 2) : problem;
+  console.log(
+    `  NON-FAMILY REGISTRY KEYS — ${report.total}（number/string 与无 env 的 json/enum；存量 report-only）`,
+  );
+  console.log(`    缺 metadata：${report.existingMetadataGaps.length}`);
+  for (const gap of report.existingMetadataGaps) {
+    console.log(`      ${gap.key} [${gap.problems.map((p) => strip(gap.key, p)).join('; ')}]`);
+  }
+  console.log(`    无活 reader：${report.existingNoReader.length}`);
+  for (const key of report.existingNoReader) console.log(`      ${key}`);
+  console.log(`    直读 env（现有，base 放行）：${report.existingDirectReads.length}`);
+  for (const read of report.existingDirectReads) console.log(`      ${read.key} @ ${read.file}`);
+  console.log('');
 }
 
 function main(): void {
@@ -299,6 +530,8 @@ function main(): void {
     console.log(`  base: ${result.base ?? '(missing)'}\n`);
 
     printViolations(result.violations);
+    if (result.envCensus) printEnvCensus(result.envCensus);
+    if (result.nonFamily) printNonFamily(result.nonFamily);
 
     const shippedDiff = result.diff.filter(
       (entry) => entry.field !== 'const-value' && entry.field !== 'codeDefault',
@@ -334,8 +567,8 @@ function main(): void {
     console.log('');
     console.log(
       '  定义在 src/core/config/registry.ts；const 由领域源码自己的 boolean 声明登记。' +
-        ' 直接 env 读只对已登记 key 与 base 删除的 key 检查，不做全仓未登记 env 普查。' +
-        ' report-only (exit 0); --strict gates UNREGISTERED / DEFINITION-PROBLEM / NO-READER / ORPHAN-* / DIRECT-ENV-READ / CONST-PROBLEM / BASE-DRIFT.',
+        ' 产品代码 env 读必须归到 registry、boot schema（src/core/config/server/env.ts）或 STAY_IN_PLACE_ENV；存量按 base 放行并列出。' +
+        ' report-only (exit 0); --strict gates UNREGISTERED / DEFINITION-PROBLEM / NO-READER / ORPHAN-* / DIRECT-ENV-READ / CONST-PROBLEM / UNCLASSIFIED-ENV-READ / DYNAMIC-ENV-READ / REGISTRY-SCHEMA-GAP / BASE-DRIFT.',
     );
   }
 
