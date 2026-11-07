@@ -73,7 +73,7 @@ export function SoloCoach({
         </header>
         <div className="un-ps-coach-body">
           <p className="un-ps-hint">
-            一级一级加力，每一级更近一步；想直接看完整解也行（记为不是独立完成）。这里的对话不计入判分。
+            看了提示，这题不算独立做的。提示一级一级加力，每一级更近一步；也可以直接看完整解。这里的对话不计入判分。
           </p>
           <HintLadder
             key={session}

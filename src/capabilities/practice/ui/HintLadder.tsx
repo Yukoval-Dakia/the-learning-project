@@ -239,7 +239,7 @@ export function HintLadder({
             <span className="un-hl-badge">{HINT_LADDER[FULL_STAGE_INDEX].label}</span>
             <span className="un-hl-noindep">
               <CircleAlert size={14} aria-hidden="true" />
-              非独立完成
+              不算独立做的
             </span>
           </div>
           <div className="un-hl-body">
@@ -331,7 +331,7 @@ export function HintLadder({
         <div className="un-hl-confirm">
           <div className="un-hl-confirm-msg">
             <CircleAlert size={18} aria-hidden="true" />
-            看完整解 = 这题记为<b>非独立完成</b>。中间的提示可以跳过。确认要直接看吗？
+            看完整解，这题就不算独立做的。中间的提示可以跳过。确认要直接看吗？
           </div>
           <div className="un-hl-confirm-acts">
             <button
@@ -445,7 +445,7 @@ function HintStageCard({
           {isReference && (
             <span className="un-hl-noindep">
               <CircleAlert size={14} aria-hidden="true" />
-              非独立完成
+              不算独立做的
             </span>
           )}
         </div>
