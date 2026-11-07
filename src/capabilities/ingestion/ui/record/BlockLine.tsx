@@ -29,7 +29,8 @@ export function BlockLine({
   block,
   no,
   serving,
-  rescuable,
+  open,
+  photos,
   onHoverPage,
 }: {
   sessionId: string;
@@ -38,8 +39,10 @@ export function BlockLine({
   no: string;
   /** Today's serving state, once history has been read. */
   serving: BlockServing | null;
-  /** The material can be read again from its page. */
-  rescuable: boolean;
+  /** The recording can still take this question in. */
+  open: boolean;
+  /** The material is pages, which a question can be read again from. */
+  photos: boolean;
   onHoverPage: (page: number | null) => void;
 }) {
   const enrollment = block.ingestion_enrollment;
@@ -83,14 +86,17 @@ export function BlockLine({
           {block.status === 'auto_enrolled' && (
             <RevertButton sessionId={sessionId} blockId={block.id} />
           )}
-          {enrollment.reason === 'publish_failed' && (
+          {open && enrollment.reason === 'publish_failed' && (
             <EnrollButton sessionId={sessionId} block={block} label="再试一次" />
           )}
-          {enrollment.reason === 'reverted' && (
+          {open && enrollment.reason === 'reverted' && (
             <EnrollButton sessionId={sessionId} block={block} label="再收进去" />
           )}
-          {enrollment.reason === 'needs_text' && <PromptFill sessionId={sessionId} block={block} />}
-          {rescuable &&
+          {open && enrollment.reason === 'needs_text' && (
+            <PromptFill sessionId={sessionId} block={block} />
+          )}
+          {open &&
+            photos &&
             (enrollment.reason === 'needs_text' || enrollment.reason === 'publish_failed') && (
               <RescueButton sessionId={sessionId} block={block} />
             )}

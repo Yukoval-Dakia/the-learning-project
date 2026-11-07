@@ -3,8 +3,8 @@ import { printedNumber } from './block-text';
 import type { Block } from './record-api';
 import type { BlockServing } from './recording-model';
 
-/** Statuses in which a question can still be read again from its page (server rescue rule). */
-const RESCUABLE = new Set(['partial', 'extracted']);
+/** Statuses in which a question can still be taken in or read again (the server's own rule). */
+const STILL_OPEN = new Set(['partial', 'extracted']);
 
 /** Recognised questions. They go into the library by themselves; each line says how that went. */
 export function BlockLines({
@@ -38,7 +38,8 @@ export function BlockLines({
           block={block}
           no={lineNumber(block, i)}
           serving={serving.get(block.id) ?? null}
-          rescuable={photos && RESCUABLE.has(status)}
+          open={STILL_OPEN.has(status)}
+          photos={photos}
           onHoverPage={onHoverPage}
         />
       ))}
