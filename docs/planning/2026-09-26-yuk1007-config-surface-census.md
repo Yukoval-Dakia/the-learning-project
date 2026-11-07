@@ -109,7 +109,7 @@ ON：`SRT_ENABLED`, `SRT_HIERARCHICAL_ELO`, `SRT_EARLY_KLP`,
 | 学习模型参数 | DIFFICULTY_PROXY_WEIGHT .3, ELO_K_GLOBAL .048, SRT_* 一组, eloK defaults | `src/core/.../theta.ts` |
 | PFA | PFA_GAMMA .5, PFA_RHO −.25, LOW_CONFIDENCE_SE 1.0 | `src/core/.../pfa.ts` |
 | selection | DEFAULT_TEMPERATURE 0.25, MEM0_PRIOR caps, CANDIDATE_CAP 24 | `src/capabilities/practice/server/selection-constants.ts` |
-| matcher | MATCHER_COSINE_MAX_DISTANCE 0.35 | `matcher.ts` |
+| matcher cosine | 已删除（YUK-2002），不再占配置面 | — |
 | verify | SOLVE_CHECK_SEMANTIC_THRESHOLD 0.8 | `verify-framework.ts` |
 | embed | EMBED_MODEL / EMBED_DIMS / EMBED_MAX_BATCH | `src/server/memory/embed.ts` |
 | db pool | max 10 | `src/server/db/client.ts` |

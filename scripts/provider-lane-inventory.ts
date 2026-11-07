@@ -376,11 +376,7 @@ export const PROVIDER_LANES = [
         imports: ['@/server/ai/embed'],
       },
       {
-        path: 'src/capabilities/practice/question-bank/server/quiz/matcher.ts',
-        imports: ['@/server/ai/embed'],
-      },
-      {
-        // ADR-0072 LIGHT — search_bank 查询嵌入：与池向量同一 seam（matcher §190 铁律）。
+        // ADR-0072 LIGHT — search_bank 查询嵌入：与题库池向量同一 embed seam。
         path: 'src/capabilities/practice/question-bank/tools/bank-search.ts',
         imports: ['@/server/ai/embed'],
       },
@@ -400,7 +396,6 @@ export const PROVIDER_LANES = [
         path: 'src/capabilities/practice/question-bank/server/admission/solution-prior-vectors.ts',
         kind: 'runtime',
       },
-      { path: 'src/capabilities/practice/question-bank/server/quiz/matcher.ts', kind: 'runtime' },
       // ADR-0072 LIGHT — search_bank 向量通道的查询嵌入（默认 embedFn）。
       { path: 'src/capabilities/practice/question-bank/tools/bank-search.ts', kind: 'runtime' },
     ],

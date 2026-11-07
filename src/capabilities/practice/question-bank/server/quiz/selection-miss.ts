@@ -55,50 +55,8 @@ export function parseSelectionMiss(value: unknown): SelectionMissV1 {
   return selectionMissSchema.parse(value);
 }
 
-function reasonFor(c: EvaluatedSelectionConstraints): SelectionMissV1['reason'] {
-  // A dead (archived/missing) KC has no dedicated reason axis and yields zero accessible
-  // items by definition, so it collapses into NO_ACCESSIBLE_ITEM. A dashboard filtering
-  // on that reason therefore mixes archived-KC and item-scarcity misses.
-  if (!c.live_knowledge) return 'NO_ACCESSIBLE_ITEM';
-  if (c.candidate_count === 0) return 'NO_ALLOWED_USE_ITEM';
-  if (c.near_difficulty_count === 0) return 'NO_NEAR_DIFFICULTY';
-  if (c.required_kind_count === 0) return 'NO_REQUIRED_KIND';
-  if (c.trusted_source_count === 0) return 'NO_TRUSTED_SOURCE';
-  if (c.accessible_count === 0 && c.quarantined_count > 0) {
-    return 'ONLY_QUARANTINED_ITEMS';
-  }
-  if (c.accessible_count === 0) return 'NO_ACCESSIBLE_ITEM';
-  if (c.scorable_count === 0) return 'NO_SCORABLE_ITEM';
-  if (c.independent_family_count === 0) return 'NO_INDEPENDENT_FAMILY';
-  if (
-    c.independent_family_count != null &&
-    c.exposed_family_count != null &&
-    c.independent_family_count === c.exposed_family_count
-  ) {
-    return 'ONLY_EXPOSED_FAMILIES';
-  }
-  // Every observable constraint passed but selection still missed: eligible items existed
-  // and only demand was not fully met. Keep this distinct from NO_ALLOWED_USE_ITEM (a
-  // truly empty pool); the final arm is a defensive fallback if the guards are reordered.
-  return c.accessible_count > 0 ? 'INSUFFICIENT_ELIGIBLE_ITEMS' : 'NO_ALLOWED_USE_ITEM';
-}
-
-export function classifySelectionMiss(
-  envelope: Pick<SelectionMissV1, 'subject_id' | 'knowledge_id' | 'selection_policy_version'>,
-  constraints: EvaluatedSelectionConstraints,
-): SelectionMissV1 {
-  const evaluated = evaluatedSelectionConstraintsSchema.parse(constraints);
-  return selectionMissSchema.parse({
-    version: SELECTION_MISS_VERSION,
-    reason: reasonFor(evaluated),
-    ...envelope,
-    evaluated_constraints: evaluated,
-  });
-}
-
 /** Observe-only ledger write. It never dispatches supply work or participates in selection. */
 export async function writeSelectionMissEvent(db: Db, miss: SelectionMissV1): Promise<string> {
-  // classifySelectionMiss already validated `miss`; write it directly instead of re-parsing.
   return writeEvent(db, {
     id: newId(),
     actor_kind: 'system',

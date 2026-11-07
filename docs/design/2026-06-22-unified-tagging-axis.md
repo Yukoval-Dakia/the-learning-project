@@ -34,9 +34,9 @@ cold-start-bridge **整体解体**：
 | **错因(cause) embedding** | **absent** | `misconception` 表显式不含 embedding；cause 走 `mistake_variant.cause_category` 纯 text 精确枚举匹配。**本设计范围外**（tagging 只需 KC + question）。 |
 | **question embedding** | **live(算) / dormant(读)** | `question.embedding vector(1024)` 同 nightly backfill；编辑重嵌 live。读路径 `poolFetch` cosine 存在，但唯一活调用方 scalar-only。 |
 | **语义检索** | **partial —— question 侧有、knowledge 侧无** | 唯一 pgvector `<=>` SQL 在 `pool-fetch.ts` over **`question`**，且唯一非测试调用方不传 queryEmbedding（scalar）。**KC 侧检索器不存在**；`poolFetch` 的 ORDER-BY-cosine 是可复用**模板**、非可复用代码（查的是错的表）。 |
-| **matcher** | **dormant + 错轴** | `matcher()`（`src/server/quiz/matcher.ts`，`MATCHER_COSINE_MAX_DISTANCE=0.35`）已建但**无 live 调用方**（`matcher-flags.ts` 自注「no live production caller yet」）。且 I/O 是 `Demand{knowledgeId}→{used:questions[],residual}` —— 匹配**题→KC（供给）**，非**内容→候选 KC（标注）**。**不复用**，只借阈值保守 pattern。 |
+| **matcher** | **removed** | `matcher()` 与 `MATCHER_COSINE_MAX_DISTANCE` 已删（YUK-2002）：没有生产调用，I/O 是题→KC 供给，不是内容→候选 KC。标注不复用这条路径。 |
 
-**成本读出**：KC/question 向量**已算、新鲜**（唯一贵的事已做）。**净新建**：(a) KC 余弦检索器 `matchKnowledgeBySimilarity`（无等价物），(b) 统一标注步 + match-vs-propose 决策，(c) tag 时 query-side embed，(d) 维护 lane 上专用 dedup 检测信号。**复活/接线**：维护 lane *已活*，只缺重复检测信号喂入 + 可观测。matcher **不复用**（错形状）。
+**成本读出**：KC/question 向量**已算、新鲜**（唯一贵的事已做）。**净新建**：(a) KC 余弦检索器 `matchKnowledgeBySimilarity`（无等价物），(b) 统一标注步 + match-vs-propose 决策，(c) tag 时 query-side embed，(d) 维护 lane 上专用 dedup 检测信号。**复活/接线**：维护 lane *已活*，只缺重复检测信号喂入 + 可观测。matcher 已删除，不复用。
 
 ## 3. 统一任务 —— `TaggingTask`（match-or-propose）
 
@@ -75,7 +75,7 @@ OUTPUT（判别式 union —— 任务 per-question 决定）
 ```
 
 ### `MATCH_THRESHOLD` 旋钮
-单个 cosine 相似度下限（镜像 matcher 的 0.35 距离 ≈ sim≥0.65，当前**未标定**，关联 YUK-396）。放进 `tagging-flags.ts`（matcher-flags.ts 模式）可调/dark-ship。**薄树上保守默认偏 propose**（冷启正确 —— 太急 match 会误归到唯一可用的 root）；树长大后阈值收紧偏复用。
+单个 cosine 相似度下限（当前**未标定**，关联 YUK-396）。放进 `tagging-flags.ts`，可调/dark-ship。**薄树上保守默认偏 propose**（冷启正确 —— 太急 match 会误归到唯一可用的 root）；树长大后阈值收紧偏复用。
 
 ### 接入点（共享步，所有入口）
 
@@ -142,7 +142,7 @@ embed-source.ts(live)            applyProposeNew+audit(live)
 | **YUK-488（判分）** | 内容轴：题内容→KC ids，读 `question_text`，整页 vision 无关 | performance 轴：整页 vision 判**学生作答**，不碰 knowledge_ids。正交。 |
 | **YUK-486（auto_enroll 幂等）** | 决定题归哪个 KC | 决定要不要重处理某上传。可组合、不重叠。 |
 | **YUK-487（已发 student-grade 门）** | 与答对错无关、内容驱动，恒跑 | 已发；gate 上传学生作答判分。 |
-| **matcher/embedding** | 建 **KC-keyed** 检索器（净新） | 现 `matcher()`/`poolFetch` 是 question-supply、dormant、错形状；只复用 cosine-threshold *pattern* + live `knowledge.embedding` substrate。 |
+| **matcher/embedding** | 建 **KC-keyed** 检索器（净新） | `matcher()` 已删（YUK-2002）。`poolFetch` 仍是题库召回，形状不是内容→候选 KC。标注复用 cosine-threshold pattern 与 live `knowledge.embedding`，不复用题库召回。 |
 
 错因(cause)轴也在范围外：保持精确枚举匹配、无 embedding。
 

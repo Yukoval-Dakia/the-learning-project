@@ -237,7 +237,7 @@ const { max, windowMs } = getConfigMany(['AI_RATE_LIMIT_MAX', 'AI_RATE_LIMIT_WIN
 3. **orchestration 常量**（`orchestration/constants.ts`：anchor 02:30 / catchup 5h / tick / NODE_TIMEOUT / LAYER_STAGGER）：DAG 语义参数；cron 注册发生在 boot + pg-boss schedule，热改要重建 schedule——同 2，boot-bound。
 4. **cron schedules ×15 + `Asia/Shanghai` tz**：manifest 静态声明 + pg-boss cron 表；热改=schedule 管理功能（远期 P2 per-job 启停，census §3 P2），首批不做。
 5. **const flags ×11**（ledger B2：SRT_*/THETA_GRID/POLY_SIGMOID…）：学术实验开关，改动=代码决策（census §1.B2 明确 P0 view-only）；**不算「硬编码率」负担**——它们是研究常量不是配置。
-6. **学习模型常数**（theta.ts DIFFICULTY_PROXY_WEIGHT/ELO_K_GLOBAL、pfa.ts GAMMA/RHO、selection-constants CANDIDATE_CAP、MATCHER_COSINE_MAX_DISTANCE、SOLVE_CHECK_SEMANTIC_THRESHOLD 等 C2 组）：同 5——科学常数热改会破坏 run 间可比性与 calibration 语义（YUK-677 校准 replay 依赖固定锚）。列「可迁移但默认不迁」清单，owner 显式点名才进 config key。
+6. **学习模型常数**（theta.ts DIFFICULTY_PROXY_WEIGHT/ELO_K_GLOBAL、pfa.ts GAMMA/RHO、selection-constants CANDIDATE_CAP、SOLVE_CHECK_SEMANTIC_THRESHOLD 等 C2 组）：同 5——科学常数热改会破坏 run 间可比性与 calibration 语义（YUK-677 校准 replay 依赖固定锚）。列「可迁移但默认不迁」清单，owner 显式点名才进 config key。题库 matcher 的 cosine 上限已删（YUK-2002），不在这组里。
 7. **compiled contract**：Provider union（task-spec.ts:4-12）、PROVIDERS 注册表 wiring（providers.ts:79-248，baseUrl/authMode/env 名）、`IMPLEMENTED_KEY_PROVIDERS`（:330-336）——provider 增删=wire shape 代码工作（YUK-608/921/1027 注释），不是配置。
 8. **secrets / boot 输入**：`*_API_KEY`、`INTERNAL_TOKEN`、`DATABASE_URL`、`API_PORT`、db pool max（`db/client.ts`）、`VITEST`/`NODE_ENV`、R2/TENCENT/MEM0 credentials、`JYEOO_RS_BINARY` 外的 script-only 组——永留 env（census §3 storage-3 + §2.7）。
 9. **design tokens / UI 文案 / i18n**：`globals.css`、内联中文——编译期；UI i18n 是另一个量级工程（census §1.D）。

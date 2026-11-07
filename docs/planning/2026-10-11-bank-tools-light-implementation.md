@@ -147,9 +147,8 @@ TS/TSX/JS/JSX/JSON/SQL 文件；文档与 vitest 分区配置不计产品。
   未证的语义与全库穷尽性；通道不可用/截断也分别披露。
 - sparse/none 时 unsatisfied_constraints 完整保存 query、subject/kind/source/
   draft/admission/within_refs 的组合与 requested_count/retrieved_count；不声称每个
-  约束单独无解。无放宽 SQL 过滤、无填充候选；向量召回也施既有 matcher 的
-  MATCHER_COSINE_MAX_DISTANCE=0.35 防远距离向量填数。该阈值尚无本产品实际输出
-  校准证据待验收。
+  约束单独无解。无放宽 SQL 过滤、无填充候选；向量召回用
+  `BANK_VECTOR_RETRIEVAL_MAX_DISTANCE`（`bank-vector-retrieval.ts`，当前 0.55）。
 - gap_request 目标为 EvidenceDemandV1，直接复用其 schema 片段：
   claim.kind=content_coverage、claim.statement=query、inventory_goal.eligible_count=limit、
   causes=[coverage_gap]，保留完整 unsatisfied_constraints。
@@ -158,8 +157,8 @@ TS/TSX/JS/JSX/JSON/SQL 文件；文档与 vitest 分区配置不计产品。
   evidence/task/difficulty/inventory_goal.horizon_days/control；这些不是检索工具应替
   agent 决定的教学、时限或费用。version=1，补齐后用 EvidenceDemandV1.parse 校验。
 - 已核全部 capability manifest 的工具注册、kernel allowlists 与工具输入：没有可
-  提交 EvidenceDemand 的现有 agent tool。store_sourced_question 仅接收已获题目的
-  candidate + optional demand_id/supply_trace（tools/store-sourced-question.ts:88-99），
+  提交 EvidenceDemand 的现有 agent tool。`executeStoreSourcedQuestion` 仅接收已获题目的
+  candidate + optional demand_id/supply_trace（`supply/tools/submit-question.ts`），
   author_question 的 demand 是生成任务内部对象，均不是缺口台账入口。
   question_supply_nightly/supply_planner 是 jobs，不是 agent 可调用的缺口提交工具。
   现有 dispatchSupplyTarget/dispatchSupplyTargets 是 server owner service，输入

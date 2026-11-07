@@ -80,7 +80,7 @@
 | OCR/VLM + 自动收录 | `ingestion/server/auto-enroll.ts:757–865`，结构/KC门控制 active/draft | 原始抽取/学生作答/参考答案分离；创建 revision 与使用范围；judge 也走统一 evaluator |
 | 上传确认导入/手工改题面/合并块 | `ingestion/server/import-completion.ts:346–390`；`import.ts` | 当前编辑可使 structured 被丢弃；迁移后保留原件/变换依据，无法结构化时使用通用开放作答契约，不丢内容 |
 | question_block 编辑/拆分/合并/配图归属 | `src/capabilities/ingestion/server/block-structured-edit.ts:163–217,229–764` | 保留原有 fold/genesis；编辑 working copy，发布才原子生成新 revision |
-| web/jyeoo 来源 | `practice/server/tools/store-sourced-question.ts:157–388` → `src/server/questions/sourced-draft-insert.ts:85–229` | 去重/KC合并/来源 extract/资产守卫保留；统一草稿规范，verify 对 revision 而非可变行 |
+| web/jyeoo 来源 | `practice/supply/tools/submit-question.ts` → `src/server/questions/sourced-draft-insert.ts` | 去重/KC合并/来源 extract/资产守卫保留；统一草稿规范，verify 对 revision 而非可变行 |
 | 批量 quiz_gen、复合题、tool_quiz | `practice/jobs/quiz_gen.ts:1244–1289,1351–1405,1439–1470` | 题组 revision 与 part identity 一起写；artifact 引用稳定身份，实际 serve 绑定版本 |
 | quiz_verify/source_verify/人工 promote | `practice/jobs/quiz_verify.ts:739–914`；`source_verify.ts`；`verify-and-promote.ts:249–270` | 原锁序/版本守卫/tombstone 保留；改成 revision-scoped verification 与 admission generation |
 | author_question + question_draft 接受/拒绝 | `practice/server/tools/question-author.ts:283–345`；`src/capabilities/practice/server/proposal-appliers.ts:342–623` | draft+proposal事务不拆；接受进入统一发布；被拒绝项保持终态，异步 verify 不再激活 |

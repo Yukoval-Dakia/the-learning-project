@@ -66,7 +66,7 @@ flowchart TD
 | 确定性缺口扫描 | `src/server/question-supply/target-discovery.ts` |
 | route plan / dispatch | `route-planner.ts`、`dispatcher.ts` |
 | nightly refill + cooldown | `refill.ts`、`question_supply_nightly` |
-| active + draft 检索 | `src/server/quiz/pool-fetch.ts`、`matcher.ts` |
+| active + draft 检索 | `src/capabilities/practice/question-bank/server/quiz/pool-fetch.ts` |
 | sourced/generated verify | `source_verify.ts`、`quiz_verify.ts` |
 | verify + promote seam | `src/server/quiz/verify-and-promote.ts` |
 | 难度后验 | `item_calibration`、`effectiveB` |

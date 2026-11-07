@@ -78,8 +78,8 @@ The 8 highest-stakes findings across the whole project, ranked by (reachability 
 | poisson-ipps-capacity-guard-ipw (B) | practice/server/... | KEEP | SKIP | Textbook water-filling with Monte-Carlo + exact-sum test coverage; ε floor is a provably-safe affine mix. |
 | legacy-stream-composer (B) | practice/server/... | KEEP | SKIP | Pure deterministic function, R1-R7 rules match its own test file 1:1; truncation is a documented safety valve. |
 | placement-probe-cluster (B) | placement-termination.ts, placement-select.ts | KEEP | SKIP | UI-cap coupling and preference-reordering are explicit, tracked owner decisions with byte-identical regression anchors. |
-| matcher-cosine-arbitration (B) | matcher.ts | KEEP | SKIP | 0.35 threshold gates a code path with zero live production caller (only db-tests). |
-| matcher-answer-class-dark-flag (B) | matcher-flags.ts | KEEP | SKIP | Pure module const, second safety layer behind an already-inert path. |
+| matcher-cosine-arbitration (B) | matcher.ts | DELETED | DONE | YUK-2002 removed `matcher()` and `MATCHER_COSINE_MAX_DISTANCE`. No production caller; refill still uses `demandToSupplyTarget`. |
+| matcher-answer-class-dark-flag (B) | matcher-flags.ts | DELETED | DONE | YUK-2002 removed `MATCHER_ANSWER_CLASS_FILTER` and the pool-fetch `answerClass` predicate. `question.answer_class` and its backfill stay. |
 | sourcing-sequence-count-unexamined (B) | sourcing-sequence.ts | KEEP | SKIP | Soft pacing knob, inherited convention, no correctness stakes. |
 
 ### Knowledge Graph — Tagging, Dedup, Edges, Hub
@@ -239,7 +239,7 @@ Stable, no further work warranted — grouped by why they're stable:
 
 **Deliberate, dated, self-documented dark-ship placeholders (named unlock trigger already exists):** `bkt-soft-track-dead-sink`, `ez-diffusion-axis-provenance`, `cohens-kappa-unwired`, `typed-state-commit-gate`, `evidence-recurrence-precision-gates`, `research-meeting-nightly-cadence`, `conjecture-accept-not-confirm-semantics`, `honesty-degradation-recompute-sigma-unreachable`, `manual-vision-rescue-half-built`, `simulator-response-model-circularity`.
 
-**Zero live caller / structurally dark, verified not hypothetical:** `matcher-cosine-arbitration`, `matcher-answer-class-dark-flag`, `mastery-progress-signal-telemetry-bridge`, `ai-task-retry-failure-ledger-cross-cut`.
+**Zero live caller / structurally dark, verified not hypothetical:** `mastery-progress-signal-telemetry-bridge`, `ai-task-retry-failure-ledger-cross-cut`. `matcher-cosine-arbitration` and `matcher-answer-class-dark-flag` were deleted in YUK-2002.
 
 **Correctness math verified textbook-correct, diagnostic-only by design:** `calibration-diagnostics-textbook-methods`, `elo-k-schedule` (math shape), `topology-gate-prereq-only-scope`, `conjunctive-multi-kc-credit` (formula half), `steps-judge-weighted-composition`.
 
@@ -940,13 +940,7 @@ KEEP.
 
 No new correctness gap surfaced in this pass; the comments-as-evidence trail (locking, snapshot semantics, cascade-revert) matches the actual code. Nothing here warrants escalation.
 
-Confirmed: `matcher()` is only invoked in `matcher.db.test.ts`; the one live production caller (`refill.ts`) reaches `demandToSupplyTarget()` (a sibling export), not `matcher()` — so the 0.35 threshold at line 456-458 has zero live-path exposure, consistent with the comment in `matcher-flags.ts:24` ("matcher() is uncalled [in production]").
-
-KEEP. Reasoning: `MATCHER_COSINE_MAX_DISTANCE=0.35` gates a code path (`matcher()`) that is genuinely dark end-to-end — its only callers are `matcher.db.test.ts`; the live production caller (`stream-store.ts` → `refill.ts`) uses the sibling `demandToSupplyTarget()` export instead, which doesn't touch this threshold at all. A magic-number tuned only against db-test-seed data sitting in unreached code is low-risk by construction (nothing in prod exercises it), and `matcher-flags.ts:24` already documents this as a known/intentional gap. No escalation warranted — re-derive the threshold empirically only if/when `matcher()` gets wired to a live caller.
-
-KEEP — `MATCHER_ANSWER_CLASS_FILTER = false` is a pure module-level const, well-commented with rationale (matcher itself has no live production caller; only `poolFetch` callers exist outside matcher's own tests), correctly dark-shipped as second safety layer behind the uncalled matcher. No wiring to audit, no side effects, no drift risk.
-
-No escalation needed — this is a textbook safe dark-ship flag sitting behind an already-inert code path.
+DELETED (YUK-2002). `matcher()` had no production caller; `refill.ts` uses `demandToSupplyTarget()` only. The cosine ceiling, `MATCHER_ANSWER_CLASS_FILTER`, and the pool-fetch `answerClass` predicate were removed with it. `question.answer_class` and its backfill stay.
 
 KEEP — not correctness-critical, no deep look warranted.
 

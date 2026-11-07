@@ -62,8 +62,6 @@ export const QUESTION_CONTENT_WRITER_REGISTRY: Record<string, QuestionContentWri
     tickets: ['YUK-1043'],
     note: 'legacy dreaming 接受 INSERT ⇒ 同事务首版 admitted（manual+human）—— 可达接受路径不再是无契约写口（§2 矩阵行 13）。',
   },
-  // store-sourced-question.ts 已降为 shim（YUK-1468），content 写迁往
-  // submit-question.ts（同收敛纪律）。
   'src/capabilities/practice/supply/tools/submit-question.ts': {
     status: 'publisher-converged',
     tickets: ['YUK-1043', 'YUK-1468'],

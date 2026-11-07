@@ -72,7 +72,7 @@ practice 当前有 521 个文件、132,465 行，已不是票面写的 437 文�
 ### 1.2 内部依赖：主要环（证据 §2）
 
 - **题库 ↔ 供题 ↔ 准入是三角环。**
-  - 题库到供题：`quiz/matcher.ts` 直接调 `question-supply/dispatcher`；`bank-search` 与 `question-parts` 取 `evidence-demand` 类型；`edit-question` 与 `proposal-appliers` 调 `tools/submit-question`。
+  - 题库到供题：`quiz/matcher.ts` 只把 `Demand` 适配成供题 target，不召回、不派发；`bank-search` 与 `question-parts` 取 `evidence-demand` 类型；`edit-question` 与 `proposal-appliers` 调 `tools/submit-question`。
   - 准入到供题：取 `placement-starter-attempts` 的定位授权和 `placement-supply-lock`，共 20 条边。
   - 供题到题库：取 `content-fingerprint`、`pool-fetch`、`question-parts`、`embed_backfill`，共 12 条边。
 - **作答 ↔ 判分：** `jobs/judge_run.ts` 回写 `assessment/durable-attempt` 与 `review-operation`。`judge/evaluate-submission.ts` 是枢纽：它内联调用 `settlement/public`（这份设计写的时候是 `src/server/assessment/runtime`，YUK-1735 已删） 的 `activateEvaluation` 与 `learningSettlement`，还调用 `assessment/appeal-execution` 的评价槽分配。
@@ -175,9 +175,9 @@ practice 之外有 142 个文件引用 practice。从 `public` / `ui-public` 静
   | `runPracticeServingAction(command, Idempotency-Key)` | 已付费批次不会重复付费 | 缺少键或键超长时 `validation_error` |
   | `enablePracticeDraft` / `forceEnablePracticeDraft` | verify-then-promote | — |
   | 入库闸核心 | 校验 → 去重 → 写草稿 → 同事务写 verify intent | — |
-  | `canonicalQuestionContentHash`、`poolFetch` / matcher 召回、`search/read/check_bank` | 读面 | — |
+  | `canonicalQuestionContentHash`、`poolFetch`、`search/read/check_bank` | 读面 | — |
 
-  入库闸核心现在混在 `tools/submit-question.ts` 里，由功能线拆出（§3.2）。matcher 只返回 `used` / `residual`，不再自己派发供题。
+  入库闸核心现在混在 `tools/submit-question.ts` 里，由功能线拆出（§3.2）。`matcher.ts` 只保留 `demandToSupplyTarget`，不召回、不派发。
 - **表与事件：**
   - 表：`question`（目标是唯一写者；现在题库 16 处、准入 14 处、供题 6 处、作答 2 处直接写）、`bank_search_snapshot`、`item_calibration`、`question_answer_anchor` 中属于发布的部分。
   - 事件：`question_archive/restore/structure_edit`、`question_serving_action`、`quiz_verify`、`variant_verify`、`question_admission_purpose`、`selection_miss`、`QUESTION_OR_ANSWER_MAY_BE_FAULTY_ACTION`。
@@ -339,7 +339,7 @@ practice 之外有 142 个文件引用 practice。从 `public` / `ui-public` 静
 
 - `practice/server/question-supply/*`：web-supply、placement-starter*、plan-executor、dispatcher、refill、target-discovery 等。
 - `practice/jobs/` 根目录余项：`quiz_gen*`、`supply_planner`、`jyeoo_staged_asset_reap`。`supply_execute`、`question_supply_nightly` 已在 `practice/supply/jobs/`，`source_verify*`、`question_admission_run` 已在 `practice/question-bank/jobs/`；`confusable_contrast_nightly` 已删除，对比缺口并入 `question_supply_nightly` 的缺口发现。
-- `server/tools/submit-question.ts` 的供题候选路径，以及 `file-bank-gap`、`jyeoo-fetch-candidates`、`web-fetch-candidates`、`generate-question-candidate`、`question-author`、`store-sourced-question`。
+- `server/tools/submit-question.ts` 的供题候选路径，以及 `file-bank-gap`、`jyeoo-fetch-candidates`、`web-fetch-candidates`、`generate-question-candidate`、`question-author`。
 - `server/{placement-starter-recovery,supply-plan-operation,web-sourcing-operation,question-generation-grounding}.ts`，供题相关 tasks，`api/quiz-gen-trigger*`。
 
 **建议目标：** `practice/supply/` 子 owner，位于 scheduling 之上、placement 之下。也可以是独立的 `src/capabilities/supply`，但它对题库/判分的 value 依赖会使跨能力 ratchet 上调，见 §6，由功能线权衡。
@@ -351,7 +351,7 @@ practice 之外有 142 个文件引用 practice。从 `public` / `ui-public` 静
 **落位接口要求**（落位时由功能线提供，架构线据此再搬题库与定位）：
 
 1. **契约下沉 kernel。** `EvidenceDemandV1`、`SupplyTraceV1`、`PlacementVerificationAuthority` 下沉到 kernel 契约模块（建议 `src/kernel/supply-contracts.ts`）。目前题库、准入在 9 处直接 import 这些类型或 schema。
-2. **供题派发只走 kernel/supply-dispatch。** matcher 在残差时触发的派发、`stream-store` 的 refill、`learner-return-wake` 的夜间供题，都走 `kernel/supply-dispatch` 或组合根装入的端口。现有 `enqueueSupplyDispatchJob` 已覆盖 `supply_execute` 和 `quiz_gen` 两个队列。
+2. **供题派发只走 kernel/supply-dispatch。** `stream-store` 的 refill、`learner-return-wake` 的夜间供题，都走 `kernel/supply-dispatch` 或组合根装入的端口。现有 `enqueueSupplyDispatchJob` 已覆盖 `supply_execute` 和 `quiz_gen` 两个队列。
 3. **定位授权与锁以端口提供给 verify。** 定位授权断言 `assertPlacementAuthority` 与供题范围锁 `lockPlacementSupplyScopes` 以端口形式提供，锁的顺序不变（ADR-0052 稳定身份是 question、verifier、placement authority 三元组）。锁 key 建议进 kernel 锁登记。
 4. **拆分 `tools/submit-question.ts`。** 唯一入库闸的核心（校验、去重、写草稿、同事务 verify intent）归 question-bank；供题候选路径留在 supply。ADR-0069 和 ADR-0072 说的唯一入库闸是这里的 owner 问题，不新增第二个 commit seam。
 5. **`placement-starter-recovery` 不再直接调用定位会话。** 它现在直调 `placement-select` / `placement-session-lifecycle`，改经 `kernel/placement.ts` 端口。

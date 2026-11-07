@@ -976,7 +976,7 @@
       "handlerImports": ["./jobs/source_verify"],
       "producerSources": [
         "src/capabilities/ingestion/server/image-candidate-accept.ts:1016",
-        "src/capabilities/practice/server/tools/store-sourced-question.ts:128"
+        "src/capabilities/practice/supply/tools/submit-question.ts:851"
       ],
       "recoveryOwner": "pg-boss with existing domain receipt/claim/outbox owner; unchanged",
       "dlq": "source_verify_dlq",
