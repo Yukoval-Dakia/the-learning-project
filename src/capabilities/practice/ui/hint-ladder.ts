@@ -99,8 +99,8 @@ export function positionLabel(reached: number, revealedFull: boolean): string {
 }
 
 /**
- * 下一个**可逐阶推进**的 hint 阶（H0-H4）。单调递进不跳级：只返回 reached 的紧邻下一阶，
- * 且**绝不返回完整解阶**——H5 只能走逃生口（显式独立动作），不能由「再给一阶」滑到。
+ * 「再给一个提示」按钮指向的下一阶（H0-H4）：reached 的紧邻下一阶，且**绝不返回完整解阶**——
+ * 按着这个按钮不会滑到完整解；完整解由学习者自己点。
  *   - reached = -1（尚未开始）→ 返回 H0（首次推进 = 最轻一阶）。
  *   - reached = LAST_HINT_INDEX（H4）→ 下一阶是 H5（isFull）→ 返回 undefined（此后只剩逃生口）。
  */
