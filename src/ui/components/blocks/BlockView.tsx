@@ -7,6 +7,7 @@ import type { ReactElement } from 'react';
 import { useContext, useMemo } from 'react';
 import { type BlockV1T, parseBlockFence } from '@/core/schema/blocks';
 import { BlockUnavailable } from './BlockFrame';
+import { ChartBlock } from './ChartBlock';
 import { DiagramBlock } from './DiagramBlock';
 import { EntityCardSlotContext } from './entity-card-slot';
 import { FigureBlock } from './FigureBlock';
@@ -47,6 +48,8 @@ export function BlockView({ block }: { block: BlockV1T | undefined }): ReactElem
       return <DiagramBlock block={block} />;
     case 'figure':
       return <FigureBlock block={block} />;
+    case 'chart':
+      return <ChartBlock block={block} />;
     case 'question_ref':
       return <QuestionRefBlock block={block} />;
     case 'entity_card':

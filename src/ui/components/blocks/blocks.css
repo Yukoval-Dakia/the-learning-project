@@ -168,6 +168,198 @@
     color: var(--un-text-3);
   }
 
+  /* A chart is drawn here, so it follows the theme; its colors are the page's own roles. */
+  & .un-blk-chart {
+    display: grid;
+    gap: var(--un-sp-2);
+    min-width: 0;
+    padding: var(--un-sp-3);
+    border-radius: var(--un-r-2);
+    background: var(--un-bg-raised);
+    box-shadow: inset 0 0 0 var(--un-hairline) var(--un-line);
+  }
+
+  & .un-blk-chart-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--un-sp-1) var(--un-sp-3);
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+
+  & .un-blk-chart-toggle {
+    color: var(--un-md-sys-color-primary);
+    font-size: var(--un-fs-1);
+  }
+
+  & .un-blk-chart-svg {
+    display: block;
+    width: 100%;
+    max-width: 520px;
+    height: auto;
+    overflow: visible;
+  }
+
+  & .un-blk-chart-pie {
+    max-width: 180px;
+    justify-self: center;
+  }
+
+  & .un-blk-chart-svg [data-series],
+  & .un-blk-chart-key[data-series] {
+    --un-blk-series: var(--un-md-sys-color-primary);
+    fill: var(--un-blk-series);
+    background: var(--un-blk-series);
+    color: var(--un-blk-series);
+  }
+
+  & .un-blk-chart-svg [data-series="1"],
+  & .un-blk-chart-key[data-series="1"] {
+    --un-blk-series: var(--un-caution);
+  }
+
+  & .un-blk-chart-svg [data-series="2"],
+  & .un-blk-chart-key[data-series="2"] {
+    --un-blk-series: var(--un-positive);
+  }
+
+  & .un-blk-chart-svg [data-series="3"],
+  & .un-blk-chart-key[data-series="3"] {
+    --un-blk-series: var(--un-critical);
+  }
+
+  & .un-blk-chart-svg [data-series="4"],
+  & .un-blk-chart-key[data-series="4"] {
+    --un-blk-series: var(--un-md-sys-color-secondary);
+  }
+
+  & .un-blk-chart-svg [data-series="5"],
+  & .un-blk-chart-key[data-series="5"] {
+    --un-blk-series: var(--un-md-sys-color-outline);
+  }
+
+  & .un-blk-chart-svg [data-series="6"],
+  & .un-blk-chart-key[data-series="6"] {
+    --un-blk-series: var(--un-text-2);
+  }
+
+  & .un-blk-chart-svg [data-series="7"],
+  & .un-blk-chart-key[data-series="7"] {
+    --un-blk-series: var(--un-text-4);
+  }
+
+  & .un-blk-chart-svg rect[data-series],
+  & .un-blk-chart-pie [data-series] {
+    stroke: var(--un-bg-raised);
+    stroke-width: 1.5;
+  }
+
+  & .un-blk-chart-line {
+    fill: none;
+    stroke: var(--un-blk-series);
+    stroke-width: 2;
+    stroke-linejoin: round;
+    stroke-linecap: round;
+  }
+
+  & .un-blk-chart-label,
+  & .un-blk-chart-value,
+  & .un-blk-chart-tick {
+    font-size: 11px;
+  }
+
+  & .un-blk-chart-label {
+    fill: var(--un-text-2);
+  }
+
+  & .un-blk-chart-value {
+    fill: var(--un-text-2);
+    font-variant-numeric: tabular-nums;
+  }
+
+  & .un-blk-chart-tick {
+    fill: var(--un-text-3);
+    font-variant-numeric: tabular-nums;
+  }
+
+  & .un-blk-chart-grid {
+    stroke: var(--un-line);
+    stroke-width: 0.5;
+  }
+
+  & .un-blk-chart-axis {
+    stroke: var(--un-md-sys-color-outline);
+    stroke-width: 0.75;
+  }
+
+  & .un-blk-chart-axes,
+  & .un-blk-chart-empty {
+    margin: 0;
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+
+  & .un-blk-chart-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--un-sp-1) var(--un-sp-3);
+    margin: 0;
+    padding: 0;
+    color: var(--un-text-2);
+    font-size: var(--un-fs-1);
+    font-variant-numeric: tabular-nums;
+    list-style: none;
+  }
+
+  & .un-blk-chart-legend li {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--un-sp-1);
+  }
+
+  & .un-blk-chart-key {
+    flex: none;
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+  }
+
+  & .un-blk-chart-table {
+    display: none;
+    width: 100%;
+    border-collapse: collapse;
+    color: var(--un-text-2);
+    font-size: var(--un-fs-1);
+    font-variant-numeric: tabular-nums;
+  }
+
+  & .un-blk-chart[data-table-open] .un-blk-chart-table {
+    display: table;
+  }
+
+  & .un-blk-chart-table :is(th, td) {
+    padding: var(--un-sp-1) var(--un-sp-2);
+    border-bottom: var(--un-hairline) solid var(--un-line);
+    text-align: start;
+  }
+
+  & .un-blk-chart-table th {
+    color: var(--un-text-3);
+    font-weight: var(--un-fw-medium);
+  }
+
+  @media print {
+    & .un-blk-chart-toggle {
+      display: none;
+    }
+
+    & .un-blk-chart-table {
+      display: table;
+    }
+  }
+
   & .un-blk-sr {
     position: absolute;
     width: 1px;
