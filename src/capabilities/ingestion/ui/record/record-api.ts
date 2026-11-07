@@ -80,6 +80,7 @@ export interface Block {
   structured: StructuredQuestionT | null;
   /** The recorded confidence, a label on the question and never a gate. */
   workflow_judge_confidence?: number | null;
+  extraction_confidence?: number;
   reference_md: string | null;
   wrong_answer_md: string | null;
   image_refs: string[] | null;
