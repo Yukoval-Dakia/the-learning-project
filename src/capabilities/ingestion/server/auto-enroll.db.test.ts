@@ -205,6 +205,7 @@ describe('runAutoEnrollForSession', () => {
     });
     const blockId = createId();
     const answeredBlockId = createId();
+    const promptFallbackBlockId = createId();
     await db.insert(source_asset).values({
       id: 'asset_1',
       kind: 'image',
@@ -267,6 +268,39 @@ describe('runAutoEnrollForSession', () => {
         updated_at: now,
         version: 0,
       },
+      {
+        // VLM emitted options with an empty prompt; the OCR text holds the stem. The one
+        // prompt selector must write the stem AND keep the options.
+        id: promptFallbackBlockId,
+        ingestion_session_id: sessionId,
+        source_document_id: null,
+        source_asset_ids: ['asset_1'],
+        page_spans: [],
+        structured: {
+          id: createId(),
+          role: 'standalone',
+          kind: 'choice',
+          source: 'vlm_structure',
+          prompt_text: '',
+          options: [
+            { label: 'A', text: '1' },
+            { label: 'B', text: '2' },
+          ],
+        },
+        extracted_prompt_md: 'What is 1+1?',
+        figures: [],
+        layout_quality: 'partial',
+        image_refs: ['asset_1'],
+        crop_refs: [],
+        visual_complexity: 'low',
+        extraction_confidence: 0.2,
+        status: 'draft',
+        knowledge_hint: null,
+        merged_from_block_ids: [],
+        created_at: now,
+        updated_at: now,
+        version: 0,
+      },
     ]);
 
     const result = await runAutoEnrollForSession({
@@ -282,7 +316,7 @@ describe('runAutoEnrollForSession', () => {
     expect(result.status).toBe('completed');
     // The unattributed block and the answered block (partial page) both enter the bank;
     // the answered one keeps its captured work as evidence without grading it.
-    expect(result.enrolled).toBe(2);
+    expect(result.enrolled).toBe(3);
 
     const [block] = await db.select().from(question_block).where(eq(question_block.id, blockId));
     expect(block?.status).toBe('auto_enrolled');
@@ -322,6 +356,20 @@ describe('runAutoEnrollForSession', () => {
     // Whole pages stay machine prompt input; no answer key or grading is produced here.
     expect(answeredQuestion?.image_refs).toEqual(['asset_1']);
     expect(answeredQuestion?.reference_md).toBeNull();
+
+    const [fallback] = await db
+      .select()
+      .from(question_block)
+      .where(eq(question_block.id, promptFallbackBlockId));
+    expect(fallback?.status).toBe('auto_enrolled');
+    if (!fallback?.imported_question_id) throw new Error('fallback block has no question');
+    const [fallbackQuestion] = await db
+      .select()
+      .from(question)
+      .where(eq(question.id, fallback.imported_question_id));
+    expect(fallbackQuestion?.prompt_md).toContain('What is 1+1?');
+    expect(fallbackQuestion?.prompt_md).toContain('A. 1');
+    expect(fallbackQuestion?.choices_md).toEqual(['1', '2']);
 
     await revertAutoEnrolledBlock(db, { blockId, sessionId });
     const [reverted] = await db.select().from(question_block).where(eq(question_block.id, blockId));

@@ -18,7 +18,7 @@ import {
   enrollCapturedBlock,
 } from '../enroll';
 import { figuresForQuestion } from '../figure_attach';
-import { blockQuestionMarkdown } from './question-text';
+import { blockQuestionMarkdown, blockStructuredContent } from './question-text';
 
 type Block = typeof question_block.$inferSelect;
 
@@ -152,12 +152,13 @@ async function resolveContent(tx: Tx, content: CapturedQuestionContent) {
           ),
         )
     : [];
+  const structured = blockStructuredContent(block);
   return {
     // Same selector as blockHasPrompt and the read projection: a structured tree without
     // prompt_text must not hide extracted_prompt_md, and the options still render.
     promptMd: blockQuestionMarkdown(block),
     referenceMd: block.reference_md ?? null,
-    structured: block.structured ?? null,
+    structured,
     figures: figuresForQuestion(block.structured, block.figures, {
       sourceAssetIds: block.source_asset_ids,
       assets: figureAssets,
