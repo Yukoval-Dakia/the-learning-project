@@ -101,7 +101,9 @@ export const quizGenTaskSpec = {
     kind: 'QuizGenTask',
     description:
       'Search-grounded QuizGen (T-SQ, docs/archive/superpowers/specs/2026-06-02-quizgen-search-grounded-design.md §1). GENERATION phase of ADR-0038 决定#2 plan-then-generate: the Q3 handler chains the machine-gated QuizPlanTask ahead of this task and threads the accepted plan in as structured input. Tool-calling agent: searches Tavily for SOURCE MATERIAL (not questions), writes ORIGINAL questions realizing the plan item-for-item (kind / knowledge_id / objective answer_anchor), and self-declares every used URL into source_refs (§0: provenance is not recoverable from runner logs, so the agent MUST self-report). The Q3 handler injects the Tavily remote MCP + the in-process domain-tool MCP (read user mistakes + knowledge graph) — allowedTools stays [] here so non-handler callers / tests get no tools.',
-    budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 8, timeout: 120_000 },
+    // TEST longest 301s (tlp-audit-artifacts/test-to-nas/route-c-plus-counts-20261106.txt);
+    // 900s clears it and stays under the 1h stuck-run bound.
+    budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 8, timeout: 900_000 },
     needsToolCall: true,
     isMultimodal: false,
     allowedTools: [],

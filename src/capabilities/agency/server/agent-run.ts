@@ -9,6 +9,7 @@
 import { createId } from '@paralleldrive/cuid2';
 import { type BuildMcpServerOptions, piDomainMount } from '@/ai/pi-tool-mount';
 import type { RunTaskResult } from '@/ai/task-result';
+import { resolveTaskBudget } from '@/capabilities/task-registry';
 import type { Db } from '@/db/client';
 import { type WriteEventInput, writeEvent } from '@/kernel/events';
 import { type ProposalInboxRow, listProposalInboxRows } from '@/kernel/proposals/inbox';
@@ -171,7 +172,10 @@ export async function runAgencyProposalScan(
         db,
         taskRunId: toolContextTaskRunId,
         providerAttemptCaller: 'worker',
-        providerSessionDeadlineAt: Date.now() + 65_000,
+        // The mounted tools live inside this run: a shorter window fails deep
+        // reads (query_context) and clamps nested paid tools before this run's
+        // own timeout.
+        providerSessionDeadlineAt: Date.now() + resolveTaskBudget(taskKind).timeout,
         callerActor: { kind: 'agent', ref: spec.surface },
         causedByEventId: triggerEventId,
       },
