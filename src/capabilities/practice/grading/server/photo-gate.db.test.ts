@@ -556,6 +556,15 @@ it('verifies photo evidence before claims and persists the accepted binding', as
     expect(result.passed).toBe(row.passed);
     expect(result.items.filter((item) => item.outcome.kind === 'scored')).toHaveLength(row.scored);
     expect(await verifyPhotoJudgeExam(db, runId, task)).toMatchObject({ verified: row.passed });
+    if (!row.passed) {
+      const { digest: _digest, ...body } = result;
+      const claimed = { ...body, passed: true };
+      await db
+        .update(event)
+        .set({ outcome: 'passed', payload: { ...claimed, digest: canonicalHash(claimed) } })
+        .where((await import('drizzle-orm')).eq(event.id, `evt_photo_exam_${runId}`));
+      expect(await verifyPhotoJudgeExam(db, runId, task)).toMatchObject({ verified: false });
+    }
   }
   judgedHardLimit = undefined;
   expect(calls).toHaveLength(75);
