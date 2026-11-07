@@ -8,8 +8,9 @@ import type { ConfirmationAction } from './turn-sender';
 // it cannot establish whether any tool operation has already taken effect.
 // Memoized: a streaming delta rebuilds only the growing message, so settled rows skip re-rendering.
 
+import { RefreshCw } from 'lucide-react';
 import { memo } from 'react';
-import { Chip } from '@/ui-next/public';
+import { Button, Chip } from '@/ui-next/public';
 import { type ChatMessage, composeStreamingReply } from '../message-projection';
 import { publicProseBody, publicProseFailureBadge, publicProseStatusText } from '../public-prose';
 import { ConversationMarkdown } from './ConversationMarkdown';
@@ -37,6 +38,8 @@ export interface MessageRowProps {
   navigate: (to: string) => void;
   onSelectCorrection: (turnId: string, turnNumber: number) => void;
   onRevert: (checkpointEventId: string) => void;
+  /** Given only to the last reply of a conversation, while the server says it can be resent. */
+  retry?: { pending: boolean; disabled: boolean; onRetry: () => void };
   onAcceptCorrective: (sessionId: string, questionId: string, replyEventId?: string) => void;
 }
 
@@ -95,6 +98,19 @@ export const MessageRow = memo(function MessageRow(props: MessageRowProps) {
         <p className="un-cp-reply-status" role="status">
           {generationStatus}
         </p>
+      ) : null}
+      {settled && props.retry ? (
+        <div className="un-cp-row-actions">
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={props.retry.pending || props.retry.disabled}
+            onClick={props.retry.onRetry}
+          >
+            <RefreshCw size={13} aria-hidden="true" />
+            {props.retry.pending ? '发送中…' : '再发一次'}
+          </Button>
+        </div>
       ) : null}
       {m.confirmationIncompatible && <p role="alert">确认题版本或状态不兼容，暂不能操作。</p>}
       {props.showConfirmation &&
