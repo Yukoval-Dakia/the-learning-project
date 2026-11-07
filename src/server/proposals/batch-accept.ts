@@ -13,8 +13,12 @@
 //      the set. `note_update` is out too: its undo restores the pre-apply body
 //      without checking whether later edits landed, and a batch revoke has no
 //      time window — one click would silently roll back every edit since the
-//      apply. Attempts, grading, settlement, block_merge and every kind
-//      without a retract declaration are rejected per item, never accepted.
+//      apply. `variant_question` is out as well: accept publishes the
+//      materialized question into the general pool, but its retract only
+//      re-projects the mistake_variant row and never un-publishes, so a
+//      "revoked" question would stay servable. Attempts, grading, settlement,
+//      block_merge and every kind without a retract declaration are rejected
+//      per item, never accepted.
 //   2. A per-item report: one failure or rejection never rolls back another
 //      item's committed accept.
 //   3. Idempotent replay: `batch_id` is derived from the id set, so a retry is
@@ -97,7 +101,6 @@ const BATCH_CONFIRMABLE_KINDS: ReadonlySet<string> = new Set([
   'completion',
   'goal_scope',
   'relearn',
-  'variant_question',
 ]);
 
 export function batchConfirmEligibleKinds(): ReadonlySet<string> {
