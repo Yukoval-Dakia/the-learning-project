@@ -118,7 +118,13 @@ export const MessageRow = memo(function MessageRow(props: MessageRowProps) {
           readNotePage={props.readNotePage}
         />
       ) : null}
-      {settled ? <ProposalNotice pending={canonical.pending} navigate={props.navigate} /> : null}
+      {settled ? (
+        <ProposalNotice
+          pending={canonical.pending}
+          autoApplying={canonical.autoApplying}
+          navigate={props.navigate}
+        />
+      ) : null}
       {canCorrect || checkpoint ? (
         <details className="un-st-message-operations">
           <summary>本轮操作</summary>
