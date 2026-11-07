@@ -69,14 +69,14 @@ print(json.dumps(r))
     },
     new AbortController().signal,
   );
-  console.log(JSON.stringify(result));
+  console.log('probe', JSON.stringify(result).length);
   assert.notEqual(result.isError, true);
   const logs = await db
     .select()
     .from(tool_call_log)
     .where(eq(tool_call_log.task_run_id, taskRunId));
   assert.equal(logs.length, 1);
-  console.log('pg-evidence', JSON.stringify(logs));
+  console.log('pg-evidence', logs.length);
   const output = logs[0].output_json;
   assert.ok(output && typeof output === 'object' && 'output' in output);
   assert.equal(typeof output.output, 'string');
@@ -106,7 +106,7 @@ print(json.dumps(r))
     { runtime: 'python', code: "while True: print('x'*4096, flush=True)" },
     new AbortController().signal,
   );
-  console.log('output-limit', JSON.stringify(bounded));
+  console.log('output-limit', JSON.stringify(bounded).length);
   assert.match(JSON.stringify(bounded.content), /output_limit/);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 1000);
