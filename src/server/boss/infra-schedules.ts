@@ -1,4 +1,4 @@
-// Import-free except queue names: admin-config-facts loads this in the API process, which must not reach
+// Import-free except queue names: the admin facts host loads this in the API process, which must not reach
 // handlers.ts and through it the worker-only paid Mem0 judge.
 import { VERIFY_DISPATCH_RECOVERY_QUEUE } from './queue-names';
 

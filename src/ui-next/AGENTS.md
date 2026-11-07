@@ -7,8 +7,9 @@ Stable-layer base for the UI rewrite (YUK-1354). Source of truth for every rule:
   stay unlayered, so they outrank the app's unlayered global element rules.
 - Variables are prefixed `--un-`, classes `un-`. Do not use names from Tailwind v4 theme
   namespaces (T9); Tailwind scans this directory, so prefer prefixed class names everywhere.
-- Never touch `:root`, `body`, global resets or global fonts; never edit `src/ui/`,
-  `web/src/globals.css`, Start routes/router/boot, package/lock/vite entries (I4).
+- Never touch `:root`, `body`, global resets or global fonts; never edit `web/src/globals.css`,
+  Start routes/router/boot, package/lock/vite entries (I4). `src/ui-next` replaces `src/ui` (Owner
+  2026-11-07): `src/ui` may import from here, never the other way round, and new components go here.
 - No external URLs (the CSP allows same-origin fonts only). No new dependencies without
   coordination. Reuse `@/ui/primitives/useFocusTrap` for modal layers; do not bind ⌘K.
 - Components are presentation and interaction only: no data fetching, no business rules (I1).

@@ -15,11 +15,7 @@ import { type DerivationPolicyT, readDerivationPolicy } from '@/core/schema/deri
 import type { Db, Tx } from '@/db/client';
 import { event, tool_operation } from '@/db/schema';
 import { getCorrectionStatuses } from '@/kernel/events';
-import {
-  COPILOT_ASK_ACTIONS,
-  COPILOT_REPLY_ACTION,
-  COPILOT_USER_ASK_ACTION,
-} from '@/kernel/events/copilot-actions';
+import { COPILOT_REPLY_ACTION, COPILOT_USER_ASK_ACTION } from '@/kernel/events/copilot-actions';
 import { eventAllowsDerivationSql } from '@/kernel/events/derivation-policy';
 import { projectLearnerToolInput } from '@/kernel/learning-content';
 import { type CopilotPrimaryView, parseCopilotPrimaryView } from '../primary-view-contract';
@@ -39,6 +35,11 @@ import {
   publicProseStatus,
   readCopilotPublicProse,
 } from './public-prose';
+import { copilotRetryRefusal, visibleCopilotReplySql } from './run-retry';
+import {
+  COPILOT_RUN_ROOT_ACTIONS as COPILOT_ASK_ACTIONS,
+  COPILOT_RETRY_ACTION,
+} from './run-retry-contract';
 import { readConfirmationProjection } from './teaching/confirmation';
 
 export type CopilotTurnRole = 'user' | 'ai' | 'tombstone';
@@ -63,6 +64,7 @@ export interface CopilotTurn {
   event_id: string;
   /** Accepted ask/chip owner of an AI reply; independent of revert eligibility. */
   run_id?: string;
+  retryable?: boolean;
   // session_id + reply_event_id let the Dock anchor a corrective chip after a
   // refresh; both are present only on AI turns.
   session_id?: string;
@@ -370,6 +372,11 @@ async function projectCopilotTurnRows(
   limit: number,
   forModel = false,
 ): Promise<CopilotTurn[]> {
+  const retryAnchors = await dbArg
+    .select({ parent: event.caused_by_event_id })
+    .from(event)
+    .where(and(eq(event.session_id, sessionId), eq(event.action, COPILOT_RETRY_ACTION)));
+  const replacedRuns = new Set(retryAnchors.map((r) => r.parent));
   // Also probe each reply's parent retraction status, even when the parent fell outside this
   // window; otherwise a reply under an out-of-window retracted parent renders stale content.
   // The parent is a user_ask OR a chip_trigger, so this set is not ask-only.
@@ -488,10 +495,36 @@ async function projectCopilotTurnRows(
   // Anchor ⇔ every effect is event-chain-compensable (materializing-tools.ts). Suppress for a
   // teaching_check draft or a materializing domain tool, on both the ask and reply rows.
   const anchorSuppressed = (askId: string): boolean =>
+    replacedRuns.has(askId) ||
     asksWithMaterializingTool.has(askId) ||
     structuredQuestionAskIds.has(askId) ||
     checkpointUnsafeAskIds.has(askId);
 
+  let retryableRunId: string | undefined;
+  if (!forModel) {
+    try {
+      retryableRunId = await dbArg.transaction(async (probe) => {
+        const [latestRoot] = await probe
+          .select({ id: event.id })
+          .from(event)
+          .where(
+            and(eq(event.session_id, sessionId), inArray(event.action, [...COPILOT_ASK_ACTIONS])),
+          )
+          .orderBy(desc(event.dispatch_seq))
+          .limit(1);
+        return latestRoot &&
+          rows.some(
+            (row) =>
+              row.action === COPILOT_REPLY_ACTION && row.caused_by_event_id === latestRoot.id,
+          ) &&
+          (await copilotRetryRefusal(probe, latestRoot.id)) === null
+          ? latestRoot.id
+          : undefined;
+      });
+    } catch (error) {
+      console.error('[copilot_turns] retry eligibility probe failed', { sessionId, error });
+    }
+  }
   const turns: CopilotTurn[] = [];
   for (const row of rows) {
     const checkpointEventId =
@@ -561,6 +594,7 @@ async function projectCopilotTurnRows(
       const primaryView = replyPrimaryView(payload);
       const turn: CopilotTurn = {
         role: 'ai',
+        retryable: retryableRunId !== undefined && row.caused_by_event_id === retryableRunId,
         derivation_policy:
           row.caused_by_event_id && restrictedRootPolicies.has(row.caused_by_event_id)
             ? (restrictedRootPolicies.get(row.caused_by_event_id) as DerivationPolicyT)
@@ -602,12 +636,13 @@ async function projectCopilotTurnRows(
       turns.push(turn);
     } else {
       const text = userText(payload);
-      if (text === null) continue;
+      if (text === null && row.action !== COPILOT_RETRY_ACTION) continue;
       // No reply marker yet: expose only committed public progress under the
       // accepted root identity. Never synthesize a completed answer from deltas.
       const progress = publicByRun.get(row.id);
       if (
         !forModel &&
+        !replacedRuns.has(row.id) &&
         !repliedRunIds.has(row.id) &&
         progress &&
         (progress.last_event_id > 0 || progress.status === 'completed')
@@ -635,10 +670,11 @@ async function projectCopilotTurnRows(
             : {}),
         });
       }
+      if (row.action === COPILOT_RETRY_ACTION) continue;
       turns.push({
         role: 'user',
         derivation_policy: readDerivationPolicy(payload),
-        text,
+        text: text ?? '',
         at: row.created_at.toISOString(),
         event_id: row.id,
         // The ask row anchors the same checkpoint and must honour the same suppression.
@@ -650,7 +686,10 @@ async function projectCopilotTurnRows(
   }
 
   // rows are newest-first; keep the newest `limit`, then reverse to chronological.
-  return turns.slice(0, limit).reverse();
+  return turns
+    .slice(0, limit)
+    .reverse()
+    .map((turn) => ({ retryable: false, ...turn }));
 }
 
 /**
@@ -687,6 +726,7 @@ export async function getRecentCopilotTurns(
     .where(
       and(
         eq(event.session_id, session.id),
+        visibleCopilotReplySql(),
         ...(opts.forModel ? [eventAllowsDerivationSql()] : []),
         or(inArray(event.action, [...COPILOT_ASK_ACTIONS]), eq(event.action, COPILOT_REPLY_ACTION)),
       ),
@@ -836,6 +876,7 @@ export async function getCopilotTurnsBeforeAnchor(
     .where(
       and(
         eq(event.session_id, opts.sessionId),
+        visibleCopilotReplySql(),
         ...(opts.forModel ? [eventAllowsDerivationSql()] : []),
         or(
           // Root user turns use the anchor's stable insertion-order boundary.
@@ -889,6 +930,7 @@ export async function getCopilotReplyPoliciesBeforeAnchor(
       and(
         eq(event.session_id, opts.sessionId),
         eq(event.action, COPILOT_REPLY_ACTION),
+        visibleCopilotReplySql(),
         opts.anchorEventId
           ? lt(sql`coalesce(${parent.dispatch_seq}, ${event.dispatch_seq})`, anchor.dispatch_seq)
           : lte(event.created_at, opts.now ?? new Date()),

@@ -1,6 +1,6 @@
 // practice 拥有键的 consumer-effective 事实（单一真相：逐键调用
 // 真实 reader，绝不复述 clamp/fallback 规则）。经 practice/public.ts 透出，
-// 供组合根 facts seam（server/config/admin-config-facts.ts）聚合进
+// 供组合根 facts seam（src/server/admin/config-facts-host.ts）聚合进
 // GET /api/admin/config 的 keys[].effective——capability 边界审计只放行
 // server→public 入口，deep import 会被 ratchet 拦下。
 

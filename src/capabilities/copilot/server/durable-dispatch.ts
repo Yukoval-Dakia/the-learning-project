@@ -12,7 +12,6 @@ import {
 } from '@/core/schema/derivation-policy';
 import type { Db, Tx } from '@/db/client';
 import { event, job_events } from '@/db/schema';
-import { COPILOT_ASK_ACTIONS } from '@/kernel/events/copilot-actions';
 import { writeJobEvent } from '@/kernel/job-events';
 import type { ReviewAnswerAttachment } from '@/kernel/tools/review-answer';
 import { ConfirmationCommand, type ConfirmationCommandT } from '../confirmation-contract';
@@ -20,6 +19,7 @@ import { writeCopilotInputEvent } from './conversation-writes';
 import { COPILOT_RUN_EVENTS, COPILOT_RUN_TABLE } from './copilot-run-status';
 import { copilotRunTerminalSql } from './copilot-run-terminal-sql';
 import { type CrisisGuardEventInput, writeCrisisGuardEvent } from './crisis-guard';
+import { COPILOT_RUN_ROOT_ACTIONS } from './run-retry-contract';
 
 export const COPILOT_IDEMPOTENCY_KEY_MAX_LENGTH = 200;
 export const COPILOT_SESSION_QUEUE_PROTOCOL_VERSION = 2;
@@ -94,7 +94,7 @@ function payloadRecord(
     : undefined;
 }
 
-function parsePersistedJobData(
+export function parsePersistedJobData(
   payload: Record<string, unknown>,
   runId: string,
   sessionId: string,
@@ -315,6 +315,7 @@ export async function reserveCopilotDurableAcceptance(
       event_type: COPILOT_RUN_EVENTS.QUEUED,
       payload: {
         ...input.queuedPayload,
+        retry_safety_version: 1,
         derivation_policy: readDerivationPolicy(input.jobData ?? input.queuedPayload),
         ...(acceptedAsk
           ? { review_answer_binding_sha256: canonicalHash(acceptedAsk.payload.review_answer) }
@@ -365,14 +366,14 @@ export async function hasTerminalCopilotRun(db: Db | Tx, runId: string): Promise
   return rows.length > 0;
 }
 
-async function acquireCopilotSessionQueueLock(tx: Tx, sessionId: string): Promise<void> {
+export async function acquireCopilotSessionQueueLock(tx: Tx, sessionId: string): Promise<void> {
   await tx.execute(
     sql`SELECT pg_advisory_xact_lock(hashtext(${'copilot-session-queue'}), hashtext(${sessionId}))`,
   );
 }
 
 // Inlined as SQL literals, not bind params, so the statement text stays byte-identical.
-const COPILOT_ASK_ACTIONS_SQL = sql.raw(COPILOT_ASK_ACTIONS.map((a) => `'${a}'`).join(', '));
+const COPILOT_ASK_ACTIONS_SQL = sql.raw(COPILOT_RUN_ROOT_ACTIONS.map((a) => `'${a}'`).join(', '));
 
 /**
  * Pick the oldest non-terminal accepted turn for a session. The session lock and
@@ -438,7 +439,7 @@ export async function hasCopilotRunDispatched(db: Db | Tx, runId: string): Promi
   return rows.length > 0;
 }
 
-async function dispatchSessionHeadTx(
+export async function dispatchSessionHeadTx(
   tx: Tx,
   sessionId: string,
   boss: CopilotDispatchBoss,
