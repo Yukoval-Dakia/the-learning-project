@@ -1,5 +1,6 @@
 import type { ComponentProps, HTMLAttributes, ReactElement } from 'react';
 import { useSyncExternalStore } from 'react';
+import remarkGfm from 'remark-gfm';
 import { useAssetUrl } from './assets';
 import { MarkdownRenderer, type MarkdownRendererProps } from './markdown-renderer';
 
@@ -142,6 +143,12 @@ if (import.meta.env.SSR) {
 }
 
 const NO_MATH_PLUGINS: MathPlugins = { remarkPlugins: [], rehypePlugins: [] };
+
+/** Tables and the rest of GFM on every reading surface. One tilde stays text: 「约 ~3」 is not a strike. */
+const GFM_PLUGIN: [typeof remarkGfm, { singleTilde: boolean }] = [
+  remarkGfm,
+  { singleTilde: false },
+];
 
 /** A mounted KaTeX render subscribes; the first one after a cold start or a failed chunk loads. */
 function subscribeMathPlugins(listener: () => void): () => void {
@@ -348,7 +355,7 @@ export function MathMarkdown({
   return (
     <MarkdownRenderer
       {...divProps}
-      remarkPlugins={[...active.remarkPlugins, ...(remarkPlugins ?? [])]}
+      remarkPlugins={[...active.remarkPlugins, GFM_PLUGIN, ...(remarkPlugins ?? [])]}
       rehypePlugins={active.rehypePlugins}
       components={{ ...components, img: MarkdownImage }}
       remarkRehypeOptions={remarkRehypeOptions}

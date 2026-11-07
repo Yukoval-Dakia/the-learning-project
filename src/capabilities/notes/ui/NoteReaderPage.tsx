@@ -38,7 +38,7 @@ import { SkeletonLines } from '@/ui-next/primitives/SkeletonLines';
 import { Button, Chip, IconButton, UiNextRoot } from '@/ui-next/public';
 import './notes-m3e.css';
 
-import { NoteBlockView, blockOutlineLabel, questionDetailHref } from './NoteBlocks';
+import { NoteBlockView, blockHeadings, blockOutlineLabel, questionDetailHref } from './NoteBlocks';
 import { NoteEditor } from './NoteEditor';
 import { NoteEmpty } from './NoteEmpty';
 import { NoteKnownIssues } from './NoteKnownIssues';
@@ -458,23 +458,48 @@ export default function NoteReaderPage({
         {outlineOpen && (
           <nav className="nt-outline" aria-label="大纲">
             <div className="nt-rail-head">大纲</div>
-            {shown.map((b, i) => (
-              <button
-                type="button"
-                key={b.attrs?.id ?? i}
-                className="nt-ol-item"
-                onClick={() => {
-                  document
-                    .getElementById(`nb-${b.attrs?.id ?? i}`)
-                    ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                }}
-              >
-                <span className="nt-ol-glyph" aria-hidden="true">
-                  {outlineGlyph(b)}
-                </span>
-                <span className="nt-ol-label">{blockOutlineLabel(b)}</span>
-              </button>
-            ))}
+            {shown.flatMap((b, i) => {
+              const anchorId = `nb-${b.attrs?.id ?? i}`;
+              const headings = blockHeadings(b);
+              if (headings.length === 0) {
+                return (
+                  <button
+                    type="button"
+                    key={b.attrs?.id ?? i}
+                    className="nt-ol-item"
+                    onClick={() =>
+                      document
+                        .getElementById(anchorId)
+                        ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+                    }
+                  >
+                    <span className="nt-ol-glyph" aria-hidden="true">
+                      {outlineGlyph(b)}
+                    </span>
+                    <span className="nt-ol-label">{blockOutlineLabel(b)}</span>
+                  </button>
+                );
+              }
+              const top = Math.min(...headings.map((heading) => heading.level));
+              return headings.map((heading, index) => (
+                <button
+                  type="button"
+                  // biome-ignore lint/suspicious/noArrayIndexKey: headings keep document order and can repeat.
+                  key={`${anchorId}:${index}`}
+                  className="nt-ol-item"
+                  data-depth={heading.level > top ? 1 : 0}
+                  onClick={() => {
+                    const block = document.getElementById(anchorId);
+                    const target = block?.querySelectorAll('h1, h2, h3, h4')[index] ?? block;
+                    target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                  }}
+                >
+                  <span className="nt-ol-label" title={heading.text}>
+                    {heading.text}
+                  </span>
+                </button>
+              ));
+            })}
           </nav>
         )}
 
