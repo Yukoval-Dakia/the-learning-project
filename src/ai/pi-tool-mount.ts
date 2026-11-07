@@ -96,6 +96,8 @@ export type PiToolMount =
   | {
       type: 'remote-mcp';
       serverName: string;
+      /** Only CopilotTask's Exa search may continue when startup fails. */
+      optional?: boolean;
       config: RemoteMcpHttpConfig;
       /** Upstream tool names to expose (mirrors the caller's allowedTools scope). */
       toolNames: readonly string[];
@@ -161,6 +163,7 @@ export function piRemoteMcpMount(
   config: RemoteMcpHttpConfig,
   toolNames: readonly string[],
   db?: Db,
+  options?: { optional?: boolean },
 ): PiToolMount {
-  return { type: 'remote-mcp', serverName, config, toolNames, ...(db ? { db } : {}) };
+  return { ...options, type: 'remote-mcp', serverName, config, toolNames, ...(db ? { db } : {}) };
 }

@@ -1,3 +1,4 @@
+import type { FailureDiagnostics } from '@/ai/failure-diagnostics';
 // Copilot conversation writes: accepted input, committed reply, and atomic teaching output.
 // Execution and queue ownership live in copilot_run and durable-dispatch.
 
@@ -192,7 +193,11 @@ export async function writeCopilotReply(
     /** Durable success metadata needed to rebuild the DONE projection. */
     durableFinishReason?: string;
     /** Durable failure metadata needed to rebuild the FAILED projection. */
-    durableFailure?: { reason: string; error: string; checkpoint_safe?: boolean };
+    durableFailure?: {
+      reason: string;
+      error: string;
+      checkpoint_safe?: boolean;
+    } & Partial<FailureDiagnostics>;
     /** ask 的 created_at；reply 戳 now+1ms 保证 (created_at,id) 排序里 reply 在 ask 之后。 */
     now: Date;
     writeFn?: WriteEventFn;
