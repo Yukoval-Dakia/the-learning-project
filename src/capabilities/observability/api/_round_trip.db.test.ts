@@ -336,4 +336,90 @@ describe('round-trip: export → import → DB state mirrored', () => {
       (after.item_calibration[0].cdm_json as { profile: { nested: string[] } }).profile.nested,
     ).toEqual(['深', '层']);
   });
+
+  async function exportZipBytes(): Promise<Uint8Array> {
+    const res = await GET(new Request('http://localhost/api/_/export'));
+    expect(res.status).toBe(200);
+    return new Uint8Array(await res.arrayBuffer());
+  }
+
+  function importRequest(body: BodyInit, headers: Record<string, string> = {}): Request {
+    return new Request('http://localhost/api/_/import?confirm=wipe-and-reload', {
+      method: 'POST',
+      body,
+      headers: { 'content-type': 'application/zip', ...headers },
+      ...(body instanceof ReadableStream ? { duplex: 'half' as const } : {}),
+    });
+  }
+
+  async function seedKnowledgeRow(id = 'k1'): Promise<void> {
+    const db = testDb();
+    const now = new Date('2024-01-01T00:00:00Z');
+    await db.insert(knowledge).values({
+      id,
+      name: '虚词',
+      domain: 'yuwen',
+      parent_id: null,
+      merged_from: [],
+      archived_at: null,
+      proposed_by_ai: false,
+      approval_status: 'approved',
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+  }
+
+  // @invariant data: a truncated or bit-corrupted archive is rejected before any wipe, so a damaged backup cannot leave the DB empty or half-restored
+  // @fails-if the streaming unzipper skipped its own CRC/central-directory checks (fflate's streaming Unzip verifies neither): a flipped data byte or truncated tail would stage garbage rows or half a data.json and still reach the wipe — the surviving knowledge row and 400 assertions fail
+  it.each(['truncated', 'bit-corrupted'])(
+    'rejects a %s archive before wiping and leaves live rows intact',
+    async (mode) => {
+      const db = testDb();
+      await seedKnowledgeRow();
+      const zip = await exportZipBytes();
+
+      const damaged: Uint8Array<ArrayBuffer> =
+        mode === 'truncated'
+          ? zip.slice(0, Math.floor(zip.length / 2))
+          : Uint8Array.from(zip, (b, i) => (i === Math.floor(zip.length / 2) ? b ^ 0xff : b));
+
+      const res = await POST(importRequest(damaged));
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: string };
+      expect(body.error).toBe('invalid_zip');
+      expect(await db.select().from(knowledge)).toHaveLength(1);
+    },
+  );
+
+  // @invariant data: a chunked request body restores the same rows as a buffered one, so proxies that stream the upload cannot corrupt the restore
+  // @fails-if the incremental data.json parser dropped or spliced rows across chunk boundaries: the restored row count or a row field would diverge from the buffered-upload baseline
+  it('restores an upload delivered as small stream chunks', async () => {
+    const db = testDb();
+    await seedKnowledgeRow();
+    const zip = await exportZipBytes();
+
+    await resetDb();
+    expect(await db.select().from(knowledge)).toHaveLength(0);
+
+    const chunkSize = 4096;
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (let off = 0; off < zip.length; off += chunkSize) {
+          controller.enqueue(zip.subarray(off, off + chunkSize));
+        }
+        controller.close();
+      },
+    });
+    const res = await POST(importRequest(stream));
+    if (res.status !== 200) {
+      console.error('Import failed:', JSON.stringify(await res.clone().json(), null, 2));
+    }
+    expect(res.status).toBe(200);
+
+    const rows = await db.select().from(knowledge);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].id).toBe('k1');
+    expect(rows[0].name).toBe('虚词');
+  });
 });
