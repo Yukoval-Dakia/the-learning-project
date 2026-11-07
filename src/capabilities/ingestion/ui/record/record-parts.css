@@ -235,7 +235,7 @@
     white-space: nowrap;
   }
 
-  /* The list row's title, not the sheet's: that one shows in full. */
+  /* Two lines in the list and on the sheet: the question lines below carry the full text. */
   & .rc-row-title.rc-row-clip {
     display: -webkit-box;
     -webkit-box-orient: vertical;
