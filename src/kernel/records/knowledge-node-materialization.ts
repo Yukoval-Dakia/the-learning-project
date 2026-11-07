@@ -56,6 +56,18 @@ export async function prepareProposedKnowledgeId(
 }
 
 /**
+ * A ready vector for a node being created by the same write. Supplying it to the
+ * guarded projection keeps the vector and the structural row in one upsert; callers
+ * must compute it before the transaction, because naming/embedding are provider work.
+ */
+export interface KnowledgeEmbedStamp {
+  embedding: number[];
+  embed_model: string;
+  embed_version: number;
+  embed_content_hash: string;
+}
+
+/**
  * Re-project one `knowledge` node. A fold of null deletes the row; otherwise upsert the
  * structural columns and leave embed_* untouched.
  */
@@ -74,7 +86,11 @@ export async function projectKnowledgeNode(db: DbLike, nodeId: string): Promise<
  * Guarded write-through: a fold of null deletes only when the node has a genesis anchor.
  * Without one the fold is blind to a pre-event row, so deleting would lose data.
  */
-export async function projectKnowledgeNodeGuarded(db: DbLike, nodeId: string): Promise<void> {
+export async function projectKnowledgeNodeGuarded(
+  db: DbLike,
+  nodeId: string,
+  embedStamp?: KnowledgeEmbedStamp,
+): Promise<void> {
   const projected = await gatherAndFoldKnowledgeNode(db, nodeId);
   if (projected === null) {
     if (await hasKnowledgeNodeGenesisAnchor(db, nodeId)) {
@@ -84,15 +100,26 @@ export async function projectKnowledgeNodeGuarded(db: DbLike, nodeId: string): P
     // else: fold-blind pre-event-sourced node — keep the imperative row (NEVER delete).
     return;
   }
-  await upsertProjectedKnowledgeNode(db, projected);
+  await upsertProjectedKnowledgeNode(db, projected, embedStamp);
 }
 
-// Upsert the structural columns only. embed_* is left at its default on insert and
-// untouched on update because the fold does not own it.
+// Upsert the structural columns. embed_* stays at its default on insert and untouched on
+// update unless the creating caller supplied a stamp for this exact projection.
 async function upsertProjectedKnowledgeNode(
   db: DbLike,
   projected: KnowledgeRowSnapshotT,
+  embedStamp?: KnowledgeEmbedStamp,
 ): Promise<void> {
+  const embedColumns = embedStamp
+    ? {
+        embedding: embedStamp.embedding,
+        embed_model: embedStamp.embed_model,
+        embed_version: embedStamp.embed_version,
+        embed_content_hash: embedStamp.embed_content_hash,
+        // The same row revision this projection writes; a later edit re-stamps it.
+        embed_source_revision: projected.version,
+      }
+    : {};
   await db
     .insert(knowledge)
     .values({
@@ -108,6 +135,7 @@ async function upsertProjectedKnowledgeNode(
       created_at: projected.created_at,
       updated_at: projected.updated_at,
       version: projected.version,
+      ...embedColumns,
     })
     .onConflictDoUpdate({
       target: knowledge.id,
@@ -123,6 +151,7 @@ async function upsertProjectedKnowledgeNode(
         created_at: projected.created_at,
         updated_at: projected.updated_at,
         version: projected.version,
+        ...embedColumns,
       },
     });
 }

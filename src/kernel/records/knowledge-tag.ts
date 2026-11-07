@@ -15,7 +15,7 @@
 // projected in the same transaction. The caller binds the embedding provider; kernel
 // records do not import server/ai.
 
-import { and, eq, isNull, sql } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import {
   EMBED_VERSION,
   embedHash,
@@ -39,6 +39,7 @@ import { resolveSessionDerivationPolicy } from '@/kernel/read-models/usage-polic
 import { getKnownSubjects } from '@/subjects/profile';
 // Projection parity assert: throws in dev/test, warns in prod.
 import {
+  type KnowledgeEmbedStamp,
   prepareProposedKnowledgeId,
   projectKnowledgeNodeGuarded,
 } from './knowledge-node-materialization';
@@ -213,40 +214,27 @@ async function findSameNamedKnowledge(
 }
 
 /**
- * Stamp a freshly proposed KC's vector immediately so the next question can match it.
- * Without this the node is invisible to cosine retrieval until the nightly embed
- * backfill, and each sibling question mints another near-duplicate (YUK-1990).
- * Best effort: a failed embed leaves the row NULL for that same backfill.
+ * Compute the fresh node's vector BEFORE the creation transaction: provider work must
+ * never sit inside the DB tx. Returns undefined on provider failure, leaving the row
+ * for the nightly embed backfill.
  */
-async function stampFreshKnowledgeEmbedding(
-  db: Db,
+async function freshKnowledgeEmbedStamp(
   embedder: KnowledgeTagEmbedder,
-  params: { id: string; name: string; effectiveDomain: string | null },
-): Promise<void> {
+  params: { name: string; effectiveDomain: string | null },
+): Promise<KnowledgeEmbedStamp | undefined> {
   try {
     const text = knowledgeEmbedText({ name: params.name, effectiveDomain: params.effectiveDomain });
     const vector = await embedder.embed(text);
-    if (vector.length === 0) return;
-    await db
-      .update(knowledge)
-      .set({
-        embedding: vector,
-        embed_model: embedder.model,
-        embed_version: EMBED_VERSION,
-        embed_content_hash: embedHash(text),
-        embed_source_revision: sql`${knowledge.version}`,
-      })
-      // Only fill a missing vector: a concurrent backfill that won the race is kept,
-      // and a rename/reparent in the window rejects a vector computed for the old name.
-      .where(
-        and(
-          eq(knowledge.id, params.id),
-          isNull(knowledge.embedding),
-          sql`${knowledge.name} IS NOT DISTINCT FROM ${params.name}`,
-        ),
-      );
+    if (vector.length === 0) return undefined;
+    return {
+      embedding: vector,
+      embed_model: embedder.model,
+      embed_version: EMBED_VERSION,
+      embed_content_hash: embedHash(text),
+    };
   } catch (err) {
-    console.warn(`[tag_knowledge] fresh KC ${params.id} left without an embedding`, err);
+    console.warn(`[tag_knowledge] fresh KC "${params.name}" left without an embedding`, err);
+    return undefined;
   }
 }
 
@@ -447,6 +435,12 @@ export async function tagKnowledge(
   if (parentRole === null || parentRole !== 'kc') pendingReasons.push('parent_non_kc');
   const namingFacts = await namingRunFacts(db, namingProvenance.task_run_id);
   const namingCostMicroUsd = costUsdToMicroUsd(namingProvenance.cost_usd);
+  // Embed before the tx so the node is matchable as soon as it exists; a provider
+  // failure only defers the vector to the nightly backfill.
+  const embedStamp = await freshKnowledgeEmbedStamp(embedder, {
+    name: kc_name,
+    effectiveDomain: targetDomain,
+  });
 
   const newKcId = await db.transaction(async (tx) => {
     const now = new Date();
@@ -509,21 +503,13 @@ export async function tagKnowledge(
       created_at: now,
     });
 
-    await projectKnowledgeNodeGuarded(tx, createdId);
+    await projectKnowledgeNodeGuarded(tx, createdId, embedStamp);
     return createdId;
   });
 
   if (deps.batchCache) {
     deps.batchCache.set(batchCacheKey(input.subjectRootId, kc_name), newKcId);
   }
-
-  // Make the new node matchable right away; otherwise the next question sees an
-  // unembedded KC and mints a near-duplicate. Failure is repaired by embed_backfill.
-  await stampFreshKnowledgeEmbedding(db, embedder, {
-    id: newKcId,
-    name: kc_name,
-    effectiveDomain: targetDomain,
-  });
 
   return { kind: 'propose', knowledge_ids: [newKcId], kc_name };
 }
