@@ -241,7 +241,8 @@ export function modelFactsLine(model: ConfigModel): string {
     : '单价未知';
   return [
     `上下文 ${size(model.context_window_tokens)}`,
-    `输出 ${size(model.max_output_tokens)}`,
+    `输入上限 ${size(model.max_input_tokens)}`,
+    `输出上限 ${size(model.max_output_tokens)}`,
     `用工具：${yes(model.tool_call)}`,
     `看图：${yes(model.vision)}`,
     price,

@@ -22,7 +22,7 @@ async function main(): Promise<number> {
 
   const { db } = await import('@/db/client');
   const { getConfigFlag } = await import('@/core/config/store');
-  const { hydrateConfigFromDb } = await import('@/server/config/hydrate');
+  const { hydrateConfigFromDb } = await import('@/core/config/server/hydrate');
   const { runRootPlacementRefile } = await import(
     '@/capabilities/practice/question-bank/server/root-placement-refile'
   );

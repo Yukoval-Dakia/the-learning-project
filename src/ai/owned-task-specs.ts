@@ -6,7 +6,14 @@ import {
   type TaskDefinition,
 } from './task-spec';
 
-export type TaskOwner = 'practice' | 'ingestion' | 'knowledge' | 'notes' | 'agency' | 'copilot';
+export type TaskOwner =
+  | 'practice'
+  | 'ingestion'
+  | 'knowledge'
+  | 'notes'
+  | 'agency'
+  | 'copilot'
+  | 'drawing';
 
 type OwnedTaskSpec = OwnedTaskSpecEntry;
 

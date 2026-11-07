@@ -164,26 +164,42 @@ const WARNING_WORDS: Record<string, string> = {
   已忽略外部链接: 'Word 里的外部链接没有带进来。',
 };
 
-/** A figure was cut out of the page but not attached to its question. */
-const FIGURE_WITHHELD = /^Figure .* retained in source; assignment withheld$/;
-/** The reader's own wording when it says part of a question didn't come through. */
-const MAY_BE_INCOMPLETE =
-  /丢弃|缺失|不完整|未能|无法|看不清|遮挡|模糊|截断|上一页|下一页|fell back to|only image\/empty/;
-
 /**
- * The recording's stored notes (session.warnings) as one plain line, or null when none of them
- * tells the learner anything. Most are internal reader messages, never shown as they are: a line
- * on every recording says nothing, so only what the learner should act on gets one.
+ * What the learner should know about how complete this recording is, or null. It reads the server's
+ * typed findings; the stored notes are internal reader messages and are never shown as they are.
+ * A finding nobody checked is said as that, never as fine. Only questions read from page images
+ * get checked, so a Word file read as text says nothing, and neither does an unfinished recording.
  */
-export function warningWords(warnings: string[]): string | null {
+export function warningWords(
+  facts: {
+    warnings?: string[];
+    figures_withheld?: boolean | null;
+    content_lost?: boolean | null;
+  },
+  { readPages, finished }: { readPages: boolean; finished: boolean },
+): string | null {
+  const warnings = facts.warnings ?? [];
   const known = [...new Set(warnings.flatMap((w) => (WARNING_WORDS[w] ? [WARNING_WORDS[w]] : [])))];
-  const figures = warnings.some((w) => FIGURE_WITHHELD.test(w));
-  const incomplete = warnings.some((w) => MAY_BE_INCOMPLETE.test(w));
+  const withheld = facts.figures_withheld === true;
+  const lost = facts.content_lost === true;
+  const figuresUnknown = facts.figures_withheld == null;
+  const contentUnknown = facts.content_lost == null;
+  const unchecked =
+    !readPages || !finished
+      ? null
+      : figuresUnknown && contentUnknown
+        ? '这次没查过题和图全不全'
+        : figuresUnknown
+          ? '这次没查过图挂全了没有'
+          : contentUnknown
+            ? '这次没查过题认全了没有'
+            : null;
   return (
     [
       ...known,
-      figures ? '题里的图还没挂到题上，看题时对照原页。' : null,
-      incomplete ? '有的题可能不完整，对照原页看一下。' : null,
+      withheld ? '有的图没挂到题上，看题时对照原页。' : null,
+      lost ? '有的题可能不完整，对照原页看一下。' : null,
+      unchecked && (withheld || lost ? `${unchecked}。` : `${unchecked}，看题时对照原页。`),
     ]
       .filter(Boolean)
       .join(' ') || null

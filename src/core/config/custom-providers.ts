@@ -4,9 +4,9 @@
 // holds its key, and a wire protocol. This module is the DB-free core: types,
 // validation, the in-memory registry every resolution surface reads
 // synchronously, and two injection ports (catalog facts + change handler) the
-// server composition root wires at boot. DB hydration/CRUD live at the edges
-// (server/config/custom-providers-hydrate.ts, the observability admin route),
-// mirroring core/config/store ↔ server/config/hydrate.
+// composition root wires at boot. DB hydration/CRUD live at the edges
+// (core/config/server/custom-providers-hydrate.ts, the observability admin
+// route), mirroring core/config/store ↔ core/config/server/hydrate.
 //
 // Credential honesty: only the env var NAME is ever stored or projected. The
 // key value stays in the operator's env and never reaches the DB or logs.
@@ -188,21 +188,9 @@ export function validateCustomProviderInput(
 // ─── in-memory registry ─────────────────────────────────────────────────────
 
 let registry: ReadonlyMap<string, CustomProviderDefinition> = new Map();
-let registryStamp: string | undefined;
-let registryHydrated = false;
 
 function stampOf(records: readonly CustomProviderRecord[]): string {
   return records.map((record) => `${record.id}@${record.updatedAt}`).join('|');
-}
-
-/**
- * False until a DB read succeeded (including an empty table). The catalog
- * merge must not read an un-hydrated registry as "every custom provider was
- * deleted"; a failed boot hydrate keeps the stored buckets until the watch
- * retries.
- */
-export function customProvidersRegistryHydrated(): boolean {
-  return registryHydrated;
 }
 
 /** Atomic registry swap (hydrate, write, and watch paths all come through here). */
@@ -219,8 +207,6 @@ export function installCustomProviders(records: readonly CustomProviderRecord[])
       },
     ]),
   );
-  registryStamp = stampOf(records);
-  registryHydrated = true;
 }
 
 /** Drizzle row (snake_case columns, Date timestamps) → registry record. Shared by both IO faces. */

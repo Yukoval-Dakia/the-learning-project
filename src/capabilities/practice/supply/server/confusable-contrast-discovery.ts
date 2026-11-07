@@ -21,8 +21,8 @@ import {
   type QuestionSupplyTarget,
   type SupplyGapKind,
   computePriority,
-  targetFingerprint,
 } from './target-discovery';
+import { targetFingerprint } from './target-fingerprint';
 
 // A contrast/discrimination item is naturally OBJECTIVE (present A and B, ask to
 // distinguish) → 'choice'; the objectiveOnly constraint carries the runtime kind gate.

@@ -139,6 +139,7 @@ export const CopilotTurnSchema = z.object({
   at: z.string().datetime(),
   event_id: z.string(),
   run_id: z.string().optional(),
+  retryable: z.boolean().optional(),
   session_id: z.string().optional(),
   reply_event_id: z.string().optional(),
   checkpoint_event_id: z.string().optional(),

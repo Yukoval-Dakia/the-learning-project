@@ -35,7 +35,7 @@ function paragraphNode(text: string): Record<string, unknown> {
   };
 }
 
-function blockText(node: Record<string, unknown>): string {
+export function blockText(node: Record<string, unknown>): string {
   if (typeof node.text === 'string') return node.text;
   const content = Array.isArray(node.content) ? node.content : [];
   const parts = content
@@ -96,25 +96,6 @@ export function artifactRefBlock(
     },
     content: [],
   };
-}
-
-export function bodyBlocksHaveSemanticKinds(
-  value: unknown,
-  requiredKinds: string[],
-): { ok: boolean; missing: string[] } {
-  const parsed = ArtifactBodyBlocks.safeParse(value);
-  const found = new Set<string>();
-
-  if (parsed.success) {
-    for (const node of parsed.data.content ?? []) {
-      if (node.type !== SEMANTIC_BLOCK_TYPE) continue;
-      const attrs = recordOrEmpty(node.attrs);
-      if (typeof attrs.semantic_kind === 'string') found.add(attrs.semantic_kind);
-    }
-  }
-
-  const missing = requiredKinds.filter((kind) => !found.has(kind));
-  return { ok: missing.length === 0, missing };
 }
 
 /**

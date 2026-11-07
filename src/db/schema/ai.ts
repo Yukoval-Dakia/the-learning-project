@@ -63,6 +63,7 @@ export const ai_task_runs = pgTable(
         phases?: {
           prompt_build_ms?: number;
           model_ttft_ms?: number | null;
+          model_thinking_ttft_ms?: number | null;
           model_total_ms?: number;
           stream_ms?: number;
           parse_ms?: number;
