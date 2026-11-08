@@ -43,6 +43,7 @@ import { KpiRow } from './blocks/KpiRow';
 import { type PlacementProfileReader, ProfileBand } from './blocks/ProfileBand';
 import { ProposalStrip } from './blocks/ProposalStrip';
 import { SessionsStrip } from './blocks/SessionsStrip';
+import { SteeringList } from './blocks/SteeringList';
 import { WeekHeat } from './blocks/WeekHeat';
 import { OvernightCostSummary } from './OvernightCostSummary';
 import { PrepDeskConjectures } from './PrepDeskConjectures';
@@ -565,6 +566,8 @@ export default function TodayPage({
   const summaryStatus = statefulStatus(summaryQ.isLoading, summaryQ.isError);
   const s = summaryQ.data;
   const threads = s ? deriveThreads(s) : [];
+  // The list is newest first; the profile and the composer follow the newest goal.
+  const newestGoal = s?.active_goals[0];
 
   // YUK-621：冷启动只认服务端聚合后的「所有学习证据皆空」。没有 active goal
   // 仍可正常查看题库、复习、历史与提议；loading / error 继续走 AreaGate。
@@ -601,16 +604,18 @@ export default function TodayPage({
 
               {/* YUK-476 起始画像卡片：active goal 存在时露出 per-KC band 摘要 + /profile 持久入口。
                 无 active goal 时只省略画像，不影响其余工作台。 */}
-              {s.active_goal && (
+              <SteeringList goals={s.active_goals} />
+
+              {newestGoal && (
                 <ProfileBand
-                  goal={s.active_goal}
+                  goal={newestGoal}
                   navigate={navigate}
                   getPlacementProfile={getPlacementProfile}
                 />
               )}
 
               <LearningIntentComposer
-                initialTopic={s.active_goal?.title ?? ''}
+                initialTopic={newestGoal?.title ?? ''}
                 pendingCount={s.proposals.by_kind.learning_item ?? 0}
                 autoApplyEnabled={s.auto_apply_enabled}
                 navigate={navigate}

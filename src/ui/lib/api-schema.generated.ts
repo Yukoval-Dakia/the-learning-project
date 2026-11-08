@@ -15645,6 +15645,9 @@ export interface operations {
                         created_at: string;
                         error?: {
                             code: string;
+                            details?: {
+                                [key: string]: unknown;
+                            };
                             message: string;
                             status: number;
                         };
@@ -15667,6 +15670,9 @@ export interface operations {
                         created_at: string;
                         error?: {
                             code: string;
+                            details?: {
+                                [key: string]: unknown;
+                            };
                             message: string;
                             status: number;
                         };
@@ -15689,6 +15695,9 @@ export interface operations {
                         created_at: string;
                         error?: {
                             code: string;
+                            details?: {
+                                [key: string]: unknown;
+                            };
                             message: string;
                             status: number;
                         };
@@ -16923,6 +16932,9 @@ export interface operations {
                         created_at: string;
                         error?: {
                             code: string;
+                            details?: {
+                                [key: string]: unknown;
+                            };
                             message: string;
                             status: number;
                         };
@@ -16945,6 +16957,9 @@ export interface operations {
                         created_at: string;
                         error?: {
                             code: string;
+                            details?: {
+                                [key: string]: unknown;
+                            };
                             message: string;
                             status: number;
                         };
@@ -16967,6 +16982,9 @@ export interface operations {
                         created_at: string;
                         error?: {
                             code: string;
+                            details?: {
+                                [key: string]: unknown;
+                            };
                             message: string;
                             status: number;
                         };
@@ -17001,6 +17019,9 @@ export interface operations {
                         created_at: string;
                         error?: {
                             code: string;
+                            details?: {
+                                [key: string]: unknown;
+                            };
                             message: string;
                             status: number;
                         };
@@ -17023,6 +17044,9 @@ export interface operations {
                         created_at: string;
                         error?: {
                             code: string;
+                            details?: {
+                                [key: string]: unknown;
+                            };
                             message: string;
                             status: number;
                         };
@@ -17045,6 +17069,9 @@ export interface operations {
                         created_at: string;
                         error?: {
                             code: string;
+                            details?: {
+                                [key: string]: unknown;
+                            };
                             message: string;
                             status: number;
                         };
@@ -42268,10 +42295,24 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        active_goal: {
+                        active_goals: {
+                            end_prompt: string;
                             id: string;
+                            instruction_md: string | null;
+                            learner_words: string | null;
+                            revise_prompt: string;
+                            scope: {
+                                names: string[];
+                                unresolved: string[];
+                            };
                             title: string;
-                        } | null;
+                            window: {
+                                days_left: number | null;
+                                from: string | null;
+                                starts_in_days: number | null;
+                                until: string | null;
+                            };
+                        }[];
                         active_sessions: {
                             duration_ms: number | null;
                             ended_at: number | null;
