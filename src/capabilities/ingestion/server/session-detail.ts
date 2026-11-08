@@ -1,9 +1,11 @@
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, desc, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { type Tx, db } from '@/db/client';
 import { event, learning_session } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { resolveDocumentDerivationPolicy } from '@/kernel/read-models/usage-policy';
+import { DuplicateUploadSchema } from '../api/contracts';
+import { DUPLICATE_UPLOAD_ACTION } from './duplicate-upload';
 import { readExtractionNotices } from './extraction-notices';
 
 const UsageReceiptMetadataSchema = z.object({
@@ -124,12 +126,22 @@ export async function readIngestionSessionDetail(sessionId: string) {
         .limit(1);
       if (!session) throw new ApiError('not_found', 'ingestion session not found', 404);
 
+      const [duplicateEvent] = await tx
+        .select({ payload: event.payload })
+        .from(event)
+        .where(and(eq(event.session_id, session.id), eq(event.action, DUPLICATE_UPLOAD_ACTION)))
+        .orderBy(desc(event.created_at), desc(event.id))
+        .limit(1);
+      const duplicatePayload = duplicateEvent?.payload as { duplicate_of?: unknown } | undefined;
+      const duplicateParsed = DuplicateUploadSchema.safeParse(duplicatePayload?.duplicate_of);
+
       return {
         session: {
           ...session,
           ...(await readExtractionNotices(tx, session.id)),
           created_at: session.created_at.toISOString(),
           updated_at: session.updated_at.toISOString(),
+          duplicate_of: duplicateParsed.success ? duplicateParsed.data : null,
         },
         usage_receipt: session.source_document_id
           ? await readUsageReceipt(tx, session.id, session.source_document_id)

@@ -27,6 +27,7 @@ import {
 import { type ProviderFailureInfo, classifyProviderFailure } from '@/ai/provider-failure';
 import { installTaskOperationObserver } from '@/ai/task-observation';
 import type { RunTaskResult } from '@/ai/task-result';
+import { failureSpendChargeUsd } from '@/ai/task-result';
 import type { TaskBudget, TaskDefinition } from '@/ai/task-spec';
 import {
   type TaskKind,
@@ -38,7 +39,6 @@ import {
 import { isSpawnToolName } from '@/core/subagent-contract';
 import { resolveProviderSessionDeadlineAt } from '../http/provider-session-deadline';
 import { bindAgentRunError, isApiErrorSuccessResult } from './agent-run-error';
-import { failureSpendChargeUsd } from './attempt-cost';
 import {
   type ModelBinding,
   type PreparedExecutionQuery,
@@ -892,6 +892,9 @@ async function runTaskImpl(
         maxAttempts,
         firstAttemptStartedAt,
         error: boundError,
+        transport: lifecycle.armedTransport(),
+        attemptCostTruth: lifecycle.costTruth,
+        aborted: lifecycle.aborted,
       });
       // Settle the full truth before another provider call is allowed. The
       // actual-retry marker is a later, conservative transition performed only
@@ -1072,10 +1075,10 @@ export function streamTask(kind: string, input: unknown, initialCtx: StreamTaskC
                 shouldClose = false;
                 return;
               }
-              const message =
-                error instanceof Error
-                  ? `[streamTask] ${error.message}`
-                  : '[streamTask] unknown error';
+              // Run id rides the marker so workers can read back the settled row.
+              const message = `[streamTask] ${
+                error instanceof Error ? error.message : 'unknown error'
+              } (task_run_id=${lifecycle.taskRunId})`;
               controller.enqueue(encoder.encode(`\n\n${message}\n`));
             } finally {
               lifecycle.dispose();
@@ -1365,6 +1368,7 @@ async function streamTaskCollectingImpl(
               apiErrorStatus: boundError.apiErrorStatus,
               httpStatus: providerFailureEvidence?.http_status,
               retryAfterMs: providerFailureEvidence?.retry_after_ms,
+              errorEvidence: boundError.errors,
               streamErrorTerminal: providerFailureEvidence?.stream_error === true,
               transport: lifecycle.transportEvidence.snapshot(),
             });

@@ -4,6 +4,8 @@
 import { AgentRunError } from '@/ai/agent-run-error';
 import { type Provider, tasks } from '@/capabilities/task-registry';
 import { getLaneOverride } from '@/core/config/store';
+import type { Db } from '@/db/client';
+import { settledAttemptEvidence } from '@/server/ai/provider-transient-retry';
 import type { RunTaskCtx } from '@/server/ai/runner';
 import { applicableVisionJudgeOverride } from '@/server/ai/vision-judge-config';
 
@@ -43,6 +45,17 @@ function classifyProviderHardFailure(err: unknown): ProviderHardFailureDetails |
     api_error_status: err.apiErrorStatus ?? null,
     error: err.errors.length > 0 ? err.errors.join('; ') : err.message,
   };
+}
+
+/**
+ * May a hard failure re-issue the request on another lane? Same rule as the
+ * in-lane resend gate: the settled attempt must carry the unbilled-rejection
+ * receipt. A possibly paid or unknown outcome never crosses.
+ */
+async function mayCrossLanes(db: Db, err: unknown): Promise<boolean> {
+  if (!(err instanceof AgentRunError)) return false;
+  const evidence = await settledAttemptEvidence(db, err.taskRunId);
+  return evidence.settled && evidence.unbilled;
 }
 
 export interface LaneDegradationEvidence {
@@ -104,6 +117,10 @@ export async function runTaskWithLaneFallback<T>({
         hardFailure: { ...hard, failed_lane: effectiveUnconfiguredLane(kind) },
       };
     }
+    // Crossing lanes re-issues the same paid request on a second provider —
+    // the shared gate requires the unbilled-rejection receipt. A possibly
+    // paid or unknown attempt never crosses.
+    if (!(await mayCrossLanes(baseCtx.db, err))) throw err;
     const fallbackOverride = {
       provider: tasks[kind].defaultProvider,
       model: tasks[kind].defaultModel,

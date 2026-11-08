@@ -2,12 +2,17 @@
 // a landed revert, 更正这轮, and the teaching 「重做 / 回看前置」 chip (a KPI event, not a chat turn).
 
 import type { DerivationPolicyT } from '@/core/schema/derivation-policy';
+import { ApiError } from '@/ui/lib/api';
+import { randomId } from '@/ui/lib/random-id';
 import { saveCopilotDerivationPreference } from '../durable-reconnect-storage';
+import { readAcceptance } from './acceptance';
 import type { CompanionCtx } from './companion-context';
-import { plainRevertError } from './plain-errors';
+import { plainRetryError, plainRevertError } from './plain-errors';
 
 export interface TurnActions {
   revert: (checkpointEventId: string) => Promise<void>;
+  /** Send a failed turn's question again in place: same question row, a new reply. */
+  retryFailedRun: (runId: string, sessionId: string) => Promise<void>;
   retryRefresh: () => Promise<void>;
   dismissError: () => void;
   acceptCorrectiveChip: (
@@ -48,6 +53,45 @@ export function createTurnActions(ctx: CompanionCtx): TurnActions {
     }
   }
 
+  async function retryFailedRun(runId: string, sessionId: string) {
+    if (ctx.get().retryPendingRunId === runId) return;
+    ctx.set({ retryPendingRunId: runId, error: null, refreshFailed: false });
+    try {
+      let accepted: Awaited<ReturnType<typeof readAcceptance>>;
+      try {
+        // The server keys a resend on the failed run, so a repeat click finds the same one.
+        const res = await ctx.client.retryRun(runId, randomId());
+        accepted = await readAcceptance(res, undefined);
+      } catch (cause) {
+        if (ctx.get().currentSessionId !== sessionId) return;
+        ctx.set({ error: plainRetryError(cause) });
+        // A refusal means the button is out of date; the fresh read takes it away.
+        if (cause instanceof ApiError && cause.code === 'retry_not_allowed') {
+          await ctx.runs.refetchTurns().catch(() => undefined);
+        }
+        return;
+      }
+      if (ctx.get().currentSessionId === sessionId) {
+        // A read sent before this answer still holds the failed reply; it must not put it back.
+        const { snapshotRequestSeq, snapshotAppliedSeq } = ctx.internals;
+        snapshotAppliedSeq.set(sessionId, snapshotRequestSeq.get(sessionId) ?? 0);
+        ctx.updateMessages((previous) =>
+          previous.filter((m) => !(m.role === 'ai' && m.run_id === runId)),
+        );
+      }
+      ctx.runs.trackAccepted({
+        runId: accepted.runId,
+        sessionId,
+        location: accepted.location,
+        derivationPolicy: accepted.policy,
+      });
+      // The question loses its undo once its run is replaced; the page reads that from the server.
+      await ctx.runs.refetchTurns().catch(() => undefined);
+    } finally {
+      if (ctx.get().retryPendingRunId === runId) ctx.set({ retryPendingRunId: null });
+    }
+  }
+
   async function retryRefresh() {
     try {
       ctx.internals.activeSkill = null;
@@ -83,6 +127,7 @@ export function createTurnActions(ctx: CompanionCtx): TurnActions {
 
   return {
     revert,
+    retryFailedRun,
     retryRefresh,
     dismissError: () => ctx.set({ error: null }),
     acceptCorrectiveChip,

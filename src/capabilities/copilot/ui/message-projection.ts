@@ -141,6 +141,7 @@ export function projectDurableCopilotMessage(
     ...previous,
     subtasks: view.subtasks,
     public_prose: publicProse,
+    retryable: view.phase === 'failed' && view.retryable === true,
     ...(view.toolCalls && view.toolCalls.length > 0 ? { tool_calls: view.toolCalls } : {}),
     // The reply frame already carries its own fences (`done` may arrive later); stream blocks stop
     // there, or every block would show twice until the run ends.
@@ -354,13 +355,17 @@ export function projectCopilotRunUpdate(
   },
 ): ChatMessage[] {
   let next = messages;
-  if (!next.some((message) => message.role === 'user' && message.id === run.runId)) {
+  // A resend answers a question already on the page, so it has no words of its own and no row.
+  if (
+    run.userMessage !== undefined &&
+    !next.some((message) => message.role === 'user' && message.id === run.runId)
+  ) {
     next = [
       ...next,
       {
         id: run.runId,
         role: 'user',
-        text: run.userMessage ?? '（已恢复的请求）',
+        text: run.userMessage,
         session_id: run.sessionId,
         run_id: run.runId,
         derivation_policy: run.derivationPolicy ?? 'allow',
@@ -502,6 +507,7 @@ export function projectReplayMessage(turn: ReplayTurn): ReplayChatMessage | null
     subagent_runs: turn.subagent_runs,
     run_id: turn.run_id,
     derivation_policy: turn.derivation_policy,
+    retryable: turn.retryable,
   };
   if (turn.role === 'tombstone')
     return {

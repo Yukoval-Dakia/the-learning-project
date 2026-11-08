@@ -11,7 +11,7 @@
 
 import { and, eq, gte, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { DEFAULT_TASK_MODEL, canonicalProviderName } from '@/ai/task-spec';
+import { canonicalProviderName } from '@/ai/task-spec';
 import {
   IMAGE_CONSUMING_JUDGE_ROUTES,
   MODEL_BACKED_JUDGE_ROUTES,
@@ -20,7 +20,7 @@ import {
   type JudgeQuestionRow,
   judgeAnswer,
 } from '@/capabilities/practice/grading/server/judge/question-contract';
-import { selectScopedLaneOverride } from '@/core/config/model-overrides';
+import { DEFAULT_TASK_MODEL, selectScopedLaneOverride } from '@/core/config/model-overrides';
 import { getConfig, getConfigSource } from '@/core/config/store';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';

@@ -17,10 +17,7 @@ import { event, tool_operation } from '@/db/schema';
 import { getCorrectionStatuses } from '@/kernel/events';
 import { COPILOT_REPLY_ACTION, COPILOT_USER_ASK_ACTION } from '@/kernel/events/copilot-actions';
 import { eventAllowsDerivationSql } from '@/kernel/events/derivation-policy';
-import {
-  INTERACTIVE_ARTIFACT_TOOL_NAMES,
-  redactInteractiveArtifactToolInput,
-} from '@/kernel/learning-content';
+import { projectLearnerToolInput } from '@/kernel/learning-content';
 import { type CopilotPrimaryView, parseCopilotPrimaryView } from '../primary-view-contract';
 import { type CopilotPublicProse, parseCopilotPublicProse } from '../public-prose-contract';
 import { type CopilotSkillTurn, readCopilotSkillTurn as replySkillTurn } from './chat-contracts';
@@ -162,9 +159,7 @@ function parseToolUseMirror(
       : {};
   // YUK-1763 — artifact-authoring tool args carry the answer key (html
   // attributes + content_validation.reference_md); the replay must not.
-  const input = INTERACTIVE_ARTIFACT_TOOL_NAMES.has(toolName)
-    ? redactInteractiveArtifactToolInput(parsedArgs)
-    : parsedArgs;
+  const input = projectLearnerToolInput(toolName, parsedArgs);
   const summary =
     typeof payload.result_summary === 'string' && payload.result_summary.length > 0
       ? payload.result_summary

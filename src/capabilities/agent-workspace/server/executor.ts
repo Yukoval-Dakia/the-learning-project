@@ -7,7 +7,7 @@ const outputLimit = 100 * 1024;
 const timeoutMs = 30 * 60 * 1000;
 type StopReason = 'timeout' | 'cancelled' | 'output_limit' | null;
 
-function invoke(action: string, id: string, code: string, signal?: AbortSignal) {
+export function invokeWorkspace(action: string, id: string, code: string, signal?: AbortSignal) {
   return new Promise<{
     exitCode: number | null;
     output: string;
@@ -91,18 +91,18 @@ export async function executeWorkspace(
   if (Buffer.byteLength(code, 'utf8') > 100 * 1024) throw new Error('workspace_code_too_large');
   const id = randomBytes(32).toString('hex');
   signal?.throwIfAborted();
-  const created = await invoke('create', id, '');
+  const created = await invokeWorkspace('create', id, '');
   if (created.exitCode !== 0) throw new Error(`workspace_create_failed: ${created.output}`);
-  let result: Awaited<ReturnType<typeof invoke>> | undefined;
+  let result: Awaited<ReturnType<typeof invokeWorkspace>> | undefined;
   let failure: unknown;
   try {
-    result = await invoke(runtime, id, code, signal);
+    result = await invokeWorkspace(runtime, id, code, signal);
   } catch (error) {
     failure = error;
   }
   // Cancellation must not cancel cleanup. Preserve both failures if cleanup also fails.
   try {
-    const removed = await invoke('remove', id, '');
+    const removed = await invokeWorkspace('remove', id, '');
     if (removed.exitCode !== 0) throw new Error(`workspace_cleanup_failed: ${removed.output}`);
   } catch (error) {
     throw new AggregateError(failure ? [failure, error] : [error], 'workspace_cleanup_failed');

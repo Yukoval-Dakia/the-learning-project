@@ -14,9 +14,18 @@ const ACTIVITY_QUERY_CHUNK = 500;
 /**
  * Latest event time per knowledge node over the same predicates the retired
  * view used: events whose subject is the node, or whose payload references it.
- * The payload containment probes ride the event_payload_idx GIN index
- * (jsonb_path_ops). Nodes with no touching event are absent from the map —
- * callers own any fallback (e.g. knowledge.created_at).
+ * The UNION ALL arms are set-based index scans instead of a per-node correlated
+ * aggregate (which seq-scanned event once per node):
+ *   - `subject_kind/subject_id` rides event_subject_idx;
+ *   - `payload->'referenced_knowledge_ids' @>` keeps its original spelling and
+ *     rides event_referenced_knowledge_gin;
+ *   - `payload->'knowledge_ids' @>` has no expression index, so it is rewritten
+ *     as the exact-equivalent top-level pair — `"kc"` (value IS the needle) OR
+ *     `["kc"]` (array containing the needle); jsonb containment is position-
+ *     sensitive, so the pair reproduces the sub-value `@>` semantics precisely,
+ *     and both forms ride the event_payload_idx jsonb_path_ops GIN.
+ * Nodes with no touching event are absent from the map — callers own any
+ * fallback (e.g. knowledge.created_at).
  */
 export async function lastKnowledgeActivityAt(
   db: DbLike,
@@ -29,19 +38,30 @@ export async function lastKnowledgeActivityAt(
   if (ids.length === 0) return out;
   for (let start = 0; start < ids.length; start += ACTIVITY_QUERY_CHUNK) {
     const chunk = ids.slice(start, start + ACTIVITY_QUERY_CHUNK);
-    const idParams = sql.join(
-      chunk.map((id) => sql`${id}`),
-      sql`, `,
-    );
+    // The chunk is bound once per arm (the id list repeats in the parameter
+    // list); sql.join keeps every binding a real parameter.
+    const idArray = () =>
+      sql`ARRAY[${sql.join(
+        chunk.map((id) => sql`${id}`),
+        sql`, `,
+      )}]::text[]`;
     const rows = await db.execute<{ kc: string; last_event_at: string | Date | null }>(sql`
-      SELECT kc, (
-        SELECT max(e.created_at) AS last_event_at
+      SELECT kc, max(created_at) AS last_event_at
+      FROM (
+        SELECT e.subject_id AS kc, e.created_at
         FROM event e
-        WHERE (e.subject_kind = 'knowledge' AND e.subject_id = kc)
-           OR (e.payload->'referenced_knowledge_ids' @> to_jsonb(kc))
-           OR (e.payload->'knowledge_ids' @> to_jsonb(kc))
-      ) AS last_event_at
-      FROM unnest(ARRAY[${idParams}]::text[]) AS kc
+        WHERE e.subject_kind = 'knowledge' AND e.subject_id = ANY(${idArray()})
+        UNION ALL
+        SELECT j.kc, e.created_at
+        FROM unnest(${idArray()}) AS j(kc)
+        JOIN event e ON e.payload->'referenced_knowledge_ids' @> to_jsonb(j.kc)
+        UNION ALL
+        SELECT j.kc, e.created_at
+        FROM unnest(${idArray()}) AS j(kc)
+        JOIN event e ON e.payload @> jsonb_build_object('knowledge_ids', to_jsonb(j.kc))
+                     OR e.payload @> jsonb_build_object('knowledge_ids', jsonb_build_array(to_jsonb(j.kc)))
+      ) hits
+      GROUP BY kc
     `);
     // Raw sql timestamps arrive without a Drizzle decoder; Date and string are
     // both accepted here.

@@ -1,7 +1,4 @@
-import {
-  INTERACTIVE_ARTIFACT_TOOL_NAMES,
-  redactInteractiveArtifactToolInput,
-} from '@/kernel/learning-content';
+import { projectLearnerToolInput } from '@/kernel/learning-content';
 import type { CopilotExecutionActivity } from './copilot-execution';
 
 /** Must stay aligned with SPAWN_TOOL_NAME in src/core/subagent-contract.ts */
@@ -22,23 +19,13 @@ export interface ToolResultSsePayload {
   toolUseId?: string;
 }
 
-/** YUK-1763 — artifact-authoring args carry the answer key; never project it. */
-function redactIfNeeded(toolName: string, input: Record<string, unknown>): Record<string, unknown> {
-  if (toolName === 'compose_block' || toolName.endsWith('__compose_block')) {
-    return { args_bytes: new TextEncoder().encode(JSON.stringify(input)).byteLength };
-  }
-  return INTERACTIVE_ARTIFACT_TOOL_NAMES.has(toolName)
-    ? redactInteractiveArtifactToolInput(input)
-    : input;
-}
-
 /**
  * Native SDK Task spawn calls carry subagent prompts/instructions that must not
  * reach SPA tool-use cards. Public UX is projected via `subtask` SSE instead.
  */
 export function sanitizeToolUseForSse(call: ToolUseSseCall): ToolUseSseCall | null {
   if (call.toolName === NATIVE_SPAWN_TOOL_NAME) return null;
-  return call;
+  return { ...call, input: projectLearnerToolInput(call.toolName, call.input) };
 }
 
 /** Defensive mirror of {@link sanitizeToolUseForSse} for done-state frames. */
@@ -46,7 +33,7 @@ export function sanitizeToolResultForSse(
   result: ToolResultSsePayload,
 ): ToolResultSsePayload | null {
   if (result.toolName === NATIVE_SPAWN_TOOL_NAME) return null;
-  return result;
+  return { ...result, input: projectLearnerToolInput(result.toolName, result.input) };
 }
 
 /** Project public execution activity before persisting it in reconnectable events. */
@@ -112,7 +99,7 @@ export function projectCopilotActivity(
         ? {
             step_kind: 'tool_started',
             tool_name: call.toolName,
-            input: redactIfNeeded(call.toolName, call.input),
+            input: call.input,
             ...(call.toolUseId ? { tool_use_id: call.toolUseId } : {}),
           }
         : null;
@@ -123,7 +110,7 @@ export function projectCopilotActivity(
         ? {
             step_kind: 'tool_finished',
             tool_name: result.toolName,
-            input: redactIfNeeded(result.toolName, result.input),
+            input: result.input,
             summary: result.summary,
             ...(result.errorReason ? { error_reason: result.errorReason } : {}),
             ...(result.toolUseId ? { tool_use_id: result.toolUseId } : {}),
