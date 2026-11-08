@@ -279,7 +279,7 @@ pnpm test             # 全量 umbrella（audit 链 + unit/db/migration）；CI 
 pnpm audit:schema     # schema write-path 审计（新表/字段必须有 write path）
 pnpm audit:partition  # 测试分区审计（依赖 DB 的测试不得进 unit config）
 pnpm audit:task-census # task registry 的 static caller / compatibility 分类与 wiring、run-log 契约
-pnpm build            # TanStack Start + 三 esbuild 产物（dist/server.cjs / dist/worker.cjs / dist/migrate.cjs）
+pnpm build            # TanStack Start（js/css 另写 .br/.gz）+ 三 esbuild 产物（dist/server.cjs / dist/worker.cjs / dist/migrate.cjs）
 ```
 
 快速迭代用 watch 模式：`pnpm test:unit:watch`（无 DB，覆盖 UI / core / schema / parser）、
@@ -389,7 +389,7 @@ network，不暴露到 host。
 `target: worker`。Dockerfile（node:24-slim 多阶段）build 产物为
 `dist/start`（TanStack Start 前门）和 `dist/server.cjs`、`dist/worker.cjs`、`dist/migrate.cjs`。
 app 容器 `CMD ["node", "dist/server.cjs"]`，`RW_FRONTDOOR=1` 启用 Start 前门：
-`/api/*` 直接交给原 Hono app，`/_build/*` 与站点根的 PWA 文件（manifest、图标）提供 Start 客户端资产，全部页面以
+`/api/*` 直接交给原 Hono app，不加长缓存。`/_build/*` 与站点根的 PWA 文件（manifest、图标）提供 Start 客户端资产；带内容哈希的 `/_build/assets/*` 返回 `Cache-Control: public, max-age=31536000, immutable`，其中 js/css 按 `Accept-Encoding` 发送构建时生成的 brotli 或 gzip。页面 HTML 和不带哈希的资源不加这组长缓存。全部页面以
 `server/start/routes/` 为准（无旧 SPA 回落）。API hydration、tool recovery 和 shutdown
 的 owner 保持不变。切换/回退及 P7 清理条件见[前门 runbook](/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/planning/2026-10-07-yuk1352-start-frontdoor.md)。
 **无 Redis 服务**——editing presence 走 PG 表 `editing_presence`（PgPresenceStore，YUK-321

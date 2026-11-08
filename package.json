@@ -118,7 +118,7 @@
     "quiz:reverify": "tsx scripts/quiz-reverify.ts",
     "delivery:evidence": "tsx scripts/delivery-evidence.ts",
     "delivery:note": "tsx scripts/delivery-note.ts",
-    "build:start": "node scripts/local-heavy.mjs 'vite build --config server/start/vite.config.ts'",
+    "build:start": "node scripts/local-heavy.mjs 'vite build --config server/start/vite.config.ts && node scripts/compress-built-assets.mjs'",
     "acceptance:start-frontdoor": "tsx tests/start-frontdoor/acceptance.ts",
     "capture:golden": "tsx scripts/capture-golden.ts",
     "audit:golden": "tsx scripts/golden-reaudit.ts"
