@@ -64,7 +64,7 @@ import {
   enqueueAdmissionLoginRecovery,
   maintainAdmissionLoginRecovery,
 } from '../server/admission/login-recovery';
-import { questionSubjectKey } from '../server/admission/question-subject';
+import { questionSubject } from '../server/admission/question-subject';
 import {
   type AdmissionDelivery,
   AdmissionResultReceipt,
@@ -243,8 +243,12 @@ function admissionInputIsCurrent(
   );
 }
 
-async function subjectProfileFor(db: Db | Tx, rootId: string) {
-  return resolveSubjectProfile(await questionSubjectKey(db, rootId));
+async function frozenSubjectFor(db: Db | Tx, rootId: string) {
+  const subject = await questionSubject(db, rootId);
+  return {
+    subject_profile: resolveSubjectProfile(subject.key),
+    ...(subject.mismatch ? { subject_mismatch: subject.mismatch } : {}),
+  };
 }
 
 export async function runAdmissionForQuestion(
@@ -357,7 +361,7 @@ export async function runAdmissionForQuestion(
           revision_digest: revision?.integrity_digest ?? null,
           admission_generation: lifecycle?.scoring_admission_generation ?? 0,
           contract,
-          subject_profile: await subjectProfileFor(tx, rootId),
+          ...(await frozenSubjectFor(tx, rootId)),
           policy_id: resolveQuestionAdmissionPolicyId(),
           solver2:
             SOLVER2_PROVIDER || SOLVER2_MODEL

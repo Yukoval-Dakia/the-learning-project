@@ -23,7 +23,7 @@ import {
 import { type BoundRunTaskTextFn, makeRunTaskTextFn } from '@/server/ai/runner-fn';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { definitionFromContract } from './definition-from-contract';
-import { questionSubjectKey } from './question-subject';
+import { questionSubject } from './question-subject';
 import { loadPriorKnowledgeCandidates } from './solution-prior';
 import { runSolutionPriorPass, settledKeysFromDefinition } from './solve';
 
@@ -158,7 +158,7 @@ export interface BackfillResult {
 }
 
 async function subjectProfileForGroup(db: Db, groupId: string) {
-  return resolveSubjectProfile(await questionSubjectKey(db, groupId));
+  return resolveSubjectProfile((await questionSubject(db, groupId)).key);
 }
 
 /** The stored revision as admission grades it; null when its seal no longer verifies. */

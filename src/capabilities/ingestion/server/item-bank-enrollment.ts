@@ -29,8 +29,8 @@ export interface EnrollmentMarkers {
   confidence: number;
   figures_attached: number;
   student_work: boolean;
-  /** StructureTask's subject for this block (absent when it was unsure). Admission's
-   *  question-subject resolver reads it first, ahead of knowledge_ids[0]. */
+  /** StructureTask's subject for this block (absent when it was unsure). Admission uses
+   *  it while the question has no knowledge; knowledge_ids[0] wins once present. */
   subject_id?: string;
 }
 

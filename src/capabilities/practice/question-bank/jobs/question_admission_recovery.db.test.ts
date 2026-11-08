@@ -643,8 +643,8 @@ describe('question admission provider recovery', () => {
 });
 
 describe('question admission subject freeze', () => {
-  // @invariant grading: the subject profile an admission freezes and sends to the solver is the enrollment subject first, then the domain of knowledge_ids[0], then general — so a later knowledge tag cannot change the subject of the same question
-  // @fails-if a question with an enrollment subject freezes its knowledge domain or general, or a question without one stops falling back to knowledge_ids[0] and then general
+  // @invariant grading: the subject an admission freezes and sends to the solver is the domain of knowledge_ids[0], else the enrollment subject, else general; a disagreement is recorded in the frozen input, and a revision already frozen keeps its subject when knowledge changes later
+  // @fails-if a conflicting enrollment subject overrides the knowledge domain or leaves no mismatch record, an enrollment-only question loses its subject, a consistent pair records a mismatch, or a replay of the same revision re-freezes under a later tag
   it.each([
     {
       name: 'enrollment subject, no knowledge',
@@ -653,52 +653,89 @@ describe('question admission subject freeze', () => {
       want: 'physics',
     },
     {
-      name: 'enrollment subject beats knowledge',
+      name: 'knowledge beats a conflicting enrollment subject',
       enrolled: 'physics',
       domain: 'math',
-      want: 'physics',
+      want: 'math',
+      mismatch: true,
     },
+    { name: 'enrollment and knowledge agree', enrolled: 'math', domain: 'math', want: 'math' },
     { name: 'no enrollment subject, knowledge', enrolled: null, domain: 'math', want: 'math' },
     { name: 'neither', enrolled: null, domain: null, want: 'general' },
-  ])('$name freezes $want', async ({ enrolled, domain, want }) => {
+    {
+      name: 'a later conflicting tag does not refreeze the same revision',
+      enrolled: 'physics',
+      domain: null,
+      want: 'physics',
+      retagTo: 'math',
+    },
+  ])('$name freezes $want', async ({ enrolled, domain, want, mismatch, retagTo }) => {
     await resetDb();
     const db = testDb();
     const seed = await seedAdmission();
     const now = new Date();
-    if (domain) {
+    const tag = async (to: string | null) => {
+      if (to) {
+        await db
+          .insert(knowledge)
+          .values({ id: `k-${to}`, name: 'Node', domain: to, created_at: now, updated_at: now })
+          .onConflictDoNothing();
+      }
       await db
-        .insert(knowledge)
-        .values({ id: 'k-subject', name: 'Node', domain, created_at: now, updated_at: now });
-    }
-    await db
-      .update(question)
-      .set({
-        knowledge_ids: domain ? ['k-subject'] : [],
-        metadata: enrolled ? { ingestion_enrollment: { subject_id: enrolled } } : {},
-      })
-      .where(eq(question.id, seed.groupId));
-    const d1 = admissionJobId(seed.groupId, seed.revisionId, seed.digest, 0);
-    const data = jobData(seed);
-    await insertDelivery(seed, d1, data);
+        .update(question)
+        .set({
+          knowledge_ids: to ? [`k-${to}`] : [],
+          metadata: enrolled ? { ingestion_enrollment: { subject_id: enrolled } } : {},
+        })
+        .where(eq(question.id, seed.groupId));
+    };
+    await tag(domain);
     const { task } = fakeTaskFactory(seed);
     const sent: Array<string | undefined> = [];
     const observed: BoundRunTaskTextFn = (kind, payload, ctx) => {
       sent.push(ctx?.subjectProfile?.id);
       return task(kind, payload, ctx);
     };
+    const deliver = async (suffix: string) => {
+      const id = admissionJobId(seed.groupId, seed.revisionId, `${seed.digest}${suffix}`, 0);
+      const data = jobData(seed);
+      await insertDelivery(seed, id, data);
+      await run(db, data, { id, jobData: data }, { runTask: observed });
+      for (const job of ownedJobs.splice(0)) await fixtureBoss?.deleteJob(job.name, job.id);
+    };
 
-    await run(db, data, { id: d1, jobData: data }, { runTask: observed });
-    for (const job of ownedJobs.splice(0)) await fixtureBoss?.deleteJob(job.name, job.id);
+    await deliver('');
+    if (retagTo) {
+      await tag(retagTo);
+      await deliver(':replay');
+    }
 
     const frozen = await db
       .select({ input: paid_effect.input_json })
       .from(paid_effect)
       .where(eq(paid_effect.family, ADMISSION_FAMILY));
+    const inputs = frozen.map(
+      (row) => row.input as { subject_profile: { id: string }; subject_mismatch?: unknown },
+    );
     expect({
-      frozen: frozen.map(
-        (row) => (row.input as { subject_profile: { id: string } }).subject_profile.id,
-      ),
+      frozen: inputs.map((input) => input.subject_profile.id),
+      mismatch: inputs.map((input) => input.subject_mismatch),
       sent: [...new Set(sent)],
-    }).toEqual({ frozen: [want], sent: [want] });
+    }).toEqual({
+      frozen: [want],
+      mismatch: [
+        mismatch
+          ? {
+              used: 'knowledge',
+              enrollment: {
+                subject_id: enrolled,
+                source: 'metadata.ingestion_enrollment.subject_id',
+              },
+              knowledge: { domain, knowledge_id: `k-${domain}`, source: 'knowledge_ids[0]' },
+            }
+          : undefined,
+      ],
+      sent: [want],
+    });
   });
 });
