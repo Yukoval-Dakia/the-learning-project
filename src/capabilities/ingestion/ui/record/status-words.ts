@@ -100,7 +100,11 @@ export function statusWords(rec: Recording, start: StartState | null): StatusWor
     };
   }
   // In the library is not yet given out: how many still wait on the answer check, or are held.
-  const servings = [...rec.blockServing.values()].filter((v) => !v.servable);
+  // The helper's questions count among those in the library, so their state counts here too.
+  const servings = [
+    ...rec.blockServing.values(),
+    ...helperIn.flatMap((i) => (i.now ? [i.now] : [])),
+  ].filter((v) => !v.servable);
   const checking = servings.filter((v) => v.admission?.status === 'pending').length;
   const heldBack = servings.length - checking;
   const notYet = [

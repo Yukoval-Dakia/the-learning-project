@@ -4,6 +4,8 @@
 
 export interface AdmissionFacts {
   status: 'pending' | 'admitted' | 'failed' | 'undecided';
+  /** The server's own fixed learner sentence for this state. */
+  reason?: string | null;
   wait?: {
     reason: 'quota' | 'login' | 'not_sent' | 'provider';
     retry_at: string | null;
@@ -48,7 +50,9 @@ export function admissionSentence(
   now: number = Date.now(),
 ): string | null {
   if (admission.status === 'admitted') return null;
-  if (admission.status === 'failed') return '两次独立解出的答案对不上，先不出给你练。';
+  // A failed check has several causes (no grader for this kind, a solve that didn't finish, two
+  // solves that disagree…); the server writes the fixed sentence for each.
+  if (admission.status === 'failed') return admission.reason ?? '没通过自动检查，先不出给你练。';
   if (admission.status === 'undecided') {
     if (admission.cause === 'purpose_denied') {
       return '这份资料按你选的用途不能拿去核对答案，所以先不出给你练。';
