@@ -18,11 +18,16 @@ import { difficultyToLogitB } from '@/core/theta';
 import type { Db, Tx } from '@/db/client';
 import { isPoolVisible } from '@/db/predicates';
 import { event, item_calibration, knowledge, question_group_lifecycle } from '@/db/schema';
+import { withoutNonKcKnowledgeIds } from '@/kernel/read-models/knowledge-roles';
 import {
   LEARNER_JUDGMENT_SOURCE,
   projectKnowledgeState,
 } from '@/kernel/read-models/knowledge-state';
 import { readLearnerJudgments } from '@/kernel/read-models/learner-judgment';
+import {
+  type QuestionTimelineEntry,
+  getQuestionTimeline,
+} from '@/kernel/read-models/question-activity';
 import {
   type ItemCalibrationBRow,
   effectiveB,
@@ -193,18 +198,6 @@ const FaultyPayload = z.object({
   }),
 });
 
-export type LatestAttemptScore = {
-  event_id: string;
-  created_at: Date;
-  outcome: string;
-  cause: {
-    primary: string;
-    primary_label: string | null;
-    confidence: number | null;
-    secondary: string[];
-  } | null;
-};
-
 export type QuestionIssueInput = {
   questionId: string;
   parentQuestionId: string | null;
@@ -213,11 +206,12 @@ export type QuestionIssueInput = {
   kind: string;
   source: string;
   draftStatus: string | null;
-  /** Question-card due. Ignored when the question has knowledge points — that card lives on the knowledge rows. */
+  /** Question-card due. Used when no role=kc point is tagged. Goal and container tags are not that card. */
   questionDueAt: Date | null;
-  latestAttempt: LatestAttemptScore | null;
   asOf: Date;
 };
+
+const SCORE_ACTIONS = ['attempt', 'experimental:assessment_attempt'] as const;
 
 function blank<T>(asOf: Date, reason: string): KnowledgeSignal<T> {
   return unknownSignal<T>(SOURCE, asOf, reason);
@@ -357,16 +351,23 @@ async function readFaulty(
 }
 
 function scoreSignal(
-  attempt: LatestAttemptScore | null,
+  entry: QuestionTimelineEntry | undefined,
   asOf: Date,
 ): QuestionIssueReading['recent_scoring'] {
-  if (!attempt) return absentSignal(SCORE_SOURCE, asOf);
+  if (entry?.kind !== 'attempt') return absentSignal(SCORE_SOURCE, asOf);
   return knownSignal(
     {
-      event_id: attempt.event_id,
-      at: attempt.created_at.toISOString(),
-      outcome: attempt.outcome,
-      cause: attempt.cause,
+      event_id: entry.event_id,
+      at: entry.created_at.toISOString(),
+      outcome: entry.outcome,
+      cause: entry.cause
+        ? {
+            primary: entry.cause.primary,
+            primary_label: entry.cause.primary_label,
+            confidence: entry.cause.confidence,
+            secondary: entry.cause.secondary,
+          }
+        : null,
     },
     SCORE_SOURCE,
     asOf,
@@ -378,25 +379,28 @@ export async function readQuestionIssue(
   input: QuestionIssueInput,
 ): Promise<QuestionIssueReading> {
   const knowledgeIds = [...new Set(input.knowledgeIds.filter((id) => id.length > 0))];
-  const [issuance, difficulty, faulty, names, judgment] = await Promise.all([
-    readIssuance(db, input),
-    readDifficulty(db, input),
-    readFaulty(db, input.questionId, input.asOf),
-    knowledgeIds.length === 0
-      ? Promise.resolve(new Map<string, string>())
-      : db
-          .select({ id: knowledge.id, name: knowledge.name })
-          .from(knowledge)
-          .where(and(inArray(knowledge.id, knowledgeIds), isNull(knowledge.archived_at)))
-          .then((rows) => new Map(rows.map((row) => [row.id, row.name]))),
-    knowledgeIds.length === 0
-      ? Promise.resolve(null)
-      : readLearnerJudgments(db, {
-          knowledge_ids: knowledgeIds,
-          context: 'any',
-          as_of: input.asOf,
-        }),
-  ]);
+  const [issuance, difficulty, faulty, names, judgment, scoreRows, schedulableIds] =
+    await Promise.all([
+      readIssuance(db, input),
+      readDifficulty(db, input),
+      readFaulty(db, input.questionId, input.asOf),
+      knowledgeIds.length === 0
+        ? Promise.resolve(new Map<string, string>())
+        : db
+            .select({ id: knowledge.id, name: knowledge.name })
+            .from(knowledge)
+            .where(and(inArray(knowledge.id, knowledgeIds), isNull(knowledge.archived_at)))
+            .then((rows) => new Map(rows.map((row) => [row.id, row.name]))),
+      knowledgeIds.length === 0
+        ? Promise.resolve(null)
+        : readLearnerJudgments(db, {
+            knowledge_ids: knowledgeIds,
+            context: 'any',
+            as_of: input.asOf,
+          }),
+      getQuestionTimeline(db, input.questionId, 1, SCORE_ACTIONS),
+      withoutNonKcKnowledgeIds(db, knowledgeIds),
+    ]);
 
   const byId = new Map(judgment?.items.map((item) => [item.knowledge_id, item]) ?? []);
   const knowledgeRows: QuestionIssueReading['knowledge'] = knowledgeIds.map((id) => {
@@ -442,16 +446,16 @@ export async function readQuestionIssue(
   });
 
   const fsrs =
-    knowledgeIds.length > 0
+    schedulableIds.length > 0
       ? knowledgeCard(
-          knowledgeIds.map((id) => byId.get(id)?.review_timing.freshness.due_at ?? missingDue),
+          schedulableIds.map((id) => byId.get(id)?.review_timing.freshness.due_at ?? missingDue),
           input.asOf,
         )
       : questionCard(input.questionDueAt, input.asOf);
 
   return QuestionIssueReadingSchema.parse({
     issuance,
-    recent_scoring: scoreSignal(input.latestAttempt, input.asOf),
+    recent_scoring: scoreSignal(scoreRows[0], input.asOf),
     fsrs,
     knowledge: knowledgeRows,
     difficulty,

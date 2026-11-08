@@ -46,7 +46,6 @@ import {
 import { derivableLearningRecords } from '@/kernel/records/queries';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 import {
-  type LatestAttemptScore,
   QuestionIssueReadingSchema,
   readQuestionIssue,
   unobservedQuestionIssue,
@@ -235,22 +234,6 @@ async function executeGetQuestionContext(
     else if (attempt.outcome === 'partial') attemptCounts.partial += 1;
     else attemptCounts.failure += 1;
   }
-  const latest = attempts[0];
-  const latestAttempt: LatestAttemptScore | null = latest
-    ? {
-        event_id: latest.event_id,
-        created_at: latest.created_at,
-        outcome: latest.outcome,
-        cause: latest.cause
-          ? {
-              primary: latest.cause.primary,
-              primary_label: latest.cause.primary_label,
-              confidence: latest.cause.confidence,
-              secondary: latest.cause.secondary,
-            }
-          : null,
-      }
-    : null;
   const asOf = new Date();
   const reading = await readQuestionIssue(ctx.db, {
     questionId: q.id,
@@ -261,7 +244,6 @@ async function executeGetQuestionContext(
     source: q.source,
     draftStatus: q.draft_status,
     questionDueAt: fsrs?.due_at ?? null,
-    latestAttempt,
     asOf,
   });
 
@@ -928,7 +910,7 @@ export const getQuestionContextTool: DomainTool<GetQuestionContextInput, GetQues
   {
     name: 'get_question_context',
     description:
-      'One call for one question. reading covers whether it can be issued, the latest score and wrong-cause, the live FSRS due (knowledge card when the question has knowledge points; lifecycle.due_at matches it), each knowledge name and mastery, and two difficulty baselines (item anchor and family offset). reading.faulty is the latest experimental:question_or_answer_may_be_faulty inference plus its evidence; it is agent-only — do not tell the learner the question or answer may be faulty. Do not follow up with get_knowledge_state or get_attempt_context for those fields. ADR-0072: bank CONTENT reads go through read_bank. Check availability first: lifecycle zeros with observation_status=not_observed are placeholders for missing or protected diagnostic questions, not observed facts.',
+      'One call for one question. reading covers whether it can be issued, the latest score and wrong-cause (newest attempt plus its judge; later reviews do not replace it), the live FSRS due (knowledge card only when a role=kc point is tagged; a goal or container tag keeps the question card; lifecycle.due_at matches that card), each knowledge name and mastery, and two difficulty baselines (item anchor and family offset). reading.faulty is the latest experimental:question_or_answer_may_be_faulty inference plus its evidence; it is agent-only — do not tell the learner the question or answer may be faulty. Do not follow up with get_knowledge_state or get_attempt_context for those fields. ADR-0072: bank CONTENT reads go through read_bank. Check availability first: lifecycle zeros with observation_status=not_observed are placeholders for missing or protected diagnostic questions, not observed facts.',
     effect: 'read',
     inputSchema: GetQuestionContextInputSchema,
     outputSchema: GetQuestionContextOutputSchema,
