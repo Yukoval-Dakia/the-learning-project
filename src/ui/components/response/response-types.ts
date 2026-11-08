@@ -379,7 +379,11 @@ export function nativeResponseText(entry: SlotResponseT, spec: ResponseSlotT | u
   }
   if (entry.kind === 'select') {
     return entry.item_ids
-      .map((id) => (spec?.kind === 'select' ? describeSelectItem(spec, id) : '原选项不可用'))
+      .map((id) =>
+        spec?.kind === 'select'
+          ? collapseRepeatedLabel(describeSelectItem(spec, id))
+          : '原选项不可用',
+      )
       .join('；');
   }
   if (entry.kind === 'ordering') {
