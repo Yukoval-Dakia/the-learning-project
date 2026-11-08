@@ -6,6 +6,7 @@ import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { insertLegacyGoal as insertGoal } from '../../../../../tests/helpers/legacy-goal';
 import { dispatchPlacementStarterClaimTx } from './placement-starter';
 import { materializePlacementStartersForGoal } from './placement-starter-store';
+import { SUPPLY_DELIVERY_INTENT_ACTION } from './supply-delivery-outbox';
 
 const db = testDb();
 
@@ -70,45 +71,38 @@ async function seedGoal(): Promise<void> {
 }
 
 describe('placement starter store', () => {
-  // @invariant concurrency: a new (sourcing_web) placement claim records exactly one supply_execute job, and a failed send rolls the claim back to pending
-  // @fails-if new claims still dispatch quiz_gen, a failed send leaves the claim queued, or a second dispatch sends again; the pending/queued status and sent-count assertions fail
-  it('atomically records one job and rolls back when send fails', async () => {
+  // @invariant concurrency: a new (sourcing_web) placement claim binds exactly one supply_execute delivery in its dispatch transaction, and a repeated dispatch binds nothing new
+  // @fails-if new claims still bind quiz_gen, the claim goes queued without the complete job request persisted, or a second dispatch binds again; the intent count and payload assertions fail
+  it('binds one supply_execute delivery with the queued claim and never binds twice', async () => {
     await seedGoal();
     const { identities } = await db.transaction((tx) =>
       materializePlacementStartersForGoal(tx, 'goal-1'),
     );
     const identity = identities[0];
     if (!identity) throw new Error('missing placement identity');
-    const noQuizGen = async (): Promise<string | null> => {
-      throw new Error('new placement claims must not dispatch quiz_gen');
+
+    const first = await db.transaction((tx) =>
+      dispatchPlacementStarterClaimTx(tx, identity.claimId),
+    );
+    const second = await db.transaction((tx) =>
+      dispatchPlacementStarterClaimTx(tx, identity.claimId),
+    );
+    expect(second).toBe(first);
+    const intents = await db
+      .select({ payload: event.payload })
+      .from(event)
+      .where(eq(event.action, SUPPLY_DELIVERY_INTENT_ACTION));
+    expect(intents).toHaveLength(1);
+    const intent = intents[0]?.payload as {
+      queue: string;
+      job_id: string;
+      data: Record<string, unknown>;
     };
-
-    await expect(
-      db.transaction((tx) =>
-        dispatchPlacementStarterClaimTx(tx, identity.claimId, noQuizGen, undefined, async () => {
-          throw new Error('send failed');
-        }),
-      ),
-    ).rejects.toThrow('send failed');
-    expect((await db.select().from(placement_starter_claim))[0]?.status).toBe('pending_dispatch');
-
-    const sent: Record<string, unknown>[] = [];
-    await db.transaction((tx) =>
-      dispatchPlacementStarterClaimTx(tx, identity.claimId, noQuizGen, undefined, async (data) => {
-        sent.push(data);
-        return 'job-1';
-      }),
-    );
-    await db.transaction((tx) =>
-      dispatchPlacementStarterClaimTx(tx, identity.claimId, noQuizGen, undefined, async () => {
-        throw new Error('must not send again');
-      }),
-    );
-    expect(sent).toHaveLength(1);
-    expect(sent[0]).toMatchObject({
+    expect(intent).toMatchObject({ queue: 'supply_execute', job_id: first });
+    expect(intent.data).toMatchObject({
       items: [{ count: 8, placement_claim_id: identity.claimId }],
     });
-    const trace = SupplyTraceV1.parse(sent[0]?.supply_trace);
+    const trace = SupplyTraceV1.parse(intent.data.supply_trace);
     expect(trace.claim_id).toBe(identity.claimId);
     expect(trace.allowed_uses).toEqual(['placement', 'diagnostic']);
     const [dispatchEvent] = await db
@@ -122,7 +116,7 @@ describe('placement starter store', () => {
     });
     expect((await db.select().from(placement_starter_claim))[0]).toMatchObject({
       status: 'queued',
-      pg_boss_job_id: 'job-1',
+      pg_boss_job_id: first,
     });
   });
 });
