@@ -4,7 +4,6 @@ import {
   ArtifactBodyBlocks,
   ArtifactHistoryEntry,
   ArtifactVerificationSummary,
-  CorrectArtifactPayload,
   NoteSection,
   SubjectProfileSchema,
 } from '@/kernel/capability-contract-schemas';
@@ -13,17 +12,10 @@ export const NoteIdParamsSchema = z.object({ id: z.string().trim().min(1) });
 
 export const ArtifactIdParamsSchema = z.object({ id: z.string().trim().min(1) });
 
-export const ArtifactSectionParamsSchema = z.object({
-  id: z.string().trim().min(1),
-  sectionId: z.string().trim().min(1),
-});
-
 export const ArtifactAiChangeParamsSchema = z.object({
   id: z.string().trim().min(1),
   eventId: z.string().trim().min(1),
 });
-
-export const HubIdParamsSchema = z.object({ id: z.string().trim().min(1) });
 
 export const ArtifactSearchQuerySchema = z.object({
   q: z.string().trim().min(1).max(200),
@@ -163,19 +155,6 @@ export const EditArtifactBodyBlocksResponseSchema = z.object({
   event_id: z.string(),
 });
 
-export const EditArtifactSectionBodySchema = z.object({
-  artifact_version: z.number().int().nonnegative(),
-  section_version: z.number().int().nonnegative(),
-  body_md: z.string().max(50_000),
-});
-
-export const EditArtifactSectionResponseSchema = z.object({
-  artifact_id: z.string(),
-  artifact_version: z.number().int().nonnegative(),
-  section: NoteSection,
-  event_id: z.string(),
-});
-
 export const ArtifactBacklinkSchema = NotePageBacklinkSchema.extend({
   snippet: z.string().nullable(),
 });
@@ -183,56 +162,6 @@ export const ArtifactBacklinkSchema = NotePageBacklinkSchema.extend({
 export const ArtifactBacklinksResponseSchema = z.object({
   artifact_id: z.string(),
   rows: z.array(ArtifactBacklinkSchema),
-});
-
-export const ArtifactCorrectionStatusSchema = z.discriminatedUnion('state', [
-  z.object({
-    state: z.literal('active'),
-    correction_event_id: z.null(),
-    replacement_artifact_id: z.null(),
-  }),
-  z.object({
-    state: z.literal('retracted'),
-    correction_event_id: z.string(),
-    replacement_artifact_id: z.null(),
-  }),
-  z.object({
-    state: z.literal('marked_wrong'),
-    correction_event_id: z.string(),
-    replacement_artifact_id: z.null(),
-  }),
-  z.object({
-    state: z.literal('superseded'),
-    correction_event_id: z.string(),
-    replacement_artifact_id: z.string(),
-  }),
-]);
-
-export const ArtifactCorrectionStateResponseSchema = z.object({
-  artifact_id: z.string(),
-  whole: ArtifactCorrectionStatusSchema,
-  blocks: z.record(z.string(), ArtifactCorrectionStatusSchema),
-});
-
-export const CorrectArtifactBodySchema = CorrectArtifactPayload.superRefine((data, ctx) => {
-  if (data.correction_kind === 'supersede' && !data.replacement_artifact_id) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: "replacement_artifact_id is required when correction_kind='supersede'",
-      path: ['replacement_artifact_id'],
-    });
-  }
-  if (data.correction_kind !== 'supersede' && data.replacement_artifact_id) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: "replacement_artifact_id is only allowed when correction_kind='supersede'",
-      path: ['replacement_artifact_id'],
-    });
-  }
-});
-
-export const CreateArtifactCorrectionResponseSchema = z.object({
-  correction_event_id: z.string(),
 });
 
 export const NoteRefineChangeSchema = z.object({
@@ -262,20 +191,6 @@ export const UndoArtifactAiChangeResponseSchema = z.object({
   artifact_id: z.string(),
   event_id: z.string().optional(),
   artifact_version: z.number().int().nonnegative().optional(),
-});
-
-export const DismissHubLinkBodySchema = z
-  .object({
-    suppressed_artifact_id: z.string().trim().min(1),
-    relation: z.enum(['subtopic', 'prerequisite', 'derived_from', 'contrasts_with']).optional(),
-  })
-  .strict();
-
-export const DismissHubLinkResponseSchema = z.object({
-  hub_id: z.string(),
-  suppressed_artifact_id: z.string(),
-  suppress_event_id: z.string(),
-  removed: z.boolean(),
 });
 
 export const EditingHeartbeatBodySchema = z.object({
