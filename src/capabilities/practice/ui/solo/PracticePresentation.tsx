@@ -3,6 +3,7 @@ import { AssetEvidencePreview } from '@/ui/components/response/AssetEvidencePrev
 import { EvidenceComposer } from '@/ui/components/response/EvidenceComposer';
 import { ResponseSlotField, nativeSlotFieldSpec } from '@/ui/components/response/ResponseSlotField';
 import { nativeResponseEntry, nativeResponseValue } from '@/ui/components/response/response-types';
+import { LEARNER_HANDWRITING_NOTE } from '@/ui/components/response/StimulusFigure';
 import { ApiError } from '@/ui/lib/api';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 import type {
@@ -237,7 +238,14 @@ export function PracticePresentation(props: PracticePresentationProps) {
                   label={m.alt_text ?? m.caption ?? '题目材料'}
                 />
               )}
-              {m.caption && <figcaption>{m.caption}</figcaption>}
+              {(m.caption || m.contains_learner_handwriting === true) && (
+                <figcaption>
+                  {m.caption}
+                  {m.contains_learner_handwriting === true && (
+                    <span className="rs-fig-note">{LEARNER_HANDWRITING_NOTE}</span>
+                  )}
+                </figcaption>
+              )}
             </figure>,
           ),
         },
