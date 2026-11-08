@@ -1,6 +1,8 @@
 import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { PgBoss } from 'pg-boss';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 import { AgentRunError } from '@/ai/agent-run-error';
 import type { ProviderTransportEvidence, RequestSendState } from '@/ai/task-result';
 import { taskInputHash } from '@/core/task-input-hash';
@@ -9,7 +11,7 @@ import { readQuestionServing } from '@/kernel/read-models/question-serving';
 import * as norm from '@/kernel/records/assessment-normalization';
 import type { BoundRunTaskTextFn } from '@/server/ai/runner-fn';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
-import { admissionJobId } from '../server/admission/enqueue';
+import { ADMISSION_FAMILY, admissionJobId } from '../server/admission/enqueue';
 import { runAdmissionForQuestion as run } from './question_admission_run';
 
 const bossSends: { name: string; data: unknown; opts: Record<string, unknown> }[] = [];
@@ -142,10 +144,7 @@ async function seedAdmission(opts: { compositeUnit?: boolean } = {}): Promise<Se
   await db.$client.unsafe(
     `insert into question (id,kind,prompt_md,source,created_at,updated_at) values ('q','choice','x','web_sourced',now(),now());
      insert into question_revision (revision_id,group_id,revision_ordinal,integrity_digest,structure,response_spec,scoring_basis,execution_plan,availability,published_at) values ('r','q',1,'${digest}','${q(contract.structure)}'::jsonb,'${q(contract.response_spec)}'::jsonb,'${q(contract.scoring_basis)}'::jsonb,'${q(contract.execution_plan)}'::jsonb,'general_pool',now());
-     insert into question_group_lifecycle (group_id,current_revision_id,availability,scoring_admission_state,scoring_admission_withheld_reason,claim_policy,created_at,updated_at) values ('q','r','general_pool','withheld','unverified_rules','unbounded',now(),now());
-     create schema if not exists pgboss;
-     create table if not exists pgboss.job (id uuid primary key, name text, state text, data jsonb);
-     delete from pgboss.job;`,
+     insert into question_group_lifecycle (group_id,current_revision_id,availability,scoring_admission_state,scoring_admission_withheld_reason,claim_policy,created_at,updated_at) values ('q','r','general_pool','withheld','unverified_rules','unbounded',now(),now());`,
   );
   const publishEventId = `pub-${createId()}`;
   await db.$client.unsafe(
@@ -164,18 +163,47 @@ async function seedAdmission(opts: { compositeUnit?: boolean } = {}): Promise<Se
   };
 }
 
+let fixtureBoss: PgBoss | undefined;
+const ownedJobs: Array<{ name: string; id: string }> = [];
+
+async function ensureBoss(): Promise<PgBoss> {
+  if (!fixtureBoss) {
+    const url = new URL(z.url().parse(process.env.TEST_DATABASE_URL));
+    if (
+      !/^\/test_fork_\d+$/.test(url.pathname) ||
+      !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
+    )
+      throw new Error('Disposable fork DB required');
+    fixtureBoss = new PgBoss({
+      connectionString: url.toString(),
+      max: 2,
+      supervise: false,
+      schedule: false,
+    });
+    fixtureBoss.on('error', () => {});
+    await fixtureBoss.start();
+  }
+  return fixtureBoss;
+}
+
 /** The live pgboss.job row the delivery fence locks; a purpose binding only
  * exists for a delivery that could have initiated spend — recovery wakes own
- * none. */
+ * none. Rows land through a real fixture install: hand-built pgboss objects
+ * abort pg-boss's own install script and poison the fork for other files. */
 async function insertDelivery(
   seed: Seeded,
   deliveryId: string,
   jobData: object,
   options: { binding?: boolean } = {},
 ) {
-  await testDb().$client.unsafe(
-    `insert into pgboss.job (id,name,state,data) values ('${deliveryId}','question_admission_run','active','${JSON.stringify(jobData).replaceAll("'", "''")}'::jsonb)`,
-  );
+  const boss = await ensureBoss();
+  await boss.createQueue(ADMISSION_FAMILY);
+  const jobId = await boss.send(ADMISSION_FAMILY, jobData, { id: deliveryId, retryLimit: 0 });
+  if (jobId !== deliveryId) throw new Error('Fixture job was not enqueued');
+  ownedJobs.push({ name: ADMISSION_FAMILY, id: jobId });
+  const [job] = await boss.fetch(ADMISSION_FAMILY, { includeMetadata: true });
+  if (job?.id !== deliveryId || job.state !== 'active')
+    throw new Error('Fixture must fetch the exact job into active state');
   if (options.binding === false) return;
   await testDb().$client.unsafe(
     `insert into event (id,session_id,actor_kind,actor_ref,action,subject_kind,subject_id,outcome,payload,caused_by_event_id,task_run_id,cost_micro_usd,created_at,ingest_at)
@@ -357,6 +385,12 @@ describe('question admission provider recovery', () => {
       delete process.env.ADMISSION_PROVIDER_RETRY_MAX_RETRIES;
       delete process.env.ADMISSION_PROVIDER_RETRY_BASE_DELAY_MS;
     };
+  });
+  afterEach(async () => {
+    for (const job of ownedJobs.splice(0)) await fixtureBoss?.deleteJob(job.name, job.id);
+  });
+  afterAll(async () => {
+    await fixtureBoss?.stop();
   });
 
   // @invariant concurrency: a provably unbilled provider rejection waits on a
