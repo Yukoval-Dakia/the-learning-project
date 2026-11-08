@@ -1050,3 +1050,40 @@
   flex: none;
   margin-top: 4px;
 }
+
+/* Printing a page prints what is on it, not the app around it. The worksheet page has its own
+   print layout and is left alone. Answer options are buttons and stay; action buttons go. */
+@media print {
+  :root,
+  :root body {
+    background: #fff;
+  }
+  [data-ui-next].un-st-shell:not(:has(.ws-root)) {
+    display: block;
+    min-height: 0;
+    background: #fff;
+  }
+  [data-ui-next].un-st-shell:not(:has(.ws-root)) > :not(.main) {
+    display: none;
+  }
+  [data-ui-next].un-st-shell:not(:has(.ws-root)) .un-st-page {
+    max-width: none;
+    padding: 0;
+  }
+  [data-ui-next].un-st-shell:not(:has(.ws-root)) .main,
+  [data-ui-next].un-st-shell:not(:has(.ws-root)) .main :is(main, section, article, [data-ui-next]) {
+    background: transparent;
+    box-shadow: none;
+  }
+  [data-ui-next].un-st-shell:not(:has(.ws-root)) .main button:not([data-option-id]) {
+    display: none;
+  }
+  [data-ui-next].un-st-shell:not(:has(.ws-root)) .main :is(h1, h2, h3, h4) {
+    break-after: avoid;
+  }
+  [data-ui-next].un-st-shell:not(:has(.ws-root))
+    .main
+    :is(img, figure, svg, .katex-display, pre, table) {
+    break-inside: avoid;
+  }
+}
