@@ -176,10 +176,6 @@ export function createTurnSender(ctx: CompanionCtx): TurnSender {
       internals.nudgeSession,
       page ? { kind: page.kind, id: page.id } : undefined,
     );
-    // A goal focus comes from a today-page 「改」/「撤回」 and names the arrangement for that one
-    // turn. Kept on, every later turn on /today would name it too, and an arrangement changed by
-    // mistake can't be taken back; so it goes once it has been sent.
-    if (page?.kind === 'goal') setCompanionFocus(null);
     return {
       session_id: sessionId,
       user_message: text,
@@ -226,6 +222,11 @@ export function createTurnSender(ctx: CompanionCtx): TurnSender {
     if (requestBody.derivation_policy === 'answer_only') {
       if (!(await confirmAnswerOnly(key, Boolean(recovery), sessionId))) return;
     }
+    // A goal focus comes from a today-page 「改」/「撤回」 and names the arrangement for the turn the
+    // learner types next. Kept on, every later turn on /today would name it too, and an
+    // arrangement changed by mistake can't be taken back; so a typed turn that carries it uses it
+    // up. Card confirmations and replays don't.
+    if (!recovery && !explicit && readCompanionFocus()?.kind === 'goal') setCompanionFocus(null);
     const pending: PendingTurn = {
       v: 2,
       idempotencyKey: key,
