@@ -2,10 +2,12 @@
 //
 // Identity is (topic, attempt). A live send is joined. A known domain result,
 // including unknown cost, is a terminal receipt and is not retried to obtain a
-// price. A send whose result is still unknown (lease ended, no proposal) stays
-// unresolved and is not dispatched again. A decided proposal seals that receipt
-// and may open a later attempt. Accept, dismiss, and retract seal the create
-// receipt so a later decision cannot leave the topic pinned on `unknown`.
+// price. A send whose result is still unknown stays unresolved and is not
+// dispatched again. Only a proposal born during that attempt can close it; an
+// earlier intent's decision cannot. A stream that ends without a terminal
+// result stays unresolved, whether or not a price was estimated. Accept,
+// dismiss, and retract seal the create receipt for the attempt that produced
+// the proposal.
 
 import { and, eq } from 'drizzle-orm';
 import { AgentRunError } from '@/ai/agent-run-error';
@@ -17,6 +19,7 @@ import {
   type PaidEffectSnapshot,
   admitPaidEffectIntent,
   claimPaidEffectSend,
+  markPaidEffectUnknown,
   readPaidEffect,
   recordPaidEffectApplication,
   recordPaidEffectResult,
@@ -68,9 +71,20 @@ interface TopicAttempt {
   readonly deliveryId: string | null;
   readonly leaseExpiresAt: Date | null;
   readonly revision: string;
+  readonly startedAt: Date;
   readonly result: unknown;
   readonly unresolvedReason: string | null;
 }
+
+/** A decision closes an attempt only when the proposal was born while that send was open. */
+type AttemptDecision =
+  | { readonly kind: 'this_attempt'; readonly proposalId: string }
+  | { readonly kind: 'none' };
+
+type OutlineFailure =
+  | { readonly kind: 'not_sent'; readonly error: unknown }
+  | { readonly kind: 'known'; readonly receipt: LearningIntentReceipt; readonly error: ApiError }
+  | { readonly kind: 'unresolved' };
 
 type SlotDecision =
   | {
@@ -211,6 +225,7 @@ async function loadTopicAttempts(db: Db | Tx, topic: string): Promise<TopicAttem
       fence: paid_effect.fence,
       delivery_id: paid_effect.delivery_id,
       send_lease_expires_at: paid_effect.send_lease_expires_at,
+      created_at: paid_effect.created_at,
       result_json: paid_effect.result_json,
       unresolved_reason: paid_effect.unresolved_reason,
     })
@@ -235,6 +250,7 @@ async function loadTopicAttempts(db: Db | Tx, topic: string): Promise<TopicAttem
     deliveryId: row.delivery_id,
     leaseExpiresAt: row.send_lease_expires_at,
     revision: row.entity_revision,
+    startedAt: row.created_at,
     result: row.result_json,
     unresolvedReason: row.unresolved_reason,
   }));
@@ -353,17 +369,23 @@ export function learningIntentTopic(payload: {
   return typeof topic === 'string' && topic.length > 0 ? topic : null;
 }
 
-async function newestDecidedIntent(db: Db | Tx, topic: string): Promise<string | null> {
-  let newest: { id: string; at: number } | null = null;
+async function decisionForAttempt(
+  db: Db | Tx,
+  topic: string,
+  attempt: TopicAttempt,
+): Promise<AttemptDecision> {
+  const started = attempt.startedAt.getTime();
+  let match: { id: string; at: number } | null = null;
   for (const status of ['accepted', 'dismissed', 'stale'] as const) {
     const rows = await listProposalInboxRows(db, { status, kind: 'learning_item' });
     for (const row of rows) {
       if (storedIntentTopic(row.payload) !== topic) continue;
       const at = row.proposed_at.getTime();
-      if (!newest || at > newest.at) newest = { id: row.id, at };
+      if (at < started) continue;
+      if (!match || at > match.at) match = { id: row.id, at };
     }
   }
-  return newest?.id ?? null;
+  return match ? { kind: 'this_attempt', proposalId: match.id } : { kind: 'none' };
 }
 
 function freshInput(topic: string, rows: readonly TopicAttempt[]) {
@@ -411,9 +433,13 @@ async function resolveUnresolvedAttempt(
   rows: readonly TopicAttempt[],
   unresolved: TopicAttempt,
 ): Promise<SlotDecision> {
-  const decided = await newestDecidedIntent(tx, topic);
-  if (decided && unresolved.deliveryId) {
-    await writeReceipt(tx, unresolved, await proposedReceipt(tx, decided, unresolved.deliveryId));
+  const decision = await decisionForAttempt(tx, topic, unresolved);
+  if (decision.kind === 'this_attempt' && unresolved.deliveryId) {
+    await writeReceipt(
+      tx,
+      unresolved,
+      await proposedReceipt(tx, decision.proposalId, unresolved.deliveryId),
+    );
     return admitFresh(tx, topic, rows);
   }
   const domain = domainFromReason(unresolved.unresolvedReason);
@@ -572,55 +598,84 @@ function knownReceipt(fact: LearningIntentFailureFact, requestId: string): Learn
   };
 }
 
+function providerFailedReceipt(err: AgentRunError, requestId: string): LearningIntentReceipt {
+  return {
+    outcome: 'provider_failed',
+    request_id: requestId,
+    task_run_id: err.taskRunId,
+    proposal_id: null,
+    code: 'provider_failed',
+    message: 'provider attempt failed',
+    cost_unknown: err.costUsd === undefined,
+  };
+}
+
+function classifyOutlineFailure(err: unknown, requestId: string): OutlineFailure {
+  const fact = learningIntentFailureFact(err);
+  if (fact) {
+    return {
+      kind: 'known',
+      receipt: knownReceipt(fact, requestId),
+      error: domainError(fact.code, fact.message, requestId, fact.taskRunId, fact.domainOutcome),
+    };
+  }
+  if (!(err instanceof AgentRunError)) return { kind: 'not_sent', error: err };
+  switch (err.subtype) {
+    case 'stream_no_terminal':
+      return { kind: 'unresolved' };
+    default:
+      return {
+        kind: 'known',
+        receipt: providerFailedReceipt(err, requestId),
+        error: domainError(
+          'provider_failed',
+          'provider attempt failed',
+          requestId,
+          err.taskRunId,
+          'provider_failed',
+        ),
+      };
+  }
+}
+
 async function settleWinnerFailure(
   db: Db,
   won: Extract<SlotDecision, { kind: 'winner' }>,
   err: unknown,
   rateToken: number | undefined,
 ): Promise<never> {
-  const fact = learningIntentFailureFact(err);
-  if (!fact && !(err instanceof AgentRunError)) {
-    if (rateToken !== undefined) refundRateLimit(rateToken);
-    await recordReceipt(db, won.identity, won.deliveryId, won.fence, {
-      outcome: 'not_sent',
-      request_id: won.deliveryId,
-      task_run_id: null,
-      proposal_id: null,
-      code: null,
-      message: null,
-      cost_unknown: false,
-    });
-    throw err;
+  const failure = classifyOutlineFailure(err, won.deliveryId);
+  switch (failure.kind) {
+    case 'not_sent':
+      if (rateToken !== undefined) refundRateLimit(rateToken);
+      await recordReceipt(db, won.identity, won.deliveryId, won.fence, {
+        outcome: 'not_sent',
+        request_id: won.deliveryId,
+        task_run_id: null,
+        proposal_id: null,
+        code: null,
+        message: null,
+        cost_unknown: false,
+      });
+      throw failure.error;
+    case 'known':
+      await recordReceipt(db, won.identity, won.deliveryId, won.fence, failure.receipt);
+      throw failure.error;
+    case 'unresolved':
+      await db.transaction(async (tx) => {
+        await lockPaidEffectControlFamily(tx, FAMILY);
+        await markPaidEffectUnknown(tx, won.identity, won.deliveryId, 'stream_no_terminal', {
+          fence: won.fence,
+        });
+      });
+      throw new ApiError(
+        'learning_intent_in_flight',
+        'learning intent request is still in flight',
+        409,
+        undefined,
+        { request_id: won.deliveryId, state: 'unknown' },
+      );
   }
-  // Unknown cost is still a known domain outcome: record it and stop. A later
-  // create is a new attempt; this one is not dispatched again to discover a price.
-  if (fact) {
-    await recordReceipt(
-      db,
-      won.identity,
-      won.deliveryId,
-      won.fence,
-      knownReceipt(fact, won.deliveryId),
-    );
-    throw domainError(fact.code, fact.message, won.deliveryId, fact.taskRunId, fact.domainOutcome);
-  }
-  const taskRunId = err instanceof AgentRunError ? err.taskRunId : null;
-  await recordReceipt(db, won.identity, won.deliveryId, won.fence, {
-    outcome: 'provider_failed',
-    request_id: won.deliveryId,
-    task_run_id: taskRunId,
-    proposal_id: null,
-    code: 'provider_failed',
-    message: 'provider attempt failed',
-    cost_unknown: err instanceof AgentRunError && err.costUsd === undefined,
-  });
-  throw domainError(
-    'provider_failed',
-    'provider attempt failed',
-    won.deliveryId,
-    taskRunId,
-    'provider_failed',
-  );
 }
 
 async function dispatchWinner(
