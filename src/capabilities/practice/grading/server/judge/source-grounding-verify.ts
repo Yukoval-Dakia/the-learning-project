@@ -1,4 +1,4 @@
-// (PR #1063 review, thread 2) — source-grounding verification runner.
+// source-grounding verification runner.
 // Reuses the multimodal judge INFRA (R2 image fetch + SDK structured-output dispatch,
 // same shape as multimodal-direct-judge.ts / steps-judge.ts) but runs a GROUNDING-
 // specific prompt (SourceGroundingVerifyTask): re-read the source image and decide
@@ -34,7 +34,7 @@ import {
 // contract fall back to the char-scan text parse (zero-loss).
 
 // Concrete `{ text, images }` input (NOT `... | unknown`, which collapses the whole union
-// to `unknown` and erases the documented shape — PR #1063 review thread 8).
+// to `unknown` and erases the documented shape).
 export type SourceGroundingRunTaskFn = (
   kind: string,
   input: { text: string; images: Array<{ data: string; mediaType: string }> },

@@ -303,7 +303,7 @@ export class JudgeInvoker {
       runTaskFn: observedRunTaskFn,
     });
 
-    // D6 (U4 L-stamp, critic-R2 HIGH): pin capability_ref.version from the
+    // D6 (U4 L-stamp): pin capability_ref.version from the
     // active SubjectProfile.version, NOT the judge runners' module-level
     // '1.0.0' constants. Override on the RESULT object **before** the output
     // parse — /api/review/submit embeds `invoked.result.capability_ref` into the

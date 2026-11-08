@@ -2,7 +2,7 @@
 // 被测不变量：同事务原子发布（revision + lifecycle + event + identity diff）、
 // 双 CAS（revision + admission generation）、digest 幂等、supersedes 链、
 // admission 分支与 evidence 形状、archive/restore 的 claim 语义、mid-step 故障
-// 全量回滚（trigger 注入）、并发兄弟编辑的组根锁序（复审 P1/P2 全覆盖）。
+// 全量回滚（trigger 注入）、并发兄弟编辑的组根锁序（全覆盖）。
 
 import { eq, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';

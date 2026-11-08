@@ -590,7 +590,7 @@ export async function applyJudgeCalibrationRejudgeSample(
 
 /** Freeze the selected candidates into staged-workset items by capturing the
  * FULL prepared input face (question row, subject profile, answer face) at
- * freeze time — R1 P1b: the freeze digest binds the exact runner
+ * freeze time — the freeze digest binds the exact runner
  * inputs, and execution never re-reads the (mutable) business rows.
  * Un-preparable candidates are reported, never silently dropped. */
 export async function freezeCalibrationWorkSetFromCandidates(
