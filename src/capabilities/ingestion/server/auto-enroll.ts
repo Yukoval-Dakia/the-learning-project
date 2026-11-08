@@ -401,8 +401,6 @@ export async function runAutoEnrollForSession(
       routedToReview += 1;
       continue;
     }
-    if (result === null) continue;
-
     // A concurrent runner already enrolled this block.
     if (result === null) continue;
 

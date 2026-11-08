@@ -1,6 +1,9 @@
-// Workbench aggregation read model: KPIs, active goal, and the seven-day activity heat.
+// Workbench aggregation read model: KPIs, active goals, and the seven-day activity heat.
 
 import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { learnerLocalDay } from '@/core/learner-day';
+import type { SteeringGoalDataT } from '@/core/schema/steering';
+import { steeringDaysLeft, steeringStartsInDays } from '@/core/steering';
 import type { Db } from '@/db/client';
 import {
   artifact,
@@ -33,6 +36,25 @@ export interface WorkbenchSessionRow {
   reviewed_count: number;
 }
 
+/** One active goal as the today page lists it; steering fields are null on a typed goal. */
+export interface WorkbenchActiveGoal {
+  id: string;
+  title: string;
+  instruction_md: string | null;
+  learner_words: string | null;
+  /** Learner-local YYYY-MM-DD days; the day counts are from today. */
+  window: {
+    from: string | null;
+    until: string | null;
+    days_left: number | null;
+    starts_in_days: number | null;
+  };
+  /** Named knowledge in a narrowed scope, and the parts said that matched none. */
+  scope: { names: string[]; unresolved: string[] };
+  revise_prompt: string;
+  end_prompt: string;
+}
+
 export interface WorkbenchHeatDay {
   /** YYYY-MM-DD in the Asia/Shanghai day boundary. */
   day: string;
@@ -49,8 +71,8 @@ export interface WorkbenchSummary {
     goal_count: number;
   };
   cold_start: ColdStartState;
-  // Null means no current goal, not cold start.
-  active_goal: { id: string; title: string } | null;
+  /** Every active goal, newest first. Empty means no current goal, not cold start. */
+  active_goals: WorkbenchActiveGoal[];
   active_sessions: WorkbenchSessionRow[];
   week_heat: WorkbenchHeatDay[];
   // Resolved in the API process, where the config snapshot is hydrated.
@@ -124,18 +146,68 @@ async function loadPersistedColdStartPresence(db: Db): Promise<PersistedColdStar
   );
 }
 
-// Feeds KPI/profile cards only, not cold-start. With multiple goals the newest is current.
-async function loadActiveGoalState(
-  db: Db,
-): Promise<{ count: number; active: { id: string; title: string } | null }> {
+/** How a goal is named back to the learner: the companion's restatement for a said one. */
+function goalLabel(title: string, steering: SteeringGoalDataT | null): string {
+  return steering?.instruction_md ?? title;
+}
+
+async function loadActiveGoals(db: Db, today: string): Promise<WorkbenchActiveGoal[]> {
   const rows = await db
-    .select({ id: goal.id, title: goal.title })
+    .select({
+      id: goal.id,
+      title: goal.title,
+      scope_mode: goal.scope_mode,
+      scope_knowledge_ids: goal.scope_knowledge_ids,
+      effective_from: goal.effective_from,
+      effective_until: goal.effective_until,
+      steering: goal.steering,
+    })
     .from(goal)
     .where(eq(goal.status, 'active'))
     // id 降序作确定性 tie-break——同 created_at（同批种子/同秒创建）时选取稳定，不随 reload 漂移。
     .orderBy(desc(goal.created_at), desc(goal.id));
-  const first = rows[0];
-  return { count: rows.length, active: first ? { id: first.id, title: first.title } : null };
+  // A subject-wide goal's scope is the whole subject, which its title already says; only a
+  // hand-narrowed scope is worth naming.
+  const scopeIds = [
+    ...new Set(
+      rows.flatMap((row) => (row.scope_mode === 'explicit' ? (row.scope_knowledge_ids ?? []) : [])),
+    ),
+  ];
+  const names = new Map<string, string>();
+  if (scopeIds.length > 0) {
+    const found = await db
+      .select({ id: knowledge.id, name: knowledge.name })
+      .from(knowledge)
+      .where(and(inArray(knowledge.id, scopeIds), isNull(knowledge.archived_at)));
+    for (const row of found) names.set(row.id, row.name);
+  }
+  return rows.map((row) => {
+    const steering = row.steering ?? null;
+    const label = goalLabel(row.title, steering);
+    return {
+      id: row.id,
+      title: row.title,
+      instruction_md: steering?.instruction_md ?? null,
+      learner_words: steering?.learner_words ?? null,
+      window: {
+        from: row.effective_from,
+        until: row.effective_until,
+        days_left: steeringDaysLeft(row.effective_until, today),
+        starts_in_days: steeringStartsInDays(row.effective_from, today),
+      },
+      scope: {
+        names:
+          row.scope_mode === 'explicit'
+            ? (row.scope_knowledge_ids ?? []).flatMap((id) => names.get(id) ?? [])
+            : [],
+        unresolved: steering?.scope_unresolved ?? [],
+      },
+      // Both open the companion with the sentence already typed; the learner finishes or sends
+      // it, and the companion makes the change through the same tool that recorded it.
+      revise_prompt: `把「${label}」改成：`,
+      end_prompt: `「${label}」不用了，撤回吧。`,
+    };
+  });
 }
 
 async function listActiveSessions(db: Db): Promise<WorkbenchSessionRow[]> {
@@ -212,7 +284,7 @@ export async function loadWorkbenchSummary(
     dueCount,
     pendingAttributionCount,
     knowledgeCount,
-    goalState,
+    activeGoals,
     activeSessions,
     weekHeat,
     persistedPresence,
@@ -221,13 +293,13 @@ export async function loadWorkbenchSummary(
     countDue(db, parts),
     countPendingAttribution(db),
     countKnowledge(db),
-    loadActiveGoalState(db),
+    loadActiveGoals(db, learnerLocalDay(new Date())),
     listActiveSessions(db),
     loadWeekHeat(db),
     loadPersistedColdStartPresence(db),
   ]);
   const coldStart = buildColdStartState({
-    active_goal: goalState.count > 0,
+    active_goal: activeGoals.length > 0,
     goal_history: persistedPresence.goal_history,
     knowledge: knowledgeCount.learner > 0,
     question: persistedPresence.question,
@@ -247,10 +319,10 @@ export async function loadWorkbenchSummary(
       due_count_scope: 'actionable_queue_sample',
       pending_attribution_count: pendingAttributionCount,
       knowledge_count: knowledgeCount.all,
-      goal_count: goalState.count,
+      goal_count: activeGoals.length,
     },
     cold_start: coldStart,
-    active_goal: goalState.active,
+    active_goals: activeGoals,
     active_sessions: activeSessions,
     week_heat: weekHeat,
     auto_apply_enabled: proposalAutoApplyEnabled(),

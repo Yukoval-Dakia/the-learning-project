@@ -1,9 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { type SQL, and, asc, eq, gt, or } from 'drizzle-orm';
-import type { Job, JobWithMetadata } from 'pg-boss';
+import type { Job } from 'pg-boss';
 import type { Db } from '@/db/client';
 import { withLearningStateLock } from '@/db/learning-state-lock';
-import { fromPgBossDrizzleTx } from '@/db/pg-boss-drizzle';
 import { intervention } from '@/db/schema';
 import { materializeInterventionDiagnostics } from '@/kernel/records/intervention-diagnostic-materialize';
 import { getRunningBoss } from '@/server/boss/client';
@@ -13,33 +12,14 @@ import {
   lockInterventionSource,
 } from './intervention-lock';
 import {
-  PREPARE_INTERVENTION_JOB,
-  type PrepareInterventionJobData,
-} from './probe-result-subscription';
-import {
-  failInterventionPreparation,
-  loadInterventionVersion,
-  updatePreparationJobId,
-} from './store';
+  type InterventionPreparationBoss,
+  drainInterventionPreparationDispatch,
+} from './preparation-dispatch';
+import { loadInterventionVersion, updatePreparationJobId } from './store';
 
-const LIVE_JOB_STATES: ReadonlySet<string> = new Set(['created', 'retry', 'active']);
 const RECOVERY_SCAN_LIMIT = 100;
 
-export interface InterventionPrepareRecoveryBoss {
-  getJobById(
-    name: typeof PREPARE_INTERVENTION_JOB,
-    id: string,
-  ): Promise<Pick<JobWithMetadata, 'state'> | null>;
-  send(
-    name: typeof PREPARE_INTERVENTION_JOB,
-    data: PrepareInterventionJobData,
-    options: {
-      id: string;
-      db: ReturnType<typeof fromPgBossDrizzleTx>;
-      startAfter?: Date;
-    },
-  ): Promise<string | null>;
-}
+export type InterventionPrepareRecoveryBoss = InterventionPreparationBoss;
 
 export interface InterventionPrepareRecoveryReport {
   scanned: number;
@@ -110,8 +90,7 @@ export async function recoverEligibleInterventionDiagnostics(
           await lockInterventionInstance(tx, row.id, row.version);
           const current = await loadInterventionVersion(tx, row.id, row.version);
           if (
-            !current ||
-            current.status !== 'active' ||
+            current?.status !== 'active' ||
             current.delivery_mode !== 'eligible' ||
             !current.package ||
             !current.settlement
@@ -150,10 +129,10 @@ export async function recoverEligibleInterventionDiagnostics(
 /**
  * Recreate operational pg-boss work for durable `preparing` aggregates.
  *
- * Backup/restore preserves aggregates but not pg-boss rows, so recovery checks
- * queue liveness, reserves a fresh job UUID when the archived id is missing, and
- * turns retry exhaustion into a terminal aggregate failure instead of paying
- * forever.
+ * Backup/restore preserves aggregates but not pg-boss rows. Every row flows
+ * through the single dispatch drain, which binds missing delivery identities,
+ * re-delivers lost sends under the persisted job id, and turns retry
+ * exhaustion into a terminal aggregate failure instead of paying forever.
  */
 export async function recoverPreparingInterventions(
   db: Db,
@@ -164,9 +143,6 @@ export async function recoverPreparingInterventions(
     .select({
       id: intervention.id,
       version: intervention.version,
-      idempotency_key: intervention.idempotency_key,
-      preparation_job_id: intervention.preparation_job_id,
-      source_probe_result_event_id: intervention.source_probe_result_event_id,
     })
     .from(intervention)
     .where(eq(intervention.status, 'preparing'))
@@ -183,79 +159,15 @@ export async function recoverPreparingInterventions(
 
   for (const row of rows) {
     try {
-      const existingJob = row.preparation_job_id
-        ? await boss.getJobById(PREPARE_INTERVENTION_JOB, row.preparation_job_id)
-        : null;
-      if (existingJob && LIVE_JOB_STATES.has(existingJob.state)) {
-        report.live += 1;
-        continue;
-      }
-      if (existingJob) {
-        if (!row.preparation_job_id) {
-          throw new Error('terminal preparation job lookup had no aggregate job id');
-        }
-        const failed = await failInterventionPreparation(db, {
-          interventionId: row.id,
-          version: row.version,
-          expectedPreparationJobId: row.preparation_job_id,
-          failureCode: `preparation_job_${existingJob.state}`,
-          now,
-        });
-        if (failed.status === 'preparation_failed') report.terminalized += 1;
-        else report.raced += 1;
-        continue;
-      }
-
-      const replacementJobId = randomUUID();
-      const outcome = await db.transaction(async (tx) => {
-        await lockInterventionCorrectionsAll(tx);
-        await lockInterventionSource(tx, row.source_probe_result_event_id);
-        const current = await loadInterventionVersion(tx, row.id, row.version);
-        if (
-          !current ||
-          current.status !== 'preparing' ||
-          current.preparation_job_id !== row.preparation_job_id
-        ) {
-          return 'raced' as const;
-        }
-        // The subscription replay uses the same source lock. Re-check after
-        // acquiring it because the pre-lock liveness read may be stale: replay
-        // can recreate the archived UUID while recovery is waiting.
-        const jobAfterLock = current.preparation_job_id
-          ? await boss.getJobById(PREPARE_INTERVENTION_JOB, current.preparation_job_id)
-          : null;
-        if (jobAfterLock) {
-          return LIVE_JOB_STATES.has(jobAfterLock.state) ? ('live' as const) : ('raced' as const);
-        }
-        // The aggregate's wait receipt survives the lost row: the resent job
-        // carries the spent budget (the handler's next wait counts from it)
-        // and honors the armed instant instead of retrying on the spot.
-        const sent = await boss.send(
-          PREPARE_INTERVENTION_JOB,
-          {
-            intervention_id: current.id,
-            version: current.version,
-            idempotency_key: current.idempotency_key,
-            ...(current.preparation_waits > 0 ? { provider_waits: current.preparation_waits } : {}),
-          },
-          {
-            id: replacementJobId,
-            ...(current.preparation_wait_until
-              ? { startAfter: current.preparation_wait_until }
-              : {}),
-            db: fromPgBossDrizzleTx(tx),
-          },
-        );
-        await updatePreparationJobId(
-          tx,
-          current.id,
-          current.version,
-          sent ?? replacementJobId,
-          now,
-        );
-        return 'reenqueued' as const;
-      });
-      report[outcome] += 1;
+      const outcome = await drainInterventionPreparationDispatch(
+        db,
+        boss,
+        { interventionId: row.id, version: row.version },
+        now,
+      );
+      report[
+        outcome === 'dispatched' ? 'reenqueued' : outcome === 'not_preparing' ? 'raced' : outcome
+      ] += 1;
     } catch (error) {
       report.failed += 1;
       console.warn('[intervention_prepare_recovery] row failed', {
@@ -286,11 +198,10 @@ export interface InterventionProviderWaitRearmInput {
 /**
  * Provider-wait rearm (YUK-2030): a `prepare_intervention` delivery that hit a
  * proven transient provider rejection schedules its own replacement instead of
- * burning pg-boss retries against a dead route. Same lock order and repoint
- * pattern as `recoverPreparingInterventions` — replacement send and
- * preparation_job_id repoint commit in one transaction, so a crash leaves no
- * half-state. The current job then completes normally; the aggregate stays
- * `preparing` and the recovery floor covers a lost wake.
+ * burning pg-boss retries against a dead route. The CAS repoint commits the
+ * fresh delivery identity and the wait receipt durably; the shared drain then
+ * delivers it after commit, so a lost send leaves the recovery floor — not a
+ * rolled-back half-state — in charge.
  */
 export async function rearmInterventionPreparationWait(
   db: Db,
@@ -305,35 +216,30 @@ export async function rearmInterventionPreparationWait(
     .limit(1);
   if (!row) return 'raced';
 
-  const replacementJobId = randomUUID();
-  return db.transaction(async (tx) => {
+  const repointed = await db.transaction(async (tx) => {
     await lockInterventionCorrectionsAll(tx);
     await lockInterventionSource(tx, row.source_probe_result_event_id);
     const current = await loadInterventionVersion(tx, input.interventionId, input.version);
     if (current?.status !== 'preparing' || current.preparation_job_id !== input.supersededJobId) {
-      return 'raced' as const;
+      return false;
     }
-    const waitUntil = new Date(now.getTime() + input.delayMs);
-    const sent = await boss.send(
-      PREPARE_INTERVENTION_JOB,
-      {
-        intervention_id: current.id,
-        version: current.version,
-        idempotency_key: current.idempotency_key,
-        provider_waits: input.waits,
-      },
-      {
-        id: replacementJobId,
-        startAfter: waitUntil,
-        db: fromPgBossDrizzleTx(tx),
-      },
-    );
-    await updatePreparationJobId(tx, current.id, current.version, sent ?? replacementJobId, now, {
+    await updatePreparationJobId(tx, current.id, current.version, randomUUID(), now, {
       waits: input.waits,
-      until: waitUntil,
+      until: new Date(now.getTime() + input.delayMs),
     });
-    return 'waiting' as const;
+    return true;
   });
+  if (!repointed) return 'raced';
+  // The repoint is durable; the drain delivers the bound id with the persisted
+  // provider_waits/startAfter. A send failure here stays recoverable — the
+  // recovery floor re-drives the same identity.
+  const outcome = await drainInterventionPreparationDispatch(
+    db,
+    boss,
+    { interventionId: input.interventionId, version: input.version },
+    now,
+  );
+  return outcome === 'dispatched' || outcome === 'live' ? 'waiting' : 'raced';
 }
 
 export function buildInterventionPrepareRecoveryHandler(

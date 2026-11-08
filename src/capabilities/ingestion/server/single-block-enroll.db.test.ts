@@ -15,6 +15,8 @@ import {
 import { persistCapturedQuestionBlock } from '@/kernel/records/question-block-creation';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { captureIngestionOriginal } from './assessment-capture';
+import { runAutoEnrollForSession } from './auto-enroll';
+import { readIngestionSessionBlocks } from './session-blocks-read';
 import { enrollIngestionBlock } from './single-block-enroll';
 
 function structured(prompt: string): StructuredQuestionT {
@@ -281,4 +283,106 @@ describe('enrollIngestionBlock', () => {
       ).toBe(expectedKnowledge);
     },
   );
+
+  // @invariant data: workflow_judge_confidence only ever reports a verdict a judge
+  //   actually produced — manual and rescue enrollment write no judge blob and read
+  //   null, automatic enrollment reads back the verdict's confidence, and a stored
+  //   blob under non-judge provenance (rows written before the gate) reads null
+  //   while a blob without readable provenance keeps its stored value
+  // @fails-if a manually or rescue-enrolled question surfaces confidence 0 (the UI's
+  //   「把握不高」 for a judge that never ran), an auto-enrolled question loses its
+  //   verdict confidence, or provenance-unreadable legacy blobs are silently blanked
+  it('reports workflow_judge confidence only when a judge actually ran', async () => {
+    const db = testDb();
+    await db.insert(knowledge).values({
+      id: 'k1',
+      name: '虚词',
+      domain: 'yuwen',
+      parent_id: null,
+      archived_at: null,
+      created_at: new Date(),
+      updated_at: new Date(),
+      version: 0,
+    });
+    const { sessionId, blockIds } = await seedSession(db, {
+      prompts: ['手动入库的题', 'rescue 入库的题', '自动入库的题'],
+      wrongAnswer: 'x=42',
+    });
+    const [manualBlockId, rescueBlockId, autoBlockId] = blockIds;
+    if (!manualBlockId || !rescueBlockId || !autoBlockId) throw new Error('seed missing');
+
+    // Manual click and the rescue write both funnel through this endpoint; only
+    // `source` differs, exactly like the production rescue call.
+    const manual = await enrollIngestionBlock(db, {
+      sessionId,
+      blockId: manualBlockId,
+      expectedVersion: 0,
+    });
+    const rescued = await enrollIngestionBlock(db, {
+      sessionId,
+      blockId: rescueBlockId,
+      expectedVersion: 0,
+      source: 'rescue',
+    });
+    const auto = await runAutoEnrollForSession({
+      db,
+      sessionId,
+      subjectId: 'yuwen',
+      runBlockAssemblyFn: async () => ({ text: '{"candidates":[]}' }),
+      tagKnowledgeFn: async () => ({ kind: 'match', knowledge_ids: ['k1'] }),
+    });
+    expect(manual.status).toBe('enrolled');
+    expect(rescued.status).toBe('enrolled');
+    expect(auto.enrolled).toBe(1);
+    const autoConfidence = auto.blocks[0]?.confidence;
+    if (typeof autoConfidence !== 'number') throw new Error('auto verdict missing');
+    expect(autoConfidence).toBeGreaterThan(0);
+
+    const metaOf = async (questionId: string) => {
+      const [row] = await db
+        .select({ metadata: question.metadata })
+        .from(question)
+        .where(eq(question.id, questionId));
+      return (row?.metadata ?? null) as Record<string, unknown> | null;
+    };
+    const manualMeta = await metaOf(manual.question_id);
+    const rescueMeta = await metaOf(rescued.question_id);
+    const autoMeta = await metaOf(auto.blocks[0]?.question_id ?? 'missing');
+    // No judge ran for these two, so nothing may claim a judge confidence.
+    expect(manualMeta?.workflow_judge).toBeUndefined();
+    expect(manualMeta?.ingestion_enrollment).toMatchObject({ enrolled_by: 'user_retry' });
+    expect(rescueMeta?.workflow_judge).toBeUndefined();
+    expect(rescueMeta?.ingestion_enrollment).toMatchObject({ enrolled_by: 'rescue' });
+    expect(autoMeta?.workflow_judge).toMatchObject({ confidence: autoConfidence });
+    expect(autoMeta?.ingestion_enrollment).toMatchObject({ enrolled_by: 'workflow_judge' });
+
+    const projected = async () => {
+      const { rows } = await readIngestionSessionBlocks(db, { id: sessionId });
+      return new Map(rows.map((r) => [r.id, r.workflow_judge_confidence]));
+    };
+    let confidence = await projected();
+    expect(confidence.get(manualBlockId)).toBeNull();
+    expect(confidence.get(rescueBlockId)).toBeNull();
+    expect(confidence.get(autoBlockId)).toBe(autoConfidence);
+
+    // Row written before the write-side gate: blob says 0, provenance says it was
+    // not a judge → the stored zero reads as null.
+    await db
+      .update(question)
+      .set({ metadata: { ...manualMeta, workflow_judge: { confidence: 0 } } })
+      .where(eq(question.id, manual.question_id));
+    // A blob with no readable provenance cannot be told apart from a real verdict:
+    // the stored value stands (pre-enrollment-marker rows stay as written).
+    const rescueMetaNoProv = { ...(rescueMeta as Record<string, unknown>) };
+    delete rescueMetaNoProv.ingestion_enrollment;
+    await db
+      .update(question)
+      .set({ metadata: { ...rescueMetaNoProv, workflow_judge: { confidence: 0 } } })
+      .where(eq(question.id, rescued.question_id));
+
+    confidence = await projected();
+    expect(confidence.get(manualBlockId)).toBeNull();
+    expect(confidence.get(rescueBlockId)).toBe(0);
+    expect(confidence.get(autoBlockId)).toBe(autoConfidence);
+  });
 });
