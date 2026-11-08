@@ -22,6 +22,7 @@ import { and, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { LearnerHandwritingMarker } from '@/core/schema/assessment/materials';
+import { knownSignal } from '@/core/schema/knowledge-signal';
 import { deriveSourceTier } from '@/core/schema/provenance';
 import type { Db, Tx } from '@/db/client';
 import {
@@ -32,6 +33,7 @@ import {
   question_solution_prior,
   source_asset,
 } from '@/db/schema';
+import { judgedAttemptCounts, readAttemptFacts } from '@/kernel/read-models/question-activity';
 import { allowedQuestionIds } from '@/kernel/read-models/usage-policy';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 import {
@@ -115,6 +117,21 @@ const ReadBankOkItemSchema = z.object({
   historical: z.boolean(),
   /** 该 revision 当前是否还允许发新 issuance（历史读 = false）。 */
   new_issuance_allowed: z.boolean(),
+  activity: z.object({
+    attempts: z.object({
+      value: z
+        .object({
+          success: z.number().int().nonnegative(),
+          partial: z.number().int().nonnegative(),
+          failure: z.number().int().nonnegative(),
+        })
+        .nullable(),
+      known: z.boolean(),
+      source: z.string(),
+      asOf: z.string(),
+      missingReason: z.string().nullable(),
+    }),
+  }),
   lifecycle: z.object({
     availability: z.enum(['general_pool', 'container_only']).nullable(),
     admission_state: z.enum(['admitted', 'withheld']).nullable(),
@@ -608,6 +625,9 @@ export async function runReadBank(
   const allowedGroups = runOpts?.derivationOnly ? await allowedQuestionIds(db, groupIds) : null;
   const deniedGroups =
     allowedGroups === null ? null : new Set(groupIds.filter((id) => !allowedGroups.has(id)));
+  const attemptAsOf = new Date();
+  const countableIds = deniedGroups ? groupIds.filter((id) => !deniedGroups.has(id)) : groupIds;
+  const attemptFacts = await readAttemptFacts(db, countableIds);
 
   const priorRows = include.has('solution_prior')
     ? await db
@@ -907,6 +927,13 @@ export async function runReadBank(
       current,
       historical: !current,
       new_issuance_allowed: newIssuanceAllowed,
+      activity: {
+        attempts: knownSignal(
+          judgedAttemptCounts(attemptFacts.get(revision.group_id) ?? []),
+          'kernel/read-models/question-activity:readAttemptFacts',
+          attemptAsOf,
+        ),
+      },
       lifecycle: {
         availability: lifecycle?.availability ?? null,
         admission_state: lifecycle?.scoring_admission_state ?? null,
@@ -1105,7 +1132,7 @@ async function executeReadBank(ctx: ToolContext, rawInput: ReadBankInput): Promi
 export const readBankTool: DomainTool<ReadBankInput, ReadBankOutput> = {
   name: 'read_bank',
   description:
-    'Fetch versioned question/group content by bank ref (qrev1:<revision_id>:<digest12> — the `ref` strings search_bank returns). Batch up to 20 refs; each resolves independently (partial success is normal). A ref that cannot be resolved, whose digest no longer matches, or whose group was withdrawn returns an explicit error for that ref — NEVER a silent fallback to latest. Default response is an overview (nav map of part/unit/material/slot stable ids — usable directly as edit_question targets); expand via include layers: content (parts + answer slots) / materials / answers (typed keys) / rubric / scoring (merged answers+rubric+execution) / source / relations / execution / metadata / solution_prior (same-version method and pitfall evidence with source ids; long text uses extent/cursor). focus narrows a read to part/unit/material/item/slot subtrees; extent.chars + next_cursor continue long text pinned to the read revision. A withdrawn revision is readable with a bound submission_id (old attempts read their exact frozen revision, marked historical + new_issuance_allowed=false) or a private role. answers/metadata/rubric/scoring/execution/solution_prior and private-visibility materials are role-gated by the server — include can never upgrade a role; denied layers are reported in denied_layers.',
+    'Fetch versioned question/group content by bank ref (qrev1:<revision_id>:<digest12> — the `ref` strings search_bank returns). Batch up to 20 refs; each resolves independently (partial success is normal). A ref that cannot be resolved, whose digest no longer matches, or whose group was withdrawn returns an explicit error for that ref — NEVER a silent fallback to latest. Default response is an overview (nav map of part/unit/material/slot stable ids — usable directly as edit_question targets); expand via include layers: content (parts + answer slots) / materials / answers (typed keys) / rubric / scoring (merged answers+rubric+execution) / source / relations / execution / metadata / solution_prior (same-version method and pitfall evidence with source ids; long text uses extent/cursor). focus narrows a read to part/unit/material/item/slot subtrees; extent.chars + next_cursor continue long text pinned to the read revision. A withdrawn revision is readable with a bound submission_id (old attempts read their exact frozen revision, marked historical + new_issuance_allowed=false) or a private role. answers/metadata/rubric/scoring/execution/solution_prior and private-visibility materials are role-gated by the server — include can never upgrade a role; denied layers are reported in denied_layers. activity.attempts counts still-active attempt outcomes on this question id (the group root); a real zero is a real zero. There is no exposure count: no exposure event is stored, and a search snapshot is not a lifetime impression count.',
   effect: 'read',
   inputSchema: ReadBankInputSchema,
   outputSchema: ReadBankOutputSchema,
