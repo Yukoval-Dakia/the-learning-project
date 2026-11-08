@@ -65,7 +65,13 @@ import {
   maxLifecycleAttempts,
 } from './run-lifecycle';
 import { createSdkTerminalEvidenceCollector } from './sdk-terminal';
-import type { Options, SDKAssistantMessage, SDKMessage, SDKUserMessage } from './sdk-types';
+import type {
+  Options,
+  SDKAssistantMessage,
+  SDKMessage,
+  SDKRequestRetryMessage,
+  SDKUserMessage,
+} from './sdk-types';
 import { currentTaskSpendScope, withinTaskSpendFrame } from './task-spend-scope';
 import { addStreamText, emptyStreamTextStats, lazyTimeoutPrompt } from './timeout-usage';
 
@@ -404,6 +410,8 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
     args_prefix: string;
   }) => void;
   onThinking?: () => void;
+  /** The dead request's streamed text is retracted before the resend streams. */
+  onRequestRetry?: (msg: SDKRequestRetryMessage) => Promise<void> | void;
   onOutputObserved?: () => void;
   onSuccess?: (msg: SDKSuccessResultMessage) => Promise<void> | void;
   onApiError?: (msg: SDKSuccessResultMessage) => void;
@@ -468,6 +476,10 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
             // Display observers must not abort the paid attempt.
           }
         }
+        continue;
+      }
+      if (msg.type === 'system' && msg.subtype === 'request_retry') {
+        await args.onRequestRetry?.(msg);
         continue;
       }
       if (args.notifySessionId && msg.type === 'system' && msg.subtype === 'init') {
@@ -1302,6 +1314,21 @@ async function streamTaskCollectingImpl(
                 }
               : undefined,
             onThinking: ctx.onThinking,
+            onRequestRetry: async (msg) => {
+              resultText = resultText.slice(
+                0,
+                Math.max(0, resultText.length - msg.discarded_text_chars),
+              );
+              await ctx.onRequestRetry?.({
+                taskRunId: lifecycle.taskRunId,
+                retry: msg.retry,
+                maxRetries: msg.max_retries,
+                reason: msg.reason,
+                delayMs: msg.delay_ms,
+                discardedTextChars: msg.discarded_text_chars,
+                discardedThinkingChars: msg.discarded_thinking_chars,
+              });
+            },
             onApiError: (msg) => {
               console.warn('[streamTaskCollecting] task_run_success_with_error_flag', {
                 event: 'task_run_success_with_error_flag',

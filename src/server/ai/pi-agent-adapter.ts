@@ -30,7 +30,7 @@ import type {
 import { helpFaultForRootStatus, rootBoundProviderStatus } from '@/ai/help-provider-fault';
 import { NO_PROGRESS_BUDGET_LANDING_MARGIN_MS } from '@/ai/no-progress-loop';
 import { type PiToolMount, piCustomTool } from '@/ai/pi-tool-mount';
-import { providerQuotaLimitSigned } from '@/ai/provider-failure';
+import { providerQuotaLimitSigned, providerRequestInterruption } from '@/ai/provider-failure';
 import { type TaskDefinition, resolveStructuredSubmitSchema } from '@/ai/task-spec';
 import { tasks } from '@/capabilities/task-registry';
 import { customProviderDefinitions } from '@/core/config/custom-providers';
@@ -51,6 +51,7 @@ import { completedChildReport, installLoopProgress, turnLimiter } from './pi-loo
 import { type LoomPiModel, createLoomPiModels } from './pi-models';
 import { piProviderId } from './pi-provider-catalog';
 import { PiProviderWire } from './pi-provider-wire';
+import { requestRetryMarkers, retryInterruptedRequest } from './pi-request-retry';
 import {
   type PiToolResultMessage,
   collectPromptMessages,
@@ -70,6 +71,7 @@ import {
 import { composePiSystemPrompt } from './pi-system-prompt';
 import { PiToolSurface } from './pi-tool-surface';
 import { sanitizeArgumentsEvidenceText } from './provider-error-evidence';
+import { interruptedRequestRetryBound } from './provider-transient-retry';
 import { TaskConfigError } from './providers';
 import type { SDKUserMessage } from './sdk-types';
 import {
@@ -792,9 +794,62 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       installLoopProgress(config, this.toolSurface.tools, this.args.piHooks, {
         loopId: this.sessionId,
       });
-    const stream = this.deps.agentLoop(prompts, context, config, this.abort.signal, rootStreamFn);
+    const retryBound = interruptedRequestRetryBound(this.args.kind);
+    const loopStreamFn =
+      retryBound === undefined
+        ? rootStreamFn
+        : retryInterruptedRequest(rootStreamFn, {
+            bound: retryBound,
+            interruption: () => {
+              const request = options.transportEvidence?.snapshot().requests.at(-1);
+              return providerRequestInterruption({
+                idleFired: this.wire.idleFailed(),
+                request: request?.loop === 'root' ? request : undefined,
+                aborted: this.abort.signal.aborted,
+              });
+            },
+            beforeResend: () => {
+              this.wire.releaseIdleFailure();
+            },
+            signal: this.abort.signal,
+          });
+    const stream = this.deps.agentLoop(prompts, context, config, this.abort.signal, loopStreamFn);
     let textStreamed = false;
+    // What the current provider request has streamed out — what a resend retracts.
+    let requestTextChars = 0;
+    let requestThinkingChars = 0;
     for await (const event of stream) {
+      if (event.type === 'message_start' && event.message.role === 'assistant') {
+        requestTextChars = 0;
+        requestThinkingChars = 0;
+      }
+      const retryNotice =
+        event.type === 'message_update'
+          ? requestRetryMarkers.get(event.assistantMessageEvent)
+          : undefined;
+      if (retryNotice !== undefined) {
+        yield* this.drainFrames();
+        // The dead attempt's partial tool arguments must not prefix the resend's.
+        rawToolArguments.clear();
+        streamedArgsByCallId.clear();
+        yield {
+          type: 'system',
+          subtype: 'request_retry',
+          retry: retryNotice.retry,
+          max_retries: retryNotice.maxRetries,
+          reason: retryNotice.reason,
+          delay_ms: retryNotice.delayMs,
+          discarded_text_chars: requestTextChars,
+          discarded_thinking_chars: requestThinkingChars,
+          uuid: randomUUID(),
+          session_id: this.sessionId,
+          source: 'pi',
+        };
+        requestTextChars = 0;
+        requestThinkingChars = 0;
+        textStreamed = false;
+        continue;
+      }
       // A new assistant turn restarts the raw-arguments window: content indexes
       // repeat per message, so without the reset a rejected submit's bytes would
       // concatenate with the corrected call's and corrupt the strict-JSON check.
@@ -816,6 +871,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
         const text = event.assistantMessageEvent.delta;
         if (text.length > 0 && !this.abort.signal.aborted) {
           textStreamed = true;
+          requestTextChars += text.length;
           yield { type: 'text_delta', text, session_id: this.sessionId, source: 'pi' };
         }
         continue;
@@ -827,6 +883,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       ) {
         const text = event.assistantMessageEvent.delta;
         if (text.length > 0 && !this.abort.signal.aborted) {
+          requestThinkingChars += text.length;
           yield { type: 'thinking_delta', text, session_id: this.sessionId, source: 'pi' };
         }
         continue;

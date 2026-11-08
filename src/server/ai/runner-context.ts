@@ -154,6 +154,21 @@ export interface RunTaskCtx {
     taskRunId: string;
     thinking: 'streamed' | 'none';
   }) => Promise<void> | void;
+  /**
+   * One interrupted provider request is being resent inside the same attempt.
+   * The dead request already streamed `discardedTextChars` of text (and
+   * `discardedThinkingChars` of reasoning) through onDelta/onThinkingDelta;
+   * the consumer retracts exactly that tail before the resend streams.
+   */
+  onRequestRetry?: (retry: {
+    taskRunId: string;
+    retry: number;
+    maxRetries: number;
+    reason: 'stream_idle' | 'connection';
+    delayMs: number;
+    discardedTextChars: number;
+    discardedThinkingChars: number;
+  }) => Promise<void> | void;
   /** Settled, no-effect Copilot attempt; emitted before the next attempt is prepared. */
   onProviderRetry?: (retry: {
     nextTaskRunId: string;

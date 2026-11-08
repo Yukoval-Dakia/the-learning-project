@@ -77,6 +77,34 @@ export function providerTransientRetryDelayMs(input: {
   return input.policy.baseDelayMs * 2 ** input.retryIndex;
 }
 
+/**
+ * The interrupted-request row of the retry table: which task kinds may resend
+ * a request that was sent and then died mid-stream (idle / connection drop),
+ * and how often. The provider may already have billed the dead request, so a
+ * kind belongs here only when the request itself has no side effect — tools
+ * run after a request completes, never inside it, and the resend carries the
+ * executed tool results unchanged. Admission, grading and every other kind stay
+ * on "outcome unknown → never resend".
+ */
+const INTERRUPTED_REQUEST_RETRY: Readonly<Record<string, InterruptedRequestRetryBound>> = {
+  CopilotTask: { maxRetries: 2, baseDelayMs: 1_000 },
+};
+
+export interface InterruptedRequestRetryBound {
+  /** Extra sends of the same request after the first interruption. */
+  readonly maxRetries: number;
+  /** Delay before resend n (0-based) is baseDelayMs * 2^n. */
+  readonly baseDelayMs: number;
+}
+
+export function interruptedRequestRetryBound(
+  kind: string,
+): InterruptedRequestRetryBound | undefined {
+  return Object.hasOwn(INTERRUPTED_REQUEST_RETRY, kind)
+    ? INTERRUPTED_REQUEST_RETRY[kind]
+    : undefined;
+}
+
 export interface SettledAttemptEvidence {
   /** False while the attempt may still be running — never resend alongside it. */
   readonly settled: boolean;
