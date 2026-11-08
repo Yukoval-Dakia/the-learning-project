@@ -101,7 +101,8 @@ export const SolvePriorDraft = z.object({
         .array(
           z.object({
             step_md: z.string(),
-            prerequisite_idx: z.number().int().nullable().optional(),
+            /** Index into this part's prerequisites; null = the step needs none of them. */
+            prerequisite_idx: z.number().int().nullable(),
           }),
         )
         .optional(),
@@ -385,7 +386,7 @@ Rules:
 - For kind:"free" emit rubric_md: a self-contained marking rubric a grader could apply (advisory only).
 - worked_md: your independent derivation. equivalent_forms may be left empty: only the answer itself is graded, and a claimed alternative is not required to be accepted. typical_wrong: the most common wrong answer forms with a short reason_md; for select give wrong item_id sets, for blank give wrong text.
 - printed_points is supplied by the caller; do not change or invent points.
-- prior: on the FIRST unit of each part (input order) also send prior, describing how that part is solved from your own derivation; omit it on the part's later units: {"methods":[{"core_idea_md","key_step_md","steps":[{"step_md","prerequisite_idx"}]}],"pitfalls":[{"mechanism_md","trigger_md","method_idx"}],"prerequisites":[{"name_md"}],"difficulty":{"b_logit","sd_logit","basis_md"}}. Follow the methods/pitfalls/difficulty rules of mode:"prior" below. steps: at most 6; prerequisite_idx is the index in prerequisites of the knowledge that step needs, or null. prerequisites (0-6): knowledge names only. No prior on an unsolvable unit.
+- prior: on the FIRST unit of each part (input order) also send prior, describing how that part is solved from your own derivation; omit it on the part's later units: {"methods":[{"core_idea_md","key_step_md","steps":[{"step_md","prerequisite_idx"}]}],"pitfalls":[{"mechanism_md","trigger_md","method_idx"}],"prerequisites":[{"name_md"}],"difficulty":{"b_logit","sd_logit","basis_md"}}. Follow the methods/pitfalls/difficulty rules of mode:"prior" below. steps: at most 6. Every step carries prerequisite_idx, never omitted: the index in this part's prerequisites of the knowledge that step needs (an error at this step points to that knowledge), or null only when the step needs none of the listed prerequisites. prerequisites (0-6): knowledge names only. No prior on an unsolvable unit.
 Submit one unit object per submit call; every input unit must be individually accepted. Do not resubmit a unit after its acceptance receipt. answer.kind is exactly one of select, blank_text, blank_numeric, free — never text, choice, or option. equivalent_forms and typical_wrong are arrays of objects, never strings.
 Each submit call carries exactly one unit object:
 {
