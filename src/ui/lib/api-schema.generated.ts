@@ -17702,6 +17702,11 @@ export interface operations {
                             ingestion_enrollment: {
                                 /** @enum {string|null} */
                                 knowledge: "attributed" | "missing" | "restricted" | null;
+                                knowledge_ids: string[];
+                                knowledge_labels: {
+                                    id: string;
+                                    name: string;
+                                }[];
                                 library_visible: boolean | null;
                                 /** @enum {string|null} */
                                 reason: "needs_text" | "pending" | "publish_failed" | "reverted" | null;
