@@ -1,5 +1,5 @@
 // Converts frozen contract slots and preserves private answers as adjudication evidence.
-// Deterministic typed criteria are author evidence; independent solves may correct them.
+// Deterministic typed criteria are author evidence; adjudication may correct them.
 
 import { CURRENT_BLANK_NORMALIZATION } from '@/core/schema/assessment/answer-compare';
 import { isPublicSharedMaterial } from '@/core/schema/assessment/materials';
@@ -128,7 +128,7 @@ function convertSlot(slot: ResponseSlotT): { slot: ResponseSlotT; targetKind: Ad
   }
 }
 
-/** seed 提取：已有 typed 判据 → 待双解和裁决核验的作者证据（仅同形可比较；异种判据
+/** seed 提取：已有 typed 判据 → 待盲解和裁决核验的作者证据（仅同形可比较；异种判据
  * 不作为种子 —— solve 重新产出并报告）。 */
 function seedFor(
   unitKind: AdmissionUnitKind,

@@ -113,11 +113,10 @@ interface ProbeRoute {
 
 /**
  * Resolve the lane the admission solve job will actually take — the same
- * layering runTask sees (chat env pin > solver2 env > DB global > DB
- * task.<kind>.* > registry), read through resolveTaskProvider, NOT a local
- * provider/model literal. Solver B's QUESTION_ADMISSION_SOLVER2_* env is the
- * same override surface the job passes as `override`; unset = same resolved
- * config as Solver A. When DATABASE_URL is set the DB config layer MUST
+ * layering runTask sees (chat env pin > DB global > DB task.<kind>.* >
+ * registry), read through resolveTaskProvider, NOT a local provider/model
+ * literal. The second blind solve is retired, so Solver B is Solver A's
+ * route. When DATABASE_URL is set the DB config layer MUST
  * hydrate — a failed read fails closed before any provider request/reopen
  * (env-only resolution could select a different model than the configured
  * pair). When DATABASE_URL is unset the face is env-only and says so in the
@@ -126,8 +125,6 @@ interface ProbeRoute {
 async function routing(): Promise<{
   routeA: ProbeRoute;
   routeB: ProbeRoute;
-  solver2Provider: string | undefined;
-  solver2Model: string | undefined;
   policy: string | undefined;
   config_db_layer: string;
   config_hydration?: { outcome: 'loaded' | 'unchanged'; epoch: number };
@@ -171,15 +168,7 @@ async function routing(): Promise<{
     }
   }
   const solverA = resolveTaskProvider(QUESTION_ADMISSION_TASK_KIND);
-  const solver2Provider = process.env.QUESTION_ADMISSION_SOLVER2_PROVIDER;
-  const solver2Model = process.env.QUESTION_ADMISSION_SOLVER2_MODEL;
-  const solverB =
-    solver2Provider || solver2Model
-      ? resolveTaskProvider(QUESTION_ADMISSION_TASK_KIND, {
-          ...(solver2Provider ? { provider: solver2Provider as Provider } : {}),
-          ...(solver2Model ? { model: solver2Model } : {}),
-        })
-      : solverA;
+  const solverB = solverA;
 
   // A and B keep their own identities even when they resolve to the same lane —
   // the preflight owes each solver a real request, not a deduped share.
@@ -222,8 +211,6 @@ async function routing(): Promise<{
   return {
     routeA,
     routeB,
-    solver2Provider,
-    solver2Model,
     policy: process.env.QUESTION_ADMISSION_POLICY_ID,
     config_db_layer: configDbLayer,
     ...(configHydration ? { config_hydration: configHydration } : {}),
@@ -479,15 +466,7 @@ async function runProbe(
 }
 
 async function preflight(path: string) {
-  const {
-    routeA,
-    routeB,
-    solver2Provider,
-    solver2Model,
-    policy,
-    config_db_layer,
-    config_hydration,
-  } = await routing();
+  const { routeA, routeB, policy, config_db_layer, config_hydration } = await routing();
   // Refuse an existing receipt BEFORE any request. Failed attempts also
   // leave a receipt; this command never retries, overwrites, or reopens a claim.
   const file = await open(path, 'wx');
@@ -496,8 +475,6 @@ async function preflight(path: string) {
     created_at: new Date().toISOString(),
     routing_hash: hash({
       routes: [routeA, routeB].map(({ apiKey: _apiKey, ...publicRoute }) => publicRoute),
-      solver2Provider,
-      solver2Model,
       policy,
       config_db_layer,
     }),

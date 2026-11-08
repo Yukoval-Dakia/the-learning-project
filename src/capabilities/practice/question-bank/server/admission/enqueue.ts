@@ -29,8 +29,10 @@ import { placementAuthority } from '../../../supply/public';
 
 export const ADMISSION_FAMILY = 'question_admission_run';
 export const AdmissionJobData = z.object({
-  /** Absent on old queued deliveries: they may reconcile old units but never initiate @3. */
-  admission_version: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]).optional(),
+  /** Absent on old queued deliveries: they may reconcile old units but never initiate. */
+  admission_version: z
+    .union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5)])
+    .optional(),
   recovery_confirmed: z.boolean().optional(),
   login_probe_route: z.object({ provider: z.string().min(1), model: z.string().min(1) }).optional(),
   question_id: z.string().min(1).optional(),
@@ -55,7 +57,7 @@ const AdmissionPurposeBinding = z
     derivation_policy: z.literal('answer_only'),
   })
   .strict();
-const purposeBindingId = (jobId: string) => `question-admission-purpose:${jobId}`;
+export const purposeBindingId = (jobId: string) => `question-admission-purpose:${jobId}`;
 
 // System writers that publish pipeline content. `submit_question:*` is deliberately absent:
 // that is how a person or an agent edits a question, and the edit may hold learner material
@@ -310,7 +312,7 @@ export async function enqueuePublishedQuestionAdmission(
     if (!revision || revision.group_id !== root.id)
       throw new Error('Admission revision binding missing');
     // （第 2 片）：声明 answer_shape 的题由共享比较核心判定支持后
-    // 才可进入付费双解 —— 未实现 notation、未知/坏声明仍在入队前被拦（宽
+    // 才可进入付费盲解 —— 未实现 notation、未知/坏声明仍在入队前被拦（宽
     // 松存在性扫描 + declaredShapesAllSupported：未知版本也算已声明并判
     // 未支持）。命中即 skip 不入队，不给后续 claim/maySend 留第一入口。
     const declaredSupport = declaredShapesAllSupported(revision.response_spec);

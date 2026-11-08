@@ -1,4 +1,4 @@
-// Durable call receipts let a waiting admission resume without repeating blind solves.
+// Durable call receipts let a waiting admission resume without repeating its blind solve.
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { AgentRunError, type AgentRunErrorFields } from '@/ai/agent-run-error';
@@ -22,6 +22,7 @@ import {
   recordPaidEffectResult,
   reservePaidEffect,
 } from '@/core/paid-work/server/paid-effect-store';
+import { DUAL_SOLVE_QUESTION_ADMISSION_POLICY_ID } from '@/core/question-admission-policy';
 import type { Db, Tx } from '@/db/client';
 import { ai_task_runs, paid_effect } from '@/db/schema';
 import { classifyLoginFailure } from '@/server/ai/login-failure';
@@ -99,6 +100,12 @@ export class AdmissionInterrupted extends Error {
 
 export const ADMISSION_STAGE_FAMILY = 'question_admission_stage';
 const FAMILY = ADMISSION_STAGE_FAMILY;
+/**
+ * Call indices are numbered per admission policy (@4: solve A, solve B, adjudication;
+ * @5: blind solve, adjudication), so every history read is scoped to one policy. Stage
+ * rows written before the field existed belong to @4.
+ */
+export const stagePolicySql = sql`coalesce(${paid_effect.input_json}->>'policy_id', ${DUAL_SOLVE_QUESTION_ADMISSION_POLICY_ID})`;
 const NOT_SENT_WINDOW_MS = 24 * 60 * 60_000;
 /**
  * Once a bounded burst is spent (not_sent window, provider-wait ladder), the
@@ -239,6 +246,7 @@ export function admissionStageRunner(input: {
   db: Db;
   groupId: string;
   baseDigest: string;
+  policyId: string;
   deliveryId: string;
   execute: BoundRunTaskTextFn;
   recovery?: AdmissionRecoveryReader;
@@ -301,6 +309,7 @@ export function admissionStageRunner(input: {
               eq(paid_effect.family, FAMILY),
               eq(paid_effect.entity_id, input.groupId),
               eq(paid_effect.entity_revision, input.baseDigest),
+              sql`${stagePolicySql} = ${input.policyId}`,
               sql`${paid_effect.input_json}->>'call_index' = ${String(index)}`,
             ),
           )
@@ -513,6 +522,7 @@ export function admissionStageRunner(input: {
         const unit = `call:${index}:attempt:${attempt}`;
         const stageInput = {
           kind,
+          policy_id: input.policyId,
           call_index: index,
           attempt,
           payload_digest: canonicalHash(payload),
@@ -823,11 +833,11 @@ export async function readAdmissionWaits(db: Db | Tx, groupIds: readonly string[
   if (!groupIds.length) return [];
   const rows = await db.execute<{ group_id: string; recovery: unknown }>(sql`
     WITH latest AS (
-      SELECT DISTINCT ON (entity_id, entity_revision, input_json->>'call_index')
+      SELECT DISTINCT ON (entity_id, entity_revision, ${stagePolicySql}, input_json->>'call_index')
         entity_id, entity_revision, state, result_json
       FROM paid_effect
       WHERE family = ${FAMILY} AND ${inArray(paid_effect.entity_id, [...groupIds])}
-      ORDER BY entity_id, entity_revision, input_json->>'call_index', (input_json->>'attempt')::int DESC
+      ORDER BY entity_id, entity_revision, ${stagePolicySql}, input_json->>'call_index', (input_json->>'attempt')::int DESC
     ) SELECT l.entity_id AS group_id, l.result_json->'recovery' AS recovery
       FROM latest l
       JOIN question_group_lifecycle q ON q.group_id = l.entity_id

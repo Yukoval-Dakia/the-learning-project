@@ -1,9 +1,10 @@
-// Two isolated blind solves produce candidate keys; disagreements go to adjudication.
+// One blind solve proposes keys and the solution prior. Only an author key that accepts the
+// blind answer settles a unit here; everything else goes to adjudication.
 import { eq } from 'drizzle-orm';
 import type { TaskTextResult } from '@/ai/task-result';
 import { canonicalHash } from '@/core/migration/canonical';
 import { rawArgumentsEvidence } from '@/core/raw-arguments-evidence';
-import { type AnswerKeyT, compareAnswerKeys } from '@/core/schema/assessment/answer-compare';
+import type { AnswerKeyT } from '@/core/schema/assessment/answer-compare';
 import { compileDeclaredKey } from '@/core/schema/assessment/blank-answer-compare';
 import type { BlankAnswerShapeT } from '@/core/schema/assessment/blank-answer-shape';
 import { gradeBlankAuthorKeyUnit, gradeSelectUnit } from '@/core/schema/assessment/grade';
@@ -26,9 +27,6 @@ import {
   type QuestionAdmissionSolveUnitT,
   parseQuestionAdmissionSolveModelOutput,
 } from '../../tasks/question-admission-solve';
-// Provider 经 verify-framework 取；TaskTextResult 直接取共享结果契约。
-// 输入 hash 直接使用 core 的完整规范化算法。
-import type { Provider } from '../quiz/verify-framework';
 import { AdmissionAttemptExhausted, AdmissionParseFailure, runAdmissionAttempts } from './attempt';
 import type { AdmissionUnitSpec, QuestionAdmissionDefinition } from './contract';
 import {
@@ -64,17 +62,20 @@ export interface AdmissionSolveReceipt {
 
 export type UnitSolveVerdict =
   | { status: 'agreed'; key: AdmissionKey }
+  /** No author key: the blind key is only a proposal until adjudication decides. */
+  | { status: 'unconfirmed'; key: AdmissionKey; detail: string }
   | { status: 'conflict'; detail: string }
   | { status: 'unsolvable'; detail: string }
   | { status: 'seed_mismatch'; detail: string }
   | { status: 'not_applicable'; detail: string };
 
-export interface DualSolveResult {
+export interface BlindSolveResult {
   verdicts: Map<string, UnitSolveVerdict>;
   attempt_run_ids: string[];
-  outputs: [QuestionAdmissionSolveOutputT, QuestionAdmissionSolveOutputT];
-  solve_a: AdmissionSolveReceipt;
-  solve_b: AdmissionSolveReceipt;
+  output: QuestionAdmissionSolveOutputT;
+  receipt: AdmissionSolveReceipt;
+  /** The blind solve's own typed keys, compared with the published keys for the prior. */
+  blind_keys: Map<string, AdmissionKey>;
   /** Blind wrong-answer candidates and explicitly adjudicated correct/incorrect forms. */
   probe_candidates: Map<
     string,
@@ -83,11 +84,13 @@ export interface DualSolveResult {
       typical_wrong: { item_ids?: string[]; text?: string; reason_md?: string }[];
     }
   >;
+  /** Null when no part carried a usable prior; the solve itself is unaffected. */
+  prior: SolutionPriorRecordT | null;
 }
 
 /** 部分失败不丢已付费收据：ok:false 时 receipts 仍带上已完成的 solve。 */
-export type DualSolveOutcome =
-  | { ok: true; result: DualSolveResult }
+export type BlindSolveOutcome =
+  | { ok: true; result: BlindSolveResult }
   | { ok: false; error: string; receipts: AdmissionSolveReceipt[] };
 
 const SUBMIT_TOOL_NAME = 'mcp__structured_output__submit';
@@ -169,7 +172,6 @@ export async function sealTaskRun(
 
 export function solverUnits(
   definition: QuestionAdmissionDefinition,
-  variant: number,
   opts: { exposePrinted: boolean },
 ): QuestionAdmissionSolveUnitT[] {
   const slotById = new Map(definition.response_spec.slots.map((s) => [s.slot_id, s] as const));
@@ -187,7 +189,7 @@ export function solverUnits(
         slot?.kind === 'select'
           ? {
               pick: slot.pick,
-              items: (variant === 1 ? [...slot.items].reverse() : slot.items).map((item) => ({
+              items: slot.items.map((item) => ({
                 item_id: item.item_id,
                 display_md: item.label_md ?? describeSelectItem(slot, item.item_id),
               })),
@@ -449,92 +451,72 @@ async function validateSolvePass(
   return { output, receipt: await sealTaskRun(db, wire, result, output) };
 }
 
+/** The blind solve's per-unit priors as the record shape: first prior per part wins. */
+function blindPrior(
+  output: QuestionAdmissionSolveOutputT,
+  units: readonly QuestionAdmissionSolveUnitT[],
+  partIds: readonly string[],
+  taskRunId: string,
+): SolutionPriorRecordT | null {
+  const partOf = new Map(units.map((unit) => [unit.scoring_unit_id, unit.part_id] as const));
+  const byPart = new Map<string, unknown>();
+  for (const unit of output.units) {
+    const partId = partOf.get(unit.scoring_unit_id);
+    if (partId == null || unit.prior == null || byPart.has(partId)) continue;
+    byPart.set(partId, { part_id: partId, ...unit.prior });
+  }
+  return buildSolutionPriorRecord({
+    raw: [...byPart.values()],
+    partIds,
+    candidates: [],
+    taskRunId,
+  });
+}
+
 /** Known exhausted attempts return repair; unknown paid outcomes escape to the durable batch fence. */
-export async function runDualSolve(
+export async function runBlindSolve(
   db: Db,
   definition: QuestionAdmissionDefinition,
   deps: {
     runTask: BoundRunTaskTextFn;
     subjectProfile?: SubjectProfile;
-    /** OPEN owner decision：异源与否由配置决定（默认同一配置模型、独立上下文）。 */
-    solver2?: { provider?: Provider; model?: string } | null;
     images?: readonly AdmissionImage[];
   },
-): Promise<DualSolveOutcome> {
+): Promise<BlindSolveOutcome> {
   const parts = solverParts(definition);
-  // solve lane 剥离一切印出判分/答案文本（rule_reference.statement_md 只进
-  // crosscheck）—— 否则对全 rule_reference 判据的存量题，两次"盲"解都在
-  // 看答案，agreement 证明不了任何东西。
-  const unitsA = solverUnits(definition, 0, { exposePrinted: false });
-  const payloadA = QuestionAdmissionSolveInput.parse({ mode: 'solve', parts, units: unitsA });
-  const payloadB = QuestionAdmissionSolveInput.parse({
-    mode: 'solve',
-    parts,
-    units: solverUnits(definition, 1, { exposePrinted: false }),
-  });
+  // The solve lane strips every printed scoring/answer text (rule_reference.statement_md
+  // goes only to adjudication); a solve that saw the answer would prove nothing.
+  const units = solverUnits(definition, { exposePrinted: false });
+  const payload = QuestionAdmissionSolveInput.parse({ mode: 'solve', parts, units });
 
-  const repairBudget = { remaining: 1 };
-  const attemptIds: string[] = [];
-  const receipts: AdmissionSolveReceipt[] = [];
-  let first: { output: QuestionAdmissionSolveOutputT; receipt: AdmissionSolveReceipt };
+  let solved: { output: QuestionAdmissionSolveOutputT; receipt: AdmissionSolveReceipt };
+  let attemptIds: string[];
   try {
     const pass = await runAdmissionAttempts(
       db,
       () =>
-        deps.runTask(QUESTION_ADMISSION_TASK_KIND, admissionWireInput(payloadA, deps.images), {
+        deps.runTask(QUESTION_ADMISSION_TASK_KIND, admissionWireInput(payload, deps.images), {
           judgeRetryPolicy: 'none',
           budgetOverride: { maxIterations: 1 },
           ...(deps.subjectProfile ? { subjectProfile: deps.subjectProfile } : {}),
         }),
-      async (result) => validateSolvePass(db, result, payloadA, repairBudget, deps.images),
+      async (result) => validateSolvePass(db, result, payload, { remaining: 1 }, deps.images),
     );
-    first = pass.value;
-    attemptIds.push(...pass.taskRunIds);
+    solved = pass.value;
+    attemptIds = [...pass.taskRunIds];
   } catch (error) {
     if (!(error instanceof AdmissionAttemptExhausted)) throw error;
     return {
       ok: false,
-      error: `solve_a failed: ${error instanceof Error ? error.message : String(error)}`,
-      receipts,
-    };
-  }
-  receipts.push(first.receipt);
-  let second: { output: QuestionAdmissionSolveOutputT; receipt: AdmissionSolveReceipt };
-  try {
-    const pass = await runAdmissionAttempts(
-      db,
-      () =>
-        deps.runTask(QUESTION_ADMISSION_TASK_KIND, admissionWireInput(payloadB, deps.images), {
-          judgeRetryPolicy: 'none',
-          budgetOverride: { maxIterations: 1 },
-          ...(deps.subjectProfile ? { subjectProfile: deps.subjectProfile } : {}),
-          ...(deps.solver2 ? { override: deps.solver2 } : {}),
-        }),
-      async (result) => validateSolvePass(db, result, payloadB, repairBudget, deps.images),
-    );
-    second = pass.value;
-    attemptIds.push(...pass.taskRunIds);
-  } catch (error) {
-    if (!(error instanceof AdmissionAttemptExhausted)) throw error;
-    return {
-      ok: false,
-      error: `solve_b failed: ${error instanceof Error ? error.message : String(error)}`,
-      receipts,
-    };
-  }
-  receipts.push(second.receipt);
-  if (first.receipt.task_run_id === second.receipt.task_run_id) {
-    return {
-      ok: false,
-      error: 'question admission solve re-used the same task run for both passes',
-      receipts,
+      error: `blind solve failed: ${error instanceof Error ? error.message : String(error)}`,
+      receipts: [],
     };
   }
 
-  const byUnitA = new Map(first.output.units.map((u) => [u.scoring_unit_id, u] as const));
-  const byUnitB = new Map(second.output.units.map((u) => [u.scoring_unit_id, u] as const));
+  const byUnit = new Map(solved.output.units.map((u) => [u.scoring_unit_id, u] as const));
   const verdicts = new Map<string, UnitSolveVerdict>();
-  const probeCandidates: DualSolveResult['probe_candidates'] = new Map();
+  const blindKeys = new Map<string, AdmissionKey>();
+  const probeCandidates: BlindSolveResult['probe_candidates'] = new Map();
 
   for (const unit of definition.units) {
     if (unit.unit_kind === 'unsupported' || unit.unit_kind === 'free') {
@@ -547,48 +529,39 @@ export async function runDualSolve(
       });
       continue;
     }
-    const outA = byUnitA.get(unit.scoring_unit_id);
-    const outB = byUnitB.get(unit.scoring_unit_id);
-    if (outA == null || outB == null) {
+    const out = byUnit.get(unit.scoring_unit_id);
+    if (out == null) {
       verdicts.set(unit.scoring_unit_id, {
         status: 'conflict',
-        detail: `solver output missing unit (a=${outA != null}, b=${outB != null})`,
+        detail: 'solver output missing unit',
       });
       continue;
     }
-    const validA = validSolveUnitOutput(unit, outA);
-    const validB = validSolveUnitOutput(unit, outB);
-    if (!validA.ok || !validB.ok) {
+    const valid = validSolveUnitOutput(unit, out);
+    if (!valid.ok) {
       verdicts.set(unit.scoring_unit_id, {
         status: 'conflict',
-        detail:
-          `invalid solver output: ${!validA.ok ? validA.detail : ''} ${!validB.ok ? validB.detail : ''}`.trim(),
+        detail: `invalid solver output: ${valid.detail}`,
       });
       continue;
     }
-    if (outA.status === 'unsolvable' || outB.status === 'unsolvable') {
+    if (out.status === 'unsolvable') {
       verdicts.set(unit.scoring_unit_id, {
         status: 'unsolvable',
-        detail:
-          [outA.reason_md, outB.reason_md].filter(Boolean).join(' / ') ||
-          'solver reported unsolvable',
+        detail: out.reason_md || 'solver reported unsolvable',
       });
       continue;
     }
-    const keyA = outA.answer != null ? keyFromAnswer(outA.answer) : null;
-    const keyB = outB.answer != null ? keyFromAnswer(outB.answer) : null;
-    if (keyA == null || keyB == null) {
+    const key = out.answer != null ? keyFromAnswer(out.answer) : null;
+    if (key == null) {
       verdicts.set(unit.scoring_unit_id, { status: 'conflict', detail: 'no typed key emitted' });
       continue;
     }
     // universe 守卫：select 键不得引用未声明 item。
-    if (keyA.kind === 'select' || keyB.kind === 'select') {
+    if (key.kind === 'select') {
       const slot = definition.response_spec.slots.find((s) => s.slot_id === unit.slot_refs[0]);
       const universe = new Set(slot?.kind === 'select' ? slot.items.map((i) => i.item_id) : []);
-      const bad =
-        (keyA.kind === 'select' && keyA.accepted_item_ids.some((id) => !universe.has(id))) ||
-        (keyB.kind === 'select' && keyB.accepted_item_ids.some((id) => !universe.has(id)));
-      if (bad) {
+      if (key.accepted_item_ids.some((id) => !universe.has(id))) {
         verdicts.set(unit.scoring_unit_id, {
           status: 'conflict',
           detail: 'solver emitted an item id outside the declared universe',
@@ -596,9 +569,9 @@ export async function runDualSolve(
         continue;
       }
     }
+    blindKeys.set(unit.scoring_unit_id, key);
     const authorKey = authorAdmissionKey(unit.seeded_criterion);
-    // 第 2 片：该槽冻结的 answer_shape（同一比较核心；无声明 → null
-    // → 旧路径逐字不变）。
+    // 第 2 片：该槽冻结的 answer_shape（同一比较核心；无声明 → 旧路径逐字不变）。
     const shapeSlot = definition.response_spec.slots.find((s) => s.slot_id === unit.slot_refs[0]);
     const declaredShape =
       shapeSlot != null && shapeSlot.kind === 'blank' && shapeSlot.answer_shape != null
@@ -617,44 +590,24 @@ export async function runDualSolve(
           continue;
         }
       }
-      if (
-        authorKey == null ||
-        !(await authorKeyAccepts(unit, keyA, declaredShape ?? undefined)) ||
-        !(await authorKeyAccepts(unit, keyB, declaredShape ?? undefined))
-      ) {
+      if (authorKey == null || !(await authorKeyAccepts(unit, key, declaredShape ?? undefined))) {
         verdicts.set(unit.scoring_unit_id, {
           status: 'seed_mismatch',
           detail: 'the author key does not accept the solver answer',
         });
         continue;
       }
-      const agreement = compareAnswerKeys(keyA, keyB, {
-        blank_normalization: unit.blank_normalization,
-        declared_shape: declaredShape,
-      });
-      verdicts.set(
-        unit.scoring_unit_id,
-        agreement.agree && agreement.key != null
-          ? { status: 'agreed', key: authorKey }
-          : { status: 'conflict', detail: agreement.detail ?? 'independent solves disagree' },
-      );
+      verdicts.set(unit.scoring_unit_id, { status: 'agreed', key: authorKey });
     } else {
-      const agree = compareAnswerKeys(keyA, keyB, {
-        blank_normalization: unit.blank_normalization,
-        declared_shape: declaredShape,
+      verdicts.set(unit.scoring_unit_id, {
+        status: 'unconfirmed',
+        key,
+        detail: 'no author key; the blind key needs adjudication',
       });
-      if (!agree.agree || agree.key == null) {
-        verdicts.set(unit.scoring_unit_id, {
-          status: 'conflict',
-          detail: `independent solves disagree: ${agree.detail}`,
-        });
-        continue;
-      }
-      verdicts.set(unit.scoring_unit_id, { status: 'agreed', key: agree.key });
     }
     probeCandidates.set(unit.scoring_unit_id, {
       equivalent_forms: [],
-      typical_wrong: (outA.typical_wrong ?? []).map((w) => ({
+      typical_wrong: (out.typical_wrong ?? []).map((w) => ({
         ...(w.item_ids != null ? { item_ids: w.item_ids } : {}),
         ...(w.text != null ? { text: w.text } : {}),
         ...(w.reason_md != null ? { reason_md: w.reason_md } : {}),
@@ -666,10 +619,16 @@ export async function runDualSolve(
     result: {
       verdicts,
       attempt_run_ids: attemptIds,
-      outputs: [first.output, second.output],
-      solve_a: first.receipt,
-      solve_b: second.receipt,
+      output: solved.output,
+      receipt: solved.receipt,
+      blind_keys: blindKeys,
       probe_candidates: probeCandidates,
+      prior: blindPrior(
+        solved.output,
+        units,
+        parts.map((part) => part.part_id),
+        solved.receipt.task_run_id,
+      ),
     },
   };
 }
@@ -746,7 +705,7 @@ export async function runSolutionPriorPass(
     const payload = QuestionAdmissionPriorInput.parse({
       mode: 'prior',
       parts,
-      units: solverUnits(definition, 0, { exposePrinted: false }),
+      units: solverUnits(definition, { exposePrinted: false }),
       answers: [
         ...[...keys.entries()].map(([unitId, key]) => ({
           scoring_unit_id: unitId,

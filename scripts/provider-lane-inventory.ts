@@ -286,7 +286,7 @@ export const PROVIDER_LANES = [
     directImporters: [],
     roles: ['operator'],
     provider: 'resolved QuestionAdmissionSolveTask provider (no local literal)',
-    model: 'resolved task config model — env pin > solver2 env > DB task.<kind>.* > registry',
+    model: 'resolved task config model — env pin > DB task.<kind>.* > registry',
     endpointClass:
       'manual per-route synthetic @3 submit-shape compatibility probe (units at top level, no result envelope)',
     configuration: {
@@ -303,12 +303,10 @@ export const PROVIDER_LANES = [
         },
       },
       model: {
-        summary:
-          'resolved task config (resolveTaskProvider); QUESTION_ADMISSION_SOLVER2_* env is the solver-B override surface',
+        summary: 'resolved task config (resolveTaskProvider); solver B reuses the solver-A route',
         source: {
           path: 'scripts/yuk1547-admission-reopen.ts',
           calls: ['resolveTaskProvider'],
-          envReads: ['QUESTION_ADMISSION_SOLVER2_PROVIDER', 'QUESTION_ADMISSION_SOLVER2_MODEL'],
         },
       },
     },
@@ -334,7 +332,7 @@ export const PROVIDER_LANES = [
       redelivery:
         'none; an existing receipt path is refused before sending; lead investigates failure',
       fanOut:
-        'one synthetic request on the solver-A route only — a solver2 env naming a different lane is statically validated (capability + wire api) but not probed; reopen mode enqueues marked @3 jobs without a model call',
+        'one synthetic request on the solver-A route only; reopen mode enqueues marked @3 jobs without a model call',
       evidence: [
         {
           path: 'scripts/yuk1547-admission-reopen.ts',

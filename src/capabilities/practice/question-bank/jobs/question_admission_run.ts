@@ -5,7 +5,6 @@ import { createHash, randomUUID } from 'node:crypto';
 import { and, eq, inArray, or, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import { AgentRunError } from '@/ai/agent-run-error';
-import { canonicalProviderName } from '@/ai/task-spec';
 import {
   admitPaidEffectDeliveryControl,
   lockPaidEffectControlFamily,
@@ -18,7 +17,11 @@ import {
   recordPaidEffectResult,
   settleExpiredPaidEffectSends,
 } from '@/core/paid-work/server/paid-effect-store';
-import { QUESTION_ADMISSION_POLICY_IDS } from '@/core/question-admission-policy';
+import {
+  QUESTION_ADMISSION_CONTRACT_VERSION,
+  QUESTION_ADMISSION_PAID_UNIT,
+  QUESTION_ADMISSION_POLICY_IDS,
+} from '@/core/question-admission-policy';
 import { declaredShapesAllSupported } from '@/core/schema/assessment/blank-answer-compare';
 import type { Db, Tx } from '@/db/client';
 import { fromPgBossDrizzleTx } from '@/db/pg-boss-drizzle';
@@ -29,7 +32,6 @@ import {
   question,
   question_admission_verification,
   question_revision,
-  question_solution_prior,
   source_asset,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
@@ -56,11 +58,12 @@ import {
   AdmissionJobData,
   admissionJobId,
   admissionTranscriptAllowed,
+  enqueuePublishedQuestionAdmission,
   isPendingAdmission,
   lockAdmissionGroup,
   readAdmissionPurpose,
 } from '../server/admission/enqueue';
-import { type Provider, definitionFromContract } from '../server/admission/index';
+import { definitionFromContract } from '../server/admission/index';
 import {
   enqueueAdmissionLoginRecovery,
   maintainAdmissionLoginRecovery,
@@ -72,6 +75,8 @@ import {
   assertAdmissionDelivery,
   claimAdmissionBatch,
   completedAdmissionStatus,
+  readPublicationSource,
+  supersedeDualSolveWait,
 } from '../server/admission/receipt';
 import {
   admissionCheckVerdict,
@@ -84,7 +89,6 @@ import {
 } from '../server/admission/run-admission';
 import {
   SolutionPriorRecord,
-  loadPriorKnowledgeCandidates,
   recordAdmissionSolutionPrior,
 } from '../server/admission/solution-prior';
 import { QUESTION_ADMISSION_TASK_KIND } from '../server/admission/solve';
@@ -120,12 +124,6 @@ export interface QuestionAdmissionRunResult {
   revision_ordinal?: number;
   per_unit: { scoring_unit_id: string; status: string; reason?: string }[];
 }
-const SOLVER2_PROVIDER_RAW = process.env.QUESTION_ADMISSION_SOLVER2_PROVIDER;
-const SOLVER2_PROVIDER = SOLVER2_PROVIDER_RAW
-  ? (canonicalProviderName(SOLVER2_PROVIDER_RAW) as Provider)
-  : undefined;
-const SOLVER2_MODEL = process.env.QUESTION_ADMISSION_SOLVER2_MODEL;
-
 async function loadDefinition(db: Db | Tx, rootId: string) {
   const [root] = await db.select().from(question).where(eq(question.id, rootId)).limit(1);
   if (!root) throw new ApiError('not_found', `question '${rootId}' not found`, 404);
@@ -372,13 +370,15 @@ export async function runAdmissionForQuestion(
           contract,
           subject_profile: await subjectProfileFor(tx, rootId),
           policy_id: resolveQuestionAdmissionPolicyId(),
-          solver2:
-            SOLVER2_PROVIDER || SOLVER2_MODEL
-              ? { provider: SOLVER2_PROVIDER, model: SOLVER2_MODEL }
-              : null,
         }),
       ),
     );
+    // A dual-solve wait on this exact base is handed to the single-solve contract: it is
+    // closed here and its publication is re-enqueued after this transaction.
+    if (pinned && eligible) {
+      const superseded = await supersedeDualSolveWait(tx, input);
+      if (superseded) return { kind: 'superseded' as const, ...superseded };
+    }
     // 声明 answer_shape 的题由共享比较核心判定支持后
     // 才可发起付费 claim —— 未实现 notation、未知/坏声明在 claim/付费发送
     // 之前强制关闸，覆盖 enqueue 之外的 manual re-dispatch 与 direct
@@ -393,6 +393,18 @@ export async function runAdmissionForQuestion(
       maySend: pinned && eligible && !declaredUnsupported && purpose.state === 'allow',
       historicalTerminal: Boolean(terminal),
     });
+    // A dual-solve delivery that never started is re-enqueued under the current contract.
+    if (
+      delivery.jobData?.admission_version === 4 &&
+      claimed.kind === 'stale' &&
+      purpose.state === 'allow' &&
+      pinned &&
+      eligible
+    )
+      return {
+        kind: 'superseded' as const,
+        sourceEventId: await readPublicationSource(tx, delivery.id),
+      };
     // A queued delivery that cannot prove its source purpose will never spend; record
     // that terminal fact so the learner surface stops saying "still checking". The
     // read model matches this event against the group's latest publication for the
@@ -468,6 +480,16 @@ export async function runAdmissionForQuestion(
     };
   });
   if (batch.kind === 'vector_held') return simple('withheld');
+  if (batch.kind === 'superseded') {
+    if (batch.sourceEventId)
+      await enqueuePublishedQuestionAdmission(db, {
+        subscriberId: 'practice.question-admission-successor',
+        subscriberVersion: QUESTION_ADMISSION_CONTRACT_VERSION,
+        deliverySeq: '0',
+        sourceEventId: batch.sourceEventId,
+      });
+    return simple('stale');
+  }
   if (batch.kind === 'applied') return simple(batch.status);
   if (batch.kind === 'historical') return simple('already_verified');
   if (batch.kind === 'stale')
@@ -482,6 +504,14 @@ export async function runAdmissionForQuestion(
           })),
         };
   if (batch.kind === 'held') return simple(batch.staleInput ? 'withheld' : 'pending');
+  // An older contract's wait that could not be closed (an unresolved stage send) never
+  // resumes under this code: its stage history follows the old call plan.
+  if (
+    batch.kind === 'receipt' &&
+    batch.receipt.result.status === 'waiting' &&
+    batch.identity.unit !== QUESTION_ADMISSION_PAID_UNIT
+  )
+    return simple('pending');
 
   const checkPurpose = async (tx: Tx) =>
     batch.sourceDeliveryId
@@ -571,9 +601,9 @@ export async function runAdmissionForQuestion(
       });
     };
     try {
-      // Owner: timeouts only guard loops and faults. 50min covers serial solve A+B (2×20min)
-      // plus adjudication (5min) with margin, and stays under the 60min coordinator send
-      // lease (receipt.ts) and the 1h llm job lease.
+      // Owner: timeouts only guard loops and faults. 50min covers the blind solve (20min)
+      // plus adjudication (5min) with margin; it is not lowered with the second solve gone.
+      // It stays under the 60min coordinator send lease (receipt.ts) and the 1h job lease.
       const providerSessionDeadlineAt = Date.now() + 50 * 60_000;
       const executeTask =
         deps.runTask ??
@@ -631,6 +661,7 @@ export async function runAdmissionForQuestion(
         db,
         groupId: rootId,
         baseDigest: batch.input.contract.integrity_digest,
+        policyId: batch.input.policy_id,
         deliveryId: delivery.id,
         execute: fencedTask,
         taskRunIds: attemptedTaskRunIds,
@@ -644,42 +675,10 @@ export async function runAdmissionForQuestion(
         signal: controller.signal,
         deadlineAt: providerSessionDeadlineAt,
       });
-      // Metadata for the solution prior only: a read failure must not touch the paid batch.
-      const knowledgeCandidates = await loadPriorKnowledgeCandidates(db, {
-        groupId: rootId,
-        subjectId: batch.input.subject_profile.id,
-      }).catch((error: unknown) => {
-        console.warn('[question_admission] prior knowledge candidates unavailable', {
-          group_id: rootId,
-          err: error instanceof Error ? error.message : String(error),
-        });
-        return [];
-      });
-      const priorRows = batch.input.revision_id
-        ? await db
-            .select({ part_id: question_solution_prior.part_id })
-            .from(question_solution_prior)
-            .where(eq(question_solution_prior.revision_id, batch.input.revision_id))
-        : [];
-      const priorComplete = batch.input.contract.structure.parts.every((part) =>
-        priorRows.some((row) => row.part_id === part.part_id),
-      );
       const result = await runQuestionAdmission(definitionFromContract(batch.input.contract), {
         db,
         runTask,
-        ...(priorComplete && batch.input.revision_digest
-          ? { priorRevisionDigest: batch.input.revision_digest }
-          : {}),
-        knowledgeCandidates,
         subjectProfile: batch.input.subject_profile,
-        solver2: batch.input.solver2
-          ? {
-              ...(batch.input.solver2.provider
-                ? { provider: canonicalProviderName(batch.input.solver2.provider) as Provider }
-                : {}),
-              ...(batch.input.solver2.model ? { model: batch.input.solver2.model } : {}),
-            }
-          : null,
         policyId: batch.input.policy_id,
       });
       await beforeSend();
@@ -803,7 +802,7 @@ export async function runAdmissionForQuestion(
           if (boss && error.recovery.reason !== 'login' && error.recovery.retry_at) {
             const wakeData = {
               ...data,
-              admission_version: 4 as const,
+              admission_version: QUESTION_ADMISSION_CONTRACT_VERSION,
               question_id: rootId,
               recovery_confirmed: false,
             };

@@ -35,6 +35,8 @@ const PUBLISH_ACTION = 'experimental:assessment_publish';
 
 const FrozenStageAttempt = z.object({
   kind: z.string(),
+  /** Absent on stage rows written before call indices were scoped per policy (@4). */
+  policy_id: z.string().optional(),
   call_index: z.number().int().nonnegative(),
   attempt: z.number().int().nonnegative(),
   payload_digest: z.string(),
@@ -84,9 +86,9 @@ type PracticeBoss = Awaited<ReturnType<typeof getStartedBoss>>;
 
 /**
  * Freeze the successor's FrozenAdmissionInput exactly the way the job derives
- * it at claim time — same seal layers, profile, resolved policy and solver2
- * env. The digest computed here is what the authorization binds and what the
- * release drift-check re-verifies before any write.
+ * it at claim time — same seal layers, profile and resolved policy. The digest
+ * computed here is what the authorization binds and what the release
+ * drift-check re-verifies before any write.
  */
 async function buildSuccessorInput(
   tx: Tx,
@@ -140,8 +142,6 @@ async function buildSuccessorInput(
         .where(eq(knowledge.id, first))
         .limit(1)
     : [undefined];
-  const solver2Provider = process.env.QUESTION_ADMISSION_SOLVER2_PROVIDER;
-  const solver2Model = process.env.QUESTION_ADMISSION_SOLVER2_MODEL;
   const input = FrozenAdmissionInput.parse(
     JSON.parse(
       JSON.stringify({
@@ -158,10 +158,6 @@ async function buildSuccessorInput(
         },
         subject_profile: await resolveSubjectProfileStrictLive(tx, node?.domain ?? null),
         policy_id: resolveQuestionAdmissionPolicyId(),
-        solver2:
-          solver2Provider || solver2Model
-            ? { provider: solver2Provider, model: solver2Model }
-            : null,
       }),
     ),
   );
@@ -333,6 +329,7 @@ export async function evaluateAdmissionVoidGroup(
       successor.data.entityRevision !== spec.baseDigest ||
       successor.data.unit !== `call:${voided.data.call_index}:attempt:${nextAttempt}` ||
       successor.data.input.kind !== voided.data.kind ||
+      successor.data.input.policy_id !== voided.data.policy_id ||
       successor.data.input.call_index !== voided.data.call_index ||
       successor.data.input.attempt !== nextAttempt ||
       successor.data.input.payload_digest !== voided.data.payload_digest ||

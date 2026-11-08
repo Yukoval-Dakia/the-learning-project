@@ -1,4 +1,6 @@
-// Resolves disagreements using the task-configured adjudicator; never selects a fallback model.
+// Decides every unit a blind solve could not settle, using the task-configured adjudicator.
+// It never selects a fallback model; the evidence records which route actually answered.
+import { canonicalProviderName } from '@/ai/task-spec';
 import { getTaskOverride } from '@/core/config/store';
 import type { Db } from '@/db/client';
 import type { BoundRunTaskTextFn } from '@/server/ai/runner-fn';
@@ -7,12 +9,14 @@ import {
   AdmissionAdjudication,
   AdmissionAdjudicationInput,
   type AdmissionMarkingStateT,
+  questionAdmissionAdjudicateTaskSpec,
 } from '../../tasks/question-admission-adjudicate';
 import { AdmissionParseFailure, runAdmissionAttempts } from './attempt';
 import type { QuestionAdmissionDefinition } from './contract';
 import {
   type AdmissionImage,
-  type DualSolveResult,
+  type AdmissionSolveReceipt,
+  type BlindSolveResult,
   admissionWireInput,
   sealTaskRun,
   solverParts,
@@ -22,14 +26,14 @@ import { AdmissionNotSent } from './stages';
 
 export const ADJUDICATION_TASK_KIND = 'QuestionAdmissionAdjudicateTask';
 
-function candidateAnswerForms(definition: QuestionAdmissionDefinition, solve: DualSolveResult) {
+function candidateAnswerForms(definition: QuestionAdmissionDefinition, solve: BlindSolveResult) {
   return definition.units.flatMap((unit) => {
     if (unit.unit_kind !== 'blank') return [];
     const texts = new Set<string>();
-    for (const output of solve.outputs) {
-      const answer = output.units.find((u) => u.scoring_unit_id === unit.scoring_unit_id)?.answer;
-      if (answer?.kind === 'blank_text') for (const text of answer.accepted) texts.add(text);
-    }
+    const answer = solve.output.units.find(
+      (u) => u.scoring_unit_id === unit.scoring_unit_id,
+    )?.answer;
+    if (answer?.kind === 'blank_text') for (const text of answer.accepted) texts.add(text);
     const criterion = unit.seeded_criterion;
     if (criterion?.kind === 'blank_key' && criterion.key.kind === 'text')
       for (const text of criterion.key.accepted) texts.add(text);
@@ -47,7 +51,7 @@ function candidateAnswerForms(definition: QuestionAdmissionDefinition, solve: Du
 export async function adjudicateAdmission(
   db: Db,
   definition: QuestionAdmissionDefinition,
-  solve: DualSolveResult,
+  solve: BlindSolveResult,
   figureState: 'none_referenced' | 'missing_referenced' | 'unreadable' | 'available',
   runTask: BoundRunTaskTextFn,
   subjectProfile?: SubjectProfile,
@@ -61,10 +65,10 @@ export async function adjudicateAdmission(
   const answerForms = candidateAnswerForms(definition, solve);
   const payload = AdmissionAdjudicationInput.parse({
     parts: solverParts(definition),
-    units: solverUnits(definition, 0, { exposePrinted: true }),
+    units: solverUnits(definition, { exposePrinted: true }),
     figure_state: figureState,
     markings,
-    solves: solve.outputs,
+    solve: { units: solve.output.units.map(({ prior: _prior, ...unit }) => unit) },
     author_evidence:
       definition.original_units ??
       definition.units.map((u) => ({
@@ -154,5 +158,29 @@ export async function adjudicateAdmission(
     form_reviews: formReviews,
     attempt_run_ids: attempt.taskRunIds,
     receipt: await sealTaskRun(db, wire, result, output, ADJUDICATION_TASK_KIND),
+  };
+}
+
+/**
+ * Who answered, read off the sealed receipts rather than configuration: the same
+ * provider+model as the blind solve means no second model looked at the question, and a
+ * route other than the task's declared adjudicator is a fallback.
+ */
+export function adjudicatorIdentity(
+  solver: Pick<AdmissionSolveReceipt, 'provider' | 'model'>,
+  adjudicator: Pick<AdmissionSolveReceipt, 'provider' | 'model'>,
+) {
+  const declared = questionAdmissionAdjudicateTaskSpec.definition;
+  const provider = canonicalProviderName(adjudicator.provider);
+  return {
+    adjudicator_context:
+      canonicalProviderName(solver.provider) === provider && solver.model === adjudicator.model
+        ? ('same_model_as_solver' as const)
+        : ('independent_model' as const),
+    route_role:
+      provider === canonicalProviderName(declared.defaultProvider) &&
+      adjudicator.model === declared.defaultModel
+        ? ('primary' as const)
+        : ('fallback' as const),
   };
 }

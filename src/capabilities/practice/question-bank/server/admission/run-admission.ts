@@ -3,16 +3,19 @@ import { resolveTaskBudget } from '@/capabilities/task-registry';
 import {
   CURRENT_BLANK_NORMALIZATION,
   CURRENT_NUMERIC_NORMALIZATION_VERSION,
+  compareAnswerKeys,
 } from '@/core/schema/assessment/answer-compare';
 import { isPublicSharedMaterial } from '@/core/schema/assessment/materials';
 import { createAssessmentAssetLoader } from '../../../grading/public';
 import { AdmissionAttemptExhausted } from './attempt';
 
-// One admission operation: structural checks, blind solves, semantic adjudication,
-// then deterministic probes or the system-admitted AI grader. Publication is append-only.
+// One admission operation: structural checks, one blind solve, semantic adjudication of
+// every unit no author key settled, then deterministic probes or the system-admitted AI
+// grader. Publication is append-only.
 
 import { canonicalHash } from '@/core/migration/canonical';
 import {
+  DUAL_SOLVE_QUESTION_ADMISSION_POLICY_ID,
   LEGACY_QUESTION_ADMISSION_POLICY_ID,
   PREVIOUS_QUESTION_ADMISSION_POLICY_ID,
   QUESTION_ADMISSION_POLICY_ID,
@@ -38,7 +41,7 @@ import { contractIntegrityDigest } from '@/kernel/records/assessment-normalizati
 import { type BoundRunTaskTextFn, makeRunTaskTextFn } from '@/server/ai/runner-fn';
 import type { SubjectProfile } from '@/subjects/profile';
 import type { AdmissionRepairT } from '../../tasks/question-admission-adjudicate';
-import { adjudicateAdmission } from './adjudicate';
+import { adjudicateAdmission, adjudicatorIdentity } from './adjudicate';
 import {
   type AdmissionProbe,
   type ProbeOutcome,
@@ -49,17 +52,14 @@ import {
 } from './calibrate';
 import type { AdmissionUnitSpec, QuestionAdmissionDefinition } from './contract';
 import { prepareAdmissionQuestionText } from './question-text';
-import type { KnowledgeCandidate, SolutionPriorRecordT } from './solution-prior';
+import type { SolutionPriorRecordT } from './solution-prior';
 import {
   type AdmissionImage,
   type AdmissionKey,
   type AdmissionSolveReceipt,
-  type Provider,
-  type SolutionPriorPassResult,
   type UnitSolveVerdict,
   keyFromAnswer,
-  runDualSolve,
-  runSolutionPriorPass,
+  runBlindSolve,
 } from './solve';
 
 export { QUESTION_ADMISSION_POLICY_ID } from '@/core/question-admission-policy';
@@ -70,7 +70,8 @@ export function resolveQuestionAdmissionPolicyId(): string {
   if (
     configured === LEGACY_QUESTION_ADMISSION_POLICY_ID ||
     configured === PREVIOUS_QUESTION_ADMISSION_POLICY_ID ||
-    configured === 'question_admission@3'
+    configured === 'question_admission@3' ||
+    configured === DUAL_SOLVE_QUESTION_ADMISSION_POLICY_ID
   ) {
     throw new Error(
       `QUESTION_ADMISSION_POLICY_ID=${configured} is obsolete; unset it for the current admission contract`,
@@ -84,14 +85,6 @@ export interface QuestionAdmissionOptions {
   /** 缺省 makeRunTaskTextFn(db) —— 测试/编排可注入替代。 */
   runTask?: BoundRunTaskTextFn;
   subjectProfile?: SubjectProfile;
-  /**
-   * OPEN owner decision — solve 2 是否必须异源模型族。默认 null = 同一
-   * registry 配置的模型 + 隔离上下文；给出时经 ctx.override 路由。
-   */
-  solver2?: { provider?: Provider; model?: string } | null;
-  /** Live knowledge points offered to the solution prior (YUK-1771). */
-  knowledgeCandidates?: readonly KnowledgeCandidate[];
-  priorRevisionDigest?: string;
   policyId?: string;
   now?: Date;
 }
@@ -142,7 +135,7 @@ export interface QuestionAdmissionResult {
     solve_receipts: AdmissionSolveReceipt[];
     crosscheck_receipt?: AdmissionSolveReceipt;
   };
-  /** Solution-method prior from the dual solve; publication freezes it on the revision. */
+  /** Solution-method prior from the blind solve; publication freezes it on the revision. */
   solution_prior?: SolutionPriorRecordT;
 }
 
@@ -225,8 +218,6 @@ export async function runQuestionAdmission(
   const policyId = options.policyId ?? resolveQuestionAdmissionPolicyId();
   const now = options.now ?? new Date();
   const runTask = options.runTask ?? makeRunTaskTextFn(options.db, { judgeRetryPolicy: 'none' });
-  const solverContext =
-    options.solver2 != null ? 'independent_model' : 'same_model_isolated_context';
   const per_unit = new Map<string, UnitAdmissionResult>();
   const evidenceTaskRuns: AdmissionSolveReceipt[] = [];
 
@@ -258,7 +249,7 @@ export async function runQuestionAdmission(
       ...emptyParts.map((p) => `Empty prompt: ${p.part_id}`),
     ].join('; ');
     for (const unit of definition.units) mark(unit, { status: 'withheld', reason });
-    return finalize(definition, policyId, now, per_unit, evidenceTaskRuns, null, solverContext, {
+    return finalize(definition, policyId, now, per_unit, evidenceTaskRuns, {
       status: 'withheld',
       reason,
     });
@@ -277,19 +268,10 @@ export async function runQuestionAdmission(
         ...(defect ? { repair: defect.repair } : {}),
       });
     }
-    const returned = finalize(
-      definition,
-      policyId,
-      now,
-      per_unit,
-      evidenceTaskRuns,
-      null,
-      solverContext,
-      {
-        status: 'withheld',
-        reason: 'question_text_invalid',
-      },
-    );
+    const returned = finalize(definition, policyId, now, per_unit, evidenceTaskRuns, {
+      status: 'withheld',
+      reason: 'question_text_invalid',
+    });
     returned.verification.evidence.question_text = {
       markings: questionText.markings,
       changes: questionText.changes,
@@ -322,7 +304,7 @@ export async function runQuestionAdmission(
             fix_hint_md: `Supply a readable frozen image for ${material.material_id}.`,
           },
         });
-      return finalize(definition, policyId, now, per_unit, evidenceTaskRuns, null, solverContext, {
+      return finalize(definition, policyId, now, per_unit, evidenceTaskRuns, {
         status: 'withheld',
         reason: 'unreadable_figure',
       });
@@ -333,11 +315,11 @@ export async function runQuestionAdmission(
     });
   }
 
-  // ---- 双盲 solve ----
+  // ---- 盲解 ----
   // （第 2 片）：声明 answer_shape 但未被共享比较器支持的 blank
   // 单元在付费 solve 之前扣留（enqueue/maySend 闸之外的第二层 —— 覆盖
   // submit_question 直接调用与手工 re-dispatch）；已支持声明的单元照常
-  // 进入双解，比较走同一比较核心。
+  // 进入盲解，比较走同一比较核心。
   const slotShapeOf = (unit: AdmissionUnitSpec) => {
     const slot = definition.response_spec.slots.find(
       (candidate) => candidate.slot_id === unit.slot_refs[0],
@@ -377,31 +359,31 @@ export async function runQuestionAdmission(
     }
   }
   if (solvableUnits.length === 0) {
-    return finalize(definition, policyId, now, per_unit, evidenceTaskRuns, null, solverContext, {
+    return finalize(definition, policyId, now, per_unit, evidenceTaskRuns, {
       status: 'withheld',
       reason: 'no_resolvable_units',
     });
   }
-  let solve: Extract<Awaited<ReturnType<typeof runDualSolve>>, { ok: true }>['result'];
+  let solve: Extract<Awaited<ReturnType<typeof runBlindSolve>>, { ok: true }>['result'];
   {
-    const outcome = await runDualSolve(options.db, definition, {
+    const outcome = await runBlindSolve(options.db, definition, {
       runTask,
       images,
       subjectProfile: options.subjectProfile,
-      solver2: options.solver2 ?? null,
     });
     if (!outcome.ok) {
       // Known exhausted calls return repair; their paid receipts remain in the evidence.
       evidenceTaskRuns.push(...outcome.receipts);
-      return finalize(definition, policyId, now, per_unit, evidenceTaskRuns, null, solverContext, {
+      return finalize(definition, policyId, now, per_unit, evidenceTaskRuns, {
         status: 'withheld',
-        reason: `dual solve failed before a verdict: ${outcome.error}`,
+        reason: `blind solve failed before a verdict: ${outcome.error}`,
         transient: true,
       });
     }
     solve = outcome.result;
   }
-  evidenceTaskRuns.push(solve.solve_a, solve.solve_b);
+  evidenceTaskRuns.push(solve.receipt);
+  const blindVerdicts = new Map(solve.verdicts);
   for (const unit of solvableUnits) {
     const verdict = solve.verdicts.get(unit.scoring_unit_id);
     if (verdict == null) continue;
@@ -435,9 +417,9 @@ export async function runQuestionAdmission(
       ? 'missing_referenced'
       : 'none_referenced';
   let adjudicationEvidence: Awaited<ReturnType<typeof adjudicateAdmission>>['output'] | null = null;
+  let adjudicationIdentity: ReturnType<typeof adjudicatorIdentity> | null = null;
   const freeRubrics = new Map<string, string>();
   const modelSlices = new Map<string, string>();
-  const crosscheck: null = null;
   if (
     figureState !== 'none_referenced' ||
     questionText.markings.length > 0 ||
@@ -461,16 +443,10 @@ export async function runQuestionAdmission(
     } catch (error) {
       if (!(error instanceof AdmissionAttemptExhausted)) throw error;
       for (const unit of solvableUnits) mark(unit, { status: 'withheld', reason: error.message });
-      const returned = finalize(
-        definition,
-        policyId,
-        now,
-        per_unit,
-        evidenceTaskRuns,
-        null,
-        solverContext,
-        { status: 'withheld', reason: 'adjudication_attempts_exhausted' },
-      );
+      const returned = finalize(definition, policyId, now, per_unit, evidenceTaskRuns, {
+        status: 'withheld',
+        reason: 'adjudication_attempts_exhausted',
+      });
       returned.verification.evidence.attempt_run_ids = [
         ...solve.attempt_run_ids,
         ...error.taskRunIds,
@@ -478,6 +454,7 @@ export async function runQuestionAdmission(
       return returned;
     }
     adjudicationEvidence = adjudication.output;
+    adjudicationIdentity = adjudicatorIdentity(solve.receipt, adjudication.receipt);
     solve.attempt_run_ids.push(...adjudication.attempt_run_ids);
     evidenceTaskRuns.push(adjudication.receipt);
     for (const verdict of adjudication.output.per_unit) {
@@ -811,56 +788,63 @@ export async function runQuestionAdmission(
       );
     }
   }
-  const settledKeys = new Map<string, AdmissionKey>();
-  for (const [unitId, verdict] of solve.verdicts) {
-    if (verdict.status === 'agreed') settledKeys.set(unitId, verdict.key);
-  }
-  // No settled key means the solvers could not agree on the answer, so a description of
-  // the solution (and a write-once difficulty anchor from it) would be speculation.
-  const prior: SolutionPriorPassResult =
-    (settledKeys.size === 0 && freeRubrics.size === 0) ||
-    options.priorRevisionDigest === resolvedContract.integrity_digest ||
-    !definition.units.every((unit) => unitResult(unit).status === 'admitted')
-      ? {
-          record: null,
-          receipt: null,
-          outcome: { status: 'skipped', task_run_id: null, reason: 'no settled key' },
-        }
-      : await runSolutionPriorPass(options.db, definition, settledKeys, {
-          runTask,
-          freeRubrics,
-          images,
-          ...(options.subjectProfile != null ? { subjectProfile: options.subjectProfile } : {}),
-          ...(options.knowledgeCandidates != null
-            ? { knowledgeCandidates: options.knowledgeCandidates }
-            : {}),
-        });
-  if (prior.receipt != null) evidenceTaskRuns.push(prior.receipt);
   const allAdmitted = definition.units.every((unit) => unitResult(unit).status === 'admitted');
-  const result = finalize(
-    definition,
-    policyId,
-    now,
-    per_unit,
-    evidenceTaskRuns,
-    crosscheck,
-    solverContext,
-    {
-      status: allAdmitted ? 'admitted' : 'withheld',
-      ...(allAdmitted ? {} : { reason: 'unit_level_withhold' }),
-      resolved: resolvedContract,
-    },
-  );
+  // The prior describes the blind solve's own path, so it is kept only for a fully admitted
+  // question, and anchors difficulty only when the published keys are the blind keys.
+  const prior: SolutionPriorRecordT | null =
+    allAdmitted && solve.prior != null
+      ? { ...solve.prior, solver_key_status: solverKeyStatus(definition, blindVerdicts, solve) }
+      : null;
+  const result = finalize(definition, policyId, now, per_unit, evidenceTaskRuns, {
+    status: allAdmitted ? 'admitted' : 'withheld',
+    ...(allAdmitted ? {} : { reason: 'unit_level_withhold' }),
+    resolved: resolvedContract,
+  });
   result.verification.evidence.figure_state = figureState;
   result.verification.evidence.question_text = {
     markings: questionText.markings,
     changes: questionText.changes,
   };
   result.verification.evidence.adjudication = adjudicationEvidence;
-  result.verification.evidence.blind_solves = solve.outputs;
+  if (adjudicationIdentity != null) {
+    result.verification.evidence.adjudicator_context = adjudicationIdentity.adjudicator_context;
+    result.verification.evidence.route_role = adjudicationIdentity.route_role;
+  }
+  result.verification.evidence.blind_solve = solve.output;
   result.verification.evidence.attempt_run_ids = solve.attempt_run_ids;
-  result.verification.evidence.solution_prior_pass = prior.outcome;
-  return prior.record != null ? { ...result, solution_prior: prior.record } : result;
+  result.verification.evidence.solution_prior = {
+    status: prior != null ? 'kept' : solve.prior != null ? 'dropped_not_admitted' : 'empty',
+    task_run_id: solve.receipt.task_run_id,
+    ...(prior?.solver_key_status != null ? { solver_key_status: prior.solver_key_status } : {}),
+  };
+  return prior != null ? { ...result, solution_prior: prior } : result;
+}
+
+/**
+ * matched: every unit is deterministic and its published key is the blind key (the author
+ * key accepted it, or adjudication decided the same key). Free units have no comparable
+ * key, so their prior is unsettled.
+ */
+function solverKeyStatus(
+  definition: QuestionAdmissionDefinition,
+  blind: ReadonlyMap<string, UnitSolveVerdict>,
+  solve: { verdicts: ReadonlyMap<string, UnitSolveVerdict>; blind_keys: Map<string, AdmissionKey> },
+): NonNullable<SolutionPriorRecordT['solver_key_status']> {
+  if (definition.units.some((unit) => unit.unit_kind !== 'select' && unit.unit_kind !== 'blank'))
+    return 'unsettled';
+  for (const unit of definition.units) {
+    if (blind.get(unit.scoring_unit_id)?.status === 'agreed') continue;
+    const final = solve.verdicts.get(unit.scoring_unit_id);
+    const proposed = solve.blind_keys.get(unit.scoring_unit_id);
+    if (final?.status !== 'agreed' || proposed == null) return 'overridden';
+    const slot = definition.response_spec.slots.find((s) => s.slot_id === unit.slot_refs[0]);
+    const same = compareAnswerKeys(proposed, final.key, {
+      blank_normalization: unit.blank_normalization,
+      declared_shape: slot?.kind === 'blank' ? (slot.answer_shape ?? null) : null,
+    });
+    if (!same.agree) return 'overridden';
+  }
+  return 'matched';
 }
 
 function finalize(
@@ -869,8 +853,6 @@ function finalize(
   now: Date,
   per_unit: Map<string, UnitAdmissionResult>,
   evidenceTaskRuns: AdmissionSolveReceipt[],
-  _crosscheck: null,
-  solverContext: string,
   tail: {
     status: 'admitted' | 'withheld';
     reason?: string;
@@ -907,8 +889,6 @@ function finalize(
       source_answer_count: definition.source_answers.length,
     }),
     base_contract_digest: definition.base_contract_digest,
-    /** 如实记录 solver 拓扑：未配置 solver2 = 同模型独立上下文（非异源）。 */
-    solver_context: solverContext,
     /** Successful task receipts; attempt_run_ids also includes failed paid attempts. */
     task_runs: evidenceTaskRuns.map((receipt) => ({
       task_run_id: receipt.task_run_id,

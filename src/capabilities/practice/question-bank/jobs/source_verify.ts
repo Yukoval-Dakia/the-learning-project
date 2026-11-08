@@ -951,7 +951,7 @@ export async function runSourceVerify(
         // 要两次独立解题一致 + 逐单元标定才 admitted，这里只有 tier-2 确定性
         // checks、没有独立核验，所以发布为 withheld(unverified_rules)＝待准入；
         // question_admission_run 经 assessment_publish outbox
-        // 订阅自动入队，双解 + 标定通过后才 admitted。
+        // 订阅自动入队，盲解 + 裁决 + 标定通过后才 admitted。
         // 已发布过同内容的组在此只更新 admission 维度（generation+1）。
         // suspension:false 清 verify_hold（同版复核通过 ⇒ 幂等恢复，
         // 「同版复核通过」行）；retraction_hold 不由本路径接线，publisher 恒保留。
