@@ -8,7 +8,7 @@ import { DerivationPolicy, type DerivationPolicyT } from '@/core/schema/derivati
 import { BLOCK_DRAFT_FENCE_INFO, blockFence } from '@/ui/components/blocks/block-fence';
 import { parseCopilotPrimaryView } from '../primary-view-contract';
 import { parseConfirmation } from './confirmation';
-import { mergePublicProse, parsePublicProse } from './public-prose';
+import { type ProseDiscard, mergePublicProse, parsePublicProse } from './public-prose';
 import type { ReplayChatMessage, ReplaySkillContext, ReplayTurn } from './replay';
 import { parseSkillContext, parseSkillTurn } from './skill-lifecycle';
 import type {
@@ -18,6 +18,7 @@ import type {
   CopilotSubtaskView,
   CopilotToolCallRecord,
 } from './subtask-events';
+import { COPILOT_RUN_STEP_EVENT, parseRequestRetry } from './subtask-events';
 
 export type ToolCallRecord = CopilotToolCallRecord;
 
@@ -116,13 +117,20 @@ export function projectDurableCopilotMessage(
       ? mergePublicProse(
           snapshot,
           new Map(
-            view.frames
-              .filter(
-                (frame) =>
-                  frame.event_type === 'copilot_run.delta' &&
-                  typeof frame.payload.text === 'string',
+            view.frames.flatMap((frame): [number, string | ProseDiscard][] => {
+              if (
+                frame.event_type === 'copilot_run.delta' &&
+                typeof frame.payload.text === 'string'
               )
-              .map((frame) => [frame.event_id, frame.payload.text as string]),
+                return [[frame.event_id, frame.payload.text]];
+              // A retried request's take-back applies here too, or the snapshot keeps the half
+              // sentence the broken attempt wrote in front of what the retry writes.
+              const retry =
+                frame.event_type === COPILOT_RUN_STEP_EVENT
+                  ? parseRequestRetry(frame.payload)
+                  : null;
+              return retry ? [[frame.event_id, { discard: retry.discard_chars }]] : [];
+            }),
           ),
         )
       : undefined);
@@ -149,7 +157,9 @@ export function projectDurableCopilotMessage(
       terminal || typeof view.replyPayload?.reply_md === 'string' ? undefined : view.blocks,
     stream_stage: terminal ? undefined : view.modelStage,
   };
-  if (!terminal) return { ...base, text: view.replyText || previous.text, streaming: true };
+  // While reconnecting the taken-back words are gone; an empty reply is not a missing one.
+  const streamingText = view.replyText || (view.modelStage === 'reconnecting' ? '' : previous.text);
+  if (!terminal) return { ...base, text: streamingText, streaming: true };
   const reply = projectCopilotReply(
     base,
     {
