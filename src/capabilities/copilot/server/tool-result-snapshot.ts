@@ -36,7 +36,7 @@ const POLICIES: Record<string, ResultPolicy> = {
   get_attempt_context: 'reader',
   get_learning_item_context: 'reader',
   // Bank evidence is agent-facing; content/answers need a UI-owned projection.
-  search_bank: ['scope_applied', 'requirements', 'coverage'],
+  search_bank: ['contract_version', 'search_id', 'goal', 'coverage', 'decision_source'],
   read_bank: [],
   check_bank: ['notes', 'supported_kinds'],
   // Filing verdict is public; the ledger receipt detail stays agent-facing.

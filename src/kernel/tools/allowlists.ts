@@ -57,6 +57,7 @@ export const READ_TOOLS = [
 ] as const;
 
 export const PROPOSE_WRITE_TOOLS = [
+  'workspace_exec',
   'curate_context',
   'submit_review_answer',
   // YUK-1986 — copilot 给答案的唯一记受助路径（先写 solution/answer_help 再返参考解）。
@@ -151,6 +152,7 @@ export type DomainToolName =
   | ControlDomainToolName;
 
 export type DomainToolSurface =
+  | 'workspace_acceptance'
   | 'question_preparer'
   | 'knowledge_review'
   | 'copilot'
@@ -400,6 +402,7 @@ export const QUESTION_PREPARER_TOOLS = [
 ] as const satisfies readonly DomainToolName[];
 
 export const DOMAIN_TOOL_ALLOWLISTS = {
+  workspace_acceptance: ['workspace_exec'],
   question_preparer: QUESTION_PREPARER_TOOLS,
   knowledge_review: KNOWLEDGE_REVIEW_TOOLS,
   copilot: COPILOT_TOOLS,

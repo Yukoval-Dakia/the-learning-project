@@ -6,8 +6,6 @@ export const TASK_OUTPUT_CAP_TOKENS: Readonly<Record<string, number>> = {
   AttemptInsightTask: 16384,
   BacktraceJudgeTask: 16384,
   AttributionRerankTask: 16384,
-  BankConditionVerifyTask: 32768,
-  BankRequirementInterpretTask: 16384,
   BlockAssemblyTask: 16384,
   CoachTask: 28672,
   ColdStartPlacementBridgeTask: 16384,

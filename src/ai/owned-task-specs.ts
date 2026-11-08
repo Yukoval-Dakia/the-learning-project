@@ -1,7 +1,7 @@
+import { DEFAULT_TASK_MODEL } from '@/core/config/model-overrides';
 import {
   CONTEXT_VIEWS,
   type ContextViewName,
-  DEFAULT_TASK_MODEL,
   type OwnedTaskSpecEntry,
   type TaskDefinition,
 } from './task-spec';

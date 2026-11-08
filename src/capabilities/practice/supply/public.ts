@@ -68,6 +68,7 @@ export {
   jyeooSpawnMaxStdoutBytes,
   jyeooSpawnTimeoutMs,
 } from './server/jyeoo-supply-config';
+export { buildQuestionPreparerTarget } from './server/preparer-target';
 export { enqueueQuestionPreparerTicket } from './server/question-preparer-ticket';
 export { type RefillDeps, refillActiveLearningPools } from './server/refill';
 export {
@@ -84,8 +85,8 @@ export {
   discoverSupplyTargets,
   seedGenerationMethod,
   seedRoutePreference,
-  targetFingerprint,
 } from './server/target-discovery';
+export { targetFingerprint } from './server/target-fingerprint';
 export type {
   ParseLooseFn,
   RunWebFetchCandidatesDeps,

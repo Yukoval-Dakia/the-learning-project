@@ -1,10 +1,9 @@
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, sql } from 'drizzle-orm';
 
-import type { ActivityRefT } from '@/core/schema/activity';
 import type { RelationTypeSchemaT } from '@/core/schema/event/blocks';
 import type { Db } from '@/db/client';
-import { event, knowledge_edge } from '@/db/schema';
+import { event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import {
@@ -21,9 +20,6 @@ import {
   withEdgeEndpointLockRetry,
 } from './edge-topology-write';
 import { archiveKnowledgeEdgeFromEvents } from './edges';
-import { applyApprovedEdgeSupersede } from './propose_edge';
-
-const SUPERSEDE_DEFAULT_REASON = 'accepted reconcile supersede';
 
 export type EdgeProposalDecision = 'accept' | 'reverse' | 'change_type' | 'dismiss';
 
@@ -43,12 +39,10 @@ export interface KnowledgeEdgeProposalDecisionResult {
 }
 
 type EdgeProposePayload = {
-  // Legacy events predate this field and default to create.
+  // Legacy events predate this field and default to create. 'supersede' stays in
+  // the union so a stale pending row parses and is rejected explicitly below.
   edge_op?: 'create' | 'archive' | 'supersede';
   archive_edge_id?: string;
-  supersede_confidence?: number;
-  supersede_neighbor_index?: number | null;
-  supersede_affected_refs?: ActivityRefT[];
   from_knowledge_id: string;
   to_knowledge_id: string;
   relation_type: string;
@@ -58,15 +52,6 @@ type EdgeProposePayload = {
 
 type EdgeAcceptPrepared =
   | { readonly op: 'archive'; readonly archiveEdgeId: string }
-  | {
-      readonly op: 'supersede';
-      readonly supersededEdgeId: string;
-      readonly confidence: number;
-      readonly affectedRefs: ActivityRefT[];
-      readonly newFromId: string;
-      readonly newToId: string;
-      readonly endpointIds: string[];
-    }
   | {
       readonly op: 'create';
       readonly fromId: string;
@@ -218,40 +203,15 @@ export async function decideKnowledgeEdgeProposal(
             return { op: 'archive', archiveEdgeId };
           }
 
-          // The judge's supersede stays a proposal until this accept; the replacement,
-          // archive, provenance and audit apply atomically in the effect.
+          // Supersede accepts are retired with the reconcile write path (YUK-1768):
+          // a stale pending supersede still parses and can be dismissed, but accepting
+          // it must not silently fall through to create semantics — fail closed.
           if (edgeOp === 'supersede') {
-            if (decision !== 'accept') {
-              throw new ApiError(
-                'validation_error',
-                `knowledge_edge supersede proposal only supports accept/dismiss, got ${decision}`,
-                400,
-              );
-            }
-            const supersededEdgeId = proposePayload.archive_edge_id;
-            const confidence = proposePayload.supersede_confidence;
-            const affectedRefs = proposePayload.supersede_affected_refs;
-            if (!supersededEdgeId || confidence === undefined || !affectedRefs?.length) {
-              throw new ApiError(
-                'validation_error',
-                `edge supersede proposal ${proposeEventId} is missing its judged decision metadata`,
-                400,
-              );
-            }
-            // Supersede creates a live replacement, so it needs the same locks and
-            // topology gate as create; without them a replacement could close a
-            // prerequisite cycle.
-            const newFromId = proposePayload.from_knowledge_id;
-            const newToId = proposePayload.to_knowledge_id;
-            return {
-              op: 'supersede',
-              supersededEdgeId,
-              confidence,
-              affectedRefs,
-              newFromId,
-              newToId,
-              endpointIds: Array.from(new Set([newFromId, newToId])),
-            };
+            throw new ApiError(
+              'validation_error',
+              `edge supersede proposal ${proposeEventId} is retired; dismiss it instead of accepting`,
+              400,
+            );
           }
 
           const fromId =
@@ -314,89 +274,6 @@ export async function decideKnowledgeEdgeProposal(
                 rate_event_id: writtenRateId,
                 generate_event_id: generateEventId,
                 edge_id: prepared.archiveEdgeId,
-              },
-            };
-          }
-
-          if (prepared.op === 'supersede') {
-            await acquireEdgeEndpointLocks(
-              tx,
-              prepared.newFromId,
-              prepared.newToId,
-              prepared.endpointIds,
-            );
-
-            // NOWAIT: blocking here while holding endpoint locks could deadlock with a merge.
-            const oldEdge = (
-              await tx
-                .select()
-                .from(knowledge_edge)
-                .where(eq(knowledge_edge.id, prepared.supersededEdgeId))
-                .limit(1)
-                .for('update', { noWait: true })
-            )[0];
-            if (!oldEdge || oldEdge.archived_at !== null) {
-              throw new ApiError(
-                'conflict',
-                `superseded knowledge_edge is no longer live: ${prepared.supersededEdgeId}`,
-                409,
-              );
-            }
-            const candidateTouchesOld =
-              oldEdge.from_knowledge_id === proposePayload.from_knowledge_id ||
-              oldEdge.to_knowledge_id === proposePayload.from_knowledge_id ||
-              oldEdge.from_knowledge_id === proposePayload.to_knowledge_id ||
-              oldEdge.to_knowledge_id === proposePayload.to_knowledge_id;
-            const candidateIsDuplicate =
-              oldEdge.from_knowledge_id === proposePayload.from_knowledge_id &&
-              oldEdge.to_knowledge_id === proposePayload.to_knowledge_id &&
-              oldEdge.relation_type === proposePayload.relation_type;
-            if (!candidateTouchesOld || candidateIsDuplicate) {
-              throw new ApiError(
-                'validation_error',
-                candidateIsDuplicate
-                  ? `supersede candidate duplicates target edge ${prepared.supersededEdgeId}`
-                  : `supersede candidate does not touch target edge ${prepared.supersededEdgeId}`,
-                400,
-              );
-            }
-
-            const writtenRateId = await writeRate({
-              id: rateEventId,
-              subject: rateSubject,
-              created_at: now,
-              payload: { edge_op: 'supersede' },
-            });
-            const result = await applyApprovedEdgeSupersede(tx, {
-              candidate: {
-                from_knowledge_id: proposePayload.from_knowledge_id,
-                to_knowledge_id: proposePayload.to_knowledge_id,
-                relation_type: proposePayload.relation_type,
-                weight: proposePayload.weight ?? 0.5,
-                reasoning: proposePayload.reasoning ?? SUPERSEDE_DEFAULT_REASON,
-              },
-              supersededEdgeId: prepared.supersededEdgeId,
-              decision: {
-                action: 'SUPERSEDE',
-                neighbor_index: proposePayload.supersede_neighbor_index ?? null,
-                superseded_edge_id: prepared.supersededEdgeId,
-                confidence: prepared.confidence,
-                reason: proposePayload.reasoning ?? SUPERSEDE_DEFAULT_REASON,
-              },
-              affectedRefs: prepared.affectedRefs,
-              proposeEventId,
-            });
-
-            // Gate after archiving, against the post-supersede mesh. A reject rolls all back.
-            await runEdgeTopologyGate(tx, result.edgeId, { translateReject: true });
-
-            return {
-              status: 'accepted',
-              result: {
-                kind: 'knowledge_edge',
-                rate_event_id: writtenRateId,
-                generate_event_id: result.generateEventId,
-                edge_id: result.edgeId,
               },
             };
           }

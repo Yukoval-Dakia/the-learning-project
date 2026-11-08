@@ -280,24 +280,19 @@ describe('accepted answer-only lifecycle', () => {
         })
       ).some((turn) => turn.text.includes('受限标记')),
     ).toBe(true);
-    // Test real execution context encoding with a provider substitute.
-    const contexts: Array<
-      Parameters<
-        NonNullable<
-          NonNullable<Parameters<typeof createCopilotExecutionOwner>[0]>['streamTaskCollectingFn']
-        >
-      >[2]
-    > = [];
+    // The correction contract already names the reply, so the provider substitute
+    // must not run and cannot replace it.
+    let providerCalls = 0;
     const owner = createCopilotExecutionOwner({
       buildExaMcpServerFn: () => null,
       resolveCopilotSkillDocsFn: async () => undefined,
-      streamTaskCollectingFn: async (_kind, _input, ctx) => {
-        contexts.push(ctx);
+      streamTaskCollectingFn: async () => {
+        providerCalls += 1;
         return {
           task_run_id: 'after_restricted',
-          text: '',
-          terminalText: '这次只说明需要重新提交内容。',
-          partial: false,
+          text: '受限答案 leaked',
+          terminalText: '',
+          partial: true,
         };
       },
     });
@@ -314,17 +309,20 @@ describe('accepted answer-only lifecycle', () => {
       onToolExecutionSettled() {},
       waitForInFlight: async () => true,
     };
-    for (const resumeSessionId of [undefined, 'pi:owned_prior'])
-      await owner(
+    for (const resumeSessionId of [undefined, 'pi:owned_prior']) {
+      const result = await owner(
         testDb(),
         { input, sessionId, taskRunId: 'after_restricted' },
         { cancellation, deadlineAt: Date.now() + 60_000, resumeSessionId },
       );
-    for (const ctx of contexts) {
-      expect(JSON.stringify(ctx.compiledModelPrompt)).not.toContain('受限答案');
-      expect(JSON.stringify(ctx.piSessionReplay) ?? '').not.toContain('受限答案');
-      expect(JSON.stringify(ctx.nativeCompaction) ?? '').not.toContain('受限答案');
+      expect(result.partial).toBe(false);
+      expect(result.providerFailure).toBeUndefined();
+      expect(result.finalization.accepted).toBe(true);
+      expect(result.finalization.receipt.correction).toBe('clarify');
+      expect(result.finalization.replyText).toContain('重新输入');
+      expect(result.finalization.replyText).not.toContain('受限');
     }
+    expect(providerCalls).toBe(0);
     const { resolveDeterministicCorrectionContract } = await import('./correction-contract');
     expect(
       resolveDeterministicCorrectionContract(

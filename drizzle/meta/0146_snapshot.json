@@ -1,5 +1,5 @@
 {
-  "id": "d8986e37-6ab0-447c-84be-013d0d326e11",
+  "id": "03c8f621-7931-4329-a558-c943b5c12f46",
   "prevId": "5a37d612-fd99-4062-b686-df852a6d1e39",
   "version": "7",
   "dialect": "postgresql",
@@ -1261,142 +1261,6 @@
           "onUpdate": "no action"
         }
       },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.attempt_insight_vector": {
-      "name": "attempt_insight_vector",
-      "schema": "",
-      "columns": {
-        "insight_event_id": {
-          "name": "insight_event_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "facet": {
-          "name": "facet",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "attempt_event_id": {
-          "name": "attempt_event_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "question_id": {
-          "name": "question_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "embedding": {
-          "name": "embedding",
-          "type": "vector(1024)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "embed_model": {
-          "name": "embed_model",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "embed_version": {
-          "name": "embed_version",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "content_hash": {
-          "name": "content_hash",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {
-        "attempt_insight_vector_insight_event_id_facet_pk": {
-          "name": "attempt_insight_vector_insight_event_id_facet_pk",
-          "columns": [
-            "insight_event_id",
-            "facet"
-          ]
-        }
-      },
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "attempt_insight_vector_facet_check": {
-          "name": "attempt_insight_vector_facet_check",
-          "value": "\"attempt_insight_vector\".\"facet\" IN ('mechanism', 'method', 'needed_method')"
-        }
-      },
-      "isRLSEnabled": false
-    },
-    "public.backtrace_work": {
-      "name": "backtrace_work",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "attempt_event_id": {
-          "name": "attempt_event_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "stage": {
-          "name": "stage",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "input_digest": {
-          "name": "input_digest",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "state": {
-          "name": "state",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "result": {
-          "name": "result",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
@@ -11282,6 +11146,26 @@
           "primaryKey": false,
           "notNull": false
         },
+        "search_document": {
+          "name": "search_document",
+          "type": "tsvector",
+          "primaryKey": false,
+          "notNull": false,
+          "generated": {
+            "as": "to_tsvector('simple'::regconfig, regexp_replace(coalesce(prompt_md,'') || ' ' || coalesce(reference_md,'') || ' ' || coalesce(choices_md::text,''), '([一-鿿])', '\\1 ', 'g'))",
+            "type": "stored"
+          }
+        },
+        "search_public_document": {
+          "name": "search_public_document",
+          "type": "tsvector",
+          "primaryKey": false,
+          "notNull": false,
+          "generated": {
+            "as": "to_tsvector('simple'::regconfig, regexp_replace(coalesce(prompt_md,'') || ' ' || coalesce(choices_md::text,''), '([一-鿿])', '\\1 ', 'g'))",
+            "type": "stored"
+          }
+        },
         "rubric_json": {
           "name": "rubric_json",
           "type": "jsonb",
@@ -11464,6 +11348,36 @@
         }
       },
       "indexes": {
+        "question_search_document_gin": {
+          "name": "question_search_document_gin",
+          "columns": [
+            {
+              "expression": "search_document",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "gin",
+          "with": {}
+        },
+        "question_search_public_document_gin": {
+          "name": "question_search_public_document_gin",
+          "columns": [
+            {
+              "expression": "search_public_document",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "gin",
+          "with": {}
+        },
         "question_knowledge_ids_gin": {
           "name": "question_knowledge_ids_gin",
           "columns": [

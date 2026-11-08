@@ -1,4 +1,5 @@
 import type { Db } from '@/db/client';
+import { installHostOperation, installedHostOperation } from '@/kernel/host-operation';
 import { computeReplay } from '@/kernel/job-events';
 import {
   INTERACTIVE_ARTIFACT_TOOL_NAMES,
@@ -113,6 +114,34 @@ const JOB_EVENT_HEARTBEAT_MS = 15_000;
 const JOB_EVENT_CATCHUP_MS = 10_000;
 
 /**
+ * Per-businessTable admission gate for the generic job-event stream. The
+ * owning capability installs one at startup; the route denies before the
+ * first frame and the stream re-evaluates on every replay tick, so a revoked
+ * channel stops leaking content without observability importing owner
+ * internals. Returning false denies the channel entirely (404-shaped).
+ */
+export type JobStreamGate = (db: Db, businessId: string) => Promise<boolean>;
+
+const JOB_STREAM_GATE_KEY = 'kernel/job-event-stream:gates';
+
+function jobStreamGates(): Map<string, JobStreamGate> {
+  let gates = installedHostOperation<Map<string, JobStreamGate>>(JOB_STREAM_GATE_KEY);
+  if (!gates) {
+    gates = new Map();
+    installHostOperation(JOB_STREAM_GATE_KEY, gates);
+  }
+  return gates;
+}
+
+export function installJobStreamGate(businessTable: string, gate: JobStreamGate): void {
+  jobStreamGates().set(businessTable, gate);
+}
+
+export function jobStreamGate(businessTable: string): JobStreamGate | undefined {
+  return jobStreamGates().get(businessTable);
+}
+
+/**
  * YUK-1763 — persisted job-event frames carry the artifact-authoring tools'
  * FULL args (html with answer attributes + the answer manifest). Frames written
  * before the serve-time redaction stay raw in storage, so every emitted frame
@@ -144,7 +173,11 @@ function redactJobEventPayload(payload: unknown): unknown {
 export function jobEventStreamResponse(
   db: Db,
   req: Request,
-  { businessTable, businessId }: { businessTable: string; businessId: string },
+  {
+    businessTable,
+    businessId,
+    gate,
+  }: { businessTable: string; businessId: string; gate?: JobStreamGate },
   profile: 'job-tracker' | 'ingestion-notify',
 ): Response {
   const lastEventIdHeader = req.headers.get('Last-Event-ID');
@@ -281,6 +314,12 @@ export function jobEventStreamResponse(
         const enqueueReplay = (): Promise<void> => {
           replayQueue = replayQueue.then(async () => {
             if (closed) return;
+            // Gate re-check cuts an in-flight stream whose channel was revoked
+            // after connect (bounded by this tick, at most one catch-up late).
+            if (gate && !(await gate(db, businessId))) {
+              close();
+              return;
+            }
             const incoming = await computeReplay(db, {
               businessTable,
               businessId,

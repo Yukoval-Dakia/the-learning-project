@@ -22,5 +22,5 @@ export const taskCatalog = composeTaskCatalog(
     { owner: 'copilot', specs: copilotTaskSpecs },
     { owner: 'drawing', specs: drawingTaskSpecs },
   ] as const,
-  62,
+  60,
 );

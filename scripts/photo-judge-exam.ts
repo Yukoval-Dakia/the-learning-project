@@ -22,9 +22,9 @@ console.info('photo-exam-database', {
 });
 const { db } = await import('@/db/client');
 try {
-  const { hydrateConfigFromDb } = await import('@/server/config/hydrate');
+  const { hydrateConfigFromDb } = await import('@/core/config/server/hydrate');
   const { hydrateModelCatalog } = await import('@/server/ai/model-catalog');
-  const { hydrateCustomProviders } = await import('@/server/config/custom-providers-hydrate');
+  const { hydrateCustomProviders } = await import('@/core/config/server/custom-providers-hydrate');
   const config = await hydrateConfigFromDb(db);
   if (
     !['loaded', 'unchanged'].includes(config.outcome) ||

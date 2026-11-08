@@ -16,6 +16,7 @@ import {
   validateResponseSpec,
   validateScoringBasis,
   validateStructure,
+  wrongResponseFullMarksIssues,
 } from '@/core/schema/assessment';
 import {
   QuestionDraftDocument,
@@ -322,6 +323,9 @@ function publishIssues(
     contract.response_spec,
     contract.structure,
   )) {
+    issues.push({ code: `scoring_basis_${i.code}`, detail: i.detail });
+  }
+  for (const i of wrongResponseFullMarksIssues(contract.scoring_basis)) {
     issues.push({ code: `scoring_basis_${i.code}`, detail: i.detail });
   }
   for (const i of validateExecutionPlan(contract.execution_plan, contract.scoring_basis)) {

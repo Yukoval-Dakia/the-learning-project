@@ -3,6 +3,7 @@ import { sql } from 'drizzle-orm';
 import { unzipSync } from 'fflate';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
+import { hydrateConfigFromDb } from '@/core/config/server/hydrate';
 import {
   type PaidEffectInput,
   type PaidEffectState,
@@ -11,7 +12,6 @@ import {
 } from '@/core/paid-work/protocol/paid-effect-protocol';
 import { reservePaidEffect } from '@/core/paid-work/server/paid-effect-store';
 import { paid_effect, paid_effect_control } from '@/db/schema';
-import { hydrateConfigFromDb } from '@/server/config/hydrate';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { memR2 } from '../../../../../tests/helpers/r2';
 import {
@@ -144,7 +144,7 @@ describe('paid-effect durable backup contract', () => {
     const manifest = z
       .object({ schema_version: z.string() })
       .parse(JSON.parse(new TextDecoder().decode(entries['manifest.json'])));
-    expect(manifest.schema_version).toBe('4.36');
+    expect(manifest.schema_version).toBe('4.38');
     expect(FK_ORDER.slice(-5)).toEqual([
       'paid_effect_control',
       'paid_effect',

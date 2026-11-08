@@ -23,6 +23,8 @@ export interface SoloCoachProps {
   onClose: () => void;
   question: QuestionDetail;
   issuanceId?: string;
+  /** The answer is in: its record is sealed, and what is looked at now doesn't change it. */
+  submitted: boolean;
 }
 
 export function SoloCoach({
@@ -32,6 +34,7 @@ export function SoloCoach({
   question,
   issuanceId,
   presentation,
+  submitted,
 }: SoloCoachProps) {
   const { revealStudyReference } = usePracticeClient();
   const trapRef = useFocusTrap(open, onClose);
@@ -63,7 +66,7 @@ export function SoloCoach({
         <header className="un-ps-coach-head">
           <Lightbulb size={15} aria-hidden="true" className="un-ps-coach-icon" />
           <span className="un-ps-coach-title">解题提示</span>
-          <span className="un-ps-hint">一级一级加力</span>
+          <span className="un-ps-hint">想看多深直接选</span>
           <IconButton
             label="关闭"
             className="un-ps-coach-close"
@@ -73,13 +76,17 @@ export function SoloCoach({
         </header>
         <div className="un-ps-coach-body">
           <p className="un-ps-hint">
-            一级一级加力，每一级更近一步；想直接看完整解也行（记为不是独立完成）。这里的对话不计入判分。
+            {submitted
+              ? '这题已经交了，现在看提示不影响这次的记录。'
+              : '看了提示，这题不算独立做的；只打开这里不算。'}
+            越往后越接近答案，想看哪个直接点。
           </p>
           <HintLadder
             key={session}
             question={question}
             onReturnToAnswer={onClose}
             issuanceId={issuanceId}
+            submitted={submitted}
             requestFullSolution={
               issuanceId
                 ? async () => (await revealStudyReference(issuanceId)).reference_md

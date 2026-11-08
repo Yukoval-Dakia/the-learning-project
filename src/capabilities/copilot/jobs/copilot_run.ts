@@ -1,3 +1,4 @@
+import { retryHistoryAnchor } from '../server/run-retry';
 // Copilot's single persistent execution owner (ADR-0062). HTTP admission commits
 // the input and queues its session head; this worker owns execution, Stop, native
 // session reuse and the live paid/tool loop. Closing a subscriber never cancels it.
@@ -52,6 +53,7 @@ import {
   hasCopilotSettlementTerminal,
   markCopilotRunStarted,
   projectCopilotOutcomeMarker,
+  settleCopilotRunIfSessionDeleted,
   terminalRunResult,
   withCopilotExecutionSettlementLock,
   writeFailedTerminalProjection,
@@ -313,6 +315,19 @@ async function executeAcceptedCopilotRun(
       throw new DurableTerminalProjectionError(runId, 'failure', projectionErr);
     }
   }
+  // Session tombstone gate: a run accepted before the revocation commit can
+  // still arrive here. Settle it through the shared pre-start terminal under
+  // the dispatch lock so the delete pass can converge — paid work never starts
+  // behind a tombstone. Placed after outcome-marker repair: a reply that was
+  // already persisted before the revoke still owes its public projection.
+  const sessionGate = await settleCopilotRunIfSessionDeleted(db, runId, data.session_id);
+  if (sessionGate.outcome === 'terminal') {
+    return terminalRunResult(sessionGate.events, taskRunId);
+  }
+  if (sessionGate.outcome === 'deleted') {
+    return { status: 'cancelled' };
+  }
+
   // Crisis 回合的确定性终局：不逃模型、不调工具、不进执行 fence。分类在接纳点
   // 完成（chat.ts），策略经投递链验证送达（acceptedCopilotDerivationPolicy）；此处
   // 用同一确定性词法重选模板。回复经 persistReply 写入并继承 ask 的 crisis 策略；
@@ -406,9 +421,10 @@ async function executeAcceptedCopilotRun(
 
   // 组装 FULL run input（与 inline byte-parity）。**pickup 时**重读
   // conversation_history / learner-state header / proposal_feedback（保新鲜，不在
-  // dispatch 侧冻结），传 historyAnchorEventId=runId，把历史固定在 dispatch 的
+  // dispatch 侧冻结），用原学习者 ask 作为 history anchor，把历史固定在 dispatch 的
   // session + 插入边界（durable 时序 = dispatch-写-then-pickup）。ambient 只随 job
   // payload 传入（request-only、从不 persisted，无处可重读）。
+  const learnerAskEventId = await retryHistoryAnchor(db, runId);
   const runInput: CopilotRunInput = await assembleRunInput(db, {
     sessionId: data.session_id,
     userMessage: data.user_message,
@@ -420,7 +436,7 @@ async function executeAcceptedCopilotRun(
       ? { correctionTargetTurnId: data.correction_target_turn_id }
       : {}),
     now: new Date(),
-    historyAnchorEventId: runId,
+    historyAnchorEventId: learnerAskEventId,
   });
   const resumeSessionId = await selectResumableWorkerSession(db, data.session_id, answerOnly);
   let streamedProse = '';
@@ -675,6 +691,7 @@ async function executeAcceptedCopilotRun(
         sessionId: data.session_id,
         taskRunId,
         sourceEventId: runId,
+        learnerAskEventId,
       },
       {
         cancellation: cancellationControl,

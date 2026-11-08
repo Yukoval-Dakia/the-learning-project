@@ -480,9 +480,12 @@ export const questionAdmissionSolveTaskSpec = {
     kind: 'QuestionAdmissionSolveTask',
     description:
       'Independent blind solutions of a frozen question; settled-key solution prior in a separate mode.',
-    // TEST longest 131s (tlp-audit-artifacts/test-to-nas/route-c-plus-counts-20261106.txt);
-    // 300s clears it. Prompt, judge identity and maxCost stay unchanged.
-    budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1, timeout: 300_000 },
+    // Owner: timeouts only guard loops and rare faults, so they must sit above the real
+    // longest task. Structured submit closes out 60s before the budget; hard-question runs
+    // died in budget_landing with 9k–17k tokens per unit (~233 tok/s, 2–3 units). 1200s is
+    // about three 334s units at the #2706 77,824-token per-submit output ceiling, now on main
+    // (867da066a).
+    budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1, timeout: 1_200_000 },
     needsToolCall: true,
     isMultimodal: false,
     allowedTools: ['mcp__structured_output__submit'],

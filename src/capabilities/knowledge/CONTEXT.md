@@ -2,7 +2,7 @@
 
 认知结构的承载包：树（tree 全量快照 + OOM guard）、边（knowledge_edge CRUD + 提议链）、
 节点页聚合（node-page 六维读：metadata/mastery/neighbors/atomics/backlinks/timeline+notes）、
-提议双链（节点 propose / 边 propose_edge，rubric-validator 两层校验，proposals
+提议双链（节点 propose / 边 propose，rubric-validator 两层校验，proposals
 accept/dismiss 带 FOR UPDATE 防并发）、错因归因（attribute → JudgeOnEvent）、
 科目派生（domain / subject-resolution / subject-profile）。
 

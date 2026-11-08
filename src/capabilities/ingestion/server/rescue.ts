@@ -6,7 +6,9 @@ import type { Db } from '@/db/client';
 import { learning_session, question_block, source_asset } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import type { R2Client } from '@/kernel/object-storage';
+import { assertRescuableBlockDraft } from '@/kernel/records/question-block-creation';
 import { type RunTaskCallCtx, makeRunTaskTextFn } from '@/server/ai/runner-fn';
+import { enrollIngestionBlock } from './single-block-enroll';
 import { type VisionBlock, runVisionExtract } from './vision';
 
 export type RescueTier = 2 | 3;
@@ -21,7 +23,11 @@ export type RunRescueParams = {
   tier: RescueTier;
   strategy?: RescueStrategy;
   /** Inject runTask in tests. Defaults to production runner. */
-  runTaskFn?: (kind: string, input: unknown, ctx?: RunTaskCallCtx) => Promise<{ text: string }>;
+  runTaskFn?: (
+    kind: string,
+    input: unknown,
+    ctx?: RunTaskCallCtx,
+  ) => Promise<{ text: string; task_run_id?: string }>;
 };
 
 /**
@@ -64,6 +70,9 @@ export async function runRescue(
       400,
     );
   }
+  // Refuse before the paid call; applyRescue + the rescue UPDATE's status CAS
+  // re-check after it.
+  assertRescuableBlockDraft(block.id, block.status);
   const [session] = await params.db
     .select({
       status: learning_session.status,
@@ -99,6 +108,7 @@ export async function runRescue(
   const runTaskFn = params.runTaskFn ?? makeRunTaskTextFn(params.db);
   const taskKind = params.tier === 2 ? 'VisionExtractTask' : 'VisionExtractTaskHeavy';
 
+  let visionTaskRunId: string | undefined;
   const visionResult = await runVisionExtract({
     assetId,
     mimeType: asset.mime_type,
@@ -107,6 +117,7 @@ export async function runRescue(
     runTaskFn: async (kind, input, ctx) => {
       // route through the requested tier
       const result = await runTaskFn(taskKind, input, ctx as RunTaskCallCtx);
+      visionTaskRunId = result.task_run_id;
       void kind;
       return result;
     },
@@ -121,14 +132,52 @@ export async function runRescue(
   }
 
   const structured: StructuredQuestionT = visionBlockToStructured(first);
-  await params.db.transaction((tx) =>
-    Ingestion.applyRescue(tx, {
-      sessionId: params.sessionId,
-      blockId: params.blockId,
-      structured,
-      figures: [],
-    }),
-  );
+  try {
+    await params.db.transaction((tx) =>
+      Ingestion.applyRescue(tx, {
+        sessionId: params.sessionId,
+        blockId: params.blockId,
+        structured,
+        figures: [],
+      }),
+    );
+  } catch (err) {
+    // The state changed between the pre-flight checks and the write: the
+    // session left extracted/partial, the block was merged or deleted, or a
+    // concurrent enrollment won the CAS. Whatever the refusal, the paid vision
+    // output rides on it rather than being dropped — the caller sees the
+    // recognized content and can re-enter it through the question edit path.
+    // Non-ApiError failures (DB/driver errors) propagate bare.
+    if (err instanceof ApiError) {
+      throw new ApiError(err.code, err.message, err.status, err.headers, {
+        ...err.details,
+        paid_result: {
+          structured,
+          ...(visionTaskRunId ? { task_run_id: visionTaskRunId } : {}),
+        },
+      });
+    }
+    throw err;
+  }
+  // Rescue enters through the explicit one-block owner, so only this block is touched.
+  // The session batch job would re-enroll other reverted blocks on the page; it is not
+  // used here. Failure never rolls back the committed rescue.
+  try {
+    const [rescued] = await params.db
+      .select({ id: question_block.id, version: question_block.version })
+      .from(question_block)
+      .where(eq(question_block.id, params.blockId));
+    if (rescued) {
+      await enrollIngestionBlock(params.db, {
+        sessionId: params.sessionId,
+        blockId: rescued.id,
+        expectedVersion: rescued.version,
+        source: 'rescue',
+      });
+    }
+  } catch (err) {
+    console.error(`[rescue] single-block enrollment failed for ${params.blockId}`, err);
+  }
   return { structured };
 }
 
