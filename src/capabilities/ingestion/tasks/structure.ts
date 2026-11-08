@@ -91,7 +91,6 @@ function buildStructurePrompt(profile: SubjectProfile): string {
    对输入每个裁剪 index，在顶层 figure_handwriting 中独立报告 {figure_index,student_answer_present}：只检查该 bbox 内实际像素，有学生手写/批改痕迹填 true，明确没有填 false，不确定就省略 student_answer_present；同页别题手写不代表这张裁剪含手写。即使图含手写也可以报告它所属题/选项，是否挂载由运行时决定，绝不转写手写文字。
 5. **数学公式定界**：prompt_text、options[].text 以及 sub_questions 题面里出现的数学公式，必须带明确的 LaTeX 定界符：行内公式用「$...$」，独立成行的展示公式用「$$...$$」。已带定界符的公式（$...$、$$...$$、\\(...\\)、\\[...\\]）原样保留，不要改写公式内容。代码片段（含 Python、缩进、反斜杠转义）与普通文字**不要**包进 $；拿不准是不是公式的文字保持原样，宁可不包也不要猜。answers / analysis 字段不适用本条。
 6. **分节标题不是题。** 「一、选择题（每题4分）」这类大题/栏目标题行、试卷标题、姓名栏都不是题目：不单独成节点，不写进任何节点的 prompt_text；略去这些标题行**不算**内容丢失。标题下面针对材料的作答要求（如「阅读下面的材料，回答问题」）不是标题，保留在所属 stem 的 prompt_text 开头。
-7. **思考只用来定结构。** 在思考里确定题与题的边界、层级（stem / sub）、跨页归属、配图归属和题型即可；不要在思考里先把题面、选项、公式草拟一遍，也不要预演 JSON 转义。题面原文只在最终 JSON 里逐字写一次。
 
 输出严格 JSON（不带 markdown 代码块包裹），shape 名 StructureOutput：
 {"layout_quality":"structured"|"partial"|"text_only","extraction_confidence":0.0-1.0,"warnings":["..."],"content_lost":true|false,"figure_handwriting":[{"figure_index":0,"student_answer_present":true|false}],"questions":[StructureNode, ...]}
