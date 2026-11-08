@@ -1,0 +1,676 @@
+/**
+ * 管理面配置读面的真相源宿主（组合根侧）。
+ *
+ * 配置 owner（core/config/server/admin-config-facts）只认识 AdminConfigFactsPorts；
+ * 这里把 provider 目录/认证、任务 catalog、cron 声明、运行常量与 consumer-effective
+ * 值绑定成端口，组合根每请求调用一次保持 env/热加载新鲜。事实只读：不发请求、
+ * 不序列化凭据值。
+ */
+
+import { capabilities } from '@/capabilities';
+import { MEMORY_INFRA_SCHEDULES } from '@/capabilities/agency/public';
+import {
+  DURABLE_COPILOT_EXECUTION_BUDGET,
+  copilotConfigEffectiveFacts,
+} from '@/capabilities/copilot/public';
+import { knowledgeConfigEffectiveFacts } from '@/capabilities/knowledge/public';
+import { notesConfigEffectiveFacts } from '@/capabilities/notes/public';
+import { observabilityConfigEffectiveFacts } from '@/capabilities/observability/public';
+import {
+  MODEL_SLICE_PINNED_TASK_KINDS,
+  SOLVE_LANE_TASK_KINDS,
+  practiceConfigEffectiveFacts,
+  resolveSolveOverrideFromEnv,
+} from '@/capabilities/practice/public';
+import {
+  type TaskKind,
+  getLearnerLocale,
+  taskBudgetFacts,
+  tasks,
+} from '@/capabilities/task-registry';
+import type {
+  AdminConfigCatalogModelRow,
+  AdminConfigFactsPorts,
+  AdminConfigGlobalEffective,
+  AdminConfigProviderAuth,
+  AdminConfigProviderRow,
+  AdminConfigRuntimeFacts,
+  AdminConfigRuntimeSection,
+  AdminConfigScheduleRow,
+  AdminConfigTaskCredential,
+  AdminConfigTaskEffectiveBinding,
+  AdminConfigTaskFacts,
+  AdminConfigWriterPorts,
+} from '@/core/config/contracts/admin';
+import type { ConfigEffectiveFact } from '@/core/config/effective';
+import { selectGlobalPin } from '@/core/config/model-overrides';
+import { resolveApiPort } from '@/core/config/server/env';
+import { getTaskOverride, resolveConfigValue } from '@/core/config/store';
+import { DB_POOL_MAX } from '@/db/pool';
+import { projectDagMembers } from '@/kernel/manifest';
+import { resolveConfig as resolveAiRateLimitConfig } from '@/kernel/request-rate-limit';
+import { catalogModelCost, catalogModelIds, currentModelCatalog } from '@/server/ai/model-catalog';
+import {
+  assertModelProfileCapabilityFit,
+  catalogProviderFor,
+  resolveModelProfile,
+} from '@/server/ai/model-profiles';
+import { piMaxRetries } from '@/server/ai/pi-agent-adapter';
+import {
+  executablePiModel,
+  executablePiModels,
+  nativePiModelApi,
+  piProviderId,
+} from '@/server/ai/pi-provider-catalog';
+import { providerAuthStatus } from '@/server/ai/provider-auth-status';
+import { providerCredentialFingerprint } from '@/server/ai/provider-models-check';
+import {
+  type Provider,
+  type ProviderAuthSurfaceRow,
+  isOauthProvider,
+  isProviderLaneReady,
+  providerAuthFileEnvName,
+  providerAuthSurface,
+  providerCredentialEnvName,
+  readGlobalProviderSwitch,
+  resolveTaskBinding,
+  resolveTaskProvider,
+  resolveTaskReasoning,
+} from '@/server/ai/providers';
+import { registeredTypedTaskBindings } from '@/server/ai/typed-primitive-runner';
+import {
+  VISION_JUDGE_TASK_KINDS,
+  applicableVisionJudgeOverride,
+  visionJudgeProviderOverride,
+} from '@/server/ai/vision-judge-config';
+import { INFRA_HOUSEKEEPING_SCHEDULES } from '@/server/boss/infra-schedules';
+import { EXPIRE_AGENT, EXPIRE_FAST, EXPIRE_LLM, RETENTION_7D } from '@/server/boss/queue-config';
+import { EVENT_SUBSCRIPTION_DISPATCH_SCHEDULE } from '@/server/events/subscriptions/dispatch-mount';
+import {
+  LAYER_STAGGER_SECONDS,
+  NODE_TIMEOUT_SECONDS,
+  ORCHESTRATOR_CATCHUP_WINDOW_SECONDS,
+  ORCHESTRATOR_CRON,
+  ORCHESTRATOR_QUEUE,
+  ORCHESTRATOR_TZ,
+  TICK_INTERVAL_SECONDS,
+} from '@/server/orchestration/constants';
+
+/** Admission keys resolve per lane, so they expose a note instead of a scalar. */
+function laneResolvedNote(reader: string): ConfigEffectiveFact {
+  return {
+    note: `按 lane 在读取时解析（${reader}）；无单一标量 effective，读该 reader 的解析结果`,
+  };
+}
+
+/** Check the same binding/catalog/capability gates as execution, without making a request. */
+function visionOverrideFacts(): { provider: ConfigEffectiveFact; model: ConfigEffectiveFact } {
+  try {
+    const override = visionJudgeProviderOverride();
+    if (!override) {
+      const absent = {
+        value: null,
+        note: 'override 未设置或被 reader 降级；使用标准 provider 解析链。',
+      };
+      return { provider: absent, model: absent };
+    }
+    const bindings = VISION_JUDGE_TASK_KINDS.map((kind) => {
+      try {
+        const binding = resolveTaskProvider(kind, override);
+        if (!executablePiModel(binding.provider, binding.model))
+          throw new Error('model is not executable in the runtime catalog');
+        assertModelProfileCapabilityFit(tasks[kind], binding.provider, binding.model);
+        // Project only public catalog identities; never return an auth-bearing binding.
+        return { kind, provider: binding.provider, model: binding.model };
+      } catch {
+        return { kind, provider: null, model: null };
+      }
+    });
+    const diagnostic = bindings
+      .map((binding) =>
+        binding.provider === null
+          ? `${binding.kind}: 解析失败（请检查 provider、模型能力与服务端凭据）`
+          : `${binding.kind}: 可用（${binding.provider} / ${binding.model}）`,
+      )
+      .join('；');
+    if (bindings.some((binding) => binding.provider === null)) {
+      // One failed consumer blocks a lane-wide value without invalidating the rest.
+      const incomplete = { value: null, note: diagnostic };
+      return { provider: incomplete, model: incomplete };
+    }
+    const models = new Set(bindings.map((binding) => binding.model));
+    return {
+      provider: { value: override.provider, note: diagnostic },
+      model:
+        models.size === 1
+          ? { value: bindings[0].model, note: diagnostic }
+          : {
+              value: null,
+              note: `各视觉任务按自身配置解析到不同模型；没有单一 effective model。${diagnostic}`,
+            },
+    };
+  } catch {
+    // Never serialize a binding or arbitrary error: either can contain credentials.
+    const failed = {
+      value: null,
+      note: '视觉 override reader 解析失败：请检查 provider、模型能力与服务端凭据；尚未取得各任务的解析结果。',
+    };
+    return { provider: failed, model: failed };
+  }
+}
+
+/** 各 capability public 面透出的 consumer-effective 事实 + server 自有键。 */
+function buildEffectiveValues(): AdminConfigRuntimeFacts['effective_values'] {
+  const rateLimit = resolveAiRateLimitConfig();
+  const vision = visionOverrideFacts();
+  // lane.global.* must come from readGlobalProviderSwitch (env/DB merge + provider
+  // gate): model-only config is not consumed, and unknown providers throw.
+  let globalSwitch: ReturnType<typeof readGlobalProviderSwitch> | undefined;
+  let globalSwitchError: string | undefined;
+  try {
+    globalSwitch = readGlobalProviderSwitch();
+  } catch (err) {
+    globalSwitchError = err instanceof Error ? err.message : String(err);
+  }
+  const globalPinActive = globalSwitch !== undefined;
+  return {
+    ...observabilityConfigEffectiveFacts(),
+    ...practiceConfigEffectiveFacts(),
+    ...knowledgeConfigEffectiveFacts(),
+    ...copilotConfigEffectiveFacts(),
+    ...notesConfigEffectiveFacts(),
+    AI_RATE_LIMIT_MAX: { value: rateLimit.max },
+    AI_RATE_LIMIT_WINDOW_MS: { value: rateLimit.windowMs },
+    CLAUDE_CODE_MAX_RETRIES: { value: piMaxRetries() },
+    AI_PROVIDER_ATTEMPT_ADMISSION_MODE: laneResolvedNote(
+      'resolveProviderAttemptAdmission（src/server/ai/provider-attempt-admission-config.ts）',
+    ),
+    AI_PROVIDER_ATTEMPT_ADMISSION_POLICIES_JSON: laneResolvedNote(
+      'resolveProviderAttemptAdmission（src/server/ai/provider-attempt-admission-config.ts）',
+    ),
+    AI_PROVIDER_SESSION_ADMISSION_MODE: laneResolvedNote(
+      'resolveProviderSessionAdmissionPlan（src/server/ai/provider-session-admission-policy.ts）',
+    ),
+    AI_PROVIDER_SESSION_ADMISSION_POLICIES_JSON: laneResolvedNote(
+      'resolveProviderSessionAdmissionPlan（src/server/ai/provider-session-admission-policy.ts）',
+    ),
+    'lane.vision_judge.provider': vision.provider,
+    'lane.vision_judge.model': vision.model,
+    'locale.learner': {
+      value: getLearnerLocale(),
+      note: 'AI 输出语言：下次 system prompt 构建时读取本进程快照；跨进程轮询间隔 15s（失败保留旧快照），不改变 UI 语言或 typed task',
+    },
+    'lane.global.reasoning': { value: resolveConfigValue('lane.global.reasoning').value },
+    'lane.global.provider': globalPinActive
+      ? { value: globalSwitch?.provider }
+      : {
+          value: null,
+          note: globalSwitchError
+            ? `reader throws（fail-visible config error）：${globalSwitchError}`
+            : '惰性：无 provider（model-only 配置 runtime 不消费——readGlobalProviderSwitch 的 provider 门），全局 pin 未生效',
+        },
+    'lane.global.model': globalPinActive
+      ? globalSwitch?.model !== undefined
+        ? { value: globalSwitch.model }
+        : {
+            value: null,
+            note: 'pin 仅 provider 生效：model 未设置，各 task 走该 provider 的默认 model 解析链',
+          }
+      : {
+          value: null,
+          note: globalSwitchError
+            ? `reader throws（fail-visible config error）：${globalSwitchError}`
+            : '惰性：model-only 配置 runtime 不消费（readGlobalProviderSwitch 的 provider 门）',
+        },
+  };
+}
+
+/**
+ * YUK-1563 AC1 — the provider's full catalog listing: every model in its
+ * runtime catalog bucket plus anything the executable registry already accepts,
+ * so a catalog-only model is never filtered out by the runnable gate. Missing
+ * catalog facts surface as 'unknown'/'null', never inferred.
+ */
+function catalogModelRows(provider: ProviderAuthSurfaceRow['name']): AdminConfigCatalogModelRow[] {
+  const executable = new Set(executablePiModels(provider).map(({ id }) => id));
+  const catalogProvider = catalogProviderFor(provider);
+  const ids = [
+    ...new Set([...(catalogProvider ? catalogModelIds(catalogProvider) : []), ...executable]),
+  ].sort();
+  return ids.map((id) => {
+    const profile = resolveModelProfile(provider, id);
+    const rates = catalogProvider ? catalogModelCost(catalogProvider, id) : undefined;
+    return {
+      id,
+      api: profile.api ?? nativePiModelApi(provider, id) ?? null,
+      input: profile.inputModalities === 'unknown' ? ['unknown'] : [...profile.inputModalities],
+      runnable: executable.has(id),
+      tool_call: profile.capabilities.toolCalling,
+      reasoning: profile.capabilities.reasoning,
+      reasoning_options:
+        profile.reasoning.mode === 'unknown'
+          ? null
+          : {
+              mode: profile.reasoning.mode,
+              values:
+                profile.reasoning.mode === 'effort'
+                  ? [...profile.reasoning.supportedEfforts]
+                  : profile.reasoning.mode === 'toggle'
+                    ? ['off', 'on']
+                    : [],
+            },
+      structured_output: profile.capabilities.structuredOutput,
+      vision: profile.capabilities.vision,
+      forced_tool_choice: profile.capabilities.forcedToolChoice,
+      context_window_tokens: profile.limits.contextWindowTokens ?? null,
+      max_input_tokens: profile.limits.maxInputTokens ?? null,
+      max_output_tokens: profile.limits.maxOutputTokens ?? null,
+      cost: rates
+        ? {
+            input: rates.input,
+            output: rates.output,
+            cache_read: rates.cache_read,
+            ...(rates.cache_write !== undefined ? { cache_write: rates.cache_write } : {}),
+          }
+        : null,
+    };
+  });
+}
+
+/**
+ * YUK-1563 AC3 — auth status from the probe/settlement facts (never the key):
+ * unconfigured / configured / auth_failed(+http, error type). A receipt only
+ * counts for the credential fingerprint that produced it.
+ */
+function providerAuthFacts(provider: ProviderAuthSurfaceRow['name']): AdminConfigProviderAuth {
+  const check = currentModelCatalog().providerChecks.find((row) => row.provider === provider);
+  const status = providerAuthStatus(check, providerCredentialFingerprint(provider, process.env));
+  return {
+    status: status.status,
+    http_status: status.httpStatus,
+    error_type: status.errorType,
+  };
+}
+
+/**
+ * Scoped-lane readers the runners use — the SAME functions, not a second
+ * mapping. Only kinds whose EVERY call path threads the lane override project
+ * `call_override` here: StepsJudge/MultimodalDirect go through
+ * runTaskWithLaneFallback, SourceGroundingVerify passes the override inline.
+ * The solve_check solver legs (SOLVE_LANE_TASK_KINDS) are shared kinds —
+ * quiz_verify threads verify_solve while reference-solution / source_verify /
+ * intervention callers run the same kind on the standard chain — so their
+ * binding stays on the standard chain and the lane reach surfaces via
+ * `sharedScopedLanes` → also_on_lanes.
+ */
+function scopedLaneCallOverride(
+  kind: TaskKind,
+): { provider?: Provider; model?: string } | undefined {
+  if ((VISION_JUDGE_TASK_KINDS as readonly string[]).includes(kind)) {
+    // All three vision call paths resolve through applicableVisionJudgeOverride:
+    // a process pin suppresses the scoped lane everywhere, so a pinned run
+    // reports its own pair and a broken stored lane can never shadow the pin.
+    return applicableVisionJudgeOverride(process.env, { checkCredentials: false });
+  }
+  return undefined;
+}
+
+/** Scoped lanes a shared kind also rides on other call paths, when the lane is live. */
+function sharedScopedLanes(kind: TaskKind): ('vision_judge' | 'verify_solve')[] | undefined {
+  if ((SOLVE_LANE_TASK_KINDS as readonly string[]).includes(kind)) {
+    // A silent warn collector: the lane.* stored rows already carry the
+    // degrade reason; per-request console noise adds nothing. checkCredentials:
+    // the worker pre-flights its own lane; this process only projects it.
+    const solve = resolveSolveOverrideFromEnv(() => {}, { checkCredentials: false });
+    if (solve.provider !== undefined || solve.model !== undefined) return ['verify_solve'];
+  }
+  return undefined;
+}
+
+/**
+ * No resolver error reaching the API carries a filesystem path — the
+ * credential file's location is worker-side state. Scrub any token that
+ * reads as an absolute path (URLs and host/path strings are preserved:
+ * their slash is not preceded by whitespace/quote).
+ */
+function scrubFsPaths(message: string): string {
+  return message.replace(/(^|[\s'"`(=])(\/[^\s'"`)]+)/g, '$1<path>');
+}
+
+/** The credential lane a resolved provider sits on, from this process's env view. */
+function credentialLaneFor(provider: Provider): AdminConfigTaskCredential['lane'] {
+  if (isOauthProvider(provider)) return 'oauth';
+  const authFileEnv = providerAuthFileEnvName(provider);
+  if (authFileEnv === undefined) return 'key';
+  const keyEnv = providerCredentialEnvName(provider);
+  const authFileSet = process.env[authFileEnv] !== undefined;
+  // providerCredentialEnvName reports the key env when it is set — key + file
+  // together are a hard run-time conflict, not a live lane.
+  const keySet =
+    keyEnv !== undefined && keyEnv !== authFileEnv && process.env[keyEnv] !== undefined;
+  if (authFileSet && keySet) return 'conflict';
+  if (authFileSet) return 'oauth-file';
+  return 'key';
+}
+
+/**
+ * YUK-1808 — one task's effective binding projected through the runtime
+ * resolver chain (single source; the read face never re-derives the layering):
+ * `resolveTaskBinding` freezes provider/model + selection_rule + the stored
+ * reasoning config — fed the scoped lane's call override when the task rides
+ * one, so the pair and rule match what the run actually uses;
+ * `resolveTaskProvider` adds the credential+endpoint gate, and
+ * `resolveTaskReasoning` resolves the stored level against the effective
+ * model requested → applied.
+ *
+ * Credential checks are process-local facts: the env var or the auth-file
+ * mount may live only in the worker (docker-compose mounts
+ * OPENAI_CHATGPT_AUTH_FILE there alone). A credential-gate failure this
+ * process cannot verify therefore reports `credential.verified_in_process:
+ * false` — never an error, and the file path never leaves the process.
+ * Errors in every other class (unknown provider, unimplemented lane,
+ * endpoint allowlist, mutual key+file exclusion, capability fit) surface
+ * with paths scrubbed.
+ * Typed tasks bypass the chat lane entirely, so their defaults report
+ * 'registry_default'; a model without reasoning options reports applied none.
+ */
+export function resolveAdminTaskEffective(kind: TaskKind): AdminConfigTaskEffectiveBinding {
+  const task = tasks[kind];
+  if ('execution' in task && task.execution === 'typed') {
+    return {
+      provider: task.defaultProvider,
+      model: task.defaultModel,
+      error: null,
+      selection_rule: 'registry_default',
+      reasoning: (() => {
+        const stored = getTaskOverride(kind)?.reasoning;
+        const requested = stored?.level ?? stored?.reasoning_effort ?? null;
+        if (requested === null) return { requested: null, applied: 'none', error: null };
+        // The typed runner builds its request from the pinned wire contract and
+        // never sends a reasoning parameter, so a stored level has no effect.
+        return {
+          requested,
+          applied: 'none',
+          error: `typed-execution task '${kind}' fixes its request in the wire contract — task.${kind}.reasoning is stored but never applied`,
+        };
+      })(),
+      credential: null,
+      also_on_lanes: sharedScopedLanes(kind),
+    };
+  }
+  // The binding is the config truth (provider/model/selection_rule); the
+  // credential+endpoint gate runs separately so a missing key reports the
+  // effective pair AND the resolver's own readable reason, not a null pair.
+  // Errors contain env/model/provider names only — never values or paths.
+  const laneOverride = scopedLaneCallOverride(kind);
+  let binding: ReturnType<typeof resolveTaskBinding> | null = null;
+  let provider: string | null = null;
+  let model: string | null = null;
+  let error: string | null = null;
+  let credential: AdminConfigTaskEffectiveBinding['credential'] = null;
+  try {
+    binding = resolveTaskBinding(kind, laneOverride);
+    provider = binding.provider;
+    model = binding.model;
+    const authFileEnv = providerAuthFileEnvName(binding.provider);
+    const fileLaneOnly =
+      authFileEnv !== undefined &&
+      process.env[authFileEnv] !== undefined &&
+      providerCredentialEnvName(binding.provider) === authFileEnv;
+    const credentialEnv = providerCredentialEnvName(binding.provider);
+    const laneReady = isProviderLaneReady(binding.provider);
+    try {
+      const resolved = resolveTaskProvider(kind, laneOverride);
+      credential = { lane: resolved.authMode, verified_in_process: true };
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      const credentialLocal =
+        (fileLaneOnly && authFileEnv !== undefined && message.includes(authFileEnv)) ||
+        (!laneReady && credentialEnv !== undefined && message.includes(credentialEnv));
+      credential = {
+        lane: fileLaneOnly ? 'oauth-file' : credentialLaneFor(binding.provider),
+        verified_in_process: false,
+      };
+      if (!credentialLocal) error = scrubFsPaths(message);
+    }
+  } catch (e) {
+    error = scrubFsPaths(e instanceof Error ? e.message : String(e));
+  }
+  let reasoning: AdminConfigTaskEffectiveBinding['reasoning'] = null;
+  if (binding !== null) {
+    const stored = binding.reasoning;
+    const requested = stored?.level ?? stored?.reasoning_effort ?? null;
+    try {
+      const resolved = resolveTaskReasoning(kind, binding.provider, binding.model, stored);
+      reasoning = {
+        requested: resolved?.requested ?? null,
+        applied: resolved?.applied ?? null,
+        source: resolved?.source,
+        error: null,
+      };
+    } catch (e) {
+      reasoning = {
+        requested,
+        applied: null,
+        error: scrubFsPaths(e instanceof Error ? e.message : String(e)),
+      };
+    }
+  }
+
+  return {
+    provider,
+    model,
+    error,
+    selection_rule: binding?.selectionRule ?? null,
+    reasoning,
+    credential,
+    also_on_lanes: sharedScopedLanes(kind),
+  };
+}
+
+/**
+ * YUK-1808 — the effective global provider switch and the layer that produced
+ * it. `readGlobalProviderSwitch` is the runtime truth (env pin wins over the
+ * DB `lane.global.*` pair); `resolveConfigValue` on the provider key reports
+ * which layer is live. An invalid configured name surfaces as `error`, not a
+ * silent fall-through.
+ */
+export function resolveAdminGlobalEffective(
+  env: NodeJS.ProcessEnv = process.env,
+): AdminConfigGlobalEffective {
+  let provider: string | null = null;
+  let model: string | null = null;
+  let error: string | null = null;
+  try {
+    const sw = readGlobalProviderSwitch();
+    provider = sw?.provider ?? null;
+    model = sw?.model ?? null;
+  } catch (e) {
+    error = scrubFsPaths(e instanceof Error ? e.message : String(e));
+  }
+  // Layer provenance comes from the same pure gate the runtime switch uses:
+  // an env provider pin replaces the whole pair, and a model-only DB row is
+  // inert. The values above still come from readGlobalProviderSwitch, so an
+  // unknown provider surfaces as `error` rather than a silent layer guess.
+  const resolvedProvider = resolveConfigValue('lane.global.provider', env);
+  const resolvedModel = resolveConfigValue('lane.global.model', env);
+  const pin = selectGlobalPin(
+    {
+      value: typeof resolvedProvider.value === 'string' ? resolvedProvider.value : undefined,
+      source: resolvedProvider.source,
+    },
+    {
+      value: typeof resolvedModel.value === 'string' ? resolvedModel.value : undefined,
+      source: resolvedModel.source,
+    },
+  );
+  const source = pin?.source ?? null;
+  const model_source = model === null ? null : (pin?.modelSource ?? null);
+  const reasoning = resolveConfigValue('lane.global.reasoning', env);
+  const level = (reasoning.value as { level?: string } | undefined)?.level ?? null;
+  return {
+    provider,
+    model,
+    source,
+    model_source,
+    error,
+    reasoning: { level, source: reasoning.source },
+  };
+}
+
+function taskCatalogFacts(): AdminConfigTaskFacts[] {
+  return Object.entries(tasks).map(([kind, def]) => {
+    const budget = taskBudgetFacts(kind as TaskKind);
+    return {
+      kind,
+      description: def.description,
+      default_provider: def.defaultProvider,
+      default_model: def.defaultModel,
+      default_budget: def.budget,
+      typed: 'execution' in def && def.execution === 'typed',
+      slice_admission: (MODEL_SLICE_PINNED_TASK_KINDS as readonly string[]).includes(kind),
+      budget_wiring: budget.wired,
+      effective_budget: budget.effective,
+      ...(kind === 'CopilotTask'
+        ? { caller_budget_override: DURABLE_COPILOT_EXECUTION_BUDGET }
+        : {}),
+    };
+  });
+}
+
+/** Cron rows declared by capability manifests; orchestrated DAG members have no cron. */
+function manifestScheduleRows(): AdminConfigScheduleRow[] {
+  return capabilities
+    .flatMap((cap) => (cap.jobs?.handlers ?? []).map((job) => ({ cap, job })))
+    .filter(({ job }) => job.schedule !== undefined)
+    .map(({ cap, job }) => ({
+      name: job.name,
+      cron: job.schedule?.cron ?? '',
+      tz: job.schedule?.tz ?? '',
+      owner: cap.name,
+      queue: job.queue,
+      source: 'capability-manifest' as const,
+    }));
+}
+
+/** One provider row; credential facts are key presence, env NAME and auth status only. */
+function providerRows(): AdminConfigProviderRow[] {
+  const typedBindings = registeredTypedTaskBindings();
+  return providerAuthSurface().map((row) => {
+    const authFileEnv = providerAuthFileEnvName(row.name);
+    // Key + auth-file envs both set is a run-time hard error (the lanes are
+    // mutually exclusive) — report 'conflict', not a live lane.
+    const authConflict =
+      authFileEnv !== undefined &&
+      row.credentialEnvName !== authFileEnv &&
+      Boolean(process.env[authFileEnv]) &&
+      Boolean(process.env[row.credentialEnvName]);
+    return {
+      name: row.name,
+      // The credential env that resolved IS the active lane: when it is the
+      // provider's auth-file env, report 'oauth-file' rather than the registry's
+      // declared 'key' (YUK-1833 — the page must not mislabel the login lane).
+      auth_mode: authConflict
+        ? ('conflict' as const)
+        : authFileEnv !== undefined && row.credentialEnvName === authFileEnv
+          ? ('oauth-file' as const)
+          : row.authMode,
+      credential_env: row.credentialEnvName,
+      key_present: isProviderLaneReady(row.name),
+      implemented: row.implemented,
+      implemented_for: {
+        chat: row.implemented,
+        typed: typedBindings.some((binding) => binding.provider === row.name),
+      },
+      pi_provider: row.implemented ? piProviderId(row.name) : null,
+      models: catalogModelRows(row.name),
+      auth: providerAuthFacts(row.name),
+    };
+  });
+}
+
+/** Server infra cron declarations (static, read-only). */
+function infraScheduleRows(): AdminConfigScheduleRow[] {
+  return [
+    {
+      ...EVENT_SUBSCRIPTION_DISPATCH_SCHEDULE,
+      owner: 'server/events/subscriptions',
+      source: 'server-event-subscriptions',
+    },
+    ...INFRA_HOUSEKEEPING_SCHEDULES.map((decl) => ({
+      name: decl.name,
+      cron: decl.cron,
+      tz: decl.tz,
+      owner: 'server/boss',
+      queue: decl.queue,
+      source: 'server-boss-infra' as const,
+      ...(decl.note !== undefined ? { note: decl.note } : {}),
+    })),
+    ...MEMORY_INFRA_SCHEDULES.map((decl) => ({
+      name: decl.name,
+      cron: decl.cron,
+      tz: decl.tz,
+      owner: 'capabilities/agency/server/memory',
+      queue: decl.queue,
+      source: 'server-memory-infra' as const,
+      ...(decl.note !== undefined ? { note: decl.note } : {}),
+    })),
+  ];
+}
+
+/** Runtime constants, all from their single declaration points. */
+function runtimeSection(): AdminConfigRuntimeSection {
+  // resolveApiPort throws on invalid values (boot-visible); degrade to null so a
+  // bad env does not take down the whole read surface.
+  let port: number | null;
+  try {
+    port = resolveApiPort(process.env.API_PORT);
+  } catch {
+    port = null;
+  }
+  return {
+    port,
+    db_pool_max: DB_POOL_MAX,
+    queue_tiers: {
+      expire_seconds: { fast: EXPIRE_FAST, llm: EXPIRE_LLM, agent: EXPIRE_AGENT },
+      retention_seconds: RETENTION_7D,
+    },
+    orchestration: {
+      anchor_cron: ORCHESTRATOR_CRON,
+      tz: ORCHESTRATOR_TZ,
+      queue: ORCHESTRATOR_QUEUE,
+      catchup_window_seconds: ORCHESTRATOR_CATCHUP_WINDOW_SECONDS,
+      tick_interval_seconds: TICK_INTERVAL_SECONDS,
+      node_timeout_seconds: NODE_TIMEOUT_SECONDS,
+      layer_stagger_seconds: LAYER_STAGGER_SECONDS,
+      // Orchestrator DAG members have no cron; schedules[] lists only cron rows.
+      dag_members: projectDagMembers(capabilities).map((member) => member.name),
+    },
+  };
+}
+
+/** Read-face truth sources, recomputed per call so hot reload stays fresh. */
+export function adminConfigFactsPorts(): AdminConfigFactsPorts {
+  return {
+    taskCatalog: taskCatalogFacts(),
+    resolveTaskEffective: (kind) => resolveAdminTaskEffective(kind as TaskKind),
+    resolveGlobalEffective: (env) => resolveAdminGlobalEffective(env),
+    providers: providerRows(),
+    manifestSchedules: manifestScheduleRows(),
+    infraSchedules: infraScheduleRows(),
+    runtime: runtimeSection(),
+    effectiveValues: buildEffectiveValues(),
+  };
+}
+
+/** Writer-side ports: scope expansion plus the post-write effective projection. */
+export function adminConfigWriterPorts(): AdminConfigWriterPorts {
+  return {
+    taskKinds: Object.keys(tasks),
+    hasTask: (kind) => Object.hasOwn(tasks, kind),
+    resolveTaskEffective: (kind) => resolveAdminTaskEffective(kind as TaskKind),
+    resolveGlobalEffective: () => resolveAdminGlobalEffective(),
+    solveLaneTaskKinds: SOLVE_LANE_TASK_KINDS,
+    visionJudgeTaskKinds: VISION_JUDGE_TASK_KINDS,
+  };
+}

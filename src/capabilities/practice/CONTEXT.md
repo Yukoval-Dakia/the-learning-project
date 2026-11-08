@@ -4,15 +4,15 @@
 cause-context）、卷机制（paper-detail/submit/sections/adaptation/practice-read/answer-draft/
 due-list/variant-rotation）、会话编排（review-session/solve-session，原 src/server/orchestrator/
 {review,solve}.ts）。P2a 为零行为变化的等价平移；应然形态（流编排器 + 卷架 + 申诉重判链）要点（源：
-`docs/archive/superpowers/specs/2026-06-10-p2-practice-journey-spec.md` §2，YUK-1575 重立档）：
+`/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/archive/superpowers/specs/2026-06-10-p2-practice-journey-spec.md` §2，YUK-1575 重立档）：
 **流** =「AI 维护的日程」（物化 `practice_stream_item`，支持白天动态插拔），**卷** =「内容打包
 形态」（唯一容器 tool_quiz，卷架为持久归宿），due-list 只是 composer 的输入信号、不构成用户面
 队列；**申诉（D15）** = 请 AI 带用户理由重判，改判**直接生效**（软判断层、无 proposal）+
-correction 留痕 + FSRS 重投影（申诉流程详见 docs/modules/quiz.md §8）。
+correction 留痕 + FSRS 重投影（申诉流程详见 `/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/modules/quiz.md` §8）。
 
 - <owner>/ — 子 owner 目录（grading、settlement、question-bank、failure-learning、session、scheduling、
   supply、placement），各有 public.ts（本 owner 的稳定入口）与 manifest-part.ts（由根 manifest.ts
-  组合）（docs/design/2026-11-03-practice-split.md）
+  组合）（`/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/design/2026-11-03-practice-split.md`）
 - 根目录是练习面：组合文件（manifest.ts、public.ts、ui-public.ts、task-public.ts、tasks/index.ts）、
   解题辅导/提示会话（server/solve-*、tutor-session、hint-explanation 与 api/solve-*）、旧练习 UI（ui/）。
   另有一类待落位余项：供题生成（功能线落位到 supply/）；

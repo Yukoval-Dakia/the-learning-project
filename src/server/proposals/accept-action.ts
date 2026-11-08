@@ -13,7 +13,6 @@ import { extractRecordEvidenceIds, markRecordsActioned } from '@/kernel/records/
 import type { AcceptAiProposalOpts } from './action-types';
 import {
   assertPending,
-  ownerInput,
   proposalLifecycleRegistry,
   proposalRuntimeSeams,
   requireProposal,
@@ -70,7 +69,7 @@ async function dispatchAccept(
       db,
       {
         proposalId: proposal.id,
-        proposal: ownerInput(proposal),
+        proposal,
         decision: opts.decision,
         new_relation_type: opts.new_relation_type,
         user_note: opts.user_note,
@@ -83,7 +82,7 @@ async function dispatchAccept(
       db,
       {
         proposalId: proposal.id,
-        proposal: ownerInput(proposal),
+        proposal,
         decision: opts.decision,
         user_note: opts.user_note,
         ...(opts.actor ? { actor: opts.actor } : {}),
@@ -95,7 +94,7 @@ async function dispatchAccept(
       db,
       {
         proposalId: proposal.id,
-        proposal: ownerInput(proposal),
+        proposal,
         decision: 'accept',
         user_note: opts.user_note,
         corrected_payload: opts.corrected_payload,

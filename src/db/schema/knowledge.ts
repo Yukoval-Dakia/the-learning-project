@@ -254,7 +254,7 @@ export const knowledge_edge = pgTable(
 // dismissed". variant_question proposals get a 'draft' row on write; accept
 // transitions to 'active' (and the question row is materialized in the same
 // txn); VariantVerifyTask second-pass verdict='fail' flips to 'broken'. See
-// docs/adr/0018-mistake-variant-lifecycle-and-variants-max.md.
+// ADR-0018 (mistake variant lifecycle and variants max).
 //
 // counting variants_max = 3 reads the in-flight set (status IN ('draft',
 // 'active')), so AI cannot flood the inbox even when the user defers review.

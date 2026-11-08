@@ -4,6 +4,7 @@
 import { sql } from 'drizzle-orm';
 import {
   check,
+  customType,
   index,
   integer,
   jsonb,
@@ -201,6 +202,8 @@ export const question_block = pgTable(
   ],
 );
 
+const tsvector = customType<{ data: string }>({ dataType: () => 'tsvector' });
+
 export const question = pgTable(
   'question',
   {
@@ -208,6 +211,12 @@ export const question = pgTable(
     kind: text('kind').notNull(),
     prompt_md: text('prompt_md').notNull(),
     reference_md: text('reference_md'),
+    search_document: tsvector('search_document').generatedAlwaysAs(
+      sql`to_tsvector('simple'::regconfig, regexp_replace(coalesce(prompt_md,'') || ' ' || coalesce(reference_md,'') || ' ' || coalesce(choices_md::text,''), '([一-鿿])', '\\1 ', 'g'))`,
+    ),
+    search_public_document: tsvector('search_public_document').generatedAlwaysAs(
+      sql`to_tsvector('simple'::regconfig, regexp_replace(coalesce(prompt_md,'') || ' ' || coalesce(choices_md::text,''), '([一-鿿])', '\\1 ', 'g'))`,
+    ),
     rubric_json: jsonb('rubric_json').$type<RubricT>(),
     choices_md: jsonb('choices_md').$type<string[]>(),
     judge_kind_override: text('judge_kind_override'),
@@ -249,7 +258,7 @@ export const question = pgTable(
     // `metadata.prompt_image_refs` is the legacy simple-image-ref path (still
     // written by ingestion for backwards-compatible readers; new code SHOULD
     // read from `image_refs` instead). See docs/archive/superpowers/specs/2026-05-21-
-    // math-mvp-vision-design.md §4 + docs/adr/0002 revision 2026-05-21.
+    // math-mvp-vision-design.md §4 + ADR-0002 revision 2026-05-21.
     figures: jsonb('figures').$type<FigureRefT[]>().notNull().default([]),
     image_refs: jsonb('image_refs').$type<string[]>().notNull().default([]),
     // `structured` is the recursive StructuredQuestion tree (stem/sub/standalone);
@@ -291,16 +300,18 @@ export const question = pgTable(
   (t) => [
     check('question_difficulty_range', sql`${t.difficulty} BETWEEN 1 AND 5`),
     // YUK-383 Phase 0 — GIN index on the knowledge_ids JSONB array to accelerate
-    // KC-containment lookups (which questions carry a given KC), consumed by the
-    // Phase 1 matcher. knowledge_ids is jsonb (NOT text[]), so this uses the
+    // KC-containment lookups (which questions carry a given KC), consumed by poolFetch.
+    // knowledge_ids is jsonb (NOT text[]), so this uses the
     // jsonb_path_ops operator class — same precedent as event_payload_idx
     // (drizzle/0005), NOT event_affected_scopes_idx (that index is on a native
     // text[] column using array_ops, a different index family). jsonb_path_ops
     // produces a smaller/faster index than the default jsonb_ops for pure
-    // element containment. The Phase-1 matcher MUST write the containment shape
+    // element containment. poolFetch MUST write the containment shape
     // the planner can use against this opclass:
     //   SELECT id FROM question WHERE knowledge_ids @> '["<kc>"]'::jsonb
     // (jsonb_path_ops supports @> only — not key/path existence operators).
+    index('question_search_document_gin').using('gin', t.search_document),
+    index('question_search_public_document_gin').using('gin', t.search_public_document),
     index('question_knowledge_ids_gin').using('gin', sql`${t.knowledge_ids} jsonb_path_ops`),
     uniqueIndex('question_canonical_content_hash_unique')
       .on(t.canonical_content_hash)

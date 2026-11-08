@@ -12,13 +12,6 @@
     box-shadow: inset 0 0 0 var(--un-hairline) var(--un-line);
   }
 
-  /* Same rhythm as the sheet's own grid; also the sticky bar's containing block. */
-  & .rc-lines-scope {
-    display: grid;
-    gap: var(--un-sp-4);
-    min-width: 0;
-  }
-
   & .rc-sheet-head {
     display: flex;
     align-items: baseline;
@@ -148,11 +141,6 @@
     box-shadow: none;
   }
 
-  & .rc-line[data-skip="true"] .rc-line-text {
-    color: var(--un-text-4);
-    text-decoration: line-through;
-  }
-
   & .rc-line-no {
     padding-top: 1px;
     white-space: nowrap;
@@ -187,6 +175,48 @@
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 3;
     overflow-wrap: anywhere;
+  }
+
+  & .rc-figs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--un-sp-3);
+    align-items: flex-end;
+  }
+
+  & .rc-fig {
+    display: grid;
+    gap: var(--un-sp-1);
+    max-width: 100%;
+    margin: 0;
+    color: var(--un-text-2);
+    font-size: var(--un-fs-1);
+  }
+
+  & .rc-fig a {
+    display: block;
+    max-width: 100%;
+  }
+
+  & .rc-fig img {
+    display: block;
+    max-width: 100%;
+    max-height: 160px;
+    border-radius: var(--un-r-1);
+  }
+
+  & .rc-fig-blank {
+    display: block;
+    width: 96px;
+    height: 72px;
+    background: var(--un-line);
+    border-radius: var(--un-r-1);
+  }
+
+  & .rc-fill {
+    display: grid;
+    gap: var(--un-sp-2);
+    width: 100%;
   }
 
   & .rc-line-note {

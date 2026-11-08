@@ -8,6 +8,7 @@ import { rejectUndoVersionConflict } from '@/ui/lib/undo-ai-change';
 import { authenticatedStartFetch } from './authenticated-fetch';
 import { startProbeAnswerClient } from './probe-answer-client';
 import {
+  acceptStartProposalBatch,
   acknowledgeStartTeachingBriefOutcome,
   decideStartProposal,
   dismissStartAiNoticesFn,
@@ -19,6 +20,7 @@ import {
   getStartKnowledgeReviewDue,
   getStartKnowledgeTree,
   getStartOvernightDigest,
+  getStartProposalBatches,
   getStartProposalInbox,
   getStartRecentAiChanges,
   getStartTaskFailureAlerts,
@@ -74,6 +76,12 @@ export const startWorkbenchClient: WorkbenchClient = {
       ...transport,
       data: { proposal_ids: [...proposalIds] },
     }).then((json) => JSON.parse(json)),
+  acceptProposalBatch: (proposalIds) =>
+    acceptStartProposalBatch({
+      ...transport,
+      data: { proposal_ids: [...proposalIds] },
+    }).then((json) => JSON.parse(json)),
+  listProposalBatches: () => getStartProposalBatches(transport).then((json) => JSON.parse(json)),
   decideProposal: (id, decision, opts) =>
     decideStartProposal({
       ...transport,

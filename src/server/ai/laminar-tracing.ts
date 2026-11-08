@@ -458,6 +458,85 @@ function recordPiLlmUsage(span: TraceSpan, message: AssistantMessage): void {
   }
 }
 
+export interface TypedModelCallUsage {
+  responseModel: string;
+  inputTokens: number;
+  outputTokens: number;
+  costUsd?: number;
+  costBasis: string;
+  costRef: string;
+  /** Same predicate as the attempt aggregate: positive tokens, not a failure estimate. */
+  usageObserved: boolean;
+}
+
+export interface TypedModelCall {
+  /** Copy settled attempt usage once. Unobserved usage stays unknown and non-additive. */
+  settle(usage: TypedModelCallUsage): void;
+  end(outcome: 'success' | 'error' | 'cancelled'): void;
+}
+
+const disabledTypedModelCall: TypedModelCall = {
+  settle() {},
+  end() {},
+};
+
+/**
+ * One typed decision HTTP call under the current attempt.
+ * Additive token/cost are copied from the attempt's settled truth, once.
+ * The systemone body is learner scoring state, so this leaf does not join the Pi transcript switches.
+ */
+export function openTypedModelCall(input: {
+  provider: string;
+  model: string;
+  signal?: AbortSignal;
+}): TypedModelCall {
+  if (!exporter) return disabledTypedModelCall;
+  const span = startTraceSpan('llm.call', {
+    provider: input.provider,
+    model: input.model,
+    additive_usage: true,
+    usage_observed: false,
+    cost_basis: 'unknown',
+  });
+  span.attribute('gen_ai.system', input.provider);
+  span.attribute('gen_ai.request.model', input.model);
+  let settled = false;
+  const finish = (outcome: 'success' | 'error' | 'cancelled') => {
+    input.signal?.removeEventListener('abort', onAbort);
+    span.end(input.signal?.aborted ? 'cancelled' : outcome);
+  };
+  const onAbort = () => finish('cancelled');
+  input.signal?.addEventListener('abort', onAbort, { once: true });
+  if (input.signal?.aborted) onAbort();
+  return {
+    settle(usage) {
+      if (settled) return;
+      settled = true;
+      span.attribute('gen_ai.response.model', usage.responseModel);
+      span.metadata({
+        usage_observed: usage.usageObserved,
+        cost_basis: usage.costBasis,
+        cost_ref: usage.costRef,
+        additive_usage: true,
+      });
+      if (!usage.usageObserved) return;
+      const total = usage.inputTokens + usage.outputTokens;
+      for (const [name, value] of [
+        ['gen_ai.usage.input_tokens', usage.inputTokens],
+        ['gen_ai.usage.output_tokens', usage.outputTokens],
+        ['llm.usage.total_tokens', total],
+        ['gen_ai.usage.cost', usage.costUsd],
+      ] as const) {
+        if (typeof value === 'number' && Number.isFinite(value) && value >= 0)
+          span.attribute(name, value);
+      }
+    },
+    end(outcome) {
+      finish(outcome);
+    },
+  };
+}
+
 /** Call only after HTTP/jobs drain. A stalled exporter gets at most 500ms. */
 export async function flushLaminarTracing(timeoutMs = TRACE_FLUSH_TIMEOUT_MS): Promise<void> {
   if (!exporter) return;

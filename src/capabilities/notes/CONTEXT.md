@@ -1,8 +1,8 @@
 # notes — 笔记域（M3 采伐，YUK-317）
 
 笔记旅程的承载包：artifact 笔记的读路径（note-page 单页聚合 / notes-read 按知识点标签）、
-写路径（body-blocks-edit 乐观锁块编辑 / sections / block-refs L2 反链 write-through /
-hub-dismiss）、generate durable handoff 与 Living Note refine 链（note-refine-{triggers,policy,proposals,apply}：
+写路径（body-blocks-edit 乐观锁块编辑 / block-refs L2 反链 write-through）、
+generate durable handoff 与 Living Note refine 链（note-refine-{triggers,policy,proposals,apply}：
 触发入队 pg-boss `note_refine` → 阈值门控 → 小改 mutator 直落（undo event）/ 大改 propose）。
 
 - **表认领**：`artifact`、`artifact_block_ref`、`note_verification_claim`（YUK-1772 起只读旧行，不再写入）。
@@ -21,7 +21,7 @@ hub-dismiss）、generate durable handoff 与 Living Note refine 链（note-refi
   `boss-port` 是唯一 Notes→boss
   接口）；tasks/ — NoteGenerateTask / NoteRefineTask 完整定义；jobs/ — note_generate /
   note-refine / hub_auto_sync_nightly（dreaming_nightly 留旧树，M4 夜链容器）；
-  api/ — 9 条 route body（T4 填，kernel v2 签名）。
+  api/ — 10 条 route body。
 - 包外主要消费方：knowledge/node-page（笔记 section + backlinks 聚合读）、orchestrator
   {learning_intent,teaching}、proposals/actions（note_update applier，M4 真身前留旧）、
   practice/grading/api/submit（enqueueMasteryNoteRefine）。

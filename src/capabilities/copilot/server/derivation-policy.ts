@@ -5,6 +5,7 @@ import { event, job_events } from '@/db/schema';
 import { COPILOT_ASK_ACTIONS, COPILOT_CHIP_TRIGGER_ACTION } from '@/kernel/events/copilot-actions';
 import { COPILOT_RUN_EVENTS, COPILOT_RUN_TABLE } from './copilot-run-status';
 import { type CopilotRunJobData, hashCopilotDurableInput } from './durable-dispatch';
+import { COPILOT_RETRY_ACTION } from './run-retry-contract';
 
 /** Delivery is not authority: validate the immutable accepted source before any execution. */
 export async function acceptedCopilotDerivationPolicy(
@@ -22,13 +23,31 @@ export async function acceptedCopilotDerivationPolicy(
     if (delivered !== 'allow') throw new Error('restricted Copilot source missing');
     return 'allow'; // Retained pre-anchor jobs only.
   }
+  const [original] =
+    ask.action === COPILOT_RETRY_ACTION
+      ? await db
+          .select({ payload: event.payload, sessionId: event.session_id, action: event.action })
+          .from(event)
+          .where(
+            and(
+              eq(
+                event.id,
+                typeof ask.payload.original_ask_id === 'string' ? ask.payload.original_ask_id : '',
+              ),
+              eq(event.session_id, data.session_id),
+            ),
+          )
+          .limit(1)
+      : [ask];
+  if (!original) throw new Error('Copilot retry source missing');
   const accepted = readDerivationPolicy(ask.payload);
   if (
     accepted !== delivered ||
     ask.sessionId !== data.session_id ||
-    !(COPILOT_ASK_ACTIONS as readonly string[]).includes(ask.action) ||
-    ask.payload.user_message !== data.user_message ||
-    (ask.action === COPILOT_CHIP_TRIGGER_ACTION ? 'chip' : 'chat') !== data.triggered_by
+    readDerivationPolicy(original.payload) !== accepted ||
+    !(COPILOT_ASK_ACTIONS as readonly string[]).includes(original.action) ||
+    original.payload.user_message !== data.user_message ||
+    (original.action === COPILOT_CHIP_TRIGGER_ACTION ? 'chip' : 'chat') !== data.triggered_by
   ) {
     throw new Error('Copilot delivery does not match accepted source');
   }
@@ -43,7 +62,10 @@ export async function acceptedCopilotDerivationPolicy(
       ),
     )
     .limit(1);
-  if ((!queued || queued.payload.job_data === undefined) && accepted !== 'allow')
+  if (
+    (!queued || queued.payload.job_data === undefined) &&
+    (accepted !== 'allow' || ask.action === COPILOT_RETRY_ACTION)
+  )
     throw new Error('restricted Copilot acceptance missing');
   if (
     queued &&

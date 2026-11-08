@@ -1,6 +1,6 @@
 # boss/handlers — 通用 pg-boss handler 与调度登记点
 
-> 本目录只放通用（非 capability）job 的 handler 工厂 `buildXxxHandler(db)`。这里**不是**调度目录：job 与 cron 的真相源是各 capability `manifest.ts` 的 `jobs.handlers` 声明（`name` / `schedule` / `dependsOn` / `backend` / `eligibility`），经 `../register-capability-jobs.ts` 注册。要看全仓现役调度，读 manifest 或管理端配置读面（`src/server/config/admin-config-facts.ts` 的 `manifest_schedules` + `infra_schedules`，由同一批声明投影）。tz 默认 `Asia/Shanghai`。
+> 本目录只放通用（非 capability）job 的 handler 工厂 `buildXxxHandler(db)`。这里**不是**调度目录：job 与 cron 的真相源是各 capability `manifest.ts` 的 `jobs.handlers` 声明（`name` / `schedule` / `dependsOn` / `backend` / `eligibility`），经 `../register-capability-jobs.ts` 注册。要看全仓现役调度，读 manifest 或管理端配置读面（`src/server/admin/config-facts-host.ts` 的 `manifest_schedules` + `infra_schedules`，由同一批声明投影）。tz 默认 `Asia/Shanghai`。
 
 ## manifest 之外的调度登记点
 不在任何 capability manifest 里的 cron 只有这几处，每处都是一张静态表或单一常量：

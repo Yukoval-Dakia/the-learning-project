@@ -12,7 +12,12 @@ export async function GET(req: Request): Promise<Response> {
   });
   const includeAssets = query.include_assets === '1';
 
-  const result = await buildBackupArchive({ db, r2: getR2(), includeAssets });
+  const result = await buildBackupArchive({
+    db,
+    r2: getR2(),
+    includeAssets,
+    signal: req.signal,
+  });
 
   if (result.error) {
     return Response.json(result.error, { status: 400 });

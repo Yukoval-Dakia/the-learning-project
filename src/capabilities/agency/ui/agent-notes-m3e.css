@@ -657,6 +657,12 @@
     & .ag-run-links {
       margin-left: 0;
     }
+
+    /* The icon only sits beside the title: what follows takes the card's full width. */
+    & .ag-group-body > :not(.ag-route, .ag-heading),
+    & .ag-summary {
+      margin-left: calc(-32px - var(--un-sp-3));
+    }
   }
 }
 

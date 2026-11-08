@@ -189,6 +189,7 @@ export async function runJudgeRun(
           'judge_authorization_required',
           'judge_disposed',
           'attempt_conflict',
+          'rating_conflict',
         ].includes(err.code));
     // will pg-boss deliver this job again? Only when the failure is retryable AND
     // the budget is not spent. That question, not "did something fail", decides whether the
@@ -218,7 +219,12 @@ export async function runJudgeRun(
               : err instanceof JudgeReceiptConflict
                 ? 'invalid_receipt'
                 : (err instanceof ApiError || err instanceof EvaluateSubmissionError) &&
-                    ['coordinate_mismatch', 'stale_head', 'attempt_conflict'].includes(err.code)
+                    [
+                      'coordinate_mismatch',
+                      'stale_head',
+                      'attempt_conflict',
+                      'rating_conflict',
+                    ].includes(err.code)
                   ? 'input_conflict'
                   : 'terminal_delivery',
           actorRef: 'judge:worker',
