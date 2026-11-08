@@ -295,6 +295,7 @@ async function processOneOcrJob(
     // Durable paid identities, one per page, in page order.
     const ocrOperationIds: string[] = [];
     let allPreFigures: PreAttachFigure[] = [];
+    let ocrFigureBoxes = 0;
     // Worst layout across pages, used only by the OCR fallback.
     let ocrLayout: LayoutQuality = 'structured';
 
@@ -386,6 +387,7 @@ async function processOneOcrJob(
         figureBoxes = parsed.figures.map((f) => f.bbox);
       }
 
+      ocrFigureBoxes += figureBoxes.length;
       if (figureBoxes.length > 0) {
         const preFigures = await cropAndUploadFigures({
           pageImage: pageBuffer,
@@ -514,6 +516,14 @@ async function processOneOcrJob(
         warnings.push(`Figure ${figure.asset_id} retained in source; assignment withheld`);
       }
     }
+    // Counts only, no image content: tells "OCR gave no boxes" from "cropped but unassigned".
+    const figureCounts = {
+      ocr_figure_boxes: ocrFigureBoxes,
+      pre_figures: allPreFigures.length,
+      assigned_figures: figureRefs.length,
+      bound_figures: boundFigureIds.size,
+    };
+    console.info(`[tencent_ocr_extract] figure_counts ${JSON.stringify(figureCounts)}`);
 
     // One question_block per top-level question; a cross-page stem is one block.
     // VLM and GLM fallback carry real page indices, while the Tencent fallback
@@ -578,6 +588,7 @@ async function processOneOcrJob(
         blocks,
         layoutQuality: structure.layout_quality,
         warnings,
+        figureCounts,
         notices: {
           figures_withheld: boundFigureIds.size < allPreFigures.length,
           content_lost: structure.content_lost ?? null,

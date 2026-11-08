@@ -12,6 +12,7 @@ import { selectedForgettingEngine } from '@/kernel/scheduling';
 import { and, asc, desc, eq, inArray, isNull, lte, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { AddressableStructureSchema } from '@/core/schema/addressable-structure';
+import { LearnerHandwritingMarker } from '@/core/schema/assessment/materials';
 import {
   INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
   InterventionSettlement,
@@ -20,7 +21,11 @@ import { deriveSourceTier } from '@/core/schema/provenance';
 // D6-R6 / D6-draftread — addressable-structure projection (read≡write
 // coordinate fix). Pure tree-clip; shared by get_question_context(include:
 // ['structure']) and the get_question_block_structure draft reader.
-import { projectAddressableStructure } from '@/core/schema/structured_question';
+import {
+  LEARNER_HANDWRITING_RULE,
+  figureForModel,
+  projectAddressableStructure,
+} from '@/core/schema/structured_question';
 import { notDraftPredicate, questionSuspendedPredicate } from '@/db/predicates';
 import {
   event,
@@ -37,6 +42,7 @@ import {
   knowledgeContext,
 } from '@/kernel/read-models/extraction-summary';
 import { getFailureAttemptsForDerivation } from '@/kernel/read-models/failure-attempts';
+import { readFigureOrigins } from '@/kernel/read-models/figure-origin';
 import { miscCauseLabelMap, resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
 import { getQuestionTimeline, getRecentReviewEvents } from '@/kernel/read-models/question-activity';
 import {
@@ -149,7 +155,14 @@ const GetQuestionContextOutputSchema = z.object({
     )
     .optional(),
   source_assets: z
-    .array(z.object({ asset_id: z.string(), role: z.string(), crop_ref: z.string().optional() }))
+    .array(
+      z.object({
+        asset_id: z.string(),
+        role: z.string(),
+        crop_ref: z.string().optional(),
+        contains_learner_handwriting: LearnerHandwritingMarker.optional(),
+      }),
+    )
     .optional(),
   // D6-R6 — addressable StructuredQuestion tree (only when
   // include:['structure'] and the question carries a `structured` jsonb).
@@ -321,6 +334,12 @@ async function executeGetQuestionContext(
       },
     );
   }
+  const figureOrigin = await readFigureOrigins(
+    ctx.db,
+    include.has('assets') || include.has('structure')
+      ? (q?.figures ?? []).map((figure) => figure.asset_id)
+      : [],
+  );
   if (include.has('assets') && q) {
     // The companion may quote these to the learner, so whole photographed pages
     // (other questions' handwriting) are filtered by the same read-time rule as the
@@ -331,17 +350,20 @@ async function executeGetQuestionContext(
         asset_id: id,
         role: 'question_image',
       })),
-      ...(q.figures ?? []).map((fig, index) => ({
-        asset_id: fig.asset_id ?? `figure_${index}`,
-        role: fig.role ?? 'figure',
-      })),
+      ...(q.figures ?? [])
+        .map((fig) => figureForModel(fig, figureOrigin(fig.asset_id)))
+        .map((fig) => ({
+          asset_id: fig.asset_id,
+          role: fig.role,
+          contains_learner_handwriting: fig.contains_learner_handwriting,
+        })),
     ];
   }
   // D6-R6 — pure-read addressable structure projection. Only emitted
   // when explicitly requested AND the question carries a `structured` tree
   // (non-structured questions — variant_gen / embedded_check — have none).
   if (include.has('structure') && q?.structured) {
-    output.structure = projectAddressableStructure(q.structured, q.figures ?? []);
+    output.structure = projectAddressableStructure(q.structured, q.figures ?? [], figureOrigin);
   }
   return GetQuestionContextOutputSchema.parse(output);
 }
@@ -909,8 +931,7 @@ export async function executeGetReviewDue(
 export const getQuestionContextTool: DomainTool<GetQuestionContextInput, GetQuestionContextOutput> =
   {
     name: 'get_question_context',
-    description:
-      'One call for one question. reading covers whether it can be issued, the latest score and wrong-cause (newest attempt plus its judge; later reviews do not replace it), the live FSRS due (knowledge card only when a role=kc point is tagged; a goal or container tag keeps the question card; lifecycle.due_at matches that card), each knowledge name and mastery, and two difficulty baselines (item anchor and family offset). reading.faulty is the latest experimental:question_or_answer_may_be_faulty inference plus its evidence; it is agent-only — do not tell the learner the question or answer may be faulty. Do not follow up with get_knowledge_state or get_attempt_context for those fields. ADR-0072: bank CONTENT reads go through read_bank. Check availability first: lifecycle zeros with observation_status=not_observed are placeholders for missing or protected diagnostic questions, not observed facts.',
+    description: `One call for one question. reading covers whether it can be issued, the latest score and wrong-cause (newest attempt plus its judge; later reviews do not replace it), the live FSRS due (knowledge card only when a role=kc point is tagged; a goal or container tag keeps the question card; lifecycle.due_at matches that card), each knowledge name and mastery, and two difficulty baselines (item anchor and family offset). reading.faulty is the latest experimental:question_or_answer_may_be_faulty inference plus its evidence; it is agent-only — do not tell the learner the question or answer may be faulty. Do not follow up with get_knowledge_state or get_attempt_context for those fields. ADR-0072: bank CONTENT reads go through read_bank. Check availability first: lifecycle zeros with observation_status=not_observed are placeholders for missing or protected diagnostic questions, not observed facts. Figures carry contains_learner_handwriting (true/false/unknown): ${LEARNER_HANDWRITING_RULE}.`,
     effect: 'read',
     inputSchema: GetQuestionContextInputSchema,
     outputSchema: GetQuestionContextOutputSchema,

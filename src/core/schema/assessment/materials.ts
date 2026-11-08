@@ -35,6 +35,10 @@ export const VersionedAssetRef = z.object({
 });
 export type VersionedAssetRefT = z.infer<typeof VersionedAssetRef>;
 
+/** Whether a figure crop shows learner work: true, false, or 'unknown' when undecided. */
+export const LearnerHandwritingMarker = z.union([z.boolean(), z.literal('unknown')]);
+export type LearnerHandwritingMarkerT = z.infer<typeof LearnerHandwritingMarker>;
+
 /**
  * 共享刺激材料。material_id 在 group 内稳定；语义不变时保留身份，
  * 语义替换生成新身份与映射（§3.1 —— 禁止按 label/相同文本自动认定连续）。
@@ -53,6 +57,8 @@ export const SharedMaterial = z.object({
    * 无处可寻。figure 等二进制资产走 asset store（asset_id + 实内容 digest）；
    * 纯文本材料的 content 即资产本身。进入 structure ⇒ 自动入 integrity digest。 */
   content_md: z.string().optional(),
+  /** Figure only: the crop may show learner work, which models must not read as a condition or answer. */
+  contains_learner_handwriting: LearnerHandwritingMarker.optional(),
 });
 export type SharedMaterialT = z.infer<typeof SharedMaterial>;
 

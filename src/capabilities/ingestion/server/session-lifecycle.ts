@@ -285,6 +285,13 @@ export type ApplyExtractionResultParams = {
   layoutQuality: 'structured' | 'partial' | 'text_only';
   warnings: string[];
   notices?: IngestionExtractionNoticesT;
+  /** Diagnostic figure counts per extraction stage; no image content. */
+  figureCounts?: {
+    ocr_figure_boxes: number;
+    pre_figures: number;
+    assigned_figures: number;
+    bound_figures: number;
+  };
   sourceDocumentId: string;
 };
 
@@ -385,6 +392,7 @@ export async function applyExtractionResult(
       layout_quality: params.layoutQuality,
       warnings: params.warnings,
       ...(params.notices ? { notices: params.notices } : {}),
+      ...(params.figureCounts ? { figure_counts: params.figureCounts } : {}),
     },
   });
 

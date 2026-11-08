@@ -9,6 +9,7 @@ import {
   LlmFallbackOutput,
   type LlmFallbackOutputT,
 } from '@/core/capability/judges/unit_dimension/types';
+import { LEARNER_HANDWRITING_RULE } from '@/core/schema/structured_question';
 import { parseTaskOutput } from '@/kernel/parse-task-output';
 import type { SubjectProfile } from '@/subjects/profile';
 
@@ -66,6 +67,7 @@ function buildStepsJudgePrompt(profile: SubjectProfile): string {
 要点：
 - verdict 4 选 1；signal_verdicts 顺序必须与 expected_signals 严格对齐（按 index）
 - prompt_image_refs 是题目条件，不是学生作答；student_image_refs 才是学生步骤/答案
+- prompt_image_refs 里的手写（拍照题的原页常带学习者当时的作答）：${LEARNER_HANDWRITING_RULE}；它既不是题目条件，也不是本次作答。
 - final_answer_match 是 boolean；caller 用它和 signal_verdicts 加权合成 partial credit
 - extracted_final_answer 即使图模糊也尽量给出，给学生 evidence 看
 - 不确定时 verdict='partial' + 写 comment 说明原因，不要强行判 correct/wrong
@@ -103,6 +105,7 @@ function buildMultimodalDirectJudgePrompt(profile: SubjectProfile): string {
 要点：
 - coarse_outcome 三选一；score 与 coarse_outcome 大致一致（caller 会按 coarse_outcome 把分数夹到 correct≥0.85 / partial 0.01..0.84 / incorrect 0）。
 - prompt_image_refs 是题目条件，不是学生作答；student_image_refs / student_final_answer_text 才是学生作答。
+- prompt_image_refs 里的手写（拍照题的原页常带学习者当时的作答）：${LEARNER_HANDWRITING_RULE}；它既不是题目条件，也不是本次作答。
 - 没有参考答案（reference_md=null）时，按题面要求和学科常识判断；observed_md 即使图模糊也尽量给出。
 - 不确定时给 partial + 在 feedback_md / missing_points 说明原因，不要强行判 correct/incorrect。
 - probe_response_contract 不存在时必须省略 probe_signature_match；存在时必须输出，且 ambiguous 必须保持不可判，不得猜测。

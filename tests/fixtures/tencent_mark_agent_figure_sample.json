@@ -1,0 +1,25 @@
+{
+  "Angle": 0,
+  "ErrorCode": "",
+  "ErrorMessage": "",
+  "JobStatus": "DONE",
+  "MarkInfos": [
+    {
+      "AnswerInfos": [
+        {
+          "AnswerAnalysis": "",
+          "HandwriteInfo": "30",
+          "HandwriteInfoPositions": [20, 50, 30, 50, 30, 60, 20, 60],
+          "IsCorrect": false,
+          "KnowledgePoints": [],
+          "RightAnswer": ""
+        }
+      ],
+      "MarkInfos": [],
+      "MarkItemTitle": "1. 如图，三角形中角A等于多少度？",
+      "QuestionImagePositions": [[10, 40, 50, 40, 50, 80, 10, 80]],
+      "QuestionPositions": [0, 0, 80, 0, 80, 110, 0, 110],
+      "RightAnswer": ""
+    }
+  ]
+}

@@ -17690,6 +17690,7 @@ export interface operations {
                                 /** @enum {string} */
                                 attach_confidence: "high" | "low" | "manual";
                                 attached_to_index: string;
+                                contains_learner_handwriting?: boolean | "unknown";
                                 handwriting_unverified?: boolean;
                                 /** Format: date-time */
                                 last_reassigned_at?: string;
@@ -19149,6 +19150,7 @@ export interface operations {
                                 alt_text?: string;
                                 asset_id: string;
                                 caption?: string;
+                                contains_learner_handwriting?: boolean | "unknown";
                                 content_md?: string;
                                 /** @enum {string} */
                                 kind: "figure" | "passage" | "table" | "audio" | "video" | "pdf" | "plaintext";
@@ -19464,6 +19466,7 @@ export interface operations {
                                 alt_text?: string;
                                 asset_id: string;
                                 caption?: string;
+                                contains_learner_handwriting?: boolean | "unknown";
                                 content_md?: string;
                                 /** @enum {string} */
                                 kind: "figure" | "passage" | "table" | "audio" | "video" | "pdf" | "plaintext";
@@ -20011,6 +20014,7 @@ export interface operations {
                                 alt_text?: string;
                                 asset_id: string;
                                 caption?: string;
+                                contains_learner_handwriting?: boolean | "unknown";
                                 content_md?: string;
                                 /** @enum {string} */
                                 kind: "figure" | "passage" | "table" | "audio" | "video" | "pdf" | "plaintext";
@@ -23678,6 +23682,7 @@ export interface operations {
                                 /** @enum {string} */
                                 availability: "inline";
                                 caption?: string;
+                                contains_learner_handwriting?: boolean | "unknown";
                                 content_md: string;
                                 /** @enum {string} */
                                 kind: "passage" | "table" | "plaintext";
@@ -23688,6 +23693,7 @@ export interface operations {
                                 /** @enum {string} */
                                 availability: "available";
                                 caption?: string;
+                                contains_learner_handwriting?: boolean | "unknown";
                                 content_md?: string;
                                 /** @enum {string} */
                                 kind: "figure" | "passage" | "table" | "audio" | "video" | "pdf" | "plaintext";
@@ -23697,6 +23703,7 @@ export interface operations {
                                 /** @enum {string} */
                                 availability: "missing" | "unavailable";
                                 caption?: string;
+                                contains_learner_handwriting?: boolean | "unknown";
                                 content_md?: string;
                                 /** @enum {string} */
                                 kind: "figure" | "passage" | "table" | "audio" | "video" | "pdf" | "plaintext";
@@ -23754,6 +23761,7 @@ export interface operations {
                                 /** @enum {string} */
                                 availability: "inline";
                                 caption?: string;
+                                contains_learner_handwriting?: boolean | "unknown";
                                 content_md: string;
                                 /** @enum {string} */
                                 kind: "passage" | "table" | "plaintext";
@@ -23764,6 +23772,7 @@ export interface operations {
                                 /** @enum {string} */
                                 availability: "available";
                                 caption?: string;
+                                contains_learner_handwriting?: boolean | "unknown";
                                 content_md?: string;
                                 /** @enum {string} */
                                 kind: "figure" | "passage" | "table" | "audio" | "video" | "pdf" | "plaintext";
@@ -23773,6 +23782,7 @@ export interface operations {
                                 /** @enum {string} */
                                 availability: "missing" | "unavailable";
                                 caption?: string;
+                                contains_learner_handwriting?: boolean | "unknown";
                                 content_md?: string;
                                 /** @enum {string} */
                                 kind: "figure" | "passage" | "table" | "audio" | "video" | "pdf" | "plaintext";
@@ -25216,6 +25226,7 @@ export interface operations {
                                             alt_text?: string;
                                             asset_id: string;
                                             caption?: string;
+                                            contains_learner_handwriting?: boolean | "unknown";
                                             content_md?: string;
                                             /** @enum {string} */
                                             kind: "figure" | "passage" | "table" | "audio" | "video" | "pdf" | "plaintext";
@@ -25967,6 +25978,7 @@ export interface operations {
                                             alt_text?: string;
                                             asset_id: string;
                                             caption?: string;
+                                            contains_learner_handwriting?: boolean | "unknown";
                                             content_md?: string;
                                             /** @enum {string} */
                                             kind: "figure" | "passage" | "table" | "audio" | "video" | "pdf" | "plaintext";
@@ -27708,6 +27720,7 @@ export interface operations {
                                                 alt_text?: string;
                                                 asset_id: string;
                                                 caption?: string;
+                                                contains_learner_handwriting?: boolean | "unknown";
                                                 content_md?: string;
                                                 /** @enum {string} */
                                                 kind: "figure" | "passage" | "table" | "audio" | "video" | "pdf" | "plaintext";
@@ -28958,6 +28971,7 @@ export interface operations {
                                             alt_text?: string;
                                             asset_id: string;
                                             caption?: string;
+                                            contains_learner_handwriting?: boolean | "unknown";
                                             content_md?: string;
                                             /** @enum {string} */
                                             kind: "figure" | "passage" | "table" | "audio" | "video" | "pdf" | "plaintext";
@@ -30112,6 +30126,7 @@ export interface operations {
                                             alt_text?: string;
                                             asset_id: string;
                                             caption?: string;
+                                            contains_learner_handwriting?: boolean | "unknown";
                                             content_md?: string;
                                             /** @enum {string} */
                                             kind: "figure" | "passage" | "table" | "audio" | "video" | "pdf" | "plaintext";
@@ -42565,6 +42580,7 @@ export interface operations {
                                     alt_text?: string;
                                     asset_id: string;
                                     caption?: string;
+                                    contains_learner_handwriting?: boolean | "unknown";
                                     content_md?: string;
                                     /** @enum {string} */
                                     kind: "figure" | "passage" | "table" | "audio" | "video" | "pdf" | "plaintext";
@@ -42911,6 +42927,7 @@ export interface operations {
                                     alt_text?: string;
                                     asset_id: string;
                                     caption?: string;
+                                    contains_learner_handwriting?: boolean | "unknown";
                                     content_md?: string;
                                     /** @enum {string} */
                                     kind: "figure" | "passage" | "table" | "audio" | "video" | "pdf" | "plaintext";
@@ -43368,6 +43385,7 @@ export interface operations {
                                     alt_text?: string;
                                     asset_id: string;
                                     caption?: string;
+                                    contains_learner_handwriting?: boolean | "unknown";
                                     content_md?: string;
                                     /** @enum {string} */
                                     kind: "figure" | "passage" | "table" | "audio" | "video" | "pdf" | "plaintext";
