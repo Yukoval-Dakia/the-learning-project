@@ -20,6 +20,8 @@ import { enqueueQuestionPreparerTicket } from './question-preparer-ticket';
 
 const ANSWER = "f'(x)=3x^2-3a，令f'(x)=0得x=±√a，所以f(x)在(-√a,√a)上单调递减，其余区间单调递增。";
 const bodies: Record<string, unknown>[] = [];
+/** The scripted model turns of the current run; after the last one it returns the final report. */
+let script: { tool: string; args: unknown }[] = [];
 let stop: () => Promise<void> = async () => {};
 
 function chunk(delta: unknown, finish: string | null = null) {
@@ -50,29 +52,13 @@ beforeAll(async () => {
     bodies.push(body);
     const tools = body.tools as { function: { name: string } }[];
     response.writeHead(200, { 'content-type': 'text/event-stream' });
-    if (bodies.length === 1)
-      response.write(
-        toolCall(tools, 'query_knowledge', {
-          subjectId: 'math',
-          nodeId: 'k_param',
-          include: ['recent_failures'],
-        }) + chunk({}, 'tool_calls'),
-      );
-    else if (bodies.length === 2)
-      response.write(
-        toolCall(tools, 'edit_question', {
-          action: 'save',
-          document: {
-            schema_version: 2,
-            parts: [{ part_id: 'p1', prompt_md: `判断下面的解答是否正确：${ANSWER}` }],
-          },
-        }) + chunk({}, 'tool_calls'),
-      );
-    else
-      response.write(
-        chunk({ role: 'assistant', content: '{"outcome":"no_progress","summary":"stopped"}' }) +
-          chunk({}, 'stop'),
-      );
+    const step = script[bodies.length - 1];
+    response.write(
+      step
+        ? toolCall(tools, step.tool, step.args) + chunk({}, 'tool_calls')
+        : chunk({ role: 'assistant', content: '{"outcome":"no_progress","summary":"stopped"}' }) +
+            chunk({}, 'stop'),
+    );
     response.end('data: [DONE]\n\n');
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -266,10 +252,78 @@ it('fills ticket learner state from the server and refuses drafts that copy a le
     ['observed_error', 'concept'],
   ]);
 
+  bodies.length = 0;
+  script = [
+    {
+      tool: 'query_knowledge',
+      args: { subjectId: 'math', nodeId: 'k_param', include: ['recent_failures'] },
+    },
+    {
+      tool: 'edit_question',
+      args: {
+        action: 'save',
+        document: {
+          schema_version: 2,
+          parts: [{ part_id: 'p1', prompt_md: `判断下面的解答是否正确：${ANSWER}` }],
+        },
+      },
+    },
+  ];
   await runQuestionPreparer(testDb(), job.id, job.data);
   const sent = JSON.stringify(bodies[1]);
   expect(sent).toContain('单调递减，其余区间单调递增');
   expect(JSON.stringify(bodies[2])).toContain('learner_text_copied');
   expect(await testDb().select().from(question)).toHaveLength(1);
   await boss.stop({ graceful: false });
+});
+
+// @invariant security: a question the learner got wrong never comes back as the preparer's new prompt.
+// @fails-if a draft whose prompt equals the missed question after spacing/LaTeX normalization is saved, or a changed parameter is refused.
+it('refuses the missed question as a new prompt and allows a changed parameter', async () => {
+  for (const row of [
+    { prompt: '讨论函数  $f(x)=x^{3}-3ax$ 的单调性．', refused: true },
+    { prompt: '讨论函数 $f(x)=x^3-12ax$ 的单调性。', refused: false },
+  ]) {
+    await resetDb();
+    await seedLearner();
+    _resetBossForTests();
+    const boss = await getStartedBoss();
+    await createJobQueue(boss, 'question_preparer_run', EXPIRE_LLM);
+    const ticket = EvidenceDemandV1.parse({
+      version: 1,
+      demand_id: 'demand:test:reuse',
+      policy_version: 'supply-v2-phase-a',
+      subject_id: 'math',
+      claim: { kind: 'knowledge_mastery', statement: '分类讨论', knowledge_ids: ['k_param'] },
+      evidence: { observables: ['分类正确'], minimum_observations: 1 },
+      task: { kinds: ['choice'], allowed_uses: ['practice'] },
+      difficulty: { band: 'near', scale: 'loom_difficulty_1_5', target_value: null },
+      inventory_goal: { eligible_count: 1, horizon_days: 7 },
+      control: { needed_by: null, max_budget_micro_usd: 100000, max_attempts: 1 },
+      causes: [{ kind: 'coverage_gap' }],
+    });
+    await enqueueQuestionPreparerTicket(
+      testDb(),
+      ticket,
+      buildQuestionPreparerTarget(ticket, { reason: 'test' }),
+    );
+    const [job] = await boss.fetch<{ ticket: EvidenceDemandV1T }>('question_preparer_run');
+    if (!job) throw new Error('ticket job missing');
+    bodies.length = 0;
+    script = [
+      { tool: 'query_mistakes', args: { filter: { knowledgeId: 'k_param' } } },
+      {
+        tool: 'edit_question',
+        args: {
+          action: 'save',
+          document: { schema_version: 2, parts: [{ part_id: 'p1', prompt_md: row.prompt }] },
+        },
+      },
+    ];
+    await runQuestionPreparer(testDb(), job.id, job.data);
+    expect(JSON.stringify(bodies[2]).includes('learner_question_reused'), row.prompt).toBe(
+      row.refused,
+    );
+    await boss.stop({ graceful: false });
+  }
 });

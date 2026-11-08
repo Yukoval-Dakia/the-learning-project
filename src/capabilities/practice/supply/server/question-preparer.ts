@@ -21,7 +21,7 @@ import {
   selectBankReceipt,
 } from '../../question-bank/public';
 import { questionPreparerReportSchema } from '../tasks/question-preparer';
-import { collectLearnerText, findLearnerCopy } from './preparer-learner-copy';
+import { createLearnerMaterialGuard } from './preparer-learner-copy';
 import {
   QuestionPreparerJobData,
   type preparerInventoryObservation,
@@ -401,7 +401,7 @@ export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown, r
       return false;
     },
   });
-  const learnerText = new Set<string>();
+  const learnerGuard = createLearnerMaterialGuard(db);
   let result: Awaited<ReturnType<typeof runAgentTask>> | undefined;
   let executionError: unknown;
   try {
@@ -469,12 +469,8 @@ export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown, r
                 },
                 interceptInput(tool, args) {
                   if (tool.effect !== 'read') {
-                    const copied = findLearnerCopy(args, learnerText);
-                    if (copied)
-                      return {
-                        args,
-                        softStop: `learner_text_copied: 草稿原样含有学习者错题材料「${copied}」。错题、笔记和错因分析只用来定方法和要防的错因类别，题面、选项、解答要自己写；改写后再保存。`,
-                      };
+                    const refusal = learnerGuard.refusal(args);
+                    if (refusal) return { args, softStop: refusal };
                   }
                   if (args && typeof args === 'object' && !Array.isArray(args)) {
                     const record = args as Record<string, unknown>;
@@ -490,7 +486,7 @@ export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown, r
                 taskKind: 'QuestionPreparerTask',
                 onResult: async (observation) => {
                   if (observation.executed && observation.error_reason == null)
-                    collectLearnerText(observation.name, observation.output, learnerText);
+                    await learnerGuard.observe(observation.name, observation.output);
                   if (
                     observation.name === 'submit_question' &&
                     observation.executed &&
