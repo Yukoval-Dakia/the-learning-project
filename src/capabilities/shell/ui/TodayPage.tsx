@@ -604,7 +604,7 @@ export default function TodayPage({
 
               {/* YUK-476 起始画像卡片：active goal 存在时露出 per-KC band 摘要 + /profile 持久入口。
                 无 active goal 时只省略画像，不影响其余工作台。 */}
-              <SteeringList goals={s.active_goals} />
+              <SteeringList goals={s.active_goals} past={s.past_steerings} />
 
               {newestGoal && (
                 <ProfileBand

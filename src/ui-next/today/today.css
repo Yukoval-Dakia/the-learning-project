@@ -167,6 +167,9 @@
 [data-ui-next] .td-plans-more .td-plans {
   margin-top: 0;
 }
+[data-ui-next] .td-plan-past .td-plan-what {
+  color: var(--un-md-sys-color-on-surface-variant);
+}
 [data-ui-next] .un-today-evidence-list {
   list-style: none;
   padding: 0;

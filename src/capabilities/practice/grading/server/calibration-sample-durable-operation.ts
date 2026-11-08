@@ -1027,6 +1027,7 @@ const CalibrationRecordedOutcome = z.object({
   lane: z.object({
     visionJudgeProviderAtSample: z.string().nullable(),
     aiProviderOverrideAtSample: z.string().nullable(),
+    envPinActive: z.boolean().optional(),
   }),
   rejudged: z.object({
     kind: z.literal('rejudged'),

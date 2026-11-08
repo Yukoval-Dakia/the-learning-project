@@ -6,9 +6,11 @@ import { Button } from '@/ui-next/public';
 import type { WorkbenchSummary } from '../workbench-api';
 
 type ActiveGoal = WorkbenchSummary['active_goals'][number];
+type PastSteering = WorkbenchSummary['past_steerings'][number];
 
 const SCOPE_NAME_LIMIT = 4;
 const SHOWN_LIMIT = 3;
+const PAST_LIMIT = 10;
 
 /** 2026-11-20 → 11月20日 */
 function monthDay(day: string): string {
@@ -90,30 +92,69 @@ function handOver(goal: ActiveGoal, label: string, sentence: string) {
   openCopilot(sentence, { send: false });
 }
 
-export function SteeringList({ goals }: { goals: ActiveGoal[] }) {
-  if (goals.length === 0) return null;
+function endedWords(past: PastSteering): string {
+  if (past.ended === 'expired') {
+    return past.until ? `${monthDay(past.until)}已过，自动结束` : '已到期，自动结束';
+  }
+  return `${monthDay(past.ended_on)}撤回`;
+}
+
+function PastRow({ past }: { past: PastSteering }) {
+  return (
+    <li className="td-plan td-plan-past">
+      <div className="td-plan-main">
+        <p className="td-plan-what">{past.instruction_md}</p>
+        <p className="un-today-meta">{endedWords(past)}</p>
+        {past.learner_words !== past.instruction_md && (
+          <p className="un-today-meta td-plan-words">你的原话：「{past.learner_words}」</p>
+        )}
+      </div>
+    </li>
+  );
+}
+
+export function SteeringList({ goals, past }: { goals: ActiveGoal[]; past: PastSteering[] }) {
+  if (goals.length === 0 && past.length === 0) return null;
   // Newest first; older ones fold away so a long list doesn't push today's work down.
   const shown = goals.slice(0, SHOWN_LIMIT);
   const rest = goals.slice(SHOWN_LIMIT);
   return (
     <section className="un-today-panel" aria-labelledby="td-plans-title">
       <h2 id="td-plans-title">当前安排</h2>
+      {goals.length === 0 && <p className="un-today-meta">现在没有生效的安排。</p>}
       {goals.some((goal) => goal.instruction_md !== null) && (
         <p className="un-today-meta">
           对学习伙伴说过的安排可以改和撤回：会打开学习伙伴并填好一句话，你补完再发，它来改。
         </p>
       )}
-      <ul className="td-plans">
-        {shown.map((goal) => (
-          <GoalRow key={goal.id} goal={goal} />
-        ))}
-      </ul>
+      {shown.length > 0 && (
+        <ul className="td-plans">
+          {shown.map((goal) => (
+            <GoalRow key={goal.id} goal={goal} />
+          ))}
+        </ul>
+      )}
       {rest.length > 0 && (
         <details className="td-plans-more">
           <summary>另外 {rest.length} 个</summary>
           <ul className="td-plans">
             {rest.map((goal) => (
               <GoalRow key={goal.id} goal={goal} />
+            ))}
+          </ul>
+        </details>
+      )}
+      {past.length > 0 && (
+        <details className="td-plans-more">
+          <summary>
+            {/* The server sends at most ten, so a full list is the latest ten, not all of them. */}
+            {past.length >= PAST_LIMIT
+              ? `以前说过的（最近 ${PAST_LIMIT} 条）`
+              : `以前说过的 ${past.length} 条`}
+          </summary>
+          <ul className="td-plans">
+            {past.map((item) => (
+              <PastRow key={item.id} past={item} />
             ))}
           </ul>
         </details>

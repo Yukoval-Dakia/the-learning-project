@@ -42350,6 +42350,15 @@ export interface operations {
                             knowledge_count: number;
                             pending_attribution_count: number;
                         };
+                        past_steerings: {
+                            /** @enum {string} */
+                            ended: "withdrawn" | "expired";
+                            ended_on: string;
+                            id: string;
+                            instruction_md: string;
+                            learner_words: string;
+                            until: string | null;
+                        }[];
                         proposals: {
                             by_kind: {
                                 [key: string]: number;
