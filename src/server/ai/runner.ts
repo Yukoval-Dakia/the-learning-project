@@ -50,11 +50,7 @@ import { taskMayExportTranscript } from './laminar-transcript';
 import { logMissingToolMountsWarning } from './log';
 import { PROVIDER_HTTP_TIMEOUT_MARGIN_MS, providerHttpTimeoutMs } from './provider-http-timeout';
 import { PROVIDER_SESSION_SDK_STARTUP_TIMEOUT_MS } from './provider-session-admission-policy';
-import {
-  planProviderTransientRetry,
-  providerTransientRetryPolicy,
-  sleepMs,
-} from './provider-transient-retry';
+import { planCopilotAttemptRetry, sleepMs } from './provider-transient-retry';
 import type { ProviderTransportCollector } from './provider-transport';
 import type { ResolvedProvider } from './providers';
 import {
@@ -65,13 +61,7 @@ import {
   maxLifecycleAttempts,
 } from './run-lifecycle';
 import { createSdkTerminalEvidenceCollector } from './sdk-terminal';
-import type {
-  Options,
-  SDKAssistantMessage,
-  SDKMessage,
-  SDKRequestRetryMessage,
-  SDKUserMessage,
-} from './sdk-types';
+import type { Options, SDKAssistantMessage, SDKMessage, SDKUserMessage } from './sdk-types';
 import { currentTaskSpendScope, withinTaskSpendFrame } from './task-spend-scope';
 import { addStreamText, emptyStreamTextStats, lazyTimeoutPrompt } from './timeout-usage';
 
@@ -388,6 +378,7 @@ async function withPreparedExecutionQuery<TResult extends RunTaskResult, TValue>
 type SDKResultMessage = Extract<SDKMessage, { type: 'result' }>;
 type SDKSuccessResultMessage = Extract<SDKResultMessage, { subtype: 'success' }>;
 type SDKToolUseBlock = Extract<ContentBlock, { type: 'tool_use' }>;
+type RequestRetryFrame = Extract<SDKMessage, { subtype: 'request_retry' }>;
 
 /**
  * Consume one prepared query, keeping caller-owned lifecycle policy (retry,
@@ -410,8 +401,7 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
     args_prefix: string;
   }) => void;
   onThinking?: () => void;
-  /** The dead request's streamed text is retracted before the resend streams. */
-  onRequestRetry?: (msg: SDKRequestRetryMessage) => Promise<void> | void;
+  onRequestRetry?: (msg: RequestRetryFrame) => Promise<void>;
   onOutputObserved?: () => void;
   onSuccess?: (msg: SDKSuccessResultMessage) => Promise<void> | void;
   onApiError?: (msg: SDKSuccessResultMessage) => void;
@@ -1197,12 +1187,6 @@ async function streamTaskCollectingImpl(
           maxCost: Math.min(resolveTaskBudget(kind, ctx.budgetOverride).maxCost, scopedAllowance),
         }),
   });
-  const policy = providerTransientRetryPolicy();
-  const retryPolicy = {
-    ...policy,
-    maxRetries: Math.min(2, policy.maxRetries),
-    maxWaitMs: Math.min(15_000, policy.maxWaitMs),
-  };
   const retryBudget = { retries: 0, waitedMs: 0 };
   const deadlineAt = Math.min(
     Date.now() + budget.timeout,
@@ -1319,15 +1303,7 @@ async function streamTaskCollectingImpl(
                 0,
                 Math.max(0, resultText.length - msg.discarded_text_chars),
               );
-              await ctx.onRequestRetry?.({
-                taskRunId: lifecycle.taskRunId,
-                retry: msg.retry,
-                maxRetries: msg.max_retries,
-                reason: msg.reason,
-                delayMs: msg.delay_ms,
-                discardedTextChars: msg.discarded_text_chars,
-                discardedThinkingChars: msg.discarded_thinking_chars,
-              });
+              await ctx.onRequestRetry?.({ ...msg, task_run_id: lifecycle.taskRunId });
             },
             onApiError: (msg) => {
               console.warn('[streamTaskCollecting] task_run_success_with_error_flag', {
@@ -1419,37 +1395,18 @@ async function streamTaskCollectingImpl(
           failureDiagnosticsCarryEvidence(thrownDiagnostics) || transportDiagnostics === undefined
             ? thrownDiagnostics
             : transportDiagnostics;
-        // Reject the policy's broader 5xx verdicts and any earlier accepted/unknown send.
-        // A bound 429 alone cannot erase a successful turn hidden earlier in this loop.
-        const noEffect =
-          transport.requests_seen > 0 &&
-          transport.requests_dropped === 0 &&
-          transport.requests.length === transport.requests_seen &&
-          transport.requests.every(
-            (request) =>
-              request.loop === 'root' &&
-              !request.timeout_layer &&
-              (request.send_state === 'not_sent' ||
-                (request.send_state === 'response_received' && request.http_status === 429)),
-          );
         const retry =
-          kind === 'CopilotTask' &&
-          !outputObserved &&
-          !lifecycle.aborted &&
-          noEffect &&
-          lifecycle.costTruth.amountUsd === 0
-            ? await planProviderTransientRetry({
+          kind === 'CopilotTask' && !outputObserved && !lifecycle.aborted
+            ? await planCopilotAttemptRetry({
                 db: ctx.db,
                 error: boundError,
-                policy: retryPolicy,
+                transport,
+                costUsd: lifecycle.costTruth.amountUsd,
                 budget: retryBudget,
                 deadlineAt,
               })
             : undefined;
-        if (
-          retry &&
-          (retry.verdict.class === 'rate_limited' || retry.verdict.class === 'not_sent')
-        ) {
+        if (retry) {
           return {
             retryDelayMs: retry.delayMs,
             failedTaskRunId: lifecycle.taskRunId,

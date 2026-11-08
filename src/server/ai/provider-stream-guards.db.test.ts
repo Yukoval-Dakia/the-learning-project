@@ -2,6 +2,7 @@ import { type ServerResponse, createServer } from 'node:http';
 import { agentLoop } from '@earendil-works/pi-agent-core';
 import { sql } from 'drizzle-orm';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import type { PiToolMount } from '@/ai/pi-tool-mount';
 import { resetTestConfig, setTestConfig } from '@/core/config/store';
 import { ai_task_runs, cost_ledger, system_config } from '@/db/schema';
 import { resetDb, testDb } from '../../../tests/helpers/db';
@@ -88,8 +89,8 @@ afterEach(async () => {
   vi.unstubAllEnvs();
 });
 
-const writeOnceMount = {
-  type: 'custom' as const,
+const writeOnceMount: PiToolMount = {
+  type: 'custom',
   tools: [
     {
       name: 'write_once',
@@ -188,7 +189,7 @@ it.each([
       piToolMounts: [writeOnceMount],
       onRequestRetry: (retry) => {
         retries.push(retry.retry);
-        page = page.slice(0, page.length - retry.discardedTextChars);
+        page = page.slice(0, page.length - retry.discarded_text_chars);
       },
     },
     (text) => {

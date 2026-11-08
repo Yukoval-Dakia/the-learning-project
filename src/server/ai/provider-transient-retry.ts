@@ -204,6 +204,51 @@ export async function planProviderTransientRetry(input: {
   return { verdict, delayMs };
 }
 
+/**
+ * The companion's whole-attempt row: a failed attempt is rerun only when it
+ * provably had no effect — every request was the root loop's own and either
+ * never sent or bound to a 429, nothing billed — and only for short congestion
+ * or not_sent, within 2 reruns / 15s so the learner is not left waiting.
+ * Interrupted requests mid-attempt are the separate interrupted-request row.
+ */
+export async function planCopilotAttemptRetry(input: {
+  db: Db;
+  error: unknown;
+  transport: ProviderTransportEvidence;
+  costUsd: number | null;
+  budget: ProviderTransientRetryBudget;
+  deadlineAt: number;
+}): Promise<{ delayMs: number } | undefined> {
+  const { transport } = input;
+  const noEffect =
+    transport.requests_seen > 0 &&
+    transport.requests_dropped === 0 &&
+    transport.requests.length === transport.requests_seen &&
+    transport.requests.every(
+      (request) =>
+        request.loop === 'root' &&
+        !request.timeout_layer &&
+        (request.send_state === 'not_sent' ||
+          (request.send_state === 'response_received' && request.http_status === 429)),
+    );
+  if (!noEffect || input.costUsd !== 0) return undefined;
+  const policy = providerTransientRetryPolicy();
+  const retry = await planProviderTransientRetry({
+    db: input.db,
+    error: input.error,
+    policy: {
+      ...policy,
+      maxRetries: Math.min(2, policy.maxRetries),
+      maxWaitMs: Math.min(15_000, policy.maxWaitMs),
+    },
+    budget: input.budget,
+    deadlineAt: input.deadlineAt,
+  });
+  return retry && (retry.verdict.class === 'rate_limited' || retry.verdict.class === 'not_sent')
+    ? { delayMs: retry.delayMs }
+    : undefined;
+}
+
 export function sleepMs(ms: number, signal?: AbortSignal): Promise<void> {
   if (signal?.aborted) return Promise.reject(signal.reason);
   return new Promise((resolve, reject) => {

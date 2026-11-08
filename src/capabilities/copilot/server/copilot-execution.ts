@@ -710,12 +710,12 @@ export function createCopilotExecutionOwner(
         thinkingAnnounced = false;
         await emitActivity(policy, {
           kind: 'request_retry',
-          taskRunId: retry.taskRunId,
+          taskRunId: retry.task_run_id,
           retry: retry.retry,
-          maxRetries: retry.maxRetries,
+          maxRetries: retry.max_retries,
           reason: retry.reason,
-          discardProseChars: retractProse(retry.discardedTextChars),
-          discardThinkingChars: suppressThinkingStream ? 0 : retry.discardedThinkingChars,
+          discardProseChars: retractProse(retry.discarded_text_chars),
+          discardThinkingChars: suppressThinkingStream ? 0 : retry.discarded_thinking_chars,
         });
       },
       ...(suppressThinkingStream
