@@ -7,6 +7,7 @@ import { useState } from 'react';
 
 import { AssetEvidencePreview } from './AssetEvidencePreview';
 import { EvidenceLightbox } from './EvidenceLightbox';
+import { LEARNER_HANDWRITING_NOTE } from './learner-handwriting-note';
 import type { EvidenceKind } from './response-types';
 
 export interface StimulusFigureProps {
@@ -21,9 +22,6 @@ export interface StimulusFigureProps {
   /** Set on photo-entry crops; only a definite `true` gets a note, `'unknown'` is most crops. */
   containsLearnerHandwriting?: boolean | 'unknown';
 }
-
-/** Shown under a figure known to keep the learner's earlier writing, so it isn't read as a hint. */
-export const LEARNER_HANDWRITING_NOTE = '图里留着你以前写的字，这次按题目重新做就好。';
 
 export function StimulusFigure({
   assetId,

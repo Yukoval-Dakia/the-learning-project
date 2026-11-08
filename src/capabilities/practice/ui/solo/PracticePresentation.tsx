@@ -1,9 +1,9 @@
 import type { ReactNode } from 'react';
 import { AssetEvidencePreview } from '@/ui/components/response/AssetEvidencePreview';
 import { EvidenceComposer } from '@/ui/components/response/EvidenceComposer';
+import { LEARNER_HANDWRITING_NOTE } from '@/ui/components/response/learner-handwriting-note';
 import { ResponseSlotField, nativeSlotFieldSpec } from '@/ui/components/response/ResponseSlotField';
 import { nativeResponseEntry, nativeResponseValue } from '@/ui/components/response/response-types';
-import { LEARNER_HANDWRITING_NOTE } from '@/ui/components/response/StimulusFigure';
 import { ApiError } from '@/ui/lib/api';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 import type {

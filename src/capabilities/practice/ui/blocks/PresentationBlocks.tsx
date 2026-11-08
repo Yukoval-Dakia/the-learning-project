@@ -367,6 +367,7 @@ export function PresentationBlocks({
         assetId={material.asset_id}
         caption={material.caption}
         alt={material.alt_text}
+        containsLearnerHandwriting={material.contains_learner_handwriting}
       />
     );
 

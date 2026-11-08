@@ -521,6 +521,7 @@
   /* The figure keeps the learner's earlier writing: one plain line under the caption. */
   & .rs-fig-note {
     display: block;
+    margin-top: 2px;
     color: var(--un-md-sys-color-on-surface-variant);
     font-size: 13px;
     line-height: 1.7;
