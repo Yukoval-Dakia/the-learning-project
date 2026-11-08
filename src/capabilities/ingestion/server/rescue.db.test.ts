@@ -208,7 +208,10 @@ describe('runRescue enrolled-block gate', () => {
       expect(enrolled.status).toBe('enrolled');
     }
 
-    const rescuePromise = runRescue({
+    // Settle-capture at creation: in the blocked-CAS race the rescue rejects
+    // while the test is still awaiting the enroll commit, and an unobserved
+    // rejection fails the whole vitest worker even though the case passes.
+    const rescueOutcome = runRescue({
       db,
       r2,
       sessionId,
@@ -216,7 +219,10 @@ describe('runRescue enrolled-block gate', () => {
       page: 0,
       tier: 2,
       runTaskFn,
-    });
+    }).then(
+      () => null,
+      (err: unknown) => err,
+    );
     if (mode === 'enroll_wins_blocked_cas') {
       // Release only once the UPDATE is provably waiting on the row lock, so
       // the enroll commit lands between its lock wait and its re-evaluation.
@@ -225,13 +231,9 @@ describe('runRescue enrolled-block gate', () => {
       await race.done;
     }
 
-    let caught: ApiError | null = null;
-    try {
-      await rescuePromise;
-    } catch (err) {
-      caught = err instanceof ApiError ? err : null;
-      if (!caught) throw err;
-    }
+    const settled = await rescueOutcome;
+    if (settled !== null && !(settled instanceof ApiError)) throw settled;
+    const caught: ApiError | null = settled;
 
     const [block] = await db.select().from(question_block).where(eq(question_block.id, blockId));
 
