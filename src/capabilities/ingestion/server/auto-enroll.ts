@@ -62,7 +62,9 @@ export interface RunAutoEnrollResult {
 /** Facts recorded on the question for a block auto-enrolled below the line. */
 export interface AutoEnrollmentMarkers {
   enrolled_by: 'workflow_judge';
-  knowledge: 'attributed' | 'missing';
+  /** 'restricted' = the document's derivation policy suppressed attribution —
+   *  distinct from 'missing' (attribution ran/failed and found nothing). */
+  knowledge: 'attributed' | 'missing' | 'restricted';
   /** Combined extraction/tagging confidence; a signal, never a gate. */
   confidence: number;
   figures_attached: number;
@@ -132,10 +134,13 @@ export async function runAutoEnrollForSession(
   }
 
   // Resolve document usage once per run; every enrolled block inherits it instead of
-  // paying an unindexed lookup per block.
+  // paying an unindexed lookup per block. The policy gates every model send below
+  // (assembly, attribution bridge/naming/embedder) — restricted documents still
+  // enroll but never reach a provider.
   const sessionDocUsage = {
     policy: await resolveSessionDerivationPolicy(params.db, params.sessionId),
     sessionId: params.sessionId,
+    sourceDocumentId: session.source_document_id ?? null,
   };
   const sourceDocumentId = session.source_document_id ?? '';
 
@@ -176,23 +181,37 @@ export async function runAutoEnrollForSession(
 
   // Block-assembly merge proposals run before any enroll import, while blocks are still
   // draft (mergeQuestions on user accept requires draft). AI only proposes; an outage is
-  // logged and swallowed because it must not abort enrollment.
-  try {
-    await runBlockAssemblyForSession(params.db, {
-      sessionId: params.sessionId,
-      blocks: blocks.map((b) => ({
-        id: b.id,
-        structured: b.structured,
-        layout_quality: b.layout_quality,
-        // page_spans lets projectBlock keep real page_index for VLM-path sessions;
-        // Tencent-path blocks carry placeholder page_index=0.
-        page_spans: b.page_spans,
-      })),
-      runTaskFn: params.runBlockAssemblyFn,
-      ctx: params.ctx ?? { db: params.db },
-    });
-  } catch (err) {
-    console.error(`[auto_enroll:block_assembly] pass failed for session ${params.sessionId}`, err);
+  // logged and swallowed because it must not abort enrollment. A restricted usage
+  // policy forbids the send entirely — the inner gate enforces the same.
+  if (sessionDocUsage.policy === 'allow') {
+    try {
+      await runBlockAssemblyForSession(params.db, {
+        sessionId: params.sessionId,
+        blocks: blocks.map((b) => ({
+          id: b.id,
+          structured: b.structured,
+          layout_quality: b.layout_quality,
+          // page_spans lets projectBlock keep real page_index for VLM-path sessions;
+          // Tencent-path blocks carry placeholder page_index=0.
+          page_spans: b.page_spans,
+        })),
+        usage: {
+          sourceDocumentId: sessionDocUsage.sourceDocumentId,
+          derivationPolicy: sessionDocUsage.policy,
+        },
+        runTaskFn: params.runBlockAssemblyFn,
+        ctx: params.ctx ?? { db: params.db },
+      });
+    } catch (err) {
+      console.error(
+        `[auto_enroll:block_assembly] pass failed for session ${params.sessionId}`,
+        err,
+      );
+    }
+  } else {
+    console.info(
+      `[auto_enroll] block assembly skipped for ${params.sessionId}: derivation policy '${sessionDocUsage.policy}'`,
+    );
   }
 
   const enrolled: AutoEnrolledBlock[] = [];
@@ -216,11 +235,12 @@ export async function runAutoEnrollForSession(
     // for the judge, student images, and stored answer refs to limit inter-page bleed.
     const scopedPageRefs = pageScopedQuestionImageRefs(block);
 
-    // Attribution is a marker, never an enrollment condition (YUK-1994): a failed or
-    // empty result still enters the bank and the background backfill repairs it.
+    // Enroll keeps tagKnowledge as the attribution writer, but a failed or empty
+    // attribution is a marker, never an enrollment condition (YUK-1994): the question
+    // still enters the bank and the background knowledge backfill repairs the label.
     // A restricted usage policy forbids every model send of this document's content
-    // — the bridge, the naming call and the tag embedder alike — so the block still
-    // enrolls but stays `knowledge: 'missing'` for the policy-gated backfill.
+    // — bridge, naming call and tag embedder alike — so the block enrolls with
+    // `knowledge: 'restricted'` (not 'missing': the gap is policy, not attribution).
     let tagging: TaggingOutputT;
     if (sessionDocUsage.policy !== 'allow') {
       tagging = synthesizeTaggingOutput([]);
@@ -263,7 +283,12 @@ export async function runAutoEnrollForSession(
     const knowledgeIds = verdict.prefilled.knowledge_ids;
     const markers: AutoEnrollmentMarkers = {
       enrolled_by: 'workflow_judge',
-      knowledge: knowledgeIds.length > 0 ? 'attributed' : 'missing',
+      knowledge:
+        sessionDocUsage.policy !== 'allow'
+          ? 'restricted'
+          : knowledgeIds.length > 0
+            ? 'attributed'
+            : 'missing',
       confidence: verdict.confidence,
       figures_attached: block.figures.length,
       student_work: detectStudentWork(block),

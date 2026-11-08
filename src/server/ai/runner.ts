@@ -27,18 +27,17 @@ import {
 import { type ProviderFailureInfo, classifyProviderFailure } from '@/ai/provider-failure';
 import { installTaskOperationObserver } from '@/ai/task-observation';
 import type { RunTaskResult } from '@/ai/task-result';
+import { failureSpendChargeUsd } from '@/ai/task-result';
 import type { TaskBudget, TaskDefinition } from '@/ai/task-spec';
 import {
   type TaskKind,
   getLearnerLocale,
-  getTaskSystemPrompt,
   resolveTaskBudget,
   tasks,
 } from '@/capabilities/task-registry';
 import { isSpawnToolName } from '@/core/subagent-contract';
 import { resolveProviderSessionDeadlineAt } from '../http/provider-session-deadline';
 import { bindAgentRunError, isApiErrorSuccessResult } from './agent-run-error';
-import { failureSpendChargeUsd } from './attempt-cost';
 import {
   type ModelBinding,
   type PreparedExecutionQuery,
@@ -48,15 +47,13 @@ import {
 import { traceMetadata, traceOperation } from './laminar-tracing';
 import { taskMayExportTranscript } from './laminar-transcript';
 import { logMissingToolMountsWarning } from './log';
-import { PROVIDER_HTTP_TIMEOUT_MARGIN_MS, providerHttpTimeoutMs } from './provider-http-timeout';
+import { PROVIDER_HTTP_TIMEOUT_MARGIN_MS } from './provider-http-timeout';
 import { PROVIDER_SESSION_SDK_STARTUP_TIMEOUT_MS } from './provider-session-admission-policy';
 import {
   planProviderTransientRetry,
   providerTransientRetryPolicy,
   sleepMs,
 } from './provider-transient-retry';
-import type { ProviderTransportCollector } from './provider-transport';
-import type { ResolvedProvider } from './providers';
 import {
   type AiRunLifecycle,
   AttemptSettlementError,
@@ -64,6 +61,7 @@ import {
   createRunLifecycle,
   maxLifecycleAttempts,
 } from './run-lifecycle';
+import { buildQueryOptions, workspaceInjectedExecution } from './runner-startup';
 import { createSdkTerminalEvidenceCollector } from './sdk-terminal';
 import type { Options, SDKAssistantMessage, SDKMessage, SDKUserMessage } from './sdk-types';
 import { currentTaskSpendScope, withinTaskSpendFrame } from './task-spend-scope';
@@ -258,52 +256,6 @@ function promptFromInput(input: unknown): string | AsyncIterable<SDKUserMessage>
   return JSON.stringify(input);
 }
 
-/**
- * Build the per-attempt call spec for the adapter so the three entry points stay
- * consistent on tools-from-registry default, turn ceiling and session resume.
- * The pi surfaces live on `ctx.pi*` and are read by the adapter, not here.
- */
-export function buildQueryOptions(
-  kind: TaskKind,
-  ctx: RunTaskCtx,
-  abortController: AbortController,
-  // The caller resolves ONCE per attempt and threads the binding in (YUK-576):
-  // single resolution per attempt keeps the retry loop's env/model provably
-  // per-attempt-consistent.
-  resolved: ResolvedProvider,
-  budget: TaskBudget,
-  transportEvidence?: ProviderTransportCollector,
-): Options {
-  // Read optional fields through the shared definition interface.
-  const def = tasks[kind];
-  const declaredDef: TaskDefinition = def;
-  const options: Options = {
-    judgeRetryPolicy: ctx.judgeRetryPolicy,
-    model: resolved.model,
-    systemPrompt: getTaskSystemPrompt(kind, ctx.subjectProfile, ctx.learnerLocale),
-    abortController,
-    tools: ctx.allowedTools ?? def.allowedTools,
-    maxTurns: budget.maxIterations === 'unbounded' ? undefined : budget.maxIterations || 1,
-    // Keep the HTTP timers behind the task lifecycle timeout.
-    providerTimeoutMs: providerHttpTimeoutMs(budget.timeout),
-    transportEvidence,
-    ...(declaredDef.enforceMaxCost === true ||
-    declaredDef.structuredOutputMode === 'tool' ||
-    currentTaskSpendScope()
-      ? { maxBudgetUsd: budget.maxCost }
-      : {}),
-  };
-  // YUK-923 — per-run modelBinding effort wins over the task-kind declaration.
-  const reasoningEffort = ctx.modelBinding?.effort ?? declaredDef.reasoningEffort;
-  if (reasoningEffort !== undefined) {
-    options.effort = reasoningEffort;
-  }
-  if (ctx.sdkSession?.persist && ctx.sdkSession.resume) {
-    options.resume = ctx.sdkSession.resume;
-  }
-  return options;
-}
-
 async function notifySdkSessionId(ctx: RunTaskCtx, msg: { session_id?: string }): Promise<void> {
   const sessionId = msg.session_id;
   if (!sessionId || !ctx.sdkSession?.onSessionId) return;
@@ -329,11 +281,12 @@ async function withPreparedExecutionQuery<TResult extends RunTaskResult, TValue>
   // config-error posture before admission and before any durable row.
   const adapter = resolveExecutionAdapter(modelBinding, lifecycle.resolved, lifecycle.kind);
   let prepared: PreparedExecutionQuery | undefined;
+  const workspace = workspaceInjectedExecution(ctx, lifecycle.kind, options);
 
   return lifecycle.withProviderSession(actualInput, {
     async prepare() {
       prepared = await adapter.startup({
-        options,
+        options: workspace.options,
         initializeTimeoutMs: lifecycle.providerPhaseTimeoutMs(
           PROVIDER_SESSION_SDK_STARTUP_TIMEOUT_MS,
         ),
@@ -346,7 +299,7 @@ async function withPreparedExecutionQuery<TResult extends RunTaskResult, TValue>
             ? Number.POSITIVE_INFINITY
             : options.providerTimeoutMs - PROVIDER_HTTP_TIMEOUT_MARGIN_MS,
         ),
-        piToolMounts: ctx?.piToolMounts,
+        piToolMounts: workspace.mounts,
         piHooks: ctx?.piHooks,
         piSessionReplay: ctx?.piSessionReplay,
         piSkillDocs: ctx?.piSkillDocs,
@@ -930,7 +883,10 @@ export async function runAgentTask(
 
 /** Text-stream Response over the same pi path; tool-use blocks land in tool_call_log. */
 export function streamTask(kind: string, input: unknown, initialCtx: StreamTaskCtx): Response {
-  const ctx = { ...initialCtx, learnerLocale: initialCtx.learnerLocale ?? getLearnerLocale() };
+  const ctx = {
+    ...initialCtx,
+    learnerLocale: initialCtx.learnerLocale ?? getLearnerLocale(),
+  };
   if (!isKnownTask(kind)) {
     throw new Error(`Unknown task kind: ${kind}`);
   }
@@ -1075,10 +1031,10 @@ export function streamTask(kind: string, input: unknown, initialCtx: StreamTaskC
                 shouldClose = false;
                 return;
               }
-              const message =
-                error instanceof Error
-                  ? `[streamTask] ${error.message}`
-                  : '[streamTask] unknown error';
+              // Run id rides the marker so workers can read back the settled row.
+              const message = `[streamTask] ${
+                error instanceof Error ? error.message : 'unknown error'
+              } (task_run_id=${lifecycle.taskRunId})`;
               controller.enqueue(encoder.encode(`\n\n${message}\n`));
             } finally {
               lifecycle.dispose();

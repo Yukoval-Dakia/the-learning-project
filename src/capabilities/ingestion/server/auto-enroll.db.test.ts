@@ -22,6 +22,7 @@ import {
 } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { type RunAutoEnrollParams, runAutoEnrollForSession } from './auto-enroll';
+import { runBlockAssemblyForSession } from './block-assembly';
 import { revertAutoEnrolledBlock } from './revert-auto-enroll';
 
 function structured(prompt: string): StructuredQuestionT {
@@ -30,7 +31,8 @@ function structured(prompt: string): StructuredQuestionT {
 
 async function seed(
   db: ReturnType<typeof testDb>,
-): Promise<{ sessionId: string; blockIds: string[] }> {
+  derivationPolicy: 'allow' | 'answer_only' | 'crisis' = 'allow',
+): Promise<{ sessionId: string; documentId: string; blockIds: string[] }> {
   const now = new Date();
   await db.insert(knowledge).values({
     id: 'k1',
@@ -47,7 +49,7 @@ async function seed(
   await db.insert(source_document).values({
     id: documentId,
     source_asset_ids: ['asset_1'],
-    provenance: { usage_policy: { derivation_policy: 'allow' } },
+    provenance: { usage_policy: { derivation_policy: derivationPolicy } },
     created_at: now,
     updated_at: now,
     version: 0,
@@ -87,7 +89,7 @@ async function seed(
       version: 0,
     })),
   );
-  return { sessionId, blockIds };
+  return { sessionId, documentId, blockIds };
 }
 
 // P3 (YUK-489): the ENROLL path runs the unified `tagKnowledge`, not the grid-prefill
@@ -381,5 +383,86 @@ describe('runAutoEnrollForSession', () => {
     expect(
       await db.select().from(question).where(eq(question.id, block.imported_question_id)),
     ).toHaveLength(1);
+  });
+
+  // A restricted source document is still enrolled, but its content must never
+  // reach a provider: assembly, subject bridge, naming and tag embedding are all
+  // model sends of the same document text. An allowed send records what it used.
+  // @invariant security: a restricted or unresolvable derivation policy leaves
+  //   every auto-enroll model seam at zero calls; an allowed send writes an
+  //   ingestion_block_assembly usage receipt
+  // @fails-if a restricted document's content reaches a model seam, an
+  //   unresolvable session is sent anyway, or an allowed send leaves no receipt
+  it('gates every auto-enroll model send on the source document derivation policy', async () => {
+    const db = testDb();
+    for (const derivationPolicy of ['answer_only', 'crisis', 'allow'] as const) {
+      await resetDb();
+      const { sessionId, documentId } = await seed(db, derivationPolicy);
+      const counts = { assembly: 0, bridge: 0, tag: 0 };
+      const result = await runAutoEnrollForSession({
+        db,
+        sessionId,
+        subjectId: 'yuwen',
+        runBlockAssemblyFn: async () => {
+          counts.assembly += 1;
+          return { text: '{"candidates":[]}' };
+        },
+        runColdStartBridgeFn: async () => {
+          counts.bridge += 1;
+          return { text: '{}' };
+        },
+        tagKnowledgeFn: async () => {
+          counts.tag += 1;
+          return { kind: 'match', knowledge_ids: ['k1'] };
+        },
+      });
+      // Restricted or not, the blocks enroll — privacy gates the send, not the bank.
+      expect(result.status).toBe('completed');
+      expect(result.enrolled).toBe(2);
+      if (derivationPolicy === 'allow') {
+        expect(counts).toEqual({ assembly: 1, bridge: 0, tag: 2 });
+        const receipts = await db
+          .select({ payload: event.payload })
+          .from(event)
+          .where(
+            and(
+              eq(event.action, 'experimental:ingestion_usage_receipt'),
+              eq(event.subject_id, documentId),
+            ),
+          );
+        expect(receipts).toHaveLength(1);
+        expect(receipts[0]?.payload).toMatchObject({
+          engine: 'ingestion_block_assembly',
+          derivation_policy: 'allow',
+          channels: { page_images: 'none', extracted_text: 'redacted' },
+        });
+      } else {
+        expect(counts).toEqual({ assembly: 0, bridge: 0, tag: 0 });
+        const enrolledQuestions = await db.select({ metadata: question.metadata }).from(question);
+        expect(enrolledQuestions).toHaveLength(2);
+        for (const row of enrolledQuestions) {
+          expect(row.metadata).toMatchObject({
+            ingestion_enrollment: { knowledge: 'restricted' },
+          });
+        }
+      }
+    }
+
+    // A session→document chain that resolves no policy fails closed at the same
+    // boundary — the session pass refuses before any model seam is touched.
+    let unresolvableCalls = 0;
+    const refused = await runBlockAssemblyForSession(db, {
+      sessionId: 'sess_unresolvable',
+      blocks: [
+        { id: 'b1', structured: structured('一'), layout_quality: 'structured' },
+        { id: 'b2', structured: structured('二'), layout_quality: 'structured' },
+      ],
+      runTaskFn: async () => {
+        unresolvableCalls += 1;
+        return { text: '{"candidates":[]}' };
+      },
+    });
+    expect(refused).toEqual({ proposed: 0, proposal_ids: [] });
+    expect(unresolvableCalls).toBe(0);
   });
 });

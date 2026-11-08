@@ -4,6 +4,7 @@ import { sha256Canonical } from '@/core/task-input-hash';
 import type { Db } from '@/db/client';
 import { ai_task_runs } from '@/db/schema';
 import { JUDGE_PROMPT_TEMPLATE_REVISION } from './judge-execution-provenance';
+import type { JudgeSandboxEvidence } from './sandbox-evidence';
 
 export interface JudgeExecutionIdentity {
   task_kind: string;
@@ -16,6 +17,9 @@ export interface JudgeExecutionIdentity {
   // corroborated against the digest the run itself persisted so a caller can
   // never bind a real run to a result the model did not produce.
   result_digest?: string;
+  // Sandbox-usage receipts collected at invocation time; carried through for
+  // audit visibility, never part of the corroboration match.
+  sandbox?: JudgeSandboxEvidence;
 }
 
 interface TaskRunIdentity {
@@ -82,6 +86,9 @@ export function resolveModelExecutionProvenance(
     task_run_id: run.id,
     provider: run.provider,
     model: run.model,
+    // Sandbox usage rides along when the identity was collected with it; it
+    // is evidence, not part of the corroboration above.
+    ...(execution.sandbox ? { sandbox: execution.sandbox } : {}),
   };
 }
 

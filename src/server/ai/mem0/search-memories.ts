@@ -119,23 +119,16 @@ export async function searchMemories(
     NOT: mergedNot,
   };
 
-  // Memory is an attention prior, not a source of truth: a store or embedding
-  // failure degrades to no facts instead of breaking the caller's tool chain.
-  let raw: SearchResult;
-  try {
-    raw = await client.search(
-      query,
-      {
-        topK: topK * OVERFETCH_FACTOR,
-        filters,
-      },
-      opts.providerOperation,
-    );
-  } catch (err) {
-    // Log, don't throw: "no memories" and "memories unavailable" both soften the prior.
-    console.warn('[searchMemories] mem0 search failed; degrading to empty results (ADR-0017)', err);
-    return { results: [] };
-  }
+  // An empty result is a real miss. A store or embedding failure stays a failure
+  // so callers do not treat an outage as "no memories".
+  const raw = await client.search(
+    query,
+    {
+      topK: topK * OVERFETCH_FACTOR,
+      filters,
+    },
+    opts.providerOperation,
+  );
 
   const candidates = raw.results ?? [];
 

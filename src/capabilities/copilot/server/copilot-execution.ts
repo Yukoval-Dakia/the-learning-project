@@ -286,10 +286,9 @@ export function createCopilotExecutionOwner(
         ? { reply: correctionResolution.reply, correction: 'clarify' as const }
         : undefined;
 
-    // YUK-1909 — turns whose committed reply is fixed before the model runs, or
-    // bound to a not-yet-submitted answer, get status only: reasoning text could
-    // leak the answer or describe a reply that never ships. Status frames
-    // (request_sent / model_thinking / thinking_end) still fire.
+    // YUK-1909 — a turn bound to a not-yet-submitted answer gets status only:
+    // reasoning text could leak the answer. Status frames
+    // (request_sent / model_thinking / thinking_end) still fire for those turns.
     // A focused page question is also an unsubmitted-question context: the
     // learner can quote a live question (QuoteSelection -> kind 'question') and
     // ask in ordinary chat. Whether that question was already submitted is not
@@ -297,11 +296,7 @@ export function createCopilotExecutionOwner(
     // Other focus kinds: knowledge / note / learning_session (nudges) carry no
     // unsubmitted question; teaching skill turns run outside this owner.
     const focusedQuestion = turn.input.ambient_context?.focused_entity?.kind === 'question';
-    const suppressThinkingStream =
-      answerOnly ||
-      authoritativeReply !== undefined ||
-      reviewAnswer !== undefined ||
-      focusedQuestion;
+    const suppressThinkingStream = answerOnly || reviewAnswer !== undefined || focusedQuestion;
 
     let activeTaskRunId = turn.taskRunId;
     const createFinalizer = () =>
@@ -312,6 +307,27 @@ export function createCopilotExecutionOwner(
       });
 
     let finalizer = createFinalizer();
+
+    // The correction contract already owns this reply. Calling the model can
+    // only replace it when the provider quota or terminal is missing.
+    if (authoritativeReply) {
+      const contextDigest = copilotSessionContextDigest(input);
+      const finalization = await observeTaskOperation(
+        { operation: 'finalize', taskKind: 'CopilotTask', taskRunId: activeTaskRunId },
+        async (reportOutcome) => {
+          const finalized = await finalizer.finalizeTerminal(authoritativeReply.reply);
+          reportOutcome(finalized.accepted ? 'accepted' : 'rejected');
+          return finalized;
+        },
+      );
+      return {
+        taskRunId: activeTaskRunId,
+        finishReason: 'end_turn',
+        finalization,
+        partial: false,
+        contextDigest,
+      };
+    }
 
     const surface = input.surface;
     const baseContextBudget = resolveContextBudget(surface);
@@ -380,7 +396,6 @@ export function createCopilotExecutionOwner(
         derivationToolDenial(derivationPolicy, tool) ??
         (await policy.cancellation.beforeTool()) ??
         finalizer.beforeDomainTool(tool) ??
-        proposalFlowGate.beforeExecute(tool) ??
         budgetTracker.beforeExecute(tool),
       onExecuteStart: async (tool) => {
         policy.cancellation.onToolExecutionStarted(tool);
@@ -397,7 +412,11 @@ export function createCopilotExecutionOwner(
       onExecuteSettled: () => policy.cancellation.onToolExecutionSettled(),
       interceptInput: (tool, args) => {
         const { args: capped, contextBudget, softStop } = budgetTracker.capInput(tool.name, args);
-        return { args: capped, truncationNote: contextBudget, softStop };
+        return {
+          args: capped,
+          truncationNote: contextBudget,
+          softStop: softStop ?? proposalFlowGate.refuseIdentical(tool, capped),
+        };
       },
       onResult: (result) => {
         proposalFlowGate.observe(result);
@@ -628,15 +647,13 @@ export function createCopilotExecutionOwner(
     const runnerContext: Parameters<typeof streamTaskCollecting>[2] = {
       db,
       taskRunId: turn.taskRunId,
+      sessionId: turn.sessionId,
       signal: policy.cancellation.signal,
       lifecycleAbortController,
       compiledModelPrompt,
-      allowedTools: authoritativeReply ? [] : allowedTools,
+      allowedTools,
       ...(piSpawnContract ? { onTaskEvent } : {}),
-      // An explicit empty allowlist (authoritativeReply) must not connect
-      // remote mounts — piRemoteMcpMount reaches Exa at buildTools time, and an
-      // outage would spend the optional-search startup budget on a tool-less turn.
-      piToolMounts: authoritativeReply ? [] : piToolMounts,
+      piToolMounts,
       piHooks,
       ...(piSpawnContract ? { piAgents: piSpawnContract.piAgents } : {}),
       ...(piSkillDocs ? { piSkillDocs } : {}),
