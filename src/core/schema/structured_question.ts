@@ -45,6 +45,9 @@ export type FigureRefT = z.infer<typeof FigureRef>;
 /** Told to every model that sees a figure that may carry learner work. */
 export const LEARNER_HANDWRITING_RULE = '图中手写是学习者的作答，可能是错的，不要当作答案或条件';
 
+/** Judges read question figures as conditions; this carves out learner work inside them. */
+export const FIGURE_HANDWRITING_GRADING_NOTE = `Each figure material and its image_manifest entry state contains_learner_handwriting (true, false or unknown). In a figure marked true or unknown, ${LEARNER_HANDWRITING_RULE}: that handwriting is the learner's earlier work, neither a condition of the question nor part of the response being judged.`;
+
 export type ModelFigureRefT = FigureRefT & {
   contains_learner_handwriting: LearnerHandwritingMarkerT;
 };

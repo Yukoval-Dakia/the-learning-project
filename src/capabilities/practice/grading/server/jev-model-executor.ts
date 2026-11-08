@@ -17,9 +17,11 @@ import type {
   ModelUnitOutcomeT,
   SlotResponseT,
 } from '@/core/schema/assessment';
+import type { LearnerHandwritingMarkerT } from '@/core/schema/assessment/materials';
 import { evaluateScoringRule } from '@/core/schema/assessment/scoring-rule';
 import type { JevSystemOneResponseT } from '@/core/schema/jev-systemone';
 import type { Db } from '@/db/client';
+import { readFigureMaterialMarkers } from '@/kernel/read-models/figure-origin';
 import {
   planProviderTransientRetry,
   providerTransientRetryPolicy,
@@ -175,6 +177,7 @@ function typedState(
   request: ModelExecutorRequest,
   entries: SlotResponseT[],
   groupEvidence: GroupEvidenceT[],
+  figureMarkers: ReadonlyMap<string, LearnerHandwritingMarkerT>,
 ): Record<string, unknown> {
   return {
     ...(request.review_context ? { review_context: request.review_context } : {}),
@@ -198,8 +201,8 @@ function typedState(
       ...(material.caption !== undefined ? { caption: material.caption } : {}),
       ...(material.alt_text !== undefined ? { alt_text: material.alt_text } : {}),
       ...(material.content_md !== undefined ? { content_md: material.content_md } : {}),
-      ...(material.contains_learner_handwriting !== undefined
-        ? { contains_learner_handwriting: material.contains_learner_handwriting }
+      ...(figureMarkers.has(material.material_id)
+        ? { contains_learner_handwriting: figureMarkers.get(material.material_id) }
         : {}),
     })),
   };
@@ -550,12 +553,13 @@ export function createJevModelExecutor(options: JevModelExecutorOptions): ModelU
     let knownSpentMicros = 0;
     let unknownAttempts = 0;
     let outcome: Awaited<ReturnType<typeof runTypedPrimitiveTask<JevSystemOneResponseT>>>;
+    const figureMarkers = await readFigureMaterialMarkers(options.db, request.materials);
     for (;;) {
       try {
         outcome = await runTypedPrimitiveTask<JevSystemOneResponseT>(
           request.executor.task_kind,
           {
-            state: typedState(request, entries, request.group_evidence),
+            state: typedState(request, entries, request.group_evidence, figureMarkers),
             questions,
           },
           {

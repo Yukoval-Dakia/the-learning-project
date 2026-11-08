@@ -14,11 +14,10 @@ import {
 } from '@/core/schema/assessment/materials';
 import { describeSelectItem } from '@/core/schema/assessment/response';
 import type { ScoringUnitCriterionT, ScoringUnitT } from '@/core/schema/assessment/scoring';
-import { learnerHandwritingMarker } from '@/core/schema/structured_question';
 import { taskInputHash } from '@/core/task-input-hash';
 import type { Db } from '@/db/client';
 import { ai_task_runs } from '@/db/schema';
-import { readFigureOrigins } from '@/kernel/read-models/figure-origin';
+import { readFigureMaterialMarkers } from '@/kernel/read-models/figure-origin';
 import { writeToolCallLog } from '@/kernel/tools/call-evidence';
 import type { BoundRunTaskTextFn } from '@/server/ai/runner-fn';
 import type { SubjectProfile } from '@/subjects/profile';
@@ -233,22 +232,13 @@ export function solverUnits(
 }
 
 /** Learner-handwriting marker per public figure material, resolved from the figure's own provenance. */
-export async function figureMaterialMarkers(
+export function figureMaterialMarkers(
   db: Db,
   definition: QuestionAdmissionDefinition,
 ): Promise<Map<string, LearnerHandwritingMarkerT>> {
-  const figures = definition.structure.materials.filter(
-    (m) => isPublicSharedMaterial(m) && m.kind === 'figure',
-  );
-  const originOf = await readFigureOrigins(
+  return readFigureMaterialMarkers(
     db,
-    figures.map((m) => m.asset.asset_id),
-  );
-  return new Map(
-    figures.map((m) => [
-      m.material_id,
-      learnerHandwritingMarker(m.contains_learner_handwriting, originOf(m.asset.asset_id)),
-    ]),
+    definition.structure.materials.filter(isPublicSharedMaterial),
   );
 }
 

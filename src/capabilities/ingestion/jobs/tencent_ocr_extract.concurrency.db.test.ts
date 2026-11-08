@@ -12,6 +12,7 @@ import { enrichEvidenceCells } from '@/capabilities/agency/server/conjecture/evi
 import { reserveIngestionOperation } from '@/capabilities/ingestion/server/operation-store';
 import { TencentSubmitInProgressError } from '@/capabilities/ingestion/server/provider-attempts';
 import type { DescribeResponse } from '@/capabilities/ingestion/server/tencent_mark';
+import { createPiModelExecutor } from '@/capabilities/practice/grading/server/pi-model-executor';
 import { installPracticeHost } from '@/capabilities/practice/public';
 import { loadGradedContract } from '@/capabilities/practice/question-bank/jobs/question_admission_run';
 import {
@@ -273,6 +274,57 @@ async function expectModelReadersSee(questionId: string, marker: boolean | 'unkn
   const system = solveRequest.messages.find((message) => (message.role as string) === 'system');
   expect(JSON.stringify(system?.content)).toContain(LEARNER_HANDWRITING_RULE);
 
+  // Grading reads question figures as conditions, so the judge must see the same marker.
+  const [unit] = contract.scoring_basis.units;
+  if (!unit || !lifecycle?.current_revision_id) throw new Error('published unit missing');
+  const gradingContexts = captureProviderContexts();
+  await createPiModelExecutor({ db, deadlineAt: Date.now() + 60_000, maxCostUsdMicros: 1_000_000 })(
+    {
+      submission_id: `sub-${questionId}`,
+      evaluation_group_id: `eg-${questionId}`,
+      revision_id: lifecycle.current_revision_id,
+      attempt: 1,
+      scoring_unit_id: unit.scoring_unit_id,
+      executor: {
+        kind: 'model_executor',
+        task_kind: 'AssessmentRuleJudgeTask',
+        admitted_slice_id: 'slice-figures',
+        max_cost_usd_micros: 1_000_000,
+      },
+      unit: {
+        ...unit,
+        criterion: {
+          kind: 'rule_reference',
+          rule_id: 'r1',
+          statement_md: '角A为30°',
+          source: 'manual',
+        },
+      },
+      question_parts: contract.structure.parts,
+      response_slots: contract.response_spec.slots,
+      slot_responses: [],
+      group_evidence: [],
+      materials: contract.structure.materials.filter((material) => material.kind === 'figure'),
+      spent_cost_usd_micros: 0,
+    },
+  );
+  const [gradeRequest] = gradingContexts;
+  if (!gradeRequest) throw new Error('grading never reached the provider');
+  const gradeUser = gradeRequest.messages.find((message) => message.role === 'user');
+  const gradeContent = Array.isArray(gradeUser?.content) ? gradeUser.content : [];
+  expect(gradeContent.filter((part) => part.type === 'image')).toHaveLength(1);
+  const gradeText = gradeContent.find((part) => part.type === 'text');
+  const gradeInput = JSON.parse(gradeText?.type === 'text' ? gradeText.text : '{}') as {
+    image_manifest: { contains_learner_handwriting?: unknown }[];
+  };
+  expect(gradeInput.image_manifest.map((entry) => entry.contains_learner_handwriting)).toEqual([
+    marker,
+  ]);
+  const gradeSystem = gradeRequest.messages.find(
+    (message) => (message.role as string) === 'system',
+  );
+  expect(JSON.stringify(gradeSystem?.content)).toContain(LEARNER_HANDWRITING_RULE);
+
   const companion = await getQuestionContextTool.execute(
     { db, taskRunId: 'tr_figures', callerActor: { kind: 'agent', ref: 'agent:copilot' } },
     { questionId, include: ['assets', 'structure'] },
@@ -318,8 +370,8 @@ async function expectModelReadersSee(questionId: string, marker: boolean | 'unkn
   ).toEqual([marker]);
 }
 
-/** A sourced question whose printed figure was stored before markers existed. */
-async function seedPrintedFigureQuestion(): Promise<string> {
+/** A sourced question with a printed figure, stored with or without a marker. */
+async function seedPrintedFigureQuestion(stored?: boolean | 'unknown'): Promise<string> {
   const bytes = await (await createImageR2()).get();
   const assetId = `printed-${createId()}`;
   const storageKey = `printed/${assetId}.png`;
@@ -362,6 +414,7 @@ async function seedPrintedFigureQuestion(): Promise<string> {
           source_bbox: { x: 0, y: 0, width: 1, height: 1 },
           attached_to_index: questionId,
           attach_confidence: 'high',
+          ...(stored === undefined ? {} : { contains_learner_handwriting: stored }),
         },
       ],
       image_refs: [],
@@ -380,9 +433,9 @@ async function seedPrintedFigureQuestion(): Promise<string> {
   return questionId;
 }
 
-// @invariant security: every attributable crop of a question with learner work reaches blind solve, the companion question context and conjecture evidence, carrying its per-crop learner-handwriting marker, while a printed figure from another source reads as free of learner handwriting; the solve prompt states that handwriting is not a condition or answer
-// @fails-if a whole-question handwriting veto drops the crop, a handwritten or undecided crop is withheld, the marker is lost between OCR and the provider request or in the companion/conjecture projections, an unmarked printed figure is told to models as possibly handwritten, or the solve prompt omits the handwriting rule
-it('gives every question figure to blind solve, the companion and conjecture evidence with its learner-handwriting marker', async () => {
+// @invariant security: every attributable crop of a question with learner work reaches blind solve, grading, the companion question context and conjecture evidence carrying its learner-handwriting marker; an unmarked printed figure reads as free of handwriting, a stored marker always wins, and the solve and grading prompts state that handwriting is not a condition or answer
+// @fails-if a whole-question handwriting veto drops the crop, a handwritten or undecided crop is withheld, the marker is lost before the solve or grading request or in the companion/conjecture projections, an unmarked printed figure is told to models as possibly handwritten, a stored marker is overridden by the origin default, or the solve or grading prompt omits the handwriting rule
+it('gives every question figure to blind solve, grading, the companion and conjecture evidence with its learner-handwriting marker', async () => {
   vi.stubEnv('OPENCODE_API_KEY', 'synthetic-fixture-key');
   vi.stubEnv('AI_PROVIDER_OVERRIDE', '');
   vi.stubEnv('AI_PROVIDER_MODEL', '');
@@ -390,9 +443,13 @@ it('gives every question figure to blind solve, the companion and conjecture evi
     'task.QuestionAdmissionSolveTask.provider': 'opencode-go',
     'task.QuestionAdmissionSolveTask.model': solverModel.id,
     'task.QuestionAdmissionSolveTask.override_global_pin': true,
+    'task.AssessmentRuleJudgeTask.provider': 'opencode-go',
+    'task.AssessmentRuleJudgeTask.model': solverModel.id,
+    'task.AssessmentRuleJudgeTask.override_global_pin': true,
   });
   const cases: Array<{
     printed?: true;
+    stored?: boolean | 'unknown';
     judgment?: boolean | null;
     optionLabel?: string | null;
     marker: boolean | 'unknown' | null;
@@ -406,12 +463,17 @@ it('gives every question figure to blind solve, the companion and conjecture evi
     { judgment: false, optionLabel: '', marker: null },
     // Not cut from a learner's page: no marker stored, and none can be learner work.
     { printed: true, marker: false },
+    // A stored marker is never replaced by the origin default.
+    { printed: true, stored: true, marker: true },
   ];
   try {
     for (const expected of cases) {
       if (expected.printed) {
         if (expected.marker === null) throw new Error('printed row needs a marker');
-        await expectModelReadersSee(await seedPrintedFigureQuestion(), expected.marker);
+        await expectModelReadersSee(
+          await seedPrintedFigureQuestion(expected.stored),
+          expected.marker,
+        );
         continue;
       }
       const { sessionId } = await seedIngestionSession(1);
