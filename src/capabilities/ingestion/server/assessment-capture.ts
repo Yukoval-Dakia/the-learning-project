@@ -302,6 +302,8 @@ export async function captureIngestionOriginal(db: Db, input: CaptureInput) {
   });
   return db.transaction(async (tx) => {
     await acquireLearningStateWriteLock(tx);
+    // Same default as the attempt record's generated_by below.
+    const generatedBy = input.generatedBy ?? 'workflow_judge';
     const [current] = await tx
       .select()
       .from(question_block)
@@ -348,12 +350,16 @@ export async function captureIngestionOriginal(db: Db, input: CaptureInput) {
           capture_block_version: block.version,
           capture_input_digest: sourceDigest,
           source_asset_ids: block.source_asset_ids,
-          // The judge confidence rides with the question as a signal; grading tiers
-          // are not derived from it here.
-          workflow_judge: {
-            confidence: input.confidence,
-            extraction_confidence: block.extraction_confidence,
-          },
+          // The judge blob asserts that a WorkflowJudge actually ran; a manual or
+          // rescue capture never ran one, so it carries no confidence signal at all.
+          ...(generatedBy === 'workflow_judge'
+            ? {
+                workflow_judge: {
+                  confidence: input.confidence,
+                  extraction_confidence: block.extraction_confidence,
+                },
+              }
+            : {}),
           ...(input.enrollmentMetadata !== undefined
             ? { ingestion_enrollment: input.enrollmentMetadata }
             : {}),
@@ -434,7 +440,7 @@ export async function captureIngestionOriginal(db: Db, input: CaptureInput) {
         block_version: block.version,
         source_document_id: session.source_document_id ?? '',
         source_asset_ids: block.source_asset_ids,
-        generated_by: input.generatedBy ?? 'workflow_judge',
+        generated_by: generatedBy,
         // 逐单元读入的落位/未决与红笔归类留痕（不判分）。
         ...(captureRecords.length > 0
           ? {

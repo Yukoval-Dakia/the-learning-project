@@ -177,12 +177,16 @@ export async function enrollIngestionBlock(
       );
     }
     if (edited.status !== 'written') {
+      const [fresh] = await db
+        .select({ version: question_block.version })
+        .from(question_block)
+        .where(eq(question_block.id, params.blockId));
       throw new ApiError(
         'prompt_edit_unavailable',
         `question_block ${params.blockId} prompt edit skipped: ${edited.status}`,
         409,
         undefined,
-        { current_version: current.version },
+        { current_version: fresh?.version ?? current.version },
       );
     }
     const [reloaded] = await db

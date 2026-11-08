@@ -75,12 +75,15 @@ export { runPracticeServingAction } from './server/serving-action-operation';
 export { recoverHeldServingRechecks, runSystemServingRecheck } from './server/serving-actions';
 export {
   type EnqueueVerifyFn,
+  VERIFY_DISPATCH_BOUND_ACTION,
   VERIFY_DISPATCH_COMPLETE_ACTION,
   VERIFY_DISPATCH_INTENT_ACTION,
   VERIFY_DISPATCH_VERSION,
   type VerifyRecoveryMark,
   dispatchPendingVerifyIntents,
   recoverOrphanVerifyDispatches,
+  verifyDeliveryJobId,
+  verifyDispatchBoundEventIdForIntent,
   writeVerifyDispatchIntent,
 } from './server/verify-dispatch-outbox';
 export {
