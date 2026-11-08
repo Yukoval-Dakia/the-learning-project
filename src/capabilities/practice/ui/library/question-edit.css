@@ -12,6 +12,14 @@
     gap: var(--un-sp-2);
   }
 
+  /* Five labels: the control's own track floor is wider than a phone. */
+  @media (max-width: 600px) {
+    & .qd-field .un-seg {
+      width: 100%;
+      grid-template-columns: repeat(var(--un-seg-n), minmax(0, 1fr));
+    }
+  }
+
   & .qd-field-label {
     color: var(--un-text-2);
     font-size: var(--un-fs-1);

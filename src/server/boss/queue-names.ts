@@ -6,3 +6,5 @@
 export const COPILOT_NUDGE_EVALUATE_QUEUE = 'copilot_nudge_evaluate';
 
 export const VERIFY_DISPATCH_RECOVERY_QUEUE = 'verify_dispatch_recover';
+
+export const AGENT_WORKSPACE_SWEEP_QUEUE = 'agent_workspace_sweep';

@@ -258,9 +258,25 @@ export interface KnowledgeFailureRun {
 
 const FAILURE_STREAK_SCAN_LIMIT = 200;
 
-async function scanFailureRuns(
+/**
+ * Current failure run per knowledge point. Answers with no right/wrong bit and
+ * contested answers are skipped; a success or partial ends the run. Only the
+ * newest FAILURE_STREAK_SCAN_LIMIT derivation-allowed answers count. A missing
+ * id means the run length is 0, which the caller must not confuse with a failed scan.
+ */
+export async function loadKnowledgeFailureStreaks(
   db: DbLike,
-): Promise<Map<string, KnowledgeFailureRun & { ended: boolean }>> {
+  knowledgeIds: readonly string[],
+): Promise<Map<string, number>> {
+  const wanted = [...new Set(knowledgeIds)];
+  const out = new Map(wanted.map((id) => [id, 0]));
+  if (wanted.length === 0) return out;
+  const runs = await loadFailureRuns(db);
+  for (const id of wanted) out.set(id, runs.get(id) ?? 0);
+  return out;
+}
+
+async function loadFailureRuns(db: DbLike): Promise<Map<string, number>> {
   const rows: EventRow[] = [];
   let cursor: EventRow | undefined;
   // Page candidates until the authorized window is full; restricted answers
@@ -297,8 +313,8 @@ async function scanFailureRuns(
     if (candidates.length < FAILURE_STREAK_SCAN_LIMIT) break;
     cursor = candidates[candidates.length - 1];
   }
-  const runs = new Map<string, KnowledgeFailureRun & { ended: boolean }>();
-  if (rows.length === 0) return runs;
+  const runs = new Map<string, { count: number; ended: boolean }>();
+  if (rows.length === 0) return new Map();
   const nativeVerdicts = await resolveVerdictsForNativeAttempts(db, rows);
   const legacyOutcomes = await loadLegacyAnswerOutcomes(db, rows);
   const contested = await loadContestedAttemptIds(
@@ -322,39 +338,31 @@ async function scanFailureRuns(
       runs.set(knowledgeId, run);
     }
   }
-  return runs;
+  return new Map([...runs].map(([id, run]) => [id, run.count]));
 }
 
 /**
- * Current failure run for each knowledge point that has a graded answer inside
- * the newest derivation-allowed window. A missing id was not in that window:
- * callers must not treat the absence as zero. Answers with no right/wrong bit
- * and contested answers are skipped; a success or partial ends the run.
+ * Observed failure runs only. A missing id was not in the scanned window and is
+ * not a measured zero. Same answers as {@link loadKnowledgeFailureStreaks}.
  */
 export async function loadKnowledgeFailureRuns(
   db: DbLike,
 ): Promise<Map<string, KnowledgeFailureRun>> {
-  const runs = await scanFailureRuns(db);
-  return new Map([...runs].map(([id, run]) => [id, { count: run.count }]));
+  const runs = await loadFailureRuns(db);
+  return new Map([...runs].map(([id, count]) => [id, { count }]));
 }
 
 /**
- * The knowledge point with the longest current run of failed answers. Answers with
- * no right/wrong bit (pending, self-reported, unsupported) and contested answers
- * (judge corrected, or an appeal filed) are skipped; a success or partial ends the
- * run. Only the newest FAILURE_STREAK_SCAN_LIMIT derivation-allowed answers count.
+ * The knowledge point with the longest current run of failed answers.
+ * Same run as {@link loadKnowledgeFailureStreaks}.
  */
 export async function loadLongestFailureStreak(db: DbLike): Promise<KnowledgeFailureStreak | null> {
-  const runs = await scanFailureRuns(db);
+  const runs = await loadFailureRuns(db);
   let best: { knowledgeId: string; count: number } | null = null;
-  for (const [knowledgeId, run] of runs) {
-    if (run.count === 0) continue;
-    if (
-      !best ||
-      run.count > best.count ||
-      (run.count === best.count && knowledgeId < best.knowledgeId)
-    )
-      best = { knowledgeId, count: run.count };
+  for (const [knowledgeId, count] of runs) {
+    if (count === 0) continue;
+    if (!best || count > best.count || (count === best.count && knowledgeId < best.knowledgeId))
+      best = { knowledgeId, count };
   }
   if (!best) return null;
   const [node] = await db

@@ -6,6 +6,7 @@ import { ApiError } from '@/kernel/http';
 import { resolveSelectableSubjectId } from '@/subjects/profile';
 import type { CreateIngestionSessionBody } from '../api/contracts';
 import { type CreationResult, commitCreationReceipt } from './creation-receipts';
+import { type DuplicateUploadMatch, detectDuplicateUpload } from './duplicate-upload';
 import { initiateUpload, markSessionPackageFailed } from './session-lifecycle';
 import { materializeSourcePackage } from './source-package';
 
@@ -48,6 +49,13 @@ export async function createIngestionSession(
         learnerSelectedSubjectId: canonicalSubjectId,
         derivationPolicy: body.derivation_policy ?? null,
       });
+      // Recognition only: the new upload proceeds untouched; the shared helper owns the
+      // savepoint so a detection fault (timeout/abort) is unknown, not a failed upload.
+      const duplicateOf: DuplicateUploadMatch | null = await detectDuplicateUpload(tx, {
+        sessionId,
+        sourceDocumentId,
+        assetIds: body.asset_ids,
+      });
       const location = `/api/ingestion-sessions/${encodeURIComponent(sessionId)}`;
       try {
         // SQL errors must roll back this savepoint before marking failed in the
@@ -81,6 +89,7 @@ export async function createIngestionSession(
             status: 'uploaded',
             source_asset_ids: body.asset_ids,
             entrypoint: body.entrypoint,
+            duplicate_of: duplicateOf,
           },
         },
         location,

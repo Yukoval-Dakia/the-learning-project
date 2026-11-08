@@ -2,10 +2,12 @@ import { createContext, useContext } from 'react';
 import { type ApiOperationJsonResponse, apiJson, apiOperationJson } from '@/ui/lib/api';
 import { undoAiChange } from '@/ui/lib/undo-ai-change';
 import {
+  acceptProposalBatch,
   decideProposal,
   listAutoApplied,
   listDecisionProposalPage,
   listObservationProposalPreview,
+  listProposalBatches,
   retractAutoApplied,
   retractProposal,
 } from './inbox-api';
@@ -26,6 +28,8 @@ export type WorkbenchClient = {
   listObservationProposalPreview: typeof listObservationProposalPreview;
   listAutoApplied: typeof listAutoApplied;
   decideProposal: typeof decideProposal;
+  acceptProposalBatch: typeof acceptProposalBatch;
+  listProposalBatches: typeof listProposalBatches;
   retractProposal: typeof retractProposal;
   retractAutoApplied: typeof retractAutoApplied;
   getPrepDeskConjectures: typeof getPrepDeskConjectures;
@@ -58,6 +62,8 @@ export const httpWorkbenchClient: WorkbenchClient = {
   listObservationProposalPreview: () => listObservationProposalPreview(),
   listAutoApplied: (...args) => listAutoApplied(...args),
   decideProposal: (...args) => decideProposal(...args),
+  acceptProposalBatch: (...args) => acceptProposalBatch(...args),
+  listProposalBatches: () => listProposalBatches(),
   retractProposal: (...args) => retractProposal(...args),
   retractAutoApplied: (...args) => retractAutoApplied(...args),
   getPrepDeskConjectures: () => getPrepDeskConjectures(),

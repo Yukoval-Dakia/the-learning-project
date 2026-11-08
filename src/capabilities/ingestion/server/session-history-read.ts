@@ -165,6 +165,7 @@ export async function readIngestionSessionHistory(
       held_since: s.held_since,
       next_action: s.next_action,
       pending_action: s.pending_action,
+      admission: s.admission ?? null,
     };
   };
 

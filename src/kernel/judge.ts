@@ -30,6 +30,16 @@ export interface FormalAttemptPreview {
   revision: typeof question_revision.$inferSelect;
   candidate: ContractAttemptOutcome;
   submission: SubmissionRecordT;
+  /** This commit replayed an already-accepted submission; its request-side claim fields are not new evidence. */
+  replayed: boolean;
+  /** Assistance receipt sealed into the submission event; null for historical receipts without a snapshot. */
+  assistance: {
+    status: 'independent' | 'assisted' | 'unknown';
+    event_ids: string[];
+    max_dose: number | null;
+    kinds: Array<'hint' | 'solution' | 'chat_context'>;
+    phase: 'before_submit' | 'after_submit' | null;
+  } | null;
   automatic_commit: boolean;
   activation_intent: {
     evaluation_id: string;

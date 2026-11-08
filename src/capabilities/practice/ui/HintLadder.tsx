@@ -1,18 +1,9 @@
-// YUK-354 (A2) — 解题会话「6 阶 hint 强度梯」组件。
+// The hint ladder in the practice hint drawer. Six stops from lightest to the full solution; the
+// learner picks how far to look, and each stop is one server call that records what was seen.
 //
-// 阶语义来自 docs/design/loom-refresh/project/data-hint-ladder.jsx，用真 solve/hint API 重建状态机，
-// 不引设计源的 window 全局 / demo 模拟。落在做题页的解题提示抽屉 body 内（solo/SoloCoach.tsx）。
-// M3E 呈现（YUK-1473）：样式在 hint-ladder.css，图标是 lucide；设计记录
-// docs/design/2026-11-03-last-old-ui-m3e.md。
-//
-// 强度梯映射：H0-H4 = 既有 solveHint(question.id, sid, stageIdx)（hint_index 0-4，单调 +1
-// 推进，与旧流 hints.length 递增同序 → 后端行为零变更）；H5 完整解 = question.reference_md
-// 的 reveal（逃生口，非 hint 调用）。详见 hint-ladder.ts 头注 + A2 handoff。
-//
-// 硬约束（handoff §硬功能约束）：① 单调递进不跳级（rail 仅作位置指示、不可点跳；推进只经
-// 「再给一阶」+1）；② 逃生口任意阶一步到 H5（「直接看完整解」恒在）；③ H5=非独立，reveal 前
-// 必经确认门（中性诚实告知后果，不羞辱）；④ 失败态可重试、不静默吞、不自动跳级；⑤ 完整解未
-// 就绪 → H5 显式不可用 + 诚实空态，前几阶仍可起跑；⑥ 会话不计入判分（壳 note 保留）。
+// H0-H4 are solveHint(question.id, sid, stageIdx); H5 is the question's reference, fetched only when
+// asked for. A failed stop can be retried and never moves on by itself. Whether the answer still
+// counts as the learner's own is the server's to say, from what it recorded.
 
 import { Check, ChevronDown, CircleAlert, Eye, Layers, RefreshCw, Undo2 } from 'lucide-react';
 import { useState } from 'react';
@@ -43,11 +34,13 @@ export function HintLadder({
   question,
   onReturnToAnswer,
   issuanceId,
+  submitted = false,
   onStageReached,
   onFullSolutionRevealed,
   requestFullSolution,
 }: {
   question: QuestionDetail;
+  submitted?: boolean;
   onReturnToAnswer?: () => void;
   // YUK-1051 (D16) — 提示/揭示证据必须绑定 issuance 并在服务端留痕；服务端契约是
   // YUK-1052 lane。接缝：宿主传入 issuanceId + 回调后，每阶提示的抵达与完整解的揭示
@@ -70,29 +63,28 @@ export function HintLadder({
   const [loading, setLoading] = useState(false);
   // 生成失败的阶索引（-1 = 无失败）；当前阶可重试，不自动跳下一阶。
   const [failAt, setFailAt] = useState(-1);
-  // 看 H5 完整解前的「非独立」确认门是否展开（reveal 前必经）。
-  const [confirmFull, setConfirmFull] = useState(false);
   // 完整解（H5）已 reveal。
   const [revealedFull, setRevealedFull] = useState(false);
   // YUK-1051 — 按需拉取的完整解正文（requestFullSolution 注入时）；null=未取。
   const [fetchedFull, setFetchedFull] = useState<string | null>(null);
   const [fetchingFull, setFetchingFull] = useState(false);
   const [fullError, setFullError] = useState<string | null>(null);
-  // owner 点了「我自己来 · 交还控制」—— 控制权回到作答。
+  // owner 点了「我自己来」—— 控制权回到作答。
   const [returned, setReturned] = useState(false);
 
-  // YUK-1051 — 注入 requestFullSolution 时完整解按需取：可用性由 seam 决定（null=不可用），
-  // 确认门照常；未注入退回 question.reference_md（现状）。
+  // YUK-1051 — 注入 requestFullSolution 时完整解按需取：可用性由 seam 决定（null=不可用）；
+  // 未注入退回 question.reference_md（现状）。
   const fullAvailable = requestFullSolution ? true : isFullSolutionAvailable(question.reference_md);
   const fullBody = requestFullSolution ? fetchedFull : (question.reference_md ?? null);
   const next = nextHintStage(reached);
 
   // 取某一 hint 阶（H0-H4）。session 懒建；空 text_md 视作该阶生成缺失（可重试，非静默 exhaust）。
   const advance = async (targetIdx: number) => {
-    if (loading) return;
+    if (loading || fetchingFull) return;
     setLoading(true);
     setFailAt(-1);
     setUnavailable(null);
+    setFullError(null);
     try {
       let sid = sessionId;
       if (!sid) {
@@ -119,7 +111,7 @@ export function HintLadder({
             : null;
       if (entry) {
         setHints((m) => ({ ...m, [targetIdx]: entry }));
-        setReached(targetIdx);
+        setReached((highest) => Math.max(highest, targetIdx));
         // YUK-1051 (D16) — 提示抵达上报（接 seam 时服务端留痕；回调失败不阻梯）。
         try {
           onStageReached?.(targetIdx, { issuanceId: issuanceId ?? null });
@@ -136,9 +128,9 @@ export function HintLadder({
     }
   };
 
-  // 逃生口：reveal 完整解（已过非独立确认门）。一步到 H5，跳过中间阶。
+  // reveal 完整解：一步到 H5，跳过中间阶。
   // YUK-1051 — 注入 requestFullSolution 时按需拉取（显式揭示授权后才取），
-  // 拉取失败不假装揭示（停确认门，可重试）；未注入则退回 question.reference_md。
+  // 拉取失败不假装揭示（可重试）；未注入则退回 question.reference_md。
   const revealFull = async () => {
     if (requestFullSolution && fetchedFull === null) {
       if (fetchingFull) return;
@@ -158,7 +150,6 @@ export function HintLadder({
         setFetchingFull(false);
       }
     }
-    setConfirmFull(false);
     setRevealedFull(true);
     setReached(FULL_STAGE_INDEX);
     try {
@@ -178,18 +169,22 @@ export function HintLadder({
       <div className="un-hl">
         <div className="un-hl-returned">
           <Check size={18} aria-hidden="true" />
-          控制交还给你了 —— 回到题面自己作答。需要时再叫我。
+          好，回到题面自己做。需要时再叫我。
         </div>
       </div>
     );
   }
 
   const atFull = revealedFull;
+  const pick = (stage: HintStage, index: number) => {
+    if (loading || fetchingFull) return;
+    if (stage.isFull) void revealFull();
+    else if (!hints[index]) void advance(index);
+  };
 
   return (
     <div className="un-hl">
-      {/* 自主程度轨 —— 6 阶离散刻度，恒可见（位置可见 + 强度爬升可感知）。
-          rail 仅作位置指示，不可点跳：推进只经下方「再给一阶」(+1) / 逃生口，守单调不跳级。 */}
+      {/* 6 个提示，从轻到重，想看哪个直接点。 */}
       <div className="un-hl-rail">
         <div className="un-hl-rail-head">
           <span className="un-hl-rail-l">
@@ -200,7 +195,8 @@ export function HintLadder({
         </div>
         <div className="un-hl-stops">
           {HINT_LADDER.map((s, i) => {
-            const isReached = atFull ? true : i <= reached;
+            // Only what was really looked at reads as seen: stops jumped over stay empty.
+            const isReached = s.isFull ? atFull : !!hints[i];
             const isCurrent = atFull ? s.isFull : i === reached;
             const cls = [
               'un-hl-stop',
@@ -211,15 +207,20 @@ export function HintLadder({
               .filter(Boolean)
               .join(' ');
             return (
-              <div
+              <button
+                type="button"
                 key={s.key}
                 className={cls}
                 title={`${s.label} — ${s.gives}`}
-                aria-label={`第 ${i + 1} 个提示（${s.label}）：${s.gives}${isCurrent ? ' · 当前' : ''}`}
+                aria-label={`第 ${i + 1} 个提示（${s.label}）：${s.gives}`}
+                aria-current={isCurrent ? 'step' : undefined}
+                aria-disabled={loading || fetchingFull || undefined}
+                disabled={atFull || (s.isFull && !fullAvailable)}
+                onClick={() => pick(s, i)}
               >
                 <span className="un-hl-dot" />
                 <span className="un-hl-stop-l">{s.label}</span>
-              </div>
+              </button>
             );
           })}
         </div>
@@ -228,7 +229,13 @@ export function HintLadder({
       {/* 已揭示的 hint 阶卡（H0-H4，仅到 reached）。 */}
       {HINT_LADDER.map((s, i) =>
         !s.isFull && i <= reached && hints[i] ? (
-          <HintStageCard key={s.key} stage={s} hint={hints[i]} notation={question.notation} />
+          <HintStageCard
+            key={s.key}
+            stage={s}
+            hint={hints[i]}
+            notation={question.notation}
+            submitted={submitted}
+          />
         ) : null,
       )}
 
@@ -237,10 +244,12 @@ export function HintLadder({
         <div className="un-hl-card full">
           <div className="un-hl-card-top">
             <span className="un-hl-badge">{HINT_LADDER[FULL_STAGE_INDEX].label}</span>
-            <span className="un-hl-noindep">
-              <CircleAlert size={14} aria-hidden="true" />
-              非独立完成
-            </span>
+            {!submitted && (
+              <span className="un-hl-noindep">
+                <CircleAlert size={14} aria-hidden="true" />
+                不算独立做的
+              </span>
+            )}
           </div>
           <div className="un-hl-body">
             {/* YUK-1005 — H5 full solution render through markdown+KaTeX like the rest
@@ -256,7 +265,7 @@ export function HintLadder({
         </p>
       )}
       {loading && (
-        <div className="un-hl-loading">
+        <div className="un-hl-loading" role="status">
           <span className="un-hl-spin" />
           正在想下一个提示…
         </div>
@@ -309,9 +318,10 @@ export function HintLadder({
               <button
                 type="button"
                 className="un-hl-jump un-hit"
+                disabled={fetchingFull}
                 onClick={() => {
                   setFailAt(-1);
-                  setConfirmFull(true);
+                  void revealFull();
                 }}
               >
                 <Eye size={18} aria-hidden="true" />
@@ -326,37 +336,8 @@ export function HintLadder({
         </div>
       )}
 
-      {/* H5 非独立确认门：reveal 完整解前，中性诚实地告知后果，确认后才展示（不羞辱、无惩罚）。 */}
-      {confirmFull && (
-        <div className="un-hl-confirm">
-          <div className="un-hl-confirm-msg">
-            <CircleAlert size={18} aria-hidden="true" />
-            看完整解 = 这题记为<b>非独立完成</b>。中间的提示可以跳过。确认要直接看吗？
-          </div>
-          <div className="un-hl-confirm-acts">
-            <button
-              type="button"
-              className="un-hl-jump un-hit"
-              disabled={fetchingFull}
-              onClick={() => void revealFull()}
-            >
-              <Eye size={18} aria-hidden="true" />
-              {fetchingFull ? '取完整解…' : '确认 · 看完整解'}
-            </button>
-            <button
-              type="button"
-              className="un-hl-escape un-hit"
-              onClick={() => setConfirmFull(false)}
-              style={{ marginLeft: 0 }}
-            >
-              再想想
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* 动作行：再给一阶（+1）· 直接看完整解（逃生口，任意阶一步可达）· 我自己来（交还控制）。 */}
-      {!loading && failAt < 0 && !unavailable && !confirmFull && !atFull && (
+      {/* 动作行：下一个提示 · 直接看完整解 · 我自己来。 */}
+      {!loading && failAt < 0 && !unavailable && !atFull && (
         <div className="un-hl-acts-wrap">
           {next && (
             <p className="un-hl-next-note">
@@ -368,6 +349,7 @@ export function HintLadder({
               <button
                 type="button"
                 className="un-hl-advance un-hit"
+                disabled={fetchingFull}
                 onClick={() => void advance(reached + 1)}
               >
                 <ChevronDown size={18} aria-hidden="true" />
@@ -378,10 +360,11 @@ export function HintLadder({
               <button
                 type="button"
                 className="un-hl-jump un-hit"
-                onClick={() => setConfirmFull(true)}
+                disabled={fetchingFull}
+                onClick={() => void revealFull()}
               >
                 <Eye size={18} aria-hidden="true" />
-                直接看完整解
+                {fetchingFull ? '正在取完整解…' : '直接看完整解'}
               </button>
             ) : (
               <button type="button" className="un-hl-jump un-hit" disabled aria-disabled="true">
@@ -391,7 +374,7 @@ export function HintLadder({
             )}
             <button type="button" className="un-hl-escape un-hit" onClick={returnToAnswer}>
               <Undo2 size={18} aria-hidden="true" />
-              我自己来 · 交还控制
+              我自己来
             </button>
           </div>
           {!fullAvailable && (
@@ -429,10 +412,12 @@ function HintStageCard({
   stage,
   hint,
   notation,
+  submitted,
 }: {
   stage: HintStage;
   hint: StageHint;
   notation: string | null;
+  submitted: boolean;
 }) {
   if (hint.kind === 'fallback') {
     // YUK-1409 — AI 提示没生成出来时的固定帮助：诚实标明是参考解答还是固定的下一步，
@@ -442,10 +427,10 @@ function HintStageCard({
       <div className={isReference ? 'un-hl-card full' : 'un-hl-card'}>
         <div className="un-hl-card-top">
           <span className="un-hl-badge">{isReference ? '参考解答' : '固定的下一步'}</span>
-          {isReference && (
+          {isReference && !submitted && (
             <span className="un-hl-noindep">
               <CircleAlert size={14} aria-hidden="true" />
-              非独立完成
+              不算独立做的
             </span>
           )}
         </div>

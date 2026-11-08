@@ -19,6 +19,7 @@ import {
   validateResponseSpec,
   validateScoringBasis,
   validateStructure,
+  wrongResponseFullMarksIssues,
 } from '@/core/schema/assessment';
 import {
   Presentation,
@@ -225,6 +226,7 @@ export function contractBarrierIssues(
   push(validateStructure(contract.structure));
   push(validateResponseSpec(contract.response_spec, contract.structure));
   push(validateScoringBasis(contract.scoring_basis, contract.response_spec, contract.structure));
+  push(wrongResponseFullMarksIssues(contract.scoring_basis));
   push(
     validateExecutionPlan(contract.execution_plan, contract.scoring_basis).filter(
       (issue) => !(issue.code === 'unadmitted_model_executor' && admission.state === 'withheld'),

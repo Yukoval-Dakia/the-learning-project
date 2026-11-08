@@ -74,6 +74,34 @@ export const FigureBlock = FigureBlockInput.omit({ svg: true })
   .strict();
 export type FigureBlockT = z.infer<typeof FigureBlock>;
 
+const DRAWING_DESCRIPTION =
+  'A drawing delegated to the dedicated drawing lane: pass a brief, not SVG. The server runs the draw in the background and the stored block carries only the drawing id — the client shows a placeholder until the drawing is ready. For a simple diagram the model already knows how to express, prefer kind=diagram.';
+
+export const DrawingBlockInput = z
+  .object({
+    ...Common,
+    kind: z.literal('drawing'),
+    brief: z.string().min(1).max(2_000).meta({
+      description:
+        'What to draw, in the model’s own words: object, structure, labels, emphasis. Never the answer to an assessment question.',
+    }),
+  })
+  .strict()
+  .meta({ description: DRAWING_DESCRIPTION });
+
+// The persisted form is a pointer: brief is model-to-Sol input and may carry
+// answer-layer content, so it lives only on the drawing row, never in the
+// learner-visible block. alt/caption stay (model-visible text the prompt bars
+// from containing unjudged answers).
+export const DrawingBlock = z
+  .object({
+    ...Common,
+    kind: z.literal('drawing'),
+    drawing_id: z.string().regex(/^drw_[a-z0-9]{10,40}$/),
+  })
+  .strict();
+export type DrawingBlockT = z.infer<typeof DrawingBlock>;
+
 export const ChartBlock = z
   .object({
     ...Common,
@@ -297,6 +325,7 @@ export const BlockInputV1 = z.discriminatedUnion('kind', [
   InteractiveBlockInput,
   QuestionRefBlock,
   EntityCardBlock,
+  DrawingBlockInput,
 ]);
 export type BlockInputV1T = z.infer<typeof BlockInputV1>;
 
@@ -309,6 +338,7 @@ export const BlockV1 = z.discriminatedUnion('kind', [
   InteractiveBlock,
   QuestionRefBlock,
   EntityCardBlock,
+  DrawingBlock,
 ]);
 export type BlockV1T = z.infer<typeof BlockV1>;
 export type BlockKind = BlockV1T['kind'];

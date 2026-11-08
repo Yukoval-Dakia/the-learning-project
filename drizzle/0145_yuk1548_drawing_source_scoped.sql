@@ -1,0 +1,1 @@
+ALTER TABLE "drawing" ADD COLUMN "source_scoped" jsonb DEFAULT '[]'::jsonb NOT NULL;

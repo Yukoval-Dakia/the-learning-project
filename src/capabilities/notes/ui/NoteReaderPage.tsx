@@ -193,8 +193,8 @@ const BLOCK_KIND_CLASS: Record<string, string> = {
   questionRefBlock: 'nt-blk-qref',
 };
 
-// 小节标题：semanticBlock 的 kind 标签（五段式解剖与 bodyBlocksToNoteSections
-// 1:1）。check 是不判分的自解释小节；kind 缺失/未知回退普通块。
+// 小节标题：semanticBlock 的 kind 标签（按维度成段的笔记才有，与
+// bodyBlocksToNoteSections 1:1）。check 是不判分的自解释小节；kind 缺失/未知回退普通块。
 function sectionKindLabel(b: BodyBlock): string | null {
   if (b.type !== 'semanticBlock') return null;
   const kind = b.attrs?.semantic_kind;

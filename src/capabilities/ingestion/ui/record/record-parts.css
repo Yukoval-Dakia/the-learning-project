@@ -29,6 +29,12 @@
       box-shadow var(--un-t-small) var(--un-ease-glide);
   }
 
+  & .rc-tile a {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+
   & .rc-tile img {
     width: 100%;
     height: 100%;
@@ -229,24 +235,11 @@
     white-space: nowrap;
   }
 
-  /* The list row's title, not the sheet's: that one shows in full. */
+  /* Two lines in the list and on the sheet: the question lines below carry the full text. */
   & .rc-row-title.rc-row-clip {
     display: -webkit-box;
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 2;
     white-space: normal;
-  }
-
-  & .rc-bar-sticky {
-    position: sticky;
-    bottom: var(--un-sp-3);
-    z-index: var(--un-z-raised);
-    padding: var(--un-sp-3) var(--un-sp-4);
-    border-radius: var(--un-r-2);
-    background: color-mix(in srgb, var(--un-bg-raised) var(--un-glass-alpha), transparent);
-    box-shadow:
-      inset 0 0 0 var(--un-hairline) var(--un-line),
-      var(--un-shadow-float);
-    backdrop-filter: blur(22px) saturate(1.8);
   }
 }

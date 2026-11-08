@@ -8,10 +8,11 @@ import type { ConfirmationAction } from './turn-sender';
 // it cannot establish whether any tool operation has already taken effect.
 // Memoized: a streaming delta rebuilds only the growing message, so settled rows skip re-rendering.
 
+import { RefreshCw } from 'lucide-react';
 import { memo } from 'react';
-import { Chip } from '@/ui-next/public';
+import { Button, Chip } from '@/ui-next/public';
 import { type ChatMessage, composeStreamingReply } from '../message-projection';
-import { publicProseFailureBadge, publicProseStatusText } from '../public-prose';
+import { publicProseBody, publicProseFailureBadge, publicProseStatusText } from '../public-prose';
 import { ConversationMarkdown } from './ConversationMarkdown';
 import { HeroBlock } from './HeroBlock';
 import { ProposalNotice } from './ProposalNotice';
@@ -37,6 +38,8 @@ export interface MessageRowProps {
   navigate: (to: string) => void;
   onSelectCorrection: (turnId: string, turnNumber: number) => void;
   onRevert: (checkpointEventId: string) => void;
+  /** Given only to the last reply of a conversation, while the server says it can be resent. */
+  retry?: { pending: boolean; disabled: boolean; onRetry: () => void };
   onAcceptCorrective: (sessionId: string, questionId: string, replyEventId?: string) => void;
 }
 
@@ -61,8 +64,11 @@ export const MessageRow = memo(function MessageRow(props: MessageRowProps) {
   const publicProse = m.public_prose;
   const incomplete = publicProse?.status === 'failed' || publicProse?.status === 'interrupted';
   // Successful terminal text retains its sealed corrections and disclosures.
-  const body =
-    incomplete || publicProse?.status === 'streaming' ? publicProse.text : canonical.text;
+  const body = incomplete
+    ? publicProseBody(publicProse)
+    : publicProse?.status === 'streaming'
+      ? publicProse.text
+      : canonical.text;
   const generationStatus = publicProse ? publicProseStatusText(publicProse) : undefined;
   // A sealed help exit completes with its exit copy as the body; the badge says why it exited.
   const failureBadge = publicProse ? publicProseFailureBadge(publicProse) : undefined;
@@ -80,7 +86,9 @@ export const MessageRow = memo(function MessageRow(props: MessageRowProps) {
       {/* YUK-1664 — settled: the reply's steps fold into one summary line above the text. */}
       {settled ? <StepActivity steps={steps} /> : null}
       {settled && props.thinkingText ? <ThinkingDone text={props.thinkingText} /> : null}
-      <ConversationMarkdown className="un-cp-md un-cp-reply">{shown}</ConversationMarkdown>
+      {shown ? (
+        <ConversationMarkdown className="un-cp-md un-cp-reply">{shown}</ConversationMarkdown>
+      ) : null}
       {failureBadge ? (
         <p className="un-cp-reply-badge">
           <Chip tone="caution">{failureBadge}</Chip>
@@ -90,6 +98,19 @@ export const MessageRow = memo(function MessageRow(props: MessageRowProps) {
         <p className="un-cp-reply-status" role="status">
           {generationStatus}
         </p>
+      ) : null}
+      {settled && props.retry ? (
+        <div className="un-cp-row-actions">
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={props.retry.pending || props.retry.disabled}
+            onClick={props.retry.onRetry}
+          >
+            <RefreshCw size={13} aria-hidden="true" />
+            {props.retry.pending ? '发送中…' : '再发一次'}
+          </Button>
+        </div>
       ) : null}
       {m.confirmationIncompatible && <p role="alert">确认题版本或状态不兼容，暂不能操作。</p>}
       {props.showConfirmation &&
