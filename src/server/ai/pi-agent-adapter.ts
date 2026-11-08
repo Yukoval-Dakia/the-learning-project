@@ -608,6 +608,12 @@ class PiPreparedQuery implements PreparedExecutionQuery {
             Date.now() +
             (this.args.executionWindowMs ?? Number.POSITIVE_INFINITY) -
             NO_PROGRESS_BUDGET_LANDING_MARGIN_MS,
+          executableTools: new Set(
+            this.toolSurface.tools
+              .map((tool) => tool.name)
+              .filter((name) => name !== STRUCTURED_OUTPUT_TOOL),
+          ),
+          ...(typeof options.maxTurns === 'number' ? { toolTurnLimit: options.maxTurns } : {}),
         })
       : undefined;
     if (structuredOutput) {
@@ -631,7 +637,8 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     // unconditional counter every maxTurns=1 task failed after its first turn.
     const maxTurns = typeof options.maxTurns === 'number' ? options.maxTurns : undefined;
     let cappedByMaxTurns = false;
-    // Structured submission closes by validation, progress and budget, not turn count.
+    // Structured submission closes by validation, progress and budget; only its
+    // tool-work turns count against the turn ceiling, inside the submit loop.
     const costCeiling =
       typeof options.maxBudgetUsd === 'number'
         ? createPiCostCeiling({
@@ -869,7 +876,9 @@ class PiPreparedQuery implements PreparedExecutionQuery {
           // not consume an untracked allowance: reject salvaged output and fail
           // closed on missing raw deltas.
           event.message.content.forEach((block, index) => {
-            if (block.type !== 'toolCall') return;
+            // The strict check guards the submitted output; other tools'
+            // arguments are validated by their own schemas when they execute.
+            if (block.type !== 'toolCall' || block.name !== STRUCTURED_OUTPUT_TOOL) return;
             try {
               JSON.parse(rawToolArguments.get(index) ?? '');
             } catch {
