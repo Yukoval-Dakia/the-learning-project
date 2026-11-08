@@ -1,4 +1,4 @@
-// PREPARED — NOT RUN. Parent owns the DB window and runtime acceptance.
+// Parent owns the DB window and runtime acceptance.
 // Real deterministic grading seals admission/input snapshots before activation.
 // Publication evidence is a fixture, not actual-provider or model admission evidence.
 
@@ -120,7 +120,7 @@ const D3A_RESPONSE: ResponseSetT = {
   ],
 };
 
-describe('YUK-1445 D3a — partial_unknown_points 结算边界（DB，prepared not run）', () => {
+describe('D3a — partial_unknown_points 结算边界（DB）', () => {
   beforeEach(resetDb);
 
   // @invariant grading: no-rule 2/3 correctness remains public with null score and no learning mutation.

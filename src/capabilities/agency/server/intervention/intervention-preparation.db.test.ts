@@ -731,7 +731,7 @@ async function prepareAdmittedDiagnosticFixture(label: string) {
   return { db, opened, active, questionId, now, staleAt };
 }
 
-describe('YUK-791 intervention preparation closed loop', () => {
+describe('intervention preparation closed loop', () => {
   beforeEach(async () => {
     await installInterventionDiagnosticLeaves();
     await resetDb();

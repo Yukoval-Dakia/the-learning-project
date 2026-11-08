@@ -10,7 +10,7 @@ import { SNAPSHOT, emptyCapture, ev, judgeEvent, withEvents } from '@/core/migra
 import { writeCaptureArtifacts } from './migration-capture';
 
 // YUK-1048 — CLI 纯函数单测（无 DB：db 客户端在 main() 内惰性构建）。
-// 幂等工件写入（checkpoint 内容寻址，review P1-1/P2-B）用 tmpdir 驱动真实 fs。
+// 幂等工件写入（checkpoint 内容寻址）用 tmpdir 驱动真实 fs。
 
 function tmpOut(): string {
   return mkdtempSync(join(tmpdir(), 'yuk1048-capture-'));

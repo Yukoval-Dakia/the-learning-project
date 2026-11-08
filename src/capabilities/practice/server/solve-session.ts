@@ -159,7 +159,7 @@ interface SolveHintAttempt extends PlanSolveHintResult {
 // a synthetic message asking for ONLY the next step (escalating with hintIndex).
 // The TeachingTurnTask prompt forbids dumping the full solution + caps ≤300 字/轮,
 // so the returned text_md is a minimal hint, not the answer. NO prior-attempt
-// summary, NO memory content (R4/R6: the hint turn is not memory-bearing).
+// summary, NO memory content (the hint turn is not memory-bearing).
 function buildSolveHintInput(
   q: {
     prompt_md: string;
