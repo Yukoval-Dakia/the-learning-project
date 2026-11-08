@@ -77,12 +77,21 @@ function mutationRowIds(payload: KnowledgeMutationPayload): string[] {
     case 'propose_new':
       return [];
     case 'reparent':
+      // Parent FOR SHARE runs after this batch. A smaller parent id already held
+      // by another accept deadlocks if the moved node is locked first.
+      return payload.new_parent_id === null
+        ? [payload.node_id]
+        : [payload.node_id, payload.new_parent_id];
     case 'archive':
       return [payload.node_id];
     case 'merge':
       return [payload.into_id, ...payload.from_ids];
     case 'split':
-      return [payload.from_id];
+      // Each new parent's FOR SHARE follows this batch, in the same id order.
+      return [
+        payload.from_id,
+        ...payload.into.flatMap((entry) => (entry.parent_id === null ? [] : [entry.parent_id])),
+      ];
   }
 }
 
