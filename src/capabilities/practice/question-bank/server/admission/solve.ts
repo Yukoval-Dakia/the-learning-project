@@ -26,6 +26,7 @@ import {
   type QuestionAdmissionSolveUnitOutputT,
   type QuestionAdmissionSolveUnitT,
   parseQuestionAdmissionSolveModelOutput,
+  undeclaredPriorFields,
 } from '../../tasks/question-admission-solve';
 import { AdmissionAttemptExhausted, AdmissionParseFailure, runAdmissionAttempts } from './attempt';
 import type { AdmissionUnitSpec, QuestionAdmissionDefinition } from './contract';
@@ -463,6 +464,13 @@ function blindPrior(
   for (const unit of output.units) {
     const partId = partOf.get(unit.scoring_unit_id);
     if (partId == null || unit.prior == null || byPart.has(partId)) continue;
+    const stripped = undeclaredPriorFields(unit.prior);
+    if (stripped.length > 0)
+      console.warn('[question_admission] solution prior undeclared fields stripped', {
+        task_run_id: taskRunId,
+        scoring_unit_id: unit.scoring_unit_id,
+        fields: stripped,
+      });
     byPart.set(partId, { part_id: partId, ...unit.prior });
   }
   return buildSolutionPriorRecord({

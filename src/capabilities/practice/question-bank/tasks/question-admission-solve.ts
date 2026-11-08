@@ -91,15 +91,19 @@ export const SolvedKey = z.discriminatedUnion('kind', [
 ]);
 export type AdmissionSolvedKeyT = z.infer<typeof SolvedKey>;
 
-/** Model-facing prior draft; solution-prior.ts enforces limits item by item. */
-export const SolvePriorDraft = z.object({
+/**
+ * Model-facing prior draft; solution-prior.ts enforces limits item by item. Every level is
+ * loose: an undeclared field inside the prior is accepted by the submit tool and stripped
+ * later, so it never costs a correction turn. The answer above stays strict.
+ */
+export const SolvePriorDraft = z.looseObject({
   methods: z.array(
-    z.object({
+    z.looseObject({
       core_idea_md: z.string(),
       key_step_md: z.string(),
       steps: z
         .array(
-          z.object({
+          z.looseObject({
             step_md: z.string(),
             /** Index into this part's prerequisites; null = the step needs none of them. */
             prerequisite_idx: z.number().int().nullable(),
@@ -110,18 +114,39 @@ export const SolvePriorDraft = z.object({
   ),
   pitfalls: z
     .array(
-      z.object({
+      z.looseObject({
         mechanism_md: z.string(),
         trigger_md: z.string(),
         method_idx: z.number().int().optional(),
       }),
     )
     .optional(),
-  prerequisites: z.array(z.object({ name_md: z.string() })).optional(),
+  prerequisites: z.array(z.looseObject({ name_md: z.string() })).optional(),
   difficulty: z
-    .object({ b_logit: z.number(), sd_logit: z.number(), basis_md: z.string().optional() })
+    .looseObject({ b_logit: z.number(), sd_logit: z.number(), basis_md: z.string().optional() })
     .optional(),
 });
+
+/** Paths of fields the prior draft does not declare, e.g. `methods.0.steps.1.note`. */
+export function undeclaredPriorFields(value: unknown): string[] {
+  const out: string[] = [];
+  const walk = (schema: z.ZodType, node: unknown, path: string): void => {
+    if (schema instanceof z.ZodOptional || schema instanceof z.ZodNullable) {
+      walk(schema.unwrap() as z.ZodType, node, path);
+    } else if (schema instanceof z.ZodArray && Array.isArray(node)) {
+      for (const [index, item] of node.entries())
+        walk(schema.element as z.ZodType, item, `${path}${index}.`);
+    } else if (schema instanceof z.ZodObject && node != null && typeof node === 'object') {
+      const shape = schema.shape as Record<string, z.ZodType>;
+      for (const [key, child] of Object.entries(node)) {
+        if (!(key in shape)) out.push(`${path}${key}`);
+        else walk(shape[key], child, `${path}${key}.`);
+      }
+    }
+  };
+  walk(SolvePriorDraft, value, '');
+  return out;
+}
 
 export const SolveUnitOutput = z.object({
   scoring_unit_id: z.string().min(1),
@@ -150,8 +175,8 @@ export const SolveUnitOutput = z.object({
     )
     .default([]),
   /**
-   * How this unit's part is solved. A prior that fails this schema is dropped, not corrected;
-   * the submit tool still refuses undeclared fields inside it, like anywhere in the unit.
+   * How this unit's part is solved. Undeclared fields inside it are stripped; a prior missing
+   * a required field is dropped whole. Neither fails the unit.
    */
   prior: SolvePriorDraft.optional().catch(undefined),
 });

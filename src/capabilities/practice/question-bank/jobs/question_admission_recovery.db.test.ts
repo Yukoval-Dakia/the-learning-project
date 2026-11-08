@@ -1044,10 +1044,24 @@ describe('question admission blind solve through the real runner', () => {
   // @invariant grading: the one blind solve the provider actually receives carries no
   // answer and no knowledge candidates, its submit tool declares the prior, and the prior
   // it returns is parsed and frozen on the published revision with step-to-prerequisite
-  // links and names only
+  // links and names only — undeclared fields inside the prior are accepted by the real
+  // submit tool and stripped, so they cost no extra turn
   // @fails-if the wire input leaks knowledge candidates or printed answers, the submit tool
-  // hides the prior, a second solve request is sent, or the returned prior is lost
-  it('sends one blind solve and freezes the prior it returns', async () => {
+  // hides the prior, a second solve request is sent, an undeclared prior field is refused
+  // or stored, or the returned prior is lost
+  it.each([
+    { name: 'declared prior', prior: PRIOR },
+    {
+      name: 'prior with undeclared fields',
+      prior: {
+        ...PRIOR,
+        methods_note: 'extra',
+        methods: [
+          { ...PRIOR.methods[0], steps: [{ ...PRIOR.methods[0].steps[0], step_note: 'extra' }] },
+        ],
+      },
+    },
+  ])('sends one blind solve and freezes the prior it returns: $name', async ({ prior }) => {
     const seed = await seedAdmission();
     const server = createServer(async (request, response) => {
       const chunks: Buffer[] = [];
@@ -1061,7 +1075,7 @@ describe('question admission blind solve through the real runner', () => {
         answer: { kind: 'select', item_ids: [seed.correctItemId] },
         equivalent_forms: [],
         typical_wrong: [],
-        prior: PRIOR,
+        prior,
       });
       response.writeHead(200, { 'content-type': 'text/event-stream' });
       const chunk = (delta: unknown, finish: string | null) =>
@@ -1136,5 +1150,6 @@ describe('question admission blind solve through the real runner', () => {
       methods: [{ steps_md: ['列出每组实验改变的量'], step_prerequisites: [0] }],
       prerequisites: [{ name_md: '控制变量法', knowledge_id: null }],
     });
+    expect(JSON.stringify(stored[0].prior)).not.toMatch(/methods_note|step_note/);
   });
 });
