@@ -6,6 +6,7 @@ import {
   type IngestionExtractionProgressPayloadT,
   writeExtractionProgress,
 } from '@/capabilities/ingestion/server/events/extraction-progress';
+import { recordExtractCostIdentities } from '@/capabilities/ingestion/server/extract-cost-identity';
 import { dispatchExtractionFollowUps } from '@/capabilities/ingestion/server/extraction-follow-up';
 import {
   assignFigures,
@@ -306,7 +307,10 @@ async function processOneOcrJob(
     }> = [];
     const glmPages: ReturnType<typeof parseGlmLayoutResponse>['pages'] = [];
     const glmParseWarnings: string[] = [];
+    // Durable paid identities, one per page, in page order.
+    const ocrOperationIds: string[] = [];
     let allPreFigures: PreAttachFigure[] = [];
+    let ocrFigureBoxes = 0;
     // Worst layout across pages, used only by the OCR fallback.
     let ocrLayout: LayoutQuality = 'structured';
 
@@ -336,6 +340,7 @@ async function processOneOcrJob(
         bossJobId,
         pageIndex,
       });
+      ocrOperationIds.push(pageOperationId);
       pageImages.push({
         data: pageBase64,
         mediaType: asset.mime_type,
@@ -397,6 +402,7 @@ async function processOneOcrJob(
         figureBoxes = parsed.figures.map((f) => f.bbox);
       }
 
+      ocrFigureBoxes += figureBoxes.length;
       if (figureBoxes.length > 0) {
         const preFigures = await cropAndUploadFigures({
           pageImage: pageBuffer,
@@ -508,8 +514,8 @@ async function processOneOcrJob(
     // (YUK-1991), so the trace pass reads the answer areas itself. An outage leaves
     // the question enrollable and the handwriting as pixels, never as a fabricated
     // answer. Traces land in extraction_evidence.handwriting before figure binding so
-    // a question with handwriting withholds its figures under the same rule as OCR
-    // evidence.
+    // a figure overlapping traced handwriting carries the learner-handwriting marker;
+    // the figure itself is still attached.
     const runHandwritingTraceFn = deps.runHandwritingTraceFn ?? runHandwritingTrace;
     const traceLeaves = collectHandwritingLeaves(structure.questions);
     if (traceLeaves.length > 0) {
@@ -582,6 +588,14 @@ async function processOneOcrJob(
         warnings.push(`Figure ${figure.asset_id} retained in source; assignment withheld`);
       }
     }
+    // Counts only, no image content: tells "OCR gave no boxes" from "cropped but unassigned".
+    const figureCounts = {
+      ocr_figure_boxes: ocrFigureBoxes,
+      pre_figures: allPreFigures.length,
+      assigned_figures: figureRefs.length,
+      bound_figures: boundFigureIds.size,
+    };
+    console.info(`[tencent_ocr_extract] figure_counts ${JSON.stringify(figureCounts)}`);
 
     // One question_block per top-level question; a cross-page stem is one block.
     // VLM and GLM fallback carry real page indices, while the Tencent fallback
@@ -624,6 +638,21 @@ async function processOneOcrJob(
       throw new PermanentError('structure produced 0 questions');
     }
 
+    // Durable cost identities for this session's extract lane — best effort:
+    // the write must not fail an otherwise-good extraction (a failed audit write
+    // convention), but a broken read is loud, not silent.
+    try {
+      await recordExtractCostIdentities(deps.db, sessionId, {
+        taskRunIds: structure.task_run_id !== undefined ? [structure.task_run_id] : [],
+        ocrOperationIds,
+      });
+    } catch (err) {
+      console.error('[tencent_ocr_extract] recordExtractCostIdentities failed', {
+        sessionId,
+        err,
+      });
+    }
+
     const extractionResult = await deps.db.transaction(async (tx) => {
       const result = await Ingestion.applyExtractionResult(tx, {
         sessionId,
@@ -631,6 +660,7 @@ async function processOneOcrJob(
         blocks,
         layoutQuality: structure.layout_quality,
         warnings,
+        figureCounts,
         notices: {
           figures_withheld: boundFigureIds.size < allPreFigures.length,
           content_lost: structure.content_lost ?? null,

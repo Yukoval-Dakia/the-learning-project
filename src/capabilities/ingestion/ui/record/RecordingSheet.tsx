@@ -80,7 +80,7 @@ export function RecordingSheet({
     <article className="rc-sheet" aria-label="一次录入" data-phase={rec.phase}>
       <header className="rc-sheet-head">
         <div className="rc-sheet-title">
-          <h2 className="rc-row-title">
+          <h2 className="rc-row-title rc-row-clip">
             <RecordTitle
               when={rec.createdAt !== null ? whenWords(rec.createdAt, now) : null}
               title={title}
@@ -165,8 +165,10 @@ export function RecordingSheet({
       {rec.blocks.length > 0 && (
         <BlockLines
           sessionId={rec.id}
+          status={rec.status}
           blocks={rec.blocks}
           serving={rec.blockServing}
+          photos={facts.entrypoint === 'vision_single' || facts.entrypoint === 'vision_paper'}
           onHoverPage={setLitPage}
         />
       )}

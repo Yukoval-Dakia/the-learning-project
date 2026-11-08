@@ -139,11 +139,29 @@ const PromptIdentity = z.object({
   prompt_fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
   prompt_template_revision: z.string().min(1),
 });
+export const SandboxToolCallEvidence = z.object({
+  tool_call_id: z.string().min(1),
+  tool_name: z.string().min(1),
+  workspace: z.string().optional(),
+  code_sha256: z.string().optional(),
+  output_sha256: z.string().optional(),
+  runtime_version: z.object({ python: z.string(), bash: z.string() }).optional(),
+});
 const TrustedModelExecution = PromptIdentity.extend({
   version: z.literal(1),
   task_run_id: z.string().min(1),
   provider: z.string().min(1),
   model: z.string().min(1),
+  // Present iff the run used the agent workspace: per-call digests + runtime,
+  // with the full script/output in tool_call_log behind tool_call_ids. Evidence
+  // only — never part of the corroboration match, so a supplied verdict stays
+  // verifiable against the same persisted run.
+  sandbox: z
+    .object({
+      tool_call_ids: z.array(z.string().min(1)).min(1),
+      calls: z.array(SandboxToolCallEvidence),
+    })
+    .optional(),
 });
 const UntrustedExecution = PromptIdentity.extend({
   version: z.literal(1),

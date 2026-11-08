@@ -98,6 +98,8 @@ export async function getRecentReviewEvents(
 //
 // Chained judge cause is hydrated onto attempt entries. Inactive (retracted or
 // superseded) rows are filtered out. Limit defaults to 10, capped at 50.
+// `actions` keeps one kind from filling the window of another: the latest
+// score is an attempt read, and later reviews must not evict it.
 // ============================================================================
 
 export type QuestionTimelineEntry =
@@ -145,17 +147,22 @@ export type QuestionTimelineEntry =
 const DEFAULT_QUESTION_TIMELINE_LIMIT = 10;
 const MAX_QUESTION_TIMELINE_LIMIT = 50;
 
+const QUESTION_TIMELINE_ACTIONS = ['attempt', 'review', 'experimental:assessment_attempt'] as const;
+type QuestionTimelineAction = (typeof QUESTION_TIMELINE_ACTIONS)[number];
+
 export async function getQuestionTimeline(
   db: DbLike,
   questionId: string,
   limit: number = DEFAULT_QUESTION_TIMELINE_LIMIT,
+  actions: readonly QuestionTimelineAction[] = QUESTION_TIMELINE_ACTIONS,
 ): Promise<QuestionTimelineEntry[]> {
+  if (actions.length === 0) return [];
   const effectiveLimit = Math.min(Math.max(limit, 1), MAX_QUESTION_TIMELINE_LIMIT);
 
   const conditions = [
     eq(event.subject_kind, 'question'),
     eq(event.subject_id, questionId),
-    inArray(event.action, ['attempt', 'review', 'experimental:assessment_attempt']),
+    inArray(event.action, [...actions]),
   ];
 
   const firstRows = await db

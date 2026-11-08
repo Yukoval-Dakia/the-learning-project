@@ -30,11 +30,13 @@ import { learning_session, question_block } from '@/db/schema';
  */
 import { resolveSessionDerivationPolicy } from '@/kernel/read-models/usage-policy';
 import { type NameKcFn, tagKnowledge } from '@/kernel/records/knowledge-tag';
+import { type RunTaskCallCtx, makeRunTaskTextFn } from '@/server/ai/runner-fn';
 import { getKnownSubjects } from '@/subjects/profile';
 import { readRevertedBlockIds } from './block-revert-state';
 import { detectStudentWork, pageScopedQuestionImageRefs } from './capture/block-answer-evidence';
 import { capturedQuestionShape } from './capture/captured-question';
 import { blockHasPrompt, blockQuestionMarkdown } from './capture/question-text';
+import { recordExtractCostIdentities } from './extract-cost-identity';
 import { enrollBlockIntoItemBank } from './item-bank-enrollment';
 import { redactIngestionText } from './privacy-guard';
 
@@ -67,7 +69,9 @@ export interface RunAutoEnrollResult {
 /** Facts recorded on the question for a block auto-enrolled below the line. */
 export interface AutoEnrollmentMarkers {
   enrolled_by: 'workflow_judge';
-  knowledge: 'attributed' | 'missing';
+  /** 'restricted' = the document's derivation policy suppressed attribution —
+   *  distinct from 'missing' (attribution ran/failed and found nothing). */
+  knowledge: 'attributed' | 'missing' | 'restricted';
   /** Combined extraction/tagging confidence; a signal, never a gate. */
   confidence: number;
   figures_attached: number;
@@ -137,12 +141,40 @@ export async function runAutoEnrollForSession(
   }
 
   // Resolve document usage once per run; every enrolled block inherits it instead of
-  // paying an unindexed lookup per block.
+  // paying an unindexed lookup per block. The policy gates every model send below
+  // (assembly, attribution bridge/naming/embedder) — restricted documents still
+  // enroll but never reach a provider.
   const sessionDocUsage = {
     policy: await resolveSessionDerivationPolicy(params.db, params.sessionId),
     sessionId: params.sessionId,
+    sourceDocumentId: session.source_document_id ?? null,
   };
   const sourceDocumentId = session.source_document_id ?? '';
+
+  // Every paid run in this lane reports its task_run_id so the session's cost
+  // evidence can attribute it. Defaults mirror the callees' own (the production
+  // runner bound to the same db), so injected test fns are tracked identically.
+  const extractRunIds = new Set<string>();
+  const trackRunId = <T extends { task_run_id?: string }>(result: T): T => {
+    if (result.task_run_id) extractRunIds.add(result.task_run_id);
+    return result;
+  };
+  const bridgeRunTaskFn: ColdStartBridgeRunTaskFn = async (kind, input, ctx) =>
+    trackRunId(
+      await (params.runColdStartBridgeFn ?? makeRunTaskTextFn(params.db))(
+        kind,
+        input,
+        ctx as RunTaskCallCtx,
+      ),
+    );
+  const assemblyRunTaskFn: BlockAssemblyRunTaskFn = async (kind, input, ctx) =>
+    trackRunId(
+      await (params.runBlockAssemblyFn ?? makeRunTaskTextFn(params.db))(
+        kind,
+        input,
+        ctx as RunTaskCallCtx,
+      ),
+    );
 
   // Bound the paid fan-out per delivery. The caller re-enqueues with
   // `next_after_block` when a batch fills, so a long page still completes. The cursor is
@@ -181,23 +213,37 @@ export async function runAutoEnrollForSession(
 
   // Block-assembly merge proposals run before any enroll import, while blocks are still
   // draft (mergeQuestions on user accept requires draft). AI only proposes; an outage is
-  // logged and swallowed because it must not abort enrollment.
-  try {
-    await runBlockAssemblyForSession(params.db, {
-      sessionId: params.sessionId,
-      blocks: blocks.map((b) => ({
-        id: b.id,
-        structured: b.structured,
-        layout_quality: b.layout_quality,
-        // page_spans lets projectBlock keep real page_index for VLM-path sessions;
-        // Tencent-path blocks carry placeholder page_index=0.
-        page_spans: b.page_spans,
-      })),
-      runTaskFn: params.runBlockAssemblyFn,
-      ctx: params.ctx ?? { db: params.db },
-    });
-  } catch (err) {
-    console.error(`[auto_enroll:block_assembly] pass failed for session ${params.sessionId}`, err);
+  // logged and swallowed because it must not abort enrollment. A restricted usage
+  // policy forbids the send entirely — the inner gate enforces the same.
+  if (sessionDocUsage.policy === 'allow') {
+    try {
+      await runBlockAssemblyForSession(params.db, {
+        sessionId: params.sessionId,
+        blocks: blocks.map((b) => ({
+          id: b.id,
+          structured: b.structured,
+          layout_quality: b.layout_quality,
+          // page_spans lets projectBlock keep real page_index for VLM-path sessions;
+          // Tencent-path blocks carry placeholder page_index=0.
+          page_spans: b.page_spans,
+        })),
+        usage: {
+          sourceDocumentId: sessionDocUsage.sourceDocumentId,
+          derivationPolicy: sessionDocUsage.policy,
+        },
+        runTaskFn: assemblyRunTaskFn,
+        ctx: params.ctx ?? { db: params.db },
+      });
+    } catch (err) {
+      console.error(
+        `[auto_enroll:block_assembly] pass failed for session ${params.sessionId}`,
+        err,
+      );
+    }
+  } else {
+    console.info(
+      `[auto_enroll] block assembly skipped for ${params.sessionId}: derivation policy '${sessionDocUsage.policy}'`,
+    );
   }
 
   const enrolled: AutoEnrolledBlock[] = [];
@@ -224,72 +270,79 @@ export async function runAutoEnrollForSession(
     // Enroll keeps tagKnowledge as the attribution writer, but a failed or empty
     // attribution is a marker, never an enrollment condition (YUK-1994): the question
     // still enters the bank and the background knowledge backfill repairs the label.
+    // A restricted usage policy forbids every model send of this document's content
+    // — bridge, naming call and tag embedder alike — so the block enrolls with
+    // `knowledge: 'restricted'` (not 'missing': the gap is policy, not attribution).
     let tagging: TaggingOutputT;
-    try {
-      // Resolve the PROPOSE parent. The production job passes no subjectId (subject is a
-      // derived view), so classify it per block through the cold-start bridge, then reuse
-      // that name for tagKnowledge so no second model call is made. Without this, a
-      // missing subjectId would build `seed:undefined:root` and route every block to review.
-      let subjectRootId: string;
-      let bridgeNameKc: NameKcFn | undefined;
-      if (params.subjectId) {
-        subjectRootId = `seed:${params.subjectId}:root`;
-      } else {
-        const bridge = await runColdStartBridge({
-          db: params.db,
-          questionMd,
-          // Placeholder forces the ECHO path; only the classified subject_id is used.
-          existingReferenceMd: '(reference answer not needed for tagging)',
-          knowledgeHint: block.knowledge_hint,
-          knownSubjects: getKnownSubjects(),
-          runTaskFn: params.runColdStartBridgeFn,
-          ctx: params.ctx ?? { db: params.db },
-        });
-        subjectRootId = `seed:${bridge.subject_id}:root`;
-        // Reuse the classified name so a PROPOSE makes no second model call, and
-        // forward the bridge run's provenance for the tag audit event (YUK-1604).
-        bridgeNameKc = async () => ({
-          kc_name: bridge.kc_name,
-          ...(bridge.task_run_id !== undefined ? { task_run_id: bridge.task_run_id } : {}),
-          ...(bridge.cost_usd !== undefined ? { cost_usd: bridge.cost_usd } : {}),
-        });
-      }
-      const tag = await tagKnowledgeFn(
-        {
-          db: params.db,
-          embedder: createKnowledgeTagEmbedder(params.providerAttempt),
-          nameKcFn:
-            bridgeNameKc ??
-            createKnowledgeNamer({
-              db: params.db,
-              runTaskFn: params.runColdStartBridgeFn,
-              ctx: params.ctx ?? { db: params.db },
-            }),
-          batchCache: tagBatchCache,
-        },
-        {
-          // Redact identifiers at the model boundary; redact the hint too so audit
-          // events match the model-facing contract. sessionId binds the events to this
-          // session for the live derivation policy.
-          questionText: redactIngestionText(questionMd).text,
-          knowledgeHint: block.knowledge_hint
-            ? redactIngestionText(block.knowledge_hint).text
-            : block.knowledge_hint,
-          sessionId: params.sessionId,
-          subjectRootId,
-          sourceRef: { kind: 'question_block', id: block.id },
-        },
-      );
-      tagging = synthesizeTaggingOutput(tag.knowledge_ids);
-    } catch (err) {
-      rethrowKnowledgeTagInvariant(err);
-      // A data-integrity invariant still aborts; ordinary tagging faults (missing
-      // seed root, provider outage) leave the question unattributed but enrolled.
-      console.error(
-        `[auto_enroll] tagKnowledge failed for block ${block.id}; enrolling without knowledge`,
-        err,
-      );
+    if (sessionDocUsage.policy !== 'allow') {
       tagging = synthesizeTaggingOutput([]);
+    } else {
+      try {
+        // Resolve the PROPOSE parent. The production job passes no subjectId (subject is a
+        // derived view), so classify it per block through the cold-start bridge, then reuse
+        // that name for tagKnowledge so no second model call is made. Without this, a
+        // missing subjectId would build `seed:undefined:root` and route every block to review.
+        let subjectRootId: string;
+        let bridgeNameKc: NameKcFn | undefined;
+        if (params.subjectId) {
+          subjectRootId = `seed:${params.subjectId}:root`;
+        } else {
+          const bridge = await runColdStartBridge({
+            db: params.db,
+            questionMd,
+            // Placeholder forces the ECHO path; only the classified subject_id is used.
+            existingReferenceMd: '(reference answer not needed for tagging)',
+            knowledgeHint: block.knowledge_hint,
+            knownSubjects: getKnownSubjects(),
+            runTaskFn: bridgeRunTaskFn,
+            ctx: params.ctx ?? { db: params.db },
+          });
+          subjectRootId = `seed:${bridge.subject_id}:root`;
+          // Reuse the classified name so a PROPOSE makes no second model call, and
+          // forward the bridge run's provenance for the tag audit event (YUK-1604).
+          bridgeNameKc = async () => ({
+            kc_name: bridge.kc_name,
+            ...(bridge.task_run_id !== undefined ? { task_run_id: bridge.task_run_id } : {}),
+            ...(bridge.cost_usd !== undefined ? { cost_usd: bridge.cost_usd } : {}),
+          });
+        }
+        const tag = await tagKnowledgeFn(
+          {
+            db: params.db,
+            embedder: createKnowledgeTagEmbedder(params.providerAttempt),
+            nameKcFn:
+              bridgeNameKc ??
+              createKnowledgeNamer({
+                db: params.db,
+                runTaskFn: bridgeRunTaskFn,
+                ctx: params.ctx ?? { db: params.db },
+              }),
+            batchCache: tagBatchCache,
+          },
+          {
+            // Redact identifiers at the model boundary; redact the hint too so audit
+            // events match the model-facing contract. sessionId binds the events to this
+            // session for the live derivation policy.
+            questionText: redactIngestionText(questionMd).text,
+            knowledgeHint: block.knowledge_hint
+              ? redactIngestionText(block.knowledge_hint).text
+              : block.knowledge_hint,
+            sessionId: params.sessionId,
+            subjectRootId,
+            sourceRef: { kind: 'question_block', id: block.id },
+          },
+        );
+        tagging = synthesizeTaggingOutput(tag.knowledge_ids);
+      } catch (err) {
+        rethrowKnowledgeTagInvariant(err);
+        // A data-integrity invariant still aborts; ordinary tagging faults (missing
+        // seed root, provider outage) leave the question unattributed but enrolled.
+        console.error(
+          `[auto_enroll] tagKnowledge failed for block ${block.id}; enrolling without knowledge`,
+          err,
+        );
+        tagging = synthesizeTaggingOutput([]);
+      }
     }
 
     // Deterministic confidence signal; it never decides the route.
@@ -301,7 +354,12 @@ export async function runAutoEnrollForSession(
     const knowledgeIds = verdict.prefilled.knowledge_ids;
     const markers: AutoEnrollmentMarkers = {
       enrolled_by: 'workflow_judge',
-      knowledge: knowledgeIds.length > 0 ? 'attributed' : 'missing',
+      knowledge:
+        sessionDocUsage.policy !== 'allow'
+          ? 'restricted'
+          : knowledgeIds.length > 0
+            ? 'attributed'
+            : 'missing',
       confidence: verdict.confidence,
       figures_attached: block.figures.length,
       student_work: detectStudentWork(block),
@@ -343,8 +401,6 @@ export async function runAutoEnrollForSession(
       routedToReview += 1;
       continue;
     }
-    if (result === null) continue;
-
     // A concurrent runner already enrolled this block.
     if (result === null) continue;
 
@@ -352,6 +408,16 @@ export async function runAutoEnrollForSession(
 
     // Failure-learning follows from the committed attempt event via the practice-owned
     // durable subscription, so this producer has no queue dependency.
+  }
+
+  // Persist the paid identities this run incurred — best effort like the other
+  // audit writes; a crash mid-run under-reports (recorded as a gap, not a zero).
+  try {
+    await recordExtractCostIdentities(params.db, params.sessionId, {
+      taskRunIds: [...extractRunIds],
+    });
+  } catch (err) {
+    console.error(`[auto_enroll] recordExtractCostIdentities failed`, err);
   }
 
   // Cursor progress is measured on the selected page, not the filtered set: a batch

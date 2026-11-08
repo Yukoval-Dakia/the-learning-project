@@ -3,22 +3,13 @@ import { ApiError } from '@/kernel/http';
 import type {
   ProposalAcceptApplier,
   ProposalAcceptInput,
-  ProposalAcceptProposal,
   ProposalAcceptResult,
   ProposalDismissApplier,
   ProposalRetractApplier,
 } from '@/kernel/proposals';
-import { toProposalLifecycleResult } from '@/kernel/proposals';
 import { decideKnowledgeEdgeProposal } from './edge-proposal-accept';
 import { retractKnowledgeCreate } from './knowledge-archive-operation';
 import { acceptProposal, dismissProposal } from './proposals';
-
-function signalProposal(proposal: ProposalAcceptProposal) {
-  return {
-    ...proposal,
-    kind: proposal.payload.kind,
-  };
-}
 
 async function acceptKnowledgeProposal(
   db: Db,
@@ -51,7 +42,7 @@ async function acceptKnowledgeProposal(
   // The decision template owns the rate write, the decision lock and the
   // after-commit signal; the applier only supplies the signal source and note.
   const result = await acceptProposal(db, proposalId, {
-    proposal: signalProposal(proposal),
+    proposal: { ...proposal, kind: proposal.payload.kind },
     userNote: input.user_note,
     ...(input.actor ? { actor: input.actor } : {}),
   });
@@ -72,7 +63,7 @@ export const knowledgeEdgeProposalAcceptApplier: ProposalAcceptApplier = async (
   });
   return {
     kind: 'knowledge_edge',
-    result: toProposalLifecycleResult(result),
+    result: { ...result },
     lifecycle_outcome: result.generate_event_id === null ? 'dismissed' : 'accepted',
   };
 };
@@ -91,12 +82,12 @@ export const knowledgeNodeProposalDismissApplier: ProposalDismissApplier = async
 
 export const knowledgeEdgeProposalDismissApplier: ProposalDismissApplier = async (db, input) => ({
   kind: input.proposal.payload.kind,
-  result: toProposalLifecycleResult(
-    await decideKnowledgeEdgeProposal(db as Db, input.proposalId, {
+  result: {
+    ...(await decideKnowledgeEdgeProposal(db as Db, input.proposalId, {
       decision: 'dismiss',
       user_note: input.user_note,
-    }),
-  ),
+    })),
+  },
 });
 
 type AssertKnowledgeNodeParity = (tx: Tx, nodeId: string) => Promise<void>;

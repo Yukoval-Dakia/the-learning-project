@@ -7,6 +7,11 @@ import { randomUUID } from 'node:crypto';
 
 import type { Db } from '@/db/client';
 import type { JobDag } from '@/kernel/job-dag';
+import {
+  PROVIDER_WAIT_MAX,
+  providerWaitDelayMs,
+  readProviderWaitRequest,
+} from '@/server/ai/provider-wait';
 import { readJobYieldReport } from '@/server/boss/job-yield';
 import {
   LAYER_STAGGER_MAX_SECONDS,
@@ -16,6 +21,7 @@ import {
   ORCHESTRATOR_ANCHOR_MINUTE,
   ORCHESTRATOR_CATCHUP_WINDOW_SECONDS,
   ORCHESTRATOR_QUEUE,
+  ORCHESTRATOR_SEND_IN_FLIGHT_MS,
   ORCHESTRATOR_TZ,
   TICK_INTERVAL_SECONDS,
 } from './constants';
@@ -41,6 +47,7 @@ import {
   listActiveRuns,
   loadNode,
   loadNodes,
+  rescheduleNodeProviderWait,
   updateNodeStatus,
 } from './store';
 
@@ -310,6 +317,56 @@ async function pollInflightNode(
   const job = node.boss_job_id ? await deps.boss.getJobById(node.job_name, node.boss_job_id) : null;
   const jobState = mapBossState(job?.state ?? null);
   if (jobState === 'succeeded') {
+    // A member that proved a transient provider rejection leaves a wait marker on
+    // its output instead of settling; the node waits out the route outage rather
+    // than landing terminal. The orchestrator owns the budget (provider_waits +
+    // the node timeout), the member only proved eligibility.
+    const wait = readProviderWaitRequest(job?.output);
+    if (wait !== undefined && node.provider_waits < PROVIDER_WAIT_MAX) {
+      const bossJobId = randomUUID();
+      const rescheduled = await rescheduleNodeProviderWait(deps.db, node.id, {
+        bossJobId,
+        oldBossJobId: node.boss_job_id,
+        detail: `provider_wait:${wait.retryClass}${wait.detail ? `: ${wait.detail}` : ''}`,
+        now,
+      });
+      // CAS lost: a concurrent tick owns the transition; its outcome stands.
+      if (!rescheduled) return;
+      const delaySeconds = Math.ceil(providerWaitDelayMs(node.provider_waits + 1) / 1000);
+      const sentId = await deps.boss.send(
+        node.job_name,
+        {},
+        {
+          id: bossJobId,
+          startAfter: delaySeconds,
+        },
+      );
+      if (sentId === null) {
+        // A fresh uuid never conflicts, so null here means the send never landed;
+        // the row already carries the reserved id, so settle honestly.
+        await settleNode(deps.db, deps.run, node, {
+          status: 'failed',
+          detail: `provider wait redelivery never landed (waits=${node.provider_waits + 1})`,
+          now,
+        });
+        return;
+      }
+      node.boss_job_id = sentId;
+      node.provider_waits += 1;
+      console.warn(
+        `[orchestrator] node '${node.job_name}' waiting for provider recovery ` +
+          `(wait ${node.provider_waits}/${PROVIDER_WAIT_MAX}, next attempt in ${delaySeconds}s): ${wait.detail}`,
+      );
+      return;
+    }
+    if (wait !== undefined) {
+      await settleNode(deps.db, deps.run, node, {
+        status: 'failed',
+        detail: `provider_wait_exhausted:${wait.retryClass} after ${node.provider_waits} waits`,
+        now,
+      });
+      return;
+    }
     // A stalled yield becomes degraded; degraded stays succeeded with detail.
     const report = readJobYieldReport(job?.output);
     await settleNode(deps.db, deps.run, node, {
@@ -326,14 +383,35 @@ async function pollInflightNode(
   } else if (jobState === 'running' && node.status !== 'running') {
     await updateNodeStatus(deps.db, node.id, { status: 'running', now });
   } else if (jobState === null || jobState === 'enqueued') {
-    // No row: re-send the reserved id until the node times out. A shorter window would
-    // fail a job that never existed after a slow restart; retention far exceeds it.
-    if (jobState === null && node.boss_job_id && !isNodeTimedOut(node, now, timeoutMs)) {
+    // No row yet: re-send only once the claim is past the in-flight window, until timeout.
+    // A younger gap is the other replica's insert, not a lost send.
+    if (
+      jobState === null &&
+      node.boss_job_id &&
+      !isNodeTimedOut(node, now, timeoutMs) &&
+      reservedJobGap(node, now) === 'lost'
+    ) {
       console.warn(
         `[orchestrator] node '${node.job_name}' (${node.id}) has no pg-boss job for reserved id ${node.boss_job_id} — re-sending idempotently (send never landed)`,
       );
+      // A wait-armed node's lost job keeps its remaining delay: resending it
+      // immediately would burn the provider budget the wait was protecting.
+      // updated_at is the arm-time anchor (the CAS's own write).
+      const waitRemainingMs = node.detail?.startsWith('provider_wait:')
+        ? Math.max(
+            0,
+            providerWaitDelayMs(node.provider_waits) - (now.getTime() - node.updated_at.getTime()),
+          )
+        : 0;
       // Same empty payload as the first send.
-      await deps.boss.send(node.job_name, {}, { id: node.boss_job_id });
+      await deps.boss.send(
+        node.job_name,
+        {},
+        {
+          id: node.boss_job_id,
+          ...(waitRemainingMs > 0 ? { startAfter: Math.ceil(waitRemainingMs / 1000) } : {}),
+        },
+      );
       return;
     }
     if (isNodeTimedOut(node, now, timeoutMs)) {
@@ -441,6 +519,17 @@ async function cancelRunInflightJobs(
 function isNodeTimedOut(node: NodeRow, now: Date, timeoutMs: number): boolean {
   if (!node.enqueued_at) return false;
   return now.getTime() - node.enqueued_at.getTime() > timeoutMs;
+}
+
+/** `in_flight`: the claim is visible and the sender's insert may still be committing. */
+type ReservedJobGap = 'in_flight' | 'lost';
+
+function reservedJobGap(node: NodeRow, now: Date): ReservedJobGap {
+  const claimedAt = node.enqueued_at?.getTime();
+  if (claimedAt === undefined) return 'lost';
+  const ageMs = now.getTime() - claimedAt;
+  if (ageMs >= 0 && ageMs < ORCHESTRATOR_SEND_IN_FLIGHT_MS) return 'in_flight';
+  return 'lost';
 }
 
 function summarize(nodes: Map<string, NodeRow>): AdvanceSummary {

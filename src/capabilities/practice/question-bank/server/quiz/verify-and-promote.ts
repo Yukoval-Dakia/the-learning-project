@@ -68,7 +68,7 @@ function isPromotableSource(source: string): boolean {
 /**
  * Re-query the verify event id written by the转调 run fn on a successful promote. run 函数
  * 不返 verify event id (RunSourceVerifyResult/RunQuizVerifyResult 只返 status/checks/overall)，
- * 但 matcher 需要 verifyEventId 留痕。回查谓词 = run 函数内部幂等查的同款索引路径
+ * 但调用方需要 verifyEventId 留痕。回查谓词 = run 函数内部幂等查的同款索引路径
  * (action, subject_kind='question', subject_id, outcome != 'error')，取最新一条。
  * 改 run 函数返 id 是后续 cleanup follow-up (不改 handler 签名，否则破 b1 等价回归).
  */
@@ -323,13 +323,13 @@ export async function verifyAndPromote(p: VerifyAndPromoteParams): Promise<Verif
 
   // ── 正常分支 = 薄派发 ───────────────────────────────────────────────────────
   // B-normal-draft (inc-4a) — the override branch already guards draft_status;
-  // the normal branch did NOT, so an owner-UI retry (or matcher race) landing on an
+  // the normal branch did NOT, so an owner-UI retry landing on an
   // already-active row would re-run a PAID verify against a non-draft. The delegated run fn
   // only short-circuits on source mismatch / terminal-event idempotency, NOT on
   // draft_status, so gate it here BEFORE dispatch.
   // - A non-draft row that already carries a TERMINAL verify event was legitimately
   // promoted (e.g. an eager verify landed first,): report it as
-  // promoted + surface the existing verify event id, so a matcher caller doesn't
+  // promoted + surface the existing verify event id, so a caller doesn't
   // skip a perfectly usable row.
   // - A non-draft row WITHOUT a terminal verify event (owner-UI retry on an already-
   // active row, never legitimately promoted via this path) → skipped:not_draft.
@@ -349,8 +349,7 @@ export async function verifyAndPromote(p: VerifyAndPromoteParams): Promise<Verif
   // mirror the override branch's tombstone guard (metadata.archived_at
   // check above) and extend it to metadata.dismissed_at: a proposal-dismissed or
   // soft-archived row is dead, not pending — never dispatch a PAID verify against
-  // it and never promote it back to active. The matcher already skips these, but
-  // owner-UI retry / direct callers can land here.
+  // it and never promote it back to active. owner-UI retry / direct callers can land here.
   const normalMeta = row.metadata as Record<string, unknown> | null;
   if (normalMeta?.archived_at != null || normalMeta?.dismissed_at != null) {
     return { promoted: false, status: 'skipped:archived_draft' };
@@ -377,7 +376,7 @@ export async function verifyAndPromote(p: VerifyAndPromoteParams): Promise<Verif
   // an eager verify can promote the row BEFORE this lazy call lands. Then the
   // run fn short-circuits as skipped:already_verified (terminal verify event exists) but the
   // row is ALREADY active. Treating that as promoted:false (status !== 'verified') would make
-  // the matcher skip a perfectly usable row. Re-SELECT on already_verified: if the row is no
+  // the caller skip a perfectly usable row. Re-SELECT on already_verified: if the row is no
   // longer a draft (eager promote happened), report it as promoted + surface the existing
   // verify event id. If it's still a draft (the terminal event was a failed/needs_review
   // verdict, not a promote), keep the honest not-promoted result.

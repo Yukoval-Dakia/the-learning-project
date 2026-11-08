@@ -1,20 +1,24 @@
 // ADR-0021 — transactional outbox real-path integration tests.
 //
-// Per `docs/audit/2026-05-27-wave1-postship-drift.md` W-05: unit-tested
-// helpers + missed caller wiring = dead production code. These tests
-// exercise the FULL outbox chain on a real Postgres (testcontainer):
-//   writeEvent → event.ingest_at NULL → poll handler → boss.send + UPDATE.
-// Only `boss.send` is mocked (no pg-boss container required); db + outbox
-// SQL (SELECT FOR UPDATE SKIP LOCKED + UPDATE) run for real.
+// The poll contract: the unstamped event row is the durable intent, the engine
+// send happens after the claim commits under a stable delivery id, and
+// `ingest_at` is the acceptance acknowledgement. These tests exercise the full
+// chain on a real Postgres + real pg-boss (testcontainer): rollback, the
+// crash window between acceptance and stamp, and concurrent drains. Only the
+// Mem0-side ingest handler stays out of scope.
 
-import { eq } from 'drizzle-orm';
+import { eq, isNull } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { newId } from '@/core/ids';
 import { event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { _resetBossForTests, createBoss } from '@/server/boss/client';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
-import { MEMORY_EVENT_INGEST_QUEUE, buildMemoryIngestOutboxPollHandler } from './triggers';
+import {
+  MEMORY_EVENT_INGEST_QUEUE,
+  buildMemoryIngestOutboxPollHandler,
+  enqueueEventMemoryIngest,
+} from './triggers';
 
 function attemptPayload(question_id = 'q1') {
   return {
@@ -54,23 +58,89 @@ describe('outbox poll handler (real-path)', () => {
     await realBoss.deleteAllJobs(MEMORY_EVENT_INGEST_QUEUE);
   });
 
-  it('tx rollback: pg-boss send participates in the same poll transaction', async () => {
+  // @invariant concurrency: a rolled-back business transaction leaves no
+  // intent for the drain to deliver
+  // @fails-if the intent write escaped its business transaction — the drained
+  // queue would carry a delivery for a business write that never committed
+  it('rollback of the business write leaves no intent for the drain', async () => {
+    const db = testDb();
+    const id = newId();
+    await expect(
+      db.transaction(async (tx) => {
+        await writeEvent(tx, { id, ...attemptPayload() });
+        throw new Error('business write aborted');
+      }),
+    ).rejects.toThrow('business write aborted');
+
+    const boss = { send: vi.fn(realBoss.send.bind(realBoss)) };
+    await buildMemoryIngestOutboxPollHandler(db, boss)([]);
+
+    expect(boss.send).not.toHaveBeenCalled();
+    expect(await realBoss.fetch(MEMORY_EVENT_INGEST_QUEUE)).toHaveLength(0);
+  });
+
+  // @invariant concurrency: an engine-accepted delivery whose
+  // stamp never landed replays the identical job, not a second one
+  // @fails-if the drain mints a fresh delivery id per pass, or stamps without
+  // engine acceptance — the crash window would multiply paid ingest work
+  it.each([
+    {
+      scenario: 'send resolves but the stamp is lost (crash after acceptance)',
+      preLand: true,
+      expectJobs: 1,
+      expectStamped: true,
+    },
+    {
+      scenario: 'engine rejects the send; the row stays pending for the next drain',
+      preLand: false,
+      expectJobs: 0,
+      expectStamped: false,
+    },
+  ])('$scenario', async ({ preLand, expectJobs, expectStamped }) => {
     const db = testDb();
     const id = newId();
     await writeEvent(db, { id, ...attemptPayload() });
-    const boss = {
-      send: vi.fn(async (name: string, data: object, options?: object) => {
-        await realBoss.send(name, data, options);
-        throw new Error('force rollback after transactional send');
-      }),
-    };
+    if (preLand) {
+      // Engine already holds this exact delivery; the stamp never landed.
+      await enqueueEventMemoryIngest({ send: realBoss.send.bind(realBoss) }, id);
+    }
 
-    const poll = buildMemoryIngestOutboxPollHandler(db, boss);
-    await expect(poll([])).rejects.toThrow('force rollback after transactional send');
+    const boss = preLand
+      ? { send: vi.fn(realBoss.send.bind(realBoss)) }
+      : {
+          send: vi.fn(async () => {
+            throw new Error('engine unreachable');
+          }),
+        };
+    await buildMemoryIngestOutboxPollHandler(db, boss)([]);
 
-    const rows = await db.select().from(event).where(eq(event.id, id));
-    expect(rows).toHaveLength(1);
-    expect(rows[0].ingest_at).toBeNull();
-    expect(await realBoss.fetch(MEMORY_EVENT_INGEST_QUEUE)).toHaveLength(0);
+    const [row] = await db.select().from(event).where(eq(event.id, id));
+    expect(await realBoss.fetch(MEMORY_EVENT_INGEST_QUEUE)).toHaveLength(expectJobs);
+    expect(row.ingest_at != null).toBe(expectStamped);
+    if (preLand) {
+      // The replay presented the identical stable id — the engine deduped it.
+      expect(boss.send).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  // @invariant concurrency: two racing pollers partition claims but converge
+  // on exactly one engine delivery per row
+  // @fails-if overlapping drains can mint a second job for the same event —
+  // the paid ingest lane would double-pay under concurrent schedulers
+  it('concurrent pollers deliver each pending event exactly once', async () => {
+    const db = testDb();
+    const ids = [newId(), newId(), newId()];
+    for (const id of ids) {
+      await writeEvent(db, { id, ...attemptPayload(id) });
+    }
+    const send = realBoss.send.bind(realBoss);
+    const poll = buildMemoryIngestOutboxPollHandler(db, { send });
+
+    await Promise.all([poll([]), poll([])]);
+
+    const jobs = await realBoss.fetch(MEMORY_EVENT_INGEST_QUEUE, { batchSize: 10 });
+    expect(jobs).toHaveLength(ids.length);
+    const unstamped = await db.select({ id: event.id }).from(event).where(isNull(event.ingest_at));
+    expect(unstamped).toHaveLength(0);
   });
 });

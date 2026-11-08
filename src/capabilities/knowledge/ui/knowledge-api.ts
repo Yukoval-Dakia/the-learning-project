@@ -154,7 +154,7 @@ export interface EdgeProposalInboxRow {
     reason_md?: string;
     proposed_change: {
       /** Pre-D4-E1 proposals omit edge_op and remain create proposals. */
-      edge_op?: 'create' | 'archive';
+      edge_op?: 'create' | 'archive' | 'supersede';
       archive_edge_id?: string;
       from_knowledge_id?: string;
       to_knowledge_id?: string;
@@ -166,8 +166,10 @@ export interface EdgeProposalInboxRow {
 
 export function edgeProposalOperation(
   proposal: Pick<EdgeProposalInboxRow, 'payload'>,
-): 'create' | 'archive' {
-  return proposal.payload.proposed_change.edge_op === 'archive' ? 'archive' : 'create';
+): 'create' | 'archive' | 'retired' {
+  const op = proposal.payload.proposed_change.edge_op;
+  // Replacing a relation is no longer supported: such a suggestion can only be dismissed.
+  return op === 'archive' ? 'archive' : op === 'supersede' ? 'retired' : 'create';
 }
 
 export const getEdgeProposals = () =>

@@ -8,6 +8,7 @@
 //   ⑤ 全终态 → run 收尾 completed，不再自调度 tick；
 //   ⑥ 单飞：同日重复 start 不建第二条 run。
 
+import { randomUUID } from 'node:crypto';
 import { and, eq } from 'drizzle-orm';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dag_orchestration_node, dag_orchestration_run } from '@/db/schema';
@@ -18,18 +19,19 @@ import {
   rollbackTestTransaction,
   testDb,
 } from '../../../tests/helpers/db';
-import { ORCHESTRATOR_QUEUE } from './constants';
+import { ORCHESTRATOR_QUEUE, ORCHESTRATOR_SEND_IN_FLIGHT_MS } from './constants';
 import {
   type OrchestratorBoss,
   runOrchestratorCatchUp,
   runOrchestratorStart,
   runOrchestratorTick,
 } from './orchestrator';
-import { finishRun, updateNodeStatus } from './store';
+import { finishRun, rescheduleNodeProviderWait, updateNodeStatus } from './store';
 
 let db = testDb();
 const RUN_DATE = '2026-07-25';
 const NOW = new Date('2026-07-25T02:30:00+08:00');
+const AFTER_IN_FLIGHT = new Date(NOW.getTime() + ORCHESTRATOR_SEND_IN_FLIGHT_MS);
 
 /**
  * fake pg-boss：记录 send，按 (name,id) 回放可编程 state。
@@ -228,6 +230,8 @@ describe('orchestrator trigger semantics', () => {
   // The self-healing re-send (⑪) is the OTHER site that used to reconstruct the payload, from
   // the persisted `node.stale` column. It must stay shaped like the original send — "same id,
   // same job" has to hold in more than just the id.
+  // @invariant concurrency: a crashed stale send is re-sent once under the reserved id after the in-flight window
+  // @fails-if recovery re-sends before that window, or under a different id or payload
   it('④b the idempotent re-send of a stale node carries the same empty payload', async () => {
     const boss = new FakeBoss();
     const dag = dagOf(member('a'), member('b', [{ job: 'a', soft: true }]));
@@ -246,7 +250,7 @@ describe('orchestrator trigger semantics', () => {
     expect(boss.hasJob('b', reservedId)).toBe(false);
 
     boss.throwOnSendJobs.clear();
-    await runOrchestratorTick({ db, boss, dag, now: NOW, localDate: () => RUN_DATE });
+    await runOrchestratorTick({ db, boss, dag, now: AFTER_IN_FLIGHT, localDate: () => RUN_DATE });
 
     const bSends = boss.memberSends.filter((s) => s.name === 'b');
     expect(bSends).toHaveLength(1); // only the recovery send was recorded (the first one threw)
@@ -343,6 +347,8 @@ describe('orchestrator trigger semantics', () => {
   // The id is now reserved with the CAS *before* the send, so a crashed send leaves a
   // node that still knows its pg-boss identity and can be recovered by an idempotent
   // re-send under the same id.
+  // @invariant concurrency: a send that never lands is recovered under the same reserved id once the in-flight window has passed
+  // @fails-if the next tick mints a new job id, or re-sends while the claim is still inside that window
   it('⑪ a send that never lands leaves the reserved id persisted and is re-sent idempotently', async () => {
     const boss = new FakeBoss();
     const dag = dagOf(member('a'), member('b', ['a']));
@@ -362,10 +368,15 @@ describe('orchestrator trigger semantics', () => {
     const reservedId = must(crashed?.boss_job_id, 'reserved boss job id');
     expect(boss.hasJob('a', reservedId)).toBe(false); // the send truly never landed
 
-    // Recovery: the next tick notices there is no job for the reserved id and re-sends
-    // under that same id rather than polling a ghost until NODE_TIMEOUT_SECONDS.
+    // Recovery waits out the in-flight window, then re-sends under the reserved id.
     boss.throwOnSendJobs.clear();
-    await runOrchestratorTick({ db, boss, dag, now: NOW, localDate: () => RUN_DATE });
+    await runOrchestratorTick({
+      db,
+      boss,
+      dag,
+      now: AFTER_IN_FLIGHT,
+      localDate: () => RUN_DATE,
+    });
 
     expect(boss.hasJob('a', reservedId)).toBe(true);
     const recovered = await nodeRow(runId, 'a');
@@ -373,7 +384,13 @@ describe('orchestrator trigger semantics', () => {
     expect(recovered?.boss_job_id).toBe(reservedId); // same identity, no second job
 
     // A further tick must not create a second job (same id → ON CONFLICT DO NOTHING).
-    await runOrchestratorTick({ db, boss, dag, now: NOW, localDate: () => RUN_DATE });
+    await runOrchestratorTick({
+      db,
+      boss,
+      dag,
+      now: AFTER_IN_FLIGHT,
+      localDate: () => RUN_DATE,
+    });
     expect(boss.memberSends.filter((s) => s.name === 'a' && s.id !== reservedId)).toHaveLength(0);
 
     // And the recovered job drives the graph forward normally.
@@ -431,6 +448,8 @@ describe('orchestrator trigger semantics', () => {
   // ⑭ review 面板必修 1 — tick 自调度是当夜唯一续跑通道。advanceRun 步骤②（claim / send /
   // updateNodeStatus）整段裸奔，一次瞬时异常原本会跳过续链，让 run 永久停在 running 且当夜
   // 剩余节点全部静默不跑。续链现在无条件发生。
+  // @invariant concurrency: a thrown advance still arms exactly one next tick, and that tick recovers the reserved id after the in-flight window
+  // @fails-if the throw skips the tick, arms more than one, or the following tick leaves the node without its reserved job
   it('⑭ an advance that throws still schedules exactly one next tick, and the run recovers', async () => {
     const boss = new FakeBoss();
     const dag = dagOf(member('a'), member('b', ['a']));
@@ -457,7 +476,13 @@ describe('orchestrator trigger semantics', () => {
 
     // The chain survives: once the transient condition clears, the run converges.
     boss.throwOnSendJobs.clear();
-    await runOrchestratorTick({ db, boss, dag, now: NOW, localDate: () => RUN_DATE });
+    await runOrchestratorTick({
+      db,
+      boss,
+      dag,
+      now: AFTER_IN_FLIGHT,
+      localDate: () => RUN_DATE,
+    });
     expect((await nodeRow(run.id, 'b'))?.status).toBe('enqueued');
     await completeMember(boss, run.id, 'b');
     await runOrchestratorTick({ db, boss, dag, now: NOW, localDate: () => RUN_DATE });
@@ -468,6 +493,8 @@ describe('orchestrator trigger semantics', () => {
     expect(finished.status).toBe('completed');
   });
 
+  // @invariant concurrency: a start whose root send throws still arms one tick, and that tick recovers the reserved id after the in-flight window
+  // @fails-if the anchor leaves no tick, or the following tick fails the node instead of re-sending
   it('⑭b a throwing advance on the anchor start still leaves a live tick chain', async () => {
     const boss = new FakeBoss();
     const dag = dagOf(member('a'), member('b', ['a']));
@@ -482,7 +509,13 @@ describe('orchestrator trigger semantics', () => {
     expect(boss.tickSends).toBe(1);
 
     boss.throwOnSendJobs.clear();
-    await runOrchestratorTick({ db, boss, dag, now: NOW, localDate: () => RUN_DATE });
+    await runOrchestratorTick({
+      db,
+      boss,
+      dag,
+      now: AFTER_IN_FLIGHT,
+      localDate: () => RUN_DATE,
+    });
     expect((await nodeRow(run.id, 'a'))?.status).toBe('enqueued');
   });
 
@@ -565,13 +598,12 @@ describe('YUK-781 A — boot catch-up for a missed anchor', () => {
   });
 
   // Two worker replicas booting in the same second both pass the window + "no run today" gate.
-  // The DB partial unique (run_date) WHERE status='running' is what has to hold the line.
-  // @invariant concurrency: two workers booting at once open one run and land each paid root job exactly once
-  // @fails-if the run single-flight or the claimNodePending CAS breaks, so runs or the shared job rows for r1/r2 exceed one
+  // One running row per date, and the in-flight window stops the loser re-sending a root
+  // the winner has claimed but not inserted yet.
+  // @invariant concurrency: two workers booting at once open one run and enqueue each paid root once
+  // @fails-if run single-flight, the claim CAS, or the in-flight window breaks, so a second run or a second r1/r2 send appears
   it('A7 two workers booting at once create exactly one run and enqueue each root once', async () => {
-    // 两个副本共享**同一份** job 表 —— 生产里它们连同一个 pg-boss 库（见 FakeBoss
-    // 构造器）。A 已 claim 但 job 未落库时，B 的自愈补发会用同一 reserved id 再 send
-    // 一次；这是合法交错，所以只断言落库行数，不断言 send 调用次数。
+    // Shared job table: production replicas use one pg-boss database.
     const sharedJobs = new Map<string, { state: string; output?: unknown }>();
     const bossA = new FakeBoss(sharedJobs);
     const bossB = new FakeBoss(sharedJobs);
@@ -592,11 +624,14 @@ describe('YUK-781 A — boot catch-up for a missed anchor', () => {
       else expect(out.reason).toBe('run-exists');
     }
     expect([outA.action, outB.action]).toContain('started');
+    const allSends = [...bossA.memberSends, ...bossB.memberSends].map((s) => s.name);
+    expect(allSends.filter((n) => n === 'r1')).toHaveLength(1);
+    expect(allSends.filter((n) => n === 'r2')).toHaveLength(1);
+    expect(allSends.filter((n) => n === 'down')).toHaveLength(0);
     expect((await nodeRow(runs[0].id, 'r1'))?.status).toBe('enqueued');
     expect((await nodeRow(runs[0].id, 'r2'))?.status).toBe('enqueued');
 
-    // 「没有重复付费」看落库的 job 行数：即便某条路径重发，reserved id 相同 +
-    // ON CONFLICT DO NOTHING 也只会存在一行。
+    // Landed rows, not only send calls: the reserved id is the job that exists.
     const jobKeys = [...sharedJobs.keys()];
     expect(jobKeys.filter((k) => k.startsWith('r1:'))).toHaveLength(1);
     expect(jobKeys.filter((k) => k.startsWith('r2:'))).toHaveLength(1);
@@ -739,5 +774,163 @@ describe('YUK-778 ② the scheduling control plane leaves a diagnosable trail', 
       await updateNodeStatus(db, node.id, { status: 'succeeded', detail: 'second', now: NOW }),
     ).toBe(false);
     expect((await nodeRow(run.id, 'a'))?.detail).toBe('first');
+  });
+});
+
+// ── YUK-2030 — provider-wait 节点重派 ─────────────────────────────────────────
+//
+// 成员 job 用 `provider_wait` 输出标记「已证明未计费的 provider 拒绝」，编排器
+// 拥有等待预算：CAS 换 boss_job_id + provider_waits+1 + startAfter 重派，
+// enqueued_at 不动（节点超时仍包整个等+跑窗口）。耗尽 → failed 留原因。
+describe('YUK-2030 — provider-wait redelivery', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  const waitOutput = { provider_wait: { retry_class: 'server_error', detail: 'ev=run_1' } };
+
+  // @invariant data: a proven-unbilled provider refusal redelivers the node instead of losing the run — waits counted, identity repointed, timeout window preserved
+  // @fails-if the wait branch settles the node, drops the waits increment, reuses the old job id, or resets enqueued_at so a stranding or a doubled charge slips through
+  it('W1 a member leaving provider_wait output waits instead of settling', async () => {
+    const boss = new FakeBoss();
+    const dag = dagOf(member('a'), member('b', ['a']));
+    const run = must(
+      await runOrchestratorStart({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }, 'cron'),
+      'run',
+    );
+    const first = must(await nodeRow(run.id, 'a'), 'node a');
+    const firstJobId = must(first.boss_job_id, 'first job id');
+    const firstEnqueuedAt = first.enqueued_at;
+    boss.setJobState('a', firstJobId, 'completed');
+    boss.setJobOutput('a', firstJobId, waitOutput);
+
+    await runOrchestratorTick({ db, boss, dag, now: NOW, localDate: () => RUN_DATE });
+
+    const waited = must(await nodeRow(run.id, 'a'), 'node a after wait');
+    // Non-terminal, wait counter spent, replacement identity repointed.
+    expect(waited.status).toBe('enqueued');
+    expect(waited.provider_waits).toBe(1);
+    expect(waited.boss_job_id).toBeTruthy();
+    expect(waited.boss_job_id).not.toBe(firstJobId);
+    // The node timeout still bounds the whole wait+run window.
+    expect(waited.enqueued_at).toEqual(firstEnqueuedAt);
+    // The replacement was actually sent, with the ladder's first delay (5 min).
+    const resend = boss.memberSends.find((s) => s.name === 'a' && s.id === waited.boss_job_id);
+    expect(resend?.startAfter).toBe(300);
+    expect(boss.hasJob('a', waited.boss_job_id ?? '')).toBe(true);
+    // Downstream stayed pending: a never produced a verdict.
+    expect((await nodeRow(run.id, 'b'))?.status).toBe('pending');
+  });
+
+  // @invariant data: a node that burns its wait budget lands terminal with an auditable reason — no silent park and no extra paid send
+  // @fails-if the exhaustion path leaves the node non-terminal, drops the provider_wait_exhausted detail, or sends another delivery after the last wait
+  it('W2 exhausting the wait budget fails the node with an explicit reason', async () => {
+    const boss = new FakeBoss();
+    const dag = dagOf(member('a'));
+    const run = must(
+      await runOrchestratorStart({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }, 'cron'),
+      'run',
+    );
+    // Drive the node to its last wait, then let the next refusal land.
+    const spent = 8; // PROVIDER_WAIT_MAX
+    for (let i = 0; i < spent; i++) {
+      const node = must(await nodeRow(run.id, 'a'), 'node a');
+      const jobId = must(node.boss_job_id, 'job id');
+      boss.setJobState('a', jobId, 'completed');
+      boss.setJobOutput('a', jobId, waitOutput);
+      await runOrchestratorTick({ db, boss, dag, now: NOW, localDate: () => RUN_DATE });
+      expect((await nodeRow(run.id, 'a'))?.provider_waits).toBe(i + 1);
+    }
+    const last = must(await nodeRow(run.id, 'a'), 'node a');
+    const lastJobId = must(last.boss_job_id, 'last job id');
+    boss.setJobState('a', lastJobId, 'completed');
+    boss.setJobOutput('a', lastJobId, waitOutput);
+    const sendsBeforeTerminalTick = boss.memberSends.filter((s) => s.name === 'a').length;
+    await runOrchestratorTick({ db, boss, dag, now: NOW, localDate: () => RUN_DATE });
+
+    const terminal = must(await nodeRow(run.id, 'a'), 'node a terminal');
+    expect(terminal.status).toBe('failed');
+    expect(terminal.detail).toContain('provider_wait_exhausted:server_error');
+    expect(terminal.provider_waits).toBe(spent);
+    // No further member job was sent once the budget was gone.
+    expect(boss.memberSends.filter((s) => s.name === 'a')).toHaveLength(sendsBeforeTerminalTick);
+  });
+
+  // @invariant concurrency: two replicas polling a waiting node land exactly one replacement job
+  // @fails-if the reschedule CAS or the repoint-then-send order breaks, so a second job row or a second waits increment appears
+  it('W3 a second replica ticking a re-armed node sends no duplicate', async () => {
+    const sharedJobs = new Map<string, { state: string; output?: unknown }>();
+    const bossA = new FakeBoss(sharedJobs);
+    const bossB = new FakeBoss(sharedJobs);
+    const dag = dagOf(member('a'));
+    const run = must(
+      await runOrchestratorStart(
+        { db, boss: bossA, dag, now: NOW, localDate: () => RUN_DATE },
+        'cron',
+      ),
+      'run',
+    );
+    const first = must(await nodeRow(run.id, 'a'), 'node a');
+    const firstJobId = must(first.boss_job_id, 'first job id');
+    bossA.setJobState('a', firstJobId, 'completed');
+    bossA.setJobOutput('a', firstJobId, waitOutput);
+
+    // Replica A re-arms; replica B's later tick sees the replacement already live.
+    await runOrchestratorTick({ db, boss: bossA, dag, now: NOW, localDate: () => RUN_DATE });
+    await runOrchestratorTick({ db, boss: bossB, dag, now: NOW, localDate: () => RUN_DATE });
+
+    const node = must(await nodeRow(run.id, 'a'), 'node a');
+    expect(node.provider_waits).toBe(1);
+    expect(bossB.memberSends.filter((s) => s.name === 'a')).toHaveLength(0);
+    // Exactly one live job row for the repointed identity.
+    const aJobs = [...sharedJobs.keys()].filter((k) => k.startsWith('a:'));
+    expect(aJobs).toHaveLength(2); // completed first + waiting replacement
+    expect(bossA.hasJob('a', node.boss_job_id ?? '')).toBe(true);
+  });
+
+  // @invariant concurrency: two ticks racing the same re-arm compare the
+  // boss_job_id they each observed; the loser's CAS returns false, exactly
+  // one replacement identity lands, and the wait budget burns once.
+  // @fails-if the WHERE stops pinning the observed boss_job_id, letting both
+  // ticks win and double-arm the node (two live paid jobs, double-counted
+  // waits)
+  it('W4 two ticks racing the same re-arm CAS exactly once on the observed job id', async () => {
+    const boss = new FakeBoss();
+    const dag = dagOf(member('a'));
+    const run = must(
+      await runOrchestratorStart({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }, 'cron'),
+      'run',
+    );
+    const armed = must(await nodeRow(run.id, 'a'), 'node a');
+    const observedJobId = must(armed.boss_job_id, 'armed job id');
+
+    const [won, lost] = await Promise.all([
+      rescheduleNodeProviderWait(db, armed.id, {
+        bossJobId: randomUUID(),
+        oldBossJobId: observedJobId,
+        detail: 'provider_wait:server_error: tick one',
+        now: NOW,
+      }),
+      rescheduleNodeProviderWait(db, armed.id, {
+        bossJobId: randomUUID(),
+        oldBossJobId: observedJobId,
+        detail: 'provider_wait:server_error: tick two',
+        now: NOW,
+      }),
+    ]);
+    expect([won, lost].sort()).toEqual([false, true]);
+
+    const node = must(await nodeRow(run.id, 'a'), 'node a');
+    expect(node.provider_waits).toBe(1);
+    expect(node.boss_job_id).not.toBe(observedJobId);
+    // A stale-observation re-arm (the old serial shape) also loses.
+    const stale = await rescheduleNodeProviderWait(db, armed.id, {
+      bossJobId: randomUUID(),
+      oldBossJobId: observedJobId,
+      detail: 'provider_wait:server_error: stale tick',
+      now: NOW,
+    });
+    expect(stale).toBe(false);
+    expect((await nodeRow(run.id, 'a'))?.provider_waits).toBe(1);
   });
 });

@@ -131,6 +131,17 @@ export function boundTerminalHttpStatus(
   if (error.apiErrorStatus != null && error.apiErrorStatus >= 400) return error.apiErrorStatus;
   const bound = error.providerFailure?.http_status;
   if (bound != null && bound >= 400) return bound;
+  return settledTransportHttpStatus(transport);
+}
+
+/**
+ * The observed final root request's ≥400 status — the only transport-derived
+ * bound, valid solely when every request provably settled (zero in-flight,
+ * unknown, or sent_without_response). Single owner of that third-leg check:
+ * `boundTerminalHttpStatus` and the row-driven provider-wait planner both read
+ * it, so an uncertain wire can never fabricate a status in either path.
+ */
+export function settledTransportHttpStatus(transport?: ProviderTransportEvidence): number | null {
   const last = transport?.requests.at(-1);
   if (
     last?.loop === 'root' &&

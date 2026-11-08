@@ -127,8 +127,8 @@ async function admit(questionId: string) {
 }
 
 describe('native ingestion originals and reversible enrollment', () => {
-  // @invariant security: a mixed student-work capture retains its private original evidence without publishing its student, foreign or unverified figure references
-  // @fails-if capture publishes the mixed block's original figures or rewrites/discards its private originals; public figure exclusion or original source/evidence retention fails
+  // @invariant security: a mixed student-work capture retains its private original evidence and never publishes its whole page, foreign or unverified figure references; its own verified crop is published carrying a learner-handwriting marker
+  // @fails-if capture publishes the whole page, a foreign or unverified figure, or a crop without its marker, drops its own verified crop, or rewrites/discards its private originals
   it('keeps one mixed student-work capture private without changing its originals', async () => {
     const db = testDb();
     const input = await fixture();
@@ -202,6 +202,8 @@ describe('native ingestion originals and reversible enrollment', () => {
       revisionRowToContract(frozen.revision),
       issuanceRowToContract(frozen.issuance),
     );
+    // Learner work no longer withholds the question's own crop; it travels with a marker.
+    // The legacy ref states no judgment, so a capture crop reads as 'unknown'.
     expect({
       questionFigures: capturedQuestion.figures,
       frozenFigures: frozen.revision.structure.materials.filter((item) => item.kind === 'figure'),
@@ -210,9 +212,25 @@ describe('native ingestion originals and reversible enrollment', () => {
       ),
       privatePageAssets: submission.group_evidence.map((item) => item.evidence.asset.asset_id),
     }).toEqual({
-      questionFigures: [],
-      frozenFigures: [],
-      publicOriginalAssets: [],
+      questionFigures: [{ ...figure, contains_learner_handwriting: 'unknown' }],
+      frozenFigures: [
+        {
+          material_id: expect.any(String),
+          kind: 'figure',
+          asset: { asset_id: 'capture-page-fig-0', digest: `sha256:${cropDigest}` },
+          alt_text: 'figure (diagram)',
+          contains_learner_handwriting: 'unknown',
+        },
+      ],
+      publicOriginalAssets: [
+        {
+          material_id: expect.any(String),
+          kind: 'figure',
+          asset_id: 'capture-page-fig-0',
+          alt_text: 'figure (diagram)',
+          contains_learner_handwriting: 'unknown',
+        },
+      ],
       privatePageAssets: ['capture-page'],
     });
     expect(await db.select().from(question_block).where(eq(question_block.id, block.id))).toEqual([

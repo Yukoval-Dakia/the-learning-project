@@ -1,7 +1,57 @@
+import type { z } from 'zod';
+import type { FsrsRating } from '@/kernel/capability-contract-schemas';
 import type { CreateAttemptBody } from '../../api/contracts';
+import type { AssistanceReceipt } from './assessment/assistance';
+import type { SealedSelfClaim } from './assessment/self-claim';
 import { ratingFromCoarseOutcome } from './judge-rating';
 import { JUDGE_RUN_TABLE, judgeRunPollUrl } from './judge-run-status';
 import type { ReviewAnswerResult } from './review-operation';
+
+type AttemptVerdictOutcome =
+  | 'correct'
+  | 'partial'
+  | 'incorrect'
+  | 'unsupported'
+  | 'partial_unknown';
+
+/**
+ * The learner's rating operation, normalized for the response: under auto_rate
+ * the rating field is the judge's suggestion, never the learner's words. Only a
+ * self-report or a manually chosen rating counts as a claim.
+ */
+function echoAttemptClaim(body: {
+  self_report?: boolean;
+  auto_rate?: boolean;
+  rating?: z.infer<typeof FsrsRating> | null;
+  self_confidence?: number | null;
+}) {
+  return body.self_report || !body.auto_rate
+    ? { rating: body.rating ?? null, confidence: body.self_confidence ?? null }
+    : { rating: null, confidence: body.self_confidence ?? null };
+}
+
+// Evidence split: exposure (sealed receipt), judged outcome, and the learner's
+// own claim stay separate — a correct or confident assisted answer is still
+// not independent. Every attempt surface (sync response, advice preview,
+// durable terminal result) projects through this one shape.
+export function projectAttemptEvidence(input: {
+  assistance: AssistanceReceipt | null;
+  verdict: { outcome: AttemptVerdictOutcome; score: number | null } | null;
+  self_claim: SealedSelfClaim | null;
+}) {
+  return {
+    assistance: input.assistance
+      ? {
+          status: input.assistance.status,
+          max_dose: input.assistance.max_dose,
+          kinds: input.assistance.kinds,
+          phase: input.assistance.phase,
+        }
+      : null,
+    verdict: input.verdict,
+    self_claim: input.self_claim,
+  };
+}
 
 export function projectJudgeRunPending(runId: string) {
   return {
@@ -37,31 +87,20 @@ export function projectReviewAnswerResponse(body: CreateAttemptBody, result: Rev
         effect: committed.status === 'effective' ? committed.activation.effect : null,
       },
       review_event: { id: committed.attempt_id },
-      // Server-computed evidence split: exposure (sealed receipt), judged
-      // outcome, and the learner's own claim stay separate — a correct or
-      // confident assisted answer is still not independent.
-      // self_claim echoes what the learner asserted in THIS request: rating is
-      // only a claim when they chose it themselves (self_report or a manual
-      // rating); under auto_rate the rating is the judge's suggestion, so the
-      // claim stays null. A replayed submission sealed its claim with the
-      // original response — this request's rating/confidence is not evidence
-      // of anything, so the claim reads null rather than echoing unsealed input.
-      evidence: {
-        assistance: committed.assistance
-          ? {
-              status: committed.assistance.status,
-              max_dose: committed.assistance.max_dose,
-              kinds: committed.assistance.kinds,
-              phase: committed.assistance.phase,
-            }
-          : null,
+      // self_claim follows the rating operation, not the submission replay
+      // flag: a submission can be persisted before the learner ever rates
+      // (advice preview, durable probe), so a replayed submission may still be
+      // the first rating operation — its sealed values read back identical.
+      // When the rating operation itself was already performed, the sealed
+      // activation receipt and attempt capture answer — never this request's
+      // unsealed input.
+      evidence: projectAttemptEvidence({
+        assistance: committed.assistance,
         verdict: body.self_report ? null : { outcome: judged.coarse_outcome, score: judged.score },
         self_claim: committed.replayed
-          ? null
-          : body.self_report || !body.auto_rate
-            ? { rating: body.rating, confidence: body.self_confidence ?? null }
-            : { rating: null, confidence: body.self_confidence ?? null },
-      },
+          ? (result.sealed_claim ?? { rating: null, confidence: null })
+          : echoAttemptClaim(body),
+      }),
       judge: body.self_report
         ? null
         : {

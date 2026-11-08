@@ -213,6 +213,12 @@
     border-radius: var(--un-r-1);
   }
 
+  & .rc-fill {
+    display: grid;
+    gap: var(--un-sp-2);
+    width: 100%;
+  }
+
   & .rc-line-note {
     display: flex;
     flex-wrap: wrap;
