@@ -1072,6 +1072,20 @@
       "when": 1794091361708,
       "tag": "0153_yuk2042_judge_receipt_restore_channel",
       "breakpoints": true
+    },
+    {
+      "idx": 154,
+      "version": "7",
+      "when": 1794102979596,
+      "tag": "0154_yuk1766_backtrace",
+      "breakpoints": true
+    },
+    {
+      "idx": 155,
+      "version": "7",
+      "when": 1794102998000,
+      "tag": "0155_yuk1766_backtrace_permissions",
+      "breakpoints": true
     }
   ]
 }
