@@ -1,0 +1,1 @@
+ALTER TABLE "agent_workspace" ADD COLUMN "claim_run_id" text;
