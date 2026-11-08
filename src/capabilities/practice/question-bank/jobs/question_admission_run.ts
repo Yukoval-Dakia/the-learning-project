@@ -389,11 +389,18 @@ export async function runAdmissionForQuestion(
     const purpose = delivery.jobData
       ? await readAdmissionPurpose(tx, delivery.id, input, delivery.jobData)
       : { state: 'unknown' as const, sourceId: null };
+    const claimed = await claimAdmissionBatch(tx, input, delivery, {
+      maySend: pinned && eligible && !declaredUnsupported && purpose.state === 'allow',
+      historicalTerminal: Boolean(terminal),
+    });
     // A queued delivery that cannot prove its source purpose will never spend; record
     // that terminal fact so the learner surface stops saying "still checking". The
     // read model matches this event against the group's latest publication for the
     // same revision, so a later republish with a bound source is not shadowed.
-    if (delivery.jobData && purpose.state !== 'allow') {
+    // Recovery deliveries (receipt/held/historical claims) replay an existing paid
+    // decision — their spend was authorized by the original delivery's binding, so
+    // a missing binding here is not a denial and must not write the terminal fact.
+    if (delivery.jobData && purpose.state !== 'allow' && claimed.kind === 'stale') {
       const now = new Date();
       await writeEvent(tx, {
         id: createHash('sha256')
@@ -421,10 +428,6 @@ export async function runAdmissionForQuestion(
         created_at: now,
       });
     }
-    const claimed = await claimAdmissionBatch(tx, input, delivery, {
-      maySend: pinned && eligible && !declaredUnsupported && purpose.state === 'allow',
-      historicalTerminal: Boolean(terminal),
-    });
     // A reused paid receipt belongs to its ORIGINAL delivery, not to the new
     // publication that happened to reach this batch. Never retag its provenance.
     const originalDelivery =

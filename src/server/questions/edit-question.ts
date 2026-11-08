@@ -22,6 +22,7 @@ import {
   QuestionDraftDocument,
   type QuestionDraftDocumentT,
   draftDocumentToStructuredQuestion,
+  formatDraftDocumentIssues,
   isDraftDocumentV2,
   isLegacyStructuredQuestion,
   structuredQuestionToDraftDocument,
@@ -583,7 +584,9 @@ export async function saveDraftEditInTx(
         return {
           status: 'rejected',
           reason: 'document failed schema validation',
-          issues: [{ code: 'invalid_document', detail: parsedDoc.error.message }],
+          issues: [
+            { code: 'invalid_document', detail: formatDraftDocumentIssues(parsedDoc.error) },
+          ],
           request_id: requestId,
         };
       }
@@ -922,7 +925,7 @@ export async function validateDraftEdit(
     if (!parsed.success) {
       return {
         status: 'invalid',
-        issues: [{ code: 'invalid_document', detail: parsed.error.message }],
+        issues: [{ code: 'invalid_document', detail: formatDraftDocumentIssues(parsed.error) }],
         publishable: false,
       };
     }
@@ -995,7 +998,7 @@ export async function probeDraftEdit(
       return {
         status: 'rejected',
         reason: 'invalid document',
-        issues: [{ code: 'invalid_document', detail: parsed.error.message }],
+        issues: [{ code: 'invalid_document', detail: formatDraftDocumentIssues(parsed.error) }],
       };
     }
     doc = parsed.data;

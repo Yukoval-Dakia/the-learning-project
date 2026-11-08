@@ -14,7 +14,7 @@ import {
 // YUK-365 (Codex review P2, Finding 2): load .env.local BEFORE .env, both
 // non-overriding, so the AI provider toggle (AI_PROVIDER_OVERRIDE /
 // CLAUDE_CODE_OAUTH_TOKEN, owner places these in .env.local) is in the parent env
-// passed to all three spawned children. The children (rw:api → server/env loadEnv,
+// passed to all three spawned children. The children (API → server/env loadEnv,
 // worker:dev → scripts/worker.ts loadEnv) also load .env.local themselves, so this
 // is belt-and-braces — but it keeps dev-local's view consistent with the API's.
 // `override: false` keeps real shell env winning, matching loadEnv's "only fill
@@ -233,10 +233,9 @@ if (allowTestDb) {
     ),
   );
   if (epoch.status !== 0) process.exit(epoch.status ?? 1);
-  // The API (RW_WORKER=1) and the worker both launch DBOS against tlp_dbos. DBOS's migration
-  // runner takes no cross-process lock, so on an empty database the two deadlock. Migrate once
-  // here; both launches then find the schema current and skip migration. Production already
-  // has a single DBOS launcher (separate worker, app without RW_WORKER).
+  // Only worker:dev launches DBOS here: the API child sets RW_WORKER=0. Apply tlp_dbos
+  // once so that launch finds the schema current. Production already has a single DBOS
+  // launcher (separate worker, app without RW_WORKER).
   const dbosSchema = run('pnpm', ['exec', 'dbos', 'schema', databaseUrl, '--schema', 'tlp_dbos']);
   if (dbosSchema.status !== 0) process.exit(dbosSchema.status ?? 1);
   // A few admitted questions so the pages have something to serve without a model provider.
@@ -295,8 +294,12 @@ type DevChild = {
 };
 const children: DevChild[] = [];
 
-function spawnDev(name: DevChild['name'], script: string, extraEnv: NodeJS.ProcessEnv): DevChild {
-  const child = spawn('pnpm', [script], {
+function spawnDev(
+  name: DevChild['name'],
+  args: readonly string[],
+  extraEnv: NodeJS.ProcessEnv,
+): DevChild {
+  const child = spawn('pnpm', [...args], {
     stdio: 'inherit',
     env: { ...env, ...extraEnv },
     // A new group per child keeps the kill scoped to this worktree's tree; other worktrees'
@@ -409,8 +412,14 @@ if (!explicitInternalToken) {
     '[dev-local] generated per start, not read from .env/.env.local; export INTERNAL_TOKEN=<value> to pin one',
   );
 }
-spawnDev('api', 'rw:api', { RW_FRONTDOOR: 'dev' });
-spawnDev('worker', 'worker:dev', {});
+// `pnpm rw:api` prefixes RW_WORKER=1, and loadEnv fills an unset key from .env, so an
+// inherited or dotenv `1` would start a second consumer. This child runs the same
+// watcher with RW_WORKER=0. Standalone `pnpm rw:api` stays the single-process fallback.
+spawnDev('api', ['exec', 'tsx', 'watch', 'server/index.ts'], {
+  RW_FRONTDOOR: 'dev',
+  RW_WORKER: '0',
+});
+spawnDev('worker', ['worker:dev'], {});
 console.log(
   `[dev-local] open ${devOrigin}/ (Vite HMR; /api/* on the same origin; database ${databaseUrl.replace(/:\/\/[^@]*@/, '://***@')})`,
 );

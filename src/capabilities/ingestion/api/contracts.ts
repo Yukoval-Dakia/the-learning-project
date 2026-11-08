@@ -166,7 +166,14 @@ const IngestionOperationBaseSchema = z
     session_id: z.string(),
     status: z.enum(['queued', 'running', 'succeeded', 'failed']),
     result: z.unknown().optional(),
-    error: z.object({ code: z.string(), message: z.string(), status: z.number().int() }).optional(),
+    error: z
+      .object({
+        code: z.string(),
+        message: z.string(),
+        status: z.number().int(),
+        details: z.record(z.string(), z.unknown()).optional(),
+      })
+      .optional(),
     created_at: z.string().datetime(),
     updated_at: z.string().datetime(),
     events_url: z.string(),
@@ -452,6 +459,17 @@ export const IngestionHistoryCurrentSchema = z
       .object({
         status: z.enum(['pending', 'admitted', 'failed', 'undecided']),
         reason: z.string().nullable(),
+        // The question read's own facts, passed through: while a provider, quota or login wait
+        // owns the pending check, and why an undecided check is undecided.
+        wait: z
+          .object({
+            reason: z.enum(['quota', 'login', 'not_sent', 'provider']),
+            retry_at: z.string().nullable(),
+            recovery_action: z.enum(['wait_for_retry', 'reauthenticate', 'confirm_recovery']),
+          })
+          .nullable()
+          .optional(),
+        cause: z.enum(['outcome_unconfirmed', 'purpose_denied']).nullable().optional(),
       })
       .nullable(),
   })

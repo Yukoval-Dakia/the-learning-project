@@ -50,10 +50,8 @@ export const supplyManifestPart: Omit<CapabilityManifest, 'name' | 'description'
         //    discoverSupplyTargets → assembleScanInput → loadQuestionPool 是
         //    target-discovery.ts 内的**私有** loader（:664），并非 Practice quiz/pool-fetch；
         //    它只 select id/kind/source/metadata/difficulty/knowledge_ids(+draft_status 谓词)，
-        //    全 src/server/question-supply/ 目录 grep 不到 answer_class。且 pool-fetch 那条
-        //    answer_class 谓词本身是 NULL-宽容（`= X OR IS NULL`）且当前无活 caller（唯一
-        //    would-be caller matcher 被 MATCHER_ANSWER_CLASS_FILTER=false 关着）——即便走到
-        //    也不会因未 backfill 而漏题。故原「answer_class 新鲜 → 缺口判定准」是伪依赖。
+        //    全 src/server/question-supply/ 目录 grep 不到 answer_class。pool-fetch 也不按
+        //    answer_class 过滤。故原「answer_class 新鲜 → 缺口判定准」是伪依赖。
         //  · 改声明 `recalibration_nightly` 硬边（**真读后写**）：同一个私有 loadQuestionPool
         //    在 target-discovery.ts:684-699 批量读 item_calibration(track='hard') 的
         //    b/b_anchor/b_post → effectiveB(= b_post ?? b_anchor ?? b，YUK-439)，该值喂 R3 的

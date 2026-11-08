@@ -4,6 +4,10 @@
 # pnpm-lock.yaml at the repo root. Owner action: this is an ongoing ops policy
 # (a steady trickle of dependency PRs to triage/merge) — see the security audit
 # 2026-05-28 recommendation #13.
+#
+# Version-update PRs wait 3 days after publish (`cooldown`). The weekly
+# schedule is only the check cadence. Security updates are not cooled down.
+# A non-security emergency names the package under `cooldown.exclude`.
 version: 2
 updates:
   # Application + tooling dependencies (package.json / pnpm-lock.yaml).
@@ -12,6 +16,8 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
+    cooldown:
+      default-days: 3
     open-pull-requests-limit: 5
     # Group low-risk updates so we get a handful of batched PRs rather than one
     # PR per package. Split prod vs dev so a noisy dev-tool bump never blocks a
@@ -81,6 +87,8 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    cooldown:
+      default-days: 3
     open-pull-requests-limit: 2
 
   - package-ecosystem: "github-actions"
@@ -88,6 +96,8 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
+    cooldown:
+      default-days: 3
     open-pull-requests-limit: 5
     groups:
       actions-minor-patch:

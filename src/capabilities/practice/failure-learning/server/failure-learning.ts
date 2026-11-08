@@ -57,7 +57,9 @@ export type FailureLearningRequestResult =
 
 export interface FailureLearningRequestDeps {
   db: Db | Tx;
-  enqueueAttribution(attemptEventId: string): Promise<string>;
+  /** Persist the durable dispatch obligation inside the caller's transaction;
+   * returns the stable attribution stage job id. */
+  recordAttributionIntent(attemptEventId: string): Promise<string>;
 }
 
 export type FailureLearningFollowUpResult =
@@ -112,8 +114,8 @@ async function classifyAttempt(
  * Durable request operation used by the attempt-event subscriber.
  *
  * It owns automatic eligibility so neither producers nor delivery adapters
- * duplicate product rules. The caller supplies the transaction-bound enqueue
- * adapter; a stable pg-boss id makes a replay another accepted request.
+ * duplicate product rules. The caller supplies the transaction-bound intent
+ * writer; the deterministic intent row makes a replay another accepted request.
  */
 export async function requestFailureLearning(
   deps: FailureLearningRequestDeps,
@@ -141,7 +143,7 @@ export async function requestFailureLearning(
 
   return {
     status: 'accepted',
-    attributionJobId: await deps.enqueueAttribution(input.attemptEventId),
+    attributionJobId: await deps.recordAttributionIntent(input.attemptEventId),
   };
 }
 

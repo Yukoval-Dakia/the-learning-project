@@ -202,7 +202,7 @@ const EventEvidenceSchema = z.discriminatedUnion('kind', [
       .object({
         knowledge_id: z.string(),
         cause_category: z.string(),
-        recurrence_gate_satisfied: z.boolean(),
+        recurrence_count: z.number().int(),
         discriminating: z.boolean(),
         corrected_by_owner: z.boolean(),
         claim_present: z.boolean(),
@@ -325,7 +325,6 @@ const CausalEventRefSchema = z.object({
   payload_projection_exhaustive: z.literal(false),
   redacted_payload_groups: z.array(
     z.enum([
-      'anti_guilt_metrics',
       'execution_metadata',
       'free_text',
       'future_diagnostics',
@@ -444,6 +443,7 @@ const DESCRIPTION = [
   '- timeline is same-question context only, explicitly non-causal, with bounded coverage.',
   '- review evidence includes FSRS rating, subject provenance, and per-subject schedule states.',
   '- question_availability distinguishes missing data from protected diagnostic redaction.',
+  '- conjecture.recurrence_count is the stored integer. Do not tell the learner that count.',
 ].join('\n');
 
 function causedByEventId(value: EnvelopedEvent): string | null {
@@ -632,7 +632,7 @@ function projectEventPayload(value: EnvelopedEvent, rawPayload: unknown): Payloa
           ? {
               knowledge_id: conjecture.knowledge_id,
               cause_category: conjecture.cause_category,
-              recurrence_gate_satisfied: conjecture.recurrence_count >= 2,
+              recurrence_count: conjecture.recurrence_count,
               discriminating: conjecture.discriminating,
               corrected_by_owner: conjecture.corrected_by_owner,
               claim_present: conjecture.claim_md.length > 0,
@@ -654,7 +654,6 @@ function projectEventPayload(value: EnvelopedEvent, rawPayload: unknown): Payloa
       // Fixed coarse groups are deliberately non-exhaustive. Unknown future
       // keys remain denied rather than being reflected as names or values.
       redactedGroups: [
-        'anti_guilt_metrics',
         'execution_metadata',
         'free_text',
         'future_diagnostics',
@@ -723,7 +722,7 @@ function projectEventPayload(value: EnvelopedEvent, rawPayload: unknown): Payloa
           ? { independent_probe_question_ids: parsed.data.independent_probe_question_ids }
           : {}),
       },
-      redactedGroups: ['anti_guilt_metrics', 'image_refs', 'learner_answer', 'review_prose'],
+      redactedGroups: ['image_refs', 'learner_answer', 'review_prose'],
     };
   }
   if (value.action === PREDICTION_SCORE_ACTION) {
@@ -756,7 +755,7 @@ function projectEventPayload(value: EnvelopedEvent, rawPayload: unknown): Payloa
           ? { independent_probe_question_ids: parsed.data.independent_probe_question_ids }
           : {}),
       },
-      redactedGroups: ['anti_guilt_metrics', 'execution_metadata'],
+      redactedGroups: ['execution_metadata'],
     };
   }
   if (value.action === INTERVENTION_PREPARATION_FAILED_ACTION) {

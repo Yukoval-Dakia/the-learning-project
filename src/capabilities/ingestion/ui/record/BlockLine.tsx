@@ -8,12 +8,17 @@ import { servingNote } from './record-copy';
 import type { BlockServing } from './recording-model';
 import type { Tone } from './status-words';
 
-function enrollmentWords(block: Block): { text: string; tone: Tone } {
+function enrollmentWords(block: Block, serving: BlockServing | null): { text: string; tone: Tone } {
   const { state, reason, library_visible: visible } = block.ingestion_enrollment;
   if (state === 'in_library') {
-    return visible === false
-      ? { text: '还没放进题库', tone: 'neutral' }
-      : { text: '已进题库', tone: 'positive' };
+    if (visible === false) return { text: '还没放进题库', tone: 'neutral' };
+    // In the library is not given out yet: while the answer is checked, or held, say so up front.
+    if (serving && !serving.servable) {
+      return serving.admission?.status === 'pending'
+        ? { text: '还在核对', tone: 'working' }
+        : { text: '先不出', tone: 'caution' };
+    }
+    return { text: '已进题库', tone: 'positive' };
   }
   if (state === 'ignored') return { text: '没收进题库', tone: 'neutral' };
   // Waiting in line is not a failure: only publish_failed says it didn't go in.
@@ -54,12 +59,13 @@ export function BlockLine({
   );
   const emptyOptions = hasOptionsWithoutFigure(block);
   const noKnowledge = inLibrary && enrollment.knowledge === 'missing';
+  const restricted = inLibrary && enrollment.knowledge === 'restricted';
   const held = inLibrary ? servingNote(serving) : null;
   // A question that is only pictures has no words to miss.
   const noWords = figuresOf(block).length > 0 ? '' : '（没认出文字）';
   const first = block.page_spans?.[0];
   const page = first ? first.page_index + 1 : null;
-  const state = enrollmentWords(block);
+  const state = enrollmentWords(block, serving);
   return (
     <li
       className="rc-line"
@@ -74,12 +80,13 @@ export function BlockLine({
           {lineText(promptOf(block), block) || noWords}
         </MathMarkdown>
         <BlockFigures block={block} />
-        {lowConfidence || emptyOptions || noKnowledge || held ? (
+        {lowConfidence || emptyOptions || noKnowledge || restricted || held ? (
           <p className="rc-line-note">
             {lowConfidence && <span>这道题认得把握不高，对照原页看一下。</span>}
             {emptyOptions && <span>选项可能是图，对照原页看。</span>}
             {noKnowledge && <span>知识点还没标。</span>}
-            {held && <span>{held}</span>}
+            {restricted && <span>这份资料只用于答题，不配知识点。</span>}
+            {held && <span>已进题库。{held}</span>}
           </p>
         ) : null}
         <div className="rc-line-tools">
