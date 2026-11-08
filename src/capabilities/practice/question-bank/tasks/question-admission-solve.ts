@@ -149,7 +149,10 @@ export const SolveUnitOutput = z.object({
       }),
     )
     .default([]),
-  /** How this unit's part is solved. A malformed prior is dropped; it never fails the unit. */
+  /**
+   * How this unit's part is solved. A prior that fails this schema is dropped, not corrected;
+   * the submit tool still refuses undeclared fields inside it, like anywhere in the unit.
+   */
   prior: SolvePriorDraft.optional().catch(undefined),
 });
 export type QuestionAdmissionSolveUnitOutputT = z.infer<typeof SolveUnitOutput>;
