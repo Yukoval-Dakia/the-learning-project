@@ -257,10 +257,12 @@ test('bound workspace ignores model owner args and isolates owners', async () =>
 });
 
 // @invariant security: through the real runner + adapter + mount pipeline the
-//   model receives the workspace tools and every exec lands in the directory
-//   bound to the run's own claim — the provider is the only swapped piece.
+//   model receives the workspace tools, every exec lands in the directory
+//   bound to the run's own claim, and the exec output is what the model reads
+//   next — the provider is the only swapped piece.
 // @fails-if the wire lacks the workspace tools, no agent_workspace row is
-//   bound to the run, or the claimed directory differs from the tool output.
+//   bound to the run, the claimed directory differs from the tool output, or
+//   the next request carries a submit reminder instead of the exec output.
 test('runner packaging mounts workspace tools into the live loop', async () => {
   await registerCapabilityTools([agentWorkspaceCapability]);
   const submitted = JSON.stringify({
@@ -272,6 +274,7 @@ test('runner packaging mounts workspace tools into the live loop', async () => {
   });
   let sends = 0;
   let toolsOnWire: string[] = [];
+  let secondRequestToolMessages: unknown[] = [];
   const server = createServer((request, response) => {
     const chunks: Buffer[] = [];
     request.on('data', (chunk) => chunks.push(chunk));
@@ -279,10 +282,13 @@ test('runner packaging mounts workspace tools into the live loop', async () => {
       sends += 1;
       const body = JSON.parse(Buffer.concat(chunks).toString()) as {
         tools?: { function?: { name?: string } }[];
+        messages?: { role?: string }[];
       };
       toolsOnWire = (body.tools ?? [])
         .map((tool) => tool.function?.name)
         .filter((name): name is string => typeof name === 'string');
+      if (sends === 2)
+        secondRequestToolMessages = (body.messages ?? []).filter((m) => m.role === 'tool');
       response.writeHead(200, { 'content-type': 'text/event-stream' });
       const call =
         sends === 1
@@ -371,6 +377,9 @@ test('runner packaging mounts workspace tools into the live loop', async () => {
     assert.equal(bound.owner_kind, 'task');
     const marker = await invokeWorkspace('bash', bound.id, 'cat solve_notes.txt');
     assert.equal(marker.output, 's1-marker');
+    const nextToolContext = JSON.stringify(secondRequestToolMessages);
+    assert.match(nextToolContext, /noted/, 'exec output missing from the next model request');
+    assert.doesNotMatch(nextToolContext, /You finished without the required tool call/);
     const logs = await db
       .select()
       .from(tool_call_log)

@@ -594,6 +594,8 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     const unitPlan = structuredOutput
       ? definition.structuredSubmitUnits?.(this.args.structuredSubmitInput)
       : undefined;
+    const executionDeadline =
+      Date.now() + (this.args.executionWindowMs ?? Number.POSITIVE_INFINITY);
     const submitLoop = structuredOutput
       ? createStructuredSubmitLoop({
           schema: toolOutputSchema(this.args.kind, this.args.structuredSubmitInput),
@@ -604,10 +606,14 @@ class PiPreparedQuery implements PreparedExecutionQuery {
           ...(unitPlan ? { fullSchema: definition.structuredOutputSchema } : {}),
           forced: submitPolicy?.forced ?? true,
           runId: this.args.runId,
-          correctionDeadline:
-            Date.now() +
-            (this.args.executionWindowMs ?? Number.POSITIVE_INFINITY) -
-            NO_PROGRESS_BUDGET_LANDING_MARGIN_MS,
+          correctionDeadline: executionDeadline - NO_PROGRESS_BUDGET_LANDING_MARGIN_MS,
+          executionDeadline,
+          executableTools: new Set(
+            this.toolSurface.tools
+              .map((tool) => tool.name)
+              .filter((name) => name !== STRUCTURED_OUTPUT_TOOL),
+          ),
+          ...(typeof options.maxTurns === 'number' ? { toolTurnLimit: options.maxTurns } : {}),
         })
       : undefined;
     if (structuredOutput) {
@@ -631,7 +637,8 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     // unconditional counter every maxTurns=1 task failed after its first turn.
     const maxTurns = typeof options.maxTurns === 'number' ? options.maxTurns : undefined;
     let cappedByMaxTurns = false;
-    // Structured submission closes by validation, progress and budget, not turn count.
+    // Structured submission closes by validation, progress and budget; only its
+    // tool-work turns count against the turn ceiling, inside the submit loop.
     const costCeiling =
       typeof options.maxBudgetUsd === 'number'
         ? createPiCostCeiling({
@@ -869,7 +876,9 @@ class PiPreparedQuery implements PreparedExecutionQuery {
           // not consume an untracked allowance: reject salvaged output and fail
           // closed on missing raw deltas.
           event.message.content.forEach((block, index) => {
-            if (block.type !== 'toolCall') return;
+            // The strict check guards the submitted output; other tools'
+            // arguments are validated by their own schemas when they execute.
+            if (block.type !== 'toolCall' || block.name !== STRUCTURED_OUTPUT_TOOL) return;
             try {
               JSON.parse(rawToolArguments.get(index) ?? '');
             } catch {
@@ -897,6 +906,13 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     }
     yield* this.drainFrames();
     const finalAssistant = lastAssistantMessage(finalMessages);
+    // A final tool-work turn streams other tools' arguments; those are not submit evidence.
+    const submitRawArguments = [...rawToolArguments.entries()]
+      .filter(([index]) => {
+        const block = finalAssistant?.content[index];
+        return !(block?.type === 'toolCall' && block.name !== STRUCTURED_OUTPUT_TOOL);
+      })
+      .map(([, raw]) => raw);
     const boundRootStatus =
       finalAssistant && !this.abort.signal.aborted && !cappedByMaxTurns
         ? rootRejections.get(finalAssistant)
@@ -941,13 +957,13 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       // capability receives this, not the still-stringified raw fields.
       repairedSubmitArguments: this.toolSurface.repairedArguments(STRUCTURED_OUTPUT_TOOL),
       structuredSubmitEvidence:
-        structuredOutput && rawToolArguments.size > 0
+        structuredOutput && submitRawArguments.length > 0
           ? {
               tool_name: STRUCTURED_OUTPUT_TOOL,
               // Same C6 boundary as per-call evidence — streamed bytes can carry
               // credential keys inside embedded JSON string fields.
               ...rawArgumentsEvidence(
-                [...rawToolArguments.values()]
+                submitRawArguments
                   .map((raw) =>
                     sanitizeArgumentsEvidenceText(raw, {
                       secrets:
