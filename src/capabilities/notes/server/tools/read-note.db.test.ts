@@ -15,7 +15,14 @@ function ctx(): ToolContext {
   };
 }
 
-function sections(id: string, body: string) {
+function sections(id: string, body: string, nested?: { id: string; body: string }) {
+  const child = nested
+    ? {
+        type: 'semanticBlock',
+        attrs: { id: nested.id, semantic_kind: 'example', source_markdown: nested.body },
+        content: [{ type: 'paragraph', content: [{ type: 'text', text: nested.body }] }],
+      }
+    : null;
   return {
     type: 'doc' as const,
     content: [
@@ -27,9 +34,12 @@ function sections(id: string, body: string) {
           source_tier: 'user_verified',
           user_verified: true,
           version: 1,
-          source_markdown: body,
+          source_markdown: nested ? `${body}\n\n${nested.body}` : body,
         },
-        content: [{ type: 'paragraph', content: [{ type: 'text', text: body }] }],
+        content: [
+          { type: 'paragraph', content: [{ type: 'text', text: body }] },
+          ...(child ? [child] : []),
+        ],
       },
     ],
   };
@@ -40,10 +50,11 @@ async function seedNote(opts: {
   title: string;
   body: string;
   extraBody?: { id: string; body: string };
+  nested?: { id: string; body: string };
   summary?: unknown;
   history?: unknown[];
 }) {
-  const content = sections('s1', opts.body);
+  const content = sections('s1', opts.body, opts.nested);
   if (opts.extraBody) {
     const extra = sections(opts.extraBody.id, opts.extraBody.body);
     content.content = [...(content.content ?? []), ...(extra.content ?? [])];
@@ -104,13 +115,14 @@ describe('read_note', () => {
   });
 
   // @invariant security: read_note reports this note's mark events, learner edit time, stored review issues and refine applies, and withholds retracted text
-  // @fails-if the count uses the current correction state, updated_at or another note's events, or a retracted note or block is returned as markdown
+  // @fails-if the count uses the current correction state, updated_at or another note's events, or a retracted note, block, or child inside a parent source_markdown is returned
   it('counts historical marks and edits and hides retracted text', async () => {
     await seedNote({
       id: 'note-a',
       title: '二次标记',
       body: '合成定义',
       extraBody: { id: 's2', body: '块内秘密' },
+      nested: { id: 's-child', body: '子树秘密' },
       summary: {
         kind: 'known_issues',
         summary_md: 'Deterministic contract check flagged 1 unresolved issue(s).',
@@ -162,6 +174,11 @@ describe('read_note', () => {
       block_id: 's2',
       reason_md: '撤回这一块',
     });
+    await seedEvent('mk-child', 'note-a', 'correct', {
+      correction_kind: 'retract',
+      block_id: 's-child',
+      reason_md: '撤回子块',
+    });
     await seedEvent('mk-other', 'note-b', 'correct', {
       correction_kind: 'mark_wrong',
       reason_md: '别篇',
@@ -191,6 +208,7 @@ describe('read_note', () => {
     ]);
     expect(one.notes[0]?.body_md).toContain('合成定义');
     expect(one.notes[0]?.body_md).not.toContain('块内秘密');
+    expect(one.notes[0]?.body_md).not.toContain('子树秘密');
 
     const hidden = await readNoteTool.execute(ctx(), { note_id: 'note-b' });
     expect(hidden.notes[0]).toMatchObject({
@@ -208,5 +226,6 @@ describe('read_note', () => {
     expect(byId.get('note-b')?.body_md).toBeNull();
     expect(JSON.stringify(found)).not.toContain('整篇秘密');
     expect(JSON.stringify(found)).not.toContain('块内秘密');
+    expect(JSON.stringify(found)).not.toContain('子树秘密');
   });
 });

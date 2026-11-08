@@ -98,15 +98,36 @@ function pendingReviewCount(summary: unknown): number | null {
   return parsed.data.verdict === 'needs_review' ? parsed.data.issues.length : 0;
 }
 
+function blockAttrs(node: Record<string, unknown>): Record<string, unknown> {
+  return node.attrs !== null && typeof node.attrs === 'object' && !Array.isArray(node.attrs)
+    ? (node.attrs as Record<string, unknown>)
+    : {};
+}
+
+function descendantHidden(node: Record<string, unknown>, hidden: ReadonlySet<string>): boolean {
+  const content = Array.isArray(node.content) ? node.content : [];
+  for (const child of content) {
+    if (child === null || typeof child !== 'object') continue;
+    const record = child as Record<string, unknown>;
+    const id = blockAttrs(record).id;
+    if (typeof id === 'string' && hidden.has(id)) return true;
+    if (descendantHidden(record, hidden)) return true;
+  }
+  return false;
+}
+
 function blockMarkdown(node: Record<string, unknown>, hidden: ReadonlySet<string>): string {
-  const attrs =
-    node.attrs !== null && typeof node.attrs === 'object' && !Array.isArray(node.attrs)
-      ? (node.attrs as Record<string, unknown>)
-      : {};
+  const attrs = blockAttrs(node);
   if (typeof attrs.id === 'string' && hidden.has(attrs.id)) return '';
   const type = typeof node.type === 'string' ? node.type : '';
   if (SKIP_TYPES.has(type)) return '';
-  if (type === 'semanticBlock' && typeof attrs.source_markdown === 'string') {
+  // The mirror is the whole subtree. A later child retract stays inside it, so
+  // a hidden descendant is dropped by walking the children instead.
+  if (
+    type === 'semanticBlock' &&
+    typeof attrs.source_markdown === 'string' &&
+    !descendantHidden(node, hidden)
+  ) {
     return attrs.source_markdown.trim();
   }
   if (type === 'text' && typeof node.text === 'string') return node.text;
