@@ -44,8 +44,11 @@ export interface AdmissionUnitSpec {
   seed_constraint?: string;
   /** blank 单元的归一化政策（版本化；不在 solve 输出里，由录入侧声明）。 */
   blank_normalization: BlankNormalizationT | null;
-  /** 印刷 rubric/规则原文（free 单元的 rubric 证据 + 其它单元的判分规则证据）。 */
+  /** 印刷 rubric/规则原文（free 单元的 rubric 证据 + 其它单元的判分规则证据）；
+   * 无参考答案的占位不是印刷规则，不在此列。 */
   printed_rule_md?: string;
+  /** rule_reference 原文（含占位），只作默认给分规则的 source，使准入产出的修订不随裁决与否变化。 */
+  rule_statement_md?: string;
 }
 
 /** 印出答案原文（evidence only —— 只作裁决证据，绝不直接解析铸键）。 */

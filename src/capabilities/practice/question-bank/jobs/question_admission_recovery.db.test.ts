@@ -5,12 +5,14 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vites
 import { z } from 'zod';
 import { AgentRunError } from '@/ai/agent-run-error';
 import type { ProviderTransportEvidence, RequestSendState } from '@/ai/task-result';
+import { resetTestConfig, setTestConfig } from '@/core/config/store';
 import { taskInputHash } from '@/core/task-input-hash';
 import { ai_task_runs, paid_effect } from '@/db/schema';
 import { readQuestionServing } from '@/kernel/read-models/question-serving';
 import * as norm from '@/kernel/records/assessment-normalization';
 import type { BoundRunTaskTextFn } from '@/server/ai/runner-fn';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
+import { ADJUDICATION_TASK_KIND } from '../server/admission/adjudicate';
 import { ADMISSION_FAMILY, admissionJobId } from '../server/admission/enqueue';
 import { runAdmissionForQuestion as run } from './question_admission_run';
 
@@ -120,11 +122,14 @@ interface Seeded {
 
 /** One publication's full provenance chain: question+revision+lifecycle plus
  * the publish event the purpose binding anchors to. */
-async function seedAdmission(opts: { compositeUnit?: boolean } = {}): Promise<Seeded> {
+async function seedAdmission(
+  opts: { compositeUnit?: boolean; row?: Partial<norm.NormalizableQuestionRow> } = {},
+): Promise<Seeded> {
   const db = testDb();
-  const contract = norm.normalizeQuestionRowToContract(
-    JSON.parse(RAW) as norm.NormalizableQuestionRow,
-  );
+  const contract = norm.normalizeQuestionRowToContract({
+    ...(JSON.parse(RAW) as norm.NormalizableQuestionRow),
+    ...opts.row,
+  });
   contract.response_spec.slots[0].placement = { row: 0, col: 0, label: '1' };
   // A scored unit spanning more than one slot has no deterministic upgrade lane.
   if (opts.compositeUnit) {
@@ -247,6 +252,33 @@ function solveOutput(unitId: string, itemId: string) {
   };
 }
 
+function freeSolveOutput(unitId: string) {
+  return {
+    units: [
+      {
+        scoring_unit_id: unitId,
+        status: 'solved',
+        answer: { kind: 'free', rubric_md: '说明坡度改变时其余条件保持不变。' },
+      },
+    ],
+  };
+}
+
+function repairVerdict(unitId: string) {
+  return {
+    scoring_unit_id: unitId,
+    verdict: 'return_for_repair',
+    reason_md: 'fixture adjudication',
+    evidence_errors: [],
+    repair: {
+      repair_target: 'reference_answer',
+      broken_part: 'reference',
+      defect: 'ambiguity',
+      fix_hint_md: 'fixture',
+    },
+  };
+}
+
 type Failure =
   | { readonly kind: 'bound'; readonly status: number }
   | {
@@ -258,7 +290,7 @@ type Failure =
 
 interface FakeTask {
   task: BoundRunTaskTextFn;
-  calls: { kind: string }[];
+  calls: { kind: string; payload: unknown }[];
 }
 
 function fakeTaskFactory(
@@ -266,14 +298,15 @@ function fakeTaskFactory(
   overrides: {
     failures?: Map<number, Failure>;
     successAnswers?: Map<number, string>;
+    free?: boolean;
   } = {},
 ): FakeTask {
   const failures = overrides.failures ?? new Map();
   const successAnswers = overrides.successAnswers ?? new Map();
-  const calls: { kind: string }[] = [];
+  const calls: { kind: string; payload: unknown }[] = [];
   const task: BoundRunTaskTextFn = async (kind, payload, ctx) => {
     const index = calls.filter((call) => call.kind === kind).length;
-    calls.push({ kind });
+    calls.push({ kind, payload });
     const runId = `probe-${calls.length}`;
     await ctx?.beforeProviderQuery?.({
       taskRunId: runId,
@@ -323,7 +356,12 @@ function fakeTaskFactory(
     }
     const taskRunId = await insertRun({ kind, payload, outcome: 'success' });
     const answer = successAnswers.get(index) ?? seed.correctItemId;
-    const output = solveOutput(seed.unitId, answer);
+    const output =
+      kind === ADJUDICATION_TASK_KIND
+        ? { per_unit: [repairVerdict(seed.unitId)] }
+        : overrides.free
+          ? freeSolveOutput(seed.unitId)
+          : solveOutput(seed.unitId, answer);
     return {
       text: JSON.stringify(output),
       structured_output: output,
@@ -638,5 +676,86 @@ describe('question admission provider recovery', () => {
     const retryAtMs = Date.parse(tailReceipt?.recovery?.retry_at ?? '');
     expect(retryAtMs - Date.now()).toBeGreaterThan(3 * 60 * 60_000);
     expect((await servingAdmission(seed.groupId))?.status).toBe('pending');
+  });
+
+  // @invariant grading: the adjudication trigger is a pure function of the
+  // frozen revision — the placeholder written because no reference answer exists
+  // is not a printed rule, so two agreeing blind solves admit a select unit
+  // without the adjudicator and publish the same rule provenance as before;
+  // free units, a referenced-but-missing figure, a printed rubric and a printed
+  // answer that did not parse still adjudicate, and only the placeholder leaves
+  // the adjudicator's printed-rule evidence
+  // @fails-if a placeholder alone sends a select unit to the adjudicator, any
+  // other trigger stops reaching it, or the admitted rule loses its provenance
+  it.each([
+    {
+      name: 'placeholder select, solves agree',
+      row: { reference_md: null },
+      calls: 0,
+    },
+    {
+      name: 'placeholder select citing a missing figure',
+      row: { reference_md: null, prompt_md: '如图，哪项是受控变量？' },
+      calls: 1,
+      printed: false,
+    },
+    {
+      name: 'placeholder free unit',
+      row: { kind: 'short_answer', reference_md: null, choices_md: null },
+      free: true,
+      calls: 1,
+      printed: false,
+    },
+    {
+      name: 'printed rubric free unit',
+      row: {
+        kind: 'short_answer',
+        reference_md: null,
+        choices_md: null,
+        rubric_json: { criteria: [{ id: 'c1', description: '指出控制变量', points: 2 }] },
+      },
+      free: true,
+      calls: 1,
+      printed: true,
+    },
+    {
+      name: 'printed answer that is not an option letter',
+      row: { reference_md: '答案见课本第 12 页' },
+      calls: 1,
+      printed: true,
+    },
+  ])('adjudication trigger: $name', async ({ row, free, calls: expected, printed }) => {
+    setTestConfig({
+      [`task.${ADJUDICATION_TASK_KIND}.provider`]: 'custom:opendesign',
+      [`task.${ADJUDICATION_TASK_KIND}.model`]: 'deepseek-v4.1-flash',
+      [`task.${ADJUDICATION_TASK_KIND}.override_global_pin`]: true,
+    });
+    try {
+      const seed = await seedAdmission({ row: row as Partial<norm.NormalizableQuestionRow> });
+      const d1 = admissionJobId(seed.groupId, seed.revisionId, seed.digest, 0);
+      const data = jobData(seed);
+      await insertDelivery(seed, d1, data);
+      const { task, calls } = fakeTaskFactory(seed, { free });
+      const result = await run(testDb(), data, { id: d1, jobData: data }, { runTask: task });
+      const adjudications = calls.filter((call) => call.kind === ADJUDICATION_TASK_KIND);
+      expect(adjudications).toHaveLength(expected);
+      for (const call of adjudications) {
+        const units = (call.payload as { units: Record<string, unknown>[] }).units;
+        expect('printed_rule_md' in units[0]).toBe(printed);
+      }
+      if (expected === 0) {
+        expect(result.status).toBe('admitted');
+        const [published] = (await testDb().$client.unsafe(
+          `select r.scoring_basis from question_group_lifecycle l
+             join question_revision r on r.revision_id = l.current_revision_id
+            where l.group_id = '${seed.groupId}'`,
+        )) as { scoring_basis: { units: { rule?: { source?: { statement: string } } }[] } }[];
+        expect(published.scoring_basis.units[0].rule?.source?.statement).toBe(
+          '（无参考答案 —— 发布为待补规则，转换未决）',
+        );
+      }
+    } finally {
+      resetTestConfig();
+    }
   });
 });
