@@ -40,10 +40,7 @@
 
 - `FORGETTING_ENGINE` — `src/kernel/scheduling.ts`；引擎选择，登记后 pinned/restart。
 - `QUESTION_ADMISSION_POLICY_ID` — `src/capabilities/practice/question-bank/server/admission/run-admission.ts`。
-- `QUESTION_ADMISSION_SOLVER2_PROVIDER` / `QUESTION_ADMISSION_SOLVER2_MODEL` —
-  `src/capabilities/practice/question-bank/jobs/question_admission_run.ts`、
-  `src/capabilities/practice/question-bank/server/admission/reauthorization.ts`。
-  admission 三个进 registry 是 per-call，付费边界保持 fail-closed。
+  进 registry 是 per-call，付费边界保持 fail-closed。
 
 已在 `STAY_IN_PLACE_ENV` 的 4 个隐身名不再另表：`DB_POOL_MAX`（`src/db/pool.ts`）、
 `DEV_HOST`（`server/dev-frontdoor.ts`）、`OPENAI_CHATGPT_AUTH_FILE`

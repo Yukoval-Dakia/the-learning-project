@@ -36,7 +36,7 @@ export interface AdmissionUnitSpec {
   /** Converted slot this unit will grade against when resolved; null when the
    * unit keeps its legacy slot (unresolved / unsupported / free). */
   resolved_slot: ResponseSlotT | null;
-  /** 已 typed 录入的判据（待独立核验的种子）；absent = dual solve mints it. */
+  /** 已 typed 录入的判据（待独立核验的种子）；absent = the blind solve proposes it and adjudication decides. */
   seeded_criterion: ScoringUnitCriterionT | null;
   /** 已 typed 录入的给分规则；absent = default policy rule (select/blank). */
   seeded_rule: ScoringRuleT | null;

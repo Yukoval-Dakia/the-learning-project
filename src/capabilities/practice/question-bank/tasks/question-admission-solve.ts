@@ -3,7 +3,8 @@ import { DEFAULT_TASK_BUDGET, type StructuredSubmitUnitPlan, type TaskSpec } fro
 import { BlankAnswerShape } from '@/core/schema/assessment/blank-answer-shape';
 import { parseTaskOutput } from '@/kernel/parse-task-output';
 
-// Blind solves never receive answers; the prior mode only describes settled keys.
+// The blind solve never receives answers or knowledge candidates; with its keys it writes
+// the solution prior. The prior mode describes settled keys for the backfill only.
 
 const SolveMaterial = z.object({
   material_id: z.string().min(1),
@@ -90,6 +91,63 @@ export const SolvedKey = z.discriminatedUnion('kind', [
 ]);
 export type AdmissionSolvedKeyT = z.infer<typeof SolvedKey>;
 
+/**
+ * Model-facing prior draft; solution-prior.ts enforces limits item by item. Every level is
+ * loose: an undeclared field inside the prior is accepted by the submit tool and stripped
+ * later, so it never costs a correction turn. The answer above stays strict.
+ */
+export const SolvePriorDraft = z.looseObject({
+  methods: z.array(
+    z.looseObject({
+      core_idea_md: z.string(),
+      key_step_md: z.string(),
+      steps: z
+        .array(
+          z.looseObject({
+            step_md: z.string(),
+            /** Index into this part's prerequisites; null = the step needs none of them. */
+            prerequisite_idx: z.number().int().nullable(),
+          }),
+        )
+        .optional(),
+    }),
+  ),
+  pitfalls: z
+    .array(
+      z.looseObject({
+        mechanism_md: z.string(),
+        trigger_md: z.string(),
+        method_idx: z.number().int().optional(),
+      }),
+    )
+    .optional(),
+  prerequisites: z.array(z.looseObject({ name_md: z.string() })).optional(),
+  difficulty: z
+    .looseObject({ b_logit: z.number(), sd_logit: z.number(), basis_md: z.string().optional() })
+    .optional(),
+});
+
+/** Paths of fields the prior draft does not declare, e.g. `methods.0.steps.1.note`. */
+export function undeclaredPriorFields(value: unknown): string[] {
+  const out: string[] = [];
+  const walk = (schema: z.ZodType, node: unknown, path: string): void => {
+    if (schema instanceof z.ZodOptional || schema instanceof z.ZodNullable) {
+      walk(schema.unwrap() as z.ZodType, node, path);
+    } else if (schema instanceof z.ZodArray && Array.isArray(node)) {
+      for (const [index, item] of node.entries())
+        walk(schema.element as z.ZodType, item, `${path}${index}.`);
+    } else if (schema instanceof z.ZodObject && node != null && typeof node === 'object') {
+      const shape = schema.shape as Record<string, z.ZodType>;
+      for (const [key, child] of Object.entries(node)) {
+        if (!(key in shape)) out.push(`${path}${key}`);
+        else walk(shape[key], child, `${path}${key}.`);
+      }
+    }
+  };
+  walk(SolvePriorDraft, value, '');
+  return out;
+}
+
 export const SolveUnitOutput = z.object({
   scoring_unit_id: z.string().min(1),
   status: z.enum(['solved', 'unsolvable']),
@@ -116,6 +174,11 @@ export const SolveUnitOutput = z.object({
       }),
     )
     .default([]),
+  /**
+   * How this unit's part is solved. Undeclared fields inside it are stripped; a prior missing
+   * a required field is dropped whole. Neither fails the unit.
+   */
+  prior: SolvePriorDraft.optional().catch(undefined),
 });
 export type QuestionAdmissionSolveUnitOutputT = z.infer<typeof SolveUnitOutput>;
 
@@ -286,7 +349,7 @@ export function parseQuestionAdmissionSolveModelOutput(
   const parsed = QuestionAdmissionSolveOutput.safeParse(json);
   if (parsed.success) return parsed.data;
   if (repairBudget.remaining <= 0) throw parsed.error;
-  // One deterministic normalization for both blind passes; no syntax guessing, no
+  // One deterministic normalization for the blind pass; no syntax guessing, no
   // filling missing numbers, no extra model request.
   repairBudget.remaining -= 1;
   return QuestionAdmissionSolveOutput.parse(coerceQuestionAdmissionSolveOutput(json, units));
@@ -351,6 +414,7 @@ Rules:
 - For kind:"free" emit rubric_md: a self-contained marking rubric a grader could apply (advisory only).
 - worked_md: your independent derivation. equivalent_forms may be left empty: only the answer itself is graded, and a claimed alternative is not required to be accepted. typical_wrong: the most common wrong answer forms with a short reason_md; for select give wrong item_id sets, for blank give wrong text.
 - printed_points is supplied by the caller; do not change or invent points.
+- prior: on the FIRST unit of each part (input order) also send prior, describing how that part is solved from your own derivation; omit it on the part's later units: {"methods":[{"core_idea_md","key_step_md","steps":[{"step_md","prerequisite_idx"}]}],"pitfalls":[{"mechanism_md","trigger_md","method_idx"}],"prerequisites":[{"name_md"}],"difficulty":{"b_logit","sd_logit","basis_md"}}. Follow the methods/pitfalls/difficulty rules of mode:"prior" below. steps: at most 6. Every step carries prerequisite_idx, never omitted: the index in this part's prerequisites of the knowledge that step needs (an error at this step points to that knowledge), or null only when the step needs none of the listed prerequisites. prerequisites (0-6): knowledge names only. No prior on an unsolvable unit.
 Submit one unit object per submit call; every input unit must be individually accepted. Do not resubmit a unit after its acceptance receipt. answer.kind is exactly one of select, blank_text, blank_numeric, free — never text, choice, or option. equivalent_forms and typical_wrong are arrays of objects, never strings.
 Each submit call carries exactly one unit object:
 {
@@ -362,7 +426,8 @@ Each submit call carries exactly one unit object:
     {"kind":"blank_numeric","expected":0,"tolerance":{"kind":"absolute","value":0}},
     {"kind":"free","rubric_md":"<rubric>"},
   "equivalent_forms":[{"text":"<blank form>"}] or [{"item_ids":["<declared item_id>"]}],
-  "typical_wrong":[{"text":"<wrong blank>","reason_md":"<why>"}] or [{"item_ids":["<wrong item_id>"],"reason_md":"<why>"}]
+  "typical_wrong":[{"text":"<wrong blank>","reason_md":"<why>"}] or [{"item_ids":["<wrong item_id>"],"reason_md":"<why>"}],
+  "prior": {...} on the first unit of each part only
 }
 Use item_ids, not accepted_item_ids. Omit answer when status is "unsolvable" and set reason_md.
 
@@ -475,7 +540,7 @@ export const questionAdmissionSolveTaskSpec = {
   definition: {
     kind: 'QuestionAdmissionSolveTask',
     description:
-      'Independent blind solutions of a frozen question; settled-key solution prior in a separate mode.',
+      'One blind solution of a frozen question with its solution prior; settled-key prior for the backfill.',
     // Owner: timeouts only guard loops and rare faults, so they must sit above the real
     // longest task. Structured submit closes out 60s before the budget; hard-question runs
     // died in budget_landing with 9k–17k tokens per unit (~233 tok/s, 2–3 units). 1200s is

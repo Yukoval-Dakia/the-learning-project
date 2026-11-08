@@ -97,7 +97,11 @@ const INFRA_ADMISSION_REASONS = [
   'unresolved',
   'unjudgeable',
 ] as const;
-const INFRA_ADMISSION_PREFIX = 'dual solve failed before a verdict:';
+/** Immutable @4 receipts keep the dual-solve wording; @5 writes the blind-solve one. */
+const INFRA_ADMISSION_PREFIXES = [
+  'dual solve failed before a verdict:',
+  'blind solve failed before a verdict:',
+] as const;
 const STRUCTURAL_CONTENT_PREFIXES = [
   'material_id ',
   'part_id ',
@@ -150,7 +154,10 @@ function contentReasonSql(reason: SQL): SQL {
 function infraReasonSql(reason: SQL): SQL {
   return sql`(
     ${reason} in (${INFRA_REASON_LIST})
-    or ${reason} like ${`${INFRA_ADMISSION_PREFIX}%`}
+    or ${sql.join(
+      INFRA_ADMISSION_PREFIXES.map((prefix) => sql`${reason} like ${`${prefix}%`}`),
+      sql` or `,
+    )}
   )`;
 }
 
@@ -562,7 +569,7 @@ function admissionRead(
     const message =
       reason == null
         ? '自动检查未通过，题目暂不能作答。'
-        : reason.startsWith('dual solve failed')
+        : INFRA_ADMISSION_PREFIXES.some((prefix) => reason.startsWith(prefix))
           ? '自动求解未能完成，题目暂不能作答。'
           : reason === 'calibration_failed' || reason === 'no_probes_executed'
             ? '自动判分检查未通过，题目暂不能作答。'

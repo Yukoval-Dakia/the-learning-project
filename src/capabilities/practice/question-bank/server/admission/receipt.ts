@@ -9,12 +9,15 @@ import {
   admitPaidEffectIntent,
   claimPaidEffectSend,
   readPaidEffect,
+  recordPaidEffectApplication,
 } from '@/core/paid-work/server/paid-effect-store';
 import {
+  DUAL_SOLVE_QUESTION_ADMISSION_PAID_UNIT,
   LEGACY_QUESTION_ADMISSION_PAID_UNIT,
   PREVIOUS_QUESTION_ADMISSION_PAID_UNIT,
   QUESTION_ADMISSION_PAID_UNIT,
   QUESTION_ADMISSION_PAID_UNITS,
+  QUESTION_ADMISSION_POLICY_ID,
   STRUCTURED_QUESTION_ADMISSION_PAID_UNIT,
 } from '@/core/question-admission-policy';
 import { ExecutionPlan } from '@/core/schema/assessment/execution';
@@ -23,9 +26,10 @@ import { ResponseSpec } from '@/core/schema/assessment/response';
 import { ScoringBasis } from '@/core/schema/assessment/scoring';
 import { QuestionGroupStructure } from '@/core/schema/assessment/structure';
 import type { Tx } from '@/db/client';
-import { paid_effect, paid_effect_authorization } from '@/db/schema';
+import { event, paid_effect, paid_effect_authorization } from '@/db/schema';
 import { SubjectProfileSchema } from '@/subjects/profile';
-import { ADMISSION_FAMILY, type AdmissionJobData } from './enqueue';
+import { ADMISSION_FAMILY, type AdmissionJobData, purposeBindingId } from './enqueue';
+import { ADMISSION_STAGE_FAMILY } from './stages';
 
 const Contract = z.object({
   structure: QuestionGroupStructure,
@@ -56,7 +60,11 @@ export const FrozenAdmissionInput = z.object({
   }),
   subject_profile: SubjectProfileSchema,
   policy_id: z.string().min(1),
-  solver2: z.object({ provider: z.string().optional(), model: z.string().optional() }).nullable(),
+  /** Read-only: @1–@4 inputs froze the second solver's route; their digests include it. */
+  solver2: z
+    .object({ provider: z.string().optional(), model: z.string().optional() })
+    .nullable()
+    .optional(),
 });
 export type FrozenAdmissionInput = z.infer<typeof FrozenAdmissionInput>;
 
@@ -131,17 +139,20 @@ export async function claimAdmissionBatch(
   // claim their own version's unit. A job carrying no admission_version is an
   // old queued @1 delivery — it may reconcile @1 but never initiate the current contract.
   const unit =
-    delivery.jobData == null || version === 4
+    delivery.jobData == null || version === 5
       ? QUESTION_ADMISSION_PAID_UNIT
-      : version === 3
-        ? STRUCTURED_QUESTION_ADMISSION_PAID_UNIT
-        : version === 2
-          ? PREVIOUS_QUESTION_ADMISSION_PAID_UNIT
-          : LEGACY_QUESTION_ADMISSION_PAID_UNIT;
+      : version === 4
+        ? DUAL_SOLVE_QUESTION_ADMISSION_PAID_UNIT
+        : version === 3
+          ? STRUCTURED_QUESTION_ADMISSION_PAID_UNIT
+          : version === 2
+            ? PREVIOUS_QUESTION_ADMISSION_PAID_UNIT
+            : LEGACY_QUESTION_ADMISSION_PAID_UNIT;
   // An applied verdict from ANY contract version is terminal for this base.
   // the marked @2 -> @3 reopen exception is retired — unresolved
   // rows move through the generic void + successor authorization instead, and
-  // no applied row is ever passed over.
+  // no applied row is ever passed over. A dual-solve wait closed for the
+  // single-solve successor recorded no verdict, so it is not terminal.
   const [applied] = await tx
     .select()
     .from(paid_effect)
@@ -152,6 +163,7 @@ export async function claimAdmissionBatch(
         eq(paid_effect.entity_revision, prepared.contract.integrity_digest),
         inArray(paid_effect.unit, [...QUESTION_ADMISSION_PAID_UNITS]),
         eq(paid_effect.state, 'applied'),
+        sql`${paid_effect.application_json}->>'superseded_by_policy' IS NULL`,
       ),
     )
     .for('update')
@@ -279,6 +291,7 @@ export async function claimAdmissionBatch(
         eq(paid_effect.entity_id, effect.entityId),
         eq(paid_effect.entity_revision, effect.entityRevision),
         inArray(paid_effect.unit, [
+          DUAL_SOLVE_QUESTION_ADMISSION_PAID_UNIT,
           STRUCTURED_QUESTION_ADMISSION_PAID_UNIT,
           LEGACY_QUESTION_ADMISSION_PAID_UNIT,
           PREVIOUS_QUESTION_ADMISSION_PAID_UNIT,
@@ -344,4 +357,82 @@ export async function claimAdmissionBatch(
   });
   if (claim.kind !== 'claimed') return { kind: 'held' as const, input, identity };
   return { kind: 'winner' as const, input, identity, fence: claim.fence };
+}
+
+/**
+ * A dual-solve (@4) batch parked on a provider wait is closed, not resumed: its stage
+ * history (call 1 = second blind solve) cannot replay under the single-solve plan. The
+ * paid receipts stay as evidence; the returned publication event re-enqueues the base
+ * under the current contract. Runs under the family + group locks of the claim. An
+ * unresolved stage send keeps the wait (an unknown payment is never re-sent).
+ */
+export async function supersedeDualSolveWait(
+  tx: Tx,
+  prepared: Pick<FrozenAdmissionInput, 'group_id' | 'contract'>,
+): Promise<{ sourceEventId: string | null } | null> {
+  const [row] = await tx
+    .select()
+    .from(paid_effect)
+    .where(
+      and(
+        eq(paid_effect.family, ADMISSION_FAMILY),
+        eq(paid_effect.entity_id, prepared.group_id),
+        eq(paid_effect.entity_revision, prepared.contract.integrity_digest),
+        eq(paid_effect.unit, DUAL_SOLVE_QUESTION_ADMISSION_PAID_UNIT),
+        eq(paid_effect.state, 'receipt_ready'),
+        sql`${paid_effect.result_json}->'result'->>'status' = 'waiting'`,
+      ),
+    )
+    .for('update')
+    .limit(1);
+  if (!row) return null;
+  const [unresolved] = await tx
+    .select({ unit: paid_effect.unit })
+    .from(paid_effect)
+    .where(
+      and(
+        eq(paid_effect.family, ADMISSION_STAGE_FAMILY),
+        eq(paid_effect.entity_id, prepared.group_id),
+        eq(paid_effect.entity_revision, prepared.contract.integrity_digest),
+        inArray(paid_effect.state, ['sending', 'unknown']),
+      ),
+    )
+    .limit(1);
+  if (unresolved) return null;
+  await recordPaidEffectApplication(
+    tx,
+    {
+      family: row.family,
+      entityId: row.entity_id,
+      entityRevision: row.entity_revision,
+      unit: row.unit,
+      inputDigest: row.input_digest,
+    },
+    {
+      status: 'stale',
+      group_id: prepared.group_id,
+      superseded_by_policy: QUESTION_ADMISSION_POLICY_ID,
+    },
+  );
+  return {
+    sourceEventId: row.delivery_id ? await readPublicationSource(tx, row.delivery_id) : null,
+  };
+}
+
+/** The publication a delivery's purpose binding names; null when the delivery owns none. */
+export async function readPublicationSource(tx: Tx, deliveryId: string): Promise<string | null> {
+  const [binding] = await tx
+    .select({ payload: event.payload })
+    .from(event)
+    .where(
+      and(
+        eq(event.id, purposeBindingId(deliveryId)),
+        eq(event.action, 'experimental:question_admission_purpose'),
+      ),
+    )
+    .limit(1);
+  const parsed = z
+    .object({ job_id: z.literal(deliveryId), source_event_id: z.string().min(1) })
+    .safeParse(binding?.payload);
+  return parsed.success ? parsed.data.source_event_id : null;
 }

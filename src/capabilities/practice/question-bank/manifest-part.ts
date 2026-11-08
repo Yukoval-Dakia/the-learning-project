@@ -316,10 +316,10 @@ export const questionBankManifestPart: Omit<CapabilityManifest, 'name' | 'descri
         load: () =>
           import('./jobs/answer_class_backfill').then((m) => m.buildAnswerClassBackfillHandler),
       },
-      // YUK-1445 — 入库准入（G1 双盲解题一致 + G2 逐单元标定）的 live consumer：
+      // YUK-1445 — 入库准入（G1 盲解与作者键或裁决定键 + G2 逐单元标定）的 live consumer：
       // 对既有 draft/revision（question_id 或 revision_id）跑 runQuestionAdmission
       // 已知结果经发布 seam 落 admitted/withheld；未知保留 durable obligation。
-      // 单次 admission = 2×solve（+1×crosscheck）LLM 调用 → 'llm' 档；
+      // 单次 admission = 1×盲解（+1×裁决）LLM 调用 → 'llm' 档；
       // pending admission 的发布事件经上方 subscriber 在事务内入队；恢复不重付。
       {
         name: 'question_admission_run',

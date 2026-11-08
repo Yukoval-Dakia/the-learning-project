@@ -1,3 +1,5 @@
+import { createServer } from 'node:http';
+import { agentLoop } from '@earendil-works/pi-agent-core';
 import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { PgBoss } from 'pg-boss';
@@ -6,10 +8,14 @@ import { z } from 'zod';
 import { AgentRunError } from '@/ai/agent-run-error';
 import type { ProviderTransportEvidence, RequestSendState } from '@/ai/task-result';
 import { resetTestConfig, setTestConfig } from '@/core/config/store';
+import { computePaidEffectIdentity } from '@/core/paid-work/protocol/paid-effect-protocol';
 import { taskInputHash } from '@/core/task-input-hash';
-import { ai_task_runs, paid_effect } from '@/db/schema';
+import { ai_task_runs, paid_effect, question_solution_prior } from '@/db/schema';
 import { readQuestionServing } from '@/kernel/read-models/question-serving';
 import * as norm from '@/kernel/records/assessment-normalization';
+import { __setPiAdapterForTests } from '@/server/ai/execution-adapter';
+import { PiAgentAdapter } from '@/server/ai/pi-agent-adapter';
+import { createLoomPiModels } from '@/server/ai/pi-models';
 import type { BoundRunTaskTextFn } from '@/server/ai/runner-fn';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { ADJUDICATION_TASK_KIND } from '../server/admission/adjudicate';
@@ -154,7 +160,7 @@ async function seedAdmission(
   const publishEventId = `pub-${createId()}`;
   await db.$client.unsafe(
     `insert into event (id,session_id,actor_kind,actor_ref,action,subject_kind,subject_id,outcome,payload,caused_by_event_id,task_run_id,cost_micro_usd,created_at,ingest_at)
-     values ('${publishEventId}',null,'system','quiz_gen:persist','experimental:assessment_publish','question','q','success','{"group_id":"q","revision_id":"r","integrity_digest":"${digest}"}'::jsonb,null,null,null,now(),now())`,
+     values ('${publishEventId}',null,'system','quiz_gen:persist','experimental:assessment_publish','question','q','success','{"group_id":"q","revision_id":"r","integrity_digest":"${digest}","admission":"withheld"}'::jsonb,null,null,null,now(),now())`,
   );
   return {
     groupId: 'q',
@@ -229,7 +235,7 @@ async function insertDelivery(
 
 function jobData(seed: Seeded, extra: object = {}) {
   return {
-    admission_version: 4 as const,
+    admission_version: 5 as const,
     question_id: seed.groupId,
     revision_id: seed.revisionId,
     expected_revision_digest: seed.digest,
@@ -240,6 +246,18 @@ function jobData(seed: Seeded, extra: object = {}) {
   };
 }
 
+const PRIOR = {
+  methods: [
+    {
+      core_idea_md: '只改变一个条件，其余保持不变',
+      key_step_md: '找出实验中唯一被改变的量',
+      steps: [{ step_md: '列出每组实验改变的量', prerequisite_idx: 0 }],
+    },
+  ],
+  prerequisites: [{ name_md: '控制变量法' }],
+  difficulty: { b_logit: -0.5, sd_logit: 0.8, basis_md: '一步判断' },
+};
+
 function solveOutput(unitId: string, itemId: string) {
   return {
     units: [
@@ -247,6 +265,7 @@ function solveOutput(unitId: string, itemId: string) {
         scoring_unit_id: unitId,
         status: 'solved',
         answer: { kind: 'select', item_ids: [itemId] },
+        prior: PRIOR,
       },
     ],
   };
@@ -259,8 +278,24 @@ function freeSolveOutput(unitId: string) {
         scoring_unit_id: unitId,
         status: 'solved',
         answer: { kind: 'free', rubric_md: '说明坡度改变时其余条件保持不变。' },
+        prior: PRIOR,
       },
     ],
+  };
+}
+
+function passVerdict(seed: Seeded, free: boolean) {
+  return {
+    scoring_unit_id: seed.unitId,
+    verdict: 'pass',
+    reason_md: 'fixture adjudication',
+    evidence_errors: [],
+    ...(free
+      ? {
+          decided_key: { kind: 'free', rubric_md: '指出坡度改变、其余条件不变。' },
+          ai_grading_sufficient: true,
+        }
+      : { decided_key: { kind: 'select', item_ids: [seed.correctItemId] } }),
   };
 }
 
@@ -299,6 +334,7 @@ function fakeTaskFactory(
     failures?: Map<number, Failure>;
     successAnswers?: Map<number, string>;
     free?: boolean;
+    adjudication?: 'repair' | 'pass' | 'fail';
   } = {},
 ): FakeTask {
   const failures = overrides.failures ?? new Map();
@@ -313,7 +349,12 @@ function fakeTaskFactory(
       provider: 'custom:opendesign',
       model: 'deepseek-v4.1-flash',
     });
-    const failure = failures.get(index);
+    const failure =
+      kind === ADJUDICATION_TASK_KIND
+        ? overrides.adjudication === 'fail'
+          ? ({ kind: 'validation' } as const)
+          : undefined
+        : failures.get(index);
     if (failure) {
       if (failure.kind === 'bound') {
         const taskRunId = await insertRun({
@@ -358,7 +399,13 @@ function fakeTaskFactory(
     const answer = successAnswers.get(index) ?? seed.correctItemId;
     const output =
       kind === ADJUDICATION_TASK_KIND
-        ? { per_unit: [repairVerdict(seed.unitId)] }
+        ? {
+            per_unit: [
+              overrides.adjudication === 'pass'
+                ? passVerdict(seed, overrides.free === true)
+                : repairVerdict(seed.unitId),
+            ],
+          }
         : overrides.free
           ? freeSolveOutput(seed.unitId)
           : solveOutput(seed.unitId, answer);
@@ -382,6 +429,64 @@ async function stageRows() {
     })
     .from(paid_effect)
     .where(eq(paid_effect.family, 'question_admission_stage'));
+}
+
+/**
+ * Rewrite a waiting @5 batch into the exact shape the dual-solve code left behind: the
+ * @4 unit and policy with its frozen solver2 field, and stage rows without policy_id.
+ */
+async function downgradeToDualSolveWait(state: 'waiting' | 'unknown', stageUnknown = false) {
+  const db = testDb();
+  const rows = (await db.$client.unsafe(
+    `select family, entity_id, entity_revision, unit, input_digest, input_json from paid_effect`,
+  )) as {
+    family: string;
+    entity_id: string;
+    entity_revision: string;
+    unit: string;
+    input_digest: string;
+    input_json: Record<string, unknown>;
+  }[];
+  for (const row of rows) {
+    const batch = row.family === ADMISSION_FAMILY;
+    const { policy_id: _policy, ...stageInput } = row.input_json;
+    const input = batch
+      ? { ...row.input_json, policy_id: 'question_admission@4', solver2: null }
+      : stageInput;
+    const unit = batch ? 'admission@4' : row.unit;
+    const identity = computePaidEffectIdentity({
+      family: row.family,
+      entityId: row.entity_id,
+      entityRevision: row.entity_revision,
+      unit,
+      input,
+    });
+    await db.$client.unsafe(
+      `update paid_effect set unit = $1, input_json = $2::jsonb, input_digest = $3
+        where family = $4 and entity_id = $5 and entity_revision = $6 and unit = $7 and input_digest = $8`,
+      [
+        unit,
+        JSON.stringify(input),
+        identity.inputDigest,
+        row.family,
+        row.entity_id,
+        row.entity_revision,
+        row.unit,
+        row.input_digest,
+      ],
+    );
+  }
+  if (state === 'unknown')
+    await db.$client.unsafe(
+      `update paid_effect set state = 'unknown', result_json = null, result_recorded_at = null,
+         unresolved_reason = 'fixture' where family = '${ADMISSION_FAMILY}'`,
+    );
+  if (stageUnknown)
+    await db.$client.unsafe(
+      `update paid_effect set state = 'unknown', result_json = null, result_recorded_at = null,
+         applied_at = null, application_json = null, unresolved_reason = 'fixture'
+        where family = 'question_admission_stage' and result_json->>'kind' = 'waiting'`,
+    );
 }
 
 async function deniedEvents(groupId: string) {
@@ -429,6 +534,7 @@ describe('question admission provider recovery', () => {
   });
   afterAll(async () => {
     await fixtureBoss?.stop();
+    fixtureBoss = undefined;
   });
 
   // @invariant concurrency: a provably unbilled provider rejection waits on a
@@ -678,33 +784,64 @@ describe('question admission provider recovery', () => {
     expect((await servingAdmission(seed.groupId))?.status).toBe('pending');
   });
 
-  // @invariant grading: the adjudication trigger is a pure function of the
-  // frozen revision — the placeholder written because no reference answer exists
-  // is not a printed rule, so two agreeing blind solves admit a select unit
-  // without the adjudicator and publish the same rule provenance as before;
-  // free units, a referenced-but-missing figure, a printed rubric and a printed
-  // answer that did not parse still adjudicate, and only the placeholder leaves
-  // the adjudicator's printed-rule evidence
-  // @fails-if a placeholder alone sends a select unit to the adjudicator, any
-  // other trigger stops reaching it, or the admitted rule loses its provenance
+  // @invariant grading: one blind solve, then the frozen gate decides — only an author key
+  // that accepts the blind answer settles a unit without the adjudicator; no author key, a
+  // disagreeing author key, free units, a cited missing figure, a printed rubric and a
+  // printed answer that did not parse all adjudicate, a failed or repairing adjudication
+  // never admits, the evidence names who adjudicated, and only a blind key that is the
+  // published key may seed a difficulty anchor
+  // @fails-if a question costs more than one blind solve, a key-less unit admits without
+  // adjudication, a placeholder reaches the adjudicator as a printed rule, an adjudicator
+  // error admits, or an overridden blind solve writes a difficulty anchor
   it.each([
     {
-      name: 'placeholder select, solves agree',
-      row: { reference_md: null },
-      calls: 0,
+      name: 'author key accepts the blind answer',
+      row: {},
+      adjudications: 0,
+      status: 'admitted',
+      keyStatus: 'matched',
     },
     {
-      name: 'placeholder select citing a missing figure',
-      row: { reference_md: null, prompt_md: '如图，哪项是受控变量？' },
-      calls: 1,
+      name: 'author key rejects the blind answer',
+      row: {},
+      wrongAnswer: true,
+      adjudication: 'pass',
+      adjudications: 1,
+      status: 'admitted',
+      keyStatus: 'overridden',
+    },
+    {
+      name: 'no author key (placeholder), adjudicator confirms the blind key',
+      row: { reference_md: null },
+      adjudication: 'pass',
+      adjudications: 1,
       printed: false,
+      status: 'admitted',
+      keyStatus: 'matched',
+    },
+    {
+      name: 'no author key (placeholder), adjudicator returns for repair',
+      row: { reference_md: null },
+      adjudications: 1,
+      printed: false,
+      status: 'withheld',
+    },
+    {
+      name: 'no author key (placeholder), adjudicator fails',
+      row: { reference_md: null },
+      adjudication: 'fail',
+      adjudications: 1,
+      printed: false,
+      status: 'withheld',
     },
     {
       name: 'placeholder free unit',
       row: { kind: 'short_answer', reference_md: null, choices_md: null },
       free: true,
-      calls: 1,
+      adjudication: 'pass',
+      adjudications: 1,
       printed: false,
+      status: 'withheld',
     },
     {
       name: 'printed rubric free unit',
@@ -715,47 +852,304 @@ describe('question admission provider recovery', () => {
         rubric_json: { criteria: [{ id: 'c1', description: '指出控制变量', points: 2 }] },
       },
       free: true,
-      calls: 1,
+      adjudications: 1,
       printed: true,
+      status: 'withheld',
     },
     {
       name: 'printed answer that is not an option letter',
       row: { reference_md: '答案见课本第 12 页' },
-      calls: 1,
+      adjudications: 1,
       printed: true,
+      status: 'withheld',
     },
-  ])('adjudication trigger: $name', async ({ row, free, calls: expected, printed }) => {
+    {
+      name: 'author key agrees but the prompt cites a missing figure',
+      row: { prompt_md: '如图，哪项是受控变量？' },
+      adjudication: 'pass',
+      adjudications: 1,
+      status: 'admitted',
+      keyStatus: 'matched',
+    },
+  ])('single blind solve gate: $name', async (c) => {
     setTestConfig({
       [`task.${ADJUDICATION_TASK_KIND}.provider`]: 'custom:opendesign',
       [`task.${ADJUDICATION_TASK_KIND}.model`]: 'deepseek-v4.1-flash',
       [`task.${ADJUDICATION_TASK_KIND}.override_global_pin`]: true,
     });
     try {
-      const seed = await seedAdmission({ row: row as Partial<norm.NormalizableQuestionRow> });
+      const seed = await seedAdmission({ row: c.row as Partial<norm.NormalizableQuestionRow> });
       const d1 = admissionJobId(seed.groupId, seed.revisionId, seed.digest, 0);
       const data = jobData(seed);
       await insertDelivery(seed, d1, data);
-      const { task, calls } = fakeTaskFactory(seed, { free });
+      const { task, calls } = fakeTaskFactory(seed, {
+        free: c.free,
+        adjudication: c.adjudication as 'pass' | 'fail' | undefined,
+        successAnswers: c.wrongAnswer ? new Map([[0, seed.wrongItemId]]) : undefined,
+      });
       const result = await run(testDb(), data, { id: d1, jobData: data }, { runTask: task });
+      expect(calls.filter((call) => call.kind === 'QuestionAdmissionSolveTask')).toHaveLength(1);
       const adjudications = calls.filter((call) => call.kind === ADJUDICATION_TASK_KIND);
-      expect(adjudications).toHaveLength(expected);
+      expect(adjudications).toHaveLength(c.adjudications);
       for (const call of adjudications) {
-        const units = (call.payload as { units: Record<string, unknown>[] }).units;
-        expect('printed_rule_md' in units[0]).toBe(printed);
+        const payload = call.payload as {
+          units: Record<string, unknown>[];
+          solve: { units: Record<string, unknown>[] };
+        };
+        if (c.printed !== undefined) expect('printed_rule_md' in payload.units[0]).toBe(c.printed);
+        expect(payload.solve.units.every((unit) => !('prior' in unit))).toBe(true);
       }
-      if (expected === 0) {
-        expect(result.status).toBe('admitted');
-        const [published] = (await testDb().$client.unsafe(
-          `select r.scoring_basis from question_group_lifecycle l
-             join question_revision r on r.revision_id = l.current_revision_id
-            where l.group_id = '${seed.groupId}'`,
-        )) as { scoring_basis: { units: { rule?: { source?: { statement: string } } }[] } }[];
-        expect(published.scoring_basis.units[0].rule?.source?.statement).toBe(
-          '（无参考答案 —— 发布为待补规则，转换未决）',
-        );
-      }
+      expect(result.status).toBe(c.status);
+      const [batch] = (await testDb().$client.unsafe(
+        `select result_json from paid_effect where family = 'question_admission_run'`,
+      )) as { result_json: { result: { verification: { evidence: Record<string, unknown> } } } }[];
+      const evidence = batch.result_json.result.verification.evidence;
+      if (c.adjudications > 0 && c.adjudication !== 'fail') {
+        expect(evidence.adjudicator_context).toBe('same_model_as_solver');
+        expect(evidence.route_role).toBe('fallback');
+      } else expect(evidence.adjudicator_context).toBeUndefined();
+      const prior = evidence.solution_prior as { solver_key_status?: string } | undefined;
+      expect(prior?.solver_key_status).toBe(c.keyStatus);
+      const anchors = (await testDb().$client.unsafe(
+        `select 1 from item_calibration where question_id = '${seed.groupId}'`,
+      )) as unknown[];
+      expect(anchors).toHaveLength(c.keyStatus === 'matched' ? 1 : 0);
     } finally {
       resetTestConfig();
     }
+  });
+
+  // @invariant concurrency: moving to the single-solve contract never re-pays an unknown
+  // send and never replays dual-solve history — a dual-solve wait is closed and its
+  // publication re-enqueued under @5 (one fresh blind solve), a dual-solve delivery that
+  // never started is re-enqueued the same way, an unknown dual-solve batch or a wait with
+  // an unknown stage send holds without any send, and replaying the @5 delivery pays nothing
+  // @fails-if a @4 wait resumes into the @5 call plan, a @5 run replays @4 stage receipts,
+  // an unknown @4 send is followed by any provider call, or a replay pays twice
+  it.each([
+    { name: '@4 wait is closed and re-enqueued', fixture: 'waiting', requeued: true },
+    { name: '@4 delivery that never started is re-enqueued', fixture: 'queued', requeued: true },
+    { name: '@4 batch outcome unknown', fixture: 'unknown', requeued: false },
+    { name: '@4 wait with an unknown stage send', fixture: 'stage_unknown', requeued: false },
+  ])('dual-solve to single-solve: $name', async ({ fixture, requeued }) => {
+    const db = testDb();
+    const seed = await seedAdmission();
+    const v4 = { ...jobData(seed), admission_version: 4 as const };
+    const { task, calls } = fakeTaskFactory(seed, {
+      failures: new Map([
+        [0, { kind: 'bound', status: 500 }],
+        [1, { kind: 'bound', status: 500 }],
+      ]),
+    });
+    if (fixture === 'queued') {
+      const d1 = admissionJobId(seed.groupId, seed.revisionId, `${seed.digest}:v4`, 0);
+      await insertDelivery(seed, d1, v4);
+      expect((await run(db, v4, { id: d1, jobData: v4 }, { runTask: task })).status).toBe('stale');
+    } else {
+      // A real waiting run, rewritten into the dual-solve rows it stands for. Its delivery
+      // id is not the @5 publication job id, as the @4 job id never was.
+      const d1 = admissionJobId(seed.groupId, seed.revisionId, `${seed.digest}:v4`, 0);
+      const data = jobData(seed);
+      await insertDelivery(seed, d1, data);
+      expect((await run(db, data, { id: d1, jobData: data }, { runTask: task })).status).toBe(
+        'waiting',
+      );
+      await downgradeToDualSolveWait(
+        fixture === 'unknown' ? 'unknown' : 'waiting',
+        fixture === 'stage_unknown',
+      );
+      bossSends.length = 0;
+      const wakeId = admissionJobId(seed.groupId, seed.revisionId, `${seed.digest}:wake`, 0);
+      const wake = { ...v4, recovery_confirmed: false };
+      await insertDelivery(seed, wakeId, wake, { binding: false });
+      await testDb().$client.unsafe(
+        `update paid_effect set result_json = jsonb_set(result_json, '{recovery,retry_at}', '"2020-01-01T00:00:00.000Z"')
+         where family = 'question_admission_stage' and result_json->>'kind' = 'waiting'`,
+      );
+      const sendsBefore = calls.length;
+      const woke = await run(db, wake, { id: wakeId, jobData: wake }, { runTask: task });
+      expect(woke.status).toBe(requeued ? 'stale' : 'pending');
+      expect(calls.length).toBe(sendsBefore);
+    }
+    const successor = bossSends.find(
+      (send) => (send.data as { admission_version?: number }).admission_version === 5,
+    );
+    if (!requeued) {
+      expect(successor).toBeUndefined();
+      // A fresh @5 publication delivery for the same base still holds.
+      const fresh = admissionJobId(seed.groupId, seed.revisionId, `${seed.digest}:fresh`, 0);
+      const data = jobData(seed);
+      await insertDelivery(seed, fresh, data);
+      const sendsBefore = calls.length;
+      expect((await run(db, data, { id: fresh, jobData: data }, { runTask: task })).status).toBe(
+        'pending',
+      );
+      expect(calls.length).toBe(sendsBefore);
+      return;
+    }
+    if (!successor) throw new Error('no @5 successor delivery was enqueued');
+    const successorId = String(successor.opts.id);
+    const successorData = successor.data as ReturnType<typeof jobData>;
+    await insertDelivery(seed, successorId, successorData, { binding: false });
+    const { task: fresh, calls: freshCalls } = fakeTaskFactory(seed);
+    const admitted = await run(
+      db,
+      successorData,
+      { id: successorId, jobData: successorData },
+      { runTask: fresh },
+    );
+    expect(admitted.status).toBe('admitted');
+    expect(freshCalls.map((call) => call.kind)).toEqual(['QuestionAdmissionSolveTask']);
+    const current = (await stageRows()).filter(
+      (row) => (row.input as { policy_id?: string }).policy_id === 'question_admission@5',
+    );
+    expect(current.map((row) => row.unit)).toEqual(['call:0:attempt:0']);
+    const replay = await run(
+      db,
+      successorData,
+      { id: successorId, jobData: successorData },
+      { runTask: fresh },
+    );
+    expect(replay.status).toBe('already_verified');
+    expect(freshCalls).toHaveLength(1);
+  });
+});
+
+describe('question admission blind solve through the real runner', () => {
+  const requests: Record<string, unknown>[] = [];
+  let stopServer: (() => Promise<void>) | undefined;
+  beforeEach(async () => {
+    await resetDb();
+    requests.length = 0;
+    vi.stubEnv('OPENCODE_API_KEY', 'offline-invalid-key');
+    setTestConfig({
+      CLAUDE_CODE_MAX_RETRIES: 0,
+      'lane.global.provider': 'opencode-go',
+      'lane.global.model': 'deepseek-v4.1-flash',
+    });
+  });
+  afterEach(async () => {
+    await stopServer?.();
+    for (const job of ownedJobs.splice(0)) await fixtureBoss?.deleteJob(job.name, job.id);
+    resetTestConfig();
+    __setPiAdapterForTests(undefined);
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+  });
+  afterAll(async () => {
+    await fixtureBoss?.stop();
+    fixtureBoss = undefined;
+  });
+
+  // @invariant grading: the one blind solve the provider actually receives carries no
+  // answer and no knowledge candidates, its submit tool declares the prior, and the prior
+  // it returns is parsed and frozen on the published revision with step-to-prerequisite
+  // links and names only — undeclared fields inside the prior are accepted by the real
+  // submit tool and stripped, so they cost no extra turn
+  // @fails-if the wire input leaks knowledge candidates or printed answers, the submit tool
+  // hides the prior, a second solve request is sent, an undeclared prior field is refused
+  // or stored, or the returned prior is lost
+  it.each([
+    { name: 'declared prior', prior: PRIOR },
+    {
+      name: 'prior with undeclared fields',
+      prior: {
+        ...PRIOR,
+        methods_note: 'extra',
+        methods: [
+          { ...PRIOR.methods[0], steps: [{ ...PRIOR.methods[0].steps[0], step_note: 'extra' }] },
+        ],
+      },
+    },
+  ])('sends one blind solve and freezes the prior it returns: $name', async ({ prior }) => {
+    const seed = await seedAdmission();
+    const server = createServer(async (request, response) => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(Buffer.from(chunk));
+      const body = JSON.parse(Buffer.concat(chunks).toString()) as Record<string, unknown>;
+      requests.push(body);
+      const tools = body.tools as { function: { name: string } }[];
+      const args = JSON.stringify({
+        scoring_unit_id: seed.unitId,
+        status: 'solved',
+        answer: { kind: 'select', item_ids: [seed.correctItemId] },
+        equivalent_forms: [],
+        typical_wrong: [],
+        prior,
+      });
+      response.writeHead(200, { 'content-type': 'text/event-stream' });
+      const chunk = (delta: unknown, finish: string | null) =>
+        response.write(
+          `data: ${JSON.stringify({
+            id: 'offline',
+            object: 'chat.completion.chunk',
+            choices: [{ index: 0, delta, finish_reason: finish }],
+            ...(finish
+              ? { usage: { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 } }
+              : {}),
+          })}\n\n`,
+        );
+      chunk(
+        {
+          role: 'assistant',
+          tool_calls: [
+            {
+              index: 0,
+              id: 'submit',
+              type: 'function',
+              function: { name: tools[0].function.name, arguments: args },
+            },
+          ],
+        },
+        null,
+      );
+      chunk({}, 'tool_calls');
+      response.end('data: [DONE]\n\n');
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    stopServer = () =>
+      new Promise<void>((resolve) => {
+        server.closeAllConnections();
+        server.close(() => resolve());
+      });
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('missing fixture address');
+    const models = await createLoomPiModels();
+    const model = models.getModel('opencode-go', 'deepseek-v4.1-flash');
+    if (!model) throw new Error('offline protocol model unavailable');
+    vi.spyOn(models, 'getModel').mockReturnValue({
+      ...model,
+      baseUrl: `http://127.0.0.1:${address.port}/v1`,
+    });
+    __setPiAdapterForTests(new PiAgentAdapter({ models, agentLoop }));
+
+    const d1 = admissionJobId(seed.groupId, seed.revisionId, seed.digest, 0);
+    const data = jobData(seed);
+    await insertDelivery(seed, d1, data);
+    const result = await run(testDb(), data, { id: d1, jobData: data });
+
+    expect(result.status).toBe('admitted');
+    expect(requests).toHaveLength(1);
+    const user = (requests[0].messages as { role: string; content: unknown }[]).find(
+      (message) => message.role === 'user',
+    );
+    const wire = JSON.parse(String(user?.content)) as Record<string, unknown>;
+    expect(wire.mode).toBe('solve');
+    expect(Object.keys(wire).sort()).toEqual(['mode', 'parts', 'units']);
+    expect(JSON.stringify(wire)).not.toContain('printed_rule_md');
+    const submit = (
+      requests[0].tools as { function: { parameters: { properties: Record<string, unknown> } } }[]
+    )[0].function.parameters;
+    expect(Object.keys(submit.properties)).toContain('prior');
+    const stored = await testDb()
+      .select({ prior: question_solution_prior.prior })
+      .from(question_solution_prior)
+      .where(eq(question_solution_prior.revision_id, result.revision_id ?? ''));
+    expect(stored).toHaveLength(1);
+    expect(stored[0].prior).toMatchObject({
+      methods: [{ steps_md: ['列出每组实验改变的量'], step_prerequisites: [0] }],
+      prerequisites: [{ name_md: '控制变量法', knowledge_id: null }],
+    });
+    expect(JSON.stringify(stored[0].prior)).not.toMatch(/methods_note|step_note/);
   });
 });

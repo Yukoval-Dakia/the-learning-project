@@ -27,7 +27,7 @@ import { randomUUID } from 'node:crypto';
 //       initial material_fsrs_state via the existing single-owner enroll path so
 //       the question enters the review pool).
 //     promote 不直接 admitted：发布为 withheld(unverified_rules) 待
-//       准入，由 assessment_publish outbox 订阅触发 C1 双解 + 标定后才 admitted
+//       准入，由 assessment_publish outbox 订阅触发 C1 盲解 + 裁决 + 标定后才 admitted
 //       （serving 读面要求 scoring_admission_state='admitted'，withheld 期间不入池）。
 //   needs_review / fail / deterministic too_close / model-only too_close (→'unknown')
 //     → leave draft_status='draft' (never reaches the pool) with
