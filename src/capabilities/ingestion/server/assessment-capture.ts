@@ -13,6 +13,7 @@ import {
 import { ApiError } from '@/kernel/http';
 import { commitFormalAttempt, recordFormalAttemptCapture, saveSubmission } from '@/kernel/judge';
 import type { DocumentUsage } from '@/kernel/read-models/usage-policy';
+import { assessmentAttemptEventId } from '@/kernel/records/assessment-attempt-identity';
 import { freezeImageEvidence } from '@/kernel/records/assessment-evidence';
 import { issueCapturedAssessment } from '@/kernel/records/assessment-issuance';
 import type { AutoEnrolledBlock } from './auto-enroll';
@@ -61,6 +62,10 @@ interface CaptureInput {
   unit_captures?: CapturedUnitAnswer[];
   /** 学习者红笔偏好（缺省保守 post_correction）。 */
   red_ink_preference?: RedInkClassification;
+  /** Enrollment markers written onto the created question (auto-enroll caller). */
+  enrollmentMetadata?: Record<string, unknown>;
+  /** Who originated this entry; evidence provenance only, never a grading decision. */
+  generatedBy?: 'workflow_judge' | 'ingestion_capture';
 }
 
 interface UnitCaptureRecord {
@@ -297,6 +302,8 @@ export async function captureIngestionOriginal(db: Db, input: CaptureInput) {
   });
   return db.transaction(async (tx) => {
     await acquireLearningStateWriteLock(tx);
+    // Same default as the attempt record's generated_by below.
+    const generatedBy = input.generatedBy ?? 'workflow_judge';
     const [current] = await tx
       .select()
       .from(question_block)
@@ -306,11 +313,13 @@ export async function captureIngestionOriginal(db: Db, input: CaptureInput) {
       .select()
       .from(learning_session)
       .where(eq(learning_session.id, block.ingestion_session_id));
+    // A degraded page layout ('partial') is a block-level fact: captured work on a
+    // structurally usable block still gets its private evidence (YUK-1994).
     if (
       current?.status !== 'draft' ||
       current.version !== block.version ||
       session?.type !== 'ingestion' ||
-      session.status !== 'extracted'
+      (session.status !== 'extracted' && session.status !== 'partial')
     )
       return null;
     if (input.pageRefs.some((id) => !current.source_asset_ids.includes(id)))
@@ -341,12 +350,19 @@ export async function captureIngestionOriginal(db: Db, input: CaptureInput) {
           capture_block_version: block.version,
           capture_input_digest: sourceDigest,
           source_asset_ids: block.source_asset_ids,
-          // The judge confidence rides with the question as a signal; grading tiers
-          // are not derived from it here.
-          workflow_judge: {
-            confidence: input.confidence,
-            extraction_confidence: block.extraction_confidence,
-          },
+          // The judge blob asserts that a WorkflowJudge actually ran; a manual or
+          // rescue capture never ran one, so it carries no confidence signal at all.
+          ...(generatedBy === 'workflow_judge'
+            ? {
+                workflow_judge: {
+                  confidence: input.confidence,
+                  extraction_confidence: block.extraction_confidence,
+                },
+              }
+            : {}),
+          ...(input.enrollmentMetadata !== undefined
+            ? { ingestion_enrollment: input.enrollmentMetadata }
+            : {}),
         },
         actorRef: 'ingestion:capture',
         now,
@@ -424,7 +440,7 @@ export async function captureIngestionOriginal(db: Db, input: CaptureInput) {
         block_version: block.version,
         source_document_id: session.source_document_id ?? '',
         source_asset_ids: block.source_asset_ids,
-        generated_by: 'workflow_judge',
+        generated_by: generatedBy,
         // 逐单元读入的落位/未决与红笔归类留痕（不判分）。
         ...(captureRecords.length > 0
           ? {
@@ -437,6 +453,7 @@ export async function captureIngestionOriginal(db: Db, input: CaptureInput) {
     return {
       request,
       questionId,
+      attemptEventId: assessmentAttemptEventId(saved.submission.submission_id),
       sourceDocumentId: session.source_document_id ?? '',
       knowledgeIds: existing?.knowledge_ids ?? input.knowledgeIds,
       admitted: lifecycle.scoring_admission_state === 'admitted',

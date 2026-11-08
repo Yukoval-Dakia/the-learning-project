@@ -8,24 +8,15 @@ import {
   ArtifactAiChangeParamsSchema,
   ArtifactAiChangesResponseSchema,
   ArtifactBacklinksResponseSchema,
-  ArtifactCorrectionStateResponseSchema,
   ArtifactIdParamsSchema,
   ArtifactSearchQuerySchema,
   ArtifactSearchResponseSchema,
-  ArtifactSectionParamsSchema,
-  CorrectArtifactBodySchema,
-  CreateArtifactCorrectionResponseSchema,
-  DismissHubLinkBodySchema,
-  DismissHubLinkResponseSchema,
   EditArtifactBodyBlocksRequestContractSchema,
   EditArtifactBodyBlocksResponseSchema,
-  EditArtifactSectionBodySchema,
-  EditArtifactSectionResponseSchema,
   EditingBlurBodySchema,
   EditingBlurResponseSchema,
   EditingHeartbeatBodySchema,
   EditingHeartbeatResponseSchema,
-  HubIdParamsSchema,
   NoteIdParamsSchema,
   NoteListQuerySchema,
   NoteListResponseSchema,
@@ -38,8 +29,8 @@ export const notesCapability = defineCapability({
   name: 'notes',
   description:
     '笔记域：artifact 笔记的读（note-page 聚合 / notes-read 按知识点）、写（body-blocks 块编辑 ' +
-    '乐观锁 / sections / block-refs 反链索引）与 Living Note refine 链（triggers→policy→' +
-    'mutator|propose，YUK-358 决定6 后信号源 = mark_wrong/mastery_change/dreaming，dwell/verify 已裁）。',
+    '乐观锁 / block-refs 反链索引）与 Living Note refine 链（triggers→policy→' +
+    'mutator|propose，YUK-358 决定6 后信号源 = mastery_change/dreaming，dwell/verify 已裁）。',
   subscriptions: {
     handlers: [
       {
@@ -117,18 +108,6 @@ export const notesCapability = defineCapability({
         load: () => import('./api/body-blocks-route').then((m) => m.PATCH),
       },
       {
-        method: 'PATCH',
-        path: '/api/artifacts/[id]/sections/[sectionId]',
-        operationId: 'updateArtifactSection',
-        request: {
-          params: ArtifactSectionParamsSchema,
-          body: EditArtifactSectionBodySchema,
-        },
-        responses: { 200: EditArtifactSectionResponseSchema, ...API_ERROR_RESPONSES },
-        successStatus: 200,
-        load: () => import('./api/section-edit').then((m) => m.PATCH),
-      },
-      {
         method: 'GET',
         path: '/api/artifacts/[id]/backlinks',
         operationId: 'listArtifactBacklinks',
@@ -137,24 +116,6 @@ export const notesCapability = defineCapability({
         successStatus: 200,
         pagination: 'none',
         load: () => import('./api/backlinks').then((m) => m.GET),
-      },
-      {
-        method: 'GET',
-        path: '/api/artifacts/[id]/correct',
-        operationId: 'getArtifactCorrectionState',
-        request: { params: ArtifactIdParamsSchema },
-        responses: { 200: ArtifactCorrectionStateResponseSchema, ...API_ERROR_RESPONSES },
-        successStatus: 200,
-        load: () => import('./api/correct').then((m) => m.GET),
-      },
-      {
-        method: 'POST',
-        path: '/api/artifacts/[id]/correct',
-        operationId: 'createArtifactCorrection',
-        request: { params: ArtifactIdParamsSchema, body: CorrectArtifactBodySchema },
-        responses: { 200: CreateArtifactCorrectionResponseSchema, ...API_ERROR_RESPONSES },
-        successStatus: 200,
-        load: () => import('./api/correct').then((m) => m.POST),
       },
       {
         method: 'GET',
@@ -174,15 +135,6 @@ export const notesCapability = defineCapability({
         responses: { 200: UndoArtifactAiChangeResponseSchema, ...API_ERROR_RESPONSES },
         successStatus: 200,
         load: () => import('./api/ai-change-undo').then((m) => m.POST),
-      },
-      {
-        method: 'POST',
-        path: '/api/hubs/[id]/dismiss-link',
-        operationId: 'dismissHubLink',
-        request: { params: HubIdParamsSchema, body: DismissHubLinkBodySchema },
-        responses: { 200: DismissHubLinkResponseSchema, ...API_ERROR_RESPONSES },
-        successStatus: 200,
-        load: () => import('./api/hub-dismiss-link').then((m) => m.POST),
       },
       {
         method: 'POST',

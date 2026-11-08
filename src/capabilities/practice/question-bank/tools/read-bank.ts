@@ -28,8 +28,10 @@ import {
   assessment_submission,
   question,
   question_revision,
+  question_solution_prior,
   source_asset,
 } from '@/db/schema';
+import { allowedQuestionIds } from '@/kernel/read-models/usage-policy';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 import {
   bankAssetDigestMatches,
@@ -40,6 +42,7 @@ import {
 
 export const READ_BANK_INCLUDE_VALUES = [
   'overview',
+  'solution_prior',
   'content',
   'materials',
   'answers',
@@ -253,6 +256,20 @@ const ReadBankOkItemSchema = z.object({
       escalation: z.record(z.string(), z.unknown()).optional(),
     })
     .optional(),
+  solution_prior: z
+    .array(
+      z.object({
+        part_id: z.string(),
+        source: z.string(),
+        text: z.string(),
+        extent: z.object({
+          complete: z.boolean(),
+          remaining: z.number(),
+          next_cursor: z.string().nullable(),
+        }),
+      }),
+    )
+    .optional(),
   /** focus 命中的子树列表（target 寻址返回；未命中项进 coverage.unavailable）。 */
   focused: z
     .array(
@@ -320,12 +337,16 @@ export type ReadRole = 'owner' | 'private' | 'restricted';
 /**
  * 允许读私有层（answers 键值 / rubric / scoring / execution / private 材料 /
  * metadata 工作副本）的 agent refs（bare）。user 面与 system 作业默认有私有层；
- * 其余 agent 面按 allowlist。in-answer Copilot（'copilot'）保持 restricted ——
- * 练习对话面不可读答案键。
+ * 其余 agent 面按 allowlist。copilot 两面由 Owner 放开（作答中同权）：答案层
+ * 供模型判断与讲解，不向学习者泄露的边界在提示词输出规则，不在读取。
  */
 const PRIVATE_LAYER_READERS = new Set([
+  // 学习伙伴两面（chat / chip）；派出的 copilot-researcher 复用同一 callerActor。
+  'copilot',
+  'copilot_chip',
   // 备题/校正/判分与维护面（author + maintenance 面 → private）。
   'ingestion_block_edit',
+  'question_preparer',
   'supply_executor',
   'quiz_verify',
   'judge',
@@ -343,10 +364,22 @@ export function bankReadRoleForActor(actor: ToolContext['callerActor'] | undefin
   return PRIVATE_LAYER_READERS.has(bare) ? 'private' : 'restricted';
 }
 
+/** Surfaces whose reads feed cross-question derivation (authoring OTHER questions),
+ *  never the learner's own answer occasion — `answer_only`/`crisis` lineage must not
+ *  reach their model context at all. Serving surfaces (copilot/coach/dreaming reads of
+ *  the learner's own bank) are not listed here: reading own material to serve the
+ *  learner is the sanctioned answer_only use. */
+const DERIVATION_TOOL_SURFACES = new Set(['question_preparer']);
+
+export function callerIsDerivationSurface(actor: ToolContext['callerActor'] | undefined): boolean {
+  return DERIVATION_TOOL_SURFACES.has(actor?.ref.replace(/^agent:/i, '').toLowerCase() ?? '');
+}
+
 /** 私有 include 层：include 不能升级角色 —— 受限角色请求时如实 denied。
  * answers 携带 criterion 字面值（select_key/blank_key）；metadata 是未版本化的
  * 工作副本投影 —— 两者对 restricted 同样私有。 */
 const PRIVATE_INCLUDE_LAYERS = new Set<ReadBankInclude>([
+  'solution_prior',
   'answers',
   'rubric',
   'scoring',
@@ -507,6 +540,9 @@ export interface RunReadBankOptions {
   role?: ReadRole;
   /** 调用方 actor ref —— submission 归属绑定的比对对象。 */
   callerRef?: string;
+  /** Derivation-facing read: groups whose provenance resolves to a restricted
+   *  derivation policy resolve as `denied` items instead of content. */
+  derivationOnly?: boolean;
 }
 
 export async function runReadBank(
@@ -564,6 +600,24 @@ export async function runReadBank(
 
   // ── 批量辅助数据（仅 include 需要的才查）──
   const groupIds = [...new Set(okResolutions.map((r) => r.revision.group_id))];
+
+  // Derivation-facing surfaces never receive restricted-source content: the ref
+  // resolves honestly but the group reads as denied, mirroring the withdrawn branch.
+  const allowedGroups = runOpts?.derivationOnly ? await allowedQuestionIds(db, groupIds) : null;
+  const deniedGroups =
+    allowedGroups === null ? null : new Set(groupIds.filter((id) => !allowedGroups.has(id)));
+
+  const priorRows = include.has('solution_prior')
+    ? await db
+        .select()
+        .from(question_solution_prior)
+        .where(
+          inArray(
+            question_solution_prior.revision_id,
+            okResolutions.map((r) => r.revision.revision_id),
+          ),
+        )
+    : [];
 
   const rootRows =
     include.has('source') || include.has('metadata')
@@ -668,6 +722,15 @@ export async function runReadBank(
       continue;
     }
     const { revision, lifecycle } = resolution;
+
+    if (deniedGroups?.has(revision.group_id)) {
+      items.push({
+        ref: resolution.raw,
+        status: 'denied',
+        error_detail: `group '${revision.group_id}' is consent-restricted; derivation surfaces cannot read its content`,
+      });
+      continue;
+    }
 
     // 历史读授权复核：withdrawn 组的读取需 bound（且归属已验证的）submission
     // 或私有角色。
@@ -797,6 +860,37 @@ export async function runReadBank(
       }
     }
 
+    const priorProjection = include.has('solution_prior')
+      ? priorRows
+          .filter((p) => p.revision_id === revision.revision_id)
+          .filter(
+            (p) =>
+              !input.focus?.length ||
+              input.focus.some(
+                (f) =>
+                  (!f.ref || f.ref === resolution.raw) && f.kind === 'part' && f.id === p.part_id,
+              ),
+          )
+          .map((p) => {
+            const source = `prior:${p.part_id}`;
+            const ext = applyExtent(JSON.stringify(p.prior), cursorForRef, extentChars, {
+              pin: revision.revision_id,
+              ref: resolution.raw,
+              layer: source,
+            });
+            takeCursor(ext.next_cursor);
+            return {
+              part_id: p.part_id,
+              source,
+              text: ext.text,
+              extent: {
+                complete: ext.complete,
+                remaining: ext.remaining,
+                next_cursor: ext.next_cursor,
+              },
+            };
+          })
+      : undefined;
     const item: ReadBankOkItem = {
       ref: resolution.raw,
       status: 'ok',
@@ -823,6 +917,7 @@ export async function runReadBank(
               )
             : null,
       },
+      ...(priorProjection ? { solution_prior: priorProjection } : {}),
       ...(include.has('overview')
         ? {
             overview: {
@@ -998,13 +1093,14 @@ async function executeReadBank(ctx: ToolContext, rawInput: ReadBankInput): Promi
   return runReadBank(ctx.db, rawInput, {
     role: bankReadRoleForActor(ctx.callerActor),
     callerRef: ctx.callerActor?.ref ?? null,
+    derivationOnly: callerIsDerivationSurface(ctx.callerActor),
   });
 }
 
 export const readBankTool: DomainTool<ReadBankInput, ReadBankOutput> = {
   name: 'read_bank',
   description:
-    'Fetch versioned question/group content by bank ref (qrev1:<revision_id>:<digest12> — the `ref` strings search_bank returns). Batch up to 20 refs; each resolves independently (partial success is normal). A ref that cannot be resolved, whose digest no longer matches, or whose group was withdrawn returns an explicit error for that ref — NEVER a silent fallback to latest. Default response is an overview (nav map of part/unit/material/slot stable ids — usable directly as edit_question targets); expand via include layers: content (parts + answer slots) / materials / answers (typed keys) / rubric / scoring (merged answers+rubric+execution) / source / relations / execution / metadata. focus narrows a read to part/unit/material/item/slot subtrees; extent.chars + next_cursor continue long text pinned to the read revision. A withdrawn revision is readable with a bound submission_id (old attempts read their exact frozen revision, marked historical + new_issuance_allowed=false) or a private role. answers/metadata/rubric/scoring/execution and private-visibility materials are role-gated by the server — include can never upgrade a role; denied layers are reported in denied_layers.',
+    'Fetch versioned question/group content by bank ref (qrev1:<revision_id>:<digest12> — the `ref` strings search_bank returns). Batch up to 20 refs; each resolves independently (partial success is normal). A ref that cannot be resolved, whose digest no longer matches, or whose group was withdrawn returns an explicit error for that ref — NEVER a silent fallback to latest. Default response is an overview (nav map of part/unit/material/slot stable ids — usable directly as edit_question targets); expand via include layers: content (parts + answer slots) / materials / answers (typed keys) / rubric / scoring (merged answers+rubric+execution) / source / relations / execution / metadata / solution_prior (same-version method and pitfall evidence with source ids; long text uses extent/cursor). focus narrows a read to part/unit/material/item/slot subtrees; extent.chars + next_cursor continue long text pinned to the read revision. A withdrawn revision is readable with a bound submission_id (old attempts read their exact frozen revision, marked historical + new_issuance_allowed=false) or a private role. answers/metadata/rubric/scoring/execution/solution_prior and private-visibility materials are role-gated by the server — include can never upgrade a role; denied layers are reported in denied_layers.',
   effect: 'read',
   inputSchema: ReadBankInputSchema,
   outputSchema: ReadBankOutputSchema,

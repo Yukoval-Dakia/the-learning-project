@@ -1,6 +1,6 @@
 # server/ai — runner + domain tools
 
-> Server 侧 AI 执行层。共享 task 契约与注入式 reader 在 [`src/ai/`](../../ai/README.md)，具体目录由 `src/capabilities/task-registry.ts` 组合（不持 key）。长期 tool 设计见 [docs/archive/superpowers/specs/2026-05-17-agent-context-tools-design.md](../../../docs/archive/superpowers/specs/2026-05-17-agent-context-tools-design.md)。
+> Server 侧 AI 执行层。共享 task 契约与注入式 reader 在 [`src/ai/`](../../ai/README.md)，具体目录由 `src/capabilities/task-registry.ts` 组合（不持 key）。长期 tool 设计见 `/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/archive/superpowers/specs/2026-05-17-agent-context-tools-design.md`。
 
 ## WHERE TO LOOK
 | 文件 | 职责 |
@@ -19,9 +19,9 @@
 | `sdk-types.ts` | YUK-1025 vendored 帧类型：SDKMessage 线形（assistant/result/user/task_*）是 pi 事件的归一化目标形状——纯类型，零运行时依赖 |
 | `sdk-terminal.ts` | 把归一化 assistant/result 帧适配为 lifecycle usage、thinking 元数据与终态证据；不持久化原始 CoT |
 | `providers.ts` | provider 认证、任务选模与 execution policy；`task.<kind>.reasoning` 存 pi 思考层级名，按 models.dev `reasoning_options` 决议（effort 向上取整、toggle 映射、空档不发参数），`requested→applied` 记入 run 回执，`task.<kind>.override_global_pin` 优先级不变；`resolveTaskReasoning` 同时是 admin 配置读面投影与配置写校验的唯一 resolver（YUK-1808） |
-| `@/core/config/custom-providers` | YUK-1563 ④ 自定义 provider 定义的纯真相源：类型、校验（slug/https URL/env 名/协议）、进程内注册表 + 目录联动端口；凭据只存 env 变量名（DB 水合/CRUD 在 `src/server/config/custom-providers-hydrate.ts` 与 observability 写面） |
+| `@/core/config/custom-providers` | YUK-1563 ④ 自定义 provider 定义的纯真相源：类型、校验（slug/https URL/env 名/协议）、进程内注册表 + 目录联动端口；凭据只存 env 变量名（DB 水合/CRUD 在 `src/core/config/server/custom-providers-hydrate.ts` 与 observability 写面；目录联动端口由 `src/core/ai-runtime/server/custom-provider-config-integration.ts` 绑定，AI 实现在 `custom-provider-catalog-ports.ts`） |
 | `model-catalog-overrides.ts` | 唯一手写模型事实例外源。按 provider/model 记原因，仅补目录缺项或实测差异，不接管选模 |
-| `model-profiles.ts` + `model-catalog.ts` + `provider-models-check.ts` + `model-catalog.snapshot.json` | ModelProfile 读取运行时 models.dev 缓存和有据例外；缺项 unknown。已有 `/models` 核对、鉴权探针和刷新锁不变。`pnpm gen:model-catalog` 只重写离线快照。自定义 provider 的模型 bucket 在 `model-catalog.ts` 刷新时从其自身 /models 合成（`mergeCustomProviderBuckets`），不进快照 |
+| `model-profiles.ts` + `model-catalog.ts` + `provider-models-check.ts` + `model-catalog.snapshot.json` | ModelProfile 读取运行时 models.dev 缓存和有据例外；缺项 unknown。已有 `/models` 核对、鉴权探针和刷新锁不变。`pnpm gen:model-catalog` 只重写离线快照。自定义 provider 的模型 bucket 在 `model-catalog.ts` 刷新时从其自身 /models 合成（`mergeCustomProviderBuckets`），合成前在刷新事务内重读定义表、不信任进程内 registry（YUK-1960），不进快照 |
 | `log.ts` | run / event 留痕 |
 | `provenance.ts` | source / `last_modified_by` 标记 |
 | `../../capabilities/practice/grading/server/judge/` | Practice 判分实现；题型路由和 TaskSpec 由 Practice 拥有 |
@@ -58,7 +58,7 @@
 
 ## Switchable AI provider lane (YUK-365, post-P4)
 
-产品默认在 `src/ai/task-spec.ts` 的 `DEFAULT_TASK_MODEL` 唯一定义为 `opencode-go/deepseek-v4.1-flash`，任务装配时补齐；有真实专用协议的任务保留显式绑定。`AI_PROVIDER_OVERRIDE` + `AI_PROVIDER_MODEL` 仍是模型应急 pin，认证变量 `OPENCODE_API_KEY`；它不改变 reasoning。Mem0 跟随全局模型 pair；无 pair 且无显式 MEM0_LLM_MODEL/BASE_URL 时继承 DEFAULT_TASK_MODEL，显式旧 memory 配置保留 GLM 专用路径。app 与 worker 必须看到相同配置。mimo-v2.5 系列已退役：存量 task/lane 模型配置明确报错，需清除或显式选择支持的 pair，不自动替换；mimo-v2.6 仍可选。
+产品默认在 `src/core/config/model-overrides.ts` 的 `DEFAULT_TASK_MODEL` 唯一定义为 `opencode-go/deepseek-v4.1-flash`，任务装配时补齐；有真实专用协议的任务保留显式绑定。`AI_PROVIDER_OVERRIDE` + `AI_PROVIDER_MODEL` 仍是模型应急 pin，认证变量 `OPENCODE_API_KEY`；它不改变 reasoning。Mem0 跟随全局模型 pair；无 pair 且无显式 MEM0_LLM_MODEL/BASE_URL 时继承 DEFAULT_TASK_MODEL，显式旧 memory 配置保留 GLM 专用路径。app 与 worker 必须看到相同配置。mimo-v2.5 系列已退役：存量 task/lane 模型配置明确报错，需清除或显式选择支持的 pair，不自动替换；mimo-v2.6 仍可选。
 
 `lane.global.reasoning` 存 `{level}`，默认 `{level:'high'}`。任务 `task.<kind>.reasoning` > 全局 > 目录默认；所有模型共用 `resolveTaskReasoning` 的向上取整/toggle/none 规则，receipt 带 source 和 requested→applied。flash 目录档位 low/high/max；无 reasoning 配置位的模型记录 none。
 
@@ -76,9 +76,9 @@ Token Plan `tp-` key 与按量 `XIAOMI_API_KEY` 不互通，旧 `xiaomi` lane �
 模型事实共享 models.dev 的 Xiaomi 条目，注册独立 pi provider；不能把按量或 OpenCode Go
 同名模型证据当成 Token Plan 证据。
 仅 `model-catalog-overrides.ts` 的 `xiaomi-token-plan/mimo-v2.6-pro` 已获本 lane 工具实测准入：
-[Sourcing actual-output](../../../docs/planning/evidence/2026-10-10-pi-tool-loop-xiaomi-token-plan-mimo-v2.6-pro-actual.json)
+[Sourcing actual-output](/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/planning/evidence/2026-10-10-pi-tool-loop-xiaomi-token-plan-mimo-v2.6-pro-actual.json)
 封存真实生产入口、durable task run、工具执行与输出 schema 校验；
-[Copilot actual-output](../../../docs/planning/evidence/2026-10-10-pi-copilot-xiaomi-token-plan-mimo-v2.6-pro-actual.json)
+[Copilot actual-output](/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/planning/evidence/2026-10-10-pi-copilot-xiaomi-token-plan-mimo-v2.6-pro-actual.json)
 封存单轮 durable worker 成功、四次 domain tool 执行及四条成功 `tool_use` mirror。
 其他模型的 toolCalling 为 unknown，能力门仍拒绝。
 
@@ -101,6 +101,8 @@ DashScope。pi cost 只按 catalog 估值记录。
 
 `openrouter` 同时是 typed 判分 lane（原生 `/api/v1/systemone`，`typed-primitive-runner.ts`）和 pi chat/agent lane：pi 内置 `openrouter` provider 的 OpenAI-compatible / Anthropic 传输，经 `pi-models.ts` 的 lane 列表按目录事实重投影，协议模板来自 `pi-provider-catalog.snapshot.json`（`pnpm tsx scripts/gen-pi-provider-catalog.ts` 重生）。可运行集 = 运行时 models.dev openrouter bucket ∩ pi 内置列表 ∩ 必需事实齐全；离线快照不含 chat 目录，所以无缓存时没有可运行的 openrouter chat 模型。`implementedProviderIds()` 刻意排除 openrouter：无 auth probe 模型、不做 `/models` 核对，因此启用它不产生后台流量或花费。费用：非 `typesafe/jev*` 模型走 `pi-catalog` estimated，且需目录费率卡，否则 unknown；`typesafe/jev*` 仍走 typed 的 reported/pricebook 路径。选模只经 task 配置 / 全局 pin，代码无默认 openrouter 模型。
 
+Typed 判分在 Laminar 开启时导出 `task.run` → `task.attempt` → `llm.call`。叶子只抄该次 attempt 已结算的 token 和 cost，不把 systemone 请求或响应写进 span。
+
 ## Pi execution engine (YUK-921 → YUK-1025 P4 唯一引擎)
 
 `PiAgentAdapter`（`@earendil-works/pi-ai` + `@earendil-works/pi-agent-core` `agentLoop`，同 process 内跑）。P4 起它是唯一执行路径——`modelBinding.adapter` 只接受 `'pi'`，非 pi pin 一律 fail-closed config 错；needsToolCall=true kind 要求 `ctx.piToolMounts` 至少产出一件 pi-visible 工具，否则 startup throw（不许静默跑无工具循环）。
@@ -120,4 +122,4 @@ DashScope。pi cost 只按 catalog 估值记录。
 - **cost 诚实**：terminal usage 累加本次父loop全部assistant回合，再合入child usage；durable replay不计入本次用量。pi `usage.cost` 是 catalog 费率估值 → `resolveAttemptCostTruth` 落 `estimated` + `pi-catalog:<provider>/<model>` ref；ChatGPT-login 订阅路由同 basis 但 ref 前缀 `pi-catalog-subscription`（含 timeout/failure 变体），spend-gate 不计该前缀——订阅估算不是付费。Copilot 与教学提示尝试另在 `usage_json.help_latency` 封存四段时延，失败、超时和取消都留下，未知费用保持 null。
 - **abort 语义**：caller abort / `close()` 不产 terminal frame——lifecycle 的 `aborted` 标志独占取消真相；provider 侧 abort（stopReason='aborted' 且我们没发信号）归一为 `error_during_execution`。`close()` 同时释放远程 MCP client socket。
 - **bundle 边界**：pi 依赖链（aws-sdk/genai/openai 等）+ MCP client 随 server/worker bundle 进 `dist/*.cjs`；`build:migrate` 标 `@earendil-works/*` 与 `@modelcontextprotocol/sdk` external + adapter/桥内 dynamic import——migrate bundle 不含 pi/MCP 代码且永不会 require 它。
-- **已知延迟画像（actual-output 封存 `docs/planning/evidence/2026-09-19-pi-adapter-*`；YUK-1983 后短任务档默认 timeout=120s）**：glm-5.3-flash ~11s、grok-4.6 ~51s、mimo-v2.5-pro ~57-60s（当时贴边 60s 档，两过一超）——跨 provider 选模型必须尊重 per-kind timeout。
+- **已知延迟画像（actual-output 封存 `/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/planning/evidence/2026-09-19-pi-adapter-*`；YUK-1983 后短任务档默认 timeout=120s）**：glm-5.3-flash ~11s、grok-4.6 ~51s、mimo-v2.5-pro ~57-60s（当时贴边 60s 档，两过一超）——跨 provider 选模型必须尊重 per-kind timeout。

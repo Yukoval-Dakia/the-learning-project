@@ -34,9 +34,11 @@ export const fastTestInclude = [
   'src/capabilities/notes/tasks/note-generate-output.unit.test.ts',
   'src/core/blocks/scene/plot.test.ts',
   'src/capabilities/observability/api/backup-import.unit.test.ts',
+  'src/capabilities/observability/server/backup/restore-stream.unit.test.ts',
   'src/capabilities/practice/grading/jobs/model_slice_admission_run.test.ts',
   'src/capabilities/practice/grading/server/calibration-sample-durable-operation.test.ts',
   'src/capabilities/practice/grading/server/assessment/durable-attempt-dispatch.unit.test.ts',
+  'src/capabilities/practice/scheduling/server/day-one-prior-propagate.unit.test.ts',
   'src/capabilities/practice/scheduling/server/fsrs.unit.test.ts',
   'src/capabilities/practice/question-bank/server/item-prior-durable-operation.unit.test.ts',
   'src/capabilities/practice/grading/server/judge-engine-client.unit.test.ts',
@@ -49,6 +51,7 @@ export const fastTestInclude = [
   'src/capabilities/practice/grading/server/judge/steps-judge.test.ts',
   'src/capabilities/practice/supply/server/jyeoo-spawn.test.ts',
   'src/kernel/placement-starter-outcome.unit.test.ts',
+  'src/kernel/read-models/knowledge-state.unit.test.ts',
   'src/capabilities/practice/question-bank/server/quiz/verify-framework.test.ts',
   'src/capabilities/practice/ui/blocks/custom-sandbox.test.ts',
   'src/capabilities/shell/server/overnight-digest-summary.unit.test.ts',
@@ -86,6 +89,7 @@ export const fastTestInclude = [
 ];
 
 export const dbTestInclude = [
+  'src/server/ai/provider-stream-guards.db.test.ts',
   'src/capabilities/practice/grading/server/photo-gate.db.test.ts',
   'src/capabilities/shell/api/proposal-reason-privacy.db.test.ts',
   'src/server/boss/isolated-runtime.db.test.ts',
@@ -101,6 +105,7 @@ export const dbTestInclude = [
   'src/capabilities/agency/server/misconception-promote.db.test.ts',
   'src/capabilities/agency/server/proposal-appliers.db.test.ts',
   'src/capabilities/copilot/api/cancel-run.db.test.ts',
+  'src/capabilities/copilot/api/retry-run.db.test.ts',
   'src/capabilities/copilot/api/nudges.db.test.ts',
   'src/capabilities/copilot/api/revert-checkpoint.db.test.ts',
   'src/capabilities/copilot/api/review-answer.db.test.ts',
@@ -123,10 +128,12 @@ export const dbTestInclude = [
   'src/capabilities/ingestion/server/assessment-capture.db.test.ts',
   'src/capabilities/ingestion/server/auto-enroll.db.test.ts',
   'src/capabilities/ingestion/server/make-paper.db.test.ts',
+  'src/capabilities/drawing/server/drawing-service.db.test.ts',
   'src/capabilities/ingestion/server/operation-store.db.test.ts',
   'src/capabilities/ingestion/server/proposal-appliers.db.test.ts',
   'src/capabilities/ingestion/server/provider-attempts.db.test.ts',
   'src/capabilities/ingestion/server/revert-auto-enroll.db.test.ts',
+  'src/capabilities/ingestion/server/single-block-enroll.db.test.ts',
   'src/capabilities/ingestion/server/tools/question-block-edits.db.test.ts',
   'src/capabilities/knowledge/jobs/kc_dedup_nightly.db.test.ts',
   'src/capabilities/knowledge/jobs/knowledge_maintenance_nightly.db.test.ts',
@@ -136,14 +143,12 @@ export const dbTestInclude = [
   'src/capabilities/knowledge/server/misconception-edges.db.test.ts',
   'src/capabilities/knowledge/server/proposals.db.test.ts',
   'src/capabilities/knowledge/server/seed.db.test.ts',
-  'src/capabilities/notes/api/hub-dismiss-link.db.test.ts',
   'src/capabilities/notes/jobs/note_generate.db.test.ts',
   'src/capabilities/notes/server/block-refs.db.test.ts',
   'src/capabilities/notes/server/hub-sync-reconciliation.db.test.ts',
   'src/capabilities/notes/server/mastery-progress-subscription.db.test.ts',
   'src/capabilities/notes/server/note-handoff-boss-contract.db.test.ts',
   'src/capabilities/notes/server/note-handoff.db.test.ts',
-  'src/capabilities/notes/server/sections.db.test.ts',
   'src/capabilities/notes/server/tools/read-note.db.test.ts',
   'src/capabilities/observability/api/_round_trip.db.test.ts',
   'src/capabilities/observability/api/admin-config-write.db.test.ts',
@@ -171,8 +176,10 @@ export const dbTestInclude = [
   'src/capabilities/practice/jobs/jyeoo_staged_asset_reap.db.test.ts',
   'src/capabilities/practice/grading/jobs/model_slice_admission_run.db.test.ts',
   'src/capabilities/practice/jobs/quiz_gen.test.ts',
+  'src/capabilities/practice/question-bank/jobs/question_admission_recovery.db.test.ts',
   'src/capabilities/practice/question-bank/jobs/quiz_verify.test.ts',
   'src/capabilities/practice/settlement/jobs/rejudge.db.test.ts',
+  'src/capabilities/practice/question-bank/jobs/restricted-derivation-lanes.db.test.ts',
   'src/capabilities/practice/question-bank/jobs/source_verify.test.ts',
   'src/capabilities/practice/grading/server/assessment/material-recovery.db.test.ts',
   'src/capabilities/practice/grading/server/assessment/submission-persistence.db.test.ts',
@@ -196,6 +203,7 @@ export const dbTestInclude = [
   'src/capabilities/practice/supply/server/placement-starter-store.db.test.ts',
   'src/capabilities/practice/question-bank/server/quiz/content-fingerprint.db.test.ts',
   'src/capabilities/practice/grading/server/recorded-model-executor.db.test.ts',
+  'src/capabilities/practice/grading/server/assistance-evidence.db.test.ts',
   'src/capabilities/practice/grading/server/review-operation.db.test.ts',
   'src/capabilities/practice/grading/server/review-settlement.db.test.ts',
   'src/capabilities/practice/server/solve-session-media.db.test.ts',
@@ -218,6 +226,7 @@ export const dbTestInclude = [
   'tests/integration/advisory-locks.db.test.ts',
   'src/server/ai/provider-attempt-lifecycle.db.test.ts',
   'src/server/ai/provider-session-admission.db.test.ts',
+  'src/server/ai/provider-transient-retry.db.test.ts',
   'src/server/ai/solution-generate.test.ts',
   'src/server/ai/tools/author-question.test.ts',
   'src/server/ai/tools/propose-question-edit.db.test.ts',
@@ -271,6 +280,7 @@ export const dbTestInclude = [
   'src/server/projections/parity-writers-c3.db.test.ts',
   'src/server/proposals/accept-records-flip.db.test.ts',
   'src/server/proposals/actions.test.ts',
+  'src/server/proposals/batch-accept.db.test.ts',
   'src/server/proposals/edge-decide-advisory-lock.db.test.ts',
   'src/server/proposals/retract-clock.db.test.ts',
   'src/server/proposals/signals.test.ts',
@@ -308,6 +318,13 @@ export const dbTestInclude = [
 ];
 
 export const migrationSmokeInclude = ['tests/integration/migration-smoke.test.ts'];
+
+// Node's runner inside the worker image owns these real-container invariants.
+// pnpm test:workspace consumes this partition; Vitest cannot supply that OS boundary.
+export const containerBoundaryInclude = [
+  'scripts/workspace/boundary.test.ts',
+  'scripts/workspace/lifecycle.test.ts',
+];
 
 export const allTestInclude = [...fastTestInclude, ...dbTestInclude, ...migrationSmokeInclude];
 

@@ -5,8 +5,8 @@
  * raw UPDATE 静态扫——补最高危不变量的机器兜底（横切 #2 的第一刀）」。A4-throat 簇终裁
  * KEEP-WITH-COST：event-sourcing 咽喉红线（fold-owned 表禁 raw UPDATE，一切修复须走事件层 /
  * 单写者咽喉）条文健康，但其执行「靠人肉不靠机器 gate」——knowledge_edge 曾 LIVE fold-owned
- * 而 raw-endpoint UPDATE 缺口在生产活跃数周（docs/design/2026-07-02-kc-dedup-attribution-
- * rewrite-spec.md §7 finding 1）。本审计把「谁可以写 fold-owned 表」这条纯人肉不变量做成
+ * 而 raw-endpoint UPDATE 缺口在生产活跃数周（design 2026-07-02-kc-dedup-attribution-
+ * rewrite-spec §7 finding 1）。本审计把「谁可以写 fold-owned 表」这条纯人肉不变量做成
  * 机器可见的 FORWARD drift-guard。
  *
  * ── 什么是 fold-owned 表 ────────────────────────────────────────────────────
@@ -214,13 +214,6 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
     marker: '.update(artifact)',
     role: 'event-native-by-caller',
     note: 'Version-CAS body/history mutation and undo emit self-contained refine events with the exact paired row timestamp in the caller transaction.',
-  },
-  {
-    table: 'artifact',
-    file: 'src/capabilities/notes/server/hub-dismiss.ts',
-    marker: '.update(artifact)',
-    role: 'event-native-by-caller',
-    note: 'Suppression attrs and body edits share a transaction; lifecycle set_attrs and refine events carry ordered timestamps and exact after-state.',
   },
   {
     table: 'artifact',

@@ -8,7 +8,7 @@ export const AssessmentAttemptCapture = z.object({
       block_version: z.number().int().nonnegative(),
       source_document_id: z.string(),
       source_asset_ids: z.array(z.string()),
-      generated_by: z.literal('workflow_judge'),
+      generated_by: z.enum(['workflow_judge', 'ingestion_capture']),
     })
     .optional(),
   paper_artifact_id: z.string().optional(),

@@ -21,6 +21,7 @@ import { validatePlacementSubmission } from '../../placement/public';
 import { type ReviewSubmitIdentityInput, normalizeReviewSubmitActivityRef } from './activity-ref';
 import { type FormalAttemptCapture, commitFormalAttempt } from './assessment/attempt';
 import type { NativeAttemptDispatchPort } from './assessment/native-attempt-dispatch-port';
+import { type SealedSelfClaim, readSealedSelfClaim } from './assessment/self-claim';
 import { judgeDurableEnabled } from './judge-durable-config';
 import { readJudgeRunPermanent } from './judge-run-observation';
 import { nativeJudgeRunId } from './judge-run-status';
@@ -301,7 +302,12 @@ export interface ReviewAnswerContext {
 
 export type ReviewAnswerResult =
   | { kind: 'pending'; run_id: string }
-  | { kind: 'committed'; committed: Awaited<ReturnType<typeof commitFormalAttempt>> };
+  | {
+      kind: 'committed';
+      committed: Awaited<ReturnType<typeof commitFormalAttempt>>;
+      /** The claim this rating operation sealed — read back only when the submission predates this request. */
+      sealed_claim: SealedSelfClaim | null;
+    };
 
 /**
  * Submit an authorized learner original. Network callers own authentication and
@@ -430,8 +436,20 @@ export async function submitReviewAnswer(
           validated.q.source === INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
       },
     );
+    // A submission persisted by an earlier request (advice preview, durable
+    // probe) still lets this request be the first rating operation — the seal
+    // lands in this same commit, so the readback echoes it faithfully. When the
+    // rating was already sealed, the receipts answer instead of the request.
+    const sealed_claim = committed.replayed
+      ? await readSealedSelfClaim(
+          database,
+          committed.submission.submission_id,
+          committed.submission.evaluation_group_id,
+          committed.candidate.evaluation.record.evaluation_id,
+        )
+      : null;
     retainDiagnosticClaim = true;
-    return { kind: 'committed', committed };
+    return { kind: 'committed', committed, sealed_claim };
   } catch (err) {
     if (claimedDiagnostic !== null && !retainDiagnosticClaim) {
       const claim = claimedDiagnostic;

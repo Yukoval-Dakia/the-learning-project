@@ -50,7 +50,7 @@ export const StructureOutput = z.object({
     .array(
       z.object({
         figure_index: z.number().int().min(0),
-        student_answer_present: z.boolean().nullable(),
+        student_answer_present: z.boolean().nullable().optional(),
       }),
     )
     .optional(),
@@ -84,7 +84,7 @@ function buildStructurePrompt(profile: SubjectProfile): string {
 
 任务：以**图片为准**、腾讯文字为辅，忠实转写为题目结构树。只调整字段与跨页分组，绝不翻译、改写、概括或解题。英语逐字保留英语，中文逐字保留中文，混合语言原样保留；不要把英语题面译成中文。
 关键能力：
-1. **跨页大题组装**：一道大题（passage / 阅读理解 / 完形 / 大题带多个小问）如果横跨多页，必须组装成**一个** stem 节点，它的 sub_questions 收齐所有页的小问。不要因为换页就把同一大题拆成两个顶层节点。
+1. **跨页大题组装**：一道大题（passage / 阅读理解 / 完形 / 大题带多个小问）如果横跨多页，必须组装成**一个** stem 节点，它的 sub_questions 收齐所有页的小问。不要因为换页就把同一大题拆成两个顶层节点。跨页合并时题目正文、选项、阅读原文必须两页齐全；「（接上页）」「（续）」等版面续页标记可以去掉，但不能因此删掉任何题目文字。
 2. **布局规范**：把题面、选项、答案规整到结构字段里；passage 进 stem 的 prompt_text，小问进 sub。
 3. 不抽取手写涂改 / 批改痕迹作为结构（那是作答证据，下游处理）。但要**判断每个节点上是否存在学生的手写作答 / 批改痕迹**：在该 StructureNode 上填 student_answer_present（true / false）。**绝不转写手写内容**——只报「有没有」这个布尔，像素留给下游判分（手写永远是像素，不做 OCR 转写）。整页都没有学生作答 → 全部省略或填 false。
 4. **图片归属（仅当输入含 figures 字段时）**：按 page_index 和 bbox 对照页面图片，把确定属于题面的裁剪图 index 填在对应节点 figure_ids；图形选项的图填入对应 options[].figure_ids，不再重复填到节点。同一 index 只声明一次，归属不明就省略，不猜最近题。跨页共享图归 stem，某小问独有图归 sub。选项 label 只存印刷标签，text 只存该选项印刷原文；选项本身是图且无正文时 text 必须为 ""，图由 figure_ids 表达。禁止编写「图A所示的」「见配图」「[图像选项]」或图像细节描述；没有图时也不要用文字冒充图。
@@ -106,7 +106,7 @@ StructureNode（递归，**不要**输出 id，运行时会补）：
 - 顶层 questions 至少 1 个；如果整页无法识别出任何题，questions 给空数组并把 layout_quality 设 "text_only"。
 - layout_quality：结构清晰完整 → "structured"；能出题但版式残缺/有疑点 → "partial"；几乎认不出结构 → "text_only"。
 - extraction_confidence：你对整棵结构树与原图一致性的置信度（0 到 1）。跨页归属、题号、选项或层级有疑点时必须降低；不要把字段固定写成 1。
-- content_lost：原图可见的题、选项或内容有丢弃/无法转写时必须为 true 并写明 warning；全部保留填 false，无法判断填 null。不能只在 warning 报丢失。
+- content_lost：原图可见的题、选项或内容有丢弃/无法转写时必须为 true 并写明 warning；跨页合并只去掉「（接上页）」「（续）」等版面续页标记不算内容丢失，题面正文、选项、原文缺一才算。全部保留填 false，无法判断填 null。不能只在 warning 报丢失。
 - answers / analysis 只转写印刷的参考答案/解析；不求解，不把手写当答案键。没有就给 null 或省略。
 - 禁止：输出 JSON 之外的文字、把跨页同一大题拆成多个顶层节点、把腾讯文字 hint 当成不可改的结构。`;
 }

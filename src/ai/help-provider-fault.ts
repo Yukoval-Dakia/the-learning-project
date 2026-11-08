@@ -1,8 +1,22 @@
 // Proven help/copilot faults only: a root HTTP 429 or 502 bound the same way as
-// a 400, or a typed parse signal. Error strings are not evidence.
+// a 400, or a typed parse signal. Error strings are not evidence — one narrow
+// exception: telling account-level quota apart from brief 429 congestion reads
+// the provider's OWN quota code words inside the sanitized failure body.
+
+import { providerQuotaLimitSigned } from './provider-failure';
 
 export type HelpProviderFault =
-  | { readonly kind: 'quota'; readonly httpStatus: 429 }
+  | {
+      readonly kind: 'quota';
+      readonly httpStatus: 429;
+      /**
+       * True only when the provider's own quota/limit signature was present in
+       * the bound failure body — copy may then name 额度 honestly. Absent or
+       * false means an unsigned 429 (brief congestion, or evidence we cannot
+       * prove) and copy must not claim quota.
+       */
+      readonly signed?: boolean;
+    }
   | { readonly kind: 'bad_gateway'; readonly httpStatus: 502 }
   | { readonly kind: 'parse' };
 
@@ -55,9 +69,13 @@ export interface HelpExitTiming {
 
 export function isHelpProviderFault(value: unknown): value is HelpProviderFault {
   if (!value || typeof value !== 'object') return false;
-  const record = value as { kind?: unknown; httpStatus?: unknown };
+  const record = value as { kind?: unknown; httpStatus?: unknown; signed?: unknown };
   if (record.kind === 'parse') return true;
-  if (record.kind === 'quota') return record.httpStatus === 429;
+  if (record.kind === 'quota')
+    return (
+      record.httpStatus === 429 &&
+      (record.signed === undefined || typeof record.signed === 'boolean')
+    );
   if (record.kind === 'bad_gateway') return record.httpStatus === 502;
   return false;
 }
@@ -91,11 +109,16 @@ export function helpProviderFaultFromSdkResult(msg: {
   help_provider_fault?: unknown;
   api_error_status?: number | null;
   is_error?: boolean;
+  /** Sanitized provider failure lines — where the quota signature lives. */
+  errors?: readonly string[];
 }): HelpProviderFault | undefined {
   if (isHelpProviderFault(msg.help_provider_fault)) return msg.help_provider_fault;
   if (msg.subtype === 'error_max_structured_output_retries') return { kind: 'parse' };
   if (msg.subtype === 'success' && msg.is_error === true) {
-    return helpProviderFaultFromStatus(msg.api_error_status);
+    const fault = helpProviderFaultFromStatus(msg.api_error_status);
+    if (fault?.kind === 'quota')
+      return { ...fault, signed: providerQuotaLimitSigned(msg.errors ?? []) };
+    return fault;
   }
   return undefined;
 }
@@ -108,32 +131,50 @@ export function readHelpProviderFault(error: unknown): HelpProviderFault | undef
     help_provider_fault?: unknown;
     subtype?: unknown;
     apiErrorStatus?: unknown;
+    errors?: unknown;
   };
   if (isHelpProviderFault(record.helpProviderFault)) return record.helpProviderFault;
   if (isHelpProviderFault(record.help_provider_fault)) return record.help_provider_fault;
   if (record.subtype === 'typed_contract_violation') return { kind: 'parse' };
   if (record.subtype === 'error_max_structured_output_retries') return { kind: 'parse' };
   if (record.subtype === 'api_error_result') {
-    return helpProviderFaultFromStatus(
+    const fault = helpProviderFaultFromStatus(
       typeof record.apiErrorStatus === 'number' ? record.apiErrorStatus : undefined,
     );
+    if (fault?.kind === 'quota' && Array.isArray(record.errors))
+      return {
+        ...fault,
+        signed: providerQuotaLimitSigned(
+          record.errors.filter((entry): entry is string => typeof entry === 'string'),
+        ),
+      };
+    return fault;
   }
   return undefined;
 }
 
 export function helpExitCopy(fault: HelpProviderFault, timing?: HelpExitTiming): HelpExitCopy {
   if (fault.kind === 'quota') {
-    const recovery = longQuotaRecoveryText(timing?.retryAfterMs);
-    if (recovery !== undefined) {
+    // Only the provider's own quota signature lets copy name 额度 — real quota
+    // responses carry no Retry-After, and a long Retry-After on an unsigned
+    // 429 is congestion, not quota.
+    if (fault.signed === true) {
+      const recovery = longQuotaRecoveryText(timing?.retryAfterMs);
       return {
-        reason: `额度用完了，${recovery}恢复。`,
+        reason:
+          recovery !== undefined
+            ? `额度用完了，${recovery}恢复。`
+            : '额度用完了，这次没能继续回答。',
         stopRetryGuidance: '恢复之前再问，还是会马上得到同样的回答。',
         deterministicPractice: DETERMINISTIC_PRACTICE,
       };
     }
     return {
       reason: '现在有点忙，这次没能继续回答。',
-      stopRetryGuidance: '过一会儿再试试吧。',
+      stopRetryGuidance:
+        timing?.retryAfterMs !== undefined && timing.retryAfterMs > 0
+          ? `${quotaWaitDurationText(timing.retryAfterMs)}后再试试吧。`
+          : '过一会儿再试试吧。',
       deterministicPractice: DETERMINISTIC_PRACTICE,
     };
   }
@@ -164,7 +205,7 @@ export function helpExitLead(fault: HelpProviderFault, timing?: HelpExitTiming):
     copy.reason,
     '',
     fault.kind === 'quota'
-      ? longQuotaRecoveryText(timing?.retryAfterMs) !== undefined
+      ? fault.signed === true || longQuotaRecoveryText(timing?.retryAfterMs) !== undefined
         ? '等恢复后再试'
         : '稍后再试'
       : '先别再试',

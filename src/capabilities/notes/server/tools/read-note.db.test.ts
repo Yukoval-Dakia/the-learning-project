@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { noteSectionsToBodyBlocks } from '@/capabilities/notes/server/body-blocks';
 import { artifact, event } from '@/db/schema';
 import type { ToolContext } from '@/kernel/tools/types';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
@@ -17,17 +16,23 @@ function ctx(): ToolContext {
 }
 
 function sections(id: string, body: string) {
-  return noteSectionsToBodyBlocks([
-    {
-      id,
-      kind: 'definition',
-      body_md: body,
-      source_tier: 'user_verified',
-      user_verified: true,
-      embedded_check: null,
-      version: 1,
-    },
-  ] as never);
+  return {
+    type: 'doc' as const,
+    content: [
+      {
+        type: 'semanticBlock',
+        attrs: {
+          id,
+          semantic_kind: 'definition',
+          source_tier: 'user_verified',
+          user_verified: true,
+          version: 1,
+          source_markdown: body,
+        },
+        content: [{ type: 'paragraph', content: [{ type: 'text', text: body }] }],
+      },
+    ],
+  };
 }
 
 async function seedNote(opts: {

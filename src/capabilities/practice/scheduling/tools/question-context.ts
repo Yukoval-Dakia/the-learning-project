@@ -39,6 +39,10 @@ import {
 import { getFailureAttemptsForDerivation } from '@/kernel/read-models/failure-attempts';
 import { miscCauseLabelMap, resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
 import { getQuestionTimeline, getRecentReviewEvents } from '@/kernel/read-models/question-activity';
+import {
+  learnerVisibleImageRefs,
+  loadLearnerImagePageIndex,
+} from '@/kernel/read-models/question-images';
 import { derivableLearningRecords } from '@/kernel/records/queries';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 
@@ -289,8 +293,15 @@ async function executeGetQuestionContext(
     output.knowledge_context = await knowledgeContext(ctx.db, q.knowledge_ids ?? []);
   }
   if (include.has('assets') && q) {
+    // The companion may quote these to the learner, so whole photographed pages
+    // (other questions' handwriting) are filtered by the same read-time rule as the
+    // bank surface; figures remain.
+    const imagePageIndex = await loadLearnerImagePageIndex(ctx.db, [q]);
     output.source_assets = [
-      ...(q.image_refs ?? []).map((id) => ({ asset_id: id, role: 'question_image' })),
+      ...learnerVisibleImageRefs(q, imagePageIndex).map((id) => ({
+        asset_id: id,
+        role: 'question_image',
+      })),
       ...(q.figures ?? []).map((fig, index) => ({
         asset_id: fig.asset_id ?? `figure_${index}`,
         role: fig.role ?? 'figure',

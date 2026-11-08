@@ -11,6 +11,7 @@ import { z } from 'zod';
 
 import type { Db } from '@/db/client';
 import { artifact, event, knowledge, learning_item } from '@/db/schema';
+import { noteBodyText } from '@/kernel/read-models/note-body-text';
 import { bodyBlocksToNoteSections } from '@/kernel/read-models/note-sections';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import {
@@ -74,13 +75,17 @@ export async function loadTeachingContext(db: Db, learningItemId: string) {
   }
 
   let atomicSections: unknown = null;
+  let atomicBodyText: string | null = null;
   if (li.primary_artifact_id) {
     const aRows = await db
       .select({ body_blocks: artifact.body_blocks })
       .from(artifact)
       .where(eq(artifact.id, li.primary_artifact_id))
       .limit(1);
-    if (aRows[0]) atomicSections = bodyBlocksToNoteSections(aRows[0].body_blocks);
+    if (aRows[0]) {
+      atomicSections = bodyBlocksToNoteSections(aRows[0].body_blocks);
+      atomicBodyText = noteBodyText(aRows[0].body_blocks);
+    }
   }
 
   let parentHubSummary: string | null = null;
@@ -110,6 +115,7 @@ export async function loadTeachingContext(db: Db, learningItemId: string) {
     },
     parent_hub_summary: parentHubSummary,
     atomic_sections: atomicSections,
+    atomic_body_text: atomicBodyText,
     subjectProfile: resolveSubjectProfile(knowledgeNode?.domain),
   };
 }
@@ -141,6 +147,7 @@ export async function planTeachingTurn(
     learning_item: context.learning_item,
     parent_hub_summary: context.parent_hub_summary,
     atomic_sections: context.atomic_sections,
+    atomic_body_text: context.atomic_body_text,
     messages,
   };
   const result = await runTaskFn('TeachingTurnTask', input, {

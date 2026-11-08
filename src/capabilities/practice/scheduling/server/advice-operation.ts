@@ -15,6 +15,7 @@ import {
   divertReviewAnswer,
   normalizeReviewSubmitActivityRef,
   previewFormalAttempt,
+  projectAttemptEvidence,
   questionKnowledgeIdsForJudge,
   ratingFromCoarseOutcome,
   requestReviewAnswer,
@@ -73,6 +74,7 @@ export async function previewReviewAdvice(db: Db, raw: unknown, signal: AbortSig
     submission,
     activation_intent,
     automatic_commit,
+    assistance,
   } = await previewFormalAttempt(db, 'advice_preview', questionId, body.assessment, signal, replay);
   const suggestedRating = ratingFromCoarseOutcome(invoked.result.coarse_outcome);
 
@@ -140,6 +142,13 @@ export async function previewReviewAdvice(db: Db, raw: unknown, signal: AbortSig
       suggested_rating: suggestedRating,
     },
     advice,
+    // Pre-commit facts for the page that shows 看过/判分 before the next
+    // question: no rating operation has run yet, so the claim stays null.
+    evidence: projectAttemptEvidence({
+      assistance,
+      verdict: { outcome: invoked.result.coarse_outcome, score: invoked.result.score },
+      self_claim: null,
+    }),
     ...(commit ? { committed: commit.body } : {}),
   };
 }

@@ -2,7 +2,7 @@ import { capabilities } from '@/capabilities';
 import { archiveProposalArtifacts } from '@/capabilities/notes/public';
 import type { Db } from '@/db/client';
 import { ApiError } from '@/kernel/http';
-import { type ProposalAcceptProposal, createProposalLifecycleRegistry } from '@/kernel/proposals';
+import { createProposalLifecycleRegistry } from '@/kernel/proposals';
 import { type ProposalInboxRow, getProposalInboxRow } from '@/kernel/proposals/inbox';
 import { getStartedBoss } from '@/server/boss/client';
 import { assertCurrentKnowledgeNodeParity } from '@/server/projections/parity';
@@ -37,13 +37,4 @@ export function assertPending(proposal: ProposalInboxRow): void {
       409,
     );
   }
-}
-
-export function ownerInput(proposal: ProposalInboxRow): ProposalAcceptProposal {
-  return {
-    id: proposal.id,
-    payload: proposal.payload,
-    status: proposal.status,
-    actor_ref: proposal.actor_ref,
-  };
 }

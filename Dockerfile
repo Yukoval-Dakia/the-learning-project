@@ -162,7 +162,25 @@ RUN node node_modules/playwright-core/cli.js install --with-deps chromium-headle
 # playwright-core）。末位 stage 是 worker，所有用本 Dockerfile 的 compose
 # 服务必须显式钉 target：app/migrate/mem0-init → runner（镜像不变），只有
 # worker 服务 → worker。
+FROM base AS workspace-launcher
+RUN apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev \
+    && rm -rf /var/lib/apt/lists/*
+COPY scripts/workspace/launch.c /tmp/launch.c
+RUN gcc -O2 -Wall -Wextra -Werror -o /workspace-launch /tmp/launch.c
+
 FROM chromium-os AS worker
+RUN apt-get update && apt-get install -y --no-install-recommends python3 libcap2-bin \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid 29082 agent-sandbox \
+    && useradd --uid 29082 --gid 29082 --no-create-home --shell /usr/sbin/nologin agent-sandbox \
+    && mkdir -p /var/lib/tlp/workspaces \
+    && chown node:agent-sandbox /var/lib/tlp/workspaces \
+    && chmod 1730 /var/lib/tlp/workspaces
+COPY scripts/workspace/files.py /usr/local/libexec/workspace-files.py
+COPY --from=workspace-launcher /workspace-launch /usr/local/libexec/workspace-launch
+RUN chown root:node /usr/local/libexec/workspace-launch \
+    && chmod 0750 /usr/local/libexec/workspace-launch \
+    && setcap cap_setuid,cap_setgid+ep /usr/local/libexec/workspace-launch
 COPY --from=runner /app ./
 # YUK-1548 — mermaid + jsdom flat overlay for compose_block diagram validation
 # (worker-only; the app image only registers the tool module, never executes

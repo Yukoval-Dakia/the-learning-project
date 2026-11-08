@@ -9,7 +9,7 @@ import {
   PartialUnknownJudgeResult,
 } from '@/kernel/capability-contract-schemas';
 import { REASONING_TRACE_MAX_LEN } from '@/kernel/limits';
-import { CreateSubmissionBodySchema } from './assessment-contracts';
+import { AttemptEvidenceSchema, CreateSubmissionBodySchema } from './assessment-contracts';
 
 /** Bound text copied into judge prompts and immutable attempt events. */
 export const MAX_REVIEW_RESPONSE_CHARS = 12_000;
@@ -158,6 +158,7 @@ export const FormalAttemptResponseSchema = z.object({
   }),
   // The immutable native receipt is an occurrence anchor, not an FSRS snapshot.
   review_event: z.object({ id: z.string() }),
+  evidence: AttemptEvidenceSchema,
   judge: AttemptJudgeResponseSchema.nullable(),
 });
 export const AttemptResponseSchema = z.union([

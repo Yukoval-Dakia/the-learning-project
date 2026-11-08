@@ -58,6 +58,20 @@ export const retractStartAutoApplied = createServerFn({ method: 'POST' })
       return JSON.stringify(await retract(data));
     }),
   );
+export const acceptStartProposalBatch = createServerFn({ method: 'POST' })
+  .validator((input: { proposal_ids: string[] }) => input)
+  .handler(({ context, data }) =>
+    runAuthenticatedStartWorkbench(context, getRequest(), async () => {
+      const { acceptStartProposalBatch: accept } = await context.adapters.workbench();
+      return JSON.stringify(await accept(data));
+    }),
+  );
+export const getStartProposalBatches = createServerFn({ method: 'GET' }).handler(({ context }) =>
+  runAuthenticatedStartWorkbench(context, getRequest(), async () => {
+    const { readStartProposalBatches } = await context.adapters.workbench();
+    return JSON.stringify(await readStartProposalBatches());
+  }),
+);
 export const getStartKnowledgeTree = createServerFn({ method: 'GET' })
   .validator((input: { subject?: string } | undefined) => input)
   .handler(({ context, data }) =>

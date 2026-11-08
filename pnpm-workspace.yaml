@@ -55,6 +55,10 @@ allowBuilds:
 patchedDependencies:
   mem0ai@3.0.13: patches/mem0ai@3.0.13.patch
 
+# 3 days, in minutes. A younger version fails resolution unless that exact
+# version is listed below. That list is the security-hotfix and emergency pin.
+minimumReleaseAge: 4320
+minimumReleaseAgeStrict: true
 minimumReleaseAgeExclude:
   - '@earendil-works/pi-agent-core@1.5.0'
   - '@earendil-works/pi-ai@1.5.0'

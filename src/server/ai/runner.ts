@@ -27,6 +27,7 @@ import {
 import { type ProviderFailureInfo, classifyProviderFailure } from '@/ai/provider-failure';
 import { installTaskOperationObserver } from '@/ai/task-observation';
 import type { RunTaskResult } from '@/ai/task-result';
+import { failureSpendChargeUsd } from '@/ai/task-result';
 import type { TaskBudget, TaskDefinition } from '@/ai/task-spec';
 import {
   type TaskKind,
@@ -38,7 +39,6 @@ import {
 import { isSpawnToolName } from '@/core/subagent-contract';
 import { resolveProviderSessionDeadlineAt } from '../http/provider-session-deadline';
 import { bindAgentRunError, isApiErrorSuccessResult } from './agent-run-error';
-import { failureSpendChargeUsd } from './attempt-cost';
 import {
   type ModelBinding,
   type PreparedExecutionQuery,
@@ -67,7 +67,7 @@ import {
 import { createSdkTerminalEvidenceCollector } from './sdk-terminal';
 import type { Options, SDKAssistantMessage, SDKMessage, SDKUserMessage } from './sdk-types';
 import { currentTaskSpendScope, withinTaskSpendFrame } from './task-spend-scope';
-import { addStreamText, emptyStreamTextStats } from './timeout-usage';
+import { addStreamText, emptyStreamTextStats, lazyTimeoutPrompt } from './timeout-usage';
 
 // The runner is loaded before capability execution. Keep the shared observation
 // contract backend-free while using the same async trace context as task/model spans.
@@ -410,14 +410,16 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
   apiErrorMessages?: (msg: SDKSuccessResultMessage) => string[];
   onResultError?: (msg: Exclude<SDKResultMessage, SDKSuccessResultMessage>) => void;
   abortedWithoutTerminalMessage: string;
-  /** System prompt plus user prompt, used only when an abort has no provider usage. */
-  usagePrompt?: string;
+  /** Submitted prompt, read at settle time. */
+  usagePrompt?: () => string;
 }): Promise<void> {
   const terminal = createSdkTerminalEvidenceCollector();
   let iteration = 0;
   let stepStartTime = Date.now();
   const modelStarted = Date.now();
-  let firstTokenAt: number | undefined;
+  let firstOutputAt: number | undefined;
+  let firstTextAt: number | undefined;
+  let firstThinkingAt: number | undefined;
   let thinkingObserved = false;
   let completeArtifact = false;
   const outputStats = emptyStreamTextStats();
@@ -425,7 +427,7 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
     // YUK-1557 — a cut stream with no usage frame still submitted a prompt:
     // persist a bounded estimate, never a null cost. A reported frame wins.
     await args.lifecycle.recordEstimatedUsage({
-      promptText: args.usagePrompt ?? '',
+      promptText: args.usagePrompt?.() ?? '',
       output: outputStats,
       priceOrigin: args.lifecycle.aborted ? 'timeout-estimate' : 'failure-estimate',
     });
@@ -446,7 +448,10 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
       if (msg.type === 'text_delta' || msg.type === 'thinking_delta') {
         if (msg.text) {
           addStreamText(outputStats, msg.text);
-          firstTokenAt ??= Date.now();
+          const at = Date.now();
+          firstOutputAt ??= at;
+          if (msg.type === 'text_delta') firstTextAt ??= at;
+          else firstThinkingAt ??= at;
         }
         if (msg.type === 'text_delta' && !args.lifecycle.abortController.signal.aborted) {
           await args.onTextDelta?.(msg.text);
@@ -601,13 +606,14 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
     const endedAt = Date.now();
     args.lifecycle.noteHelpProviderClock({
       endedAt,
-      ...(firstTokenAt !== undefined ? { firstTokenAt } : {}),
+      ...(firstOutputAt !== undefined ? { firstTokenAt: firstOutputAt } : {}),
       completeArtifact,
     });
     args.lifecycle.recordNotePhases({
       model_total_ms: endedAt - modelStarted,
-      model_ttft_ms: firstTokenAt === undefined ? null : firstTokenAt - modelStarted,
-      stream_ms: firstTokenAt === undefined ? 0 : endedAt - firstTokenAt,
+      model_ttft_ms: firstTextAt === undefined ? null : firstTextAt - modelStarted,
+      model_thinking_ttft_ms: firstThinkingAt === undefined ? null : firstThinkingAt - modelStarted,
+      stream_ms: firstTextAt === undefined ? 0 : endedAt - firstTextAt,
     });
     try {
       await args.ctx.onThinkingSettled?.({
@@ -666,7 +672,12 @@ async function runTaskAttempt(args: {
     budget,
     lifecycle.transportEvidence,
   );
-  const usagePrompt = `${typeof callOptions.systemPrompt === 'string' ? callOptions.systemPrompt : ''}\n${typeof promptText === 'string' ? promptText : ''}`;
+  const usagePrompt = lazyTimeoutPrompt(
+    callOptions.systemPrompt,
+    promptText,
+    ctx.piSkillDocs,
+    () => lifecycle.transportEvidence.optionalDependencyUnavailable,
+  );
   lifecycle.recordNotePhases({
     prompt_build_ms: Date.now() - promptStarted,
     retry_count: args.retryCount ?? 0,
@@ -709,16 +720,25 @@ async function runTaskAttempt(args: {
       usagePrompt,
     });
   };
-  await withPreparedExecutionQuery(
-    lifecycle,
-    modelBinding,
-    actualInput,
-    promptText,
-    callOptions,
-    consumePreparedQuery,
-    ctx.beforeProviderQuery,
-    ctx,
-  );
+  try {
+    await withPreparedExecutionQuery(
+      lifecycle,
+      modelBinding,
+      actualInput,
+      promptText,
+      callOptions,
+      consumePreparedQuery,
+      ctx.beforeProviderQuery,
+      ctx,
+    );
+  } catch (error) {
+    await lifecycle.recordEstimatedUsage({
+      promptText: usagePrompt(),
+      output: emptyStreamTextStats(),
+      priceOrigin: 'failure-estimate',
+    });
+    throw error;
+  }
 
   // The provider permit is released before attempt settlement / afterRun. A DB
   // observation write must never occupy scarce upstream session capacity.
@@ -858,14 +878,6 @@ async function runTaskImpl(
       // It has an admission row but no YUK-841 cost attempt and is never retried
       // by the runner's provider-transient loop.
       if (!lifecycle.started) throw err;
-      // YUK-1557 — failures outside consumeProviderAttempt (startup/transport)
-      // still need non-null estimated cost evidence.
-      const fallbackPrompt = promptFromInput(actualInput);
-      await lifecycle.recordEstimatedUsage({
-        promptText: typeof fallbackPrompt === 'string' ? fallbackPrompt : '',
-        output: emptyStreamTextStats(),
-        priceOrigin: 'failure-estimate',
-      });
       const boundError = bindAgentRunError({
         error: err,
         kind,
@@ -880,6 +892,9 @@ async function runTaskImpl(
         maxAttempts,
         firstAttemptStartedAt,
         error: boundError,
+        transport: lifecycle.armedTransport(),
+        attemptCostTruth: lifecycle.costTruth,
+        aborted: lifecycle.aborted,
       });
       // Settle the full truth before another provider call is allowed. The
       // actual-retry marker is a later, conservative transition performed only
@@ -960,14 +975,13 @@ export function streamTask(kind: string, input: unknown, initialCtx: StreamTaskC
             const encoder = new TextEncoder();
             let resultText = '';
             let shouldClose = true;
-            let usagePromptText = '';
+            let readUsagePrompt: () => string = () => '';
 
             try {
               const actualInput = ctx.middleware?.beforeRun
                 ? await ctx.middleware.beforeRun(kind, input, ctx)
                 : input;
               const promptText = ctx.compiledModelPrompt?.text ?? promptFromInput(actualInput);
-              usagePromptText = typeof promptText === 'string' ? promptText : '';
               const callOptions = buildQueryOptions(
                 kind,
                 ctx,
@@ -975,6 +989,12 @@ export function streamTask(kind: string, input: unknown, initialCtx: StreamTaskC
                 lifecycle.resolved,
                 budget,
                 lifecycle.transportEvidence,
+              );
+              readUsagePrompt = lazyTimeoutPrompt(
+                callOptions.systemPrompt,
+                promptText,
+                ctx.piSkillDocs,
+                () => lifecycle.transportEvidence.optionalDependencyUnavailable,
               );
               const consumePreparedQuery = async (q: AsyncIterable<RunnerMessage>) => {
                 await consumeProviderAttempt({
@@ -1002,6 +1022,7 @@ export function streamTask(kind: string, input: unknown, initialCtx: StreamTaskC
                     }
                   },
                   abortedWithoutTerminalMessage: `[${kind}] Agent SDK run aborted with no terminal result`,
+                  usagePrompt: readUsagePrompt,
                 });
               };
               await withPreparedExecutionQuery(
@@ -1029,7 +1050,7 @@ export function streamTask(kind: string, input: unknown, initialCtx: StreamTaskC
             } catch (error) {
               if (lifecycle.started) {
                 await lifecycle.recordEstimatedUsage({
-                  promptText: usagePromptText,
+                  promptText: readUsagePrompt(),
                   output: emptyStreamTextStats(),
                   priceOrigin: 'failure-estimate',
                 });
@@ -1054,10 +1075,10 @@ export function streamTask(kind: string, input: unknown, initialCtx: StreamTaskC
                 shouldClose = false;
                 return;
               }
-              const message =
-                error instanceof Error
-                  ? `[streamTask] ${error.message}`
-                  : '[streamTask] unknown error';
+              // Run id rides the marker so workers can read back the settled row.
+              const message = `[streamTask] ${
+                error instanceof Error ? error.message : 'unknown error'
+              } (task_run_id=${lifecycle.taskRunId})`;
               controller.enqueue(encoder.encode(`\n\n${message}\n`));
             } finally {
               lifecycle.dispose();
@@ -1210,10 +1231,9 @@ async function streamTaskCollectingImpl(
       | undefined;
 
     const outcome = await lifecycle.withTracing(async () => {
-      let usagePromptText = '';
+      let readUsagePrompt: () => string = () => '';
       try {
         const promptText = ctx.compiledModelPrompt?.text ?? promptFromInput(actualInput);
-        usagePromptText = typeof promptText === 'string' ? promptText : '';
         const callOptions = buildQueryOptions(
           kind,
           ctx,
@@ -1223,6 +1243,12 @@ async function streamTaskCollectingImpl(
           lifecycle.transportEvidence,
         );
         if (kind === 'CopilotTask') callOptions.judgeRetryPolicy = 'none';
+        readUsagePrompt = lazyTimeoutPrompt(
+          callOptions.systemPrompt,
+          promptText,
+          ctx.piSkillDocs,
+          () => lifecycle.transportEvidence.optionalDependencyUnavailable,
+        );
         const consumePreparedQuery = async (q: AsyncIterable<RunnerMessage>) => {
           await consumeProviderAttempt({
             query: q,
@@ -1290,6 +1316,7 @@ async function streamTaskCollectingImpl(
                 providerFailureEvidence = msg.provider_failure;
             },
             abortedWithoutTerminalMessage: `[${kind}] Agent SDK run aborted with no terminal result`,
+            usagePrompt: readUsagePrompt,
           });
         };
         await withPreparedExecutionQuery(
@@ -1318,7 +1345,7 @@ async function streamTaskCollectingImpl(
       } catch (error) {
         if (!lifecycle.started) throw error;
         await lifecycle.recordEstimatedUsage({
-          promptText: usagePromptText,
+          promptText: readUsagePrompt(),
           output: emptyStreamTextStats(),
           priceOrigin: 'failure-estimate',
         });
@@ -1341,6 +1368,7 @@ async function streamTaskCollectingImpl(
               apiErrorStatus: boundError.apiErrorStatus,
               httpStatus: providerFailureEvidence?.http_status,
               retryAfterMs: providerFailureEvidence?.retry_after_ms,
+              errorEvidence: boundError.errors,
               streamErrorTerminal: providerFailureEvidence?.stream_error === true,
               transport: lifecycle.transportEvidence.snapshot(),
             });

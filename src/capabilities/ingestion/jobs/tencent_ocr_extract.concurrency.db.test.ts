@@ -8,6 +8,8 @@ import { db } from '@/db/client';
 import { learning_session, provider_attempt, question_block } from '@/db/schema';
 import tencentDone from '../../../../tests/fixtures/tencent_mark_agent_cloze_sample.json';
 import { resetDb } from '../../../../tests/helpers/db';
+import { IngestionBlocksResponseSchema } from '../api/contracts';
+import { readIngestionSessionBlocks } from '../server/session-blocks-read';
 import { readIngestionSessionDetail } from '../server/session-detail';
 import { runStructureTask } from '../server/structure';
 import { createImageR2, seedIngestionSession } from './ingestion-test-support';
@@ -131,10 +133,45 @@ describe('Tencent OCR concurrent delivery fencing', () => {
   });
 });
 
-// @invariant security: crop handwriting evidence controls publication without exposing known student work
-// @fails-if known handwriting is attached or unknown handwriting is hidden or loses its durable warning
+// @invariant security: VLM crop evidence and option claims cannot publish known student work or write figure rows the read surface rejects
+// @fails-if a missing handwriting judgment aborts the whole structure, an empty option label is attached or breaks the block read, or known handwriting is published
 it('retains clean and unverified option crops but withholds known handwriting', async () => {
-  for (const handwriting of [false, null, true]) {
+  const cases: Array<{
+    handwriting: boolean | null | undefined;
+    optionLabel: string;
+    figures: [string, boolean][];
+    withheld: boolean;
+    unverified: boolean;
+  }> = [
+    {
+      handwriting: false,
+      optionLabel: 'A',
+      figures: [['A', false]],
+      withheld: false,
+      unverified: false,
+    },
+    {
+      handwriting: null,
+      optionLabel: 'A',
+      figures: [['A', true]],
+      withheld: false,
+      unverified: true,
+    },
+    { handwriting: true, optionLabel: 'A', figures: [], withheld: true, unverified: false },
+    // A model that omits the judgment leaves that crop unknown; it must not fail
+    // the whole StructureOutput parse and fall back to OCR for every page.
+    {
+      handwriting: undefined,
+      optionLabel: 'A',
+      figures: [['A', true]],
+      withheld: false,
+      unverified: true,
+    },
+    // FigureRef.option_label.min(1): an empty option label claim stays unbound.
+    { handwriting: false, optionLabel: '', figures: [], withheld: true, unverified: false },
+  ];
+  for (const expected of cases) {
+    const { handwriting, optionLabel } = expected;
     const { sessionId } = await seedIngestionSession(1);
     const handler = buildTencentOcrHandler({
       db,
@@ -182,7 +219,7 @@ it('retains clean and unverified option crops but withholds known handwriting', 
                   role: 'standalone',
                   prompt_text: 'Choose A.',
                   student_answer_present: false,
-                  options: [{ label: 'A', text: '', figure_ids: [0] }],
+                  options: [{ label: optionLabel, text: '', figure_ids: [0] }],
                 },
               ],
             }),
@@ -204,12 +241,14 @@ it('retains clean and unverified option crops but withholds known handwriting', 
       .where(eq(question_block.ingestion_session_id, sessionId));
     expect(
       block.figures?.map((figure) => [figure.option_label, figure.handwriting_unverified]),
-    ).toEqual(handwriting === true ? [] : [['A', handwriting === null]]);
+    ).toEqual(expected.figures);
+    const { rows } = await readIngestionSessionBlocks(db, { id: sessionId });
+    expect(IngestionBlocksResponseSchema.safeParse({ rows }).success).toBe(true);
     const { session } = await readIngestionSessionDetail(sessionId);
     expect([
       session.figures_withheld,
       session.figure_handwriting_unverified,
       session.content_lost,
-    ]).toEqual([handwriting === true, handwriting === null, false]);
+    ]).toEqual([expected.withheld, expected.unverified, false]);
   }
 });
