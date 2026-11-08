@@ -35,6 +35,7 @@ import {
   feedbackAfterRejudge,
   feedbackFromCommittedAttempt,
   feedbackFromCommittedDiagnosticAttempt,
+  outcomeFitsFeedbackCard,
   provenanceOf,
 } from './judge-feedback';
 import type { PfToast } from './PracticeFacePage';
@@ -416,8 +417,13 @@ export function usePracticeSubmit({
   // YUK-432 — 客观题在 preview 回来时已自动 commit（auto_rate:true）。记下来：反馈卡保留判定，
   // 「下一项」只 onDone() 推进（不再二次 commit）。开放题恒 false → 现有手动流不变。
   const [autoCommitted, setAutoCommitted] = useState(false);
-  // What the server recorded about this answer, once it has been committed here.
-  const [recorded, setRecorded] = useState<AttemptEvidence | null>(null);
+  // What the server recorded about this answer, once it has been committed here. The host reuses
+  // this instance across questions, so it is kept with the question it belongs to and read only
+  // while that question is shown: the next question never shows the last one's facts.
+  const [recordedFor, setRecordedFor] = useState<{
+    questionId: string | undefined;
+    evidence: AttemptEvidence;
+  } | null>(null);
   // 自动 commit 后可申诉的 evaluation id（名字是历史遗留）。null = 没有可申诉的记录，入口隐藏。
   const [autoCommitJudgeEventId, setAutoCommitJudgeEventId] = useState<string | null>(null);
   // YUK-433 — solo 路径 RT capture：题面变可见那刻的墙钟时间戳。commit 时 now - 它 = 这次作答用时
@@ -427,6 +433,12 @@ export function usePracticeSubmit({
   const questionShownAtRef = useRef<number | null>(null);
 
   const q = qQ.data ?? null;
+  const questionId = q?.id;
+  const setRecorded = useCallback(
+    (evidence: AttemptEvidence | null) =>
+      setRecordedFor(evidence ? { questionId, evidence } : null),
+    [questionId],
+  );
   const isInterventionDiagnostic = isInterventionDiagnosticSource(q?.source ?? '');
   const committedDiagnosticQuestionId = q?.id;
   // YUK-617 W1 — 本题 attempt·review 历史，从题面聚合 data.timeline 直接派生（同一份请求，无二次取）。
@@ -509,7 +521,7 @@ export function usePracticeSubmit({
       }
       setPendingRun(null);
     },
-    [addToast],
+    [addToast, setRecorded],
   );
 
   // YUK-1729 — the issuance whose recovered judge outcome this visit already applied.
@@ -1420,6 +1432,15 @@ export function usePracticeSubmit({
     : null;
 
   const settledFeedback = preview ?? committedPreview;
+  // A finished rejudge changes the result the card leads with; the 判分 fact follows it, or the
+  // card would say two different things about one answer.
+  const recordedHere =
+    recordedFor && recordedFor.questionId === q?.id ? recordedFor.evidence : null;
+  const rejudgedOutcome = rejudged?.effective.coarse_outcome;
+  const recorded =
+    recordedHere?.verdict && rejudgedOutcome && outcomeFitsFeedbackCard(rejudgedOutcome)
+      ? { ...recordedHere, verdict: { ...recordedHere.verdict, outcome: rejudgedOutcome } }
+      : recordedHere;
   const displayedFeedback = settledFeedback
     ? feedbackAfterRejudge(settledFeedback, rejudged?.effective ?? null)
     : settledFeedback;
