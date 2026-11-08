@@ -19,11 +19,11 @@ description: 检测 ADR / planning-doc ↔ 代码实现之间的漂移。支持�
 ### 1. 列决策清单
 
 读：
-- `docs/adr/*.md`（所有 ADR）
+- `/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/adr/` 下所有 `*.md`（所有 ADR）
 - `AGENTS.md`（Architecture / Layering / Design principles 三段）
-- `docs/design/*.md`（最近 30 天）
+- `/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/design/` 下最近 30 天的 `*.md`
 
-（历史归档 `docs/archive/superpowers/` 已退役，不是活跃决策源，不进扫描输入；溯源见该目录 README。）
+（历史归档 `/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/archive/superpowers/` 已退役，不是活跃决策源，不进扫描输入；溯源见该目录 README。）
 
 抽取每个**可验证的决策点**——能在代码里找到证据的那种。**忽略**纯设计语录、纯前置说明。
 
@@ -70,7 +70,7 @@ description: 检测 ADR / planning-doc ↔ 代码实现之间的漂移。支持�
 - **代码**: `src/path/file.ts:L42`，做了 X
 - **冲突**: <一句话说清楚>
 - **建议**: <修 code / 改 ADR / 加 deprecation>
-- Linear issue（报告完成后按 `docs/agents/issue-tracker.md` closeout gate 去重并创建 / 更新，label `drift`）：
+- Linear issue（报告完成后按 `/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/agents/issue-tracker.md` closeout gate 去重并创建 / 更新，label `drift`）：
   - title: `Drift: <ADR-NNNN> ↔ <file>`
   - 或通过当前 runtime 的 Linear connector: `save_issue` with `team="Yukoval Studios"`, `labels=["drift"]`
 

@@ -13,7 +13,6 @@ function normalizePath(file) {
 
 function isDocsOnly(file) {
   if (file.startsWith('.remember/')) return true;
-  if (file.startsWith('docs/')) return /\.(?:md|mdx|txt|png|jpe?g|gif|webp|svg|pdf)$/i.test(file);
   if (!file.includes('/') && file.endsWith('.md')) return true;
   if (file.startsWith('.agents/') || file.startsWith('.claude/')) return file.endsWith('.md');
   return /\/(?:AGENTS|CLAUDE|CONTEXT|README)\.md$/.test(file);

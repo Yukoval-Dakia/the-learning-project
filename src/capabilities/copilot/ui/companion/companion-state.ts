@@ -65,6 +65,8 @@ export interface CompanionState {
   /** The revert landed but the refresh after it failed (never shown as a revert failure). */
   refreshFailed: boolean;
   revertPendingId: string | null;
+  /** The failed run a resend is being accepted for. */
+  retryPendingRunId: string | null;
   chipPending: string | null;
   chipAcked: string | null;
   draft: string;
@@ -97,6 +99,7 @@ export const initialCompanionState: CompanionState = {
   error: null,
   refreshFailed: false,
   revertPendingId: null,
+  retryPendingRunId: null,
   chipPending: null,
   chipAcked: null,
   draft: '',

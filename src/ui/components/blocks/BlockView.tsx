@@ -6,6 +6,7 @@
 import type { ReactElement } from 'react';
 import { useContext, useMemo } from 'react';
 import { type BlockV1T, parseBlockFence } from '@/core/schema/blocks';
+import { PlotBlock } from '@/ui-next/blocks/PlotBlock';
 import { BlockUnavailable } from './BlockFrame';
 import { ChartBlock } from './ChartBlock';
 import { DiagramBlock } from './DiagramBlock';
@@ -50,6 +51,9 @@ export function BlockView({ block }: { block: BlockV1T | undefined }): ReactElem
       return <FigureBlock block={block} />;
     case 'chart':
       return <ChartBlock block={block} />;
+    case 'plot':
+      // A changed block starts over from its own defaults; the same block keeps the learner's sliders.
+      return <PlotBlock key={JSON.stringify(block)} block={block} />;
     case 'question_ref':
       return <QuestionRefBlock block={block} />;
     case 'entity_card':

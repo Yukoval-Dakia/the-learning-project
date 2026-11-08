@@ -13,6 +13,8 @@
 import { z } from 'zod';
 import type { DerivationPolicyT } from '@/core/schema/derivation-policy';
 import type { Db, Tx } from '@/db/client';
+import type { EvidenceDemandV1T } from '@/kernel/supply-contracts';
+import type { TurnSourceLedger } from './source-ledger';
 
 export type ToolEffect = 'read' | 'propose' | 'write' | 'control';
 
@@ -91,6 +93,8 @@ export interface ToolCallerActor {
 }
 
 export interface ToolContext {
+  /** Validated preparation ticket supplied by the server, never model arguments. */
+  supplyDemand?: EvidenceDemandV1T;
   /** Original execution owner authorizes the actual write transaction. */
   beforeIngestionWrite?: (tx: Tx) => Promise<void>;
   derivationPolicy?: DerivationPolicyT;
@@ -134,6 +138,8 @@ export interface ToolContext {
   callerActor: ToolCallerActor;
   /** When set, mirror events use this as `caused_by_event_id`. */
   causedByEventId?: string;
+  /** Server-bound original learner ask for quote authorization, separate from execution causality. */
+  learnerAskEventId?: string;
   /**
    * Server-bound publication anchor for a run whose content provenance is its ticket rather
    * than a learner session (the question preparer). Never accepted from model arguments:
@@ -142,6 +148,18 @@ export interface ToolContext {
   publicationCausedByEventId?: string;
   /** Server-bound gap-ticket scope for a preparer run; gates edits of existing questions. */
   ticketEventId?: string;
+  /**
+   * Server-bound ledger of the learner sources the model could have seen this
+   * run (assembled context + each executed read tool). Populated by the caller
+   * only, never from model arguments; derivations bind its snapshot.
+   */
+  sourceLedger?: TurnSourceLedger;
+  /**
+   * Server-bound: the turn runs the restricted answer-reveal surface
+   * (derivationPolicy !== 'allow' ⇒ post-judgment answers are legitimately
+   * visible). Never populated from model arguments.
+   */
+  answerOnly?: boolean;
 }
 
 /**

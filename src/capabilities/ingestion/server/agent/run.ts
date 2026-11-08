@@ -1,10 +1,7 @@
 import { eq, sql } from 'drizzle-orm';
-import {
-  AgentRunError,
-  isProviderSessionWallClockBudgetError,
-  isTransientAgentFailure,
-} from '@/ai/agent-run-error';
+import { AgentRunError, isProviderSessionWallClockBudgetError } from '@/ai/agent-run-error';
 import { piDomainMount } from '@/ai/pi-tool-mount';
+import { isTransientAgentFailure } from '@/ai/provider-failure';
 import * as Ingestion from '@/capabilities/ingestion/server/session-lifecycle';
 import { newId } from '@/core/ids';
 import type { DerivationPolicyT } from '@/core/schema/derivation-policy';

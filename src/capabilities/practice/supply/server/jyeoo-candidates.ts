@@ -12,7 +12,7 @@
 // store_sourced_question 提交。未提交候选的 staged 资产由 jyeoo_staged_asset_reap 回收。
 // - dedup 分层：fetch 侧做 in-batch near-dup + 全局 canonical-hash 存在性判定
 // （advisory，terminal-rejected 旧 draft 也保守判重——重复内容本就会被 verify 再拒）；
-// KC-scoped pool near-dup + cross-KC merge 全部在 commit（store-sourced-question.ts），
+// KC-scoped pool near-dup + cross-KC merge 全部在 commit（submit-question.ts），
 // 因为只有那时才有 knowledge_ids。
 // 确定性保证（继承旧 handler 语义）：
 // - 任何非零 exit / 超时 / stdout 截断 ⇒ 整批丢弃，绝不入库半截数据（producer 契约）。

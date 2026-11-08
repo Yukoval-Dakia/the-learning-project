@@ -113,7 +113,8 @@ function EffDirChip({
   const m = directionMeta(direction);
   return (
     <span className={`ef-dir${lg ? ' ef-dir-lg' : ''}`} data-tone={m.tone}>
-      {m.glyph} {prefix}
+      {m.tone === 'insf' ? '' : `${m.glyph} `}
+      {prefix}
       {m.label}
     </span>
   );

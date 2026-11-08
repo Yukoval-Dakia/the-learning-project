@@ -33,8 +33,8 @@ import {
   type QuestionSupplyTarget,
   computePriority,
   discoverSupplyTargets,
-  targetFingerprint,
 } from '@/capabilities/practice/supply/server/target-discovery';
+import { targetFingerprint } from '@/capabilities/practice/supply/server/target-fingerprint';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { loadActivityTier } from '@/kernel/read-models/activity-tier';

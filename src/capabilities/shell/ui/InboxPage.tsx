@@ -39,6 +39,7 @@ import { showToast } from '@/ui-next/feedback/toast-store';
 import { RetryLine } from '@/ui-next/primitives/RetryLine';
 import { SkeletonLines } from '@/ui-next/primitives/SkeletonLines';
 import { Button, ChipToggle, UiNextRoot } from '@/ui-next/public';
+import { BatchConfirm } from './BatchConfirm';
 import {
   type AutoAppliedRetractResultWire,
   type AutoAppliedRowWire,
@@ -554,6 +555,13 @@ export default function InboxPage({ navigate }: InboxPageProps) {
               : '需要判断的提议留在这里，提醒类信息归入 AI 观察。'}
           </p>
         </header>
+
+        {/* Outside the gate: a batch that empties the inbox can still be undone. */}
+        <BatchConfirm
+          eligibleIds={decide
+            .filter((p) => p.batch_confirm_eligible && !resolved[p.id])
+            .map((p) => p.id)}
+        />
 
         <InboxGate
           status={status}

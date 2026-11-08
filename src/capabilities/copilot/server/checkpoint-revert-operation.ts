@@ -15,6 +15,7 @@ import {
 import { findReusableCopilotConversation } from './conversation-lifecycle';
 import { COPILOT_RUN_TABLE } from './copilot-run-status';
 import { copilotRunTerminalSql } from './copilot-run-terminal-sql';
+import { acquireCopilotSessionQueueLock } from './durable-dispatch';
 
 // Exhaustiveness guard: a new CascadeRevertRefusal variant that isn't handled in the
 // refusal-body switch makes this fail to compile.
@@ -24,7 +25,7 @@ function assertNever(x: never): never {
 
 /**
  * Revert a terminal checkpoint in the current Copilot conversation, or replay its result.
- * Owns selection/checkpoint/G lock order, terminal evidence and the cascade savepoint.
+ * Owns selection/session-queue/checkpoint/G lock order, terminal evidence and the cascade savepoint.
  * Refusal mapping remains inside the transaction; unexpected failures still roll it back.
  */
 export async function revertCopilotCheckpoint(db: Db, checkpointEventId: string) {
@@ -32,6 +33,9 @@ export async function revertCopilotCheckpoint(db: Db, checkpointEventId: string)
     await lockCopilotSessionSelection(tx);
     const currentSession = await findReusableCopilotConversation(tx);
     if (!currentSession) throw new ApiError('not_found', 'checkpoint not found', 404);
+    // Retry admission must observe the complete retraction, or commit its
+    // replacement before the cascade is collected.
+    await acquireCopilotSessionQueueLock(tx, currentSession.id);
     await tx.execute(
       sql`SELECT pg_advisory_xact_lock(hashtextextended(${`copilot_revert:${checkpointEventId}`}, 0))`,
     );
@@ -126,8 +130,8 @@ export async function revertCopilotCheckpoint(db: Db, checkpointEventId: string)
     }
 
     // G acquired HERE, just before the first learning-state row access
-    // (orchestrateCascadeRevert), not at handler entry: the pre-checks above are all
-    // lock-free plain SELECTs, so holding the global G across them only amplifies
+    // (orchestrateCascadeRevert), not at handler entry: the pre-checks above do not
+    // lock learning-state rows, so holding the global G across them only amplifies
     // contention. The G→rows invariant still holds (orchestrate takes row locks only
     // after this) and it re-acquires G reentrantly on the tx path.
     await acquireLearningStateWriteLock(tx);

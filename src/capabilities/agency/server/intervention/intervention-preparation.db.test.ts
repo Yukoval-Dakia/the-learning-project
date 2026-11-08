@@ -1,6 +1,7 @@
 import { and, count, eq, inArray, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
+import { AgentRunError } from '@/ai/agent-run-error';
 import {
   JUDGE_RUN_EVENTS,
   JUDGE_RUN_TABLE,
@@ -703,7 +704,10 @@ async function prepareAdmittedDiagnosticFixture(label: string) {
   const seeded = await seedEvidenceFor(label);
   await handleProbeResultInterventionDelivery(db, delivery(seeded.probeResultId), {
     env: { AUTO_INTERVENTION_EXPANSION_ENABLED: 'true' },
-    bossSend: async (_name, _data, options) => options.id,
+    boss: {
+      send: async (_name, _data, options) => options.id,
+      getJobById: async () => null,
+    },
   });
   const [opened] = await db.select().from(intervention);
   const { fn } = successfulRunTask(db);
@@ -1055,7 +1059,10 @@ describe('YUK-791 intervention preparation closed loop', () => {
     });
     await handleProbeResultInterventionDelivery(db, delivery(seeded.probeResultId), {
       env: { AUTO_INTERVENTION_EXPANSION_ENABLED: 'true' },
-      bossSend: async (_name, _data, options) => options.id,
+      boss: {
+        send: async (_name, _data, options) => options.id,
+        getJobById: async () => null,
+      },
     });
     const [opened] = await db.select().from(intervention);
     const { fn } = successfulRunTask(db);
@@ -1551,38 +1558,57 @@ describe('YUK-791 intervention preparation closed loop', () => {
     });
   });
 
-  it('replayed delivery re-enqueues recovery but never creates a second aggregate', async () => {
+  // @invariant concurrency: a replayed delivery reads back the accepted engine
+  // row under the same stable job id and never sends a second preparation job
+  // @fails-if the replay re-sends without engine readback or records the
+  // receipt before acceptance — one intervention would double-pay preparation
+  it('replayed delivery sees the accepted engine row and never sends a second job', async () => {
     const db = testDb();
     const seeded = await seedEvidenceFor('a');
-    let sendCount = 0;
-    const reservedIds: string[] = [];
-    const bossSend = async (
-      _name: 'prepare_intervention',
-      _data: unknown,
-      options: { id: string },
-    ) => {
-      sendCount += 1;
-      reservedIds.push(options.id);
-      return sendCount === 1 ? options.id : null;
+    const engine = new Map<string, { state: 'created' | 'active' }>();
+    const sentIds: string[] = [];
+    const boss = {
+      send: async (_name: 'prepare_intervention', _data: unknown, options: { id: string }) => {
+        sentIds.push(options.id);
+        if (engine.has(options.id)) return null;
+        engine.set(options.id, { state: 'created' });
+        return options.id;
+      },
+      getJobById: async (_name: 'prepare_intervention', id: string) => engine.get(id) ?? null,
     };
-    await handleProbeResultInterventionDelivery(db, delivery(seeded.probeResultId), {
-      bossSend,
-    });
-    await handleProbeResultInterventionDelivery(db, delivery(seeded.probeResultId), {
-      bossSend,
-    });
+    await handleProbeResultInterventionDelivery(db, delivery(seeded.probeResultId), { boss });
+    await handleProbeResultInterventionDelivery(db, delivery(seeded.probeResultId), { boss });
     const rows = await db.select().from(intervention);
     expect(rows).toHaveLength(1);
-    expect(rows[0].preparation_job_id).toBe(reservedIds[0]);
-    expect(reservedIds[1]).toBe(reservedIds[0]);
-    expect(sendCount).toBe(2);
+    expect(rows[0].preparation_job_id).toBe(sentIds[0]);
+    // The replay's drain read the live engine row and stopped: one delivery total.
+    expect(sentIds).toHaveLength(1);
+
+    const receipts = await db
+      .select({ id: job_events.id })
+      .from(job_events)
+      .where(
+        and(
+          eq(job_events.business_table, 'intervention'),
+          eq(job_events.business_id, rows[0].id),
+          eq(job_events.event_type, 'preparation_dispatch_accepted'),
+        ),
+      );
+    expect(receipts).toHaveLength(1);
   });
 
+  // @invariant concurrency: activation waits on the corrections lock order and
+  // fails closed when the source row is corrected while its commit is in flight
+  // @fails-if activation skips the correction/source locks or proceeds on a
+  // superseded version — a stale snapshot would activate a corrected-away intent
   it('serializes activation with a concurrent source correction and fails closed', async () => {
     const db = testDb();
     const seeded = await seedEvidenceFor('r');
     await handleProbeResultInterventionDelivery(db, delivery(seeded.probeResultId), {
-      bossSend: async (_name, _data, options) => options.id,
+      boss: {
+        send: async (_name, _data, options) => options.id,
+        getJobById: async () => null,
+      },
     });
     const [opened] = await db.select().from(intervention);
     const record = await loadInterventionVersion(db, opened.id, opened.version);
@@ -1656,20 +1682,102 @@ describe('YUK-791 intervention preparation closed loop', () => {
     expect(activated[0]?.value).toBe(0);
   });
 
-  it('rechecks liveness under the shared source lock before enqueueing recovery', async () => {
+  // @invariant security: a draft package whose review stage fails is retained on the author_failed attempt for server audit but never crosses into the learner surface (package_json, materialized diagnostics, due review stream)
+  // @fails-if drop the draft from the persisted attempt, write package_json on a failed intervention, or materialize intervention_diagnostic questions for it; the draft-equality, null package, and zero-diagnostics assertions fail
+  it('persists the authored draft on review-stage failure without exposing it to the learner surface', async () => {
+    const db = testDb();
+    const seeded = await seedEvidenceFor('draft_hold');
+    await handleProbeResultInterventionDelivery(db, delivery(seeded.probeResultId), {
+      env: { AUTO_INTERVENTION_EXPANSION_ENABLED: 'true' },
+      boss: {
+        send: async (_name, _data, options) => options.id,
+        getJobById: async () => null,
+      },
+    });
+    const [opened] = await db.select().from(intervention);
+    const { fn } = successfulRunTask(db);
+    const failingFn: TaskTextRunFn = async (kind, input, ctx) => {
+      if (kind === 'InterventionPackageReviewTask') {
+        const taskRunId = `review_run_timeout_${newId()}`;
+        await recordMockAiRun(db, kind, input, taskRunId);
+        throw new AgentRunError({
+          kind,
+          taskRunId,
+          subtype: 'budget_timeout',
+          errors: [`[${kind}] Agent SDK run aborted (budget timeout) with no terminal result`],
+        });
+      }
+      return fn(kind, input, ctx);
+    };
+    const result = await prepareInterventionWave(
+      db,
+      {
+        interventionId: opened.id,
+        version: opened.version,
+        idempotencyKey: opened.idempotency_key,
+        preparationJobId: preparationJobIdOf(opened),
+      },
+      { runTaskFn: failingFn, authorPackageFn: authorInterventionPackage },
+    );
+    expect(result).toMatchObject({ status: 'preparation_failed' });
+
+    const failed = await loadInterventionVersion(db, opened.id, opened.version);
+    expect(failed?.status).toBe('preparation_failed');
+    expect(failed?.failure_code).toBe('review_runner_failure');
+    expect(failed?.package).toBeNull();
+    expect(failed?.activated_at).toBeNull();
+    expect(failed?.preparation_attempts).toHaveLength(2);
+    for (const attempt of failed?.preparation_attempts ?? []) {
+      if (attempt.kind !== 'author_failed') throw new Error('expected author_failed attempts');
+      expect(attempt.failure_code).toBe('review_runner_failure');
+      const draft = attempt.package;
+      if (!draft) throw new Error('author_failed attempt dropped the authored draft');
+      expect(draft.intervention_id).toBe(opened.id);
+      expect(draft.method_id).toBe('worked_example');
+      expect(draft.diagnostics.immediate.tested_claim_md).toBe(CLAIM);
+    }
+
+    const diagnostics = await db
+      .select({ id: question.id })
+      .from(question)
+      .where(eq(question.source, 'intervention_diagnostic'));
+    expect(diagnostics).toHaveLength(0);
+    const dueResponse = await handleReviewDue(
+      new Request('http://localhost/api/review/due?limit=20'),
+      {
+        listActiveGoalsFn: async () => [],
+      },
+    );
+    expect(dueResponse.status).toBe(200);
+    const dueBody = (await dueResponse.json()) as { rows: Array<{ question_id: string }> };
+    expect(dueBody.rows).toHaveLength(0);
+  });
+
+  // @invariant concurrency: recovery converges on the live engine row when the
+  // engine dedups the redriven send — one send, resolved by readback
+  // @fails-if a deduped send is treated as lost or retried under a new id —
+  // recovery would mint a second delivery for work the engine already holds
+  it('converges on the live engine row when the send dedups during recovery', async () => {
     const db = testDb();
     const seeded = await seedEvidenceFor('l');
     await handleProbeResultInterventionDelivery(db, delivery(seeded.probeResultId), {
-      bossSend: async (_name, _data, options) => options.id,
+      boss: {
+        send: async (_name, _data, options) => options.id,
+        getJobById: async () => null,
+      },
     });
     let livenessReads = 0;
+    let sendCount = 0;
     const report = await recoverPreparingInterventions(db, {
       getJobById: async () => {
         livenessReads += 1;
-        return livenessReads === 1 ? null : { state: 'active' };
+        // Pre-send read misses the job a racing drain just delivered; the
+        // readback after the deduped send sees it live.
+        return livenessReads === 1 ? null : ({ state: 'active' } as const);
       },
       send: async () => {
-        throw new Error('stale pre-lock read must not enqueue a second paid job');
+        sendCount += 1;
+        return null;
       },
     });
 
@@ -1681,6 +1789,8 @@ describe('YUK-791 intervention preparation closed loop', () => {
       raced: 0,
       failed: 0,
     });
+    // One send attempt, resolved by readback as the pre-existing live delivery.
+    expect(sendCount).toBe(1);
     expect(livenessReads).toBe(2);
   });
 });

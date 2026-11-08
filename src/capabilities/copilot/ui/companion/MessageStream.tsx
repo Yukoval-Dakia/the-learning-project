@@ -66,6 +66,16 @@ export function MessageStream({
   );
   const correctionTurnId = useCompanion(controller, (s) => s.correctionTarget?.turnId ?? null);
   const revertPendingId = useCompanion(controller, (s) => s.revertPendingId);
+  const retryPendingRunId = useCompanion(controller, (s) => s.retryPendingRunId);
+  const sessionBusy = useCompanion(
+    controller,
+    (s) =>
+      s.pendingTurns.some((t) => t.requestBody.session_id === s.currentSessionId) ||
+      s.runs.some(
+        (r) =>
+          r.sessionId === s.currentSessionId && r.phase !== 'completed' && r.phase !== 'failed',
+      ),
+  );
   const chipPending = useCompanion(controller, (s) => s.chipPending);
   const chipAcked = useCompanion(controller, (s) => s.chipAcked);
   const disabled = useCompanion(
@@ -93,6 +103,8 @@ export function MessageStream({
     }
   }
   const { actions } = controller;
+  // A resend answers the latest question only; a nudge line after it doesn't make it older.
+  const lastTurn = messages.findLast((m) => !m.nudge_line);
   let replies = 0;
   // A run's user message carries the run id; a settled reply read back from the server may not.
   let currentRunId: string | undefined;
@@ -103,7 +115,7 @@ export function MessageStream({
           <div className="un-cp-stream">
             <SummaryCard empty={messages.length === 0} navigate={navigate} />
             {messages.map((message) => {
-              if (message.role === 'ai') replies += 1;
+              if (message.role === 'ai' && !message.nudge_line) replies += 1;
               if (message.role === 'user') currentRunId = message.id;
               const questionId = message.skill_turn?.structured_question?.id;
               return (
@@ -111,7 +123,7 @@ export function MessageStream({
                   key={message.id}
                   message={message}
                   thinkingText={
-                    message.role === 'ai'
+                    message.role === 'ai' && !message.nudge_line
                       ? thinkingByRun[message.run_id ?? currentRunId ?? '']
                       : undefined
                   }
@@ -155,6 +167,19 @@ export function MessageStream({
                   navigate={navigate}
                   onSelectCorrection={actions.selectCorrection}
                   onRevert={actions.revert}
+                  retry={
+                    message === lastTurn && message.retryable && message.run_id
+                      ? {
+                          pending: retryPendingRunId === message.run_id,
+                          disabled: sessionBusy,
+                          onRetry: () => {
+                            if (message.run_id && message.session_id) {
+                              void actions.retryFailedRun(message.run_id, message.session_id);
+                            }
+                          },
+                        }
+                      : undefined
+                  }
                   onAcceptCorrective={actions.acceptCorrectiveChip}
                 />
               );

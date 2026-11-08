@@ -407,7 +407,10 @@ export async function issueCapturedAssessment(
       block.version !== request.source.block_version ||
       block.status !== 'draft' ||
       session?.type !== 'ingestion' ||
-      session.status !== 'extracted'
+      // Only this capture entry accepts a degraded page layout: its block is already
+      // usable and the answer evidence is what is being frozen. Other issuance
+      // entries keep the extracted-only gate.
+      (session.status !== 'extracted' && session.status !== 'partial')
     ) {
       return { status: 'binding_invalid', issues: ['capture source is no longer available'] };
     }

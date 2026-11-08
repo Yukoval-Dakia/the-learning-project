@@ -6,13 +6,17 @@
 //     `SDKResultSuccess { is_error: true, api_error_status }` and are wrapped as
 //     'api_error_result'.
 //   - `api_error_status === null` marks a connection-class drop (mid-stream
-//     socket loss); 429 / 5xx are transient by semantics.
-//   - `error_during_execution` is permanent. Classic API statuses stay on
-//     api_error_result; a bound pi 429/502 is the helpProviderFault exception
-//     and is not retried.
+//     socket loss) — sent, outcome unknown, never resent.
+//   - `error_during_execution` carries `providerFailure` when a bound status
+//     exists; a proven complete rejection is re-issuable, a local loop death
+//     without one is permanent.
 //   - 'stream_no_terminal' is a process-level fast failure: the message stream
-//     ended without a terminal result (engine death / stream drop).
+//     ended without a terminal result (engine death / stream drop). The request
+//     may already be paid — no resend without not_sent transport proof.
 //   - abort/timeout and anything unrecognized are permanent.
+//
+// `isTransientAgentFailure` lives in `./provider-failure` next to the verdict
+// it projects — one owner names every class.
 
 import type { SealedHelpLatency } from '@/ai/help-latency';
 import type { HelpProviderFault } from '@/ai/help-provider-fault';
@@ -66,6 +70,19 @@ export interface ProviderFailureEvidence {
   stream_error?: true;
 }
 
+/**
+ * Typed login/auth failure evidence — the only basis for a `waiting_login`
+ * pause. `credential` marks a credential-store/file failure observed before or
+ * during the run (e.g. ChatGPTOAuthFileError anywhere on the cause chain);
+ * `provider_auth` marks a bound HTTP 401 on the failed request. Absent means
+ * the failure is NOT classified as login — never inferred from error text.
+ */
+export interface LoginFailureEvidence {
+  kind: 'credential' | 'provider_auth';
+  /** Credential-store reason when known (e.g. 'missing_file', 'invalid_json'). */
+  reason?: string;
+}
+
 export interface AgentRunErrorFields {
   kind: string;
   taskRunId: string;
@@ -82,6 +99,8 @@ export interface AgentRunErrorFields {
   helpLatency?: SealedHelpLatency;
   /** Bound provider wire evidence on a failed terminal; absent when unobserved. */
   providerFailure?: ProviderFailureEvidence;
+  /** Typed login evidence; absent ⇒ not a login failure. */
+  loginFailure?: LoginFailureEvidence;
 }
 
 /**
@@ -99,6 +118,7 @@ export class AgentRunError extends Error {
   readonly helpProviderFault?: HelpProviderFault;
   readonly helpLatency?: SealedHelpLatency;
   readonly providerFailure?: ProviderFailureEvidence;
+  readonly loginFailure?: LoginFailureEvidence;
 
   constructor(fields: AgentRunErrorFields) {
     const http =
@@ -115,6 +135,7 @@ export class AgentRunError extends Error {
     this.helpProviderFault = fields.helpProviderFault;
     this.helpLatency = fields.helpLatency;
     this.providerFailure = fields.providerFailure;
+    this.loginFailure = fields.loginFailure;
   }
 }
 
@@ -137,21 +158,4 @@ export class ProviderSessionWallClockBudgetError extends Error {
 
 export function isProviderSessionWallClockBudgetError(error: unknown): boolean {
   return error instanceof ProviderSessionWallClockBudgetError;
-}
-
-/**
- * Whitelist-only transient predicate. Anything not an AgentRunError (budget
- * aborts, config errors, unknown throws) is permanent by default.
- */
-export function isTransientAgentFailure(err: unknown): boolean {
-  if (!(err instanceof AgentRunError)) return false;
-  if (err.subtype === 'stream_no_terminal') return true;
-  if (err.subtype === 'api_error_result') {
-    const status = err.apiErrorStatus;
-    if (status === null || status === undefined) return true; // connection-class
-    if (status === 429) return true;
-    if (status >= 500 && status <= 599) return true;
-    return false; // other 4xx: auth/config/validation
-  }
-  return false; // error_during_execution / error_max_* / anything else
 }

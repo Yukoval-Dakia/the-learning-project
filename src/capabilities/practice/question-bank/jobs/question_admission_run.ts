@@ -1,7 +1,7 @@
 // one durable admission batch per group/base digest.
 // The publisher event outbox enqueues pinned revisions. Queue retries replay a
 // complete result receipt, never paid solves. Unknown payments stay fenced after question closure.
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { and, eq, inArray, or, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import { AgentRunError } from '@/ai/agent-run-error';
@@ -32,6 +32,7 @@ import {
   question_solution_prior,
   source_asset,
 } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import {
   type NormalizedContract,
@@ -91,6 +92,7 @@ import {
   ADMISSION_STAGE_FAMILY,
   AdmissionInterrupted,
   AdmissionNotSent,
+  AdmissionProviderWaitExhausted,
   type AdmissionRecoveryReader,
   AdmissionSafeRetryExhausted,
   type AdmissionStageReceiptRef,
@@ -391,6 +393,41 @@ export async function runAdmissionForQuestion(
       maySend: pinned && eligible && !declaredUnsupported && purpose.state === 'allow',
       historicalTerminal: Boolean(terminal),
     });
+    // A queued delivery that cannot prove its source purpose will never spend; record
+    // that terminal fact so the learner surface stops saying "still checking". The
+    // read model matches this event against the group's latest publication for the
+    // same revision, so a later republish with a bound source is not shadowed.
+    // Recovery deliveries (receipt/held/historical claims) replay an existing paid
+    // decision — their spend was authorized by the original delivery's binding, so
+    // a missing binding here is not a denial and must not write the terminal fact.
+    if (delivery.jobData && purpose.state !== 'allow' && claimed.kind === 'stale') {
+      const now = new Date();
+      await writeEvent(tx, {
+        id: createHash('sha256')
+          .update(`question_admission_purpose_denied:${delivery.id}`)
+          .digest('hex'),
+        session_id: null,
+        actor_kind: 'system',
+        actor_ref: 'practice:question_admission',
+        action: 'experimental:question_admission_purpose_denied',
+        subject_kind: 'question',
+        subject_id: rootId,
+        outcome: 'skipped',
+        payload: {
+          group_id: rootId,
+          revision_id: input.revision_id,
+          revision_digest: input.revision_digest,
+          purpose_state: purpose.state,
+          source_event_id: delivery.jobData.source_event_id ?? null,
+        },
+        caused_by_event_id: null,
+        task_run_id: null,
+        cost_micro_usd: null,
+        // Opt out of memory ingestion; this is an operational fact, not learner content.
+        ingest_at: now,
+        created_at: now,
+      });
+    }
     // A reused paid receipt belongs to its ORIGINAL delivery, not to the new
     // publication that happened to reach this batch. Never retag its provenance.
     const originalDelivery =
@@ -534,7 +571,10 @@ export async function runAdmissionForQuestion(
       });
     };
     try {
-      const providerSessionDeadlineAt = Date.now() + 15 * 60_000;
+      // Owner: timeouts only guard loops and faults. 50min covers serial solve A+B (2×20min)
+      // plus adjudication (5min) with margin, and stays under the 60min coordinator send
+      // lease (receipt.ts) and the 1h llm job lease.
+      const providerSessionDeadlineAt = Date.now() + 50 * 60_000;
       const executeTask =
         deps.runTask ??
         makeRunTaskTextFn(db, {
@@ -791,10 +831,13 @@ export async function runAdmissionForQuestion(
         };
       }
       if (error instanceof AdmissionNotSent && !interrupted) {
+        const providerWaitOut = error instanceof AdmissionProviderWaitExhausted;
         const exhausted = error instanceof AdmissionSafeRetryExhausted;
-        const reason = exhausted
-          ? 'admission_provider_safe_retry_exhausted'
-          : 'admission_provider_query_not_started';
+        const reason = providerWaitOut
+          ? 'admission_provider_wait_exhausted'
+          : exhausted
+            ? 'admission_provider_safe_retry_exhausted'
+            : 'admission_provider_query_not_started';
         receipt = AdmissionResultReceipt.parse({
           version: 1,
           recorded_at: new Date().toISOString(),
@@ -810,14 +853,18 @@ export async function runAdmissionForQuestion(
               policy_id: batch.input.policy_id,
               outcome: 'suspended',
               evidence: {
-                pack: exhausted
-                  ? 'question_admission_safe_retry_exhausted'
-                  : 'question_admission_not_sent',
+                pack: providerWaitOut
+                  ? 'question_admission_provider_wait_exhausted'
+                  : exhausted
+                    ? 'question_admission_safe_retry_exhausted'
+                    : 'question_admission_not_sent',
                 repair_delivery: {
                   kind: 'system_closed',
-                  reason: exhausted
-                    ? 'provider_safe_retry_exhausted'
-                    : 'provider_query_not_started',
+                  reason: providerWaitOut
+                    ? 'provider_wait_exhausted'
+                    : exhausted
+                      ? 'provider_safe_retry_exhausted'
+                      : 'provider_query_not_started',
                 },
                 paid_stage_receipts: stageReceiptRefs,
               },

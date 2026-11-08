@@ -36,14 +36,14 @@ async function executeCheckNote(
   return {
     artifact_id: input.artifact_id,
     artifact_type: row.type,
-    issues: noteBodyContractIssues(row.type, row.body_blocks),
+    issues: noteBodyContractIssues(row.body_blocks),
   };
 }
 
 export const checkNoteTool: DomainTool<CheckNoteInput, CheckNoteOutput> = {
   name: 'check_note',
   description:
-    'Run the deterministic structural check on a note artifact (e.g. required semantic_kind coverage for atomic notes) and return the list of issues found. Read-only diagnostic: it does not pass or fail the note and does not block any write. Use when a learner questions a note or an error signal needs confirming.',
+    'Run the deterministic structural check on a note artifact (currently: leftover closing pleasantries) and return the list of issues found. Read-only diagnostic: it does not pass or fail the note and does not block any write. Use when a learner questions a note or an error signal needs confirming.',
   effect: 'read',
   inputSchema: CheckNoteInputSchema,
   outputSchema: CheckNoteOutputSchema,

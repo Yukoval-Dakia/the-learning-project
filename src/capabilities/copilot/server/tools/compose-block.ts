@@ -30,6 +30,7 @@ import { isNoteCardVisible } from '@/kernel/read-models/note-card';
 import { readQuestionCard } from '@/kernel/read-models/question-card';
 import { createAssessmentAssetLoader } from '@/kernel/records/assessment-assets';
 import { ImmutableAssetError, persistImmutableAsset } from '@/kernel/records/asset-store';
+import { drawingRequestPort } from '@/kernel/tools/drawing-request';
 import type { DomainTool, ToolContext, ToolImageOutput } from '@/kernel/tools/types';
 
 const BLOCK_CANONICAL_MAX_BYTES = 64 * 1024;
@@ -177,7 +178,7 @@ export function createComposeBlockTool(
   return {
     name: 'compose_block',
     description:
-      'Compose one generative-UI block for the reply. Mandatory channel for diagrams, figures and charts — never write tlp-block fences yourself. Pass one block object; invalid input returns typed issues (code/path/line/expected) to repair and resubmit. On ready, place the block in prose with the returned place string `![alt](block:ref)`. A figure returns its raster under images for visual self-check before you cite it. A chart binds to recorded data with data_source.kind="tool_result" (tool_use_id + JSON Pointer path); the server replaces your series with those recorded values.',
+      'Compose one generative-UI block for the reply. Mandatory channel for diagrams, figures, charts and function plots — never write tlp-block fences yourself. Pass one block object; invalid input returns typed issues (code/path/line/expected) to repair and resubmit. On ready, place the block in prose with the returned place string `![alt](block:ref)`. A figure returns its raster under images for visual self-check before you cite it. A chart binds to recorded data with data_source.kind="tool_result" (tool_use_id + JSON Pointer path); the server replaces your series with those recorded values.',
     effect: 'write',
     inputSchema: ComposeBlockInput,
     outputSchema: ComposeBlockOutput,
@@ -334,6 +335,43 @@ export function createComposeBlockTool(
             ]);
           }
           stored = block;
+          break;
+        }
+        case 'drawing': {
+          // The dedicated lane draws in the background; the stored block is
+          // the drawing pointer and the reply gets its placeholder immediately.
+          const request = drawingRequestPort();
+          const outcome = await request(
+            {
+              db: ctx.db,
+              sessionId: ctx.sessionId,
+              taskRunId: ctx.logTaskRunId ?? ctx.taskRunId,
+              ...(ctx.causedByEventId !== undefined
+                ? { causedByEventId: ctx.causedByEventId }
+                : {}),
+              actorRef: ctx.callerActor.ref,
+              ...(ctx.sourceLedger !== undefined ? { ledger: ctx.sourceLedger } : {}),
+              ...(ctx.answerOnly !== undefined ? { answerOnly: ctx.answerOnly } : {}),
+            },
+            {
+              brief: block.brief,
+              alt: block.alt,
+              ...(block.caption !== undefined ? { caption: block.caption } : {}),
+            },
+          );
+          if (outcome.status !== 'ready') {
+            return { status: 'unavailable', issues: outcome.issues };
+          }
+          // The learner-visible block is a pointer only — the brief stays
+          // server-side on the drawing row (it may quote source content the
+          // learner has not been judged on yet).
+          stored = {
+            v: block.v,
+            kind: 'drawing',
+            alt: block.alt,
+            ...(block.caption !== undefined ? { caption: block.caption } : {}),
+            drawing_id: outcome.drawing_id,
+          };
           break;
         }
         case 'diagram': {
