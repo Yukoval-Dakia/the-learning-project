@@ -279,6 +279,10 @@ export function buildCopilotToolResultSnapshot(
         const rows = projected[listKey];
         if (Array.isArray(rows)) for (const row of rows) if (record(row)) delete row[field];
       }
+    } else if (name === 'get_question_context' && record(projected.reading)) {
+      // Faulty-item inference stays on the agent tool result. The learner snapshot
+      // does not name or show it.
+      delete projected.reading.faulty;
     } else if (policy === 'events' && record(projected.filter_applied)) {
       projected.filter_applied = z
         .record(z.string(), z.union([z.string(), z.number(), z.null()]))
