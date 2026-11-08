@@ -57,6 +57,7 @@ export const READ_TOOLS = [
 
 export const PROPOSE_WRITE_TOOLS = [
   'workspace_exec',
+  'workspace_files',
   'curate_context',
   'submit_review_answer',
   // YUK-1986 — copilot 给答案的唯一记受助路径（先写 solution/answer_help 再返参考解）。
@@ -149,6 +150,16 @@ export type DomainToolName =
   | ReadDomainToolName
   | ProposeWriteDomainToolName
   | ControlDomainToolName;
+
+/**
+ * Workspace tools the runner injects on every tool-loop task. Surfaces keep
+ * their business scopes; these two ride along through the same mount/gate so
+ * every agent gets the session sandbox without per-task allowlist edits.
+ */
+export const AGENT_WORKSPACE_DOMAIN_TOOLS = [
+  'workspace_exec',
+  'workspace_files',
+] as const satisfies readonly DomainToolName[];
 
 export type DomainToolSurface =
   | 'workspace_acceptance'
@@ -400,7 +411,7 @@ export const QUESTION_PREPARER_TOOLS = [
 ] as const satisfies readonly DomainToolName[];
 
 export const DOMAIN_TOOL_ALLOWLISTS = {
-  workspace_acceptance: ['workspace_exec'],
+  workspace_acceptance: ['workspace_exec', 'workspace_files'],
   question_preparer: QUESTION_PREPARER_TOOLS,
   knowledge_review: KNOWLEDGE_REVIEW_TOOLS,
   copilot: COPILOT_TOOLS,

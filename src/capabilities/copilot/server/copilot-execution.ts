@@ -628,6 +628,7 @@ export function createCopilotExecutionOwner(
     const runnerContext: Parameters<typeof streamTaskCollecting>[2] = {
       db,
       taskRunId: turn.taskRunId,
+      sessionId: turn.sessionId,
       signal: policy.cancellation.signal,
       lifecycleAbortController,
       compiledModelPrompt,
