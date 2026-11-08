@@ -2,10 +2,10 @@
 //
 // Identity is (topic, attempt). A live send is joined. A known domain result,
 // including unknown cost, is a terminal receipt and is not retried to obtain a
-// price. A lost send (lease expired, no proposal) is voided and replaced by one
-// successor attempt; that lost delivery is never claimed again. Accept, dismiss,
-// and retract seal the create receipt so a later decision cannot leave the topic
-// pinned on `unknown`.
+// price. A send whose result is still unknown (lease ended, no proposal) stays
+// unresolved and is not dispatched again. A decided proposal seals that receipt
+// and may open a later attempt. Accept, dismiss, and retract seal the create
+// receipt so a later decision cannot leave the topic pinned on `unknown`.
 
 import { and, eq } from 'drizzle-orm';
 import { AgentRunError } from '@/ai/agent-run-error';
@@ -17,12 +17,10 @@ import {
   type PaidEffectSnapshot,
   admitPaidEffectIntent,
   claimPaidEffectSend,
-  markPaidEffectUnknown,
   readPaidEffect,
   recordPaidEffectApplication,
   recordPaidEffectResult,
   settleExpiredPaidEffectSends,
-  voidPaidEffectWithSuccessor,
 } from '@/core/paid-work/server/paid-effect-store';
 import type { Db, Tx } from '@/db/client';
 import { event, paid_effect } from '@/db/schema';
@@ -82,18 +80,18 @@ type SlotDecision =
       readonly deliveryId: string;
     }
   | { readonly kind: 'join'; readonly identity: PaidEffectIdentity }
-  | { readonly kind: 'closed_known'; readonly receipt: LearningIntentReceipt };
+  | { readonly kind: 'closed_known'; readonly receipt: LearningIntentReceipt }
+  | { readonly kind: 'unresolved' };
 
-/** Open slot of one outline attempt. Closed rows (applied / voided / cancelled) are absent. */
+/**
+ * Open slot of one outline attempt. Closed rows (applied / voided / cancelled) are absent.
+ * `unresolved` is an admitted send with no result. It is not a claim and cannot become `winner`.
+ */
 type OpenAttempt =
   | { readonly kind: 'unsent'; readonly row: TopicAttempt }
   | { readonly kind: 'in_flight'; readonly row: TopicAttempt }
-  | { readonly kind: 'lost'; readonly row: TopicAttempt }
+  | { readonly kind: 'unresolved'; readonly row: TopicAttempt }
   | { readonly kind: 'receipt'; readonly row: TopicAttempt };
-
-const SUCCESSOR_REASON = 'new_intent_after_unknown_outline';
-const SUCCESSOR_OPERATOR = 'learner';
-const SUCCESSOR_BASIS = 'learning_intent_outline';
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -122,9 +120,9 @@ function classifyAttempt(row: TopicAttempt, now: number): OpenAttempt | null {
     case 'pending':
       return { kind: 'unsent', row };
     case 'sending':
-      return leaseEnded(row, now) ? { kind: 'lost', row } : { kind: 'in_flight', row };
+      return leaseEnded(row, now) ? { kind: 'unresolved', row } : { kind: 'in_flight', row };
     case 'unknown':
-      return { kind: 'lost', row };
+      return { kind: 'unresolved', row };
     case 'receipt_ready':
       return { kind: 'receipt', row };
     default:
@@ -407,62 +405,32 @@ async function admitFresh(
   return claimDelivery(tx, identity, deliveryId);
 }
 
-async function retireLost(
+async function resolveUnresolvedAttempt(
   tx: Tx,
   topic: string,
   rows: readonly TopicAttempt[],
-  lost: TopicAttempt,
+  unresolved: TopicAttempt,
 ): Promise<SlotDecision> {
   const decided = await newestDecidedIntent(tx, topic);
-  if (decided && lost.deliveryId) {
-    await writeReceipt(tx, lost, await proposedReceipt(tx, decided, lost.deliveryId));
+  if (decided && unresolved.deliveryId) {
+    await writeReceipt(tx, unresolved, await proposedReceipt(tx, decided, unresolved.deliveryId));
     return admitFresh(tx, topic, rows);
   }
-  const domain = domainFromReason(lost.unresolvedReason);
-  if (domain && lost.deliveryId) {
+  const domain = domainFromReason(unresolved.unresolvedReason);
+  if (domain && unresolved.deliveryId) {
     const receipt: LearningIntentReceipt = {
       outcome: domain.outcome,
-      request_id: lost.deliveryId,
-      task_run_id: taskRunFromReason(lost.unresolvedReason),
+      request_id: unresolved.deliveryId,
+      task_run_id: taskRunFromReason(unresolved.unresolvedReason),
       proposal_id: null,
       code: domain.code,
       message: null,
       cost_unknown: true,
     };
-    await writeReceipt(tx, lost, receipt);
+    await writeReceipt(tx, unresolved, receipt);
     return { kind: 'closed_known', receipt };
   }
-  if (lost.state === 'sending') {
-    if (!lost.deliveryId) {
-      throw new ApiError('inconsistent_state', 'expired outline send has no delivery', 500);
-    }
-    await markPaidEffectUnknown(tx, lost.identity, lost.deliveryId, 'send_lease_expired', {
-      fence: lost.fence,
-    });
-  }
-  const deliveryId = newId();
-  const successorInput = freshInput(topic, rows);
-  const voided = await voidPaidEffectWithSuccessor(tx, lost.identity, {
-    expectedFence: lost.fence,
-    authorization: {
-      authorizationId: newId(),
-      reason: SUCCESSOR_REASON,
-      operator: SUCCESSOR_OPERATOR,
-      basis: SUCCESSOR_BASIS,
-      successorInput,
-      successorDelivery: { backend: 'pg-boss', deliveryId },
-    },
-  });
-  // The successor is a new attempt. The voided delivery cannot record or send again.
-  const claim = await claimDelivery(tx, voided.successor, deliveryId);
-  if (claim.kind !== 'winner') {
-    throw new ApiError(
-      'inconsistent_state',
-      'learning intent successor was not claimed by its bound delivery',
-      500,
-    );
-  }
-  return claim;
+  return { kind: 'unresolved' };
 }
 
 async function claimSlot(db: Db, topic: string): Promise<SlotDecision> {
@@ -477,8 +445,8 @@ async function claimSlot(db: Db, topic: string): Promise<SlotDecision> {
       .filter((row): row is OpenAttempt => row !== null);
     const inFlight = open.find((row) => row.kind === 'in_flight');
     if (inFlight) return { kind: 'join', identity: inFlight.row.identity };
-    const lost = open.find((row) => row.kind === 'lost');
-    if (lost) return retireLost(tx, topic, rows, lost.row);
+    const unresolved = open.find((row) => row.kind === 'unresolved');
+    if (unresolved) return resolveUnresolvedAttempt(tx, topic, rows, unresolved.row);
     const receipt = open.find((row) => row.kind === 'receipt');
     if (receipt) return { kind: 'join', identity: receipt.row.identity };
     const unsent = open.find((row) => row.kind === 'unsent');
@@ -528,16 +496,16 @@ async function waitForTerminal(
 
 type JoinOutcome =
   | { readonly kind: 'proposal'; readonly proposal: LearningIntentProposal }
-  | { readonly kind: 'retry' };
+  | { readonly kind: 'retry' }
+  | { readonly kind: 'unresolved' };
 
 async function answerSnapshot(
   db: Db,
   topic: string,
   row: PaidEffectSnapshot,
 ): Promise<JoinOutcome> {
-  if (row.state === 'unknown' || row.state === 'voided' || row.state === 'cancelled') {
-    return { kind: 'retry' };
-  }
+  if (row.state === 'unknown') return { kind: 'unresolved' };
+  if (row.state === 'voided' || row.state === 'cancelled') return { kind: 'retry' };
   const receipt = receiptFrom(row.state === 'applied' ? row.application : row.result);
   if (row.state === 'applied' && receipt?.outcome === 'not_sent') return { kind: 'retry' };
   if (row.state === 'applied' && receipt?.outcome === 'proposed') {
@@ -565,7 +533,7 @@ async function answerSnapshot(
     row.sendLeaseExpiresAt &&
     row.sendLeaseExpiresAt.getTime() <= Date.now()
   ) {
-    return { kind: 'retry' };
+    return { kind: 'unresolved' };
   }
   throw new ApiError(
     'learning_intent_in_flight',
@@ -585,9 +553,8 @@ async function joinAttempt(
   if (!current) {
     throw new ApiError('inconsistent_state', 'learning intent request disappeared', 500);
   }
-  if (current.state === 'unknown' || current.state === 'voided' || current.state === 'cancelled') {
-    return { kind: 'retry' };
-  }
+  if (current.state === 'unknown') return { kind: 'unresolved' };
+  if (current.state === 'voided' || current.state === 'cancelled') return { kind: 'retry' };
   const deadline = (current.sendLeaseExpiresAt?.getTime() ?? Date.now() + LEASE_MS) + JOIN_GRACE_MS;
   const finished = await waitForTerminal(db, identity, deadline);
   return answerSnapshot(db, topic, finished);
@@ -704,6 +671,7 @@ export async function runLearningIntentRequest(
   await settleExpiredPaidEffectSends(database, { family: FAMILY });
   for (let step = 0; step < 4; step += 1) {
     const slot = await claimSlot(database, topic);
+    if (slot.kind === 'unresolved') break;
     if (slot.kind === 'closed_known') {
       throw domainError(
         slot.receipt.code ?? 'learning_intent_failed',
@@ -716,6 +684,7 @@ export async function runLearningIntentRequest(
     if (slot.kind === 'winner') return dispatchWinner(database, topic, runTaskFn, slot);
     const joined = await joinAttempt(database, topic, slot.identity);
     if (joined.kind === 'proposal') return joined.proposal;
+    if (joined.kind === 'unresolved') break;
   }
   throw new ApiError(
     'learning_intent_in_flight',
