@@ -294,7 +294,7 @@ async function main(): Promise<void> {
   const client = postgres(dbUrl, { max: 2 });
   try {
     // ::int — postgres-js 把裸 count(*) 递成字符串，字符串永不 === 0，会把无向量副本
-    // 放进付费 embed 阶段（R1 review P2）。归档/诊断面另行如实打印。
+    // 放进付费 embed 阶段（P2）。归档/诊断面另行如实打印。
     const bankRows = await client<{ total: number; with_vectors: number }[]>`
       SELECT count(*) FILTER (WHERE q.parent_question_id IS NULL)::int AS total,
              count(*) FILTER (WHERE q.parent_question_id IS NULL AND q.embedding IS NOT NULL)::int AS with_vectors

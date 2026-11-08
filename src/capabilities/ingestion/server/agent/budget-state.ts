@@ -127,6 +127,15 @@ const envelopeSchema = z
     unproven_dispatches: z
       .record(z.string(), z.object({ reason: z.string(), observed_at: z.string() }))
       .optional(),
+    // Extract lane's own namespace: durable ids of its paid calls so the session
+    // cost read can attribute them (agent lane keeps tasks/attributions).
+    extract_cost: z
+      .object({
+        task_run_ids: z.array(z.string()).optional(),
+        ocr_operation_ids: z.array(z.string()).optional(),
+      })
+      .passthrough()
+      .optional(),
   })
   .passthrough();
 export type AgentBudgetEnvelope = z.infer<typeof envelopeSchema>;

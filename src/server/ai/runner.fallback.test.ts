@@ -105,7 +105,7 @@ function resetAll() {
   __setPiAdapterForTests(fakePiAdapter());
 }
 
-describe('runTask — YUK-576 transient retry loop', () => {
+describe('runTask transient retry loop', () => {
   beforeEach(resetAll);
   afterEach(() => {
     __setPiAdapterForTests(undefined);

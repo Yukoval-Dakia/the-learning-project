@@ -21,6 +21,7 @@ import { createHash } from 'node:crypto';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
+import { LearnerHandwritingMarker } from '@/core/schema/assessment/materials';
 import { deriveSourceTier } from '@/core/schema/provenance';
 import type { Db, Tx } from '@/db/client';
 import {
@@ -166,6 +167,7 @@ const ReadBankOkItemSchema = z.object({
         caption: z.string().optional(),
         alt_text: z.string().optional(),
         content_md: z.string().optional(),
+        contains_learner_handwriting: LearnerHandwritingMarker.optional(),
         text_extent: z
           .object({
             complete: z.boolean(),
@@ -813,6 +815,9 @@ export async function runReadBank(
               ...(m.caption != null ? { caption: m.caption } : {}),
               ...(m.alt_text != null ? { alt_text: m.alt_text } : {}),
               ...(textExt != null ? { content_md: textExt.text } : {}),
+              ...(m.contains_learner_handwriting !== undefined
+                ? { contains_learner_handwriting: m.contains_learner_handwriting }
+                : {}),
               ...(textExt != null && !textExt.complete
                 ? {
                     text_extent: {

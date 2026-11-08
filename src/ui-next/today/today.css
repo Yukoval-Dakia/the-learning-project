@@ -117,6 +117,59 @@
   margin: 0;
   font: 600 22px / 1.4 var(--un-font-sans);
 }
+[data-ui-next] .td-plans {
+  list-style: none;
+  padding: 0;
+  margin: 16px 0 0;
+  display: grid;
+  gap: 8px;
+}
+[data-ui-next] .td-plan {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  padding: 12px 12px 12px 20px;
+  background: var(--un-md-sys-color-surface-container-low);
+  border-radius: 16px;
+  overflow-wrap: anywhere;
+}
+/* Narrow cards put the two actions under the words instead of squeezing them. */
+[data-ui-next] .td-plan-main {
+  flex: 1 1 280px;
+  min-width: 0;
+}
+[data-ui-next] .td-plan-main p {
+  margin: 0;
+}
+[data-ui-next] .td-plan-main p + p {
+  margin-top: 4px;
+}
+[data-ui-next] .td-plan-what {
+  font: 500 16px / 1.5 var(--un-font-sans);
+}
+[data-ui-next] .td-plan-words {
+  font-size: 13px;
+}
+[data-ui-next] .td-plan-actions {
+  flex: none;
+  gap: 4px;
+  margin-left: auto;
+}
+[data-ui-next] .td-plans-more summary {
+  cursor: pointer;
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  margin-top: 8px;
+  color: var(--un-md-sys-color-primary);
+}
+[data-ui-next] .td-plans-more .td-plans {
+  margin-top: 0;
+}
+[data-ui-next] .td-plan-past .td-plan-what {
+  color: var(--un-md-sys-color-on-surface-variant);
+}
 [data-ui-next] .un-today-evidence-list {
   list-style: none;
   padding: 0;

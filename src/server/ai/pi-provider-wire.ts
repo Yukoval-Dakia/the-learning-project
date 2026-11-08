@@ -31,6 +31,7 @@ import { reasoningModelView } from './reasoning-wire';
 import type { Options } from './sdk-types';
 import {
   type StructuredSubmitPolicy,
+  payloadToolNames,
   resolveStructuredSubmitPolicy,
   structuredSubmitWireFields,
 } from './structured-submit';
@@ -266,6 +267,7 @@ export class PiProviderWire {
           ...structuredSubmitWireFields(
             submitPolicy,
             model.api === 'openai-responses' ? 'openai-responses' : 'openai-completions',
+            payloadToolNames(body as Record<string, unknown>),
           ),
         };
       },

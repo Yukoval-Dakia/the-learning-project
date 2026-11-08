@@ -7,7 +7,7 @@ import { ai_task_runs, cost_ledger } from '@/db/schema';
 // cost_ledger is a loose-coupled correlation log (no FK), so one INSERT works
 // against either a top-level Db or a Tx. Accepting DbLike lets callers fold the
 // write into a surrounding transaction; tool-call writers in
-// kernel/tools/call-evidence keep the same contract (FIX-R2-10). The terminal
+// kernel/tools/call-evidence keep the same contract. The terminal
 // attempt operation below owns its Db transaction; its inner terminal writer
 // accepts the same Tx. Task start/retry and execution remain in server AI.
 type DbLike = Db | Tx;

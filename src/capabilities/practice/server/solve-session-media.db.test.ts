@@ -230,6 +230,8 @@ describe('frozen solve image task payload', () => {
     ]);
   });
 
+  // @invariant security: a solve hint receives only the issued figure bytes with their identity and learner-handwriting marker, never the reference answer, a mutated prompt or unissued media
+  // @fails-if the hint input carries unissued or private media, the mutated prompt or the reference, or its image manifest drops an image's identity or marker
   it('passes original issued bytes, controls and image identity while preserving help digest and hint secrecy', async () => {
     const s = await seed();
     await db.update(question).set({
@@ -251,7 +253,12 @@ describe('frozen solve image task payload', () => {
     expect(wire.frozen_question.faces).toHaveLength(1);
     expect(wire.frozen_question.response_spec.slots[0].options[1].text).toContain('向下');
     expect(wire.image_manifest).toEqual([
-      { index: 0, material_id: expect.any(String), asset_id: 'issued-diagram' },
+      {
+        index: 0,
+        material_id: expect.any(String),
+        asset_id: 'issued-diagram',
+        contains_learner_handwriting: false,
+      },
     ]);
     expect(wire.messages[0].text_md).toContain('仍然不要直接说出最终答案');
     expect(input.text).not.toMatch(/MUTATED|UNISSUED|unissued-diagram|private-diagram/);

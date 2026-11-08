@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { LearnerHandwritingMarker, type LearnerHandwritingMarkerT } from './assessment/materials';
 import { Presentation, type PresentationT } from './assessment/presentation';
 import { QuestionKind } from './business';
 
@@ -32,11 +33,71 @@ export const FigureRef = z.object({
   attach_confidence: AttachConfidence,
   option_label: z.string().min(1).optional(),
   handwriting_unverified: z.boolean().optional(),
+  // Per-crop handwriting judgment travels with the figure to every model reader;
+  // it never decides whether the figure is attached.
+  contains_learner_handwriting: LearnerHandwritingMarker.optional(),
   // 用户手动改归属时记录时间戳；ISO 字符串或 Date（z.coerce.date）
   last_reassigned_at: z.coerce.date().optional(),
 });
 
 export type FigureRefT = z.infer<typeof FigureRef>;
+
+/** Told to every model that sees a figure that may carry learner work. */
+export const LEARNER_HANDWRITING_RULE = '图中手写是学习者的作答，可能是错的，不要当作答案或条件';
+
+/** Judges read question figures as conditions; this carves out learner work inside them. */
+export const FIGURE_HANDWRITING_GRADING_NOTE = `Each figure material and its image_manifest entry state contains_learner_handwriting (true, false or unknown). In a figure marked true or unknown, ${LEARNER_HANDWRITING_RULE}: that handwriting is the learner's earlier work, neither a condition of the question nor part of the response being judged.`;
+
+export type ModelFigureRefT = FigureRefT & {
+  contains_learner_handwriting: LearnerHandwritingMarkerT;
+};
+
+/**
+ * Only a crop of a learner's own captured page can show learner work; quiz_gen,
+ * web-sourced, imported and other figures are printed source material.
+ */
+export type FigureOrigin = 'learner_capture' | 'printed_source';
+
+/**
+ * Ingestion crop is the only writer of asset role 'pipeline_figure'. Capture crops made
+ * before that stamp existed have no source_asset row at all, so a missing row stays a
+ * capture.
+ */
+export function figureOriginFromAssetProvenance(provenance: unknown): FigureOrigin {
+  if (provenance === undefined) return 'learner_capture';
+  return typeof provenance === 'object' &&
+    provenance !== null &&
+    (provenance as { role?: unknown }).role === 'pipeline_figure'
+    ? 'learner_capture'
+    : 'printed_source';
+}
+
+/** A stated marker wins; an unstated one is false for printed source and conservative for captures. */
+export function learnerHandwritingMarker(
+  stated: LearnerHandwritingMarkerT | undefined,
+  origin: FigureOrigin,
+  handwritingUnverified?: boolean,
+): LearnerHandwritingMarkerT {
+  if (stated !== undefined) return stated;
+  if (origin === 'printed_source') return false;
+  return handwritingUnverified === false ? false : 'unknown';
+}
+
+/**
+ * Per-figure step of the one "which figures go to models" exit: publication
+ * (ingestion figuresForQuestion) and every model-facing projection of stored figures
+ * call it, so no reader can drop or misstate the learner-handwriting marker.
+ */
+export function figureForModel(figure: FigureRefT, origin: FigureOrigin): ModelFigureRefT {
+  return {
+    ...figure,
+    contains_learner_handwriting: learnerHandwritingMarker(
+      figure.contains_learner_handwriting,
+      origin,
+      figure.handwriting_unverified,
+    ),
+  };
+}
 
 // ---------- StructuredQuestion 抽取证据 ----------
 
@@ -96,6 +157,12 @@ export type StructuredQuestionT = {
   id: string;
   role: 'stem' | 'sub' | 'standalone';
   question_no?: string;
+  /**
+   * 印刷栏目/大题区段名（如「一、选择题」「三、解答题」）。VLM StructureTask
+   * 或确定性后处理把它放进这个字段，绝不并入 prompt_text。jsonb-internal —
+   * NOT a DDL column（同 `kind`/`student_answer_present` 先例）。
+   */
+  section?: string;
   prompt_text: string;
   options?: { label: string; text: string }[];
   answers?: string[];
@@ -156,6 +223,7 @@ export const StructuredQuestion: z.ZodType<StructuredQuestionT> = z.lazy(() =>
       id: z.string().min(1),
       role: QuestionRole,
       question_no: z.string().optional(),
+      section: z.string().optional(),
       prompt_text: z.string(),
       options: z.array(QuestionOption).optional(),
       answers: z.array(z.string()).optional(),
@@ -275,12 +343,14 @@ export interface AddressableFigureRef {
   asset_id: string;
   role: string;
   attached_to_index: string;
+  contains_learner_handwriting: LearnerHandwritingMarkerT;
 }
 
 export interface AddressableStructuredQuestion {
   id: string;
   role: 'stem' | 'sub' | 'standalone';
   question_no?: string;
+  section?: string;
   prompt_text: string;
   options?: { label: string; text: string }[];
   answers?: string[];
@@ -307,6 +377,7 @@ export function projectAddressableNode(q: StructuredQuestionT): AddressableStruc
     prompt_text: q.prompt_text,
   };
   if (q.question_no != null) node.question_no = q.question_no;
+  if (q.section != null) node.section = q.section;
   if (q.options != null) node.options = q.options.map((o) => ({ label: o.label, text: o.text }));
   if (q.answers != null) node.answers = [...q.answers];
   if (q.analysis != null) node.analysis = q.analysis;
@@ -317,20 +388,24 @@ export function projectAddressableNode(q: StructuredQuestionT): AddressableStruc
 
 /**
  * 把一棵 StructuredQuestion 树 + 其 FigureRef[] 投影成可寻址结构。figures 只保留
- * 寻址三元组（asset_id / role / attached_to_index）—— source_bbox /
+ * 寻址三元组（asset_id / role / attached_to_index）和手写标记 —— source_bbox /
  * source_page_index / attach_confidence 是抽取期坐标，对寻址无用。
  */
 export function projectAddressableStructure(
   tree: StructuredQuestionT,
-  figures: readonly FigureRefT[] = [],
+  figures: readonly FigureRefT[],
+  originOf: (assetId: string) => FigureOrigin,
 ): AddressableStructure {
   return {
     tree: projectAddressableNode(tree),
-    figures: figures.map((f) => ({
-      asset_id: f.asset_id,
-      role: f.role,
-      attached_to_index: f.attached_to_index,
-    })),
+    figures: figures
+      .map((figure) => figureForModel(figure, originOf(figure.asset_id)))
+      .map((f) => ({
+        asset_id: f.asset_id,
+        role: f.role,
+        attached_to_index: f.attached_to_index,
+        contains_learner_handwriting: f.contains_learner_handwriting,
+      })),
   };
 }
 
