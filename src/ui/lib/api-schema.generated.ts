@@ -15645,6 +15645,9 @@ export interface operations {
                         created_at: string;
                         error?: {
                             code: string;
+                            details?: {
+                                [key: string]: unknown;
+                            };
                             message: string;
                             status: number;
                         };
@@ -15667,6 +15670,9 @@ export interface operations {
                         created_at: string;
                         error?: {
                             code: string;
+                            details?: {
+                                [key: string]: unknown;
+                            };
                             message: string;
                             status: number;
                         };
@@ -15689,6 +15695,9 @@ export interface operations {
                         created_at: string;
                         error?: {
                             code: string;
+                            details?: {
+                                [key: string]: unknown;
+                            };
                             message: string;
                             status: number;
                         };
@@ -16923,6 +16932,9 @@ export interface operations {
                         created_at: string;
                         error?: {
                             code: string;
+                            details?: {
+                                [key: string]: unknown;
+                            };
                             message: string;
                             status: number;
                         };
@@ -16945,6 +16957,9 @@ export interface operations {
                         created_at: string;
                         error?: {
                             code: string;
+                            details?: {
+                                [key: string]: unknown;
+                            };
                             message: string;
                             status: number;
                         };
@@ -16967,6 +16982,9 @@ export interface operations {
                         created_at: string;
                         error?: {
                             code: string;
+                            details?: {
+                                [key: string]: unknown;
+                            };
                             message: string;
                             status: number;
                         };
@@ -17001,6 +17019,9 @@ export interface operations {
                         created_at: string;
                         error?: {
                             code: string;
+                            details?: {
+                                [key: string]: unknown;
+                            };
                             message: string;
                             status: number;
                         };
@@ -17023,6 +17044,9 @@ export interface operations {
                         created_at: string;
                         error?: {
                             code: string;
+                            details?: {
+                                [key: string]: unknown;
+                            };
                             message: string;
                             status: number;
                         };
@@ -17045,6 +17069,9 @@ export interface operations {
                         created_at: string;
                         error?: {
                             code: string;
+                            details?: {
+                                [key: string]: unknown;
+                            };
                             message: string;
                             status: number;
                         };
