@@ -243,6 +243,9 @@ export function createTurnSender(ctx: CompanionCtx): TurnSender {
     const showing = () => ctx.get().currentSessionId === sessionId;
     const s = ctx.get();
     if (!recovery) {
+      // A handed sentence that is sent is the learner's now: if it comes back after a failed
+      // send, the next handoff must add to it, not replace it.
+      internals.handedDraft = null;
       ctx.set({
         error: null,
         refreshFailed: false,

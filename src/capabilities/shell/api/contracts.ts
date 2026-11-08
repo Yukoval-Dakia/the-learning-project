@@ -316,7 +316,23 @@ export const WorkbenchSummaryResponseSchema = z.object({
       user_event: z.boolean(),
     }),
   }),
-  active_goal: z.object({ id: z.string(), title: z.string() }).nullable(),
+  active_goals: z.array(
+    z.object({
+      id: z.string(),
+      title: z.string(),
+      instruction_md: z.string().nullable(),
+      learner_words: z.string().nullable(),
+      window: z.object({
+        from: z.string().nullable(),
+        until: z.string().nullable(),
+        days_left: z.number().int().nullable(),
+        starts_in_days: z.number().int().nullable(),
+      }),
+      scope: z.object({ names: z.array(z.string()), unresolved: z.array(z.string()) }),
+      revise_prompt: z.string(),
+      end_prompt: z.string(),
+    }),
+  ),
   active_sessions: z.array(
     z.object({
       id: z.string(),
