@@ -2,6 +2,8 @@
 // how it was judged, and what the learner said. Independence is the server's verdict; nothing here
 // works it out, and a fact the server doesn't have gets no line.
 
+import { useCallback, useState } from 'react';
+import { outcomeFitsFeedbackCard } from './judge-feedback';
 import type { SubmitResult } from './practice-api';
 
 export type AttemptEvidence = Extract<SubmitResult, { evidence: unknown }>['evidence'];
@@ -62,4 +64,36 @@ export function attemptFacts(evidence: AttemptEvidence | null): readonly Attempt
       : []),
     ...(rating ? [{ label: '你说', value: CLAIM_WORDS[rating] }] : []),
   ];
+}
+
+/**
+ * The evidence recorded for an answer, kept with the question it came from. The practice host
+ * reuses one submit hook across questions, so it is read only while that question is shown: the
+ * next question never shows the last one's facts. A result that settles late stays with its own.
+ */
+export function useRecordedEvidence(questionId: string | undefined) {
+  const [held, setHeld] = useState<{
+    questionId: string | undefined;
+    evidence: AttemptEvidence;
+  } | null>(null);
+  const setRecorded = useCallback(
+    (evidence: AttemptEvidence | null) => setHeld(evidence ? { questionId, evidence } : null),
+    [questionId],
+  );
+  const recordedHere = held && held.questionId === questionId ? held.evidence : null;
+  return { recordedHere, setRecorded };
+}
+
+/**
+ * A finished rejudge changes the result the card leads with; the 判分 fact follows it, or the
+ * card would say two different things about one answer.
+ */
+export function recordedAfterRejudge(
+  evidence: AttemptEvidence | null,
+  rejudgedOutcome: string | undefined,
+): AttemptEvidence | null {
+  if (!evidence?.verdict || !rejudgedOutcome || !outcomeFitsFeedbackCard(rejudgedOutcome)) {
+    return evidence;
+  }
+  return { ...evidence, verdict: { ...evidence.verdict, outcome: rejudgedOutcome } };
 }
