@@ -12,6 +12,7 @@ import { selectedForgettingEngine } from '@/kernel/scheduling';
 import { and, asc, desc, eq, inArray, isNull, lte, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { AddressableStructureSchema } from '@/core/schema/addressable-structure';
+import { LearnerHandwritingMarker } from '@/core/schema/assessment/materials';
 import {
   INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
   InterventionSettlement,
@@ -20,7 +21,11 @@ import { deriveSourceTier } from '@/core/schema/provenance';
 // D6-R6 / D6-draftread — addressable-structure projection (read≡write
 // coordinate fix). Pure tree-clip; shared by get_question_context(include:
 // ['structure']) and the get_question_block_structure draft reader.
-import { projectAddressableStructure } from '@/core/schema/structured_question';
+import {
+  LEARNER_HANDWRITING_RULE,
+  figureForModel,
+  projectAddressableStructure,
+} from '@/core/schema/structured_question';
 import { notDraftPredicate, questionSuspendedPredicate } from '@/db/predicates';
 import {
   event,
@@ -144,7 +149,14 @@ const GetQuestionContextOutputSchema = z.object({
     )
     .optional(),
   source_assets: z
-    .array(z.object({ asset_id: z.string(), role: z.string(), crop_ref: z.string().optional() }))
+    .array(
+      z.object({
+        asset_id: z.string(),
+        role: z.string(),
+        crop_ref: z.string().optional(),
+        contains_learner_handwriting: LearnerHandwritingMarker.optional(),
+      }),
+    )
     .optional(),
   // D6-R6 — addressable StructuredQuestion tree (only when
   // include:['structure'] and the question carries a `structured` jsonb).
@@ -302,9 +314,10 @@ async function executeGetQuestionContext(
         asset_id: id,
         role: 'question_image',
       })),
-      ...(q.figures ?? []).map((fig, index) => ({
-        asset_id: fig.asset_id ?? `figure_${index}`,
-        role: fig.role ?? 'figure',
+      ...(q.figures ?? []).map(figureForModel).map((fig) => ({
+        asset_id: fig.asset_id,
+        role: fig.role,
+        contains_learner_handwriting: fig.contains_learner_handwriting,
       })),
     ];
   }
@@ -880,8 +893,7 @@ export async function executeGetReviewDue(
 export const getQuestionContextTool: DomainTool<GetQuestionContextInput, GetQuestionContextOutput> =
   {
     name: 'get_question_context',
-    description:
-      'Learner-state context for one question: attempts, reviews, FSRS state, linked records, variants, knowledge paths, and assets. ADR-0072: bank CONTENT reads go through read_bank (versioned refs from search_bank) — this tool remains the learner-side read (its content projection stays for the coach/dreaming/maintenance faces; final home decided with the learner-brain line). Check availability first: lifecycle zeros with observation_status=not_observed are compatibility placeholders for missing or protected diagnostic questions, not observed facts.',
+    description: `Learner-state context for one question: attempts, reviews, FSRS state, linked records, variants, knowledge paths, and assets. ADR-0072: bank CONTENT reads go through read_bank (versioned refs from search_bank) — this tool remains the learner-side read (its content projection stays for the coach/dreaming/maintenance faces; final home decided with the learner-brain line). Check availability first: lifecycle zeros with observation_status=not_observed are compatibility placeholders for missing or protected diagnostic questions, not observed facts. Figures carry contains_learner_handwriting (true/false/unknown): ${LEARNER_HANDWRITING_RULE}.`,
     effect: 'read',
     inputSchema: GetQuestionContextInputSchema,
     outputSchema: GetQuestionContextOutputSchema,

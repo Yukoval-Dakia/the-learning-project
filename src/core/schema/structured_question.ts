@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { LearnerHandwritingMarker } from './assessment/materials';
+import { LearnerHandwritingMarker, type LearnerHandwritingMarkerT } from './assessment/materials';
 import { Presentation, type PresentationT } from './assessment/presentation';
 import { QuestionKind } from './business';
 
@@ -41,6 +41,28 @@ export const FigureRef = z.object({
 });
 
 export type FigureRefT = z.infer<typeof FigureRef>;
+
+/** Told to every model that sees a figure that may carry learner work. */
+export const LEARNER_HANDWRITING_RULE = '图中手写是学习者的作答，可能是错的，不要当作答案或条件';
+
+export type ModelFigureRefT = FigureRefT & {
+  contains_learner_handwriting: LearnerHandwritingMarkerT;
+};
+
+/**
+ * Per-figure step of the one "which figures go to models" exit: publication
+ * (ingestion figuresForQuestion) and every model-facing projection of stored figures
+ * call it, so no reader can drop the learner-handwriting marker. Refs written before
+ * the marker existed only recorded whether the judgment was missing.
+ */
+export function figureForModel(figure: FigureRefT): ModelFigureRefT {
+  return {
+    ...figure,
+    contains_learner_handwriting:
+      figure.contains_learner_handwriting ??
+      (figure.handwriting_unverified === false ? false : 'unknown'),
+  };
+}
 
 // ---------- StructuredQuestion 抽取证据 ----------
 
@@ -279,6 +301,7 @@ export interface AddressableFigureRef {
   asset_id: string;
   role: string;
   attached_to_index: string;
+  contains_learner_handwriting: LearnerHandwritingMarkerT;
 }
 
 export interface AddressableStructuredQuestion {
@@ -321,7 +344,7 @@ export function projectAddressableNode(q: StructuredQuestionT): AddressableStruc
 
 /**
  * 把一棵 StructuredQuestion 树 + 其 FigureRef[] 投影成可寻址结构。figures 只保留
- * 寻址三元组（asset_id / role / attached_to_index）—— source_bbox /
+ * 寻址三元组（asset_id / role / attached_to_index）和手写标记 —— source_bbox /
  * source_page_index / attach_confidence 是抽取期坐标，对寻址无用。
  */
 export function projectAddressableStructure(
@@ -330,10 +353,11 @@ export function projectAddressableStructure(
 ): AddressableStructure {
   return {
     tree: projectAddressableNode(tree),
-    figures: figures.map((f) => ({
+    figures: figures.map(figureForModel).map((f) => ({
       asset_id: f.asset_id,
       role: f.role,
       attached_to_index: f.attached_to_index,
+      contains_learner_handwriting: f.contains_learner_handwriting,
     })),
   };
 }

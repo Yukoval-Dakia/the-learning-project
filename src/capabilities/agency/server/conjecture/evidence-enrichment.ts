@@ -19,7 +19,7 @@ import {
 } from '@/capabilities/agency/server/conjecture/evidence';
 import { QUESTION_EDIT_ACTION } from '@/core/schema/event/experimental';
 import type { QuestionEvidenceContextSnapshotT } from '@/core/schema/question-evidence-snapshot';
-import { FigureRef } from '@/core/schema/structured_question';
+import { FigureRef, figureForModel } from '@/core/schema/structured_question';
 import type { Db, Tx } from '@/db/client';
 import { event, knowledge, question } from '@/db/schema';
 import { batchResolveEffectiveDomains } from '@/kernel/read-models/knowledge-tree';
@@ -309,6 +309,7 @@ function safeFigures(values: unknown): ConjectureEvidenceFigure[] {
     if (figures.length >= CONJECTURE_EVIDENCE_FIGURES_PER_FIELD) break;
     const parsed = FigureRef.safeParse(value);
     if (!parsed.success) continue;
+    const figure = figureForModel(parsed.data);
     const assetId = parsed.data.asset_id.trim().slice(0, CONJECTURE_EVIDENCE_ASSET_REF_CHAR_CAP);
     const attachedToIndex = parsed.data.attached_to_index
       .trim()
@@ -321,6 +322,7 @@ function safeFigures(values: unknown): ConjectureEvidenceFigure[] {
       source_bbox: { ...parsed.data.source_bbox },
       attached_to_index: attachedToIndex,
       attach_confidence: parsed.data.attach_confidence,
+      contains_learner_handwriting: figure.contains_learner_handwriting,
     });
   }
   return figures;

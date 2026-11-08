@@ -6,7 +6,7 @@ import {
 } from '@earendil-works/pi-ai';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-
+import { enrichEvidenceCells } from '@/capabilities/agency/server/conjecture/evidence-enrichment';
 import { reserveIngestionOperation } from '@/capabilities/ingestion/server/operation-store';
 import { TencentSubmitInProgressError } from '@/capabilities/ingestion/server/provider-attempts';
 import type { DescribeResponse } from '@/capabilities/ingestion/server/tencent_mark';
@@ -16,7 +16,9 @@ import {
   definitionFromContract,
   runQuestionAdmission,
 } from '@/capabilities/practice/question-bank/server/admission';
+import { getQuestionContextTool } from '@/capabilities/practice/scheduling/tools/question-context';
 import { resetTestConfig, setTestConfig } from '@/core/config/store';
+import { LEARNER_HANDWRITING_RULE } from '@/core/schema/structured_question';
 import { db } from '@/db/client';
 import {
   learning_session,
@@ -240,11 +242,9 @@ async function runHandler(handler: ReturnType<typeof buildTencentOcrHandler>, se
   return block;
 }
 
-const LEARNER_HANDWRITING_RULE = '图中手写是学习者的作答，可能是错的，不要当作答案或条件';
-
-// @invariant security: every attributable crop of a question with learner work reaches blind solve, carrying its per-crop learner-handwriting marker and the rule that handwriting is not a condition or answer
-// @fails-if a whole-question handwriting veto drops the crop, a handwritten or undecided crop is withheld, the marker is lost between OCR and the provider request, or the solve prompt omits the handwriting rule
-it('sends every question figure to blind solve with its learner-handwriting marker', async () => {
+// @invariant security: every attributable crop of a question with learner work reaches blind solve, the companion question context and conjecture evidence, carrying its per-crop learner-handwriting marker, and the solve prompt states that handwriting is not a condition or answer
+// @fails-if a whole-question handwriting veto drops the crop, a handwritten or undecided crop is withheld, the marker is lost between OCR and the provider request or in the companion/conjecture projections, or the solve prompt omits the handwriting rule
+it('gives every question figure to blind solve, the companion and conjecture evidence with its learner-handwriting marker', async () => {
   vi.stubEnv('OPENCODE_API_KEY', 'synthetic-fixture-key');
   vi.stubEnv('AI_PROVIDER_OVERRIDE', '');
   vi.stubEnv('AI_PROVIDER_MODEL', '');
@@ -385,6 +385,51 @@ it('sends every question figure to blind solve with its learner-handwriting mark
       expect(JSON.stringify(content)).toContain(`contains_learner_handwriting: ${expected.marker}`);
       const system = solveRequest.messages.find((message) => (message.role as string) === 'system');
       expect(JSON.stringify(system?.content)).toContain(LEARNER_HANDWRITING_RULE);
+
+      // The companion and conjecture evidence read stored figures through the same exit.
+      const companion = await getQuestionContextTool.execute(
+        { db, taskRunId: 'tr_figures', callerActor: { kind: 'agent', ref: 'agent:copilot' } },
+        { questionId: enrolled.question_id, include: ['assets', 'structure'] },
+      );
+      expect(
+        companion.source_assets
+          ?.filter((asset) => asset.role === 'diagram')
+          .map((asset) => asset.contains_learner_handwriting),
+      ).toEqual([expected.marker]);
+      expect(
+        companion.structure?.figures.map((figure) => figure.contains_learner_handwriting),
+      ).toEqual([expected.marker]);
+      const attemptId = `attempt-${sessionId}`;
+      const [cell] = await enrichEvidenceCells(db, {
+        cells: [
+          {
+            key: `concept:${attemptId}`,
+            cause_category: 'concept',
+            knowledge_id: 'k-figures',
+            recurrence_count: 1,
+            evidence_event_ids: [attemptId],
+            theta_hat: null,
+            theta_precision: null,
+            baseline_p: null,
+            probe_here: false,
+            has_owner_cause: false,
+            has_contested_verdict: false,
+          },
+        ],
+        failures: [
+          {
+            attempt_event_id: attemptId,
+            question_id: enrolled.question_id,
+            answer_md: '60°',
+            answer_image_refs: [],
+            referenced_knowledge_ids: [],
+            created_at: new Date(),
+          },
+        ],
+      });
+      expect(
+        cell?.samples[0]?.question_figures.map((figure) => figure.contains_learner_handwriting),
+      ).toEqual([expected.marker]);
     }
   } finally {
     __setPiAdapterForTests(undefined);

@@ -12,7 +12,7 @@
 
 import type { CauseCategoryT, CauseSchemaT } from '@/core/schema/event/blocks';
 import type { AttemptQuestionSnapshotT } from '@/core/schema/question-evidence-snapshot';
-import type { BBoxT, FigureRefT } from '@/core/schema/structured_question';
+import type { BBoxT, FigureRefT, ModelFigureRefT } from '@/core/schema/structured_question';
 
 export const CONJECTURE_RECURRENCE_FLOOR = 2;
 
@@ -72,6 +72,7 @@ export interface ConjectureEvidenceFigure {
   source_bbox: BBoxT;
   attached_to_index: string;
   attach_confidence: FigureRefT['attach_confidence'];
+  contains_learner_handwriting: ModelFigureRefT['contains_learner_handwriting'];
 }
 
 export interface ConjectureEvidenceSample {

@@ -1,5 +1,9 @@
-import type { LearnerHandwritingMarkerT } from '@/core/schema/assessment/materials';
-import type { BBoxT, FigureRefT, StructuredQuestionT } from '@/core/schema/structured_question';
+import {
+  type BBoxT,
+  type FigureRefT,
+  type StructuredQuestionT,
+  figureForModel,
+} from '@/core/schema/structured_question';
 import type { source_asset } from '@/db/schema';
 import type { PreAttachFigure } from './crop';
 import type { FigureAssignment, StructureResult } from './structure';
@@ -16,9 +20,9 @@ type PublicFigureEvidence = {
 
 /**
  * The one exit deciding which figures a question publishes: every attributable crop,
- * each carrying its learner-handwriting marker. Learner display, blind solve,
- * adjudication and grading all read the figures this returns; handwriting never
- * withholds a figure because some questions cannot be solved without it.
+ * each stamped by figureForModel. Learner display, blind solve, adjudication, grading,
+ * the companion and conjecture evidence all read the figures this returns; handwriting
+ * never withholds a figure because some questions cannot be solved without it.
  */
 export function figuresForQuestion(
   question: StructuredQuestionT | null,
@@ -48,16 +52,7 @@ export function figuresForQuestion(
         /^[a-f0-9]{64}$/i.test(asset.sha256)
       );
     })
-    .map((figure) => ({
-      ...figure,
-      contains_learner_handwriting: learnerHandwritingMarker(figure),
-    }));
-}
-
-/** Refs written before the marker existed only recorded whether the judgment was missing. */
-function learnerHandwritingMarker(figure: FigureRefT): LearnerHandwritingMarkerT {
-  if (figure.contains_learner_handwriting !== undefined) return figure.contains_learner_handwriting;
-  return figure.handwriting_unverified === false ? false : 'unknown';
+    .map(figureForModel);
 }
 
 /** OCR fallback: only unique, innermost containment on the actual source page. */
