@@ -23,12 +23,6 @@ export type EnrollmentGeneratedBy = 'workflow_judge' | 'user_retry' | 'rescue';
 export interface EnrollmentMarkers {
   enrolled_by: EnrollmentGeneratedBy;
   knowledge: 'attributed' | 'missing';
-  /**
-   * The slice-3 sweep marker: its mere presence says "enrolled after the
-   * annotation backfill shipped", so the cron can tell new inventory from
-   * historical rows and must never be omitted by an enrollment writer.
-   */
-  solution: 'annotated' | 'missing';
   confidence: number;
   figures_attached: number;
   student_work: boolean;

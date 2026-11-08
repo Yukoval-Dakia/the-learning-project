@@ -30,7 +30,6 @@ function structured(prompt: string): StructuredQuestionT {
 
 async function seed(
   db: ReturnType<typeof testDb>,
-  derivationPolicy: 'allow' | 'answer_only' | 'crisis' = 'allow',
 ): Promise<{ sessionId: string; blockIds: string[] }> {
   const now = new Date();
   await db.insert(knowledge).values({
@@ -48,7 +47,7 @@ async function seed(
   await db.insert(source_document).values({
     id: documentId,
     source_asset_ids: ['asset_1'],
-    provenance: { usage_policy: { derivation_policy: derivationPolicy } },
+    provenance: { usage_policy: { derivation_policy: 'allow' } },
     created_at: now,
     updated_at: now,
     version: 0,
@@ -382,49 +381,5 @@ describe('runAutoEnrollForSession', () => {
     expect(
       await db.select().from(question).where(eq(question.id, block.imported_question_id)),
     ).toHaveLength(1);
-  });
-
-  // YUK-1994 — a restricted usage policy forbids every model send of the
-  // document's content on this path: block assembly, the cold-start bridge and
-  // the tagging call all see zero invocations while the blocks still enroll
-  // with `knowledge: 'missing'` for the policy-gated backfill.
-  // @invariant security: an answer_only/crisis source document never reaches a
-  //   provider through auto-enroll — assembly and attribution make zero model calls
-  // @fails-if the assembly pass or the attribution path sends document text under a
-  //   restricted derivation policy, or the policy gate aborts enrollment
-  it('restricted answer_only document sends no model call and still enrolls', async () => {
-    const db = testDb();
-    const { sessionId } = await seed(db, 'answer_only');
-    const calls = { assembly: 0, bridge: 0, tag: 0 };
-
-    const result = await runAutoEnrollForSession({
-      db,
-      sessionId,
-      subjectId: 'yuwen',
-      runBlockAssemblyFn: async () => {
-        calls.assembly += 1;
-        return { text: '{}' };
-      },
-      runColdStartBridgeFn: async () => {
-        calls.bridge += 1;
-        return { text: '' };
-      },
-      tagKnowledgeFn: async () => {
-        calls.tag += 1;
-        return { kind: 'match', knowledge_ids: ['k1'] };
-      },
-    });
-
-    expect(result.status).toBe('completed');
-    expect(result.enrolled).toBe(2);
-    expect(calls).toEqual({ assembly: 0, bridge: 0, tag: 0 });
-
-    const enrolledQuestions = await db.select().from(question);
-    expect(enrolledQuestions).toHaveLength(2);
-    for (const row of enrolledQuestions) {
-      expect(row.metadata).toMatchObject({
-        ingestion_enrollment: { knowledge: 'missing', solution: 'missing' },
-      });
-    }
   });
 });

@@ -49,24 +49,6 @@ export function buildAutoEnrollHandler(db: Db): (jobs: Job<AutoEnrollJobData>[])
         console.log(
           `[auto_enroll] ${sessionId} → ${result.status} (enrolled=${result.enrolled}, routed_to_review=${result.routed_to_review})`,
         );
-        // Accelerator for the background annotation owner: hand the just-enrolled
-        // question ids to the annotation backfill. Best effort — the scheduled sweep
-        // is the durable trigger, so a failed send only delays annotation.
-        if (result.blocks.length > 0) {
-          try {
-            const boss = await getStartedBoss();
-            await boss.send(
-              'ingestion_annotation_backfill',
-              { questionIds: result.blocks.map((block) => block.question_id) },
-              { singletonKey: `annotation:${sessionId}`, singletonSeconds: 60 },
-            );
-          } catch (err) {
-            console.error(
-              `[auto_enroll] annotation backfill enqueue failed for ${sessionId}; sweep will retry`,
-              err,
-            );
-          }
-        }
         // One job keeps its per-delivery paid ceiling; a page longer than it continues
         // in a fresh delivery from the returned cursor. The cursor is part of the
         // singleton key so the follow-up is not collapsed into this delivery. A failed

@@ -7,7 +7,6 @@
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 
 import { MistakeEnrollOutcome } from '@/core/schema/mistake_enroll';
-import { readStoredSolutionAnnotation } from '@/core/schema/solution-annotation';
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
 import { event, knowledge, question, question_block } from '@/db/schema';
@@ -178,49 +177,14 @@ function toEnrollmentProjection(
       knowledge: null,
       knowledge_ids: [] as string[],
       knowledge_labels: [] as Array<{ id: string; name: string }>,
-      solution: null,
       library_visible: false,
     };
   }
   if (block.status !== 'draft') {
-    const markers = enrolled?.metadata?.ingestion_enrollment as
-      | { knowledge?: unknown; solution?: unknown; solution_skipped_reason?: unknown }
-      | undefined;
+    const markers = enrolled?.metadata?.ingestion_enrollment as { knowledge?: unknown } | undefined;
     // Synthetic ids (pending proposals, system nodes) are never learner-visible;
     // the read must not leak them as labels either.
     const knowledgeIds = learnerVisibleKnowledgeIds(enrolled?.knowledge_ids ?? []);
-    const annotation = readStoredSolutionAnnotation(enrolled?.metadata?.solution_annotation);
-    // 'skipped' is a terminal marker, not a wait: the annotator is text-only and
-    // this question's prompt cannot stand without its figure. The UI must show it
-    // honestly rather than render an eternal "pending" — nothing re-enters a
-    // skipped row; fixing the capture makes a new block and a new question.
-    const solution =
-      annotation !== null
-        ? {
-            state: 'annotated' as const,
-            reason: null,
-            method_md: annotation.method_md,
-            steps_md: annotation.steps_md,
-            confidence: annotation.confidence,
-          }
-        : markers?.solution === 'skipped'
-          ? {
-              state: 'skipped' as const,
-              reason:
-                markers?.solution_skipped_reason === 'figure_dependent'
-                  ? ('figure_dependent' as const)
-                  : null,
-              method_md: null,
-              steps_md: [] as string[],
-              confidence: null,
-            }
-          : {
-              state: 'missing' as const,
-              reason: null,
-              method_md: null,
-              steps_md: [],
-              confidence: null,
-            };
     return {
       state: 'in_library' as const,
       reason: null,
@@ -233,8 +197,6 @@ function toEnrollmentProjection(
         id,
         name: knowledgeNames.get(id) ?? id,
       })),
-      // `auto_enroll_observation` has no writer, so this is the only solution signal.
-      solution,
       library_visible: enrolled ? enrolled.draft_status !== 'draft' : null,
     };
   }
@@ -250,7 +212,6 @@ function toEnrollmentProjection(
       knowledge: null,
       knowledge_ids: [] as string[],
       knowledge_labels: [] as Array<{ id: string; name: string }>,
-      solution: null,
       library_visible: null,
     };
   }
@@ -264,7 +225,6 @@ function toEnrollmentProjection(
     knowledge: null,
     knowledge_ids: [] as string[],
     knowledge_labels: [] as Array<{ id: string; name: string }>,
-    solution: null,
     library_visible: null,
   };
 }

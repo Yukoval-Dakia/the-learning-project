@@ -1,11 +1,11 @@
 /**
  * One owner for "attribute this ingested question to a knowledge point" (YUK-1994).
  *
- * Both the enroll path and the background knowledge backfill call this, so subject
- * classification, PROPOSE naming and the unified match-or-propose rule cannot drift
- * between an immediate enrollment and a repair run. A failure is thrown to the caller:
- * enrollment marks the question `knowledge: 'missing'`, the backfill counts a bounded
- * attempt. Neither is an enrollment gate.
+ * Subject classification, PROPOSE naming and the unified match-or-propose rule live
+ * here so a later repair path reuses the same decision instead of copying it. A failure
+ * is thrown to the caller; enrollment marks the question `knowledge: 'missing'` and
+ * still enrolls — attribution is never an enrollment gate. Callers own the usage-policy
+ * gate: a restricted document must not reach this function.
  */
 import {
   type ColdStartBridgeRunTaskFn,
@@ -15,16 +15,10 @@ import {
   createKnowledgeNamer,
   createKnowledgeTagEmbedder,
 } from '@/capabilities/ingestion/server/knowledge-namer';
-import type { DerivationPolicyT } from '@/core/schema/derivation-policy';
 import type { Db } from '@/db/client';
 import { type NameKcFn, tagKnowledge } from '@/kernel/records/knowledge-tag';
 import { getKnownSubjects } from '@/subjects/profile';
-import {
-  type IngestionRedactionField,
-  IngestionUsagePolicyError,
-  redactIngestionText,
-  writeIngestionUsageReceipt,
-} from './privacy-guard';
+import { redactIngestionText } from './privacy-guard';
 
 export interface AttributeIngestionKnowledgeParams {
   db: Db;
@@ -42,12 +36,6 @@ export interface AttributeIngestionKnowledgeParams {
   batchCache?: Map<string, string>;
   /** Binds tag audit events to the ingestion session (retroactive consent filter). */
   sessionId?: string | null;
-  /**
-   * The bound source document and its resolved derivation policy. A restricted
-   * policy is refused before any send (fail closed); an allowed send writes a
-   * usage receipt under the document/session anchors — including failed sends.
-   */
-  usage?: { sourceDocumentId: string; derivationPolicy: DerivationPolicyT };
   /** Audit-only provenance anchor; never read by the decision. */
   sourceRef?: { kind: string; id: string } | null;
   ctx?: unknown;
@@ -63,108 +51,67 @@ export interface AttributedIngestionKnowledge {
 export async function attributeIngestionKnowledge(
   params: AttributeIngestionKnowledgeParams,
 ): Promise<AttributedIngestionKnowledge> {
-  // A restricted document is never sent — redaction does not exempt the send.
-  if (params.usage !== undefined && params.usage.derivationPolicy !== 'allow') {
-    throw new IngestionUsagePolicyError(params.usage.derivationPolicy);
-  }
   const tagKnowledgeFn = params.tagKnowledgeFn ?? tagKnowledge;
-  const questionRedaction = redactIngestionText(params.questionMd);
-  const hintRedaction = params.knowledgeHint ? redactIngestionText(params.knowledgeHint) : null;
-  const receiptFields = [
-    ...new Set<IngestionRedactionField>([
-      ...questionRedaction.fields,
-      ...(hintRedaction?.fields ?? []),
-    ]),
-  ].sort();
-  const receiptCounts = { ...questionRedaction.counts };
-  for (const [field, count] of Object.entries(hintRedaction?.counts ?? {})) {
-    receiptCounts[field as IngestionRedactionField] =
-      (receiptCounts[field as IngestionRedactionField] ?? 0) + count;
+  let subjectRootId: string;
+  let bridgeNameKc: NameKcFn | undefined;
+  let bridgeTaskRunId: string | undefined;
+  let bridgeCostUsd: number | undefined;
+
+  if (params.subjectId) {
+    subjectRootId = `seed:${params.subjectId}:root`;
+  } else {
+    const bridge = await runColdStartBridge({
+      db: params.db,
+      questionMd: params.questionMd,
+      // Placeholder forces the ECHO path; only the classified subject_id is used.
+      existingReferenceMd: '(reference answer not needed for tagging)',
+      knowledgeHint: params.knowledgeHint,
+      knownSubjects: getKnownSubjects(),
+      runTaskFn: params.runTaskFn,
+      ctx: params.ctx ?? { db: params.db },
+    });
+    subjectRootId = `seed:${bridge.subject_id}:root`;
+    bridgeTaskRunId = bridge.task_run_id;
+    bridgeCostUsd = bridge.cost_usd;
+    // Reuse the classified name so a PROPOSE makes no second model call, and
+    // forward the bridge run's provenance for the tag audit event (YUK-1604).
+    bridgeNameKc = async () => ({
+      kc_name: bridge.kc_name,
+      ...(bridge.task_run_id !== undefined ? { task_run_id: bridge.task_run_id } : {}),
+      ...(bridge.cost_usd !== undefined ? { cost_usd: bridge.cost_usd } : {}),
+    });
   }
-  const recordUsage = async () => {
-    const usage = params.usage;
-    const sessionId = params.sessionId ?? null;
-    if (usage === undefined || sessionId === null) return;
-    try {
-      await writeIngestionUsageReceipt(params.db, {
-        sourceDocumentId: usage.sourceDocumentId,
-        sessionId,
-        derivationPolicy: usage.derivationPolicy,
-        engine: 'ingestion_knowledge_attribution',
-        redactedFields: receiptFields,
-        redactionCounts: receiptCounts,
-        channels: { page_images: 'none', extracted_text: 'redacted' },
-      });
-    } catch (err) {
-      // The sends are already recorded in ai_task_runs; a lost receipt is an
-      // observability gap, not a reason to burn a second paid call on retry.
-      console.error('[knowledge_attribution] usage receipt write failed', err);
-    }
+
+  const tag = await tagKnowledgeFn(
+    {
+      db: params.db,
+      embedder: createKnowledgeTagEmbedder(params.providerAttempt),
+      nameKcFn:
+        bridgeNameKc ??
+        createKnowledgeNamer({
+          db: params.db,
+          runTaskFn: params.runTaskFn,
+          ctx: params.ctx ?? { db: params.db },
+        }),
+      batchCache: params.batchCache,
+    },
+    {
+      // Redact identifiers at the model boundary; redact the hint too so audit
+      // events match the model-facing contract. sessionId binds the events to this
+      // ingestion session for the live derivation policy.
+      questionText: redactIngestionText(params.questionMd).text,
+      knowledgeHint: params.knowledgeHint
+        ? redactIngestionText(params.knowledgeHint).text
+        : params.knowledgeHint,
+      sessionId: params.sessionId ?? null,
+      subjectRootId,
+      sourceRef: params.sourceRef ?? null,
+    },
+  );
+
+  return {
+    knowledgeIds: tag.knowledge_ids,
+    ...(bridgeTaskRunId !== undefined ? { bridgeTaskRunId } : {}),
+    ...(bridgeCostUsd !== undefined ? { bridgeCostUsd } : {}),
   };
-
-  try {
-    let subjectRootId: string;
-    let bridgeNameKc: NameKcFn | undefined;
-    let bridgeTaskRunId: string | undefined;
-    let bridgeCostUsd: number | undefined;
-
-    if (params.subjectId) {
-      subjectRootId = `seed:${params.subjectId}:root`;
-    } else {
-      const bridge = await runColdStartBridge({
-        db: params.db,
-        questionMd: params.questionMd,
-        // Placeholder forces the ECHO path; only the classified subject_id is used.
-        existingReferenceMd: '(reference answer not needed for tagging)',
-        knowledgeHint: params.knowledgeHint,
-        knownSubjects: getKnownSubjects(),
-        runTaskFn: params.runTaskFn,
-        ctx: params.ctx ?? { db: params.db },
-      });
-      subjectRootId = `seed:${bridge.subject_id}:root`;
-      bridgeTaskRunId = bridge.task_run_id;
-      bridgeCostUsd = bridge.cost_usd;
-      // Reuse the classified name so a PROPOSE makes no second model call, and
-      // forward the bridge run's provenance for the tag audit event (YUK-1604).
-      bridgeNameKc = async () => ({
-        kc_name: bridge.kc_name,
-        ...(bridge.task_run_id !== undefined ? { task_run_id: bridge.task_run_id } : {}),
-        ...(bridge.cost_usd !== undefined ? { cost_usd: bridge.cost_usd } : {}),
-      });
-    }
-
-    const tag = await tagKnowledgeFn(
-      {
-        db: params.db,
-        embedder: createKnowledgeTagEmbedder(params.providerAttempt),
-        nameKcFn:
-          bridgeNameKc ??
-          createKnowledgeNamer({
-            db: params.db,
-            runTaskFn: params.runTaskFn,
-            ctx: params.ctx ?? { db: params.db },
-          }),
-        batchCache: params.batchCache,
-      },
-      {
-        // Redact identifiers at the model boundary; redact the hint too so audit
-        // events match the model-facing contract. sessionId binds the events to
-        // this ingestion session for the live derivation policy.
-        questionText: questionRedaction.text,
-        knowledgeHint: hintRedaction ? hintRedaction.text : params.knowledgeHint,
-        sessionId: params.sessionId ?? null,
-        subjectRootId,
-        sourceRef: params.sourceRef ?? null,
-      },
-    );
-
-    return {
-      knowledgeIds: tag.knowledge_ids,
-      ...(bridgeTaskRunId !== undefined ? { bridgeTaskRunId } : {}),
-      ...(bridgeCostUsd !== undefined ? { bridgeCostUsd } : {}),
-    };
-  } finally {
-    // An attempted send is usage too: receipt on success and on failure alike.
-    await recordUsage();
-  }
 }

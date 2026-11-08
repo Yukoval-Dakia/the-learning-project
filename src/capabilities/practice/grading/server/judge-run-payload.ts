@@ -93,18 +93,15 @@ export type FrozenAbilityGlobalByKnowledgeId = z.infer<
  * 拾取时重读可变的 question 行；提交后有人编辑 prompt/reference/choices/knowledge/
  * difficulty，判分与调度就打在与学习者当时所见**不同**的题面上（判词错、FSRS 脏）。
  *
- * 为什么不用 version 锚：`question.version` 不是完整 staleness 锚——structured
- * 编辑（practice/question-bank/server/proposal-appliers.ts）和录入标注回填
- * （ingestion/server/annotation-backfill.ts 的 metadata 写）都会自增它，但纯
- * prompt_md / reference_md 编辑路径不动它——拿它当判死锚会**漏检**恰好是本 finding
- * 说的那类编辑。`updated_at` 覆盖面更广但同样不是每条写路径的硬契约。故取**内容
- * 冻结**：把判分 + 调度真正读的字段整体冻进 payload，worker 按冻结值判分，与同步
- * 面（单次读行）语义一致。
+ * 为什么不用 version 锚：`question.version` 只在 structured 编辑路径自增
+ * （practice/question-bank/server/proposal-appliers.ts 的乐观写），纯 prompt_md / reference_md 编辑
+ * 不动它——拿它当 staleness 锚会**漏检**恰好是本 finding 说的那类编辑。`updated_at`
+ * 覆盖面更广但同样不是每条写路径的硬契约。故取**内容冻结**：把判分 + 调度真正读的
+ * 字段整体冻进 payload，worker 按冻结值判分，与同步面（单次读行）语义一致。
  *
  * 也因此**不需要 stale 失败路径**：冻结值自足，题面漂移不再让一次合法作答报废
  * （version-mismatch-then-fail 会把学习者已提交的答案直接丢掉，更差）。version /
- * updated_at 仍冻一份，纯作可观测锚——标注回填这类不动判分字段的写入也会让
- * worker 侧 drift warn 误报为"题面变了"，warn 是漂移信号不是漂移证明。
+ * updated_at 仍冻一份，纯作可观测锚（worker 侧检出漂移记一条 warn）。
   * 
 /**
  * W4 #TtZ8l — the four jsonb columns are typed to their actual SHAPE, not `z.unknown`.

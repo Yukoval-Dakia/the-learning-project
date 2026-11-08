@@ -8,10 +8,6 @@ import { and, asc, desc, eq, getTableColumns, inArray, isNull, sql } from 'drizz
 import { type MasteryDecayBucket, worstMasteryDecayBucket } from '@/core/mastery-freshness';
 import type { ReviewTimingJson } from '@/core/schema/learner-judgment';
 import { type SourceTier, type SourceTierName, deriveSourceTier } from '@/core/schema/provenance';
-import {
-  type StoredSolutionAnnotationT,
-  readStoredSolutionAnnotation,
-} from '@/core/schema/solution-annotation';
 import type { Db } from '@/db/client';
 import { artifact, knowledge, question } from '@/db/schema';
 import {
@@ -164,8 +160,6 @@ export interface QuestionDetail {
   backlinks_by_intent_source: Record<string, QuestionDetailBacklink[]>;
   timeline: QuestionDetailTimelineEntry[];
   metadata: Record<string, unknown> | null;
-  /** Background method annotation; never an answer key, never a grading input. */
-  solution_annotation: StoredSolutionAnnotationT | null;
   /** Auto-enroll judge confidence (0..1) for a captured question; null otherwise. */
   ingestion_judge_confidence: number | null;
   created_at_sec: number;
@@ -274,7 +268,6 @@ export async function loadQuestionDetail(
     backlinks_by_intent_source: groupByIntentSource(backlinks),
     timeline: timelineEntries.map(toTimelineEntry),
     metadata: (q.metadata ?? null) as Record<string, unknown> | null,
-    solution_annotation: readStoredSolutionAnnotation(q.metadata?.solution_annotation),
     ingestion_judge_confidence: readWorkflowJudgeConfidence(q.metadata),
     created_at_sec: Math.floor(q.created_at.getTime() / 1000),
     updated_at_sec: Math.floor(q.updated_at.getTime() / 1000),

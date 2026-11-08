@@ -7,8 +7,6 @@
  * only when a session has real page indices; all-placeholder sessions (Tencent
  * fallback) stay semantic-only. The model works on text, not page images.
  */
-
-import { eq } from 'drizzle-orm';
 import {
   BlockAssemblyCandidate,
   type BlockAssemblyCandidateT,
@@ -17,18 +15,11 @@ import {
   BlockAssemblyTaskError,
   parseBlockAssemblyOutput,
 } from '@/capabilities/ingestion/tasks/block-assembly';
-import type { DerivationPolicyT } from '@/core/schema/derivation-policy';
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db, Tx } from '@/db/client';
-import { learning_session } from '@/db/schema';
 import { writeBlockMergeProposal } from '@/kernel/proposals/producers';
-import { resolveSessionDerivationPolicy } from '@/kernel/read-models/usage-policy';
 import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
-import {
-  type IngestionRedactionField,
-  redactIngestionText,
-  writeIngestionUsageReceipt,
-} from './privacy-guard';
+import { redactIngestionText } from './privacy-guard';
 
 // Re-exported task schema and error. The session pass and its auto_enroll caller
 // swallow the error: merge proposals are best-effort and must not abort enrollment.
@@ -71,17 +62,6 @@ export interface RunBlockAssemblyTaskParams {
   db?: Db | Tx;
   /** Inject in tests; defaults to the production runner. */
   runTaskFn?: BlockAssemblyRunTaskFn;
-  /**
-   * The source document the session's content is sent under. When present the
-   * policy is enforced at the send boundary and the attempted send writes a
-   * usage receipt; when absent (no resolvable document) the send proceeds under
-   * a document that never declared a policy and no receipt can be anchored.
-   */
-  usage?: {
-    sourceDocumentId: string;
-    sessionId: string;
-    derivationPolicy: DerivationPolicyT;
-  };
   /** Forwarded to runTask ctx (subjectProfile only). */
   ctx?: unknown;
 }
@@ -100,57 +80,19 @@ export async function runBlockAssemblyTask(
   }
   // Audit writes need the root Db; transactional callers must inject runTaskFn.
   const runTaskFn = params.runTaskFn ?? makeRunTaskTextFn(params.db as Db);
-  // A restricted document is never sent — redaction does not exempt the send.
-  if (params.usage !== undefined && params.usage.derivationPolicy !== 'allow') {
-    throw new BlockAssemblyTaskError(
-      `derivation policy '${params.usage.derivationPolicy}' forbids model use of this document's content`,
-    );
-  }
-  // Redact identifiers before the extracted text reaches the model; the per-block
-  // accounting unions into the usage receipt, categories and counts never values.
-  const redactedFields = new Set<IngestionRedactionField>();
-  const redactedCounts = new Map<IngestionRedactionField, number>();
+  // Redact identifiers before the extracted text reaches the model.
   const input: BlockAssemblyInput = {
     ...params.input,
-    blocks: params.input.blocks.map((block) => {
-      const redacted = redactIngestionText(block.prompt_head);
-      for (const field of redacted.fields) redactedFields.add(field);
-      for (const [field, count] of Object.entries(redacted.counts) as [
-        IngestionRedactionField,
-        number,
-      ][]) {
-        redactedCounts.set(field, (redactedCounts.get(field) ?? 0) + count);
-      }
-      return { ...block, prompt_head: redacted.text };
-    }),
-  };
-  const recordUsage = async () => {
-    const usage = params.usage;
-    if (usage === undefined || params.db === undefined) return;
-    try {
-      await writeIngestionUsageReceipt(params.db, {
-        sourceDocumentId: usage.sourceDocumentId,
-        sessionId: usage.sessionId,
-        derivationPolicy: usage.derivationPolicy,
-        engine: 'ingestion_block_assembly',
-        redactedFields: [...redactedFields].sort(),
-        redactionCounts: Object.fromEntries(redactedCounts),
-        channels: { page_images: 'none', extracted_text: 'redacted' },
-      });
-    } catch (err) {
-      // The send is already recorded in ai_task_runs; a lost receipt is an
-      // observability gap, not a reason to burn a second paid call on retry.
-      console.error('[block_assembly] usage receipt write failed', err);
-    }
+    blocks: params.input.blocks.map((block) => ({
+      ...block,
+      prompt_head: redactIngestionText(block.prompt_head).text,
+    })),
   };
   let llmText: string;
   try {
     const result = await runTaskFn('BlockAssemblyTask', input, params.ctx ?? {});
     llmText = result.text;
-    await recordUsage();
   } catch (err) {
-    // An attempted send is usage too: receipt first, then the failure surfaces.
-    await recordUsage();
     throw new BlockAssemblyTaskError('BlockAssemblyTask LLM call failed', { cause: err });
   }
 
@@ -186,12 +128,6 @@ export interface RunBlockAssemblyForSessionParams {
   blocks: BlockAssemblySourceBlock[];
   /** Inject in tests; defaults to the production BlockAssemblyTask invoker. */
   runTaskFn?: BlockAssemblyRunTaskFn;
-  /**
-   * The bound source document and its already-resolved derivation policy. When
-   * absent the policy is re-resolved from the session here, so no caller can
-   * bypass the gate by omission.
-   */
-  usage?: { sourceDocumentId: string | null; derivationPolicy: DerivationPolicyT };
   /** Forwarded to runTask ctx (db / subjectProfile). */
   ctx?: unknown;
 }
@@ -257,30 +193,6 @@ export async function runBlockAssemblyForSession(
     return { proposed: 0, proposal_ids: [] };
   }
 
-  // The usage-policy gate owns the send decision: a restricted document never
-  // reaches the model — redaction only shapes what an ALLOWED send looks like.
-  // A caller that passed no usage still gets resolved + anchored here.
-  const sessionUsage =
-    params.usage !== undefined
-      ? params.usage
-      : await (async () => {
-          const [session] = await db
-            .select({ source_document_id: learning_session.source_document_id })
-            .from(learning_session)
-            .where(eq(learning_session.id, params.sessionId))
-            .limit(1);
-          return {
-            sourceDocumentId: session?.source_document_id ?? null,
-            derivationPolicy: await resolveSessionDerivationPolicy(db, params.sessionId),
-          };
-        })();
-  if (sessionUsage.derivationPolicy !== 'allow') {
-    console.info(
-      `[block_assembly] session ${params.sessionId}: derivation policy '${sessionUsage.derivationPolicy}' forbids the send`,
-    );
-    return { proposed: 0, proposal_ids: [] };
-  }
-
   // All-placeholder sessions (Tencent fallback) stay semantic-only.
   const includeSpatial = !isAllPlaceholderPageIndex(params.blocks);
 
@@ -293,15 +205,6 @@ export async function runBlockAssemblyForSession(
     input,
     db,
     runTaskFn: params.runTaskFn,
-    ...(sessionUsage.sourceDocumentId != null
-      ? {
-          usage: {
-            sourceDocumentId: sessionUsage.sourceDocumentId,
-            sessionId: params.sessionId,
-            derivationPolicy: sessionUsage.derivationPolicy,
-          },
-        }
-      : {}),
     ctx: params.ctx,
   });
 

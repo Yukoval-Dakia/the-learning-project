@@ -134,27 +134,6 @@ export function redactIngestionText(text: string): IngestionRedactionResult {
   };
 }
 
-/**
- * The policy a model boundary resolved for this send. `'unresolvable'` is the
- * fail-closed pseudo-value for a row with no session/document anchor at all —
- * it is never a persisted provenance value.
- */
-export type ResolvedDerivationGate = DerivationPolicyT | 'unresolvable';
-
-/**
- * Thrown before anything is sent when the resolved derivation policy restricts
- * model use (or no anchor exists to resolve one). Carries the resolved policy
- * so the caller can mark the reason without paying a send or an attempt.
- */
-export class IngestionUsagePolicyError extends Error {
-  readonly policy: ResolvedDerivationGate;
-  constructor(policy: ResolvedDerivationGate) {
-    super(`derivation policy '${policy}' forbids model use of this document's content`);
-    this.name = 'IngestionUsagePolicyError';
-    this.policy = policy;
-  }
-}
-
 export interface IngestionUsageReceipt {
   sourceDocumentId: string;
   sessionId: string;

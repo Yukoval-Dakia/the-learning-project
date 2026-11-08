@@ -322,8 +322,6 @@ export const QuestionDetailResponseSchema = z
       .nullable()
       .optional(),
     metadata: z.record(z.string(), z.unknown()).nullable(),
-    // Solution-method annotation; stripped on the practice surface.
-    solution_annotation: z.unknown().optional(),
     /** Auto-enroll judge confidence (0..1); null for questions that were not auto-enrolled. */
     ingestion_judge_confidence: z.number().nullable(),
     created_at_sec: z.number(),

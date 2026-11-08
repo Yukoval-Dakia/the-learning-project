@@ -303,21 +303,6 @@ const AutoEnrollObservationSchema = z.object({
   observed_at: z.string().datetime(),
 });
 
-/** Server-owned reading of one block's solution-method annotation. */
-export const IngestionBlockSolutionSchema = z.object({
-  /**
-   * 'skipped' is terminal honest state: the question needs its figure and the
-   * text-only annotator cannot answer for it — no annotation will ever arrive,
-   * and nothing re-enters it for this question row.
-   */
-  state: z.enum(['annotated', 'missing', 'skipped']),
-  /** Why annotation was skipped; only meaningful when state = 'skipped'. */
-  reason: z.enum(['figure_dependent']).nullable(),
-  method_md: z.string().nullable(),
-  steps_md: z.array(z.string()),
-  confidence: z.number().nullable(),
-});
-
 /** Server-owned reading of one block's enrollment; the page never re-derives gates. */
 export const IngestionBlockEnrollmentSchema = z.object({
   state: z.enum(['in_library', 'not_enrolled', 'ignored']),
@@ -326,8 +311,6 @@ export const IngestionBlockEnrollmentSchema = z.object({
   /** Attributed KC ids and their display names (id fallback when a node is gone). */
   knowledge_ids: z.array(z.string()),
   knowledge_labels: z.array(z.object({ id: z.string(), name: z.string() })),
-  /** Method annotation; null while the block has no enrolled question. */
-  solution: IngestionBlockSolutionSchema.nullable(),
   library_visible: z.boolean().nullable(),
 });
 

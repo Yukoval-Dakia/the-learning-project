@@ -18309,23 +18309,9 @@ export interface operations {
                             ingestion_enrollment: {
                                 /** @enum {string|null} */
                                 knowledge: "attributed" | "missing" | null;
-                                knowledge_ids: string[];
-                                knowledge_labels: {
-                                    id: string;
-                                    name: string;
-                                }[];
                                 library_visible: boolean | null;
                                 /** @enum {string|null} */
                                 reason: "needs_text" | "pending" | "publish_failed" | "reverted" | null;
-                                solution: {
-                                    confidence: number | null;
-                                    method_md: string | null;
-                                    /** @enum {string|null} */
-                                    reason: "figure_dependent" | null;
-                                    /** @enum {string} */
-                                    state: "annotated" | "missing" | "skipped";
-                                    steps_md: string[];
-                                } | null;
                                 /** @enum {string} */
                                 state: "in_library" | "not_enrolled" | "ignored";
                             };
@@ -36858,7 +36844,6 @@ export interface operations {
                             } | null;
                             servable: boolean;
                         };
-                        solution_annotation?: unknown;
                         source: string;
                         source_ref: string | null;
                         source_tier: {
