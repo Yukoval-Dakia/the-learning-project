@@ -35,8 +35,11 @@ export function retryInterruptedRequest(
     bound: InterruptedRequestRetryBound;
     /** Decides from the dead attempt's evidence; undefined keeps the failure. */
     interruption: (failed: PiAssistantMessage) => ProviderRequestInterruption | undefined;
-    /** Clear per-request failure state before the resend opens. */
-    beforeResend: () => void;
+    /**
+     * Before the resend opens: clear per-request failure state and charge the
+     * dead request — it was sent, so it may have been billed.
+     */
+    beforeResend: (dead: PiAssistantMessage, context: Parameters<StreamFn>[1]) => void;
     signal: AbortSignal;
   },
 ): StreamFn {
@@ -115,7 +118,7 @@ export function retryInterruptedRequest(
             if (terminal) yield terminal;
             return;
           }
-          deps.beforeResend();
+          deps.beforeResend(message, context);
           const next = await open(model, context, options);
           current = {
             events: next[Symbol.asyncIterator].bind(next),

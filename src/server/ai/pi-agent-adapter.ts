@@ -70,6 +70,7 @@ import {
 } from './pi-runner-frames';
 import { composePiSystemPrompt } from './pi-system-prompt';
 import { PiToolSurface } from './pi-tool-surface';
+import { hasPiUsageEvidence } from './pi-usage-evidence';
 import { sanitizeArgumentsEvidenceText } from './provider-error-evidence';
 import { interruptedRequestRetryBound } from './provider-transient-retry';
 import { TaskConfigError } from './providers';
@@ -335,6 +336,46 @@ class PiPreparedQuery implements PreparedExecutionQuery {
         : parentTools.filter((tool) => spec.tools?.includes(tool.name));
     const disallowed = new Set(spec.disallowedTools ?? []);
     return allowlisted.filter((tool) => !disallowed.has(tool.name));
+  }
+
+  /**
+   * A resent request's dead attempt never reaches the transcript, so its spend
+   * rides the out-of-transcript accumulator. A stalled stream rarely carries a
+   * usage frame; then the sent context and the partial output are estimated
+   * at the model's catalog price rather than recorded as free.
+   */
+  private chargeDeadRequest(dead: PiAssistantMessage, sent: readonly AgentMessage[]): void {
+    const reported = hasPiUsageEvidence(dead);
+    const input = reported ? dead.usage.input : estimatePiTokens(sent);
+    const output = reported ? dead.usage.output : estimatePiTokens([dead]);
+    const costUsd = reported
+      ? dead.usage.cost.total
+      : (input * this.model.cost.input + output * this.model.cost.output) / 1_000_000;
+    this.childUsage.input += input;
+    this.childUsage.output += output;
+    this.childUsage.costUsd += costUsd;
+    const entry = this.childUsage.byModel.get(this.model.id) ?? {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadInputTokens: 0,
+      cacheCreationInputTokens: 0,
+      webSearchRequests: 0,
+      costUSD: 0,
+      contextWindow: this.model.contextWindow,
+      maxOutputTokens: this.model.maxTokens,
+    };
+    entry.inputTokens += input;
+    entry.outputTokens += output;
+    entry.costUSD += costUsd;
+    this.childUsage.byModel.set(this.model.id, entry);
+    console.warn('[pi] interrupted_request_resent', {
+      run_id: this.args.runId,
+      kind: this.args.kind,
+      usage_basis: reported ? 'reported' : 'estimated',
+      input_tokens: input,
+      output_tokens: output,
+      cost_usd: costUsd,
+    });
   }
 
   /**
@@ -808,8 +849,9 @@ class PiPreparedQuery implements PreparedExecutionQuery {
                 aborted: this.abort.signal.aborted,
               });
             },
-            beforeResend: () => {
+            beforeResend: (dead, llmContext) => {
               this.wire.releaseIdleFailure();
+              this.chargeDeadRequest(dead, llmContext.messages);
             },
             signal: this.abort.signal,
           });
