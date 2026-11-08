@@ -1,5 +1,9 @@
 import { z } from 'zod';
-import { ProposalBatchRetractInput, ProposalDecisionInput } from '@/core/schema/proposal';
+import {
+  ProposalBatchAcceptInput,
+  ProposalBatchRetractInput,
+  ProposalDecisionInput,
+} from '@/core/schema/proposal';
 import { API_ERROR_RESPONSES, ApiIdParamsSchema } from '@/kernel/http-contracts';
 import { defineCapability } from '@/kernel/manifest';
 import { uiPagesFor } from '@/kernel/ui-surfaces';
@@ -11,6 +15,8 @@ import {
   OvernightDigestResponseSchema,
   PrepDeskConjecturesResponseSchema,
   PrepDeskProbesResponseSchema,
+  ProposalBatchAcceptListResponseSchema,
+  ProposalBatchAcceptResponseSchema,
   ProposalDecisionResponseSchema,
   ProposalPageResponseSchema,
   SubjectListResponseSchema,
@@ -86,6 +92,30 @@ export const shellCapability = defineCapability({
         successStatus: 200,
         // The retraction lane lives in the server composition root (one canonical
         // retract path); the shell manifest only owns the wire contract.
+      },
+      {
+        method: 'POST',
+        path: '/api/proposals/batch-accept',
+        operationId: 'batchAcceptProposals',
+        request: { body: ProposalBatchAcceptInput },
+        responses: {
+          200: ProposalBatchAcceptResponseSchema,
+          ...API_ERROR_RESPONSES,
+        },
+        successStatus: 200,
+        // Composed route: accepts run the canonical per-item decision protocol
+        // owned by server/proposals; shell only declares the wire contract.
+      },
+      {
+        method: 'GET',
+        path: '/api/proposals/batch-accepts',
+        operationId: 'listProposalBatchAccepts',
+        responses: {
+          200: ProposalBatchAcceptListResponseSchema,
+          ...API_ERROR_RESPONSES,
+        },
+        successStatus: 200,
+        load: () => import('./api/proposal-batch-accepts').then((m) => m.GET),
       },
       {
         method: 'POST',

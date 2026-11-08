@@ -548,7 +548,7 @@ export async function acceptQuestionDraftProposal(
  * call with metadata.archived_at). `draft_status='draft'` +
  * `metadata.dismissed_at` keeps the row invisible everywhere drafts are
  * excluded, while the marker lets draft-aware surfaces (search_bank,
- * listQuestions, listDraftReview, write_quiz, the matcher's lazy-verify) tell
+ * listQuestions, listDraftReview, write_quiz) tell
  * "rejected" apart from "awaiting review".
  *
  * The UPDATE is conditioned on draft_status='draft': a row already promoted

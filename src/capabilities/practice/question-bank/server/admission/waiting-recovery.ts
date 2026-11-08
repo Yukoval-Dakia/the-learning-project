@@ -60,7 +60,7 @@ const EXHAUSTED_EVENT_ACTION = 'experimental:question_admission_waiting_recovery
 const RECOVERY_ACTOR_REF = 'practice:question_admission';
 
 const QuotaWait = AdmissionRecovery.extend({
-  reason: z.enum(['quota', 'not_sent']),
+  reason: z.enum(['quota', 'not_sent', 'provider']),
   retry_at: z.string().datetime(),
 });
 const WaitingStage = z.object({ kind: z.literal('waiting'), recovery: QuotaWait });
@@ -181,7 +181,7 @@ async function readCandidates(
       WHERE s.family = ${ADMISSION_STAGE_FAMILY}
         AND s.state IN ('receipt_ready', 'applied')
         AND s.result_json->>'kind' = 'waiting'
-        AND s.result_json->'recovery'->>'reason' IN ('quota', 'not_sent')
+        AND s.result_json->'recovery'->>'reason' IN ('quota', 'not_sent', 'provider')
       ORDER BY s.entity_id, s.entity_revision, s.result_recorded_at DESC, s.unit DESC, s.input_digest DESC
     )
     SELECT c.entity_id AS group_id, c.entity_revision, c.input_digest, c.input_json,
@@ -196,7 +196,7 @@ async function readCandidates(
       AND c.result_json->'result'->>'status' = 'waiting'
       AND w.state IN ('receipt_ready', 'applied')
       AND w.result_json->>'kind' = 'waiting'
-      AND w.result_json->'recovery'->>'reason' IN ('quota', 'not_sent')
+      AND w.result_json->'recovery'->>'reason' IN ('quota', 'not_sent', 'provider')
       AND r.integrity_digest = c.entity_revision
       AND l.scoring_admission_state = 'withheld'
       AND l.scoring_admission_withheld_reason = 'unverified_rules'
@@ -462,7 +462,7 @@ export async function recoverExpiredAdmissionWaits(
               eq(paid_effect.entity_revision, row.entity_revision),
               inArray(paid_effect.state, ['receipt_ready', 'applied']),
               sql`${paid_effect.result_json}->>'kind' = 'waiting'`,
-              sql`${paid_effect.result_json}->'recovery'->>'reason' IN ('quota', 'not_sent')`,
+              sql`${paid_effect.result_json}->'recovery'->>'reason' IN ('quota', 'not_sent', 'provider')`,
             ),
           )
           .orderBy(

@@ -1,0 +1,1 @@
+DROP TABLE "edge_reconciliation_log" CASCADE;

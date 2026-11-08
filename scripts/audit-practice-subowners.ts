@@ -1,5 +1,5 @@
 /**
- * practice 子 owner 边界审计（docs/design/2026-11-03-practice-split.md §0、§5.1）。
+ * practice 子 owner 边界审计（design 2026-11-03-practice-split §0、§5.1）。
  *
  * - owner 归属：已迁入 `practice/<owner>/` 的文件按目录；仍在根目录的文件按 OWNER_RULES
  *   映射到迁移目标，未命中的归练习面 face（根目录的最终形态）。

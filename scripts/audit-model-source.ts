@@ -4,8 +4,9 @@
  *
  * Model-id literals may live only at their default-declaration sites:
  *   1. `defaultModel:` initializers in task definitions under src/capabilities/<owner>/tasks/** (practice sub-owners: practice/<owner>/tasks/**);
- *   2. the provider catalog / pricing files (those files ARE the catalog);
- *   3. `codeDefault:` initializers of `*_MODEL` / `*.model` keys in the config registry.
+ *   2. the global task default pair in src/core/config/model-overrides.ts;
+ *   3. the provider catalog / pricing files (those files ARE the catalog);
+ *   4. `codeDefault:` initializers of `*_MODEL` / `*.model` keys in the config registry.
  *
  * Everything else reads the resolved task config. A literal site is illegal when it was not
  * already present on the comparison base — the base is the inventory, there is no allowlist.
@@ -293,9 +294,9 @@ function isAllowedSite(path: string, node: ts.StringLiteralLike): boolean {
         : undefined;
     return scope !== undefined && (/_MODEL$/u.test(scope) || /\.model$/u.test(scope));
   }
+  if (path === 'src/core/config/model-overrides.ts') return keyName === 'defaultModel';
   return (
-    (path === 'src/ai/task-spec.ts' ||
-      /^src\/capabilities\/(?:[^/]+|practice\/[^/]+)\/tasks\//u.test(path)) &&
+    /^src\/capabilities\/(?:[^/]+|practice\/[^/]+)\/tasks\//u.test(path) &&
     keyName === 'defaultModel'
   );
 }

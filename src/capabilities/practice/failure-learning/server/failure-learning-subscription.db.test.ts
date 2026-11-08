@@ -1,8 +1,15 @@
+import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { question } from '@/db/schema';
+import { event, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { ATTRIBUTION_FOLLOWUP_QUEUE, failureLearningJobId } from '../jobs/failure-learning-jobs';
+import {
+  FAILURE_LEARNING_DISPATCH_ACTION,
+  FAILURE_LEARNING_DISPATCH_INTENT_ACTION,
+  drainFailureLearningDispatch,
+  writeFailureLearningDispatchIntent,
+} from './failure-learning-dispatch';
 import { handleFailureLearningAttemptDelivery } from './failure-learning-subscription';
 
 const ATTEMPT_ID = 'failure_learning_subscription_attempt';
@@ -52,15 +59,23 @@ async function seedFailureAttempt(payload: Record<string, unknown> = {}): Promis
   });
 }
 
+async function dispatchRows(action: string) {
+  return testDb().select({ id: event.id }).from(event).where(eq(event.action, action));
+}
+
 describe('Failure Learning attempt subscription', () => {
   beforeEach(async () => {
     await resetDb();
   });
 
-  it('transactionally enqueues the stable attribution job and accepts replay', async () => {
+  // @invariant concurrency: the subscription commits only the
+  // intent; the engine sees one stable delivery and the ack records acceptance
+  // @fails-if a replay mints a second send or the ack precedes acceptance —
+  // the attribution stage would double-pay or lose its crash window
+  it('commits the intent, delivers under the stable job id, and acks once', async () => {
     await seedFailureAttempt();
     const expectedJobId = failureLearningJobId(ATTRIBUTION_FOLLOWUP_QUEUE, ATTEMPT_ID);
-    const bossSend = vi.fn().mockResolvedValueOnce(expectedJobId).mockResolvedValueOnce(null);
+    const bossSend = vi.fn().mockResolvedValue(expectedJobId);
 
     await expect(
       handleFailureLearningAttemptDelivery(testDb(), delivery(), { bossSend }),
@@ -75,12 +90,36 @@ describe('Failure Learning attempt subscription', () => {
       detail: { attempt_event_id: ATTEMPT_ID, attribution_job_id: expectedJobId },
     });
 
-    expect(bossSend).toHaveBeenCalledTimes(2);
-    expect(bossSend).toHaveBeenNthCalledWith(
-      1,
+    expect(bossSend).toHaveBeenCalledTimes(1);
+    expect(bossSend).toHaveBeenCalledWith(
       ATTRIBUTION_FOLLOWUP_QUEUE,
       { attempt_event_id: ATTEMPT_ID },
-      { id: expectedJobId, db: expect.any(Object) },
+      { id: expectedJobId },
     );
+    expect(await dispatchRows(FAILURE_LEARNING_DISPATCH_INTENT_ACTION)).toHaveLength(1);
+    expect(await dispatchRows(FAILURE_LEARNING_DISPATCH_ACTION)).toHaveLength(1);
+  });
+
+  // @invariant concurrency: a committed intent whose engine acceptance never
+  // landed is re-driven by the single drain owner under the same stable id
+  // @fails-if the drain loses a bound-but-unacked intent or re-sends after the
+  // ack — the crash window between business commit and send would lose work
+  it('re-drives a committed intent whose acceptance event never landed', async () => {
+    await seedFailureAttempt();
+    const db = testDb();
+    const expectedJobId = await writeFailureLearningDispatchIntent(db, ATTEMPT_ID);
+    const bossSend = vi.fn().mockResolvedValue(expectedJobId);
+
+    const first = await drainFailureLearningDispatch(db, bossSend);
+    expect(first).toEqual({ scanned: 1, dispatched: 1, failed: 0 });
+    expect(bossSend).toHaveBeenCalledWith(
+      ATTRIBUTION_FOLLOWUP_QUEUE,
+      { attempt_event_id: ATTEMPT_ID },
+      { id: expectedJobId },
+    );
+
+    const second = await drainFailureLearningDispatch(db, bossSend);
+    expect(second.dispatched).toBe(0);
+    expect(bossSend).toHaveBeenCalledTimes(1);
   });
 });

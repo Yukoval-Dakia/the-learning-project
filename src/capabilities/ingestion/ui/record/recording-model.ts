@@ -16,6 +16,7 @@ import type {
 import type { LiveFold } from './recording-live';
 
 export type ItemState = HistoryItem['state_at_finish'];
+export type BlockServing = NonNullable<HistoryItem['current']>;
 export type RunState = 'in_progress' | 'waiting' | 'done' | 'failed' | 'lost';
 
 /** Today's serving state of a question that came in. Never replaces the at-finish state. */
@@ -91,6 +92,8 @@ export interface Recording {
   priorRuns: PriorRun[];
   gaps: Gap[];
   blocks: Block[];
+  /** Today's serving state of each block that history has one for. */
+  blockServing: ReadonlyMap<string, BlockServing>;
   /** Whether the recording's blocks are read: none to read, still reading, read, or failed. */
   blocksRead: BlocksRead;
   createdAt: number | null;
@@ -224,6 +227,11 @@ export function deriveRecording(input: {
   // History also lists the recording's own blocks as lines; those show as blocks, with their
   // actions, so they are left out of the helper's lines here.
   const blockIds = new Set(blocks.map((b) => b.id));
+  const blockServing = new Map(
+    (h?.items ?? []).flatMap((i) =>
+      blockIds.has(i.item_id) && i.current ? [[i.item_id, i.current] as const] : [],
+    ),
+  );
   const items = new Map(
     (h?.items ?? [])
       .filter((i) => !blockIds.has(i.item_id))
@@ -260,6 +268,7 @@ export function deriveRecording(input: {
     status,
     phase,
     lane,
+    blockServing,
     path: h?.session.path ?? null,
     read,
     runState,

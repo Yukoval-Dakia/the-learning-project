@@ -87,6 +87,7 @@ const GENERIC_CONTEXT_BUDGET: ContextBudget = {
 };
 
 export const BUDGETS_BY_SURFACE: Record<DomainToolSurface, ContextBudget> = {
+  workspace_acceptance: COPILOT_CONTEXT_BUDGET,
   question_preparer: GENERIC_CONTEXT_BUDGET,
   copilot: COPILOT_CONTEXT_BUDGET,
   copilot_user_suggested_mistake_action: COPILOT_CONTEXT_BUDGET,

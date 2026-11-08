@@ -15,14 +15,21 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { type SQL, and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
+import { EMBED_VERSION } from '@/core/embed-source';
 import { stableStringify } from '@/core/migration/canonical';
 import { deriveSourceTier } from '@/core/schema/provenance';
 import type { Db, Tx } from '@/db/client';
 import { embedCurrencyPredicate } from '@/db/embed-currency';
-import { question, question_group_lifecycle, question_revision } from '@/db/schema';
+import {
+  question,
+  question_group_lifecycle,
+  question_revision,
+  question_solution_prior,
+  question_solution_prior_vector,
+} from '@/db/schema';
 import { toSqlVector } from '@/db/vector';
 import { EvidenceDemandV1 } from '@/kernel/supply-contracts';
-import { embedText } from '@/server/ai/embed';
+import { EMBED_MODEL, embedText } from '@/server/ai/embed';
 import { questionVectorInvalidReason } from '../jobs/embed_backfill';
 import { encodeBankRef, readBankServableParts } from './bank-ref';
 import { collectBankSearchChannel } from './bank-search-channel';
@@ -82,6 +89,7 @@ export const BankSearchScopeSchema = z
   .object({
     subject: z.string().min(1).optional(),
     kind: z.string().min(1).optional(),
+    kinds: z.array(z.string().min(1)).min(1).max(10).optional(),
     source: z.string().min(1).optional(),
     within_refs: z.array(z.string().min(1)).max(200).optional(),
     /** 知识点硬过滤：按真实（live、未归档）科目 KC 解析；未知/已归档 id 显式报错。 */
@@ -130,6 +138,13 @@ export const BankGapRequestSchema = z.object({
   // hand-written complete:true) to trigger paid dispatch. Absent only when the secret
   // is unconfigured, in which case filing fails closed.
   evidence_mac: z.string().optional(),
+  search_id: z.string().optional(),
+  assessment_digest: z.string().optional(),
+  decision_source: z.literal('caller_assessed').optional(),
+  unsupported_constraints: z.array(z.string()).optional(),
+  semantic_conditions: z
+    .array(z.object({ id: z.string(), text: z.string(), required: z.boolean() }))
+    .optional(),
 });
 export type BankGapRequest = z.infer<typeof BankGapRequestSchema>;
 
@@ -214,16 +229,24 @@ export interface BankSearchDeps {
   embedFn?: (text: string) => Promise<number[]>;
   /** Internal v2 consumer freezes the entire bounded pool before verification. */
   fullPool?: boolean;
+  /** V3 fuses same-revision method/pitfall vectors using the single query vector. */
+  priorFacets?: boolean;
+  disableVectors?: boolean;
+  predicates?: SQL[];
   /** Existing vectors include private answers; restricted v2 recall cannot use them. */
   publicOnly?: boolean;
   deadlineAt?: number;
   providerAttemptCaller?: 'api' | 'worker';
   onSnapshotOpened?: (tx: Db | Tx) => Promise<void>;
-  onPoolFrozen?: (tx: Db | Tx, output: BankSearchOutput) => Promise<void>;
+  onPoolFrozen?: (
+    tx: Db | Tx,
+    output: BankSearchOutput,
+    servable: ReadonlyMap<string, string[]>,
+  ) => Promise<void>;
 }
 
 export interface BankSearchMatchEvidence {
-  channel: 'fts' | 'vector';
+  channel: 'fts' | 'vector' | 'method' | 'pitfall';
   /** prompt_md 原文前缀（定位摘录；截断以 … 标记，绝不改写原文）。 */
   excerpt: string;
   /** fts 命中的强度：'strong' 计入 coverage.verdict；'weak'（只共享个别词项）留在
@@ -258,6 +281,7 @@ export interface BankSearchHit {
   source: string;
   automatically_servable_part_ids: string[];
   source_tier: { tier: number; name: string };
+  question_kind: string;
   difficulty: number;
   knowledge_ids: string[];
   match_evidence: BankSearchMatchEvidence[];
@@ -289,6 +313,7 @@ export interface BankSearchOutput {
   scope_applied: {
     subject?: { profile: string; knowledge_id_count: number };
     kind?: { canonical: string; persisted_forms: string[] };
+    kinds?: { canonical: string[]; persisted_forms: string[] };
     source?: string;
     within_refs?: string[];
     knowledge?: { ids: string[]; mode: 'any' | 'all'; resolved_count: number };
@@ -456,14 +481,6 @@ export const CJK_FTS_SPLIT = '([一-鿿])';
  * 的 legacy 八进制转义陷阱（cooked 值会变 undefined）。 */
 const CJK_FTS_REPLACEMENT = '\\1 ';
 
-/** FTS 文档表达式：prompt + reference + choices 的 JSON 文本，统一逐字切分。 */
-function ftsDocumentExpr(publicOnly = false): SQL {
-  const doc = publicOnly
-    ? sql`concat_ws(' ', ${question.prompt_md}, ${question.choices_md}::text)`
-    : sql`concat_ws(' ', ${question.prompt_md}, ${question.reference_md}, ${question.choices_md}::text)`;
-  return sql`regexp_replace(${doc}, ${CJK_FTS_SPLIT}, ${CJK_FTS_REPLACEMENT}, 'g')`;
-}
-
 /** tsquery 词项上限：长查询只取前 N 个词项，防巨型 OR（query 上限 400 字 → 数百 bigram）。 */
 const FTS_QUERY_TERM_CAP = 32;
 
@@ -590,7 +607,12 @@ export async function runSearchBank(
   // search reuses the anchor question's stored content vector instead of
   // embedding the query text, so no provider call is made either way.
   let embedded: { vector: number[] } | { error: unknown } | undefined;
-  if (request.form === 'new' && request.scope.similar_to === undefined && !deps.publicOnly) {
+  if (
+    request.form === 'new' &&
+    request.scope.similar_to === undefined &&
+    !deps.publicOnly &&
+    !deps.disableVectors
+  ) {
     const embedFn =
       deps.embedFn ??
       ((text: string) =>
@@ -610,16 +632,19 @@ export async function runSearchBank(
   return db.transaction(
     async (tx) => {
       await deps.onSnapshotOpened?.(tx);
-      const output = await runSearchBankInSnapshot(tx, request, {
+      const { output, servable } = await runSearchBankInSnapshot(tx, request, {
         fullPool: deps.fullPool,
         publicOnly: deps.publicOnly,
+        predicates: deps.predicates,
+        priorFacets: deps.priorFacets,
+        disableVectors: deps.disableVectors,
         embedFn: async () => {
           if (embedded === undefined) throw new Error('cursor continuation must not embed');
           if ('error' in embedded) throw embedded.error;
           return embedded.vector;
         },
       });
-      await deps.onPoolFrozen?.(tx, output);
+      await deps.onPoolFrozen?.(tx, output, servable);
       return output;
     },
     { isolationLevel: 'repeatable read', accessMode: 'read only' },
@@ -630,7 +655,7 @@ async function runSearchBankInSnapshot(
   db: Db | Tx,
   request: BankSearchRequest,
   deps: BankSearchDeps & Required<Pick<BankSearchDeps, 'embedFn'>>,
-): Promise<BankSearchOutput> {
+): Promise<{ output: BankSearchOutput; servable: ReadonlyMap<string, string[]> }> {
   let offset = 0;
   let cursor: BankSearchCursor | undefined;
   let limit: number;
@@ -651,11 +676,26 @@ async function runSearchBankInSnapshot(
 
   const resolved = await resolveBankSearchScope(db, scope);
   const filters = buildBankSearchFilters(resolved);
-  const where = and(...filters);
+  const where = and(...filters, ...(deps.predicates ?? []));
+
+  const scopeRows = await db
+    .select({ id: question.id })
+    .from(question)
+    .leftJoin(question_group_lifecycle, eq(question_group_lifecycle.group_id, question.id))
+    .where(where)
+    .limit(2001);
+  const cachedParts =
+    scopeRows.length <= 2000
+      ? await readBankServableParts(
+          db,
+          scopeRows.map((row) => row.id),
+        )
+      : null;
+  const readParts = async (ids: string[]) => cachedParts ?? readBankServableParts(db, ids);
 
   // FTS 词法表达式对新检索与 cursor 续页都可用（续页按 cursor.q 重算 strength；
   // 内容若被改过，snapshot_hash 校验会显式让 cursor 过期）。
-  const tsvec = sql`to_tsvector('simple', ${ftsDocumentExpr(deps.publicOnly)})`;
+  const tsvec = sql`${deps.publicOnly ? question.search_public_document : question.search_document}`;
   const fts = ftsChannelExprs(effectiveQuery, tsvec);
 
   let fused: RrfFused[];
@@ -684,14 +724,11 @@ async function runSearchBankInSnapshot(
     // 弱命中排通道尾部：RRF 位置靠后 → 融合序也落在强命中之下（向量救回的除外）。
     const ftsRowsPromise = collectBankSearchChannel(
       db,
+      // The channel consumes ids + positions only; the ordering keys stay in
+      // ORDER BY. Projecting prompt_md/rank/created_at detoasts every matched row.
       (offset, count) =>
         db
-          .select({
-            id: question.id,
-            prompt_md: question.prompt_md,
-            created_at: question.created_at,
-            rank: sql<number>`ts_rank_cd(${tsvec}, ${fts.tsq})`,
-          })
+          .select({ id: question.id })
           .from(question)
           .leftJoin(question_group_lifecycle, eq(question_group_lifecycle.group_id, question.id))
           .where(and(where, sql`${tsvec} @@ ${fts.tsq}`))
@@ -703,7 +740,7 @@ async function runSearchBankInSnapshot(
           )
           .limit(count)
           .offset(offset),
-      { admitted: scope.admission_state === 'admitted', cap: BANK_SEARCH_CHANNEL_CAP },
+      { readParts, admitted: scope.admission_state === 'admitted', cap: BANK_SEARCH_CHANNEL_CAP },
     );
 
     // ── 通道 B：暴力 pgvector cosine（embed 失败 → 通道不可用，不阻塞 FTS）──
@@ -723,6 +760,7 @@ async function runSearchBankInSnapshot(
           reference_md: question.reference_md,
           choices_md: question.choices_md,
           version: question.version,
+          embed_model: question.embed_model,
           embed_version: question.embed_version,
           embed_content_hash: question.embed_content_hash,
           embed_source_revision: question.embed_source_revision,
@@ -731,33 +769,36 @@ async function runSearchBankInSnapshot(
         .where(eq(question.id, resolved.similarToGroupId))
         .limit(1);
       anchorInvalidReason =
-        anchorRow == null
+        anchorRow == null || anchorRow.embedding == null
           ? 'no_vector'
-          : questionVectorInvalidReason({
-              ...anchorRow,
-              dimension: anchorRow.embedding?.length ?? null,
-            });
+          : anchorRow.embed_model !== EMBED_MODEL
+            ? 'embedding_model_mismatch'
+            : questionVectorInvalidReason({
+                ...anchorRow,
+                dimension: anchorRow.embedding?.length ?? null,
+              });
       anchorVector = anchorInvalidReason === null ? (anchorRow?.embedding ?? null) : null;
     }
-    const vectorPromise: Promise<{ vector: number[] | null; error?: string }> = deps.publicOnly
-      ? Promise.resolve({
-          vector: null,
-          error: 'private_answer_vector_projection_unavailable_for_role',
-        })
-      : resolved.similarToGroupId !== undefined
-        ? anchorVector != null
-          ? Promise.resolve({ vector: anchorVector })
-          : Promise.resolve({
-              vector: null,
-              error: `similar_to anchor content vector unusable (${anchorInvalidReason}): never embedded, embedded under an older EMBED_VERSION, stamped from an older row revision, or invalidated by a content edit; awaiting embed_backfill`,
-            })
-        : deps
-            .embedFn(effectiveQuery)
-            .then((vector) => ({ vector }))
-            .catch((err: unknown) => ({
-              vector: null,
-              error: err instanceof Error ? err.message : String(err),
-            }));
+    const vectorPromise: Promise<{ vector: number[] | null; error?: string }> =
+      deps.publicOnly || deps.disableVectors
+        ? Promise.resolve({
+            vector: null,
+            error: 'private_answer_vector_projection_unavailable_for_role',
+          })
+        : resolved.similarToGroupId !== undefined
+          ? anchorVector != null
+            ? Promise.resolve({ vector: anchorVector })
+            : Promise.resolve({
+                vector: null,
+                error: `similar_to anchor content vector unusable (${anchorInvalidReason}): never embedded, embedded under an older EMBED_VERSION, stamped from an older row revision, or invalidated by a content edit; awaiting embed_backfill`,
+              })
+          : deps
+              .embedFn(effectiveQuery)
+              .then((vector) => ({ vector }))
+              .catch((err: unknown) => ({
+                vector: null,
+                error: err instanceof Error ? err.message : String(err),
+              }));
 
     const [ftsAll, vectorResult] = await Promise.all([ftsRowsPromise, vectorPromise]);
 
@@ -804,13 +845,18 @@ async function runSearchBankInSnapshot(
                   where,
                   sql`${question.embedding} IS NOT NULL`,
                   embedCurrencyPredicate(question),
+                  eq(question.embed_model, EMBED_MODEL),
                   sql`${distanceExpr} <= ${BANK_VECTOR_RETRIEVAL_MAX_DISTANCE}`,
                 ),
               )
               .orderBy(sql`${distanceExpr} ASC`, desc(question.id))
               .limit(count)
               .offset(offset),
-          { admitted: scope.admission_state === 'admitted', cap: BANK_SEARCH_CHANNEL_CAP },
+          {
+            readParts,
+            admitted: scope.admission_state === 'admitted',
+            cap: BANK_SEARCH_CHANNEL_CAP,
+          },
         ),
         db
           .select({
@@ -824,7 +870,7 @@ async function runSearchBankInSnapshot(
           })
           .from(question)
           .leftJoin(question_group_lifecycle, eq(question_group_lifecycle.group_id, question.id))
-          .where(and(...bankVectorBaselinePredicates()))
+          .where(and(...bankVectorBaselinePredicates(), eq(question.embed_model, EMBED_MODEL)))
           .orderBy(sql`${distanceExpr} ASC`)
           .limit(bankVectorBaselineLimit(BANK_VECTOR_RETRIEVAL_PARAMS)),
       ]);
@@ -864,16 +910,73 @@ async function runSearchBankInSnapshot(
       unavailable.push('vector');
     }
 
+    if (deps.priorFacets && vectorResult.vector) {
+      const facetDistance = sql<number>`(${question_solution_prior_vector.embedding} <=> ${toSqlVector(vectorResult.vector)}::vector)`;
+      const facetText = sql<string>`CASE WHEN ${question_solution_prior_vector.facet} = 'method' THEN concat(${question_solution_prior.prior}->'methods'->${question_solution_prior_vector.idx}->>'core_idea_md', ${'\n'}::text, ${question_solution_prior.prior}->'methods'->${question_solution_prior_vector.idx}->>'key_step_md') ELSE concat(${question_solution_prior.prior}->'pitfalls'->${question_solution_prior_vector.idx}->>'mechanism_md', ${'\n'}::text, ${question_solution_prior.prior}->'pitfalls'->${question_solution_prior_vector.idx}->>'trigger_md') END`;
+      const ranked = db
+        .select({
+          id: question.id,
+          facet: question_solution_prior_vector.facet,
+          distance: facetDistance.as('distance'),
+          rank: sql<number>`row_number() over(partition by ${question.id},${question_solution_prior_vector.facet} order by ${facetDistance},${question_solution_prior_vector.part_id},${question_solution_prior_vector.idx})`.as(
+            'candidate_rank',
+          ),
+        })
+        .from(question)
+        .innerJoin(question_group_lifecycle, eq(question_group_lifecycle.group_id, question.id))
+        .innerJoin(
+          question_solution_prior_vector,
+          eq(
+            question_solution_prior_vector.revision_id,
+            question_group_lifecycle.current_revision_id,
+          ),
+        )
+        .innerJoin(
+          question_solution_prior,
+          and(
+            eq(question_solution_prior.revision_id, question_solution_prior_vector.revision_id),
+            eq(question_solution_prior.part_id, question_solution_prior_vector.part_id),
+          ),
+        )
+        .where(
+          and(
+            where,
+            eq(question_solution_prior_vector.embed_model, EMBED_MODEL),
+            eq(question_solution_prior_vector.embed_version, EMBED_VERSION),
+            sql`${facetDistance} <= ${BANK_VECTOR_RETRIEVAL_MAX_DISTANCE}`,
+            sql`${question_solution_prior_vector.content_hash}=encode(sha256(convert_to(${facetText},'UTF8')),'hex')`,
+          ),
+        )
+        .as('bank_prior_ranked');
+      const facets = await Promise.all(
+        (['method', 'pitfall'] as const).map(async (facet) => ({
+          facet,
+          rows: await db
+            .select({ id: ranked.id, distance: ranked.distance })
+            .from(ranked)
+            .where(and(eq(ranked.facet, facet), sql`${ranked.rank}=1`))
+            .orderBy(ranked.distance, ranked.id)
+            .limit(BANK_SEARCH_CHANNEL_CAP + 1),
+        })),
+      );
+      for (const { facet, rows: all } of facets) {
+        if (all.length > BANK_SEARCH_CHANNEL_CAP) vectorTruncated = true;
+        const rows = all.slice(0, BANK_SEARCH_CHANNEL_CAP);
+        channels.push({ name: facet, hits: rows.map((r, rank) => ({ id: r.id, rank })) });
+        recallScan.push({
+          channel: facet,
+          scanned: all.length,
+          stop: all.length > BANK_SEARCH_CHANNEL_CAP ? 'eligible_pool_cap' : 'channel_exhausted',
+        });
+      }
+    }
     retrievalTruncated = ftsTruncated || vectorTruncated;
     fused = rrfFuse(channels);
   }
 
   // Revalidate the complete bounded pool before slicing. A changed/withdrawn card
   // expires the cursor explicitly; immutable refs are never silently replaced.
-  const servableParts = await readBankServableParts(
-    db,
-    fused.map((hit) => hit.id),
-  );
+  const servableParts = await readParts(fused.map((hit) => hit.id));
   if (scope.admission_state === 'admitted') {
     fused = fused.filter((hit) => (servableParts.get(hit.id)?.length ?? 0) > 0);
   }
@@ -971,6 +1074,8 @@ async function runSearchBankInSnapshot(
               source_revision: row.embed_source_revision ?? null,
             };
           }
+          if (channel === 'method' || channel === 'pitfall')
+            return { channel, excerpt: preview(row.prompt_md, 160) };
           return {
             channel: 'fts',
             excerpt: preview(row.prompt_md, 160),
@@ -1003,6 +1108,7 @@ async function runSearchBankInSnapshot(
         source: row.source,
         automatically_servable_part_ids: servableParts.get(row.id) ?? [],
         source_tier: { tier, name },
+        question_kind: row.kind,
         difficulty: row.difficulty,
         knowledge_ids: row.knowledge_ids ?? [],
         match_evidence: evidence,
@@ -1050,7 +1156,9 @@ async function runSearchBankInSnapshot(
     );
   }
   if (resolved.kindForms !== undefined) {
-    enforced.push(`kind=${scope.kind} (persisted forms: ${resolved.kindForms.join(', ')})`);
+    enforced.push(
+      `kind=${scope.kind ?? scope.kinds?.join('|')} (persisted forms: ${resolved.kindForms.join(', ')})`,
+    );
   }
   if (scope.source !== undefined) enforced.push(`source=${scope.source}`);
   if (scope.within_refs !== undefined)
@@ -1133,79 +1241,87 @@ async function runSearchBankInSnapshot(
         })();
 
   return {
-    scope_applied: {
-      subject:
-        resolved.subjectKnowledgeIds !== undefined
-          ? {
-              profile: scope.subject as string,
-              knowledge_id_count: resolved.subjectKnowledgeIds.length,
-            }
-          : undefined,
-      kind:
-        resolved.kindForms !== undefined
-          ? { canonical: scope.kind as string, persisted_forms: resolved.kindForms }
-          : undefined,
-      source: scope.source,
-      within_refs: scope.within_refs,
-      knowledge:
-        resolved.knowledgeFilterIds !== undefined
-          ? {
-              ids: resolved.knowledgeFilterIds,
-              mode: resolved.knowledgeFilterMode,
-              resolved_count: resolved.knowledgeFilterIds.length,
-            }
-          : undefined,
-      difficulty:
-        scope.difficulty !== undefined
-          ? {
-              basis: scope.difficulty.basis,
-              range: scope.difficulty.range,
-              scale: scope.difficulty.basis === 'authored' ? 'authored_1_5' : 'calibrated_logit_b',
-            }
-          : undefined,
-      exclude_refs:
-        resolved.excludedQuestionIds !== undefined
-          ? {
-              refs: scope.exclude_refs ?? [],
-              excluded_question_ids: resolved.excludedQuestionIds.length,
-            }
-          : undefined,
-      similar_to:
-        scope.similar_to !== undefined
-          ? {
-              question_ref: scope.similar_to.question_ref,
-              aspect: 'content',
-              vector_available: !unavailable.includes('vector'),
-            }
-          : undefined,
-      draft_state: scope.draft_state,
-      admission_state: scope.admission_state,
-    },
-    requirements: {
-      enforced,
-      not_verified: [
-        'query 语义相关性（排序依据，非逐项保证——候选不等于满足全部语义条件）',
-        '未被本通道召回的题不构成「库中没有」',
-        ...(scope.similar_to !== undefined && unavailable.includes('vector')
-          ? [
-              'similar_to 锚题暂无当前同版内容向量（未嵌入、旧 EMBED_VERSION、落后行 revision 或被内容编辑失效，待 embed_backfill 回填）——向量通道不可用，本页仅 FTS 召回',
-            ]
-          : []),
-      ],
-    },
-    hits: pageHits,
-    coverage: {
-      verdict,
-      unsatisfied_constraints: verdict === 'enough' ? [] : [unsatisfied],
-      gap_request: gapRequest,
-      candidate_pool_size: confirmedPoolSize,
-      recall_scan: recallScan,
-      counted_pool_size: countedPoolSize,
-      retrieval_truncated: retrievalTruncated,
-      page_has_more: hasMore,
-      next_cursor: nextCursor,
-      unavailable_channels: unavailable,
-      complete,
+    servable: servableParts,
+    output: {
+      scope_applied: {
+        subject:
+          resolved.subjectKnowledgeIds !== undefined
+            ? {
+                profile: scope.subject as string,
+                knowledge_id_count: resolved.subjectKnowledgeIds.length,
+              }
+            : undefined,
+        kind:
+          resolved.kindForms !== undefined && scope.kind !== undefined
+            ? { canonical: scope.kind, persisted_forms: resolved.kindForms }
+            : undefined,
+        kinds:
+          scope.kinds && resolved.kindForms
+            ? { canonical: scope.kinds, persisted_forms: resolved.kindForms }
+            : undefined,
+        source: scope.source,
+        within_refs: scope.within_refs,
+        knowledge:
+          resolved.knowledgeFilterIds !== undefined
+            ? {
+                ids: resolved.knowledgeFilterIds,
+                mode: resolved.knowledgeFilterMode,
+                resolved_count: resolved.knowledgeFilterIds.length,
+              }
+            : undefined,
+        difficulty:
+          scope.difficulty !== undefined
+            ? {
+                basis: scope.difficulty.basis,
+                range: scope.difficulty.range,
+                scale:
+                  scope.difficulty.basis === 'authored' ? 'authored_1_5' : 'calibrated_logit_b',
+              }
+            : undefined,
+        exclude_refs:
+          resolved.excludedQuestionIds !== undefined
+            ? {
+                refs: scope.exclude_refs ?? [],
+                excluded_question_ids: resolved.excludedQuestionIds.length,
+              }
+            : undefined,
+        similar_to:
+          scope.similar_to !== undefined
+            ? {
+                question_ref: scope.similar_to.question_ref,
+                aspect: 'content',
+                vector_available: !unavailable.includes('vector'),
+              }
+            : undefined,
+        draft_state: scope.draft_state,
+        admission_state: scope.admission_state,
+      },
+      requirements: {
+        enforced,
+        not_verified: [
+          'query 语义相关性（排序依据，非逐项保证——候选不等于满足全部语义条件）',
+          '未被本通道召回的题不构成「库中没有」',
+          ...(scope.similar_to !== undefined && unavailable.includes('vector')
+            ? [
+                'similar_to 锚题暂无当前同版内容向量（未嵌入、旧 EMBED_VERSION、落后行 revision 或被内容编辑失效，待 embed_backfill 回填）——向量通道不可用，本页仅 FTS 召回',
+              ]
+            : []),
+        ],
+      },
+      hits: pageHits,
+      coverage: {
+        verdict,
+        unsatisfied_constraints: verdict === 'enough' ? [] : [unsatisfied],
+        gap_request: gapRequest,
+        candidate_pool_size: confirmedPoolSize,
+        recall_scan: recallScan,
+        counted_pool_size: countedPoolSize,
+        retrieval_truncated: retrievalTruncated,
+        page_has_more: hasMore,
+        next_cursor: nextCursor,
+        unavailable_channels: unavailable,
+        complete,
+      },
     },
   };
 }

@@ -3,9 +3,9 @@
 // Does not load .env, start workers/listeners for events, recover jobs, or call AI.
 import { serve } from '@hono/node-server';
 import { capabilities } from '@/capabilities';
+import { getServerEnv, requireApiInternalToken, resolveApiPort } from '@/core/config/server/env';
 import { assertProposalKindsOwned } from '@/kernel/manifest';
 import { installSettlementCascadeRevert } from '@/kernel/settlement-cascade-revert';
-import { getServerEnv, requireApiInternalToken, resolveApiPort } from '@/server/config/env';
 import { orchestrateCascadeRevert } from '@/server/revert/cascade-revert';
 import { buildHonoApp } from '../app';
 import { assertComposedRoutesDeclared } from '../composed-routes';
@@ -20,16 +20,23 @@ const { installAgencyHostOperations } = await import('@/capabilities/agency/publ
 await installAgencyHostOperations();
 const { installObservabilityHostOperations } = await import('@/capabilities/observability/public');
 await installObservabilityHostOperations();
+const { installCopilotJobStreamGate } = await import('@/capabilities/copilot/public');
+installCopilotJobStreamGate();
 const { installDrawingHostOperations } = await import('@/capabilities/drawing/public');
 installDrawingHostOperations();
 installSettlementCascadeRevert(orchestrateCascadeRevert);
 const { installProposalUndoGuards } = await import('@/server/proposals/undo-guards');
 installProposalUndoGuards();
-const [{ buildAdminConfigRuntimeFacts }, { setAdminConfigRuntimeFacts }] = await Promise.all([
-  import('@/server/config/admin-config-facts'),
+const [
+  { buildAdminConfigRuntimeFacts },
+  { adminConfigFactsPorts },
+  { setAdminConfigRuntimeFacts },
+] = await Promise.all([
+  import('@/core/config/server/admin-config-facts'),
+  import('@/server/admin/config-facts-host'),
   import('@/capabilities/observability/public'),
 ]);
-setAdminConfigRuntimeFacts(buildAdminConfigRuntimeFacts);
+setAdminConfigRuntimeFacts(() => buildAdminConfigRuntimeFacts(adminConfigFactsPorts()));
 assertComposedRoutesDeclared(capabilities);
 assertProposalKindsOwned(capabilities);
 const fetch = await createFrontdoor(buildHonoApp(capabilities));
