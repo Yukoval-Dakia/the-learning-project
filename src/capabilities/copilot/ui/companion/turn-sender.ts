@@ -12,7 +12,7 @@ import {
 
 import { ApiAuthError, ApiError } from '@/ui/lib/api';
 import { randomId } from '@/ui/lib/random-id';
-import { readCompanionFocus } from '@/ui/lib/use-copilot-dwell';
+import { readCompanionFocus, setCompanionFocus } from '@/ui/lib/use-copilot-dwell';
 import {
   type PersistedPendingCopilotRequestBody,
   type PersistedPendingCopilotTurn,
@@ -176,6 +176,10 @@ export function createTurnSender(ctx: CompanionCtx): TurnSender {
       internals.nudgeSession,
       page ? { kind: page.kind, id: page.id } : undefined,
     );
+    // A goal focus comes from a today-page 「改」/「撤回」 and names the arrangement for that one
+    // turn. Kept on, every later turn on /today would name it too, and an arrangement changed by
+    // mistake can't be taken back; so it goes once it has been sent.
+    if (page?.kind === 'goal') setCompanionFocus(null);
     return {
       session_id: sessionId,
       user_message: text,
