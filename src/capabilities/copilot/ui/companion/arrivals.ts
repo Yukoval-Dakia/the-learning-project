@@ -88,7 +88,11 @@ export function handleOpenRequest(
     void ctx.sender.send(prefill);
     return;
   }
-  // Compose handoffs never auto-send, and a cold open cannot send yet: append to the draft.
+  // Compose handoffs never auto-send, and a cold open cannot send yet: append to the draft, so
+  // nothing the learner typed is lost. A draft that is still exactly the last handed sentence
+  // holds nothing of theirs, so the new one replaces it (改 then 撤回 is one ask, not two).
   const draft = ctx.get().draft;
-  ctx.set({ draft: draft.trim() ? `${draft}\n${prefill}` : prefill });
+  const untouched = draft.trim() === '' || draft === internals.handedDraft;
+  internals.handedDraft = prefill;
+  ctx.set({ draft: untouched ? prefill : `${draft}\n${prefill}` });
 }

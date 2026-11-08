@@ -39,7 +39,7 @@
   fence / legacy worker-touch evidence 做有界修复；只有 QUEUED-only dead delivery 才能标成
   pre-execution loss。不得用 wall-clock 或 heartbeat timestamp 猜测 live queue run 已死。
 - 工具归属以 `manifest.ts` 为准；artifact 创建/更新属于 [Notes manifest](../notes/manifest.ts)，Copilot 仅持调用授权与呈现控制。YUK-1769：伙伴写 Markdown 笔记走 notes 的 `write_note`（create / append / note_generate 交接）。
-- 根任务实时流式发送正文，并以 terminal Markdown 权威替换草稿；服务端在 runner terminal 后绑定实际 root trace、更正、proposal 披露与呈现授权。
+- 根任务实时流式发送正文，并以 terminal Markdown 权威替换草稿；服务端在 runner terminal 后绑定实际 root trace、更正、proposal 披露与呈现授权。纠错契约已经给出确定性澄清时，直接发布该澄清，不再调用主模型，额度或供应商失败不能替换这句回复。
   `present_primary_view` 已退役；旧会话保存的主视图继续只读显示，新回复不再写入。统计展示用 chart 积木（ADR-0061 仅作历史背景，见 `/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/adr/0061-copilot-presentation-intent-control.md`）。
 - chip 是 Copilot 回复里的可点击动作卡片，accept-chip 把用户选择物化为教学事件。
 - 教学回合正文原样发布，不再按题干特调替换；每次发布封存一条 `experimental:help_explanation_receipt`，绑定输入面与正文 digest、task-run、provider/model 与费用（历史 `help_explanation_replay` 载荷仍可读）。教学检查题保留模型自产的 structured_question（kind / reference / choices 不被改写），题面回退用回合正文。这条不改已发布正文的结算。

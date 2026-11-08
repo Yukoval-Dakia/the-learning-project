@@ -1,8 +1,7 @@
 diff --git a/dist/oss/index.d.ts b/dist/oss/index.d.ts
-index 1de43bc9510ed6d6b69da5e9cf6813b4e4273234..4158c0320e49ca2e687dcaf3eedfc70df4e84102 100644
 --- a/dist/oss/index.d.ts
 +++ b/dist/oss/index.d.ts
-@@ -39,6 +39,8 @@ interface HistoryStoreConfig {
+@@ -39,6 +39,8 @@
      };
  }
  interface LLMConfig {
@@ -12,10 +11,9 @@ index 1de43bc9510ed6d6b69da5e9cf6813b4e4273234..4158c0320e49ca2e687dcaf3eedfc70d
      baseURL?: string;
      url?: string;
 diff --git a/dist/oss/index.js b/dist/oss/index.js
-index aea2313c9df0c75d3c9c9f8564de4140964fb4c8..744184a416cb53d55dd448b7c45b4f947dc685f2 100644
 --- a/dist/oss/index.js
 +++ b/dist/oss/index.js
-@@ -100,6 +100,8 @@ var MemoryConfigSchema = import_zod.z.object({
+@@ -101,6 +101,8 @@
        baseURL: import_zod.z.string().optional(),
        url: import_zod.z.string().optional(),
        timeout: import_zod.z.number().optional(),
@@ -24,7 +22,7 @@ index aea2313c9df0c75d3c9c9f8564de4140964fb4c8..744184a416cb53d55dd448b7c45b4f94
        temperature: import_zod.z.number().optional(),
        topP: import_zod.z.number().optional(),
        maxTokens: import_zod.z.number().optional()
-@@ -282,6 +284,8 @@ var OpenAILLM = class {
+@@ -282,6 +284,8 @@
      this.openai = new import_openai3.default({
        apiKey: config.apiKey,
        baseURL: config.baseURL,
@@ -33,7 +31,70 @@ index aea2313c9df0c75d3c9c9f8564de4140964fb4c8..744184a416cb53d55dd448b7c45b4f94
        ...config.timeout != null && { timeout: config.timeout }
      });
      this.model = config.model || "gpt-5-mini";
-@@ -4829,14 +4831,11 @@ var PGVector = class {
+@@ -4761,22 +4765,51 @@
+         this.client = new Client(buildClientConfig(this.config, this.dbName));
+         await this.client.connect();
+       }
+-      await this.client.query("CREATE EXTENSION IF NOT EXISTS vector");
+-      await this.client.query(`
+-        CREATE TABLE IF NOT EXISTS memory_migrations (
+-          id SERIAL PRIMARY KEY,
+-          user_id TEXT NOT NULL UNIQUE
+-        )
+-      `);
+-      const collections = await this.listCols();
+-      if (!collections.includes(this.collectionName)) {
+-        await this.createCol(this.config.embeddingModelDims);
+-      }
++      await this._createSchemaSerialized();
+     } catch (error) {
+       console.error("Error during initialization:", error);
+       throw error;
+     }
+   }
++  // CREATE TABLE IF NOT EXISTS still inserts a composite type. Two sessions that
++  // both miss the table race on pg_type_typname_nsp_index (23505).
++  async _createSchemaSerialized() {
++    const lockKey = "mem0:pgvector-init";
++    await this.client.query("SELECT pg_advisory_lock(hashtext($1))", [lockKey]);
++    let schemaError;
++    try {
++      try {
++        await this._createSchema();
++      } catch (error) {
++        if (!(error && error.code === "23505" && error.constraint === "pg_type_typname_nsp_index")) {
++          throw error;
++        }
++        await this._createSchema();
++      }
++    } catch (error) {
++      schemaError = error;
++    } finally {
++      try {
++        await this.client.query("SELECT pg_advisory_unlock(hashtext($1))", [lockKey]);
++      } catch (unlockError) {
++        console.error("mem0 pgvector init unlock failed", unlockError);
++      }
++    }
++    if (schemaError) throw schemaError;
++  }
++  async _createSchema() {
++    await this.client.query("CREATE EXTENSION IF NOT EXISTS vector");
++    await this.client.query(`
++      CREATE TABLE IF NOT EXISTS memory_migrations (
++        id SERIAL PRIMARY KEY,
++        user_id TEXT NOT NULL UNIQUE
++      )
++    `);
++    const collections = await this.listCols();
++    if (!collections.includes(this.collectionName)) {
++      await this.createCol(this.config.embeddingModelDims);
++    }
++  }
+   async checkDatabaseExists(dbName) {
+     const result = await this.client.query(
+       "SELECT 1 FROM pg_database WHERE datname = $1",
+@@ -4829,14 +4862,11 @@
        vector: `[${vector.join(",")}]`,
        payload: payloads[i]
      }));
@@ -53,7 +114,7 @@ index aea2313c9df0c75d3c9c9f8564de4140964fb4c8..744184a416cb53d55dd448b7c45b4f94
      );
    }
    async keywordSearch(query, topK = 5, filters) {
-@@ -5216,6 +5215,9 @@ var ConfigManager = class {
+@@ -5216,6 +5246,9 @@
              apiKey: (userConf == null ? void 0 : userConf.apiKey) !== void 0 ? userConf.apiKey : defaultConf.apiKey,
              model: finalModel,
              modelProperties: (userConf == null ? void 0 : userConf.modelProperties) !== void 0 ? userConf.modelProperties : defaultConf.modelProperties,
@@ -63,7 +124,7 @@ index aea2313c9df0c75d3c9c9f8564de4140964fb4c8..744184a416cb53d55dd448b7c45b4f94
              temperature,
              topP,
              maxTokens
-@@ -7969,27 +7971,13 @@ var Memory = class _Memory {
+@@ -7969,27 +8002,13 @@
          { type: "json_object" }
        );
      } catch (e) {
@@ -96,7 +157,7 @@ index aea2313c9df0c75d3c9c9f8564de4140964fb4c8..744184a416cb53d55dd448b7c45b4f94
      if (extractedMemories.length === 0) {
        if (typeof this.db.saveMessages === "function") {
          try {
-@@ -8009,7 +7997,7 @@ var Memory = class _Memory {
+@@ -8009,7 +8028,7 @@
        var _a3;
        return (_a3 = m.text) != null ? _a3 : "";
      }).filter((t) => t.length > 0);
@@ -105,7 +166,7 @@ index aea2313c9df0c75d3c9c9f8564de4140964fb4c8..744184a416cb53d55dd448b7c45b4f94
      try {
        const memEmbeddingsList = await this.embedder.embedBatch(memTexts);
        for (let i = 0; i < memTexts.length; i++) {
-@@ -8017,11 +8005,7 @@ var Memory = class _Memory {
+@@ -8017,11 +8036,7 @@
        }
      } catch (e) {
        for (const text of memTexts) {
@@ -118,7 +179,7 @@ index aea2313c9df0c75d3c9c9f8564de4140964fb4c8..744184a416cb53d55dd448b7c45b4f94
        }
      }
      const existingHashes = /* @__PURE__ */ new Set();
-@@ -8081,21 +8065,7 @@ var Memory = class _Memory {
+@@ -8081,21 +8096,7 @@
      const allVectors = records.map((r) => r.embedding);
      const allIds = records.map((r) => r.memoryId);
      const allPayloads = records.map((r) => r.payload);
@@ -142,10 +203,9 @@ index aea2313c9df0c75d3c9c9f8564de4140964fb4c8..744184a416cb53d55dd448b7c45b4f94
        memoryId: r.memoryId,
        previousValue: null,
 diff --git a/dist/oss/index.mjs b/dist/oss/index.mjs
-index b4a81de4c7669cc29d741680e4373f513d3d9293..8967e906123cda8f2ae479511ecf46a364228fc7 100644
 --- a/dist/oss/index.mjs
 +++ b/dist/oss/index.mjs
-@@ -42,6 +42,8 @@ var MemoryConfigSchema = z.object({
+@@ -42,6 +42,8 @@
        baseURL: z.string().optional(),
        url: z.string().optional(),
        timeout: z.number().optional(),
@@ -154,7 +214,7 @@ index b4a81de4c7669cc29d741680e4373f513d3d9293..8967e906123cda8f2ae479511ecf46a3
        temperature: z.number().optional(),
        topP: z.number().optional(),
        maxTokens: z.number().optional()
-@@ -223,6 +225,8 @@ var OpenAILLM = class {
+@@ -223,6 +225,8 @@
      this.openai = new OpenAI3({
        apiKey: config.apiKey,
        baseURL: config.baseURL,
@@ -163,7 +223,70 @@ index b4a81de4c7669cc29d741680e4373f513d3d9293..8967e906123cda8f2ae479511ecf46a3
        ...config.timeout != null && { timeout: config.timeout }
      });
      this.model = config.model || "gpt-5-mini";
-@@ -4778,14 +4782,11 @@ var PGVector = class {
+@@ -4710,22 +4714,51 @@
+         this.client = new Client(buildClientConfig(this.config, this.dbName));
+         await this.client.connect();
+       }
+-      await this.client.query("CREATE EXTENSION IF NOT EXISTS vector");
+-      await this.client.query(`
+-        CREATE TABLE IF NOT EXISTS memory_migrations (
+-          id SERIAL PRIMARY KEY,
+-          user_id TEXT NOT NULL UNIQUE
+-        )
+-      `);
+-      const collections = await this.listCols();
+-      if (!collections.includes(this.collectionName)) {
+-        await this.createCol(this.config.embeddingModelDims);
+-      }
++      await this._createSchemaSerialized();
+     } catch (error) {
+       console.error("Error during initialization:", error);
+       throw error;
+     }
+   }
++  // CREATE TABLE IF NOT EXISTS still inserts a composite type. Two sessions that
++  // both miss the table race on pg_type_typname_nsp_index (23505).
++  async _createSchemaSerialized() {
++    const lockKey = "mem0:pgvector-init";
++    await this.client.query("SELECT pg_advisory_lock(hashtext($1))", [lockKey]);
++    let schemaError;
++    try {
++      try {
++        await this._createSchema();
++      } catch (error) {
++        if (!(error && error.code === "23505" && error.constraint === "pg_type_typname_nsp_index")) {
++          throw error;
++        }
++        await this._createSchema();
++      }
++    } catch (error) {
++      schemaError = error;
++    } finally {
++      try {
++        await this.client.query("SELECT pg_advisory_unlock(hashtext($1))", [lockKey]);
++      } catch (unlockError) {
++        console.error("mem0 pgvector init unlock failed", unlockError);
++      }
++    }
++    if (schemaError) throw schemaError;
++  }
++  async _createSchema() {
++    await this.client.query("CREATE EXTENSION IF NOT EXISTS vector");
++    await this.client.query(`
++      CREATE TABLE IF NOT EXISTS memory_migrations (
++        id SERIAL PRIMARY KEY,
++        user_id TEXT NOT NULL UNIQUE
++      )
++    `);
++    const collections = await this.listCols();
++    if (!collections.includes(this.collectionName)) {
++      await this.createCol(this.config.embeddingModelDims);
++    }
++  }
+   async checkDatabaseExists(dbName) {
+     const result = await this.client.query(
+       "SELECT 1 FROM pg_database WHERE datname = $1",
+@@ -4778,14 +4811,11 @@
        vector: `[${vector.join(",")}]`,
        payload: payloads[i]
      }));
@@ -183,7 +306,7 @@ index b4a81de4c7669cc29d741680e4373f513d3d9293..8967e906123cda8f2ae479511ecf46a3
      );
    }
    async keywordSearch(query, topK = 5, filters) {
-@@ -5165,6 +5166,9 @@ var ConfigManager = class {
+@@ -5165,6 +5195,9 @@
              apiKey: (userConf == null ? void 0 : userConf.apiKey) !== void 0 ? userConf.apiKey : defaultConf.apiKey,
              model: finalModel,
              modelProperties: (userConf == null ? void 0 : userConf.modelProperties) !== void 0 ? userConf.modelProperties : defaultConf.modelProperties,
@@ -193,7 +316,7 @@ index b4a81de4c7669cc29d741680e4373f513d3d9293..8967e906123cda8f2ae479511ecf46a3
              temperature,
              topP,
              maxTokens
-@@ -7918,27 +7922,13 @@ var Memory = class _Memory {
+@@ -7918,27 +7951,13 @@
          { type: "json_object" }
        );
      } catch (e) {
@@ -226,7 +349,7 @@ index b4a81de4c7669cc29d741680e4373f513d3d9293..8967e906123cda8f2ae479511ecf46a3
      if (extractedMemories.length === 0) {
        if (typeof this.db.saveMessages === "function") {
          try {
-@@ -7958,7 +7948,7 @@ var Memory = class _Memory {
+@@ -7958,7 +7977,7 @@
        var _a3;
        return (_a3 = m.text) != null ? _a3 : "";
      }).filter((t) => t.length > 0);
@@ -235,7 +358,7 @@ index b4a81de4c7669cc29d741680e4373f513d3d9293..8967e906123cda8f2ae479511ecf46a3
      try {
        const memEmbeddingsList = await this.embedder.embedBatch(memTexts);
        for (let i = 0; i < memTexts.length; i++) {
-@@ -7966,11 +7956,7 @@ var Memory = class _Memory {
+@@ -7966,11 +7985,7 @@
        }
      } catch (e) {
        for (const text of memTexts) {
@@ -248,7 +371,7 @@ index b4a81de4c7669cc29d741680e4373f513d3d9293..8967e906123cda8f2ae479511ecf46a3
        }
      }
      const existingHashes = /* @__PURE__ */ new Set();
-@@ -8030,21 +8016,7 @@ var Memory = class _Memory {
+@@ -8030,21 +8045,7 @@
      const allVectors = records.map((r) => r.embedding);
      const allIds = records.map((r) => r.memoryId);
      const allPayloads = records.map((r) => r.payload);

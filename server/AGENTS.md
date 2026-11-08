@@ -10,6 +10,7 @@
 | `composed-routes.ts` | 跨 capability 组装的路由 handler（manifest 声明了路由但不带 `load`）：按 operationId 匹配，缺 handler 时 `buildHonoApp` 抛错，孤儿 handler 由启动入口的 `assertComposedRoutesDeclared` 拦下 |
 | `dev-frontdoor.ts` | dev-only：Vite middleware 模式前门，生产 bundle 不引入；复用 `frontdoor.ts` 的 `buildFrontdoor` |
 | `frontdoor.ts` / `start/` | 固定 Start fetch 前门；通过 request context 调原 Hono app，Start 独立 TS program |
+| `built-asset-cache.ts` | 带内容哈希的 `/_build/assets/*` 返回一年 immutable 缓存；js/css 按 Accept-Encoding 选 `build:start` 生成的 `.br`/`.gz`。页面 HTML、无哈希资源和 `/api/*` 不走这组缓存 |
 | `env.ts` | `.env` / `.env.local` 加载（API / Vite / worker 三进程统一） |
 
 ## CONVENTIONS

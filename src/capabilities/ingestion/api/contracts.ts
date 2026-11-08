@@ -166,7 +166,14 @@ const IngestionOperationBaseSchema = z
     session_id: z.string(),
     status: z.enum(['queued', 'running', 'succeeded', 'failed']),
     result: z.unknown().optional(),
-    error: z.object({ code: z.string(), message: z.string(), status: z.number().int() }).optional(),
+    error: z
+      .object({
+        code: z.string(),
+        message: z.string(),
+        status: z.number().int(),
+        details: z.record(z.string(), z.unknown()).optional(),
+      })
+      .optional(),
     created_at: z.string().datetime(),
     updated_at: z.string().datetime(),
     events_url: z.string(),

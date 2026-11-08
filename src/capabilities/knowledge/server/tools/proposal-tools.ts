@@ -33,6 +33,11 @@ const EvidenceEventIdsSchema = z.array(z.string().min(1)).max(20);
 const LEARNER_SUMMARY_DESCRIPTION =
   'One plain Chinese sentence (max 80 chars) for the learner: WHAT this proposal does and WHY — never knowledge/edge/node ids, tool names, or English field names; technical evidence belongs in reasoning/evidence_event_ids. A failure beginning learner_summary_rejected means only this sentence must be rewritten before retrying.';
 
+const ExistingProposalSchema = z.object({
+  title: z.string(),
+  status: z.enum(['pending', 'accepted', 'dismissed', 'stale', 'rubric_rejected']),
+});
+
 function evidenceRefsFromEventIds(ids: string[]): ProposalEvidenceRefT[] {
   return [...new Set(ids)].map((id) => ({ kind: 'event', id }));
 }
@@ -128,6 +133,10 @@ const ProposeKnowledgeEdgeOutputSchema = z.object({
   reason: z.string().optional(),
   // P5.4 — stable gate string from the rubric verdict (YUK-174 Layer-2 signal).
   gate: z.string().optional(),
+  // skipped:rubric_rejected — the standard the edge failed.
+  criterion: z.string().optional(),
+  // skipped:duplicate_pending / skipped:cooldown — the colliding proposal.
+  existing_proposal: ExistingProposalSchema.optional(),
 });
 
 type ProposeKnowledgeEdgeInput = z.infer<typeof ProposeKnowledgeEdgeInputSchema>;
@@ -375,6 +384,7 @@ const KnowledgeMutationOutputSchema = z.object({
   // skipped:duplicate_pending / skipped:already_exists — the deterministic next
   // step the result already enables, so the model can continue without re-reading.
   next_step: z.string().optional(),
+  existing_proposal: ExistingProposalSchema.optional(),
 });
 
 type KnowledgeMutationInput = z.infer<typeof KnowledgeMutationInputSchema>;
@@ -505,6 +515,7 @@ async function proposeKnowledgeMutationExecute(
         proposal_id: skip.proposal_id,
         cooldown_key: skip.cooldown_key,
         cooldown_until: skip.cooldown_until,
+        ...(skip.existing_proposal ? { existing_proposal: skip.existing_proposal } : {}),
         ...(skip.status === 'skipped:duplicate_pending'
           ? {
               next_step:

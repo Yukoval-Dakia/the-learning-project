@@ -386,6 +386,7 @@ export const QUESTION_PREPARER_TOOLS = [
   'read_bank',
   'check_bank',
   'query_knowledge',
+  'get_knowledge_state',
   'get_subject_graph_overview',
   'expand_knowledge_subgraph',
   'find_knowledge_paths',

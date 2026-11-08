@@ -270,6 +270,8 @@ export function findBlankOrderDeclarations(structureRaw: unknown): BlankOrderDec
     if (part == null || typeof part !== 'object') continue;
     const record = part as Record<string, unknown>;
     if (record.blank_order == null) continue;
+    // An empty array is undeclared (the schema normalizes it away on parse).
+    if (Array.isArray(record.blank_order) && record.blank_order.length === 0) continue;
     const partId = typeof record.part_id === 'string' ? record.part_id : '(unknown part_id)';
     out.push({ part_id: partId, blank_order: record.blank_order });
   }
