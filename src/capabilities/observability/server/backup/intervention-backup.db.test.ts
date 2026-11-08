@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { hydrateConfigFromDb } from '@/core/config/server/hydrate';
 import { event, intervention } from '@/db/schema';
-import { hydrateConfigFromDb } from '@/server/config/hydrate';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { memR2 } from '../../../../../tests/helpers/r2';
 import {
@@ -27,6 +27,10 @@ describe('intervention backup operational reset', () => {
   beforeEach(resetDb);
   afterAll(resetDb);
 
+  // @invariant data: same-database restore clears archived preparation job ids
+  // inside the restore transaction so recovery re-enqueues fresh work
+  // @fails-if the fence id survives restore — a stale engine row would block
+  // redelivery — or the clear happens outside the restore transaction
   it('clears archived job ids so same-database restore re-enqueues fresh work', async () => {
     const db = testDb();
     const archivedJobId = '79100000-0000-4000-8000-000000000001';
@@ -70,12 +74,14 @@ describe('intervention backup operational reset', () => {
       db,
       r2: memR2(),
       bytes,
-      retireInterventionPreparationJobs: async (tx, jobIds) => {
-        const [stillCurrent] = await tx
+      // Post-commit cleanup: by the time the retirer runs, the restore has
+      // already landed the job-id fence (aggregate job id cleared) atomically.
+      retireInterventionPreparationJobs: async (jobIds) => {
+        const [stillCurrent] = await db
           .select({ preparation_job_id: intervention.preparation_job_id })
           .from(intervention)
           .where(eq(intervention.id, 'restore_intervention'));
-        expect(stillCurrent?.preparation_job_id).toBe(archivedJobId);
+        expect(stillCurrent?.preparation_job_id).toBeNull();
         retired.push(jobIds);
       },
     });

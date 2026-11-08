@@ -6,7 +6,6 @@ import type {
   ProposalAcceptResult,
   ProposalDismissApplier,
 } from '@/kernel/proposals';
-import { toProposalLifecycleResult } from '@/kernel/proposals';
 import { findExistingRateEvent } from '@/kernel/proposals/applier-helpers';
 import { runProposalDismiss } from '@/kernel/proposals/decision-protocol';
 import { createLearningIntentNote } from '@/kernel/records/learning-intent-note-birth';
@@ -70,7 +69,7 @@ function wrap(result: {
   readonly kind: string;
   readonly idempotent?: boolean;
 }): ProposalAcceptResult {
-  return { kind: result.kind, result: toProposalLifecycleResult(result) };
+  return { kind: result.kind, result: { ...result } };
 }
 
 export const learningItemProposalAcceptApplier: ProposalAcceptApplier = async (

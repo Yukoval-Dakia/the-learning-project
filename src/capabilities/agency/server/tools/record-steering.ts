@@ -139,16 +139,11 @@ function normalizedSignature(
   ]);
 }
 
-/**
- * The verbatim gate's ONLY anchor: the user-ask event that started this run
- * (`ctx.causedByEventId` — both the durable and API copilot paths set it to the
- * `copilot_user_ask`/`copilot_chip_trigger` event id). Anchoring to exactly this
- * turn's message keeps a queued later message from failing a real quote, and an
- * old revoked quote from authorising a new write. Fail closed when the anchor
- * is missing — never widen back to a session-message window.
+/** Quotes bind to the server's original ask even on retry. Never search a
+ * session-message window: older revoked or later queued messages are not authority.
  */
 async function quoteAppearsInCurrentTurnMessage(ctx: ToolContext, quote: string): Promise<boolean> {
-  const anchorId = ctx.causedByEventId;
+  const anchorId = ctx.learnerAskEventId ?? ctx.causedByEventId;
   if (!anchorId) {
     throw new ApiError(
       'validation_error',

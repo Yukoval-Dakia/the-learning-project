@@ -1,0 +1,4 @@
+ALTER TABLE "question" ADD COLUMN "search_document" "tsvector" GENERATED ALWAYS AS (to_tsvector('simple'::regconfig, regexp_replace(coalesce(prompt_md,'') || ' ' || coalesce(reference_md,'') || ' ' || coalesce(choices_md::text,''), '([一-鿿])', '\1 ', 'g'))) STORED;--> statement-breakpoint
+ALTER TABLE "question" ADD COLUMN "search_public_document" "tsvector" GENERATED ALWAYS AS (to_tsvector('simple'::regconfig, regexp_replace(coalesce(prompt_md,'') || ' ' || coalesce(choices_md::text,''), '([一-鿿])', '\1 ', 'g'))) STORED;--> statement-breakpoint
+CREATE INDEX "question_search_document_gin" ON "question" USING gin ("search_document");--> statement-breakpoint
+CREATE INDEX "question_search_public_document_gin" ON "question" USING gin ("search_public_document");

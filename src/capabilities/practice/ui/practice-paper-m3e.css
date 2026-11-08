@@ -157,7 +157,6 @@
   }
 
   & .pf-pp-stem {
-    color: var(--un-md-sys-color-on-surface);
     font-size: 18px;
     line-height: 1.8;
   }

@@ -38,9 +38,12 @@ export interface LifecycleResult extends Omit<RunTaskResult, 'phases'> {}
 /** Millisecond phase timings for one long-note generation. Absent on other tasks. */
 export interface NoteGeneratePhaseTimings {
   prompt_build_ms?: number;
-  /** Null when the provider sent no token before the call ended. */
+  /** Milliseconds until the first text token. Null when the call produced none. */
   model_ttft_ms?: number | null;
+  /** Milliseconds until the first thinking token. Null when the model sent none. */
+  model_thinking_ttft_ms?: number | null;
   model_total_ms?: number;
+  /** Milliseconds from the first text token until the call ended. Zero when no text arrived. */
   stream_ms?: number;
   parse_ms?: number;
   validation_ms?: number;
@@ -90,6 +93,25 @@ export type AttemptCostTruth =
   | { basis: 'unknown'; amountUsd: null; ref: string };
 
 export type AttemptCostBasis = AttemptCostTruth['basis'];
+
+/** Persisted cost_ref prefix proving a provider refusal billed nothing. */
+export const UNBILLED_PROVIDER_REJECTION_REF_PREFIX = 'unbilled-provider-rejection:';
+
+/**
+ * The chargeable USD of a failed attempt: 0 only when the persisted receipt
+ * proves the provider rejected pre-billing. A bare `cost_usd === 0` is NOT
+ * proof — free-at-margin lanes (subscriptions, zero-price catalog cards)
+ * record 0 for work that actually ran and may have side effects. Kept beside
+ * the truth type so the unbilled rule stays leaf-level and import-safe from
+ * db/schema-reachable modules.
+ */
+export function failureSpendChargeUsd(truth: AttemptCostTruth | undefined): 0 | null {
+  return truth?.basis === 'estimated' &&
+    truth.amountUsd === 0 &&
+    truth.ref.startsWith(UNBILLED_PROVIDER_REJECTION_REF_PREFIX)
+    ? 0
+    : null;
+}
 
 export type TransportLane = 'undici_agent' | 'observer_fetch';
 export type RequestSendState =

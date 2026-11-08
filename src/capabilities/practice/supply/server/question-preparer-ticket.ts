@@ -29,6 +29,13 @@ export interface QuestionPreparerTicketScope {
   sessionId?: string | null;
   /** `fbgap|<request_id>` filing event: the ticket's causal parent. */
   filingEventId?: string | null;
+  /**
+   * Actor recorded on the dispatcher-compatible `experimental:question_supply` ledger event.
+   * Defaults to the bank-gap writer; manual filings pass their own so the ledger does not
+   * attribute an operator ticket to the learner tool. The cooldown query does not filter on
+   * this actor (action + payload.status + fingerprint only), so attribution stays free.
+   */
+  ledgerActorRef?: string;
 }
 
 /**
@@ -101,7 +108,7 @@ export async function enqueueQuestionPreparerTicket(
     await writeEvent(tx, {
       id: ledgerEventId,
       actor_kind: 'agent',
-      actor_ref: 'file_bank_gap',
+      actor_ref: scope.ledgerActorRef ?? 'file_bank_gap',
       action: 'experimental:question_supply',
       subject_kind: 'query',
       subject_id: target.id,

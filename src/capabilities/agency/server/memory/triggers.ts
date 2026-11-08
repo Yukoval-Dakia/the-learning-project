@@ -1,7 +1,7 @@
+import { createHash } from 'node:crypto';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { Job, PgBoss } from 'pg-boss';
 import type { Db } from '@/db/client';
-import { fromPgBossDrizzleTx } from '@/db/pg-boss-drizzle';
 import { event } from '@/db/schema';
 import {
   eventAllowsDerivationSql,
@@ -109,7 +109,19 @@ async function defaultLoadEvent(db: Db, eventId: string): Promise<MemoryEventInp
   const rows = await db
     .select()
     .from(event)
-    .where(and(eq(event.id, eventId), eventAllowsDerivationSql()))
+    .where(
+      and(
+        eq(event.id, eventId),
+        eventAllowsDerivationSql(),
+        // A deleting/deleted conversation stops feeding extraction at the load
+        // choke point: outbox rows already queued simply resolve to null.
+        sql`NOT EXISTS (
+          SELECT 1 FROM learning_session ls
+          WHERE ls.id = ${event.session_id}
+            AND (ls.deletion_requested_at IS NOT NULL OR ls.deleted_at IS NOT NULL)
+        )`,
+      ),
+    )
     .limit(1);
   const row = rows[0];
   if (!row) return null;
@@ -158,14 +170,27 @@ function editedConjectureMemory(event: MemoryEventInput): EditedConjectureMemory
 // verbatim projection metadata must not drift.
 const CONJECTURE_EDIT_MEMORY_KIND = 'weakness';
 
-// Outbox poll is the sole producer. `ingest_at IS NULL` is the once-only partition:
-// the stamp commits with the enqueue, so no singleton key is needed.
-export async function enqueueEventMemoryIngest(
-  boss: Pick<BossLike, 'send'>,
-  eventId: string,
-  options?: object,
-) {
-  await boss.send(MEMORY_EVENT_INGEST_QUEUE, { event_id: eventId }, options);
+// One stable RFC 9562 uuidv8 delivery identity per event: concurrent drains and
+// crash replays present the engine with the identical job, so the once-only
+// partition lives at the engine, not in the local stamp.
+export function memoryIngestJobId(eventId: string): string {
+  const digest = createHash('sha256').update(`memory-event-ingest@v1\0${eventId}`).digest('hex');
+  const bytes = digest.slice(0, 32).split('');
+  bytes[12] = '8';
+  bytes[16] = ((Number.parseInt(bytes[16], 16) & 0x3) | 0x8).toString(16);
+  const hex = bytes.join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+// Outbox poll is the sole producer. A resolved send is the engine's acceptance
+// signal (a null return names the pre-existing identical delivery); the
+// ingest_at stamp is the acknowledgement written after that acceptance.
+export async function enqueueEventMemoryIngest(boss: Pick<BossLike, 'send'>, eventId: string) {
+  await boss.send(
+    MEMORY_EVENT_INGEST_QUEUE,
+    { event_id: eventId },
+    { id: memoryIngestJobId(eventId) },
+  );
 }
 
 // Completion digests retain the extracted text and created_ms alongside the id.
@@ -412,36 +437,39 @@ export function buildContextPurposeRepairHandler(
   };
 }
 
-// Transactional outbox poll: one batch of pending rows is locked SKIP LOCKED,
-// enqueued, and stamped ingest_at in the same transaction. Concurrent pollers cannot
-// double-enqueue, and a crash before commit reverts the stamp.
+// Outbox poll: the durable intent is the unstamped event row itself. The claim
+// transaction only partitions pending rows; the engine send runs after it
+// commits under the stable delivery id, and ingest_at is stamped only for rows
+// the engine accepted. A crash between send and stamp leaves the row pending —
+// the next drain replays the identical delivery and dedupes at the engine.
 export function buildMemoryIngestOutboxPollHandler(
   db: Db,
   boss: Pick<BossLike, 'send'>,
 ): (jobs: Job<object>[]) => Promise<void> {
   return async () => {
-    await db.transaction(async (tx) => {
-      const pending = await tx
+    const pending = await db.transaction(async (tx) =>
+      tx
         .select({ id: event.id })
         .from(event)
         .where(isNull(event.ingest_at))
         .orderBy(event.created_at)
         .limit(OUTBOX_POLL_BATCH)
-        .for('update', { skipLocked: true });
-      if (pending.length === 0) return;
-      for (const row of pending) {
-        await enqueueEventMemoryIngest(boss, row.id, { db: fromPgBossDrizzleTx(tx) });
+        .for('update', { skipLocked: true }),
+    );
+    const accepted: string[] = [];
+    for (const row of pending) {
+      try {
+        await enqueueEventMemoryIngest(boss, row.id);
+        accepted.push(row.id);
+      } catch (error) {
+        console.error('[memory_ingest_outbox_poll] engine send failed; row stays pending', {
+          event_id: row.id,
+          error: error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500),
+        });
       }
-      await tx
-        .update(event)
-        .set({ ingest_at: new Date() })
-        .where(
-          inArray(
-            event.id,
-            pending.map((r) => r.id),
-          ),
-        );
-    });
+    }
+    if (accepted.length === 0) return;
+    await db.update(event).set({ ingest_at: new Date() }).where(inArray(event.id, accepted));
   };
 }
 

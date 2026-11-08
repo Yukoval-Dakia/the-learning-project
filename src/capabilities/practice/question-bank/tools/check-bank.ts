@@ -13,6 +13,7 @@ import {
   validateResponseSpec,
   validateScoringBasis,
   validateStructure,
+  wrongResponseFullMarksIssues,
 } from '@/core/schema/assessment/index';
 import type { Db, Tx } from '@/db/client';
 import { source_asset } from '@/db/schema';
@@ -30,8 +31,6 @@ export type CheckBankKind = (typeof CHECK_BANK_KINDS)[number];
 
 export const CheckBankInputSchema = z
   .object({
-    /** v1 恒为 false（确定性 only）。true 不报错，但不会启用任何模型检查——响应 notes 说明。 */
-    allow_model: z.boolean().default(false),
     checks: z
       .array(
         z
@@ -158,11 +157,6 @@ async function runCheckBankInSnapshot(
 ): Promise<CheckBankOutput> {
   const input = CheckBankInputSchema.parse(rawInput);
   const notes: string[] = [];
-  if (input.allow_model) {
-    notes.push(
-      'allow_model=true 被接受但 v1 无任何已准入的语义（模型）检查（ADR-0072 D5：逐项过预注册比较才接入）——本响应全部结果均为确定性方法',
-    );
-  }
 
   const allRefs = [...new Set(input.checks.flatMap((c) => c.refs))];
   const resolutions = await resolveBankRefs(db, allRefs);
@@ -414,7 +408,7 @@ async function runCheckBankInSnapshot(
 
     if (check.kind === 'contract_valid') {
       const interpretation =
-        '对每个 ref 的已存版本重跑发布期纯校验器（structure / response_spec / scoring_basis 三层，validateStructure/validateResponseSpec/validateScoringBasis）';
+        '对每个 ref 的已存版本重跑发布期纯校验器（structure / response_spec / scoring_basis 三层，再查错答不得满分）';
       if (badInCheck.length > 0 || resolved.length !== check.refs.length) {
         results.push(
           unknownResult(
@@ -438,6 +432,7 @@ async function runCheckBankInSnapshot(
           ...validateStructure(structure),
           ...validateResponseSpec(spec, structure),
           ...validateScoringBasis(basis, spec, structure),
+          ...wrongResponseFullMarksIssues(basis),
         ];
         if (issues.length > 0) allValid = false;
         evidence.push({
@@ -549,7 +544,7 @@ async function executeCheckBank(
 export const checkBankTool: DomainTool<CheckBankInput, CheckBankOutput> = {
   name: 'check_bank',
   description:
-    'Run DETERMINISTIC checks over explicitly specified bank refs (ADR-0072 D5; v1 has NO semantic/model checks — allow_model is accepted but enables nothing). Pick an explicit `kind`: same_material_refs (≥2 refs — versioned material asset sets identical? narrow fact: asset identity, NOT "same article" semantics) / ref_state (params.assert = is_current (default) | is_servable — the issuance gate for each part; optional params.part_ids selects a nonempty subset for one ref, otherwise reports whether any part is servable with its exact IDs) / contract_valid (re-runs the publish-time pure validators over the stored version) / material_assets_present (figures/materials present with sha256 matching the version digest). Free-text claims are echoed, never interpreted — if no kind matches your question the verdict is unknown with the supported-kind list. Each check reports verdict (supported/contradicted/unknown), method, input refs, evidence and limitations; checks answer only the specified refs, never "nothing else in the bank".',
+    'Run DETERMINISTIC checks over explicitly specified bank refs (ADR-0072 D5; v1 has NO semantic/model checks). Pick an explicit `kind`: same_material_refs (≥2 refs — versioned material asset sets identical? narrow fact: asset identity, NOT "same article" semantics) / ref_state (params.assert = is_current (default) | is_servable — the issuance gate for each part; optional params.part_ids selects a nonempty subset for one ref, otherwise reports whether any part is servable with its exact IDs) / contract_valid (re-runs the publish-time pure validators over the stored version) / material_assets_present (figures/materials present with sha256 matching the version digest). Free-text claims are echoed, never interpreted — if no kind matches your question the verdict is unknown with the supported-kind list. Each check reports verdict (supported/contradicted/unknown), method, input refs, evidence and limitations; checks answer only the specified refs, never "nothing else in the bank".',
   effect: 'read',
   inputSchema: CheckBankInputSchema,
   outputSchema: CheckBankOutputSchema,

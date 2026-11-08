@@ -334,3 +334,17 @@ export async function getQuestionAttemptOutcomeCounts(
   }
   return counts;
 }
+
+/** Current active attempts establish that a question was seen; no model inference. */
+export async function getAttemptedQuestionIds(db: DbLike): Promise<string[]> {
+  const rows = await db
+    .select()
+    .from(event)
+    .where(
+      and(
+        eq(event.subject_kind, 'question'),
+        inArray(event.action, ['attempt', 'review', 'experimental:assessment_attempt']),
+      ),
+    );
+  return [...new Set((await filterActiveRows(db, rows)).map((row) => row.subject_id))];
+}

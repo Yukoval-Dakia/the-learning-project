@@ -87,6 +87,8 @@ export interface CopilotRunView {
   /** The final words replaced what streamed: on a reply, or on a failed or cancelled end. */
   thinkingClear?: boolean;
   failureReason?: string;
+  /** The server's word, from the FAILED frame: this run can be sent again in place. */
+  retryable?: boolean;
   checkpointEventId?: string;
   subtasks: CopilotSubtaskView[];
   toolCalls?: CopilotToolCallRecord[];
@@ -440,6 +442,7 @@ export function foldCopilotRunFrames(
   let replyPayload: Record<string, unknown> | undefined;
   let thinkingClear = false;
   let failureReason: string | undefined;
+  let retryable = false;
   let checkpointEventId: string | undefined;
   const subtasks = new Map<string, MutableSubtask>();
   let toolCalls: CopilotToolCallRecord[] = [];
@@ -578,6 +581,7 @@ export function foldCopilotRunFrames(
           if (item.payload.thinking_clear === true) thinkingClear = true;
           if (typeof item.payload.reply_md === 'string') replyText = item.payload.reply_md;
           if (typeof item.payload.reason === 'string') failureReason = item.payload.reason;
+          retryable = item.payload.retryable === true;
           if (failureReason === 'ambiguous_execution') {
             // Ambiguous execution can hide committed materializing effects, so
             // a checkpoint learned from an earlier frame must not survive.
@@ -605,6 +609,7 @@ export function foldCopilotRunFrames(
     ...(replyPayload ? { replyPayload } : {}),
     ...(thinkingClear ? { thinkingClear } : {}),
     ...(failureReason ? { failureReason } : {}),
+    ...(retryable ? { retryable } : {}),
     ...(checkpointEventId ? { checkpointEventId } : {}),
     subtasks: [...subtasks.values()]
       .sort((a, b) => a.firstEventId - b.firstEventId)
