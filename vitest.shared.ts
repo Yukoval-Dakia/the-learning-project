@@ -75,6 +75,7 @@ export const fastTestInclude = [
   'src/server/ai/pi-agent-adapter.tracing.test.ts',
   'src/server/ai/runner.fallback.test.ts',
   'src/server/ai/runner.stream-collect.test.ts',
+  'src/capabilities/ingestion/server/structure.runner.test.ts',
   'src/server/ai/tools/mcp-bridge.test.ts',
   'src/server/ai/tools/pi-tools.test.ts',
   'src/capabilities/practice/grading/server/jev-model-executor.test.ts',
