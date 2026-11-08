@@ -36032,9 +36032,18 @@ export interface operations {
                                 root_question_id: string | null;
                                 serving: {
                                     admission?: {
+                                        /** @enum {string|null} */
+                                        cause?: "outcome_unconfirmed" | "purpose_denied" | null;
                                         reason: string | null;
                                         /** @enum {string} */
                                         status: "pending" | "admitted" | "failed" | "undecided";
+                                        wait?: {
+                                            /** @enum {string} */
+                                            reason: "quota" | "login" | "not_sent" | "provider";
+                                            /** @enum {string} */
+                                            recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                            retry_at: string | null;
+                                        } | null;
                                     } | null;
                                     held_since: string | null;
                                     /** @enum {string|null} */
@@ -36080,9 +36089,18 @@ export interface operations {
                             root_question_id: string | null;
                             serving: {
                                 admission?: {
+                                    /** @enum {string|null} */
+                                    cause?: "outcome_unconfirmed" | "purpose_denied" | null;
                                     reason: string | null;
                                     /** @enum {string} */
                                     status: "pending" | "admitted" | "failed" | "undecided";
+                                    wait?: {
+                                        /** @enum {string} */
+                                        reason: "quota" | "login" | "not_sent" | "provider";
+                                        /** @enum {string} */
+                                        recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                        retry_at: string | null;
+                                    } | null;
                                 } | null;
                                 held_since: string | null;
                                 /** @enum {string|null} */
@@ -36133,9 +36151,18 @@ export interface operations {
                                     root_question_id: string | null;
                                     serving: {
                                         admission?: {
+                                            /** @enum {string|null} */
+                                            cause?: "outcome_unconfirmed" | "purpose_denied" | null;
                                             reason: string | null;
                                             /** @enum {string} */
                                             status: "pending" | "admitted" | "failed" | "undecided";
+                                            wait?: {
+                                                /** @enum {string} */
+                                                reason: "quota" | "login" | "not_sent" | "provider";
+                                                /** @enum {string} */
+                                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                                retry_at: string | null;
+                                            } | null;
                                         } | null;
                                         held_since: string | null;
                                         /** @enum {string|null} */
@@ -36181,9 +36208,18 @@ export interface operations {
                                 root_question_id: string | null;
                                 serving: {
                                     admission?: {
+                                        /** @enum {string|null} */
+                                        cause?: "outcome_unconfirmed" | "purpose_denied" | null;
                                         reason: string | null;
                                         /** @enum {string} */
                                         status: "pending" | "admitted" | "failed" | "undecided";
+                                        wait?: {
+                                            /** @enum {string} */
+                                            reason: "quota" | "login" | "not_sent" | "provider";
+                                            /** @enum {string} */
+                                            recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                            retry_at: string | null;
+                                        } | null;
                                     } | null;
                                     held_since: string | null;
                                     /** @enum {string|null} */
@@ -36239,9 +36275,18 @@ export interface operations {
                                     root_question_id: string | null;
                                     serving: {
                                         admission?: {
+                                            /** @enum {string|null} */
+                                            cause?: "outcome_unconfirmed" | "purpose_denied" | null;
                                             reason: string | null;
                                             /** @enum {string} */
                                             status: "pending" | "admitted" | "failed" | "undecided";
+                                            wait?: {
+                                                /** @enum {string} */
+                                                reason: "quota" | "login" | "not_sent" | "provider";
+                                                /** @enum {string} */
+                                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                                retry_at: string | null;
+                                            } | null;
                                         } | null;
                                         held_since: string | null;
                                         /** @enum {string|null} */
@@ -36287,9 +36332,18 @@ export interface operations {
                                 root_question_id: string | null;
                                 serving: {
                                     admission?: {
+                                        /** @enum {string|null} */
+                                        cause?: "outcome_unconfirmed" | "purpose_denied" | null;
                                         reason: string | null;
                                         /** @enum {string} */
                                         status: "pending" | "admitted" | "failed" | "undecided";
+                                        wait?: {
+                                            /** @enum {string} */
+                                            reason: "quota" | "login" | "not_sent" | "provider";
+                                            /** @enum {string} */
+                                            recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                            retry_at: string | null;
+                                        } | null;
                                     } | null;
                                     held_since: string | null;
                                     /** @enum {string|null} */
@@ -36342,9 +36396,18 @@ export interface operations {
                                 root_question_id: string | null;
                                 serving: {
                                     admission?: {
+                                        /** @enum {string|null} */
+                                        cause?: "outcome_unconfirmed" | "purpose_denied" | null;
                                         reason: string | null;
                                         /** @enum {string} */
                                         status: "pending" | "admitted" | "failed" | "undecided";
+                                        wait?: {
+                                            /** @enum {string} */
+                                            reason: "quota" | "login" | "not_sent" | "provider";
+                                            /** @enum {string} */
+                                            recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                            retry_at: string | null;
+                                        } | null;
                                     } | null;
                                     held_since: string | null;
                                     /** @enum {string|null} */
@@ -36390,9 +36453,18 @@ export interface operations {
                             root_question_id: string | null;
                             serving: {
                                 admission?: {
+                                    /** @enum {string|null} */
+                                    cause?: "outcome_unconfirmed" | "purpose_denied" | null;
                                     reason: string | null;
                                     /** @enum {string} */
                                     status: "pending" | "admitted" | "failed" | "undecided";
+                                    wait?: {
+                                        /** @enum {string} */
+                                        reason: "quota" | "login" | "not_sent" | "provider";
+                                        /** @enum {string} */
+                                        recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                        retry_at: string | null;
+                                    } | null;
                                 } | null;
                                 held_since: string | null;
                                 /** @enum {string|null} */
@@ -36833,9 +36905,18 @@ export interface operations {
                         };
                         serving: {
                             admission?: {
+                                /** @enum {string|null} */
+                                cause?: "outcome_unconfirmed" | "purpose_denied" | null;
                                 reason: string | null;
                                 /** @enum {string} */
                                 status: "pending" | "admitted" | "failed" | "undecided";
+                                wait?: {
+                                    /** @enum {string} */
+                                    reason: "quota" | "login" | "not_sent" | "provider";
+                                    /** @enum {string} */
+                                    recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                    retry_at: string | null;
+                                } | null;
                             } | null;
                             held_since: string | null;
                             /** @enum {string|null} */
@@ -37557,9 +37638,18 @@ export interface operations {
                         question_id: string;
                         serving: {
                             admission?: {
+                                /** @enum {string|null} */
+                                cause?: "outcome_unconfirmed" | "purpose_denied" | null;
                                 reason: string | null;
                                 /** @enum {string} */
                                 status: "pending" | "admitted" | "failed" | "undecided";
+                                wait?: {
+                                    /** @enum {string} */
+                                    reason: "quota" | "login" | "not_sent" | "provider";
+                                    /** @enum {string} */
+                                    recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                    retry_at: string | null;
+                                } | null;
                             } | null;
                             held_since: string | null;
                             /** @enum {string|null} */
@@ -37841,9 +37931,18 @@ export interface operations {
                         accepted: boolean;
                         serving: {
                             admission?: {
+                                /** @enum {string|null} */
+                                cause?: "outcome_unconfirmed" | "purpose_denied" | null;
                                 reason: string | null;
                                 /** @enum {string} */
                                 status: "pending" | "admitted" | "failed" | "undecided";
+                                wait?: {
+                                    /** @enum {string} */
+                                    reason: "quota" | "login" | "not_sent" | "provider";
+                                    /** @enum {string} */
+                                    recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                    retry_at: string | null;
+                                } | null;
                             } | null;
                             held_since: string | null;
                             /** @enum {string|null} */
@@ -39760,9 +39859,18 @@ export interface operations {
                     "application/json": {
                         data: {
                             admission?: {
+                                /** @enum {string|null} */
+                                cause?: "outcome_unconfirmed" | "purpose_denied" | null;
                                 reason: string | null;
                                 /** @enum {string} */
                                 status: "pending" | "admitted" | "failed" | "undecided";
+                                wait?: {
+                                    /** @enum {string} */
+                                    reason: "quota" | "login" | "not_sent" | "provider";
+                                    /** @enum {string} */
+                                    recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                    retry_at: string | null;
+                                } | null;
                             } | null;
                             admission_owned: boolean;
                             /** Format: date-time */
@@ -39789,9 +39897,18 @@ export interface operations {
                         };
                         rows: {
                             admission?: {
+                                /** @enum {string|null} */
+                                cause?: "outcome_unconfirmed" | "purpose_denied" | null;
                                 reason: string | null;
                                 /** @enum {string} */
                                 status: "pending" | "admitted" | "failed" | "undecided";
+                                wait?: {
+                                    /** @enum {string} */
+                                    reason: "quota" | "login" | "not_sent" | "provider";
+                                    /** @enum {string} */
+                                    recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                    retry_at: string | null;
+                                } | null;
                             } | null;
                             admission_owned: boolean;
                             /** Format: date-time */
@@ -39933,9 +40050,18 @@ export interface operations {
                 content: {
                     "application/json": {
                         admission?: {
+                            /** @enum {string|null} */
+                            cause?: "outcome_unconfirmed" | "purpose_denied" | null;
                             reason: string | null;
                             /** @enum {string} */
                             status: "pending" | "admitted" | "failed" | "undecided";
+                            wait?: {
+                                /** @enum {string} */
+                                reason: "quota" | "login" | "not_sent" | "provider";
+                                /** @enum {string} */
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                retry_at: string | null;
+                            } | null;
                         } | null;
                         admission_owned: boolean;
                         answer: string | null;
