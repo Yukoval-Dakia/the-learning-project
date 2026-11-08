@@ -96,8 +96,8 @@ async function main() {
   }
 
   // A branch push can start before GitHub links the commit to its PR.
-  // One sighting is not enough: keep the same open PR until the deadline.
-  // A second PR or a changed identity fails immediately; zero fails at the deadline.
+  // Hold the same open PR until the deadline; a second PR or a changed identity fails.
+  // Zero open PRs pins main's tip, the same base.sha a PR targeting main would use.
   const OPEN_PR_WAIT_MS = 60_000;
   const OPEN_PR_POLL_MS = 5_000;
   function openPullNumber(pull) {
@@ -124,6 +124,7 @@ async function main() {
       await new Promise((resolve) => setTimeout(resolve, Math.min(OPEN_PR_POLL_MS, remaining)));
     }
     if (open.length === 1 && held === openPullNumber(open[0])) return uniquePull(open, 'open');
+    if (held === null && open.length === 0) return null;
     fail('Expected one open PR; found 0');
   }
 
@@ -171,17 +172,22 @@ async function main() {
     }
   } else {
     const pull = await waitForSingleOpenPull();
-    if (
-      pull.state !== 'open' ||
-      pull.merged ||
-      pull.head?.sha !== head ||
-      pull.head?.ref !== branch
-    ) {
-      fail('Open PR head SHA/ref differs from this build');
+    if (pull) {
+      if (
+        pull.state !== 'open' ||
+        pull.merged ||
+        pull.head?.sha !== head ||
+        pull.head?.ref !== branch
+      ) {
+        fail('Open PR head SHA/ref differs from this build');
+      }
+      base = sha(pull.base?.sha, 'Open PR base');
+      basis = 'verified-open-pr';
+      pullNumber = pull.number;
+    } else {
+      base = sha((await api('commits/main')).sha, 'Main tip');
+      basis = 'verified-main-tip';
     }
-    base = sha(pull.base?.sha, 'Open PR base');
-    basis = 'verified-open-pr';
-    pullNumber = pull.number;
   }
   if (base === head) fail('Comparison base equals HEAD; refusing an empty audit boundary');
   if ((await api(`commits/${base}`)).sha !== base)
