@@ -4,7 +4,10 @@ import {
   CURRENT_BLANK_NORMALIZATION,
   CURRENT_NUMERIC_NORMALIZATION_VERSION,
 } from '@/core/schema/assessment/answer-compare';
-import { isPublicSharedMaterial } from '@/core/schema/assessment/materials';
+import {
+  type LearnerHandwritingMarkerT,
+  isPublicSharedMaterial,
+} from '@/core/schema/assessment/materials';
 import { createAssessmentAssetLoader } from '../../../grading/public';
 import { AdmissionAttemptExhausted } from './attempt';
 
@@ -57,6 +60,7 @@ import {
   type Provider,
   type SolutionPriorPassResult,
   type UnitSolveVerdict,
+  figureMaterialMarkers,
   keyFromAnswer,
   runDualSolve,
   runSolutionPriorPass,
@@ -223,6 +227,7 @@ export async function runQuestionAdmission(
   options: QuestionAdmissionOptions,
 ): Promise<QuestionAdmissionResult> {
   const policyId = options.policyId ?? resolveQuestionAdmissionPolicyId();
+  const figureMarkers = await figureMaterialMarkers(options.db, definition);
   const now = options.now ?? new Date();
   const runTask = options.runTask ?? makeRunTaskTextFn(options.db, { judgeRetryPolicy: 'none' });
   const solverContext =
@@ -258,10 +263,20 @@ export async function runQuestionAdmission(
       ...emptyParts.map((p) => `Empty prompt: ${p.part_id}`),
     ].join('; ');
     for (const unit of definition.units) mark(unit, { status: 'withheld', reason });
-    return finalize(definition, policyId, now, per_unit, evidenceTaskRuns, null, solverContext, {
-      status: 'withheld',
-      reason,
-    });
+    return finalize(
+      definition,
+      figureMarkers,
+      policyId,
+      now,
+      per_unit,
+      evidenceTaskRuns,
+      null,
+      solverContext,
+      {
+        status: 'withheld',
+        reason,
+      },
+    );
   }
 
   const questionText = prepareAdmissionQuestionText(
@@ -279,6 +294,7 @@ export async function runQuestionAdmission(
     }
     const returned = finalize(
       definition,
+      figureMarkers,
       policyId,
       now,
       per_unit,
@@ -322,10 +338,20 @@ export async function runQuestionAdmission(
             fix_hint_md: `Supply a readable frozen image for ${material.material_id}.`,
           },
         });
-      return finalize(definition, policyId, now, per_unit, evidenceTaskRuns, null, solverContext, {
-        status: 'withheld',
-        reason: 'unreadable_figure',
-      });
+      return finalize(
+        definition,
+        figureMarkers,
+        policyId,
+        now,
+        per_unit,
+        evidenceTaskRuns,
+        null,
+        solverContext,
+        {
+          status: 'withheld',
+          reason: 'unreadable_figure',
+        },
+      );
     }
     images.push({
       data: Buffer.from(loaded.bytes).toString('base64'),
@@ -377,10 +403,20 @@ export async function runQuestionAdmission(
     }
   }
   if (solvableUnits.length === 0) {
-    return finalize(definition, policyId, now, per_unit, evidenceTaskRuns, null, solverContext, {
-      status: 'withheld',
-      reason: 'no_resolvable_units',
-    });
+    return finalize(
+      definition,
+      figureMarkers,
+      policyId,
+      now,
+      per_unit,
+      evidenceTaskRuns,
+      null,
+      solverContext,
+      {
+        status: 'withheld',
+        reason: 'no_resolvable_units',
+      },
+    );
   }
   let solve: Extract<Awaited<ReturnType<typeof runDualSolve>>, { ok: true }>['result'];
   {
@@ -393,11 +429,21 @@ export async function runQuestionAdmission(
     if (!outcome.ok) {
       // Known exhausted calls return repair; their paid receipts remain in the evidence.
       evidenceTaskRuns.push(...outcome.receipts);
-      return finalize(definition, policyId, now, per_unit, evidenceTaskRuns, null, solverContext, {
-        status: 'withheld',
-        reason: `dual solve failed before a verdict: ${outcome.error}`,
-        transient: true,
-      });
+      return finalize(
+        definition,
+        figureMarkers,
+        policyId,
+        now,
+        per_unit,
+        evidenceTaskRuns,
+        null,
+        solverContext,
+        {
+          status: 'withheld',
+          reason: `dual solve failed before a verdict: ${outcome.error}`,
+          transient: true,
+        },
+      );
     }
     solve = outcome.result;
   }
@@ -463,6 +509,7 @@ export async function runQuestionAdmission(
       for (const unit of solvableUnits) mark(unit, { status: 'withheld', reason: error.message });
       const returned = finalize(
         definition,
+        figureMarkers,
         policyId,
         now,
         per_unit,
@@ -839,6 +886,7 @@ export async function runQuestionAdmission(
   const allAdmitted = definition.units.every((unit) => unitResult(unit).status === 'admitted');
   const result = finalize(
     definition,
+    figureMarkers,
     policyId,
     now,
     per_unit,
@@ -865,6 +913,7 @@ export async function runQuestionAdmission(
 
 function finalize(
   definition: QuestionAdmissionDefinition,
+  figureMarkers: ReadonlyMap<string, LearnerHandwritingMarkerT>,
   policyId: string,
   now: Date,
   per_unit: Map<string, UnitAdmissionResult>,
@@ -891,12 +940,10 @@ function finalize(
   });
   const outcome = tail.status === 'admitted' ? 'passed' : 'failed';
   // Lets a later audit check whether a blind solve copied learner handwriting.
-  const figureHandwriting = definition.structure.materials
-    .filter((m) => isPublicSharedMaterial(m) && m.kind === 'figure')
-    .map((m) => ({
-      material_id: m.material_id,
-      contains_learner_handwriting: m.contains_learner_handwriting ?? 'unknown',
-    }));
+  const figureHandwriting = [...figureMarkers].map(([material_id, marker]) => ({
+    material_id,
+    contains_learner_handwriting: marker,
+  }));
   const evidence: Record<string, unknown> = {
     pack: 'question_admission',
     pack_version: 1,

@@ -19,8 +19,8 @@ type PublicFigureEvidence = {
 };
 
 /**
- * The one exit deciding which figures a question publishes: every attributable crop,
- * each stamped by figureForModel. Learner display, blind solve, adjudication, grading,
+ * The one exit deciding which figures a question publishes: every attributable crop of
+ * the learner's captured page, each stamped by figureForModel. Learner display, blind solve, adjudication, grading,
  * the companion and conjecture evidence all read the figures this returns; handwriting
  * never withholds a figure because some questions cannot be solved without it.
  */
@@ -52,7 +52,7 @@ export function figuresForQuestion(
         /^[a-f0-9]{64}$/i.test(asset.sha256)
       );
     })
-    .map(figureForModel);
+    .map((figure) => figureForModel(figure, 'learner_capture'));
 }
 
 /** OCR fallback: only unique, innermost containment on the actual source page. */

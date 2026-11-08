@@ -50,17 +50,49 @@ export type ModelFigureRefT = FigureRefT & {
 };
 
 /**
+ * Only a crop of a learner's own captured page can show learner work; quiz_gen,
+ * web-sourced, imported and other figures are printed source material.
+ */
+export type FigureOrigin = 'learner_capture' | 'printed_source';
+
+/**
+ * Ingestion crop is the only writer of asset role 'pipeline_figure'. Capture crops made
+ * before that stamp existed have no source_asset row at all, so a missing row stays a
+ * capture.
+ */
+export function figureOriginFromAssetProvenance(provenance: unknown): FigureOrigin {
+  if (provenance === undefined) return 'learner_capture';
+  return typeof provenance === 'object' &&
+    provenance !== null &&
+    (provenance as { role?: unknown }).role === 'pipeline_figure'
+    ? 'learner_capture'
+    : 'printed_source';
+}
+
+/** A stated marker wins; an unstated one is false for printed source and conservative for captures. */
+export function learnerHandwritingMarker(
+  stated: LearnerHandwritingMarkerT | undefined,
+  origin: FigureOrigin,
+  handwritingUnverified?: boolean,
+): LearnerHandwritingMarkerT {
+  if (stated !== undefined) return stated;
+  if (origin === 'printed_source') return false;
+  return handwritingUnverified === false ? false : 'unknown';
+}
+
+/**
  * Per-figure step of the one "which figures go to models" exit: publication
  * (ingestion figuresForQuestion) and every model-facing projection of stored figures
- * call it, so no reader can drop the learner-handwriting marker. Refs written before
- * the marker existed only recorded whether the judgment was missing.
+ * call it, so no reader can drop or misstate the learner-handwriting marker.
  */
-export function figureForModel(figure: FigureRefT): ModelFigureRefT {
+export function figureForModel(figure: FigureRefT, origin: FigureOrigin): ModelFigureRefT {
   return {
     ...figure,
-    contains_learner_handwriting:
-      figure.contains_learner_handwriting ??
-      (figure.handwriting_unverified === false ? false : 'unknown'),
+    contains_learner_handwriting: learnerHandwritingMarker(
+      figure.contains_learner_handwriting,
+      origin,
+      figure.handwriting_unverified,
+    ),
   };
 }
 
@@ -349,16 +381,19 @@ export function projectAddressableNode(q: StructuredQuestionT): AddressableStruc
  */
 export function projectAddressableStructure(
   tree: StructuredQuestionT,
-  figures: readonly FigureRefT[] = [],
+  figures: readonly FigureRefT[],
+  originOf: (assetId: string) => FigureOrigin,
 ): AddressableStructure {
   return {
     tree: projectAddressableNode(tree),
-    figures: figures.map(figureForModel).map((f) => ({
-      asset_id: f.asset_id,
-      role: f.role,
-      attached_to_index: f.attached_to_index,
-      contains_learner_handwriting: f.contains_learner_handwriting,
-    })),
+    figures: figures
+      .map((figure) => figureForModel(figure, originOf(figure.asset_id)))
+      .map((f) => ({
+        asset_id: f.asset_id,
+        role: f.role,
+        attached_to_index: f.attached_to_index,
+        contains_learner_handwriting: f.contains_learner_handwriting,
+      })),
   };
 }
 

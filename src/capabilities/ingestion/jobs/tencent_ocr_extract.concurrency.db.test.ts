@@ -1,9 +1,11 @@
+import { createHash } from 'node:crypto';
 import {
   type AssistantMessage,
   type Context,
   type Model,
   createAssistantMessageEventStream,
 } from '@earendil-works/pi-ai';
+import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { enrichEvidenceCells } from '@/capabilities/agency/server/conjecture/evidence-enrichment';
@@ -23,9 +25,13 @@ import { db } from '@/db/client';
 import {
   learning_session,
   provider_attempt,
+  question,
   question_block,
   question_group_lifecycle,
+  source_asset,
 } from '@/db/schema';
+import { withAnswerClass } from '@/kernel/records/answer-class-write';
+import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
 import { __setPiAdapterForTests } from '@/server/ai/execution-adapter';
 import { type PiAdapterDeps, PiAgentAdapter } from '@/server/ai/pi-agent-adapter';
 import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
@@ -242,8 +248,140 @@ async function runHandler(handler: ReturnType<typeof buildTencentOcrHandler>, se
   return block;
 }
 
-// @invariant security: every attributable crop of a question with learner work reaches blind solve, the companion question context and conjecture evidence, carrying its per-crop learner-handwriting marker, and the solve prompt states that handwriting is not a condition or answer
-// @fails-if a whole-question handwriting veto drops the crop, a handwritten or undecided crop is withheld, the marker is lost between OCR and the provider request or in the companion/conjecture projections, or the solve prompt omits the handwriting rule
+/** Blind solve, the companion question context and conjecture evidence all see this figure marker. */
+async function expectModelReadersSee(questionId: string, marker: boolean | 'unknown') {
+  const [lifecycle] = await db
+    .select()
+    .from(question_group_lifecycle)
+    .where(eq(question_group_lifecycle.group_id, questionId));
+  const { contract } = await loadGradedContract(
+    db,
+    questionId,
+    lifecycle?.current_revision_id ?? null,
+  );
+  const contexts = captureProviderContexts();
+  await runQuestionAdmission(definitionFromContract(contract), {
+    db,
+    runTask: makeRunTaskTextFn(db),
+  });
+  const [solveRequest] = contexts;
+  if (!solveRequest) throw new Error('blind solve never reached the provider');
+  const user = solveRequest.messages.find((message) => message.role === 'user');
+  const content = Array.isArray(user?.content) ? user.content : [];
+  expect(content.filter((part) => part.type === 'image')).toHaveLength(1);
+  expect(JSON.stringify(content)).toContain(`contains_learner_handwriting: ${marker}`);
+  const system = solveRequest.messages.find((message) => (message.role as string) === 'system');
+  expect(JSON.stringify(system?.content)).toContain(LEARNER_HANDWRITING_RULE);
+
+  const companion = await getQuestionContextTool.execute(
+    { db, taskRunId: 'tr_figures', callerActor: { kind: 'agent', ref: 'agent:copilot' } },
+    { questionId, include: ['assets', 'structure'] },
+  );
+  expect(
+    companion.source_assets
+      ?.filter((asset) => asset.role === 'diagram')
+      .map((asset) => asset.contains_learner_handwriting),
+  ).toEqual([marker]);
+  expect(companion.structure?.figures.map((figure) => figure.contains_learner_handwriting)).toEqual(
+    [marker],
+  );
+  const attemptId = `attempt-${questionId}`;
+  const [cell] = await enrichEvidenceCells(db, {
+    cells: [
+      {
+        key: `concept:${attemptId}`,
+        cause_category: 'concept',
+        knowledge_id: 'k-figures',
+        recurrence_count: 1,
+        evidence_event_ids: [attemptId],
+        theta_hat: null,
+        theta_precision: null,
+        baseline_p: null,
+        probe_here: false,
+        has_owner_cause: false,
+        has_contested_verdict: false,
+      },
+    ],
+    failures: [
+      {
+        attempt_event_id: attemptId,
+        question_id: questionId,
+        answer_md: '60°',
+        answer_image_refs: [],
+        referenced_knowledge_ids: [],
+        created_at: new Date(),
+      },
+    ],
+  });
+  expect(
+    cell?.samples[0]?.question_figures.map((figure) => figure.contains_learner_handwriting),
+  ).toEqual([marker]);
+}
+
+/** A sourced question whose printed figure was stored before markers existed. */
+async function seedPrintedFigureQuestion(): Promise<string> {
+  const bytes = await (await createImageR2()).get();
+  const assetId = `printed-${createId()}`;
+  const storageKey = `printed/${assetId}.png`;
+  objects.set(storageKey, bytes);
+  const now = new Date();
+  await db.insert(source_asset).values({
+    id: assetId,
+    kind: 'image',
+    storage_key: storageKey,
+    mime_type: 'image/png',
+    byte_size: bytes.byteLength,
+    sha256: createHash('sha256').update(bytes).digest('hex'),
+    width: 80,
+    height: 120,
+    provenance: { origin: 'jyeoo_staged', fetch_run_id: 'fixture' },
+    created_at: now,
+  });
+  const questionId = createId();
+  await db.insert(question).values(
+    withAnswerClass({
+      id: questionId,
+      kind: 'choice',
+      prompt_md: '如图，三角形中角A等于多少度？',
+      choices_md: ['30°', '60°'],
+      structured: {
+        id: questionId,
+        kind: 'choice',
+        role: 'standalone',
+        prompt_text: '如图，三角形中角A等于多少度？',
+        options: [
+          { label: 'A', text: '30°' },
+          { label: 'B', text: '60°' },
+        ],
+      },
+      figures: [
+        {
+          asset_id: assetId,
+          role: 'diagram',
+          source_page_index: 0,
+          source_bbox: { x: 0, y: 0, width: 1, height: 1 },
+          attached_to_index: questionId,
+          attach_confidence: 'high',
+        },
+      ],
+      image_refs: [],
+      knowledge_ids: [],
+      difficulty: 3,
+      source: 'jyeoo',
+      variant_depth: 0,
+      draft_status: 'active',
+      metadata: {},
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    }),
+  );
+  await publishQuestionGroupFromRow(db, { rootId: questionId, actorRef: 'fixture', now });
+  return questionId;
+}
+
+// @invariant security: every attributable crop of a question with learner work reaches blind solve, the companion question context and conjecture evidence, carrying its per-crop learner-handwriting marker, while a printed figure from another source reads as free of learner handwriting; the solve prompt states that handwriting is not a condition or answer
+// @fails-if a whole-question handwriting veto drops the crop, a handwritten or undecided crop is withheld, the marker is lost between OCR and the provider request or in the companion/conjecture projections, an unmarked printed figure is told to models as possibly handwritten, or the solve prompt omits the handwriting rule
 it('gives every question figure to blind solve, the companion and conjecture evidence with its learner-handwriting marker', async () => {
   vi.stubEnv('OPENCODE_API_KEY', 'synthetic-fixture-key');
   vi.stubEnv('AI_PROVIDER_OVERRIDE', '');
@@ -254,8 +392,9 @@ it('gives every question figure to blind solve, the companion and conjecture evi
     'task.QuestionAdmissionSolveTask.override_global_pin': true,
   });
   const cases: Array<{
-    judgment: boolean | null | undefined;
-    optionLabel: string | null;
+    printed?: true;
+    judgment?: boolean | null;
+    optionLabel?: string | null;
     marker: boolean | 'unknown' | null;
   }> = [
     { judgment: false, optionLabel: null, marker: false },
@@ -265,11 +404,18 @@ it('gives every question figure to blind solve, the companion and conjecture evi
     { judgment: undefined, optionLabel: 'A', marker: 'unknown' },
     // FigureRef.option_label.min(1): an empty option label claim stays unbound.
     { judgment: false, optionLabel: '', marker: null },
+    // Not cut from a learner's page: no marker stored, and none can be learner work.
+    { printed: true, marker: false },
   ];
   try {
     for (const expected of cases) {
+      if (expected.printed) {
+        if (expected.marker === null) throw new Error('printed row needs a marker');
+        await expectModelReadersSee(await seedPrintedFigureQuestion(), expected.marker);
+        continue;
+      }
       const { sessionId } = await seedIngestionSession(1);
-      const optionClaim = expected.optionLabel !== null;
+      const optionClaim = expected.optionLabel != null;
       const handler = buildTencentOcrHandler({
         db,
         r2: await storingR2(),
@@ -363,73 +509,7 @@ it('gives every question figure to blind solve, the companion and conjecture evi
         generatedBy: 'workflow_judge',
       });
       if (!enrolled) throw new Error('block was not enrolled');
-      const [lifecycle] = await db
-        .select()
-        .from(question_group_lifecycle)
-        .where(eq(question_group_lifecycle.group_id, enrolled.question_id));
-      const { contract } = await loadGradedContract(
-        db,
-        enrolled.question_id,
-        lifecycle?.current_revision_id ?? null,
-      );
-      const contexts = captureProviderContexts();
-      await runQuestionAdmission(definitionFromContract(contract), {
-        db,
-        runTask: makeRunTaskTextFn(db),
-      });
-      const [solveRequest] = contexts;
-      if (!solveRequest) throw new Error('blind solve never reached the provider');
-      const user = solveRequest.messages.find((message) => message.role === 'user');
-      const content = Array.isArray(user?.content) ? user.content : [];
-      expect(content.filter((part) => part.type === 'image')).toHaveLength(1);
-      expect(JSON.stringify(content)).toContain(`contains_learner_handwriting: ${expected.marker}`);
-      const system = solveRequest.messages.find((message) => (message.role as string) === 'system');
-      expect(JSON.stringify(system?.content)).toContain(LEARNER_HANDWRITING_RULE);
-
-      // The companion and conjecture evidence read stored figures through the same exit.
-      const companion = await getQuestionContextTool.execute(
-        { db, taskRunId: 'tr_figures', callerActor: { kind: 'agent', ref: 'agent:copilot' } },
-        { questionId: enrolled.question_id, include: ['assets', 'structure'] },
-      );
-      expect(
-        companion.source_assets
-          ?.filter((asset) => asset.role === 'diagram')
-          .map((asset) => asset.contains_learner_handwriting),
-      ).toEqual([expected.marker]);
-      expect(
-        companion.structure?.figures.map((figure) => figure.contains_learner_handwriting),
-      ).toEqual([expected.marker]);
-      const attemptId = `attempt-${sessionId}`;
-      const [cell] = await enrichEvidenceCells(db, {
-        cells: [
-          {
-            key: `concept:${attemptId}`,
-            cause_category: 'concept',
-            knowledge_id: 'k-figures',
-            recurrence_count: 1,
-            evidence_event_ids: [attemptId],
-            theta_hat: null,
-            theta_precision: null,
-            baseline_p: null,
-            probe_here: false,
-            has_owner_cause: false,
-            has_contested_verdict: false,
-          },
-        ],
-        failures: [
-          {
-            attempt_event_id: attemptId,
-            question_id: enrolled.question_id,
-            answer_md: '60°',
-            answer_image_refs: [],
-            referenced_knowledge_ids: [],
-            created_at: new Date(),
-          },
-        ],
-      });
-      expect(
-        cell?.samples[0]?.question_figures.map((figure) => figure.contains_learner_handwriting),
-      ).toEqual([expected.marker]);
+      await expectModelReadersSee(enrolled.question_id, expected.marker);
     }
   } finally {
     __setPiAdapterForTests(undefined);

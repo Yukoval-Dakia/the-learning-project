@@ -42,6 +42,7 @@ import {
   knowledgeContext,
 } from '@/kernel/read-models/extraction-summary';
 import { getFailureAttemptsForDerivation } from '@/kernel/read-models/failure-attempts';
+import { readFigureOrigins } from '@/kernel/read-models/figure-origin';
 import { miscCauseLabelMap, resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
 import { getQuestionTimeline, getRecentReviewEvents } from '@/kernel/read-models/question-activity';
 import {
@@ -304,6 +305,12 @@ async function executeGetQuestionContext(
   if (include.has('knowledge_context') && q) {
     output.knowledge_context = await knowledgeContext(ctx.db, q.knowledge_ids ?? []);
   }
+  const figureOrigin = await readFigureOrigins(
+    ctx.db,
+    include.has('assets') || include.has('structure')
+      ? (q?.figures ?? []).map((figure) => figure.asset_id)
+      : [],
+  );
   if (include.has('assets') && q) {
     // The companion may quote these to the learner, so whole photographed pages
     // (other questions' handwriting) are filtered by the same read-time rule as the
@@ -314,18 +321,20 @@ async function executeGetQuestionContext(
         asset_id: id,
         role: 'question_image',
       })),
-      ...(q.figures ?? []).map(figureForModel).map((fig) => ({
-        asset_id: fig.asset_id,
-        role: fig.role,
-        contains_learner_handwriting: fig.contains_learner_handwriting,
-      })),
+      ...(q.figures ?? [])
+        .map((fig) => figureForModel(fig, figureOrigin(fig.asset_id)))
+        .map((fig) => ({
+          asset_id: fig.asset_id,
+          role: fig.role,
+          contains_learner_handwriting: fig.contains_learner_handwriting,
+        })),
     ];
   }
   // D6-R6 — pure-read addressable structure projection. Only emitted
   // when explicitly requested AND the question carries a `structured` tree
   // (non-structured questions — variant_gen / embedded_check — have none).
   if (include.has('structure') && q?.structured) {
-    output.structure = projectAddressableStructure(q.structured, q.figures ?? []);
+    output.structure = projectAddressableStructure(q.structured, q.figures ?? [], figureOrigin);
   }
   return GetQuestionContextOutputSchema.parse(output);
 }
