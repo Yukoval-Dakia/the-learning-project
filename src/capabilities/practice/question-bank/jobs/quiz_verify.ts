@@ -253,7 +253,7 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
   // a question_part is never an independent verify subject: the
   // composite group is verified at the parent and this handler's promote branch
   // cascades to its draft children in the same tx. A stray dispatch (orphan
-  // recovery, owner-UI enable on a part id, matcher lazy-verify) must NOT spend
+  // recovery, owner-UI enable on a part id) must NOT spend
   // a paid verify on a part or promote it standalone — an active child under a
   // still-draft parent would break the atomic group gate.
   if (row.parent_question_id != null) return { status: 'skipped:question_part' };

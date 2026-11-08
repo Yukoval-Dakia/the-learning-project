@@ -194,10 +194,19 @@ const PlacementProfileAxisSchema = z.object({
   provenance: z.string(),
 });
 
+const PlacementDayOnePriorClaimSchema = z.object({
+  observation: z.literal('untested').describe('这份先验没有作答观测'),
+  basis: z.literal('model_prior').describe('模型先验，不是校准结果'),
+  inputs: z.literal('neutral_zero').describe('难度锚和域能力输入全为 0，是中性假设'),
+  mastery_role: z.literal('not_independent_mastery').describe('mean_mastery 不是独立掌握'),
+});
+
 const PlacementDayOnePriorSchema = z.object({
   mean_mastery: z.number(),
   weakest_prereq_id: z.string().optional(),
   weakest_prereq_mastery: z.number().optional(),
+  evidence_count: z.literal(0).describe('证据数仍为 0'),
+  claim: PlacementDayOnePriorClaimSchema,
 });
 
 const PlacementProfileKcBaseSchema = z.object({
