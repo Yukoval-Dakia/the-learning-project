@@ -65,7 +65,9 @@ export function structuredSubmitWireFields(
   // workspace among them), so it holds only when submit is the request's sole
   // tool; 'auto' keeps the reminder correction that lanes without force run on.
   const forced =
-    policy.forced && wireToolNames.every((name) => name === STRUCTURED_OUTPUT_SUBMIT_TOOL);
+    policy.forced &&
+    wireToolNames.length > 0 &&
+    wireToolNames.every((name) => name === STRUCTURED_OUTPUT_SUBMIT_TOOL);
   return forced
     ? {
         tool_choice:
@@ -284,6 +286,8 @@ export function createStructuredSubmitLoop(input: {
   forced: boolean;
   runId: string;
   correctionDeadline: number;
+  /** The attempt's own execution deadline; correctionDeadline sits a landing margin before it. */
+  executionDeadline?: number;
   /** Mounted non-submit tools; their turns run and return results instead of a reminder. */
   executableTools?: ReadonlySet<string>;
   /** The runner's turn ceiling (workspace margin included); bounds tool-work turns. */
@@ -294,7 +298,8 @@ export function createStructuredSubmitLoop(input: {
   // submit correction into an immediate no_progress closure.
   const toolProgress = createNoProgressLoop();
   let toolTurns = 0;
-  let toolWorkClosed = false;
+  /** Set once tool work is closed; the failure reason if tool calls continue. */
+  let toolWorkClosed: 'no_progress' | 'budget_landing' | undefined;
   const errorOccurrences = new Map<string, number>();
   let submitAccepted = false;
   let submitFailure: string | undefined;
@@ -402,7 +407,10 @@ export function createStructuredSubmitLoop(input: {
 
   // Tool work shares the run's existing bounds: the correction deadline, the
   // turn ceiling and a no-progress gate (repeated call or identical output).
-  // Hitting one sends a single closing notice; tool work after it ends the run.
+  // Hitting one closes tool work with a single notice and leaves one submit
+  // turn: the correction deadline already reserves the landing margin before
+  // the execution deadline, and the cost ceiling still wraps every turn.
+  // Any non-submit call after the notice ends the run (checked in finishTurn).
   async function finishToolWork(
     message: AgentTurnContext['message'],
     toolResults: AgentTurnContext['toolResults'],
@@ -422,23 +430,23 @@ export function createStructuredSubmitLoop(input: {
         ...(result?.isError ? { error: result.content } : {}),
       });
     }
-    const pastDeadline = Date.now() >= input.correctionDeadline;
-    const closed =
+    const now = Date.now();
+    const pastCorrection = now >= input.correctionDeadline;
+    const exhausted =
       toolProgress.closure() !== undefined ||
       (input.toolTurnLimit !== undefined && toolTurns >= input.toolTurnLimit);
     logTurn(message, false, {
       event: 'tool_work',
       tools: calls.map((call) => call.name),
       tool_turns: toolTurns,
-      closed: pastDeadline || closed,
+      closed: pastCorrection || exhausted,
     });
-    if (!pastDeadline && !closed) return { action: 'continue' as const };
-    if (pastDeadline || toolWorkClosed) {
-      const reason = pastDeadline ? 'budget_landing' : 'no_progress';
-      const detail = `tool work ${pastDeadline ? 'past the correction deadline' : 'after the closing notice'} (${toolTurns} tool turns)`;
-      return failRun(reason, plan ? `${detail}; ${unitSummary()}` : detail);
+    if (input.executionDeadline !== undefined && now >= input.executionDeadline) {
+      const detail = `tool work past the execution deadline (${toolTurns} tool turns)`;
+      return failRun('budget_landing', plan ? `${detail}; ${unitSummary()}` : detail);
     }
-    toolWorkClosed = true;
+    if (!pastCorrection && !exhausted) return { action: 'continue' as const };
+    toolWorkClosed = pastCorrection ? 'budget_landing' : 'no_progress';
     submitFeedback =
       TOOL_WORK_CLOSED_NOTICE +
       (plan
@@ -474,6 +482,20 @@ export function createStructuredSubmitLoop(input: {
       rawArguments: readonly (string | undefined)[],
     ) {
       const calls = message.content.filter((block) => block.type === 'toolCall');
+      // Checked before classification so a submit mixed into the same turn
+      // cannot carry tool work past the closing notice in either mode.
+      if (
+        toolWorkClosed !== undefined &&
+        calls.some((call) => call.name !== STRUCTURED_OUTPUT_SUBMIT_TOOL)
+      ) {
+        logTurn(message, false, {
+          event: 'tool_work_after_close',
+          tools: calls.map((call) => call.name),
+          tool_turns: toolTurns,
+        });
+        const detail = `tool call after the closing notice (${toolTurns} tool turns)`;
+        return failRun(toolWorkClosed, plan ? `${detail}; ${unitSummary()}` : detail);
+      }
       const verdict = classifySubmitTurn(
         { stopReason: message.stopReason, toolCallNames: calls.map((call) => call.name) },
         { forced: input.forced, executableTools: input.executableTools },
