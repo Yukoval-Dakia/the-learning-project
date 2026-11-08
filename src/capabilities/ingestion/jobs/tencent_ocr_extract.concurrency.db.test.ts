@@ -20,6 +20,7 @@ import {
   runQuestionAdmission,
 } from '@/capabilities/practice/question-bank/server/admission';
 import { getQuestionContextTool } from '@/capabilities/practice/scheduling/tools/question-context';
+import { planSolveHint, startSolveSession } from '@/capabilities/practice/server/solve-session';
 import { resetTestConfig, setTestConfig } from '@/core/config/store';
 import { LEARNER_HANDWRITING_RULE } from '@/core/schema/structured_question';
 import { db } from '@/db/client';
@@ -32,7 +33,12 @@ import {
   source_asset,
 } from '@/db/schema';
 import { withAnswerClass } from '@/kernel/records/answer-class-write';
-import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
+import { issueAssessment } from '@/kernel/records/assessment-issuance';
+import { contractIntegrityDigest } from '@/kernel/records/assessment-normalization';
+import {
+  publishQuestionGroup,
+  publishQuestionGroupFromRow,
+} from '@/kernel/records/assessment-publication';
 import { __setPiAdapterForTests } from '@/server/ai/execution-adapter';
 import { type PiAdapterDeps, PiAgentAdapter } from '@/server/ai/pi-agent-adapter';
 import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
@@ -250,7 +256,11 @@ async function runHandler(handler: ReturnType<typeof buildTencentOcrHandler>, se
 }
 
 /** Blind solve, the companion question context and conjecture evidence all see this figure marker. */
-async function expectModelReadersSee(questionId: string, marker: boolean | 'unknown') {
+async function expectModelReadersSee(
+  questionId: string,
+  marker: boolean | 'unknown',
+  options: { hint?: boolean } = {},
+) {
   const [lifecycle] = await db
     .select()
     .from(question_group_lifecycle)
@@ -368,6 +378,92 @@ async function expectModelReadersSee(questionId: string, marker: boolean | 'unkn
   expect(
     cell?.samples[0]?.question_figures.map((figure) => figure.contains_learner_handwriting),
   ).toEqual([marker]);
+
+  if (!options.hint) return;
+  // A solve hint sends the issued figure bytes to TeachingTurnVisionTask. Issuing needs an
+  // admitted, servable revision; the scripted admission above cannot resolve a key, so the
+  // sealed contract is republished with the key a passing admission would freeze. Its
+  // structure, and so the figure material and marker, is unchanged.
+  const [current] = await db
+    .select()
+    .from(question_group_lifecycle)
+    .where(eq(question_group_lifecycle.group_id, questionId));
+  const [slot] = contract.response_spec.slots;
+  const [keyedUnit] = contract.scoring_basis.units;
+  if (slot?.kind !== 'single_choice' || !slot.options?.[0] || !keyedUnit)
+    throw new Error('captured choice slot missing');
+  const admitted = {
+    ...contract,
+    scoring_basis: {
+      ...contract.scoring_basis,
+      units: [
+        {
+          ...keyedUnit,
+          criterion: {
+            kind: 'option_set_key' as const,
+            accepted_option_ids: [slot.options[0].option_id],
+          },
+        },
+      ],
+    },
+    execution_plan: {
+      ...contract.execution_plan,
+      assignments: [
+        {
+          scoring_unit_ids: [keyedUnit.scoring_unit_id],
+          executor: { kind: 'deterministic' as const, comparator: 'exact_option_set' as const },
+        },
+      ],
+    },
+  };
+  admitted.integrity_digest = contractIntegrityDigest(admitted);
+  const republished = await publishQuestionGroup(db, {
+    group_id: questionId,
+    contract: admitted,
+    expectedCurrentRevision: current?.current_revision_id ?? null,
+    expectedAdmissionGeneration: current?.scoring_admission_generation ?? null,
+    // Container occurrences refuse study assistance; a general-pool issue allows hints.
+    availability: 'general_pool',
+    admission: {
+      state: 'admitted',
+      evidence: {
+        marking_provenance: 'official',
+        verification: { structural_check_passed: true, independent_verification: null },
+        model_slice: null,
+      },
+    },
+    actorRef: 'test:hint-figures',
+    now: new Date(),
+  });
+  if (republished.status !== 'published') throw new Error(`republish ${republished.status}`);
+  const issued = await issueAssessment(db, {
+    group_id: questionId,
+    part_ids: contract.structure.parts.map((part) => part.part_id),
+    mode: 'manual',
+  });
+  if (issued.status !== 'issued') throw new Error(`issuance ${JSON.stringify(issued)}`);
+  const session = await startSolveSession({
+    db,
+    questionId,
+    issuanceId: issued.issuance.issuance_id,
+  });
+  const hintContexts = captureProviderContexts();
+  // The scripted provider returns '{}', so parsing the hint fails after the request is sent.
+  await planSolveHint({ db, sessionId: session.sessionId, hintIndex: 0 }).catch(() => undefined);
+  const [hintRequest] = hintContexts;
+  if (!hintRequest) throw new Error('solve hint never reached the provider');
+  const hintUser = hintRequest.messages.find((message) => message.role === 'user');
+  const hintContent = Array.isArray(hintUser?.content) ? hintUser.content : [];
+  expect(hintContent.filter((part) => part.type === 'image')).toHaveLength(1);
+  const hintText = hintContent.find((part) => part.type === 'text');
+  const hintInput = JSON.parse(hintText?.type === 'text' ? hintText.text : '{}') as {
+    image_manifest: { contains_learner_handwriting?: unknown }[];
+  };
+  expect(hintInput.image_manifest.map((entry) => entry.contains_learner_handwriting)).toEqual([
+    marker,
+  ]);
+  const hintSystem = hintRequest.messages.find((message) => (message.role as string) === 'system');
+  expect(JSON.stringify(hintSystem?.content)).toContain(LEARNER_HANDWRITING_RULE);
 }
 
 /** A sourced question with a printed figure, stored with or without a marker. */
@@ -433,8 +529,8 @@ async function seedPrintedFigureQuestion(stored?: boolean | 'unknown'): Promise<
   return questionId;
 }
 
-// @invariant security: every attributable crop of a question with learner work reaches blind solve, grading, the companion question context and conjecture evidence carrying its learner-handwriting marker; an unmarked printed figure reads as free of handwriting, a stored marker always wins, and the solve and grading prompts state that handwriting is not a condition or answer
-// @fails-if a whole-question handwriting veto drops the crop, a handwritten or undecided crop is withheld, the marker is lost before the solve or grading request or in the companion/conjecture projections, an unmarked printed figure is told to models as possibly handwritten, a stored marker is overridden by the origin default, or the solve or grading prompt omits the handwriting rule
+// @invariant security: every attributable crop of a question with learner work reaches blind solve, grading, solve hints, the companion question context and conjecture evidence carrying its learner-handwriting marker; an unmarked printed figure reads as free of handwriting, a stored marker always wins, and the solve and grading prompts state that handwriting is not a condition or answer
+// @fails-if a whole-question handwriting veto drops the crop, a handwritten or undecided crop is withheld, the marker is lost before the solve, grading or hint request or in the companion/conjecture projections, an unmarked printed figure is told to models as possibly handwritten, a stored marker is overridden by the origin default, or the solve, grading or hint prompt omits the handwriting rule
 it('gives every question figure to blind solve, grading, the companion and conjecture evidence with its learner-handwriting marker', async () => {
   vi.stubEnv('OPENCODE_API_KEY', 'synthetic-fixture-key');
   vi.stubEnv('AI_PROVIDER_OVERRIDE', '');
@@ -450,12 +546,15 @@ it('gives every question figure to blind solve, grading, the companion and conje
   const cases: Array<{
     printed?: true;
     stored?: boolean | 'unknown';
+    hint?: true;
     judgment?: boolean | null;
     optionLabel?: string | null;
     marker: boolean | 'unknown' | null;
   }> = [
     { judgment: false, optionLabel: null, marker: false },
     { judgment: true, optionLabel: null, marker: true },
+    // A solve hint on a photographed question carries the same marker and rule.
+    { judgment: true, optionLabel: null, marker: true, hint: true },
     { judgment: null, optionLabel: null, marker: 'unknown' },
     // An omitted judgment must not fail the whole StructureOutput parse.
     { judgment: undefined, optionLabel: 'A', marker: 'unknown' },
@@ -571,7 +670,9 @@ it('gives every question figure to blind solve, grading, the companion and conje
         generatedBy: 'workflow_judge',
       });
       if (!enrolled) throw new Error('block was not enrolled');
-      await expectModelReadersSee(enrolled.question_id, expected.marker);
+      await expectModelReadersSee(enrolled.question_id, expected.marker, {
+        hint: expected.hint === true,
+      });
     }
   } finally {
     __setPiAdapterForTests(undefined);

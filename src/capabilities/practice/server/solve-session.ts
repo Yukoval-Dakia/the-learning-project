@@ -286,6 +286,7 @@ async function runSolveHintAttempt(params: PlanSolveHintParams): Promise<SolveHi
     context,
     createAssessmentAssetLoader(db),
     signal,
+    db,
   );
   const ran =
     images.length > 0
