@@ -5,7 +5,7 @@ const launcher = '/usr/local/libexec/workspace-launch';
 const outputLimit = 100 * 1024;
 // This ceiling only stops loops/errors; no model task is admitted by this slice.
 const timeoutMs = 30 * 60 * 1000;
-type StopReason = 'timeout' | 'cancelled' | 'output_limit' | null;
+type StopReason = 'timeout' | 'cancelled' | 'output_limit' | 'quota_exceeded' | null;
 
 export function invokeWorkspace(
   action: string,
@@ -103,6 +103,10 @@ export async function executeWorkspace(
   let failure: unknown;
   try {
     result = await invokeWorkspace(runtime, id, code, signal);
+    if (result.exitCode === WORKSPACE_QUOTA_EXIT && (await workspaceQuotaExceeded(id))) {
+      result.stopReason = 'quota_exceeded';
+      result.stopped = true;
+    }
   } catch (error) {
     failure = error;
   }
@@ -119,6 +123,28 @@ export async function executeWorkspace(
 
 export function sha256Hex(value: string): string {
   return createHash('sha256').update(value, 'utf8').digest('hex');
+}
+
+/** Dedicated wrapper exit for quota kill — never emitted by user scripts. */
+export const WORKSPACE_QUOTA_EXIT = 98;
+
+/**
+ * Ground-truth check behind the exit signal: a script could exit 98 itself, so
+ * the classification only sticks when measured usage actually crossed the cap.
+ */
+export async function workspaceQuotaExceeded(id: string): Promise<boolean> {
+  const res = await invokeWorkspace('usage', id, '');
+  if (res.exitCode !== 0) return false;
+  try {
+    const parsed = JSON.parse(res.output) as { bytes?: unknown; cap?: unknown };
+    return (
+      typeof parsed.bytes === 'number' &&
+      typeof parsed.cap === 'number' &&
+      parsed.bytes > parsed.cap
+    );
+  } catch {
+    return false;
+  }
 }
 
 export type WorkspaceRuntimeVersion = { python: string; bash: string };

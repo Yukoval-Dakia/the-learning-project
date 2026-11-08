@@ -1,10 +1,12 @@
 import { z } from 'zod';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 import {
+  WORKSPACE_QUOTA_EXIT,
   executeWorkspace,
   invokeWorkspace,
   invokeWorkspaceFiles,
   sha256Hex,
+  workspaceQuotaExceeded,
   workspaceRuntimeVersion,
 } from './executor';
 import { type WorkspaceOwner, withWorkspace } from './lifecycle';
@@ -65,13 +67,7 @@ export const workspaceExec: DomainTool<z.infer<typeof execInput>, z.infer<typeof
     // run create→execute→delete under the controlled actor only.
     if (isAcceptance(ctx) && !ctx.sessionId && !ctx.logTaskRunId) {
       const result = await executeWorkspace(parsed.runtime, parsed.code, ctx.signal);
-      return {
-        ...result,
-        stopReason:
-          result.stopReason ??
-          (result.output.includes('workspace_quota_exceeded') ? 'quota_exceeded' : null),
-        ...digests(result.output),
-      };
+      return { ...result, ...digests(result.output) };
     }
     if (!owner) throw new Error('workspace_owner_unbindable');
     return withWorkspace(
@@ -80,9 +76,13 @@ export const workspaceExec: DomainTool<z.infer<typeof execInput>, z.infer<typeof
       'write',
       async (id, signal) => {
         const result = await invokeWorkspace(parsed.runtime, id, parsed.code, signal);
+        // The wrapper's dedicated exit is the signal; usage re-measure is the
+        // ground truth so a script's own exit-98 cannot forge the label.
         const stopReason =
           result.stopReason ??
-          (result.output.includes('workspace_quota_exceeded') ? 'quota_exceeded' : null);
+          (result.exitCode === WORKSPACE_QUOTA_EXIT && (await workspaceQuotaExceeded(id))
+            ? 'quota_exceeded'
+            : null);
         return {
           ...result,
           stopReason,

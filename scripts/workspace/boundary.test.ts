@@ -8,7 +8,12 @@ import { and, eq } from 'drizzle-orm';
 import { piDomainMount } from '../../src/ai/pi-tool-mount';
 import { agentWorkspaceCapability } from '../../src/capabilities/agent-workspace/manifest';
 import { invokeWorkspace } from '../../src/capabilities/agent-workspace/server/executor';
+import { resolveModelExecutionProvenance } from '../../src/capabilities/practice/grading/server/judge/execution-provenance-resolve';
+import { collectJudgeSandboxEvidence } from '../../src/capabilities/practice/grading/server/judge/sandbox-evidence';
+import { currentModelPins } from '../../src/capabilities/practice/grading/server/model-slice-registry';
+import { tasks } from '../../src/capabilities/task-registry';
 import { setTestConfig } from '../../src/core/config/store';
+import { canonicalHash } from '../../src/core/migration/canonical';
 import { db } from '../../src/db/client';
 import { agent_workspace, ai_task_runs, tool_call_log } from '../../src/db/schema';
 import {
@@ -19,6 +24,7 @@ import { __setPiAdapterForTests } from '../../src/server/ai/execution-adapter';
 import { PiAgentAdapter } from '../../src/server/ai/pi-agent-adapter';
 import { createLoomPiModels } from '../../src/server/ai/pi-models';
 import { streamTaskCollecting } from '../../src/server/ai/runner';
+import { specToolSurface } from '../../src/server/ai/runner-startup';
 import { buildPiDomainAgentTools } from '../../src/server/ai/tools/pi-tools';
 import { registerCapabilityTools } from '../../src/server/ai/tools/register-capability-tools';
 
@@ -385,6 +391,166 @@ test('runner packaging mounts workspace tools into the live loop', async () => {
     assert.match(out.code_sha256, /^[a-f0-9]{64}$/);
     assert.match(out.output_sha256, /^[a-f0-9]{64}$/);
     assert.ok(out.runtime_version?.python, 'runtime version evidence missing');
+  } finally {
+    __setPiAdapterForTests(undefined);
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+// @invariant grading: a maxIterations:1 judge kind mounted with the
+//   sandbox completes a workspace call plus its final answer under the shared
+//   turn margin, and the receipt material the invoker stamps (per-call digests,
+//   runtime, tool_call_ids) is collectable from the run's tool log. The slice
+//   identity must also bind the mounted surface so a tool change re-admits.
+// @fails-if the run dies on error_max_turns, the projected sandbox evidence
+//   lacks the call's digests/runtime, or model_version does not hash the surface.
+test('maxIterations:1 judge uses the sandbox once and the receipt is collectable', async () => {
+  await registerCapabilityTools([agentWorkspaceCapability]);
+  const verdict = JSON.stringify({
+    score: 1,
+    coarse_outcome: 'correct',
+    confidence: 0.9,
+    feedback_md: 'ok',
+    evidence_json: { matched_points: ['p'], missing_points: [] },
+  });
+  let sends = 0;
+  let toolsOnWire: string[] = [];
+  const server = createServer((request, response) => {
+    const chunks: Buffer[] = [];
+    request.on('data', (chunk) => chunks.push(chunk));
+    request.on('end', () => {
+      sends += 1;
+      const body = JSON.parse(Buffer.concat(chunks).toString()) as {
+        tools?: { function?: { name?: string } }[];
+      };
+      toolsOnWire = (body.tools ?? [])
+        .map((tool) => tool.function?.name)
+        .filter((name): name is string => typeof name === 'string');
+      response.writeHead(200, { 'content-type': 'text/event-stream' });
+      const delta =
+        sends === 1
+          ? {
+              role: 'assistant',
+              tool_calls: [
+                {
+                  index: 0,
+                  id: 'call-1',
+                  type: 'function',
+                  function: {
+                    name: 'mcp__loom__workspace_exec',
+                    arguments: JSON.stringify({
+                      runtime: 'python',
+                      code: "print(sum(int(x) for x in open('scores.txt','w') or '3'))",
+                    }),
+                  },
+                },
+              ],
+            }
+          : { role: 'assistant', content: verdict };
+      response.write(
+        `data: ${JSON.stringify({
+          id: 'offline',
+          object: 'chat.completion.chunk',
+          choices: [
+            {
+              index: 0,
+              delta,
+              finish_reason: sends === 1 ? 'tool_calls' : 'stop',
+            },
+          ],
+          usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110 },
+        })}\n\ndata: [DONE]\n\n`,
+      );
+      response.end();
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('missing fixture address');
+  try {
+    const models = await createLoomPiModels();
+    const model = models.getModel('opencode-go', 'deepseek-v4.1-flash');
+    if (!model) throw new Error('offline protocol model unavailable');
+    const port = address.port;
+    const original = models.getModel.bind(models);
+    models.getModel = (provider: string, modelId: string) => {
+      const resolved = original(provider, modelId);
+      if (!resolved) return resolved;
+      return { ...resolved, baseUrl: `http://127.0.0.1:${port}/v1` };
+    };
+    __setPiAdapterForTests(new PiAgentAdapter({ models, agentLoop }));
+    process.env.OPENCODE_API_KEY = 'synthetic-offline-key';
+    setTestConfig({
+      'lane.global.provider': 'opencode-go',
+      'lane.global.model': 'deepseek-v4.1-flash',
+      CLAUDE_CODE_MAX_RETRIES: 0,
+    });
+    const result = await streamTaskCollecting(
+      'SemanticJudgeTask',
+      { answer: 'x', rubric_json: { required_points: ['p'] } },
+      { db },
+      () => {},
+    );
+    assert.ok(toolsOnWire.includes('mcp__loom__workspace_exec'), 'workspace_exec missing on wire');
+    assert.equal(sends, 2, 'judge should have made exactly one sandbox turn plus its answer');
+    // The invoker stamps this projection verbatim into execution.sandbox — the
+    // receipt check below is the same shape the judging run carries.
+    const evidence = await collectJudgeSandboxEvidence(db, result.task_run_id);
+    assert.ok(evidence, 'sandbox evidence missing for a run that called workspace_exec');
+    assert.equal(evidence.tool_call_ids.length, 1);
+    const call = evidence.calls[0];
+    assert.equal(call.tool_name, 'workspace_exec');
+    assert.match(call.code_sha256 ?? '', /^[a-f0-9]{64}$/);
+    assert.match(call.output_sha256 ?? '', /^[a-f0-9]{64}$/);
+    assert.ok(call.runtime_version?.python, 'runtime version evidence missing');
+    // The sealed provenance carries the receipt next to the run identity —
+    // resolveModelExecutionProvenance copies it verbatim, never corroborates it.
+    const sealed = resolveModelExecutionProvenance(
+      {
+        task_kind: 'SemanticJudgeTask',
+        task_run_id: result.task_run_id,
+        input_hash: 'a'.repeat(64),
+        prompt_fingerprint: 'b'.repeat(64),
+        prompt_template_revision: 'rev',
+        sandbox: evidence,
+      },
+      'invoked',
+      {
+        id: result.task_run_id,
+        task_kind: 'SemanticJudgeTask',
+        input_hash: 'a'.repeat(64),
+        provider: 'p',
+        model: 'm',
+        status: 'success',
+        finished_at: new Date(),
+        prompt_fingerprint: 'b'.repeat(64),
+        result_digest: 'c'.repeat(64),
+      },
+    );
+    assert.equal(sealed.kind, 'invoked');
+    const sealedSandbox = sealed.kind === 'invoked' ? sealed.sandbox : undefined;
+    assert.equal(sealedSandbox?.tool_call_ids[0], evidence.tool_call_ids[0]);
+    assert.equal(sealedSandbox?.calls[0]?.code_sha256, evidence.calls[0]?.code_sha256);
+    // Surface descriptor: chat kinds mount the pair; the typed lane mounts none.
+    assert.deepEqual(specToolSurface('SemanticJudgeTask'), [
+      'mcp__loom__workspace_exec',
+      'mcp__loom__workspace_files',
+    ]);
+    assert.deepEqual(specToolSurface('JevScoringDecisionTask'), []);
+    // Slice identity binds the surface: the live pin's model_version must hash
+    // {prompt, toolSurface} with the same descriptor the injection uses.
+    const definition = tasks.AssessmentRuleJudgeTask;
+    const expectedHash = canonicalHash({
+      prompt: definition.prompt,
+      toolSurface: specToolSurface('AssessmentRuleJudgeTask'),
+    });
+    const pin = currentModelPins().get('AssessmentRuleJudgeTask');
+    assert.ok(pin, 'AssessmentRuleJudgeTask pin did not resolve');
+    assert.ok(
+      pin.model_version.includes(expectedHash),
+      `model_version ${pin.model_version} does not carry the surface hash`,
+    );
   } finally {
     __setPiAdapterForTests(undefined);
     server.closeAllConnections();

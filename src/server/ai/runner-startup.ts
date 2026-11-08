@@ -18,6 +18,7 @@ import type { ResolvedProvider } from './providers';
 import type { RunTaskCtx } from './runner-context';
 import type { Options } from './sdk-types';
 import { currentTaskSpendScope } from './task-spend-scope';
+import { getTool } from './tools/registry';
 
 /**
  * Build the per-attempt call spec for the adapter so the three entry points stay
@@ -65,6 +66,23 @@ export function buildQueryOptions(
   return options;
 }
 
+// Each workspace round-trip costs extra agentic turns beyond a spec's declared
+// ceiling (maxIterations:1 judges would hit error_max_turns on their first tool
+// call otherwise). The margin only stops runaway loops — spend and wall-clock
+// stay bounded by the task's own maxCost/timeout budgets.
+const WORKSPACE_TURN_MARGIN = 24;
+
+/**
+ * Spec-level descriptor of the workspace wire surface a kind receives — the
+ * single source shared by runtime injection and the judge model-pin hash so a
+ * surface change invalidates slices exactly when the mount changes.
+ */
+export function specToolSurface(kind: TaskKind): string[] {
+  const def = tasks[kind] as TaskDefinition;
+  if ((def.execution ?? 'chat') !== 'chat') return [];
+  return AGENT_WORKSPACE_DOMAIN_TOOLS.map((name) => toMcpAllowedToolName(name));
+}
+
 /**
  * Every tool-loop task rides with the agent-workspace mount unless the caller
  * explicitly pinned an empty runtime allowlist (authoritativeReply turns keep
@@ -79,6 +97,12 @@ export function workspaceInjectedExecution(
 ): { mounts: PiToolMount[] | undefined; options: Options } {
   if (!ctx || (ctx.allowedTools !== undefined && ctx.allowedTools.length === 0))
     return { mounts: ctx?.piToolMounts, options };
+  // Partial compositions (test harnesses registering only the manifests they
+  // exercise) lack the workspace tools; an unresolvable mount would crash
+  // every attempt at tool build. Production boots the full capability index,
+  // so absence here means the caller never asked for the workspace lane.
+  if (!AGENT_WORKSPACE_DOMAIN_TOOLS.every((name) => getTool(name)))
+    return { mounts: ctx.piToolMounts, options };
   const mount = piDomainMount({
     ctx: {
       db: ctx.db,
@@ -94,12 +118,10 @@ export function workspaceInjectedExecution(
     toolNames: AGENT_WORKSPACE_DOMAIN_TOOLS,
     taskKind: kind,
   });
-  const extraTools = AGENT_WORKSPACE_DOMAIN_TOOLS.map((name) => toMcpAllowedToolName(name));
-  return {
-    mounts: [...(ctx.piToolMounts ?? []), mount],
-    options:
-      options.tools === undefined
-        ? options
-        : { ...options, tools: [...new Set([...options.tools, ...extraTools])] },
-  };
+  const nextOptions: Options = { ...options };
+  if (options.tools !== undefined)
+    nextOptions.tools = [...new Set([...options.tools, ...specToolSurface(kind)])];
+  if (typeof options.maxTurns === 'number')
+    nextOptions.maxTurns = options.maxTurns + WORKSPACE_TURN_MARGIN;
+  return { mounts: [...(ctx.piToolMounts ?? []), mount], options: nextOptions };
 }

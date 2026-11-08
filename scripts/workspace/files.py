@@ -156,17 +156,13 @@ def _exec_policed(runtime):
         try:
             while proc.poll() is None:
                 if usage(root) > _SESSION_CAP:
-                    # The launcher placed us and the interpreter in one group;
-                    # killing the group is what makes the breach stick even if
-                    # the interpreter spawned helpers. We die with it — the C
-                    # supervisor still owns cancel/reap.
+                    # Exit 98 is the explicit quota signal: the C supervisor
+                    # reaps this whole process group (interpreter + helpers)
+                    # and forwards the code — output text alone is forgeable
+                    # by the script, a wrapper exit code is not.
                     sys.stderr.write('workspace_quota_exceeded\n')
                     sys.stderr.flush()
-                    try:
-                        os.killpg(os.getpgrp(), 9)
-                    except (ProcessLookupError, PermissionError):
-                        proc.kill()
-                    return 99
+                    return 98
                 time.sleep(0.2)
             return proc.returncode
         finally:
@@ -227,7 +223,7 @@ def remove(root_fd):
 if sys.argv[1] == 'usage':
     root = os.open('.', _DIR_FLAGS)
     try:
-        print(json.dumps({'bytes': usage(root)}))
+        print(json.dumps({'bytes': usage(root), 'cap': _SESSION_CAP}))
     finally:
         os.close(root)
 elif sys.argv[1] == 'remove':
