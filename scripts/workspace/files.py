@@ -126,13 +126,22 @@ def _file_op(root_fd, op, path):
 
 
 def _version():
+    import importlib
     import platform
     import subprocess
     bash = subprocess.run(['/bin/bash', '--version'], capture_output=True, text=True)
-    return {
+    versions = {
         'python': platform.python_version(),
         'bash': bash.stdout.splitlines()[0] if bash.stdout else 'unknown',
     }
+    # Imported, not read from package metadata: evidence names what a script's
+    # own `import` resolves to under the same -I path.
+    for name in ('sympy', 'numpy'):
+        try:
+            versions[name] = importlib.import_module(name).__version__
+        except Exception:
+            versions[name] = 'unavailable'
+    return versions
 
 
 _SESSION_CAP = 64 * 1024 * 1024

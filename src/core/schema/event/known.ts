@@ -145,7 +145,15 @@ export const SandboxToolCallEvidence = z.object({
   workspace: z.string().optional(),
   code_sha256: z.string().optional(),
   output_sha256: z.string().optional(),
-  runtime_version: z.object({ python: z.string(), bash: z.string() }).optional(),
+  runtime_version: z
+    .object({
+      python: z.string(),
+      bash: z.string(),
+      // Absent on receipts written before the sandbox image carried these libraries.
+      sympy: z.string().optional(),
+      numpy: z.string().optional(),
+    })
+    .optional(),
 });
 const TrustedModelExecution = PromptIdentity.extend({
   version: z.literal(1),

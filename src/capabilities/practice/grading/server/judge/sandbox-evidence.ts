@@ -48,7 +48,7 @@ export async function collectJudgeSandboxEvidence(
   const calls = rows.map((row) => {
     const out = (row.output_json ?? {}) as Record<string, unknown>;
     const input = (row.input_json ?? {}) as Record<string, unknown>;
-    const runtime = out.runtime_version as { python?: unknown; bash?: unknown } | undefined;
+    const runtime = SandboxToolCallEvidence.shape.runtime_version.safeParse(out.runtime_version);
     // exec rows carry both digests directly; a files write's payload digest is
     // computed here from input_json.content (its "script"), its file digest
     // arrives as output_json.sha256.
@@ -70,9 +70,7 @@ export async function collectJudgeSandboxEvidence(
       ...(typeof out.workspace === 'string' ? { workspace: out.workspace } : {}),
       ...(codeSha ? { code_sha256: codeSha } : {}),
       ...(outputSha ? { output_sha256: outputSha } : {}),
-      ...(runtime && typeof runtime.python === 'string' && typeof runtime.bash === 'string'
-        ? { runtime_version: { python: runtime.python, bash: runtime.bash } }
-        : {}),
+      ...(runtime.success && runtime.data ? { runtime_version: runtime.data } : {}),
     };
   });
   return { tool_call_ids: rows.map((row) => row.id), calls };
