@@ -3,7 +3,7 @@
 // no-ops with zero spend while it is off).
 
 import { canonicalProviderName } from '@/ai/task-spec';
-import { type ConfigValue, getConfig } from '@/core/config/store';
+import { type ConfigValue, getConfig, getConfigSource } from '@/core/config/store';
 import { TaskConfigError, readProviderId, resolveTaskBinding } from '@/server/ai/providers';
 import type { JudgeCalibrationConfig } from '../server/judge-calibration-sample-core';
 
@@ -46,10 +46,14 @@ function executedRejudgePair(provider: string, model: string): { provider: strin
     return { provider: canonicalProviderName(binding.provider), model: binding.model };
   } catch (error) {
     if (!(error instanceof TaskConfigError)) throw error;
-    // Binding reads the process pin. An unresolvable pin still names that
-    // provider so the gate's preflight fails on the pin, not the configured pair.
-    const pin = process.env.AI_PROVIDER_OVERRIDE;
-    if (!pin) return { provider, model };
+    // An unresolvable process pin still names that provider so the gate's
+    // preflight fails on the pin, not the configured pair. The pin is the
+    // lane.global.provider value when its source is env.
+    const pin =
+      getConfigSource('lane.global.provider') === 'env'
+        ? getConfig('lane.global.provider')
+        : undefined;
+    if (typeof pin !== 'string' || pin === '') return { provider, model };
     return { provider: canonicalProviderName(pin), model };
   }
 }
