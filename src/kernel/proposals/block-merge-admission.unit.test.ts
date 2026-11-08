@@ -25,6 +25,8 @@ function facts(overrides: Partial<BlockMergeAdmissionFacts> = {}): BlockMergeAdm
     source_document_id: DOC,
     status: 'draft',
     page_spans: [{ page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 } }],
+    ordinal: idSeq - 1,
+    source_asset_ids: [`asset-${Math.ceil(idSeq / 3)}`, 'asset-shared'],
     structured: { id: `n${idSeq}`, role: 'standalone', prompt_text: '题目内容。' },
   };
   return Object.assign(base, overrides);
@@ -33,10 +35,18 @@ function facts(overrides: Partial<BlockMergeAdmissionFacts> = {}): BlockMergeAdm
 function ctxFor(
   blocks: BlockMergeAdmissionFacts[],
   knownDocumentIds: readonly string[] = [DOC],
+  sessionBlocks: BlockMergeAdmissionContext['sessionBlocks'] = new Map(),
 ): BlockMergeAdmissionContext {
+  const resolved =
+    sessionBlocks.size > 0
+      ? sessionBlocks
+      : new Map([
+          [SESSION, blocks.map((b) => ({ id: b.id, ordinal: b.ordinal, status: b.status }))],
+        ]);
   return {
     factsById: new Map(blocks.map((b) => [b.id, b])),
     knownDocumentIds: new Set(knownDocumentIds),
+    sessionBlocks: resolved,
   };
 }
 
@@ -107,8 +117,12 @@ describe('evaluateBlockMergeAdmission', () => {
     expect(verdict.effectiveMergeIds).toEqual([m2.id, m3.id]);
   });
 
-  it('rejects a same-page fragment (adjacency requires the immediately next page)', () => {
-    // Same-page AI proposals stay internal: gap 0 is not ordered adjacency.
+  // @invariant data: a single photographed page must not leave one question split into two blocks
+  // @fails-if the same-page arm disappears or stops admitting bare fragments on contiguous ordinals
+  it('admits a same-page bare fragment continuing the question', () => {
+    // One photographed page can split a question's trailing text into a second
+    // block; an unnumbered bare fragment right after it in reading order is the
+    // continuation, proven by contiguous ordinals instead of page adjacency.
     const primary = facts({
       id: 'p',
       page_spans: [{ page_index: 4, bbox: { x: 0, y: 0, width: 1, height: 1 } }],
@@ -117,7 +131,109 @@ describe('evaluateBlockMergeAdmission', () => {
       id: 'm',
       page_spans: [{ page_index: 4, bbox: { x: 0, y: 0, width: 1, height: 1 } }],
     });
-    expectIneligible([primary, member], [member.id], 'pages_not_adjacent');
+    const verdict = evaluateBlockMergeAdmission(
+      input(primary, [member]),
+      ctxFor([primary, member]),
+    );
+    expect(verdict.eligible).toBe(true);
+  });
+
+  // @invariant data: one-photo sessions (placeholder page 0) still merge a proven continuation
+  // @fails-if the page-0 ambiguity gate stops trusting a shared single source asset
+  it('admits a same-page fragment on a single-asset (one-photo) session', () => {
+    const primary = facts({
+      id: 'p',
+      source_asset_ids: ['asset-1'],
+      page_spans: [{ page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 } }],
+    });
+    const member = facts({
+      id: 'm',
+      source_asset_ids: ['asset-1'],
+      page_spans: [{ page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 } }],
+    });
+    const verdict = evaluateBlockMergeAdmission(
+      input(primary, [member]),
+      ctxFor([primary, member]),
+    );
+    expect(verdict.eligible).toBe(true);
+  });
+
+  // @invariant data: two distinct printed questions on one page must never be merged
+  // @fails-if the same-page arm admits a follower that carries its own question number
+  it('rejects a same-page block carrying an own number (a different question)', () => {
+    const primary = facts({
+      id: 'p',
+      page_spans: [{ page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 } }],
+      source_asset_ids: ['asset-1'],
+    });
+    const member = facts({
+      id: 'm',
+      page_spans: [{ page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 } }],
+      source_asset_ids: ['asset-1'],
+      structured: { id: 'n', role: 'standalone', question_no: '2', prompt_text: '第二题。' },
+    });
+    expectIneligible([primary, member], [member.id], 'conflicting_question_number');
+  });
+
+  // @invariant data: a numberless but self-contained block must not be absorbed into a neighbour
+  // @fails-if the same-page arm merges a follower that still carries options/answers/analysis
+  it('rejects a same-page follower that could stand alone as a question', () => {
+    // A numberless block with its own options/answers is not a bare fragment —
+    // it may be a whole question that merely lost its printed number.
+    const primary = facts({
+      id: 'p',
+      page_spans: [{ page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 } }],
+      source_asset_ids: ['asset-1'],
+    });
+    const member = facts({
+      id: 'm',
+      page_spans: [{ page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 } }],
+      source_asset_ids: ['asset-1'],
+      structured: {
+        id: 'n',
+        role: 'standalone',
+        prompt_text: '完整的一道题。',
+        options: [
+          { label: 'A', text: '甲' },
+          { label: 'B', text: '乙' },
+        ],
+      },
+    });
+    expectIneligible([primary, member], [member.id], 'missing_continuity');
+  });
+
+  // @invariant data: merging across a live block would splice unrelated question content
+  // @fails-if the same-page arm skips the intervening-live-block check on session ordinals
+  it('rejects a same-page pair with a live block between their ordinals', () => {
+    const primary = facts({
+      id: 'p',
+      ordinal: 0,
+      page_spans: [{ page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 } }],
+      source_asset_ids: ['asset-1'],
+    });
+    const member = facts({
+      id: 'm',
+      ordinal: 2,
+      page_spans: [{ page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 } }],
+      source_asset_ids: ['asset-1'],
+    });
+    const between = facts({ id: 'x', ordinal: 1, source_asset_ids: ['asset-1'] });
+    const ctx = ctxFor(
+      [primary, member],
+      [DOC],
+      new Map([
+        [
+          SESSION,
+          [primary, between, member].map((b) => ({
+            id: b.id,
+            ordinal: b.ordinal,
+            status: b.status,
+          })),
+        ],
+      ]),
+    );
+    const verdict = evaluateBlockMergeAdmission(input(primary, [member]), ctx);
+    expect(verdict).toMatchObject({ eligible: false, reason: 'pages_not_adjacent' });
   });
 
   it('rejects a reversed payload chain (sorted adjacency cannot rescue mutation order)', () => {
@@ -288,6 +404,67 @@ describe('evaluateBlockMergeAdmission', () => {
       structured: { id: 'n', role: 'standalone', prompt_text: '第2题 计算下列各式。' },
     });
     expectIneligible([primary, member], [member.id], 'conflicting_question_number');
+  });
+
+  // @invariant data: an ambiguous head (decimal, enumeration, out-of-width 第…题) is neither a number nor its absence — it fails closed like the pre-parser proof did
+  // @fails-if the shared head parser reads an ambiguous head as absent (bare fragment) instead of uncertain
+  it('fails closed on ambiguous heads while a provable number still vetoes', () => {
+    const rows = [
+      { in: '3.14×2 等于多少？', eligible: false, reason: 'missing_continuity' as const },
+      { in: '0.75 化成分数是____', eligible: false, reason: 'missing_continuity' as const },
+      {
+        in: '12.5 米的绳子剪去 3 米，还剩多少米？',
+        eligible: false,
+        reason: 'missing_continuity' as const,
+      },
+      { in: '3、5 两数之和', eligible: false, reason: 'missing_continuity' as const },
+      { in: '3. 5倍的绳子剪去一段……', eligible: false, reason: 'missing_continuity' as const },
+      { in: '３.５ 化成分数是____', eligible: false, reason: 'missing_continuity' as const },
+      {
+        in: '（1）求 x 的值；（2）求 y 的值',
+        eligible: false,
+        reason: 'missing_continuity' as const,
+      },
+      { in: '第三题 计算下列各式。', eligible: false, reason: 'missing_continuity' as const },
+      { in: '第1234题 计算下列各式。', eligible: false, reason: 'missing_continuity' as const },
+      { in: '……接上题最后一问。', eligible: true, reason: undefined },
+      {
+        in: '3. 计算下列各式。',
+        eligible: false,
+        reason: 'conflicting_question_number' as const,
+      },
+      {
+        in: '第3题 计算下列各式。',
+        eligible: false,
+        reason: 'conflicting_question_number' as const,
+      },
+      {
+        in: '（2）求 y 的值',
+        eligible: false,
+        reason: 'conflicting_question_number' as const,
+      },
+    ];
+    for (const row of rows) {
+      const primary = facts({
+        id: 'p',
+        ordinal: 0,
+        page_spans: [{ page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 } }],
+        source_asset_ids: ['asset-1'],
+      });
+      const member = facts({
+        id: 'm',
+        ordinal: 1,
+        page_spans: [{ page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 } }],
+        source_asset_ids: ['asset-1'],
+        structured: { id: 'nm', role: 'standalone', prompt_text: row.in },
+      });
+      const verdict = evaluateBlockMergeAdmission(
+        { primaryBlockId: 'p', mergeBlockIds: [member.id], ingestionSessionId: SESSION },
+        ctxFor([primary, member]),
+      );
+      expect(verdict.eligible).toBe(row.eligible);
+      expect(verdict.reason).toBe(row.reason);
+    }
   });
 
   it('rejects a stem fragment starting a fresh sub sequence (new question)', () => {

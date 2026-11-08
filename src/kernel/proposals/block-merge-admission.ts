@@ -7,13 +7,18 @@
 //      which the accept applier answers softly rather than with the typed 409;
 //   4. page facts are unambiguous: page_spans form a strict +1 sequence in stored
 //      order, and the chain is not entirely the page-0 placeholder stamped by the
-//      docx/Tencent fallbacks;
+//      docx/Tencent fallbacks. A chain entirely on one page is provable only
+//      when its page is unambiguous (one shared source asset for page 0), and
+//      then reads adjacency from stored ordinals instead;
 //   5. adjacent pages follow the order mergeQuestions will mutate (caller mergeIds
-//      order, never re-sorted), each next block starting at prev.max + 1;
+//      order, never re-sorted), each next block starting at prev.max + 1. For a
+//      same-page chain, ordinals must be strictly increasing and contiguous
+//      among the session's live blocks;
 //   6. each adjacent pair has deterministic continuity: the next block has no own
-//      question number, or a same-style sub-number continues by one. A conflicting
-//      own number fails closed, and an unreadable own number is not treated as
-//      absent.
+//      question number, or a same-style sub-number continues by one — and on one
+//      page, even a sub-number continuation is not enough; the follower must
+//      carry no own number at all. A conflicting number fails closed, and an
+//      unreadable own number is not treated as absent.
 //
 // Check the draft arm before the proof arms so a chain that is both non-draft and
 // proof-deficient reports stale. Fail closed on every unknown; model confidence,
@@ -49,6 +54,10 @@ export interface BlockMergeAdmissionFacts {
     bbox: { x: number; y: number; width: number; height: number };
     role?: string;
   }>;
+  /** 0-based reading order inside the session — proves same-page adjacency. */
+  ordinal: number;
+  /** Source assets the block was cut from; one shared asset proves a one-page session. */
+  source_asset_ids: string[];
   structured: StructuredQuestionT | null;
 }
 
@@ -56,6 +65,14 @@ export interface BlockMergeAdmissionContext {
   factsById: ReadonlyMap<string, BlockMergeAdmissionFacts>;
   /** source_document ids that actually resolve (unknown docs fail closed). */
   knownDocumentIds: ReadonlySet<string>;
+  /**
+   * Every block's reading order in the chain's session(s), including non-draft
+   * rows — proves no live block sits between two same-page chain members.
+   */
+  sessionBlocks: ReadonlyMap<
+    string,
+    ReadonlyArray<{ id: string; ordinal: number; status: string }>
+  >;
 }
 
 export interface BlockMergeAdmissionInput {
@@ -107,7 +124,7 @@ export function blockMergeAdmissionInputFromPayload(
 // Question-number parsing (deterministic, stored-structure only)
 // ---------------------------------------------------------------------------
 
-type ParsedQuestionNo =
+export type ParsedQuestionNo =
   | { kind: 'top'; value: number; style: 'digits' | 'cn' | 'prefixed' }
   | { kind: 'sub'; value: number; style: 'paren' | 'suffix' | 'circled' | 'letter' }
   | { kind: 'unknown' };
@@ -188,17 +205,87 @@ export function parseQuestionNo(raw: string | null | undefined): ParsedQuestionN
   return { kind: 'unknown' };
 }
 
+/**
+ * A printed question-number head: 第N题 / N. / （N）/ N). The dotted form
+ * requires a digit NOT to follow the punctuation — `0.75`, `3.14×2`, `12.5 米`
+ * are decimals inside the stem, not numbers, in both ASCII and full-width
+ * digits. The dotted form also requires non-space content after it.
+ */
+const PROMPT_HEAD_QUESTION_NO_RE =
+  /^\s*(?:第\s*(?:\d+|[零一二三四五六七八九十百两]+)\s*题|\d{1,3}\s*[.、．](?![0-9０-９])(?=\s*\S)|[（(]\s*\d{1,3}\s*[)）]|\d{1,3}\s*[)）])/u;
+
+/**
+ * A digit run, a dot-family separator, then another digit: a decimal inside
+ * the stem (`0.75`, `12.5 米`, `３.５`, `3、5`, even a spaced `3. 5`), never a
+ * question number. The head regex above already refuses to match these, but
+ * absence is not provable either — a decimal-led block read as "no number"
+ * would merge into the previous question as a bare fragment, a direction the
+ * proof rejected before this parser existed. Flagging it keeps both callers
+ * conservative.
+ */
+const DECIMAL_HEAD_RE = /^\s*[0-9０-９]+\s*[.、．]\s*[0-9０-９]/u;
+
+/**
+ * The 第…题 arm's numbered width. The pre-unification move regex took only
+ * `\d{1,3}` Arabic digits (`第3题`); a Chinese-numeral head (`第三题`) or a
+ * wider number (`第1234题`) is a shape that parser never moved — uncertain,
+ * not a provable own number and not provable absence.
+ */
+const PREFIXED_HEAD_NUMERAL_RE = /第\s*(\d+|[零一二三四五六七八九十百两]+)\s*题/u;
+
+/**
+ * Another paren-family number token later in the stem, anchored on a
+ * separator (sentence punctuation / whitespace / start) so function-style
+ * `f(2)` or prose references like 「由（2）式」 do not count — a head paren
+ * number followed by one is an inline enumeration like 「（1）…；（2）…」.
+ */
+const INLINE_ENUM_NEXT_NO_RE =
+  /(?:^|[\s；;，,、。:：])(?:[（(]\s*\d{1,3}\s*[)）]|\d{1,3}\s*[)）])/u;
+
+export type PromptHeadQuestionNoMatch = {
+  /**
+   * The head verdict. `top`/`sub` is a provable own number; `{ kind: 'unknown' }`
+   * is the uncertain result — a head-shaped token that proves neither a number
+   * nor its absence: a leading decimal, an inline enumeration like
+   * 「（1）…（2）…」, or a 第…题 head outside the numbered width. Callers treat
+   * uncertain conservatively: the structure move never relocates it, merge
+   * admission fails closed on it.
+   */
+  parsed: ParsedQuestionNo;
+  /** Characters consumed by the head token, leading whitespace included. */
+  matchLength: number;
+};
+
+/**
+ * The single parser for a printed question number leading prompt text, shared
+ * by the structure move (which relocates it into question_no) and merge
+ * admission (which reads it as the block's own number). Three outcomes: a
+ * `top`/`sub` match is a provable number, a `{ kind: 'unknown' }` match is
+ * uncertain, and null means no head-shaped token at all.
+ */
+export function matchPromptHeadQuestionNo(
+  promptText: string | null | undefined,
+): PromptHeadQuestionNoMatch | null {
+  const text = promptText ?? '';
+  const decimal = DECIMAL_HEAD_RE.exec(text);
+  if (decimal) return { parsed: { kind: 'unknown' }, matchLength: decimal[0].length };
+  const m = PROMPT_HEAD_QUESTION_NO_RE.exec(text);
+  if (!m) return null;
+  const head = m[0];
+  const rest = text.slice(head.length);
+  if (/[)）]\s*$/u.test(head) && INLINE_ENUM_NEXT_NO_RE.test(rest)) {
+    return { parsed: { kind: 'unknown' }, matchLength: head.length };
+  }
+  const prefixed = PREFIXED_HEAD_NUMERAL_RE.exec(head);
+  if (prefixed && !/^\d{1,3}$/u.test(prefixed[1])) {
+    return { parsed: { kind: 'unknown' }, matchLength: head.length };
+  }
+  return { parsed: parseQuestionNo(head) ?? { kind: 'unknown' }, matchLength: head.length };
+}
+
 /** A visible question number leading the prompt text (question_no absent). */
 function promptHeadQuestionNo(promptText: string | undefined): ParsedQuestionNo | null {
-  const head = promptText?.slice(0, 24);
-  if (!head) return null;
-  let m = /^\s*(第\s*\d+\s*题|第\s*[零一二三四五六七八九十百两]+\s*题)/u.exec(head);
-  if (m) return parseQuestionNo(m[1]);
-  m = /^\s*(\d{1,3})\s*[.、．]\s*\S/u.exec(head);
-  if (m) return parseQuestionNo(m[1]);
-  m = /^\s*([（(]\s*\d{1,3}\s*[)）])/u.exec(head) ?? /^\s*(\d{1,3}[)）])/u.exec(head);
-  if (m) return parseQuestionNo(m[1]);
-  return null;
+  return matchPromptHeadQuestionNo(promptText)?.parsed ?? null;
 }
 
 // ---------------------------------------------------------------------------
@@ -318,6 +405,55 @@ export function evaluateBlockMergeAdmission(
     if (pages === null) return fail('ambiguous_page_index');
     provenRanges.push({ block: b, min: pages[0], max: pages[pages.length - 1] });
   }
+  // One photographed page can still split a question into adjacent fragments.
+  // The cross-page proof below cannot see that (page facts are degenerate), so
+  // a same-page chain proves adjacency from stored reading order instead, and
+  // proves continuity more strictly: the follower must carry no own number at
+  // all — two numbered blocks on one page are provably different questions.
+  const samePage = provenRanges.every((r) => r.min === r.max && r.min === provenRanges[0].min);
+  if (samePage) {
+    const page = provenRanges[0].min;
+    const sharedAssets = new Set(blocks.flatMap((b) => b.source_asset_ids));
+    // Page-0 spans on a multi-asset chain cannot be told from the docx/Tencent
+    // placeholder stamp, and a page >0 needs more than one asset to exist.
+    if (page === 0 ? sharedAssets.size !== 1 : sharedAssets.size < 2) {
+      return fail('ambiguous_page_index');
+    }
+    const chainIds = new Set(blocks.map((b) => b.id));
+    const siblings = ctx.sessionBlocks.get(blocks[0].ingestion_session_id) ?? [];
+    for (let i = 1; i < blocks.length; i += 1) {
+      const prev = blocks[i - 1];
+      const next = blocks[i];
+      if (next.ordinal <= prev.ordinal) return fail('pages_not_adjacent');
+      const interrupted = siblings.some(
+        (b) =>
+          !chainIds.has(b.id) &&
+          b.status !== 'ignored' &&
+          b.ordinal > prev.ordinal &&
+          b.ordinal < next.ordinal,
+      );
+      if (interrupted) return fail('pages_not_adjacent');
+      const lead = leadingQuestionNo(next);
+      if (lead !== null) {
+        return fail(lead.kind === 'unknown' ? 'missing_continuity' : 'conflicting_question_number');
+      }
+      // A numberless block can still be a whole question that merely lost its
+      // printed number (a real extraction failure mode), so the follower must
+      // be a bare text fragment — own options/answers/analysis/sub-questions
+      // would make it a different question and fail closed.
+      const root = next.structured;
+      if (
+        root === null ||
+        (root.options?.length ?? 0) > 0 ||
+        (root.answers?.length ?? 0) > 0 ||
+        (root.analysis?.length ?? 0) > 0 ||
+        (root.sub_questions?.length ?? 0) > 0
+      ) {
+        return fail('missing_continuity');
+      }
+    }
+    return { eligible: true, reason: undefined, ...base };
+  }
   if (provenRanges.every((r) => r.min === 0)) return fail('ambiguous_page_index');
 
   // Pages follow the mutation order, each block starting exactly one page after
@@ -361,10 +497,31 @@ export async function loadBlockMergeAdmissionContext(
             source_document_id: question_block.source_document_id,
             status: question_block.status,
             page_spans: question_block.page_spans,
+            ordinal: question_block.ordinal,
+            source_asset_ids: question_block.source_asset_ids,
             structured: question_block.structured,
           })
           .from(question_block)
           .where(inArray(question_block.id, ids));
+
+  const sessionBlocks = new Map<string, Array<{ id: string; ordinal: number; status: string }>>();
+  const sessionIds = [...new Set(rows.map((row) => row.ingestion_session_id))];
+  if (sessionIds.length > 0) {
+    const siblings = await db
+      .select({
+        id: question_block.id,
+        ingestion_session_id: question_block.ingestion_session_id,
+        ordinal: question_block.ordinal,
+        status: question_block.status,
+      })
+      .from(question_block)
+      .where(inArray(question_block.ingestion_session_id, sessionIds));
+    for (const row of siblings) {
+      const list = sessionBlocks.get(row.ingestion_session_id) ?? [];
+      list.push({ id: row.id, ordinal: row.ordinal, status: row.status });
+      sessionBlocks.set(row.ingestion_session_id, list);
+    }
+  }
 
   const docIds = [
     ...new Set(
@@ -384,6 +541,7 @@ export async function loadBlockMergeAdmissionContext(
   return {
     factsById: new Map(rows.map((row) => [row.id, row])),
     knownDocumentIds: new Set(docs.map((doc) => doc.id)),
+    sessionBlocks,
   };
 }
 

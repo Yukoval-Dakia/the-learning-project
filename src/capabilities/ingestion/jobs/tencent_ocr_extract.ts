@@ -6,6 +6,7 @@ import {
   type IngestionExtractionProgressPayloadT,
   writeExtractionProgress,
 } from '@/capabilities/ingestion/server/events/extraction-progress';
+import { recordExtractCostIdentities } from '@/capabilities/ingestion/server/extract-cost-identity';
 import { dispatchExtractionFollowUps } from '@/capabilities/ingestion/server/extraction-follow-up';
 import {
   assignFigures,
@@ -291,6 +292,8 @@ async function processOneOcrJob(
     }> = [];
     const glmPages: ReturnType<typeof parseGlmLayoutResponse>['pages'] = [];
     const glmParseWarnings: string[] = [];
+    // Durable paid identities, one per page, in page order.
+    const ocrOperationIds: string[] = [];
     let allPreFigures: PreAttachFigure[] = [];
     // Worst layout across pages, used only by the OCR fallback.
     let ocrLayout: LayoutQuality = 'structured';
@@ -321,6 +324,7 @@ async function processOneOcrJob(
         bossJobId,
         pageIndex,
       });
+      ocrOperationIds.push(pageOperationId);
       pageImages.push({
         data: pageBase64,
         mediaType: asset.mime_type,
@@ -550,6 +554,21 @@ async function processOneOcrJob(
 
     if (blocks.length === 0) {
       throw new PermanentError('structure produced 0 questions');
+    }
+
+    // Durable cost identities for this session's extract lane — best effort:
+    // the write must not fail an otherwise-good extraction (a failed audit write
+    // convention), but a broken read is loud, not silent.
+    try {
+      await recordExtractCostIdentities(deps.db, sessionId, {
+        taskRunIds: structure.task_run_id !== undefined ? [structure.task_run_id] : [],
+        ocrOperationIds,
+      });
+    } catch (err) {
+      console.error('[tencent_ocr_extract] recordExtractCostIdentities failed', {
+        sessionId,
+        err,
+      });
     }
 
     const extractionResult = await deps.db.transaction(async (tx) => {
