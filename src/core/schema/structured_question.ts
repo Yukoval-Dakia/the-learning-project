@@ -101,10 +101,36 @@ export function figureForModel(figure: FigureRefT, origin: FigureOrigin): ModelF
 
 // ---------- StructuredQuestion 抽取证据 ----------
 
+// 学习者手写的红笔勾叉：是学习者自己标的记号，只作作答证据，不进入判分。
+// jsonb-internal，同 kind / student_answer_present 先例，不是 DDL 列。
+export const HandwritingRedMark = z.enum(['check', 'cross', 'mixed']);
+export type HandwritingRedMarkT = z.infer<typeof HandwritingRedMark>;
+
 export const HandwriteInfo = z.object({
   text: z.string(),
-  bbox: BBox,
+  /** Absent when the page-local box could not be validated; never a fake zero box. */
+  bbox: BBox.optional(),
+  /** 该题作答区域的红色勾/叉；'mixed' = 同时有勾和叉。缺省 = 未观测到红笔勾叉。 */
+  red_ink: HandwritingRedMark.optional(),
+  /** 转写文本本身是红笔（例如红笔订正），不是黑/蓝笔作答。 */
+  red_text: z.boolean().optional(),
+  /** 转写置信度；缺省 = 未知，不冒充高置信。 */
+  confidence: z.number().min(0).max(1).optional(),
+  /** 模型对该区域的补充说明；只作证据，不进作答文本。 */
+  note: z.string().optional(),
 });
+
+/**
+ * Whole-pass trace outcome, written on the block root. `failed` means the
+ * handwriting model never produced usable evidence (provider or parse failure),
+ * which must stay distinguishable from a successful pass that saw no handwriting.
+ * jsonb-internal, same precedent as the per-node evidence above.
+ */
+export const HandwritingTraceOutcome = z.object({
+  status: z.enum(['completed', 'failed']),
+  reason: z.string().optional(),
+});
+export type HandwritingTraceOutcomeT = z.infer<typeof HandwritingTraceOutcome>;
 
 export const TencentGrading = z.object({
   IsCorrect: z.boolean(),
@@ -115,6 +141,8 @@ export const TencentGrading = z.object({
 
 export const ExtractionEvidence = z.object({
   handwriting: z.array(HandwriteInfo).optional(),
+  /** Whole-pass trace outcome on the block root; absent = this path did not run. */
+  handwriting_trace: HandwritingTraceOutcome.optional(),
   tencent_grading: TencentGrading.optional(),
 });
 

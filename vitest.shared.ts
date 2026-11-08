@@ -31,6 +31,7 @@ export const fastTestInclude = [
   'server/app.unit.test.ts',
   'server/start/auth.unit.test.ts',
   'src/capabilities/ingestion/server/docx/route-classify.test.ts',
+  'src/capabilities/ingestion/server/handwriting-trace.runner.test.ts',
   'src/capabilities/ingestion/server/structure-normalize.unit.test.ts',
   'src/capabilities/ingestion/server/tencent_mark_parser.unit.test.ts',
   'src/capabilities/notes/tasks/note-generate-output.unit.test.ts',

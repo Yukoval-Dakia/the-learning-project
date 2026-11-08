@@ -21,6 +21,12 @@ import {
   parseGlmLayoutResponse,
   renderGlmHint,
 } from '@/capabilities/ingestion/server/glm_ocr_parser';
+import {
+  applyHandwritingTraces,
+  collectHandwritingLeaves,
+  markHandwritingTraceFailure,
+  runHandwritingTrace,
+} from '@/capabilities/ingestion/server/handwriting-trace';
 import { writeIngestionOperationEvent } from '@/capabilities/ingestion/server/operation-store';
 import {
   redactIngestionText,
@@ -77,6 +83,13 @@ function bboxCenterPosition(bbox: { x: number; y: number; width: number; height:
 
 export type TencentOcrJobData = { sessionId: string; operationId?: string };
 
+/**
+ * In-job attempts for the handwriting pass. A provider wobble must not strand a
+ * page's handwriting until a manual rescue; two attempts bound the paid retry
+ * without inventing a sweep. A real terminal timeout is not shortened here.
+ */
+const HANDWRITING_TRACE_ATTEMPTS = 2;
+
 export type TencentOcrDeps = {
   db: Db;
   r2: R2Client;
@@ -91,6 +104,8 @@ export type TencentOcrDeps = {
   engine?: 'glm' | 'tencent';
   /** VLM StructureTask seam. Defaults to runStructureTask. */
   runStructureFn?: typeof runStructureTask;
+  /** Per-question handwriting trace seam. Defaults to runHandwritingTrace. */
+  runHandwritingTraceFn?: typeof runHandwritingTrace;
 };
 
 export function buildTencentOcrHandler(
@@ -491,6 +506,63 @@ async function processOneOcrJob(
       usedVlmPath = false;
     }
     warnings.push(...structure.warnings);
+
+    // Per-question handwriting evidence for captured answers (YUK-1994 slice 4).
+    // Runs on both VLM-owned and OCR-fallback structures: a provider wobble must not
+    // permanently lose this page's handwriting. The structure's
+    // `student_answer_present` signal is advisory and can miss faint writing
+    // (YUK-1991), so the trace pass reads the answer areas itself. An outage leaves
+    // the question enrollable and the handwriting as pixels, never as a fabricated
+    // answer. Traces land in extraction_evidence.handwriting before figure binding so
+    // a figure overlapping traced handwriting carries the learner-handwriting marker;
+    // the figure itself is still attached.
+    const runHandwritingTraceFn = deps.runHandwritingTraceFn ?? runHandwritingTrace;
+    const traceLeaves = collectHandwritingLeaves(structure.questions);
+    if (traceLeaves.length > 0) {
+      const leaves = traceLeaves.map(({ index, node }) => ({
+        index,
+        page_index: node.page_index ?? 0,
+        question_no: node.question_no ?? null,
+        prompt_text: node.prompt_text.slice(0, 400),
+      }));
+      if (!usedVlmPath) {
+        warnings.push(
+          `HandwritingTraceTask ran on ${engine === 'glm' ? 'GLM' : 'Tencent'} fallback structure; leaves are page-scoped rather than per-question`,
+        );
+      }
+      let lastTraceError: unknown;
+      for (let attempt = 1; attempt <= HANDWRITING_TRACE_ATTEMPTS; attempt++) {
+        try {
+          const traced = await runHandwritingTraceFn({
+            pageImages,
+            pageCount: assetIds.length,
+            leaves,
+            db: deps.db,
+            ctx: { r2: deps.r2 },
+          });
+          const applied = applyHandwritingTraces(structure.questions, traced);
+          warnings.push(...traced.warnings);
+          warnings.push(...applied.warnings);
+          lastTraceError = undefined;
+          break;
+        } catch (err) {
+          lastTraceError = err;
+          if (attempt < HANDWRITING_TRACE_ATTEMPTS) {
+            warnings.push(
+              `HandwritingTraceTask attempt ${attempt} failed; retrying (${err instanceof Error ? err.message : String(err)})`,
+            );
+          }
+        }
+      }
+      if (lastTraceError !== undefined) {
+        const message =
+          lastTraceError instanceof Error ? lastTraceError.message : String(lastTraceError);
+        markHandwritingTraceFailure(structure.questions, message);
+        warnings.push(
+          `HandwritingTraceTask unavailable after ${HANDWRITING_TRACE_ATTEMPTS} attempts (${message}); student work stays pixel evidence without per-question text`,
+        );
+      }
+    }
 
     // Bind only evidenced ownership; ambiguous crops stay source assets.
     let figureRefs: FigureRefT[];
