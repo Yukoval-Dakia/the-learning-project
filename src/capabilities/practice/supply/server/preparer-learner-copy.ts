@@ -5,7 +5,8 @@
 //   than one window (e.g. a bare `x=2`) is too generic to tell a copy from a coincidence;
 // - a question the learner got wrong must not come back as the new prompt; a new parameter or
 //   interval in the same function family is a different prompt;
-// - once learner causes were read, the explanation must not cite「常见错因」as its source.
+// - once learner causes were read, a draft citing only「常见错因」ignored them; a draft that cites
+//  「你近期的错因」somewhere may still label other parts as common errors.
 import { inArray } from 'drizzle-orm';
 import type { Db } from '@/db/client';
 import { question } from '@/db/schema';
@@ -99,9 +100,10 @@ export function createLearnerMaterialGuard(db: Db) {
         return 'learner_question_reused: 这是学习者做错的原题，换参数或换区间重出。';
       if (
         readLearnerCauses &&
-        explanations.some((text) => text.includes('常见错因') && !text.includes('你近期的错因'))
+        explanations.some((text) => text.includes('常见错因')) &&
+        !explanations.some((text) => text.includes('你近期的错因'))
       )
-        return 'source_label_mismatch: 本次读到了该学习者的错因，用到时来源写「来源：你近期的错因」；只有没用学习者数据时才写「常见错因」。改正后再保存。';
+        return 'source_label_mismatch: 本次读到了该学习者的错因，草稿却只标了「常见错因」。用到学习者错因的部分写「来源：你近期的错因」，确实没用学习者数据的部分才写「常见错因」。改正后再保存。';
       return null;
     },
   };
