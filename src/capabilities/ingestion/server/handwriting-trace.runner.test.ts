@@ -17,7 +17,6 @@ vi.mock('@/server/ai/log', () => ({
   writeAiTaskRunRetried: vi.fn(async () => true),
   writeCostLedger: vi.fn(async () => {}),
   writeAiTaskAttemptFinished: vi.fn(async () => true),
-  markAiTaskRunOutputInvalid: vi.fn(async () => true),
 }));
 
 import { __setPiAdapterForTests } from '@/server/ai/execution-adapter';
