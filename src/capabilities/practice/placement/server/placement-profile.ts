@@ -95,9 +95,8 @@ export async function readPlacementProfile(
     // per-KC caution/speed-accuracy descriptor (display-only; absent for KCs
     // the nightly batch hasn't reached the usage gate on).
     readLearnerAxisStates(db, scope),
-    // resolves null (NO-OP, no DB read) unless DAY_ONE_PRIOR_ENABLED && the
-    // native binding is loadable. Null ⇒ no field added below ⇒ this response
-    // stays byte-identical to today (the regression anchor).
+    // Null when the scope's prerequisite graph is rejected. A present value is
+    // the complete labeled prior; this read does not assemble it.
     loadDayOnePriors(db, scope),
   ]);
   const nameById = new Map(nameRows.map((r) => [r.id, r.name]));
@@ -117,8 +116,6 @@ export async function readPlacementProfile(
           provenance: ax.provenance,
         }
       : undefined;
-    // undefined whenever dayOnePriors is null (flag off / binding absent) → key
-    // never added (byte-identical-off).
     const dop = dayOnePriors?.get(id);
     if (!m) {
       const row: PlacementProfileKc = { id, name, tested: false, evidence_count: 0 };
