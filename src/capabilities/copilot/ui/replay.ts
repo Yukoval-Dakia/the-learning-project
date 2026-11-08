@@ -41,6 +41,8 @@ export type ReplayPrimaryView = CopilotPrimaryView;
 
 export interface ReplayTurn {
   confirmation?: unknown;
+  /** The server's word: this failed turn can be sent again in place. */
+  retryable?: boolean;
   public_prose?: PublicProse;
   role: ReplayTurnRole;
   derivation_policy?: DerivationPolicyT;
@@ -66,6 +68,7 @@ export interface ReplayTurn {
 
 export interface ReplayChatMessage {
   confirmation?: ConfirmationProjection;
+  retryable?: boolean;
   confirmationIncompatible?: boolean;
   public_prose?: PublicProse;
   id: string;

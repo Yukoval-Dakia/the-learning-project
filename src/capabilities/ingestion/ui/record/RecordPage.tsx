@@ -74,7 +74,13 @@ export default function RecordPage({ navigate, getQuery, setQuery }: RecordPageP
 
         <DraftSheet onStarted={started} />
         {openId && (
-          <RecordingSheet key={openId} sessionId={openId} onClose={close} navigate={navigate} />
+          <RecordingSheet
+            key={openId}
+            sessionId={openId}
+            onClose={close}
+            onOpen={open}
+            navigate={navigate}
+          />
         )}
 
         <HistoryList openId={openId} visited={visited} onOpen={open} />

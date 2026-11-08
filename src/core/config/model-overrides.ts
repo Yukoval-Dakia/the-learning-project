@@ -1,13 +1,23 @@
 // 模型覆盖选择链的唯一实现（纯模块，YUK-1869 片 3）。
 //
-// 本模块只拥有「覆盖值的选择与来源」：给定各层已解析的结构化值，逐字段决定
-// provider/model 来自哪一层、六规则标签是哪一条、reasoning 请求的层级与来源，
-// 或返回结构化配置错误。它不读 DB / env / task catalog / SDK / 凭据；模型是否存在、
-// 能力与 reasoning wire 映射仍由 AI owner 的 resolver 执行，预算仍归 task-budget，
-// 版本身份仍归 pin owner。
+// 本模块只拥有「覆盖值的选择与来源」与全局任务默认 pair 的唯一定义：给定各层
+// 已解析的结构化值，逐字段决定 provider/model 来自哪一层、六规则标签是哪一条、
+// reasoning 请求的层级与来源，或返回结构化配置错误。它不读 DB / env / task catalog /
+// SDK / 凭据；模型是否存在、能力与 reasoning wire 映射仍由 AI owner 的 resolver
+// 执行，预算仍归 task-budget，版本身份仍归 pin owner。
 //
 // 调用方（providers 运行时、write 事务终态校验、admin 读面、scoped lane reader）
 // 只负责把各自的事实投影成这里的输入并把结构化错误翻成自己的错误类型与文案。
+
+/**
+ * 全局任务默认模型：未显式绑定 provider/model 的任务继承这一对。
+ * 任务装配（src/ai/owned-task-specs.ts）把它补进 definition；改这里会影响所有
+ * 未显式绑定的任务。专用协议任务在各自 tasks/** 里保留显式绑定。
+ */
+export const DEFAULT_TASK_MODEL = Object.freeze({
+  defaultProvider: 'opencode-go',
+  defaultModel: 'deepseek-v4.1-flash',
+} as const);
 
 /** 选择链的六个来源标签（run 回执 selection_rule / 配置页 effective）。 */
 export type TaskSelectionRule =

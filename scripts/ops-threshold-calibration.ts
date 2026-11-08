@@ -1,13 +1,10 @@
-// ops:threshold-calibration — read-only distance-distribution replay for three embedding
+// ops:threshold-calibration — read-only distance-distribution replay for two embedding
 // thresholds that shipped untuned.
 //
 //   Axis A — MATCH_THRESHOLD: question→KC match-or-propose ceiling. Replays production order:
 //            global top-K retrieval first, then the effective-domain subject gate. An assigned
 //            in-domain KC ranked beyond the window is counted as retrieval-starved, not accepted.
 //   Axis B — DEDUP_DISTANCE_MAX: KC↔KC near-duplicate ceiling for dedup merge proposals.
-//   Axis C — MATCHER_COSINE_MAX_DISTANCE: KC-centric query→pool. Recall is same-KC by
-//            construction, so a cross-KC wrong serve is impossible; the ceiling only trades
-//            serve-pool against residual generation.
 //
 // NEVER WRITES and never flips a threshold. It reads vectors + the auto-tag event log, replays
 // distances in memory, and prints n/quantiles/suggested bands. Threshold values are read from the
@@ -474,104 +471,6 @@ export function analyzeDedupAxis(corpus: Corpus): AxisResult {
   };
 }
 
-/**
- * Axis C — KC-centric query→pool. Recall is poolFetch(knowledgeId, activeOnly:false): every
- * question carrying the KC, drafts included. Cross-KC candidates are structurally excluded, so
- * there is no negative distribution; the ceiling only trades serving a pool candidate against
- * starving the demand into residual generation. Evidence is KC→own-question distances plus same-KC
- * pair cohesion and the at-ceiling servable/starved split.
- */
-export function analyzeMatcherAxis(corpus: Corpus, ceiling: number): AxisResult {
-  // poolFetch(activeOnly:false) recalls drafts too: the pool is all embedded questions.
-  const pool = corpus.questions;
-
-  // Group pool questions by assigned KC — one entry per poolFetch(knowledgeId) pool.
-  const byKc = new Map<string, number[]>();
-  for (let i = 0; i < pool.length; i++) {
-    for (const kc of pool[i].knowledge_ids) {
-      const list = byKc.get(kc) ?? [];
-      list.push(i);
-      byKc.set(kc, list);
-    }
-  }
-
-  const sameKcPairs: number[] = [];
-  let nanDistances = 0;
-  const seenPair = new Set<string>();
-  for (const members of byKc.values()) {
-    for (let a = 0; a < members.length; a++) {
-      for (let b = a + 1; b < members.length; b++) {
-        const key = `${members[a]}:${members[b]}`;
-        if (seenPair.has(key)) continue; // a pair sharing TWO KCs counts once
-        seenPair.add(key);
-        const d = cosineDistance(pool[members[a]].embedding, pool[members[b]].embedding);
-        if (Number.isNaN(d)) nanDistances++;
-        else sameKcPairs.push(d);
-      }
-    }
-  }
-
-  // Per-KC distance to its own pool questions: the recall set production thresholds on. The
-  // at-ceiling split asks whether demand is servable from the pool or starved into residual.
-  const kcToOwn: number[] = [];
-  let kcWithPool = 0;
-  let servable = 0; // ≥1 own pool question ≤ ceiling → demand fillable from pool
-  let starved = 0; // every own pool question > ceiling → residual generation
-  for (const kc of corpus.kcs) {
-    const members = byKc.get(kc.id);
-    if (!members || members.length === 0) continue;
-    kcWithPool++;
-    let anyUnderCeiling = false;
-    for (const qi of members) {
-      const d = cosineDistance(kc.embedding, pool[qi].embedding);
-      if (Number.isNaN(d)) {
-        nanDistances++;
-        continue;
-      }
-      kcToOwn.push(d);
-      if (d <= ceiling) anyUnderCeiling = true;
-    }
-    if (anyUnderCeiling) servable++;
-    else starved++;
-  }
-
-  const sameSorted = sameKcPairs.slice().sort((a, b) => a - b);
-  const ownSorted = kcToOwn.slice().sort((a, b) => a - b);
-  const grid = [0.15, 0.25, 0.35, 0.45, 0.55, 0.65];
-
-  // Serve-side only: no cross-KC negative exists. A lower ceiling starves more demands into
-  // residual; a higher one serves weaker same-KC candidates.
-  const own = summarize(ownSorted);
-  const band =
-    Number.isFinite(own.p50) && Number.isFinite(own.p90)
-      ? `[${fmt(own.p50)}, ${fmt(own.p90)}] — ceiling ≥ p90 serves ~90% of pool candidates; ` +
-        'below p50 over half of every pool starves into residual (no cross-KC bound exists)'
-      : 'insufficient data';
-
-  return {
-    summaries: {
-      'q↔q same-KC pairs (pool cohesion)': summarize(sameSorted),
-      'KC→own pool questions (query proxy)': summarize(ownSorted),
-    },
-    gridFractions: {
-      'same-KC pairs under ceiling': Object.fromEntries(
-        grid.map((g) => [`<=${g}`, fractionUnder(sameSorted, g)]),
-      ),
-      'KC→own pool questions under ceiling': Object.fromEntries(
-        grid.map((g) => [`<=${g}`, fractionUnder(ownSorted, g)]),
-      ),
-    },
-    extras: {
-      'embedded questions in matcher recall pool (drafts included, activeOnly:false)': pool.length,
-      'NaN distances (zero-norm vector)': nanDistances,
-      'KCs with ≥1 pool question': kcWithPool,
-      [`at ceiling ${ceiling}: servable (≥1 pool candidate ≤ ceiling)`]: servable,
-      [`at ceiling ${ceiling}: starved (all pool candidates > ceiling → residual)`]: starved,
-      'suggested band on KC-query proxy (serve-side only, no negative bound)': band,
-    },
-  };
-}
-
 // ─────────────────────────────────────────────────────────────────────────────────────
 // Report
 // ─────────────────────────────────────────────────────────────────────────────────────
@@ -617,9 +516,6 @@ export async function runCli(args: string[] = process.argv.slice(2)): Promise<nu
   const { dedupDistanceMax } = await import('@/capabilities/knowledge/server/dedup-flags');
   const MATCH_THRESHOLD = matchThreshold();
   const DEDUP_DISTANCE_MAX = dedupDistanceMax();
-  const { MATCHER_COSINE_MAX_DISTANCE } = await import(
-    '@/capabilities/practice/question-bank/server/quiz/matcher'
-  );
 
   const url = env.AUDIT_READ_DATABASE_URL ?? env.DATABASE_URL;
   const usingAuditUrl = env.AUDIT_READ_DATABASE_URL != null;
@@ -639,7 +535,6 @@ export async function runCli(args: string[] = process.argv.slice(2)): Promise<nu
   try {
     const corpus = await loadCorpus(sql);
     const tagged = corpus.questions.filter((q) => q.knowledge_ids.length > 0).length;
-    // Corpus descriptor only; axis C reports its own recall-pool count (drafts included).
     const nonDraft = corpus.questions.filter((q) => q.draft_status !== 'draft').length;
 
     const axes: Array<[ThresholdSpec, AxisResult]> = [
@@ -660,15 +555,6 @@ export async function runCli(args: string[] = process.argv.slice(2)): Promise<nu
           source: 'dedup-flags.ts / KC_DEDUP_DISTANCE_MAX',
         },
         analyzeDedupAxis(corpus),
-      ],
-      [
-        {
-          axis: 'Axis C — quiz matcher pool',
-          name: 'MATCHER_COSINE_MAX_DISTANCE',
-          current: MATCHER_COSINE_MAX_DISTANCE,
-          source: 'matcher.ts (hard const)',
-        },
-        analyzeMatcherAxis(corpus, MATCHER_COSINE_MAX_DISTANCE),
       ],
     ];
 

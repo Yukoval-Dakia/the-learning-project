@@ -319,6 +319,7 @@ async function runSolveHintAttempt(params: PlanSolveHintParams): Promise<SolveHi
       kind: 'hint',
       impact: 'unknown',
       contentDigest: `sha256:${canonicalHash(sealed.text_md)}`,
+      dose: hintIndex,
     });
   return {
     text_md: sealed.text_md,
@@ -604,8 +605,7 @@ async function buildSolveHintFallback(params: {
         source: reference.source,
         text_md: reference.text_md,
         generated_on_demand: false,
-        disclosure_md:
-          '提示生成失败，这是该题封存的参考材料（非本次 AI 生成）。查看参考解记为非独立完成。',
+        disclosure_md: '提示生成失败，这是该题封存的参考材料（非本次 AI 生成）。',
       },
       text_md: reference.text_md,
       reference_available: true,
@@ -641,7 +641,7 @@ async function buildSolveHintFallback(params: {
   const disclosures = ['本条为确定性文本，非 AI 生成。'];
   if (reference) {
     disclosures.push(
-      '本题有封存参考解 —— 按提示阶梯规则当前阶不在此展开；走「直接看完整解」（记为非独立完成）可查看。',
+      '本题有封存参考解 —— 按提示阶梯规则当前阶不在此展开；走「直接看完整解」可查看。',
     );
   }
   const helpText = lines.join('\n\n');
@@ -653,6 +653,7 @@ async function buildSolveHintFallback(params: {
       kind: 'hint',
       impact: 'unknown',
       contentDigest: `sha256:${canonicalHash(helpText)}`,
+      dose: hintIndex,
     });
   }
   return {

@@ -125,6 +125,24 @@ export async function revertAutoEnrolledBlock(
         sessionId: params.sessionId,
         now,
       });
+    } else if (block.imported_attempt_event_id) {
+      // Captured work keeps its own immutable attempt (record origin is the
+      // record_capture event). Withdrawing only the record would leave the attempt in
+      // the learner's timeline, so the linked attempt is withdrawn with the same
+      // correction.
+      const [capturedAttempt] = await tx
+        .select({ action: event.action })
+        .from(event)
+        .where(eq(event.id, block.imported_attempt_event_id));
+      if (capturedAttempt?.action === 'experimental:assessment_attempt') {
+        await withdrawCapturedOccurrence(tx, {
+          originalAttemptEventId: block.imported_attempt_event_id,
+          correctionEventId: retractEventId,
+          blockId: block.id,
+          sessionId: params.sessionId,
+          now,
+        });
+      }
     }
     await writeEvent(tx, {
       id: retractEventId,

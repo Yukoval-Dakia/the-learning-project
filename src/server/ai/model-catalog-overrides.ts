@@ -72,8 +72,8 @@ const overrides: Partial<Record<Provider, Record<string, CatalogOverride>>> = {
     'deepseek-v4.1-flash': {
       when: 'missing',
       reason:
-        'OpenDesign dev structured submit accepted named tool_choice with high reasoning on 2026-11-07; task_run_id at1ab43yazalsqh6zpf3a771, all_units_accepted. This route does not inherit OpenCode Go forced-tool restrictions.',
-      facts: { forcedToolChoice: true },
+        'OpenDesign accepts named tool_choice (2026-11-07 dev run all_units_accepted), but the 2026-11-08 forced-vs-auto watch on wired requests measured markup residue ("key">, </parameter>, </｜DSML｜) only under forced: 4/13 vs 0/13 at equal clean delivery 3/13 vs 3/13, auto halving output tokens and cap hits.',
+      facts: { forcedToolChoice: false },
     },
   },
   'opencode-go': {

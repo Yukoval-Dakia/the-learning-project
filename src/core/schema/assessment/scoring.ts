@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { ConjectureProbeSpecV2 } from '../business';
 import { isInteriorGap } from './position-gap';
 import type { ResponseSlotT, ResponseSpecT, SelectSlotT } from './response';
-import { ScoringRule, validateScoringRule } from './scoring-rule';
+import { ScoringRule, validateScoringRule, validateScoringRuleWrongResponse } from './scoring-rule';
 import type { QuestionGroupStructureT } from './structure';
 
 // ====================================================================
@@ -361,6 +361,7 @@ export interface ScoringBasisIssue {
     | 'rule_item_not_in_key'
     | 'rule_exceeds_unit_points'
     | 'rule_key_response_not_full_marks'
+    | 'rule_wrong_response_full_marks'
     | 'rubric_criterion_duplicated'
     | 'rubric_award_out_of_range'
     | 'rubric_points_mismatch';
@@ -673,6 +674,41 @@ export function validateScoringBasis(
         code: 'weights_must_cover_units_exactly',
         detail: `weighted_sum weights must cover units exactly once; missing=${missing.join(',')} extra=${extra.join(',')}`,
       });
+    }
+  }
+  return issues;
+}
+
+/**
+ * 入口加查（YUK-1468）：完全错误的作答不得在规则下拿满分。只在提交/准入
+ * 路径调用（submit_question 提交闸、edit_question 预览、check_bank、
+ * question-bank 准入）——判分（evaluation.ts）、迁移保真
+ * （snapshot-fidelity.ts）、serving 门与读模型共用 validateScoringBasis，
+ * 本检查绝不进那些读侧路径：存量已发布规则照冻结契约原样判分。
+ * 只覆盖 select_key/blank_key 单元（rule 的唯二合法载体）；rubric /
+ * rule_reference 等无 typed rule，不在本检查范围。
+ */
+export function wrongResponseFullMarksIssues(basis: ScoringBasisT): ScoringBasisIssue[] {
+  const issues: ScoringBasisIssue[] = [];
+  for (const unit of basis.units) {
+    if (unit.rule == null || unit.points == null) continue;
+    if (unit.criterion.kind === 'select_key') {
+      issues.push(
+        ...validateScoringRuleWrongResponse(unit.rule, {
+          unitId: unit.scoring_unit_id,
+          points: unit.points,
+          facts: 'set',
+          keyIds: unit.criterion.accepted_item_ids,
+        }),
+      );
+    } else if (unit.criterion.kind === 'blank_key') {
+      issues.push(
+        ...validateScoringRuleWrongResponse(unit.rule, {
+          unitId: unit.scoring_unit_id,
+          points: unit.points,
+          facts: 'single',
+        }),
+      );
     }
   }
   return issues;

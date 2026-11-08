@@ -25,6 +25,7 @@ import {
   readAutomaticServingDecision,
   revisionRowToContract,
 } from '@/kernel/records/assessment-issuance';
+import { encodeBankRef } from '../../../question-bank/public';
 import { readPaperSections } from '../paper-sections';
 
 export const PaperAssessmentBinding = z.object({
@@ -94,10 +95,14 @@ type PaperToolState = ReturnType<typeof Artifact.parse>['tool_state'];
 
 function listPaperSlots(state: PaperToolState) {
   const sections = readPaperSections(state);
+  const refs = z
+    .record(z.string(), z.string())
+    .parse(state?.session_meta?.bank_selection_refs ?? {});
   return sections.length
     ? sections.flatMap((section, sectionIndex) =>
         section.assignments.map((a) => ({
           question_id: a.question_id,
+          bank_ref: refs[a.question_id],
           part_ref: a.part_ref ?? null,
           section_index: sectionIndex,
           knowledge_focus: section.knowledge_focus,
@@ -116,7 +121,7 @@ function listPaperSlots(state: PaperToolState) {
 /** The frozen current revision and part scope a paper slot would be issued at. */
 async function resolvePaperSlotRevision(
   tx: Tx,
-  slot: { question_id: string; part_ref: string | null },
+  slot: { question_id: string; part_ref: string | null; bank_ref?: string },
   groupId: string,
 ) {
   const [lifecycle] = await tx
@@ -130,6 +135,15 @@ async function resolvePaperSlotRevision(
     .from(question_revision)
     .where(eq(question_revision.revision_id, lifecycle.current_revision_id));
   if (!revision) throw new ApiError('unpublished', 'paper revision is unavailable', 409);
+  if (
+    slot.bank_ref &&
+    slot.bank_ref !== encodeBankRef(revision.revision_id, revision.integrity_digest)
+  )
+    throw new ApiError(
+      'coordinate_mismatch',
+      'the searched question revision changed; select it again',
+      409,
+    );
   const partId = slot.part_ref ?? slot.question_id;
   const partIds = revision.structure.parts.some((part) => part.part_id === partId)
     ? [partId]

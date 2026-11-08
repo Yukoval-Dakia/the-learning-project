@@ -4,8 +4,6 @@
 // Evidence: tlp-docs/audit/2026-11-07-output-tokens-by-task.md (2026-11-07).
 export const TASK_OUTPUT_CAP_TOKENS: Readonly<Record<string, number>> = {
   AttributionRerankTask: 16384,
-  BankConditionVerifyTask: 32768,
-  BankRequirementInterpretTask: 16384,
   BlockAssemblyTask: 16384,
   CoachTask: 28672,
   ColdStartPlacementBridgeTask: 16384,

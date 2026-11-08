@@ -5,6 +5,12 @@ import { orchestrateCascadeRevert } from '@/server/revert/cascade-revert';
 
 import type { PgBoss } from 'pg-boss';
 import { capabilities } from '@/capabilities';
+import {
+  CUSTOM_PROVIDERS_WATCH_INTERVAL_MS,
+  hydrateCustomProviders,
+  startCustomProvidersWatch,
+} from '@/core/config/server/custom-providers-hydrate';
+import { hydrateConfigFromDb, startConfigRefresh } from '@/core/config/server/hydrate';
 import type { Db } from '@/db/client';
 import { hydrateSubjectRegistryFromDb } from '@/kernel/read-models/subject-hydration';
 import { recoverToolOperationsOnBoot } from '@/kernel/tools/tool-operations';
@@ -19,18 +25,13 @@ import { resolveTaskProvider } from '@/server/ai/providers';
 import { createBoss, isQueueCreateRace, markBossStarted } from '@/server/boss/client';
 import { registerHandlers } from '@/server/boss/handlers';
 import { reconcileStuckAiTaskRuns } from '@/server/boss/handlers/ai_task_run_reconcile';
+import { AGENT_WORKSPACE_SWEEP_QUEUE } from '@/server/boss/queue-names';
 import { registerCapabilityJobs } from '@/server/boss/register-capability-jobs';
 import { sendVerifyDispatchStartupRecovery } from '@/server/boss/verify-dispatch-recovery';
-import {
-  CUSTOM_PROVIDERS_WATCH_INTERVAL_MS,
-  hydrateCustomProviders,
-  startCustomProvidersWatch,
-} from '@/server/config/custom-providers-hydrate';
-import { hydrateConfigFromDb, startConfigRefresh } from '@/server/config/hydrate';
-import { startSubjectRefresh } from '@/server/config/subject-refresh';
 import { mountSubscriptionDispatch } from '@/server/events/subscriptions/dispatch-mount';
 import { waitForRunnableEpoch } from '@/server/migration/contract-epoch/epoch';
 import { registerOrchestrator } from '@/server/orchestration/register';
+import { startSubjectRefresh } from '@/subjects/server/refresh';
 
 export type StartBossWorkerOptions = {
   /** Epoch-gate poll interval. Tests pass a short value. */
@@ -109,6 +110,9 @@ export async function startBossWorker(
   // After the verifier queues exist. The recover worker is mounted earlier, so a send
   // before those queues exist throws and the drain waits for the nightly cron.
   await sendVerifyDispatchStartupRecovery(boss);
+  // Startup sweep: a restart must not wait out the five-minute cron to retry
+  // tombstoned deletions or reclaim leases left by the previous incarnation.
+  await boss.send(AGENT_WORKSPACE_SWEEP_QUEUE, { trigger: 'startup' });
   // The checkpoint lease serializes workers, so the in-process and standalone workers can both mount.
   // No declared subscription means this is a no-op.
   await mountSubscriptionDispatch(boss, db, capabilities);

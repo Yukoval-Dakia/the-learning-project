@@ -29,7 +29,7 @@ import { type GradingEntryPoint, evaluateAttempt } from '../judge/evaluation-aut
 import { type JudgeExecution, requireJudgeRunOpen } from '../judge-operational';
 import { ratingFromCoarseOutcome } from '../judge-rating';
 import { emitMasteryProgressSignal } from '../mastery-progress-signal';
-import { submissionWasAssisted } from './assistance';
+import { readSubmissionAssistanceReceipt } from './assistance';
 import { chatCardSource } from './chat-card-source';
 import { type SaveSubmissionRequest, saveSubmission } from './submit';
 
@@ -84,8 +84,30 @@ export async function prepareFormalAttemptSubmission(
       409,
     );
   }
-  const assisted = await submissionWasAssisted(database, saved.submission.submission_id);
-  return { issuance, revision, scopedBasis, scopedUnitIds, submission: saved.submission, assisted };
+  // One receipt read serves both gates: the provenance bit and the evidence
+  // block projected back to the caller. A missing (historical) receipt is
+  // unprovable — treated as assisted, surfaced as null.
+  const assistance = await readSubmissionAssistanceReceipt(
+    database,
+    saved.submission.submission_id,
+  );
+  const assisted = !(assistance && assistance.status === 'independent');
+  return {
+    issuance,
+    revision,
+    scopedBasis,
+    scopedUnitIds,
+    submission: saved.submission,
+    // A replayed submission sealed its claim with the original accept; the
+    // response projection must not re-echo this request's rating/confidence.
+    // The durable-divert probe seals the row with this request's own `now`, so
+    // only a submitted_at that differs was sealed by an earlier request — the
+    // sealed claim belongs to that earlier accept, not this one.
+    replayed:
+      saved.status === 'replayed' && saved.submission.submitted_at !== request.now?.toISOString(),
+    assisted,
+    assistance,
+  };
 }
 
 /** Formal entry input already carries the issuance served to the learner. */
@@ -105,8 +127,16 @@ export async function previewFormalAttempt(
     hold?: PendingStateT;
   } = {},
 ): Promise<FormalAttemptPreview> {
-  const { issuance, revision, scopedBasis, scopedUnitIds, submission, assisted } =
-    await prepareFormalAttemptSubmission(database, entry, questionId, request);
+  const {
+    issuance,
+    revision,
+    scopedBasis,
+    scopedUnitIds,
+    submission,
+    replayed,
+    assisted,
+    assistance,
+  } = await prepareFormalAttemptSubmission(database, entry, questionId, request);
   const hold = options.hold;
   const candidate = await evaluateAttempt({
     db: database,
@@ -163,6 +193,8 @@ export async function previewFormalAttempt(
     revision,
     candidate,
     submission: submission,
+    replayed,
+    assistance,
     automatic_commit:
       !options.selfReport &&
       !assisted &&

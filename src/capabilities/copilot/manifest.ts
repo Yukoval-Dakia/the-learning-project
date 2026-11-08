@@ -16,6 +16,7 @@ import {
   CopilotCheckpointRevertErrorSchema,
   CopilotCheckpointRevertSuccessSchema,
   CopilotCreateSessionResponseSchema,
+  CopilotDeleteSessionResponseSchema,
   CopilotDurableRunResponseSchema,
   CopilotNudgeCompanionResponseSchema,
   CopilotNudgesResponseSchema,
@@ -42,6 +43,7 @@ export const copilotCapability = defineCapability({
       COPILOT_USER_ASK_ACTION,
       COPILOT_CHIP_TRIGGER_ACTION,
       COPILOT_REPLY_ACTION,
+      'experimental:copilot_run_retry',
       'experimental:conversation_confirmation',
       'experimental:confirmation_command',
       'experimental:confirmation_command_result',
@@ -93,6 +95,15 @@ export const copilotCapability = defineCapability({
       },
       {
         method: 'POST',
+        path: '/api/copilot/runs/[id]/retry',
+        operationId: 'retryCopilotRun',
+        request: { params: CopilotRunParamsSchema, headers: CopilotChatHeadersSchema },
+        responses: { 202: CopilotDurableRunResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 202,
+        load: () => import('./api/retry-run').then((m) => m.POST),
+      },
+      {
+        method: 'POST',
         path: '/api/copilot/runs/[id]/cancel',
         operationId: 'cancelCopilotRun',
         request: { params: CopilotRunParamsSchema },
@@ -131,6 +142,18 @@ export const copilotCapability = defineCapability({
         responses: { 201: CopilotCreateSessionResponseSchema, ...API_ERROR_RESPONSES },
         successStatus: 201,
         load: () => import('./api/sessions').then((m) => m.POST),
+      },
+      {
+        // Hard delete: revoke -> cancel+drain runs -> conversation tombstone.
+        // The workspace sweep removes the owner's directory afterwards; Stop and
+        // drawer close deliberately never reach this route.
+        method: 'POST',
+        path: '/api/copilot/sessions/[id]/delete',
+        operationId: 'deleteCopilotSession',
+        request: { params: CopilotRouteIdParamsSchema },
+        responses: { 200: CopilotDeleteSessionResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        load: () => import('./api/delete-session').then((m) => m.POST),
       },
       {
         method: 'GET',

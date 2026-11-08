@@ -1,17 +1,14 @@
-import type { Tx } from '@/db/client';
-import { fromPgBossDrizzleTx } from '@/db/pg-boss-drizzle';
 import { getStartedBoss } from '@/server/boss/client';
-import { PREPARE_INTERVENTION_JOB } from './probe-result-subscription';
+import { PREPARE_INTERVENTION_JOB } from './preparation-dispatch';
 
 /**
- * Fence archived preparation jobs inside the same transaction that replaces
- * their aggregate rows. pg-boss cancellation retires created/retry/active rows;
- * the per-stage job-id guard handles the residual already-running handler.
+ * Retire archived preparation jobs after the restore transaction commits. The
+ * aggregate job-id fence (restored rows lose `preparation_job_id`) already
+ * invalidated these deliveries atomically with the restore; the cancel only
+ * cleans the transport layer, so it must run outside the restore transaction.
  */
-export async function retireInterventionPreparationJobs(tx: Tx, jobIds: string[]): Promise<void> {
+export async function retireInterventionPreparationJobs(jobIds: string[]): Promise<void> {
   if (jobIds.length === 0) return;
   const boss = await getStartedBoss();
-  await boss.cancel(PREPARE_INTERVENTION_JOB, jobIds, {
-    db: fromPgBossDrizzleTx(tx),
-  });
+  await boss.cancel(PREPARE_INTERVENTION_JOB, jobIds);
 }

@@ -6,7 +6,7 @@
 //   - the combined commit message (all -m / -F segments) lacks a `YUK-NN`
 //     reference.
 //
-// Per docs/agents/issue-tracker.md, the Linear GitHub integration scans commit
+// Per /Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/agents/issue-tracker.md, the Linear GitHub integration scans commit
 // MESSAGES (not PR body alone) to link work. A commit without YUK-NN on a
 // Linear-scoped branch silently breaks that integration; the agent only
 // notices when reconciling Linear state much later. This hook is the cheap

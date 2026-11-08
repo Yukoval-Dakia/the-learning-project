@@ -196,6 +196,19 @@ export const ProposalBatchRetractInput = z
   });
 export type ProposalBatchRetractInputT = z.infer<typeof ProposalBatchRetractInput>;
 
+// Batch confirmation (YUK-2009): the learner may confirm a set of pending
+// proposals in one action. Eligibility is decided by the server (B-strength
+// kind with a retract path); this schema only bounds the request shape.
+export const PROPOSAL_BATCH_ACCEPT_MAX_IDS = 200;
+
+export const ProposalBatchAcceptInput = z
+  .object({
+    proposal_ids: z.array(z.string().trim().min(1)).min(1).max(PROPOSAL_BATCH_ACCEPT_MAX_IDS),
+    user_note: z.string().max(2000).optional(),
+  })
+  .strict();
+export type ProposalBatchAcceptInputT = z.infer<typeof ProposalBatchAcceptInput>;
+
 // The decision resource is an explicit union, not a broadly nullable success
 // contract: every COMMITTED decision still requires its immutable event id
 // (readable through GET /api/events/:id, so the HTTP handler can return an

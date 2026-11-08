@@ -454,6 +454,19 @@
     ]
   },
   {
+    "path": "/api/copilot/runs/:id/retry",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "安全重发失败的学伴回答，沿用原学习者消息",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": null,
+        "notes": "无需 body。需 x-internal-token 和 Idempotency-Key。202 返回 run_id/session_id/derivation_policy，Location 为新 run events。同失败 run 连点或重放沿用唯一后继。409 details.reason：not_failed/not_latest/session_busy/failure_not_retryable/write_tool_started/safety_unknown/conversation_inactive/question_retracted。已接受后继的重放不受会话关闭或新接纳闸门影响；新接纳队列禁用503、backlog或速率限制429。重发后不再提供原checkpoint。"
+      }
+    ]
+  },
+  {
     "path": "/api/copilot/runs/:id/cancel",
     "methods": [
       {
@@ -779,22 +792,6 @@
         "contentType": null,
         "bodyExample": null,
         "notes": "无需 x-internal-token（中间件豁免）；返回 {ok, epoch, state, code_epoch, reason}；维护窗或 epoch 不匹配时 503"
-      }
-    ]
-  },
-  {
-    "path": "/api/hubs/:id/dismiss-link",
-    "methods": [
-      {
-        "method": "POST",
-        "summary": "从 hub 的 AutoLinksContainer 中压制（dismiss）一条系统维护的 auto-link",
-        "query": [],
-        "contentType": "application/json",
-        "bodyExample": {
-          "suppressed_artifact_id": "artifact_xyz789",
-          "relation": "subtopic"
-        },
-        "notes": "relation 可选，枚举：subtopic|prerequisite|derived_from|contrasts_with；suppressed_artifact_id 不能等于 hub id；操作幂等；单事务原子"
       }
     ]
   },
@@ -2185,6 +2182,20 @@
           "session_id": "sess_…"
         },
         "notes": "body 仅 {session_id}。live 行重复调用幂等返回当前态；来源被撤回返回 422 restricted_source。跨学习者一律 404。需 x-internal-token。"
+      }
+    ]
+  },
+  {
+    "path": "/api/copilot/sessions/:id/delete",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "彻底删除 Copilot 对话：撤销访问→取消并等在途 run 结算→持久 tombstone；工作区目录由清扫 job 随后移除",
+        "query": [],
+        "headers": [],
+        "contentType": "application/json",
+        "bodyExample": {},
+        "notes": "幂等。返回 {session_id,status}：deleting 表示撤销已提交、在途 run 尚在结算；deleted 表示会话 tombstone 已持久化。Stop/关抽屉不走此路由。"
       }
     ]
   }

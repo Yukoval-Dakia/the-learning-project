@@ -59,7 +59,7 @@ export const learning_item = pgTable(
     // learning_item only *references* it. primary_artifact_id stays as a nullable
     // "primary/representative" pointer (no longer DB-unique; one artifact may be the
     // primary of more than one item). A plain index is kept for owner-lookup reads.
-    // See docs/adr/0027-note-artifact-decouple-from-learning-item-ownership.md.
+    // See ADR-0027 (note artifact decoupled from learning item ownership).
     index('learning_item_primary_artifact_idx').on(t.primary_artifact_id),
     // YUK-733: indexes the `knowledge_ids @> '["<kc>"]'::jsonb` containment read on the
     // user-facing note page related-items query (note-page.ts) + KC-merge rewrites.
@@ -202,7 +202,11 @@ export const learning_session = pgTable('learning_session', {
   // Write path = ingestion/server/agent/budget-state.ts 的路径级写入；
   // operation-identity.ts / agent/{budget,spend}.ts 分别持有身份/授权/费用职责。
   agent_budget: jsonb('agent_budget'),
-  // conversation-only fields
+  // conversation-only fields — hard delete tombstones, owned by
+  // copilot/server/conversation-lifecycle.ts. Workspace expiry derives user
+  // activity from the event stream instead of a stored column.
+  deletion_requested_at: timestamp('deletion_requested_at', { withTimezone: true }),
+  deleted_at: timestamp('deleted_at', { withTimezone: true }),
   summary_md: text('summary_md'),
   // YUK-936 — Agent SDK session id for foreground inline Copilot resume (ADR-0054).
   // Product session_id stays learning_session.id; this is server-owned SDK transcript

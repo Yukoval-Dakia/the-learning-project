@@ -4,6 +4,7 @@
 // 反框架护栏：静态数组、类型检查、无动态加载。
 import type { CapabilityManifest } from '@/kernel/manifest';
 import { agencyCapability } from './agency/manifest';
+import { agentWorkspaceCapability } from './agent-workspace/manifest';
 import { copilotCapability } from './copilot/manifest';
 import { drawingCapability } from './drawing/manifest';
 import { ingestionCapability } from './ingestion/manifest';
@@ -16,6 +17,7 @@ import { shellCapability } from './shell/manifest';
 
 export const capabilities: CapabilityManifest[] = [
   agencyCapability,
+  agentWorkspaceCapability,
   ingestionCapability,
   practiceCapability,
   knowledgeCapability,
