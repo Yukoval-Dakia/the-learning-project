@@ -418,7 +418,12 @@ export function ProposalCard({ p, resolved, navigate, onResolve, onError }: Prop
     : null;
   const knowledgeChange = p.presentation?.knowledge_mutation;
   const changeBlockedWords = knowledgeChange ? mutationBlockedWords(knowledgeChange) : null;
-  const blockedWords = mergeBlockedWords ?? changeBlockedWords;
+  // Replacing a relation is no longer supported: the suggestion can only be dismissed.
+  const isRetiredEdge = isEdge && change?.edge_op === 'supersede';
+  const blockedWords =
+    mergeBlockedWords ??
+    changeBlockedWords ??
+    (isRetiredEdge ? '替换知识关系已经不再支持，这条只能忽略。' : null);
   // Merging knowledge cannot be undone either, so it asks first, like merging question blocks.
   const mergesKnowledge = knowledgeChange?.mutation === 'merge';
   // ADR-0032 D4-E1 / YUK-332 — legacy proposals have no discriminator and are creates.
@@ -441,6 +446,9 @@ export function ProposalCard({ p, resolved, navigate, onResolve, onError }: Prop
     acceptButtonLabel = '确认归档';
     acceptedLabel = '已归档';
     edgeOperationLabel = archiveTargetMissing ? '归档目标缺失' : '将归档';
+  } else if (isRetiredEdge) {
+    cardLabel = '替换知识关系';
+    edgeOperationLabel = '已不再支持';
   } else if (isEdge) {
     cardLabel = '新增知识关系';
     acceptButtonLabel = '建立关系';
@@ -738,7 +746,7 @@ export function ProposalCard({ p, resolved, navigate, onResolve, onError }: Prop
               {acceptButtonLabel}
             </Button>
           )}
-          {isEdge && !isArchiveEdge && (
+          {isEdge && !isArchiveEdge && !isRetiredEdge && (
             <>
               <Button
                 size="sm"
@@ -787,7 +795,7 @@ export function ProposalCard({ p, resolved, navigate, onResolve, onError }: Prop
         </div>
       </div>
 
-      {pickingRel && !resolved && !isArchiveEdge && (
+      {pickingRel && !resolved && !isArchiveEdge && !isRetiredEdge && (
         <fieldset className="ib-rel-pick">
           <legend className="ib-rel-legend">改为关系类型</legend>
           {Object.entries(REL_LABEL).map(([k, label]) => (

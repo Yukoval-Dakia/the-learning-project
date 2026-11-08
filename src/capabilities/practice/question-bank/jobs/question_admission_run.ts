@@ -92,6 +92,7 @@ import {
   ADMISSION_STAGE_FAMILY,
   AdmissionInterrupted,
   AdmissionNotSent,
+  AdmissionProviderWaitExhausted,
   type AdmissionRecoveryReader,
   AdmissionSafeRetryExhausted,
   type AdmissionStageReceiptRef,
@@ -388,11 +389,18 @@ export async function runAdmissionForQuestion(
     const purpose = delivery.jobData
       ? await readAdmissionPurpose(tx, delivery.id, input, delivery.jobData)
       : { state: 'unknown' as const, sourceId: null };
+    const claimed = await claimAdmissionBatch(tx, input, delivery, {
+      maySend: pinned && eligible && !declaredUnsupported && purpose.state === 'allow',
+      historicalTerminal: Boolean(terminal),
+    });
     // A queued delivery that cannot prove its source purpose will never spend; record
     // that terminal fact so the learner surface stops saying "still checking". The
     // read model matches this event against the group's latest publication for the
     // same revision, so a later republish with a bound source is not shadowed.
-    if (delivery.jobData && purpose.state !== 'allow') {
+    // Recovery deliveries (receipt/held/historical claims) replay an existing paid
+    // decision — their spend was authorized by the original delivery's binding, so
+    // a missing binding here is not a denial and must not write the terminal fact.
+    if (delivery.jobData && purpose.state !== 'allow' && claimed.kind === 'stale') {
       const now = new Date();
       await writeEvent(tx, {
         id: createHash('sha256')
@@ -420,10 +428,6 @@ export async function runAdmissionForQuestion(
         created_at: now,
       });
     }
-    const claimed = await claimAdmissionBatch(tx, input, delivery, {
-      maySend: pinned && eligible && !declaredUnsupported && purpose.state === 'allow',
-      historicalTerminal: Boolean(terminal),
-    });
     // A reused paid receipt belongs to its ORIGINAL delivery, not to the new
     // publication that happened to reach this batch. Never retag its provenance.
     const originalDelivery =
@@ -827,10 +831,13 @@ export async function runAdmissionForQuestion(
         };
       }
       if (error instanceof AdmissionNotSent && !interrupted) {
+        const providerWaitOut = error instanceof AdmissionProviderWaitExhausted;
         const exhausted = error instanceof AdmissionSafeRetryExhausted;
-        const reason = exhausted
-          ? 'admission_provider_safe_retry_exhausted'
-          : 'admission_provider_query_not_started';
+        const reason = providerWaitOut
+          ? 'admission_provider_wait_exhausted'
+          : exhausted
+            ? 'admission_provider_safe_retry_exhausted'
+            : 'admission_provider_query_not_started';
         receipt = AdmissionResultReceipt.parse({
           version: 1,
           recorded_at: new Date().toISOString(),
@@ -846,14 +853,18 @@ export async function runAdmissionForQuestion(
               policy_id: batch.input.policy_id,
               outcome: 'suspended',
               evidence: {
-                pack: exhausted
-                  ? 'question_admission_safe_retry_exhausted'
-                  : 'question_admission_not_sent',
+                pack: providerWaitOut
+                  ? 'question_admission_provider_wait_exhausted'
+                  : exhausted
+                    ? 'question_admission_safe_retry_exhausted'
+                    : 'question_admission_not_sent',
                 repair_delivery: {
                   kind: 'system_closed',
-                  reason: exhausted
-                    ? 'provider_safe_retry_exhausted'
-                    : 'provider_query_not_started',
+                  reason: providerWaitOut
+                    ? 'provider_wait_exhausted'
+                    : exhausted
+                      ? 'provider_safe_retry_exhausted'
+                      : 'provider_query_not_started',
                 },
                 paid_stage_receipts: stageReceiptRefs,
               },

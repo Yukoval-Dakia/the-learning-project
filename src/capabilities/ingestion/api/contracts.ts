@@ -166,7 +166,14 @@ const IngestionOperationBaseSchema = z
     session_id: z.string(),
     status: z.enum(['queued', 'running', 'succeeded', 'failed']),
     result: z.unknown().optional(),
-    error: z.object({ code: z.string(), message: z.string(), status: z.number().int() }).optional(),
+    error: z
+      .object({
+        code: z.string(),
+        message: z.string(),
+        status: z.number().int(),
+        details: z.record(z.string(), z.unknown()).optional(),
+      })
+      .optional(),
     created_at: z.string().datetime(),
     updated_at: z.string().datetime(),
     events_url: z.string(),
@@ -307,7 +314,7 @@ const AutoEnrollObservationSchema = z.object({
 export const IngestionBlockEnrollmentSchema = z.object({
   state: z.enum(['in_library', 'not_enrolled', 'ignored']),
   reason: z.enum(['needs_text', 'pending', 'publish_failed', 'reverted']).nullable(),
-  knowledge: z.enum(['attributed', 'missing']).nullable(),
+  knowledge: z.enum(['attributed', 'missing', 'restricted']).nullable(),
   library_visible: z.boolean().nullable(),
 });
 
@@ -397,7 +404,7 @@ export const EnrollIngestionBlockResponseSchema = z.object({
   question_id: z.string(),
   block_status: z.string(),
   block_version: z.number().int().nonnegative(),
-  knowledge: z.enum(['attributed', 'missing']),
+  knowledge: z.enum(['attributed', 'missing', 'restricted']),
   library_visible: z.boolean(),
   admission_status: z.enum(['pending', 'admitted', 'failed', 'undecided']),
 });

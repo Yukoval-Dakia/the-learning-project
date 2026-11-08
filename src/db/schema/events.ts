@@ -42,18 +42,6 @@ export const job_events = pgTable(
   ],
 );
 
-// Echo job 用作 Sub 0c golden E2E（acceptance gate #1）：HTTP enqueue → pg-boss
-// worker → DB update → SSE delivers full-state event。Step 4 实现
-export const echo_jobs = pgTable('echo_jobs', {
-  id: text('id').primaryKey(),
-  input: text('input').notNull(),
-  output: text('output'),
-  status: text('status').notNull().default('queued'),
-  error_md: text('error_md'),
-  created_at: timestamp('created_at', { withTimezone: true }).notNull(),
-  updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
-});
-
 export const event = pgTable(
   'event',
   {
@@ -488,6 +476,11 @@ export const dag_orchestration_node = pgTable(
     stale: boolean('stale').notNull().default(false),
     // skipped/failed 的可读原因（观测痕迹，如 "upstream 'x' failed"）。
     detail: text('detail'),
+    // Job-level provider waits already spent on this node (YUK-2030). The
+    // orchestrator owns the budget; member jobs only mark eligibility on their
+    // output. enqueued_at is NOT reset on a wait redelivery, so the node timeout
+    // still bounds the whole wait+run window.
+    provider_waits: integer('provider_waits').notNull().default(0),
     enqueued_at: timestamp('enqueued_at', { withTimezone: true }),
     finished_at: timestamp('finished_at', { withTimezone: true }),
     updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),

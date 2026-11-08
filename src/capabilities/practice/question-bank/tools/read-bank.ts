@@ -31,6 +31,7 @@ import {
   question_solution_prior,
   source_asset,
 } from '@/db/schema';
+import { allowedQuestionIds } from '@/kernel/read-models/usage-policy';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 import {
   bankAssetDigestMatches,
@@ -363,6 +364,17 @@ export function bankReadRoleForActor(actor: ToolContext['callerActor'] | undefin
   return PRIVATE_LAYER_READERS.has(bare) ? 'private' : 'restricted';
 }
 
+/** Surfaces whose reads feed cross-question derivation (authoring OTHER questions),
+ *  never the learner's own answer occasion — `answer_only`/`crisis` lineage must not
+ *  reach their model context at all. Serving surfaces (copilot/coach/dreaming reads of
+ *  the learner's own bank) are not listed here: reading own material to serve the
+ *  learner is the sanctioned answer_only use. */
+const DERIVATION_TOOL_SURFACES = new Set(['question_preparer']);
+
+export function callerIsDerivationSurface(actor: ToolContext['callerActor'] | undefined): boolean {
+  return DERIVATION_TOOL_SURFACES.has(actor?.ref.replace(/^agent:/i, '').toLowerCase() ?? '');
+}
+
 /** 私有 include 层：include 不能升级角色 —— 受限角色请求时如实 denied。
  * answers 携带 criterion 字面值（select_key/blank_key）；metadata 是未版本化的
  * 工作副本投影 —— 两者对 restricted 同样私有。 */
@@ -528,6 +540,9 @@ export interface RunReadBankOptions {
   role?: ReadRole;
   /** 调用方 actor ref —— submission 归属绑定的比对对象。 */
   callerRef?: string;
+  /** Derivation-facing read: groups whose provenance resolves to a restricted
+   *  derivation policy resolve as `denied` items instead of content. */
+  derivationOnly?: boolean;
 }
 
 export async function runReadBank(
@@ -585,6 +600,12 @@ export async function runReadBank(
 
   // ── 批量辅助数据（仅 include 需要的才查）──
   const groupIds = [...new Set(okResolutions.map((r) => r.revision.group_id))];
+
+  // Derivation-facing surfaces never receive restricted-source content: the ref
+  // resolves honestly but the group reads as denied, mirroring the withdrawn branch.
+  const allowedGroups = runOpts?.derivationOnly ? await allowedQuestionIds(db, groupIds) : null;
+  const deniedGroups =
+    allowedGroups === null ? null : new Set(groupIds.filter((id) => !allowedGroups.has(id)));
 
   const priorRows = include.has('solution_prior')
     ? await db
@@ -701,6 +722,15 @@ export async function runReadBank(
       continue;
     }
     const { revision, lifecycle } = resolution;
+
+    if (deniedGroups?.has(revision.group_id)) {
+      items.push({
+        ref: resolution.raw,
+        status: 'denied',
+        error_detail: `group '${revision.group_id}' is consent-restricted; derivation surfaces cannot read its content`,
+      });
+      continue;
+    }
 
     // 历史读授权复核：withdrawn 组的读取需 bound（且归属已验证的）submission
     // 或私有角色。
@@ -1063,6 +1093,7 @@ async function executeReadBank(ctx: ToolContext, rawInput: ReadBankInput): Promi
   return runReadBank(ctx.db, rawInput, {
     role: bankReadRoleForActor(ctx.callerActor),
     callerRef: ctx.callerActor?.ref ?? null,
+    derivationOnly: callerIsDerivationSurface(ctx.callerActor),
   });
 }
 

@@ -12,7 +12,10 @@ import { ApiError } from '@/kernel/http';
 import { writeJobEvent } from '@/kernel/job-events';
 import { assertFromState } from '@/kernel/learning-session-guard';
 import { resolveSessionDerivationPolicy } from '@/kernel/read-models/usage-policy';
-import { persistCapturedQuestionBlock } from '@/kernel/records/question-block-creation';
+import {
+  assertRescuableBlockDraft,
+  persistCapturedQuestionBlock,
+} from '@/kernel/records/question-block-creation';
 import type { DocxExternalRefOmissionFacts } from './docx/omission';
 import { writeIngestionSessionBirth } from './session/birth';
 import { recordSourcePackageAttachError } from './session/source-document-provenance';
@@ -565,7 +568,11 @@ export async function applyRescue(tx: Db | Tx, params: ApplyRescueParams): Promi
 
   const now = new Date();
   const blockExists = await tx
-    .select({ id: question_block.id, version: question_block.version })
+    .select({
+      id: question_block.id,
+      version: question_block.version,
+      status: question_block.status,
+    })
     .from(question_block)
     .where(
       and(
@@ -580,6 +587,7 @@ export async function applyRescue(tx: Db | Tx, params: ApplyRescueParams): Promi
       404,
     );
   }
+  assertRescuableBlockDraft(params.blockId, blockExists[0]?.status);
 
   await persistCapturedQuestionBlock(
     tx,

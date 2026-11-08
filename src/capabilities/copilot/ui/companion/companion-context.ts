@@ -43,6 +43,8 @@ export interface CompanionInternals {
   snapshotAppliedSeq: Map<string, number>;
   checkingPolicy: boolean;
   storageInitialized: boolean;
+  /** The last sentence a page put in the draft, so an untouched one can be swapped for the next. */
+  handedDraft: string | null;
 }
 
 export interface CompanionCtx {
@@ -66,6 +68,7 @@ export function createInternals(): CompanionInternals {
     runs: new Map(),
     activeSkill: null,
     nudgeSession: null,
+    handedDraft: null,
     bootstrapEpoch: null,
     selectionRevision: 0,
     snapshotRequestSeq: new Map(),

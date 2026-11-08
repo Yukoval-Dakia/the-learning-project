@@ -5,6 +5,7 @@ import type { Job } from 'pg-boss';
 import { streamReviewTask } from '@/capabilities/knowledge/server/review';
 import type { Db } from '@/db/client';
 import { listProposalInboxRows } from '@/kernel/proposals/inbox';
+import { planJobProviderWaitForRun, providerWaitOutput } from '@/server/ai/provider-wait';
 
 export interface KnowledgeMaintenanceNightlyResult {
   processed: number;
@@ -39,6 +40,17 @@ async function drainResponseText(response: Response): Promise<string> {
 }
 
 const STREAM_ERROR_MARKER = /\[streamTask\][^\n]*/;
+const STREAM_ERROR_RUN_ID = /task_run_id=([^\s)]+)/;
+
+/** The settled run behind a streamTask failure marker, when the marker carried it. */
+export class KnowledgeMaintenanceStreamError extends Error {
+  constructor(
+    message: string,
+    readonly taskRunId: string | null,
+  ) {
+    super(message);
+  }
+}
 
 export async function runKnowledgeMaintenanceNightly(
   db: Db,
@@ -52,7 +64,10 @@ export async function runKnowledgeMaintenanceNightly(
   const body = await drainResponseText(response);
   const errorMatch = body.match(STREAM_ERROR_MARKER);
   if (errorMatch) {
-    throw new Error(`knowledge_maintenance_nightly streamTask failure: ${errorMatch[0].trim()}`);
+    throw new KnowledgeMaintenanceStreamError(
+      `knowledge_maintenance_nightly streamTask failure: ${errorMatch[0].trim()}`,
+      body.match(STREAM_ERROR_RUN_ID)?.[1] ?? null,
+    );
   }
 
   const afterRows = await listProposalInboxRows(db);
@@ -65,12 +80,25 @@ export async function runKnowledgeMaintenanceNightly(
 
 export function buildKnowledgeMaintenanceNightlyHandler(
   db: Db,
-): (jobs: Job<Record<string, never>>[]) => Promise<void> {
+  deps: DepsOverride = {},
+): (jobs: Job<Record<string, never>>[]) => Promise<Record<string, unknown> | undefined> {
   return async () => {
     try {
-      const result = await runKnowledgeMaintenanceNightly(db);
+      const result = await runKnowledgeMaintenanceNightly(db, deps);
       console.log('[knowledge_maintenance_nightly] result', result);
     } catch (err) {
+      // Provable transient provider rejection → ask the DAG for a recovery wait.
+      if (err instanceof KnowledgeMaintenanceStreamError && err.taskRunId) {
+        const wait = await planJobProviderWaitForRun(db, err.taskRunId, {
+          errorEvidence: [err.message],
+        });
+        if (wait) {
+          return providerWaitOutput({
+            retryClass: wait.retryClass,
+            detail: `evidence=${wait.evidenceRef}`,
+          });
+        }
+      }
       console.error('[knowledge_maintenance_nightly] failed', err);
       throw err;
     }

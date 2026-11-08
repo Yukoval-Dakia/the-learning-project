@@ -1,6 +1,7 @@
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { Db } from '@/db/client';
 import { question, question_group_lifecycle } from '@/db/schema';
+import { sourceAllowsDerivationSql } from '@/kernel/read-models/usage-policy';
 import type { EvidenceDemandV1T } from '@/kernel/supply-contracts';
 import { canonicalKindToPersistedForms } from '@/subjects/question-kind';
 import { isPendingAdmission } from '../../question-bank/public';
@@ -29,6 +30,10 @@ export async function questionPreparerPendingStock(db: Db, ticket: EvidenceDeman
               ...new Set(ticket.task.kinds.flatMap(canonicalKindToPersistedForms)),
             ]),
         sql`${question.knowledge_ids} @> ${JSON.stringify(ticket.claim.knowledge_ids)}::jsonb`,
+        // Pending-stock prompt_md is returned to the preparer agent verbatim — derivation
+        // work, not serving — so restricted lineage never enters the tool result. Server-side
+        // exact/vector dedup in submit_question remains authoritative for hidden rows.
+        sourceAllowsDerivationSql({ kind: 'question', id: question.id }),
       ),
     );
   return rows
