@@ -16553,9 +16553,18 @@ export interface operations {
                         items: {
                             current: {
                                 admission: {
+                                    /** @enum {string|null} */
+                                    cause?: "outcome_unconfirmed" | "purpose_denied" | null;
                                     reason: string | null;
                                     /** @enum {string} */
                                     status: "pending" | "admitted" | "failed" | "undecided";
+                                    wait?: {
+                                        /** @enum {string} */
+                                        reason: "quota" | "login" | "not_sent" | "provider";
+                                        /** @enum {string} */
+                                        recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                        retry_at: string | null;
+                                    } | null;
                                 } | null;
                                 draft_status: string | null;
                                 held_since: string | null;
