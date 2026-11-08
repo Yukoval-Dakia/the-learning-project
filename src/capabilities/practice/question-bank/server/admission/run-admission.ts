@@ -152,7 +152,7 @@ function defaultRuleFor(
 ): ScoringRuleT {
   const points = unit.points ?? 0;
   const source =
-    unit.printed_rule_md != null ? { source: { statement: unit.printed_rule_md } } : {};
+    unit.rule_statement_md != null ? { source: { statement: unit.rule_statement_md } } : {};
   if (unit.unit_kind === 'select') {
     const slot = spec.slots.find((s) => s.slot_id === unit.slot_refs[0]);
     const pick = slot?.kind === 'select' ? slot.pick : 'many';
