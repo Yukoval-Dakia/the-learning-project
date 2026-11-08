@@ -220,10 +220,8 @@ const ALL_TABLES = [
   'editing_presence',
   // YUK-342 P2 — memory reconcile write-ahead log.
   'memory_reconciliation_log',
-  // YUK-344 增量 2 / ADR-0034 §3 — knowledge-edge reconcile write-ahead log.
-  'edge_reconciliation_log',
   // YUK-531 (A5 S4 / RT1) — misconception-edge reconcile AUDIT log. No FK, so resetDb
-  // must list it explicitly or it leaks across tests (same footgun as edge_reconciliation_log).
+  // must list it explicitly or it leaks across tests (same footgun as memory_reconciliation_log).
   'misconception_reconciliation_log',
   // YUK-143 / ADR-0024 — North-Star goal entity.
   'goal',
@@ -289,6 +287,9 @@ const ALL_TABLES = [
   // 切片（同 mastery_state 一族的 footgun：残留 active 切片会让后续用例的服务门
   // 误判已准入）。
   'model_admission_slice',
+  // YUK-1548 — generative-UI drawing 持久行。loose text-ref 无 FK，不列入则
+  // resetDb 漏清 → 跨测泄漏 dedupe/state（同 mastery_state 一族的 footgun）。
+  'drawing',
 ] as const;
 
 export async function resetDb() {

@@ -1,8 +1,7 @@
 import type { z } from 'zod';
 
-import { ArtifactBodyBlocks, type NoteSection } from '@/core/schema/business';
+import { ArtifactBodyBlocks } from '@/core/schema/business';
 
-type NoteSectionT = z.infer<typeof NoteSection>;
 type ArtifactBodyBlocksT = z.infer<typeof ArtifactBodyBlocks>;
 interface ArtifactRefTarget {
   artifact_id: string;
@@ -24,18 +23,7 @@ function recordOrEmpty(value: unknown): Record<string, unknown> {
     : {};
 }
 
-function textNode(text: string): Record<string, unknown> {
-  return { type: 'text', text };
-}
-
-function paragraphNode(text: string): Record<string, unknown> {
-  return {
-    type: 'paragraph',
-    content: text.length > 0 ? [textNode(text)] : [],
-  };
-}
-
-function blockText(node: Record<string, unknown>): string {
+export function blockText(node: Record<string, unknown>): string {
   if (typeof node.text === 'string') return node.text;
   const content = Array.isArray(node.content) ? node.content : [];
   const parts = content
@@ -48,73 +36,6 @@ function blockText(node: Record<string, unknown>): string {
 
 export function emptyArtifactBodyBlocks(): ArtifactBodyBlocksT {
   return { type: 'doc', content: [] };
-}
-
-export function noteSectionsToBodyBlocks(sections: NoteSectionT[]): ArtifactBodyBlocksT {
-  return {
-    type: 'doc',
-    content: sections.map((section) => ({
-      type: SEMANTIC_BLOCK_TYPE,
-      attrs: {
-        id: section.id,
-        semantic_kind: section.kind,
-        source_tier: section.source_tier,
-        user_verified: section.user_verified,
-        embedded_check: section.embedded_check ?? null,
-        version: section.version,
-        source_markdown: section.body_md,
-      },
-      content: [paragraphNode(section.body_md)],
-    })),
-  };
-}
-
-export function summaryBodyBlocks(blockId: string, summaryMd: string): ArtifactBodyBlocksT {
-  return {
-    type: 'doc',
-    content: [
-      {
-        type: 'paragraph',
-        attrs: { id: blockId },
-        content: summaryMd.length > 0 ? [textNode(summaryMd)] : [],
-      },
-    ],
-  };
-}
-
-export function artifactRefBlock(
-  artifactId: string,
-  kind: string,
-  opts: { id?: string } = {},
-): Record<string, unknown> {
-  return {
-    type: 'artifactRefBlock',
-    attrs: {
-      ...(opts.id ? { id: opts.id } : {}),
-      artifact_id: artifactId,
-      artifact_type: kind,
-    },
-    content: [],
-  };
-}
-
-export function bodyBlocksHaveSemanticKinds(
-  value: unknown,
-  requiredKinds: string[],
-): { ok: boolean; missing: string[] } {
-  const parsed = ArtifactBodyBlocks.safeParse(value);
-  const found = new Set<string>();
-
-  if (parsed.success) {
-    for (const node of parsed.data.content ?? []) {
-      if (node.type !== SEMANTIC_BLOCK_TYPE) continue;
-      const attrs = recordOrEmpty(node.attrs);
-      if (typeof attrs.semantic_kind === 'string') found.add(attrs.semantic_kind);
-    }
-  }
-
-  const missing = requiredKinds.filter((kind) => !found.has(kind));
-  return { ok: missing.length === 0, missing };
 }
 
 /**
@@ -271,111 +192,4 @@ export function extractCrossLinkSnippet(
     if (result !== null) break;
   }
   return result;
-}
-
-export function bodyBlocksContainId(value: unknown, blockId: string): boolean {
-  const parsed = ArtifactBodyBlocks.safeParse(value);
-  if (!parsed.success) return false;
-
-  const visit = (node: Record<string, unknown>): boolean => {
-    const attrs = recordOrEmpty(node.attrs);
-    if (attrs.id === blockId) return true;
-    const content = Array.isArray(node.content) ? node.content : [];
-    return content.some(
-      (child) =>
-        child !== null && typeof child === 'object' && visit(child as Record<string, unknown>),
-    );
-  };
-
-  return (parsed.data.content ?? []).some((node) => visit(node));
-}
-
-export function replaceNoteSectionBody(
-  value: unknown,
-  sectionId: string,
-  nextBodyMd: string,
-): ArtifactBodyBlocksT {
-  const parsed = ArtifactBodyBlocks.parse(value);
-  return {
-    ...parsed,
-    content: parsed.content.map((node) => {
-      const attrs = node.attrs as { id?: unknown; version?: unknown } | undefined;
-      if (node.type !== SEMANTIC_BLOCK_TYPE || attrs?.id !== sectionId) return node;
-      const version = typeof attrs.version === 'number' ? attrs.version + 1 : 1;
-      const preservedRefs = Array.isArray(node.content)
-        ? node.content.filter(
-            (child) =>
-              child !== null &&
-              typeof child === 'object' &&
-              (child as Record<string, unknown>).type === 'artifactRefBlock',
-          )
-        : [];
-      return {
-        ...node,
-        // A human edit marks the block verified so AI must propose.
-        attrs: {
-          ...recordOrEmpty(node.attrs),
-          version,
-          source_markdown: nextBodyMd,
-          user_verified: true,
-          source_tier: 'user_verified',
-        },
-        content: [paragraphNode(nextBodyMd), ...preservedRefs],
-      };
-    }),
-  };
-}
-
-export function setNoteSectionEmbeddedCheck(
-  value: unknown,
-  sectionId: string,
-  questionIds: string[],
-): ArtifactBodyBlocksT {
-  const parsed = ArtifactBodyBlocks.parse(value);
-  return {
-    ...parsed,
-    content: parsed.content.map((node) => {
-      const attrs = node.attrs as { id?: unknown } | undefined;
-      if (node.type !== SEMANTIC_BLOCK_TYPE || attrs?.id !== sectionId) return node;
-      return {
-        ...node,
-        attrs: {
-          ...recordOrEmpty(node.attrs),
-          embedded_check: { question_ids: questionIds },
-        },
-      };
-    }),
-  };
-}
-
-export function setNoteSectionEmbeddedCheckArtifactRef(
-  value: unknown,
-  sectionId: string,
-  artifactId: string,
-  questionIds: string[],
-): ArtifactBodyBlocksT {
-  const parsed = ArtifactBodyBlocks.parse(value);
-  const refId = `${sectionId}_quiz_ref`;
-  return {
-    ...parsed,
-    content: parsed.content.map((node) => {
-      const attrs = node.attrs as { id?: unknown } | undefined;
-      if (node.type !== SEMANTIC_BLOCK_TYPE || attrs?.id !== sectionId) return node;
-      const content = Array.isArray(node.content)
-        ? node.content.filter((child) => {
-            if (child === null || typeof child !== 'object') return true;
-            const childAttrs = recordOrEmpty((child as Record<string, unknown>).attrs);
-            return childAttrs.id !== refId;
-          })
-        : [];
-      return {
-        ...node,
-        attrs: {
-          ...recordOrEmpty(node.attrs),
-          embedded_check: { question_ids: questionIds },
-        },
-        content: [...content, artifactRefBlock(artifactId, 'tool_quiz', { id: refId })],
-      };
-    }),
-  };
 }

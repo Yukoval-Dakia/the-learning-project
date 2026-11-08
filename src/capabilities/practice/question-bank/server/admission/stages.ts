@@ -3,7 +3,13 @@ import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { AgentRunError, type AgentRunErrorFields } from '@/ai/agent-run-error';
 import { type HelpProviderFault, isHelpProviderFault } from '@/ai/help-provider-fault';
-import { boundTerminalHttpStatus, providerTransientVerdict } from '@/ai/provider-failure';
+import {
+  type ProviderTransientClass,
+  boundTerminalHttpStatus,
+  providerTransientResendable,
+  providerTransientVerdict,
+} from '@/ai/provider-failure';
+import { type TaskKind, resolveTaskBudget } from '@/capabilities/task-registry';
 import { getTaskOverride } from '@/core/config/store';
 import { canonicalHash } from '@/core/migration/canonical';
 import {
@@ -18,18 +24,21 @@ import {
 } from '@/core/paid-work/server/paid-effect-store';
 import type { Db, Tx } from '@/db/client';
 import { ai_task_runs, paid_effect } from '@/db/schema';
+import { classifyLoginFailure } from '@/server/ai/login-failure';
 import { assertModelProfileCapabilityFit } from '@/server/ai/model-profiles';
 import {
   planProviderTransientRetry,
   providerTransientRetryPolicy,
+  settledAttemptEvidence,
   sleepMs,
 } from '@/server/ai/provider-transient-retry';
+import { PROVIDER_WAIT_MAX, providerWaitDelayMs } from '@/server/ai/provider-wait';
 import type { BoundRunTaskTextFn } from '@/server/ai/runner-fn';
 
 export type AdmissionStageReceiptRef = { identity: PaidEffectIdentity; receipt_digest: string };
 
 export const AdmissionRecovery = z.object({
-  reason: z.enum(['quota', 'login', 'not_sent']),
+  reason: z.enum(['quota', 'login', 'not_sent', 'provider']),
   retry_at: z.string().datetime().nullable(),
   evidence_ref: z.string().min(1),
 });
@@ -50,7 +59,9 @@ export class AdmissionWaiting extends Error {
         ? 'Admission provider connection is waiting for recovery'
         : recovery.reason === 'quota'
           ? 'Admission adjudicator quota is exhausted'
-          : 'Admission adjudicator login needs renewal',
+          : recovery.reason === 'provider'
+            ? 'Admission provider route is waiting for recovery'
+            : 'Admission adjudicator login needs renewal',
     );
   }
 }
@@ -64,6 +75,13 @@ export class AdmissionNotSent extends Error {
 export class AdmissionSafeRetryExhausted extends AdmissionNotSent {
   constructor() {
     super('Admission provider safe retry budget is exhausted');
+  }
+}
+
+/** The provider-wait ladder (PROVIDER_WAIT_MAX) ran out during an outage. */
+export class AdmissionProviderWaitExhausted extends AdmissionNotSent {
+  constructor() {
+    super('Admission provider outage outlasted the recovery wait budget');
   }
 }
 
@@ -82,6 +100,13 @@ export class AdmissionInterrupted extends Error {
 export const ADMISSION_STAGE_FAMILY = 'question_admission_stage';
 const FAMILY = ADMISSION_STAGE_FAMILY;
 const NOT_SENT_WINDOW_MS = 24 * 60 * 60_000;
+/**
+ * Once a bounded burst is spent (not_sent window, provider-wait ladder), the
+ * wait does not die — it drops to a slow outage tail. Every tail resend still
+ * requires the settled, provably-unbilled evidence gate, so an open-ended wait
+ * can never turn into open-ended spend.
+ */
+export const OUTAGE_TAIL_DELAY_MS = 6 * 60 * 60_000;
 
 const ProviderFailureEvidenceSchema = z.object({
   http_status: z.number().optional(),
@@ -119,7 +144,10 @@ const StageReceipt = z.discriminatedUnion('kind', [
     recovery: AdmissionRecovery,
     not_sent_started_at: z.string().datetime().optional(),
     not_sent_waits: z.number().int().positive().optional(),
+    provider_waits: z.number().int().positive().optional(),
     quota_failures: z.number().int().nonnegative().optional(),
+    /** Count of tail waits after the bounded burst/ladder was spent. */
+    outage_waits: z.number().int().positive().optional(),
     inherited_login_wait: z.boolean().optional(),
     /** Set when the wait follows an exhausted in-run transient chain (429 lane). */
     transient: z.literal(true).optional(),
@@ -127,6 +155,7 @@ const StageReceipt = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('failure'),
     safe_retry_exhausted: z.literal(true).optional(),
+    provider_wait_exhausted: z.literal(true).optional(),
     fields: StageErrorFields,
   }),
   /**
@@ -159,7 +188,9 @@ function existingRecovery(
   if (error.helpProviderFault?.kind === 'quota')
     return { reason: 'quota', evidence_ref: error.taskRunId };
   if (httpStatus === 429) return { reason: 'quota', evidence_ref: error.taskRunId };
-  if (httpStatus === 401 && kind === 'QuestionAdmissionAdjudicateTask')
+  // Typed login evidence (credential-store failure or bound 401), never
+  // message text. Still adjudicator-gated: only its waits have a probe clock.
+  if (kind === 'QuestionAdmissionAdjudicateTask' && classifyLoginFailure(error))
     return { reason: 'login', evidence_ref: error.taskRunId };
   return null;
 }
@@ -276,11 +307,14 @@ export function admissionStageRunner(input: {
           .orderBy(desc(sql`(${paid_effect.input_json}->>'attempt')::int`));
         const previous = history[0];
         // Grants consume this burst's budget even before the successor is claimed.
-        // Only an exhausted network wait starts another burst; quota never resets it.
+        // A spent network window drops to the outage tail; quota never resets it.
         let notSentStartedAt: string | undefined;
         let notSentWaits = 0;
+        let notSentOutageWaits = 0;
         let notSentRetries = 0;
         let notSentWaitedMs = 0;
+        let providerWaits = 0;
+        let providerOutageWaits = 0;
         let previousTransientWait = 0;
         let latestRetryClass: string | undefined;
         for (const row of [...history].reverse()) {
@@ -291,8 +325,13 @@ export function admissionStageRunner(input: {
               throw new Error('Admission network wait has no durable window; no resend');
             notSentStartedAt ??= saved.not_sent_started_at;
             notSentWaits = saved.not_sent_waits;
+            notSentOutageWaits = saved.outage_waits ?? 0;
             notSentRetries = 0;
             notSentWaitedMs = 0;
+          }
+          if (saved.kind === 'waiting' && saved.recovery.reason === 'provider') {
+            providerWaits = saved.provider_waits ?? providerWaits;
+            providerOutageWaits = saved.outage_waits ?? 0;
           }
           if (saved.kind !== 'transient') {
             previousTransientWait = 0;
@@ -300,20 +339,24 @@ export function admissionStageRunner(input: {
           }
           let retryClass = saved.retry_class;
           if (retryClass === undefined) {
-            // Old receipts carry no retry class; only the sealed task-run
-            // transport can establish not_sent. Missing evidence fails closed.
-            const [run] = await input.db
-              .select()
-              .from(ai_task_runs)
-              .where(eq(ai_task_runs.id, saved.fields.taskRunId));
+            // Old receipts carry no retry class — replay them under the same
+            // rules a live resend obeys: the sealed attempt must be settled,
+            // carry the unbilled-rejection receipt, and classify resendable.
+            // Paid/unknown attempts and quota fail closed like new data.
+            const evidence = await settledAttemptEvidence(input.db, saved.fields.taskRunId);
             retryClass =
-              run?.finished_at != null
+              evidence.settled && evidence.unbilled
                 ? providerTransientVerdict({
                     error: new AgentRunError(saved.fields as AgentRunErrorFields),
-                    transport: run.usage_json.transport,
+                    transport: evidence.transport,
                   })?.class
                 : undefined;
           }
+          if (
+            retryClass !== undefined &&
+            !providerTransientResendable(retryClass as ProviderTransientClass)
+          )
+            retryClass = undefined;
           if (row === previous) latestRetryClass = retryClass;
           if (retryClass === undefined) {
             notSentRetries++;
@@ -402,26 +445,19 @@ export function admissionStageRunner(input: {
             if (receipt.kind === 'result') return receipt.result;
             if (receipt.kind === 'not_sent') throw new AdmissionNotSent();
             if (receipt.kind === 'interrupted') throw new AdmissionInterrupted(receipt.reason);
+            if (receipt.kind === 'failure' && receipt.provider_wait_exhausted)
+              throw new AdmissionProviderWaitExhausted();
             if (receipt.kind === 'failure' && receipt.safe_retry_exhausted)
               throw new AdmissionSafeRetryExhausted();
             if (receipt.kind === 'failure')
               throw new AgentRunError(receipt.fields as AgentRunErrorFields);
             // Successful/terminal legacy receipts above retain their original replay.
-            if (notSentStartedAt && Date.now() >= Date.parse(notSentStartedAt) + NOT_SENT_WINDOW_MS)
-              throw new AdmissionSafeRetryExhausted();
             if (receipt.kind === 'transient') {
-              // The transient chain stays bounded by the same policy the caller
-              // applies: beyond the retry bound the frozen failure is terminal.
+              // A spent in-run budget is not terminal: the next send's outcome
+              // lands on the durable wait ladder instead. Only an attempt that
+              // carries no sealed unbilled evidence may still refuse a resend.
               if (latestRetryClass === undefined)
                 throw new Error('Admission retry has no sealed evidence; no resend');
-              if (latestRetryClass === 'not_sent') {
-                if (
-                  notSentRetries > transientPolicy.maxRetries ||
-                  notSentWaitedMs > transientPolicy.maxWaitMs
-                )
-                  throw new AdmissionSafeRetryExhausted();
-              } else if (frozen.attempt >= transientPolicy.maxRetries)
-                throw new AgentRunError(receipt.fields as AgentRunErrorFields);
               attempt = frozen.attempt + 1;
               priorWaitedMs = receipt.waited_ms ?? 0;
               if (receipt.retry_not_before != null) {
@@ -456,12 +492,22 @@ export function admissionStageRunner(input: {
                 !automaticLoginProbe
               )
                 throw new AdmissionWaiting(receipt.recovery, previous.unit, route);
+              // A waited resend re-issues the WHOLE call — earlier turns'
+              // billed work would be bought again. Same gate as a live resend:
+              // the evidence attempt must carry the unbilled-rejection
+              // receipt; a paid or unknown attempt never resends.
+              const resendEvidence = await settledAttemptEvidence(
+                input.db,
+                receipt.recovery.evidence_ref,
+              );
+              if (!resendEvidence.settled || !resendEvidence.unbilled)
+                throw new Error(
+                  'Admission wait resend lacks unbilled-rejection evidence; no resend',
+                );
               attempt = frozen.attempt + 1;
             }
           }
         }
-        if (notSentStartedAt && Date.now() >= Date.parse(notSentStartedAt) + NOT_SENT_WINDOW_MS)
-          throw new AdmissionSafeRetryExhausted();
         // Purpose/control guards and aborts retain their original identity.
         await input.beforeSend?.();
         const unit = `call:${index}:attempt:${attempt}`;
@@ -487,7 +533,11 @@ export function admissionStageRunner(input: {
             backend: 'pg-boss',
             deliveryId: input.deliveryId,
             generation: 0,
-            leaseExpiresAt: new Date(Date.now() + 15 * 60_000),
+            // Derived so a system_config timeout override cannot outlive the lease and get a
+            // live call settled as expired; crash recovery pays the 5min margin.
+            leaseExpiresAt: new Date(
+              Date.now() + resolveTaskBudget(kind as TaskKind).timeout + 5 * 60_000,
+            ),
           },
         );
         if (reservation.kind !== 'winner')
@@ -566,6 +616,20 @@ export function admissionStageRunner(input: {
             const recovery =
               (kind === 'QuestionAdmissionAdjudicateTask' ? input.recovery?.(error) : undefined) ??
               existingRecovery(error, httpStatus, kind);
+            // A proven transient rejection whose in-run budget is spent can
+            // still wait the route out — but only while the sealed attempt is
+            // provably unbilled, the same gate a waited resend applies. A bound
+            // 401 is a complete pre-billing refusal too: the adjudicator's own
+            // 401 already took the login route above, so a non-adjudicate auth
+            // refusal parks on the provider wait clock until the credential is
+            // renewed instead of landing terminal.
+            const providerWaitEvidence =
+              error instanceof AgentRunError &&
+              plan === undefined &&
+              ((verdict !== undefined && providerTransientResendable(verdict.class)) ||
+                httpStatus === 401)
+                ? await settledAttemptEvidence(input.db, error.taskRunId)
+                : undefined;
             const knownFailure =
               error instanceof AgentRunError &&
               run?.finished_at != null &&
@@ -574,27 +638,41 @@ export function admissionStageRunner(input: {
                 error.subtype === 'error_max_structured_output_retries' ||
                 error.helpProviderFault?.kind === 'parse' ||
                 error.helpProviderFault?.kind === 'bad_gateway');
-            if (
-              verdict?.class === 'not_sent' &&
-              plan === undefined &&
-              !input.interrupted?.() &&
-              (!notSentStartedAt || Date.now() < Date.parse(notSentStartedAt) + NOT_SENT_WINDOW_MS)
-            ) {
+            if (verdict?.class === 'not_sent' && plan === undefined && !input.interrupted?.()) {
               const now = Date.now();
               const startedAt = notSentStartedAt ?? new Date(now).toISOString();
               const expiresAt = Date.parse(startedAt) + NOT_SENT_WINDOW_MS;
-              const waits = notSentWaits + 1;
-              const minutes = [5, 15, 30][waits - 1] ?? 60;
-              receipt = {
-                kind: 'waiting',
-                not_sent_started_at: startedAt,
-                not_sent_waits: waits,
-                recovery: {
-                  reason: 'not_sent',
-                  evidence_ref: error instanceof AgentRunError ? error.taskRunId : '',
-                  retry_at: new Date(Math.min(now + minutes * 60_000, expiresAt)).toISOString(),
-                },
-              };
+              if (now < expiresAt) {
+                const waits = notSentWaits + 1;
+                const minutes = [5, 15, 30][waits - 1] ?? 60;
+                receipt = {
+                  kind: 'waiting',
+                  not_sent_started_at: startedAt,
+                  not_sent_waits: waits,
+                  recovery: {
+                    reason: 'not_sent',
+                    evidence_ref: error instanceof AgentRunError ? error.taskRunId : '',
+                    retry_at: new Date(Math.min(now + minutes * 60_000, expiresAt)).toISOString(),
+                  },
+                };
+              } else {
+                // The 24h burst is spent: the wait drops to the outage tail
+                // instead of dying on a terminal receipt. The frozen burst
+                // window stays as provenance; resends still pass the settled
+                // unbilled-evidence gate, so the tail can never spend.
+                receipt = {
+                  kind: 'waiting',
+                  transient: true,
+                  not_sent_started_at: startedAt,
+                  not_sent_waits: notSentWaits,
+                  outage_waits: notSentOutageWaits + 1,
+                  recovery: {
+                    reason: 'not_sent',
+                    evidence_ref: error instanceof AgentRunError ? error.taskRunId : '',
+                    retry_at: new Date(now + OUTAGE_TAIL_DELAY_MS).toISOString(),
+                  },
+                };
+              }
             } else if (recovery && !input.interrupted?.() && plan === undefined) {
               const parsed = AdmissionRecovery.pick({ reason: true, evidence_ref: true }).parse(
                 recovery,
@@ -613,12 +691,40 @@ export function admissionStageRunner(input: {
                       : new Date(Date.now() + 60 * 60_000).toISOString(),
                 },
               };
+            } else if (
+              providerWaitEvidence?.settled === true &&
+              providerWaitEvidence.unbilled === true &&
+              !input.interrupted?.() &&
+              error instanceof AgentRunError
+            ) {
+              // Outage-scale wait (5/15/30/60 min ladder, then a 6h tail): the
+              // coordinator wake redelivers this stage after route recovery
+              // instead of landing the question failed while the provider was
+              // merely down. The tail has no cap — every resend already passed
+              // the settled unbilled-evidence gate, so waiting forever costs $0.
+              const nextWait = providerWaits + 1;
+              const tail = nextWait > PROVIDER_WAIT_MAX;
+              receipt = {
+                kind: 'waiting',
+                transient: true,
+                provider_waits: nextWait,
+                ...(tail ? { outage_waits: providerOutageWaits + 1 } : {}),
+                recovery: {
+                  reason: 'provider',
+                  evidence_ref: error.taskRunId,
+                  retry_at: new Date(
+                    Date.now() + (tail ? OUTAGE_TAIL_DELAY_MS : providerWaitDelayMs(nextWait)),
+                  ).toISOString(),
+                },
+              };
             } else if (plan !== undefined && error instanceof AgentRunError) {
               receipt = {
                 kind: 'transient',
-                ...(plan.verdict.class === 'not_sent'
-                  ? { retry_class: plan.verdict.class, retry_delay_ms: plan.delayMs }
-                  : {}),
+                // Every class rides the receipt: replay reads it directly instead
+                // of re-deriving from the frozen error, and the not_sent ledger
+                // still owns its independent delay accounting.
+                retry_class: plan.verdict.class,
+                ...(plan.verdict.class === 'not_sent' ? { retry_delay_ms: plan.delayMs } : {}),
                 waited_ms: priorWaitedMs + plan.delayMs,
                 retry_not_before: new Date(Date.now() + plan.delayMs).toISOString(),
                 fields: {
@@ -639,7 +745,6 @@ export function admissionStageRunner(input: {
             } else if (knownFailure && error instanceof AgentRunError)
               receipt = {
                 kind: 'failure',
-                ...(verdict?.class === 'not_sent' ? { safe_retry_exhausted: true as const } : {}),
                 fields: {
                   kind: error.kind,
                   taskRunId: error.taskRunId,
@@ -699,8 +804,6 @@ export function admissionStageRunner(input: {
           );
         if (receipt.kind === 'waiting') throw new AdmissionWaiting(receipt.recovery, unit, route);
         if (receipt.kind === 'not_sent') throw new AdmissionNotSent();
-        if (receipt.kind === 'failure' && receipt.safe_retry_exhausted)
-          throw new AdmissionSafeRetryExhausted();
         if (receipt.kind === 'failure')
           throw new AgentRunError(receipt.fields as AgentRunErrorFields);
         // Transient chains loop back through the history read, which owns the

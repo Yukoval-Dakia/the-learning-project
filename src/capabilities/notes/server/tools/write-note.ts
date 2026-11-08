@@ -55,9 +55,9 @@ export const WRITE_NOTE_MARKDOWN_MAX_CHARS = 100_000;
 
 const NOTE_BLOCK_SOURCE_TIER = 'llm_only';
 
-// One Markdown chunk ↔ one semanticBlock, mirroring noteSectionsToBodyBlocks:
-// the raw Markdown lives in attrs.source_markdown (the reader's blockText
-// source) and in a single paragraph child (the editor's PM mirror). The block
+// One Markdown chunk ↔ one semanticBlock: the raw Markdown lives in
+// attrs.source_markdown (the reader's blockText source) and in a single
+// paragraph child (the editor's PM mirror). The block
 // intentionally carries NO semantic_kind — a free-form prose block renders as
 // the plain nrb block, not one of the five section kinds. This write path has no
 // tool-result binding step, so a recorded-data chart fence is downgraded here.

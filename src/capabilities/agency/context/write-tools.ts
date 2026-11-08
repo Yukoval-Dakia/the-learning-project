@@ -30,7 +30,7 @@ export const rememberLearnerTool: DomainTool<
   inputSchema: RememberInput,
   outputSchema: ChangeResult,
   async execute(ctx, input) {
-    const anchor = ctx.causedByEventId;
+    const anchor = ctx.learnerAskEventId ?? ctx.causedByEventId;
     if (
       !anchor ||
       ctx.derivationPolicy !== 'allow' ||

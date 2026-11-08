@@ -40,6 +40,7 @@ import { readJudgeRunPermanent } from '../judge-run-observation';
 import type { NativeJudgeRunJobData } from '../judge-run-payload';
 import { NativeJudgeResolutionPayload } from '../judge-run-payload';
 import { JUDGE_RUN_EVENTS, nativeJudgeRunId } from '../judge-run-status';
+import { projectAttemptEvidence } from '../review-answer-response';
 import {
   type FormalAttemptCapture,
   commitFormalAttempt,
@@ -47,6 +48,7 @@ import {
   previewFormalAttempt,
   recordFormalAttemptCapture,
 } from './attempt';
+import { readSealedSelfClaim } from './self-claim';
 import type { SaveSubmissionRequest } from './submit';
 
 export const NATIVE_JUDGE_RESOLUTION = 'experimental:assessment_judge_resolution';
@@ -324,16 +326,28 @@ export async function executeNativeAttempt(
   ) => {
     await lockJudgeRun(tx, job.run_id);
     const candidateId = prepared.candidate.evaluation.record.evaluation_id;
-    const finalRating =
-      status === 'effective'
-        ? ratingFromCoarseOutcome(prepared.candidate.result.coarse_outcome)
-        : null;
-    if (status === 'effective' && finalRating === null)
+    // The pending payload is itself a first-write-wins seal of the accepted
+    // rating operation (a retry that changes it fails coordinate_mismatch). The
+    // activation receipt seals user_rating in this same transaction; the frozen
+    // input only backfills the claim for held paths and pre-seal receipts.
+    const sealedClaim = await readSealedSelfClaim(
+      tx,
+      input.submission_id,
+      input.evaluation_group_id,
+      candidateId,
+    );
+    const derivedRating = ratingFromCoarseOutcome(prepared.candidate.result.coarse_outcome);
+    if (status === 'effective' && derivedRating === null)
       throw new ApiError(
         'corrupt_state',
         'effective worker result requires a model-derived rating',
         500,
       );
+    // final_rating is what the activation actually settled. Settlement and the
+    // receipt read the same sealed user_rating inside one transaction, so the
+    // seal is the honest source; a pre-seal receipt (old runs) means settlement
+    // was verdict-derived, never a learner rating the seal did not record.
+    const finalRating = status === 'effective' ? (sealedClaim.rating ?? derivedRating) : null;
     const wanted = {
       id: job.run_id,
       session_id: input.capture.session_id ?? null,
@@ -351,6 +365,17 @@ export async function executeNativeAttempt(
         judge_event_id: null,
         ...(finalRating ? { final_rating: finalRating } : {}),
         ...prepared.candidate.result,
+        evidence: projectAttemptEvidence({
+          assistance: prepared.assistance,
+          verdict: {
+            outcome: prepared.candidate.result.coarse_outcome,
+            score: prepared.candidate.result.score,
+          },
+          self_claim: {
+            rating: sealedClaim.rating ?? input.user_rating ?? null,
+            confidence: sealedClaim.confidence ?? input.capture.self_confidence ?? null,
+          },
+        }),
         assessment: {
           submission_id: input.submission_id,
           evaluation_group_id: input.evaluation_group_id,
@@ -368,6 +393,9 @@ export async function executeNativeAttempt(
       const {
         grading_provenance: _derived,
         feedback_md: _copy,
+        // Receipts sealed before this field shipped carry none; the read side
+        // degrades to "no evidence" instead of minting a mismatch on redeploy.
+        evidence: _evidence,
         ...rest
       } = payload as Record<string, unknown>;
       return rest;
@@ -483,6 +511,10 @@ export async function executeNativeAttempt(
         capture: input.capture,
         modelAdmission: 'durable',
         judgeExecution: authority,
+        // The accepted rating operation froze its learner choice into the
+        // pending input; activation seals it exactly like a synchronous commit.
+        // auto_rate submits freeze none, so they stay judge-derived.
+        userRating: input.user_rating,
         requireUnassistedModelEvidence: input.require_unassisted_model_evidence,
         onActivated: async (tx, prepared) => {
           await writeResolution(tx, prepared, 'effective');

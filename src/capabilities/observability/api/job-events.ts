@@ -1,5 +1,5 @@
 import { db } from '@/db/client';
-import { jobEventStreamResponse } from '@/kernel/job-event-stream';
+import { jobEventStreamResponse, jobStreamGate } from '@/kernel/job-event-stream';
 import { JOB_EVENT_KIND_SET } from './event-contracts';
 
 // Generic SSE tracker for job_events, keyed by business kind and id. The stream
@@ -28,5 +28,16 @@ export async function GET(req: Request, params: Record<string, string>): Promise
     });
   }
 
-  return jobEventStreamResponse(db, req, { businessTable, businessId }, 'job-tracker');
+  // Channel owner gates (installed via the kernel port, not capability imports)
+  // deny both fresh replay and — inside the stream — later replay ticks, so a
+  // revoked channel reads as gone instead of leaking persisted frames.
+  const gate = jobStreamGate(businessTable);
+  if (gate && !(await gate(db, businessId))) {
+    return new Response(JSON.stringify({ error: 'not found' }), {
+      status: 404,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  return jobEventStreamResponse(db, req, { businessTable, businessId, gate }, 'job-tracker');
 }

@@ -63,6 +63,7 @@ export const ai_task_runs = pgTable(
         phases?: {
           prompt_build_ms?: number;
           model_ttft_ms?: number | null;
+          model_thinking_ttft_ms?: number | null;
           model_total_ms?: number;
           stream_ms?: number;
           parse_ms?: number;
@@ -555,8 +556,8 @@ export const tool_call_log = pgTable('tool_call_log', {
   mirrored_event_id: text('mirrored_event_id'),
 });
 
-// YUK-1448: short-lived, actor/role-bound semantic search pagination only.
-// No gap, quiz or issuance authority. Learner archive restore wipes this cache.
+// Short-lived actor/role/run-bound bank evidence and pagination. Consumers revalidate
+// the receipt and pinned revisions before gap filing or issuance; restore wipes the cache.
 export const bank_search_snapshot = pgTable(
   'bank_search_snapshot',
   {

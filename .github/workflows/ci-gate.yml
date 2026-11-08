@@ -858,7 +858,61 @@ jobs:
             src/core/calibration/native-parity.unit.test.ts \
             src/core/calibration/wasm-parity.unit.test.ts \
             src/core/poly-exp-parity.unit.test.ts \
-            src/core/coldstart-solver-parity.unit.test.ts
+            src/core/coldstart-solver-parity.unit.test.ts \
+            src/capabilities/practice/scheduling/server/day-one-prior-propagate.unit.test.ts
+
+  workspace_boundary:
+    name: workspace container invariant
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Select container boundary
+        id: boundary
+        env:
+          BASE_SHA: ${{ inputs.test_policy_base || github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          selected=true
+          if [ -n "$BASE_SHA" ]; then
+            git diff --name-only "$BASE_SHA" HEAD > /tmp/workspace-changed
+            if ! grep -Eq '^(Dockerfile$|\.node-version$|\.npmrc$|pnpm-workspace\.yaml$|tsconfig|scripts/local-heavy\.mjs$|src/kernel/|src/ai/|src/core/schema/derivation-policy\.ts$|src/capabilities/agent-workspace/|src/ai/pi-tool-mount.ts$|src/server/ai/tools/|src/kernel/tools/|src/db/|scripts/workspace/|vitest.shared.ts$|package.json$|pnpm-lock.yaml$|.github/workflows/ci-gate.yml$)' /tmp/workspace-changed; then
+              selected=false
+            fi
+          fi
+          echo "selected=$selected" >> "$GITHUB_OUTPUT"
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        if: steps.boundary.outputs.selected == 'true'
+        with:
+          version: 11.13.1
+      - uses: actions/setup-node@v7
+        if: steps.boundary.outputs.selected == 'true'
+        with:
+          node-version-file: '.node-version'
+          cache: 'pnpm'
+      - name: Install dependencies
+        if: steps.boundary.outputs.selected == 'true'
+        run: pnpm install --frozen-lockfile
+      - name: Build real worker image and run container partition
+        if: steps.boundary.outputs.selected == 'true'
+        env:
+          WORKSPACE_IMAGE: workspace-boundary-ci:owned
+        shell: bash
+        run: |
+          docker build --target worker -t "$WORKSPACE_IMAGE" . 2>&1 | tee workspace-image.log
+          pnpm test:workspace 2>&1 | tee workspace-boundary.log
+      - name: Remove owned image
+        if: always() && steps.boundary.outputs.selected == 'true'
+        run: docker image rm workspace-boundary-ci:owned || true
+      - name: Save raw container evidence
+        if: always() && steps.boundary.outputs.selected == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: workspace-container-evidence
+          path: workspace-*.log
+          retention-days: 7
+          if-no-files-found: ignore
 
   # Keep this name identical to the historical required check while the work moves into parallel jobs.
   gate:
@@ -882,6 +936,7 @@ jobs:
       - migration
       - build
       - parity
+      - workspace_boundary
 
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -905,10 +960,11 @@ jobs:
           MIGRATION_RESULT: ${{ needs.migration.result }}
           BUILD_RESULT: ${{ needs.build.result }}
           PARITY_RESULT: ${{ needs.parity.result }}
+          WORKSPACE_RESULT: ${{ needs.workspace_boundary.result }}
         run: |
           set -euo pipefail
           failed=0
-          for lane in STATIC AUDITS_CONTRACTS AUDITS_ARCHITECTURE AUDITS_POLICY UNIT_1 UNIT_2 DB_1 DB_2 DB_3 DB_4 DB_5 DB_6 DB_7 DB_8 MIGRATION BUILD PARITY; do
+          for lane in STATIC AUDITS_CONTRACTS AUDITS_ARCHITECTURE AUDITS_POLICY UNIT_1 UNIT_2 DB_1 DB_2 DB_3 DB_4 DB_5 DB_6 DB_7 DB_8 MIGRATION BUILD PARITY WORKSPACE; do
             result_var="${lane}_RESULT"
             result="${!result_var}"
             printf '%-22s %s\n' "$lane" "$result"

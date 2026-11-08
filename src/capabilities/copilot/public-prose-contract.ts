@@ -8,6 +8,7 @@ export const CopilotPublicProseFailureSchema = z
     kind: z.enum([
       'provider_rejected',
       'rate_limited',
+      'quota',
       'provider_error',
       'timeout',
       'connection',
@@ -55,6 +56,8 @@ export function providerFailureToPublicFailure(
 }
 
 export const COPILOT_PROVIDER_REJECTION_REPLY = '这次没答成，可以换个说法再试一次。';
+/** Stored as the reply when a run ended with nothing written and no provider failure to name. */
+export const COPILOT_FINALIZATION_FAILURE_REPLY = '这次回复未能完成，已有内容已保留。';
 
 function retryAfterSentence(seconds: number | undefined): string {
   if (seconds === undefined || seconds <= 0) return '';
@@ -70,12 +73,15 @@ export function publicProseFailureMessage(failure?: CopilotPublicProseFailure): 
     case 'provider_rejected':
       // 401/403/404 等拒绝不是问法问题，不提示换说法或重试。
       return failure.http_status === 400 ? COPILOT_PROVIDER_REJECTION_REPLY : '这次没答成。';
-    case 'rate_limited': {
-      const recovery = longQuotaRecoveryTextFromSeconds(failure.retry_after_seconds);
-      if (recovery !== undefined) {
-        return `额度用完了，本次未完成回答。${recovery}恢复。`;
-      }
+    case 'rate_limited':
       return `现在有点忙，这次没答完。${retryAfterSentence(failure.retry_after_seconds) || '过一会儿再试试。'}`;
+    case 'quota': {
+      // Only a signature-proven quota reaches this kind — real quota responses
+      // carry no Retry-After, so absence must not downgrade the copy to "busy".
+      const recovery = longQuotaRecoveryTextFromSeconds(failure.retry_after_seconds);
+      return recovery !== undefined
+        ? `额度用完了，本次未完成回答。${recovery}恢复。`
+        : '额度用完了，这次没答完。恢复之后再来。';
     }
     case 'provider_error':
       return `服务暂时出了点问题，这次没答完。${retryAfterSentence(failure.retry_after_seconds)}`;

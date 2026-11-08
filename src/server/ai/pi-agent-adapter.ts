@@ -30,6 +30,7 @@ import type {
 import { helpFaultForRootStatus, rootBoundProviderStatus } from '@/ai/help-provider-fault';
 import { NO_PROGRESS_BUDGET_LANDING_MARGIN_MS } from '@/ai/no-progress-loop';
 import { type PiToolMount, piCustomTool } from '@/ai/pi-tool-mount';
+import { providerQuotaLimitSigned } from '@/ai/provider-failure';
 import { type TaskDefinition, resolveStructuredSubmitSchema } from '@/ai/task-spec';
 import { tasks } from '@/capabilities/task-registry';
 import { customProviderDefinitions } from '@/core/config/custom-providers';
@@ -186,6 +187,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       emitFrame: (frame) => this.emitFrame(frame),
     });
     this.wire = new PiProviderWire({
+      kind: args.kind,
       runId: args.runId,
       resolved: args.resolved,
       options: args.options,
@@ -222,8 +224,9 @@ class PiPreparedQuery implements PreparedExecutionQuery {
    */
   private makeBeforeToolCall(agentType?: string): AgentLoopConfig['beforeToolCall'] {
     const piHooks = this.args.piHooks;
-    if (!piHooks?.beforeToolCall?.length) return undefined;
     return async ({ toolCall, args: callArgs }: BeforeToolCallContext, signal) => {
+      this.wire.throwIfFailed();
+      if (!piHooks?.beforeToolCall?.length) return undefined;
       const effectiveSignal = signal ?? this.abort.signal;
       return runPiBeforeToolCall(
         piHooks,
@@ -880,6 +883,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     const lastRequestStatus = lastRequest?.loop === 'root' ? lastRequest.http_status : undefined;
     const terminalRequestStatus =
       lastRequestStatus !== undefined && lastRequestStatus >= 400 ? lastRequestStatus : undefined;
+    this.wire.applyFailure(lastAssistantMessage(finalMessages));
     const terminal = piTerminalResultFrame({
       messages: finalMessages,
       model: this.model,
@@ -928,8 +932,14 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       providerError: this.wire.latestProviderError(),
       providerRequestRejection: boundRootRejection === 400 ? { http_status: 400 } : undefined,
       providerHttpStatus: boundRootStatus ?? terminalRequestStatus,
-      helpProviderFault:
-        boundRootRejection === undefined ? undefined : helpFaultForRootStatus(boundRootRejection),
+      helpProviderFault: (() => {
+        const fault =
+          boundRootRejection === undefined ? undefined : helpFaultForRootStatus(boundRootRejection);
+        if (fault?.kind !== 'quota') return fault;
+        // The bound 429's own body decides whether copy may name 额度.
+        const body = this.wire.latestProviderError()?.body;
+        return { ...fault, signed: providerQuotaLimitSigned(body !== undefined ? [body] : []) };
+      })(),
       // Same shared boundary on errors[0] — pi's errorMessage can carry the
       // full unsanitized provider body and must not bypass redaction/cap.
       sanitizeErrorMessage: this.wire.sanitizeErrorMessage(),
