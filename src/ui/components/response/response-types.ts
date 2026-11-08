@@ -5,6 +5,7 @@ import type {
   SlotResponseT,
 } from '@/core/schema/assessment';
 import { describeSelectItem } from '@/core/schema/assessment/response';
+import { collapseRepeatedLabel } from './display-option-content';
 
 // YUK-1051 — 通用 response 组件族的共享类型与纯函数。
 //
@@ -315,7 +316,8 @@ export function nativeResponseValue(
 // options, each once and each starting with a label; anything less certain stays as written.
 // Stored text and grading are unchanged.
 const OPTION_LABEL = /^\s*[（(]?[A-Ha-h][)）]?\s*[.．、:：)）]\s*/;
-const bareOption = (text: string) => text.replace(OPTION_LABEL, '').replace(/\s+/g, '');
+const bareOption = (text: string) =>
+  collapseRepeatedLabel(text).replace(OPTION_LABEL, '').replace(/\s+/g, '');
 export function stemWithoutRepeatedOptions(stem: string, options: readonly string[]): string {
   if (options.length < 2) return stem;
   const lines = stem.split('\n');
