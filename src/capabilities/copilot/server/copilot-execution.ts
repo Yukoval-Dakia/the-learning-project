@@ -379,6 +379,7 @@ export function createCopilotExecutionOwner(
         callerActor,
         ...(turn.sourceEventId ? { causedByEventId: turn.sourceEventId } : {}),
         ...(turn.learnerAskEventId ? { learnerAskEventId: turn.learnerAskEventId } : {}),
+        ...(focused ? { ambientFocus: { kind: focused.kind, id: focused.id } } : {}),
         sourceLedger,
         answerOnly,
       },

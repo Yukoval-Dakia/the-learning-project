@@ -35,13 +35,19 @@ const LearnerLocalDay = z
 const RecordSteeringInputSchema = z.object({
   op: z.enum(['create', 'revise', 'end']),
   /** The goal being revised/ended. Optional when exactly ONE steering goal is
-   *  active (the common follow-up case: the confirmation text carries no id);
-   * required when several are active. */
+   *  active (the common follow-up case: the confirmation text carries no id) or
+   *  when the turn's focus is one of several; required otherwise. */
   goal_id: z.string().min(1).optional(),
   /** Verbatim quote from the learner's message this turn (≤500 chars). */
   learner_words: z.string().min(1).max(500),
-  /** Plain restatement of the instruction; the guidance-facing summary. */
-  instruction_md: z.string().min(1).max(280).optional(),
+  instruction_md: z
+    .string()
+    .min(1)
+    .max(280)
+    .optional()
+    .describe(
+      'The arrangement itself as the learner reads it under 当前安排 on the today page: one plain sentence, dates written like 「11 月 27 日」, e.g. 「11 月 27 日期中考，先练数列和导数」. On revise, state the whole arrangement as it now stands. Never describe the edit (no 「改成…」「改在…」「仍是…」).',
+    ),
   subject_id: z.string().min(1).max(80).optional(),
   window: z
     .object({
@@ -260,7 +266,9 @@ async function countDeferredDueReviews(ctx: ToolContext, now: Date): Promise<num
 /**
  * goal_id resolution for revise/end: an explicit id wins; otherwise the single
  * active steering goal (follow-up turns cannot carry the id — conversation
- * history keeps prose only). Ambiguity fails loudly instead of guessing.
+ * history keeps prose only); with several, the one the learner had in focus
+ * (the today page's 改/撤回 focuses the tapped goal). Any other ambiguity
+ * fails loudly instead of guessing.
  */
 async function resolveSingleSteeringGoalId(
   ctx: ToolContext,
@@ -272,6 +280,8 @@ async function resolveSingleSteeringGoalId(
   if (active.length === 0) {
     throw new ApiError('not_found', 'no active steering goal to revise or end', 404);
   }
+  const focus = ctx.ambientFocus;
+  if (focus?.kind === 'goal' && active.some((g) => g.id === focus.id)) return focus.id;
   throw new ApiError(
     'validation_error',
     `several steering goals are active; pass one of: ${active.map((g) => g.id).join(', ')}`,
@@ -282,7 +292,7 @@ async function resolveSingleSteeringGoalId(
 export const recordSteeringTool: DomainTool<RecordSteeringToolInput, RecordSteeringToolOutput> = {
   name: 'record_steering',
   description:
-    "MUST be called FIRST — before any advice or proposal — whenever the learner states an exam/quiz date or scope (期中/期末/测验), a study deadline, a priority change (这周主攻/别排物理), or cancels a prior arrangement (考试取消了). Writes directly, no proposal: learner_words MUST quote the learner's words verbatim from the current message (server-checked; paraphrases are rejected); unmappable scope stays as text. Build the confirmation ONLY from the result's echo/issues/preparing. Never substitute a knowledge-tree proposal or a spoken-only recap for this call.",
+    "MUST be called FIRST — before any advice or proposal — whenever the learner states an exam/quiz date or scope (期中/期末/测验), a study deadline, a priority change (这周主攻/别排物理), or cancels a prior arrangement (考试取消了). Writes directly, no proposal: learner_words MUST quote the learner's words verbatim from the current message (server-checked; paraphrases are rejected); unmappable scope stays as text. revise/end: when ambient.focused_entity is a goal, the learner came from that arrangement's 改/撤回 on the today page, so it IS the one to change — omit goal_id and the server uses it (pass another goal_id only if the learner's words clearly name a different arrangement). instruction_md is the arrangement itself (「11 月 27 日期中考，先练数列和导数」), not a description of the change. Build the confirmation ONLY from the result's echo/issues/preparing. Never substitute a knowledge-tree proposal or a spoken-only recap for this call.",
   effect: 'write',
   inputSchema: RecordSteeringInputSchema,
   outputSchema: RecordSteeringOutputSchema,
