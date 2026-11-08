@@ -504,6 +504,8 @@ export function foldCopilotRunFrames(
           // Until it says something, the line says the connection is being picked up.
           modelStage = 'reconnecting';
           replyText = replyText.slice(0, Math.max(0, replyText.length - retry.discard_chars));
+          // A picture placed inside the taken-back words belonged to the broken attempt.
+          blocks = blocks.filter((block) => block.anchor <= replyText.length);
           if (!publicProse || publicProse.status === 'streaming') {
             publicDeltas.set(item.event_id, { discard: retry.discard_chars });
             if (publicProse) publicProse = mergePublicProse(publicProse, publicDeltas);
@@ -591,6 +593,8 @@ export function foldCopilotRunFrames(
         replyPayload = { ...replyPayload, ...item.payload };
         if (item.payload.thinking_clear === true) thinkingClear = true;
         phase = 'running';
+        // The reply is here: whatever was being picked up has been.
+        if (modelStage === 'reconnecting') modelStage = 'writing';
         if (typeof item.payload.reply_md === 'string') replyText = item.payload.reply_md;
         if (typeof item.payload.checkpoint_event_id === 'string') {
           checkpointEventId = item.payload.checkpoint_event_id;
