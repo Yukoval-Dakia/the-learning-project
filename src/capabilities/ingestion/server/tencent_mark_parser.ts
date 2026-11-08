@@ -1,6 +1,7 @@
 import { createId } from '@paralleldrive/cuid2';
 import { clampBBox } from '@/core/schema/bbox-utils';
 import type { BBoxT, StructuredQuestionT } from '@/core/schema/structured_question';
+import { matchPromptHeadQuestionNo } from '@/kernel/proposals/block-merge-admission';
 
 // Tencent parser, retained permanently as the selectable tencent engine. Dual
 // engines allow same-page A/B quality comparison and per-scenario switching.
@@ -66,12 +67,16 @@ export type ParsedSubTitle = {
 };
 
 const OPTION_LINE = /^([A-Z])\.\s*(.*)$/;
-const SUB_LEADING_NUM = /^(\d+)\.\s*(.*)$/;
 
 /**
  * Parse a sub-question MarkItemTitle like:
  *   "1. ______\nA. decision\nB. reason\nC. difference\nD. choice"
  * → { question_no: '1', prompt_text: '______', options: [{A,decision}, ...] }
+ *
+ * The leading number moves through matchPromptHeadQuestionNo — the same
+ * parser merge admission and the structure move use — so a decimal head
+ * (`0.75`) or an inline enumeration (「（1）…（2）…」) stays inside
+ * prompt_text instead of being cut into a number.
  */
 export function parseSubMarkItemTitle(title: string): ParsedSubTitle {
   const lines = title.split('\n').map((l) => l.trim());
@@ -84,10 +89,11 @@ export function parseSubMarkItemTitle(title: string): ParsedSubTitle {
   }
 
   const first = lines[0] ?? '';
-  const numMatch = first.match(SUB_LEADING_NUM);
-  if (numMatch) {
-    question_no = numMatch[1];
-    prompt_text = numMatch[2] ?? '';
+  const headMatch = matchPromptHeadQuestionNo(first);
+  const rest = headMatch ? first.slice(headMatch.matchLength).trim() : '';
+  if (headMatch && headMatch.parsed.kind !== 'unknown' && rest.length > 0) {
+    question_no = String(headMatch.parsed.value);
+    prompt_text = rest;
   } else {
     prompt_text = first;
   }

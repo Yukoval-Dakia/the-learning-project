@@ -234,22 +234,35 @@ const DECIMAL_HEAD_RE = /^\s*[0-9０-９]+\s*[.、．]\s*[0-9０-９]/u;
 const PREFIXED_HEAD_NUMERAL_RE = /第\s*(\d+|[零一二三四五六七八九十百两]+)\s*题/u;
 
 /**
- * Another paren-family number token later in the stem, anchored on a
- * separator (sentence punctuation / whitespace / start) so function-style
- * `f(2)` or prose references like 「由（2）式」 do not count — a head paren
- * number followed by one is an inline enumeration like 「（1）…；（2）…」.
+ * Another paren-family number token later in the stem — a head paren number
+ * followed by one is an inline enumeration like 「（1）…；（2）…」, not a
+ * provable own number. A fullwidth （N）token counts wherever it appears:
+ * after a literal ellipsis or abutting the previous text with no separator
+ * at all (「（1）…（2）…」, 「（1）求x（2）求y」). A halfwidth token still
+ * counts only when anchored on a separator, so function-style `f(2)` does
+ * not flag — the cost is that a prose reference like 「由（2）式」 now
+ * flags, which is the conservative direction.
  */
 const INLINE_ENUM_NEXT_NO_RE =
-  /(?:^|[\s；;，,、。:：])(?:[（(]\s*\d{1,3}\s*[)）]|\d{1,3}\s*[)）])/u;
+  /(?:^|[\s；;，,、。:：.…])(?:[（(]\s*\d{1,3}\s*[)）]|\d{1,3}\s*[)）])|（\s*\d{1,3}\s*）/u;
+
+/**
+ * A dotted digit head the movable arm refused — a run wider than `\d{1,3}`
+ * (`1234. x`) or a dot with nothing after it (`12.`). Still head-shaped: a
+ * number outside the parseable width or a clipped decimal proves neither a
+ * number nor its absence.
+ */
+const UNMOVED_DOTTED_HEAD_RE = /^\s*[0-9０-９]+\s*[.、．]/u;
 
 export type PromptHeadQuestionNoMatch = {
   /**
    * The head verdict. `top`/`sub` is a provable own number; `{ kind: 'unknown' }`
    * is the uncertain result — a head-shaped token that proves neither a number
    * nor its absence: a leading decimal, an inline enumeration like
-   * 「（1）…（2）…」, or a 第…题 head outside the numbered width. Callers treat
-   * uncertain conservatively: the structure move never relocates it, merge
-   * admission fails closed on it.
+   * 「（1）…（2）…」 (ellipsis-separated or unseparated fullwidth included), a
+   * dotted head outside the movable width, or a 第…题 head outside the numbered
+   * width. Callers treat uncertain conservatively: the structure move never
+   * relocates it, merge admission fails closed on it.
    */
   parsed: ParsedQuestionNo;
   /** Characters consumed by the head token, leading whitespace included. */
@@ -270,7 +283,11 @@ export function matchPromptHeadQuestionNo(
   const decimal = DECIMAL_HEAD_RE.exec(text);
   if (decimal) return { parsed: { kind: 'unknown' }, matchLength: decimal[0].length };
   const m = PROMPT_HEAD_QUESTION_NO_RE.exec(text);
-  if (!m) return null;
+  if (!m) {
+    const unmoved = UNMOVED_DOTTED_HEAD_RE.exec(text);
+    if (unmoved) return { parsed: { kind: 'unknown' }, matchLength: unmoved[0].length };
+    return null;
+  }
   const head = m[0];
   const rest = text.slice(head.length);
   if (/[)）]\s*$/u.test(head) && INLINE_ENUM_NEXT_NO_RE.test(rest)) {
