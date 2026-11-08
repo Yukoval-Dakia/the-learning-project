@@ -1,4 +1,4 @@
-// Workbench aggregation read model: KPIs, active goal, and the seven-day activity heat.
+// Workbench aggregation read model: KPIs, active goals, and the seven-day activity heat.
 
 import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { learnerLocalDay } from '@/core/learner-day';
@@ -146,7 +146,6 @@ async function loadPersistedColdStartPresence(db: Db): Promise<PersistedColdStar
   );
 }
 
-// Feeds KPI/profile cards only, not cold-start. With multiple goals the newest is current.
 /** How a goal is named back to the learner: the companion's restatement for a said one. */
 function goalLabel(title: string, steering: SteeringGoalDataT | null): string {
   return steering?.instruction_md ?? title;

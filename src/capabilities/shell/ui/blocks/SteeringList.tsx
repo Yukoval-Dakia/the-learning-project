@@ -1,7 +1,7 @@
 // Today's 当前安排 card (YUK-1770 slice 2): every active goal, including the ones the learner
 // said to the companion (「11月20日期中考，范围数列和导数」). Changing or withdrawing one goes back
 // through the companion with the sentence already typed, so there is one way to change them.
-import { openCopilot } from '@/ui/lib/use-copilot-dwell';
+import { openCopilot, setCompanionFocus } from '@/ui/lib/use-copilot-dwell';
 import { Button } from '@/ui-next/public';
 import type { WorkbenchSummary } from '../workbench-api';
 
@@ -43,6 +43,7 @@ function GoalRow({ goal }: { goal: ActiveGoal }) {
   const when = whenWords(goal);
   const scope = scopeWords(goal);
   const unresolved = goal.scope.unresolved;
+  const said = goal.instruction_md !== null;
   return (
     <li className="td-plan">
       <div className="td-plan-main">
@@ -57,24 +58,36 @@ function GoalRow({ goal }: { goal: ActiveGoal }) {
           <p className="un-today-meta td-plan-words">你的原话：「{goal.learner_words}」</p>
         )}
       </div>
-      <div className="un-today-actions td-plan-actions">
-        <Button
-          variant="ghost"
-          aria-label={`改「${label}」`}
-          onClick={() => openCopilot(goal.revise_prompt, { send: false })}
-        >
-          改
-        </Button>
-        <Button
-          variant="ghost"
-          aria-label={`撤回「${label}」`}
-          onClick={() => openCopilot(goal.end_prompt, { send: false })}
-        >
-          撤回
-        </Button>
-      </div>
+      {/* The companion changes only what was said to it; a typed goal has no way to change here. */}
+      {said && (
+        <div className="un-today-actions td-plan-actions">
+          <Button
+            variant="ghost"
+            aria-label={`改「${label}」`}
+            onClick={() => handOver(goal, label, goal.revise_prompt)}
+          >
+            改
+          </Button>
+          <Button
+            variant="ghost"
+            aria-label={`撤回「${label}」`}
+            onClick={() => handOver(goal, label, goal.end_prompt)}
+          >
+            撤回
+          </Button>
+        </div>
+      )}
     </li>
   );
+}
+
+/**
+ * The sentence names the goal for the learner; the focus names it for the companion, so with
+ * several arrangements it changes the one tapped, not whichever it guesses.
+ */
+function handOver(goal: ActiveGoal, label: string, sentence: string) {
+  setCompanionFocus({ kind: 'goal', id: goal.id, title: label });
+  openCopilot(sentence, { send: false });
 }
 
 export function SteeringList({ goals }: { goals: ActiveGoal[] }) {
@@ -85,7 +98,11 @@ export function SteeringList({ goals }: { goals: ActiveGoal[] }) {
   return (
     <section className="un-today-panel" aria-labelledby="td-plans-title">
       <h2 id="td-plans-title">当前安排</h2>
-      <p className="un-today-meta">改和撤回会打开学习伙伴并填好一句话，你补完再发，它来改。</p>
+      {goals.some((goal) => goal.instruction_md !== null) && (
+        <p className="un-today-meta">
+          对学习伙伴说过的安排可以改和撤回：会打开学习伙伴并填好一句话，你补完再发，它来改。
+        </p>
+      )}
       <ul className="td-plans">
         {shown.map((goal) => (
           <GoalRow key={goal.id} goal={goal} />
