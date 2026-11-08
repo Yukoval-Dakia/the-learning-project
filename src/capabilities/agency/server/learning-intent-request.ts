@@ -2,10 +2,11 @@
 //
 // Identity is (topic, attempt). A live send is joined. A known domain result,
 // including unknown cost, is a terminal receipt and is not retried to obtain a
-// price. A lost send (lease expired, no proposal) is voided and replaced by one
-// successor attempt; that lost delivery is never claimed again. Accept, dismiss,
-// and retract seal the create receipt so a later decision cannot leave the topic
-// pinned on `unknown`.
+// price. A lost send whose proposal already landed is sealed to that proposal
+// and is not sent again. A lost send with no proposal is voided and replaced by
+// one successor attempt; that lost delivery is never claimed again. Accept,
+// dismiss, and retract seal the create receipt so a later decision cannot leave
+// the topic pinned on `unknown`.
 
 import { and, eq } from 'drizzle-orm';
 import { AgentRunError } from '@/ai/agent-run-error';
@@ -82,7 +83,8 @@ type SlotDecision =
       readonly deliveryId: string;
     }
   | { readonly kind: 'join'; readonly identity: PaidEffectIdentity }
-  | { readonly kind: 'closed_known'; readonly receipt: LearningIntentReceipt };
+  | { readonly kind: 'closed_known'; readonly receipt: LearningIntentReceipt }
+  | { readonly kind: 'replay'; readonly proposal: LearningIntentProposal };
 
 /** Open slot of one outline attempt. Closed rows (applied / voided / cancelled) are absent. */
 type OpenAttempt =
@@ -243,10 +245,10 @@ async function loadTopicAttempts(db: Db | Tx, topic: string): Promise<TopicAttem
 }
 
 async function replayPendingLearningIntent(
-  database: Db,
+  db: Db | Tx,
   topic: string,
 ): Promise<LearningIntentProposal | null> {
-  const pending = await listProposalInboxRows(database, {
+  const pending = await listProposalInboxRows(db, {
     status: 'pending',
     kind: 'learning_item',
   });
@@ -340,6 +342,16 @@ export async function sealLearningIntentOutlineReceiptTx(
   await sealOutlineReceipt(tx, topic, proposalId);
 }
 
+async function sealPendingProposal(
+  database: Db,
+  topic: string,
+): Promise<LearningIntentProposal | null> {
+  const pending = await replayPendingLearningIntent(database, topic);
+  if (!pending) return null;
+  await sealLearningIntentOutlineReceipt(database, topic, pending.proposal_id);
+  return pending;
+}
+
 export function learningIntentTopic(payload: {
   readonly kind: string;
   readonly proposed_change: unknown;
@@ -407,12 +419,28 @@ async function admitFresh(
   return claimDelivery(tx, identity, deliveryId);
 }
 
+async function sealLostToPending(
+  tx: Tx,
+  topic: string,
+  lost: TopicAttempt,
+): Promise<Extract<SlotDecision, { kind: 'replay' }> | null> {
+  const pending = await replayPendingLearningIntent(tx, topic);
+  if (!pending) return null;
+  // Receipt loss is not a lost outline: the proposal row is already the paid outcome.
+  if (lost.deliveryId) {
+    await writeReceipt(tx, lost, await proposedReceipt(tx, pending.proposal_id, lost.deliveryId));
+  }
+  return { kind: 'replay', proposal: pending };
+}
+
 async function retireLost(
   tx: Tx,
   topic: string,
   rows: readonly TopicAttempt[],
   lost: TopicAttempt,
 ): Promise<SlotDecision> {
+  const pending = await sealLostToPending(tx, topic, lost);
+  if (pending) return pending;
   const decided = await newestDecidedIntent(tx, topic);
   if (decided && lost.deliveryId) {
     await writeReceipt(tx, lost, await proposedReceipt(tx, decided, lost.deliveryId));
@@ -440,6 +468,9 @@ async function retireLost(
       fence: lost.fence,
     });
   }
+  // Proposal insert does not take this family lock, so look again before authorizing a send.
+  const landed = await sealLostToPending(tx, topic, lost);
+  if (landed) return landed;
   const deliveryId = newId();
   const successorInput = freshInput(topic, rows);
   const voided = await voidPaidEffectWithSuccessor(tx, lost.identity, {
@@ -696,14 +727,15 @@ export async function runLearningIntentRequest(
   topic: string,
   runTaskFn: RunTaskFn,
 ): Promise<LearningIntentProposal> {
-  const replay = await replayPendingLearningIntent(database, topic);
-  if (replay) {
-    await sealLearningIntentOutlineReceipt(database, topic, replay.proposal_id);
-    return replay;
-  }
+  const pending = await sealPendingProposal(database, topic);
+  if (pending) return pending;
   await settleExpiredPaidEffectSends(database, { family: FAMILY });
   for (let step = 0; step < 4; step += 1) {
     const slot = await claimSlot(database, topic);
+    if (slot.kind === 'replay') {
+      await sealLearningIntentOutlineReceipt(database, topic, slot.proposal.proposal_id);
+      return slot.proposal;
+    }
     if (slot.kind === 'closed_known') {
       throw domainError(
         slot.receipt.code ?? 'learning_intent_failed',
@@ -716,6 +748,8 @@ export async function runLearningIntentRequest(
     if (slot.kind === 'winner') return dispatchWinner(database, topic, runTaskFn, slot);
     const joined = await joinAttempt(database, topic, slot.identity);
     if (joined.kind === 'proposal') return joined.proposal;
+    const sealed = await sealPendingProposal(database, topic);
+    if (sealed) return sealed;
   }
   throw new ApiError(
     'learning_intent_in_flight',
