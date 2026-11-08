@@ -11,7 +11,7 @@ description: 学习者明确要求出题、组卷或创建练习时的编排方�
 
 1. 出新题前先 `search_bank` 查目标考查点，按请求收窄题型／难度／学科，摘要不足则凭版本化 ref 调 `read_bank`；复用合适的已准入题，候选/草稿不称合格。
 2. 缺题用 `author_question(seed_mode="teaching_draft",knowledge_ids,draft)`，一次一道，由你直接写紧凑草稿，无嵌套出题任务。draft={stem_md,response,solution_md?}。response 按形式填写：single_choice 的 options/answer_index，multi_choice 的 options/answer_indices，blank 的 blanks:[{answer,accepted?,numeric?:{value,tolerance?,unit?}}]，matching 的 left/right/pairs（下标从 0 开始），break_tap 的 segments，ordering 的 objects_in_order。首日只选这些确定性形式。工具成功提交就已进入题库待自动准入，不进收件箱、不等确认。存好后以 question_id 调 compose_block 放 inline question_ref 题卡，用回执 place 放进回复；正文别提检查、准入或能否作答。失败原因如实说明；若模型写了 free 解答题，说明当前无法自动判分，可换一道确定性题，不承诺一直等待就会解锁。
-3. 用户要可作答练习／整卷时，只把已准入题交给 `write_quiz({title,question_ids})`，用返回的 practice_path 给出练习链接。同轮新题仍在检查时先交题卡；组卷成功不等于准入；正文/待检查卷不称可运行练习。
+3. 用户要可作答练习／整卷时，把已准入题交给 `write_quiz`：带上同一次 `search_bank` 的 `search_id` 和 `assessments`，`checks[].condition` 填该次结果的 `conditions[].id`（如 `r1`），不要填条件原文。用返回的 practice_path 给出练习链接。同轮新题仍在检查时先交题卡；组卷成功不等于准入；正文/待检查卷不称可运行练习。
 
 整卷数量、难度、题型、知识点遵守原话及已有任务，不扩大；如实说明未覆盖项，不以不合格题凑数。
 
