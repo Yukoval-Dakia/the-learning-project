@@ -3,7 +3,7 @@
 // the ready body. Failures flip generation_status to 'failed' so the UI never
 // sits on pending; the throw still lets pg-boss retry.
 
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { type SQL, and, eq, inArray, isNull } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
@@ -21,8 +21,11 @@ import {
 import {
   type NoteGenerationFailure,
   attrsClearingGenerationFailure,
+  attrsClearingGenerationWait,
   attrsWithGenerationFailure,
+  attrsWithGenerationWait,
   noteGenerationFailure,
+  readNoteGenerationWait,
 } from '@/capabilities/notes/server/note-generation-failure';
 import {
   NOTE_GENERATION_FALLBACK_ACTOR_REF,
@@ -49,7 +52,13 @@ import {
   costUsdToMicroUsd,
   isGenerationBudgetTimeout,
 } from '@/server/ai/provenance';
+import {
+  PROVIDER_WAIT_MAX,
+  planJobProviderWait,
+  providerWaitDelayMs,
+} from '@/server/ai/provider-wait';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
+import { getStartedBoss } from '@/server/boss/client';
 import { resolveNoteSkillDoc } from '@/subjects/note-skills';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
@@ -99,6 +108,7 @@ function logNoteGeneratePhases(input: {
       prompt_build_ms: input.promptBuildMs,
       model_wait_ms: input.modelWaitMs,
       model_ttft_ms: input.runnerPhases?.model_ttft_ms ?? null,
+      model_thinking_ttft_ms: input.runnerPhases?.model_thinking_ttft_ms ?? null,
       model_total_ms: input.runnerPhases?.model_total_ms ?? null,
       stream_ms: input.runnerPhases?.stream_ms ?? null,
       parse_ms: input.parseMs,
@@ -151,9 +161,14 @@ export interface RunNoteGenerateResult {
     | 'skipped:not_pending'
     | 'skipped:not_found'
     | 'skipped:learner_edited'
+    | 'provider_waiting'
     | 'failed';
   sections_count?: number;
   blocks_count?: number;
+  /** provider_waiting only: the recorded wake instant, wait count, and job id. */
+  retry_at?: string;
+  waits?: number;
+  wake_job_id?: string;
 }
 
 type ReopenOutcome = 'reopened' | 'absent' | 'refused:learner_edited';
@@ -296,7 +311,7 @@ export async function runNoteGenerate(
     parseMs = Date.now() - parseStarted;
     const validationStarted = Date.now();
     assertNoteGenerationReferences(parsed.body_blocks, referenceArtifacts);
-    let contractIssues = noteBodyContractIssues(row.type, parsed.body_blocks);
+    let contractIssues = noteBodyContractIssues(parsed.body_blocks);
     // Deterministic contract check rides back into the SAME generation flow:
     // one bounded revision round with the typed issues as revision_context.
     // Unresolved issues are saved on the note as its known issues — never a
@@ -320,7 +335,7 @@ export async function runNoteGenerate(
         result = revised;
         attempt = revised;
         parsed = revisedParsed;
-        contractIssues = noteBodyContractIssues(row.type, parsed.body_blocks);
+        contractIssues = noteBodyContractIssues(parsed.body_blocks);
       } catch (revisionError) {
         // The first version is a usable note: keep it with its known issues instead of paying
         // for a retry. A note that left the pending state must still stop here.
@@ -370,6 +385,8 @@ export async function runNoteGenerate(
           const clearedFailure = attrsClearingGenerationFailure(before.attrs);
           // A fresh generation epoch restarts the long-note check cycle (YUK-1642).
           const clearedLongCheck = attrsClearingNoteLongCheck(clearedFailure.attrs);
+          // A ready note never keeps a spent provider-wait receipt.
+          const clearedWait = attrsClearingGenerationWait(clearedLongCheck.attrs);
           return {
             body: parsed.body_blocks,
             lifecycle: {
@@ -380,8 +397,8 @@ export async function runNoteGenerate(
               verificationStatus: 'not_required',
               verificationSummary: knownIssues,
               generatedBy: generatedByRef,
-              ...(clearedFailure.cleared || clearedLongCheck.cleared
-                ? { attrs: clearedLongCheck.attrs }
+              ...(clearedFailure.cleared || clearedLongCheck.cleared || clearedWait.cleared
+                ? { attrs: clearedWait.attrs }
                 : {}),
             },
             actor: {
@@ -398,10 +415,19 @@ export async function runNoteGenerate(
         return { kind: 'not_pending' };
       }
       if (commit.status === 'skipped') {
-        // Authored over the fallback: keep it and honestly report failed.
+        // Authored over the fallback: keep it and honestly report failed. The
+        // reason rides attrs like every other terminal flip.
+        const editedAttrs = attrsWithGenerationFailure(
+          commit.base.attrs,
+          noteGenerationFailure(
+            'learner_edited',
+            result.task_run_id ?? null,
+            'learner committed a body edit that beat the generation write',
+          ),
+        );
         const kept = await tx
           .update(artifact)
-          .set({ generation_status: 'failed', updated_at: now })
+          .set({ generation_status: 'failed', attrs: editedAttrs, updated_at: now })
           .where(and(eq(artifact.id, artifactId), pendingNoteGuard))
           .returning({ id: artifact.id });
         if (kept.length === 0) return { kind: 'not_pending' };
@@ -409,6 +435,7 @@ export async function runNoteGenerate(
           subjectId: artifactId,
           op: 'set_generation_status',
           generationStatus: 'failed',
+          attrs: editedAttrs,
           nextVersion: commit.base.version,
           actorKind: 'agent',
           actorRef: 'note_generate',
@@ -449,10 +476,71 @@ export async function runNoteGenerate(
   } catch (err) {
     if (modelWaitMs === null) modelWaitMs = Date.now() - modelStarted;
     const taskRunId = attempt?.task_run_id ?? taskRunIdOf(err);
+    // A proven transient provider rejection waits out the outage instead of
+    // landing terminal: the note stays 'pending' with a durable wait receipt
+    // (attrs.generation_wait) and the handler schedules the wake. Unproven,
+    // billed-unknown, and permanent failures fall straight through to the
+    // existing failed flip.
+    let providerWaitExhausted = false;
+    const providerWait = await planJobProviderWait(db, err);
+    if (providerWait) {
+      const waited = await db.transaction(async (tx) => {
+        const rows = await tx
+          .select({ attrs: artifact.attrs })
+          .from(artifact)
+          .where(
+            and(
+              eq(artifact.id, artifactId),
+              inArray(artifact.type, NOTE_ARTIFACT_TYPES),
+              eq(artifact.generation_status, 'pending'),
+              isNull(artifact.archived_at),
+            ),
+          )
+          .for('update')
+          .limit(1);
+        const row = rows[0];
+        if (!row) return null;
+        const waits = (readNoteGenerationWait(row.attrs)?.waits ?? 0) + 1;
+        if (waits > PROVIDER_WAIT_MAX) return 'exhausted' as const;
+        const retryAt = new Date(Date.now() + providerWaitDelayMs(waits));
+        const wakeJobId = randomUUID();
+        await tx
+          .update(artifact)
+          .set({
+            attrs: attrsWithGenerationWait(row.attrs, {
+              retry_at: retryAt.toISOString(),
+              retry_class: providerWait.retryClass,
+              waits,
+              evidence_ref: providerWait.evidenceRef,
+              wake_job_id: wakeJobId,
+            }),
+            updated_at: new Date(),
+          })
+          .where(and(eq(artifact.id, artifactId), eq(artifact.generation_status, 'pending')));
+        return { waits, retryAt, wakeJobId };
+      });
+      if (waited === 'exhausted') providerWaitExhausted = true;
+      else if (waited) {
+        console.warn(
+          `[note_generate] ${artifactId} provider_waiting (${providerWait.retryClass}, wait ${waited.waits}/${PROVIDER_WAIT_MAX}, retry_at=${waited.retryAt.toISOString()})`,
+        );
+        return {
+          status: 'provider_waiting',
+          retry_at: waited.retryAt.toISOString(),
+          waits: waited.waits,
+          wake_job_id: waited.wakeJobId,
+        };
+      }
+      // null: the row stopped being pending under us — the failed flip decides.
+    }
     const generationFailure = noteGenerationFailure(
-      noteGenerationFailureKind(err),
+      providerWaitExhausted ? 'provider_outage' : noteGenerationFailureKind(err),
       taskRunId,
-      err instanceof Error ? err.message : String(err),
+      providerWaitExhausted
+        ? `provider outage outlasted ${PROVIDER_WAIT_MAX} recovery waits (${providerWait?.retryClass}); last error: ${err instanceof Error ? err.message : String(err)}`
+        : err instanceof Error
+          ? err.message
+          : String(err),
     );
     const failure = annotateNoteGenerateFailure(err, taskRunId, attempt?.text);
     const failureDbStarted = Date.now();
@@ -626,6 +714,16 @@ export function buildNoteGenerateHandler(
       try {
         const result = await runNoteGenerate({ db, artifactId, runTaskFn });
         console.log(`[note_generate] ${artifactId} → ${result.status}`);
+        // The wake id was persisted inside the wait receipt before this send —
+        // a crash here leaves the recovery floor a resendable id, not a leak.
+        if (result.status === 'provider_waiting' && result.retry_at && result.wake_job_id) {
+          const boss = await getStartedBoss();
+          await boss.send(
+            'note_generate',
+            { artifact_id: artifactId },
+            { id: result.wake_job_id, startAfter: new Date(result.retry_at) },
+          );
+        }
       } catch (err) {
         console.error(`[note_generate] ${artifactId} failed`, err);
         throw err;

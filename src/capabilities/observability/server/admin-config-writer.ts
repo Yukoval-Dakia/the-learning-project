@@ -1,14 +1,7 @@
-import type { z } from 'zod';
-import type { ConfigMutation } from '@/core/config/mutations';
-import type { AdminConfigWriteResponseSchema } from '../api/admin-config-write-contracts';
+import type { AdminConfigWriteResult, AdminConfigWriter } from '@/core/config/contracts/admin';
 
 /** snapshot_current means this process has observed the commit or later, not a worker acknowledgement. */
-export type AdminConfigWriteResult = z.infer<typeof AdminConfigWriteResponseSchema>;
-
-export type AdminConfigWriter = (
-  mutations: readonly ConfigMutation[],
-  note?: string,
-) => Promise<AdminConfigWriteResult>;
+export type { AdminConfigWriteResult, AdminConfigWriter };
 
 let writer: AdminConfigWriter | undefined;
 

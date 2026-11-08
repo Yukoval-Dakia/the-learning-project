@@ -10,7 +10,7 @@
 #
 # 三段都是学习者私有数据：日志只记文件名/大小/sha256；dump 与 daily-private 内
 # 一切文件/目录落盘 chmod go-rwx（owner-only，尊重 umask 不硬编码权限位）。外置盘
-# 挂 noowners，权限位不是真正的访问边界——边界是 runtime 目录本身（见 docs/operations.md）。
+# 挂 noowners，权限位不是真正的访问边界——边界是 runtime 目录本身（见运维 runbook operations.md）。
 #
 # 背景：09-12 主机盘写满 → OrbStack VM 崩溃 → docker 存储全清（含生产 pgdata 卷），
 # 恢复只能靠 4 天前的手动 per-lane dump。本脚本由 launchd 每日 07:15

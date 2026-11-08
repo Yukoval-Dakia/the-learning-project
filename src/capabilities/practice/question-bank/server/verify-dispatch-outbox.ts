@@ -4,7 +4,6 @@ import { type AnyColumn, and, eq, inArray, isNull, notExists, sql } from 'drizzl
 import { alias } from 'drizzle-orm/pg-core';
 import { z } from 'zod';
 import type { Db, Tx } from '@/db/client';
-import { fromPgBossDrizzleTx } from '@/db/pg-boss-drizzle';
 import { event, question } from '@/db/schema';
 import type { WriteEventInput } from '@/kernel/events/index';
 import { writeEvent, writeEvents } from '@/kernel/events/index';
@@ -12,6 +11,10 @@ import { declaredAdmissionOwned } from '@/kernel/read-models/question-admission-
 import type { PlacementVerificationAuthority } from '@/kernel/supply-contracts';
 
 export const VERIFY_DISPATCH_INTENT_ACTION = 'experimental:verify_dispatch_intent';
+// Bound marks the committed obligation between intent write and engine send: the
+// drain binds intents to a stable delivery id inside one transaction, sends after
+// commit, and only then writes the completion ack.
+export const VERIFY_DISPATCH_BOUND_ACTION = 'experimental:verify_dispatch_bound';
 export const VERIFY_DISPATCH_COMPLETE_ACTION = 'experimental:verify_dispatch';
 export const VERIFY_DISPATCH_VERSION = 1 as const;
 
@@ -76,6 +79,17 @@ const verifyDispatchIntentPayloadSchema = z.object({
 });
 
 type VerifyDispatchIntentPayload = z.infer<typeof verifyDispatchIntentPayloadSchema>;
+
+const verifyDispatchBoundPayloadSchema = z.object({
+  version: z.literal(VERIFY_DISPATCH_VERSION),
+  verifier_kind: verifyKindSchema,
+  /** Stable engine delivery identity, derived from the member intent ids. */
+  delivery_id: z.string().min(1),
+  question_ids: z.array(z.string().min(1)).min(1),
+  intent_ids: z.array(z.string().min(1)).min(1),
+});
+
+type VerifyDispatchBoundPayload = z.infer<typeof verifyDispatchBoundPayloadSchema>;
 
 /** Server-written recovery marker for one question in a sweep-created job. Only
  * an intent carrying recovery_epoch produces this; job redelivery or client
@@ -143,7 +157,7 @@ function placementAuthorityEquals(
 }
 
 function stableEventId(
-  kind: 'intent' | 'complete',
+  kind: 'intent' | 'bound' | 'complete',
   questionId: string,
   verifier: VerifyKind,
   authority?: PlacementVerificationAuthority,
@@ -178,6 +192,27 @@ function completeEventId(
   recoveryAttempt?: number,
 ) {
   return stableEventId('complete', questionId, verifier, authority, recoveryEpoch, recoveryAttempt);
+}
+
+// Bound ids mirror intent ids so the redrive join needs no payload lookup: swap
+// the kind segment and the digest stays identical.
+export function verifyDispatchBoundEventIdForIntent(intentId: string) {
+  return intentId.replace('verify-dispatch-intent-', 'verify-dispatch-bound-');
+}
+
+// The engine delivery id is content-derived from the member intents, so a crash
+// after bind and any concurrent drain re-drive the identical job.
+export function verifyDeliveryJobId(verifier: VerifyKind, memberIntentIds: string[]) {
+  const digest = createHash('sha256')
+    .update(`verify-dispatch-delivery-v${VERIFY_DISPATCH_VERSION_TAG}\0${verifier}`)
+    .update(`\0${[...memberIntentIds].sort().join('\0')}`)
+    .digest('hex');
+  // RFC 9562 uuidv8: sha256 application bits with version/variant stamped.
+  const bytes = digest.slice(0, 32).split('');
+  bytes[12] = '8';
+  bytes[16] = ((Number.parseInt(bytes[16], 16) & 0x3) | 0x8).toString(16);
+  const hex = bytes.join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 /** Tombstoned drafts (archived or owner-dismissed) are dead, not pending —
@@ -265,7 +300,12 @@ export async function writeVerifyDispatchIntent(
 
 function dispatchCompletionEvent(
   intent: VerifyDispatchIntentPayload,
-  input: { recovery: boolean; disposition: 'enqueued' | 'terminal_skip'; now: Date },
+  input: {
+    recovery: boolean;
+    disposition: 'enqueued' | 'terminal_skip';
+    deliveryId?: string;
+    now: Date;
+  },
 ): WriteEventInput {
   return {
     id: completeEventId(
@@ -288,6 +328,7 @@ function dispatchCompletionEvent(
       stage: 'verify_enqueue',
       recovery: input.recovery,
       disposition: input.disposition,
+      ...(input.deliveryId != null ? { delivery_id: input.deliveryId } : {}),
       ...(intent.supply_trace ? { supply_trace: intent.supply_trace } : {}),
       ...(intent.placement_authority ? { placement_authority: intent.placement_authority } : {}),
       ...(intent.recovery_epoch != null ? { recovery_epoch: intent.recovery_epoch } : {}),
@@ -332,6 +373,168 @@ async function writeDispatchFailure(
   }
 }
 
+interface BoundVerifyDelivery {
+  deliveryId: string;
+  verifier: VerifyKind;
+  questionIds: string[];
+  intents: VerifyDispatchIntentPayload[];
+  /** Recovery deliveries keep retryLimit 0: the epoch claim, not pgboss retries,
+   * owns a paid recovery. */
+  recovery: boolean;
+}
+
+// The pending claim for a drain pass. Bind adds `¬bound`: the bound row itself
+// is the durable ownership claim, so a bound-but-unacked intent belongs to its
+// recorded delivery and no other drain may sweep it into a second batch.
+function pendingIntentPredicates(
+  tx: Db | Tx,
+  input: {
+    recoveryOnly?: boolean;
+    /** Bind only: only intents minted by this sweep may bind in this pass. */
+    freshOnly?: boolean;
+    questionIds?: string[];
+    now: Date;
+  },
+) {
+  const completion = alias(event, 'verify_dispatch_completion');
+  const boundProbe = alias(event, 'verify_dispatch_bound_probe');
+  return [
+    eq(event.action, VERIFY_DISPATCH_INTENT_ACTION),
+    eq(event.subject_kind, 'question'),
+    input.recoveryOnly
+      ? and(
+          sql`${event.payload}->>'recovery_epoch' IS NOT NULL`,
+          ...(input.freshOnly ? [sql`${event.created_at} = ${input.now.toISOString()}`] : []),
+          sql`NOT EXISTS (SELECT 1 FROM ${event} i
+            WHERE i.subject_kind = ${event.subject_kind} AND i.subject_id = ${event.subject_id} AND i.action = ${VERIFY_DISPATCH_INTENT_ACTION}
+              AND i.payload->>'verifier_kind' = 'source_verify'
+              AND i.payload->>'recovery_epoch' IS NOT NULL
+              AND (i.created_at, i.id) > (${event.created_at}, ${event.id}))`,
+          eligibleRecoveryError(event.subject_id, input.now, event.payload),
+          noLiveSourceVerifyJob(event.subject_id),
+        )
+      : and(
+          sql`${event.payload}->>'recovery_epoch' IS NULL`,
+          sql`NOT EXISTS (SELECT 1 FROM ${event} v
+            WHERE v.subject_id = ${event.subject_id}
+              AND v.action = 'experimental:source_verify' AND v.outcome = 'error')`,
+        ),
+    // An incomplete or wrong-version intent never gets a completion, so it would keep the oldest lock page.
+    isStructurallyDispatchableIntent(event.payload),
+    // Filter completions before LIMIT. Otherwise every drain locks the same finished page.
+    notExists(
+      tx
+        .select({ id: completion.id })
+        .from(completion)
+        .where(
+          and(
+            eq(completion.action, VERIFY_DISPATCH_COMPLETE_ACTION),
+            eq(completion.subject_id, event.subject_id),
+            sql`${completion.payload}->>'verifier_kind' = ${event.payload}->>'verifier_kind'`,
+            sql`COALESCE(${completion.payload}->'placement_authority', 'null'::jsonb) = COALESCE(${event.payload}->'placement_authority', 'null'::jsonb)`,
+            sql`COALESCE(${completion.payload}->>'recovery_epoch', '') = COALESCE(${event.payload}->>'recovery_epoch', '')`,
+            sql`COALESCE(${completion.payload}->>'recovery_attempt', '') = COALESCE(${event.payload}->>'recovery_attempt', '')`,
+          ),
+        ),
+    ),
+    ...(input.freshOnly
+      ? [
+          notExists(
+            tx
+              .select({ id: boundProbe.id })
+              .from(boundProbe)
+              .where(
+                and(
+                  eq(boundProbe.action, VERIFY_DISPATCH_BOUND_ACTION),
+                  sql`${boundProbe.id} = replace(${event.id}, 'verify-dispatch-intent-', 'verify-dispatch-bound-')`,
+                ),
+              ),
+          ),
+        ]
+      : []),
+    ...(input.questionIds ? [inArray(event.subject_id, input.questionIds)] : []),
+  ];
+}
+
+// Bound ∧ unacked member intents, grouped by the delivery recorded at bind.
+// The send reuses the bound member set verbatim, so a redrive presents the
+// engine with the identical delivery.
+async function selectBoundDeliveries(
+  db: Db,
+  input: {
+    recoveryOnly?: boolean;
+    questionIds?: string[];
+    batchSize?: number;
+    now: Date;
+  },
+): Promise<BoundVerifyDelivery[]> {
+  const bound = alias(event, 'verify_dispatch_bound');
+  const rows = await db
+    .select({ intentPayload: event.payload, boundPayload: bound.payload })
+    .from(event)
+    .innerJoin(
+      bound,
+      sql`${bound.id} = replace(${event.id}, 'verify-dispatch-intent-', 'verify-dispatch-bound-')`,
+    )
+    .where(and(...pendingIntentPredicates(db, { ...input, freshOnly: false })))
+    .limit(input.batchSize ?? 100);
+
+  const byDelivery = new Map<
+    string,
+    { bound: VerifyDispatchBoundPayload; intents: VerifyDispatchIntentPayload[] }
+  >();
+  for (const row of rows) {
+    const boundParsed = verifyDispatchBoundPayloadSchema.safeParse(row.boundPayload);
+    const intentParsed = verifyDispatchIntentPayloadSchema.safeParse(row.intentPayload);
+    if (!boundParsed.success || !intentParsed.success) continue;
+    const bucket = byDelivery.get(boundParsed.data.delivery_id) ?? {
+      bound: boundParsed.data,
+      intents: [],
+    };
+    bucket.intents.push(intentParsed.data);
+    byDelivery.set(boundParsed.data.delivery_id, bucket);
+  }
+  return [...byDelivery.values()].map(({ bound: boundPayload, intents }) => ({
+    deliveryId: boundPayload.delivery_id,
+    verifier: boundPayload.verifier_kind,
+    questionIds: boundPayload.question_ids,
+    intents,
+    recovery: intents.some((intent) => intent.recovery_epoch != null),
+  }));
+}
+
+async function enqueueBoundDelivery(
+  enqueue: EnqueueVerifyFn,
+  delivery: BoundVerifyDelivery,
+): Promise<void> {
+  const byQuestion = new Map(delivery.intents.map((intent) => [intent.question_id, intent]));
+  const placementAuthorities = delivery.questionIds.flatMap((questionId) => {
+    const authority = byQuestion.get(questionId)?.placement_authority;
+    return authority ? [authority] : [];
+  });
+  const recoveryMarks: Record<string, VerifyRecoveryMark> = {};
+  for (const intent of delivery.intents) {
+    if (intent.recovery_epoch != null) {
+      recoveryMarks[intent.question_id] = {
+        epoch: intent.recovery_epoch,
+        ...(intent.recheck_command_event_id != null
+          ? { recheck_command_event_id: intent.recheck_command_event_id }
+          : {}),
+      };
+    }
+  }
+  await enqueue(
+    delivery.verifier,
+    delivery.questionIds,
+    {
+      id: delivery.deliveryId,
+      ...(delivery.recovery ? { retryLimit: 0 } : {}),
+    },
+    placementAuthorities.length > 0 ? placementAuthorities : undefined,
+    Object.keys(recoveryMarks).length > 0 ? recoveryMarks : undefined,
+  );
+}
+
 export async function dispatchPendingVerifyIntents(
   db: Db,
   input: {
@@ -355,50 +558,16 @@ export async function dispatchPendingVerifyIntents(
   // The catch runs after rollback, and a full scan has no questionIds length to report.
   let lockedCount = 0;
   try {
-    return await db.transaction(async (tx) => {
-      const completion = alias(event, 'verify_dispatch_completion');
-      const predicates = [
-        eq(event.action, VERIFY_DISPATCH_INTENT_ACTION),
-        eq(event.subject_kind, 'question'),
-        input.recoveryOnly
-          ? and(
-              sql`${event.payload}->>'recovery_epoch' IS NOT NULL`,
-              // Only this sweep's new attempt may dispatch; older pending attempts wait for replacement.
-              sql`${event.created_at} = ${now.toISOString()}`,
-              sql`NOT EXISTS (SELECT 1 FROM ${event} i
-                WHERE i.subject_kind = ${event.subject_kind} AND i.subject_id = ${event.subject_id} AND i.action = ${VERIFY_DISPATCH_INTENT_ACTION}
-                  AND i.payload->>'verifier_kind' = 'source_verify'
-                  AND i.payload->>'recovery_epoch' IS NOT NULL
-                  AND (i.created_at, i.id) > (${event.created_at}, ${event.id}))`,
-              eligibleRecoveryError(event.subject_id, now, event.payload),
-              noLiveSourceVerifyJob(event.subject_id),
-            )
-          : and(
-              sql`${event.payload}->>'recovery_epoch' IS NULL`,
-              sql`NOT EXISTS (SELECT 1 FROM ${event} v
-                WHERE v.subject_id = ${event.subject_id}
-                  AND v.action = 'experimental:source_verify' AND v.outcome = 'error')`,
-            ),
-        // An incomplete or wrong-version intent never gets a completion, so it would keep the oldest lock page.
-        isStructurallyDispatchableIntent(event.payload),
-        // Filter completions before LIMIT. Otherwise every drain locks the same finished page.
-        notExists(
-          tx
-            .select({ id: completion.id })
-            .from(completion)
-            .where(
-              and(
-                eq(completion.action, VERIFY_DISPATCH_COMPLETE_ACTION),
-                eq(completion.subject_id, event.subject_id),
-                sql`${completion.payload}->>'verifier_kind' = ${event.payload}->>'verifier_kind'`,
-                sql`COALESCE(${completion.payload}->'placement_authority', 'null'::jsonb) = COALESCE(${event.payload}->'placement_authority', 'null'::jsonb)`,
-                sql`COALESCE(${completion.payload}->>'recovery_epoch', '') = COALESCE(${event.payload}->>'recovery_epoch', '')`,
-                sql`COALESCE(${completion.payload}->>'recovery_attempt', '') = COALESCE(${event.payload}->>'recovery_attempt', '')`,
-              ),
-            ),
-        ),
-      ];
-      if (input.questionIds) predicates.push(inArray(event.subject_id, input.questionIds));
+    // Phase 1 — bind: classify the locked page and commit durable delivery
+    // claims. No engine call happens here, so a crash leaves only bound rows
+    // that the redrive below re-drives under the same stable delivery id.
+    const bound = await db.transaction(async (tx) => {
+      const predicates = pendingIntentPredicates(tx, {
+        recoveryOnly: input.recoveryOnly,
+        freshOnly: true,
+        questionIds: input.questionIds,
+        now,
+      });
       const locked = await tx
         .select({ id: event.id, subjectId: event.subject_id, payload: event.payload })
         .from(event)
@@ -412,7 +581,7 @@ export async function dispatchPendingVerifyIntents(
         .limit(input.batchSize ?? 100)
         .for('update', { skipLocked: true });
       lockedCount = locked.length;
-      if (locked.length === 0) return empty;
+      if (locked.length === 0) return { skippedTerminal: 0 };
 
       // One corrupt payload must not abort the locked page. Skip it. The SQL probe is not the full schema.
       const intents = locked
@@ -505,7 +674,7 @@ export async function dispatchPendingVerifyIntents(
         }
       }
 
-      const completionEvents: WriteEventInput[] = [];
+      const written: WriteEventInput[] = [];
       for (const verifier of verifyKindSchema.options) {
         const group = eligible.filter((intent) => intent.verifier_kind === verifier);
         if (group.length === 0) continue;
@@ -515,51 +684,99 @@ export async function dispatchPendingVerifyIntents(
           ...group.filter((intent) => intent.recovery_epoch != null).map((intent) => [intent]),
         ].filter((batch) => batch.length > 0);
         for (const batch of batches) {
-          const placementAuthorities = batch.flatMap((intent) =>
-            intent.placement_authority ? [intent.placement_authority] : [],
+          const intentIds = batch.map((intent) =>
+            intentEventId(
+              intent.question_id,
+              intent.verifier_kind,
+              intent.placement_authority,
+              intent.recovery_epoch,
+              intent.recovery_attempt,
+            ),
           );
-          const recoveryMarks: Record<string, VerifyRecoveryMark> = {};
-          for (const intent of batch) {
-            if (intent.recovery_epoch != null) {
-              recoveryMarks[intent.question_id] = {
-                epoch: intent.recovery_epoch,
-                ...(intent.recheck_command_event_id != null
-                  ? { recheck_command_event_id: intent.recheck_command_event_id }
-                  : {}),
-              };
-            }
-          }
-          await input.enqueue(
-            verifier,
-            batch.map((intent) => intent.question_id),
-            {
-              db: fromPgBossDrizzleTx(tx),
-              ...(batch[0]?.recovery_epoch != null ? { retryLimit: 0 } : {}),
-            },
-            placementAuthorities.length > 0 ? placementAuthorities : undefined,
-            Object.keys(recoveryMarks).length > 0 ? recoveryMarks : undefined,
-          );
-          for (const intent of batch) {
-            completionEvents.push(
-              dispatchCompletionEvent(intent, { recovery, disposition: 'enqueued', now }),
-            );
+          const boundPayload: VerifyDispatchBoundPayload = {
+            version: VERIFY_DISPATCH_VERSION,
+            verifier_kind: verifier,
+            delivery_id: verifyDeliveryJobId(verifier, intentIds),
+            question_ids: batch.map((intent) => intent.question_id),
+            intent_ids: intentIds,
+          };
+          for (const [index, intent] of batch.entries()) {
+            written.push({
+              id: verifyDispatchBoundEventIdForIntent(intentIds[index]),
+              actor_kind: 'system',
+              actor_ref: 'verify_dispatch_outbox',
+              action: VERIFY_DISPATCH_BOUND_ACTION,
+              subject_kind: 'question',
+              subject_id: intent.question_id,
+              outcome: 'success',
+              payload: boundPayload,
+              created_at: now,
+              ingest_at: now,
+            });
           }
         }
       }
       for (const intent of terminal) {
-        completionEvents.push(
+        written.push(
           dispatchCompletionEvent(intent, { recovery, disposition: 'terminal_skip', now }),
         );
       }
-      await writeEvents(tx, completionEvents);
+      await writeEvents(tx, written);
 
-      return {
-        synthesized: 0,
-        dispatched: eligible.length,
-        skippedTerminal: terminal.length,
-        failed: 0,
-      };
+      return { skippedTerminal: terminal.length };
     });
+
+    // Phase 2 — send: outside any transaction, per bound delivery. A send that
+    // resolves means the engine accepted the delivery (a duplicate stable id
+    // resolves as the pre-existing identical delivery). Per-delivery isolation
+    // keeps one engine failure from stalling the page.
+    const deliveries = await selectBoundDeliveries(db, {
+      recoveryOnly: input.recoveryOnly,
+      questionIds: input.questionIds,
+      batchSize: input.batchSize,
+      now,
+    });
+    const accepted: BoundVerifyDelivery[] = [];
+    let failed = 0;
+    for (const delivery of deliveries) {
+      try {
+        await enqueueBoundDelivery(input.enqueue, delivery);
+        accepted.push(delivery);
+      } catch (error) {
+        failed += delivery.questionIds.length;
+        await writeDispatchFailure(db, {
+          recovery,
+          questionIds: delivery.questionIds,
+          error,
+        });
+      }
+    }
+
+    // Phase 3 — ack: the completion event is written only after the engine
+    // accepted the delivery. A crash before this commit leaves bound rows that
+    // phase 2 re-drives against the same stable delivery id.
+    const ackEvents = accepted.flatMap((delivery) =>
+      delivery.intents.map((intent) =>
+        dispatchCompletionEvent(intent, {
+          recovery,
+          disposition: 'enqueued',
+          deliveryId: delivery.deliveryId,
+          now,
+        }),
+      ),
+    );
+    if (ackEvents.length > 0) {
+      await db.transaction(async (tx) => {
+        await writeEvents(tx, ackEvents);
+      });
+    }
+
+    return {
+      synthesized: 0,
+      dispatched: accepted.reduce((count, delivery) => count + delivery.intents.length, 0),
+      skippedTerminal: bound.skippedTerminal,
+      failed,
+    };
   } catch (error) {
     await writeDispatchFailure(db, {
       recovery,

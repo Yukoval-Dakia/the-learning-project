@@ -202,6 +202,10 @@ export const gradingManifestPart: Omit<CapabilityManifest, 'name' | 'description
         name: 'submit_review_answer',
         load: () => import('./tools/submit-review-answer').then((m) => m.submitReviewAnswerTool),
       },
+      {
+        name: 'reveal_answer',
+        load: () => import('./tools/reveal-answer').then((m) => m.revealAnswerTool),
+      },
     ],
   },
 };

@@ -35,11 +35,13 @@ const POLICIES: Record<string, ResultPolicy> = {
   get_attempt_context: 'reader',
   get_learning_item_context: 'reader',
   // Bank evidence is agent-facing; content/answers need a UI-owned projection.
-  search_bank: ['scope_applied', 'requirements', 'coverage'],
+  search_bank: ['contract_version', 'search_id', 'goal', 'coverage', 'decision_source'],
   read_bank: [],
   check_bank: ['notes', 'supported_kinds'],
   // Filing verdict is public; the ledger receipt detail stays agent-facing.
   file_bank_gap: ['demand_id', 'status', 'deduplicated', 'reason'],
+  // YUK-1986 — 快照只留「这次记受助给答了」这个事实；参考解走模型正文给，不进公共投影。
+  reveal_answer: ['status', 'issuance_id', 'question_id'],
   get_record_context: 'record',
   get_review_due: 'review',
   query_events: 'events',

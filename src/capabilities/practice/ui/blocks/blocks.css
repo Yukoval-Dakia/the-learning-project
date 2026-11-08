@@ -25,10 +25,13 @@
   }
 
   & .un-blk-text {
-    color: var(--un-text-1);
     font-size: var(--un-fs-3);
-    line-height: var(--un-lh-prose);
     overflow-wrap: anywhere;
+  }
+
+  & .un-blk-text:not(.un-read) {
+    color: var(--un-text-1);
+    line-height: var(--un-lh-prose);
   }
 
   & .un-blk-unsupported {

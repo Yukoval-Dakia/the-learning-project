@@ -68,9 +68,11 @@ function EdgeProposalRow({
   const [failed, setFailed] = useState(false);
   const operation = edgeProposalOperation(e);
   const isArchive = operation === 'archive';
+  const retired = operation === 'retired';
   const archiveTargetMissing = isArchive && !e.payload.proposed_change.archive_edge_id;
   let operationLabel = '新增关系';
   if (isArchive) operationLabel = archiveTargetMissing ? '归档目标缺失' : '归档关系';
+  if (retired) operationLabel = '替换关系，已不再支持，只能忽略';
   const rel = e.payload.proposed_change.relation_type ?? 'related_to';
   const cue = REL_CUE[rel] ?? REL_CUE.related_to;
   const act = (decision: 'accept' | 'reverse' | 'change_type' | 'dismiss', label: string) => {
@@ -116,20 +118,22 @@ function EdgeProposalRow({
         </span>
       </div>
       <div className="kn-prop-acts">
-        <Button
-          size="sm"
-          className={isArchive ? 'kn-btn-critical' : undefined}
-          disabled={busy || archiveTargetMissing}
-          onClick={() => act('accept', isArchive ? '已归档' : '已建立')}
-        >
-          {isArchive ? (
-            <Archive size={14} aria-hidden="true" />
-          ) : (
-            <Check size={14} aria-hidden="true" />
-          )}
-          {isArchive ? '确认归档' : '建立关系'}
-        </Button>
-        {!isArchive && (
+        {!retired && (
+          <Button
+            size="sm"
+            className={isArchive ? 'kn-btn-critical' : undefined}
+            disabled={busy || archiveTargetMissing}
+            onClick={() => act('accept', isArchive ? '已归档' : '已建立')}
+          >
+            {isArchive ? (
+              <Archive size={14} aria-hidden="true" />
+            ) : (
+              <Check size={14} aria-hidden="true" />
+            )}
+            {isArchive ? '确认归档' : '建立关系'}
+          </Button>
+        )}
+        {!isArchive && !retired && (
           <Button
             size="sm"
             variant="ghost"

@@ -2,7 +2,7 @@ import { Extension, type Extensions, type JSONContent, Mark, Node, getSchema } f
 import { EditorContent, useEditor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import { useCallback, useMemo, useRef, useState } from 'react';
-import { noteBlockSource } from '../shared/note-block-source';
+import { noteBlockSource } from '@/kernel/read-models/note-block-source';
 import type { BodyBlock } from './notes-api';
 
 const standardSchema = getSchema([StarterKit]);

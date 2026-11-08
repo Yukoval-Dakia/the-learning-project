@@ -22,6 +22,8 @@ import type {
 export type ToolCallRecord = CopilotToolCallRecord;
 
 export interface ChatMessage extends Omit<ReplayChatMessage, 'tool_calls'> {
+  /** A nudge's headline shown as the companion's line. Only here: no snapshot carries it. */
+  nudge_line?: true;
   streaming?: boolean;
   subtasks?: CopilotSubtaskView[];
   tool_calls?: ToolCallRecord[];
@@ -139,6 +141,7 @@ export function projectDurableCopilotMessage(
     ...previous,
     subtasks: view.subtasks,
     public_prose: publicProse,
+    retryable: view.phase === 'failed' && view.retryable === true,
     ...(view.toolCalls && view.toolCalls.length > 0 ? { tool_calls: view.toolCalls } : {}),
     // The reply frame already carries its own fences (`done` may arrive later); stream blocks stop
     // there, or every block would show twice until the run ends.
@@ -352,13 +355,17 @@ export function projectCopilotRunUpdate(
   },
 ): ChatMessage[] {
   let next = messages;
-  if (!next.some((message) => message.role === 'user' && message.id === run.runId)) {
+  // A resend answers a question already on the page, so it has no words of its own and no row.
+  if (
+    run.userMessage !== undefined &&
+    !next.some((message) => message.role === 'user' && message.id === run.runId)
+  ) {
     next = [
       ...next,
       {
         id: run.runId,
         role: 'user',
-        text: run.userMessage ?? '（已恢复的请求）',
+        text: run.userMessage,
         session_id: run.sessionId,
         run_id: run.runId,
         derivation_policy: run.derivationPolicy ?? 'allow',
@@ -424,8 +431,8 @@ export function projectCopilotRunUpdate(
 
 /**
  * Replace persisted history while retaining only client rows that still have a
- * concrete pending key or run handle. A run reply from history wins over its
- * live placeholder by causal run identity.
+ * concrete pending key or run handle, and nudge lines, which only exist here. A run
+ * reply from history wins over its live placeholder by causal run identity.
  */
 export function reconcileCopilotSnapshotMessages(
   previous: ChatMessage[],
@@ -460,8 +467,22 @@ export function reconcileCopilotSnapshotMessages(
     seenIds.add(message.id);
     output.push(message);
   };
+  // A nudge line stays right after the row it followed. One whose row isn't in the snapshot (history
+  // still loading, a send still pending) goes last, so it never lands above a newer message.
+  const nudgeLinesAfter = new Map<string | null, ChatMessage[]>();
+  let before: string | null = null;
+  for (const message of previous) {
+    if (message.nudge_line) {
+      if (message.session_id !== sessionId) continue;
+      nudgeLinesAfter.set(before, [...(nudgeLinesAfter.get(before) ?? []), message]);
+    } else {
+      before = message.id;
+    }
+  }
+  const replayedIds = new Set(replayed.map((message) => message.id));
   for (const message of replayed) {
     append(message);
+    for (const line of nudgeLinesAfter.get(message.id) ?? []) append(line);
     if (message.role === 'user') {
       const liveReply = transientAiByRun.get(message.id);
       if (liveReply) append(liveReply);
@@ -469,6 +490,9 @@ export function reconcileCopilotSnapshotMessages(
   }
   for (const message of transientRunMessages) append(message);
   for (const message of pendingMessages) append(message);
+  for (const [anchor, lines] of nudgeLinesAfter) {
+    if (anchor === null || !replayedIds.has(anchor)) for (const line of lines) append(line);
+  }
   return output;
 }
 
@@ -483,6 +507,7 @@ export function projectReplayMessage(turn: ReplayTurn): ReplayChatMessage | null
     subagent_runs: turn.subagent_runs,
     run_id: turn.run_id,
     derivation_policy: turn.derivation_policy,
+    retryable: turn.retryable,
   };
   if (turn.role === 'tombstone')
     return {

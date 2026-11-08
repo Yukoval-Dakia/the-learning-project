@@ -5,7 +5,7 @@
 # concise reminder because audit/planning work can require issue capture
 # without producing a commit or a dirty working tree.
 #
-# Per docs/agents/issue-tracker.md "Closeout issue capture gate", the agent
+# Per /Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/agents/issue-tracker.md "Closeout issue capture gate", the agent
 # must say which Linear issues were created/updated OR say "No Linear issue
 # needed" with a one-sentence reason. This hook is the harness-side nudge —
 # self-discipline is unreliable across long sessions.
@@ -28,7 +28,7 @@ branch=$(git branch --show-current 2>/dev/null || echo "?")
 cat >&2 <<EOF
 linear-gate: $recent_commits recent commit(s) + $dirty uncommitted file(s) on branch \`$branch\`.
 
-Before stopping an implementation, audit, planning, or migration task, verify the Linear closeout gate per docs/agents/issue-tracker.md:
+Before stopping an implementation, audit, planning, or migration task, verify the Linear closeout gate per /Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/agents/issue-tracker.md:
   - did the work create new follow-ups? → save_issue
   - did it complete in-flight YUK-NN issues? → integration usually handles via
     commit \`Closes YUK-NN\`, but verify state for issues left In Progress

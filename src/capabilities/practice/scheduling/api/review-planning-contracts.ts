@@ -8,7 +8,7 @@ import {
   PartialUnknownJudgeResult,
   ScoreMeaning,
 } from '@/kernel/capability-contract-schemas';
-import { CreateSubmissionBodySchema } from '../../api/assessment-contracts';
+import { AttemptEvidenceSchema, CreateSubmissionBodySchema } from '../../api/assessment-contracts';
 import {
   AttemptCorrectionStateSchema,
   CreateAttemptCaptureSchema,
@@ -103,6 +103,11 @@ export const ReviewAdviceResponseSchema = z.object({
   activation_intent: ActivateEvaluationIntent,
   automatic_commit: z.boolean(),
   judge: ReviewAdviceJudgeSchema,
+  // Same evidence shape every attempt surface carries: the learner sees "看过"
+  // and the judged outcome next to the preview, before deciding whether to
+  // commit. Read-only; grading never consumes it, and no rating operation has
+  // happened yet at preview time so self_claim stays null.
+  evidence: AttemptEvidenceSchema,
   advice: z.object({
     rating: FsrsRating.nullable(),
     reason: z.string(),

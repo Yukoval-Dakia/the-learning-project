@@ -19,6 +19,7 @@ import { readDerivationPolicy } from '@/core/schema/derivation-policy';
 import type { PiAfterToolCall } from '@/core/tool-call-contract';
 import type { Db } from '@/db/client';
 import { chartPublishedAfterBinding } from '@/kernel/blocks/chart';
+import { projectLearnerToolInput } from '@/kernel/learning-content';
 import { recordAiTaskReplyUnsealed } from '@/kernel/records/ai-attempt-facts';
 import {
   DOMAIN_TOOL_MCP_SERVER_NAME,
@@ -32,6 +33,7 @@ import { TurnSourceLedger } from '@/kernel/tools/source-ledger';
 import type { ModelBinding } from '@/server/ai/execution-adapter';
 import { type StreamCollectResult, runAgentTask, streamTaskCollecting } from '@/server/ai/runner';
 import { isToolArgumentContractFailure } from '@/server/ai/tool-param-contract';
+import { getTool } from '@/server/ai/tools/registry';
 import { shouldEmitToolUseForCaller } from '@/server/ai/tools/tool-mirror-policy';
 import { resolveCopilotSkillDocs } from '@/subjects/copilot-skills';
 import type { CopilotThinkingEndResult } from '../thinking-lane-contract';
@@ -68,6 +70,7 @@ import {
   prependCopilotPiFinalizationHooks,
 } from './reply-finalization';
 import { resolveCopilotReviewAnswer } from './review-answer-consumer';
+import { recordRetryToolEffect, retryToolDenial } from './run-retry';
 import { bindSubagentParentCancellation, handleNativeSubagentTaskEvent } from './subagent-mailbox';
 import {
   type CopilotSubtaskEvent,
@@ -132,8 +135,10 @@ export interface CopilotExecutionTurn {
   input: CopilotRunInput;
   sessionId: string;
   taskRunId: string;
-  /** User ask/chip event that owns tool mirrors and native child records. */
+  /** Execution root that owns tool mirrors, fences and native child records. */
   sourceEventId?: string;
+  /** Original learner ask used only by the memory/steering quote gates. */
+  learnerAskEventId?: string;
 }
 
 export interface CopilotExecutionPolicy {
@@ -281,10 +286,9 @@ export function createCopilotExecutionOwner(
         ? { reply: correctionResolution.reply, correction: 'clarify' as const }
         : undefined;
 
-    // YUK-1909 — turns whose committed reply is fixed before the model runs, or
-    // bound to a not-yet-submitted answer, get status only: reasoning text could
-    // leak the answer or describe a reply that never ships. Status frames
-    // (request_sent / model_thinking / thinking_end) still fire.
+    // YUK-1909 — a turn bound to a not-yet-submitted answer gets status only:
+    // reasoning text could leak the answer. Status frames
+    // (request_sent / model_thinking / thinking_end) still fire for those turns.
     // A focused page question is also an unsubmitted-question context: the
     // learner can quote a live question (QuoteSelection -> kind 'question') and
     // ask in ordinary chat. Whether that question was already submitted is not
@@ -292,11 +296,7 @@ export function createCopilotExecutionOwner(
     // Other focus kinds: knowledge / note / learning_session (nudges) carry no
     // unsubmitted question; teaching skill turns run outside this owner.
     const focusedQuestion = turn.input.ambient_context?.focused_entity?.kind === 'question';
-    const suppressThinkingStream =
-      answerOnly ||
-      authoritativeReply !== undefined ||
-      reviewAnswer !== undefined ||
-      focusedQuestion;
+    const suppressThinkingStream = answerOnly || reviewAnswer !== undefined || focusedQuestion;
 
     let activeTaskRunId = turn.taskRunId;
     const createFinalizer = () =>
@@ -307,6 +307,27 @@ export function createCopilotExecutionOwner(
       });
 
     let finalizer = createFinalizer();
+
+    // The correction contract already owns this reply. Calling the model can
+    // only replace it when the provider quota or terminal is missing.
+    if (authoritativeReply) {
+      const contextDigest = copilotSessionContextDigest(input);
+      const finalization = await observeTaskOperation(
+        { operation: 'finalize', taskKind: 'CopilotTask', taskRunId: activeTaskRunId },
+        async (reportOutcome) => {
+          const finalized = await finalizer.finalizeTerminal(authoritativeReply.reply);
+          reportOutcome(finalized.accepted ? 'accepted' : 'rejected');
+          return finalized;
+        },
+      );
+      return {
+        taskRunId: activeTaskRunId,
+        finishReason: 'end_turn',
+        finalization,
+        partial: false,
+        contextDigest,
+      };
+    }
 
     const surface = input.surface;
     const baseContextBudget = resolveContextBudget(surface);
@@ -342,6 +363,9 @@ export function createCopilotExecutionOwner(
     // One mount-options literal feeds the pi AgentTool bridge
     // (`ctx.piToolMounts` → piDomainMount); the loop's native toolCall.id
     // supplies correlation via `correlatedToolUseId` (see pi-tools.ts).
+    const isRetry =
+      turn.learnerAskEventId !== undefined && turn.learnerAskEventId !== turn.sourceEventId;
+    const toolNames = answerOnly ? [...ANSWER_ONLY_TOOL_NAMES] : resolveDomainToolNames(surface);
     const domainMountOptions = {
       ctx: {
         db,
@@ -354,21 +378,38 @@ export function createCopilotExecutionOwner(
         ...(deadlineAt !== undefined ? { providerSessionDeadlineAt: deadlineAt } : {}),
         callerActor,
         ...(turn.sourceEventId ? { causedByEventId: turn.sourceEventId } : {}),
+        ...(turn.learnerAskEventId ? { learnerAskEventId: turn.learnerAskEventId } : {}),
         sourceLedger,
         answerOnly,
       },
       serverName: DOMAIN_TOOL_MCP_SERVER_NAME,
-      toolNames: answerOnly ? [...ANSWER_ONLY_TOOL_NAMES] : resolveDomainToolNames(surface),
+      toolNames: isRetry
+        ? toolNames.filter(
+            (name) => retryToolDenial({ name, effect: getTool(name)?.effect }) === undefined,
+          )
+        : toolNames,
       taskKind: 'CopilotTask',
       presentResult: (envelope) => learnerToolResult(db, envelope),
       cancellationSignals,
       beforeExecute: async (tool) =>
+        (isRetry ? retryToolDenial(tool) : undefined) ??
         derivationToolDenial(derivationPolicy, tool) ??
         (await policy.cancellation.beforeTool()) ??
         finalizer.beforeDomainTool(tool) ??
         proposalFlowGate.beforeExecute(tool) ??
         budgetTracker.beforeExecute(tool),
-      onExecuteStart: (tool) => policy.cancellation.onToolExecutionStarted(tool),
+      onExecuteStart: async (tool) => {
+        policy.cancellation.onToolExecutionStarted(tool);
+        try {
+          if (turn.sourceEventId) await recordRetryToolEffect(db, turn.sourceEventId, tool.effect);
+          const denial = await policy.cancellation.beforeTool();
+          if (denial) throw new Error(denial);
+        } catch (error) {
+          // The bridge takes over settlement only after this hook returns.
+          policy.cancellation.onToolExecutionSettled();
+          throw error;
+        }
+      },
       onExecuteSettled: () => policy.cancellation.onToolExecutionSettled(),
       interceptInput: (tool, args) => {
         const { args: capped, contextBudget, softStop } = budgetTracker.capInput(tool.name, args);
@@ -423,9 +464,13 @@ export function createCopilotExecutionOwner(
         }
       },
       onToolComplete: (result) => {
-        void Promise.resolve(emitActivity(policy, { kind: 'tool_finished', ...result })).catch(
-          () => undefined,
-        );
+        void Promise.resolve(
+          emitActivity(policy, {
+            kind: 'tool_finished',
+            ...result,
+            input: projectLearnerToolInput(result.toolName, result.input),
+          }),
+        ).catch(() => undefined);
       },
     } satisfies BuildMcpServerOptions;
     const exa = answerOnly ? null : adapters.buildExaMcpServerFn();
@@ -514,7 +559,7 @@ export function createCopilotExecutionOwner(
         emitActivity(policy, {
           kind: 'tool_finished',
           toolName: observation.call.name,
-          input: observation.args,
+          input: projectLearnerToolInput(observation.call.name, observation.args),
           summary: summaryText.slice(0, 180),
           ...(observation.isError
             ? { errorReason: piToolErrorText(observation.error).slice(0, 500) }
@@ -602,12 +647,9 @@ export function createCopilotExecutionOwner(
       signal: policy.cancellation.signal,
       lifecycleAbortController,
       compiledModelPrompt,
-      allowedTools: authoritativeReply ? [] : allowedTools,
+      allowedTools,
       ...(piSpawnContract ? { onTaskEvent } : {}),
-      // An explicit empty allowlist (authoritativeReply) must not connect
-      // remote mounts — piRemoteMcpMount reaches Exa at buildTools time, and an
-      // outage would spend the optional-search startup budget on a tool-less turn.
-      piToolMounts: authoritativeReply ? [] : piToolMounts,
+      piToolMounts,
       piHooks,
       ...(piSpawnContract ? { piAgents: piSpawnContract.piAgents } : {}),
       ...(piSkillDocs ? { piSkillDocs } : {}),
@@ -682,9 +724,13 @@ export function createCopilotExecutionOwner(
         if (!shouldEmitToolUseForCaller(call.toolName, DOMAIN_TOOL_MCP_SERVER_NAME, callerActor)) {
           return;
         }
-        void Promise.resolve(emitActivity(policy, { kind: 'tool_started', ...call })).catch(
-          () => undefined,
-        );
+        void Promise.resolve(
+          emitActivity(policy, {
+            kind: 'tool_started',
+            ...call,
+            input: projectLearnerToolInput(call.toolName, call.input),
+          }),
+        ).catch(() => undefined);
       },
       onToolArgsDelta: (delta) => {
         thinkingAnnounced = false;

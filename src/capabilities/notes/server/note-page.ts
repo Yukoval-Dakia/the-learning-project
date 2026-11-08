@@ -123,7 +123,8 @@ export async function loadNotePage(db: Db, noteId: string): Promise<NotePage | n
             .where(and(inArray(knowledge.id, knowledgeIds), isNull(knowledge.archived_at)))
         ).map((r) => ({ id: r.id, name: r.name }));
 
-  // 3. sections — the five-section view; `check` remains the self-explanation anchor.
+  // 3. sections — the semantic-dimension view; empty for notes organized freely
+  // around their material. `check` remains the self-explanation anchor.
   const sections = bodyBlocksToNoteSections(note.body_blocks);
 
   // 4. backlinks — inbound cross_links with the same read-time filters as the panel.

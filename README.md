@@ -1,8 +1,10 @@
 # AI 学习工具 (the-learning-project)
 
-自用 AI 学习系统。当前实现是 **Hono API + TanStack Start 前门 + pg-boss worker** 三进程的 self-hosted 单用户应用；规划与架构以当前代码、ADR 与 [docs/architecture.md](./docs/architecture.md) 为准；进程、发布、备份与访问约束见 [docs/operations.md](./docs/operations.md)；配置见 [docs/configuration.md](./docs/configuration.md)。
+自用 AI 学习系统。当前实现是 **Hono API + TanStack Start 前门 + pg-boss worker** 三进程的 self-hosted 单用户应用；规划与架构以当前代码、ADR 与 [architecture.md](/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/architecture.md) 为准；进程、发布、备份与访问约束见 [operations.md](/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/operations.md)；配置见 [configuration.md](/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/configuration.md)。
 
-> **2026-06-13 形态变更（YUK-321 M5）**：Next.js 全栈已退场。现形状 = Hono API（`server/index.ts`，:8787）+ Vite SPA（`web/`，:5173）+ pg-boss worker（`scripts/worker.ts`，dev 入口 `pnpm worker:dev`、prod 入口 `node dist/worker.cjs`）。后端真相源 = capability manifests（`src/capabilities/*/manifest.ts`）+ 组合根 `server/app.ts`。旧 Next/App Router/middleware.ts/Redis 描述出现在历史 docs/ 里，均不再适用。后续 Vite SPA（独立 :5173 路由表）已被 TanStack Start 前门取代并移除，页面由 `server/start/routes/` 同源提供于 :8787。
+> 文档不在 git 内：原 `docs/` 与 `PLANNING.md` 的副本在 `/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/`（清单 `MANIFEST.tsv`，逐文件 hash `SHA256SUMS`）；下文文档链接均指向该目录。
+
+> **2026-06-13 形态变更（YUK-321 M5）**：Next.js 全栈已退场。现形状 = Hono API（`server/index.ts`，:8787）+ Vite SPA（`web/`，:5173）+ pg-boss worker（`scripts/worker.ts`，dev 入口 `pnpm worker:dev`、prod 入口 `node dist/worker.cjs`）。后端真相源 = capability manifests（`src/capabilities/*/manifest.ts`）+ 组合根 `server/app.ts`。旧 Next/App Router/middleware.ts/Redis 描述只存在于历史文档，均不再适用。后续 Vite SPA（独立 :5173 路由表）已被 TanStack Start 前门取代并移除，页面由 `server/start/routes/` 同源提供于 :8787。
 
 ## 技术栈
 
@@ -103,11 +105,16 @@ changes are required by this switch.
 Only `llm.call` leaves carry additive token/cost attributes. Attempt aggregates are
 reconciliation metadata and include child usage, so do not add them to leaf totals.
 Pi catalog costs are estimates, not invoices; absent usage remains unknown.
+Typed decision runs use the same chain: one `task.run`, one `task.attempt` per wire
+attempt, and one `llm.call` for the systemone request. That leaf copies the attempt's
+settled tokens and cost once, and it does not carry the request or response. Jev
+amounts stay on the reported or pricebook basis. A transient retry is a failed
+attempt beside the next attempt under the same `task.run`.
 Worker pickup starts a new `job.run` root, with logical-run correlation on Copilot;
 queue trace headers and payloads are unchanged. Flush runs only after shutdown drain
 and waits at most 500 ms. Trace export is best effort and cannot retry application work.
 
-See [YUK-1325 design and verification](docs/planning/2026-10-06-yuk1325-laminar.md)
+See [YUK-1325 design and verification](/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/planning/2026-10-06-yuk1325-laminar.md)
 for exact boundaries and current limits.
 
 ## 开发
@@ -258,9 +265,9 @@ finding 语义。配置面板经 `GET /api/admin/custom-providers` 读列表（�
 pg-boss worker 在服务端执行。
 
 API 与独立 worker 都先由 `server/env.ts` 加载 `.env.local` / `.env`，再由
-`src/server/config/env.ts` 用 @t3-oss/env-core + zod 校验 server schema。加载顺序、
+`src/core/config/server/env.ts` 用 @t3-oss/env-core + zod 校验 server schema。加载顺序、
 必填项、compose 与本机 dev 的取值、逐键默认值及 DB 配置层见
-[docs/configuration.md](./docs/configuration.md)。
+[configuration.md](/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/configuration.md)。
 
 常用检查 / PR 前门禁：
 
@@ -270,7 +277,7 @@ pnpm lint             # biome check .
 pnpm hooks:install    # 幂等安装仓库 pre-commit，只对暂存内容跑 biome check
 pnpm hooks:uninstall  # 只删除带本仓库标记的 hook
 pnpm lint:ratchet     # warning/info 总数不得高于 PR 分叉点实测数（merge-base 用 head 的 Biome 重测）；低于不失败，无台账文件；取不到 base 时 fail closed（CI 必须给 LINT_BASE_SHA/--base）
-pnpm test             # 全量 umbrella（audit 链 + unit/db/migration）；CI Gate 不调用它，而是跑 .github/workflows/ci-gate.yml 的矩阵（见 docs/agents/development-workflow.md）；本机按 AGENTS.md 只跑 scoped tests
+pnpm test             # 全量 umbrella（audit 链 + unit/db/migration）；CI Gate 不调用它，而是跑 .github/workflows/ci-gate.yml 的矩阵（见 AGENTS.md 与 `/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/agents/development-workflow.md`）；本机按 AGENTS.md 只跑 scoped tests
 pnpm audit:schema     # schema write-path 审计（新表/字段必须有 write path）
 pnpm audit:partition  # 测试分区审计（依赖 DB 的测试不得进 unit config）
 pnpm audit:task-census # task registry 的 static caller / compatibility 分类与 wiring、run-log 契约
@@ -287,9 +294,9 @@ pnpm build            # TanStack Start + 三 esbuild 产物（dist/server.cjs / 
 
 ## 当前部署目标：NAS 上的 Agent 开发测试环境
 
-Owner 于 2026-10-07 将产品交付与本机运维持续委托给 agent，见[授权记录](docs/planning/2026-10-07-autonomous-delivery-charter.md)。TEST 跑在 NAS（`bancho-nb2.local`，`/volume1/docker/tlp-test/`），Mac 入口 <http://localhost:8787> 经 LaunchAgent `studio.yukoval.tlp-nas-tunnel` 中继到达，只供 Agent 开发测试，沿用独立 app、worker 和 PostgreSQL；只有 owner 之后明确要求“为我日常使用的部署”才切换日用。回滚期 Mac 容器 stopped 不删。完整行为设计见[连续学习系统](docs/design/2026-10-06-continuous-learning-system-behavior.md)，设计基线不等于当前实现。当前附件存储与重置证据见[测试存储记录](docs/planning/2026-10-07-agent-test-storage.md)与[Agent 测试环境记录](docs/planning/2026-10-07-agent-test-environment-reset.md)，后续任务与进度见 [Linear](docs/agents/issue-tracker.md)；`PLAN.md` 仅为各工作树的本地记录。
+Owner 于 2026-10-07 将产品交付与本机运维持续委托给 agent，见[授权记录](/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/planning/2026-10-07-autonomous-delivery-charter.md)。TEST 跑在 NAS（`bancho-nb2.local`，`/volume1/docker/tlp-test/`），Mac 入口 <http://localhost:8787> 经 LaunchAgent `studio.yukoval.tlp-nas-tunnel` 中继到达，只供 Agent 开发测试，沿用独立 app、worker 和 PostgreSQL；只有 owner 之后明确要求“为我日常使用的部署”才切换日用。回滚期 Mac 容器 stopped 不删。完整行为设计见[连续学习系统](/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/design/2026-10-06-continuous-learning-system-behavior.md)，设计基线不等于当前实现。当前附件存储与重置证据见[测试存储记录](/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/planning/2026-10-07-agent-test-storage.md)与[Agent 测试环境记录](/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/planning/2026-10-07-agent-test-environment-reset.md)，后续任务与进度见 [Linear](/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/agents/issue-tracker.md)；`PLAN.md` 仅为各工作树的本地记录。
 
-compose 服务、发布与恢复顺序、备份、容器 DNS，以及 Tailscale / 局域网等访问约束统一见[运维](docs/operations.md)。远程入口是可选的 Tailscale Serve（同一 tailnet、Mac 开机且用户会话内 daemon 运行，未开 Funnel）；主机名和局域网地址属于本机私有配置。
+compose 服务、发布与恢复顺序、备份、容器 DNS，以及 Tailscale / 局域网等访问约束统一见[运维](/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/operations.md)。远程入口是可选的 Tailscale Serve（同一 tailnet、Mac 开机且用户会话内 daemon 运行，未开 Funnel）；主机名和局域网地址属于本机私有配置。
 
 下面的 NAS / Cloudflare Tunnel 指南是通用自托管参考；当前 TEST 的 NAS 部署用的是 owner 私有的 `compose.private.json`，不以下面这份为准。
 
@@ -314,7 +321,7 @@ compose 服务、发布与恢复顺序、备份、容器 DNS，以及 Tailscale 
    的 key；worker 处理记忆事件需要 `DASHSCOPE_API_KEY`。
 
    变量含义、默认值、AI/记忆 pin 与 DB 配置层见
-   [docs/configuration.md](./docs/configuration.md)。
+   [configuration.md](/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/configuration.md)。
 
 3. **Database migrations run automatically.** A dedicated `migrate` init container
    (YUK-65) applies the bundled drizzle migrations before `app` / `worker` start on
@@ -337,7 +344,7 @@ compose 服务、发布与恢复顺序、备份、容器 DNS，以及 Tailscale 
    blocks migration; terminal history and native child projections are retained.
    Never delete pending jobs to pass readiness. Rolling back the worker restores its
    schedule, so repeat this check before retrying the upgrade. See
-   [ADR-0063](docs/adr/0063-retire-copilot-mailbox-execution.md).
+   [ADR-0063](/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/adr/0063-retire-copilot-mailbox-execution.md).
    Goal, LearningItem and MistakeVariant now have one structural writer; their old
    `PROJECTION_IS_WRITER_*` switches are ignored. Rollback requires the previous
    release plus a verified recovery configuration, not switching these entities OFF
@@ -345,7 +352,7 @@ compose 服务、发布与恢复顺序、备份、容器 DNS，以及 Tailscale 
    events: previous-release recovery must preserve materialized rows, disable its three
    structural projection modes, and never rebuild them with those older reducers.
    Before returning to canonical mode after rollback writes, repeat readiness checks
-   and repair any mismatch. See the [cutover evidence](docs/planning/2026-09-07-canonical-state-writers.md).
+   and repair any mismatch. See the [cutover evidence](/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/planning/2026-09-07-canonical-state-writers.md).
    Knowledge, KnowledgeEdge, Note and QuestionBlock editors also use canonical
    projection writers; the global `PROJECTION_IS_WRITER` and retired per-entity
    flags no longer select alternate writers. Deployment preparation validates all
@@ -388,7 +395,7 @@ network，不暴露到 host。
 app 容器 `CMD ["node", "dist/server.cjs"]`，`RW_FRONTDOOR=1` 启用 Start 前门：
 `/api/*` 直接交给原 Hono app，`/_build/*` 与站点根的 PWA 文件（manifest、图标）提供 Start 客户端资产，全部页面以
 `server/start/routes/` 为准（无旧 SPA 回落）。API hydration、tool recovery 和 shutdown
-的 owner 保持不变。切换/回退及 P7 清理条件见[前门 runbook](docs/planning/2026-10-07-yuk1352-start-frontdoor.md)。
+的 owner 保持不变。切换/回退及 P7 清理条件见[前门 runbook](/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/planning/2026-10-07-yuk1352-start-frontdoor.md)。
 **无 Redis 服务**——editing presence 走 PG 表 `editing_presence`（PgPresenceStore，YUK-321
 M5 gate 选项 b）。
 
@@ -407,7 +414,7 @@ curl https://loom.<your-domain>/api/health
 
 ### Backup
 
-**日级 dump**：Mac 上 launchd 每日 07:15 跑 `scripts/mac-daily-dump.sh`，经 ssh 在 NAS 的 TEST postgres 容器里 `pg_dump`，写 `loom-daily-YYYYMMDD.dump`（custom format），保留最近 14 份 + 每月 1 号归档；Mac 关机时当日不跑。安装、TCC 约束、失败标记与巡检命令见[运维：备份与恢复](docs/operations.md#备份与恢复)。
+**日级 dump**：Mac 上 launchd 每日 07:15 跑 `scripts/mac-daily-dump.sh`，经 ssh 在 NAS 的 TEST postgres 容器里 `pg_dump`，写 `loom-daily-YYYYMMDD.dump`（custom format），保留最近 14 份 + 每月 1 号归档；Mac 关机时当日不跑。安装、TCC 约束、失败标记与巡检命令见[运维：备份与恢复](/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/operations.md#备份与恢复)。
 
 **手动 dump / restore**：
 
@@ -416,7 +423,7 @@ pnpm db:dump
 pnpm db:restore < /tmp/loom-20260101-000000.sql
 ```
 
-**完整 Postgres 恢复演练**：外部 maintenance owner 持有 writer 边界后跑 `scripts/cutover-final-backup.sh ... --strict`，用 `scripts/restore-drill.sh` 在隔离 scratch 比较，最终 manifest 另加 `--require-restore-parity`；`--strict` 只检查 capture 工件。命令、边界与重开条件见[完整 Postgres 恢复流程](docs/sub5-restore-cli.md#full-postgres-disaster-recovery)。Postgres dump 不含 R2 对象，需独立备份。
+**完整 Postgres 恢复演练**：外部 maintenance owner 持有 writer 边界后跑 `scripts/cutover-final-backup.sh ... --strict`，用 `scripts/restore-drill.sh` 在隔离 scratch 比较，最终 manifest 另加 `--require-restore-parity`；`--strict` 只检查 capture 工件。命令、边界与重开条件见[完整 Postgres 恢复流程](/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/sub5-restore-cli.md#full-postgres-disaster-recovery)。Postgres dump 不含 R2 对象，需独立备份。
 
 ## 目录
 
@@ -452,7 +459,6 @@ src/
   ui-next/        # UI rewrite 的 scoped design-system 基础层（tokens/primitives/shell/mascot/motion）
 scripts/          # worker.ts（pg-boss 独立进程）+ migrate.ts + dev-local.ts + audits（schema/partition/profile）
 postman/          # api-endpoints.json 真相源 + gen:postman manifest 对账层
-docs/             # architecture, configuration, operations, modules, ADRs, planning
 ```
 
 `core/` 是跨学科共享层；`subjects/<name>/` 是单学科特化层。`src/capabilities/<name>/manifest.ts`
@@ -461,9 +467,10 @@ docs/             # architecture, configuration, operations, modules, ADRs, plan
 
 ### TEST on the NAS, reached through a Mac-local relay
 
-TEST runs on the NAS (`bancho-nb2.local`) at `/volume1/docker/tlp-test/` — project `the-learning-project` with a private `compose.private.json`, memory/CPU-limited containers, restart `unless-stopped`; `app` and Postgres bind `127.0.0.1:18787` / `127.0.0.1:15433` on the NAS only, never `0.0.0.0`. The NAS sshd forbids TCP forwarding, so the Mac reaches TEST through LaunchAgent `studio.yukoval.tlp-nas-tunnel`: a relay on `127.0.0.1:8787` where each connection is an ssh exec channel running a Python forwarder on the NAS (with a few warm channels parked, a request normally skips the ssh setup). The relay's Postgres ports (`5433`/`5544` → NAS `15433`) were closed on 2026-11-06 — dev scripts used to default to 5433, so those ports must not reach TEST; query TEST data over `ssh yukoval@bancho-nb2.local docker exec … psql` instead. `studio.yukoval.tlp-nas-watch` restarts the NAS memory watchdog after NAS reboots and alerts on a memory stop or unhealthy TEST. With the Mac off, TEST keeps running but is unreachable from outside, the Tailscale entry is down, and that day's backup does not run. Relay/watch reinstall steps and token/health rules are in [docs/operations.md](docs/operations.md#网络与访问). Specific private addresses stay in owner private records, not this repo.
+TEST runs on the NAS (`bancho-nb2.local`) at `/volume1/docker/tlp-test/` — project `the-learning-project` with a private `compose.private.json`, memory/CPU-limited containers, restart `unless-stopped`; `app` and Postgres bind `127.0.0.1:18787` / `127.0.0.1:15433` on the NAS only, never `0.0.0.0`. The NAS sshd forbids TCP forwarding, so the Mac reaches TEST through LaunchAgent `studio.yukoval.tlp-nas-tunnel`: a relay on `127.0.0.1:8787` where each connection is an ssh exec channel running a Python forwarder on the NAS (with a few warm channels parked, a request normally skips the ssh setup). The relay's Postgres ports (`5433`/`5544` → NAS `15433`) were closed on 2026-11-06 — dev scripts used to default to 5433, so those ports must not reach TEST; query TEST data over `ssh yukoval@bancho-nb2.local docker exec … psql` instead. `studio.yukoval.tlp-nas-watch` restarts the NAS memory watchdog after NAS reboots and alerts on a memory stop or unhealthy TEST. With the Mac off, TEST keeps running but is unreachable from outside, the Tailscale entry is down, and that day's backup does not run. Relay/watch reinstall steps and token/health rules are in [operations.md](/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/operations.md#网络与访问). Specific private addresses stay in owner private records, not this repo.
 
-AI tasks inherit `opencode-go/deepseek-v4.1-flash` from `DEFAULT_TASK_MODEL` with
+AI tasks inherit `opencode-go/deepseek-v4.1-flash` from `DEFAULT_TASK_MODEL`
+(`src/core/config/model-overrides.ts`) with
 `lane.global.reasoning={"level":"high"}`. Set `task.<kind>.reasoning={"level":"max"}`
 for a task override. `AI_PROVIDER_OVERRIDE` / `AI_PROVIDER_MODEL` remain process-wide
 provider/model emergency pins; clear both to exercise the defaults. Removed `mimo-v2.5*` stored

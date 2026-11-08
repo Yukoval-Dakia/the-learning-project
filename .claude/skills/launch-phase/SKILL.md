@@ -28,7 +28,7 @@ orchestration 状态工具按运行 harness 取用，其余内容对两个 harne
 ## 何时用 / 何时不用
 
 ✅ 用：
-- 有 phase spec 文档（如 `/Volumes/YukovalSBak/yukoval-projects/tlp-docs/planning/<phase>.md`；历史 phase spec 已归档至 `docs/archive/superpowers/plans/`，仅溯源用）
+- 有 phase spec 文档（如 `/Volumes/YukovalSBak/yukoval-projects/tlp-docs/planning/<phase>.md`；历史 phase spec 已归档至 `/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/archive/superpowers/plans/`，仅溯源用）
 - spec 能拆出 ≥ 2 条**独立** lane（文件不重叠、不共享 schema 改动）
 - 想最小化人工介入
 
@@ -59,8 +59,7 @@ orchestration 状态工具按运行 harness 取用，其余内容对两个 harne
 1. **Worktree**：`superpowers:using-git-worktrees` 建独立 worktree。**Guard**：subagent prompt 必须显式约束所有 bash 操作只能在 worktree 路径内（见下方模板）。
 2. **Plan**：`superpowers:writing-plans` 把 lane spec + 验收标准转成可执行 plan。
 3. **Impl**：`superpowers:subagent-driven-development` 跑 impl → 自审 → spec review → fix → quality review → fix。**不并行 dispatch implementation subagent**（superpowers 明确反对，会冲突）。
-4. **Pre-merge gate**：`superpowers:verification-before-completion` 执行
-   `docs/agents/development-workflow.md` 的 **Pre-PR gate**。该文档是命令清单唯一真相源；
+4. **Pre-merge gate**：`superpowers:verification-before-completion` 执行 `AGENTS.md`「Development and verification」的 **Pre-PR gate**（完整命令表与 lane 细节在 `/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/agents/development-workflow.md`）；
    不在 skill 内复制另一份易漂移的命令。任一失败 → 回 step 3，**不进 step 5**。
 5. 标 lane `local-verified`，**不删 worktree 不删 branch**（merge 成功后统一清理）。
 

@@ -170,7 +170,7 @@ export function buildQueryContextTool(
   return {
     name: 'query_context',
     description:
-      "Read the learner Context warm layer: the Dreaming-maintained memory brief at a scope plus, at depth='deep', Mem0 facts matched by `query`. Read-only attention prior (ADR-0017) — never mutates scheduling or mastery. The startup segment already carries the global brief; use this to drill into a scope.",
+      "Read the learner Context warm layer: the Dreaming-maintained memory brief at a scope plus, at depth='deep', Mem0 facts matched by `query`. Read-only attention prior (ADR-0017) — never mutates scheduling or mastery. A failed fact search is a tool error, not zero facts. The startup segment already carries the global brief; use this to drill into a scope.",
     effect: 'read',
     inputSchema: QueryContextInputSchema,
     outputSchema: QueryContextOutputSchema,
