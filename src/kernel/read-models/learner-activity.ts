@@ -251,6 +251,11 @@ export interface KnowledgeFailureStreak {
   count: number;
 }
 
+export interface KnowledgeFailureRun {
+  /** Consecutive failed answers, newest backwards. Zero is a measured run that a success ended. */
+  count: number;
+}
+
 const FAILURE_STREAK_SCAN_LIMIT = 200;
 
 /**
@@ -334,6 +339,17 @@ async function loadFailureRuns(db: DbLike): Promise<Map<string, number>> {
     }
   }
   return new Map([...runs].map(([id, run]) => [id, run.count]));
+}
+
+/**
+ * Observed failure runs only. A missing id was not in the scanned window and is
+ * not a measured zero. Same answers as {@link loadKnowledgeFailureStreaks}.
+ */
+export async function loadKnowledgeFailureRuns(
+  db: DbLike,
+): Promise<Map<string, KnowledgeFailureRun>> {
+  const runs = await loadFailureRuns(db);
+  return new Map([...runs].map(([id, count]) => [id, { count }]));
 }
 
 /**
