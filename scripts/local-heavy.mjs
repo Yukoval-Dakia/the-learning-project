@@ -5,11 +5,24 @@ import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 // Shared with the host's heavy.sh: slot-N/owner starts with the holding PID.
-const [command, ...args] = process.argv.slice(2);
+const [command, ...rawArgs] = process.argv.slice(2);
 if (!command) throw new Error('local-heavy requires a shell command');
 const ci = ['CI', 'GITHUB_ACTIONS', 'CIRCLECI'].some((key) =>
   /^(1|true)$/i.test(process.env[key] ?? ''),
 );
+// `pnpm <script> -- <file>` forwards the `--`; vitest then drops every file
+// filter after it and runs the whole suite, which the host must never do.
+const args = rawArgs[0] === '--' ? rawArgs.slice(1) : rawArgs;
+if (
+  !ci &&
+  args.length === 0 &&
+  /\bvitest run --config vitest\.(db|unit)\.config\.ts$/.test(command)
+) {
+  console.error(
+    '[local-heavy] refusing to run the whole suite on this host: pass explicit test file paths',
+  );
+  process.exit(2);
+}
 const directory = join(homedir(), '.cache', 'tlp-heavy-slots');
 let owned;
 let child;
