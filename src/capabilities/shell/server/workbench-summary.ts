@@ -220,7 +220,10 @@ async function loadActiveGoals(db: Db, today: string): Promise<WorkbenchActiveGo
       // Both open the companion with the sentence already typed; the learner finishes or sends
       // it, and the companion makes the change through the same tool that recorded it.
       revise_prompt: `把「${label}」改成：`,
-      end_prompt: `「${label}」不用了，撤回吧。`,
+      // 「撤回」 alone read as undoing the last change once a revised restatement named that
+      // change (11-08 real turn moved the date back instead of ending it): say 取消, as an exam
+      // being called off is said.
+      end_prompt: `这个安排取消了，以后不用再按它安排：「${label}」`,
     };
   });
 }
