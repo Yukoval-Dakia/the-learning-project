@@ -15,6 +15,7 @@ import type {
   Submission,
 } from '@/ui-next/practice-studio/contracts';
 import { PracticeStudio } from '@/ui-next/practice-studio/PracticeStudio';
+import { attemptFacts } from '../attempt-facts';
 import { PresentationBlocks } from '../blocks/PresentationBlocks';
 import { outcomeFitsFeedbackCard } from '../judge-feedback';
 import { practiceSourceLabel } from '../PfStream';
@@ -410,6 +411,7 @@ export function PracticePresentation(props: PracticePresentationProps) {
               : [],
           uncertainty: unknownScore ? '对了几处是确定的；分数还算不出来，不按 0 分记。' : undefined,
           aiGraded,
+          facts: attemptFacts(submit.recorded),
         },
       };
       if (!submit.autoCommitted && !unknownScore)

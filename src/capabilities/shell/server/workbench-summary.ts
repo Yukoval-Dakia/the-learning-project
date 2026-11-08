@@ -1,6 +1,6 @@
 // Workbench aggregation read model: KPIs, active goals, and the seven-day activity heat.
 
-import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull, isNull, ne, sql } from 'drizzle-orm';
 import { learnerLocalDay } from '@/core/learner-day';
 import type { SteeringGoalDataT } from '@/core/schema/steering';
 import { steeringDaysLeft, steeringStartsInDays } from '@/core/steering';
@@ -24,6 +24,7 @@ import { type TodayProposalKpi, loadTodayProposalKpi } from './proposal-kpi';
 // KPI sampling cap: these are magnitude signals, not exact totals.
 const KPI_SAMPLE_LIMIT = 200;
 const ACTIVE_SESSIONS_LIMIT = 6;
+const PAST_STEERINGS_LIMIT = 10;
 
 export interface WorkbenchSessionRow {
   id: string;
@@ -55,6 +56,19 @@ export interface WorkbenchActiveGoal {
   end_prompt: string;
 }
 
+/** An arrangement said to the companion that no longer applies, newest ended first. */
+export interface WorkbenchPastSteering {
+  id: string;
+  instruction_md: string;
+  learner_words: string;
+  /** Learner-local YYYY-MM-DD; null when it had no end date. */
+  until: string | null;
+  /** withdrawn: the learner ended it; expired: its date passed. */
+  ended: 'withdrawn' | 'expired';
+  /** Learner-local day it stopped applying. */
+  ended_on: string;
+}
+
 export interface WorkbenchHeatDay {
   /** YYYY-MM-DD in the Asia/Shanghai day boundary. */
   day: string;
@@ -73,6 +87,7 @@ export interface WorkbenchSummary {
   cold_start: ColdStartState;
   /** Every active goal, newest first. Empty means no current goal, not cold start. */
   active_goals: WorkbenchActiveGoal[];
+  past_steerings: WorkbenchPastSteering[];
   active_sessions: WorkbenchSessionRow[];
   week_heat: WorkbenchHeatDay[];
   // Resolved in the API process, where the config snapshot is hydrated.
@@ -205,9 +220,52 @@ async function loadActiveGoals(db: Db, today: string): Promise<WorkbenchActiveGo
       // Both open the companion with the sentence already typed; the learner finishes or sends
       // it, and the companion makes the change through the same tool that recorded it.
       revise_prompt: `把「${label}」改成：`,
-      end_prompt: `「${label}」不用了，撤回吧。`,
+      // 「撤回」 alone read as undoing the last change once a revised restatement named that
+      // change (11-08 real turn moved the date back instead of ending it): say 取消, as an exam
+      // being called off is said.
+      end_prompt: `这个安排取消了，以后不用再按它安排：「${label}」`,
     };
   });
+}
+
+async function loadPastSteerings(db: Db): Promise<WorkbenchPastSteering[]> {
+  // The day it ended is the status change that ended it. The row's updated_at moves with any
+  // later write, such as a knowledge merge rewriting the scope of an ended goal.
+  const endedAt = sql<Date>`(
+    select max(${event.created_at}) from ${event}
+    where ${event.subject_kind} = 'goal'
+      and ${event.subject_id} = ${goal.id}
+      and ${event.action} = 'experimental:goal_status_update'
+      and ${event.payload}->>'status' = ${goal.status}
+  )`.mapWith(goal.updated_at);
+  const rows = await db
+    .select({
+      id: goal.id,
+      status: goal.status,
+      effective_until: goal.effective_until,
+      steering: goal.steering,
+      ended_at: endedAt,
+      updated_at: goal.updated_at,
+    })
+    .from(goal)
+    .where(and(isNotNull(goal.steering), ne(goal.status, 'active')))
+    .orderBy(desc(sql`coalesce(${endedAt}, ${goal.updated_at})`), desc(goal.id))
+    .limit(PAST_STEERINGS_LIMIT);
+  return rows.flatMap((row) =>
+    row.steering
+      ? [
+          {
+            id: row.id,
+            instruction_md: row.steering.instruction_md,
+            learner_words: row.steering.learner_words,
+            until: row.effective_until,
+            // The expiry sweep marks a passed window done; ending it by word leaves it dormant.
+            ended: row.status === 'done' ? ('expired' as const) : ('withdrawn' as const),
+            ended_on: learnerLocalDay(row.ended_at ?? row.updated_at),
+          },
+        ]
+      : [],
+  );
 }
 
 async function listActiveSessions(db: Db): Promise<WorkbenchSessionRow[]> {
@@ -285,6 +343,7 @@ export async function loadWorkbenchSummary(
     pendingAttributionCount,
     knowledgeCount,
     activeGoals,
+    pastSteerings,
     activeSessions,
     weekHeat,
     persistedPresence,
@@ -294,6 +353,7 @@ export async function loadWorkbenchSummary(
     countPendingAttribution(db),
     countKnowledge(db),
     loadActiveGoals(db, learnerLocalDay(new Date())),
+    loadPastSteerings(db),
     listActiveSessions(db),
     loadWeekHeat(db),
     loadPersistedColdStartPresence(db),
@@ -323,6 +383,7 @@ export async function loadWorkbenchSummary(
     },
     cold_start: coldStart,
     active_goals: activeGoals,
+    past_steerings: pastSteerings,
     active_sessions: activeSessions,
     week_heat: weekHeat,
     auto_apply_enabled: proposalAutoApplyEnabled(),

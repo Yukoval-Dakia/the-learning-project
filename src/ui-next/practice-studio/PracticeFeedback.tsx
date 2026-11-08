@@ -49,6 +49,16 @@ export function PracticeFeedback({
             </div>
           </header>
           {result.uncertainty && <p role="status">{result.uncertainty}</p>}
+          {result.facts && result.facts.length > 0 && (
+            <dl className="un-st-facts">
+              {result.facts.map((fact) => (
+                <div key={fact.label}>
+                  <dt>{fact.label}</dt>
+                  <dd>{fact.value}</dd>
+                </div>
+              ))}
+            </dl>
+          )}
         </>
       )}
       {result && (

@@ -20,6 +20,7 @@ import {
   resolveTaskBinding,
   resolveTaskReasoning,
 } from '@/server/ai/providers';
+import { specToolSurface } from '@/server/ai/runner-startup';
 import type { MODEL_SLICE_PINNED_TASK_KINDS } from './model-slice-pins';
 
 type SliceRow = typeof model_admission_slice.$inferSelect;
@@ -73,7 +74,13 @@ function resolveLiveModelPin(
         // resolveConfiguredTaskModel asserts the resolved pair is executable —
         // a stored-but-unservable pair fails THIS kind readably, not silently.
         model: resolveConfiguredTaskModel(kind as TaskKind),
-        model_version: `${version}:${binding.provider}:${canonicalHash(definition.prompt)}${wireReasoning}`,
+        // Slice identity covers the prompt AND the spec-level tool surface the
+        // run is mounted with — mounting sandbox tools on judges changes what
+        // the model may do, so a surface change must re-admit, not silently run.
+        model_version: `${version}:${binding.provider}:${canonicalHash({
+          prompt: definition.prompt,
+          toolSurface: specToolSurface(kind as TaskKind),
+        })}${wireReasoning}`,
       },
     };
   } catch (error) {

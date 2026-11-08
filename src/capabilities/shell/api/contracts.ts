@@ -333,6 +333,16 @@ export const WorkbenchSummaryResponseSchema = z.object({
       end_prompt: z.string(),
     }),
   ),
+  past_steerings: z.array(
+    z.object({
+      id: z.string(),
+      instruction_md: z.string(),
+      learner_words: z.string(),
+      until: z.string().nullable(),
+      ended: z.enum(['withdrawn', 'expired']),
+      ended_on: z.string(),
+    }),
+  ),
   active_sessions: z.array(
     z.object({
       id: z.string(),

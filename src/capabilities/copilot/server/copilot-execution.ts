@@ -379,6 +379,7 @@ export function createCopilotExecutionOwner(
         callerActor,
         ...(turn.sourceEventId ? { causedByEventId: turn.sourceEventId } : {}),
         ...(turn.learnerAskEventId ? { learnerAskEventId: turn.learnerAskEventId } : {}),
+        ...(focused ? { ambientFocus: { kind: focused.kind, id: focused.id } } : {}),
         sourceLedger,
         answerOnly,
       },
@@ -396,7 +397,6 @@ export function createCopilotExecutionOwner(
         derivationToolDenial(derivationPolicy, tool) ??
         (await policy.cancellation.beforeTool()) ??
         finalizer.beforeDomainTool(tool) ??
-        proposalFlowGate.beforeExecute(tool) ??
         budgetTracker.beforeExecute(tool),
       onExecuteStart: async (tool) => {
         policy.cancellation.onToolExecutionStarted(tool);
@@ -413,7 +413,11 @@ export function createCopilotExecutionOwner(
       onExecuteSettled: () => policy.cancellation.onToolExecutionSettled(),
       interceptInput: (tool, args) => {
         const { args: capped, contextBudget, softStop } = budgetTracker.capInput(tool.name, args);
-        return { args: capped, truncationNote: contextBudget, softStop };
+        return {
+          args: capped,
+          truncationNote: contextBudget,
+          softStop: softStop ?? proposalFlowGate.refuseIdentical(tool, capped),
+        };
       },
       onResult: (result) => {
         proposalFlowGate.observe(result);
@@ -644,6 +648,7 @@ export function createCopilotExecutionOwner(
     const runnerContext: Parameters<typeof streamTaskCollecting>[2] = {
       db,
       taskRunId: turn.taskRunId,
+      sessionId: turn.sessionId,
       signal: policy.cancellation.signal,
       lifecycleAbortController,
       compiledModelPrompt,

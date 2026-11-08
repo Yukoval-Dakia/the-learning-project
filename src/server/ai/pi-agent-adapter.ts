@@ -29,7 +29,7 @@ import type {
 } from '@earendil-works/pi-ai';
 import { helpFaultForRootStatus, rootBoundProviderStatus } from '@/ai/help-provider-fault';
 import { NO_PROGRESS_BUDGET_LANDING_MARGIN_MS } from '@/ai/no-progress-loop';
-import { type PiToolMount, piCustomTool } from '@/ai/pi-tool-mount';
+import { type PiToolMount, piCustomTool, piToolWireName } from '@/ai/pi-tool-mount';
 import { providerQuotaLimitSigned } from '@/ai/provider-failure';
 import { type TaskDefinition, resolveStructuredSubmitSchema } from '@/ai/task-spec';
 import { tasks } from '@/capabilities/task-registry';
@@ -37,6 +37,10 @@ import { customProviderDefinitions } from '@/core/config/custom-providers';
 import { getConfig } from '@/core/config/store';
 import { rawArgumentsEvidence } from '@/core/raw-arguments-evidence';
 import { type PiSubagentSpec, isSpawnToolName } from '@/core/subagent-contract';
+import {
+  AGENT_WORKSPACE_DOMAIN_TOOLS,
+  DOMAIN_TOOL_MCP_SERVER_NAME,
+} from '@/kernel/tools/allowlists';
 import type {
   ExecutionAdapter,
   ExecutionAdapterStartupArgs,
@@ -324,15 +328,43 @@ class PiPreparedQuery implements PreparedExecutionQuery {
   /**
    * Child tool set: the spec's allowlist over mounted wire names, minus
    * disallowedTools, minus spawn aliases (depth-one is structural).
+   * Workspace tools granted to a child are rebuilt against a per-spawn owner
+   * scope so the child gets its own directory — never the parent's files.
    */
-  private childToolsFor(spec: PiSubagentSpec): AgentTool[] {
+  private childToolsFor(spec: PiSubagentSpec, toolCallId: string): AgentTool[] {
     const parentTools = this.toolSurface.tools.filter((tool) => !isSpawnToolName(tool.name));
     const allowlisted =
       spec.tools === undefined
         ? parentTools
         : parentTools.filter((tool) => spec.tools?.includes(tool.name));
     const disallowed = new Set(spec.disallowedTools ?? []);
-    return allowlisted.filter((tool) => !disallowed.has(tool.name));
+    const visible = allowlisted.filter((tool) => !disallowed.has(tool.name));
+    const workspaceWires = new Set(
+      AGENT_WORKSPACE_DOMAIN_TOOLS.map((name) => piToolWireName(DOMAIN_TOOL_MCP_SERVER_NAME, name)),
+    );
+    const scopedNames = new Set(
+      visible.filter((t) => workspaceWires.has(t.name)).map((t) => t.name),
+    );
+    if (scopedNames.size === 0) return visible;
+    const rebuilt: AgentTool[] = [];
+    const done = new Set<string>();
+    for (const mount of this.args.piToolMounts ?? []) {
+      if (mount.type !== 'domain') continue;
+      for (const toolName of mount.options.toolNames) {
+        const wire = piToolWireName(mount.options.serverName, toolName);
+        if (!scopedNames.has(wire) || done.has(wire)) continue;
+        done.add(wire);
+        rebuilt.push(
+          ...buildPiDomainAgentTools({
+            ...mount.options,
+            toolNames: [toolName],
+            ctx: { ...mount.options.ctx, workspaceOwnerId: `agent:${toolCallId}` },
+            logTaskRunId: this.args.runId,
+          }),
+        );
+      }
+    }
+    return [...visible.filter((t) => !scopedNames.has(t.name)), ...rebuilt];
   }
 
   /**
@@ -363,7 +395,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
             }),
           );
           const childModel = this.childModelFor(spec);
-          const childTools = this.childToolsFor(spec);
+          const childTools = this.childToolsFor(spec, toolCallId);
           const childSignal = signal
             ? AbortSignal.any([this.abort.signal, signal])
             : this.abort.signal;

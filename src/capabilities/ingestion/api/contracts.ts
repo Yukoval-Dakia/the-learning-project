@@ -459,6 +459,17 @@ export const IngestionHistoryCurrentSchema = z
       .object({
         status: z.enum(['pending', 'admitted', 'failed', 'undecided']),
         reason: z.string().nullable(),
+        // The question read's own facts, passed through: while a provider, quota or login wait
+        // owns the pending check, and why an undecided check is undecided.
+        wait: z
+          .object({
+            reason: z.enum(['quota', 'login', 'not_sent', 'provider']),
+            retry_at: z.string().nullable(),
+            recovery_action: z.enum(['wait_for_retry', 'reauthenticate', 'confirm_recovery']),
+          })
+          .nullable()
+          .optional(),
+        cause: z.enum(['outcome_unconfirmed', 'purpose_denied']).nullable().optional(),
       })
       .nullable(),
   })
@@ -625,7 +636,8 @@ export const IngestionHistoryPriorRunSchema = z
 
 const IngestionCostIdentitySchema = z.object({
   kind: z.enum(['agent_task', 'ocr']),
-  task_run_id: z.string(),
+  /** Null on extract-lane OCR operations: bound by derived operation id, not a run. */
+  task_run_id: z.string().nullable(),
   attempt_id: z.string().nullable(),
   operation_id: z.string().nullable(),
 });
@@ -633,7 +645,7 @@ const IngestionCostIdentitySchema = z.object({
 /** Session-owned observed evidence only; never the full package/admission bill. */
 export const IngestionSessionCostEvidenceSchema = z
   .object({
-    scope: z.literal('ingestion_agent_observed'),
+    scope: z.literal('ingestion_session_observed'),
     coverage: z.literal('partial'),
     /** DB snapshot time of cost identities + canonical costs, not all history. */
     as_of: z.iso.datetime(),
