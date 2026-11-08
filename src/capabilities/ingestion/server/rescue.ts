@@ -6,6 +6,7 @@ import type { Db } from '@/db/client';
 import { learning_session, question_block, source_asset } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import type { R2Client } from '@/kernel/object-storage';
+import { assertRescuableBlockDraft } from '@/kernel/records/question-block-creation';
 import { type RunTaskCallCtx, makeRunTaskTextFn } from '@/server/ai/runner-fn';
 import { enrollIngestionBlock } from './single-block-enroll';
 import { type VisionBlock, runVisionExtract } from './vision';
@@ -22,7 +23,11 @@ export type RunRescueParams = {
   tier: RescueTier;
   strategy?: RescueStrategy;
   /** Inject runTask in tests. Defaults to production runner. */
-  runTaskFn?: (kind: string, input: unknown, ctx?: RunTaskCallCtx) => Promise<{ text: string }>;
+  runTaskFn?: (
+    kind: string,
+    input: unknown,
+    ctx?: RunTaskCallCtx,
+  ) => Promise<{ text: string; task_run_id?: string }>;
 };
 
 /**
@@ -65,19 +70,9 @@ export async function runRescue(
       400,
     );
   }
-  // Rescue only rewrites draft blocks: an enrolled block already published its
-  // question snapshot, and overwriting structured here would leave the block and
-  // the banked question disagreeing with no surface signal. Refuse before the
-  // paid call; applyRescue + the rescue UPDATE's status CAS re-check after it.
-  if (block.status !== 'draft') {
-    throw new ApiError(
-      'block_not_rescuable',
-      `question_block ${params.blockId} is '${block.status}'; rescue only applies to draft blocks`,
-      409,
-      undefined,
-      { block_id: params.blockId, block_status: block.status },
-    );
-  }
+  // Refuse before the paid call; applyRescue + the rescue UPDATE's status CAS
+  // re-check after it.
+  assertRescuableBlockDraft(block.id, block.status);
   const [session] = await params.db
     .select({
       status: learning_session.status,
@@ -113,6 +108,7 @@ export async function runRescue(
   const runTaskFn = params.runTaskFn ?? makeRunTaskTextFn(params.db);
   const taskKind = params.tier === 2 ? 'VisionExtractTask' : 'VisionExtractTaskHeavy';
 
+  let visionTaskRunId: string | undefined;
   const visionResult = await runVisionExtract({
     assetId,
     mimeType: asset.mime_type,
@@ -121,6 +117,7 @@ export async function runRescue(
     runTaskFn: async (kind, input, ctx) => {
       // route through the requested tier
       const result = await runTaskFn(taskKind, input, ctx as RunTaskCallCtx);
+      visionTaskRunId = result.task_run_id;
       void kind;
       return result;
     },
@@ -145,14 +142,19 @@ export async function runRescue(
       }),
     );
   } catch (err) {
-    // The block left 'draft' between the pre-flight check and the write (a
-    // concurrent enrollment won the block). The paid vision output is returned
-    // with the refusal rather than dropped: the caller sees the recognized
-    // content and can re-enter it through the question edit path.
-    if (err instanceof ApiError && err.code === 'block_not_rescuable') {
+    // The state changed between the pre-flight checks and the write: the
+    // session left extracted/partial, the block was merged or deleted, or a
+    // concurrent enrollment won the CAS. Whatever the refusal, the paid vision
+    // output rides on it rather than being dropped — the caller sees the
+    // recognized content and can re-enter it through the question edit path.
+    // Non-ApiError failures (DB/driver errors) propagate bare.
+    if (err instanceof ApiError) {
       throw new ApiError(err.code, err.message, err.status, err.headers, {
         ...err.details,
-        paid_result: { structured },
+        paid_result: {
+          structured,
+          ...(visionTaskRunId ? { task_run_id: visionTaskRunId } : {}),
+        },
       });
     }
     throw err;

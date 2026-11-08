@@ -12,7 +12,10 @@ import { ApiError } from '@/kernel/http';
 import { writeJobEvent } from '@/kernel/job-events';
 import { assertFromState } from '@/kernel/learning-session-guard';
 import { resolveSessionDerivationPolicy } from '@/kernel/read-models/usage-policy';
-import { persistCapturedQuestionBlock } from '@/kernel/records/question-block-creation';
+import {
+  assertRescuableBlockDraft,
+  persistCapturedQuestionBlock,
+} from '@/kernel/records/question-block-creation';
 import type { DocxExternalRefOmissionFacts } from './docx/omission';
 import { writeIngestionSessionBirth } from './session/birth';
 import { recordSourcePackageAttachError } from './session/source-document-provenance';
@@ -584,16 +587,7 @@ export async function applyRescue(tx: Db | Tx, params: ApplyRescueParams): Promi
       404,
     );
   }
-  const blockStatus = blockExists[0]?.status;
-  if (blockStatus !== 'draft') {
-    throw new ApiError(
-      'block_not_rescuable',
-      `question_block ${params.blockId} is '${blockStatus}'; rescue only applies to draft blocks`,
-      409,
-      undefined,
-      { block_id: params.blockId, block_status: blockStatus },
-    );
-  }
+  assertRescuableBlockDraft(params.blockId, blockExists[0]?.status);
 
   await persistCapturedQuestionBlock(
     tx,

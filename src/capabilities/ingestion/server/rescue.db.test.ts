@@ -1,9 +1,10 @@
 import { createId } from '@paralleldrive/cuid2';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { installPracticeHost } from '@/capabilities/practice/public';
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
+import type { Db } from '@/db/client';
 import {
   learning_session,
   question,
@@ -16,6 +17,7 @@ import { persistCapturedQuestionBlock } from '@/kernel/records/question-block-cr
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { memR2 } from '../../../../tests/helpers/r2';
 import { runRescue } from './rescue';
+import { markReviewed } from './session-lifecycle';
 import { enrollIngestionBlock } from './single-block-enroll';
 
 const PAGE_ASSET = 'asset_page_1';
@@ -84,6 +86,7 @@ async function seedSession(
 }
 
 const RESCUE_PROMPT = 'rescue 重识别出的题面';
+const RESCUE_TASK_RUN_ID = 'task_run_rescue_test';
 const rescueVisionText = JSON.stringify({
   blocks: [
     {
@@ -100,6 +103,23 @@ const rescueVisionText = JSON.stringify({
   ],
 });
 
+// Poll until a statement is blocked on a lock — here, the rescue UPDATE
+// waiting on the enrollment's held row lock.
+async function waitForBlockedQuery(db: Db, needle: string): Promise<void> {
+  for (let i = 0; i < 200; i++) {
+    const waiters = (await db.execute(sql`
+      SELECT pid FROM pg_stat_activity
+      WHERE datname = current_database()
+        AND wait_event_type = 'Lock'
+        AND state = 'active'
+        AND query ILIKE ${`%${needle}%`}
+    `)) as unknown as Array<{ pid: number }>;
+    if (waiters.length > 0) return;
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  throw new Error(`timed out waiting for a lock-blocked query matching '${needle}'`);
+}
+
 describe('runRescue enrolled-block gate', () => {
   beforeAll(installPracticeHost);
   beforeEach(async () => {
@@ -112,19 +132,25 @@ describe('runRescue enrolled-block gate', () => {
   // @invariant concurrency: a rescue and an enrollment racing on one block have
   //   exactly one winner — the status CAS refuses the loser instead of letting
   //   the second write silently desync block and question
+  // @invariant data: a refusal after the paid call — session flipped, block
+  //   gone, or lost CAS — returns paid_result with the task_run receipt
+  //   instead of dropping the recognized content
   // @fails-if the rescue UPDATE matched on id alone, applyRescue skipped the
-  //   status check, a paid vision result vanished without a receipt, or an
-  //   enrolled block's question changed after a refused rescue
+  //   session or block status check, a paid vision result vanished without a
+  //   receipt, or an enrolled block's question changed after a refused rescue
   it.each([
     { mode: 'already_enrolled' as const },
     { mode: 'draft_applies' as const },
     { mode: 'enroll_wins_race' as const },
+    { mode: 'enroll_wins_blocked_cas' as const },
+    { mode: 'session_turns_reviewed' as const },
   ])('handles block state %s', async ({ mode }) => {
     const db = testDb();
     const { sessionId, blockId } = await seedSession(db, { prompt: '原始识别题面' });
     const r2 = memR2();
     await r2.put(PAGE_KEY, new Uint8Array([1, 2, 3]), 'image/png');
 
+    const race: { release?: () => void; done?: Promise<unknown> } = {};
     let paidCalls = 0;
     const runTaskFn = async () => {
       paidCalls += 1;
@@ -139,7 +165,37 @@ describe('runRescue enrolled-block gate', () => {
         });
         expect(enrolled.status).toBe('enrolled');
       }
-      return { text: rescueVisionText };
+      if (mode === 'enroll_wins_blocked_cas') {
+        // The same race, with the commit ordered inside the write window: the
+        // enrollment takes the block row lock and holds it uncommitted, the
+        // rescue UPDATE waits on the lock, then re-evaluates against the
+        // committed 'auto_enrolled' row and matches 0 rows — the CAS is what
+        // refuses this write, not the in-transaction status read.
+        let held!: () => void;
+        const lockHeld = new Promise<void>((r) => {
+          held = r;
+        });
+        const gate = new Promise<void>((r) => {
+          race.release = () => r();
+        });
+        race.done = db.transaction(async (tx) => {
+          const enrolled = await enrollIngestionBlock(tx as unknown as Db, {
+            sessionId,
+            blockId,
+            expectedVersion: 0,
+            source: 'user',
+          });
+          held();
+          await gate;
+          return enrolled;
+        });
+        await lockHeld;
+      }
+      if (mode === 'session_turns_reviewed') {
+        // The learner taps "已核对" while the paid vision call is in flight.
+        await markReviewed(db, sessionId);
+      }
+      return { text: rescueVisionText, task_run_id: RESCUE_TASK_RUN_ID };
     };
 
     if (mode === 'already_enrolled') {
@@ -152,17 +208,26 @@ describe('runRescue enrolled-block gate', () => {
       expect(enrolled.status).toBe('enrolled');
     }
 
+    const rescuePromise = runRescue({
+      db,
+      r2,
+      sessionId,
+      blockId,
+      page: 0,
+      tier: 2,
+      runTaskFn,
+    });
+    if (mode === 'enroll_wins_blocked_cas') {
+      // Release only once the UPDATE is provably waiting on the row lock, so
+      // the enroll commit lands between its lock wait and its re-evaluation.
+      await waitForBlockedQuery(db, 'question_block');
+      race.release?.();
+      await race.done;
+    }
+
     let caught: ApiError | null = null;
     try {
-      await runRescue({
-        db,
-        r2,
-        sessionId,
-        blockId,
-        page: 0,
-        tier: 2,
-        runTaskFn,
-      });
+      await rescuePromise;
     } catch (err) {
       caught = err instanceof ApiError ? err : null;
       if (!caught) throw err;
@@ -185,6 +250,24 @@ describe('runRescue enrolled-block gate', () => {
       return;
     }
 
+    if (mode === 'session_turns_reviewed') {
+      // applyRescue's locked re-check sees 'reviewed' and refuses with 409 —
+      // after money was spent, so the result must ride on the refusal.
+      expect(caught?.code).toBe('conflict');
+      expect(caught?.status).toBe(409);
+      expect(paidCalls).toBe(1);
+      expect(block?.status).toBe('draft');
+      expect(block?.version).toBe(0);
+      expect(block?.imported_question_id).toBeNull();
+      expect((block?.structured as StructuredQuestionT | null)?.prompt_text).toBe('原始识别题面');
+      const paid = caught?.details?.paid_result as
+        | { structured?: StructuredQuestionT; task_run_id?: string }
+        | undefined;
+      expect(paid?.structured?.prompt_text).toBe(RESCUE_PROMPT);
+      expect(paid?.task_run_id).toBe(RESCUE_TASK_RUN_ID);
+      return;
+    }
+
     expect(caught?.code).toBe('block_not_rescuable');
     expect(block?.status).toBe('auto_enrolled');
     expect((block?.structured as StructuredQuestionT | null)?.prompt_text).toBe('原始识别题面');
@@ -204,11 +287,14 @@ describe('runRescue enrolled-block gate', () => {
       return;
     }
 
-    // enroll_wins_race: the paid call did run, so the result rides on the
-    // refusal instead of being dropped.
+    // enroll_wins_race / enroll_wins_blocked_cas: the paid call did run, so
+    // the result rides on the refusal instead of being dropped.
     expect(paidCalls).toBe(1);
     expect(block?.version).toBe(1);
-    const paid = caught?.details?.paid_result as { structured?: StructuredQuestionT } | undefined;
+    const paid = caught?.details?.paid_result as
+      | { structured?: StructuredQuestionT; task_run_id?: string }
+      | undefined;
     expect(paid?.structured?.prompt_text).toBe(RESCUE_PROMPT);
+    expect(paid?.task_run_id).toBe(RESCUE_TASK_RUN_ID);
   });
 });
