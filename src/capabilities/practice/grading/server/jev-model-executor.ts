@@ -198,6 +198,9 @@ function typedState(
       ...(material.caption !== undefined ? { caption: material.caption } : {}),
       ...(material.alt_text !== undefined ? { alt_text: material.alt_text } : {}),
       ...(material.content_md !== undefined ? { content_md: material.content_md } : {}),
+      ...(material.contains_learner_handwriting !== undefined
+        ? { contains_learner_handwriting: material.contains_learner_handwriting }
+        : {}),
     })),
   };
 }

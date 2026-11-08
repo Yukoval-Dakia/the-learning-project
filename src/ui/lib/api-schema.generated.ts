@@ -17681,6 +17681,7 @@ export interface operations {
                                 /** @enum {string} */
                                 attach_confidence: "high" | "low" | "manual";
                                 attached_to_index: string;
+                                contains_learner_handwriting?: boolean | "unknown";
                                 handwriting_unverified?: boolean;
                                 /** Format: date-time */
                                 last_reassigned_at?: string;

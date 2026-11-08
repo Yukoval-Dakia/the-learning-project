@@ -207,7 +207,7 @@ function sealedRevisionContract(revision: typeof question_revision.$inferSelect)
  * and its rebuilt contract is a different document. A missing current revision,
  * or a stored layer whose digest no longer matches, is not graded.
  */
-async function loadGradedContract(
+export async function loadGradedContract(
   db: Db | Tx,
   rootId: string,
   currentRevisionId: string | null,

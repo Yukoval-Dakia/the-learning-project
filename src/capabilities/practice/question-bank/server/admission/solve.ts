@@ -250,7 +250,7 @@ export function solverParts(
         material_id: m.material_id,
         text_md:
           m.kind === 'figure'
-            ? `Figure image ${figures.findIndex((f) => f.material_id === m.material_id) + 1}: ${m.alt_text ?? m.caption ?? ''}`
+            ? `Figure image ${figures.findIndex((f) => f.material_id === m.material_id) + 1}: ${m.alt_text ?? m.caption ?? ''}; contains_learner_handwriting: ${m.contains_learner_handwriting ?? 'unknown'}`
             : (m.content_md ?? ''),
       })),
   }));

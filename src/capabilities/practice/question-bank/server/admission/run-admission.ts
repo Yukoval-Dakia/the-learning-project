@@ -890,6 +890,13 @@ function finalize(
     return result;
   });
   const outcome = tail.status === 'admitted' ? 'passed' : 'failed';
+  // Lets a later audit check whether a blind solve copied learner handwriting.
+  const figureHandwriting = definition.structure.materials
+    .filter((m) => isPublicSharedMaterial(m) && m.kind === 'figure')
+    .map((m) => ({
+      material_id: m.material_id,
+      contains_learner_handwriting: m.contains_learner_handwriting ?? 'unknown',
+    }));
   const evidence: Record<string, unknown> = {
     pack: 'question_admission',
     pack_version: 1,
@@ -920,6 +927,7 @@ function finalize(
     })),
     crosscheck: { ran: false, replaced_by: 'adjudication' },
     per_unit: units,
+    ...(figureHandwriting.length > 0 ? { figure_handwriting: figureHandwriting } : {}),
     ...(tail.transient === true ? { transient: true } : {}),
     recorded_at: now.toISOString(),
   };

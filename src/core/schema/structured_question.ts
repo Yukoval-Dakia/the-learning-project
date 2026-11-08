@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { LearnerHandwritingMarker } from './assessment/materials';
 import { Presentation, type PresentationT } from './assessment/presentation';
 import { QuestionKind } from './business';
 
@@ -32,6 +33,9 @@ export const FigureRef = z.object({
   attach_confidence: AttachConfidence,
   option_label: z.string().min(1).optional(),
   handwriting_unverified: z.boolean().optional(),
+  // Per-crop handwriting judgment travels with the figure to every model reader;
+  // it never decides whether the figure is attached.
+  contains_learner_handwriting: LearnerHandwritingMarker.optional(),
   // 用户手动改归属时记录时间戳；ISO 字符串或 Date（z.coerce.date）
   last_reassigned_at: z.coerce.date().optional(),
 });
