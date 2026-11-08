@@ -298,6 +298,23 @@ describe('learning intent reference graph', () => {
         },
       },
       {
+        seeded: 3,
+        proposals: 1,
+        run: async () => {
+          const root = nid();
+          const first = nid();
+          const second = nid();
+          await seedGraph(root, [first, second], []);
+          const id = await store({
+            topic: root,
+            planCase: '3c_existing_graph',
+            rootId: root,
+            atomics: [note(first)],
+          });
+          await acceptAiProposal(testDb(), id);
+        },
+      },
+      {
         seeded: 0,
         proposals: 1,
         run: () => {

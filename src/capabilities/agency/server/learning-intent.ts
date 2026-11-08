@@ -15,7 +15,7 @@
 // check is a placeholder (empty question_ids); hub status aggregation and living-note
 // triggers remain out of scope.
 
-import { and, eq, inArray, isNull } from 'drizzle-orm';
+import { and, eq, inArray, isNull, or } from 'drizzle-orm';
 import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
 import { knowledge } from '@/db/schema';
@@ -301,6 +301,25 @@ async function lockKnowledgeRows(
   const locked = new Map<string, LockedKnowledgeRow>();
   for (const row of rows) locked.set(row.id, row);
   return locked;
+}
+
+async function lockRootAndActiveChildren(tx: Tx, rootId: string): Promise<LockedKnowledgeRow[]> {
+  return tx
+    .select({
+      id: knowledge.id,
+      parent_id: knowledge.parent_id,
+      version: knowledge.version,
+      archived_at: knowledge.archived_at,
+    })
+    .from(knowledge)
+    .where(
+      or(
+        eq(knowledge.id, rootId),
+        and(eq(knowledge.parent_id, rootId), isNull(knowledge.archived_at)),
+      ),
+    )
+    .orderBy(knowledge.id)
+    .for('update');
 }
 
 async function assertKnowledgeCompatible(
@@ -802,6 +821,8 @@ interface AcceptSpec {
   readonly knowledgeNodeDomain: string | null;
   readonly taskRunId: string | null;
   readonly costMicroUsd: number | null;
+  /** Old 3c proposals did not record children. Their legal set is the locked active children. */
+  readonly resolveActiveChildren: boolean;
 }
 
 function readAcceptSpec(payload: ProposalEventRow['payload']): AcceptSpec {
@@ -821,6 +842,7 @@ function readAcceptSpec(payload: ProposalEventRow['payload']): AcceptSpec {
     knowledgeNodeDomain: payload.knowledge_node?.domain ?? null,
     taskRunId: payload.task_run_id ?? null,
     costMicroUsd: payload.cost_micro_usd ?? null,
+    resolveActiveChildren: false,
   };
 
   if (planCase === '3a_topic_missing') {
@@ -870,9 +892,7 @@ function readAcceptSpec(payload: ProposalEventRow['payload']): AcceptSpec {
       'proposal reviewed root does not match knowledge_node_id',
     );
   }
-  const childIds = reviewed?.children
-    ? reviewed.children.map((child) => child.id)
-    : atomics.map((atomic) => atomic.knowledge_id);
+  const childIds = reviewed?.children?.map((child) => child.id) ?? [];
   return {
     ...shared,
     graph: { rootKey: rootId, childKeys: childIds },
@@ -883,6 +903,27 @@ function readAcceptSpec(payload: ProposalEventRow['payload']): AcceptSpec {
       ...childIds.map((id) => compatibilityFor(id, 'child', rootId, reviewed)),
     ],
     existingRootId: rootId,
+    resolveActiveChildren: !reviewed?.children,
+  };
+}
+
+function withLockedActiveChildren(
+  spec: AcceptSpec,
+  locked: readonly LockedKnowledgeRow[],
+): AcceptSpec {
+  const rootId = spec.existingRootId;
+  if (!rootId) return spec;
+  const childIds = locked
+    .filter((row) => row.id !== rootId && row.parent_id === rootId && row.archived_at === null)
+    .map((row) => row.id);
+  return {
+    ...spec,
+    resolveActiveChildren: false,
+    graph: { rootKey: rootId, childKeys: childIds },
+    existing: [
+      ...spec.existing.filter((node) => node.id === rootId),
+      ...childIds.map((id) => compatibilityFor(id, 'child', rootId, null)),
+    ],
   };
 }
 
@@ -900,7 +941,11 @@ export async function acceptLearningIntent(
 ): Promise<LearningIntentMaterializeResult> {
   const { createKnowledgeNode, createNote, tx, proposalId, writeRate } = params;
   const proposal = await readProposal(tx, proposalId);
-  const spec = readAcceptSpec(proposal.payload);
+  const read = readAcceptSpec(proposal.payload);
+  const spec =
+    read.resolveActiveChildren && read.existingRootId
+      ? withLockedActiveChildren(read, await lockRootAndActiveChildren(tx, read.existingRootId))
+      : read;
   const fault = checkProposalGraph(spec.graph, spec.atomics, spec.longs);
   if (fault) rejectGraphFault(fault, 'proposal');
   await assertKnowledgeCompatible(tx, spec.existing);
