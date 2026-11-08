@@ -255,14 +255,21 @@ export async function assembleCopilotRunInput(
     ? (await readEventDerivationPolicy(db, params.correctionTargetTurnId)) !== 'allow'
     : false;
   const focused = ambient?.focused_entity;
-  const backtrace = await readBacktraceContext(db, {
-    ...(focused?.kind === 'question'
-      ? { question_id: focused.id }
-      : focused?.kind === 'event' || focused?.kind === 'attempt'
-        ? { attempt_event_id: focused.id }
-        : {}),
-    session_id: !focused ? sessionId : undefined,
-  });
+  // Optional context: compositions without the practice host (crisis-guard subset
+  // tests, standalone copilot) have no backtrace reader — degrade to no digest.
+  let backtrace: Awaited<ReturnType<typeof readBacktraceContext>> | undefined;
+  try {
+    backtrace = await readBacktraceContext(db, {
+      ...(focused?.kind === 'question'
+        ? { question_id: focused.id }
+        : focused?.kind === 'event' || focused?.kind === 'attempt'
+          ? { attempt_event_id: focused.id }
+          : {}),
+      session_id: !focused ? sessionId : undefined,
+    });
+  } catch (error) {
+    if (!(error instanceof HostOperationNotInstalledError)) throw error;
+  }
   return {
     ...(backtrace ? { backtrace_digest: backtrace } : {}),
     derivation_policy: params.derivationPolicy ?? 'allow',

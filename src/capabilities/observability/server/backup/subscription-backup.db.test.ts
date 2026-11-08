@@ -62,6 +62,7 @@ const liveSubscriberIdentities = [
   ['agency.steering-changed', 1],
   ['notes.dreaming-note-refresh', 1],
   ['notes.mastery-progress-note-refine', 1],
+  ['practice.backtrace', 1],
   ['practice.failure-learning-attempt', 3],
   ['practice.learner-return-wake', 1],
   ['practice.question-admission-enqueue', 1],
@@ -261,7 +262,7 @@ describe('YUK-766 subscription progress backup', () => {
 
   // @invariant data: archive keeps all live subscribers, seven states, and one shared publish event
   // @fails-if omit admission enqueue or the return wake, or split the publish source
-  it('archives all fourteen live subscriber identities, seven delivery states and effect provenance', async () => {
+  it('archives all fifteen live subscriber identities, seven delivery states and effect provenance', async () => {
     const { registry } = await seedProgress();
     const data = decode(await archive());
     expect(data.event_subscription_checkpoint).toHaveLength(subscriberCount);
@@ -288,6 +289,7 @@ describe('YUK-766 subscription progress backup', () => {
       'agency.probe-evidence-intervention-prepare',
       'agency.probe-publication-serve',
       'agency.probe-result-reconcile',
+      'practice.backtrace',
       'practice.failure-learning-attempt',
       'practice.learner-return-wake',
       'practice.question-admission-enqueue',
@@ -432,7 +434,18 @@ describe('YUK-766 subscription progress backup', () => {
           .from(delivery)
           .where(eq(delivery.subscriber_id, sub.id));
         const effectAttemptDelivery = sub.actions.includes('attempt') ? 1 : 0;
-        expect(discovered).toHaveLength(statuses.length + 1 + effectAttemptDelivery);
+        // A subscriber also hears every OTHER seeded action it declares (e.g.
+        // practice.backtrace subscribes beyond its first action), each seeded
+        // fixture carrying statuses + one undiscovered event.
+        const seededFixtureActions = [
+          ...new Set(registry.subscriptions.map((s) => s.actions[0])),
+        ].filter((action) => action !== sub.actions[0] && sub.actions.includes(action)).length;
+        expect(discovered).toHaveLength(
+          statuses.length +
+            1 +
+            effectAttemptDelivery +
+            seededFixtureActions * (statuses.length + 1),
+        );
         expect(
           discovered.filter(
             (row) => row.source_event_id === fixtureSourceId(sub, 'undiscovered', counts),
