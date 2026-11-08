@@ -406,7 +406,7 @@ describe('evaluateBlockMergeAdmission', () => {
     expectIneligible([primary, member], [member.id], 'conflicting_question_number');
   });
 
-  // @invariant data: an ambiguous head (decimal, enumeration, out-of-width 第…题) is neither a number nor its absence — it fails closed like the pre-parser proof did
+  // @invariant data: an ambiguous head (decimal, enumeration, out-of-width head) is neither a number nor its absence — it fails closed like the pre-parser proof did
   // @fails-if the shared head parser reads an ambiguous head as absent (bare fragment) instead of uncertain
   it('fails closed on ambiguous heads while a provable number still vetoes', () => {
     const rows = [
@@ -425,6 +425,12 @@ describe('evaluateBlockMergeAdmission', () => {
         eligible: false,
         reason: 'missing_continuity' as const,
       },
+      { in: '（1）…（2）…', eligible: false, reason: 'missing_continuity' as const },
+      { in: '（1）求x（2）求y', eligible: false, reason: 'missing_continuity' as const },
+      { in: '（1）由（2）式可得 x', eligible: false, reason: 'missing_continuity' as const },
+      { in: '1234. 计算下列各式。', eligible: false, reason: 'missing_continuity' as const },
+      { in: '12.', eligible: false, reason: 'missing_continuity' as const },
+      { in: '１２. 求 x 的值', eligible: false, reason: 'missing_continuity' as const },
       { in: '第三题 计算下列各式。', eligible: false, reason: 'missing_continuity' as const },
       { in: '第1234题 计算下列各式。', eligible: false, reason: 'missing_continuity' as const },
       { in: '……接上题最后一问。', eligible: true, reason: undefined },
@@ -440,6 +446,11 @@ describe('evaluateBlockMergeAdmission', () => {
       },
       {
         in: '（2）求 y 的值',
+        eligible: false,
+        reason: 'conflicting_question_number' as const,
+      },
+      {
+        in: '（1）求 f(2) 的值',
         eligible: false,
         reason: 'conflicting_question_number' as const,
       },
