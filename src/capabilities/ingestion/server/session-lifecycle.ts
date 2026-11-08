@@ -652,7 +652,7 @@ export async function applyHandwritingTrace(
   }
   assertRescuableSessionStatus(current.status, params.sessionId);
   const blockRows = await tx
-    .select({ id: question_block.id })
+    .select({ id: question_block.id, status: question_block.status })
     .from(question_block)
     .where(
       and(
@@ -667,6 +667,7 @@ export async function applyHandwritingTrace(
       404,
     );
   }
+  assertRescuableBlockDraft(params.blockId, blockRows[0]?.status);
   const now = new Date();
   await persistCapturedQuestionBlock(
     tx,

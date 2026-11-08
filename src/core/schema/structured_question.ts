@@ -116,6 +116,8 @@ export const HandwriteInfo = z.object({
   red_text: z.boolean().optional(),
   /** 转写置信度；缺省 = 未知，不冒充高置信。 */
   confidence: z.number().min(0).max(1).optional(),
+  /** 模型对该区域的补充说明；只作证据，不进作答文本。 */
+  note: z.string().optional(),
 });
 
 /**

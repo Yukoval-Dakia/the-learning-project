@@ -220,6 +220,8 @@ export async function persistCapturedQuestionBlock(
       return;
     }
     case 'handwriting_trace': {
+      // Same draft-only CAS as rescue: an enrolled block's question holds the
+      // published snapshot, so evidence written here afterwards would desync it.
       const [row] = await db
         .update(question_block)
         .set({
@@ -227,8 +229,9 @@ export async function persistCapturedQuestionBlock(
           updated_at: now,
           version: sql<number>`${question_block.version} + 1`,
         })
-        .where(eq(question_block.id, command.blockId))
+        .where(and(eq(question_block.id, command.blockId), eq(question_block.status, 'draft')))
         .returning();
+      if (!row) assertRescuableBlockDraft(command.blockId);
       await writeQuestionBlockCreateEvent(db, {
         row,
         origin: 'handwriting_trace',

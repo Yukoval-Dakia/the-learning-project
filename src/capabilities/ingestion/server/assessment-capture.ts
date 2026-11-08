@@ -141,6 +141,9 @@ function collectHandwritingCaptures(
       capture: { state: 'unknown', reason: 'handwriting_trace_failed' },
     }));
   }
+  // A completed pass read every leaf's answer area; a leaf it left without
+  // evidence (and not flagged as unreadable) is an observed blank.
+  const traceCompleted = structured.extraction_evidence?.handwriting_trace?.status === 'completed';
   const out: LeafHandwritingCapture[] = [];
   const walk = (node: StructuredQuestionT) => {
     const subs = node.sub_questions ?? [];
@@ -182,7 +185,9 @@ function collectHandwritingCaptures(
     if (node.student_answer_present === true) {
       // 结构看到手写，但没有可归属的文本：显式 unknown，不冒充空白。
       out.push({ leaf_id: node.id, capture: { state: 'unknown' } });
+      return;
     }
+    if (traceCompleted) out.push({ leaf_id: node.id, capture: { state: 'blank' } });
   };
   walk(structured);
   return out;
@@ -364,6 +369,16 @@ function capturedEntryFor(
     // 旧槽位没有 unknown 响应态；但证据层仍需如实记未知，不能写成 omitted。
     record('unknown', `${slot.kind}:unknown`);
     return undefined;
+  }
+  if (capture?.state === 'blank') {
+    // 旧槽位没有 blank 响应态：信封与旧 flat 空文本逐字节一致，证据层如实记空白。
+    record(
+      'blank',
+      slot.kind === 'single_choice' || slot.kind === 'multi_choice' ? 'choice' : slot.kind,
+    );
+    return slot.kind === 'text' && ctx.allowFlat
+      ? ({ slot_id: slot.slot_id, kind: 'text', text_md: '' } as const)
+      : undefined;
   }
   if (slot.kind === 'single_choice' || slot.kind === 'multi_choice') {
     const labels = (
@@ -551,13 +566,19 @@ export async function captureIngestionOriginal(db: Db, input: CaptureInput) {
     }
     const warnings: string[] = [];
     for (const { leaf_id, capture } of collectHandwritingCaptures(current.structured)) {
+      // Extracted answer text outranks an observed-blank trace; the flat path keeps it.
+      if (capture.state === 'blank' && text.trim().length > 0) continue;
       const partSlots = slotsByPart.get(leaf_id) ?? [];
       if (partSlots.length === 1) {
         const slotId = partSlots[0];
         if (slotId != null && !captureBySlot.has(slotId)) captureBySlot.set(slotId, capture);
       } else if (partSlots.length > 1) {
         for (const slotId of partSlots) {
-          if (!captureBySlot.has(slotId)) {
+          if (captureBySlot.has(slotId)) continue;
+          if (capture.state === 'blank') {
+            // An empty answer area is empty for every slot in it.
+            captureBySlot.set(slotId, { state: 'blank' });
+          } else {
             captureBySlot.set(slotId, {
               state: 'unknown',
               reason: 'handwriting_slot_ambiguous',
@@ -565,7 +586,7 @@ export async function captureIngestionOriginal(db: Db, input: CaptureInput) {
             });
           }
         }
-      } else {
+      } else if (capture.state !== 'blank') {
         // A leaf with no response slot cannot carry its handwriting. Dropping it
         // silently would look like "no handwriting" on the page, so leave a
         // warning with the block/leaf identity.

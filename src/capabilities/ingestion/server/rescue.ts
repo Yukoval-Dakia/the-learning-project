@@ -238,6 +238,7 @@ async function runHandwritingTraceRescue(
       mediaType: row.mime_type,
     });
   }
+  let traceTaskRunId: string | undefined;
   try {
     const traceFn = params.runHandwritingTraceFn ?? runHandwritingTrace;
     const traced = await traceFn({
@@ -248,6 +249,7 @@ async function runHandwritingTraceRescue(
       ctx: { r2: params.r2 },
     });
     applyHandwritingTraces([structured], traced);
+    traceTaskRunId = traced.task_run_id;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     markHandwritingTraceFailure([structured], message);
@@ -260,13 +262,29 @@ async function runHandwritingTraceRescue(
     );
     throw new ApiError('extraction_failed', `handwriting trace failed: ${message}`, 502);
   }
-  await params.db.transaction((tx) =>
-    Ingestion.applyHandwritingTrace(tx, {
-      sessionId: params.sessionId,
-      blockId: params.blockId,
-      structured,
-    }),
-  );
+  try {
+    await params.db.transaction((tx) =>
+      Ingestion.applyHandwritingTrace(tx, {
+        sessionId: params.sessionId,
+        blockId: params.blockId,
+        structured,
+      }),
+    );
+  } catch (err) {
+    // Same contract as the vision rescue: the block left draft (or the session
+    // moved) after the paid call, so the write is refused and the paid trace
+    // rides on the refusal instead of being dropped.
+    if (err instanceof ApiError) {
+      throw new ApiError(err.code, err.message, err.status, err.headers, {
+        ...err.details,
+        paid_result: {
+          structured,
+          ...(traceTaskRunId ? { task_run_id: traceTaskRunId } : {}),
+        },
+      });
+    }
+    throw err;
+  }
   return { structured };
 }
 

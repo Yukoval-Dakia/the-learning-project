@@ -565,4 +565,120 @@ describe('native ingestion originals and reversible enrollment', () => {
     expect(after?.extracted_prompt_md).toBe(before?.extracted_prompt_md);
     expect(after?.reference_md).toBe(before?.reference_md);
   });
+
+  type TraceOut = Awaited<
+    ReturnType<NonNullable<Parameters<typeof runRescue>[0]['runHandwritingTraceFn']>>
+  >;
+  const traceRow = (over: Partial<TraceOut['traces'][number]>): TraceOut['traces'][number] => ({
+    leaf_index: 0,
+    text: 'AB = 5',
+    red_mark: 'cross',
+    red_text: false,
+    bbox: { page_index: 0, x: 0.2, y: 0.3, width: 0.2, height: 0.1 },
+    confidence: 0.8,
+    ...over,
+  });
+  // @invariant data: a rescued handwriting trace records only what the learner wrote — an observed-empty answer area is blank, model remarks stay evidence, and a block enrolled mid-call is never rewritten while its paid result is returned
+  // @fails-if a no_handwriting leaf is captured as unknown, a model note reaches response_md or is dropped from evidence, or the trace write lands on a block that left draft (or drops paid_result)
+  it.each([
+    {
+      name: 'an answer area the pass saw as empty is captured blank',
+      trace: {
+        traces: [],
+        unresolved: [{ leaf_index: 0, cause: 'no_handwriting' as const, reason: 'no writing' }],
+      },
+      expectCapture: { response_md: '', unit_captures: [{ state: 'blank' }] },
+    },
+    {
+      name: 'an older output naming the leaf without a cause stays unknown',
+      trace: { traces: [], unresolved: [{ leaf_index: 0, reason: 'unreadable' }] },
+      expectCapture: { response_md: '', unit_captures: [{ state: 'unknown' }] },
+    },
+    {
+      name: 'the model note stays in evidence and out of the learner answer',
+      trace: {
+        traces: [traceRow({ note: 'the 7 on the hypotenuse is handwritten' })],
+        unresolved: [],
+      },
+      expectNote: 'the 7 on the hypotenuse is handwritten',
+      expectCapture: {
+        response_md: 'AB = 5',
+        unit_captures: [{ state: 'answered', red_ink_mark: 'cross' }],
+      },
+    },
+    {
+      name: 'a block enrolled during the paid call is refused and the trace is returned',
+      trace: { traces: [traceRow({})], unresolved: [] },
+      enrollDuringCall: true,
+    },
+  ])('$name', async (row) => {
+    const db = testDb();
+    const input = await fixture('');
+    const [before] = await db
+      .select()
+      .from(question_block)
+      .where(eq(question_block.id, input.block.id));
+    const rescue = runRescue({
+      db,
+      r2: (await createImageR2()) as never,
+      sessionId: input.block.ingestion_session_id,
+      blockId: input.block.id,
+      page: 0,
+      strategy: 'handwriting_trace',
+      runHandwritingTraceFn: async () => {
+        if (row.enrollDuringCall) {
+          await db
+            .update(question_block)
+            .set({ status: 'auto_enrolled' })
+            .where(eq(question_block.id, input.block.id));
+        }
+        return { ...row.trace, warnings: [], task_run_id: 'trace-run' };
+      },
+    });
+    if (row.enrollDuringCall) {
+      const refusal = await rescue.then(
+        () => null,
+        (err: unknown) => err,
+      );
+      expect(refusal).toMatchObject({
+        code: 'block_not_rescuable',
+        details: {
+          paid_result: {
+            task_run_id: 'trace-run',
+            structured: { extraction_evidence: { handwriting: [{ text: 'AB = 5' }] } },
+          },
+        },
+      });
+      const [after] = await db
+        .select()
+        .from(question_block)
+        .where(eq(question_block.id, input.block.id));
+      expect({ version: after?.version, structured: after?.structured }).toEqual({
+        version: before?.version,
+        structured: before?.structured,
+      });
+      return;
+    }
+    await rescue;
+    const [block] = await db
+      .select()
+      .from(question_block)
+      .where(eq(question_block.id, input.block.id));
+    if (!block) throw new Error('rescued block missing');
+    expect(block.structured?.extraction_evidence?.handwriting?.[0]?.note).toBe(row.expectNote);
+    expect(await captureIngestionOriginal(db, { ...input, block })).not.toBeNull();
+    const [attempt] = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:assessment_attempt'));
+    const payload = attempt?.payload as {
+      response_md?: string;
+      ingestion?: { unit_captures?: unknown };
+    };
+    expect({
+      response_md: payload.response_md,
+      unit_captures: payload.ingestion?.unit_captures,
+    }).toMatchObject(row.expectCapture ?? {});
+    expect(await db.select().from(evaluation)).toHaveLength(0);
+  });
 });

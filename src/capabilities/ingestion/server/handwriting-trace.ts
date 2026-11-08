@@ -149,6 +149,7 @@ export function applyHandwritingTraces(
           ...(redInk !== null ? { red_ink: redInk } : {}),
           ...(trace.red_text ? { red_text: true } : {}),
           ...(trace.confidence > 0 ? { confidence: trace.confidence } : {}),
+          ...(trace.note?.trim() ? { note: trace.note.trim() } : {}),
         },
       ],
     };
@@ -156,14 +157,21 @@ export function applyHandwritingTraces(
     applied += 1;
   }
   for (const item of output.unresolved) {
-    // An unresolved item that names a leaf still proves student work in that area;
-    // mark it present without text so capture records an explicit unknown instead
-    // of silently treating the question as unanswered. A null leaf stays page-level
-    // and is only a warning (never assigned to a question by proximity).
-    if (item.leaf_index !== undefined && item.leaf_index !== null) {
-      const node = byIndex.get(item.leaf_index);
-      if (node) node.student_answer_present = true;
+    const node =
+      item.leaf_index !== undefined && item.leaf_index !== null
+        ? byIndex.get(item.leaf_index)
+        : undefined;
+    if (item.cause === 'no_handwriting') {
+      // The pass looked at this answer area and saw nothing: an explicit blank.
+      // The structure step's student_answer_present is advisory, so the dedicated
+      // reader overrides it; a leaf that did get a trace keeps its evidence.
+      if (node && !seen.has(item.leaf_index ?? -1)) node.student_answer_present = false;
+      continue;
     }
+    // Illegible, ambiguous, or an older output without a cause: learner work exists
+    // but is not usable text, so capture records an explicit unknown. A null leaf
+    // stays page-level and is only a warning (never assigned by proximity).
+    if (node) node.student_answer_present = true;
     warnings.push(
       `handwriting trace unresolved for leaf_index ${item.leaf_index ?? 'unknown'}: ${item.reason}`,
     );
