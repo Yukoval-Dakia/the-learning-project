@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { AgentRunError } from '@/ai/agent-run-error';
 import type { ProviderTransportEvidence, RequestSendState } from '@/ai/task-result';
 import { taskInputHash } from '@/core/task-input-hash';
-import { ai_task_runs, paid_effect } from '@/db/schema';
+import { ai_task_runs, knowledge, paid_effect, question } from '@/db/schema';
 import { readQuestionServing } from '@/kernel/read-models/question-serving';
 import * as norm from '@/kernel/records/assessment-normalization';
 import type { BoundRunTaskTextFn } from '@/server/ai/runner-fn';
@@ -375,6 +375,10 @@ async function deliverWake(
   return run(testDb(), wakeData, { id: wakeId, jobData: wakeData }, { runTask: task });
 }
 
+afterAll(async () => {
+  await fixtureBoss?.stop();
+});
+
 describe('question admission provider recovery', () => {
   beforeEach(async () => {
     process.env.ADMISSION_PROVIDER_RETRY_MAX_RETRIES = '1';
@@ -388,9 +392,6 @@ describe('question admission provider recovery', () => {
   });
   afterEach(async () => {
     for (const job of ownedJobs.splice(0)) await fixtureBoss?.deleteJob(job.name, job.id);
-  });
-  afterAll(async () => {
-    await fixtureBoss?.stop();
   });
 
   // @invariant concurrency: a provably unbilled provider rejection waits on a
@@ -638,5 +639,66 @@ describe('question admission provider recovery', () => {
     const retryAtMs = Date.parse(tailReceipt?.recovery?.retry_at ?? '');
     expect(retryAtMs - Date.now()).toBeGreaterThan(3 * 60 * 60_000);
     expect((await servingAdmission(seed.groupId))?.status).toBe('pending');
+  });
+});
+
+describe('question admission subject freeze', () => {
+  // @invariant grading: the subject profile an admission freezes and sends to the solver is the enrollment subject first, then the domain of knowledge_ids[0], then general — so a later knowledge tag cannot change the subject of the same question
+  // @fails-if a question with an enrollment subject freezes its knowledge domain or general, or a question without one stops falling back to knowledge_ids[0] and then general
+  it.each([
+    {
+      name: 'enrollment subject, no knowledge',
+      enrolled: 'physics',
+      domain: null,
+      want: 'physics',
+    },
+    {
+      name: 'enrollment subject beats knowledge',
+      enrolled: 'physics',
+      domain: 'math',
+      want: 'physics',
+    },
+    { name: 'no enrollment subject, knowledge', enrolled: null, domain: 'math', want: 'math' },
+    { name: 'neither', enrolled: null, domain: null, want: 'general' },
+  ])('$name freezes $want', async ({ enrolled, domain, want }) => {
+    await resetDb();
+    const db = testDb();
+    const seed = await seedAdmission();
+    const now = new Date();
+    if (domain) {
+      await db
+        .insert(knowledge)
+        .values({ id: 'k-subject', name: 'Node', domain, created_at: now, updated_at: now });
+    }
+    await db
+      .update(question)
+      .set({
+        knowledge_ids: domain ? ['k-subject'] : [],
+        metadata: enrolled ? { ingestion_enrollment: { subject_id: enrolled } } : {},
+      })
+      .where(eq(question.id, seed.groupId));
+    const d1 = admissionJobId(seed.groupId, seed.revisionId, seed.digest, 0);
+    const data = jobData(seed);
+    await insertDelivery(seed, d1, data);
+    const { task } = fakeTaskFactory(seed);
+    const sent: Array<string | undefined> = [];
+    const observed: BoundRunTaskTextFn = (kind, payload, ctx) => {
+      sent.push(ctx?.subjectProfile?.id);
+      return task(kind, payload, ctx);
+    };
+
+    await run(db, data, { id: d1, jobData: data }, { runTask: observed });
+    for (const job of ownedJobs.splice(0)) await fixtureBoss?.deleteJob(job.name, job.id);
+
+    const frozen = await db
+      .select({ input: paid_effect.input_json })
+      .from(paid_effect)
+      .where(eq(paid_effect.family, ADMISSION_FAMILY));
+    expect({
+      frozen: frozen.map(
+        (row) => (row.input as { subject_profile: { id: string } }).subject_profile.id,
+      ),
+      sent: [...new Set(sent)],
+    }).toEqual({ frozen: [want], sent: [want] });
   });
 });

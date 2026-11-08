@@ -154,6 +154,13 @@ export type StructuredQuestionT = {
    * 其它 structured 编辑不得触碰。
    */
   presentation?: PresentationT;
+  /**
+   * Root only: the subject StructureTask reported for the pages this question spans,
+   * always a known subject id. Enrollment copies it into
+   * `metadata.ingestion_enrollment.subject_id`, the only place admission reads it.
+   * jsonb-internal — NOT a DDL column.
+   */
+  subject_id?: string;
 };
 
 export const StructuredQuestion: z.ZodType<StructuredQuestionT> = z.lazy(() =>
@@ -179,6 +186,8 @@ export const StructuredQuestion: z.ZodType<StructuredQuestionT> = z.lazy(() =>
       student_answer_present: z.boolean().optional(),
       // 冻结展示层草稿（jsonb-internal，仅 compose_presentation 读写）。
       presentation: Presentation.optional(),
+      // StructureTask page subject (root only, jsonb-internal).
+      subject_id: z.string().min(1).optional(),
     })
     .refine(
       (q) => {

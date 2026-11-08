@@ -24,7 +24,6 @@ import type { Db, Tx } from '@/db/client';
 import { fromPgBossDrizzleTx } from '@/db/pg-boss-drizzle';
 import {
   event,
-  knowledge,
   paid_effect,
   question,
   question_admission_verification,
@@ -65,6 +64,7 @@ import {
   enqueueAdmissionLoginRecovery,
   maintainAdmissionLoginRecovery,
 } from '../server/admission/login-recovery';
+import { questionSubjectKey } from '../server/admission/question-subject';
 import {
   type AdmissionDelivery,
   AdmissionResultReceipt,
@@ -244,20 +244,7 @@ function admissionInputIsCurrent(
 }
 
 async function subjectProfileFor(db: Db | Tx, rootId: string) {
-  const [row] = await db
-    .select({ knowledge_ids: question.knowledge_ids })
-    .from(question)
-    .where(eq(question.id, rootId))
-    .limit(1);
-  const first = row?.knowledge_ids?.[0];
-  const [node] = first
-    ? await db
-        .select({ domain: knowledge.domain })
-        .from(knowledge)
-        .where(eq(knowledge.id, first))
-        .limit(1)
-    : [undefined];
-  return resolveSubjectProfile(node?.domain ?? null);
+  return resolveSubjectProfile(await questionSubjectKey(db, rootId));
 }
 
 export async function runAdmissionForQuestion(

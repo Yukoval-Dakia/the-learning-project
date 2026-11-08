@@ -28,6 +28,7 @@ import {
   parseQuestionNo,
 } from '@/kernel/proposals/block-merge-admission';
 import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
+import { type KnownSubject, getKnownSubjects } from '@/subjects/profile';
 import { redactIngestionText } from './privacy-guard';
 import type { LayoutQuality } from './tencent_mark_parser';
 
@@ -215,6 +216,50 @@ function nodeToStructured(
   return out;
 }
 
+// ---------- Page subjects → question subject ----------
+
+/** Known-subject page claims; a page claimed with two different subjects is dropped. */
+function pageSubjectMap(
+  claims: StructureOutputT['page_subjects'],
+  knownIds: ReadonlySet<string>,
+  pageCount: number,
+): Map<number, string> {
+  const out = new Map<number, string>();
+  const conflicted = new Set<number>();
+  for (const claim of claims ?? []) {
+    const subjectId = claim.subject_id?.trim();
+    if (!subjectId || !knownIds.has(subjectId) || claim.page_index >= pageCount) continue;
+    const prior = out.get(claim.page_index);
+    if (prior !== undefined && prior !== subjectId) conflicted.add(claim.page_index);
+    out.set(claim.page_index, subjectId);
+  }
+  for (const page of conflicted) out.delete(page);
+  return out;
+}
+
+function nodePages(node: StructureNodeT, into: Set<number>): Set<number> {
+  if (node.page_index != null) into.add(node.page_index);
+  for (const sub of node.sub_questions ?? []) nodePages(sub, into);
+  return into;
+}
+
+/**
+ * A question spanning several pages takes a subject only when every spanned page that
+ * reported one agrees; pages left unreported stay neutral. A node with no page_index
+ * is on page 0, matching the block's page span.
+ */
+function questionSubject(node: StructureNodeT, pages: Map<number, string>): string | undefined {
+  const spanned = nodePages(node, new Set());
+  if (spanned.size === 0) spanned.add(0);
+  const subjects = new Set(
+    [...spanned].flatMap((page) => {
+      const subjectId = pages.get(page);
+      return subjectId === undefined ? [] : [subjectId];
+    }),
+  );
+  return subjects.size === 1 ? [...subjects][0] : undefined;
+}
+
 // ---------- runStructureTask ----------
 
 export type StructureRunTaskFn = (
@@ -240,6 +285,8 @@ export type RunStructureTaskParams = {
     position: string;
     bbox?: StructuredQuestionT['bbox'];
   }>;
+  /** Subject vocabulary for page_subjects; defaults to the live selectable registry. */
+  knownSubjects?: ReadonlyArray<KnownSubject>;
   /** Database bound by the production runner; tests may inject runTaskFn instead. */
   db?: Db;
   /** Inject in tests; defaults to the production runner. */
@@ -257,10 +304,12 @@ export async function runStructureTask(params: RunStructureTaskParams): Promise<
     throw new StructureTaskError('runStructureTask: no page images provided');
   }
 
+  const knownSubjects = params.knownSubjects ?? getKnownSubjects();
   const textPayload = JSON.stringify({
     // Redact the text hint; page images stay raw because they are the input itself.
     tencent_hint_md: redactIngestionText(params.tencentHintMd).text,
     page_count: params.pageCount,
+    known_subjects: knownSubjects,
     // Coordinates identify the exact crop for figure_ids self-assignment.
     ...(params.preFigures && params.preFigures.length > 0 ? { figures: params.preFigures } : {}),
   });
@@ -300,7 +349,16 @@ export async function runStructureTask(params: RunStructureTaskParams): Promise<
   // Collect assignments while mapping; no-op without preFigures.
   const assignmentsOut: FigureAssignment[] | undefined =
     params.preFigures && params.preFigures.length > 0 ? [] : undefined;
-  const questions = parsed.questions.map((node) => nodeToStructured(node, assignmentsOut));
+  const pages = pageSubjectMap(
+    parsed.page_subjects,
+    new Set(knownSubjects.map((subject) => subject.id)),
+    params.pageCount,
+  );
+  const questions = parsed.questions.map((node) => {
+    const structured = nodeToStructured(node, assignmentsOut);
+    const subjectId = questionSubject(node, pages);
+    return subjectId === undefined ? structured : { ...structured, subject_id: subjectId };
+  });
   return {
     questions,
     layout_quality: parsed.layout_quality,
