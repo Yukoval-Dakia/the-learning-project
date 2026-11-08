@@ -137,18 +137,16 @@ async function seedLearner() {
     },
   ]);
   const prompt = '讨论函数 $f(x)=x^3-3ax$ 的单调性。';
-  await db
-    .insert(question)
-    .values({
-      id: 'q1',
-      kind: 'short_answer',
-      prompt_md: prompt,
-      reference_md: '分 a≤0、a>0 讨论',
-      source: 'manual',
-      knowledge_ids: ['k_param'],
-      created_at: now,
-      updated_at: now,
-    });
+  await db.insert(question).values({
+    id: 'q1',
+    kind: 'short_answer',
+    prompt_md: prompt,
+    reference_md: '分 a≤0、a>0 讨论',
+    source: 'manual',
+    knowledge_ids: ['k_param'],
+    created_at: now,
+    updated_at: now,
+  });
   await writeEvent(db, {
     id: 'attempt1',
     session_id: null,
@@ -192,17 +190,15 @@ async function seedLearner() {
     runTaskFn: (async () => ({ text: JSON.stringify(cause) })) as never,
     enqueueVariantGen: async () => {},
   });
-  await db
-    .insert(mastery_state)
-    .values({
-      id: 'm1',
-      subject_kind: 'knowledge',
-      subject_id: 'k_param',
-      theta_hat: -0.6,
-      evidence_count: 1,
-      fail_count: 1,
-      updated_at: now,
-    });
+  await db.insert(mastery_state).values({
+    id: 'm1',
+    subject_kind: 'knowledge',
+    subject_id: 'k_param',
+    theta_hat: -0.6,
+    evidence_count: 1,
+    fail_count: 1,
+    updated_at: now,
+  });
 }
 
 // @invariant security: the preparer reads the learner's mistakes, but neither the ticket's learner state nor a new question can carry caller- or learner-authored text.
