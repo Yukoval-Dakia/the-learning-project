@@ -1,6 +1,23 @@
+import { z } from 'zod';
 import { DEFAULT_TASK_BUDGET, type StructuredSubmitUnitPlan, type TaskSpec } from '@/ai/task-spec';
 import { AttemptDescription, BacktraceDecisions } from '@/core/schema/backtrace';
 import { parseTaskOutput } from '@/kernel/parse-task-output';
+
+// Whole-object submits on this lane exceed ~850 chars and pick up an emitted
+// trailing brace (attempt6 wires 9-11: complete JSON + one extra '}'); the
+// per-unit contract keeps every submit far below that threshold.
+const InsightFacet = z.union([
+  z.object({ method: AttemptDescription.shape.method }).strict(),
+  z.object({ needed_method: AttemptDescription.shape.needed_method }).strict(),
+  z.object({ mechanism: AttemptDescription.shape.mechanism }).strict(),
+  z.object({ no_description_reason: AttemptDescription.shape.no_description_reason }).strict(),
+]);
+
+function insightFacetKey(submitted: unknown): string | undefined {
+  if (!submitted || typeof submitted !== 'object') return undefined;
+  const keys = Object.keys(submitted);
+  return keys.length === 1 && InsightFacet.safeParse(submitted).success ? keys[0] : undefined;
+}
 
 export const attemptInsightTaskSpec = {
   ownership: 'owned',
@@ -13,10 +30,20 @@ export const attemptInsightTaskSpec = {
     allowedTools: ['mcp__structured_output__submit'],
     context: { view: 'none', reason: '只读冻结作答证据，不读取画像。' },
     structuredOutputMode: 'tool',
+    structuredSubmitSchema: () => InsightFacet,
+    structuredSubmitUnits: (): StructuredSubmitUnitPlan => ({
+      expectedUnitIds: ['method', 'needed_method', 'mechanism', 'no_description_reason'],
+      unitOf: (submitted) => ({ id: insightFacetKey(submitted), unit: submitted }),
+      validateUnit: (submitted) =>
+        InsightFacet.safeParse(submitted).success
+          ? []
+          : ['unit: submit exactly one declared description field; null when absent'],
+      assemble: (units) => Object.assign({}, ...units),
+    }),
     structuredOutputSchema: AttemptDescription,
     prompt: {
       kind: 'inline',
-      text: '只据reasoning_trace；没过程则null。本人明写标evidence，evidence_quotes/steps.quote逐字摘原文；没明说的算法仅标inferred，不冒充本人方法。参考解只放needed_method。具体错法点名步骤和条件，用户错因保留原话；无错则mechanism=null。submit整个描述。',
+      text: '只据reasoning_trace；没过程则null。本人明写标evidence，evidence_quotes/steps.quote逐字摘原文；没明说的算法仅标inferred，不冒充本人方法。参考解只放needed_method。具体错法点名步骤和条件，用户错因保留原话；无错则mechanism=null。逐字段submit，无值字段交null。',
     },
   },
   outputSchema: AttemptDescription,
@@ -75,7 +102,7 @@ export const backtraceJudgeTaskSpec = {
     structuredOutputSchema: BacktraceDecisions,
     prompt: {
       kind: 'inline',
-      text: 'anchor本次，candidate过去。逐候选submit/outcome。same_method仅原文方法；needs_this_method指本次需要候选过去成功方法，反向不成立。失败非成功解法，inferred不作依据。公式/条件相同才specific，审题单位只能broad。evidence.now/prior逐字摘对应insight证据；why不加算法。shared_step仅已有键；无依据null/not_similar。不判分，不重交已收项。',
+      text: 'anchor本次，candidate过去。机制同即same_mechanism；same_method仅原文方法；候选成功用本次needed_method即needs_this_method。肯定关系必附evidence（now/prior逐字摘对应字段原文），缺即not_similar；失败非成功解法，inferred不作依据。机制或方法结构同即specific，数字题型可不同；审题单位只能broad。why不加算法；shared_step仅已有键。',
     },
   },
   outputSchema: BacktraceDecisions,
