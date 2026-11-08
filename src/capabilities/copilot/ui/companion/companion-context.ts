@@ -29,6 +29,8 @@ export interface ActiveRun {
   stopPending: boolean;
   cancelRequested: boolean;
   thinking: readonly ThinkingSegment[];
+  /** Retry frames (event ids) whose thinking trim has been applied this visit. */
+  retriesSeen: Set<number>;
 }
 
 export interface CompanionInternals {

@@ -14,7 +14,12 @@ import {
 import { BLOCK_REF_PATTERN, BlockV1, type BlockV1T } from '@/core/schema/blocks';
 import { COPILOT_RUN_THINKING_EVENT } from '../thinking-lane-contract';
 
-import { type PublicProse, mergePublicProse, parsePublicProse } from './public-prose';
+import {
+  type ProseDiscard,
+  type PublicProse,
+  mergePublicProse,
+  parsePublicProse,
+} from './public-prose';
 
 export const COPILOT_RUN_STEP_EVENT = 'copilot_run.step' as const;
 
@@ -73,7 +78,7 @@ export interface CopilotRunJobFrame {
 }
 
 /** What the model is doing right now, from run frames only: nothing sent yet, reasoning, writing. */
-export type CopilotModelStage = 'waiting' | 'thinking' | 'writing' | 'busy';
+export type CopilotModelStage = 'waiting' | 'thinking' | 'writing' | 'busy' | 'reconnecting';
 
 export type CopilotRunPhase = 'queued' | 'running' | 'cancel_requested' | 'completed' | 'failed';
 
@@ -407,6 +412,30 @@ export function parseCopilotThinkingFrame(
   return { task_run_id: taskRunId, seq: seq as number, text };
 }
 
+/** A request retried after its stream broke (#2810): how much of what it wrote to take back. */
+export interface CopilotRequestRetry {
+  task_run_id: string;
+  retry: number;
+  discard_chars: number;
+  discard_thinking_chars: number;
+}
+
+export function parseRequestRetry(payload: Record<string, unknown>): CopilotRequestRetry | null {
+  if (payload.step_kind !== 'request_retry') return null;
+  const count = (value: unknown) =>
+    typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
+  const discard = count(payload.discard_chars);
+  const thinking = count(payload.discard_thinking_chars);
+  const retry = count(payload.retry);
+  if (typeof payload.task_run_id !== 'string' || discard === null || thinking === null) return null;
+  return {
+    task_run_id: payload.task_run_id,
+    retry: retry ?? 1,
+    discard_chars: discard,
+    discard_thinking_chars: thinking,
+  };
+}
+
 interface MutableSubtask extends CopilotSubtaskView {
   firstEventId: number;
 }
@@ -433,7 +462,7 @@ export function foldCopilotRunFrames(
   let phase: CopilotRunPhase = 'queued';
   let replyText = '';
   let publicProse: PublicProse | undefined;
-  const publicDeltas = new Map<number, string>();
+  const publicDeltas = new Map<number, string | ProseDiscard>();
   const receivePublicProse = (item: CopilotRunJobFrame) => {
     const snapshot = parsePublicProse(item.payload.public_prose);
     if (!snapshot || snapshot.last_event_id > item.event_id) return;
@@ -469,6 +498,22 @@ export function foldCopilotRunFrames(
           modelStage = 'busy';
           break;
         }
+        const retry = parseRequestRetry(item.payload);
+        if (retry) {
+          // The broken attempt's last words are taken back; the retried request writes them again.
+          // Until it says something, the line says the connection is being picked up.
+          modelStage = 'reconnecting';
+          replyText = replyText.slice(0, Math.max(0, replyText.length - retry.discard_chars));
+          // A picture placed inside the taken-back words belonged to the broken attempt.
+          blocks = blocks.filter((block) => block.anchor <= replyText.length);
+          if (!publicProse || publicProse.status === 'streaming') {
+            publicDeltas.set(item.event_id, { discard: retry.discard_chars });
+            if (publicProse) publicProse = mergePublicProse(publicProse, publicDeltas);
+          }
+          break;
+        }
+        // The retried request going out is part of picking the connection up, not news.
+        if (item.payload.step_kind === 'request_sent' && modelStage === 'reconnecting') break;
         // Any other step: once it ends, the next thing to come is the model's next response.
         modelStage = 'waiting';
         const event = parseSubtaskPayload(item.payload);
@@ -548,6 +593,8 @@ export function foldCopilotRunFrames(
         replyPayload = { ...replyPayload, ...item.payload };
         if (item.payload.thinking_clear === true) thinkingClear = true;
         phase = 'running';
+        // The reply is here: whatever was being picked up has been.
+        if (modelStage === 'reconnecting') modelStage = 'writing';
         if (typeof item.payload.reply_md === 'string') replyText = item.payload.reply_md;
         if (typeof item.payload.checkpoint_event_id === 'string') {
           checkpointEventId = item.payload.checkpoint_event_id;
