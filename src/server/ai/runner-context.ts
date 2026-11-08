@@ -180,6 +180,11 @@ export interface RunTaskCtx {
   budgetOverride?: TaskBudgetOverride;
   /** Correlation id shared with an in-process MCP server; a retry gets a fresh id. */
   taskRunId?: string;
+  /**
+   * Server-bound durable conversation the run belongs to (copilot turns).
+   * Owner-scoped tool mounts bind to it; the model never supplies it.
+   */
+  sessionId?: string;
   /** Runs after durable attempt creation and immediately before the prepared query submits its prompt. */
   beforeProviderQuery?: BeforeProviderQuery;
   /**
