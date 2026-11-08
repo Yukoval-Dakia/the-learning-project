@@ -10,6 +10,7 @@ type PastSteering = WorkbenchSummary['past_steerings'][number];
 
 const SCOPE_NAME_LIMIT = 4;
 const SHOWN_LIMIT = 3;
+const PAST_LIMIT = 10;
 
 /** 2026-11-20 → 11月20日 */
 function monthDay(day: string): string {
@@ -145,7 +146,12 @@ export function SteeringList({ goals, past }: { goals: ActiveGoal[]; past: PastS
       )}
       {past.length > 0 && (
         <details className="td-plans-more">
-          <summary>以前说过的 {past.length} 条</summary>
+          <summary>
+            {/* The server sends at most ten, so a full list is the latest ten, not all of them. */}
+            {past.length >= PAST_LIMIT
+              ? `以前说过的（最近 ${PAST_LIMIT} 条）`
+              : `以前说过的 ${past.length} 条`}
+          </summary>
           <ul className="td-plans">
             {past.map((item) => (
               <PastRow key={item.id} past={item} />

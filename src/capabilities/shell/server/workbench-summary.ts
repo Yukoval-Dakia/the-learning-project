@@ -229,17 +229,27 @@ async function loadActiveGoals(db: Db, today: string): Promise<WorkbenchActiveGo
 }
 
 async function loadPastSteerings(db: Db): Promise<WorkbenchPastSteering[]> {
+  // The day it ended is the status change that ended it. The row's updated_at moves with any
+  // later write, such as a knowledge merge rewriting the scope of an ended goal.
+  const endedAt = sql<Date>`(
+    select max(${event.created_at}) from ${event}
+    where ${event.subject_kind} = 'goal'
+      and ${event.subject_id} = ${goal.id}
+      and ${event.action} = 'experimental:goal_status_update'
+      and ${event.payload}->>'status' = ${goal.status}
+  )`.mapWith(goal.updated_at);
   const rows = await db
     .select({
       id: goal.id,
       status: goal.status,
       effective_until: goal.effective_until,
       steering: goal.steering,
+      ended_at: endedAt,
       updated_at: goal.updated_at,
     })
     .from(goal)
     .where(and(isNotNull(goal.steering), ne(goal.status, 'active')))
-    .orderBy(desc(goal.updated_at), desc(goal.id))
+    .orderBy(desc(sql`coalesce(${endedAt}, ${goal.updated_at})`), desc(goal.id))
     .limit(PAST_STEERINGS_LIMIT);
   return rows.flatMap((row) =>
     row.steering
@@ -251,7 +261,7 @@ async function loadPastSteerings(db: Db): Promise<WorkbenchPastSteering[]> {
             until: row.effective_until,
             // The expiry sweep marks a passed window done; ending it by word leaves it dormant.
             ended: row.status === 'done' ? ('expired' as const) : ('withdrawn' as const),
-            ended_on: learnerLocalDay(row.updated_at),
+            ended_on: learnerLocalDay(row.ended_at ?? row.updated_at),
           },
         ]
       : [],
