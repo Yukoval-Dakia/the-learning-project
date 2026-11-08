@@ -83,7 +83,13 @@ function installHungProvider(): { reached: Promise<ProviderCall> } {
       () => stream.push({ type: 'error', reason: 'aborted', error: message('', 'aborted') }),
       { once: true },
     );
-    resolveReached({ systemPrompt: context.systemPrompt ?? '', timeoutMs: options?.timeoutMs });
+    const system = (context.messages as readonly { role: string; content: unknown }[]).find(
+      (entry) => entry.role === 'system',
+    );
+    resolveReached({
+      systemPrompt: typeof system?.content === 'string' ? system.content : '',
+      timeoutMs: options?.timeoutMs,
+    });
     return stream;
   });
   __setPiAdapterForTests(new PiAgentAdapter({ models, agentLoop }));
