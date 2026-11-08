@@ -91,6 +91,9 @@ const SteeringIssueSchema = z.object({
 const RecordSteeringOutputSchema = z.object({
   status: z.enum(['created', 'revised', 'ended', 'unchanged']),
   goal_id: z.string(),
+  /** revise/end: the arrangement as its card read before this call, so the confirmation can
+   * name which one changed; null on create/unchanged. */
+  previous_instruction_md: z.string().nullable(),
   issues: z.array(SteeringIssueSchema),
   echo: z.object({
     instruction_md: z.string(),
@@ -282,9 +285,12 @@ async function resolveSingleSteeringGoalId(
   }
   const focus = ctx.ambientFocus;
   if (focus?.kind === 'goal' && active.some((g) => g.id === focus.id)) return focus.id;
+  // Titles ride with the ids: the companion only sees ids elsewhere and must not guess which is which.
   throw new ApiError(
     'validation_error',
-    `several steering goals are active; pass one of: ${active.map((g) => g.id).join(', ')}`,
+    `several steering goals are active; pass the goal_id of the one the learner means: ${active
+      .map((g) => `${g.id}「${g.steering?.instruction_md ?? g.title}」`)
+      .join(', ')}`,
     400,
   );
 }
@@ -292,7 +298,7 @@ async function resolveSingleSteeringGoalId(
 export const recordSteeringTool: DomainTool<RecordSteeringToolInput, RecordSteeringToolOutput> = {
   name: 'record_steering',
   description:
-    "MUST be called FIRST — before any advice or proposal — whenever the learner states an exam/quiz date or scope (期中/期末/测验), a study deadline, a priority change (这周主攻/别排物理), or cancels a prior arrangement (考试取消了). Writes directly, no proposal: learner_words MUST quote the learner's words verbatim from the current message (server-checked; paraphrases are rejected); unmappable scope stays as text. revise/end: when ambient.focused_entity is a goal, the learner tapped 改/撤回 on that arrangement on the today page (the prefilled sentence quotes its title), so it IS the one to change — omit goal_id and the server uses it; never look up or pass another id instead. instruction_md is the arrangement itself (「11 月 27 日期中考，先练数列和导数」), not a description of the change. Build the confirmation ONLY from the result's echo/issues/preparing. Never substitute a knowledge-tree proposal or a spoken-only recap for this call.",
+    "MUST be called FIRST — before any advice or proposal — whenever the learner states an exam/quiz date or scope (期中/期末/测验), a study deadline, a priority change (这周主攻/别排物理), or cancels a prior arrangement (考试取消了). Writes directly, no proposal: learner_words MUST quote the learner's words verbatim from the current message (server-checked; paraphrases are rejected); unmappable scope stays as text. revise/end target: with goal_id omitted the server uses the only active arrangement, or the ambient.focused_entity goal (the learner tapped 改/撤回 on it on the today page; the prefilled sentence quotes its title). When the learner's words clearly name a different arrangement, pass that one's goal_id from the startup context's 当前安排 lines (each shows its title and goal_id) — never guess an id. instruction_md is the arrangement itself (「11 月 27 日期中考，先练数列和导数」), not a description of the change. revise/end results carry previous_instruction_md: open the confirmation by naming that arrangement (「把『11 月 20 日期中考…』改成了…」 / 「『…』撤回了」), and build the rest ONLY from echo/issues/preparing. Never substitute a knowledge-tree proposal or a spoken-only recap for this call.",
   effect: 'write',
   inputSchema: RecordSteeringInputSchema,
   outputSchema: RecordSteeringOutputSchema,
@@ -345,6 +351,7 @@ export const recordSteeringTool: DomainTool<RecordSteeringToolInput, RecordSteer
       return {
         status: 'ended',
         goal_id: row.id,
+        previous_instruction_md: steering.instruction_md,
         issues,
         echo: {
           instruction_md: steering.instruction_md,
@@ -490,6 +497,7 @@ export const recordSteeringTool: DomainTool<RecordSteeringToolInput, RecordSteer
           return {
             status: 'unchanged',
             goal_id: active.id,
+            previous_instruction_md: null,
             issues,
             echo: echoOf(active, today, active.scope_knowledge_ids),
             preparing: [],
@@ -512,6 +520,7 @@ export const recordSteeringTool: DomainTool<RecordSteeringToolInput, RecordSteer
       return {
         status: 'created',
         goal_id: goalId,
+        previous_instruction_md: null,
         issues,
         echo: echoOf(
           { effective_from: from, effective_until: until, steering },
@@ -545,6 +554,7 @@ export const recordSteeringTool: DomainTool<RecordSteeringToolInput, RecordSteer
     return {
       status: 'revised',
       goal_id: row.id,
+      previous_instruction_md: row.steering.instruction_md,
       issues,
       echo: echoOf({ effective_from: from, effective_until: until, steering }, today, resolvedIds),
       preparing: [...PREPARING],
