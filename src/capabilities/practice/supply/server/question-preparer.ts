@@ -15,7 +15,18 @@ import { runAgentTask } from '@/server/ai/runner';
 import { currentTaskSpendScope, withTaskSpendScope } from '@/server/ai/task-spend-scope';
 import { fromPgBossDrizzleTx, getStartedBoss } from '@/server/boss/client';
 import { resolveSubjectProfile } from '@/subjects/profile';
-import { QuestionPreparerJobData, preparerTerminal } from './question-preparer-contract';
+import {
+  BankAssessmentSchema,
+  BankSearchError,
+  selectBankReceipt,
+} from '../../question-bank/public';
+import { questionPreparerReportSchema } from '../tasks/question-preparer';
+import { createLearnerMaterialGuard } from './preparer-learner-copy';
+import {
+  QuestionPreparerJobData,
+  type preparerInventoryObservation,
+  preparerTerminal,
+} from './question-preparer-contract';
 import {
   defectCategory,
   lockQuestionPreparerSegment,
@@ -28,6 +39,7 @@ import {
   recoverQuestionPreparer,
 } from './question-preparer-journal';
 import { recoveryPriorContext } from './question-preparer-recovery';
+import { questionPreparerPendingStock } from './question-preparer-stock';
 import {
   admitNightlySourcingRun,
   holdNightlySupplyUnit,
@@ -60,42 +72,12 @@ function stripVolatile(value: unknown): unknown {
   );
 }
 
-/** Temporary LIGHT limit (YUK-1938): a ticket-bound run may not read learner mistakes.
- *  Runs without a ticket keep the full surface; this is not the target shape. */
-export function questionPreparerToolSurface(ticketBound: boolean) {
-  const toolNames = ticketBound
-    ? QUESTION_PREPARER_TOOLS.filter((name) => name !== 'query_mistakes')
-    : QUESTION_PREPARER_TOOLS;
-  return {
-    toolNames,
-    allowedTools: resolveMcpAllowedTools('question_preparer').filter(
-      (wire) => !ticketBound || !wire.endsWith('__query_mistakes'),
-    ),
-  };
-}
-
-/** Ticket-bound runs never read learner evidence (YUK-1938); strip the request flags
- *  server-side so the model cannot ask for it. Structure reads stay available. */
-export function stripLearnerEvidenceInput(
-  toolName: string,
-  args: Record<string, unknown>,
-): Record<string, unknown> {
-  const without = (blocked: readonly string[]) =>
-    Array.isArray(args.include)
-      ? args.include.filter((value) => !blocked.includes(String(value)))
-      : args.include;
-  if (toolName === 'query_knowledge')
-    return { ...args, include: without(['stats', 'recent_failures']) };
-  if (toolName === 'expand_knowledge_subgraph')
-    return { ...args, include: without(['recent_failures', 'mastery']) };
-  if (toolName === 'get_subject_graph_overview') return { ...args, includeWeaknessSummary: false };
-  return args;
-}
-
 /** One admitted segment, with durable continuations on repair and interrupted delivery. */
 export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown, retryCount = 0) {
   let data = QuestionPreparerJobData.parse(raw);
   const taskRunId = `question_preparer_${jobId}`;
+  let inventoryReport: z.infer<typeof questionPreparerReportSchema>['inventory'];
+  let inventoryObservation: z.infer<typeof preparerInventoryObservation> | undefined;
   const finish = (
     outcome: 'done' | 'no_progress' | 'awaiting_admission',
     summary: string,
@@ -107,9 +89,59 @@ export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown, r
         .select()
         .from(event)
         .where(eq(event.id, `question_preparer_finished_${jobId}`));
-      return existing
-        ? preparerTerminal.parse(existing.payload.terminal)
-        : preparerFinish(tx, jobId, data, outcome, summary, retryable);
+      if (existing) return preparerTerminal.parse(existing.payload.terminal);
+      let finalOutcome = outcome,
+        finalSummary = summary;
+      if (outcome === 'done' && data.ticket.inventory_goal.eligible_count > 0) {
+        let met = false;
+        if (inventoryReport)
+          try {
+            const stock = await selectBankReceipt(
+              tx,
+              {
+                callerActor: { kind: 'agent', ref: 'question_preparer' },
+                taskRunId,
+                supplyDemand: data.ticket,
+              },
+              inventoryReport.search_id,
+              BankAssessmentSchema.array().parse(inventoryReport.assessments),
+              true,
+              true,
+            );
+            const count = new Set(stock.accepted_refs).size;
+            inventoryObservation = {
+              search_id: inventoryReport.search_id,
+              source: stock.source,
+              accepted_refs: stock.accepted_refs,
+              count,
+              goal: data.ticket.inventory_goal.eligible_count,
+            };
+            met =
+              stock.use === 'inventory' &&
+              stock.goal === data.ticket.inventory_goal.eligible_count &&
+              count >= data.ticket.inventory_goal.eligible_count;
+          } catch (error) {
+            if (!(error instanceof BankSearchError) && !(error instanceof z.ZodError)) throw error;
+          }
+        if (!met) {
+          const pending = await questionPreparerPendingStock(tx as unknown as Db, data.ticket);
+          finalOutcome =
+            (inventoryObservation?.count ?? 0) + pending.length >=
+            data.ticket.inventory_goal.eligible_count
+              ? 'awaiting_admission'
+              : 'no_progress';
+          finalSummary = '库存证据尚未确认满足票据目标；未知/不支持不计合格，待准入只作预留。';
+        }
+      }
+      return preparerFinish(
+        tx,
+        jobId,
+        data,
+        finalOutcome,
+        finalSummary,
+        retryable,
+        inventoryObservation,
+      );
     });
   let history = await preparerHistory(db, data);
   if (history.some((row) => row.id === `question_preparer_unstarted_${jobId}`)) {
@@ -331,9 +363,6 @@ export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown, r
   const runIds = new Set<string>();
   const versions = new Set<string>();
   const defects = new Set<string>();
-  let inventorySatisfied = false;
-  let bankEvidenceObserved = false;
-  let pendingStockObserved = false;
   let started = false;
   /** Set by onResult when the owner read found a publication this segment had not seen;
    *  consumed by the next afterToolCall (the submit that produced it). */
@@ -372,9 +401,7 @@ export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown, r
       return false;
     },
   });
-  // Temporary LIGHT limit (YUK-1938): a ticket-bound run may not read learner mistakes.
-  // Runs without a ticket keep the full surface; this is not the target shape.
-  const surface = questionPreparerToolSurface(data.ticket_event_id != null);
+  const learnerGuard = createLearnerMaterialGuard(db);
   let result: Awaited<ReturnType<typeof runAgentTask>> | undefined;
   let executionError: unknown;
   try {
@@ -412,7 +439,7 @@ export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown, r
             db,
             taskRunId,
             subjectProfile: resolveSubjectProfile(data.ticket.subject_id),
-            allowedTools: [...surface.allowedTools],
+            allowedTools: [...resolveMcpAllowedTools('question_preparer')],
             judgeRetryPolicy: 'none',
             budgetOverride: {
               maxIterations: 'unbounded',
@@ -426,6 +453,7 @@ export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown, r
                   db,
                   taskRunId,
                   callerActor: { kind: 'agent', ref: 'question_preparer' },
+                  supplyDemand: data.ticket,
                   ...(data.ticket_event_id
                     ? {
                         causedByEventId: data.ticket_event_id,
@@ -440,41 +468,25 @@ export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown, r
                   return undefined;
                 },
                 interceptInput(tool, args) {
+                  if (tool.effect !== 'read') {
+                    const refusal = learnerGuard.refusal(args);
+                    if (refusal) return { args, softStop: refusal };
+                  }
                   if (args && typeof args === 'object' && !Array.isArray(args)) {
                     const record = args as Record<string, unknown>;
                     if (tool.name === 'scan_coverage_gaps')
                       return { args: { ...record, ticket: data.ticket } };
                     if (tool.name === 'submit_question')
                       return { args: { ...record, demand_id: data.ticket.demand_id } };
-                    if (data.ticket_event_id) {
-                      // Ticket-bound runs never read learner evidence (YUK-1938).
-                      if (
-                        tool.name === 'query_knowledge' ||
-                        tool.name === 'expand_knowledge_subgraph' ||
-                        tool.name === 'get_subject_graph_overview'
-                      )
-                        return { args: stripLearnerEvidenceInput(tool.name, record) };
-                    }
                   }
                   return { args };
                 },
                 serverName: 'loom',
-                toolNames: surface.toolNames,
+                toolNames: QUESTION_PREPARER_TOOLS,
                 taskKind: 'QuestionPreparerTask',
                 onResult: async (observation) => {
-                  const value = z
-                    .object({
-                      fulfillment: z.string().optional(),
-                      pending_stock: z.array(z.json()).optional(),
-                    })
-                    .safeParse(observation.output);
-                  if (!value.success) return;
-                  if (['search_bank', 'read_bank', 'check_bank'].includes(observation.name))
-                    bankEvidenceObserved = true;
-                  if (observation.name === 'scan_coverage_gaps' && value.data.pending_stock?.length)
-                    pendingStockObserved = true;
-                  if (observation.name === 'search_bank' && value.data.fulfillment === 'met')
-                    inventorySatisfied = true;
+                  if (observation.executed && observation.error_reason == null)
+                    await learnerGuard.observe(observation.name, observation.output);
                   if (
                     observation.name === 'submit_question' &&
                     observation.executed &&
@@ -509,31 +521,22 @@ export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown, r
       `execution_failed: ${executionError instanceof Error ? executionError.message : String(executionError)}`,
       true,
     );
-  const report = z
-    .object({ outcome: z.enum(['done', 'no_progress']), summary: z.string() })
-    .safeParse(
-      (() => {
-        try {
-          return parseTaskOutput(
-            result.text,
-            'QuestionPreparerTask',
-            z.object({ outcome: z.enum(['done', 'no_progress']), summary: z.string() }),
-          );
-        } catch {
-          return null;
-        }
-      })(),
-    );
+  const report = questionPreparerReportSchema.safeParse(
+    (() => {
+      try {
+        return parseTaskOutput(result.text, 'QuestionPreparerTask', questionPreparerReportSchema);
+      } catch {
+        return null;
+      }
+    })(),
+  );
+  inventoryReport = report.success ? report.data.inventory : undefined;
   return finish(
     published.size
       ? 'awaiting_admission'
-      : inventorySatisfied
+      : report.success && report.data.outcome === 'done'
         ? 'done'
-        : report.success && report.data.outcome === 'done' && bankEvidenceObserved
-          ? pendingStockObserved
-            ? 'awaiting_admission'
-            : 'done'
-          : 'no_progress',
+        : 'no_progress',
     report.success
       ? report.data.summary
       : result.text || loop.closure()?.reason || 'no_terminal_report',

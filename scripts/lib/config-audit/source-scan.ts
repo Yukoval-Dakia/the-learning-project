@@ -4,6 +4,19 @@
  * SCAN_ROOTS 的源码、git ref 的 blob、AST 解析、flag token / reader / const /
  * direct-env 扫描，以及 CONFIG_REGISTRY 的 head 定义投影都在这里；纯指纹
  * 与对比在 ./contract-compare，report/exit 留在 scripts/audit-flags.ts。
+ *
+ * 静态扫描的边界（产品 env 普查与登记键直读都只看这些形状）：
+ *   - 只看 `process.env.X` / `process.env['X']` / 同一文件内可解析的
+ *     `process.env[CONST]` / `const { X } = process.env`；
+ *   - 看不到 `const e = process.env` 别名（要求访问子对象时已是 process.env）、
+ *     `globalThis.process.env` / `process['env']`、`Object.keys(process.env)`、
+ *     computed destructure（`const { [k]: v } = process.env`）、以及把
+ *     `process.env` 传给 helper 后再读；这些要么用字面量读点，要么由 review 发现；
+ *   - 解析失败的文件跳过（调用方用 typecheck / CI 兜底）。
+ *
+ * `src/core/config/` 的直读豁免只属于 DIRECT-ENV-READ（定义/解析层），不豁免产品
+ * env 的读点门：新文件在该目录直读已登记 env 仍算新增读，需要进 STAY_IN_PLACE_ENV
+ * 并按 owner 放行。
  */
 import { type Dirent, readFileSync, readdirSync } from 'node:fs';
 import { dirname, join, posix, relative, resolve } from 'node:path';
@@ -26,6 +39,8 @@ import {
 
 export const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 export const REGISTRY_PATH = 'src/core/config/registry.ts';
+/** Boot env schema: `const server = {...}` is the only declaration of boot-validated names. */
+export const BOOT_ENV_PATH = 'src/core/config/server/env.ts';
 
 const SCAN_ROOTS = ['src', 'server', 'scripts'] as const;
 const EXCLUDE_DIRS = new Set(['node_modules', '.next', 'dist', '.git', '.claude', 'drizzle']);
@@ -512,9 +527,172 @@ export function collectDirectEnvReads(tree: SourceTree): DirectEnvRead[] {
   );
 }
 
-/** Allowed homes for direct env reads of registered keys (definitions, not readers). */
+/** Allowed homes for DIRECT-ENV-READ of registered keys (definitions, not readers). The
+ *  product env read-point gate is separate and does not inherit this exemption. */
 export function isAllowedDirectEnvFile(path: string): boolean {
   return path.startsWith('src/core/config/');
+}
+
+// ── product env census ──────────────────────────────────────────────────────────────────────
+
+const PRODUCT_TEST_FILE_RE = /\.(test|test-support|d)\.tsx?$/;
+
+/** Product code for the env census: `src/` + `server/`, tests and test support excluded. */
+export function isProductSourcePath(path: string): boolean {
+  if (!path.startsWith('src/') && !path.startsWith('server/')) return false;
+  if (!path.endsWith('.ts') && !path.endsWith('.tsx')) return false;
+  return !PRODUCT_TEST_FILE_RE.test(path);
+}
+
+/** The boot env loader owns dynamic hydration; everywhere else the key must be statically known. */
+export function isAllowedDynamicEnvFile(path: string): boolean {
+  return path === 'server/env.ts';
+}
+
+export interface ProductEnvRead {
+  /** Statically resolved env name; null when a computed key cannot be resolved. */
+  key: string | null;
+  file: string;
+  form: 'member' | 'computed' | 'destructure' | 'dynamic';
+}
+
+export interface ProductEnvReads {
+  named: ProductEnvRead[];
+  dynamic: ProductEnvRead[];
+}
+
+function walkAstWithParent(
+  node: unknown,
+  parent: AstNode | null,
+  fn: (node: AstNode, parent: AstNode | null) => void,
+): void {
+  if (node === null || typeof node !== 'object') return;
+  if (Array.isArray(node)) {
+    for (const child of node) walkAstWithParent(child, parent, fn);
+    return;
+  }
+  const record = node as AstNode;
+  if (typeof record.type === 'string') fn(record, parent);
+  for (const key of Object.keys(record)) {
+    if (key === 'loc' || key === 'start' || key === 'end' || key === 'extra') continue;
+    walkAstWithParent(record[key], record, fn);
+  }
+}
+
+function isEnvWriteTarget(node: AstNode, parent: AstNode | null): boolean {
+  if (!parent) return false;
+  if (parent.type === 'AssignmentExpression' && parent.left === node) return true;
+  if (parent.type === 'UpdateExpression' && parent.argument === node) return true;
+  return (
+    parent.type === 'UnaryExpression' && parent.operator === 'delete' && parent.argument === node
+  );
+}
+
+/**
+ * Product-code env reads for the census. Named reads dedupe by (key, file) like the
+ * registered-key scan; dynamic reads stay per occurrence so a new one cannot hide behind
+ * an existing access in the same file. Write targets (`process.env.X = ...`) are not reads.
+ */
+export function collectProductEnvReads(tree: SourceTree): ProductEnvReads {
+  const named = new Map<string, ProductEnvRead>();
+  const dynamic: ProductEnvRead[] = [];
+  const addNamed = (key: string, file: string, form: ProductEnvRead['form']): void => {
+    if (!key) return;
+    const id = `${key}\u0000${file}`;
+    if (!named.has(id)) named.set(id, { key, file, form });
+  };
+
+  for (const path of tree.paths()) {
+    if (!isProductSourcePath(path)) continue;
+    const ast = tree.ast(path);
+    if (!ast) continue;
+    walkAstWithParent(ast, null, (node, parent) => {
+      if (node.type === 'MemberExpression' || node.type === 'OptionalMemberExpression') {
+        if (!isProcessEnvObject(node.object) || isEnvWriteTarget(node, parent)) return;
+        if (!node.computed && node.property?.type === 'Identifier') {
+          addNamed(node.property.name, path, 'member');
+          return;
+        }
+        if (node.computed && node.property?.type === 'StringLiteral') {
+          addNamed(node.property.value, path, 'computed');
+          return;
+        }
+        if (node.computed) {
+          const resolved = resolveStrings(tree, path, node.property);
+          if (resolved?.length === 1 && resolved[0]) addNamed(resolved[0], path, 'computed');
+          else dynamic.push({ key: null, file: path, form: 'dynamic' });
+        }
+        return;
+      }
+      if (node.type !== 'VariableDeclarator' || !isProcessEnvObject(node.init)) return;
+      if (node.id?.type !== 'ObjectPattern') return;
+      for (const prop of node.id.properties ?? []) {
+        if (prop.type === 'RestElement') {
+          dynamic.push({ key: null, file: path, form: 'dynamic' });
+          continue;
+        }
+        if (prop.type !== 'ObjectProperty' || prop.computed) continue;
+        const key =
+          prop.key.type === 'Identifier'
+            ? prop.key.name
+            : prop.key.type === 'StringLiteral'
+              ? prop.key.value
+              : undefined;
+        if (key) addNamed(key, path, 'destructure');
+      }
+    });
+  }
+
+  return {
+    named: [...named.values()].sort(
+      (a, b) => (a.key ?? '').localeCompare(b.key ?? '') || a.file.localeCompare(b.file),
+    ),
+    dynamic: dynamic.sort((a, b) => a.file.localeCompare(b.file)),
+  };
+}
+
+export interface BootEnvExtraction {
+  keys: string[];
+  problems: string[];
+}
+
+/** `const server = {...}` in the boot schema, extracted from source text (head and base). */
+export function extractBootEnvKeys(sourceText: string): BootEnvExtraction {
+  const keys: string[] = [];
+  const problems: string[] = [];
+  if (!sourceText.trim()) return { keys, problems: ['boot env schema source is empty'] };
+  const ast = parse(sourceText, {
+    sourceType: 'module',
+    plugins: ['typescript'],
+    errorRecovery: true,
+  }) as unknown as AstNode;
+  let serverObject: AstNode | undefined;
+  walkAst(ast, (node) => {
+    if (serverObject) return;
+    if (node.type !== 'VariableDeclarator' || node.id?.type !== 'Identifier') return;
+    if (node.id.name !== 'server' || !node.init) return;
+    if (node.init.type === 'ObjectExpression') serverObject = node.init;
+  });
+  if (!serverObject) {
+    return { keys, problems: ['could not find `const server = {...}` in the boot env schema'] };
+  }
+  for (const prop of serverObject.properties ?? []) {
+    if (prop.type !== 'ObjectProperty' || prop.computed) {
+      problems.push(
+        'boot env schema has a spread/computed entry; its keys are not statically decidable',
+      );
+      continue;
+    }
+    const key =
+      prop.key.type === 'Identifier'
+        ? prop.key.name
+        : prop.key.type === 'StringLiteral'
+          ? prop.key.value
+          : undefined;
+    if (key) keys.push(key);
+    else problems.push('boot env schema has an entry with a non-static key');
+  }
+  return { keys: [...new Set(keys)].sort(), problems };
 }
 
 export function headDefinitions(

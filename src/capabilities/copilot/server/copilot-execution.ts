@@ -19,6 +19,7 @@ import { readDerivationPolicy } from '@/core/schema/derivation-policy';
 import type { PiAfterToolCall } from '@/core/tool-call-contract';
 import type { Db } from '@/db/client';
 import { chartPublishedAfterBinding } from '@/kernel/blocks/chart';
+import { projectLearnerToolInput } from '@/kernel/learning-content';
 import { recordAiTaskReplyUnsealed } from '@/kernel/records/ai-attempt-facts';
 import {
   DOMAIN_TOOL_MCP_SERVER_NAME,
@@ -94,6 +95,20 @@ export type CopilotExecutionActivity =
   /** YUK-1765 — the model started reasoning. Carries no reasoning text. */
   | { kind: 'model_thinking' }
   | { kind: 'provider_retry'; delayMs: number; retry: number }
+  /**
+   * One interrupted request is being resent inside the same attempt. The page
+   * drops the last `discardProseChars` of prose and `discardThinkingChars` of
+   * this attempt's thinking — what the dead request had already streamed.
+   */
+  | {
+      kind: 'request_retry';
+      taskRunId: string;
+      retry: number;
+      maxRetries: number;
+      reason: 'stream_idle' | 'connection';
+      discardProseChars: number;
+      discardThinkingChars: number;
+    }
   | { kind: 'subtask'; event: CopilotSubtaskEvent }
   | {
       kind: 'tool_started';
@@ -285,10 +300,9 @@ export function createCopilotExecutionOwner(
         ? { reply: correctionResolution.reply, correction: 'clarify' as const }
         : undefined;
 
-    // YUK-1909 — turns whose committed reply is fixed before the model runs, or
-    // bound to a not-yet-submitted answer, get status only: reasoning text could
-    // leak the answer or describe a reply that never ships. Status frames
-    // (request_sent / model_thinking / thinking_end) still fire.
+    // YUK-1909 — a turn bound to a not-yet-submitted answer gets status only:
+    // reasoning text could leak the answer. Status frames
+    // (request_sent / model_thinking / thinking_end) still fire for those turns.
     // A focused page question is also an unsubmitted-question context: the
     // learner can quote a live question (QuoteSelection -> kind 'question') and
     // ask in ordinary chat. Whether that question was already submitted is not
@@ -296,11 +310,7 @@ export function createCopilotExecutionOwner(
     // Other focus kinds: knowledge / note / learning_session (nudges) carry no
     // unsubmitted question; teaching skill turns run outside this owner.
     const focusedQuestion = turn.input.ambient_context?.focused_entity?.kind === 'question';
-    const suppressThinkingStream =
-      answerOnly ||
-      authoritativeReply !== undefined ||
-      reviewAnswer !== undefined ||
-      focusedQuestion;
+    const suppressThinkingStream = answerOnly || reviewAnswer !== undefined || focusedQuestion;
 
     let activeTaskRunId = turn.taskRunId;
     const createFinalizer = () =>
@@ -311,6 +321,27 @@ export function createCopilotExecutionOwner(
       });
 
     let finalizer = createFinalizer();
+
+    // The correction contract already owns this reply. Calling the model can
+    // only replace it when the provider quota or terminal is missing.
+    if (authoritativeReply) {
+      const contextDigest = copilotSessionContextDigest(input);
+      const finalization = await observeTaskOperation(
+        { operation: 'finalize', taskKind: 'CopilotTask', taskRunId: activeTaskRunId },
+        async (reportOutcome) => {
+          const finalized = await finalizer.finalizeTerminal(authoritativeReply.reply);
+          reportOutcome(finalized.accepted ? 'accepted' : 'rejected');
+          return finalized;
+        },
+      );
+      return {
+        taskRunId: activeTaskRunId,
+        finishReason: 'end_turn',
+        finalization,
+        partial: false,
+        contextDigest,
+      };
+    }
 
     const surface = input.surface;
     const baseContextBudget = resolveContextBudget(surface);
@@ -362,6 +393,7 @@ export function createCopilotExecutionOwner(
         callerActor,
         ...(turn.sourceEventId ? { causedByEventId: turn.sourceEventId } : {}),
         ...(turn.learnerAskEventId ? { learnerAskEventId: turn.learnerAskEventId } : {}),
+        ...(focused ? { ambientFocus: { kind: focused.kind, id: focused.id } } : {}),
         sourceLedger,
         answerOnly,
       },
@@ -379,7 +411,6 @@ export function createCopilotExecutionOwner(
         derivationToolDenial(derivationPolicy, tool) ??
         (await policy.cancellation.beforeTool()) ??
         finalizer.beforeDomainTool(tool) ??
-        proposalFlowGate.beforeExecute(tool) ??
         budgetTracker.beforeExecute(tool),
       onExecuteStart: async (tool) => {
         policy.cancellation.onToolExecutionStarted(tool);
@@ -396,7 +427,11 @@ export function createCopilotExecutionOwner(
       onExecuteSettled: () => policy.cancellation.onToolExecutionSettled(),
       interceptInput: (tool, args) => {
         const { args: capped, contextBudget, softStop } = budgetTracker.capInput(tool.name, args);
-        return { args: capped, truncationNote: contextBudget, softStop };
+        return {
+          args: capped,
+          truncationNote: contextBudget,
+          softStop: softStop ?? proposalFlowGate.refuseIdentical(tool, capped),
+        };
       },
       onResult: (result) => {
         proposalFlowGate.observe(result);
@@ -447,9 +482,13 @@ export function createCopilotExecutionOwner(
         }
       },
       onToolComplete: (result) => {
-        void Promise.resolve(emitActivity(policy, { kind: 'tool_finished', ...result })).catch(
-          () => undefined,
-        );
+        void Promise.resolve(
+          emitActivity(policy, {
+            kind: 'tool_finished',
+            ...result,
+            input: projectLearnerToolInput(result.toolName, result.input),
+          }),
+        ).catch(() => undefined);
       },
     } satisfies BuildMcpServerOptions;
     const exa = answerOnly ? null : adapters.buildExaMcpServerFn();
@@ -538,7 +577,7 @@ export function createCopilotExecutionOwner(
         emitActivity(policy, {
           kind: 'tool_finished',
           toolName: observation.call.name,
-          input: observation.args,
+          input: projectLearnerToolInput(observation.call.name, observation.args),
           summary: summaryText.slice(0, 180),
           ...(observation.isError
             ? { errorReason: piToolErrorText(observation.error).slice(0, 500) }
@@ -623,15 +662,13 @@ export function createCopilotExecutionOwner(
     const runnerContext: Parameters<typeof streamTaskCollecting>[2] = {
       db,
       taskRunId: turn.taskRunId,
+      sessionId: turn.sessionId,
       signal: policy.cancellation.signal,
       lifecycleAbortController,
       compiledModelPrompt,
-      allowedTools: authoritativeReply ? [] : allowedTools,
+      allowedTools,
       ...(piSpawnContract ? { onTaskEvent } : {}),
-      // An explicit empty allowlist (authoritativeReply) must not connect
-      // remote mounts — piRemoteMcpMount reaches Exa at buildTools time, and an
-      // outage would spend the optional-search startup budget on a tool-less turn.
-      piToolMounts: authoritativeReply ? [] : piToolMounts,
+      piToolMounts,
       piHooks,
       ...(piSpawnContract ? { piAgents: piSpawnContract.piAgents } : {}),
       ...(piSkillDocs ? { piSkillDocs } : {}),
@@ -674,6 +711,18 @@ export function createCopilotExecutionOwner(
         finalizer = createFinalizer();
         await emitActivity(policy, { kind: 'provider_retry', delayMs, retry });
       },
+      onRequestRetry: async (retry) => {
+        thinkingAnnounced = false;
+        await emitActivity(policy, {
+          kind: 'request_retry',
+          taskRunId: retry.task_run_id,
+          retry: retry.retry,
+          maxRetries: retry.max_retries,
+          reason: retry.reason,
+          discardProseChars: retractProse(retry.discarded_text_chars),
+          discardThinkingChars: suppressThinkingStream ? 0 : retry.discarded_thinking_chars,
+        });
+      },
       ...(suppressThinkingStream
         ? {}
         : {
@@ -706,9 +755,13 @@ export function createCopilotExecutionOwner(
         if (!shouldEmitToolUseForCaller(call.toolName, DOMAIN_TOOL_MCP_SERVER_NAME, callerActor)) {
           return;
         }
-        void Promise.resolve(emitActivity(policy, { kind: 'tool_started', ...call })).catch(
-          () => undefined,
-        );
+        void Promise.resolve(
+          emitActivity(policy, {
+            kind: 'tool_started',
+            ...call,
+            input: projectLearnerToolInput(call.toolName, call.input),
+          }),
+        ).catch(() => undefined);
       },
       onToolArgsDelta: (delta) => {
         thinkingAnnounced = false;
@@ -726,11 +779,33 @@ export function createCopilotExecutionOwner(
       },
     };
     let streamedProse = '';
-    const prose = createCopilotProseStream((text) => {
+    // Raw model text behind the filtered prose: a retracted tail must be cut
+    // before the comment filter, whose state that tail may have changed.
+    let rawProse = '';
+    let replayed: string | undefined;
+    const emitProse = (text: string) => {
+      if (replayed !== undefined) {
+        replayed += text;
+        return;
+      }
       if (policy.cancellation.signal.aborted || lifecycleAbortController.signal.aborted) return;
       streamedProse += text;
       void emitActivity(policy, { kind: 'prose_delta', text });
-    });
+    };
+    let prose = createCopilotProseStream(emitProse);
+    /** Rebuild the filter on the kept raw text; returns the public chars to drop. */
+    const retractProse = (rawChars: number): number => {
+      rawProse = rawProse.slice(0, Math.max(0, rawProse.length - rawChars));
+      replayed = '';
+      prose = createCopilotProseStream(emitProse);
+      prose.push(rawProse);
+      // The filter only ever withholds, so the replay is a prefix of what was sent.
+      const kept: string = replayed;
+      replayed = undefined;
+      const discard = Math.max(0, streamedProse.length - kept.length);
+      streamedProse = streamedProse.slice(0, kept.length);
+      return discard;
+    };
     let retainSdkSession = false;
     const bindCancellation = () =>
       bindSubagentParentCancellation(db, {
@@ -769,6 +844,7 @@ export function createCopilotExecutionOwner(
         runnerContext,
         (text) => {
           thinkingAnnounced = false;
+          rawProse += text;
           prose.push(text);
         },
       );

@@ -242,6 +242,23 @@ export const retractProposal = (id: string) =>
     body: { decision: 'retract' },
   }).then((resource) => resource.result);
 
+export type ProposalBatchAcceptWire = ApiOperationJsonResponse<'batchAcceptProposals'>;
+export type ProposalBatchSummaryWire =
+  ApiOperationJsonResponse<'listProposalBatchAccepts'>['batches'][number];
+
+export const acceptProposalBatch = (proposalIds: readonly string[]) =>
+  apiOperationJson('batchAcceptProposals', {
+    url: '/api/proposals/batch-accept',
+    method: 'POST',
+    body: { proposal_ids: [...proposalIds] },
+  });
+
+export const listProposalBatches = () =>
+  apiOperationJson('listProposalBatchAccepts', {
+    url: '/api/proposals/batch-accepts',
+    method: 'GET',
+  });
+
 // ── A4 强度轴 (YUK-521)：A 档 auto-applied 读模型 wire 类型 + caller ──
 export type AutoAppliedDigestWire = ApiOperationJsonResponse<'getAutoAppliedProposals'>;
 export type AutoAppliedRowWire = AutoAppliedDigestWire['rows'][number];

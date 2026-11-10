@@ -26,7 +26,7 @@ import {
 import { withFrozenPaperReopen } from '../assessment/paper-session-transition';
 import { isPaperIntentSource } from '../paper-intent-sources';
 
-// ---------- summary dispatch contract (moved from api/session-end.ts) ----------
+// ---------- summary dispatch contract ----------
 
 export async function enqueueReviewSessionSummary(sessionId: string): Promise<void> {
   // Best-effort: closing the session succeeds even when pg-boss is unavailable.

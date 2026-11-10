@@ -135,6 +135,12 @@ export interface PublishQuestionGroupInput {
    */
   causedByEventId?: string | null;
   /**
+   * 发布事件的 session_id。录入/导入的发布必须绑定它的 ingestion session，这是
+   * 准入门验证来源用途（readAdmissionPurpose 的 lineage）的唯一事实；缺省 null
+   * 表示发布者没有会话来源（如 web_sourced 管线）。
+   */
+  sessionId?: string | null;
+  /**
    * 自定义块字节核验的读取器；kernel 不依赖存储层，由组合方注入。含 custom
    * 块时必供，缺省 fail-closed。
    */
@@ -975,7 +981,7 @@ export async function publishQuestionGroup(
     const eventId = createId();
     await writeEvent(tx, {
       id: eventId,
-      session_id: null,
+      session_id: input.sessionId ?? null,
       actor_kind: 'system',
       actor_ref: input.actorRef,
       caused_by_event_id: explicitCausedByEventId,
@@ -1097,6 +1103,8 @@ export interface PublishFromRowInput {
   claimPolicy?: 'one_time' | 'unbounded';
   /** 透传给 publishQuestionGroup，缺省时的继承规则见其 causedByEventId。 */
   causedByEventId?: string | null;
+  /** 透传给 publishQuestionGroup；录入/导入发布绑定其来源会话。 */
+  sessionId?: string | null;
   /** 透传给 publishQuestionGroup；含 custom 块时必供。 */
   readAssetBytes?: (storageKey: string) => Promise<Uint8Array | null>;
   actorRef: string;
@@ -1202,6 +1210,7 @@ export async function publishQuestionGroupFromRow(
       verification: input.verification,
       claimPolicy: input.claimPolicy,
       causedByEventId: input.causedByEventId,
+      sessionId: input.sessionId,
       readAssetBytes: input.readAssetBytes,
       actorRef: input.actorRef,
       now: input.now,

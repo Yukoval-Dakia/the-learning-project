@@ -35,7 +35,7 @@ const baseInput = {
 };
 
 describe('question generation grounding persistence (YUK-350)', () => {
-  // Finding 3 — the transition race. A concurrent failure marker must never
+  // The transition race. A concurrent failure marker must never
   // leave a failed plan with a committed binding, and it must never be able to
   // flip a plan the binding transaction already claimed.
   describe('plan transition race (Finding 3)', () => {

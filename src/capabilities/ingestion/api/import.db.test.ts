@@ -4,8 +4,7 @@
  * Strategy:
  * - Use testDb() / resetDb() for actual Postgres integration
  * - Mock @/server/ai/runner
- * - Lane D (YUK-482): the failure→propose-new-KC side-effect was removed from
- *   import; these tests assert only canonical capture facts are written. The
+ * - These tests assert only canonical capture facts are written. The
  *   practice-owned durable subscription derives failure learning afterwards.
  */
 
@@ -248,6 +247,10 @@ describe('POST /api/ingestion/[id]/import', () => {
     expect(session.status).toBe('imported');
   });
 
+  // @invariant concurrency: manual import and auto-enroll cannot both consume the same
+  //   source block; exactly one wins and the other sees the claimed block
+  // @fails-if dropping the session/block serialization lets both paths create a question
+  //   from one source block
   it('manual import and auto-enroll cannot consume the same source block concurrently', async () => {
     const db = testDb();
     const { sessionId, sourceDocId } = await setupSession(db);
@@ -284,7 +287,6 @@ describe('POST /api/ingestion/[id]/import', () => {
       db,
       sessionId,
       subjectId: 'yuwen',
-      env: { WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED: 'true' },
       tagKnowledgeFn: async () => ({ kind: 'match', knowledge_ids: ['k1'] }),
     }).finally(() => {
       autoFinished = true;
@@ -315,7 +317,7 @@ describe('POST /api/ingestion/[id]/import', () => {
     }
   });
 
-  // Codex P1-A — concurrent double-submit must not produce partial side effects.
+  //  concurrent double-submit must not produce partial side effects.
   // The status-machine check (commitImport) and the write phase must live inside
   // a single transaction; otherwise both callers may pass per-row checks, both
   // INSERT question/mistake/question_block rows, and only one wins the

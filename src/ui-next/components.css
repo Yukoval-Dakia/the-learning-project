@@ -203,6 +203,14 @@
     transition: color var(--un-t-feedback) var(--un-ease-glide);
   }
 
+  /* Four labels on a phone: tighter, and one line each. */
+  @media (max-width: 600px) {
+    & .un-seg-option {
+      padding: 0 var(--un-sp-1);
+      white-space: nowrap;
+    }
+  }
+
   & .un-seg-option:has(:checked) {
     color: var(--un-text-1);
     font-weight: var(--un-fw-medium);

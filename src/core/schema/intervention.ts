@@ -835,6 +835,10 @@ export const InterventionPreparationAttempt = z.discriminatedUnion('kind', [
         .max(MAX_INTERVENTION_VALIDATOR_CALLS_PER_PACKAGE)
         .optional(),
       failure_code: z.string().trim().min(1).max(160),
+      // The authored draft when a paid package existed but the review stage did
+      // not pass it. Server-side audit only: activation is the sole write path
+      // onto package_json, and no learner-facing read-model consumes this field.
+      package: InterventionPackage.optional(),
     })
     .strict(),
   z

@@ -1,6 +1,8 @@
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { buildCopilotToolResultSnapshot } from '@/capabilities/copilot/server/tool-result-snapshot';
 import { getQuestionContextTool } from '@/capabilities/practice/scheduling/tools/question-context';
+import { QUESTION_OR_ANSWER_MAY_BE_FAULTY_ACTION } from '@/core/schema/event';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import {
   artifact,
@@ -16,7 +18,7 @@ import {
 import { writeEvent } from '@/kernel/events';
 import type { ToolContext } from '@/kernel/tools/types';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { __resetRegistryForTests } from './registry';
+import { __resetRegistryForTests, registerTool } from './registry';
 
 const BASE = new Date(Date.now() - 60_000);
 
@@ -318,5 +320,70 @@ describe('Foundation D M2 read tools', () => {
     expect(getQuestionContextTool.summarize({ questionId: 'q_does_not_exist' }, missing)).toContain(
       'missing',
     );
+  });
+
+  // @invariant security: one question read returns the linked knowledge card's due and the latest faulty inference, and the learner snapshot omits that inference
+  // @fails-if lifecycle.due_at stays null while a knowledge card is due, or the learner snapshot still contains the faulty event
+  it('reads a knowledge-card due and keeps a faulty inference off the learner snapshot', async () => {
+    await seedAll();
+    const due = new Date(BASE.getTime() - 86_400_000);
+    await writeEvent(testDb(), {
+      id: 'evt_question_or_answer_may_be_faulty_self_q_due',
+      session_id: null,
+      actor_kind: 'system',
+      actor_ref: 'assessment_settlement',
+      action: QUESTION_OR_ANSWER_MAY_BE_FAULTY_ACTION,
+      subject_kind: 'question',
+      subject_id: 'q_due',
+      outcome: null,
+      payload: {
+        inference: true,
+        learner_id: 'self',
+        question_id: 'q_due',
+        kc_ids: ['k_er'],
+        attempt_ids: {
+          incorrect: ['att_fault_a', 'att_fault_b'],
+          correct: ['att_fault_c', 'att_fault_d'],
+        },
+        window: {
+          ms: 14 * 86_400_000,
+          from: new Date(due.getTime() - 14 * 86_400_000).toISOString(),
+          until: due.toISOString(),
+        },
+      },
+      created_at: new Date(BASE.getTime() + 5_000),
+    });
+
+    const found = await getQuestionContextTool.execute(ctx(), { questionId: 'q_due' });
+    expect(found.lifecycle.due_at).toBe(due.toISOString());
+    expect(found.reading.fsrs).toMatchObject({
+      card: 'knowledge',
+      due_at: { known: true, value: due.toISOString() },
+    });
+    expect(found.reading.knowledge.map((row) => row.name.value)).toEqual(['之的用法', '而的用法']);
+    expect(found.reading.issuance.value).toMatchObject({
+      servable: false,
+      blocked_by: 'missing_lifecycle',
+    });
+    expect(found.reading.difficulty.item.value?.basis).toBe('difficulty_proxy');
+    expect(found.reading.difficulty.family.known).toBe(true);
+    expect(found.reading.faulty.value).toMatchObject({
+      event_id: 'evt_question_or_answer_may_be_faulty_self_q_due',
+      inference: true,
+      attempt_ids: { incorrect: ['att_fault_a', 'att_fault_b'] },
+    });
+
+    const scored = await getQuestionContextTool.execute(ctx(), { questionId: 'q_new' });
+    expect(scored.reading.recent_scoring.value).toMatchObject({
+      event_id: 'att_new',
+      outcome: 'failure',
+      cause: { primary: 'concept' },
+    });
+
+    registerTool(getQuestionContextTool);
+    const snapshot = buildCopilotToolResultSnapshot('get_question_context', found);
+    expect(snapshot.state).toBe('available');
+    expect(JSON.stringify(snapshot)).not.toContain('question_or_answer_may_be_faulty');
+    expect(JSON.stringify(snapshot)).not.toContain('att_fault_a');
   });
 });

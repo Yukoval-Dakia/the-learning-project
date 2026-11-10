@@ -29,13 +29,18 @@ import type {
 } from '@earendil-works/pi-ai';
 import { helpFaultForRootStatus, rootBoundProviderStatus } from '@/ai/help-provider-fault';
 import { NO_PROGRESS_BUDGET_LANDING_MARGIN_MS } from '@/ai/no-progress-loop';
-import { type PiToolMount, piCustomTool } from '@/ai/pi-tool-mount';
+import { type PiToolMount, piCustomTool, piToolWireName } from '@/ai/pi-tool-mount';
+import { providerQuotaLimitSigned, providerRequestInterruption } from '@/ai/provider-failure';
 import { type TaskDefinition, resolveStructuredSubmitSchema } from '@/ai/task-spec';
 import { tasks } from '@/capabilities/task-registry';
 import { customProviderDefinitions } from '@/core/config/custom-providers';
 import { getConfig } from '@/core/config/store';
 import { rawArgumentsEvidence } from '@/core/raw-arguments-evidence';
 import { type PiSubagentSpec, isSpawnToolName } from '@/core/subagent-contract';
+import {
+  AGENT_WORKSPACE_DOMAIN_TOOLS,
+  DOMAIN_TOOL_MCP_SERVER_NAME,
+} from '@/kernel/tools/allowlists';
 import type {
   ExecutionAdapter,
   ExecutionAdapterStartupArgs,
@@ -50,6 +55,7 @@ import { completedChildReport, installLoopProgress, turnLimiter } from './pi-loo
 import { type LoomPiModel, createLoomPiModels } from './pi-models';
 import { piProviderId } from './pi-provider-catalog';
 import { PiProviderWire } from './pi-provider-wire';
+import { requestRetryMarkers, retryInterruptedRequest } from './pi-request-retry';
 import {
   type PiToolResultMessage,
   collectPromptMessages,
@@ -68,7 +74,9 @@ import {
 } from './pi-runner-frames';
 import { composePiSystemPrompt } from './pi-system-prompt';
 import { PiToolSurface } from './pi-tool-surface';
+import { hasPiUsageEvidence } from './pi-usage-evidence';
 import { sanitizeArgumentsEvidenceText } from './provider-error-evidence';
+import { interruptedRequestRetryBound } from './provider-transient-retry';
 import { TaskConfigError } from './providers';
 import type { SDKUserMessage } from './sdk-types';
 import {
@@ -323,15 +331,83 @@ class PiPreparedQuery implements PreparedExecutionQuery {
   /**
    * Child tool set: the spec's allowlist over mounted wire names, minus
    * disallowedTools, minus spawn aliases (depth-one is structural).
+   * Workspace tools granted to a child are rebuilt against a per-spawn owner
+   * scope so the child gets its own directory — never the parent's files.
    */
-  private childToolsFor(spec: PiSubagentSpec): AgentTool[] {
+  private childToolsFor(spec: PiSubagentSpec, toolCallId: string): AgentTool[] {
     const parentTools = this.toolSurface.tools.filter((tool) => !isSpawnToolName(tool.name));
     const allowlisted =
       spec.tools === undefined
         ? parentTools
         : parentTools.filter((tool) => spec.tools?.includes(tool.name));
     const disallowed = new Set(spec.disallowedTools ?? []);
-    return allowlisted.filter((tool) => !disallowed.has(tool.name));
+    const visible = allowlisted.filter((tool) => !disallowed.has(tool.name));
+    const workspaceWires = new Set(
+      AGENT_WORKSPACE_DOMAIN_TOOLS.map((name) => piToolWireName(DOMAIN_TOOL_MCP_SERVER_NAME, name)),
+    );
+    const scopedNames = new Set(
+      visible.filter((t) => workspaceWires.has(t.name)).map((t) => t.name),
+    );
+    if (scopedNames.size === 0) return visible;
+    const rebuilt: AgentTool[] = [];
+    const done = new Set<string>();
+    for (const mount of this.args.piToolMounts ?? []) {
+      if (mount.type !== 'domain') continue;
+      for (const toolName of mount.options.toolNames) {
+        const wire = piToolWireName(mount.options.serverName, toolName);
+        if (!scopedNames.has(wire) || done.has(wire)) continue;
+        done.add(wire);
+        rebuilt.push(
+          ...buildPiDomainAgentTools({
+            ...mount.options,
+            toolNames: [toolName],
+            ctx: { ...mount.options.ctx, workspaceOwnerId: `agent:${toolCallId}` },
+            logTaskRunId: this.args.runId,
+          }),
+        );
+      }
+    }
+    return [...visible.filter((t) => !scopedNames.has(t.name)), ...rebuilt];
+  }
+
+  /**
+   * A resent request's dead attempt never reaches the transcript, so its spend
+   * rides the out-of-transcript accumulator. A stalled stream rarely carries a
+   * usage frame; then the sent context and the partial output are estimated
+   * at the model's catalog price rather than recorded as free.
+   */
+  private chargeDeadRequest(dead: PiAssistantMessage, sent: readonly AgentMessage[]): void {
+    const reported = hasPiUsageEvidence(dead);
+    const input = reported ? dead.usage.input : estimatePiTokens(sent);
+    const output = reported ? dead.usage.output : estimatePiTokens([dead]);
+    const costUsd = reported
+      ? dead.usage.cost.total
+      : (input * this.model.cost.input + output * this.model.cost.output) / 1_000_000;
+    this.childUsage.input += input;
+    this.childUsage.output += output;
+    this.childUsage.costUsd += costUsd;
+    const entry = this.childUsage.byModel.get(this.model.id) ?? {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadInputTokens: 0,
+      cacheCreationInputTokens: 0,
+      webSearchRequests: 0,
+      costUSD: 0,
+      contextWindow: this.model.contextWindow,
+      maxOutputTokens: this.model.maxTokens,
+    };
+    entry.inputTokens += input;
+    entry.outputTokens += output;
+    entry.costUSD += costUsd;
+    this.childUsage.byModel.set(this.model.id, entry);
+    console.warn('[pi] interrupted_request_resent', {
+      run_id: this.args.runId,
+      kind: this.args.kind,
+      usage_basis: reported ? 'reported' : 'estimated',
+      input_tokens: input,
+      output_tokens: output,
+      cost_usd: costUsd,
+    });
   }
 
   /**
@@ -362,7 +438,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
             }),
           );
           const childModel = this.childModelFor(spec);
-          const childTools = this.childToolsFor(spec);
+          const childTools = this.childToolsFor(spec, toolCallId);
           const childSignal = signal
             ? AbortSignal.any([this.abort.signal, signal])
             : this.abort.signal;
@@ -561,6 +637,8 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     const unitPlan = structuredOutput
       ? definition.structuredSubmitUnits?.(this.args.structuredSubmitInput)
       : undefined;
+    const executionDeadline =
+      Date.now() + (this.args.executionWindowMs ?? Number.POSITIVE_INFINITY);
     const submitLoop = structuredOutput
       ? createStructuredSubmitLoop({
           schema: toolOutputSchema(this.args.kind, this.args.structuredSubmitInput),
@@ -571,10 +649,14 @@ class PiPreparedQuery implements PreparedExecutionQuery {
           ...(unitPlan ? { fullSchema: definition.structuredOutputSchema } : {}),
           forced: submitPolicy?.forced ?? true,
           runId: this.args.runId,
-          correctionDeadline:
-            Date.now() +
-            (this.args.executionWindowMs ?? Number.POSITIVE_INFINITY) -
-            NO_PROGRESS_BUDGET_LANDING_MARGIN_MS,
+          correctionDeadline: executionDeadline - NO_PROGRESS_BUDGET_LANDING_MARGIN_MS,
+          executionDeadline,
+          executableTools: new Set(
+            this.toolSurface.tools
+              .map((tool) => tool.name)
+              .filter((name) => name !== STRUCTURED_OUTPUT_TOOL),
+          ),
+          ...(typeof options.maxTurns === 'number' ? { toolTurnLimit: options.maxTurns } : {}),
         })
       : undefined;
     if (structuredOutput) {
@@ -598,7 +680,8 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     // unconditional counter every maxTurns=1 task failed after its first turn.
     const maxTurns = typeof options.maxTurns === 'number' ? options.maxTurns : undefined;
     let cappedByMaxTurns = false;
-    // Structured submission closes by validation, progress and budget, not turn count.
+    // Structured submission closes by validation, progress and budget; only its
+    // tool-work turns count against the turn ceiling, inside the submit loop.
     const costCeiling =
       typeof options.maxBudgetUsd === 'number'
         ? createPiCostCeiling({
@@ -791,9 +874,63 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       installLoopProgress(config, this.toolSurface.tools, this.args.piHooks, {
         loopId: this.sessionId,
       });
-    const stream = this.deps.agentLoop(prompts, context, config, this.abort.signal, rootStreamFn);
+    const retryBound = interruptedRequestRetryBound(this.args.kind);
+    const loopStreamFn =
+      retryBound === undefined
+        ? rootStreamFn
+        : retryInterruptedRequest(rootStreamFn, {
+            bound: retryBound,
+            interruption: () => {
+              const request = options.transportEvidence?.snapshot().requests.at(-1);
+              return providerRequestInterruption({
+                idleFired: this.wire.idleFailed(),
+                request: request?.loop === 'root' ? request : undefined,
+                aborted: this.abort.signal.aborted,
+              });
+            },
+            beforeResend: (dead, llmContext) => {
+              this.wire.releaseIdleFailure();
+              this.chargeDeadRequest(dead, llmContext.messages);
+            },
+            signal: this.abort.signal,
+          });
+    const stream = this.deps.agentLoop(prompts, context, config, this.abort.signal, loopStreamFn);
     let textStreamed = false;
+    // What the current provider request has streamed out — what a resend retracts.
+    let requestTextChars = 0;
+    let requestThinkingChars = 0;
     for await (const event of stream) {
+      if (event.type === 'message_start' && event.message.role === 'assistant') {
+        requestTextChars = 0;
+        requestThinkingChars = 0;
+      }
+      const retryNotice =
+        event.type === 'message_update'
+          ? requestRetryMarkers.get(event.assistantMessageEvent)
+          : undefined;
+      if (retryNotice !== undefined) {
+        yield* this.drainFrames();
+        // The dead attempt's partial tool arguments must not prefix the resend's.
+        rawToolArguments.clear();
+        streamedArgsByCallId.clear();
+        yield {
+          type: 'system',
+          subtype: 'request_retry',
+          retry: retryNotice.retry,
+          max_retries: retryNotice.maxRetries,
+          reason: retryNotice.reason,
+          delay_ms: retryNotice.delayMs,
+          discarded_text_chars: requestTextChars,
+          discarded_thinking_chars: requestThinkingChars,
+          uuid: randomUUID(),
+          session_id: this.sessionId,
+          source: 'pi',
+        };
+        requestTextChars = 0;
+        requestThinkingChars = 0;
+        textStreamed = false;
+        continue;
+      }
       // A new assistant turn restarts the raw-arguments window: content indexes
       // repeat per message, so without the reset a rejected submit's bytes would
       // concatenate with the corrected call's and corrupt the strict-JSON check.
@@ -815,6 +952,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
         const text = event.assistantMessageEvent.delta;
         if (text.length > 0 && !this.abort.signal.aborted) {
           textStreamed = true;
+          requestTextChars += text.length;
           yield { type: 'text_delta', text, session_id: this.sessionId, source: 'pi' };
         }
         continue;
@@ -826,6 +964,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       ) {
         const text = event.assistantMessageEvent.delta;
         if (text.length > 0 && !this.abort.signal.aborted) {
+          requestThinkingChars += text.length;
           yield { type: 'thinking_delta', text, session_id: this.sessionId, source: 'pi' };
         }
         continue;
@@ -836,7 +975,9 @@ class PiPreparedQuery implements PreparedExecutionQuery {
           // not consume an untracked allowance: reject salvaged output and fail
           // closed on missing raw deltas.
           event.message.content.forEach((block, index) => {
-            if (block.type !== 'toolCall') return;
+            // The strict check guards the submitted output; other tools'
+            // arguments are validated by their own schemas when they execute.
+            if (block.type !== 'toolCall' || block.name !== STRUCTURED_OUTPUT_TOOL) return;
             try {
               JSON.parse(rawToolArguments.get(index) ?? '');
             } catch {
@@ -864,6 +1005,13 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     }
     yield* this.drainFrames();
     const finalAssistant = lastAssistantMessage(finalMessages);
+    // A final tool-work turn streams other tools' arguments; those are not submit evidence.
+    const submitRawArguments = [...rawToolArguments.entries()]
+      .filter(([index]) => {
+        const block = finalAssistant?.content[index];
+        return !(block?.type === 'toolCall' && block.name !== STRUCTURED_OUTPUT_TOOL);
+      })
+      .map(([, raw]) => raw);
     const boundRootStatus =
       finalAssistant && !this.abort.signal.aborted && !cappedByMaxTurns
         ? rootRejections.get(finalAssistant)
@@ -908,13 +1056,13 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       // capability receives this, not the still-stringified raw fields.
       repairedSubmitArguments: this.toolSurface.repairedArguments(STRUCTURED_OUTPUT_TOOL),
       structuredSubmitEvidence:
-        structuredOutput && rawToolArguments.size > 0
+        structuredOutput && submitRawArguments.length > 0
           ? {
               tool_name: STRUCTURED_OUTPUT_TOOL,
               // Same C6 boundary as per-call evidence — streamed bytes can carry
               // credential keys inside embedded JSON string fields.
               ...rawArgumentsEvidence(
-                [...rawToolArguments.values()]
+                submitRawArguments
                   .map((raw) =>
                     sanitizeArgumentsEvidenceText(raw, {
                       secrets:
@@ -931,8 +1079,14 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       providerError: this.wire.latestProviderError(),
       providerRequestRejection: boundRootRejection === 400 ? { http_status: 400 } : undefined,
       providerHttpStatus: boundRootStatus ?? terminalRequestStatus,
-      helpProviderFault:
-        boundRootRejection === undefined ? undefined : helpFaultForRootStatus(boundRootRejection),
+      helpProviderFault: (() => {
+        const fault =
+          boundRootRejection === undefined ? undefined : helpFaultForRootStatus(boundRootRejection);
+        if (fault?.kind !== 'quota') return fault;
+        // The bound 429's own body decides whether copy may name 额度.
+        const body = this.wire.latestProviderError()?.body;
+        return { ...fault, signed: providerQuotaLimitSigned(body !== undefined ? [body] : []) };
+      })(),
       // Same shared boundary on errors[0] — pi's errorMessage can carry the
       // full unsanitized provider body and must not bypass redaction/cap.
       sanitizeErrorMessage: this.wire.sanitizeErrorMessage(),

@@ -52,6 +52,8 @@ export type CopilotClient = {
   sendChat: (body: unknown, idempotencyKey: string) => Promise<Response>;
   /** Fetch used to read a run's event stream (`fetchResponse` of consumeDurableCopilotRun). */
   fetchRunEvents: (input: string, init?: RequestInit) => Promise<Response>;
+  /** POST /api/copilot/runs/:id/retry; resolves with the raw response, same 202 as sendChat. */
+  retryRun: (runId: string, idempotencyKey: string) => Promise<Response>;
   cancelRun: (runId: string) => Promise<CopilotCancelResult>;
   revertCheckpoint: (checkpointEventId: string) => Promise<unknown>;
   getEntityCard: (
@@ -88,6 +90,11 @@ export const httpCopilotClient: CopilotClient = {
       body: JSON.stringify(body),
     }),
   fetchRunEvents: (input, init) => apiFetch(input, init),
+  retryRun: (runId, idempotencyKey) =>
+    apiFetch(`/api/copilot/runs/${encodeURIComponent(runId)}/retry`, {
+      method: 'POST',
+      headers: { 'Idempotency-Key': idempotencyKey },
+    }),
   cancelRun: (runId) =>
     apiJson<CopilotCancelResult>(`/api/copilot/runs/${encodeURIComponent(runId)}/cancel`, {
       method: 'POST',

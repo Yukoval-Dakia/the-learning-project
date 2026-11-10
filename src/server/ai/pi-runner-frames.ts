@@ -441,7 +441,8 @@ export function piTerminalResultFrame(args: {
    *  text, applied to pi's errorMessage (errors[0]) so the full unsanitized body
    *  cannot bypass credential redaction or the 4096B cap. */
   sanitizeErrorMessage?: (text: string) => string;
-  /** Nested-child usage merged into the terminal totals (SDK result parity). */
+  /** Usage outside the root transcript — nested children and resent dead
+   *  requests — merged into the terminal totals (SDK result parity). */
   childUsage?: PiChildUsage;
 }): PiRunnerMessage | undefined {
   const final = lastAssistantMessage(args.messages);

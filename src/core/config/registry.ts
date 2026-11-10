@@ -321,6 +321,10 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     envName: 'JUDGE_FALLBACK_PROVIDER',
     envParse: (raw) => raw.trim(), // trim 后 ''（含 ' '）→ 显式关，非空 → trim 后名
     tier: 'A',
+    description: 'judge 任务跨 provider 兜底目标；空串 = 显式关闭',
+    consumers: ['practice.judge-durable-dispatch'],
+    reload: 'per-call',
+    exposure: 'operator',
   },
   MISCONCEPTION_PROMOTE_ENABLED: {
     schema: z.boolean(),
@@ -354,30 +358,6 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     tier: 'A',
     description: '允许付费 judge 校准抽样运行',
     consumers: ['practice.judge-calibration-sampling'],
-    reload: 'per-call',
-    exposure: 'operator',
-    flag: OPT_IN_FLAG,
-  },
-  WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED: {
-    schema: z.boolean(),
-    codeDefault: true,
-    envName: 'WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED',
-    envParse: flagEnv,
-    tier: 'A',
-    description: '提取后自动入队付费标注/判分',
-    consumers: ['ingestion.workflow-judge-auto-enroll'],
-    reload: 'per-call',
-    exposure: 'operator',
-    flag: OPT_OUT_FLAG,
-  },
-  WORKFLOW_JUDGE_OBSERVE_ENABLED: {
-    schema: z.boolean(),
-    codeDefault: false,
-    envName: 'WORKFLOW_JUDGE_OBSERVE_ENABLED',
-    envParse: flagEnv,
-    tier: 'A',
-    description: '允许付费 observe-only 判分路径',
-    consumers: ['ingestion.workflow-judge-observe'],
     reload: 'per-call',
     exposure: 'operator',
     flag: OPT_IN_FLAG,
@@ -483,6 +463,10 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     envName: 'COPILOT_NUDGE_DAILY_MAX',
     envParse: posIntEnv,
     tier: 'A',
+    description: '每个学习者每天的 Copilot nudge 上限',
+    consumers: ['copilot.nudge-config'],
+    reload: 'per-call',
+    exposure: 'operator',
   },
   COPILOT_NUDGE_EXPIRES_HOURS: {
     schema: z.number().int().positive(),
@@ -490,6 +474,10 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     envName: 'COPILOT_NUDGE_EXPIRES_HOURS',
     envParse: posIntEnv,
     tier: 'A',
+    description: 'Copilot nudge 的过期小时数',
+    consumers: ['copilot.nudge-config'],
+    reload: 'per-call',
+    exposure: 'operator',
   },
   SELECTION_POLICY: {
     schema: z.enum(['legacy', 'softmax_mfi']),
@@ -551,6 +539,10 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     // 原 readPositiveInt：Number+floor（'1e2'→100 而非 parseInt 的 1）。
     envParse: posNumFloorEnv,
     tier: 'A',
+    description: '限流窗口内允许的 AI 请求数',
+    consumers: ['kernel.request-rate-limit'],
+    reload: 'per-call',
+    exposure: 'operator',
   },
   AI_RATE_LIMIT_WINDOW_MS: {
     schema: z.number().int().positive(),
@@ -558,6 +550,10 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     envName: 'AI_RATE_LIMIT_WINDOW_MS',
     envParse: posNumFloorEnv,
     tier: 'A',
+    description: 'AI 限流窗口毫秒数',
+    consumers: ['kernel.request-rate-limit'],
+    reload: 'per-call',
+    exposure: 'operator',
   },
   CLAUDE_CODE_MAX_RETRIES: {
     schema: z.number().int().min(0),
@@ -570,6 +566,10 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
       return Number.isFinite(n) && n >= 0 ? n : undefined;
     },
     tier: 'A',
+    description: 'pi 适配器的最大重试次数（原 SDK 子进程环境变量）',
+    consumers: ['server.ai.pi-agent-adapter'],
+    reload: 'per-call',
+    exposure: 'operator',
   },
   JUDGE_CALIBRATION_BATCH_MAX: {
     schema: z.number().int().min(1).max(50),
@@ -578,6 +578,10 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     // 原 readIntInRange：'0' 产出 0 交 reader clamp→1（posIntEnv 会吞成 20）。
     envParse: intEnv,
     tier: 'A',
+    description: '单轮判分校准抽样的最大样本数',
+    consumers: ['practice.judge-calibration'],
+    reload: 'per-call',
+    exposure: 'operator',
   },
   JUDGE_CALIBRATION_WINDOW_DAYS: {
     schema: z.number().int().min(1).max(90),
@@ -585,6 +589,10 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     envName: 'JUDGE_CALIBRATION_WINDOW_DAYS',
     envParse: intEnv,
     tier: 'A',
+    description: '判分校准抽样的回看天数',
+    consumers: ['practice.judge-calibration'],
+    reload: 'per-call',
+    exposure: 'operator',
   },
   JUDGE_CALIBRATION_REJUDGE_PROVIDER: {
     schema: z.string(),
@@ -592,6 +600,10 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     envName: 'JUDGE_CALIBRATION_REJUDGE_PROVIDER',
     envParse: stringEnv,
     tier: 'A',
+    description: '校准重判使用的 provider',
+    consumers: ['practice.judge-calibration'],
+    reload: 'per-call',
+    exposure: 'operator',
   },
   JUDGE_CALIBRATION_REJUDGE_MODEL: {
     schema: z.string(),
@@ -599,6 +611,10 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     envName: 'JUDGE_CALIBRATION_REJUDGE_MODEL',
     envParse: stringEnv,
     tier: 'A',
+    description: '校准重判使用的模型 id',
+    consumers: ['practice.judge-calibration'],
+    reload: 'per-call',
+    exposure: 'operator',
   },
   // ── 全局 provider pin（owner 裁决：env pin > DB > default） ────────────────
   // 裸 AI_PROVIDER_OVERRIDE / AI_PROVIDER_MODEL 不注册：resolver 只消费 lane.global.*，
@@ -610,6 +626,10 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     envName: 'JYEOO_RS_BINARY',
     envParse: stringEnv,
     tier: 'A',
+    description: 'jyeoo-rs 可执行文件路径（缺省由 reader 拼出）',
+    consumers: ['practice.jyeoo-supply'],
+    reload: 'per-call',
+    exposure: 'operator',
   },
   JYEOO_SPAWN_TIMEOUT_MS: {
     // env 垃圾值 NaN 直通 spawn 边界 fail-closed，不做 env 纠偏；DB 层走 zod（int
@@ -619,6 +639,10 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     envName: 'JYEOO_SPAWN_TIMEOUT_MS',
     envParse: rawParseIntEnv,
     tier: 'A',
+    description: 'jyeoo-rs 在途调用的墙钟上限（毫秒）',
+    consumers: ['practice.jyeoo-supply'],
+    reload: 'per-call',
+    exposure: 'operator',
   },
   JYEOO_BACKFILL_TIMEOUT_MS: {
     schema: z.number().int().positive(),
@@ -629,6 +653,10 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     // parser——它的直读 reader 语义就是 ''→NaN 直通，同一 env 名两面各取主 reader 语义。
     envParse: backfillTimeoutEnv,
     tier: 'A',
+    description: 'jyeoo:backfill 专用超时（缺省按题数 × 90s 推导）',
+    consumers: ['practice.jyeoo-supply'],
+    reload: 'per-call',
+    exposure: 'operator',
   },
   JYEOO_SPAWN_MAX_STDOUT_BYTES: {
     schema: z.number().int().positive(),
@@ -636,6 +664,10 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     envName: 'JYEOO_SPAWN_MAX_STDOUT_BYTES',
     envParse: rawParseIntEnv,
     tier: 'A',
+    description: 'jyeoo-rs 单次调用 stdout 上限（字节）',
+    consumers: ['practice.jyeoo-supply'],
+    reload: 'per-call',
+    exposure: 'operator',
   },
   JYEOO_SPAWN_MAX_STDERR_BYTES: {
     schema: z.number().int().positive(),
@@ -643,6 +675,10 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     envName: 'JYEOO_SPAWN_MAX_STDERR_BYTES',
     envParse: rawParseIntEnv,
     tier: 'A',
+    description: 'jyeoo-rs 单次调用 stderr 上限（字节）',
+    consumers: ['practice.jyeoo-supply'],
+    reload: 'per-call',
+    exposure: 'operator',
   },
   JYEOO_DAILY_FETCH_BUDGET: {
     // 0 = 当日禁抓（operator kill-switch），不得被 coalesce 成默认。
@@ -651,6 +687,10 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     envName: 'JYEOO_DAILY_FETCH_BUDGET',
     envParse: nonNegIntEnv,
     tier: 'A',
+    description: '每个学习日的 jyeoo 抓取预算；0 = 当日禁抓',
+    consumers: ['practice.jyeoo-budget'],
+    reload: 'per-call',
+    exposure: 'operator',
   },
   SUPPLY_NIGHTLY_SPEND_CAP_USD: {
     // 夜扫供题链（找题 + 换路 + 核验）每个学习日（Asia/Shanghai）合计 USD 上限；
@@ -662,6 +702,10 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     envName: 'SUPPLY_NIGHTLY_SPEND_CAP_USD',
     envParse: numberEnv,
     tier: 'A',
+    description: '夜扫供题链每个学习日的 USD 上限；0 = 不再派新付费供题',
+    consumers: ['practice.supply-spend-gate'],
+    reload: 'per-call',
+    exposure: 'operator',
   },
   // ── 引擎/资源上限 ─────────────────────────────────────────────────────────
   EXTRACT_OCR_ENGINE: {
@@ -696,6 +740,10 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     // env 层保原「非正/非有限 → fallback」——envParse 只出有限正值，其余 → 默认。
     envParse: posNumEnv,
     tier: 'A',
+    description: 'KC 去重判定的最大向量距离',
+    consumers: ['knowledge.kc-dedup'],
+    reload: 'per-call',
+    exposure: 'operator',
   },
   KC_DEDUP_WINDOW_DAYS: {
     schema: z.number().int().min(1),
@@ -704,6 +752,10 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     // 原 resolvePositiveInt：trunc(Number) ≥1（'1e2'→100 而非 parseInt 的 1）。
     envParse: posNumTruncEnv,
     tier: 'A',
+    description: 'KC 去重的回看窗口天数',
+    consumers: ['knowledge.kc-dedup'],
+    reload: 'per-call',
+    exposure: 'operator',
   },
   KC_DEDUP_MAX_PAIRS: {
     schema: z.number().int().min(1),
@@ -711,6 +763,10 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     envName: 'KC_DEDUP_MAX_PAIRS',
     envParse: posNumTruncEnv,
     tier: 'A',
+    description: '单轮 KC 去重的最大候选对数',
+    consumers: ['knowledge.kc-dedup'],
+    reload: 'per-call',
+    exposure: 'operator',
   },
   TAGGING_MATCH_THRESHOLD: {
     schema: z.number(),
@@ -723,6 +779,10 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
       return Number.isFinite(n) ? n : undefined;
     },
     tier: 'A',
+    description: '打标匹配的最低相似度',
+    consumers: ['kernel.knowledge-similarity'],
+    reload: 'per-call',
+    exposure: 'operator',
   },
   BACKUP_IMPORT_MAX_BYTES: {
     schema: z.number().int().min(1_000_000), // floor 1MB（过低会静默 413 每个 restore）
@@ -736,23 +796,39 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
       return Number.isFinite(n) ? n : NaN;
     },
     tier: 'A',
+    description: '备份导入请求体的最大字节数',
+    consumers: ['observability.backup-import'],
+    reload: 'per-call',
+    exposure: 'operator',
   },
   // ── 任务持续失败告警（observability/server/task-failure-alerts.ts 唯一判定） ──
   TASK_FAILURE_ALERT_CONSECUTIVE: {
     schema: z.number().int().min(2).max(100),
     codeDefault: 2,
     tier: 'A',
+    description: '同一任务连续失败达到此次数即告警',
+    consumers: ['observability.task-failure-alerts'],
+    reload: 'per-call',
+    exposure: 'operator',
     note: '同一 task kind 自上次成功以来连续失败达到此次数即告警',
   },
   TASK_FAILURE_ALERT_WINDOW_HOURS: {
     schema: z.number().int().min(1).max(168),
     codeDefault: 24,
     tier: 'A',
+    description: '失败率告警的回看窗口小时数',
+    consumers: ['observability.task-failure-alerts'],
+    reload: 'per-call',
+    exposure: 'operator',
   },
   TASK_FAILURE_ALERT_RATE: {
     schema: z.number().min(0).max(1),
     codeDefault: 0.5,
     tier: 'A',
+    description: '窗口内失败率严格高于此值才告警；1 = 关闭失败率规则',
+    consumers: ['observability.task-failure-alerts'],
+    reload: 'per-call',
+    exposure: 'operator',
     note: '窗口内失败率严格高于此值才告警；1 = 关闭失败率规则',
   },
   TASK_FAILURE_ALERT_MIN_RUNS: {
@@ -761,11 +837,19 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     schema: z.number().int().min(2).max(1000),
     codeDefault: 8,
     tier: 'A',
+    description: '失败率规则要求的最小运行次数',
+    consumers: ['observability.task-failure-alerts'],
+    reload: 'per-call',
+    exposure: 'operator',
   },
   TASK_FAILURE_ALERT_STALE_DAYS: {
     schema: z.number().int().min(1).max(90),
     codeDefault: 14,
     tier: 'A',
+    description: '最近一次失败早于此天数的连续失败不再告警',
+    consumers: ['observability.task-failure-alerts'],
+    reload: 'per-call',
+    exposure: 'operator',
     note: '最近一次失败早于此天数的连续失败不再告警（已停用的任务不长期挂红）',
   },
   // ── admission 面（enforce 断流；mode 原文透传保 throw 语义） ──────────────
@@ -834,6 +918,10 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     envName: 'ADMISSION_PROVIDER_RETRY_MAX_RETRIES',
     envParse: nonNegIntEnv,
     tier: 'A',
+    description: '瞬时失败的 in-run 额外发送上限（0 = 关闭 in-run 重试）',
+    consumers: ['server.ai.provider-transient-retry'],
+    reload: 'per-call',
+    exposure: 'operator',
     note: '绑定状态 429 等瞬时失败的额外付费发送上限（0=关闭 in-run 重试；发送总数=1+该值）',
   },
   ADMISSION_PROVIDER_RETRY_MAX_WAIT_MS: {
@@ -845,6 +933,10 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     envName: 'ADMISSION_PROVIDER_RETRY_MAX_WAIT_MS',
     envParse: posNumFloorEnv,
     tier: 'A',
+    description: 'in-run 重试的总睡眠预算（毫秒）',
+    consumers: ['server.ai.provider-transient-retry'],
+    reload: 'per-call',
+    exposure: 'operator',
     note: 'in-run 重试的总睡眠预算；放不下的 delay 不执行（超界=明确 provider 失败）',
   },
   ADMISSION_PROVIDER_RETRY_BASE_DELAY_MS: {
@@ -853,6 +945,10 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     envName: 'ADMISSION_PROVIDER_RETRY_BASE_DELAY_MS',
     envParse: nonNegIntEnv,
     tier: 'A',
+    description: '无 Retry-After 时的回退退避基数（毫秒）',
+    consumers: ['server.ai.provider-transient-retry'],
+    reload: 'per-call',
+    exposure: 'operator',
     note: '无 provider retry_after 时的回退退避基数（指数 2^n）',
   },
   AI_PROVIDER_SESSION_ADMISSION_POLICIES_JSON: {
@@ -891,6 +987,10 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     envName: 'VERIFY_SOLVE_PROVIDER_OVERRIDE',
     envParse: stringEnv,
     tier: 'A',
+    description: 'verify_solve lane 的 provider 覆盖',
+    consumers: ['ai.task-spec'],
+    reload: 'per-call',
+    exposure: 'operator',
   },
   'lane.verify_solve.model': {
     schema: z.string(),
@@ -898,6 +998,10 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     envName: 'VERIFY_SOLVE_MODEL_OVERRIDE',
     envParse: stringEnv,
     tier: 'A',
+    description: 'verify_solve lane 的模型覆盖',
+    consumers: ['ai.task-spec'],
+    reload: 'per-call',
+    exposure: 'operator',
   },
   'lane.vision_judge.provider': {
     schema: z.string(),
@@ -905,6 +1009,10 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     envName: 'VISION_JUDGE_PROVIDER',
     envParse: stringEnv,
     tier: 'A',
+    description: 'vision_judge lane 的 provider 覆盖',
+    consumers: ['ai.task-spec'],
+    reload: 'per-call',
+    exposure: 'operator',
   },
   'lane.vision_judge.model': {
     schema: z.string(),
@@ -912,6 +1020,10 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     envName: 'VISION_JUDGE_MODEL',
     envParse: stringEnv,
     tier: 'A',
+    description: 'vision_judge lane 的模型覆盖',
+    consumers: ['ai.task-spec'],
+    reload: 'per-call',
+    exposure: 'operator',
   },
   // lane.global.* = AI_PROVIDER_OVERRIDE 的 DB 位（env pin 恒压它，见 §2.2
   // ordering：arg > env global pin > DB global/task override > registry default）。
@@ -921,6 +1033,10 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
       .strict(),
     codeDefault: { level: 'high' },
     tier: 'B',
+    description: '全局推理档（lane.global 默认 high）',
+    consumers: ['ai.task-spec'],
+    reload: 'per-call',
+    exposure: 'operator',
   },
   'lane.global.provider': {
     schema: z.string(),
@@ -929,6 +1045,10 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     envParse: stringEnv,
     envMode: 'priority',
     tier: 'B',
+    description: '全局 provider pin 的 DB 位（env AI_PROVIDER_OVERRIDE 恒压它）',
+    consumers: ['ai.task-spec'],
+    reload: 'per-call',
+    exposure: 'operator',
   },
   'lane.global.model': {
     schema: z.string(),
@@ -937,6 +1057,10 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     envParse: stringEnv,
     envMode: 'priority',
     tier: 'B',
+    description: '全局模型 pin 的 DB 位（env AI_PROVIDER_MODEL 恒压它）',
+    consumers: ['ai.task-spec'],
+    reload: 'per-call',
+    exposure: 'operator',
   },
   // ── ingestion agent 周预算（启动额度门） ──────────────────────────────────
   'ingestion.agent_weekly_budget_usd': {
@@ -948,6 +1072,10 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     envName: 'INGESTION_AGENT_WEEKLY_BUDGET_USD',
     envParse: numberEnv,
     tier: 'A',
+    description: 'ingestion agent 每周 USD 上限；0 = 关闭 agent 启动',
+    consumers: ['ingestion.agent-budget'],
+    reload: 'per-call',
+    exposure: 'operator',
     // 资金授权不能拿 operator 的错误输入去顶默认值；预算行过期仍是事实
     // （早期实现就不消费 expires_at，TTL 生效是独立的资金行为变更）。
     transactionRead: { invalidEnv: 'error', expiredRow: 'ignore' },
@@ -958,6 +1086,10 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     codeDefault: 'zh-CN',
     envName: undefined, // 无 env fallback（TaskSpec pin 的 DB 位）
     tier: 'B',
+    description: '学习者 locale（TaskSpec pin 的 DB 位，无 env 层）',
+    consumers: ['ai.task-prompt-locale'],
+    reload: 'per-call',
+    exposure: 'operator',
   },
 };
 

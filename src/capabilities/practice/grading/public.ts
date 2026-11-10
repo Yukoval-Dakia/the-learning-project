@@ -114,6 +114,7 @@ export {
   JudgeDurablePendingResponseSchema,
 } from './server/judge-run-status';
 export { installModelAdmissionPins } from './server/model-admission-pins';
+export { projectAttemptEvidence } from './server/review-answer-response';
 export type { ReviewAnswerContext, ReviewAnswerResult } from './server/review-operation';
 
 export const submitReviewAnswer: typeof import('./server/review-operation').submitReviewAnswer =

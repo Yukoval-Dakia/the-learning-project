@@ -6,10 +6,10 @@
 // 强制：
 //   - 每个 content writer 有登记（status + tickets + note）；
 //   - publisher-converged 文件必须【逐写点】在结构邻域内调用 publisher seam
-//     （per-site 验证 —— 注册文件内新增绕过写口会被抓，复审 P1-7）；
+//     （per-site 验证 —— 注册文件内新增绕过写口会被抓）；
 //   - converged 登记必须对应真实 content 写入（防过期条目）；
 //   - working-copy-pending 必须带 pendingClass（cutover / blocked-by:ticket）
-//     —— 显式分类，不许笼统 pending（复审 P1-6）。
+//     显式分类，不许笼统 pending。
 //
 // 生命周期/投影列（draft_status / embedding / answer_class /
 // canonical_content_hash / metadata / knowledge_ids / difficulty）的写入方
@@ -29,7 +29,7 @@ export interface QuestionContentWriterEntry {
   /** 收敛/跟踪 ticket。 */
   tickets: string[];
   note: string;
-  /** pending 条目必填（P1-6；复审裁决补 'deferred'）：'blocked-by:YUK-NNNN'
+  /** pending 条目必填：'blocked-by:YUK-NNNN'
    *（真前置 —— 需要别的 lane 的契约）| 'deferred'（可做但选择不做，注明理由）
    * | 'cutover'（YUK-1059 统一切换时收敛）。 */
   pendingClass?: string;
@@ -62,16 +62,12 @@ export const QUESTION_CONTENT_WRITER_REGISTRY: Record<string, QuestionContentWri
     tickets: ['YUK-1043'],
     note: 'legacy dreaming 接受 INSERT ⇒ 同事务首版 admitted（manual+human）—— 可达接受路径不再是无契约写口（§2 矩阵行 13）。',
   },
-  // store-sourced-question.ts 已降为 shim（YUK-1468），content 写迁往
-  // submit-question.ts（同收敛纪律）。
   'src/capabilities/practice/supply/tools/submit-question.ts': {
     status: 'publisher-converged',
     tickets: ['YUK-1043', 'YUK-1468'],
     note: 'INSERT 走 sourced-draft-insert（converged）；图题事后富集 UPDATE（structured/figures/judge_override/multimodal —— 改变判分输入）之后同事务重发组 revision（复审 P1-6 补齐；纯 metadata 富集 digest 不变 ⇒ 幂等 noop）。',
   },
-  // submit-question.ts 自 YUK-1568 S3 起降为 facade（委托 shared-submit.ts
-  // 内核 + re-export），自身无 content 写点 —— 原登记按真实闭包迁移到
-  // shared-submit（同收敛纪律）。
+  // submit-question.ts 委托 shared-submit.ts，自身无 content 写点；登记在 shared-submit。
   'src/server/questions/shared-submit.ts': {
     status: 'publisher-converged',
     tickets: ['YUK-1468', 'YUK-1568'],
@@ -101,6 +97,11 @@ export const QUESTION_CONTENT_WRITER_REGISTRY: Record<string, QuestionContentWri
     status: 'publisher-converged',
     tickets: ['YUK-1043'],
     note: 'seed 每题 INSERT 后同事务铸首版 revision（withheld/unverified_rules；synthetic 答案非官方 —— provenance system_proposed 如实入契约；幂等：digest 不变 noop）。§2 矩阵 seeds 行收敛。',
+  },
+  'scripts/bench/search-bank-fixture.ts': {
+    status: 'publisher-converged',
+    tickets: ['YUK-1986'],
+    note: '检索验收合成语料 seeder（仅 loom_dev_* 自有库、sb1986: 前缀）：前 101 题 INSERT 后经 publishQuestionGroup 铸 admitted revision（official provenance、固定答案键）；其余模板扩增行保持 draft 不铸 revision（无判分消费者，同 deferred 草稿纪律）。',
   },
 
   // ─── 待收敛（工作副本直写；显式 pendingClass，不许笼统 pending） ───

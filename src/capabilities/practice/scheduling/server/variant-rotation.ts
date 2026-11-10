@@ -179,7 +179,7 @@ export async function prefetchProbeSelection(
       .select(QUESTION_PROJECTION)
       .from(question)
       // 契约准入门：recall 回放也要过 suspended/withdrawn 门 ——
-      // 挂起的上一题不返 recall，回落到 K 内首个可用题（复审 P1：此前无门，
+      // 挂起的上一题不返 recall，回落到 K 内首个可用题（P1：此前无门，
       // 挂起题仍被 recall 路径直送）。
       .where(
         and(inArray(question.id, lastQuestionIds), questionSuspendedPredicate(question)),

@@ -26,7 +26,7 @@
 //     映射成本引擎的 3 档获取尺度（见 acquisitionTierForQuestion 文档）。
 //   - subject profile sourcingRoutePreference：subjectProfiles（src/subjects/profile.ts）。
 
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, inArray, sql } from 'drizzle-orm';
 import { OBJECTIVE_ANSWER_KINDS } from '@/core/schema/answer-class';
 import { LearningItemOpenStatus } from '@/core/schema/business';
 import {
@@ -50,6 +50,7 @@ import {
   type DifficultyBand,
   type SupplyTargetContextV1T,
   buildCoverageEvidenceDemand,
+  difficultyBandFor,
   evidenceDemandToTargetContext,
 } from '@/kernel/supply-contracts';
 import { resolveSubjectProfile } from '@/subjects/profile';
@@ -248,26 +249,8 @@ export function acquisitionTierForQuestion(q: PoolQuestion): 1 | 2 | 3 {
   return 3; // provenance tier 3 (material) + 4 (generated) → 获取档 3（生成/草稿级）
 }
 
-// ── difficulty band 归类 ──────────────────────────────────────────────────────
-
-/**
- * 据题的 b 锚（calibrationB 优先，否则 difficulty 弱锚）相对 KC 的 θ̂ 归到一个难度档。
- * 窗口（logit 尺度）对齐架构 doc §2 的 σ_b≈0.75 + 选题 MFI 近-θ̂ 窗口：
- *   below   : b < θ̂ − NEAR_WINDOW
- *   near    : |b − θ̂| ≤ NEAR_WINDOW（诊断/MFI 最有用的格子）
- *   above   : θ̂ + NEAR_WINDOW < b ≤ θ̂ + STRETCH_WINDOW
- *   stretch : b > θ̂ + STRETCH_WINDOW
- */
-export const NEAR_WINDOW = 0.75;
-export const STRETCH_WINDOW = 1.5;
-
-export function difficultyBandFor(b: number, thetaHat: number): DifficultyBand {
-  const delta = b - thetaHat;
-  if (delta < -NEAR_WINDOW) return 'below';
-  if (delta <= NEAR_WINDOW) return 'near';
-  if (delta <= STRETCH_WINDOW) return 'above';
-  return 'stretch';
-}
+// Difficulty bands are the kernel contract (NEAR_WINDOW / difficultyBandFor).
+// The scanner still classifies each pool question against its KC's θ̂.
 
 // ── 优先级 + 指纹 ─────────────────────────────────────────────────────────────
 

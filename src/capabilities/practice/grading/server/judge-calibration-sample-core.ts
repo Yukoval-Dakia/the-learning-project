@@ -6,11 +6,12 @@
 // Selection: LLM routes only, newest judge per answer event, random order, capped by
 // cfg.batchMax. Idempotency relies on the partial unique index; the SELECT dedup is only a
 // pre-filter. The per-call provider/model override spreads after ...ctx so it beats vision
-// route injection; global AI_PROVIDER_OVERRIDE is neither set nor consulted.
+// route injection. A process AI_PROVIDER_OVERRIDE still outranks that override
+// inside resolveTaskProvider; the recorded pair is the binding that executes.
 
 import { and, eq, gte, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { DEFAULT_TASK_MODEL, canonicalProviderName } from '@/ai/task-spec';
+import { canonicalProviderName } from '@/ai/task-spec';
 import {
   IMAGE_CONSUMING_JUDGE_ROUTES,
   MODEL_BACKED_JUDGE_ROUTES,
@@ -19,7 +20,8 @@ import {
   type JudgeQuestionRow,
   judgeAnswer,
 } from '@/capabilities/practice/grading/server/judge/question-contract';
-import { getConfig } from '@/core/config/store';
+import { DEFAULT_TASK_MODEL, selectScopedLaneOverride } from '@/core/config/model-overrides';
+import { getConfig, getConfigSource } from '@/core/config/store';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { event, question } from '@/db/schema';
@@ -263,10 +265,13 @@ export type JudgeCalibrationSingleRejudge =
       rawText: string | null;
     };
 
-/** Sample-time lane snapshots (: effective values, env+DB merged). */
+/** Sample-time lane snapshots (effective values, env+DB merged).
+ * `envPinActive` is the process pin that suppresses the vision lane.
+ * Absent on receipts sent before that flag: those keep vision-first inference. */
 export interface JudgeCalibrationLaneSnapshots {
   visionJudgeProviderAtSample: string | null;
   aiProviderOverrideAtSample: string | null;
+  envPinActive?: boolean;
 }
 
 /** MF4 selection — window query → effective-verdict walk →
@@ -350,19 +355,33 @@ export async function selectJudgeCalibrationCandidates(
   return shuffleInPlace(candidates).slice(0, cfg.batchMax);
 }
 
-/** Lane snapshots — ：lane 快照记「生效值」（env+DB 合并后），不是裸
- * env——DB 写的 lane pin 也要被审计到。 lane.global.provider 才是 env pin >
- * DB > default 的生效值（裸 AI_PROVIDER_OVERRIDE 已从 keyspace 摘除）。 */
+/** Lane snapshots record the merged lane values. `envPinActive` is whether
+ * `lane.global.provider` came from the process pin — that pin suppresses the
+ * vision lane on the call path; a DB global pin does not. The two provider
+ * strings stay the configured facts and are not rewritten to the executed lane. */
 export function readCalibrationLaneSnapshots(): JudgeCalibrationLaneSnapshots {
-  const visionJudgeProviderAtSample = (() => {
-    const v = getConfig('VISION_JUDGE_PROVIDER');
-    return typeof v === 'string' ? v : null;
-  })();
-  const aiProviderOverrideAtSample = (() => {
-    const v = getConfig('lane.global.provider');
-    return typeof v === 'string' ? v : null;
-  })();
-  return { visionJudgeProviderAtSample, aiProviderOverrideAtSample };
+  const vision = getConfig('VISION_JUDGE_PROVIDER');
+  const global = getConfig('lane.global.provider');
+  return {
+    visionJudgeProviderAtSample: typeof vision === 'string' ? vision : null,
+    aiProviderOverrideAtSample: typeof global === 'string' ? global : null,
+    envPinActive: getConfigSource('lane.global.provider') === 'env',
+  };
+}
+
+/** Original judge provider under the same precedence as the call path:
+ * a process pin suppresses the vision lane; otherwise a vision route uses it. */
+function inferredOriginalJudgeProvider(
+  isVision: boolean,
+  lane: JudgeCalibrationLaneSnapshots,
+): string {
+  const visionLane = selectScopedLaneOverride({
+    lane: { provider: lane.visionJudgeProviderAtSample ?? undefined },
+    envPinActive: lane.envPinActive === true,
+    activation: 'provider',
+  });
+  if (isVision && visionLane?.provider) return visionLane.provider;
+  return lane.aiProviderOverrideAtSample ?? DEFAULT_TASK_MODEL.defaultProvider;
 }
 
 /** Prepared runner inputs. The staged executor uses this saved face without
@@ -546,14 +565,7 @@ export async function applyJudgeCalibrationRejudgeSample(
   laneSnapshots: JudgeCalibrationLaneSnapshots,
   now: Date,
 ): Promise<'written' | 'duplicate'> {
-  // No captured env override means the original judge ran the registry default
-  // lane — follow the current default, never a literal provider name (a stale
-  // literal mislabels samples as contrastive and pollutes the agreement rate).
-  const inferredOriginalProvider = rejudged.isVision
-    ? (laneSnapshots.visionJudgeProviderAtSample ??
-      laneSnapshots.aiProviderOverrideAtSample ??
-      DEFAULT_TASK_MODEL.defaultProvider)
-    : (laneSnapshots.aiProviderOverrideAtSample ?? DEFAULT_TASK_MODEL.defaultProvider);
+  const inferredOriginalProvider = inferredOriginalJudgeProvider(rejudged.isVision, laneSnapshots);
 
   return writeJudgeCalibrationSampleEvent(db, {
     originalJudgeEventId: rejudged.judgeEventId,
@@ -578,7 +590,7 @@ export async function applyJudgeCalibrationRejudgeSample(
 
 /** Freeze the selected candidates into staged-workset items by capturing the
  * FULL prepared input face (question row, subject profile, answer face) at
- * freeze time — R1 P1b: the freeze digest binds the exact runner
+ * freeze time — the freeze digest binds the exact runner
  * inputs, and execution never re-reads the (mutable) business rows.
  * Un-preparable candidates are reported, never silently dropped. */
 export async function freezeCalibrationWorkSetFromCandidates(

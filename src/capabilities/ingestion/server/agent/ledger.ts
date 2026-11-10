@@ -227,7 +227,7 @@ export async function readPaidAttempts(
   return attempts;
 }
 
-// ---------- segment claim (P1-5 mutual exclusion) ----------
+// ---------- segment claim (mutual exclusion) ----------
 
 /**
  * A numbered segment is OPEN while its latest row is outcome:'running' — any

@@ -9,6 +9,7 @@
 import Markdown from 'react-markdown';
 
 import { AgentRunError } from '@/ai/agent-run-error';
+import { providerTransientResendable, providerTransientVerdict } from '@/ai/provider-failure';
 import type {
   GroupEvidenceT,
   ModelExecutorRequest,
@@ -16,9 +17,11 @@ import type {
   ModelUnitOutcomeT,
   SlotResponseT,
 } from '@/core/schema/assessment';
+import type { LearnerHandwritingMarkerT } from '@/core/schema/assessment/materials';
 import { evaluateScoringRule } from '@/core/schema/assessment/scoring-rule';
 import type { JevSystemOneResponseT } from '@/core/schema/jev-systemone';
 import type { Db } from '@/db/client';
+import { readFigureMaterialMarkers } from '@/kernel/read-models/figure-origin';
 import {
   planProviderTransientRetry,
   providerTransientRetryPolicy,
@@ -174,6 +177,7 @@ function typedState(
   request: ModelExecutorRequest,
   entries: SlotResponseT[],
   groupEvidence: GroupEvidenceT[],
+  figureMarkers: ReadonlyMap<string, LearnerHandwritingMarkerT>,
 ): Record<string, unknown> {
   return {
     ...(request.review_context ? { review_context: request.review_context } : {}),
@@ -197,6 +201,9 @@ function typedState(
       ...(material.caption !== undefined ? { caption: material.caption } : {}),
       ...(material.alt_text !== undefined ? { alt_text: material.alt_text } : {}),
       ...(material.content_md !== undefined ? { content_md: material.content_md } : {}),
+      ...(figureMarkers.has(material.material_id)
+        ? { contains_learner_handwriting: figureMarkers.get(material.material_id) }
+        : {}),
     })),
   };
 }
@@ -546,12 +553,13 @@ export function createJevModelExecutor(options: JevModelExecutorOptions): ModelU
     let knownSpentMicros = 0;
     let unknownAttempts = 0;
     let outcome: Awaited<ReturnType<typeof runTypedPrimitiveTask<JevSystemOneResponseT>>>;
+    const figureMarkers = await readFigureMaterialMarkers(options.db, request.materials);
     for (;;) {
       try {
         outcome = await runTypedPrimitiveTask<JevSystemOneResponseT>(
           request.executor.task_kind,
           {
-            state: typedState(request, entries, request.group_evidence),
+            state: typedState(request, entries, request.group_evidence, figureMarkers),
             questions,
           },
           {
@@ -648,15 +656,12 @@ export function createJevModelExecutor(options: JevModelExecutorOptions): ModelU
 }
 
 function isTypedRetryable(error: unknown): boolean {
-  // AgentRunError api_error_result: transient statuses (null/429/5xx) mean the
-  // runner already spent its retry budget inside the deadline → still
-  // retryable at the attempt level; permanent statuses (401/422) → not.
-  if (error instanceof AgentRunError) {
-    if (error.subtype === 'api_error_result') {
-      const status = error.apiErrorStatus;
-      return status === null || status === undefined || status === 429 || status >= 500;
-    }
-    return false; // budget_timeout / contract / runner_error: per-invocation terminal
-  }
-  return true;
+  // Same owner as every other lane: only a positively-classified, resendable
+  // provider rejection may mark the unit retryable — the inner lifecycle
+  // budget is spent, so this flag only says a LATER attempt is honest (the
+  // rejection billed nothing). Unknown statuses, plain errors, timeouts and
+  // quota fail closed: a possibly-paid attempt is never re-bought blindly.
+  if (!(error instanceof AgentRunError)) return false;
+  const verdict = providerTransientVerdict({ error });
+  return verdict !== undefined && providerTransientResendable(verdict.class);
 }

@@ -223,6 +223,7 @@
 
     & .ql-controls .un-seg {
       width: 100%;
+      grid-template-columns: repeat(var(--un-seg-n), minmax(0, 1fr));
     }
 
     & .ql-pickers {

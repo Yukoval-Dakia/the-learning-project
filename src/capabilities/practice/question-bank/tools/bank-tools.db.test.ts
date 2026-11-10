@@ -1,11 +1,14 @@
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { eq, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { projectCopilotActivity } from '@/capabilities/copilot/server/tool-activity';
 import { generateReferenceSolution } from '@/capabilities/practice/question-bank/server/reference-solution';
 import * as schema from '@/db/schema';
-import { event, material_fsrs_state, question, source_asset } from '@/db/schema';
+import { artifact, event, material_fsrs_state, question, source_asset } from '@/db/schema';
+import { allowedQuestionIds } from '@/kernel/read-models/usage-policy';
 import {
   contractIntegrityDigest,
   normalizeQuestionGroupToContract,
@@ -15,10 +18,17 @@ import {
   publishQuestionGroupFromRow,
 } from '@/kernel/records/assessment-publication';
 import type { ToolContext } from '@/kernel/tools/types';
+import { executeDomainToolCall } from '@/server/ai/tools/mcp-bridge';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
+import { fileBankGapTool } from '../../server/tools/file-bank-gap';
+import { assertPaperOpenable } from '../../session/server/assessment/paper-issuance';
+import { writeQuizTool } from '../../session/tools/write-quiz';
 import { runEmbedBackfill } from '../jobs/embed_backfill';
+import { selectBankReceipt } from '../public';
 import { archiveQuestion, editQuestion } from '../server/question-bank-write';
 import { encodeBankRef } from './bank-ref';
+import { BankSearchScopeSchema, runSearchBank } from './bank-search';
+import type { BankAssessment } from './bank-search-contract';
 import { checkBankTool } from './check-bank';
 import { readBankTool } from './read-bank';
 import { searchBankTool } from './search-bank';
@@ -90,12 +100,205 @@ async function publishAdmitted(id: string) {
 }
 
 async function searchHits(input: Record<string, unknown>) {
-  const output = await searchBankTool.execute(ctx, searchBankTool.inputSchema.parse(input));
-  return output;
+  const { query, limit, cursor, ...scope } = input;
+  return runSearchBank(
+    db,
+    cursor
+      ? { form: 'cursor', cursor: String(cursor) }
+      : {
+          form: 'new',
+          query: String(query ?? ''),
+          limit: Number(limit ?? 20),
+          scope: BankSearchScopeSchema.parse({
+            draft_state: 'all',
+            admission_state: 'any',
+            ...scope,
+          }),
+        },
+  );
+}
+
+async function receiptFixture(run: string, kinds?: string[]) {
+  vi.stubEnv('BANK_GAP_EVIDENCE_SECRET', 'bank-boundary-fixture-signing-key-at-least-32-chars');
+  await seedQuestion('receipt-question', {
+    prompt_md: '边界样本：已知二次方程，判断根的个数。',
+    knowledge_ids: ['math'],
+  });
+  await publishAdmitted('receipt-question');
+  const owner: ToolContext = {
+    ...ctx,
+    taskRunId: run,
+    callerActor: { kind: 'user', ref: 'receipt-owner' },
+  };
+  const search = await searchBankTool.execute(owner, {
+    query: '边界样本',
+    count: 2,
+    ...(kinds ? { filters: { kinds } } : {}),
+  });
+  const hit = search.hits[0];
+  const evidence = [{ source: hit.evidence[0].source, quote: hit.evidence[0].text }];
+  if (!hit.ref) throw new Error('Published fixture has no revision ref');
+  const assessment: BankAssessment = {
+    ref: hit.ref,
+    parts: hit.parts,
+    checks: [{ condition: 'r1', verdict: 'supported', evidence }],
+    joint: { verdict: 'supported', evidence },
+  };
+  return { owner, search, assessment };
 }
 
 describe('bank tools boundary invariants (search_bank / read_bank / check_bank)', () => {
-  beforeEach(resetDb);
+  beforeEach(async () => {
+    vi.stubEnv('BANK_GAP_EVIDENCE_SECRET', 'bank-boundary-fixture-signing-key-at-least-32-chars');
+    await resetDb();
+  });
+
+  // @invariant security: batch authorization equals the frozen scalar policy for every root and recursive dependency
+  // @fails-if restricted, dangling, malformed, cyclic or historical lineage is authorized differently by batching
+  it('authorizes each root exactly as the frozen recursive scalar policy', async () => {
+    const now = new Date();
+    await db.insert(schema.source_document).values([
+      { id: 'allowed-doc', created_at: now, updated_at: now, provenance: {} },
+      {
+        id: 'denied-doc',
+        created_at: now,
+        updated_at: now,
+        provenance: { usage_policy: { derivation_policy: 'answer_only' } },
+      },
+      { id: 'epoch-doc', created_at: now, updated_at: now, provenance: { usage_epoch: 'current' } },
+    ]);
+    await db.insert(schema.learning_session).values({
+      id: 'ingestion-session',
+      type: 'ingestion',
+      status: 'active',
+      source_document_id: 'denied-doc',
+    });
+    await db.insert(event).values([
+      {
+        id: 'restricted-event',
+        actor_kind: 'user',
+        actor_ref: 'user',
+        action: 'attempt',
+        subject_kind: 'question',
+        subject_id: 'legacy',
+        outcome: 'failure',
+        payload: { derivation_policy: 'answer_only' },
+      },
+      {
+        id: 'historical-promotion',
+        actor_kind: 'agent',
+        actor_ref: 'legacy',
+        action: 'experimental:proposal',
+        subject_kind: 'record',
+        subject_id: 'historical-record',
+        payload: { kind: 'record_promotion', proposed_change: { record_id: 'historical-record' } },
+      },
+      {
+        id: 'allowed-promotion',
+        actor_kind: 'agent',
+        actor_ref: 'legacy',
+        action: 'experimental:proposal',
+        subject_kind: 'record',
+        subject_id: 'allowed-record',
+        payload: { kind: 'record_promotion', proposed_change: { record_id: 'allowed-record' } },
+      },
+      {
+        id: 'note',
+        actor_kind: 'agent',
+        actor_ref: 'legacy',
+        action: 'experimental:agent_note',
+        subject_kind: 'event',
+        subject_id: 'note',
+        payload: { refs: [{ kind: 'source_document', id: 'denied-doc' }] },
+      },
+    ]);
+    await db.insert(schema.learning_record).values({
+      id: 'historical-record',
+      kind: 'note',
+      source: 'capture',
+      capture_mode: 'text',
+      activity_kind: 'learning',
+      source_document_id: 'denied-doc',
+      created_at: now,
+      updated_at: now,
+    });
+    await db.insert(schema.learning_record).values({
+      id: 'allowed-record',
+      kind: 'note',
+      source: 'capture',
+      capture_mode: 'text',
+      activity_kind: 'learning',
+      source_document_id: 'allowed-doc',
+      created_at: now,
+      updated_at: now,
+    });
+    const fixtures = [
+      ['legacy', {}],
+      ['allow', { metadata: { source_document_id: 'allowed-doc' } }],
+      ['deny', { metadata: { source_document_id: 'denied-doc' } }],
+      ['dangling', { metadata: { source_document_id: 'gone' } }],
+      ['unknown', { metadata: { derivation_policy: 'invalid' } }],
+      ['null-binding', { metadata: { source_document_id: null } }],
+      ['bad-epochs', { metadata: { source_usage_epochs: [] } }],
+      [
+        'old-epoch',
+        {
+          metadata: {
+            source_document_id: 'epoch-doc',
+            source_usage_epochs: { 'epoch-doc': 'legacy' },
+          },
+        },
+      ],
+      ['record', { metadata: { source_record_id: 'historical-record' } }],
+      ['event', { metadata: { source_attempt_event_id: 'restricted-event' } }],
+      ['session', { metadata: { ingestion_session_id: 'ingestion-session' } }],
+      ['promotion', { source: 'dreaming', source_ref: 'historical-promotion' }],
+      ['promotion-allow', { source: 'dreaming', source_ref: 'allowed-promotion' }],
+      ['note-source', { metadata: { source_attempt_event_id: 'note' } }],
+      ['orphan-event', { metadata: { source_attempt_event_id: 'gone' } }],
+      ['cycle-a', {}],
+      ['cycle-b', {}],
+      ['parent-deny', { parent_variant_id: 'deny' }],
+    ] as const;
+    for (const [id, overrides] of fixtures) await seedQuestion(id, overrides);
+    await db
+      .update(question)
+      .set({ parent_variant_id: 'cycle-b' })
+      .where(eq(question.id, 'cycle-a'));
+    await db
+      .update(question)
+      .set({ parent_variant_id: 'cycle-a' })
+      .where(eq(question.id, 'cycle-b'));
+    await db.transaction(async (tx) => {
+      await tx.execute(sql`CREATE TEMP TABLE purpose_baseline_anchor(id text) ON COMMIT DROP`);
+      const frozen = readFileSync('drizzle/0142_yuk1834_purpose_authorization.sql', 'utf8')
+        .replaceAll('public.tlp_', 'pg_temp.old_tlp_')
+        .replaceAll('--> statement-breakpoint', '');
+      await tx.execute(sql.raw(frozen));
+      const ids = [...fixtures.map(([id]) => id), 'missing', 'legacy'];
+      const old = await tx.execute<{ id: string }>(
+        sql`SELECT id FROM question WHERE id IN (${sql.join(
+          ids.map((id) => sql`${id}`),
+          sql`, `,
+        )}) AND pg_temp.old_tlp_question_allows_derivation(id)`,
+      );
+      const batch = await allowedQuestionIds(tx, ids);
+      expect([...batch].sort()).toEqual(old.map((r) => r.id).sort());
+      expect([...batch].sort()).toEqual([
+        'allow',
+        'cycle-a',
+        'cycle-b',
+        'legacy',
+        'promotion-allow',
+      ]);
+      expect(await allowedQuestionIds(tx, [])).toEqual(new Set());
+      await tx
+        .update(schema.source_document)
+        .set({ provenance: { usage_policy: { derivation_policy: 'crisis' } } })
+        .where(eq(schema.source_document.id, 'allowed-doc'));
+      expect(await allowedQuestionIds(tx, ids)).not.toContain('allow');
+    });
+  });
 
   // @invariant data: served-face search returns only eligible items (withdrawn never; drafts/withheld only on the explicit dedup face) @fails-if a hard filter is dropped or ignored in SQL so withdrawn/withheld/draft items leak into the admitted+active served hits
   it('hard filters cannot be bypassed: withdrawn never served; draft/admission filters hold', async () => {
@@ -140,6 +343,72 @@ describe('bank tools boundary invariants (search_bank / read_bank / check_bank)'
     });
     expect(served.hits.map((h) => h.question_id)).toEqual(['bt_admitted']);
     expect(served.hits[0].ref).toMatch(/^qrev1:/);
+    const literal = await searchBankTool.execute(ctx, {
+      query: '电容器',
+      filters: { terms: ['已准入'] },
+    });
+    expect(literal.hits.map((h) => h.id)).toEqual(['bt_admitted']);
+    const wrong = await searchBankTool.execute(ctx, {
+      query: '电容器',
+      filters: { history: 'wrong' },
+    });
+    expect(wrong.hits).toEqual([]);
+    await db.insert(event).values({
+      id: 'bank-real-failure',
+      actor_kind: 'user',
+      actor_ref: 'learner',
+      action: 'attempt',
+      subject_kind: 'question',
+      subject_id: 'bt_admitted',
+      outcome: 'failure',
+      payload: { answer_md: 'incorrect' },
+    });
+    const failedHistory = await searchBankTool.execute(ctx, {
+      query: '电容器',
+      filters: { history: 'wrong' },
+    });
+    expect(failedHistory.hits.map((h) => h.id)).toEqual(['bt_admitted']);
+    await seedQuestion('bt_group', { prompt_md: '电容器充放电组合题根' });
+    await seedQuestion('bt_group_p1', {
+      prompt_md: '组合题子题',
+      parent_question_id: 'bt_group',
+      part_index: 0,
+    });
+    await db.insert(event).values({
+      id: 'bank-part-failure',
+      actor_kind: 'user',
+      actor_ref: 'learner',
+      action: 'attempt',
+      subject_kind: 'question',
+      subject_id: 'bt_group_p1',
+      outcome: 'failure',
+      payload: { answer_md: 'incorrect' },
+    });
+    const partFailure = await searchBankTool.execute(ctx, {
+      query: '电容器',
+      use: 'dedup',
+      filters: { history: 'wrong' },
+    });
+    expect(partFailure.hits.map((h) => h.id)).toContain('bt_group');
+    const partSeen = await searchBankTool.execute(ctx, {
+      query: '电容器',
+      use: 'dedup',
+      filters: { history: 'unseen' },
+    });
+    expect(partSeen.hits.map((h) => h.id)).not.toContain('bt_group');
+    await db.insert(schema.item_calibration).values({
+      id: 'bank-calibration',
+      question_id: 'bt_admitted',
+      source: 'fixed_anchor',
+      b_post: 0.7,
+    });
+    const calibrated = await searchBankTool.execute(ctx, {
+      query: '电容器',
+      filters: { difficulty: { basis: 'calibrated', range: [0.6, 0.8] } },
+    });
+    expect(calibrated.hits.map((h) => h.id)).toEqual(['bt_admitted']);
+    expect(calibrated.hits[0].facts.difficulty.basis).toBe('calibrated');
+    expect(calibrated.hits[0].facts.difficulty.value).toBeCloseTo(0.7);
 
     const dedup = await searchHits({ query: '电容器 充放电' });
     const ids = dedup.hits.map((h) => h.question_id);
@@ -503,13 +772,16 @@ describe('bank tools boundary invariants (search_bank / read_bank / check_bank)'
           `GRANT SELECT ON question, question_revision, question_group_lifecycle, source_asset TO "${role}"`,
         ),
       );
+      await db.execute(
+        sql.raw(`GRANT SELECT, INSERT, DELETE ON bank_search_snapshot TO "${role}"`),
+      );
       await bankDb.execute(sql.raw(`SET ROLE "${role}"`));
       const bankCtx = { ...ctx, db: bankDb } satisfies ToolContext;
       const read = await readBankTool.execute(
         bankCtx,
         readBankTool.inputSchema.parse({
           refs: [ref],
-          include: ['content', 'answers', 'metadata'],
+          include: ['content', 'answers', 'metadata', 'solution_prior'],
         }),
       );
       // The real PG role can see revisions only inside one read-only RR snapshot.
@@ -603,7 +875,6 @@ describe('bank tools boundary invariants (search_bank / read_bank / check_bank)'
     const output = await checkBankTool.execute(
       ctx,
       checkBankTool.inputSchema.parse({
-        allow_model: true,
         checks: [
           { id: 'current', kind: 'ref_state', refs: [ref] },
           {
@@ -629,5 +900,248 @@ describe('bank tools boundary invariants (search_bank / read_bank / check_bank)'
     expect(output.checks[1].interpretation).toBe(
       'This question proves the learner has mastered reading.',
     );
+  });
+
+  // @invariant security: caller judgments keep their provenance and unknown/contradicted required never qualify @fails-if a caller opinion is stored as a verified fact, uncited support is accepted or unknown/contradicted enters a paper
+  it('requires cited supported conditions and joint while retaining caller attribution', async () => {
+    const { owner, search, assessment } = await receiptFixture('receipt-judgment');
+    await expect(
+      searchBankTool.execute(owner, { query: '边界样本', conditions: [] }),
+    ).rejects.toThrow('required');
+    const inspection = await searchBankTool.execute(owner, {
+      query: '边界样本',
+      use: 'inspect',
+      conditions: [],
+    });
+    await expect(
+      writeQuizTool.execute(owner, { search_id: inspection.search_id, assessments: [] }),
+    ).rejects.toThrow('practice or inventory');
+    await seedQuestion('unread-part', { prompt_md: '未读图样本 ![图](missing.png)' });
+    await publishAdmitted('unread-part');
+    const unread = await searchBankTool.execute(owner, {
+      query: '未读图样本',
+      filters: { terms: ['未读图样本'] },
+    });
+    const hit = unread.hits[0];
+    expect(hit.missing.some((m) => m.reason === 'media_not_read')).toBe(true);
+    const evidence = [{ source: hit.evidence[0].source, quote: hit.evidence[0].text }];
+    await expect(
+      writeQuizTool.execute(owner, {
+        search_id: unread.search_id,
+        assessments: [
+          {
+            ref: hit.ref!,
+            parts: hit.parts,
+            checks: [{ condition: 'r1', verdict: 'supported', evidence }],
+            joint: { verdict: 'supported', evidence },
+          },
+        ],
+      }),
+    ).rejects.toThrow('supported required and joint');
+
+    for (const verdict of ['unknown', 'contradicted'] as const) {
+      const rejected = { ...assessment, checks: assessment.checks.map((c) => ({ ...c, verdict })) };
+      await expect(
+        writeQuizTool.execute(owner, { search_id: search.search_id, assessments: [rejected] }),
+      ).rejects.toThrow('supported required and joint');
+    }
+    await expect(
+      writeQuizTool.execute(owner, {
+        search_id: search.search_id,
+        assessments: [
+          {
+            ...assessment,
+            joint: { verdict: 'supported', evidence: [{ source: 'foreign', quote: 'forged' }] },
+          },
+        ],
+      }),
+    ).rejects.toThrow('authorized selected content');
+    expect(await db.select().from(artifact)).toHaveLength(0);
+    await writeQuizTool.execute(owner, { search_id: search.search_id, assessments: [assessment] });
+    const [paper] = await db.select().from(artifact);
+    expect(paper.tool_state).toMatchObject({
+      session_meta: { bank_decision_source: 'caller_assessed' },
+    });
+    expect(JSON.stringify(paper.tool_state)).not.toContain(assessment.joint.evidence[0].quote);
+  });
+
+  // @invariant security: private receipt quotes never reach learner tool activity or mirrored events
+  // @fails-if assessment quotes or demand prose survive the live, persisted or tool_use projection
+  it('keeps receipt evidence out of learner-visible tool activity', async () => {
+    const { owner, search, assessment } = await receiptFixture('receipt-private');
+    const marker = 'PRIVATE_REFERENCE_RUBRIC_SENTINEL';
+    const input = {
+      search_id: search.search_id,
+      assessments: [
+        {
+          ...assessment,
+          joint: {
+            verdict: 'supported',
+            evidence: [{ source: 'criterion:private', quote: marker }],
+          },
+        },
+      ],
+    };
+    const visible: unknown[] = [];
+    const start = projectCopilotActivity({ kind: 'tool_started', toolName: 'write_quiz', input });
+    visible.push(start);
+    await executeDomainToolCall(writeQuizTool, input, {
+      ctx: { ...owner, callerActor: { kind: 'agent', ref: 'copilot' } },
+      onToolComplete: (call) => {
+        visible.push(call);
+        visible.push(projectCopilotActivity({ kind: 'tool_finished', ...call }));
+      },
+    });
+    visible.push(...(await db.select().from(event).where(eq(event.action, 'tool_use'))));
+    expect(visible.length).toBeGreaterThan(3);
+    expect(JSON.stringify(visible)).not.toContain(marker);
+    expect(start?.input).toEqual({ search_id: search.search_id, assessments_count: 1 });
+    expect(
+      projectCopilotActivity({
+        kind: 'tool_started',
+        toolName: 'file_bank_gap',
+        input: { ...input, demand: { claim: { statement: marker } } },
+      })?.input,
+    ).toEqual({ search_id: search.search_id, assessments_count: 1 });
+  });
+
+  // @invariant concurrency: receipt-based paper selection serializes and never issues another revision @fails-if concurrent same-run calls create two papers or a later current revision silently replaces the selected one at paper opening
+  it('serializes receipt consumption and rejects replacement revisions when opening the paper', async () => {
+    const { owner, search, assessment } = await receiptFixture('receipt-paper-race');
+    const results = await Promise.allSettled(
+      [1, 2].map(() =>
+        writeQuizTool.execute(owner, { search_id: search.search_id, assessments: [assessment] }),
+      ),
+    );
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    const papers = await db.select().from(artifact);
+    expect(papers).toHaveLength(1);
+    await editQuestion(
+      db,
+      'receipt-question',
+      0,
+      { prompt_md: '边界样本：修改后的另一份题面。' },
+      'receipt-edit',
+    );
+    await expect(db.transaction((tx) => assertPaperOpenable(tx, papers[0].id))).rejects.toThrow(
+      'searched question revision changed',
+    );
+  });
+
+  // @invariant concurrency: a filing binds the original receipt and concurrent identical content is idempotent @fails-if stale evidence can file, a repeated request creates multiple ledger claims, or changed judgments replay as identical
+  it('revalidates gap evidence and deduplicates concurrent filings without upgrading caller judgments', async () => {
+    const { owner, search, assessment } = await receiptFixture('receipt-gap-race', [
+      'choice',
+      'fill_blank',
+    ]);
+    const negative = {
+      ...assessment,
+      checks: assessment.checks.map((c) => ({ ...c, verdict: 'contradicted' as const })),
+      joint: { ...assessment.joint, verdict: 'contradicted' as const },
+    };
+    const demand = {
+      version: 1 as const,
+      demand_id: 'receipt-gap',
+      policy_version: 'supply-v2-phase-a',
+      subject_id: 'math',
+      claim: { kind: 'content_coverage' as const, knowledge_ids: ['math'], statement: '边界样本' },
+      evidence: { observables: ['correct response'], minimum_observations: 1 },
+      task: { kinds: ['choice', 'fill_blank'], allowed_uses: ['practice' as const] },
+      difficulty: { band: 'near' as const, scale: 'authored', target_value: null },
+      inventory_goal: { eligible_count: 2, horizon_days: 7 },
+      control: { needed_by: null, max_budget_micro_usd: 0, max_attempts: 1 },
+      causes: [{ kind: 'coverage_gap' as const }],
+    };
+    await db.insert(schema.knowledge).values({
+      id: 'math',
+      name: '数学',
+      domain: 'math',
+      created_at: new Date(),
+      updated_at: new Date(),
+    });
+    const ticket = { ...demand, inventory_goal: { ...demand.inventory_goal, eligible_count: 12 } };
+    const preparer = {
+      ...owner,
+      callerActor: { kind: 'agent' as const, ref: 'question_preparer' },
+      supplyDemand: ticket,
+    };
+    await expect(
+      searchBankTool.execute(preparer, { query: '边界样本', use: 'inventory', count: 2 }),
+    ).rejects.toThrow('bound ticket');
+    const stock = await searchBankTool.execute(preparer, {
+      query: '边界样本',
+      use: 'inventory',
+      page_size: 1,
+    });
+    expect(stock.goal).toEqual({ use: 'inventory', count: 12 });
+    expect(stock.hits.map((h) => h.id)).toEqual(['receipt-question']);
+    expect(stock.conditions[0].text).toContain('correct response');
+    await db
+      .update(schema.bank_search_snapshot)
+      .set({
+        as_of: new Date(Date.now() - 20 * 60_000),
+        expires_at: new Date(Date.now() - 5 * 60_000),
+      })
+      .where(eq(schema.bank_search_snapshot.search_id, stock.search_id));
+    await expect(
+      selectBankReceipt(db, preparer, stock.search_id, [assessment], true, true),
+    ).resolves.toMatchObject({ accepted_refs: [assessment.ref] });
+    await expect(
+      writeQuizTool.execute(preparer, { search_id: stock.search_id, assessments: [assessment] }),
+    ).rejects.toThrow('expired');
+
+    await expect(
+      writeQuizTool.execute(
+        { ...owner, supplyDemand: { ...ticket, demand_id: 'other-ticket' } },
+        {
+          search_id: stock.search_id,
+          assessments: [assessment],
+        },
+      ),
+    ).rejects.toThrow();
+    const input = {
+      request_id: 'receipt-gap-request',
+      demand,
+      search_id: search.search_id,
+      assessments: [negative],
+    };
+    const filings = await Promise.all([
+      fileBankGapTool.execute(owner, input),
+      fileBankGapTool.execute(owner, input),
+    ]);
+    expect(
+      filings.every((f) => f.status === 'held' && f.reason.startsWith('budget_exhausted')),
+    ).toBe(true);
+    expect(filings.filter((f) => f.deduplicated)).toHaveLength(1);
+    expect(
+      await db.select().from(event).where(eq(event.id, 'fbgap|receipt-gap-request')),
+    ).toHaveLength(1);
+    const changed = await fileBankGapTool.execute(owner, {
+      ...input,
+      assessments: [
+        {
+          ...negative,
+          checks: negative.checks.map((c) => ({ ...c, verdict: 'unknown' as const })),
+        },
+      ],
+    });
+    expect(changed.status).toBe('rejected');
+    await editQuestion(db, 'receipt-question', 0, { prompt_md: '新题面' }, 'receipt-edit');
+    await expect(
+      fileBankGapTool.execute(owner, { ...input, request_id: 'stale-gap-request' }),
+    ).rejects.toThrow('stale');
+    expect(
+      await db.select().from(event).where(eq(event.id, 'fbgap|stale-gap-request')),
+    ).toHaveLength(0);
+    await db.update(schema.bank_search_snapshot).set({
+      as_of: new Date(Date.now() - 20 * 60_000),
+      expires_at: new Date(Date.now() - 5 * 60_000),
+    });
+    const replay = await fileBankGapTool.execute(
+      { ...owner, taskRunId: 'retry-after-response-loss' },
+      input,
+    );
+    expect(replay.deduplicated).toBe(true);
+    expect(replay.status).toBe('held');
   });
 });
