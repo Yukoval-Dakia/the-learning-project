@@ -735,7 +735,8 @@ function nativeFrozenPrompt(
 }
 
 function nativeMentionsAny(knowledgeIds: readonly string[]) {
-  return or(...knowledgeIds.map((id) => nativeScopeMentions(id)));
+  // nativeScopeMentions casts its argument as jsonb; the caller must pass a JSON array.
+  return or(...knowledgeIds.map((id) => nativeScopeMentions(JSON.stringify([id]))));
 }
 
 function legacyMentionsAny(knowledgeIds: readonly string[]) {
