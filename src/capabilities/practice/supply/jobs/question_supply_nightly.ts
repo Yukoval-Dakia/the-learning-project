@@ -21,7 +21,9 @@
 // 本 job **不**新增任何绕过该过滤的 active-surface 查询。dispatcher 只 enqueue 既有队列 +
 // emit 观测事件，永不写题的 b 锚（item difficulty）——纯只读消费 + 派发，不污染标定轴。
 
+import { and, inArray, isNull } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
+import { readOpenSelectionMissDemands } from '@/capabilities/practice/question-bank/public';
 import { discoverConfusableContrastTargets } from '@/capabilities/practice/supply/server/confusable-contrast-discovery';
 import { recentlyDispatchedFingerprints } from '@/capabilities/practice/supply/server/dispatcher';
 import { runInventoryShadowDualRead } from '@/capabilities/practice/supply/server/inventory-projection';
@@ -33,10 +35,13 @@ import {
   type QuestionSupplyTarget,
   computePriority,
   discoverSupplyTargets,
+  seedGenerationMethod,
+  seedRoutePreference,
 } from '@/capabilities/practice/supply/server/target-discovery';
 import { targetFingerprint } from '@/capabilities/practice/supply/server/target-fingerprint';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
+import { knowledge } from '@/db/schema';
 import { loadActivityTier } from '@/kernel/read-models/activity-tier';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
 import { loadReturnStockGaps } from '@/kernel/read-models/return-stock';
@@ -308,6 +313,73 @@ async function dispatchReturnStock(
   return tallyByStatus(results, results.length + budgetDeferred, 0, budgetDeferred);
 }
 
+async function loadSelectionMissTargets(db: Db, now: Date): Promise<QuestionSupplyTarget[]> {
+  let demands: Awaited<ReturnType<typeof readOpenSelectionMissDemands>>;
+  try {
+    demands = await readOpenSelectionMissDemands(db, now);
+  } catch (err) {
+    console.error(
+      '[question_supply_nightly] selection_miss read failed; coverage gaps still dispatch',
+      err,
+    );
+    return [];
+  }
+  if (demands.length === 0) return [];
+  const ids = [...new Set(demands.map((demand) => demand.miss.knowledge_id))];
+  const liveRows = await db
+    .select({ id: knowledge.id })
+    .from(knowledge)
+    .where(and(inArray(knowledge.id, ids), isNull(knowledge.archived_at)));
+  const live = new Set(liveRows.map((row) => row.id));
+  const targets: QuestionSupplyTarget[] = [];
+  for (const demand of demands) {
+    const knowledgeId = demand.miss.knowledge_id;
+    if (!live.has(knowledgeId)) continue;
+    let profile = resolveSubjectProfile(null);
+    try {
+      profile = resolveSubjectProfile(demand.miss.subject_id);
+    } catch {
+      profile = resolveSubjectProfile(null);
+    }
+    const subjectId = profile.id;
+    const routePreference = seedRoutePreference(profile);
+    const fingerprint = targetFingerprint({
+      subjectId,
+      knowledgeIds: [knowledgeId],
+      kind: 'any',
+      difficultyBand: 'near',
+      gapKind: 'frontier_zero',
+      minSourceTier: 2,
+    });
+    const evidence = buildCoverageEvidenceDemand({
+      subjectId,
+      knowledgeIds: [knowledgeId],
+      statement: `selection_miss ${demand.miss.reason} for knowledge ${knowledgeId}`,
+      eligibleCount: 1,
+      cause: { kind: 'selection_miss', ref: demand.eventId },
+    });
+    const preferredGenerationMethod = seedGenerationMethod(profile);
+    targets.push({
+      id: newId(),
+      fingerprint,
+      gapKind: 'frontier_zero',
+      subjectId,
+      knowledgeIds: [knowledgeId],
+      kind: 'any',
+      difficultyBand: 'near',
+      desiredCount: 1,
+      minSourceTier: 2,
+      routePreference,
+      ...(preferredGenerationMethod ? { preferredGenerationMethod } : {}),
+      priority: computePriority('frontier_zero', 0),
+      reason: `selection_miss ${demand.miss.reason}: knowledge ${knowledgeId} is due and has no servable question`,
+      constraints: {},
+      context: evidenceDemandToTargetContext(evidence),
+    });
+  }
+  return targets;
+}
+
 // 对比缺口是附加来源：读取失败只丢这一路，覆盖缺口照常派发。
 async function discoverContrastTargetsIsolated(db: Db): Promise<QuestionSupplyTarget[]> {
   try {
@@ -331,11 +403,17 @@ async function runSupplyDiscoveryAndDispatch(
       await runInventoryShadowDualRead(db, input, currentTargets);
     },
   });
-  // 易混对比缺口与覆盖缺口同表排序，共用 per-run 硬顶与 dispatcher cooldown。
-  // 稳定排序：同优先级保持覆盖缺口在前。
-  const targets = [...coverageTargets, ...(await discoverContrastTargetsIsolated(db))].sort(
-    (a, b) => b.priority - a.priority,
+  const coverageFingerprints = new Set(coverageTargets.map((target) => target.fingerprint));
+  const selectionMissTargets = (await loadSelectionMissTargets(db, new Date())).filter(
+    (target) => !coverageFingerprints.has(target.fingerprint),
   );
+  // 易混对比缺口、选题落空与覆盖缺口同表排序，共用 per-run 硬顶与 dispatcher cooldown。
+  // 稳定排序：同优先级保持覆盖缺口在前。
+  const targets = [
+    ...coverageTargets,
+    ...selectionMissTargets,
+    ...(await discoverContrastTargetsIsolated(db)),
+  ].sort((a, b) => b.priority - a.priority);
   if (targets.length === 0) return emptyTally();
   // 先剔除冷却中的目标再截取：冷却目标派发时只会 skipped，不该占 per-run 名额挤掉
   // 低优先级缺口。dispatcher 派发时仍按同一判据复查。

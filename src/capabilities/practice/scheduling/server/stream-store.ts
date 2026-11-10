@@ -36,6 +36,7 @@ import {
   type ComposeSoftmaxResult,
   composeSoftmaxStream,
 } from './softmax-selection';
+import { withdrawStalePendingDueLines } from './stale-due-lines';
 import { planStoredStreamBudgetTrim, storedStreamExceedsBudget } from './stored-stream-budget';
 import { estimateStreamItemMinutes } from './stream-budget';
 import { type ComposerInputs, type StreamPlan, composeDailyStream } from './stream-composer';
@@ -712,6 +713,17 @@ export async function getStream(
       .orderBy(asc(practice_stream_item.position));
   }
 
+  const hasPendingDecay = rows.some(
+    (row) => row.status === 'pending' && row.item_kind === 'question' && row.source === 'decay',
+  );
+  if (hasPendingDecay && (await withdrawStalePendingDueLines(db, date)) > 0) {
+    rows = await db
+      .select()
+      .from(practice_stream_item)
+      .where(streamPartitionPredicate(date))
+      .orderBy(asc(practice_stream_item.position));
+  }
+
   const [budget, questionPace] = await Promise.all([
     resolveDailyPracticeBudget(db),
     readQuestionPace(db),
@@ -959,8 +971,10 @@ export async function recomposeStream(
 // as compose), excluding frozen refs. targetCount is the number of replaceable pending
 // slots, not the pool size, so sampling is real IPPS (π_i < 1).
 // - Only items touching the answered question's KCs are reranked. Unrelated pending
-// items, due rows, paper rows, recall-locked rows, and done/in_progress/skipped rows
-// stay frozen: not deleted, not moved, not re-sampled.
+// items, paper rows, recall-locked rows, and done/in_progress/skipped rows stay
+// frozen: not deleted, not moved, not re-sampled. Pending decay rows whose card is
+// no longer due today, or whose knowledge was settled after the row was written,
+// are removed first; the decay rows that remain stay frozen.
 // - A row whose snapshot is not recall-locked but whose fresh classification is recall
 // stays in place (fail-closed); never drop it into a freed slot.
 // - Sample sizes fluctuate. Delete only slots that will actually be refilled
@@ -997,30 +1011,35 @@ export async function reRankAfterAnswer(
 ): Promise<number> {
   const { date, sessionId, answeredQuestionId } = opts;
 
-  // 受影响 KC = 刚答完那题的 knowledge_ids。空 → 无 θ̂ 移动锚点 → no-op（不触发重排）。
+  // 受影响 KC = 刚答完那题的 knowledge_ids。空则没有 θ̂ 锚点，不重排非到期行；
+  // 过期的待做到期行仍先撤下。
   const [answered] = await db
     .select({ knowledge_ids: question.knowledge_ids })
     .from(question)
     .where(eq(question.id, answeredQuestionId))
     .limit(1);
   const affectedKnowledgeIds = new Set((answered?.knowledge_ids ?? []).filter(Boolean));
-  if (affectedKnowledgeIds.size === 0) return 0;
 
   const { added, observations } = await db.transaction(async (tx) => {
     // Same key as every compose path, so rerank cannot race lazy/recompose/nightly.
     await lockPracticeStreamPartition(tx, date, sessionId);
+    // Pending decay rows that are no longer due today, or whose knowledge was settled
+    // after the row was written, leave before rerank. The decay rows that remain,
+    // plus paper, recall-locked, and completed/in-progress/skipped rows, stay frozen.
+    await withdrawStalePendingDueLines(tx, date, sessionId);
 
     const rows = await tx
       .select()
       .from(practice_stream_item)
       .where(streamPartitionPredicate(date, sessionId))
       .orderBy(asc(practice_stream_item.position));
-    if (rows.length === 0) return { added: 0, observations: [] } satisfies ComposeOutcome;
+    if (affectedKnowledgeIds.size === 0 || rows.length === 0) {
+      return { added: 0, observations: [] } satisfies ComposeOutcome;
+    }
 
     // Rerank scope: pending question items from variant/new_check whose snapshot is not
-    // recall-locked. Due rows, paper rows, recall-locked rows, and completed/in-progress/
-    // skipped rows are frozen. Frontier items are sampled at compose time but excluded
-    // here: frontier signals structural reachability, not θ̂ diagnostics, so answering must
+    // recall-locked. Frontier items are sampled at compose time but excluded here:
+    // frontier signals structural reachability, not θ̂ diagnostics, so answering must
     // not churn them. Changing either side must preserve that split.
     const allPendingNonDue = rows.filter(
       (r) =>

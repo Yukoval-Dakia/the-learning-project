@@ -7,6 +7,7 @@ import {
   enrollFsrsStateIfAbsent,
   getFsrsState,
   initialSchedulingState,
+  retireQuestionFsrsState,
   upsertFsrsState,
 } from '@/kernel/records/scheduling-state';
 
@@ -73,11 +74,14 @@ export async function enrollPromotedQuestionScheduling(
  */
 export async function enrollAddedKnowledgeScheduling(
   tx: Tx,
-  input: SchedulingEnrollmentEvidence & { knowledgeIds: readonly string[] },
+  input: SchedulingEnrollmentEvidence & {
+    questionId: string;
+    knowledgeIds: readonly string[];
+  },
 ): Promise<string[]> {
   const enrolledKnowledgeIds: string[] = [];
-  // Preserve input order and CAS insertion: do not read/parse existing cards or
-  // turn a concurrent review's schedule into an enrollment upsert.
+  // Preserve input order and CAS insertion: do not read/parse existing knowledge
+  // cards or turn a concurrent review's schedule into an enrollment upsert.
   for (const knowledgeId of await contentKnowledgeIds(tx, input.knowledgeIds)) {
     const enrolled = await enrollFsrsStateIfAbsent(
       tx,
@@ -85,5 +89,9 @@ export async function enrollAddedKnowledgeScheduling(
     );
     if (enrolled) enrolledKnowledgeIds.push(knowledgeId);
   }
+  // The question now carries a knowledge label, so the schedule lives on the
+  // knowledge card. Drop the question-level card in this same transaction; a
+  // question that never had one is a no-op.
+  await retireQuestionFsrsState(tx, input.questionId);
   return enrolledKnowledgeIds;
 }
