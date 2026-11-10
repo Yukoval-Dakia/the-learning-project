@@ -34,8 +34,10 @@ import { resolveSubjectProfile } from '@/subjects/profile';
 import { type SupplyPlanRunAgentFn, runSupplyPlanOperation } from '../server/supply-plan-operation';
 import {
   discoverSupplyTargets,
+  isDifficultyBand,
   isUnanchoredSupplyPaused,
   jyeooBudgetRemaining,
+  resolveBandLevelTarget,
 } from '../supply/public';
 
 // 非终态 placement claim（schema.ts placement_starter_claim 注释同集）：
@@ -514,6 +516,10 @@ export async function runSupplyPlanner(
         knowledge_id: item.knowledge_id,
         kind: item.kind,
         difficulty_band: item.difficulty_band ?? null,
+        difficulty_levels: isDifficultyBand(item.difficulty_band)
+          ? resolveBandLevelTarget(item.difficulty_band, mastery.get(item.knowledge_id)?.theta ?? 0)
+              .levels
+          : null,
         count: item.count,
         route_preference: item.route_preference,
         ...(claimByKnowledgeId.has(item.knowledge_id)

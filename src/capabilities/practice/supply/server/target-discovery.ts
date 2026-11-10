@@ -58,6 +58,7 @@ import type { SubjectProfile } from '@/subjects/profile-schema';
 import { rotationClassForKind } from '../../scheduling/public';
 // Stable fingerprint lives in a runtime-free module so operator tooling can derive a target
 // without loading this scanner's readers.
+import { type BandLevelTarget, resolveBandLevelTarget } from './band-level';
 import { targetFingerprint } from './target-fingerprint';
 
 // ── Types（Task 13 Step 1，prompt 字面给定的形状即权威）────────────────────────
@@ -92,6 +93,8 @@ export interface QuestionSupplyTarget {
   knowledgeIds: string[];
   kind: string;
   difficultyBand: DifficultyBand;
+  /** 1–5 span for `difficultyBand` at this KC's θ̂. Computed once at discovery. */
+  levelTarget: BandLevelTarget;
   desiredCount: number;
   minSourceTier: 1 | 2 | 3;
   routePreference: SupplyRoute[];
@@ -384,6 +387,7 @@ export function scanCoverageGaps(
       knowledgeIds: [f.knowledgeId],
       kind: fields.kind,
       difficultyBand: fields.difficultyBand,
+      levelTarget: resolveBandLevelTarget(fields.difficultyBand, f.thetaHat),
       desiredCount: fields.desiredCount,
       minSourceTier: fields.minSourceTier,
       routePreference,

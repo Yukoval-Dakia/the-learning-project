@@ -101,6 +101,14 @@ const State = z.object({
     placementClaimId: z.string().optional(),
     objectiveOnly: z.boolean().optional(),
     kindRequired: z.boolean().optional(),
+    /** Resolved 1–5 span. null = the band holds no ordinal. Absent = legacy demand. */
+    difficultyLevels: z
+      .object({
+        min: z.number().int().min(1).max(5),
+        max: z.number().int().min(1).max(5),
+      })
+      .nullable()
+      .optional(),
   }),
   trace: SupplyTraceV1.optional(),
   subjectId: z.string(),
@@ -288,6 +296,7 @@ const FALLBACKABLE_BLOCK_REASONS: ReadonlySet<string> = new Set([
   'parse',
   'kind_gate',
   'knowledge_unresolvable',
+  'difficulty_out_of_band',
 ]);
 
 /** Routes the executor can actually dispatch ('sourcing_web' is always tried). */
@@ -308,6 +317,7 @@ const PLACEMENT_REDRIVE_BLOCK_REASONS: ReadonlySet<string> = new Set([
   'parse',
   'kind_gate',
   'knowledge_unresolvable',
+  'difficulty_out_of_band',
 ]);
 
 /** Routes of the persisted plan not yet tried for this demand (deduped, in order). */
@@ -385,6 +395,9 @@ export async function dispatchWebSupplyRouteFallback(
         knowledge_id: state.item.knowledgeId,
         kind: state.item.kind,
         difficulty_band: state.item.difficultyBand,
+        ...(state.item.difficultyLevels !== undefined
+          ? { difficulty_levels: state.item.difficultyLevels }
+          : {}),
         count: state.item.count,
         route_preference: [route],
         ...(state.item.objectiveOnly ? { objective_only: true } : {}),
@@ -457,6 +470,9 @@ export async function dispatchWebSupplyRouteFallback(
           knowledge_ids: [state.item.knowledgeId],
           kind: state.item.kind,
           difficulty_band: state.item.difficultyBand,
+          ...(state.item.difficultyLevels !== undefined
+            ? { difficulty_levels: state.item.difficultyLevels }
+            : {}),
           desired_count: state.item.count,
           route_plan: state.routePlan,
           chosen_route: route,
@@ -908,7 +924,13 @@ async function runWebSupplyRound(
   // Validate the original claim binding before deriving a private acquisition key.
   if (placement && roundId) item.demandId = roundId;
   const intent = {
-    item: { ...item, routePreference: undefined },
+    // levelTarget / difficultyLevels are how this fill is aimed, not a different demand.
+    item: {
+      ...item,
+      routePreference: undefined,
+      levelTarget: undefined,
+      difficultyLevels: undefined,
+    },
     trace: trace ? { ...trace, trace_id: undefined } : undefined,
     subjectId: params.subjectProfile.id,
   };
@@ -937,7 +959,10 @@ async function runWebSupplyRound(
     sequence: 0,
     demandId: item.demandId,
     fingerprint,
-    item,
+    item: {
+      ...item,
+      ...(item.levelTarget ? { difficultyLevels: item.levelTarget.levels } : {}),
+    },
     trace,
     subjectId: params.subjectProfile.id,
     causeId: params.causeId,
@@ -1007,6 +1032,7 @@ async function runWebSupplyRound(
         kindRequired: item.kindRequired,
         // Placement 交付只走扁平提交链——取水即只要不带 parts 的单题。
         flatOnly: placement !== undefined,
+        ...(item.levelTarget ? { levelTarget: item.levelTarget } : {}),
         subjectProfile: params.subjectProfile,
       },
       ctx: {
@@ -1046,6 +1072,8 @@ async function runWebSupplyRound(
   await recordAcquisition(fetched.taskRunId, fetched.costUsd);
   // The actual runner id is canonical. A legacy/injected fetch without one cannot
   // produce a traceable supply commit; preserve its result and stop honestly.
+  // Out-of-band questions were already dropped by the fetch. They are not submitted
+  // and do not count as filling the gap; an empty in-band set falls through.
   const candidates = fetched.candidates.slice(0, item.count);
   await settleSourcingRun(
     [state.producerTaskRunId, ...(fetched.taskRunId ? [fetched.taskRunId] : [])],
@@ -1054,9 +1082,11 @@ async function runWebSupplyRound(
   const nextPhase = fetched.taskRunId && candidates.length ? 'verifying' : 'blocked';
   const nextReason = !fetched.taskRunId
     ? 'producer_identity_missing'
-    : !candidates.length
-      ? 'text_evidence_unavailable'
-      : null;
+    : candidates.length
+      ? null
+      : fetched.filteredOutOfBand > 0
+        ? 'difficulty_out_of_band'
+        : 'text_evidence_unavailable';
   state = await advance(db, state, {
     phase: nextPhase,
     reason: nextReason,

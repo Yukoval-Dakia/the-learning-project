@@ -18,6 +18,7 @@ import {
   resolveNearbyPlacementScope,
 } from '@/kernel/read-models/placement-scope';
 import { EvidenceDemandV1, evidenceDemandToTargetContext } from '@/kernel/supply-contracts';
+import { resolveBandLevelTarget } from './band-level';
 import { dispatchSupplyTarget } from './dispatcher';
 import { countPlacementInventory } from './placement-inventory';
 import {
@@ -108,6 +109,7 @@ export function buildPlacementStarterTarget(claim: ClaimRow): QuestionSupplyTarg
     knowledgeIds: [claim.knowledge_id],
     kind: 'any',
     difficultyBand: 'near',
+    levelTarget: resolveBandLevelTarget('near', 0),
     desiredCount: PLACEMENT_STARTER_COUNT,
     minSourceTier: 3,
     // In-flight claims created before the 2026-11-02 policy keep closed-book quiz_gen; new

@@ -22,6 +22,7 @@
 // emit 观测事件，永不写题的 b 锚（item difficulty）——纯只读消费 + 派发，不污染标定轴。
 
 import type { Job } from 'pg-boss';
+import { resolveBandLevelTarget } from '@/capabilities/practice/supply/server/band-level';
 import { discoverConfusableContrastTargets } from '@/capabilities/practice/supply/server/confusable-contrast-discovery';
 import { recentlyDispatchedFingerprints } from '@/capabilities/practice/supply/server/dispatcher';
 import { runInventoryShadowDualRead } from '@/capabilities/practice/supply/server/inventory-projection';
@@ -179,6 +180,7 @@ function returnStockTarget(
     knowledgeIds: [knowledgeId],
     kind: 'any',
     difficultyBand: 'near',
+    levelTarget: resolveBandLevelTarget('near', 0),
     desiredCount: missing,
     minSourceTier: 2,
     routePreference: [],
