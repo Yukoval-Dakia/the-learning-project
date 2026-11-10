@@ -36,10 +36,12 @@ import {
 } from '@/capabilities/practice/supply/server/target-discovery';
 import { targetFingerprint } from '@/capabilities/practice/supply/server/target-fingerprint';
 import { newId } from '@/core/ids';
+import { steeringDefersKnowledgeIds } from '@/core/steering';
 import type { Db } from '@/db/client';
 import { loadActivityTier } from '@/kernel/read-models/activity-tier';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
 import { loadReturnStockGaps } from '@/kernel/read-models/return-stock';
+import { loadSteeringDeferredKnowledgeIds } from '@/kernel/read-models/steering-deferral';
 import {
   buildCoverageEvidenceDemand,
   evidenceDemandToTargetContext,
@@ -270,13 +272,17 @@ async function dispatchReturnStock(
 ): Promise<QuestionSupplyNightlyResult> {
   const gaps = await loadReturnStockGaps(db);
   if (gaps.length === 0) return emptyTally();
+  const deferredKnowledgeIds = await loadSteeringDeferredKnowledgeIds(db, new Date());
   const cooldownDays = deps.dispatchDeps?.cooldownDays ?? SUPPLY_DISPATCH_COOLDOWN_DAYS;
   const results: DispatchResult[] = [];
   let budgetDeferred = 0;
+  let attempted = 0;
   for (const [gapIndex, gap] of gaps.entries()) {
     let remaining = gap.missing;
     for (const knowledgeId of [...new Set(gap.knowledgeIds)].sort()) {
       if (remaining <= 0) break;
+      if (steeringDefersKnowledgeIds([knowledgeId], deferredKnowledgeIds)) continue;
+      attempted += 1;
       const subjectId = await subjectForReturnStock(db, gap.subjectId, knowledgeId);
       if (!subjectId) continue;
       const target = returnStockTarget(subjectId, knowledgeId, remaining);
@@ -300,7 +306,7 @@ async function dispatchReturnStock(
     }
     if (budgetDeferred > 0) break;
   }
-  if (results.length === 0 && budgetDeferred === 0) {
+  if (results.length === 0 && budgetDeferred === 0 && attempted > 0) {
     console.warn(
       '[question_supply_nightly] return stock is short but no knowledge id could be dispatched',
     );
