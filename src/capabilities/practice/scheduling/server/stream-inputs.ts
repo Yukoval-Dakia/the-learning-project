@@ -11,10 +11,10 @@
 // - variantItems：mistake_variant(status='active') 中 parent 近 7 天有 failure
 // attempt 的变体（变体轮换的「错题跟练」信号）。
 // - newCheckItems：open learning_item（pending/in_progress）的 knowledge_ids 中尚无 FSRS 状态行的
-// 知识点（= 学了还没检验），各取一道未排入的题。
+// 知识点（= 学了还没检验）。按置顶、截止、计划顺序取，先修未满足的不进池，各取一道未排入的题。
 // - pendingPapers：getPracticeList 的 ready 且未开始 session 的卷。
 
-import { and, desc, eq, gte, inArray, isNotNull, lte, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, isNotNull, lte, sql } from 'drizzle-orm';
 import { LearningItemOpenStatus } from '@/core/schema/business';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import type { Db, Tx } from '@/db/client';
@@ -29,11 +29,17 @@ import {
 } from '@/db/schema';
 import { errorResponse } from '@/kernel/http';
 import { withoutNonKcKnowledgeIds } from '@/kernel/read-models/knowledge-roles';
+import {
+  type FrontierResolution,
+  isMasteredForFrontier,
+  learnableFrontierResolved,
+} from '@/kernel/read-models/learnable-frontier';
+import { getMasteryProjection } from '@/kernel/read-models/mastery-projection';
 import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
 import { getPracticeList } from '../../session/public';
 import { REVIEW_DUE_LIMIT_MAX, type ReviewDueRow, queryReviewDue } from './due-list';
 import { knowledgeLabels } from './knowledge-labels';
-import { FRONTIER_MAX_ITEMS, learnableFrontier } from './learnable-frontier';
+import { FRONTIER_MAX_ITEMS } from './learnable-frontier';
 import { readQuestionPace } from './question-pace';
 import {
   type DailyPracticePace,
@@ -52,6 +58,115 @@ type DbLike = Db | Tx;
 const VARIANT_WINDOW_DAYS = 7;
 /** Hard ceiling for mistake variants admitted to one composer/LLM input. */
 export const VARIANT_INPUT_LIMIT = 50;
+/** New-check pool handed to the sampler. Wider than a final pick of 3. */
+const NEW_CHECK_CANDIDATE_LIMIT = 6;
+/** A topic with no deadline sorts after every topic that has one. */
+const NEW_CHECK_NO_DEADLINE_MS = Number.POSITIVE_INFINITY;
+
+/**
+ * Lexicographic new-check key. Lower sorts first.
+ * `prereqBlocked` 1 is not a candidate.
+ */
+interface NewCheckRank {
+  prereqBlocked: 0 | 1;
+  unpinned: 0 | 1;
+  dueAtMs: number;
+  planOrder: number;
+  knowledgeId: string;
+}
+
+function compareNumber(left: number, right: number): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function compareText(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function compareNewCheckRank(left: NewCheckRank, right: NewCheckRank): number {
+  return (
+    compareNumber(left.prereqBlocked, right.prereqBlocked) ||
+    compareNumber(left.unpinned, right.unpinned) ||
+    compareNumber(left.dueAtMs, right.dueAtMs) ||
+    compareNumber(left.planOrder, right.planOrder) ||
+    compareText(left.knowledgeId, right.knowledgeId)
+  );
+}
+
+function preferNewCheckRank(left: NewCheckRank, right: NewCheckRank): NewCheckRank {
+  return compareNewCheckRank(left, right) <= 0 ? left : right;
+}
+
+function rankOpenLearningTopics(
+  items: ReadonlyArray<{
+    knowledge_ids: readonly string[];
+    user_pinned: boolean;
+    due_at: Date | null;
+  }>,
+): Map<string, NewCheckRank> {
+  const priorityByKid = new Map<string, NewCheckRank>();
+  let planOrder = 0;
+  for (const item of items) {
+    const unpinned: 0 | 1 = item.user_pinned ? 0 : 1;
+    const dueAtMs = item.due_at === null ? NEW_CHECK_NO_DEADLINE_MS : item.due_at.getTime();
+    for (const raw of item.knowledge_ids) {
+      const knowledgeId = raw.trim();
+      if (knowledgeId.length === 0) continue;
+      const occurrence: NewCheckRank = {
+        prereqBlocked: 0,
+        unpinned,
+        dueAtMs,
+        planOrder,
+        knowledgeId,
+      };
+      planOrder += 1;
+      const previous = priorityByKid.get(knowledgeId);
+      priorityByKid.set(
+        knowledgeId,
+        previous === undefined ? occurrence : preferNewCheckRank(occurrence, previous),
+      );
+    }
+  }
+  return priorityByKid;
+}
+
+async function prereqBlockedByKnowledge(
+  db: DbLike,
+  knowledgeIds: readonly string[],
+  resolution: FrontierResolution,
+): Promise<Map<string, 0 | 1>> {
+  // Overflow has no trustworthy closure, so every topic stays blocked.
+  const proven = new Set(resolution.kind === 'dense' ? resolution.ids : []);
+  const prereqsByKid = new Map<string, readonly string[] | null>();
+  const toRead: string[] = [];
+  for (const id of knowledgeIds) {
+    if (resolution.kind === 'overflow') {
+      prereqsByKid.set(id, null);
+      continue;
+    }
+    if (proven.has(id)) {
+      prereqsByKid.set(id, []);
+      continue;
+    }
+    const prereqs =
+      resolution.kind === 'dense' ? (resolution.prereqsByFrontier?.get(id) ?? []) : [];
+    prereqsByKid.set(id, prereqs);
+    toRead.push(...prereqs);
+  }
+  const projection = await getMasteryProjection(db, toRead);
+  const mastered = (id: string): boolean => {
+    const row = projection.get(id);
+    // A missing row is the frontier cold start, below the mastery threshold.
+    return row !== undefined && isMasteredForFrontier(row.mastery, row.evidence_count);
+  };
+  const blocked = new Map<string, 0 | 1>();
+  for (const id of knowledgeIds) {
+    const prereqs = prereqsByKid.get(id) ?? null;
+    const unmet = prereqs === null || prereqs.some((prereqId) => !mastered(prereqId));
+    blocked.set(id, unmet ? 1 : 0);
+  }
+  return blocked;
+}
 
 export async function resolveDailyPracticeBudget(
   db: DbLike,
@@ -212,17 +327,24 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
     .slice(0, VARIANT_INPUT_LIMIT);
 
   // 3. 新学待检 — 尚未开始或正在学习的学习项，其知识点里没有 FSRS 状态行的。
+  // 同一份计划在一个事务里写入，created_at 会并列；id 单调，所以 (created_at, id)
+  // 加上 knowledge_ids 的数组顺序就是计划顺序。先修闭包与前沿选题共用一次读取。
   const items = await db
-    .select({ knowledge_ids: learning_item.knowledge_ids })
+    .select({
+      knowledge_ids: learning_item.knowledge_ids,
+      user_pinned: learning_item.user_pinned,
+      due_at: learning_item.due_at,
+    })
     .from(learning_item)
-    .where(inArray(learning_item.status, LearningItemOpenStatus.options));
+    .where(inArray(learning_item.status, LearningItemOpenStatus.options))
+    .orderBy(asc(learning_item.created_at), asc(learning_item.id));
+  // collectComposerInputs 会在事务里跑，两条查询不能并行。
+  const frontierResolution = await learnableFrontierResolved(db);
+  const priorityByKid = rankOpenLearningTopics(items);
   // YUK-1600 — the hub learning item references its topic ROOT (a goal); a goal is not
   // a testable KC and must never be picked as a new-check practice knowledge point.
-  const candidateKids = await withoutNonKcKnowledgeIds(
-    db,
-    items.flatMap((i) => i.knowledge_ids),
-  );
-  let newCheckPairs: Array<{ questionId: string; knowledgeId: string }> = [];
+  const candidateKids = await withoutNonKcKnowledgeIds(db, [...priorityByKid.keys()]);
+  const newCheckPairs: Array<{ questionId: string; knowledgeId: string }> = [];
   if (candidateKids.length > 0) {
     const tracked = await db
       .select({ kid: material_fsrs_state.subject_id })
@@ -236,17 +358,29 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
     const trackedSet = new Set(tracked.map((r) => r.kid));
     const untracked = candidateKids.filter((k) => !trackedSet.has(k));
     if (untracked.length > 0) {
+      const blockedByKid = await prereqBlockedByKnowledge(db, untracked, frontierResolution);
+      const admitted = untracked.flatMap((knowledgeId) => {
+        const base = priorityByKid.get(knowledgeId);
+        if (base === undefined) return [];
+        const rank: NewCheckRank = {
+          ...base,
+          prereqBlocked: blockedByKid.get(knowledgeId) ?? 1,
+        };
+        return rank.prereqBlocked === 0 ? [rank] : [];
+      });
+      admitted.sort(compareNewCheckRank);
       // 每个未检验知识点取一道题（JSONB 包含查询，非 draft 题——见 notDraftPredicate，src/db/predicates.ts）。
       // new_check 在「KC 还没 material_fsrs_state 行」时触发——此时刚生成的 embedded/teaching
       // draft 题（container-only）还没被任何 review 路径物化，若不过滤会被这里抓成第一题、暴露
-      // 给用户成普通练习项。
-      for (const kid of untracked) {
+      // 给用户成普通练习项。没有可发题的知识点不占候选名额。
+      for (const rank of admitted) {
+        if (newCheckPairs.length === NEW_CHECK_CANDIDATE_LIMIT) break;
         const candidates = await db
           .select({ id: question.id })
           .from(question)
           .where(
             and(
-              sql`${question.knowledge_ids} @> ${JSON.stringify([kid])}::jsonb`,
+              sql`${question.knowledge_ids} @> ${JSON.stringify([rank.knowledgeId])}::jsonb`,
               notDraftPredicate(question.draft_status),
               // 契约准入门：suspended/withdrawn 组不作新检选第题。
               questionSuspendedPredicate(question),
@@ -257,9 +391,8 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
           candidates.map((row) => row.id),
         );
         const q = candidates.find((row) => admittedIds.has(row.id));
-        if (q) newCheckPairs.push({ questionId: q.id, knowledgeId: kid });
+        if (q) newCheckPairs.push({ questionId: q.id, knowledgeId: rank.knowledgeId });
       }
-      newCheckPairs = newCheckPairs.slice(0, 3);
     }
   }
 
@@ -280,9 +413,9 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
 
   // 5. B3 learnable_frontier（#3）——前置全掌握、自身未掌握的「可学前沿」KC，各取
   // 一道**非 draft** active 题（谓词与 new_check 同形，均 notDraftPredicate——红线 4）。frontier KC 无题 →
-  // SKIP（不触发供给）。NO-OP：稀疏先决图上 learnableFrontier 返 [] → frontierPairs=[]（
+  // SKIP（不触发供给）。NO-OP：稀疏或闭包溢出时 ids 为空 → frontierPairs=[]（
   // defer-flip，无 flag；sparse/overflow 均保持空候选）。
-  const frontierKcs = await learnableFrontier(db);
+  const frontierKcs = frontierResolution.ids;
   const frontierPairs: Array<{ questionId: string; knowledgeId: string }> = [];
   for (const kc of frontierKcs) {
     const candidates = await db
