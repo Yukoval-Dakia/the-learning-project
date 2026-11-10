@@ -94,7 +94,15 @@ export async function assembleCompanionContext(
   const trimmed = trimUnitsToBudget(
     [
       { rank: 0, name: 'steering', markdown: contract.steeringMd },
-      { rank: 0.2, name: 'curriculum', markdown: curriculum.header_md, protected: true },
+      { rank: 0.2, name: 'curriculum', markdown: curriculum.stage_md, protected: true },
+      // The preference list is a light bias, not a constraint: it is the first thing
+      // dropped when the budget is tight, so it never squeezes steering or mastery.
+      {
+        rank: 0.3,
+        name: 'curriculum_preferences',
+        markdown: curriculum.preferences_md,
+        dropRank: 10,
+      },
       {
         rank: 0.5,
         name: 'communication',

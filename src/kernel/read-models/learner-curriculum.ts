@@ -31,8 +31,12 @@ export interface LearnerCurriculum {
   readonly stage_label: string | null;
   readonly unconstrained_reason: UnconstrainedReason | null;
   readonly subject_mix_bias: SubjectMixBias;
-  /** Shared companion/teaching header. Null when there is nothing to say. */
+  /** Shared teaching/quiz header: stage line plus mix-bias line. */
   readonly header_md: string | null;
+  /** Stage line alone; the startup segment keeps it while the bias may be dropped. */
+  readonly stage_md: string | null;
+  /** Mix-bias line alone: droppable on its own, it is only a light preference. */
+  readonly preferences_md: string | null;
 }
 
 const STAGE_LABEL: Record<StandardStage, string> = {
@@ -40,6 +44,13 @@ const STAGE_LABEL: Record<StandardStage, string> = {
   high_school: '高中',
   university: '大学',
 };
+
+/**
+ * Placement leanings reach the DB through an unvalidated string array
+ * (`placement_leanings`), so the rendered header is bounded here rather than there.
+ */
+const MAX_PREFERRED_SUBJECTS = 8;
+const MAX_PREFERRED_SUBJECT_LABEL_CHARS = 16;
 
 type StageClass =
   | { readonly kind: 'band'; readonly stage: StandardStage }
@@ -103,8 +114,9 @@ export function foldDeclaredStages(
 export function subjectMixBias(preferred: readonly PreferredSubject[]): SubjectMixBias {
   const byId = new Map<string, PreferredSubject>();
   for (const subject of preferred) {
+    if (byId.size >= MAX_PREFERRED_SUBJECTS) break;
     const id = subject.id.trim();
-    const label = subject.label.trim();
+    const label = subject.label.trim().slice(0, MAX_PREFERRED_SUBJECT_LABEL_CHARS);
     if (id.length === 0 || label.length === 0 || byId.has(id)) continue;
     byId.set(id, { id, label });
   }
@@ -112,10 +124,7 @@ export function subjectMixBias(preferred: readonly PreferredSubject[]): SubjectM
 }
 
 export function renderCurriculumHeader(
-  curriculum: Pick<
-    LearnerCurriculum,
-    'declared_stage' | 'stage_label' | 'unconstrained_reason' | 'subject_mix_bias'
-  >,
+  curriculum: Pick<LearnerCurriculum, 'declared_stage' | 'stage_label' | 'unconstrained_reason'>,
 ): string | null {
   const lines: string[] = [];
   if (curriculum.declared_stage && curriculum.stage_label) {
@@ -128,11 +137,14 @@ export function renderCurriculumHeader(
   } else if (curriculum.unconstrained_reason === 'conflicting') {
     lines.push('课程约束：进行中的目标学段不一致，本次不按单一学段限制。');
   }
-  const names = curriculum.subject_mix_bias.preferred_subjects.map((item) => item.label);
-  if (names.length > 0) {
-    lines.push(`偏好学科只作轻度搭配偏置，不是范围：${names.join('、')}。`);
-  }
   return lines.length > 0 ? lines.join('\n') : null;
+}
+
+export function renderCurriculumPreferences(
+  curriculum: Pick<LearnerCurriculum, 'subject_mix_bias'>,
+): string | null {
+  const names = curriculum.subject_mix_bias.preferred_subjects.map((item) => item.label);
+  return names.length > 0 ? `偏好学科只作轻度搭配偏置，不是范围：${names.join('、')}。` : null;
 }
 
 export function assembleLearnerCurriculum(input: {
@@ -140,9 +152,11 @@ export function assembleLearnerCurriculum(input: {
   preferredSubjects: readonly PreferredSubject[];
 }): LearnerCurriculum {
   const fold = foldDeclaredStages(input.declaredStages);
-  const bias = subjectMixBias(input.preferredSubjects);
-  const curriculum = { ...fold, subject_mix_bias: bias };
-  return { ...curriculum, header_md: renderCurriculumHeader(curriculum) };
+  const subject_mix_bias = subjectMixBias(input.preferredSubjects);
+  const stage_md = renderCurriculumHeader(fold);
+  const preferences_md = renderCurriculumPreferences({ subject_mix_bias });
+  const header_md = [stage_md, preferences_md].filter(Boolean).join('\n') || null;
+  return { ...fold, subject_mix_bias, header_md, stage_md, preferences_md };
 }
 
 /** How a task prompt must read `curriculum` on its input. */
@@ -157,6 +171,7 @@ function preferredSubjectIds(raw: unknown): string[] {
     const id = item.trim();
     if (id.length === 0 || ids.includes(id)) continue;
     ids.push(id);
+    if (ids.length >= MAX_PREFERRED_SUBJECTS) break;
   }
   return ids;
 }
@@ -185,6 +200,11 @@ export async function readLearnerCurriculum(db: DbLike): Promise<LearnerCurricul
   const labelById = new Map(labels.map((row) => [row.id, row.display_name]));
   return assembleLearnerCurriculum({
     declaredStages: stageRows.map((row) => row.declared_stage),
-    preferredSubjects: ids.map((id) => ({ id, label: labelById.get(id) ?? id })),
+    // An unknown or deleted subject has no learner-readable label; a bare id would
+    // leak into the header, so it is dropped rather than rendered.
+    preferredSubjects: ids.flatMap((id) => {
+      const label = labelById.get(id);
+      return label ? [{ id, label }] : [];
+    }),
   });
 }
