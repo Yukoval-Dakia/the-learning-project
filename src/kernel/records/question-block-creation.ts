@@ -40,6 +40,12 @@ type RescueBlockCommand = {
   figures: FigureRefT[];
 };
 
+type HandwritingTraceBlockCommand = {
+  origin: 'handwriting_trace';
+  blockId: string;
+  structured: StructuredQuestionT;
+};
+
 type DocxBlockCommand = {
   origin: 'docx';
   blockId: string;
@@ -79,6 +85,7 @@ type EditDraftBlockCommand = {
 type CapturedBlockCommand =
   | OcrBlockCommand
   | RescueBlockCommand
+  | HandwritingTraceBlockCommand
   | DocxBlockCommand
   | ImportBlockCommand
   | EditDraftBlockCommand;
@@ -121,7 +128,12 @@ export function persistCapturedQuestionBlock(
 ): Promise<QuestionBlockRow>;
 export function persistCapturedQuestionBlock(
   db: Db | Tx,
-  command: OcrBlockCommand | RescueBlockCommand | DocxBlockCommand | ImportBlockCommand,
+  command:
+    | OcrBlockCommand
+    | RescueBlockCommand
+    | HandwritingTraceBlockCommand
+    | DocxBlockCommand
+    | ImportBlockCommand,
   now: Date,
 ): Promise<void>;
 /**
@@ -203,6 +215,28 @@ export async function persistCapturedQuestionBlock(
         origin: 'rescue',
         actorKind: 'agent',
         actorRef: 'vision_rescue',
+        now,
+      });
+      return;
+    }
+    case 'handwriting_trace': {
+      // Same draft-only CAS as rescue: an enrolled block's question holds the
+      // published snapshot, so evidence written here afterwards would desync it.
+      const [row] = await db
+        .update(question_block)
+        .set({
+          structured: command.structured,
+          updated_at: now,
+          version: sql<number>`${question_block.version} + 1`,
+        })
+        .where(and(eq(question_block.id, command.blockId), eq(question_block.status, 'draft')))
+        .returning();
+      if (!row) assertRescuableBlockDraft(command.blockId);
+      await writeQuestionBlockCreateEvent(db, {
+        row,
+        origin: 'handwriting_trace',
+        actorKind: 'agent',
+        actorRef: 'handwriting_trace',
         now,
       });
       return;
@@ -330,7 +364,7 @@ function questionBlockRowToSnapshot(row: QuestionBlockRow): QuestionBlockRowSnap
 
 interface WriteQuestionBlockCreateEventParams {
   row: QuestionBlockRow;
-  origin: 'ocr' | 'rescue' | 'docx' | 'import' | 'edit_draft';
+  origin: 'ocr' | 'rescue' | 'handwriting_trace' | 'docx' | 'import' | 'edit_draft';
   actorKind: 'agent' | 'user' | 'system';
   actorRef: string;
   now: Date;
