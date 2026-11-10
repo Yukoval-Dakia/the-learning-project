@@ -10,7 +10,7 @@ generate durable handoff 与 Living Note refine 链（note-refine-{triggers,poli
   包过渡期跨域写（卷生成/session 链），M5 manifest 对账时统一裁。
 - **D6 / YUK-358 决定3**（笔记内嵌判分自测孤儿链已真删）：refine 触发器五信号删
   `error_rate` 余四（mark_wrong/mastery_change/dwell/dreaming）；新信号源 = 流作答
-  （mastery_change 经 practice submit persist 接入）。graded inline self-test 链
+  （答对走 mastery_change；错因归因完成后走 mark_wrong，1 小时防抖）。graded inline self-test 链
   （`/api/embedded-check/attempt` 路由 + `embedded_check_generate` 生成链 handler +
   `EmbeddedCheckGenerateTask` AI task + `artifact.embedded_check_status` 列 +
   note/node page 投影）已全部删除。`check` 段本身保留为 Phase-3 自解释锚点

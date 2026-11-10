@@ -1,12 +1,16 @@
 import { eq } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
 import { event, question } from '@/db/schema';
+import { shouldEnqueueBackgroundJobs } from '@/kernel/background-job-enqueue';
+import { HostOperationNotInstalledError } from '@/kernel/host-operation';
+import { enqueueNoteRefineTrigger } from '@/kernel/note-refine-trigger';
 import { resolveVerdictForAttempt } from '@/kernel/read-models/assessment-verdict';
 import {
   getFailureAttemptForDerivationById,
   getFailureAttemptWithReasoningTraceForDerivationById,
 } from '@/kernel/read-models/failure-attempts';
 import { loadFailureLearningKnowledgeContext } from '@/kernel/read-models/failure-learning-context';
+import { notesForKnowledge } from '@/kernel/read-models/notes-read';
 import type { BoundRunTaskTextFn } from '@/server/ai/runner-fn';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import {
@@ -212,6 +216,10 @@ async function attributeFailure(
     return { status: 'skipped', reason: 'question_not_found', modelInvoked: false };
   }
 
+  const promptMd =
+    native?.prompt_md ??
+    (frozenQuestion ? frozenQuestion.prompt_md : (questionRow?.prompt_md ?? ''));
+  const wrongAnswerMd = native?.answer_md ?? failure.answer_md ?? '';
   const referencedKnowledgeIds =
     native?.knowledge_ids ??
     (failure.referenced_knowledge_ids.length > 0
@@ -233,15 +241,13 @@ async function attributeFailure(
       db: deps.db,
       attemptEventId,
       input: {
-        prompt_md:
-          native?.prompt_md ??
-          (frozenQuestion ? frozenQuestion.prompt_md : (questionRow?.prompt_md ?? '')),
+        prompt_md: promptMd,
         reference_md: native
           ? native.reference_md
           : frozenQuestion
             ? frozenQuestion.reference_md
             : (questionRow?.reference_md ?? null),
-        wrong_answer_md: native?.answer_md ?? failure.answer_md ?? '',
+        wrong_answer_md: wrongAnswerMd,
         knowledge_context: knowledgeContext,
         ...(reasoningTraceMd !== undefined ? { reasoning_trace_md: reasoningTraceMd } : {}),
       },
@@ -277,11 +283,90 @@ async function attributeFailure(
       modelInvoked,
     };
   }
+  await enqueueMarkWrongNoteRefine({
+    db: deps.db,
+    knowledgeIds: referencedKnowledgeIds,
+    knowledgeNames: knowledgeContext.map((node) => node.name),
+    promptMd,
+    wrongAnswerMd,
+    attemptEventId,
+    judgeEventId,
+  });
   return {
     status: outcome.outcome === 'written' && modelInvoked ? 'written' : 'existing',
     judgeEventId,
     modelInvoked,
   };
+}
+
+/** Paid note-refine jobs one wrong answer may fan out. One first note per knowledge point. */
+const MARK_WRONG_NOTE_LIMIT = 8;
+
+function clipLearnerText(value: string): string {
+  const text = value.replace(/\s+/g, ' ').trim();
+  return text.length <= 400 ? text : `${text.slice(0, 399)}…`;
+}
+
+async function enqueueMarkWrongNoteRefine(input: {
+  db: Db;
+  knowledgeIds: string[];
+  knowledgeNames: string[];
+  promptMd: string;
+  wrongAnswerMd: string;
+  attemptEventId: string;
+  judgeEventId: string;
+}): Promise<void> {
+  const knowledgeIds = [
+    ...new Set(input.knowledgeIds.map((id) => id.trim()).filter(Boolean)),
+  ].slice(0, MARK_WRONG_NOTE_LIMIT);
+  if (knowledgeIds.length === 0) return;
+  const notes = await Promise.all(
+    knowledgeIds.map((knowledgeId) => notesForKnowledge(input.db, knowledgeId, { limit: 1 })),
+  );
+  const artifactIds: string[] = [];
+  const seen = new Set<string>();
+  for (const batch of notes) {
+    const note = batch[0];
+    if (!note || seen.has(note.id)) continue;
+    seen.add(note.id);
+    artifactIds.push(note.id);
+    if (artifactIds.length >= MARK_WRONG_NOTE_LIMIT) break;
+  }
+  if (artifactIds.length === 0) return;
+  const names = input.knowledgeNames.filter((name) => name.trim().length > 0);
+  const contextMd = [
+    '学习者在这些知识点上做错了一题。',
+    names.length > 0 ? `知识点：${names.join('、')}` : null,
+    input.promptMd.trim() ? `题目：${clipLearnerText(input.promptMd)}` : null,
+    `学习者的答案：${clipLearnerText(input.wrongAnswerMd) || '（空）'}`,
+  ]
+    .filter((line): line is string => line !== null)
+    .join('\n');
+  for (const artifactId of artifactIds) {
+    try {
+      const result = await enqueueNoteRefineTrigger({
+        db: input.db,
+        artifactId,
+        kind: 'mark_wrong',
+        contextMd,
+        evidenceIds: [input.attemptEventId],
+        triggerEventId: input.judgeEventId,
+      });
+      if (result.status === 'failed') {
+        console.warn(
+          `[failure-learning] mark_wrong note refine enqueue failed for ${artifactId}: ${result.error}`,
+        );
+      }
+    } catch (err) {
+      if (err instanceof HostOperationNotInstalledError) {
+        if (shouldEnqueueBackgroundJobs()) {
+          console.error('[failure-learning] note refine trigger is not installed', err);
+        }
+        return;
+      }
+      throw err;
+    }
+  }
 }
 
 export function createFailureLearning(deps: FailureLearningDeps): FailureLearning {
