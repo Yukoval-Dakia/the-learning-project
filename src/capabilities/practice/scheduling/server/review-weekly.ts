@@ -7,7 +7,7 @@
 // Single-shot per page load; computed at request time (no view). Acceptable at
 // single-user scale where the window is bounded and the event table is small.
 
-import { and, eq, gte, inArray, lte, sql } from 'drizzle-orm';
+import { and, gte, inArray, lte, sql } from 'drizzle-orm';
 import type { z } from 'zod';
 import type { Db } from '@/db/client';
 import { event, knowledge } from '@/db/schema';
@@ -50,30 +50,19 @@ export async function loadWeeklyReview(db: Db, input: unknown) {
   const cutoff = reportWindow.from;
   const inWindow = and(gte(event.created_at, cutoff), lte(event.created_at, now));
 
-  // 1) Review events in window — for rating distribution + daily trend.
-  const reviews = await db
-    .select({
-      id: event.id,
-      outcome: event.outcome,
-      payload: event.payload,
-      created_at: event.created_at,
-    })
-    .from(event)
-    .where(and(eq(event.action, 'review'), eq(event.subject_kind, 'question'), inWindow));
-
-  const nativeReviews = await loadNativeReviewOccurrences(db);
-  for (const occurrence of nativeReviews) {
-    if (occurrence.occurredAt < cutoff || occurrence.occurredAt > now) continue;
-    reviews.push({
-      id: occurrence.id,
-      created_at: occurrence.occurredAt,
-      outcome:
-        occurrence.outcome === 'pending' || occurrence.outcome === 'unsupported'
-          ? null
-          : occurrence.outcome,
-      payload: { fsrs_rating: occurrence.rating },
-    });
-  }
+  const reviews = (await loadNativeReviewOccurrences(db)).flatMap((occurrence) => {
+    if (occurrence.occurredAt < cutoff || occurrence.occurredAt > now) return [];
+    return [
+      {
+        created_at: occurrence.occurredAt,
+        rating: occurrence.rating,
+        outcome:
+          occurrence.outcome === 'pending' || occurrence.outcome === 'unsupported'
+            ? null
+            : occurrence.outcome,
+      },
+    ];
+  });
 
   // 2) Failure attempts in window — for top struggling knowledge_ids + cause.
   const failures = (await getCurrentFailureAttempts(db, { since: cutoff })).filter(
@@ -107,8 +96,7 @@ export async function loadWeeklyReview(db: Db, input: unknown) {
   // 5) Rating distribution from review event payloads.
   const ratingCounts: Record<string, number> = { again: 0, hard: 0, good: 0, easy: 0 };
   for (const r of reviews) {
-    const rating = (r.payload as { fsrs_rating?: string }).fsrs_rating;
-    if (rating && rating in ratingCounts) ratingCounts[rating] += 1;
+    if (r.rating in ratingCounts) ratingCounts[r.rating] += 1;
   }
 
   // 6) Daily trend buckets use the learner's calendar days. A seven-day report

@@ -1,11 +1,12 @@
 // Domain event read models for review history and question timelines. Generic
 // envelope storage lives in @/kernel/events.
 
-import { and, desc, eq, gte, inArray, ne } from 'drizzle-orm';
+import { and, desc, eq, inArray, ne } from 'drizzle-orm';
 import type { FsrsStateSchemaT } from '@/core/schema/event/blocks';
 import type { Db, Tx } from '@/db/client';
 import { event, question } from '@/db/schema';
 import { filterActiveRows, takeActiveRows } from '@/kernel/events';
+import { loadNativeReviewOccurrences } from '@/kernel/read-models/assessment-review-occurrences';
 import {
   nativeAttemptOutcome,
   resolveVerdictsForAttempts,
@@ -23,10 +24,11 @@ export type ReviewEvent = {
   review_event_id: string;
   question_id: string;
   fsrs_rating: 'again' | 'hard' | 'good';
-  fsrs_state_after: FsrsStateSchemaT;
+  /** Absent on a native settlement receipt; the rating and outcome are the review. */
+  fsrs_state_after: FsrsStateSchemaT | null;
   user_response_md: string | null;
   referenced_knowledge_ids: string[];
-  outcome: 'success' | 'failure';
+  outcome: 'success' | 'failure' | 'partial';
   created_at: Date;
 };
 
@@ -39,9 +41,8 @@ export interface GetRecentReviewEventsOpts {
 const DEFAULT_REVIEW_EVENTS_LIMIT = 100;
 
 /**
- * Returns review events ordered desc by created_at. Filters by questionIds /
- * since when provided. action='review' AND subject_kind='question' only — review
- * action on other materials may come in future phases.
+ * Settled native reviews, newest first. One row per question on the occurrence.
+ * Filters by questionIds / since when provided.
  */
 export async function getRecentReviewEvents(
   db: DbLike,
@@ -49,49 +50,41 @@ export async function getRecentReviewEvents(
 ): Promise<ReviewEvent[]> {
   const limit = opts.limit ?? DEFAULT_REVIEW_EVENTS_LIMIT;
   if (limit <= 0) return [];
-  const conditions = [eq(event.action, 'review'), eq(event.subject_kind, 'question')];
-  if (opts.questionIds && opts.questionIds.length > 0) {
-    conditions.push(inArray(event.subject_id, opts.questionIds));
+  const questionFilter =
+    opts.questionIds && opts.questionIds.length > 0 ? new Set(opts.questionIds) : null;
+  const occurrences = await loadNativeReviewOccurrences(db);
+  const events: ReviewEvent[] = [];
+  for (const occurrence of occurrences) {
+    if (opts.since && occurrence.occurredAt < opts.since) continue;
+    if (
+      occurrence.outcome !== 'success' &&
+      occurrence.outcome !== 'failure' &&
+      occurrence.outcome !== 'partial'
+    )
+      continue;
+    const seen = new Set<string>();
+    for (const questionId of occurrence.questionIds) {
+      if (seen.has(questionId) || (questionFilter && !questionFilter.has(questionId))) continue;
+      seen.add(questionId);
+      events.push({
+        review_event_id: occurrence.settlementId,
+        question_id: questionId,
+        fsrs_rating: occurrence.rating,
+        fsrs_state_after: null,
+        user_response_md: null,
+        referenced_knowledge_ids: [],
+        outcome: occurrence.outcome,
+        created_at: occurrence.occurredAt,
+      });
+    }
   }
-  if (opts.since) {
-    conditions.push(gte(event.created_at, opts.since));
-  }
-  const rows = await db
-    .select()
-    .from(event)
-    .where(and(...conditions))
-    .orderBy(desc(event.created_at))
-    .limit(limit * 3);
-
-  const activeRows = await takeActiveRows(db, rows, limit, async (nextLimit, offset) =>
-    db
-      .select()
-      .from(event)
-      .where(and(...conditions))
-      .orderBy(desc(event.created_at))
-      .limit(nextLimit)
-      .offset(offset),
+  events.sort(
+    (a, b) =>
+      b.created_at.getTime() - a.created_at.getTime() ||
+      b.review_event_id.localeCompare(a.review_event_id) ||
+      a.question_id.localeCompare(b.question_id),
   );
-
-  return activeRows.map((r) => {
-    const payload = r.payload as {
-      fsrs_rating: 'again' | 'hard' | 'good';
-      fsrs_state_after: FsrsStateSchemaT;
-      user_response_md: string | null;
-      referenced_knowledge_ids: string[];
-    };
-    return {
-      review_event_id: r.id,
-      question_id: r.subject_id,
-      fsrs_rating: payload.fsrs_rating,
-      fsrs_state_after: payload.fsrs_state_after,
-      user_response_md: payload.user_response_md ?? null,
-      referenced_knowledge_ids: payload.referenced_knowledge_ids ?? [],
-      // review outcome invariant: again→failure, hard/good→success
-      outcome: (r.outcome as 'success' | 'failure') ?? 'success',
-      created_at: r.created_at,
-    };
-  });
+  return events.slice(0, limit);
 }
 
 // ============================================================================

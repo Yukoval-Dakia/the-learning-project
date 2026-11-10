@@ -250,6 +250,7 @@ jobs:
           pnpm audit:provider-lanes
           pnpm audit:model-source
           pnpm audit:advisory-locks
+          pnpm audit:review-action-readers
           pnpm audit:relations
           pnpm audit:mastery-provenance
 

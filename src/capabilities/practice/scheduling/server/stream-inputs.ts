@@ -14,13 +14,12 @@
 // 知识点（= 学了还没检验），各取一道未排入的题。
 // - pendingPapers：getPracticeList 的 ready 且未开始 session 的卷。
 
-import { and, desc, eq, gte, inArray, isNotNull, lte, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull, lte, sql } from 'drizzle-orm';
 import { LearningItemOpenStatus } from '@/core/schema/business';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import type { Db, Tx } from '@/db/client';
 import { notDraftPredicate, questionSuspendedPredicate } from '@/db/predicates';
 import {
-  event,
   learning_item,
   learning_session,
   material_fsrs_state,
@@ -28,6 +27,7 @@ import {
   question,
 } from '@/db/schema';
 import { errorResponse } from '@/kernel/http';
+import { getCurrentFailureAttempts } from '@/kernel/read-models/failure-attempts';
 import { withoutNonKcKnowledgeIds } from '@/kernel/read-models/knowledge-roles';
 import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
 import { getPracticeList } from '../../session/public';
@@ -171,19 +171,8 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
 
   // 2. 错题变式 — active 变体，parent 近窗口内有 failure attempt。
   const since = new Date(Date.now() - VARIANT_WINDOW_DAYS * 24 * 3600 * 1000);
-  const recentFailures = await db
-    .select({ qid: event.subject_id })
-    .from(event)
-    .where(
-      and(
-        eq(event.action, 'attempt'),
-        eq(event.outcome, 'failure'),
-        eq(event.subject_kind, 'question'),
-        gte(event.created_at, since),
-      ),
-    )
-    .orderBy(desc(event.created_at), desc(event.id));
-  const failedQids = [...new Set(recentFailures.map((r) => r.qid))];
+  const recentFailures = await getCurrentFailureAttempts(db, { since, limit: null });
+  const failedQids = [...new Set(recentFailures.map((row) => row.question_id))];
   const variantCandidates =
     failedQids.length === 0
       ? []
