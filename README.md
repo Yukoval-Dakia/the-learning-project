@@ -410,6 +410,9 @@ API 总退出期限 65 秒，Compose 留 70 秒；独立 worker 保留 30 秒清
 ```bash
 curl https://loom.<your-domain>/api/health
 # → {"ok":true}
+
+curl https://loom.<your-domain>/api/ready
+# commit：构建参数 TLP_SOURCE_COMMIT（40 位 SHA）的前 9 位；镜像没写入时为 null
 ```
 
 ### Backup
