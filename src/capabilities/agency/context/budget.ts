@@ -1,22 +1,14 @@
-// 启动段预算与裁剪（YUK-1794 B1）。token 数用确定性估计器（不是真实 tokenizer）：
-// CJK 按 ~1.6 token/字、其余按 ~1 token/3.5 字符 —— 与 budgets.ts 的既有口径同向
-// （CJK 1.5–2.5 token/char），取偏保守中位，验收以真实运行的实测为准。
+// 启动段预算与裁剪（YUK-1794 B1）。token 数用 kernel 的确定性估计器（不是真实
+// tokenizer）。概况头有自己的预算，不计入对话历史。
+
+import { estimateContextTokens } from '@/kernel/tools/budgets';
 
 export const LEARNER_CONTEXT_STARTUP_BUDGET = {
   /** 启动段估计 token 上限（设计 §3.2：学伴 view ≤1000）。 */
   maxEstimatedTokens: 1000,
-  /** 兜底字符硬顶：即使估计器失灵，启动段也不会顶穿 conversation_history 的 4000 字符总预算。 */
+  /** 启动段自己的字符硬顶，与对话历史预算分开。 */
   maxChars: 2400,
 } as const;
-
-const CJK_RE = /[　-鿿豈-﫿＀-￯]/;
-
-/** Deterministic token estimate; intentionally conservative for CJK-heavy text. */
-export function estimateTokens(text: string): number {
-  let units = 0;
-  for (const ch of text) units += CJK_RE.test(ch) ? 1.6 : 1 / 3.5;
-  return Math.ceil(units);
-}
 
 export interface TrimUnit {
   /** Render order AND default drop priority: 0 = rendered first, kept longest. */
@@ -57,13 +49,13 @@ export function trimUnitsToBudget(
     .filter((u): u is TrimUnit & { markdown: string } => !!u.markdown && u.markdown.length > 0)
     .sort((a, b) => a.rank - b.rank);
   const render = () => kept.map((u) => u.markdown).join('\n');
-  const tokensBeforeTrim = estimateTokens(render());
+  const tokensBeforeTrim = estimateContextTokens(render());
   const droppedUnits: string[] = [];
 
   // Drop the highest-dropRank (lowest-priority) unit until the estimate fits;
   // rank 0 (Steering) is never dropped whole — it takes the boundary truncation instead.
   while (
-    estimateTokens(render()) > budget.maxEstimatedTokens ||
+    estimateContextTokens(render()) > budget.maxEstimatedTokens ||
     render().length > budget.maxChars
   ) {
     const candidates = kept.filter((u) => u.rank !== 0 && !u.protected);
@@ -73,7 +65,7 @@ export function trimUnitsToBudget(
     kept.splice(kept.indexOf(drop), 1);
   }
   let md = render();
-  if (estimateTokens(md) > budget.maxEstimatedTokens || md.length > budget.maxChars) {
+  if (estimateContextTokens(md) > budget.maxEstimatedTokens || md.length > budget.maxChars) {
     const steering = kept.find((u) => u.rank === 0);
     if (steering) {
       const protectedText = kept
@@ -82,7 +74,7 @@ export function trimUnitsToBudget(
         .join('\n');
       let text = steering.markdown;
       const fits = () =>
-        estimateTokens(`${text}…\n${protectedText}`) <= budget.maxEstimatedTokens &&
+        estimateContextTokens(`${text}…\n${protectedText}`) <= budget.maxEstimatedTokens &&
         text.length + protectedText.length + 2 <= budget.maxChars;
       while (text.length && !fits()) text = text.slice(0, -1);
       const boundary = Math.max(
@@ -94,12 +86,12 @@ export function trimUnitsToBudget(
       steering.markdown = `${text}…`;
       md = render();
     }
-    if (estimateTokens(md) > budget.maxEstimatedTokens || md.length > budget.maxChars)
+    if (estimateContextTokens(md) > budget.maxEstimatedTokens || md.length > budget.maxChars)
       throw new Error('communication brief exceeds its compact storage contract');
   }
   return {
     markdown: md,
-    estimatedTokens: estimateTokens(md),
+    estimatedTokens: estimateContextTokens(md),
     droppedUnits,
     tokensBeforeTrim,
   };
