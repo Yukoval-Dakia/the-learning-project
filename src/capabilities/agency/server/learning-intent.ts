@@ -303,7 +303,39 @@ async function lockKnowledgeRows(
   return locked;
 }
 
-async function lockRootAndActiveChildren(tx: Tx, rootId: string): Promise<LockedKnowledgeRow[]> {
+type Citation =
+  | { readonly state: 'in_graph' }
+  | { readonly state: 'stale'; readonly id: string }
+  | { readonly state: 'outside' };
+
+function classifyCitation(
+  id: string,
+  role: 'atomic' | 'long',
+  rootId: string,
+  row: LockedKnowledgeRow | undefined,
+): Citation {
+  if (role === 'long' && id === rootId) return { state: 'in_graph' };
+  if (!row || id === rootId) return { state: 'outside' };
+  if (row.archived_at === null && row.parent_id === rootId) return { state: 'in_graph' };
+  return { state: 'stale', id };
+}
+
+function citedKnowledgeIds(spec: AcceptSpec): string[] {
+  return [
+    ...new Set([
+      ...spec.atomics.map((atomic) => atomic.knowledge_id),
+      ...spec.longs.flatMap((long) => long.knowledge_ids),
+    ]),
+  ];
+}
+
+async function lockLegacyKnowledge(
+  tx: Tx,
+  rootId: string,
+  citedIds: readonly string[],
+): Promise<LockedKnowledgeRow[]> {
+  const cited = citedIds.filter((id) => id !== rootId);
+  const activeChildren = and(eq(knowledge.parent_id, rootId), isNull(knowledge.archived_at));
   return tx
     .select({
       id: knowledge.id,
@@ -313,13 +345,29 @@ async function lockRootAndActiveChildren(tx: Tx, rootId: string): Promise<Locked
     })
     .from(knowledge)
     .where(
-      or(
-        eq(knowledge.id, rootId),
-        and(eq(knowledge.parent_id, rootId), isNull(knowledge.archived_at)),
-      ),
+      cited.length === 0
+        ? or(eq(knowledge.id, rootId), activeChildren)
+        : or(eq(knowledge.id, rootId), activeChildren, inArray(knowledge.id, cited)),
     )
     .orderBy(knowledge.id)
     .for('update');
+}
+
+function staleCitedId(spec: AcceptSpec, locked: readonly LockedKnowledgeRow[]): string | null {
+  const rootId = spec.existingRootId;
+  if (!rootId) return null;
+  const byId = new Map(locked.map((row) => [row.id, row]));
+  const refs = [
+    ...spec.atomics.map((atomic) => ({ id: atomic.knowledge_id, role: 'atomic' as const })),
+    ...spec.longs.flatMap((long) =>
+      long.knowledge_ids.map((id) => ({ id, role: 'long' as const })),
+    ),
+  ];
+  for (const ref of refs) {
+    const citation = classifyCitation(ref.id, ref.role, rootId, byId.get(ref.id));
+    if (citation.state === 'stale') return citation.id;
+  }
+  return null;
 }
 
 async function assertKnowledgeCompatible(
@@ -942,10 +990,15 @@ export async function acceptLearningIntent(
   const { createKnowledgeNode, createNote, tx, proposalId, writeRate } = params;
   const proposal = await readProposal(tx, proposalId);
   const read = readAcceptSpec(proposal.payload);
-  const spec =
-    read.resolveActiveChildren && read.existingRootId
-      ? withLockedActiveChildren(read, await lockRootAndActiveChildren(tx, read.existingRootId))
-      : read;
+  let spec = read;
+  if (read.resolveActiveChildren && read.existingRootId) {
+    const locked = await lockLegacyKnowledge(tx, read.existingRootId, citedKnowledgeIds(read));
+    // An archived or moved citation is stale. The active-child check would
+    // report that same id as unknown and leave the proposal pending.
+    const staleId = staleCitedId(read, locked);
+    if (staleId) throw new LearningIntentStaleError(staleId);
+    spec = withLockedActiveChildren(read, locked);
+  }
   const fault = checkProposalGraph(spec.graph, spec.atomics, spec.longs);
   if (fault) rejectGraphFault(fault, 'proposal');
   await assertKnowledgeCompatible(tx, spec.existing);

@@ -346,6 +346,30 @@ describe('learning intent reference graph', () => {
     }
 
     for (const move of ['archive', 'reparent', 'merge'] as const) {
+      const root = nid();
+      const child = nid();
+      const other = nid();
+      await seedGraph(root, [child], [other]);
+      const proposalId = await store({
+        topic: root,
+        planCase: '3c_existing_graph',
+        rootId: root,
+        atomics: [note(child)],
+      });
+      await moveNode(child, other, move === 'merge' ? 'archive' : move);
+      const before = await counts();
+      await expect(acceptAiProposal(testDb(), proposalId)).rejects.toThrow(/^stale/);
+      const after = await counts();
+      expect(after.items).toBe(before.items);
+      expect(after.artifacts).toBe(before.artifacts);
+      const rates = await testDb()
+        .select({ payload: event.payload })
+        .from(event)
+        .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, proposalId)));
+      expect(rates.map((row) => (row.payload as { rating?: string }).rating)).toEqual(['rollback']);
+    }
+
+    for (const move of ['archive', 'reparent', 'merge'] as const) {
       const graph = await planned();
       const before = await counts();
       await moveNode(graph.child, graph.other, move);
