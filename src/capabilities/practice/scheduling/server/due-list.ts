@@ -317,10 +317,10 @@ export async function queryReviewDue(
     (stateRow) => !deferredBySteering.has(stateRow.knowledge_id),
   );
 
-  // bulk-prefetch every probe-selection DB input for the whole due page in THREE
-  // reads (was up to ~3 serial round-trips PER due KC — the /api/review/due N+1). The per-KC
-  // selection below is then pure in-memory over the prefetch, and the shared usedDueQuestionIds
-  // set is threaded through the SAME sequential order → byte-identical probe picks.
+  // bulk-prefetch every probe-selection DB input for the whole due page (was up to ~3
+  // serial round-trips PER due KC — the /api/review/due N+1). The per-KC selection below is
+  // then pure in-memory over the prefetch, and the shared usedDueQuestionIds set is threaded
+  // through the SAME sequential order as a per-KC prefetch.
   const knowledgeStateRows = (
     await Promise.all(
       schedulingKnowledgeRows.map((row) =>
@@ -340,6 +340,7 @@ export async function queryReviewDue(
       knowledgeId: stateRow.knowledge_id,
       lastReviewEventId: stateRow.last_review_event_id ?? null,
     })),
+    now,
   );
   const dueRows: ScheduledDueRow[] = [];
   for (const stateRow of knowledgeStateRows) {
