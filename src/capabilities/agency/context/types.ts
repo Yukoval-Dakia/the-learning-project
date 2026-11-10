@@ -49,6 +49,8 @@ export interface DeltaSection {
   dueItems: DueItemLine[];
   failureStreak: KnowledgeFailureStreak | null;
   lastActivityAt: Date | null;
+  /** Plain-language backlog / unmet new-learning floor, when the practice stream wrote one. */
+  mixNote: string | null;
 }
 
 /** 契约段读数：确定性读模型的白话档。 */

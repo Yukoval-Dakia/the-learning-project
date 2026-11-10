@@ -12,6 +12,7 @@ import type { Db, Tx } from '@/db/client';
 import { event, knowledge } from '@/db/schema';
 import { COPILOT_USER_ASK_ACTION } from '@/kernel/events/copilot-actions';
 import { allowedEventIds } from '@/kernel/events/derivation-policy';
+import { readAgentNotes } from '@/kernel/read-models/agent-note-hints';
 import { excerpt } from '@/kernel/read-models/extraction-summary';
 import {
   LEARNER_ANSWER_ACTIONS,
@@ -138,7 +139,7 @@ export async function readDeltaSection(
     callerActor: { kind: 'system', ref: 'learner-context' },
   };
   const predicate = deltaEventPredicate(opts.asOf);
-  const [candidates, due, streak, lastActivityAt] = await Promise.all([
+  const [candidates, due, streak, lastActivityAt, mixNotes] = await Promise.all([
     db
       .select({
         id: event.id,
@@ -155,6 +156,7 @@ export async function readDeltaSection(
     executeGetReviewDue(toolCtx, { limit: REVIEW_DUE_DISPLAY_CAP }),
     loadLongestFailureStreak(db),
     loadLastLearnerEventAt(db),
+    readAgentNotes(db, { for_agent: 'copilot', now: opts.now, limit: 20 }),
   ]);
 
   const window = candidates.slice(0, DELTA_SCAN_LIMIT);
@@ -225,5 +227,7 @@ export async function readDeltaSection(
     dueItems,
     failureStreak: streak,
     lastActivityAt,
+    mixNote:
+      mixNotes.find((note) => note.signal_kind === 'practice_stream_mix')?.summary_md ?? null,
   };
 }

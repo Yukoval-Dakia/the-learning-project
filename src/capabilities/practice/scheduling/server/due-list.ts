@@ -1,6 +1,6 @@
 import { getCurrentFailureAttempts } from '@/kernel/read-models/failure-attempts';
 import { resolveSchedulingProjection } from '@/kernel/records/scheduling-state';
-import { selectedForgettingEngine } from '@/kernel/scheduling';
+import { retrievabilityForKc, selectedForgettingEngine } from '@/kernel/scheduling';
 // Phase 1c.1 Step 9.B — `/api/review/due` handler over `material_fsrs_state`.
 // queryReviewDue is the typed actionable queue. get_review_due separately
 // reports schedule projections and bounded diagnostic coverage; its result
@@ -17,6 +17,7 @@ import { and, eq, inArray, lte } from 'drizzle-orm';
 import { type ActivityRefT, questionRef } from '@/core/schema/activity';
 import type { CauseCategoryT } from '@/core/schema/event/blocks';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
+import { SchedulingStateSchema } from '@/core/schema/scheduling-state';
 import { type Db, type Tx, db } from '@/db/client';
 import { notDraftPredicate, questionSuspendedPredicate } from '@/db/predicates';
 import { material_fsrs_state, question } from '@/db/schema';
@@ -122,8 +123,8 @@ async function getFailureAttemptsPerQuestion(
 }
 
 // T-CS / — deterministic round-robin SELECTION across subjects.
-// `rows` is already ordered most-due-first (due_at asc for the overdue segment,
-// or attempt order for the never-reviewed segment). We partition it by subject
+// `rows` is already ordered most-forgotten-first (retrievability ascending for the
+// overdue segment, or attempt order for the never-reviewed segment). We partition it by subject
 // id (preserving that within-subject order — STABLE), then cycle through the
 // subjects in a deterministic, stable order — the order in which each subject is
 // FIRST encountered in `rows` — taking the next most-due item from each in turn
@@ -140,7 +141,7 @@ function roundRobinBySubject<T extends { id: string }>(
 ): T[] {
   if (rows.length <= 1 || limit <= 0) return rows.slice(0, Math.max(limit, 0));
   // Stable bucketing: subject order = first-seen order in `rows`; within-subject
-  // order = `rows` order (most-due first). Single subject → one bucket → no-op.
+  // order = `rows` order (most-forgotten first). Single subject → one bucket → no-op.
   const buckets: T[][] = [];
   const bucketIndexBySubject = new Map<string, number>();
   for (const row of rows) {
@@ -204,6 +205,27 @@ export interface ReviewDueQuery {
  */
 export const REVIEW_DUE_LIMIT_MAX = 200;
 
+/** Current recall probability in [0, 1]. An unknown reading sorts as 0 so it is not treated as still remembered. */
+export function dueRetrievability(state: unknown, now: Date): number {
+  const parsed = SchedulingStateSchema.safeParse(state);
+  const reading = retrievabilityForKc(parsed.success ? parsed.data : null, now);
+  if (typeof reading === 'number') return reading;
+  if (reading.kind === 'score') return reading.value;
+  return 0;
+}
+
+function compareDueByRetrievability(
+  a: { state: unknown; due_at: Date; tie: string },
+  b: { state: unknown; due_at: Date; tie: string },
+  now: Date,
+): number {
+  const recall = dueRetrievability(a.state, now) - dueRetrievability(b.state, now);
+  if (recall !== 0) return recall;
+  const dueDelta = a.due_at.getTime() - b.due_at.getTime();
+  if (dueDelta !== 0) return dueDelta;
+  return a.tie.localeCompare(b.tie);
+}
+
 export type ReviewDueRow = {
   id: string;
   activity_ref: ActivityRefT;
@@ -238,7 +260,8 @@ export async function queryReviewDue(
   // 2. Questions with NO material_fsrs_state row but at least one failure
   // attempt — never-reviewed cards still owed a first pass.
   // We keep them ordered: null-state cards first (legacy contract), then
-  // due-earliest first.
+  // lowest current retrievability first. The SQL scan stays due_at order;
+  // retrievability is computed after the projection.
   // T-CS / : fetch a WIDER overdue candidate window than `limit` (same
   // bounded window the never-reviewed slice uses) so the round-robin selection
   // below can balance across subjects. With a plain `.limit(limit)` the SQL
@@ -280,6 +303,7 @@ export async function queryReviewDue(
         selectedForgettingEngine() === 'fsrs' ? lte(material_fsrs_state.due_at, now) : undefined,
       ),
     )
+    // Scan order only. Scheduling order is retrievability ascending after projection.
     .orderBy(material_fsrs_state.due_at, material_fsrs_state.subject_id);
   // defense in depth: a 'seed:<subj>:root' FSRS subject is a structural anchor, never
   // probeable content. Enroll sites no longer mint it, but a pre-fix row may still exist
@@ -303,7 +327,7 @@ export async function queryReviewDue(
   // YUK-1770 D4 — subtractive steering deferral (「这周别排物理」). In-window
   // excluded KCs leave the candidate pool entirely: their FSRS rows, due_at and
   // state are untouched (deferral, not deletion); when the window closes or the
-  // learner revokes, the ordinary ordering serves them again by forgetting risk.
+  // learner revokes, the ordinary ordering serves them again by retrievability.
   // Question-shaped rows defer only when EVERY knowledge id is excluded — a
   // cross-subject item stays (its other subject still owns it).
   const deferredBySteering = await (
@@ -329,9 +353,12 @@ export async function queryReviewDue(
     )
   )
     .filter((row) => row.due_at <= now)
-    .sort(
-      (a, b) =>
-        a.due_at.getTime() - b.due_at.getTime() || a.knowledge_id.localeCompare(b.knowledge_id),
+    .sort((a, b) =>
+      compareDueByRetrievability(
+        { state: a.state, due_at: a.due_at, tie: a.knowledge_id },
+        { state: b.state, due_at: b.due_at, tie: b.knowledge_id },
+        now,
+      ),
     );
 
   const probePrefetch = await prefetchProbeSelection(
@@ -388,6 +415,7 @@ export async function queryReviewDue(
         questionSuspendedPredicate(question),
       ),
     )
+    // Scan order only. Scheduling order is retrievability ascending after projection.
     .orderBy(material_fsrs_state.due_at, question.created_at);
   const legacyQuestionStateRows = (
     await Promise.all(
@@ -397,9 +425,12 @@ export async function queryReviewDue(
     )
   )
     .filter((row) => row.due_at <= now)
-    .sort(
-      (a, b) =>
-        a.due_at.getTime() - b.due_at.getTime() || a.question_id.localeCompare(b.question_id),
+    .sort((a, b) =>
+      compareDueByRetrievability(
+        { state: a.state, due_at: a.due_at, tie: a.question_id },
+        { state: b.state, due_at: b.due_at, tie: b.question_id },
+        now,
+      ),
     );
 
   const admittedLegacyIds = await readAutomaticallyServableQuestionIds(
@@ -427,13 +458,13 @@ export async function queryReviewDue(
       metadata: row.metadata,
     });
   }
-  dueRows.sort((a, b) => {
-    const dueDelta = a.due_at.getTime() - b.due_at.getTime();
-    if (dueDelta !== 0) return dueDelta;
-    const createdDelta = a.created_at.getTime() - b.created_at.getTime();
-    if (createdDelta !== 0) return createdDelta;
-    return a.question_id.localeCompare(b.question_id);
-  });
+  dueRows.sort((a, b) =>
+    compareDueByRetrievability(
+      { state: a.state, due_at: a.due_at, tie: a.question_id },
+      { state: b.state, due_at: b.due_at, tie: b.question_id },
+      now,
+    ),
+  );
 
   // Build the "never reviewed" slice by finding failure attempts whose
   // question has no FSRS state row yet. Use the existing event-stream read
