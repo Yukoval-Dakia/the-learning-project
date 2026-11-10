@@ -274,8 +274,10 @@ export async function composeSoftmaxStream(
   // ── 组装：到期（L1 序） + recall 透传 + 抽中非到期（LLM arrangement 序） + 卷 + 收尾。
   const nonDueDrafts: Omit<StreamPlanItem, 'position'>[] = [];
 
-  // 非到期保底（确定性，不进 π_i）。新学优先，没有新学候选时才是变式。
+  const sampledRefIds = new Set(sampled.map((s) => s.refId));
+  // 抽样没覆盖到的保底项确定性补上，不记 π_i。已抽中的不重复。
   for (const s of floorPassthrough) {
+    if (sampledRefIds.has(s.refId)) continue;
     const role = roleByRef.get(s.refId);
     nonDueDrafts.push({
       item_kind: 'question',

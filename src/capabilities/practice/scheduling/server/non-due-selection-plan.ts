@@ -91,8 +91,8 @@ export function planNonDueSelection<Signal extends NonDueSelectionSignal>({
     : allRecallLocked.length;
   const recallLocked = allRecallLocked.slice(0, recallLimit);
   const recallLockedRefs = new Set(recallLocked.map((s) => s.refId));
-  const floorIds = new Set(floorPassthrough.map((signal) => signal.refId));
-  const samplable = samplablePool.filter((signal) => !floorIds.has(signal.refId));
+  // Floor refs stay samplable so the provider path still runs. Misses are backfilled.
+  const samplable = samplablePool;
 
   // Due, selected recall, and the deterministic non-due floor reserve capacity before
   // sampling. Papers are a truncatable tail after sampled questions, so they do not
@@ -113,8 +113,12 @@ export function planNonDueSelection<Signal extends NonDueSelectionSignal>({
 
   // The experiment target can lower the capacity/time bound; omission keeps that bound.
   const boundedNonDueBudget = Math.min(nonDueBudget, timeQuestionBudget);
+  const floorTarget =
+    floorPassthrough.length > 0
+      ? Math.max(boundedNonDueBudget, Math.min(floorPassthrough.length, samplable.length))
+      : boundedNonDueBudget;
   const effectiveTarget =
-    targetCount !== undefined ? Math.min(targetCount, boundedNonDueBudget) : boundedNonDueBudget;
+    targetCount !== undefined ? Math.min(targetCount, floorTarget) : floorTarget;
 
   return { recallLocked, recallLockedRefs, samplable, floorPassthrough, effectiveTarget };
 }
