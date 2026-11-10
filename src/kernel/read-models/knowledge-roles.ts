@@ -12,6 +12,7 @@
 import { and, inArray, ne } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
 import { knowledge } from '@/db/schema';
+import { SYNTHETIC_SUBJECT_ROOT_RE } from '@/kernel/read-models/placement-scope';
 
 type DbLike = Db | Tx;
 
@@ -52,4 +53,14 @@ export async function withoutNonKcKnowledgeIds(
   const nonKc = await getNonKcKnowledgeIds(db, ids);
   if (nonKc.size === 0) return normalizeIds(ids);
   return normalizeIds(ids).filter((id) => !nonKc.has(id));
+}
+
+/**
+ * Knowledge ids that own a knowledge-level schedule. Same cut settlement uses
+ * before choosing a question card: drop seed roots, then drop goal/container
+ * roles. An id with no live row stays, matching the default-open role gate.
+ */
+export async function testableKnowledgeIds(db: DbLike, ids: readonly string[]): Promise<string[]> {
+  const candidates = normalizeIds(ids).filter((id) => !SYNTHETIC_SUBJECT_ROOT_RE.test(id));
+  return withoutNonKcKnowledgeIds(db, candidates);
 }

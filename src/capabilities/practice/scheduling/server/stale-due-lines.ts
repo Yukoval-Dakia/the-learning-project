@@ -8,6 +8,7 @@ import { learnerLocalDay } from '@/core/learner-day';
 import type { Db, Tx } from '@/db/client';
 import { event, material_fsrs_state, practice_stream_item, question } from '@/db/schema';
 import { lockPracticeStreamPartition } from '@/kernel/locks/practice-stream';
+import { testableKnowledgeIds } from '@/kernel/read-models/knowledge-roles';
 
 type DbLike = Db | Tx;
 
@@ -56,10 +57,12 @@ function dueLineShouldWithdraw(
 function cardsForQuestion(
   questionId: string,
   knowledgeIds: readonly string[],
+  testable: ReadonlySet<string>,
   present: ReadonlySet<string>,
 ): CardRef[] {
-  if (knowledgeIds.length > 0) {
-    return knowledgeIds
+  const testableIds = knowledgeIds.filter((id) => testable.has(id));
+  if (testableIds.length > 0) {
+    return testableIds
       .filter((id) => present.has(cardKey({ kind: 'knowledge', id })))
       .map((id) => ({ kind: 'knowledge' as const, id }));
   }
@@ -89,9 +92,11 @@ async function withdrawInTransaction(
     .where(inArray(question.id, questionIds));
   const knowledgeIdsByQuestion = new Map(questions.map((row) => [row.id, row.knowledge_ids ?? []]));
   const knowledgeIds = [...new Set([...knowledgeIdsByQuestion.values()].flat())];
-  const unlabeledQuestionIds = questionIds.filter(
-    (id) => (knowledgeIdsByQuestion.get(id) ?? []).length === 0,
-  );
+  const testable = new Set(await testableKnowledgeIds(tx, knowledgeIds));
+  const questionCardIds = questionIds.filter((id) => {
+    const labels = knowledgeIdsByQuestion.get(id);
+    return labels !== undefined && !labels.some((kid) => testable.has(kid));
+  });
 
   const clocks = new Map<string, CardClock>();
   const knowledgeClause =
@@ -102,10 +107,10 @@ async function withdrawInTransaction(
         )
       : undefined;
   const questionClause =
-    unlabeledQuestionIds.length > 0
+    questionCardIds.length > 0
       ? and(
           eq(material_fsrs_state.subject_kind, 'question'),
-          inArray(material_fsrs_state.subject_id, unlabeledQuestionIds),
+          inArray(material_fsrs_state.subject_id, questionCardIds),
         )
       : undefined;
   const subjectClause =
@@ -156,7 +161,8 @@ async function withdrawInTransaction(
   const deleteIds = pending
     .filter((row) => {
       const labels = knowledgeIdsByQuestion.get(row.ref_id);
-      const cards = labels === undefined ? [] : cardsForQuestion(row.ref_id, labels, present);
+      const cards =
+        labels === undefined ? [] : cardsForQuestion(row.ref_id, labels, testable, present);
       return dueLineShouldWithdraw(
         { rowId: row.id, createdAt: row.created_at, cards },
         clocks,
@@ -165,12 +171,17 @@ async function withdrawInTransaction(
     })
     .map((row) => row.id);
   if (deleteIds.length === 0) return 0;
-  await tx
+  const deleted = await tx
     .delete(practice_stream_item)
     .where(
-      and(streamPartitionPredicate(date, sessionId), inArray(practice_stream_item.id, deleteIds)),
-    );
-  return deleteIds.length;
+      and(
+        streamPartitionPredicate(date, sessionId),
+        inArray(practice_stream_item.id, deleteIds),
+        eq(practice_stream_item.status, 'pending'),
+      ),
+    )
+    .returning({ id: practice_stream_item.id });
+  return deleted.length;
 }
 
 export async function withdrawStalePendingDueLines(

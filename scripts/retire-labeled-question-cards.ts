@@ -1,32 +1,47 @@
 /**
  * One-time stock repair: retire question-level FSRS cards whose question now
- * carries a knowledge label. Not a migration, and CI does not run it.
+ * carries a testable knowledge component. Goal, container, and seed-root labels
+ * do not count. Not a migration, and CI does not run it.
  *
- * Usage: pnpm ops:retire-labeled-question-cards [--dry-run]
+ * Default is a dry run. Pass --apply to write.
+ *
+ * Usage: pnpm ops:retire-labeled-question-cards [--apply]
  */
 import './load-env';
 
-import { and, eq, sql } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { db } from '@/db/client';
 import { material_fsrs_state, question } from '@/db/schema';
+import { testableKnowledgeIds } from '@/kernel/read-models/knowledge-roles';
 import { retireQuestionFsrsState } from '@/kernel/records/scheduling-state';
 
 async function main(): Promise<void> {
-  const dryRun = process.argv.includes('--dry-run');
+  const apply = process.argv.includes('--apply');
+  if (apply && process.argv.includes('--dry-run')) {
+    console.error('pass either --apply or --dry-run, not both');
+    process.exitCode = 1;
+    return;
+  }
   const rows = await db
-    .select({ questionId: material_fsrs_state.subject_id })
+    .select({
+      questionId: material_fsrs_state.subject_id,
+      knowledgeIds: question.knowledge_ids,
+    })
     .from(material_fsrs_state)
     .innerJoin(question, eq(question.id, material_fsrs_state.subject_id))
-    .where(
-      and(
-        eq(material_fsrs_state.subject_kind, 'question'),
-        sql`jsonb_array_length(${question.knowledge_ids}) > 0`,
-      ),
-    )
+    .where(eq(material_fsrs_state.subject_kind, 'question'))
     .orderBy(material_fsrs_state.subject_id);
-  const questionIds = rows.map((row) => row.questionId);
+  const testable = new Set(
+    await testableKnowledgeIds(
+      db,
+      rows.flatMap((row) => row.knowledgeIds ?? []),
+    ),
+  );
+  const questionIds = rows
+    .filter((row) => (row.knowledgeIds ?? []).some((id) => testable.has(id)))
+    .map((row) => row.questionId);
   let retired = 0;
-  if (!dryRun) {
+  if (apply) {
     await db.transaction(async (tx) => {
       for (const questionId of questionIds) {
         if (await retireQuestionFsrsState(tx, questionId)) retired += 1;
@@ -37,10 +52,10 @@ async function main(): Promise<void> {
     JSON.stringify(
       {
         operation: 'retire_labeled_question_cards',
-        dry_run: dryRun,
+        dry_run: !apply,
         matched: questionIds.length,
-        retired: dryRun ? 0 : retired,
-        would_retire: dryRun ? questionIds.length : 0,
+        retired: apply ? retired : 0,
+        would_retire: apply ? 0 : questionIds.length,
         question_ids: questionIds,
       },
       null,

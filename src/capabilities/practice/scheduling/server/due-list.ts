@@ -32,7 +32,7 @@ import {
 } from '@/kernel/read-models/active-goal-scope';
 import { effectiveCauseCategoryForFailureAttempt } from '@/kernel/read-models/cause-policy';
 import { type FailureAttempt, getFailureAttempts } from '@/kernel/read-models/failure-attempts';
-import { getNonKcKnowledgeIds } from '@/kernel/read-models/knowledge-roles';
+import { getNonKcKnowledgeIds, testableKnowledgeIds } from '@/kernel/read-models/knowledge-roles';
 import { SYNTHETIC_SUBJECT_ROOT_RE } from '@/kernel/read-models/placement-scope';
 import { loadSteeringDeferredKnowledgeIds } from '@/kernel/read-models/steering-deferral';
 // T-CS / — cross-subject scheduling v1 (, line 242). The due
@@ -506,12 +506,18 @@ export async function queryReviewDue(
     legacyQuestionStateRows.map((row) => row.question_id),
     { includeInterventionDiagnostics: true },
   );
+  const testableIds = new Set(
+    await testableKnowledgeIds(
+      activeDb,
+      legacyQuestionStateRows.flatMap((row) => row.knowledge_ids ?? []),
+    ),
+  );
   for (const row of legacyQuestionStateRows
     .filter((row) => admittedLegacyIds.has(row.question_id))
     .filter((row) => !isSteeringDeferredRow(row.knowledge_ids ?? []))
-    // A knowledge label moves the schedule onto the knowledge card. A leftover
-    // question card must not keep serving the same question every day.
-    .filter((row) => (row.knowledge_ids ?? []).length === 0)
+    // A testable KC moves the schedule onto the knowledge card. Goal, container,
+    // and seed-root labels do not; those questions keep their question card.
+    .filter((row) => !(row.knowledge_ids ?? []).some((id) => testableIds.has(id)))
     .slice(0, candidateWindow)) {
     if (usedDueQuestionIds.has(row.question_id)) continue;
     usedDueQuestionIds.add(row.question_id);
