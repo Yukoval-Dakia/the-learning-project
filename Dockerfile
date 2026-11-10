@@ -169,10 +169,16 @@ COPY scripts/workspace/launch.c /tmp/launch.c
 RUN gcc -O2 -Wall -Wextra -Werror -o /workspace-launch /tmp/launch.c
 
 FROM chromium-os AS worker
+# Sandbox math libraries come from Debian, not pip: the reference BLAS that python3-numpy pulls in
+# starts no threads, so importing numpy cannot trip the sandbox uid's shared RLIMIT_NPROC, and no
+# pip or compiler lands in the image. workspace_exec's description names these versions; bump
+# them together. The import check runs as the sandbox uid with the launcher's `python3 -I`.
 RUN apt-get update && apt-get install -y --no-install-recommends python3 libcap2-bin \
+      python3-numpy=1:1.24.2-1+deb12u1 python3-sympy=1.11.1-1 python3-mpmath=1.2.1-2 \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 29082 agent-sandbox \
     && useradd --uid 29082 --gid 29082 --no-create-home --shell /usr/sbin/nologin agent-sandbox \
+    && setpriv --reuid=29082 --regid=29082 --clear-groups python3 -I -c 'import numpy, sympy' \
     && mkdir -p /var/lib/tlp/workspaces \
     && chown node:agent-sandbox /var/lib/tlp/workspaces \
     && chmod 1730 /var/lib/tlp/workspaces

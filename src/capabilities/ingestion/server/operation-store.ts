@@ -56,10 +56,16 @@ export interface IngestionOperationError {
   code: string;
   message: string;
   status: number;
+  details?: Record<string, unknown>;
 }
 
 const IngestionOperationErrorSchema = z
-  .object({ code: z.string(), message: z.string(), status: z.number() })
+  .object({
+    code: z.string(),
+    message: z.string(),
+    status: z.number(),
+    details: z.record(z.string(), z.unknown()).optional(),
+  })
   .passthrough();
 
 export interface IngestionOperationResource {

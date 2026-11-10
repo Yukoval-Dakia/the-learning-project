@@ -49,10 +49,20 @@ const EvidenceDemandTask = z.object({
   allowed_uses: z.array(EvidenceAllowedUse).min(1),
 });
 
+/** Server-read learner ability at ticket time; callers cannot supply it. */
+const EvidenceDemandThetaReading = z.object({
+  knowledge_id: z.string().min(1),
+  value: z.number().finite(),
+  evidence_count: z.number().int().nonnegative(),
+  provenance: z.enum(['observed', 'inferred']),
+  as_of: z.string().datetime({ offset: true }),
+});
+
 const EvidenceDemandDifficulty = z.object({
   band: z.enum(['below', 'near', 'above', 'stretch']),
   scale: z.string().min(1),
   target_value: z.number().finite().nullable(),
+  theta_hat: z.array(EvidenceDemandThetaReading).optional(),
 });
 
 const EvidenceDemandInventoryGoal = z.object({
@@ -67,6 +77,16 @@ const EvidenceDemandControl = z.object({
   max_attempts: z.number().int().positive(),
 });
 
+/** One ranked failure cause from the shared cause judgment, read when the ticket was written. */
+const EvidenceDemandObservedError = z.object({
+  knowledge_id: z.string().min(1),
+  category: z.string().min(1),
+  label: z.string().nullable(),
+  count: z.number().int().positive(),
+  last_at: z.string(),
+  source: z.string().min(1),
+});
+
 const EvidenceDemandCause = z.object({
   kind: z.enum([
     'coverage_gap',
@@ -74,8 +94,10 @@ const EvidenceDemandCause = z.object({
     'mastery_uncertainty',
     'owner_request',
     'confusable_pair',
+    'observed_error',
   ]),
   ref: z.string().min(1).optional(),
+  observed: EvidenceDemandObservedError.optional(),
 });
 
 /**

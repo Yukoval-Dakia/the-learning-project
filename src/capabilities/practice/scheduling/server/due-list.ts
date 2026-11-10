@@ -113,7 +113,7 @@ async function getFailureAttemptsPerQuestion(
   perQuestionLimit: number,
 ): Promise<FailureAttempt[]> {
   if (questionIds.length === 0 || perQuestionLimit <= 0) return [];
-  // codex round-3 P1 — push per-question cap into SQL via the new
+  // push per-question cap into SQL via the new
   // `perQuestionLimit` opt so each question gets its own bounded slice. The
   // previous `limit: qids*cap*3` was a global active-rows cap and let one
   // hot question saturate the window, dropping quiet questions from the

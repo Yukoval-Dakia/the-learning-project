@@ -29,6 +29,8 @@ export interface ActiveRun {
   stopPending: boolean;
   cancelRequested: boolean;
   thinking: readonly ThinkingSegment[];
+  /** Retry frames (event ids) whose thinking trim has been applied this visit. */
+  retriesSeen: Set<number>;
 }
 
 export interface CompanionInternals {
@@ -43,6 +45,8 @@ export interface CompanionInternals {
   snapshotAppliedSeq: Map<string, number>;
   checkingPolicy: boolean;
   storageInitialized: boolean;
+  /** The last sentence a page put in the draft, so an untouched one can be swapped for the next. */
+  handedDraft: string | null;
 }
 
 export interface CompanionCtx {
@@ -66,6 +70,7 @@ export function createInternals(): CompanionInternals {
     runs: new Map(),
     activeSkill: null,
     nudgeSession: null,
+    handedDraft: null,
     bootstrapEpoch: null,
     selectionRevision: 0,
     snapshotRequestSeq: new Map(),

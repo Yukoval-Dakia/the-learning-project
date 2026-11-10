@@ -15,6 +15,7 @@ import {
   DraftUnit,
   DraftUnitKey,
   QuestionDraftDocument,
+  formatDraftDocumentIssues,
   mintDraftAssetId,
   sha256Hex,
 } from '@/core/schema/question-draft';
@@ -261,16 +262,17 @@ function applySet(
           if (!parsed.success) fail('invalid_value', 'material_ids must be string[]');
           part.material_ids = parsed.data;
         } else if (field === 'blank_order') {
-          // Explicit logical order (slot ids); null/undefined clears the declaration.
-          // Coverage is validated by integrityIssues and the publish barrier.
-          if (value == null) {
+          // Empty means undeclared (same as the document schema): null/[]
+          // clear the declaration. Coverage is validated by integrityIssues
+          // and the publish barrier.
+          if (value == null || (Array.isArray(value) && value.length === 0)) {
             part.blank_order = undefined;
           } else {
-            const parsed = z.array(z.string().min(1)).min(1).safeParse(value);
+            const parsed = z.array(z.string().min(1)).safeParse(value);
             if (!parsed.success) {
               fail(
                 'invalid_value',
-                'blank_order must be a non-empty string[] of slot ids (or null to clear)',
+                'blank_order must be a string[] of slot ids (null or [] clears it)',
               );
             }
             part.blank_order = parsed.data;
@@ -1130,7 +1132,10 @@ export function applyEditOps(doc: QuestionDraftDocumentT, ops: EditOpT[]): Apply
     return {
       ok: false,
       issues: [
-        { code: 'invalid_value', detail: `document invalid after ops: ${reparsed.error.message}` },
+        {
+          code: 'invalid_value',
+          detail: `document invalid after ops: ${formatDraftDocumentIssues(reparsed.error)}`,
+        },
       ],
     };
   }
