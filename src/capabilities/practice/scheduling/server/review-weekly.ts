@@ -7,7 +7,7 @@
 // Single-shot per page load; computed at request time (no view). Acceptable at
 // single-user scale where the window is bounded and the event table is small.
 
-import { and, gte, inArray, lte, sql } from 'drizzle-orm';
+import { and, eq, gte, inArray, lte, sql } from 'drizzle-orm';
 import type { z } from 'zod';
 import type { Db } from '@/db/client';
 import { event, knowledge } from '@/db/schema';
@@ -27,6 +27,40 @@ export type WeeklyReportQuery = z.input<typeof ReviewWeeklyQuerySchema>;
 
 const MAX_DAYS = 90;
 const DEFAULT_DAYS = 7;
+
+type WeeklyReview = {
+  at: Date;
+  rating: string | null;
+  outcome: 'success' | 'failure' | 'partial' | null;
+};
+
+function storedOutcome(value: string | null): WeeklyReview['outcome'] {
+  return value === 'success' || value === 'failure' || value === 'partial' ? value : null;
+}
+
+function stringField(payload: unknown, key: string): string | null {
+  if (!payload || typeof payload !== 'object' || !(key in payload)) return null;
+  const value = (payload as Record<string, unknown>)[key];
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+/** Keys that mean this row is the same issuance or the same answer as another row. */
+function reviewIdentityKeys(input: {
+  eventId?: string;
+  groupId?: string;
+  issuanceId?: string;
+  streamItemId?: string;
+}): string[] {
+  const keys: string[] = [];
+  if (input.eventId) keys.push(`event:${input.eventId}`);
+  if (input.groupId) keys.push(`group:${input.groupId}`);
+  if (input.issuanceId) keys.push(`issuance:${input.issuanceId}`);
+  if (input.streamItemId) {
+    keys.push(`stream:${input.streamItemId}`);
+    keys.push(`issuance:iss_stream_${input.streamItemId}`);
+  }
+  return keys;
+}
 
 export async function loadWeeklyReview(db: Db, input: unknown) {
   const parsedQuery = ReviewWeeklyQuerySchema.safeParse(input);
@@ -50,19 +84,69 @@ export async function loadWeeklyReview(db: Db, input: unknown) {
   const cutoff = reportWindow.from;
   const inWindow = and(gte(event.created_at, cutoff), lte(event.created_at, now));
 
-  const reviews = (await loadNativeReviewOccurrences(db)).flatMap((occurrence) => {
-    if (occurrence.occurredAt < cutoff || occurrence.occurredAt > now) return [];
-    return [
-      {
-        created_at: occurrence.occurredAt,
-        rating: occurrence.rating,
-        outcome:
-          occurrence.outcome === 'pending' || occurrence.outcome === 'unsupported'
-            ? null
-            : occurrence.outcome,
-      },
+  const nativeOccurrences = (await loadNativeReviewOccurrences(db)).filter(
+    (occurrence) => occurrence.occurredAt >= cutoff && occurrence.occurredAt <= now,
+  );
+  const groupIds = [...new Set(nativeOccurrences.map((occurrence) => occurrence.groupId))];
+  const nativeAnchors =
+    groupIds.length === 0
+      ? []
+      : await db
+          .select({ id: event.id, payload: event.payload })
+          .from(event)
+          .where(
+            and(
+              eq(event.action, 'experimental:assessment_attempt'),
+              eq(event.subject_kind, 'question'),
+              inArray(sql<string>`${event.payload}->>'evaluation_group_id'`, groupIds),
+            ),
+          );
+  const claimed = new Set<string>();
+  const reviews: WeeklyReview[] = [];
+  for (const occurrence of nativeOccurrences) {
+    const anchors = nativeAnchors.filter(
+      (anchor) => stringField(anchor.payload, 'evaluation_group_id') === occurrence.groupId,
+    );
+    const keys = [
+      ...reviewIdentityKeys({ groupId: occurrence.groupId }),
+      ...anchors.flatMap((anchor) =>
+        reviewIdentityKeys({
+          eventId: anchor.id,
+          issuanceId: stringField(anchor.payload, 'issuance_id') ?? undefined,
+          streamItemId: stringField(anchor.payload, 'stream_item_id') ?? undefined,
+        }),
+      ),
     ];
-  });
+    for (const key of keys) claimed.add(key);
+    reviews.push({
+      at: occurrence.occurredAt,
+      rating: occurrence.rating,
+      outcome: storedOutcome(occurrence.outcome),
+    });
+  }
+  const legacyReviews = await db
+    .select({
+      id: event.id,
+      outcome: event.outcome,
+      payload: event.payload,
+      created_at: event.created_at,
+    })
+    .from(event)
+    .where(and(eq(event.action, 'review'), eq(event.subject_kind, 'question'), inWindow));
+  for (const row of legacyReviews) {
+    const keys = reviewIdentityKeys({
+      eventId: row.id,
+      issuanceId: stringField(row.payload, 'issuance_id') ?? undefined,
+      streamItemId: stringField(row.payload, 'stream_item_id') ?? undefined,
+    });
+    if (keys.some((key) => claimed.has(key))) continue;
+    for (const key of keys) claimed.add(key);
+    reviews.push({
+      at: row.created_at,
+      rating: stringField(row.payload, 'fsrs_rating'),
+      outcome: storedOutcome(row.outcome),
+    });
+  }
 
   // 2) Failure attempts in window — for top struggling knowledge_ids + cause.
   const failures = (await getCurrentFailureAttempts(db, { since: cutoff })).filter(
@@ -96,7 +180,7 @@ export async function loadWeeklyReview(db: Db, input: unknown) {
   // 5) Rating distribution from review event payloads.
   const ratingCounts: Record<string, number> = { again: 0, hard: 0, good: 0, easy: 0 };
   for (const r of reviews) {
-    if (r.rating in ratingCounts) ratingCounts[r.rating] += 1;
+    if (r.rating && r.rating in ratingCounts) ratingCounts[r.rating] += 1;
   }
 
   // 6) Daily trend buckets use the learner's calendar days. A seven-day report
@@ -116,7 +200,7 @@ export async function loadWeeklyReview(db: Db, input: unknown) {
     dailyMap.set(key, { date: key, count: 0, correct: 0, incorrect: 0, partial: 0, ungraded: 0 });
   }
   for (const r of reviews) {
-    const key = localDateKey(r.created_at, timeZone);
+    const key = localDateKey(r.at, timeZone);
     const bucket = dailyMap.get(key);
     if (bucket) {
       bucket.count += 1;
