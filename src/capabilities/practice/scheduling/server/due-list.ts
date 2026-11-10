@@ -17,6 +17,7 @@ import { and, eq, inArray, lte } from 'drizzle-orm';
 import { type ActivityRefT, questionRef } from '@/core/schema/activity';
 import type { CauseCategoryT } from '@/core/schema/event/blocks';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
+import { steeringDefersKnowledgeIds } from '@/core/steering';
 import { type Db, type Tx, db } from '@/db/client';
 import { notDraftPredicate, questionSuspendedPredicate } from '@/db/predicates';
 import { material_fsrs_state, question } from '@/db/schema';
@@ -310,11 +311,9 @@ export async function queryReviewDue(
     deps.loadSteeringDeferredFn ?? loadSteeringDeferredKnowledgeIds
   )(activeDb, now);
   const isSteeringDeferredRow = (knowledgeIds: readonly string[]): boolean =>
-    deferredBySteering.size > 0 &&
-    knowledgeIds.length > 0 &&
-    knowledgeIds.every((kid) => deferredBySteering.has(kid));
+    steeringDefersKnowledgeIds(knowledgeIds, deferredBySteering);
   const schedulingKnowledgeRows = rawKnowledgeStateRows.filter(
-    (stateRow) => !deferredBySteering.has(stateRow.knowledge_id),
+    (stateRow) => !steeringDefersKnowledgeIds([stateRow.knowledge_id], deferredBySteering),
   );
 
   // bulk-prefetch every probe-selection DB input for the whole due page in THREE

@@ -8,9 +8,11 @@
 // - edge confidence never feeds priority or difficulty; an acquired contrast item takes
 // an independent b-anchor (ItemPriorTask) and never inherits edge confidence.
 
+import { steeringDefersKnowledgeIds } from '@/core/steering';
 import type { Db } from '@/db/client';
 import { loadConfusablePairs } from '@/kernel/read-models/confusables';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
+import { loadSteeringDeferredKnowledgeIds } from '@/kernel/read-models/steering-deferral';
 import {
   buildCoverageEvidenceDemand,
   evidenceDemandToTargetContext,
@@ -101,8 +103,10 @@ export async function discoverConfusableContrastTargets(
     });
   }
 
+  const deferredKnowledgeIds = await loadSteeringDeferredKnowledgeIds(db, new Date());
   // priority desc (stable: same priority keeps insertion order) — mirror scanCoverageGaps tail.
   return targets
+    .filter((target) => !steeringDefersKnowledgeIds(target.knowledgeIds, deferredKnowledgeIds))
     .map((t, i) => ({ t, i }))
     .sort((a, b) => b.t.priority - a.t.priority || a.i - b.i)
     .map(({ t }) => t);
