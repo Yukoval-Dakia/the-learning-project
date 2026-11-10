@@ -101,7 +101,7 @@ function attributionEvidenceGuide(): string {
 - grading_evidence：有效判定里丢分或选错/漏选的评分项。units[].wrong_option_ids 是选错的选项 id，missed_option_ids 是漏选的选项 id，points_awarded / points_full 是得分与满分，reason_md 是判分理由，model_observations 是模型对非文本证据的未校验观察。null 表示这次没有结构化判分；units 为空表示判了但没有可摘的丢分项。
 - behavior：self_confidence 是学习者自评把握（记录了才有，通常 1–5），duration_ms 是用时毫秒，hints_used 是用过的提示次数，final_hint_level 是最后看到的提示层级。null 表示没记录，禁止当成 0。
 - failed_part_pitfalls：本题解法先验里、失败那一小问的易错点。mechanism_md 是错法，trigger_md 是什么情境会触发。这是题目的常见坑，不是这次已经证实的错因。空数组表示没有先验或对不上失败小问。
-- recent_same_question：同一题最近几次作答（不含本次）的结果和错因类别。
+- recent_same_question：同一题最近几次作答（不含本次）的结果和错因。cause_category 为 null 只表示这次失败还没有错因记录（包括还没归因的复习），不能当成「确认没有这类错」或据此否定复发。
 - knowledge_failure_counts_14d：这些知识点近 14 天的失败次数（含本次）。
 - prerequisite_mastery：这些知识点的直接先修和掌握档（萌芽 / 成长 / 稳固 / 精熟）。band 为 null 表示还没有该先修自己的掌握读数，不是萌芽。先修档低时，错因要考虑先修缺口，不要只归到本题概念。`;
 }

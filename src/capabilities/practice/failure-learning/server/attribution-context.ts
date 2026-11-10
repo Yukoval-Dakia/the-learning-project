@@ -1,7 +1,7 @@
 // Assembles AttributionEvidence for one failure. Reads grading output, the
 // admission solution prior, and history. Does not grade, admit, or settle.
 
-import { and, desc, eq, inArray, isNull, ne, or } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, ne, or } from 'drizzle-orm';
 import { A5_BANDS, masteryBandView } from '@/core/mastery-band';
 import type { Db, Tx } from '@/db/client';
 import { event, knowledge, knowledge_edge } from '@/db/schema';
@@ -11,7 +11,10 @@ import {
   resolveVerdictsForNativeAttempts,
 } from '@/kernel/read-models/assessment-verdict';
 import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
-import { getFailureAttemptsForDerivation } from '@/kernel/read-models/failure-attempts';
+import {
+  getFailureAttemptForDerivationById,
+  getFailureAttemptsForDerivation,
+} from '@/kernel/read-models/failure-attempts';
 import { getMasteryProjection, isObserved } from '@/kernel/read-models/mastery-projection';
 import { readSolutionPriorForServer } from '../../question-bank/public';
 import {
@@ -117,12 +120,24 @@ async function loadRecentSameQuestion(
     db,
     kept.filter((row) => row.action === 'experimental:assessment_attempt'),
   );
-  const failures = await getFailureAttemptsForDerivation(db, {
-    questionIds: [questionId],
-    perQuestionLimit: RECENT_SAME_QUESTION_ATTEMPTS,
+  // The list above already dropped the attempt being attributed. Causes are
+  // loaded for those same ids. A per-question failure window would also count
+  // the current attempt and leave the oldest history row without a cause.
+  const failureIds = kept.flatMap((row) => {
+    if (row.action === 'experimental:assessment_attempt') {
+      return nativeAttemptOutcome(native.get(row.id)) === 'failure' ? [row.id] : [];
+    }
+    return row.outcome === 'failure' ? [row.id] : [];
   });
+  const loaded = await Promise.all(
+    failureIds.map((id) => getFailureAttemptForDerivationById(db, id)),
+  );
   const causeByAttempt = new Map(
-    failures.map((failure) => [failure.attempt_event_id, effectiveCauseForFailureAttempt(failure)]),
+    loaded.flatMap((failure) => {
+      if (!failure || failure.attempt_event_id === attemptEventId) return [];
+      const cause = effectiveCauseForFailureAttempt(failure);
+      return cause ? [[failure.attempt_event_id, cause] as const] : [];
+    }),
   );
   return kept.map((row) => {
     const nativeOutcome =
@@ -199,6 +214,11 @@ async function loadPrerequisiteMastery(
         eq(knowledge_edge.relation_type, 'prerequisite'),
         isNull(knowledge_edge.archived_at),
       ),
+    )
+    .orderBy(
+      asc(knowledge_edge.to_knowledge_id),
+      asc(knowledge_edge.from_knowledge_id),
+      asc(knowledge_edge.id),
     )
     .limit(MAX_PREREQUISITES);
   if (edges.length === 0) return [];
