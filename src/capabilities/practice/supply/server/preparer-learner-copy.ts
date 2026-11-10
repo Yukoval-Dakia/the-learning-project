@@ -10,23 +10,13 @@
 import { inArray } from 'drizzle-orm';
 import type { Db } from '@/db/client';
 import { question } from '@/db/schema';
+import { normalizePrompt } from '@/kernel/prompt-identity';
 
 const LEARNER_TOOLS = new Set(['query_mistakes', 'query_knowledge', 'expand_knowledge_subgraph']);
 const LEARNER_TEXT_FIELDS = new Set(['excerpt', 'user_notes', 'analysis_md']);
 export const LEARNER_COPY_WINDOW = 24;
 
 const squash = (text: string) => text.replace(/\s+/g, '');
-
-/** Same prompt despite spacing, full-width punctuation or LaTeX spelling; digits and symbols stay. */
-export function normalizePrompt(text: string): string {
-  return text
-    .normalize('NFKC')
-    .replace(/\\[dt]frac/g, '\\frac')
-    .replace(/\\(?:left|right|displaystyle)(?![a-zA-Z])/g, '')
-    .replace(/\\(?:[,;:!]|q?quad(?![a-zA-Z]))/g, '')
-    .replace(/[\s{}$]/g, '')
-    .replace(/[。.]+$/, '');
-}
 
 function strings(
   value: unknown,

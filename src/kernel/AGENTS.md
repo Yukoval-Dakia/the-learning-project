@@ -10,7 +10,7 @@
 | `settlement-cascade-revert.ts` | 结算重放调用级联撤回的宿主端口：实现在 `src/server/revert/cascade-revert.ts`，API、worker、验收入口和跑结算的脚本在启动时经 `installSettlementCascadeRevert()` 安装，未安装时抛 `HostOperationNotInstalledError` |
 | `proposals/auto-apply.ts` | Proposal 自动应用 sweep 的 accept 宿主端口：worker 启动时经 `installProposalAutoApplyAcceptPort()` 绑定 `acceptAiProposal`；未安装即抛 `HostOperationNotInstalledError`，sweep 不静默跳过。端口槽进程级（`kernel/proposals/auto-apply:accept`） |
 | `subject-create.ts` | 建学科的宿主端口：实现是 observability 的 `thinCreateSubject`（单事务建控制行/claim/六绑定/学科根），API、Start 验收入口和 worker 启动时经 `installObservabilityHostOperations()` 安装；practice 的拟题路径用它为学习者明确说要学的新学科建学科，并传入来源（ask 事件 id、`task_run_id`）写入创建 journal `detail`（管理面不传，行为不变）；未安装时抛 `HostOperationNotInstalledError` |
-| `read-models/learner-context.ts`、`read-models/memory-brief.ts` | Agency 在启动时经 `installAgencyHostOperations()` 安装的宿主端口：前者是启动段装配（Copilot 调用），后者是 memory brief 读语义（行 + 用途现行 + freshness 的唯一口径，Copilot 今日摘要经它读）；未安装即抛 `HostOperationNotInstalledError`，契约同上 |
+| `read-models/learner-context.ts`、`read-models/memory-brief.ts`、`read-models/learner-evidence.ts` | Agency 在启动时经 `installAgencyHostOperations()` 安装的宿主端口：前者是启动段装配（Copilot 调用），memory brief 是行 + 用途现行 + freshness 的唯一口径（Copilot 今日摘要经它读），learner-evidence 把干预 `evidence_refs` 解析成有上限的错答块给补救材料作者；未安装即抛 `HostOperationNotInstalledError`，契约同上 |
 | `config-completeness.ts` | 关键配置是否齐全：纯函数 `checkConfigCompleteness()`（只返回缺失的变量名，不含值）、事件 action `CONFIG_INCOMPLETE_EVENT_ACTION` 与 payload schema；`/api/ready` 缺配置时返回 503，API 与 worker 启动时按「进程 + UTC 日」各写一条事件，任务失败告警读它 |
 | `read-models/model-admission.ts` | 判分模型准入的读侧：active 切片、题组→科目查找；当前模型 pin 表由 practice 判分 owner 的 `installModelAdmissionPins()`（`capabilities/practice/grading/server/model-admission-pins.ts`）在 API、Start 验收入口、worker 启动时经 `installPracticeHost()` 安装、维护脚本经 `grading/public.ts` 直装；未安装时只要存在 active 切片即抛错（无 active 切片时 pin 不参与判定）。切片登记与退役归 `capabilities/practice/grading/server/model-slice-registry` |
 | `events/` | event envelope 的完整读写 API、修正投影（corrections / effective-truth）和 deterministic scope tagging；唯一 event INSERT owner |
@@ -26,7 +26,7 @@
 | `records/` | 共享 learning-record 读/迁移模型（queries / record-processing / types）、typed-state 存取与 `conjecture-prediction-scoring.ts` 单探针评分规则 |
 | `proposals/` | proposal 生命周期 registry + inbox / writer / producers / signals engine（kernel 共享机制）；`decision-protocol.ts` 是接受与驳回共用的裁决事务模板 |
 | `locks/registry.ts` | 命名 advisory-lock 键模板与键派生。不取锁、不证明顺序。contract-epoch 状态迁移由 `locks/contract-epoch-transition-lock.ts` 消费；迁移演练竞争写者 fence 由 `locks/migration-apply-fence.ts` 消费。learning-state write 由 `src/db/learning-state-lock.ts` 消费；provider-attempt 三族（hashtextextended salt 0）由 `src/server/ai/provider-attempt-lock.ts` 消费；探针 serve cap、probe question、conjecture fold 由 `src/capabilities/agency/server/conjecture/probe-lock.ts` 消费；intervention instance / corrections:all / source 由 `src/capabilities/agency/server/intervention/intervention-lock.ts` 消费（store、恢复与 probe-result 订阅）；同一 corrections:all / source 键由 `src/kernel/events/correction-lock.ts` 消费（`writeEvents` 与 review-answer-consumer）；proposal decision 由 `proposals/applier-helpers.ts` 的 `acquireProposalDecisionLock` 消费 |
-| `cost.ts` / `canonical-json.ts` | 共享数值与序列化 helper |
+| `cost.ts` / `canonical-json.ts` / `prompt-identity.ts` | 共享数值、序列化，以及题面同一性（空白、全角、LaTeX 写法） |
 | `parse-task-output.ts` / `generation-prompt-support.ts` | TaskSpec 文本输出的 JSON 解析与 schema 校验；出题类 prompt 的题型词表与科目 rubric 规范段 |
 | `object-storage.ts` | 共享 R2/S3 对象 I/O：完整 client 接口、SDK 命令/响应适配与 lazy singleton；不拥有资产引用、数据库事务或付费策略 |
 | `http.ts` | 公共 HTTP helper（公共件，非契约） |
