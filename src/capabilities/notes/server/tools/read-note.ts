@@ -10,6 +10,7 @@ import { ArtifactBodyBlocks, ArtifactVerificationSummary } from '@/core/schema/b
 import type { Db } from '@/db/client';
 import { artifact, event } from '@/db/schema';
 import { getArtifactCorrectionStates } from '@/kernel/read-models/artifact-corrections';
+import { noteBlockSource } from '@/kernel/read-models/note-block-source';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 
 const NOTE_TYPES = ['note_atomic', 'note_long', 'note_hub'] as const;
@@ -116,13 +117,44 @@ function descendantHidden(node: Record<string, unknown>, hidden: ReadonlySet<str
   return false;
 }
 
+function withoutHidden(
+  node: Record<string, unknown>,
+  hidden: ReadonlySet<string>,
+): Record<string, unknown> | null {
+  const id = blockAttrs(node).id;
+  if (typeof id === 'string' && hidden.has(id)) return null;
+  if (!Array.isArray(node.content)) return node;
+  const content = [];
+  for (const child of node.content) {
+    if (child === null || typeof child !== 'object') continue;
+    const kept = withoutHidden(child as Record<string, unknown>, hidden);
+    if (kept) content.push(kept);
+  }
+  return { ...node, content };
+}
+
+// Same projection that built source_markdown. Hidden nodes are already gone,
+// so a retracted child's text cannot come back through the parent mirror.
+function projectNode(node: Record<string, unknown>): string {
+  try {
+    return noteBlockSource(node);
+  } catch {
+    const content = Array.isArray(node.content) ? node.content : [];
+    const parts: string[] = [];
+    for (const child of content) {
+      if (child === null || typeof child !== 'object') continue;
+      const text = projectNode(child as Record<string, unknown>).trim();
+      if (text) parts.push(text);
+    }
+    return parts.join('\n\n');
+  }
+}
+
 function blockMarkdown(node: Record<string, unknown>, hidden: ReadonlySet<string>): string {
   const attrs = blockAttrs(node);
   if (typeof attrs.id === 'string' && hidden.has(attrs.id)) return '';
   const type = typeof node.type === 'string' ? node.type : '';
   if (SKIP_TYPES.has(type)) return '';
-  // The mirror is the whole subtree. A later child retract stays inside it, so
-  // a hidden descendant is dropped by walking the children instead.
   if (
     type === 'semanticBlock' &&
     typeof attrs.source_markdown === 'string' &&
@@ -130,16 +162,8 @@ function blockMarkdown(node: Record<string, unknown>, hidden: ReadonlySet<string
   ) {
     return attrs.source_markdown.trim();
   }
-  if (type === 'text' && typeof node.text === 'string') return node.text;
-  const content = Array.isArray(node.content) ? node.content : [];
-  const parts: string[] = [];
-  for (const child of content) {
-    if (child !== null && typeof child === 'object') {
-      const text = blockMarkdown(child as Record<string, unknown>, hidden);
-      if (text) parts.push(text);
-    }
-  }
-  return parts.join(type === 'doc' || type === 'semanticBlock' ? '\n\n' : '');
+  const filtered = withoutHidden(node, hidden);
+  return filtered ? projectNode(filtered).trim() : '';
 }
 
 function noteBodyMarkdown(

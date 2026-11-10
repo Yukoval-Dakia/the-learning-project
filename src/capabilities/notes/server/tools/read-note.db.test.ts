@@ -37,7 +37,30 @@ function sections(id: string, body: string, nested?: { id: string; body: string 
           source_markdown: nested ? `${body}\n\n${nested.body}` : body,
         },
         content: [
-          { type: 'paragraph', content: [{ type: 'text', text: body }] },
+          {
+            type: 'heading',
+            attrs: { level: 2 },
+            content: [{ type: 'text', text: '标题甲' }],
+          },
+          {
+            type: 'paragraph',
+            content: [
+              { type: 'text', text: body },
+              { type: 'inlineMath', attrs: { latex: 'a^2' } },
+            ],
+          },
+          {
+            type: 'bulletList',
+            content: ['LIST_A', 'LIST_B'].map((item) => ({
+              type: 'listItem',
+              content: [{ type: 'paragraph', content: [{ type: 'text', text: item }] }],
+            })),
+          },
+          {
+            type: 'calloutBlock',
+            attrs: { title: '注意' },
+            content: [{ type: 'paragraph', content: [{ type: 'text', text: '看这里' }] }],
+          },
           ...(child ? [child] : []),
         ],
       },
@@ -115,7 +138,7 @@ describe('read_note', () => {
   });
 
   // @invariant security: read_note reports this note's mark events, learner edit time, stored review issues and refine applies, and withholds retracted text
-  // @fails-if the count uses the current correction state, updated_at or another note's events, or a retracted note, block, or child inside a parent source_markdown is returned
+  // @fails-if a retracted child leaks, or the remaining heading, list, math, or callout is flattened to plain text
   it('counts historical marks and edits and hides retracted text', async () => {
     await seedNote({
       id: 'note-a',
@@ -206,9 +229,14 @@ describe('read_note', () => {
         body_truncated: false,
       }),
     ]);
-    expect(one.notes[0]?.body_md).toContain('合成定义');
-    expect(one.notes[0]?.body_md).not.toContain('块内秘密');
-    expect(one.notes[0]?.body_md).not.toContain('子树秘密');
+    const body = one.notes[0]?.body_md ?? '';
+    expect(body).toContain('合成定义');
+    expect(body).toContain('## 标题甲');
+    expect(body).toContain('$a^2$');
+    expect(body).toContain('- LIST_A\n- LIST_B');
+    expect(body).toContain('注意\n\n看这里');
+    expect(body).not.toContain('块内秘密');
+    expect(body).not.toContain('子树秘密');
 
     const hidden = await readNoteTool.execute(ctx(), { note_id: 'note-b' });
     expect(hidden.notes[0]).toMatchObject({
@@ -222,7 +250,8 @@ describe('read_note', () => {
 
     const found = await readNoteTool.execute(ctx(), { query: '二次标记' });
     const byId = new Map(found.notes.map((note) => [note.note_id, note]));
-    expect(byId.get('note-a')?.body_md).toContain('合成定义');
+    expect(byId.get('note-a')?.body_md).toContain('## 标题甲');
+    expect(byId.get('note-a')?.body_md).toContain('- LIST_A\n- LIST_B');
     expect(byId.get('note-b')?.body_md).toBeNull();
     expect(JSON.stringify(found)).not.toContain('整篇秘密');
     expect(JSON.stringify(found)).not.toContain('块内秘密');
