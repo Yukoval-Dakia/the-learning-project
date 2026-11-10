@@ -18,9 +18,11 @@
 //
 // 数据源（全部复用既有 reader，零新查询子系统）：
 //   - 开放目标 + learning_item.knowledge_ids：pending/in_progress learning item（mirror stream-store）
+//   - 可学前沿（learnable frontier）：前置全掌握、自身未掌握的 KC，即使还没有 learning item
+//     引用它也在扫描面内（知识图已经说「可以学 X」，X 没题时必须有供给目标，否则永远不出题）。
 //   - 前沿/新检知识点：open learning item 的 KC 里**没有 material_fsrs_state 行**者
 //     （= 从未被调度 = 新知/前沿，mirror stream-store.ts:144-156「新学待检」语义）。
-//   - mastery_state.theta_hat/theta_precision：getMasteryState（src/kernel/read-models/mastery-state.ts）。
+//   - mastery_state.theta_hat/theta_precision：getMasteryStates（src/kernel/read-models/mastery-state.ts）。
 //   - 现有题按 knowledge_id + kind + difficulty band + source tier 分组：本模块的 loadQuestionPool。
 //   - source tier：deriveSourceTier（src/core/schema/provenance.ts，4 档 provenance）→
 //     映射成本引擎的 3 档获取尺度（见 acquisitionTierForQuestion 文档）。
@@ -41,8 +43,9 @@ import type { Db, Tx } from '@/db/client';
 import { notDraftPredicate, questionSuspendedPredicate } from '@/db/predicates';
 import { learning_item, question } from '@/db/schema';
 import { withoutNonKcKnowledgeIds } from '@/kernel/read-models/knowledge-roles';
-import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
-import { getMasteryState, globalThetaForDomain } from '@/kernel/read-models/mastery-state';
+import { batchResolveEffectiveDomains } from '@/kernel/read-models/knowledge-tree';
+import { learnableFrontierResolved } from '@/kernel/read-models/learnable-frontier';
+import { effectiveThetaForKcBatch, getMasteryStates } from '@/kernel/read-models/mastery-state';
 import { readHardCalibrationBs } from '@/kernel/read-models/question-difficulty';
 import { loadSteeringDeferredKnowledgeIds } from '@/kernel/read-models/steering-deferral';
 import {
@@ -562,59 +565,67 @@ export function seedGenerationMethod(
 }
 
 /**
- * 加载待扫的 open-goal KC：pending/in_progress learning item 的全部 KC。
+ * 加载待扫的 KC：pending/in_progress learning item 的全部 KC，加上可学前沿
+ * （learnable frontier——前置全掌握、自身未掌握）里还没有任何可用题的 KC。
  *
  * 扫**全部** open-goal KC（无 material_fsrs_state 行不是必要条件）：一个只入册了 1 道题的 thin KC
  * 仍需被扫（它仍需补深度/补客观锚/补题型）。覆盖深度阈值（R1 < COVERAGE_DEPTH_THRESHOLD 可用题）
  * 与 R2/R3/R4 的结构性缺口判定决定发不发目标（这些规则自限：题数够 + 质量够 + 有近-θ̂ 锚 +
  * 题型多样 → 零目标，不洪泛）。
  *
- * 每个 KC 配上 mastery_state 的 θ̂/precision/evidence（冷启兜底）+ 经 getEffectiveDomain 派生的
+ * 可学前沿的 KC 图面上已经说「可以学」，所以它没题时必须成为 frontier_zero 候选——否则永远
+ * 不会出现在练习里。有题的前沿 KC 不因这条新增来源扩大 R2-R4 的扫描面（assembleScanInput 过滤）。
+ *
+ * 每个 KC 配上 mastery_state 的 θ̂/precision/evidence（冷启兜底）+ 经 batchResolveEffectiveDomains 派生的
  * subjectId（科目是视角，派生轴，不给 KC 加 subject 列）。
  */
-async function loadFrontierKnowledge(db: Db | Tx): Promise<FrontierKnowledgeInput[]> {
-  const items = await db
-    .select({ knowledge_ids: learning_item.knowledge_ids })
-    .from(learning_item)
-    .where(inArray(learning_item.status, LearningItemOpenStatus.options));
+async function loadFrontierKnowledge(
+  db: Db | Tx,
+): Promise<{ entries: FrontierKnowledgeInput[]; frontierOnlyKids: Set<string> }> {
+  const [items, frontierResolution] = await Promise.all([
+    db
+      .select({ knowledge_ids: learning_item.knowledge_ids })
+      .from(learning_item)
+      .where(inArray(learning_item.status, LearningItemOpenStatus.options)),
+    learnableFrontierResolved(db),
+  ]);
   // YUK-1600 — a hub learning item references its topic ROOT (a goal), which is not a
   // testable KC: the supply scan must never emit a target for it.
   const candidateKids = await withoutNonKcKnowledgeIds(
     db,
     items.flatMap((i) => i.knowledge_ids ?? []),
   );
-  if (candidateKids.length === 0) return [];
+  const frontierKids = await withoutNonKcKnowledgeIds(db, frontierResolution.ids);
+  const ownedKids = new Set(candidateKids);
+  const frontierOnlyKids = new Set(frontierKids.filter((kid) => !ownedKids.has(kid)));
+  const kids = [...ownedKids, ...frontierOnlyKids];
+  if (kids.length === 0) return { entries: [], frontierOnlyKids };
 
-  const out: FrontierKnowledgeInput[] = [];
-  for (const kid of candidateKids) {
-    const state = await getMasteryState(db, kid, 'knowledge');
-    let subjectId: string;
-    // A2 (YUK-434) — capture the RAW resolved domain alongside subjectId so the
-    // effective theta reuses it (no second domain walk). Null = unresolved domain.
-    let rawDomain: string | null = null;
-    try {
-      rawDomain = await getEffectiveDomain(db, kid);
-      subjectId = resolveSubjectProfile(rawDomain).id;
-    } catch {
-      subjectId = resolveSubjectProfile(null).id;
-    }
-    // A2 — θ_hat fed to the supply scanner is the EFFECTIVE theta = θ_global(domain) +
-    //   θ_KC. Now LIVE (HIERARCHICAL_ELO_ENABLED=true, P1 go-live YUK-361): a frontier
-    //   KC of a strong domain is scanned at its inherited ability (θ_global read; null
-    //   row / unresolved domain → 0, so the bare θ_KC). With the flag OFF (still a valid
-    //   mocked-false regression) globalThetaForDomain returns 0 WITHOUT a DB read →
-    //   thetaHat stays bit-identical to single-layer (the bare θ_KC).
-    const thetaKc = state?.theta_hat ?? COLD_START_THETA;
-    const thetaHat = thetaKc + (await globalThetaForDomain(db, rawDomain));
-    out.push({
+  const mastery = await getMasteryStates(db, kids, 'knowledge');
+  const [domains, thetaByKc] = await Promise.all([
+    batchResolveEffectiveDomains(db, kids),
+    // A2 (YUK-434) — θ̂ fed to the supply scanner is the EFFECTIVE theta = θ_global(domain) +
+    // θ_KC, the same resolution mastery/selection use; the batch twin never walks the tree twice.
+    effectiveThetaForKcBatch(
+      db,
+      kids.map((knowledgeId) => ({
+        knowledgeId,
+        thetaKc: mastery.get(knowledgeId)?.theta_hat ?? COLD_START_THETA,
+      })),
+    ),
+  ]);
+
+  const entries = kids.map((kid) => {
+    const state = mastery.get(kid);
+    return {
       knowledgeId: kid,
-      subjectId,
-      thetaHat,
+      subjectId: resolveSubjectProfile(domains.get(kid) ?? null).id,
+      thetaHat: thetaByKc.get(kid) ?? COLD_START_THETA,
       thetaPrecision: state?.theta_precision ?? COLD_START_PRECISION,
       evidenceCount: state?.evidence_count ?? 0,
-    });
-  }
-  return out;
+    };
+  });
+  return { entries, frontierOnlyKids };
 }
 
 /**
@@ -691,9 +702,17 @@ async function loadQuestionPool(db: Db | Tx, frontierKids: string[]): Promise<Po
  *     + scanCoverageGaps 拿缺口 targets，单次 DB 遍历出完整覆盖蓝图。
  */
 export async function assembleScanInput(db: Db | Tx): Promise<ScanInput> {
-  const frontier = await loadFrontierKnowledge(db);
-  const frontierKids = frontier.map((f) => f.knowledgeId);
-  const questions = await loadQuestionPool(db, frontierKids);
+  const { entries, frontierOnlyKids } = await loadFrontierKnowledge(db);
+  const allKids = entries.map((f) => f.knowledgeId);
+  const questions = await loadQuestionPool(db, allKids);
+  // A frontier KC that already has a usable question stays out of the new scan surface: it
+  // was reachable through learning items before, and adding it wholesale would widen
+  // R2-R4 to every frontier KC. Only the "graph says learnable, practice has nothing"
+  // case joins the scan.
+  const coveredKids = new Set(questions.flatMap((q) => q.knowledgeIds));
+  const frontier = entries.filter(
+    (f) => !frontierOnlyKids.has(f.knowledgeId) || !coveredKids.has(f.knowledgeId),
+  );
 
   // 按 subjectId 播种 routePreference + 生成方法偏好（去重——同 subject 只算一次 seed）。
   const routePreferenceBySubject: Record<string, SupplyRoute[]> = {};

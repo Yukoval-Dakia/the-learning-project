@@ -11,18 +11,18 @@
 // - variantItems：mistake_variant(status='active') 中 parent 近 7 天有 failure
 // attempt 的变体（变体轮换的「错题跟练」信号）。
 // - newCheckItems：open learning_item（pending/in_progress）的 knowledge_ids 中尚无 FSRS 状态行的
-// 知识点（= 学了还没检验），各取一道未排入的题。
+// 知识点（= 学了还没检验），按 MFI 取信息量最高的 1–2 道已准入题。
 // - pendingPapers：getPracticeList 的 ready 且未开始 session 的卷。
 // 减项 steering 的延后集合在 collectComposerInputs 开头读一次。到期（含干预
 // 诊断）、变式、新学、前沿和待做卷：知识点全部落在该集合内才丢弃，混有集合外
 // 知识点的综合题保留。
 
-import { and, desc, eq, gte, inArray, isNotNull, lte, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, isNotNull, lte } from 'drizzle-orm';
 import { LearningItemOpenStatus } from '@/core/schema/business';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import { steeringDefersKnowledgeIds } from '@/core/steering';
 import type { Db, Tx } from '@/db/client';
-import { notDraftPredicate, questionSuspendedPredicate } from '@/db/predicates';
+import { notDraftPredicate } from '@/db/predicates';
 import {
   event,
   learning_item,
@@ -37,6 +37,7 @@ import { loadSteeringDeferredKnowledgeIds } from '@/kernel/read-models/steering-
 import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
 import { getPracticeList } from '../../session/public';
 import { REVIEW_DUE_LIMIT_MAX, type ReviewDueRow, queryReviewDue } from './due-list';
+import { pickFirstQuestions } from './first-question-rank';
 import { knowledgeLabels } from './knowledge-labels';
 import { FRONTIER_MAX_ITEMS, learnableFrontier } from './learnable-frontier';
 import { readQuestionPace } from './question-pace';
@@ -57,6 +58,8 @@ type DbLike = Db | Tx;
 const VARIANT_WINDOW_DAYS = 7;
 /** Hard ceiling for mistake variants admitted to one composer/LLM input. */
 export const VARIANT_INPUT_LIMIT = 50;
+/** New-check first questions admitted per composition (the historical three-item cap). */
+const NEW_CHECK_MAX_ITEMS = 3;
 
 export async function resolveDailyPracticeBudget(
   db: DbLike,
@@ -252,7 +255,7 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
     db,
     items.flatMap((i) => i.knowledge_ids),
   );
-  let newCheckPairs: Array<{ questionId: string; knowledgeId: string }> = [];
+  const newCheckPairs: Array<{ questionId: string; knowledgeId: string }> = [];
   if (candidateKids.length > 0) {
     const tracked = await db
       .select({ kid: material_fsrs_state.subject_id })
@@ -266,32 +269,12 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
     const trackedSet = new Set(tracked.map((r) => r.kid));
     const untracked = candidateKids.filter((k) => !trackedSet.has(k));
     if (untracked.length > 0) {
-      // 每个未检验知识点取一道题（JSONB 包含查询，非 draft 题——见 notDraftPredicate，src/db/predicates.ts）。
-      // new_check 在「KC 还没 material_fsrs_state 行」时触发——此时刚生成的 embedded/teaching
-      // draft 题（container-only）还没被任何 review 路径物化，若不过滤会被这里抓成第一题、暴露
-      // 给用户成普通练习项。
-      for (const kid of untracked) {
-        const candidates = await db
-          .select({ id: question.id, knowledge_ids: question.knowledge_ids })
-          .from(question)
-          .where(
-            and(
-              sql`${question.knowledge_ids} @> ${JSON.stringify([kid])}::jsonb`,
-              notDraftPredicate(question.draft_status),
-              // 契约准入门：suspended/withdrawn 组不作新检选第题。
-              questionSuspendedPredicate(question),
-            ),
-          );
-        const admittedIds = await readAutomaticallyServableQuestionIds(
-          db,
-          candidates.map((row) => row.id),
-        );
-        const q = candidates.find(
-          (row) => admittedIds.has(row.id) && steeringKeeps(row.knowledge_ids),
-        );
-        if (q) newCheckPairs.push({ questionId: q.id, knowledgeId: kid });
-      }
-      newCheckPairs = newCheckPairs.slice(0, 3);
+      // The first question a learner sees on a KC must be the most informative admitted
+      // one, not the lowest id. Unranked KCs stay out; a KC with no usable question must
+      // not consume one of the three new-check slots.
+      newCheckPairs.push(
+        ...(await pickFirstQuestions(db, untracked, NEW_CHECK_MAX_ITEMS, steeringKeeps)),
+      );
     }
   }
 
@@ -314,33 +297,16 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
     }));
 
   // 5. B3 learnable_frontier（#3）——前置全掌握、自身未掌握的「可学前沿」KC，各取
-  // 一道**非 draft** active 题（谓词与 new_check 同形，均 notDraftPredicate——红线 4）。frontier KC 无题 →
-  // SKIP（不触发供给）。NO-OP：稀疏先决图上 learnableFrontier 返 [] → frontierPairs=[]（
-  // defer-flip，无 flag；sparse/overflow 均保持空候选）。
+  // 信息量最高的 1–2 道**非 draft** active 题（谓词与 new_check 同形）。frontier KC 无题 →
+  // 不进候选；补题由 supply 的 discoverSupplyTargets 读同一 learnableFrontier 发出
+  // frontier_zero 目标（夜间 + refill 共用 7d fingerprint cooldown）。NO-OP：稀疏先决图上
+  // learnableFrontier 返 [] → frontierPairs=[]（defer-flip，无 flag）。
   const frontierKcs = await learnableFrontier(db);
   const frontierPairs: Array<{ questionId: string; knowledgeId: string }> = [];
-  for (const kc of frontierKcs) {
-    const candidates = await db
-      .select({ id: question.id, knowledge_ids: question.knowledge_ids })
-      .from(question)
-      .where(
-        and(
-          sql`${question.knowledge_ids} @> ${JSON.stringify([kc])}::jsonb`,
-          notDraftPredicate(question.draft_status),
-          // 契约准入门：suspended/withdrawn 组不进 frontier 选题。
-          questionSuspendedPredicate(question),
-        ),
-      )
-      // Deterministic pick (reproducible composition) — the new_check sibling omits this;
-      // frontier is net-new so we make it stable from the start.
-      .orderBy(question.id);
-    const admittedIds = await readAutomaticallyServableQuestionIds(
-      db,
-      candidates.map((row) => row.id),
+  if (frontierKcs.length > 0) {
+    frontierPairs.push(
+      ...(await pickFirstQuestions(db, frontierKcs, FRONTIER_MAX_ITEMS, steeringKeeps)),
     );
-    const q = candidates.find((row) => admittedIds.has(row.id) && steeringKeeps(row.knowledge_ids));
-    if (q) frontierPairs.push({ questionId: q.id, knowledgeId: kc });
-    if (frontierPairs.length === FRONTIER_MAX_ITEMS) break;
   }
 
   // L3 fatigue/repetition needs stable KC + question-kind identities. Resolve every
