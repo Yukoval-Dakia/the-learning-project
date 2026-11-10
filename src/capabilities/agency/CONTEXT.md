@@ -15,7 +15,7 @@ AF §4）。用户面只有只读观察窗（/agent-notes 页 + today 块）。
 - ui/ — 看板/卡片/derive/meta/已读态/页面（外壳 app/(app)/agent-notes/page.tsx 挂载；
   today 页的 AgentNotesBoard 由路由壳注入 shell TodayPage）
 - 包外读写方：notes 写 = src/server/boss/handlers/quiz_verify.ts；
-  notes 读 = src/capabilities/knowledge/server/review.ts；
+  notes 读 = src/capabilities/knowledge/server/review.ts、`jobs/coach_daily.ts`、curator 输入（写给 dreaming）、研究会选格子（写给 research_meeting，加权并注入归纳输入）；
   goals 读 = practice due-list / learning-items queries（注意力先验）；
   goals accept = src/server/proposals/actions.ts（T4 解体后进包）
 - M5 seam：scope.ts / goal_scope_propose_nightly.ts 跨包深 import

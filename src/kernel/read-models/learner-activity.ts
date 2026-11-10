@@ -1,8 +1,13 @@
 // Which events count as a learner answer or as learning activity, which subject
-// such an event belongs to, and when the learner last did any of it. Consumers
-// read these sets instead of spelling their own action lists.
+// such an event belongs to, when the learner last did any of it, and which recent
+// answers on a knowledge point were correct. Consumers read these sets instead of
+// spelling their own action lists.
 
-import { and, desc, eq, inArray, isNull, lt, or, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, isNull, lt, or, sql } from 'drizzle-orm';
+import {
+  AttemptQuestionSnapshot,
+  type AttemptQuestionSnapshotT,
+} from '@/core/schema/question-evidence-snapshot';
 import type { Db, Tx } from '@/db/client';
 import {
   evaluation,
@@ -663,6 +668,211 @@ function stringArrayField(payload: unknown, key: string): string[] {
   const value = (payload as Record<string, unknown>)[key];
   if (!Array.isArray(value)) return [];
   return value.filter((id): id is string => typeof id === 'string');
+}
+
+// Newest-first pages while filling a small per-knowledge cap. One learner's
+// 14-day window should fit; past this bound, report the corrects already found.
+const CORRECT_ATTEMPT_PAGE = 32;
+const CORRECT_ATTEMPT_MAX_PAGES = 8;
+
+export interface CorrectKnowledgeAttempt {
+  attempt_event_id: string;
+  question_id: string;
+  knowledge_ids: string[];
+  created_at: Date;
+  answer_md: string | null;
+  answer_image_refs: string[];
+  /**
+   * undefined: legacy row with no snapshot (the live question is usable only when
+   * it has not changed since the attempt). null: do not fall back to the live question.
+   */
+  question_snapshot: AttemptQuestionSnapshotT | null | undefined;
+  /** Part prompt frozen on a native revision. Legacy rows leave this null. */
+  frozen_prompt_md: string | null;
+}
+
+function legacyAnswerText(row: EventRow): {
+  answer_md: string | null;
+  answer_image_refs: string[];
+} {
+  const payload = (row.payload ?? {}) as {
+    answer_md?: unknown;
+    user_response_md?: unknown;
+    answer_image_refs?: unknown;
+  };
+  const answer =
+    row.action === 'review'
+      ? typeof payload.user_response_md === 'string'
+        ? payload.user_response_md
+        : null
+      : typeof payload.answer_md === 'string'
+        ? payload.answer_md
+        : null;
+  const images = Array.isArray(payload.answer_image_refs)
+    ? payload.answer_image_refs.filter((id): id is string => typeof id === 'string')
+    : [];
+  return { answer_md: answer, answer_image_refs: images };
+}
+
+function legacyQuestionSnapshot(row: EventRow): AttemptQuestionSnapshotT | null | undefined {
+  const raw = (row.payload as { question_snapshot?: unknown } | null)?.question_snapshot;
+  if (raw === undefined) return undefined;
+  const parsed = AttemptQuestionSnapshot.safeParse(raw);
+  if (!parsed.success || parsed.data.question.question_id !== row.subject_id) return null;
+  return parsed.data;
+}
+
+function nativeFrozenPrompt(
+  parts: readonly { part_id: string; prompt_md: string }[] | undefined,
+  questionId: string,
+): string | null {
+  if (!parts || parts.length === 0) return null;
+  const part =
+    parts.find((item) => item.part_id === questionId) ??
+    (parts.length === 1 ? parts[0] : undefined);
+  const text = part?.prompt_md.trim();
+  return text ? text : null;
+}
+
+function nativeMentionsAny(knowledgeIds: readonly string[]) {
+  return or(...knowledgeIds.map((id) => nativeScopeMentions(id)));
+}
+
+function legacyMentionsAny(knowledgeIds: readonly string[]) {
+  return or(
+    ...knowledgeIds.map(
+      (id) => sql`${event.payload}->'referenced_knowledge_ids' @> ${JSON.stringify([id])}::jsonb`,
+    ),
+  );
+}
+
+function pushCorrectAttempt(
+  out: Map<string, CorrectKnowledgeAttempt[]>,
+  attempt: CorrectKnowledgeAttempt,
+  limit: number,
+) {
+  for (const knowledgeId of attempt.knowledge_ids) {
+    const list = out.get(knowledgeId);
+    if (!list || list.length >= limit) continue;
+    if (list.some((item) => item.attempt_event_id === attempt.attempt_event_id)) continue;
+    list.push(attempt);
+  }
+}
+
+/**
+ * Newest derivation-allowed correct answers on the requested knowledge points,
+ * since `since`, at most `limitPerKnowledge` each. Partial, pending, unsupported,
+ * and contested answers are left out. Native prompts come from the frozen revision
+ * part; they are not read off the live question row.
+ */
+export async function loadRecentCorrectAttemptsForKnowledge(
+  db: DbLike,
+  input: { knowledgeIds: readonly string[]; since: Date; limitPerKnowledge: number },
+): Promise<Map<string, CorrectKnowledgeAttempt[]>> {
+  const wanted = [...new Set(input.knowledgeIds)];
+  const out = new Map(wanted.map((id) => [id, [] as CorrectKnowledgeAttempt[]]));
+  if (wanted.length === 0 || input.limitPerKnowledge <= 0) return out;
+  const wantedSet = new Set(wanted);
+  const filled = () => wanted.every((id) => (out.get(id)?.length ?? 0) >= input.limitPerKnowledge);
+  let cursor: { at: Date; id: string } | undefined;
+
+  for (let page = 0; page < CORRECT_ATTEMPT_MAX_PAGES && !filled(); page += 1) {
+    const legacy = legacyMentionsAny(wanted);
+    const rows: EventRow[] = await db
+      .select()
+      .from(event)
+      .where(
+        and(
+          eq(event.actor_kind, 'user'),
+          inArray(event.action, [...LEARNER_ANSWER_ACTIONS]),
+          eq(event.subject_kind, 'question'),
+          gte(event.created_at, input.since),
+          or(
+            and(eq(event.action, NATIVE_ATTEMPT_ACTION), nativeMentionsAny(wanted)),
+            and(inArray(event.action, ['attempt', 'review']), legacy),
+          ),
+          cursor
+            ? or(
+                lt(event.created_at, cursor.at),
+                and(eq(event.created_at, cursor.at), lt(event.id, cursor.id)),
+              )
+            : undefined,
+        ),
+      )
+      .orderBy(desc(event.created_at), desc(event.id))
+      .limit(CORRECT_ATTEMPT_PAGE);
+    if (rows.length === 0) break;
+
+    const allowed = await allowedEventIds(
+      db,
+      rows.map((row) => row.id),
+    );
+    const authorized = rows.filter((row) => allowed.has(row.id));
+    const contested =
+      authorized.length > 0
+        ? await loadContestedAttemptIds(
+            db,
+            authorized.map((row) => row.id),
+          )
+        : new Set<string>();
+    const nativeRows = authorized.filter((row) => row.action === NATIVE_ATTEMPT_ACTION);
+    const legacyRows = authorized.filter((row) => row.action !== NATIVE_ATTEMPT_ACTION);
+    const nativeVerdicts =
+      nativeRows.length > 0 ? await resolveVerdictsForNativeAttempts(db, nativeRows) : null;
+    const legacyOutcomes =
+      legacyRows.length > 0 ? await loadLegacyAnswerOutcomes(db, legacyRows) : null;
+
+    for (const row of authorized) {
+      if (contested.has(row.id)) continue;
+      if (row.action === NATIVE_ATTEMPT_ACTION) {
+        const verdict = nativeVerdicts?.get(row.id);
+        if (!verdict || nativeAttemptOutcome(verdict) !== 'success') continue;
+        const knowledgeIds = verdict.knowledge_ids.filter((id) => wantedSet.has(id));
+        if (knowledgeIds.length === 0) continue;
+        const response = (row.payload as { response_md?: unknown } | null)?.response_md;
+        pushCorrectAttempt(
+          out,
+          {
+            attempt_event_id: row.id,
+            question_id: row.subject_id,
+            knowledge_ids: knowledgeIds,
+            created_at: row.created_at,
+            answer_md: typeof response === 'string' ? response : null,
+            answer_image_refs: [],
+            question_snapshot: null,
+            frozen_prompt_md: nativeFrozenPrompt(verdict.revision.structure.parts, row.subject_id),
+          },
+          input.limitPerKnowledge,
+        );
+        continue;
+      }
+      if (legacyOutcomes?.get(row.id) !== 'success') continue;
+      const knowledgeIds = stringArrayField(row.payload, 'referenced_knowledge_ids').filter((id) =>
+        wantedSet.has(id),
+      );
+      if (knowledgeIds.length === 0) continue;
+      const answer = legacyAnswerText(row);
+      pushCorrectAttempt(
+        out,
+        {
+          attempt_event_id: row.id,
+          question_id: row.subject_id,
+          knowledge_ids: knowledgeIds,
+          created_at: row.created_at,
+          answer_md: answer.answer_md,
+          answer_image_refs: answer.answer_image_refs,
+          question_snapshot: legacyQuestionSnapshot(row),
+          frozen_prompt_md: null,
+        },
+        input.limitPerKnowledge,
+      );
+    }
+
+    if (rows.length < CORRECT_ATTEMPT_PAGE) break;
+    const last = rows[rows.length - 1];
+    cursor = { at: last.created_at, id: last.id };
+  }
+  return out;
 }
 
 function asDate(value: unknown): Date | null {

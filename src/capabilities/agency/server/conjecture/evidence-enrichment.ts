@@ -103,10 +103,10 @@ export interface EnrichEvidenceCellsInput {
   samplesPerCell?: number;
 }
 
-async function loadEvidenceSampleBatch(
+export async function quoteConjectureAttemptSamples(
   db: DbLike,
   failures: ConjectureFailureAttempt[],
-  traceByAttemptId: ReadonlyMap<string, string | null>,
+  traceByAttemptId: ReadonlyMap<string, string | null> = new Map(),
 ): Promise<Map<string, ConjectureEvidenceSample>> {
   if (failures.length === 0) return new Map();
   const questionIds = [...new Set(failures.map((failure) => failure.question_id))];
@@ -251,7 +251,7 @@ export async function enrichEvidenceCells(
     for (const failure of [...roundByCellKey.values()].flat()) {
       roundFailuresById.set(failure.attempt_event_id, failure);
     }
-    const samplesByAttemptId = await loadEvidenceSampleBatch(
+    const samplesByAttemptId = await quoteConjectureAttemptSamples(
       db,
       [...roundFailuresById.values()],
       traceByAttemptId,
