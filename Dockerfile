@@ -4,7 +4,7 @@
 # command 覆盖），presence 走 PG 表（PgPresenceStore），不设 RW_WORKER。
 # Production and the supported runtime contract use Node 24 (YUK-686).
 # Pinned: a moving tag re-runs every layer below, including the Chromium one. Dependabot bumps it.
-FROM node:24-slim@sha256:01d566e8d94d8c619591d78652babfccd3c6992a3dffa9ed5ab39e11cf6c70e9 AS base
+FROM node:26-slim@sha256:5adad64f9a1fca2d51972caa65983634c8a774eb300d72b20f7f2a0f60368072 AS base
 ENV PNPM_HOME=/pnpm PATH=$PNPM_HOME:$PATH
 RUN corepack enable
 WORKDIR /app
@@ -27,7 +27,7 @@ RUN if [ -n "$NPM_REGISTRY" ]; then export COREPACK_NPM_REGISTRY="$NPM_REGISTRY"
 ARG TLP_SOURCE_COMMIT
 
 # Parent of the flat npm stages below; only their node_modules reach the final images.
-FROM node:24-bookworm-slim@sha256:01d566e8d94d8c619591d78652babfccd3c6992a3dffa9ed5ab39e11cf6c70e9 AS npmbase
+FROM node:26-bookworm-slim@sha256:add5c17c14752c54d2f3d519ec46a3815684d41c33f198bcb09fb998f7dcbf68 AS npmbase
 ARG NPM_REGISTRY
 RUN if [ -n "$NPM_REGISTRY" ]; then npm config set registry "$NPM_REGISTRY"; fi
 
