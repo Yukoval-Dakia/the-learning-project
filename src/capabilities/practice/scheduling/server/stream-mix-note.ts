@@ -1,50 +1,50 @@
-// Backlog / unmet new-learning floor, written as an existing agent-note event so the
-// coach prompt and the companion's note read already surface it. Not a new event type.
+// Backlog note for the coach prompt and the companion startup segment.
+// Written as an existing agent-note event. Not a new event type.
+// The text comes from what this compose actually kept, not from the frontier diagnostic.
 
 import type { Db, Tx } from '@/db/client';
 import { writeEvent } from '@/kernel/events';
-import type { LearningMixDiagnostic } from './post-filter';
+import type { StreamPlan } from './stream-composer';
 
 type DbLike = Db | Tx;
 
 const SIGNAL_KIND = 'practice_stream_mix';
 const NOTE_TTL_MS = 36 * 60 * 60 * 1000;
+const NEW_LEARNING_SOURCES = new Set(['new_check', 'frontier']);
 
-export function streamMixNoteSummary(input: {
-  diagnostics?: readonly LearningMixDiagnostic[];
-  deferredDueCount?: number;
-}): { reason: string; summary: string } | null {
-  const floor = input.diagnostics?.find((item) => item.kind === 'anti_comfort_floor_unmet');
-  const deferred = input.deferredDueCount ?? 0;
-  if (floor?.reason === 'budget_truncated') {
-    return {
-      reason: floor.reason,
-      summary:
-        '今天复习很多，是因为到期题积压。新学保底被时间预算截断，已把最不容易忘的到期项延后。',
-    };
+/** What this compose did with the day. `fits` means no due item was pushed out. */
+export type StreamMixResult =
+  | { kind: 'fits' }
+  | { kind: 'backlog'; deferredDueCount: number; newLearningScheduled: number };
+
+export function streamMixResult(
+  plan: Pick<StreamPlan, 'items' | 'deferredDueCount'>,
+): StreamMixResult {
+  const deferredDueCount = plan.deferredDueCount ?? 0;
+  if (deferredDueCount <= 0) return { kind: 'fits' };
+  const newLearningScheduled = plan.items.filter((item) =>
+    NEW_LEARNING_SOURCES.has(item.source),
+  ).length;
+  return { kind: 'backlog', deferredDueCount, newLearningScheduled };
+}
+
+function backlogSummary(result: Extract<StreamMixResult, { kind: 'backlog' }>): string {
+  const deferred = `最不容易忘的 ${result.deferredDueCount} 项到期复习延后`;
+  const scheduled =
+    result.newLearningScheduled > 0 ? `，并排进了 ${result.newLearningScheduled} 道新学` : '';
+  return `今天复习很多，是因为到期题积压。已按可回忆概率先排快忘的${scheduled}；${deferred}。`;
+}
+
+export function streamMixNoteSummary(
+  plan: Pick<StreamPlan, 'items' | 'deferredDueCount'>,
+): { reason: string; summary: string } | null {
+  const result = streamMixResult(plan);
+  switch (result.kind) {
+    case 'fits':
+      return null;
+    case 'backlog':
+      return { reason: 'due_backlog', summary: backlogSummary(result) };
   }
-  if (floor?.reason === 'not_selected') {
-    return {
-      reason: floor.reason,
-      summary: '今天复习很多，是因为到期题积压。有新学候选，但没有被选进今天的练习。',
-    };
-  }
-  // no_candidate on a day that still fits is the steady state (nothing new to schedule).
-  // Say it only when due items were actually pushed out.
-  if (deferred > 0 && floor?.reason === 'no_candidate') {
-    return {
-      reason: floor.reason,
-      summary:
-        '今天复习很多，是因为到期题积压。已按可回忆概率先排快忘的，最不容易忘的到期项延后。没有可排的新学前沿。',
-    };
-  }
-  if (deferred > 0) {
-    return {
-      reason: 'due_backlog',
-      summary: '今天复习很多，是因为到期题积压。已按可回忆概率先排快忘的；最不容易忘的到期项延后。',
-    };
-  }
-  return null;
 }
 
 /** One note per date and reason. A repeat compose keeps the first write. */
