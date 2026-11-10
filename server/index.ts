@@ -7,7 +7,8 @@
 import { serve } from '@hono/node-server';
 import { capabilities } from '@/capabilities';
 import { resolveApiPort } from '@/core/config/server/env';
-import { assertProposalKindsOwned } from '@/kernel/manifest';
+import { installSubscriptionWakeActions } from '@/kernel/events/subscription-wake';
+import { assertProposalKindsOwned, subscribedEventActions } from '@/kernel/manifest';
 import { warnFlipOrder } from '@/kernel/projection-writer-policy';
 import { installSettlementCascadeRevert } from '@/kernel/settlement-cascade-revert';
 import { initializeLaminarTracing } from '@/server/ai/laminar-tracing';
@@ -35,6 +36,8 @@ if (!isProductionRuntime()) {
 }
 assertComposedRoutesDeclared(capabilities);
 assertProposalKindsOwned(capabilities);
+// Before any event write in this process, including boot-time completeness events.
+installSubscriptionWakeActions(subscribedEventActions(capabilities));
 const app = buildHonoApp(capabilities);
 
 // YUK-599（v2 §4 / v3 §2.2）— hydrate-before-serve：serve 前把 DB 六表装配水合进

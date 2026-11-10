@@ -13,6 +13,7 @@ import { loadFailureLearningKnowledgeContext } from '@/kernel/read-models/failur
 import { notesForKnowledge } from '@/kernel/read-models/notes-read';
 import type { BoundRunTaskTextFn } from '@/server/ai/runner-fn';
 import { resolveSubjectProfile } from '@/subjects/profile';
+import { loadAttributionEvidence } from './attribution-context';
 import {
   type AttributionOutcome,
   runAttributionAndWriteJudgeEvent,
@@ -233,6 +234,15 @@ async function attributeFailure(
   );
   const subjectProfile = resolveSubjectProfile(knowledgeContext[0]?.effective_domain ?? null);
   const reasoningTraceMd = rawReasoningTrace?.trim() ? rawReasoningTrace : undefined;
+  const evidence = await loadAttributionEvidence(deps.db, {
+    attemptEventId,
+    questionId: failure.question_id,
+    attemptPayload: classified.payload,
+    knowledgeIds: referencedKnowledgeIds,
+    gradingEvidence: native?.grading_evidence ?? null,
+    revisionId: native?.revision_id ?? null,
+    failedPartIds: native?.failed_part_ids ?? [],
+  });
 
   let modelInvoked = false;
   let outcome: AttributionOutcome;
@@ -250,6 +260,7 @@ async function attributeFailure(
         wrong_answer_md: wrongAnswerMd,
         knowledge_context: knowledgeContext,
         ...(reasoningTraceMd !== undefined ? { reasoning_trace_md: reasoningTraceMd } : {}),
+        ...evidence,
       },
       referencedKnowledgeIds,
       ...(native ? { nativeExpectation: native } : {}),

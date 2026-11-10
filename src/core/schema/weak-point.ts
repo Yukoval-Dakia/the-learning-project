@@ -14,7 +14,7 @@
 // user_cause 归因、被 owner 接受的 misconception 所携带的一手事件指针）；禁止指向 agent note、
 // 派生 scan 或另一个 weak point（自喂）。落点本身是派生读，不是第二真相源。
 import { z } from 'zod';
-import { CauseCategoryId, MetaCause, type MetaCauseT } from './cause';
+import { CauseCategoryId, MetaCause, type MetaCauseT, MetacogFlag } from './cause';
 
 /** 陈述侧（能说出定义/陈述）与程序侧（能执行变形/程序）是不同的训练对象与证据对象。 */
 export const WeakPointKind = z.enum(['concept_statement', 'procedural_execution']);
@@ -118,6 +118,8 @@ export const WeakPointUnknownReason = z.enum([
   'meta_cause_unresolved',
   /** 窗口内失败全部是 execution_slip——不构成训练薄弱点，按 slip 处方提示自查。 */
   'slip_only_failures',
+  /** Agent 错因置信度低于共用门槛——不计入落点，也不单独驱动加练。 */
+  'low_confidence_attribution',
 ]);
 export type WeakPointUnknownReasonT = z.infer<typeof WeakPointUnknownReason>;
 
@@ -139,6 +141,8 @@ export const ActionableWeakPoint = z
     /** 窗口内贡献本落点的独立失败次数（按 attempt 事件去重）。 */
     failure_count: z.number().int().positive(),
     evidence_strength: WeakPointEvidenceStrength,
+    /** 贡献本落点的 judge 上出现过的 metacog_flag，去重且先见先留。 */
+    metacog_flags: z.array(MetacogFlag).max(6).default([]),
     first_seen_at: z.coerce.date(),
     last_seen_at: z.coerce.date(),
   })

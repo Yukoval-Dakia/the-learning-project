@@ -4,7 +4,8 @@
 import { serve } from '@hono/node-server';
 import { capabilities } from '@/capabilities';
 import { getServerEnv, requireApiInternalToken, resolveApiPort } from '@/core/config/server/env';
-import { assertProposalKindsOwned } from '@/kernel/manifest';
+import { installSubscriptionWakeActions } from '@/kernel/events/subscription-wake';
+import { assertProposalKindsOwned, subscribedEventActions } from '@/kernel/manifest';
 import { installSettlementCascadeRevert } from '@/kernel/settlement-cascade-revert';
 import { orchestrateCascadeRevert } from '@/server/revert/cascade-revert';
 import { buildHonoApp } from '../app';
@@ -40,6 +41,7 @@ const [
 ]);
 setAdminConfigRuntimeFacts(() => buildAdminConfigRuntimeFacts(adminConfigFactsPorts()));
 assertComposedRoutesDeclared(capabilities);
+installSubscriptionWakeActions(subscribedEventActions(capabilities));
 assertProposalKindsOwned(capabilities);
 const fetch = await createFrontdoor(buildHonoApp(capabilities));
 const server = serve({ fetch, hostname: '127.0.0.1', port });
