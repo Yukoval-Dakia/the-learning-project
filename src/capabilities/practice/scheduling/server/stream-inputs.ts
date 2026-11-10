@@ -14,12 +14,13 @@
 // 知识点（= 学了还没检验）。按置顶、截止、计划顺序取，先修未满足的不进池，各取一道未排入的题。
 // - pendingPapers：getPracticeList 的 ready 且未开始 session 的卷。
 
-import { and, asc, desc, eq, gte, inArray, isNotNull, lte, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, isNotNull, lte, sql } from 'drizzle-orm';
 import { LearningItemOpenStatus } from '@/core/schema/business';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import type { Db, Tx } from '@/db/client';
 import { notDraftPredicate, questionSuspendedPredicate } from '@/db/predicates';
 import {
+  artifact,
   event,
   learning_item,
   learning_session,
@@ -62,16 +63,21 @@ export const VARIANT_INPUT_LIMIT = 50;
 const NEW_CHECK_CANDIDATE_LIMIT = 6;
 /** A topic with no deadline sorts after every topic that has one. */
 const NEW_CHECK_NO_DEADLINE_MS = Number.POSITIVE_INFINITY;
+/** A topic missing from the hub step list sorts after every listed step. */
+const NEW_CHECK_NO_PLAN_STEP = Number.POSITIVE_INFINITY;
 
 /**
  * Lexicographic new-check key. Lower sorts first.
  * `prereqBlocked` 1 is not a candidate.
+ * Plan order is acceptance time, then the hub step index, then the index inside that step.
  */
 interface NewCheckRank {
   prereqBlocked: 0 | 1;
   unpinned: 0 | 1;
   dueAtMs: number;
-  planOrder: number;
+  createdAtMs: number;
+  planStep: number;
+  withinStep: number;
   knowledgeId: string;
 }
 
@@ -88,7 +94,9 @@ function compareNewCheckRank(left: NewCheckRank, right: NewCheckRank): number {
     compareNumber(left.prereqBlocked, right.prereqBlocked) ||
     compareNumber(left.unpinned, right.unpinned) ||
     compareNumber(left.dueAtMs, right.dueAtMs) ||
-    compareNumber(left.planOrder, right.planOrder) ||
+    compareNumber(left.createdAtMs, right.createdAtMs) ||
+    compareNumber(left.planStep, right.planStep) ||
+    compareNumber(left.withinStep, right.withinStep) ||
     compareText(left.knowledgeId, right.knowledgeId)
   );
 }
@@ -97,18 +105,84 @@ function preferNewCheckRank(left: NewCheckRank, right: NewCheckRank): NewCheckRa
   return compareNewCheckRank(left, right) <= 0 ? left : right;
 }
 
+function linkedArtifactIds(attrs: unknown): readonly string[] {
+  if (typeof attrs !== 'object' || attrs === null || !('linked_artifact_ids' in attrs)) return [];
+  const raw = attrs.linked_artifact_ids;
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((id) => (typeof id === 'string' && id.length > 0 ? [id] : []));
+}
+
+function indexLinkedSteps(
+  notes: ReadonlyArray<{ attrs: unknown }>,
+  into: Map<string, number>,
+): void {
+  for (const note of notes) {
+    const linked = linkedArtifactIds(note.attrs);
+    for (let index = 0; index < linked.length; index += 1) {
+      const artifactId = linked[index];
+      if (artifactId === undefined) continue;
+      const previous = into.get(artifactId);
+      if (previous === undefined || index < previous) into.set(artifactId, index);
+    }
+  }
+}
+
+async function loadPlanSteps(
+  db: DbLike,
+  primaryArtifactIds: readonly string[],
+): Promise<Map<string, number>> {
+  const ids = [...new Set(primaryArtifactIds)];
+  if (ids.length === 0) return new Map();
+  const notes = await db
+    .select({
+      id: artifact.id,
+      parent_artifact_id: artifact.parent_artifact_id,
+      attrs: artifact.attrs,
+    })
+    .from(artifact)
+    .where(inArray(artifact.id, ids));
+  const loaded = new Set(notes.map((note) => note.id));
+  const parentIds = [
+    ...new Set(
+      notes.flatMap((note) =>
+        note.parent_artifact_id !== null && !loaded.has(note.parent_artifact_id)
+          ? [note.parent_artifact_id]
+          : [],
+      ),
+    ),
+  ];
+  const parents =
+    parentIds.length === 0
+      ? []
+      : await db
+          .select({ attrs: artifact.attrs })
+          .from(artifact)
+          .where(inArray(artifact.id, parentIds));
+  const steps = new Map<string, number>();
+  indexLinkedSteps(notes, steps);
+  indexLinkedSteps(parents, steps);
+  return steps;
+}
+
 function rankOpenLearningTopics(
   items: ReadonlyArray<{
     knowledge_ids: readonly string[];
     user_pinned: boolean;
     due_at: Date | null;
+    created_at: Date;
+    primary_artifact_id: string | null;
   }>,
+  planStepByArtifact: ReadonlyMap<string, number>,
 ): Map<string, NewCheckRank> {
   const priorityByKid = new Map<string, NewCheckRank>();
-  let planOrder = 0;
   for (const item of items) {
     const unpinned: 0 | 1 = item.user_pinned ? 0 : 1;
     const dueAtMs = item.due_at === null ? NEW_CHECK_NO_DEADLINE_MS : item.due_at.getTime();
+    const planStep =
+      item.primary_artifact_id === null
+        ? NEW_CHECK_NO_PLAN_STEP
+        : (planStepByArtifact.get(item.primary_artifact_id) ?? NEW_CHECK_NO_PLAN_STEP);
+    let withinStep = 0;
     for (const raw of item.knowledge_ids) {
       const knowledgeId = raw.trim();
       if (knowledgeId.length === 0) continue;
@@ -116,10 +190,12 @@ function rankOpenLearningTopics(
         prereqBlocked: 0,
         unpinned,
         dueAtMs,
-        planOrder,
+        createdAtMs: item.created_at.getTime(),
+        planStep,
+        withinStep,
         knowledgeId,
       };
-      planOrder += 1;
+      withinStep += 1;
       const previous = priorityByKid.get(knowledgeId);
       priorityByKid.set(
         knowledgeId,
@@ -327,20 +403,25 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
     .slice(0, VARIANT_INPUT_LIMIT);
 
   // 3. 新学待检 — 尚未开始或正在学习的学习项，其知识点里没有 FSRS 状态行的。
-  // 同一份计划在一个事务里写入，created_at 会并列；id 单调，所以 (created_at, id)
-  // 加上 knowledge_ids 的数组顺序就是计划顺序。先修闭包与前沿选题共用一次读取。
+  // 一份计划的各行共用同一个 created_at。跨行顺序是 hub 笔记
+  // attrs.linked_artifact_ids（先 atomic 再 long）。不在名单里的没有步骤序。
+  // 这些查询会跑在事务里，不能并行。
   const items = await db
     .select({
       knowledge_ids: learning_item.knowledge_ids,
       user_pinned: learning_item.user_pinned,
       due_at: learning_item.due_at,
+      created_at: learning_item.created_at,
+      primary_artifact_id: learning_item.primary_artifact_id,
     })
     .from(learning_item)
-    .where(inArray(learning_item.status, LearningItemOpenStatus.options))
-    .orderBy(asc(learning_item.created_at), asc(learning_item.id));
-  // collectComposerInputs 会在事务里跑，两条查询不能并行。
+    .where(inArray(learning_item.status, LearningItemOpenStatus.options));
+  const planSteps = await loadPlanSteps(
+    db,
+    items.flatMap((item) => item.primary_artifact_id ?? []),
+  );
   const frontierResolution = await learnableFrontierResolved(db);
-  const priorityByKid = rankOpenLearningTopics(items);
+  const priorityByKid = rankOpenLearningTopics(items, planSteps);
   // YUK-1600 — the hub learning item references its topic ROOT (a goal); a goal is not
   // a testable KC and must never be picked as a new-check practice knowledge point.
   const candidateKids = await withoutNonKcKnowledgeIds(db, [...priorityByKid.keys()]);
