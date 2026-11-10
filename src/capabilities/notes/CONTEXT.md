@@ -17,6 +17,7 @@ generate durable handoff 与 Living Note refine 链（note-refine-{triggers,poli
   （ADR-0040 决定3），`NoteSection.embedded_check` 仍是合法 schema 槽（latent，无生产 writer）。
 - **编辑 presence**：Notes 拥有 session 心跳、延迟 refine 队列与逐项应用/失败恢复；
   heartbeat/blur 由 Notes manifest 注册。持久化队列格式由 core schema 单一类型定义，表结构与锁协议不变。
+- 第一版 `note_generate` 输入带该知识点的学习者切片：掌握档、至多两个错因或误解、至多两条限长错答。切片为空时不写个人错法。用途为仅本次回答或危机的内容不进入切片。
 - server/ — 模块本体（`note-handoff` 承载 append-only intent/completion 与 indexed recovery；
   `boss-port` 是唯一 Notes→boss
   接口）；tasks/ — NoteGenerateTask / NoteRefineTask 完整定义；jobs/ — note_generate /
