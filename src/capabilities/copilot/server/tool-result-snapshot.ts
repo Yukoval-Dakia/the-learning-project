@@ -165,7 +165,13 @@ function record(value: unknown): value is Record<string, unknown> {
 
 // Recurrence counts and evidence-id lists stay in the model tool result.
 // The learner snapshot drops them so a saved hero cannot show the tally.
-const MODEL_ONLY_COUNT_KEYS = new Set(['recurrence_count', 'evidence_event_ids', 'readings']);
+const MODEL_ONLY_COUNT_KEYS = new Set([
+  'recurrence_count',
+  'evidence_event_ids',
+  'readings',
+  'hint_dependence',
+  'personal_hit_rate',
+]);
 
 function omitModelOnlyCounts(value: unknown): void {
   if (Array.isArray(value)) {

@@ -23,6 +23,8 @@ ARG NPM_REGISTRY
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN if [ -n "$NPM_REGISTRY" ]; then export COREPACK_NPM_REGISTRY="$NPM_REGISTRY"; fi; pnpm build
+# Declared so the public SHA build-arg is accepted. The file is written in the runner stage.
+ARG TLP_SOURCE_COMMIT
 
 # Parent of the flat npm stages below; only their node_modules reach the final images.
 FROM node:24-bookworm-slim@sha256:01d566e8d94d8c619591d78652babfccd3c6992a3dffa9ed5ab39e11cf6c70e9 AS npmbase
@@ -141,6 +143,10 @@ COPY --from=lmnrdeps /lmnr/node_modules ./vendor/lmnr/node_modules
 RUN ln -s ../vendor/lmnr/node_modules/@lmnr-ai ./node_modules/@lmnr-ai
 RUN test -f node_modules/@lmnr-ai/lmnr/package.json
 RUN test -s node_modules/@hyzyla/pdfium/dist/pdfium.wasm
+# /api/ready 读这个文件。不进 ENV：不是运行时可改的配置，新 SHA 也不会冲掉上面的 COPY 缓存。
+ARG TLP_SOURCE_COMMIT=""
+RUN printf '%s\n' "$TLP_SOURCE_COMMIT" > /app/BUILD_COMMIT \
+ && chown node:node /app/BUILD_COMMIT
 ENV API_PORT=8787 RW_FRONTDOOR=1
 # gate 选项 b：不设 RW_WORKER（worker 独立进程，compose worker 服务 command 覆盖跑 dist/worker.cjs）。
 EXPOSE 8787
@@ -187,6 +193,8 @@ COPY --from=workspace-launcher /workspace-launch /usr/local/libexec/workspace-la
 RUN chown root:node /usr/local/libexec/workspace-launch \
     && chmod 0750 /usr/local/libexec/workspace-launch \
     && setcap cap_setuid,cap_setgid+ep /usr/local/libexec/workspace-launch
+# Same public SHA as the runner build. The file arrives via the copy below.
+ARG TLP_SOURCE_COMMIT
 COPY --from=runner /app ./
 # YUK-1548 — mermaid + jsdom flat overlay for compose_block diagram validation
 # (worker-only; the app image only registers the tool module, never executes

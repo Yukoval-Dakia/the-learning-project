@@ -13,13 +13,15 @@ import { selectedForgettingEngine } from '@/kernel/scheduling';
 // Wire contract preserved: { rows: [{ id, question_id, prompt_md, reference_md,
 // knowledge_ids, cause, fsrs_state, created_at }] }.
 
-import { and, eq, inArray, lte } from 'drizzle-orm';
+import { and, eq, gte, inArray, lte } from 'drizzle-orm';
+import { learnerDayWindowUtc, learnerLocalDay } from '@/core/learner-day';
 import { type ActivityRefT, questionRef } from '@/core/schema/activity';
 import type { CauseCategoryT } from '@/core/schema/event/blocks';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
+import { steeringDefersKnowledgeIds } from '@/core/steering';
 import { type Db, type Tx, db } from '@/db/client';
 import { notDraftPredicate, questionSuspendedPredicate } from '@/db/predicates';
-import { material_fsrs_state, question } from '@/db/schema';
+import { event, material_fsrs_state, question } from '@/db/schema';
 import type { EffectiveTruth } from '@/kernel/events';
 import { errorResponse } from '@/kernel/http';
 // North-Star W10 review soft-bias. Active goals supply a
@@ -31,7 +33,10 @@ import {
 } from '@/kernel/read-models/active-goal-scope';
 import { effectiveCauseCategoryForFailureAttempt } from '@/kernel/read-models/cause-policy';
 import { type FailureAttempt, getFailureAttempts } from '@/kernel/read-models/failure-attempts';
-import { getNonKcKnowledgeIds } from '@/kernel/read-models/knowledge-roles';
+import {
+  getNonKcKnowledgeIds,
+  scheduledTestableKnowledgeIds,
+} from '@/kernel/read-models/knowledge-roles';
 import { SYNTHETIC_SUBJECT_ROOT_RE } from '@/kernel/read-models/placement-scope';
 import { loadSteeringDeferredKnowledgeIds } from '@/kernel/read-models/steering-deferral';
 // T-CS / — cross-subject scheduling v1 (, line 242). The due
@@ -43,6 +48,7 @@ import { loadSteeringDeferredKnowledgeIds } from '@/kernel/read-models/steering-
 // so the brief-refresh layer shares the SAME canonical bridge.
 import { batchResolveSubjectIds } from '@/kernel/read-models/subject-resolution';
 import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
+import type { SelectionMissV1 } from '../../question-bank/public';
 // by-kind variant-rotation probe selection. Replaces the
 // inline single-question-avoidance ORDER BY (seam) with a routed pick:
 // recall kinds repeat the original question, application kinds rotate the
@@ -170,6 +176,95 @@ function roundRobinBySubject<T extends { id: string }>(
     if (!advanced) break; // all buckets exhausted (defensive; cap bounds the loop)
   }
   return out;
+}
+
+type ProbeSelectionMiss = {
+  knowledgeId: string;
+  candidateCount: number;
+};
+
+function probeSelectionMissPayload(
+  knowledgeId: string,
+  subjectId: string,
+  candidateCount: number,
+  version: SelectionMissV1['version'],
+  selectionPolicyVersion: string,
+): SelectionMissV1 {
+  const empty = candidateCount === 0;
+  // The prefetch bucket is already the servable pool. Repeating its size on the
+  // axes this miss did not filter keeps a zero from looking like a difficulty or
+  // kind rejection.
+  const counted = empty ? 0 : candidateCount;
+  return {
+    version,
+    reason: empty ? 'NO_ALLOWED_USE_ITEM' : 'INSUFFICIENT_ELIGIBLE_ITEMS',
+    subject_id: subjectId,
+    knowledge_id: knowledgeId,
+    selection_policy_version: selectionPolicyVersion,
+    evaluated_constraints: {
+      live_knowledge: true,
+      candidate_count: candidateCount,
+      near_difficulty_count: counted,
+      required_kind_count: counted,
+      trusted_source_count: counted,
+      accessible_count: candidateCount,
+      scorable_count: candidateCount,
+      independent_family_count: null,
+      exposed_family_count: null,
+      quarantined_count: 0,
+    },
+  };
+}
+
+/**
+ * One selection_miss per knowledge per learner day. Due-page reads and stream
+ * compose share this branch; a second pass the same day must not flood the ledger.
+ */
+async function recordProbeSelectionMisses(
+  activeDb: DbLike,
+  misses: readonly ProbeSelectionMiss[],
+  now: Date,
+): Promise<void> {
+  if (misses.length === 0) return;
+  const day = learnerLocalDay(now);
+  const { from } = learnerDayWindowUtc(day, day);
+  const knowledgeIds = [...new Set(misses.map((miss) => miss.knowledgeId))];
+  const already = await activeDb
+    .select({ subject_id: event.subject_id })
+    .from(event)
+    .where(
+      and(
+        eq(event.action, 'experimental:selection_miss'),
+        inArray(event.subject_id, knowledgeIds),
+        gte(event.created_at, from),
+      ),
+    );
+  const seen = new Set(already.map((row) => row.subject_id));
+  const pending: ProbeSelectionMiss[] = [];
+  for (const miss of misses) {
+    if (seen.has(miss.knowledgeId)) continue;
+    seen.add(miss.knowledgeId);
+    pending.push(miss);
+  }
+  if (pending.length === 0) return;
+  const subjectIds = await batchResolveSubjectIds(
+    activeDb,
+    pending.map((miss) => ({ id: miss.knowledgeId, knowledge_ids: [miss.knowledgeId] })),
+  );
+  const { DEFAULT_SELECTION_POLICY_VERSION, SELECTION_MISS_VERSION, writeSelectionMissEvent } =
+    await import('../../question-bank/public');
+  for (const miss of pending) {
+    await writeSelectionMissEvent(
+      activeDb,
+      probeSelectionMissPayload(
+        miss.knowledgeId,
+        subjectIds.get(miss.knowledgeId) ?? miss.knowledgeId,
+        miss.candidateCount,
+        SELECTION_MISS_VERSION,
+        DEFAULT_SELECTION_POLICY_VERSION,
+      ),
+    );
+  }
 }
 
 type ScheduledDueRow = {
@@ -310,17 +405,15 @@ export async function queryReviewDue(
     deps.loadSteeringDeferredFn ?? loadSteeringDeferredKnowledgeIds
   )(activeDb, now);
   const isSteeringDeferredRow = (knowledgeIds: readonly string[]): boolean =>
-    deferredBySteering.size > 0 &&
-    knowledgeIds.length > 0 &&
-    knowledgeIds.every((kid) => deferredBySteering.has(kid));
+    steeringDefersKnowledgeIds(knowledgeIds, deferredBySteering);
   const schedulingKnowledgeRows = rawKnowledgeStateRows.filter(
-    (stateRow) => !deferredBySteering.has(stateRow.knowledge_id),
+    (stateRow) => !steeringDefersKnowledgeIds([stateRow.knowledge_id], deferredBySteering),
   );
 
-  // bulk-prefetch every probe-selection DB input for the whole due page in THREE
-  // reads (was up to ~3 serial round-trips PER due KC — the /api/review/due N+1). The per-KC
-  // selection below is then pure in-memory over the prefetch, and the shared usedDueQuestionIds
-  // set is threaded through the SAME sequential order → byte-identical probe picks.
+  // bulk-prefetch every probe-selection DB input for the whole due page (was up to ~3
+  // serial round-trips PER due KC — the /api/review/due N+1). The per-KC selection below is
+  // then pure in-memory over the prefetch, and the shared usedDueQuestionIds set is threaded
+  // through the SAME sequential order as a per-KC prefetch.
   const knowledgeStateRows = (
     await Promise.all(
       schedulingKnowledgeRows.map((row) =>
@@ -340,8 +433,10 @@ export async function queryReviewDue(
       knowledgeId: stateRow.knowledge_id,
       lastReviewEventId: stateRow.last_review_event_id ?? null,
     })),
+    now,
   );
   const dueRows: ScheduledDueRow[] = [];
+  const probeMisses: ProbeSelectionMiss[] = [];
   for (const stateRow of knowledgeStateRows) {
     // by-kind variant-rotation probe (recall repeat vs
     // application family rotation). Returns the same projection the old inline
@@ -352,7 +447,13 @@ export async function queryReviewDue(
       lastReviewEventId: stateRow.last_review_event_id ?? null,
       usedQuestionIds: usedDueQuestionIds,
     });
-    if (!selected) continue;
+    if (!selected) {
+      probeMisses.push({
+        knowledgeId: stateRow.knowledge_id,
+        candidateCount: probePrefetch.kcQuestions.get(stateRow.knowledge_id)?.length ?? 0,
+      });
+      continue;
+    }
     dueRows.push({
       ...selected,
       state: stateRow.state,
@@ -362,6 +463,7 @@ export async function queryReviewDue(
     });
     if (dueRows.length === candidateWindow) break;
   }
+  await recordProbeSelectionMisses(activeDb, probeMisses, now);
 
   const rawLegacyQuestionStateRows = await activeDb
     .select({
@@ -407,9 +509,18 @@ export async function queryReviewDue(
     legacyQuestionStateRows.map((row) => row.question_id),
     { includeInterventionDiagnostics: true },
   );
+  const testableIds = new Set(
+    await scheduledTestableKnowledgeIds(
+      activeDb,
+      legacyQuestionStateRows.flatMap((row) => row.knowledge_ids ?? []),
+    ),
+  );
   for (const row of legacyQuestionStateRows
     .filter((row) => admittedLegacyIds.has(row.question_id))
     .filter((row) => !isSteeringDeferredRow(row.knowledge_ids ?? []))
+    // A testable KC that has its knowledge card takes over the schedule. Goal,
+    // container, seed-root, and not-yet-enrolled KC labels keep the question card.
+    .filter((row) => !(row.knowledge_ids ?? []).some((id) => testableIds.has(id)))
     .slice(0, candidateWindow)) {
     if (usedDueQuestionIds.has(row.question_id)) continue;
     usedDueQuestionIds.add(row.question_id);

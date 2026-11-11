@@ -36,6 +36,7 @@ import {
 } from '@/core/schema/difficulty-evidence';
 import type { QuestionKindT } from '@/core/schema/judge-routing';
 import { deriveSourceTier } from '@/core/schema/provenance';
+import { steeringDefersKnowledgeIds } from '@/core/steering';
 import type { Db, Tx } from '@/db/client';
 import { notDraftPredicate, questionSuspendedPredicate } from '@/db/predicates';
 import { learning_item, question } from '@/db/schema';
@@ -43,6 +44,7 @@ import { withoutNonKcKnowledgeIds } from '@/kernel/read-models/knowledge-roles';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
 import { getMasteryState, globalThetaForDomain } from '@/kernel/read-models/mastery-state';
 import { readHardCalibrationBs } from '@/kernel/read-models/question-difficulty';
+import { loadSteeringDeferredKnowledgeIds } from '@/kernel/read-models/steering-deferral';
 import {
   DEFAULT_EVIDENCE_DEADLINE_DAYS,
   DEFAULT_MAX_ATTEMPTS,
@@ -50,6 +52,7 @@ import {
   type DifficultyBand,
   type SupplyTargetContextV1T,
   buildCoverageEvidenceDemand,
+  difficultyBandFor,
   evidenceDemandToTargetContext,
 } from '@/kernel/supply-contracts';
 import { resolveSubjectProfile } from '@/subjects/profile';
@@ -248,26 +251,8 @@ export function acquisitionTierForQuestion(q: PoolQuestion): 1 | 2 | 3 {
   return 3; // provenance tier 3 (material) + 4 (generated) → 获取档 3（生成/草稿级）
 }
 
-// ── difficulty band 归类 ──────────────────────────────────────────────────────
-
-/**
- * 据题的 b 锚（calibrationB 优先，否则 difficulty 弱锚）相对 KC 的 θ̂ 归到一个难度档。
- * 窗口（logit 尺度）对齐架构 doc §2 的 σ_b≈0.75 + 选题 MFI 近-θ̂ 窗口：
- *   below   : b < θ̂ − NEAR_WINDOW
- *   near    : |b − θ̂| ≤ NEAR_WINDOW（诊断/MFI 最有用的格子）
- *   above   : θ̂ + NEAR_WINDOW < b ≤ θ̂ + STRETCH_WINDOW
- *   stretch : b > θ̂ + STRETCH_WINDOW
- */
-export const NEAR_WINDOW = 0.75;
-export const STRETCH_WINDOW = 1.5;
-
-export function difficultyBandFor(b: number, thetaHat: number): DifficultyBand {
-  const delta = b - thetaHat;
-  if (delta < -NEAR_WINDOW) return 'below';
-  if (delta <= NEAR_WINDOW) return 'near';
-  if (delta <= STRETCH_WINDOW) return 'above';
-  return 'stretch';
-}
+// Difficulty bands are the kernel contract (NEAR_WINDOW / difficultyBandFor).
+// The scanner still classifies each pool question against its KC's θ̂.
 
 // ── 优先级 + 指纹 ─────────────────────────────────────────────────────────────
 
@@ -745,7 +730,8 @@ export async function assembleScanInput(db: Db | Tx): Promise<ScanInput> {
 
 /**
  * 端到端只读发现：读 DB → 组装 ScanInput → 跑纯扫描器 → QuestionSupplyTarget[]（priority 降序）。
- * 派发到获取面是 dispatcher.ts 的活；本函数纯发现，零写、零 LLM。
+ * 知识点全部落在减项 steering 延后集合里的目标不返回。派发到获取面是 dispatcher.ts
+ * 的活；本函数零写、零 LLM。
  *
  * YUK-579：组装体已上提到 assembleScanInput（行为等价——受既有 target-discovery db test 守护）。
  */
@@ -760,14 +746,20 @@ export async function discoverSupplyTargets(
     observeInventory?: (input: ScanInput, targets: QuestionSupplyTarget[]) => void | Promise<void>;
   },
 ): Promise<QuestionSupplyTarget[]> {
-  const input = await assembleScanInput(db);
-  const targets = scanCoverageGaps(input, makeId);
-  // A shadow observer must never turn an otherwise successful current scan into a failure. Its
-  // comparison ledger is best-effort diagnostics; serving/dispatch still receives `targets`.
+  const [input, deferredKnowledgeIds] = await Promise.all([
+    assembleScanInput(db),
+    loadSteeringDeferredKnowledgeIds(db, new Date()),
+  ]);
+  const scanned = scanCoverageGaps(input, makeId);
+  // A shadow observer must never turn an otherwise successful scan into a failure.
+  // It compares the unfiltered scan with inventory, so deferred KCs stay visible
+  // there; callers that dispatch receive only targets the deferral does not withhold.
   try {
-    await shadow?.observeInventory?.(input, targets);
+    await shadow?.observeInventory?.(input, scanned);
   } catch (error) {
     console.warn('[question-supply] inventory shadow observation failed', error);
   }
-  return targets;
+  return scanned.filter(
+    (target) => !steeringDefersKnowledgeIds(target.knowledgeIds, deferredKnowledgeIds),
+  );
 }

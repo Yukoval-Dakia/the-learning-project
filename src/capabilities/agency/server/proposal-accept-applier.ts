@@ -13,6 +13,7 @@ import { type BossDispatch, dispatchNoteGeneration } from '@/kernel/records/note
 import { type ConjectureApplierOpts, acceptConjectureProposal } from './conjecture-accept';
 import { acceptGoalScopeProposal } from './goals/accept';
 import { createLearningIntentKnowledgeNode } from './learning-intent';
+import { learningIntentTopic, sealLearningIntentOutlineReceipt } from './learning-intent-request';
 import {
   type AgencyApplierOpts,
   acceptCompletionProposal,
@@ -112,14 +113,16 @@ export const goalScopeProposalAcceptApplier: ProposalAcceptApplier = async (db, 
     }),
   );
 
-export const agencyProposalDismissApplier: ProposalDismissApplier = async (db, input) => ({
-  kind: input.proposal.payload.kind,
-  result: await runProposalDismiss(db as Db, input.proposalId, {
+export const agencyProposalDismissApplier: ProposalDismissApplier = async (db, input) => {
+  const result = await runProposalDismiss(db as Db, input.proposalId, {
     proposal: inboxView(input),
     userNote: input.user_note,
     signal: 'in_transaction',
-  }),
-});
+  });
+  const topic = learningIntentTopic(input.proposal.payload);
+  if (topic) await sealLearningIntentOutlineReceipt(db as Db, topic, input.proposalId);
+  return { kind: input.proposal.payload.kind, result };
+};
 
 export const conjectureProposalAcceptApplier: ProposalAcceptApplier = async (db, input, runtime) =>
   wrap(

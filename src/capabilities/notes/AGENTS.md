@@ -17,7 +17,7 @@
 ## CONVENTIONS
 - 编辑器栈 = TipTap 3；block-tree 用 optimistic lock。
 - 笔记正文提交（body_blocks + version + history）只经 `server/artifact-body-commit.ts`：调用方给出调用方事务与决策回调，入口持有行锁、版本 +1、块引用同步、成对 fold 事件与时间戳；入口不开事务、不拿 advisory 锁。精修（`note-refine-apply.ts`）与 hub 同步（`hub-sync-reconciliation.ts`）有各自事件/fence 语义，不经此入口。
-- `note_refine` 触发源 = mastery_change / dreaming（dwell 已裁；verify 桥随 YUK-1772 退役）。dreaming 由已提交的 `experimental:dreaming_note_refresh` 订阅入队，agency 不直接调用 notes。
+- `note_refine` 触发源 = mastery_change / mark_wrong（dwell 已裁；verify 桥随 YUK-1772 退役；dreaming 订阅已删，夜间整理不再写笔记刷新事件）。mark_wrong 由错因归因完成后经 kernel 端口入队，1 小时防抖在 `note-refine-triggers.ts`。
 - `note_generate` 只经同事务 intent + 提交后 dispatcher 衔接；completion 表示 queue dispatch 已确认，不表示模型业务完成。生成后不再有独立 AI 复审（YUK-1772）：确定性块契约检查在落盘前跑一次，发现问题交回同一条生成链做一次有界修订，未解决的 issue 写入 `verification_summary`（`kind='known_issues'`，仅在有未解决 issue 时非空）。
 - `note_generate` 失败显式落 `failed`，pg-boss redelivery 用 CAS 重开为 `pending`；已 `ready` 的成功重投跳过。
 - `check_note` copilotTool 对指定笔记跑同一套确定性检查，返回 issues 列表，不做 pass/fail，不拦截写入。

@@ -10,13 +10,14 @@ generate durable handoff 与 Living Note refine 链（note-refine-{triggers,poli
   包过渡期跨域写（卷生成/session 链），M5 manifest 对账时统一裁。
 - **D6 / YUK-358 决定3**（笔记内嵌判分自测孤儿链已真删）：refine 触发器五信号删
   `error_rate` 余四（mark_wrong/mastery_change/dwell/dreaming）；新信号源 = 流作答
-  （mastery_change 经 practice submit persist 接入）。graded inline self-test 链
+  （答对走 mastery_change；错因归因完成后走 mark_wrong，1 小时防抖）。graded inline self-test 链
   （`/api/embedded-check/attempt` 路由 + `embedded_check_generate` 生成链 handler +
   `EmbeddedCheckGenerateTask` AI task + `artifact.embedded_check_status` 列 +
   note/node page 投影）已全部删除。`check` 段本身保留为 Phase-3 自解释锚点
   （ADR-0040 决定3），`NoteSection.embedded_check` 仍是合法 schema 槽（latent，无生产 writer）。
 - **编辑 presence**：Notes 拥有 session 心跳、延迟 refine 队列与逐项应用/失败恢复；
   heartbeat/blur 由 Notes manifest 注册。持久化队列格式由 core schema 单一类型定义，表结构与锁协议不变。
+- 第一版 `note_generate` 输入带该知识点的学习者切片：掌握档、至多两个错因或误解、至多两条限长错答。切片为空时不写个人错法。用途为仅本次回答或危机的内容不进入切片。
 - server/ — 模块本体（`note-handoff` 承载 append-only intent/completion 与 indexed recovery；
   `boss-port` 是唯一 Notes→boss
   接口）；tasks/ — NoteGenerateTask / NoteRefineTask 完整定义；jobs/ — note_generate /
