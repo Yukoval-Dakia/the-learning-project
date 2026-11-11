@@ -189,6 +189,7 @@ export {
 export { createPracticeHintRequest, createPracticeSolveSession } from './server/solve-operations';
 export {
   abandonOrphanReviewSession,
+  enqueueReviewSessionSummary,
   selectOrphanReviewCandidates,
 } from './session/public';
 export { submitCopilotAuthoredDraft } from './supply/public';
