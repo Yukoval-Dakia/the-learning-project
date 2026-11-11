@@ -35,7 +35,8 @@ export function publicProseStatus(
 }
 
 /**
- * Only the original sanitized, committed DELTA channel is eligible. The query is
+ * Only the original sanitized, committed DELTA channel is eligible, minus the
+ * tails `request_retry` steps retract. The query is
  * scoped by accepted run identity; ids are actual job_events ids, never SDK seq.
  * Ordering/dedup also makes the fold safe for repeated or unordered read results.
  */
@@ -78,6 +79,17 @@ export async function readCopilotPublicProse(
       row.payload.text.length > 0
     ) {
       prose.text += row.payload.text;
+      prose.last_event_id = row.id;
+      result.set(row.runId, prose);
+    } else if (
+      prose.status === 'streaming' &&
+      row.event_type === COPILOT_RUN_EVENTS.STEP &&
+      row.payload.step_kind === 'request_retry' &&
+      typeof row.payload.discard_chars === 'number' &&
+      row.payload.discard_chars > 0
+    ) {
+      // A resent request retracts what its dead attempt had streamed.
+      prose.text = prose.text.slice(0, Math.max(0, prose.text.length - row.payload.discard_chars));
       prose.last_event_id = row.id;
       result.set(row.runId, prose);
     } else if (

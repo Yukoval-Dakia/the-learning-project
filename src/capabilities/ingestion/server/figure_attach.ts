@@ -152,6 +152,7 @@ function cropHandwriting(
     if (
       node.extraction_evidence?.handwriting?.some(
         ({ bbox }) =>
+          bbox !== undefined &&
           bboxArea(bbox) > 0 &&
           bbox.x < figure.source_bbox.x + figure.source_bbox.width &&
           bbox.x + bbox.width > figure.source_bbox.x &&

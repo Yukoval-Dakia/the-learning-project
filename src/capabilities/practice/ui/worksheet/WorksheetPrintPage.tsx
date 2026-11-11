@@ -17,6 +17,7 @@ import { useQuery } from '@tanstack/react-query';
 import { type ReactNode, useCallback, useMemo, useState } from 'react';
 
 import type { WorksheetExportStateT } from '@/capabilities/practice/api/worksheet-contracts';
+import { LEARNER_HANDWRITING_NOTE } from '@/ui/components/response/learner-handwriting-note';
 import { useAssetUrl } from '@/ui/lib/assets';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 
@@ -112,10 +113,12 @@ function PrintFigure({
   assetId,
   caption,
   alt,
+  handwriting,
 }: {
   assetId: string;
   caption?: string;
   alt?: string;
+  handwriting?: true;
 }) {
   const asset = useAssetUrl(assetId);
   const label = alt ?? caption ?? '题目配图';
@@ -128,7 +131,12 @@ function PrintFigure({
       ) : (
         <span className="ws-fig-wait" data-asset-pending="true" />
       )}
-      {caption ? <figcaption className="ws-cap">{caption}</figcaption> : null}
+      {caption || handwriting ? (
+        <figcaption className="ws-cap">
+          {caption}
+          {handwriting ? <span className="ws-cap-note">{LEARNER_HANDWRITING_NOTE}</span> : null}
+        </figcaption>
+      ) : null}
     </figure>
   );
 }
@@ -170,7 +178,14 @@ function BlockView({
         </div>
       );
     case 'figure':
-      return <PrintFigure assetId={block.assetId} caption={block.caption} alt={block.alt} />;
+      return (
+        <PrintFigure
+          assetId={block.assetId}
+          caption={block.caption}
+          alt={block.alt}
+          handwriting={block.handwriting}
+        />
+      );
     case 'note':
       return (
         <p className="ws-note">

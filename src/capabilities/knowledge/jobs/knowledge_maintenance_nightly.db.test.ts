@@ -1,6 +1,7 @@
 import { createId } from '@paralleldrive/cuid2';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { ProviderTransportEvidence } from '@/ai/task-result';
+import type { MaintenanceReviewTarget } from '@/capabilities/knowledge/server/review';
 import {
   type KnowledgeMutationOutput,
   proposeKnowledgeMutationTool,
@@ -9,6 +10,7 @@ import { type Db, db } from '@/db/client';
 import { ai_task_runs, knowledge } from '@/db/schema';
 import { listProposalInboxRows } from '@/kernel/proposals/inbox';
 import { readProviderWaitRequest } from '@/server/ai/provider-wait';
+import { resolveSubjectProfile } from '@/subjects/profile';
 import { resetDb } from '../../../../tests/helpers/db';
 import {
   buildKnowledgeMaintenanceNightlyHandler,
@@ -43,6 +45,18 @@ async function seedParentKnowledge(id = createId()) {
   return id;
 }
 
+function mathTarget(): MaintenanceReviewTarget {
+  return {
+    subject: 'math',
+    subjectProfile: resolveSubjectProfile('math'),
+    input: { tree: [], recent_mistakes: [], agent_notes: [] },
+  };
+}
+
+function singleSubjectPlan() {
+  return async () => ({ targets: [mathTarget()], skipped_subjects: [] });
+}
+
 describe('knowledge_maintenance_nightly handler', () => {
   beforeEach(async () => {
     await resetDb();
@@ -65,7 +79,8 @@ describe('knowledge_maintenance_nightly handler', () => {
 
     const run = () =>
       runKnowledgeMaintenanceNightly(db, {
-        streamReviewTaskFn: async ({ db }) => {
+        planFn: singleSubjectPlan(),
+        runMaintenanceReviewFn: async ({ db }) => {
           await waitForBoth();
           await proposeNewChild(
             db,
@@ -94,7 +109,8 @@ describe('knowledge_maintenance_nightly handler', () => {
 
     let second: KnowledgeMutationOutput | null = null;
     const result = await runKnowledgeMaintenanceNightly(db, {
-      streamReviewTaskFn: async ({ db }) => {
+      planFn: singleSubjectPlan(),
+      runMaintenanceReviewFn: async ({ db }) => {
         second = await proposeNewChild(
           db,
           parentId,
@@ -175,7 +191,8 @@ describe('knowledge_maintenance_nightly handler', () => {
     // The exact frame runner.ts enqueues into the response body on failure:
     // `\n\n[streamTask] <message> (task_run_id=<id>)\n`.
     const handler = buildKnowledgeMaintenanceNightlyHandler(db, {
-      streamReviewTaskFn: async () =>
+      planFn: singleSubjectPlan(),
+      runMaintenanceReviewFn: async () =>
         new Response(`\n\n[streamTask] provider exploded (task_run_id=${taskRunId})\n`),
     });
     const output = await handler([]);

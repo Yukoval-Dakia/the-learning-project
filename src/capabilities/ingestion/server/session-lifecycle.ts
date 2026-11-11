@@ -636,6 +636,55 @@ export async function applyRescue(tx: Db | Tx, params: ApplyRescueParams): Promi
   }
 }
 
+/**
+ * partial / extracted: re-run only the handwriting pass for one block. Keeps the
+ * question text, answer key and figures untouched; appends `extraction_evidence`
+ * onto the existing structured tree and bumps the block version. The session status
+ * does not change, so a failed/partial page can be retried without re-extraction.
+ */
+export async function applyHandwritingTrace(
+  tx: Db | Tx,
+  params: { sessionId: string; blockId: string; structured: StructuredQuestionT },
+): Promise<void> {
+  const current = await loadSessionForUpdate(tx, params.sessionId);
+  if (!current) {
+    throw new ApiError('not_found', `learning_session ${params.sessionId} not found`, 404);
+  }
+  assertRescuableSessionStatus(current.status, params.sessionId);
+  const blockRows = await tx
+    .select({ id: question_block.id, status: question_block.status })
+    .from(question_block)
+    .where(
+      and(
+        eq(question_block.id, params.blockId),
+        eq(question_block.ingestion_session_id, params.sessionId),
+      ),
+    );
+  if (blockRows.length === 0) {
+    throw new ApiError(
+      'not_found',
+      `question_block ${params.blockId} not found in session ${params.sessionId}`,
+      404,
+    );
+  }
+  assertRescuableBlockDraft(params.blockId, blockRows[0]?.status);
+  const now = new Date();
+  await persistCapturedQuestionBlock(
+    tx,
+    { origin: 'handwriting_trace', blockId: params.blockId, structured: params.structured },
+    now,
+  );
+  await writeJobEvent(tx, {
+    business_table: SESSION_TABLE,
+    business_id: params.sessionId,
+    event_type: 'ingestion.handwriting_trace',
+    payload: {
+      block_id: params.blockId,
+      status: params.structured.extraction_evidence?.handwriting_trace?.status ?? null,
+    },
+  });
+}
+
 // ---------- markReviewed ----------
 
 /**
