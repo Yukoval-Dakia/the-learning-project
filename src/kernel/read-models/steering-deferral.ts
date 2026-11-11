@@ -1,9 +1,11 @@
-// YUK-1770 D4 — the deferred-review KC set read by the due-list path.
+// YUK-1770 D4 — the deferred KC set for in-window subtractive steering.
 //
-// 「这周别排物理」: every KC whose reviews an in-window subtractive steering
-// goal excludes. The due query filters these KCs out of its candidate pool —
-// nothing is deleted, no FSRS state changes; when the window closes (or the
-// learner revokes), the ordinary forgetting-risk ordering serves them again.
+// 「这周别排物理」: every KC an in-window subtractive steering goal excludes.
+// Due review, the daily practice composer, and automatic supply-target
+// generation read this set. Nothing is deleted and no FSRS state changes;
+// when the window closes (or the learner revokes), ordinary ordering serves
+// those KCs again. A candidate leaves only when every one of its knowledge
+// ids is in the set (`steeringDefersKnowledgeIds`).
 
 import { learnerLocalDay } from '@/core/learner-day';
 import {

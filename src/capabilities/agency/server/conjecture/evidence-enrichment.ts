@@ -103,7 +103,7 @@ export interface EnrichEvidenceCellsInput {
   samplesPerCell?: number;
 }
 
-async function loadEvidenceSampleBatch(
+export async function loadEvidenceSampleBatch(
   db: DbLike,
   failures: ConjectureFailureAttempt[],
   traceByAttemptId: ReadonlyMap<string, string | null>,
