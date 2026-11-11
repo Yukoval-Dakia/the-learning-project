@@ -1,7 +1,7 @@
 /**
  * One-time stock repair: retire question-level FSRS cards whose question now
- * carries a testable knowledge component. Goal, container, and seed-root labels
- * do not count. Not a migration, and CI does not run it.
+ * carries a testable knowledge component that already has its knowledge card.
+ * Goal, container, seed-root, and not-yet-enrolled KC labels do not count. Not a migration, and CI does not run it.
  *
  * Default is a dry run. Pass --apply to write.
  *
@@ -12,7 +12,7 @@ import './load-env';
 import { eq } from 'drizzle-orm';
 import { db } from '@/db/client';
 import { material_fsrs_state, question } from '@/db/schema';
-import { testableKnowledgeIds } from '@/kernel/read-models/knowledge-roles';
+import { scheduledTestableKnowledgeIds } from '@/kernel/read-models/knowledge-roles';
 import { retireQuestionFsrsState } from '@/kernel/records/scheduling-state';
 
 async function main(): Promise<void> {
@@ -32,7 +32,7 @@ async function main(): Promise<void> {
     .where(eq(material_fsrs_state.subject_kind, 'question'))
     .orderBy(material_fsrs_state.subject_id);
   const testable = new Set(
-    await testableKnowledgeIds(
+    await scheduledTestableKnowledgeIds(
       db,
       rows.flatMap((row) => row.knowledgeIds ?? []),
     ),

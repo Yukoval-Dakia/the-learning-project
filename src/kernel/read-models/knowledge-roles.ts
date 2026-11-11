@@ -9,9 +9,9 @@
 // only a node that positively carries a non-kc role is dropped. Unknown/legacy ids keep
 // their existing behavior, so the marker can never silently widen into an outage.
 
-import { and, inArray, ne } from 'drizzle-orm';
+import { and, eq, inArray, ne } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
-import { knowledge } from '@/db/schema';
+import { knowledge, material_fsrs_state } from '@/db/schema';
 import { SYNTHETIC_SUBJECT_ROOT_RE } from '@/kernel/read-models/placement-scope';
 
 type DbLike = Db | Tx;
@@ -63,4 +63,27 @@ export async function withoutNonKcKnowledgeIds(
 export async function testableKnowledgeIds(db: DbLike, ids: readonly string[]): Promise<string[]> {
   const candidates = normalizeIds(ids).filter((id) => !SYNTHETIC_SUBJECT_ROOT_RE.test(id));
   return withoutNonKcKnowledgeIds(db, candidates);
+}
+
+/**
+ * Testable ids that already hold a knowledge card. A question card only moves
+ * onto its KC once that card exists; edit paths can add a KC without enrolling it.
+ */
+export async function scheduledTestableKnowledgeIds(
+  db: DbLike,
+  ids: readonly string[],
+): Promise<string[]> {
+  const testable = await testableKnowledgeIds(db, ids);
+  if (testable.length === 0) return [];
+  const rows = await db
+    .select({ id: material_fsrs_state.subject_id })
+    .from(material_fsrs_state)
+    .where(
+      and(
+        eq(material_fsrs_state.subject_kind, 'knowledge'),
+        inArray(material_fsrs_state.subject_id, testable),
+      ),
+    );
+  const scheduled = new Set(rows.map((row) => row.id));
+  return testable.filter((id) => scheduled.has(id));
 }

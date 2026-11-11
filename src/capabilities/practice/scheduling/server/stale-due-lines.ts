@@ -8,7 +8,7 @@ import { learnerLocalDay } from '@/core/learner-day';
 import type { Db, Tx } from '@/db/client';
 import { event, material_fsrs_state, practice_stream_item, question } from '@/db/schema';
 import { lockPracticeStreamPartition } from '@/kernel/locks/practice-stream';
-import { testableKnowledgeIds } from '@/kernel/read-models/knowledge-roles';
+import { scheduledTestableKnowledgeIds } from '@/kernel/read-models/knowledge-roles';
 
 type DbLike = Db | Tx;
 
@@ -92,7 +92,7 @@ async function withdrawInTransaction(
     .where(inArray(question.id, questionIds));
   const knowledgeIdsByQuestion = new Map(questions.map((row) => [row.id, row.knowledge_ids ?? []]));
   const knowledgeIds = [...new Set([...knowledgeIdsByQuestion.values()].flat())];
-  const testable = new Set(await testableKnowledgeIds(tx, knowledgeIds));
+  const testable = new Set(await scheduledTestableKnowledgeIds(tx, knowledgeIds));
   const questionCardIds = questionIds.filter((id) => {
     const labels = knowledgeIdsByQuestion.get(id);
     return labels !== undefined && !labels.some((kid) => testable.has(kid));
