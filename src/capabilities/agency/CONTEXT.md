@@ -17,7 +17,9 @@ AF §4）。用户面只有只读观察窗（/agent-notes 页 + today 块）。
   today 页的 AgentNotesBoard 由 server/start/routes/today.tsx 注入 shell TodayPage）
 - 读写方：notes 写 = server/notes.ts（quiz_verify 事件经
   server/question-pool-gap-subscription.ts 转 coach hint）；notes 读 =
-  knowledge/server/review.ts（经 kernel/read-models/agent-note-hints）；
+  knowledge/server/review.ts（经 kernel/read-models/agent-note-hints）、
+  `jobs/coach_daily.ts`、curator 输入（写给 dreaming）、研究会选格子（写给 research_meeting，
+  加权并注入归纳输入）；
   goals 读 = practice due-list（注意力先验）/ supply_planner（经
   kernel/read-models/active-goal-scope）；goals accept = server/goals/accept.ts（dispatch 经
   src/server/proposals/actions.ts）

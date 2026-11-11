@@ -1,16 +1,33 @@
 // Research-meeting candidate selection: the one owner of the order
-// gather → history gate → accountability rank → batched enrichment →
-// reproducible + complete-evidence filter → second history gate → image load → final rank.
+// gather → abstention replay → history gate → note-weighted accountability rank →
+// batched enrichment → reproducible + complete-evidence filter → abstention replay
+// on the reproducible ids → second history gate → image load → final rank.
 // Read-only: no transaction, no lock; callers own durability and execution locks.
 
 import type { Db } from '@/db/client';
 import { listProposalInboxRows } from '@/kernel/proposals/inbox';
+import {
+  type AgentNoteInput,
+  agentNoteInputs,
+  readAgentNotes,
+} from '@/kernel/read-models/agent-note-hints';
 import type { FailureAttempt } from '@/kernel/read-models/failure-attempts';
+import {
+  type ReopenedAbstention,
+  decideAbstentionReplay,
+  loadSemanticAbstentionsByCell,
+  reopenedAbstention,
+} from './abstention';
 import {
   type PredictionAccountability,
   loadPredictionAccountabilityByKey,
   rankEvidenceCellsByAccountability,
 } from './accountability';
+import {
+  type ContrastCorrectSample,
+  contrastSamplesForCell,
+  loadContrastCorrectSamples,
+} from './contrast-correct';
 import {
   CONJECTURE_RECURRENCE_FLOOR,
   type ConjectureMasteryProjection,
@@ -28,6 +45,7 @@ import {
   applyConjectureHistoryGate,
   loadConjectureHistory,
 } from './history';
+import { researchMeetingNoteWeight } from './meeting-notes';
 
 /** Enrichment batch for uncapped selections; capped selections batch at their top-K size. */
 const UNCAPPED_ENRICH_BATCH_SIZE = 3;
@@ -36,19 +54,26 @@ export interface ConjectureCandidate {
   cell: EnrichedEvidenceCell;
   evidenceImages: LoadedConjectureEvidenceImage[];
   priorClaimMd: string | null;
+  /** Set when this cell was abstained and tonight has failure ids the abstention had not seen. */
+  priorAbstention: ReopenedAbstention | null;
+  contrastCorrectSamples: ContrastCorrectSample[];
+  agentNotes: AgentNoteInput[];
 }
 
 export type ConjectureCandidateExclusion =
   | { key: string; reason: 'non_reproducible_evidence' }
   | { key: string; reason: 'invalid_evidence_packet'; detail: string }
   | { key: string; reason: 'lifecycle_gate_after_enrichment' }
-  | { key: string; reason: 'evidence_image_unavailable'; error: unknown };
+  | { key: string; reason: 'evidence_image_unavailable'; error: unknown }
+  | { key: string; reason: 'abstained_without_new_evidence' };
 
 export interface SelectConjectureCandidatesInput {
   failures: FailureAttempt[];
   reasoningTraceByAttemptId: ReadonlyMap<string, string | null>;
   masteryByKnowledgeId: ReadonlyMap<string, ConjectureMasteryProjection>;
   now: Date;
+  /** Correct-answer window. Same bound the caller used for the failure scan. */
+  since: Date;
   /**
    * Final top-K cut. Enrichment stops once the validated top-K is provably settled.
    * `null` enriches every lifecycle-eligible cell and returns all of them.
@@ -103,7 +128,7 @@ export async function selectConjectureCandidates(
   db: Db,
   input: SelectConjectureCandidatesInput,
 ): Promise<ConjectureCandidateSelection> {
-  const { failures, reasoningTraceByAttemptId, masteryByKnowledgeId, now, limit } = input;
+  const { failures, reasoningTraceByAttemptId, masteryByKnowledgeId, now, since, limit } = input;
   const loadKnownConjectureKeysFn = input.loadKnownConjectureKeysFn ?? loadPendingConjectureKeys;
   const knownConjectureKeys = await loadKnownConjectureKeysFn(db);
 
@@ -112,16 +137,52 @@ export async function selectConjectureCandidates(
     masteryByKnowledgeId,
     knownConjectureKeys,
   });
-  const historyByKey =
+  const exclusions: ConjectureCandidateExclusion[] = [];
+  const abstentionByKey =
+    gatheredCells.length > 0 ? await loadSemanticAbstentionsByCell(db, gatheredCells) : new Map();
+  const meetingNotes =
     gatheredCells.length > 0
-      ? await loadConjectureHistory(db, gatheredCells)
+      ? await readAgentNotes(db, { for_agent: 'research_meeting', now })
+      : [];
+  const abstentionKept: EvidenceCell[] = [];
+  for (const cell of gatheredCells) {
+    const replay = decideAbstentionReplay(
+      cell.evidence_event_ids,
+      abstentionByKey.get(cell.key) ?? null,
+    );
+    if (replay.kind === 'skip_unchanged') {
+      exclusions.push({ key: cell.key, reason: 'abstained_without_new_evidence' });
+      continue;
+    }
+    abstentionKept.push(cell);
+  }
+  const historyByKey =
+    abstentionKept.length > 0
+      ? await loadConjectureHistory(db, abstentionKept)
       : new Map<string, ConjectureHistory>();
-  const historyGate = applyConjectureHistoryGate(gatheredCells, failures, historyByKey, now);
+  const historyGate = applyConjectureHistoryGate(abstentionKept, failures, historyByKey, now);
   const accountabilityByKey =
     historyGate.cells.length > 0
       ? await loadPredictionAccountabilityByKey(db, historyGate.cells)
       : new Map<string, PredictionAccountability>();
-  const cells = rankEvidenceCellsByAccountability(historyGate.cells, accountabilityByKey);
+  const noteWeightByKey = new Map(
+    historyGate.cells.map(
+      (cell) => [cell.key, researchMeetingNoteWeight(cell, meetingNotes)] as const,
+    ),
+  );
+  const cells = rankEvidenceCellsByAccountability(
+    historyGate.cells,
+    accountabilityByKey,
+    noteWeightByKey,
+  );
+  const contrastByKnowledge =
+    cells.length > 0
+      ? await loadContrastCorrectSamples(db, {
+          knowledgeIds: [...new Set(cells.map((cell) => cell.knowledge_id))],
+          since,
+        })
+      : new Map<string, ContrastCorrectSample[]>();
+  const agentNotes = agentNoteInputs(meetingNotes);
 
   // Enrich in bounded salience batches and refill from lower-ranked cells when mutable or
   // missing question context leaves a candidate ungrounded. Raw recurrence is only an
@@ -130,7 +191,6 @@ export async function selectConjectureCandidates(
   // propagate; only cell-local evidence/image defects become exclusions.
   const batchSize = limit ?? UNCAPPED_ENRICH_BATCH_SIZE;
   const prepared: ConjectureCandidate[] = [];
-  const exclusions: ConjectureCandidateExclusion[] = [];
   let reproducibleCellCount = 0;
   let cellOffset = 0;
   while (cellOffset < cells.length) {
@@ -171,17 +231,32 @@ export async function selectConjectureCandidates(
     }
     reproducibleCellCount += reproducibleCells.length;
 
+    // Enrichment can drop the only failure id that was new since the abstention.
+    // Re-check against the ids that would actually be shown, and free the slot.
+    const openCells: EnrichedEvidenceCell[] = [];
+    for (const cell of reproducibleCells) {
+      const replay = decideAbstentionReplay(
+        cell.evidence_event_ids,
+        abstentionByKey.get(cell.key) ?? null,
+      );
+      if (replay.kind === 'skip_unchanged') {
+        exclusions.push({ key: cell.key, reason: 'abstained_without_new_evidence' });
+        continue;
+      }
+      openCells.push(cell);
+    }
+
     // A terminal conjecture may clear the raw two-fresh-failures gate before enrichment
     // removes a missing/mutated attempt. Re-run the lifecycle gate over only reproducible
     // ids so older pre-terminal evidence cannot substitute for post-terminal failures.
     const reproducibleHistoryGate = applyConjectureHistoryGate(
-      reproducibleCells,
+      openCells,
       failures,
       historyByKey,
       now,
     );
     const secondGateKeys = new Set(reproducibleHistoryGate.cells.map((cell) => cell.key));
-    for (const cell of reproducibleCells) {
+    for (const cell of openCells) {
       if (!secondGateKeys.has(cell.key)) {
         exclusions.push({ key: cell.key, reason: 'lifecycle_gate_after_enrichment' });
       }
@@ -203,6 +278,11 @@ export async function selectConjectureCandidates(
           cell,
           evidenceImages: result.value,
           priorClaimMd: reproducibleHistoryGate.priorClaimMdByKey.get(cell.key) ?? null,
+          priorAbstention: reopenedAbstention(
+            decideAbstentionReplay(cell.evidence_event_ids, abstentionByKey.get(cell.key) ?? null),
+          ),
+          contrastCorrectSamples: contrastSamplesForCell(cell, contrastByKnowledge),
+          agentNotes,
         });
       } else {
         // A deterministic bad/missing asset must not occupy a top-K slot; a lower
@@ -221,6 +301,7 @@ export async function selectConjectureCandidates(
       const bestPossibleTopKeys = rankEvidenceCellsByAccountability<EvidenceCell>(
         [...prepared.map((candidate) => candidate.cell), ...cells.slice(cellOffset)],
         accountabilityByKey,
+        noteWeightByKey,
       )
         .slice(0, limit)
         .map((candidate) => candidate.key);
@@ -232,6 +313,7 @@ export async function selectConjectureCandidates(
   const ranked = rankEvidenceCellsByAccountability(
     prepared.map((candidate) => candidate.cell),
     accountabilityByKey,
+    noteWeightByKey,
   );
   const candidates = (limit === null ? ranked : ranked.slice(0, limit)).map((cell) => {
     const candidate = preparedByKey.get(cell.key);
