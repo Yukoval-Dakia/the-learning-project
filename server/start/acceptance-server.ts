@@ -17,6 +17,8 @@ requireApiInternalToken(env);
 const port = resolveApiPort(env.API_PORT);
 const { installPracticeHost } = await import('@/capabilities/practice/public');
 await installPracticeHost();
+const { installNotesHostOperations } = await import('@/capabilities/notes/public');
+installNotesHostOperations();
 const { installAgencyHostOperations } = await import('@/capabilities/agency/public');
 await installAgencyHostOperations();
 const { installObservabilityHostOperations } = await import('@/capabilities/observability/public');
