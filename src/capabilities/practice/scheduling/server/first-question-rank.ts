@@ -27,9 +27,10 @@ const KCS_PER_ROUND = 25;
  * `maxItems` overall and {@link FIRST_QUESTION_PER_KC} per KC.
  *
  * A KC with no usable question is a supply gap, not a first question, so it is skipped
- * without consuming the item budget; KCs are read in rounds until enough have a question.
- * Depth rounds keep the caller's KC diversity: the best question of each KC first, then
- * alternatives only while budget remains.
+ * without consuming the item budget; KCs are read in rounds until enough distinct questions
+ * exist, because a question shared by several KCs fills only one budget slot. Depth rounds
+ * keep the caller's KC diversity: the best question of each KC first, then alternatives
+ * only while budget remains.
  *
  * `accept` applies caller policy (steering deferral) before the per-KC cut, so a filtered
  * question never occupies a slot. This prefilter scores point MFI; the sampler downstream
@@ -51,10 +52,16 @@ export async function pickFirstQuestions(
 
   const roundSize = Math.max(limit, KCS_PER_ROUND);
   const rankedByKc = new Map<string, string[]>();
-  for (let start = 0; start < kcs.length && rankedByKc.size < limit; start += roundSize) {
+  // Stop on distinct question ids, not on the number of KCs with a question: a comprehensive
+  // question shared by several KCs fills one budget slot, so KC count can overshoot the
+  // deliverable item count. Every ranked id is a candidate the depth pass below can return.
+  const candidateIds = new Set<string>();
+  for (let start = 0; start < kcs.length && candidateIds.size < limit; start += roundSize) {
     const ranked = await rankFirstQuestions(db, kcs.slice(start, start + roundSize), accept);
     for (const [kc, ids] of ranked) {
-      if (ids.length > 0) rankedByKc.set(kc, ids);
+      if (ids.length === 0) continue;
+      rankedByKc.set(kc, ids);
+      for (const id of ids) candidateIds.add(id);
     }
   }
 

@@ -196,9 +196,10 @@ export interface FrontierKnowledgeInput {
 export interface ScanInput {
   frontier: FrontierKnowledgeInput[];
   /**
-   * 现有**可用**题池（loadQuestionPool 已过滤掉 draft_status='draft'）。
-   * 只有 non-draft / 已晋升题算真覆盖——一个 KC 唯一的题若是被拒/未验证草稿，不该被当作已覆盖
-   * 而压制 R1/R2（草稿不是可用 item）。本扫描器再据 source tier 区分高可信 vs 低可信生成档。
+   * 现有**可发**题池（loadQuestionPool 过滤 draft/suspended，assembleScanInput 再取
+   * `readAutomaticallyServableQuestionIds` 的准入集）。只有学习者真能被发到的题算真覆盖——
+   * 被拒草稿、withheld、container_only 或留出题都不是可用 item。本扫描器再据 source tier
+   * 区分高可信 vs 低可信生成档。
    */
   questions: PoolQuestion[];
   /** subject profile 的 sourcingRoutePreference → 播种 routePreference。key=subjectId。 */
@@ -310,9 +311,10 @@ const OBJECTIVE_KINDS: ReadonlySet<QuestionKindT> =
 // exact（defaultJudgeKindForQuestion：choice/true_false → exact，无 rubric 依赖），是最稳的客观题型。
 const R3_CALIBRATION_KIND: QuestionKindT = 'choice';
 
-// 覆盖深度阈值——一个 open-goal KC 的**可用（non-draft）**题数 < 此值
+// 覆盖深度阈值——一个 open-goal KC 的**可发**题数 < 此值
 // 即「前沿/覆盖不足」，R1 发一个 frontier/coverage 目标（架构 doc §Scanner Rules 1「fewer than
-// 2 active questions」）。draft 已在 loadQuestionPool 过滤掉，故这里数的就是可用题。
+// 2 active questions」）。draft/suspended 在 loadQuestionPool 过滤，准入在 assembleScanInput
+// 过滤，故这里数的就是学习者真能被发到的题。
 // YUK-579: exported so the coverage-lattice read model discloses the threshold to the UI
 // (no magic number on the render side) and its consistency unit test asserts
 // depthMet ⟺ usableCount ≥ COVERAGE_DEPTH_THRESHOLD. Value/behaviour unchanged.
@@ -325,7 +327,7 @@ export const COVERAGE_DEPTH_THRESHOLD = 2;
  * 纯函数——无 IO、无随机、无时钟（id 由 caller 注入的 makeId 生成，测试可注入确定性 id）。
  *
  * 四条规则（Task 13 Step 2，权威）：
- *   R1 frontier_zero    : KC 的可用题数 < COVERAGE_DEPTH_THRESHOLD → 一个 coverage 目标
+ *   R1 frontier_zero    : KC 的可发题数（已过准入）< COVERAGE_DEPTH_THRESHOLD → 一个 coverage 目标
  *                         （desiredCount 补齐到阈值；建脚手架，band=near）。
  *   R2 source_quality   : 某 KC 只有低获取档（档 3 llm-only/草稿）题 → 一个更高获取档目标（minSourceTier=2）。
  *   R3 diagnostic       : 某 KC **没有近-θ̂ 题**（无题 effectiveB 落 'near' band）→ 一个 calibrationCandidate 目标（band=near）。
@@ -408,9 +410,9 @@ export function scanCoverageGaps(
   for (const f of input.frontier) {
     const pool = questionsByKid.get(f.knowledgeId) ?? [];
 
-    // ── R1: 可用题数 < 覆盖深度阈值 → coverage 目标（补齐到阈值）─────────────
-    // pool 已是 non-draft 可用题（draft 在 loadQuestionPool 过滤）。
-    // 阈值化（< COVERAGE_DEPTH_THRESHOLD）让只有 1 道可用题（已入册但 thin）的 KC
+    // ── R1: 可发题数 < 覆盖深度阈值 → coverage 目标（补齐到阈值）─────────────
+    // pool 已是**可发**题（draft/suspended 在 loadQuestionPool 过滤，准入在 assembleScanInput 过滤）。
+    // 阈值化（< COVERAGE_DEPTH_THRESHOLD）让只有 1 道可发题（已入册但 thin）的 KC
     // 仍能补到目标深度（架构 doc §Scanner Rules 1）。
     if (pool.length < COVERAGE_DEPTH_THRESHOLD) {
       push(f, 'frontier_zero', {
@@ -567,15 +569,15 @@ export function seedGenerationMethod(
 
 /**
  * 加载待扫的 KC：pending/in_progress learning item 的全部 KC，加上可学前沿
- * （learnable frontier——前置全掌握、自身未掌握）里还没有任何可用题的 KC。
+ * （learnable frontier——前置全掌握、自身未掌握）里还没有任何可发题的 KC。
  *
  * 扫**全部** open-goal KC（无 material_fsrs_state 行不是必要条件）：一个只入册了 1 道题的 thin KC
- * 仍需被扫（它仍需补深度/补客观锚/补题型）。覆盖深度阈值（R1 < COVERAGE_DEPTH_THRESHOLD 可用题）
+ * 仍需被扫（它仍需补深度/补客观锚/补题型）。覆盖深度阈值（R1 < COVERAGE_DEPTH_THRESHOLD 可发题）
  * 与 R2/R3/R4 的结构性缺口判定决定发不发目标（这些规则自限：题数够 + 质量够 + 有近-θ̂ 锚 +
  * 题型多样 → 零目标，不洪泛）。
  *
  * 可学前沿的 KC 图面上已经说「可以学」，所以它没题时必须成为 frontier_zero 候选——否则永远
- * 不会出现在练习里。有题的前沿 KC 不因这条新增来源扩大 R2-R4 的扫描面（assembleScanInput 过滤）。
+ * 不会出现在练习里。有可发题的前沿 KC 不因这条新增来源扩大 R2-R4 的扫描面（assembleScanInput 过滤）。
  *
  * 每个 KC 配上 mastery_state 的 θ̂/precision/evidence（冷启兜底）+ 经 batchResolveEffectiveDomains 派生的
  * subjectId（科目是视角，派生轴，不给 KC 加 subject 列）。
@@ -632,8 +634,10 @@ async function loadFrontierKnowledge(
 }
 
 /**
- * 加载现有**可用**题池里挂了任一 open-goal KC 的题 + 它们的 hard 列层锚（b_post ?? b_anchor ?? b）。
- * 只取与 open-goal KC 相关的题（按 KC 过滤，非全库扫描）。
+ * 加载现有题池里挂了任一 open-goal KC 的题 + 它们的 hard 列层锚（b_post ?? b_anchor ?? b）。
+ * 只取与 open-goal KC 相关的题（按 KC 过滤，非全库扫描）。这是**候选**池：草稿/挂起在这里滤掉，
+ * 契约准入（general_pool / admitted / 非留出）由 assembleScanInput 用与选题同一个
+ * `readAutomaticallyServableQuestionIds` 滤一次。
  *
  * 过滤掉 draft_status='draft'：草稿（未验证/被拒）不是可用 item，不该被当作
  * 已覆盖而压制 R1/R2。复用共享 draft-exclusion 三值逻辑安全谓词 notDraftPredicate（@/db/predicates：
@@ -707,20 +711,18 @@ async function loadQuestionPool(db: Db | Tx, frontierKids: string[]): Promise<Po
 export async function assembleScanInput(db: Db | Tx): Promise<ScanInput> {
   const { entries, frontierOnlyKids } = await loadFrontierKnowledge(db);
   const allKids = entries.map((f) => f.knowledgeId);
-  const questions = await loadQuestionPool(db, allKids);
-  // A frontier KC counts as covered only when a question the learner can actually be served
-  // exists: the pool predicate drops drafts, but a promoted question still sits behind the
-  // admission gate until `readAutomaticallyServableQuestionIds` admits it. Counting pool
-  // membership alone would leave "graph says learnable, nothing servable" KCs with no target.
+  const pool = await loadQuestionPool(db, allKids);
+  // Draft/suspension is not the usable-question boundary: the scanner and the covered-KC filter
+  // must both read the same admission gate selection uses (`readAutomaticallyServableQuestionIds`),
+  // or a frontier-only KC whose questions are all withheld looks covered while nothing serves.
   const admittedIds = await readAutomaticallyServableQuestionIds(
     db,
-    questions.map((q) => q.id),
+    pool.map((q) => q.id),
   );
-  const coveredKids = new Set(
-    questions.filter((q) => admittedIds.has(q.id)).flatMap((q) => q.knowledgeIds),
-  );
-  // Every other frontier KC stays on its open learning-item path so this new source cannot
-  // widen R2-R4 to the whole frontier; only the "nothing servable" case joins the scan.
+  const questions = pool.filter((q) => admittedIds.has(q.id));
+  const coveredKids = new Set(questions.flatMap((q) => q.knowledgeIds));
+  // A covered frontier KC stays out of the new scan surface so this source cannot widen R2-R4
+  // to the whole frontier; only the "nothing servable" case joins the scan.
   const frontier = entries.filter(
     (f) => !frontierOnlyKids.has(f.knowledgeId) || !coveredKids.has(f.knowledgeId),
   );
