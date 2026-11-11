@@ -34,12 +34,9 @@ describe('read_note', () => {
     await seed('b', [block('b1', '第一段', []), block('b2', 'x'.repeat(9000), [])]);
     await retract('a', 's-child');
 
-    expect((await note('a')).notes[0]?.body_md).toBe(
-      '## 标题甲\n\n定义$a^2$\n\n- LIST_A\n- LIST_B',
-    );
-    expect((await note('b')).notes[0]).toMatchObject({
-      body_md: `第一段\n\n${'x'.repeat(7995)}`,
-      body_truncated: true,
-    });
+    const kept = '## 标题甲\n\n定义$a^2$\n\n- LIST_A\n- LIST_B';
+    const clipped = `第一段\n\n${'x'.repeat(7995)}`;
+    expect((await note('a')).notes[0]?.body_md).toBe(kept);
+    expect((await note('b')).notes[0]).toMatchObject({ body_md: clipped, body_truncated: true });
   });
 });
