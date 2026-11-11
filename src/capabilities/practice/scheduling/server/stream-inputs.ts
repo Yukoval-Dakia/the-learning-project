@@ -14,10 +14,14 @@
 // - newCheckItems：open learning_item（pending/in_progress）的 knowledge_ids 中尚无 FSRS 状态行的
 // 知识点（= 学了还没检验），各取一道未排入的题。
 // - pendingPapers：getPracticeList 的 ready 且未开始 session 的卷。
+// 减项 steering 的延后集合在 collectComposerInputs 开头读一次。到期（含干预
+// 诊断）、变式、新学、前沿和待做卷：知识点全部落在该集合内才丢弃，混有集合外
+// 知识点的综合题保留。
 
 import { and, desc, eq, gte, inArray, isNotNull, lte, sql } from 'drizzle-orm';
 import { LearningItemOpenStatus } from '@/core/schema/business';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
+import { steeringDefersKnowledgeIds } from '@/core/steering';
 import type { Db, Tx } from '@/db/client';
 import { notDraftPredicate, questionSuspendedPredicate } from '@/db/predicates';
 import {
@@ -30,6 +34,7 @@ import {
 } from '@/db/schema';
 import { errorResponse } from '@/kernel/http';
 import { withoutNonKcKnowledgeIds } from '@/kernel/read-models/knowledge-roles';
+import { loadSteeringDeferredKnowledgeIds } from '@/kernel/read-models/steering-deferral';
 import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
 import { getPracticeList } from '../../session/public';
 import {
@@ -152,6 +157,19 @@ function orderComposerDueItems(
   return [...interventions, ...decay.map((row) => row.item)];
 }
 
+async function questionKnowledgeIds(
+  db: DbLike,
+  ids: readonly string[],
+): Promise<Map<string, readonly string[]>> {
+  const unique = [...new Set(ids)].filter(Boolean);
+  if (unique.length === 0) return new Map();
+  const rows = await db
+    .select({ id: question.id, knowledge_ids: question.knowledge_ids })
+    .from(question)
+    .where(inArray(question.id, unique));
+  return new Map(rows.map((row) => [row.id, row.knowledge_ids]));
+}
+
 /**
  * composer 的 due 页读取与降级边界。直调 HTTP adapter 共用的
  * `queryReviewDue`，请求 due 页 FULL ceiling（REVIEW_DUE_LIMIT_MAX——与 adapter
@@ -176,10 +194,13 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
   // （NULL≡active / 'active' 留池，仅排字面 'draft'）。new_check + frontier 共用
   // notDraftPredicate（@/db/predicates，三值逻辑安全的单一定义）。
 
-  const [dailyBudget, questionPace] = await Promise.all([
+  const [dailyBudget, questionPace, deferredKnowledgeIds] = await Promise.all([
     resolveDailyPracticeBudget(db),
     readQuestionPace(db),
+    loadSteeringDeferredKnowledgeIds(db, new Date()),
   ]);
+  const steeringKeeps = (knowledgeIds: readonly string[]): boolean =>
+    !steeringDefersKnowledgeIds(knowledgeIds, deferredKnowledgeIds);
 
   // 1. FSRS 到期投影 — 与 HTTP adapter 共用的 typed due 读取。
   const cappedDueRows = await readComposerDueRows(db);
@@ -220,7 +241,7 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
   const dueRows = [
     ...protectedInterventionRows,
     ...cappedDueRows.filter((row) => !protectedInterventionIds.has(row.question_id)),
-  ];
+  ].filter((row) => steeringKeeps(row.knowledge_ids ?? []));
 
   // 2. 错题变式 — active 变体，parent 近窗口内有 failure attempt。
   const since = new Date(Date.now() - VARIANT_WINDOW_DAYS * 24 * 3600 * 1000);
@@ -258,10 +279,19 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
     db,
     variantCandidates.flatMap((row) => row.variant_question_id ?? []),
   );
+  const variantKnowledgeIds =
+    deferredKnowledgeIds.size === 0
+      ? new Map<string, readonly string[]>()
+      : await questionKnowledgeIds(db, [...admittedVariantIds]);
   const variantRows = variantCandidates
-    .filter(
-      (row) => row.variant_question_id !== null && admittedVariantIds.has(row.variant_question_id),
-    )
+    .filter((row) => {
+      const id = row.variant_question_id;
+      return (
+        id !== null &&
+        admittedVariantIds.has(id) &&
+        steeringKeeps(variantKnowledgeIds.get(id) ?? [])
+      );
+    })
     .slice(0, VARIANT_INPUT_LIMIT);
 
   // 3. 新学待检 — 尚未开始或正在学习的学习项，其知识点里没有 FSRS 状态行的。
@@ -295,7 +325,7 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
       // 给用户成普通练习项。
       for (const kid of untracked) {
         const candidates = await db
-          .select({ id: question.id })
+          .select({ id: question.id, knowledge_ids: question.knowledge_ids })
           .from(question)
           .where(
             and(
@@ -309,7 +339,9 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
           db,
           candidates.map((row) => row.id),
         );
-        const q = candidates.find((row) => admittedIds.has(row.id));
+        const q = candidates.find(
+          (row) => admittedIds.has(row.id) && steeringKeeps(row.knowledge_ids),
+        );
         if (q) newCheckPairs.push({ questionId: q.id, knowledgeId: kid });
       }
       newCheckPairs = newCheckPairs.slice(0, 3);
@@ -319,7 +351,10 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
   // 4. 当日待做卷 — ready 且未开始 session。
   const practiceList = await getPracticeList(db);
   const pendingPapers = practiceList.papers
-    .filter((p) => p.generation_status === 'ready' && p.session === null)
+    .filter(
+      (p) =>
+        p.generation_status === 'ready' && p.session === null && steeringKeeps(p.knowledge_ids),
+    )
     .map((p) => ({
       paperId: p.artifact_id,
       title: p.title,
@@ -339,7 +374,7 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
   const frontierPairs: Array<{ questionId: string; knowledgeId: string }> = [];
   for (const kc of frontierKcs) {
     const candidates = await db
-      .select({ id: question.id })
+      .select({ id: question.id, knowledge_ids: question.knowledge_ids })
       .from(question)
       .where(
         and(
@@ -356,7 +391,7 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
       db,
       candidates.map((row) => row.id),
     );
-    const q = candidates.find((row) => admittedIds.has(row.id));
+    const q = candidates.find((row) => admittedIds.has(row.id) && steeringKeeps(row.knowledge_ids));
     if (q) frontierPairs.push({ questionId: q.id, knowledgeId: kc });
     if (frontierPairs.length === FRONTIER_MAX_ITEMS) break;
   }

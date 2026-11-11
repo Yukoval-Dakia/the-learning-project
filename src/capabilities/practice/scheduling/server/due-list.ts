@@ -18,6 +18,7 @@ import { type ActivityRefT, questionRef } from '@/core/schema/activity';
 import type { CauseCategoryT } from '@/core/schema/event/blocks';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import { SchedulingStateSchema } from '@/core/schema/scheduling-state';
+import { steeringDefersKnowledgeIds } from '@/core/steering';
 import { type Db, type Tx, db } from '@/db/client';
 import { notDraftPredicate, questionSuspendedPredicate } from '@/db/predicates';
 import { material_fsrs_state, question } from '@/db/schema';
@@ -334,17 +335,15 @@ export async function queryReviewDue(
     deps.loadSteeringDeferredFn ?? loadSteeringDeferredKnowledgeIds
   )(activeDb, now);
   const isSteeringDeferredRow = (knowledgeIds: readonly string[]): boolean =>
-    deferredBySteering.size > 0 &&
-    knowledgeIds.length > 0 &&
-    knowledgeIds.every((kid) => deferredBySteering.has(kid));
+    steeringDefersKnowledgeIds(knowledgeIds, deferredBySteering);
   const schedulingKnowledgeRows = rawKnowledgeStateRows.filter(
-    (stateRow) => !deferredBySteering.has(stateRow.knowledge_id),
+    (stateRow) => !steeringDefersKnowledgeIds([stateRow.knowledge_id], deferredBySteering),
   );
 
-  // bulk-prefetch every probe-selection DB input for the whole due page in THREE
-  // reads (was up to ~3 serial round-trips PER due KC — the /api/review/due N+1). The per-KC
-  // selection below is then pure in-memory over the prefetch, and the shared usedDueQuestionIds
-  // set is threaded through the SAME sequential order → byte-identical probe picks.
+  // bulk-prefetch every probe-selection DB input for the whole due page (was up to ~3
+  // serial round-trips PER due KC — the /api/review/due N+1). The per-KC selection below is
+  // then pure in-memory over the prefetch, and the shared usedDueQuestionIds set is threaded
+  // through the SAME sequential order as a per-KC prefetch.
   const knowledgeStateRows = (
     await Promise.all(
       schedulingKnowledgeRows.map((row) =>
@@ -367,6 +366,7 @@ export async function queryReviewDue(
       knowledgeId: stateRow.knowledge_id,
       lastReviewEventId: stateRow.last_review_event_id ?? null,
     })),
+    now,
   );
   const dueRows: ScheduledDueRow[] = [];
   for (const stateRow of knowledgeStateRows) {
