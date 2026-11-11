@@ -7,9 +7,9 @@
 // coach_daily). This module consolidates them so future tuning is deliberate
 // and in one place (CB-1).
 //
-// IO-free / no dependencies — pure constants + a small lookup. Counting unit is
-// node / edge / event-row for v1 (CB-6); token-level accounting remains a
-// future token-meter feature. YUK-590 wires registry `maxCost` to SDK-native
+// IO-free / no dependencies — pure constants + a small lookup. Per-surface
+// context budgets count nodes, edges, and event rows. Copilot conversation
+// history is capped in estimated tokens instead. YUK-590 wires registry `maxCost` to SDK-native
 // `Options.maxBudgetUsd` only on the cost-reporting Anthropic direct lane; this
 // context budget remains row/tool based and orthogonal to that USD guard. No
 // user-configurable budgets (CB-5) and no hard-reject circuit-breaker (§6):
@@ -156,15 +156,15 @@ export interface BriefRefreshBudget {
    *  exceeded, prioritize by activity recency; defer remainder to the next
    *  night (no starvation). */
   maxSubjectsPerRun: number;
-  /** Max recent activity events fed into a single subject brief's
-   *  summarization. Formalizes the prior hardcoded `.limit(50)` in
-   *  brief.ts loadEventsFromDb. */
+  /** Max events sampled from each brief window (this week, the last three
+   *  months, and long term). Each window is read on its own, so a busy week
+   *  cannot crowd older evidence out of the sample. */
   maxEventsPerBrief: number;
 }
 
 export const BRIEF_REFRESH_BUDGET: BriefRefreshBudget = {
   maxSubjectsPerRun: 12, // Never bites at today's 3–5 active subjects; forward-looking guard
-  maxEventsPerBrief: 50, // Existing hardcoded limit in brief.ts loadEventsFromDb; proven bound
+  maxEventsPerBrief: 50,
 };
 
 // ── P5.4-L2 proposal-feedback budget (AB-5) ─────────────────────────────────
@@ -208,37 +208,36 @@ export const PROPOSAL_FEEDBACK_BUDGET: ProposalFeedbackBudget = {
   maxSerializedChars: 1200, // Copilot whole-digest read cap (~5 fully-populated edge cells); P1 fix
 };
 
-// ── YUK-267 (C2) Copilot conversation-history budget ────────────────────────
+// ── Copilot conversation-history budget ─────────────────────────────────────
 //
 // The free-form CopilotTask run input carries `conversation_history` (the last N
 // session-scoped turns) so the agent reuses what it already knows rather than
-// re-reading via a DomainTool. Bounded by DOUBLE truncation (防循环 ④): a per-turn
-// char cap is applied to each turn's text, then a whole-array char cap drops the
-// OLDEST turns first until the serialized history fits. Kept here alongside
-// PROPOSAL_FEEDBACK_BUDGET so all Copilot input-budget tunables live in one place
-// and are unit-testable in isolation.
+// re-reading via a DomainTool. Turns are kept whole. The token ceiling drops the
+// oldest whole turns first. The pinned learner-state header is prepended and is
+// not charged against this ceiling; it has its own startup budget.
+const CJK_RE = /[　-鿿豈-﫿＀-￯]/;
+
+/** Deterministic token estimate. CJK ~1.6, other ~1/3.5. Not a real tokenizer. */
+export function estimateContextTokens(text: string): number {
+  let units = 0;
+  for (const ch of text) units += CJK_RE.test(ch) ? 1.6 : 1 / 3.5;
+  return Math.ceil(units);
+}
+
 export interface CopilotHistoryBudget {
-  /** Max turns surfaced to the run input (newest-first kept). */
+  /** Newest user and assistant turns loaded. Twelve rounds is 24 turns. */
   maxTurns: number;
-  /** PER-TURN char cap applied to each turn's text before assembly. */
-  perTurnChars: number;
-  /** WHOLE-ARRAY char cap; oldest turns dropped first until the serialized
-   *  conversation_history fits. */
-  totalChars: number;
+  /** Token ceiling over those turns only. Header is not included. */
+  totalTokens: number;
 }
 
 export const COPILOT_HISTORY_BUDGET: CopilotHistoryBudget = {
-  maxTurns: 8, // last 8 session-scoped turns (ask原文 + reply正文 only)
-  perTurnChars: 800, // per-turn truncation (防循环 ④)
-  totalChars: 4000, // whole-history truncation, oldest dropped first (防循环 ④)
+  maxTurns: 24,
+  // Twelve replies of about 2500 CJK characters fit under this ceiling, so an
+  // earlier question in that span is still the full reply. A pasted essay drops
+  // older whole turns instead of slicing the recent ones.
+  totalTokens: 64_000,
 };
-
-// CROSS-REFERENCE (PR #717 round-2 OCR fix #1) — `totalChars` above bounds the
-// PINNED learner-state header too (copilot-run-input.ts's assembleConversationHistory reserves
-// the header's char cost first, before the oldest-first drop loop touches real
-// turns). The pinned header is the Context startup segment (agency/context,
-// LEARNER_CONTEXT_STARTUP_BUDGET ≤1000 est tokens, 2400-char hard cap); its raw
-// char cap MUST stay well below totalChars so a lone pinned header still fits.
 
 // ── P5.3 long-term brief freshness/decay budget ─────────────────────────────
 // Single tunable source for the long_term_md evidence-decay freshness score

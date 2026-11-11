@@ -46,8 +46,10 @@ import { inArray } from 'drizzle-orm';
 import { getConfigFlag } from '@/core/config/store';
 import { newId } from '@/core/ids';
 import { LearningItemOpenStatus } from '@/core/schema/business';
+import { steeringDefersKnowledgeIds } from '@/core/steering';
 import type { Db } from '@/db/client';
 import { learning_item } from '@/db/schema';
+import { loadSteeringDeferredKnowledgeIds } from '@/kernel/read-models/steering-deferral';
 import { type Demand, demandToSupplyTarget, poolFetch } from '../../question-bank/public';
 import { type DispatchDeps, type DispatchResult, dispatchSupplyTarget } from './dispatcher';
 import type { QuestionSupplyTarget } from './target-discovery';
@@ -137,6 +139,7 @@ export async function refillThinPools(
 ): Promise<RefillOutcome[]> {
   if (!refillEnabled()) return []; // flag-off → byte-identical no-op（无 DB、无 dispatch）。
 
+  const deferredKnowledgeIds = await loadSteeringDeferredKnowledgeIds(db, new Date());
   const countActive = deps.countActiveQuestions ?? defaultCountActiveQuestions;
   const buildTarget = deps.buildTarget ?? demandToSupplyTarget;
   const dispatch = deps.dispatch ?? dispatchSupplyTarget;
@@ -144,7 +147,9 @@ export async function refillThinPools(
   const makeId = deps.makeId ?? newId;
 
   // open Q3 — in-request 去重：同 KC 被多个待做项引用 → 塌成一次池检查。
-  const allUnique = [...new Set(knowledgeIds.filter(Boolean))];
+  const allUnique = [...new Set(knowledgeIds.filter(Boolean))].filter(
+    (kid) => !steeringDefersKnowledgeIds([kid], deferredKnowledgeIds),
+  );
   if (allUnique.length > REFILL_MAX_PER_REQUEST) {
     console.warn(
       `[question_supply_refill] truncating ${allUnique.length} KCs to ${REFILL_MAX_PER_REQUEST}`,
