@@ -15,7 +15,8 @@ import { eventAllowsDerivationSql } from '@/kernel/events/derivation-policy';
 type DbLike = Db | Tx;
 
 // Which background agents a note addresses. 'research_meeting' names the nightly
-// meeting lane, not a writing actor; the deterministic lane reads no agent notes.
+// meeting lane, not a writing actor. Curator and that lane read notes as input;
+// the notes stay attention priors, not evidence.
 export type AgentNoteTarget = 'dreaming' | 'maintenance' | 'coach' | 'research_meeting' | 'copilot';
 
 export interface AgentNoteRef {
@@ -37,6 +38,27 @@ export interface AgentNote {
   // From the event column, not the payload; the board uses it as the evidence
   // fallback when refs[] is empty.
   caused_by_event_id?: string;
+}
+
+export interface AgentNoteInput {
+  id: string;
+  signal_kind: string;
+  summary_md: string;
+  refs: { kind: string; id: string }[];
+  source_task_kind: string;
+  confidence?: number;
+}
+
+/** Prompt-facing projection. The note stays a hint: callers do not treat it as evidence. */
+export function agentNoteInputs(notes: readonly AgentNote[]): AgentNoteInput[] {
+  return notes.map((note) => ({
+    id: note.id,
+    signal_kind: note.signal_kind,
+    summary_md: note.summary_md,
+    refs: note.refs.map((ref) => ({ kind: ref.kind, id: ref.id })),
+    source_task_kind: note.source_task_kind,
+    ...(note.confidence !== undefined ? { confidence: note.confidence } : {}),
+  }));
 }
 
 export interface ReadAgentNotesOpts {
