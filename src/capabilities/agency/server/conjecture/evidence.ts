@@ -6,6 +6,8 @@
 // Two gates keep one-off noise out:
 //   - recurrence floor (>= 2 distinct attempts for a cell), and
 //   - dedup against already-raised conjecture keys (knownConjectureKeys).
+// An agent cause below the shared confidence floor does not count toward the
+// floor. User attribution still counts as one full observation.
 //
 // Each cell snapshots `baseline_p` = the learner's PFA mastery p(L) for the KC — the
 // number the qualitative claim must later beat.
@@ -13,6 +15,7 @@
 import type { CauseCategoryT, CauseSchemaT } from '@/core/schema/event/blocks';
 import type { AttemptQuestionSnapshotT } from '@/core/schema/question-evidence-snapshot';
 import type { BBoxT, FigureRefT, ModelFigureRefT } from '@/core/schema/structured_question';
+import { agentCauseCountsAsObservation } from '@/kernel/read-models/cause-confidence';
 
 export const CONJECTURE_RECURRENCE_FLOOR = 2;
 
@@ -307,6 +310,12 @@ export function gatherConjectureEvidence(input: GatherConjectureEvidenceInput): 
   for (const failure of failures) {
     const cause = effectiveCauseForConjectureFailure(failure);
     if (cause === null) continue; // no active cause — cannot attribute a conjecture
+    if (
+      cause.source === 'agent' &&
+      !agentCauseCountsAsObservation(failure.judge?.cause.confidence)
+    ) {
+      continue;
+    }
     const isOwnerCause = cause.source === 'user';
     for (const knowledgeId of failure.referenced_knowledge_ids) {
       const key = conjectureKey(cause.primary_category, knowledgeId);
