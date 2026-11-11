@@ -6,7 +6,7 @@ import type { Db } from '@/db/client';
 import { loadRecentCorrectAttemptsForKnowledge } from '@/kernel/read-models/learner-activity';
 import { CONJECTURE_CONTRAST_CORRECT_LIMIT } from '../../tasks/conjecture-induction';
 import type { ConjectureFailureAttempt } from './evidence';
-import { quoteConjectureAttemptSamples } from './evidence-enrichment';
+import { loadEvidenceSampleBatch } from './evidence-enrichment';
 import { wrapTruncatedLearnerText } from './untrusted-text';
 
 /** Extra corrects fetched so a dropped prompt does not leave the cell with nothing. */
@@ -57,7 +57,7 @@ export async function loadContrastCorrectSamples(
   const legacy = [...byKnowledge.values()]
     .flat()
     .filter((attempt) => attempt.frozen_prompt_md === null);
-  const quotedLegacy = await quoteConjectureAttemptSamples(db, legacy.map(asFailureAttempt));
+  const quotedLegacy = await loadEvidenceSampleBatch(db, legacy.map(asFailureAttempt));
   const byAttemptId = new Map<string, ContrastCorrectSample>();
   for (const [attemptId, sample] of quotedLegacy) {
     if (sample.question_prompt_md === null) continue;
