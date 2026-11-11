@@ -36,6 +36,7 @@ import {
 } from '@/core/schema/difficulty-evidence';
 import type { QuestionKindT } from '@/core/schema/judge-routing';
 import { deriveSourceTier } from '@/core/schema/provenance';
+import { steeringDefersKnowledgeIds } from '@/core/steering';
 import type { Db, Tx } from '@/db/client';
 import { notDraftPredicate, questionSuspendedPredicate } from '@/db/predicates';
 import { learning_item, question } from '@/db/schema';
@@ -43,6 +44,7 @@ import { withoutNonKcKnowledgeIds } from '@/kernel/read-models/knowledge-roles';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
 import { getMasteryState, globalThetaForDomain } from '@/kernel/read-models/mastery-state';
 import { readHardCalibrationBs } from '@/kernel/read-models/question-difficulty';
+import { loadSteeringDeferredKnowledgeIds } from '@/kernel/read-models/steering-deferral';
 import {
   DEFAULT_EVIDENCE_DEADLINE_DAYS,
   DEFAULT_MAX_ATTEMPTS,
@@ -728,7 +730,8 @@ export async function assembleScanInput(db: Db | Tx): Promise<ScanInput> {
 
 /**
  * 端到端只读发现：读 DB → 组装 ScanInput → 跑纯扫描器 → QuestionSupplyTarget[]（priority 降序）。
- * 派发到获取面是 dispatcher.ts 的活；本函数纯发现，零写、零 LLM。
+ * 知识点全部落在减项 steering 延后集合里的目标不返回。派发到获取面是 dispatcher.ts
+ * 的活；本函数零写、零 LLM。
  *
  * YUK-579：组装体已上提到 assembleScanInput（行为等价——受既有 target-discovery db test 守护）。
  */
@@ -743,14 +746,20 @@ export async function discoverSupplyTargets(
     observeInventory?: (input: ScanInput, targets: QuestionSupplyTarget[]) => void | Promise<void>;
   },
 ): Promise<QuestionSupplyTarget[]> {
-  const input = await assembleScanInput(db);
-  const targets = scanCoverageGaps(input, makeId);
-  // A shadow observer must never turn an otherwise successful current scan into a failure. Its
-  // comparison ledger is best-effort diagnostics; serving/dispatch still receives `targets`.
+  const [input, deferredKnowledgeIds] = await Promise.all([
+    assembleScanInput(db),
+    loadSteeringDeferredKnowledgeIds(db, new Date()),
+  ]);
+  const scanned = scanCoverageGaps(input, makeId);
+  // A shadow observer must never turn an otherwise successful scan into a failure.
+  // It compares the unfiltered scan with inventory, so deferred KCs stay visible
+  // there; callers that dispatch receive only targets the deferral does not withhold.
   try {
-    await shadow?.observeInventory?.(input, targets);
+    await shadow?.observeInventory?.(input, scanned);
   } catch (error) {
     console.warn('[question-supply] inventory shadow observation failed', error);
   }
-  return targets;
+  return scanned.filter(
+    (target) => !steeringDefersKnowledgeIds(target.knowledgeIds, deferredKnowledgeIds),
+  );
 }

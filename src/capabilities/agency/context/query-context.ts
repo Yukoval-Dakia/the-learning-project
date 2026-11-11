@@ -19,6 +19,13 @@ import {
 import { readMemoryBriefNote } from './memory-brief';
 
 const DEFAULT_FACTS_TOP_K = 10;
+const GLOBAL_DIGEST_SCOPE = 'global:digest';
+
+/** `global:digest` is the brief scope, not a fact scope. Filtering on it matches nothing. */
+function factScopeFilters(scopeKey: string): { scope_key: string } | undefined {
+  if (scopeKey === GLOBAL_DIGEST_SCOPE) return undefined;
+  return { scope_key: scopeKey };
+}
 
 function iso(value: Date | null | undefined): string | null {
   return value ? value.toISOString() : null;
@@ -29,7 +36,7 @@ const QueryContextInputSchema = z.object({
     .string()
     .optional()
     .describe(
-      'Optional scope filter (global, subject:*, topic:*, mistake_cluster:*, meta:orchestrator_self). Defaults to global. WARNING: attempt/review facts carry only global + topic:* scopes, never subject:* — a subject:* filter drops most learning facts.',
+      'Optional scope. Defaults to global:digest: the global brief, and fact search is not filtered by scope. Pass global, subject:*, topic:*, mistake_cluster:*, or meta:orchestrator_self to filter. WARNING: attempt/review facts carry only global and topic:* scopes, never subject:* — a subject:* filter drops most learning facts.',
     ),
   depth: z
     .enum(['summary', 'deep'])
@@ -88,7 +95,7 @@ export function buildQueryContextTool(
   const readDeps = opts.memoryFactory ? { createClient: opts.memoryFactory } : undefined;
 
   async function execute(ctx: ToolContext, input: QueryContextInput): Promise<QueryContextOutput> {
-    const scopeKey = input.scopeKey ?? 'global:digest';
+    const scopeKey = input.scopeKey ?? GLOBAL_DIGEST_SCOPE;
     let read = await readMemoryBriefNote(ctx.db, scopeKey);
     const { digest } = await readTopics(ctx.db);
     const withheld = withdrawnTopicEvidence(digest);
@@ -102,12 +109,12 @@ export function buildQueryContextTool(
     )
       read = { note: null, freshness: { ...read.freshness, state: 'missing' } };
     const scoped = digest.topics.filter(
-      (t) => scopeKey === 'global:digest' || scopeKey === 'global' || t.scope_key === scopeKey,
+      (t) => scopeKey === GLOBAL_DIGEST_SCOPE || scopeKey === 'global' || t.scope_key === scopeKey,
     );
     const scopedText = scoped
       .map((t) => `${t.name}：${t.facts.map((f) => f.body).join('；')}`)
       .join('\n');
-    if (scopedText && !read.note) read = await readMemoryBriefNote(ctx.db, 'global:digest');
+    if (scopedText && !read.note) read = await readMemoryBriefNote(ctx.db, GLOBAL_DIGEST_SCOPE);
     const brief = {
       note: read.note
         ? {
@@ -115,7 +122,7 @@ export function buildQueryContextTool(
             recent_week_md: scopedText || read.note.recent_week_md,
             recent_months_md: scopedText ? '' : read.note.recent_months_md,
             long_term_md:
-              scopedText || (scopeKey === 'global:digest' ? '' : read.note.long_term_md),
+              scopedText || (scopeKey === GLOBAL_DIGEST_SCOPE ? '' : read.note.long_term_md),
             long_term_freshness_score: read.note.long_term_freshness_score,
             refreshed_at: iso(read.note.refreshed_at),
             version: read.note.version,
@@ -137,14 +144,21 @@ export function buildQueryContextTool(
       if (Date.now() >= ctx.providerSessionDeadlineAt) {
         throw new Error('hard_deadline_exceeded');
       }
+      const factFilters = factScopeFilters(scopeKey);
       const inputDigest = createHash('sha256')
-        .update(JSON.stringify({ query, topK: DEFAULT_FACTS_TOP_K, scopeKey }))
+        .update(
+          JSON.stringify({
+            query,
+            topK: DEFAULT_FACTS_TOP_K,
+            scopeKey: factFilters?.scope_key ?? null,
+          }),
+        )
         .digest('hex');
       const result = await readMemoryFacts(
         query,
         {
           topK: DEFAULT_FACTS_TOP_K,
-          filters: scopeKey ? { scope_key: scopeKey } : undefined,
+          filters: factFilters,
         },
         createMem0OpaqueOperationContext({
           db: ctx.db,
@@ -183,7 +197,7 @@ export function buildQueryContextTool(
         ? `brief v${output.brief.note.version} ${output.brief.freshness.state}`
         : `brief ${output.brief?.freshness.state ?? 'missing'}`;
       const facts = output.facts ? ` · ${output.facts.count} facts` : '';
-      return `context · ${input.scopeKey ?? 'global'} · ${brief}${facts}`;
+      return `context · ${input.scopeKey ?? GLOBAL_DIGEST_SCOPE} · ${brief}${facts}`;
     },
     // Same policy the brief read always had: a user-facing copilot lookup shows
     // up as a step; coach/dreaming callers stay invisible either way.

@@ -33,6 +33,7 @@ import {
 } from '@/core/schema/intervention';
 import type { Db } from '@/db/client';
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
+import { loadLearnerEvidence } from '@/kernel/read-models/learner-evidence';
 import { authorInterventionPackage as runInterventionAuthorSequence } from '@/kernel/records/intervention-package-author';
 import { type TaskTextRunFn, taskPromptFingerprint } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
@@ -41,6 +42,10 @@ import {
   runConfirmedStructuredReview,
 } from '@/server/ai/sealed-validation';
 import type { SubjectProfile } from '@/subjects/profile';
+import {
+  interventionAuthorTaskInput,
+  transferRepeatsMissedQuestion,
+} from './intervention-author-input';
 import {
   type IndependentSolutionResult,
   runIndependentSolution,
@@ -667,22 +672,15 @@ async function runPackageAuthor(
   runTaskFn: TaskTextRunFn,
   context: InterventionAuthoringContextT,
   subjectProfile: ResolvedSubjectProfile,
+  db: Db,
 ): Promise<
   | { status: 'ok'; package: InterventionPackageT }
   | { status: 'invalid'; taskRunId?: string; failureCode: string }
 > {
+  const evidence = await loadLearnerEvidence(db, context.snapshot.conjecture.evidence_refs);
   const result = await runTaskFn(
     'InterventionPackageAuthorTask',
-    {
-      snapshot: context.snapshot,
-      recommendation: context.recommendation,
-      output_contract: {
-        material_count: 1,
-        diagnostic_kinds: ['immediate', 'delayed', 'transfer'],
-        tested_claim_md: context.snapshot.conjecture.claim_md,
-        target_error_rule_md: context.snapshot.conjecture.target_error_rule_md,
-      },
-    },
+    interventionAuthorTaskInput(context, evidence),
     {
       subjectProfile,
     },
@@ -704,6 +702,18 @@ async function runPackageAuthor(
       status: 'invalid',
       taskRunId: result.task_run_id,
       failureCode: 'author_output_invalid',
+    };
+  }
+  if (
+    transferRepeatsMissedQuestion(
+      draft.diagnostics.transfer.probe_spec.prompt_md,
+      evidence.missed_prompt_md,
+    )
+  ) {
+    return {
+      status: 'invalid',
+      taskRunId: result.task_run_id,
+      failureCode: 'learner_question_reused',
     };
   }
   return {
