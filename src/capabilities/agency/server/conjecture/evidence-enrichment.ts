@@ -19,9 +19,10 @@ import {
 } from '@/capabilities/agency/server/conjecture/evidence';
 import { QUESTION_EDIT_ACTION } from '@/core/schema/event/experimental';
 import type { QuestionEvidenceContextSnapshotT } from '@/core/schema/question-evidence-snapshot';
-import { FigureRef } from '@/core/schema/structured_question';
+import { type FigureOrigin, FigureRef, figureForModel } from '@/core/schema/structured_question';
 import type { Db, Tx } from '@/db/client';
 import { event, knowledge, question } from '@/db/schema';
+import { readFigureOrigins } from '@/kernel/read-models/figure-origin';
 import { batchResolveEffectiveDomains } from '@/kernel/read-models/knowledge-tree';
 import { resolveKnownSubjectId, resolveSubjectProfile } from '@/subjects/profile';
 import { UNTRUSTED_TEXT_CHAR_CAP, wrapTruncatedLearnerText } from './untrusted-text';
@@ -102,7 +103,7 @@ export interface EnrichEvidenceCellsInput {
   samplesPerCell?: number;
 }
 
-async function loadEvidenceSampleBatch(
+export async function loadEvidenceSampleBatch(
   db: DbLike,
   failures: ConjectureFailureAttempt[],
   traceByAttemptId: ReadonlyMap<string, string | null>,
@@ -157,9 +158,22 @@ async function loadEvidenceSampleBatch(
     edits.push(row.created_at);
     editsByQuestionId.set(row.question_id, edits);
   }
+  const originOf = await readFigureOrigins(db, [
+    ...[...questionRows, ...parentQuestionRows].flatMap((row) => figureAssetIds(row.figures)),
+    ...failures.flatMap((failure) => [
+      ...figureAssetIds(failure.question_snapshot?.question.figures),
+      ...figureAssetIds(failure.question_snapshot?.parent_question?.figures),
+    ]),
+  ]);
   const samples = new Map<string, ConjectureEvidenceSample>();
   for (const failure of failures) {
-    const sample = toEvidenceSample(failure, questionById, traceByAttemptId, editsByQuestionId);
+    const sample = toEvidenceSample(
+      failure,
+      questionById,
+      traceByAttemptId,
+      editsByQuestionId,
+      originOf,
+    );
     if (sample !== null) samples.set(failure.attempt_event_id, sample);
   }
   return samples;
@@ -302,13 +316,25 @@ function safeImageRefs(values: string[] | null | undefined): string[] {
     .map((value) => value.slice(0, CONJECTURE_EVIDENCE_ASSET_REF_CHAR_CAP));
 }
 
-function safeFigures(values: unknown): ConjectureEvidenceFigure[] {
+function figureAssetIds(values: unknown): string[] {
+  if (!Array.isArray(values)) return [];
+  return values.flatMap((value) => {
+    const parsed = FigureRef.safeParse(value);
+    return parsed.success ? [parsed.data.asset_id] : [];
+  });
+}
+
+function safeFigures(
+  values: unknown,
+  originOf: (assetId: string) => FigureOrigin,
+): ConjectureEvidenceFigure[] {
   if (!Array.isArray(values)) return [];
   const figures: ConjectureEvidenceFigure[] = [];
   for (const value of values) {
     if (figures.length >= CONJECTURE_EVIDENCE_FIGURES_PER_FIELD) break;
     const parsed = FigureRef.safeParse(value);
     if (!parsed.success) continue;
+    const figure = figureForModel(parsed.data, originOf(parsed.data.asset_id));
     const assetId = parsed.data.asset_id.trim().slice(0, CONJECTURE_EVIDENCE_ASSET_REF_CHAR_CAP);
     const attachedToIndex = parsed.data.attached_to_index
       .trim()
@@ -321,6 +347,7 @@ function safeFigures(values: unknown): ConjectureEvidenceFigure[] {
       source_bbox: { ...parsed.data.source_bbox },
       attached_to_index: attachedToIndex,
       attach_confidence: parsed.data.attach_confidence,
+      contains_learner_handwriting: figure.contains_learner_handwriting,
     });
   }
   return figures;
@@ -339,6 +366,7 @@ function toEvidenceSample(
   questionById: ReadonlyMap<string, QuestionContextRow>,
   traceByAttemptId: ReadonlyMap<string, string | null>,
   editsByQuestionId: ReadonlyMap<string, Date[]>,
+  originOf: (assetId: string) => FigureOrigin,
 ): ConjectureEvidenceSample | null {
   let q: EvidenceQuestionContext;
   let parent: EvidenceQuestionContext | undefined;
@@ -403,7 +431,7 @@ function toEvidenceSample(
     question_reference_md: wrapTruncatedLearnerText(q.reference_md, UNTRUSTED_TEXT_CHAR_CAP),
     question_choices_md: wrapTextList(q.choices_md),
     question_image_refs: safeImageRefs(q.image_refs),
-    question_figures: safeFigures(q.figures),
+    question_figures: safeFigures(q.figures, originOf),
     parent_question_id: q.parent_question_id,
     parent_question_prompt_md: wrapTruncatedLearnerText(
       parent?.prompt_md ?? null,
@@ -415,7 +443,7 @@ function toEvidenceSample(
     ),
     parent_question_choices_md: wrapTextList(parent?.choices_md),
     parent_question_image_refs: safeImageRefs(parent?.image_refs),
-    parent_question_figures: safeFigures(parent?.figures),
+    parent_question_figures: safeFigures(parent?.figures, originOf),
     answer_md: wrapTruncatedLearnerText(failure.answer_md, UNTRUSTED_TEXT_CHAR_CAP),
     answer_image_refs: safeImageRefs(failure.answer_image_refs),
     reasoning_trace: wrapTruncatedLearnerText(

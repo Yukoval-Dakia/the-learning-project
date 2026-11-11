@@ -10,8 +10,8 @@
 // producer 内容是付费账号资源——治理经 jyeoo-budget 日租约（fetch 核 pre-flight 读取并把
 // session_max 裁进余额），不走 LLM 预算。
 // Canary：由 fetch 核（runJyeooFetchCandidates）单写——每次运行（含失败）恰好一条
-// action='experimental:jyeoo_fetch' 事件（预算账本 + 漏斗观测面）。 E3 P1-3
-// 起从本工具层移入核：executor/脚本直调核时观测/预算归账无法被绕过；工具层不再写。
+// action='experimental:jyeoo_fetch' 事件（预算账本 + 漏斗观测面）。
+// 观测与预算归账在核里，工具层不再写；executor 或脚本直调核时也无法绕过。
 
 import { z } from 'zod';
 import { SourcedQuestion } from '@/core/schema/sourcing';

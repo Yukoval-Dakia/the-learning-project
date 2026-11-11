@@ -129,6 +129,12 @@ export interface ToolContext {
   scope?: { readonly kind: string; readonly id?: string };
   taskRunId: string;
   /**
+   * Server-bound owner key for a nested agent's own workspace directory. The
+   * runner scopes it per spawned child; the model never supplies it. When set
+   * it takes precedence over sessionId/taskRunId for workspace binding.
+   */
+  workspaceOwnerId?: string;
+  /**
    * YUK-1557 — the caller's active ai_task_runs.id for observability rows
    * (tool_call_log / tool_use mirror / store events). Tools whose spend or
    * budget reservation uses a different internal id (ingestion agent segments)
@@ -154,6 +160,12 @@ export interface ToolContext {
    * only, never from model arguments; derivations bind its snapshot.
    */
   sourceLedger?: TurnSourceLedger;
+  /**
+   * Server-bound: the page entity the learner had in focus when sending this
+   * turn (the request's ambient focused_entity). It only picks among targets a
+   * tool already accepts, never authorizes a change; never from model arguments.
+   */
+  ambientFocus?: { readonly kind: string; readonly id: string };
   /**
    * Server-bound: the turn runs the restricted answer-reveal surface
    * (derivationPolicy !== 'allow' ⇒ post-judgment answers are legitimately

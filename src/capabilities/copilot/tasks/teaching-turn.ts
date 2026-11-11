@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
 import { sanitizeJsonStringLiterals } from '@/core/json-sanitize';
 import { JudgeKind, QuestionKind, Rubric } from '@/core/schema/business';
+import { LEARNER_HANDWRITING_RULE } from '@/core/schema/structured_question';
 import type { SubjectProfile } from '@/subjects/profile';
 import { normalizeToCanonicalKind } from '@/subjects/question-kind';
 
@@ -209,6 +210,7 @@ export const teachingTurnVisionTaskSpec = {
       kind: 'profile',
       build: (profile: SubjectProfile) => `${buildTeachingTurnPrompt(profile)}
 本轮为解题提示。image_manifest 按从 0 开始的 index 对应附带原图；必须结合 frozen_question 的题面和控件读取图形、标注及关系，不得把图片说明当作原图内容。
+image_manifest 每张图带 contains_learner_handwriting（true / false / unknown）；标记为 true 或 unknown 的图里：${LEARNER_HANDWRITING_RULE}。提示只依据印刷内容，不评价、也不沿用图里的手写。
 只提供用户要求的下一步最小提示，不透露最终答案或完整解法，不输出参考答案、评分键或私有解析。无法读清必要图像时明确说明，禁止猜测。`,
     },
   },

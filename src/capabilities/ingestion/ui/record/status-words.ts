@@ -99,6 +99,22 @@ export function statusWords(rec: Recording, start: StartState | null): StatusWor
       detail: partly,
     };
   }
+  // In the library is not yet given out: how many still wait on the answer check, or are held.
+  // The helper's questions count among those in the library, so their state counts here too.
+  const servings = [
+    ...rec.blockServing.values(),
+    ...helperIn.flatMap((i) => (i.now ? [i.now] : [])),
+  ].filter((v) => !v.servable);
+  const checking = servings.filter((v) => v.admission?.status === 'pending').length;
+  const heldBack = servings.length - checking;
+  const notYet = [
+    checking > 0 ? `${checking} 道还在核对答案` : '',
+    heldBack > 0 ? `${heldBack} 道先不出` : '',
+  ]
+    .filter(Boolean)
+    .join('，');
+  const inBankWords =
+    inBank > 0 ? `${inBank} 道题已进题库${notYet ? `（其中 ${notYet}）` : ''}` : '';
   const left = [
     failed > 0 ? `${failed} 道没进题库` : '',
     noText > 0 ? `${noText} 道没认出题目` : '',
@@ -107,12 +123,25 @@ export function statusWords(rec: Recording, start: StartState | null): StatusWor
     .join('，');
   if (left) {
     return {
-      text: inBank > 0 ? `${inBank} 道题已进题库，${left}` : left,
+      text: inBank > 0 ? `${inBankWords}，${left}` : left,
       tone: 'caution',
       detail: partly,
     };
   }
-  if (inBank > 0) return { text: `${inBank} 道题已进题库`, tone: 'positive', detail: partly };
+  if (inBank > 0) {
+    return {
+      text: inBankWords,
+      tone: checking > 0 ? 'working' : heldBack > 0 ? 'caution' : 'positive',
+      detail:
+        [
+          partly,
+          checking > 0 ? '核对完的题才会出给你练。' : '',
+          heldBack > 0 ? '先不出的原因写在每道题下面。' : '',
+        ]
+          .filter(Boolean)
+          .join('') || undefined,
+    };
+  }
   if (rec.blocks.length > 0) return { text: '这次的题没有收进题库', tone: 'neutral' };
   return { text: '没认出题目', tone: 'neutral' };
 }

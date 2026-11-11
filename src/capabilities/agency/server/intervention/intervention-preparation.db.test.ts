@@ -68,6 +68,7 @@ import { publishPaperModelFixture } from '../../../../../tests/fixtures/assessme
 import { issueHistoricalSoloFixture } from '../../../../../tests/fixtures/assessment-solo';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { answerProbe } from '../conjecture/probe-lifecycle';
+import { installAgencyHostOperations } from '../host-operations';
 import { prepareInterventionWave } from './prepare';
 import { handleProbeResultInterventionDelivery } from './probe-result-subscription';
 import { recoverEligibleInterventionDiagnostics, recoverPreparingInterventions } from './reconcile';
@@ -731,8 +732,9 @@ async function prepareAdmittedDiagnosticFixture(label: string) {
   return { db, opened, active, questionId, now, staleAt };
 }
 
-describe('YUK-791 intervention preparation closed loop', () => {
+describe('intervention preparation closed loop', () => {
   beforeEach(async () => {
+    await installAgencyHostOperations();
     await installInterventionDiagnosticLeaves();
     await resetDb();
   });

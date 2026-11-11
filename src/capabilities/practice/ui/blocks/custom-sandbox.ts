@@ -19,6 +19,7 @@ import type {
   PresentationT,
 } from '@/core/schema/assessment/presentation';
 import type { ResponseSlotT, SelectSlotT, SlotResponseT } from '@/core/schema/assessment/response';
+import { collapseRepeatedLabel } from '@/ui/components/response/display-option-content';
 
 import { readOpen, writeBlank, writeOpen, writeSelect } from './envelope';
 
@@ -343,7 +344,10 @@ export function summarizeAnswers(
     const slot = slotById.get(bind.slot_id);
     if (entry?.kind === 'select' && slot?.kind === 'select' && entry.item_ids.length > 0) {
       const labels = new Map(
-        slot.items.map((item) => [item.item_id, item.label_md ?? item.item_id]),
+        slot.items.map((item) => [
+          item.item_id,
+          item.label_md ? collapseRepeatedLabel(item.label_md) : item.item_id,
+        ]),
       );
       return clip(entry.item_ids.map((id) => labels.get(id) ?? id).join('、'));
     }
