@@ -222,6 +222,10 @@ export const notesCapability = defineCapability({
         name: 'check_note',
         load: () => import('./server/tools/check-note').then((m) => m.checkNoteTool),
       },
+      {
+        name: 'read_note',
+        load: () => import('./server/tools/read-note').then((m) => m.readNoteTool),
+      },
     ],
   },
   ui: { pages: uiPagesFor('notes') },
