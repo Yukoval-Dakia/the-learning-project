@@ -48,6 +48,7 @@ import { learnableFrontierResolved } from '@/kernel/read-models/learnable-fronti
 import { effectiveThetaForKcBatch, getMasteryStates } from '@/kernel/read-models/mastery-state';
 import { readHardCalibrationBs } from '@/kernel/read-models/question-difficulty';
 import { loadSteeringDeferredKnowledgeIds } from '@/kernel/read-models/steering-deferral';
+import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
 import {
   DEFAULT_EVIDENCE_DEADLINE_DAYS,
   DEFAULT_MAX_ATTEMPTS,
@@ -605,7 +606,9 @@ async function loadFrontierKnowledge(
   const [domains, thetaByKc] = await Promise.all([
     batchResolveEffectiveDomains(db, kids),
     // A2 (YUK-434) — θ̂ fed to the supply scanner is the EFFECTIVE theta = θ_global(domain) +
-    // θ_KC, the same resolution mastery/selection use; the batch twin never walks the tree twice.
+    // θ_KC, the same resolution mastery/selection use. It re-walks the tree the `domains` read
+    // already covers, but keeps one owner of that rule; duplicating the fold here would put a
+    // second copy of the write-path formula in the scanner.
     effectiveThetaForKcBatch(
       db,
       kids.map((knowledgeId) => ({
@@ -705,11 +708,19 @@ export async function assembleScanInput(db: Db | Tx): Promise<ScanInput> {
   const { entries, frontierOnlyKids } = await loadFrontierKnowledge(db);
   const allKids = entries.map((f) => f.knowledgeId);
   const questions = await loadQuestionPool(db, allKids);
-  // A frontier KC that already has a usable question stays out of the new scan surface: it
-  // was reachable through learning items before, and adding it wholesale would widen
-  // R2-R4 to every frontier KC. Only the "graph says learnable, practice has nothing"
-  // case joins the scan.
-  const coveredKids = new Set(questions.flatMap((q) => q.knowledgeIds));
+  // A frontier KC counts as covered only when a question the learner can actually be served
+  // exists: the pool predicate drops drafts, but a promoted question still sits behind the
+  // admission gate until `readAutomaticallyServableQuestionIds` admits it. Counting pool
+  // membership alone would leave "graph says learnable, nothing servable" KCs with no target.
+  const admittedIds = await readAutomaticallyServableQuestionIds(
+    db,
+    questions.map((q) => q.id),
+  );
+  const coveredKids = new Set(
+    questions.filter((q) => admittedIds.has(q.id)).flatMap((q) => q.knowledgeIds),
+  );
+  // Every other frontier KC stays on its open learning-item path so this new source cannot
+  // widen R2-R4 to the whole frontier; only the "nothing servable" case joins the scan.
   const frontier = entries.filter(
     (f) => !frontierOnlyKids.has(f.knowledgeId) || !coveredKids.has(f.knowledgeId),
   );

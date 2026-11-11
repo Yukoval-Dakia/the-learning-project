@@ -44,7 +44,7 @@ export async function pickFirstQuestions(
   maxItems: number,
   accept: (knowledgeIds: readonly string[]) => boolean = () => true,
 ): Promise<Array<{ questionId: string; knowledgeId: string }>> {
-  const limit = Math.max(0, Math.floor(maxItems));
+  const limit = Number.isFinite(maxItems) ? Math.max(0, Math.floor(maxItems)) : 0;
   const kcs = [...new Set(orderedKnowledgeIds.filter((id) => id.length > 0))];
   const pairs: Array<{ questionId: string; knowledgeId: string }> = [];
   if (limit === 0 || kcs.length === 0) return pairs;
@@ -138,8 +138,9 @@ async function rankFirstQuestions(
   }
 
   for (const [kc, scored] of scoredByKc) {
-    // Score ties fall to id so composition stays reproducible across runs.
-    scored.sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
+    // Score ties fall to code-unit id order, not localeCompare: ICU collation can differ
+    // between runtimes, which would make the surviving candidate set unstable.
+    scored.sort((a, b) => b.score - a.score || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
     out.set(
       kc,
       scored.slice(0, FIRST_QUESTION_PER_KC).map((entry) => entry.id),
