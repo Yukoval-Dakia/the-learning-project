@@ -13,12 +13,14 @@
 // so a slow attribution still gets folded in.
 
 import { createHash } from 'node:crypto';
+import { eq } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import {
   type RunTaskFn,
   runSessionSummary,
 } from '@/capabilities/practice/session/server/session-summary';
 import type { Db } from '@/db/client';
+import { learning_session } from '@/db/schema';
 import { shouldEnqueueBackgroundJobs } from '@/kernel/background-job-enqueue';
 import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
 import { getStartedBoss } from '@/server/boss/client';
@@ -32,6 +34,12 @@ const REFRESH_DELAY_MS = 10 * 60_000;
 
 export interface SessionSummaryJobData {
   session_id: string;
+  /**
+   * learning_session.version of the close this job summarizes. Stable across
+   * retries of one close; a reopen bumps it, so a later close's follow-ups do not
+   * collide with the previous close's retained (completed) job ids.
+   */
+  close_version?: number;
   /** 0 on the first delivery; incremented by each delayed wait. */
   attribution_wait_attempt?: number;
   /** The single late pass that runs after a summary was written with causes pending. */
@@ -42,12 +50,29 @@ type DepsOverride = {
   runTaskFn?: RunTaskFn;
 };
 
-/** Stable RFC 9562 UUIDv8 seeded by the session: every close/retry for that
- *  session converges on the same delayed follow-up instead of fanning out. */
-function summaryFollowUpJobId(sessionId: string, attempt: number, refresh: boolean): string {
+/** learning_session.version of the close being summarized. A deleted row can
+ *  schedule nothing (the runner returns skipped:no_session), so 0 is a placeholder. */
+async function closeVersionOf(db: Db, sessionId: string): Promise<number> {
+  const rows = await db
+    .select({ version: learning_session.version })
+    .from(learning_session)
+    .where(eq(learning_session.id, sessionId))
+    .limit(1);
+  return rows[0]?.version ?? 0;
+}
+
+/** Stable RFC 9562 UUIDv8 seeded by (session, close, wait step): retries of one
+ *  close converge on the same delayed follow-up, and a second close of a reopened
+ *  session gets its own instead of being dropped by pg-boss id conflict. */
+function summaryFollowUpJobId(
+  sessionId: string,
+  closeVersion: number,
+  attempt: number,
+  refresh: boolean,
+): string {
   const hex = createHash('sha256')
     .update(
-      `practice.session-summary@v1\0${sessionId}\0${attempt}\0${refresh ? 'refresh' : 'wait'}`,
+      `practice.session-summary@v2\0${sessionId}\0${closeVersion}\0${attempt}\0${refresh ? 'refresh' : 'wait'}`,
     )
     .digest('hex');
   const bytes = hex.slice(0, 32).split('');
@@ -59,6 +84,7 @@ function summaryFollowUpJobId(sessionId: string, attempt: number, refresh: boole
 
 async function scheduleFollowUp(
   data: SessionSummaryJobData,
+  closeVersion: number,
   attempt: number,
   refresh: boolean,
   startAfter: Date,
@@ -69,10 +95,11 @@ async function scheduleFollowUp(
     SESSION_SUMMARY_JOB,
     {
       session_id: data.session_id,
+      close_version: closeVersion,
       attribution_wait_attempt: attempt,
       ...(refresh ? { attribution_refresh: true } : {}),
     },
-    { id: summaryFollowUpJobId(data.session_id, attempt, refresh), startAfter },
+    { id: summaryFollowUpJobId(data.session_id, closeVersion, attempt, refresh), startAfter },
   );
 }
 
@@ -90,6 +117,10 @@ export function buildSessionSummaryHandler(
       }
       const attempt = job.data.attribution_wait_attempt ?? 0;
       const refresh = job.data.attribution_refresh === true;
+      // Keyed by the close's version: a reopen bumps it, so the second close of a
+      // reopened session schedules its own follow-ups instead of colliding with the
+      // first close's retained job ids.
+      const closeVersion = job.data.close_version ?? (await closeVersionOf(db, sessionId));
       try {
         const result = await runSessionSummary({
           db,
@@ -108,6 +139,7 @@ export function buildSessionSummaryHandler(
           // cheap delivery: nothing was written and no model call was made.
           await scheduleFollowUp(
             job.data,
+            closeVersion,
             attempt + 1,
             false,
             new Date(Date.now() + ATTRIBUTION_WAIT_MS),
@@ -119,6 +151,7 @@ export function buildSessionSummaryHandler(
           try {
             await scheduleFollowUp(
               job.data,
+              closeVersion,
               MAX_ATTRIBUTION_WAITS,
               true,
               new Date(Date.now() + REFRESH_DELAY_MS),

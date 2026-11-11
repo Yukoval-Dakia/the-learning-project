@@ -295,9 +295,9 @@ export async function runSessionSummary(
   // A retried refresh whose write already landed must not pay again: the newest
   // event says this session used its one late pass.
   const alreadyRefreshed = existingSummary?.attribution_refresh === true;
-  // A written summary_md without a summary event is either a pre-provenance
-  // session or a run whose event write failed; neither justifies paying for
-  // another model call on a replayed close.
+  // A written summary_md without a summary event is a pre-provenance session:
+  // text and event commit together, so a replayed close has nothing to repair and
+  // must not pay for another model call.
   const onlyStaleSummaryMd = !existingSummary && sess.summary_md !== null;
   // Answers that landed after the last summary was written mean it is stale: a
   // reopened session continues collecting answers while the old text only covers
@@ -315,7 +315,7 @@ export async function runSessionSummary(
     return {
       status: 'skipped:already_summarized',
       // A close whose first delivery crashed before enqueuing the refresh can still
-      // recover it: the follow-up id is derived from the session, so at most one
+      // recover it: the follow-up id is derived from this close, so at most one
       // refresh job ever exists for it.
       ...(!alreadyRefreshed && causesPending !== null
         ? { pending_attribution: causesPending }
@@ -627,35 +627,40 @@ export async function runSessionSummary(
   const summaryMd = `${numericSummary}${observation}`.slice(0, SUMMARY_MAX_CHARS);
 
   const status = observation.length > 0 ? 'written' : 'written:numbers_only';
-  await db
-    .update(learning_session)
-    .set({ summary_md: summaryMd, updated_at: new Date() })
-    .where(eq(learning_session.id, sessionId));
 
   // Provenance + contradiction issues ride one event per written summary so a
   // replay can verify the numbers and later readers can see what was flagged.
   // next_focus is the structured handoff the coach reads; causes_pending marks a
-  // summary written before every cause landed.
-  await writeEvent(db, {
-    id: newId(),
-    session_id: sessionId,
-    actor_kind: 'system',
-    actor_ref: 'session_summary',
-    action: SESSION_SUMMARY_EVENT_ACTION,
-    subject_kind: 'learning_session',
-    subject_id: sessionId,
-    outcome: 'success',
-    payload: {
-      status,
-      task_run_id: result.task_run_id,
-      facts: numericFacts,
-      process_signals: processSignals,
-      ...(nextFocus ? { next_focus: nextFocus } : {}),
-      ...(pendingCauseIds.size > 0 ? { causes_pending: pendingCauseIds.size } : {}),
-      // Marks the one allowed late rewrite so a retried refresh dedupes on read.
-      ...(params.refresh === true ? { attribution_refresh: true } : {}),
-      ...(issues.length > 0 ? { issues } : {}),
-    },
+  // summary written before every cause landed. Text and event commit together: a
+  // summary_md without its event reads as already summarized, so a half-written
+  // pair would skip the session forever.
+  await db.transaction(async (tx) => {
+    await writeEvent(tx, {
+      id: newId(),
+      session_id: sessionId,
+      actor_kind: 'system',
+      actor_ref: 'session_summary',
+      action: SESSION_SUMMARY_EVENT_ACTION,
+      subject_kind: 'learning_session',
+      subject_id: sessionId,
+      outcome: 'success',
+      payload: {
+        status,
+        task_run_id: result.task_run_id,
+        facts: numericFacts,
+        process_signals: processSignals,
+        ...(nextFocus ? { next_focus: nextFocus } : {}),
+        ...(pendingCauseIds.size > 0 ? { causes_pending: pendingCauseIds.size } : {}),
+        // Marks the one allowed late rewrite so a retried refresh dedupes on read.
+        ...(params.refresh === true ? { attribution_refresh: true } : {}),
+        ...(issues.length > 0 ? { issues } : {}),
+      },
+    });
+
+    await tx
+      .update(learning_session)
+      .set({ summary_md: summaryMd, updated_at: new Date() })
+      .where(eq(learning_session.id, sessionId));
   });
 
   return {
