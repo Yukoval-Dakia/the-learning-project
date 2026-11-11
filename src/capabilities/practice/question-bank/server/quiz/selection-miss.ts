@@ -1,7 +1,12 @@
+import { and, desc, eq, gte } from 'drizzle-orm';
 import { z } from 'zod';
 import { newId } from '@/core/ids';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
+import { event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events/index';
+import { DEFAULT_EVIDENCE_DEADLINE_DAYS } from '@/kernel/supply-contracts';
+
+type DbLike = Db | Tx;
 
 export const SELECTION_MISS_VERSION = 1 as const;
 export const DEFAULT_SELECTION_POLICY_VERSION = 'matcher-v1';
@@ -55,8 +60,8 @@ export function parseSelectionMiss(value: unknown): SelectionMissV1 {
   return selectionMissSchema.parse(value);
 }
 
-/** Observe-only ledger write. It never dispatches supply work or participates in selection. */
-export async function writeSelectionMissEvent(db: Db, miss: SelectionMissV1): Promise<string> {
+/** Ledger write. Supply reads these rows as selection_miss demands; this write does not dispatch. */
+export async function writeSelectionMissEvent(db: DbLike, miss: SelectionMissV1): Promise<string> {
   return writeEvent(db, {
     id: newId(),
     actor_kind: 'system',
@@ -68,4 +73,41 @@ export async function writeSelectionMissEvent(db: Db, miss: SelectionMissV1): Pr
     payload: miss,
     ingest_at: new Date(),
   });
+}
+
+export interface SelectionMissDemand {
+  eventId: string;
+  recordedAt: Date;
+  miss: SelectionMissV1;
+}
+
+/** Latest selection_miss per knowledge inside the supply evidence window. A bad payload is skipped. */
+export async function readOpenSelectionMissDemands(
+  db: DbLike,
+  now: Date,
+): Promise<SelectionMissDemand[]> {
+  const since = new Date(now.getTime() - DEFAULT_EVIDENCE_DEADLINE_DAYS * 24 * 60 * 60 * 1000);
+  const rows = await db
+    .select({
+      id: event.id,
+      payload: event.payload,
+      created_at: event.created_at,
+    })
+    .from(event)
+    .where(and(eq(event.action, 'experimental:selection_miss'), gte(event.created_at, since)))
+    .orderBy(desc(event.created_at), desc(event.id));
+  const seen = new Set<string>();
+  const demands: SelectionMissDemand[] = [];
+  for (const row of rows) {
+    let miss: SelectionMissV1;
+    try {
+      miss = parseSelectionMiss(row.payload);
+    } catch {
+      continue;
+    }
+    if (seen.has(miss.knowledge_id)) continue;
+    seen.add(miss.knowledge_id);
+    demands.push({ eventId: row.id, recordedAt: row.created_at, miss });
+  }
+  return demands;
 }

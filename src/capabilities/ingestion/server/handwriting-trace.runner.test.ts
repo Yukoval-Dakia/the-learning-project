@@ -13,12 +13,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('@/server/ai/log', () => ({
   logMissingToolMountsWarning: vi.fn(),
   writeAiTaskRunStarted: vi.fn(async () => {}),
-  writeAiTaskRunFinished: vi.fn(async () => {}),
   writeAiTaskRunRetried: vi.fn(async () => true),
   writeCostLedger: vi.fn(async () => {}),
-  writeAiTaskAttemptFinished: vi.fn(async () => true),
   markAiTaskRunOutputInvalid: vi.fn(async () => true),
 }));
+vi.mock('@/kernel/records/ai-attempt-facts', async () => {
+  const actual = await vi.importActual<typeof import('@/kernel/records/ai-attempt-facts')>(
+    '@/kernel/records/ai-attempt-facts',
+  );
+  return {
+    ...actual,
+    writeAiTaskRunFinished: vi.fn(async () => {}),
+    writeAiTaskAttemptFinished: vi.fn(async () => true),
+  };
+});
 
 import { __setPiAdapterForTests } from '@/server/ai/execution-adapter';
 import { PiAgentAdapter } from '@/server/ai/pi-agent-adapter';

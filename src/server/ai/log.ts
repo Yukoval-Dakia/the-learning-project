@@ -3,12 +3,6 @@ import type { TaskKind } from '@/capabilities/task-registry';
 import type { Db, Tx } from '@/db/client';
 import { ai_task_runs } from '@/db/schema';
 
-export {
-  writeAiTaskAttemptFinished,
-  writeAiTaskRunFinished,
-  writeModelCatalogProbeCost,
-} from '@/kernel/records/ai-attempt-facts';
-
 type DbLike = Db | Tx;
 
 /** Warn when a tool-calling task has no pi tool mounts configured in its context. */
