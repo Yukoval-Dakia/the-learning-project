@@ -20,6 +20,12 @@ export const UpdatePracticeStreamItemBodySchema = z.object({
   status: PracticeStreamItemStatusSchema,
 });
 
+const PracticeStreamKnowledgeNoteSchema = z.object({
+  knowledge_id: z.string(),
+  note_id: z.string(),
+  title: z.string(),
+});
+
 const PracticeStreamItemKindSchema = z.enum(['question', 'paper']);
 const PracticeStreamItemSourceSchema = z.enum([
   'decay',
@@ -42,6 +48,7 @@ const PracticeStreamViewItemSchema = z.object({
   status: PracticeStreamItemStatusSchema,
   estimated_minutes: z.number().nonnegative(),
   knowledge_name: z.string().nullable(),
+  knowledge_notes: z.array(PracticeStreamKnowledgeNoteSchema),
   paper_title: z.string().nullable(),
   verdict: z.enum(['again', 'hard', 'good']).nullable(),
   // 双轨裁决。verdict 仍是原始 FSRS rating；effective judge 判
@@ -98,6 +105,7 @@ const PersistedPracticeStreamItemSchema = z.object({
   updated_at: z.string().datetime(),
   estimated_minutes: z.number().nonnegative(),
   knowledge_name: z.string().nullable(),
+  knowledge_notes: z.array(PracticeStreamKnowledgeNoteSchema),
   paper_title: z.string().nullable(),
   verdict: z.enum(['again', 'hard', 'good']).nullable(),
   verdict_effective: z.string().nullable(),
