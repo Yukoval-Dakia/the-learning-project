@@ -6,17 +6,20 @@
 expires_at。存储零新表：骑乘 event(action='experimental:agent_note')（U0 D10 /
 AF §4）。用户面只有只读观察窗（/agent-notes 页 + today 块）。
 
-- jobs/ — dreaming_nightly（03:15 agent 档）/ coach_daily（llm 档，不在夜链：学习者回来且
-  计划过期时由 learner_return_wake 经 kernel/coach-wake 入队）/
-  goal_scope_propose_nightly（03:50 llm 档，sibling goal_scope_dedup）
-- server/goals/ — accept / queries / scope（goal scope 提议的读写与验收）
+- jobs/ — dreaming_nightly（agent 档，夜链成员：soft 依赖 knowledge_maintenance_nightly）/
+  coach_daily（llm 档，不在夜链：学习者回来且计划过期时由 learner_return_wake 经
+  kernel/coach-wake 按义务入队）/ goal_scope_propose_nightly（llm 档，夜链根；cron 移除，
+  orchestrator 触发，sibling goal_scope_dedup）
+- server/goals/ — create / accept / scope（goal scope 提议的读写与验收）
 - server/notes.ts — writeAgentNote / readAgentNotes / readAllAgentNotes
-- api/notes.ts — GET /api/agents/notes（外壳 app/api/agents/notes/route.ts 挂载）
-- ui/ — 看板/卡片/derive/meta/已读态/页面（外壳 app/(app)/agent-notes/page.tsx 挂载；
-  today 页的 AgentNotesBoard 由路由壳注入 shell TodayPage）
-- 包外读写方：notes 写 = src/server/boss/handlers/quiz_verify.ts；
-  notes 读 = src/capabilities/knowledge/server/review.ts；
-  goals 读 = practice due-list / learning-items queries（注意力先验）；
-  goals accept = src/server/proposals/actions.ts（T4 解体后进包）
-- M5 seam：scope.ts / goal_scope_propose_nightly.ts 跨包深 import
-  knowledge/server/tree（loadTreeSnapshot），M5 收紧包边界时换 knowledge 对外导出面
+- api/notes.ts — GET /api/agents/notes
+- ui/ — 看板/卡片/derive/meta/已读态/页面（Start 路由 server/start/routes/agent-notes.tsx；
+  today 页的 AgentNotesBoard 由 server/start/routes/today.tsx 注入 shell TodayPage）
+- 读写方：notes 写 = server/notes.ts（quiz_verify 事件经
+  server/question-pool-gap-subscription.ts 转 coach hint）；notes 读 =
+  knowledge/server/review.ts（经 kernel/read-models/agent-note-hints）；
+  goals 读 = practice due-list（注意力先验）/ supply_planner（经
+  kernel/read-models/active-goal-scope）；goals accept = server/goals/accept.ts（dispatch 经
+  src/server/proposals/actions.ts）
+- 知识树读取 = kernel/read-models/knowledge-graph（loadTreeSnapshot），
+  scope / goal_scope_propose_nightly 共用

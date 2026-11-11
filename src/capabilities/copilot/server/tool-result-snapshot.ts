@@ -78,7 +78,15 @@ const POLICIES: Record<string, ResultPolicy> = {
   // YUK-1770 — steering 回执：状态 + 回声（含窗口/剩余天数）+ 问题清单 + 待办承诺；
   // 原话/元数据已在事件层留痕，公共快照只给学习者可见面。
   remember_learner: ['status', 'change_id', 'version', 'before', 'after', 'issues'],
-  record_steering: ['status', 'goal_id', 'echo', 'issues', 'preparing', 'deferred_due_reviews'],
+  record_steering: [
+    'status',
+    'goal_id',
+    'previous_instruction_md',
+    'echo',
+    'issues',
+    'preparing',
+    'deferred_due_reviews',
+  ],
   attribute_mistake: ['status', 'judge_event_id', 'cause'],
   propose_variant: ['status', 'proposal_ids', 'mistake_variant_ids', 'variant_question_ids'],
   write_quiz: ['artifact_id', 'question_count', 'knowledge_ids', 'practice_path'],
@@ -156,7 +164,13 @@ function record(value: unknown): value is Record<string, unknown> {
 
 // Recurrence counts and evidence-id lists stay in the model tool result.
 // The learner snapshot drops them so a saved hero cannot show the tally.
-const MODEL_ONLY_COUNT_KEYS = new Set(['recurrence_count', 'evidence_event_ids', 'readings']);
+const MODEL_ONLY_COUNT_KEYS = new Set([
+  'recurrence_count',
+  'evidence_event_ids',
+  'readings',
+  'hint_dependence',
+  'personal_hit_rate',
+]);
 
 function omitModelOnlyCounts(value: unknown): void {
   if (Array.isArray(value)) {
@@ -279,6 +293,10 @@ export function buildCopilotToolResultSnapshot(
         const rows = projected[listKey];
         if (Array.isArray(rows)) for (const row of rows) if (record(row)) delete row[field];
       }
+    } else if (name === 'get_question_context' && record(projected.reading)) {
+      // Faulty-item inference stays on the agent tool result. The learner snapshot
+      // does not name or show it.
+      delete projected.reading.faulty;
     } else if (policy === 'events' && record(projected.filter_applied)) {
       projected.filter_applied = z
         .record(z.string(), z.union([z.string(), z.number(), z.null()]))

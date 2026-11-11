@@ -782,7 +782,7 @@ describe('YUK-778 ② the scheduling control plane leaves a diagnosable trail', 
 // 成员 job 用 `provider_wait` 输出标记「已证明未计费的 provider 拒绝」，编排器
 // 拥有等待预算：CAS 换 boss_job_id + provider_waits+1 + startAfter 重派，
 // enqueued_at 不动（节点超时仍包整个等+跑窗口）。耗尽 → failed 留原因。
-describe('YUK-2030 — provider-wait redelivery', () => {
+describe('provider-wait redelivery', () => {
   beforeEach(async () => {
     await resetDb();
   });

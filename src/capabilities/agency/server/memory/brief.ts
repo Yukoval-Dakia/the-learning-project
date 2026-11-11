@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, inArray, isNull, like, lt, not, or, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, gte, inArray, isNull, like, lt, not, or, sql } from 'drizzle-orm';
 import { allowsDerivation } from '@/core/schema/derivation-policy';
 import type { Db } from '@/db/client';
 import { event, memory_brief_note } from '@/db/schema';
@@ -67,6 +67,36 @@ export type BriefDraft = {
   long_term_evidence_ids: string[];
 };
 
+// Fixed windows keep the sampler and the writer on the same boundaries.
+// Future timestamps (negative age) stay in the week window.
+export const BRIEF_WINDOW_MAX_AGE_MS = {
+  recent_week: 7 * 24 * 60 * 60 * 1000,
+  recent_months: 90 * 24 * 60 * 60 * 1000,
+} as const;
+
+export type BriefWindowKey = 'recent_week' | 'recent_months' | 'long_term';
+
+export function briefWindowForAge(ageMs: number): BriefWindowKey {
+  if (ageMs <= BRIEF_WINDOW_MAX_AGE_MS.recent_week) return 'recent_week';
+  if (ageMs <= BRIEF_WINDOW_MAX_AGE_MS.recent_months) return 'recent_months';
+  return 'long_term';
+}
+
+const BRIEF_WINDOW_FIELDS = [
+  { md: 'recent_week_md', ids: 'recent_week_evidence_ids' },
+  { md: 'recent_months_md', ids: 'recent_months_evidence_ids' },
+  { md: 'long_term_md', ids: 'long_term_evidence_ids' },
+] as const satisfies readonly {
+  md: 'recent_week_md' | 'recent_months_md' | 'long_term_md';
+  ids: 'recent_week_evidence_ids' | 'recent_months_evidence_ids' | 'long_term_evidence_ids';
+}[];
+
+const BRIEF_WINDOWS = [
+  'recent_week',
+  'recent_months',
+  'long_term',
+] as const satisfies readonly BriefWindowKey[];
+
 export type GenerateBrief = (input: {
   taskRunId?: string;
   scopeKey: string;
@@ -106,24 +136,29 @@ function subjectForScope(scopeKey: string): string | null {
   return scopeKey.startsWith('subject:') ? scopeKey.slice('subject:'.length) : null;
 }
 
-async function loadEventsFromDb(db: Db, scopeKey: string): Promise<BriefEvent[]> {
-  const rows = await db
-    .select()
-    .from(event)
-    .where(
-      and(
-        sql`${event.affected_scopes} @> ARRAY[${scopeKey}]::text[]`,
-        excludesInternalBriefLedger(),
-        // Question-bank authoring/publish events audit bank content, not learner
-        // activity, so they never enter the brief evidence window.
-        learnerEvidenceSql(),
-        eventAllowsDerivationSql(),
-      ),
-    )
-    .orderBy(desc(event.created_at))
-    // Per-brief read cap; budgets.ts is the only place this number lives.
-    .limit(BRIEF_REFRESH_BUDGET.maxEventsPerBrief);
-  return rows.map((row) => ({
+function evidenceWhere(scopeKey: string) {
+  return and(
+    sql`${event.affected_scopes} @> ARRAY[${scopeKey}]::text[]`,
+    excludesInternalBriefLedger(),
+    // Question-bank authoring/publish events audit bank content, not learner
+    // activity, so they never enter the brief evidence window.
+    learnerEvidenceSql(),
+    eventAllowsDerivationSql(),
+  );
+}
+
+function windowPredicates(now: Date) {
+  const weekStart = new Date(now.getTime() - BRIEF_WINDOW_MAX_AGE_MS.recent_week);
+  const monthsStart = new Date(now.getTime() - BRIEF_WINDOW_MAX_AGE_MS.recent_months);
+  return {
+    recent_week: gte(event.created_at, weekStart),
+    recent_months: and(gte(event.created_at, monthsStart), lt(event.created_at, weekStart)),
+    long_term: lt(event.created_at, monthsStart),
+  } as const;
+}
+
+function toBriefEvent(row: typeof event.$inferSelect): BriefEvent {
+  return {
     id: row.id,
     action: row.action,
     subject_kind: row.subject_kind,
@@ -131,7 +166,78 @@ async function loadEventsFromDb(db: Db, scopeKey: string): Promise<BriefEvent[]>
     outcome: row.outcome,
     payload: row.payload,
     created_at: row.created_at,
-  }));
+  };
+}
+
+async function loadWindowEvents(
+  db: Db,
+  scopeKey: string,
+  window: ReturnType<typeof windowPredicates>[BriefWindowKey],
+): Promise<BriefEvent[]> {
+  const rows = await db
+    .select()
+    .from(event)
+    .where(and(evidenceWhere(scopeKey), window))
+    .orderBy(desc(event.created_at))
+    .limit(BRIEF_REFRESH_BUDGET.maxEventsPerBrief);
+  return rows.map(toBriefEvent);
+}
+
+async function loadEventsFromDb(db: Db, scopeKey: string, now = new Date()): Promise<BriefEvent[]> {
+  const predicates = windowPredicates(now);
+  const samples = await Promise.all(
+    BRIEF_WINDOWS.map((key) => loadWindowEvents(db, scopeKey, predicates[key])),
+  );
+  return samples.flat().sort((a, b) => b.created_at.getTime() - a.created_at.getTime());
+}
+
+async function readStoredBriefDraft(db: Db, scopeKey: string): Promise<BriefDraft | null> {
+  const [row] = await db
+    .select({
+      recent_week_md: memory_brief_note.recent_week_md,
+      recent_months_md: memory_brief_note.recent_months_md,
+      long_term_md: memory_brief_note.long_term_md,
+      recent_week_evidence_ids: memory_brief_note.recent_week_evidence_ids,
+      recent_months_evidence_ids: memory_brief_note.recent_months_evidence_ids,
+      long_term_evidence_ids: memory_brief_note.long_term_evidence_ids,
+    })
+    .from(memory_brief_note)
+    .where(eq(memory_brief_note.scope_key, scopeKey))
+    .limit(1);
+  return row ?? null;
+}
+
+async function blockedBriefEvidenceIds(db: Db, previous: BriefDraft | null): Promise<Set<string>> {
+  if (!previous) return new Set();
+  const ids = [
+    ...previous.recent_week_evidence_ids,
+    ...previous.recent_months_evidence_ids,
+    ...previous.long_term_evidence_ids,
+  ];
+  if (ids.length === 0) return new Set();
+  const rows = await db
+    .select({ id: event.id })
+    .from(event)
+    .where(and(inArray(event.id, ids), sql`NOT (${eventAllowsDerivationSql()})`));
+  return new Set(rows.map((row) => row.id));
+}
+
+function retainWindowsWithoutNewEvents(
+  draft: BriefDraft,
+  previous: BriefDraft | null,
+  blockedIds: ReadonlySet<string>,
+): BriefDraft {
+  if (!previous) return draft;
+  const next: BriefDraft = { ...draft };
+  for (const field of BRIEF_WINDOW_FIELDS) {
+    const previousIds = previous[field.ids];
+    if (previousIds.some((id) => blockedIds.has(id))) continue;
+    const known = new Set(previousIds);
+    if (draft[field.ids].some((id) => !known.has(id))) continue;
+    next[field.md] = previous[field.md];
+    next[field.ids] = [...previousIds];
+  }
+  return next;
 }
 
 async function upsertBriefInDb(db: Db, row: BriefRow, withdrawal: string | null): Promise<void> {
@@ -300,7 +406,7 @@ export async function regenerateMemoryBrief(params: {
   const template = BRIEF_TEMPLATES[prefixForScope(params.scopeKey)];
   const loadedEvents = params.loadEvents
     ? await params.loadEvents(params.scopeKey)
-    : await loadEventsFromDb(params.db as Db, params.scopeKey);
+    : await loadEventsFromDb(params.db as Db, params.scopeKey, now);
   const allowed = params.db
     ? await allowedEventIds(
         params.db,
@@ -350,15 +456,19 @@ export async function regenerateMemoryBrief(params: {
   // Filtering ids cannot remove prose that was already generated from those inputs.
   if (restrictedIds.size)
     throw new Error('restricted input reached brief writer; discard entire draft');
+  const previous = params.db ? await readStoredBriefDraft(params.db, params.scopeKey) : null;
+  const blockedIds = params.db
+    ? await blockedBriefEvidenceIds(params.db, previous)
+    : new Set<string>();
+  const stableDraft = retainWindowsWithoutNewEvents(draft, previous, blockedIds);
   const latestEvidenceAt =
     events.length === 0
       ? null
       : new Date(Math.max(...events.map((row) => row.created_at.getTime())));
 
-  // Long-term freshness is advisory: no LLM/embedding call and no mutation of the
-  // generated long-term fields. Deduplicate only the scoring input so a repeated id
-  // is not weighted twice; the stored id list is unchanged.
-  const scoringEvidenceIds = [...new Set(draft.long_term_evidence_ids)];
+  // Long-term freshness is advisory: no LLM/embedding call. Deduplicate only the
+  // scoring input so a repeated id is not weighted twice.
+  const scoringEvidenceIds = [...new Set(stableDraft.long_term_evidence_ids)];
   const evidenceTimestamps = await resolveEvidenceTimestamps(scoringEvidenceIds, events, params);
   const { score: longTermFreshnessScore } = scoreLongTermFreshness(
     evidenceTimestamps,
@@ -370,7 +480,7 @@ export async function regenerateMemoryBrief(params: {
     id: idForScope(params.scopeKey),
     scope_key: params.scopeKey,
     subject_id: subjectForScope(params.scopeKey),
-    ...draft, // long_term_md and long_term_evidence_ids pass through untouched
+    ...stableDraft,
     long_term_freshness_score: longTermFreshnessScore,
     source_event_id: events[0]?.id ?? null,
     latest_evidence_at: latestEvidenceAt,

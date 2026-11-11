@@ -21,6 +21,7 @@ import {
   resolveVerdictsForAttempts,
   resolveVerdictsForNativeAttempts,
 } from '@/kernel/read-models/assessment-verdict';
+import { notesForKnowledge } from '@/kernel/read-models/notes-read';
 import {
   readAutomaticIssuanceServingDecisions,
   readAutomaticallyServableQuestionIds,
@@ -58,6 +59,11 @@ export interface StreamView {
     status: StreamItemStatus;
     estimated_minutes: number;
     knowledge_name: string | null;
+    /**
+     * First note on each of the question's knowledge points (at most one per
+     * point). Empty for papers and for points that have no note.
+     */
+    knowledge_notes: Array<{ knowledge_id: string; note_id: string; title: string }>;
     paper_title: string | null;
     /**
      * 原始 FSRS rating（immutable 用户自评 rating，写入时即固定，不为
@@ -95,6 +101,7 @@ type StreamViewItem = StreamView['items'][number];
 
 interface StreamItemMetadata {
   knowledgeName: string | null;
+  knowledgeNotes: StreamViewItem['knowledge_notes'];
   paperTitle: string | null;
   verdict: StreamViewItem['verdict'];
   verdictEffective: string | null;
@@ -108,6 +115,7 @@ interface StreamItemMetadata {
 
 const EMPTY_STREAM_ITEM_METADATA: StreamItemMetadata = {
   knowledgeName: null,
+  knowledgeNotes: [],
   paperTitle: null,
   verdict: null,
   verdictEffective: null,
@@ -183,6 +191,19 @@ export async function filterProspectiveStreamQuestions(
   return { rows: kept, recoveryRowIds };
 }
 
+async function firstNoteByKnowledge(
+  db: DbLike,
+  knowledgeIds: string[],
+): Promise<Map<string, { id: string; title: string }>> {
+  const notes = await Promise.all(
+    knowledgeIds.map(async (knowledgeId) => {
+      const [note] = await notesForKnowledge(db, knowledgeId, { limit: 1 });
+      return note ? ([knowledgeId, { id: note.id, title: note.title }] as const) : null;
+    }),
+  );
+  return new Map(notes.filter((pair) => pair !== null));
+}
+
 async function resolveStreamItemMetadata(
   db: DbLike,
   rows: StreamItemRow[],
@@ -207,10 +228,20 @@ async function resolveStreamItemMetadata(
       ),
     ];
     const names = await knowledgeLabels(db, primaryKnowledgeIds);
+    const knowledgeIdsByQuestion = new Map(
+      questions.map((row) => [row.id, row.knowledge_ids ?? []]),
+    );
+    const firstNotes = await firstNoteByKnowledge(db, [
+      ...new Set([...knowledgeIdsByQuestion.values()].flat()),
+    ]);
     for (const row of questionRows) {
       const knowledgeId = primaryKnowledgeByQuestion.get(row.ref_id);
       const current = metadata.get(row.id) ?? { ...EMPTY_STREAM_ITEM_METADATA };
       current.knowledgeName = knowledgeId ? (names.get(knowledgeId) ?? null) : null;
+      current.knowledgeNotes = (knowledgeIdsByQuestion.get(row.ref_id) ?? []).flatMap((id) => {
+        const note = firstNotes.get(id);
+        return note ? [{ knowledge_id: id, note_id: note.id, title: note.title }] : [];
+      });
       metadata.set(row.id, current);
     }
   }
@@ -351,6 +382,7 @@ function toStreamViewItem(
     status: row.status,
     estimated_minutes: estimateStreamItemMinutes(row.item_kind, questionMinutes),
     knowledge_name: metadata.knowledgeName,
+    knowledge_notes: metadata.knowledgeNotes,
     paper_title: metadata.paperTitle,
     verdict: metadata.verdict,
     verdict_effective: metadata.verdictEffective,

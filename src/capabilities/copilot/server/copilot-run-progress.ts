@@ -26,6 +26,8 @@ export function createCopilotRunProgressWriter(deps: {
   db: Db;
   runId: string;
   onDeltaAccepted?: (text: string) => void;
+  /** Committed prose shrank by this many chars (a published retract). */
+  onRetractAccepted?: (chars: number) => void;
 }): CopilotRunProgressWriter {
   let chain: Promise<void> = Promise.resolve();
   let buffered = '';
@@ -51,14 +53,14 @@ export function createCopilotRunProgressWriter(deps: {
     if (!buffered) return;
     const text = buffered;
     buffered = '';
-    enqueue(() =>
-      publishCopilotRunProgressEvent(
+    enqueue(async () => {
+      await publishCopilotRunProgressEvent(
         deps.db,
         deps.runId,
         { kind: 'delta', text },
         deps.onDeltaAccepted,
-      ),
-    );
+      );
+    });
   };
 
   const flushBlockDrafts = () => {
@@ -66,7 +68,9 @@ export function createCopilotRunProgressWriter(deps: {
     const slots = [...blockDrafts.values()];
     blockDrafts.clear();
     for (const payload of slots) {
-      enqueue(() => publishCopilotRunProgressEvent(deps.db, deps.runId, { kind: 'step', payload }));
+      enqueue(async () => {
+        await publishCopilotRunProgressEvent(deps.db, deps.runId, { kind: 'step', payload });
+      });
     }
   };
 
@@ -97,14 +101,31 @@ export function createCopilotRunProgressWriter(deps: {
         }
         return;
       }
+      if (progress.kind === 'retract') {
+        // Prose still buffered never reached a reader: drop it here, and only
+        // the committed remainder rides the published step.
+        const fromBuffer = Math.min(progress.payload.discard_chars, buffered.length);
+        buffered = buffered.slice(0, buffered.length - fromBuffer);
+        const committed = progress.payload.discard_chars - fromBuffer;
+        flushDelta();
+        flushBlockDrafts();
+        enqueue(async () => {
+          const published = await publishCopilotRunProgressEvent(deps.db, deps.runId, {
+            kind: 'retract',
+            payload: { ...progress.payload, discard_chars: committed },
+          });
+          if (published && committed > 0) deps.onRetractAccepted?.(committed);
+        });
+        return;
+      }
       flushDelta();
       flushBlockDrafts();
-      enqueue(() =>
-        publishCopilotRunProgressEvent(deps.db, deps.runId, {
+      enqueue(async () => {
+        await publishCopilotRunProgressEvent(deps.db, deps.runId, {
           kind: 'step',
           payload: progress.payload,
-        }),
-      );
+        });
+      });
     },
     async drain() {
       clearFlushTimer();

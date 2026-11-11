@@ -6,6 +6,7 @@ import { getConfig } from '@/core/config/store';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { parseTaskOutput } from '@/kernel/parse-task-output';
+import { readLearnerCurriculum } from '@/kernel/read-models/learner-curriculum';
 import {
   authorizeDemandRepair,
   readTaskRunPublications,
@@ -422,11 +423,13 @@ export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown, r
         started = true;
         runIds.add(runId);
       },
-      () =>
-        runAgentTask(
+      async () => {
+        const curriculum = await readLearnerCurriculum(db);
+        return runAgentTask(
           'QuestionPreparerTask',
           {
             gap_ticket: data.ticket,
+            curriculum,
             steering: data.steering,
             admission_return: data.continuation?.verdict,
             admission_return_simulated: data.continuation?.simulated,
@@ -501,7 +504,8 @@ export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown, r
               }),
             ],
           },
-        ),
+        );
+      },
     );
   } catch (error) {
     executionError = error;

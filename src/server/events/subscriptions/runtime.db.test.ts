@@ -158,6 +158,8 @@ describe('YUK-751 durable event subscription runtime', () => {
     expect(await discoverSubscriptionDeliveries(testDb(), registry(), SUBSCRIBER, lease)).toBe(0);
   });
 
+  // @invariant concurrency: an earlier not-yet-due retry blocks that subscriber's next claim
+  // @fails-if the later delivery is claimed, or retry_wait is recorded without next_attempt_at
   it('fences checkpoint leases and prevents a later delivery from running while an earlier retry waits', async () => {
     await bootstrapSubscription(testDb(), registry(), SUBSCRIBER);
     await insertEvent('one');
@@ -173,7 +175,7 @@ describe('YUK-751 durable event subscription runtime', () => {
     expect(await renewSubscriptionDeliveryLease(testDb(), first)).toBe(true);
     expect(
       await failSubscriptionDelivery(testDb(), first, new Error('retry'), { maxAttempts: 2 }),
-    ).toBe('retry_wait');
+    ).toEqual({ status: 'retry_wait', nextAttemptAt: expect.any(Date) });
     expect(
       await claimNextSubscriptionDelivery(testDb(), registry(), SUBSCRIBER, firstLease),
     ).toBeNull();
@@ -188,6 +190,8 @@ describe('YUK-751 durable event subscription runtime', () => {
     expect(await renewSubscriptionLease(testDb(), firstLease)).toBe(false);
   });
 
+  // @invariant concurrency: the attempt bound dead-letters the claim and redrive reopens that terminal row
+  // @fails-if the bound stays retry_wait, or redrive leaves the dead-letter row closed
   it('retries to dead-letter at the configured bound and explicitly redrives terminal failures', async () => {
     await bootstrapSubscription(testDb(), registry(), SUBSCRIBER);
     await insertEvent('source');
@@ -198,7 +202,7 @@ describe('YUK-751 durable event subscription runtime', () => {
     if (!first) throw new Error('expected delivery');
     expect(
       await failSubscriptionDelivery(testDb(), first, new Error('first'), { maxAttempts: 1 }),
-    ).toBe('dead_letter');
+    ).toEqual({ status: 'dead_letter' });
     expect(await redriveSubscriptionDelivery(testDb(), registry(), SUBSCRIBER, 'source')).toBe(
       true,
     );
@@ -226,6 +230,8 @@ describe('YUK-751 durable event subscription runtime', () => {
     ).rejects.toThrow(/declaration hash mismatch/);
   });
 
+  // @invariant concurrency: renew, complete, and fail reject a claim after its checkpoint lease moved
+  // @fails-if a stale fail or complete still changes the delivery after the takeover
   it('fences delivery renew, completion, and failure on the checkpoint lease that created the claim', async () => {
     await bootstrapSubscription(testDb(), registry(), SUBSCRIBER);
     await insertEvent('renew-source');
@@ -270,9 +276,11 @@ describe('YUK-751 durable event subscription runtime', () => {
       await failSubscriptionDelivery(testDb(), completeClaim, new Error('stale'), {
         maxAttempts: 1,
       }),
-    ).toBe('lost_lease');
+    ).toEqual({ status: 'lost_lease' });
   });
 
+  // @invariant concurrency: a stale renew, complete, or fail waits for the checkpoint lock and then loses
+  // @fails-if the stale transition commits, or it does not wait until the takeover releases
   it.each(['renew', 'complete', 'fail'] as const)(
     'serializes stale %s behind checkpoint takeover and then rejects it',
     async (transition) => {
@@ -327,7 +335,9 @@ describe('YUK-751 durable event subscription runtime', () => {
         await takeover;
       }
 
-      await expect(staleTransition).resolves.toBe(transition === 'fail' ? 'lost_lease' : false);
+      await expect(staleTransition).resolves.toEqual(
+        transition === 'fail' ? { status: 'lost_lease' } : false,
+      );
       const [delivery] = await deliveryRows();
       expect(delivery).toEqual(expect.objectContaining({ status: 'claimed', attemptCount: 0 }));
     },
@@ -391,6 +401,8 @@ describe('YUK-751 durable event subscription runtime', () => {
     ).not.toBeNull();
   });
 
+  // @invariant concurrency: redrive refuses a dead-letter once a later delivery has completed
+  // @fails-if redrive reopens the earlier row after the later delivery succeeded
   it('rejects redrive when a later delivery has reached a terminal state', async () => {
     await bootstrapSubscription(testDb(), registry(), SUBSCRIBER);
     await insertEvent('first');
@@ -402,7 +414,7 @@ describe('YUK-751 durable event subscription runtime', () => {
     if (!first) throw new Error('expected first claim');
     expect(
       await failSubscriptionDelivery(testDb(), first, new Error('dead'), { maxAttempts: 1 }),
-    ).toBe('dead_letter');
+    ).toEqual({ status: 'dead_letter' });
     const second = await claimNextSubscriptionDelivery(testDb(), registry(), SUBSCRIBER, lease);
     if (!second) throw new Error('expected second claim');
     expect(await completeSubscriptionDelivery(testDb(), second, { status: 'succeeded' })).toBe(
@@ -453,6 +465,8 @@ describe('YUK-751 durable event subscription runtime', () => {
     expect(otherDelivery?.status).toBe('pending');
   });
 
+  // @invariant concurrency: redrive refuses an earlier dead-letter while a later delivery is retrying
+  // @fails-if redrive reopens the earlier row while that later retry is still outstanding
   it('rejects redrive when a later delivery has failed into retry_wait', async () => {
     await bootstrapSubscription(testDb(), registry(), SUBSCRIBER);
     await insertEvent('first-dead');
@@ -464,12 +478,12 @@ describe('YUK-751 durable event subscription runtime', () => {
     if (!first) throw new Error('expected first claim');
     expect(
       await failSubscriptionDelivery(testDb(), first, new Error('dead'), { maxAttempts: 1 }),
-    ).toBe('dead_letter');
+    ).toEqual({ status: 'dead_letter' });
     const later = await claimNextSubscriptionDelivery(testDb(), registry(), SUBSCRIBER, lease);
     if (!later) throw new Error('expected later claim');
     expect(
       await failSubscriptionDelivery(testDb(), later, new Error('retry'), { maxAttempts: 2 }),
-    ).toBe('retry_wait');
+    ).toEqual({ status: 'retry_wait', nextAttemptAt: expect.any(Date) });
 
     expect(await redriveSubscriptionDelivery(testDb(), registry(), SUBSCRIBER, 'first-dead')).toBe(
       false,

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
 import { parseTaskOutput } from '@/kernel/parse-task-output';
+import { CURRICULUM_TASK_RULE } from '@/kernel/read-models/learner-curriculum';
 
 export const questionPreparerReportSchema = z.object({
   outcome: z.enum(['done', 'no_progress']),
@@ -27,7 +28,7 @@ export const questionPreparerTaskSpec = {
     context: { view: 'none', reason: '缺口单和显式证据工具提供本次备题上下文' },
     prompt: {
       kind: 'inline',
-      text: `你是备题员。处理一张 gap_ticket，只看题目质量，自己决定查库、外找或自出；没有固定找题顺序。needed_by 和 steering 是真实用户意图，不能丢弃。
+      text: `你是备题员。处理一张 gap_ticket，只看题目质量，自己决定查库、外找或自出；没有固定找题顺序。needed_by 和 steering 是真实用户意图，不能丢弃。${CURRICULUM_TASK_RULE}
 gap_ticket.inventory_goal.eligible_count 是目标题库总量，不是新增数量。先用 search_bank 和 scan_coverage_gaps 看真实库存，按用途/题型(gap_ticket.task.kinds)/知识点/难度核实可用题 N，只补 max(0,目标总量-N)；已有库存满足目标就停止，不提交新题。gap_ticket 的 claim.knowledge_ids / task.kinds / task.allowed_uses / difficulty.band 是本题硬范围；scan_coverage_gaps 的 targets 是科目缺口信号，范围外的目标不采用；出题和库存核实都不得超出。绝不沿用旧链固定新增8题。withheld/pending 不是可用库存，但其占用差额必须计入，不能因等待准入而重复补题；scan_coverage_gaps 传原 gap_ticket 为 ticket，返回 pending_stock，先核实范围并扣除这些待准入题。search_bank v3：查可用库存用 use=inventory，将 ticket 的 subject_id、claim.knowledge_ids（同题 all）、task.kinds 放 filters，inventory_goal.eligible_count 放 count；page_size 与目标数独立。difficulty.band 没有数值锚点时不猜 numeric range，语义判断不确定就 unknown。补充前查重用 use=dedup，包含待准入/草稿；先别按 KC/题型缩窄到漏掉异标签同文。状态与 available 只说明可发性，不说明合题；pending 预留仍由 scan_coverage_gaps 计算，submit_question 的正式查重和准入闸不被此搜索替代。search_bank v3 只取候选和证据，不替你判合格；conditions 的 required unknown／contradicted 和 joint 不支持不能计入 N。按 ref 补读并自己判断，结论始终是 caller_assessed；count 是真实目标数，page_size 只是分页，续页只传 cursor。search_bank 没有完整召回不能宣称全库为零，已知可用题用 read_bank/check_bank 核实。错题、笔记、错因分析只用来定方法和要防的错因类别，不把其原文（学习者作答、笔记、分析）写进题面、选项或解答；草稿原样含这类片段会被退回。需要时读取知识图谱、read_bank/check_bank，金标只作参考，agent 不能盖 gold。改编须声明 adapted_from_question_id。
 自出或改编前先拿全要素，按序：①读状态和错法：对 claim.knowledge_ids 各调 get_knowledge_state（掌握度、到期、连错、top_causes），并用 query_mistakes(filter.knowledgeId) 读该学习者错题；gap_ticket.difficulty.theta_hat 和 causes 里 kind:'observed_error' 是写票时读的能力估计与错因，难度按 band 对准 theta_hat。②要前置：query_knowledge 的 relationTypes 含 prerequisite，或 find_knowledge_paths；题目只铺垫前置，不越出本票范围。③解法先验：search_bank 命中的 prior 证据 complete:false 时，用 read_bank 读全再定方法和难度。④先定后写：先定要考的方法、关键步和要防的 1–2 个错因（各注来源：该学习者的错因类别，或某道库题的解法），再写题面、选项（每个干扰项对应一个要防的错因）和参考解答。把方法、关键步、易错点及来源用学习者能读的话写进该 part 的 explanation_md（free 单元也写进 reference_md），不写 id、工具名或学习者原话。用了该学习者的错因就写「来源：你近期的错因」；只有没用学习者数据时才写「常见错因」，读不到该学习者的错法时写明「没有该学习者的错法，按常见错因出」，不编造。不要把学习者做错的原题当新题面，换参数或换区间重出。
 外找用 web_fetch_candidates 或 jyeoo_fetch_candidates；菁优只覆盖高中10–12数学且保留外部授权限制。fetch 返回候选不是入库，也不能捏造网址、图或 extraction_hash。候选原样 submit_question；web 必传 source_route:"sourcing_web"，菁优传 "jyeoo_fetch"。改内容走草稿。

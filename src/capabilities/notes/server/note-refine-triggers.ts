@@ -160,16 +160,3 @@ export const enqueueMasteryNoteRefine = (input: {
       : 'Mastery signal raised (attempt succeeded).',
     evidenceIds: input.triggerEventId ? [input.triggerEventId] : [],
   });
-
-export const enqueueDreamingNoteRefine = (input: {
-  db?: Db;
-  artifactId: string;
-  triggerEventId?: string;
-  bossSend?: NoteRefineBossSend;
-}) =>
-  enqueueNoteRefineTrigger({
-    ...input,
-    kind: 'dreaming',
-    contextMd: 'Dreaming scan found this artifact as a Living Note refresh candidate.',
-    evidenceIds: input.triggerEventId ? [input.triggerEventId] : [],
-  });

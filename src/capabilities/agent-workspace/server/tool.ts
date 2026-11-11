@@ -44,13 +44,16 @@ const execOutput = z.object({
   workspace: z.string().optional(),
   code_sha256: z.string(),
   output_sha256: z.string(),
-  runtime_version: z.object({ python: z.string(), bash: z.string() }).optional(),
+  runtime_version: z
+    .object({ python: z.string(), bash: z.string(), sympy: z.string(), numpy: z.string() })
+    .optional(),
 });
 
 export const workspaceExec: DomainTool<z.infer<typeof execInput>, z.infer<typeof execOutput>> = {
   name: 'workspace_exec',
+  // Library versions mirror the worker image's apt pins in the Dockerfile.
   description:
-    "Run a bash or Python script in this session's private scratch directory (fixed interpreter, 30 min ceiling, output truncated at 100 KiB). Files persist only while the owning run or conversation is alive.",
+    "Run a bash or Python script in this session's private scratch directory (fixed interpreter: Python 3.11 with sympy 1.11.1 and numpy 1.24.2 preinstalled, no pip; 30 min ceiling, output truncated at 100 KiB). Files persist only while the owning run or conversation is alive.",
   effect: 'write',
   costClass: 'local',
   inputSchema: execInput,

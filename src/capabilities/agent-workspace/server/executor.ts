@@ -147,26 +147,38 @@ export async function workspaceQuotaExceeded(id: string): Promise<boolean> {
   }
 }
 
-export type WorkspaceRuntimeVersion = { python: string; bash: string };
+export type WorkspaceRuntimeVersion = {
+  python: string;
+  bash: string;
+  sympy: string;
+  numpy: string;
+};
 
 // The sandbox runtime image is fixed per container, so one probe per process
 // is enough; the probe itself runs under the sandbox identity on the claim's
 // directory so the reported versions are exactly what scripts execute.
 let cachedRuntime: Promise<WorkspaceRuntimeVersion> | undefined;
 export function workspaceRuntimeVersion(id: string): Promise<WorkspaceRuntimeVersion> {
+  // The probe imports sympy and numpy, so it must not respawn per call once cached.
+  if (cachedRuntime) return cachedRuntime;
   // Only a successful probe is cached — a transiently unavailable launcher must
   // not pin 'unknown' into evidence for the process lifetime.
   const probe = invokeWorkspace('version', id, '').then((result) => {
     if (result.exitCode !== 0) throw new Error('workspace_version_probe_failed');
-    const parsed = JSON.parse(result.output) as WorkspaceRuntimeVersion;
-    return { python: String(parsed.python ?? 'unknown'), bash: String(parsed.bash ?? 'unknown') };
+    const parsed = JSON.parse(result.output) as Partial<WorkspaceRuntimeVersion>;
+    return {
+      python: String(parsed.python ?? 'unknown'),
+      bash: String(parsed.bash ?? 'unknown'),
+      sympy: String(parsed.sympy ?? 'unknown'),
+      numpy: String(parsed.numpy ?? 'unknown'),
+    };
   });
   const failed = probe.catch(() => {
     if (cachedRuntime === failed) cachedRuntime = undefined;
-    return { python: 'unknown', bash: 'unknown' };
+    return { python: 'unknown', bash: 'unknown', sympy: 'unknown', numpy: 'unknown' };
   });
-  cachedRuntime ??= failed;
-  return cachedRuntime;
+  cachedRuntime = failed;
+  return failed;
 }
 
 export type WorkspaceFileOp = 'read' | 'write' | 'list' | 'delete';

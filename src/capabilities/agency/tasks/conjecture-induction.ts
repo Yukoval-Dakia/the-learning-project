@@ -7,6 +7,7 @@ const DEFAULT_BUDGET = DEFAULT_TASK_BUDGET;
 
 import { z } from 'zod';
 import { ConjectureHypothesisAuthorDraft } from '@/core/schema/business';
+import { LEARNER_HANDWRITING_RULE } from '@/core/schema/structured_question';
 import type { SubjectProfile } from '@/subjects/profile';
 import { parseTaskOutput } from './parse-output';
 
@@ -39,6 +40,7 @@ function buildMindModelInductionPrompt(profile: SubjectProfile): string {
 - knowledge_name 是该知识点的名称，subject_display_name 是它所属科目（两者都可能为 null=该知识点未标注）。
 - evidence_samples 是该 cell 背后的代表性错题一手证据（可能少于 recurrence_count）：question_prompt_md 是题面，question_reference_md 是参考答案/正解（可能为 null），question_choices_md 是选项；question_image_refs / question_figures 是题图，parent_question_* 是题目分部依赖的父题文本与图像，answer_md / answer_image_refs 是 owner 的实际错答，reasoning_trace 是 owner 自述的思考过程（可能为 null），cause_attribution_md 是 owner 或 judge 给出的有效错因归因。作答后被编辑过、又缺少作答时快照的题面已在调用前排除（YUK-804 将补齐全入口快照持久化）。
 - image_manifest 把资产引用绑定到本条消息随后附带的真实图片块：image_index 从 1 开始，严格对应图片块顺序；source 依次按 question（题图）、parent_question（父题图）、answer（作答图）排列。引用资产解析不完整时调用方会整格失败，不会让你依据缺失图片猜测。
+- question_figures / parent_question_figures 每张带 contains_learner_handwriting（true / false / unknown）。${LEARNER_HANDWRITING_RULE}；owner 的作答只以 answer_md / answer_image_refs 为准，true 或 unknown 的题图里的手写不另算一次作答证据。
 - theta_precision 低（或为 null）代表该处掌握度估计不确定（值得探针）；baseline_p 是该知识点当前的掌握概率 p(L)（可能为 null=冷启动）。
 
 科目上下文：${profile.displayName}。${profile.languageStyle}

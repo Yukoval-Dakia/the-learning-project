@@ -8,7 +8,8 @@
 // mode) degrades to 'auto' with the same submission correction contract.
 // 'unknown' keeps the legacy forced posture: forcing is the proven fix for the
 // text-JSON drift these tasks were admitted under, and absent evidence of breakage
-// the runner must not weaken every lane's wire guarantee.
+// the runner must not weaken every lane's wire guarantee. The force applies only
+// while submit is the request's sole tool; see structuredSubmitWireFields.
 
 import { createHash } from 'node:crypto';
 import type { AgentTurnContext } from '@earendil-works/pi-agent-core';
@@ -36,10 +37,22 @@ export function resolveStructuredSubmitPolicy(
   return { forced: capability !== false, capability };
 }
 
+/** Tool names declared on an OpenAI completions or responses request body. */
+export function payloadToolNames(body: Record<string, unknown>): string[] {
+  if (!Array.isArray(body.tools)) return [];
+  return body.tools.flatMap((tool: unknown) => {
+    if (!tool || typeof tool !== 'object') return [];
+    const declared = tool as { name?: unknown; function?: { name?: unknown } };
+    const name = declared.function?.name ?? declared.name;
+    return typeof name === 'string' ? [name] : [];
+  });
+}
+
 /** The `tool_choice`/`parallel_tool_calls` fields merged into the request body verbatim. */
 export function structuredSubmitWireFields(
   policy: StructuredSubmitPolicy,
   api: 'openai-completions' | 'openai-responses' = 'openai-completions',
+  wireToolNames: readonly string[] = [STRUCTURED_OUTPUT_SUBMIT_TOOL],
 ):
   | {
       tool_choice:
@@ -48,7 +61,14 @@ export function structuredSubmitWireFields(
       parallel_tool_calls: false;
     }
   | { tool_choice: 'auto'; parallel_tool_calls: false } {
-  return policy.forced
+  // A named force makes every other declared tool uncallable (the mounted
+  // workspace among them), so it holds only when submit is the request's sole
+  // tool; 'auto' keeps the reminder correction that lanes without force run on.
+  const forced =
+    policy.forced &&
+    wireToolNames.length > 0 &&
+    wireToolNames.every((name) => name === STRUCTURED_OUTPUT_SUBMIT_TOOL);
+  return forced
     ? {
         tool_choice:
           api === 'openai-responses'
@@ -80,21 +100,38 @@ export const STRUCTURED_SUBMIT_UNIT_REMINDER =
   `You finished without the required tool call. Call ${STRUCTURED_OUTPUT_SUBMIT_TOOL} ` +
   'with ONE not-yet-accepted unit object as arguments (no result envelope).';
 
-export type SubmitTurnVerdict = 'landed' | 'needs_reminder' | 'terminal_failure';
+/** Sent once when tool work stops paying; tool work after it ends the run. */
+const TOOL_WORK_CLOSED_NOTICE =
+  'Further tool calls are no longer making progress, the tool-turn allowance is used up, or the time budget is closing. Do not call any other tool; another non-submit tool call ends the run unsuccessfully. ';
+
+export type SubmitTurnVerdict = 'landed' | 'tool_work' | 'needs_reminder' | 'terminal_failure';
 export interface SubmitTurnSignal {
   stopReason: string | undefined;
   toolCallNames: string[];
 }
 
+/**
+ * The one owner of what a structured-submit turn counts as. A turn that only
+ * calls mounted non-submit tools is tool work: those tools already ran and
+ * their results go back to the model unchanged. The reminder is reserved for
+ * turns that neither submit alone nor call an executable tool.
+ */
 export function classifySubmitTurn(
   signal: SubmitTurnSignal,
-  _opts: { forced: boolean },
+  opts: { forced: boolean; executableTools?: ReadonlySet<string> },
 ): SubmitTurnVerdict {
   if (signal.stopReason === 'error' || signal.stopReason === 'aborted') return 'terminal_failure';
-  return (signal.stopReason === 'toolUse' || signal.stopReason === 'tool_calls') &&
+  const toolStop = signal.stopReason === 'toolUse' || signal.stopReason === 'tool_calls';
+  if (!toolStop || signal.toolCallNames.length === 0) return 'needs_reminder';
+  if (
     signal.toolCallNames.length === 1 &&
     signal.toolCallNames[0] === STRUCTURED_OUTPUT_SUBMIT_TOOL
-    ? 'landed'
+  )
+    return 'landed';
+  return signal.toolCallNames.every(
+    (name) => name !== STRUCTURED_OUTPUT_SUBMIT_TOOL && opts.executableTools?.has(name) === true,
+  )
+    ? 'tool_work'
     : 'needs_reminder';
 }
 
@@ -249,8 +286,20 @@ export function createStructuredSubmitLoop(input: {
   forced: boolean;
   runId: string;
   correctionDeadline: number;
+  /** The attempt's own execution deadline; correctionDeadline sits a landing margin before it. */
+  executionDeadline?: number;
+  /** Mounted non-submit tools; their turns run and return results instead of a reminder. */
+  executableTools?: ReadonlySet<string>;
+  /** The runner's turn ceiling (workspace margin included); bounds tool-work turns. */
+  toolTurnLimit?: number;
 }) {
   const submitProgress = createNoProgressLoop();
+  // Separate from submitProgress: a repeated script must not turn the next
+  // submit correction into an immediate no_progress closure.
+  const toolProgress = createNoProgressLoop();
+  let toolTurns = 0;
+  /** Set once tool work is closed; the failure reason if tool calls continue. */
+  let toolWorkClosed: 'no_progress' | 'budget_landing' | undefined;
   const errorOccurrences = new Map<string, number>();
   let submitAccepted = false;
   let submitFailure: string | undefined;
@@ -298,12 +347,15 @@ export function createStructuredSubmitLoop(input: {
     return { action: 'end' as const };
   }
 
+  // The loop owns only the submit receipt; any other tool's result is that
+  // tool's own output and reaches the model unchanged.
   function rewriteToolResults(
     toolResults: AgentTurnContext['toolResults'],
     feedback: string,
     isError: boolean,
   ): void {
     for (const result of toolResults) {
+      if (result.toolName !== STRUCTURED_OUTPUT_SUBMIT_TOOL) continue;
       result.isError = isError;
       result.content = [{ type: 'text', text: feedback }];
     }
@@ -353,6 +405,56 @@ export function createStructuredSubmitLoop(input: {
     );
   }
 
+  // Tool work shares the run's existing bounds: the correction deadline, the
+  // turn ceiling and a no-progress gate (repeated call or identical output).
+  // Hitting one closes tool work with a single notice and leaves one submit
+  // turn: the correction deadline already reserves the landing margin before
+  // the execution deadline, and the cost ceiling still wraps every turn.
+  // Any non-submit call after the notice ends the run (checked in finishTurn).
+  async function finishToolWork(
+    message: AgentTurnContext['message'],
+    toolResults: AgentTurnContext['toolResults'],
+    calls: readonly { id: string; name: string; arguments: Record<string, unknown> }[],
+  ): Promise<{ action: 'end' } | { action: 'continue' }> {
+    toolTurns += 1;
+    for (const call of calls) {
+      const result = toolResults.find((item) => item.toolCallId === call.id);
+      const observed = { id: call.id, name: call.name };
+      // pi already executed the call; this only records a repeated signature.
+      await toolProgress.beforeToolCall(observed, call.arguments);
+      await toolProgress.afterToolCall({
+        call: observed,
+        args: call.arguments,
+        isError: result?.isError ?? true,
+        output: result?.content,
+        ...(result?.isError ? { error: result.content } : {}),
+      });
+    }
+    const now = Date.now();
+    const pastCorrection = now >= input.correctionDeadline;
+    const exhausted =
+      toolProgress.closure() !== undefined ||
+      (input.toolTurnLimit !== undefined && toolTurns >= input.toolTurnLimit);
+    logTurn(message, false, {
+      event: 'tool_work',
+      tools: calls.map((call) => call.name),
+      tool_turns: toolTurns,
+      closed: pastCorrection || exhausted,
+    });
+    if (input.executionDeadline !== undefined && now >= input.executionDeadline) {
+      const detail = `tool work past the execution deadline (${toolTurns} tool turns)`;
+      return failRun('budget_landing', plan ? `${detail}; ${unitSummary()}` : detail);
+    }
+    if (!pastCorrection && !exhausted) return { action: 'continue' as const };
+    toolWorkClosed = pastCorrection ? 'budget_landing' : 'no_progress';
+    submitFeedback =
+      TOOL_WORK_CLOSED_NOTICE +
+      (plan
+        ? `Call ${STRUCTURED_OUTPUT_SUBMIT_TOOL} with ONE not-yet-accepted unit object as arguments (no result envelope).`
+        : `Call ${STRUCTURED_OUTPUT_SUBMIT_TOOL} with the complete output object as arguments (no result envelope).`);
+    return { action: 'continue' as const };
+  }
+
   return {
     get accepted() {
       return plan ? fullCoverage() : submitAccepted;
@@ -380,10 +482,25 @@ export function createStructuredSubmitLoop(input: {
       rawArguments: readonly (string | undefined)[],
     ) {
       const calls = message.content.filter((block) => block.type === 'toolCall');
+      // Checked before classification so a submit mixed into the same turn
+      // cannot carry tool work past the closing notice in either mode.
+      if (
+        toolWorkClosed !== undefined &&
+        calls.some((call) => call.name !== STRUCTURED_OUTPUT_SUBMIT_TOOL)
+      ) {
+        logTurn(message, false, {
+          event: 'tool_work_after_close',
+          tools: calls.map((call) => call.name),
+          tool_turns: toolTurns,
+        });
+        const detail = `tool call after the closing notice (${toolTurns} tool turns)`;
+        return failRun(toolWorkClosed, plan ? `${detail}; ${unitSummary()}` : detail);
+      }
       const verdict = classifySubmitTurn(
         { stopReason: message.stopReason, toolCallNames: calls.map((call) => call.name) },
-        { forced: input.forced },
+        { forced: input.forced, executableTools: input.executableTools },
       );
+      if (verdict === 'tool_work') return finishToolWork(message, toolResults, calls);
       const schema = input.schema;
       if (!schema) throw new Error('Structured submit schema unavailable');
       const candidate = repairedArguments ?? calls[0]?.arguments;
