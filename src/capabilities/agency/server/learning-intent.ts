@@ -36,6 +36,30 @@ import { type TaskTextRunFn, costUsdToMicroUsd } from './ai-runtime';
 export type { LearningIntentOutline } from '../tasks/learning-intent';
 export { LearningIntentError, parseLearningIntentOutline };
 
+export type LearningIntentDomainOutcome = 'outline_rejected' | 'proposal_failed';
+
+/** Domain rejection after the provider attempt already finished. The task run stays as the provider wrote it. */
+export interface LearningIntentFailureFact {
+  readonly taskRunId: string | null;
+  readonly costBasis: 'reported' | 'estimated' | 'unknown';
+  readonly domainOutcome: LearningIntentDomainOutcome;
+  readonly code: string;
+  readonly message: string;
+}
+
+const failureFacts = new WeakMap<object, LearningIntentFailureFact>();
+
+export function learningIntentFailureFact(err: unknown): LearningIntentFailureFact | null {
+  if (typeof err === 'object' && err !== null && failureFacts.has(err)) {
+    return failureFacts.get(err) ?? null;
+  }
+  return null;
+}
+
+function noteLearningIntentFailure(err: object, fact: LearningIntentFailureFact): void {
+  failureFacts.set(err, fact);
+}
+
 // ---------- Public types ----------
 
 export interface HubProposal {
@@ -194,8 +218,11 @@ async function loadChildren(db: Db, parentId: string): Promise<KnowledgeNodeRow[
  * Locate the topic in the knowledge graph, decide whether the graph needs bootstrapping,
  * ask the LLM for a 1-hub + N-atomic outline, then persist it as a `propose` event.
  *
- * Throws LearningIntentError for llm_parse_failed (output violates the outline schema) and
- * invalid_atomic_knowledge_id (hallucinated ids outside child_nodes / proposed children).
+ * Throws LearningIntentError for llm_parse_failed (output violates the outline schema),
+ * invalid_atomic_knowledge_id (hallucinated ids outside child_nodes / proposed children),
+ * and proposal_failed when the outline was usable but the proposal row did not commit.
+ * A failure after the provider returns is stamped with that attempt's task run and cost
+ * basis; the task run's provider outcome is left as recorded.
  */
 export async function planLearningIntent(
   params: PlanLearningIntentParams,
@@ -229,6 +256,42 @@ export async function planLearningIntent(
   const result = await runTaskFn('LearningIntentOutlineTask', input, {
     subjectProfile: resolveSubjectProfile(node?.domain),
   });
+  try {
+    return await persistLearningIntentOutline(db, topic, planCase, node, children, result);
+  } catch (err) {
+    const costBasis = result.cost_basis ?? 'unknown';
+    const taskRunId = result.task_run_id ?? null;
+    if (err instanceof LearningIntentError) {
+      noteLearningIntentFailure(err, {
+        taskRunId,
+        costBasis,
+        domainOutcome: 'outline_rejected',
+        code: err.code,
+        message: err.message,
+      });
+      throw err;
+    }
+    const message = err instanceof Error ? err.message : 'proposal persist failed';
+    const wrapped = new LearningIntentError('proposal_failed', message);
+    noteLearningIntentFailure(wrapped, {
+      taskRunId,
+      costBasis,
+      domainOutcome: 'proposal_failed',
+      code: 'proposal_failed',
+      message,
+    });
+    throw wrapped;
+  }
+}
+
+async function persistLearningIntentOutline(
+  db: Db,
+  topic: string,
+  planCase: LearningIntentPlanCase,
+  node: KnowledgeNodeRow | null,
+  children: KnowledgeNodeRow[],
+  result: Awaited<ReturnType<RunTaskFn>>,
+): Promise<LearningIntentProposal> {
   const outline = parseLearningIntentOutline(result.text);
 
   let knowledgeNode: LearningIntentProposal['knowledge_node'];

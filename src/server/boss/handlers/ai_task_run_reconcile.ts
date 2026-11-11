@@ -11,8 +11,8 @@ import type { Job } from 'pg-boss';
 import { STUCK_RUN_THRESHOLD_MS } from '@/core/ai-run-limits';
 import type { Db } from '@/db/client';
 import { ai_task_runs } from '@/db/schema';
+import { writeAiTaskAttemptFinished } from '@/kernel/records/ai-attempt-facts';
 import { unknownAttemptCostTruth } from '@/server/ai/attempt-cost';
-import { writeAiTaskAttemptFinished } from '@/server/ai/log';
 
 /** Shared lifetime boundary, also enforced by configuration and caller overrides. */
 export { STUCK_RUN_THRESHOLD_MS };

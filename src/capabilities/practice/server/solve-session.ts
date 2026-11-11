@@ -25,6 +25,10 @@ import type { Db } from '@/db/client';
 import { artifact, question } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { REASONING_TRACE_MAX_LEN } from '@/kernel/limits';
+import {
+  type LearnerCurriculum,
+  readLearnerCurriculum,
+} from '@/kernel/read-models/learner-curriculum';
 import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
 import { createAssessmentLearningRecord } from '@/kernel/records/queries';
 import { hasPriorSolutionExposure } from '@/kernel/records/study-reference';
@@ -168,6 +172,7 @@ function buildSolveHintInput(
     practice_dto?: PracticeIssuanceDtoT;
   },
   hintIndex: number,
+  curriculum: LearnerCurriculum,
 ) {
   const atomicSections: Record<string, string> = {};
   if (q.solution_md?.trim()) atomicSections.worked_solution = q.solution_md;
@@ -182,6 +187,7 @@ function buildSolveHintInput(
     },
     parent_hub_summary: null,
     ...(q.practice_dto ? { frozen_question: q.practice_dto } : {}),
+    curriculum,
     atomic_sections: Object.keys(atomicSections).length > 0 ? atomicSections : null,
     messages: [
       {
@@ -276,7 +282,8 @@ async function runSolveHintAttempt(params: PlanSolveHintParams): Promise<SolveHi
       409,
     );
   const context = await loadFrozenStudyContext(db, issuanceId, questionId);
-  const input = buildSolveHintInput(context, hintIndex);
+  const curriculum = await readLearnerCurriculum(db);
+  const input = buildSolveHintInput(context, hintIndex, curriculum);
   // T4 — one bounded budget covers frozen media load + provider call so
   // a slow upstream cannot push the route past the ~20s usable-help target.
   const signal = params.signal ?? AbortSignal.timeout(SOLVE_HINT_GENERATION_BUDGET_MS);
