@@ -25,6 +25,7 @@ import { startReviewSession, transitionReviewSessionState } from '../../session/
 import { type CollectedSignal, collectCandidateSignals } from './candidate-signals';
 import { DEFAULT_COMPOSE_LOCK_WAIT_MS, withinComposePaidWorkLock } from './compose-paid-work-lock';
 import { readQuestionPace } from './question-pace';
+import { selectScopedKnowledgeFill } from './scoped-fill';
 import {
   type SelectionObservationInput,
   recordSelectionObservation,
@@ -420,6 +421,59 @@ export async function composeNightly(
 
 const SCOPED_QUESTION_LIMIT = 5;
 
+/** Same KC already asking for questions in this process. Cooldown cannot see an event that is not written yet. */
+const scopedSupplyInFlight = new Set<string>();
+
+function scopedOpeningLine(label: string, itemCount: number, preparing: boolean): string {
+  if (itemCount === 0) {
+    return preparing ? `「${label}」正在准备更多题。` : `「${label}」暂时没有可练的已发布题目。`;
+  }
+  const base = `这里仅显示「${label}」相关的题目——按顺序练即可。`;
+  return preparing ? `${base}正在准备更多题。` : base;
+}
+
+/**
+ * Ask the existing supply dispatcher for this KC. Fingerprint matches the nightly
+ * frontier target, so the 7-day cooldown is shared. Returns true only while a supply
+ * job is actually live; manual, failed, or a cooldown skip over a finished job is false.
+ */
+async function requestScopedQuestionSupply(
+  db: Db,
+  knowledgeId: string,
+  gap: number,
+): Promise<boolean> {
+  if (scopedSupplyInFlight.has(knowledgeId)) return true;
+  scopedSupplyInFlight.add(knowledgeId);
+  try {
+    const { demandToSupplyTarget, dispatchSupplyTarget, inFlightSupplyCount } = await import(
+      '../../public'
+    );
+    const target = await demandToSupplyTarget(
+      db,
+      {
+        knowledgeId,
+        gapType: 'frontier_zero',
+        limit: SCOPED_QUESTION_LIMIT,
+        cause: 'scoped practice has fewer than 5 servable questions',
+      },
+      gap,
+    );
+    const result = await dispatchSupplyTarget(db, target, { actorRef: 'question_supply_scoped' });
+    // Only a live job is "preparing": manual has no queue, and a cooldown skip may point at a finished job.
+    if (result.status === 'dispatched') return true;
+    if (result.status !== 'skipped' || !result.stopCondition.startsWith('cooldown:')) return false;
+    return (await inFlightSupplyCount(db, result.fingerprint)) > 0;
+  } catch (err) {
+    console.error('[stream-store] scoped supply dispatch failed (best-effort)', {
+      knowledgeId,
+      err,
+    });
+    return false;
+  } finally {
+    scopedSupplyInFlight.delete(knowledgeId);
+  }
+}
+
 function scopedSessionDateBounds(date: string): { start: Date; end: Date } {
   const start = new Date(`${date}T00:00:00+08:00`);
   return { start, end: new Date(start.getTime() + 24 * 60 * 60 * 1000) };
@@ -459,7 +513,7 @@ async function materializeKnowledgeScopedSession(
   date: string,
   knowledgeId: string,
   knowledgeLabel: string,
-): Promise<{ sessionId: string; rows: StreamItemRow[] }> {
+): Promise<{ sessionId: string; rows: StreamItemRow[]; supplyGap: number }> {
   return db.transaction(async (tx) => {
     // Scope identity lock prevents two first opens from creating duplicate sessions. Once the
     // session is known, also take the physical partition lock shared with answer-time rerank so
@@ -482,12 +536,18 @@ async function materializeKnowledgeScopedSession(
       .where(streamPartitionPredicate(date, sessionId))
       .orderBy(asc(practice_stream_item.position));
     const eligibleExisting = (await filterProspectiveStreamQuestions(tx, existing)).rows;
+    let supplyGap = 0;
     if (session.status === 'started' && eligibleExisting.length < SCOPED_QUESTION_LIMIT) {
-      // Deterministic, local-only selection: a user-requested scope must not pay the daily LLM
-      // compose cost or inherit unrelated whole-profile candidates. Pull only published questions
-      // carrying this KC; keep the session snapshot stable and fill newly available vacancies.
+      // A scoped open stays on this KC and does not pay for the daily LLM compose.
+      // Today's rows stay put; only vacancies are filled.
       const candidates = await tx
-        .select({ id: question.id })
+        .select({
+          id: question.id,
+          kind: question.kind,
+          knowledgeIds: question.knowledge_ids,
+          difficulty: question.difficulty,
+          source: question.source,
+        })
         .from(question)
         .where(
           and(
@@ -496,29 +556,36 @@ async function materializeKnowledgeScopedSession(
             // 契约准入门：suspended/withdrawn 组不作 scoped 填空。
             questionSuspendedPredicate(question),
           ),
-        )
-        .orderBy(asc(question.difficulty), desc(question.updated_at), asc(question.id));
+        );
       const admittedIds = await readAutomaticallyServableQuestionIds(
         tx,
         candidates.map((row) => row.id),
+        { includeInterventionDiagnostics: true },
       );
       const existingRefs = new Set(existing.map((row) => row.ref_id));
-      const available = candidates
-        .filter((candidate) => admittedIds.has(candidate.id) && !existingRefs.has(candidate.id))
-        .slice(0, SCOPED_QUESTION_LIMIT - eligibleExisting.length);
-      if (available.length > 0) {
+      const fill = await selectScopedKnowledgeFill(tx, {
+        now: new Date(),
+        questions: candidates,
+        admittedIds,
+        alreadyPlacedIds: existingRefs,
+        limit: SCOPED_QUESTION_LIMIT - eligibleExisting.length,
+      });
+      if (fill.servableCount < SCOPED_QUESTION_LIMIT) {
+        supplyGap = SCOPED_QUESTION_LIMIT - fill.servableCount;
+      }
+      if (fill.ids.length > 0) {
         const now = new Date();
         const startPosition = existing.reduce((max, row) => Math.max(max, row.position), 0) + 1;
         await tx
           .insert(practice_stream_item)
           .values(
-            available.map((candidate, index) => ({
+            fill.ids.map((id, index) => ({
               id: newId(),
               date,
               session_id: sessionId,
               position: startPosition + index,
               item_kind: 'question' as const,
-              ref_id: candidate.id,
+              ref_id: id,
               source: 'on_demand' as const,
               status: 'pending' as const,
               reasoning: `你点了「${knowledgeLabel}」专项——这道题只来自该知识点的现有题库。`,
@@ -537,7 +604,7 @@ async function materializeKnowledgeScopedSession(
       .from(practice_stream_item)
       .where(streamPartitionPredicate(date, sessionId))
       .orderBy(asc(practice_stream_item.position));
-    return { sessionId, rows };
+    return { sessionId, rows, supplyGap };
   });
 }
 
@@ -558,13 +625,19 @@ async function getKnowledgeScopedStream(
 
   let sessionId: string | null;
   let rows: StreamItemRow[];
+  let preparing = false;
   if (materialize) {
-    ({ sessionId, rows } = await materializeKnowledgeScopedSession(
+    const materialized = await materializeKnowledgeScopedSession(
       db,
       date,
       knowledgeId,
       knowledgeRow.name,
-    ));
+    );
+    sessionId = materialized.sessionId;
+    rows = materialized.rows;
+    if (materialized.supplyGap > 0) {
+      preparing = await requestScopedQuestionSupply(db, knowledgeId, materialized.supplyGap);
+    }
   } else {
     const session = await findKnowledgeScopedSession(db, date, knowledgeId);
     sessionId = session?.id ?? null;
@@ -602,10 +675,7 @@ async function getKnowledgeScopedStream(
     budget,
     scope,
     questionMinutes: questionPace.minutes,
-    openingLine:
-      rows.length === 0
-        ? `「${knowledgeRow.name}」暂时没有可练的已发布题目。`
-        : `这里仅显示「${knowledgeRow.name}」相关的题目——按顺序练即可。`,
+    openingLine: scopedOpeningLine(knowledgeRow.name, rows.length, preparing),
   });
 }
 
