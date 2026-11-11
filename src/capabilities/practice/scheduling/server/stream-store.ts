@@ -29,6 +29,7 @@ import {
 import { type CollectedSignal, collectCandidateSignals } from './candidate-signals';
 import { DEFAULT_COMPOSE_LOCK_WAIT_MS, withinComposePaidWorkLock } from './compose-paid-work-lock';
 import { readQuestionPace } from './question-pace';
+import { selectScopedKnowledgeFill } from './scoped-fill';
 import {
   type SelectionObservationInput,
   recordSelectionObservation,
@@ -40,6 +41,7 @@ import {
   type ComposeSoftmaxResult,
   composeSoftmaxStream,
 } from './softmax-selection';
+import { withdrawStalePendingDueLines } from './stale-due-lines';
 import { planStoredStreamBudgetTrim, storedStreamExceedsBudget } from './stored-stream-budget';
 import { estimateStreamItemMinutes } from './stream-budget';
 import { type ComposerInputs, type StreamPlan, composeDailyStream } from './stream-composer';
@@ -424,6 +426,59 @@ export async function composeNightly(
 
 const SCOPED_QUESTION_LIMIT = 5;
 
+/** Same KC already asking for questions in this process. Cooldown cannot see an event that is not written yet. */
+const scopedSupplyInFlight = new Set<string>();
+
+function scopedOpeningLine(label: string, itemCount: number, preparing: boolean): string {
+  if (itemCount === 0) {
+    return preparing ? `「${label}」正在准备更多题。` : `「${label}」暂时没有可练的已发布题目。`;
+  }
+  const base = `这里仅显示「${label}」相关的题目——按顺序练即可。`;
+  return preparing ? `${base}正在准备更多题。` : base;
+}
+
+/**
+ * Ask the existing supply dispatcher for this KC. Fingerprint matches the nightly
+ * frontier target, so the 7-day cooldown is shared. Returns true only while a supply
+ * job is actually live; manual, failed, or a cooldown skip over a finished job is false.
+ */
+async function requestScopedQuestionSupply(
+  db: Db,
+  knowledgeId: string,
+  gap: number,
+): Promise<boolean> {
+  if (scopedSupplyInFlight.has(knowledgeId)) return true;
+  scopedSupplyInFlight.add(knowledgeId);
+  try {
+    const { demandToSupplyTarget, dispatchSupplyTarget, inFlightSupplyCount } = await import(
+      '../../public'
+    );
+    const target = await demandToSupplyTarget(
+      db,
+      {
+        knowledgeId,
+        gapType: 'frontier_zero',
+        limit: SCOPED_QUESTION_LIMIT,
+        cause: 'scoped practice has fewer than 5 servable questions',
+      },
+      gap,
+    );
+    const result = await dispatchSupplyTarget(db, target, { actorRef: 'question_supply_scoped' });
+    // Only a live job is "preparing": manual has no queue, and a cooldown skip may point at a finished job.
+    if (result.status === 'dispatched') return true;
+    if (result.status !== 'skipped' || !result.stopCondition.startsWith('cooldown:')) return false;
+    return (await inFlightSupplyCount(db, result.fingerprint)) > 0;
+  } catch (err) {
+    console.error('[stream-store] scoped supply dispatch failed (best-effort)', {
+      knowledgeId,
+      err,
+    });
+    return false;
+  } finally {
+    scopedSupplyInFlight.delete(knowledgeId);
+  }
+}
+
 function scopedSessionDateBounds(date: string): { start: Date; end: Date } {
   const start = new Date(`${date}T00:00:00+08:00`);
   return { start, end: new Date(start.getTime() + 24 * 60 * 60 * 1000) };
@@ -463,7 +518,7 @@ async function materializeKnowledgeScopedSession(
   date: string,
   knowledgeId: string,
   knowledgeLabel: string,
-): Promise<{ sessionId: string; rows: StreamItemRow[] }> {
+): Promise<{ sessionId: string; rows: StreamItemRow[]; supplyGap: number }> {
   return db.transaction(async (tx) => {
     // Scope identity lock prevents two first opens from creating duplicate sessions. Once the
     // session is known, also take the physical partition lock shared with answer-time rerank so
@@ -486,12 +541,18 @@ async function materializeKnowledgeScopedSession(
       .where(streamPartitionPredicate(date, sessionId))
       .orderBy(asc(practice_stream_item.position));
     const eligibleExisting = (await filterProspectiveStreamQuestions(tx, existing)).rows;
+    let supplyGap = 0;
     if (session.status === 'started' && eligibleExisting.length < SCOPED_QUESTION_LIMIT) {
-      // Deterministic, local-only selection: a user-requested scope must not pay the daily LLM
-      // compose cost or inherit unrelated whole-profile candidates. Pull only published questions
-      // carrying this KC; keep the session snapshot stable and fill newly available vacancies.
+      // A scoped open stays on this KC and does not pay for the daily LLM compose.
+      // Today's rows stay put; only vacancies are filled.
       const candidates = await tx
-        .select({ id: question.id })
+        .select({
+          id: question.id,
+          kind: question.kind,
+          knowledgeIds: question.knowledge_ids,
+          difficulty: question.difficulty,
+          source: question.source,
+        })
         .from(question)
         .where(
           and(
@@ -500,29 +561,36 @@ async function materializeKnowledgeScopedSession(
             // 契约准入门：suspended/withdrawn 组不作 scoped 填空。
             questionSuspendedPredicate(question),
           ),
-        )
-        .orderBy(asc(question.difficulty), desc(question.updated_at), asc(question.id));
+        );
       const admittedIds = await readAutomaticallyServableQuestionIds(
         tx,
         candidates.map((row) => row.id),
+        { includeInterventionDiagnostics: true },
       );
       const existingRefs = new Set(existing.map((row) => row.ref_id));
-      const available = candidates
-        .filter((candidate) => admittedIds.has(candidate.id) && !existingRefs.has(candidate.id))
-        .slice(0, SCOPED_QUESTION_LIMIT - eligibleExisting.length);
-      if (available.length > 0) {
+      const fill = await selectScopedKnowledgeFill(tx, {
+        now: new Date(),
+        questions: candidates,
+        admittedIds,
+        alreadyPlacedIds: existingRefs,
+        limit: SCOPED_QUESTION_LIMIT - eligibleExisting.length,
+      });
+      if (fill.servableCount < SCOPED_QUESTION_LIMIT) {
+        supplyGap = SCOPED_QUESTION_LIMIT - fill.servableCount;
+      }
+      if (fill.ids.length > 0) {
         const now = new Date();
         const startPosition = existing.reduce((max, row) => Math.max(max, row.position), 0) + 1;
         await tx
           .insert(practice_stream_item)
           .values(
-            available.map((candidate, index) => ({
+            fill.ids.map((id, index) => ({
               id: newId(),
               date,
               session_id: sessionId,
               position: startPosition + index,
               item_kind: 'question' as const,
-              ref_id: candidate.id,
+              ref_id: id,
               source: 'on_demand' as const,
               status: 'pending' as const,
               reasoning: `你点了「${knowledgeLabel}」专项——这道题只来自该知识点的现有题库。`,
@@ -541,7 +609,7 @@ async function materializeKnowledgeScopedSession(
       .from(practice_stream_item)
       .where(streamPartitionPredicate(date, sessionId))
       .orderBy(asc(practice_stream_item.position));
-    return { sessionId, rows };
+    return { sessionId, rows, supplyGap };
   });
 }
 
@@ -562,13 +630,19 @@ async function getKnowledgeScopedStream(
 
   let sessionId: string | null;
   let rows: StreamItemRow[];
+  let preparing = false;
   if (materialize) {
-    ({ sessionId, rows } = await materializeKnowledgeScopedSession(
+    const materialized = await materializeKnowledgeScopedSession(
       db,
       date,
       knowledgeId,
       knowledgeRow.name,
-    ));
+    );
+    sessionId = materialized.sessionId;
+    rows = materialized.rows;
+    if (materialized.supplyGap > 0) {
+      preparing = await requestScopedQuestionSupply(db, knowledgeId, materialized.supplyGap);
+    }
   } else {
     const session = await findKnowledgeScopedSession(db, date, knowledgeId);
     sessionId = session?.id ?? null;
@@ -606,10 +680,7 @@ async function getKnowledgeScopedStream(
     budget,
     scope,
     questionMinutes: questionPace.minutes,
-    openingLine:
-      rows.length === 0
-        ? `「${knowledgeRow.name}」暂时没有可练的已发布题目。`
-        : `这里仅显示「${knowledgeRow.name}」相关的题目——按顺序练即可。`,
+    openingLine: scopedOpeningLine(knowledgeRow.name, rows.length, preparing),
   });
 }
 
@@ -709,6 +780,17 @@ export async function getStream(
       });
     }
 
+    rows = await db
+      .select()
+      .from(practice_stream_item)
+      .where(streamPartitionPredicate(date))
+      .orderBy(asc(practice_stream_item.position));
+  }
+
+  const hasPendingDecay = rows.some(
+    (row) => row.status === 'pending' && row.item_kind === 'question' && row.source === 'decay',
+  );
+  if (hasPendingDecay && (await withdrawStalePendingDueLines(db, date)) > 0) {
     rows = await db
       .select()
       .from(practice_stream_item)
@@ -966,8 +1048,10 @@ export async function recomposeStream(
 // as compose), excluding frozen refs. targetCount is the number of replaceable pending
 // slots, not the pool size, so sampling is real IPPS (π_i < 1).
 // - Only items touching the answered question's KCs are reranked. Unrelated pending
-// items, due rows, paper rows, recall-locked rows, and done/in_progress/skipped rows
-// stay frozen: not deleted, not moved, not re-sampled.
+// items, paper rows, recall-locked rows, and done/in_progress/skipped rows stay
+// frozen: not deleted, not moved, not re-sampled. Pending decay rows whose card is
+// no longer due today, or whose knowledge was settled after the row was written,
+// are removed first; the decay rows that remain stay frozen.
 // - A row whose snapshot is not recall-locked but whose fresh classification is recall
 // stays in place (fail-closed); never drop it into a freed slot.
 // - Sample sizes fluctuate. Delete only slots that will actually be refilled
@@ -1004,30 +1088,35 @@ export async function reRankAfterAnswer(
 ): Promise<number> {
   const { date, sessionId, answeredQuestionId } = opts;
 
-  // 受影响 KC = 刚答完那题的 knowledge_ids。空 → 无 θ̂ 移动锚点 → no-op（不触发重排）。
+  // 受影响 KC = 刚答完那题的 knowledge_ids。空则没有 θ̂ 锚点，不重排非到期行；
+  // 过期的待做到期行仍先撤下。
   const [answered] = await db
     .select({ knowledge_ids: question.knowledge_ids })
     .from(question)
     .where(eq(question.id, answeredQuestionId))
     .limit(1);
   const affectedKnowledgeIds = new Set((answered?.knowledge_ids ?? []).filter(Boolean));
-  if (affectedKnowledgeIds.size === 0) return 0;
 
   const { added, observations } = await db.transaction(async (tx) => {
     // Same key as every compose path, so rerank cannot race lazy/recompose/nightly.
     await lockPracticeStreamPartition(tx, date, sessionId);
+    // Pending decay rows that are no longer due today, or whose knowledge was settled
+    // after the row was written, leave before rerank. The decay rows that remain,
+    // plus paper, recall-locked, and completed/in-progress/skipped rows, stay frozen.
+    await withdrawStalePendingDueLines(tx, date, sessionId);
 
     const rows = await tx
       .select()
       .from(practice_stream_item)
       .where(streamPartitionPredicate(date, sessionId))
       .orderBy(asc(practice_stream_item.position));
-    if (rows.length === 0) return { added: 0, observations: [] } satisfies ComposeOutcome;
+    if (affectedKnowledgeIds.size === 0 || rows.length === 0) {
+      return { added: 0, observations: [] } satisfies ComposeOutcome;
+    }
 
     // Rerank scope: pending question items from variant/new_check whose snapshot is not
-    // recall-locked. Due rows, paper rows, recall-locked rows, and completed/in-progress/
-    // skipped rows are frozen. Frontier items are sampled at compose time but excluded
-    // here: frontier signals structural reachability, not θ̂ diagnostics, so answering must
+    // recall-locked. Frontier items are sampled at compose time but excluded here:
+    // frontier signals structural reachability, not θ̂ diagnostics, so answering must
     // not churn them. Changing either side must preserve that split.
     const allPendingNonDue = rows.filter(
       (r) =>

@@ -1,7 +1,8 @@
 // YUK-266 (C1) — streamTaskCollecting: a collecting variant of streamTask that
 // streams text deltas to an onDelta callback then resolves the full RunTaskResult.
 // Pure no-DB unit (post YUK-1025 P4): a fake ExecutionAdapter injected via
-// __setPiAdapterForTests replays scripted frames and @/server/ai/log is vi.mock'd,
+// __setPiAdapterForTests replays scripted frames. Start/retry stay mocked on
+// @/server/ai/log; finish writers are mocked on @/kernel/records/ai-attempt-facts,
 // so no live Postgres is needed — mirrors the sibling stream-cancel.test.ts
 // (both live in fastTestInclude).
 
@@ -73,52 +74,61 @@ const logMocks = vi.hoisted(() => ({
 vi.mock('@/server/ai/log', () => ({
   logMissingToolMountsWarning: vi.fn(),
   writeAiTaskRunStarted: logMocks.started,
-  writeAiTaskRunFinished: logMocks.finished,
   writeAiTaskRunRetried: vi.fn(async () => true),
   writeCostLedger: logMocks.cost,
-  writeAiTaskAttemptFinished: vi.fn(
-    async (
-      db: unknown,
-      row: {
-        id: string;
-        status: string;
-        finish_reason: string;
-        usage: unknown;
-        cost_truth: { amountUsd: number | null; basis: string; ref: string };
-        error_message?: string;
-        outcome: string;
-      },
-    ) => {
-      logMocks.terminalStatuses.push(row.status);
-      if (logMocks.finishedFailuresRemaining > 0) {
-        logMocks.finishedFailuresRemaining -= 1;
-        throw new Error('db down once');
-      }
-      if (logMocks.finishedShouldThrow) throw new Error('db down');
-      await logMocks.finished(db, {
-        id: row.id,
-        status: row.status,
-        finish_reason: row.finish_reason,
-        usage: row.usage,
-        cost_usd: row.cost_truth.amountUsd ?? undefined,
-        cost_basis: row.cost_truth.basis,
-        cost_ref: row.cost_truth.ref,
-        error_message: row.error_message,
-      });
-      const usage = row.usage as { inputTokens?: number; outputTokens?: number } | undefined;
-      await logMocks.cost(db, {
-        task_run_id: row.id,
-        cost: row.cost_truth.amountUsd,
-        cost_basis: row.cost_truth.basis,
-        cost_ref: row.cost_truth.ref,
-        tokens_in: usage?.inputTokens ?? 0,
-        tokens_out: usage?.outputTokens ?? 0,
-        outcome: row.outcome,
-      });
-      return true;
-    },
-  ),
 }));
+
+vi.mock('@/kernel/records/ai-attempt-facts', async () => {
+  const actual = await vi.importActual<typeof import('@/kernel/records/ai-attempt-facts')>(
+    '@/kernel/records/ai-attempt-facts',
+  );
+  return {
+    ...actual,
+    writeAiTaskRunFinished: logMocks.finished,
+    writeAiTaskAttemptFinished: vi.fn(
+      async (
+        db: unknown,
+        row: {
+          id: string;
+          status: string;
+          finish_reason: string;
+          usage: unknown;
+          cost_truth: { amountUsd: number | null; basis: string; ref: string };
+          error_message?: string;
+          outcome: string;
+        },
+      ) => {
+        logMocks.terminalStatuses.push(row.status);
+        if (logMocks.finishedFailuresRemaining > 0) {
+          logMocks.finishedFailuresRemaining -= 1;
+          throw new Error('db down once');
+        }
+        if (logMocks.finishedShouldThrow) throw new Error('db down');
+        await logMocks.finished(db, {
+          id: row.id,
+          status: row.status,
+          finish_reason: row.finish_reason,
+          usage: row.usage,
+          cost_usd: row.cost_truth.amountUsd ?? undefined,
+          cost_basis: row.cost_truth.basis,
+          cost_ref: row.cost_truth.ref,
+          error_message: row.error_message,
+        });
+        const usage = row.usage as { inputTokens?: number; outputTokens?: number } | undefined;
+        await logMocks.cost(db, {
+          task_run_id: row.id,
+          cost: row.cost_truth.amountUsd,
+          cost_basis: row.cost_truth.basis,
+          cost_ref: row.cost_truth.ref,
+          tokens_in: usage?.inputTokens ?? 0,
+          tokens_out: usage?.outputTokens ?? 0,
+          outcome: row.outcome,
+        });
+        return true;
+      },
+    ),
+  };
+});
 
 vi.mock('@/kernel/tools/call-evidence', () => ({
   writeToolCallLog: vi.fn(async () => 'tool-log-id'),
@@ -311,6 +321,8 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
     expect(JSON.stringify(records)).not.toContain('SECRET_INPUT');
   });
 
+  // @invariant security: a collected run's finish payload omits raw assistant reasoning text
+  // @fails-if thinking-block text is copied into the persisted finish record
   it('carries thinking-block metadata without streaming or logging raw reasoning', async () => {
     mockPi.messages = [assistantThinking('hidden reasoning'), assistant('answer'), resultMsg];
     const deltas: string[] = [];
@@ -329,7 +341,7 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
       thinkingCharacters: 16,
     });
     expect(deltas).toEqual(['answer']);
-    const { writeAiTaskRunFinished } = await import('@/server/ai/log');
+    const { writeAiTaskRunFinished } = await import('@/kernel/records/ai-attempt-facts');
     const finished = (writeAiTaskRunFinished as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[1];
     expect(JSON.stringify(finished)).not.toContain('hidden reasoning');
   });
