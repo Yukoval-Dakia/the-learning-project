@@ -434,8 +434,8 @@ function scopedOpeningLine(label: string, itemCount: number, preparing: boolean)
 
 /**
  * Ask the existing supply dispatcher for this KC. Fingerprint matches the nightly
- * frontier target, so the 7-day cooldown is shared. A skip means that dispatch is
- * already on the ledger. Enqueue failure leaves the stream sentence unchanged.
+ * frontier target, so the 7-day cooldown is shared. Returns true only while a supply
+ * job is actually live; manual, failed, or a cooldown skip over a finished job is false.
  */
 async function requestScopedQuestionSupply(
   db: Db,
@@ -445,7 +445,9 @@ async function requestScopedQuestionSupply(
   if (scopedSupplyInFlight.has(knowledgeId)) return true;
   scopedSupplyInFlight.add(knowledgeId);
   try {
-    const { demandToSupplyTarget, dispatchSupplyTarget } = await import('../../public');
+    const { demandToSupplyTarget, dispatchSupplyTarget, inFlightSupplyCount } = await import(
+      '../../public'
+    );
     const target = await demandToSupplyTarget(
       db,
       {
@@ -457,7 +459,10 @@ async function requestScopedQuestionSupply(
       gap,
     );
     const result = await dispatchSupplyTarget(db, target, { actorRef: 'question_supply_scoped' });
-    return result.status !== 'failed';
+    // Only a live job is "preparing": manual has no queue, and a cooldown skip may point at a finished job.
+    if (result.status === 'dispatched') return true;
+    if (result.status !== 'skipped' || !result.stopCondition.startsWith('cooldown:')) return false;
+    return (await inFlightSupplyCount(db, result.fingerprint)) > 0;
   } catch (err) {
     console.error('[stream-store] scoped supply dispatch failed (best-effort)', {
       knowledgeId,

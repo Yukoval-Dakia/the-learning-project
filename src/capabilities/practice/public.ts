@@ -174,6 +174,9 @@ export const demandToSupplyTarget: typeof import('./question-bank/public').deman
 export const dispatchSupplyTarget: typeof import('./supply/public').dispatchSupplyTarget = async (
   ...args
 ) => (await import('./supply/public')).dispatchSupplyTarget(...args);
+export const inFlightSupplyCount: typeof import('./supply/public').inFlightSupplyCount = async (
+  ...args
+) => (await import('./supply/public')).inFlightSupplyCount(...args);
 export const runQuestionSupplyNightly: typeof import('./supply/public').runQuestionSupplyNightly =
   async (...args) => (await import('./supply/public')).runQuestionSupplyNightly(...args);
 export const recoverHeldServingRechecks: typeof import('./question-bank/public').recoverHeldServingRechecks =
