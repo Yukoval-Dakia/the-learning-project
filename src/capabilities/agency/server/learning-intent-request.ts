@@ -620,22 +620,24 @@ function classifyOutlineFailure(err: unknown, requestId: string): OutlineFailure
     };
   }
   if (!(err instanceof AgentRunError)) return { kind: 'not_sent', error: err };
-  switch (err.subtype) {
-    case 'stream_no_terminal':
-      return { kind: 'unresolved' };
-    default:
-      return {
-        kind: 'known',
-        receipt: providerFailedReceipt(err, requestId),
-        error: domainError(
-          'provider_failed',
-          'provider attempt failed',
-          requestId,
-          err.taskRunId,
-          'provider_failed',
-        ),
-      };
+  // Sent with unknown outcome (stream drop, or connection-class drop with no HTTP status): never settle or resend.
+  if (
+    err.subtype === 'stream_no_terminal' ||
+    (err.subtype === 'api_error_result' && err.apiErrorStatus === null)
+  ) {
+    return { kind: 'unresolved' };
   }
+  return {
+    kind: 'known',
+    receipt: providerFailedReceipt(err, requestId),
+    error: domainError(
+      'provider_failed',
+      'provider attempt failed',
+      requestId,
+      err.taskRunId,
+      'provider_failed',
+    ),
+  };
 }
 
 async function settleWinnerFailure(
