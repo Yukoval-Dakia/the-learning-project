@@ -44,6 +44,7 @@ import {
   LearningIntentStaleError,
   acceptLearningIntent,
 } from './learning-intent';
+import { learningIntentTopic, sealLearningIntentOutlineReceipt } from './learning-intent-request';
 import type { ProposalInboxRow } from './proposal-lifecycle';
 
 export interface AgencyApplierOpts {
@@ -261,6 +262,8 @@ export async function acceptLearningItemProposal(
     }
     throw err;
   }
+  const topic = learningIntentTopic(proposal.payload);
+  if (topic) await sealLearningIntentOutlineReceipt(db, topic, proposalId);
   if (run.outcome !== 'accepted') return run.result;
 
   const enqueued = await enqueueLearningIntentNotes(

@@ -30844,6 +30844,11 @@ export interface operations {
                             /** @enum {string} */
                             item_kind: "question" | "paper";
                             knowledge_name: string | null;
+                            knowledge_notes: {
+                                knowledge_id: string;
+                                note_id: string;
+                                title: string;
+                            }[];
                             paper_title: string | null;
                             position: number;
                             reasoning: string;
@@ -31014,6 +31019,11 @@ export interface operations {
                             /** @enum {string} */
                             item_kind: "question" | "paper";
                             knowledge_name: string | null;
+                            knowledge_notes: {
+                                knowledge_id: string;
+                                note_id: string;
+                                title: string;
+                            }[];
                             paper_title: string | null;
                             position: number;
                             reasoning: string;
@@ -31175,6 +31185,11 @@ export interface operations {
                             /** @enum {string} */
                             item_kind: "question" | "paper";
                             knowledge_name: string | null;
+                            knowledge_notes: {
+                                knowledge_id: string;
+                                note_id: string;
+                                title: string;
+                            }[];
                             paper_title: string | null;
                             position: number;
                             reasoning: string;
@@ -37736,7 +37751,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Runtime is runnable under the DB contract epoch */
+            /** @description Runtime is runnable under the DB contract epoch. commit is a 9-char source SHA, or null. */
             200: {
                 headers: {
                     [name: string]: unknown;
