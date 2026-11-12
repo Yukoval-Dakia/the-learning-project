@@ -130,6 +130,7 @@ export const dbTestInclude = [
   'src/capabilities/ingestion/api/assets.db.test.ts',
   'src/capabilities/ingestion/api/import.db.test.ts',
   'src/capabilities/ingestion/jobs/tencent_ocr_extract.concurrency.db.test.ts',
+  'src/capabilities/ingestion/jobs/structure-subject.db.test.ts',
   'src/capabilities/ingestion/server/assessment-capture.db.test.ts',
   'src/capabilities/ingestion/server/auto-enroll.db.test.ts',
   'src/capabilities/ingestion/server/extract-cost-identity.db.test.ts',
