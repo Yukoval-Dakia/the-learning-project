@@ -328,9 +328,7 @@ function AiFailureNotice() {
   // the closed list can't be read, the failures still show.
   if (digestQuery.isPending || alertsQuery.isPending || dismissedQuery.isPending) return null;
   const closed = new Set(dismissedQuery.data?.keys ?? []);
-  const failing = failureNoticeKeys({ digest, alerts: alerts?.alerts }).filter(
-    (key) => !closed.has(key),
-  );
+  const failing = failureNoticeKeys({ digest, alerts: alerts?.alerts, closed });
   const dependencies = (alerts?.dependency_notices ?? []).filter(
     (notice) => !closed.has(dependencyNoticeKey(notice)),
   );

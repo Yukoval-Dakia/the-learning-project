@@ -42563,6 +42563,7 @@ export interface operations {
                         };
                         degraded_kinds: {
                             error_count: number;
+                            last_at: string;
                             recent_error_messages: string[];
                             task_kind: string;
                         }[];

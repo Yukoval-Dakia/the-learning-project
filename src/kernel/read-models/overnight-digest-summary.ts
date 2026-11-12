@@ -195,6 +195,8 @@ export function computeDegradedKinds(
       task_kind,
       error_count: errors.length + scans.length,
       recent_error_messages: samples.slice(0, DEGRADED_KIND_SAMPLE_SIZE).map((s) => s.message),
+      // Samples are newest-first, so the head is the latest failure of this kind.
+      last_at: samples[0].at,
     });
   }
   return out.sort((a, b) => a.task_kind.localeCompare(b.task_kind));

@@ -35,6 +35,8 @@ export interface DegradedKind {
   error_count: number;
   /** Most recent first; the aggregator truncates long strings. */
   recent_error_messages: string[];
+  /** Newest failure time in the window; the notice key uses it to tell episodes apart. */
+  last_at: string;
 }
 
 /** Five-source overnight facts shared by Today and Copilot. */
