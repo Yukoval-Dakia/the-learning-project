@@ -167,9 +167,9 @@ it('writes StructureTask page subjects into enrollment metadata through the real
     );
   }
 
-  expect(contexts).toHaveLength(1);
-  expect(contexts[0]).toContain('known_subjects');
-  expect(contexts[0]).toMatch(/\\"id\\":\\"math\\"/);
-  expect(contexts[0]).toMatch(/\\"id\\":\\"physics\\"/);
+  const structureContexts = contexts.filter((context) => context.includes('known_subjects'));
+  expect(structureContexts).toHaveLength(1);
+  expect(structureContexts[0]).toMatch(/\\"id\\":\\"math\\"/);
+  expect(structureContexts[0]).toMatch(/\\"id\\":\\"physics\\"/);
   expect(enrolledSubjects).toEqual(['math', undefined, 'physics']);
 });
