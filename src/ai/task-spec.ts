@@ -79,6 +79,8 @@ export interface StructuredSubmitUnitPlan {
   readonly expectedUnitIds: readonly string[];
   /** Reads the submitted unit and its id off submit arguments (pre- or post-parse). */
   readonly unitOf: (submitted: unknown) => { id: unknown; unit: unknown };
+  /** Optional batch envelope; every extracted unit still passes normal unit admission. */
+  readonly unitsOf?: (submitted: unknown) => readonly unknown[] | undefined;
   /** Wraps the schema-parsed submit arguments (expectedUnitIds order) into the full output. */
   readonly assemble: (units: readonly unknown[]) => unknown;
   /** Field-level checks for one parsed submit; unit coverage is owned by the submit loop. */

@@ -8,6 +8,7 @@
 export const DOMAIN_TOOL_MCP_SERVER_NAME = 'loom';
 
 export const READ_TOOLS = [
+  'backtrace',
   'query_mistakes',
   'query_events',
   'get_attempt_context',
@@ -204,6 +205,7 @@ const KNOWLEDGE_REVIEW_TOOLS = [
 // 字面量：src/ai/registry.ts 是浏览器共享面，不能经 import 把 @/capabilities
 // 拉进 web bundle（plan 裁决 h）。
 export const COPILOT_TOOLS = [
+  'backtrace',
   'submit_review_answer',
   'query_context',
   'generate_goal_outline',

@@ -391,6 +391,10 @@ export const PROVIDER_LANES = [
     ],
     directImporters: [
       { path: 'src/capabilities/ingestion/server/knowledge-namer.ts', kind: 'runtime' },
+      {
+        path: 'src/capabilities/practice/failure-learning/server/backtrace-writer.ts',
+        kind: 'runtime',
+      },
       { path: 'src/capabilities/practice/question-bank/jobs/embed_backfill.ts', kind: 'runtime' },
       {
         path: 'src/capabilities/practice/question-bank/server/admission/solution-prior-vectors.ts',

@@ -77,6 +77,9 @@ export {
 // Binds the operations Practice owns behind kernel ports that API routes and worker
 // jobs both call. Hosts call this before serving or mounting handlers.
 async function installPracticeHostOperationPorts(): Promise<void> {
+  const { installBacktraceContextReader } = await import('@/kernel/read-models/backtrace');
+  const { backtraceContext } = await import('./failure-learning/public');
+  installBacktraceContextReader(backtraceContext);
   const [
     { installReviewAnswerBindingOperations },
     { installReviewDueReader },

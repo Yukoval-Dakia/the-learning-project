@@ -2186,6 +2186,19 @@
     ]
   },
   {
+    "path": "/api/backtrace/attempts/:attemptEventId",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "读取有效作答的相似错法与本人解法缓存",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "内部 token 保护；buffered 不返回判分或历史；pending_insight/judging 返回已可用同题历史。"
+      }
+    ]
+  },
+  {
     "path": "/api/copilot/sessions/:id/delete",
     "methods": [
       {

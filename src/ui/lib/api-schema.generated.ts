@@ -708,6 +708,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/backtrace/attempts/{attemptEventId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getBacktrace"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/conjecture/probe/{id}/answer": {
         parameters: {
             query?: never;
@@ -11218,6 +11234,363 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    getBacktrace: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                attemptEventId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        anchor: {
+                            attempt_event_id: string;
+                            insight?: {
+                                backfill_run_id?: string;
+                                /** @enum {string} */
+                                image_status: "none" | "text_available" | "unavailable";
+                                input_digest: string;
+                                /** @enum {string} */
+                                insight_version: "attempt-insight-v2";
+                                mechanism: {
+                                    quote?: string;
+                                    quote_verified: boolean;
+                                    trigger_md: string;
+                                    what_went_wrong_md: string;
+                                    wrong_step_k?: string;
+                                } | null;
+                                method: {
+                                    core_idea_md: string;
+                                    evidence_quotes: string[];
+                                    key_step_md: string;
+                                    /** @enum {string} */
+                                    provenance: "evidence" | "inferred";
+                                    steps: {
+                                        k: string;
+                                        quote?: string;
+                                        quote_verified: boolean;
+                                        text_md: string;
+                                    }[];
+                                } | null;
+                                needed_method: {
+                                    core_idea_md: string;
+                                    key_step_md: string;
+                                } | null;
+                                no_description_reason: string | null;
+                                question_id: string;
+                                source_event_ids: string[];
+                                user_cause_event_id: string | null;
+                                verdict_seen: {
+                                    evaluation_id: string | null;
+                                    judge_event_id: string | null;
+                                    /** @enum {string} */
+                                    outcome: "success" | "partial" | "failure";
+                                };
+                            };
+                            /** @enum {string} */
+                            outcome: "success" | "partial" | "failure";
+                            question_id: string;
+                        } | null;
+                        broader: {
+                            answer_md: string;
+                            attempt_event_id: string;
+                            created_at: string;
+                            evidence: {
+                                now: string;
+                                prior: string;
+                            } | null;
+                            insight: {
+                                backfill_run_id?: string;
+                                /** @enum {string} */
+                                image_status: "none" | "text_available" | "unavailable";
+                                input_digest: string;
+                                /** @enum {string} */
+                                insight_version: "attempt-insight-v2";
+                                mechanism: {
+                                    quote?: string;
+                                    quote_verified: boolean;
+                                    trigger_md: string;
+                                    what_went_wrong_md: string;
+                                    wrong_step_k?: string;
+                                } | null;
+                                method: {
+                                    core_idea_md: string;
+                                    evidence_quotes: string[];
+                                    key_step_md: string;
+                                    /** @enum {string} */
+                                    provenance: "evidence" | "inferred";
+                                    steps: {
+                                        k: string;
+                                        quote?: string;
+                                        quote_verified: boolean;
+                                        text_md: string;
+                                    }[];
+                                } | null;
+                                needed_method: {
+                                    core_idea_md: string;
+                                    key_step_md: string;
+                                } | null;
+                                no_description_reason: string | null;
+                                question_id: string;
+                                source_event_ids: string[];
+                                user_cause_event_id: string | null;
+                                verdict_seen: {
+                                    evaluation_id: string | null;
+                                    judge_event_id: string | null;
+                                    /** @enum {string} */
+                                    outcome: "success" | "partial" | "failure";
+                                };
+                            };
+                            /** @enum {string} */
+                            outcome: "success" | "partial" | "failure";
+                            prompt_snippet: string | null;
+                            question_id: string;
+                            /** @enum {string} */
+                            relation: "same_mechanism" | "same_method" | "needs_this_method" | "not_similar";
+                            score: number;
+                            shared_step: {
+                                now_k: string;
+                                then_k: string;
+                            } | null;
+                            signals: {
+                                /** @enum {string} */
+                                basis: "same_question_history";
+                                count: number;
+                                error_rate: number;
+                                fixed_later: boolean;
+                                generic: number;
+                                last_seen_at: string;
+                                sim: number;
+                            };
+                            /** @enum {string} */
+                            specificity: "specific" | "broad";
+                            why_md: string;
+                        }[];
+                        failure?: {
+                            cost_upper_usd: number | null;
+                            reason_md: string;
+                        };
+                        judgement: {
+                            event_id: string;
+                            judged_at: string;
+                            task_run_id: string | null;
+                        } | null;
+                        same_question: {
+                            answer_md: string;
+                            attempt_event_id: string;
+                            created_at: string;
+                            insight: {
+                                backfill_run_id?: string;
+                                /** @enum {string} */
+                                image_status: "none" | "text_available" | "unavailable";
+                                input_digest: string;
+                                /** @enum {string} */
+                                insight_version: "attempt-insight-v2";
+                                mechanism: {
+                                    quote?: string;
+                                    quote_verified: boolean;
+                                    trigger_md: string;
+                                    what_went_wrong_md: string;
+                                    wrong_step_k?: string;
+                                } | null;
+                                method: {
+                                    core_idea_md: string;
+                                    evidence_quotes: string[];
+                                    key_step_md: string;
+                                    /** @enum {string} */
+                                    provenance: "evidence" | "inferred";
+                                    steps: {
+                                        k: string;
+                                        quote?: string;
+                                        quote_verified: boolean;
+                                        text_md: string;
+                                    }[];
+                                } | null;
+                                needed_method: {
+                                    core_idea_md: string;
+                                    key_step_md: string;
+                                } | null;
+                                no_description_reason: string | null;
+                                question_id: string;
+                                source_event_ids: string[];
+                                user_cause_event_id: string | null;
+                                verdict_seen: {
+                                    evaluation_id: string | null;
+                                    judge_event_id: string | null;
+                                    /** @enum {string} */
+                                    outcome: "success" | "partial" | "failure";
+                                };
+                            } | null;
+                            /** @enum {string} */
+                            outcome: "success" | "partial" | "failure";
+                            question_id: string;
+                        }[];
+                        similar_mistakes: {
+                            answer_md: string;
+                            attempt_event_id: string;
+                            created_at: string;
+                            evidence: {
+                                now: string;
+                                prior: string;
+                            } | null;
+                            insight: {
+                                backfill_run_id?: string;
+                                /** @enum {string} */
+                                image_status: "none" | "text_available" | "unavailable";
+                                input_digest: string;
+                                /** @enum {string} */
+                                insight_version: "attempt-insight-v2";
+                                mechanism: {
+                                    quote?: string;
+                                    quote_verified: boolean;
+                                    trigger_md: string;
+                                    what_went_wrong_md: string;
+                                    wrong_step_k?: string;
+                                } | null;
+                                method: {
+                                    core_idea_md: string;
+                                    evidence_quotes: string[];
+                                    key_step_md: string;
+                                    /** @enum {string} */
+                                    provenance: "evidence" | "inferred";
+                                    steps: {
+                                        k: string;
+                                        quote?: string;
+                                        quote_verified: boolean;
+                                        text_md: string;
+                                    }[];
+                                } | null;
+                                needed_method: {
+                                    core_idea_md: string;
+                                    key_step_md: string;
+                                } | null;
+                                no_description_reason: string | null;
+                                question_id: string;
+                                source_event_ids: string[];
+                                user_cause_event_id: string | null;
+                                verdict_seen: {
+                                    evaluation_id: string | null;
+                                    judge_event_id: string | null;
+                                    /** @enum {string} */
+                                    outcome: "success" | "partial" | "failure";
+                                };
+                            };
+                            /** @enum {string} */
+                            outcome: "success" | "partial" | "failure";
+                            prompt_snippet: string | null;
+                            question_id: string;
+                            /** @enum {string} */
+                            relation: "same_mechanism" | "same_method" | "needs_this_method" | "not_similar";
+                            score: number;
+                            shared_step: {
+                                now_k: string;
+                                then_k: string;
+                            } | null;
+                            signals: {
+                                /** @enum {string} */
+                                basis: "same_question_history";
+                                count: number;
+                                error_rate: number;
+                                fixed_later: boolean;
+                                generic: number;
+                                last_seen_at: string;
+                                sim: number;
+                            };
+                            /** @enum {string} */
+                            specificity: "specific" | "broad";
+                            why_md: string;
+                        }[];
+                        similar_solutions: {
+                            answer_md: string;
+                            attempt_event_id: string;
+                            created_at: string;
+                            evidence: {
+                                now: string;
+                                prior: string;
+                            } | null;
+                            insight: {
+                                backfill_run_id?: string;
+                                /** @enum {string} */
+                                image_status: "none" | "text_available" | "unavailable";
+                                input_digest: string;
+                                /** @enum {string} */
+                                insight_version: "attempt-insight-v2";
+                                mechanism: {
+                                    quote?: string;
+                                    quote_verified: boolean;
+                                    trigger_md: string;
+                                    what_went_wrong_md: string;
+                                    wrong_step_k?: string;
+                                } | null;
+                                method: {
+                                    core_idea_md: string;
+                                    evidence_quotes: string[];
+                                    key_step_md: string;
+                                    /** @enum {string} */
+                                    provenance: "evidence" | "inferred";
+                                    steps: {
+                                        k: string;
+                                        quote?: string;
+                                        quote_verified: boolean;
+                                        text_md: string;
+                                    }[];
+                                } | null;
+                                needed_method: {
+                                    core_idea_md: string;
+                                    key_step_md: string;
+                                } | null;
+                                no_description_reason: string | null;
+                                question_id: string;
+                                source_event_ids: string[];
+                                user_cause_event_id: string | null;
+                                verdict_seen: {
+                                    evaluation_id: string | null;
+                                    judge_event_id: string | null;
+                                    /** @enum {string} */
+                                    outcome: "success" | "partial" | "failure";
+                                };
+                            };
+                            /** @enum {string} */
+                            outcome: "success" | "partial" | "failure";
+                            prompt_snippet: string | null;
+                            question_id: string;
+                            /** @enum {string} */
+                            relation: "same_mechanism" | "same_method" | "needs_this_method" | "not_similar";
+                            score: number;
+                            shared_step: {
+                                now_k: string;
+                                then_k: string;
+                            } | null;
+                            signals: {
+                                /** @enum {string} */
+                                basis: "same_question_history";
+                                count: number;
+                                error_rate: number;
+                                fixed_later: boolean;
+                                generic: number;
+                                last_seen_at: string;
+                                sim: number;
+                            };
+                            /** @enum {string} */
+                            specificity: "specific" | "broad";
+                            why_md: string;
+                        }[];
+                        /** @enum {string} */
+                        status: "unavailable" | "buffered" | "pending_insight" | "judging" | "ready" | "needs_reconciliation" | "failed";
+                    };
+                };
             };
         };
     };

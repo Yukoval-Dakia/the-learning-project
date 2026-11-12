@@ -1,5 +1,8 @@
 import { eq, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+// practice.backtrace subscribes to the observability-owned 'correct' action,
+// so any composition including practice must also declare that action's owner.
+import { observabilityCapability } from '@/capabilities/observability/manifest';
 import { createAttempt } from '@/capabilities/practice/grading/api/submit';
 import { submitReviewAnswerTool } from '@/capabilities/practice/grading/tools/submit-review-answer';
 import { practiceCapability } from '@/capabilities/practice/manifest';
@@ -43,7 +46,7 @@ vi.mock('@/server/boss/client', () => ({
 // Only queue delivery is substituted. Real route/session/acceptance/original/effect owners run.
 vi.mock('@/kernel/background-job-enqueue', () => ({ shouldEnqueueBackgroundJobs: () => true }));
 registerTool(submitReviewAnswerTool);
-const app = buildHonoApp([copilotCapability, practiceCapability], {
+const app = buildHonoApp([copilotCapability, practiceCapability, observabilityCapability], {
   epochGate: async () => ({ runnable: true }),
 });
 const token = 'offline-yuk1356-token';

@@ -12,6 +12,7 @@ type TurnContext = {
   /** 「自上条消息以来：……」 — what changed since the cached header was assembled. */
   readonly since_last_message?: string;
   readonly learner_state?: string;
+  readonly backtrace?: string;
   readonly proposal_feedback?: CopilotRunInput['proposal_feedback'];
   readonly review_answer?: CopilotRunInput['review_answer'];
   readonly ambient?: CopilotRunInput['ambient_context'];
@@ -68,6 +69,7 @@ function compileTurnContext(input: CopilotRunInput, includeProposalFeedback: boo
   const context: TurnContext = {
     v: 1,
     today: input.today,
+    ...(input.backtrace_digest ? { backtrace: input.backtrace_digest } : {}),
     ...(input.since_last_message ? { since_last_message: input.since_last_message } : {}),
     ...(input.review_answer ? { review_answer: input.review_answer } : {}),
     ...(input.learner_state_header ? { learner_state: input.learner_state_header } : {}),
