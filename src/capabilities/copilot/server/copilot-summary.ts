@@ -78,6 +78,8 @@ const PREVIEW_FIRST_KINDS = ['conjecture', 'variant_question'] as const;
 // learner; an unknown producer gets a neutral label rather than a false attribution.
 const PROPOSAL_SOURCE_LABELS: Readonly<Record<string, string>> = {
   dreaming: '夜间整理',
+  research_meeting: '夜间整理',
+  kc_dedup_nightly: '夜间整理',
   copilot: '学习伙伴',
   coach: '教练',
   variant_gen: '变体题',
@@ -95,6 +97,7 @@ function proposalSourceLabel(actorRef: string): string {
   // Live Copilot executions pass their tool caller actor (`agent:copilot`,
   // `agent:copilot_chip`, …), not the bare producer name used by the factories.
   if (actorRef.startsWith('agent:copilot')) return '学习伙伴';
+  if (actorRef.endsWith('_nightly')) return '夜间整理';
   return PROPOSAL_SOURCE_LABELS[actorRef] ?? '自动整理';
 }
 
