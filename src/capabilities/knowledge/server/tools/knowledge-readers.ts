@@ -610,14 +610,22 @@ async function executeOverview(ctx: ToolContext, raw: OverviewInput): Promise<Ov
 const NonEmptyKnowledgeSelectorSchema = z.string().trim().min(1);
 
 const QueryKnowledgeInputSchema = z.object({
-  subjectId: NonEmptyKnowledgeSelectorSchema,
-  query: NonEmptyKnowledgeSelectorSchema.optional(),
-  nodeId: NonEmptyKnowledgeSelectorSchema.optional(),
+  subjectId: NonEmptyKnowledgeSelectorSchema.describe('Domain scope (e.g. math), never a node id.'),
+  query: NonEmptyKnowledgeSelectorSchema.optional().describe(
+    'Text match — mutually exclusive with nodeId.',
+  ),
+  nodeId: NonEmptyKnowledgeSelectorSchema.optional().describe(
+    'Exact node selector — mutually exclusive with query.',
+  ),
   include: z
     .array(z.enum(['ancestors', 'children', 'neighbors', 'stats', 'recent_failures']))
-    .optional(),
-  relationTypes: z.array(NonEmptyKnowledgeSelectorSchema).optional(),
-  limit: z.number().int().min(1).max(50).optional(),
+    .optional()
+    .describe('Extra layers; unrequested layers are not observed.'),
+  relationTypes: z
+    .array(NonEmptyKnowledgeSelectorSchema)
+    .optional()
+    .describe('Mesh edge types to include.'),
+  limit: z.number().int().min(1).max(50).optional().describe('1–50.'),
 });
 
 const QueryKnowledgeOutputSchema = z.object({
@@ -1158,7 +1166,7 @@ export const getSubjectGraphOverviewTool: DomainTool<OverviewInput, OverviewOutp
 export const queryKnowledgeTool: DomainTool<QueryKnowledgeInput, QueryKnowledgeOutput> = {
   name: 'query_knowledge',
   description:
-    'Find active knowledge nodes by id or text inside one effective subject domain and return path, local edge counts, optional stats, and recent failure snippets. subjectId is the domain scope (for example math/yuwen), never a node id. nodeId and query are mutually exclusive exact selectors. Empty nodes means no active match in that exact domain/query scope; it cannot prove global absence, archived absence, or that a node never existed. edges only cover returned active nodes and requested relation types; an empty edge list is not global absence. recent_failures.cause is the effective attribution (learner over judge) as a signal, null when none was recorded. edges.evidence_event_ids lists proposal event refs when the lineage is known, and is unknown rather than empty when it is not. Unrequested stats/recent_failures are not observed, never zero or absent failures. Do not tell the learner evidence-event counts. Read query_scope, lookup_status, coverage, and claim_boundaries before making a negative or complete-expansion claim.',
+    'Find active knowledge nodes by id or text inside one effective subject domain; returns path, local edge counts and requested layers. Empty nodes means no active match in that exact scope — never proof of global or archived absence, or that a node never existed; edges cover returned nodes only. recent_failures.cause is the effective attribution (learner over judge), null when none was recorded; edges.evidence_event_ids is unknown, not empty, when lineage is unknown. Do not tell the learner evidence-event counts. Read query_scope, lookup_status, coverage and claim_boundaries before any negative or complete-expansion claim.',
   effect: 'read',
   inputSchema: QueryKnowledgeInputSchema,
   outputSchema: QueryKnowledgeOutputSchema,

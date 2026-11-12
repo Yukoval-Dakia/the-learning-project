@@ -43,6 +43,14 @@ export function capForPace(pace: string | null | undefined): number {
   return PLACEMENT_DEFAULT_CAP;
 }
 
+/**
+ * Default θ SE early-stop threshold (θ SE = 1/√precision). Owner-tunable module const, same
+ * class as the count caps above: 0.5 means precision ≥ 4, i.e. stop only once the probed KCs
+ * are meaningfully settled rather than at the 1.0 no-evidence SE. Callers may pass their own
+ * value; an explicit `null` disables the early stop.
+ */
+export const PLACEMENT_DEFAULT_SE_THRESHOLD = 0.5;
+
 export interface PlacementTerminationInput {
   /** number of questions answered so far in this probe. */
   answeredCount: number;
@@ -56,8 +64,9 @@ export interface PlacementTerminationInput {
    */
   perKcPrecision?: readonly number[];
   /**
-   * θ SE early-stop threshold. null/undefined (default) disables SE convergence → only the
-   * count cap stops the probe. A finite positive value enables the early stop.
+   * θ SE early-stop threshold. Omitted or null disables SE convergence in this pure oracle;
+   * the placement advance seam passes {@link PLACEMENT_DEFAULT_SE_THRESHOLD} so the server
+   * default applies there. A finite positive value enables the early stop.
    */
   seThreshold?: number | null;
 }
