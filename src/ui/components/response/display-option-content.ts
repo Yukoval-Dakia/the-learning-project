@@ -1,15 +1,16 @@
 /** Presentation only: the separate letter marker owns its label; response IDs/text stay untouched. */
 export function displayOptionContent(text: string, label: string | null): string {
-  if (!label || !/^[A-Za-z]$/.test(label)) return text;
+  if (!label || !/^[A-Za-z0-9]+$/.test(label)) return text;
+  // “A、B两点” is a literal pair name, not this option's marker repeated before its content.
+  const literalPair = new RegExp(`^\\s*${label}、\\s*[A-Za-z](?![A-Za-z])`);
   const prefix = new RegExp(`^\\s*(?:${label}[.．、:：]\\s*|[（(]${label}[)）]\\s*)`);
   let content = text;
   for (;;) {
     const match = prefix.exec(content);
     if (!match) return content;
     const remainder = content.slice(match[0].length);
-    // Preserve literal names such as “A、B两点”; repeated copies of this exact marker are unambiguous.
-    if (!remainder.trim() || (/^[A-Za-z]/.test(remainder) && !prefix.test(remainder)))
-      return content;
+    if (literalPair.test(content)) return content;
+    if (!remainder.trim()) return remainder;
     content = remainder;
   }
 }
