@@ -44,22 +44,30 @@ function stringField(payload: unknown, key: string): string | null {
   return typeof value === 'string' && value.length > 0 ? value : null;
 }
 
-/** Keys that mean this row is the same issuance or the same answer as another row. */
+/**
+ * Keys that mean this row is the same issuance or the same answer as another row.
+ * A stream item is a practice slot, not an answer: one slot can hold several reviews
+ * and nothing distinguishes them, so it never collapses two rows. Only rows naming the
+ * same event, group or issuance (the stream answer's own issuance id) do.
+ */
 function reviewIdentityKeys(input: {
   eventId?: string;
   groupId?: string;
   issuanceId?: string;
-  streamItemId?: string;
 }): string[] {
   const keys: string[] = [];
   if (input.eventId) keys.push(`event:${input.eventId}`);
   if (input.groupId) keys.push(`group:${input.groupId}`);
   if (input.issuanceId) keys.push(`issuance:${input.issuanceId}`);
-  if (input.streamItemId) {
-    keys.push(`stream:${input.streamItemId}`);
-    keys.push(`issuance:iss_stream_${input.streamItemId}`);
-  }
   return keys;
+}
+
+/**
+ * Stream answers are issued as `iss_stream_<slot>`, so a legacy review row that kept only
+ * `stream_item_id` still names the issuance a settlement receipt claimed for that answer.
+ */
+function slotIssuanceKey(streamItemId: string): string {
+  return `issuance:iss_stream_${streamItemId}`;
 }
 
 export async function loadWeeklyReview(db: Db, input: unknown) {
@@ -113,7 +121,6 @@ export async function loadWeeklyReview(db: Db, input: unknown) {
         reviewIdentityKeys({
           eventId: anchor.id,
           issuanceId: stringField(anchor.payload, 'issuance_id') ?? undefined,
-          streamItemId: stringField(anchor.payload, 'stream_item_id') ?? undefined,
         }),
       ),
     ];
@@ -137,9 +144,13 @@ export async function loadWeeklyReview(db: Db, input: unknown) {
     const keys = reviewIdentityKeys({
       eventId: row.id,
       issuanceId: stringField(row.payload, 'issuance_id') ?? undefined,
-      streamItemId: stringField(row.payload, 'stream_item_id') ?? undefined,
     });
+    // A legacy row names only the slot it answered, so it repeats a receipt's answer when
+    // that receipt already claimed the slot's issuance. Match only: claiming would swallow
+    // the slot's later reviews.
+    const slotItemId = stringField(row.payload, 'stream_item_id');
     if (keys.some((key) => claimed.has(key))) continue;
+    if (slotItemId && claimed.has(slotIssuanceKey(slotItemId))) continue;
     for (const key of keys) claimed.add(key);
     reviews.push({
       at: row.created_at,
