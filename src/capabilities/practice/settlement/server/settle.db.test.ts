@@ -346,7 +346,7 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
     expect(bracketEvents).toHaveLength(2);
   });
 
-  it('partial verdict：FSRS hard 评级落位，per-KC partial ⇒ θ̂ abstain（partial→1 已 REJECTED）', async () => {
+  it('partial verdict：per-KC partial ⇒ FSRS 与 θ̂ 均弃权（partial→1 已 REJECTED）', async () => {
     await seedKnowledge('kc_a', { domain: 'dom_x' });
     const seed = await seedChain('s2', { kcs: ['kc_a'] });
     const unitId = `${seed.qid}::u`;
@@ -358,10 +358,9 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
 
     const result = await activate('s2_ev1', { effectiveId: null, generation: 0 });
     expect(result.status).toBe('activated');
-    expect((result as { effect: string }).effect).toBe('applied');
+    expect((result as { effect: string }).effect).toBe('ineligible');
 
-    const fsrs = await fsrsRow('knowledge', 'kc_a');
-    expect(fsrs?.state?.reps).toBe(1);
+    expect(await fsrsRow('knowledge', 'kc_a')).toBeUndefined();
     // θ̂ abstain：该 KC 不产生 mastery obs。
     expect(await masteryRow('kc_a')).toBeUndefined();
     const se = (await settlementEvents(seed.groupId))[0] as {
@@ -372,7 +371,7 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
     expect(theta?.abstainReason).toBe('no_kc_evidence');
   });
 
-  it('blank_marked_zero：分数计零（incorrect→again 卡），但 KC 无 mastery 票（空白≠全 KC failure）', async () => {
+  it('blank_marked_zero：分数计零，但 FSRS 与 KC mastery 均不落票（空白≠全 KC failure）', async () => {
     await seedKnowledge('kc_a', { domain: 'dom_x' });
     const seed = await seedChain('s3', { kcs: ['kc_a'] });
     const unitId = `${seed.qid}::u`;
@@ -382,8 +381,8 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
     });
 
     const result = await activate('s3_ev1', { effectiveId: null, generation: 0 });
-    expect((result as { effect: string }).effect).toBe('applied');
-    expect((await fsrsRow('knowledge', 'kc_a'))?.state?.reps).toBe(1);
+    expect((result as { effect: string }).effect).toBe('ineligible');
+    expect(await fsrsRow('knowledge', 'kc_a')).toBeUndefined();
     expect(await masteryRow('kc_a')).toBeUndefined();
     const obs = ((
       (await settlementEvents(seed.groupId))[0] as {
