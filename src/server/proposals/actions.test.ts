@@ -71,6 +71,8 @@ describe('retractAiProposal — completion / relearn row reversal (YUK-471)', ()
     await resetDb();
   });
 
+  // @invariant data: retracting an accepted completion restores the learning item and removes the proposal evidence
+  // @fails-if retract leaves the item completed, or leaves the ai_propose/evidence event behind
   it('retracting an ACCEPTED completion re-opens the item + deletes the ai_propose evidence', async () => {
     const db = testDb();
     const now = new Date();
@@ -154,6 +156,8 @@ describe('retractAiProposal — knowledge_node soft-delete + fold==row (YUK-471)
     await resetDb();
   });
 
+  // @invariant data: a reversal failure rolls back the whole retract, leaving no orphan correct event
+  // @fails-if a failed reversal commits a partial retract or leaves an orphan correct event
   it('ATOMICITY: a reversal throw rolls back the WHOLE retract (no orphan correct event)', async () => {
     const db = testDb();
     await seedKnowledge(['parent_atomic']);
