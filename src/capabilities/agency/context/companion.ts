@@ -1,11 +1,14 @@
 // companion view（B1 唯一落地 view）：三段装配 + 按优先级裁剪到 ≤1000 估计 token。
-// 渲染序即文档序；裁剪序：Steering > Δ > 掌握和错因 > 稳态画像 > 信号 > 昨夜，
-// 到期题明细与失败明细（§13 给「怎么和我说话」留空间）最先被裁。
+// 渲染序即文档序；裁剪序：Steering > Δ > 掌握和错因 > 稳态画像 > 便条 > 信号 > 昨夜，
+// 到期题明细与失败明细（§13 给「怎么和我说话」留空间）最先被裁。被裁单元的名字
+// 以一行省略说明留在 header 末尾，模型不会把裁剪后的段落当成全部。
 
+import type { ContextViewName } from '@/ai/task-spec';
 import { wrapUntrustedLearnerText } from '@/capabilities/agency/server/conjecture/untrusted-text';
 import type { Db, Tx } from '@/db/client';
 import type { LearnerContextResult } from '@/kernel/read-models/learner-context';
 import { readLearnerCurriculum } from '@/kernel/read-models/learner-curriculum';
+import { readCompanionAgentNotes, renderAgentNotes } from './agent-notes';
 import { trimUnitsToBudget } from './budget';
 import { readContractSection } from './contract';
 import { DELTA_SCAN_LIMIT, readDeltaSection, shanghaiLabel } from './delta';
@@ -52,6 +55,18 @@ function renderDelta(delta: DeltaSection): string {
   return lines.join('\n');
 }
 
+/** 省掉的单元写进 header：模型知道有内容被预算裁掉，而不是以为那就是全部。 */
+function formatOmissionNotice(labels: readonly string[], hiddenCount: number): string {
+  const named = labels.map((label) => `「${label}」`).join('');
+  if (named.length === 0) {
+    return hiddenCount > 0 ? '（另有内容因篇幅省略，需要时用对应读取工具取）' : '';
+  }
+  const total = labels.length + hiddenCount;
+  return hiddenCount > 0
+    ? `（因篇幅省略：${named} 等 ${total} 项，需要时用对应读取工具取）`
+    : `（因篇幅省略：${named}，需要时用对应读取工具取）`;
+}
+
 // 题干摘录是学习者文本（prompt_md 属仓库红线的 learner-authored text），整段
 // 明细包一次 <untrusted_learner_text> 定界——逐条已截断（先截断再包裹），
 // 定界符也计入启动段预算（trim 测的是包裹后的 markdown）。
@@ -74,8 +89,9 @@ function renderDueItems(items: DueItemLine[]): string | null {
  */
 export async function assembleCompanionContext(
   db: DbLike,
-  opts: { now: Date; budget?: number },
+  opts: { now: Date; budget?: number; view?: ContextViewName },
 ): Promise<LearnerContextResult> {
+  const view = opts.view ?? 'companion';
   const [steady, curriculum] = await Promise.all([
     readSteadySection(db, { now: opts.now }),
     readLearnerCurriculum(db),
@@ -84,6 +100,8 @@ export async function assembleCompanionContext(
     readDeltaSection(db, { asOf: steady.asOf, asOfBasis: steady.asOfBasis, now: opts.now }),
     readContractSection(db, { now: opts.now }),
   ]);
+  // 便条是写给学伴的 AI 线索；curator 的整理轮不消费这条信道。
+  const agentNotes = view === 'companion' ? await readCompanionAgentNotes(db, opts.now) : [];
 
   const masteryMd = [contract.masteryMd, contract.causesMd].filter(Boolean).join('\n') || null;
   const portraitMd = steady.portraitMd ? `画像：${steady.portraitMd}` : null;
@@ -93,35 +111,58 @@ export async function assembleCompanionContext(
 
   const trimmed = trimUnitsToBudget(
     [
-      { rank: 0, name: 'steering', markdown: contract.steeringMd },
-      { rank: 0.2, name: 'curriculum', markdown: curriculum.stage_md, protected: true },
+      { rank: 0, name: 'steering', label: '学习目标', markdown: contract.steeringMd },
+      {
+        rank: 0.2,
+        name: 'curriculum',
+        label: '学段',
+        markdown: curriculum.stage_md,
+        protected: true,
+      },
       // The preference list is a light bias, not a constraint: it is the first thing
       // dropped when the budget is tight, so it never squeezes steering or mastery.
       {
         rank: 0.3,
         name: 'curriculum_preferences',
+        label: '学科偏好',
         markdown: curriculum.preferences_md,
         dropRank: 10,
       },
       {
         rank: 0.5,
         name: 'communication',
+        label: '沟通偏好',
         markdown: steady.communicationMd ? `怎么和我说话：${steady.communicationMd}` : null,
         protected: true,
       },
-      { rank: 1, name: 'delta', markdown: renderDelta(delta) },
-      { rank: 2, name: 'due_details', markdown: renderDueItems(delta.dueItems), dropRank: 8 },
-      { rank: 3, name: 'mastery_causes', markdown: masteryMd },
-      { rank: 4, name: 'failure_details', markdown: contract.failureDetailsMd, dropRank: 9 },
-      { rank: 5, name: 'portrait', markdown: portraitMd },
-      { rank: 6, name: 'signals', markdown: signalsMd },
-      { rank: 7, name: 'overnight', markdown: overnightMd },
+      { rank: 1, name: 'delta', label: '近期动态', markdown: renderDelta(delta) },
+      {
+        rank: 2,
+        name: 'due_details',
+        label: '到期题明细',
+        markdown: renderDueItems(delta.dueItems),
+        dropRank: 8,
+      },
+      { rank: 3, name: 'mastery_causes', label: '掌握和错因', markdown: masteryMd },
+      {
+        rank: 4,
+        name: 'failure_details',
+        label: '失败明细',
+        markdown: contract.failureDetailsMd,
+        dropRank: 9,
+      },
+      { rank: 5, name: 'portrait', label: '画像', markdown: portraitMd },
+      // 便条排在画像之后、判读备注之前：它是线索，不该挤掉画像或掌握度。
+      { rank: 5.5, name: 'agent_notes', label: '便条', markdown: renderAgentNotes(agentNotes) },
+      { rank: 6, name: 'signals', label: '判读备注', markdown: signalsMd },
+      { rank: 7, name: 'overnight', label: '昨夜交班', markdown: overnightMd },
     ],
     { maxEstimatedTokens: opts.budget ?? 1000, maxChars: 2400 },
+    formatOmissionNotice,
   );
 
   return {
-    view: 'companion',
+    view,
     markdown: trimmed.markdown,
     estimatedTokens: trimmed.estimatedTokens,
     startupTrim: {

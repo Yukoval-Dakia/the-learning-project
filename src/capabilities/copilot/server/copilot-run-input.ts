@@ -73,6 +73,8 @@ export interface CopilotRunInput {
   proposal_feedback: ScopedProposalFeedbackCell[];
   conversation_history: CopilotHistoryTurn[];
   learner_state_header?: string;
+  /** 「自上条消息以来：……」 — only when the cached header predates new activity. */
+  since_last_message?: string;
   correction_contract: CopilotCorrectionContract;
   ambient_context?: CopilotAmbientContext;
   /**
@@ -259,6 +261,9 @@ export async function assembleCopilotRunInput(
     // few extra turn ids is fail-closed, binding fewer would be a leak.
     bound_turn_event_ids: rawTurns.flatMap((t) => (t.event_id ? [t.event_id] : [])),
     learner_state_header: learnerState.header_md,
+    ...(learnerState.since_last_message
+      ? { since_last_message: learnerState.since_last_message }
+      : {}),
     correction_contract: {
       ...(restrictedCorrectionTarget ? { restricted_target: true } : {}),
       ...(correctionPositionsUnavailable ? { positions_unavailable: true } : {}),
