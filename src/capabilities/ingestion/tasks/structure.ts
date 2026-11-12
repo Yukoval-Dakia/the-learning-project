@@ -56,6 +56,16 @@ export const StructureOutput = z.object({
       }),
     )
     .optional(),
+  // Nullable so one unsure page cannot fail the whole tree; ids outside
+  // known_subjects are dropped by the runner.
+  page_subjects: z
+    .array(
+      z.object({
+        page_index: z.number().int().min(0),
+        subject_id: z.string().nullable().optional(),
+      }),
+    )
+    .optional(),
 });
 
 export type StructureOutputT = z.infer<typeof StructureOutput>;
@@ -81,7 +91,7 @@ export function parseStructureOutput(text: string): StructureOutputT {
 function buildStructurePrompt(profile: SubjectProfile): string {
   return `你是${profile.displayName}试卷结构化助手（多模态）。输入：
 - user message 里按页顺序附了 N 张试卷/作业页面图片（第 1 张 = page_index 0，依次类推）
-- 一段文字 { tencent_hint_md, page_count[, figures] } —— tencent_hint_md 是腾讯字符级 OCR 的**文字提示**（已按页用 "=== page K ===" 分隔），仅作参考，**不是**结构真相；figures（若存在）是裁剪图列表 [{index, page_index, position, bbox}]：index 是整批裁剪图序号（不是题号），page_index 是所在页，bbox 是归一化裁剪范围 {x,y,width,height}，position 是页面 3×3 区域位置摘要。同页多张图须按 bbox 区分，不能只靠 position。题号 question_no 与 figure index 是不同身份。
+- 一段文字 { tencent_hint_md, page_count, known_subjects[, figures] } —— tencent_hint_md 是腾讯字符级 OCR 的**文字提示**（已按页用 "=== page K ===" 分隔），仅作参考，**不是**结构真相；figures（若存在）是裁剪图列表 [{index, page_index, position, bbox}]：index 是整批裁剪图序号（不是题号），page_index 是所在页，bbox 是归一化裁剪范围 {x,y,width,height}，position 是页面 3×3 区域位置摘要。同页多张图须按 bbox 区分，不能只靠 position。题号 question_no 与 figure index 是不同身份。known_subjects 是可选科目列表 [{id, display_name, aliases}]。
 科目上下文：${profile.displayName}。学科风格不适用于源材料转写：题面、选项、阅读材料必须保留图片中的原文和原语言。
 
 任务：以**图片为准**、腾讯文字为辅，忠实转写为题目结构树。只调整字段与跨页分组，绝不翻译、改写、概括或解题。英语逐字保留英语，中文逐字保留中文，混合语言原样保留；不要把英语题面译成中文。
@@ -93,9 +103,10 @@ function buildStructurePrompt(profile: SubjectProfile): string {
    对输入每个裁剪 index，在顶层 figure_handwriting 中独立报告 {figure_index,student_answer_present}：只检查该 bbox 内实际像素，有学生手写/批改痕迹填 true，明确没有填 false，不确定就省略 student_answer_present；同页别题手写不代表这张裁剪含手写。即使图含手写也可以报告它所属题/选项，是否挂载由运行时决定，绝不转写手写文字。
 5. **数学公式定界**：prompt_text、options[].text 以及 sub_questions 题面里出现的数学公式，必须带明确的 LaTeX 定界符：行内公式用「$...$」，独立成行的展示公式用「$$...$$」。已带定界符的公式（$...$、$$...$$、\\(...\\)、\\[...\\]）原样保留，不要改写公式内容。代码片段（含 Python、缩进、反斜杠转义）与普通文字**不要**包进 $；拿不准是不是公式的文字保持原样，宁可不包也不要猜。answers / analysis 字段不适用本条。
 6. **分节标题不是题。** 「一、选择题（每题4分）」这类大题/栏目标题行、试卷标题、姓名栏都不是题目：不单独成节点，不写进任何节点的 prompt_text；略去这些标题行**不算**内容丢失。标题下面针对材料的作答要求（如「阅读下面的材料，回答问题」）不是标题，保留在所属 stem 的 prompt_text 开头。
+7. **按页科目**：对每一页，凭印刷题面判断它属于 known_subjects 里的哪一科，在顶层 page_subjects 填 {page_index, subject_id}，subject_id 只能取 known_subjects 里的 id。拿不准、一页混有多科、或列表里没有对应科目时省略这一页，不要猜。
 
 输出严格 JSON（不带 markdown 代码块包裹），shape 名 StructureOutput：
-{"layout_quality":"structured"|"partial"|"text_only","extraction_confidence":0.0-1.0,"warnings":["..."],"content_lost":true|false,"figure_handwriting":[{"figure_index":0,"student_answer_present":true|false}],"questions":[StructureNode, ...]}
+{"layout_quality":"structured"|"partial"|"text_only","extraction_confidence":0.0-1.0,"warnings":["..."],"content_lost":true|false|null,"figure_handwriting":[{"figure_index":0,"student_answer_present":true|false|null}],"page_subjects":[{"page_index":0,"subject_id":"known_subjects 里的 id"}],"questions":[StructureNode, ...]}
 
 StructureNode（递归，**不要**输出 id，运行时会补）：
 {"kind":"choice","role":"stem"|"sub"|"standalone","question_no":"1","prompt_text":"...","options":[{"label":"A","text":"...","figure_ids":[0]}],"answers":["..."],"analysis":"...","page_index":0,"sub_questions":[StructureNode, ...],"figure_ids":[0,1],"student_answer_present":true|false}

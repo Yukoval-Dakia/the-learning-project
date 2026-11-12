@@ -4,9 +4,10 @@
 // sits on pending; the throw still lets pg-boss retry.
 
 import { createHash, randomUUID } from 'node:crypto';
+import { createId } from '@paralleldrive/cuid2';
 import { type SQL, and, eq, inArray, isNull } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
-
+import { type BuildMcpServerOptions, piDomainMount } from '@/ai/pi-tool-mount';
 import { type NoteGeneratePhaseTimings, type TaskTextResult, aiAgentRef } from '@/ai/task-result';
 import { commitArtifactBody } from '@/capabilities/notes/server/artifact-body-commit';
 import { emitArtifactLifecycleEvent } from '@/capabilities/notes/server/artifacts/mutation-events';
@@ -47,6 +48,8 @@ import { parseNoteGenerateOutput } from '@/capabilities/notes/tasks/note-tasks';
 import type { ArtifactVerificationSummaryT } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { artifact } from '@/db/schema';
+import { subjectDocCatalogPiSkillDoc } from '@/kernel/read-models/subject-docs';
+import { DOMAIN_TOOL_MCP_SERVER_NAME, toMcpAllowedToolName } from '@/kernel/tools/allowlists';
 import {
   type TaskTextRunFn,
   costUsdToMicroUsd,
@@ -59,7 +62,6 @@ import {
 } from '@/server/ai/provider-wait';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { getStartedBoss } from '@/server/boss/client';
-import { resolveNoteSkillDoc } from '@/subjects/note-skills';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
 export interface NoteGenerateJobData {
@@ -272,7 +274,23 @@ export async function runNoteGenerate(
     row satisfies NoteGenerateSourceRow,
   );
   const subjectProfile = resolveSubjectProfile(input.knowledge_node?.domain);
-  const skillDocs = await resolveNoteSkillDoc(subjectProfile.id);
+  // 启动只带文档目录，笔记规范与政策正文由模型用 read_subject_doc 按需读；
+  // 目录空（表未就绪）时退化为旧提示词路径，任务不被文档库阻塞。
+  const skillDocs = await subjectDocCatalogPiSkillDoc(db, subjectProfile.id);
+  const docToolMount = piDomainMount({
+    ctx: {
+      db,
+      taskRunId: `note_generate_tool_${createId()}`,
+      callerActor: { kind: 'agent', ref: 'note_generate' },
+    },
+    serverName: DOMAIN_TOOL_MCP_SERVER_NAME,
+    toolNames: ['read_subject_doc'],
+    taskKind: 'NoteGenerateTask',
+  } satisfies BuildMcpServerOptions);
+  const docToolCtx = {
+    piToolMounts: [docToolMount],
+    allowedTools: [toMcpAllowedToolName('read_subject_doc')],
+  };
   const promptBuildMs = Date.now() - promptStarted;
   let modelWaitMs: number | null = null;
   let parseMs: number | null = null;
@@ -302,6 +320,7 @@ export async function runNoteGenerate(
     let result = await runTaskFn('NoteGenerateTask', input, {
       subjectProfile,
       piSkillDocs: skillDocs,
+      ...docToolCtx,
       beforeProviderQuery: assertStillPending,
     });
     modelWaitMs = Date.now() - modelStarted;
@@ -327,6 +346,7 @@ export async function runNoteGenerate(
           {
             subjectProfile,
             piSkillDocs: skillDocs,
+            ...docToolCtx,
             beforeProviderQuery: assertStillPending,
           },
         );

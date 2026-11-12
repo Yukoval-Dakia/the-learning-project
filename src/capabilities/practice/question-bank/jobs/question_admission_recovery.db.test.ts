@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { AgentRunError } from '@/ai/agent-run-error';
 import type { ProviderTransportEvidence, RequestSendState } from '@/ai/task-result';
 import { taskInputHash } from '@/core/task-input-hash';
-import { ai_task_runs, paid_effect } from '@/db/schema';
+import { ai_task_runs, knowledge, paid_effect, question } from '@/db/schema';
 import { readQuestionServing } from '@/kernel/read-models/question-serving';
 import * as norm from '@/kernel/records/assessment-normalization';
 import type { BoundRunTaskTextFn } from '@/server/ai/runner-fn';
@@ -375,6 +375,10 @@ async function deliverWake(
   return run(testDb(), wakeData, { id: wakeId, jobData: wakeData }, { runTask: task });
 }
 
+afterAll(async () => {
+  await fixtureBoss?.stop();
+});
+
 describe('question admission provider recovery', () => {
   beforeEach(async () => {
     process.env.ADMISSION_PROVIDER_RETRY_MAX_RETRIES = '1';
@@ -388,9 +392,6 @@ describe('question admission provider recovery', () => {
   });
   afterEach(async () => {
     for (const job of ownedJobs.splice(0)) await fixtureBoss?.deleteJob(job.name, job.id);
-  });
-  afterAll(async () => {
-    await fixtureBoss?.stop();
   });
 
   // @invariant concurrency: a provably unbilled provider rejection waits on a
@@ -638,5 +639,103 @@ describe('question admission provider recovery', () => {
     const retryAtMs = Date.parse(tailReceipt?.recovery?.retry_at ?? '');
     expect(retryAtMs - Date.now()).toBeGreaterThan(3 * 60 * 60_000);
     expect((await servingAdmission(seed.groupId))?.status).toBe('pending');
+  });
+});
+
+describe('question admission subject freeze', () => {
+  // @invariant grading: the subject an admission freezes and sends to the solver is the domain of knowledge_ids[0], else the enrollment subject, else general; a disagreement is recorded in the frozen input, and a revision already frozen keeps its subject when knowledge changes later
+  // @fails-if a conflicting enrollment subject overrides the knowledge domain or leaves no mismatch record, an enrollment-only question loses its subject, a consistent pair records a mismatch, or a replay of the same revision re-freezes under a later tag
+  it.each([
+    {
+      name: 'enrollment subject, no knowledge',
+      enrolled: 'physics',
+      domain: null,
+      want: 'physics',
+    },
+    {
+      name: 'knowledge beats a conflicting enrollment subject',
+      enrolled: 'physics',
+      domain: 'math',
+      want: 'math',
+      mismatch: true,
+    },
+    { name: 'enrollment and knowledge agree', enrolled: 'math', domain: 'math', want: 'math' },
+    { name: 'no enrollment subject, knowledge', enrolled: null, domain: 'math', want: 'math' },
+    { name: 'neither', enrolled: null, domain: null, want: 'general' },
+    {
+      name: 'a later conflicting tag does not refreeze the same revision',
+      enrolled: 'physics',
+      domain: null,
+      want: 'physics',
+      retagTo: 'math',
+    },
+  ])('$name freezes $want', async ({ enrolled, domain, want, mismatch, retagTo }) => {
+    await resetDb();
+    const db = testDb();
+    const seed = await seedAdmission();
+    const now = new Date();
+    const tag = async (to: string | null) => {
+      if (to) {
+        await db
+          .insert(knowledge)
+          .values({ id: `k-${to}`, name: 'Node', domain: to, created_at: now, updated_at: now })
+          .onConflictDoNothing();
+      }
+      await db
+        .update(question)
+        .set({
+          knowledge_ids: to ? [`k-${to}`] : [],
+          metadata: enrolled ? { ingestion_enrollment: { subject_id: enrolled } } : {},
+        })
+        .where(eq(question.id, seed.groupId));
+    };
+    await tag(domain);
+    const { task } = fakeTaskFactory(seed);
+    const sent: Array<string | undefined> = [];
+    const observed: BoundRunTaskTextFn = (kind, payload, ctx) => {
+      sent.push(ctx?.subjectProfile?.id);
+      return task(kind, payload, ctx);
+    };
+    const deliver = async (suffix: string) => {
+      const id = admissionJobId(seed.groupId, seed.revisionId, `${seed.digest}${suffix}`, 0);
+      const data = jobData(seed);
+      await insertDelivery(seed, id, data);
+      await run(db, data, { id, jobData: data }, { runTask: observed });
+      for (const job of ownedJobs.splice(0)) await fixtureBoss?.deleteJob(job.name, job.id);
+    };
+
+    await deliver('');
+    if (retagTo) {
+      await tag(retagTo);
+      await deliver(':replay');
+    }
+
+    const frozen = await db
+      .select({ input: paid_effect.input_json })
+      .from(paid_effect)
+      .where(eq(paid_effect.family, ADMISSION_FAMILY));
+    const inputs = frozen.map(
+      (row) => row.input as { subject_profile: { id: string }; subject_mismatch?: unknown },
+    );
+    expect({
+      frozen: inputs.map((input) => input.subject_profile.id),
+      mismatch: inputs.map((input) => input.subject_mismatch),
+      sent: [...new Set(sent)],
+    }).toEqual({
+      frozen: [want],
+      mismatch: [
+        mismatch
+          ? {
+              used: 'knowledge',
+              enrollment: {
+                subject_id: enrolled,
+                source: 'metadata.ingestion_enrollment.subject_id',
+              },
+              knowledge: { domain, knowledge_id: `k-${domain}`, source: 'knowledge_ids[0]' },
+            }
+          : undefined,
+      ],
+      sent: [want],
+    });
   });
 });

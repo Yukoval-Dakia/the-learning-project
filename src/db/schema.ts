@@ -86,6 +86,8 @@ export {
   source_document,
   subject,
   subject_control_journal,
+  subject_doc,
+  subject_doc_journal,
   subject_name_claim,
   subject_trait,
   subject_trait_binding,

@@ -37,6 +37,7 @@ export const MistakePromptMaterialSchema = z.discriminatedUnion('availability', 
 
 export const MistakeProjectionSchema = z.object({
   id: z.string(),
+  attempt_event_id: z.string(),
   record_id: z.string(),
   question_id: z.string(),
   prompt_md: z.string(),
@@ -49,6 +50,7 @@ export const MistakeProjectionSchema = z.object({
     .object({
       source: z.enum(['agent', 'user']),
       primary_category: CauseCategory,
+      label: z.string(),
       // Display backfill from active misconception titles; null when not a misc id.
       primary_label: z.string().nullable(),
       secondary_categories: z.array(CauseCategory),

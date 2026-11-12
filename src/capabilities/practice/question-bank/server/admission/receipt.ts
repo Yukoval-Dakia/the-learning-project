@@ -26,6 +26,7 @@ import type { Tx } from '@/db/client';
 import { paid_effect, paid_effect_authorization } from '@/db/schema';
 import { SubjectProfileSchema } from '@/subjects/profile';
 import { ADMISSION_FAMILY, type AdmissionJobData } from './enqueue';
+import { SubjectMismatch } from './question-subject';
 
 const Contract = z.object({
   structure: QuestionGroupStructure,
@@ -55,6 +56,7 @@ export const FrozenAdmissionInput = z.object({
       .optional(),
   }),
   subject_profile: SubjectProfileSchema,
+  subject_mismatch: SubjectMismatch.optional(),
   policy_id: z.string().min(1),
   solver2: z.object({ provider: z.string().optional(), model: z.string().optional() }).nullable(),
 });

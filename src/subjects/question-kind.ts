@@ -82,6 +82,27 @@ export function skillKindToQuestionKind(skillKind: string): string {
   return parsed.success ? SKILL_TO_CANONICAL[parsed.data] : skillKind;
 }
 
+// Underscored enum values map to hyphenated quiz-gen pack suffixes here — the
+// single translation point. Pack content lives in the subject doc library as
+// `skill/quiz-gen-<suffix>` documents (subject_doc 表，按需读；不再走文件 resolver)。
+const QUIZ_GEN_PACK_KIND_KEYS: Partial<Record<SubjectQuestionKind, string>> = {
+  translation: 'translation',
+  reading_comprehension: 'reading-comprehension',
+  calculation: 'calculation',
+};
+
+/**
+ * Persisted kind → its quiz-gen pack document key (`skill/quiz-gen-<suffix>`), or
+ * null when the kind vocabulary has no pack form. Accepts either vocabulary; the
+ * doc's actual presence is a storage question this function does not answer.
+ */
+export function quizGenPackDocKey(persistedKind: string): string | null {
+  const parsed = SubjectQuestionKindSchema.safeParse(questionKindToSkillKind(persistedKind));
+  if (!parsed.success) return null;
+  const key = QUIZ_GEN_PACK_KIND_KEYS[parsed.data];
+  return key ? `skill/quiz-gen-${key}` : null;
+}
+
 /**
  * Every persisted form that folds to this canonical label. Historical writers used
  * both vocabularies, so a read filtering on `kind = 'choice'` would miss
