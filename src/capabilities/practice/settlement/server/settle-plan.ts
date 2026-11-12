@@ -305,6 +305,24 @@ export function derivePlan(input: ActivationSettleInput, scope: SettlementScope)
     scopeKcIds.length > 0
       ? scopeKcIds.map((id) => ({ kind: 'knowledge' as const, id }))
       : [{ kind: 'question' as const, id: input.questionGroupId }];
+  // The verdict-level rating remains the fallback for questions without KCs and
+  // for legacy replay. A question with KCs schedules each card from that KC's
+  // own observation, while an explicit user rating keeps authority over all.
+  const kcRatings =
+    scopeKcIds.length === 0
+      ? []
+      : scopeKcIds.map((knowledgeId) => {
+          const observation = observations.find((row) => row.kc_id === knowledgeId);
+          const direction = observation?.direction;
+          const observationRating =
+            direction === 'up' ? 'good' : direction === 'down' ? 'again' : null;
+          return {
+            knowledgeId,
+            rating: scope.preserveScheduling
+              ? null
+              : (input.userRating ?? (autoRatingSuppressed ? null : observationRating)),
+          };
+        });
 
   const executorKinds = unitExecutorKinds(scope.plan);
   const scoredUnitIds = new Set(
@@ -494,6 +512,7 @@ export function derivePlan(input: ActivationSettleInput, scope: SettlementScope)
     scopeVersion: SETTLEMENT_SCOPE_VERSION,
     scopeKcIds,
     fsrsSubjects,
+    kcRatings,
     kcObservations: observations,
     kcWrongCause,
     theta,
@@ -503,8 +522,22 @@ export function derivePlan(input: ActivationSettleInput, scope: SettlementScope)
   };
 }
 
+export function ratingForSchedulingSubject(
+  plan: SettlementPlan,
+  subject: FsrsSubject,
+): SettlementPlan['rating'] {
+  if (subject.kind === 'knowledge' && plan.kcRatings !== undefined) {
+    return plan.kcRatings.find((row) => row.knowledgeId === subject.id)?.rating ?? null;
+  }
+  return plan.rating;
+}
+
 export function schedulingSubjects(plan: SettlementPlan): FsrsSubject[] {
-  if (selectedForgettingEngine() === 'fsrs') return plan.rating === null ? [] : plan.fsrsSubjects;
+  if (selectedForgettingEngine() === 'fsrs') {
+    return plan.fsrsSubjects.filter(
+      (subject) => ratingForSchedulingSubject(plan, subject) !== null,
+    );
+  }
   if (candidateSchedulingSuppressed(plan)) return [];
   if (!plan.forgettingInput) return plan.rating === null ? [] : plan.fsrsSubjects;
   const included = new Set(
