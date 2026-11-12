@@ -14,6 +14,7 @@ export type StructureNodeT = {
   kind?: string | null;
   role: 'stem' | 'sub' | 'standalone';
   question_no?: string | null;
+  section?: string | null;
   prompt_text: string;
   options?: { label: string; text: string; figure_ids?: number[] | null }[] | null;
   answers?: string[] | null;
@@ -29,6 +30,7 @@ const StructureNode: z.ZodType<StructureNodeT> = z.lazy(() =>
     kind: QuestionKind.nullable().optional(),
     role: z.enum(['stem', 'sub', 'standalone']),
     question_no: z.string().nullable().optional(),
+    section: z.string().nullable().optional(),
     prompt_text: z.string(),
     options: z.array(QuestionOptionOut).nullable().optional(),
     answers: z.array(z.string()).nullable().optional(),
