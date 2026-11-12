@@ -353,7 +353,6 @@ function AiFailureNotice() {
             [
               ...failing,
               ...failureNoticeCloseKeys({
-                digest,
                 alerts: alerts?.alerts.filter((alert) => !closed.has(alert.id)),
               }),
             ],

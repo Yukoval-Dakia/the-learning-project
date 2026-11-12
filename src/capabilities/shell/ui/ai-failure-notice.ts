@@ -4,8 +4,6 @@
 
 import { learnerLocalDay } from '@/core/learner-day';
 
-const DAY_MS = 86_400_000;
-
 const LEARNER_FELT_TASKS: ReadonlySet<string> = new Set([
   // The companion.
   'CopilotTask',
@@ -39,23 +37,33 @@ interface Alert {
   id: string;
   task_kind: string;
   rule: string;
+  /** Newest failure counted by the rule; anchors the digest mute. */
+  last_failure_at: string;
+}
+
+const DIGEST_MUTE_PREFIX = 'digest-kind:';
+
+/** Latest failure time the learner already acknowledged for this kind, or -Infinity. */
+function mutedThrough(closed: ReadonlySet<string>, taskKind: string): number {
+  const prefix = `${DIGEST_MUTE_PREFIX}${taskKind}:`;
+  let latest = Number.NEGATIVE_INFINITY;
+  for (const key of closed) {
+    if (!key.startsWith(prefix)) continue;
+    const at = Date.parse(key.slice(prefix.length));
+    if (Number.isFinite(at) && at > latest) latest = at;
+  }
+  return latest;
 }
 
 /**
- * What closing also covers: an alert's failures land in the next digest, whose episode key
- * depends on their future `last_at`. Mute the kind for that one reading instead. The digest
- * ends at today's BJT midnight, so the next reading ends one day later.
+ * What closing also covers: an alert's failures land in later digests under an episode key
+ * the UI cannot know yet. Mute the kind through the alert's newest failure instead, so the
+ * same episode stays closed across readings and a newer failure still shows through.
  */
-export function failureNoticeCloseKeys(input: {
-  digest?: { window: { to: string } };
-  alerts?: readonly Alert[];
-}): string[] {
-  const windowTo = input.digest ? Date.parse(input.digest.window.to) : Number.NaN;
-  if (!Number.isFinite(windowTo)) return [];
-  const nextReadingEnd = new Date(windowTo + DAY_MS).toISOString();
+export function failureNoticeCloseKeys(input: { alerts?: readonly Alert[] }): string[] {
   return (input.alerts ?? [])
     .filter((alert) => alert.rule !== 'unsealed' && LEARNER_FELT_TASKS.has(alert.task_kind))
-    .map((alert) => `digest-kind:${nextReadingEnd}:${alert.task_kind}`);
+    .map((alert) => `${DIGEST_MUTE_PREFIX}${alert.task_kind}:${alert.last_failure_at}`);
 }
 
 /**
@@ -70,11 +78,10 @@ export function failureNoticeKeys(input: {
 }): string[] {
   const digest = input.digest;
   const closed = input.closed ?? new Set<string>();
-  const muted = (taskKind: string) => `digest-kind:${digest?.window.to}:${taskKind}`;
   return [
     ...(digest?.degraded_kinds ?? [])
       .filter((kind) => LEARNER_FELT_TASKS.has(kind.task_kind))
-      .filter((kind) => !closed.has(muted(kind.task_kind)))
+      .filter((kind) => !(Date.parse(kind.last_at) <= mutedThrough(closed, kind.task_kind)))
       .map((kind) => `digest:${kind.task_kind}:${kind.last_at}`),
     // An unsealed reply reached the learner; only its closing record is incomplete.
     ...(input.alerts ?? [])
