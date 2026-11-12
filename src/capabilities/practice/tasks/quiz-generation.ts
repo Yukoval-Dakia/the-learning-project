@@ -30,7 +30,7 @@ ${CURRICULUM_TASK_RULE}
 few_shot_examples_md（若有）是已入库的优质范例，**仅供参考其结构与设问风格，禁止照抄题面**。requested_generation_method 是上游找题次序**指定**的出题方式：出现时**必须**用该方式（material_grounded=据真实素材出题，必须拉真原文并填顶层 material；closed_book=凭已有知识闭卷出题，不强制检索素材）——不要自作主张换成别的方式；缺省时按 plan.generation_method 与下面的规则执行。objective_only=true 时 requested_kind 是硬约束（客观题），kind_required=true 时 requested_kind 是硬约束（结构）；任一为 true 时每一道题的 kind 都必须与它一致。requested_difficulty_band（若有）是相对该学习者的难度带（below 偏易 / near 贴合 / above 略拔高 / stretch 明显拔高）。requested_difficulty_levels（若有）是这条带反算后的 1–5 闭区间，plan.items 的 difficulty 已落在区间内，不要改出区间；levels 为 null 表示没有落在该带的档，不要改写成 3。composite_parent_only=true 时是「篇」供给：每一项 plan 都是 composite 组合大题（见下方「组合题模式」），**禁止**退化成单题。下游会对每题独立质检。
 
 **plan 是已机检通过的出题计划（硬约束）**：plan.items 数组每一项对应你要产出的一道题（顺序一致、数量一致），每项定死该题的 knowledge_id（必须出现在该题 knowledge_ids 里）、kind（该题 kind 必须与它一致，不容改选；理解该 kind 代表的答案类型——受限答案、关键词、开放语义或分步推导——与题面结构）、difficulty（以此为目标难度）；客观题项还带 answer_anchor（标准答案锚点）——该题的正确答案**必须恰好是**这个锚点：choice 的正确选项正文 = answer_anchor，true_false 的正确判断 = answer_anchor，fill_blank 的标准填空答案 = answer_anchor；reference_md 第一行也必须写出这个锚点。偏离 plan 的输出会被整批拒收。
-若已加载本学科的出题规范 skill（quiz-gen-<…>），先读它声明的「结构描述符」段（这类题落在 嵌套 / 排版 / 答案语义 三维的哪个坐标上），再按其题面结构 / 采分点 / 答案格式规范出题。
+本科目文档库目录在系统提示末尾：先用 read_subject_doc 读目标题型的出题规范文档（skill/quiz-gen-<…> 里的「结构描述符」段——这类题落在 嵌套 / 排版 / 答案语义 三维的哪个坐标），再按其题面结构 / 采分点 / 答案格式规范出题；评分细则、坏题反例与精选范例（…/rubric、…/anti-patterns、…/few-shot）与出题政策（guide/question-writing）需要时同法读取。
 科目上下文：${profile.displayName}。${profile.languageStyle}
 证据要求：${profile.grounding.requirement}
 不确定性策略：${profile.grounding.uncertaintyPolicy}${rubricGuidanceSection(profile)}
@@ -38,6 +38,7 @@ few_shot_examples_md（若有）是已入库的优质范例，**仅供参考其�
 你有工具：
 - 联网检索（web_search_exa / web_fetch_exa）：用来搜**背景素材 / 事实 / 例子**，**不是**搜现成题目。web_search_exa 除 query 外还需填 objective（本次检索想拿到什么）。
 - 领域读工具：可读用户的错题与知识图谱，判断该出什么难度 / 题型 / 覆盖哪些知识点。
+- 科目文档库（read_subject_doc）：读本科目出题规范、坏题反例与范例正文；目录在系统提示末尾，doc_key 按目录取。
 
 工作流程：
 1. 读 plan：逐项理解每道题的知识点 / 题型 / 难度 /（客观题）答案锚点；检索与素材选择围绕 plan 展开，**不要另起炉灶改计划**。
@@ -82,7 +83,8 @@ source_pack.tool 如实自报：真的用了 exa 检索才填 "exa"；closed_boo
 
 题目要求：
 - kind 以 plan.items 对应项为准（客观选择结构统一用 "choice"）；无论是否偏离 requested_kind，都必须遵循输出的 kind 对应的格式规则。
-- ${profile.promptFragments.checkQuestionPolicy}
+- ${profile.promptFragments.checkQuestionPolicy}（来自当前生效的科目 charter；若文档库里的同主题 policy 与此不一致，以此条为准）
+- 变式题政策：${profile.promptFragments.variantExamplePolicy}
 - choice / true_false：judge_kind_override="exact"，给 3–4 个选项；choices_md 每项只写选项正文，禁止带 A./B./C./D. 等字母序号（渲染层按数组索引添加）；题面 prompt_md 不要再抄一遍选项内容；reference_md 第一行是正确选项原文。
 - 数学定界（强约束，仅题面与选项的显示字段）：每个数学表达式必须自带显式定界——行内用 $...$，独立公式用 $$...$$（已有 \\(...\\)/\\[...\\] 写法可保留）；\\frac、\\dfrac、\\tfrac、\\sqrt 等数学命令禁止裸露在定界之外（渲染端不猜公式边界，裸命令会原样漏出给学习者）。要把命令按字面文本展示时，放行内代码 \`...\` 或代码块。本规则覆盖 prompt_md、choices_md 与 structured 各节点的 prompt_text/options[].text。reference_md 与小题 answers/analysis 是判分消费的答案值（与 answer_anchor 的裸正文同格式），按既有答案格式书写，不受本条定界约束。
 - 最终判分路由为 "exact" 或 "semantic" 时，rubric_json 必填，且 rubric_json.reference_solution 必须同时填写 final_answer 与 answer_equivalents（无额外等价表达时填 []）；expected_signals 至少 1 条。此规则按最终判分路由判断，不只看显式 override：judge_kind_override 省略或为 null 时，choice / true_false → exact，fill_blank 无 keywords → exact（有 keywords → keyword），computation 无 keywords → semantic（有 keywords → keyword），derivation 及 short_answer / reading / translation / essay 等文本题 → semantic。

@@ -42,16 +42,16 @@ function buildQuizVerifyPrompt(profile: SubjectProfile): string {
 2. copy_safety（原创/抄袭）：题干措辞是否与任一 source_ref 的 snippet 过于接近（逐句复制 / 仅做同义替换）？给 verdict：'original'（措辞充分原创）/ 'too_close'（与某来源太接近，应重写）/ 'unknown'（信息不足）；尽量给 max_overlap（0-1 粗略重合度）。输入带 material（据材出题）时，题干引用 material 原文是设计使然：与 material 原文（或 source_refs 中该素材自身的截段）相同不算 too_close，只比较其余 source_refs。
 3. knowledge_hit（知识命中）：这道题是否真的考查它声明的 knowledge_ids（对照 knowledge_context）？跑题 / 考了别的点 → 'fail'；沾边但弱 → 'unclear'。
 4. material_grounding（素材命中，**仅当输入带 material 时给出**）：题干 + reference_md 是否**真的考查这份 material 原文**？答案能否在 material 原文里找到依据？若题与这份素材无关（素材只是凑数地附上、题其实考别的）→ 'fail'；切题但弱关联 → 'unclear'；题确实据这份素材而出且答案有素材依据 → 'pass'。**输入没有 material 时，省略该字段（不要输出 material_grounding）。**
-5. kind_conformance（结构形态符合，**仅当已加载本题型的出题规范 skill（quiz-gen-<…>）时给出**）：先读该 skill 的「结构描述符」段（这类题该有的 嵌套 / 排版 / 答案语义），再对照规范包里的题面结构 / 采分点 / 答案格式 / 坏题反例，这道题**是否像该结构形态的真题**？结构件缺失（如开放转换题无采分点、题组题无素材原文锚、计算题条件不全）或命中坏题反例 → 'fail'；基本符合但有瑕疵 → 'unclear'；结构与采分都规范 → 'pass'。**未加载对应 skill 时，省略该字段（不要输出 kind_conformance）。**
+5. kind_conformance（结构形态符合，**仅当本科目文档库目录（系统提示末尾）里有该题型的出题规范文档（skill/quiz-gen-<…>）时给出**）：先用 read_subject_doc 读它的「结构描述符」段（这类题该有的 嵌套 / 排版 / 答案语义），坏题反例在 …/anti-patterns 需要时同法读取，再对照题面结构 / 采分点 / 答案格式规范判断这道题**是否像该结构形态的真题**。结构件缺失（如开放转换题无采分点、题组题无素材原文锚、计算题条件不全）或命中坏题反例 → 'fail'；基本符合但有瑕疵 → 'unclear'；结构与采分都规范 → 'pass'。**目录里没有该题型规范文档时，省略该字段（不要输出 kind_conformance）。**
 
 综合裁决 overall（驱动 Option B gate）：
 - 'pass'：适用的内容检查均为 pass，且 copy_safety='original'。不确定轴优先按下一条 needs_review，硬伤优先 fail。
 - 'needs_review'：有可疑项但不致命（出现 'unclear'，或 copy_safety='unknown'），需人工复核。
 - 'fail'：任一硬伤（grounding='fail' 或 knowledge_hit='fail' 或 material_grounding='fail' 或 kind_conformance='fail' 或题面自相矛盾/不可解）。
-注意：copy_safety='too_close' 即使其他两项 pass 也**不能**给 overall='pass'（至少 'needs_review'）。带 material 时若 material_grounding='fail'（题与素材无关），overall 不能 'pass'。加载了题型规范 skill 时若 kind_conformance='fail'（题型结构不规范 / 命中坏题反例），overall 不能 'pass'。
+注意：copy_safety='too_close' 即使其他两项 pass 也**不能**给 overall='pass'（至少 'needs_review'）。带 material 时若 material_grounding='fail'（题与素材无关），overall 不能 'pass'。kind_conformance='fail'（题型结构不规范 / 命中坏题反例）时，overall 不能 'pass'。
 
 严格 JSON 输出（不带 markdown 代码块包裹），shape 名 QuizVerificationResult：
-{"grounding":{"basis":"closed_world_givens"|"discipline_knowledge"|"source_refs"|"material"|"executed_remote_evidence"|"insufficient"（validation_purpose=learning_content 时必需，其它 purpose 可省略）,"verdict":"pass"|"fail"|"unclear","note":"..."},"copy_safety":{"verdict":"original"|"too_close"|"unknown","max_overlap":0.0-1.0},"knowledge_hit":{"verdict":"pass"|"fail"|"unclear","note":"..."},"material_grounding":{"verdict":"pass"|"fail"|"unclear","note":"..."}（仅当输入带 material 时；否则省略此键）,"kind_conformance":{"verdict":"pass"|"fail"|"unclear","note":"..."}（仅当已加载本题型出题规范 skill 时；否则省略此键）,"overall":"pass"|"needs_review"|"fail","summary_md":"<≤200 字结论 + 关键证据>","confidence":0.0-1.0}
+{"grounding":{"basis":"closed_world_givens"|"discipline_knowledge"|"source_refs"|"material"|"executed_remote_evidence"|"insufficient"（validation_purpose=learning_content 时必需，其它 purpose 可省略）,"verdict":"pass"|"fail"|"unclear","note":"..."},"copy_safety":{"verdict":"original"|"too_close"|"unknown","max_overlap":0.0-1.0},"knowledge_hit":{"verdict":"pass"|"fail"|"unclear","note":"..."},"material_grounding":{"verdict":"pass"|"fail"|"unclear","note":"..."}（仅当输入带 material 时；否则省略此键）,"kind_conformance":{"verdict":"pass"|"fail"|"unclear","note":"..."}（仅当目录里有本题型出题规范文档并已读取时；否则省略此键）,"overall":"pass"|"needs_review"|"fail","summary_md":"<≤200 字结论 + 关键证据>","confidence":0.0-1.0}
 要点：
 - summary_md 必须可执行：写"为什么 pass / needs_review / fail"和对应证据（指向具体 source_ref 或题面），不写套话。
 - ${profile.grounding.uncertaintyPolicy}
@@ -64,7 +64,9 @@ export const quizVerifyTaskSpec = {
     kind: 'QuizVerifyTask',
     description:
       "Search-grounded QuizGen (T-SQ, docs/archive/superpowers/specs/2026-06-02-quizgen-search-grounded-design.md §1 / §5 Q5). Single-shot, CLOSED-BOOK verifier built on the VariantVerify skeleton: trusts the QuizGen agent's self-reported source_refs (no own Tavily loop this wave) and runs three checks — fact/grounding vs source_refs, plagiarism/copy_safety, knowledge-hit — rolling them into a two-axis QuizVerificationResult. The quiz_verify handler (Q5) gates Option B on the output: overall='pass' (and copy_safety not flagged by the deterministic n-gram gate; a model-only too_close routes to review) promotes draft→active + FSRS-enrolls; otherwise the draft stays out of the pool (needs_review / fail).",
-    budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1 },
+    // maxIterations 覆盖 read_subject_doc 按需读（规范 + 反例）后的一次裁决，
+    // 无文档可读的调用方照旧单轮收口。
+    budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 4 },
     needsToolCall: false,
     isMultimodal: false,
     allowedTools: [],

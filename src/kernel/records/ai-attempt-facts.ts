@@ -138,6 +138,45 @@ export async function recordAiTaskReplyUnsealed(
     .where(and(eq(ai_task_runs.id, taskRunId), eq(ai_task_runs.status, 'success')));
 }
 
+/** finish_reason for a run whose provider replied but whose text broke the task contract. */
+export const MODEL_OUTPUT_INVALID = 'model_output_invalid';
+
+/**
+ * The only writer that turns a settled success into "billed, result unusable": the
+ * provider replied, the caller could not parse the text into the task's contract.
+ * The run and its attempt ledger row flip together; usage and cost stay as billed.
+ * Returns false when the run was not a settled success (already failed or missing).
+ */
+export async function markAiTaskRunOutputInvalid(
+  db: Db,
+  taskRunId: string,
+  reason: string,
+): Promise<boolean> {
+  return db.transaction(async (tx) => {
+    const rows = await tx
+      .update(ai_task_runs)
+      .set({
+        status: 'failure',
+        finish_reason: MODEL_OUTPUT_INVALID,
+        error_message: `${MODEL_OUTPUT_INVALID}: ${reason}`.slice(0, 1000),
+      })
+      .where(and(eq(ai_task_runs.id, taskRunId), eq(ai_task_runs.status, 'success')))
+      .returning({ id: ai_task_runs.id });
+    if (rows.length !== 1) return false;
+    await tx
+      .update(cost_ledger)
+      .set({ outcome: 'failed_permanent' })
+      .where(
+        and(
+          eq(cost_ledger.task_run_id, taskRunId),
+          eq(cost_ledger.entry_kind, 'attempt'),
+          eq(cost_ledger.outcome, 'success'),
+        ),
+      );
+    return true;
+  });
+}
+
 export interface AiTaskRunFinishEntry {
   id: string;
   status: 'success' | 'failure';

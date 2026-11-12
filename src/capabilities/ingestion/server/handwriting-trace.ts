@@ -9,7 +9,7 @@ import {
 import { MAX_PDF_PAGES } from '@/core/limits';
 import type { BBoxT, StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
-import { markAiTaskRunOutputInvalid } from '@/server/ai/log';
+import { markAiTaskRunOutputInvalid } from '@/kernel/records/ai-attempt-facts';
 import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
 import { redactIngestionText } from './privacy-guard';
 

@@ -3,6 +3,7 @@ import { QUESTION_EDIT_ACTION } from '@/core/schema/event/experimental';
 import type { Db } from '@/db/client';
 import { event, learning_record, question } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
+import { withActiveCauseCategoryOverlays } from '@/kernel/read-models/cause-overlay';
 import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
 import {
   type FailureAttempt,
@@ -10,9 +11,11 @@ import {
   getFailureAttemptById,
   getFailureAttempts,
 } from '@/kernel/read-models/failure-attempts';
+import { loadFailureLearningKnowledgeContext } from '@/kernel/read-models/failure-learning-context';
 import { learnerVisibleKnowledgeIds } from '@/kernel/read-models/learner-knowledge-visibility';
 import { miscCauseLabelMap, resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
 import type { MistakeProjection } from '@/kernel/records/mistake-projection-contract';
+import { resolveSubjectProfile } from '@/subjects/profile';
 import { readNativeMistakeEvidence } from './native-mistake-evidence';
 
 export interface ListMistakeProjectionFilter {
@@ -179,6 +182,48 @@ async function projectMistakeFailures(
       cause ? [cause.primary_category, ...cause.secondary_categories] : [],
     ),
   );
+  const liveQuestionIds = [
+    ...new Set(
+      pageFailures.flatMap((failure) =>
+        failure.referenced_knowledge_ids.length === 0 ? [failure.question_id] : [],
+      ),
+    ),
+  ];
+  const questionKnowledgeIds = new Map<string, string[]>();
+  if (liveQuestionIds.length > 0) {
+    const rows = await db
+      .select({ id: question.id, knowledge_ids: question.knowledge_ids })
+      .from(question)
+      .where(inArray(question.id, liveQuestionIds));
+    for (const row of rows) questionKnowledgeIds.set(row.id, row.knowledge_ids);
+  }
+  const knowledgeIds = [
+    ...new Set([
+      ...pageFailures.flatMap((failure) => failure.referenced_knowledge_ids),
+      ...[...questionKnowledgeIds.values()].flat(),
+    ]),
+  ];
+  const domainByKc = new Map(
+    (await loadFailureLearningKnowledgeContext(db, knowledgeIds)).map((node) => [
+      node.id,
+      node.effective_domain,
+    ]),
+  );
+  const profileBySubject = new Map<
+    string,
+    Awaited<ReturnType<typeof withActiveCauseCategoryOverlays>>
+  >();
+  for (const domain of domainByKc.values()) {
+    const profile = resolveSubjectProfile(domain);
+    if (!profileBySubject.has(profile.id)) {
+      profileBySubject.set(profile.id, await withActiveCauseCategoryOverlays(db, profile));
+    }
+  }
+  const causeLabelById = new Map(
+    [...profileBySubject.values()].flatMap((profile) =>
+      profile.causeCategories.map((category) => [category.id, category.label] as const),
+    ),
+  );
 
   return pageFailures.map((failure) => {
     const effectiveCause = causeByAttempt.get(failure.attempt_event_id);
@@ -186,6 +231,10 @@ async function projectMistakeFailures(
       ? {
           source: effectiveCause.source,
           primary_category: effectiveCause.primary_category,
+          label:
+            causeLabelById.get(effectiveCause.primary_category) ??
+            miscLabels.get(effectiveCause.primary_category) ??
+            effectiveCause.primary_category,
           primary_label: miscLabels.get(effectiveCause.primary_category) ?? null,
           secondary_categories: effectiveCause.secondary_categories,
           secondary_labels: miscCauseLabelMap(miscLabels, effectiveCause.secondary_categories),
@@ -195,6 +244,7 @@ async function projectMistakeFailures(
       : null;
     return {
       id: failure.attempt_event_id,
+      attempt_event_id: failure.attempt_event_id,
       record_id: recordIdByAttempt.get(failure.attempt_event_id) ?? '',
       question_id: failure.question_id,
       ...(nativeEvidence.get(failure.attempt_event_id) ?? {
