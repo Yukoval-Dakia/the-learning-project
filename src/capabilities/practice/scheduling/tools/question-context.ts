@@ -376,10 +376,10 @@ async function executeGetQuestionContext(
 }
 
 const GetReviewDueInputSchema = z.object({
-  limit: z.number().int().min(1).max(50).optional(),
-  knowledgeIds: z.array(z.string()).optional(),
-  causes: z.array(z.string()).optional(),
-  includeReason: z.boolean().optional(),
+  limit: z.number().int().min(1).max(50).optional().describe('1–50.'),
+  knowledgeIds: z.array(z.string()).optional().describe('Restrict to these knowledge nodes.'),
+  causes: z.array(z.string()).optional().describe('Restrict to these cause categories.'),
+  includeReason: z.boolean().optional().describe('Include per-row reason detail.'),
 });
 
 const GetReviewDueOutputSchema = z.object({
@@ -964,7 +964,7 @@ export async function executeGetReviewDue(
 export const getQuestionContextTool: DomainTool<GetQuestionContextInput, GetQuestionContextOutput> =
   {
     name: 'get_question_context',
-    description: `One call for one question. reading covers whether it can be issued, the latest score and wrong-cause (newest attempt plus its judge; later reviews do not replace it), the live FSRS due (knowledge card only when a role=kc point is tagged; a goal or container tag keeps the question card; lifecycle.due_at matches that card), each knowledge name and mastery, and two difficulty baselines (item anchor and family offset). reading.difficulty.band places the item logit against the primary knowledge point's theta_hat (below|near|above|stretch); an inferred theta is labeled, and a missing theta stays unknown. reading.timing.median_ms is the median recorded attempt duration; reading.timing.relative_to_same_difficulty.ratio is that median divided by the median duration of other questions at the same difficulty ordinal. Missing durations stay unknown and are never filled with 0. reading.hint_dependence is the chronological hints_used trajectory (latest 20 recorded points); attempts that did not record hints_used are omitted_attempts, not zeros. hint_dependence is agent-only — do not quote the tally to the learner. reading.faulty is the latest experimental:question_or_answer_may_be_faulty inference plus its evidence; it is agent-only — do not tell the learner the question or answer may be faulty. Do not follow up with get_knowledge_state or get_attempt_context for those fields. ADR-0072: bank CONTENT reads go through read_bank. Check availability first: lifecycle zeros with observation_status=not_observed are placeholders for missing or protected diagnostic questions, not observed facts. Figures carry contains_learner_handwriting (true/false/unknown): ${LEARNER_HANDWRITING_RULE}.`,
+    description: `One-call learner-state read for one question: issueability; latest score and wrong-cause; live FSRS due; knowledge mastery; item/family difficulty and band; timing median and same-difficulty ratio; hint trajectory; and faulty inference. Missing theta or durations stay unknown and are never filled with 0; hint_dependence and faulty are agent-only. Bank CONTENT reads go through read_bank; do not follow up with get_knowledge_state or get_attempt_context for these fields. lifecycle values with observation_status=not_observed are placeholders, not observed facts. Figures carry contains_learner_handwriting (true/false/unknown): ${LEARNER_HANDWRITING_RULE}.`,
     effect: 'read',
     inputSchema: GetQuestionContextInputSchema,
     outputSchema: GetQuestionContextOutputSchema,
@@ -985,7 +985,7 @@ export const getQuestionContextTool: DomainTool<GetQuestionContextInput, GetQues
 export const getReviewDueTool: DomainTool<GetReviewDueInput, GetReviewDueOutput> = {
   name: 'get_review_due',
   description:
-    'Read returned actionable due-now rows (never-reviewed failures, then overdue FSRS cards) plus bounded future FSRS projections. Each row includes personal_hit_rate: successes divided by judged attempts (success+partial+failure) on that question. value=null means no judged attempt, not a 0% rate. personal_hit_rate is agent-only — do not quote it to the learner. rows=[] means this call returned zero actionable rows, NOT that the queue is empty. Use queue_assertion as the authoritative claim surface: cleared=false is supported by at least one returned actionable row; every null is unobserved and must never be converted to 0 or true. Report due returned rows, material due-state count, due completeness, and future returned/total/completeness separately. queue_coverage.completeness=unknown and supports_exhaustive_zero_claim=false forbid complete/cleared/global-zero claims. entity_status_coverage=not_observed forbids pending/in-progress entity counts. Never mutates FSRS.',
+    'Read returned actionable due-now rows (never-reviewed failures, then overdue FSRS cards) plus bounded future FSRS projections. personal_hit_rate is successes divided by judged attempts; null means no judged attempt, not 0%, and is agent-only. rows=[] means zero returned actionable rows, not an empty queue: queue_assertion is the claim surface — cleared=false is supported by a returned row; every null is unobserved and must never become 0 or true. Report due returned/state/completeness and future returned/total/completeness separately; completeness=unknown, supports_exhaustive_zero_claim=false and entity_status_coverage=not_observed forbid complete/cleared/entity-count claims. Never mutates FSRS.',
   effect: 'read',
   inputSchema: GetReviewDueInputSchema,
   outputSchema: GetReviewDueOutputSchema,

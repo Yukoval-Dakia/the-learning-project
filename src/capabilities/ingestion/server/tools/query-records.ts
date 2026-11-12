@@ -135,7 +135,7 @@ async function executeQueryRecords(
 export const queryRecordsTool: DomainTool<QueryRecordsInput, QueryRecordsOutput> = {
   name: 'query_records',
   description:
-    'Read bounded activity-grounded LearningRecord rows with filters for kind, knowledge, question, attempt, item, and text. processing_status is a LearningRecord ingestion/linking state, not a LearningItem or intervention lifecycle status. rows=[] only means zero matching returned LearningRecord rows and cannot prove those entities are absent. claim_boundaries forbids entity inventory and lifecycle-status claims, and this tool must not override get_review_due.queue_assertion nulls or entity_status_coverage=not_observed.',
+    'Read bounded activity-grounded LearningRecord rows with filters. processing_status is a LearningRecord ingestion/linking state, not a lifecycle status. rows=[] means zero matching returned rows — never proof the entities are absent; claim_boundaries forbids entity inventory and lifecycle-status claims and cannot override get_review_due.queue_assertion nulls or entity_status_coverage=not_observed.',
   effect: 'read',
   inputSchema: QueryRecordsInputSchema,
   outputSchema: QueryRecordsOutputSchema,

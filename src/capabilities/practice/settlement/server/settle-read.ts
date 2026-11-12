@@ -21,7 +21,7 @@ import {
   sealCandidateFact,
   validateCandidateInput,
 } from '@/core/scheduling/candidate';
-import type { KcObservation } from '@/core/schema/assessment';
+import type { FsrsRatingLabel, KcObservation } from '@/core/schema/assessment';
 import { EvaluationProvenance } from '@/core/schema/assessment';
 import type { KcEvidenceApply, KcWrongCauseT } from '@/core/schema/assessment/kc-mastery-evidence';
 import type { Tx } from '@/db/client';
@@ -101,6 +101,11 @@ export interface SettlementPlan {
   scopeKcIds: string[];
   /** One knowledge card per scope KC. An empty scope uses the group-root question card. */
   fsrsSubjects: FsrsSubject[];
+  /**
+   * Per-KC FSRS ratings sealed with the plan. Absence is a legacy plan and keeps
+   * the shared `rating` behaviour; an abstaining KC is present with `rating: null`.
+   */
+  kcRatings?: Array<{ knowledgeId: string; rating: FsrsRatingLabel | null }>;
   kcObservations: KcObservation[];
   /** Which KC dragged the attempt. null only on plans sealed before this field existed. */
   kcWrongCause?: KcWrongCauseT;

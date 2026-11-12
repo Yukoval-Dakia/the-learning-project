@@ -20,7 +20,9 @@ import { ConjectureProposalChange } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
 import { event, intervention, knowledge, mastery_state } from '@/db/schema';
 import { getProposalInboxRow } from '@/kernel/proposals/inbox';
+import { effectiveThetaForKcBatch } from '@/kernel/read-models/mastery-state';
 import { getEffectiveProbeResultStatuses } from '@/kernel/read-models/probe-evidence';
+import { getKcRuleBasedness } from './kc-rule-basedness';
 
 type DbLike = Db | Tx;
 
@@ -158,6 +160,20 @@ export async function buildInterventionSnapshotFromProbeResult(
     )
     .limit(1);
 
+  // A KC row's theta_hat is only this KC's offset against the learner's global
+  // ability in the domain, so banding it alone calls a subject-wide strong learner
+  // a novice. Fold the global term in the same way the write path and selection do.
+  // No KC row means no ability estimate for this KC at all: stay null (conservative
+  // novice) instead of reading a cold-start 0 as measured ability.
+  const effectiveTheta = mastery
+    ? ((
+        await effectiveThetaForKcBatch(db, [
+          { knowledgeId: change.knowledge_id, thetaKc: mastery.theta_hat },
+        ])
+      ).get(change.knowledge_id) ?? mastery.theta_hat)
+    : null;
+  const ruleBasedness = await getKcRuleBasedness(db, change.knowledge_id);
+
   const priorRows = await db
     .select({
       id: intervention.id,
@@ -225,13 +241,13 @@ export async function buildInterventionSnapshotFromProbeResult(
       evidence_refs: evidenceRefs,
     },
     learner_context: {
-      theta_band: thetaBand(mastery?.theta_hat ?? null),
+      theta_band: thetaBand(effectiveTheta),
       precision_band: precisionBand(mastery?.theta_precision ?? null),
       misconception_present: true,
-      // No subject-owned KC rule/concept trait exists yet. False is the
-      // conservative, explicit value: it withholds reconstruction rather than
-      // asking the model to invent a hidden classification.
-      kc_is_rule_based: false,
+      // The contract carries a boolean only, so an unresolvable KC stays false
+      // (withholds reconstruction rather than asking the model to invent a hidden
+      // classification). getKcRuleBasedness keeps the tri-state internally.
+      kc_is_rule_based: ruleBasedness === 'rule_based',
     },
     prior_interventions: priorInterventions,
     disabled_method_ids: disabledPedagogyMethods(input.env ?? process.env),

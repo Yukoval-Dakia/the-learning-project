@@ -15,7 +15,6 @@ vi.mock('@/server/ai/log', () => ({
   writeAiTaskRunStarted: vi.fn(async () => {}),
   writeAiTaskRunRetried: vi.fn(async () => true),
   writeCostLedger: vi.fn(async () => {}),
-  markAiTaskRunOutputInvalid: vi.fn(async () => true),
 }));
 vi.mock('@/kernel/records/ai-attempt-facts', async () => {
   const actual = await vi.importActual<typeof import('@/kernel/records/ai-attempt-facts')>(
