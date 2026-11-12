@@ -64,6 +64,7 @@ type ListActiveGoalsFn = (db: DbLike) => Promise<ActiveGoal[]>;
 
 export interface ReviewDueDeps {
   db?: DbLike;
+  recordSelectionMisses?: boolean;
   // Defaults to listActiveGoalsWithResolvedScope. The goals only ADD a soft re-rank of the
   // overdue items already selected by the FSRS due-ordering + limit — they
   // never change which items are returned (ND-5).
@@ -340,7 +341,10 @@ export type ReviewDueRow = {
 export async function queryReviewDue(
   activeDb: DbLike,
   input: ReviewDueQuery = {},
-  deps: Pick<ReviewDueDeps, 'listActiveGoalsFn' | 'loadSteeringDeferredFn'> = {},
+  deps: Pick<
+    ReviewDueDeps,
+    'listActiveGoalsFn' | 'loadSteeringDeferredFn' | 'recordSelectionMisses'
+  > = {},
 ): Promise<{ rows: ReviewDueRow[] }> {
   const listGoals = deps.listActiveGoalsFn ?? listActiveGoalsWithResolvedScope;
   const requestedLimit = input.limit ?? 20;
@@ -490,7 +494,9 @@ export async function queryReviewDue(
     });
     if (dueRows.length === candidateWindow) break;
   }
-  await recordProbeSelectionMisses(activeDb, probeMisses, now);
+  if (deps.recordSelectionMisses ?? true) {
+    await recordProbeSelectionMisses(activeDb, probeMisses, now);
+  }
 
   const rawLegacyQuestionStateRows = await activeDb
     .select({
