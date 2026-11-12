@@ -1,5 +1,7 @@
 import type { ReactNode } from 'react';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
+import { CauseEditor } from '@/ui-next/practice-studio/CauseEditor';
+import type { CauseEditor as CauseEditorModel } from '@/ui-next/practice-studio/contracts';
 import { Card } from '@/ui-next/primitives/Card';
 import { FoldList } from '@/ui-next/primitives/FoldList';
 import { RetryLine } from '@/ui-next/primitives/RetryLine';
@@ -23,12 +25,14 @@ function MistakeLine({
   lookups,
   partial,
   navigate,
+  causeEditorFor,
 }: {
   group: MistakeQuestion;
   lookups: LibraryLookups;
   /** More mistake pages exist, so counts cover only what is loaded. */
   partial: boolean;
   navigate: (to: string) => void;
+  causeEditorFor?: (target: MistakeCauseTarget) => CauseEditorModel | undefined;
 }) {
   const { summary } = group;
   const counted = summary.effective_wrong_attempt_count > 0;
@@ -36,6 +40,14 @@ function MistakeLine({
   const record = group.records.find((r) => r.standing === 'stands') ?? group.records[0];
   const answer = record ? plainAnswer(record.wrongAnswerMd) : '';
   const notation = lookups.notationFor(group.knowledgeIds);
+  const causeEditor =
+    group.summary.editable_attempt_event_id && causeEditorFor
+      ? causeEditorFor({
+          attemptEventId: group.summary.editable_attempt_event_id,
+          questionId: group.summary.question_id,
+          current: group.summary.primary_cause,
+        })
+      : undefined;
   return (
     <QuestionLine
       id={summary.question_id}
@@ -83,8 +95,15 @@ function MistakeLine({
           </span>
         )
       }
+      below={causeEditor ? <CauseEditor editor={causeEditor} /> : undefined}
     />
   );
+}
+
+export interface MistakeCauseTarget {
+  attemptEventId: string;
+  questionId: string;
+  current: MistakeQuestion['summary']['primary_cause'];
 }
 
 function FoldedGroup({
@@ -130,12 +149,15 @@ export function MistakesView({
   lookups,
   navigate,
   onClearScope,
+  causeEditorFor,
 }: {
   scope: LibraryScope;
   scoped: boolean;
   lookups: LibraryLookups;
   navigate: (to: string) => void;
   onClearScope: () => void;
+  /** YUK-2108 owner seam: becomes available when the cause routes are deployed and merged. */
+  causeEditorFor?: (target: MistakeCauseTarget) => CauseEditorModel | undefined;
 }) {
   const { query: q, groups } = useMistakeQuestions(scope);
 
@@ -169,6 +191,7 @@ export function MistakesView({
       lookups={lookups}
       partial={partial}
       navigate={navigate}
+      causeEditorFor={causeEditorFor}
     />
   );
 

@@ -1,5 +1,6 @@
 import { Check, CircleHelp, RotateCcw, Sparkles, X } from 'lucide-react';
 import { type ReactNode, useCallback, useRef } from 'react';
+import { CauseEditor } from './CauseEditor';
 import type { PracticeIntents, PracticeRenderers, Revelation } from './contracts';
 import { IntentButton, NoticeBlock } from './controls';
 import { PracticeField } from './PracticeFields';
@@ -128,6 +129,7 @@ export function PracticeFeedback({
         </fieldset>
       )}
       {/* After the answer and its reference: only then can a learner tell a judgment looks wrong. */}
+      {r.cause && <CauseEditor editor={r.cause} />}
       {r.appeal && (
         <section className="un-st-appeal">
           {r.appeal.field && (

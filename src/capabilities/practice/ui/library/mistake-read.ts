@@ -49,6 +49,8 @@ export interface MistakeCause {
 
 export interface MistakeRecord {
   id: string;
+  /** The immutable attempt anchored by the new cause API; absent on older reads. */
+  attemptEventId: string | null;
   createdAtSec: number;
   /** The prompt as it was when this attempt happened (frozen per record). */
   promptMd: string;
@@ -64,6 +66,8 @@ export interface MistakeQuestionSummary {
   effective_wrong_attempt_count: number;
   last_effective_wrong_at: number | null;
   primary_cause: MistakeCause | null;
+  /** The newest standing failure this row can attribute, whether or not it already has a cause. */
+  editable_attempt_event_id: string | null;
   attribution_state: 'attributed' | 'unknown';
 }
 
@@ -78,8 +82,15 @@ export interface MistakeQuestion {
 }
 
 function toRecord(row: MistakeRow): MistakeRecord {
+  const attemptEventId =
+    'attempt_event_id' in row &&
+    typeof row.attempt_event_id === 'string' &&
+    row.attempt_event_id.length > 0
+      ? row.attempt_event_id
+      : null;
   return {
     id: row.id,
+    attemptEventId,
     createdAtSec: row.created_at,
     promptMd: row.prompt_md,
     wrongAnswerMd: row.wrong_answer_md,
@@ -104,6 +115,7 @@ function summarise(questionId: string, records: readonly MistakeRecord[]): Mista
     effective_wrong_attempt_count: effective.length,
     last_effective_wrong_at: latest?.createdAtSec ?? null,
     primary_cause: latest?.cause ?? null,
+    editable_attempt_event_id: latest?.attemptEventId ?? null,
     attribution_state: latest?.cause ? 'attributed' : 'unknown',
   };
 }
