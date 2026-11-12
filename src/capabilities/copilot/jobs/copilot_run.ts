@@ -53,6 +53,7 @@ import {
   hasCopilotSettlementTerminal,
   markCopilotRunStarted,
   projectCopilotOutcomeMarker,
+  settleCopilotRunIfSessionDeleted,
   terminalRunResult,
   withCopilotExecutionSettlementLock,
   writeFailedTerminalProjection,
@@ -314,6 +315,19 @@ async function executeAcceptedCopilotRun(
       throw new DurableTerminalProjectionError(runId, 'failure', projectionErr);
     }
   }
+  // Session tombstone gate: a run accepted before the revocation commit can
+  // still arrive here. Settle it through the shared pre-start terminal under
+  // the dispatch lock so the delete pass can converge — paid work never starts
+  // behind a tombstone. Placed after outcome-marker repair: a reply that was
+  // already persisted before the revoke still owes its public projection.
+  const sessionGate = await settleCopilotRunIfSessionDeleted(db, runId, data.session_id);
+  if (sessionGate.outcome === 'terminal') {
+    return terminalRunResult(sessionGate.events, taskRunId);
+  }
+  if (sessionGate.outcome === 'deleted') {
+    return { status: 'cancelled' };
+  }
+
   // Crisis 回合的确定性终局：不逃模型、不调工具、不进执行 fence。分类在接纳点
   // 完成（chat.ts），策略经投递链验证送达（acceptedCopilotDerivationPolicy）；此处
   // 用同一确定性词法重选模板。回复经 persistReply 写入并继承 ask 的 crisis 策略；
@@ -433,6 +447,9 @@ async function executeAcceptedCopilotRun(
     runId,
     onDeltaAccepted: (text) => {
       streamedProse += text;
+    },
+    onRetractAccepted: (chars) => {
+      streamedProse = streamedProse.slice(0, Math.max(0, streamedProse.length - chars));
     },
   });
   // YUK-1909 — display-only thinking lane: coalesced pg_notify frames to this
@@ -700,6 +717,18 @@ async function executeAcceptedCopilotRun(
               taskRunId: activity.taskRunId,
               text: activity.text,
             });
+            return;
+          }
+          if (activity.kind === 'request_retry') {
+            // The retracted thinking tail must already be on the live lane.
+            await liveWriter.drain();
+            const payload = projectCopilotActivity(activity);
+            if (payload) {
+              progressWriter.push({
+                kind: 'retract',
+                payload: { ...payload, discard_chars: activity.discardProseChars },
+              });
+            }
             return;
           }
           if (activity.kind === 'thinking_end') {

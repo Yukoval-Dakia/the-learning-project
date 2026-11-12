@@ -33,6 +33,7 @@
 - Postgres + Drizzle 是真相源；editing presence 走 PG，无 Redis；blob storage 走 R2/S3-compatible client。
 - 后端 route/job/copilotTool 只经 `src/capabilities/<name>/manifest.ts` 贡献到组合根；`server/app.ts` 对 `/api/*` 校验 `x-internal-token`（仅 `/api/health`、`/api/ready` 豁免）。
 - 浏览器不持 provider key，AI 调用只经 Hono route 或 worker；AI 动作可追踪、可逆，保留 run logging。
+- 配置：新 env 变量的归属（registry / boot schema / stay-in-place）与读法见 `src/core/config/AGENTS.md`；产品代码禁止新增裸 `process.env` 读，`pnpm audit:flags --strict` 拦截。
 - `core/` 只放跨科目逻辑，科目专属逻辑留 `subjects/<name>/`（科目知识是学科语境数据，ADR-0068）；多 provider 细节以 `src/server/ai/AGENTS.md` 为准；`src/server/` 子模块清单以 `ls src/server/*/` 现状为准。Next.js、Vercel、Redis/ioredis、`:3000`、`middleware.ts` 均为历史描述。
 - 架构不回退审查（YUK-1579 六项，独立审查逐项给源码证据或 NOT_APPLICABLE）：①一个 owner 拥有一项完整事实/操作；②窄接口隐藏决策、状态与恢复复杂度，拒绝 pass-through 与时序耦合；③深模块以两个真实变更场景的局部理解/修改范围衡量，行数与 import 数只是信号；④不新增 god file，业务规则不进 UI，调用方不得重写被依赖模块的内部排序或决策；⑤事务边界、锁顺序、幂等、部分完成/恢复与兼容契约显式，静态检查、CI 与真实运行验证分开；⑥新增依赖只走既有 `public`/`ui-public` 规则或已批 kernel 端口，ratchet 台账与机器输出逐条一致。
 
@@ -66,7 +67,7 @@
 ## Planning, docs, and tracking
 
 - 文档不在 git 内，统一放仓库外：`/Volumes/YukovalSBak/yukoval-projects/tlp-docs/`。原 `docs/` 与 `PLANNING.md` 的副本在 `repo-docs/`（逐文件清单 `MANIFEST.tsv`、hash `SHA256SUMS`）；架构/设计决策写 `repo-docs/docs/adr/` 或 `tlp-docs/design/`；过程性规划、清单、审计和回执写 `tlp-docs/planning/`、`tlp-docs/audit/`。README 随 runtime 形态同步；domain layout 用根 `CONTEXT.md` 与外部 ADR 目录。
-- 批量证据外置 `tlp-audit-artifacts/<line-or-issue>/<head>/`（架构线必须落在 `architecture-deepening/` 子路径）；git 只留结论、命令、revision、外部路径与 SHA256 摘要；git 历史不重写；把既有批量证据从 HEAD 删除前必须先外置复制、hash 核验、建 git 指针并经协调线逐批确认。
+- 批量证据外置到仓库外 `/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/<line-or-issue>/<head>/`（架构线必须落在 `architecture-deepening/` 子路径），不提交进仓库（镜像内容检查会拦）；git 只留结论、命令、revision、外部路径与 SHA256 摘要；git 历史不重写；把既有批量证据从 HEAD 删除前必须先外置复制、hash 核验、建 git 指针并经协调线逐批确认。
 - Linear（Yukoval Studios / YUK）是权威 tracker，GitHub Issues 仅历史。branch/commit/PR 用 `YUK-NN`；多票逐个 `Closes YUK-NN`；任务收尾执行 capture gate（先查重再建/更新 actionable follow-up，没有则说明原因）；触及的 issue 状态当场与代码现实对齐。流程见 `/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/agents/issue-tracker.md`，标签见 `/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/agents/triage-labels.md`。
 - 代码检索：概念/未知位置先 `ykv-code-index.search_code`；已知符号/引用用 LSP 或 grep；已知字面量/regex/文件名用 grep，无结果不断言不存在；索引偏靶时查 index health 再交叉验证。
 - UI 实施在 2026-10-07 自主交付授权（`/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/planning/2026-10-07-autonomous-delivery-charter.md`）范围内自主进行：pre-flight 引用 design doc 原文（路径+行号）、声明组件类型（drawer/route/modal/page）、列出创建与修改文件；遵循既有 design tokens/primitives/design-system。

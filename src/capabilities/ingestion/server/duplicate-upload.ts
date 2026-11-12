@@ -25,6 +25,26 @@ export interface DuplicateUploadMatch {
   uploaded_at: string;
 }
 
+/**
+ * Evidence pages only: Word sessions also pin embedded media on the session so imports
+ * can reference it, but the same docx must still compare as the same page set. Media is
+ * `role='media'` from persistPackageMedia; everything else is a page.
+ */
+function evidencePageIds(
+  rows: Array<{ id: string; provenance?: unknown }>,
+  orderedIds: readonly string[],
+): string[] {
+  const media = new Set(
+    rows
+      .filter((row) => {
+        const provenance = row.provenance as { role?: unknown } | null | undefined;
+        return provenance?.role === 'media';
+      })
+      .map((row) => row.id),
+  );
+  return orderedIds.filter((id) => !media.has(id));
+}
+
 /** Exact ordered page-set match against an earlier document; null when unknown or unique. */
 export async function findDuplicateUpload(
   tx: Tx,
@@ -33,11 +53,17 @@ export async function findDuplicateUpload(
   if (input.assetIds.length === 0) return null;
 
   const newAssets = await tx
-    .select({ id: source_asset.id, sha256: source_asset.sha256 })
+    .select({
+      id: source_asset.id,
+      sha256: source_asset.sha256,
+      provenance: source_asset.provenance,
+    })
     .from(source_asset)
     .where(inArray(source_asset.id, [...input.assetIds]));
+  if (newAssets.length !== input.assetIds.length) return null;
   const shaById = new Map(newAssets.map((row) => [row.id, row.sha256]));
-  const target = input.assetIds.map((id) => shaById.get(id));
+  const targetIds = evidencePageIds(newAssets, input.assetIds);
+  const target = targetIds.map((id) => shaById.get(id));
   // An unresolvable asset identity must not turn into a false duplicate claim.
   if (target.some((sha) => sha === undefined)) return null;
 
@@ -51,25 +77,37 @@ export async function findDuplicateUpload(
     .where(ne(source_document.id, input.sourceDocumentId))
     .orderBy(desc(source_document.created_at))
     .limit(DUPLICATE_SCAN_LIMIT);
-  const samePageCount = candidates.filter(
-    (doc) => (doc.assetIds ?? []).length === input.assetIds.length,
-  );
-  if (samePageCount.length === 0) return null;
-
-  const candidateAssetIds = [...new Set(samePageCount.flatMap((doc) => doc.assetIds ?? []))].filter(
+  const candidateAssetIds = [...new Set(candidates.flatMap((doc) => doc.assetIds ?? []))].filter(
     (id) => shaById.get(id) === undefined,
   );
   const candidateAssets =
     candidateAssetIds.length === 0
       ? []
       : await tx
-          .select({ id: source_asset.id, sha256: source_asset.sha256 })
+          .select({
+            id: source_asset.id,
+            sha256: source_asset.sha256,
+            provenance: source_asset.provenance,
+          })
           .from(source_asset)
           .where(inArray(source_asset.id, candidateAssetIds));
   const candidateSha = new Map(candidateAssets.map((row) => [row.id, row.sha256]));
+  const candidateById = new Map([...newAssets, ...candidateAssets].map((row) => [row.id, row]));
+  const samePageCount = candidates.filter((doc) => {
+    const ids = evidencePageIds(
+      (doc.assetIds ?? []).map((id) => candidateById.get(id)).filter((row) => row !== undefined),
+      doc.assetIds ?? [],
+    );
+    return ids.length === targetIds.length;
+  });
+  if (samePageCount.length === 0) return null;
 
   for (const doc of samePageCount) {
-    const sameOrder = (doc.assetIds ?? []).every((id, index) => {
+    const ids = evidencePageIds(
+      (doc.assetIds ?? []).map((id) => candidateById.get(id)).filter((row) => row !== undefined),
+      doc.assetIds ?? [],
+    );
+    const sameOrder = ids.every((id, index) => {
       const sha = shaById.get(id) ?? candidateSha.get(id);
       return sha !== undefined && sha === target[index];
     });
@@ -91,6 +129,35 @@ export async function findDuplicateUpload(
     };
   }
   return null;
+}
+
+/**
+ * Recognise and record a duplicate in a savepoint so a detection fault never aborts the
+ * surrounding creation transaction (e.g. a statement timeout). Unknown stays unknown.
+ */
+export async function detectDuplicateUpload(
+  tx: Tx,
+  input: { sessionId: string; sourceDocumentId: string; assetIds: readonly string[] },
+): Promise<DuplicateUploadMatch | null> {
+  try {
+    return await tx.transaction(async (savepoint) => {
+      const duplicate = await findDuplicateUpload(savepoint, {
+        sourceDocumentId: input.sourceDocumentId,
+        assetIds: input.assetIds,
+      });
+      if (duplicate !== null) {
+        await recordDuplicateUpload(savepoint, {
+          sessionId: input.sessionId,
+          sourceDocumentId: input.sourceDocumentId,
+          duplicate,
+        });
+      }
+      return duplicate;
+    });
+  } catch (err) {
+    console.error('[ingestion] duplicate upload detection failed', err);
+    return null;
+  }
 }
 
 /** Persist the typed signal; the caller's creation transaction owns it. */

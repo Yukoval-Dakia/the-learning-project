@@ -1,6 +1,7 @@
 // Learner words for the record page (YUK-1473). Codes and internal names never reach the screen:
 // every code maps to a plain sentence here, and anything unknown gets a plain generic line.
 
+import { type AdmissionFacts, admissionSentence } from '@/ui/lib/admission-words';
 import type { StartProblem } from './record-start';
 
 export const STAGE_WORDS: Record<string, string> = {
@@ -53,11 +54,20 @@ const IN_BANK = new Set(['admitted', 'imported', 'auto_enrolled']);
  * says nothing new (still in the library and served, or still waiting for the usual check).
  */
 export function nowWords(
-  now: { servable: boolean; holdReason: string | null } | null,
+  now: { servable: boolean; holdReason: string | null; admission?: AdmissionFacts | null } | null,
   atFinish: string,
 ): string | null {
   if (!now) return null;
   if (now.servable) return IN_BANK.has(atFinish) ? null : '现在：可以练了';
+  // The check's own state says what is happening and when it tries again; a question already
+  // shown as withheld at the finish needs no line for an ordinary wait.
+  const admission = now.admission;
+  if (admission && admission.status !== 'admitted') {
+    const ordinaryWait = admission.status === 'pending' && !admission.wait;
+    if (!(ordinaryWait && atFinish === 'withheld')) {
+      return `现在：在题库里。${admissionSentence(admission)}`;
+    }
+  }
   const code = now.holdReason;
   if (code === 'awaiting_admission' || code === 'unverified_rules') {
     return atFinish === 'withheld' ? null : '现在：在题库里，等核对答案';
@@ -107,6 +117,36 @@ export function holdWords(reason: string | null): string | null {
   if (HOLD_WORDS[code]) return HOLD_WORDS[code];
   if (/^[a-z][a-z0-9_]*$/.test(code)) return '先不出，原因没有说清。';
   return reason;
+}
+
+/**
+ * Being in the library is not being served: why a question there isn't given out yet, or null.
+ * A question recorded before admission ran reads as undecided, which is what it is.
+ */
+export function servingNote(
+  serving: {
+    servable: boolean;
+    hold_reason: string | null;
+    admission?: AdmissionFacts | null;
+  } | null,
+): string | null {
+  if (!serving || serving.servable) return null;
+  const admission = serving.admission;
+  if (admission && admission.status !== 'admitted') return admissionSentence(admission);
+  return holdWords(serving.hold_reason);
+}
+
+/** Why one question didn't go in just now, in words; the list is re-read after these. */
+export function enrollProblemWords(code: string | undefined): string {
+  if (code === 'prompt_missing') return '这道题还没有题目文字，先补上。';
+  if (code === 'enroll_in_progress') return '这道题正在进题库，稍等一下。';
+  if (code === 'version_conflict' || code === 'prompt_edit_unavailable') {
+    return '这道题刚刚变了，已经重新读出来，再试一次。';
+  }
+  if (code === 'conflict') return '这次录入已经结束，不能再收题了。';
+  if (code === 'validation_error') return '题目文字太长了，最多 2 万字。';
+  if (code === 'not_found') return '这道题已经不在了。';
+  return '这次没收进去，再试一次。';
 }
 
 export const START_WORDS: Record<StartProblem, { title: string; body: string }> = {
@@ -229,25 +269,4 @@ export function materialWords(entrypoint: string | null, pages: number): string 
   if (entrypoint === 'docx') return 'Word 文件';
   if (entrypoint === 'vision_single') return '一张照片';
   return pages > 0 ? `${pages} 页材料` : '一份材料';
-}
-
-/** The line beside「都看过了」on a classic recording that was only partly read. */
-export function reviewLine(r: {
-  problem: 'no_version' | 'changed' | 'unknown' | 'refused' | null;
-  sending: boolean;
-  done: boolean;
-  marked: number;
-  total: number;
-}): string {
-  if (r.problem === 'no_version') return '这些题少了版本信息，现在没法确认看过。刷新页面后再试。';
-  if (r.sending) return '正在记下你都看过了…';
-  if (r.done) return '记下了，正在刷新。';
-  if (r.problem === 'unknown')
-    return '没收到结果，不知道记下没有。按「查一下结果」查回刚才那次，不会重复记。';
-  if (r.problem === 'changed') return '有题刚刚变了，已经重新读出来，请再逐道看一遍。';
-  if (r.problem === 'refused') return '这次没能记成看过了。可以再试一次；还是不行，刷新页面看看。';
-  const left = r.total - r.marked;
-  return left > 0
-    ? `逐道看过后点「看过了」，还剩 ${left} 道。没收的、已自动进题库的也算。`
-    : '都看过了，确认之后就可以收了，缺的要先补。';
 }

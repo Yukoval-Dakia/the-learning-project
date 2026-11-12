@@ -12,12 +12,27 @@ export const MakePaperBody = z.object({
     .optional(),
 });
 
-export const RescueBody = z.object({
-  block_id: z.string().min(1),
-  page: z.number().int().min(0),
-  tier: z.union([z.literal(2), z.literal(3)]),
-  strategy: z.enum(['extract', 'restructure_cloze', 'restructure_compound']).optional(),
-});
+export const RescueBody = z
+  .object({
+    block_id: z.string().min(1),
+    page: z.number().int().min(0),
+    tier: z.union([z.literal(2), z.literal(3)]).optional(),
+    strategy: z
+      .enum(['extract', 'restructure_cloze', 'restructure_compound', 'handwriting_trace'])
+      .optional(),
+  })
+  .superRefine((body, ctx) => {
+    // The Vision tiers still require an explicit tier; only the handwriting re-run
+    // has no tier to choose. Keeping this required for every other strategy is the
+    // pre-existing contract, not a relaxed validation.
+    if (body.strategy !== 'handwriting_trace' && body.tier === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['tier'],
+        message: 'tier is required unless strategy is handwriting_trace',
+      });
+    }
+  });
 
 /** The complete classic block/version set explicitly checked by the learner. */
 export const ReviewBody = z

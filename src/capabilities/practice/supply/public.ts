@@ -32,6 +32,11 @@ export const placementAuthority = {
   lockPlacementSupplyScopes,
 } as const;
 
+export {
+  type BandLevelTarget,
+  isDifficultyBand,
+  resolveBandLevelTarget,
+} from './server/band-level';
 export { loadCoverageLattice } from './server/coverage-lattice';
 export type { CoverageLatticeRead } from './server/coverage-lattice-core';
 export type { DispatchResult } from './server/dispatcher';

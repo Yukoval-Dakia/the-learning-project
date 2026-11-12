@@ -98,6 +98,8 @@ export type EditStatus =
   | 'skipped:node_not_found'
   | 'skipped:not_splittable'
   | 'skipped:cross_session'
+  | 'skipped:version_conflict'
+  | 'skipped:structured_exists'
   | 'skipped:block_not_found'
   | 'skipped:figure_not_found'
   | 'skipped:null_structured';
@@ -111,6 +113,8 @@ export interface EditResult {
 export interface BaseEditParams {
   /** `callerActor.ref` of the tool caller, stamped as `last_modified_by`. */
   actorRef: string;
+  /** CAS on the version the caller read; updatePrompt rejects a stale edit. */
+  expectedVersion?: number;
   /**
    * Provenance for the canonical edit event. Agent tools default to 'agent'; the
    * user-driven proposal accept path passes 'user'. The fold does not read it.
@@ -219,6 +223,50 @@ async function persistStructured(tx: Tx, params: PersistStructuredParams): Promi
   return version;
 }
 
+/**
+ * Writes the first prompt for a block whose extraction produced no structured tree.
+ * The block worksheet is the one user entry for `needs_text`; it must not be blocked on a
+ * tree that does not exist. Uses the same row lock, CAS and canonical edit event as
+ * updatePrompt so versioning and fold parity stay one owner.
+ */
+export async function setMissingPrompt(
+  db: Db,
+  params: {
+    blockId: string;
+    promptText: string;
+    expectedVersion: number;
+    actorRef: string;
+    actorKind?: 'agent' | 'user';
+  },
+): Promise<EditResult> {
+  return db.transaction(async (tx) => {
+    const block = await loadBlockForUpdate(tx, params.blockId);
+    if (!block) return { status: 'skipped:block_not_found' };
+    if (block.version !== params.expectedVersion) {
+      return { status: 'skipped:version_conflict' };
+    }
+    if (block.status !== 'draft') return { status: 'skipped:not_draft' };
+    if (block.structured) return { status: 'skipped:structured_exists' };
+    const tree: StructuredQuestionT = {
+      id: newId(),
+      role: 'standalone',
+      prompt_text: params.promptText,
+      source: 'manual',
+    };
+    const version = await persistStructured(tx, {
+      blockId: params.blockId,
+      structured: tree,
+      op: 'update_prompt',
+      jobPayload: { op: 'update_prompt', node_id: tree.id },
+      actorRef: params.actorRef,
+      actorKind: params.actorKind ?? 'user',
+      currentStatus: block.status,
+      currentVersion: block.version,
+    });
+    return { status: 'written', version };
+  });
+}
+
 export interface UpdatePromptParams extends BaseEditParams {
   blockId: string;
   nodeId: string;
@@ -229,6 +277,9 @@ export async function updatePrompt(db: Db, params: UpdatePromptParams): Promise<
   return db.transaction(async (tx) => {
     const block = await loadBlockForUpdate(tx, params.blockId);
     if (!block) return { status: 'skipped:block_not_found' };
+    if (params.expectedVersion !== undefined && block.version !== params.expectedVersion) {
+      return { status: 'skipped:version_conflict' };
+    }
     if (block.status !== 'draft') return { status: 'skipped:not_draft' };
     if (!block.structured) return { status: 'skipped:node_not_found' };
 
@@ -262,6 +313,9 @@ export async function addOption(db: Db, params: AddOptionParams): Promise<EditRe
   return db.transaction(async (tx) => {
     const block = await loadBlockForUpdate(tx, params.blockId);
     if (!block) return { status: 'skipped:block_not_found' };
+    if (params.expectedVersion !== undefined && block.version !== params.expectedVersion) {
+      return { status: 'skipped:version_conflict' };
+    }
     if (block.status !== 'draft') return { status: 'skipped:not_draft' };
     if (!block.structured) return { status: 'skipped:node_not_found' };
 
@@ -295,6 +349,9 @@ export async function setQuestionType(db: Db, params: SetQuestionTypeParams): Pr
   return db.transaction(async (tx) => {
     const block = await loadBlockForUpdate(tx, params.blockId);
     if (!block) return { status: 'skipped:block_not_found' };
+    if (params.expectedVersion !== undefined && block.version !== params.expectedVersion) {
+      return { status: 'skipped:version_conflict' };
+    }
     if (block.status !== 'draft') return { status: 'skipped:not_draft' };
     if (!block.structured) return { status: 'skipped:node_not_found' };
 
@@ -412,6 +469,9 @@ export async function splitStem(db: Db, params: SplitStemParams): Promise<EditRe
   return db.transaction(async (tx) => {
     const block = await loadBlockForUpdate(tx, params.blockId);
     if (!block) return { status: 'skipped:block_not_found' };
+    if (params.expectedVersion !== undefined && block.version !== params.expectedVersion) {
+      return { status: 'skipped:version_conflict' };
+    }
     if (block.status !== 'draft') return { status: 'skipped:not_draft' };
     if (!block.structured) return { status: 'skipped:node_not_found' };
     if (!idHasMatch(block.structured, params.nodeId)) {

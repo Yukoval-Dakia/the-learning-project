@@ -47,7 +47,7 @@ describe('acceptAiProposal records-flip degradation', () => {
         .values({ id, name: id, ...KNOWLEDGE_BASE, created_at: now, updated_at: now });
     }
     await db.insert(knowledge_edge).values({
-      id: 'edge_flip_superseded',
+      id: 'edge_flip_archived',
       from_knowledge_id: 'k2',
       to_knowledge_id: 'k1',
       relation_type: 'related_to',
@@ -59,21 +59,18 @@ describe('acceptAiProposal records-flip degradation', () => {
       id: 'edge_flip_p1',
       payload: {
         kind: 'knowledge_edge',
-        target: { subject_kind: 'knowledge_edge', subject_id: 'edge_flip_superseded' },
+        target: { subject_kind: 'knowledge_edge', subject_id: 'edge_flip_archived' },
         reason_md: 'the candidate corrects the old edge',
         evidence_refs: [{ kind: 'record', id: 'rec_1' }],
         proposed_change: {
-          edge_op: 'supersede',
+          edge_op: 'archive',
           from_knowledge_id: 'k1',
           to_knowledge_id: 'k3',
           relation_type: 'contrasts_with',
           weight: 0.8,
-          archive_edge_id: 'edge_flip_superseded',
-          supersede_confidence: 0.91,
-          supersede_neighbor_index: 0,
-          supersede_affected_refs: [{ kind: 'question', id: 'question_1' }],
+          archive_edge_id: 'edge_flip_archived',
         },
-        cooldown_key: 'knowledge_edge_supersede:edge_flip_superseded:k1|k3|contrasts_with',
+        cooldown_key: 'knowledge_edge_archive:edge_flip_archived',
       },
     });
     await backfillKnowledgeEdgeGenesis(db);

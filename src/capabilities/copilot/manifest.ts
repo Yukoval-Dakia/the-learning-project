@@ -16,6 +16,7 @@ import {
   CopilotCheckpointRevertErrorSchema,
   CopilotCheckpointRevertSuccessSchema,
   CopilotCreateSessionResponseSchema,
+  CopilotDeleteSessionResponseSchema,
   CopilotDurableRunResponseSchema,
   CopilotNudgeCompanionResponseSchema,
   CopilotNudgesResponseSchema,
@@ -141,6 +142,18 @@ export const copilotCapability = defineCapability({
         responses: { 201: CopilotCreateSessionResponseSchema, ...API_ERROR_RESPONSES },
         successStatus: 201,
         load: () => import('./api/sessions').then((m) => m.POST),
+      },
+      {
+        // Hard delete: revoke -> cancel+drain runs -> conversation tombstone.
+        // The workspace sweep removes the owner's directory afterwards; Stop and
+        // drawer close deliberately never reach this route.
+        method: 'POST',
+        path: '/api/copilot/sessions/[id]/delete',
+        operationId: 'deleteCopilotSession',
+        request: { params: CopilotRouteIdParamsSchema },
+        responses: { 200: CopilotDeleteSessionResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        load: () => import('./api/delete-session').then((m) => m.POST),
       },
       {
         method: 'GET',
@@ -291,6 +304,11 @@ export const copilotCapability = defineCapability({
       {
         name: 'query_events',
         load: () => import('./server/tools/query-events').then((m) => m.queryEventsTool),
+      },
+      {
+        name: 'list_pending_proposals',
+        load: () =>
+          import('./server/tools/list-pending-proposals').then((m) => m.listPendingProposalsTool),
       },
       // Context 暖层读归 agency 的 query_context（YUK-1794 B1）；今日摘要的
       // brief 读走 kernel read-models/memory-brief 端口（executeMemoryBrief 适配）。

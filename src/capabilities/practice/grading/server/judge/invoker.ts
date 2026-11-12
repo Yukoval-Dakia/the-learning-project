@@ -37,6 +37,7 @@ import {
   unsupportedResult,
 } from './question-contract';
 import { resolveQuestionJudgeRoute } from './route-resolve';
+import { JudgeSandboxEvidenceSchema, collectJudgeSandboxEvidence } from './sandbox-evidence';
 
 export const JudgeInvokerQuestionSchema = z
   .object({
@@ -136,6 +137,9 @@ export const JudgeInvokerOutputSchema = z.object({
       input_hash: z.string().regex(/^[a-f0-9]{64}$/),
       prompt_fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
       prompt_template_revision: z.string().min(1),
+      // Present iff the judging run used the sandbox: per-call digests +
+      // runtime, with full script/output staying in tool_call_log.
+      sandbox: JudgeSandboxEvidenceSchema.optional(),
     })
     .optional(),
 });
@@ -265,6 +269,9 @@ export class JudgeInvoker {
         if (!isAiTaskKind(kind)) {
           throw new Error(`unknown judge task kind '${kind}' — refusing to fingerprint`);
         }
+        const sandbox = taskResult.task_run_id
+          ? await collectJudgeSandboxEvidence(narrowed.db, taskResult.task_run_id)
+          : null;
         const provenance = {
           task_kind: kind,
           ...(taskResult.task_run_id ? { task_run_id: taskResult.task_run_id } : {}),
@@ -277,6 +284,7 @@ export class JudgeInvoker {
             learnerLocale,
           }),
           prompt_template_revision: JUDGE_PROMPT_TEMPLATE_REVISION,
+          ...(sandbox ? { sandbox } : {}),
         };
         taskRunId = taskResult.task_run_id;
         execution = provenance;
@@ -295,7 +303,7 @@ export class JudgeInvoker {
       runTaskFn: observedRunTaskFn,
     });
 
-    // D6 (U4 L-stamp, critic-R2 HIGH): pin capability_ref.version from the
+    // D6 (U4 L-stamp): pin capability_ref.version from the
     // active SubjectProfile.version, NOT the judge runners' module-level
     // '1.0.0' constants. Override on the RESULT object **before** the output
     // parse — /api/review/submit embeds `invoked.result.capability_ref` into the

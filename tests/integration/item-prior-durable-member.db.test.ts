@@ -49,7 +49,7 @@ beforeEach(async () => {
   await resetDb();
 });
 
-// Real-PG float4 check for the application seam (R1 P1). Real `real` columns,
+// Real-PG float4 check for the application seam. Real `real` columns,
 // real applyItemPrior write, no provider, no DBOS runtime.
 
 // Every case below uses the concrete adapter + fixed B store + real Postgres.

@@ -81,6 +81,9 @@ export type ViolationCode =
   | 'ORPHAN-ENV-READ'
   | 'DIRECT-ENV-READ'
   | 'CONST-PROBLEM'
+  | 'UNCLASSIFIED-ENV-READ'
+  | 'DYNAMIC-ENV-READ'
+  | 'REGISTRY-SCHEMA-GAP'
   | 'BASE-PROBLEM'
   | 'BASE-DRIFT';
 
@@ -97,6 +100,17 @@ export interface DiffEntry {
   head: unknown;
 }
 
+export interface EnvExampleReport {
+  /** Boot-schema keys absent from `.env.example` (report-only). */
+  missingFromExample: string[];
+  /** `.env.example` keys the boot schema does not own (report-only). */
+  notInSchema: string[];
+  /** Sample keys with a real `KEY=` assignment line. */
+  assignedCount: number;
+  /** Sample keys present only as `# KEY=` comments — documented but never set. */
+  commentedOnly: string[];
+}
+
 export interface FlagAuditResult {
   ok: boolean;
   base: string | null;
@@ -106,6 +120,9 @@ export interface FlagAuditResult {
   violations: FlagViolation[];
   diff: DiffEntry[];
   variance: { signature: string; flags: string[] }[];
+  envCensus?: EnvCensusReport;
+  nonFamily?: NonFamilyReport;
+  envExample?: EnvExampleReport;
 }
 
 const METADATA_FIELDS = ['description', 'consumers', 'reload', 'exposure'] as const;
@@ -733,6 +750,374 @@ export function crossCheckHead(
     }
   }
   return violations;
+}
+
+// ── registry key census (all keys, not only the family audited above) ───────────────────────
+
+export interface RegistryKeyCensusEntry {
+  key: string;
+  kind: ControlKind;
+  envName: string | null;
+}
+
+export interface RegistryKeyCensus {
+  entries: Map<string, RegistryKeyCensusEntry>;
+  problems: string[];
+}
+
+/** All CONFIG_REGISTRY keys at a ref; used for base/head env-name and new-key comparisons. */
+export function extractRegistryKeyCensus(sourceText: string): RegistryKeyCensus {
+  const ast = parse(sourceText, {
+    sourceType: 'module',
+    plugins: ['typescript'],
+    errorRecovery: true,
+  }) as unknown as AstNode;
+  const consts = constInitializers(ast);
+  let registry: AstNode | undefined;
+  walkAst(ast, (node) => {
+    if (registry) return;
+    if (node.type !== 'VariableDeclarator' || node.id?.type !== 'Identifier') return;
+    if (node.id.name !== 'CONFIG_REGISTRY') return;
+    const init = node.init ? unwrapExpression(node.init) : undefined;
+    if (init?.type === 'ObjectExpression') registry = init;
+  });
+  const entries = new Map<string, RegistryKeyCensusEntry>();
+  const problems: string[] = [];
+  if (!registry) return { entries, problems };
+  for (const prop of registry.properties ?? []) {
+    if (prop.type !== 'ObjectProperty' || prop.computed) {
+      problems.push(
+        'CONFIG_REGISTRY has a spread/computed entry; keys are not statically decidable',
+      );
+      continue;
+    }
+    const key =
+      prop.key.type === 'Identifier'
+        ? prop.key.name
+        : prop.key.type === 'StringLiteral'
+          ? prop.key.value
+          : undefined;
+    if (key === undefined) {
+      problems.push('CONFIG_REGISTRY has an entry with a non-static key');
+      continue;
+    }
+    const node = prop.value;
+    const envNameNode = objectProperty(node, 'envName');
+    const envNameValue = resolveStatic(envNameNode, consts);
+    if (envNameNode && envNameValue === UNKNOWN) {
+      problems.push(`${key}: envName is not statically decidable`);
+    }
+    entries.set(key, {
+      key,
+      kind: schemaKindFromAst(objectProperty(node, 'schema')),
+      envName: typeof envNameValue === 'string' ? envNameValue : null,
+    });
+  }
+  return { entries, problems };
+}
+
+// ── env census ────────────────────────────────────────────────────────────────────────────
+
+export interface EnvReadLike {
+  key: string | null;
+  file: string;
+}
+
+/** A direct env read that stays outside registry/boot by design, scoped to one owner. */
+export interface StayInPlaceEntry {
+  env: string;
+  /** Repo-relative file, or directory prefix; only this owner may read the name. */
+  owner: string;
+  reason: string;
+}
+
+export interface EnvCensusInput {
+  registryEnvs: ReadonlySet<string>;
+  baseRegistryEnvs: ReadonlySet<string>;
+  bootKeys: ReadonlySet<string>;
+  baseBootKeys: ReadonlySet<string>;
+  stayInPlace: readonly StayInPlaceEntry[];
+  headNamedReads: readonly EnvReadLike[];
+  baseNamedReads: readonly EnvReadLike[];
+  headDynamicReads: readonly EnvReadLike[];
+  baseDynamicReads: readonly EnvReadLike[];
+  /** Head path -> path at the comparison base, so a moved file keeps its base grant. */
+  baseFileOf: (headFile: string) => string;
+  isAllowedDynamicFile: (path: string) => boolean;
+}
+
+export interface EnvCensusReport {
+  registryEnvCount: number;
+  bootKeyCount: number;
+  overlapCount: number;
+  schemaOnly: string[];
+  registryOnly: string[];
+  existingRegistryOnly: string[];
+  hidden: { key: string; files: string[] }[];
+  existingUnclassified: { key: string; file: string }[];
+  dynamicByFile: { file: string; count: number }[];
+  stayInPlace: StayInPlaceEntry[];
+  namedReadCount: number;
+  namedFileCount: number;
+  namedNameCount: number;
+  existingNamedReadCount: number;
+  dynamicReadCount: number;
+  classified: { registry: number; boot: number; stay: number };
+}
+
+type EnvTable = 'registry' | 'boot' | 'stay';
+
+function ownerMatches(owner: string, file: string): boolean {
+  return file === owner || file.startsWith(owner.endsWith('/') ? owner : `${owner}/`);
+}
+
+function stayEntryFor(
+  entries: readonly StayInPlaceEntry[],
+  key: string,
+  file: string,
+): StayInPlaceEntry | undefined {
+  return entries.find((entry) => entry.env === key && ownerMatches(entry.owner, file));
+}
+
+function tableOf(input: EnvCensusInput, key: string, file: string): EnvTable | null {
+  if (stayEntryFor(input.stayInPlace, key, file)) return 'stay';
+  if (input.registryEnvs.has(key)) return 'registry';
+  if (input.bootKeys.has(key)) return 'boot';
+  return null;
+}
+
+const READ_POINT_GUIDANCE =
+  'boot names must come from the parsed env in src/core/config/server/env.ts, registry keys from getConfig/getConfigFlag/getConfigMany, and provider/third-party credentials or pre-boot reads belong in STAY_IN_PLACE_ENV under their owner';
+
+/**
+ * Product env census: new named reads fail regardless of which table the name lives in
+ * (boot names included) unless the read sits at a STAY_IN_PLACE_ENV owner; reads present at
+ * the base — including the same read inside a renamed file — are grandfathered. New dynamic
+ * reads fail by per-file count vs base (rename-aware). The report lists the existing stock.
+ */
+export function computeEnvCensus(input: EnvCensusInput): {
+  report: EnvCensusReport;
+  violations: FlagViolation[];
+} {
+  const violations: FlagViolation[] = [];
+  const schemaOnly = [...input.bootKeys].filter((key) => !input.registryEnvs.has(key)).sort();
+  const registryOnly = [...input.registryEnvs].filter((key) => !input.bootKeys.has(key)).sort();
+  const existingRegistryOnly = registryOnly.filter(
+    (env) => input.baseRegistryEnvs.has(env) && !input.baseBootKeys.has(env),
+  );
+  for (const env of registryOnly) {
+    if (existingRegistryOnly.includes(env)) continue;
+    violations.push({
+      code: 'REGISTRY-SCHEMA-GAP',
+      name: env,
+      detail:
+        'registry envName is missing from the boot schema (src/core/config/server/env.ts); add it to the boot schema or drop the registry envName',
+    });
+  }
+
+  const stayEnvs = new Set(input.stayInPlace.map((entry) => entry.env));
+  const baseNamedIds = new Set(
+    input.baseNamedReads.map((read) => `${read.key ?? ''}\u0000${read.file}`),
+  );
+  const seen = new Set<string>();
+  const hiddenFiles = new Map<string, Set<string>>();
+  const existingUnclassified: { key: string; file: string }[] = [];
+  const classified = { registry: 0, boot: 0, stay: 0 };
+  let namedReadCount = 0;
+  let existingNamedReadCount = 0;
+
+  for (const read of input.headNamedReads) {
+    const key = read.key;
+    if (!key) continue;
+    const id = `${key}\u0000${read.file}`;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    namedReadCount += 1;
+
+    const table = tableOf(input, key, read.file);
+    if (table) classified[table] += 1;
+
+    if (!input.registryEnvs.has(key) && !input.bootKeys.has(key) && !stayEnvs.has(key)) {
+      const files = hiddenFiles.get(key) ?? new Set<string>();
+      files.add(read.file);
+      hiddenFiles.set(key, files);
+    }
+
+    const baseFile = input.baseFileOf(read.file);
+    if (baseNamedIds.has(`${key}\u0000${baseFile}`)) {
+      existingNamedReadCount += 1;
+      if (!table) existingUnclassified.push({ key, file: read.file });
+      continue;
+    }
+    if (table === 'stay') continue;
+    violations.push({
+      code: 'UNCLASSIFIED-ENV-READ',
+      name: key,
+      detail: `new product-code process.env.${key} read in ${read.file}; ${READ_POINT_GUIDANCE}`,
+    });
+  }
+
+  const baseDynamicCounts = new Map<string, number>();
+  for (const read of input.baseDynamicReads) {
+    baseDynamicCounts.set(read.file, (baseDynamicCounts.get(read.file) ?? 0) + 1);
+  }
+  const headDynamicCounts = new Map<string, number>();
+  for (const read of input.headDynamicReads) {
+    headDynamicCounts.set(read.file, (headDynamicCounts.get(read.file) ?? 0) + 1);
+  }
+  const dynamicByFile: { file: string; count: number }[] = [];
+  let dynamicReadCount = 0;
+  for (const [file, count] of [...headDynamicCounts.entries()].sort((a, b) =>
+    a[0].localeCompare(b[0]),
+  )) {
+    if (input.isAllowedDynamicFile(file)) continue;
+    dynamicByFile.push({ file, count });
+    dynamicReadCount += count;
+    const previous = baseDynamicCounts.get(input.baseFileOf(file)) ?? 0;
+    if (count > previous) {
+      violations.push({
+        code: 'DYNAMIC-ENV-READ',
+        name: file,
+        detail: `${count} dynamic process.env[...] read(s) at head vs ${previous} at base; ${READ_POINT_GUIDANCE}`,
+      });
+    }
+  }
+
+  const namedFiles = new Set(input.headNamedReads.map((read) => read.file));
+  const namedNames = new Set(input.headNamedReads.map((read) => read.key).filter(Boolean));
+
+  return {
+    report: {
+      registryEnvCount: input.registryEnvs.size,
+      bootKeyCount: input.bootKeys.size,
+      overlapCount: [...input.registryEnvs].filter((key) => input.bootKeys.has(key)).length,
+      schemaOnly,
+      registryOnly,
+      existingRegistryOnly,
+      hidden: [...hiddenFiles.entries()]
+        .map(([key, files]) => ({ key, files: [...files].sort() }))
+        .sort((a, b) => a.key.localeCompare(b.key)),
+      existingUnclassified: existingUnclassified.sort(
+        (a, b) => a.key.localeCompare(b.key) || a.file.localeCompare(b.file),
+      ),
+      dynamicByFile,
+      stayInPlace: [...input.stayInPlace].sort(
+        (a, b) => a.env.localeCompare(b.env) || a.owner.localeCompare(b.owner),
+      ),
+      namedReadCount,
+      namedFileCount: namedFiles.size,
+      namedNameCount: namedNames.size,
+      existingNamedReadCount,
+      dynamicReadCount,
+      classified,
+    },
+    violations,
+  };
+}
+
+// ── non-family registry keys (metadata / reader / direct-env checks) ───────────────────────
+
+export interface NonFamilyEntryLike {
+  key: string;
+  envName: string | null;
+  metadataProblems: string[];
+  readerCount: number;
+}
+
+export interface NonFamilyAuditInput {
+  entries: readonly NonFamilyEntryLike[];
+  baseKeys: ReadonlySet<string>;
+  headReads: readonly { key: string; file: string }[];
+  baseReadIds: ReadonlySet<string>;
+  isAllowedDirectEnvFile: (path: string) => boolean;
+}
+
+export interface NonFamilyReport {
+  total: number;
+  existingMetadataGaps: { key: string; problems: string[] }[];
+  existingNoReader: string[];
+  existingDirectReads: { key: string; file: string }[];
+}
+
+/**
+ * Number/string and env-less json keys skip the family gate; this adds the same
+ * metadata / reader / direct-env checks. Existing findings stay report-only; a new key or
+ * a new direct read fails.
+ */
+export function auditNonFamilyKeys(input: NonFamilyAuditInput): {
+  report: NonFamilyReport;
+  violations: FlagViolation[];
+} {
+  const violations: FlagViolation[] = [];
+  const byKey = new Map(input.entries.map((entry) => [entry.key, entry]));
+  const envNameToKeys = new Map<string, string[]>();
+  for (const entry of input.entries) {
+    if (!entry.envName) continue;
+    const list = envNameToKeys.get(entry.envName) ?? [];
+    list.push(entry.key);
+    envNameToKeys.set(entry.envName, list);
+  }
+  const existingMetadataGaps: { key: string; problems: string[] }[] = [];
+  const existingNoReader: string[] = [];
+
+  for (const entry of input.entries) {
+    const isNew = !input.baseKeys.has(entry.key);
+    if (entry.metadataProblems.length > 0) {
+      if (isNew) {
+        for (const problem of entry.metadataProblems) {
+          violations.push({
+            code: 'DEFINITION-PROBLEM',
+            name: entry.key,
+            detail: problem.startsWith(`${entry.key}: `)
+              ? problem.slice(entry.key.length + 2)
+              : problem,
+          });
+        }
+      } else {
+        existingMetadataGaps.push({ key: entry.key, problems: entry.metadataProblems });
+      }
+    }
+    if (entry.readerCount === 0) {
+      if (isNew) {
+        violations.push({
+          code: 'NO-READER',
+          name: entry.key,
+          detail: 'non-family key has no live getConfig/getConfigFlag/getConfigMany reader',
+        });
+      } else {
+        existingNoReader.push(entry.key);
+      }
+    }
+  }
+
+  const existingDirectReads: { key: string; file: string }[] = [];
+  for (const read of input.headReads) {
+    for (const key of envNameToKeys.get(read.key) ?? []) {
+      if (!byKey.has(key)) continue;
+      if (input.isAllowedDirectEnvFile(read.file)) continue;
+      if (input.baseReadIds.has(`${read.key}\u0000${read.file}`)) {
+        existingDirectReads.push({ key, file: read.file });
+        continue;
+      }
+      violations.push({
+        code: 'DIRECT-ENV-READ',
+        name: key,
+        detail: `non-family key read directly from process.env in ${read.file} (${read.key}); use getConfig/getConfigMany`,
+      });
+    }
+  }
+
+  return {
+    report: {
+      total: input.entries.length,
+      existingMetadataGaps: existingMetadataGaps.sort((a, b) => a.key.localeCompare(b.key)),
+      existingNoReader: existingNoReader.sort(),
+      existingDirectReads: existingDirectReads.sort(
+        (a, b) => a.key.localeCompare(b.key) || a.file.localeCompare(b.file),
+      ),
+    },
+    violations,
+  };
 }
 
 export function computeVariance(

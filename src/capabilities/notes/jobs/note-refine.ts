@@ -4,7 +4,7 @@
 // files larger ones as proposals for human approval.
 
 import { createId } from '@paralleldrive/cuid2';
-import { eq, inArray } from 'drizzle-orm';
+import { and, desc, eq, inArray } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import { type BuildMcpServerOptions, piDomainMount } from '@/ai/pi-tool-mount';
 import { enqueueOrApplyNoteRefinePatch } from '@/capabilities/notes/server/artifacts/editing-session';
@@ -21,12 +21,17 @@ import {
 import { writeNoteRefineProposal } from '@/capabilities/notes/server/note-refine-proposals';
 import {
   type ParsedNoteRefineOutput,
+  REVERTED_NOTE_EDIT_LIMIT,
+  type RevertedNoteEdit,
   parseNoteRefineOutput,
+  patchHitsRevertedNoteEdit,
+  revertedNoteEditFromOps,
+  summarizeRevertedNoteEdits,
 } from '@/capabilities/notes/tasks/note-refine';
 import { filterMissingNotePatchTargets } from '@/core/blocks/apply-note-patch';
 import { type NotePatchT, summarizeNotePatch } from '@/core/schema/note-patch';
 import type { Db } from '@/db/client';
-import { artifact, knowledge } from '@/db/schema';
+import { artifact, event, knowledge } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { subjectDocCatalogPiSkillDoc } from '@/kernel/read-models/subject-docs';
 import { DOMAIN_TOOL_MCP_SERVER_NAME, toMcpAllowedToolName } from '@/kernel/tools/allowlists';
@@ -113,6 +118,43 @@ export type RunNoteRefineResult =
 
 const defaultGate: NoteRefineGate = decideNoteRefineMode;
 
+async function loadRevertedNoteEdits(db: Db, artifactId: string): Promise<RevertedNoteEdit[]> {
+  const undos = await db
+    .select({ payload: event.payload })
+    .from(event)
+    .where(
+      and(
+        eq(event.action, 'experimental:note_refine_undo'),
+        eq(event.subject_kind, 'artifact'),
+        eq(event.subject_id, artifactId),
+      ),
+    )
+    .orderBy(desc(event.created_at), desc(event.id))
+    .limit(REVERTED_NOTE_EDIT_LIMIT);
+  const applyIds: string[] = [];
+  const seen = new Set<string>();
+  for (const row of undos) {
+    const undoneId = (row.payload as { undone_event_id?: unknown }).undone_event_id;
+    if (typeof undoneId !== 'string' || undoneId.length === 0 || seen.has(undoneId)) continue;
+    seen.add(undoneId);
+    applyIds.push(undoneId);
+  }
+  if (applyIds.length === 0) return [];
+  const applies = await db
+    .select({ id: event.id, payload: event.payload })
+    .from(event)
+    .where(inArray(event.id, applyIds));
+  const opsById = new Map(
+    applies.map((row) => [row.id, (row.payload as { ops?: unknown }).ops] as const),
+  );
+  const edits: RevertedNoteEdit[] = [];
+  for (const applyId of applyIds) {
+    const edit = revertedNoteEditFromOps(opsById.get(applyId));
+    if (edit) edits.push(edit);
+  }
+  return edits;
+}
+
 /**
  * Loads context, calls NoteRefineTask, and routes the patch to apply or propose.
  */
@@ -149,6 +191,7 @@ export async function runNoteRefine(params: RunNoteRefineParams): Promise<RunNot
   }
 
   const blockSummaries = bodyBlocksToBlockSummaries(row.body_blocks);
+  const revertedEdits = await loadRevertedNoteEdits(db, artifactId);
 
   const input = {
     artifact_id: row.id,
@@ -157,6 +200,7 @@ export async function runNoteRefine(params: RunNoteRefineParams): Promise<RunNot
     knowledge_node: kNode,
     body_blocks: row.body_blocks,
     block_summaries: blockSummaries,
+    reverted_edits_md: summarizeRevertedNoteEdits(revertedEdits),
     trigger: {
       kind: trigger.kind,
       context_md: trigger.context_md ?? '',
@@ -224,7 +268,9 @@ export async function runNoteRefine(params: RunNoteRefineParams): Promise<RunNot
   // A patch that would overwrite a user-verified block goes to the inbox rather
   // than applying silently. applyNotePatch's guard remains the cross-caller net.
   const decision =
-    gate(summary) === 'propose' || patchTouchesVerifiedBlock(row.body_blocks, patch)
+    gate(summary) === 'propose' ||
+    patchTouchesVerifiedBlock(row.body_blocks, patch) ||
+    patchHitsRevertedNoteEdit(patch, revertedEdits)
       ? 'propose'
       : 'mutator';
 

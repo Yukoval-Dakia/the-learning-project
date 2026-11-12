@@ -14,7 +14,9 @@
  *
  * Cost: 55 successful calls cost 44_700 µ$; a timeout has no settled price, so retry
  * gating reserves the rounded mean rather than the old $0.02 placeholder. The runner
- * does not retry budget_timeout, so this single retry lives in the executor.
+ * does not retry budget_timeout, so this single retry lives in the executor — and
+ * only while the attempt provably never submitted (pre-wire abort); a timeout after
+ * the provider query started may already bill and is never resent.
  */
 
 export const QA_R4_RUBRIC_LATENCY = {
@@ -34,7 +36,7 @@ export const ASSESSMENT_RUBRIC_ESTIMATED_ATTEMPT_MICROS = Math.ceil(
   QA_R4_SUCCESSFUL_COST_MICROS / QA_R4_SUCCESSFUL_CALLS,
 );
 
-/** One retry after a timeout; other failures do not use this path. */
+/** One retry after a pre-wire timeout abort; a submitted timeout is never resent. */
 export const ASSESSMENT_RUBRIC_TIMEOUT_RETRIES = 1;
 
 /**

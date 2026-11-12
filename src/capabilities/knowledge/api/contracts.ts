@@ -2,7 +2,6 @@ import { z } from 'zod';
 import { RelationTypeSchema } from '@/core/schema/event/blocks';
 import { ReviewTimingJsonSchema } from '@/core/schema/learner-judgment';
 import { RetentionReadingSchema } from '@/core/schema/scheduling-state';
-import { ApiPageSchema } from '@/kernel/http-contracts';
 import { SubjectProfileSchema } from '@/subjects/profile-schema';
 
 export const KnowledgeIdParamsSchema = z.object({ id: z.string().trim().min(1) });
@@ -91,14 +90,10 @@ export const KnowledgeEdgeSchema = z.object({
   archived_at: z.string().nullable(),
 });
 
-export const KnowledgeEdgeCollectionResponseSchema = z
-  .object({
-    data: z.array(KnowledgeEdgeSchema),
-    page: ApiPageSchema,
-    rows: z.array(KnowledgeEdgeSchema),
-    next_cursor: z.string().nullable(),
-  })
-  .passthrough();
+export const KnowledgeEdgeCollectionResponseSchema = z.object({
+  rows: z.array(KnowledgeEdgeSchema),
+  next_cursor: z.string().nullable(),
+});
 
 export const CreateKnowledgeEdgeResponseSchema = z.object({ id: z.string() });
 

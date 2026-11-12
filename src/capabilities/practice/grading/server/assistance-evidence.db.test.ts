@@ -12,6 +12,7 @@ import {
   nativeSoloHttpFixture,
 } from '../../../../../tests/fixtures/native-solo-http';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
+import { POST as advicePost } from '../../scheduling/api/advice';
 import { createAttempt } from '../api/submit';
 import { readSubmissionAssistanceReceipt, recordAssistanceExposure } from './assessment/assistance';
 import { revealFrozenStudyReference } from './assessment/study-context';
@@ -93,6 +94,73 @@ describe('assistance evidence separation', () => {
     });
 
     expect(await snapshot()).toEqual(before);
+  });
+
+  // @invariant concurrency: self_claim follows the rating operation, not the
+  // submission replay flag — a submission sealed by an advice preview still
+  // echoes the first rating the learner supplies (its seal lands in the same
+  // commit), while a true replay of that rating operation answers the sealed
+  // values, never the replayed request's unsealed input
+  // @fails-if the confirm after a preview-sealed submission reports a null
+  // claim, or a confirm replay echoes a confidence the original operation
+  // never sealed
+  it('echoes the first rating claim and reports sealed values on rating replay', async () => {
+    const db = testDb();
+    const f = await nativeSoloHttpFixture(db);
+    const issuanceId = f.body().assessment.issuance_id;
+    await recordAssistanceExposure(db, {
+      issuanceId,
+      questionId: f.id,
+      kind: 'hint',
+      impact: 'answer_help',
+      contentDigest: HINT_DIGEST,
+      dose: 2,
+    });
+
+    // Advice preview seals the submission and answers what the page shows
+    // before the learner rates: the exposure and the judged outcome.
+    const advice = await advicePost(
+      new Request('http://local/api/review/advice', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ assessment: f.assessment, question_id: f.id, response_md: 'A' }),
+      }),
+    );
+    expect(advice.status).toBe(200);
+    const adviceBody = await advice.json();
+    expect(adviceBody).toMatchObject({
+      automatic_commit: false,
+      evidence: {
+        assistance: {
+          status: 'assisted',
+          max_dose: 2,
+          kinds: ['hint'],
+          phase: 'before_submit',
+        },
+        verdict: { outcome: 'correct' },
+        self_claim: null,
+      },
+    });
+
+    // The confirm is the first rating operation — replayed submission, unsealed
+    // rating — so the learner's own rating and confidence echo.
+    const confirm = f.body({
+      auto_rate: false,
+      rating: 'good',
+      self_confidence: 4,
+      activation_intent: adviceBody.activation_intent,
+    });
+    const http = await createAttempt(nativeHttpRequest(confirm));
+    expect(http.status).toBe(200);
+    expect(await http.json()).toMatchObject({
+      evidence: { self_claim: { rating: 'good', confidence: 4 } },
+    });
+
+    const replay = await createAttempt(nativeHttpRequest({ ...confirm, self_confidence: 5 }));
+    expect(replay.status).toBe(200);
+    expect(await replay.json()).toMatchObject({
+      evidence: { self_claim: { rating: 'good', confidence: 4 } },
+    });
   });
 
   // @invariant security: a submission following a server-recorded hint

@@ -17,7 +17,7 @@ import {
 import { resetDb } from '../../../../../tests/helpers/db';
 import { recordDifficultyCalibrationLabel } from './recalibration';
 
-// FINDING #3：π_i join 按作答本地日（Asia/Shanghai）等值 join selection_observation.date。
+// π_i join 按作答本地日（Asia/Shanghai）等值 join selection_observation.date。
 // 用一个**固定**的作答时刻让测试确定（不随真实日期漂移），并按同一时区公式派生它对应的
 // 本地日（与 recalibration.ts attemptLocalDate / stream-store.ts streamLocalDate 同度量）。
 const ATTEMPT_NOW = new Date('2026-06-16T08:00:00+08:00'); // = 2026-06-16 Asia/Shanghai

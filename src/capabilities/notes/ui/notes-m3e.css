@@ -1224,6 +1224,14 @@
   }
 
   @media (max-width: 880px) {
+    & .nt-rows {
+      margin-inline: 0;
+    }
+
+    & .nt-row {
+      padding-inline: 0;
+    }
+
     & .nt-list-main {
       padding: var(--un-sp-6) var(--un-sp-4) calc(var(--un-sp-8) + var(--un-sp-6));
     }
@@ -1267,6 +1275,44 @@
     & .nt-blk-gutter,
     & .nt-eblk-gutter {
       opacity: 1;
+    }
+
+    /* A tap leaves :hover on; the button shouldn't stay filled after it. */
+    & .nt-blk-btn:hover {
+      background: transparent;
+      color: var(--un-text-4);
+    }
+  }
+
+  /* With no hover, or no room, the text takes the gutter's width. A section's collapse button
+     moves to the end of its heading; the per-block links go. */
+  @media (hover: none), (max-width: 880px) {
+    & .nt-body .nt-blk {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    & .nt-body .nt-blk:not(.nt-blk-section) .nt-blk-gutter {
+      display: none;
+    }
+
+    & .nt-body .nt-blk-section {
+      position: relative;
+    }
+
+    & .nt-body .nt-blk-section .nt-blk-gutter {
+      position: absolute;
+      top: 0;
+      right: 0;
+      padding-top: 0;
+    }
+
+    & .nt-body .nt-blk-section .nt-blk-btn {
+      width: 32px;
+      height: 32px;
+    }
+
+    & .nt-body .nt-blk-section .nt-blk-h {
+      padding-inline-end: 36px;
     }
   }
 }

@@ -217,13 +217,6 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   },
   {
     table: 'artifact',
-    file: 'src/capabilities/notes/server/hub-dismiss.ts',
-    marker: '.update(artifact)',
-    role: 'event-native-by-caller',
-    note: 'Suppression attrs and body edits share a transaction; lifecycle set_attrs and refine events carry ordered timestamps and exact after-state.',
-  },
-  {
-    table: 'artifact',
     file: 'src/capabilities/notes/server/artifact-body-commit.ts',
     marker: '.update(artifact)',
     role: 'event-native-by-caller',

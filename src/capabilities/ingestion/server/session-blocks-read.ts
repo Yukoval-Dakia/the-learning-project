@@ -12,6 +12,7 @@ import type { Db } from '@/db/client';
 import { event, question, question_block } from '@/db/schema';
 import { learnerVisibleKnowledgeIds } from '@/kernel/read-models/learner-knowledge-visibility';
 import { readWorkflowJudgeConfidence } from '@/kernel/read-models/workflow-judge-confidence';
+import { readRevertedBlockIds } from './block-revert-state';
 import { blockHasPrompt } from './capture/question-text';
 
 export async function readIngestionSessionBlocks(db: Db, params: { id: string }) {
@@ -44,6 +45,7 @@ export async function readIngestionSessionBlocks(db: Db, params: { id: string })
 
   const blockIds = rows.map((r) => r.id);
   const enrollmentInFlight = await hasInflightAutoEnroll(db, sessionId);
+  const revertedBlockIds = await readRevertedBlockIds(db, blockIds);
   const observations =
     blockIds.length === 0
       ? []
@@ -97,6 +99,7 @@ export async function readIngestionSessionBlocks(db: Db, params: { id: string })
         : null;
       return {
         ...r,
+        handwriting_trace: r.structured?.extraction_evidence?.handwriting_trace ?? null,
         created_at: Math.floor(r.created_at.getTime() / 1000),
         workflow_judge_confidence: recordedConfidence ?? projectedObservation?.confidence ?? null,
         auto_enroll_observation: projectedObservation,
@@ -104,6 +107,7 @@ export async function readIngestionSessionBlocks(db: Db, params: { id: string })
           r,
           r.imported_question_id !== null ? questionById.get(r.imported_question_id) : undefined,
           enrollmentInFlight,
+          revertedBlockIds.has(r.id),
         ),
       };
     }),
@@ -116,7 +120,7 @@ export async function readIngestionSessionBlocks(db: Db, params: { id: string })
  * missing/in-flight job is the only "waiting" signal — anything else means the session's
  * enrollment has finished and a still-draft block is a failure.
  */
-async function hasInflightAutoEnroll(db: Db, sessionId: string): Promise<boolean> {
+export async function hasInflightAutoEnroll(db: Db, sessionId: string): Promise<boolean> {
   const probe = await db.execute<{ reg: string | null }>(
     sql`select to_regclass('pgboss.job') as reg`,
   );
@@ -140,6 +144,7 @@ function toEnrollmentProjection(
   },
   enrolled: { draft_status: string | null; metadata: Record<string, unknown> | null } | undefined,
   enrollmentInFlight: boolean,
+  reverted: boolean,
 ) {
   // The block status is the ground truth about what happened to this capture:
   // imported/submitted/auto_enrolled all carry a question, ignored was an explicit
@@ -158,7 +163,9 @@ function toEnrollmentProjection(
       state: 'in_library' as const,
       reason: null,
       knowledge:
-        markers?.knowledge === 'attributed' || markers?.knowledge === 'missing'
+        markers?.knowledge === 'attributed' ||
+        markers?.knowledge === 'missing' ||
+        markers?.knowledge === 'restricted'
           ? markers.knowledge
           : null,
       library_visible: enrolled ? enrolled.draft_status !== 'draft' : null,
@@ -167,6 +174,16 @@ function toEnrollmentProjection(
   // Enrollment is automatic. A draft block with a prompt is still waiting while its
   // session has a queued/running auto_enroll delivery; once that has finished, the same
   // row is a failure. A block with no printed prompt never had anything to publish.
+  if (reverted) {
+    // A learner-reverted block is intentionally out of the library; it is not a failed
+    // publication and the automatic worker will not touch it again.
+    return {
+      state: 'not_enrolled' as const,
+      reason: 'reverted' as const,
+      knowledge: null,
+      library_visible: null,
+    };
+  }
   return {
     state: 'not_enrolled' as const,
     reason: blockHasPrompt(block)

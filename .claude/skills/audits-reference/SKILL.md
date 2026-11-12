@@ -37,4 +37,6 @@ description: Full mechanics of this repo's pnpm audit:* scripts and their allowl
 - `ops:threshold-calibration`（`scripts/ops-threshold-calibration.ts`）：嵌入距离阈值分布报告，read-only。优先 `AUDIT_READ_DATABASE_URL`，否则 `DATABASE_URL`。
 - `audit:advisory-locks`：生产 `.ts`/`.tsx`（排除测试与注释）里裸 `pg_advisory*` / `pg_try_advisory*` 的计数棘轮。`src/kernel/locks/` 与 `src/db/learning-state-lock.ts`、`src/db/session-advisory-lock.ts`、`src/server/ai/provider-attempt-lock.ts`、`src/capabilities/agency/server/conjecture/probe-lock.ts`、`src/capabilities/agency/server/intervention/intervention-lock.ts` 是批准的注册表/helper，可以持有 SQL。无台账：其余文件的调用次数与比较基（`TEST_POLICY_BASE`/`CAPABILITY_BASE_SHA`/`--base`，否则与 `origin/main` 分叉点）实测数比较——base 上已有的站点可保持或缩减，新站点或计数增加即失败；rename 经 `git diff -M` 跟随。不校验 81 族、不证明锁顺序。
 
+`pnpm audit:review-action-readers`：生产 `.ts`/`.tsx`（排除测试、注释和字符串）里 `eq(event.action, 'review')` 的计数棘轮。比较基同上：已有站点可保持或缩减，新站点或计数增加即失败。接入 `pnpm test` 前缀与 CI Audits 步骤。
+
 `/audit-drift` skill（`.claude/skills/audit-drift/SKILL.md`）扫描 **ADR / planning-doc ↔ 代码实现**结构性漂移（不重审 schema）。交互模式写 `/Volumes/YukovalSBak/yukoval-projects/tlp-docs/audit/YYYY-MM-DD-drift.md`；定时模式不写仓库、不建分支/PR，只在完成去重后创建或更新带 `drift` label 的 Linear issue。配套 `pnpm audit:schema` 形成 schema 层 + 决策层双 lint。

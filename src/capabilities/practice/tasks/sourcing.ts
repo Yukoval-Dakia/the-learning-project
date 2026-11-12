@@ -22,7 +22,7 @@ import type { SubjectProfile } from '@/subjects/profile';
 //
 // docs/archive/superpowers/plans/2026-06-05-yuk216-question-source-s2.md §3
 function buildSourcingPrompt(profile: SubjectProfile): string {
-  return `你是${profile.displayName}题源检索员。任务：根据输入的学科 + 考点/题型 + 数量，**联网检索现成的练习题**，把每道题抽取并结构化为 SourcedQuestion。输入 { subject, knowledge_context, kinds?, objective_only?: boolean, kind_required?: boolean, count, whitelist } —— count 是期望题数，whitelist 是可信题源域名列表（可能为空）。objective_only=true 时 kinds 中指定的 kind 是硬约束（客观题），kind_required=true 时它是硬约束（结构）；任一为 true 时每道文本题的 kind 都必须与它一致；否则 kinds 是检索时的答案类型与题面结构指导，不要求整批输出复刻同一个 kind 字符串，应忠实抽取每道题的实际结构。
+  return `你是${profile.displayName}题源检索员。任务：根据输入的学科 + 考点/题型 + 数量，**联网检索现成的练习题**，把每道题抽取并结构化为 SourcedQuestion。输入 { subject, knowledge_context, kinds?, objective_only?: boolean, kind_required?: boolean, count, whitelist, difficulty_band?: 'below'|'near'|'above'|'stretch', difficulty_levels?: {min:number,max:number}|null } —— count 是期望题数，whitelist 是可信题源域名列表（可能为空）。objective_only=true 时 kinds 中指定的 kind 是硬约束（客观题），kind_required=true 时它是硬约束（结构）；任一为 true 时每道文本题的 kind 都必须与它一致；否则 kinds 是检索时的答案类型与题面结构指导，不要求整批输出复刻同一个 kind 字符串，应忠实抽取每道题的实际结构。
 科目上下文：${profile.displayName}。${profile.languageStyle}
 证据要求：${profile.grounding.requirement}
 不确定性策略：${profile.grounding.uncertaintyPolicy}${rubricGuidanceSection(profile)}
@@ -87,6 +87,7 @@ typed 声明（可选字段 parts，统一草稿结构）：
 - knowledge_ids 用 knowledge_context 里真实存在的知识点 id，不要发明。
 - whitelist 非空时**优先**抽取命中白名单域名的来源；白名单外的来源仍可抽（会在入库时被降权标记，不影响质检），但不要为了凑数抽明显低质的来源。
 约束（强约束）：
+- difficulty_levels（若有）是该学习者这条 difficulty_band 反算后的 1–5 闭区间。每道题的 difficulty 必须落在 min 与 max 之间（含端点）。为 null 时 1–5 里没有落在该带的档，不要交题充数。没有该字段时不要自行改成固定的 3 档。
 - 每道题必须有有效的 source_url（具体网页 URL）+ source_title，否则会被拒收。
 - **必填** extract（从 source_url 逐字抽取的原始题面片段）：质检会用它对题面做确定性 grounding 比对，证明来源真实。缺 extract 或 extract 与题面毫无重叠 → 该题被判为来源不可锚定/伪造、拒收。
 - 正文不足的页面报进 image_candidates，仅作为内部来源受阻记录；**不要**自己抽图、**不要**编造文本题或参考答案。

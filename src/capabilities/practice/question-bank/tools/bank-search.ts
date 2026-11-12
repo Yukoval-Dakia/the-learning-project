@@ -131,7 +131,7 @@ export const BankGapRequestSchema = z.object({
   complete: z.boolean(),
   retrieval_truncated: z.boolean(),
   unavailable_channels: z.array(z.enum(['fts', 'vector'])),
-  // YUK-1448 (review P1) — server-minted HMAC-SHA256 over the canonical JSON of this
+  // Server-minted HMAC-SHA256 over the canonical JSON of this
   // gap evidence (every field except evidence_mac itself), keyed by the server-only
   // BANK_GAP_EVIDENCE_SECRET. file_bank_gap refuses to file — let alone dispatch paid
   // supply — without a valid MAC, so a caller cannot fabricate gap evidence (e.g. a
@@ -148,7 +148,7 @@ export const BankGapRequestSchema = z.object({
 });
 export type BankGapRequest = z.infer<typeof BankGapRequestSchema>;
 
-// ── gap evidence MAC（YUK-1448 review P1：防伪造检索证据触发付费 dispatch）────────
+// ── gap evidence MAC（防伪造检索证据触发付费 dispatch）────────
 
 /** 域分隔前缀：同一 secret 的 MAC 永不与其他用途的 HMAC 输入同形。 */
 const BANK_GAP_EVIDENCE_MAC_DOMAIN = 'bank-gap-evidence:v1:';
@@ -724,14 +724,11 @@ async function runSearchBankInSnapshot(
     // 弱命中排通道尾部：RRF 位置靠后 → 融合序也落在强命中之下（向量救回的除外）。
     const ftsRowsPromise = collectBankSearchChannel(
       db,
+      // The channel consumes ids + positions only; the ordering keys stay in
+      // ORDER BY. Projecting prompt_md/rank/created_at detoasts every matched row.
       (offset, count) =>
         db
-          .select({
-            id: question.id,
-            prompt_md: question.prompt_md,
-            created_at: question.created_at,
-            rank: sql<number>`ts_rank_cd(${tsvec}, ${fts.tsq})`,
-          })
+          .select({ id: question.id })
           .from(question)
           .leftJoin(question_group_lifecycle, eq(question_group_lifecycle.group_id, question.id))
           .where(and(where, sql`${tsvec} @@ ${fts.tsq}`))
@@ -1233,7 +1230,7 @@ async function runSearchBankInSnapshot(
             retrieval_truncated: retrievalTruncated,
             unavailable_channels: unavailable,
           });
-          // YUK-1448 (review P1) — 把缺口证据绑到本次检索：MAC 由服务端密钥签发，
+          // 把缺口证据绑到本次检索：MAC 由服务端密钥签发，
           // file_bank_gap 验不过就 rejected，调用方伪造 complete=true 也触发不了
           // 付费 dispatch。secret 未配置时 gap 照常返回（覆盖诚实），但 filing 端
           // fail closed。

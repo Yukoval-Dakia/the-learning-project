@@ -22,14 +22,6 @@ import { expectedScore, fisherInformation3pl } from './theta';
 export const THETA_GRID_ENABLED = false;
 
 /**
- * Dark-ship flag for the day-one prerequisite prior read surface (not A6 θ
- * propagation). False makes loadDayOnePriors a no-op. The name deliberately differs
- * from the two existing PREREQ_PROPAGATION_* mechanisms; the native binding is
- * dev/CI-only, so the surface no-ops wherever the .node is absent.
- */
-export const DAY_ONE_PRIOR_ENABLED = false;
-
-/**
  * Offset grid endpoints. The offset is per-KC ability relative to the A2 domain
  * anchor; ±4 logits brackets any plausible deviation.
  */

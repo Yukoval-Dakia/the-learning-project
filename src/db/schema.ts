@@ -12,6 +12,7 @@
 // inferred types (not the schemas) keeps these modules zod-free at runtime;
 // generated.ts wraps these tables with drizzle-zod for validation.
 
+export { agent_workspace } from './schema/agent-workspace';
 export {
   ai_task_runs,
   bank_search_snapshot,
@@ -31,7 +32,6 @@ export {
   artifact,
   artifact_block_ref,
   artifact_edit_session,
-  edge_reconciliation_log,
   editing_presence,
   hub_sync_reconciliation,
   memory_brief_note,
@@ -67,7 +67,6 @@ export { drawing } from './schema/drawing';
 export {
   dag_orchestration_node,
   dag_orchestration_run,
-  echo_jobs,
   event,
   event_subscription_checkpoint,
   event_subscription_delivery,

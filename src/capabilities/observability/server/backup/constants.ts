@@ -7,7 +7,7 @@
 // (artifact_block_ref, ai_task_runs, mistake_variant, goal, proposal_signals,
 // practice_stream_item, memory_reconciliation_log) — minor bump to 4.2. New tables
 // ride the whole-row dump/restore automatically. Transient/operational tables
-// (job_events, echo_jobs, editing_presence) were instead recorded in
+// (job_events, editing_presence) were instead recorded in
 // BACKUP_EXCLUDED_TABLES below.
 // B1-W1 (ADR-0035): additive `mastery_state` + `item_calibration` tables — also
 // additive within the 4.2 generation (both ride whole-row dump/restore via
@@ -150,7 +150,13 @@
 // No enforced FK (loose text-ref to session/task_run/event/asset). NEW
 // FK_ORDER table → bump SCHEMA_VERSION (4.34 → 4.35).
 // drawing.source_scoped column → the backup row shape changes → 4.35 → 4.36.
-export const SCHEMA_VERSION = '4.37';
+// YUK-1768: edge_reconciliation_log dropped with the supersede write path — a
+// table removal changes the FK_ORDER payload contract the same way an add does
+// → 4.37 → 4.38 (lockstep, per the FK_ORDER rule below).
+// YUK-2008: subject_doc + append-only subject_doc_journal are authored control-
+// plane truth sharing subject_change_seq. Both enter FK_ORDER, not exclusions.
+// NEW FK_ORDER tables → bump 4.38 → 4.39.
+export const SCHEMA_VERSION = '4.39';
 
 export const SUBSCRIPTION_PROGRESS_TABLES = [
   'event_subscription_checkpoint',
@@ -309,19 +315,12 @@ export const FK_ORDER = [
   // 软引用 practice_stream_item.id (text ref，no enforced FK)，位置不受 PG FK 约束。
   'selection_observation',
   'memory_reconciliation_log',
-  // YUK-344 调和环增量 2 (ADR-0034 §3): edge_reconciliation_log — 结构轴知识边写入期
-  // 调和的 AUDIT / PROVENANCE 日志 (SUPERSEDE 决策来由)。与 memory_reconciliation_log
-  // (记忆/个性化轴) 结构正交但语义同类 (provenance 值得保留，丢了即灭失 epistemic 来由)，
-  // 故同入 FK_ORDER 备份 (非 BACKUP_EXCLUDED)。软引用 knowledge_edge.id (superseded_edge_id
-  // 是 text ref，无 hard FK)，位置不受 PG FK 约束；置于 memory_reconciliation_log 后保持
-  // 两条 reconciliation 日志相邻可读。
-  'edge_reconciliation_log',
   // YUK-531 (A5 S4 / ADR-0036 RT1): misconception_reconciliation_log — 异构误区边写入期
-  // 调和的 AUDIT / PROVENANCE 日志 (SUPERSEDE 决策来由)，peer of edge_reconciliation_log。
+  // 调和的 AUDIT / PROVENANCE 日志 (SUPERSEDE 决策来由)。
   // provenance 值得保留 (丢了即灭失 epistemic 来由)，故同入 FK_ORDER 备份 (非
   // BACKUP_EXCLUDED)。软引用 misconception_edge.id (superseded_edge_id 是 text ref，无 hard
-  // FK)，位置不受 PG FK 约束；紧邻 edge_reconciliation_log 保持三条 reconciliation 日志相邻
-  // 可读。NEW FK_ORDER table → bump SCHEMA_VERSION (4.12 → 4.13)。
+  // FK)，位置不受 PG FK 约束；置于 memory_reconciliation_log 后保持两条 reconciliation
+  // 日志相邻可读。NEW FK_ORDER table → bump SCHEMA_VERSION (4.12 → 4.13)。
   'misconception_reconciliation_log',
   // YUK-471 W1 PR-A2a (ADR-0044): materialized_id_index — the projection reverse-index
   // (materialized knowledge/knowledge_edge id → anchor event). Cheaply rebuildable from
@@ -358,6 +357,11 @@ export const FK_ORDER = [
   'subject_trait_binding',
   'subject_control_journal',
   'subject_name_claim',
+  // YUK-2008: subject-doc catalog/body + append-only revision journal. Authored
+  // control-plane prose and provenance cannot be rebuilt after a restore; both
+  // share the existing subject_change_seq axis, so they restore with this family.
+  'subject_doc',
+  'subject_doc_journal',
   // YUK-452 Phase B (0074/0075): placement cold-starter admission 四表 — 冷启 admission
   // 与付费清算的持久台账（预算 claim / attempt / attempt↔question 链 / settled 成本组件，
   // 含 task_run_id 与 actual cost provenance）。丢了即 restore 后预算控制失忆（可重复
@@ -431,6 +435,10 @@ export type TableName = (typeof FK_ORDER)[number];
 // only transient / derived / operational state belongs here, never authored or
 // slow-accumulated cognitive data.
 export const BACKUP_EXCLUDED_TABLES: ReadonlySet<string> = new Set<string>([
+  // Sandbox workspace leases are bound to a local executor volume that a learner
+  // archive cannot restore; restoring rows would resurrect stale fencing while
+  // the directories they fence are already gone.
+  'agent_workspace',
   // YUK-1771: derived vectors, rebuilt from question_solution_prior by embed_backfill.
   'question_solution_prior_vector',
   // YUK-1771: one-off backfill ledger; losing it costs at most one more paid call per group.
@@ -458,9 +466,6 @@ export const BACKUP_EXCLUDED_TABLES: ReadonlySet<string> = new Set<string>([
   'session_orphan_tick',
   'session_orphan_receipt',
   'session_orphan_disposition',
-  // Sub-0c golden E2E health-check fixture (HTTP enqueue → worker → SSE). Transient
-  // echo-job state, not business data.
-  'echo_jobs',
   // Cross-process editing-presence state machine (YUK-321 M5); explicitly "纯状态机
   // 存储非业务实体". A restore starts from an empty presence backend — heartbeats are
   // re-established live, so persisting them would resurrect stale lock state.
@@ -524,6 +529,9 @@ export const BACKUP_EXCLUDED_TABLES: ReadonlySet<string> = new Set<string>([
 // Cascading children of backed-up parents need no separate entry here.
 // Subscription progress is durable and lives in FK_ORDER; restore clears only its claims.
 export const RESTORE_WIPE_ONLY_TABLES: readonly string[] = [
+  // Rows kept in the live DB through a restore would fence directories bound
+  // to the pre-restore executor volume — wipe them and let owners re-claim.
+  'agent_workspace',
   // A learner archive restore must invalidate even unexpired pre-restore cursors.
   'bank_search_snapshot',
   // YUK-851: clear pre-restore owners before durable provider_attempt rows are replaced.

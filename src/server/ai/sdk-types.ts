@@ -336,6 +336,25 @@ export interface SDKToolArgsProgressMessage {
   session_id: string;
 }
 
+/**
+ * One interrupted provider request is being resent inside the same run. The
+ * counts are what that dead request already streamed out (UTF-16 units, as
+ * delivered in text_delta/thinking_delta) — consumers retract exactly that tail.
+ */
+export interface SDKRequestRetryMessage {
+  type: 'system';
+  subtype: 'request_retry';
+  /** 1-based resend number. */
+  retry: number;
+  max_retries: number;
+  reason: 'stream_idle' | 'connection';
+  delay_ms: number;
+  discarded_text_chars: number;
+  discarded_thinking_chars: number;
+  uuid: UUID;
+  session_id: string;
+}
+
 /** Normalized frame union the runner consumes, sized to what the codebase produces. */
 export type SDKMessage =
   | SDKAssistantMessage
@@ -349,4 +368,5 @@ export type SDKMessage =
   | SDKTaskNotificationMessage
   | SDKToolArgsCoercedMessage
   | SDKToolArgsContractFailedMessage
-  | SDKToolArgsProgressMessage;
+  | SDKToolArgsProgressMessage
+  | SDKRequestRetryMessage;
