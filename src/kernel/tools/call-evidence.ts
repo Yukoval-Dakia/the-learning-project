@@ -4,7 +4,7 @@ import type { Db, Tx } from '@/db/client';
 import { cost_ledger, tool_call_log } from '@/db/schema';
 
 // These loose-coupled correlation logs (no FK) accept either Db or Tx so callers
-// can retain their existing transaction boundaries (FIX-R2-10). Tool-call logs
+// can retain their existing transaction boundaries. Tool-call logs
 // and remote unknown-cost rows remain separate writes, not an atomic operation.
 type DbLike = Db | Tx;
 

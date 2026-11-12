@@ -4,13 +4,34 @@ import { notDraftPredicate, questionSuspendedPredicate } from '@/db/predicates';
 import { question } from '@/db/schema';
 import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
 
-/** A question placement may use: live, unarchived, and unrestricted or restricted to include
- * both placement uses. Serving permission is decided separately by the admission read. */
+/** A question placement may use: live, unarchived, unexpired, not exposure-blocked,
+ * and unrestricted or restricted to include both placement uses. Expiry follows the
+ * supply projection (`expires_at`, otherwise `expired_at`): only a parseable timestamp
+ * at or before the database clock counts. Serving permission is decided separately
+ * by the admission read. */
 export function placementUsableQuestionPredicate(): SQL {
+  // Present-but-unparseable expires_at must not fall through to expired_at (`??`).
+  const expiryCandidate = sql`CASE
+    WHEN jsonb_typeof(${question.metadata}->'expires_at') IS NOT NULL
+     AND jsonb_typeof(${question.metadata}->'expires_at') IS DISTINCT FROM 'null'
+    THEN ${question.metadata}->'expires_at'
+    ELSE ${question.metadata}->'expired_at'
+  END`;
   return and(
     notDraftPredicate(question.draft_status),
     questionSuspendedPredicate(question),
     isNull(sql`${question.metadata}->>'archived_at'`),
+    sql`(${question.metadata}->'exposure_blocked') IS DISTINCT FROM 'true'::jsonb`,
+    // AND does not protect a failing cast; CASE does. Unparseable values are not expired.
+    sql`NOT (
+      SELECT CASE
+        WHEN jsonb_typeof(candidate) = 'string'
+         AND pg_input_is_valid(candidate #>> '{}', 'timestamptz')
+        THEN (candidate #>> '{}')::timestamptz <= clock_timestamp()
+        ELSE false
+      END
+      FROM (SELECT ${expiryCandidate} AS candidate) parsed
+    )`,
     sql`(
       jsonb_typeof(${question.metadata}->'allowed_uses') IS DISTINCT FROM 'array'
       OR jsonb_array_length(${question.metadata}->'allowed_uses') = 0

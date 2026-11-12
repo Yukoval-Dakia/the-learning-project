@@ -32,6 +32,7 @@ import {
   buildBackupArchive,
   restoreFromArchive as restoreArchive,
 } from './archive';
+import { FK_ORDER } from './constants';
 
 // Restores here re-read config through the same hydrator the API composition root injects.
 const restoreFromArchive = (opts: Omit<RestoreFromArchiveOpts, 'hydrateConfig'>) =>
@@ -59,7 +60,6 @@ const liveSubscriberIdentities = [
   ['agency.probe-result-reconcile', 1],
   ['agency.question-pool-gap', 1],
   ['agency.steering-changed', 1],
-  ['notes.dreaming-note-refresh', 1],
   ['notes.mastery-progress-note-refine', 1],
   ['practice.failure-learning-attempt', 3],
   ['practice.learner-return-wake', 1],
@@ -567,5 +567,117 @@ describe('YUK-766 subscription progress backup', () => {
     expect(data[collection][0].payload).toEqual({ version: 'before' });
     const [live] = await db.select().from(knowledge).where(eq(knowledge.id, 'snapshot-kc'));
     expect(live.name).toBe('after');
+  });
+
+  function interpose(
+    db: Db,
+    spy: (text: string, call: () => Promise<unknown>) => Promise<unknown>,
+  ): Db {
+    const dialect = new PgDialect();
+    const wrap = <T extends Db | Tx>(handle: T): T =>
+      new Proxy(handle, {
+        get(target, property) {
+          if (property === 'transaction')
+            return (fn: (tx: Tx) => Promise<unknown>, config?: Parameters<Db['transaction']>[1]) =>
+              target.transaction((tx) => fn(wrap(tx)), config);
+          if (property === 'execute')
+            return (query: SQL) => spy(dialect.sqlToQuery(query).sql, () => target.execute(query));
+          const value = Reflect.get(target, property);
+          return typeof value === 'function' ? value.bind(target) : value;
+        },
+      });
+    return wrap(db);
+  }
+
+  function concat(parts: Uint8Array[]): Uint8Array {
+    const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+    let offset = 0;
+    for (const p of parts) {
+      out.set(p, offset);
+      offset += p.length;
+    }
+    return out;
+  }
+
+  async function expectNoLiveSessions(db: Db) {
+    await vi.waitFor(async () => {
+      const stray = await db.execute(
+        sql`select count(*) as n from pg_stat_activity where datname = current_database() and state <> 'idle' and pid <> pg_backend_pid()`,
+      );
+      expect(Number(stray[0].n)).toBe(0);
+    });
+  }
+
+  // @invariant data: an export whose snapshot read fails mid-stream must not yield a complete-looking archive
+  // @fails-if the stream completes, or the received bytes parse as a zip, or the failed transaction stays open
+  it('fails the stream and releases the snapshot when a mid-export read errors', async () => {
+    const db = testDb();
+    const injected = new Error('injected mid-export read failure');
+    let fetches = 0;
+    const proxied = interpose(db, (text, call) => {
+      if (text.startsWith('fetch forward') && ++fetches === 3) throw injected;
+      return call();
+    });
+    const result = await buildBackupArchive({ db: proxied, r2: memR2() });
+    expect(result.error).toBeUndefined();
+    const reader = result.stream.getReader();
+    const parts: Uint8Array[] = [];
+    await expect(async () => {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) return;
+        parts.push(value);
+      }
+    }).rejects.toThrow('injected mid-export read failure');
+    expect(() => unzipSync(concat(parts))).toThrow();
+    await expectNoLiveSessions(db);
+  });
+
+  // @invariant concurrency: a consumer abort stops snapshot reads and releases the transaction
+  // @fails-if reads keep issuing after the abort, or an 'idle in transaction' session survives
+  it('stops snapshot reads and releases the transaction when the consumer aborts', async () => {
+    const db = testDb();
+    let fetches = 0;
+    let declares = 0;
+    let releaseGate!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseGate = resolve;
+    });
+    const proxied = interpose(db, async (text, call) => {
+      if (text.startsWith('declare ')) declares += 1;
+      if (text.startsWith('fetch forward')) {
+        fetches += 1;
+        // Hold one fetch in flight so the abort lands mid-stream, not at EOF.
+        if (fetches === 3) await gate;
+      }
+      return call();
+    });
+    const controller = new AbortController();
+    const result = await buildBackupArchive({
+      db: proxied,
+      r2: memR2(),
+      signal: controller.signal,
+    });
+    expect(result.error).toBeUndefined();
+    const reader = result.stream.getReader();
+    const parts: Uint8Array[] = [];
+    const drain = (async () => {
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) return;
+          parts.push(value);
+        }
+      } catch {
+        // The abort surfaces here as a read failure; the assertion is on DB state.
+      }
+    })();
+    await vi.waitFor(() => expect(fetches).toBeGreaterThanOrEqual(3));
+    controller.abort();
+    releaseGate();
+    await drain;
+    expect(() => unzipSync(concat(parts))).toThrow();
+    await expectNoLiveSessions(db);
+    expect(declares).toBeLessThan(FK_ORDER.length);
   });
 });

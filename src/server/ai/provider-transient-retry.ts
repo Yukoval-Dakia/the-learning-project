@@ -7,8 +7,16 @@
 
 import { eq } from 'drizzle-orm';
 import { AgentRunError } from '@/ai/agent-run-error';
-import { type ProviderTransientVerdict, providerTransientVerdict } from '@/ai/provider-failure';
-import type { ProviderTransportEvidence } from '@/ai/task-result';
+import {
+  type ProviderTransientVerdict,
+  providerTransientResendable,
+  providerTransientVerdict,
+} from '@/ai/provider-failure';
+import {
+  type AttemptCostTruth,
+  type ProviderTransportEvidence,
+  failureSpendChargeUsd,
+} from '@/ai/task-result';
 import { getConfig } from '@/core/config/store';
 import type { Db } from '@/db/client';
 import { ai_task_runs } from '@/db/schema';
@@ -40,19 +48,19 @@ export function providerTransientRetryPolicy(): ProviderTransientRetryPolicy {
 }
 
 /**
- * The bound a verdict's class earns. `rate_limited` and `not_sent` — the two
- * classes the admission bound was designed for — consume the full configured
- * retry/wait budget; the other positively-proven classes keep the ADR-0079
- * single immediate re-send, capped by the configured limit so `0` still
- * disables every resend.
+ * The bound a verdict's class earns — the single class→budget table. Every
+ * resendable class is a complete pre-billing refusal and consumes the full
+ * configured retry/wait budget (sleep costs no tokens); `quota_exhausted`
+ * cannot be outwaited in-run, so its bound is zero and the caller's durable
+ * wait takes over instead.
  */
 export function transientClassBound(
   verdict: ProviderTransientVerdict,
   policy: ProviderTransientRetryPolicy,
 ): ProviderTransientRetryPolicy {
-  return verdict.class === 'rate_limited' || verdict.class === 'not_sent'
+  return providerTransientResendable(verdict.class)
     ? policy
-    : { maxRetries: Math.min(1, policy.maxRetries), maxWaitMs: 0, baseDelayMs: 0 };
+    : { maxRetries: 0, maxWaitMs: 0, baseDelayMs: 0 };
 }
 
 /**
@@ -69,11 +77,49 @@ export function providerTransientRetryDelayMs(input: {
   return input.policy.baseDelayMs * 2 ** input.retryIndex;
 }
 
+/**
+ * The interrupted-request row of the retry table: which task kinds may resend
+ * a request that was sent and then died mid-stream (idle / connection drop),
+ * and how often. The provider may already have billed the dead request, so a
+ * kind belongs here only when the request itself has no side effect — tools
+ * run after a request completes, never inside it, and the resend carries the
+ * executed tool results unchanged. Admission, grading and every other kind stay
+ * on "outcome unknown → never resend".
+ */
+const INTERRUPTED_REQUEST_RETRY: Readonly<Record<string, InterruptedRequestRetryBound>> = {
+  CopilotTask: { maxRetries: 2, baseDelayMs: 1_000 },
+};
+
+export interface InterruptedRequestRetryBound {
+  /** Extra sends of the same request after the first interruption. */
+  readonly maxRetries: number;
+  /** Delay before resend n (0-based) is baseDelayMs * 2^n. */
+  readonly baseDelayMs: number;
+}
+
+export function interruptedRequestRetryBound(
+  kind: string,
+): InterruptedRequestRetryBound | undefined {
+  return Object.hasOwn(INTERRUPTED_REQUEST_RETRY, kind)
+    ? INTERRUPTED_REQUEST_RETRY[kind]
+    : undefined;
+}
+
 export interface SettledAttemptEvidence {
   /** False while the attempt may still be running — never resend alongside it. */
   readonly settled: boolean;
+  /**
+   * True only when the settled row carries the unbilled-rejection receipt —
+   * `estimated` basis, amount 0, `unbilled-provider-rejection:` ref. A bare
+   * `cost_usd === 0` is NOT proof: free-at-margin lanes (subscription routes,
+   * zero-price catalog cards) record 0 for work that actually ran and may
+   * have side effects; resending them can duplicate paid-or-written effects.
+   */
+  readonly unbilled: boolean;
   /** Armed-lane transport when the attempt produced one; absent on the typed lane. */
   readonly transport?: ProviderTransportEvidence;
+  /** Persisted failure line — the row-driven quota-signature source. */
+  readonly errorMessage?: string | null;
 }
 
 export async function settledAttemptEvidence(
@@ -85,28 +131,40 @@ export async function settledAttemptEvidence(
       status: ai_task_runs.status,
       finished_at: ai_task_runs.finished_at,
       usage_json: ai_task_runs.usage_json,
+      cost_usd: ai_task_runs.cost_usd,
+      cost_basis: ai_task_runs.cost_basis,
+      cost_ref: ai_task_runs.cost_ref,
+      error_message: ai_task_runs.error_message,
     })
     .from(ai_task_runs)
     .where(eq(ai_task_runs.id, taskRunId));
+  const truth: AttemptCostTruth =
+    (row?.cost_basis === 'reported' || row?.cost_basis === 'estimated') && row.cost_usd != null
+      ? { basis: row.cost_basis, amountUsd: row.cost_usd, ref: row.cost_ref ?? '' }
+      : { basis: 'unknown', amountUsd: null, ref: row?.cost_ref ?? '' };
   return {
     settled: row?.finished_at != null && row.status !== 'running',
+    unbilled: failureSpendChargeUsd(truth) === 0,
     ...(row?.usage_json?.transport !== undefined ? { transport: row.usage_json.transport } : {}),
+    errorMessage: row?.error_message,
   };
 }
 
 /**
- * The caller-side verdict for one thrown attempt error: settled rows only,
- * transport forwarded when the lane armed one. A bound status without a
- * settled row still cannot justify a resend.
+ * One settled-failure consultation: verdict + the unbilled receipt. A resend
+ * is only honest when the failed attempt provably billed nothing — the
+ * persisted `unbilled-provider-rejection:` ref is that proof; an unknown,
+ * positive, or merely-zero amount never authorizes another send.
  */
-export async function settledTransientVerdict(
+async function settledTransientFacts(
   db: Db,
   error: unknown,
-): Promise<ProviderTransientVerdict | undefined> {
+): Promise<{ verdict: ProviderTransientVerdict; unbilled: boolean } | undefined> {
   if (!(error instanceof AgentRunError)) return undefined;
   const evidence = await settledAttemptEvidence(db, error.taskRunId);
   if (!evidence.settled) return undefined;
-  return providerTransientVerdict({ error, transport: evidence.transport });
+  const verdict = providerTransientVerdict({ error, transport: evidence.transport });
+  return verdict === undefined ? undefined : { verdict, unbilled: evidence.unbilled };
 }
 
 export interface ProviderTransientRetryBudget {
@@ -118,8 +176,9 @@ export interface ProviderTransientRetryBudget {
 
 /**
  * One owner for "may this settled failure re-issue, and after how long?":
- * verdict → class bound → count/wait/deadline fit. undefined means terminal;
- * the caller treats that as the definitive provider failure it is.
+ * settled row → verdict → unbilled-rejection receipt → class bound →
+ * count/wait/deadline fit. undefined means terminal; the caller treats that
+ * as the definitive provider failure it is.
  */
 export async function planProviderTransientRetry(input: {
   db: Db;
@@ -129,8 +188,10 @@ export async function planProviderTransientRetry(input: {
   /** Absolute wall-clock bound (ms epoch); the delay must leave room to retry. */
   deadlineAt?: number;
 }): Promise<{ verdict: ProviderTransientVerdict; delayMs: number } | undefined> {
-  const verdict = await settledTransientVerdict(input.db, input.error);
-  if (verdict === undefined) return undefined;
+  const facts = await settledTransientFacts(input.db, input.error);
+  if (facts === undefined) return undefined;
+  if (!facts.unbilled) return undefined;
+  const { verdict } = facts;
   const bound = transientClassBound(verdict, input.policy);
   if (input.budget.retries >= bound.maxRetries) return undefined;
   const delayMs = providerTransientRetryDelayMs({
@@ -141,6 +202,51 @@ export async function planProviderTransientRetry(input: {
   if (input.budget.waitedMs + delayMs > bound.maxWaitMs) return undefined;
   if (input.deadlineAt !== undefined && input.deadlineAt - Date.now() <= delayMs) return undefined;
   return { verdict, delayMs };
+}
+
+/**
+ * The companion's whole-attempt row: a failed attempt is rerun only when it
+ * provably had no effect — every request was the root loop's own and either
+ * never sent or bound to a 429, nothing billed — and only for short congestion
+ * or not_sent, within 2 reruns / 15s so the learner is not left waiting.
+ * Interrupted requests mid-attempt are the separate interrupted-request row.
+ */
+export async function planCopilotAttemptRetry(input: {
+  db: Db;
+  error: unknown;
+  transport: ProviderTransportEvidence;
+  costUsd: number | null;
+  budget: ProviderTransientRetryBudget;
+  deadlineAt: number;
+}): Promise<{ delayMs: number } | undefined> {
+  const { transport } = input;
+  const noEffect =
+    transport.requests_seen > 0 &&
+    transport.requests_dropped === 0 &&
+    transport.requests.length === transport.requests_seen &&
+    transport.requests.every(
+      (request) =>
+        request.loop === 'root' &&
+        !request.timeout_layer &&
+        (request.send_state === 'not_sent' ||
+          (request.send_state === 'response_received' && request.http_status === 429)),
+    );
+  if (!noEffect || input.costUsd !== 0) return undefined;
+  const policy = providerTransientRetryPolicy();
+  const retry = await planProviderTransientRetry({
+    db: input.db,
+    error: input.error,
+    policy: {
+      ...policy,
+      maxRetries: Math.min(2, policy.maxRetries),
+      maxWaitMs: Math.min(15_000, policy.maxWaitMs),
+    },
+    budget: input.budget,
+    deadlineAt: input.deadlineAt,
+  });
+  return retry && (retry.verdict.class === 'rate_limited' || retry.verdict.class === 'not_sent')
+    ? { delayMs: retry.delayMs }
+    : undefined;
 }
 
 export function sleepMs(ms: number, signal?: AbortSignal): Promise<void> {

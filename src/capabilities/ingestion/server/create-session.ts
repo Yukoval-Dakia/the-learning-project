@@ -6,11 +6,7 @@ import { ApiError } from '@/kernel/http';
 import { resolveSelectableSubjectId } from '@/subjects/profile';
 import type { CreateIngestionSessionBody } from '../api/contracts';
 import { type CreationResult, commitCreationReceipt } from './creation-receipts';
-import {
-  type DuplicateUploadMatch,
-  findDuplicateUpload,
-  recordDuplicateUpload,
-} from './duplicate-upload';
+import { type DuplicateUploadMatch, detectDuplicateUpload } from './duplicate-upload';
 import { initiateUpload, markSessionPackageFailed } from './session-lifecycle';
 import { materializeSourcePackage } from './source-package';
 
@@ -53,29 +49,13 @@ export async function createIngestionSession(
         learnerSelectedSubjectId: canonicalSubjectId,
         derivationPolicy: body.derivation_policy ?? null,
       });
-      // Recognition only: the new upload proceeds untouched. A detection fault must not
-      // discard the learner's file, so it is logged and reported as unknown. The
-      // savepoint restores the outer tx after a statement error (timeout/abort).
-      let duplicateOf: DuplicateUploadMatch | null = null;
-      try {
-        await tx.transaction(async (duplicateTx) => {
-          const found = await findDuplicateUpload(duplicateTx, {
-            sourceDocumentId,
-            assetIds: body.asset_ids,
-          });
-          if (found !== null) {
-            await recordDuplicateUpload(duplicateTx, {
-              sessionId,
-              sourceDocumentId,
-              duplicate: found,
-            });
-          }
-          duplicateOf = found;
-        });
-      } catch (err) {
-        console.error('[ingestion] duplicate upload detection failed', err);
-        duplicateOf = null;
-      }
+      // Recognition only: the new upload proceeds untouched; the shared helper owns the
+      // savepoint so a detection fault (timeout/abort) is unknown, not a failed upload.
+      const duplicateOf: DuplicateUploadMatch | null = await detectDuplicateUpload(tx, {
+        sessionId,
+        sourceDocumentId,
+        assetIds: body.asset_ids,
+      });
       const location = `/api/ingestion-sessions/${encodeURIComponent(sessionId)}`;
       try {
         // SQL errors must roll back this savepoint before marking failed in the

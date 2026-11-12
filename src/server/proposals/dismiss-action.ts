@@ -6,7 +6,7 @@ import { runProposalDismiss } from '@/kernel/proposals/decision-protocol';
 import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
 import { ensureProposalDecisionSignal } from '@/kernel/proposals/signals';
 import type { DismissAiProposalOpts, DismissAiProposalResult } from './action-types';
-import { ownerInput, proposalLifecycleRegistry, requireProposal } from './lifecycle-context';
+import { proposalLifecycleRegistry, requireProposal } from './lifecycle-context';
 
 async function reconcileExistingRateSignal(
   db: Db,
@@ -43,7 +43,7 @@ async function dispatchDismiss(
     const applier = await declaration.load();
     const result = await applier(db, {
       proposalId: proposal.id,
-      proposal: ownerInput(proposal),
+      proposal,
       user_note: opts.user_note,
     });
     if (result.kind !== proposal.payload.kind) {

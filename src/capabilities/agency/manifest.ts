@@ -1,5 +1,4 @@
 import { PROBE_RESULT_ACTION } from '@/core/schema/conjecture';
-import { DREAMING_NOTE_REFRESH_ACTION } from '@/core/schema/event/dreaming-note-refresh';
 import {
   INTERVENTION_ACTIVATED_ACTION,
   INTERVENTION_PREPARATION_FAILED_ACTION,
@@ -38,7 +37,6 @@ export const agencyCapability = defineCapability({
       'experimental:context_change',
       'experimental:context_edit_request',
       'experimental:agent_note',
-      DREAMING_NOTE_REFRESH_ACTION,
       PROBE_RESULT_ACTION,
       INTERVENTION_ACTIVATED_ACTION,
       INTERVENTION_PREPARATION_FAILED_ACTION,

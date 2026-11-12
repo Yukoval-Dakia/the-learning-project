@@ -1,9 +1,5 @@
 import { createId } from '@paralleldrive/cuid2';
-import {
-  ProviderSessionWallClockBudgetError,
-  RETRY_ELAPSED_CAP_MS,
-  isTransientAgentFailure,
-} from '@/ai/agent-run-error';
+import { ProviderSessionWallClockBudgetError, RETRY_ELAPSED_CAP_MS } from '@/ai/agent-run-error';
 import {
   type ExecutableHelpBasis,
   type SealedHelpLatency,
@@ -13,25 +9,28 @@ import {
   nonnegativeElapsed,
   sealHelpLatency,
 } from '@/ai/help-latency';
+import { isTransientAgentFailure } from '@/ai/provider-failure';
 import type { TaskTimeoutSource } from '@/ai/task-budget';
 import type {
   AiTaskUsage,
   LifecycleResult,
   AiTaskUsage as LifecycleUsage,
   NoteGeneratePhaseTimings,
+  ProviderTransportEvidence,
   TransportAbortInitiator,
+} from '@/ai/task-result';
+import {
+  type AttemptCostTruth,
+  UNBILLED_PROVIDER_REJECTION_REF_PREFIX,
+  failureSpendChargeUsd,
 } from '@/ai/task-result';
 import type { TaskDefinition } from '@/ai/task-spec';
 import { type TaskKind, tasks } from '@/capabilities/task-registry';
 import { taskInputHash } from '@/core/task-input-hash';
 import type { Db } from '@/db/client';
+import { writeAiTaskAttemptFinished } from '@/kernel/records/ai-attempt-facts';
 import { writeToolCallLog } from '@/kernel/tools/call-evidence';
-import {
-  type AttemptCostTruth,
-  UNBILLED_PROVIDER_REJECTION_REF_PREFIX,
-  resolveAttemptCostTruth,
-  unknownAttemptCostTruth,
-} from './attempt-cost';
+import { resolveAttemptCostTruth, unknownAttemptCostTruth } from './attempt-cost';
 import { type ModelBinding, explicitProviderRouting } from './execution-adapter';
 import {
   type TraceSpan,
@@ -40,7 +39,7 @@ import {
   traceMetadata,
   withTraceContext,
 } from './laminar-tracing';
-import { writeAiTaskAttemptFinished, writeAiTaskRunRetried, writeAiTaskRunStarted } from './log';
+import { writeAiTaskRunRetried, writeAiTaskRunStarted } from './log';
 import {
   type ModelProfile,
   assertModelProfileCapabilityFit,
@@ -200,6 +199,12 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
   private terminalSettledStatus: AttemptTerminalStatus | undefined;
   private lastTerminalWriteError: unknown;
   private durableStart = false;
+  /**
+   * The single-request lane's own declaration that its only wire send was
+   * rejected with a bound status — the same fact the armed transport proves on
+   * the pi lane, for a lane that has no transport collector.
+   */
+  private unbilledProviderRejection = false;
   private trace: TraceSpan | undefined;
   private traceOutcome: 'success' | 'error' | 'cancelled' | 'not_started' = 'not_started';
   private notePhases: NoteGeneratePhaseTimings | undefined;
@@ -308,6 +313,25 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
   recordNotePhases(patch: NoteGeneratePhaseTimings): void {
     if (this.kind !== 'NoteGenerateTask') return;
     this.notePhases = { ...this.notePhases, ...patch };
+  }
+
+  /**
+   * The attempt's transport snapshot — only when the controlled lane armed it;
+   * an unobserved lane must never fabricate a `not_sent` receipt.
+   */
+  armedTransport(): ProviderTransportEvidence | undefined {
+    return this.transportEvidence.isArmed ? this.transportEvidence.snapshot() : undefined;
+  }
+
+  /**
+   * Declare the attempt provably unbilled: the lane's only request was rejected
+   * with a bound non-2xx before any processing. Marks the same fact the armed
+   * transport infers from per-request send states — cost truth then records
+   * the unbilled zero instead of a conservative estimate.
+   */
+  noteUnbilledProviderRejection(): void {
+    this.unbilledProviderRejection = true;
+    this.costTruthCache = undefined;
   }
 
   /**
@@ -470,11 +494,10 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
 
   get costTruth(): AttemptCostTruth {
     const usage = this.terminal ?? this.observedUsage;
-    const transport = this.transportEvidence.isArmed
-      ? this.transportEvidence.snapshot()
-      : undefined;
+    const transport = this.armedTransport();
     // Never erase usage from an earlier successful turn or an unobserved send.
     const unbilledTransport =
+      this.unbilledProviderRejection ||
       transport?.send_state === 'not_sent' ||
       (transport != null &&
         transport.requests_seen > 0 &&
@@ -842,7 +865,9 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
       status: 'failure',
       finishReason,
       errorMessage: error instanceof Error ? error.message : String(error),
-      outcome: isTransientAgentFailure(error) ? 'failed_retryable' : 'failed_permanent',
+      outcome: isTransientAgentFailure(error, this.armedTransport())
+        ? 'failed_retryable'
+        : 'failed_permanent',
     });
     this.traceOutcome = this.aborted ? 'cancelled' : 'error';
     this.trace?.metadata({ execution_outcome: this.traceOutcome, durable_settled: settled });
@@ -1019,6 +1044,19 @@ export function classifyLifecycleRetry(input: {
   maxAttempts: number;
   firstAttemptStartedAt: number;
   error: unknown;
+  /**
+   * Armed-lane transport when one exists — never pass an unarmed snapshot,
+   * which would claim not_sent on a lane that observed nothing.
+   */
+  transport?: ProviderTransportEvidence;
+  /**
+   * The attempt's settled cost truth. Only the unbilled-rejection receipt
+   * (estimated 0 + `unbilled-provider-rejection:` ref) authorizes a resend —
+   * a bare zero on a free-at-margin lane is not proof nothing ran.
+   */
+  attemptCostTruth?: AttemptCostTruth;
+  /** Caller/lifecycle cancellation — a cancelled attempt never resends. */
+  aborted?: boolean;
   now?: number;
 }): LifecycleAttemptDecision {
   const elapsedMs = (input.now ?? Date.now()) - input.firstAttemptStartedAt;
@@ -1026,7 +1064,9 @@ export function classifyLifecycleRetry(input: {
     elapsedMs,
     willRetry:
       input.attempt < input.maxAttempts &&
-      isTransientAgentFailure(input.error) &&
+      isTransientAgentFailure(input.error, input.transport) &&
+      input.aborted !== true &&
+      failureSpendChargeUsd(input.attemptCostTruth) === 0 &&
       elapsedMs < RETRY_ELAPSED_CAP_MS,
   };
 }

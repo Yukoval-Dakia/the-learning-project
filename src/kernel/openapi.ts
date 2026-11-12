@@ -160,7 +160,10 @@ export function generateOpenApiDocument(capabilities: CapabilityManifest[]): Jso
         operationId: 'getReady',
         security: [],
         responses: {
-          200: { description: 'Runtime is runnable under the DB contract epoch' },
+          200: {
+            description:
+              'Runtime is runnable under the DB contract epoch. commit is a 9-char source SHA, or null.',
+          },
           503: {
             description:
               'Fenced (maintenance window or contract epoch mismatch) or a required setting is missing',
