@@ -310,7 +310,7 @@ async function resolveSingleSteeringGoalId(
 export const recordSteeringTool: DomainTool<RecordSteeringToolInput, RecordSteeringToolOutput> = {
   name: 'record_steering',
   description:
-    "MUST be called FIRST — before any advice or proposal — whenever the learner states an exam/quiz date or scope (期中/期末/测验), a study deadline, a priority change (这周主攻/别排物理), or cancels a prior arrangement (考试取消了). Writes directly, no proposal; never substitute a knowledge-tree proposal or a spoken-only recap. Build the confirmation ONLY from previous_instruction_md/echo/issues/preparing; unmappable scope stays as text.",
+    'MUST be called FIRST — before any advice or proposal — whenever the learner states an exam/quiz date or scope (期中/期末/测验), a study deadline, a priority change (这周主攻/别排物理), or cancels a prior arrangement (考试取消了). Writes directly, no proposal; never substitute a knowledge-tree proposal or a spoken-only recap. Build the confirmation ONLY from previous_instruction_md/echo/issues/preparing; unmappable scope stays as text.',
   effect: 'write',
   inputSchema: RecordSteeringInputSchema,
   outputSchema: RecordSteeringOutputSchema,
