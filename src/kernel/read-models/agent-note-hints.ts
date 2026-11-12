@@ -10,6 +10,7 @@
 import { and, desc, eq, notInArray, sql } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
+import { eventCorrectionActiveSql } from '@/kernel/events/corrections';
 import { eventAllowsDerivationSql } from '@/kernel/events/derivation-policy';
 
 type DbLike = Db | Tx;
@@ -105,6 +106,8 @@ export async function readAgentNotes(db: DbLike, opts: ReadAgentNotesOpts): Prom
   const conditions = [
     eq(event.action, 'experimental:agent_note'),
     eventAllowsDerivationSql(),
+    // A note replaced or withdrawn by a later observation stays in history only.
+    eventCorrectionActiveSql(event.id),
     eq(event.subject_kind, 'query'),
     // target_agents array contains for_agent (jsonb containment).
     sql`${event.payload}->'target_agents' @> ${JSON.stringify([opts.for_agent])}::jsonb`,
@@ -146,6 +149,8 @@ export async function readAllAgentNotes(
       and(
         eq(event.action, 'experimental:agent_note'),
         eq(event.subject_kind, 'query'),
+        // Same retire filter as readAgentNotes: the board shows live hints, not history.
+        eventCorrectionActiveSql(event.id),
         // Un-expired only: no expires_at OR expires_at strictly in the future.
         sql`(NOT (${event.payload} ? 'expires_at') OR (${event.payload}->>'expires_at') > ${nowIso})`,
       ),

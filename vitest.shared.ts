@@ -192,6 +192,7 @@ export const dbTestInclude = [
   'src/capabilities/practice/grading/server/calibration-sample-durable-operation.db.test.ts',
   'src/capabilities/practice/failure-learning/server/cause-overlay.db.test.ts',
   'src/capabilities/practice/scheduling/server/compose-paid-work-lock.db.test.ts',
+  'src/capabilities/practice/scheduling/server/stream-mix-note.db.test.ts',
   'src/capabilities/practice/grading/server/evaluate-submission.db.test.ts',
   'src/capabilities/practice/failure-learning/server/failure-learning-subscription.db.test.ts',
   'src/capabilities/practice/failure-learning/server/failure-learning-variant.db.test.ts',

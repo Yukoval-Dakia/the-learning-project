@@ -43,7 +43,7 @@ import { estimateStreamItemMinutes } from './stream-budget';
 import { type ComposerInputs, type StreamPlan, composeDailyStream } from './stream-composer';
 import { collectComposerInputs, resolveDailyPracticeBudget } from './stream-inputs';
 import { presentNonDueQuestion } from './stream-item-presentation';
-import { streamMixNoteSummary, writeStreamMixNote } from './stream-mix-note';
+import { type StreamMixNote, streamMixNote, writeStreamMixNote } from './stream-mix-note';
 import { planStreamReplacement, prepareStreamReplacement } from './stream-replacement-plan';
 import { readStreamSelectionCandidates } from './stream-selection-candidates';
 import {
@@ -220,7 +220,7 @@ interface ComposeOutcome {
   /** Written after commit; empty on the legacy path. */
   observations: SelectionObservationInput[];
   /** Written after commit so a note failure cannot roll the stream back. */
-  mixNote?: { reason: string; summary: string } | null;
+  mixNote?: StreamMixNote | null;
 }
 
 interface PreparedCompose {
@@ -301,7 +301,7 @@ async function materializePreparedCollect(
     }
   }
 
-  return { added, observations, mixNote: streamMixNoteSummary(prepared.plan) };
+  return { added, observations, mixNote: streamMixNote(prepared.plan) };
 }
 
 /**
@@ -395,14 +395,14 @@ async function singleFlightCompose(
 async function writeStreamMixNoteBestEffort(
   db: Db,
   date: string,
-  note: { reason: string; summary: string },
+  note: StreamMixNote,
 ): Promise<void> {
   try {
     await writeStreamMixNote(db, date, note);
   } catch (err) {
     console.error('[stream-store] stream mix note failed (post-commit, best-effort)', {
       date,
-      reason: note.reason,
+      kind: note.kind,
       err,
     });
   }
