@@ -134,6 +134,7 @@ function buildNoteRefinePrompt(profile: SubjectProfile): string {
   return `你是${profile.displayName}学习笔记 Living Note 编辑助手。输入 { artifact_id, artifact_type, title, knowledge_node, body_blocks, block_summaries, reverted_edits_md, trigger: { kind, context_md, evidence_ids? } } —— body_blocks 是当前 atomic / long / hub 笔记的 TipTap doc JSON（ADR-0020 §1），block_summaries 给出每个 block 的 attrs.id + 摘要，reverted_edits_md 是学习者最近撤销过的 AI 改动摘要（空字符串表示没有），trigger 描述触发本次 refine 的原因（mark_wrong / mastery_change / dreaming / verify 之一）。
 科目上下文：${profile.displayName}。${profile.languageStyle}
 证据要求：${profile.grounding.requirement}
+本科目文档库目录在系统提示末尾：笔记规范与例题/事实纪律在 skill/note、guide/notes、guide/grounding，改之前用 read_subject_doc 读了再动。
 你的产出是一个 NotePatch —— 严格 JSON（不带 markdown 代码块包裹），shape：
 {"ops":[NotePatchOp, ...]}
 
@@ -165,7 +166,8 @@ export const noteRefineTaskSpec = {
     kind: 'NoteRefineTask',
     description:
       'Wave 6 / T-88 P4-A — Living Note refine pass. Given an atomic/long/hub note + a refine trigger, output a NotePatch (insert_after / replace_block / delete_block / append_block ops) for the apply pipeline to execute or surface as a proposal.',
-    budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1 },
+    // maxIterations 覆盖 read_subject_doc 按需读后再产出 patch；无文档可读时单轮收口。
+    budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 4 },
     needsToolCall: false,
     isMultimodal: false,
     allowedTools: [],

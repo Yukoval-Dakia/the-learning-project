@@ -400,7 +400,7 @@ interface PersistQuizVerifyVerdictInput {
   tierChecks: readonly VerifyCheck[];
   meta: QuizGenMetadataT;
   materialPresent: boolean;
-  verifySkillDocs: { name: string; body: string }[] | undefined;
+  kindConformanceSkillLoaded: boolean;
   solveResult: SolveCheckResult | undefined;
   teachingResult: TeachingQualityResult | undefined;
   verificationStatus: QuizGenVerificationT['status'];
@@ -436,7 +436,7 @@ export async function persistQuizVerifyVerdict(
     tierChecks,
     meta,
     materialPresent,
-    verifySkillDocs,
+    kindConformanceSkillLoaded,
     solveResult,
     teachingResult,
     verificationStatus,
@@ -793,7 +793,7 @@ export async function persistQuizVerifyVerdict(
         ...(tierChecks.includes('kind_conformance')
           ? {
               kind_conformance: {
-                skill_loaded: verifySkillDocs !== undefined,
+                skill_loaded: kindConformanceSkillLoaded,
                 verdict: parsed.kind_conformance?.verdict ?? null,
               },
             }

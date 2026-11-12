@@ -116,6 +116,7 @@ export {
 } from './server/backup/config-hydrator';
 // The rehearsal DB proof reads the same table order the backup restores.
 export { FK_ORDER } from './server/backup/constants';
+export { reconcileBuiltinSubjectDocs } from './server/builtin-doc-reconcile';
 export { reconcileBuiltinTraits } from './server/builtin-trait-reconcile';
 export { loadCalibrationMaturity } from './server/calibration-maturity';
 export { observabilityConfigEffectiveFacts } from './server/config-effective-facts';
