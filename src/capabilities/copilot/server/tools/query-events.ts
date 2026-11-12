@@ -38,16 +38,20 @@ const InputSchema = z.object({
       actorRef: ExactStringSchema.optional(),
       action: ExactStringSchema.optional(),
       subjectKind: ExactStringSchema.optional(),
-      subjectId: ExactStringSchema.optional(),
+      subjectId: ExactStringSchema.optional().describe(
+        'One exact entity id, not a domain; subjectKind narrows it further.',
+      ),
       outcome: z.enum(['success', 'failure', 'partial']).optional(),
-      causedByEventId: ExactStringSchema.optional(),
-      siblingOfEventId: ExactStringSchema.optional(),
+      causedByEventId: ExactStringSchema.optional().describe('Direct children of this event.'),
+      siblingOfEventId: ExactStringSchema.optional().describe(
+        'Same non-null parent, excluding the focal event; cannot combine with eventId/causedByEventId.',
+      ),
       sinceAt: z.string().datetime().optional(),
-      sinceDays: z.number().int().positive().max(180).optional(),
-      limit: z.number().int().min(1).max(50).optional(),
+      sinceDays: z.number().int().positive().max(180).optional().describe('At most 180 days back.'),
+      limit: z.number().int().min(1).max(50).optional().describe('1–50, default 20.'),
     })
     .optional(),
-  cursor: CursorSchema.optional(),
+  cursor: CursorSchema.optional().describe('Continuation token — resubmit with the same filters.'),
   includePayload: z
     .boolean()
     .optional()

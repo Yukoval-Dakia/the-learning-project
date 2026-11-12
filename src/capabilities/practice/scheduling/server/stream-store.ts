@@ -22,7 +22,11 @@ import {
   DEFAULT_TEMPERATURE,
   type SelectionPolicyConfig,
 } from '../../server/selection-constants';
-import { startReviewSession, transitionReviewSessionState } from '../../session/public';
+import {
+  enqueueReviewSessionSummary,
+  startReviewSession,
+  transitionReviewSessionState,
+} from '../../session/public';
 import { type CollectedSignal, collectCandidateSignals } from './candidate-signals';
 import { DEFAULT_COMPOSE_LOCK_WAIT_MS, withinComposePaidWorkLock } from './compose-paid-work-lock';
 import { readQuestionPace } from './question-pace';
@@ -863,7 +867,10 @@ async function completeScopedSessionIfDone(db: Db, row: StreamItemRow): Promise<
         ),
       );
     if (remaining === 0) {
-      await transitionReviewSessionState(db, row.session_id, 'completed');
+      const transition = await transitionReviewSessionState(db, row.session_id, 'completed');
+      // Only a real transition writes the summary: a replay of an already completed
+      // session must not re-run the LLM from this path.
+      if (transition.changed) await enqueueReviewSessionSummary(row.session_id);
     }
   } catch (err) {
     // The stream-item transition is already committed. Session-envelope closeout is important
