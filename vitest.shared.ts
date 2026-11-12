@@ -201,7 +201,6 @@ export const dbTestInclude = [
   'src/capabilities/practice/grading/server/native-durable-attempt.db.test.ts',
   'src/capabilities/practice/session/server/paper-adaptation.db.test.ts',
   'src/capabilities/practice/session/server/paper-cycle.db.test.ts',
-  'src/capabilities/practice/session/jobs/session_summary.db.test.ts',
   'src/capabilities/practice/session/server/paper-issuance.db.test.ts',
   'src/capabilities/practice/session/server/paper-mastery-progress.db.test.ts',
   'src/capabilities/practice/session/server/paper-submit-session-race.db.test.ts',
