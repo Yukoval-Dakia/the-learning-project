@@ -159,7 +159,7 @@ export function OptionListBlock({
                 {mark}
               </span>
               <MathMarkdown className="un-blk-opt-text" notation={notation}>
-                {displayOptionContent(item.label_md, marker === 'letter' ? mark : null)}
+                {displayOptionContent(item.label_md, mark)}
               </MathMarkdown>
             </button>
           );
