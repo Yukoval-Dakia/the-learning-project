@@ -6,14 +6,16 @@
 import type { ContextViewName } from '@/ai/task-spec';
 import { wrapUntrustedLearnerText } from '@/capabilities/agency/server/conjecture/untrusted-text';
 import type { Db, Tx } from '@/db/client';
+import type { AgentNote } from '@/kernel/read-models/agent-note-hints';
 import type { LearnerContextResult } from '@/kernel/read-models/learner-context';
+import type { LearnerCurriculum } from '@/kernel/read-models/learner-curriculum';
 import { readLearnerCurriculum } from '@/kernel/read-models/learner-curriculum';
 import { readCompanionAgentNotes, renderAgentNotes } from './agent-notes';
-import { trimUnitsToBudget } from './budget';
+import { type TrimUnit, trimUnitsToBudget } from './budget';
 import { readContractSection } from './contract';
 import { DELTA_SCAN_LIMIT, readDeltaSection, shanghaiLabel } from './delta';
 import { DELTA_FALLBACK_LOOKBACK_MS, readSteadySection } from './steady';
-import type { DeltaSection, DueItemLine } from './types';
+import type { ContractSection, DeltaSection, DueItemLine, SteadySection } from './types';
 
 type DbLike = Db | Tx;
 
@@ -81,6 +83,72 @@ function renderDueItems(items: DueItemLine[]): string | null {
   return wrapUntrustedLearnerText(block);
 }
 
+/** The rendered units in render order; trimming (not this builder) decides what fits. */
+export function buildCompanionUnits(input: {
+  steady: SteadySection;
+  curriculum: LearnerCurriculum;
+  delta: DeltaSection;
+  contract: ContractSection;
+  agentNotes: readonly AgentNote[];
+}): TrimUnit[] {
+  const { steady, curriculum, delta, contract, agentNotes } = input;
+  const masteryMd = [contract.masteryMd, contract.causesMd].filter(Boolean).join('\n') || null;
+  const portraitMd = steady.portraitMd ? `画像：${steady.portraitMd}` : null;
+  const signalsMd =
+    contract.signalsMd.length > 0 ? `判读备注：${contract.signalsMd.join('')}` : null;
+  const overnightMd = steady.overnightMd ? `昨夜交班：${steady.overnightMd}` : null;
+
+  return [
+    { rank: 0, name: 'steering', label: '学习目标', markdown: contract.steeringMd },
+    {
+      rank: 0.2,
+      name: 'curriculum',
+      label: '学段',
+      markdown: curriculum.stage_md,
+      protected: true,
+    },
+    // The preference list is a light bias, not a constraint: it is the first thing
+    // dropped when the budget is tight, so it never squeezes steering or mastery.
+    {
+      rank: 0.3,
+      name: 'curriculum_preferences',
+      label: '学科偏好',
+      markdown: curriculum.preferences_md,
+      dropRank: 10,
+    },
+    {
+      rank: 0.5,
+      name: 'communication',
+      label: '沟通偏好',
+      markdown: steady.communicationMd ? `怎么和我说话：${steady.communicationMd}` : null,
+      protected: true,
+    },
+    { rank: 1, name: 'delta', label: '近期动态', markdown: renderDelta(delta) },
+    {
+      rank: 2,
+      name: 'due_details',
+      label: '到期题明细',
+      markdown: renderDueItems(delta.dueItems),
+      dropRank: 8,
+    },
+    { rank: 3, name: 'mastery_causes', label: '掌握和错因', markdown: masteryMd },
+    {
+      rank: 4,
+      name: 'failure_details',
+      label: '失败明细',
+      markdown: contract.failureDetailsMd,
+      dropRank: 9,
+    },
+    // 画像保持 rank 5，不额外 protected：预算真不够时它仍按文档顺序让位（掌握度
+    // 更重要），但 steady.ts 的 200 字符上限让它不再自己把整段画像顶出启动段。
+    { rank: 5, name: 'portrait', label: '画像', markdown: portraitMd },
+    // 便条排在画像之后、判读备注之前：它是线索，不该挤掉画像或掌握度。
+    { rank: 5.5, name: 'agent_notes', label: '便条', markdown: renderAgentNotes(agentNotes) },
+    { rank: 6, name: 'signals', label: '判读备注', markdown: signalsMd },
+    { rank: 7, name: 'overnight', label: '昨夜交班', markdown: overnightMd },
+  ];
+}
+
 /**
  * The companion startup segment: three sections read from existing read models,
  * rendered then deterministically trimmed to the view budget. The three reads
@@ -103,60 +171,8 @@ export async function assembleCompanionContext(
   // 便条是写给学伴的 AI 线索；curator 的整理轮不消费这条信道。
   const agentNotes = view === 'companion' ? await readCompanionAgentNotes(db, opts.now) : [];
 
-  const masteryMd = [contract.masteryMd, contract.causesMd].filter(Boolean).join('\n') || null;
-  const portraitMd = steady.portraitMd ? `画像：${steady.portraitMd}` : null;
-  const signalsMd =
-    contract.signalsMd.length > 0 ? `判读备注：${contract.signalsMd.join('')}` : null;
-  const overnightMd = steady.overnightMd ? `昨夜交班：${steady.overnightMd}` : null;
-
   const trimmed = trimUnitsToBudget(
-    [
-      { rank: 0, name: 'steering', label: '学习目标', markdown: contract.steeringMd },
-      {
-        rank: 0.2,
-        name: 'curriculum',
-        label: '学段',
-        markdown: curriculum.stage_md,
-        protected: true,
-      },
-      // The preference list is a light bias, not a constraint: it is the first thing
-      // dropped when the budget is tight, so it never squeezes steering or mastery.
-      {
-        rank: 0.3,
-        name: 'curriculum_preferences',
-        label: '学科偏好',
-        markdown: curriculum.preferences_md,
-        dropRank: 10,
-      },
-      {
-        rank: 0.5,
-        name: 'communication',
-        label: '沟通偏好',
-        markdown: steady.communicationMd ? `怎么和我说话：${steady.communicationMd}` : null,
-        protected: true,
-      },
-      { rank: 1, name: 'delta', label: '近期动态', markdown: renderDelta(delta) },
-      {
-        rank: 2,
-        name: 'due_details',
-        label: '到期题明细',
-        markdown: renderDueItems(delta.dueItems),
-        dropRank: 8,
-      },
-      { rank: 3, name: 'mastery_causes', label: '掌握和错因', markdown: masteryMd },
-      {
-        rank: 4,
-        name: 'failure_details',
-        label: '失败明细',
-        markdown: contract.failureDetailsMd,
-        dropRank: 9,
-      },
-      { rank: 5, name: 'portrait', label: '画像', markdown: portraitMd },
-      // 便条排在画像之后、判读备注之前：它是线索，不该挤掉画像或掌握度。
-      { rank: 5.5, name: 'agent_notes', label: '便条', markdown: renderAgentNotes(agentNotes) },
-      { rank: 6, name: 'signals', label: '判读备注', markdown: signalsMd },
-      { rank: 7, name: 'overnight', label: '昨夜交班', markdown: overnightMd },
-    ],
+    buildCompanionUnits({ steady, curriculum, delta, contract, agentNotes }),
     { maxEstimatedTokens: opts.budget ?? 1000, maxChars: 2400 },
     formatOmissionNotice,
   );

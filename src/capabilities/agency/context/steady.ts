@@ -11,8 +11,12 @@ export const DELTA_FALLBACK_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000;
 /**
  * 画像在启动段里的字符上限。整条主题优先；装不下时按事实边界收尾，绝不让一个
  * 主题把画像整段顶出预算。超出部分指向 query_context。
+ *
+ * 上限按启动段预算反推：1000 估计 token ≈ 620 个汉字，画像占其中约三分之一
+ * （200 汉字 ≈ 320 token），其余留给目标、Δ、掌握度和沟通偏好。420 字符
+ * （≈670 token）会单独吃掉大半预算，画像在完整装配时仍会被整段裁掉。
  */
-const PORTRAIT_MAX_CHARS = 420;
+const PORTRAIT_MAX_CHARS = 200;
 
 const PORTRAIT_MORE_SUFFIX = '（更多见 query_context）';
 
@@ -69,18 +73,34 @@ export function renderPortrait(
   return `${text}\n${PORTRAIT_MORE_SUFFIX}`;
 }
 
+/**
+ * Same per-unit cap for the legacy (pre-digest) brief text, which has no topic
+ * structure: cut at a sentence boundary and point at query_context, so the
+ * fallback portrait cannot eat the startup budget either.
+ */
+export function clampPortraitText(
+  text: string | null,
+  maxChars: number = PORTRAIT_MAX_CHARS,
+): string | null {
+  if (!text) return null;
+  if (text.length <= maxChars) return text;
+  const room = maxChars - PORTRAIT_MORE_SUFFIX.length - 1; // '\n' + suffix
+  if (room <= 0) return PORTRAIT_MORE_SUFFIX.slice(0, Math.max(0, maxChars));
+  const cut = text.slice(0, room);
+  const boundary = Math.max(cut.lastIndexOf('。'), cut.lastIndexOf('\n'), cut.lastIndexOf('；'));
+  const head = boundary > 0 ? cut.slice(0, boundary + 1) : `${cut.slice(0, room - 1)}…`;
+  return `${head}\n${PORTRAIT_MORE_SUFFIX}`;
+}
+
 export async function readSteadySection(db: DbLike, opts: { now: Date }): Promise<SteadySection> {
   const { digest, version } = await readTopics(db);
   const legacy = version === 0 ? (await readMemoryBriefNote(db, 'global')).note : null;
   const dreamingAt = digest.as_of ? new Date(digest.as_of) : null;
   const portrait = renderPortrait(digest.topics.filter((t) => t.key !== 'communication'));
+  const legacyPortrait =
+    legacy?.recent_week_md ?? legacy?.long_term_md ?? legacy?.recent_months_md ?? null;
   return {
-    portraitMd:
-      portrait ||
-      legacy?.recent_week_md ||
-      legacy?.long_term_md ||
-      legacy?.recent_months_md ||
-      null,
+    portraitMd: portrait || clampPortraitText(legacyPortrait),
     asOf: dreamingAt ?? new Date(opts.now.getTime() - DELTA_FALLBACK_LOOKBACK_MS),
     asOfBasis: dreamingAt ? 'dreaming' : 'lookback',
     communicationMd:

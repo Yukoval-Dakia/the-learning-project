@@ -17,7 +17,7 @@
 import { createId } from '@paralleldrive/cuid2';
 import { and, desc, eq, inArray, or, sql } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
-import { ai_task_runs, event } from '@/db/schema';
+import { drawing, event } from '@/db/schema';
 import { type WriteEventInput, writeEvent } from '@/kernel/events';
 import { HostOperationNotInstalledError } from '@/kernel/host-operation';
 import {
@@ -27,7 +27,6 @@ import {
 import { LEARNER_ANSWER_ACTIONS } from '@/kernel/read-models/learner-activity';
 import { loadLearnerContext } from '@/kernel/read-models/learner-context';
 import { PURPOSE_CHANGE_ACTION } from '@/kernel/read-models/purpose-change';
-import { isTaskFailureOutcome } from '@/kernel/records/ai-attempt-facts';
 import { PROPOSAL_FEEDBACK_BUDGET } from '@/kernel/tools/budgets';
 
 type DbLike = Db | Tx;
@@ -54,12 +53,10 @@ export const LEARNER_STATE_WATERMARKS = [
   'purpose_change_at',
   /** Latest `experimental:record_capture` — an approved capture the learner just got. */
   'capture_at',
-  /** Latest successful learner-requested generation (note / drawing) finish. */
+  /** Latest note artifact reaching generation_status='ready' — the note is really readable. */
   'artifact_at',
-  /** Latest failed learner-requested generation (note / drawing) — the learner is owed a word. */
+  /** Latest note/drawing generation reaching `failed` — the learner is owed a word. */
   'job_failure_at',
-  /** Latest `experimental:agent_note` — another worker left the companion a hint. */
-  'agent_note_at',
 ] as const;
 
 export type LearnerStateWatermarkKey = (typeof LEARNER_STATE_WATERMARKS)[number];
@@ -129,7 +126,7 @@ function watermarkAdvanced(cached: string | null, current: string | null): boole
 /**
  * Cheap invalidation predicate. The header is stale when the day rolled over OR
  * any watermark advanced (new attempt / capture / dreaming ran / generation
- * finished or failed / agent note / proposal decision / Steering change).
+ * finished or failed / proposal decision / Steering change).
  */
 export function isLearnerStateHeaderStale(
   cached: { day_bucket: string; watermarks: LearnerStateWatermarks },
@@ -155,7 +152,6 @@ const WATERMARK_DIFF_PHRASES: Record<LearnerStateWatermarkKey, string> = {
   capture_at: '新录入学习记录',
   artifact_at: '笔记或图片生成完成',
   job_failure_at: '有生成任务失败',
-  agent_note_at: '同事留下了新便条',
 };
 
 /**
@@ -235,24 +231,21 @@ const GOAL_WRITE_WATERMARK_ACTIONS = [
 ] as const;
 
 const RECORD_CAPTURE_ACTION = 'experimental:record_capture';
-const AGENT_NOTE_ACTION = 'experimental:agent_note';
+const ARTIFACT_LIFECYCLE_ACTION = 'experimental:artifact_lifecycle';
 
-// The two learner-requested generation lanes whose terminal state the learner
-// can feel (「笔记/图片还在生成吗」). Their completion is not recorded in one
-// shared event stream (a note writes an artifact lifecycle event, a drawing only
-// moves a row), so the run row's finished_at is the lane-neutral watermark.
-// Failure uses the same real-failure predicate as the Today notice
-// (retries/cancels are not failures).
-const LEARNER_GENERATION_TASK_KINDS = ['NoteGenerateTask', 'DrawingTask'] as const;
+// 产物终态而非 AI run：note 的 run 成功后仍可能在解析/落库失败，学习者编辑过的
+// 正文也会把 note 落 failed；drawing 更没有事件流，资产发布与授权栅栏都发生在
+// DrawingTask 之后。所以两种生成都读产物自己的终态（note 生命周期事件、
+// drawing 行状态），模型才不会把已失败的生成说成完成。
+const TERMINAL_GENERATION_STATUSES = ['ready', 'failed'] as const;
 
-/** One grouped MAX(created_at) query plus the generation run watermark read. */
+/**
+ * One grouped MAX(created_at) query per source (events, drawing rows). Watermarks
+ * follow product terminal states, so the header never claims a note is ready
+ * while generation failed, and a failed drawing is never silent.
+ */
 export async function readLearnerStateWatermarks(db: DbLike): Promise<LearnerStateWatermarks> {
-  const failedRun = isTaskFailureOutcome(
-    ai_task_runs.status,
-    ai_task_runs.finish_reason,
-    ai_task_runs.usage_json,
-  );
-  const [rows, generationRows] = await Promise.all([
+  const [rows, noteRows, drawingRows] = await Promise.all([
     db
       .select({
         action: event.action,
@@ -267,7 +260,6 @@ export async function readLearnerStateWatermarks(db: DbLike): Promise<LearnerSta
           eq(event.action, 'experimental:context_change'),
           eq(event.action, PURPOSE_CHANGE_ACTION),
           eq(event.action, RECORD_CAPTURE_ACTION),
-          eq(event.action, AGENT_NOTE_ACTION),
           and(
             inArray(event.action, [...GOAL_WRITE_WATERMARK_ACTIONS]),
             eq(event.subject_kind, 'goal'),
@@ -277,20 +269,46 @@ export async function readLearnerStateWatermarks(db: DbLike): Promise<LearnerSta
       .groupBy(event.action),
     db
       .select({
-        artifact_at: sql<Date | null>`max(${ai_task_runs.finished_at}) filter (where ${ai_task_runs.status} = 'success')`,
-        job_failure_at: sql<Date | null>`max(${ai_task_runs.finished_at}) filter (where ${failedRun})`,
+        status: sql<string>`${event.payload}->>'generation_status'`,
+        max_at: sql<Date>`max(${event.created_at})`,
       })
-      .from(ai_task_runs)
-      .where(inArray(ai_task_runs.task_kind, [...LEARNER_GENERATION_TASK_KINDS])),
+      .from(event)
+      .where(
+        and(
+          eq(event.action, ARTIFACT_LIFECYCLE_ACTION),
+          sql`${event.payload}->>'op' = 'set_generation_status'`,
+          inArray(sql<string>`${event.payload}->>'generation_status'`, [
+            ...TERMINAL_GENERATION_STATUSES,
+          ]),
+        ),
+      )
+      .groupBy(sql<string>`${event.payload}->>'generation_status'`),
+    db
+      .select({
+        status: drawing.status,
+        max_at: sql<Date>`max(${drawing.updated_at})`,
+      })
+      .from(drawing)
+      .where(inArray(drawing.status, [...TERMINAL_GENERATION_STATUSES]))
+      .groupBy(drawing.status),
   ]);
   const byAction = new Map(rows.map((r) => [r.action, r.max_at]));
+  const byStatus = (source: ReadonlyArray<{ status: string; max_at: Date }>, status: string) =>
+    source.find((r) => r.status === status)?.max_at ?? null;
   const iso = (action: string): string | null => {
     const at = byAction.get(action);
     return at ? new Date(at).toISOString() : null;
   };
   const isoDate = (at: Date | string | null | undefined): string | null =>
     at ? new Date(at).toISOString() : null;
-  const generation = generationRows[0];
+  const ready = maxIso(
+    isoDate(byStatus(noteRows, 'ready')),
+    isoDate(byStatus(drawingRows, 'ready')),
+  );
+  const failed = maxIso(
+    isoDate(byStatus(noteRows, 'failed')),
+    isoDate(byStatus(drawingRows, 'failed')),
+  );
   return {
     attempt_at: PRACTICE_WATERMARK_ACTIONS.reduce<string | null>(
       (latest, action) => maxIso(latest, iso(action)),
@@ -304,9 +322,8 @@ export async function readLearnerStateWatermarks(db: DbLike): Promise<LearnerSta
     ),
     purpose_change_at: iso(PURPOSE_CHANGE_ACTION),
     capture_at: iso(RECORD_CAPTURE_ACTION),
-    artifact_at: isoDate(generation?.artifact_at),
-    job_failure_at: isoDate(generation?.job_failure_at),
-    agent_note_at: iso(AGENT_NOTE_ACTION),
+    artifact_at: ready,
+    job_failure_at: failed,
   };
 }
 
