@@ -9,7 +9,7 @@
 | `boss/` | pg-boss client + handler 注册；`handlers/` 是 job/cron 目录（见 AGENTS.md）|
 | `core/config/server/` | 配置写面/读面事实装配（写面/观测 facts）；运行时水合、执行读面与环境解析同属 `../core/config/server/`；面板真相源宿主在 `src/server/admin/` |
 | `durable/` | DBOS durable 层：判分、孤儿会话回收等 workflow family；付费状态机与后端控制归 `../core/paid-work/server/` |
-| `events/` | 事件因果级联遍历 + 进程级 LISTEN 连接；`events/subscriptions/` 是 capability 事件订阅的注册与派发挂载 |
+| `events/` | 事件因果级联遍历 + 进程级 LISTEN 连接；`events/subscriptions/` 注册订阅并把提交 NOTIFY、retry 到期唤醒转成分发任务，分钟 cron 只做兜底 |
 | `http/` | HTTP 错误与 provider 会话截止时间 helper |
 | `migration/` | 迁移捕获与应用；`migration/contract-epoch/` 是契约 epoch 规则与 pg-boss 生产者 fence |
 | `orchestration/` | 夜间 DAG 编排器（anchor + tick 推进）|

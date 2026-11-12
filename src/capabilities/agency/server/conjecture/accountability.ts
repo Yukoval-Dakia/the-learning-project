@@ -112,11 +112,15 @@ export function derivePredictionAccountability(
 export function rankEvidenceCellsByAccountability<T extends AccountabilityCandidate>(
   cells: readonly T[],
   accountabilityByKey: ReadonlyMap<string, PredictionAccountability>,
+  noteWeightByKey: ReadonlyMap<string, number> = new Map(),
 ): T[] {
   return [...cells].sort((a, b) => {
     const aMultiplier = accountabilityByKey.get(a.key)?.rank_multiplier ?? 1;
     const bMultiplier = accountabilityByKey.get(b.key)?.rank_multiplier ?? 1;
-    const adjusted = b.recurrence_count * bMultiplier - a.recurrence_count * aMultiplier;
+    const aNote = noteWeightByKey.get(a.key) ?? 1;
+    const bNote = noteWeightByKey.get(b.key) ?? 1;
+    const adjusted =
+      b.recurrence_count * bMultiplier * bNote - a.recurrence_count * aMultiplier * aNote;
     const adjustedWithStableTie =
       Math.abs(adjusted) < ACCOUNTABILITY_RANK_TIE_EPSILON ? 0 : adjusted;
     return (

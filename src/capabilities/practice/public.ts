@@ -164,11 +164,19 @@ export type { CoverageLatticeRead } from './supply/public';
 export const recoverWebSupplies: typeof import('./supply/public').recoverWebSupplies = async (
   ...args
 ) => (await import('./supply/public')).recoverWebSupplies(...args);
-// Scheduling triggers supply (post-compose refill, return-wake nightly supply) only through
-// these lazy entries until the supply owner lands a kernel port.
+// Scheduling triggers supply (post-compose refill, return-wake nightly supply, KC-scoped
+// shortfall) only through these lazy entries until the supply owner lands a kernel port.
 export type { RefillDeps } from './supply/public';
 export const refillActiveLearningPools: typeof import('./supply/public').refillActiveLearningPools =
   async (...args) => (await import('./supply/public')).refillActiveLearningPools(...args);
+export const demandToSupplyTarget: typeof import('./question-bank/public').demandToSupplyTarget =
+  async (...args) => (await import('./question-bank/public')).demandToSupplyTarget(...args);
+export const dispatchSupplyTarget: typeof import('./supply/public').dispatchSupplyTarget = async (
+  ...args
+) => (await import('./supply/public')).dispatchSupplyTarget(...args);
+export const inFlightSupplyCount: typeof import('./supply/public').inFlightSupplyCount = async (
+  ...args
+) => (await import('./supply/public')).inFlightSupplyCount(...args);
 export const runQuestionSupplyNightly: typeof import('./supply/public').runQuestionSupplyNightly =
   async (...args) => (await import('./supply/public')).runQuestionSupplyNightly(...args);
 export const recoverHeldServingRechecks: typeof import('./question-bank/public').recoverHeldServingRechecks =
