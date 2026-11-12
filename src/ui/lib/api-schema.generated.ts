@@ -23719,6 +23719,22 @@ export interface operations {
                                 source: "agent" | "user";
                                 user_notes: string | null;
                             } | null;
+                            cause_edit: {
+                                attempt_event_id: string;
+                                current: {
+                                    confidence: number | null;
+                                    label: string;
+                                    primary_category: string;
+                                    primary_label: string | null;
+                                    secondary_categories: string[];
+                                    secondary_labels: {
+                                        [key: string]: string;
+                                    };
+                                    /** @enum {string} */
+                                    source: "agent" | "user";
+                                    user_notes: string | null;
+                                } | null;
+                            } | null;
                             correction_state: {
                                 chain: {
                                     correction_event_id: string | null;
@@ -23799,6 +23815,22 @@ export interface operations {
                                 /** @enum {string} */
                                 source: "agent" | "user";
                                 user_notes: string | null;
+                            } | null;
+                            cause_edit: {
+                                attempt_event_id: string;
+                                current: {
+                                    confidence: number | null;
+                                    label: string;
+                                    primary_category: string;
+                                    primary_label: string | null;
+                                    secondary_categories: string[];
+                                    secondary_labels: {
+                                        [key: string]: string;
+                                    };
+                                    /** @enum {string} */
+                                    source: "agent" | "user";
+                                    user_notes: string | null;
+                                } | null;
                             } | null;
                             correction_state: {
                                 chain: {

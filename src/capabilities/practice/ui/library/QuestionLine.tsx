@@ -64,6 +64,7 @@ export function QuestionLine({
   facts,
   knowledge,
   detail,
+  below,
   lead,
   aside,
   navigate,
@@ -76,6 +77,8 @@ export function QuestionLine({
   knowledge?: ReadonlyArray<{ id: string; name: string }>;
   /** An extra line under the stem, e.g. my wrong answer. */
   detail?: ReactNode;
+  /** Interactive content outside the whole-row link. */
+  below?: ReactNode;
   lead?: ReactNode;
   aside?: ReactNode;
   navigate: (to: string) => void;
@@ -97,6 +100,7 @@ export function QuestionLine({
         {knowledge && knowledge.length > 0 && (
           <KnowledgeLinks knowledge={knowledge} navigate={navigate} className="ql-kn-line" />
         )}
+        {below && <div className="ql-line-extra">{below}</div>}
       </div>
       {aside && <div className="ql-line-aside">{aside}</div>}
     </li>

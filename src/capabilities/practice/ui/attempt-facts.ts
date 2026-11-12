@@ -17,6 +17,13 @@ export function attemptEvidenceOf(result: unknown): AttemptEvidence | null {
     : null;
 }
 
+/** A synchronous or polled receipt names the immutable attempt it recorded. */
+export function attemptEventIdOf(result: unknown): string | null {
+  if (!result || typeof result !== 'object' || !('attempt_event_id' in result)) return null;
+  const value = result.attempt_event_id;
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
 export interface AttemptFact {
   label: string;
   value: string;
@@ -75,13 +82,26 @@ export function useRecordedEvidence(questionId: string | undefined) {
   const [held, setHeld] = useState<{
     questionId: string | undefined;
     evidence: AttemptEvidence;
+    attemptEventId: string | null;
   } | null>(null);
   const setRecorded = useCallback(
-    (evidence: AttemptEvidence | null) => setHeld(evidence ? { questionId, evidence } : null),
+    (evidence: AttemptEvidence | null, attemptEventId: string | null = null) =>
+      setHeld((previous) =>
+        evidence
+          ? {
+              questionId,
+              evidence,
+              attemptEventId:
+                attemptEventId ??
+                (previous && previous.questionId === questionId ? previous.attemptEventId : null),
+            }
+          : null,
+      ),
     [questionId],
   );
   const recordedHere = held && held.questionId === questionId ? held.evidence : null;
-  return { recordedHere, setRecorded };
+  const recordedAttemptIdHere = held && held.questionId === questionId ? held.attemptEventId : null;
+  return { recordedHere, recordedAttemptIdHere, setRecorded };
 }
 
 /**

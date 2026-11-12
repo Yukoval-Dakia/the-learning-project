@@ -47,6 +47,11 @@ export interface MistakeCause {
   note: string | null;
 }
 
+export interface MistakeCauseEdit {
+  attemptEventId: string;
+  current: MistakeCause | null;
+}
+
 export interface MistakeRecord {
   id: string;
   createdAtSec: number;
@@ -55,6 +60,8 @@ export interface MistakeRecord {
   wrongAnswerMd: string;
   wrongAnswerImages: readonly string[];
   cause: MistakeCause | null;
+  /** Owner-projected target; null means this row is not the question's editable attempt. */
+  causeEdit: MistakeCauseEdit | null;
   standing: RecordStanding;
 }
 
@@ -69,12 +76,25 @@ export interface MistakeQuestionSummary {
 
 export interface MistakeQuestion {
   summary: MistakeQuestionSummary;
+  /** The exact owner-projected attribution target; the UI never derives this from outcomes. */
+  causeEdit: MistakeCauseEdit | null;
   /** Newest record's prompt (for recognising the question in a list). */
   promptMd: string;
   knowledgeIds: readonly string[];
   /** Newest first; every record, including ones whose grading was corrected. */
   records: MistakeRecord[];
   latestRecordAtSec: number;
+}
+
+function toCause(cause: MistakeRow['cause']): MistakeCause | null {
+  return cause
+    ? {
+        by: cause.source === 'user' ? 'me' : 'ai',
+        category: cause.primary_category,
+        label: cause.primary_label,
+        note: cause.user_notes,
+      }
+    : null;
 }
 
 function toRecord(row: MistakeRow): MistakeRecord {
@@ -84,12 +104,11 @@ function toRecord(row: MistakeRow): MistakeRecord {
     promptMd: row.prompt_md,
     wrongAnswerMd: row.wrong_answer_md,
     wrongAnswerImages: row.wrong_answer_image_refs,
-    cause: row.cause
+    cause: toCause(row.cause),
+    causeEdit: row.cause_edit
       ? {
-          by: row.cause.source === 'user' ? 'me' : 'ai',
-          category: row.cause.primary_category,
-          label: row.cause.primary_label,
-          note: row.cause.user_notes,
+          attemptEventId: row.cause_edit.attempt_event_id,
+          current: toCause(row.cause_edit.current),
         }
       : null,
     standing: recordStanding(row),
@@ -125,6 +144,7 @@ export function groupMistakes(rows: readonly MistakeRow[]): MistakeQuestion[] {
     const newest = group.rows.reduce((a, b) => (b.created_at > a.created_at ? b : a));
     groups.push({
       summary: summarise(questionId, records),
+      causeEdit: records.find((record) => record.causeEdit)?.causeEdit ?? null,
       promptMd: newest.prompt_md,
       knowledgeIds: newest.knowledge_ids,
       records,

@@ -21,6 +21,7 @@ import { PresentationBlocks } from '../blocks/PresentationBlocks';
 import { outcomeFitsFeedbackCard } from '../judge-feedback';
 import { practiceSourceLabel } from '../PfStream';
 import type { StreamItem } from '../practice-api';
+import { useLearnerCause } from '../use-learner-cause';
 import {
   type Rating,
   appealEntryAvailable,
@@ -68,6 +69,7 @@ export interface PracticePresentationProps {
 export function PracticePresentation(props: PracticePresentationProps) {
   const { engine, item, pos, total, advancing, onBack, onDone } = props;
   const { question, issuance, draft, conflict, submit, appeal } = engine;
+  const causeEditor = useLearnerCause();
   const { phase, displayedPreview: feedback } = submit;
   const q = question.data;
   const ready = issuance.status === 'ready' ? issuance : null;
@@ -433,6 +435,12 @@ export function PracticePresentation(props: PracticePresentationProps) {
             : '这次没有建议，自己选一个',
           actions: [],
         };
+      if (submit.causeEdit) {
+        revelation.cause = causeEditor.editorFor({
+          attemptEventId: submit.causeEdit.attemptEventId,
+          current: submit.causeEdit.current,
+        });
+      }
       if (unsupported && !submit.autoCommitted && !submit.committedPreview)
         submission.secondary = [
           ...submission.secondary,

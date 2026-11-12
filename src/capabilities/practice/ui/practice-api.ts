@@ -328,6 +328,27 @@ export type SubmitReviewInput = Extract<
 export type SubmitPending = PendingAttemptWire;
 export type SubmitOutcome = SubmitResult | SubmitPending;
 
+export type AttemptCauseOptions = ApiOperationJsonResponse<'getAttemptCauseOptions'>;
+export type AttemptCauseWrite = ApiOperationJsonResponse<'setAttemptCause'>;
+
+export function getAttemptCauseOptions(attemptEventId: string): Promise<AttemptCauseOptions> {
+  return apiOperationJson('getAttemptCauseOptions', {
+    url: `/api/practice/attempts/${encodeURIComponent(attemptEventId)}/cause-options`,
+    method: 'GET',
+  });
+}
+
+export function setAttemptCause(
+  attemptEventId: string,
+  body: ApiOperationRequestBody<'setAttemptCause'>,
+): Promise<AttemptCauseWrite> {
+  return apiOperationJson('setAttemptCause', {
+    url: `/api/practice/attempts/${encodeURIComponent(attemptEventId)}/cause`,
+    method: 'POST',
+    body,
+  });
+}
+
 export function isSubmitPending(
   outcome: SubmitOutcome | ReviewAdviceWire,
 ): outcome is SubmitPending {
