@@ -1,5 +1,5 @@
 import { Check, CircleHelp, RotateCcw, Sparkles, X } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { type ReactNode, useEffect, useRef } from 'react';
 import type { PracticeIntents, PracticeRenderers, Revelation } from './contracts';
 import { IntentButton, NoticeBlock } from './controls';
 import { PracticeField } from './PracticeFields';
@@ -24,6 +24,18 @@ export function PracticeFeedback({
   /** The way forward closes the card, as it closes the question card before an answer. */
   actions?: ReactNode;
 }) {
+  const verdictHeading = useRef<HTMLHeadingElement>(null);
+  const verdict = r.kind === 'concealed' ? undefined : r.result?.verdict;
+  // Submitting disables or removes the control that had focus, and the page lost its place: on a
+  // phone the next focus landed on the skip link at the top. A verdict that arrives while nothing
+  // holds focus takes it, so reading and Tab carry on from the result.
+  useEffect(() => {
+    if (!verdict) return;
+    const active = document.activeElement;
+    if (!active || active === document.body || active.classList.contains('un-st-skip')) {
+      verdictHeading.current?.focus({ preventScroll: true });
+    }
+  }, [verdict]);
   if (r.kind === 'concealed')
     return r.reason ? <p className="un-st-secondary">{r.reason}</p> : null;
   const result = r.result;
@@ -38,7 +50,9 @@ export function PracticeFeedback({
               <VerdictIcon size={22} aria-hidden="true" />
             </span>
             <div>
-              <h2>{verdicts[result.verdict]}</h2>
+              <h2 ref={verdictHeading} tabIndex={-1}>
+                {verdicts[result.verdict]}
+              </h2>
               {result.summary && <p>{result.summary}</p>}
               {result.aiGraded && (
                 <p className="un-st-ai-graded">

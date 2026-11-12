@@ -256,7 +256,8 @@
   color: var(--st-on-accent);
   background: var(--st-accent);
 }
-[data-ui-next] .un-st-skip:focus {
+/* Keyboard only: a focus the page moves there itself must not pull it into view. */
+[data-ui-next] .un-st-skip:focus-visible {
   top: 8px;
 }
 [data-ui-next] .un-st-page {
