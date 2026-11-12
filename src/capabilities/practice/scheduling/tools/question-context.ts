@@ -964,8 +964,7 @@ export async function executeGetReviewDue(
 export const getQuestionContextTool: DomainTool<GetQuestionContextInput, GetQuestionContextOutput> =
   {
     name: 'get_question_context',
-    description:
-      `One-call learner-state read for one question: issueability; latest score and wrong-cause; live FSRS due; knowledge mastery; item/family difficulty and band; timing median and same-difficulty ratio; hint trajectory; and faulty inference. Missing theta or durations stay unknown and are never filled with 0; hint_dependence and faulty are agent-only. Bank CONTENT reads go through read_bank; do not follow up with get_knowledge_state or get_attempt_context for these fields. lifecycle values with observation_status=not_observed are placeholders, not observed facts. Figures carry contains_learner_handwriting (true/false/unknown): ${LEARNER_HANDWRITING_RULE}.`,
+    description: `One-call learner-state read for one question: issueability; latest score and wrong-cause; live FSRS due; knowledge mastery; item/family difficulty and band; timing median and same-difficulty ratio; hint trajectory; and faulty inference. Missing theta or durations stay unknown and are never filled with 0; hint_dependence and faulty are agent-only. Bank CONTENT reads go through read_bank; do not follow up with get_knowledge_state or get_attempt_context for these fields. lifecycle values with observation_status=not_observed are placeholders, not observed facts. Figures carry contains_learner_handwriting (true/false/unknown): ${LEARNER_HANDWRITING_RULE}.`,
     effect: 'read',
     inputSchema: GetQuestionContextInputSchema,
     outputSchema: GetQuestionContextOutputSchema,
