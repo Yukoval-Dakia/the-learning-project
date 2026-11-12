@@ -29,7 +29,7 @@ import { serializeProfileToTs } from '@/subjects/serialize';
 //             ONLY after validateProfile passes (RL7 — the gate is not bypassable)
 //   --critic  additionally run ProfileCriticTask (proposal-only; RL6) — needs db+env
 //
-// env fence (R9): only --critic / --write touch external resources. --critic calls
+// env fence: only --critic / --write touch external resources. --critic calls
 // the runner (needs DATABASE_URL + provider env); --write touches the filesystem.
 
 const TOP_LEVEL_KEYS: (keyof SubjectProfile)[] = [
@@ -160,7 +160,7 @@ function formatReport(report: ProfileImpactReport): string {
   return lines.join('\n');
 }
 
-// Scoped env fence (R9, mirrors seed-synthetic.ts): only the --critic path needs
+// Scoped env fence (mirrors seed-synthetic.ts): only the --critic path needs
 // DATABASE_URL + provider env (it calls the runner). Refuse a non-loopback host
 // unless explicit opt-in, so a misfire never hits a real DB.
 function assertCriticEnv(env: NodeJS.ProcessEnv = process.env): void {

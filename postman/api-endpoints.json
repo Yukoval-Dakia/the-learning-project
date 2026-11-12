@@ -791,7 +791,7 @@
         "query": [],
         "contentType": null,
         "bodyExample": null,
-        "notes": "无需 x-internal-token（中间件豁免）；返回 {ok, epoch, state, code_epoch, reason}；维护窗或 epoch 不匹配时 503"
+        "notes": "无需 x-internal-token（中间件豁免）；返回 {ok, epoch, state, code_epoch, reason, missing_config, commit}；commit 是构建参数 TLP_SOURCE_COMMIT 的前 9 位，未写入时为 null；维护窗、epoch 不匹配或缺配置时 503"
       }
     ]
   },

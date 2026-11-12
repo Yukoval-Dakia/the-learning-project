@@ -21,6 +21,8 @@ import { createHash } from 'node:crypto';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
+import { LearnerHandwritingMarker } from '@/core/schema/assessment/materials';
+import { knownSignal } from '@/core/schema/knowledge-signal';
 import { deriveSourceTier } from '@/core/schema/provenance';
 import type { Db, Tx } from '@/db/client';
 import {
@@ -31,6 +33,7 @@ import {
   question_solution_prior,
   source_asset,
 } from '@/db/schema';
+import { judgedAttemptCounts, readAttemptFacts } from '@/kernel/read-models/question-activity';
 import { allowedQuestionIds } from '@/kernel/read-models/usage-policy';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 import {
@@ -58,8 +61,17 @@ export type ReadBankInclude = (typeof READ_BANK_INCLUDE_VALUES)[number];
 
 export const ReadBankInputSchema = z
   .object({
-    refs: z.array(z.string().min(1)).min(1).max(20),
-    include: z.array(z.enum(READ_BANK_INCLUDE_VALUES)).default(['overview']),
+    refs: z
+      .array(z.string().min(1))
+      .min(1)
+      .max(20)
+      .describe('qrev1:<revision_id>:<digest12> strings returned by search_bank.'),
+    include: z
+      .array(z.enum(READ_BANK_INCLUDE_VALUES))
+      .default(['overview'])
+      .describe(
+        'Layers to expand; overview is a nav map of part/unit/material/slot stable ids usable as edit_question targets. content=parts+answer slots; answers=typed keys; scoring=merged answers+rubric+execution; solution_prior=same-version method and pitfall evidence with source ids. answers/metadata/rubric/scoring/execution/solution_prior and private-visibility materials are role-gated by the server — include never upgrades a role; denials report in denied_layers.',
+      ),
     /** 稳定 id 聚焦：把该 ref 的读取收缩到指定子树（与 include 组合取层）。 */
     focus: z
       .array(
@@ -69,16 +81,26 @@ export const ReadBankInputSchema = z
           id: z.string().min(1),
         }),
       )
-      .optional(),
+      .optional()
+      .describe('Narrow a read to part/unit/material/item/slot/option subtrees by stable id.'),
     /** 长文本续读：chars=每个文本字段上限；cursor=上一响应的 next_cursor。 */
     extent: z
       .object({
         chars: z.number().int().min(64).max(200000).optional(),
         cursor: z.string().min(1).optional(),
       })
-      .optional(),
+      .optional()
+      .describe(
+        'Long-text paging: chars caps each text field; cursor continues via next_cursor pinned to the read revision.',
+      ),
     /** 历史读授权：绑定所请 revision 的既有 submission（旧作答读旧题）。 */
-    submission_id: z.string().min(1).optional(),
+    submission_id: z
+      .string()
+      .min(1)
+      .optional()
+      .describe(
+        'Binds an existing submission so its frozen withdrawn revision reads (marked historical, new_issuance_allowed=false).',
+      ),
   })
   .strict();
 
@@ -114,6 +136,23 @@ const ReadBankOkItemSchema = z.object({
   historical: z.boolean(),
   /** 该 revision 当前是否还允许发新 issuance（历史读 = false）。 */
   new_issuance_allowed: z.boolean(),
+  activity: z
+    .object({
+      attempts: z.object({
+        value: z
+          .object({
+            success: z.number().int().nonnegative(),
+            partial: z.number().int().nonnegative(),
+            failure: z.number().int().nonnegative(),
+          })
+          .nullable(),
+        known: z.boolean(),
+        source: z.string(),
+        asOf: z.string(),
+        missingReason: z.string().nullable(),
+      }),
+    })
+    .optional(),
   lifecycle: z.object({
     availability: z.enum(['general_pool', 'container_only']).nullable(),
     admission_state: z.enum(['admitted', 'withheld']).nullable(),
@@ -166,6 +205,7 @@ const ReadBankOkItemSchema = z.object({
         caption: z.string().optional(),
         alt_text: z.string().optional(),
         content_md: z.string().optional(),
+        contains_learner_handwriting: LearnerHandwritingMarker.optional(),
         text_extent: z
           .object({
             complete: z.boolean(),
@@ -606,6 +646,16 @@ export async function runReadBank(
   const allowedGroups = runOpts?.derivationOnly ? await allowedQuestionIds(db, groupIds) : null;
   const deniedGroups =
     allowedGroups === null ? null : new Set(groupIds.filter((id) => !allowedGroups.has(id)));
+  const attemptAsOf = new Date();
+  // The bank role can read bank tables only. Attempt counts are learner events,
+  // so a restricted read omits them instead of selecting event.
+  const attemptFacts =
+    role === 'restricted'
+      ? null
+      : await readAttemptFacts(
+          db,
+          deniedGroups ? groupIds.filter((id) => !deniedGroups.has(id)) : groupIds,
+        );
 
   const priorRows = include.has('solution_prior')
     ? await db
@@ -813,6 +863,9 @@ export async function runReadBank(
               ...(m.caption != null ? { caption: m.caption } : {}),
               ...(m.alt_text != null ? { alt_text: m.alt_text } : {}),
               ...(textExt != null ? { content_md: textExt.text } : {}),
+              ...(m.contains_learner_handwriting !== undefined
+                ? { contains_learner_handwriting: m.contains_learner_handwriting }
+                : {}),
               ...(textExt != null && !textExt.complete
                 ? {
                     text_extent: {
@@ -902,6 +955,17 @@ export async function runReadBank(
       current,
       historical: !current,
       new_issuance_allowed: newIssuanceAllowed,
+      ...(attemptFacts
+        ? {
+            activity: {
+              attempts: knownSignal(
+                judgedAttemptCounts(attemptFacts.get(revision.group_id) ?? []),
+                'kernel/read-models/question-activity:readAttemptFacts',
+                attemptAsOf,
+              ),
+            },
+          }
+        : {}),
       lifecycle: {
         availability: lifecycle?.availability ?? null,
         admission_state: lifecycle?.scoring_admission_state ?? null,
@@ -1100,7 +1164,7 @@ async function executeReadBank(ctx: ToolContext, rawInput: ReadBankInput): Promi
 export const readBankTool: DomainTool<ReadBankInput, ReadBankOutput> = {
   name: 'read_bank',
   description:
-    'Fetch versioned question/group content by bank ref (qrev1:<revision_id>:<digest12> — the `ref` strings search_bank returns). Batch up to 20 refs; each resolves independently (partial success is normal). A ref that cannot be resolved, whose digest no longer matches, or whose group was withdrawn returns an explicit error for that ref — NEVER a silent fallback to latest. Default response is an overview (nav map of part/unit/material/slot stable ids — usable directly as edit_question targets); expand via include layers: content (parts + answer slots) / materials / answers (typed keys) / rubric / scoring (merged answers+rubric+execution) / source / relations / execution / metadata / solution_prior (same-version method and pitfall evidence with source ids; long text uses extent/cursor). focus narrows a read to part/unit/material/item/slot subtrees; extent.chars + next_cursor continue long text pinned to the read revision. A withdrawn revision is readable with a bound submission_id (old attempts read their exact frozen revision, marked historical + new_issuance_allowed=false) or a private role. answers/metadata/rubric/scoring/execution/solution_prior and private-visibility materials are role-gated by the server — include can never upgrade a role; denied layers are reported in denied_layers.',
+    'Fetch versioned question/group content by bank ref — each ref resolves independently (partial success is normal); an unresolvable, digest-mismatched or withdrawn-group ref returns an explicit error for that ref, never a silent fallback to latest. Use overview ids directly as edit_question targets; include/focus/extent paging rules are in their parameter descriptions. A withdrawn revision reads only with a bound submission_id (as historical, new_issuance_allowed=false) or a private role. Role-gated layers never upgrade access; denied_layers reports omissions. activity.attempts counts still-active outcomes for owner/private reads and may really be zero; restricted reads omit it. There is no exposure count because no exposure event is stored.',
   effect: 'read',
   inputSchema: ReadBankInputSchema,
   outputSchema: ReadBankOutputSchema,

@@ -5,6 +5,7 @@
 import { and, asc, eq, gte } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
+import { NEAR_WINDOW } from '@/kernel/supply-contracts';
 import { getDefaultSubjectRegistry } from '@/subjects/profile';
 import {
   type CoverageLatticeRead,
@@ -14,12 +15,7 @@ import {
   buildCoverageLattice,
 } from './coverage-lattice-core';
 import { SUPPLY_DISPATCH_COOLDOWN_DAYS } from './dispatcher';
-import {
-  COVERAGE_DEPTH_THRESHOLD,
-  NEAR_WINDOW,
-  assembleScanInput,
-  scanCoverageGaps,
-} from './target-discovery';
+import { COVERAGE_DEPTH_THRESHOLD, assembleScanInput, scanCoverageGaps } from './target-discovery';
 
 const SUPPLY_EVENT_ACTION = 'experimental:question_supply';
 const DAY_MS = 24 * 60 * 60 * 1000;

@@ -24,6 +24,7 @@ import { usePagehideTransition } from '@/ui/hooks/usePagehideTransition';
 import { useResponseDraftAutosave } from '@/ui/hooks/useResponseDraftAutosave';
 import { ApiError } from '@/ui/lib/api';
 import { computeLatencyMs } from '@/ui/lib/response-latency';
+import { attemptEvidenceOf, recordedAfterRejudge, useRecordedEvidence } from './attempt-facts';
 import { toAttemptTimelineEvents } from './attempt-timeline-adapter';
 import { useCustomBlocksReady } from './blocks/CustomBlock';
 import { customBlocksOf, summarizeAnswers } from './blocks/custom-sandbox';
@@ -424,6 +425,8 @@ export function usePracticeSubmit({
   const questionShownAtRef = useRef<number | null>(null);
 
   const q = qQ.data ?? null;
+  // What the server recorded about this answer, kept with the question it came from.
+  const { recordedHere, setRecorded } = useRecordedEvidence(q?.id);
   const isInterventionDiagnostic = isInterventionDiagnosticSource(q?.source ?? '');
   const committedDiagnosticQuestionId = q?.id;
   // YUK-617 W1 — 本题 attempt·review 历史，从题面聚合 data.timeline 直接派生（同一份请求，无二次取）。
@@ -440,6 +443,8 @@ export function usePracticeSubmit({
     (settled: JudgeRunPollingState) => {
       if (settled.status !== 'done') return;
       const r = settled.result;
+      // An older run has no evidence; that shows as nothing, not as a claim of independence.
+      setRecorded(attemptEvidenceOf(r));
       if (r?.status === 'review_required') {
         setCommittedPreview({
           route: 'durable',
@@ -504,7 +509,7 @@ export function usePracticeSubmit({
       }
       setPendingRun(null);
     },
-    [addToast],
+    [addToast, setRecorded],
   );
 
   // YUK-1729 — the issuance whose recovered judge outcome this visit already applied.
@@ -1132,6 +1137,7 @@ export function usePracticeSubmit({
         addToast('作答已保存，暂时没法自动判；可以自己评一下来安排复习。', 'info', 'clock');
         return;
       }
+      if ('evidence' in res) setRecorded(res.evidence);
       if (opts.withAppeal) {
         const anchor = res.judge && 'assessment' in res ? res.assessment.candidate_id : null;
         // The answer is recorded by now: a failed appeal must not undo that.
@@ -1159,6 +1165,7 @@ export function usePracticeSubmit({
       if (opts.advance !== false) onDone();
     } catch {
       setPreview(null);
+      setRecorded(null);
       setCommittedPreview(null);
       setRating(null);
       setAutoCommitted(false);
@@ -1224,12 +1231,14 @@ export function usePracticeSubmit({
     setPendingRun(null);
     setPreview(r.judge);
     setRating(r.judge.suggested_rating);
+    setRecorded(r.evidence);
     if (!r.automatic_commit || r.judge.suggested_rating === null) return;
     if (r.committed) {
       if (r.committed.status === 'review_required') {
         addToast('作答已保存，暂时没法自动判；可以自己评一下来安排复习。', 'info', 'clock');
         return;
       }
+      setRecorded(r.committed.evidence);
       setAutoCommitted(true);
       setAutoCommitJudgeEventId(r.committed.judge ? r.committed.assessment.candidate_id : null);
       return;
@@ -1305,6 +1314,7 @@ export function usePracticeSubmit({
         const feedback = feedbackFromCommittedAttempt(res);
         setCommittedPreview(feedback);
         setRating(feedback.suggested_rating);
+        if ('evidence' in res) setRecorded(res.evidence);
         setAutoCommitted(true);
         setAutoCommitJudgeEventId('assessment' in res ? res.assessment.candidate_id : null);
         return;
@@ -1355,6 +1365,7 @@ export function usePracticeSubmit({
   const startSelfRate = () => {
     setIssuanceMode('manual');
     setPreview(null);
+    setRecorded(null);
     activationIntent.current = undefined;
     // Back to answering (self-rated): unsaved edits resume autosaving.
     autosave.resume();
@@ -1409,6 +1420,7 @@ export function usePracticeSubmit({
     : null;
 
   const settledFeedback = preview ?? committedPreview;
+  const recorded = recordedAfterRejudge(recordedHere, rejudged?.effective.coarse_outcome);
   const displayedFeedback = settledFeedback
     ? feedbackAfterRejudge(settledFeedback, rejudged?.effective ?? null)
     : settledFeedback;
@@ -1447,6 +1459,7 @@ export function usePracticeSubmit({
       pendingRun,
       pendingPoll,
       displayedPreview: displayedFeedback,
+      recorded,
       committedPreview,
       rating,
       setRating,

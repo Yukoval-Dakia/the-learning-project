@@ -24,13 +24,14 @@ import {
   PROVIDER_HTTP_TIMEOUT_MARGIN_MS,
   providerHttpTimeoutMs,
 } from './provider-http-timeout';
-import { watchProviderStream } from './provider-stream-watchdog';
+import { ProviderStreamIdleError, watchProviderStream } from './provider-stream-watchdog';
 import { createBudgetedProviderFetch } from './provider-transport';
 import type { ResolvedProvider } from './providers';
 import { reasoningModelView } from './reasoning-wire';
 import type { Options } from './sdk-types';
 import {
   type StructuredSubmitPolicy,
+  payloadToolNames,
   resolveStructuredSubmitPolicy,
   structuredSubmitWireFields,
 } from './structured-submit';
@@ -73,6 +74,20 @@ export class PiProviderWire {
       `output_cap_exceeded: task output reached ${this.outputCap} tokens; automatic resend forbidden`,
     );
     return this.failure;
+  }
+
+  /**
+   * Release an idle-stream failure so the interrupted request can be resent.
+   * Any other sticky failure (output cap) stays; false means none was idle.
+   */
+  releaseIdleFailure(): boolean {
+    if (!(this.failure instanceof ProviderStreamIdleError)) return false;
+    this.failure = undefined;
+    return true;
+  }
+
+  idleFailed(): boolean {
+    return this.failure instanceof ProviderStreamIdleError;
   }
 
   throwIfFailed(): void {
@@ -266,6 +281,7 @@ export class PiProviderWire {
           ...structuredSubmitWireFields(
             submitPolicy,
             model.api === 'openai-responses' ? 'openai-responses' : 'openai-completions',
+            payloadToolNames(body as Record<string, unknown>),
           ),
         };
       },

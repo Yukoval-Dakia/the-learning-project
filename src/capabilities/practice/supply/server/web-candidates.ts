@@ -7,8 +7,8 @@
 // 整个压进单个依赖注入函数 RunWebSourcingAgentFn；真实实现住在
 // ../web-sourcing-operation.ts（自 tool 层下沉），tool 层与 executor
 // job 层经 defaultWebSourcingDeps 共享同一实现。SourcingTask
-// prompt 契约（trigger/ref/knowledge_context/kinds/objective_only/kind_required）
-// 与旧 sourcing.ts 完全一致——SourcingTask TaskSpec 不变。
+// prompt 契约在 tasks/sourcing.ts。难度带通过 difficulty_band / difficulty_levels
+// 进入 SourcingTask 输入；TaskSpec 本身不因此改 schema。
 
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, inArray, isNull } from 'drizzle-orm';
@@ -27,6 +27,7 @@ import { writeEvent } from '@/kernel/events';
 import type { SubjectProfile } from '@/subjects/profile-schema';
 import { answerClassCompatible } from '@/subjects/question-kind';
 import { canonicalQuestionContentHash } from '../../question-bank/public';
+import { type BandLevelTarget, difficultyInBand } from './band-level';
 
 // 旧 sourcing.ts:109 同款常量；source_route / difficulty_evidence 的路由身份。
 export const SOURCING_WEB_ROUTE = 'sourcing_web' as const;
@@ -65,6 +66,8 @@ export type RunWebFetchCandidatesResult =
       fetchedAt: string;
       taskRunId: string | null;
       costUsd: number | null;
+      /** Questions the model returned whose difficulty sits outside the requested span. */
+      filteredOutOfBand: number;
     }
   | { status: 'failed'; failureClass: WebFetchFailureClass; detail: string };
 
@@ -85,6 +88,9 @@ export interface WebSourcingAgentInput {
   kind_required?: boolean;
   /** placement 交付专用：本批只收不带 parts 的扁平单题；多小问跳过不压平。 */
   flat_only?: boolean;
+  /** Relative band. difficulty_levels is the already-inverted 1–5 span (null = none). */
+  difficulty_band?: BandLevelTarget['band'];
+  difficulty_levels?: BandLevelTarget['levels'];
 }
 
 /**
@@ -128,6 +134,8 @@ export interface RunWebFetchCandidatesParams {
     kindRequired?: boolean;
     /** placement 交付的水-fetch：要求模型只交不带 parts 的扁平单题。 */
     flatOnly?: boolean;
+    /** band + 1–5 span. Present ⇒ the sourcing input carries it and out-of-band questions are dropped. */
+    levelTarget?: BandLevelTarget | null;
     subjectProfile: SubjectProfile;
   };
   /** 运行归因（canary 事件的 session/task/causal 字段来源；agent 工具透传，executor 传 task 侧）。 */
@@ -310,6 +318,12 @@ export async function runWebFetchCandidates(
         ...(params.input.kind ? { kind: params.input.kind } : {}),
         ...(params.input.objectiveOnly ? { objective_only: true } : {}),
         ...(params.input.kindRequired ? { kind_required: true } : {}),
+        ...(params.input.levelTarget
+          ? {
+              difficulty_band: params.input.levelTarget.band,
+              difficulty_levels: params.input.levelTarget.levels,
+            }
+          : {}),
         tool: 'web_fetch_candidates',
         task_run_id: params.ctx?.taskRunId ?? null,
         ...(result.status === 'ok'
@@ -318,6 +332,7 @@ export async function runWebFetchCandidates(
               image_candidate_count: result.imageCandidates.length,
               query_plan: result.queryPlan,
               cost_usd: result.costUsd,
+              filtered_out_of_band: result.filteredOutOfBand,
             }
           : {
               failure_class: result.failureClass,
@@ -370,6 +385,12 @@ async function runWebFetchCandidatesCore(
     ...(params.input.objectiveOnly ? { objective_only: true } : {}),
     ...(params.input.kindRequired ? { kind_required: true } : {}),
     ...(params.input.flatOnly ? { flat_only: true } : {}),
+    ...(params.input.levelTarget
+      ? {
+          difficulty_band: params.input.levelTarget.band,
+          difficulty_levels: params.input.levelTarget.levels,
+        }
+      : {}),
   };
 
   // ── 3. LLM 相位（deps；null = 检索后端不可用 → deterministic skip） ──────────────
@@ -443,8 +464,15 @@ async function runWebFetchCandidatesCore(
   };
 
   // ── 6. 候选成形（不写库；归属 id 已活校验，commit seam 的 dedup/verify 接管正确性） ──
+  // Out-of-band questions are dropped here, before any caller can submit them.
+  const levelTarget = params.input.levelTarget ?? null;
   const candidates: WebCandidate[] = [];
+  let filteredOutOfBand = 0;
   for (const q of parsed.questions) {
+    if (levelTarget && !difficultyInBand(q.difficulty, levelTarget)) {
+      filteredOutOfBand += 1;
+      continue;
+    }
     let knowledgeIds: string[];
     try {
       knowledgeIds = resolveQuestionKnowledgeIds(q);
@@ -478,5 +506,6 @@ async function runWebFetchCandidatesCore(
     fetchedAt: now.toISOString(),
     taskRunId: taskResult.task_run_id ?? null,
     costUsd: taskResult.cost_usd ?? null,
+    filteredOutOfBand,
   };
 }

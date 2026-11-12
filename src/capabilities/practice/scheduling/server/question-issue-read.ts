@@ -14,6 +14,7 @@ import {
   knownSignal,
   unknownSignal,
 } from '@/core/schema/knowledge-signal';
+import type { LearnerJudgment } from '@/core/schema/learner-judgment';
 import { difficultyToLogitB } from '@/core/theta';
 import type { Db, Tx } from '@/db/client';
 import { isPoolVisible } from '@/db/predicates';
@@ -25,8 +26,14 @@ import {
 } from '@/kernel/read-models/knowledge-state';
 import { readLearnerJudgments } from '@/kernel/read-models/learner-judgment';
 import {
+  type AttemptFact,
   type QuestionTimelineEntry,
   getQuestionTimeline,
+  hintDependenceOf,
+  medianOf,
+  readAttemptFacts,
+  readSameDifficultyDurations,
+  recordedDurations,
 } from '@/kernel/read-models/question-activity';
 import {
   type ItemCalibrationBRow,
@@ -36,6 +43,7 @@ import {
   resolveFamilyKeyForQuestion,
 } from '@/kernel/read-models/question-difficulty';
 import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
+import { difficultyBandFor } from '@/kernel/supply-contracts';
 
 const SOURCE = 'capabilities/practice/scheduling/server/question-issue-read';
 const ISSUANCE_SOURCE = 'kernel/records/assessment-issuance:readAutomaticallyServableQuestionIds';
@@ -43,6 +51,8 @@ const SCORE_SOURCE = 'kernel/read-models/question-activity:getQuestionTimeline';
 const ITEM_SOURCE = 'kernel/read-models/question-difficulty:effectiveB';
 const FAMILY_SOURCE = 'kernel/read-models/question-difficulty:effectiveFamilyB';
 const FAULTY_SOURCE = `event:${QUESTION_OR_ANSWER_MAY_BE_FAULTY_ACTION}`;
+const ATTEMPT_FACT_SOURCE = 'kernel/read-models/question-activity:readAttemptFacts';
+const BAND_SOURCE = 'kernel/supply-contracts:difficultyBandFor';
 
 const ISSUANCE_BLOCKS = [
   'draft',
@@ -105,6 +115,7 @@ function signalSchema<T extends z.ZodType>(value: T) {
 }
 
 const ItemBasis = z.enum(['posterior', 'anchor', 'legacy_b', 'difficulty_proxy']);
+const DifficultyBandName = z.enum(['below', 'near', 'above', 'stretch']);
 
 const CauseSchema = z.object({
   primary: z.string(),
@@ -158,7 +169,51 @@ export const QuestionIssueReadingSchema = z.object({
         evidence_count: z.number().int().nonnegative(),
       }),
     ),
+    band: signalSchema(
+      z.object({
+        band: DifficultyBandName,
+        logit: z.number(),
+        theta_hat: z.number(),
+        knowledge_id: z.string(),
+        provenance: z.enum(['observed', 'inferred']),
+      }),
+    ),
   }),
+  timing: z.object({
+    median_ms: signalSchema(
+      z.object({
+        ms: z.number(),
+        samples: z.number().int().positive(),
+      }),
+    ),
+    relative_to_same_difficulty: signalSchema(
+      z.object({
+        ratio: z.number(),
+        question_median_ms: z.number(),
+        question_samples: z.number().int().positive(),
+        baseline_median_ms: z.number(),
+        baseline_samples: z.number().int().positive(),
+      }),
+    ),
+  }),
+  hint_dependence: signalSchema(
+    z.object({
+      points: z
+        .array(
+          z.object({
+            event_id: z.string(),
+            at: z.string(),
+            outcome: z.string(),
+            hints_used: z.number().int().nonnegative(),
+            final_hint_level: z.number().int().nonnegative().nullable(),
+          }),
+        )
+        .max(20),
+      recorded_attempts: z.number().int().nonnegative(),
+      omitted_attempts: z.number().int().nonnegative(),
+      truncated: z.boolean(),
+    }),
+  ),
   faulty: signalSchema(
     z.object({
       event_id: z.string(),
@@ -224,7 +279,16 @@ export function unobservedQuestionIssue(asOf: Date): QuestionIssueReading {
     recent_scoring: blank(asOf, reason),
     fsrs: { card: 'none', due_at: blank(asOf, reason) },
     knowledge: [],
-    difficulty: { item: blank(asOf, reason), family: blank(asOf, reason) },
+    difficulty: {
+      item: blank(asOf, reason),
+      family: blank(asOf, reason),
+      band: blank(asOf, reason),
+    },
+    timing: {
+      median_ms: blank(asOf, reason),
+      relative_to_same_difficulty: blank(asOf, reason),
+    },
+    hint_dependence: blank(asOf, reason),
     faulty: blank(asOf, reason),
   };
 }
@@ -268,7 +332,7 @@ async function readIssuance(
 async function readDifficulty(
   db: DbLike,
   input: QuestionIssueInput,
-): Promise<QuestionIssueReading['difficulty']> {
+): Promise<Omit<QuestionIssueReading['difficulty'], 'band'>> {
   const [row] = await db
     .select({
       b: item_calibration.b,
@@ -374,33 +438,142 @@ function scoreSignal(
   );
 }
 
+function difficultyBandSignal(
+  logit: number | undefined,
+  primaryId: string | undefined,
+  judgment: LearnerJudgment | undefined,
+  asOf: Date,
+): QuestionIssueReading['difficulty']['band'] {
+  if (!primaryId) return unknownSignal(BAND_SOURCE, asOf, 'no_primary_knowledge');
+  if (logit === undefined) return unknownSignal(BAND_SOURCE, asOf, 'item_logit_unknown');
+  if (judgment?.ability.kind !== 'available') {
+    return unknownSignal(
+      BAND_SOURCE,
+      asOf,
+      judgment?.ability.kind === 'unknown' ? judgment.ability.reason : 'learner_judgment_missing',
+    );
+  }
+  const theta = judgment.ability.reading.theta_hat;
+  if (!Number.isFinite(theta)) return unknownSignal(BAND_SOURCE, asOf, 'theta_not_finite');
+  return knownSignal(
+    {
+      band: difficultyBandFor(logit, theta),
+      logit,
+      theta_hat: theta,
+      knowledge_id: primaryId,
+      provenance: judgment.ability.reading.provenance,
+    },
+    BAND_SOURCE,
+    asOf,
+  );
+}
+
+function timingSignals(
+  rows: readonly AttemptFact[],
+  baseline: readonly number[],
+  asOf: Date,
+): QuestionIssueReading['timing'] {
+  const samples = recordedDurations(rows);
+  const questionMedian = medianOf(samples);
+  const medianMs =
+    questionMedian === null
+      ? unknownSignal<{ ms: number; samples: number }>(
+          ATTEMPT_FACT_SOURCE,
+          asOf,
+          'duration_not_recorded',
+        )
+      : knownSignal({ ms: questionMedian, samples: samples.length }, ATTEMPT_FACT_SOURCE, asOf);
+  const baselineMedian = medianOf(baseline);
+  if (questionMedian === null) {
+    return {
+      median_ms: medianMs,
+      relative_to_same_difficulty: unknownSignal(
+        ATTEMPT_FACT_SOURCE,
+        asOf,
+        'duration_not_recorded',
+      ),
+    };
+  }
+  if (baselineMedian === null) {
+    return {
+      median_ms: medianMs,
+      relative_to_same_difficulty: unknownSignal(
+        ATTEMPT_FACT_SOURCE,
+        asOf,
+        'no_same_difficulty_baseline',
+      ),
+    };
+  }
+  if (baselineMedian === 0) {
+    return {
+      median_ms: medianMs,
+      relative_to_same_difficulty: unknownSignal(ATTEMPT_FACT_SOURCE, asOf, 'baseline_median_zero'),
+    };
+  }
+  return {
+    median_ms: medianMs,
+    relative_to_same_difficulty: knownSignal(
+      {
+        ratio: questionMedian / baselineMedian,
+        question_median_ms: questionMedian,
+        question_samples: samples.length,
+        baseline_median_ms: baselineMedian,
+        baseline_samples: baseline.length,
+      },
+      ATTEMPT_FACT_SOURCE,
+      asOf,
+    ),
+  };
+}
+
+function hintSignal(
+  rows: readonly AttemptFact[],
+  asOf: Date,
+): QuestionIssueReading['hint_dependence'] {
+  const dependence = hintDependenceOf(rows);
+  if (!dependence) return absentSignal(ATTEMPT_FACT_SOURCE, asOf);
+  return knownSignal(dependence, ATTEMPT_FACT_SOURCE, asOf);
+}
+
 export async function readQuestionIssue(
   db: DbLike,
   input: QuestionIssueInput,
 ): Promise<QuestionIssueReading> {
   const knowledgeIds = [...new Set(input.knowledgeIds.filter((id) => id.length > 0))];
-  const [issuance, difficulty, faulty, names, judgment, scoreRows, schedulableIds] =
-    await Promise.all([
-      readIssuance(db, input),
-      readDifficulty(db, input),
-      readFaulty(db, input.questionId, input.asOf),
-      knowledgeIds.length === 0
-        ? Promise.resolve(new Map<string, string>())
-        : db
-            .select({ id: knowledge.id, name: knowledge.name })
-            .from(knowledge)
-            .where(and(inArray(knowledge.id, knowledgeIds), isNull(knowledge.archived_at)))
-            .then((rows) => new Map(rows.map((row) => [row.id, row.name]))),
-      knowledgeIds.length === 0
-        ? Promise.resolve(null)
-        : readLearnerJudgments(db, {
-            knowledge_ids: knowledgeIds,
-            context: 'any',
-            as_of: input.asOf,
-          }),
-      getQuestionTimeline(db, input.questionId, 1, SCORE_ACTIONS),
-      withoutNonKcKnowledgeIds(db, knowledgeIds),
-    ]);
+  const primaryId = input.knowledgeIds[0];
+  const [
+    issuance,
+    difficulty,
+    faulty,
+    names,
+    judgment,
+    scoreRows,
+    schedulableIds,
+    attemptRows,
+    baselineDurations,
+  ] = await Promise.all([
+    readIssuance(db, input),
+    readDifficulty(db, input),
+    readFaulty(db, input.questionId, input.asOf),
+    knowledgeIds.length === 0
+      ? Promise.resolve(new Map<string, string>())
+      : db
+          .select({ id: knowledge.id, name: knowledge.name })
+          .from(knowledge)
+          .where(and(inArray(knowledge.id, knowledgeIds), isNull(knowledge.archived_at)))
+          .then((rows) => new Map(rows.map((row) => [row.id, row.name]))),
+    knowledgeIds.length === 0
+      ? Promise.resolve(null)
+      : readLearnerJudgments(db, {
+          knowledge_ids: knowledgeIds,
+          context: 'any',
+          as_of: input.asOf,
+        }),
+    getQuestionTimeline(db, input.questionId, 1, SCORE_ACTIONS),
+    withoutNonKcKnowledgeIds(db, knowledgeIds),
+    readAttemptFacts(db, [input.questionId]).then((facts) => facts.get(input.questionId) ?? []),
+    readSameDifficultyDurations(db, input.difficulty, input.questionId),
+  ]);
 
   const byId = new Map(judgment?.items.map((item) => [item.knowledge_id, item]) ?? []);
   const knowledgeRows: QuestionIssueReading['knowledge'] = knowledgeIds.map((id) => {
@@ -458,7 +631,17 @@ export async function readQuestionIssue(
     recent_scoring: scoreSignal(scoreRows[0], input.asOf),
     fsrs,
     knowledge: knowledgeRows,
-    difficulty,
+    difficulty: {
+      ...difficulty,
+      band: difficultyBandSignal(
+        difficulty.item.value?.logit,
+        primaryId && primaryId.length > 0 ? primaryId : undefined,
+        primaryId ? byId.get(primaryId) : undefined,
+        input.asOf,
+      ),
+    },
+    timing: timingSignals(attemptRows, baselineDurations, input.asOf),
+    hint_dependence: hintSignal(attemptRows, input.asOf),
     faulty,
   });
 }

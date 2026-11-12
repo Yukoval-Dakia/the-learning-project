@@ -99,6 +99,9 @@ export async function enrollBlockIntoItemBank(
       generatedBy: provenance,
     });
     if (!captured) return null;
+    for (const warning of captured.warnings) {
+      console.warn(`[enroll:capture] ${warning}`);
+    }
     return params.db.transaction(async (tx) => {
       await acquireLearningStateWriteLock(tx);
       const [current] = await tx

@@ -121,6 +121,8 @@ export interface Result {
   uncertainty?: string;
   /** Some of this was judged by AI and has not been checked against people's marking. */
   aiGraded?: boolean;
+  /** Separate facts about this answer, as the server recorded them. */
+  facts?: readonly { label: string; value: string }[];
 }
 export interface Question {
   id: string;

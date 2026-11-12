@@ -30,11 +30,29 @@ import { BankAssessmentSchema, selectBankReceipt } from '../../question-bank/pub
 import { writeToolQuizArtifact } from './tool-quiz-core';
 
 const WriteQuizInputSchema = z.object({
-  title: z.string().min(1).max(120).optional(),
+  title: z.string().min(1).max(120).optional().describe('Paper title.'),
   // Practice order = array order. max 50 mirrors the practice-session scale.
-  question_ids: z.array(z.string().min(1)).min(1).max(50).optional(),
-  search_id: z.string().optional(),
-  assessments: z.array(BankAssessmentSchema).max(20).optional(),
+  question_ids: z
+    .array(z.string().min(1))
+    .min(1)
+    .max(50)
+    .optional()
+    .describe(
+      'Question ids in practice order; every question must carry ≥1 knowledge_id. Without search_id+assessments this is only the retained teaching-draft compatibility path.',
+    ),
+  search_id: z
+    .string()
+    .optional()
+    .describe(
+      'v3 search receipt id binding this selection (required for existing bank questions).',
+    ),
+  assessments: z
+    .array(BankAssessmentSchema)
+    .max(20)
+    .optional()
+    .describe(
+      'Per-ref caller judgments: ref, selected parts, one verdict per condition and joint with source/quote. unknown or contradicted required/joint cannot issue.',
+    ),
 });
 type WriteQuizInput = z.input<typeof WriteQuizInputSchema>;
 
@@ -339,7 +357,7 @@ async function executeWriteQuiz(
 export const writeQuizTool: DomainTool<WriteQuizInput, WriteQuizOutput> = {
   name: 'write_quiz',
   description:
-    'Assemble admitted, answerable questions into ONE runnable tool_quiz practice paper and return a /practice/<id> link. New author_question teaching drafts enter the question bank awaiting automatic admission; they cannot enter a runnable paper in the same turn until admission passes. Return their bank links and current status instead. Existing pool questions can be found via search_bank. Retained legacy proposal drafts keep their compatibility path. Every question must carry at least one knowledge_id. For existing bank questions pass search_id plus assessments (ref, selected parts, one verdict per condition and joint with source/quote). unknown or contradicted required/joint cannot issue. question_ids without search evidence is only the retained teaching-draft compatibility path. Pure local write — call it once after selecting the questions; a second call in the same run is refused.',
+    'Assemble admitted, answerable questions into ONE runnable tool_quiz practice paper; returns a /practice/<id> link. New author_question teaching drafts await automatic admission and cannot enter a runnable paper this turn; return their bank links and current status instead. Existing pool questions use search_bank plus search_id and assessments. Retained legacy proposal drafts keep their compatibility path. Call once after selecting; a second call in the same run is refused.',
   effect: 'write',
   inputSchema: WriteQuizInputSchema,
   outputSchema: WriteQuizOutputSchema,

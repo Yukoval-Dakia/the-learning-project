@@ -30,12 +30,28 @@ import {
 const FileBankGapInputSchema = z
   .object({
     /** 调用方生成的幂等键。同 id + 同内容重试回同一回执；同 id + 不同内容被拒。 */
-    request_id: z.string().trim().min(1).max(200),
+    request_id: z
+      .string()
+      .trim()
+      .min(1)
+      .max(200)
+      .describe(
+        'Caller idempotency key: same id + same content replays the receipt; same id + different content is rejected.',
+      ),
     /** Complete demand with the original request and explicit inventory target. */
-    demand: EvidenceDemandV1,
+    demand: EvidenceDemandV1.describe(
+      'Complete EvidenceDemandV1: original request, explicit inventory target, controls/context.',
+    ),
     /** Server receipt identity; the caller cannot mint retrieval evidence. */
-    search_id: z.string(),
-    assessments: z.array(BankAssessmentSchema).max(200),
+    search_id: z
+      .string()
+      .describe(
+        'Server receipt identity from a v3 search — the caller cannot mint retrieval evidence.',
+      ),
+    assessments: z
+      .array(BankAssessmentSchema)
+      .max(200)
+      .describe('Cited per-ref assessments from that search.'),
   })
   .strict();
 
@@ -631,7 +647,7 @@ async function fileBankGapWithEvidence(
 export const fileBankGapTool: DomainTool<FileBankGapInput, FileBankGapOutput> = {
   name: 'file_bank_gap',
   description:
-    'File a supply demand using a v3 search_id, original demand statement and cited per-ref assessments. The server loads its own signed snapshot and rechecks actor, versions, serving state, scope and required/joint judgments; caller_assessed never becomes a database semantic fact. unknown, incomplete recall or unsupported supply filters are held, not evidence that the bank has no question. Pass request_id for idempotency and the full EvidenceDemandV1 controls/context. Same id+content replays; changed content is rejected. Budget, deadline, cooldown and transactional ticket/job lineage remain enforced before paid work. No raw search_evidence or model-authored MAC is accepted.',
+    'File a supply demand bound to a v3 search receipt — the server reloads its signed snapshot and rechecks actor, versions, serving state, scope and required/joint judgments; caller_assessed never becomes a database semantic fact. unknown, incomplete recall or unsupported supply filters are held, not evidence the bank lacks the question. Budget, deadline, cooldown and ticket/job lineage are enforced before paid work; no raw search_evidence or model-authored MAC is accepted.',
   effect: 'write',
   inputSchema: FileBankGapInputSchema,
   outputSchema: FileBankGapOutputSchema,

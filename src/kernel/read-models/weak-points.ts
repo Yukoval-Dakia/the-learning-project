@@ -13,6 +13,7 @@
 //   失败 attempt ──无 active 归因──────────────→ unknown(no_active_attribution)
 //             └─meta 解析失败（实例缺失且无 prior）→ unknown(meta_cause_unresolved)
 //             └─meta = execution_slip───────────→ unknown(slip_only_failures)（处方是提示自查，不是训练）
+//             └─agent 错因低于置信门槛──────────→ unknown(low_confidence_attribution)（用户归因仍计满）
 //             └─meta 可行动 ──有 KC 引用────────→ 落点格(meta × cause × KC)
 //                           └─无任何 KC 引用────→ 落点格(meta × cause × null KC)（knowledge_id=null 仅此路径）
 //   落点格 → ActionableWeakPoint（kind/destination 取 WEAK_POINT_LANDING_RULES）
@@ -23,12 +24,13 @@
 // 需要掌握读数的消费方走 readLearnerJudgments。
 
 import { and, eq, inArray, isNull } from 'drizzle-orm';
-
+import { settlementReversions } from '@/core/assessment-settlement-liveness';
 import {
   type CauseCategoryT,
   type CauseProfileLike,
   type CauseSchemaT,
   type MetaCauseT,
+  type MetacogFlagT,
   getCauseLabel,
   getMetaCausePrior,
 } from '@/core/schema/cause';
@@ -44,7 +46,8 @@ import {
   weakPointKey,
 } from '@/core/schema/weak-point';
 import type { Db, Tx } from '@/db/client';
-import { knowledge, misconception, misconception_edge } from '@/db/schema';
+import { event, knowledge, misconception, misconception_edge } from '@/db/schema';
+import { agentCauseCountsAsObservation } from '@/kernel/read-models/cause-confidence';
 import {
   type FailureAttempt,
   getFailureAttemptsForDerivation,
@@ -53,6 +56,8 @@ import { batchResolveEffectiveDomains } from '@/kernel/read-models/knowledge-tre
 import { resolveSubjectProfile } from '@/subjects/profile';
 
 type DbLike = Db | Tx;
+
+const ASSESSMENT_SETTLEMENT_ACTION = 'experimental:assessment_settlement';
 
 /** 默认回看窗口：薄弱点信号取近 30 天失败（研究例会取 14 天是为了提案新鲜度，此处是训练去向）。 */
 export const WEAK_POINT_WINDOW_DAYS = 30;
@@ -78,6 +83,119 @@ interface CellAccumulator {
   refs: Map<string, WeakPointEvidenceRefT>;
   firstSeenAt: Date;
   lastSeenAt: Date;
+  metacogFlags: MetacogFlagT[];
+}
+
+interface SettlementWrongCause {
+  kc_id: string | null;
+  uncertain: boolean;
+}
+
+interface SettlementAttributionRow {
+  id: string;
+  groupId: string;
+  submissionId: string;
+  evaluationId: string | null;
+  createdMs: number;
+  effect: string | null;
+  wrongCause: SettlementWrongCause | null;
+  supersedesSettlementEventId: string | null;
+  revertedIds: string[];
+  replayOf: string | null;
+  fsrsApplied: string[];
+}
+
+function settlementAttribution(payload: unknown): {
+  wrongCause: SettlementWrongCause | null;
+} {
+  if (payload === null || typeof payload !== 'object') {
+    return { wrongCause: null };
+  }
+  const p = payload as Record<string, unknown>;
+  const plan =
+    p.replay_inputs !== null && typeof p.replay_inputs === 'object'
+      ? (p.replay_inputs as Record<string, unknown>)
+      : null;
+  const raw = plan?.kcWrongCause ?? p.kc_wrong_cause;
+  if (raw === null || typeof raw !== 'object') return { wrongCause: null };
+  const cause = raw as Record<string, unknown>;
+  if (cause.kc_id !== null && typeof cause.kc_id !== 'string') {
+    return { wrongCause: null };
+  }
+  if (typeof cause.uncertain !== 'boolean') return { wrongCause: null };
+  return {
+    wrongCause: { kc_id: cause.kc_id as string | null, uncertain: cause.uncertain },
+  };
+}
+
+/**
+ * A failed attempt may cite several KCs when only one dragged it down. Use the
+ * live settlement receipt for its current evaluation; reverted/superseded
+ * receipts cannot leave a stale attribution on the weak-point cells.
+ */
+async function liveSettlementWrongCauses(
+  db: DbLike,
+  failures: readonly FailureAttempt[],
+): Promise<SettlementAttributionRow[]> {
+  const groupIds = [
+    ...new Set(
+      failures.flatMap((failure) =>
+        failure.assessment ? [failure.assessment.evaluation_group_id] : [],
+      ),
+    ),
+  ];
+  if (groupIds.length === 0) return [];
+  const receipts = await db
+    .select({ id: event.id, createdAt: event.created_at, payload: event.payload })
+    .from(event)
+    .where(
+      and(
+        eq(event.action, ASSESSMENT_SETTLEMENT_ACTION),
+        eq(event.subject_kind, 'evaluation_group'),
+        inArray(event.subject_id, groupIds),
+      ),
+    );
+  const rows = receipts.flatMap((row): SettlementAttributionRow[] => {
+    const payload =
+      row.payload !== null && typeof row.payload === 'object'
+        ? (row.payload as Record<string, unknown>)
+        : null;
+    if (!payload || typeof payload.evaluation_group_id !== 'string') return [];
+    if (typeof payload.submission_id !== 'string') return [];
+    const effects =
+      payload.effects !== null && typeof payload.effects === 'object'
+        ? (payload.effects as Record<string, unknown>)
+        : null;
+    const parsed = settlementAttribution(payload);
+    return [
+      {
+        id: row.id,
+        groupId: payload.evaluation_group_id,
+        submissionId: payload.submission_id,
+        evaluationId: typeof payload.evaluation_id === 'string' ? payload.evaluation_id : null,
+        createdMs: row.createdAt.getTime(),
+        effect: typeof payload.effect === 'string' ? payload.effect : null,
+        wrongCause: parsed.wrongCause,
+        supersedesSettlementEventId:
+          typeof payload.supersedes_settlement_event_id === 'string'
+            ? payload.supersedes_settlement_event_id
+            : null,
+        revertedIds: Array.isArray(payload.reverted_settlement_event_ids)
+          ? payload.reverted_settlement_event_ids.filter(
+              (id): id is string => typeof id === 'string',
+            )
+          : [],
+        replayOf: typeof payload.replay_of === 'string' ? payload.replay_of : null,
+        fsrsApplied: Array.isArray(effects?.fsrs_applied)
+          ? effects.fsrs_applied.filter((id): id is string => typeof id === 'string')
+          : [],
+      },
+    ];
+  });
+  const { dead } = settlementReversions(rows);
+  return rows
+    .filter((row) => row.effect === 'applied' && !dead.has(row.id))
+    .sort((a, b) => a.createdMs - b.createdMs || a.id.localeCompare(b.id));
 }
 
 /** user_cause 优先于 judge（用户对归因有最后发言权）；与 conjecture 证据面的读法一致。 */
@@ -99,6 +217,15 @@ function effectiveCause(
     return { category: failure.judge.cause.primary_category, judgeCause: failure.judge.cause };
   }
   return null;
+}
+
+/** User attribution counts in full. An agent cause below the shared floor does not. */
+function countsAsObservation(
+  failure: FailureAttempt,
+  cause: { judgeCause: CauseSchemaT | null },
+): boolean {
+  if (failure.user_cause) return true;
+  return agentCauseCountsAsObservation(cause.judgeCause?.confidence);
 }
 
 function resolveMetaCause(
@@ -166,17 +293,42 @@ export async function deriveActionableWeakPoints(
   const referencedKnowledgeIds = (failure: FailureAttempt): string[] => [
     ...new Set(failure.referenced_knowledge_ids.filter((id) => id.length > 0)),
   ];
+  const settlementAttributions = await liveSettlementWrongCauses(db, failures);
+  const attributedKnowledgeIds = (failure: FailureAttempt): string[] => {
+    const ids = referencedKnowledgeIds(failure);
+    if (failure.assessment === undefined) return ids;
+    const candidates = settlementAttributions.filter(
+      (row) =>
+        row.groupId === failure.assessment?.evaluation_group_id &&
+        row.submissionId === failure.assessment?.submission_id,
+    );
+    const effectiveEvaluationId = failure.assessment.effective_evaluation_id;
+    const matchingEvaluation =
+      effectiveEvaluationId === null
+        ? []
+        : candidates.filter((row) => row.evaluationId === effectiveEvaluationId);
+    const receipt =
+      matchingEvaluation[matchingEvaluation.length - 1] ?? candidates[candidates.length - 1];
+    const kcId = receipt?.wrongCause?.kc_id ?? null;
+    return kcId !== null && ids.includes(kcId) ? [kcId] : ids;
+  };
 
   // 第一遍：预解析每个失败的有效归因与 KC 引用，收集待查元数据的 KC 集合。
   const pendingKnowledgeIds = new Set<string>();
   const effectiveCauses = failures.map((failure) => ({
     failure,
-    knowledgeIds: referencedKnowledgeIds(failure),
+    knowledgeIds: attributedKnowledgeIds(failure),
     cause: effectiveCause(failure),
   }));
   for (const entry of effectiveCauses) {
-    if (entry.cause === null)
+    if (entry.cause === null) {
       recordUnknown('no_active_attribution', entry.failure.attempt_event_id);
+      continue;
+    }
+    if (!countsAsObservation(entry.failure, entry.cause)) {
+      recordUnknown('low_confidence_attribution', entry.failure.attempt_event_id);
+      continue;
+    }
     for (const id of entry.knowledgeIds) pendingKnowledgeIds.add(id);
   }
 
@@ -210,7 +362,7 @@ export async function deriveActionableWeakPoints(
 
   // 第二遍：解析 meta，折叠格。
   for (const { failure, knowledgeIds: failureKnowledgeIds, cause } of effectiveCauses) {
-    if (cause === null) continue; // 已在第一遍记 unknown
+    if (cause === null || !countsAsObservation(failure, cause)) continue;
     const profile = profileFor(failureKnowledgeIds[0] ?? null);
     const meta = resolveMetaCause(cause, profile);
     if (meta === null) {
@@ -235,8 +387,13 @@ export async function deriveActionableWeakPoints(
           refs: new Map<string, WeakPointEvidenceRefT>(),
           firstSeenAt: failure.created_at,
           lastSeenAt: failure.created_at,
+          metacogFlags: [],
         } satisfies CellAccumulator);
       cell.attemptIds.set(failure.attempt_event_id, true);
+      const metacogFlag = cause.judgeCause?.metacog_flag;
+      if (metacogFlag && !cell.metacogFlags.includes(metacogFlag)) {
+        cell.metacogFlags.push(metacogFlag);
+      }
       appendRef(cell.refs, { event_id: failure.attempt_event_id, role: 'failed_attempt' });
       if (failure.judge) {
         appendRef(cell.refs, {
@@ -332,6 +489,7 @@ export async function deriveActionableWeakPoints(
       evidence_refs: refs,
       failure_count: failureCount,
       evidence_strength: strength,
+      metacog_flags: cell.metacogFlags,
       first_seen_at: cell.firstSeenAt,
       last_seen_at: cell.lastSeenAt,
     });

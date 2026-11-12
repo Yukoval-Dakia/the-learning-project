@@ -7,6 +7,7 @@ import { useState } from 'react';
 
 import { AssetEvidencePreview } from './AssetEvidencePreview';
 import { EvidenceLightbox } from './EvidenceLightbox';
+import { LEARNER_HANDWRITING_NOTE } from './learner-handwriting-note';
 import type { EvidenceKind } from './response-types';
 
 export interface StimulusFigureProps {
@@ -18,6 +19,8 @@ export interface StimulusFigureProps {
   kind?: EvidenceKind;
   /** 图片是否可点开缩放（默认 true；非图片恒不可缩放——audio/pdf 有自己的控件）。 */
   zoomable?: boolean;
+  /** Set on photo-entry crops; only a definite `true` gets a note, `'unknown'` is most crops. */
+  containsLearnerHandwriting?: boolean | 'unknown';
 }
 
 export function StimulusFigure({
@@ -26,6 +29,7 @@ export function StimulusFigure({
   alt,
   kind,
   zoomable = true,
+  containsLearnerHandwriting,
 }: StimulusFigureProps) {
   const [zoom, setZoom] = useState(false);
   const label = alt ?? caption ?? '题目配图';
@@ -44,7 +48,14 @@ export function StimulusFigure({
       ) : (
         <AssetEvidencePreview assetId={assetId} kind={kind} label={label} variant="inline" />
       )}
-      {caption && <figcaption className="rs-fig-cap">{caption}</figcaption>}
+      {(caption || containsLearnerHandwriting === true) && (
+        <figcaption className="rs-fig-cap">
+          {caption}
+          {containsLearnerHandwriting === true && (
+            <span className="rs-fig-note">{LEARNER_HANDWRITING_NOTE}</span>
+          )}
+        </figcaption>
+      )}
       {isImage && zoomable && <div className="rs-fig-zoom">点开可放大</div>}
       <EvidenceLightbox
         open={zoom}

@@ -17,7 +17,9 @@ import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 import { recordAssistanceExposure } from '../server/assessment/assistance';
 import { projectFrozenStudyContext } from '../server/assessment/study-context';
 
-const Input = z.object({ question_id: z.string().min(1) }).strict();
+const Input = z
+  .object({ question_id: z.string().min(1).describe('An open issued question id.') })
+  .strict();
 
 const Output = z.discriminatedUnion('status', [
   z
@@ -171,7 +173,7 @@ async function execute(ctx: ToolContext, raw: unknown): Promise<z.infer<typeof O
 export const revealAnswerTool: DomainTool<z.infer<typeof Input>, z.infer<typeof Output>> = {
   name: 'reveal_answer',
   description:
-    'Give the learner the reference answer for an open issued question — the server records solution/answer_help assistance on that issuance BEFORE returning the frozen prompt, options and reference_md, so the submission is not counted as independent evidence. Use this whenever the learner explicitly asks for the final answer on an unsubmitted question; never for hints or option analysis. Statuses: revealed → present reference_md plainly against the returned prompt/options; already_submitted → a submission already exists, explain from that instead; ambiguous → more than one unsubmitted issuance matches and none is bound, say so honestly instead of guessing; no_open_issuance → the question is not open in practice — ask the learner to open it first rather than quoting an unrecorded answer; unknown_question → the id does not resolve to a question or issued part; reveal_unavailable → this assessment does not permit study assistance.',
+    'Give the learner the reference answer for an open issued question — the server records solution/answer_help assistance on that issuance BEFORE returning the frozen prompt, options and reference_md, so the submission is not counted as independent evidence. Use only for an explicit final-answer request on an unsubmitted question — never for hints or option analysis. Statuses: revealed → present reference_md plainly against the returned prompt/options; already_submitted → explain from the existing submission; ambiguous → say honestly the issuance cannot be resolved; no_open_issuance → ask the learner to open it first, never quote an unrecorded answer; unknown_question → the id does not resolve; reveal_unavailable → study assistance not permitted.',
   effect: 'write',
   costClass: 'local',
   inputSchema: Input,
