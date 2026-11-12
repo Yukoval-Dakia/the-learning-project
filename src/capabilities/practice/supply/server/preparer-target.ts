@@ -6,6 +6,7 @@ import {
   type EvidenceDemandV1T,
   evidenceDemandToTargetContext,
 } from '@/kernel/supply-contracts';
+import { resolveBandLevelTarget } from './band-level';
 import type { DifficultyBand, QuestionSupplyTarget } from './target-discovery';
 import { targetFingerprint } from './target-fingerprint';
 
@@ -37,6 +38,10 @@ export function buildQuestionPreparerTarget(
     10,
     Math.max(1, parsed.inventory_goal.eligible_count, options.requestedCount ?? 0),
   );
+  const band = parsed.difficulty.band as DifficultyBand;
+  const anchor = knowledgeIds[0];
+  const readings = parsed.difficulty.theta_hat ?? [];
+  const reading = readings.find((row) => row.knowledge_id === anchor) ?? readings[0];
   return {
     // The id names the gap, not the filing seam; keeping one shape means an identical demand
     // is the same target (and the same ledger subject) no matter where it came from.
@@ -46,7 +51,7 @@ export function buildQuestionPreparerTarget(
       knowledgeIds,
       kind,
       kindSet: parsed.task.kinds.length > 1 ? parsed.task.kinds : undefined,
-      difficultyBand: parsed.difficulty.band as DifficultyBand,
+      difficultyBand: band,
       gapKind: 'frontier_zero',
       minSourceTier: 2,
     }),
@@ -54,7 +59,8 @@ export function buildQuestionPreparerTarget(
     subjectId: parsed.subject_id,
     knowledgeIds,
     kind,
-    difficultyBand: parsed.difficulty.band as DifficultyBand,
+    difficultyBand: band,
+    levelTarget: resolveBandLevelTarget(band, reading?.value ?? 0),
     desiredCount,
     // A gap means existing questions did not cover the demand: prefer finding an existing
     // question on the web (tier 2), then closed-book generation.

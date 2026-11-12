@@ -138,6 +138,7 @@ async function writeSettlementEvent(
       rating_source: plan?.ratingSource ?? null,
       provenance: plan?.provenance ?? null,
       kc_observations: plan?.kcObservations ?? [],
+      kc_ratings: plan?.kcRatings ?? [],
       kc_wrong_cause: plan?.kcWrongCause ?? null,
       theta_decision: plan?.theta ?? null,
       effects: input.appliedOutcome

@@ -256,7 +256,8 @@
   color: var(--st-on-accent);
   background: var(--st-accent);
 }
-[data-ui-next] .un-st-skip:focus {
+/* Keyboard only: a focus the page moves there itself must not pull it into view. */
+[data-ui-next] .un-st-skip:focus-visible {
   top: 8px;
 }
 [data-ui-next] .un-st-page {
@@ -466,6 +467,25 @@
 }
 [data-ui-next] .un-st-feedback h3 {
   font-size: 16px;
+}
+[data-ui-next] .un-st-facts {
+  display: grid;
+  gap: var(--un-sp-1);
+  margin: 0;
+  font-size: var(--un-fs-1);
+}
+[data-ui-next] .un-st-facts > div {
+  display: flex;
+  gap: var(--un-sp-3);
+}
+[data-ui-next] .un-st-facts dt {
+  flex: none;
+  width: 3em;
+  color: var(--un-text-3);
+}
+[data-ui-next] .un-st-facts dd {
+  margin: 0;
+  color: var(--un-text-1);
 }
 [data-ui-next] .un-st-verdict {
   --verdict-ink: var(--st-muted);
@@ -1049,4 +1069,42 @@
 [data-ui-next] .un-st-verdict .un-st-ai-graded svg {
   flex: none;
   margin-top: 4px;
+}
+
+/* Printing a page prints what is on it, not the app around it. The worksheet page has its own
+   print layout and is left alone. Answer options and figures (a zoomable figure is a button
+   around its image) stay; action buttons go. */
+@media print {
+  :root,
+  :root body {
+    background: #fff;
+  }
+  [data-ui-next].un-st-shell:not(:has(.ws-root)) {
+    display: block;
+    min-height: 0;
+    background: #fff;
+  }
+  [data-ui-next].un-st-shell:not(:has(.ws-root)) > :not(.main) {
+    display: none;
+  }
+  [data-ui-next].un-st-shell:not(:has(.ws-root)) .un-st-page {
+    max-width: none;
+    padding: 0;
+  }
+  [data-ui-next].un-st-shell:not(:has(.ws-root)) .main,
+  [data-ui-next].un-st-shell:not(:has(.ws-root)) .main :is(main, section, article, [data-ui-next]) {
+    background: transparent;
+    box-shadow: none;
+  }
+  [data-ui-next].un-st-shell:not(:has(.ws-root)) .main button:not([data-option-id], :has(img)) {
+    display: none;
+  }
+  [data-ui-next].un-st-shell:not(:has(.ws-root)) .main :is(h1, h2, h3, h4) {
+    break-after: avoid;
+  }
+  [data-ui-next].un-st-shell:not(:has(.ws-root))
+    .main
+    :is(img, figure, svg, .katex-display, pre, table) {
+    break-inside: avoid;
+  }
 }

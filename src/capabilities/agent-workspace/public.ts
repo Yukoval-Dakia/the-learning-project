@@ -1,1 +1,1 @@
-export { workspaceExec } from './server/tool';
+export { workspaceExec, workspaceFiles } from './server/tool';

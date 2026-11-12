@@ -37,15 +37,19 @@ const InputSchema = z.object({
       actorRef: ExactStringSchema.optional(),
       action: ExactStringSchema.optional(),
       subjectKind: ExactStringSchema.optional(),
-      subjectId: ExactStringSchema.optional(),
+      subjectId: ExactStringSchema.optional().describe(
+        'One exact entity id, not a domain; subjectKind narrows it further.',
+      ),
       outcome: z.enum(['success', 'failure', 'partial']).optional(),
-      causedByEventId: ExactStringSchema.optional(),
-      siblingOfEventId: ExactStringSchema.optional(),
-      sinceDays: z.number().int().positive().max(180).optional(),
-      limit: z.number().int().min(1).max(50).optional(),
+      causedByEventId: ExactStringSchema.optional().describe('Direct children of this event.'),
+      siblingOfEventId: ExactStringSchema.optional().describe(
+        'Same non-null parent, excluding the focal event; cannot combine with eventId/causedByEventId.',
+      ),
+      sinceDays: z.number().int().positive().max(180).optional().describe('At most 180 days back.'),
+      limit: z.number().int().min(1).max(50).optional().describe('1–50, default 20.'),
     })
     .optional(),
-  cursor: CursorSchema.optional(),
+  cursor: CursorSchema.optional().describe('Continuation token — resubmit with the same filters.'),
 });
 
 const EventRowSchema = z.object({
@@ -146,14 +150,12 @@ function filterKey(filter: NonNullable<Input['filter']> | undefined): string {
 }
 
 const DESCRIPTION = [
-  'Read paginated action-log history, not current entity inventory. Filters compose exact AND matches.',
-  'subjectId is one exact entity id, not a domain; subjectKind further narrows that id.',
-  'causedByEventId selects direct children; siblingOfEventId selects the same non-null parent, excluding the focal event.',
-  'required_followup none: do not repeat this filter, including when the page has zero rows. none does not mean this response contains the whole window.',
-  'required_followup continue_with_next_cursor: resubmit the same filters with coverage.next_cursor. Do not drop filters or walk other events.',
-  'window_complete: no cursor was passed, and a subject-scoped window is fully returned. It does not include causal descendants.',
-  'remaining_window_complete: a cursor was passed and no further pages remain. coverage.complete_for_window stays false. Do not claim rows before the cursor.',
-  'sinceDays is at most 180; limit is 1–50 (default 20).',
+  'Read paginated action-log history, not current entity inventory. Filters compose exact AND',
+  'matches. required_followup=continue_with_next_cursor means resubmit the same filters with',
+  'coverage.next_cursor — do not repeat without it, drop filters, or walk other events, even',
+  'on a zero-row page. window_complete means a subject-scoped window is fully returned (causal',
+  'descendants never included); remaining_window_complete means a cursor page finished —',
+  'never claim rows before the cursor.',
 ].join('\n');
 
 type ClaimStatus =

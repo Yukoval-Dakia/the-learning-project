@@ -15,14 +15,14 @@ import {
 import type { Db } from '@/db/client';
 import { isEmbedRevisionCurrent } from '@/db/embed-currency';
 import { knowledge, knowledge_edge } from '@/db/schema';
+import { markAiTaskRunOutputInvalid } from '@/kernel/records/ai-attempt-facts';
 import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
 import { createKnowledgeTagEmbedder } from './knowledge-namer';
 import { redactIngestionText } from './privacy-guard';
 
 /**
- * Thrown when the TaggingTask cannot produce a usable result (provider down,
- * unparseable output). Callers (auto-enroll) treat this as "route to review" —
- * a tagging outage must never auto-enroll, only ever fall back to human review.
+ * Thrown when the TaggingTask cannot reach a result at all (provider failure, grid
+ * embedding failure). Unusable model text is not thrown: it ends as `unknown`.
  */
 export { TaggingTaskError };
 
@@ -30,7 +30,15 @@ export type TaggingRunTaskFn = (
   kind: string,
   input: TaggingInputT,
   ctx: unknown,
-) => Promise<{ text: string }>;
+) => Promise<{ text: string; task_run_id?: string }>;
+
+/**
+ * Paid sends per tagging call when the reply breaks the output contract. Each send is
+ * billed and side-effect free (no tools, one turn), so one resend covers a one-off
+ * format slip; a second invalid reply on identical input points at the prompt/model
+ * pair, where further sends only add cost, so the call settles as `unknown`.
+ */
+export const TAGGING_MAX_PAID_SENDS = 2;
 
 /** The embedder seam used only when the candidate grid needs relevance ranking. */
 export interface TaggingGridEmbedder {
@@ -61,7 +69,7 @@ export interface RunTaggingTaskParams {
   ctx?: unknown;
 }
 
-export interface TaggingRunResult extends TaggingOutputT {
+interface TaggingRunBase {
   /**
    * True when the subject's active node set exceeded MAX_GRID_NODES and the prompt
    * grid carries only the relevance-ranked head. Suggestions for real KCs outside
@@ -69,6 +77,11 @@ export interface TaggingRunResult extends TaggingOutputT {
    */
   grid_truncated: boolean;
 }
+
+/** `unknown`: every paid send replied with unusable text; knowledge stays unattributed. */
+export type TaggingRunResult =
+  | (TaggingRunBase & TaggingOutputT & { outcome: 'tagged' })
+  | (TaggingRunBase & { outcome: 'unknown'; reason: 'model_output_invalid' });
 
 const MAX_GRID_NODES = 200;
 
@@ -276,9 +289,9 @@ export async function buildTaggingGrid(
 
 /**
  * Runs the TaggingTask. Returns a validated `TaggingOutput` plus the honest
- * `grid_truncated` flag. Suggestions are kept when the knowledge id exists as an
- * active library node, even if relevance truncation left it out of the prompt
- * grid; invented ids are dropped.
+ * `grid_truncated` flag, or `unknown` after TAGGING_MAX_PAID_SENDS unusable replies.
+ * Suggestions are kept when the knowledge id exists as an active library node, even
+ * if relevance truncation left it out of the prompt grid; invented ids are dropped.
  */
 export async function runTaggingTask(params: RunTaggingTaskParams): Promise<TaggingRunResult> {
   const questionMd = redactIngestionText(params.questionMd).text;
@@ -298,22 +311,29 @@ export async function runTaggingTask(params: RunTaggingTaskParams): Promise<Tagg
   });
 
   const runTaskFn = params.runTaskFn ?? makeRunTaskTextFn(params.db);
-  let llmText: string;
-  try {
-    const result = await runTaskFn('TaggingTask', input, params.ctx ?? {});
-    llmText = result.text;
-  } catch (err) {
-    throw new TaggingTaskError('TaggingTask LLM call failed', { cause: err });
-  }
-
-  let parsed: TaggingOutputT;
-  try {
-    parsed = parseTaggingOutput(llmText);
-  } catch (err) {
-    if (err instanceof TaggingTaskError) throw err;
-    throw new TaggingTaskError('TaggingTask output did not match TaggingOutput schema', {
-      cause: err,
-    });
+  let parsed: TaggingOutputT | undefined;
+  for (let send = 1; parsed === undefined; send += 1) {
+    let result: Awaited<ReturnType<TaggingRunTaskFn>>;
+    try {
+      result = await runTaskFn('TaggingTask', input, params.ctx ?? {});
+    } catch (err) {
+      throw new TaggingTaskError('TaggingTask LLM call failed', { cause: err });
+    }
+    try {
+      parsed = parseTaggingOutput(result.text);
+    } catch (err) {
+      // The reply arrived and was billed: record the run as failed before deciding to resend.
+      if (result.task_run_id !== undefined) {
+        await markAiTaskRunOutputInvalid(
+          params.db,
+          result.task_run_id,
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+      if (send >= TAGGING_MAX_PAID_SENDS) {
+        return { outcome: 'unknown', reason: 'model_output_invalid', grid_truncated };
+      }
+    }
   }
 
   // Existence check, not membership: a real library node stays accepted even when
@@ -329,5 +349,5 @@ export async function runTaggingTask(params: RunTaggingTaskParams): Promise<Tagg
   }
   const suggestions = parsed.suggestions.filter((s) => existingIds.has(s.knowledge_id));
 
-  return { ...parsed, suggestions, grid_truncated };
+  return { outcome: 'tagged', ...parsed, suggestions, grid_truncated };
 }

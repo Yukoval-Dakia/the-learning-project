@@ -21,7 +21,7 @@ import {
   sealCandidateFact,
   validateCandidateInput,
 } from '@/core/scheduling/candidate';
-import type { KcObservation } from '@/core/schema/assessment';
+import type { FsrsRatingLabel, KcObservation } from '@/core/schema/assessment';
 import { EvaluationProvenance } from '@/core/schema/assessment';
 import type { KcEvidenceApply, KcWrongCauseT } from '@/core/schema/assessment/kc-mastery-evidence';
 import type { Tx } from '@/db/client';
@@ -101,6 +101,11 @@ export interface SettlementPlan {
   scopeKcIds: string[];
   /** One knowledge card per scope KC. An empty scope uses the group-root question card. */
   fsrsSubjects: FsrsSubject[];
+  /**
+   * Per-KC FSRS ratings sealed with the plan. Absence is a legacy plan and keeps
+   * the shared `rating` behaviour; an abstaining KC is present with `rating: null`.
+   */
+  kcRatings?: Array<{ knowledgeId: string; rating: FsrsRatingLabel | null }>;
   kcObservations: KcObservation[];
   /** Which KC dragged the attempt. null only on plans sealed before this field existed. */
   kcWrongCause?: KcWrongCauseT;
@@ -207,6 +212,46 @@ export function candidateSchedulingSuppressed(plan: SettlementPlan): boolean {
   );
 }
 
+function decodeSettlementEvent(row: {
+  id: string;
+  created_at: Date;
+  payload: unknown;
+}): SettlementEventRow {
+  const p = (row.payload ?? {}) as Record<string, unknown>;
+  const effects = (p.effects ?? {}) as Record<string, unknown>;
+  const subjects = new Set<string>(
+    Array.isArray(effects.subjects)
+      ? (effects.subjects as unknown[]).filter((v): v is string => typeof v === 'string')
+      : [],
+  );
+  return {
+    id: row.id,
+    fsrsOnly: p.fsrs_only === true,
+    createdMs: coerceMs(row.created_at) ?? 0,
+    groupId: typeof p.evaluation_group_id === 'string' ? p.evaluation_group_id : null,
+    evaluationId: typeof p.evaluation_id === 'string' ? p.evaluation_id : null,
+    effect: typeof p.effect === 'string' ? p.effect : null,
+    occurrenceMs: coerceMs(p.occurrence_at as string | undefined),
+    subjects,
+    fsrsApplied: Array.isArray(effects.fsrs_applied)
+      ? (effects.fsrs_applied as unknown[]).filter((v): v is string => typeof v === 'string')
+      : [],
+    familyObservationRecorded: effects.family_observation_recorded === true,
+    familyFold: parseFamilyFold(effects.family_fold),
+    inputs: planFromPayload(p.replay_inputs),
+    supersedesSettlementEventId:
+      typeof p.supersedes_settlement_event_id === 'string'
+        ? p.supersedes_settlement_event_id
+        : null,
+    revertedIds: Array.isArray(p.reverted_settlement_event_ids)
+      ? (p.reverted_settlement_event_ids as unknown[]).filter(
+          (v): v is string => typeof v === 'string',
+        )
+      : [],
+    replayOf: typeof p.replay_of === 'string' ? p.replay_of : null,
+  };
+}
+
 /** `occurredSince` keeps rows written then, or whose sealed occurrence is then or later. */
 export async function loadSettlementEvents(
   tx: Tx,
@@ -226,43 +271,43 @@ export async function loadSettlementEvents(
           )
         : eq(event.action, ASSESSMENT_SETTLEMENT_ACTION),
     );
-  const out: SettlementEventRow[] = [];
-  for (const row of rows) {
-    const p = (row.payload ?? {}) as Record<string, unknown>;
-    const effects = (p.effects ?? {}) as Record<string, unknown>;
-    const subjects = new Set<string>(
-      Array.isArray(effects.subjects)
-        ? (effects.subjects as unknown[]).filter((v): v is string => typeof v === 'string')
-        : [],
+  return rows.map(decodeSettlementEvent);
+}
+
+/**
+ * Anchor questions of the live family observations receipted under `familyKey`: the same
+ * receipts evidence_count folds and revert unfolds. Loads only this family's receipts and
+ * the settlements that revert them, which is all liveness needs. Inside a replay the members
+ * being reverted stay visible until the settlement that reverts them is written.
+ */
+export async function liveFamilyObservationQuestionIds(
+  tx: Tx,
+  familyKey: string,
+): Promise<Set<string>> {
+  const familyReceiptIds = sql`SELECT receipt.id FROM ${event} AS receipt
+    WHERE receipt.action = ${ASSESSMENT_SETTLEMENT_ACTION}
+      AND receipt.payload->'effects'->'family_fold'->>'familyKey' = ${familyKey}`;
+  const rows = await tx
+    .select({ id: event.id, created_at: event.created_at, payload: event.payload })
+    .from(event)
+    .where(
+      and(
+        eq(event.action, ASSESSMENT_SETTLEMENT_ACTION),
+        or(
+          sql`${event.id} IN (${familyReceiptIds})`,
+          sql`${event.payload}->>'supersedes_settlement_event_id' IN (${familyReceiptIds})`,
+          sql`${event.payload}->>'replay_of' IN (${familyReceiptIds})`,
+          sql`${event.payload}->'reverted_settlement_event_ids' ?| ARRAY(${familyReceiptIds})`,
+        ),
+      ),
     );
-    out.push({
-      id: row.id,
-      fsrsOnly: p.fsrs_only === true,
-      createdMs: coerceMs(row.created_at) ?? 0,
-      groupId: typeof p.evaluation_group_id === 'string' ? p.evaluation_group_id : null,
-      evaluationId: typeof p.evaluation_id === 'string' ? p.evaluation_id : null,
-      effect: typeof p.effect === 'string' ? p.effect : null,
-      occurrenceMs: coerceMs(p.occurrence_at as string | undefined),
-      subjects,
-      fsrsApplied: Array.isArray(effects.fsrs_applied)
-        ? (effects.fsrs_applied as unknown[]).filter((v): v is string => typeof v === 'string')
-        : [],
-      familyObservationRecorded: effects.family_observation_recorded === true,
-      familyFold: parseFamilyFold(effects.family_fold),
-      inputs: planFromPayload(p.replay_inputs),
-      supersedesSettlementEventId:
-        typeof p.supersedes_settlement_event_id === 'string'
-          ? p.supersedes_settlement_event_id
-          : null,
-      revertedIds: Array.isArray(p.reverted_settlement_event_ids)
-        ? (p.reverted_settlement_event_ids as unknown[]).filter(
-            (v): v is string => typeof v === 'string',
-          )
-        : [],
-      replayOf: typeof p.replay_of === 'string' ? p.replay_of : null,
-    });
+  const questionIds = new Set<string>();
+  for (const member of liveAppliedSettlements(rows.map(decodeSettlementEvent))) {
+    if (member.familyFold?.familyKey === familyKey && member.inputs.theta.applied) {
+      questionIds.add(member.inputs.theta.anchorQuestionId);
+    }
   }
-  return out;
+  return questionIds;
 }
 
 /** Live settlements plus user FSRS segments retained after their verdict was superseded. */

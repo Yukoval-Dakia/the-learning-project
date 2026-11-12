@@ -11,7 +11,7 @@ import type { MigrationCapture, MigrationManifest } from '@/core/migration/types
 import { loadMigrationArtifacts } from './migration-apply';
 
 // YUK-1050（review 修订版）— CLI 单元测试（无 DB）：参数面、--target 校验
-//（P1-8：空/残缺 URL 拒绝）、工件身份复算（P1-2：capture↔manifest 拼装/篡改/
+//（空/残缺 URL 拒绝）、工件身份复算（capture↔manifest 拼装/篡改/
 // 脱敏/悬空引用全拒）。
 
 const TMP_ROOT = mkdtempSync(join(tmpdir(), 'yuk1050-cli-'));

@@ -1,5 +1,5 @@
 import { createId } from '@paralleldrive/cuid2';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import * as Ingestion from '@/capabilities/ingestion/server/session-lifecycle';
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
@@ -8,11 +8,21 @@ import { ApiError } from '@/kernel/http';
 import type { R2Client } from '@/kernel/object-storage';
 import { assertRescuableBlockDraft } from '@/kernel/records/question-block-creation';
 import { type RunTaskCallCtx, makeRunTaskTextFn } from '@/server/ai/runner-fn';
+import {
+  applyHandwritingTraces,
+  collectHandwritingLeaves,
+  markHandwritingTraceFailure,
+  runHandwritingTrace,
+} from './handwriting-trace';
 import { enrollIngestionBlock } from './single-block-enroll';
 import { type VisionBlock, runVisionExtract } from './vision';
 
 export type RescueTier = 2 | 3;
-export type RescueStrategy = 'extract' | 'restructure_cloze' | 'restructure_compound';
+export type RescueStrategy =
+  | 'extract'
+  | 'restructure_cloze'
+  | 'restructure_compound'
+  | 'handwriting_trace';
 
 export type RunRescueParams = {
   db: Db;
@@ -20,7 +30,7 @@ export type RunRescueParams = {
   sessionId: string;
   blockId: string;
   page: number;
-  tier: RescueTier;
+  tier?: RescueTier;
   strategy?: RescueStrategy;
   /** Inject runTask in tests. Defaults to production runner. */
   runTaskFn?: (
@@ -28,6 +38,8 @@ export type RunRescueParams = {
     input: unknown,
     ctx?: RunTaskCallCtx,
   ) => Promise<{ text: string; task_run_id?: string }>;
+  /** Inject the handwriting pass in tests. */
+  runHandwritingTraceFn?: typeof runHandwritingTrace;
 };
 
 /**
@@ -42,11 +54,13 @@ export async function runRescue(
   params: RunRescueParams,
 ): Promise<{ structured: StructuredQuestionT }> {
   if (params.strategy && params.strategy !== 'extract') {
-    throw new ApiError(
-      'not_implemented',
-      `rescue strategy '${params.strategy}' not implemented`,
-      501,
-    );
+    if (params.strategy !== 'handwriting_trace') {
+      throw new ApiError(
+        'not_implemented',
+        `rescue strategy '${params.strategy}' not implemented`,
+        501,
+      );
+    }
   }
 
   if (!Number.isSafeInteger(params.page) || params.page < 0) {
@@ -100,13 +114,18 @@ export async function runRescue(
     throw new ApiError('not_found', `source_asset ${assetId} not found`, 404);
   }
 
+  if (params.strategy === 'handwriting_trace') {
+    return runHandwritingTraceRescue(params, block, session.source_asset_ids);
+  }
+
   const imageBytes = await params.r2.get(asset.storage_key);
   if (!imageBytes) {
     throw new ApiError('not_found', `R2 object missing: ${asset.storage_key}`, 404);
   }
 
   const runTaskFn = params.runTaskFn ?? makeRunTaskTextFn(params.db);
-  const taskKind = params.tier === 2 ? 'VisionExtractTask' : 'VisionExtractTaskHeavy';
+  const tier = params.tier ?? 2;
+  const taskKind = tier === 2 ? 'VisionExtractTask' : 'VisionExtractTaskHeavy';
 
   let visionTaskRunId: string | undefined;
   const visionResult = await runVisionExtract({
@@ -181,6 +200,94 @@ export async function runRescue(
   return { structured };
 }
 
+async function runHandwritingTraceRescue(
+  params: RunRescueParams,
+  block: typeof question_block.$inferSelect,
+  pageAssetIds: string[],
+): Promise<{ structured: StructuredQuestionT }> {
+  if (!block.structured) {
+    throw new ApiError(
+      'validation_error',
+      'block has no structured tree to attach handwriting evidence to',
+      422,
+    );
+  }
+  const structured = block.structured;
+  const leaves = collectHandwritingLeaves([structured]).map(({ index, node }) => ({
+    index,
+    page_index: node.page_index ?? 0,
+    question_no: node.question_no ?? null,
+    prompt_text: node.prompt_text.slice(0, 400),
+  }));
+  if (leaves.length === 0) {
+    throw new ApiError('validation_error', 'block has no leaf question to trace', 422);
+  }
+  const assetRows = await params.db
+    .select()
+    .from(source_asset)
+    .where(inArray(source_asset.id, pageAssetIds));
+  const assetById = new Map(assetRows.map((row) => [row.id, row]));
+  const pageImages: Array<{ data: string; mediaType: string }> = [];
+  for (const assetId of pageAssetIds) {
+    const row = assetById.get(assetId);
+    if (!row) throw new ApiError('not_found', `source_asset ${assetId} not found`, 404);
+    const bytes = await params.r2.get(row.storage_key);
+    if (!bytes) throw new ApiError('not_found', `R2 object missing: ${row.storage_key}`, 404);
+    pageImages.push({
+      data: Buffer.from(bytes).toString('base64'),
+      mediaType: row.mime_type,
+    });
+  }
+  let traceTaskRunId: string | undefined;
+  try {
+    const traceFn = params.runHandwritingTraceFn ?? runHandwritingTrace;
+    const traced = await traceFn({
+      pageImages,
+      pageCount: pageAssetIds.length,
+      leaves,
+      db: params.db,
+      ctx: { r2: params.r2 },
+    });
+    applyHandwritingTraces([structured], traced);
+    traceTaskRunId = traced.task_run_id;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    markHandwritingTraceFailure([structured], message);
+    await params.db.transaction((tx) =>
+      Ingestion.applyHandwritingTrace(tx, {
+        sessionId: params.sessionId,
+        blockId: params.blockId,
+        structured,
+      }),
+    );
+    throw new ApiError('extraction_failed', `handwriting trace failed: ${message}`, 502);
+  }
+  try {
+    await params.db.transaction((tx) =>
+      Ingestion.applyHandwritingTrace(tx, {
+        sessionId: params.sessionId,
+        blockId: params.blockId,
+        structured,
+      }),
+    );
+  } catch (err) {
+    // Same contract as the vision rescue: the block left draft (or the session
+    // moved) after the paid call, so the write is refused and the paid trace
+    // rides on the refusal instead of being dropped.
+    if (err instanceof ApiError) {
+      throw new ApiError(err.code, err.message, err.status, err.headers, {
+        ...err.details,
+        paid_result: {
+          structured,
+          ...(traceTaskRunId ? { task_run_id: traceTaskRunId } : {}),
+        },
+      });
+    }
+    throw err;
+  }
+  return { structured };
+}
+
 function visionBlockToStructured(b: VisionBlock): StructuredQuestionT {
   return {
     id: createId(),
@@ -194,7 +301,7 @@ function visionBlockToStructured(b: VisionBlock): StructuredQuestionT {
           handwriting: [
             {
               text: b.wrong_answer_md,
-              bbox: { x: 0, y: 0, width: 0, height: 0 }, // exact bbox unknown from old Vision format
+              // Legacy Vision has no page-local box; omit rather than fake zero.
             },
           ],
         }

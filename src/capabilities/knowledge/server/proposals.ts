@@ -58,6 +58,11 @@ import { acceptKnowledgeCreate } from './knowledge-create-operation';
 
 type DbLike = Db | Tx;
 
+const KNOWLEDGE_PROPOSAL_SUBJECT_KINDS: ReadonlySet<string> = new Set([
+  'knowledge',
+  'knowledge_edge',
+]);
+
 function mutationSubjectId(payload: KnowledgeMutationPayload): string {
   switch (payload.mutation) {
     case 'propose_new':
@@ -77,12 +82,21 @@ function mutationRowIds(payload: KnowledgeMutationPayload): string[] {
     case 'propose_new':
       return [];
     case 'reparent':
+      // Parent FOR SHARE runs after this batch. A smaller parent id already held
+      // by another accept deadlocks if the moved node is locked first.
+      return payload.new_parent_id === null
+        ? [payload.node_id]
+        : [payload.node_id, payload.new_parent_id];
     case 'archive':
       return [payload.node_id];
     case 'merge':
       return [payload.into_id, ...payload.from_ids];
     case 'split':
-      return [payload.from_id];
+      // Each new parent's FOR SHARE follows this batch, in the same id order.
+      return [
+        payload.from_id,
+        ...payload.into.flatMap((entry) => (entry.parent_id === null ? [] : [entry.parent_id])),
+      ];
   }
 }
 
@@ -340,12 +354,8 @@ export async function writeKnowledgeProposeEvent(
     return id;
   }
 
-  // reparent / merge / split stay in the experimental:knowledge_<mutation>
-  // namespace while carrying a typed ai_proposal payload for the inbox.
-  const action = `experimental:knowledge_${entry.payload.mutation}` as const;
-  const { mutation: _omit, ...rest } = entry.payload;
+  // reparent / merge / split: the writer stores them as experimental:knowledge_<mutation>.
   const subjectId = mutationSubjectId(entry.payload);
-  void _omit;
   await writeAiProposal(db, {
     id,
     actor_ref: actorRef,
@@ -359,16 +369,6 @@ export async function writeKnowledgeProposeEvent(
       proposed_change: entry.payload,
       cooldown_key: knowledgeMutationCooldown(entry.payload).cooldownKeys[0],
       ...(entry.suggestion_kind ? { suggestion_kind: entry.suggestion_kind } : {}),
-    },
-    event_override: {
-      action,
-      subject_kind: 'knowledge',
-      subject_id: subjectId,
-      payload: {
-        ...rest,
-        reasoning,
-        evidence_refs: entry.evidence_refs ?? [],
-      },
     },
     caused_by_event_id: causedByEventId,
     task_run_id: entry.task_run_id ?? null,
@@ -866,10 +866,13 @@ async function readProposeEvent(db: DbLike, proposalId: string): Promise<Propose
   if (row.subject_kind !== 'knowledge') {
     throw new Error(`proposal ${proposalId} is not a knowledge proposal`);
   }
+  // The knowledge fold reads only these shapes; applying any other would change
+  // rows that replay can never reproduce. Refuse it as a decision, not a crash.
   if (row.action !== 'propose' && !row.action.startsWith('experimental:knowledge_')) {
-    throw new Error(
-      `proposal ${proposalId} action '${row.action}' is not a knowledge mutation event`,
+    console.warn(
+      `[knowledge-accept] proposal ${proposalId} action '${row.action}' is not a knowledge mutation event`,
     );
+    throw new ApiError('proposal_not_applicable', '这张建议的记录格式无法应用，可以忽略它。', 409);
   }
   return {
     id: row.id,
@@ -1221,25 +1224,16 @@ export async function dismissProposal(
   proposalId: string,
   userNote?: string,
 ): Promise<{ idempotent: boolean; rate_event_id: string | null }> {
-  // Guard against dismissing an arbitrary event id; only proposals may be rated.
-  // Same contract the pre-template writer enforced under the row lock — events
-  // are immutable, so the read can stay outside the decision transaction.
-  const [proposeRow] = await db
-    .select({ action: event.action })
-    .from(event)
-    .where(eq(event.id, proposalId))
-    .limit(1);
-  if (!proposeRow) {
-    throw new Error(`proposal not found: ${proposalId}`);
-  }
-  const isProposal =
-    proposeRow.action === 'propose' || proposeRow.action.startsWith('experimental:knowledge_');
-  if (!isProposal) {
-    throw new Error(`event ${proposalId} is not a proposal (action='${proposeRow.action}')`);
+  // Only proposals may be rated. The inbox read that routed this card is the one
+  // answer to "is this event a proposal"; knowledge only takes those aimed at its
+  // own subjects. Events are immutable, so the read stays outside the decision tx.
+  const proposal = await getProposalInboxRow(db, proposalId);
+  if (!proposal || !KNOWLEDGE_PROPOSAL_SUBJECT_KINDS.has(proposal.target.subject_kind)) {
+    throw new ApiError('not_found', `knowledge proposal not found: ${proposalId}`, 404);
   }
 
   const dismissed = await runProposalDismiss(db, proposalId, {
-    proposal: await knowledgeSignalSource(db, proposalId),
+    proposal,
     userNote,
     signal: 'after_commit',
   });

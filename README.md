@@ -196,10 +196,10 @@ reuses the same database and only applies new migrations. Docker/OrbStack must b
 
 | 进程 | 端口 | 命令 | 角色 |
 | --- | --- | --- | --- |
-| API + Start 前门 | 自动选择（8788 起，`DEV_PORT` 固定） | `pnpm rw:api`（`tsx watch server/index.ts`，`RW_WORKER=1` 同进程启 pg-boss worker；dev-local 另设 `RW_FRONTDOOR=dev`） | Hono 组合根 + in-process worker；Vite dev server 以 middleware 模式跑在同一进程、同一端口（`server/dev-frontdoor.ts`），页面与 `/api/*` 同源，**页面改动热更新（HMR），不需要构建**；改 `server/`、`src/server/` 等服务端文件由 tsx watch 重启 API |
-| Worker | — | `pnpm worker:dev`（`tsx scripts/worker.ts`） | 独立 pg-boss worker 进程 |
+| API + Start 前门 | 自动选择（8788 起，`DEV_PORT` 固定） | `pnpm exec tsx watch server/index.ts`（`RW_WORKER=0`，另设 `RW_FRONTDOOR=dev`） | Hono 组合根，不消费队列；Vite dev server 以 middleware 模式跑在同一进程、同一端口（`server/dev-frontdoor.ts`），页面与 `/api/*` 同源，**页面改动热更新（HMR），不需要构建**；改 `server/`、`src/server/` 等服务端文件由 tsx watch 重启 API |
+| Worker | — | `pnpm worker:dev`（`tsx scripts/worker.ts`） | 独立 pg-boss worker 进程，`dev:local` 里唯一的队列消费者 |
 
-dev 拓扑必须 api（含 Vite 前门）+ worker 两进程齐活（YUK-321 M5 双进程拓扑）：`LISTEN loop 不消费 boss job`，dev 也必须有独立 worker 进程；同进程 worker 是 RW_WORKER=1 的兜底，不替代独立 worker。
+dev 拓扑必须 api（含 Vite 前门）+ worker 两进程齐活（YUK-321 M5 双进程拓扑）：`LISTEN loop 不消费 boss job`，队列只由独立 worker 消费。单独跑 `pnpm rw:api` 仍带 `RW_WORKER=1`，是不另起 worker 时的单进程兜底。
 
 `pnpm dev` 是 `pnpm dev:local` 的别名。单独运行 `pnpm rw:api` 时 `API_PORT` 缺省也是 8787，本机 dev（`NODE_ENV` 非 `production`、非容器）会在绑定前退出（8787 是本机 NAS 中继的 TEST 端口；生产入口与容器由 Dockerfile 显式设 `API_PORT=8787`，照常监听）。dev 的 `DATABASE_URL` 由 dev-local 固定指向 dev Postgres（:5434）中本 worktree 自己的库（`loom_dev_<worktree>_<hash>`），忽略 `.env` / `.env.local` 里的 `DATABASE_URL` 与 `POSTGRES_*`。
 
@@ -274,6 +274,8 @@ API 与独立 worker 都先由 `server/env.ts` 加载 `.env.local` / `.env`，�
 ```bash
 pnpm typecheck        # tsrs --noEmit（root + server/start/tsconfig.json）
 pnpm lint             # biome check .
+pnpm hooks:install    # 幂等安装仓库 pre-commit，只对暂存内容跑 biome check
+pnpm hooks:uninstall  # 只删除带本仓库标记的 hook
 pnpm lint:ratchet     # warning/info 总数不得高于 PR 分叉点实测数（merge-base 用 head 的 Biome 重测）；低于不失败，无台账文件；取不到 base 时 fail closed（CI 必须给 LINT_BASE_SHA/--base）
 pnpm test             # 全量 umbrella（audit 链 + unit/db/migration）；CI Gate 不调用它，而是跑 .github/workflows/ci-gate.yml 的矩阵（见 AGENTS.md 与 `/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/agents/development-workflow.md`）；本机按 AGENTS.md 只跑 scoped tests
 pnpm audit:schema     # schema write-path 审计（新表/字段必须有 write path）
@@ -281,6 +283,8 @@ pnpm audit:partition  # 测试分区审计（依赖 DB 的测试不得进 unit c
 pnpm audit:task-census # task registry 的 static caller / compatibility 分类与 wiring、run-log 契约
 pnpm build            # TanStack Start（js/css 另写 .br/.gz）+ 三 esbuild 产物（dist/server.cjs / dist/worker.cjs / dist/migrate.cjs）
 ```
+
+`pnpm hooks:install` 把 hook 写进该仓库的 `.git/hooks/pre-commit`，不改全局或本地 `core.hooksPath`；这项配置已经存在时拒绝安装。hook 不写工作区，也不 `git add`。部分暂存时只检查索引里的内容，路径里的空格和未暂存修改留在原地。全仓 typecheck 不进提交或推送 hook：它读的是工作区，不是暂存区。本机 root `tsrs --noEmit` 检查 6542 个文件的 check time 是 1.4 秒；`pnpm typecheck` 仍是显式 preflight，CI Gate 是最终检查。
 
 快速迭代用 watch 模式：`pnpm test:unit:watch`（无 DB，覆盖 UI / core / schema / parser）、
 `pnpm test:db:watch`（DB / API，需 Docker）。
@@ -406,6 +410,9 @@ API 总退出期限 65 秒，Compose 留 70 秒；独立 worker 保留 30 秒清
 ```bash
 curl https://loom.<your-domain>/api/health
 # → {"ok":true}
+
+curl https://loom.<your-domain>/api/ready
+# commit：构建参数 TLP_SOURCE_COMMIT（40 位 SHA）的前 9 位；镜像没写入时为 null
 ```
 
 ### Backup
@@ -431,15 +438,17 @@ crates/
   calibration-native/ # Rust 离线 calibration 核心（napi + WASM，与 TS oracle parity）
 src/
   capabilities/   # Capability 包：manifest.ts 声明路由/jobs/copilotTools/ui.pages
-    copilot/      # Copilot 域（D14 单人格 + 统一记忆读取面 + copilotTools 贡献制）
-    observability/# Observability 域（admin/logs/cost/jobs four GET 面平移）
+    copilot/      # Copilot 域（单人格对话 + chip SSE 流 + copilotTools 贡献制）
+    drawing/      # 生成式 UI 绘图域（compose_block drawing 委托的 Sol 后台单轮绘制）
+    observability/# Observability 域（admin 只读面 + 今日成本条）
     onboarding/   # 冷启动引导：目标设定、材料上传、起点探测与起始档案
     ingestion/    # 录入域（assets/ingestion pipeline）
     knowledge/    # 知识图谱域
     notes/        # Note artifact 域（block-tree Tiptap 编辑器）
     practice/     # 练习域（review/quiz/judge/teaching skills）
     agency/       # 代理域（nightly chain + goals）
-    shell/        # 工作台域（CopilotDock + admin pages）
+    agent-workspace/ # 每 owner 持久工作区中的固定身份脚本执行（仅受控验收入口）
+    shell/        # 工作台域（today / inbox / coach 页面 + workbench 聚合）
     index.ts      # 静态组合根：按顺序聚合所有 capability manifests
   kernel/         # CapabilityManifest 契约 + validateComposition 唯一性循环
   core/           # Zod schemas, id helpers, cross-subject primitives
