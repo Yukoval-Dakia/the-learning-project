@@ -26,6 +26,7 @@ import { recordDifficultyCalibrationLabel } from './recalibration';
 import {
   hasSchedulingEffect,
   planSubjects,
+  ratingForSchedulingSubject,
   rederiveSettlementPlan,
   schedulingSubjects,
 } from './settle-plan';
@@ -171,8 +172,9 @@ export async function executePlan(
       } else {
         if (before && isCandidateState(before))
           throw new Error('candidate state cannot be reinterpreted as FSRS');
-        if (plan.rating === null) throw new Error('FSRS rating missing');
-        const scheduled = scheduleReview(before, plan.rating, occurrenceAt);
+        const rating = ratingForSchedulingSubject(plan, subject);
+        if (rating === null) throw new Error('FSRS rating missing');
+        const scheduled = scheduleReview(before, rating, occurrenceAt);
         after = {
           ...scheduled.nextState,
           last_review: scheduled.nextState.last_review ?? null,
