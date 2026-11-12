@@ -37,9 +37,21 @@ const RecordSteeringInputSchema = z.object({
   /** The goal being revised/ended. Optional when exactly ONE steering goal is
    *  active (the common follow-up case: the confirmation text carries no id) or
    *  when the turn's focus is one of several; required otherwise. */
-  goal_id: z.string().min(1).optional(),
+  goal_id: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      'The steering goal to revise/end. With multiple active goals, pass the named or focused goal; omit only when the server can resolve one unambiguously.',
+    ),
   /** Verbatim quote from the learner's message this turn (≤500 chars). */
-  learner_words: z.string().min(1).max(500),
+  learner_words: z
+    .string()
+    .min(1)
+    .max(500)
+    .describe(
+      "Verbatim quote from the learner's CURRENT message (server-checked; paraphrases rejected).",
+    ),
   instruction_md: z
     .string()
     .min(1)
@@ -298,7 +310,7 @@ async function resolveSingleSteeringGoalId(
 export const recordSteeringTool: DomainTool<RecordSteeringToolInput, RecordSteeringToolOutput> = {
   name: 'record_steering',
   description:
-    "MUST be called FIRST — before any advice or proposal — whenever the learner states an exam/quiz date or scope (期中/期末/测验), a study deadline, a priority change (这周主攻/别排物理), or cancels a prior arrangement (考试取消了). Writes directly, no proposal: learner_words MUST quote the learner's words verbatim from the current message (server-checked; paraphrases are rejected); unmappable scope stays as text. revise/end target: with goal_id omitted the server uses the only active arrangement, or the ambient.focused_entity goal (the learner tapped 改/撤回 on it on the today page; the prefilled sentence quotes its title). When the learner's words clearly name a different arrangement, pass that one's goal_id from the startup context's 当前安排 lines (each shows its title and goal_id) — never guess an id. instruction_md is the arrangement itself (「11 月 27 日期中考，先练数列和导数」), not a description of the change. revise/end results carry previous_instruction_md: open the confirmation by naming that arrangement (「把『11 月 20 日期中考…』改成了…」 / 「『…』撤回了」), and build the rest ONLY from echo/issues/preparing. Never substitute a knowledge-tree proposal or a spoken-only recap for this call.",
+    'MUST be called FIRST — before any advice or proposal — whenever the learner states an exam/quiz date or scope (期中/期末/测验), a study deadline, a priority change (这周主攻/别排物理), or cancels a prior arrangement (考试取消了). Writes directly, no proposal; never substitute a knowledge-tree proposal or a spoken-only recap. Build the confirmation ONLY from previous_instruction_md/echo/issues/preparing; unmappable scope stays as text.',
   effect: 'write',
   inputSchema: RecordSteeringInputSchema,
   outputSchema: RecordSteeringOutputSchema,
