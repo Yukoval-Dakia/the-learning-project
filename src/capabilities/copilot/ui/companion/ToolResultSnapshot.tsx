@@ -60,8 +60,6 @@ const FIELD_LABELS: Readonly<Record<string, string>> = {
   recent_failures: '近期错题',
   question_id: '题目编号',
   knowledge_ids: '关联知识点',
-  proposals: '待确认的建议',
-  created_at: '提出时间',
 };
 
 const UNAVAILABLE: Readonly<Record<string, string>> = {

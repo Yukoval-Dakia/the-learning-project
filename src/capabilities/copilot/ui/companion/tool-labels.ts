@@ -32,7 +32,6 @@ export const TOOL_LABELS: Readonly<Record<string, string>> = {
   attribute_mistake: '错因',
   propose_variant: '建议换个变式',
   write_quiz: '组的练习',
-  list_pending_proposals: '等你确认的建议',
   // Tools the step rows meet that have no saved-result card.
   knowledge_mutation: '建议调整学习内容',
   edit_question: '改题',
@@ -91,7 +90,6 @@ const ACTIVITY: Readonly<Record<string, string>> = {
   attribute_mistake: '在分析错因',
   propose_variant: '在想换个什么变式',
   write_quiz: '在组一份练习',
-  list_pending_proposals: '在看有哪些建议等你确认',
   knowledge_mutation: '在想怎么调整学习内容',
   edit_question: '在改题',
   submit_review_answer: '在提交作答',

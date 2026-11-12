@@ -504,13 +504,14 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
       row.variants = variantsMap.get(fa.question_id) ?? [];
     }
     if (input.includeAnswers) {
-      row.answer_excerpt = excerpt(fa.answer_md);
-      // Frozen snapshot first: a reference the learner saw at attempt time beats
-      // today's edited version, which may have moved on. Diagnostic prompts are
-      // redacted elsewhere; with no question row to prove the source, withhold too.
-      const referenceAllowed =
+      // The whole attempt surface of a diagnostic prompt is redacted elsewhere;
+      // withhold both excerpts there, including when no question row proves the source.
+      const answersAllowed =
         questionRow !== undefined && questionRow.source !== INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE;
-      row.reference_excerpt = referenceAllowed
+      row.answer_excerpt = answersAllowed ? excerpt(fa.answer_md) : null;
+      // Frozen snapshot first: a reference the learner saw at attempt time beats
+      // today's edited version, which may have moved on.
+      row.reference_excerpt = answersAllowed
         ? excerpt(fa.question_snapshot?.question.reference_md ?? questionRow.reference_md)
         : null;
     }

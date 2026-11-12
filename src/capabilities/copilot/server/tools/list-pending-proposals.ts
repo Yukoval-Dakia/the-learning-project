@@ -51,8 +51,8 @@ const DESCRIPTION = [
   'Use it before proposing or when the learner asks what awaits confirmation.',
   'Optional kind narrows to one kind; limit is 1–50 (default 20).',
   'Pending page only, never an all-status inventory: decided and dismissed proposals are',
-  'absent and unparseable stored payloads are skipped, so zero rows mean no matching',
-  'pending rows were projected.',
+  'absent, observe-only kinds that never wait on the learner are excluded, and unparseable',
+  'stored payloads are skipped, so zero rows mean no matching pending rows were projected.',
 ].join('\n');
 
 async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
@@ -60,6 +60,10 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
   const limit = input.limit ?? TOOL_COURTESY_DEFAULTS.list_pending_proposals;
   const page = await listProposalInboxPage(ctx.db, {
     status: 'pending',
+    // Decision lane only: observe-only kinds (defer / archive / image_candidate …)
+    // never wait on the learner, so they must not fill the page the tool calls
+    // "awaiting confirmation". Same split the inbox UI applies.
+    lane: 'decision',
     limit,
     ...(input.kind ? { kind: input.kind } : {}),
   });
