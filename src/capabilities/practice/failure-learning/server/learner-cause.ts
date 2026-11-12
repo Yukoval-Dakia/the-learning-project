@@ -4,7 +4,9 @@ import type { Db, Tx } from '@/db/client';
 import { event, question } from '@/db/schema';
 import { type EffectiveTruth, getEffectiveTruths, writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
+import { lockAssessmentEvaluationGroup } from '@/kernel/locks/assessment-evaluation-group-lock';
 import {
+  type NativeAttemptVerdict,
   nativeAttemptOutcome,
   resolveVerdictForAttempt,
   resolveVerdictsForNativeAttempts,
@@ -39,6 +41,17 @@ type CauseTarget = {
   knowledgeIds: string[];
   profile: SubjectProfile;
 };
+
+function isSelectableNativeVerdict(native: NativeAttemptVerdict | undefined): boolean {
+  const outcome = nativeAttemptOutcome(native);
+  if (outcome === 'failure' || outcome === 'partial') return true;
+  const selected = native?.effective;
+  return (
+    selected?.row.provenance?.source !== 'self_report' &&
+    selected?.verdict.verdict === 'unsupported' &&
+    selected.verdict.reason === 'partial_unknown_points'
+  );
+}
 
 function payloadKnowledgeIds(row: EventRow): string[] {
   const value = (row.payload as { referenced_knowledge_ids?: unknown }).referenced_knowledge_ids;
@@ -82,7 +95,9 @@ async function loadCauseTarget(
   let outcome = attempt.outcome;
   if (attempt.action === 'experimental:assessment_attempt') {
     const native = await resolveVerdictsForNativeAttempts(db, [attempt]);
-    outcome = nativeAttemptOutcome(native.get(attempt.id));
+    const verdict = native.get(attempt.id);
+    if (isSelectableNativeVerdict(verdict)) return buildCauseTarget(db, attempt);
+    outcome = nativeAttemptOutcome(verdict);
   } else {
     const verdict = await resolveVerdictForAttempt(db, attempt.id);
     outcome =
@@ -95,12 +110,24 @@ async function loadCauseTarget(
     throw new ApiError('cause_not_available', NOT_WRONG_OR_PARTIAL, 409);
   }
 
+  return buildCauseTarget(db, attempt);
+}
+
+async function buildCauseTarget(db: Db | Tx, attempt: EventRow): Promise<CauseTarget> {
   const knowledgeIds = await loadKnowledgeIds(db, attempt);
   const profile = await withActiveCauseCategoryOverlays(
     db,
     await resolveSubjectProfileForKnowledgeIds(db, knowledgeIds),
   );
   return { attempt, knowledgeIds, profile };
+}
+
+async function lockNativeAttemptVerification(tx: Tx, attemptEventId: string): Promise<void> {
+  const [attempt] = await tx.select().from(event).where(eq(event.id, attemptEventId)).limit(1);
+  if (attempt?.action !== 'experimental:assessment_attempt') return;
+  const native = await resolveVerdictsForNativeAttempts(tx, [attempt]);
+  const evaluationGroupId = native.get(attempt.id)?.evaluation_group_id;
+  if (evaluationGroupId) await lockAssessmentEvaluationGroup(tx, evaluationGroupId);
 }
 
 function causeLabel(profile: SubjectProfile, primaryCategory: string): string {
@@ -277,6 +304,10 @@ export async function setAttemptCause(
 }> {
   const userNotes = body.user_notes ?? null;
   return db.transaction(async (tx) => {
+    // Native activation moves the effective head under this group lock. Resolve
+    // the immutable group coordinate first, then re-read the verdict while the
+    // lock is held so the eligibility check and cause append share its serialization.
+    await lockNativeAttemptVerification(tx, attemptEventId);
     const target = await loadCauseTarget(tx, attemptEventId, true);
     assertCauseAllowedForSubjectProfile(
       { primary_category: body.primary_category },
