@@ -1,6 +1,6 @@
 import { getCurrentFailureAttempts } from '@/kernel/read-models/failure-attempts';
 import { resolveSchedulingProjection } from '@/kernel/records/scheduling-state';
-import { selectedForgettingEngine } from '@/kernel/scheduling';
+import { retrievabilityForKc, selectedForgettingEngine } from '@/kernel/scheduling';
 // Phase 1c.1 Step 9.B — `/api/review/due` handler over `material_fsrs_state`.
 // queryReviewDue is the typed actionable queue. get_review_due separately
 // reports schedule projections and bounded diagnostic coverage; its result
@@ -13,13 +13,16 @@ import { selectedForgettingEngine } from '@/kernel/scheduling';
 // Wire contract preserved: { rows: [{ id, question_id, prompt_md, reference_md,
 // knowledge_ids, cause, fsrs_state, created_at }] }.
 
-import { and, eq, inArray, lte } from 'drizzle-orm';
+import { and, eq, gte, inArray, lte } from 'drizzle-orm';
+import { learnerDayWindowUtc, learnerLocalDay } from '@/core/learner-day';
 import { type ActivityRefT, questionRef } from '@/core/schema/activity';
 import type { CauseCategoryT } from '@/core/schema/event/blocks';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
+import { SchedulingStateSchema } from '@/core/schema/scheduling-state';
+import { steeringDefersKnowledgeIds } from '@/core/steering';
 import { type Db, type Tx, db } from '@/db/client';
 import { notDraftPredicate, questionSuspendedPredicate } from '@/db/predicates';
-import { material_fsrs_state, question } from '@/db/schema';
+import { event, material_fsrs_state, question } from '@/db/schema';
 import type { EffectiveTruth } from '@/kernel/events';
 import { errorResponse } from '@/kernel/http';
 // North-Star W10 review soft-bias. Active goals supply a
@@ -31,7 +34,10 @@ import {
 } from '@/kernel/read-models/active-goal-scope';
 import { effectiveCauseCategoryForFailureAttempt } from '@/kernel/read-models/cause-policy';
 import { type FailureAttempt, getFailureAttempts } from '@/kernel/read-models/failure-attempts';
-import { getNonKcKnowledgeIds } from '@/kernel/read-models/knowledge-roles';
+import {
+  getNonKcKnowledgeIds,
+  scheduledTestableKnowledgeIds,
+} from '@/kernel/read-models/knowledge-roles';
 import { SYNTHETIC_SUBJECT_ROOT_RE } from '@/kernel/read-models/placement-scope';
 import { loadSteeringDeferredKnowledgeIds } from '@/kernel/read-models/steering-deferral';
 // T-CS / — cross-subject scheduling v1 (, line 242). The due
@@ -43,6 +49,7 @@ import { loadSteeringDeferredKnowledgeIds } from '@/kernel/read-models/steering-
 // so the brief-refresh layer shares the SAME canonical bridge.
 import { batchResolveSubjectIds } from '@/kernel/read-models/subject-resolution';
 import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
+import type { SelectionMissV1 } from '../../question-bank/public';
 // by-kind variant-rotation probe selection. Replaces the
 // inline single-question-avoidance ORDER BY (seam) with a routed pick:
 // recall kinds repeat the original question, application kinds rotate the
@@ -122,8 +129,8 @@ async function getFailureAttemptsPerQuestion(
 }
 
 // T-CS / — deterministic round-robin SELECTION across subjects.
-// `rows` is already ordered most-due-first (due_at asc for the overdue segment,
-// or attempt order for the never-reviewed segment). We partition it by subject
+// `rows` is already ordered most-forgotten-first (retrievability ascending for the
+// overdue segment, or attempt order for the never-reviewed segment). We partition it by subject
 // id (preserving that within-subject order — STABLE), then cycle through the
 // subjects in a deterministic, stable order — the order in which each subject is
 // FIRST encountered in `rows` — taking the next most-due item from each in turn
@@ -140,7 +147,7 @@ function roundRobinBySubject<T extends { id: string }>(
 ): T[] {
   if (rows.length <= 1 || limit <= 0) return rows.slice(0, Math.max(limit, 0));
   // Stable bucketing: subject order = first-seen order in `rows`; within-subject
-  // order = `rows` order (most-due first). Single subject → one bucket → no-op.
+  // order = `rows` order (most-forgotten first). Single subject → one bucket → no-op.
   const buckets: T[][] = [];
   const bucketIndexBySubject = new Map<string, number>();
   for (const row of rows) {
@@ -170,6 +177,95 @@ function roundRobinBySubject<T extends { id: string }>(
     if (!advanced) break; // all buckets exhausted (defensive; cap bounds the loop)
   }
   return out;
+}
+
+type ProbeSelectionMiss = {
+  knowledgeId: string;
+  candidateCount: number;
+};
+
+function probeSelectionMissPayload(
+  knowledgeId: string,
+  subjectId: string,
+  candidateCount: number,
+  version: SelectionMissV1['version'],
+  selectionPolicyVersion: string,
+): SelectionMissV1 {
+  const empty = candidateCount === 0;
+  // The prefetch bucket is already the servable pool. Repeating its size on the
+  // axes this miss did not filter keeps a zero from looking like a difficulty or
+  // kind rejection.
+  const counted = empty ? 0 : candidateCount;
+  return {
+    version,
+    reason: empty ? 'NO_ALLOWED_USE_ITEM' : 'INSUFFICIENT_ELIGIBLE_ITEMS',
+    subject_id: subjectId,
+    knowledge_id: knowledgeId,
+    selection_policy_version: selectionPolicyVersion,
+    evaluated_constraints: {
+      live_knowledge: true,
+      candidate_count: candidateCount,
+      near_difficulty_count: counted,
+      required_kind_count: counted,
+      trusted_source_count: counted,
+      accessible_count: candidateCount,
+      scorable_count: candidateCount,
+      independent_family_count: null,
+      exposed_family_count: null,
+      quarantined_count: 0,
+    },
+  };
+}
+
+/**
+ * One selection_miss per knowledge per learner day. Due-page reads and stream
+ * compose share this branch; a second pass the same day must not flood the ledger.
+ */
+async function recordProbeSelectionMisses(
+  activeDb: DbLike,
+  misses: readonly ProbeSelectionMiss[],
+  now: Date,
+): Promise<void> {
+  if (misses.length === 0) return;
+  const day = learnerLocalDay(now);
+  const { from } = learnerDayWindowUtc(day, day);
+  const knowledgeIds = [...new Set(misses.map((miss) => miss.knowledgeId))];
+  const already = await activeDb
+    .select({ subject_id: event.subject_id })
+    .from(event)
+    .where(
+      and(
+        eq(event.action, 'experimental:selection_miss'),
+        inArray(event.subject_id, knowledgeIds),
+        gte(event.created_at, from),
+      ),
+    );
+  const seen = new Set(already.map((row) => row.subject_id));
+  const pending: ProbeSelectionMiss[] = [];
+  for (const miss of misses) {
+    if (seen.has(miss.knowledgeId)) continue;
+    seen.add(miss.knowledgeId);
+    pending.push(miss);
+  }
+  if (pending.length === 0) return;
+  const subjectIds = await batchResolveSubjectIds(
+    activeDb,
+    pending.map((miss) => ({ id: miss.knowledgeId, knowledge_ids: [miss.knowledgeId] })),
+  );
+  const { DEFAULT_SELECTION_POLICY_VERSION, SELECTION_MISS_VERSION, writeSelectionMissEvent } =
+    await import('../../question-bank/public');
+  for (const miss of pending) {
+    await writeSelectionMissEvent(
+      activeDb,
+      probeSelectionMissPayload(
+        miss.knowledgeId,
+        subjectIds.get(miss.knowledgeId) ?? miss.knowledgeId,
+        miss.candidateCount,
+        SELECTION_MISS_VERSION,
+        DEFAULT_SELECTION_POLICY_VERSION,
+      ),
+    );
+  }
 }
 
 type ScheduledDueRow = {
@@ -203,6 +299,27 @@ export interface ReviewDueQuery {
  * contract instead of copying the literal.
  */
 export const REVIEW_DUE_LIMIT_MAX = 200;
+
+/** Current recall probability in [0, 1]. An unknown reading sorts as 0 so it is not treated as still remembered. */
+export function dueRetrievability(state: unknown, now: Date): number {
+  const parsed = SchedulingStateSchema.safeParse(state);
+  const reading = retrievabilityForKc(parsed.success ? parsed.data : null, now);
+  if (typeof reading === 'number') return reading;
+  if (reading.kind === 'score') return reading.value;
+  return 0;
+}
+
+function compareDueByRetrievability(
+  a: { state: unknown; due_at: Date; tie: string },
+  b: { state: unknown; due_at: Date; tie: string },
+  now: Date,
+): number {
+  const recall = dueRetrievability(a.state, now) - dueRetrievability(b.state, now);
+  if (recall !== 0) return recall;
+  const dueDelta = a.due_at.getTime() - b.due_at.getTime();
+  if (dueDelta !== 0) return dueDelta;
+  return a.tie.localeCompare(b.tie);
+}
 
 export type ReviewDueRow = {
   id: string;
@@ -238,7 +355,8 @@ export async function queryReviewDue(
   // 2. Questions with NO material_fsrs_state row but at least one failure
   // attempt — never-reviewed cards still owed a first pass.
   // We keep them ordered: null-state cards first (legacy contract), then
-  // due-earliest first.
+  // lowest current retrievability first. The SQL scan stays due_at order;
+  // retrievability is computed after the projection.
   // T-CS / : fetch a WIDER overdue candidate window than `limit` (same
   // bounded window the never-reviewed slice uses) so the round-robin selection
   // below can balance across subjects. With a plain `.limit(limit)` the SQL
@@ -280,6 +398,7 @@ export async function queryReviewDue(
         selectedForgettingEngine() === 'fsrs' ? lte(material_fsrs_state.due_at, now) : undefined,
       ),
     )
+    // Scan order only. Scheduling order is retrievability ascending after projection.
     .orderBy(material_fsrs_state.due_at, material_fsrs_state.subject_id);
   // defense in depth: a 'seed:<subj>:root' FSRS subject is a structural anchor, never
   // probeable content. Enroll sites no longer mint it, but a pre-fix row may still exist
@@ -303,24 +422,22 @@ export async function queryReviewDue(
   // YUK-1770 D4 — subtractive steering deferral (「这周别排物理」). In-window
   // excluded KCs leave the candidate pool entirely: their FSRS rows, due_at and
   // state are untouched (deferral, not deletion); when the window closes or the
-  // learner revokes, the ordinary ordering serves them again by forgetting risk.
+  // learner revokes, the ordinary ordering serves them again by retrievability.
   // Question-shaped rows defer only when EVERY knowledge id is excluded — a
   // cross-subject item stays (its other subject still owns it).
   const deferredBySteering = await (
     deps.loadSteeringDeferredFn ?? loadSteeringDeferredKnowledgeIds
   )(activeDb, now);
   const isSteeringDeferredRow = (knowledgeIds: readonly string[]): boolean =>
-    deferredBySteering.size > 0 &&
-    knowledgeIds.length > 0 &&
-    knowledgeIds.every((kid) => deferredBySteering.has(kid));
+    steeringDefersKnowledgeIds(knowledgeIds, deferredBySteering);
   const schedulingKnowledgeRows = rawKnowledgeStateRows.filter(
-    (stateRow) => !deferredBySteering.has(stateRow.knowledge_id),
+    (stateRow) => !steeringDefersKnowledgeIds([stateRow.knowledge_id], deferredBySteering),
   );
 
-  // bulk-prefetch every probe-selection DB input for the whole due page in THREE
-  // reads (was up to ~3 serial round-trips PER due KC — the /api/review/due N+1). The per-KC
-  // selection below is then pure in-memory over the prefetch, and the shared usedDueQuestionIds
-  // set is threaded through the SAME sequential order → byte-identical probe picks.
+  // bulk-prefetch every probe-selection DB input for the whole due page (was up to ~3
+  // serial round-trips PER due KC — the /api/review/due N+1). The per-KC selection below is
+  // then pure in-memory over the prefetch, and the shared usedDueQuestionIds set is threaded
+  // through the SAME sequential order as a per-KC prefetch.
   const knowledgeStateRows = (
     await Promise.all(
       schedulingKnowledgeRows.map((row) =>
@@ -329,9 +446,12 @@ export async function queryReviewDue(
     )
   )
     .filter((row) => row.due_at <= now)
-    .sort(
-      (a, b) =>
-        a.due_at.getTime() - b.due_at.getTime() || a.knowledge_id.localeCompare(b.knowledge_id),
+    .sort((a, b) =>
+      compareDueByRetrievability(
+        { state: a.state, due_at: a.due_at, tie: a.knowledge_id },
+        { state: b.state, due_at: b.due_at, tie: b.knowledge_id },
+        now,
+      ),
     );
 
   const probePrefetch = await prefetchProbeSelection(
@@ -340,8 +460,10 @@ export async function queryReviewDue(
       knowledgeId: stateRow.knowledge_id,
       lastReviewEventId: stateRow.last_review_event_id ?? null,
     })),
+    now,
   );
   const dueRows: ScheduledDueRow[] = [];
+  const probeMisses: ProbeSelectionMiss[] = [];
   for (const stateRow of knowledgeStateRows) {
     // by-kind variant-rotation probe (recall repeat vs
     // application family rotation). Returns the same projection the old inline
@@ -352,7 +474,13 @@ export async function queryReviewDue(
       lastReviewEventId: stateRow.last_review_event_id ?? null,
       usedQuestionIds: usedDueQuestionIds,
     });
-    if (!selected) continue;
+    if (!selected) {
+      probeMisses.push({
+        knowledgeId: stateRow.knowledge_id,
+        candidateCount: probePrefetch.kcQuestions.get(stateRow.knowledge_id)?.length ?? 0,
+      });
+      continue;
+    }
     dueRows.push({
       ...selected,
       state: stateRow.state,
@@ -362,6 +490,7 @@ export async function queryReviewDue(
     });
     if (dueRows.length === candidateWindow) break;
   }
+  await recordProbeSelectionMisses(activeDb, probeMisses, now);
 
   const rawLegacyQuestionStateRows = await activeDb
     .select({
@@ -388,6 +517,7 @@ export async function queryReviewDue(
         questionSuspendedPredicate(question),
       ),
     )
+    // Scan order only. Scheduling order is retrievability ascending after projection.
     .orderBy(material_fsrs_state.due_at, question.created_at);
   const legacyQuestionStateRows = (
     await Promise.all(
@@ -397,9 +527,12 @@ export async function queryReviewDue(
     )
   )
     .filter((row) => row.due_at <= now)
-    .sort(
-      (a, b) =>
-        a.due_at.getTime() - b.due_at.getTime() || a.question_id.localeCompare(b.question_id),
+    .sort((a, b) =>
+      compareDueByRetrievability(
+        { state: a.state, due_at: a.due_at, tie: a.question_id },
+        { state: b.state, due_at: b.due_at, tie: b.question_id },
+        now,
+      ),
     );
 
   const admittedLegacyIds = await readAutomaticallyServableQuestionIds(
@@ -407,9 +540,18 @@ export async function queryReviewDue(
     legacyQuestionStateRows.map((row) => row.question_id),
     { includeInterventionDiagnostics: true },
   );
+  const testableIds = new Set(
+    await scheduledTestableKnowledgeIds(
+      activeDb,
+      legacyQuestionStateRows.flatMap((row) => row.knowledge_ids ?? []),
+    ),
+  );
   for (const row of legacyQuestionStateRows
     .filter((row) => admittedLegacyIds.has(row.question_id))
     .filter((row) => !isSteeringDeferredRow(row.knowledge_ids ?? []))
+    // A testable KC that has its knowledge card takes over the schedule. Goal,
+    // container, seed-root, and not-yet-enrolled KC labels keep the question card.
+    .filter((row) => !(row.knowledge_ids ?? []).some((id) => testableIds.has(id)))
     .slice(0, candidateWindow)) {
     if (usedDueQuestionIds.has(row.question_id)) continue;
     usedDueQuestionIds.add(row.question_id);
@@ -427,13 +569,13 @@ export async function queryReviewDue(
       metadata: row.metadata,
     });
   }
-  dueRows.sort((a, b) => {
-    const dueDelta = a.due_at.getTime() - b.due_at.getTime();
-    if (dueDelta !== 0) return dueDelta;
-    const createdDelta = a.created_at.getTime() - b.created_at.getTime();
-    if (createdDelta !== 0) return createdDelta;
-    return a.question_id.localeCompare(b.question_id);
-  });
+  dueRows.sort((a, b) =>
+    compareDueByRetrievability(
+      { state: a.state, due_at: a.due_at, tie: a.question_id },
+      { state: b.state, due_at: b.due_at, tie: b.question_id },
+      now,
+    ),
+  );
 
   // Build the "never reviewed" slice by finding failure attempts whose
   // question has no FSRS state row yet. Use the existing event-stream read

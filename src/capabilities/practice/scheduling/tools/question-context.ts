@@ -1,7 +1,3 @@
-import { SYNTHETIC_SUBJECT_ROOT_RE } from '@/kernel/read-models/placement-scope';
-import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
-import { resolveSchedulingProjection } from '@/kernel/records/scheduling-state';
-import { selectedForgettingEngine } from '@/kernel/scheduling';
 // Foundation D M2 — moved to Practice by (F4.0).
 // Composite read tools for one question contract (attempts, reviews, FSRS
 // state, linked records, variants, knowledge paths, assets, addressable
@@ -17,6 +13,7 @@ import {
   INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
   InterventionSettlement,
 } from '@/core/schema/intervention';
+import { absentSignal, knownSignal } from '@/core/schema/knowledge-signal';
 import { deriveSourceTier } from '@/core/schema/provenance';
 // D6-R6 / D6-draftread — addressable-structure projection (read≡write
 // coordinate fix). Pure tree-clip; shared by get_question_context(include:
@@ -44,12 +41,22 @@ import {
 import { getFailureAttemptsForDerivation } from '@/kernel/read-models/failure-attempts';
 import { readFigureOrigins } from '@/kernel/read-models/figure-origin';
 import { miscCauseLabelMap, resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
-import { getQuestionTimeline, getRecentReviewEvents } from '@/kernel/read-models/question-activity';
+import { SYNTHETIC_SUBJECT_ROOT_RE } from '@/kernel/read-models/placement-scope';
+import {
+  getQuestionTimeline,
+  getRecentReviewEvents,
+  judgedAttemptCounts,
+  personalHitRate,
+  readAttemptFacts,
+} from '@/kernel/read-models/question-activity';
 import {
   learnerVisibleImageRefs,
   loadLearnerImagePageIndex,
 } from '@/kernel/read-models/question-images';
+import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
 import { derivableLearningRecords } from '@/kernel/records/queries';
+import { resolveSchedulingProjection } from '@/kernel/records/scheduling-state';
+import { selectedForgettingEngine } from '@/kernel/scheduling';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 import {
   QuestionIssueReadingSchema,
@@ -396,6 +403,19 @@ const GetReviewDueOutputSchema = z.object({
       // time. Present only for tier-2 rows (metadata.web_sourced.whitelist_match);
       // null otherwise. Demotion affects selection priority only, never quality.
       whitelist_match: z.boolean().nullable(),
+      personal_hit_rate: z.object({
+        value: z
+          .object({
+            rate: z.number(),
+            hits: z.number().int().nonnegative(),
+            judged_attempts: z.number().int().positive(),
+          })
+          .nullable(),
+        known: z.boolean(),
+        source: z.string(),
+        asOf: z.string(),
+        missingReason: z.string().nullable(),
+      }),
       latest_mistake: z
         .object({
           attempt_event_id: z.string(),
@@ -813,7 +833,7 @@ export async function executeGetReviewDue(
   const admittedNew = await readAutomaticallyServableQuestionIds(ctx.db, newQuestionIds, {
     includeInterventionDiagnostics: true,
   });
-  const rows: GetReviewDueOutput['rows'] = [];
+  const rows: Array<Omit<GetReviewDueOutput['rows'][number], 'personal_hit_rate'>> = [];
   for (const qid of newQuestionIds) {
     const q = qById.get(qid);
     const failure = latestNeverReviewed.get(qid);
@@ -857,10 +877,23 @@ export async function executeGetReviewDue(
   for (const row of rows) {
     for (const id of row.knowledge_ids) counts.set(id, (counts.get(id) ?? 0) + 1);
   }
+  const attemptFacts = await readAttemptFacts(
+    ctx.db,
+    rows.map((row) => row.question_id),
+  );
+  const ratedRows = rows.map((row) => {
+    const rate = personalHitRate(judgedAttemptCounts(attemptFacts.get(row.question_id) ?? []));
+    return {
+      ...row,
+      personal_hit_rate: rate
+        ? knownSignal(rate, 'kernel/read-models/question-activity:readAttemptFacts', now)
+        : absentSignal('kernel/read-models/question-activity:readAttemptFacts', now),
+    };
+  });
   return GetReviewDueOutputSchema.parse({
     as_of: now.toISOString(),
     queue_scope: 'due_now_and_never_reviewed_failures',
-    rows,
+    rows: ratedRows,
     queue_summary: {
       count_scope: 'returned_actionable_rows_only',
       total_returned: rows.length,
@@ -931,7 +964,7 @@ export async function executeGetReviewDue(
 export const getQuestionContextTool: DomainTool<GetQuestionContextInput, GetQuestionContextOutput> =
   {
     name: 'get_question_context',
-    description: `One call for one question. reading covers whether it can be issued, the latest score and wrong-cause (newest attempt plus its judge; later reviews do not replace it), the live FSRS due (knowledge card only when a role=kc point is tagged; a goal or container tag keeps the question card; lifecycle.due_at matches that card), each knowledge name and mastery, and two difficulty baselines (item anchor and family offset). reading.faulty is the latest experimental:question_or_answer_may_be_faulty inference plus its evidence; it is agent-only — do not tell the learner the question or answer may be faulty. Do not follow up with get_knowledge_state or get_attempt_context for those fields. ADR-0072: bank CONTENT reads go through read_bank. Check availability first: lifecycle zeros with observation_status=not_observed are placeholders for missing or protected diagnostic questions, not observed facts. Figures carry contains_learner_handwriting (true/false/unknown): ${LEARNER_HANDWRITING_RULE}.`,
+    description: `One call for one question. reading covers whether it can be issued, the latest score and wrong-cause (newest attempt plus its judge; later reviews do not replace it), the live FSRS due (knowledge card only when a role=kc point is tagged; a goal or container tag keeps the question card; lifecycle.due_at matches that card), each knowledge name and mastery, and two difficulty baselines (item anchor and family offset). reading.difficulty.band places the item logit against the primary knowledge point's theta_hat (below|near|above|stretch); an inferred theta is labeled, and a missing theta stays unknown. reading.timing.median_ms is the median recorded attempt duration; reading.timing.relative_to_same_difficulty.ratio is that median divided by the median duration of other questions at the same difficulty ordinal. Missing durations stay unknown and are never filled with 0. reading.hint_dependence is the chronological hints_used trajectory (latest 20 recorded points); attempts that did not record hints_used are omitted_attempts, not zeros. hint_dependence is agent-only — do not quote the tally to the learner. reading.faulty is the latest experimental:question_or_answer_may_be_faulty inference plus its evidence; it is agent-only — do not tell the learner the question or answer may be faulty. Do not follow up with get_knowledge_state or get_attempt_context for those fields. ADR-0072: bank CONTENT reads go through read_bank. Check availability first: lifecycle zeros with observation_status=not_observed are placeholders for missing or protected diagnostic questions, not observed facts. Figures carry contains_learner_handwriting (true/false/unknown): ${LEARNER_HANDWRITING_RULE}.`,
     effect: 'read',
     inputSchema: GetQuestionContextInputSchema,
     outputSchema: GetQuestionContextOutputSchema,
@@ -952,7 +985,7 @@ export const getQuestionContextTool: DomainTool<GetQuestionContextInput, GetQues
 export const getReviewDueTool: DomainTool<GetReviewDueInput, GetReviewDueOutput> = {
   name: 'get_review_due',
   description:
-    'Read returned actionable due-now rows (never-reviewed failures, then overdue FSRS cards) plus bounded future FSRS projections. rows=[] means this call returned zero actionable rows, NOT that the queue is empty. Use queue_assertion as the authoritative claim surface: cleared=false is supported by at least one returned actionable row; every null is unobserved and must never be converted to 0 or true. Report due returned rows, material due-state count, due completeness, and future returned/total/completeness separately. queue_coverage.completeness=unknown and supports_exhaustive_zero_claim=false forbid complete/cleared/global-zero claims. entity_status_coverage=not_observed forbids pending/in-progress entity counts. Never mutates FSRS.',
+    'Read returned actionable due-now rows (never-reviewed failures, then overdue FSRS cards) plus bounded future FSRS projections. Each row includes personal_hit_rate: successes divided by judged attempts (success+partial+failure) on that question. value=null means no judged attempt, not a 0% rate. personal_hit_rate is agent-only — do not quote it to the learner. rows=[] means this call returned zero actionable rows, NOT that the queue is empty. Use queue_assertion as the authoritative claim surface: cleared=false is supported by at least one returned actionable row; every null is unobserved and must never be converted to 0 or true. Report due returned rows, material due-state count, due completeness, and future returned/total/completeness separately. queue_coverage.completeness=unknown and supports_exhaustive_zero_claim=false forbid complete/cleared/global-zero claims. entity_status_coverage=not_observed forbids pending/in-progress entity counts. Never mutates FSRS.',
   effect: 'read',
   inputSchema: GetReviewDueInputSchema,
   outputSchema: GetReviewDueOutputSchema,

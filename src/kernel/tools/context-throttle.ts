@@ -79,6 +79,12 @@ const LIMITED_TOOLS: Record<string, LimitedToolSpec> = {
     courtesyDefault: 20,
     dimension: 'eventRows',
   },
+  // One row per pending proposal event; same eventRows dimension as query_events.
+  list_pending_proposals: {
+    limitPath: ['limit'],
+    courtesyDefault: TOOL_COURTESY_DEFAULTS.list_pending_proposals,
+    dimension: 'eventRows',
+  },
 };
 
 function readLimit(args: unknown, path: readonly string[]): number | undefined {

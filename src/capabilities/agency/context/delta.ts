@@ -12,6 +12,7 @@ import type { Db, Tx } from '@/db/client';
 import { event, knowledge } from '@/db/schema';
 import { COPILOT_USER_ASK_ACTION } from '@/kernel/events/copilot-actions';
 import { allowedEventIds } from '@/kernel/events/derivation-policy';
+import { readAgentNotes } from '@/kernel/read-models/agent-note-hints';
 import { excerpt } from '@/kernel/read-models/extraction-summary';
 import {
   LEARNER_ANSWER_ACTIONS,
@@ -23,6 +24,7 @@ import { SYNTHETIC_SUBJECT_ROOT_RE } from '@/kernel/read-models/placement-scope'
 import { executeGetReviewDue } from '@/kernel/read-models/review-due';
 import { allowedQuestionIds } from '@/kernel/read-models/usage-policy';
 import type { ToolContext } from '@/kernel/tools/types';
+import { gradedOutcomesForAnswerRows, outcomeWord } from './answer-outcome';
 import type { DeltaSection, DueItemLine } from './types';
 
 type DbLike = Db | Tx;
@@ -63,16 +65,6 @@ export function shanghaiLabel(at: Date): string {
   return `${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`;
 }
 
-function outcomeWord(outcome: string | null): string {
-  return outcome === 'success'
-    ? '对'
-    : outcome === 'failure'
-      ? '错'
-      : outcome === 'partial'
-        ? '半对'
-        : '已记';
-}
-
 function rateWord(payload: unknown): string {
   const rating =
     payload && typeof payload === 'object' ? (payload as { rating?: unknown }).rating : undefined;
@@ -85,15 +77,17 @@ function rateWord(payload: unknown): string {
         : '提议有处置';
 }
 
-function lineFor(row: {
-  action: string;
-  subject_kind: string;
-  outcome: string | null;
-  payload: unknown;
-}): string {
+function lineFor(
+  row: {
+    action: string;
+    subject_kind: string;
+    payload: unknown;
+  },
+  outcome: string | null,
+): string {
   if (row.action === ATTEMPT_ACTION || row.action === NATIVE_ATTEMPT_ACTION)
-    return `作答·${outcomeWord(row.outcome)}`;
-  if (row.action === REVIEW_ACTION) return `复习·${outcomeWord(row.outcome)}`;
+    return `作答·${outcomeWord(outcome)}`;
+  if (row.action === REVIEW_ACTION) return `复习·${outcomeWord(outcome)}`;
   if (row.action === RECORD_CAPTURE_ACTION) return '录入学习记录';
   if (row.action === RATE_ACTION) return rateWord(row.payload);
   if (row.subject_kind === 'goal') return '目标调整';
@@ -138,7 +132,7 @@ export async function readDeltaSection(
     callerActor: { kind: 'system', ref: 'learner-context' },
   };
   const predicate = deltaEventPredicate(opts.asOf);
-  const [candidates, due, streak, lastActivityAt] = await Promise.all([
+  const [candidates, due, streak, lastActivityAt, mixNotes] = await Promise.all([
     db
       .select({
         id: event.id,
@@ -155,6 +149,7 @@ export async function readDeltaSection(
     executeGetReviewDue(toolCtx, { limit: REVIEW_DUE_DISPLAY_CAP }),
     loadLongestFailureStreak(db),
     loadLastLearnerEventAt(db),
+    readAgentNotes(db, { for_agent: 'copilot', now: opts.now, limit: 20 }),
   ]);
 
   const window = candidates.slice(0, DELTA_SCAN_LIMIT);
@@ -163,6 +158,7 @@ export async function readDeltaSection(
     window.map((row) => row.id),
   );
   const rows = window.filter((row) => allowed.has(row.id));
+  const graded = await gradedOutcomesForAnswerRows(db, rows);
   const countRows = rows.map((row) => ({ ...row, n: 1 }));
   const purposeAllowed = await allowedQuestionIds(
     db,
@@ -219,11 +215,16 @@ export async function readDeltaSection(
     asOfBasis: opts.asOfBasis,
     counts,
     countsWindowLimited: candidates.length > DELTA_SCAN_LIMIT,
-    recent: rows.slice(0, 3).map((row) => ({ at: row.created_at, label: lineFor(row) })),
+    recent: rows.slice(0, 3).map((row) => ({
+      at: row.created_at,
+      label: lineFor(row, graded.has(row.id) ? (graded.get(row.id) ?? null) : row.outcome),
+    })),
     reviewDueCount: due.queue_summary.total_returned,
     reviewDueOverCap: due.queue_summary.total_returned >= REVIEW_DUE_DISPLAY_CAP,
     dueItems,
     failureStreak: streak,
     lastActivityAt,
+    mixNote:
+      mixNotes.find((note) => note.signal_kind === 'practice_stream_mix')?.summary_md ?? null,
   };
 }
