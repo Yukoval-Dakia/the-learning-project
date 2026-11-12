@@ -21,13 +21,11 @@ export async function loadLearnerContext(
   switch (view) {
     case 'curator':
     case 'companion':
-      return {
-        ...(await assembleCompanionContext(db, {
-          now: input.now ?? new Date(),
-          budget: view === 'curator' ? 800 : 1000,
-        })),
+      return assembleCompanionContext(db, {
+        now: input.now ?? new Date(),
+        budget: view === 'curator' ? 800 : 1000,
         view,
-      };
+      });
     default:
       // Every declared view must have an assembler here.
       throw new Error(`learner-context: unregistered view '${String(view)}'`);

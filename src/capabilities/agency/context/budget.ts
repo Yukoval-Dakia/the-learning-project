@@ -22,8 +22,16 @@ export interface TrimUnit {
   readonly protected?: boolean;
   /** 遥测名：被裁时按名字记（只记名不记内容）。 */
   readonly name: string;
+  /** 省略说明里的学习者可读名；缺省用 name。 */
+  readonly label?: string;
   readonly markdown: string | null;
 }
+
+/**
+ * Build the omission line shown in the assembled header. `hiddenCount` counts the
+ * dropped units whose labels no longer fit in the notice itself.
+ */
+export type OmissionNoticeFormatter = (labels: readonly string[], hiddenCount: number) => string;
 
 export interface TrimResult {
   readonly markdown: string;
@@ -52,6 +60,7 @@ type KeptUnit = TrimUnit & { markdown: string };
 export function trimUnitsToBudget(
   units: readonly TrimUnit[],
   budget: { maxEstimatedTokens: number; maxChars: number } = LEARNER_CONTEXT_STARTUP_BUDGET,
+  formatOmissionNotice?: OmissionNoticeFormatter,
 ): TrimResult {
   const kept: KeptUnit[] = units
     .filter((u): u is KeptUnit => !!u.markdown && u.markdown.length > 0)
@@ -158,10 +167,46 @@ export function trimUnitsToBudget(
     }
     md = low > 0 ? `${md.slice(0, low)}…` : '';
   }
+
+  // 5. Tell the model what was left out instead of silently losing whole units.
+  // The notice is charged against the same budget: labels are dropped from the
+  // tail until it fits. If not even the label-free line fits, the header is
+  // already visibly clamped with … and the notice is skipped rather than
+  // evicting a unit that still fit just to describe what was lost.
+  const notice =
+    formatOmissionNotice && droppedUnits.length > 0
+      ? omissionNotice(droppedUnits, units, md, budget, formatOmissionNotice)
+      : null;
+  if (notice) {
+    md = md ? `${md}\n${notice}` : notice;
+  }
   return {
     markdown: md,
     estimatedTokens: estimateContextTokens(md),
     droppedUnits,
     tokensBeforeTrim,
   };
+}
+
+/**
+ * Fit the omission notice into the remaining budget: drop labels from the tail
+ * (they are the least important part) before dropping the notice itself.
+ */
+function omissionNotice(
+  droppedUnits: readonly string[],
+  units: readonly TrimUnit[],
+  body: string,
+  budget: { maxEstimatedTokens: number; maxChars: number },
+  format: OmissionNoticeFormatter,
+): string | null {
+  const over = (text: string) =>
+    estimateContextTokens(text) > budget.maxEstimatedTokens || text.length > budget.maxChars;
+  const labels = [
+    ...new Set(droppedUnits.map((name) => units.find((u) => u.name === name)?.label ?? name)),
+  ];
+  for (let shown = labels.length; shown >= 0; shown -= 1) {
+    const notice = format(labels.slice(0, shown), labels.length - shown);
+    if (!over(body ? `${body}\n${notice}` : notice)) return notice;
+  }
+  return null;
 }
