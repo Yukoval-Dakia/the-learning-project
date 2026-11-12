@@ -49,6 +49,7 @@ function renderDelta(delta: DeltaSection): string {
   }
   if (delta.lastActivityAt) tail.push(`最近活动 ${shanghaiLabel(delta.lastActivityAt)}`);
   lines.push(tail.join('；'));
+  if (delta.mixNote) lines.push(delta.mixNote);
   return lines.join('\n');
 }
 
