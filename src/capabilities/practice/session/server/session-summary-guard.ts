@@ -33,6 +33,12 @@ export interface SessionSummaryFacts {
   /** The percent printed in numeric_summary; null when nothing was graded. */
   readonly correct_pct: number | null;
   readonly duration_min: number | null;
+  /**
+   * Other real per-session counts the model may cite (process-signal counts,
+   * per-cause counts, per-knowledge wrong counts). A clause naming one of these
+   * is not a fabricated number; the guard only rejects numbers no reader supplied.
+   */
+  readonly related_counts?: readonly number[];
 }
 
 export type SessionSummaryIssue = {
@@ -62,8 +68,18 @@ export function checkSessionSummaryClaims(
   facts: SessionSummaryFacts,
 ): SessionSummaryIssue[] {
   const issues: SessionSummaryIssue[] = [];
+  const relatedCounts = facts.related_counts ?? [];
+  // Per-cause, per-knowledge and process-signal counts are real readings of this
+  // session, so citing one is not a session-total contradiction.
   const allQuestionCounts = [
-    ...new Set([facts.total_reviewed, facts.graded, facts.correct, facts.partial, facts.incorrect]),
+    ...new Set([
+      facts.total_reviewed,
+      facts.graded,
+      facts.correct,
+      facts.partial,
+      facts.incorrect,
+      ...relatedCounts,
+    ]),
   ];
   for (const clause of checkableClauses(text)) {
     if (PER_UNIT.test(clause) || OTHER_SCOPE.test(clause)) continue;
@@ -78,11 +94,11 @@ export function checkSessionSummaryClaims(
       questionClaims.size > 1 || percentClaims.size > 0
         ? allQuestionCounts
         : hasWrongCue
-          ? [facts.incorrect]
+          ? [...new Set([facts.incorrect, ...relatedCounts])]
           : PARTIAL_CUE.test(clause)
-            ? [facts.partial]
+            ? [...new Set([facts.partial, ...relatedCounts])]
             : RIGHT_CUE.test(clause)
-              ? [facts.correct]
+              ? [...new Set([facts.correct, ...relatedCounts])]
               : allQuestionCounts;
     for (const claimed of questionClaims) {
       if (!questionExpected.includes(claimed)) {

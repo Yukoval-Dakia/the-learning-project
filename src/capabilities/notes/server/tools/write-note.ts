@@ -86,20 +86,42 @@ const WriteNoteInputSchema = z
     // append = add the Markdown body as a new block on an EXISTING note.
     // generate = queue the durable note_generate task to author a complete,
     //   systematic note (returns generation_queued — content is NOT written yet).
-    mode: z.enum(['create', 'append', 'generate']),
+    mode: z
+      .enum(['create', 'append', 'generate'])
+      .describe(
+        'create writes a NEW note now (returns written + artifact_id); append adds markdown as a new block on an existing note_id and bumps its version; generate hands off to the durable note_generate task for a complete systematic note — returns generation_queued, so say queued, not written.',
+      ),
     // Required for create + generate: the note's title.
-    title: z.string().min(1).max(120).optional(),
+    title: z.string().min(1).max(120).optional().describe('Required for create/generate.'),
     // Required for append: the artifact id of the existing note (art_… id
     // returned by an earlier write_note call or the notes API).
-    note_id: z.string().min(1).optional(),
+    note_id: z
+      .string()
+      .min(1)
+      .optional()
+      .describe('Existing note artifact id (art_…) — required for append.'),
     // Required for create + append: the Markdown content to write.
-    markdown: z.string().min(1).max(WRITE_NOTE_MARKDOWN_MAX_CHARS).optional(),
+    markdown: z
+      .string()
+      .min(1)
+      .max(WRITE_NOTE_MARKDOWN_MAX_CHARS)
+      .optional()
+      .describe('Markdown content — required for create/append.'),
     // Optional one-line intent for mode=generate (steers the note_generate
     // task, e.g. 「给期中复习的系统笔记」). Ignored for create/append.
-    intent: z.string().min(1).max(500).optional(),
+    intent: z
+      .string()
+      .min(1)
+      .max(500)
+      .optional()
+      .describe('One-line intent steering note_generate (generate only).'),
     // Optional knowledge-node labels for discovery. No existence check — a
     // dangling id degrades discovery, it breaks nothing (ADR-0033 D6).
-    knowledge_ids: z.array(z.string().min(1)).max(20).optional(),
+    knowledge_ids: z
+      .array(z.string().min(1))
+      .max(20)
+      .optional()
+      .describe('Knowledge-node labels for discovery; no existence check.'),
   })
   .superRefine((input, ctx) => {
     if ((input.mode === 'create' || input.mode === 'generate') && !input.title?.trim()) {
@@ -291,7 +313,7 @@ async function executeWriteNote(
 export const writeNoteTool: DomainTool<WriteNoteInput, WriteNoteOutput> = {
   name: 'write_note',
   description:
-    'Write a Markdown note for the learner. mode=create saves a NEW note with the given title and markdown and returns status=written with its artifact_id. mode=append adds the markdown as a new block on an existing note_id (an art_… id returned earlier or from the notes API) and bumps its version. mode=generate hands off to the durable note_generate task when the learner asks for a complete, systematic note — returns status=generation_queued and the note content is produced asynchronously, so say it is queued, not written. Errors come back as typed field issues — fix the named field and resubmit.',
+    'Write a Markdown note for the learner. Errors come back as typed field issues — fix the named field and resubmit.',
   effect: 'write',
   inputSchema: WriteNoteInputSchema,
   outputSchema: WriteNoteOutputSchema,

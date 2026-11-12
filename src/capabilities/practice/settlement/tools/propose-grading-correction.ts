@@ -24,14 +24,30 @@ import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 const ProposeGradingCorrectionInputSchema = z
   .object({
     /** 目标 native evaluation id（eval_*）。 */
-    evaluation_id: z.string().trim().min(1),
+    evaluation_id: z
+      .string()
+      .trim()
+      .min(1)
+      .describe(
+        'Target native evaluation id (eval_*); must be a COMPLETED evaluation — pending attempts are retryable infra state, not verdicts, and are rejected.',
+      ),
     /** 纠错理由（写进 proposal.reason_md 与 appeal request）。 */
-    reason_md: z.string().trim().min(1).max(2000),
+    reason_md: z
+      .string()
+      .trim()
+      .min(1)
+      .max(2000)
+      .describe('Why the verdict looks wrong (into proposal.reason_md and the appeal request).'),
     /**
      * rejudge（默认）= 重评冻结输入，走异步 appeal/rejudge/CAS 激活链；
      * assert = 携带每个在判 unit 的人工判定，accept 后 manual_assert 激活。
      */
-    correction_kind: z.enum(['rejudge', 'assert']).default('rejudge'),
+    correction_kind: z
+      .enum(['rejudge', 'assert'])
+      .default('rejudge')
+      .describe(
+        'rejudge = owner accept queues a regrade of the frozen submission via the appeal chain (new candidate evaluation → CAS activation → settlement replay); assert = manual-verdict activation and requires asserted_verdicts.',
+      ),
     /** correction_kind='assert' 时必填：每个 in-scope unit 一条 correct|incorrect。 */
     asserted_verdicts: z
       .array(
@@ -40,9 +56,13 @@ const ProposeGradingCorrectionInputSchema = z
           verdict: z.enum(['correct', 'incorrect']),
         }),
       )
-      .optional(),
+      .optional()
+      .describe('assert only: one {scoring_unit_id, verdict} per in-scope unit.'),
     /** 额外事件证据引用（判词/作答/相关事件 id）。 */
-    evidence_event_ids: z.array(z.string().min(1)).optional(),
+    evidence_event_ids: z
+      .array(z.string().min(1))
+      .optional()
+      .describe('Event ids grounding the proposal (judge/attempt evidence).'),
   })
   .strict();
 type ProposeGradingCorrectionInput = z.infer<typeof ProposeGradingCorrectionInputSchema>;
@@ -169,7 +189,7 @@ export const proposeGradingCorrectionTool: DomainTool<
 > = {
   name: 'propose_grading_correction',
   description:
-    'File a REVERSIBLE grading-correction proposal for a completed native evaluation (eval_*) that looks misgraded — e.g. a worked derivation judged 0 because the exact comparator could not read it, or a verdict contradicted by evidence. This does NOT regrade anything itself: it files a judge_retraction proposal that the owner reviews in the inbox. On accept, correction_kind=rejudge re-evaluates the frozen submission through the existing appeal chain (new candidate evaluation → CAS activation → settlement replay recalculates learning effects); correction_kind=assert activates a manual verdict immediately (requires asserted_verdicts covering every in-scope unit: {scoring_unit_id, verdict: correct|incorrect}). Use get_attempt_context / the events of the attempt to ground evidence first — evidence_event_ids are attached to the proposal for review. Pending (incomplete) evaluation attempts are rejected: they are retryable infra state, not verdicts. Duplicate-safe: a pending proposal for the same evaluation returns status duplicate.',
+    'File a REVERSIBLE judge_retraction proposal for a completed evaluation (eval_*) that looks misgraded — the owner reviews it in the inbox; this call never regrades anything itself. Ground evidence first via get_attempt_context / attempt events. A pending proposal for the same evaluation returns status duplicate.',
   effect: 'propose',
   inputSchema: ProposeGradingCorrectionInputSchema,
   outputSchema: ProposeGradingCorrectionOutputSchema,
