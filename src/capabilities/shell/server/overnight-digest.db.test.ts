@@ -48,7 +48,12 @@ describe('loadOvernightDigest degraded scan marking', () => {
       details: [],
     }));
     expect(digest.degraded_kinds).toEqual([
-      { task_kind: 'CoachTask', error_count: 1, recent_error_messages: ['plan_parse_error'] },
+      {
+        task_kind: 'CoachTask',
+        error_count: 1,
+        recent_error_messages: ['plan_parse_error'],
+        last_at: at.toISOString(),
+      },
     ]);
   });
 });

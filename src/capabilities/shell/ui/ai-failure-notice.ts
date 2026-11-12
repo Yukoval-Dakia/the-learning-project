@@ -30,43 +30,64 @@ const LEARNER_FELT_TASKS: ReadonlySet<string> = new Set([
 
 interface DegradedKind {
   task_kind: string;
+  /** Newest failure of this kind in the digest window; part of the episode key. */
+  last_at: string;
 }
 interface Alert {
   id: string;
   task_kind: string;
   rule: string;
+  /** Newest failure counted by the rule; anchors the digest mute. */
+  last_failure_at: string;
+}
+
+const DIGEST_MUTE_PREFIX = 'digest-kind:';
+
+/** Latest failure time the learner already acknowledged for this kind, or -Infinity. */
+function mutedThrough(closed: ReadonlySet<string>, taskKind: string): number {
+  const prefix = `${DIGEST_MUTE_PREFIX}${taskKind}:`;
+  let latest = Number.NEGATIVE_INFINITY;
+  for (const key of closed) {
+    if (!key.startsWith(prefix)) continue;
+    const at = Date.parse(key.slice(prefix.length));
+    if (Number.isFinite(at) && at > latest) latest = at;
+  }
+  return latest;
 }
 
 /**
- * What closing also covers: an alert's failures land in the next night's digest under another key,
- * and without this the same failures would show again the next morning.
+ * What closing also covers: an alert's failures land in later digests under an episode key
+ * the UI cannot know yet. Mute the kind through the alert's newest failure instead, so the
+ * same episode stays closed across readings and a newer failure still shows through.
  */
-export function failureNoticeCloseKeys(input: {
-  digest?: { window: { to: string } };
-  alerts?: readonly Alert[];
-}): string[] {
-  const nextWindow = input.digest?.window.to;
-  if (!nextWindow) return [];
+export function failureNoticeCloseKeys(input: { alerts?: readonly Alert[] }): string[] {
   return (input.alerts ?? [])
     .filter((alert) => alert.rule !== 'unsealed' && LEARNER_FELT_TASKS.has(alert.task_kind))
-    .map((alert) => `digest:${nextWindow}:${alert.task_kind}`);
+    .map((alert) => `${DIGEST_MUTE_PREFIX}${alert.task_kind}:${alert.last_failure_at}`);
 }
 
-/** A digest failure is one key per kind per night; an alert id already names its episode. */
+/**
+ * A digest failure is one key per episode: kind plus newest failure time, so a new failure
+ * shows again while an older one of the same kind is still inside the widened window.
+ * An alert id already names its episode.
+ */
 export function failureNoticeKeys(input: {
   digest?: { window: { from: string; to: string }; degraded_kinds: readonly DegradedKind[] };
   alerts?: readonly Alert[];
+  closed?: ReadonlySet<string>;
 }): string[] {
   const digest = input.digest;
+  const closed = input.closed ?? new Set<string>();
   return [
     ...(digest?.degraded_kinds ?? [])
       .filter((kind) => LEARNER_FELT_TASKS.has(kind.task_kind))
-      .map((kind) => `digest:${digest?.window.from}:${kind.task_kind}`),
+      .filter((kind) => !(Date.parse(kind.last_at) <= mutedThrough(closed, kind.task_kind)))
+      .map((kind) => `digest:${kind.task_kind}:${kind.last_at}`),
     // An unsealed reply reached the learner; only its closing record is incomplete.
     ...(input.alerts ?? [])
       .filter((alert) => alert.rule !== 'unsealed' && LEARNER_FELT_TASKS.has(alert.task_kind))
       .map((alert) => alert.id),
-  ];
+  ].filter((key) => !closed.has(key));
 }
 
 /**

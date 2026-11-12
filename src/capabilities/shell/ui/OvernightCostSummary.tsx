@@ -2,6 +2,7 @@
 // lucide chevron and the shared coach-shared-m3e.css. Formatting and every figure are unchanged.
 import { ChevronDown } from 'lucide-react';
 import { useId, useState } from 'react';
+import { overnightCostCopy, overnightWindowDayCount } from './overnight-band-copy';
 import type { OvernightDigest } from './workbench-api';
 import './coach-shared-m3e.css';
 
@@ -90,8 +91,9 @@ function CostDetailRow({ detail }: { detail: CostDetail }) {
 export function OvernightCostSummary({ cost, window }: Pick<OvernightDigest, 'cost' | 'window'>) {
   const [open, setOpen] = useState(false);
   const panelId = useId();
+  const costCopy = overnightCostCopy(overnightWindowDayCount(window));
   return (
-    <section className="oc un-m3e-bridge" aria-label="昨日 AI 用量与费用">
+    <section className="oc un-m3e-bridge" aria-label={costCopy.label}>
       <button
         type="button"
         className="oc-toggle un-hit"
@@ -99,7 +101,7 @@ export function OvernightCostSummary({ cost, window }: Pick<OvernightDigest, 'co
         aria-controls={panelId}
         onClick={() => setOpen((value) => !value)}
       >
-        昨日 AI 用量与费用
+        {costCopy.label}
         <ChevronDown size={14} aria-hidden="true" className="oc-chev" />
       </button>
       <div id={panelId} hidden={!open} className="oc-panel">
@@ -109,7 +111,7 @@ export function OvernightCostSummary({ cost, window }: Pick<OvernightDigest, 'co
           （不含结束时刻），包含前台与后台活动。
         </p>
         {cost.records === 0 ? (
-          <p className="oc-quiet">昨日暂无费用记录，不代表实际费用为零。</p>
+          <p className="oc-quiet">{costCopy.quiet}</p>
         ) : (
           <>
             <p>{cost.records} 条费用记录；记录数不等于实际请求数。</p>
