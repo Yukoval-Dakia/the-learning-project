@@ -872,7 +872,7 @@
         ],
         "contentType": null,
         "bodyExample": null,
-        "notes": "limit 默认 50，钳制 1–200；since 为 ISO-8601；subject 按 question → knowledge → effective_domain 派生；cursor 使用响应 next_cursor。响应含 data/rows/page/next_cursor；行含 id/record_id/question_id/prompt_md/prompt_materials/reference_md/wrong_answer_md/wrong_answer_image_refs/knowledge_ids/cause/correction_state/created_at。题面优先冻结 snapshot（含父题干）；历史无 snapshot 仅在可证明作答后未编辑时读现值，损坏或不支持证据保留行并返回空题面、null 参考答案；错答图片来自原 attempt answer_image_refs。 native prompt_materials 仅含原 issuance 所选公开题面材料；figure/passage/table/audio/video/pdf/plaintext 全部保留完整公开说明与冻结 content_md。availability=inline 时正文即冻结材料；available 仅表示 source_asset 元数据与冻结 digest、kind/MIME 匹配，真实 blob 交付另验；missing 为资产行缺席、unavailable 为不匹配，两者保留文本且不返回 asset_id。历史/手工读取默认 []；无可信揭示策略时 native reference_md 仍为 null。"
+        "notes": "limit 默认 50，钳制 1–200；since 为 ISO-8601；subject 按 question → knowledge → effective_domain 派生；cursor 使用响应 next_cursor。响应含 data/rows/page/next_cursor；行含 id/attempt_event_id/record_id/question_id/prompt_md/prompt_materials/reference_md/wrong_answer_md/wrong_answer_image_refs/knowledge_ids/cause/correction_state/created_at，cause 带 source 与 label。题面优先冻结 snapshot（含父题干）；历史无 snapshot 仅在可证明作答后未编辑时读现值，损坏或不支持证据保留行并返回空题面、null 参考答案；错答图片来自原 attempt answer_image_refs。 native prompt_materials 仅含原 issuance 所选公开题面材料；figure/passage/table/audio/video/pdf/plaintext 全部保留完整公开说明与冻结 content_md。availability=inline 时正文即冻结材料；available 仅表示 source_asset 元数据与冻结 digest、kind/MIME 匹配，真实 blob 交付另验；missing 为资产行缺席、unavailable 为不匹配，两者保留文本且不返回 asset_id。历史/手工读取默认 []；无可信揭示策略时 native reference_md 仍为 null。"
       }
     ]
   },
@@ -1690,7 +1690,36 @@
             "expected_generation": 0
           }
         },
-        "notes": "原生请求返回 effective/review_required，assessment 带 submission/group/candidate 与学习 effect；重复提交复用原始回执，不产生第二次练习。self_report=true 仅显式 FSRS；auto_rate=true 不把 rating fallback 当用户选择。无 assessment 的旧请求返回 historical_unknown(409)，不会补造发题或写入学习状态。原始提交事务冻结学习知识点/难度/学科目标，排队后的标签编辑不改变本次学习范围。；无印规则的部分正确返回 partial_unknown、score=null 与 typed partial_units 正确数/总数，不补造分数或评级。"
+        "notes": "原生请求返回 effective/review_required 与 attempt_event_id，assessment 带 submission/group/candidate 与学习 effect；重复提交复用原始回执，不产生第二次练习。self_report=true 仅显式 FSRS；auto_rate=true 不把 rating fallback 当用户选择。无 assessment 的旧请求返回 historical_unknown(409)，不会补造发题或写入学习状态。原始提交事务冻结学习知识点/难度/学科目标，排队后的标签编辑不改变本次学习范围。；无印规则的部分正确返回 partial_unknown、score=null 与 typed partial_units 正确数/总数，不补造分数或评级。"
+      }
+    ]
+  },
+  {
+    "path": "/api/practice/attempts/:attemptEventId/cause",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "学习者为一笔判错/部分对的作答选择错因",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "primary_category": "carelessness",
+          "user_notes": "看错最后一个条件"
+        },
+        "notes": "写入 experimental:user_cause；同作答再次选择按最新学习者错因生效。primary_category 必须属于该题科目当前生效词表（含 active overlay）。非判错/部分对、或作答已被更正/撤回时返回 409；作答不存在返回 404。响应 {cause:{source:'user',primary_category,label,user_notes}}。需 x-internal-token。"
+      }
+    ]
+  },
+  {
+    "path": "/api/practice/attempts/:attemptEventId/cause-options",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "读取该作答可选题目科目的错因目录与当前生效错因",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "options 来自该题所属科目声明 + active overlay，按近期有效使用次数降序、同频保持目录稳定序；current 为 user/agent 生效错因或 null（user 优先）。非判错/部分对、或作答已被更正/撤回时返回 409；作答不存在返回 404。需 x-internal-token。"
       }
     ]
   },
