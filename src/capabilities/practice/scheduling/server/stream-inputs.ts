@@ -12,18 +12,19 @@
 // - variantItems：mistake_variant(status='active') 中 parent 近 7 天有 failure
 // attempt 的变体（变体轮换的「错题跟练」信号）。
 // - newCheckItems：open learning_item（pending/in_progress）的 knowledge_ids 中尚无 FSRS 状态行的
-// 知识点（= 学了还没检验）。按置顶、截止、计划顺序取，先修未满足的不进池，各取一道未排入的题。
+// 知识点（= 学了还没检验）。按置顶、截止、计划顺序取，先修未满足的不进池；每个 KC 的
+// 首题按 MFI 取信息量最高的已准入题，候选池交下游 sampler。
 // - pendingPapers：getPracticeList 的 ready 且未开始 session 的卷。
 // 减项 steering 的延后集合在 collectComposerInputs 开头读一次。到期（含干预
 // 诊断）、变式、新学、前沿和待做卷：知识点全部落在该集合内才丢弃，混有集合外
 // 知识点的综合题保留。
 
-import { and, desc, eq, gte, inArray, isNotNull, lte, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, isNotNull, lte } from 'drizzle-orm';
 import { LearningItemOpenStatus } from '@/core/schema/business';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import { steeringDefersKnowledgeIds } from '@/core/steering';
 import type { Db, Tx } from '@/db/client';
-import { notDraftPredicate, questionSuspendedPredicate } from '@/db/predicates';
+import { notDraftPredicate } from '@/db/predicates';
 import {
   artifact,
   event,
@@ -50,6 +51,7 @@ import {
   dueRetrievability,
   queryReviewDue,
 } from './due-list';
+import { pickFirstQuestions } from './first-question-rank';
 import { knowledgeLabels } from './knowledge-labels';
 import { FRONTIER_MAX_ITEMS } from './learnable-frontier';
 import { readQuestionPace } from './question-pace';
@@ -533,32 +535,16 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
         return rank.prereqBlocked === 0 ? [rank] : [];
       });
       admitted.sort(compareNewCheckRank);
-      // 每个未检验知识点取一道题（JSONB 包含查询，非 draft 题——见 notDraftPredicate，src/db/predicates.ts）。
-      // new_check 在「KC 还没 material_fsrs_state 行」时触发——此时刚生成的 embedded/teaching
-      // draft 题（container-only）还没被任何 review 路径物化，若不过滤会被这里抓成第一题、暴露
-      // 给用户成普通练习项。没有可发题的知识点不占候选名额。
-      for (const rank of admitted) {
-        if (newCheckPairs.length === NEW_CHECK_CANDIDATE_LIMIT) break;
-        const candidates = await db
-          .select({ id: question.id, knowledge_ids: question.knowledge_ids })
-          .from(question)
-          .where(
-            and(
-              sql`${question.knowledge_ids} @> ${JSON.stringify([rank.knowledgeId])}::jsonb`,
-              notDraftPredicate(question.draft_status),
-              // 契约准入门：suspended/withdrawn 组不作新检选第题。
-              questionSuspendedPredicate(question),
-            ),
-          );
-        const admittedIds = await readAutomaticallyServableQuestionIds(
+      // 先修/置顶/截止/计划顺序决定 KC 的先后（main）；KC 内首题由共享 MFI 决定，
+      // 没有可发题的 KC 不占候选名额（本票）。
+      newCheckPairs.push(
+        ...(await pickFirstQuestions(
           db,
-          candidates.map((row) => row.id),
-        );
-        const q = candidates.find(
-          (row) => admittedIds.has(row.id) && steeringKeeps(row.knowledge_ids),
-        );
-        if (q) newCheckPairs.push({ questionId: q.id, knowledgeId: rank.knowledgeId });
-      }
+          admitted.map((rank) => rank.knowledgeId),
+          NEW_CHECK_CANDIDATE_LIMIT,
+          steeringKeeps,
+        )),
+      );
     }
   }
 
@@ -580,34 +566,17 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
             : ('paper' as const),
     }));
 
-  // 5. B3 learnable_frontier（#3）——前置全掌握、自身未掌握的「可学前沿」KC，各取
-  // 一道**非 draft** active 题（谓词与 new_check 同形，均 notDraftPredicate——红线 4）。frontier KC 无题 →
-  // SKIP（不触发供给）。NO-OP：稀疏或闭包溢出时 ids 为空 → frontierPairs=[]（
-  // defer-flip，无 flag；sparse/overflow 均保持空候选）。
+  // 5. B3 learnable_frontier（#3）——前置全掌握、自身未掌握的「可学前沿」KC，每个取
+  // 信息量最高的 1–2 道**非 draft** active 题（谓词与 new_check 同形）。frontier KC 无题 →
+  // 不进候选；补题由 supply 的 discoverSupplyTargets 读同一 learnableFrontier 发出
+  // frontier_zero 目标（夜间 + refill 共用 7d fingerprint cooldown）。复用第 3 步的同一次
+  // 闭包读：稀疏或闭包溢出时 ids 为空 → frontierPairs=[]（defer-flip，无 flag）。
   const frontierKcs = frontierResolution.ids;
   const frontierPairs: Array<{ questionId: string; knowledgeId: string }> = [];
-  for (const kc of frontierKcs) {
-    const candidates = await db
-      .select({ id: question.id, knowledge_ids: question.knowledge_ids })
-      .from(question)
-      .where(
-        and(
-          sql`${question.knowledge_ids} @> ${JSON.stringify([kc])}::jsonb`,
-          notDraftPredicate(question.draft_status),
-          // 契约准入门：suspended/withdrawn 组不进 frontier 选题。
-          questionSuspendedPredicate(question),
-        ),
-      )
-      // Deterministic pick (reproducible composition) — the new_check sibling omits this;
-      // frontier is net-new so we make it stable from the start.
-      .orderBy(question.id);
-    const admittedIds = await readAutomaticallyServableQuestionIds(
-      db,
-      candidates.map((row) => row.id),
+  if (frontierKcs.length > 0) {
+    frontierPairs.push(
+      ...(await pickFirstQuestions(db, frontierKcs, FRONTIER_MAX_ITEMS, steeringKeeps)),
     );
-    const q = candidates.find((row) => admittedIds.has(row.id) && steeringKeeps(row.knowledge_ids));
-    if (q) frontierPairs.push({ questionId: q.id, knowledgeId: kc });
-    if (frontierPairs.length === FRONTIER_MAX_ITEMS) break;
   }
 
   // L3 fatigue/repetition needs stable KC + question-kind identities. Resolve every
