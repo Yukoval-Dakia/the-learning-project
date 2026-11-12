@@ -43,17 +43,17 @@ function MistakeLine({
   const answer = record ? plainAnswer(record.wrongAnswerMd) : '';
   const notation = lookups.notationFor(group.knowledgeIds);
   const causeEditor =
-    group.summary.editable_attempt_event_id && causeEditorFor
+    group.causeEdit && causeEditorFor
       ? causeEditorFor({
-          attemptEventId: group.summary.editable_attempt_event_id,
-          current: group.summary.primary_cause
+          attemptEventId: group.causeEdit.attemptEventId,
+          current: group.causeEdit.current
             ? {
-                source: group.summary.primary_cause.by === 'me' ? 'user' : 'agent',
-                primary_category: group.summary.primary_cause.category,
+                source: group.causeEdit.current.by === 'me' ? 'user' : 'agent',
+                primary_category: group.causeEdit.current.category,
                 label:
-                  group.summary.primary_cause.label ??
-                  lookups.causeLabel(group.summary.primary_cause.category),
-                note: group.summary.primary_cause.note,
+                  group.causeEdit.current.label ??
+                  lookups.causeLabel(group.causeEdit.current.category),
+                note: group.causeEdit.current.note,
               }
             : null,
         })

@@ -435,12 +435,10 @@ export function PracticePresentation(props: PracticePresentationProps) {
             : '这次没有建议，自己选一个',
           actions: [],
         };
-      if (
-        submit.recordedAttemptId &&
-        (outcome === 'incorrect' || outcome === 'partial' || outcome === 'partial_unknown')
-      ) {
+      if (submit.causeEdit) {
         revelation.cause = causeEditor.editorFor({
-          attemptEventId: submit.recordedAttemptId,
+          attemptEventId: submit.causeEdit.attemptEventId,
+          current: submit.causeEdit.current,
         });
       }
       if (unsupported && !submit.autoCommitted && !submit.committedPreview)

@@ -54,6 +54,7 @@ import {
 } from './practice-api';
 import { type PracticeClient, usePracticeClient } from './practice-client';
 import { verdictNeedsLearnerRating } from './submit-recovery';
+import { useAttemptCauseEdit } from './use-attempt-cause-edit';
 
 export type Rating = 'again' | 'hard' | 'good';
 type IssuanceMode = 'auto_score' | 'manual';
@@ -432,6 +433,7 @@ export function usePracticeSubmit({
   const q = qQ.data ?? null;
   // What the server recorded about this answer, kept with the question it came from.
   const { recordedHere, recordedAttemptIdHere, setRecorded } = useRecordedEvidence(q?.id);
+  const { recordAttempt, causeEdit } = useAttemptCauseEdit(q?.id, setRecorded);
   const isInterventionDiagnostic = isInterventionDiagnosticSource(q?.source ?? '');
   const committedDiagnosticQuestionId = q?.id;
   // YUK-617 W1 — 本题 attempt·review 历史，从题面聚合 data.timeline 直接派生（同一份请求，无二次取）。
@@ -449,7 +451,7 @@ export function usePracticeSubmit({
       if (settled.status !== 'done') return;
       const r = settled.result;
       // An older run has no evidence; that shows as nothing, not as a claim of independence.
-      setRecorded(attemptEvidenceOf(r), attemptEventIdOf(r));
+      recordAttempt(attemptEvidenceOf(r), attemptEventIdOf(r));
       if (r?.status === 'review_required') {
         setCommittedPreview({
           route: 'durable',
@@ -514,7 +516,7 @@ export function usePracticeSubmit({
       }
       setPendingRun(null);
     },
-    [addToast, setRecorded],
+    [addToast, recordAttempt],
   );
 
   // YUK-1729 — the issuance whose recovered judge outcome this visit already applied.
@@ -1142,7 +1144,7 @@ export function usePracticeSubmit({
         addToast('作答已保存，暂时没法自动判；可以自己评一下来安排复习。', 'info', 'clock');
         return;
       }
-      if ('evidence' in res) setRecorded(res.evidence, attemptEventIdOf(res));
+      if ('evidence' in res) recordAttempt(res.evidence, attemptEventIdOf(res));
       if (opts.withAppeal) {
         const anchor = res.judge && 'assessment' in res ? res.assessment.candidate_id : null;
         // The answer is recorded by now: a failed appeal must not undo that.
@@ -1170,7 +1172,7 @@ export function usePracticeSubmit({
       if (opts.advance !== false) onDone();
     } catch {
       setPreview(null);
-      setRecorded(null);
+      recordAttempt(null);
       setCommittedPreview(null);
       setRating(null);
       setAutoCommitted(false);
@@ -1222,7 +1224,6 @@ export function usePracticeSubmit({
     ...(selfConfidence === null ? {} : { self_confidence: selfConfidence }),
     latency_ms: withLatency ? computeLatencyMs(questionShownAtRef.current, Date.now()) : null,
   });
-
   // A 200 replay restores the preview; accepted originals use the existing durable poller.
   const applyAdvice = async (
     r: Awaited<ReturnType<typeof getAdvice>>,
@@ -1236,14 +1237,14 @@ export function usePracticeSubmit({
     setPendingRun(null);
     setPreview(r.judge);
     setRating(r.judge.suggested_rating);
-    setRecorded(r.evidence);
+    recordAttempt(r.evidence);
     if (!r.automatic_commit || r.judge.suggested_rating === null) return;
     if (r.committed) {
       if (r.committed.status === 'review_required') {
         addToast('作答已保存，暂时没法自动判；可以自己评一下来安排复习。', 'info', 'clock');
         return;
       }
-      setRecorded(r.committed.evidence, r.committed.attempt_event_id);
+      recordAttempt(r.committed.evidence, r.committed.attempt_event_id);
       setAutoCommitted(true);
       setAutoCommitJudgeEventId(r.committed.judge ? r.committed.assessment.candidate_id : null);
       return;
@@ -1257,7 +1258,6 @@ export function usePracticeSubmit({
       omitLatency: recovery,
     });
   };
-
   // YUK-1729 b-lite — replay advice for an answer accepted before a reload but never recorded.
   // The server reuses the stored verdict for this submission (no new judge run, no charge).
   const recoverAccepted = async () => {
@@ -1272,7 +1272,6 @@ export function usePracticeSubmit({
       setJudging(false);
     }
   };
-
   // The answering root also starts the recovery replay: it runs at commit time (not in render),
   // once, after the restored answer for this issuance has rendered.
   const attachAnswerRoot = (node: HTMLElement | null) => {
@@ -1319,7 +1318,7 @@ export function usePracticeSubmit({
         const feedback = feedbackFromCommittedAttempt(res);
         setCommittedPreview(feedback);
         setRating(feedback.suggested_rating);
-        if ('evidence' in res) setRecorded(res.evidence, attemptEventIdOf(res));
+        if ('evidence' in res) recordAttempt(res.evidence, attemptEventIdOf(res));
         setAutoCommitted(true);
         setAutoCommitJudgeEventId('assessment' in res ? res.assessment.candidate_id : null);
         return;
@@ -1370,7 +1369,7 @@ export function usePracticeSubmit({
   const startSelfRate = () => {
     setIssuanceMode('manual');
     setPreview(null);
-    setRecorded(null);
+    recordAttempt(null);
     activationIntent.current = undefined;
     // Back to answering (self-rated): unsaved edits resume autosaving.
     autosave.resume();
@@ -1423,7 +1422,6 @@ export function usePracticeSubmit({
         reload: readServerVersion,
       }
     : null;
-
   const settledFeedback = preview ?? committedPreview;
   const recorded = recordedAfterRejudge(recordedHere, rejudged?.effective.coarse_outcome);
   const displayedFeedback = settledFeedback
@@ -1466,6 +1464,7 @@ export function usePracticeSubmit({
       displayedPreview: displayedFeedback,
       recorded,
       recordedAttemptId: recordedAttemptIdHere,
+      causeEdit,
       committedPreview,
       rating,
       setRating,

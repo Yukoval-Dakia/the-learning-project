@@ -97,6 +97,11 @@ export interface GetFailureAttemptsOpts {
   questionIds?: string[];
   since?: Date;
   /**
+   * Include active native verdicts that the learner-cause owner accepts for attribution.
+   * This is opt-in so the established failure readers keep their current meaning.
+   */
+  causeEditable?: boolean;
+  /**
    * Include FSRS `review` rows whose outcome is failure (`again`). Defaults to
    * false so user-facing mistake/due readers keep their established attempt-only
    * distribution; nightly knowledge/research consumers opt in deliberately.
@@ -325,11 +330,23 @@ function nativeFailureReference(
   };
 }
 
+function nativeAttemptAllowsCause(value: NativeAttemptVerdict | undefined): boolean {
+  const outcome = nativeAttemptOutcome(value);
+  if (outcome === 'failure' || outcome === 'partial') return true;
+  const selected = value?.effective;
+  return (
+    selected?.row.provenance?.source !== 'self_report' &&
+    selected?.verdict.verdict === 'unsupported' &&
+    selected.verdict.reason === 'partial_unknown_points'
+  );
+}
+
 async function filterActiveFailureRows(
   db: DbLike,
   rows: EventRow[],
   currentOnly = false,
   derivationOnly = false,
+  causeEditable = false,
 ): Promise<EventRow[]> {
   let active = await filterActiveRows(db, rows);
   if (derivationOnly && active.length > 0) {
@@ -350,7 +367,9 @@ async function filterActiveFailureRows(
   );
   return active.filter((row) => {
     if (row.action === 'experimental:assessment_attempt')
-      return nativeAttemptOutcome(native.get(row.id)) === 'failure';
+      return causeEditable
+        ? nativeAttemptAllowsCause(native.get(row.id))
+        : nativeAttemptOutcome(native.get(row.id)) === 'failure';
     return legacy.get(row.id)?.effective?.verdict.coarse_outcome !== 'correct';
   });
 }
@@ -413,7 +432,13 @@ async function loadFailureAttempts(
         partitionBatchLimit,
       );
       if (attemptRows.length === 0) break;
-      const filtered = await filterActiveFailureRows(db, attemptRows, currentOnly, derivationOnly);
+      const filtered = await filterActiveFailureRows(
+        db,
+        attemptRows,
+        currentOnly,
+        derivationOnly,
+        opts.causeEditable,
+      );
       for (const row of filtered) {
         const rows = activeRowsByQuestion.get(row.subject_id) ?? [];
         if (rows.length >= perQuestionLimit) continue;
@@ -457,7 +482,13 @@ async function loadFailureAttempts(
         .limit(batchSize);
       if (rows.length === 0) break;
       activeAttemptRows.push(
-        ...(await filterActiveFailureRows(db, rows, currentOnly, derivationOnly)),
+        ...(await filterActiveFailureRows(
+          db,
+          rows,
+          currentOnly,
+          derivationOnly,
+          opts.causeEditable,
+        )),
       );
       if ((!unbounded && activeAttemptRows.length >= limit) || rows.length < batchSize) break;
       cursor = rows.at(-1);
@@ -698,8 +729,11 @@ export async function getUserCauseForAttempt(
 export async function getFailureAttemptById(
   db: DbLike,
   attemptEventId: string,
+  opts: Pick<GetFailureAttemptsOpts, 'causeEditable'> = {},
 ): Promise<FailureAttempt | null> {
-  return (await loadFailureAttemptById(db, attemptEventId))?.failure ?? null;
+  return (
+    (await loadFailureAttemptById(db, attemptEventId, false, opts.causeEditable))?.failure ?? null
+  );
 }
 
 /**
@@ -737,6 +771,7 @@ async function loadFailureAttemptById(
   db: DbLike,
   attemptEventId: string,
   derivationOnly = false,
+  causeEditable = false,
 ): Promise<FailureAttemptWithReasoningTrace | null> {
   const rows = await db.select().from(event).where(eq(event.id, attemptEventId)).limit(1);
   const attempt = rows[0];
@@ -763,7 +798,13 @@ async function loadFailureAttemptById(
 
   const native = await resolveVerdictsForNativeAttempts(db, [attempt]);
   if (attempt.action === 'experimental:assessment_attempt') {
-    if (nativeAttemptOutcome(native.get(attempt.id)) !== 'failure') return null;
+    const verdict = native.get(attempt.id);
+    if (
+      causeEditable
+        ? !nativeAttemptAllowsCause(verdict)
+        : nativeAttemptOutcome(verdict) !== 'failure'
+    )
+      return null;
   }
   const evidence = failureEvidenceFromRow(attempt);
   // Pull all judge rows once (subject_id or caused_by anchor, oldest first) and

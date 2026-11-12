@@ -98,6 +98,7 @@ function decodeMistakeCursor(cursor: string): MistakeCursor {
 async function projectMistakeFailures(
   db: Db,
   failures: FailureAttempt[],
+  causeEditAttemptByQuestion: ReadonlyMap<string, string>,
 ): Promise<MistakeProjection[]> {
   if (failures.length === 0) return [];
   const attemptIds = failures.map((failure) => failure.attempt_event_id);
@@ -255,6 +256,13 @@ async function projectMistakeFailures(
       }),
       knowledge_ids: learnerVisibleKnowledgeIds(failure.referenced_knowledge_ids),
       cause,
+      cause_edit:
+        causeEditAttemptByQuestion.get(failure.question_id) === failure.attempt_event_id
+          ? {
+              attempt_event_id: failure.attempt_event_id,
+              current: cause,
+            }
+          : null,
       correction_state: failure.correction_state,
       created_at: Math.floor(failure.created_at.getTime() / 1000),
     };
@@ -287,10 +295,13 @@ async function failuresForMistakeRecords(
     ...(questionIds.length > 0 ? { questionIds } : {}),
     since: filter.since,
     limit: null,
+    causeEditable: true,
   });
   const byId = new Map(found.map((failure) => [failure.attempt_event_id, failure]));
   const missing = attemptIds.filter((id) => !byId.has(id));
-  for (const failure of await Promise.all(missing.map((id) => getFailureAttemptById(db, id)))) {
+  for (const failure of await Promise.all(
+    missing.map((id) => getFailureAttemptById(db, id, { causeEditable: true })),
+  )) {
     if (failure) byId.set(failure.attempt_event_id, failure);
   }
   return attemptIds.flatMap((id) => {
@@ -363,6 +374,7 @@ export async function listMistakeProjectionPage(db: Db, filter: ListMistakeProje
       ...(questionIds ? { questionIds } : {}),
       since: filter.since,
       limit: null,
+      causeEditable: true,
     })
   ).filter(
     (failure) =>
@@ -379,8 +391,18 @@ export async function listMistakeProjectionPage(db: Db, filter: ListMistakeProje
   const hasMore = paged.length > filter.limit;
   const page = hasMore ? paged.slice(0, filter.limit) : paged;
   const last = page.at(-1);
+  const causeEditAttemptByQuestion = new Map<string, string>();
+  for (const failure of visible) {
+    if (
+      failure.correction_state.terminal_state === 'active' &&
+      failure.correction_state.effective_event_id === failure.attempt_event_id &&
+      !causeEditAttemptByQuestion.has(failure.question_id)
+    ) {
+      causeEditAttemptByQuestion.set(failure.question_id, failure.attempt_event_id);
+    }
+  }
   return {
-    rows: await projectMistakeFailures(db, page),
+    rows: await projectMistakeFailures(db, page, causeEditAttemptByQuestion),
     next_cursor:
       hasMore && last
         ? encodeMistakeCursor({ created_at: last.created_at, id: last.attempt_event_id })

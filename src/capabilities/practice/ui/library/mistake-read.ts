@@ -47,16 +47,21 @@ export interface MistakeCause {
   note: string | null;
 }
 
+export interface MistakeCauseEdit {
+  attemptEventId: string;
+  current: MistakeCause | null;
+}
+
 export interface MistakeRecord {
   id: string;
-  /** The immutable attempt anchored by the new cause API; absent on older reads. */
-  attemptEventId: string | null;
   createdAtSec: number;
   /** The prompt as it was when this attempt happened (frozen per record). */
   promptMd: string;
   wrongAnswerMd: string;
   wrongAnswerImages: readonly string[];
   cause: MistakeCause | null;
+  /** Owner-projected target; null means this row is not the question's editable attempt. */
+  causeEdit: MistakeCauseEdit | null;
   standing: RecordStanding;
 }
 
@@ -66,13 +71,13 @@ export interface MistakeQuestionSummary {
   effective_wrong_attempt_count: number;
   last_effective_wrong_at: number | null;
   primary_cause: MistakeCause | null;
-  /** The newest standing failure this row can attribute, whether or not it already has a cause. */
-  editable_attempt_event_id: string | null;
   attribution_state: 'attributed' | 'unknown';
 }
 
 export interface MistakeQuestion {
   summary: MistakeQuestionSummary;
+  /** The exact owner-projected attribution target; the UI never derives this from outcomes. */
+  causeEdit: MistakeCauseEdit | null;
   /** Newest record's prompt (for recognising the question in a list). */
   promptMd: string;
   knowledgeIds: readonly string[];
@@ -81,26 +86,29 @@ export interface MistakeQuestion {
   latestRecordAtSec: number;
 }
 
+function toCause(cause: MistakeRow['cause']): MistakeCause | null {
+  return cause
+    ? {
+        by: cause.source === 'user' ? 'me' : 'ai',
+        category: cause.primary_category,
+        label: cause.primary_label,
+        note: cause.user_notes,
+      }
+    : null;
+}
+
 function toRecord(row: MistakeRow): MistakeRecord {
-  const attemptEventId =
-    'attempt_event_id' in row &&
-    typeof row.attempt_event_id === 'string' &&
-    row.attempt_event_id.length > 0
-      ? row.attempt_event_id
-      : null;
   return {
     id: row.id,
-    attemptEventId,
     createdAtSec: row.created_at,
     promptMd: row.prompt_md,
     wrongAnswerMd: row.wrong_answer_md,
     wrongAnswerImages: row.wrong_answer_image_refs,
-    cause: row.cause
+    cause: toCause(row.cause),
+    causeEdit: row.cause_edit
       ? {
-          by: row.cause.source === 'user' ? 'me' : 'ai',
-          category: row.cause.primary_category,
-          label: row.cause.primary_label,
-          note: row.cause.user_notes,
+          attemptEventId: row.cause_edit.attempt_event_id,
+          current: toCause(row.cause_edit.current),
         }
       : null,
     standing: recordStanding(row),
@@ -115,7 +123,6 @@ function summarise(questionId: string, records: readonly MistakeRecord[]): Mista
     effective_wrong_attempt_count: effective.length,
     last_effective_wrong_at: latest?.createdAtSec ?? null,
     primary_cause: latest?.cause ?? null,
-    editable_attempt_event_id: latest?.attemptEventId ?? null,
     attribution_state: latest?.cause ? 'attributed' : 'unknown',
   };
 }
@@ -137,6 +144,7 @@ export function groupMistakes(rows: readonly MistakeRow[]): MistakeQuestion[] {
     const newest = group.rows.reduce((a, b) => (b.created_at > a.created_at ? b : a));
     groups.push({
       summary: summarise(questionId, records),
+      causeEdit: records.find((record) => record.causeEdit)?.causeEdit ?? null,
       promptMd: newest.prompt_md,
       knowledgeIds: newest.knowledge_ids,
       records,
