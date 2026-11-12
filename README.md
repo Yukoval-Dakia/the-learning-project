@@ -438,15 +438,17 @@ crates/
   calibration-native/ # Rust 离线 calibration 核心（napi + WASM，与 TS oracle parity）
 src/
   capabilities/   # Capability 包：manifest.ts 声明路由/jobs/copilotTools/ui.pages
-    copilot/      # Copilot 域（D14 单人格 + 统一记忆读取面 + copilotTools 贡献制）
-    observability/# Observability 域（admin/logs/cost/jobs four GET 面平移）
+    copilot/      # Copilot 域（单人格对话 + chip SSE 流 + copilotTools 贡献制）
+    drawing/      # 生成式 UI 绘图域（compose_block drawing 委托的 Sol 后台单轮绘制）
+    observability/# Observability 域（admin 只读面 + 今日成本条）
     onboarding/   # 冷启动引导：目标设定、材料上传、起点探测与起始档案
     ingestion/    # 录入域（assets/ingestion pipeline）
     knowledge/    # 知识图谱域
     notes/        # Note artifact 域（block-tree Tiptap 编辑器）
     practice/     # 练习域（review/quiz/judge/teaching skills）
     agency/       # 代理域（nightly chain + goals）
-    shell/        # 工作台域（CopilotDock + admin pages）
+    agent-workspace/ # 每 owner 持久工作区中的固定身份脚本执行（仅受控验收入口）
+    shell/        # 工作台域（today / inbox / coach 页面 + workbench 聚合）
     index.ts      # 静态组合根：按顺序聚合所有 capability manifests
   kernel/         # CapabilityManifest 契约 + validateComposition 唯一性循环
   core/           # Zod schemas, id helpers, cross-subject primitives
