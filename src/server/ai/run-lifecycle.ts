@@ -28,6 +28,7 @@ import type { TaskDefinition } from '@/ai/task-spec';
 import { type TaskKind, tasks } from '@/capabilities/task-registry';
 import { taskInputHash } from '@/core/task-input-hash';
 import type { Db } from '@/db/client';
+import { writeAiTaskAttemptFinished } from '@/kernel/records/ai-attempt-facts';
 import { writeToolCallLog } from '@/kernel/tools/call-evidence';
 import { resolveAttemptCostTruth, unknownAttemptCostTruth } from './attempt-cost';
 import { type ModelBinding, explicitProviderRouting } from './execution-adapter';
@@ -38,7 +39,7 @@ import {
   traceMetadata,
   withTraceContext,
 } from './laminar-tracing';
-import { writeAiTaskAttemptFinished, writeAiTaskRunRetried, writeAiTaskRunStarted } from './log';
+import { writeAiTaskRunRetried, writeAiTaskRunStarted } from './log';
 import {
   type ModelProfile,
   assertModelProfileCapabilityFit,

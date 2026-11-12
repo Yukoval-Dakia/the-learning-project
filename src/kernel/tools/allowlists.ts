@@ -53,6 +53,8 @@ export const READ_TOOLS = [
   // `ingestion` surface below (same containment as the draft-structure reader).
   'read_source',
   'view_image',
+  // Note body plus mark / edit / review / refine stats. Copilot grant is below.
+  'read_note',
 ] as const;
 
 export const PROPOSE_WRITE_TOOLS = [
@@ -268,6 +270,7 @@ export const COPILOT_TOOLS = [
   'write_note',
   // YUK-1772 — read-only deterministic note check (issues list, no verdict).
   'check_note',
+  'read_note',
   // YUK-1986 — 明确要答案时的记受助给答路径（owner「有记录的给」）。
   'reveal_answer',
   // YUK-1468 — Copilot 编辑面：edit_question（ops/document/validate/probe）。

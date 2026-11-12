@@ -3,7 +3,8 @@
 // 链路位置：
 //   原始信号读面 → LLM 产出 SupplyPlanV1 → 确定性机器门（supply-plan-gate.ts）
 //   → 门过：run 事件（accepted）+ 逐项 demand 事件（manual 留痕）
-//   → 门拒（≤2 轮有界重生成后仍不过）：run 事件（rejected），当晚零需求事件
+//   → 门拒（≤2 轮有界重生成后仍不过）：run 事件（rejected），当晚零模型需求事件。
+//     已落账的 selection_miss 仍写需求事件，派发由夜间供给扫描负责。
 //   → 扫描器安全网：question_supply_nightly 照常 06:00 派发缺口，planner 失败/空
 //     计划不影响它；本 job 与 DAG 无硬边（设计使然，安全网不被 planner 拖死）。
 //   → shadow 对比：同 job 内跑 discoverSupplyTargets（只读确定性扫描），planner
@@ -21,6 +22,7 @@
 import { createId } from '@paralleldrive/cuid2';
 import { eq, isNull } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
+import { readOpenSelectionMissDemands } from '@/capabilities/practice/question-bank/public';
 import { learnerLocalDay } from '@/core/learner-day';
 import type { SupplyPlanItemV1T, SupplyPlanV1T } from '@/core/schema/supply_plan';
 import { learnerDayWeekday, steeringDaysLeft, steeringWindowCoversToday } from '@/core/steering';
@@ -315,6 +317,7 @@ export async function runSupplyPlanner(
     pendingClaims,
     jyeooRemaining,
     steeringScopes,
+    selectionMisses,
   ] = await Promise.all([
     loadLiveKnowledge(db),
     loadPoolCounts(db),
@@ -322,6 +325,7 @@ export async function runSupplyPlanner(
     loadPendingClaims(db),
     jyeooBudgetRemaining(db, now),
     loadSteeringScopes(db, now),
+    readOpenSelectionMissDemands(db, now),
   ]);
 
   const liveKnowledgeIds = new Set(knowledgeRows.map((row) => row.id));
@@ -372,6 +376,15 @@ export async function runSupplyPlanner(
       knowledge_id: claim.knowledgeId,
     })),
     jyeoo_budget_remaining: jyeooRemaining,
+    selection_misses: selectionMisses
+      .filter((row) => liveKnowledgeIds.has(row.miss.knowledge_id))
+      .map((row) => ({
+        knowledge_id: row.miss.knowledge_id,
+        subject_id: row.miss.subject_id,
+        reason: row.miss.reason,
+        event_id: row.eventId,
+        recorded_at: row.recordedAt.toISOString(),
+      })),
     // YUK-1770 — in-window steering goals（原话+转述+scope+剩余天数）。不加额度、
     // 不免机检：只在同一套规划约束里抬升考纲内补题优先级（见 prompt）。
     ...(steeringScopes.length > 0
@@ -465,10 +478,16 @@ export async function runSupplyPlanner(
       }
     }
   }
+  const missByKnowledge = new Map(
+    selectionMisses
+      .filter((row) => liveKnowledgeIds.has(row.miss.knowledge_id))
+      .map((row) => [row.miss.knowledge_id, row]),
+  );
   if (acceptedPlan !== null) {
     for (const item of acceptedPlan.items) {
       const claimId = claimByKnowledgeId.get(item.knowledge_id);
       const steeringTag = steeringTagByKc.get(item.knowledge_id);
+      const selectionMiss = missByKnowledge.get(item.knowledge_id);
       const demandEventId = `supply_planner_demand_${createId()}`;
       demandEventIds.push(demandEventId);
       await writeEvent(db, {
@@ -495,12 +514,39 @@ export async function runSupplyPlanner(
                 },
               }
             : {}),
+          ...(selectionMiss
+            ? { cause: { kind: 'selection_miss' as const, ref: selectionMiss.eventId } }
+            : {}),
         },
         ingest_at: now,
         created_at: now,
       });
       demandEvents += 1;
     }
+  }
+  const coveredKnowledgeIds = new Set(acceptedPlan?.items.map((item) => item.knowledge_id) ?? []);
+  for (const [knowledgeId, miss] of missByKnowledge) {
+    if (coveredKnowledgeIds.has(knowledgeId)) continue;
+    const demandEventId = `supply_planner_demand_${createId()}`;
+    await writeEvent(db, {
+      id: demandEventId,
+      actor_kind: 'agent',
+      actor_ref: 'supply_planner',
+      action: 'experimental:supply_planner_demand',
+      subject_kind: 'knowledge',
+      subject_id: knowledgeId,
+      outcome: 'manual',
+      payload: {
+        version: 1,
+        plan_event_id: planEventId,
+        cause: { kind: 'selection_miss', ref: miss.eventId },
+        reason: miss.miss.reason,
+        dispatch: 'question_supply_nightly',
+      },
+      ingest_at: now,
+      created_at: now,
+    });
+    demandEvents += 1;
   }
 
   // ── 3.5 phase-2：accepted plan → 确定性 executor（当晚计划当晚执行） ────────

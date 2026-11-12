@@ -190,7 +190,7 @@ function queuedSupplyPromise(
 export async function inFlightSupplyCount(
   db: Db | Tx,
   fingerprint: string,
-  cooldownDays: number,
+  cooldownDays: number = SUPPLY_DISPATCH_COOLDOWN_DAYS,
 ): Promise<number> {
   if (cooldownDays <= 0) return 0;
   const cutoff = new Date(Date.now() - cooldownDays * 24 * 60 * 60 * 1000);
