@@ -346,6 +346,8 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
     expect(bracketEvents).toHaveLength(2);
   });
 
+  // @invariant grading: a per-KC partial verdict settles as ineligible because FSRS and θ̂ both abstain, while the settlement receipt preserves no_kc_evidence
+  // @fails-if a partial verdict creates an FSRS card, writes mastery evidence, or records an applied θ̂ decision
   it('partial verdict：per-KC partial ⇒ FSRS 与 θ̂ 均弃权（partial→1 已 REJECTED）', async () => {
     await seedKnowledge('kc_a', { domain: 'dom_x' });
     const seed = await seedChain('s2', { kcs: ['kc_a'] });
@@ -371,6 +373,8 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
     expect(theta?.abstainReason).toBe('no_kc_evidence');
   });
 
+  // @invariant grading: blank_marked_zero contributes a zero score but settles as ineligible with no FSRS or mastery vote and an abstain KC observation
+  // @fails-if a blank answer creates an FSRS card or mastery vote, or its settlement receipt records a success/failure KC observation
   it('blank_marked_zero：分数计零，但 FSRS 与 KC mastery 均不落票（空白≠全 KC failure）', async () => {
     await seedKnowledge('kc_a', { domain: 'dom_x' });
     const seed = await seedChain('s3', { kcs: ['kc_a'] });
