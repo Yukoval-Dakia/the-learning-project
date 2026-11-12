@@ -8,11 +8,14 @@
 //   - 3a: topic node missing -> propose root + starter children, materialize on accept.
 //   - 3b: topic exists but child nodes missing -> propose starter children.
 //   - 3c: topic + children exist -> propose 1 hub + N atomic outline over existing nodes.
+// Root and child ids share one namespace and must be unique; each child has exactly one
+// atomic, and longs only cite that graph. Accept locks referenced knowledge rows and
+// refuses the proposal when archive, merge, or reparent has moved them.
 // Notes default source_tier='llm_only'; no NoteVerifyTask; no Search-grounded. Embedded
 // check is a placeholder (empty question_ids); hub status aggregation and living-note
 // triggers remain out of scope.
 
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, inArray, isNull, or } from 'drizzle-orm';
 import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
 import { knowledge } from '@/db/schema';
@@ -134,6 +137,51 @@ interface KnowledgeNodeRow {
   id: string;
   name: string;
   domain: string | null;
+  parent_id: string | null;
+  version: number;
+}
+
+/** Ids in one namespace: a proposed temp_id or an existing knowledge id. */
+interface ProposalGraph {
+  readonly rootKey: string;
+  readonly childKeys: readonly string[];
+}
+
+type GraphFault =
+  | { readonly type: 'duplicate_id'; readonly id: string }
+  | { readonly type: 'missing_atomic'; readonly id: string }
+  | { readonly type: 'duplicate_atomic'; readonly id: string }
+  | { readonly type: 'unknown_atomic'; readonly id: string }
+  | { readonly type: 'unknown_long'; readonly id: string };
+
+interface ReviewedKnowledgeNode {
+  readonly id: string;
+  readonly parent_id: string | null;
+  readonly version: number;
+}
+
+interface ReviewedKnowledge {
+  readonly root: ReviewedKnowledgeNode;
+  readonly children?: readonly ReviewedKnowledgeNode[];
+}
+
+/** What accept must still see on a locked knowledge row. */
+interface KnowledgeCompatibility {
+  readonly id: string;
+  /** Absent when the proposal did not record a parent. Null is a recorded root. */
+  readonly parentId?: string | null;
+  readonly version?: number;
+  /** The proposal stored this row at review time, so a missing row is stale. */
+  readonly recorded: boolean;
+}
+
+export class LearningIntentStaleError extends Error {
+  readonly code = 'stale' as const;
+
+  constructor(readonly knowledgeId: string) {
+    super(`stale: knowledge ${knowledgeId} no longer matches the reviewed proposal`);
+    this.name = 'LearningIntentStaleError';
+  }
 }
 
 interface ProposedKnowledgeNodeRaw {
@@ -161,27 +209,213 @@ function normalizeProposedNode(
   };
 }
 
-function validateAtomicKnowledgeIds(
-  allowedIds: Set<string>,
-  atomics: AtomicProposal[],
-  message: string,
-) {
+function checkProposalGraph(
+  graph: ProposalGraph,
+  atomics: readonly AtomicProposal[],
+  longs: readonly LongProposal[],
+): GraphFault | null {
+  const seen = new Map<string, true>();
+  const duplicate = (id: string): GraphFault | null => {
+    if (seen.has(id)) return { type: 'duplicate_id', id };
+    seen.set(id, true);
+    return null;
+  };
+  const rootFault = duplicate(graph.rootKey);
+  if (rootFault) return rootFault;
+  for (const id of graph.childKeys) {
+    const fault = duplicate(id);
+    if (fault) return fault;
+  }
+
+  const atomicCount = new Map<string, number>();
   for (const atomic of atomics) {
-    if (!allowedIds.has(atomic.knowledge_id)) {
-      throw new LearningIntentError(
-        'invalid_atomic_knowledge_id',
-        `${message}: ${atomic.knowledge_id}`,
-      );
+    const id = atomic.knowledge_id;
+    if (id === graph.rootKey || !seen.has(id)) return { type: 'unknown_atomic', id };
+    const count = (atomicCount.get(id) ?? 0) + 1;
+    if (count > 1) return { type: 'duplicate_atomic', id };
+    atomicCount.set(id, count);
+  }
+  for (const id of graph.childKeys) {
+    if ((atomicCount.get(id) ?? 0) !== 1) return { type: 'missing_atomic', id };
+  }
+
+  for (const long of longs) {
+    for (const id of long.knowledge_ids) {
+      if (!seen.has(id)) return { type: 'unknown_long', id };
     }
+  }
+  return null;
+}
+
+function graphFaultDetail(fault: GraphFault): string {
+  switch (fault.type) {
+    case 'duplicate_id':
+      return `a repeated knowledge id ${fault.id}`;
+    case 'missing_atomic':
+      return `knowledge id ${fault.id} with no atomic`;
+    case 'duplicate_atomic':
+      return `more than one atomic for knowledge id ${fault.id}`;
+    case 'unknown_atomic':
+      return `atomic knowledge id ${fault.id} outside the root and children`;
+    case 'unknown_long':
+      return `long knowledge id ${fault.id} outside the root and children`;
   }
 }
 
-function validateLongKnowledgeIds(allowedIds: Set<string>, longs: LongProposal[], message: string) {
-  for (const long of longs) {
-    for (const knowledgeId of long.knowledge_ids) {
-      if (!allowedIds.has(knowledgeId)) {
-        throw new LearningIntentError('invalid_atomic_knowledge_id', `${message}: ${knowledgeId}`);
-      }
+function rejectGraphFault(fault: GraphFault, source: 'outline' | 'proposal'): never {
+  const who = source === 'outline' ? 'LLM proposed' : 'proposal contains';
+  throw new LearningIntentError('invalid_atomic_knowledge_id', `${who} ${graphFaultDetail(fault)}`);
+}
+
+function reviewNode(node: KnowledgeNodeRow): ReviewedKnowledgeNode {
+  return { id: node.id, parent_id: node.parent_id, version: node.version };
+}
+
+function bindKnowledgeId(bindings: Map<string, string>, key: string, realId: string): void {
+  if (bindings.has(key)) {
+    throw new LearningIntentError(
+      'invalid_atomic_knowledge_id',
+      `proposal contains a repeated knowledge id ${key}`,
+    );
+  }
+  bindings.set(key, realId);
+}
+
+function boundKnowledgeId(
+  bindings: ReadonlyMap<string, string>,
+  key: string,
+  kind: 'atomic' | 'long',
+): string {
+  const realId = bindings.get(key);
+  if (realId === undefined) {
+    throw new LearningIntentError(
+      'invalid_atomic_knowledge_id',
+      `proposal ${kind} references unknown knowledge id ${key}`,
+    );
+  }
+  return realId;
+}
+
+interface LockedKnowledgeRow {
+  readonly id: string;
+  readonly parent_id: string | null;
+  readonly version: number;
+  readonly archived_at: Date | null;
+}
+
+async function lockKnowledgeRows(
+  tx: Tx,
+  ids: readonly string[],
+): Promise<Map<string, LockedKnowledgeRow>> {
+  if (ids.length === 0) return new Map();
+  // Archive, merge, and reparent take this same id-sorted FOR UPDATE inside their
+  // accept transaction. Holding it here, after the proposal decision lock, means
+  // this accept either sees that commit or waits and then refuses the moved base.
+  const rows = await tx
+    .select({
+      id: knowledge.id,
+      parent_id: knowledge.parent_id,
+      version: knowledge.version,
+      archived_at: knowledge.archived_at,
+    })
+    .from(knowledge)
+    .where(inArray(knowledge.id, [...ids].sort()))
+    .orderBy(knowledge.id)
+    .for('update');
+  const locked = new Map<string, LockedKnowledgeRow>();
+  for (const row of rows) locked.set(row.id, row);
+  return locked;
+}
+
+type Citation =
+  | { readonly state: 'in_graph' }
+  | { readonly state: 'stale'; readonly id: string }
+  | { readonly state: 'outside' };
+
+function classifyCitation(
+  id: string,
+  role: 'atomic' | 'long',
+  rootId: string,
+  row: LockedKnowledgeRow | undefined,
+): Citation {
+  if (role === 'long' && id === rootId) return { state: 'in_graph' };
+  if (!row || id === rootId) return { state: 'outside' };
+  if (row.archived_at === null && row.parent_id === rootId) return { state: 'in_graph' };
+  return { state: 'stale', id };
+}
+
+function citedKnowledgeIds(spec: AcceptSpec): string[] {
+  return [
+    ...new Set([
+      ...spec.atomics.map((atomic) => atomic.knowledge_id),
+      ...spec.longs.flatMap((long) => long.knowledge_ids),
+    ]),
+  ];
+}
+
+async function lockLegacyKnowledge(
+  tx: Tx,
+  rootId: string,
+  citedIds: readonly string[],
+): Promise<LockedKnowledgeRow[]> {
+  const cited = citedIds.filter((id) => id !== rootId);
+  const activeChildren = and(eq(knowledge.parent_id, rootId), isNull(knowledge.archived_at));
+  return tx
+    .select({
+      id: knowledge.id,
+      parent_id: knowledge.parent_id,
+      version: knowledge.version,
+      archived_at: knowledge.archived_at,
+    })
+    .from(knowledge)
+    .where(
+      cited.length === 0
+        ? or(eq(knowledge.id, rootId), activeChildren)
+        : or(eq(knowledge.id, rootId), activeChildren, inArray(knowledge.id, cited)),
+    )
+    .orderBy(knowledge.id)
+    .for('update');
+}
+
+function staleCitedId(spec: AcceptSpec, locked: readonly LockedKnowledgeRow[]): string | null {
+  const rootId = spec.existingRootId;
+  if (!rootId) return null;
+  const byId = new Map(locked.map((row) => [row.id, row]));
+  const refs = [
+    ...spec.atomics.map((atomic) => ({ id: atomic.knowledge_id, role: 'atomic' as const })),
+    ...spec.longs.flatMap((long) =>
+      long.knowledge_ids.map((id) => ({ id, role: 'long' as const })),
+    ),
+  ];
+  for (const ref of refs) {
+    const citation = classifyCitation(ref.id, ref.role, rootId, byId.get(ref.id));
+    if (citation.state === 'stale') return citation.id;
+  }
+  return null;
+}
+
+async function assertKnowledgeCompatible(
+  tx: Tx,
+  expectedNodes: readonly KnowledgeCompatibility[],
+): Promise<void> {
+  const locked = await lockKnowledgeRows(
+    tx,
+    expectedNodes.map((node) => node.id),
+  );
+  const ordered = [...expectedNodes].sort((left, right) => left.id.localeCompare(right.id));
+  for (const expected of ordered) {
+    const row = locked.get(expected.id);
+    if (!row) {
+      if (expected.recorded) throw new LearningIntentStaleError(expected.id);
+      throw new LearningIntentError(
+        'invalid_atomic_knowledge_id',
+        `proposal references unknown knowledge id ${expected.id}`,
+      );
+    }
+    const parentMismatch = expected.parentId !== undefined && row.parent_id !== expected.parentId;
+    const versionMismatch = expected.version !== undefined && row.version !== expected.version;
+    if (row.archived_at !== null || parentMismatch || versionMismatch) {
+      throw new LearningIntentStaleError(expected.id);
     }
   }
 }
@@ -192,7 +426,13 @@ async function findTopicNode(db: Db, topic: string): Promise<KnowledgeNodeRow | 
   // Case-insensitive exact match on knowledge.name first; if multiple match, the
   // first by created_at wins (user must disambiguate at /knowledge).
   const rows = await db
-    .select({ id: knowledge.id, name: knowledge.name, domain: knowledge.domain })
+    .select({
+      id: knowledge.id,
+      name: knowledge.name,
+      domain: knowledge.domain,
+      parent_id: knowledge.parent_id,
+      version: knowledge.version,
+    })
     .from(knowledge)
     .where(isNull(knowledge.archived_at));
   for (const r of rows) {
@@ -207,7 +447,13 @@ async function findTopicNode(db: Db, topic: string): Promise<KnowledgeNodeRow | 
 
 async function loadChildren(db: Db, parentId: string): Promise<KnowledgeNodeRow[]> {
   return db
-    .select({ id: knowledge.id, name: knowledge.name, domain: knowledge.domain })
+    .select({
+      id: knowledge.id,
+      name: knowledge.name,
+      domain: knowledge.domain,
+      parent_id: knowledge.parent_id,
+      version: knowledge.version,
+    })
     .from(knowledge)
     .where(and(eq(knowledge.parent_id, parentId), isNull(knowledge.archived_at)));
 }
@@ -219,10 +465,11 @@ async function loadChildren(db: Db, parentId: string): Promise<KnowledgeNodeRow[
  * ask the LLM for a 1-hub + N-atomic outline, then persist it as a `propose` event.
  *
  * Throws LearningIntentError for llm_parse_failed (output violates the outline schema),
- * invalid_atomic_knowledge_id (hallucinated ids outside child_nodes / proposed children),
- * and proposal_failed when the outline was usable but the proposal row did not commit.
- * A failure after the provider returns is stamped with that attempt's task run and cost
- * basis; the task run's provider outcome is left as recorded.
+ * invalid_atomic_knowledge_id (repeated ids, a child with no atomic, or a long/atomic id
+ * outside the root and children), and proposal_failed when the outline was usable but the
+ * proposal row did not commit. Nothing is written when the graph check fails. A failure
+ * after the provider returns is stamped with that attempt's task run and cost basis; the
+ * task run's provider outcome is left as recorded.
  */
 export async function planLearningIntent(
   params: PlanLearningIntentParams,
@@ -296,22 +543,22 @@ async function persistLearningIntentOutline(
 
   let knowledgeNode: LearningIntentProposal['knowledge_node'];
   let proposedKnowledge: ProposedKnowledgeGraph | undefined;
+  let reviewedKnowledge: ReviewedKnowledge | undefined;
 
   if (planCase === '3c_existing_graph') {
     if (!node) {
       throw new LearningIntentError('topic_not_found', `knowledge topic vanished: ${topic}`);
     }
-    const childIds = new Set(children.map((c) => c.id));
-    validateAtomicKnowledgeIds(
-      childIds,
+    const fault = checkProposalGraph(
+      { rootKey: node.id, childKeys: children.map((child) => child.id) },
       outline.atomics,
-      "LLM proposed knowledge_id that is not in the topic's child nodes",
-    );
-    validateLongKnowledgeIds(
-      new Set([node.id, ...children.map((c) => c.id)]),
       outline.longs,
-      'LLM proposed long.knowledge_ids entry that is not in the topic graph',
     );
+    if (fault) rejectGraphFault(fault, 'outline');
+    reviewedKnowledge = {
+      root: reviewNode(node),
+      children: children.map(reviewNode),
+    };
     knowledgeNode = { id: node.id, name: node.name, domain: node.domain };
   } else {
     const knowledgeSpec = outline.knowledge;
@@ -348,20 +595,19 @@ async function persistLearningIntentOutline(
     if (proposedChildren.length === 0) {
       failInvalidOutline(`${planCase} outline must include at least one knowledge.children entry`);
     }
-    validateAtomicKnowledgeIds(
-      new Set(proposedChildren.map((child) => child.temp_id)),
+    const rootKey =
+      planCase === '3a_topic_missing'
+        ? (root?.temp_id ?? failInvalidOutline('3a outline must include knowledge.root'))
+        : (node?.id ?? failInvalidOutline(`${planCase} outline is missing the topic node`));
+    const fault = checkProposalGraph(
+      { rootKey, childKeys: proposedChildren.map((child) => child.temp_id) },
       outline.atomics,
-      'LLM proposed knowledge_id that is not in proposed knowledge.children',
-    );
-    validateLongKnowledgeIds(
-      new Set([
-        ...(root ? [root.temp_id] : []),
-        ...(node ? [node.id] : []),
-        ...proposedChildren.map((child) => child.temp_id),
-      ]),
       outline.longs,
-      'LLM proposed long.knowledge_ids entry that is not in proposed knowledge graph',
     );
+    if (fault) rejectGraphFault(fault, 'outline');
+    if (planCase === '3b_children_missing' && node) {
+      reviewedKnowledge = { root: reviewNode(node) };
+    }
 
     proposedKnowledge = {
       ...(root ? { root } : {}),
@@ -383,6 +629,7 @@ async function persistLearningIntentOutline(
     hub: outline.hub,
     atomics: outline.atomics,
     longs: outline.longs,
+    ...(reviewedKnowledge ? { reviewed_knowledge: reviewedKnowledge } : {}),
   };
   // 3c is the only auto-applied case; reuse the learner's own topic instead of
   // the technical reason line. A topic that trips the learner-copy gate falls
@@ -482,6 +729,7 @@ interface ProposalEventRow {
     knowledge_node_id: string | null;
     knowledge_node?: { id: string; name: string; domain: string | null };
     proposed_knowledge?: ProposedKnowledgeGraph;
+    reviewed_knowledge?: ReviewedKnowledge;
     task_run_id?: string | null;
     cost_micro_usd?: number | null;
     hub: HubProposal;
@@ -514,44 +762,321 @@ async function readProposal(db: Db | Tx, proposalId: string): Promise<ProposalEv
   return { id: row.id, payload: row.payload as ProposalEventRow['payload'] };
 }
 
+function requirePlanCase(value: unknown): LearningIntentPlanCase {
+  if (
+    value === '3a_topic_missing' ||
+    value === '3b_children_missing' ||
+    value === '3c_existing_graph'
+  ) {
+    return value;
+  }
+  if (value === undefined) return '3c_existing_graph';
+  throw new LearningIntentError(
+    'llm_parse_failed',
+    'proposal plan_case is not a learning intent case',
+  );
+}
+
+function requireTempId(value: unknown, label: string): string {
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new LearningIntentError('llm_parse_failed', `${label} is missing temp_id`);
+  }
+  return value;
+}
+
+function readStringId(value: unknown, label: string): string {
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new LearningIntentError(
+      'invalid_atomic_knowledge_id',
+      `${label} is missing a knowledge id`,
+    );
+  }
+  return value;
+}
+
+function readProposedNode(value: unknown, label: string): ProposedKnowledgeNode {
+  if (!value || typeof value !== 'object') {
+    throw new LearningIntentError('llm_parse_failed', `${label} is missing`);
+  }
+  const row = value as { temp_id?: unknown; name?: unknown; domain?: string | null };
+  return {
+    temp_id: requireTempId(row.temp_id, label),
+    name: typeof row.name === 'string' ? row.name : '',
+    domain: typeof row.domain === 'string' || row.domain === null ? row.domain : null,
+  };
+}
+
+function readProposedChildren(
+  value: unknown,
+  planCase: LearningIntentPlanCase,
+): ProposedKnowledgeNode[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new LearningIntentError(
+      'llm_parse_failed',
+      `${planCase} proposal missing proposed children`,
+    );
+  }
+  return value.map((child, index) => readProposedNode(child, `${planCase} child ${index}`));
+}
+
+function readAtomics(value: unknown): AtomicProposal[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new LearningIntentError('llm_parse_failed', 'proposal is missing atomics');
+  }
+  return value.map((item, index) => {
+    if (!item || typeof item !== 'object') {
+      throw new LearningIntentError(
+        'llm_parse_failed',
+        `proposal atomic ${index} is not an object`,
+      );
+    }
+    const row = item as AtomicProposal;
+    return { ...row, knowledge_id: readStringId(row.knowledge_id, `atomic ${index}`) };
+  });
+}
+
+function readLongs(value: unknown): LongProposal[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) {
+    throw new LearningIntentError('llm_parse_failed', 'proposal longs is not a list');
+  }
+  return value.map((item, index) => {
+    if (!item || typeof item !== 'object') {
+      throw new LearningIntentError('llm_parse_failed', `proposal long ${index} is not an object`);
+    }
+    const row = item as LongProposal;
+    if (!Array.isArray(row.knowledge_ids) || row.knowledge_ids.length === 0) {
+      throw new LearningIntentError(
+        'invalid_atomic_knowledge_id',
+        `proposal long ${index} is missing knowledge ids`,
+      );
+    }
+    return {
+      ...row,
+      knowledge_ids: row.knowledge_ids.map((id, idIndex) =>
+        readStringId(id, `long ${index} knowledge id ${idIndex}`),
+      ),
+    };
+  });
+}
+
+function readReviewedNode(value: unknown): ReviewedKnowledgeNode | null {
+  if (!value || typeof value !== 'object') return null;
+  const row = value as { id?: unknown; parent_id?: unknown; version?: unknown };
+  if (typeof row.id !== 'string' || row.id.length === 0) return null;
+  if (typeof row.parent_id !== 'string' && row.parent_id !== null) return null;
+  if (typeof row.version !== 'number' || !Number.isInteger(row.version)) return null;
+  return { id: row.id, parent_id: row.parent_id, version: row.version };
+}
+
+function readReviewedKnowledge(value: unknown): ReviewedKnowledge | null {
+  if (!value || typeof value !== 'object') return null;
+  const root = readReviewedNode((value as { root?: unknown }).root);
+  if (!root) return null;
+  const rawChildren = (value as { children?: unknown }).children;
+  if (rawChildren === undefined) return { root };
+  if (!Array.isArray(rawChildren)) return null;
+  const children: ReviewedKnowledgeNode[] = [];
+  for (const item of rawChildren) {
+    const child = readReviewedNode(item);
+    if (!child) return null;
+    children.push(child);
+  }
+  return { root, children };
+}
+
+function readOptionalReviewed(
+  value: unknown,
+  shape: 'root' | 'children',
+): ReviewedKnowledge | null {
+  if (value === undefined || value === null) return null;
+  const reviewed = readReviewedKnowledge(value);
+  if (!reviewed) {
+    throw new LearningIntentError('llm_parse_failed', 'proposal reviewed knowledge is unreadable');
+  }
+  if (shape === 'children' && !reviewed.children) {
+    throw new LearningIntentError(
+      'llm_parse_failed',
+      'proposal reviewed knowledge is missing children',
+    );
+  }
+  return reviewed;
+}
+
+function compatibilityFor(
+  id: string,
+  role: 'root' | 'child',
+  rootId: string,
+  reviewed: ReviewedKnowledge | null,
+): KnowledgeCompatibility {
+  const recorded =
+    role === 'root' ? reviewed?.root : reviewed?.children?.find((child) => child.id === id);
+  if (recorded && recorded.id === id) {
+    return { id, parentId: recorded.parent_id, version: recorded.version, recorded: true };
+  }
+  if (role === 'child') return { id, parentId: rootId, recorded: false };
+  return { id, recorded: false };
+}
+
+interface AcceptSpec {
+  readonly planCase: LearningIntentPlanCase;
+  readonly graph: ProposalGraph;
+  readonly rootToMint: ProposedKnowledgeNode | null;
+  readonly childrenToMint: readonly ProposedKnowledgeNode[];
+  readonly existing: readonly KnowledgeCompatibility[];
+  readonly existingRootId: string | null;
+  readonly atomics: readonly AtomicProposal[];
+  readonly longs: readonly LongProposal[];
+  readonly hub: HubProposal;
+  readonly topic: string;
+  readonly knowledgeNodeDomain: string | null;
+  readonly taskRunId: string | null;
+  readonly costMicroUsd: number | null;
+  /** Old 3c proposals did not record children. Their legal set is the locked active children. */
+  readonly resolveActiveChildren: boolean;
+}
+
+function readAcceptSpec(payload: ProposalEventRow['payload']): AcceptSpec {
+  const planCase = requirePlanCase(payload.plan_case);
+  const atomics = readAtomics(payload.atomics);
+  const longs = readLongs(payload.longs);
+  const hub = payload.hub;
+  if (!hub || typeof hub.title !== 'string' || typeof hub.summary_md !== 'string') {
+    throw new LearningIntentError('llm_parse_failed', 'proposal is missing hub');
+  }
+  const shared = {
+    planCase,
+    atomics,
+    longs,
+    hub,
+    topic: typeof payload.topic === 'string' ? payload.topic : '',
+    knowledgeNodeDomain: payload.knowledge_node?.domain ?? null,
+    taskRunId: payload.task_run_id ?? null,
+    costMicroUsd: payload.cost_micro_usd ?? null,
+    resolveActiveChildren: false,
+  };
+
+  if (planCase === '3a_topic_missing') {
+    const root = readProposedNode(payload.proposed_knowledge?.root, '3a proposal root');
+    const children = readProposedChildren(payload.proposed_knowledge?.children, planCase);
+    return {
+      ...shared,
+      graph: { rootKey: root.temp_id, childKeys: children.map((child) => child.temp_id) },
+      rootToMint: root,
+      childrenToMint: children,
+      existing: [],
+      existingRootId: null,
+    };
+  }
+
+  const rootId = payload.knowledge_node_id;
+  if (typeof rootId !== 'string' || rootId.length === 0) {
+    throw new LearningIntentError(
+      'llm_parse_failed',
+      `${planCase} proposal missing knowledge_node_id`,
+    );
+  }
+
+  if (planCase === '3b_children_missing') {
+    const children = readProposedChildren(payload.proposed_knowledge?.children, planCase);
+    const reviewed = readOptionalReviewed(payload.reviewed_knowledge, 'root');
+    if (reviewed && reviewed.root.id !== rootId) {
+      throw new LearningIntentError(
+        'invalid_atomic_knowledge_id',
+        'proposal reviewed root does not match knowledge_node_id',
+      );
+    }
+    return {
+      ...shared,
+      graph: { rootKey: rootId, childKeys: children.map((child) => child.temp_id) },
+      rootToMint: null,
+      childrenToMint: children,
+      existing: [compatibilityFor(rootId, 'root', rootId, reviewed)],
+      existingRootId: rootId,
+    };
+  }
+
+  const reviewed = readOptionalReviewed(payload.reviewed_knowledge, 'children');
+  if (reviewed && reviewed.root.id !== rootId) {
+    throw new LearningIntentError(
+      'invalid_atomic_knowledge_id',
+      'proposal reviewed root does not match knowledge_node_id',
+    );
+  }
+  const childIds = reviewed?.children?.map((child) => child.id) ?? [];
+  return {
+    ...shared,
+    graph: { rootKey: rootId, childKeys: childIds },
+    rootToMint: null,
+    childrenToMint: [],
+    existing: [
+      compatibilityFor(rootId, 'root', rootId, reviewed),
+      ...childIds.map((id) => compatibilityFor(id, 'child', rootId, reviewed)),
+    ],
+    existingRootId: rootId,
+    resolveActiveChildren: !reviewed?.children,
+  };
+}
+
+function withLockedActiveChildren(
+  spec: AcceptSpec,
+  locked: readonly LockedKnowledgeRow[],
+): AcceptSpec {
+  const rootId = spec.existingRootId;
+  if (!rootId) return spec;
+  const childIds = locked
+    .filter((row) => row.id !== rootId && row.parent_id === rootId && row.archived_at === null)
+    .map((row) => row.id);
+  return {
+    ...spec,
+    resolveActiveChildren: false,
+    graph: { rootKey: rootId, childKeys: childIds },
+    existing: [
+      ...spec.existing.filter((node) => node.id === rootId),
+      ...childIds.map((id) => compatibilityFor(id, 'child', rootId, null)),
+    ],
+  };
+}
+
 /**
  * Materializes a proposal: 1 hub LearningItem + N atomic LearningItems (parent-linked) +
  * paired hub artifact + N atomic artifact stubs (body_blocks=null, generation_status='pending'),
  * then writes the accept rate event chained to the proposal. Runs as the accept effect of the
  * kernel decision transaction; the caller enqueues note_generate jobs after it commits.
+ *
+ * The id graph is checked before any knowledge, learning-item, or note write. A referenced
+ * row that was archived, merged, or reparented raises LearningIntentStaleError instead.
  */
 export async function acceptLearningIntent(
   params: AcceptLearningIntentParams,
 ): Promise<LearningIntentMaterializeResult> {
   const { createKnowledgeNode, createNote, tx, proposalId, writeRate } = params;
   const proposal = await readProposal(tx, proposalId);
+  const read = readAcceptSpec(proposal.payload);
+  let spec = read;
+  if (read.resolveActiveChildren && read.existingRootId) {
+    const locked = await lockLegacyKnowledge(tx, read.existingRootId, citedKnowledgeIds(read));
+    // An archived or moved citation is stale. The active-child check would
+    // report that same id as unknown and leave the proposal pending.
+    const staleId = staleCitedId(read, locked);
+    if (staleId) throw new LearningIntentStaleError(staleId);
+    spec = withLockedActiveChildren(read, locked);
+  }
+  const fault = checkProposalGraph(spec.graph, spec.atomics, spec.longs);
+  if (fault) rejectGraphFault(fault, 'proposal');
+  await assertKnowledgeCompatible(tx, spec.existing);
 
-  const {
-    hub,
-    atomics,
-    topic,
-    knowledge_node_id,
-    plan_case: planCase = '3c_existing_graph',
-    proposed_knowledge: proposedKnowledge,
-    task_run_id: proposalTaskRunId,
-    cost_micro_usd: proposalCostMicroUsd,
-    longs = [],
-  } = proposal.payload;
   const now = new Date();
   // Mint the RATE event id up-front so the same-tx artifact_create events can chain caused_by
   // to it (the accept is what materializes these artifacts). caused_by has no FK, so emitting
   // the create events BEFORE the rate row exists in the tx is safe.
   const rateEventId = newId();
-
   const createdKnowledgeIds: string[] = [];
-  const tempIdToRealId = new Map<string, string>();
-  let rootKnowledgeId = knowledge_node_id;
+  const bindings = new Map<string, string>();
 
-  if (planCase === '3a_topic_missing') {
-    const root = proposedKnowledge?.root;
-    if (!root) {
-      throw new LearningIntentError('llm_parse_failed', '3a proposal missing proposed root');
-    }
+  let rootKnowledgeId: string;
+  if (spec.rootToMint) {
+    const root = spec.rootToMint;
     const rootDomain = resolveSelectableSubjectId(root.domain);
     if (!rootDomain) {
       throw new LearningIntentError(
@@ -560,7 +1085,7 @@ export async function acceptLearningIntent(
       );
     }
     rootKnowledgeId = newId();
-    tempIdToRealId.set(root.temp_id, rootKnowledgeId);
+    bindKnowledgeId(bindings, root.temp_id, rootKnowledgeId);
     createdKnowledgeIds.push(rootKnowledgeId);
 
     // A domain-bearing topic root parents under its subject's seed anchor (seed:<domain>:root)
@@ -587,33 +1112,27 @@ export async function acceptLearningIntent(
       // KC: the proposed children below carry the testable knowledge.
       role: 'goal',
     });
-  }
-
-  if (!rootKnowledgeId) {
+  } else if (spec.existingRootId) {
+    rootKnowledgeId = spec.existingRootId;
+    bindKnowledgeId(bindings, spec.graph.rootKey, rootKnowledgeId);
+  } else {
     throw new LearningIntentError(
       'llm_parse_failed',
-      `${planCase} proposal missing knowledge_node_id`,
+      `${spec.planCase} proposal missing knowledge_node_id`,
     );
   }
 
-  if (planCase === '3a_topic_missing' || planCase === '3b_children_missing') {
-    const children = proposedKnowledge?.children ?? [];
-    if (children.length === 0) {
-      throw new LearningIntentError(
-        'llm_parse_failed',
-        `${planCase} proposal missing proposed children`,
-      );
-    }
+  if (spec.childrenToMint.length > 0) {
     // Sanitise every persisted domain so a stale proposal carrying 'general' cannot leak
     // into knowledge.domain at accept time either; legitimately unresolvable domains keep
     // the same verbatim passthrough the write seam applies.
     const fallbackDomain =
-      sanitizeProposedNodeDomain(proposedKnowledge?.root?.domain) ??
-      sanitizeProposedNodeDomain(proposal.payload.knowledge_node?.domain) ??
+      sanitizeProposedNodeDomain(spec.rootToMint?.domain) ??
+      sanitizeProposedNodeDomain(spec.knowledgeNodeDomain) ??
       null;
-    for (const child of children) {
+    for (const child of spec.childrenToMint) {
       const childId = newId();
-      tempIdToRealId.set(child.temp_id, childId);
+      bindKnowledgeId(bindings, child.temp_id, childId);
       createdKnowledgeIds.push(childId);
       await createKnowledgeNode(tx, {
         id: childId,
@@ -626,36 +1145,24 @@ export async function acceptLearningIntent(
     }
   }
 
-  const resolvedAtomics = atomics.map((atomic) => {
-    const resolvedKnowledgeId = tempIdToRealId.get(atomic.knowledge_id) ?? atomic.knowledge_id;
-    if (
-      (planCase === '3a_topic_missing' || planCase === '3b_children_missing') &&
-      !tempIdToRealId.has(atomic.knowledge_id)
-    ) {
-      throw new LearningIntentError(
-        'invalid_atomic_knowledge_id',
-        `proposal atomic references unknown proposed knowledge_id=${atomic.knowledge_id}`,
-      );
-    }
-    return { ...atomic, knowledge_id: resolvedKnowledgeId };
-  });
-  const resolvedLongs = longs.map((long) => {
-    const resolvedKnowledgeIds = long.knowledge_ids.map((knowledgeId) => {
-      const resolvedKnowledgeId = tempIdToRealId.get(knowledgeId) ?? knowledgeId;
-      if (
-        (planCase === '3a_topic_missing' || planCase === '3b_children_missing') &&
-        !tempIdToRealId.has(knowledgeId) &&
-        knowledgeId !== rootKnowledgeId
-      ) {
-        throw new LearningIntentError(
-          'invalid_atomic_knowledge_id',
-          `proposal long note references unknown proposed knowledge_id=${knowledgeId}`,
-        );
-      }
-      return resolvedKnowledgeId;
-    });
-    return { ...long, knowledge_ids: resolvedKnowledgeIds };
-  });
+  for (const node of spec.existing) {
+    if (node.id === rootKnowledgeId) continue;
+    bindKnowledgeId(bindings, node.id, node.id);
+  }
+
+  const { hub, topic } = spec;
+  const proposalTaskRunId = spec.taskRunId;
+  const proposalCostMicroUsd = spec.costMicroUsd;
+  const resolvedAtomics = spec.atomics.map((atomic) => ({
+    ...atomic,
+    knowledge_id: boundKnowledgeId(bindings, atomic.knowledge_id, 'atomic'),
+  }));
+  const resolvedLongs = spec.longs.map((long) => ({
+    ...long,
+    knowledge_ids: long.knowledge_ids.map((knowledgeId) =>
+      boundKnowledgeId(bindings, knowledgeId, 'long'),
+    ),
+  }));
 
   // Hub LearningItem
   const hubLiId = newId();
