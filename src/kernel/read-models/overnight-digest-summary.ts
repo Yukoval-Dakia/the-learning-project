@@ -17,19 +17,48 @@ const BJT_OFFSET_MS = 8 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
- * "Last night" = the previous Asia/Shanghai calendar day, [from, to). The system has no
- * last-visited anchor, so the window is fixed rather than "since last visit".
+ * The learner's absence is capped: a month away should not turn the digest into a
+ * month-long report, and the bounded window also keeps the note-change read cheap.
+ */
+export const OVERNIGHT_WINDOW_MAX_DAYS = 14;
+
+function bjtDayStartUtcMs(at: Date): number {
+  const bjt = new Date(at.getTime() + BJT_OFFSET_MS);
+  return Date.UTC(bjt.getUTCFullYear(), bjt.getUTCMonth(), bjt.getUTCDate()) - BJT_OFFSET_MS;
+}
+
+/** Whole days the window covers; always at least the single previous night. */
+export function overnightWindowDays(window: { from: Date; to: Date }): number {
+  const span = window.to.getTime() - window.from.getTime();
+  if (!Number.isFinite(span)) return 1;
+  return Math.max(1, Math.round(span / DAY_MS));
+}
+
+/**
+ * "Last night" = the previous Asia/Shanghai calendar day. Without a last-visit anchor
+ * the window stays fixed (callers that only have a clock use this form).
  */
 export function overnightWindow(now: Date): { from: Date; to: Date } {
-  const bjt = new Date(now.getTime() + BJT_OFFSET_MS);
-  const bjtTodayMidnightWallMs = Date.UTC(
-    bjt.getUTCFullYear(),
-    bjt.getUTCMonth(),
-    bjt.getUTCDate(),
-  );
-  const todayStartUtcMs = bjtTodayMidnightWallMs - BJT_OFFSET_MS;
+  return overnightWindowSince(now, null);
+}
+
+/**
+ * Window from the day of the learner's last activity through today's BJT midnight,
+ * capped at OVERNIGHT_WINDOW_MAX_DAYS. An activity today still shows last night only.
+ */
+export function overnightWindowSince(
+  now: Date,
+  lastLearnerEventAt: Date | null,
+): { from: Date; to: Date } {
+  const todayStartUtcMs = bjtDayStartUtcMs(now);
+  const lastNightStartUtcMs = todayStartUtcMs - DAY_MS;
+  const earliestStartUtcMs = todayStartUtcMs - OVERNIGHT_WINDOW_MAX_DAYS * DAY_MS;
+  const absenceStartUtcMs =
+    lastLearnerEventAt === null
+      ? lastNightStartUtcMs
+      : Math.max(bjtDayStartUtcMs(lastLearnerEventAt), earliestStartUtcMs);
   return {
-    from: new Date(todayStartUtcMs - DAY_MS),
+    from: new Date(Math.min(lastNightStartUtcMs, absenceStartUtcMs)),
     to: new Date(todayStartUtcMs),
   };
 }

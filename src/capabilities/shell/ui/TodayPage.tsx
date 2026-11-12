@@ -46,6 +46,7 @@ import { SessionsStrip } from './blocks/SessionsStrip';
 import { SteeringList } from './blocks/SteeringList';
 import { WeekHeat } from './blocks/WeekHeat';
 import { OvernightCostSummary } from './OvernightCostSummary';
+import { overnightBandCopy, overnightWindowDayCount } from './overnight-band-copy';
 import { PrepDeskConjectures } from './PrepDeskConjectures';
 import { ProbeAnswers } from './ProbeAnswers';
 import { TeachingBriefBand } from './TeachingBrief';
@@ -412,6 +413,10 @@ export function OvernightDigestBand({ navigate }: { navigate: (to: string) => vo
   const canDecide = !!d && (d.new_proposals_count > 0 || d.new_conjectures_count > 0);
   const hasActivity = !!d?.has_overnight_activity;
   const hasProbes = activeProbes.length > 0;
+  // The server owns the window (last-activity day → today, capped); the band only
+  // names how many nights it covers.
+  const digestDays = d ? overnightWindowDayCount(d.window) : 1;
+  const bandCopy = overnightBandCopy(digestDays);
   return (
     <section className="td-night">
       <h2 className="un-today-section-title">夜链 · 交班</h2>
@@ -420,23 +425,19 @@ export function OvernightDigestBand({ navigate }: { navigate: (to: string) => vo
           <span className="td-card-ic" data-tone="accent" aria-hidden="true">
             <Moon size={18} />
           </span>
-          <h3 className="td-card-title">昨夜 AI 替你做了什么</h3>
+          <h3 className="td-card-title">{bandCopy.title}</h3>
         </div>
         <AreaGate
           status={status}
           onRetry={() => void q.refetch()}
           errorText="夜链交班暂不可用。"
-          loading={<SkeletonLines rows={2} label="正在读取昨夜交班" />}
+          loading={<SkeletonLines rows={2} label="正在读取夜间交班" />}
         >
           {/* AI failures show in <AiFailureNotice/>, above the brief.
               A quiet night (no overnight activity) shows the calm empty line. A served probe
               is NOT overnight activity, so it never suppresses this line — it renders in its
               own sibling below, independent of this digest query's state. */}
-          {d && !hasActivity && (
-            <p className="td-quiet">
-              昨夜没有需要交班的活动 —— 团队会在你持续学习后，开始为你做夜间复盘。
-            </p>
-          )}
+          {d && !hasActivity && <p className="td-quiet">{bandCopy.quiet}</p>}
           {d && hasActivity && (
             <>
               <button
@@ -445,7 +446,7 @@ export function OvernightDigestBand({ navigate }: { navigate: (to: string) => vo
                 onClick={() => setActivityOpen((o) => !o)}
                 aria-expanded={activityOpen}
               >
-                <Moon size={14} aria-hidden="true" /> 昨夜 AI 还替你做了这些
+                <Moon size={14} aria-hidden="true" /> {bandCopy.toggle}
                 <ChevronDown size={14} aria-hidden="true" className="td-chev" />
               </button>
               {activityOpen && (

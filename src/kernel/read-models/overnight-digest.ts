@@ -5,11 +5,15 @@
 
 import type { ProviderCostWindow } from '@/core/schema/cost-observation';
 import type { Db, Tx } from '@/db/client';
+import { overnightWindowDays } from './overnight-digest-summary';
 
 type DbLike = Db | Tx;
 
 export interface OvernightWindow {
-  /** Window start (inclusive): yesterday 00:00 BJT, ISO-8601 UTC. */
+  /**
+   * Window start (inclusive), ISO-8601 UTC: the day of the learner's last activity,
+   * never later than yesterday 00:00 BJT and never earlier than the 14-day cap.
+   */
   from: string;
   /** Window end (exclusive): today 00:00 BJT, ISO-8601 UTC. */
   to: string;
@@ -36,7 +40,7 @@ export interface DegradedKind {
 /** Five-source overnight facts shared by Today and Copilot. */
 export interface OvernightDigest {
   window: OvernightWindow;
-  /** All accounting activity in the fixed BJT day; not night-cron-only or billing quota. */
+  /** All accounting activity in the window; not night-cron-only or billing quota. */
   cost: ProviderCostWindow;
   /** Any of the five sources has a fact; false is an explicit quiet night, never ColdStart. */
   has_overnight_activity: boolean;
@@ -52,6 +56,10 @@ export interface OvernightDigest {
 export type LoadTodayOvernightDigest = (db: DbLike, now?: Date) => Promise<OvernightDigest>;
 
 const OVERNIGHT_HANDOFF_UNAVAILABLE = '夜链数据暂不可用。';
+/** Whole days the digest covers; 1 means the ordinary "last night" window. */
+export function overnightDigestDays(window: OvernightWindow): number {
+  return overnightWindowDays({ from: new Date(window.from), to: new Date(window.to) });
+}
 
 /**
  * One-line handoff for prompt/header surfaces. Null is the same quiet-night state
@@ -61,6 +69,8 @@ const OVERNIGHT_HANDOFF_UNAVAILABLE = '夜链数据暂不可用。';
 export function formatOvernightHandoffSentence(digest: OvernightDigest): string | null {
   if (!digest.has_overnight_activity && digest.cost.records === 0) return null;
 
+  const days = overnightDigestDays(digest.window);
+  const absence = days > 1 ? `你不在的这 ${days} 天` : null;
   const facts: string[] = [];
   const runsTotal = digest.runs.reduce((sum, group) => sum + group.count, 0);
   if (runsTotal > 0) facts.push(`夜间任务 ${runsTotal} 次`);
@@ -70,12 +80,15 @@ export function formatOvernightHandoffSentence(digest: OvernightDigest): string 
   if (digest.agent_notes_count > 0) facts.push(`AI 观察 ${digest.agent_notes_count} 条`);
 
   if (digest.cost.records > 0)
-    facts.push(`昨日 AI 费用记录 ${digest.cost.records} 条（含前台与后台，非订阅扣额）`);
+    facts.push(
+      `${absence ? '这几天' : '昨日'} AI 费用记录 ${digest.cost.records} 条（含前台与后台，非订阅扣额）`,
+    );
 
   const detail = facts.length > 0 ? facts.join('，') : '记录到活动，但暂无可展开的交班明细';
+  const lead = absence ? `${absence}里，` : '';
   const degraded = digest.degraded_kinds.length;
-  if (degraded > 0) return `${degraded} 类夜间任务降级；${detail}。`;
-  return `${detail}。`;
+  if (degraded > 0) return `${lead}${degraded} 类夜间任务降级；${detail}。`;
+  return `${lead}${detail}。`;
 }
 
 /** Read the handoff sentence with its existing asynchronous failure policy. */
