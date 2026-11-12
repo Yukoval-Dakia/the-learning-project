@@ -72,6 +72,10 @@ export async function readGradedAttempt(db: Db | Tx, id: string) {
     native?.submission.response_set.entries.some(
       (x) => x.kind === 'open' && x.evidence.length > 0,
     ) ?? false;
+  const hasNativeText =
+    native?.submission.response_set.entries.some(
+      (x) => 'text_md' in x && x.text_md.trim().length > 0,
+    ) ?? false;
   let visible = legacy?.effective?.verdict.visible_to_user !== false;
   // The canonical native resolver already withholds buffered paper evaluations.
   if (!native && !visible && raw.session_id) {
@@ -118,7 +122,7 @@ export async function readGradedAttempt(db: Db | Tx, id: string) {
     visible,
     image_status:
       imageRefs.length || hasNativeImages
-        ? answer.trim() || trace.trim()
+        ? answer.trim() || trace.trim() || hasNativeText
           ? ('text_available' as const)
           : ('unavailable' as const)
         : ('none' as const),

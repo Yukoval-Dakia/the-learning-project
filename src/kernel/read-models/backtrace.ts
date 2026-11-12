@@ -9,13 +9,30 @@ export interface BacktraceContextQuery {
   question_id?: string;
   session_id?: string;
 }
-type Reader = (db: Db, query: BacktraceContextQuery) => Promise<string | null>;
+export interface BacktraceContextResult {
+  /** Model-facing digest; unchanged when no context resolves. */
+  digest: string | null;
+  /**
+   * Event ids whose content fed the digest. Copilot replies persist them so
+   * the derivation closure still authorizes against the consumed sources.
+   */
+  sourceEventIds: string[];
+}
+type Reader = (
+  db: Db,
+  query: BacktraceContextQuery,
+) => Promise<BacktraceContextResult | string | null>;
 const SLOT = 'kernel/read-models/backtrace:context';
 export function installBacktraceContextReader(reader: Reader) {
   installHostOperation(SLOT, reader);
 }
-export async function readBacktraceContext(db: Db, query: BacktraceContextQuery) {
+export async function readBacktraceContext(
+  db: Db,
+  query: BacktraceContextQuery,
+): Promise<BacktraceContextResult | null> {
   const reader = installedHostOperation<Reader>(SLOT);
   if (!reader) throw new HostOperationNotInstalledError('Backtrace context reader not installed');
-  return reader(db, query);
+  const result = await reader(db, query);
+  if (!result) return null;
+  return typeof result === 'string' ? { digest: result, sourceEventIds: [] } : result;
 }

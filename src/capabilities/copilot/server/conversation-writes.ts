@@ -167,6 +167,11 @@ export async function writeCopilotReply(
     taskRunId: string;
     /** Sealed FULL-validator run linkage; contains no model prose or reasoning. */
     evidenceValidation?: CopilotEvidenceValidationRef;
+    /**
+     * Backtrace insight/judgement event ids this reply derived from. Persisted
+     * as lineage so derivation authorization traverses consumed sources.
+     */
+    sourceEventIds?: string[];
     /** Compact root-owned structural finalization receipt. */
     replyFinalization?: CopilotReplyFinalizationReceipt;
     /** Product mode state persisted with the reply; never included in model input. */
@@ -305,6 +310,7 @@ export async function writeCopilotReply(
         : {}),
       ...(params.confirmation ? { confirmation: params.confirmation } : {}),
       in_reply_to_event_id: params.userAskEventId ?? null,
+      ...(params.sourceEventIds?.length ? { source_event_ids: params.sourceEventIds } : {}),
     },
     caused_by_event_id: params.userAskEventId ?? null,
     task_run_id: params.taskRunId,

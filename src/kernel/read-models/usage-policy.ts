@@ -142,7 +142,7 @@ const PURPOSE_EDGES_SQL = sql`
       CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(derived.payload->'source_event_ids') = 'array'
         THEN derived.payload->'source_event_ids' ELSE '[]'::jsonb END) ref
       WHERE n.kind = 'event' AND derived.id = n.id
-        AND derived.action IN ('experimental:attempt_insight', 'experimental:backtrace_judgement')
+        AND derived.action IN ('experimental:attempt_insight', 'experimental:backtrace_judgement', 'experimental:copilot_reply')
       UNION ALL
       SELECT 'document', s.source_document_id FROM learning_session s
       WHERE n.kind = 'session' AND s.id = n.id
@@ -239,7 +239,7 @@ const NODE_VIOLATION_SQL = sql`CASE n.kind
                 THEN e.payload->'refs' ELSE '[]'::jsonb END) ref
               WHERE NOT coalesce(ref->>'kind' IN ('source_document', 'question', 'record', 'event', 'knowledge'), false)
                 OR jsonb_typeof(ref->'id') IS DISTINCT FROM 'string' OR length(ref->>'id') = 0)))
-          OR (e.action IN ('experimental:attempt_insight', 'experimental:backtrace_judgement') AND (
+          OR (e.action IN ('experimental:attempt_insight', 'experimental:backtrace_judgement', 'experimental:copilot_reply') AND e.payload ? 'source_event_ids' AND (
             jsonb_typeof(e.payload->'source_event_ids') IS DISTINCT FROM 'array'
             OR jsonb_array_length(CASE WHEN jsonb_typeof(e.payload->'source_event_ids') = 'array' THEN e.payload->'source_event_ids' ELSE '[]'::jsonb END) = 0
             OR EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(e.payload->'source_event_ids') = 'array' THEN e.payload->'source_event_ids' ELSE '[]'::jsonb END) ref

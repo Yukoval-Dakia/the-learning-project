@@ -44,7 +44,13 @@ try {
     console.log(
       JSON.stringify({ run_id: revert, reverted: await revertBacktraceBackfill(db, revert) }),
     );
-  else
+  else {
+    if (args.includes('--apply')) {
+      const { hydrateConfigFromDb } = await import('@/core/config/server/hydrate');
+      const { hydrateModelCatalog } = await import('@/server/ai/model-catalog');
+      await hydrateConfigFromDb(db);
+      await hydrateModelCatalog(db);
+    }
     console.log(
       JSON.stringify(
         await backfillBacktrace(db, {
@@ -58,6 +64,7 @@ try {
         }),
       ),
     );
+  }
 } finally {
   await db.$client.end();
 }

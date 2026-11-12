@@ -37,6 +37,7 @@ export const failureLearningManifestPart: Omit<CapabilityManifest, 'name' | 'des
           'experimental:user_cause',
           'experimental:assessment_attempt',
           'experimental:assessment_activation',
+          'experimental:assessment_feedback_released',
         ],
         load: () =>
           import('./server/backtrace-subscription').then((m) => m.buildBacktraceSubscriber),

@@ -183,6 +183,13 @@ export interface CopilotExecutionResult {
   sdkSessionId?: string;
   contextDigest: string;
   correctionFiling?: SealedCorrectionFiling;
+  /**
+   * Server-bound sources this turn's model context consumed (history window,
+   * ask, review answer, ambient focus, backtrace lineage). The reply writer
+   * persists the event-kind ids so withdrawal reaches replies that paraphrased
+   * them.
+   */
+  consumedSourceEventIds?: string[];
 }
 
 /** Tolerant scan of the streamed compose_block args prefix (never the payload). */
@@ -355,6 +362,10 @@ export function createCopilotExecutionOwner(
     const sourceLedger = new TurnSourceLedger();
     if (turn.sourceEventId) sourceLedger.note({ kind: 'event', id: turn.sourceEventId });
     for (const id of input.bound_turn_event_ids ?? []) sourceLedger.note({ kind: 'event', id });
+    // The backtrace digest's insight/judgement sources are part of this turn's
+    // read set: withdrawal must reach replies derived through them.
+    for (const id of input.backtrace_source_event_ids ?? [])
+      sourceLedger.note({ kind: 'event', id });
     if (reviewAnswer) sourceLedger.note({ kind: 'event', id: reviewAnswer.originalRef });
     const focused = input.ambient_context?.focused_entity;
     if (focused) {
@@ -949,6 +960,10 @@ export function createCopilotExecutionOwner(
         ...(result.providerFailure ? { providerFailure: result.providerFailure } : {}),
         ...(observedSdkSessionId && retainSdkSession ? { sdkSessionId: observedSdkSessionId } : {}),
         contextDigest,
+        consumedSourceEventIds: sourceLedger
+          .snapshot()
+          .sources.filter((src) => src.kind === 'event')
+          .map((src) => src.id),
       };
     } finally {
       clearTimeout(budgetLandingTimer);

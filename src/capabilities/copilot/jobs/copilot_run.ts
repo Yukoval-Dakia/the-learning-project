@@ -844,6 +844,9 @@ async function executeAcceptedCopilotRun(
             durableFinishReason: result.finishReason,
             ...(result.providerFailure ? { providerFailure: result.providerFailure } : {}),
             ...(modeState ? { modeState } : {}),
+            ...(result.consumedSourceEventIds?.length
+              ? { sourceEventIds: result.consumedSourceEventIds }
+              : {}),
             now: new Date(),
           });
           const candidateMatchesCommitted =

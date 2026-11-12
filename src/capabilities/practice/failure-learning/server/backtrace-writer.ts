@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import { EMBED_VERSION } from '@/core/embed-source';
 import {
   ATTEMPT_INSIGHT_VERSION,
@@ -10,8 +10,14 @@ import {
 } from '@/core/schema/backtrace';
 import type { Db, Tx } from '@/db/client';
 import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
-import { ai_task_runs, attempt_insight_vector, backtrace_work, source_document } from '@/db/schema';
-import { writeEvent } from '@/kernel/events';
+import {
+  ai_task_runs,
+  attempt_insight_vector,
+  backtrace_work,
+  event,
+  source_document,
+} from '@/db/schema';
+import { filterActiveRows, getCorrectionStatuses, writeEvent } from '@/kernel/events';
 import { lockEventCorrectionsAll } from '@/kernel/events/correction-lock';
 import { lockAssessmentEvaluationGroup } from '@/kernel/locks/assessment-evaluation-group-lock';
 import { readSourceUsageEpochs } from '@/kernel/read-models/usage-policy';
@@ -20,7 +26,7 @@ import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { backtraceJudgeTimeoutMs } from '../tasks/backtrace';
 import { backtraceDigest, loadBacktraceInput } from './backtrace-input';
 import { backtracePool } from './backtrace-pool';
-import { activeBacktraceEvents, currentInsight } from './backtrace-store';
+import { currentInsight } from './backtrace-store';
 
 async function guarded<T>(
   db: Db,
@@ -222,9 +228,20 @@ export async function writeAttemptInsight(db: Db, id: string, backfillRunId?: st
         image_status: current.input.image_status,
         ...(backfillRunId ? { backfill_run_id: backfillRunId } : {}),
       });
-      const previous = await activeBacktraceEvents(tx, 'experimental:attempt_insight', id);
+      // Look beyond active rows: a digest-equal insight superseded earlier
+      // (A→B) is the same write id and must be restored, not silently dropped
+      // by the idempotent insert (which would strand the attempt at null).
+      const allRows = await tx
+        .select()
+        .from(event)
+        .where(and(eq(event.action, 'experimental:attempt_insight'), eq(event.subject_id, id)))
+        .orderBy(desc(event.created_at), desc(event.dispatch_seq));
+      const previous = (await filterActiveRows(tx, allRows)).filter(
+        (row) => row.id !== `insight:${ATTEMPT_INSIGHT_VERSION}:${id}:${before.digest}`,
+      );
+      const newId = `insight:${ATTEMPT_INSIGHT_VERSION}:${id}:${before.digest}`;
       await writeEvent(tx, {
-        id: `insight:${ATTEMPT_INSIGHT_VERSION}:${id}:${before.digest}`,
+        id: newId,
         actor_kind: 'agent',
         actor_ref: 'attempt-insight',
         action: 'experimental:attempt_insight',
@@ -238,23 +255,38 @@ export async function writeAttemptInsight(db: Db, id: string, backfillRunId?: st
         ingest_at: new Date(),
         affected_scopes: [],
       });
+      const priorStatuses = await getCorrectionStatuses(tx, [newId]);
+      if (priorStatuses.get(newId)?.state === 'superseded')
+        await writeEvent(tx, {
+          id: `insight-restore:${newId}:${before.digest}`,
+          actor_kind: 'agent',
+          actor_ref: 'attempt-insight',
+          action: 'correct',
+          subject_kind: 'event',
+          subject_id: newId,
+          outcome: 'success',
+          payload: {
+            correction_kind: 'restore',
+            reason_md: '作答证据回滚至先前版本，恢复同内容描述',
+            affected_refs: [{ kind: 'question', id: current.input.question_id }],
+          },
+        });
       for (const old of previous)
-        if (old.id !== `insight:${ATTEMPT_INSIGHT_VERSION}:${id}:${before.digest}`)
-          await writeEvent(tx, {
-            id: `insight-supersede:${old.id}:${before.digest}`,
-            actor_kind: 'agent',
-            actor_ref: 'attempt-insight',
-            action: 'correct',
-            subject_kind: 'event',
-            subject_id: old.id,
-            outcome: 'success',
-            payload: {
-              correction_kind: 'supersede',
-              replacement_event_id: `insight:${ATTEMPT_INSIGHT_VERSION}:${id}:${before.digest}`,
-              reason_md: '作答的有效证据已更正',
-              affected_refs: [{ kind: 'question', id: current.input.question_id }],
-            },
-          });
+        await writeEvent(tx, {
+          id: `insight-supersede:${old.id}:${before.digest}`,
+          actor_kind: 'agent',
+          actor_ref: 'attempt-insight',
+          action: 'correct',
+          subject_kind: 'event',
+          subject_id: old.id,
+          outcome: 'success',
+          payload: {
+            correction_kind: 'supersede',
+            replacement_event_id: `insight:${ATTEMPT_INSIGHT_VERSION}:${id}:${before.digest}`,
+            reason_md: '作答的有效证据已更正',
+            affected_refs: [{ kind: 'question', id: current.input.question_id }],
+          },
+        });
     });
     active = await currentInsight(db, id);
   }
@@ -327,7 +359,15 @@ export async function writeAttemptInsight(db: Db, id: string, backfillRunId?: st
       // Read the committed receipt below, so both fresh execution and recovery use the same bytes.
     }
     const [receipt] = await db.select().from(backtrace_work).where(eq(backtrace_work.id, indexId));
-    if (receipt?.state !== 'completed' || !Array.isArray(receipt.result?.vectors)) return;
+    if (receipt?.state !== 'completed' || !Array.isArray(receipt.result?.vectors)) {
+      // A send claimed before this run and never settled: flag it so judgement
+      // and the read model surface the failure instead of an empty result.
+      await db
+        .update(backtrace_work)
+        .set({ state: 'needs_reconciliation' })
+        .where(and(eq(backtrace_work.id, indexId), eq(backtrace_work.state, 'sending')));
+      return;
+    }
     vectors = receipt.result.vectors as number[][];
     await guarded(db, id, async (tx, current) => {
       if (current.digest !== before.digest) return;

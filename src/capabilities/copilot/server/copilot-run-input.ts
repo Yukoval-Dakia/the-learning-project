@@ -75,6 +75,8 @@ export interface CopilotRunInput {
   conversation_history: CopilotHistoryTurn[];
   learner_state_header?: string;
   backtrace_digest?: string;
+  /** Insight/judgement event ids the backtrace digest derived from. */
+  backtrace_source_event_ids?: string[];
   /** 「自上条消息以来：……」 — only when the cached header predates new activity. */
   since_last_message?: string;
   correction_contract: CopilotCorrectionContract;
@@ -253,7 +255,7 @@ export async function assembleCopilotRunInput(
   const focused = ambient?.focused_entity;
   // Optional context: compositions without the practice host (crisis-guard subset
   // tests, standalone copilot) have no backtrace reader — degrade to no digest.
-  let backtrace: Awaited<ReturnType<typeof readBacktraceContext>> | undefined;
+  let backtrace: Awaited<ReturnType<typeof readBacktraceContext>> | null = null;
   try {
     backtrace = await readBacktraceContext(db, {
       ...(focused?.kind === 'question'
@@ -267,7 +269,10 @@ export async function assembleCopilotRunInput(
     if (!(error instanceof HostOperationNotInstalledError)) throw error;
   }
   return {
-    ...(backtrace ? { backtrace_digest: backtrace } : {}),
+    ...(backtrace?.digest ? { backtrace_digest: backtrace.digest } : {}),
+    ...(backtrace?.sourceEventIds.length
+      ? { backtrace_source_event_ids: backtrace.sourceEventIds }
+      : {}),
     derivation_policy: params.derivationPolicy ?? 'allow',
     surface: selectSurface(triggeredBy),
     triggered_by: triggeredBy,

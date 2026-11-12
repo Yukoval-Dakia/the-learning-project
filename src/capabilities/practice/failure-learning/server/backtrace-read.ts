@@ -178,12 +178,12 @@ export async function readBacktrace(
         Number(a.specificity === 'broad') - Number(b.specificity === 'broad') || b.score - a.score,
     );
   return {
-    status: judged
-      ? ('ready' as const)
-      : failure
-        ? ('failed' as const)
-        : unresolved([digest, insight.basis.digest])
-          ? ('needs_reconciliation' as const)
+    status: unresolved([digest, insight.basis.digest])
+      ? ('needs_reconciliation' as const)
+      : judged
+        ? ('ready' as const)
+        : failure
+          ? ('failed' as const)
           : ('judging' as const),
     ...(failure
       ? {
@@ -225,25 +225,34 @@ export async function backtraceContext(
 ) {
   const view = await readBacktrace(db, opts);
   if (view.status !== 'ready') return null;
-  return JSON.stringify({
-    anchor: view.anchor?.attempt_event_id,
-    current_error_md: view.anchor?.insight?.mechanism?.what_went_wrong_md.slice(0, 200),
-    current_key_step_md:
-      view.anchor?.insight?.method?.provenance === 'evidence'
-        ? view.anchor.insight.method.key_step_md.slice(0, 160)
-        : null,
-    similar_mistakes: view.similar_mistakes.slice(0, 1).map((x) => ({
-      attempt_event_id: x.attempt_event_id,
-      why_md: x.why_md.slice(0, 180),
-      outcome: x.outcome,
-      key_step_md: x.insight.method?.key_step_md.slice(0, 160),
-      mechanism_md: x.insight.mechanism?.what_went_wrong_md.slice(0, 180),
-    })),
-    similar_solutions: view.similar_solutions.slice(0, 1).map((x) => ({
-      attempt_event_id: x.attempt_event_id,
-      why_md: x.why_md.slice(0, 180),
-      outcome: x.outcome,
-      key_step_md: x.insight.method?.key_step_md.slice(0, 160),
-    })),
-  });
+  const sourceEventIds = [
+    ...(view.anchor?.insight?.source_event_ids ?? []),
+    ...view.similar_mistakes.slice(0, 1).flatMap((x) => x.insight.source_event_ids),
+    ...view.similar_solutions.slice(0, 1).flatMap((x) => x.insight.source_event_ids),
+    ...(view.judgement?.event_id ? [view.judgement.event_id] : []),
+  ];
+  return {
+    digest: JSON.stringify({
+      anchor: view.anchor?.attempt_event_id,
+      current_error_md: view.anchor?.insight?.mechanism?.what_went_wrong_md.slice(0, 200),
+      current_key_step_md:
+        view.anchor?.insight?.method?.provenance === 'evidence'
+          ? view.anchor.insight.method.key_step_md.slice(0, 160)
+          : null,
+      similar_mistakes: view.similar_mistakes.slice(0, 1).map((x) => ({
+        attempt_event_id: x.attempt_event_id,
+        why_md: x.why_md.slice(0, 180),
+        outcome: x.outcome,
+        key_step_md: x.insight.method?.key_step_md.slice(0, 160),
+        mechanism_md: x.insight.mechanism?.what_went_wrong_md.slice(0, 180),
+      })),
+      similar_solutions: view.similar_solutions.slice(0, 1).map((x) => ({
+        attempt_event_id: x.attempt_event_id,
+        why_md: x.why_md.slice(0, 180),
+        outcome: x.outcome,
+        key_step_md: x.insight.method?.key_step_md.slice(0, 160),
+      })),
+    }),
+    sourceEventIds,
+  };
 }
