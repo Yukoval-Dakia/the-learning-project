@@ -61,8 +61,17 @@ export type ReadBankInclude = (typeof READ_BANK_INCLUDE_VALUES)[number];
 
 export const ReadBankInputSchema = z
   .object({
-    refs: z.array(z.string().min(1)).min(1).max(20),
-    include: z.array(z.enum(READ_BANK_INCLUDE_VALUES)).default(['overview']),
+    refs: z
+      .array(z.string().min(1))
+      .min(1)
+      .max(20)
+      .describe('qrev1:<revision_id>:<digest12> strings returned by search_bank.'),
+    include: z
+      .array(z.enum(READ_BANK_INCLUDE_VALUES))
+      .default(['overview'])
+      .describe(
+        'Layers to expand; overview is a nav map of part/unit/material/slot stable ids usable as edit_question targets. content=parts+answer slots; answers=typed keys; scoring=merged answers+rubric+execution; solution_prior=same-version method and pitfall evidence with source ids. answers/metadata/rubric/scoring/execution/solution_prior and private-visibility materials are role-gated by the server — include never upgrades a role; denials report in denied_layers.',
+      ),
     /** 稳定 id 聚焦：把该 ref 的读取收缩到指定子树（与 include 组合取层）。 */
     focus: z
       .array(
@@ -72,16 +81,26 @@ export const ReadBankInputSchema = z
           id: z.string().min(1),
         }),
       )
-      .optional(),
+      .optional()
+      .describe('Narrow a read to part/unit/material/item/slot/option subtrees by stable id.'),
     /** 长文本续读：chars=每个文本字段上限；cursor=上一响应的 next_cursor。 */
     extent: z
       .object({
         chars: z.number().int().min(64).max(200000).optional(),
         cursor: z.string().min(1).optional(),
       })
-      .optional(),
+      .optional()
+      .describe(
+        'Long-text paging: chars caps each text field; cursor continues via next_cursor pinned to the read revision.',
+      ),
     /** 历史读授权：绑定所请 revision 的既有 submission（旧作答读旧题）。 */
-    submission_id: z.string().min(1).optional(),
+    submission_id: z
+      .string()
+      .min(1)
+      .optional()
+      .describe(
+        'Binds an existing submission so its frozen withdrawn revision reads (marked historical, new_issuance_allowed=false).',
+      ),
   })
   .strict();
 
@@ -1145,7 +1164,7 @@ async function executeReadBank(ctx: ToolContext, rawInput: ReadBankInput): Promi
 export const readBankTool: DomainTool<ReadBankInput, ReadBankOutput> = {
   name: 'read_bank',
   description:
-    'Fetch versioned question/group content by bank ref (qrev1:<revision_id>:<digest12> — the `ref` strings search_bank returns). Batch up to 20 refs; each resolves independently (partial success is normal). A ref that cannot be resolved, whose digest no longer matches, or whose group was withdrawn returns an explicit error for that ref — NEVER a silent fallback to latest. Default response is an overview (nav map of part/unit/material/slot stable ids — usable directly as edit_question targets); expand via include layers: content (parts + answer slots) / materials / answers (typed keys) / rubric / scoring (merged answers+rubric+execution) / source / relations / execution / metadata / solution_prior (same-version method and pitfall evidence with source ids; long text uses extent/cursor). focus narrows a read to part/unit/material/item/slot subtrees; extent.chars + next_cursor continue long text pinned to the read revision. A withdrawn revision is readable with a bound submission_id (old attempts read their exact frozen revision, marked historical + new_issuance_allowed=false) or a private role. answers/metadata/rubric/scoring/execution/solution_prior and private-visibility materials are role-gated by the server — include can never upgrade a role; denied layers are reported in denied_layers. activity.attempts counts still-active attempt outcomes on this question id (the group root) for owner and private reads; a real zero is a real zero. Restricted reads omit it, because that role cannot read learner events. There is no exposure count: no exposure event is stored, and a search snapshot is not a lifetime impression count.',
+    'Fetch versioned question/group content by bank ref — each ref resolves independently (partial success is normal); an unresolvable, digest-mismatched or withdrawn-group ref returns an explicit error for that ref, never a silent fallback to latest. Use overview ids directly as edit_question targets; include/focus/extent paging rules are in their parameter descriptions. A withdrawn revision reads only with a bound submission_id (as historical, new_issuance_allowed=false) or a private role. Role-gated layers never upgrade access; denied_layers reports omissions. activity.attempts counts still-active outcomes for owner/private reads and may really be zero; restricted reads omit it. There is no exposure count because no exposure event is stored.',
   effect: 'read',
   inputSchema: ReadBankInputSchema,
   outputSchema: ReadBankOutputSchema,

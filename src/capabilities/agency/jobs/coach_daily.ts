@@ -49,6 +49,9 @@ import {
   type DailyReviewPlanInputs,
   resolveDailyReviewPlanInputs,
 } from '@/kernel/read-models/daily-review-plan';
+// Last practice session's structured next focus (YUK-2166): the session summary
+// owns the write; Coach only reads it as attention pressure for the new plan.
+import { type SessionFocusRead, readLatestSessionFocus } from '@/kernel/read-models/session-focus';
 import { deriveActionableWeakPoints } from '@/kernel/read-models/weak-points';
 // Active/pinned learning items' knowledge_ids feed the Coach input as ATTENTION PRESSURE
 // only; never scheduling/bookkeeping, never the FSRS-due review backbone.
@@ -83,6 +86,10 @@ const COACH_PLAN_ISSUES_GUIDANCE =
 // review backbone or signal-driven proposals. Inert when agent_notes is empty.
 const COACH_AGENT_NOTES_GUIDANCE =
   ' When agent_notes are present, treat each as a soft HINT (not a fact) left by a narrow task — it has a signal_kind, refs, and confidence; use it to direct attention when shaping the plan, never as ground truth, and never let it suppress or replace the FSRS-due review backbone or signal-driven proposals (ND-5). When agent_notes is empty, behave exactly as before.';
+// Last-session focus clause: the summary's structured next_focus names the KC the
+// learner just struggled with. Attention pressure only; inert when absent.
+const COACH_SESSION_FOCUS_GUIDANCE =
+  ' When last_session_focus is present, it is the structured next focus written by the last practice session summary (knowledge_id + reason_md). Treat it as attention pressure when ranking knowledge_focus and phrasing daily_focus: prefer that knowledge_id when it overlaps due/weak signals, and state the reason in one clause. Never invent additional next-focus entries and never let it suppress or replace the FSRS-due review backbone. When it is absent, behave exactly as before.';
 // Brief guidance: count / estimated_minutes / time_box_minutes / subject_mix are
 // system-computed read-only facts supplied in `review_plan`; the model owns only
 // knowledge_focus and intent_tags. active_items are attention pressure only (never
@@ -97,7 +104,7 @@ const COACH_WEAK_POINTS_GUIDANCE =
 // The coach view is attention context; candidate facts come from read_practice_candidates.
 const COACH_CONTEXT_VIEW_GUIDANCE =
   ' When coach_context is present, it is the purpose-trimmed planner segment (active goal + Steering, recent activity counts, mastery/cause readings, recent failure cause labels). It carries no question stems or answer keys: use it as attention context, never as a candidate list — candidate facts (due / variant / new_check / frontier / never-started) come only from read_practice_candidates, and never restate its numbers as new measurements.';
-export const COACH_DAILY_OBJECTIVE = `Produce a TodayPlan draft for the user via the provided DomainTools. Only write proposals (defer / split / relearn / archive / completion / maintenance / knowledge_edge); never mutate user data directly. Prefer doing nothing if the day has no actionable adjustments.${COACH_GOAL_STRAND_GUIDANCE}${COACH_STEERING_GUIDANCE}${COACH_PROPOSAL_FEEDBACK_GUIDANCE}${COACH_AGENT_NOTES_GUIDANCE}${COACH_PLAN_ISSUES_GUIDANCE}${COACH_BRIEF_GUIDANCE}${COACH_WEAK_POINTS_GUIDANCE}${COACH_SUGGESTION_KIND_GUIDANCE}${COACH_CONTEXT_VIEW_GUIDANCE}`;
+export const COACH_DAILY_OBJECTIVE = `Produce a TodayPlan draft for the user via the provided DomainTools. Only write proposals (defer / split / relearn / archive / completion / maintenance / knowledge_edge); never mutate user data directly. Prefer doing nothing if the day has no actionable adjustments.${COACH_GOAL_STRAND_GUIDANCE}${COACH_STEERING_GUIDANCE}${COACH_PROPOSAL_FEEDBACK_GUIDANCE}${COACH_AGENT_NOTES_GUIDANCE}${COACH_SESSION_FOCUS_GUIDANCE}${COACH_PLAN_ISSUES_GUIDANCE}${COACH_BRIEF_GUIDANCE}${COACH_WEAK_POINTS_GUIDANCE}${COACH_SUGGESTION_KIND_GUIDANCE}${COACH_CONTEXT_VIEW_GUIDANCE}`;
 
 /** How many derived weak points ride the Coach input (bounded for prompt budget). */
 const COACH_MAX_WEAK_POINTS = 8;
@@ -132,6 +139,7 @@ type ReadAgentNotesFn = (db: Db, now: Date) => Promise<AgentNote[]>;
 type ResolvePlanInputsFn = (db: Db) => Promise<DailyReviewPlanInputs>;
 type DeriveWeakPointsFn = (db: Db, input: { now: Date }) => Promise<ActionableWeakPointDerivationT>;
 type LoadPreviousPlanIssuesFn = (db: Db) => Promise<readonly DailyFocusPlanIssue[]>;
+type LoadSessionFocusFn = (db: Db) => Promise<SessionFocusRead | null>;
 
 export interface CoachRunDeps {
   runAgentTaskFn?: AgencyScanRunFn;
@@ -145,6 +153,7 @@ export interface CoachRunDeps {
   resolvePlanInputsFn?: ResolvePlanInputsFn;
   deriveWeakPointsFn?: DeriveWeakPointsFn;
   loadPreviousPlanIssuesFn?: LoadPreviousPlanIssuesFn;
+  loadSessionFocusFn?: LoadSessionFocusFn;
   now?: () => Date;
 }
 
@@ -159,6 +168,7 @@ function buildCoachInput(
   weakPoints: ActionableWeakPointDerivationT,
   previousPlanIssues: readonly DailyFocusPlanIssue[],
   coachContextMd: string | null,
+  sessionFocus: SessionFocusRead | null,
   reviewPlan: ReviewPlanNumbers & {
     due_count: number;
     budget_minutes: number;
@@ -255,6 +265,18 @@ function buildCoachInput(
       last_seen_at: wp.last_seen_at.toISOString(),
     })),
     weak_point_unknowns: weakPoints.unknowns,
+    // Last practice session's structured next focus; absent before the first summary.
+    ...(sessionFocus
+      ? {
+          last_session_focus: {
+            session_id: sessionFocus.session_id,
+            knowledge_id: sessionFocus.knowledge_id,
+            knowledge_name: sessionFocus.knowledge_name,
+            reason_md: sessionFocus.reason_md,
+            at: sessionFocus.created_at.toISOString(),
+          },
+        }
+      : {}),
     // Read-only plan facts; the model never owns these numbers.
     review_plan: reviewPlan,
     // The previous scan's flagged daily_focus clauses, handed back so the model
@@ -277,7 +299,7 @@ function buildCoachInput(
     },
     output_schema: {
       kind: 'TodayPlan',
-      hint: "Return a JSON object with daily_focus, review_session_proposal, plan_adjustments[], maintenance_proposals[]. review_session_proposal contains only knowledge_focus[] (ranked knowledge_ids from due/weak + active_items pressure) and intent_tags[]; do NOT output count, estimated_minutes, time_box_minutes or subject_mix — the system computes those from review_plan and overwrites them. In daily_focus, any mention of today's question count or minutes must restate review_plan exactly; other real numbers you observed may be stated. When active_goals are present, also set goal_ids[] and goal_strand[] (each item: serves_goal_id, knowledge_ids[], focus) — additive only, never replacing the review backbone (ND-5).",
+      hint: "Return a JSON object with daily_focus, review_session_proposal, plan_adjustments[], maintenance_proposals[]. review_session_proposal contains only knowledge_focus[] (ranked knowledge_ids from due/weak + active_items + last_session_focus pressure) and intent_tags[]; do NOT output count, estimated_minutes, time_box_minutes or subject_mix — the system computes those from review_plan and overwrites them. In daily_focus, any mention of today's question count or minutes must restate review_plan exactly; other real numbers you observed may be stated. When active_goals are present, also set goal_ids[] and goal_strand[] (each item: serves_goal_id, knowledge_ids[], focus) — additive only, never replacing the review backbone (ND-5).",
     },
   };
 }
@@ -314,6 +336,7 @@ export async function runCoach(db: Db, deps: CoachRunDeps = {}): Promise<CoachRu
     deps.deriveWeakPointsFn ??
     ((db: Db, input: { now: Date }) => deriveActionableWeakPoints(db, input));
   const loadPrevPlanIssues = deps.loadPreviousPlanIssuesFn ?? loadPreviousPlanIssues;
+  const loadSessionFocus = deps.loadSessionFocusFn ?? readLatestSessionFocus;
   // Run-log contract value kept verbatim from the nightly era; the trigger is now the return wake.
   const triggerActorRef = 'nightly_coach';
   const objective = COACH_DAILY_OBJECTIVE;
@@ -382,6 +405,7 @@ export async function runCoach(db: Db, deps: CoachRunDeps = {}): Promise<CoachRu
       const activeItems = await listItems(db);
       const weakPoints = await deriveWeakPoints(db, { now });
       const previousPlanIssues = await loadPrevPlanIssues(db);
+      const sessionFocus = await loadSessionFocus(db);
       // YUK-1790 LIGHT — the Coach view is one more readable segment for the existing run.
       // A wiring defect (port not installed) must surface; any other read failure degrades
       // to an absent segment instead of failing the whole scan over advisory context.
@@ -422,6 +446,7 @@ export async function runCoach(db: Db, deps: CoachRunDeps = {}): Promise<CoachRu
           weakPoints,
           previousPlanIssues,
           coachContextMd,
+          sessionFocus,
           reviewPlan,
         );
     },
