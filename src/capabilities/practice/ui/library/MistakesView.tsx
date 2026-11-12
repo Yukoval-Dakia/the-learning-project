@@ -1,3 +1,4 @@
+import { useQueryClient } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { CauseEditor } from '@/ui-next/practice-studio/CauseEditor';
@@ -7,10 +8,11 @@ import { FoldList } from '@/ui-next/primitives/FoldList';
 import { RetryLine } from '@/ui-next/primitives/RetryLine';
 import { SkeletonLines } from '@/ui-next/primitives/SkeletonLines';
 import { Button } from '@/ui-next/public';
+import { type LearnerCauseSeed, useLearnerCause } from '../use-learner-cause';
 import type { LibraryScope } from './library-url';
 import { type MistakeQuestion, RECORD_WORDS, causeWords, splitByEffect } from './mistake-read';
 import { LoadMore, QuestionLine, shortDay } from './QuestionLine';
-import { type LibraryLookups, useMistakeQuestions } from './use-library';
+import { LIBRARY_KEY, type LibraryLookups, useMistakeQuestions } from './use-library';
 
 function plainAnswer(md: string): string {
   const text = md
@@ -44,8 +46,16 @@ function MistakeLine({
     group.summary.editable_attempt_event_id && causeEditorFor
       ? causeEditorFor({
           attemptEventId: group.summary.editable_attempt_event_id,
-          questionId: group.summary.question_id,
-          current: group.summary.primary_cause,
+          current: group.summary.primary_cause
+            ? {
+                source: group.summary.primary_cause.by === 'me' ? 'user' : 'agent',
+                primary_category: group.summary.primary_cause.category,
+                label:
+                  group.summary.primary_cause.label ??
+                  lookups.causeLabel(group.summary.primary_cause.category),
+                note: group.summary.primary_cause.note,
+              }
+            : null,
         })
       : undefined;
   return (
@@ -100,11 +110,7 @@ function MistakeLine({
   );
 }
 
-export interface MistakeCauseTarget {
-  attemptEventId: string;
-  questionId: string;
-  current: MistakeQuestion['summary']['primary_cause'];
-}
+export type MistakeCauseTarget = LearnerCauseSeed;
 
 function FoldedGroup({
   id,
@@ -156,10 +162,15 @@ export function MistakesView({
   lookups: LibraryLookups;
   navigate: (to: string) => void;
   onClearScope: () => void;
-  /** YUK-2108 owner seam: becomes available when the cause routes are deployed and merged. */
+  /** Injectable owner seam; the live page defaults to the practice cause routes. */
   causeEditorFor?: (target: MistakeCauseTarget) => CauseEditorModel | undefined;
 }) {
   const { query: q, groups } = useMistakeQuestions(scope);
+  const queryClient = useQueryClient();
+  const learnerCause = useLearnerCause(() => {
+    void queryClient.invalidateQueries({ queryKey: [LIBRARY_KEY] });
+  });
+  const resolveCauseEditor = causeEditorFor ?? learnerCause.editorFor;
 
   if (q.isLoading) return <SkeletonLines rows={5} label="正在载入做错过的题" />;
   if (q.isError) return <RetryLine message="做错过的题没取到。" onRetry={() => void q.refetch()} />;
@@ -191,7 +202,7 @@ export function MistakesView({
       lookups={lookups}
       partial={partial}
       navigate={navigate}
-      causeEditorFor={causeEditorFor}
+      causeEditorFor={resolveCauseEditor}
     />
   );
 

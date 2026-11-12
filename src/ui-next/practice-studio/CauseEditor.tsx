@@ -27,11 +27,15 @@ export function CauseEditor({ editor }: { editor: CauseEditorModel }) {
       </summary>
       <div className="un-cause-body">
         <p className="un-cause-current" aria-live="polite">
-          {editor.current ? (
+          {editor.mode === 'busy' ? (
+            '正在读取现在记的原因…'
+          ) : editor.current ? (
             <>
               现在记的是：<strong>{editor.current.label}</strong>
               <span> · {sourceLabel[editor.current.source]}</span>
             </>
+          ) : editor.notice ? (
+            '现在记的原因暂时不确定。'
           ) : (
             '现在还没有记下错因。'
           )}
@@ -65,8 +69,8 @@ export function CauseEditor({ editor }: { editor: CauseEditorModel }) {
         {editor.notice && (
           <div
             className="un-cause-notice"
-            data-tone={editor.notice.actions?.length ? 'error' : 'status'}
-            role={editor.notice.actions?.length ? 'alert' : 'status'}
+            data-tone={editor.noticeTone ?? (editor.notice.actions?.length ? 'error' : 'status')}
+            role={editor.noticeTone === 'error' ? 'alert' : 'status'}
           >
             {editor.notice.title && <p>{editor.notice.title}</p>}
             {editor.notice.detail && <p>{editor.notice.detail}</p>}

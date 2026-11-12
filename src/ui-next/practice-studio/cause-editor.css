@@ -139,6 +139,14 @@
   color: var(--un-critical);
 }
 
+[data-ui-next] .un-cause-notice[data-tone="saved"] {
+  background: var(--un-positive-soft);
+}
+
+[data-ui-next] .un-cause-notice[data-tone="saved"] p:first-child {
+  color: var(--un-positive);
+}
+
 [data-ui-next] .un-cause-actions {
   display: flex;
   flex-wrap: wrap;

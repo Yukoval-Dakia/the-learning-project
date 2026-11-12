@@ -24,7 +24,12 @@ import { usePagehideTransition } from '@/ui/hooks/usePagehideTransition';
 import { useResponseDraftAutosave } from '@/ui/hooks/useResponseDraftAutosave';
 import { ApiError } from '@/ui/lib/api';
 import { computeLatencyMs } from '@/ui/lib/response-latency';
-import { attemptEvidenceOf, recordedAfterRejudge, useRecordedEvidence } from './attempt-facts';
+import {
+  attemptEventIdOf,
+  attemptEvidenceOf,
+  recordedAfterRejudge,
+  useRecordedEvidence,
+} from './attempt-facts';
 import { toAttemptTimelineEvents } from './attempt-timeline-adapter';
 import { useCustomBlocksReady } from './blocks/CustomBlock';
 import { customBlocksOf, summarizeAnswers } from './blocks/custom-sandbox';
@@ -426,7 +431,7 @@ export function usePracticeSubmit({
 
   const q = qQ.data ?? null;
   // What the server recorded about this answer, kept with the question it came from.
-  const { recordedHere, setRecorded } = useRecordedEvidence(q?.id);
+  const { recordedHere, recordedAttemptIdHere, setRecorded } = useRecordedEvidence(q?.id);
   const isInterventionDiagnostic = isInterventionDiagnosticSource(q?.source ?? '');
   const committedDiagnosticQuestionId = q?.id;
   // YUK-617 W1 — 本题 attempt·review 历史，从题面聚合 data.timeline 直接派生（同一份请求，无二次取）。
@@ -444,7 +449,7 @@ export function usePracticeSubmit({
       if (settled.status !== 'done') return;
       const r = settled.result;
       // An older run has no evidence; that shows as nothing, not as a claim of independence.
-      setRecorded(attemptEvidenceOf(r));
+      setRecorded(attemptEvidenceOf(r), attemptEventIdOf(r));
       if (r?.status === 'review_required') {
         setCommittedPreview({
           route: 'durable',
@@ -1137,7 +1142,7 @@ export function usePracticeSubmit({
         addToast('作答已保存，暂时没法自动判；可以自己评一下来安排复习。', 'info', 'clock');
         return;
       }
-      if ('evidence' in res) setRecorded(res.evidence);
+      if ('evidence' in res) setRecorded(res.evidence, attemptEventIdOf(res));
       if (opts.withAppeal) {
         const anchor = res.judge && 'assessment' in res ? res.assessment.candidate_id : null;
         // The answer is recorded by now: a failed appeal must not undo that.
@@ -1238,7 +1243,7 @@ export function usePracticeSubmit({
         addToast('作答已保存，暂时没法自动判；可以自己评一下来安排复习。', 'info', 'clock');
         return;
       }
-      setRecorded(r.committed.evidence);
+      setRecorded(r.committed.evidence, r.committed.attempt_event_id);
       setAutoCommitted(true);
       setAutoCommitJudgeEventId(r.committed.judge ? r.committed.assessment.candidate_id : null);
       return;
@@ -1314,7 +1319,7 @@ export function usePracticeSubmit({
         const feedback = feedbackFromCommittedAttempt(res);
         setCommittedPreview(feedback);
         setRating(feedback.suggested_rating);
-        if ('evidence' in res) setRecorded(res.evidence);
+        if ('evidence' in res) setRecorded(res.evidence, attemptEventIdOf(res));
         setAutoCommitted(true);
         setAutoCommitJudgeEventId('assessment' in res ? res.assessment.candidate_id : null);
         return;
@@ -1460,6 +1465,7 @@ export function usePracticeSubmit({
       pendingPoll,
       displayedPreview: displayedFeedback,
       recorded,
+      recordedAttemptId: recordedAttemptIdHere,
       committedPreview,
       rating,
       setRating,

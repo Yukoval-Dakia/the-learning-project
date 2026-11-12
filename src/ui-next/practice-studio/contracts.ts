@@ -96,6 +96,7 @@ export interface CauseEditor {
   mode: 'editable' | 'readonly' | 'disabled' | 'busy' | 'saved';
   reason?: string;
   notice?: Notice;
+  noticeTone?: 'status' | 'error' | 'saved';
   actions: readonly Action[];
   onSelect(optionId: string): void;
   onNoteChange(value: string): void;
