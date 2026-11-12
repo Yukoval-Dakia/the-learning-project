@@ -4,10 +4,11 @@
 // including unknown cost, is a terminal receipt and is not retried to obtain a
 // price. A send whose result is still unknown stays unresolved and is not
 // dispatched again. Only a proposal born during that attempt can close it; an
-// earlier intent's decision cannot. A stream that ends without a terminal
-// result stays unresolved, whether or not a price was estimated. Accept,
-// dismiss, and retract seal the create receipt for the attempt that produced
-// the proposal.
+// earlier intent's decision cannot. A proposal that already landed is sealed to
+// the send that bought it, so a lost receipt is replayed rather than sent
+// again. A stream that ends without a terminal result stays unresolved, whether
+// or not a price was estimated. Accept, dismiss, and retract seal the create
+// receipt for the attempt that produced the proposal.
 
 import { and, eq } from 'drizzle-orm';
 import { AgentRunError } from '@/ai/agent-run-error';
@@ -95,6 +96,7 @@ type SlotDecision =
     }
   | { readonly kind: 'join'; readonly identity: PaidEffectIdentity }
   | { readonly kind: 'closed_known'; readonly receipt: LearningIntentReceipt }
+  | { readonly kind: 'replay'; readonly proposal: LearningIntentProposal }
   | { readonly kind: 'unresolved' };
 
 /**
@@ -257,15 +259,18 @@ async function loadTopicAttempts(db: Db | Tx, topic: string): Promise<TopicAttem
 }
 
 async function replayPendingLearningIntent(
-  database: Db,
+  db: Db | Tx,
   topic: string,
+  notBefore?: Date,
 ): Promise<LearningIntentProposal | null> {
-  const pending = await listProposalInboxRows(database, {
+  const pending = await listProposalInboxRows(db, {
     status: 'pending',
     kind: 'learning_item',
   });
   for (const candidate of pending) {
     if (storedIntentTopic(candidate.payload) !== topic) continue;
+    // Only a proposal born during the attempt can be that attempt's outcome.
+    if (notBefore && candidate.proposed_at.getTime() < notBefore.getTime()) continue;
     const restored = LearningIntentProposalResponseSchema.safeParse({
       proposal_id: candidate.id,
       ...candidate.payload.proposed_change,
@@ -354,6 +359,17 @@ export async function sealLearningIntentOutlineReceiptTx(
   await sealOutlineReceipt(tx, topic, proposalId);
 }
 
+/** A pending proposal for this topic is this create's paid outcome: seal the create receipt to it. */
+async function sealPendingProposal(
+  database: Db,
+  topic: string,
+): Promise<LearningIntentProposal | null> {
+  const pending = await replayPendingLearningIntent(database, topic);
+  if (!pending) return null;
+  await sealLearningIntentOutlineReceipt(database, topic, pending.proposal_id);
+  return pending;
+}
+
 export function learningIntentTopic(payload: {
   readonly kind: string;
   readonly proposed_change: unknown;
@@ -427,12 +443,32 @@ async function admitFresh(
   return claimDelivery(tx, identity, deliveryId);
 }
 
+async function sealUnresolvedToPending(
+  tx: Tx,
+  topic: string,
+  unresolved: TopicAttempt,
+): Promise<Extract<SlotDecision, { kind: 'replay' }> | null> {
+  const pending = await replayPendingLearningIntent(tx, topic, unresolved.startedAt);
+  if (!pending) return null;
+  // Receipt loss is not a lost outline: the proposal row is already the paid outcome.
+  if (unresolved.deliveryId) {
+    await writeReceipt(
+      tx,
+      unresolved,
+      await proposedReceipt(tx, pending.proposal_id, unresolved.deliveryId),
+    );
+  }
+  return { kind: 'replay', proposal: pending };
+}
+
 async function resolveUnresolvedAttempt(
   tx: Tx,
   topic: string,
   rows: readonly TopicAttempt[],
   unresolved: TopicAttempt,
 ): Promise<SlotDecision> {
+  const landed = await sealUnresolvedToPending(tx, topic, unresolved);
+  if (landed) return landed;
   const decision = await decisionForAttempt(tx, topic, unresolved);
   if (decision.kind === 'this_attempt' && unresolved.deliveryId) {
     await writeReceipt(
@@ -720,14 +756,15 @@ export async function runLearningIntentRequest(
   topic: string,
   runTaskFn: RunTaskFn,
 ): Promise<LearningIntentProposal> {
-  const replay = await replayPendingLearningIntent(database, topic);
-  if (replay) {
-    await sealLearningIntentOutlineReceipt(database, topic, replay.proposal_id);
-    return replay;
-  }
+  const pending = await sealPendingProposal(database, topic);
+  if (pending) return pending;
   await settleExpiredPaidEffectSends(database, { family: FAMILY });
   for (let step = 0; step < 4; step += 1) {
     const slot = await claimSlot(database, topic);
+    if (slot.kind === 'replay') {
+      await sealLearningIntentOutlineReceipt(database, topic, slot.proposal.proposal_id);
+      return slot.proposal;
+    }
     if (slot.kind === 'unresolved') break;
     if (slot.kind === 'closed_known') {
       throw domainError(
@@ -741,6 +778,9 @@ export async function runLearningIntentRequest(
     if (slot.kind === 'winner') return dispatchWinner(database, topic, runTaskFn, slot);
     const joined = await joinAttempt(database, topic, slot.identity);
     if (joined.kind === 'proposal') return joined.proposal;
+    // A joined waiter that lost the receipt re-reads the pending proposal instead of retrying.
+    const sealed = await sealPendingProposal(database, topic);
+    if (sealed) return sealed;
     if (joined.kind === 'unresolved') break;
   }
   throw new ApiError(
