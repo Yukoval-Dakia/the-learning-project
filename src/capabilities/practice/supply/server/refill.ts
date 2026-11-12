@@ -14,8 +14,8 @@
 // （`scanCoverageGaps`，同 KC，同 `targetFingerprint` 同入参）**逐字相同**。故 dispatcher 的 7 天
 // fingerprint cooldown 在 refill 与 nightly **之间共享**——refill 不会重发 nightly 刚发过的同一
 // KC 缺口，反之亦然。这把「按需 refill」与「夜间基线」收敛到同一把幂等闸，不双付费。
-// （subjectId 解析路径与 target-discovery `loadFrontierKnowledge`:552-556 同款 try/catch；
-// 即便边缘场景 subjectId 解析有别，refill 仍有**自身** fingerprint 的 7d cooldown 兜 spam，
+// （subjectId 解析路径与 target-discovery `loadFrontierKnowledge` 同款「解不出 domain → 默认 subject」
+// 语义；即便边缘场景 subjectId 解析有别，refill 仍有**自身** fingerprint 的 7d cooldown 兜 spam，
 // shared-fingerprint 是收益而非正确性依赖。）
 // ── open question 1 / 3：cooldown 竞态（并发取题多次触发）─────────────────────────────
 // dispatcher 已有 7d 持久 cooldown（查 `event` 表 action='experimental:question_supply'、
@@ -39,8 +39,8 @@
 // ── n=1 admissibility ────────────────────────────────────────────────────────────────
 // refill **不引入任何新信号**：判据全是 admissible —— 池题计数（计数）、COVERAGE 阈值常数 2、
 // cooldown 7d 常数、in-flight 进程内集合。**无**跨被试 a/slip/guess/φ/discrimination；不读写
-// θ̂/p(L)/选题调度。复用件（demandToSupplyTarget/dispatchSupplyTarget）的内部判据沿用既有
-// GAP_KIND_BASE_PRIORITY 常数，本模块不新增需 population 方差的权重。
+// θ̂/p(L)/选题调度。demandToSupplyTarget 会按该 KC 的有效 θ̂ 把 near 反算成 1–5 档；
+// 指纹仍只含 band 名，与夜间 R1 共享冷却。本模块不新增需 population 方差的权重。
 
 import { inArray } from 'drizzle-orm';
 import { getConfigFlag } from '@/core/config/store';
