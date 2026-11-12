@@ -24,6 +24,7 @@
 import { and, inArray, isNull } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import { readOpenSelectionMissDemands } from '@/capabilities/practice/question-bank/public';
+import { resolveBandLevelTarget } from '@/capabilities/practice/supply/server/band-level';
 import { discoverConfusableContrastTargets } from '@/capabilities/practice/supply/server/confusable-contrast-discovery';
 import { recentlyDispatchedFingerprints } from '@/capabilities/practice/supply/server/dispatcher';
 import { runInventoryShadowDualRead } from '@/capabilities/practice/supply/server/inventory-projection';
@@ -45,6 +46,7 @@ import type { Db } from '@/db/client';
 import { knowledge } from '@/db/schema';
 import { loadActivityTier } from '@/kernel/read-models/activity-tier';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
+import { getMasteryState, globalThetaForDomain } from '@/kernel/read-models/mastery-state';
 import { loadReturnStockGaps } from '@/kernel/read-models/return-stock';
 import { loadSteeringDeferredKnowledgeIds } from '@/kernel/read-models/steering-deferral';
 import {
@@ -158,10 +160,18 @@ function emptyTally(discovered = 0, coolingDown = 0): QuestionSupplyNightlyResul
   };
 }
 
+/** θ̂ the scanner uses for this KC: θ_KC + θ_global(domain); 0 when cold or unresolved. */
+async function effectiveThetaHat(db: Db, knowledgeId: string): Promise<number> {
+  const state = await getMasteryState(db, knowledgeId);
+  const domain = await getEffectiveDomain(db, knowledgeId).catch(() => null);
+  return (state?.theta_hat ?? 0) + (await globalThetaForDomain(db, domain));
+}
+
 function returnStockTarget(
   subjectId: string,
   knowledgeId: string,
   missing: number,
+  thetaHat: number,
 ): QuestionSupplyTarget {
   // 与普通覆盖补题共用指纹：在途的那次派发算承诺；死掉的冷却不占缺口，改派下一个知识点。
   const fingerprint = targetFingerprint({
@@ -186,6 +196,7 @@ function returnStockTarget(
     knowledgeIds: [knowledgeId],
     kind: 'any',
     difficultyBand: 'near',
+    levelTarget: resolveBandLevelTarget('near', thetaHat),
     desiredCount: missing,
     minSourceTier: 2,
     routePreference: [],
@@ -290,7 +301,12 @@ async function dispatchReturnStock(
       attempted += 1;
       const subjectId = await subjectForReturnStock(db, gap.subjectId, knowledgeId);
       if (!subjectId) continue;
-      const target = returnStockTarget(subjectId, knowledgeId, remaining);
+      const target = returnStockTarget(
+        subjectId,
+        knowledgeId,
+        remaining,
+        await effectiveThetaHat(db, knowledgeId),
+      );
       const result = await dispatchWithinBudget(db, target, async () => {
         try {
           return await dispatchSupplyTarget(db, target, deps.dispatchDeps);
@@ -373,6 +389,7 @@ async function loadSelectionMissTargets(db: Db, now: Date): Promise<QuestionSupp
       knowledgeIds: [knowledgeId],
       kind: 'any',
       difficultyBand: 'near',
+      levelTarget: resolveBandLevelTarget('near', await effectiveThetaHat(db, knowledgeId)),
       desiredCount: 1,
       minSourceTier: 2,
       routePreference,

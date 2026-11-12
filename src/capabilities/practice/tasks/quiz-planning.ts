@@ -15,7 +15,7 @@ import { CURRICULUM_TASK_RULE } from '@/kernel/read-models/learner-curriculum';
 import type { SubjectProfile } from '@/subjects/profile';
 
 function buildQuizPlanPrompt(profile: SubjectProfile): string {
-  return `你是${profile.displayName}出题规划人。输入 { trigger: 'knowledge'|'learning_item'|'manual', ref: { id, name, ... }, knowledge_context, count, curriculum, requested_generation_method?: 'material_grounded'|'closed_book', requested_kind?: string, objective_only?: boolean, kind_required?: boolean, composite_parent_only?: boolean, requested_difficulty_band?: 'below'|'near'|'above'|'stretch', previous_rejection?: string[] } —— ref 是触发出题的知识点 / 学习项，count 是计划题数（默认 3）。你的任务**只做规划，不写题面**：为 count 道题各定一个计划项（考哪个知识点、什么题型、多难、客观题给标准答案锚点）。下游会逐项机检本计划，通过后才据它生成题面。
+  return `你是${profile.displayName}出题规划人。输入 { trigger: 'knowledge'|'learning_item'|'manual', ref: { id, name, ... }, knowledge_context, count, curriculum, requested_generation_method?: 'material_grounded'|'closed_book', requested_kind?: string, objective_only?: boolean, kind_required?: boolean, composite_parent_only?: boolean, requested_difficulty_band?: 'below'|'near'|'above'|'stretch', requested_difficulty_levels?: {min:number,max:number}|null, previous_rejection?: string[] } —— ref 是触发出题的知识点 / 学习项，count 是计划题数（默认 3）。你的任务**只做规划，不写题面**：为 count 道题各定一个计划项（考哪个知识点、什么题型、多难、客观题给标准答案锚点）。下游会逐项机检本计划，通过后才据它生成题面。
 ${CURRICULUM_TASK_RULE}
 科目上下文：${profile.displayName}。${profile.languageStyle}
 
@@ -30,7 +30,7 @@ ${CURRICULUM_TASK_RULE}
 - 非客观题不给 answer_anchor（开放 / 语义判分题的答案在生成阶段写 rubric）。
 - requested_generation_method 出现时是硬约束：计划顶层 generation_method 必须等于它；缺省时自行选择（material_grounded=需要真实原文锚的阅读类，closed_book=闭卷，search_grounded=常规检索背景素材）。
 - objective_only=true 或 kind_required=true 时，requested_kind 是硬约束：每项 kind 都必须与它一致；否则 requested_kind 只是偏好，优先遵从但素材明显更支持别的结构时可改选实际结构。
-- requested_difficulty_band（若有）是难度目标带（相对用户当前水平）：below=偏易巩固、near=贴合当前水平、above=略拔高、stretch=明显拔高挑战。把每项 difficulty 朝该带瞄准（below→1-2、near→3、above→4、stretch→5，与题库 side 的 band→难度映射同义）；它不是机检硬约束，但与错题/掌握信号冲突时以信号为准。
+- requested_difficulty_band（若有）是相对该学习者能力的难度带：below=偏易巩固、near=贴合当前水平、above=略拔高、stretch=明显拔高。requested_difficulty_levels（若有）是这条带反算后的 1–5 闭区间 {min,max}；每项 difficulty 必须落在这个区间里。levels 为 null 表示 1–5 里没有落在该带的档，不要改写成 3。它不是机检硬约束，但与错题/掌握信号冲突时以信号为准。
 - composite_parent_only=true 时是「篇」供给硬约束：**每一项**都必须标 "composite": true——该项产出的是一道组合大题（一个材料/短文题干 + 至少 2 个围绕同一材料的小题，生成阶段写成 stem+sub_questions 结构）。composite 项 kind 应选组合题面型（如 "reading"；材料/语篇类），且**免 answer_anchor**（答案属于各小题，生成阶段在 structured.sub_questions 里写）。composite_parent_only 缺省时**任何**项都不得标 composite。
 - previous_rejection（若有）是上一轮机检的拒绝原因列表：逐条修正后重新输出完整计划，不要输出解释。
 

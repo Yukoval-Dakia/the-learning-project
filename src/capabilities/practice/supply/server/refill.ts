@@ -39,8 +39,8 @@
 // ── n=1 admissibility ────────────────────────────────────────────────────────────────
 // refill **不引入任何新信号**：判据全是 admissible —— 池题计数（计数）、COVERAGE 阈值常数 2、
 // cooldown 7d 常数、in-flight 进程内集合。**无**跨被试 a/slip/guess/φ/discrimination；不读写
-// θ̂/p(L)/选题调度。复用件（demandToSupplyTarget/dispatchSupplyTarget）的内部判据沿用既有
-// GAP_KIND_BASE_PRIORITY 常数，本模块不新增需 population 方差的权重。
+// θ̂/p(L)/选题调度。demandToSupplyTarget 会按该 KC 的有效 θ̂ 把 near 反算成 1–5 档；
+// 指纹仍只含 band 名，与夜间 R1 共享冷却。本模块不新增需 population 方差的权重。
 
 import { inArray } from 'drizzle-orm';
 import { getConfigFlag } from '@/core/config/store';

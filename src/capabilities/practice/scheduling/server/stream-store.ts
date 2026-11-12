@@ -13,6 +13,7 @@ import {
   lockPracticeStreamPartition,
   lockPracticeStreamScope,
 } from '@/kernel/locks/practice-stream';
+import { loadNativeInterventionDiagnosticState } from '@/kernel/read-models/intervention-diagnostic-verdict';
 import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
 // 取题瞬间 refill（池见底补题）经根 public 按需调用：compose 后 best-effort，flag-off 为 no-op。
 import type { RefillDeps } from '../../public';
@@ -43,6 +44,7 @@ import { estimateStreamItemMinutes } from './stream-budget';
 import { type ComposerInputs, type StreamPlan, composeDailyStream } from './stream-composer';
 import { collectComposerInputs, resolveDailyPracticeBudget } from './stream-inputs';
 import { presentNonDueQuestion } from './stream-item-presentation';
+import { type StreamMixNote, streamMixNote, writeStreamMixNote } from './stream-mix-note';
 import { planStreamReplacement, prepareStreamReplacement } from './stream-replacement-plan';
 import { readStreamSelectionCandidates } from './stream-selection-candidates';
 import {
@@ -105,7 +107,7 @@ export interface MaterializeResult {
  * Positions: refs in the plan get plan index + 1; surviving rows outside the plan are
  * appended after the plan in their existing order. All rows are renumbered so
  * ORDER BY position always yields the plan order, making the due subsequence equal to
- * due_at ASC.
+ * retrievability ascending.
  *
  * `(date, position)` must stay NON-UNIQUE: renumbering temporarily gives two rows the
  * same position. Adding a unique index would fail mid-loop with 23505; free the slots
@@ -127,12 +129,6 @@ export async function materializeStream(
     .from(practice_stream_item)
     .where(streamPartitionPredicate(plan.date));
 
-  if (plan.diagnostics?.length) {
-    console.warn('[practice-stream] L3 learning-mix degradation', {
-      date: plan.date,
-      diagnostics: plan.diagnostics,
-    });
-  }
   const existingByRef = new Map(existing.map((r) => [r.ref_id, r]));
 
   if (plan.items.length === 0 && existing.length === 0) {
@@ -224,6 +220,8 @@ interface ComposeOutcome {
   added: number;
   /** Written after commit; empty on the legacy path. */
   observations: SelectionObservationInput[];
+  /** Written after commit so a note failure cannot roll the stream back. */
+  mixNote?: StreamMixNote | null;
 }
 
 interface PreparedCompose {
@@ -304,7 +302,7 @@ async function materializePreparedCollect(
     }
   }
 
-  return { added, observations };
+  return { added, observations, mixNote: streamMixNote(prepared.plan) };
 }
 
 /**
@@ -354,7 +352,7 @@ async function singleFlightCompose(
 ): Promise<number> {
   const lockDeadlineAt =
     deps.providerInvocation?.deadlineAt ?? new Date(Date.now() + DEFAULT_COMPOSE_LOCK_WAIT_MS);
-  const { added, observations } = await withinComposePaidWorkLock(
+  const { added, observations, mixNote } = await withinComposePaidWorkLock(
     db,
     date,
     lockDeadlineAt,
@@ -367,7 +365,7 @@ async function singleFlightCompose(
           .where(streamPartitionPredicate(date));
         return result.count;
       });
-      if (count > 0) return { added: 0, observations: [] } satisfies ComposeOutcome;
+      if (count > 0) return { added: 0, observations: [], mixNote: null } satisfies ComposeOutcome;
 
       const lockedDeps = deps.providerInvocation
         ? {
@@ -382,15 +380,33 @@ async function singleFlightCompose(
           .select({ finalCount: sql<number>`count(*)::int` })
           .from(practice_stream_item)
           .where(streamPartitionPredicate(date));
-        if (finalCount > 0) return { added: 0, observations: [] } satisfies ComposeOutcome;
+        if (finalCount > 0)
+          return { added: 0, observations: [], mixNote: null } satisfies ComposeOutcome;
         return materializePreparedCollect(tx, date, prepared, addedBy);
       });
     },
   );
 
-  // 事务已提交（流已稳）——锁外 best-effort 写观测；失败只丢遥测，绝不回滚流。
+  // 事务已提交（流已稳）——锁外 best-effort 写观测和积压说明；失败只丢遥测，绝不回滚流。
   await writeObservationsBestEffort(db, observations);
+  if (mixNote) await writeStreamMixNoteBestEffort(db, date, mixNote);
   return added;
+}
+
+async function writeStreamMixNoteBestEffort(
+  db: Db,
+  date: string,
+  note: StreamMixNote,
+): Promise<void> {
+  try {
+    await writeStreamMixNote(db, date, note);
+  } catch (err) {
+    console.error('[stream-store] stream mix note failed (post-commit, best-effort)', {
+      date,
+      kind: note.kind,
+      err,
+    });
+  }
 }
 
 /**
@@ -903,18 +919,16 @@ export async function advanceStreamItem(
         .from(event)
         .where(
           and(
-            eq(event.action, 'review'),
+            eq(event.action, 'experimental:assessment_attempt'),
             eq(event.subject_kind, 'question'),
             eq(event.subject_id, row.ref_id),
-            row.session_id === null
-              ? isNull(event.session_id)
-              : eq(event.session_id, row.session_id),
-            gte(event.created_at, row.created_at),
-            sql`${event.payload} ->> 'stream_item_id' = ${row.id}`,
+            sql`${event.payload}->>'issuance_id' = ${`iss_stream_${row.id}`}`,
           ),
         )
+        .orderBy(desc(event.created_at), desc(event.id))
         .limit(1);
-      if (!attempt) {
+      const recorded = attempt ? await loadNativeInterventionDiagnosticState(db, attempt.id) : null;
+      if (!recorded) {
         throw new ApiError(
           'conflict',
           'intervention diagnostics can be completed only after a recorded attempt',
@@ -979,7 +993,7 @@ export async function recomposeStream(
   const deps = opts.composeDeps ?? {};
   const lockDeadlineAt =
     deps.providerInvocation?.deadlineAt ?? new Date(Date.now() + DEFAULT_COMPOSE_LOCK_WAIT_MS);
-  const { added, observations } = await withinComposePaidWorkLock(
+  const { added, observations, mixNote } = await withinComposePaidWorkLock(
     db,
     date,
     lockDeadlineAt,
@@ -1023,8 +1037,9 @@ export async function recomposeStream(
     },
   );
 
-  // 事务已提交（流已稳）——锁外 best-effort 写观测。
+  // 事务已提交（流已稳）——锁外 best-effort 写观测和积压说明。
   await writeObservationsBestEffort(db, observations);
+  if (mixNote) await writeStreamMixNoteBestEffort(db, date, mixNote);
   return added;
 }
 

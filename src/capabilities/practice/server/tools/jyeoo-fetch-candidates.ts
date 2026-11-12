@@ -32,8 +32,11 @@ const inputSchema = z.object({
   session_max: z.number().int().min(1).max(40).default(10),
   /** 可选 kind pin：不匹配题在入库前丢弃（如 'choice'）。 */
   kind: z.string().trim().min(1).optional(),
-  /** 可选难度带 post-filter（grade 路线无 --dg；near≈3、below≤2、above=4、stretch≥5）。 */
+  /** 相对难度带。单独传时按冷启动 θ̂=0 反算，不再把 near 当成固定的 3 档。 */
   difficulty_band: z.enum(['below', 'near', 'above', 'stretch']).optional(),
+  /** 与 difficulty_band 一起给出的 1–5 闭区间（已按学习者能力反算）。有则按区间过滤。 */
+  difficulty_level_min: z.number().int().min(1).max(5).optional(),
+  difficulty_level_max: z.number().int().min(1).max(5).optional(),
 });
 
 const candidateSchema = z.object({
@@ -193,6 +196,16 @@ export const jyeooFetchCandidatesTool: DomainTool<Input, Output> = {
         sessionMax: input.session_max,
         ...(input.kind ? { kind: input.kind } : {}),
         ...(input.difficulty_band ? { difficultyBand: input.difficulty_band } : {}),
+        ...(input.difficulty_band &&
+        input.difficulty_level_min != null &&
+        input.difficulty_level_max != null
+          ? {
+              levelTarget: {
+                band: input.difficulty_band,
+                levels: { min: input.difficulty_level_min, max: input.difficulty_level_max },
+              },
+            }
+          : {}),
       },
       ctx: {
         taskRunId: ctx.taskRunId,

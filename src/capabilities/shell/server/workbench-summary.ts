@@ -17,6 +17,7 @@ import {
   source_document,
 } from '@/db/schema';
 import { proposalAutoApplyEnabled } from '@/kernel/proposals/auto-apply-marker';
+import { loadNativeReviewOccurrences } from '@/kernel/read-models/assessment-review-occurrences';
 import { listMistakeProjectionRows } from '@/kernel/read-models/mistake-projection';
 import { type ColdStartState, buildColdStartState } from './cold-start-state';
 import { type TodayProposalKpi, loadTodayProposalKpi } from './proposal-kpi';
@@ -280,21 +281,42 @@ async function listActiveSessions(db: Db): Promise<WorkbenchSessionRow[]> {
     .limit(ACTIVE_SESSIONS_LIMIT);
   if (sessions.length === 0) return [];
 
-  const counts = await db
-    .select({ session_id: event.session_id, count: sql<number>`count(*)::int` })
-    .from(event)
-    .where(
-      and(
-        inArray(
-          event.session_id,
-          sessions.map((s) => s.id),
-        ),
-        eq(event.action, 'review'),
-        eq(event.subject_kind, 'question'),
-      ),
+  const sessionIds = new Set(sessions.map((s) => s.id));
+  const reviewedGroups = new Set((await loadNativeReviewOccurrences(db)).map((row) => row.groupId));
+  const anchors =
+    reviewedGroups.size === 0
+      ? []
+      : await db
+          .select({
+            session_id: event.session_id,
+            subject_id: event.subject_id,
+            payload: event.payload,
+          })
+          .from(event)
+          .where(
+            and(
+              inArray(event.session_id, [...sessionIds]),
+              eq(event.action, 'experimental:assessment_attempt'),
+              eq(event.subject_kind, 'question'),
+            ),
+          );
+  const questionsBySession = new Map<string, Set<string>>();
+  for (const anchor of anchors) {
+    const groupId = anchor.payload.evaluation_group_id;
+    if (
+      !anchor.session_id ||
+      !sessionIds.has(anchor.session_id) ||
+      typeof groupId !== 'string' ||
+      !reviewedGroups.has(groupId)
     )
-    .groupBy(event.session_id);
-  const countBySession = new Map(counts.map((c) => [c.session_id, c.count]));
+      continue;
+    const questions = questionsBySession.get(anchor.session_id) ?? new Set<string>();
+    questions.add(anchor.subject_id);
+    questionsBySession.set(anchor.session_id, questions);
+  }
+  const countBySession = new Map(
+    [...questionsBySession].map(([sessionId, questions]) => [sessionId, questions.size]),
+  );
 
   return sessions.map((s) => {
     const endedAt = s.ended_at ?? (s.status === 'started' ? new Date() : null);

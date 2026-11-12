@@ -4,8 +4,10 @@
 // surfaces pass it into `@/core/daily-review-plan`.
 // Samples are the learner's own `duration_ms` on the last 200 question
 // attempts/reviews within 14 days. Wall-clock timing includes idle time, so
-// single samples above 10 minutes are capped, sub-second samples are ignored,
-// and fewer than 5 samples falls back to the default (2 minutes).
+// samples above 10 minutes are dropped (a backgrounded tab is not a slower
+// question), sub-second samples are ignored, the remaining samples are
+// summarized by their median, and fewer than 5 usable samples falls back to
+// the default (2 minutes).
 
 import { and, desc, eq, gte, inArray } from 'drizzle-orm';
 import {
@@ -16,6 +18,7 @@ import {
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { LEARNER_ANSWER_ACTIONS } from '@/kernel/read-models/learner-activity';
+import { medianOf } from '@/kernel/read-models/question-activity';
 
 type DbLike = Db | Tx;
 
@@ -50,15 +53,15 @@ export async function readQuestionPace(db: DbLike, now: Date = new Date()): Prom
   const samples = rows
     .map((row) => (row.payload as { duration_ms?: unknown }).duration_ms)
     .filter((value): value is number => typeof value === 'number' && Number.isFinite(value))
-    .filter((value) => value >= MIN_SAMPLE_MS)
-    .map((value) => Math.min(value, MAX_SAMPLE_MS));
+    .filter((value) => value >= MIN_SAMPLE_MS && value <= MAX_SAMPLE_MS);
 
   if (samples.length < QUESTION_PACE_MIN_SAMPLES) {
     return { minutes: DEFAULT_QUESTION_MINUTES, source: 'default', sample_count: samples.length };
   }
-  const meanMs = samples.reduce((sum, value) => sum + value, 0) / samples.length;
+  // Median, not mean: one backgrounded tab must not move the whole day's count.
+  const medianMs = medianOf(samples) ?? DEFAULT_QUESTION_MINUTES * 60_000;
   return {
-    minutes: normalizeQuestionMinutes(meanMs / 60_000),
+    minutes: normalizeQuestionMinutes(medianMs / 60_000),
     source: 'observed',
     sample_count: samples.length,
   };

@@ -6,8 +6,9 @@
 // 与查询组合。
 // 输入信号来源（P2 「due-list 降级为输入信号」）：
 // - dueItems：与 HTTP adapter 共用的 typed due 读取 queryReviewDue——FSRS 到期
-// 投影 + 跨学科 round-robin + goal 软偏置全部复用现行为；读取失败按既有
-// 契约降级为空候选（见 readComposerDueRows）。旧 /api/review/due 不删。
+// 投影 + 跨学科 round-robin 决定进入当日的集合；decay 段再按可回忆概率升序，
+// 让分钟预算延后最不容易忘的。读取失败按既有契约降级为空候选（见
+// readComposerDueRows）。旧 /api/review/due 不删。
 // - variantItems：mistake_variant(status='active') 中 parent 近 7 天有 failure
 // attempt 的变体（变体轮换的「错题跟练」信号）。
 // - newCheckItems：open learning_item（pending/in_progress）的 knowledge_ids 中尚无 FSRS 状态行的
@@ -18,7 +19,7 @@
 // 诊断）、变式、新学、前沿和待做卷：知识点全部落在该集合内才丢弃，混有集合外
 // 知识点的综合题保留。
 
-import { and, desc, eq, gte, inArray, isNotNull, lte } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull, lte } from 'drizzle-orm';
 import { LearningItemOpenStatus } from '@/core/schema/business';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import { steeringDefersKnowledgeIds } from '@/core/steering';
@@ -26,7 +27,6 @@ import type { Db, Tx } from '@/db/client';
 import { notDraftPredicate } from '@/db/predicates';
 import {
   artifact,
-  event,
   learning_item,
   learning_session,
   material_fsrs_state,
@@ -34,6 +34,7 @@ import {
   question,
 } from '@/db/schema';
 import { errorResponse } from '@/kernel/http';
+import { getCurrentFailureAttempts } from '@/kernel/read-models/failure-attempts';
 import { withoutNonKcKnowledgeIds } from '@/kernel/read-models/knowledge-roles';
 import {
   type FrontierResolution,
@@ -44,7 +45,12 @@ import { getMasteryProjection } from '@/kernel/read-models/mastery-projection';
 import { loadSteeringDeferredKnowledgeIds } from '@/kernel/read-models/steering-deferral';
 import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
 import { getPracticeList } from '../../session/public';
-import { REVIEW_DUE_LIMIT_MAX, type ReviewDueRow, queryReviewDue } from './due-list';
+import {
+  REVIEW_DUE_LIMIT_MAX,
+  type ReviewDueRow,
+  dueRetrievability,
+  queryReviewDue,
+} from './due-list';
 import { pickFirstQuestions } from './first-question-rank';
 import { knowledgeLabels } from './knowledge-labels';
 import { FRONTIER_MAX_ITEMS } from './learnable-frontier';
@@ -297,6 +303,53 @@ async function questionMixMetadata(
   );
 }
 
+function orderComposerDueItems(
+  dueRows: ReadonlyArray<{
+    question_id: string;
+    knowledge_ids?: readonly string[] | null;
+    fsrs_state?: unknown;
+  }>,
+  mixMetadataByQuestion: Map<string, QuestionMixMetadata>,
+  labelMap: Map<string, string>,
+): ComposerInputs['dueItems'] {
+  const now = new Date();
+  const toItem = (
+    row: { question_id: string; knowledge_ids?: readonly string[] | null },
+    source: 'decay' | 'intervention',
+  ): ComposerInputs['dueItems'][number] => {
+    const metadata = mixMetadataByQuestion.get(row.question_id);
+    return {
+      questionId: row.question_id,
+      knowledgeLabel: row.knowledge_ids?.length ? labelMap.get(row.knowledge_ids[0]) : undefined,
+      knowledgeId: metadata?.knowledgeId,
+      questionKind: metadata?.questionKind,
+      source,
+    };
+  };
+  const interventions: ComposerInputs['dueItems'] = [];
+  const decay: Array<{
+    item: ComposerInputs['dueItems'][number];
+    retrievability: number;
+    tie: string;
+  }> = [];
+  for (const row of dueRows) {
+    if (
+      mixMetadataByQuestion.get(row.question_id)?.isInterventionDiagnostic ||
+      !('fsrs_state' in row)
+    ) {
+      interventions.push(toItem(row, 'intervention'));
+      continue;
+    }
+    decay.push({
+      item: toItem(row, 'decay'),
+      retrievability: dueRetrievability(row.fsrs_state, now),
+      tie: row.question_id,
+    });
+  }
+  decay.sort((a, b) => a.retrievability - b.retrievability || a.tie.localeCompare(b.tie));
+  return [...interventions, ...decay.map((row) => row.item)];
+}
+
 async function questionKnowledgeIds(
   db: DbLike,
   ids: readonly string[],
@@ -385,19 +438,8 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
 
   // 2. 错题变式 — active 变体，parent 近窗口内有 failure attempt。
   const since = new Date(Date.now() - VARIANT_WINDOW_DAYS * 24 * 3600 * 1000);
-  const recentFailures = await db
-    .select({ qid: event.subject_id })
-    .from(event)
-    .where(
-      and(
-        eq(event.action, 'attempt'),
-        eq(event.outcome, 'failure'),
-        eq(event.subject_kind, 'question'),
-        gte(event.created_at, since),
-      ),
-    )
-    .orderBy(desc(event.created_at), desc(event.id));
-  const failedQids = [...new Set(recentFailures.map((r) => r.qid))];
+  const recentFailures = await getCurrentFailureAttempts(db, { since, limit: null });
+  const failedQids = [...new Set(recentFailures.map((row) => row.question_id))];
   const variantCandidates =
     failedQids.length === 0
       ? []
@@ -546,16 +588,7 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
     date,
     dailyBudgetMinutes: dailyBudget.minutes,
     questionMinutes: questionPace.minutes,
-    dueItems: dueRows.map((r) => {
-      const metadata = mixMetadataByQuestion.get(r.question_id);
-      return {
-        questionId: r.question_id,
-        knowledgeLabel: r.knowledge_ids?.length ? labelMap.get(r.knowledge_ids[0]) : undefined,
-        knowledgeId: metadata?.knowledgeId,
-        questionKind: metadata?.questionKind,
-        source: metadata?.isInterventionDiagnostic ? 'intervention' : 'decay',
-      };
-    }),
+    dueItems: orderComposerDueItems(dueRows, mixMetadataByQuestion, labelMap),
     variantItems: variantRows
       .filter((v): v is { variant_question_id: string; parent_question_id: string } =>
         Boolean(v.variant_question_id),

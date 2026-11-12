@@ -30,14 +30,17 @@ import type { Db } from '@/db/client';
 import { knowledge, mastery_state, placement_starter_claim, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { listActiveGoalsWithResolvedScope } from '@/kernel/read-models/active-goal-scope';
+import { globalThetaForDomain } from '@/kernel/read-models/mastery-state';
 import { expireDueSteeringGoals } from '@/kernel/records/goal-commands';
 import { enqueueSupplyDispatchJob } from '@/kernel/supply-dispatch';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { type SupplyPlanRunAgentFn, runSupplyPlanOperation } from '../server/supply-plan-operation';
 import {
   discoverSupplyTargets,
+  isDifficultyBand,
   isUnanchoredSupplyPaused,
   jyeooBudgetRemaining,
+  resolveBandLevelTarget,
 } from '../supply/public';
 
 // 非终态 placement claim（schema.ts placement_starter_claim 注释同集）：
@@ -553,6 +556,18 @@ export async function runSupplyPlanner(
   // （plan 事件已写、扫描器安全网仍在）——日志给出手动重跑命令后继续。
   let executeEnqueued: string | null | undefined;
   if (acceptedPlan !== null && demandEventIds.length > 0) {
+    // Same effective θ̂ as the scanner and matcher: θ_KC + θ_global(domain).
+    const levelsByItem = await Promise.all(
+      acceptedPlan.items.map(async (item) =>
+        isDifficultyBand(item.difficulty_band)
+          ? resolveBandLevelTarget(
+              item.difficulty_band,
+              (mastery.get(item.knowledge_id)?.theta ?? 0) +
+                (await globalThetaForDomain(db, subjectById.get(item.knowledge_id) ?? null)),
+            ).levels
+          : null,
+      ),
+    );
     const executePayload: Record<string, unknown> = {
       plan_event_id: planEventId,
       items: acceptedPlan.items.map((item, index) => ({
@@ -560,6 +575,7 @@ export async function runSupplyPlanner(
         knowledge_id: item.knowledge_id,
         kind: item.kind,
         difficulty_band: item.difficulty_band ?? null,
+        difficulty_levels: levelsByItem[index],
         count: item.count,
         route_preference: item.route_preference,
         ...(claimByKnowledgeId.has(item.knowledge_id)

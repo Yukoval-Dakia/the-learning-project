@@ -2,12 +2,12 @@
 // 持久行 → StreamView，本模块拥有三件事：
 // 1. issuance 准入门（filterProspectiveStreamQuestions，含 accepted-answer
 // recovery）——读路径与 trim/scoped 物化共用同一份「落库行可否服务」判定；
-// 2. 行元数据匹配（resolveStreamItemMetadata：review/judge verdict、knowledge /
+// 2. 行元数据匹配（resolveStreamItemMetadata：有效判定、knowledge /
 // paper 名、answer_recorded）——实现细节不导出，调用方不碰 metadata map；
 // 3. 视图装配（buildStreamView / getStreamViewItem）。
 // 编排入口（getStream / scoped 物化 / advance / recompose / nightly）留在 stream-store.ts。
 
-import { and, desc, eq, gte, inArray, lte, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { DEFAULT_QUESTION_MINUTES } from '@/core/daily-review-plan';
 import type { Db, Tx } from '@/db/client';
 import {
@@ -18,7 +18,7 @@ import {
   question,
 } from '@/db/schema';
 import {
-  resolveVerdictsForAttempts,
+  nativeAttemptOutcome,
   resolveVerdictsForNativeAttempts,
 } from '@/kernel/read-models/assessment-verdict';
 import { notesForKnowledge } from '@/kernel/read-models/notes-read';
@@ -66,18 +66,14 @@ export interface StreamView {
     knowledge_notes: Array<{ knowledge_id: string; note_id: string; title: string }>;
     paper_title: string | null;
     /**
-     * 原始 FSRS rating（immutable 用户自评 rating，写入时即固定，不为
-     * 改判/track 变化）。 要求的「原始判轨」对本 surface 就是 review 事件的
-     * 原始 rating；effective judge 判单独经 `verdict_effective` 透出。
+     * 今日列表的对/错标签。有效判定映射到既有三档：
+     * correct→good（对）、partial→hard（部分对）、incorrect→again（错）。
+     * 未判定、自评或不支持为 null。
      */
     verdict: 'again' | 'hard' | 'good' | null;
-    /**
-     * 双轨裁决effective 侧。matched review 的 judge 链解析后
-     * 仍 live 的最新 judge 的 coarse_outcome（'correct'|'partial'|'incorrect'|
-     * 'unsupported'）。无 judge 判或无匹配 review → null。
-     */
+    /** 有效判定的 coarse verdict；没有有效判定时为 null。 */
     verdict_effective: string | null;
-    /** effective 判的 chain truth（'active'|'superseded'|…）；与 verdict_effective 同生。 */
+    /** 有效判定仍成立时为 'active'；与 verdict_effective 同生。 */
     verdict_effective_state: string | null;
     completed_at: string | null;
     total_slots: number | null;
@@ -106,8 +102,6 @@ interface StreamItemMetadata {
   verdict: StreamViewItem['verdict'];
   verdictEffective: string | null;
   verdictEffectiveState: string | null;
-  /** Internal: matched review event id (for judge-verdict batch resolution). */
-  matchedReviewId: string | null;
   completedAt: string | null;
   totalSlots: number | null;
   answerRecorded: boolean;
@@ -120,35 +114,25 @@ const EMPTY_STREAM_ITEM_METADATA: StreamItemMetadata = {
   verdict: null,
   verdictEffective: null,
   verdictEffectiveState: null,
-  matchedReviewId: null,
   completedAt: null,
   totalSlots: null,
   answerRecorded: false,
 };
 
-function eventRating(payload: unknown): StreamViewItem['verdict'] {
-  if (!payload || typeof payload !== 'object') return null;
-  const rating = (payload as Record<string, unknown>).fsrs_rating;
-  return rating === 'again' || rating === 'hard' || rating === 'good' ? rating : null;
+const STREAM_VERDICT_BY_OUTCOME = {
+  success: 'good',
+  failure: 'again',
+  partial: 'hard',
+} as const;
+
+function streamVerdict(
+  outcome: ReturnType<typeof nativeAttemptOutcome>,
+): StreamViewItem['verdict'] {
+  if (outcome === 'success' || outcome === 'failure' || outcome === 'partial')
+    return STREAM_VERDICT_BY_OUTCOME[outcome];
+  return null;
 }
 
-function eventStreamItemId(payload: unknown): string | null {
-  if (!payload || typeof payload !== 'object') return null;
-  const id = (payload as Record<string, unknown>).stream_item_id;
-  return typeof id === 'string' && id.length > 0 ? id : null;
-}
-
-/**
- * Batch-enrich persisted stream rows without N+1 queries.
- *
- * Review matching rule:
- * 1. Prefer the immutable review.payload.stream_item_id exact key, additionally
- * checking question, nullable session and the row lifetime window.
- * 2. Historical reviews pre- have no key. They may match only when exactly
- * one same-question + same-nullable-session review exists between row creation
- * and its done timestamp. Ambiguity deliberately returns null rather than
- * displaying another attempt's judgement.
- */
 export async function filterProspectiveStreamQuestions(
   db: DbLike,
   rows: StreamItemRow[],
@@ -299,67 +283,33 @@ async function resolveStreamItemMetadata(
 
   const doneQuestions = questionRows.filter((row) => row.status === 'done');
   if (doneQuestions.length > 0) {
-    const firstCreatedAt = new Date(
-      Math.min(...doneQuestions.map((row) => row.created_at.getTime())),
-    );
-    const lastCompletedAt = new Date(
-      Math.max(...doneQuestions.map((row) => row.updated_at.getTime())),
-    );
-    const reviews = await db
-      .select({
-        id: event.id,
-        session_id: event.session_id,
-        subject_id: event.subject_id,
-        payload: event.payload,
-        created_at: event.created_at,
-      })
+    const rowByIssuance = new Map(doneQuestions.map((row) => [`iss_stream_${row.id}`, row]));
+    const anchors = await db
+      .select()
       .from(event)
       .where(
         and(
-          eq(event.action, 'review'),
+          eq(event.action, 'experimental:assessment_attempt'),
           eq(event.subject_kind, 'question'),
           inArray(event.subject_id, [...new Set(doneQuestions.map((row) => row.ref_id))]),
-          gte(event.created_at, firstCreatedAt),
-          lte(event.created_at, lastCompletedAt),
+          inArray(sql<string>`${event.payload}->>'issuance_id'`, [...rowByIssuance.keys()]),
         ),
       )
-      .orderBy(desc(event.created_at), desc(event.id));
-
-    for (const row of doneQuestions) {
-      const candidates = reviews.filter(
-        (review) =>
-          review.subject_id === row.ref_id &&
-          review.session_id === row.session_id &&
-          review.created_at >= row.created_at &&
-          review.created_at <= row.updated_at,
-      );
-      const exact = candidates.filter((review) => eventStreamItemId(review.payload) === row.id);
-      const legacy = candidates.filter((review) => eventStreamItemId(review.payload) === null);
-      const matched = exact[0] ?? (legacy.length === 1 ? legacy[0] : null);
-      if (!matched) continue;
-      const current = metadata.get(row.id) ?? { ...EMPTY_STREAM_ITEM_METADATA };
-      current.verdict = eventRating(matched.payload);
-      current.completedAt = matched.created_at.toISOString();
-      current.matchedReviewId = matched.id;
-      metadata.set(row.id, current);
-    }
-    // Chain-resolved effective judge for matched reviews: judge events anchor
-    // subject_id=<review_event_id>. Resolve them in one batch and write each row's effective
-    // verdict back to metadata.
-    const matchedReviewIds = [
-      ...new Set(
-        [...metadata.values()]
-          .map((m) => m.matchedReviewId)
-          .filter((id): id is string => id !== null),
-      ),
-    ];
-    if (matchedReviewIds.length > 0) {
-      const verdicts = await resolveVerdictsForAttempts(db, matchedReviewIds);
-      for (const current of metadata.values()) {
-        if (current.matchedReviewId === null) continue;
-        const effective = verdicts.get(current.matchedReviewId)?.effective ?? null;
-        current.verdictEffective = effective?.verdict.coarse_outcome ?? null;
-        current.verdictEffectiveState = effective?.correction_state.state ?? null;
+      .orderBy(event.created_at, event.id);
+    if (anchors.length > 0) {
+      const groups = await resolveVerdictsForNativeAttempts(db, anchors);
+      for (const anchor of anchors) {
+        const group = groups.get(anchor.id);
+        const rating = streamVerdict(nativeAttemptOutcome(group));
+        if (!group || !rating) continue;
+        const row = rowByIssuance.get(group.issuance.issuance_id);
+        if (!row || row.ref_id !== anchor.subject_id) continue;
+        const current = metadata.get(row.id) ?? { ...EMPTY_STREAM_ITEM_METADATA };
+        current.verdict = rating;
+        current.verdictEffective = group.effective?.verdict.verdict ?? null;
+        current.verdictEffectiveState = group.effective ? 'active' : null;
+        current.completedAt = anchor.created_at.toISOString();
+        metadata.set(row.id, current);
       }
     }
   }

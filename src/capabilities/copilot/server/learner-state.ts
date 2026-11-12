@@ -168,7 +168,8 @@ export function describeSinceLastMessage(
   return parts.length > 0 ? `自上条消息以来：${parts.join('、')}` : null;
 }
 
-// Copilot proposes ONLY knowledge_edge, so the digest is edge-scoped:
+// Copilot proposes many kinds (relations, knowledge structure, learning-item
+// lifecycle, question drafts/edits, notes), so the digest is kind-agnostic:
 // reason-bearing cells first (they carry the failure mode Copilot learns most
 // from; the digest is sorted acceptance DESC, so a naive tail-drop would discard
 // them), then the serialized field is truncated to the whole-digest cap by
@@ -176,21 +177,16 @@ export function describeSinceLastMessage(
 export function scopeCopilotProposalFeedback(
   digest: ProposalFeedbackCell[],
 ): ScopedProposalFeedbackCell[] {
-  const edgeCells = digest
-    .filter((cell) => cell.kind === 'knowledge_edge')
-    .map((cell) => ({
-      kind: cell.kind,
-      relation: cell.relation,
-      acceptance_rate: cell.acceptance_rate,
-      top_dismiss_reasons: cell.top_dismiss_reasons,
-      top_rubric_gates: cell.top_rubric_gates,
-    }));
-  const hasReasonContent = (c: (typeof edgeCells)[number]) =>
+  const cells: ScopedProposalFeedbackCell[] = digest.map((cell) => ({
+    kind: cell.kind,
+    relation: cell.relation,
+    acceptance_rate: cell.acceptance_rate,
+    top_dismiss_reasons: cell.top_dismiss_reasons,
+    top_rubric_gates: cell.top_rubric_gates,
+  }));
+  const hasReasonContent = (c: ScopedProposalFeedbackCell) =>
     c.top_dismiss_reasons.length > 0 || c.top_rubric_gates.length > 0;
-  const ordered = [
-    ...edgeCells.filter(hasReasonContent),
-    ...edgeCells.filter((c) => !hasReasonContent(c)),
-  ];
+  const ordered = [...cells.filter(hasReasonContent), ...cells.filter((c) => !hasReasonContent(c))];
   const scoped = [...ordered];
   while (
     scoped.length > 0 &&

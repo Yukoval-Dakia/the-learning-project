@@ -18,6 +18,7 @@ import {
   evidenceDemandToTargetContext,
 } from '@/kernel/supply-contracts';
 import { resolveSubjectProfile } from '@/subjects/profile';
+import { resolveBandLevelTarget } from './band-level';
 import {
   type DifficultyBand,
   type QuestionSupplyTarget,
@@ -80,6 +81,7 @@ export async function discoverConfusableContrastTargets(
       knowledgeIds,
       kind: CONFUSABLE_CONTRAST_KIND,
       difficultyBand: DIFFICULTY_BAND,
+      levelTarget: resolveBandLevelTarget(DIFFICULTY_BAND, 0),
       desiredCount: 1,
       minSourceTier: MIN_SOURCE_TIER,
       routePreference: [],
