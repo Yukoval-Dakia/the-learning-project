@@ -121,12 +121,14 @@ export function resolveContextBudget(surface: DomainToolSurface): ContextBudget 
 //   - query_mistakes.filter.limit     default 20  (query-mistakes.ts)
 //   - query_events.filter.limit       default 20  (query-events.ts)
 //   - get_attempt_context.timelineLimit default 10 (get-attempt-context.ts)
+//   - list_pending_proposals.limit     default 20  (list-pending-proposals.ts)
 export const TOOL_COURTESY_DEFAULTS = {
   query_knowledge: 10,
   expand_knowledge_subgraph: 30,
   query_mistakes: 20,
   query_events: 20,
   get_attempt_context: 10,
+  list_pending_proposals: 20,
 } as const satisfies Record<string, number>;
 
 export type CourtesyDefaultToolName = keyof typeof TOOL_COURTESY_DEFAULTS;
@@ -140,8 +142,12 @@ export type CourtesyDefaultToolName = keyof typeof TOOL_COURTESY_DEFAULTS;
 //     equals the per-surface ContextBudget.maxExcerptChars ceiling (CB-2).
 //   - MISTAKE_PROMPT_SNIPPET_MAX (160) was query-mistakes' PROMPT_SNIPPET_MAX,
 //     a tool-local courtesy value that sits below the 180 budget ceiling.
+//   - MISTAKE_ANSWER_EXCERPT_MAX (180) caps the optional answer / reference
+//     excerpts query_mistakes returns with includeAnswers=true; equal to the
+//     per-surface maxExcerptChars ceiling, so one row cannot exceed it.
 export const KNOWLEDGE_EXCERPT_MAX = 180;
 export const MISTAKE_PROMPT_SNIPPET_MAX = 160;
+export const MISTAKE_ANSWER_EXCERPT_MAX = 180;
 
 // ── P5.2 brief-refresh budget (BR-9) ────────────────────────────────────────
 //

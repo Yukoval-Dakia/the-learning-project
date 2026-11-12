@@ -128,6 +128,8 @@ const BINDABLE_READ_TOOLS: Record<string, { bareId?: SourceKind; bankRefs?: bool
   query_records: {},
   query_mistakes: {},
   query_events: { bareId: 'event' },
+  // Pending proposals are propose events, so their row `id` binds as an event id.
+  list_pending_proposals: { bareId: 'event' },
   get_attempt_context: {},
   get_review_due: {},
   search_bank: { bareId: 'question', bankRefs: true },
