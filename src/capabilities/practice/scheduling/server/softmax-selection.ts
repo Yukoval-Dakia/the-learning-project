@@ -63,6 +63,11 @@ export interface ComposeSoftmaxDeps {
   /** L2 LLM 编排器。省略 → 默认动态 import runTask（production 路径）。 */
   runTaskFn?: RunTaskFn;
   /**
+   * Use the statistical sampler directly and skip L2 LLM orchestration. Return-wake
+   * compose runs for idle/dormant tiers where model batch work stays off.
+   */
+  statisticalOnly?: boolean;
+  /**
    * mem0 learner-prior loader。省略 → production 动态 import server/ai/mem0 read seam；
    * 构造/搜索失败一律退空 prior，不改变 LLM fallback level。
    */
@@ -244,6 +249,10 @@ export async function composeSoftmaxStream(
   if (samplable.length === 0) {
     // 无可抽样非到期候选（全到期/全 recall/全卷）——无需调 LLM，直接空抽样。
     weighted = [];
+  } else if (deps.statisticalOnly) {
+    // Explicit no-model path: keep the policy's sampler and π_i, skip the L2 call.
+    fallback = 'statistical';
+    weighted = statisticalWeights(samplable);
   } else {
     const llmResult = await tryLlmOrchestration(
       db,

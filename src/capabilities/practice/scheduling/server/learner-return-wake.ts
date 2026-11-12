@@ -16,7 +16,8 @@ import { loadActivityTier } from '@/kernel/read-models/activity-tier';
 import { LEARNING_ACTIVITY_ACTIONS } from '@/kernel/read-models/learner-activity';
 import { streamLocalDate } from '@/kernel/stream-date';
 import { getStartedBoss } from '@/server/boss/client';
-import { composeNightly } from './stream-store';
+import { buildSeededSelectionRng } from './selection-seed';
+import { composeNightly, resolveSelectionPolicy } from './stream-store';
 
 export const LEARNER_RETURN_WAKE_QUEUE = 'learner_return_wake';
 const WAKE_SINGLETON_SECONDS = 180;
@@ -65,8 +66,21 @@ export function buildLearnerReturnWakeHandler(
     const tier = await loadActivityTier(db, row.created_at, row.created_at);
     if (tier !== 'idle' && tier !== 'dormant') return;
 
-    const added = await composeNightly(db, streamLocalDate(row.created_at), {
-      policy: { policy: 'legacy' },
+    // The wake runs for idle/dormant tiers, where model batch work stays off. When the
+    // configured policy is softmax, compose with the statistical sampler only (no provider
+    // call); an explicitly configured legacy policy still wins.
+    const policy = resolveSelectionPolicy();
+    const statisticalOnly = policy.policy !== 'legacy';
+    console.log(
+      `[learner_return_wake] compose policy=${policy.policy} statisticalOnly=${statisticalOnly}`,
+    );
+    const date = streamLocalDate(row.created_at);
+    const added = await composeNightly(db, date, {
+      policy,
+      composeDeps: {
+        statisticalOnly: true,
+        rng: buildSeededSelectionRng(date, 'compose', date),
+      },
     });
     const { runQuestionSupplyNightly } = await import('../../public');
     const supply = await runQuestionSupplyNightly(db, { returnStock: true });
