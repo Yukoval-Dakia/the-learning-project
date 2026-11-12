@@ -224,6 +224,8 @@ interface ProposalCursor {
   id: string;
   cooldown_active: number;
   acceptance_rate: number;
+  /** Rank of the row's kind under the caller's kindFirst order; 0 when unsorted. */
+  kind_priority: number;
 }
 
 interface LoadedProposalEvent {
@@ -400,6 +402,7 @@ function encodeProposalCursor(row: ProposalCursor): string {
       cooldown_active: row.cooldown_active,
       created_at: row.created_at.toISOString(),
       id: row.id,
+      kind_priority: row.kind_priority,
     }),
   ).toString('base64url');
 }
@@ -411,6 +414,7 @@ function decodeProposalCursor(cursor: string): ProposalCursor {
       cooldown_active?: unknown;
       created_at?: unknown;
       id?: unknown;
+      kind_priority?: unknown;
     };
     if (typeof parsed.id !== 'string' || typeof parsed.created_at !== 'string') {
       throw new Error('missing id or created_at');
@@ -427,11 +431,17 @@ function decodeProposalCursor(cursor: string): ProposalCursor {
       typeof parsed.acceptance_rate === 'number' && Number.isFinite(parsed.acceptance_rate)
         ? parsed.acceptance_rate
         : 0.5;
+    // Cursors minted before the kind rank existed only served the unsorted order.
+    const kindPriority =
+      typeof parsed.kind_priority === 'number' && Number.isFinite(parsed.kind_priority)
+        ? parsed.kind_priority
+        : 0;
     return {
       acceptance_rate: acceptanceRate,
       cooldown_active: cooldownActive,
       created_at: createdAt,
       id: parsed.id,
+      kind_priority: kindPriority,
     };
   } catch (err) {
     throw new ApiError(
@@ -491,27 +501,33 @@ function proposalKindFirstExpr(kinds: readonly AiProposalKindT[]) {
   return sql<number>`CASE WHEN ${proposalPayloadKindExpr()} IN (${list}) THEN 0 ELSE 1 END`;
 }
 
-function proposalCursorWhere(cursor: ProposalCursor, nowIso: string) {
+function proposalCursorWhere(cursor: ProposalCursor, nowIso: string, kindPriority: SQL<number>) {
   const cooldownActive = proposalCooldownActiveExpr(nowIso);
   const acceptanceRate = proposalAcceptanceRateExpr();
   const cursorCreatedAtIso = cursor.created_at.toISOString();
   return sql`
     (
-      ${cooldownActive} > ${cursor.cooldown_active}
+      ${kindPriority} > ${cursor.kind_priority}
       OR (
-        ${cooldownActive} = ${cursor.cooldown_active}
-        AND ${acceptanceRate} < ${cursor.acceptance_rate}
-      )
-      OR (
-        ${cooldownActive} = ${cursor.cooldown_active}
-        AND ${acceptanceRate} = ${cursor.acceptance_rate}
-        AND ${event.created_at} < ${cursorCreatedAtIso}::timestamptz
-      )
-      OR (
-        ${cooldownActive} = ${cursor.cooldown_active}
-        AND ${acceptanceRate} = ${cursor.acceptance_rate}
-        AND ${event.created_at} = ${cursorCreatedAtIso}::timestamptz
-        AND ${event.id} < ${cursor.id}
+        ${kindPriority} = ${cursor.kind_priority}
+        AND (
+          ${cooldownActive} > ${cursor.cooldown_active}
+          OR (
+            ${cooldownActive} = ${cursor.cooldown_active}
+            AND ${acceptanceRate} < ${cursor.acceptance_rate}
+          )
+          OR (
+            ${cooldownActive} = ${cursor.cooldown_active}
+            AND ${acceptanceRate} = ${cursor.acceptance_rate}
+            AND ${event.created_at} < ${cursorCreatedAtIso}::timestamptz
+          )
+          OR (
+            ${cooldownActive} = ${cursor.cooldown_active}
+            AND ${acceptanceRate} = ${cursor.acceptance_rate}
+            AND ${event.created_at} = ${cursorCreatedAtIso}::timestamptz
+            AND ${event.id} < ${cursor.id}
+          )
+        )
       )
     )
   `;
@@ -534,20 +550,26 @@ async function loadProposalEvents(
   const createdAfterWhere = opts.createdAfter
     ? gte(event.created_at, opts.createdAfter)
     : undefined;
+  // The rank is part of the ordering, so refill cursors must carry it too. Without a
+  // kindFirst order every row ranks 0 and the predicate reduces to the previous one.
+  const kindPriority = opts.kindFirst?.length
+    ? proposalKindFirstExpr(opts.kindFirst)
+    : sql<number>`0`;
   const where = cursor
     ? and(
         proposalWhere(),
         proposalLaneWhere(opts.lane),
-        proposalCursorWhere(cursor, nowIso),
+        proposalCursorWhere(cursor, nowIso, kindPriority),
         asOfWhere,
         createdAfterWhere,
       )
     : and(proposalWhere(), proposalLaneWhere(opts.lane), asOfWhere, createdAfterWhere);
-  const rank = opts.kindFirst?.length ? [proposalKindFirstExpr(opts.kindFirst)] : [];
+  const rank = opts.kindFirst?.length ? [kindPriority] : [];
   const query = db
     .select({
       acceptance_rate: acceptanceRate,
       cooldown_active: cooldownActive,
+      kind_priority: kindPriority,
       row: event,
     })
     .from(event)
@@ -568,6 +590,7 @@ async function loadProposalEvents(
       cooldown_active: loaded.cooldown_active,
       created_at: loaded.row.created_at,
       id: loaded.row.id,
+      kind_priority: loaded.kind_priority,
     },
   }));
 }

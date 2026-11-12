@@ -92,6 +92,9 @@ const PROPOSAL_SOURCE_LABELS: Readonly<Record<string, string>> = {
 };
 
 function proposalSourceLabel(actorRef: string): string {
+  // Live Copilot executions pass their tool caller actor (`agent:copilot`,
+  // `agent:copilot_chip`, …), not the bare producer name used by the factories.
+  if (actorRef.startsWith('agent:copilot')) return '学习伙伴';
   return PROPOSAL_SOURCE_LABELS[actorRef] ?? '自动整理';
 }
 
