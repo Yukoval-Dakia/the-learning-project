@@ -16,7 +16,7 @@ import { loadActivityTier } from '@/kernel/read-models/activity-tier';
 import { LEARNING_ACTIVITY_ACTIONS } from '@/kernel/read-models/learner-activity';
 import { streamLocalDate } from '@/kernel/stream-date';
 import { getStartedBoss } from '@/server/boss/client';
-import { composeNightly } from './stream-store';
+import { composeNightly, resolveSelectionPolicy } from './stream-store';
 
 export const LEARNER_RETURN_WAKE_QUEUE = 'learner_return_wake';
 const WAKE_SINGLETON_SECONDS = 180;
@@ -65,8 +65,14 @@ export function buildLearnerReturnWakeHandler(
     const tier = await loadActivityTier(db, row.created_at, row.created_at);
     if (tier !== 'idle' && tier !== 'dormant') return;
 
+    // The wake runs for idle/dormant tiers, where model batch work stays off. Compose
+    // the default policy's statistical sampler so the day is not locked to legacy
+    // ordering; this path makes no provider call.
+    const policy = resolveSelectionPolicy();
+    console.log(`[learner_return_wake] compose policy=${policy.policy} statisticalOnly=true`);
     const added = await composeNightly(db, streamLocalDate(row.created_at), {
-      policy: { policy: 'legacy' },
+      policy,
+      composeDeps: { statisticalOnly: true },
     });
     const { runQuestionSupplyNightly } = await import('../../public');
     const supply = await runQuestionSupplyNightly(db, { returnStock: true });
