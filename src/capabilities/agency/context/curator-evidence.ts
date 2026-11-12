@@ -4,6 +4,7 @@ import { event } from '@/db/schema';
 import { eventAllowsDerivationSql } from '@/kernel/events/derivation-policy';
 import { learnerEvidenceSql } from '../server/memory/learner-evidence';
 import { CURATOR_ACTIVITY_ACTIONS } from './activity-contract';
+import { gradedOutcomesForAnswerRows } from './answer-outcome';
 import { readTopics, withdrawnTopicEvidence } from './topics';
 
 // The run anchor freezes the upper bound. Later user turns never become implicit
@@ -17,8 +18,14 @@ export async function readCuratorEvidence(db: Db, anchorId?: string) {
     .where(eq(event.id, anchorId));
   if (!anchor) throw new Error('Curator run anchor unknown');
   const { digest } = await readTopics(db);
-  return db
-    .select({ id: event.id, action: event.action, payload: event.payload, at: event.created_at })
+  const rows = await db
+    .select({
+      id: event.id,
+      action: event.action,
+      payload: event.payload,
+      outcome: event.outcome,
+      at: event.created_at,
+    })
     .from(event)
     .where(
       and(
@@ -39,6 +46,14 @@ export async function readCuratorEvidence(db: Db, anchorId?: string) {
       ),
     )
     .orderBy(asc(event.created_at), asc(event.id));
+  const graded = await gradedOutcomesForAnswerRows(db, rows);
+  return rows.map((row) => ({
+    id: row.id,
+    action: row.action,
+    payload: row.payload,
+    at: row.at,
+    ...(graded.has(row.id) ? { outcome: graded.get(row.id) ?? null } : {}),
+  }));
 }
 
 export async function readCuratorLegacyScopes(db: Db) {

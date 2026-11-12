@@ -19,7 +19,7 @@
 // 诊断）、变式、新学、前沿和待做卷：知识点全部落在该集合内才丢弃，混有集合外
 // 知识点的综合题保留。
 
-import { and, desc, eq, gte, inArray, isNotNull, lte } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull, lte } from 'drizzle-orm';
 import { LearningItemOpenStatus } from '@/core/schema/business';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import { steeringDefersKnowledgeIds } from '@/core/steering';
@@ -27,7 +27,6 @@ import type { Db, Tx } from '@/db/client';
 import { notDraftPredicate } from '@/db/predicates';
 import {
   artifact,
-  event,
   learning_item,
   learning_session,
   material_fsrs_state,
@@ -35,6 +34,7 @@ import {
   question,
 } from '@/db/schema';
 import { errorResponse } from '@/kernel/http';
+import { getCurrentFailureAttempts } from '@/kernel/read-models/failure-attempts';
 import { withoutNonKcKnowledgeIds } from '@/kernel/read-models/knowledge-roles';
 import {
   type FrontierResolution,
@@ -438,19 +438,8 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
 
   // 2. 错题变式 — active 变体，parent 近窗口内有 failure attempt。
   const since = new Date(Date.now() - VARIANT_WINDOW_DAYS * 24 * 3600 * 1000);
-  const recentFailures = await db
-    .select({ qid: event.subject_id })
-    .from(event)
-    .where(
-      and(
-        eq(event.action, 'attempt'),
-        eq(event.outcome, 'failure'),
-        eq(event.subject_kind, 'question'),
-        gte(event.created_at, since),
-      ),
-    )
-    .orderBy(desc(event.created_at), desc(event.id));
-  const failedQids = [...new Set(recentFailures.map((r) => r.qid))];
+  const recentFailures = await getCurrentFailureAttempts(db, { since, limit: null });
+  const failedQids = [...new Set(recentFailures.map((row) => row.question_id))];
   const variantCandidates =
     failedQids.length === 0
       ? []

@@ -13,6 +13,7 @@ import {
   lockPracticeStreamPartition,
   lockPracticeStreamScope,
 } from '@/kernel/locks/practice-stream';
+import { loadNativeInterventionDiagnosticState } from '@/kernel/read-models/intervention-diagnostic-verdict';
 import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
 // 取题瞬间 refill（池见底补题）经根 public 按需调用：compose 后 best-effort，flag-off 为 no-op。
 import type { RefillDeps } from '../../public';
@@ -918,18 +919,16 @@ export async function advanceStreamItem(
         .from(event)
         .where(
           and(
-            eq(event.action, 'review'),
+            eq(event.action, 'experimental:assessment_attempt'),
             eq(event.subject_kind, 'question'),
             eq(event.subject_id, row.ref_id),
-            row.session_id === null
-              ? isNull(event.session_id)
-              : eq(event.session_id, row.session_id),
-            gte(event.created_at, row.created_at),
-            sql`${event.payload} ->> 'stream_item_id' = ${row.id}`,
+            sql`${event.payload}->>'issuance_id' = ${`iss_stream_${row.id}`}`,
           ),
         )
+        .orderBy(desc(event.created_at), desc(event.id))
         .limit(1);
-      if (!attempt) {
+      const recorded = attempt ? await loadNativeInterventionDiagnosticState(db, attempt.id) : null;
+      if (!recorded) {
         throw new ApiError(
           'conflict',
           'intervention diagnostics can be completed only after a recorded attempt',
