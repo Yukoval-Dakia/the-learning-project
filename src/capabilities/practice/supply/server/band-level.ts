@@ -25,10 +25,11 @@ export function isDifficultyBand(value: string): value is DifficultyBand {
 /**
  * Invert `band` at this learner's θ̂. Each ordinal's logit is `difficultyToLogitB`;
  * the cut is `difficultyBandFor`, the same one the scanner uses on pool items.
- * θ̂ = 0 is the cold-start anchor (near → 3, above → 4, stretch → 5, below → 1–2).
- * `above` is narrower than one ordinal step, so a high θ̂ can leave `levels` null.
+ * θ̂ = 0 is the cold-start anchor (near → 3, above → 4–5, stretch → 5, below → 1–2).
+ * `above` (稍难一点) never comes back empty: see `aboveSpan`.
  */
 export function resolveBandLevelTarget(band: DifficultyBand, thetaHat: number): BandLevelTarget {
+  if (band === 'above') return { band, levels: aboveSpan(thetaHat) };
   const matched = ORDINAL_LEVELS.filter(
     (level) => difficultyBandFor(difficultyToLogitB(level), thetaHat) === band,
   );
@@ -36,6 +37,21 @@ export function resolveBandLevelTarget(band: DifficultyBand, thetaHat: number): 
   const last = matched[matched.length - 1];
   if (first === undefined || last === undefined) return { band, levels: null };
   return { band, levels: { min: first, max: last } };
+}
+
+/**
+ * Two ordinals from the first one harder than near, slid down to stay inside 1–5.
+ * The logit `above` window is narrower than one ordinal step and is empty for a
+ * strong learner; a learner past the top of the scale still gets 4–5.
+ */
+function aboveSpan(thetaHat: number): DifficultyLevelSpan {
+  const firstHarder =
+    ORDINAL_LEVELS.find((level) => {
+      const band = difficultyBandFor(difficultyToLogitB(level), thetaHat);
+      return band === 'above' || band === 'stretch';
+    }) ?? 5;
+  const min = Math.min(firstHarder, 4);
+  return { min, max: min + 1 };
 }
 
 export function difficultyInBand(difficulty: number, target: BandLevelTarget): boolean {

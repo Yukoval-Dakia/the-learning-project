@@ -46,6 +46,7 @@ import type { Db } from '@/db/client';
 import { knowledge } from '@/db/schema';
 import { loadActivityTier } from '@/kernel/read-models/activity-tier';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
+import { getMasteryState, globalThetaForDomain } from '@/kernel/read-models/mastery-state';
 import { loadReturnStockGaps } from '@/kernel/read-models/return-stock';
 import { loadSteeringDeferredKnowledgeIds } from '@/kernel/read-models/steering-deferral';
 import {
@@ -159,10 +160,18 @@ function emptyTally(discovered = 0, coolingDown = 0): QuestionSupplyNightlyResul
   };
 }
 
+/** θ̂ the scanner uses for this KC: θ_KC + θ_global(domain); 0 when cold or unresolved. */
+async function effectiveThetaHat(db: Db, knowledgeId: string): Promise<number> {
+  const state = await getMasteryState(db, knowledgeId);
+  const domain = await getEffectiveDomain(db, knowledgeId).catch(() => null);
+  return (state?.theta_hat ?? 0) + (await globalThetaForDomain(db, domain));
+}
+
 function returnStockTarget(
   subjectId: string,
   knowledgeId: string,
   missing: number,
+  thetaHat: number,
 ): QuestionSupplyTarget {
   // 与普通覆盖补题共用指纹：在途的那次派发算承诺；死掉的冷却不占缺口，改派下一个知识点。
   const fingerprint = targetFingerprint({
@@ -187,7 +196,7 @@ function returnStockTarget(
     knowledgeIds: [knowledgeId],
     kind: 'any',
     difficultyBand: 'near',
-    levelTarget: resolveBandLevelTarget('near', 0),
+    levelTarget: resolveBandLevelTarget('near', thetaHat),
     desiredCount: missing,
     minSourceTier: 2,
     routePreference: [],
@@ -292,7 +301,12 @@ async function dispatchReturnStock(
       attempted += 1;
       const subjectId = await subjectForReturnStock(db, gap.subjectId, knowledgeId);
       if (!subjectId) continue;
-      const target = returnStockTarget(subjectId, knowledgeId, remaining);
+      const target = returnStockTarget(
+        subjectId,
+        knowledgeId,
+        remaining,
+        await effectiveThetaHat(db, knowledgeId),
+      );
       const result = await dispatchWithinBudget(db, target, async () => {
         try {
           return await dispatchSupplyTarget(db, target, deps.dispatchDeps);
@@ -375,8 +389,7 @@ async function loadSelectionMissTargets(db: Db, now: Date): Promise<QuestionSupp
       knowledgeIds: [knowledgeId],
       kind: 'any',
       difficultyBand: 'near',
-      // selection_miss 票据不带 θ̂，按冷启动反算（near → 3），与回库/对比路径一致。
-      levelTarget: resolveBandLevelTarget('near', 0),
+      levelTarget: resolveBandLevelTarget('near', await effectiveThetaHat(db, knowledgeId)),
       desiredCount: 1,
       minSourceTier: 2,
       routePreference,
