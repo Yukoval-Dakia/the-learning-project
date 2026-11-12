@@ -93,6 +93,9 @@ const POLICIES: Record<string, ResultPolicy> = {
   write_note: ['status', 'artifact_id', 'title', 'version'],
   check_note: ['artifact_id', 'artifact_type', 'issues'],
   read_note: 'reader',
+  // Pending-inbox rows are learner-visible as they are; coverage says what the page
+  // proves. Claim boundaries and the filter echo stay in the agent's tool result.
+  list_pending_proposals: ['proposals', 'coverage'],
 } satisfies Record<PublicResultTool, ResultPolicy>;
 const INTERNAL = new Set([
   'read_agent_notes',
@@ -154,6 +157,7 @@ const COLLECTIONS = new Set([
   'timeline',
   'linked_records',
   'recent_activity',
+  'proposals',
 ]);
 
 function bare(name: string): string {
@@ -298,6 +302,15 @@ export function buildCopilotToolResultSnapshot(
       // Faulty-item inference stays on the agent tool result. The learner snapshot
       // does not name or show it.
       delete projected.reading.faulty;
+    } else if (name === 'query_mistakes' && Array.isArray(projected.mistakes)) {
+      // Excerpts are model context, not card content: the learner's own answer is
+      // already known to them and the reference answer stays behind reveal_answer
+      // (issuance-gated), so a saved card shows the row only.
+      for (const row of projected.mistakes) {
+        if (!record(row)) continue;
+        delete row.answer_excerpt;
+        delete row.reference_excerpt;
+      }
     } else if (policy === 'events' && record(projected.filter_applied)) {
       projected.filter_applied = z
         .record(z.string(), z.union([z.string(), z.number(), z.null()]))
