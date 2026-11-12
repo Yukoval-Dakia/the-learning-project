@@ -57,6 +57,10 @@ function initialState(target: LearnerCauseSeed): Entry {
   };
 }
 
+function wouldDropUnknownNote(entry: Entry): boolean {
+  return entry.current?.source === 'user' && !entry.noteKnown && entry.note.trim().length === 0;
+}
+
 function causeError(error: unknown): { status: EntryStatus; notice: Notice; reason?: string } {
   if (error instanceof ApiError && (error.status === 404 || error.code === 'cause_not_available')) {
     return {
@@ -175,6 +179,9 @@ export function useLearnerCause(
       return;
     }
     const note = entry.note.trim();
+    if (wouldDropUnknownNote(entry)) {
+      return;
+    }
     if (
       entry.current?.source === 'user' &&
       entry.selected === entry.current.primary_category &&
@@ -243,6 +250,7 @@ export function useLearnerCause(
       entry.status !== 'saving' &&
       entry.status !== 'readonly' &&
       entry.status !== 'saved' &&
+      !wouldDropUnknownNote(entry) &&
       !(
         entry.current?.source === 'user' &&
         entry.selected === entry.current.primary_category &&
@@ -258,11 +266,12 @@ export function useLearnerCause(
           ? { kind: 'busy', reason: '正在保存' }
           : {
               kind: 'disabled',
-              reason:
-                entry.current?.source === 'user' &&
-                entry.selected === entry.current.primary_category &&
-                entry.noteKnown &&
-                entry.note.trim().length === 0
+              reason: wouldDropUnknownNote(entry)
+                ? '这条作答已有备注，但当前界面读不到；请重新写一句再保存，避免覆盖原备注。'
+                : entry.current?.source === 'user' &&
+                    entry.selected === entry.current.primary_category &&
+                    entry.noteKnown &&
+                    entry.note.trim().length === 0
                   ? '已经记的是这个原因；要修改可以另选一个原因或补充一句。'
                   : '先选一个原因。',
             },
