@@ -124,10 +124,12 @@ export async function readCuratorLegacyScopes(db: Db) {
         return {
           scope: r.key,
           ...read,
-          ...(ids.some((id) => withheld.has(id)) || version !== read.version
+          ...(ids.some((id) => withheld.has(id)) || version !== read.note?.version
             ? { withheld: true }
             : {}),
         };
       }),
   );
 }
+
+export type CuratorLegacyScope = Awaited<ReturnType<typeof readCuratorLegacyScopes>>[number];
