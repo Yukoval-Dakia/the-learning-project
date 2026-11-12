@@ -95,6 +95,20 @@ export type CopilotExecutionActivity =
   /** YUK-1765 — the model started reasoning. Carries no reasoning text. */
   | { kind: 'model_thinking' }
   | { kind: 'provider_retry'; delayMs: number; retry: number }
+  /**
+   * One interrupted request is being resent inside the same attempt. The page
+   * drops the last `discardProseChars` of prose and `discardThinkingChars` of
+   * this attempt's thinking — what the dead request had already streamed.
+   */
+  | {
+      kind: 'request_retry';
+      taskRunId: string;
+      retry: number;
+      maxRetries: number;
+      reason: 'stream_idle' | 'connection';
+      discardProseChars: number;
+      discardThinkingChars: number;
+    }
   | { kind: 'subtask'; event: CopilotSubtaskEvent }
   | {
       kind: 'tool_started';
@@ -379,6 +393,7 @@ export function createCopilotExecutionOwner(
         callerActor,
         ...(turn.sourceEventId ? { causedByEventId: turn.sourceEventId } : {}),
         ...(turn.learnerAskEventId ? { learnerAskEventId: turn.learnerAskEventId } : {}),
+        ...(focused ? { ambientFocus: { kind: focused.kind, id: focused.id } } : {}),
         sourceLedger,
         answerOnly,
       },
@@ -647,6 +662,7 @@ export function createCopilotExecutionOwner(
     const runnerContext: Parameters<typeof streamTaskCollecting>[2] = {
       db,
       taskRunId: turn.taskRunId,
+      sessionId: turn.sessionId,
       signal: policy.cancellation.signal,
       lifecycleAbortController,
       compiledModelPrompt,
@@ -694,6 +710,18 @@ export function createCopilotExecutionOwner(
         domainMountOptions.ctx.taskRunId = nextTaskRunId;
         finalizer = createFinalizer();
         await emitActivity(policy, { kind: 'provider_retry', delayMs, retry });
+      },
+      onRequestRetry: async (retry) => {
+        thinkingAnnounced = false;
+        await emitActivity(policy, {
+          kind: 'request_retry',
+          taskRunId: retry.task_run_id,
+          retry: retry.retry,
+          maxRetries: retry.max_retries,
+          reason: retry.reason,
+          discardProseChars: retractProse(retry.discarded_text_chars),
+          discardThinkingChars: suppressThinkingStream ? 0 : retry.discarded_thinking_chars,
+        });
       },
       ...(suppressThinkingStream
         ? {}
@@ -751,11 +779,33 @@ export function createCopilotExecutionOwner(
       },
     };
     let streamedProse = '';
-    const prose = createCopilotProseStream((text) => {
+    // Raw model text behind the filtered prose: a retracted tail must be cut
+    // before the comment filter, whose state that tail may have changed.
+    let rawProse = '';
+    let replayed: string | undefined;
+    const emitProse = (text: string) => {
+      if (replayed !== undefined) {
+        replayed += text;
+        return;
+      }
       if (policy.cancellation.signal.aborted || lifecycleAbortController.signal.aborted) return;
       streamedProse += text;
       void emitActivity(policy, { kind: 'prose_delta', text });
-    });
+    };
+    let prose = createCopilotProseStream(emitProse);
+    /** Rebuild the filter on the kept raw text; returns the public chars to drop. */
+    const retractProse = (rawChars: number): number => {
+      rawProse = rawProse.slice(0, Math.max(0, rawProse.length - rawChars));
+      replayed = '';
+      prose = createCopilotProseStream(emitProse);
+      prose.push(rawProse);
+      // The filter only ever withholds, so the replay is a prefix of what was sent.
+      const kept: string = replayed;
+      replayed = undefined;
+      const discard = Math.max(0, streamedProse.length - kept.length);
+      streamedProse = streamedProse.slice(0, kept.length);
+      return discard;
+    };
     let retainSdkSession = false;
     const bindCancellation = () =>
       bindSubagentParentCancellation(db, {
@@ -794,6 +844,7 @@ export function createCopilotExecutionOwner(
         runnerContext,
         (text) => {
           thinkingAnnounced = false;
+          rawProse += text;
           prose.push(text);
         },
       );

@@ -1,9 +1,11 @@
 import { createHash } from 'node:crypto';
 import Markdown from 'react-markdown';
 import { canonicalHash } from '@/core/migration/canonical';
+import type { LearnerHandwritingMarkerT } from '@/core/schema/assessment/materials';
 import type { Db } from '@/db/client';
 import type { assessment_issuance, question_revision } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
+import { readFigureMaterialMarkers } from '@/kernel/read-models/figure-origin';
 import {
   type AssessmentAssetLoader,
   withinAssessmentSignal,
@@ -79,6 +81,7 @@ export async function loadFrozenStudyImages(
   context: ReturnType<typeof projectFrozenStudyContext>,
   load: AssessmentAssetLoader,
   signal: AbortSignal,
+  db: Db,
 ) {
   const unavailable = () =>
     new ApiError(
@@ -123,8 +126,15 @@ export async function loadFrozenStudyImages(
       throw unavailable();
     }
   }
+  // An issued figure may show the learner's earlier work; the hint model must know which.
+  const figureMarkers = await readFigureMaterialMarkers(db, figures);
   const images: Array<{ data: string; mediaType: string }> = [];
-  const image_manifest: Array<{ index: number; material_id: string; asset_id: string }> = [];
+  const image_manifest: Array<{
+    index: number;
+    material_id: string;
+    asset_id: string;
+    contains_learner_handwriting: LearnerHandwritingMarkerT;
+  }> = [];
   try {
     for (const material of figures) {
       const asset = await withinAssessmentSignal(() => load(material.asset, signal), signal);
@@ -138,6 +148,7 @@ export async function loadFrozenStudyImages(
         index: images.length,
         material_id: material.material_id,
         asset_id: material.asset.asset_id,
+        contains_learner_handwriting: figureMarkers.get(material.material_id) ?? 'unknown',
       });
       images.push({
         data: Buffer.from(asset.bytes).toString('base64'),

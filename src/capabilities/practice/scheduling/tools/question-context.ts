@@ -1,7 +1,3 @@
-import { SYNTHETIC_SUBJECT_ROOT_RE } from '@/kernel/read-models/placement-scope';
-import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
-import { resolveSchedulingProjection } from '@/kernel/records/scheduling-state';
-import { selectedForgettingEngine } from '@/kernel/scheduling';
 // Foundation D M2 — moved to Practice by (F4.0).
 // Composite read tools for one question contract (attempts, reviews, FSRS
 // state, linked records, variants, knowledge paths, assets, addressable
@@ -12,15 +8,21 @@ import { selectedForgettingEngine } from '@/kernel/scheduling';
 import { and, asc, desc, eq, inArray, isNull, lte, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { AddressableStructureSchema } from '@/core/schema/addressable-structure';
+import { LearnerHandwritingMarker } from '@/core/schema/assessment/materials';
 import {
   INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
   InterventionSettlement,
 } from '@/core/schema/intervention';
+import { absentSignal, knownSignal } from '@/core/schema/knowledge-signal';
 import { deriveSourceTier } from '@/core/schema/provenance';
 // D6-R6 / D6-draftread — addressable-structure projection (read≡write
 // coordinate fix). Pure tree-clip; shared by get_question_context(include:
 // ['structure']) and the get_question_block_structure draft reader.
-import { projectAddressableStructure } from '@/core/schema/structured_question';
+import {
+  LEARNER_HANDWRITING_RULE,
+  figureForModel,
+  projectAddressableStructure,
+} from '@/core/schema/structured_question';
 import { notDraftPredicate, questionSuspendedPredicate } from '@/db/predicates';
 import {
   event,
@@ -37,14 +39,30 @@ import {
   knowledgeContext,
 } from '@/kernel/read-models/extraction-summary';
 import { getFailureAttemptsForDerivation } from '@/kernel/read-models/failure-attempts';
+import { readFigureOrigins } from '@/kernel/read-models/figure-origin';
 import { miscCauseLabelMap, resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
-import { getQuestionTimeline, getRecentReviewEvents } from '@/kernel/read-models/question-activity';
+import { SYNTHETIC_SUBJECT_ROOT_RE } from '@/kernel/read-models/placement-scope';
+import {
+  getQuestionTimeline,
+  getRecentReviewEvents,
+  judgedAttemptCounts,
+  personalHitRate,
+  readAttemptFacts,
+} from '@/kernel/read-models/question-activity';
 import {
   learnerVisibleImageRefs,
   loadLearnerImagePageIndex,
 } from '@/kernel/read-models/question-images';
+import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
 import { derivableLearningRecords } from '@/kernel/records/queries';
+import { resolveSchedulingProjection } from '@/kernel/records/scheduling-state';
+import { selectedForgettingEngine } from '@/kernel/scheduling';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
+import {
+  QuestionIssueReadingSchema,
+  readQuestionIssue,
+  unobservedQuestionIssue,
+} from '../server/question-issue-read';
 
 function iso(value: Date | null | undefined): string | null {
   return value ? value.toISOString() : null;
@@ -144,11 +162,22 @@ const GetQuestionContextOutputSchema = z.object({
     )
     .optional(),
   source_assets: z
-    .array(z.object({ asset_id: z.string(), role: z.string(), crop_ref: z.string().optional() }))
+    .array(
+      z.object({
+        asset_id: z.string(),
+        role: z.string(),
+        crop_ref: z.string().optional(),
+        contains_learner_handwriting: LearnerHandwritingMarker.optional(),
+      }),
+    )
     .optional(),
   // D6-R6 — addressable StructuredQuestion tree (only when
   // include:['structure'] and the question carries a `structured` jsonb).
   structure: AddressableStructureSchema.optional(),
+  // Always present. One question id is enough: issuance, latest score and
+  // wrong-cause, the live FSRS card, knowledge name and mastery, both
+  // difficulty baselines, and the latest faulty-item inference.
+  reading: QuestionIssueReadingSchema,
 });
 
 type GetQuestionContextInput = z.infer<typeof GetQuestionContextInputSchema>;
@@ -183,6 +212,7 @@ async function executeGetQuestionContext(
         last_review_event_id: null,
         linked_record_ids: [],
       },
+      reading: unobservedQuestionIssue(new Date()),
     });
   }
   const records = include.has('records')
@@ -224,6 +254,18 @@ async function executeGetQuestionContext(
     else if (attempt.outcome === 'partial') attemptCounts.partial += 1;
     else attemptCounts.failure += 1;
   }
+  const asOf = new Date();
+  const reading = await readQuestionIssue(ctx.db, {
+    questionId: q.id,
+    parentQuestionId: q.parent_question_id,
+    knowledgeIds: q.knowledge_ids ?? [],
+    difficulty: q.difficulty,
+    kind: q.kind,
+    source: q.source,
+    draftStatus: q.draft_status,
+    questionDueAt: fsrs?.due_at ?? null,
+    asOf,
+  });
 
   const output: GetQuestionContextOutput = {
     availability: 'found',
@@ -248,10 +290,11 @@ async function executeGetQuestionContext(
       first_reviewed_at: iso(reviewEntries.at(-1)?.created_at ?? reviews.at(-1)?.created_at),
       last_reviewed_at: iso(reviewEntries[0]?.created_at ?? reviews[0]?.created_at),
       review_count: reviews.length,
-      due_at: iso(fsrs?.due_at),
+      due_at: reading.fsrs.due_at.known ? reading.fsrs.due_at.value : null,
       last_review_event_id: fsrs?.last_review_event_id ?? null,
       linked_record_ids: records.map((row) => row.id),
     },
+    reading,
   };
   if (include.has('attempts')) {
     output.attempts = attempts.map((entry) => ({
@@ -290,8 +333,20 @@ async function executeGetQuestionContext(
     }));
   }
   if (include.has('knowledge_context') && q) {
-    output.knowledge_context = await knowledgeContext(ctx.db, q.knowledge_ids ?? []);
+    const masteryById = new Map(reading.knowledge.map((row) => [row.id, row.mastery]));
+    output.knowledge_context = (await knowledgeContext(ctx.db, q.knowledge_ids ?? [])).map(
+      (row) => {
+        const mastery = masteryById.get(row.knowledge_id);
+        return { ...row, mastery: mastery?.known ? mastery.value : null };
+      },
+    );
   }
+  const figureOrigin = await readFigureOrigins(
+    ctx.db,
+    include.has('assets') || include.has('structure')
+      ? (q?.figures ?? []).map((figure) => figure.asset_id)
+      : [],
+  );
   if (include.has('assets') && q) {
     // The companion may quote these to the learner, so whole photographed pages
     // (other questions' handwriting) are filtered by the same read-time rule as the
@@ -302,17 +357,20 @@ async function executeGetQuestionContext(
         asset_id: id,
         role: 'question_image',
       })),
-      ...(q.figures ?? []).map((fig, index) => ({
-        asset_id: fig.asset_id ?? `figure_${index}`,
-        role: fig.role ?? 'figure',
-      })),
+      ...(q.figures ?? [])
+        .map((fig) => figureForModel(fig, figureOrigin(fig.asset_id)))
+        .map((fig) => ({
+          asset_id: fig.asset_id,
+          role: fig.role,
+          contains_learner_handwriting: fig.contains_learner_handwriting,
+        })),
     ];
   }
   // D6-R6 — pure-read addressable structure projection. Only emitted
   // when explicitly requested AND the question carries a `structured` tree
   // (non-structured questions — variant_gen / embedded_check — have none).
   if (include.has('structure') && q?.structured) {
-    output.structure = projectAddressableStructure(q.structured, q.figures ?? []);
+    output.structure = projectAddressableStructure(q.structured, q.figures ?? [], figureOrigin);
   }
   return GetQuestionContextOutputSchema.parse(output);
 }
@@ -345,6 +403,19 @@ const GetReviewDueOutputSchema = z.object({
       // time. Present only for tier-2 rows (metadata.web_sourced.whitelist_match);
       // null otherwise. Demotion affects selection priority only, never quality.
       whitelist_match: z.boolean().nullable(),
+      personal_hit_rate: z.object({
+        value: z
+          .object({
+            rate: z.number(),
+            hits: z.number().int().nonnegative(),
+            judged_attempts: z.number().int().positive(),
+          })
+          .nullable(),
+        known: z.boolean(),
+        source: z.string(),
+        asOf: z.string(),
+        missingReason: z.string().nullable(),
+      }),
       latest_mistake: z
         .object({
           attempt_event_id: z.string(),
@@ -762,7 +833,7 @@ export async function executeGetReviewDue(
   const admittedNew = await readAutomaticallyServableQuestionIds(ctx.db, newQuestionIds, {
     includeInterventionDiagnostics: true,
   });
-  const rows: GetReviewDueOutput['rows'] = [];
+  const rows: Array<Omit<GetReviewDueOutput['rows'][number], 'personal_hit_rate'>> = [];
   for (const qid of newQuestionIds) {
     const q = qById.get(qid);
     const failure = latestNeverReviewed.get(qid);
@@ -806,10 +877,23 @@ export async function executeGetReviewDue(
   for (const row of rows) {
     for (const id of row.knowledge_ids) counts.set(id, (counts.get(id) ?? 0) + 1);
   }
+  const attemptFacts = await readAttemptFacts(
+    ctx.db,
+    rows.map((row) => row.question_id),
+  );
+  const ratedRows = rows.map((row) => {
+    const rate = personalHitRate(judgedAttemptCounts(attemptFacts.get(row.question_id) ?? []));
+    return {
+      ...row,
+      personal_hit_rate: rate
+        ? knownSignal(rate, 'kernel/read-models/question-activity:readAttemptFacts', now)
+        : absentSignal('kernel/read-models/question-activity:readAttemptFacts', now),
+    };
+  });
   return GetReviewDueOutputSchema.parse({
     as_of: now.toISOString(),
     queue_scope: 'due_now_and_never_reviewed_failures',
-    rows,
+    rows: ratedRows,
     queue_summary: {
       count_scope: 'returned_actionable_rows_only',
       total_returned: rows.length,
@@ -881,7 +965,7 @@ export const getQuestionContextTool: DomainTool<GetQuestionContextInput, GetQues
   {
     name: 'get_question_context',
     description:
-      'Learner-state context for one question: attempts, reviews, FSRS state, linked records, variants, knowledge paths and assets. Bank CONTENT reads go through read_bank (versioned refs from search_bank); this tool is the learner-side read. lifecycle zeros with observation_status=not_observed are compatibility placeholders for missing or protected diagnostic questions, not observed facts.',
+      `One-call learner-state read for one question: issueability; latest score and wrong-cause; live FSRS due; knowledge mastery; item/family difficulty and band; timing median and same-difficulty ratio; hint trajectory; and faulty inference. Missing theta or durations stay unknown and are never filled with 0; hint_dependence and faulty are agent-only. Bank CONTENT reads go through read_bank; do not follow up with get_knowledge_state or get_attempt_context for these fields. lifecycle values with observation_status=not_observed are placeholders, not observed facts. Figures carry contains_learner_handwriting (true/false/unknown): ${LEARNER_HANDWRITING_RULE}.`,
     effect: 'read',
     inputSchema: GetQuestionContextInputSchema,
     outputSchema: GetQuestionContextOutputSchema,
@@ -902,7 +986,7 @@ export const getQuestionContextTool: DomainTool<GetQuestionContextInput, GetQues
 export const getReviewDueTool: DomainTool<GetReviewDueInput, GetReviewDueOutput> = {
   name: 'get_review_due',
   description:
-    'Read returned actionable due-now rows (never-reviewed failures, then overdue FSRS cards) plus bounded future FSRS projections. rows=[] means zero returned actionable rows, not an empty queue: queue_assertion is the claim surface — cleared=false is supported by a returned row; every null is unobserved and must never become 0 or true. Report due returned/state/completeness and future returned/total/completeness separately; completeness=unknown, supports_exhaustive_zero_claim=false and entity_status_coverage=not_observed forbid complete/cleared/entity-count claims. Never mutates FSRS.',
+    'Read returned actionable due-now rows (never-reviewed failures, then overdue FSRS cards) plus bounded future FSRS projections. personal_hit_rate is successes divided by judged attempts; null means no judged attempt, not 0%, and is agent-only. rows=[] means zero returned actionable rows, not an empty queue: queue_assertion is the claim surface — cleared=false is supported by a returned row; every null is unobserved and must never become 0 or true. Report due returned/state/completeness and future returned/total/completeness separately; completeness=unknown, supports_exhaustive_zero_claim=false and entity_status_coverage=not_observed forbid complete/cleared/entity-count claims. Never mutates FSRS.',
   effect: 'read',
   inputSchema: GetReviewDueInputSchema,
   outputSchema: GetReviewDueOutputSchema,

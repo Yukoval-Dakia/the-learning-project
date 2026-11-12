@@ -21,6 +21,8 @@ import { createHash } from 'node:crypto';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
+import { LearnerHandwritingMarker } from '@/core/schema/assessment/materials';
+import { knownSignal } from '@/core/schema/knowledge-signal';
 import { deriveSourceTier } from '@/core/schema/provenance';
 import type { Db, Tx } from '@/db/client';
 import {
@@ -31,6 +33,7 @@ import {
   question_solution_prior,
   source_asset,
 } from '@/db/schema';
+import { judgedAttemptCounts, readAttemptFacts } from '@/kernel/read-models/question-activity';
 import { allowedQuestionIds } from '@/kernel/read-models/usage-policy';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 import {
@@ -133,6 +136,23 @@ const ReadBankOkItemSchema = z.object({
   historical: z.boolean(),
   /** 该 revision 当前是否还允许发新 issuance（历史读 = false）。 */
   new_issuance_allowed: z.boolean(),
+  activity: z
+    .object({
+      attempts: z.object({
+        value: z
+          .object({
+            success: z.number().int().nonnegative(),
+            partial: z.number().int().nonnegative(),
+            failure: z.number().int().nonnegative(),
+          })
+          .nullable(),
+        known: z.boolean(),
+        source: z.string(),
+        asOf: z.string(),
+        missingReason: z.string().nullable(),
+      }),
+    })
+    .optional(),
   lifecycle: z.object({
     availability: z.enum(['general_pool', 'container_only']).nullable(),
     admission_state: z.enum(['admitted', 'withheld']).nullable(),
@@ -185,6 +205,7 @@ const ReadBankOkItemSchema = z.object({
         caption: z.string().optional(),
         alt_text: z.string().optional(),
         content_md: z.string().optional(),
+        contains_learner_handwriting: LearnerHandwritingMarker.optional(),
         text_extent: z
           .object({
             complete: z.boolean(),
@@ -625,6 +646,16 @@ export async function runReadBank(
   const allowedGroups = runOpts?.derivationOnly ? await allowedQuestionIds(db, groupIds) : null;
   const deniedGroups =
     allowedGroups === null ? null : new Set(groupIds.filter((id) => !allowedGroups.has(id)));
+  const attemptAsOf = new Date();
+  // The bank role can read bank tables only. Attempt counts are learner events,
+  // so a restricted read omits them instead of selecting event.
+  const attemptFacts =
+    role === 'restricted'
+      ? null
+      : await readAttemptFacts(
+          db,
+          deniedGroups ? groupIds.filter((id) => !deniedGroups.has(id)) : groupIds,
+        );
 
   const priorRows = include.has('solution_prior')
     ? await db
@@ -832,6 +863,9 @@ export async function runReadBank(
               ...(m.caption != null ? { caption: m.caption } : {}),
               ...(m.alt_text != null ? { alt_text: m.alt_text } : {}),
               ...(textExt != null ? { content_md: textExt.text } : {}),
+              ...(m.contains_learner_handwriting !== undefined
+                ? { contains_learner_handwriting: m.contains_learner_handwriting }
+                : {}),
               ...(textExt != null && !textExt.complete
                 ? {
                     text_extent: {
@@ -921,6 +955,17 @@ export async function runReadBank(
       current,
       historical: !current,
       new_issuance_allowed: newIssuanceAllowed,
+      ...(attemptFacts
+        ? {
+            activity: {
+              attempts: knownSignal(
+                judgedAttemptCounts(attemptFacts.get(revision.group_id) ?? []),
+                'kernel/read-models/question-activity:readAttemptFacts',
+                attemptAsOf,
+              ),
+            },
+          }
+        : {}),
       lifecycle: {
         availability: lifecycle?.availability ?? null,
         admission_state: lifecycle?.scoring_admission_state ?? null,
@@ -1119,7 +1164,7 @@ async function executeReadBank(ctx: ToolContext, rawInput: ReadBankInput): Promi
 export const readBankTool: DomainTool<ReadBankInput, ReadBankOutput> = {
   name: 'read_bank',
   description:
-    'Fetch versioned question/group content by bank ref — each ref resolves independently (partial success is normal); an unresolvable, digest-mismatched or withdrawn-group ref returns an explicit error for that ref, never a silent fallback to latest. A withdrawn revision reads only with a bound submission_id or a private role.',
+    'Fetch versioned question/group content by bank ref — each ref resolves independently (partial success is normal); an unresolvable, digest-mismatched or withdrawn-group ref returns an explicit error for that ref, never a silent fallback to latest. Use overview ids directly as edit_question targets; include/focus/extent paging rules are in their parameter descriptions. A withdrawn revision reads only with a bound submission_id (as historical, new_issuance_allowed=false) or a private role. Role-gated layers never upgrade access; denied_layers reports omissions. activity.attempts counts still-active outcomes for owner/private reads and may really be zero; restricted reads omit it. There is no exposure count because no exposure event is stored.',
   effect: 'read',
   inputSchema: ReadBankInputSchema,
   outputSchema: ReadBankOutputSchema,

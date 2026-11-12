@@ -357,7 +357,7 @@ async function executeWriteQuiz(
 export const writeQuizTool: DomainTool<WriteQuizInput, WriteQuizOutput> = {
   name: 'write_quiz',
   description:
-    'Assemble admitted, answerable questions into ONE runnable tool_quiz practice paper; returns a /practice/<id> link. New author_question teaching drafts await automatic admission — they cannot enter a runnable paper this turn; return their bank links and current status instead. Existing pool questions can be found via search_bank; retained legacy proposal drafts keep their compatibility path. Call once after selecting; a second call in the same run is refused.',
+    'Assemble admitted, answerable questions into ONE runnable tool_quiz practice paper; returns a /practice/<id> link. New author_question teaching drafts await automatic admission and cannot enter a runnable paper this turn; return their bank links and current status instead. Existing pool questions use search_bank plus search_id and assessments. Retained legacy proposal drafts keep their compatibility path. Call once after selecting; a second call in the same run is refused.',
   effect: 'write',
   inputSchema: WriteQuizInputSchema,
   outputSchema: WriteQuizOutputSchema,

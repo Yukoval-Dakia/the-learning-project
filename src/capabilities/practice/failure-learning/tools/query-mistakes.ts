@@ -3,6 +3,7 @@
 
 import { and, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
+import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import type { Db } from '@/db/client';
 import { material_fsrs_state, mistake_variant, question } from '@/db/schema';
 import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
@@ -14,7 +15,11 @@ import { loadFailureLearningKnowledgeContext } from '@/kernel/read-models/failur
 import { miscCauseLabelMap, resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
 // P5.1 / — snippet cap + courtesy default sourced from budgets.ts.
 // Both are byte-unchanged from the prior file-local literals (160 / 20).
-import { MISTAKE_PROMPT_SNIPPET_MAX, TOOL_COURTESY_DEFAULTS } from '@/kernel/tools/budgets';
+import {
+  MISTAKE_ANSWER_EXCERPT_MAX,
+  MISTAKE_PROMPT_SNIPPET_MAX,
+  TOOL_COURTESY_DEFAULTS,
+} from '@/kernel/tools/budgets';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
@@ -56,6 +61,13 @@ const InputSchema = z.object({
     .boolean()
     .optional()
     .describe('false skips cause-policy resolution (cheaper; aggregates.by_cause absent).'),
+  // Opt-in: each row also carries bounded excerpts of the learner's answer and
+  // the reference answer, so the caller can tell a wrong-answer shape apart from
+  // a fluke without reading raw attempt events.
+  includeAnswers: z
+    .boolean()
+    .optional()
+    .describe('true adds bounded learner-answer and reference-answer excerpts.'),
 });
 
 const CauseSchema = z.object({
@@ -118,6 +130,9 @@ const MistakeRowSchema = z.object({
   review_state: ReviewStateSchema.nullable(),
   variants: z.array(VariantSchema).optional(),
   knowledge_ids: z.array(z.string()),
+  // Present only with includeAnswers; both are bounded excerpts, not full text.
+  answer_excerpt: z.string().nullable().optional(),
+  reference_excerpt: z.string().nullable().optional(),
 });
 
 const OutputSchema = z.object({
@@ -157,13 +172,32 @@ const DESCRIPTION = [
   'chart_caption is the server coverage line and replaces any caption you wrote.',
 ].join('\n');
 
-async function loadQuestionPrompts(db: Db, questionIds: string[]): Promise<Map<string, string>> {
+interface QuestionPromptRow {
+  prompt_md: string;
+  reference_md: string | null;
+  source: string;
+}
+
+async function loadQuestionPrompts(
+  db: Db,
+  questionIds: string[],
+): Promise<Map<string, QuestionPromptRow>> {
   if (questionIds.length === 0) return new Map();
   const rows = await db
-    .select({ id: question.id, prompt_md: question.prompt_md })
+    .select({
+      id: question.id,
+      prompt_md: question.prompt_md,
+      reference_md: question.reference_md,
+      source: question.source,
+    })
     .from(question)
     .where(inArray(question.id, questionIds));
-  return new Map(rows.map((r) => [r.id, r.prompt_md]));
+  return new Map(
+    rows.map((r) => [
+      r.id,
+      { prompt_md: r.prompt_md, reference_md: r.reference_md ?? null, source: r.source },
+    ]),
+  );
 }
 
 async function loadFsrsStates(
@@ -277,6 +311,20 @@ function causeLabel(input: {
 function shortName(name: string): string {
   const glyphs = Array.from(name);
   return glyphs.length > 30 ? `${glyphs.slice(0, 30).join('')}…` : name;
+}
+
+/**
+ * One-line bounded excerpt. Newlines collapse so a row stays readable in a tool
+ * result, and truncation counts code points so multi-byte math text is not cut
+ * mid-glyph.
+ */
+function excerpt(text: string | null | undefined): string | null {
+  const flat = text?.replace(/\s+/g, ' ').trim() ?? '';
+  if (flat.length === 0) return null;
+  const glyphs = Array.from(flat);
+  return glyphs.length > MISTAKE_ANSWER_EXCERPT_MAX
+    ? `${glyphs.slice(0, MISTAKE_ANSWER_EXCERPT_MAX).join('')}…`
+    : flat;
 }
 
 /** What a bound chart covers: the window only when the rows reach across it, plus every filter. */
@@ -432,7 +480,8 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
 
   const now = Date.now();
   const mistakes = final.map(({ fa, cause }) => {
-    const promptMd = promptMap.get(fa.question_id) ?? '';
+    const questionRow = promptMap.get(fa.question_id);
+    const promptMd = questionRow?.prompt_md ?? '';
     const fsrs = fsrsMap.get(fa.question_id);
     const row: Output['mistakes'][number] = {
       event_id: fa.attempt_event_id,
@@ -461,6 +510,18 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
     };
     if (input.includeVariants) {
       row.variants = variantsMap.get(fa.question_id) ?? [];
+    }
+    if (input.includeAnswers) {
+      // The whole attempt surface of a diagnostic prompt is redacted elsewhere;
+      // withhold both excerpts there, including when no question row proves the source.
+      const answersAllowed =
+        questionRow !== undefined && questionRow.source !== INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE;
+      row.answer_excerpt = answersAllowed ? excerpt(fa.answer_md) : null;
+      // Frozen snapshot first: a reference the learner saw at attempt time beats
+      // today's edited version, which may have moved on.
+      row.reference_excerpt = answersAllowed
+        ? excerpt(fa.question_snapshot?.question.reference_md ?? questionRow.reference_md)
+        : null;
     }
     return row;
   });
