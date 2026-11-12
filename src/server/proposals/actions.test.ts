@@ -86,6 +86,7 @@ describe('retractAiProposal — completion / relearn row reversal (YUK-471)', ()
     });
     await migrateCanonicalProjections(db);
     await writeAiProposal(db, {
+      actor_ref: 'dreaming',
       id: 'completion_retract_p1',
       payload: {
         kind: 'completion',
@@ -157,6 +158,7 @@ describe('retractAiProposal — knowledge_node soft-delete + fold==row (YUK-471)
     const db = testDb();
     await seedKnowledge(['parent_atomic']);
     await writeAiProposal(db, {
+      actor_ref: 'dreaming',
       id: 'knode_atomic_p1',
       payload: {
         kind: 'knowledge_node',
