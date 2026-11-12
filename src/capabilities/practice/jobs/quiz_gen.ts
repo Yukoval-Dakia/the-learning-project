@@ -50,6 +50,10 @@ import { costUsdToMicroUsd } from '@/kernel/cost';
 import { writeEvent } from '@/kernel/events';
 import type { QuizGenJobData, QuizGenTrigger } from '@/kernel/quiz-gen-contract';
 import {
+  type LearnerCurriculum,
+  readLearnerCurriculum,
+} from '@/kernel/read-models/learner-curriculum';
+import {
   type PlacementVerificationAuthority,
   SupplyTraceV1,
   type SupplyTraceV1T,
@@ -491,6 +495,7 @@ async function planQuizGeneration(
   params: RunQuizGenParams,
   context: QuizGenerationContext,
   evidence: QuizGenerationEvidence,
+  curriculum: LearnerCurriculum,
 ): Promise<QuizGenPlanT> {
   const { db, trigger, resolved, count, run, planPiToolMounts, planAllowedTools, subjectProfile } =
     context;
@@ -520,6 +525,7 @@ async function planQuizGeneration(
       },
       knowledge_context: resolved.knowledgeNode ? [resolved.knowledgeNode] : [],
       count,
+      curriculum,
       ...(params.generationMethod ? { requested_generation_method: params.generationMethod } : {}),
       ...(params.kind ? { requested_kind: params.kind } : {}),
       ...(params.objectiveOnly ? { objective_only: true } : {}),
@@ -590,6 +596,7 @@ async function generateQuizDrafts(
   context: QuizGenerationContext,
   plan: QuizGenPlanT,
   evidence: QuizGenerationEvidence,
+  curriculum: LearnerCurriculum,
 ) {
   const {
     db,
@@ -612,6 +619,7 @@ async function generateQuizDrafts(
     },
     knowledge_context: resolved.knowledgeNode ? [resolved.knowledgeNode] : [],
     count,
+    curriculum,
     // ADR-0038 决定#2 — the ACCEPTED plan rides into the generation call as
     // structured input: one question per plan item, in order, honouring each
     // item's kind / knowledge_id / objective answer_anchor.
@@ -1049,9 +1057,10 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
     failureStage: 'plan',
   };
   try {
-    const plan = await planQuizGeneration(params, context, evidence);
+    const curriculum = await readLearnerCurriculum(params.db);
+    const plan = await planQuizGeneration(params, context, evidence, curriculum);
     evidence.failureStage = 'producer';
-    const generated = await generateQuizDrafts(params, context, plan, evidence);
+    const generated = await generateQuizDrafts(params, context, plan, evidence, curriculum);
     const persisted = await persistQuizDrafts(params, context, generated, evidence);
     await emitQuizGenerationEvent(params, context, plan, generated, persisted, evidence);
     await dispatchQuizVerification(context, persisted, evidence);

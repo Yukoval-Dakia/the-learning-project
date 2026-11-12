@@ -8,6 +8,7 @@
 | `manifest.ts` | API、job/cron、proposal kinds、copilot tools、event subscriptions/actions 与 todayBlock 的权威注册面（清单以 `manifest.ts` 为准） |
 | `api/*.ts` | agent-notes、goal-create、probe-answer（conjecture 判别探针作答，#13 通电——与 attempt/FSRS 写面隔离，只写 1 个 `experimental:probe_result` 事件） |
 | `server/` | dreaming nightly、coach daily、goal scope propose、conjecture、agent-notes、proposal-appliers |
+| `server/learning-intent-request.ts` | 学习意图创建的一次付费请求：在途只派一次；领域结果已知收成终态；当前发送未知时不重派，也不沿用上一意图；无终态的流保持未决；提案决定只补本次回执 |
 | `server/conjecture/reconcile.ts` | 有效 probe 结果记账与纠错回放；先写 typed ledger，最后写确定性 anchor；execution checkpoint 归相邻 `reconciliation-execution.ts` |
 | `server/conjecture/learner-evidence.ts` | 把干预 `evidence_refs` 解析成有上限的错答块（原答、判定、错因），经 kernel `learner-evidence` 端口给补救材料作者 |
 | `server/conjecture/accountability.ts` / `hard-confirm.ts` | 共享预测问责排序与纠错有效事实/判定；nightly 与 grounding candidate collector 消费同一 reader/ranker，硬确认写入仍需原独立授权 |
