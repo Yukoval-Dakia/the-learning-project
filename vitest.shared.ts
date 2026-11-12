@@ -225,6 +225,7 @@ export const dbTestInclude = [
   'src/capabilities/practice/scheduling/server/stream-store-provider-lock.db.test.ts',
   'src/capabilities/practice/scheduling/server/stream-store-reserved-connection.db.test.ts',
   'src/capabilities/practice/scheduling/server/stream-store.db.test.ts',
+  'src/capabilities/practice/scheduling/server/practice-candidates.db.test.ts',
   'src/capabilities/practice/question-bank/tools/bank-tools.db.test.ts',
   'src/capabilities/practice/server/tools/store-sourced-question.db.test.ts',
   'src/capabilities/practice/session/tools/write-quiz.test.ts',

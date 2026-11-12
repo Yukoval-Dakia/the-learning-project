@@ -20,6 +20,8 @@ export const READ_TOOLS = [
   'get_record_context',
   'get_question_context',
   'get_review_due',
+  // YUK-1790 LIGHT — Coach's candidate union read (session owner's composed pool).
+  'read_practice_candidates',
   'get_learning_item_context',
   // YUK-1794 B1 — Context warm-layer read (brief + facts layers). Granted to
   // coach / dreaming / copilot below; NOT to evaluator surfaces.
@@ -353,6 +355,7 @@ const COACH_TOOLS = [
   'get_review_due',
   'get_learning_item_context',
   'get_question_context',
+  'read_practice_candidates',
   'propose_learning_item_completion',
   'propose_learning_item_relearn',
   'propose_learning_item_defer',
