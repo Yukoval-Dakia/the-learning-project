@@ -589,7 +589,7 @@ async function sweepPendingDispatch(
     );
     return;
   }
-  // NON-ACTIVE GOAL GUARD (review PRRT…upw3). A goal retracted to 'dormant' (the proposal retract
+  // NON-ACTIVE GOAL GUARD. A goal retracted to 'dormant' (the proposal retract
   // path, src/server/proposals/actions.ts) or finished as 'done' has left the active-goal flow, but
   // its stranded claim is untouched: `resolvePlacementStarterGoalAuthority` derives the revision
   // from genesis/scope events only, so a STATUS change does not invalidate it and the revision
@@ -609,7 +609,7 @@ async function sweepPendingDispatch(
     );
     return;
   }
-  // STALE-REVISION GUARD (review PRRT…ua3w). The live /placement/start path can only ever
+  // STALE-REVISION GUARD. The live /placement/start path can only ever
   // dispatch the CURRENT revision's claim — it dispatches exactly the ids its own materialize just
   // produced. This sweeper is the only code that can pick up an OLD revision's claim, and doing so
   // is actively destructive: with two revisions stranded pending_dispatch (a pg-boss outage
@@ -658,19 +658,19 @@ async function sweepPendingDispatch(
     // dispatched: a /placement/start that landed between our acquire (which moves only the cursor,
     // never the status) and our dispatch call would have dispatched it, and we would be handed
     // that job's id. Without this flag the sweeper credits itself for someone else's dispatch and
-    // logs "re-dispatched" for a claim it never drove (review PRRT…0VF).
+    // logs "re-dispatched" for a claim it never drove.
     let admitInvoked = false;
     // Same admission contract as /api/placement/start's cold path: serialize against pool
     // promotion for this KC scope, then pay ONLY if the scope still has no eligible item.
     const jobId = await dispatch(db, claim.id, async (tx) => {
       admitInvoked = true;
-      // AUTHORITATIVE RE-CHECK of BOTH goal preconditions (review PRRT…h8a, PRRT…upw3). The two
+      // AUTHORITATIVE RE-CHECK of BOTH goal preconditions. The two
       // checks above are lockless reads, so a goal re-scoped OR retracted between them and the
       // dispatch transaction taking the claim row lock would still get a paid batch dispatched —
       // and for the revision case that is the destructive outcome in full, not a near-miss. Redo
       // both HERE, inside the dispatch tx, holding the goal row locked so a concurrent scope or
       // status update must serialize against us.
-      // ── Why NOWAIT (review PRRT…HNf) ────────────────────────────────────────────────────
+      // ── Why NOWAIT ──────────────────────────────────────────────────────────────────
       // This path locks claim → goal, while materializePlacementStartersForGoal locks goal →
       // claim (goal FOR UPDATE, then INSERT ... ON CONFLICT DO NOTHING on the claim, which waits
       // on a claim row this sweeper holds). A plain FOR UPDATE here is therefore a genuine AB-BA

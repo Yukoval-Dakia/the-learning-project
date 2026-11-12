@@ -61,7 +61,6 @@ export {
   buildMemoryIngestOutboxPollHandler,
   buildMemoryIngestOutboxRecoverHandler,
 } from './server/memory/triggers';
-export { misconceptionHardConfirmEnabled } from './server/misconception-promote';
 export {
   type AgentNoteBoardDto,
   type AgentNoteBoardQuery,

@@ -53,6 +53,12 @@ export const READ_TOOLS = [
   // `ingestion` surface below (same containment as the draft-structure reader).
   'read_source',
   'view_image',
+  // Note body plus mark / edit / review / refine stats. Copilot grant is below.
+  'read_note',
+  // Pending proposal inbox rows (kind / title / created_at / id). Read-only over
+  // the kernel inbox projection; granted to copilot below so the companion can
+  // see what the learner still has to decide.
+  'list_pending_proposals',
 ] as const;
 
 export const PROPOSE_WRITE_TOOLS = [
@@ -268,6 +274,7 @@ export const COPILOT_TOOLS = [
   'write_note',
   // YUK-1772 — read-only deterministic note check (issues list, no verdict).
   'check_note',
+  'read_note',
   // YUK-1986 — 明确要答案时的记受助给答路径（owner「有记录的给」）。
   'reveal_answer',
   // YUK-1468 — Copilot 编辑面：edit_question（ops/document/validate/probe）。
@@ -284,6 +291,8 @@ export const COPILOT_TOOLS = [
   // 唯一非 propose 的学习者数据直写：原话即事实（D3），确认句只能基于工具结果。
   'record_steering',
   'remember_learner',
+  // 学伴自己已提出、还没被裁决的提案（kind / 标题 / 创建时间 / id），用于避免重复提议。
+  'list_pending_proposals',
 ] as const satisfies readonly DomainToolName[];
 
 // YUK-1553 / YUK-1559 — Dreaming's grant is now an EXPLICIT list: it must not

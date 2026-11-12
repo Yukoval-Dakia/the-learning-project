@@ -3,7 +3,8 @@
 // 链路位置：
 //   原始信号读面 → LLM 产出 SupplyPlanV1 → 确定性机器门（supply-plan-gate.ts）
 //   → 门过：run 事件（accepted）+ 逐项 demand 事件（manual 留痕）
-//   → 门拒（≤2 轮有界重生成后仍不过）：run 事件（rejected），当晚零需求事件
+//   → 门拒（≤2 轮有界重生成后仍不过）：run 事件（rejected），当晚零模型需求事件。
+//     已落账的 selection_miss 仍写需求事件，派发由夜间供给扫描负责。
 //   → 扫描器安全网：question_supply_nightly 照常 06:00 派发缺口，planner 失败/空
 //     计划不影响它；本 job 与 DAG 无硬边（设计使然，安全网不被 planner 拖死）。
 //   → shadow 对比：同 job 内跑 discoverSupplyTargets（只读确定性扫描），planner
@@ -21,6 +22,7 @@
 import { createId } from '@paralleldrive/cuid2';
 import { eq, isNull } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
+import { readOpenSelectionMissDemands } from '@/capabilities/practice/question-bank/public';
 import { learnerLocalDay } from '@/core/learner-day';
 import type { SupplyPlanItemV1T, SupplyPlanV1T } from '@/core/schema/supply_plan';
 import { learnerDayWeekday, steeringDaysLeft, steeringWindowCoversToday } from '@/core/steering';
@@ -28,14 +30,17 @@ import type { Db } from '@/db/client';
 import { knowledge, mastery_state, placement_starter_claim, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { listActiveGoalsWithResolvedScope } from '@/kernel/read-models/active-goal-scope';
+import { globalThetaForDomain } from '@/kernel/read-models/mastery-state';
 import { expireDueSteeringGoals } from '@/kernel/records/goal-commands';
 import { enqueueSupplyDispatchJob } from '@/kernel/supply-dispatch';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { type SupplyPlanRunAgentFn, runSupplyPlanOperation } from '../server/supply-plan-operation';
 import {
   discoverSupplyTargets,
+  isDifficultyBand,
   isUnanchoredSupplyPaused,
   jyeooBudgetRemaining,
+  resolveBandLevelTarget,
 } from '../supply/public';
 
 // 非终态 placement claim（schema.ts placement_starter_claim 注释同集）：
@@ -313,6 +318,7 @@ export async function runSupplyPlanner(
     pendingClaims,
     jyeooRemaining,
     steeringScopes,
+    selectionMisses,
   ] = await Promise.all([
     loadLiveKnowledge(db),
     loadPoolCounts(db),
@@ -320,6 +326,7 @@ export async function runSupplyPlanner(
     loadPendingClaims(db),
     jyeooBudgetRemaining(db, now),
     loadSteeringScopes(db, now),
+    readOpenSelectionMissDemands(db, now),
   ]);
 
   const liveKnowledgeIds = new Set(knowledgeRows.map((row) => row.id));
@@ -370,6 +377,15 @@ export async function runSupplyPlanner(
       knowledge_id: claim.knowledgeId,
     })),
     jyeoo_budget_remaining: jyeooRemaining,
+    selection_misses: selectionMisses
+      .filter((row) => liveKnowledgeIds.has(row.miss.knowledge_id))
+      .map((row) => ({
+        knowledge_id: row.miss.knowledge_id,
+        subject_id: row.miss.subject_id,
+        reason: row.miss.reason,
+        event_id: row.eventId,
+        recorded_at: row.recordedAt.toISOString(),
+      })),
     // YUK-1770 — in-window steering goals（原话+转述+scope+剩余天数）。不加额度、
     // 不免机检：只在同一套规划约束里抬升考纲内补题优先级（见 prompt）。
     ...(steeringScopes.length > 0
@@ -463,10 +479,16 @@ export async function runSupplyPlanner(
       }
     }
   }
+  const missByKnowledge = new Map(
+    selectionMisses
+      .filter((row) => liveKnowledgeIds.has(row.miss.knowledge_id))
+      .map((row) => [row.miss.knowledge_id, row]),
+  );
   if (acceptedPlan !== null) {
     for (const item of acceptedPlan.items) {
       const claimId = claimByKnowledgeId.get(item.knowledge_id);
       const steeringTag = steeringTagByKc.get(item.knowledge_id);
+      const selectionMiss = missByKnowledge.get(item.knowledge_id);
       const demandEventId = `supply_planner_demand_${createId()}`;
       demandEventIds.push(demandEventId);
       await writeEvent(db, {
@@ -493,12 +515,39 @@ export async function runSupplyPlanner(
                 },
               }
             : {}),
+          ...(selectionMiss
+            ? { cause: { kind: 'selection_miss' as const, ref: selectionMiss.eventId } }
+            : {}),
         },
         ingest_at: now,
         created_at: now,
       });
       demandEvents += 1;
     }
+  }
+  const coveredKnowledgeIds = new Set(acceptedPlan?.items.map((item) => item.knowledge_id) ?? []);
+  for (const [knowledgeId, miss] of missByKnowledge) {
+    if (coveredKnowledgeIds.has(knowledgeId)) continue;
+    const demandEventId = `supply_planner_demand_${createId()}`;
+    await writeEvent(db, {
+      id: demandEventId,
+      actor_kind: 'agent',
+      actor_ref: 'supply_planner',
+      action: 'experimental:supply_planner_demand',
+      subject_kind: 'knowledge',
+      subject_id: knowledgeId,
+      outcome: 'manual',
+      payload: {
+        version: 1,
+        plan_event_id: planEventId,
+        cause: { kind: 'selection_miss', ref: miss.eventId },
+        reason: miss.miss.reason,
+        dispatch: 'question_supply_nightly',
+      },
+      ingest_at: now,
+      created_at: now,
+    });
+    demandEvents += 1;
   }
 
   // ── 3.5 phase-2：accepted plan → 确定性 executor（当晚计划当晚执行） ────────
@@ -507,6 +556,18 @@ export async function runSupplyPlanner(
   // （plan 事件已写、扫描器安全网仍在）——日志给出手动重跑命令后继续。
   let executeEnqueued: string | null | undefined;
   if (acceptedPlan !== null && demandEventIds.length > 0) {
+    // Same effective θ̂ as the scanner and matcher: θ_KC + θ_global(domain).
+    const levelsByItem = await Promise.all(
+      acceptedPlan.items.map(async (item) =>
+        isDifficultyBand(item.difficulty_band)
+          ? resolveBandLevelTarget(
+              item.difficulty_band,
+              (mastery.get(item.knowledge_id)?.theta ?? 0) +
+                (await globalThetaForDomain(db, subjectById.get(item.knowledge_id) ?? null)),
+            ).levels
+          : null,
+      ),
+    );
     const executePayload: Record<string, unknown> = {
       plan_event_id: planEventId,
       items: acceptedPlan.items.map((item, index) => ({
@@ -514,6 +575,7 @@ export async function runSupplyPlanner(
         knowledge_id: item.knowledge_id,
         kind: item.kind,
         difficulty_band: item.difficulty_band ?? null,
+        difficulty_levels: levelsByItem[index],
         count: item.count,
         route_preference: item.route_preference,
         ...(claimByKnowledgeId.has(item.knowledge_id)

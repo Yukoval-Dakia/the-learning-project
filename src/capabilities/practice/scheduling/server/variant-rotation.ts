@@ -4,11 +4,25 @@
 // root_question_id family so repeated reviews exercise the skill. Pure and deterministic;
 // only mutates the caller-owned usedQuestionIds set.
 
-import { and, inArray, sql } from 'drizzle-orm';
+import { and, eq, gte, inArray, sql } from 'drizzle-orm';
+import { mfiScore } from '@/core/selection-signals';
+import { difficultyToLogitB } from '@/core/theta';
 import type { Db, Tx } from '@/db/client';
 import { isPoolVisible, notDraftPredicate, questionSuspendedPredicate } from '@/db/predicates';
 import { event, question } from '@/db/schema';
+import { effectiveThetaForKcBatch, getMasteryStates } from '@/kernel/read-models/mastery-state';
+import { readHardCalibrationBs } from '@/kernel/read-models/question-difficulty';
+import { assessmentAttemptEventId } from '@/kernel/records/assessment-attempt-identity';
 import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
+
+// A ring of one never moves. Fewer than two family members the learner has not
+// seen inside this window cannot rotate, so the probe leaves the family.
+const MIN_FRESH_FAMILY_MEMBERS = 2;
+const RECENT_SIGHT_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
+
+// Seeing a question means the learner answered it. Promote/verify events also
+// use subject_kind=question and must not burn the window.
+const LEARNER_SIGHT_ACTIONS = ['attempt', 'review', 'experimental:assessment_attempt'] as const;
 
 // by-kind routing class.
 export type RotationClass = 'recall' | 'application';
@@ -18,8 +32,9 @@ export type RotationClass = 'recall' | 'application';
 // application: short_answer / reading / choice — rotate the variant family.
 // Unadjudicated kinds (essay / computation / derivation / true_false) fall through
 // to the CONSERVATIVE application default: they are all open/solve-type where
-// "memorise the answer" is harmful, and a family of one degrades naturally to an
-// original-repeat (see pickProbeForKnowledge).
+// "memorise the answer" is harmful. A family with fewer than two members the
+// learner has not seen recently cannot rotate, so the probe moves to another
+// servable question on the same knowledge point (see chooseApplicationProbe).
 // question.kind is a free-form label, so this is now a lookup over the
 // KNOWN label ids (the nine below), not an exhaustive enum map. A label outside
 // the table → undefined: the signal collectors (softmax/placement/stream-store)
@@ -85,6 +100,7 @@ type QuestionRow = {
   variant_depth: number;
   root_question_id: string | null;
   draft_status: string | null;
+  difficulty: number;
 };
 
 // Shared column projection — keeps the three reads (single, family, K-fallback)
@@ -101,6 +117,7 @@ const QUESTION_PROJECTION = {
   variant_depth: question.variant_depth,
   root_question_id: question.root_question_id,
   draft_status: question.draft_status,
+  difficulty: question.difficulty,
 } as const;
 
 function knowledgeContains(knowledgeId: string) {
@@ -142,15 +159,23 @@ export interface ProbeSelectionPrefetch {
   // per due-KC: its pool-visible (non-draft) questions, sorted (created_at ASC, id ASC) —
   // the exact firstForKnowledge ordering. Family reads filter this same bucket in memory.
   kcQuestions: Map<string, QuestionRow[]>;
+  // question ids the learner answered or reviewed inside the recent-sight window.
+  recentlySeenQuestionIds: ReadonlySet<string>;
+  // Effective θ̂ of each due knowledge point. Absent at score time → cold start 0.
+  thetaHatByKnowledgeId: ReadonlyMap<string, number>;
+  // Hard calibration b, else the difficulty proxy. Absent → that question ranks last.
+  difficultyBByQuestionId: ReadonlyMap<string, number>;
 }
 
 /**
  * prefetch every DB input {@link selectProbeFromPrefetch} needs for a batch of due
- * knowledge points in THREE reads total (independent of KC count):
- * 1. last-review event → presented question id (one `inArray` over event ids);
+ * knowledge points. The per-KC walk stays in memory:
+ * 1. last-review event → presented question id (one `inArray` over event ids, plus the
+ *    attempt row when that event is a settlement rather than a question-scoped review);
  * 2. the last-reviewed question rows (one `inArray` over those question ids, no draft filter);
  * 3. every non-draft question containing ANY of the due KCs (one containment scan), bucketed
- * per KC in (created_at, id) order.
+ * per KC in (created_at, id) order;
+ * 4. recent answer/review sights, effective θ̂, and item difficulty for the widened pool.
  *
  * Bucket (3) is the superset for BOTH fallback paths: a family member must be tagged the due
  * KC (readFamily's `knowledgeContains(K)`), so it always appears in that KC's bucket — the
@@ -159,17 +184,14 @@ export interface ProbeSelectionPrefetch {
 export async function prefetchProbeSelection(
   dbHandle: Db | Tx,
   inputs: Array<{ knowledgeId: string; lastReviewEventId: string | null }>,
+  now: Date = new Date(),
 ): Promise<ProbeSelectionPrefetch> {
   const eventIds = Array.from(
     new Set(inputs.map((i) => i.lastReviewEventId).filter((id): id is string => id !== null)),
   );
   const lastQuestionIdByEventId = new Map<string, string>();
   if (eventIds.length > 0) {
-    const rows = await dbHandle
-      .select({ id: event.id, subject_id: event.subject_id })
-      .from(event)
-      .where(inArray(event.id, eventIds));
-    for (const r of rows) lastQuestionIdByEventId.set(r.id, r.subject_id);
+    await resolvePresentedQuestionIds(dbHandle, eventIds, lastQuestionIdByEventId);
   }
 
   const lastQuestionIds = Array.from(new Set(lastQuestionIdByEventId.values()));
@@ -179,7 +201,7 @@ export async function prefetchProbeSelection(
       .select(QUESTION_PROJECTION)
       .from(question)
       // 契约准入门：recall 回放也要过 suspended/withdrawn 门 ——
-      // 挂起的上一题不返 recall，回落到 K 内首个可用题（复审 P1：此前无门，
+      // 挂起的上一题不返 recall，回落到 K 内首个可用题（P1：此前无门，
       // 挂起题仍被 recall 路径直送）。
       .where(
         and(inArray(question.id, lastQuestionIds), questionSuspendedPredicate(question)),
@@ -229,7 +251,145 @@ export async function prefetchProbeSelection(
     }
   }
 
-  return { lastQuestionIdByEventId, questionRowById, kcQuestions };
+  const bucketRows = Array.from(kcQuestions.values()).flat();
+  const bucketQuestionIds = Array.from(new Set(bucketRows.map((row) => row.id)));
+  const [recentlySeenQuestionIds, difficultyBByQuestionId, thetaHatByKnowledgeId] =
+    await Promise.all([
+      readRecentlySeenQuestionIds(dbHandle, bucketQuestionIds, now),
+      readDifficultyBByQuestionId(dbHandle, bucketRows),
+      readThetaHatByKnowledgeId(dbHandle, knowledgeIds),
+    ]);
+
+  return {
+    lastQuestionIdByEventId,
+    questionRowById,
+    kcQuestions,
+    recentlySeenQuestionIds,
+    thetaHatByKnowledgeId,
+    difficultyBByQuestionId,
+  };
+}
+
+function payloadText(value: unknown): string | null {
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+// Settlement rows store the evaluation group as subject_id. The question the learner
+// saw is the attempt anchored by payload.submission_id. A question-scoped review or
+// attempt already carries that question as subject_id.
+async function resolvePresentedQuestionIds(
+  dbHandle: Db | Tx,
+  eventIds: string[],
+  into: Map<string, string>,
+): Promise<void> {
+  const rows = await dbHandle
+    .select({
+      id: event.id,
+      subject_kind: event.subject_kind,
+      subject_id: event.subject_id,
+      submission_id: sql<string | null>`${event.payload}->>'submission_id'`,
+      anchor_question_id: sql<
+        string | null
+      >`${event.payload}->'theta_decision'->>'anchorQuestionId'`,
+    })
+    .from(event)
+    .where(inArray(event.id, eventIds));
+
+  const pending: Array<{
+    eventId: string;
+    submissionId: string;
+    anchorQuestionId: string | null;
+  }> = [];
+  for (const row of rows) {
+    if (row.subject_kind === 'question') {
+      into.set(row.id, row.subject_id);
+      continue;
+    }
+    const submissionId = payloadText(row.submission_id);
+    const anchorQuestionId = payloadText(row.anchor_question_id);
+    if (submissionId) pending.push({ eventId: row.id, submissionId, anchorQuestionId });
+    else if (anchorQuestionId) into.set(row.id, anchorQuestionId);
+  }
+  if (pending.length === 0) return;
+
+  const attemptIds = Array.from(
+    new Set(pending.map((row) => assessmentAttemptEventId(row.submissionId))),
+  );
+  const attempts = await dbHandle
+    .select({
+      id: event.id,
+      subject_kind: event.subject_kind,
+      subject_id: event.subject_id,
+    })
+    .from(event)
+    .where(inArray(event.id, attemptIds));
+  const questionByAttemptId = new Map(
+    attempts
+      .filter((row) => row.subject_kind === 'question')
+      .map((row) => [row.id, row.subject_id] as const),
+  );
+  for (const row of pending) {
+    const questionId = questionByAttemptId.get(assessmentAttemptEventId(row.submissionId));
+    if (questionId) into.set(row.eventId, questionId);
+    else if (row.anchorQuestionId) into.set(row.eventId, row.anchorQuestionId);
+  }
+}
+
+async function readRecentlySeenQuestionIds(
+  dbHandle: Db | Tx,
+  questionIds: string[],
+  now: Date,
+): Promise<Set<string>> {
+  const seen = new Set<string>();
+  if (questionIds.length === 0) return seen;
+  const since = new Date(now.getTime() - RECENT_SIGHT_WINDOW_MS);
+  const rows = await dbHandle
+    .select({ subject_id: event.subject_id })
+    .from(event)
+    .where(
+      and(
+        eq(event.subject_kind, 'question'),
+        inArray(event.subject_id, questionIds),
+        inArray(event.action, [...LEARNER_SIGHT_ACTIONS]),
+        gte(event.created_at, since),
+      ),
+    )
+    .groupBy(event.subject_id);
+  for (const row of rows) seen.add(row.subject_id);
+  return seen;
+}
+
+async function readDifficultyBByQuestionId(
+  dbHandle: Db | Tx,
+  rows: QuestionRow[],
+): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  if (rows.length === 0) return out;
+  const hard = await readHardCalibrationBs(
+    dbHandle,
+    Array.from(new Set(rows.map((row) => row.id))),
+  );
+  for (const row of rows) {
+    const calibrated = hard.get(row.id);
+    const b = calibrated ?? difficultyToLogitB(row.difficulty);
+    if (typeof b === 'number' && Number.isFinite(b)) out.set(row.id, b);
+  }
+  return out;
+}
+
+async function readThetaHatByKnowledgeId(
+  dbHandle: Db | Tx,
+  knowledgeIds: string[],
+): Promise<Map<string, number>> {
+  if (knowledgeIds.length === 0) return new Map();
+  const mastery = await getMasteryStates(dbHandle, knowledgeIds, 'knowledge');
+  return effectiveThetaForKcBatch(
+    dbHandle,
+    knowledgeIds.map((knowledgeId) => ({
+      knowledgeId,
+      thetaKc: mastery.get(knowledgeId)?.theta_hat ?? 0,
+    })),
+  );
 }
 
 // K 下首个未用 non-draft 题, created_at ASC, id ASC — the shared fallback序 used by
@@ -264,8 +424,7 @@ function readFamilyPure(
 
 /**
  * Pick the deterministic probe question for a due knowledge point, PURE over a
- * {@link ProbeSelectionPrefetch}. Byte-identical selection to the pre- per-KC DB walk —
- * it is a straight in-memory translation of the same routing/fallback branches.
+ * {@link ProbeSelectionPrefetch}.
  *
  * Routing key = the kind of the question presented at the knowledge point's LAST review.
  * NULL last review → application default (first probe).
@@ -273,7 +432,9 @@ function readFamilyPure(
  * - recall: re-present the last question (FSRS measures THIS recall item). If it was deleted /
  * demoted to draft / unlabelled K / already used → fall back to K's first non-draft question.
  * - application: rotate within the last question's root_question_id family, taking the next
- * member after the last (wrapping the ring). A family of one degrades to an original-repeat.
+ * member after the last (wrapping the ring). When fewer than two family members are unseen
+ * in the recent window, pick another servable question on this knowledge point by mfiScore.
+ * No such question → the family ring, including a one-member repeat.
  *
  * Mutates `usedQuestionIds` (adds the chosen id) so a question surfaces at most once per due
  * page (cross-knowledge dedup). Callers thread ONE shared set through the page in order — the
@@ -324,23 +485,102 @@ export function selectProbeFromPrefetch(
     return firstForKnowledgePure(kcQuestions, knowledgeId, usedQuestionIds);
   }
 
-  // application — variant-family rotation.
+  // application — variant-family rotation, widened when the family cannot move.
   const familyRoot = lastQuestion.root_question_id ?? lastQuestion.id;
-  const family = readFamilyPure(kcQuestions, familyRoot, knowledgeId).filter(
-    (row) => !usedQuestionIds.has(row.id),
-  );
-  if (family.length === 0) {
+  const familyAll = readFamilyPure(kcQuestions, familyRoot, knowledgeId);
+  const familyUnused = familyAll.filter((row) => !usedQuestionIds.has(row.id));
+  if (familyUnused.length === 0) {
     // Family minus used is empty → fall back to K's first 未用 non-draft 题.
     return firstForKnowledgePure(kcQuestions, knowledgeId, usedQuestionIds);
   }
 
-  const ordered = sortFamily(family);
-  const idx = ordered.findIndex((row) => row.id === lastQuestion.id);
-  // Q_last 之后的下一个, 环绕. Q_last not in family (deleted / unlabelled K /
-  // already used) → idx === -1 → take the 序首 (ordered[0]).
-  const chosen = idx >= 0 ? ordered[(idx + 1) % ordered.length] : ordered[0];
+  const chosen = chooseApplicationProbe(
+    familyUnused,
+    familyAll,
+    kcQuestions.get(knowledgeId) ?? [],
+    lastQuestion.id,
+    usedQuestionIds,
+    prefetch,
+    knowledgeId,
+  );
   usedQuestionIds.add(chosen.id);
   return toProbe(chosen);
+}
+
+function chooseApplicationProbe(
+  familyUnused: QuestionRow[],
+  familyAll: QuestionRow[],
+  kcRows: QuestionRow[],
+  lastQuestionId: string,
+  usedQuestionIds: Set<string>,
+  prefetch: ProbeSelectionPrefetch,
+  knowledgeId: string,
+): QuestionRow {
+  const freshCount = familyAll.filter(
+    (row) => !prefetch.recentlySeenQuestionIds.has(row.id),
+  ).length;
+  const widened =
+    freshCount >= MIN_FRESH_FAMILY_MEMBERS
+      ? []
+      : widenCandidates(familyAll, kcRows, usedQuestionIds, prefetch.recentlySeenQuestionIds);
+  if (widened.length > 0) return takeHighestMfi(widened, knowledgeId, prefetch);
+  return takeFamilyRing(sortFamily(familyUnused), lastQuestionId);
+}
+
+function widenCandidates(
+  familyAll: QuestionRow[],
+  kcRows: QuestionRow[],
+  usedQuestionIds: Set<string>,
+  recentlySeen: ReadonlySet<string>,
+): QuestionRow[] {
+  const familyIds = new Set(familyAll.map((row) => row.id));
+  return kcRows.filter(
+    (row) =>
+      !familyIds.has(row.id) &&
+      !usedQuestionIds.has(row.id) &&
+      !recentlySeen.has(row.id) &&
+      // A recall item would lock the next review onto itself.
+      rotationClassForKind(row.kind) !== 'recall',
+  );
+}
+
+// Q_last 之后的下一个, 环绕. Q_last not in the ring (deleted / unlabelled K /
+// already used) → take the 序首.
+function takeFamilyRing(ordered: QuestionRow[], lastQuestionId: string): QuestionRow {
+  const idx = ordered.findIndex((row) => row.id === lastQuestionId);
+  const chosen = idx >= 0 ? ordered[(idx + 1) % ordered.length] : ordered[0];
+  if (!chosen) throw new Error('application family ring is empty');
+  return chosen;
+}
+
+// Ties keep sortFamily order, so equal information still moves once the winner
+// becomes the last question and drops out of the widened pool.
+function takeHighestMfi(
+  candidates: QuestionRow[],
+  knowledgeId: string,
+  prefetch: ProbeSelectionPrefetch,
+): QuestionRow {
+  const ordered = sortFamily(candidates);
+  let best = ordered[0];
+  if (!best) throw new Error('widened probe pool is empty');
+  let bestScore = mfiFor(best, knowledgeId, prefetch);
+  for (const row of ordered.slice(1)) {
+    const score = mfiFor(row, knowledgeId, prefetch);
+    if (score > bestScore) {
+      best = row;
+      bestScore = score;
+    }
+  }
+  return best;
+}
+
+function mfiFor(row: QuestionRow, knowledgeId: string, prefetch: ProbeSelectionPrefetch): number {
+  const theta = prefetch.thetaHatByKnowledgeId.get(knowledgeId) ?? 0;
+  const b = prefetch.difficultyBByQuestionId.get(row.id);
+  if (b === undefined || !Number.isFinite(b) || !Number.isFinite(theta)) {
+    return Number.NEGATIVE_INFINITY;
+  }
+  return mfiScore(theta, b);
 }
 
 /**

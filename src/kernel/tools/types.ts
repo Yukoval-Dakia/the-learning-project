@@ -161,6 +161,12 @@ export interface ToolContext {
    */
   sourceLedger?: TurnSourceLedger;
   /**
+   * Server-bound: the page entity the learner had in focus when sending this
+   * turn (the request's ambient focused_entity). It only picks among targets a
+   * tool already accepts, never authorizes a change; never from model arguments.
+   */
+  ambientFocus?: { readonly kind: string; readonly id: string };
+  /**
    * Server-bound: the turn runs the restricted answer-reveal surface
    * (derivationPolicy !== 'allow' ⇒ post-judgment answers are legitimately
    * visible). Never populated from model arguments.

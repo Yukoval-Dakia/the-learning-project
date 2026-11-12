@@ -11,9 +11,9 @@ import {
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { lockQuestionSubmitRequest } from '@/kernel/locks/question-supply';
+import { writeAiTaskAttemptFinished } from '@/kernel/records/ai-attempt-facts';
 import { readTaskRunPublications } from '@/kernel/records/publication-receipt';
 import { unknownAttemptCostTruth } from '@/server/ai/attempt-cost';
-import { writeAiTaskAttemptFinished } from '@/server/ai/log';
 import { getStartedBoss } from '@/server/boss/client';
 import {
   type QuestionPreparerData,

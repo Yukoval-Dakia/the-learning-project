@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { LearnerHandwritingMarker, type LearnerHandwritingMarkerT } from './assessment/materials';
 import { Presentation, type PresentationT } from './assessment/presentation';
 import { QuestionKind } from './business';
 
@@ -32,18 +33,104 @@ export const FigureRef = z.object({
   attach_confidence: AttachConfidence,
   option_label: z.string().min(1).optional(),
   handwriting_unverified: z.boolean().optional(),
+  // Per-crop handwriting judgment travels with the figure to every model reader;
+  // it never decides whether the figure is attached.
+  contains_learner_handwriting: LearnerHandwritingMarker.optional(),
   // 用户手动改归属时记录时间戳；ISO 字符串或 Date（z.coerce.date）
   last_reassigned_at: z.coerce.date().optional(),
 });
 
 export type FigureRefT = z.infer<typeof FigureRef>;
 
+/** Told to every model that sees a figure that may carry learner work. */
+export const LEARNER_HANDWRITING_RULE = '图中手写是学习者的作答，可能是错的，不要当作答案或条件';
+
+/** Judges read question figures as conditions; this carves out learner work inside them. */
+export const FIGURE_HANDWRITING_GRADING_NOTE = `Each figure material and its image_manifest entry state contains_learner_handwriting (true, false or unknown). In a figure marked true or unknown, ${LEARNER_HANDWRITING_RULE}: that handwriting is the learner's earlier work, neither a condition of the question nor part of the response being judged.`;
+
+export type ModelFigureRefT = FigureRefT & {
+  contains_learner_handwriting: LearnerHandwritingMarkerT;
+};
+
+/**
+ * Only a crop of a learner's own captured page can show learner work; quiz_gen,
+ * web-sourced, imported and other figures are printed source material.
+ */
+export type FigureOrigin = 'learner_capture' | 'printed_source';
+
+/**
+ * Ingestion crop is the only writer of asset role 'pipeline_figure'. Capture crops made
+ * before that stamp existed have no source_asset row at all, so a missing row stays a
+ * capture.
+ */
+export function figureOriginFromAssetProvenance(provenance: unknown): FigureOrigin {
+  if (provenance === undefined) return 'learner_capture';
+  return typeof provenance === 'object' &&
+    provenance !== null &&
+    (provenance as { role?: unknown }).role === 'pipeline_figure'
+    ? 'learner_capture'
+    : 'printed_source';
+}
+
+/** A stated marker wins; an unstated one is false for printed source and conservative for captures. */
+export function learnerHandwritingMarker(
+  stated: LearnerHandwritingMarkerT | undefined,
+  origin: FigureOrigin,
+  handwritingUnverified?: boolean,
+): LearnerHandwritingMarkerT {
+  if (stated !== undefined) return stated;
+  if (origin === 'printed_source') return false;
+  return handwritingUnverified === false ? false : 'unknown';
+}
+
+/**
+ * Per-figure step of the one "which figures go to models" exit: publication
+ * (ingestion figuresForQuestion) and every model-facing projection of stored figures
+ * call it, so no reader can drop or misstate the learner-handwriting marker.
+ */
+export function figureForModel(figure: FigureRefT, origin: FigureOrigin): ModelFigureRefT {
+  return {
+    ...figure,
+    contains_learner_handwriting: learnerHandwritingMarker(
+      figure.contains_learner_handwriting,
+      origin,
+      figure.handwriting_unverified,
+    ),
+  };
+}
+
 // ---------- StructuredQuestion 抽取证据 ----------
+
+// 学习者手写的红笔勾叉：是学习者自己标的记号，只作作答证据，不进入判分。
+// jsonb-internal，同 kind / student_answer_present 先例，不是 DDL 列。
+export const HandwritingRedMark = z.enum(['check', 'cross', 'mixed']);
+export type HandwritingRedMarkT = z.infer<typeof HandwritingRedMark>;
 
 export const HandwriteInfo = z.object({
   text: z.string(),
-  bbox: BBox,
+  /** Absent when the page-local box could not be validated; never a fake zero box. */
+  bbox: BBox.optional(),
+  /** 该题作答区域的红色勾/叉；'mixed' = 同时有勾和叉。缺省 = 未观测到红笔勾叉。 */
+  red_ink: HandwritingRedMark.optional(),
+  /** 转写文本本身是红笔（例如红笔订正），不是黑/蓝笔作答。 */
+  red_text: z.boolean().optional(),
+  /** 转写置信度；缺省 = 未知，不冒充高置信。 */
+  confidence: z.number().min(0).max(1).optional(),
+  /** 模型对该区域的补充说明；只作证据，不进作答文本。 */
+  note: z.string().optional(),
 });
+
+/**
+ * Whole-pass trace outcome, written on the block root. `failed` means the
+ * handwriting model never produced usable evidence (provider or parse failure),
+ * which must stay distinguishable from a successful pass that saw no handwriting.
+ * jsonb-internal, same precedent as the per-node evidence above.
+ */
+export const HandwritingTraceOutcome = z.object({
+  status: z.enum(['completed', 'failed']),
+  reason: z.string().optional(),
+});
+export type HandwritingTraceOutcomeT = z.infer<typeof HandwritingTraceOutcome>;
 
 export const TencentGrading = z.object({
   IsCorrect: z.boolean(),
@@ -54,6 +141,8 @@ export const TencentGrading = z.object({
 
 export const ExtractionEvidence = z.object({
   handwriting: z.array(HandwriteInfo).optional(),
+  /** Whole-pass trace outcome on the block root; absent = this path did not run. */
+  handwriting_trace: HandwritingTraceOutcome.optional(),
   tencent_grading: TencentGrading.optional(),
 });
 
@@ -282,6 +371,7 @@ export interface AddressableFigureRef {
   asset_id: string;
   role: string;
   attached_to_index: string;
+  contains_learner_handwriting: LearnerHandwritingMarkerT;
 }
 
 export interface AddressableStructuredQuestion {
@@ -326,20 +416,24 @@ export function projectAddressableNode(q: StructuredQuestionT): AddressableStruc
 
 /**
  * 把一棵 StructuredQuestion 树 + 其 FigureRef[] 投影成可寻址结构。figures 只保留
- * 寻址三元组（asset_id / role / attached_to_index）—— source_bbox /
+ * 寻址三元组（asset_id / role / attached_to_index）和手写标记 —— source_bbox /
  * source_page_index / attach_confidence 是抽取期坐标，对寻址无用。
  */
 export function projectAddressableStructure(
   tree: StructuredQuestionT,
-  figures: readonly FigureRefT[] = [],
+  figures: readonly FigureRefT[],
+  originOf: (assetId: string) => FigureOrigin,
 ): AddressableStructure {
   return {
     tree: projectAddressableNode(tree),
-    figures: figures.map((f) => ({
-      asset_id: f.asset_id,
-      role: f.role,
-      attached_to_index: f.attached_to_index,
-    })),
+    figures: figures
+      .map((figure) => figureForModel(figure, originOf(figure.asset_id)))
+      .map((f) => ({
+        asset_id: f.asset_id,
+        role: f.role,
+        attached_to_index: f.attached_to_index,
+        contains_learner_handwriting: f.contains_learner_handwriting,
+      })),
   };
 }
 
