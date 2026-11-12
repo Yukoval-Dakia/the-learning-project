@@ -7,6 +7,7 @@ import { withActiveCauseCategoryOverlays } from '@/kernel/read-models/cause-over
 import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
 import {
   type FailureAttempt,
+  getCauseEditableFailureAttemptIds,
   getCurrentFailureAttempts,
   getFailureAttemptById,
   getFailureAttempts,
@@ -391,11 +392,14 @@ export async function listMistakeProjectionPage(db: Db, filter: ListMistakeProje
   const hasMore = paged.length > filter.limit;
   const page = hasMore ? paged.slice(0, filter.limit) : paged;
   const last = page.at(-1);
+  const causeEditableAttemptIds = await getCauseEditableFailureAttemptIds(
+    db,
+    visible.map((failure) => failure.attempt_event_id),
+  );
   const causeEditAttemptByQuestion = new Map<string, string>();
   for (const failure of visible) {
     if (
-      failure.correction_state.terminal_state === 'active' &&
-      failure.correction_state.effective_event_id === failure.attempt_event_id &&
+      causeEditableAttemptIds.has(failure.attempt_event_id) &&
       !causeEditAttemptByQuestion.has(failure.question_id)
     ) {
       causeEditAttemptByQuestion.set(failure.question_id, failure.attempt_event_id);

@@ -20,6 +20,7 @@ import {
 import { allowedEventIds } from '@/kernel/events/derivation-policy';
 
 import {
+  type AttemptVerdict,
   type NativeAttemptVerdict,
   nativeAttemptOutcome,
   resolveVerdictsForAttempts,
@@ -341,6 +342,16 @@ function nativeAttemptAllowsCause(value: NativeAttemptVerdict | undefined): bool
   );
 }
 
+const LEGACY_CAUSE_OUTCOMES = new Set(['failure', 'partial', 'incorrect', 'partial_unknown']);
+
+function legacyAttemptAllowsCause(attempt: EventRow, verdict: AttemptVerdict | undefined): boolean {
+  const outcome =
+    verdict?.effective?.verdict.coarse_outcome ??
+    verdict?.embedded?.coarse_outcome ??
+    attempt.outcome;
+  return outcome !== null && LEGACY_CAUSE_OUTCOMES.has(outcome);
+}
+
 async function filterActiveFailureRows(
   db: DbLike,
   rows: EventRow[],
@@ -372,6 +383,49 @@ async function filterActiveFailureRows(
         : nativeAttemptOutcome(native.get(row.id)) === 'failure';
     return legacy.get(row.id)?.effective?.verdict.coarse_outcome !== 'correct';
   });
+}
+
+/**
+ * Resolve the exact set of attempts the learner-cause write owner accepts. This is kept
+ * separate from failure-history filtering: a corrected historical attempt may still belong in
+ * `/api/mistakes`, but it must not consume that question's single editable target.
+ */
+export async function getCauseEditableFailureAttemptIds(
+  db: DbLike,
+  attemptEventIds: readonly string[],
+): Promise<Set<string>> {
+  const ids = [...new Set(attemptEventIds)];
+  if (ids.length === 0) return new Set();
+  const rows = await db.select().from(event).where(inArray(event.id, ids));
+  const candidates = rows.filter(
+    (row) =>
+      (row.action === 'attempt' ||
+        row.action === 'review' ||
+        row.action === 'experimental:assessment_attempt') &&
+      row.subject_kind === 'question',
+  );
+  const active = await resolveEffectiveActiveRows(db, candidates);
+  const current = candidates.filter((row) => {
+    const truth = active.get(row.id)?.truth;
+    return truth?.terminal_state === 'active' && truth.effective_event_id === row.id;
+  });
+  const nativeRows = current.filter((row) => row.action === 'experimental:assessment_attempt');
+  const legacyIds = current
+    .filter((row) => row.action !== 'experimental:assessment_attempt')
+    .map((row) => row.id);
+  const [native, legacy] = await Promise.all([
+    resolveVerdictsForNativeAttempts(db, nativeRows),
+    resolveVerdictsForAttempts(db, legacyIds),
+  ]);
+  return new Set(
+    current
+      .filter((row) =>
+        row.action === 'experimental:assessment_attempt'
+          ? nativeAttemptAllowsCause(native.get(row.id))
+          : legacyAttemptAllowsCause(row, legacy.get(row.id)),
+      )
+      .map((row) => row.id),
+  );
 }
 
 async function loadFailureAttempts(
