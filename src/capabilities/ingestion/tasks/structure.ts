@@ -98,31 +98,32 @@ function buildStructurePrompt(profile: SubjectProfile): string {
 关键能力：
 1. **跨页大题组装**：一道大题（passage / 阅读理解 / 完形 / 大题带多个小问）如果横跨多页，必须组装成**一个** stem 节点，它的 sub_questions 收齐所有页的小问。不要因为换页就把同一大题拆成两个顶层节点。跨页合并时题目正文、选项、阅读原文必须两页齐全；「（接上页）」「（续）」等版面续页标记可以去掉，但不能因此删掉任何题目文字。
 2. **布局规范**：把题面、选项、答案规整到结构字段里；passage 进 stem 的 prompt_text，小问进 sub。
-3. 不抽取手写涂改 / 批改痕迹作为结构（那是作答证据，下游处理）。但要**判断每个节点上是否存在学生的手写作答 / 批改痕迹**：在该 StructureNode 上填 student_answer_present（true / false）。**绝不转写手写内容**——只报「有没有」这个布尔，像素留给下游判分（手写永远是像素，不做 OCR 转写）。整页都没有学生作答 → 全部省略或填 false。
+3. **手写和批改痕迹不是题面。** 学生的手写作答、涂改、红笔勾叉、批改分数都不进 prompt_text、options、answers、analysis；压在印刷字上或紧挨着印刷字的笔迹一律忽略，题面不能因为手写多出或少掉任何字符（例如印刷「2+3=」后面手写了「5」，题面仍是「2+3=」，不能写成「2+3=5」或「2+3×5=」）。腾讯文字提示可能把手写字混进印刷行，以图片为准剔除。手写只用来填 student_answer_present：该节点作答区域有任何学生笔迹或批改痕迹填 true，明确没有填 false，看不清就省略。只判断有没有，不辨认笔迹内容、不区分勾和叉、不判断对错，**绝不转写手写内容**（手写永远是像素，下游处理）。
 4. **图片归属（仅当输入含 figures 字段时）**：按 page_index 和 bbox 对照页面图片，把确定属于题面的裁剪图 index 填在对应节点 figure_ids；图形选项的图填入对应 options[].figure_ids，不再重复填到节点。同一 index 只声明一次，归属不明就省略，不猜最近题。跨页共享图归 stem，某小问独有图归 sub。选项 label 只存印刷标签，text 只存该选项印刷原文；选项本身是图且无正文时 text 必须为 ""，图由 figure_ids 表达。禁止编写「图A所示的」「见配图」「[图像选项]」或图像细节描述；没有图时也不要用文字冒充图。
-   对输入每个裁剪 index，在顶层 figure_handwriting 中独立报告 {figure_index,student_answer_present}：只检查该 bbox 内实际像素，有学生手写/批改痕迹填 true，明确没有填 false，不确定填 null；同页别题手写不代表这张裁剪含手写。即使图含手写也可以报告它所属题/选项，是否挂载由运行时决定，绝不转写手写文字。
+   对输入每个裁剪 index，在顶层 figure_handwriting 中独立报告 {figure_index,student_answer_present}：只检查该 bbox 内实际像素，有学生手写/批改痕迹填 true，明确没有填 false，不确定就省略 student_answer_present；同页别题手写不代表这张裁剪含手写。即使图含手写也可以报告它所属题/选项，是否挂载由运行时决定，绝不转写手写文字。
 5. **数学公式定界**：prompt_text、options[].text 以及 sub_questions 题面里出现的数学公式，必须带明确的 LaTeX 定界符：行内公式用「$...$」，独立成行的展示公式用「$$...$$」。已带定界符的公式（$...$、$$...$$、\\(...\\)、\\[...\\]）原样保留，不要改写公式内容。代码片段（含 Python、缩进、反斜杠转义）与普通文字**不要**包进 $；拿不准是不是公式的文字保持原样，宁可不包也不要猜。answers / analysis 字段不适用本条。
-6. **按页科目**：对每一页，凭印刷题面判断它属于 known_subjects 里的哪一科，在顶层 page_subjects 填 {page_index, subject_id}，subject_id 只能取 known_subjects 里的 id。拿不准、一页混有多科、或列表里没有对应科目时省略这一页，不要猜。
+6. **分节标题不是题。** 「一、选择题（每题4分）」这类大题/栏目标题行、试卷标题、姓名栏都不是题目：不单独成节点，不写进任何节点的 prompt_text；略去这些标题行**不算**内容丢失。标题下面针对材料的作答要求（如「阅读下面的材料，回答问题」）不是标题，保留在所属 stem 的 prompt_text 开头。
+7. **按页科目**：对每一页，凭印刷题面判断它属于 known_subjects 里的哪一科，在顶层 page_subjects 填 {page_index, subject_id}，subject_id 只能取 known_subjects 里的 id。拿不准、一页混有多科、或列表里没有对应科目时省略这一页，不要猜。
 
 输出严格 JSON（不带 markdown 代码块包裹），shape 名 StructureOutput：
 {"layout_quality":"structured"|"partial"|"text_only","extraction_confidence":0.0-1.0,"warnings":["..."],"content_lost":true|false|null,"figure_handwriting":[{"figure_index":0,"student_answer_present":true|false|null}],"page_subjects":[{"page_index":0,"subject_id":"known_subjects 里的 id"}],"questions":[StructureNode, ...]}
 
 StructureNode（递归，**不要**输出 id，运行时会补）：
-{"kind":"choice|true_false|fill_blank|short_answer|essay|computation|reading|translation|derivation 或原题题型","role":"stem"|"sub"|"standalone","question_no":"1"|null,"section":"一、选择题"|null,"prompt_text":"...","options":[{"label":"A","text":"","figure_ids":[0]}]|null,"answers":["..."]|null,"analysis":"..."|null,"page_index":0,"sub_questions":[StructureNode, ...]|null,"figure_ids":[0,1]|null,"student_answer_present":true|false|null}
+{"kind":"choice","role":"stem"|"sub"|"standalone","question_no":"1","prompt_text":"...","options":[{"label":"A","text":"...","figure_ids":[0]}],"answers":["..."],"analysis":"...","page_index":0,"sub_questions":[StructureNode, ...],"figure_ids":[0,1],"student_answer_present":true|false}
 
 约束：
-- kind 是原题的题型标签，依据题面填写；选择题的选项必须进入 options，不能只拼进 prompt_text。题型标签不是评分准入，不据此生成参考答案。
-- role 三选一：stem（容器，含 passage + sub_questions）/ sub（大题下的小问）/ standalone（独立单题）。只有 stem 能有 sub_questions；sub / standalone 的 sub_questions 必须为 null 或省略。
-- question_no 收该节点在卷面上的**印刷题号**，归一成号码本身（如 "6"）：「6.」「第6题」「（6）」都写成 "6"。印刷题号**不得留在 prompt_text 开头**——prompt_text 从题号之后的题干原文开始；没印题号才给 null。
-- section 收该节点所属的**印刷栏目/大题区段名**（如「一、选择题」「三、解答题」），栏目名下辖的连续若干题都标同一个 section；栏目/部分标题**不得写进 prompt_text**，卷面没有栏目标题才给 null。
+- **可选字段没有值就省略这个键**，不写 null，也不用空数组、空字符串占位（图形选项的 text "" 除外）。
+- kind 只填下列英文值之一，按题目自身的作答要求对应：选择题（单选/多选）→ choice；判断题 → true_false；填空题 → fill_blank；题干要求计算、化简、求值 → computation；证明题、推导题 → derivation；其它解答题、简答题、问答题 → short_answer；作文、书面表达 → essay；阅读理解、完形填空等带材料的大题（stem）→ reading；翻译题 → translation。表里没有的题型取最接近的一个，不必反复权衡。选择题的选项必须进入 options，不能只拼进 prompt_text。题型标签不是评分准入，不据此生成参考答案。
+- question_no 只写该节点自己的印刷号码本身，去掉标点和括号：「6.」「第6题」写 "6"；小问「(1)」「⑴」「①」写 "1"，不拼大题号（不写 "9(1)"）。卷面没印号码就省略。
+- role 三选一：stem（容器，含 passage + sub_questions）/ sub（大题下的小问）/ standalone（独立单题）。只有 stem 能有 sub_questions；sub / standalone 不输出 sub_questions。
 - page_index 是 0-based 整数，指该节点主要出现在第几张图（跨页 stem 用它起始页）。
-- figure_ids 是裁剪图序号数组（0-based，与输入 figures[].index 对应）；无配图时给 null 或省略。**仅当输入含 figures 字段时才填写 figure_ids**，否则省略。
-- student_answer_present 是布尔：该节点的题面区域是否有学生手写作答 / 批改痕迹。**只报 true/false，绝不转写手写文字**（手写是作答像素，下游判分用，不做 OCR）。无 / 不确定给 null 或省略。
+- figure_ids 是裁剪图序号数组（0-based，与输入 figures[].index 对应）；无配图就省略。**仅当输入含 figures 字段时才填写 figure_ids**，否则省略。
+- student_answer_present 是布尔：该节点作答区域有学生笔迹或批改痕迹填 true，明确没有填 false，看不清就省略（见第 3 条）。
 - 顶层 questions 至少 1 个；如果整页无法识别出任何题，questions 给空数组并把 layout_quality 设 "text_only"。
 - layout_quality：结构清晰完整 → "structured"；能出题但版式残缺/有疑点 → "partial"；几乎认不出结构 → "text_only"。
 - extraction_confidence：你对整棵结构树与原图一致性的置信度（0 到 1）。跨页归属、题号、选项或层级有疑点时必须降低；不要把字段固定写成 1。
-- content_lost：原图可见的题、选项或内容有丢弃/无法转写时必须为 true 并写明 warning；跨页合并只去掉「（接上页）」「（续）」等版面续页标记不算内容丢失，题面正文、选项、原文缺一才算。全部保留填 false，无法判断填 null。不能只在 warning 报丢失。
-- answers / analysis 只转写印刷的参考答案/解析；不求解，不把手写当答案键。没有就给 null 或省略。
+- content_lost：原图可见的题、选项或内容有丢弃/无法转写时必须为 true 并写明 warning；跨页合并只去掉「（接上页）」「（续）」等版面续页标记不算内容丢失，题面正文、选项、原文缺一才算。略去第 6 条所列标题行不算丢失。全部保留填 false，无法判断就省略。不能只在 warning 报丢失。
+- answers / analysis 只转写印刷的参考答案/解析；不求解，不把手写当答案键。没有就省略。
 - 一道题在同一页内也必须保持完整：它的题干、全部选项、小问、印刷答案/解析属于同一个顶层节点，**不得**把后半部分（剩余选项、答案行或解析行）拆成第二个顶层节点；拿不准是不是同一道题时保持为一个节点。
 - 禁止：输出 JSON 之外的文字、把跨页同一大题拆成多个顶层节点、把同一页内一道题的后半部分拆成新顶层节点、把腾讯文字 hint 当成不可改的结构。`;
 }
@@ -133,7 +134,10 @@ export const structureTaskSpec = {
     kind: 'StructureTask',
     description:
       'T-OC slice 2 (YUK-145, OC-1/OC-2) — VLM 全权拥有结构。输入 N 页图片 + 腾讯文字 OCR hint → 规范结构树（跨页大题组装 + 布局规范）。腾讯结构降为 hint，VLM 可完全覆盖。题图匹配 (assignFigures 替换) DEFERRED 到 slice 2b。自动调用（作为 extraction 一环，类比 StepsJudgeTask），非 manual rescue。',
-    budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1 },
+    // Hang/loop guard only (owner 2026-11-07). Longest measured run: TEST 131.6s
+    // (tlp-audit-artifacts/yuk1994/structure-usage/52aa5a834/raw.jsonl), ~10k
+    // thinking tokens at ~100 tok/s; 300s leaves room for admission concurrency.
+    budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1, timeout: 300_000 },
     needsToolCall: false,
     isMultimodal: true,
     allowedTools: [],
