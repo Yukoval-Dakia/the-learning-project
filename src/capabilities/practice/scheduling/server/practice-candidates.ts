@@ -519,10 +519,14 @@ async function readPracticeCandidatesInSnapshot(
   const raw: SourceEntry[] = [];
 
   // ── 1. Due: the product's own due page (FSRS projection + never-reviewed + round-robin).
-  const { rows: dueRows } = await queryReviewDue(db as Db, {
-    limit: REVIEW_DUE_LIMIT_MAX,
-    now: asOf,
-  });
+  const { rows: dueRows } = await queryReviewDue(
+    db,
+    {
+      limit: REVIEW_DUE_LIMIT_MAX,
+      now: asOf,
+    },
+    { recordSelectionMisses: false },
+  );
   caps.push({
     source: 'practice/scheduling/server/due-list:queryReviewDue',
     cap: REVIEW_DUE_LIMIT_MAX,
@@ -591,7 +595,8 @@ async function readPracticeCandidatesInSnapshot(
   const items = await db
     .select({ knowledge_ids: learning_item.knowledge_ids })
     .from(learning_item)
-    .where(inArray(learning_item.status, LearningItemOpenStatus.options));
+    .where(inArray(learning_item.status, LearningItemOpenStatus.options))
+    .orderBy(learning_item.id);
   const candidateKids = await withoutNonKcKnowledgeIds(
     db,
     items.flatMap((item) => item.knowledge_ids),
