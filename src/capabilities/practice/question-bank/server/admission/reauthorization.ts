@@ -102,7 +102,8 @@ async function buildSuccessorInput(
   identity: ReturnType<typeof computePaidEffectIdentity>;
   contractLayers: Record<string, unknown>;
 }> {
-  const { knowledge, question, question_revision } = await import('@/db/schema');
+  const { question_revision } = await import('@/db/schema');
+  const { questionSubject } = await import('./question-subject');
   const { publishedContractSeal, publishedSealAccepts } = await import(
     '@/kernel/records/assessment-normalization'
   );
@@ -127,19 +128,7 @@ async function buildSuccessorInput(
   if (!publishedSealAccepts(seal, revision.integrity_digest)) {
     throw new Error('revision layers no longer seal to the stored digest');
   }
-  const [row] = await tx
-    .select({ knowledge_ids: question.knowledge_ids })
-    .from(question)
-    .where(eq(question.id, opts.groupId))
-    .limit(1);
-  const first = row?.knowledge_ids?.[0];
-  const [node] = first
-    ? await tx
-        .select({ domain: knowledge.domain })
-        .from(knowledge)
-        .where(eq(knowledge.id, first))
-        .limit(1)
-    : [undefined];
+  const subject = await questionSubject(tx, opts.groupId);
   const solver2Provider = process.env.QUESTION_ADMISSION_SOLVER2_PROVIDER;
   const solver2Model = process.env.QUESTION_ADMISSION_SOLVER2_MODEL;
   const input = FrozenAdmissionInput.parse(
@@ -156,7 +145,8 @@ async function buildSuccessorInput(
           group_id: opts.groupId,
           conversion_issues: [],
         },
-        subject_profile: await resolveSubjectProfileStrictLive(tx, node?.domain ?? null),
+        subject_profile: await resolveSubjectProfileStrictLive(tx, subject.key),
+        ...(subject.mismatch ? { subject_mismatch: subject.mismatch } : {}),
         policy_id: resolveQuestionAdmissionPolicyId(),
         solver2:
           solver2Provider || solver2Model

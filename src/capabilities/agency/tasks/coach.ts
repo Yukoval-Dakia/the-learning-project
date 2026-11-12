@@ -29,8 +29,9 @@ export const coachTaskSpec = {
     // allowlist from src/kernel/tools/allowlists.ts; registry default stays empty.
     allowedTools: [],
     context: {
-      view: 'none',
-      reason: 'coach_daily 按既有 job 输入装配（今日计划与提议读数）；Context view 在 B2 接入。',
+      // YUK-1790 LIGHT — the planner reads the coach view (goal/Steering + recent activity
+      // + mastery/cause readings), not companion's chat brief or curator's consolidation brief.
+      view: 'coach',
     },
 
     prompt: {

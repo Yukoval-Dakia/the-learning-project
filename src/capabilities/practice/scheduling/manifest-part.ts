@@ -139,6 +139,10 @@ export const schedulingManifestPart: Omit<CapabilityManifest, 'name' | 'descript
         name: 'get_review_due',
         load: () => import('./tools/question-context').then((m) => m.getReviewDueTool),
       },
+      {
+        name: 'read_practice_candidates',
+        load: () => import('./tools/practice-candidates').then((m) => m.readPracticeCandidatesTool),
+      },
     ],
   },
 };

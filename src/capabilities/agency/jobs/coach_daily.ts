@@ -32,6 +32,7 @@ import {
 } from '@/core/steering';
 import type { Db } from '@/db/client';
 import { type WriteEventInput, getEvents } from '@/kernel/events';
+import { HostOperationNotInstalledError } from '@/kernel/host-operation';
 // Per-(kind, relation) accept-learned reason digest for the Coach input, scoped to the
 // kinds Coach can act on (includes knowledge_edge). Purely additive / cold-start inert.
 import {
@@ -57,6 +58,9 @@ import { deriveActionableWeakPoints } from '@/kernel/read-models/weak-points';
 import { type ActiveLearningItem, listActiveLearningItems } from '@/kernel/records/learning-items';
 // Single tunable source for Coach run caps.
 import { COACH_CONTEXT_BUDGET, PROPOSAL_FEEDBACK_BUDGET } from '@/kernel/tools/budgets';
+// YUK-1790 LIGHT — the `coach` Context view (goal/Steering + recent activity + mastery and
+// cause readings). Read here, outside the scan failure boundary, like the other coach reads.
+import { loadLearnerContext } from '../context/index';
 
 // Re-exported alias kept for existing imports; sourced from COACH_CONTEXT_BUDGET.maxProposals.
 export const COACH_MAX_PROPOSALS = COACH_CONTEXT_BUDGET.maxProposals as number;
@@ -97,7 +101,10 @@ const COACH_BRIEF_GUIDANCE =
 // additive, inert when the list is empty.
 const COACH_WEAK_POINTS_GUIDANCE =
   ' When weak_points is present, each entry is a system-derived actionable weak point at sub-skill granularity with its evidence refs and a training_destination (concept_review / retrieval_practice → concept material or no-hint retrieval drills; procedural_practice / discrimination_probe → targeted step practice or a discriminating probe). Use them to bias knowledge_focus ranking and intent_tags toward the strongest cells, and phrase daily_focus around the named targets. Treat them as derived reads, not ground truth: never invent additional weak points, never attach percentages to them, and never let them suppress or replace the FSRS-due review backbone. metacog_flags on a weak point come from the cause judgment: overconfident, false_fluency and blind_spot mean the learner thought they had it; poor_resolution means a guess; regulation_gap is skipped steps or no check, not a skill gap — do not schedule skill drills for regulation_gap alone; calibrated means confidence matched the result. weak_point_unknowns reason low_confidence_attribution means the cause model was not sure — do not add practice from those alone. When weak_points is empty, behave exactly as before.';
-export const COACH_DAILY_OBJECTIVE = `Produce a TodayPlan draft for the user via the provided DomainTools. Only write proposals (defer / split / relearn / archive / completion / maintenance / knowledge_edge); never mutate user data directly. Prefer doing nothing if the day has no actionable adjustments.${COACH_GOAL_STRAND_GUIDANCE}${COACH_STEERING_GUIDANCE}${COACH_PROPOSAL_FEEDBACK_GUIDANCE}${COACH_AGENT_NOTES_GUIDANCE}${COACH_SESSION_FOCUS_GUIDANCE}${COACH_PLAN_ISSUES_GUIDANCE}${COACH_BRIEF_GUIDANCE}${COACH_WEAK_POINTS_GUIDANCE}${COACH_SUGGESTION_KIND_GUIDANCE}`;
+// The coach view is attention context; candidate facts come from read_practice_candidates.
+const COACH_CONTEXT_VIEW_GUIDANCE =
+  ' When coach_context is present, it is the purpose-trimmed planner segment (active goal + Steering, recent activity counts, mastery/cause readings, recent failure cause labels). It carries no question stems or answer keys: use it as attention context, never as a candidate list — candidate facts (due / variant / new_check / frontier / never-started) come only from read_practice_candidates, and never restate its numbers as new measurements.';
+export const COACH_DAILY_OBJECTIVE = `Produce a TodayPlan draft for the user via the provided DomainTools. Only write proposals (defer / split / relearn / archive / completion / maintenance / knowledge_edge); never mutate user data directly. Prefer doing nothing if the day has no actionable adjustments.${COACH_GOAL_STRAND_GUIDANCE}${COACH_STEERING_GUIDANCE}${COACH_PROPOSAL_FEEDBACK_GUIDANCE}${COACH_AGENT_NOTES_GUIDANCE}${COACH_SESSION_FOCUS_GUIDANCE}${COACH_PLAN_ISSUES_GUIDANCE}${COACH_BRIEF_GUIDANCE}${COACH_WEAK_POINTS_GUIDANCE}${COACH_SUGGESTION_KIND_GUIDANCE}${COACH_CONTEXT_VIEW_GUIDANCE}`;
 
 /** How many derived weak points ride the Coach input (bounded for prompt budget). */
 const COACH_MAX_WEAK_POINTS = 8;
@@ -160,6 +167,7 @@ function buildCoachInput(
   activeItems: ActiveLearningItem[],
   weakPoints: ActionableWeakPointDerivationT,
   previousPlanIssues: readonly DailyFocusPlanIssue[],
+  coachContextMd: string | null,
   sessionFocus: SessionFocusRead | null,
   reviewPlan: ReviewPlanNumbers & {
     due_count: number;
@@ -275,6 +283,8 @@ function buildCoachInput(
     // rephrases them — agent-facing feedback, not a user-facing alert. Absent when
     // the last scan had nothing flagged.
     ...(previousPlanIssues.length > 0 ? { previous_plan_issues: previousPlanIssues } : {}),
+    // YUK-1790 LIGHT — purpose-trimmed `coach` Context view (no question content).
+    ...(coachContextMd ? { coach_context: coachContextMd } : {}),
     budget: {
       // Advisory warning; max_tool_calls is the higher hard ceiling.
       warning_tool_calls: COACH_CONTEXT_BUDGET.toolCalls.warning,
@@ -396,6 +406,16 @@ export async function runCoach(db: Db, deps: CoachRunDeps = {}): Promise<CoachRu
       const weakPoints = await deriveWeakPoints(db, { now });
       const previousPlanIssues = await loadPrevPlanIssues(db);
       const sessionFocus = await loadSessionFocus(db);
+      // YUK-1790 LIGHT — the Coach view is one more readable segment for the existing run.
+      // A wiring defect (port not installed) must surface; any other read failure degrades
+      // to an absent segment instead of failing the whole scan over advisory context.
+      let coachContextMd: string | null = null;
+      try {
+        coachContextMd = (await loadLearnerContext(db, { view: 'coach', now })).markdown || null;
+      } catch (err) {
+        if (err instanceof HostOperationNotInstalledError) throw err;
+        coachContextMd = null;
+      }
       // Read before the trigger write and outside the scan failure boundary, closing over
       // the same anchored `now` the trigger event uses. The computed facts ride the input
       // and the success payload.
@@ -425,6 +445,7 @@ export async function runCoach(db: Db, deps: CoachRunDeps = {}): Promise<CoachRu
           activeItems,
           weakPoints,
           previousPlanIssues,
+          coachContextMd,
           sessionFocus,
           reviewPlan,
         );

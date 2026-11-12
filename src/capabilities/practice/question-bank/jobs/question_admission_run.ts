@@ -24,7 +24,6 @@ import type { Db, Tx } from '@/db/client';
 import { fromPgBossDrizzleTx } from '@/db/pg-boss-drizzle';
 import {
   event,
-  knowledge,
   paid_effect,
   question,
   question_admission_verification,
@@ -65,6 +64,7 @@ import {
   enqueueAdmissionLoginRecovery,
   maintainAdmissionLoginRecovery,
 } from '../server/admission/login-recovery';
+import { questionSubject } from '../server/admission/question-subject';
 import {
   type AdmissionDelivery,
   AdmissionResultReceipt,
@@ -243,21 +243,12 @@ function admissionInputIsCurrent(
   );
 }
 
-async function subjectProfileFor(db: Db | Tx, rootId: string) {
-  const [row] = await db
-    .select({ knowledge_ids: question.knowledge_ids })
-    .from(question)
-    .where(eq(question.id, rootId))
-    .limit(1);
-  const first = row?.knowledge_ids?.[0];
-  const [node] = first
-    ? await db
-        .select({ domain: knowledge.domain })
-        .from(knowledge)
-        .where(eq(knowledge.id, first))
-        .limit(1)
-    : [undefined];
-  return resolveSubjectProfile(node?.domain ?? null);
+async function frozenSubjectFor(db: Db | Tx, rootId: string) {
+  const subject = await questionSubject(db, rootId);
+  return {
+    subject_profile: resolveSubjectProfile(subject.key),
+    ...(subject.mismatch ? { subject_mismatch: subject.mismatch } : {}),
+  };
 }
 
 export async function runAdmissionForQuestion(
@@ -370,7 +361,7 @@ export async function runAdmissionForQuestion(
           revision_digest: revision?.integrity_digest ?? null,
           admission_generation: lifecycle?.scoring_admission_generation ?? 0,
           contract,
-          subject_profile: await subjectProfileFor(tx, rootId),
+          ...(await frozenSubjectFor(tx, rootId)),
           policy_id: resolveQuestionAdmissionPolicyId(),
           solver2:
             SOLVER2_PROVIDER || SOLVER2_MODEL
