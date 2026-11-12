@@ -23,7 +23,7 @@
 //
 // 纯模块纪律（ownership/boundary，镜像 web-candidates.ts）：不 import '@/server/'。
 // 外部效果（web LLM 相位、pg-boss enqueue、web 获取）全部依赖注入；
-// '../tools/store-sourced-question' 是 capability 内兄弟 seam（tools 层持 server 依赖）。
+// '../tools/submit-question' 是 capability 内兄弟 seam（tools 层持 server 依赖）。
 
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, isNotNull, isNull, or, sql } from 'drizzle-orm';
@@ -37,7 +37,8 @@ import type { SubjectProfile } from '@/subjects/profile-schema';
 import {
   type StoreSourcedQuestionDeps,
   executeStoreSourcedQuestion,
-} from '../tools/store-sourced-question';
+} from '../tools/submit-question';
+import { type BandLevelTarget, bandLevelTargetFromPayload } from './band-level';
 import { jyeooBudgetRemaining } from './jyeoo-budget';
 import {
   type JyeooCandidate,
@@ -61,6 +62,12 @@ export const SUPPLY_EXECUTOR_ROUTES: readonly SupplyRouteName[] = [
 ];
 
 const DIFFICULTY_BANDS: ReadonlySet<string> = new Set(['below', 'near', 'above', 'stretch']);
+
+/** Resolved aim for this item. Legacy payloads (no levelTarget) invert the band at θ̂ = 0. */
+function aimOf(item: SupplyDemandItem): BandLevelTarget | null {
+  if (item.levelTarget !== undefined) return item.levelTarget;
+  return bandLevelTargetFromPayload(item.difficultyBand, undefined);
+}
 
 /** jyeoo 单次抓取的 sessionMax 上界（spec：min(count*2, 预算余额, 8)）。 */
 const JYEOO_SESSION_MAX_CAP = 8;
@@ -133,8 +140,13 @@ export interface SupplyDemandItem {
   knowledgeId: string;
   /** 自由文本 kind 标签（YUK-386）或 'any'（透传为无约束）。 */
   kind: string;
-  /** 'below' | 'near' | 'above' | 'stretch'（仅 jyeoo post-filter 消费；null = 不过滤）。 */
+  /** 'below' | 'near' | 'above' | 'stretch'（null = 不过滤）。 */
   difficultyBand: string | null;
+  /**
+   * band + 已反算的 1–5 区间。缺省且 difficultyBand 有值时按 θ̂ = 0 补（旧 payload）。
+   * null 表示明确没有档可滤。
+   */
+  levelTarget?: BandLevelTarget | null;
   count: number;
   routePreference: readonly SupplyRouteName[];
   placementClaimId?: string;
@@ -495,10 +507,12 @@ async function runJyeooRoute(
   }
 
   const sessionMax = Math.min(run.remaining * 2, budgetRemaining, JYEOO_SESSION_MAX_CAP);
+  const aim = aimOf(run.item);
   const band: DifficultyBand | undefined =
-    run.item.difficultyBand && DIFFICULTY_BANDS.has(run.item.difficultyBand)
+    aim?.band ??
+    (run.item.difficultyBand && DIFFICULTY_BANDS.has(run.item.difficultyBand)
       ? (run.item.difficultyBand as DifficultyBand)
-      : undefined;
+      : undefined);
   const fetchFn = deps.runJyeooFetchCandidates ?? runJyeooFetchCandidates;
   let result: JyeooFetchCandidatesResult;
   try {
@@ -511,7 +525,7 @@ async function runJyeooRoute(
         maxPapers: config.maxPapers ?? 2,
         sessionMax,
         ...(run.item.kind !== 'any' ? { kind: run.item.kind } : {}),
-        ...(band ? { difficultyBand: band } : {}),
+        ...(aim ? { levelTarget: aim } : band ? { difficultyBand: band } : {}),
       },
       now: run.now,
     });
@@ -604,7 +618,7 @@ async function runWebRoute(
   if (routeTrace === null) throw new Error('web supply requires a valid supply_trace');
   const state = await runWebSupply({
     db: run.db,
-    item: { ...run.item, count: run.remaining },
+    item: { ...run.item, count: run.remaining, levelTarget: aimOf(run.item) },
     trace: routeTrace,
     causeId: run.planEventId ?? run.causedByEventId,
     subjectProfile: run.subjectProfile,
@@ -649,6 +663,7 @@ async function runQuizGenRoute(
   // rather than blind-cast (web route throws on the same failure; quiz_gen has
   // no hard trace requirement).
   const quizGenTrace = cloneSupplyTraceForRoute(run.supplyTrace, 'quiz_gen');
+  const aim = aimOf(run.item);
   const payload: QuizGenDispatchPayload = {
     trigger: 'knowledge',
     ref_id: run.item.knowledgeId,
@@ -659,6 +674,7 @@ async function runQuizGenRoute(
     ...(run.item.objectiveOnly ? { objective_only: true } : {}),
     ...(run.item.kindRequired ? { kind_required: true } : {}),
     ...(run.item.placementClaimId ? { placement_starter_claim_id: run.item.placementClaimId } : {}),
+    ...(aim ? { difficulty_band: aim.band, difficulty_levels: aim.levels } : {}),
     ...(quizGenTrace ? { supply_trace: quizGenTrace } : {}),
   };
   // enqueue 与逐 item 完成事件之间的崩溃窗口用 pg-boss 单例键封——同

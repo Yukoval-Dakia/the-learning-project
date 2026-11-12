@@ -465,7 +465,7 @@ describe('sweepStalePlacementStarterClaims — retry_scheduled reap', () => {
 });
 
 describe('sweepStalePlacementStarterClaims — goal lock contention', () => {
-  // Review PRRT…HNf: the in-tx goal lock inverts the order materializePlacementStartersForGoal
+  // The in-tx goal lock inverts the order materializePlacementStartersForGoal
   // uses (goal → claim), so a plain FOR UPDATE is a real AB-BA cycle that Postgres resolves by
   // aborting one side — possibly the LEARNER's /placement/start, i.e. a 5xx for a real person.
   // NOWAIT removes the cycle rather than documenting it: a deadlock needs both sides to WAIT and
@@ -533,7 +533,7 @@ describe('sweepStalePlacementStarterClaims — goal lock contention', () => {
 });
 
 describe('sweepStalePlacementStarterClaims — concurrent dispatch attribution', () => {
-  // Review PRRT…0VF: dispatchPlacementStarterClaimTx re-reads the claim FOR UPDATE and, when the
+  // dispatchPlacementStarterClaimTx re-reads the claim FOR UPDATE and, when the
   // status is no longer 'pending_dispatch', early-returns the EXISTING pg_boss_job_id without ever
   // calling admit. Reachable in the ordinary case — a learner hitting /placement/start during the
   // sweep window — because the sweeper's acquire moves only the cursor, never the status. Counting

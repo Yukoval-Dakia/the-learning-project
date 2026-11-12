@@ -1347,7 +1347,7 @@ describe('acceptProposal — high-tier mutations', () => {
     await resetDb();
   });
 
-  // Codex P1-F — concurrent double-accept must not produce duplicate
+  //  concurrent double-accept must not produce duplicate
   // knowledge nodes / duplicate rate=accept events. The shared decision lock
   // serializes both accepts; the second one replays the recorded rate.
   // @invariant concurrency: a double-accept applies exactly once — one node, one accept rate

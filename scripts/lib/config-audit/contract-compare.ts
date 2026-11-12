@@ -100,6 +100,17 @@ export interface DiffEntry {
   head: unknown;
 }
 
+export interface EnvExampleReport {
+  /** Boot-schema keys absent from `.env.example` (report-only). */
+  missingFromExample: string[];
+  /** `.env.example` keys the boot schema does not own (report-only). */
+  notInSchema: string[];
+  /** Sample keys with a real `KEY=` assignment line. */
+  assignedCount: number;
+  /** Sample keys present only as `# KEY=` comments — documented but never set. */
+  commentedOnly: string[];
+}
+
 export interface FlagAuditResult {
   ok: boolean;
   base: string | null;
@@ -111,6 +122,7 @@ export interface FlagAuditResult {
   variance: { signature: string; flags: string[] }[];
   envCensus?: EnvCensusReport;
   nonFamily?: NonFamilyReport;
+  envExample?: EnvExampleReport;
 }
 
 const METADATA_FIELDS = ['description', 'consumers', 'reload', 'exposure'] as const;

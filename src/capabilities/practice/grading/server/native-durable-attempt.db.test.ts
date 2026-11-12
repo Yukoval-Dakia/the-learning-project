@@ -36,6 +36,7 @@ import { GET as pollStatus } from '../api/judge-run-status-route';
 import { createAttempt } from '../api/submit';
 import { RECONCILE_STALL_MS, reconcileStalledJudgeAttempts } from '../jobs/judge_pending_reconcile';
 import { runJudgeRun } from '../jobs/judge_run';
+import { recordAssistanceExposure } from './assessment/assistance';
 import * as formalAttempts from './assessment/attempt';
 import { commitFormalAttempt } from './assessment/attempt';
 import {
@@ -295,10 +296,23 @@ beforeEach(async () => {
 afterEach(() => vi.restoreAllMocks());
 
 describe('native durable assessment', () => {
-  // @invariant data: the native resolution receipt is committed atomically with activation and settlement in one transaction, uses the model-derived rating, and stays byte-identical across redelivery
-  // @fails-if write the receipt outside the activation transaction or let a redelivery rewrite it; the other-connection zero-visibility, resolutionWrites-1 and toEqual(receipts)/nativeEffects assertions fail
-  it('writes the immutable resolution in the activation transaction and uses the model-derived rating', async () => {
+  // @invariant data: the native resolution receipt is committed atomically with activation and settlement in one transaction, settles the learner-chosen rating the pending input froze (scheduling + material_fsrs_state follow it, exactly like a synchronous commit), carries the sealed evidence split the poller reads, and stays byte-identical across redelivery
+  // @fails-if write the receipt outside the activation transaction, drop the exposure/claim evidence from the terminal result, settle a judge-derived rating over the frozen learner choice, or let a redelivery rewrite it; the other-connection zero-visibility, resolutionWrites-1, evidence, rating/rating_source and toEqual(receipts)/nativeEffects assertions fail
+  it('writes the immutable resolution in the activation transaction and settles the learner-chosen rating', async () => {
     const f = await fixture();
+    // Exposures the learner took before submitting fold into the sealed receipt
+    // (harmless clarifications stay independent but still list dose and kinds);
+    // the terminal result the poller reads must carry them as evidence, not
+    // lose them in the queue.
+    for (const exposure of [{ kind: 'hint' as const, dose: 3 }, { kind: 'solution' as const }]) {
+      await recordAssistanceExposure(f.db, {
+        issuanceId: f.request.issuance_id,
+        questionId: f.id,
+        impact: 'harmless_clarification',
+        contentDigest: `sha256:${'7'.repeat(64)}`,
+        ...exposure,
+      });
+    }
     const run = await dispatchNativeAttempt(
       f.db,
       f.id,
@@ -338,10 +352,22 @@ describe('native durable assessment', () => {
     const payload = NativeJudgeResolutionPayload.parse(receipts[0].payload);
     expect(payload).toMatchObject({
       status: 'effective',
-      final_rating: 'good',
+      final_rating: 'hard',
       score: 1,
       coarse_outcome: 'correct',
       assessment: { activation_intent: { expected_effective_id: null, expected_generation: 0 } },
+      evidence: {
+        assistance: {
+          status: 'independent',
+          max_dose: 3,
+          kinds: ['hint', 'solution'],
+          phase: 'before_submit',
+        },
+        verdict: { outcome: 'correct', score: 1 },
+        // The activation receipt sealed the accepted rating operation in this
+        // same transaction, so the claim and the settled rating agree.
+        self_claim: { rating: 'hard', confidence: null },
+      },
     });
     expect(receipts[0]).toMatchObject({
       session_id: 'served-session',
@@ -350,7 +376,35 @@ describe('native durable assessment', () => {
     });
     expect(resolutionWrites).toBe(1);
     expect(f.execute).toHaveBeenCalledTimes(1);
+    const settlements = await groupSettlements(f.db, f.request.evaluation_group_id);
+    expect(settlements).toHaveLength(1);
+    // The learner's frozen rating drives scheduling (user-sourced, self-report
+    // fact) while the verdict stays automatic — the same split the synchronous
+    // commit produces.
+    expect(settlements[0].payload).toMatchObject({
+      rating: 'hard',
+      rating_source: 'user',
+      replay_inputs: {
+        rating: 'hard',
+        ratingSource: 'user',
+        provenance: { source: 'automatic' },
+        forgettingInput: {
+          fact: {
+            source: 'self_report',
+            judgment: 'deterministic',
+            points: [{ maximum: 1, earned: 0.5 }],
+          },
+        },
+      },
+    });
+    const [activation] = await f.db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:assessment_activation'));
+    expect(activation.payload).toMatchObject({ user_rating: 'hard' });
     const before = await nativeEffects(f.db, run);
+    expect(before.cards).toHaveLength(1);
+    expect(FsrsStateSchema.parse(before.cards[0].state).reps).toBe(1);
     await runJudgeRun(f.db, f.jobs[0], { ...meta, retryCount: 1 });
     expect(await nativeEffects(f.db, run)).toEqual(before);
     expect(await f.db.select().from(event).where(eq(event.id, run))).toEqual(receipts);
@@ -447,7 +501,7 @@ describe('native durable assessment', () => {
     expect(receipts).toHaveLength(1);
     expect(NativeJudgeResolutionPayload.parse(receipts[0].payload)).toMatchObject({
       status: 'effective',
-      final_rating: 'good',
+      final_rating: 'hard',
       assessment: {
         candidate_id: committed.candidate.evaluation.record.evaluation_id,
         activation_intent: { expected_effective_id: null, expected_generation: 0 },
@@ -1082,7 +1136,18 @@ describe('native durable assessment', () => {
     });
     const settlements = await groupSettlements(f.db, f.request.evaluation_group_id);
     expect(settlements).toHaveLength(1);
-    expect(settlements[0].payload).toMatchObject({ evaluation_id: candidate });
+    // auto_rate freezes no learner claim: scheduling stays verdict-derived,
+    // and the activation receipt carries no user_rating to seal.
+    expect(settlements[0].payload).toMatchObject({
+      evaluation_id: candidate,
+      rating: 'good',
+      rating_source: 'verdict',
+    });
+    const [activation] = await f.db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:assessment_activation'));
+    expect(activation.payload).not.toHaveProperty('user_rating');
     expect(
       FsrsStateSchema.parse((await f.db.select().from(material_fsrs_state))[0].state).reps,
     ).toBe(1);
@@ -1239,6 +1304,13 @@ describe('native durable assessment', () => {
         const [receipt] = await f.db.select().from(event).where(eq(event.id, run));
         const resolution = NativeJudgeResolutionPayload.parse(receipt.payload);
         expect(resolution.status).toBe('review_required');
+        // A superseded result still reports the sealed split honestly: no
+        // rating of this operation ever sealed, and the frozen claim stays empty.
+        expect(resolution.evidence).toMatchObject({
+          assistance: { status: 'independent' },
+          verdict: { outcome: 'unsupported' },
+          self_claim: { rating: null, confidence: null },
+        });
         expect(resolution.assessment.candidate_id).not.toBe(newer);
         const permanent = await readJudgeRunPermanent(f.db, run);
         expect(permanent.kind).toBe('resolved');
@@ -1267,51 +1339,92 @@ describe('native durable assessment', () => {
       ).toBe(1);
     },
   );
-  // @invariant data: an admitted native attempt enqueues with durable authorization, returns a 202 handle, and its poll reconstructs the effective terminal result with original anchored to its candidate
-  // @fails-if execute synchronously in the request, enqueue without authorization, or return a handle that cannot reconstruct the result; the 202/poll-200, effective-result and original==candidate assertions fail
-  it('returns a real HTTP 202 handle and polls native completion with evaluation anchors', async () => {
-    const f = await fixture();
-    vi.spyOn(runtimeEnv, 'shouldEnqueueBackgroundJobs').mockReturnValue(true);
-    vi.spyOn(durableConfig, 'judgeDurableEnabled').mockReturnValue(true);
-    vi.spyOn(dispatch, 'admitJudgeRun').mockReturnValue(12);
-    vi.spyOn(dispatch, 'enqueueJudgeRun').mockImplementation(async (job, _deps, opts) => {
-      if (job.caller !== 'native_assessment') throw new Error('unexpected legacy route');
-      if (!opts?.authorization) throw new Error('Missing durable authority');
-      f.jobs.push({ ...job, operational: judgeDeliveryInput(opts.authorization.reservation) });
-      return opts.authorization.reservation.delivery_id;
-    });
-    const response = await createAttempt(
-      new Request('http://localhost/api/attempts', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          question_id: f.id,
-          assessment: f.request,
-          rating: 'good',
-          auto_rate: true,
+  // @invariant data: an admitted native attempt enqueues with durable authorization, returns a 202 handle, and its poll reconstructs the effective terminal result whose settled rating matches the accepted rating operation — a frozen learner choice schedules 'user', auto_rate stays verdict-derived
+  // @fails-if execute synchronously in the request, enqueue without authorization, return a handle that cannot reconstruct the result, or let the queued lane settle a different rating than the learner chose; the 202/poll-200, effective-result, final_rating/rating_source and original==candidate assertions fail
+  it.each([
+    {
+      name: 'learner-chosen',
+      rating: 'hard' as const,
+      auto_rate: false,
+      expected: { rating: 'hard', rating_source: 'user', user_rating: 'hard' },
+    },
+    {
+      name: 'judge-suggested',
+      rating: 'good' as const,
+      auto_rate: true,
+      expected: { rating: 'good', rating_source: 'verdict', user_rating: undefined },
+    },
+  ] satisfies {
+    name: string;
+    rating: 'again' | 'hard' | 'good';
+    auto_rate: boolean;
+    expected: { rating: string; rating_source: string; user_rating?: string };
+  }[])(
+    'returns a real HTTP 202 handle and polls native completion with evaluation anchors ($name)',
+    async ({ rating, auto_rate, expected }) => {
+      const f = await fixture();
+      vi.spyOn(runtimeEnv, 'shouldEnqueueBackgroundJobs').mockReturnValue(true);
+      vi.spyOn(durableConfig, 'judgeDurableEnabled').mockReturnValue(true);
+      vi.spyOn(dispatch, 'admitJudgeRun').mockReturnValue(12);
+      vi.spyOn(dispatch, 'enqueueJudgeRun').mockImplementation(async (job, _deps, opts) => {
+        if (job.caller !== 'native_assessment') throw new Error('unexpected legacy route');
+        if (!opts?.authorization) throw new Error('Missing durable authority');
+        f.jobs.push({ ...job, operational: judgeDeliveryInput(opts.authorization.reservation) });
+        return opts.authorization.reservation.delivery_id;
+      });
+      const response = await createAttempt(
+        new Request('http://localhost/api/attempts', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            question_id: f.id,
+            assessment: f.request,
+            rating,
+            auto_rate,
+          }),
         }),
-      }),
-    );
-    expect(response.status).toBe(202);
-    const pending = await response.json();
-    expect(pending.backfill.poll_url).toContain(pending.run_id);
-    expect(f.execute).not.toHaveBeenCalled();
-    await runJudgeRun(f.db, f.jobs[0], meta);
-    const polled = await pollStatus(new Request(`http://localhost${pending.backfill.poll_url}`), {
-      id: pending.run_id,
-    });
-    expect(polled.status).toBe(200);
-    const done = await polled.json();
-    expect(done).toMatchObject({
-      status: 'done',
-      result: {
-        status: 'effective',
-        final_rating: 'good',
-        judge_event_id: null,
-        coarse_outcome: 'correct',
-        assessment: { evaluation_group_id: f.request.evaluation_group_id },
-      },
-    });
-    expect(done.result.assessment.original_evaluation_id).toBe(done.result.assessment.candidate_id);
-  });
+      );
+      expect(response.status).toBe(202);
+      const pending = await response.json();
+      expect(pending.backfill.poll_url).toContain(pending.run_id);
+      expect(f.execute).not.toHaveBeenCalled();
+      await runJudgeRun(f.db, f.jobs[0], meta);
+      const polled = await pollStatus(new Request(`http://localhost${pending.backfill.poll_url}`), {
+        id: pending.run_id,
+      });
+      expect(polled.status).toBe(200);
+      const done = await polled.json();
+      expect(done).toMatchObject({
+        status: 'done',
+        result: {
+          status: 'effective',
+          final_rating: expected.rating,
+          judge_event_id: null,
+          coarse_outcome: 'correct',
+          assessment: { evaluation_group_id: f.request.evaluation_group_id },
+        },
+      });
+      expect(done.result.assessment.original_evaluation_id).toBe(
+        done.result.assessment.candidate_id,
+      );
+      const settlements = await groupSettlements(f.db, f.request.evaluation_group_id);
+      expect(settlements).toHaveLength(1);
+      expect(settlements[0].payload).toMatchObject({
+        rating: expected.rating,
+        rating_source: expected.rating_source,
+      });
+      const [activation] = await f.db
+        .select()
+        .from(event)
+        .where(eq(event.action, 'experimental:assessment_activation'));
+      if (expected.user_rating === undefined) {
+        expect(activation.payload).not.toHaveProperty('user_rating');
+      } else {
+        expect(activation.payload).toMatchObject({ user_rating: expected.user_rating });
+      }
+      expect(
+        FsrsStateSchema.parse((await f.db.select().from(material_fsrs_state))[0].state).reps,
+      ).toBe(1);
+    },
+  );
 });

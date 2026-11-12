@@ -1,3 +1,7 @@
+import {
+  providerTransientClassForStatus,
+  providerTransientResendable,
+} from '@/ai/provider-failure';
 import { PermanentError, RetryableError } from '@/core/schema/structured_question';
 import {
   GLM_OCR_MODEL,
@@ -121,13 +125,27 @@ function validateGlmLayoutResponse(parsed: GlmLayoutResponse): void {
 }
 
 /**
+ * A bound non-2xx GLM answered before billing — the shared transient table's
+ * resendable classes. Distinct from RetryableError: a thrown RetryableError
+ * from the network/abort path means the outcome is UNKNOWN (the request may
+ * have been dispatched and billed), while this subclass means the provider
+ * itself refused the call and a re-dispatch provably buys nothing twice.
+ */
+export class GlmResendableRejectionError extends RetryableError {}
+
+/**
  * Normalize a GLM failure into the typed Retryable/Permanent errors the handler
  * already classifies (so `markFailedAndLogCost` keeps working unchanged — it
- * accepts any thrown Retryable|Permanent directly).
+ * accepts any thrown Retryable|Permanent directly). Bound statuses consult the
+ * same owner table as every other provider lane.
  *
  * - HTTP 401/403 or missing key → Permanent (auth/arrears never self-heal).
  * - GLM code 1214 (格式错误 / bad data URI) → Permanent.
- * - HTTP 429 / 5xx / network / abort-timeout → Retryable (pg-boss retries).
+ * - Resendable bound rejections (429 congestion, 408/409, 5xx) →
+ *   GlmResendableRejectionError — provably unbilled, the agent may re-dispatch.
+ * - quota_exhausted and other bound statuses → Permanent (a known refusal —
+ *   billed or not, never auto-redispatch).
+ * - network / abort-timeout → RetryableError (outcome unknown, not resendable).
  */
 function mapGlmHttpError(
   status: number,
@@ -143,10 +161,12 @@ function mapGlmHttpError(
   if (status === 401 || status === 403) {
     return new PermanentError(message);
   }
-  if (status === 429 || status >= 500) {
-    return new RetryableError(message);
-  }
-  // Other 4xx (bad request not covered above) → Permanent (won't self-heal).
+  const verdict = providerTransientClassForStatus({
+    httpStatus: status,
+    errorEvidence: [code ?? '', readGlmErrorMessage(body) ?? ''],
+  });
+  if (verdict !== undefined && providerTransientResendable(verdict.class))
+    return new GlmResendableRejectionError(message);
   return new PermanentError(message);
 }
 

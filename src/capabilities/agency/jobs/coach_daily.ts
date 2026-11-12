@@ -93,9 +93,8 @@ const COACH_BRIEF_GUIDANCE =
 // first-hand evidence refs and its own training destination). Attention pressure only —
 // additive, inert when the list is empty.
 const COACH_WEAK_POINTS_GUIDANCE =
-  ' When weak_points is present, each entry is a system-derived actionable weak point at sub-skill granularity with its evidence refs and a training_destination (concept_review / retrieval_practice → concept material or no-hint retrieval drills; procedural_practice / discrimination_probe → targeted step practice or a discriminating probe). Use them to bias knowledge_focus ranking and intent_tags toward the strongest cells, and phrase daily_focus around the named targets. Treat them as derived reads, not ground truth: never invent additional weak points, never attach percentages to them, and never let them suppress or replace the FSRS-due review backbone. When weak_points is empty, behave exactly as before.';
-// YUK-1790 LIGHT — the `coach` Context view rides the input as coach_context. It is
-// attention context, never a candidate list; candidate facts come from read_practice_candidates.
+  ' When weak_points is present, each entry is a system-derived actionable weak point at sub-skill granularity with its evidence refs and a training_destination (concept_review / retrieval_practice → concept material or no-hint retrieval drills; procedural_practice / discrimination_probe → targeted step practice or a discriminating probe). Use them to bias knowledge_focus ranking and intent_tags toward the strongest cells, and phrase daily_focus around the named targets. Treat them as derived reads, not ground truth: never invent additional weak points, never attach percentages to them, and never let them suppress or replace the FSRS-due review backbone. metacog_flags on a weak point come from the cause judgment: overconfident, false_fluency and blind_spot mean the learner thought they had it; poor_resolution means a guess; regulation_gap is skipped steps or no check, not a skill gap — do not schedule skill drills for regulation_gap alone; calibrated means confidence matched the result. weak_point_unknowns reason low_confidence_attribution means the cause model was not sure — do not add practice from those alone. When weak_points is empty, behave exactly as before.';
+// The coach view is attention context; candidate facts come from read_practice_candidates.
 const COACH_CONTEXT_VIEW_GUIDANCE =
   ' When coach_context is present, it is the purpose-trimmed planner segment (active goal + Steering, recent activity counts, mastery/cause readings, recent failure cause labels). It carries no question stems or answer keys: use it as attention context, never as a candidate list — candidate facts (due / variant / new_check / frontier / never-started) come only from read_practice_candidates, and never restate its numbers as new measurements.';
 export const COACH_DAILY_OBJECTIVE = `Produce a TodayPlan draft for the user via the provided DomainTools. Only write proposals (defer / split / relearn / archive / completion / maintenance / knowledge_edge); never mutate user data directly. Prefer doing nothing if the day has no actionable adjustments.${COACH_GOAL_STRAND_GUIDANCE}${COACH_STEERING_GUIDANCE}${COACH_PROPOSAL_FEEDBACK_GUIDANCE}${COACH_AGENT_NOTES_GUIDANCE}${COACH_PLAN_ISSUES_GUIDANCE}${COACH_BRIEF_GUIDANCE}${COACH_WEAK_POINTS_GUIDANCE}${COACH_SUGGESTION_KIND_GUIDANCE}${COACH_CONTEXT_VIEW_GUIDANCE}`;
@@ -251,6 +250,7 @@ function buildCoachInput(
       training_destination: wp.training_destination,
       evidence_strength: wp.evidence_strength,
       failure_count: wp.failure_count,
+      metacog_flags: wp.metacog_flags,
       evidence_event_ids: wp.evidence_refs.map((ref) => ref.event_id),
       last_seen_at: wp.last_seen_at.toISOString(),
     })),

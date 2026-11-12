@@ -791,23 +791,7 @@
         "query": [],
         "contentType": null,
         "bodyExample": null,
-        "notes": "无需 x-internal-token（中间件豁免）；返回 {ok, epoch, state, code_epoch, reason}；维护窗或 epoch 不匹配时 503"
-      }
-    ]
-  },
-  {
-    "path": "/api/hubs/:id/dismiss-link",
-    "methods": [
-      {
-        "method": "POST",
-        "summary": "从 hub 的 AutoLinksContainer 中压制（dismiss）一条系统维护的 auto-link",
-        "query": [],
-        "contentType": "application/json",
-        "bodyExample": {
-          "suppressed_artifact_id": "artifact_xyz789",
-          "relation": "subtopic"
-        },
-        "notes": "relation 可选，枚举：subtopic|prerequisite|derived_from|contrasts_with；suppressed_artifact_id 不能等于 hub id；操作幂等；单事务原子"
+        "notes": "无需 x-internal-token（中间件豁免）；返回 {ok, epoch, state, code_epoch, reason, missing_config, commit}；commit 是构建参数 TLP_SOURCE_COMMIT 的前 9 位，未写入时为 null；维护窗、epoch 不匹配或缺配置时 503"
       }
     ]
   },

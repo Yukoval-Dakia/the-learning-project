@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { IngestionExtractionNotices } from '@/core/schema/ingestion-extraction';
+import { HandwritingTraceOutcome } from '@/core/schema/structured_question';
 import {
   CauseCategory,
   FigureRef,
@@ -166,7 +167,14 @@ const IngestionOperationBaseSchema = z
     session_id: z.string(),
     status: z.enum(['queued', 'running', 'succeeded', 'failed']),
     result: z.unknown().optional(),
-    error: z.object({ code: z.string(), message: z.string(), status: z.number().int() }).optional(),
+    error: z
+      .object({
+        code: z.string(),
+        message: z.string(),
+        status: z.number().int(),
+        details: z.record(z.string(), z.unknown()).optional(),
+      })
+      .optional(),
     created_at: z.string().datetime(),
     updated_at: z.string().datetime(),
     events_url: z.string(),
@@ -306,8 +314,8 @@ const AutoEnrollObservationSchema = z.object({
 /** Server-owned reading of one block's enrollment; the page never re-derives gates. */
 export const IngestionBlockEnrollmentSchema = z.object({
   state: z.enum(['in_library', 'not_enrolled', 'ignored']),
-  reason: z.enum(['needs_text', 'pending', 'publish_failed']).nullable(),
-  knowledge: z.enum(['attributed', 'missing']).nullable(),
+  reason: z.enum(['needs_text', 'pending', 'publish_failed', 'reverted']).nullable(),
+  knowledge: z.enum(['attributed', 'missing', 'restricted']).nullable(),
   library_visible: z.boolean().nullable(),
 });
 
@@ -320,6 +328,8 @@ export const IngestionBlockSchema = z
     page_spans: z.array(PageSpan),
     extracted_prompt_md: z.string().nullable(),
     structured: StructuredQuestion.nullable(),
+    /** Whole-pass handwriting outcome; null when the trace path did not run. */
+    handwriting_trace: HandwritingTraceOutcome.nullable(),
     reference_md: z.string().nullable(),
     wrong_answer_md: z.string().nullable(),
     image_refs: z.array(z.string()),
@@ -377,6 +387,31 @@ export const RevertAutoEnrolledBlockResponseSchema = z.object({
   retractedEventId: z.string(),
 });
 
+// Single-block enrollment (POST /api/ingestion/[id]/blocks/[block_id]/enroll).
+export const IngestionBlockParamsSchema = z.object({
+  id: z.string().min(1),
+  block_id: z.string().min(1),
+});
+
+export const EnrollIngestionBlockBodySchema = z
+  .object({
+    expected_version: z.number().int().nonnegative(),
+    /** Optional printed prompt; required when the block has no prompt yet. */
+    prompt_md: z.string().trim().min(1).max(20_000).optional(),
+  })
+  .strict();
+
+export const EnrollIngestionBlockResponseSchema = z.object({
+  block_id: z.string(),
+  status: z.enum(['enrolled', 'already_enrolled']),
+  question_id: z.string(),
+  block_status: z.string(),
+  block_version: z.number().int().nonnegative(),
+  knowledge: z.enum(['attributed', 'missing', 'restricted']),
+  library_visible: z.boolean(),
+  admission_status: z.enum(['pending', 'admitted', 'failed', 'undecided']),
+});
+
 // Ask answer wire shapes, re-exported from the single agent contract source so
 // this file stays the one-stop wire surface.
 export const IngestionAskAnswerBodySchema = IngestionAskAnswerBody;
@@ -427,6 +462,17 @@ export const IngestionHistoryCurrentSchema = z
       .object({
         status: z.enum(['pending', 'admitted', 'failed', 'undecided']),
         reason: z.string().nullable(),
+        // The question read's own facts, passed through: while a provider, quota or login wait
+        // owns the pending check, and why an undecided check is undecided.
+        wait: z
+          .object({
+            reason: z.enum(['quota', 'login', 'not_sent', 'provider']),
+            retry_at: z.string().nullable(),
+            recovery_action: z.enum(['wait_for_retry', 'reauthenticate', 'confirm_recovery']),
+          })
+          .nullable()
+          .optional(),
+        cause: z.enum(['outcome_unconfirmed', 'purpose_denied']).nullable().optional(),
       })
       .nullable(),
   })
@@ -593,7 +639,8 @@ export const IngestionHistoryPriorRunSchema = z
 
 const IngestionCostIdentitySchema = z.object({
   kind: z.enum(['agent_task', 'ocr']),
-  task_run_id: z.string(),
+  /** Null on extract-lane OCR operations: bound by derived operation id, not a run. */
+  task_run_id: z.string().nullable(),
   attempt_id: z.string().nullable(),
   operation_id: z.string().nullable(),
 });
@@ -601,7 +648,7 @@ const IngestionCostIdentitySchema = z.object({
 /** Session-owned observed evidence only; never the full package/admission bill. */
 export const IngestionSessionCostEvidenceSchema = z
   .object({
-    scope: z.literal('ingestion_agent_observed'),
+    scope: z.literal('ingestion_session_observed'),
     coverage: z.literal('partial'),
     /** DB snapshot time of cost identities + canonical costs, not all history. */
     as_of: z.iso.datetime(),

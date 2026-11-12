@@ -1,4 +1,4 @@
-// YUK-1050 — 历史迁移 apply CLI（grounding §13、§15；review P1-2/P1-8 修订）。
+// 历史迁移 apply CLI（grounding §13、§15）。
 //
 // 一次性离线 cutover 工具：消费 YUK-1048 捕获/分类工件（内容寻址目录 +
 // latest.json 指针）与语料导入 lane 的 revision registry v2，按分类输出把历史
@@ -11,12 +11,12 @@
 //   pnpm migration:apply --artifacts=<dir> --target=<postgres-url> --revisions=<registry.json> --dry-run
 //   可选：--out=<report-dir>（默认 = artifacts 目录）、--batch-size=<N>
 //
-// 安全纪律（P1-8）：--target 必须是【非空、可解析、host/database 齐备】的
+// 安全纪律：--target 必须是【非空、可解析、host/database 齐备】的
 // postgres URL —— 空串/残缺 URL 会让 postgres 驱动静默回退 env 默认，一律
 // 在任何连接建立前拒绝。写路径必须显式 --target + --confirm-write，不回退
 // DATABASE_URL。
 //
-// 工件纪律（P1-2）：装载即复算全部内容身份 —— checkpoint/raw-fact/edge/classification
+// 工件纪律：装载即复算全部内容身份 —— checkpoint/raw-fact/edge/classification
 // 四个哈希逐一与存储值比对（capture 与 manifest 必须是同一次观测）；分类
 // 记录的 source 引用必须在 capture 内闭合；脱敏工件（无法忠实重建学习者
 // 作答/证据）拒绝 apply。
@@ -59,7 +59,7 @@ export { isLoopbackHost, migrationTargetSsl as applyTargetSsl } from './lib/migr
 
 export const APPLY_TOOL_VERSION = '1.1.0';
 
-// ───────────────────────── CLI 参数与 target 校验（P1-8） ─────────────────────────
+// ───────────────────────── CLI 参数与 target 校验 ─────────────────────────
 
 export interface ApplyCliArgs {
   artifacts: string | null;
@@ -102,7 +102,7 @@ export class ApplyCliError extends Error {
 }
 
 /**
- * target 校验（P1-8）：非空、postgres 协议、host 与 database 齐备。
+ * target 校验：非空、postgres 协议、host 与 database 齐备。
  * `--target=`（空串）会让 postgres 驱动静默回退 env/默认 —— 在这里显式拒绝。
  */
 export function validateTargetUrl(target: string | null): string {
@@ -132,7 +132,7 @@ export function validateTargetUrl(target: string | null): string {
   return target;
 }
 
-// ───────────────────────── 工件加载与身份复算（P1-2） ─────────────────────────
+// ───────────────────────── 工件加载与身份复算 ─────────────────────────
 
 export interface LoadedArtifacts {
   capture: MigrationCapture;
@@ -258,7 +258,7 @@ export function loadMigrationArtifacts(artifactsDir: string): LoadedArtifacts {
     );
   }
 
-  // (d) 分类身份复算（按存储 version，对齐 YUK-1048 P2-A）。
+  // (d) 分类身份复算（按存储 version，对齐 YUK-1048 ）。
   const classification = manifest.classification;
   if (classification === undefined || classification === null) {
     throw new ApplyCliError(
@@ -366,7 +366,7 @@ export async function loadRevisionContracts(
       response_spec: row.response_spec,
       scoring_basis: row.scoring_basis,
       execution_plan: row.execution_plan,
-      // YUK-1497（review R1）—— 非空展示层随行映射；解析失败由本 safeParse
+      // 非空展示层随行映射；解析失败由本 safeParse
       // 拒收整行（fail-closed，绝不静默丢列后继续导入）。
       ...(row.presentation != null ? { presentation: row.presentation } : {}),
       published_at: row.published_at.toISOString(),
@@ -388,7 +388,7 @@ export async function loadRevisionContracts(
       `question_revision 行不符合五层契约（语料导入产物损坏）：\n  - ${issues.join('\n  - ')}`,
     );
   }
-  // P1-2（终轮）：每一条 registry 绑定（不限 submission 锚）都对契约做普适坐标
+  // ：每一条 registry 绑定（不限 submission 锚）都对契约做普适坐标
   // 校验 —— part/slot/unit 关联在装载即 fail-visible，坏条目在写库前被拒。
   const coordinateIssues: string[] = [];
   for (const entry of registry.entries) {

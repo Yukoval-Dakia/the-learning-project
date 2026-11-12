@@ -28,7 +28,7 @@ export const knowledgeCapability = defineCapability({
   description:
     '知识域：认知结构树（tree 快照 / effective_domain 派生轴——科目是视角不是结构）、' +
     'knowledge_edge 关系网、节点页聚合（node-page，跨包读 notes 导出）、提议双链' +
-    '（节点 propose / 边 propose_edge + rubric 校验 + accept/dismiss）。',
+    '（节点 propose / 边 propose + rubric 校验 + accept/dismiss）。',
   api: {
     // Static segments match before the :id catch-all, so their order here is not
     // load-bearing for Hono.
@@ -178,9 +178,9 @@ export const knowledgeCapability = defineCapability({
           import('./jobs/frontier_fill_nightly').then((m) => m.buildFrontierFillNightlyHandler),
       },
       {
-        // Multi-step maintenance producer and the nightly mesh-edge proposer: it reads the
-        // whole tree plus recent failures and proposes edges via propose_knowledge_edge.
-        // No real upstream, which is why it is a root.
+        // Multi-step maintenance producer and the nightly mesh-edge proposer: one run per
+        // subject with recent failures, reading only that subject's subtree and proposing
+        // edges via propose_knowledge_edge. No real upstream, which is why it is a root.
         name: 'knowledge_maintenance_nightly',
         dependsOn: [],
         eligibility: nightlyEligibility('structure'),

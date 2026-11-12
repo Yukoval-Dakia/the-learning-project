@@ -397,6 +397,9 @@
   color: var(--ws-quiet);
   letter-spacing: 0.03em;
 }
+.ws-cap-note {
+  display: block;
+}
 
 /* parts answered in Loom */
 .ws-note {

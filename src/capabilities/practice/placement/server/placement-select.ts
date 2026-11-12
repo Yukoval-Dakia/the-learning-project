@@ -3,11 +3,12 @@
 //
 // Candidates are active, non-draft questions touching the goal subgraph. Scoring is not
 // reimplemented: collectCandidateSignals supplies the production KLP/MFI signal. Subject
-// scoping is a derived axis passed by the caller; there is no subject root node. Frontier
-// walking along prereq edges is not implemented yet. Returns null when no eligible question
-// exists so the caller can source starter questions.
+// scoping is a derived axis passed by the caller; there is no subject root node. Ranking
+// applies a coverage penalty for KCs this probe already touched (repeat items lose rank but
+// keep their reported score). Returns null when no eligible question exists so the caller can
+// source starter questions.
 
-import { and, notInArray, sql } from 'drizzle-orm';
+import { and, inArray, notInArray, sql } from 'drizzle-orm';
 import type { SelectionCandidateSignal } from '@/core/selection-signals';
 import type { Db, Tx } from '@/db/client';
 import { question } from '@/db/schema';
@@ -54,8 +55,8 @@ export async function resolveLeaningPreferenceKcs(
  * rotation-classifiable label or undefined. Same fail-closed idiom as
  * stream-store.ts:resolveRotatableKind / the softmax side — kind only affects family-key
  * + recall routing in the signal layer, so an unrecognized label degrades to undefined,
- * never throws. : the boundary moved from enum membership to
- * rotationClassForKind classifiability — same KNOWN-label table, same behaviour. */
+ * never throws. Unrecognized labels fail closed on rotationClassForKind
+ * classifiability — same KNOWN-label table, same behaviour. */
 function toEnumKind(kind: string | null | undefined): CandidateInput['kind'] {
   return kind != null && rotationClassForKind(kind) !== undefined ? kind : undefined;
 }
@@ -67,6 +68,14 @@ function toEnumKind(kind: string | null | undefined): CandidateInput['kind'] {
  * scan order — acceptable for an MVP frontier (inc-E's prereq walk will scope tighter).
  */
 const PLACEMENT_CANDIDATE_LIMIT = 200;
+
+/**
+ * Coverage penalty weight (ranking-only). A candidate whose KCs are ALL already probed in
+ * this session keeps `1 - PLACEMENT_COVERAGE_PENALTY` of its information score; a candidate
+ * touching half-new KCs keeps half the discount. It never rewrites the reported score
+ * (same red line as the leaning preference): it only reorders WHICH item wins.
+ */
+const PLACEMENT_COVERAGE_PENALTY = 0.5;
 
 export interface SelectPlacementItemInput {
   /** the goal subgraph KC set (effective-domain derived; caller supplies, NOT a subject root). */
@@ -170,6 +179,33 @@ export async function selectNextPlacementItem(
   // refId → its KC set, so the leaning-preference tier can be computed per candidate signal
   // (SelectionCandidateSignal carries refId but not knowledge_ids). Empty `prefer` → never read.
   const kcsByQuestion = new Map(rows.map((r) => [r.id, r.knowledge_ids ?? []]));
+
+  // KCs this probe already served/answered. Read from the excluded questions themselves so
+  // the selector stays a single self-contained seam (the caller only passes ids). Bounded by
+  // the probe cap (≤ 8 per subject).
+  const coveredKcs = new Set<string>();
+  if (exclude.length > 0) {
+    const coveredRows = await db
+      .select({ knowledge_ids: question.knowledge_ids })
+      .from(question)
+      .where(inArray(question.id, exclude));
+    for (const row of coveredRows) for (const kc of row.knowledge_ids ?? []) coveredKcs.add(kc);
+  }
+
+  /** Share of a candidate's goal-subgraph KCs this probe already probed; 0 when none. */
+  const coveredShare = (questionId: string): number => {
+    if (coveredKcs.size === 0) return 0;
+    const candidateKcs = (kcsByQuestion.get(questionId) ?? []).filter((k) => kcs.includes(k));
+    if (candidateKcs.length === 0) return 0;
+    return candidateKcs.filter((k) => coveredKcs.has(k)).length / candidateKcs.length;
+  };
+
+  // Ranking key = score discounted by coverage; the REPORTED score stays the true value.
+  const rankScore = (questionId: string, score: number): number =>
+    coveredKcs.size === 0
+      ? score
+      : score * (1 - PLACEMENT_COVERAGE_PENALTY * coveredShare(questionId));
+
   const matchesLeaning = (questionId: string): boolean => {
     if (prefer.size === 0) return false;
     const kcs = kcsByQuestion.get(questionId) ?? [];
@@ -197,17 +233,20 @@ export async function selectNextPlacementItem(
   // WHICH candidate wins, it never rewrites the psychometric score nor touches θ̂/p(L).
   let best: PlacementSelection | null = null;
   let bestPrefers = false;
+  let bestRank = 0;
   for (const s of signals) {
     if (s.mfiScore === undefined) continue;
     const prefers = matchesLeaning(s.refId);
+    const rank = rankScore(s.refId, s.mfiScore);
     const better =
       best === null ||
       (prefers && !bestPrefers) ||
       (prefers === bestPrefers &&
-        (s.mfiScore > best.score || (s.mfiScore === best.score && s.refId < best.questionId)));
+        (rank > bestRank || (rank === bestRank && s.refId < best.questionId)));
     if (better) {
       best = { questionId: s.refId, score: s.mfiScore, scoreKind: s.scoreKind };
       bestPrefers = prefers;
+      bestRank = rank;
     }
   }
   return best;

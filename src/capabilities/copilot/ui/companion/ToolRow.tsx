@@ -166,6 +166,7 @@ const STAGE_WORDS: Record<CopilotModelStage, string> = {
   thinking: '思考中',
   writing: '在写',
   busy: '有点忙，稍等一下',
+  reconnecting: '连接断了一下，正在接着说',
 };
 
 // One shared clock while any live line is on screen; seconds on the line are the only thing it drives.

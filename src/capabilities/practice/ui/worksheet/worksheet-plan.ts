@@ -55,7 +55,15 @@ interface AnswerRef {
 export type PlanBlock =
   | { type: 'head'; key: string; number: number; meta: string | null }
   | { type: 'text'; key: string; md: string; ring: number | null }
-  | { type: 'figure'; key: string; assetId: string; caption?: string; alt?: string }
+  | {
+      type: 'figure';
+      key: string;
+      assetId: string;
+      caption?: string;
+      alt?: string;
+      /** The crop keeps the learner's earlier writing (a definite marker only). */
+      handwriting?: true;
+    }
   | { type: 'note'; key: string; text: string; ring: number | null }
   | ({ type: 'choice'; key: string; options: PlanOption[]; columns: 1 | 2 | 4 } & AnswerRef)
   | ({
@@ -344,6 +352,7 @@ function planItem(
         assetId: material.asset_id,
         caption: material.caption,
         alt: material.alt_text,
+        ...(material.contains_learner_handwriting === true ? { handwriting: true as const } : {}),
       });
     } else {
       blocks.push({
