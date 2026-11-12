@@ -78,8 +78,8 @@ import {
 import { type FewShotExample, renderFewShotBlock } from '../server/quiz/fewshot-retrieve';
 import { embedMaterialInPrompt } from '../server/quiz/quiz-gen-material';
 import { QuizGenOutputFailure, parseOutput } from '../server/quiz/quiz-gen-output';
-import type { DifficultyBand } from '../supply/public';
 import {
+  type DifficultyBand,
   PLACEMENT_ATTEMPT_HEARTBEAT_MS,
   PLACEMENT_QUEUE_EXPIRY_MS,
   PLACEMENT_STARTER_REQUIRED_COUNT,
@@ -100,6 +100,7 @@ import {
   releaseAuthorizedPaidCall,
   renewPlacementAttempt,
   reservePlacementGenerationCall,
+  resolveBandLevelTarget,
   startPlacementAttemptHeartbeat,
   terminalizePlacementUnknownCost,
 } from '../supply/public';
@@ -235,6 +236,8 @@ export interface RunQuizGenParams {
   // requested_difficulty_band in plan/generate inputs (planner difficulty is a hint,
   // not a checked pin — bands are approximate producer semantics).
   difficultyBand?: DifficultyBand;
+  /** Inclusive 1–5 span for `difficultyBand`. null = no ordinal sits in the band. */
+  difficultyLevels?: { min: number; max: number } | null;
   // YUK-1011 — the supply target's 篇 pin (dispatcher forwards
   // constraints.compositeParentOnly as job data composite_parent_only). When set,
   // every plan item must carry composite:true and every generated question must
@@ -531,6 +534,9 @@ async function planQuizGeneration(
       ...(params.objectiveOnly ? { objective_only: true } : {}),
       ...(params.kindRequired ? { kind_required: true } : {}),
       ...(params.difficultyBand ? { requested_difficulty_band: params.difficultyBand } : {}),
+      ...(params.difficultyLevels !== undefined
+        ? { requested_difficulty_levels: params.difficultyLevels }
+        : {}),
       // YUK-1011 — the 篇 pin reaches the planner so EVERY item comes back
       // composite:true (gate-checked below; a violating plan regenerates).
       ...(params.compositeParentOnly ? { composite_parent_only: true } : {}),
@@ -638,6 +644,9 @@ async function generateQuizDrafts(
     // YUK-287 — the supply target's difficulty band rides alongside so the agent
     // aims plan-item / question difficulty at it (soft hint; not a checked pin).
     ...(params.difficultyBand ? { requested_difficulty_band: params.difficultyBand } : {}),
+    ...(params.difficultyLevels !== undefined
+      ? { requested_difficulty_levels: params.difficultyLevels }
+      : {}),
     // YUK-1011 — the 篇 pin: every emitted question must carry a structured
     // stem + ≥2 sub_questions (prompt contract in quiz-generation.ts).
     ...(params.compositeParentOnly ? { composite_parent_only: true } : {}),
@@ -1156,6 +1165,11 @@ export function buildQuizGenHandler(
           ...(data.objective_only ? { objectiveOnly: true } : {}),
           ...(data.kind_required ? { kindRequired: true } : {}),
           ...(data.difficulty_band ? { difficultyBand: data.difficulty_band } : {}),
+          ...(data.difficulty_levels !== undefined
+            ? { difficultyLevels: data.difficulty_levels }
+            : data.difficulty_band
+              ? { difficultyLevels: resolveBandLevelTarget(data.difficulty_band, 0).levels }
+              : {}),
           // YUK-1011 — consume the 篇 pin the dispatcher has forwarded since
           // YUK-287 (was phase-deferred: forwarded but never read).
           ...(data.composite_parent_only ? { compositeParentOnly: true } : {}),

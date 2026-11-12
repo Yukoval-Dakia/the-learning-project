@@ -1,6 +1,7 @@
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
+import { getMasteryState, globalThetaForDomain } from '@/kernel/read-models/mastery-state';
 import {
   type EvidenceDemandV1T,
   buildCoverageEvidenceDemand,
@@ -12,6 +13,7 @@ import {
   type DifficultyBand,
   type QuestionSupplyTarget,
   type SupplyGapKind,
+  resolveBandLevelTarget,
   seedGenerationMethod,
   seedRoutePreference,
   targetFingerprint,
@@ -41,8 +43,8 @@ export interface Demand {
   limit: number;
 }
 
-// difficultyMin/Max 不映射到 logit band：没有 θ̂ / mastery 时缺省 near
-// （与 target-discovery R1 frontier 目标的 band=near 同款）。
+// 覆盖缺口的带仍是 near（相对该 KC 的 θ̂，与扫描器 R1 相同）。
+// 1–5 档在 levelTarget 里按 θ̂ 反算，不再把 near 写成固定的 3。
 function difficultyBandFor(_demand: Demand): DifficultyBand {
   return 'near';
 }
@@ -79,13 +81,17 @@ export async function demandToSupplyTarget(
   makeId: () => string = newId,
 ): Promise<QuestionSupplyTarget> {
   let subjectId: string;
+  let rawDomain: string | null = null;
   try {
-    subjectId = resolveSubjectProfile(await getEffectiveDomain(db, demand.knowledgeId)).id;
+    rawDomain = await getEffectiveDomain(db, demand.knowledgeId);
+    subjectId = resolveSubjectProfile(rawDomain).id;
   } catch {
     // 节点缺失 / domain 未解 (零库 / 自由 caller) → 默认 subject.
     subjectId = resolveSubjectProfile(null).id;
   }
   const profile = resolveSubjectProfile(subjectId);
+  const mastery = await getMasteryState(db, demand.knowledgeId);
+  const thetaHat = (mastery?.theta_hat ?? 0) + (await globalThetaForDomain(db, rawDomain));
 
   const kind = demand.kind ?? 'any';
   const difficultyBand = difficultyBandFor(demand);
@@ -131,6 +137,7 @@ export async function demandToSupplyTarget(
     knowledgeIds,
     kind,
     difficultyBand,
+    levelTarget: resolveBandLevelTarget(difficultyBand, thetaHat),
     desiredCount: gap,
     minSourceTier,
     // import seedRoutePreference (不硬编码空数组)；空 profile 退 [] → dispatcher 落 manual.
