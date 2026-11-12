@@ -128,6 +128,7 @@ const AttemptJudgeResponseSchema = z.discriminatedUnion('coarse_outcome', [
 ]);
 
 const LegacyAttemptResponseSchema = z.object({
+  attempt_event_id: z.string(),
   next_due_at: z.number().int().nonnegative(),
   new_state: FsrsStateWireSchema,
   review_event: z.object({
@@ -149,6 +150,7 @@ const LegacyAttemptResponseSchema = z.object({
 
 export const FormalAttemptResponseSchema = z.object({
   status: z.enum(['effective', 'review_required']),
+  attempt_event_id: z.string(),
   assessment: z.object({
     submission_id: z.string(),
     evaluation_group_id: z.string(),

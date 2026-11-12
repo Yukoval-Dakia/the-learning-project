@@ -1932,6 +1932,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/practice/attempts/{attemptEventId}/cause": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["setAttemptCause"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/practice/attempts/{attemptEventId}/cause-options": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getAttemptCauseOptions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/practice/calibration/anchors": {
         parameters: {
             query?: never;
@@ -10857,6 +10889,7 @@ export interface operations {
                             evaluation_group_id: string;
                             submission_id: string;
                         };
+                        attempt_event_id: string;
                         evidence: {
                             assistance: {
                                 kinds: ("hint" | "solution" | "chat_context")[];
@@ -10946,6 +10979,7 @@ export interface operations {
                         /** @enum {string} */
                         status: "effective" | "review_required";
                     } | {
+                        attempt_event_id: string;
                         judge: (({
                             auto_rated: boolean;
                             capability_ref: {
@@ -17935,6 +17969,7 @@ export interface operations {
                                 source?: "tencent_ocr" | "glm_ocr" | "vision_rescue" | "vlm_structure" | "manual" | "agent_edit" | "docx_text";
                                 student_answer_present?: boolean;
                                 sub_questions?: unknown[];
+                                subject_id?: string;
                             } | null;
                             version: number;
                             workflow_judge_confidence: number | null;
@@ -18572,6 +18607,7 @@ export interface operations {
                             source?: "tencent_ocr" | "glm_ocr" | "vision_rescue" | "vlm_structure" | "manual" | "agent_edit" | "docx_text";
                             student_answer_present?: boolean;
                             sub_questions?: unknown[];
+                            subject_id?: string;
                         };
                     };
                 };
@@ -23669,8 +23705,10 @@ export interface operations {
                 content: {
                     "application/json": {
                         data: {
+                            attempt_event_id: string;
                             cause: {
                                 confidence: number | null;
+                                label: string;
                                 primary_category: string;
                                 primary_label: string | null;
                                 secondary_categories: string[];
@@ -23748,8 +23786,10 @@ export interface operations {
                             next_cursor: string | null;
                         };
                         rows: {
+                            attempt_event_id: string;
                             cause: {
                                 confidence: number | null;
+                                label: string;
                                 primary_category: string;
                                 primary_label: string | null;
                                 secondary_categories: string[];
@@ -26539,7 +26579,7 @@ export interface operations {
                                 issues: {
                                     /** @enum {string} */
                                     code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "reason" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "section" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "handwriting_trace" | "tencent_grading" | "red_ink" | "red_text" | "note" | "status" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "reason" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "section" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "subject_id" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "handwriting_trace" | "tencent_grading" | "red_ink" | "red_text" | "note" | "status" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
                                     path_truncated: boolean;
                                 }[];
                                 issues_truncated: boolean;
@@ -26618,7 +26658,7 @@ export interface operations {
                                 issues: {
                                     /** @enum {string} */
                                     code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "reason" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "section" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "handwriting_trace" | "tencent_grading" | "red_ink" | "red_text" | "note" | "status" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "reason" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "section" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "subject_id" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "handwriting_trace" | "tencent_grading" | "red_ink" | "red_text" | "note" | "status" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
                                     path_truncated: boolean;
                                 }[];
                                 issues_truncated: boolean;
@@ -26664,7 +26704,7 @@ export interface operations {
                                 issues: {
                                     /** @enum {string} */
                                     code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "reason" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "section" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "handwriting_trace" | "tencent_grading" | "red_ink" | "red_text" | "note" | "status" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "reason" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "section" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "subject_id" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "handwriting_trace" | "tencent_grading" | "red_ink" | "red_text" | "note" | "status" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
                                     path_truncated: boolean;
                                 }[];
                                 issues_truncated: boolean;
@@ -26879,7 +26919,7 @@ export interface operations {
                                 issues: {
                                     /** @enum {string} */
                                     code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "reason" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "section" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "handwriting_trace" | "tencent_grading" | "red_ink" | "red_text" | "note" | "status" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "reason" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "section" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "subject_id" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "handwriting_trace" | "tencent_grading" | "red_ink" | "red_text" | "note" | "status" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
                                     path_truncated: boolean;
                                 }[];
                                 issues_truncated: boolean;
@@ -26958,7 +26998,7 @@ export interface operations {
                                 issues: {
                                     /** @enum {string} */
                                     code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "reason" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "section" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "handwriting_trace" | "tencent_grading" | "red_ink" | "red_text" | "note" | "status" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "reason" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "section" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "subject_id" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "handwriting_trace" | "tencent_grading" | "red_ink" | "red_text" | "note" | "status" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
                                     path_truncated: boolean;
                                 }[];
                                 issues_truncated: boolean;
@@ -27004,7 +27044,7 @@ export interface operations {
                                 issues: {
                                     /** @enum {string} */
                                     code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "reason" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "section" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "handwriting_trace" | "tencent_grading" | "red_ink" | "red_text" | "note" | "status" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "reason" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "section" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "subject_id" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "handwriting_trace" | "tencent_grading" | "red_ink" | "red_text" | "note" | "status" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
                                     path_truncated: boolean;
                                 }[];
                                 issues_truncated: boolean;
@@ -27383,7 +27423,7 @@ export interface operations {
                                     issues: {
                                         /** @enum {string} */
                                         code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                        path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "reason" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "section" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "handwriting_trace" | "tencent_grading" | "red_ink" | "red_text" | "note" | "status" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
+                                        path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "reason" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "section" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "subject_id" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "handwriting_trace" | "tencent_grading" | "red_ink" | "red_text" | "note" | "status" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
                                         path_truncated: boolean;
                                     }[];
                                     issues_truncated: boolean;
@@ -27462,7 +27502,7 @@ export interface operations {
                                     issues: {
                                         /** @enum {string} */
                                         code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                        path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "reason" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "section" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "handwriting_trace" | "tencent_grading" | "red_ink" | "red_text" | "note" | "status" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
+                                        path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "reason" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "section" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "subject_id" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "handwriting_trace" | "tencent_grading" | "red_ink" | "red_text" | "note" | "status" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
                                         path_truncated: boolean;
                                     }[];
                                     issues_truncated: boolean;
@@ -27508,7 +27548,7 @@ export interface operations {
                                     issues: {
                                         /** @enum {string} */
                                         code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                        path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "reason" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "section" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "handwriting_trace" | "tencent_grading" | "red_ink" | "red_text" | "note" | "status" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
+                                        path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "reason" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "section" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "subject_id" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "handwriting_trace" | "tencent_grading" | "red_ink" | "red_text" | "note" | "status" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
                                         path_truncated: boolean;
                                     }[];
                                     issues_truncated: boolean;
@@ -28280,7 +28320,7 @@ export interface operations {
                                     issues: {
                                         /** @enum {string} */
                                         code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                        path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "reason" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "section" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "handwriting_trace" | "tencent_grading" | "red_ink" | "red_text" | "note" | "status" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
+                                        path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "reason" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "section" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "subject_id" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "handwriting_trace" | "tencent_grading" | "red_ink" | "red_text" | "note" | "status" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
                                         path_truncated: boolean;
                                     }[];
                                     issues_truncated: boolean;
@@ -28359,7 +28399,7 @@ export interface operations {
                                     issues: {
                                         /** @enum {string} */
                                         code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                        path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "reason" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "section" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "handwriting_trace" | "tencent_grading" | "red_ink" | "red_text" | "note" | "status" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
+                                        path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "reason" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "section" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "subject_id" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "handwriting_trace" | "tencent_grading" | "red_ink" | "red_text" | "note" | "status" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
                                         path_truncated: boolean;
                                     }[];
                                     issues_truncated: boolean;
@@ -28405,7 +28445,7 @@ export interface operations {
                                     issues: {
                                         /** @enum {string} */
                                         code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                        path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "reason" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "section" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "handwriting_trace" | "tencent_grading" | "red_ink" | "red_text" | "note" | "status" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
+                                        path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "reason" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "section" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "subject_id" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "handwriting_trace" | "tencent_grading" | "red_ink" | "red_text" | "note" | "status" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
                                         path_truncated: boolean;
                                     }[];
                                     issues_truncated: boolean;
@@ -28634,7 +28674,7 @@ export interface operations {
                                 issues: {
                                     /** @enum {string} */
                                     code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "reason" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "section" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "handwriting_trace" | "tencent_grading" | "red_ink" | "red_text" | "note" | "status" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "reason" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "section" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "subject_id" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "handwriting_trace" | "tencent_grading" | "red_ink" | "red_text" | "note" | "status" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
                                     path_truncated: boolean;
                                 }[];
                                 issues_truncated: boolean;
@@ -28713,7 +28753,7 @@ export interface operations {
                                 issues: {
                                     /** @enum {string} */
                                     code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "reason" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "section" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "handwriting_trace" | "tencent_grading" | "red_ink" | "red_text" | "note" | "status" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "reason" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "section" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "subject_id" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "handwriting_trace" | "tencent_grading" | "red_ink" | "red_text" | "note" | "status" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
                                     path_truncated: boolean;
                                 }[];
                                 issues_truncated: boolean;
@@ -28759,7 +28799,7 @@ export interface operations {
                                 issues: {
                                     /** @enum {string} */
                                     code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "reason" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "section" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "handwriting_trace" | "tencent_grading" | "red_ink" | "red_text" | "note" | "status" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "reason" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "section" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "subject_id" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "handwriting_trace" | "tencent_grading" | "red_ink" | "red_text" | "note" | "status" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
                                     path_truncated: boolean;
                                 }[];
                                 issues_truncated: boolean;
@@ -29531,7 +29571,7 @@ export interface operations {
                                 issues: {
                                     /** @enum {string} */
                                     code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "reason" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "section" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "handwriting_trace" | "tencent_grading" | "red_ink" | "red_text" | "note" | "status" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "reason" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "section" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "subject_id" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "handwriting_trace" | "tencent_grading" | "red_ink" | "red_text" | "note" | "status" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
                                     path_truncated: boolean;
                                 }[];
                                 issues_truncated: boolean;
@@ -29610,7 +29650,7 @@ export interface operations {
                                 issues: {
                                     /** @enum {string} */
                                     code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "reason" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "section" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "handwriting_trace" | "tencent_grading" | "red_ink" | "red_text" | "note" | "status" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "reason" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "section" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "subject_id" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "handwriting_trace" | "tencent_grading" | "red_ink" | "red_text" | "note" | "status" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
                                     path_truncated: boolean;
                                 }[];
                                 issues_truncated: boolean;
@@ -29656,7 +29696,7 @@ export interface operations {
                                 issues: {
                                     /** @enum {string} */
                                     code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "reason" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "section" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "handwriting_trace" | "tencent_grading" | "red_ink" | "red_text" | "note" | "status" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "reason" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "section" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "subject_id" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "handwriting_trace" | "tencent_grading" | "red_ink" | "red_text" | "note" | "status" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
                                     path_truncated: boolean;
                                 }[];
                                 issues_truncated: boolean;
@@ -30573,6 +30613,272 @@ export interface operations {
                             question_id: string;
                             /** @enum {string} */
                             reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | "no_input_renderer" | "invalid_presentation" | "source_purpose_restricted_or_unknown";
+                        }[];
+                    };
+                };
+            };
+            /** @description Malformed request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description State or version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Semantic validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Rate limited */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    setAttemptCause: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                attemptEventId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    primary_category: string;
+                    user_notes?: string | null;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        cause: {
+                            label: string;
+                            primary_category: string;
+                            /** @enum {string} */
+                            source: "user";
+                            user_notes: string | null;
+                        };
+                    };
+                };
+            };
+            /** @description Malformed request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description State or version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Semantic validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Rate limited */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    getAttemptCauseOptions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                attemptEventId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        current: {
+                            label: string;
+                            primary_category: string;
+                            /** @enum {string} */
+                            source: "user" | "agent";
+                        } | null;
+                        options: {
+                            id: string;
+                            label: string;
                         }[];
                     };
                 };
@@ -39061,6 +39367,7 @@ export interface operations {
                                 evaluation_group_id: string;
                                 submission_id: string;
                             };
+                            attempt_event_id: string;
                             evidence: {
                                 assistance: {
                                     kinds: ("hint" | "solution" | "chat_context")[];

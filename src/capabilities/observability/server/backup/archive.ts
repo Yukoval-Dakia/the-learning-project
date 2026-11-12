@@ -1177,7 +1177,7 @@ export async function restoreFromArchive({
         // same transaction, so it rolls back atomically.
         await tx.execute(
           sql.raw(
-            `select setval('subject_change_seq', (select greatest(coalesce((select max(change_seq) from "subject_trait_journal"), 0), coalesce((select max(change_seq) from "subject_control_journal"), 0)) + 1), false)`,
+            `select setval('subject_change_seq', (select greatest(coalesce((select max(change_seq) from "subject_trait_journal"), 0), coalesce((select max(change_seq) from "subject_control_journal"), 0), coalesce((select max(change_seq) from "subject_doc_journal"), 0)) + 1), false)`,
           ),
         );
 
