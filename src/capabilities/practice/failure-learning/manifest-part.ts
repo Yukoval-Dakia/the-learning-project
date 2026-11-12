@@ -1,7 +1,43 @@
 // 错因学习 owner 的 manifest 片段，由根 `manifest.ts` 组合。
+import { API_ERROR_RESPONSES } from '@/kernel/http-contracts';
 import type { CapabilityManifest } from '@/kernel/manifest';
+import {
+  AttemptCauseOptionsResponseSchema,
+  AttemptCauseParamsSchema,
+  SetAttemptCauseBodySchema,
+  SetAttemptCauseResponseSchema,
+} from './api/contracts';
 
 export const failureLearningManifestPart: Omit<CapabilityManifest, 'name' | 'description'> = {
+  api: {
+    routes: [
+      {
+        method: 'POST',
+        path: '/api/practice/attempts/[attemptEventId]/cause',
+        operationId: 'setAttemptCause',
+        request: {
+          params: AttemptCauseParamsSchema,
+          body: SetAttemptCauseBodySchema,
+        },
+        responses: {
+          200: SetAttemptCauseResponseSchema,
+          ...API_ERROR_RESPONSES,
+        },
+        successStatus: 200,
+        load: () => import('./api/attempt-cause').then((m) => m.POST),
+      },
+      {
+        method: 'GET',
+        path: '/api/practice/attempts/[attemptEventId]/cause-options',
+        operationId: 'getAttemptCauseOptions',
+        request: { params: AttemptCauseParamsSchema },
+        responses: { 200: AttemptCauseOptionsResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        pagination: 'none',
+        load: () => import('./api/attempt-cause').then((m) => m.GET),
+      },
+    ],
+  },
   subscriptions: {
     handlers: [
       {
