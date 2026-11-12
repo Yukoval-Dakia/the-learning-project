@@ -19,6 +19,7 @@ async function writeCauseCategoryProposal(opts: {
 }) {
   const db = testDb();
   return writeAiProposal(db, {
+    actor_ref: 'dreaming',
     payload: {
       kind: 'cause_category',
       target: {

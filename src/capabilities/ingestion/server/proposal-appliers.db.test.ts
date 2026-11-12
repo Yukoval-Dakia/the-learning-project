@@ -111,6 +111,7 @@ describe('block_merge proposal lifecycle', () => {
     mergeBlockIds: string[];
   }): Promise<void> {
     await writeAiProposal(testDb(), {
+      actor_ref: 'dreaming',
       id: opts.proposalId,
       payload: {
         kind: 'block_merge',

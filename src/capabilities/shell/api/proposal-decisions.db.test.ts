@@ -96,6 +96,7 @@ async function seedBlockMergeProposal(opts: {
   mergeBlockIds: string[];
 }): Promise<void> {
   await writeAiProposal(testDb(), {
+    actor_ref: 'dreaming',
     id: opts.proposalId,
     payload: {
       kind: 'block_merge',
@@ -276,6 +277,7 @@ describe('POST /api/proposals/[id]/decisions', () => {
     });
     const generic = (change: ReturnType<typeof merge> | Record<string, unknown>, target: string) =>
       writeAiProposal(db, {
+        actor_ref: 'dreaming',
         payload: {
           kind: 'knowledge_mutation',
           target: { subject_kind: 'knowledge', subject_id: target },

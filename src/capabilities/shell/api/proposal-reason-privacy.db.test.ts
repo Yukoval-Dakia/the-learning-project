@@ -49,6 +49,7 @@ it('masks credentials in proposal reasons without rewriting their stored history
   ];
   const [archiveCase, knowledgeCase, findingCase] = cases;
   await writeAiProposal(db, {
+    actor_ref: 'dreaming',
     id: archiveCase.id,
     payload: {
       kind: 'archive',
@@ -64,6 +65,7 @@ it('masks credentials in proposal reasons without rewriting their stored history
     },
   });
   await writeAiProposal(db, {
+    actor_ref: 'dreaming',
     id: knowledgeCase.id,
     payload: {
       kind: 'knowledge_node',
@@ -76,6 +78,7 @@ it('masks credentials in proposal reasons without rewriting their stored history
     },
   });
   await writeAiProposal(db, {
+    actor_ref: 'dreaming',
     id: findingCase.id,
     payload: {
       kind: 'conjecture',

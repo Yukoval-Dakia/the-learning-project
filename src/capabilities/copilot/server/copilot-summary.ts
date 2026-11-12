@@ -51,7 +51,7 @@ export interface CopilotSummary {
   review_due_count: number;
   /** First paragraph of the global memory brief (capped); null hides the drawer slot. */
   brief_global_md: string | null;
-  /** Pending Dreaming-authored proposals (latest 3). */
+  /** Pending proposals from the last day; probes and variants rank first. */
   dreaming_preview: CopilotSummaryDreamingPreview[];
   /** Snapshot of the pending total; a lower bound only if the scan cap is hit. */
   pending_proposals_total: number;
@@ -68,6 +68,38 @@ export interface CopilotSummary {
 // exists only when review_due_count > 0; otherwise state the missing plan only.
 const COACH_PLACEHOLDER_FOCUS_WITH_QUEUE = 'Coach 还没出新计划，先按到期的复习队列开始即可。';
 const COACH_PLACEHOLDER_FOCUS_NO_QUEUE = 'Coach 还没出新计划。';
+
+/** The drawer previews the last day of pending suggestions, not an unbounded backlog. */
+const PREVIEW_WINDOW_MS = 24 * 60 * 60 * 1000;
+/** A probe is the cheapest way to resolve a belief; a variant targets a proven failure. */
+const PREVIEW_FIRST_KINDS = ['conjecture', 'variant_question'] as const;
+
+// The drawer says where a suggestion came from. Internal producer ids never reach the
+// learner; an unknown producer gets a neutral label rather than a false attribution.
+const PROPOSAL_SOURCE_LABELS: Readonly<Record<string, string>> = {
+  dreaming: '夜间整理',
+  research_meeting: '夜间整理',
+  kc_dedup_nightly: '夜间整理',
+  copilot: '学习伙伴',
+  coach: '教练',
+  variant_gen: '变体题',
+  learning_intent: '学习方向',
+  learning_item_maintenance: '学习安排',
+  maintenance: '日常维护',
+  block_assembly: '内容整理',
+  appeal: '申诉复核',
+  attribution: '错因归类',
+  note_refine: '笔记整理',
+  goal_scope: '目标范围',
+};
+
+function proposalSourceLabel(actorRef: string): string {
+  // Live Copilot executions pass their tool caller actor (`agent:copilot`,
+  // `agent:copilot_chip`, …), not the bare producer name used by the factories.
+  if (actorRef.startsWith('agent:copilot')) return '学习伙伴';
+  if (actorRef.endsWith('_nightly')) return '夜间整理';
+  return PROPOSAL_SOURCE_LABELS[actorRef] ?? '自动整理';
+}
 
 const LEARNER_PROPOSAL_SUMMARIES: Readonly<Record<string, string>> = {
   knowledge_node: '有一项知识点建议待你查看。',
@@ -113,6 +145,7 @@ export async function loadCopilotSummary(
   // Clamp before the options reach executeGetReviewDue's Zod schema; previewLimit and
   // briefCharCap floor at 1, and reviewDueLimit stays in 1..50.
   const previewLimit = Math.max(1, opts.previewLimit ?? 3);
+  const previewWindowStart = new Date(Date.now() - PREVIEW_WINDOW_MS);
   const briefCharCap = Math.max(1, opts.briefCharCap ?? 280);
   const reviewDueLimit = Math.min(50, Math.max(1, opts.reviewDueLimit ?? 50));
 
@@ -155,10 +188,12 @@ export async function loadCopilotSummary(
     // every /today load. `?? undefined` guards a caller passing null, which default
     // parameters do not replace.
     countPendingProposalInboxByKind(db, opts.pendingCountOptions ?? undefined),
-    // The actorRef filter plus limit stop the ranked pagination after previewLimit rows.
+    // A one-day window keeps the drawer about today; probes and variants outrank the rest
+    // so an old backlog cannot push the newest actionable suggestion out of the preview.
     listProposalInboxPage(db, {
       status: 'pending',
-      actorRef: 'dreaming',
+      createdAfter: previewWindowStart,
+      kindFirst: PREVIEW_FIRST_KINDS,
       limit: previewLimit,
     }),
     // Reuse the execute fn so the due predicate stays single-sourced.
@@ -195,7 +230,7 @@ export async function loadCopilotSummary(
   const dreamingPreview: CopilotSummaryDreamingPreview[] = dreamingPage.rows.map((row) => ({
     proposal_id: row.id,
     kind: row.kind,
-    brief: learnerProposalSummary(row.kind),
+    brief: `${proposalSourceLabel(row.actor_ref)}：${learnerProposalSummary(row.kind)}`,
     proposed_at:
       row.proposed_at instanceof Date ? row.proposed_at.toISOString() : String(row.proposed_at),
   }));

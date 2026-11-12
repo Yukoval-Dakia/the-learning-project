@@ -56,6 +56,7 @@ describe('acceptAiProposal records-flip degradation', () => {
       created_at: now,
     });
     await writeAiProposal(db, {
+      actor_ref: 'dreaming',
       id: 'edge_flip_p1',
       payload: {
         kind: 'knowledge_edge',
