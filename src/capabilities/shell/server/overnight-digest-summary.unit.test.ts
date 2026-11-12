@@ -33,7 +33,12 @@ describe('computeDegradedKinds degraded-scan merge', () => {
       rows: [] as RunErrorRow[],
       scans: [scan('CoachTask', T3, 'plan_parse_error')],
       expected: [
-        { task_kind: 'CoachTask', error_count: 1, recent_error_messages: ['plan_parse_error'] },
+        {
+          task_kind: 'CoachTask',
+          error_count: 1,
+          recent_error_messages: ['plan_parse_error'],
+          last_at: T3,
+        },
       ],
     },
     {
@@ -46,7 +51,14 @@ describe('computeDegradedKinds degraded-scan merge', () => {
       name: 'two errors still flag at the threshold',
       rows: [err('QuizGenTask', T1, 'a'), err('QuizGenTask', T2, 'b')],
       scans: [] as DegradedScanRow[],
-      expected: [{ task_kind: 'QuizGenTask', error_count: 2, recent_error_messages: ['b', 'a'] }],
+      expected: [
+        {
+          task_kind: 'QuizGenTask',
+          error_count: 2,
+          recent_error_messages: ['b', 'a'],
+          last_at: T2,
+        },
+      ],
     },
     {
       name: 'same-kind error and scan merge newest-first',
@@ -57,6 +69,7 @@ describe('computeDegradedKinds degraded-scan merge', () => {
           task_kind: 'CoachTask',
           error_count: 2,
           recent_error_messages: ['plan_parse_error', 'timeout'],
+          last_at: T2,
         },
       ],
     },
@@ -69,6 +82,7 @@ describe('computeDegradedKinds degraded-scan merge', () => {
           task_kind: 'CoachTask',
           error_count: 1,
           recent_error_messages: [DEGRADED_SCAN_NO_REASON_PLACEHOLDER],
+          last_at: T2,
         },
       ],
     },
@@ -77,8 +91,18 @@ describe('computeDegradedKinds degraded-scan merge', () => {
       rows: [err('DreamingTask', T1, 'x'), err('DreamingTask', T2, 'y')],
       scans: [scan('CoachTask', T3, 'plan_parse_error')],
       expected: [
-        { task_kind: 'CoachTask', error_count: 1, recent_error_messages: ['plan_parse_error'] },
-        { task_kind: 'DreamingTask', error_count: 2, recent_error_messages: ['y', 'x'] },
+        {
+          task_kind: 'CoachTask',
+          error_count: 1,
+          recent_error_messages: ['plan_parse_error'],
+          last_at: T3,
+        },
+        {
+          task_kind: 'DreamingTask',
+          error_count: 2,
+          recent_error_messages: ['y', 'x'],
+          last_at: T2,
+        },
       ],
     },
   ])('$name', ({ rows, scans, expected }) => {
