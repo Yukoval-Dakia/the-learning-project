@@ -77,29 +77,3 @@ export async function writeAiTaskRunRetried(db: DbLike, id: string): Promise<boo
     .returning({ id: ai_task_runs.id });
   return rows.length === 1;
 }
-
-/**
- * A provider call that ended cleanly but whose text could not be parsed into the
- * task's contract is NOT a successful task run. Flip the just-settled success row so
- * observability and retry logic see the failure; paid usage and cost stay untouched
- * because the provider call really happened. Returns false when the row was already
- * settled as failure (or does not exist).
- *
- * Same semantics as YUK-1994 slice 3 (#2759); kept local until that PR lands.
- */
-export async function markAiTaskRunOutputInvalid(
-  db: DbLike,
-  id: string,
-  reason: string,
-): Promise<boolean> {
-  const rows = await db
-    .update(ai_task_runs)
-    .set({
-      status: 'failure',
-      finish_reason: 'model_output_invalid',
-      error_message: reason.slice(0, 1000),
-    })
-    .where(and(eq(ai_task_runs.id, id), eq(ai_task_runs.status, 'success')))
-    .returning({ id: ai_task_runs.id });
-  return rows.length === 1;
-}
