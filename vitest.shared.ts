@@ -212,6 +212,7 @@ export const dbTestInclude = [
   'src/capabilities/practice/supply/server/placement-starter-attempts.db.test.ts',
   'src/capabilities/practice/supply/server/placement-starter-store.db.test.ts',
   'src/capabilities/practice/supply/server/question-preparer.db.test.ts',
+  'src/capabilities/practice/supply/server/supply-delivery-outbox.db.test.ts',
   'src/capabilities/practice/question-bank/server/quiz/content-fingerprint.db.test.ts',
   'src/capabilities/practice/grading/server/recorded-model-executor.db.test.ts',
   'src/capabilities/practice/grading/server/assistance-evidence.db.test.ts',
