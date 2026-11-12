@@ -825,10 +825,13 @@ jobs:
           echo "CARGO_HOME=$cargo_home" >> "$GITHUB_ENV"
           echo "$cargo_home/bin" >> "$GITHUB_PATH"
           stat -c '%U:%G %a %n' "$rustup_home" "$cargo_home"
-      # stable @ 2026-07-20; pin third-party actions to immutable commits.
+      # Rust 1.99.1 produced the last known-good WASM parity build before 1.100.0
+      # introduced a duplicate _initialize linker symbol. Pin the toolchain so the
+      # lane does not silently change with each stable release.
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         if: steps.filter.outputs.parity_changed != 'false'
         with:
+          toolchain: 1.99.1
           targets: wasm32-wasip1-threads
       # v2 @ 2026-07-20. Cache Cargo registry/git data and this standalone crate's target.
       - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
