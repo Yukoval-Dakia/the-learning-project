@@ -83,7 +83,8 @@ source_pack.tool 如实自报：真的用了 exa 检索才填 "exa"；closed_boo
 
 题目要求：
 - kind 以 plan.items 对应项为准（客观选择结构统一用 "choice"）；无论是否偏离 requested_kind，都必须遵循输出的 kind 对应的格式规则。
-- 本科目检查题与变式政策见文档库 guide/question-writing（目录里有就读了再写）。
+- ${profile.promptFragments.checkQuestionPolicy}（来自当前生效的科目 charter；若文档库里的同主题 policy 与此不一致，以此条为准）
+- 变式题政策：${profile.promptFragments.variantExamplePolicy}
 - choice / true_false：judge_kind_override="exact"，给 3–4 个选项；choices_md 每项只写选项正文，禁止带 A./B./C./D. 等字母序号（渲染层按数组索引添加）；题面 prompt_md 不要再抄一遍选项内容；reference_md 第一行是正确选项原文。
 - 数学定界（强约束，仅题面与选项的显示字段）：每个数学表达式必须自带显式定界——行内用 $...$，独立公式用 $$...$$（已有 \\(...\\)/\\[...\\] 写法可保留）；\\frac、\\dfrac、\\tfrac、\\sqrt 等数学命令禁止裸露在定界之外（渲染端不猜公式边界，裸命令会原样漏出给学习者）。要把命令按字面文本展示时，放行内代码 \`...\` 或代码块。本规则覆盖 prompt_md、choices_md 与 structured 各节点的 prompt_text/options[].text。reference_md 与小题 answers/analysis 是判分消费的答案值（与 answer_anchor 的裸正文同格式），按既有答案格式书写，不受本条定界约束。
 - 最终判分路由为 "exact" 或 "semantic" 时，rubric_json 必填，且 rubric_json.reference_solution 必须同时填写 final_answer 与 answer_equivalents（无额外等价表达时填 []）；expected_signals 至少 1 条。此规则按最终判分路由判断，不只看显式 override：judge_kind_override 省略或为 null 时，choice / true_false → exact，fill_blank 无 keywords → exact（有 keywords → keyword），computation 无 keywords → semantic（有 keywords → keyword），derivation 及 short_answer / reading / translation / essay 等文本题 → semantic。

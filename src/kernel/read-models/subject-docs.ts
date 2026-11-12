@@ -5,7 +5,7 @@
 // 目录路径（进任务提示词）吞错返回空目录——文档库缺席不阻塞任务；点查与
 // 搜索让错误冒泡，调用方（工具/任务）拿到真实失败而不是「没有文档」的假象。
 
-import { and, asc, eq, ilike, inArray, or } from 'drizzle-orm';
+import { and, asc, eq, inArray } from 'drizzle-orm';
 import type { Db } from '@/db/client';
 import { subject_doc } from '@/db/schema';
 
@@ -87,28 +87,29 @@ export async function searchSubjectDocs(
   query: string,
 ): Promise<SubjectDocSearchHit[]> {
   const scope = subjectId === GENERAL_DOC_SUBJECT ? [subjectId] : [subjectId, GENERAL_DOC_SUBJECT];
-  const pattern = `%${query.replaceAll('%', '\\%').replaceAll('_', '\\_')}%`;
   const rows = await db
     .select({ ...ENTRY_COLS, body: subject_doc.body })
     .from(subject_doc)
-    .where(
-      and(
-        inArray(subject_doc.subject_id, scope),
-        or(
-          ilike(subject_doc.title, pattern),
-          ilike(subject_doc.summary, pattern),
-          ilike(subject_doc.body, pattern),
-        ),
-      ),
-    )
-    .orderBy(asc(subject_doc.subject_id), asc(subject_doc.doc_key))
-    .limit(SEARCH_LIMIT);
-  const ownKeys = new Set(rows.filter((r) => r.subject_id === subjectId).map((r) => r.doc_key));
-  return rows
-    .filter((r) => r.subject_id === subjectId || !ownKeys.has(r.doc_key))
+    .where(inArray(subject_doc.subject_id, scope))
+    .orderBy(asc(subject_doc.subject_id), asc(subject_doc.doc_key));
+  // Resolve subject-over-general precedence before matching and applying the result
+  // limit. This prevents a matching general row from hiding a more-specific
+  // subject override whose body does not contain the query.
+  const effectiveByKey = new Map<string, (typeof rows)[number]>();
+  for (const row of rows) {
+    if (row.subject_id === subjectId) effectiveByKey.set(row.doc_key, row);
+  }
+  for (const row of rows) {
+    if (row.subject_id === GENERAL_DOC_SUBJECT && !effectiveByKey.has(row.doc_key)) {
+      effectiveByKey.set(row.doc_key, row);
+    }
+  }
+  const needle = query.toLowerCase();
+  return [...effectiveByKey.values()]
+    .filter((r) => `${r.title}\n${r.summary}\n${r.body}`.toLowerCase().includes(needle))
     .map((r) => {
       const haystack = `${r.title}\n${r.summary}\n${r.body}`;
-      const at = haystack.toLowerCase().indexOf(query.toLowerCase());
+      const at = haystack.toLowerCase().indexOf(needle);
       const excerpt =
         at < 0
           ? haystack.slice(0, EXCERPT_RADIUS * 2)
@@ -121,7 +122,8 @@ export async function searchSubjectDocs(
         shared: r.subject_id === GENERAL_DOC_SUBJECT && r.subject_id !== subjectId,
         excerpt,
       };
-    });
+    })
+    .slice(0, SEARCH_LIMIT);
 }
 
 /**

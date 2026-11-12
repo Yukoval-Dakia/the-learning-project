@@ -61,13 +61,14 @@ import {
 import type { Db } from '@/db/client';
 import { event, knowledge, question, question_group_lifecycle, source_document } from '@/db/schema';
 import { declaredAdmissionOwned } from '@/kernel/read-models/question-admission-ownership';
-import { subjectDocCatalogPiSkillDoc } from '@/kernel/read-models/subject-docs';
+import { listSubjectDocCatalog, renderSubjectDocCatalog } from '@/kernel/read-models/subject-docs';
 import type { PlacementVerificationAuthority } from '@/kernel/supply-contracts';
 import { SupplyTraceV1 } from '@/kernel/supply-contracts';
 import { DOMAIN_TOOL_MCP_SERVER_NAME, toMcpAllowedToolName } from '@/kernel/tools/allowlists';
 import { type TaskTextRunFn, costUsdToMicroUsd } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { resolveSubjectProfile } from '@/subjects/profile';
+import { quizGenPackDocKey } from '@/subjects/question-kind';
 import {
   PlacementStarterAdmissionError,
   PlacementStarterStaleAuthorityError,
@@ -443,9 +444,20 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
         } satisfies BuildMcpServerOptions),
       ]
     : undefined;
-  const verifySkillDocs = kindConformanceChecked
-    ? await subjectDocCatalogPiSkillDoc(db, subjectProfile.id)
+  const verifyDocCatalog = kindConformanceChecked
+    ? await listSubjectDocCatalog(db, subjectProfile.id)
     : undefined;
+  const verifyCatalogBody = verifyDocCatalog ? renderSubjectDocCatalog(verifyDocCatalog) : '';
+  const verifySkillDocs = verifyCatalogBody
+    ? [{ name: 'subject-docs', body: verifyCatalogBody }]
+    : undefined;
+  const applicableKindDocKey = kindConformanceChecked ? quizGenPackDocKey(row.kind) : null;
+  const kindConformanceSkillAvailable =
+    applicableKindDocKey !== null &&
+    verifyDocCatalog !== undefined &&
+    [...verifyDocCatalog.own, ...verifyDocCatalog.shared].some(
+      (doc) => doc.doc_key === applicableKindDocKey,
+    );
 
   let taskResult: TaskTextResult | null = null;
   // Primary QuizVerifyTask reservation bookkeeping: release on a
@@ -839,7 +851,8 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
       tierChecks,
       meta,
       materialPresent,
-      verifySkillDocs,
+      kindConformanceSkillLoaded:
+        kindConformanceSkillAvailable && parsed.kind_conformance !== undefined,
       solveResult,
       teachingResult,
       verificationStatus,
