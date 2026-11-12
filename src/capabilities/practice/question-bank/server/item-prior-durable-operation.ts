@@ -570,7 +570,7 @@ export type ItemPriorApplicationVerification =
   | { readonly status: 'not-applicable' };
 
 /**
- * float4-storage equality (R1 P1 fix). `item_calibration.b/b_anchor/
+ * float4-storage equality. `item_calibration.b/b_anchor/
  * confidence` are PG `real` (float4, ~7 significant digits): a legal
  * even-count median like (0.1+0.2)/2 or a high-precision LLM value
  * round-trips shortened, so strict double equality would misreport a freshly

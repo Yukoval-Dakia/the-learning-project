@@ -53,10 +53,13 @@ export const READ_TOOLS = [
   // `ingestion` surface below (same containment as the draft-structure reader).
   'read_source',
   'view_image',
+  // Note body plus mark / edit / review / refine stats. Copilot grant is below.
+  'read_note',
 ] as const;
 
 export const PROPOSE_WRITE_TOOLS = [
   'workspace_exec',
+  'workspace_files',
   'curate_context',
   'submit_review_answer',
   // YUK-1986 — copilot 给答案的唯一记受助路径（先写 solution/answer_help 再返参考解）。
@@ -149,6 +152,16 @@ export type DomainToolName =
   | ReadDomainToolName
   | ProposeWriteDomainToolName
   | ControlDomainToolName;
+
+/**
+ * Workspace tools the runner injects on every tool-loop task. Surfaces keep
+ * their business scopes; these two ride along through the same mount/gate so
+ * every agent gets the session sandbox without per-task allowlist edits.
+ */
+export const AGENT_WORKSPACE_DOMAIN_TOOLS = [
+  'workspace_exec',
+  'workspace_files',
+] as const satisfies readonly DomainToolName[];
 
 export type DomainToolSurface =
   | 'workspace_acceptance'
@@ -257,6 +270,7 @@ export const COPILOT_TOOLS = [
   'write_note',
   // YUK-1772 — read-only deterministic note check (issues list, no verdict).
   'check_note',
+  'read_note',
   // YUK-1986 — 明确要答案时的记受助给答路径（owner「有记录的给」）。
   'reveal_answer',
   // YUK-1468 — Copilot 编辑面：edit_question（ops/document/validate/probe）。
@@ -386,6 +400,7 @@ export const QUESTION_PREPARER_TOOLS = [
   'read_bank',
   'check_bank',
   'query_knowledge',
+  'get_knowledge_state',
   'get_subject_graph_overview',
   'expand_knowledge_subgraph',
   'find_knowledge_paths',
@@ -400,7 +415,7 @@ export const QUESTION_PREPARER_TOOLS = [
 ] as const satisfies readonly DomainToolName[];
 
 export const DOMAIN_TOOL_ALLOWLISTS = {
-  workspace_acceptance: ['workspace_exec'],
+  workspace_acceptance: ['workspace_exec', 'workspace_files'],
   question_preparer: QUESTION_PREPARER_TOOLS,
   knowledge_review: KNOWLEDGE_REVIEW_TOOLS,
   copilot: COPILOT_TOOLS,

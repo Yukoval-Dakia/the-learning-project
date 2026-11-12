@@ -1,5 +1,5 @@
-import { and, eq, inArray } from 'drizzle-orm';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { and, eq, inArray, sql } from 'drizzle-orm';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, onTestFailed } from 'vitest';
 
 import {
   type EnqueueVerifyFn,
@@ -37,7 +37,27 @@ async function seedIntent(questionId: string, verifier: 'quiz_verify' | 'source_
   return writeVerifyDispatchIntent(db, { questionId, verifier });
 }
 
-describe('verify dispatch outbox (YUK-700)', () => {
+async function snapshotDispatchState() {
+  const events = await db.execute(sql`
+    SELECT action, subject_id,
+      payload->>'delivery_id' AS delivery_id,
+      payload->'question_ids' AS question_ids,
+      payload->>'disposition' AS disposition,
+      payload->>'verifier_kind' AS verifier_kind
+    FROM event
+    WHERE action IN (
+      'experimental:verify_dispatch_intent',
+      'experimental:verify_dispatch_bound',
+      'experimental:verify_dispatch')
+    ORDER BY created_at, id`);
+  const jobs = await db.execute(sql`
+    SELECT id, state, data->'question_ids' AS question_ids
+    FROM pgboss.job WHERE name = 'quiz_verify' ORDER BY created_on`);
+  console.log('SNAPSHOT dispatch events:', JSON.stringify(events));
+  console.log('SNAPSHOT pgboss jobs:', JSON.stringify(jobs));
+}
+
+describe('verify dispatch outbox', () => {
   let realBoss: ReturnType<typeof createBoss>;
 
   beforeAll(async () => {
@@ -58,29 +78,65 @@ describe('verify dispatch outbox (YUK-700)', () => {
     await realBoss.deleteAllJobs('quiz_verify');
   });
 
-  // @invariant concurrency: two racing drains bind disjoint work and the
-  // engine sees exactly one delivery per bound batch
+  // @invariant concurrency: racing drains bind disjoint batches (SKIP LOCKED may
+  // split the locked page), and after the round plus one compensating pass — the
+  // same call the poller makes — every intent is delivered exactly once, as one
+  // engine job per bound batch
   // @fails-if the bound claim does not fence concurrent drains — a second
   // drain would mint a second paid verify for the same intent
   it('concurrent drains converge on one engine delivery per bound batch', async () => {
+    onTestFailed(snapshotDispatchState);
     await Promise.all([seedQuestion('q-c1', 'quiz_gen'), seedQuestion('q-c2', 'quiz_gen')]);
     await Promise.all([seedIntent('q-c1', 'quiz_verify'), seedIntent('q-c2', 'quiz_verify')]);
     const enqueue: EnqueueVerifyFn = async (verifier, questionIds, options) => {
       await realBoss.send(verifier, { question_ids: questionIds }, options);
-      await new Promise((resolve) => setTimeout(resolve, 20));
     };
 
     await Promise.all([
       dispatchPendingVerifyIntents(db, { enqueue }),
       dispatchPendingVerifyIntents(db, { enqueue }),
     ]);
+    await dispatchPendingVerifyIntents(db, { enqueue });
 
-    const jobs = await realBoss.fetch('quiz_verify');
-    expect(jobs).toHaveLength(1);
-    expect((jobs[0].data as { question_ids: string[] }).question_ids.sort()).toEqual([
-      'q-c1',
-      'q-c2',
-    ]);
+    // One engine job per bound batch, carrying that batch's exact question set.
+    const bounds = (await db
+      .select({
+        deliveryId: sql`${event.payload}->>'delivery_id'`,
+        questionIds: sql`${event.payload}->'question_ids'`,
+      })
+      .from(event)
+      .where(eq(event.action, VERIFY_DISPATCH_BOUND_ACTION))) as {
+      deliveryId: string;
+      questionIds: string[];
+    }[];
+    const boundByDelivery = new Map<string, string[]>();
+    for (const row of bounds) {
+      const memberSet = [...row.questionIds].sort();
+      const existing = boundByDelivery.get(row.deliveryId);
+      if (existing) {
+        expect(existing).toEqual(memberSet);
+      } else {
+        boundByDelivery.set(row.deliveryId, memberSet);
+      }
+    }
+
+    const jobs = (await db.execute(sql`
+      SELECT id, state, data->'question_ids' AS question_ids
+      FROM pgboss.job WHERE name = 'quiz_verify' ORDER BY created_on, id`)) as unknown as {
+      id: string;
+      state: string;
+      question_ids: string[];
+    }[];
+    const liveJobs = jobs.filter((j) => j.state === 'created' || j.state === 'retry');
+    expect(new Set(liveJobs.map((j) => j.id)).size).toBe(liveJobs.length);
+    expect(liveJobs.map((j) => j.id).sort()).toEqual([...boundByDelivery.keys()].sort());
+    for (const job of liveJobs) {
+      expect([...job.question_ids].sort()).toEqual(boundByDelivery.get(job.id));
+    }
+
+    // Every intent delivered exactly once, and acked exactly once.
+    const delivered = liveJobs.flatMap((j) => j.question_ids).sort();
+    expect(delivered).toEqual(['q-c1', 'q-c2']);
     const completions = await db
       .select({ subjectId: event.subject_id })
       .from(event)

@@ -59,8 +59,9 @@ export async function adjudicateAdmission(
     throw new AdmissionNotSent();
   }
   const answerForms = candidateAnswerForms(definition, solve);
+  const parts = await solverParts(db, definition);
   const payload = AdmissionAdjudicationInput.parse({
-    parts: solverParts(definition),
+    parts,
     units: solverUnits(definition, 0, { exposePrinted: true }),
     figure_state: figureState,
     markings,

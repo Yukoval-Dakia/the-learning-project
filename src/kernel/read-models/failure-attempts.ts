@@ -53,6 +53,17 @@ export type FailureAttemptUserCause = {
   correction_state: EffectiveTruth;
 };
 
+/** Tolerant read of the capture evidence a photographed attempt carries. */
+export type IngestionUnitCapture = {
+  slot_id: string;
+  state: 'answered' | 'blank' | 'unknown' | 'omitted';
+  ink: string | null;
+  /** The learner's own red-pen mark; evidence only, never a grading result. */
+  red_ink_mark?: 'check' | 'cross' | 'mixed';
+  /** Why this unit stayed unknown (for example a failed handwriting pass). */
+  reason?: string;
+};
+
 export type FailureAttempt = {
   attempt_event_id: string;
   question_id: string;
@@ -62,6 +73,8 @@ export type FailureAttempt = {
   question_snapshot?: AttemptQuestionSnapshotT | null;
   created_at: Date;
   correction_state: EffectiveTruth;
+  /** Learner's own red-pen check/cross, kept as capture evidence (never a grading verdict). */
+  ingestion_unit_captures?: IngestionUnitCapture[];
   judge?: FailureAttemptJudge;
   /**
    * Earliest raw judge receipt for this attempt, unchained. judge is the
@@ -156,6 +169,7 @@ function failureEvidenceFromRow(row: EventRow): {
   referenced_knowledge_ids: string[];
   /** undefined = historical absence; null = present but invalid/corrupt. */
   question_snapshot: AttemptQuestionSnapshotT | null | undefined;
+  ingestion_unit_captures: IngestionUnitCapture[] | undefined;
 } {
   if (row.action === 'experimental:assessment_attempt') {
     return {
@@ -164,6 +178,7 @@ function failureEvidenceFromRow(row: EventRow): {
       referenced_knowledge_ids: [],
       // Never substitute today's question for a native frozen assessment.
       question_snapshot: null,
+      ingestion_unit_captures: parseIngestionUnitCaptures(row.payload),
     };
   }
   const payload = row.payload as {
@@ -208,7 +223,38 @@ function failureEvidenceFromRow(row: EventRow): {
     answer_image_refs: payload.answer_image_refs ?? [],
     referenced_knowledge_ids: payload.referenced_knowledge_ids ?? [],
     question_snapshot: questionSnapshot,
+    ingestion_unit_captures: parseIngestionUnitCaptures(row.payload),
   };
+}
+
+/** Reads capture evidence defensively; a malformed payload yields undefined, not a throw. */
+function parseIngestionUnitCaptures(payload: unknown): IngestionUnitCapture[] | undefined {
+  if (payload == null || typeof payload !== 'object') return undefined;
+  const ingestion = (payload as { ingestion?: unknown }).ingestion;
+  if (ingestion == null || typeof ingestion !== 'object') return undefined;
+  const raw = (ingestion as { unit_captures?: unknown }).unit_captures;
+  if (!Array.isArray(raw)) return undefined;
+  const out: IngestionUnitCapture[] = [];
+  for (const item of raw) {
+    if (item == null || typeof item !== 'object') continue;
+    const record = item as Record<string, unknown>;
+    const slotId = typeof record.slot_id === 'string' ? record.slot_id : null;
+    const state = record.state;
+    if (
+      slotId === null ||
+      (state !== 'answered' && state !== 'blank' && state !== 'unknown' && state !== 'omitted')
+    )
+      continue;
+    const mark = record.red_ink_mark;
+    out.push({
+      slot_id: slotId,
+      state,
+      ink: typeof record.ink === 'string' ? record.ink : null,
+      ...(mark === 'check' || mark === 'cross' || mark === 'mixed' ? { red_ink_mark: mark } : {}),
+      ...(typeof record.reason === 'string' ? { reason: record.reason } : {}),
+    });
+  }
+  return out.length > 0 ? out : undefined;
 }
 
 /**
@@ -506,6 +552,9 @@ async function loadFailureAttempts(
       referenced_knowledge_ids:
         nativeVerdicts.get(a.id)?.knowledge_ids ?? evidence.referenced_knowledge_ids,
       question_snapshot: evidence.question_snapshot,
+      ...(evidence.ingestion_unit_captures !== undefined
+        ? { ingestion_unit_captures: evidence.ingestion_unit_captures }
+        : {}),
       created_at: a.created_at,
       correction_state: attemptTruths.get(a.id) ?? activeEffectiveTruth(a.id),
     };

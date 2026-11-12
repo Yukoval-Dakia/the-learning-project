@@ -19,6 +19,7 @@ import {
   HTTP_PROVIDER_SESSION_BUDGET_MS,
   runWithHttpProviderSessionDeadline,
 } from '@/server/http/provider-session-deadline';
+import { sourceCommit } from './build-commit';
 import { routeLoaderFor } from './composed-routes';
 
 // YUK-233 — the old Next shell carried baseline headers but deliberately omitted CSP.
@@ -189,6 +190,7 @@ export function buildHonoApp(
   // 级别信息）。fenced → 503（ready 语义本身就是「不可服务」）。
   // A missing required setting (names only, never values) also makes the process not ready,
   // so a release that drops one fails its readiness probe instead of reaching a learner.
+  // commit 是构建时写入的来源 SHA 前 9 位；health 仍只表示进程活着。
   app.get('/api/ready', async (c) => {
     const gate = await epochGate();
     const { missing: missingConfig } = checkConfigCompleteness();
@@ -201,6 +203,7 @@ export function buildHonoApp(
         code_epoch: gate.codeEpoch ?? null,
         reason: gate.reason ?? (missingConfig.length > 0 ? 'config_incomplete' : null),
         missing_config: missingConfig,
+        commit: sourceCommit,
       },
       ready ? 200 : 503,
     );

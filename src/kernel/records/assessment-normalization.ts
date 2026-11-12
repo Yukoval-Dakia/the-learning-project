@@ -166,6 +166,15 @@ function rubricToStatementMd(rubric: JsonObject): string {
   return JSON.stringify(rubric, null, 0);
 }
 
+/** Only refs that carry a marker add the field, so revisions sealed before it keep their digest. */
+function figureHandwritingMarker(
+  figure: FigureRefT,
+): Pick<QuestionGroupStructureT['materials'][number], 'contains_learner_handwriting'> {
+  return figure.contains_learner_handwriting === undefined
+    ? {}
+    : { contains_learner_handwriting: figure.contains_learner_handwriting };
+}
+
 interface MaterialBuild {
   materials: QuestionGroupStructureT['materials'];
   issues: ConversionIssue[];
@@ -217,6 +226,7 @@ function buildSharedMaterials(ctx: {
         kind: 'figure',
         asset: { asset_id: figure.asset_id, digest: `sha256:${verified}` },
         alt_text: `figure (${figure.role})`,
+        ...figureHandwritingMarker(figure),
       });
     }
   }
@@ -857,6 +867,7 @@ export function normalizeQuestionGroupToContract(
           kind: 'figure',
           asset: { asset_id: figure.asset_id, digest: `sha256:${verified}` },
           alt_text: `figure (${figure.role})`,
+          ...figureHandwritingMarker(figure),
         });
       }
     }

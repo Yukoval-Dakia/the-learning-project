@@ -14,8 +14,8 @@
 // （`scanCoverageGaps`，同 KC，同 `targetFingerprint` 同入参）**逐字相同**。故 dispatcher 的 7 天
 // fingerprint cooldown 在 refill 与 nightly **之间共享**——refill 不会重发 nightly 刚发过的同一
 // KC 缺口，反之亦然。这把「按需 refill」与「夜间基线」收敛到同一把幂等闸，不双付费。
-// （subjectId 解析路径与 target-discovery `loadFrontierKnowledge`:552-556 同款 try/catch；
-// 即便边缘场景 subjectId 解析有别，refill 仍有**自身** fingerprint 的 7d cooldown 兜 spam，
+// （subjectId 解析路径与 target-discovery `loadFrontierKnowledge` 同款「解不出 domain → 默认 subject」
+// 语义；即便边缘场景 subjectId 解析有别，refill 仍有**自身** fingerprint 的 7d cooldown 兜 spam，
 // shared-fingerprint 是收益而非正确性依赖。）
 // ── open question 1 / 3：cooldown 竞态（并发取题多次触发）─────────────────────────────
 // dispatcher 已有 7d 持久 cooldown（查 `event` 表 action='experimental:question_supply'、
@@ -46,8 +46,10 @@ import { inArray } from 'drizzle-orm';
 import { getConfigFlag } from '@/core/config/store';
 import { newId } from '@/core/ids';
 import { LearningItemOpenStatus } from '@/core/schema/business';
+import { steeringDefersKnowledgeIds } from '@/core/steering';
 import type { Db } from '@/db/client';
 import { learning_item } from '@/db/schema';
+import { loadSteeringDeferredKnowledgeIds } from '@/kernel/read-models/steering-deferral';
 import { type Demand, demandToSupplyTarget, poolFetch } from '../../question-bank/public';
 import { type DispatchDeps, type DispatchResult, dispatchSupplyTarget } from './dispatcher';
 import type { QuestionSupplyTarget } from './target-discovery';
@@ -137,6 +139,7 @@ export async function refillThinPools(
 ): Promise<RefillOutcome[]> {
   if (!refillEnabled()) return []; // flag-off → byte-identical no-op（无 DB、无 dispatch）。
 
+  const deferredKnowledgeIds = await loadSteeringDeferredKnowledgeIds(db, new Date());
   const countActive = deps.countActiveQuestions ?? defaultCountActiveQuestions;
   const buildTarget = deps.buildTarget ?? demandToSupplyTarget;
   const dispatch = deps.dispatch ?? dispatchSupplyTarget;
@@ -144,7 +147,9 @@ export async function refillThinPools(
   const makeId = deps.makeId ?? newId;
 
   // open Q3 — in-request 去重：同 KC 被多个待做项引用 → 塌成一次池检查。
-  const allUnique = [...new Set(knowledgeIds.filter(Boolean))];
+  const allUnique = [...new Set(knowledgeIds.filter(Boolean))].filter(
+    (kid) => !steeringDefersKnowledgeIds([kid], deferredKnowledgeIds),
+  );
   if (allUnique.length > REFILL_MAX_PER_REQUEST) {
     console.warn(
       `[question_supply_refill] truncating ${allUnique.length} KCs to ${REFILL_MAX_PER_REQUEST}`,

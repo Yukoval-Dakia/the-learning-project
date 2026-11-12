@@ -430,7 +430,7 @@ export async function dispatchNextDuePendingPlacementClaim(
 // leads to a reap that is already gated behind the 6h grace window and the claim's own status
 // re-check, whereas defaulting unknown states to live would let a genuine zombie block every
 // later goal revision forever (the exact bug this sweeper exists to fix).
-// On 'expired' specifically (review PRRT…nAc suggested adding it to the state union): the
+// On 'expired' specifically: the
 // installed pg-boss v12.26.1 `job_state` enum has exactly six states — created / retry / active /
 // completed / cancelled / failed — and 'expired' is NOT among them; it is a v9/v10 state, and v12
 // handles a timed-out job by deleting and re-inserting it as retry or failed. That was verified

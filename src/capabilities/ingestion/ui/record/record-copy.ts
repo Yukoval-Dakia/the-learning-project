@@ -1,6 +1,7 @@
 // Learner words for the record page (YUK-1473). Codes and internal names never reach the screen:
 // every code maps to a plain sentence here, and anything unknown gets a plain generic line.
 
+import { type AdmissionFacts, admissionSentence } from '@/ui/lib/admission-words';
 import type { StartProblem } from './record-start';
 
 export const STAGE_WORDS: Record<string, string> = {
@@ -53,11 +54,20 @@ const IN_BANK = new Set(['admitted', 'imported', 'auto_enrolled']);
  * says nothing new (still in the library and served, or still waiting for the usual check).
  */
 export function nowWords(
-  now: { servable: boolean; holdReason: string | null } | null,
+  now: { servable: boolean; holdReason: string | null; admission?: AdmissionFacts | null } | null,
   atFinish: string,
 ): string | null {
   if (!now) return null;
   if (now.servable) return IN_BANK.has(atFinish) ? null : '现在：可以练了';
+  // The check's own state says what is happening and when it tries again; a question already
+  // shown as withheld at the finish needs no line for an ordinary wait.
+  const admission = now.admission;
+  if (admission && admission.status !== 'admitted') {
+    const ordinaryWait = admission.status === 'pending' && !admission.wait;
+    if (!(ordinaryWait && atFinish === 'withheld')) {
+      return `现在：在题库里。${admissionSentence(admission)}`;
+    }
+  }
   const code = now.holdReason;
   if (code === 'awaiting_admission' || code === 'unverified_rules') {
     return atFinish === 'withheld' ? null : '现在：在题库里，等核对答案';
@@ -117,13 +127,12 @@ export function servingNote(
   serving: {
     servable: boolean;
     hold_reason: string | null;
-    admission?: { status: string } | null;
+    admission?: AdmissionFacts | null;
   } | null,
 ): string | null {
   if (!serving || serving.servable) return null;
-  const status = serving.admission?.status;
-  if (status === 'pending') return '还在检查，查完才会出给你练。';
-  if (status === 'failed' || status === 'undecided') return '暂时没查成，这道先不出给你练。';
+  const admission = serving.admission;
+  if (admission && admission.status !== 'admitted') return admissionSentence(admission);
   return holdWords(serving.hold_reason);
 }
 

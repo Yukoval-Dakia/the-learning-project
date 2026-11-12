@@ -49,10 +49,20 @@ const EvidenceDemandTask = z.object({
   allowed_uses: z.array(EvidenceAllowedUse).min(1),
 });
 
+/** Server-read learner ability at ticket time; callers cannot supply it. */
+const EvidenceDemandThetaReading = z.object({
+  knowledge_id: z.string().min(1),
+  value: z.number().finite(),
+  evidence_count: z.number().int().nonnegative(),
+  provenance: z.enum(['observed', 'inferred']),
+  as_of: z.string().datetime({ offset: true }),
+});
+
 const EvidenceDemandDifficulty = z.object({
   band: z.enum(['below', 'near', 'above', 'stretch']),
   scale: z.string().min(1),
   target_value: z.number().finite().nullable(),
+  theta_hat: z.array(EvidenceDemandThetaReading).optional(),
 });
 
 const EvidenceDemandInventoryGoal = z.object({
@@ -67,6 +77,16 @@ const EvidenceDemandControl = z.object({
   max_attempts: z.number().int().positive(),
 });
 
+/** One ranked failure cause from the shared cause judgment, read when the ticket was written. */
+const EvidenceDemandObservedError = z.object({
+  knowledge_id: z.string().min(1),
+  category: z.string().min(1),
+  label: z.string().nullable(),
+  count: z.number().int().positive(),
+  last_at: z.string(),
+  source: z.string().min(1),
+});
+
 const EvidenceDemandCause = z.object({
   kind: z.enum([
     'coverage_gap',
@@ -74,8 +94,10 @@ const EvidenceDemandCause = z.object({
     'mastery_uncertainty',
     'owner_request',
     'confusable_pair',
+    'observed_error',
   ]),
   ref: z.string().min(1).optional(),
+  observed: EvidenceDemandObservedError.optional(),
 });
 
 /**
@@ -132,8 +154,21 @@ export const SupplyTraceV1 = SupplyTargetContextV1.extend({
 }).strict();
 export type SupplyTraceV1T = z.infer<typeof SupplyTraceV1>;
 
-/** Supply difficulty band vocabulary; band assignment logic stays with the supply owner. */
+/** Supply difficulty band vocabulary. Cuts are logit distance from θ̂. */
 export type DifficultyBand = 'below' | 'near' | 'above' | 'stretch';
+
+/** |b − θ̂| inside this window is `near`. Matches the supply scanner's MFI window. */
+export const NEAR_WINDOW = 0.75;
+/** b − θ̂ above `near` and at most this window is `above`; past it is `stretch`. */
+export const STRETCH_WINDOW = 1.5;
+
+export function difficultyBandFor(b: number, thetaHat: number): DifficultyBand {
+  const delta = b - thetaHat;
+  if (delta < -NEAR_WINDOW) return 'below';
+  if (delta <= NEAR_WINDOW) return 'near';
+  if (delta <= STRETCH_WINDOW) return 'above';
+  return 'stretch';
+}
 
 export function parseEvidenceDemand(value: unknown): EvidenceDemandV1T {
   return EvidenceDemandV1.parse(value);

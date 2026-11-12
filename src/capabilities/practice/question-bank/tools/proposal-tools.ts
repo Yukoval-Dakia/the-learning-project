@@ -12,6 +12,7 @@ import { QuestionKind } from '@/core/schema/business';
 // explicitly via the propose-tool input arg (§4.1/§4.2).
 import { SuggestionKind } from '@/core/schema/event/known';
 import { QuestionEditOp, type QuestionEditOpT } from '@/core/schema/proposal';
+import { formatDraftDocumentIssues } from '@/core/schema/question-draft';
 import {
   TeachingDraft,
   type TeachingDraftT,
@@ -134,6 +135,7 @@ const AuthorQuestionOutputSchema = z.object({
     'skipped:max_depth',
     'skipped:variant_chain_terminus',
     'skipped:cause_not_targetable',
+    'skipped:low_cause_confidence',
     'skipped:already_has_variant',
     'skipped:variants_max_reached',
     // record passthrough
@@ -487,6 +489,8 @@ async function authorQuestionExecute(
     });
     return Object.keys(receipt).length > 0 ? { ...result, ...receipt } : result;
   } catch (err) {
+    // A raw ZodError message is one JSON blob; name each field and what it must be instead.
+    const fields = err instanceof z.ZodError ? formatDraftDocumentIssues(err) : null;
     return {
       status: err instanceof z.ZodError ? 'skipped:invalid_payload' : 'failed',
       seed_mode: input.seed_mode,
@@ -494,7 +498,10 @@ async function authorQuestionExecute(
       mistake_variant_ids: [],
       variant_question_ids: [],
       ...receipt,
-      reasoning_summary: err instanceof Error ? err.message : String(err),
+      ...(fields
+        ? { issues: fields.split('\n').map((detail) => ({ code: 'invalid_field', detail })) }
+        : {}),
+      reasoning_summary: fields ?? (err instanceof Error ? err.message : String(err)),
     };
   }
 }

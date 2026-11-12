@@ -2,7 +2,7 @@
 //
 // 三个关注点：
 //   1. session presence（artifact_edit_session）：心跳 upsert、按 session 删、
-//      30s 活跃边界、DB-time 判定（RED 15 / RED 17）。
+//      30s 活跃边界、DB-time 判定。
 //   2. NON-HUB note-refine defer 队列（editing_presence.pending，保留）：idle 立即
 //      apply、活跃会话 defer、末个会话 blur 才 flush、陈旧 pending 丢弃（裁决 i）。
 //   3. 跨进程：两实例共享同一 PG。

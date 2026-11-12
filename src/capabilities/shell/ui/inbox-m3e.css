@@ -549,20 +549,15 @@
        at phone width (YUK-1478). Inherited by everything in the card. */
     min-width: 0;
     overflow-wrap: anywhere;
-    transition: opacity var(--un-t-small) var(--un-ease-glide);
+  }
+
+  /* The card's own slot: a decided card fades and folds this to nothing (ProposalCard). */
+  & .ib-prop-slot {
+    min-width: 0;
   }
 
   & .ib-prop .katex-display {
     overflow-x: auto;
-  }
-
-  & .ib-prop[data-resolved] {
-    opacity: 0.55;
-  }
-
-  /* A decided card keeps its place but loses its write buttons (they are locked as well). */
-  & .ib-prop[data-resolved] .ib-prop-acts {
-    display: none;
   }
 
   & .ib-prop-head {
@@ -579,10 +574,6 @@
     font-size: var(--un-fs-3);
     font-weight: var(--un-fw-semibold);
     line-height: var(--un-lh-tight);
-  }
-
-  & .ib-stamp {
-    margin-left: auto;
   }
 
   & .ib-prop-reason {
