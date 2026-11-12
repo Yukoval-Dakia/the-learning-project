@@ -7,6 +7,7 @@ const DEFAULT_BUDGET = DEFAULT_TASK_BUDGET;
 
 import { z } from 'zod';
 import { ConjectureHypothesisAuthorDraft } from '@/core/schema/business';
+import { LEARNER_HANDWRITING_RULE } from '@/core/schema/structured_question';
 import type { SubjectProfile } from '@/subjects/profile';
 import { parseTaskOutput } from './parse-output';
 
@@ -31,14 +32,21 @@ export function parseConjectureGroupingOutput(text: string): ConjectureGroupingO
   return parseTaskOutput(text, 'ConjectureGroupingTask', ConjectureGroupingOutputSchema);
 }
 
+/** Correct answers quoted beside one failure cell. Small on purpose: the cell is still about the misses. */
+export const CONJECTURE_CONTRAST_CORRECT_LIMIT = 2;
+
 function buildMindModelInductionPrompt(profile: SubjectProfile): string {
   return `你是教研例会的归因研究员。输入：
-{ evidence_cells: [{ knowledge_id, knowledge_name, subject_id, subject_display_name, cause_category, recurrence_count, theta_hat, theta_precision, baseline_p, evidence_event_ids: [...], evidence_samples: [{ attempt_event_id, question_id, question_prompt_md, question_reference_md, question_choices_md, question_image_refs, question_figures, parent_question_id, parent_question_prompt_md, parent_question_reference_md, parent_question_choices_md, parent_question_image_refs, parent_question_figures, answer_md, answer_image_refs, reasoning_trace, cause_category, cause_source, cause_attribution_md }] }], image_manifest: [{ image_index, asset_id, attempt_event_id, source }], prior_claim_md?: string }
+{ evidence_cells: [{ knowledge_id, knowledge_name, subject_id, subject_display_name, cause_category, recurrence_count, theta_hat, theta_precision, baseline_p, evidence_event_ids: [...], evidence_samples: [{ attempt_event_id, question_id, question_prompt_md, question_reference_md, question_choices_md, question_image_refs, question_figures, parent_question_id, parent_question_prompt_md, parent_question_reference_md, parent_question_choices_md, parent_question_image_refs, parent_question_figures, answer_md, answer_image_refs, reasoning_trace, cause_category, cause_source, cause_attribution_md }], contrast_correct_samples: [{ attempt_event_id, question_id, question_prompt_md, question_reference_md, answer_md }] }], image_manifest: [{ image_index, asset_id, attempt_event_id, source }], prior_claim_md?: string, prior_abstention?: { reason_code, explanation_md, seen_failure_attempt_ids, new_failure_attempt_ids }, agent_notes?: [{ id, signal_kind, summary_md, refs, source_task_kind, confidence? }] }
 
 每个 cell 是某知识点上某错因类别累积了 ≥2 次不同 attempt 的确定性取证结果：
 - knowledge_name 是该知识点的名称，subject_display_name 是它所属科目（两者都可能为 null=该知识点未标注）。
 - evidence_samples 是该 cell 背后的代表性错题一手证据（可能少于 recurrence_count）：question_prompt_md 是题面，question_reference_md 是参考答案/正解（可能为 null），question_choices_md 是选项；question_image_refs / question_figures 是题图，parent_question_* 是题目分部依赖的父题文本与图像，answer_md / answer_image_refs 是 owner 的实际错答，reasoning_trace 是 owner 自述的思考过程（可能为 null），cause_attribution_md 是 owner 或 judge 给出的有效错因归因。作答后被编辑过、又缺少作答时快照的题面已在调用前排除（YUK-804 将补齐全入口快照持久化）。
+- contrast_correct_samples 是同一知识点上至多 ${CONJECTURE_CONTRAST_CORRECT_LIMIT} 条答对作答（题面、参考答案、学习者当时写对的答案）。它们不是错答，不得写入 evidence_event_ids。空数组表示这段窗口里没有可引用的答对样本，不是反证。写出规则前，说明这条规则会不会在这些答对题上预测出错；会预测出错就 abstain（conflicting_evidence），或把 scope_boundary_md / trigger_conditions_md 收窄到不覆盖这些题。
+- prior_abstention 只在「这个格子上次放弃过，而且这次有新的失败作答」时出现。seen_failure_attempt_ids 是上次已经看过的失败作答；new_failure_attempt_ids 是不在那个集合里的新失败作答 id。没有这个字段就当第一次看这个格子。不要因为上次放弃过就再放弃，只根据新 id 和现有证据重新判断。
+- agent_notes 是学伴留给研究会的便签，只提示该留意的混淆，不是证据。不得把便签 id 或摘要写成 evidence_event_ids，也不得把摘要当成学习者事实。
 - image_manifest 把资产引用绑定到本条消息随后附带的真实图片块：image_index 从 1 开始，严格对应图片块顺序；source 依次按 question（题图）、parent_question（父题图）、answer（作答图）排列。引用资产解析不完整时调用方会整格失败，不会让你依据缺失图片猜测。
+- question_figures / parent_question_figures 每张带 contains_learner_handwriting（true / false / unknown）。${LEARNER_HANDWRITING_RULE}；owner 的作答只以 answer_md / answer_image_refs 为准，true 或 unknown 的题图里的手写不另算一次作答证据。
 - theta_precision 低（或为 null）代表该处掌握度估计不确定（值得探针）；baseline_p 是该知识点当前的掌握概率 p(L)（可能为 null=冷启动）。
 
 科目上下文：${profile.displayName}。${profile.languageStyle}

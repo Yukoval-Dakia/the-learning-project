@@ -12,6 +12,7 @@ import { QuestionKind } from '@/core/schema/business';
 // explicitly via the propose-tool input arg (§4.1/§4.2).
 import { SuggestionKind } from '@/core/schema/event/known';
 import { QuestionEditOp, type QuestionEditOpT } from '@/core/schema/proposal';
+import { formatDraftDocumentIssues } from '@/core/schema/question-draft';
 import {
   TeachingDraft,
   type TeachingDraftT,
@@ -62,22 +63,49 @@ type AuthorQuestionSeed =
 // `validateAuthorQuestionInput` inside execute (NOT on the schema), keeping the
 // schema a pure ZodObject.
 const AuthorQuestionInputSchema = z.object({
-  seed_mode: z.enum(['variant', 'record', 'teaching_draft']),
+  seed_mode: z
+    .enum(['variant', 'record', 'teaching_draft'])
+    .describe(
+      'teaching_draft writes a new question from draft; variant/record seeds retain proposal paths.',
+    ),
   // variant seed
-  attempt_event_id: z.string().min(1).optional(),
+  attempt_event_id: z
+    .string()
+    .min(1)
+    .optional()
+    .describe('variant seed: the failure attempt event to base the variant on.'),
   // ADR-0032 D2 — count>1 is now allowed in principle; the variant core still
   // emits exactly one today, so accept only the literal 1 (forward-compatible).
   count: z.literal(1).optional(),
   // record seed
-  record_id: z.string().min(1).optional(),
+  record_id: z.string().min(1).optional().describe('record seed: the learning record to promote.'),
   reasoning: z.string().min(1).max(2000).optional(),
   // Opaque record-promotion draft, consumed by the record_promotion accept
   // applier; z.json instead of an unconstrained value (YUK-1553 C1-1).
-  draft: OpaqueJsonInput.optional(),
+  draft: OpaqueJsonInput.optional().describe(
+    'Opaque draft document. teaching_draft shape: {stem_md,response,solution_md?}; response.form vocab: single_choice(options,answer_index), multi_choice(options,answer_indices), blank(blanks:[{answer,accepted?,numeric?}]), matching(left,right,pairs), break_tap(segments), ordering(objects_in_order). Free response has no automatic grader — pick a deterministic form.',
+  ),
   suggestion_kind: SuggestionKind.optional(),
-  knowledge_ids: z.array(z.string().min(1)).optional(),
-  subject_id: z.string().min(1).max(160).optional(),
-  learner_topic: z.string().min(1).max(200).optional(),
+  knowledge_ids: z
+    .array(z.string().min(1))
+    .optional()
+    .describe(
+      'Confirmed matching knowledge node ids; pass [] when none fits — subject_id + learner_topic then carry the placement.',
+    ),
+  subject_id: z
+    .string()
+    .min(1)
+    .max(160)
+    .optional()
+    .describe(
+      "Existing subject id, or an unregistered discipline name when the learner's own message declares wanting to study it — the server creates that subject and files under its root. Match the discipline to existing subjects first; a topic is not a new subject.",
+    ),
+  learner_topic: z
+    .string()
+    .min(1)
+    .max(200)
+    .optional()
+    .describe("Exact topic substring from the learner's request (exact-name matching)."),
   difficulty: z.number().int().min(1).max(5).optional(),
 });
 
@@ -134,6 +162,7 @@ const AuthorQuestionOutputSchema = z.object({
     'skipped:max_depth',
     'skipped:variant_chain_terminus',
     'skipped:cause_not_targetable',
+    'skipped:low_cause_confidence',
     'skipped:already_has_variant',
     'skipped:variants_max_reached',
     // record passthrough
@@ -487,6 +516,8 @@ async function authorQuestionExecute(
     });
     return Object.keys(receipt).length > 0 ? { ...result, ...receipt } : result;
   } catch (err) {
+    // A raw ZodError message is one JSON blob; name each field and what it must be instead.
+    const fields = err instanceof z.ZodError ? formatDraftDocumentIssues(err) : null;
     return {
       status: err instanceof z.ZodError ? 'skipped:invalid_payload' : 'failed',
       seed_mode: input.seed_mode,
@@ -494,7 +525,10 @@ async function authorQuestionExecute(
       mistake_variant_ids: [],
       variant_question_ids: [],
       ...receipt,
-      reasoning_summary: err instanceof Error ? err.message : String(err),
+      ...(fields
+        ? { issues: fields.split('\n').map((detail) => ({ code: 'invalid_field', detail })) }
+        : {}),
+      reasoning_summary: fields ?? (err instanceof Error ? err.message : String(err)),
     };
   }
 }
@@ -502,7 +536,7 @@ async function authorQuestionExecute(
 export const authorQuestionTool: DomainTool<AuthorQuestionInput, AuthorQuestionOutput> = {
   name: 'author_question',
   description:
-    'Create one question with seed_mode="teaching_draft": write draft={stem_md,response,solution_md?}. Prefer confirmed matching knowledge_ids. If no suitable knowledge node exists, pass knowledge_ids=[], subject_id (existing subject ID), learner_topic (exact topic substring from this user request). Match the discipline to existing subjects first; a topic is not a new subject. For an unregistered discipline use its name as subject_id: when the learner message itself says they want to study it, the server creates the subject and files the question under its root; otherwise it returns a typed missing-subject problem. In the missing case explain only that the subject is not available and nothing was saved. If subject_created=true and the question was not saved, tell the learner the subject exists but the question was not saved; retrying the same subject reuses it. Never show problem codes or suggest creating subjects, roots, nodes, proposals or inbox confirmations. You may explain a question in chat, explicitly saying it will not enter the bank. Do not retry this missing-subject problem. When no suitable node exists you may first call propose_knowledge_mutation to propose the topic as a child node — it auto-applies later; submit the question as usual without waiting for placement. Never ask confirmation. On root fallback repeat placement_note once. response.form: single_choice(options,answer_index), multi_choice(options,answer_indices), blank(blanks:[{answer,accepted?,numeric?}]), matching(left,right,pairs), break_tap(segments), ordering(objects_in_order). Direct bank submission, no inbox. Give bank_path; only admitted questions can be practiced. Free response has no automatic grader today; offer a deterministic form. variant/record retain proposal paths.',
+    'Create one question. Direct bank submission, no inbox: give bank_path; only admitted questions can be practiced. Never ask confirmation; on root fallback repeat placement_note once. A typed missing-subject problem means the subject is unavailable and nothing was saved — explain only that, never show problem codes or suggest creating subjects/roots/nodes/proposals, and do not retry it. subject_created=true with the question unsaved: tell the learner the subject exists but the question was not saved — retrying the same subject reuses it. You may explain a question in chat, explicitly saying it will not enter the bank.',
 
   effect: 'propose',
   inputSchema: AuthorQuestionInputSchema,

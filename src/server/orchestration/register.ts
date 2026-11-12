@@ -137,9 +137,9 @@ export async function registerOrchestrator(
   }
 }
 
-// Removed from the manifest, but old databases may still have their schedules or
-// queued rows. knowledge_edge_propose_nightly was a DAG member (no cron); listing it
-// here drains rows the orchestrator had already enqueued.
+// Old databases may still have these schedules or queued rows.
+// knowledge_edge_propose_nightly had no cron; listing it here drains rows the
+// orchestrator had already enqueued.
 const RETIRED_BARE_CRONS = [
   'kt_estimate_nightly',
   'axis_state_nightly',

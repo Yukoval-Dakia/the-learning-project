@@ -2,13 +2,15 @@ import type { CopilotRunInput } from './copilot-run-input';
 
 export const COPILOT_TURN_CONTEXT_OPEN = '<turn_context>';
 export const COPILOT_TURN_CONTEXT_CLOSE = '</turn_context>';
-export const COPILOT_TURN_CONTEXT_CODEC_VERSION = 'copilot-live-turn-v4';
+export const COPILOT_TURN_CONTEXT_CODEC_VERSION = 'copilot-live-turn-v5';
 
 type TurnContext = {
   readonly v: 1;
   /** YUK-1770 — learner-local today, refreshed EVERY turn so a session resumed
    *  across days never anchors 「下周五」 to a stale date. */
   readonly today: string;
+  /** 「自上条消息以来：……」 — what changed since the cached header was assembled. */
+  readonly since_last_message?: string;
   readonly learner_state?: string;
   readonly backtrace?: string;
   readonly proposal_feedback?: CopilotRunInput['proposal_feedback'];
@@ -49,6 +51,8 @@ export function compileCopilotModelInput(
   options: { includeProposalFeedback?: boolean } = {},
 ): string {
   if (mode === 'cold') {
+    // The pinned header rides conversation_history's 'context' turn in cold mode;
+    // only the raw header is removed from the envelope, its one-line diff is not.
     const { learner_state_header: _learnerStateHeader, ...boundedEnvelope } = input;
     return JSON.stringify({
       ...boundedEnvelope,
@@ -66,6 +70,7 @@ function compileTurnContext(input: CopilotRunInput, includeProposalFeedback: boo
     v: 1,
     today: input.today,
     ...(input.backtrace_digest ? { backtrace: input.backtrace_digest } : {}),
+    ...(input.since_last_message ? { since_last_message: input.since_last_message } : {}),
     ...(input.review_answer ? { review_answer: input.review_answer } : {}),
     ...(input.learner_state_header ? { learner_state: input.learner_state_header } : {}),
     ...(includeProposalFeedback && input.proposal_feedback.length > 0

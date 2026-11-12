@@ -20,6 +20,7 @@ const ProposeVariantOutputSchema = z.object({
     'skipped:max_depth',
     'skipped:variant_chain_terminus',
     'skipped:cause_not_targetable',
+    'skipped:low_cause_confidence',
     'skipped:already_has_variant',
     'skipped:variants_max_reached',
     'failed',

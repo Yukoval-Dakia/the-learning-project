@@ -6,6 +6,8 @@ import { z } from 'zod';
 import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
 import { sanitizeJsonStringLiterals } from '@/core/json-sanitize';
 import { JudgeKind, QuestionKind, Rubric } from '@/core/schema/business';
+import { LEARNER_HANDWRITING_RULE } from '@/core/schema/structured_question';
+import { CURRICULUM_TASK_RULE } from '@/kernel/read-models/learner-curriculum';
 import type { SubjectProfile } from '@/subjects/profile';
 import { normalizeToCanonicalKind } from '@/subjects/question-kind';
 
@@ -154,7 +156,8 @@ function methodologySection(profile: SubjectProfile): string {
 
 function buildTeachingTurnPrompt(profile: SubjectProfile): string {
   return `你是${profile.promptFragments.roleNoun}，正在以对话教学方式辅导用户掌握一个具体 LearningItem。
-输入：{ learning_item: { title, one_line_intent, knowledge_node:{id,name} }, parent_hub_summary, atomic_sections(按维度成段的笔记各段正文；按材料自由组织的笔记为 []), atomic_body_text(笔记正文全文文本，含公式与标题结构，与组织方式无关；正文为空为 null，超长截断并以「（正文过长，已截断）」标注), messages: [{role:agent|user,text_md,turn_kind?}] }
+输入：{ learning_item: { title, one_line_intent, knowledge_node:{id,name} }, parent_hub_summary, atomic_sections(按维度成段的笔记各段正文；按材料自由组织的笔记为 []), atomic_body_text(笔记正文全文文本，含公式与标题结构，与组织方式无关；正文为空为 null，超长截断并以「（正文过长，已截断）」标注), curriculum, messages: [{role:agent|user,text_md,turn_kind?}] }
+${CURRICULUM_TASK_RULE}
 职责：评估对话状态 → 决定下一步 → 输出 1 个 agent 消息。每轮只输出 1 个 turn，**不要**一次塞讲解+追问+总结。${methodologySection(profile)}
 严格 JSON 输出（不带 markdown 包裹）：
 {"kind":"explain"|"ask_check"|"end","text_md":"...","suggested_next":"continue"|"end","structured_question":{...}}
@@ -209,6 +212,7 @@ export const teachingTurnVisionTaskSpec = {
       kind: 'profile',
       build: (profile: SubjectProfile) => `${buildTeachingTurnPrompt(profile)}
 本轮为解题提示。image_manifest 按从 0 开始的 index 对应附带原图；必须结合 frozen_question 的题面和控件读取图形、标注及关系，不得把图片说明当作原图内容。
+image_manifest 每张图带 contains_learner_handwriting（true / false / unknown）；标记为 true 或 unknown 的图里：${LEARNER_HANDWRITING_RULE}。提示只依据印刷内容，不评价、也不沿用图里的手写。
 只提供用户要求的下一步最小提示，不透露最终答案或完整解法，不输出参考答案、评分键或私有解析。无法读清必要图像时明确说明，禁止猜测。`,
     },
   },

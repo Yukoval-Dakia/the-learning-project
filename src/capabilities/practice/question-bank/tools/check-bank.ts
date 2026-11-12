@@ -36,12 +36,27 @@ export const CheckBankInputSchema = z
         z
           .object({
             id: z.string().min(1).max(80),
-            refs: z.array(z.string().min(1)).min(1).max(8),
+            refs: z
+              .array(z.string().min(1))
+              .min(1)
+              .max(8)
+              .describe('Bank refs this check answers.'),
             /** 检查意图的原文记录（进响应回显；v1 不解释 claim，机器语义由 kind 决定）。 */
-            claim: z.string().max(1000).optional(),
-            kind: z.enum(CHECK_BANK_KINDS),
+            claim: z
+              .string()
+              .max(1000)
+              .optional()
+              .describe('Free-text intent echoed into the response; never interpreted.'),
+            kind: z
+              .enum(CHECK_BANK_KINDS)
+              .describe(
+                'same_material_refs (≥2 refs — versioned material ASSET sets identical? asset identity, not "same article") / ref_state (params.assert = is_current default | is_servable — the issuance gate per part; optional params.part_ids checks a nonempty subset, else reports any-part-servable with exact ids) / contract_valid (re-runs publish-time pure validators on the stored version) / material_assets_present (figures/materials present, sha256 matches the version digest).',
+              ),
             /** kind 专属参数（如 ref_state 的断言目标）。 */
-            params: z.record(z.string(), z.unknown()).optional(),
+            params: z
+              .record(z.string(), z.unknown())
+              .optional()
+              .describe('Per-kind parameters (e.g. ref_state assert / part_ids).'),
           })
           .strict(),
       )
@@ -544,7 +559,7 @@ async function executeCheckBank(
 export const checkBankTool: DomainTool<CheckBankInput, CheckBankOutput> = {
   name: 'check_bank',
   description:
-    'Run DETERMINISTIC checks over explicitly specified bank refs (ADR-0072 D5; v1 has NO semantic/model checks). Pick an explicit `kind`: same_material_refs (≥2 refs — versioned material asset sets identical? narrow fact: asset identity, NOT "same article" semantics) / ref_state (params.assert = is_current (default) | is_servable — the issuance gate for each part; optional params.part_ids selects a nonempty subset for one ref, otherwise reports whether any part is servable with its exact IDs) / contract_valid (re-runs the publish-time pure validators over the stored version) / material_assets_present (figures/materials present with sha256 matching the version digest). Free-text claims are echoed, never interpreted — if no kind matches your question the verdict is unknown with the supported-kind list. Each check reports verdict (supported/contradicted/unknown), method, input refs, evidence and limitations; checks answer only the specified refs, never "nothing else in the bank".',
+    'Run DETERMINISTIC checks over explicit bank refs (no semantic/model checks). Free-text claims are echoed, never interpreted — if no kind matches your question the verdict is unknown with the supported-kind list. Each check reports verdict (supported/contradicted/unknown), method, evidence and limitations, and answers only the specified refs — never "nothing else in the bank".',
   effect: 'read',
   inputSchema: CheckBankInputSchema,
   outputSchema: CheckBankOutputSchema,

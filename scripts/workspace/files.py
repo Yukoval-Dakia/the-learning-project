@@ -9,6 +9,7 @@ path's ancestors stay open — directory fds open lazily one level at a time —
 so depth is bounded by the launcher nofile limit, which a deep enough tree can
 still exceed; that fails loudly and stays retryable, never silently partial.
 """
+import hashlib
 import json
 import os
 import stat
@@ -23,6 +24,161 @@ def _open_child(fd, name):
     except PermissionError:
         os.chmod(name, 0o700, dir_fd=fd)
         return os.open(name, _DIR_FLAGS, dir_fd=fd)
+
+
+def _parts(path):
+    if not path or path.startswith('/') or len(path) > 1024:
+        raise ValueError('invalid_workspace_path')
+    parts = path.split('/')
+    if any(p in ('', '.', '..') for p in parts) or len(parts) > 64:
+        raise ValueError('invalid_workspace_path')
+    return parts
+
+
+def _walk(fd, parts):
+    """Open each directory component, anchored and symlink-free."""
+    opened = []
+    for name in parts:
+        nxt = _open_child(fd, name)
+        opened.append(nxt)
+        fd = nxt
+    return opened
+
+
+def _walk_or_make(fd, parts):
+    opened = []
+    for name in parts:
+        try:
+            nxt = _open_child(fd, name)
+        except FileNotFoundError:
+            os.mkdir(name, 0o700, dir_fd=fd)
+            nxt = os.open(name, _DIR_FLAGS, dir_fd=fd)
+        opened.append(nxt)
+        fd = nxt
+    return opened
+
+
+def _close_all(fds):
+    for fd in reversed(fds):
+        os.close(fd)
+
+
+def _file_op(root_fd, op, path):
+    parts = _parts(path)
+    parents, leaf = parts[:-1], parts[-1]
+    if op == 'write':
+        fds = _walk_or_make(root_fd, parents)
+        try:
+            fd = os.open(leaf, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW,
+                         0o600, dir_fd=fds[-1] if fds else root_fd)
+            data = sys.stdin.buffer.read()
+            digest = hashlib.sha256(data).hexdigest()
+            with os.fdopen(fd, 'wb') as f:
+                f.write(data)
+            return {'bytes': len(data), 'sha256': digest}
+        finally:
+            _close_all(fds)
+    fds = _walk(root_fd, parents)
+    parent = fds[-1] if fds else root_fd
+    try:
+        if op == 'read':
+            fd = os.open(leaf, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=parent)
+            with os.fdopen(fd, 'rb') as f:
+                data = f.read()
+            # Header line carries the full digest/length; the body follows so a
+            # truncated downstream capture still proves what the file was.
+            sys.stdout.write(json.dumps({'bytes': len(data),
+                                         'sha256': hashlib.sha256(data).hexdigest()}) + '\n')
+            sys.stdout.flush()
+            sys.stdout.buffer.write(data)
+            return None
+        if op == 'list':
+            fd = os.open(leaf, _DIR_FLAGS, dir_fd=parent)
+            entries = []
+            with os.scandir(fd) as it:
+                for entry in it:
+                    info = entry.stat(follow_symlinks=False)
+                    kind = ('dir' if stat.S_ISDIR(info.st_mode)
+                            else 'link' if stat.S_ISLNK(info.st_mode) else 'file')
+                    entries.append({'name': entry.name, 'kind': kind, 'size': info.st_size})
+                    if len(entries) >= 2000:
+                        break
+            os.close(fd)
+            entries.sort(key=lambda e: e['name'])
+            return {'entries': entries, 'truncated': len(entries) >= 2000}
+        if op == 'delete':
+            try:
+                fd = os.open(leaf, _DIR_FLAGS, dir_fd=parent)
+            except OSError as e:
+                if e.errno == 2:
+                    raise  # ENOENT: nothing to delete
+                # ENOTDIR/ELOOP: regular file or symlink — unlink removes the
+                # name itself, never a followed target.
+                os.unlink(leaf, dir_fd=parent)
+                return {'removed': 'file'}
+            remove(fd)
+            os.close(fd)
+            os.rmdir(leaf, dir_fd=parent)
+            return {'removed': 'dir'}
+        raise ValueError('invalid_workspace_operation')
+    finally:
+        _close_all(fds)
+
+
+def _version():
+    import importlib
+    import platform
+    import subprocess
+    bash = subprocess.run(['/bin/bash', '--version'], capture_output=True, text=True)
+    versions = {
+        'python': platform.python_version(),
+        'bash': bash.stdout.splitlines()[0] if bash.stdout else 'unknown',
+    }
+    # Imported, not read from package metadata: evidence names what a script's
+    # own `import` resolves to under the same -I path.
+    for name in ('sympy', 'numpy'):
+        try:
+            versions[name] = importlib.import_module(name).__version__
+        except Exception:
+            versions[name] = 'unavailable'
+    return versions
+
+
+_SESSION_CAP = 64 * 1024 * 1024
+
+
+def _exec_policed(runtime):
+    """Interpreter wrapper that enforces the per-owner byte cap during the run.
+
+    RLIMIT_FSIZE only bounds a single file; post-run accounting cannot undo an
+    overshoot. This wrapper polls the anchored usage walk and kills the whole
+    group the moment the cap is crossed, so one run can never exceed the
+    session budget and have it measured only afterwards.
+    """
+    import subprocess
+    import time
+    cmd = ['/bin/bash', '--noprofile', '--norc', '-s'] if runtime == 'bash' else [
+        '/usr/bin/python3', '-I', '-']
+    root = os.open('.', _DIR_FLAGS)
+    try:
+        proc = subprocess.Popen(cmd)
+        try:
+            while proc.poll() is None:
+                if usage(root) > _SESSION_CAP:
+                    # Exit 98 is the explicit quota signal: the C supervisor
+                    # reaps this whole process group (interpreter + helpers)
+                    # and forwards the code — output text alone is forgeable
+                    # by the script, a wrapper exit code is not.
+                    sys.stderr.write('workspace_quota_exceeded\n')
+                    sys.stderr.flush()
+                    return 98
+                time.sleep(0.2)
+            return proc.returncode
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+    finally:
+        os.close(root)
 
 
 def usage(root_fd):
@@ -76,7 +232,7 @@ def remove(root_fd):
 if sys.argv[1] == 'usage':
     root = os.open('.', _DIR_FLAGS)
     try:
-        print(json.dumps({'bytes': usage(root)}))
+        print(json.dumps({'bytes': usage(root), 'cap': _SESSION_CAP}))
     finally:
         os.close(root)
 elif sys.argv[1] == 'remove':
@@ -92,5 +248,17 @@ elif sys.argv[1] == 'remove':
     finally:
         os.close(root)
         os.close(parent)
+elif sys.argv[1] == 'version':
+    print(json.dumps(_version()))
+elif sys.argv[1] == 'file':
+    root = os.open('.', _DIR_FLAGS)
+    try:
+        result = _file_op(root, sys.argv[2], sys.argv[3])
+        if result is not None:
+            print(json.dumps(result))
+    finally:
+        os.close(root)
+elif sys.argv[1] == 'exec':
+    sys.exit(_exec_policed(sys.argv[2]))
 else:
     raise ValueError('invalid_workspace_operation')

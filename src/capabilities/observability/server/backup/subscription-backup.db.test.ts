@@ -60,7 +60,6 @@ const liveSubscriberIdentities = [
   ['agency.probe-result-reconcile', 1],
   ['agency.question-pool-gap', 1],
   ['agency.steering-changed', 1],
-  ['notes.dreaming-note-refresh', 1],
   ['notes.mastery-progress-note-refine', 1],
   ['practice.backtrace', 1],
   ['practice.failure-learning-attempt', 3],

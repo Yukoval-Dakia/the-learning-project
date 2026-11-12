@@ -35,6 +35,7 @@ export interface InterventionAuthorStages {
     runTaskFn: PackageAuthorRun,
     context: InterventionAuthoringContextT,
     subjectProfile: SubjectProfile,
+    db: Db,
   ) => Promise<AuthorStageResult>;
   reviewPackage: (input: {
     db: Db;
@@ -92,7 +93,7 @@ export async function authorInterventionPackage(
   const subjectProfile = await resolveSubjectProfileForKnowledgeIdsStrict(db, [
     context.snapshot.conjecture.knowledge_id,
   ]);
-  const authored = await stages.authorPackage(runTaskFn, context, subjectProfile);
+  const authored = await stages.authorPackage(runTaskFn, context, subjectProfile, db);
   if (authored.status === 'invalid') {
     return InterventionPreparationAttempt.parse({
       kind: 'author_failed',

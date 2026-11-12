@@ -3,20 +3,30 @@ import { getCurrentFailureAttemptsForDerivation } from '@/kernel/read-models/fai
 // Knowledge graph read tools. Traversal stays server-side so callers get bounded,
 // named context instead of raw rows.
 
-import { and, inArray, isNull, or } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, or } from 'drizzle-orm';
 import { z } from 'zod';
+import { masteryDecayBucket } from '@/core/mastery-freshness';
 import type { Db } from '@/db/client';
-import { knowledge, knowledge_edge } from '@/db/schema';
+import { event, knowledge, knowledge_edge } from '@/db/schema';
+import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
+import type { FailureAttempt } from '@/kernel/read-models/failure-attempts';
+import { loadKnowledgeFailureRuns } from '@/kernel/read-models/learner-activity';
 import {
   abilityReadingsByIdOrFail,
   readLearnerJudgments,
 } from '@/kernel/read-models/learner-judgment';
+import { type MasteryStateRow, getMasteryStates } from '@/kernel/read-models/mastery-state';
 import { KNOWLEDGE_EXCERPT_MAX, TOOL_COURTESY_DEFAULTS } from '@/kernel/tools/budgets';
 import type { DomainTool, ToolContext } from './types';
 
 const TEXT_SNIPPET_MAX = KNOWLEDGE_EXCERPT_MAX;
 const MAX_NODES = 60;
 const QUERY_FAILURE_LIMIT = 10;
+const MASTERY_WEAK_BELOW = 0.55;
+const STREAK_WEAK_AT_LEAST = 2;
+const ERROR_RATE_WEAK_AT_LEAST = 0.5;
+const ERROR_RATE_MIN_GRADED = 2;
+const REPEATED_CAUSE_AT_LEAST = 2;
 // Window behind the recent_failure_count_30d stat, owned solely by this reader:
 // the stat name fixes it at 30 days and no other consumer derives from it, so
 // keeping the literal inline cannot drift against a shared definition.
@@ -130,6 +140,171 @@ function recentFailureCutoff(now = new Date()): Date {
   return new Date(now.getTime() - RECENT_FAILURE_WINDOW_MS);
 }
 
+type ModelSignal<T> = {
+  value: T | null;
+  known: boolean;
+  source: string;
+  asOf: string;
+  missingReason: string | null;
+};
+
+function knownSignal<T>(value: T, source: string, asOf: string): ModelSignal<T> {
+  return { value, known: true, source, asOf, missingReason: null };
+}
+
+function unknownSignal<T>(source: string, asOf: string, missingReason: string): ModelSignal<T> {
+  return { value: null, known: false, source, asOf, missingReason };
+}
+
+function modelSignalSchema<T extends z.ZodType>(value: T) {
+  return z.object({
+    value: value.nullable(),
+    known: z.boolean(),
+    source: z.string(),
+    asOf: z.string().datetime(),
+    missingReason: z.string().nullable(),
+  });
+}
+
+const FailureCauseSignalSchema = modelSignalSchema(z.string());
+const EvidenceEventIdsSignalSchema = modelSignalSchema(z.array(z.string()));
+const WeaknessReadingsSchema = z.object({
+  mastery: modelSignalSchema(z.number()),
+  consecutive_errors: modelSignalSchema(z.number().int().nonnegative()),
+  error_rate: modelSignalSchema(z.number()),
+  trend: modelSignalSchema(z.enum(['improving', 'flat', 'worsening'])),
+  days_since_practice: modelSignalSchema(z.number().int().nonnegative()),
+  cause_frequency: modelSignalSchema(
+    z.array(z.object({ cause: z.string(), count: z.number().int().positive() })),
+  ),
+});
+type WeaknessReadings = z.infer<typeof WeaknessReadingsSchema>;
+
+function failureCauseSignal(row: FailureAttempt, asOf: string): ModelSignal<string> {
+  const cause = effectiveCauseForFailureAttempt(row);
+  if (!cause) return unknownSignal('failure_attempt', asOf, 'no_cause_attribution');
+  return knownSignal(
+    cause.primary_category,
+    cause.source === 'user' ? 'user_cause.primary_category' : 'judge.cause.primary_category',
+    cause.created_at.toISOString(),
+  );
+}
+
+function causeFrequency(
+  failures: FailureAttempt[],
+  ids: ReadonlySet<string>,
+): Map<string, Array<{ cause: string; count: number }>> {
+  const counts = new Map<string, Map<string, number>>();
+  for (const failure of failures) {
+    const cause = effectiveCauseForFailureAttempt(failure);
+    if (!cause) continue;
+    for (const id of new Set(failure.referenced_knowledge_ids)) {
+      if (!ids.has(id)) continue;
+      const byCause = counts.get(id) ?? new Map<string, number>();
+      byCause.set(cause.primary_category, (byCause.get(cause.primary_category) ?? 0) + 1);
+      counts.set(id, byCause);
+    }
+  }
+  const out = new Map<string, Array<{ cause: string; count: number }>>();
+  for (const [id, byCause] of counts) {
+    out.set(
+      id,
+      [...byCause]
+        .map(([cause, count]) => ({ cause, count }))
+        .sort((a, b) => b.count - a.count || a.cause.localeCompare(b.cause)),
+    );
+  }
+  return out;
+}
+
+function daysSincePractice(
+  state: MasteryStateRow | undefined,
+  asOf: Date,
+  asOfIso: string,
+): ModelSignal<number> {
+  const source = 'mastery_state.last_outcome_at';
+  if (!state) return unknownSignal(source, asOfIso, 'no_mastery_state');
+  if (!state.last_outcome_at || state.evidence_count <= 0) {
+    return unknownSignal(source, asOfIso, 'no_dated_practice');
+  }
+  const days = Math.max(
+    0,
+    Math.floor((asOf.getTime() - state.last_outcome_at.getTime()) / 86_400_000),
+  );
+  return knownSignal(days, source, asOfIso);
+}
+
+function readingsForNode(
+  mastery: number | null | undefined,
+  state: MasteryStateRow | undefined,
+  streak: number | undefined,
+  causes: Array<{ cause: string; count: number }> | undefined,
+  asOf: Date,
+  asOfIso: string,
+): WeaknessReadings {
+  const graded = state ? state.success_count + state.fail_count : 0;
+  const trendSource = 'mastery_state.last_theta_delta';
+  let trend: ModelSignal<'improving' | 'flat' | 'worsening'>;
+  if (!state || state.last_theta_delta == null) {
+    trend = unknownSignal(trendSource, asOfIso, state ? 'no_theta_delta' : 'no_mastery_state');
+  } else if (state.last_theta_delta < 0) {
+    trend = knownSignal('worsening', trendSource, asOfIso);
+  } else if (state.last_theta_delta > 0) {
+    trend = knownSignal('improving', trendSource, asOfIso);
+  } else {
+    trend = knownSignal('flat', trendSource, asOfIso);
+  }
+  const rateSource = 'mastery_state.success_count_fail_count';
+  return {
+    mastery:
+      typeof mastery === 'number'
+        ? knownSignal(mastery, 'learner_judgment.ability.mastery', asOfIso)
+        : unknownSignal('learner_judgment.ability.mastery', asOfIso, 'no_observed_mastery'),
+    consecutive_errors:
+      streak === undefined
+        ? unknownSignal('learner_answer_failure_run', asOfIso, 'no_graded_answer_in_scan_window')
+        : knownSignal(streak, 'learner_answer_failure_run', asOfIso),
+    error_rate: !state
+      ? unknownSignal(rateSource, asOfIso, 'no_mastery_state')
+      : graded < ERROR_RATE_MIN_GRADED
+        ? unknownSignal(rateSource, asOfIso, 'fewer_than_2_graded_outcomes')
+        : knownSignal(state.fail_count / graded, rateSource, asOfIso),
+    trend,
+    days_since_practice: daysSincePractice(state, asOf, asOfIso),
+    cause_frequency: knownSignal(causes ?? [], 'failure_attempts_30d.effective_cause', asOfIso),
+  };
+}
+
+function nodeIsWeak(readings: WeaknessReadings, asOf: Date): boolean {
+  const mastery = readings.mastery;
+  if (mastery.known && mastery.value != null && mastery.value < MASTERY_WEAK_BELOW) return true;
+  const streak = readings.consecutive_errors;
+  if (streak.known && streak.value != null && streak.value >= STREAK_WEAK_AT_LEAST) return true;
+  const rate = readings.error_rate;
+  if (rate.known && rate.value != null && rate.value >= ERROR_RATE_WEAK_AT_LEAST) return true;
+  if (readings.trend.known && readings.trend.value === 'worsening') return true;
+  const days = readings.days_since_practice;
+  if (days.known && days.value != null) {
+    const at = new Date(asOf.getTime() - days.value * 86_400_000);
+    if (masteryDecayBucket(1, at, asOf) === 'stale') return true;
+  }
+  const causes = readings.cause_frequency;
+  if (causes.known && causes.value?.some((row) => row.count >= REPEATED_CAUSE_AT_LEAST))
+    return true;
+  return false;
+}
+
+function countFailures(rows: FailureAttempt[], ids: string[]): Map<string, number> {
+  const idSet = new Set(ids);
+  const counts = new Map(ids.map((id) => [id, 0]));
+  for (const row of rows) {
+    for (const id of row.referenced_knowledge_ids) {
+      if (idSet.has(id)) counts.set(id, (counts.get(id) ?? 0) + 1);
+    }
+  }
+  return counts;
+}
+
 /** Mastery band plus the contract's unified evidence clocks. */
 type MasteryMapEntry = {
   mastery: number | null;
@@ -167,27 +342,137 @@ async function loadMasteryMap(db: Db, rows: KnowledgeRow[]): Promise<Map<string,
 async function loadRecentFailures(
   db: Db,
   ids: string[],
+  asOf: string,
   limit = 10,
 ): Promise<
   Array<{
     event_id: string;
     question_id: string;
-    cause: string | null;
+    cause: ModelSignal<string>;
     created_at: string;
     excerpt: string;
   }>
 > {
   if (ids.length === 0) return [];
+  const idSet = new Set(ids);
   const rows = (await getCurrentFailureAttemptsForDerivation(db))
-    .filter((row) => row.referenced_knowledge_ids.some((id) => ids.includes(id)))
+    .filter((row) => row.referenced_knowledge_ids.some((id) => idSet.has(id)))
     .slice(0, limit);
   return rows.map((row) => ({
     event_id: row.attempt_event_id,
     question_id: row.question_id,
-    cause: null,
+    cause: failureCauseSignal(row, asOf),
     created_at: row.created_at.toISOString(),
     excerpt: excerpt(row.answer_md),
   }));
+}
+
+async function loadWindowFailures(db: Db, asOf: Date): Promise<FailureAttempt[]> {
+  return getCurrentFailureAttemptsForDerivation(db, { since: recentFailureCutoff(asOf) });
+}
+
+async function loadWeaknessReadings(
+  db: Db,
+  rows: KnowledgeRow[],
+  mastery: Map<string, MasteryMapEntry>,
+  asOf: Date,
+  failures: FailureAttempt[],
+): Promise<Map<string, WeaknessReadings>> {
+  const ids = rows.map((row) => row.id);
+  const asOfIso = asOf.toISOString();
+  const [states, streaks] = await Promise.all([
+    getMasteryStates(db, ids),
+    loadKnowledgeFailureRuns(db),
+  ]);
+  const frequency = causeFrequency(failures, new Set(ids));
+  const out = new Map<string, WeaknessReadings>();
+  for (const id of ids) {
+    out.set(
+      id,
+      readingsForNode(
+        mastery.get(id)?.mastery,
+        states.get(id),
+        streaks.get(id)?.count,
+        frequency.get(id),
+        asOf,
+        asOfIso,
+      ),
+    );
+  }
+  return out;
+}
+
+const ProposalEvidenceSchema = z.object({
+  ai_proposal: z.object({
+    evidence_refs: z.array(z.object({ kind: z.string(), id: z.string() })),
+  }),
+});
+
+async function loadEdgeEvidence(
+  db: Db,
+  edgeIds: string[],
+  asOf: string,
+): Promise<Map<string, ModelSignal<string[]>>> {
+  const source = 'knowledge_edge_proposal.evidence_refs';
+  const out = new Map<string, ModelSignal<string[]>>();
+  for (const id of edgeIds) out.set(id, unknownSignal(source, asOf, 'no_generate_event'));
+  if (edgeIds.length === 0) return out;
+  const generates = await db
+    .select({
+      subject_id: event.subject_id,
+      payload: event.payload,
+      created_at: event.created_at,
+      id: event.id,
+    })
+    .from(event)
+    .where(
+      and(
+        eq(event.action, 'generate'),
+        eq(event.subject_kind, 'knowledge_edge'),
+        eq(event.outcome, 'success'),
+        inArray(event.subject_id, edgeIds),
+      ),
+    )
+    .orderBy(desc(event.created_at), desc(event.id));
+  const proposeByEdge = new Map<string, string | null>();
+  for (const row of generates) {
+    if (proposeByEdge.has(row.subject_id)) continue;
+    const proposeId = (row.payload as { propose_event_id?: unknown }).propose_event_id;
+    proposeByEdge.set(
+      row.subject_id,
+      typeof proposeId === 'string' && proposeId ? proposeId : null,
+    );
+  }
+  const proposeIds = [...proposeByEdge.values()].filter((id): id is string => id != null);
+  const proposes =
+    proposeIds.length === 0
+      ? []
+      : await db
+          .select({ id: event.id, payload: event.payload, created_at: event.created_at })
+          .from(event)
+          .where(inArray(event.id, proposeIds));
+  const proposeById = new Map(proposes.map((row) => [row.id, row]));
+  for (const [edgeId, proposeId] of proposeByEdge) {
+    if (!proposeId) {
+      out.set(edgeId, unknownSignal(source, asOf, 'generate_without_proposal'));
+      continue;
+    }
+    const propose = proposeById.get(proposeId);
+    const parsed = propose ? ProposalEvidenceSchema.safeParse(propose.payload) : null;
+    if (!propose || !parsed?.success) {
+      out.set(edgeId, unknownSignal(source, asOf, 'proposal_evidence_unreadable'));
+      continue;
+    }
+    const ids = [
+      ...new Set(
+        parsed.data.ai_proposal.evidence_refs
+          .filter((ref) => ref.kind === 'event')
+          .map((ref) => ref.id),
+      ),
+    ];
+    out.set(edgeId, knownSignal(ids, source, propose.created_at.toISOString()));
+  }
+  return out;
 }
 
 async function loadRecentFailureCounts(
@@ -264,13 +549,18 @@ type OverviewOutput = z.infer<typeof OverviewOutputSchema>;
 
 async function executeOverview(ctx: ToolContext, raw: OverviewInput): Promise<OverviewOutput> {
   const input = OverviewInputSchema.parse(raw);
+  const asOf = new Date();
   const rows = await loadKnowledgeRows(ctx.db, input.subjectId);
   const ids = rows.map((row) => row.id);
   const edges = await loadEdges(ctx.db, ids);
   const mastery = input.includeWeaknessSummary ? await loadMasteryMap(ctx.db, rows) : new Map();
+  const windowFailures = input.includeWeaknessSummary ? await loadWindowFailures(ctx.db, asOf) : [];
   const recentFailureCounts = input.includeWeaknessSummary
-    ? await loadRecentFailureCounts(ctx.db, ids, recentFailureCutoff())
+    ? countFailures(windowFailures, ids)
     : new Map<string, number>();
+  const weakness = input.includeWeaknessSummary
+    ? await loadWeaknessReadings(ctx.db, rows, mastery, asOf, windowFailures)
+    : new Map<string, WeaknessReadings>();
   const roots = rows.filter((row) => !row.parent_id || !ids.includes(row.parent_id));
   const clusters = roots.map((root) => {
     const descendantIds = new Set<string>([root.id]);
@@ -295,8 +585,8 @@ async function executeOverview(ctx: ToolContext, raw: OverviewInput): Promise<Ov
     } as OverviewOutput['clusters'][number];
     if (input.includeWeaknessSummary) {
       cluster.weak_node_count = [...descendantIds].filter((id) => {
-        const m = mastery.get(id)?.mastery;
-        return typeof m === 'number' && m < 0.55;
+        const readings = weakness.get(id);
+        return readings ? nodeIsWeak(readings, asOf) : false;
       }).length;
       cluster.recent_failure_count_30d = [...descendantIds].reduce(
         (sum, id) => sum + (recentFailureCounts.get(id) ?? 0),
@@ -320,14 +610,22 @@ async function executeOverview(ctx: ToolContext, raw: OverviewInput): Promise<Ov
 const NonEmptyKnowledgeSelectorSchema = z.string().trim().min(1);
 
 const QueryKnowledgeInputSchema = z.object({
-  subjectId: NonEmptyKnowledgeSelectorSchema,
-  query: NonEmptyKnowledgeSelectorSchema.optional(),
-  nodeId: NonEmptyKnowledgeSelectorSchema.optional(),
+  subjectId: NonEmptyKnowledgeSelectorSchema.describe('Domain scope (e.g. math), never a node id.'),
+  query: NonEmptyKnowledgeSelectorSchema.optional().describe(
+    'Text match — mutually exclusive with nodeId.',
+  ),
+  nodeId: NonEmptyKnowledgeSelectorSchema.optional().describe(
+    'Exact node selector — mutually exclusive with query.',
+  ),
   include: z
     .array(z.enum(['ancestors', 'children', 'neighbors', 'stats', 'recent_failures']))
-    .optional(),
-  relationTypes: z.array(NonEmptyKnowledgeSelectorSchema).optional(),
-  limit: z.number().int().min(1).max(50).optional(),
+    .optional()
+    .describe('Extra layers; unrequested layers are not observed.'),
+  relationTypes: z
+    .array(NonEmptyKnowledgeSelectorSchema)
+    .optional()
+    .describe('Mesh edge types to include.'),
+  limit: z.number().int().min(1).max(50).optional().describe('1–50.'),
 });
 
 const QueryKnowledgeOutputSchema = z.object({
@@ -389,7 +687,7 @@ const QueryKnowledgeOutputSchema = z.object({
       to_knowledge_id: z.string(),
       relation_type: z.string(),
       weight: z.number(),
-      evidence_event_ids: z.array(z.string()),
+      evidence_event_ids: EvidenceEventIdsSignalSchema,
     }),
   ),
   recent_failures: z
@@ -397,7 +695,7 @@ const QueryKnowledgeOutputSchema = z.object({
       z.object({
         event_id: z.string(),
         question_id: z.string(),
-        cause: z.string().nullable(),
+        cause: FailureCauseSignalSchema,
         created_at: z.string(),
         excerpt: z.string(),
       }),
@@ -422,6 +720,7 @@ async function executeQueryKnowledge(
       },
     ]);
   }
+  const asOfIso = new Date().toISOString();
   const limit = input.limit ?? TOOL_COURTESY_DEFAULTS.query_knowledge;
   // [] is the model's spelling for "no filter"; treat it like omission.
   const relationTypes = input.relationTypes?.length ? input.relationTypes : undefined;
@@ -483,10 +782,18 @@ async function executeQueryKnowledge(
     ? await loadRecentFailureCounts(ctx.db, ids, recentFailureCutoff())
     : new Map<string, number>();
   const failures = included.includes('recent_failures')
-    ? await loadRecentFailures(ctx.db, ids, QUERY_FAILURE_LIMIT)
+    ? await loadRecentFailures(ctx.db, ids, asOfIso, QUERY_FAILURE_LIMIT)
     : undefined;
 
   const selectedIds = new Set(ids);
+  const returnedEdges = allEdges.filter(
+    (edge) => selectedIds.has(edge.from_knowledge_id) && selectedIds.has(edge.to_knowledge_id),
+  );
+  const edgeEvidence = await loadEdgeEvidence(
+    ctx.db,
+    returnedEdges.map((edge) => edge.id),
+    asOfIso,
+  );
   const expansionComplete = seedMatches.length <= limit && selected.size <= limit;
   const observationStatus = (section: 'stats' | 'recent_failures') =>
     !included.includes(section)
@@ -533,7 +840,8 @@ async function executeQueryKnowledge(
       'edges cover only the returned nodes' +
       `${relationTypes ? ` and relation types ${relationTypes.join(', ')}` : ''}; ` +
       'stats and recent_failures cover only requested, returned nodes; ' +
-      'absence of nodes, edges, or failures outside this result was not checked.',
+      'absence of nodes, edges, or failures outside this result was not checked. ' +
+      'evidence_event_ids is unknown when the edge has no proposal lineage; an unknown signal is not an empty list.',
     nodes: matches.map((row) => {
       const m = mastery.get(row.id);
       return {
@@ -558,18 +866,16 @@ async function executeQueryKnowledge(
           : {}),
       };
     }),
-    edges: allEdges
-      .filter(
-        (edge) => selectedIds.has(edge.from_knowledge_id) && selectedIds.has(edge.to_knowledge_id),
-      )
-      .map((edge) => ({
-        id: edge.id,
-        from_knowledge_id: edge.from_knowledge_id,
-        to_knowledge_id: edge.to_knowledge_id,
-        relation_type: edge.relation_type,
-        weight: edge.weight,
-        evidence_event_ids: [],
-      })),
+    edges: returnedEdges.map((edge) => ({
+      id: edge.id,
+      from_knowledge_id: edge.from_knowledge_id,
+      to_knowledge_id: edge.to_knowledge_id,
+      relation_type: edge.relation_type,
+      weight: edge.weight,
+      evidence_event_ids:
+        edgeEvidence.get(edge.id) ??
+        unknownSignal('knowledge_edge_proposal.evidence_refs', asOfIso, 'no_generate_event'),
+    })),
     ...(failures ? { recent_failures: failures } : {}),
   });
 }
@@ -616,12 +922,15 @@ const ExpandOutputSchema = z.object({
       z.object({
         event_id: z.string(),
         question_id: z.string(),
-        cause: z.string().nullable(),
+        cause: FailureCauseSignalSchema,
         excerpt: z.string(),
       }),
     ),
     weak_points: z.array(
-      z.object({ knowledge_id: z.string(), signal: z.string(), score: z.number() }),
+      z.object({
+        knowledge_id: z.string(),
+        readings: WeaknessReadingsSchema,
+      }),
     ),
   }),
 });
@@ -691,15 +1000,23 @@ async function executeExpand(ctx: ToolContext, raw: ExpandInput): Promise<Expand
   }
   const selectedIds = [...selected.keys()].slice(0, maxNodes);
   const selectedSet = new Set(selectedIds);
+  const asOf = new Date();
   const failures = included.includes('recent_failures')
-    ? await loadRecentFailures(ctx.db, selectedIds, 10)
+    ? await loadRecentFailures(ctx.db, selectedIds, asOf.toISOString(), 10)
     : [];
+  const masteryRows = selectedIds.map((id) => byId.get(id) as KnowledgeRow);
   const mastery = included.includes('mastery')
-    ? await loadMasteryMap(
-        ctx.db,
-        selectedIds.map((id) => byId.get(id) as KnowledgeRow),
-      )
+    ? await loadMasteryMap(ctx.db, masteryRows)
     : new Map();
+  const weakness = included.includes('mastery')
+    ? await loadWeaknessReadings(
+        ctx.db,
+        masteryRows,
+        mastery,
+        asOf,
+        await loadWindowFailures(ctx.db, asOf),
+      )
+    : new Map<string, WeaknessReadings>();
 
   return ExpandOutputSchema.parse({
     center: {
@@ -749,12 +1066,11 @@ async function executeExpand(ctx: ToolContext, raw: ExpandInput): Promise<Expand
         cause: f.cause,
         excerpt: f.excerpt,
       })),
-      weak_points: [...mastery.entries()]
-        .filter(([, m]) => typeof m.mastery === 'number' && (m.mastery as number) < 0.55)
-        .map(([knowledgeId, m]) => ({
+      weak_points: [...weakness.entries()]
+        .filter(([, readings]) => nodeIsWeak(readings, asOf))
+        .map(([knowledgeId, readings]) => ({
           knowledge_id: knowledgeId,
-          signal: 'low_mastery',
-          score: m.mastery ?? 0,
+          readings,
         })),
     },
   });
@@ -835,7 +1151,7 @@ async function executePaths(ctx: ToolContext, raw: PathsInput): Promise<PathsOut
 export const getSubjectGraphOverviewTool: DomainTool<OverviewInput, OverviewOutput> = {
   name: 'get_subject_graph_overview',
   description:
-    'Read a compact subject knowledge graph overview: roots, relation legend, clusters, and reading hint.',
+    'Read a compact subject knowledge graph overview: roots, relation legend, clusters, and reading hint. weak_node_count includes low mastery and also a consecutive-error run, a high error rate, a worsening theta move, a stale practice gap, or a cause repeated in 30 days. Unknown readings are not zero. Do not tell the learner those counts.',
   effect: 'read',
   inputSchema: OverviewInputSchema,
   outputSchema: OverviewOutputSchema,
@@ -850,7 +1166,7 @@ export const getSubjectGraphOverviewTool: DomainTool<OverviewInput, OverviewOutp
 export const queryKnowledgeTool: DomainTool<QueryKnowledgeInput, QueryKnowledgeOutput> = {
   name: 'query_knowledge',
   description:
-    'Find active knowledge nodes by id or text inside one effective subject domain and return path, local edge counts, optional stats, and recent failure snippets. subjectId is the domain scope (for example math/yuwen), never a node id. nodeId and query are mutually exclusive exact selectors. Empty nodes means no active match in that exact domain/query scope; it cannot prove global absence, archived absence, or that a node never existed. edges only cover returned active nodes and requested relation types; an empty edge list is not global absence. Unrequested stats/recent_failures are not observed, never zero or absent failures. Read query_scope, lookup_status, coverage, and claim_boundaries before making a negative or complete-expansion claim.',
+    'Find active knowledge nodes by id or text inside one effective subject domain; returns path, local edge counts and requested layers. Empty nodes means no active match in that exact scope — never proof of global or archived absence, or that a node never existed; edges cover returned nodes only. recent_failures.cause is the effective attribution (learner over judge), null when none was recorded; edges.evidence_event_ids is unknown, not empty, when lineage is unknown. Do not tell the learner evidence-event counts. Read query_scope, lookup_status, coverage and claim_boundaries before any negative or complete-expansion claim.',
   effect: 'read',
   inputSchema: QueryKnowledgeInputSchema,
   outputSchema: QueryKnowledgeOutputSchema,
@@ -866,7 +1182,7 @@ export const queryKnowledgeTool: DomainTool<QueryKnowledgeInput, QueryKnowledgeO
 export const expandKnowledgeSubgraphTool: DomainTool<ExpandInput, ExpandOutput> = {
   name: 'expand_knowledge_subgraph',
   description:
-    'Read a bounded local graph around one knowledge node: ancestors, children, mesh neighbors, and optional evidence.',
+    'Read a bounded local graph around one knowledge node: ancestors, children, mesh neighbors, and optional evidence. weak_points carry mastery, consecutive errors, error rate, trend, days since practice, and 30-day cause frequency. A node is listed when any known reading is weak, not only when mastery is below 0.55. Unknown readings stay null. Do not tell the learner those counts.',
   effect: 'read',
   inputSchema: ExpandInputSchema,
   outputSchema: ExpandOutputSchema,

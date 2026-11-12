@@ -26,14 +26,25 @@ import {
 import { withFrozenPaperReopen } from '../assessment/paper-session-transition';
 import { isPaperIntentSource } from '../paper-intent-sources';
 
-// ---------- summary dispatch contract (moved from api/session-end.ts) ----------
+// ---------- summary dispatch contract ----------
 
 export async function enqueueReviewSessionSummary(sessionId: string): Promise<void> {
   // Best-effort: closing the session succeeds even when pg-boss is unavailable.
   if (!shouldEnqueueBackgroundJobs()) return;
   try {
     const boss = await getStartedBoss();
-    await boss.send('session_summary', { session_id: sessionId });
+    // The just-committed close bump is this close's identity: a later close of the
+    // same reopened session has a higher version, so its delayed follow-ups get
+    // their own job ids instead of colliding with this close's retained ones.
+    const rows = await db
+      .select({ version: learning_session.version })
+      .from(learning_session)
+      .where(eq(learning_session.id, sessionId))
+      .limit(1);
+    await boss.send('session_summary', {
+      session_id: sessionId,
+      ...(rows[0] ? { close_version: rows[0].version } : {}),
+    });
   } catch (err) {
     console.warn(`session_summary enqueue failed for ${sessionId}:`, err);
   }

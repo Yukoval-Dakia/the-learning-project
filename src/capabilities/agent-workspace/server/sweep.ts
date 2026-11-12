@@ -93,10 +93,11 @@ export async function sweepAgentWorkspaces(
     const owner: WorkspaceOwner = { kind: row.owner_kind, id: row.owner_id };
     try {
       if (row.owner_kind === 'task') {
+        const anchor = row.claim_run_id ?? row.owner_id;
         const [run] = await db
           .select({ status: ai_task_runs.status })
           .from(ai_task_runs)
-          .where(eq(ai_task_runs.id, row.owner_id))
+          .where(eq(ai_task_runs.id, anchor))
           .limit(1);
         if (!run) {
           // No run row means we cannot prove the task ended — keep the directory
@@ -124,12 +125,10 @@ export async function sweepAgentWorkspaces(
         )
         .limit(1);
       if (!session) {
-        // Same proof rule as task owners: a vanished owner row is not evidence
-        // the workspace is safe to remove.
-        await db
-          .update(agent_workspace)
-          .set({ last_error: 'workspace_owner_unverifiable' })
-          .where(and(eq(agent_workspace.id, row.id), isNull(agent_workspace.last_error)));
+        // A physically deleted conversation row can never be claimed again;
+        // the directory is reclaimable rather than an unverifiable orphan.
+        const before = await requestWorkspaceDeletion(db, owner, 'deleted');
+        if (before?.state === 'revoking') report.requested.deleted += 1;
         continue;
       }
       if (session.deleting) {

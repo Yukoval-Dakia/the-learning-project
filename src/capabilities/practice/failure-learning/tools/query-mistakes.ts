@@ -3,6 +3,7 @@
 
 import { and, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
+import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import type { Db } from '@/db/client';
 import { material_fsrs_state, mistake_variant, question } from '@/db/schema';
 import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
@@ -14,7 +15,11 @@ import { loadFailureLearningKnowledgeContext } from '@/kernel/read-models/failur
 import { miscCauseLabelMap, resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
 // P5.1 / — snippet cap + courtesy default sourced from budgets.ts.
 // Both are byte-unchanged from the prior file-local literals (160 / 20).
-import { MISTAKE_PROMPT_SNIPPET_MAX, TOOL_COURTESY_DEFAULTS } from '@/kernel/tools/budgets';
+import {
+  MISTAKE_ANSWER_EXCERPT_MAX,
+  MISTAKE_PROMPT_SNIPPET_MAX,
+  TOOL_COURTESY_DEFAULTS,
+} from '@/kernel/tools/budgets';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
@@ -23,15 +28,46 @@ const PROMPT_SNIPPET_MAX = MISTAKE_PROMPT_SNIPPET_MAX;
 const InputSchema = z.object({
   filter: z
     .object({
-      causeCategoryId: z.string().optional(),
-      knowledgeId: z.string().optional(),
-      dueWithinDays: z.number().int().nonnegative().max(90).optional(),
-      sinceDays: z.number().int().positive().max(180).optional(),
-      limit: z.number().int().min(1).max(50).optional(),
+      causeCategoryId: z
+        .string()
+        .optional()
+        .describe('Only mistakes whose effective cause (user > agent) matches.'),
+      knowledgeId: z
+        .string()
+        .optional()
+        .describe('Only mistakes whose attempt event referenced this knowledge node.'),
+      dueWithinDays: z
+        .number()
+        .int()
+        .nonnegative()
+        .max(90)
+        .optional()
+        .describe('Only mistakes whose FSRS card is due within N days.'),
+      sinceDays: z
+        .number()
+        .int()
+        .positive()
+        .max(180)
+        .optional()
+        .describe('Only attempts created within the last N days.'),
+      limit: z.number().int().min(1).max(50).optional().describe('Default 20.'),
     })
     .optional(),
-  includeVariants: z.boolean().optional(),
-  includeAttribution: z.boolean().optional(),
+  includeVariants: z
+    .boolean()
+    .optional()
+    .describe('true also lists mistake_variant rows per question.'),
+  includeAttribution: z
+    .boolean()
+    .optional()
+    .describe('false skips cause-policy resolution (cheaper; aggregates.by_cause absent).'),
+  // Opt-in: each row also carries bounded excerpts of the learner's answer and
+  // the reference answer, so the caller can tell a wrong-answer shape apart from
+  // a fluke without reading raw attempt events.
+  includeAnswers: z
+    .boolean()
+    .optional()
+    .describe('true adds bounded learner-answer and reference-answer excerpts.'),
 });
 
 const CauseSchema = z.object({
@@ -94,6 +130,9 @@ const MistakeRowSchema = z.object({
   review_state: ReviewStateSchema.nullable(),
   variants: z.array(VariantSchema).optional(),
   knowledge_ids: z.array(z.string()),
+  // Present only with includeAnswers; both are bounded excerpts, not full text.
+  answer_excerpt: z.string().nullable().optional(),
+  reference_excerpt: z.string().nullable().optional(),
 });
 
 const OutputSchema = z.object({
@@ -123,40 +162,42 @@ type Input = z.infer<typeof InputSchema>;
 type Output = z.infer<typeof OutputSchema>;
 
 const DESCRIPTION = [
-  'Read recent failure attempts (mistakes) with optional cause / review-state / variant joins.',
-  'Use this instead of scanning the event table when the user asks "what am I getting wrong" or',
-  'when Dreaming / Coach orchestrators need a ranked candidate list.',
-  '',
-  'Filters compose AND-style:',
-  '- filter.causeCategoryId: keep only mistakes whose effective cause (user > agent) matches.',
-  '- filter.knowledgeId: keep only mistakes whose attempt event referenced this knowledge node.',
-  '- filter.dueWithinDays: keep only mistakes whose FSRS card is due within N days (≤90).',
-  '- filter.sinceDays: only consider attempts created within the last N days (≤180).',
-  '- filter.limit: 1–50, default 20.',
-  '',
-  'Set includeVariants=true to also list mistake_variant rows per question.',
-  'Set includeAttribution=false to skip the cause-policy resolution (cheaper).',
-  'A zero-row result only describes matching failure-attempt rows. It cannot prove a current queue',
-  'or entity failed-status count of zero, and cannot override get_review_due.queue_assertion nulls.',
-  '',
-  'aggregates.by_cause and aggregates.by_knowledge are ChartBlock series over the returned rows:',
-  'x is the human cause label / knowledge-point name, y is the number of failed attempts.',
-  '`counted` is how many attempts the series cover; `truncated` means more matching attempts exist',
-  'beyond the returned limit, so the series describe a recent window, not the whole history.',
-  'These are wrong-answer counts, never the due-review queue size.',
-  'by_cause is absent when includeAttribution=false (no cause was loaded).',
-  'Bind a chart to them with data_source.path=/aggregates/by_cause or /aggregates/by_knowledge.',
-  'chart_bindings lists the paths this result declares as chart-bindable.',
-  'chart_caption is the coverage line the server puts under a bound chart, replacing any caption you wrote.',
+  'Read recent failure attempts (mistakes) with optional cause / review-state / variant joins —',
+  'use this instead of scanning the event table. Filters compose AND-style. A zero-row result',
+  'describes only matching failure-attempt rows: it cannot prove a queue or entity failed-count',
+  'of zero or override get_review_due.queue_assertion nulls. aggregates.* are wrong-answer-count',
+  'ChartBlock series over the returned window (truncated = partial), never the due queue size;',
+  'by_cause is absent when includeAttribution=false. Bind a chart via data_source.path=',
+  '/aggregates/by_cause or /aggregates/by_knowledge (chart_bindings lists declared paths);',
+  'chart_caption is the server coverage line and replaces any caption you wrote.',
 ].join('\n');
 
-async function loadQuestionPrompts(db: Db, questionIds: string[]): Promise<Map<string, string>> {
+interface QuestionPromptRow {
+  prompt_md: string;
+  reference_md: string | null;
+  source: string;
+}
+
+async function loadQuestionPrompts(
+  db: Db,
+  questionIds: string[],
+): Promise<Map<string, QuestionPromptRow>> {
   if (questionIds.length === 0) return new Map();
   const rows = await db
-    .select({ id: question.id, prompt_md: question.prompt_md })
+    .select({
+      id: question.id,
+      prompt_md: question.prompt_md,
+      reference_md: question.reference_md,
+      source: question.source,
+    })
     .from(question)
     .where(inArray(question.id, questionIds));
-  return new Map(rows.map((r) => [r.id, r.prompt_md]));
+  return new Map(
+    rows.map((r) => [
+      r.id,
+      { prompt_md: r.prompt_md, reference_md: r.reference_md ?? null, source: r.source },
+    ]),
+  );
 }
 
 async function loadFsrsStates(
@@ -270,6 +311,20 @@ function causeLabel(input: {
 function shortName(name: string): string {
   const glyphs = Array.from(name);
   return glyphs.length > 30 ? `${glyphs.slice(0, 30).join('')}…` : name;
+}
+
+/**
+ * One-line bounded excerpt. Newlines collapse so a row stays readable in a tool
+ * result, and truncation counts code points so multi-byte math text is not cut
+ * mid-glyph.
+ */
+function excerpt(text: string | null | undefined): string | null {
+  const flat = text?.replace(/\s+/g, ' ').trim() ?? '';
+  if (flat.length === 0) return null;
+  const glyphs = Array.from(flat);
+  return glyphs.length > MISTAKE_ANSWER_EXCERPT_MAX
+    ? `${glyphs.slice(0, MISTAKE_ANSWER_EXCERPT_MAX).join('')}…`
+    : flat;
 }
 
 /** What a bound chart covers: the window only when the rows reach across it, plus every filter. */
@@ -425,7 +480,8 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
 
   const now = Date.now();
   const mistakes = final.map(({ fa, cause }) => {
-    const promptMd = promptMap.get(fa.question_id) ?? '';
+    const questionRow = promptMap.get(fa.question_id);
+    const promptMd = questionRow?.prompt_md ?? '';
     const fsrs = fsrsMap.get(fa.question_id);
     const row: Output['mistakes'][number] = {
       event_id: fa.attempt_event_id,
@@ -454,6 +510,18 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
     };
     if (input.includeVariants) {
       row.variants = variantsMap.get(fa.question_id) ?? [];
+    }
+    if (input.includeAnswers) {
+      // The whole attempt surface of a diagnostic prompt is redacted elsewhere;
+      // withhold both excerpts there, including when no question row proves the source.
+      const answersAllowed =
+        questionRow !== undefined && questionRow.source !== INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE;
+      row.answer_excerpt = answersAllowed ? excerpt(fa.answer_md) : null;
+      // Frozen snapshot first: a reference the learner saw at attempt time beats
+      // today's edited version, which may have moved on.
+      row.reference_excerpt = answersAllowed
+        ? excerpt(fa.question_snapshot?.question.reference_md ?? questionRow.reference_md)
+        : null;
     }
     return row;
   });

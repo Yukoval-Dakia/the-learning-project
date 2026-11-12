@@ -5,6 +5,7 @@ import type { PgBoss } from 'pg-boss';
 import { z } from 'zod';
 import {
   abandonOrphanReviewSession,
+  enqueueReviewSessionSummary,
   selectOrphanReviewCandidates,
 } from '@/capabilities/practice/public';
 import type { Db, Tx } from '@/db/client';
@@ -306,8 +307,12 @@ export async function runReviewOrphanTick(
         }
       }
     }
-    if (outcome.kind === 'abandoned') summary.abandoned++;
-    else if (outcome.kind === 'skipped') summary.skipped++;
+    if (outcome.kind === 'abandoned') {
+      summary.abandoned++;
+      // Same close→summary contract as the live routes: the runner skips sessions
+      // with no learner answers, so enqueue unconditionally. Best-effort, post-commit.
+      await enqueueReviewSessionSummary(candidate.sessionId);
+    } else if (outcome.kind === 'skipped') summary.skipped++;
     else summary.deferred++;
     await boundary({ kind: 'row-committed', tickId: id, sessionId: candidate.sessionId });
   }

@@ -186,7 +186,7 @@ export async function saveResponseDraft(
 
     const groupRef = request.evaluation_group_ref ?? null;
 
-    // 提交 tombstone（P1-3）：submission 行是【该次作答已接收】的持久事实 ——
+    // 提交 tombstone：submission 行是【该次作答已接收】的持久事实 ——
     // saveSubmission 清草稿后，迟到的 debounced autosave 绝不允许把已提交的
     // 作答重建为 live draft。判定按草稿声明的联合组锚点：
     // - 带 ref：同 issuance 同组的提交存在 ⇒ 该次作答已提交，拒收；
@@ -682,7 +682,7 @@ export async function getIssuanceState(
     ? await readObservedAdmissionGeneration(db, issuanceId, admissionGenerationFallback)
     : null;
 
-  // tombstone 读侧（P1-3）：草稿声明的联合组已有提交 —— 或未定组草稿撞上本
+  // tombstone 读侧：草稿声明的联合组已有提交 —— 或未定组草稿撞上本
   // issuance 的已接收提交 —— 都不能再报作 pending（修复前遗留的脏草稿行也
   // 被同一谓词压住）。
   const submissionGroups = new Set(submissions.map((s) => s.evaluation_group_id));

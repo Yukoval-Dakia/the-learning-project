@@ -178,9 +178,9 @@ export const knowledgeCapability = defineCapability({
           import('./jobs/frontier_fill_nightly').then((m) => m.buildFrontierFillNightlyHandler),
       },
       {
-        // Multi-step maintenance producer and the nightly mesh-edge proposer: it reads the
-        // whole tree plus recent failures and proposes edges via propose_knowledge_edge.
-        // No real upstream, which is why it is a root.
+        // Multi-step maintenance producer and the nightly mesh-edge proposer: one run per
+        // subject with recent failures, reading only that subject's subtree and proposing
+        // edges via propose_knowledge_edge. No real upstream, which is why it is a root.
         name: 'knowledge_maintenance_nightly',
         dependsOn: [],
         eligibility: nightlyEligibility('structure'),

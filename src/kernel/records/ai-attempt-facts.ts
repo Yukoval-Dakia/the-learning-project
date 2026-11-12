@@ -7,7 +7,7 @@ import { ai_task_runs, cost_ledger } from '@/db/schema';
 // cost_ledger is a loose-coupled correlation log (no FK), so one INSERT works
 // against either a top-level Db or a Tx. Accepting DbLike lets callers fold the
 // write into a surrounding transaction; tool-call writers in
-// kernel/tools/call-evidence keep the same contract (FIX-R2-10). The terminal
+// kernel/tools/call-evidence keep the same contract. The terminal
 // attempt operation below owns its Db transaction; its inner terminal writer
 // accepts the same Tx. Task start/retry and execution remain in server AI.
 type DbLike = Db | Tx;
@@ -136,6 +136,45 @@ export async function recordAiTaskReplyUnsealed(
       error_message: `Reply published with an unsealed receipt: ${reason}`,
     })
     .where(and(eq(ai_task_runs.id, taskRunId), eq(ai_task_runs.status, 'success')));
+}
+
+/** finish_reason for a run whose provider replied but whose text broke the task contract. */
+export const MODEL_OUTPUT_INVALID = 'model_output_invalid';
+
+/**
+ * The only writer that turns a settled success into "billed, result unusable": the
+ * provider replied, the caller could not parse the text into the task's contract.
+ * The run and its attempt ledger row flip together; usage and cost stay as billed.
+ * Returns false when the run was not a settled success (already failed or missing).
+ */
+export async function markAiTaskRunOutputInvalid(
+  db: Db,
+  taskRunId: string,
+  reason: string,
+): Promise<boolean> {
+  return db.transaction(async (tx) => {
+    const rows = await tx
+      .update(ai_task_runs)
+      .set({
+        status: 'failure',
+        finish_reason: MODEL_OUTPUT_INVALID,
+        error_message: `${MODEL_OUTPUT_INVALID}: ${reason}`.slice(0, 1000),
+      })
+      .where(and(eq(ai_task_runs.id, taskRunId), eq(ai_task_runs.status, 'success')))
+      .returning({ id: ai_task_runs.id });
+    if (rows.length !== 1) return false;
+    await tx
+      .update(cost_ledger)
+      .set({ outcome: 'failed_permanent' })
+      .where(
+        and(
+          eq(cost_ledger.task_run_id, taskRunId),
+          eq(cost_ledger.entry_kind, 'attempt'),
+          eq(cost_ledger.outcome, 'success'),
+        ),
+      );
+    return true;
+  });
 }
 
 export interface AiTaskRunFinishEntry {

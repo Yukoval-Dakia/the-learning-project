@@ -96,7 +96,7 @@ function buildDb(targetUrl: string) {
   return { db: drizzle(client, { schema }), close: () => client.end() };
 }
 
-// ──────────────────── 幂等工件写入（checkpoint 内容寻址，review P1-1/P1-2/P2-B） ────────────────────
+// ──────────────────── 幂等工件写入（checkpoint 内容寻址） ────────────────────
 
 export interface ArtifactWriteResult {
   outDir: string;
@@ -109,7 +109,7 @@ export interface ArtifactWriteResult {
   latestStatus: 'written' | 'unchanged';
 }
 
-/** 原子发布：写临时文件 + rename（同目录，原子替换；P2-B —— 并发写者不互踩半文件）。 */
+/** 原子发布：写临时文件 + rename（同目录，原子替换；并发写者不互踩半文件）。 */
 function atomicWrite(path: string, content: string): void {
   const tmp = `${path}.tmp-${process.pid}-${randomUUID()}`;
   writeFileSync(tmp, content);
@@ -117,13 +117,13 @@ function atomicWrite(path: string, content: string): void {
 }
 
 /**
- * checkpoint 内容寻址写入（P1-1）：文件名派生自 manifest.checkpoint_hash ——
+ * checkpoint 内容寻址写入：文件名派生自 manifest.checkpoint_hash ——
  * 覆盖 rawFacts + ops（ingest_at 等）+ queues/subscription/ai_task_runs + provenance；
  * 唯独排除随运行变化的 snapshot_at/captured_at（重跑不产生重复捕获的前提）。
  * 运维态变化 ⇒ 新 checkpoint hash ⇒ 新工件；不会被旧文件名吞掉。
  *
- * 验证而非盲跳过（P1-1）：已存在的工件读回并复算身份 —— 损坏/身份不符 ⇒ 重写
- * （repaired）。manifest 额外按 classification_hash 刷新（P1-2：分类器改进 ⇒
+ * 验证而非盲跳过：已存在的工件读回并复算身份 —— 损坏/身份不符 ⇒ 重写
+ * （repaired）。manifest 额外按 classification_hash 刷新（分类器改进 ⇒
  * 同 checkpoint 的 manifest 被重写为最新分类，capture 观测保持首见胜出）。
  * latest.json 在两个工件都落盘后最后发布。
  */
@@ -162,7 +162,7 @@ export function writeCaptureArtifacts(
   if (existsSync(manifestPath)) {
     try {
       const stored = JSON.parse(readFileSync(manifestPath, 'utf8')) as MigrationManifest;
-      // P2-A（终轮）：不信任存储的哈希字符串 —— 从存储内容【重算】。
+      // ：不信任存储的哈希字符串 —— 从存储内容【重算】。
       // (a) 身份：stored.checkpoint_hash 必须与本次一致；
       // (b) 分类内容：从 stored.classification 的 version/records/unresolved/
       //     deferred_replay 重算哈希，与 stored.classification.classification_hash
@@ -182,7 +182,7 @@ export function writeCaptureArtifacts(
         atomicWrite(manifestPath, expectedManifest);
         manifestStatus = 'repaired';
       } else if (storedRecomputedHash !== manifest.classification.classification_hash) {
-        // P1-2：分类器改进/分类版本变化 —— 同一观测的最新分类必须持久化。
+        // ：分类器改进/分类版本变化 —— 同一观测的最新分类必须持久化。
         atomicWrite(manifestPath, expectedManifest);
         manifestStatus = 'refreshed';
       }
@@ -211,7 +211,7 @@ export function writeCaptureArtifacts(
         capture_file?: string;
         manifest_file?: string;
       };
-      // P2-A（终轮）：指针同时校验哈希与【文件名】—— 与 checkpoint 派生名
+      // ：指针同时校验哈希与【文件名】—— 与 checkpoint 派生名
       // 不符（被篡改/漂移）的指针不复用。
       const pointerOk =
         existing.checkpoint_hash === pointer.checkpoint_hash &&

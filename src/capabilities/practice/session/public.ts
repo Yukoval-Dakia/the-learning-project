@@ -16,6 +16,7 @@ export {
 } from './server/review-session-lifecycle';
 export {
   createReviewSession,
+  enqueueReviewSessionSummary,
   transitionReviewSession,
 } from './server/session-operations/review-session';
 export { learningItemsWithAnswerDrafts } from './server/undo-usage';
