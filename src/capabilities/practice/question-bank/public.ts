@@ -70,17 +70,28 @@ export {
 } from './server/quiz/content-fingerprint';
 export { type Demand, demandToSupplyTarget } from './server/quiz/matcher';
 export { poolFetch } from './server/quiz/pool-fetch';
+export {
+  DEFAULT_SELECTION_POLICY_VERSION,
+  SELECTION_MISS_VERSION,
+  type SelectionMissDemand,
+  type SelectionMissV1,
+  readOpenSelectionMissDemands,
+  writeSelectionMissEvent,
+} from './server/quiz/selection-miss';
 export { SOLVE_LANE_TASK_KINDS, resolveSolveOverrideFromEnv } from './server/quiz/solve-lane';
 export { runPracticeServingAction } from './server/serving-action-operation';
 export { recoverHeldServingRechecks, runSystemServingRecheck } from './server/serving-actions';
 export {
   type EnqueueVerifyFn,
+  VERIFY_DISPATCH_BOUND_ACTION,
   VERIFY_DISPATCH_COMPLETE_ACTION,
   VERIFY_DISPATCH_INTENT_ACTION,
   VERIFY_DISPATCH_VERSION,
   type VerifyRecoveryMark,
   dispatchPendingVerifyIntents,
   recoverOrphanVerifyDispatches,
+  verifyDeliveryJobId,
+  verifyDispatchBoundEventIdForIntent,
   writeVerifyDispatchIntent,
 } from './server/verify-dispatch-outbox';
 export {

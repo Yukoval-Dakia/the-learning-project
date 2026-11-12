@@ -36,6 +36,18 @@ export const failureLearningManifestPart: Omit<CapabilityManifest, 'name' | 'des
         queue: 'llm',
         load: () => import('./jobs/variant_gen').then((m) => m.buildVariantGenHandler),
       },
+      {
+        // Single recovery owner for dispatch intents whose engine-acceptance
+        // event never landed (engine down at delivery, crash between the
+        // business commit and the send, or a lost subscription wake).
+        name: 'failure_learning_dispatch',
+        queue: 'fast',
+        schedule: { cron: '*/5 * * * *', tz: 'Asia/Shanghai' },
+        load: () =>
+          import('./server/failure-learning-dispatch').then(
+            (m) => m.buildFailureLearningDispatchHandler,
+          ),
+      },
     ],
   },
   proposals: {

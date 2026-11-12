@@ -278,35 +278,42 @@ export function integrityIssues(doc: QuestionDraftDocumentT): DocIntegrityIssue[
     // blank_order must cover each blank slot of this part exactly once; only this
     // part's slot ids count.
     if (part.blank_order != null) {
-      const seen = new Set<string>();
       const blankSlotIds = new Set<string>();
       for (const unit of part.units) {
         if (unit.response_class === 'blank' && unit.response_spec.kind === 'blank') {
           blankSlotIds.add(unit.slot_id);
         }
       }
-      for (const slotId of part.blank_order) {
-        if (seen.has(slotId)) {
-          issues.push({
-            code: 'duplicate_id',
-            detail: `part '${part.part_id}' blank_order lists slot '${slotId}' more than once`,
-          });
-          continue;
-        }
-        seen.add(slotId);
-        if (!blankSlotIds.has(slotId)) {
-          issues.push({
-            code: 'unresolved_blank_order_slot',
-            detail: `part '${part.part_id}' blank_order references '${slotId}', which is not a blank slot of this part`,
-          });
-        }
-      }
-      const missing = [...blankSlotIds].filter((id) => !seen.has(id));
-      if (missing.length > 0) {
+      if (blankSlotIds.size === 0) {
         issues.push({
-          code: 'blank_order_coverage',
-          detail: `part '${part.part_id}' declares blank_order but does not cover its blank slot(s): ${missing.join(', ')}`,
+          code: 'unresolved_blank_order_slot',
+          detail: `part '${part.part_id}' has no blank slots (e.g. a choice part) — remove blank_order; only parts with blank units declare it`,
         });
+      } else {
+        const seen = new Set<string>();
+        for (const slotId of part.blank_order) {
+          if (seen.has(slotId)) {
+            issues.push({
+              code: 'duplicate_id',
+              detail: `part '${part.part_id}' blank_order lists slot '${slotId}' more than once`,
+            });
+            continue;
+          }
+          seen.add(slotId);
+          if (!blankSlotIds.has(slotId)) {
+            issues.push({
+              code: 'unresolved_blank_order_slot',
+              detail: `part '${part.part_id}' blank_order references '${slotId}', which is not a blank slot of this part`,
+            });
+          }
+        }
+        const missing = [...blankSlotIds].filter((id) => !seen.has(id));
+        if (missing.length > 0) {
+          issues.push({
+            code: 'blank_order_coverage',
+            detail: `part '${part.part_id}' declares blank_order but does not cover its blank slot(s): ${missing.join(', ')}`,
+          });
+        }
       }
     }
     for (const unit of part.units) {

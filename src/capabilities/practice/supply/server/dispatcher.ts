@@ -190,7 +190,7 @@ function queuedSupplyPromise(
 export async function inFlightSupplyCount(
   db: Db | Tx,
   fingerprint: string,
-  cooldownDays: number,
+  cooldownDays: number = SUPPLY_DISPATCH_COOLDOWN_DAYS,
 ): Promise<number> {
   if (cooldownDays <= 0) return 0;
   const cutoff = new Date(Date.now() - cooldownDays * 24 * 60 * 60 * 1000);
@@ -431,6 +431,7 @@ export async function dispatchSupplyTarget(
               // aim at the band-gap the matcher detected (requested_difficulty_band
               // reaches plan/generate inputs as a soft hint).
               difficulty_band: target.difficultyBand,
+              difficulty_levels: target.levelTarget.levels,
               // forwarded the 篇 (composite parent) requirement
               // phase-deferred; makes quiz_gen consume it — the run
               // persists a composite parent + question_part children.
@@ -456,6 +457,7 @@ export async function dispatchSupplyTarget(
             // 'sourcing_web'), where plan-executor validates the band against
             // DIFFICULTY_BANDS and feeds it to runJyeooFetchCandidates' band filter.
             difficulty_band: target.difficultyBand,
+            difficulty_levels: target.levelTarget.levels,
             count: target.desiredCount,
             route_preference: routePlan.slice(routePlan.indexOf(autoRoute)),
             ...(target.placementStarter
@@ -550,6 +552,7 @@ export async function dispatchSupplyTarget(
         knowledge_ids: target.knowledgeIds,
         kind: target.kind,
         difficulty_band: target.difficultyBand,
+        difficulty_levels: target.levelTarget.levels,
         desired_count: target.desiredCount,
         min_source_tier: target.minSourceTier,
         priority: target.priority,

@@ -4,6 +4,7 @@ import { event } from '@/db/schema';
 import { eventAllowsDerivationSql } from '@/kernel/events/derivation-policy';
 import { learnerEvidenceSql } from '../server/memory/learner-evidence';
 import { CURATOR_ACTIVITY_ACTIONS } from './activity-contract';
+import { gradedOutcomesForAnswerRows } from './answer-outcome';
 import { readTopics, withdrawnTopicEvidence } from './topics';
 
 // The run anchor freezes the upper bound. Later user turns never become implicit
@@ -42,7 +43,7 @@ export async function curatorEvidenceScope(db: Db | Tx, anchorId?: string): Prom
 
 export async function readCuratorEvidence(db: Db, anchorId?: string) {
   const scope = await curatorEvidenceScope(db, anchorId);
-  return db
+  const rows = await db
     .select({
       id: event.id,
       action: event.action,
@@ -55,6 +56,16 @@ export async function readCuratorEvidence(db: Db, anchorId?: string) {
     .from(event)
     .where(scope)
     .orderBy(asc(event.created_at), asc(event.id));
+  const graded = await gradedOutcomesForAnswerRows(db, rows);
+  return rows.map((row) => ({
+    id: row.id,
+    action: row.action,
+    subject_kind: row.subject_kind,
+    subject_id: row.subject_id,
+    payload: row.payload,
+    at: row.at,
+    ...(graded.has(row.id) ? { outcome: graded.get(row.id) ?? null } : {}),
+  }));
 }
 
 /**
@@ -113,13 +124,10 @@ export async function readCuratorLegacyScopes(db: Db) {
         return {
           scope: r.key,
           ...read,
-          ...(ids.some((id) => withheld.has(id)) ||
-          (r.key === 'global' && version > 0 && read.note?.version === digest.legacy_global_version)
-            ? { note: null }
+          ...(ids.some((id) => withheld.has(id)) || version !== read.version
+            ? { withheld: true }
             : {}),
         };
       }),
   );
 }
-
-export type CuratorLegacyScope = Awaited<ReturnType<typeof readCuratorLegacyScopes>>[number];

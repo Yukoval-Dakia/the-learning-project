@@ -29,13 +29,6 @@ export function createProposalLifecycleRegistry(
   return registry;
 }
 
-export function getProposalLifecycleDecl(
-  registry: ProposalLifecycleRegistry,
-  kind: string,
-): ProposalLifecycleDecl | undefined {
-  return registry.get(kind);
-}
-
 export function getProposalLifecycleOperation(
   registry: ProposalLifecycleRegistry,
   kind: string,

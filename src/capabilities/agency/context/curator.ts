@@ -221,5 +221,4 @@ async function runCuratorTurn(db: Db, reason: 'nightly' | 'activity', runTimeout
     ingest_at: new Date(),
   });
   if (refreshError !== undefined) throw refreshError;
-  return result;
 }

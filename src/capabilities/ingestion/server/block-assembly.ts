@@ -43,7 +43,7 @@ export type BlockAssemblyRunTaskFn = (
   kind: string,
   input: unknown,
   ctx: unknown,
-) => Promise<{ text: string }>;
+) => Promise<{ text: string; task_run_id?: string }>;
 
 /** One block projected to the compact text view the model reasons over. */
 export interface BlockAssemblyInputBlock {

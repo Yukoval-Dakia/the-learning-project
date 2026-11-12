@@ -9,7 +9,7 @@
 // carried one; absent means unknown, not zero.
 
 import { type AgentFailureSubtype, AgentRunError } from './agent-run-error';
-import type { ProviderTransportEvidence } from './task-result';
+import type { ProviderRequestEvidence, ProviderTransportEvidence } from './task-result';
 
 export type ProviderFailureCategory =
   /** Bound HTTP 429 (quota / rate limit). */
@@ -131,6 +131,17 @@ export function boundTerminalHttpStatus(
   if (error.apiErrorStatus != null && error.apiErrorStatus >= 400) return error.apiErrorStatus;
   const bound = error.providerFailure?.http_status;
   if (bound != null && bound >= 400) return bound;
+  return settledTransportHttpStatus(transport);
+}
+
+/**
+ * The observed final root request's ≥400 status — the only transport-derived
+ * bound, valid solely when every request provably settled (zero in-flight,
+ * unknown, or sent_without_response). Single owner of that third-leg check:
+ * `boundTerminalHttpStatus` and the row-driven provider-wait planner both read
+ * it, so an uncertain wire can never fabricate a status in either path.
+ */
+export function settledTransportHttpStatus(transport?: ProviderTransportEvidence): number | null {
   const last = transport?.requests.at(-1);
   if (
     last?.loop === 'root' &&
@@ -265,4 +276,30 @@ export function isTransientAgentFailure(
 ): boolean {
   const verdict = providerTransientVerdict({ error: err, transport });
   return verdict !== undefined && providerTransientResendable(verdict.class);
+}
+
+/**
+ * A request that was sent and then died mid-stream: the idle watchdog fired, or
+ * the transport recorded a wire/connection failure without a bound status.
+ * Unlike `providerTransientVerdict` this is NOT proof the provider billed
+ * nothing — only tasks whose interrupted request has no side effect may resend
+ * it (`interruptedRequestRetryBound` owns that list and its bound).
+ */
+export type ProviderRequestInterruption = 'stream_idle' | 'connection';
+
+export function providerRequestInterruption(input: {
+  /** The provider stream watchdog fired for this request. */
+  idleFired: boolean;
+  /** The transport record of the request this attempt issued, when attributed. */
+  request?: ProviderRequestEvidence;
+  /** Caller cancellation or an armed lifecycle timer — never a provider cause. */
+  aborted: boolean;
+}): ProviderRequestInterruption | undefined {
+  if (input.aborted) return undefined;
+  if (input.idleFired) return 'stream_idle';
+  const request = input.request;
+  if (request === undefined || request.timeout_layer !== undefined) return undefined;
+  // A bound rejection belongs to the status table above, not to this rule.
+  if (request.http_status !== undefined && request.http_status >= 400) return undefined;
+  return request.error !== undefined ? 'connection' : undefined;
 }

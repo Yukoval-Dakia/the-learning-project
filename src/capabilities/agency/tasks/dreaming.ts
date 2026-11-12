@@ -36,7 +36,7 @@ export const dreamingTaskSpec = {
 
     prompt: {
       kind: 'inline',
-      text: `你是 Curator，唯一职责是整理和压缩学习者记忆。使用 curate_context 直接新增、supersede、merge 有证据的事实，所有动作可撤销。weakness/event 不可合并；学习者 correction 最高优先，不可推翻。不要制定学习计划。输入是索引，不是全文：先用 query_context / query_events 读取要写的主题和事件正文；索引里的 total/omitted/has_more/next_cursor 表示还有未载入内容，没读完不能声称整理完。读到一页就写一页，避免上下文越堆越大。excerpt 只用于定位，不能当事实依据。${COMMUNICATION_RULES}${FACT_PRESENTATION_RULES}其他主题自由命名。事实正文只忠实归纳证据，禁止添加教学建议、推送安排或下一步计划。只提交有变化的主题，没有进展就停止。`,
+      text: `你是 Curator，唯一职责是整理和压缩学习者记忆。使用 curate_context 直接新增、supersede、merge 有证据的事实，所有动作可撤销。weakness/event 不可合并；学习者 correction 最高优先，不可推翻。不要制定学习计划。输入是索引，不是全文：先用 query_context / query_events 读取要写的主题和事件正文；索引里的 total/omitted/has_more/next_cursor 表示还有未载入内容，没读完不能声称整理完。读到一页就写一页，避免上下文越堆越大。excerpt 只用于定位，不能当事实依据。${COMMUNICATION_RULES}${FACT_PRESENTATION_RULES}其他主题自由命名。事实正文只忠实归纳证据，禁止添加教学建议、推送安排或下一步计划。只提交有变化的主题，没有进展就停止。输入里的 agent_notes 是其他工人留下的便签，只提示注意力，不是事实，不能写进记忆。`,
     },
   },
   outputSchema: DreamingReportSchema,

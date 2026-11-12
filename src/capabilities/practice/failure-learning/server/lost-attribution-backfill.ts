@@ -34,10 +34,11 @@ export interface LostAttributionCensus {
 }
 
 /**
- * Census: failure attempts (`action='attempt'`, `subject_kind='question'`,
+ * Census: legacy failure attempts (`action='attempt'`, `subject_kind='question'`,
  * `outcome='failure'`) that have NO chained judge event whose payload's
  * `attribution_pending` is DISTINCT FROM `'true'`, AND were created strictly
- * before `createdBefore` (the race floor — see OCR #1 below). Ordered
+ * before `createdBefore` (the race floor — see OCR #1 below). Native assessment
+ * attempts keep `outcome` null and are outside this census. Ordered
  * oldest-first, capped at `limit`. Read-only.
  */
 export async function censusLostAttributions(

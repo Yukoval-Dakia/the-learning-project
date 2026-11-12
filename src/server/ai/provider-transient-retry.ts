@@ -12,11 +12,14 @@ import {
   providerTransientResendable,
   providerTransientVerdict,
 } from '@/ai/provider-failure';
-import type { AttemptCostTruth, ProviderTransportEvidence } from '@/ai/task-result';
+import {
+  type AttemptCostTruth,
+  type ProviderTransportEvidence,
+  failureSpendChargeUsd,
+} from '@/ai/task-result';
 import { getConfig } from '@/core/config/store';
 import type { Db } from '@/db/client';
 import { ai_task_runs } from '@/db/schema';
-import { failureSpendChargeUsd } from './attempt-cost';
 
 export interface ProviderTransientRetryPolicy {
   /** Extra wire sends allowed after the first bound failure. */
@@ -74,6 +77,34 @@ export function providerTransientRetryDelayMs(input: {
   return input.policy.baseDelayMs * 2 ** input.retryIndex;
 }
 
+/**
+ * The interrupted-request row of the retry table: which task kinds may resend
+ * a request that was sent and then died mid-stream (idle / connection drop),
+ * and how often. The provider may already have billed the dead request, so a
+ * kind belongs here only when the request itself has no side effect — tools
+ * run after a request completes, never inside it, and the resend carries the
+ * executed tool results unchanged. Admission, grading and every other kind stay
+ * on "outcome unknown → never resend".
+ */
+const INTERRUPTED_REQUEST_RETRY: Readonly<Record<string, InterruptedRequestRetryBound>> = {
+  CopilotTask: { maxRetries: 2, baseDelayMs: 1_000 },
+};
+
+export interface InterruptedRequestRetryBound {
+  /** Extra sends of the same request after the first interruption. */
+  readonly maxRetries: number;
+  /** Delay before resend n (0-based) is baseDelayMs * 2^n. */
+  readonly baseDelayMs: number;
+}
+
+export function interruptedRequestRetryBound(
+  kind: string,
+): InterruptedRequestRetryBound | undefined {
+  return Object.hasOwn(INTERRUPTED_REQUEST_RETRY, kind)
+    ? INTERRUPTED_REQUEST_RETRY[kind]
+    : undefined;
+}
+
 export interface SettledAttemptEvidence {
   /** False while the attempt may still be running — never resend alongside it. */
   readonly settled: boolean;
@@ -87,6 +118,8 @@ export interface SettledAttemptEvidence {
   readonly unbilled: boolean;
   /** Armed-lane transport when the attempt produced one; absent on the typed lane. */
   readonly transport?: ProviderTransportEvidence;
+  /** Persisted failure line — the row-driven quota-signature source. */
+  readonly errorMessage?: string | null;
 }
 
 export async function settledAttemptEvidence(
@@ -101,6 +134,7 @@ export async function settledAttemptEvidence(
       cost_usd: ai_task_runs.cost_usd,
       cost_basis: ai_task_runs.cost_basis,
       cost_ref: ai_task_runs.cost_ref,
+      error_message: ai_task_runs.error_message,
     })
     .from(ai_task_runs)
     .where(eq(ai_task_runs.id, taskRunId));
@@ -112,6 +146,7 @@ export async function settledAttemptEvidence(
     settled: row?.finished_at != null && row.status !== 'running',
     unbilled: failureSpendChargeUsd(truth) === 0,
     ...(row?.usage_json?.transport !== undefined ? { transport: row.usage_json.transport } : {}),
+    errorMessage: row?.error_message,
   };
 }
 
@@ -167,6 +202,51 @@ export async function planProviderTransientRetry(input: {
   if (input.budget.waitedMs + delayMs > bound.maxWaitMs) return undefined;
   if (input.deadlineAt !== undefined && input.deadlineAt - Date.now() <= delayMs) return undefined;
   return { verdict, delayMs };
+}
+
+/**
+ * The companion's whole-attempt row: a failed attempt is rerun only when it
+ * provably had no effect — every request was the root loop's own and either
+ * never sent or bound to a 429, nothing billed — and only for short congestion
+ * or not_sent, within 2 reruns / 15s so the learner is not left waiting.
+ * Interrupted requests mid-attempt are the separate interrupted-request row.
+ */
+export async function planCopilotAttemptRetry(input: {
+  db: Db;
+  error: unknown;
+  transport: ProviderTransportEvidence;
+  costUsd: number | null;
+  budget: ProviderTransientRetryBudget;
+  deadlineAt: number;
+}): Promise<{ delayMs: number } | undefined> {
+  const { transport } = input;
+  const noEffect =
+    transport.requests_seen > 0 &&
+    transport.requests_dropped === 0 &&
+    transport.requests.length === transport.requests_seen &&
+    transport.requests.every(
+      (request) =>
+        request.loop === 'root' &&
+        !request.timeout_layer &&
+        (request.send_state === 'not_sent' ||
+          (request.send_state === 'response_received' && request.http_status === 429)),
+    );
+  if (!noEffect || input.costUsd !== 0) return undefined;
+  const policy = providerTransientRetryPolicy();
+  const retry = await planProviderTransientRetry({
+    db: input.db,
+    error: input.error,
+    policy: {
+      ...policy,
+      maxRetries: Math.min(2, policy.maxRetries),
+      maxWaitMs: Math.min(15_000, policy.maxWaitMs),
+    },
+    budget: input.budget,
+    deadlineAt: input.deadlineAt,
+  });
+  return retry && (retry.verdict.class === 'rate_limited' || retry.verdict.class === 'not_sent')
+    ? { delayMs: retry.delayMs }
+    : undefined;
 }
 
 export function sleepMs(ms: number, signal?: AbortSignal): Promise<void> {

@@ -215,38 +215,145 @@ export function zodToJsonSchemaCompat(
   return normalized;
 }
 
+const SCHEMA_RECORD_KEYS = new Set([
+  'properties',
+  'patternProperties',
+  '$defs',
+  'definitions',
+  'dependentSchemas',
+]);
+
+const SCHEMA_ARRAY_KEYS = new Set(['anyOf', 'oneOf', 'allOf', 'prefixItems']);
+
+const SCHEMA_NODE_KEYS = new Set([
+  'additionalProperties',
+  'unevaluatedProperties',
+  'unevaluatedItems',
+  'not',
+  'contains',
+  'if',
+  'then',
+  'else',
+  'propertyNames',
+  'contentSchema',
+]);
+
 /**
- * Tuple arrays (`z.tuple`) compile to draft-07 `items: [...]` + `additionalItems`
- * (or `prefixItems`). mimo-v2.6-pro rejects the whole request with 400
- * "Invalid request parameters" when any tool carries that form (YUK-1718: every
- * Copilot turn failed from 10-22 because search_bank / file_bank_gap gained a
- * `range` tuple). The wire keeps a single-schema `items` with the same length
- * bounds; argument validation still parses through the original Zod tuple.
+ * A positional array. `closed` already forbids items past the prefix
+ * (`additionalItems: false`, `items: false`, or `maxItems` within the prefix).
+ * `open` has a tail schema that applies past the prefix.
  */
-function flattenTupleItems(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(flattenTupleItems);
-  if (!isJsonObject(value)) return value;
-  const node = Object.fromEntries(
-    Object.entries(value).map(([key, nested]) => [key, flattenTupleItems(nested)]),
-  );
-  const tuple = Array.isArray(node.prefixItems)
-    ? node.prefixItems
-    : Array.isArray(node.items)
-      ? node.items
-      : undefined;
-  if (!tuple) return node;
-  const { prefixItems: _prefix, additionalItems: _additional, ...rest } = node;
-  const unique = tuple.filter(
+type TupleShape =
+  | { readonly kind: 'absent' }
+  | { readonly kind: 'closed'; readonly positions: readonly unknown[] }
+  | { readonly kind: 'open'; readonly positions: readonly unknown[]; readonly tail: unknown };
+
+function lengthCapped(node: JsonObject, positions: number): boolean {
+  return typeof node.maxItems === 'number' && node.maxItems <= positions;
+}
+
+function readPrefixedTuple(node: JsonObject, positions: readonly unknown[]): TupleShape {
+  if (
+    lengthCapped(node, positions.length) ||
+    node.items === false ||
+    node.additionalItems === false
+  ) {
+    return { kind: 'closed', positions };
+  }
+  if (isJsonObject(node.items)) return { kind: 'open', positions, tail: node.items };
+  if (node.items === true) return { kind: 'open', positions, tail: {} };
+  if (isJsonObject(node.additionalItems))
+    return { kind: 'open', positions, tail: node.additionalItems };
+  if (node.additionalItems === true || node.items === undefined) {
+    return { kind: 'open', positions, tail: {} };
+  }
+  return { kind: 'closed', positions };
+}
+
+function readDraft07Tuple(node: JsonObject, positions: readonly unknown[]): TupleShape {
+  if (lengthCapped(node, positions.length) || node.additionalItems === false) {
+    return { kind: 'closed', positions };
+  }
+  if (isJsonObject(node.additionalItems))
+    return { kind: 'open', positions, tail: node.additionalItems };
+  if (node.additionalItems === true || node.additionalItems === undefined) {
+    return { kind: 'open', positions, tail: {} };
+  }
+  return { kind: 'closed', positions };
+}
+
+function readTupleShape(node: JsonObject): TupleShape {
+  if (Array.isArray(node.prefixItems)) return readPrefixedTuple(node, node.prefixItems);
+  if (Array.isArray(node.items)) return readDraft07Tuple(node, node.items);
+  return { kind: 'absent' };
+}
+
+function collapseItemSchemas(schemas: readonly unknown[]): unknown {
+  const unique = schemas.filter(
     (item, index) =>
-      tuple.findIndex((other) => JSON.stringify(other) === JSON.stringify(item)) === index,
+      schemas.findIndex((other) => JSON.stringify(other) === JSON.stringify(item)) === index,
   );
-  const items = unique.length === 1 ? unique[0] : unique.length === 0 ? {} : { anyOf: unique };
+  if (unique.length === 1) return unique[0];
+  if (unique.length === 0) return {};
+  if (
+    unique.some((item) => item === true || (isJsonObject(item) && Object.keys(item).length === 0))
+  ) {
+    return {};
+  }
+  return { anyOf: unique };
+}
+
+function flattenSchemaValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(flattenTupleItems);
+  return flattenTupleItems(value);
+}
+
+function flattenAtSchemaKey(key: string, value: unknown): unknown {
+  if (key === 'items' || key === 'additionalItems') return flattenSchemaValue(value);
+  if (SCHEMA_RECORD_KEYS.has(key)) {
+    if (!isJsonObject(value)) return value;
+    return Object.fromEntries(
+      Object.entries(value).map(([name, schema]) => [name, flattenTupleItems(schema)]),
+    );
+  }
+  if (SCHEMA_ARRAY_KEYS.has(key)) {
+    return Array.isArray(value) ? value.map(flattenTupleItems) : value;
+  }
+  if (SCHEMA_NODE_KEYS.has(key)) return flattenTupleItems(value);
+  return value;
+}
+
+function rewriteTupleNode(node: JsonObject): JsonObject {
+  const shape = readTupleShape(node);
+  if (shape.kind === 'absent') return node;
+  const { prefixItems: _prefix, additionalItems: _additional, ...rest } = node;
+  const items =
+    shape.kind === 'closed'
+      ? collapseItemSchemas(shape.positions)
+      : collapseItemSchemas([...shape.positions, shape.tail]);
   return sortSchemaKeys({
     ...rest,
     items,
-    minItems: rest.minItems ?? tuple.length,
-    maxItems: rest.maxItems ?? tuple.length,
+    minItems: rest.minItems ?? shape.positions.length,
+    ...(shape.kind === 'closed' ? { maxItems: rest.maxItems ?? shape.positions.length } : {}),
   });
+}
+
+/**
+ * Tuple arrays (`z.tuple`) compile to draft-07 `items: [...]` + `additionalItems`
+ * (or `prefixItems`). mimo-v2.6-pro rejects that form with 400 (YUK-1718: the
+ * `range` tuple on search_bank / file_bank_gap). The wire uses one `items`
+ * schema. Closed tuples keep their length. An open tail is not capped at the
+ * prefix: `items` is the union of the prefix schemas and the tail, and no
+ * `maxItems` is added. Registry tools still validate with the original Zod
+ * tuple. Instance data (`default`, `const`, `enum`, `examples`) is not walked.
+ */
+function flattenTupleItems(value: unknown): unknown {
+  if (!isJsonObject(value)) return value;
+  const node = Object.fromEntries(
+    Object.entries(value).map(([key, nested]) => [key, flattenAtSchemaKey(key, nested)]),
+  );
+  return rewriteTupleNode(node);
 }
 
 /**

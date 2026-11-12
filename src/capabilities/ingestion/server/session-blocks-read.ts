@@ -99,6 +99,7 @@ export async function readIngestionSessionBlocks(db: Db, params: { id: string })
         : null;
       return {
         ...r,
+        handwriting_trace: r.structured?.extraction_evidence?.handwriting_trace ?? null,
         created_at: Math.floor(r.created_at.getTime() / 1000),
         workflow_judge_confidence: recordedConfidence ?? projectedObservation?.confidence ?? null,
         auto_enroll_observation: projectedObservation,
@@ -162,7 +163,9 @@ function toEnrollmentProjection(
       state: 'in_library' as const,
       reason: null,
       knowledge:
-        markers?.knowledge === 'attributed' || markers?.knowledge === 'missing'
+        markers?.knowledge === 'attributed' ||
+        markers?.knowledge === 'missing' ||
+        markers?.knowledge === 'restricted'
           ? markers.knowledge
           : null,
       library_visible: enrolled ? enrolled.draft_status !== 'draft' : null,

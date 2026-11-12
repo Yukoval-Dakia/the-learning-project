@@ -21,6 +21,13 @@ import { readMemoryBriefNote } from './memory-brief';
 import { Topic } from './topic-contract';
 
 const DEFAULT_FACTS_TOP_K = 10;
+const GLOBAL_DIGEST_SCOPE = 'global:digest';
+
+/** `global:digest` is the brief scope, not a fact scope. Filtering on it matches nothing. */
+function factScopeFilters(scopeKey: string): { scope_key: string } | undefined {
+  if (scopeKey === GLOBAL_DIGEST_SCOPE) return undefined;
+  return { scope_key: scopeKey };
+}
 
 function iso(value: Date | null | undefined): string | null {
   return value ? value.toISOString() : null;
@@ -95,7 +102,7 @@ const QueryContextOutputSchema = z.object({
           score: z.number().optional(),
         }),
       ),
-      count: z.number(),
+      count: z.number().int(),
     })
     .nullable(),
   topics: z
@@ -103,7 +110,7 @@ const QueryContextOutputSchema = z.object({
       version: z.number().int(),
       as_of: z.string().nullable(),
       topics: z.array(Topic),
-      missing_topic_keys: z.array(z.string()).default([]),
+      missing_topic_keys: z.array(z.string()),
     })
     .optional(),
   legacy_facts: z
@@ -112,11 +119,11 @@ const QueryContextOutputSchema = z.object({
         z.object({
           id: z.string(),
           body: z.string(),
-          memory_kind: z.enum(['preference', 'habit', 'weakness', 'event']),
+          memory_kind: z.string(),
           evidence_ids: z.array(z.string()),
         }),
       ),
-      total: z.number().int().nonnegative(),
+      total: z.number().int(),
       has_more: z.boolean(),
       next_cursor: z.string().nullable(),
     })
@@ -137,7 +144,7 @@ export function buildQueryContextTool(
     // default global brief (prose digest) back into the prompt.
     const includeBrief =
       explicitScope || (input.topicKeys === undefined && input.legacyFacts === undefined);
-    const scopeKey = input.scopeKey ?? 'global:digest';
+    const scopeKey = input.scopeKey ?? GLOBAL_DIGEST_SCOPE;
     let read: Awaited<ReturnType<typeof readMemoryBriefNote>> | null = includeBrief
       ? await readMemoryBriefNote(ctx.db, scopeKey)
       : null;
@@ -154,13 +161,13 @@ export function buildQueryContextTool(
     )
       read = { note: null, freshness: { ...read.freshness, state: 'missing' } };
     const scoped = digest.topics.filter(
-      (t) => scopeKey === 'global:digest' || scopeKey === 'global' || t.scope_key === scopeKey,
+      (t) => scopeKey === GLOBAL_DIGEST_SCOPE || scopeKey === 'global' || t.scope_key === scopeKey,
     );
     const scopedText = includeBrief
       ? scoped.map((t) => `${t.name}：${t.facts.map((f) => f.body).join('；')}`).join('\n')
       : '';
     if (includeBrief && scopedText && read && !read.note)
-      read = await readMemoryBriefNote(ctx.db, 'global:digest');
+      read = await readMemoryBriefNote(ctx.db, GLOBAL_DIGEST_SCOPE);
     const brief =
       includeBrief && read
         ? {
@@ -176,7 +183,7 @@ export function buildQueryContextTool(
                       ? read.note.recent_months_md
                       : '',
                   long_term_md:
-                    scopeKey === 'global:digest' || read.note.scope_key !== scopeKey
+                    scopeKey === GLOBAL_DIGEST_SCOPE || read.note.scope_key !== scopeKey
                       ? ''
                       : read.note.long_term_md,
                   long_term_freshness_score: read.note.long_term_freshness_score,
@@ -208,14 +215,21 @@ export function buildQueryContextTool(
       if (Date.now() >= ctx.providerSessionDeadlineAt) {
         throw new Error('hard_deadline_exceeded');
       }
+      const factFilters = factScopeFilters(scopeKey);
       const inputDigest = createHash('sha256')
-        .update(JSON.stringify({ query, topK: DEFAULT_FACTS_TOP_K, scopeKey }))
+        .update(
+          JSON.stringify({
+            query,
+            topK: DEFAULT_FACTS_TOP_K,
+            scopeKey: factFilters?.scope_key ?? null,
+          }),
+        )
         .digest('hex');
       const result = await readMemoryFacts(
         query,
         {
           topK: DEFAULT_FACTS_TOP_K,
-          filters: scopeKey ? { scope_key: scopeKey } : undefined,
+          filters: factFilters,
         },
         createMem0OpaqueOperationContext({
           db: ctx.db,

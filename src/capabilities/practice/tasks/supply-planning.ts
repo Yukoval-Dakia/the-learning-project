@@ -23,6 +23,7 @@ function buildSupplyPlanPrompt(profile: SubjectProfile): string {
   today: 今晚日期与星期（YYYY-MM-DD（周X））,
   subjects: [{ id, display_name, knowledge_nodes: 节点数, frontier: [{ id, name, theta, evidence_count, available_questions, draft_questions }] }],
   pending_placement_claims: [{ claim_id, subject_id, knowledge_id }],  // 诊断放置等已声明的供给需求
+  selection_misses: [{ knowledge_id, subject_id, reason, event_id, recorded_at }],  // 到期复习选不出可出的题
   steering?: [{ goal_id, instruction_md, learner_words, scope_knowledge_ids, scope_unresolved, until, days_left }],  // 学习者亲口说出的考试/优先安排（在窗口内生效）
   jyeoo_budget_remaining: 今日 jyeoo 付费题剩余预算,
   previous_rejection?: 上一轮机检拒绝原因（若有则逐条修正后重出完整计划）
@@ -32,6 +33,7 @@ function buildSupplyPlanPrompt(profile: SubjectProfile): string {
 - 只为**真实存在的知识点**规划：knowledge_id 必须从输入 frontier 列表里选，或用只读知识图谱工具核实后引用；发明 id 会被机检查无此点整份拒绝。
 - steering 出现时：考纲内（scope_knowledge_ids）的格子优先补——离 until 越近（days_left 越小）优先级越高；scope_unresolved 是对不上知识点的范围文字，只能忽略，不能发明 id 去填。steering 不改变任何硬约束（仍是同一套 25 项/预算/机检），也不免任何检查。
 - 优先补：available_questions = 0 的前缘节点（零覆盖冷启动）、evidence_count 低但有掌握信号的节点、pending_placement_claims 指向的节点（诊断放置需要题）。
+- selection_misses 是已经落账的选题落空：这些知识点到期，但没有可出的题。夜间供给扫描会按 selection_miss 补它们。不要把同一知识点再写进 items，避免当晚补两次。available_questions 大于 0 仍可能一道都不可出，以 selection_misses 为准。
 - available/draft 充足的节点不要补（题池已够）。
 - 难度档按该节点的 theta 与 evidence_count 判断：无信号给 'near'，theta 低给 'below'/'near'，theta 高且需要拉开给 'above'/'stretch'。
 - route_preference 是偏好不是承诺：'sourcing_web'（web 既存题）优先于 'quiz_gen'（生成）；'jyeoo_fetch' 仅在你判断需要真题风格且预算够时放入（付费，40/日硬顶）。执行侧有权降级。

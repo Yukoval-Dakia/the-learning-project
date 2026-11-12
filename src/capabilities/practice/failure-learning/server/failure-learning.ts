@@ -1,14 +1,19 @@
 import { eq } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
 import { event, question } from '@/db/schema';
+import { shouldEnqueueBackgroundJobs } from '@/kernel/background-job-enqueue';
+import { HostOperationNotInstalledError } from '@/kernel/host-operation';
+import { enqueueNoteRefineTrigger } from '@/kernel/note-refine-trigger';
 import { resolveVerdictForAttempt } from '@/kernel/read-models/assessment-verdict';
 import {
   getFailureAttemptForDerivationById,
   getFailureAttemptWithReasoningTraceForDerivationById,
 } from '@/kernel/read-models/failure-attempts';
 import { loadFailureLearningKnowledgeContext } from '@/kernel/read-models/failure-learning-context';
+import { notesForKnowledge } from '@/kernel/read-models/notes-read';
 import type { BoundRunTaskTextFn } from '@/server/ai/runner-fn';
 import { resolveSubjectProfile } from '@/subjects/profile';
+import { loadAttributionEvidence } from './attribution-context';
 import {
   type AttributionOutcome,
   runAttributionAndWriteJudgeEvent,
@@ -57,7 +62,9 @@ export type FailureLearningRequestResult =
 
 export interface FailureLearningRequestDeps {
   db: Db | Tx;
-  enqueueAttribution(attemptEventId: string): Promise<string>;
+  /** Persist the durable dispatch obligation inside the caller's transaction;
+   * returns the stable attribution stage job id. */
+  recordAttributionIntent(attemptEventId: string): Promise<string>;
 }
 
 export type FailureLearningFollowUpResult =
@@ -112,8 +119,8 @@ async function classifyAttempt(
  * Durable request operation used by the attempt-event subscriber.
  *
  * It owns automatic eligibility so neither producers nor delivery adapters
- * duplicate product rules. The caller supplies the transaction-bound enqueue
- * adapter; a stable pg-boss id makes a replay another accepted request.
+ * duplicate product rules. The caller supplies the transaction-bound intent
+ * writer; the deterministic intent row makes a replay another accepted request.
  */
 export async function requestFailureLearning(
   deps: FailureLearningRequestDeps,
@@ -141,7 +148,7 @@ export async function requestFailureLearning(
 
   return {
     status: 'accepted',
-    attributionJobId: await deps.enqueueAttribution(input.attemptEventId),
+    attributionJobId: await deps.recordAttributionIntent(input.attemptEventId),
   };
 }
 
@@ -210,6 +217,10 @@ async function attributeFailure(
     return { status: 'skipped', reason: 'question_not_found', modelInvoked: false };
   }
 
+  const promptMd =
+    native?.prompt_md ??
+    (frozenQuestion ? frozenQuestion.prompt_md : (questionRow?.prompt_md ?? ''));
+  const wrongAnswerMd = native?.answer_md ?? failure.answer_md ?? '';
   const referencedKnowledgeIds =
     native?.knowledge_ids ??
     (failure.referenced_knowledge_ids.length > 0
@@ -223,6 +234,15 @@ async function attributeFailure(
   );
   const subjectProfile = resolveSubjectProfile(knowledgeContext[0]?.effective_domain ?? null);
   const reasoningTraceMd = rawReasoningTrace?.trim() ? rawReasoningTrace : undefined;
+  const evidence = await loadAttributionEvidence(deps.db, {
+    attemptEventId,
+    questionId: failure.question_id,
+    attemptPayload: classified.payload,
+    knowledgeIds: referencedKnowledgeIds,
+    gradingEvidence: native?.grading_evidence ?? null,
+    revisionId: native?.revision_id ?? null,
+    failedPartIds: native?.failed_part_ids ?? [],
+  });
 
   let modelInvoked = false;
   let outcome: AttributionOutcome;
@@ -231,17 +251,16 @@ async function attributeFailure(
       db: deps.db,
       attemptEventId,
       input: {
-        prompt_md:
-          native?.prompt_md ??
-          (frozenQuestion ? frozenQuestion.prompt_md : (questionRow?.prompt_md ?? '')),
+        prompt_md: promptMd,
         reference_md: native
           ? native.reference_md
           : frozenQuestion
             ? frozenQuestion.reference_md
             : (questionRow?.reference_md ?? null),
-        wrong_answer_md: native?.answer_md ?? failure.answer_md ?? '',
+        wrong_answer_md: wrongAnswerMd,
         knowledge_context: knowledgeContext,
         ...(reasoningTraceMd !== undefined ? { reasoning_trace_md: reasoningTraceMd } : {}),
+        ...evidence,
       },
       referencedKnowledgeIds,
       ...(native ? { nativeExpectation: native } : {}),
@@ -275,11 +294,90 @@ async function attributeFailure(
       modelInvoked,
     };
   }
+  await enqueueMarkWrongNoteRefine({
+    db: deps.db,
+    knowledgeIds: referencedKnowledgeIds,
+    knowledgeNames: knowledgeContext.map((node) => node.name),
+    promptMd,
+    wrongAnswerMd,
+    attemptEventId,
+    judgeEventId,
+  });
   return {
     status: outcome.outcome === 'written' && modelInvoked ? 'written' : 'existing',
     judgeEventId,
     modelInvoked,
   };
+}
+
+/** Paid note-refine jobs one wrong answer may fan out. One first note per knowledge point. */
+const MARK_WRONG_NOTE_LIMIT = 8;
+
+function clipLearnerText(value: string): string {
+  const text = value.replace(/\s+/g, ' ').trim();
+  return text.length <= 400 ? text : `${text.slice(0, 399)}…`;
+}
+
+async function enqueueMarkWrongNoteRefine(input: {
+  db: Db;
+  knowledgeIds: string[];
+  knowledgeNames: string[];
+  promptMd: string;
+  wrongAnswerMd: string;
+  attemptEventId: string;
+  judgeEventId: string;
+}): Promise<void> {
+  const knowledgeIds = [
+    ...new Set(input.knowledgeIds.map((id) => id.trim()).filter(Boolean)),
+  ].slice(0, MARK_WRONG_NOTE_LIMIT);
+  if (knowledgeIds.length === 0) return;
+  const notes = await Promise.all(
+    knowledgeIds.map((knowledgeId) => notesForKnowledge(input.db, knowledgeId, { limit: 1 })),
+  );
+  const artifactIds: string[] = [];
+  const seen = new Set<string>();
+  for (const batch of notes) {
+    const note = batch[0];
+    if (!note || seen.has(note.id)) continue;
+    seen.add(note.id);
+    artifactIds.push(note.id);
+    if (artifactIds.length >= MARK_WRONG_NOTE_LIMIT) break;
+  }
+  if (artifactIds.length === 0) return;
+  const names = input.knowledgeNames.filter((name) => name.trim().length > 0);
+  const contextMd = [
+    '学习者在这些知识点上做错了一题。',
+    names.length > 0 ? `知识点：${names.join('、')}` : null,
+    input.promptMd.trim() ? `题目：${clipLearnerText(input.promptMd)}` : null,
+    `学习者的答案：${clipLearnerText(input.wrongAnswerMd) || '（空）'}`,
+  ]
+    .filter((line): line is string => line !== null)
+    .join('\n');
+  for (const artifactId of artifactIds) {
+    try {
+      const result = await enqueueNoteRefineTrigger({
+        db: input.db,
+        artifactId,
+        kind: 'mark_wrong',
+        contextMd,
+        evidenceIds: [input.attemptEventId],
+        triggerEventId: input.judgeEventId,
+      });
+      if (result.status === 'failed') {
+        console.warn(
+          `[failure-learning] mark_wrong note refine enqueue failed for ${artifactId}: ${result.error}`,
+        );
+      }
+    } catch (err) {
+      if (err instanceof HostOperationNotInstalledError) {
+        if (shouldEnqueueBackgroundJobs()) {
+          console.error('[failure-learning] note refine trigger is not installed', err);
+        }
+        return;
+      }
+      throw err;
+    }
+  }
 }
 
 export function createFailureLearning(deps: FailureLearningDeps): FailureLearning {

@@ -94,6 +94,25 @@ export type AttemptCostTruth =
 
 export type AttemptCostBasis = AttemptCostTruth['basis'];
 
+/** Persisted cost_ref prefix proving a provider refusal billed nothing. */
+export const UNBILLED_PROVIDER_REJECTION_REF_PREFIX = 'unbilled-provider-rejection:';
+
+/**
+ * The chargeable USD of a failed attempt: 0 only when the persisted receipt
+ * proves the provider rejected pre-billing. A bare `cost_usd === 0` is NOT
+ * proof — free-at-margin lanes (subscriptions, zero-price catalog cards)
+ * record 0 for work that actually ran and may have side effects. Kept beside
+ * the truth type so the unbilled rule stays leaf-level and import-safe from
+ * db/schema-reachable modules.
+ */
+export function failureSpendChargeUsd(truth: AttemptCostTruth | undefined): 0 | null {
+  return truth?.basis === 'estimated' &&
+    truth.amountUsd === 0 &&
+    truth.ref.startsWith(UNBILLED_PROVIDER_REJECTION_REF_PREFIX)
+    ? 0
+    : null;
+}
+
 export type TransportLane = 'undici_agent' | 'observer_fetch';
 export type RequestSendState =
   | 'not_sent'

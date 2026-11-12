@@ -26,6 +26,7 @@ import type { Db } from '@/db/client';
 import { isEmbedRevisionCurrent } from '@/db/embed-currency';
 import { knowledge, question } from '@/db/schema';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
+import { sourceAllowsDerivationSql } from '@/kernel/read-models/usage-policy';
 import {
   EMBED_DIMS,
   EMBED_MODEL,
@@ -247,6 +248,9 @@ export async function runEmbedBackfill(
     caller: 'worker',
     deadlineAt: new Date(Date.now() + 20_000),
   },
+  /** Test seam: production callers leave this unset so sends go through the real
+   *  DashScope client. */
+  embedFn: typeof embedMany = embedMany,
 ): Promise<number> {
   let total = 0;
 
@@ -266,10 +270,18 @@ export async function runEmbedBackfill(
     isNull(question.embed_version),
     lt(question.embed_version, EMBED_VERSION),
   );
-  const qs = await db.select().from(question).where(qStale).limit(limit);
+  // Source-document consent: restricted lineage is excluded at the scan predicate —
+  // before the batch limit — so those rows can neither consume the budget nor reach
+  // embedMany. The same predicate rides the write CAS, so a restriction flipped
+  // mid-send also blocks the landing vector.
+  const qDerivationAllowed = sourceAllowsDerivationSql({
+    kind: 'question',
+    id: question.id,
+  });
+  const qs = await db.select().from(question).where(and(qStale, qDerivationAllowed)).limit(limit);
   if (qs.length > 0) {
     const texts = qs.map((q) => questionEmbedText(q));
-    const vecs = await embedMany(texts, providerAttempt);
+    const vecs = await embedFn(texts, providerAttempt);
     for (let i = 0; i < qs.length; i++) {
       // A content edit during the provider call invalidates this result even if the
       // row still needs an embedding; match the selected source null-safely. The
@@ -278,6 +290,7 @@ export async function runEmbedBackfill(
       const sourceStillCurrent = and(
         eq(question.id, qs[i].id),
         qStale,
+        qDerivationAllowed,
         eq(question.version, qs[i].version),
         sql`${question.prompt_md} IS NOT DISTINCT FROM ${qs[i].prompt_md}`,
         sql`${question.reference_md} IS NOT DISTINCT FROM ${qs[i].reference_md}`,
@@ -316,7 +329,7 @@ export async function runEmbedBackfill(
     }));
 
     if (pairs.length > 0) {
-      const vecs = await embedMany(
+      const vecs = await embedFn(
         pairs.map((r) => r.text),
         providerAttempt,
       );
@@ -351,7 +364,7 @@ export async function runEmbedBackfill(
     total += pairs.length;
   }
 
-  total += await embedSolutionPriorVectors(db, limit, providerAttempt);
+  total += await embedSolutionPriorVectors(db, limit, providerAttempt, embedFn);
 
   return total;
 }

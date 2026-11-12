@@ -977,9 +977,9 @@ async function bookPaidProbes(
   occurredAt: Date,
 ): Promise<PaidProbePosting[]> {
   if (!postings.some((posting) => posting.state === 'owed')) return [...postings];
-  let writeModelCatalogProbeCost: typeof import('./log').writeModelCatalogProbeCost;
+  let writeModelCatalogProbeCost: typeof import('@/kernel/records/ai-attempt-facts').writeModelCatalogProbeCost;
   try {
-    ({ writeModelCatalogProbeCost } = await import('./log'));
+    ({ writeModelCatalogProbeCost } = await import('@/kernel/records/ai-attempt-facts'));
   } catch (error) {
     console.warn(
       '[model-catalog] probe ledger writer unavailable',

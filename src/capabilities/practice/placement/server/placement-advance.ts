@@ -31,6 +31,7 @@ import { resolveLeaningPreferenceKcs } from './placement-select';
 import { loadPlacementSessionForUpdate } from './placement-session-lifecycle';
 import {
   PLACEMENT_DEFAULT_CAP,
+  PLACEMENT_DEFAULT_SE_THRESHOLD,
   capForPace,
   evaluatePlacementTermination,
 } from './placement-termination';
@@ -42,6 +43,7 @@ export interface PlacementAdvanceOptions {
   /** Client scope override; persisted scope wins when omitted. */
   scopeOverride?: readonly string[];
   cap?: number;
+  /** Omitted → PLACEMENT_DEFAULT_SE_THRESHOLD; explicit null disables the SE early stop. */
   seThreshold?: number | null;
   /** Release this currently-held issuance before advancing. */
   releaseIssuanceId?: string;
@@ -166,7 +168,9 @@ export async function runPlacementAdvanceTx(
       // PLACEMENT_DEFAULT_CAP remains a hard server ceiling.
       cap: Math.min(options.cap ?? capForPace(session.pace), PLACEMENT_DEFAULT_CAP),
       perKcPrecision,
-      seThreshold: options.seThreshold ?? null,
+      // Omitted → the server default; an explicit null (client opt-out) keeps the cap-only path.
+      seThreshold:
+        options.seThreshold === undefined ? PLACEMENT_DEFAULT_SE_THRESHOLD : options.seThreshold,
     });
     if (termination.shouldStop) {
       // shouldStop guarantees a binding reason (placement-termination contract).

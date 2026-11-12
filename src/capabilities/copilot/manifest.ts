@@ -305,6 +305,11 @@ export const copilotCapability = defineCapability({
         name: 'query_events',
         load: () => import('./server/tools/query-events').then((m) => m.queryEventsTool),
       },
+      {
+        name: 'list_pending_proposals',
+        load: () =>
+          import('./server/tools/list-pending-proposals').then((m) => m.listPendingProposalsTool),
+      },
       // Context 暖层读归 agency 的 query_context（YUK-1794 B1）；今日摘要的
       // brief 读走 kernel read-models/memory-brief 端口（executeMemoryBrief 适配）。
     ],
