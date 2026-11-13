@@ -1065,7 +1065,8 @@ export async function countDerivationKnowledgeFailures(
     WHERE ${event.action} IN ('attempt', 'review')
       AND ${event.outcome} = 'failure'
       AND ${event.subject_kind} = 'question'
-      AND ${event.created_at} >= ${input.since}
+      -- postgres-js rejects a Date parameter before the query runs.
+      AND ${event.created_at} >= ${input.since.toISOString()}::timestamptz
       AND ${eventAllowsDerivationSql()}
       AND ${eventCorrectionActiveSql(event.id)}
     GROUP BY kc
