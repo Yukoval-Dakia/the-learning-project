@@ -207,7 +207,11 @@ export async function readAnswerFirstKcBeta(
       row.payload.unsupported_judge === true ||
       (row.payload.judge as { coarse_outcome?: unknown } | undefined)?.coarse_outcome ===
         'unsupported';
-    if (effective === 'unsupported' || (!verdict?.effective && unsupported)) continue;
+    if (
+      effective === 'unsupported' ||
+      (unsupported && !['correct', 'incorrect', 'partial'].includes(effective ?? ''))
+    )
+      continue;
     const outcome = effective ?? row.outcome;
     if (!['correct', 'incorrect', 'success', 'failure', 'partial'].includes(outcome ?? ''))
       continue;
