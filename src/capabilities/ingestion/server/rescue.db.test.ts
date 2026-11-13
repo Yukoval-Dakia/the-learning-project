@@ -142,7 +142,7 @@ describe('runRescue enrolled-block gate', () => {
     { mode: 'already_enrolled' as const },
     { mode: 'draft_applies' as const },
     { mode: 'enroll_wins_race' as const },
-    { mode: 'enroll_wins_blocked_cas' as const },
+    { mode: 'enroll_wins_blocked_session' as const },
     { mode: 'session_turns_reviewed' as const },
   ])('handles block state %s', async ({ mode }) => {
     const db = testDb();
@@ -165,12 +165,9 @@ describe('runRescue enrolled-block gate', () => {
         });
         expect(enrolled.status).toBe('enrolled');
       }
-      if (mode === 'enroll_wins_blocked_cas') {
-        // The same race, with the commit ordered inside the write window: the
-        // enrollment takes the block row lock and holds it uncommitted, the
-        // rescue UPDATE waits on the lock, then re-evaluates against the
-        // committed 'auto_enrolled' row and matches 0 rows — the CAS is what
-        // refuses this write, not the in-transaction status read.
+      if (mode === 'enroll_wins_blocked_session') {
+        // Publication holds the source session SHARE lock. Rescue's session
+        // UPDATE lock waits for enrollment before it can re-check the block.
         let held!: () => void;
         const lockHeld = new Promise<void>((r) => {
           held = r;
@@ -208,7 +205,7 @@ describe('runRescue enrolled-block gate', () => {
       expect(enrolled.status).toBe('enrolled');
     }
 
-    // Settle-capture at creation: in the blocked-CAS race the rescue rejects
+    // Settle-capture at creation: in the blocked-session race the rescue rejects
     // while the test is still awaiting the enroll commit, and an unobserved
     // rejection fails the whole vitest worker even though the case passes.
     const rescueOutcome = runRescue({
@@ -223,12 +220,13 @@ describe('runRescue enrolled-block gate', () => {
       () => null,
       (err: unknown) => err,
     );
-    if (mode === 'enroll_wins_blocked_cas') {
-      // Release only once the UPDATE is provably waiting on the row lock, so
-      // the enroll commit lands between its lock wait and its re-evaluation.
-      await waitForBlockedQuery(db, 'question_block');
-      race.release?.();
-      await race.done;
+    if (mode === 'enroll_wins_blocked_session') {
+      try {
+        await waitForBlockedQuery(db, 'learning_session');
+      } finally {
+        race.release?.();
+        await race.done;
+      }
     }
 
     const settled = await rescueOutcome;
@@ -289,7 +287,7 @@ describe('runRescue enrolled-block gate', () => {
       return;
     }
 
-    // enroll_wins_race / enroll_wins_blocked_cas: the paid call did run, so
+    // Both enrollment races reached the paid call, so
     // the result rides on the refusal instead of being dropped.
     expect(paidCalls).toBe(1);
     expect(block?.version).toBe(1);
