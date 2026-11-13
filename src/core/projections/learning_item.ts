@@ -277,13 +277,18 @@ export function foldLearningItem(
         { user_pinned: plan.data.payload.user_pinned, due_at: dueAt },
       );
       if (next === null) continue;
-      row = {
-        ...row,
-        user_pinned: next.user_pinned,
-        due_at: next.due_at,
-        updated_at: fe.created_at,
-        version: row.version + 1,
-      };
+      // System adoption records a deadline the row already carried. Bumping version
+      // would make the fold disagree with that live row.
+      row =
+        plan.data.actor_kind === 'system'
+          ? { ...row, user_pinned: next.user_pinned, due_at: next.due_at }
+          : {
+              ...row,
+              user_pinned: next.user_pinned,
+              due_at: next.due_at,
+              updated_at: fe.created_at,
+              version: row.version + 1,
+            };
       continue;
     }
 
