@@ -14,8 +14,6 @@ export const DAILY_PRACTICE_BUDGET_MINUTES: Readonly<Record<DailyPracticePace, n
   dense: 40,
 };
 
-export const PAPER_ESTIMATED_MINUTES = 10;
-
 export function normalizeDailyPracticePace(pace: string | null | undefined): DailyPracticePace {
   if (pace === 'light' || pace === 'medium' || pace === 'dense') return pace;
   return DEFAULT_DAILY_PRACTICE_PACE;
@@ -28,13 +26,24 @@ export function dailyPracticeBudgetMinutes(pace: string | null | undefined): num
 export function estimateStreamItemMinutes(
   itemKind: 'question' | 'paper',
   questionMinutes: number = DEFAULT_QUESTION_MINUTES,
+  questionCount?: number,
 ): number {
-  return itemKind === 'paper' ? PAPER_ESTIMATED_MINUTES : questionMinutes;
+  if (itemKind === 'question') return questionMinutes;
+  if (questionCount === undefined || !Number.isFinite(questionCount) || questionCount <= 0) {
+    return 0;
+  }
+  return questionCount * questionMinutes;
 }
 
 export interface BudgetableStreamItem {
   item_kind: 'question' | 'paper';
   source: string;
+  /** Answerable slots. Prices a paper; questions ignore it. */
+  questionCount?: number;
+}
+
+function pricedMinutes(item: BudgetableStreamItem, questionMinutes: number): number {
+  return estimateStreamItemMinutes(item.item_kind, questionMinutes, item.questionCount);
 }
 
 export interface TimeBudgetResult<T> {
@@ -83,10 +92,7 @@ export function fitStreamToTimeBudget<T extends BudgetableStreamItem>(
   if (budgetMinutes === undefined) {
     return {
       kept: [...items],
-      estimatedMinutes: items.reduce(
-        (sum, item) => sum + estimateStreamItemMinutes(item.item_kind, questionMinutes),
-        0,
-      ),
+      estimatedMinutes: items.reduce((sum, item) => sum + pricedMinutes(item, questionMinutes), 0),
       deferredDueCount: 0,
       truncated: false,
     };
@@ -102,7 +108,7 @@ export function fitStreamToTimeBudget<T extends BudgetableStreamItem>(
   for (const [index, item] of items.entries()) {
     if (item.source !== 'intervention') continue;
     selectedIndexes.add(index);
-    remaining = Math.max(0, remaining - estimateStreamItemMinutes(item.item_kind, questionMinutes));
+    remaining = Math.max(0, remaining - pricedMinutes(item, questionMinutes));
   }
 
   const newLearningIndexes: number[] = [];
@@ -131,7 +137,7 @@ export function fitStreamToTimeBudget<T extends BudgetableStreamItem>(
   let deferredDueCount = 0;
   for (const [index, item] of items.entries()) {
     if (item.source !== 'decay' || selectedIndexes.has(index)) continue;
-    const cost = estimateStreamItemMinutes(item.item_kind, questionMinutes);
+    const cost = pricedMinutes(item, questionMinutes);
     if (cost <= flexible) {
       selectedIndexes.add(index);
       flexible -= cost;
@@ -145,7 +151,7 @@ export function fitStreamToTimeBudget<T extends BudgetableStreamItem>(
     if (selectedIndexes.has(index) || item.source === 'decay' || item.source === 'intervention') {
       continue;
     }
-    const cost = estimateStreamItemMinutes(item.item_kind, questionMinutes);
+    const cost = pricedMinutes(item, questionMinutes);
     if (cost <= leftover) {
       selectedIndexes.add(index);
       leftover -= cost;
@@ -155,10 +161,7 @@ export function fitStreamToTimeBudget<T extends BudgetableStreamItem>(
   const kept = items.filter((_, index) => selectedIndexes.has(index));
   return {
     kept,
-    estimatedMinutes: kept.reduce(
-      (sum, item) => sum + estimateStreamItemMinutes(item.item_kind, questionMinutes),
-      0,
-    ),
+    estimatedMinutes: kept.reduce((sum, item) => sum + pricedMinutes(item, questionMinutes), 0),
     deferredDueCount,
     truncated: kept.length < items.length,
   };

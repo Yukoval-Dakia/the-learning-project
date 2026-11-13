@@ -29,6 +29,7 @@ import {
 } from '../../session/public';
 import { type CollectedSignal, collectCandidateSignals } from './candidate-signals';
 import { DEFAULT_COMPOSE_LOCK_WAIT_MS, withinComposePaidWorkLock } from './compose-paid-work-lock';
+import { attachPaperQuestionCounts } from './paper-rank';
 import { readQuestionPace } from './question-pace';
 import { selectScopedKnowledgeFill } from './scoped-fill';
 import {
@@ -716,7 +717,7 @@ async function trimStoredPendingItemsToBudget(
 
     const { rows: eligible, recoveryRowIds } = await filterProspectiveStreamQuestions(tx, current);
     const deleteIds = planStoredStreamBudgetTrim({
-      rows: eligible,
+      rows: await attachPaperQuestionCounts(tx, eligible),
       recoveryRowIds,
       budgetMinutes,
       questionMinutes,
@@ -821,7 +822,7 @@ export async function getStream(
   const gated = await filterProspectiveStreamQuestions(db, rows);
   rows = gated.rows;
   const exceedsBudget = storedStreamExceedsBudget({
-    rows,
+    rows: await attachPaperQuestionCounts(db, rows),
     recoveryRowIds: gated.recoveryRowIds,
     budgetMinutes: budget.minutes,
     questionMinutes: questionPace.minutes,

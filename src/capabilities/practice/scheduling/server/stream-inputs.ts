@@ -14,7 +14,8 @@
 // - newCheckItems：open learning_item（pending/in_progress）的 knowledge_ids 中尚无 FSRS 状态行的
 // 知识点（= 学了还没检验）。按置顶、截止、计划顺序取，先修未满足的不进池；每个 KC 的
 // 首题按 MFI 取信息量最高的已准入题，候选池交下游 sampler。
-// - pendingPapers：getPracticeList 的 ready 且未开始 session 的卷。
+// - pendingPapers：getPracticeList 翻页读完全部 ready 且未开始的卷，再按卷内
+// 知识点与到期/弱项/误解/steering 的重叠排序（卷龄只打破平局）。
 // 减项 steering 的延后集合在 collectComposerInputs 开头读一次。到期（含干预
 // 诊断）、变式、新学、前沿和待做卷：知识点全部落在该集合内才丢弃，混有集合外
 // 知识点的综合题保留。
@@ -54,6 +55,7 @@ import {
 import { pickFirstQuestions } from './first-question-rank';
 import { knowledgeLabels } from './knowledge-labels';
 import { FRONTIER_MAX_ITEMS } from './learnable-frontier';
+import { type PendingPaperFacts, rankPendingPapers } from './paper-rank';
 import { readQuestionPace } from './question-pace';
 import {
   type DailyPracticePace,
@@ -382,6 +384,37 @@ async function readComposerDueRows(db: DbLike): Promise<ReviewDueRow[]> {
   }
 }
 
+const PRACTICE_PAPER_PAGE = 200;
+
+async function readAllPendingPapers(db: DbLike): Promise<PendingPaperFacts[]> {
+  const papers: PendingPaperFacts[] = [];
+  const seenCursors = new Set<string>();
+  let cursor: string | undefined;
+  for (;;) {
+    const page = await getPracticeList(db, { limit: PRACTICE_PAPER_PAGE, cursor });
+    for (const paper of page.papers) {
+      if (paper.generation_status !== 'ready' || paper.session !== null) continue;
+      papers.push({
+        paperId: paper.artifact_id,
+        title: paper.title,
+        source:
+          paper.intent_source === 'ingestion_paper'
+            ? 'import'
+            : paper.intent_source === 'quiz_gen'
+              ? 'on_demand'
+              : 'paper',
+        knowledgeIds: paper.knowledge_ids,
+        questionCount: paper.total_slots,
+        createdAt: paper.created_at,
+      });
+    }
+    if (!page.next_cursor || seenCursors.has(page.next_cursor)) break;
+    seenCursors.add(page.next_cursor);
+    cursor = page.next_cursor;
+  }
+  return papers;
+}
+
 export async function collectComposerInputs(db: DbLike, date: string): Promise<ComposerInputs> {
   // 红线 4（draft 排除契约，）：通用练习池的选题候选**必须排除** draft_status='draft'
   // （NULL≡active / 'active' 留池，仅排字面 'draft'）。new_check + frontier 共用
@@ -537,23 +570,12 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
     }
   }
 
-  // 4. 当日待做卷 — ready 且未开始 session。
-  const practiceList = await getPracticeList(db);
-  const pendingPapers = practiceList.papers
-    .filter(
-      (p) =>
-        p.generation_status === 'ready' && p.session === null && steeringKeeps(p.knowledge_ids),
-    )
-    .map((p) => ({
-      paperId: p.artifact_id,
-      title: p.title,
-      source:
-        p.intent_source === 'ingestion_paper'
-          ? ('import' as const)
-          : p.intent_source === 'quiz_gen'
-            ? ('on_demand' as const)
-            : ('paper' as const),
-    }));
+  // 4. 当日待做卷 — 翻页读完全部 ready 且未开始的卷，再按卷内知识点排序。
+  const listedPapers = (await readAllPendingPapers(db)).filter((paper) =>
+    steeringKeeps(paper.knowledgeIds),
+  );
+  const dueKnowledgeIds = new Set(dueRows.flatMap((row) => row.knowledge_ids ?? []));
+  const pendingPapers = await rankPendingPapers(db, listedPapers, dueKnowledgeIds, new Date());
 
   // 5. B3 learnable_frontier（#3）——前置全掌握、自身未掌握的「可学前沿」KC，每个取
   // 信息量最高的 1–2 道**非 draft** active 题（谓词与 new_check 同形）。frontier KC 无题 →
