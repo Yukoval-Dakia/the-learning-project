@@ -15,7 +15,7 @@
 // 知识点（= 学了还没检验）。按置顶、截止、计划顺序取，先修未满足的不进池；每个 KC 的
 // 首题按 MFI 取信息量最高的已准入题，候选池交下游 sampler。
 // - pendingPapers：getPracticeList 翻页读完全部 ready 且未开始的卷，再按卷内
-// 知识点与到期/弱项/误解/steering 的重叠排序（卷龄只打破平局）。
+// 题目行上的知识点与到期/弱项/误解/steering 的重叠排序（更早导入的靠前）。
 // 减项 steering 的延后集合在 collectComposerInputs 开头读一次。到期（含干预
 // 诊断）、变式、新学、前沿和待做卷：知识点全部落在该集合内才丢弃，混有集合外
 // 知识点的综合题保留。
@@ -55,7 +55,11 @@ import {
 import { pickFirstQuestions } from './first-question-rank';
 import { knowledgeLabels } from './knowledge-labels';
 import { FRONTIER_MAX_ITEMS } from './learnable-frontier';
-import { type PendingPaperFacts, rankPendingPapers } from './paper-rank';
+import {
+  type PendingPaperFacts,
+  attachPaperQuestionKnowledge,
+  rankPendingPapers,
+} from './paper-rank';
 import { readQuestionPace } from './question-pace';
 import {
   type DailyPracticePace,
@@ -403,7 +407,7 @@ async function readAllPendingPapers(db: DbLike): Promise<PendingPaperFacts[]> {
             : paper.intent_source === 'quiz_gen'
               ? 'on_demand'
               : 'paper',
-        knowledgeIds: paper.knowledge_ids,
+        knowledgeIds: [],
         questionCount: paper.total_slots,
         createdAt: paper.created_at,
       });
@@ -570,10 +574,10 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
     }
   }
 
-  // 4. 当日待做卷 — 翻页读完全部 ready 且未开始的卷，再按卷内知识点排序。
-  const listedPapers = (await readAllPendingPapers(db)).filter((paper) =>
-    steeringKeeps(paper.knowledgeIds),
-  );
+  // 4. 当日待做卷 — 翻页读完全部 ready 且未开始的卷。知识点取题目行，再按重叠排序。
+  const listedPapers = (
+    await attachPaperQuestionKnowledge(db, await readAllPendingPapers(db))
+  ).filter((paper) => steeringKeeps(paper.knowledgeIds));
   const dueKnowledgeIds = new Set(dueRows.flatMap((row) => row.knowledge_ids ?? []));
   const pendingPapers = await rankPendingPapers(db, listedPapers, dueKnowledgeIds, new Date());
 

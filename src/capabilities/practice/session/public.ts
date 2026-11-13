@@ -2,7 +2,7 @@
 // （`pnpm audit:practice-subowners`）；practice 外部调用方经根 `public.ts` 的具名转出。
 export { createAnswerDraft } from './api/paper-answer-route';
 export { getPaperDetail } from './server/paper-detail';
-export { countPaperSlots } from './server/paper-sections';
+export { countPaperSlots, paperQuestionIds } from './server/paper-sections';
 export { createPracticePaperSubmission } from './server/paper-submission-operation';
 export { submitPaperSlot } from './server/paper-submit';
 export { readPaperList } from './server/papers-list';

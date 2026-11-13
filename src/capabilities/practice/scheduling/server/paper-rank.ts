@@ -1,8 +1,9 @@
 // Pending-paper order for the daily stream.
-// A paper is ranked by how many of its question knowledge points sit in today's
-// due, weak, misconception, and steering sets. Age is only the last key, so an
-// older paper is not buried when it covers the same points, and a newer paper
-// cannot outrank one that covers more of today's due points.
+// A paper is ranked by how many knowledge points on its question rows sit in
+// today's due, weak, misconception, and steering sets. The artifact's own tag
+// list is not used: it can name points the paper's questions do not cover, or
+// miss points they do. Import time is the last key, so an older paper is not
+// buried when it covers the same points.
 // Duration is not decided here: the caller prices a paper as its answerable
 // slot count times the shared per-question pace.
 
@@ -11,19 +12,18 @@ import { learnerLocalDay } from '@/core/learner-day';
 import { MASTERY_BAND_THRESHOLDS } from '@/core/mastery-band';
 import { steeringWindowCoversToday } from '@/core/steering';
 import type { Db, Tx } from '@/db/client';
-import { artifact, misconception, misconception_edge } from '@/db/schema';
+import { artifact, misconception, misconception_edge, question } from '@/db/schema';
 import { listActiveGoalsWithResolvedScope } from '@/kernel/read-models/active-goal-scope';
 import { getMasteryProjection, isObserved } from '@/kernel/read-models/mastery-projection';
-import { countPaperSlots } from '../../session/public';
+import { countPaperSlots, paperQuestionIds } from '../../session/public';
 
 type DbLike = Db | Tx;
-
-const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 export interface PendingPaperFacts {
   paperId: string;
   title: string;
   source: 'paper' | 'on_demand' | 'import';
+  /** Knowledge points on the paper's question rows. */
   knowledgeIds: readonly string[];
   questionCount: number;
   createdAt: Date;
@@ -41,7 +41,6 @@ interface PaperRank {
   weak: number;
   misconception: number;
   steering: number;
-  ageDays: number;
 }
 
 function overlap(knowledgeIds: readonly string[], scope: ReadonlySet<string>): number {
@@ -50,24 +49,12 @@ function overlap(knowledgeIds: readonly string[], scope: ReadonlySet<string>): n
   return seen.size;
 }
 
-function ageDays(createdAt: Date, now: Date): number {
-  const elapsed = now.getTime() - createdAt.getTime();
-  if (!Number.isFinite(elapsed) || elapsed <= 0) return 0;
-  return Math.floor(elapsed / MS_PER_DAY);
-}
-
-function paperRank(
-  knowledgeIds: readonly string[],
-  createdAt: Date,
-  now: Date,
-  scope: PaperRelevanceScope,
-): PaperRank {
+function paperRank(knowledgeIds: readonly string[], scope: PaperRelevanceScope): PaperRank {
   return {
     due: overlap(knowledgeIds, scope.due),
     weak: overlap(knowledgeIds, scope.weak),
     misconception: overlap(knowledgeIds, scope.misconception),
     steering: overlap(knowledgeIds, scope.steering),
-    ageDays: ageDays(createdAt, now),
   };
 }
 
@@ -76,9 +63,16 @@ function comparePaperRank(left: PaperRank, right: PaperRank): number {
     right.due - left.due ||
     right.weak - left.weak ||
     right.misconception - left.misconception ||
-    right.steering - left.steering ||
-    right.ageDays - left.ageDays
+    right.steering - left.steering
   );
+}
+
+/** Future or invalid timestamps tie with "just imported" and lose to any earlier paper. */
+function importedAt(createdAt: Date, now: Date): number {
+  const time = createdAt.getTime();
+  const current = now.getTime();
+  if (!Number.isFinite(time) || !Number.isFinite(current) || time > current) return current;
+  return time;
 }
 
 async function weakKnowledgeIds(db: DbLike, knowledgeIds: readonly string[]): Promise<Set<string>> {
@@ -151,10 +145,52 @@ export async function rankPendingPapers(
   const scope = await loadPaperRelevanceScope(db, papers, dueKnowledgeIds, now);
   return [...papers].sort((left, right) => {
     const byRank = comparePaperRank(
-      paperRank(left.knowledgeIds, left.createdAt, now, scope),
-      paperRank(right.knowledgeIds, right.createdAt, now, scope),
+      paperRank(left.knowledgeIds, scope),
+      paperRank(right.knowledgeIds, scope),
     );
-    return byRank || left.paperId.localeCompare(right.paperId);
+    return (
+      byRank ||
+      importedAt(left.createdAt, now) - importedAt(right.createdAt, now) ||
+      left.paperId.localeCompare(right.paperId)
+    );
+  });
+}
+
+export async function attachPaperQuestionKnowledge(
+  db: DbLike,
+  papers: readonly PendingPaperFacts[],
+): Promise<PendingPaperFacts[]> {
+  if (papers.length === 0) return [];
+  const states = await db
+    .select({ id: artifact.id, tool_state: artifact.tool_state })
+    .from(artifact)
+    .where(
+      inArray(
+        artifact.id,
+        papers.map((paper) => paper.paperId),
+      ),
+    );
+  const questionIdsByPaper = new Map<string, string[]>();
+  const questionIds = new Set<string>();
+  for (const row of states) {
+    const ids = paperQuestionIds(row.tool_state);
+    questionIdsByPaper.set(row.id, ids);
+    for (const id of ids) questionIds.add(id);
+  }
+  const knowledgeByQuestion = new Map<string, readonly string[]>();
+  if (questionIds.size > 0) {
+    const rows = await db
+      .select({ id: question.id, knowledge_ids: question.knowledge_ids })
+      .from(question)
+      .where(inArray(question.id, [...questionIds]));
+    for (const row of rows) knowledgeByQuestion.set(row.id, row.knowledge_ids);
+  }
+  return papers.map((paper) => {
+    const covered = new Set<string>();
+    for (const questionId of questionIdsByPaper.get(paper.paperId) ?? []) {
+      for (const knowledgeId of knowledgeByQuestion.get(questionId) ?? []) covered.add(knowledgeId);
+    }
+    return { ...paper, knowledgeIds: [...covered] };
   });
 }
 

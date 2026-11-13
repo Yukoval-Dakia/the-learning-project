@@ -93,6 +93,24 @@ export function countPaperSlots(toolState: ToolStateLike): number {
   return slotKeys.size > 0 ? slotKeys.size : (toolState?.question_ids?.length ?? 0);
 }
 
+/** Question ids of the same slots `countPaperSlots` counts. Structured assignments win. */
+export function paperQuestionIds(toolState: ToolStateLike): string[] {
+  const fromSections = new Set<string>();
+  let structured = false;
+  for (const section of readPaperSections(toolState)) {
+    for (const assignment of section.assignments) {
+      structured = true;
+      if (assignment.question_id) fromSections.add(assignment.question_id);
+    }
+  }
+  if (structured) return [...fromSections];
+  const flat = new Set<string>();
+  for (const id of toolState?.question_ids ?? []) {
+    if (id) flat.add(id);
+  }
+  return [...flat];
+}
+
 export interface ResolvedSlotAssignment {
   questionId: string;
   partRef: string | null;
