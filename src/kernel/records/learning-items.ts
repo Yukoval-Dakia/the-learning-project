@@ -1,14 +1,19 @@
 // Shared creation and structural materialization for event-native learning items.
-// Derived child_learning_item_ids / ai_score / due_at / reviewed_at remain outside the snapshot.
+// Derived child_learning_item_ids / ai_score / reviewed_at remain outside the snapshot.
 
-import { and, asc, eq, inArray, isNull, or } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNotNull, isNull, or } from 'drizzle-orm';
 import type { z } from 'zod';
 import { newId } from '@/core/ids';
-import { foldLearningItem } from '@/core/projections/learning_item';
+import {
+  type LearningItemPlanPatch,
+  applyLearningItemPlan,
+  foldLearningItem,
+} from '@/core/projections/learning_item';
 import type { LearningItemRowSnapshotT } from '@/core/schema/event/genesis';
-import type {
-  LearningItemKnowledgeIdsRewriteExperimental,
-  LearningItemStateRestoreExperimental,
+import {
+  LEARNING_ITEM_PLAN_BACKFILL_ACTOR,
+  type LearningItemKnowledgeIdsRewriteExperimental,
+  type LearningItemStateRestoreExperimental,
 } from '@/core/schema/event/learning-item-events';
 import type { Db, Tx } from '@/db/client';
 import { event, learning_item, materialized_id_index } from '@/db/schema';
@@ -42,6 +47,7 @@ export async function createPendingLearningItem(
     ...input,
     status: 'pending',
     user_pinned: false,
+    due_at: null,
     completed_at: null,
     dismissed_at: null,
     archived_at: null,
@@ -77,6 +83,7 @@ export async function createPendingLearningItem(
  * snapshot columns.
  */
 export async function projectLearningItem(db: DbLike, itemId: string): Promise<void> {
+  await adoptUnownedLearningItemDeadline(db, itemId);
   const projected = await gatherAndFoldLearningItem(db, itemId);
   if (projected === null) {
     await db.delete(learning_item).where(eq(learning_item.id, itemId));
@@ -85,11 +92,97 @@ export async function projectLearningItem(db: DbLike, itemId: string): Promise<v
   await upsertProjectedLearningItem(db, projected);
 }
 
+function genesisOmitsDeadline(payload: unknown): boolean {
+  if (!payload || typeof payload !== 'object') return false;
+  const row = (payload as { row?: unknown }).row;
+  return !!row && typeof row === 'object' && !('due_at' in row);
+}
+
+/**
+ * Record a live deadline whose genesis predates fold ownership. The event keeps
+ * the genesis pin and does not touch the live row; the fold then reproduces due_at.
+ */
+export async function adoptUnownedLearningItemDeadline(
+  db: DbLike,
+  itemId: string,
+  now: Date = new Date(),
+): Promise<boolean> {
+  return db.transaction(async (tx) => {
+    const [live] = await tx
+      .select({ due_at: learning_item.due_at })
+      .from(learning_item)
+      .where(eq(learning_item.id, itemId))
+      .for('update');
+    if (!live?.due_at) return false;
+    const [plan] = await tx
+      .select({ id: event.id })
+      .from(event)
+      .where(
+        and(
+          eq(event.subject_kind, 'learning_item'),
+          eq(event.subject_id, itemId),
+          eq(event.action, 'experimental:learning_item_plan'),
+        ),
+      )
+      .limit(1);
+    if (plan) return false;
+    const [genesis] = await tx
+      .select({ payload: event.payload })
+      .from(event)
+      .where(
+        and(
+          eq(event.subject_kind, 'learning_item'),
+          eq(event.subject_id, itemId),
+          eq(event.action, 'experimental:genesis'),
+        ),
+      )
+      .orderBy(asc(event.created_at), asc(event.id))
+      .limit(1);
+    if (!genesis || !genesisOmitsDeadline(genesis.payload)) return false;
+    const pinned = (genesis.payload as { row?: { user_pinned?: unknown } }).row?.user_pinned;
+    if (typeof pinned !== 'boolean') return false;
+    const createdAt = await nextProjectionEventTime(tx, 'learning_item', itemId, now);
+    await writeEvent(tx, {
+      id: newId(),
+      actor_kind: 'system',
+      actor_ref: LEARNING_ITEM_PLAN_BACKFILL_ACTOR,
+      action: 'experimental:learning_item_plan',
+      subject_kind: 'learning_item',
+      subject_id: itemId,
+      outcome: 'success',
+      payload: {
+        user_pinned: pinned,
+        due_at: live.due_at.toISOString(),
+      },
+      created_at: createdAt,
+      ingest_at: createdAt,
+    });
+    return true;
+  });
+}
+
+/** Compatibility pass for rows anchored before the fold owned the plan deadline. */
+export async function adoptUnownedLearningItemDeadlines(
+  db: DbLike,
+  now: Date = new Date(),
+): Promise<number> {
+  const rows = await db
+    .select({ id: learning_item.id })
+    .from(learning_item)
+    .where(isNotNull(learning_item.due_at));
+  let adopted = 0;
+  for (const row of rows) {
+    if (await adoptUnownedLearningItemDeadline(db, row.id, now)) adopted += 1;
+  }
+  return adopted;
+}
+
 /**
  * Guarded write-through: a fold of null deletes only when the row has a genesis anchor.
  * Without one the fold is blind to a pre-event row, so deleting would lose data.
  */
 export async function projectLearningItemGuarded(db: DbLike, itemId: string): Promise<void> {
+  await adoptUnownedLearningItemDeadline(db, itemId);
   const projected = await gatherAndFoldLearningItem(db, itemId);
   if (projected === null) {
     if (await hasLearningItemGenesisAnchor(db, itemId)) {
@@ -120,6 +213,7 @@ async function upsertProjectedLearningItem(
       parent_learning_item_id: projected.parent_learning_item_id,
       status: projected.status,
       user_pinned: projected.user_pinned,
+      due_at: projected.due_at ?? null,
       completed_at: projected.completed_at,
       dismissed_at: projected.dismissed_at,
       archived_at: projected.archived_at,
@@ -140,6 +234,7 @@ async function upsertProjectedLearningItem(
         parent_learning_item_id: projected.parent_learning_item_id,
         status: projected.status,
         user_pinned: projected.user_pinned,
+        due_at: projected.due_at ?? null,
         completed_at: projected.completed_at,
         dismissed_at: projected.dismissed_at,
         archived_at: projected.archived_at,
@@ -284,6 +379,72 @@ export async function applyLearningItemRepair(
   );
   await writeEvent(tx, { ...input, id: newId(), created_at: createdAt, ingest_at: requestedAt });
   await projectLearningItemGuarded(tx, input.subject_id);
+}
+
+export type SetLearningItemPlanResult =
+  | { ok: true; id: string; user_pinned: boolean; due_at: Date | null }
+  | { ok: false; reason: 'missing' | 'unanchored' | 'invalid' };
+
+function planPatchValid(patch: LearningItemPlanPatch): boolean {
+  if (patch.user_pinned === undefined && patch.due_at === undefined) return false;
+  return !(patch.due_at instanceof Date && !Number.isFinite(patch.due_at.getTime()));
+}
+
+/**
+ * Learner plan edit. The locked row is the current fact; the event replaces pin and
+ * deadline together so a later fold does not keep a stale half.
+ */
+export async function setLearningItemPlan(
+  db: Db,
+  itemId: string,
+  patch: LearningItemPlanPatch,
+  now: Date = new Date(),
+): Promise<SetLearningItemPlanResult> {
+  if (!planPatchValid(patch)) return { ok: false, reason: 'invalid' };
+  return db.transaction(async (tx) => {
+    const [current] = await tx
+      .select({
+        user_pinned: learning_item.user_pinned,
+        due_at: learning_item.due_at,
+      })
+      .from(learning_item)
+      .where(eq(learning_item.id, itemId))
+      .for('update');
+    if (!current) return { ok: false, reason: 'missing' };
+    if (!(await hasLearningItemGenesisAnchor(tx, itemId))) {
+      return { ok: false, reason: 'unanchored' };
+    }
+    const next = applyLearningItemPlan(
+      { user_pinned: current.user_pinned, due_at: current.due_at },
+      patch,
+    );
+    if (next === null) {
+      return {
+        ok: true,
+        id: itemId,
+        user_pinned: current.user_pinned,
+        due_at: current.due_at,
+      };
+    }
+    const createdAt = await nextProjectionEventTime(tx, 'learning_item', itemId, now);
+    await writeEvent(tx, {
+      id: newId(),
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'experimental:learning_item_plan',
+      subject_kind: 'learning_item',
+      subject_id: itemId,
+      outcome: 'success',
+      payload: {
+        user_pinned: next.user_pinned,
+        due_at: next.due_at === null ? null : next.due_at.toISOString(),
+      },
+      created_at: createdAt,
+      ingest_at: createdAt,
+    });
+    await projectLearningItemGuarded(tx, itemId);
+    return { ok: true, id: itemId, user_pinned: next.user_pinned, due_at: next.due_at };
+  });
 }
 
 // Read-only active learning-item reader for the Coach brief. Results are attention

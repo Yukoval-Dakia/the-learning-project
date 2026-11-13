@@ -139,9 +139,9 @@ export type MistakeVariantRowSnapshotT = z.infer<typeof MistakeVariantRowSnapsho
 //
 // Projected shape of a `learning_item` row. EXCLUDED (no write path / not fold truth):
 // child_learning_item_ids (the tree is read via parent_learning_item_id), ai_score,
-// due_at (FSRS state lives elsewhere), reviewed_at (derived from the log). `user_pinned`
-// is retained so a seed carries its current value, but no action event mutates it yet,
-// so later toggles read as drift until pin is event-sourced.
+// reviewed_at (derived from the log). `due_at` is the plan deadline, not an FSRS due.
+// Historical genesis may omit it; the fold materializes null. Later pin and deadline
+// changes are `experimental:learning_item_plan`.
 //
 // `status` is free text on the table (not a pgEnum), so it stays z.string(): a status
 // the fold reproduces must never fail to parse. archived/dismissed are timestamp
@@ -160,7 +160,9 @@ export const LearningItemRowSnapshot = z
     primary_artifact_id: z.string().nullable(), // nullable pointer (ADR-0027 — not DB-unique)
     parent_learning_item_id: z.string().nullable(), // nullable self-ref (tree parent; snapshot-only)
     status: z.string(), // FREE TEXT column (pending|in_progress|done|resting|active) — NOT an enum
-    user_pinned: z.boolean(), // snapshot-RETAINED but no event drives a later change (parity-skip)
+    user_pinned: z.boolean(),
+    // Absent on genesis written before the fold owned the plan deadline.
+    due_at: z.coerce.date().nullable().optional(),
     completed_at: z.coerce.date().nullable(), // nullable timestamp (set by complete, cleared by relearn)
     dismissed_at: z.coerce.date().nullable(), // nullable timestamp (always null today; retained)
     archived_at: z.coerce.date().nullable(), // nullable timestamp (set by archive/retract)

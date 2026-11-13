@@ -270,6 +270,7 @@ export function learningItemLiveRowToSnapshot(row: {
   parent_learning_item_id: string | null;
   status: string;
   user_pinned: boolean;
+  due_at: Date | null;
   completed_at: Date | null;
   dismissed_at: Date | null;
   archived_at: Date | null;
@@ -289,6 +290,7 @@ export function learningItemLiveRowToSnapshot(row: {
     parent_learning_item_id: row.parent_learning_item_id,
     status: row.status,
     user_pinned: row.user_pinned,
+    due_at: row.due_at,
     completed_at: row.completed_at,
     dismissed_at: row.dismissed_at,
     archived_at: row.archived_at,

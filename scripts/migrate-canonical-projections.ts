@@ -2,6 +2,7 @@ import { eq, sql } from 'drizzle-orm';
 import type { Db } from '@/db/client';
 import { event, materialized_id_index } from '@/db/schema';
 import { assertKnowledgeOperationsDecodable } from '@/kernel/records/knowledge-operation';
+import { adoptUnownedLearningItemDeadlines } from '@/kernel/records/learning-items';
 import { auditProjectionKind, auditProjectionKindSymmetric } from '@/server/projections/audit-kind';
 import { PROJECTION_ENTITIES } from '@/server/projections/entity-registry';
 import {
@@ -111,6 +112,7 @@ export async function migrateCanonicalProjections(db: Db, now = new Date()) {
         );
       }
       const counts = await BACKFILLS[kind](tx, now);
+      if (kind === 'learning_item') await adoptUnownedLearningItemDeadlines(tx, now);
       const audit = await auditProjectionKind(tx, kind);
       // Include event-only entities too: value parity on live rows alone misses a
       // deleted live row that the next projection write would resurrect. Table locks

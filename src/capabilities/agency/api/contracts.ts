@@ -112,3 +112,19 @@ export const ProbeAnswerResponseSchema = z.object({
     .optional(),
   idempotent: z.boolean(),
 });
+
+export const LearningItemPlanBody = z
+  .object({
+    user_pinned: z.boolean().optional(),
+    due_at: z.string().datetime().nullable().optional(),
+  })
+  .strict()
+  .refine((value) => value.user_pinned !== undefined || value.due_at !== undefined, {
+    message: 'plan update must set pin or deadline',
+  });
+
+export const LearningItemPlanResponseSchema = z.object({
+  id: z.string().min(1),
+  user_pinned: z.boolean(),
+  due_at: z.string().datetime().nullable(),
+});

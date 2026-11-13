@@ -109,6 +109,7 @@ const LEARNING_ITEM_STRUCTURAL_COLUMNS = {
   parent_learning_item_id: learning_item.parent_learning_item_id,
   status: learning_item.status,
   user_pinned: learning_item.user_pinned,
+  due_at: learning_item.due_at,
   completed_at: learning_item.completed_at,
   dismissed_at: learning_item.dismissed_at,
   archived_at: learning_item.archived_at,
