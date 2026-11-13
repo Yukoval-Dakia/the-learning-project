@@ -65,7 +65,7 @@
 ## 录入与会话
 
 - **录入会话（ingestion session）**：一次"用户上传一批材料 → 系统抽取 → 落库"的工作单元。状态机：`uploaded` →（用户触发抽取）→ `queued` →（worker 起跑）→ `extracting` → `extracted` / `partial` / `failed`；`extracted` / `partial` 可 `markReviewed()` → `reviewed`（可选步骤，`commitImport()` 也直接接 `extracted` / `partial`）→ **`imported`（终态，只读）**。`failed` 可重新入队（`enqueueExtraction()`）回到 `queued`。**救援是 block-level**：session 状态不变（partial → partial），仅替换单块内容。
-- **会话总结（session summary）**：练习会话结束（交卷、练完最后一项或放弃）后由 LLM 生成的总结，写入 `learning_session.summary_md`，并把结构化的 `next_focus` 交给次日教练。
+- **会话总结（session summary）**：试卷交卷、知识点专练做完、有作答的会话放弃，或当天整档练习完成后，由现有总结任务生成的回顾，写入 `learning_session.summary_md`，结构化的 `next_focus` 供次日教练读取。整档练习以列表里仍可发放或可恢复的题是否做完判定；已隐藏且没有已接受作答可恢复的不可发放行不挡住总结。
 - **上传材料的使用范围（usage choice）**：学习者上传材料时选择这份资料可以用在哪里：`allow`（**全部使用**，也可进长期记忆、学习总结）或 `answer_only`（**只用于本题**，只用来生成这道题的答案与判分）。上传后可经 POST `/api/ingestion-sessions/:id/purpose` 在 `allow` 与 `answer_only` 间变更（body 含 `request_id`、`source_document_id`、`expected_version`、`target`），系统 `crisis` 不可被用户放宽。GET 同路径读回执、停止与派生修复状态；已外发副本与未归因历史仍记 `unknown`，不宣称全部撤回（详见 `/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/planning/2026-10-28-ingestion-purpose-change-full.md`）。
 - **使用回执（usage receipt）**：上传识别后给学习者的一条回执，说明从识别出的文字里隐去了哪些类别的个人信息（只报类别与处数，不报被隐去的值），以及**原图是否原样交给 AI**（拍照 / PDF 必须把原图交给识别引擎，回执明说原图原样交出；Word 文本行不外传图像）。在录入会话详情里可以查看这份回执，Word 文本行也补写回执。
 

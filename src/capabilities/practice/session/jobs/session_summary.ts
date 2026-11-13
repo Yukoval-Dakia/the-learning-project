@@ -2,8 +2,9 @@
 //
 // Enqueued by canonical `PATCH /api/review-sessions/[id]` and its legacy `/end`
 // alias when the transition reaches completed, by the daily stream when a
-// KC-scoped session's last item closes, and by the orphan sweep for abandoned
-// sessions (the runner itself skips sessions with no answers). Runs async so the
+// KC-scoped session's last item closes, by the whole-profile daily stream when
+// its last item closes, and by the orphan sweep for abandoned sessions (the
+// runner itself skips sessions with no answers). Runs async so the
 // LLM call doesn't block the close request (and survives the page being closed
 // mid-flight).
 //

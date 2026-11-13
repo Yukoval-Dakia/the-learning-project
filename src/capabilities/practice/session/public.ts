@@ -1,6 +1,10 @@
 // 整卷与做题会话 owner 的稳定业务操作。practice 内其它 owner 只经本文件引用本 owner
 // （`pnpm audit:practice-subowners`）；practice 外部调用方经根 `public.ts` 的具名转出。
 export { createAnswerDraft } from './api/paper-answer-route';
+export {
+  dailyStreamEntrypoint,
+  earliestDailyStreamAnswerAt,
+} from './server/daily-stream-answers';
 export { getPaperDetail } from './server/paper-detail';
 export { countPaperSlots, paperQuestionIds } from './server/paper-sections';
 export { createPracticePaperSubmission } from './server/paper-submission-operation';

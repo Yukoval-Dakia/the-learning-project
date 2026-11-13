@@ -271,6 +271,13 @@ export type StartReviewSessionParams = {
    * recover the same session without trusting a client-supplied session id.
    */
   scopeKnowledgeIds?: string[] | null;
+  /**
+   * Whole-profile daily stream identity (`daily-stream:YYYY-MM-DD`). That
+   * partition's session_id stays null, so the day lives on the session row.
+   */
+  entrypoint?: string | null;
+  /** When the learner actually started; defaults to insert time. */
+  startedAt?: Date;
 };
 
 /**
@@ -290,14 +297,14 @@ export async function startReviewSession(
       status: 'started',
       source_document_id: null,
       source_asset_ids: [],
-      entrypoint: null,
+      entrypoint: params.entrypoint ?? null,
       warnings: [],
       error_message: null,
       summary_md: null,
       goal_id: params.goalId ?? null,
       artifact_id: params.artifactId ?? null,
       scope_knowledge_ids: params.scopeKnowledgeIds ?? null,
-      started_at: now,
+      started_at: params.startedAt ?? now,
       created_at: now,
       updated_at: now,
       version: 0,

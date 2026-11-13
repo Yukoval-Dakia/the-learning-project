@@ -1,6 +1,6 @@
 // Daily stream IO shell: materialize StreamPlan and orchestrate reads/advances.
 // Pure selection lives in stream-composer.ts; candidate inputs in stream-inputs.ts;
-// projections in stream-view.ts.
+// projections in stream-view.ts; whole-profile close in daily-stream-close.ts.
 
 import { and, asc, desc, eq, gte, inArray, isNull, lt, sql } from 'drizzle-orm';
 import { getConfig } from '@/core/config/store';
@@ -31,6 +31,7 @@ import {
 } from '../../session/public';
 import { type CollectedSignal, collectCandidateSignals } from './candidate-signals';
 import { DEFAULT_COMPOSE_LOCK_WAIT_MS, withinComposePaidWorkLock } from './compose-paid-work-lock';
+import { completeDailyStreamIfDone } from './daily-stream-close';
 import { attachPaperQuestionCounts } from './paper-rank';
 import { readQuestionPace } from './question-pace';
 import { selectScopedKnowledgeFill } from './scoped-fill';
@@ -1084,6 +1085,7 @@ export async function advanceStreamItem(
   if (!updated) return null;
 
   await completeScopedSessionIfDone(db, updated);
+  await completeDailyStreamIfDone(db, updated);
 
   // Rerank only completed question items, and only under the softmax policy: the legacy
   // path must stay deterministic, so its stream must not be randomly reshuffled.
