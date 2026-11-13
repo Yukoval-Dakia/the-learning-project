@@ -31,6 +31,7 @@ overrides:
   mongoose@>=9 <9.11.4: '>=9.11.4 <10'
 
 patchedDependencies:
+  drizzle-orm@0.45.4: d727202a754044294b921e3c7f704ad47f8451638129d49bca59483ae6b102f7
   mem0ai@3.0.13: bed42b0fae1699500136270802df34fefa5cd5d3d0087e9d8a9838b3a4a0600e
 
 importers:
@@ -111,10 +112,10 @@ importers:
         version: 2.2.0(cytoscape@3.34.4)
       drizzle-orm:
         specifier: ^0.45.4
-        version: 0.45.4(@cloudflare/workers-types@4.20260508.1)(@opentelemetry/api@1.9.1)(@types/pg@8.23.1)(better-sqlite3@12.11.1)(pg@8.23.1)(postgres@3.4.9)
+        version: 0.45.4(patch_hash=d727202a754044294b921e3c7f704ad47f8451638129d49bca59483ae6b102f7)(@cloudflare/workers-types@4.20260508.1)(@opentelemetry/api@1.9.1)(@types/pg@8.23.1)(better-sqlite3@12.11.1)(pg@8.23.1)(postgres@3.4.9)
       drizzle-zod:
         specifier: ^0.7.1
-        version: 0.7.1(drizzle-orm@0.45.4(@cloudflare/workers-types@4.20260508.1)(@opentelemetry/api@1.9.1)(@types/pg@8.23.1)(better-sqlite3@12.11.1)(pg@8.23.1)(postgres@3.4.9))(zod@4.6.7)
+        version: 0.7.1(drizzle-orm@0.45.4(patch_hash=d727202a754044294b921e3c7f704ad47f8451638129d49bca59483ae6b102f7)(@cloudflare/workers-types@4.20260508.1)(@opentelemetry/api@1.9.1)(@types/pg@8.23.1)(better-sqlite3@12.11.1)(pg@8.23.1)(postgres@3.4.9))(zod@4.6.7)
       fast-xml-parser:
         specifier: ^5.11.2
         version: 5.11.2
@@ -9500,7 +9501,7 @@ snapshots:
       esbuild: 0.28.2
       tsx: 4.23.12
 
-  drizzle-orm@0.45.4(@cloudflare/workers-types@4.20260508.1)(@opentelemetry/api@1.9.1)(@types/pg@8.23.1)(better-sqlite3@12.11.1)(pg@8.23.1)(postgres@3.4.9):
+  drizzle-orm@0.45.4(patch_hash=d727202a754044294b921e3c7f704ad47f8451638129d49bca59483ae6b102f7)(@cloudflare/workers-types@4.20260508.1)(@opentelemetry/api@1.9.1)(@types/pg@8.23.1)(better-sqlite3@12.11.1)(pg@8.23.1)(postgres@3.4.9):
     optionalDependencies:
       '@cloudflare/workers-types': 4.20260508.1
       '@opentelemetry/api': 1.9.1
@@ -9509,9 +9510,9 @@ snapshots:
       pg: 8.23.1
       postgres: 3.4.9
 
-  drizzle-zod@0.7.1(drizzle-orm@0.45.4(@cloudflare/workers-types@4.20260508.1)(@opentelemetry/api@1.9.1)(@types/pg@8.23.1)(better-sqlite3@12.11.1)(pg@8.23.1)(postgres@3.4.9))(zod@4.6.7):
+  drizzle-zod@0.7.1(drizzle-orm@0.45.4(patch_hash=d727202a754044294b921e3c7f704ad47f8451638129d49bca59483ae6b102f7)(@cloudflare/workers-types@4.20260508.1)(@opentelemetry/api@1.9.1)(@types/pg@8.23.1)(better-sqlite3@12.11.1)(pg@8.23.1)(postgres@3.4.9))(zod@4.6.7):
     dependencies:
-      drizzle-orm: 0.45.4(@cloudflare/workers-types@4.20260508.1)(@opentelemetry/api@1.9.1)(@types/pg@8.23.1)(better-sqlite3@12.11.1)(pg@8.23.1)(postgres@3.4.9)
+      drizzle-orm: 0.45.4(patch_hash=d727202a754044294b921e3c7f704ad47f8451638129d49bca59483ae6b102f7)(@cloudflare/workers-types@4.20260508.1)(@opentelemetry/api@1.9.1)(@types/pg@8.23.1)(better-sqlite3@12.11.1)(pg@8.23.1)(postgres@3.4.9)
       zod: 4.6.7
 
   dunder-proto@1.0.1:
