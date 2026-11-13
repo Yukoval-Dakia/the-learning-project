@@ -20,7 +20,7 @@
 // 诊断）、变式、新学、前沿和待做卷：知识点全部落在该集合内才丢弃，混有集合外
 // 知识点的综合题保留。
 
-import { and, desc, eq, inArray, isNotNull, lte } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull, isNull, lte } from 'drizzle-orm';
 import { LearningItemOpenStatus } from '@/core/schema/business';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import { steeringDefersKnowledgeIds } from '@/core/steering';
@@ -526,7 +526,13 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
       primary_artifact_id: learning_item.primary_artifact_id,
     })
     .from(learning_item)
-    .where(inArray(learning_item.status, LearningItemOpenStatus.options));
+    .where(
+      and(
+        inArray(learning_item.status, LearningItemOpenStatus.options),
+        // 归档是独立 tombstone：status 保持 pending/in_progress，不能靠 open-status 过滤。
+        isNull(learning_item.archived_at),
+      ),
+    );
   const planSteps = await loadPlanSteps(
     db,
     items.flatMap((item) => item.primary_artifact_id ?? []),
