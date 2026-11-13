@@ -261,6 +261,7 @@ export const dbTestInclude = [
   'src/core/calibration/replay.fixture.db.test.ts',
   'src/capabilities/agency/server/conjecture/reconcile.db.test.ts',
   'src/kernel/records/kc-typed-state.db.test.ts',
+  'src/kernel/records/knowledge-tag.db.test.ts',
   'src/server/migration/contract-epoch/epoch.db.test.ts',
   'src/server/durable/paid-effect-store.db.test.ts',
   'src/server/durable/producer-fence-lock.db.test.ts',

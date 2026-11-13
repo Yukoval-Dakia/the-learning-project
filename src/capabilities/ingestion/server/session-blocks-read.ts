@@ -9,7 +9,7 @@ import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { MistakeEnrollOutcome } from '@/core/schema/mistake_enroll';
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
-import { event, question, question_block } from '@/db/schema';
+import { event, knowledge, question, question_block } from '@/db/schema';
 import { learnerVisibleKnowledgeIds } from '@/kernel/read-models/learner-knowledge-visibility';
 import { readWorkflowJudgeConfidence } from '@/kernel/read-models/workflow-judge-confidence';
 import { readRevertedBlockIds } from './block-revert-state';
@@ -77,18 +77,32 @@ export async function readIngestionSessionBlocks(db: Db, params: { id: string })
   const judgeConfidenceByQuestionId = new Map<string, number | null>();
   const questionById = new Map<
     string,
-    { draft_status: string | null; metadata: Record<string, unknown> | null }
+    {
+      draft_status: string | null;
+      metadata: Record<string, unknown> | null;
+      knowledge_ids: string[];
+    }
   >();
   if (importedQuestionIds.length > 0) {
     const questionRows = await db
-      .select({ id: question.id, metadata: question.metadata, draft_status: question.draft_status })
+      .select({
+        id: question.id,
+        metadata: question.metadata,
+        draft_status: question.draft_status,
+        knowledge_ids: question.knowledge_ids,
+      })
       .from(question)
       .where(inArray(question.id, importedQuestionIds));
     for (const row of questionRows) {
       judgeConfidenceByQuestionId.set(row.id, readWorkflowJudgeConfidence(row.metadata));
-      questionById.set(row.id, { draft_status: row.draft_status, metadata: row.metadata });
+      questionById.set(row.id, {
+        draft_status: row.draft_status,
+        metadata: row.metadata,
+        knowledge_ids: row.knowledge_ids ?? [],
+      });
     }
   }
+  const knowledgeNames = await loadKnowledgeNames(db, questionById);
 
   return {
     rows: rows.map((r) => {
@@ -108,6 +122,7 @@ export async function readIngestionSessionBlocks(db: Db, params: { id: string })
           r.imported_question_id !== null ? questionById.get(r.imported_question_id) : undefined,
           enrollmentInFlight,
           revertedBlockIds.has(r.id),
+          knowledgeNames,
         ),
       };
     }),
@@ -142,9 +157,16 @@ function toEnrollmentProjection(
     extracted_prompt_md: string | null;
     structured: StructuredQuestionT | null;
   },
-  enrolled: { draft_status: string | null; metadata: Record<string, unknown> | null } | undefined,
+  enrolled:
+    | {
+        draft_status: string | null;
+        metadata: Record<string, unknown> | null;
+        knowledge_ids: string[];
+      }
+    | undefined,
   enrollmentInFlight: boolean,
   reverted: boolean,
+  knowledgeNames: Map<string, string>,
 ) {
   // The block status is the ground truth about what happened to this capture:
   // imported/submitted/auto_enrolled all carry a question, ignored was an explicit
@@ -154,11 +176,16 @@ function toEnrollmentProjection(
       state: 'ignored' as const,
       reason: null,
       knowledge: null,
+      knowledge_ids: [] as string[],
+      knowledge_labels: [] as Array<{ id: string; name: string }>,
       library_visible: false,
     };
   }
   if (block.status !== 'draft') {
     const markers = enrolled?.metadata?.ingestion_enrollment as { knowledge?: unknown } | undefined;
+    // Synthetic ids (pending proposals, system nodes) are never learner-visible;
+    // the read must not leak them as labels either.
+    const knowledgeIds = learnerVisibleKnowledgeIds(enrolled?.knowledge_ids ?? []);
     return {
       state: 'in_library' as const,
       reason: null,
@@ -168,6 +195,11 @@ function toEnrollmentProjection(
         markers?.knowledge === 'restricted'
           ? markers.knowledge
           : null,
+      knowledge_ids: knowledgeIds,
+      knowledge_labels: knowledgeIds.map((id) => ({
+        id,
+        name: knowledgeNames.get(id) ?? id,
+      })),
       library_visible: enrolled ? enrolled.draft_status !== 'draft' : null,
     };
   }
@@ -181,6 +213,8 @@ function toEnrollmentProjection(
       state: 'not_enrolled' as const,
       reason: 'reverted' as const,
       knowledge: null,
+      knowledge_ids: [] as string[],
+      knowledge_labels: [] as Array<{ id: string; name: string }>,
       library_visible: null,
     };
   }
@@ -192,6 +226,8 @@ function toEnrollmentProjection(
         : ('publish_failed' as const)
       : ('needs_text' as const),
     knowledge: null,
+    knowledge_ids: [] as string[],
+    knowledge_labels: [] as Array<{ id: string; name: string }>,
     library_visible: null,
   };
 }
@@ -282,4 +318,22 @@ function numberOrNull(value: unknown): number | null {
 
 function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [];
+}
+
+/**
+ * One batched name lookup for every enrolled question's attributed KCs, so the block
+ * read can label the knowledge point without an N+1 query. Missing/archived nodes fall
+ * back to their id at the call site.
+ */
+async function loadKnowledgeNames(
+  db: Db,
+  questionById: Map<string, { knowledge_ids: string[] }>,
+): Promise<Map<string, string>> {
+  const ids = [...new Set([...questionById.values()].flatMap((row) => row.knowledge_ids))];
+  if (ids.length === 0) return new Map();
+  const rows = await db
+    .select({ id: knowledge.id, name: knowledge.name })
+    .from(knowledge)
+    .where(inArray(knowledge.id, ids));
+  return new Map(rows.map((row) => [row.id, row.name]));
 }

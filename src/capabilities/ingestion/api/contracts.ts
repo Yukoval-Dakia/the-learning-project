@@ -316,6 +316,9 @@ export const IngestionBlockEnrollmentSchema = z.object({
   state: z.enum(['in_library', 'not_enrolled', 'ignored']),
   reason: z.enum(['needs_text', 'pending', 'publish_failed', 'reverted']).nullable(),
   knowledge: z.enum(['attributed', 'missing', 'restricted']).nullable(),
+  /** Attributed KC ids and their display names (id fallback when a node is gone). */
+  knowledge_ids: z.array(z.string()),
+  knowledge_labels: z.array(z.object({ id: z.string(), name: z.string() })),
   library_visible: z.boolean().nullable(),
 });
 
