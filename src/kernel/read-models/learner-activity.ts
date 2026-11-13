@@ -1027,7 +1027,10 @@ export async function loadSettledKnowledgeAnswerCounts(
           gte(event.created_at, input.since),
           lt(event.created_at, input.until),
           or(
-            and(eq(event.action, NATIVE_ATTEMPT_ACTION), nativeLearningScopeMentionsAny(scope.scanIds)),
+            and(
+              eq(event.action, NATIVE_ATTEMPT_ACTION),
+              nativeLearningScopeMentionsAny(scope.scanIds),
+            ),
             and(inArray(event.action, ['attempt', 'review']), legacy),
           ),
           cursor
