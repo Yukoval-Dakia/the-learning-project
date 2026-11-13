@@ -859,17 +859,17 @@ const LEGAL_TRANSITIONS: Record<StreamItemStatus, StreamItemStatus[]> = {
 
 const OPEN_STREAM_STATUSES = ['pending', 'in_progress', 'skipped'] as const;
 
+/**
+ * A stored question the practice list no longer serves, and that has no
+ * accepted answer to recover, stays in the table. It is not an open slot:
+ * the day finishes when every slot still on that list is done.
+ */
 async function openDailyItemCount(db: DbLike, date: string): Promise<number> {
-  const [{ remaining }] = await db
-    .select({ remaining: sql<number>`count(*)::int` })
-    .from(practice_stream_item)
-    .where(
-      and(
-        streamPartitionPredicate(date),
-        inArray(practice_stream_item.status, [...OPEN_STREAM_STATUSES]),
-      ),
-    );
-  return remaining;
+  const rows = await db.select().from(practice_stream_item).where(streamPartitionPredicate(date));
+  const visible = await filterProspectiveStreamQuestions(db, rows);
+  return visible.rows.filter((row) =>
+    (OPEN_STREAM_STATUSES as readonly string[]).includes(row.status),
+  ).length;
 }
 
 async function completeScopedSessionIfDone(db: Db, row: StreamItemRow): Promise<void> {
@@ -904,10 +904,10 @@ async function completeScopedSessionIfDone(db: Db, row: StreamItemRow): Promise<
 type DailyStreamClose = { kind: 'summarize'; sessionId: string } | { kind: 'skip' };
 
 /**
- * The whole-profile partition cannot store a session id. When its last open slot
- * closes, one review session for that calendar day is completed and the existing
- * summary job is enqueued. A second close of the same day finds the session
- * already completed and does not enqueue again.
+ * The whole-profile partition cannot store a session id. When the last slot
+ * still on the practice list closes, one review session for that calendar day
+ * is completed and the existing summary job is enqueued. A second close of the
+ * same day finds the session already completed and does not enqueue again.
  */
 async function closeDailyStream(db: Db, date: string): Promise<DailyStreamClose> {
   return db.transaction(async (tx) => {
