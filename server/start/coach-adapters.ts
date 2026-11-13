@@ -35,7 +35,18 @@ export async function readStartCoachEffectiveness() {
   }
 }
 
+export async function readStartLearningPlanProgress() {
+  try {
+    const { db } = await import('@/db/client');
+    const { loadLearningPlanProgress } = await import('@/capabilities/agency/public');
+    return await loadLearningPlanProgress(db);
+  } catch (error) {
+    throw errorResponse(error);
+  }
+}
+
 export const coachAdapters = {
+  readStartLearningPlanProgress,
   readStartCoachCalibration,
   readStartCoachEffectiveness,
   readStartCoachWeekly,

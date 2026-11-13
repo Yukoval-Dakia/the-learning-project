@@ -25,3 +25,11 @@ export const getStartCoachEffectiveness = createServerFn({ method: 'GET' }).hand
     return JSON.stringify(await readStartCoachEffectiveness());
   }),
 );
+
+export const getStartLearningPlanProgress = createServerFn({ method: 'GET' }).handler(
+  ({ context }) =>
+    runAuthenticatedStartWorkbench(context, getRequest(), async () => {
+      const { readStartLearningPlanProgress } = await context.adapters.coach();
+      return JSON.stringify(await readStartLearningPlanProgress());
+    }),
+);

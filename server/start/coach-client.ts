@@ -1,3 +1,4 @@
+import type { LearningPlanProgressData } from '@/capabilities/agency/ui-public';
 import type {
   CoachCalibrationReader,
   CoachEffectivenessReader,
@@ -8,6 +9,7 @@ import {
   getStartCoachCalibration,
   getStartCoachEffectiveness,
   getStartCoachWeekly,
+  getStartLearningPlanProgress,
 } from './coach-function';
 
 export const startCoachWeeklyClient: CoachWeeklyReader = async (days, timeZone) =>
@@ -23,3 +25,6 @@ export const startCoachCalibrationClient: CoachCalibrationReader = async () =>
 
 export const startCoachEffectivenessClient: CoachEffectivenessReader = async () =>
   JSON.parse(await getStartCoachEffectiveness({ fetch: authenticatedStartFetch }));
+
+export const startLearningPlanProgressClient = async (): Promise<LearningPlanProgressData> =>
+  JSON.parse(await getStartLearningPlanProgress({ fetch: authenticatedStartFetch }));

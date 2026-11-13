@@ -1,3 +1,7 @@
+import {
+  type LearningPlanProgress,
+  loadLearningPlanProgress,
+} from '../server/learning-item-completion-policy';
 // coach_daily pg-boss handler: builds the Coach allowlist MCP bridge, runs
 // `CoachTask`, and writes trigger + scan events (`experimental:trigger_coach_scan` /
 // `experimental:coach_scan`). Enqueued on learner return when the plan is stale
@@ -173,6 +177,7 @@ function buildCoachInput(
   feedbackDigest: ProposalFeedbackCell[],
   agentNotes: AgentNote[],
   activeItems: ActiveLearningItem[],
+  itemProgress: LearningPlanProgress,
   weakPoints: ActionableWeakPointDerivationT,
   previousPlanIssues: readonly DailyFocusPlanIssue[],
   coachContextMd: string | null,
@@ -238,7 +243,9 @@ function buildCoachInput(
       knowledge_ids: it.knowledge_ids,
       status: it.status,
       user_pinned: it.user_pinned,
+      mastery_progress: itemProgress.items.find((item) => item.id === it.id) ?? null,
     })),
+    learning_plan_progress: itemProgress,
     // Scoped to actable kinds; bounded by the digest's own cap.
     proposal_feedback: feedbackDigest
       .filter((cell) => COACH_ACTABLE_KINDS.has(cell.kind))
@@ -421,6 +428,7 @@ export async function runCoach(db: Db, deps: CoachRunDeps = {}): Promise<CoachRu
       const feedbackDigest = await loadFeedback(db);
       const agentNotes = await readNotes(db, now);
       const activeItems = await listItems(db);
+      const itemProgress = await loadLearningPlanProgress(db);
       const weakPoints = await deriveWeakPoints(db, { now });
       const previousPlanIssues = await loadPrevPlanIssues(db);
       const sessionFocus = await loadSessionFocus(db);
@@ -463,6 +471,7 @@ export async function runCoach(db: Db, deps: CoachRunDeps = {}): Promise<CoachRu
           feedbackDigest,
           agentNotes,
           activeItems,
+          itemProgress,
           weakPoints,
           previousPlanIssues,
           coachContextMd,
