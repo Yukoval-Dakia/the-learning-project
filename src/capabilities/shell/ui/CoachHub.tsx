@@ -136,12 +136,14 @@ export default function CoachHub({
   readCalibration,
   CalibrationMaturityBadge,
   readEffectiveness,
+  learningPlanProgress,
 }: {
   navigate: (to: string) => void;
   readWeekly?: CoachWeeklyReader;
   readCalibration: CoachCalibrationReader;
   CalibrationMaturityBadge: CoachCalibrationBadge;
   readEffectiveness?: CoachEffectivenessReader;
+  learningPlanProgress?: ReactNode;
 }) {
   const [view, setView] = useState<CoachView>(DEFAULT_COACH_VIEW);
   const tabRefs = useRef<Record<CoachView, HTMLButtonElement | null>>({
@@ -215,6 +217,7 @@ export default function CoachHub({
           <p className="ch-lead">{VIEW_LEDE[view]}</p>
         </header>
 
+        {learningPlanProgress}
         <section
           id={`coach-panel-${view}`}
           role="tabpanel"

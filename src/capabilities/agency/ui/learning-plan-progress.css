@@ -1,0 +1,72 @@
+.lp-progress {
+  padding: var(--un-sp-5);
+  border-radius: var(--un-md-sys-shape-large);
+  background: var(--un-md-sys-color-surface-container-low);
+  color: var(--un-text-1);
+  overflow-wrap: anywhere;
+  & h2 {
+    font-size: var(--un-fs-4);
+    font-weight: 600;
+  }
+  & h3 {
+    font-size: var(--un-fs-3);
+    font-weight: 600;
+  }
+  & p {
+    margin-block: var(--un-sp-2);
+    line-height: 1.6;
+  }
+  & summary {
+    cursor: pointer;
+    padding-block: var(--un-sp-2);
+  }
+  & summary:focus-visible,
+  & button:focus-visible {
+    outline: 2px solid var(--un-md-sys-color-primary);
+    outline-offset: 3px;
+  }
+  & details ul {
+    padding-left: var(--un-sp-5);
+    list-style: disc;
+  }
+}
+.lp-progress-note {
+  color: var(--un-text-3);
+  font-size: var(--un-fs-1);
+}
+.lp-progress-items,
+.lp-progress-kcs {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.lp-progress-items > li {
+  padding-block: var(--un-sp-4);
+  border-top: 1px solid var(--un-md-sys-color-outline-variant);
+}
+.lp-progress-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--un-sp-2);
+}
+.lp-progress-heading span {
+  font-size: var(--un-fs-1);
+  color: var(--un-text-3);
+}
+.lp-progress-heading [data-ready="true"] {
+  color: var(--un-positive);
+}
+.lp-progress-kcs > li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--un-sp-4);
+  padding-top: var(--un-sp-3);
+}
+@media (max-width: 640px) {
+  .lp-progress-kcs > li {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+}

@@ -282,3 +282,7 @@ export type { AgentNotesResponse } from './ui/types';
 
 export const loadAgentNotesPage = () => import('./ui/page').then((module) => module.default);
 export const loadMemoryPage = () => import('./ui/memory/page').then((module) => module.default);
+
+export type { LearningPlanProgress as LearningPlanProgressData } from './server/learning-item-completion-policy';
+export const loadLearningPlanProgressSection = () =>
+  import('./ui/LearningPlanProgress').then((module) => module.default);
