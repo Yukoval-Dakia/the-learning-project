@@ -901,11 +901,12 @@ export function usePracticeSubmit({
     setDraftConflict(null);
     void autosave.rebase(serverDraft(answer), 'server');
   };
-  // 「保留我的」: save this visit's text expecting the epoch just read. A write that lands
-  // after that read raises the stored epoch, so this save gets 409 and the panel returns.
+  // A restored, unedited visit has no controller value: seed its visible answer first.
+  // Rebase still saves against the epoch just read, so a later write raises a conflict.
   const keepMyVersion = () => {
     if (draftConflict?.status !== 'ready' || draftConflict.submitted) return;
     ackedEpoch.current = draftConflict.epoch;
+    autosave.change(currentDraft(), serverDraft(draftConflict.answer));
     setDraftConflict(null);
     void autosave.rebase(serverDraft(draftConflict.answer), 'mine');
   };
