@@ -68,6 +68,8 @@ export interface ProviderFailureEvidence {
   http_status?: number;
   retry_after_ms?: number;
   stream_error?: true;
+  /** Set only by the local watchdog, never inferred from provider text. */
+  stream_idle?: true;
 }
 
 /**

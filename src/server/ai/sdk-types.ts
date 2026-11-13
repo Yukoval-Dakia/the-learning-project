@@ -154,6 +154,8 @@ export interface SDKResultError {
     http_status?: number;
     retry_after_ms?: number;
     stream_error?: true;
+    /** Local watchdog identity survives terminal frame assembly. */
+    stream_idle?: true;
   };
   subtype:
     | 'error_during_execution'

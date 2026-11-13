@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { StreamFn } from '@earendil-works/pi-agent-core';
 import type { AssistantMessage } from '@earendil-works/pi-ai';
+import { AgentRunError } from '@/ai/agent-run-error';
 import {
   developmentTranscriptsEnabled,
   piInputTranscript,
@@ -129,7 +130,8 @@ export function traceSafeError(error: unknown, messageOnly: true): string;
 export function traceSafeError<T>(error: T): T | string;
 export function traceSafeError<T>(error: T, messageOnly = false): T | string {
   if (isPrivateTraceContent())
-    return error instanceof ProviderStreamIdleError
+    return error instanceof ProviderStreamIdleError ||
+      (error instanceof AgentRunError && error.providerFailure?.stream_idle === true)
       ? 'provider_stream_idle'
       : '[private task diagnostic omitted]';
   return messageOnly ? (error instanceof Error ? error.message : String(error)) : error;
