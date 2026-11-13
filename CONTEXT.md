@@ -11,6 +11,8 @@
 - **五个用户面**：中央工作台（shell）/ 练习面（practice）/ 知识图谱与笔记（knowledge + notes）/ 录入（ingestion）/ Copilot 抽屉（copilot）——其余一切一律幕后。
 - **AI 只有两条用户信道**：提议收件箱（proposal inbox）+ 工作台观察摘要。
 
+> 代码里另有 onboarding 冷启动（`/welcome`、`/onboarding/upload`、`/placement`、`/profile`）、AI 观察窗与记忆（`/agent-notes`、`/memory`）、observability 的证据与 admin 页（`/events/$id`、`/admin/*`）；它们是辅助面，主学习旅程仍按上面五个面归属。
+
 ## 学习状态与学习安排（已批准目标，2026-10-06）
 
 来源：[ADR-0066](/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/adr/0066-typescript-adaptive-learning-architecture.md)。以下是已批准的产品目标，尚不表示新实现已经上线。
@@ -24,7 +26,7 @@
 - **结构化抽取（structured extraction）**：把试卷 / 教材 / 题目图像转成机器可读的题目结构（题面、选项、答案、配图坐标、用户手写答案）。架构原则：**结构化抽取 = 确定性 API**（Tencent 试题批改 Agent，异步 job），不交给 LLM。见 ADR-0002。**（2026-07-07 X2 审查补注：post-YUK-145 T-OC 主结构 owner 已改为付费 VLM `StructureTask`（mimo-v2.5, `invocation:'auto'`），腾讯降为纯文字 OCR hint——「确定性 API」现指腾讯文字底层的接口契约稳定性，主结构抽取是每次录入自动触发的 baseline VLM。付费动作红线 scope = 上传即隐式授权 baseline 抽取，只门控 baseline 之外的 discretionary 付费升级与 cascade；见 ADR-0002 修订 2026-05-30。）**
 - **救援（rescue）**：当 Tencent Mark Agent 切错 / 切不出（`layout_quality='partial' | 'text_only'`，或部分手写涂改无法识别）时，**由用户主动**触发的 LLM Vision 抽取（Tier 2 = haiku，Tier 3 = sonnet）。区别于"自动 cascade fallback"—— 救援是显式的、付费可见的、用户授权的。
 - **配图（figure / illustration）**：题目附带的图（函数图、几何图、表格图像等）。Tencent 返回坐标（`QuestionImagePositions`），系统**自动裁剪**为独立 R2 asset，元数据存于 `question_block.figures`。
-- **配图归属（figure attachment）**：每张 figure 通过 `attached_to_index` 指向所属 StructuredQuestion；初配由 parser 启发式（空间包含 + 最近邻）确定，置 `attach_confidence: 'high' | 'low'`；用户可通过 `PATCH /api/question-blocks/:id/figures/:asset_id` 改归属，状态变 `'manual'`。低置信度归属在 UI 上明确标识，提示用户检查。
+- **配图归属（figure attachment）**：每张 figure 通过 `attached_to_index` 指向所属 StructuredQuestion；抽取时按唯一最内层包含或 VLM 认领确定归属（`attach_confidence: 'high'`），不唯一或冲突的不绑定、也不发布。Copilot 的结构化编辑 `reassign_figure` 可改归属，状态变 `'manual'`。
 - **题目结构（StructuredQuestion）**：一道题的完整结构化表示，含题面 / 选项 / 答案 / 解析 / 表格 / bbox / 题型 / 题号 / 嵌套 sub_questions。是 OCR / Vision rescue / 人工编辑 / agent 修订**共享的唯一真相**字段。
 - **大题 / 小题 / 叶题（stem / sub / standalone）**：StructuredQuestion 的三种角色（`role` 字段）。**大题** = 含共享 passage 的容器（阅读理解 / 完形填空 / 文言文），自身无答题动作，含 `sub_questions[]`。**小题** = 大题下的子问题，有独立题面 / 选项 / 答案。**叶题** = 独立单题，无父无子。
 - **共享材料（passage）**：大题（stem）的题面文本，对其所有 sub_questions 共享。LLM 处理 sub 时调用方必须前置注入 passage 作为上下文。
@@ -63,7 +65,7 @@
 ## 录入与会话
 
 - **录入会话（ingestion session）**：一次"用户上传一批材料 → 系统抽取 → 落库"的工作单元。状态机：`uploaded` →（用户触发抽取）→ `queued` →（worker 起跑）→ `extracting` → `extracted` / `partial` / `failed`；`extracted` / `partial` 可 `markReviewed()` → `reviewed`（可选步骤，`commitImport()` 也直接接 `extracted` / `partial`）→ **`imported`（终态，只读）**。`failed` 可重新入队（`enqueueExtraction()`）回到 `queued`。**救援是 block-level**：session 状态不变（partial → partial），仅替换单块内容。
-- **会话总结（session summary）**：一场练习结束时写下的总结（Phase 1b）。试卷交卷、知识点专练做完、弃置但仍有作答的会话，以及当天整档练习里列表上还在的题做完，都写这一份。列表已经拿掉、库里仍留着的不可发放题不挡住这份总结。它点名错得最多的知识点和过程观察，并留下下一场先看哪里。
+- **会话总结（session summary）**：试卷交卷、知识点专练做完、有作答的会话放弃，或当天整档练习完成后，由现有总结任务生成的回顾，写入 `learning_session.summary_md`，结构化的 `next_focus` 供次日教练读取。整档练习以列表里仍可发放或可恢复的题是否做完判定；已隐藏且没有已接受作答可恢复的不可发放行不挡住总结。
 - **上传材料的使用范围（usage choice）**：学习者上传材料时选择这份资料可以用在哪里：`allow`（**全部使用**，也可进长期记忆、学习总结）或 `answer_only`（**只用于本题**，只用来生成这道题的答案与判分）。上传后可经 POST `/api/ingestion-sessions/:id/purpose` 在 `allow` 与 `answer_only` 间变更（body 含 `request_id`、`source_document_id`、`expected_version`、`target`），系统 `crisis` 不可被用户放宽。GET 同路径读回执、停止与派生修复状态；已外发副本与未归因历史仍记 `unknown`，不宣称全部撤回（详见 `/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/planning/2026-10-28-ingestion-purpose-change-full.md`）。
 - **使用回执（usage receipt）**：上传识别后给学习者的一条回执，说明从识别出的文字里隐去了哪些类别的个人信息（只报类别与处数，不报被隐去的值），以及**原图是否原样交给 AI**（拍照 / PDF 必须把原图交给识别引擎，回执明说原图原样交出；Word 文本行不外传图像）。在录入会话详情里可以查看这份回执，Word 文本行也补写回执。
 
@@ -83,7 +85,7 @@
   - 例：AI 归因 = `event(actor='agent:attribution', action='judge', subject=event, caused_by=...)`
   - 例：AI 提议变式 = `event(actor='agent:variant_gen', action='generate', subject=artifact)`
   - 例：用户接受 AI 提议 = `event(actor='user', action='rate', subject=event, payload={rating:'accept'})`
-- **学习会话（learning_session）**（ADR-0008 修订）：通用 session envelope。type ∈ `ingestion | review | conversation | tutor | explore | create`。一个 session 内的 event 流自然成 timeline。`type='conversation'` **替代** ADR-0004 原规划的独立 agent_sessions / agent_messages 表。
+- **学习会话（learning_session）**（ADR-0008 修订）：通用 session envelope。type ∈ `ingestion | review | conversation | tutor | explore | create | placement`。一个 session 内的 event 流自然成 timeline。`type='conversation'` **替代** ADR-0004 原规划的独立 agent_sessions / agent_messages 表。
 - **AI 平等 actor**（ADR-0006 v2 核心原则）：event.actor_kind ∈ {'user', 'agent', 'cron', 'system'} —— AI 不是注释层，是和用户对等的事件发起者。Copilot 对话、Dreaming 夜间产出、Critique 自批改全部 first-class。
 - **事件链（event chaining）**：event.caused_by_event_id 把因果连成 DAG。可重放、可审计、可让 critique agent 作用在历史 event 上。
 - **事件对象（event subject）**：一次学习动作直接作用的对象，例如知识点、题目或另一条事件。同一条因果链可以经过不同事件对象；“事件对象不同”不表示跨学科，也不表示没有共同起因。
