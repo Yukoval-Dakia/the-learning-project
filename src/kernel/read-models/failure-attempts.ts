@@ -13,6 +13,8 @@ import { event } from '@/db/schema';
 import {
   type EffectiveTruth,
   activeEffectiveTruth,
+  eventAllowsDerivationSql,
+  eventCorrectionActiveSql,
   filterActiveRows,
   getEffectiveTruths,
   newerEventRow,
@@ -26,6 +28,7 @@ import {
   resolveVerdictsForAttempts,
   resolveVerdictsForNativeAttempts,
 } from './assessment-verdict';
+import { nativeLearningScopeMentionsAny } from './learner-activity';
 
 type DbLike = Db | Tx;
 type EventRow = typeof event.$inferSelect;
@@ -1033,4 +1036,70 @@ export async function getCurrentFailureAttemptsForDerivation(
   return (await loadFailureAttempts(db, { ...opts, limit: opts.limit ?? null }, true, true)).map(
     (row) => row.failure,
   );
+}
+
+/**
+ * Active, derivation-allowed failures since `since`, counted per knowledge id.
+ * A newest-N window of every failure would drop older misses on these points.
+ * Legacy attempt and review rows are aggregated from payload references.
+ * Native attempts are limited by the frozen scope, then only an actual failure's
+ * issued knowledge ids count.
+ */
+export async function countDerivationKnowledgeFailures(
+  db: DbLike,
+  input: { knowledgeIds: readonly string[]; since: Date },
+): Promise<Map<string, number>> {
+  const ids = [...new Set(input.knowledgeIds.filter((id) => id.length > 0))];
+  const counts = new Map<string, number>();
+  if (ids.length === 0) return counts;
+  const wanted = new Set(ids);
+  const idParams = sql.join(
+    ids.map((id) => sql`${id}`),
+    sql`, `,
+  );
+  const legacy = await db.execute<{ knowledge_id: string; failure_count: number | string }>(sql`
+    SELECT kc AS knowledge_id, count(DISTINCT ${event.id})::int AS failure_count
+    FROM unnest(ARRAY[${idParams}]::text[]) AS kc
+    JOIN ${event}
+      ON ${event.payload}->'referenced_knowledge_ids' @> to_jsonb(kc)
+    WHERE ${event.action} IN ('attempt', 'review')
+      AND ${event.outcome} = 'failure'
+      AND ${event.subject_kind} = 'question'
+      AND ${event.created_at} >= ${input.since}
+      AND ${eventAllowsDerivationSql()}
+      AND ${eventCorrectionActiveSql(event.id)}
+    GROUP BY kc
+  `);
+  for (const row of legacy) {
+    if (!wanted.has(row.knowledge_id)) continue;
+    const failureCount = Number(row.failure_count);
+    if (Number.isInteger(failureCount) && failureCount > 0) {
+      counts.set(row.knowledge_id, failureCount);
+    }
+  }
+
+  const nativeRows = await db
+    .select()
+    .from(event)
+    .where(
+      and(
+        eq(event.action, 'experimental:assessment_attempt'),
+        eq(event.subject_kind, 'question'),
+        gte(event.created_at, input.since),
+        nativeLearningScopeMentionsAny(ids),
+        eventAllowsDerivationSql(),
+        eventCorrectionActiveSql(event.id),
+      ),
+    );
+  if (nativeRows.length === 0) return counts;
+  const verdicts = await resolveVerdictsForNativeAttempts(db, nativeRows);
+  for (const row of nativeRows) {
+    const verdict = verdicts.get(row.id);
+    if (!verdict || nativeAttemptOutcome(verdict) !== 'failure') continue;
+    for (const knowledgeId of new Set(verdict.knowledge_ids)) {
+      if (!wanted.has(knowledgeId)) continue;
+      counts.set(knowledgeId, (counts.get(knowledgeId) ?? 0) + 1);
+    }
+  }
+  return counts;
 }

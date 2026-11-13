@@ -204,7 +204,10 @@ export async function loadLastKnowledgePractice(
           inArray(event.action, [...LEARNER_ANSWER_ACTIONS]),
           eq(event.subject_kind, 'question'),
           or(
-            and(eq(event.action, NATIVE_ATTEMPT_ACTION), nativeMentionsAny(historyIds)),
+            and(
+              eq(event.action, NATIVE_ATTEMPT_ACTION),
+              nativeLearningScopeMentionsAny(historyIds),
+            ),
             and(sql`${event.action} <> ${NATIVE_ATTEMPT_ACTION}`, legacyMentionsAny(historyIds)),
           ),
           cursor
@@ -744,7 +747,8 @@ function nativeFrozenPrompt(
   return text ? text : null;
 }
 
-function nativeMentionsAny(knowledgeIds: readonly string[]) {
+/** Superset filter. Issued membership is still `issuedLearningKnowledgeIds`. */
+export function nativeLearningScopeMentionsAny(knowledgeIds: readonly string[]) {
   // nativeScopeMentions casts its argument as jsonb; the caller must pass a JSON array.
   return or(...knowledgeIds.map((id) => nativeScopeMentions(JSON.stringify([id]))));
 }
@@ -819,7 +823,7 @@ export async function loadRecentCorrectAttemptsForKnowledge(
           eq(event.subject_kind, 'question'),
           gte(event.created_at, input.since),
           or(
-            and(eq(event.action, NATIVE_ATTEMPT_ACTION), nativeMentionsAny(wanted)),
+            and(eq(event.action, NATIVE_ATTEMPT_ACTION), nativeLearningScopeMentionsAny(wanted)),
             and(inArray(event.action, ['attempt', 'review']), legacy),
           ),
           cursor
@@ -978,7 +982,7 @@ export async function loadSettledKnowledgeAnswerCounts(
           gte(event.created_at, input.since),
           lt(event.created_at, input.until),
           or(
-            and(eq(event.action, NATIVE_ATTEMPT_ACTION), nativeMentionsAny(wanted)),
+            and(eq(event.action, NATIVE_ATTEMPT_ACTION), nativeLearningScopeMentionsAny(wanted)),
             and(inArray(event.action, ['attempt', 'review']), legacy),
           ),
           cursor

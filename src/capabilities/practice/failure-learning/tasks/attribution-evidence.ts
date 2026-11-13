@@ -10,8 +10,6 @@ import type { ScoringBasisT, ScoringUnitT } from '@/core/schema/assessment/scori
 export const RECENT_SAME_QUESTION_ATTEMPTS = 5;
 /** Failure counts on the attempt's knowledge points. */
 export const KNOWLEDGE_FAILURE_WINDOW_DAYS = 14;
-/** Newest-first cap. A learner past it still reports the newest window, not a guess. */
-export const KNOWLEDGE_FAILURE_SCAN_LIMIT = 200;
 
 const TEXT_CAP = 400;
 const MAX_EVIDENCE_UNITS = 12;
@@ -179,10 +177,22 @@ function toEvidenceUnit(
   };
 }
 
+type GradingEvidenceRole = 'lost' | 'observed';
+
+function gradingEvidenceRole(
+  result: Extract<ScoringUnitResultT, { status: 'scored' }>,
+  lostIds: ReadonlySet<string>,
+): GradingEvidenceRole | null {
+  if (lostIds.has(result.scoring_unit_id)) return 'lost';
+  if ((result.model_observations?.length ?? 0) > 0) return 'observed';
+  return null;
+}
+
 /**
- * Pull the effective evaluation's lost units. `failedPartIds` is the issued
- * parts those units belong to, so the solution-prior read stays on the parts
- * the learner actually missed.
+ * Pull the effective evaluation's lost units, then fill any remaining evidence
+ * slots with observations that did not lose points. `failedPartIds` is the
+ * issued parts of the kept lost units, so the solution-prior read stays on the
+ * parts the learner actually missed.
  */
 export function extractGradingEvidence(input: {
   unitResults: readonly ScoringUnitResultT[];
@@ -216,14 +226,14 @@ export function extractGradingEvidence(input: {
       .filter((result) => unitLostPoints(result, unitById.get(result.scoring_unit_id)))
       .map((result) => result.scoring_unit_id),
   );
-  // Observations ride along even when points are absent: a photo grade may have
-  // no numeric loss and still be the only record of what the judge saw.
-  const chosen = scored
-    .filter(
-      (result) =>
-        lostIds.has(result.scoring_unit_id) || (result.model_observations?.length ?? 0) > 0,
-    )
-    .slice(0, MAX_EVIDENCE_UNITS);
+  // A photo grade may record only observations. Those fill slots the lost units
+  // did not take, so an observation listed first cannot drop a lost unit.
+  const buckets: Record<GradingEvidenceRole, typeof scored> = { lost: [], observed: [] };
+  for (const result of scored) {
+    const role = gradingEvidenceRole(result, lostIds);
+    if (role) buckets[role].push(result);
+  }
+  const chosen = [...buckets.lost, ...buckets.observed].slice(0, MAX_EVIDENCE_UNITS);
   const units = chosen.map((result) =>
     toEvidenceUnit(result, unitById.get(result.scoring_unit_id), partIdFor(result.scoring_unit_id)),
   );
