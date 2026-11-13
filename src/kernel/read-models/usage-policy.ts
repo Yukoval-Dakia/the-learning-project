@@ -132,6 +132,11 @@ const PURPOSE_EDGES_SQL = sql`
         ('document', b.payload->>'document_id')
       ) v(kind, id) WHERE n.kind = 'event' AND e.id = n.id
       UNION ALL
+      SELECT 'event', ref #>> '{}' FROM event reply
+      CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(reply.payload->'history_read_set'->'event_ids') = 'array'
+        THEN reply.payload->'history_read_set'->'event_ids' ELSE '[]'::jsonb END) ref
+      WHERE n.kind = 'event' AND reply.id = n.id AND reply.action = 'experimental:copilot_reply'
+      UNION ALL
       SELECT 'document', epoch.key FROM event ask
       CROSS JOIN LATERAL jsonb_each_text(CASE WHEN jsonb_typeof(ask.payload->'draft_focus'->'source_usage_epochs') = 'object'
         THEN ask.payload->'draft_focus'->'source_usage_epochs' ELSE '{}'::jsonb END) epoch
@@ -240,6 +245,25 @@ const NODE_VIOLATION_SQL = sql`CASE n.kind
               WHERE NOT coalesce(ref->>'kind' IN ('source_document', 'question', 'record', 'event', 'knowledge'), false)
                 OR jsonb_typeof(ref->'id') IS DISTINCT FROM 'string' OR length(ref->>'id') = 0)))
           OR (e.payload ? 'derivation_policy' AND e.payload->>'derivation_policy' IS DISTINCT FROM 'allow')
+          OR (e.action = 'experimental:copilot_reply' AND (
+            ((e.payload ? 'history_read_set' OR e.task_run_id IS NOT NULL OR EXISTS (
+              SELECT 1 FROM job_events j WHERE j.business_table = 'copilot_run' AND j.business_id = e.caused_by_event_id
+                AND j.event_type IN ('copilot_run.execution_started', 'copilot_run.step', 'copilot_run.delta')))
+              AND (jsonb_typeof(e.payload->'history_read_set') IS DISTINCT FROM 'object'
+                OR e.payload->'history_read_set'->'version' IS DISTINCT FROM '1'::jsonb
+                OR jsonb_typeof(e.payload->'history_read_set'->'event_ids') IS DISTINCT FROM 'array'))
+            OR EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(e.payload->'history_read_set'->'event_ids') = 'array'
+              THEN e.payload->'history_read_set'->'event_ids' ELSE '[]'::jsonb END) ref
+              WHERE jsonb_typeof(ref) IS DISTINCT FROM 'string' OR length(btrim(ref #>> '{}')) = 0
+                OR ref #>> '{}' IN (e.id, e.caused_by_event_id))
+            OR EXISTS (WITH RECURSIVE history_ancestors(id) AS (
+              SELECT ref #>> '{}' FROM jsonb_array_elements(CASE WHEN jsonb_typeof(e.payload->'history_read_set'->'event_ids') = 'array'
+                THEN e.payload->'history_read_set'->'event_ids' ELSE '[]'::jsonb END) ref
+              UNION
+              SELECT ref #>> '{}' FROM history_ancestors h JOIN event parent ON parent.id = h.id
+              CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(parent.payload->'history_read_set'->'event_ids') = 'array'
+                THEN parent.payload->'history_read_set'->'event_ids' ELSE '[]'::jsonb END) ref
+            ) SELECT 1 FROM history_ancestors h WHERE h.id = e.id)))
           OR (e.action = 'experimental:copilot_user_ask' AND e.payload ? 'draft_focus' AND (
             jsonb_typeof(e.payload->'draft_focus'->'source_usage_epochs') IS DISTINCT FROM 'object'
             OR e.payload->'draft_focus'->'source_usage_epochs' = '{}'::jsonb

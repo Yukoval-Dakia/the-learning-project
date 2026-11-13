@@ -885,6 +885,26 @@ function collectSeamViolations(projectRoot: string): Violation[] {
         continue;
       }
       const targetLocation = locateModule(projectRoot, target);
+      if (
+        sourceLocation?.layer === 'capability' &&
+        relative(projectRoot, target).split(sep).join('/') ===
+          'src/server/ai/tools/tool-mirror-policy.ts' &&
+        (relative(projectRoot, file).split(sep).join('/') !==
+          'src/capabilities/copilot/server/copilot-execution.ts' ||
+          reference.symbols.some(
+            (symbol) =>
+              !['shouldEmitToolUseForCaller', 'projectToolObservationForPersistence'].includes(
+                symbol,
+              ),
+          ))
+      ) {
+        violations.push({
+          file: relative(projectRoot, file),
+          source: reference.source,
+          reason:
+            'tool observation policy permits only the two declared symbols in Copilot execution',
+        });
+      }
       if (targetLocation?.layer !== 'capability') continue;
       if (sourceLocation?.layer === 'capability' && sourceLocation.owner === targetLocation.owner) {
         continue;

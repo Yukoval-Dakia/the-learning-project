@@ -27,6 +27,7 @@ import {
   publicProseFailureMessage,
 } from '../public-prose-contract';
 import type { CopilotModeState, CopilotSkillContextT, CopilotSkillTurn } from './chat-contracts';
+import { readWinningHistoryReadSet } from './history-read-set';
 import { stripCopilotInternalComments } from './prose-stream';
 import {
   publicProseFailureForReason,
@@ -281,6 +282,16 @@ export async function writeCopilotReply(
     : 'allow';
   const replyAt = new Date(params.now.getTime() + 1);
   const replyEventId = params.replyEventId ?? `copilot_reply_${createId()}`;
+  const historyReadSet = params.userAskEventId
+    ? await readWinningHistoryReadSet(
+        db,
+        params.userAskEventId,
+        replyEventId,
+        params.durableFinishReason === 'crisis_template' ||
+          params.durableFailure?.reason === 'pre_execution_lost' ||
+          (params.durableFailure?.reason === 'cancelled' && !publicProse?.text),
+      )
+    : null;
   // YUK-1909 — only a replaced, actually streamed draft clears live thinking.
   // Callers pass '' (not undefined) when nothing streamed, so blank counts as none.
   // Append-only finalization keeps the prefix; block composition or truncation
@@ -304,6 +315,7 @@ export async function writeCopilotReply(
       surface: 'copilot',
       session_id: params.sessionId,
       reply_md: cleanedReply,
+      history_read_set: historyReadSet,
       ...(publicProse ? { public_prose: publicProse } : {}),
       derivation_policy: derivationPolicy,
       task_run_id: params.taskRunId,

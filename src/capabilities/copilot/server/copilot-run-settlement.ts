@@ -63,6 +63,7 @@ import {
 } from '@/server/boss/job-observation';
 import type { CopilotPublicProse, CopilotPublicProseFailure } from '../public-prose-contract';
 import { publicProseFailureMessage } from '../public-prose-contract';
+import { type CopilotHistoryReadSet, parseHistoryReadSet } from './history-read-set';
 import { copilotRetryRefusal } from './run-retry';
 
 export const COPILOT_RUN_QUEUE = 'copilot_run' as const;
@@ -120,6 +121,7 @@ export type ClaimCopilotExecutionFenceFn = (
   db: Db,
   runId: string,
   options?: {
+    historyReadSet?: CopilotHistoryReadSet;
     beforeCancelled?: (tx: Tx) => Promise<void>;
     beforeExecution?: (tx: Tx) => Promise<void>;
   },
@@ -176,6 +178,7 @@ export async function claimCopilotExecutionFence(
   db: Db,
   runId: string,
   options: {
+    historyReadSet?: CopilotHistoryReadSet;
     writeJobEventFn?: WriteJobEventFn;
     beforeCancelled?: (tx: Tx) => Promise<void>;
     beforeExecution?: (tx: Tx) => Promise<void>;
@@ -206,7 +209,10 @@ export async function claimCopilotExecutionFence(
       business_table: COPILOT_RUN_TABLE,
       business_id: runId,
       event_type: COPILOT_RUN_EVENTS.EXECUTION_STARTED,
-      payload: { execution_fence: 'at_most_once' },
+      payload: {
+        execution_fence: 'at_most_once',
+        history_read_set: parseHistoryReadSet(options.historyReadSet, runId),
+      },
     });
     return { outcome: 'claimed' };
   });

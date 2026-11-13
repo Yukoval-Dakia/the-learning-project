@@ -25,6 +25,7 @@ import {
   zodToToolParametersSchema,
 } from '@/kernel/zod-json-schema';
 import type { ExecutionAdapterStartupArgs } from '../execution-adapter';
+import { isPrivateTraceContent } from '../laminar-tracing';
 import { executeDomainToolCall } from './mcp-bridge';
 import { getTool } from './registry';
 
@@ -198,14 +199,17 @@ export async function connectPiRemoteMcp(
               errorReason?: string,
             ): Promise<void> => {
               if (!mount.db || !run) return;
+              const privateContent = isPrivateTraceContent();
               try {
                 await writeToolCallLog(mount.db, {
                   task_run_id: run.taskRunId,
                   task_kind: run.taskKind,
                   tool_name: wireName,
                   effect: 'read',
-                  input_json: (params ?? {}) as Record<string, unknown>,
-                  output_json: output,
+                  input_json: privateContent
+                    ? { content_omitted: true }
+                    : ((params ?? {}) as Record<string, unknown>),
+                  output_json: privateContent ? { content_omitted: true } : output,
                   ...(errorReason ? { error_reason: errorReason } : {}),
                   iteration: 0,
                   latency_ms: Date.now() - startedAt,
@@ -224,7 +228,7 @@ export async function connectPiRemoteMcp(
                 console.error('[pi-tools] remote MCP tool log failed', {
                   tool: wireName,
                   task_run_id: run.taskRunId,
-                  err: logErr,
+                  err: privateContent ? 'private_tool_log_failed' : logErr,
                 });
               }
             };

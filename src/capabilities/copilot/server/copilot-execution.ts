@@ -30,7 +30,10 @@ import type { ModelBinding } from '@/server/ai/execution-adapter';
 import { type StreamCollectResult, runAgentTask, streamTaskCollecting } from '@/server/ai/runner';
 import { isToolArgumentContractFailure } from '@/server/ai/tool-param-contract';
 import { getTool } from '@/server/ai/tools/registry';
-import { shouldEmitToolUseForCaller } from '@/server/ai/tools/tool-mirror-policy';
+import {
+  projectToolObservationForPersistence,
+  shouldEmitToolUseForCaller,
+} from '@/server/ai/tools/tool-mirror-policy';
 import { resolveCopilotSkillDocs } from '@/subjects/copilot-skills';
 import type { CopilotThinkingEndResult } from '../thinking-lane-contract';
 import type { CopilotRunCancellationControl } from './copilot-run-cancellation';
@@ -239,7 +242,11 @@ async function emitActivity(
   activity: CopilotExecutionActivity,
 ): Promise<void> {
   try {
-    await policy.observe?.(activity);
+    await policy.observe?.(
+      activity.kind === 'tool_started' || activity.kind === 'tool_finished'
+        ? projectToolObservationForPersistence(activity)
+        : activity,
+    );
   } catch (error) {
     console.error('[copilot-execution] activity observer failed', { kind: activity.kind, error });
   }

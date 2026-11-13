@@ -475,6 +475,9 @@ async function executeAcceptedCopilotRun(
   // the run while the winner may still be live; throwing lets pg-boss retry after
   // the owner either persists DONE or crashes.
   const executionClaim = await claimExecutionFence(db, runId, {
+    historyReadSet: runInput.bound_turn_event_ids
+      ? { version: 1, event_ids: runInput.bound_turn_event_ids }
+      : undefined,
     beforeCancelled: answerOnly ? undefined : discardWorkerCursor,
     beforeExecution: answerOnly ? discardWorkerCursor : undefined,
   });
