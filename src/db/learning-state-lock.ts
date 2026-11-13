@@ -40,7 +40,7 @@ export function acquireSortedAdvisoryLocks(
   tx: Tx,
   namespace: string,
   ids: readonly string[],
-): Promise<void>;
+): Promise<undefined>;
 export function acquireSortedAdvisoryLocks(
   tx: Tx,
   namespace: string,
@@ -52,7 +52,7 @@ export async function acquireSortedAdvisoryLocks(
   namespace: string,
   ids: readonly string[],
   options?: { noWait: true },
-): Promise<void | boolean> {
+): Promise<boolean | undefined> {
   for (const id of [...ids].sort()) {
     const key = `${namespace}:${id}`;
     if (options?.noWait) {
@@ -64,5 +64,5 @@ export async function acquireSortedAdvisoryLocks(
       await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${key}))`);
     }
   }
-  if (options?.noWait) return true;
+  return options?.noWait ? true : undefined;
 }
