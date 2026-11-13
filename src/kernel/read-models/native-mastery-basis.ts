@@ -3,7 +3,7 @@ import { and, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { ThetaSnapshot } from '@/core/schema/event/state-snapshot';
 import type { Tx } from '@/db/client';
-import { evaluation, event, materialized_id_index, question, source_document } from '@/db/schema';
+import { evaluation, event, materialized_id_index, source_document } from '@/db/schema';
 import { filterActiveRows } from '@/kernel/events/active-rows';
 import { allowedEventIds } from '@/kernel/events/derivation-policy';
 import { LearningScope } from './assessment-learning-scope';
@@ -55,6 +55,7 @@ const Plan = z.object({
   ]),
 });
 const ScopeReceipt = z.object({ learning_scope: LearningScope });
+const LegacyScope = z.array(z.string().min(1));
 const Assistance = z.object({ assistance: z.object({ status: z.literal('independent') }) });
 const Snapshot = z.object({
   attempt_event_id: z.string(),
@@ -201,15 +202,16 @@ export async function readNativeMasteryBasis(tx: Tx, ids: string[], asOf: Date) 
     if (!capturedIds.has(id))
       pending(scope, String(receipts.get(id)?.payload.evaluation_group_id ?? id));
   }
-  const questions = await tx
-    .select({ id: question.id, knowledgeIds: question.knowledge_ids })
-    .from(question);
-  const questionKcs = new Map(questions.map((q) => [q.id, q.knowledgeIds]));
   const scopeOf = (row: typeof event.$inferSelect) => {
-    const submission = row.payload.submission_id;
-    return typeof submission === 'string'
-      ? (scopeBySubmission.get(submission) ?? ids)
-      : (questionKcs.get(row.subject_id) ?? ids);
+    if (row.action === 'experimental:assessment_attempt') {
+      const submission = row.payload.submission_id;
+      return typeof submission === 'string' ? (scopeBySubmission.get(submission) ?? ids) : ids;
+    }
+    // Current question tags cannot disassociate an immutable historical contribution.
+    const scope = LegacyScope.safeParse(row.payload.referenced_knowledge_ids);
+    if (scope.success) return scope.data;
+    block(ids, 'unresolved_scope', true);
+    return ids;
   };
   const relevantAnswers = answers.filter((row) => scopeOf(row).some((id) => result.has(id)));
   const allowed = await allowedEventIds(
