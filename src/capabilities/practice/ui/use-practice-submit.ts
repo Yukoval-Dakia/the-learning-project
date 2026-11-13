@@ -752,8 +752,7 @@ export function usePracticeSubmit({
     },
     [issuanceId, draftGroupRef, restoredEpoch, saveResponseDraft],
   );
-  // YUK-1489 — on a conflict autosave stops and the server's current version is read, so the
-  // learner can compare and choose (panel below). Each read is tagged; only the newest lands.
+  // Only the newest conflict read may offer a version to restore.
   const [draftConflict, setDraftConflict] = useState<DraftConflict | null>(null);
   const conflictRead = useRef(0);
   const readServerVersion = useCallback(() => {
@@ -785,11 +784,11 @@ export function usePracticeSubmit({
   // A held controller sends nothing.
   const { flush: flushDraft } = autosave;
   const flushOnPagehide = useCallback(() => flushDraft({ keepalive: true }), [flushDraft]);
-  // YUK-1497 / YUK-1719 — iOS may kill a backgrounded tab without pagehide: the same keepalive
-  // flush also runs when the page turns hidden. One owner node arms both listeners.
+  // iOS may terminate a hidden tab without pagehide, so both transitions flush.
   const attachPagehideFlush = usePagehideTransition(flushOnPagehide, true, flushOnPagehide);
   // Old render handlers must use the latest edit under this issuance, including late uploads.
   // Every edit updates this ref synchronously before autosave can send it.
+  const editingFrozen = useRef(false);
   const latestDraft = useRef<{ issuanceId: string; value: typeof draftValue } | null>(null);
   const currentDraft = () =>
     latestDraft.current?.issuanceId === restoredIssuanceId ? latestDraft.current.value : draftValue;
@@ -805,6 +804,7 @@ export function usePracticeSubmit({
     autosave.change(next, from);
   };
   const updateNativeResponse = (entry: SlotResponseT) => {
+    if (editingFrozen.current || autosave.isHeld()) return;
     const draft = currentDraft();
     const response_set = {
       entries: [
@@ -838,6 +838,7 @@ export function usePracticeSubmit({
   // remove its entry: an emptied blank or selection is "not answered" in the draft). `immediate`
   // (custom blocks) skips an unchanged envelope and saves without waiting for the debounce.
   const updateNativeResponses = (update: EntriesUpdate, opts?: { immediate?: boolean }) => {
+    if (editingFrozen.current || autosave.isHeld()) return;
     const draft = currentDraft();
     const entries = update(draft.response_set.entries);
     if (opts?.immediate && JSON.stringify(entries) === JSON.stringify(draft.response_set.entries)) {
@@ -849,6 +850,7 @@ export function usePracticeSubmit({
     if (opts?.immediate) saveSandboxAnswer();
   };
   const updateEvidence = (next: EvidenceAttachment[]) => {
+    if (editingFrozen.current || autosave.isHeld()) return;
     setEvidence(next);
     editDraft({
       response_set: currentDraft().response_set,
@@ -973,8 +975,7 @@ export function usePracticeSubmit({
             );
           }));
   const phase = preview || committedPreview ? 'feedback' : 'answering';
-  // YUK-432 (Bugbot FINDING 1) — 「返回流」出口：自动 commit 后必须标 slot done（onCommittedBack），
-  // 否则只 onBack 会留下「已判分但 slot 卡 in_progress」的不一致。未自动 commit → 原 onBack。
+  // Recorded answers must mark the slot done before returning to the stream.
   const handleBack = async () => {
     if (returningRef.current || uploading || judging || committing) return;
     returningRef.current = true;
@@ -1075,11 +1076,8 @@ export function usePracticeSubmit({
     onSettled: onPolledSettled,
   });
 
-  // commit 接受显式 rating + autoRate：客观题自动流不依赖手动 `rating` state（直接用 judge 的
-  // suggested_rating + auto_rate:true）；手动流（开放题/申诉）走 body.rating + auto_rate 缺省 false。
-  // previewOverride：客观题自动 commit 在 setPreview 同一 tick 内触发，闭包里的 `preview` 仍是旧的
-  // null（state 尚未 re-render），故 runJudge 把 fresh judge preview 直接传进来（手动流省略 → 用
-  // 已落 state 的 `preview`）。
+  // Automatic commit passes its fresh preview because setPreview has not rendered yet.
+  // Freeze synchronously before flush so old render/upload callbacks cannot change the answer.
   const commit = async (opts: {
     withAppeal: boolean;
     rating: Rating;
@@ -1089,12 +1087,14 @@ export function usePracticeSubmit({
     // YUK-1729 — a recovery replay after a reload: the original answer time is unknown here.
     omitLatency?: boolean;
   }) => {
+    if (editingFrozen.current && !opts.previewOverride) return;
     const pv = opts.previewOverride ?? preview;
     if (returningRef.current || !q || (!pv && issuanceMode !== 'manual') || committing) return;
     if (answerRecorded) {
       addToast('这道题已经交过了，不能再交一次。', 'info', 'alert');
       return;
     }
+    editingFrozen.current = true;
     setCommitting(true);
     try {
       if (!accepted && !(await flushDraft())) return;
@@ -1111,10 +1111,7 @@ export function usePracticeSubmit({
         // YUK-372 L2 — 被答 practice_stream_item.id（流作答的 π_i 直 join 判别子，server hook
         // 用它精确取放置该 slot 的随机抽样事件的 π_i）。
         stream_item_id: item.id,
-        // YUK-562 / YUK-444 — 过程文本 + 信心自评的可选采集字段（空值不发，见 buildCaptureFields）。
-        // 单一 commit 路径 → 手动流与客观题 auto_rate 自动 commit 都覆盖：客观题 selfConfidence 恒 null
-        // （不插拍）故只可能带 reasoning_trace（若 fill_blank 文本面填了）；开放题两者都可能带。
-        // server 侧 observe-only 落 review event payload，绝不进 rating / FSRS / θ̂。
+        // Optional process/confidence capture is observational, never grading evidence.
         ...buildCaptureFields({ reasoningTrace, selfConfidence }),
         // YUK-432 — 客观题自动判分+自动评级：server 用 judge 的 suggested rating 覆盖 body.rating，
         // 并让客观判分流过 difficulty_calibration_label hook 产标签（B1 难度 firm-up 链解冻）。
@@ -1155,16 +1152,13 @@ export function usePracticeSubmit({
           addToast('作答已保存，但重判没提交上。', 'info', 'alert');
         }
       }
-      // 客观题自动 commit 成功 → 标记 autoCommitted（反馈卡隐藏手动评级、「下一项」只推进）+ 暂存
-      // 这次判定的 judge 锚点 id（FINDING 2：让「不服判」入口在自动 commit 后仍能对它发 appeal）。
-      // 只在写入成功后置位：失败时保持手动评级行可见，用户可重试/手动评级（不丢答）。
+      // Only a recorded answer hides rating controls and supplies the appeal anchor.
       if (opts.autoRate && opts.advance === false) {
         setAutoCommitted(true);
         setAutoCommitJudgeEventId(
           res.judge && 'assessment' in res ? res.assessment.candidate_id : null,
         );
       }
-      // advance=false（客观题自动 commit）→ 留在反馈卡让用户先看判定，「下一项」再 onDone()。
       if (opts.advance !== false) onDone();
     } catch (error) {
       if (holdStaleDraft(error)) return;
@@ -1175,9 +1169,9 @@ export function usePracticeSubmit({
       setAutoCommitted(false);
       setAutoCommitJudgeEventId(null);
       addToast(JUDGE_FAILURE_MESSAGE, 'info', 'alert');
-      // Back to answering: unsaved edits resume autosaving.
       autosave.resume();
     } finally {
+      editingFrozen.current = false;
       setCommitting(false);
     }
   };
@@ -1259,6 +1253,7 @@ export function usePracticeSubmit({
   // The server reuses the stored verdict for this submission (no new judge run, no charge).
   const recoverAccepted = async () => {
     if (!q || isInterventionDiagnostic || issuanceMode === 'manual' || answerRecorded) return;
+    editingFrozen.current = true;
     setJudging(true);
     try {
       const r = await getAdvice(q.id, answerMd, imageRefs, assessmentInput(), adviceCommit(false));
@@ -1267,6 +1262,7 @@ export function usePracticeSubmit({
       if (holdStaleDraft(error)) return;
       if (!pendingRun) addToast(JUDGE_FAILURE_MESSAGE, 'info', 'alert');
     } finally {
+      editingFrozen.current = false;
       setJudging(false);
     }
   };
@@ -1282,7 +1278,9 @@ export function usePracticeSubmit({
   };
 
   const runJudge = async () => {
+    if (editingFrozen.current) return;
     if (returningRef.current || !q || !canSubmit || issuanceMode === 'manual') return;
+    editingFrozen.current = true;
     setJudging(true);
     try {
       if (!accepted && !(await flushDraft())) return;
@@ -1342,6 +1340,7 @@ export function usePracticeSubmit({
       // Still answering after a failed judge: unsaved edits resume autosaving.
       autosave.resume();
     } finally {
+      editingFrozen.current = false;
       setJudging(false);
     }
   };

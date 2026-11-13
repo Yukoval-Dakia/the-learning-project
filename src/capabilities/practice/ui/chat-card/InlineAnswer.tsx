@@ -214,8 +214,10 @@ function AnswerArea({
   const attachFlush = usePagehideTransition(flushOnLeave, true, flushOnLeave);
 
   // A handler from an older render must build on the newest answer, not its render's copy.
+  const editingFrozen = useRef(false);
   const latest = useRef(responses);
   const edit = (update: (entries: ResponseSetT['entries']) => ResponseSetT['entries']) => {
+    if (editingFrozen.current || autosave.isHeld()) return;
     const previous = latest.current;
     const next = { entries: update(previous.entries) };
     latest.current = next;
@@ -271,6 +273,7 @@ function AnswerArea({
     // Leaving during grading must not lose the last edit: it is saved before saving stops, and the
     // fields are locked from the moment this starts.
     mutationFn: async () => {
+      editingFrozen.current = true;
       if (!(await flush())) {
         if (autosave.isHeld()) return null;
         throw new Error('the answer was not saved');
@@ -279,7 +282,10 @@ function AnswerArea({
       return readAdvice();
     },
     onSuccess: (advice) => {
-      if (advice === null) return;
+      if (advice === null) {
+        editingFrozen.current = false;
+        return;
+      }
       if (isSubmitPending(advice)) {
         setStillGrading(true);
         return;
@@ -289,7 +295,10 @@ function AnswerArea({
       onAttemptChanged();
     },
     onError: (error) => {
-      if (!holdStaleDraft(error)) autosave.resume();
+      if (!holdStaleDraft(error)) {
+        editingFrozen.current = false;
+        autosave.resume();
+      }
     },
   });
   const resumed = resume.data && !isSubmitPending(resume.data) ? resume.data : null;
