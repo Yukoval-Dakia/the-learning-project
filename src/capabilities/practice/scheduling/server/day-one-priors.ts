@@ -1,9 +1,10 @@
 // Day-one mastery prior for one knowledge scope.
 // Owns the prerequisite read, the measured anchors, the DAG propagation, and the claim.
-// A root with a measured effective ability or a calibrated difficulty uses a unit-precision
-// offset prior in that frame. Every other root stays uniform. Downstream nodes inherit
-// through the probabilistic-AND. A cycle or a read failure returns null so callers keep
-// their previous behavior.
+// Both readers expand the requested ids through prerequisite ancestors, then return
+// only those requested ids. A root with a measured effective ability or a calibrated
+// difficulty uses a unit-precision offset prior in that frame. Every other root stays
+// uniform. Downstream nodes inherit through the probabilistic-AND. A cycle or a read
+// failure returns null so callers keep their previous behavior.
 
 import { and, eq, inArray, isNull } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
@@ -119,8 +120,8 @@ async function loadInScopeEdges(
 }
 
 /**
- * Requested ids plus prerequisite ancestors, so a cold KC can see an observed
- * prerequisite that is not itself in the candidate set. Ancestors are sorted
+ * Requested ids plus prerequisite ancestors, so a cold KC keeps an observed
+ * prerequisite that sits outside the requested scope. Ancestors are sorted
  * so a mastery tie breaks the same way on every read.
  */
 async function prerequisiteClosure(db: DbLike, roots: readonly string[]): Promise<string[]> {
@@ -219,19 +220,28 @@ async function propagateScope(
   return out;
 }
 
+/** Ancestors included, archived edges excluded. Callers project back to the requested ids. */
+async function propagateEvidenceClosure(
+  db: DbLike,
+  requested: readonly string[],
+): Promise<Map<string, PropagatedDayOne> | null> {
+  const ids = await prerequisiteClosure(db, requested);
+  return propagateScope(db, ids, await loadInScopeEdges(db, ids));
+}
+
 /** Propagated priors for a scope, or null when the scope is empty or the graph is rejected. */
 export async function loadDayOnePriors(
   db: DbLike,
   scope: string[],
 ): Promise<Map<string, DayOnePrior> | null> {
-  const ids = scopeIds(scope);
-  if (ids.length === 0) return null;
+  const requested = scopeIds(scope);
+  if (requested.length === 0) return null;
 
   try {
-    const propagated = await propagateScope(db, ids, await loadInScopeEdges(db, ids));
+    const propagated = await propagateEvidenceClosure(db, requested);
     if (!propagated) return null;
     const out = new Map<string, DayOnePrior>();
-    for (const id of ids) {
+    for (const id of requested) {
       const row = propagated.get(id);
       if (!row) return null;
       out.set(id, row.prior);
@@ -255,8 +265,7 @@ export async function loadPropagatedAbilityOffsets(
   if (roots.length === 0) return new Map();
 
   try {
-    const ids = await prerequisiteClosure(db, roots);
-    const propagated = await propagateScope(db, ids, await loadInScopeEdges(db, ids));
+    const propagated = await propagateEvidenceClosure(db, roots);
     if (!propagated) return null;
     const out = new Map<string, number>();
     for (const id of roots) out.set(id, propagated.get(id)?.abilityOffset ?? 0);
