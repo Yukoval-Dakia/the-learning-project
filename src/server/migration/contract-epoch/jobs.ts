@@ -107,6 +107,9 @@ export const JOB_EPOCH_DISPOSITION: Readonly<Record<string, JobEpochDisposition>
   learner_return_wake: 'translate',
   supply_planner: 'translate',
   jyeoo_staged_asset_reap: 'drain', // 资产回收只删 staged 文件/行，合同无关。
+  // Reads admitted solution-prior rows and writes knowledge-edge proposals only.
+  // It does not touch scoring, answers, or question content.
+  solution_prior_prereq_nightly: 'drain',
 };
 
 /** DLQ 恢复队列后缀（pg-boss `<queue>_dlq`）。 */
