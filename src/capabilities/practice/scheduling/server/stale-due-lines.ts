@@ -1,7 +1,9 @@
 // Pending decay rows are a snapshot of a card that was due when the stream was
 // composed. A later read or rerank drops a row whose card is no longer due today,
-// or whose knowledge was settled after the row was written. Remaining due rows
-// stay where they are.
+// or whose knowledge was settled after the row was written. On a question that
+// tags several measurable knowledge points, one settlement after the row was
+// written drops the row; a sibling card that is still due does not keep it.
+// Remaining due rows stay where they are.
 
 import { and, eq, inArray, isNull, or } from 'drizzle-orm';
 import { learnerLocalDay } from '@/core/learner-day';
@@ -39,19 +41,33 @@ function streamPartitionPredicate(date: string, sessionId?: string | null) {
     : and(eq(practice_stream_item.date, date), isNull(practice_stream_item.session_id));
 }
 
-/** A line stays only while one of its cards is still an open due obligation. */
+type CardObligation = 'open' | 'practiced_after_line' | 'not_due_today' | 'absent';
+
+function cardObligation(
+  clock: CardClock | undefined,
+  lineCreatedAt: Date,
+  streamDay: string,
+): CardObligation {
+  if (!clock) return 'absent';
+  if (clock.settledReviewAt !== null && clock.settledReviewAt > lineCreatedAt) {
+    return 'practiced_after_line';
+  }
+  if (learnerLocalDay(clock.dueAt) > streamDay) return 'not_due_today';
+  return 'open';
+}
+
+/** A practiced card releases the row. A sibling that is still due does not keep it. */
 function dueLineShouldWithdraw(
   line: PendingDueLine,
   clocks: ReadonlyMap<string, CardClock>,
   streamDay: string,
 ): boolean {
   if (line.cards.length === 0) return true;
-  return line.cards.every((card) => {
-    const clock = clocks.get(cardKey(card));
-    if (!clock) return true;
-    if (learnerLocalDay(clock.dueAt) > streamDay) return true;
-    return clock.settledReviewAt !== null && clock.settledReviewAt > line.createdAt;
-  });
+  const obligations = line.cards.map((card) =>
+    cardObligation(clocks.get(cardKey(card)), line.createdAt, streamDay),
+  );
+  if (obligations.includes('practiced_after_line')) return true;
+  return obligations.every((obligation) => obligation !== 'open');
 }
 
 function cardsForQuestion(
