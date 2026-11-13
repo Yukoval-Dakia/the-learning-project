@@ -61,6 +61,8 @@ import { COACH_CONTEXT_BUDGET, PROPOSAL_FEEDBACK_BUDGET } from '@/kernel/tools/b
 // YUK-1790 LIGHT — the `coach` Context view (goal/Steering + recent activity + mastery and
 // cause readings). Read here, outside the scan failure boundary, like the other coach reads.
 import { loadLearnerContext } from '../context/index';
+import { type YesterdayPlanOutcome, rankSkippedYesterdayFocus } from './yesterday-focus';
+import { loadYesterdayPlanOutcome } from './yesterday-plan-outcome';
 
 // Re-exported alias kept for existing imports; sourced from COACH_CONTEXT_BUDGET.maxProposals.
 export const COACH_MAX_PROPOSALS = COACH_CONTEXT_BUDGET.maxProposals as number;
@@ -104,7 +106,11 @@ const COACH_WEAK_POINTS_GUIDANCE =
 // The coach view is attention context; candidate facts come from read_practice_candidates.
 const COACH_CONTEXT_VIEW_GUIDANCE =
   ' When coach_context is present, it is the purpose-trimmed planner segment (active goal + Steering, recent activity counts, mastery/cause readings, recent failure cause labels). It carries no question stems or answer keys: use it as attention context, never as a candidate list — candidate facts (due / variant / new_check / frontier / never-started) come only from read_practice_candidates, and never restate its numbers as new measurements.';
-export const COACH_DAILY_OBJECTIVE = `Produce a TodayPlan draft for the user via the provided DomainTools. Only write proposals (defer / split / relearn / archive / completion / maintenance / knowledge_edge); never mutate user data directly. Prefer doing nothing if the day has no actionable adjustments.${COACH_GOAL_STRAND_GUIDANCE}${COACH_STEERING_GUIDANCE}${COACH_PROPOSAL_FEEDBACK_GUIDANCE}${COACH_AGENT_NOTES_GUIDANCE}${COACH_SESSION_FOCUS_GUIDANCE}${COACH_PLAN_ISSUES_GUIDANCE}${COACH_BRIEF_GUIDANCE}${COACH_WEAK_POINTS_GUIDANCE}${COACH_SUGGESTION_KIND_GUIDANCE}${COACH_CONTEXT_VIEW_GUIDANCE}`;
+const COACH_DUE_KNOWLEDGE_GUIDANCE =
+  ' review_plan.due_knowledge lists the first due knowledge points from the same due read as the plan numbers (name, overdue_days, retention, mastery_band). Rank knowledge_focus from these named points together with weak signals. A null retention or mastery_band is unknown — never treat it as zero or as 萌芽, and never invent a due name that is not in this list, weak_points, or a tool read. When due_knowledge is empty, name focuses from weak signals and tool reads as before.';
+const COACH_YESTERDAY_OUTCOME_GUIDANCE =
+  ' When yesterday_plan_outcome is present, each focus is a knowledge point yesterday\'s plan named, scored only from settled answers after that plan was written. settlement.kind "not_practiced" means it was skipped: put those knowledge_ids first in knowledge_focus, in the listed order, ahead of every other focus, and say 「昨天跳过了」 plus each skipped name in daily_focus. "practiced" carries correct, wrong and partial counts — you may mention them, but they never outrank a skip. "unknown" means the read could not prove a skip: do not claim one. When yesterday_plan_outcome is absent, behave exactly as before.';
+export const COACH_DAILY_OBJECTIVE = `Produce a TodayPlan draft for the user via the provided DomainTools. Only write proposals (defer / split / relearn / archive / completion / maintenance / knowledge_edge); never mutate user data directly. Prefer doing nothing if the day has no actionable adjustments.${COACH_GOAL_STRAND_GUIDANCE}${COACH_STEERING_GUIDANCE}${COACH_PROPOSAL_FEEDBACK_GUIDANCE}${COACH_AGENT_NOTES_GUIDANCE}${COACH_SESSION_FOCUS_GUIDANCE}${COACH_PLAN_ISSUES_GUIDANCE}${COACH_BRIEF_GUIDANCE}${COACH_WEAK_POINTS_GUIDANCE}${COACH_SUGGESTION_KIND_GUIDANCE}${COACH_CONTEXT_VIEW_GUIDANCE}${COACH_DUE_KNOWLEDGE_GUIDANCE}${COACH_YESTERDAY_OUTCOME_GUIDANCE}`;
 
 /** How many derived weak points ride the Coach input (bounded for prompt budget). */
 const COACH_MAX_WEAK_POINTS = 8;
@@ -140,6 +146,7 @@ type ResolvePlanInputsFn = (db: Db) => Promise<DailyReviewPlanInputs>;
 type DeriveWeakPointsFn = (db: Db, input: { now: Date }) => Promise<ActionableWeakPointDerivationT>;
 type LoadPreviousPlanIssuesFn = (db: Db) => Promise<readonly DailyFocusPlanIssue[]>;
 type LoadSessionFocusFn = (db: Db) => Promise<SessionFocusRead | null>;
+type LoadYesterdayPlanOutcomeFn = (db: Db, now: Date) => Promise<YesterdayPlanOutcome | null>;
 
 export interface CoachRunDeps {
   runAgentTaskFn?: AgencyScanRunFn;
@@ -154,6 +161,7 @@ export interface CoachRunDeps {
   deriveWeakPointsFn?: DeriveWeakPointsFn;
   loadPreviousPlanIssuesFn?: LoadPreviousPlanIssuesFn;
   loadSessionFocusFn?: LoadSessionFocusFn;
+  loadYesterdayPlanOutcomeFn?: LoadYesterdayPlanOutcomeFn;
   now?: () => Date;
 }
 
@@ -169,12 +177,14 @@ function buildCoachInput(
   previousPlanIssues: readonly DailyFocusPlanIssue[],
   coachContextMd: string | null,
   sessionFocus: SessionFocusRead | null,
+  yesterdayOutcome: YesterdayPlanOutcome | null,
   reviewPlan: ReviewPlanNumbers & {
     due_count: number;
     budget_minutes: number;
     question_minutes: number;
     question_minutes_source: 'observed' | 'default';
     question_minutes_sample_count: number;
+    due_knowledge: DailyReviewPlanInputs['due_knowledge'];
   },
 ) {
   return {
@@ -279,6 +289,8 @@ function buildCoachInput(
       : {}),
     // Read-only plan facts; the model never owns these numbers.
     review_plan: reviewPlan,
+    // Yesterday's named focuses, scored from settled answers. Absent on a cold start.
+    ...(yesterdayOutcome ? { yesterday_plan_outcome: yesterdayOutcome } : {}),
     // The previous scan's flagged daily_focus clauses, handed back so the model
     // rephrases them — agent-facing feedback, not a user-facing alert. Absent when
     // the last scan had nothing flagged.
@@ -299,7 +311,7 @@ function buildCoachInput(
     },
     output_schema: {
       kind: 'TodayPlan',
-      hint: "Return a JSON object with daily_focus, review_session_proposal, plan_adjustments[], maintenance_proposals[]. review_session_proposal contains only knowledge_focus[] (ranked knowledge_ids from due/weak + active_items + last_session_focus pressure) and intent_tags[]; do NOT output count, estimated_minutes, time_box_minutes or subject_mix — the system computes those from review_plan and overwrites them. In daily_focus, any mention of today's question count or minutes must restate review_plan exactly; other real numbers you observed may be stated. When active_goals are present, also set goal_ids[] and goal_strand[] (each item: serves_goal_id, knowledge_ids[], focus) — additive only, never replacing the review backbone (ND-5).",
+      hint: "Return a JSON object with daily_focus, review_session_proposal, plan_adjustments[], maintenance_proposals[]. review_session_proposal contains only knowledge_focus[] (ranked knowledge_ids from review_plan.due_knowledge + due/weak + active_items + last_session_focus pressure) and intent_tags[]; do NOT output count, estimated_minutes, time_box_minutes or subject_mix — the system computes those from review_plan and overwrites them. In daily_focus, any mention of today's question count or minutes must restate review_plan exactly; other real numbers you observed may be stated. When yesterday_plan_outcome lists not_practiced focuses, knowledge_focus must lead with those ids and daily_focus must say 「昨天跳过了」. When active_goals are present, also set goal_ids[] and goal_strand[] (each item: serves_goal_id, knowledge_ids[], focus) — additive only, never replacing the review backbone (ND-5).",
     },
   };
 }
@@ -337,6 +349,7 @@ export async function runCoach(db: Db, deps: CoachRunDeps = {}): Promise<CoachRu
     ((db: Db, input: { now: Date }) => deriveActionableWeakPoints(db, input));
   const loadPrevPlanIssues = deps.loadPreviousPlanIssuesFn ?? loadPreviousPlanIssues;
   const loadSessionFocus = deps.loadSessionFocusFn ?? readLatestSessionFocus;
+  const loadYesterday = deps.loadYesterdayPlanOutcomeFn ?? loadYesterdayPlanOutcome;
   // Run-log contract value kept verbatim from the nightly era; the trigger is now the return wake.
   const triggerActorRef = 'nightly_coach';
   const objective = COACH_DAILY_OBJECTIVE;
@@ -359,9 +372,13 @@ export async function runCoach(db: Db, deps: CoachRunDeps = {}): Promise<CoachRu
       // (and `payload.today_plan.daily_focus`) off the latest `experimental:coach_scan`.
       // Invalid model output falls through to the placeholder copy. The reviewPlan computed
       // in prepareInput rides the same built input, so this payload needs no re-read.
-      const { review_plan: reviewPlan } = input as ReturnType<typeof buildCoachInput>;
+      const built = input as ReturnType<typeof buildCoachInput>;
+      const reviewPlan = built.review_plan;
       const todayPlanDraft = parseCoachOutputSafely(taskResult.text ?? '');
-      const composed = todayPlanDraft ? composeTodayPlan(todayPlanDraft, reviewPlan) : null;
+      const ranked = todayPlanDraft
+        ? rankSkippedYesterdayFocus(todayPlanDraft, built.yesterday_plan_outcome ?? null)
+        : null;
+      const composed = ranked ? composeTodayPlan(ranked, reviewPlan) : null;
       const todayPlan = composed?.plan ?? null;
       const focusIssues = composed?.issues ?? [];
       return {
@@ -376,6 +393,7 @@ export async function runCoach(db: Db, deps: CoachRunDeps = {}): Promise<CoachRu
           count: reviewPlan.count,
           estimated_minutes: reviewPlan.estimated_minutes,
           subject_mix: reviewPlan.subject_mix,
+          due_knowledge: reviewPlan.due_knowledge,
         },
         ...(todayPlan
           ? {
@@ -406,6 +424,7 @@ export async function runCoach(db: Db, deps: CoachRunDeps = {}): Promise<CoachRu
       const weakPoints = await deriveWeakPoints(db, { now });
       const previousPlanIssues = await loadPrevPlanIssues(db);
       const sessionFocus = await loadSessionFocus(db);
+      const yesterdayOutcome = await loadYesterday(db, now);
       // YUK-1790 LIGHT — the Coach view is one more readable segment for the existing run.
       // A wiring defect (port not installed) must surface; any other read failure degrades
       // to an absent segment instead of failing the whole scan over advisory context.
@@ -433,6 +452,7 @@ export async function runCoach(db: Db, deps: CoachRunDeps = {}): Promise<CoachRu
         question_minutes: planInputs.question_minutes,
         question_minutes_source: planInputs.question_minutes_source,
         question_minutes_sample_count: planInputs.question_minutes_sample_count,
+        due_knowledge: planInputs.due_knowledge,
       };
       return () =>
         buildCoachInput(
@@ -447,6 +467,7 @@ export async function runCoach(db: Db, deps: CoachRunDeps = {}): Promise<CoachRu
           previousPlanIssues,
           coachContextMd,
           sessionFocus,
+          yesterdayOutcome,
           reviewPlan,
         );
     },
