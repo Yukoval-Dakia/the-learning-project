@@ -10,6 +10,7 @@ import {
   nativeAttemptOutcome,
   resolveVerdictsForNativeAttempts,
 } from '@/kernel/read-models/assessment-verdict';
+import { loadMergedKnowledgeClosure } from '@/kernel/read-models/merged-knowledge';
 
 type DbLike = Db | Tx;
 
@@ -42,17 +43,21 @@ const ACTIVITY_QUERY_CHUNK = 500;
  *     sensitive, so the pair reproduces the sub-value `@>` semantics precisely,
  *     and both forms ride the event_payload_idx jsonb_path_ops GIN.
  * Nodes with no touching event are absent from the map — callers own any
- * fallback (e.g. knowledge.created_at).
+ * fallback (e.g. knowledge.created_at). A requested id also takes the later
+ * event on any knowledge id merged into it.
  */
 export async function lastKnowledgeActivityAt(
   db: DbLike,
   knowledgeIds: string[],
 ): Promise<Map<string, Date>> {
-  const ids = Array.from(
+  const requested = Array.from(
     new Set(knowledgeIds.map((id) => id.trim()).filter((id) => id.length > 0)),
   );
   const out = new Map<string, Date>();
-  if (ids.length === 0) return out;
+  if (requested.length === 0) return out;
+  const closure = await loadMergedKnowledgeClosure(db);
+  const ids = Array.from(new Set(requested.flatMap((id) => [...closure.closure(id)])));
+  const raw = new Map<string, Date>();
   for (let start = 0; start < ids.length; start += ACTIVITY_QUERY_CHUNK) {
     const chunk = ids.slice(start, start + ACTIVITY_QUERY_CHUNK);
     // The chunk is bound once per arm (the id list repeats in the parameter
@@ -87,30 +92,39 @@ export async function lastKnowledgeActivityAt(
     // both accepted here.
     for (const row of rows) {
       if (row.last_event_at !== null && row.last_event_at !== undefined) {
-        out.set(row.kc, new Date(row.last_event_at));
+        raw.set(row.kc, new Date(row.last_event_at));
       }
     }
   }
-  const wanted = new Set(ids);
+  const queried = new Set(ids);
   for (const hit of await userNativeAttemptTouches(db)) {
     for (const knowledgeId of hit.knowledge_ids) {
-      if (!wanted.has(knowledgeId)) continue;
-      const prev = out.get(knowledgeId);
-      if (!prev || hit.created_at > prev) out.set(knowledgeId, hit.created_at);
+      if (!queried.has(knowledgeId)) continue;
+      const prev = raw.get(knowledgeId);
+      if (!prev || hit.created_at > prev) raw.set(knowledgeId, hit.created_at);
     }
+  }
+  for (const id of requested) {
+    let best: Date | null = null;
+    for (const member of closure.closure(id)) {
+      const at = raw.get(member);
+      if (at && (!best || at > best)) best = at;
+    }
+    if (best) out.set(id, best);
   }
   return out;
 }
 
-/** Newest learner attempts whose frozen scope includes this node. */
+/** Newest learner attempts whose frozen scope includes this node or one merged into it. */
 export async function recentNativeAttemptsForKnowledge(
   db: DbLike,
   knowledgeId: string,
   limit: number,
 ): Promise<KnowledgeAttemptHit[]> {
   if (limit <= 0) return [];
+  const history = (await loadMergedKnowledgeClosure(db)).closure(knowledgeId);
   const hits = (await userNativeAttemptTouches(db))
-    .filter((hit) => hit.knowledge_ids.includes(knowledgeId))
+    .filter((hit) => hit.knowledge_ids.some((id) => history.has(id)))
     .sort(
       (a, b) =>
         b.created_at.getTime() - a.created_at.getTime() || b.event_id.localeCompare(a.event_id),

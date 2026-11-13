@@ -40507,6 +40507,35 @@ export interface operations {
                             partial: number;
                             ungraded: number;
                         }[];
+                        knowledge_week_compare: {
+                            added: {
+                                id: string;
+                                mastery: number | null;
+                                name: string;
+                                prior_unresolved_count: number;
+                                retention: number | null;
+                                unresolved_count: number;
+                                weight: number;
+                            }[];
+                            fixed: {
+                                id: string;
+                                mastery: number | null;
+                                name: string;
+                                prior_unresolved_count: number;
+                                retention: number | null;
+                                unresolved_count: number;
+                                weight: number;
+                            }[];
+                            still_unresolved: {
+                                id: string;
+                                mastery: number | null;
+                                name: string;
+                                prior_unresolved_count: number;
+                                retention: number | null;
+                                unresolved_count: number;
+                                weight: number;
+                            }[];
+                        };
                         ratings: {
                             again: number;
                             easy: number;
@@ -40521,7 +40550,12 @@ export interface operations {
                         top_knowledge: {
                             failure_count: number;
                             id: string;
+                            mastery: number | null;
                             name: string;
+                            retention: number | null;
+                            /** @enum {string} */
+                            versus_prior: "still_unresolved" | "added";
+                            weight: number;
                         }[];
                         totals: {
                             cost_usd: number;

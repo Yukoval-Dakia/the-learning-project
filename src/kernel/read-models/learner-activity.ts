@@ -28,6 +28,7 @@ import {
   resolveVerdictsForAttempts,
   resolveVerdictsForNativeAttempts,
 } from './assessment-verdict';
+import { loadMergedKnowledgeClosure } from './merged-knowledge';
 import { batchResolveSubjectIds } from './subject-resolution';
 
 type DbLike = Db | Tx;
@@ -183,12 +184,14 @@ async function loadCardLegacyOutcome(db: DbLike, row: EventRow): Promise<AnswerO
  * Native attempts are attributed by the frozen learning scope and the issued
  * parts, never by mutable question tags; a denied candidate walks on instead of
  * ending the read. Legacy attempt/review rows carry `referenced_knowledge_ids`.
+ * The node's merged_from closure is included, so the newer answer on either side wins.
  */
 export async function loadLastKnowledgePractice(
   db: DbLike,
   knowledgeId: string,
 ): Promise<LastKnowledgePractice | null> {
-  const kc = JSON.stringify([knowledgeId]);
+  const historyIds = [...(await loadMergedKnowledgeClosure(db)).closure(knowledgeId)];
+  const history = new Set(historyIds);
   let cursor: { at: Date; id: string } | undefined;
   for (let page = 0; ; page += 1) {
     if (page >= PRACTICE_MAX_PAGES) return null;
@@ -200,11 +203,10 @@ export async function loadLastKnowledgePractice(
           eq(event.actor_kind, 'user'),
           inArray(event.action, [...LEARNER_ANSWER_ACTIONS]),
           eq(event.subject_kind, 'question'),
-          sql`(
-            (${event.action} = ${NATIVE_ATTEMPT_ACTION} AND ${nativeScopeMentions(kc)})
-            OR (${event.action} <> ${NATIVE_ATTEMPT_ACTION}
-                AND ${event.payload}->'referenced_knowledge_ids' @> ${kc}::jsonb)
-          )`,
+          or(
+            and(eq(event.action, NATIVE_ATTEMPT_ACTION), nativeMentionsAny(historyIds)),
+            and(sql`${event.action} <> ${NATIVE_ATTEMPT_ACTION}`, legacyMentionsAny(historyIds)),
+          ),
           cursor
             ? or(
                 lt(event.created_at, cursor.at),
@@ -229,7 +231,7 @@ export async function loadLastKnowledgePractice(
       for (const row of authorized) {
         if (row.action === NATIVE_ATTEMPT_ACTION) {
           const verdict = nativeVerdicts?.get(row.id);
-          if (!verdict?.knowledge_ids.includes(knowledgeId)) continue;
+          if (!verdict?.knowledge_ids.some((id) => history.has(id))) continue;
           const outcome = nativeAttemptOutcome(verdict);
           return {
             at: row.created_at.toISOString(),
@@ -265,7 +267,8 @@ const FAILURE_STREAK_SCAN_LIMIT = 200;
 
 /**
  * Current failure run per knowledge point. Answers with no right/wrong bit and
- * contested answers are skipped; a success or partial ends the run. Only the
+ * contested answers are skipped; a success or partial ends the run. An answer
+ * on a node merged into a live survivor also advances that survivor's run. Only the
  * newest FAILURE_STREAK_SCAN_LIMIT derivation-allowed answers count. A missing
  * id means the run length is 0, which the caller must not confuse with a failed scan.
  */
@@ -320,6 +323,7 @@ async function loadFailureRuns(db: DbLike): Promise<Map<string, number>> {
   }
   const runs = new Map<string, { count: number; ended: boolean }>();
   if (rows.length === 0) return new Map();
+  const merged = await loadMergedKnowledgeClosure(db);
   const nativeVerdicts = await resolveVerdictsForNativeAttempts(db, rows);
   const legacyOutcomes = await loadLegacyAnswerOutcomes(db, rows);
   const contested = await loadContestedAttemptIds(
@@ -335,7 +339,13 @@ async function loadFailureRuns(db: DbLike): Promise<Map<string, number>> {
     const knowledgeIds = native
       ? native.knowledge_ids
       : stringArrayField(row.payload, 'referenced_knowledge_ids');
-    for (const knowledgeId of new Set(knowledgeIds)) {
+    const targets = new Set<string>();
+    for (const knowledgeId of knowledgeIds) {
+      targets.add(knowledgeId);
+      const winner = merged.liveWinner(knowledgeId);
+      if (winner) targets.add(winner);
+    }
+    for (const knowledgeId of targets) {
       const run = runs.get(knowledgeId) ?? { count: 0, ended: false };
       if (run.ended) continue;
       if (outcome === 'failure') run.count += 1;

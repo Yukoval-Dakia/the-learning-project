@@ -22,6 +22,7 @@
 - 收件箱 count 与 TodayPage 复用同一 `workbench-summary` query key，React Query 自动去重。
 - `/today`、`/coach` 用到的 agency / onboarding 组件与读函数由路由壳注入（Start `server/start/routes/`）；shell 只 type-import 它们。
 - 工作台 due KPI 采样 Practice 的 `queryReviewDue`，由组合层传入：Start 读者 `server/start/workbench-reader.ts`、Hono handler `server/composed-routes.ts`（manifest 只声明 `/api/workbench/summary` 归属，不带 loader）；shell 不 import practice。
+- 7 天活动热力只计 actor 为 user 的学习活动（作答、复习、作答锚点、学习记录）。夜间系统事件不计入。
 
 ## ANTI-PATTERNS
 - 别在 shell 里硬编码某个 capability 的业务规则；只聚合。

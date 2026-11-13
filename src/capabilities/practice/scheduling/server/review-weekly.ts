@@ -1,21 +1,30 @@
 // Weekly review report shared by HTTP and Start.
 //
 // Aggregates review event activity over a sliding window (default 7d, max 90d):
-// count/correct rate per day, FSRS rating distribution, top knowledge_ids by
-// failure count, top effective cause categories, and total AI cost.
+// count/correct rate per day, FSRS rating distribution, knowledge points whose
+// in-window failures still have no later independent correct answer, top effective
+// cause categories, and total AI cost. That ranking is weighted by the weaker of
+// mastery and retention, and compared with the previous window of the same length.
 //
 // Single-shot per page load; computed at request time (no view). Acceptable at
 // single-user scale where the window is bounded and the event table is small.
 
 import { and, desc, eq, gte, inArray, lte, sql } from 'drizzle-orm';
 import type { z } from 'zod';
+import type { RetentionReading } from '@/core/schema/scheduling-state';
 import type { Db } from '@/db/client';
 import { event, knowledge } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { loadNativeReviewOccurrences } from '@/kernel/read-models/assessment-review-occurrences';
 import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
-import { getCurrentFailureAttempts } from '@/kernel/read-models/failure-attempts';
+import {
+  type FailureAttempt,
+  getCurrentFailureAttempts,
+} from '@/kernel/read-models/failure-attempts';
+import { loadRecentCorrectAttemptsForKnowledge } from '@/kernel/read-models/learner-activity';
+import { getMasteryProjection } from '@/kernel/read-models/mastery-projection';
 import { resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
+import { getFsrsRetrievabilityByIds } from '@/kernel/records/scheduling-state';
 import { ReviewWeeklyQuerySchema } from '../api/review-planning-contracts';
 import {
   buildCalendarReportWindow,
@@ -68,6 +77,187 @@ function reviewIdentityKeys(input: {
  */
 function slotIssuanceKey(streamItemId: string): string {
   return `issuance:iss_stream_${streamItemId}`;
+}
+
+const TOP_KNOWLEDGE = 8;
+// A fully held point still counts, at a quarter of an unheld one with the same open failures.
+const HOLD_FLOOR = 0.25;
+const CORRECTS_PER_KNOWLEDGE = 64;
+
+/** Where an open failure stands against the previous window of the same length. */
+type KnowledgeStanding = 'fixed' | 'still_unresolved' | 'added';
+
+interface KnowledgeFailureTally {
+  /** Failures in the current window with no later independent correct answer. */
+  currentOpen: number;
+  /** Failures in the previous window that were still open when this window began. */
+  priorOpen: number;
+  /** Previous-window failures that are still open now. */
+  priorStillOpen: number;
+}
+
+interface RankedKnowledgeFailure {
+  id: string;
+  name: string;
+  unresolved_count: number;
+  prior_unresolved_count: number;
+  weight: number;
+  mastery: number | null;
+  retention: number | null;
+  standing: KnowledgeStanding;
+}
+
+function standingOf(tally: KnowledgeFailureTally): KnowledgeStanding | null {
+  if (tally.priorOpen > 0 && tally.currentOpen === 0 && tally.priorStillOpen === 0) return 'fixed';
+  if (tally.priorOpen > 0) return 'still_unresolved';
+  if (tally.currentOpen > 0) return 'added';
+  return null;
+}
+
+function clamp01(value: number): number {
+  if (value < 0) return 0;
+  if (value > 1) return 1;
+  return value;
+}
+
+function retentionScore(reading: RetentionReading | undefined): number | null {
+  if (typeof reading === 'number') return clamp01(reading);
+  if (reading?.kind === 'score') return clamp01(reading.value);
+  return null;
+}
+
+/** Weaker known hold. Missing mastery and retention leave the count unscaled. */
+function holdOf(mastery: number | null, retention: number | null): number | null {
+  if (mastery != null && retention != null) return Math.min(mastery, retention);
+  return mastery ?? retention;
+}
+
+function unresolvedWeight(count: number, hold: number | null): number {
+  if (count <= 0) return 0;
+  const multiplier = hold == null ? 1 : HOLD_FLOOR + (1 - HOLD_FLOOR) * (1 - clamp01(hold));
+  return count * multiplier;
+}
+
+function knowledgeIdsOf(row: FailureAttempt): string[] {
+  const ids = row.referenced_knowledge_ids;
+  if (!Array.isArray(ids)) return [];
+  return [...new Set(ids.filter((id) => typeof id === 'string' && id.length > 0))];
+}
+
+function clearedBy(
+  times: readonly Date[] | undefined,
+  failureAt: Date,
+  until: Date,
+  untilInclusive: boolean,
+): boolean {
+  if (!times || times.length === 0) return false;
+  const after = failureAt.getTime();
+  const end = until.getTime();
+  return times.some((at) => {
+    const ms = at.getTime();
+    return ms > after && (untilInclusive ? ms <= end : ms < end);
+  });
+}
+
+function emptyKnowledgeRanking(): {
+  top: RankedKnowledgeFailure[];
+  fixed: RankedKnowledgeFailure[];
+  still_unresolved: RankedKnowledgeFailure[];
+  added: RankedKnowledgeFailure[];
+} {
+  return { top: [], fixed: [], still_unresolved: [], added: [] };
+}
+
+/**
+ * Failures that a later, separate correct answer has not cleared. A rejudge of the
+ * same attempt never reaches this list. Weight uses the weaker of mastery and
+ * retention so a slipping point outranks an equally failed point that is still held.
+ */
+async function rankOpenKnowledgeFailures(
+  db: Db,
+  input: { priorFrom: Date; currentFrom: Date; now: Date; rows: FailureAttempt[] },
+): Promise<ReturnType<typeof emptyKnowledgeRanking>> {
+  const knowledgeIds = [...new Set(input.rows.flatMap((row) => knowledgeIdsOf(row)))];
+  if (knowledgeIds.length === 0) return emptyKnowledgeRanking();
+
+  const corrects = await loadRecentCorrectAttemptsForKnowledge(db, {
+    knowledgeIds,
+    since: input.priorFrom,
+    limitPerKnowledge: CORRECTS_PER_KNOWLEDGE,
+  });
+  const successAt = new Map<string, Date[]>();
+  for (const [id, attempts] of corrects) {
+    successAt.set(
+      id,
+      attempts.map((attempt) => attempt.created_at).sort((a, b) => a.getTime() - b.getTime()),
+    );
+  }
+  const tallies = new Map<string, KnowledgeFailureTally>();
+  const bump = (id: string): KnowledgeFailureTally => {
+    const tally = tallies.get(id) ?? { currentOpen: 0, priorOpen: 0, priorStillOpen: 0 };
+    tallies.set(id, tally);
+    return tally;
+  };
+  for (const row of input.rows) {
+    const inCurrent = row.created_at >= input.currentFrom;
+    for (const id of knowledgeIdsOf(row)) {
+      const times = successAt.get(id);
+      const openNow = !clearedBy(times, row.created_at, input.now, true);
+      const openAtPriorEnd = !clearedBy(times, row.created_at, input.currentFrom, false);
+      const tally = bump(id);
+      if (inCurrent) {
+        if (openNow) tally.currentOpen += 1;
+      } else if (openAtPriorEnd) {
+        tally.priorOpen += 1;
+        if (openNow) tally.priorStillOpen += 1;
+      }
+    }
+  }
+
+  const emitted = [...tallies.entries()].filter(([, tally]) => standingOf(tally) !== null);
+  if (emitted.length === 0) return emptyKnowledgeRanking();
+  const ids = emitted.map(([id]) => id);
+  const [projection, retentionById, nameRows] = await Promise.all([
+    getMasteryProjection(db, ids),
+    getFsrsRetrievabilityByIds(db, 'knowledge', ids, input.now),
+    db
+      .select({ id: knowledge.id, name: knowledge.name })
+      .from(knowledge)
+      .where(inArray(knowledge.id, ids)),
+  ]);
+  const nameById = new Map(nameRows.map((row) => [row.id, row.name]));
+  const ranked = emitted.map(([id, tally]) => {
+    const masteryRow = projection.get(id);
+    const mastery =
+      masteryRow && masteryRow.evidence_count > 0 ? clamp01(masteryRow.mastery) : null;
+    const retention = retentionScore(retentionById.get(id));
+    const standing = standingOf(tally);
+    if (!standing) throw new Error('knowledge failure standing missing');
+    return {
+      id,
+      name: nameById.get(id) ?? id,
+      unresolved_count: tally.currentOpen,
+      prior_unresolved_count: tally.priorOpen,
+      weight: unresolvedWeight(tally.currentOpen, holdOf(mastery, retention)),
+      mastery,
+      retention,
+      standing,
+    };
+  });
+  const byWeight = (a: RankedKnowledgeFailure, b: RankedKnowledgeFailure) =>
+    b.weight - a.weight || b.unresolved_count - a.unresolved_count || a.id.localeCompare(b.id);
+  const byPrior = (a: RankedKnowledgeFailure, b: RankedKnowledgeFailure) =>
+    b.prior_unresolved_count - a.prior_unresolved_count || a.id.localeCompare(b.id);
+  const open = ranked
+    .filter((row) => row.unresolved_count > 0)
+    .sort(byWeight)
+    .slice(0, TOP_KNOWLEDGE);
+  return {
+    top: open,
+    fixed: ranked.filter((row) => row.standing === 'fixed').sort(byPrior),
+    still_unresolved: ranked.filter((row) => row.standing === 'still_unresolved').sort(byWeight),
+    added: ranked.filter((row) => row.standing === 'added').sort(byWeight),
+  };
 }
 
 export async function loadWeeklyReview(db: Db, input: unknown) {
@@ -162,10 +352,17 @@ export async function loadWeeklyReview(db: Db, input: unknown) {
     });
   }
 
-  // 2) Failure attempts in window — for top struggling knowledge_ids + cause.
-  const failures = (await getCurrentFailureAttempts(db, { since: cutoff })).filter(
+  // 2) Effective failures from the previous window through now. Totals and causes
+  // stay on the current window; the knowledge ranking also needs the previous one.
+  const priorWindow = buildCalendarReportWindow(
+    new Date(reportWindow.from.getTime() - 1),
+    days,
+    timeZone,
+  );
+  const failureRows = (await getCurrentFailureAttempts(db, { since: priorWindow.from })).filter(
     (row) => row.created_at <= now,
   );
+  const failures = failureRows.filter((row) => row.created_at >= cutoff);
 
   // 3) Cost — sum cost_micro_usd over any event in window.
   const costRows = await db
@@ -226,33 +423,32 @@ export async function loadWeeklyReview(db: Db, input: unknown) {
   }
   const daily = [...dailyMap.values()].sort((a, b) => a.date.localeCompare(b.date));
 
-  // 7) Top struggling knowledge_ids — referenced_knowledge_ids on failure
-  //    attempts; resolve names via knowledge table.
-  const knowledgeCounts = new Map<string, number>();
-  for (const f of failures) {
-    const ids = f.referenced_knowledge_ids;
-    if (!Array.isArray(ids)) continue;
-    for (const kid of ids) {
-      knowledgeCounts.set(kid, (knowledgeCounts.get(kid) ?? 0) + 1);
-    }
-  }
-  const topKnowledgeEntries = [...knowledgeCounts.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 8);
-  const topKnowledgeIds = topKnowledgeEntries.map(([id]) => id);
-  const nameById = new Map<string, string>();
-  if (topKnowledgeIds.length > 0) {
-    const rows = await db
-      .select({ id: knowledge.id, name: knowledge.name })
-      .from(knowledge)
-      .where(inArray(knowledge.id, topKnowledgeIds));
-    for (const k of rows) nameById.set(k.id, k.name);
-  }
-  const topKnowledge = topKnowledgeEntries.map(([id, count]) => ({
-    id,
-    name: nameById.get(id) ?? id,
-    failure_count: count,
+  // 7) Knowledge points whose current-window failures have no later independent
+  //    correct answer, weighted, plus the previous window's fixed / still open / new.
+  const knowledgeRanking = await rankOpenKnowledgeFailures(db, {
+    priorFrom: priorWindow.from,
+    currentFrom: cutoff,
+    now,
+    rows: failureRows,
+  });
+  const topKnowledge = knowledgeRanking.top.map((row) => ({
+    id: row.id,
+    name: row.name,
+    failure_count: row.unresolved_count,
+    weight: row.weight,
+    mastery: row.mastery,
+    retention: row.retention,
+    versus_prior: row.standing === 'still_unresolved' ? 'still_unresolved' : 'added',
   }));
+  const compareRow = (row: RankedKnowledgeFailure) => ({
+    id: row.id,
+    name: row.name,
+    unresolved_count: row.unresolved_count,
+    prior_unresolved_count: row.prior_unresolved_count,
+    weight: row.weight,
+    mastery: row.mastery,
+    retention: row.retention,
+  });
 
   return {
     window: {
@@ -272,5 +468,10 @@ export async function loadWeeklyReview(db: Db, input: unknown) {
     daily,
     top_causes: topCauses,
     top_knowledge: topKnowledge,
+    knowledge_week_compare: {
+      fixed: knowledgeRanking.fixed.map(compareRow),
+      still_unresolved: knowledgeRanking.still_unresolved.map(compareRow),
+      added: knowledgeRanking.added.map(compareRow),
+    },
   };
 }
