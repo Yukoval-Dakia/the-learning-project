@@ -1,0 +1,40 @@
+diff --git a/pg-core/columns/timestamp.cjs b/pg-core/columns/timestamp.cjs
+index 207a6df7f084b079574c580293ca2da0975fbe18..46a768718db289d25cd57c6aa9935919b9042533 100644
+--- a/pg-core/columns/timestamp.cjs
++++ b/pg-core/columns/timestamp.cjs
+@@ -55,7 +55,14 @@ class PgTimestamp extends import_common.PgColumn {
+     return `timestamp${precision}${this.withTimezone ? " with time zone" : ""}`;
+   }
+   mapFromDriverValue(value) {
+-    if (typeof value === "string") return new Date(this.withTimezone ? value : value + "+0000");
++    if (typeof value === "string") {
++      // Node's legacy space-format parser interprets years 0001-0099 as 19xx/20xx.
++      if (/^00(?:0[1-9]|[1-9]\d)-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[+-]\d{2}(?::\d{2})?)?$/.test(value)) {
++        const iso = value.replace(" ", "T");
++        return new Date(this.withTimezone ? iso.replace(/([+-]\d{2})$/, "$1:00") : iso + "+00:00");
++      }
++      return new Date(this.withTimezone ? value : value + "+0000");
++    }
+     return value;
+   }
+   mapToDriverValue = (value) => {
+diff --git a/pg-core/columns/timestamp.js b/pg-core/columns/timestamp.js
+index 6ce67ac7e4bbd52e9d3da2cf7266798dd61e591a..44eb0a6d50a678f680ecef1e13156df680ac05f2 100644
+--- a/pg-core/columns/timestamp.js
++++ b/pg-core/columns/timestamp.js
+@@ -28,7 +28,14 @@ class PgTimestamp extends PgColumn {
+     return `timestamp${precision}${this.withTimezone ? " with time zone" : ""}`;
+   }
+   mapFromDriverValue(value) {
+-    if (typeof value === "string") return new Date(this.withTimezone ? value : value + "+0000");
++    if (typeof value === "string") {
++      // Node's legacy space-format parser interprets years 0001-0099 as 19xx/20xx.
++      if (/^00(?:0[1-9]|[1-9]\d)-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[+-]\d{2}(?::\d{2})?)?$/.test(value)) {
++        const iso = value.replace(" ", "T");
++        return new Date(this.withTimezone ? iso.replace(/([+-]\d{2})$/, "$1:00") : iso + "+00:00");
++      }
++      return new Date(this.withTimezone ? value : value + "+0000");
++    }
+     return value;
+   }
+   mapToDriverValue = (value) => {
