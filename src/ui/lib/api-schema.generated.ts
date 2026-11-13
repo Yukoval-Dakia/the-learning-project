@@ -10045,6 +10045,7 @@ export interface operations {
                     answer_image_refs?: string[];
                     assessment?: {
                         evaluation_group_id: string;
+                        expected_save_epoch?: number;
                         /** @default [] */
                         group_evidence?: {
                             evidence: {
@@ -10329,6 +10330,7 @@ export interface operations {
                     answer_image_refs?: string[];
                     assessment?: {
                         evaluation_group_id: string;
+                        expected_save_epoch?: number;
                         /** @default [] */
                         group_evidence?: {
                             evidence: {
@@ -10613,6 +10615,7 @@ export interface operations {
                     answer_image_refs?: string[];
                     assessment?: {
                         evaluation_group_id: string;
+                        expected_save_epoch?: number;
                         /** @default [] */
                         group_evidence?: {
                             evidence: {
@@ -38674,6 +38677,7 @@ export interface operations {
                 "application/json": {
                     assessment?: {
                         evaluation_group_id: string;
+                        expected_save_epoch?: number;
                         /** @default [] */
                         group_evidence?: {
                             evidence: {
@@ -39088,6 +39092,7 @@ export interface operations {
                     answer_md: string;
                     assessment?: {
                         evaluation_group_id: string;
+                        expected_save_epoch?: number;
                         /** @default [] */
                         group_evidence?: {
                             evidence: {
@@ -39377,6 +39382,7 @@ export interface operations {
                     answer_image_refs?: string[];
                     assessment: {
                         evaluation_group_id: string;
+                        expected_save_epoch?: number;
                         /** @default [] */
                         group_evidence?: {
                             evidence: {
@@ -41272,6 +41278,7 @@ export interface operations {
                     };
                     assessment?: {
                         evaluation_group_id: string;
+                        expected_save_epoch?: number;
                         /** @default [] */
                         group_evidence?: {
                             evidence: {
@@ -41669,6 +41676,7 @@ export interface operations {
             content: {
                 "application/json": {
                     evaluation_group_id: string;
+                    expected_save_epoch?: number;
                     /** @default [] */
                     group_evidence?: {
                         evidence: {

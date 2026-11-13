@@ -708,40 +708,35 @@ export function usePracticeSubmit({
   // A cached question read may predate the commit (back, then reopen); until it is
   // refreshed it cannot clear an accepted answer, so submitting waits for it.
   const acceptedUnconfirmed = !!accepted && (answerRecorded || qQ.isFetching);
-  const assessmentInput = {
+  const assessmentInput = (draft = currentDraft()) => ({
     issuance_id: issuanceId,
     evaluation_group_id: accepted?.evaluation_group_id ?? `group_stream_${item.id}`,
     submission_id: accepted?.submission_id ?? `submission_stream_${item.id}`,
     idempotency_key: accepted?.idempotency_key ?? `submit_stream_${item.id}`,
-    // YUK-1497 — a block-drawn question hands in every bound select / blank slot still empty as
-    // an active blank (spec §1.2.2); the draft itself never holds those entries.
     response_set:
-      presentation && frozen
+      accepted?.response_set ??
+      (presentation && frozen
         ? {
             entries: entriesForSubmit(
               presentation,
               frozen.response_spec.slots,
-              nativeResponses.entries,
+              draft.response_set.entries,
             ),
           }
-        : nativeResponses,
-    group_evidence: nativeEvidence,
-  };
+        : draft.response_set),
+    group_evidence: accepted?.group_evidence ?? draft.group_evidence,
+    expected_save_epoch: ackedEpoch.current ?? restoredEpoch ?? 0,
+  });
   const draftValue = useMemo(
     () => ({ response_set: nativeResponses, group_evidence: nativeEvidence }),
     [nativeResponses, nativeEvidence],
   );
-  // YUK-1483 — autosave is driven by the edit events below. It is armed only while
-  // answering: the fields render after the issuance is restored and are disabled once
-  // an answer is accepted; judging/committing call hold(), and returning to answering
-  // after a failure calls resume().
-  const draftGroupRef = assessmentInput.evaluation_group_id;
+  // Flush edits before holding autosave; failed submissions resume only without a conflict.
+  const draftGroupRef = accepted?.evaluation_group_id ?? `group_stream_${item.id}`;
   const saveDraft = useCallback(
     async (value: typeof draftValue, ctx: { keepalive: boolean; chained: boolean }) => {
-      // YUK-1487 — always send an epoch (0 = no draft yet): without one the server skips the
-      // stale check, and an older in-flight save could overwrite a newer chained one. A save
-      // chained past an in-flight one sends acked + 1 so whichever lands second loses only
-      // if it is the older text (contract in useResponseDraftAutosave).
+      // A chained save reserves the in-flight save's next epoch; ordinary saves use its ACK.
+      // See useResponseDraftAutosave for the latest-wins ordering contract.
       const acked = ackedEpoch.current ?? restoredEpoch ?? 0;
       const ack = await saveResponseDraft(
         issuanceId,
@@ -757,8 +752,7 @@ export function usePracticeSubmit({
     },
     [issuanceId, draftGroupRef, restoredEpoch, saveResponseDraft],
   );
-  // YUK-1489 — on a conflict autosave stops and the server's current version is read, so the
-  // learner can compare and choose (panel below). Each read is tagged; only the newest lands.
+  // Only the newest conflict read may offer a version to restore.
   const [draftConflict, setDraftConflict] = useState<DraftConflict | null>(null);
   const conflictRead = useRef(0);
   const readServerVersion = useCallback(() => {
@@ -786,30 +780,31 @@ export function usePracticeSubmit({
     holdOnConflict: true,
     onConflict: readServerVersion,
   });
-  // YUK-1485 — tab close / reload inside the 800ms debounce: flush the pending draft with
-  // keepalive, as ScreenPlacement does. The controller holds the latest edited value, so this
-  // sends the last keystrokes; while held (judging/committing) or after an accepted answer it
-  // sends nothing. Newer text than an in-flight save carries goes out as one chained keepalive
-  // save (YUK-1487). Armed by the answering root below.
+  // Keepalive flush preserves the latest edit on leave, including an in-flight save chain.
+  // A held controller sends nothing.
   const { flush: flushDraft } = autosave;
   const flushOnPagehide = useCallback(() => flushDraft({ keepalive: true }), [flushDraft]);
-  // YUK-1497 / YUK-1719 — iOS may kill a backgrounded tab without pagehide: the same keepalive
-  // flush also runs when the page turns hidden. One owner node arms both listeners.
+  // iOS may terminate a hidden tab without pagehide, so both transitions flush.
   const attachPagehideFlush = usePagehideTransition(flushOnPagehide, true, flushOnPagehide);
-  // Latest edited draft, written synchronously by every edit handler (never during render).
-  // A handler captured by an older render — e.g. EvidenceComposer finishing an upload after
-  // an await — must build on this, not on its render's answer, or it would hand autosave a
-  // pre-upload answer and the save would drop newer typing. Tagged with the issuance it was
-  // edited under, so it is only used for the issuance currently restored.
+  // Old render handlers must use the latest edit under this issuance, including late uploads.
+  // Every edit updates this ref synchronously before autosave can send it.
+  const editingFrozen = useRef(false);
   const latestDraft = useRef<{ issuanceId: string; value: typeof draftValue } | null>(null);
   const currentDraft = () =>
     latestDraft.current?.issuanceId === restoredIssuanceId ? latestDraft.current.value : draftValue;
+  const holdStaleDraft = (error: unknown) => {
+    if (!(error instanceof ApiError) || error.code !== 'stale_draft') return false;
+    autosave.hold();
+    readServerVersion();
+    return true;
+  };
   const editDraft = (next: typeof draftValue) => {
     const from = currentDraft();
     if (restoredIssuanceId) latestDraft.current = { issuanceId: restoredIssuanceId, value: next };
     autosave.change(next, from);
   };
   const updateNativeResponse = (entry: SlotResponseT) => {
+    if (editingFrozen.current || autosave.isHeld()) return;
     const draft = currentDraft();
     const response_set = {
       entries: [
@@ -843,6 +838,7 @@ export function usePracticeSubmit({
   // remove its entry: an emptied blank or selection is "not answered" in the draft). `immediate`
   // (custom blocks) skips an unchanged envelope and saves without waiting for the debounce.
   const updateNativeResponses = (update: EntriesUpdate, opts?: { immediate?: boolean }) => {
+    if (editingFrozen.current || autosave.isHeld()) return;
     const draft = currentDraft();
     const entries = update(draft.response_set.entries);
     if (opts?.immediate && JSON.stringify(entries) === JSON.stringify(draft.response_set.entries)) {
@@ -854,6 +850,7 @@ export function usePracticeSubmit({
     if (opts?.immediate) saveSandboxAnswer();
   };
   const updateEvidence = (next: EvidenceAttachment[]) => {
+    if (editingFrozen.current || autosave.isHeld()) return;
     setEvidence(next);
     editDraft({
       response_set: currentDraft().response_set,
@@ -904,11 +901,12 @@ export function usePracticeSubmit({
     setDraftConflict(null);
     void autosave.rebase(serverDraft(answer), 'server');
   };
-  // 「保留我的」: save this visit's text expecting the epoch just read. A write that lands
-  // after that read raises the stored epoch, so this save gets 409 and the panel returns.
+  // A restored, unedited visit has no controller value: seed its visible answer first.
+  // Rebase still saves against the epoch just read, so a later write raises a conflict.
   const keepMyVersion = () => {
     if (draftConflict?.status !== 'ready' || draftConflict.submitted) return;
     ackedEpoch.current = draftConflict.epoch;
+    autosave.change(currentDraft(), serverDraft(draftConflict.answer));
     setDraftConflict(null);
     void autosave.rebase(serverDraft(draftConflict.answer), 'mine');
   };
@@ -978,8 +976,7 @@ export function usePracticeSubmit({
             );
           }));
   const phase = preview || committedPreview ? 'feedback' : 'answering';
-  // YUK-432 (Bugbot FINDING 1) — 「返回流」出口：自动 commit 后必须标 slot done（onCommittedBack），
-  // 否则只 onBack 会留下「已判分但 slot 卡 in_progress」的不一致。未自动 commit → 原 onBack。
+  // Recorded answers must mark the slot done before returning to the stream.
   const handleBack = async () => {
     if (returningRef.current || uploading || judging || committing) return;
     returningRef.current = true;
@@ -1080,11 +1077,8 @@ export function usePracticeSubmit({
     onSettled: onPolledSettled,
   });
 
-  // commit 接受显式 rating + autoRate：客观题自动流不依赖手动 `rating` state（直接用 judge 的
-  // suggested_rating + auto_rate:true）；手动流（开放题/申诉）走 body.rating + auto_rate 缺省 false。
-  // previewOverride：客观题自动 commit 在 setPreview 同一 tick 内触发，闭包里的 `preview` 仍是旧的
-  // null（state 尚未 re-render），故 runJudge 把 fresh judge preview 直接传进来（手动流省略 → 用
-  // 已落 state 的 `preview`）。
+  // Automatic commit passes its fresh preview because setPreview has not rendered yet.
+  // Freeze synchronously before flush so old render/upload callbacks cannot change the answer.
   const commit = async (opts: {
     withAppeal: boolean;
     rating: Rating;
@@ -1094,18 +1088,21 @@ export function usePracticeSubmit({
     // YUK-1729 — a recovery replay after a reload: the original answer time is unknown here.
     omitLatency?: boolean;
   }) => {
+    if (editingFrozen.current && !opts.previewOverride) return;
     const pv = opts.previewOverride ?? preview;
     if (returningRef.current || !q || (!pv && issuanceMode !== 'manual') || committing) return;
     if (answerRecorded) {
       addToast('这道题已经交过了，不能再交一次。', 'info', 'alert');
       return;
     }
+    editingFrozen.current = true;
     setCommitting(true);
-    autosave.hold();
     try {
+      if (!accepted && !(await flushDraft())) return;
+      autosave.hold();
       const res = await submitReview({
         question_id: q.id,
-        assessment: assessmentInput,
+        assessment: assessmentInput(),
         activation_intent: issuanceMode === 'manual' ? undefined : activationIntent.current,
         self_report: issuanceMode === 'manual',
         session_id: sessionId ?? undefined,
@@ -1115,10 +1112,7 @@ export function usePracticeSubmit({
         // YUK-372 L2 — 被答 practice_stream_item.id（流作答的 π_i 直 join 判别子，server hook
         // 用它精确取放置该 slot 的随机抽样事件的 π_i）。
         stream_item_id: item.id,
-        // YUK-562 / YUK-444 — 过程文本 + 信心自评的可选采集字段（空值不发，见 buildCaptureFields）。
-        // 单一 commit 路径 → 手动流与客观题 auto_rate 自动 commit 都覆盖：客观题 selfConfidence 恒 null
-        // （不插拍）故只可能带 reasoning_trace（若 fill_blank 文本面填了）；开放题两者都可能带。
-        // server 侧 observe-only 落 review event payload，绝不进 rating / FSRS / θ̂。
+        // Optional process/confidence capture is observational, never grading evidence.
         ...buildCaptureFields({ reasoningTrace, selfConfidence }),
         // YUK-432 — 客观题自动判分+自动评级：server 用 judge 的 suggested rating 覆盖 body.rating，
         // 并让客观判分流过 difficulty_calibration_label hook 产标签（B1 难度 firm-up 链解冻）。
@@ -1159,18 +1153,16 @@ export function usePracticeSubmit({
           addToast('作答已保存，但重判没提交上。', 'info', 'alert');
         }
       }
-      // 客观题自动 commit 成功 → 标记 autoCommitted（反馈卡隐藏手动评级、「下一项」只推进）+ 暂存
-      // 这次判定的 judge 锚点 id（FINDING 2：让「不服判」入口在自动 commit 后仍能对它发 appeal）。
-      // 只在写入成功后置位：失败时保持手动评级行可见，用户可重试/手动评级（不丢答）。
+      // Only a recorded answer hides rating controls and supplies the appeal anchor.
       if (opts.autoRate && opts.advance === false) {
         setAutoCommitted(true);
         setAutoCommitJudgeEventId(
           res.judge && 'assessment' in res ? res.assessment.candidate_id : null,
         );
       }
-      // advance=false（客观题自动 commit）→ 留在反馈卡让用户先看判定，「下一项」再 onDone()。
       if (opts.advance !== false) onDone();
-    } catch {
+    } catch (error) {
+      if (holdStaleDraft(error)) return;
       setPreview(null);
       recordAttempt(null);
       setCommittedPreview(null);
@@ -1178,9 +1170,9 @@ export function usePracticeSubmit({
       setAutoCommitted(false);
       setAutoCommitJudgeEventId(null);
       addToast(JUDGE_FAILURE_MESSAGE, 'info', 'alert');
-      // Back to answering: unsaved edits resume autosaving.
       autosave.resume();
     } finally {
+      editingFrozen.current = false;
       setCommitting(false);
     }
   };
@@ -1262,13 +1254,16 @@ export function usePracticeSubmit({
   // The server reuses the stored verdict for this submission (no new judge run, no charge).
   const recoverAccepted = async () => {
     if (!q || isInterventionDiagnostic || issuanceMode === 'manual' || answerRecorded) return;
+    editingFrozen.current = true;
     setJudging(true);
     try {
-      const r = await getAdvice(q.id, answerMd, imageRefs, assessmentInput, adviceCommit(false));
+      const r = await getAdvice(q.id, answerMd, imageRefs, assessmentInput(), adviceCommit(false));
       await applyAdvice(r, true);
-    } catch {
+    } catch (error) {
+      if (holdStaleDraft(error)) return;
       if (!pendingRun) addToast(JUDGE_FAILURE_MESSAGE, 'info', 'alert');
     } finally {
+      editingFrozen.current = false;
       setJudging(false);
     }
   };
@@ -1284,10 +1279,13 @@ export function usePracticeSubmit({
   };
 
   const runJudge = async () => {
+    if (editingFrozen.current) return;
     if (returningRef.current || !q || !canSubmit || issuanceMode === 'manual') return;
+    editingFrozen.current = true;
     setJudging(true);
-    autosave.hold();
     try {
+      if (!accepted && !(await flushDraft())) return;
+      autosave.hold();
       if (isInterventionDiagnostic) {
         // One-shot measurement integrity: do not call the repeatable advice
         // endpoint. The canonical attempt owns the first and only server judge,
@@ -1295,7 +1293,7 @@ export function usePracticeSubmit({
         // the probe, and uses its suggested rating via auto_rate.
         const res = await submitReview({
           question_id: q.id,
-          assessment: assessmentInput,
+          assessment: assessmentInput(),
           session_id: sessionId ?? undefined,
           // Required wire fallback only; auto_rate replaces it with the server
           // judge's suggested rating before persistence.
@@ -1323,9 +1321,10 @@ export function usePracticeSubmit({
         setAutoCommitJudgeEventId('assessment' in res ? res.assessment.candidate_id : null);
         return;
       }
-      const r = await getAdvice(q.id, answerMd, imageRefs, assessmentInput, adviceCommit(true));
+      const r = await getAdvice(q.id, answerMd, imageRefs, assessmentInput(), adviceCommit(true));
       await applyAdvice(r, false);
     } catch (e) {
+      if (holdStaleDraft(e)) return;
       if (isInterventionDiagnostic && e instanceof ApiError && e.status === 409) {
         const restored = await qQ.refetch();
         const committed = restored.data?.committed_attempt;
@@ -1342,6 +1341,7 @@ export function usePracticeSubmit({
       // Still answering after a failed judge: unsaved edits resume autosaving.
       autosave.resume();
     } finally {
+      editingFrozen.current = false;
       setJudging(false);
     }
   };

@@ -77,6 +77,11 @@ export async function prepareFormalAttemptSubmission(
   const scopedBasis = projectIssuedScoringBasis(revision, issuance.part_ids);
   const scopedUnitIds = new Set(scopedBasis.units.map((unit) => unit.scoring_unit_id));
   const saved = await saveSubmission(database, { ...request, actorRef: `assessment:${entry}` });
+  if (saved.status === 'stale_draft') {
+    throw new ApiError('stale_draft', '草稿已在别处更新，请读取最新答案', 409, undefined, {
+      current_save_epoch: saved.current_save_epoch,
+    });
+  }
   if (!('submission' in saved)) {
     throw new ApiError(
       saved.status,

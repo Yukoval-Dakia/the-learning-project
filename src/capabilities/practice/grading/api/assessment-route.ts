@@ -77,6 +77,7 @@ export async function createSubmission(req: Request): Promise<Response> {
       response_set: body.response_set,
       group_evidence: body.group_evidence,
       submission_id: body.submission_id,
+      expected_save_epoch: body.expected_save_epoch,
       actorRef: 'api:submit',
     });
     switch (out.status) {
@@ -85,6 +86,10 @@ export async function createSubmission(req: Request): Promise<Response> {
         return resourceResponse(out, {
           outcome: out.status === 'saved' ? 'created' : 'existing',
           location: `/api/submissions/${encodeURIComponent(out.submission.submission_id)}`,
+        });
+      case 'stale_draft':
+        throw new ApiError('stale_draft', '草稿已在别处更新，请读取最新答案', 409, undefined, {
+          current_save_epoch: out.current_save_epoch,
         });
       case 'issuance_not_found':
         throw new ApiError('not_found', `issuance '${body.issuance_id}' not found`, 404);
