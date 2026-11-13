@@ -34,6 +34,12 @@ export interface DeltaSection {
   asOfBasis: 'dreaming' | 'lookback';
   counts: {
     answers: number;
+    answerOutcomes: {
+      success: number;
+      failure: number;
+      partial: number;
+      ungraded: number;
+    };
     reviews: number;
     captures: number;
     decisions: number;
