@@ -6,7 +6,7 @@ import { UploadPracticeDeliveryPayload } from '@/core/schema/event';
 import type { Db, Tx } from '@/db/client';
 import {
   acquireLearningStateWriteLock,
-  tryAcquireAdvisoryTransactionLock,
+  acquireSortedAdvisoryLocks,
 } from '@/db/learning-state-lock';
 import {
   event,
@@ -20,7 +20,7 @@ import {
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
-import { practiceStreamPartitionKey } from '@/kernel/locks/practice-stream';
+import { practiceStreamPartitionKeyParts } from '@/kernel/locks/practice-stream';
 import type { EventSubscriptionHandler } from '@/kernel/manifest';
 import {
   type PurposeSource,
@@ -254,7 +254,10 @@ async function reconcileBatchAttempt(db: Db, sessionId: string): Promise<number>
     const batch = await readUploadReadyBatch(tx, sessionId);
     if (!batch) return 0;
     const date = streamLocalDate();
-    if (!(await tryAcquireAdvisoryTransactionLock(tx, practiceStreamPartitionKey(date))))
+    const partition = practiceStreamPartitionKeyParts(date);
+    if (
+      !(await acquireSortedAdvisoryLocks(tx, partition.namespace, [partition.id], { noWait: true }))
+    )
       throw new UploadPracticeContention();
     let added = 0;
     for (const ready of batch.ready) {

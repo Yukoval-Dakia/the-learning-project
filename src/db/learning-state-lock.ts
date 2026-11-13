@@ -14,14 +14,6 @@ export async function acquireLearningStateWriteLock(tx: Tx): Promise<void> {
   await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${LEARNING_STATE_WRITE_LOCK}))`);
 }
 
-/** Callers holding other locks can roll back without waiting for another transaction. */
-export async function tryAcquireAdvisoryTransactionLock(tx: Tx, key: string): Promise<boolean> {
-  const [result] = await tx.execute<{ acquired: boolean }>(
-    sql`SELECT pg_try_advisory_xact_lock(hashtext(${key})) AS acquired`,
-  );
-  return result?.acquired === true;
-}
-
 /**
  * Run `fn` under the global learning-state write lock G, inside a transaction. Dispatch uses the
  * DOCUMENTED `'$client' in db` polarity (src/db/client.ts: a `Tx` does not carry `$client`) rather
@@ -43,13 +35,34 @@ export async function withLearningStateLock<T>(
   return apply(db);
 }
 
-/** 按 id 排序逐个取 `pg_advisory_xact_lock(hashtext('<namespace>:<id>'))`，避免重叠 id 集死锁。 */
+/** Failed nonblocking attempts retain earlier locks until the owner rolls back. */
+export function acquireSortedAdvisoryLocks(
+  tx: Tx,
+  namespace: string,
+  ids: readonly string[],
+): Promise<void>;
+export function acquireSortedAdvisoryLocks(
+  tx: Tx,
+  namespace: string,
+  ids: readonly string[],
+  options: { noWait: true },
+): Promise<boolean>;
 export async function acquireSortedAdvisoryLocks(
   tx: Tx,
   namespace: string,
   ids: readonly string[],
-): Promise<void> {
+  options?: { noWait: true },
+): Promise<void | boolean> {
   for (const id of [...ids].sort()) {
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`${namespace}:${id}`}))`);
+    const key = `${namespace}:${id}`;
+    if (options?.noWait) {
+      const [result] = await tx.execute<{ acquired: boolean }>(
+        sql`SELECT pg_try_advisory_xact_lock(hashtext(${key})) AS acquired`,
+      );
+      if (result?.acquired !== true) return false;
+    } else {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${key}))`);
+    }
   }
+  if (options?.noWait) return true;
 }

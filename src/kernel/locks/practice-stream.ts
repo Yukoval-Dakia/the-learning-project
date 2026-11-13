@@ -2,8 +2,10 @@ import { sql } from 'drizzle-orm';
 
 import type { Db, Tx } from '@/db/client';
 
-export function practiceStreamPartitionKey(date: string, sessionId?: string | null): string {
-  return sessionId ? `stream:session:${sessionId}` : `stream:compose:${date}`;
+export function practiceStreamPartitionKeyParts(date: string, sessionId?: string | null) {
+  return sessionId
+    ? { namespace: 'stream:session', id: sessionId }
+    : { namespace: 'stream:compose', id: date };
 }
 
 /**
@@ -15,7 +17,8 @@ export async function lockPracticeStreamPartition(
   date: string,
   sessionId?: string | null,
 ): Promise<void> {
-  const key = practiceStreamPartitionKey(date, sessionId);
+  const partition = practiceStreamPartitionKeyParts(date, sessionId);
+  const key = `${partition.namespace}:${partition.id}`;
   await db.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${key}))`);
 }
 
