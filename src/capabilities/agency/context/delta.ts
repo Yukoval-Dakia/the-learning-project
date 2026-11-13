@@ -196,15 +196,24 @@ export async function readDeltaSection(
     }))
     .filter((item) => item.stem.length > 0);
 
-  const counts = { answers: 0, reviews: 0, captures: 0, decisions: 0, steering: 0, messages: 0 };
+  const counts = {
+    answers: 0,
+    answerOutcomes: { success: 0, failure: 0, partial: 0, ungraded: 0 },
+    reviews: 0,
+    captures: 0,
+    decisions: 0,
+    steering: 0,
+    messages: 0,
+  };
   for (const row of countRows) {
     if (row.subject_kind === 'goal') {
       counts.steering += row.n;
       continue;
     }
-    if (row.action === ATTEMPT_ACTION || row.action === NATIVE_ATTEMPT_ACTION)
+    if (row.action === ATTEMPT_ACTION || row.action === NATIVE_ATTEMPT_ACTION) {
       counts.answers += row.n;
-    else if (row.action === REVIEW_ACTION) counts.reviews += row.n;
+      counts.answerOutcomes[graded.get(row.id) ?? 'ungraded'] += row.n;
+    } else if (row.action === REVIEW_ACTION) counts.reviews += row.n;
     else if (row.action === RECORD_CAPTURE_ACTION) counts.captures += row.n;
     else if (row.action === RATE_ACTION) counts.decisions += row.n;
     else if (row.action === COPILOT_USER_ASK_ACTION) counts.messages += row.n;

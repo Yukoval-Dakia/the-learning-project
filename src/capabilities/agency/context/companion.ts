@@ -27,9 +27,16 @@ function renderDelta(delta: DeltaSection): string {
   const lines: string[] = [];
   const c = delta.counts;
   const windowLabel = delta.countsWindowLimited ? `（最近${DELTA_SCAN_LIMIT}条候选活动内）` : '';
+  const outcomes = c.answerOutcomes;
+  const answerSummary = [
+    `对 ${outcomes.success}`,
+    `错 ${outcomes.failure}`,
+    `半对 ${outcomes.partial}`,
+    outcomes.ungraded > 0 ? `未判定 ${outcomes.ungraded}` : '',
+  ].filter(Boolean);
 
   const parts = [
-    c.answers > 0 ? `新作答 ${c.answers} 次` : '',
+    c.answers > 0 ? `新作答 ${c.answers} 次（${answerSummary.join('、')}）` : '',
     c.reviews > 0 ? `复习 ${c.reviews} 次` : '',
     c.captures > 0 ? `录入 ${c.captures} 条` : '',
     c.decisions > 0 ? `提议决策 ${c.decisions} 条` : '',
