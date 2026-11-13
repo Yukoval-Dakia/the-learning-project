@@ -65,7 +65,7 @@ import {
   publishedContractSeal,
   publishedSealAccepts,
 } from './assessment-normalization';
-import { captureStudySources } from './study-sources';
+import { captureStudySources, studyMaterialAssetIds } from './study-sources';
 
 export const ASSESSMENT_PUBLISH_ACTION = 'experimental:assessment_publish' as const;
 
@@ -1022,9 +1022,7 @@ export async function publishQuestionGroup(
           tx,
           groupId,
           contract.structure.parts.map((part) => part.part_id),
-          contract.structure.materials.flatMap((m) =>
-            !('content_md' in m) && 'asset' in m && m.asset ? [m.asset.asset_id] : [],
-          ),
+          studyMaterialAssetIds(contract.structure.materials),
         ),
       },
       created_at: input.now,

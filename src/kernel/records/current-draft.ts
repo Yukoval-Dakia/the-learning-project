@@ -25,11 +25,16 @@ export async function captureDraftFocus(db: Db | Tx, raw: DraftFocusT) {
   return withStudyAuthorization(
     db,
     { issuanceId: focus.issuance_id, questionId: focus.question_id },
-    async (tx, c, binding, sources) => {
+    async (tx, c, binding, sources, sourceEpochs) => {
       if (c.revision.revision_id !== focus.revision_id)
         throw new ApiError('draft_focus_stale', 'revision differs', 409);
       await readFocusedSavedDraft(tx, focus);
-      return { ...focus, binding_digest: binding, source_digest: sources };
+      return {
+        ...focus,
+        binding_digest: binding,
+        source_digest: sources,
+        source_usage_epochs: sourceEpochs,
+      };
     },
   );
 }

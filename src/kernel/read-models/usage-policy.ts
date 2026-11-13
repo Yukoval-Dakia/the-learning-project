@@ -121,6 +121,7 @@ const PURPOSE_EDGES_SQL = sql`
       CROSS JOIN LATERAL (VALUES
         ('event', e.caused_by_event_id), ('session', e.session_id),
         ('question', CASE WHEN e.subject_kind = 'question' THEN e.subject_id END),
+        ('question', CASE WHEN e.action = 'experimental:copilot_user_ask' THEN e.payload->'draft_focus'->>'question_id' END),
         ('record', CASE WHEN e.subject_kind = 'record' THEN e.subject_id END),
         ('document', CASE WHEN e.subject_kind = 'source_document' THEN e.subject_id END),
         ('event', CASE WHEN e.subject_kind = 'event' THEN e.subject_id END),
@@ -130,6 +131,11 @@ const PURPOSE_EDGES_SQL = sql`
           THEN COALESCE(e.payload->'ai_proposal', e.payload)->'proposed_change'->>'source_question_id' END),
         ('document', b.payload->>'document_id')
       ) v(kind, id) WHERE n.kind = 'event' AND e.id = n.id
+      UNION ALL
+      SELECT 'document', epoch.key FROM event ask
+      CROSS JOIN LATERAL jsonb_each_text(CASE WHEN jsonb_typeof(ask.payload->'draft_focus'->'source_usage_epochs') = 'object'
+        THEN ask.payload->'draft_focus'->'source_usage_epochs' ELSE '{}'::jsonb END) epoch
+      WHERE n.kind = 'event' AND ask.id = n.id AND ask.action = 'experimental:copilot_user_ask'
       UNION ALL
       SELECT CASE ref->>'kind' WHEN 'source_document' THEN 'document' ELSE ref->>'kind' END,
         ref->>'id' FROM event note
@@ -234,6 +240,13 @@ const NODE_VIOLATION_SQL = sql`CASE n.kind
               WHERE NOT coalesce(ref->>'kind' IN ('source_document', 'question', 'record', 'event', 'knowledge'), false)
                 OR jsonb_typeof(ref->'id') IS DISTINCT FROM 'string' OR length(ref->>'id') = 0)))
           OR (e.payload ? 'derivation_policy' AND e.payload->>'derivation_policy' IS DISTINCT FROM 'allow')
+          OR (e.action = 'experimental:copilot_user_ask' AND e.payload ? 'draft_focus' AND (
+            jsonb_typeof(e.payload->'draft_focus'->'source_usage_epochs') IS DISTINCT FROM 'object'
+            OR e.payload->'draft_focus'->'source_usage_epochs' = '{}'::jsonb
+            OR EXISTS (SELECT 1 FROM jsonb_each_text(CASE WHEN jsonb_typeof(e.payload->'draft_focus'->'source_usage_epochs') = 'object'
+              THEN e.payload->'draft_focus'->'source_usage_epochs' ELSE '{}'::jsonb END) epoch
+              LEFT JOIN source_document bound_doc ON bound_doc.id = epoch.key
+              WHERE bound_doc.id IS NULL OR epoch.value IS DISTINCT FROM coalesce(bound_doc.provenance->>'usage_epoch', 'legacy'))))
           OR (b.id IS NOT NULL AND (b.payload->>'source_policy' IS DISTINCT FROM 'allow'
             OR NOT (b.payload ?& ARRAY['document_id', 'epoch', 'source_policy'])))
           OR (ed.id IS NOT NULL AND coalesce(b.payload->>'epoch', 'legacy') <> coalesce(ed.provenance->>'usage_epoch', 'legacy'))

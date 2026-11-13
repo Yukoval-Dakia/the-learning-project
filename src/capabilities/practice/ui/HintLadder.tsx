@@ -31,7 +31,10 @@ type StageUnavailable = { stage: number; text: string; canSkip: boolean };
 // Reopening rechecks authorization before displaying stored bodies. Generation
 // remains an explicit action; an unfinished claim cannot trigger another send.
 export function HintLadder(
-  props: Omit<Parameters<typeof HintLadderReady>[0], 'history' | 'onRefresh'>,
+  props: Omit<
+    Parameters<typeof HintLadderReady>[0],
+    'history' | 'onRefresh' | 'historyUnavailable'
+  >,
 ) {
   const { restoreHints } = usePracticeClient();
   const query = useQuery({
@@ -46,7 +49,7 @@ export function HintLadder(
     gcTime: 0,
     refetchOnWindowFocus: false,
   });
-  if (!props.issuanceId || query.isError)
+  if (!props.issuanceId)
     return (
       <div className="un-hl" role="status">
         <p>暂时无法恢复这次作答的提示。没有生成新提示。</p>
@@ -54,6 +57,15 @@ export function HintLadder(
           回到作答
         </button>
       </div>
+    );
+  if (query.isError)
+    return (
+      <HintLadderReady
+        {...props}
+        history={{ status: 'empty', hints: [], next_rung: 0 }}
+        historyUnavailable
+        onRefresh={() => void query.refetch()}
+      />
     );
   if (!query.data || query.isFetching)
     return (
@@ -73,6 +85,7 @@ export function HintLadder(
 
 function HintLadderReady({
   history,
+  historyUnavailable = false,
   onRefresh,
   question,
   onReturnToAnswer,
@@ -83,6 +96,7 @@ function HintLadderReady({
   requestFullSolution,
 }: {
   history: HintHistoryResponse;
+  historyUnavailable?: boolean;
   onRefresh: () => void;
   question: QuestionDetail;
   submitted?: boolean;
@@ -123,7 +137,9 @@ function HintLadderReady({
     ),
   );
   const historyBlocked =
-    history.status === 'outcome_unknown' || history.status === 'legacy_body_unavailable';
+    historyUnavailable ||
+    history.status === 'outcome_unknown' ||
+    history.status === 'legacy_body_unavailable';
   const [unavailable, setUnavailable] = useState<StageUnavailable | null>(null);
   const [loading, setLoading] = useState(false);
   // Failed requests may only refresh persisted results, never resend automatically.
@@ -139,7 +155,9 @@ function HintLadderReady({
 
   // YUK-1051 — 注入 requestFullSolution 时完整解按需取：可用性由 seam 决定（null=不可用）；
   // 未注入退回 question.reference_md（现状）。
-  const fullAvailable = requestFullSolution ? true : isFullSolutionAvailable(question.reference_md);
+  const fullAvailable = requestFullSolution
+    ? true
+    : !historyUnavailable && isFullSolutionAvailable(question.reference_md);
   const fullBody = requestFullSolution ? fetchedFull : (question.reference_md ?? null);
   const next = nextHintStage(reached);
 
@@ -260,9 +278,11 @@ function HintLadderReady({
       )}
       {historyBlocked && (
         <div className="un-hl-unavail-msg" role="status">
-          {history.status === 'outcome_unknown'
-            ? '上次提示的结果尚不确定。不会再次自动生成；可以刷新已存记录或回到作答。'
-            : '旧提示只有使用记录，正文无法恢复。不会自动重新生成。'}
+          {historyUnavailable
+            ? '暂时无法恢复这次作答的提示。没有生成新提示。'
+            : history.status === 'outcome_unknown'
+              ? '上次提示的结果尚不确定。不会再次自动生成；可以刷新已存记录或回到作答。'
+              : '旧提示只有使用记录，正文无法恢复。不会自动重新生成。'}
           <button className="un-hl-escape un-hit" type="button" onClick={onRefresh}>
             刷新已存记录
           </button>
@@ -420,15 +440,15 @@ function HintLadderReady({
       )}
 
       {/* 动作行：下一个提示 · 直接看完整解 · 我自己来。 */}
-      {!loading && failAt < 0 && !unavailable && !atFull && !historyBlocked && (
+      {!loading && failAt < 0 && !unavailable && !atFull && (
         <div className="un-hl-acts-wrap">
-          {next && (
+          {next && !historyBlocked && (
             <p className="un-hl-next-note">
               下一个提示 · {next.label}：{next.gives}
             </p>
           )}
           <div className="un-hl-acts">
-            {next && (
+            {next && !historyBlocked && (
               <button
                 type="button"
                 className="un-hl-advance un-hit"
@@ -460,7 +480,7 @@ function HintLadderReady({
               我自己来
             </button>
           </div>
-          {!fullAvailable && (
+          {!fullAvailable && !historyBlocked && (
             <p className="un-hl-empty-s">
               这道题暂时没有可展示的完整解（自动生成失败或尚未就绪）。前面的提示仍可用，或回题面自己作答。
             </p>

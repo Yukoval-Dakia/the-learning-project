@@ -1,6 +1,7 @@
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { canonicalHash } from '@/core/migration/canonical';
+import type { SharedMaterialT } from '@/core/schema/assessment/materials';
 import type { Tx } from '@/db/client';
 import { event, learning_session, question, source_asset, source_document } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
@@ -18,6 +19,12 @@ const CropLineage = z.object({
   derived_from: z.object({ asset_id: z.string().min(1), digest: z.string().min(1) }),
   op: z.object({ kind: z.literal('crop') }),
 });
+
+export function studyMaterialAssetIds(materials: readonly SharedMaterialT[]): string[] {
+  return materials.flatMap((material) =>
+    ['plaintext', 'passage', 'table'].includes(material.kind) ? [] : [material.asset.asset_id],
+  );
+}
 
 /** Called under the publication root lock. Only proven direct source sets qualify. */
 export async function captureStudySources(

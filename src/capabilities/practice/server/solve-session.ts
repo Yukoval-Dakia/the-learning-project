@@ -81,6 +81,16 @@ export class SolveError extends Error {
   }
 }
 
+export class HintOutcomeUnknownError extends ApiError {
+  constructor(public readonly helpLatency: SealedHelpLatency) {
+    super(
+      'hint_outcome_unknown',
+      'the admitted provider attempt has no published reply; retry is disabled',
+      409,
+    );
+  }
+}
+
 export interface StartSolveSessionParams {
   db: Db;
   questionId: string;
@@ -695,9 +705,10 @@ export async function planSolveHintOutcome(params: PlanSolveHintParams): Promise
     const saved = prepared.saved.publication;
     if (saved.kind === 'ai')
       return { status: 'ok', text_md: saved.body, restored_id: prepared.saved.id };
-    return {
+    const fault = readHelpProviderFault(saved.receipt);
+    return presentHintFaultExit({
       status: 'fallback',
-      reason: 'unknown',
+      reason: fault?.kind === 'parse' ? 'parse_failed' : (fault?.kind ?? 'unknown'),
       text_md: saved.body,
       restored_id: prepared.saved.id,
       help: {
@@ -710,7 +721,7 @@ export async function planSolveHintOutcome(params: PlanSolveHintParams): Promise
       reference_available: false,
       reference_revealed: false,
       elapsed_ms: 0,
-    };
+    });
   }
   params = prepared.params;
   const originAt = Date.now();
@@ -761,15 +772,41 @@ export async function planSolveHintOutcome(params: PlanSolveHintParams): Promise
       elapsedMs: settledMs,
     });
     if (built.status === 'fallback' && !built.reference_revealed) {
-      await publishIssuedHint(params.db, {
-        issuanceId: prepared.params.issuanceId,
-        questionId: prepared.params.expectedQuestionId,
-        rung: params.hintIndex,
-        requestId: prepared.params.requestId,
-        body: built.help.text_md,
-        kind: 'deterministic_next_step',
-        disclosure: built.help.disclosure_md,
-      });
+      try {
+        await publishIssuedHint(params.db, {
+          issuanceId: prepared.params.issuanceId,
+          questionId: prepared.params.expectedQuestionId,
+          rung: params.hintIndex,
+          requestId: prepared.params.requestId,
+          body: built.help.text_md,
+          kind: 'deterministic_next_step',
+          disclosure: built.help.disclosure_md,
+          terminalFailure:
+            err instanceof SolveError && err.code === 'llm_parse_failed'
+              ? { kind: 'parse' }
+              : readHelpProviderFault(err),
+        });
+      } catch (publicationError) {
+        if (
+          !(publicationError instanceof ApiError) ||
+          publicationError.code !== 'hint_outcome_unknown'
+        )
+          throw publicationError;
+        throw new HintOutcomeUnknownError(
+          sealHintRequest({
+            originAt,
+            doneMs: Date.now() - originAt,
+            settledMs,
+            attempt,
+            terminal: reason === 'timeout' || signal.aborted ? 'timeout' : 'failure',
+            modality: attempt?.modality ?? 'none',
+            executable: null,
+            complete: false,
+            costBasis: attempt?.cost.basis,
+            costUsd: attempt?.cost.usd ?? undefined,
+          }),
+        );
+      }
     }
     const doneMs = Date.now() - originAt;
     const executable: ExecutableHelpBasis | null =

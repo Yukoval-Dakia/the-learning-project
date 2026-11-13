@@ -1,4 +1,5 @@
 import { and, desc, eq, ne, sql } from 'drizzle-orm';
+import { type HelpProviderFault, isHelpProviderFault } from '@/ai/help-provider-fault';
 import { canonicalHash } from '@/core/migration/canonical';
 import { HintPublication, type HintPublicationT } from '@/core/schema/event/assistance-publication';
 import type { Db, Tx } from '@/db/client';
@@ -7,7 +8,7 @@ import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import { issuanceRowToContract } from './assessment-issuance';
 import { loadIssuanceStudyCoordinate, recordStudyAssistanceExposure } from './study-reference';
-import { lockStudySources } from './study-sources';
+import { lockStudySources, studyMaterialAssetIds } from './study-sources';
 
 type Coordinate = { issuanceId: string; questionId: string };
 export type StoredHint = { id: string; publication: HintPublicationT };
@@ -26,6 +27,7 @@ export async function withStudyAuthorization<T>(
     >,
     binding: string,
     sources: string,
+    sourceEpochs: Record<string, string>,
   ) => Promise<T>,
 ) {
   return db.transaction(async (tx) => {
@@ -42,9 +44,7 @@ export async function withStudyAuthorization<T>(
       loaded.revision.revision_id,
       loaded.revision.group_id,
       loaded.revision.structure.parts.map((part) => part.part_id),
-      loaded.revision.structure.materials.flatMap((m) =>
-        !('content_md' in m) && 'asset' in m && m.asset ? [m.asset.asset_id] : [],
-      ),
+      studyMaterialAssetIds(loaded.revision.structure.materials),
     );
     const [issuance] = await tx
       .select()
@@ -63,6 +63,7 @@ export async function withStudyAuthorization<T>(
       { ...loaded, issuance },
       canonicalHash(issuanceRowToContract(issuance).binding),
       canonicalHash(sources),
+      Object.fromEntries(sources.documents.map((document) => [document.id, document.epoch])),
     );
   });
 }
@@ -308,6 +309,7 @@ export async function publishIssuedHint(
     kind: HintPublicationT['kind'];
     disclosure?: string;
     receipt?: Record<string, unknown>;
+    terminalFailure?: HelpProviderFault;
   },
 ) {
   if (!input.body || Buffer.byteLength(input.body) > 16384)
@@ -320,7 +322,11 @@ export async function publishIssuedHint(
       .from(event)
       .where(eq(event.id, `${id}:send`));
     const state = await readHints(tx, input, binding, sources);
-    if (input.kind === 'deterministic_next_step' && sent)
+    if (
+      input.kind === 'deterministic_next_step' &&
+      sent &&
+      !isHelpProviderFault(input.terminalFailure)
+    )
       throw new ApiError(
         'hint_outcome_unknown',
         'the admitted provider attempt has no published reply; retry is disabled',
@@ -351,7 +357,9 @@ export async function publishIssuedHint(
       claim_id: id,
       request_id: input.requestId,
       source_exposure_id: null,
-      receipt: input.receipt ?? null,
+      receipt: input.terminalFailure
+        ? { help_provider_fault: input.terminalFailure }
+        : (input.receipt ?? null),
     };
     return recordStudyAssistanceExposure(tx, {
       ...input,

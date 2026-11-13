@@ -1,5 +1,5 @@
 // YUK-1473 — existing practice engine and lifecycle, rendered by the cleanroom M3E surface.
-import { type Ref, useCallback, useState } from 'react';
+import { type Ref, useCallback, useRef, useState } from 'react';
 import type { PracticeIssuanceDtoT } from '@/core/schema/assessment';
 import { REASONING_TRACE_MAX_LEN } from '@/kernel/limits';
 import { useSubjects } from '@/ui/hooks/useSubjects';
@@ -208,26 +208,35 @@ export function PracticeSolo({
   const { question, issuance } = engine;
   const q = question.data;
   const ready = issuance.status === 'ready' ? issuance : null;
+  const latestDraftReader = useRef<typeof engine.draft.readFocus | undefined>(undefined);
+  const readSavedDraft = useCallback(() => latestDraftReader.current?.(), []);
+  const questionId = q?.id;
+  const issuanceId = ready?.id;
   const attachFocus = useCallback(
     (node: HTMLDivElement | null) => {
-      if (!node || !q || !ready) return;
+      if (!node || !questionId || !issuanceId) return;
       const focus = {
         kind: 'question',
-        id: q.id,
+        id: questionId,
         title: '当前作答（已保存内容）',
-        readSavedDraft: engine.draft.readFocus,
+        readSavedDraft,
       };
       setCompanionFocus(focus);
       return () => {
         if (readCompanionFocus()?.readSavedDraft === focus.readSavedDraft) setCompanionFocus(null);
       };
     },
-    [q, ready, engine.draft.readFocus],
+    [questionId, issuanceId, readSavedDraft],
   );
 
   return (
     <div ref={attachFocus} data-screen-label={`散题作答 · ${item.ref_id}`}>
-      <div data-swap-body="">
+      <div
+        data-swap-body=""
+        ref={(node) => {
+          latestDraftReader.current = node ? engine.draft.readFocus : undefined;
+        }}
+      >
         <PracticePresentation
           engine={engine}
           item={item}

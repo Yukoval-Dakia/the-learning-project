@@ -14,7 +14,12 @@ import {
   RestoreHintsBodySchema,
   StartSolveBodySchema,
 } from '../api/solve-contracts';
-import { SolveError, planSolveHintOutcome, startSolveSession } from './solve-session';
+import {
+  HintOutcomeUnknownError,
+  SolveError,
+  planSolveHintOutcome,
+  startSolveSession,
+} from './solve-session';
 
 function parseResourceInput<T>(raw: unknown, schema: ZodType<T>): T {
   const parsed = schema.safeParse(raw);
@@ -157,6 +162,27 @@ export async function requestPracticeSolveHint(
     }
     return { hint_request_id: hintRequestId, ...publicOutcome };
   } catch (err) {
+    if (err instanceof HintOutcomeUnknownError) {
+      await writeEvent(db, {
+        id: newId(),
+        session_id: sessionId,
+        actor_kind: 'user',
+        actor_ref: 'self',
+        action: 'experimental:hint_request',
+        subject_kind: 'question',
+        subject_id: questionId,
+        outcome: 'failure',
+        payload: {
+          hint_index: HintRequestBodySchema.parse(raw)?.hint_index ?? 0,
+          status: 'outcome_unknown',
+          reason: 'unknown',
+          stop_retry: 'stop',
+          help_latency: err.helpLatency,
+          denominator: readHelpLatency([err.helpLatency]).denominator,
+        },
+      });
+      throw err;
+    }
     if (err instanceof SolveError) {
       if (err.code === 'session_not_found' || err.code === 'question_not_found') {
         throw new ApiError('not_found', err.message, 404);

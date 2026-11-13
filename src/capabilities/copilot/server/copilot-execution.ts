@@ -21,11 +21,7 @@ import type { Db } from '@/db/client';
 import { chartPublishedAfterBinding } from '@/kernel/blocks/chart';
 import { projectLearnerToolInput } from '@/kernel/learning-content';
 import { recordAiTaskReplyUnsealed } from '@/kernel/records/ai-attempt-facts';
-import {
-  DOMAIN_TOOL_MCP_SERVER_NAME,
-  resolveDomainToolNames,
-  resolveMcpAllowedTools,
-} from '@/kernel/tools/allowlists';
+import { DOMAIN_TOOL_MCP_SERVER_NAME, resolveDomainToolNames } from '@/kernel/tools/allowlists';
 import { resolveContextBudget } from '@/kernel/tools/budgets';
 import { ContextBudgetTracker } from '@/kernel/tools/context-throttle';
 import { ANSWER_ONLY_TOOL_NAMES, derivationToolDenial } from '@/kernel/tools/derivation-policy';
@@ -514,9 +510,7 @@ export function createCopilotExecutionOwner(
         : []),
     ];
     const baseAllowedTools = [
-      ...(answerOnly
-        ? ANSWER_ONLY_TOOL_NAMES.map((name) => `mcp__${DOMAIN_TOOL_MCP_SERVER_NAME}__${name}`)
-        : resolveMcpAllowedTools(surface)),
+      ...domainMountOptions.toolNames.map((name) => `mcp__${DOMAIN_TOOL_MCP_SERVER_NAME}__${name}`),
       ...(exa ? EXA_MCP_ALLOWED_TOOLS : []),
     ];
     const subagentsEnabled = !answerOnly && (policy.subagentsEnabled ?? isCopilotSubagentEnabled());
