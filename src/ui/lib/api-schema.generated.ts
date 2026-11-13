@@ -10045,6 +10045,7 @@ export interface operations {
                     answer_image_refs?: string[];
                     assessment?: {
                         evaluation_group_id: string;
+                        expected_save_epoch?: number;
                         /** @default [] */
                         group_evidence?: {
                             evidence: {
@@ -10329,6 +10330,7 @@ export interface operations {
                     answer_image_refs?: string[];
                     assessment?: {
                         evaluation_group_id: string;
+                        expected_save_epoch?: number;
                         /** @default [] */
                         group_evidence?: {
                             evidence: {
@@ -10613,6 +10615,7 @@ export interface operations {
                     answer_image_refs?: string[];
                     assessment?: {
                         evaluation_group_id: string;
+                        expected_save_epoch?: number;
                         /** @default [] */
                         group_evidence?: {
                             evidence: {
@@ -31326,6 +31329,11 @@ export interface operations {
                             /** @enum {string} */
                             pace: "light" | "medium" | "dense";
                         };
+                        composition_error?: {
+                            /** @enum {string} */
+                            code: "compose_failed" | "compose_unknown";
+                            message: string;
+                        };
                         date: string;
                         items: {
                             answer_recorded: boolean;
@@ -31350,6 +31358,7 @@ export interface operations {
                             /** @enum {string} */
                             status: "pending" | "in_progress" | "done" | "skipped";
                             total_slots: number | null;
+                            upload_batch_label?: string;
                             /** @enum {string|null} */
                             verdict: "again" | "hard" | "good" | null;
                             verdict_effective: string | null;
@@ -31531,6 +31540,7 @@ export interface operations {
                             total_slots: number | null;
                             /** Format: date-time */
                             updated_at: string;
+                            upload_batch_label?: string;
                             /** @enum {string|null} */
                             verdict: "again" | "hard" | "good" | null;
                             verdict_effective: string | null;
@@ -31667,6 +31677,11 @@ export interface operations {
                             /** @enum {string} */
                             pace: "light" | "medium" | "dense";
                         };
+                        composition_error?: {
+                            /** @enum {string} */
+                            code: "compose_failed" | "compose_unknown";
+                            message: string;
+                        };
                         date: string;
                         items: {
                             answer_recorded: boolean;
@@ -31691,6 +31706,7 @@ export interface operations {
                             /** @enum {string} */
                             status: "pending" | "in_progress" | "done" | "skipped";
                             total_slots: number | null;
+                            upload_batch_label?: string;
                             /** @enum {string|null} */
                             verdict: "again" | "hard" | "good" | null;
                             verdict_effective: string | null;
@@ -38674,6 +38690,7 @@ export interface operations {
                 "application/json": {
                     assessment?: {
                         evaluation_group_id: string;
+                        expected_save_epoch?: number;
                         /** @default [] */
                         group_evidence?: {
                             evidence: {
@@ -39088,6 +39105,7 @@ export interface operations {
                     answer_md: string;
                     assessment?: {
                         evaluation_group_id: string;
+                        expected_save_epoch?: number;
                         /** @default [] */
                         group_evidence?: {
                             evidence: {
@@ -39377,6 +39395,7 @@ export interface operations {
                     answer_image_refs?: string[];
                     assessment: {
                         evaluation_group_id: string;
+                        expected_save_epoch?: number;
                         /** @default [] */
                         group_evidence?: {
                             evidence: {
@@ -41272,6 +41291,7 @@ export interface operations {
                     };
                     assessment?: {
                         evaluation_group_id: string;
+                        expected_save_epoch?: number;
                         /** @default [] */
                         group_evidence?: {
                             evidence: {
@@ -41669,6 +41689,7 @@ export interface operations {
             content: {
                 "application/json": {
                     evaluation_group_id: string;
+                    expected_save_epoch?: number;
                     /** @default [] */
                     group_evidence?: {
                         evidence: {

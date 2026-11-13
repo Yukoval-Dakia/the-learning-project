@@ -162,6 +162,8 @@ export function PracticePresentation(props: PracticePresentationProps) {
     const answering = phase === 'answering' && !submit.pendingRun && !submit.answerRecorded;
     const locked =
       submit.returning ||
+      submit.judging ||
+      submit.committing ||
       phase !== 'answering' ||
       !!ready.accepted ||
       !!submit.pendingRun ||
@@ -290,6 +292,7 @@ export function PracticePresentation(props: PracticePresentationProps) {
             <summary>补充思路（可选）</summary>
             <textarea
               rows={3}
+              disabled={locked}
               value={submit.reasoningTrace}
               maxLength={props.reasoningTraceMaxLength}
               onChange={(event) => submit.setReasoningTrace(event.target.value)}

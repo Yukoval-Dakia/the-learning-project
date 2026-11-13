@@ -103,6 +103,7 @@ export const CreateSubmissionBodySchema = z.object({
   /** 幂等键：同 (group,key) 重复提交 —— 一致 replay；不同 conflict(409)。 */
   idempotency_key: z.string().min(1),
   response_set: LearnerResponseSet,
+  expected_save_epoch: z.number().int().min(0).optional(),
   group_evidence: z.array(GroupEvidence).default([]),
 });
 

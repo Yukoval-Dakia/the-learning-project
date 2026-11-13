@@ -14,6 +14,7 @@ export {
   recomposePracticeStream,
   updatePracticeStreamItem,
 } from './server/stream-operations';
+export { type UploadReadyBatch, readUploadReadyBatch } from './server/upload-ready';
 export { rotationClassForKind } from './server/variant-rotation';
 
 export const queryReviewDue: typeof import('./server/due-list').queryReviewDue = async (...args) =>

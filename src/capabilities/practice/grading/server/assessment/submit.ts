@@ -425,6 +425,18 @@ export async function saveSubmission(
       };
     }
 
+    // The issuance lock serializes draft saves; replay must return before this check.
+    if (request.expected_save_epoch != null) {
+      const [draft] = await tx
+        .select({ save_epoch: assessment_response_draft.save_epoch })
+        .from(assessment_response_draft)
+        .where(eq(assessment_response_draft.issuance_id, request.issuance_id))
+        .limit(1);
+      if (draft && draft.save_epoch > request.expected_save_epoch) {
+        return { status: 'stale_draft', current_save_epoch: draft.save_epoch };
+      }
+    }
+
     const [frozenCandidate] = await tx
       .select({ id: evaluation.evaluation_id })
       .from(evaluation)

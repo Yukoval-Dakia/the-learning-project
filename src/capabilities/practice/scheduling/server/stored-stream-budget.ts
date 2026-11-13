@@ -1,4 +1,5 @@
 import { estimateStreamItemMinutes, fitStreamToTimeBudget } from './stream-budget';
+import { isUploadPracticeRow } from './upload-ready';
 
 interface StoredStreamBudgetRow {
   readonly id: string;
@@ -17,6 +18,7 @@ interface StoredStreamBudgetTrimInput extends StoredStreamBudgetInput {
   readonly rows: readonly (StoredStreamBudgetRow & {
     readonly status: string;
     readonly source: string;
+    readonly signals?: Record<string, unknown>;
   })[];
 }
 
@@ -60,8 +62,12 @@ export function planStoredStreamBudgetTrim({
   // not an ordinary recommendation tail. Never trim it merely because it was
   // appended after the day's budget was composed; instead budget the remaining
   // pending rows around this protected delivery.
-  const protectedPending = pending.filter((row) => row.source === 'intervention');
-  const budgetablePending = pending.filter((row) => row.source !== 'intervention');
+  const protectedPending = pending.filter(
+    (row) => row.source === 'intervention' || isUploadPracticeRow(row),
+  );
+  const budgetablePending = pending.filter(
+    (row) => row.source !== 'intervention' && !isUploadPracticeRow(row),
+  );
   const protectedMinutes = protectedPending.reduce(
     (sum, row) =>
       sum + estimateStreamItemMinutes(row.item_kind, questionMinutes, row.questionCount),

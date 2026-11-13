@@ -30,6 +30,7 @@ import { countPaperSlots } from '../../session/public';
 import { knowledgeLabels } from './knowledge-labels';
 import { readQuestionPace } from './question-pace';
 import { type DailyPracticePace, estimateStreamItemMinutes } from './stream-budget';
+import { isUploadPracticeRow } from './upload-ready';
 
 /** 本模块的 DB 句柄：既可是顶层 `db`，也可是事务内 `tx`。 */
 type DbLike = Db | Tx;
@@ -46,6 +47,7 @@ export interface StreamScope {
 }
 
 export interface StreamView {
+  composition_error?: { code: 'compose_failed' | 'compose_unknown'; message: string };
   date: string;
   scope: StreamScope | null;
   opening_line: string;
@@ -56,6 +58,7 @@ export interface StreamView {
     ref_id: string;
     source: StreamItemRow['source'];
     reasoning: string;
+    upload_batch_label?: string;
     status: StreamItemStatus;
     estimated_minutes: number;
     knowledge_name: string | null;
@@ -329,6 +332,7 @@ function toStreamViewItem(
     ref_id: row.ref_id,
     source: row.source,
     reasoning: row.reasoning,
+    ...(isUploadPracticeRow(row) ? { upload_batch_label: '刚上传' } : {}),
     status: row.status,
     estimated_minutes: estimateStreamItemMinutes(
       row.item_kind,

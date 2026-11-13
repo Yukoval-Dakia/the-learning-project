@@ -39,6 +39,7 @@ export interface StreamItem {
   ref_id: string;
   source: StreamSource;
   reasoning: string;
+  upload_batch_label?: string;
   status: StreamStatus;
   estimated_minutes: number;
   knowledge_name: string | null;
@@ -51,6 +52,7 @@ export interface StreamItem {
 }
 
 export interface StreamView {
+  composition_error?: { code: 'compose_failed' | 'compose_unknown'; message: string };
   date: string;
   scope?: {
     kind: 'knowledge';

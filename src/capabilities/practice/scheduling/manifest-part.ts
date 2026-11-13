@@ -20,10 +20,20 @@ import {
   RecomposePracticeStreamBodySchema,
   UpdatePracticeStreamItemBodySchema,
 } from './api/stream-contracts';
+import { UPLOAD_READY_ACTIONS, UPLOAD_READY_SUBSCRIBER } from './server/upload-ready';
 
 export const schedulingManifestPart: Omit<CapabilityManifest, 'name' | 'description'> = {
+  events: {
+    actions: ['experimental:upload_practice_delivery', 'experimental:stream_compose_control'],
+  },
   subscriptions: {
     handlers: [
+      {
+        id: UPLOAD_READY_SUBSCRIBER,
+        version: 1,
+        actions: UPLOAD_READY_ACTIONS,
+        load: () => import('./server/upload-ready').then((m) => m.buildUploadReadySubscriber),
+      },
       {
         id: 'practice.learner-return-wake',
         version: 1,
