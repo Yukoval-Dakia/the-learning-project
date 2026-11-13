@@ -221,6 +221,19 @@ export const knowledgeCapability = defineCapability({
         load: () =>
           import('./jobs/projection_oracle_sweep').then((m) => m.buildProjectionOracleSweepHandler),
       },
+      {
+        // Deterministic scan of admitted solution priors. A pair needs two
+        // questions; the existing edge writer keeps live, pending and dismissed
+        // pairs out. Nothing here is accepted. No model and no activity gate:
+        // the priors are already paid for.
+        name: 'solution_prior_prereq_nightly',
+        schedule: { cron: '55 4 * * *', tz: 'Asia/Shanghai' },
+        queue: 'fast',
+        load: () =>
+          import('./jobs/solution_prior_prereq_nightly').then(
+            (m) => m.buildSolutionPriorPrereqNightlyHandler,
+          ),
+      },
     ],
   },
   // Proposal kinds owned here. `archive` is produced by this package and has no
