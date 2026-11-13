@@ -28,6 +28,7 @@ import {
   resolveVerdictsForAttempts,
   resolveVerdictsForNativeAttempts,
 } from './assessment-verdict';
+import { loadMergedKnowledgeClosure } from './merged-knowledge';
 import { batchResolveSubjectIds } from './subject-resolution';
 
 type DbLike = Db | Tx;
@@ -183,12 +184,14 @@ async function loadCardLegacyOutcome(db: DbLike, row: EventRow): Promise<AnswerO
  * Native attempts are attributed by the frozen learning scope and the issued
  * parts, never by mutable question tags; a denied candidate walks on instead of
  * ending the read. Legacy attempt/review rows carry `referenced_knowledge_ids`.
+ * The node's merged_from closure is included, so the newer answer on either side wins.
  */
 export async function loadLastKnowledgePractice(
   db: DbLike,
   knowledgeId: string,
 ): Promise<LastKnowledgePractice | null> {
-  const kc = JSON.stringify([knowledgeId]);
+  const historyIds = [...(await loadMergedKnowledgeClosure(db)).closure(knowledgeId)];
+  const history = new Set(historyIds);
   let cursor: { at: Date; id: string } | undefined;
   for (let page = 0; ; page += 1) {
     if (page >= PRACTICE_MAX_PAGES) return null;
@@ -200,11 +203,10 @@ export async function loadLastKnowledgePractice(
           eq(event.actor_kind, 'user'),
           inArray(event.action, [...LEARNER_ANSWER_ACTIONS]),
           eq(event.subject_kind, 'question'),
-          sql`(
-            (${event.action} = ${NATIVE_ATTEMPT_ACTION} AND ${nativeScopeMentions(kc)})
-            OR (${event.action} <> ${NATIVE_ATTEMPT_ACTION}
-                AND ${event.payload}->'referenced_knowledge_ids' @> ${kc}::jsonb)
-          )`,
+          or(
+            and(eq(event.action, NATIVE_ATTEMPT_ACTION), nativeMentionsAny(historyIds)),
+            and(sql`${event.action} <> ${NATIVE_ATTEMPT_ACTION}`, legacyMentionsAny(historyIds)),
+          ),
           cursor
             ? or(
                 lt(event.created_at, cursor.at),
@@ -229,7 +231,7 @@ export async function loadLastKnowledgePractice(
       for (const row of authorized) {
         if (row.action === NATIVE_ATTEMPT_ACTION) {
           const verdict = nativeVerdicts?.get(row.id);
-          if (!verdict?.knowledge_ids.includes(knowledgeId)) continue;
+          if (!verdict?.knowledge_ids.some((id) => history.has(id))) continue;
           const outcome = nativeAttemptOutcome(verdict);
           return {
             at: row.created_at.toISOString(),
@@ -265,7 +267,8 @@ const FAILURE_STREAK_SCAN_LIMIT = 200;
 
 /**
  * Current failure run per knowledge point. Answers with no right/wrong bit and
- * contested answers are skipped; a success or partial ends the run. Only the
+ * contested answers are skipped; a success or partial ends the run. An answer
+ * on a node merged into a live survivor also advances that survivor's run. Only the
  * newest FAILURE_STREAK_SCAN_LIMIT derivation-allowed answers count. A missing
  * id means the run length is 0, which the caller must not confuse with a failed scan.
  */
@@ -320,6 +323,7 @@ async function loadFailureRuns(db: DbLike): Promise<Map<string, number>> {
   }
   const runs = new Map<string, { count: number; ended: boolean }>();
   if (rows.length === 0) return new Map();
+  const merged = await loadMergedKnowledgeClosure(db);
   const nativeVerdicts = await resolveVerdictsForNativeAttempts(db, rows);
   const legacyOutcomes = await loadLegacyAnswerOutcomes(db, rows);
   const contested = await loadContestedAttemptIds(
@@ -335,7 +339,13 @@ async function loadFailureRuns(db: DbLike): Promise<Map<string, number>> {
     const knowledgeIds = native
       ? native.knowledge_ids
       : stringArrayField(row.payload, 'referenced_knowledge_ids');
-    for (const knowledgeId of new Set(knowledgeIds)) {
+    const targets = new Set<string>();
+    for (const knowledgeId of knowledgeIds) {
+      targets.add(knowledgeId);
+      const winner = merged.liveWinner(knowledgeId);
+      if (winner) targets.add(winner);
+    }
+    for (const knowledgeId of targets) {
       const run = runs.get(knowledgeId) ?? { count: 0, ended: false };
       if (run.ended) continue;
       if (outcome === 'failure') run.count += 1;
@@ -670,8 +680,8 @@ function stringArrayField(payload: unknown, key: string): string[] {
   return value.filter((id): id is string => typeof id === 'string');
 }
 
-// Newest-first pages while filling a small per-knowledge cap. One learner's
-// 14-day window should fit; past this bound, report the corrects already found.
+// Newest-first pages while filling a small per-knowledge sample. Absence past
+// this bound does not mean the knowledge point has no later correct answer.
 const CORRECT_ATTEMPT_PAGE = 32;
 const CORRECT_ATTEMPT_MAX_PAGES = 8;
 
@@ -762,22 +772,42 @@ function pushCorrectAttempt(
 
 /**
  * Newest derivation-allowed correct answers on the requested knowledge points,
- * since `since`, at most `limitPerKnowledge` each. Partial, pending, unsupported,
- * and contested answers are left out. Native prompts come from the frozen revision
- * part; they are not read off the live question row.
+ * since `since`. Partial, pending, unsupported, and contested answers are left
+ * out. Native prompts come from the frozen revision part; they are not read off
+ * the live question row.
+ *
+ * The default read is a sample: at most `limitPerKnowledge` each, and at most
+ * eight pages. A caller that treats a missing answer as "no later independent
+ * success" must set `exhaustive`. That read keeps every match in the window,
+ * because an older success can be the one that cleared a failure before a
+ * newer page of unrelated answers.
  */
 export async function loadRecentCorrectAttemptsForKnowledge(
   db: DbLike,
-  input: { knowledgeIds: readonly string[]; since: Date; limitPerKnowledge: number },
+  input:
+    | {
+        knowledgeIds: readonly string[];
+        since: Date;
+        limitPerKnowledge: number;
+        exhaustive?: false;
+      }
+    | {
+        knowledgeIds: readonly string[];
+        since: Date;
+        exhaustive: true;
+      },
 ): Promise<Map<string, CorrectKnowledgeAttempt[]>> {
   const wanted = [...new Set(input.knowledgeIds)];
   const out = new Map(wanted.map((id) => [id, [] as CorrectKnowledgeAttempt[]]));
-  if (wanted.length === 0 || input.limitPerKnowledge <= 0) return out;
+  const exhaustive = input.exhaustive === true;
+  const sampleLimit = input.exhaustive === true ? 0 : input.limitPerKnowledge;
+  if (wanted.length === 0 || (!exhaustive && sampleLimit <= 0)) return out;
   const wantedSet = new Set(wanted);
-  const filled = () => wanted.every((id) => (out.get(id)?.length ?? 0) >= input.limitPerKnowledge);
+  const keep = exhaustive ? Number.POSITIVE_INFINITY : sampleLimit;
+  const filled = () => wanted.every((id) => (out.get(id)?.length ?? 0) >= keep);
   let cursor: { at: Date; id: string } | undefined;
 
-  for (let page = 0; page < CORRECT_ATTEMPT_MAX_PAGES && !filled(); page += 1) {
+  for (let page = 0; (exhaustive || page < CORRECT_ATTEMPT_MAX_PAGES) && !filled(); page += 1) {
     const legacy = legacyMentionsAny(wanted);
     const rows: EventRow[] = await db
       .select()
@@ -843,7 +873,7 @@ export async function loadRecentCorrectAttemptsForKnowledge(
             question_snapshot: null,
             frozen_prompt_md: nativeFrozenPrompt(verdict.revision.structure.parts, row.subject_id),
           },
-          input.limitPerKnowledge,
+          keep,
         );
         continue;
       }
@@ -865,12 +895,20 @@ export async function loadRecentCorrectAttemptsForKnowledge(
           question_snapshot: legacyQuestionSnapshot(row),
           frozen_prompt_md: null,
         },
-        input.limitPerKnowledge,
+        keep,
       );
     }
 
     if (rows.length < CORRECT_ATTEMPT_PAGE) break;
     const last = rows[rows.length - 1];
+    if (
+      exhaustive &&
+      cursor &&
+      last.created_at.getTime() === cursor.at.getTime() &&
+      last.id === cursor.id
+    ) {
+      throw new Error('independent success scan repeated a page');
+    }
     cursor = { at: last.created_at, id: last.id };
   }
   return out;

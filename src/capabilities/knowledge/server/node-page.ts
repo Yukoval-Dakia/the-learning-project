@@ -28,6 +28,7 @@ import {
 } from '@/kernel/read-models/learner-judgment';
 import { isLearnerVisibleKnowledgeId } from '@/kernel/read-models/learner-knowledge-visibility';
 import { getRepresentativeKcBeta } from '@/kernel/read-models/mastery-projection';
+import { loadMergedKnowledgeClosure } from '@/kernel/read-models/merged-knowledge';
 import {
   type NoteSummary,
   interactiveForKnowledge,
@@ -250,6 +251,15 @@ export async function loadKnowledgeNodePage(
 
   // Five independent reads run concurrently; backlinks wait for the primary atomic.
   // Named promises prevent swapping the two NoteSummary results.
+  // Answer events keep the knowledge id they were written with, so the survivor
+  // page reads every id in its merged_from closure.
+  const answerHistoryIds = [...(await loadMergedKnowledgeClosure(db)).closure(knowledgeId)];
+  const answerHistoryMatch = sql.join(
+    answerHistoryIds.map(
+      (id) => sql`${event.payload}->'referenced_knowledge_ids' @> ${JSON.stringify([id])}::jsonb`,
+    ),
+    sql` OR `,
+  );
   // Primary atomic = newest non-archived note_atomic containing this node.
   const atomicPromise = db
     .select({
@@ -281,9 +291,7 @@ export async function loadKnowledgeNodePage(
       created_at: event.created_at,
     })
     .from(event)
-    .where(
-      sql`${event.payload}->'referenced_knowledge_ids' @> ${JSON.stringify([knowledgeId])}::jsonb`,
-    )
+    .where(answerHistoryMatch)
     .orderBy(desc(event.created_at))
     .limit(TIMELINE_LIMIT)
     .execute();
