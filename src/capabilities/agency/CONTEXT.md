@@ -8,7 +8,7 @@ AF §4）。用户面只有只读观察窗（/agent-notes 页 + today 块）。
 
 - jobs/ — dreaming_nightly（agent 档，夜链成员：soft 依赖 knowledge_maintenance_nightly）/
   coach_daily（llm 档，不在夜链：学习者回来且计划过期时由 learner_return_wake 经
-  kernel/coach-wake 按义务入队）/ goal_scope_propose_nightly（llm 档，夜链根；cron 移除，
+  kernel/coach-wake 按义务入队；输入含昨天重点的结算结果，以及 review_plan 上的到期知识点名称、逾期天数、保持率、掌握档；工具面含知识维护的图谱读取）/ goal_scope_propose_nightly（llm 档，夜链根；cron 移除，
   orchestrator 触发，sibling goal_scope_dedup）
 - server/goals/ — create / accept / scope（goal scope 提议的读写与验收）
 - server/notes.ts — writeAgentNote / readAgentNotes / readAllAgentNotes

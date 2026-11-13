@@ -914,6 +914,132 @@ export async function loadRecentCorrectAttemptsForKnowledge(
   return out;
 }
 
+const SETTLED_ANSWER_PAGE = 32;
+const SETTLED_ANSWER_MAX_PAGES = 64;
+
+export interface SettledKnowledgeAnswerCounts {
+  correct: number;
+  wrong: number;
+  partial: number;
+}
+
+const SETTLED_COUNT_FIELD = {
+  success: 'correct',
+  failure: 'wrong',
+  partial: 'partial',
+} as const satisfies Record<AnswerOutcome, keyof SettledKnowledgeAnswerCounts>;
+
+function emptySettledCounts(
+  knowledgeIds: readonly string[],
+): Map<string, SettledKnowledgeAnswerCounts> {
+  return new Map(knowledgeIds.map((id) => [id, { correct: 0, wrong: 0, partial: 0 }]));
+}
+
+function addSettledCount(
+  counts: Map<string, SettledKnowledgeAnswerCounts>,
+  knowledgeIds: readonly string[],
+  outcome: AnswerOutcome,
+) {
+  const field = SETTLED_COUNT_FIELD[outcome];
+  for (const knowledgeId of knowledgeIds) {
+    const row = counts.get(knowledgeId);
+    if (!row) continue;
+    row[field] += 1;
+  }
+}
+
+/**
+ * Settled right/wrong/partial counts on the requested knowledge points in
+ * `[since, until)`. Pending, unsupported, and contested answers are left out.
+ * `complete: false` means the page cap stopped the scan: a zero is then not
+ * proof that the point was skipped.
+ */
+export async function loadSettledKnowledgeAnswerCounts(
+  db: DbLike,
+  input: { knowledgeIds: readonly string[]; since: Date; until: Date },
+): Promise<{ complete: boolean; counts: Map<string, SettledKnowledgeAnswerCounts> }> {
+  const wanted = [...new Set(input.knowledgeIds)];
+  const counts = emptySettledCounts(wanted);
+  if (wanted.length === 0 || input.until.getTime() <= input.since.getTime()) {
+    return { complete: true, counts };
+  }
+  const wantedSet = new Set(wanted);
+  let cursor: { at: Date; id: string } | undefined;
+  for (let page = 0; page < SETTLED_ANSWER_MAX_PAGES; page += 1) {
+    const legacy = legacyMentionsAny(wanted);
+    const rows: EventRow[] = await db
+      .select()
+      .from(event)
+      .where(
+        and(
+          eq(event.actor_kind, 'user'),
+          inArray(event.action, [...LEARNER_ANSWER_ACTIONS]),
+          eq(event.subject_kind, 'question'),
+          gte(event.created_at, input.since),
+          lt(event.created_at, input.until),
+          or(
+            and(eq(event.action, NATIVE_ATTEMPT_ACTION), nativeMentionsAny(wanted)),
+            and(inArray(event.action, ['attempt', 'review']), legacy),
+          ),
+          cursor
+            ? or(
+                lt(event.created_at, cursor.at),
+                and(eq(event.created_at, cursor.at), lt(event.id, cursor.id)),
+              )
+            : undefined,
+        ),
+      )
+      .orderBy(desc(event.created_at), desc(event.id))
+      .limit(SETTLED_ANSWER_PAGE);
+    if (rows.length === 0) return { complete: true, counts };
+
+    const allowed = await allowedEventIds(
+      db,
+      rows.map((row) => row.id),
+    );
+    const authorized = rows.filter((row) => allowed.has(row.id));
+    const contested =
+      authorized.length > 0
+        ? await loadContestedAttemptIds(
+            db,
+            authorized.map((row) => row.id),
+          )
+        : new Set<string>();
+    const nativeRows = authorized.filter((row) => row.action === NATIVE_ATTEMPT_ACTION);
+    const legacyRows = authorized.filter((row) => row.action !== NATIVE_ATTEMPT_ACTION);
+    const nativeVerdicts =
+      nativeRows.length > 0 ? await resolveVerdictsForNativeAttempts(db, nativeRows) : null;
+    const legacyOutcomes =
+      legacyRows.length > 0 ? await loadLegacyAnswerOutcomes(db, legacyRows) : null;
+
+    for (const row of authorized) {
+      if (contested.has(row.id)) continue;
+      if (row.action === NATIVE_ATTEMPT_ACTION) {
+        const verdict = nativeVerdicts?.get(row.id);
+        const outcome = nativeAttemptOutcome(verdict);
+        if (outcome !== 'success' && outcome !== 'failure' && outcome !== 'partial') continue;
+        const knowledgeIds = verdict?.knowledge_ids.filter((id) => wantedSet.has(id)) ?? [];
+        addSettledCount(counts, knowledgeIds, outcome);
+        continue;
+      }
+      const outcome = legacyOutcomes?.get(row.id);
+      if (!outcome) continue;
+      const knowledgeIds = stringArrayField(row.payload, 'referenced_knowledge_ids').filter((id) =>
+        wantedSet.has(id),
+      );
+      addSettledCount(counts, knowledgeIds, outcome);
+    }
+
+    if (rows.length < SETTLED_ANSWER_PAGE) return { complete: true, counts };
+    const last = rows[rows.length - 1];
+    if (cursor && last.created_at.getTime() === cursor.at.getTime() && last.id === cursor.id) {
+      throw new Error('settled answer scan repeated a page');
+    }
+    cursor = { at: last.created_at, id: last.id };
+  }
+  return { complete: false, counts };
+}
+
 function asDate(value: unknown): Date | null {
   if (value == null) return null;
   if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;

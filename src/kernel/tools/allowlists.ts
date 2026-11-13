@@ -356,6 +356,13 @@ const COACH_TOOLS = [
   'get_learning_item_context',
   'get_question_context',
   'read_practice_candidates',
+  // Knowledge-maintenance readers: check a node's version and existing edges
+  // before a knowledge proposal, the same reads that surface uses.
+  'get_subject_graph_overview',
+  'query_knowledge',
+  'expand_knowledge_subgraph',
+  'find_knowledge_paths',
+  'query_events',
   'propose_learning_item_completion',
   'propose_learning_item_relearn',
   'propose_learning_item_defer',
