@@ -7,10 +7,14 @@ import { QUESTION_OR_ANSWER_MAY_BE_FAULTY_ACTION } from '@/core/schema/event';
 import type { Tx } from '@/db/client';
 import { event, question, question_group_lifecycle } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import {
+  type SettlementPlan,
+  liveAppliedSettlements,
+  loadSettlementEvents,
+} from '@/kernel/read-models/assessment-settlements';
 import { getNonKcKnowledgeIds } from '@/kernel/read-models/knowledge-roles';
 import { SYNTHETIC_SUBJECT_ROOT_RE } from '@/kernel/read-models/placement-scope';
 import { assessmentAttemptEventId } from '@/kernel/records/assessment-attempt-identity';
-import { type SettlementPlan, liveAppliedSettlements, loadSettlementEvents } from './settle-read';
 
 /** Guess, pending calibration on real use. Not a serving rule. */
 export const FAULTY_QUESTION_INFERENCE_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;

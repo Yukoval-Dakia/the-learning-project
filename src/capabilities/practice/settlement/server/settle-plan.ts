@@ -24,6 +24,12 @@ import {
 } from '@/core/schema/assessment';
 import type { Tx } from '@/db/client';
 import { event, question, question_revision } from '@/db/schema';
+import {
+  type CalibrationEvidencePlan,
+  type FsrsSubject,
+  type SettlementPlan,
+  subjectKey,
+} from '@/kernel/read-models/assessment-settlements';
 import { getNonKcKnowledgeIds } from '@/kernel/read-models/knowledge-roles';
 import type { AbilityGlobalByKnowledgeId } from '@/kernel/read-models/mastery-state';
 import { SYNTHETIC_SUBJECT_ROOT_RE } from '@/kernel/read-models/placement-scope';
@@ -31,14 +37,7 @@ import { assessmentAttemptEventId } from '@/kernel/records/assessment-attempt-id
 import { selectedForgettingEngine } from '@/kernel/scheduling';
 import type { ActivationSettleInput } from './activate';
 import { loadAssessmentLearningScope } from './learning-scope';
-import {
-  type CalibrationEvidencePlan,
-  type FsrsSubject,
-  type RederiveSettlementPlan,
-  type SettlementPlan,
-  candidateSchedulingSuppressed,
-  subjectKey,
-} from './settle-read';
+import { type RederiveSettlementPlan, candidateSchedulingSuppressed } from './settle-read';
 
 interface QuestionLite {
   id: string;

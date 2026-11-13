@@ -12,16 +12,18 @@ import {
 } from '@/core/scheduling/candidate';
 import { type SchedulingState, isCandidateState } from '@/core/schema/scheduling-state';
 import type { Tx } from '@/db/client';
+import {
+  type FamilyFoldRecord,
+  type SettlementPlan,
+  subjectKey,
+} from '@/kernel/read-models/assessment-settlements';
 import { getMasteryState } from '@/kernel/read-models/mastery-state';
 import { updateThetaForAttempt } from '@/kernel/records/mastery-state';
 import { getFsrsState, upsertFsrsState } from '@/kernel/records/scheduling-state';
 import { selectedForgettingEngine } from '@/kernel/scheduling';
 import { writeAttemptSnapshotBrackets } from './attempt-snapshot';
 import { recordDifficultyCalibrationEvidence } from './calibration-evidence';
-import {
-  type FamilyFoldRecord,
-  recordFamilyObservationForAttempt,
-} from './personalized-difficulty';
+import { recordFamilyObservationForAttempt } from './personalized-difficulty';
 import { recordDifficultyCalibrationLabel } from './recalibration';
 import {
   hasSchedulingEffect,
@@ -30,12 +32,7 @@ import {
   rederiveSettlementPlan,
   schedulingSubjects,
 } from './settle-plan';
-import {
-  type SettlementPlan,
-  candidateHistory,
-  candidateSchedulingSuppressed,
-  subjectKey,
-} from './settle-read';
+import { candidateHistory, candidateSchedulingSuppressed } from './settle-read';
 
 /** One item-level bit when every KC evidence row agrees. Mixed directions have no such bit. */
 function sharedItemOutcome(theta: {
