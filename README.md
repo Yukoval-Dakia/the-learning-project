@@ -1,10 +1,10 @@
 # AI 学习工具 (the-learning-project)
 
-自用 AI 学习系统。当前实现是 **Hono API + TanStack Start 前门 + pg-boss worker** 三进程的 self-hosted 单用户应用；规划与架构以当前代码、ADR 与 [architecture.md](/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/architecture.md) 为准；进程、发布、备份与访问约束见 [operations.md](/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/operations.md)；配置见 [configuration.md](/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/configuration.md)。
+自用 AI 学习系统。当前实现是 **Hono API（同进程托管 TanStack Start 前门）+ pg-boss worker** 两进程的 self-hosted 单用户应用；规划与架构以当前代码、ADR 与 [architecture.md](/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/architecture.md) 为准；进程、发布、备份与访问约束见 [operations.md](/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/operations.md)；配置见 [configuration.md](/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/configuration.md)。
 
 > 文档不在 git 内：原 `docs/` 与 `PLANNING.md` 的副本在 `/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/`（清单 `MANIFEST.tsv`，逐文件 hash `SHA256SUMS`）；下文文档链接均指向该目录。
 
-> **2026-06-13 形态变更（YUK-321 M5）**：Next.js 全栈已退场。现形状 = Hono API（`server/index.ts`，:8787）+ Vite SPA（`web/`，:5173）+ pg-boss worker（`scripts/worker.ts`，dev 入口 `pnpm worker:dev`、prod 入口 `node dist/worker.cjs`）。后端真相源 = capability manifests（`src/capabilities/*/manifest.ts`）+ 组合根 `server/app.ts`。旧 Next/App Router/middleware.ts/Redis 描述只存在于历史文档，均不再适用。后续 Vite SPA（独立 :5173 路由表）已被 TanStack Start 前门取代并移除，页面由 `server/start/routes/` 同源提供于 :8787。
+> **当前形状**：Hono API（`server/index.ts`，生产 :8787、本地 dev 从 8788 起）+ pg-boss worker（`scripts/worker.ts`，dev 入口 `pnpm worker:dev`、prod 入口 `node dist/worker.cjs`）两进程。前端是 TanStack Start 前门同源托管——dev 由 API 进程内的 Vite middleware 提供（`server/dev-frontdoor.ts`，HMR），prod 用 `dist/start`（`RW_FRONTDOOR=1`）；页面以 `server/start/routes/` 为准，壳层资源在 `web/src/`。后端真相源 = capability manifests（`src/capabilities/*/manifest.ts`）+ 组合根 `server/app.ts`。
 
 ## 技术栈
 
@@ -440,7 +440,7 @@ src/
   capabilities/   # Capability 包：manifest.ts 声明路由/jobs/copilotTools/ui.pages
     copilot/      # Copilot 域（单人格对话 + chip SSE 流 + copilotTools 贡献制）
     drawing/      # 生成式 UI 绘图域（compose_block drawing 委托的 Sol 后台单轮绘制）
-    observability/# Observability 域（admin 只读面 + 今日成本条）
+    observability/# Observability 域（admin 页 + 今日成本条）
     onboarding/   # 冷启动引导：目标设定、材料上传、起点探测与起始档案
     ingestion/    # 录入域（assets/ingestion pipeline）
     knowledge/    # 知识图谱域
@@ -451,23 +451,23 @@ src/
     shell/        # 工作台域（today / inbox / coach 页面 + workbench 聚合）
     index.ts      # 静态组合根：按顺序聚合所有 capability manifests
   kernel/         # CapabilityManifest 契约 + validateComposition 唯一性循环
-  core/           # Zod schemas, id helpers, cross-subject primitives
+  core/           # 跨科目逻辑：Zod schemas、id helpers、config、assessment/calibration 原语
   db/             # Drizzle schema + Postgres client
-  ai/             # Task registry + browser-side caller（不持 provider key）
-  server/         # Server-only：AI runner/tools、ingestion、knowledge、memory、review、export、R2、pg-boss helpers
+  ai/             # Task 契约与 catalog/registry（不跑模型；调用只经服务端 route / worker）
+  server/         # Server-only 平台层：AI runner/tools、pg-boss、durable、events、http、admin、orchestration、projections、proposals、questions、migration/release、revert
   subjects/
-    yuwen/        # Phase 1 subject bundle: 语文 (current content: classical Chinese)
-    math/         # Non-yuwen pressure subject: KaTeX + steps judging
-    physics/      # Foundation closeout subject: units/dimensions pressure test
+    yuwen/        # 语文（当前内容为文言文；note / 阅读 / 翻译 skill）
+    math/         # 数学（KaTeX 渲染 + steps 判分）
+    physics/      # 物理（单位/量纲 + 带图整题判分）
     general/      # 中性默认 subject profile（未知 domain 的 fallback 身份）
-  ui/             # Shared React components（block-tree Tiptap 编辑器、KnowledgeGraph cytoscape）
-  ui-next/        # UI rewrite 的 scoped design-system 基础层（tokens/primitives/shell/mascot/motion）
-scripts/          # worker.ts（pg-boss 独立进程）+ migrate.ts + dev-local.ts + audits（schema/partition/profile）
+  ui/             # Shared React primitives / hooks / lib / components
+  ui-next/        # scoped design-system 基础层（tokens / primitives / shell / today / blocks / mascot / motion / feedback / practice-studio）
+scripts/          # worker.ts（pg-boss 独立进程）、migrate.ts、dev-local.ts、audit-* / ops-* 与备份恢复脚本
 postman/          # api-endpoints.json 真相源 + gen:postman manifest 对账层
 ```
 
 `core/` 是跨学科共享层；`subjects/<name>/` 是单学科特化层。`src/capabilities/<name>/manifest.ts`
-是后端真相源——新增路由/jobs/tools 都通过 manifest 贡献制登记进组合根 `server/app.ts`。当前已从语文（首个科目，当前内容为文言文）扩展到 math / physics pressure subjects，新增科目应优先新增 profile 与能力声明，不 fork framework 路径。
+是后端真相源——新增路由/jobs/tools 都通过 manifest 贡献制登记进组合根 `server/app.ts`。内置四个 subject profile：语文（当前内容为文言文）、数学、物理，以及作为未知 domain fallback 的中性 `general`；新增科目应优先新增 profile 与能力声明，不 fork framework 路径。
 
 
 ### TEST on the NAS, reached through a Mac-local relay
