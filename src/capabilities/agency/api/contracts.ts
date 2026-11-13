@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import {
   ConjectureProbeResponseJudgement,
+  LearningItemOpenStatus,
   PROBE_NON_EVIDENCE_RESOLUTION,
   PROBE_RESOLUTIONS,
 } from '@/kernel/capability-contract-schemas';
@@ -127,4 +128,21 @@ export const LearningItemPlanResponseSchema = z.object({
   id: z.string().min(1),
   user_pinned: z.boolean(),
   due_at: z.string().datetime().nullable(),
+});
+
+export const LearningItemPlansQuerySchema = z
+  .object({
+    cursor: z.string().min(1).max(200).optional(),
+    limit: z.coerce.number().int().min(1).max(50).default(20),
+  })
+  .strict();
+
+export const LearningItemPlansResponseSchema = z.object({
+  items: z.array(
+    LearningItemPlanResponseSchema.extend({
+      title: z.string(),
+      status: LearningItemOpenStatus,
+    }),
+  ),
+  next_cursor: z.string().nullable(),
 });

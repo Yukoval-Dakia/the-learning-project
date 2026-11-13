@@ -1,6 +1,10 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { Suspense, lazy } from 'react';
-import { AgentNotesBoard, LearningIntentComposer } from '@/capabilities/agency/ui-public';
+import {
+  AgentNotesBoard,
+  LearningIntentComposer,
+  LearningItemPlanSection,
+} from '@/capabilities/agency/ui-public';
 import { ColdStart } from '@/capabilities/onboarding/ui-public';
 import { loadTodayPage } from '@/capabilities/shell/ui-public';
 import { startAgentNoteClient } from '../agent-note-client';
@@ -23,6 +27,7 @@ export const Route = createFileRoute('/today')({
           getPlacementProfile={startPlacementProfileClient}
           AgentNotesBoard={AgentNotesBoard}
           LearningIntentComposer={StartLearningIntentComposer}
+          LearningItemPlanSection={LearningItemPlanSection}
           ColdStart={ColdStart}
         />
       </Suspense>

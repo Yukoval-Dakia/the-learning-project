@@ -1,5 +1,5 @@
 // Learner plan edit: pin and project deadline on one learning item.
-// The route is the product write. No screen calls it yet.
+// The Today editor and other callers share the canonical plan writer.
 
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/kernel/http';

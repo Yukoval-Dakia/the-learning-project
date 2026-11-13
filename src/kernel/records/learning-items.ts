@@ -1,7 +1,7 @@
 // Shared creation and structural materialization for event-native learning items.
 // Derived child_learning_item_ids / ai_score / reviewed_at remain outside the snapshot.
 
-import { and, asc, eq, inArray, isNotNull, isNull, or } from 'drizzle-orm';
+import { and, asc, eq, gt, inArray, isNotNull, isNull, or } from 'drizzle-orm';
 import type { z } from 'zod';
 import { newId } from '@/core/ids';
 import {
@@ -9,6 +9,7 @@ import {
   applyLearningItemPlan,
   foldLearningItem,
 } from '@/core/projections/learning_item';
+import { LearningItemOpenStatus } from '@/core/schema/business';
 import type { LearningItemRowSnapshotT } from '@/core/schema/event/genesis';
 import {
   LEARNING_ITEM_PLAN_BACKFILL_ACTOR,
@@ -23,6 +24,37 @@ import { rowToFoldEvent } from './projection-events';
 
 type DbLike = Db | Tx;
 type EventRow = typeof event.$inferSelect;
+
+/** Stable browsing order keeps plan edits from moving items across page boundaries. */
+export async function listOpenLearningItemPlans(
+  db: DbLike,
+  { cursor, limit = 20 }: { cursor?: string; limit?: number } = {},
+) {
+  const pageSize = Math.min(50, Math.max(1, Math.trunc(limit)));
+  const rows = await db
+    .select({
+      id: learning_item.id,
+      title: learning_item.title,
+      status: learning_item.status,
+      user_pinned: learning_item.user_pinned,
+      due_at: learning_item.due_at,
+    })
+    .from(learning_item)
+    .where(
+      and(
+        isNull(learning_item.archived_at),
+        inArray(learning_item.status, LearningItemOpenStatus.options),
+        cursor === undefined ? undefined : gt(learning_item.id, cursor),
+      ),
+    )
+    .orderBy(asc(learning_item.id))
+    .limit(pageSize + 1);
+  const items = rows.slice(0, pageSize);
+  return {
+    items,
+    next_cursor: rows.length > pageSize ? (items.at(-1)?.id ?? null) : null,
+  };
+}
 
 /** Caller-owned facts; the creation owner supplies the shared pending state. */
 export type PendingLearningItemInput = Pick<
