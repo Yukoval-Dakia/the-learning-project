@@ -128,8 +128,8 @@ function liveUrl(): { scope: string; item: string | null } {
   return { scope: `${window.location.pathname}?${search}`, item };
 }
 
-// navigate 暂未消费（M3 知识面挂上后，复盘 trace 的知识点链接会用它跳转）。
 export default function PracticeFacePage({
+  navigate,
   getQuery,
   setQuery,
   itemParam,
@@ -155,7 +155,25 @@ export default function PracticeFacePage({
     },
     [setQuery],
   );
-  const [mode, setMode] = useState<Mode>({ kind: 'list' });
+  const paperParam = getQuery('paper');
+  const [mode, setMode] = useState<Mode>(() =>
+    paperParam === null ? { kind: 'list' } : { kind: 'paper', artifactId: paperParam },
+  );
+  const [followedPaper, setFollowedPaper] = useState(paperParam);
+  // Reconcile before children commit: a late read from the previous paper must not mount it.
+  if (paperParam !== followedPaper) {
+    setFollowedPaper(paperParam);
+    setMode(paperParam === null ? { kind: 'list' } : { kind: 'paper', artifactId: paperParam });
+  }
+  const openPaper = useCallback(
+    (artifactId: string) => {
+      const search = new URLSearchParams(window.location.search);
+      search.delete('item');
+      search.set('paper', artifactId);
+      navigate(`/practice?${search}`);
+    },
+    [navigate],
+  );
   const [toasts, setToasts] = useState<PfToast[]>([]);
   const [actionFailure, setActionFailure] = useState<StreamActionFailure | null>(null);
 
@@ -277,7 +295,8 @@ export default function PracticeFacePage({
     if (!nextScope && getQuery('view') === 'shelf') nextView = 'shelf';
     setScopeKnowledgeId(nextScope);
     setView(nextView);
-    setMode({ kind: 'list' });
+    const paper = getQuery('paper');
+    setMode(paper === null ? { kind: 'list' } : { kind: 'paper', artifactId: paper });
     setActionFailure(null);
   }, [getQuery]);
 
@@ -287,6 +306,7 @@ export default function PracticeFacePage({
   );
   const streamQ = useQuery({
     queryKey: streamQueryKey,
+    enabled: paperParam === null,
     queryFn: () => getStream(scopeKnowledgeId ?? undefined),
   });
   // 路由范围切换/HMR 期间，Query cache 可能短暂保留上一分区的数据。范围与 payload
@@ -314,7 +334,11 @@ export default function PracticeFacePage({
   // names now; until then it waits, unfollowed, so the right stream can still open it.
   const urlScope = getQuery('kc')?.trim() || null;
   const streamMatchesUrl = urlScope === scopeKnowledgeId;
-  if (itemParam !== followedItem && (itemParam === null || (streamRead && streamMatchesUrl))) {
+  if (
+    paperParam === null &&
+    itemParam !== followedItem &&
+    (itemParam === null || (streamRead && streamMatchesUrl))
+  ) {
     setFollowedItem(itemParam);
     const target = itemParam === null ? undefined : items.find((it) => it.id === itemParam);
     if (target?.item_kind === 'question' && target.status === 'in_progress') {
@@ -444,7 +468,7 @@ export default function PracticeFacePage({
       const enter = (confirmed: StreamItem) => {
         if (liveUrl().scope !== scope) return;
         if (confirmed.item_kind === 'paper') {
-          setMode({ kind: 'paper', artifactId: confirmed.ref_id });
+          openPaper(confirmed.ref_id);
         } else {
           // M4: the row's title grows into the question's; the list's place is kept for back.
           listScroll.current = window.scrollY;
@@ -461,7 +485,7 @@ export default function PracticeFacePage({
       }
       void commitStreamItem(item, 'in_progress', '开始练习', enter);
     },
-    [commitStreamItem, morph, openQuestionUrl],
+    [commitStreamItem, morph, openPaper, openQuestionUrl],
   );
 
   const continueAfterSolo = useCallback(
@@ -761,6 +785,8 @@ export default function PracticeFacePage({
         key={mode.artifactId}
         artifactId={mode.artifactId}
         onExit={(info) => {
+          if (new URLSearchParams(window.location.search).get('paper') !== paperParam) return;
+          setQuery('paper', null);
           setMode({ kind: 'list' });
           void refreshStream();
           const n = info?.unsavedFailures ?? 0;
@@ -771,7 +797,8 @@ export default function PracticeFacePage({
           );
         }}
         onSubmitted={() => {
-          void refreshStream();
+          if (new URLSearchParams(window.location.search).get('paper') !== paperParam) return;
+          void qc.invalidateQueries({ queryKey: streamQueryKey, refetchType: 'none' });
           setMode({ kind: 'retro', artifactId: mode.artifactId });
         }}
         addToast={addToast}
@@ -782,6 +809,7 @@ export default function PracticeFacePage({
       <PfRetro
         artifactId={mode.artifactId}
         onBack={() => {
+          setQuery('paper', null);
           setMode({ kind: 'list' });
           switchView('shelf');
         }}
@@ -798,7 +826,7 @@ export default function PracticeFacePage({
         />
         {view === 'shelf' ? (
           <PfShelf
-            openPaper={(artifactId) => setMode({ kind: 'paper', artifactId })}
+            openPaper={openPaper}
             openRetro={(artifactId) => setMode({ kind: 'retro', artifactId })}
           />
         ) : (

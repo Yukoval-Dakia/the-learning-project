@@ -38,6 +38,7 @@ import { Route as EventsIdRouteImport } from './routes/events.$id'
 import { Route as KnowledgeIdRouteImport } from './routes/knowledge.$id'
 import { Route as NotesIdRouteImport } from './routes/notes.$id'
 import { Route as OnboardingUploadRouteImport } from './routes/onboarding.upload'
+import { Route as PracticeArtifactIdRouteImport } from './routes/practice_.$artifactId'
 import { Route as QuestionsIdRouteImport } from './routes/questions.$id'
 import { Route as AdminSubjectsIdRouteImport } from './routes/admin.subjects.$id'
 import { Route as PrintWorksheetTokenRouteImport } from './routes/print.worksheet.$token'
@@ -187,6 +188,11 @@ const OnboardingUploadRoute = OnboardingUploadRouteImport.update({
   path: '/onboarding/upload',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PracticeArtifactIdRoute = PracticeArtifactIdRouteImport.update({
+  id: '/practice_/$artifactId',
+  path: '/practice/$artifactId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const QuestionsIdRoute = QuestionsIdRouteImport.update({
   id: '/$id',
   path: '/$id',
@@ -233,6 +239,7 @@ export interface FileRoutesByFullPath {
   '/knowledge/$id': typeof KnowledgeIdRoute
   '/notes/$id': typeof NotesIdRoute
   '/onboarding/upload': typeof OnboardingUploadRoute
+  '/practice/$artifactId': typeof PracticeArtifactIdRoute
   '/questions/$id': typeof QuestionsIdRoute
   '/admin/subjects/$id': typeof AdminSubjectsIdRoute
   '/print/worksheet/$token': typeof PrintWorksheetTokenRoute
@@ -267,6 +274,7 @@ export interface FileRoutesByTo {
   '/knowledge/$id': typeof KnowledgeIdRoute
   '/notes/$id': typeof NotesIdRoute
   '/onboarding/upload': typeof OnboardingUploadRoute
+  '/practice/$artifactId': typeof PracticeArtifactIdRoute
   '/questions/$id': typeof QuestionsIdRoute
   '/admin/subjects/$id': typeof AdminSubjectsIdRoute
   '/print/worksheet/$token': typeof PrintWorksheetTokenRoute
@@ -302,6 +310,7 @@ export interface FileRoutesById {
   '/knowledge/$id': typeof KnowledgeIdRoute
   '/notes/$id': typeof NotesIdRoute
   '/onboarding/upload': typeof OnboardingUploadRoute
+  '/practice_/$artifactId': typeof PracticeArtifactIdRoute
   '/questions/$id': typeof QuestionsIdRoute
   '/admin/subjects/$id': typeof AdminSubjectsIdRoute
   '/print/worksheet/$token': typeof PrintWorksheetTokenRoute
@@ -338,6 +347,7 @@ export interface FileRouteTypes {
     | '/knowledge/$id'
     | '/notes/$id'
     | '/onboarding/upload'
+    | '/practice/$artifactId'
     | '/questions/$id'
     | '/admin/subjects/$id'
     | '/print/worksheet/$token'
@@ -372,6 +382,7 @@ export interface FileRouteTypes {
     | '/knowledge/$id'
     | '/notes/$id'
     | '/onboarding/upload'
+    | '/practice/$artifactId'
     | '/questions/$id'
     | '/admin/subjects/$id'
     | '/print/worksheet/$token'
@@ -406,6 +417,7 @@ export interface FileRouteTypes {
     | '/knowledge/$id'
     | '/notes/$id'
     | '/onboarding/upload'
+    | '/practice_/$artifactId'
     | '/questions/$id'
     | '/admin/subjects/$id'
     | '/print/worksheet/$token'
@@ -439,6 +451,7 @@ export interface RootRouteChildren {
   ApiSplatRoute: typeof ApiSplatRoute
   EventsIdRoute: typeof EventsIdRoute
   OnboardingUploadRoute: typeof OnboardingUploadRoute
+  PracticeArtifactIdRoute: typeof PracticeArtifactIdRoute
   PrintWorksheetTokenRoute: typeof PrintWorksheetTokenRoute
 }
 
@@ -647,6 +660,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof OnboardingUploadRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/practice_/$artifactId': {
+      id: '/practice_/$artifactId'
+      path: '/practice/$artifactId'
+      fullPath: '/practice/$artifactId'
+      preLoaderRoute: typeof PracticeArtifactIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/questions/$id': {
       id: '/questions/$id'
       path: '/$id'
@@ -745,6 +765,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiSplatRoute: ApiSplatRoute,
   EventsIdRoute: EventsIdRoute,
   OnboardingUploadRoute: OnboardingUploadRoute,
+  PracticeArtifactIdRoute: PracticeArtifactIdRoute,
   PrintWorksheetTokenRoute: PrintWorksheetTokenRoute,
 }
 export const routeTree = rootRouteImport
