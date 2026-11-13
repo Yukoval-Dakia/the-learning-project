@@ -8,10 +8,10 @@
 | `manifest.ts` | 6 条 API 路由 + `/today` `/inbox` `/coach` 三页 |
 | `api/proposals-list.ts` | 跨 capability pending proposal 列表 |
 | `api/proposals-auto-applied.ts` | A 档 auto-applied 卡与裁决熔断快照 |
-| `api/proposal-decide.ts` / `proposal-retract.ts` | 统一 decide / retract 入口 |
+| `api/proposal-decisions.ts` | 统一 decide / retract 入口 |
 | `api/overnight-digest.ts` | 昨夜窗 digest |
 | `api/prep-desk-conjectures.ts` | 备课台 top pending conjectures |
-| `server/auto-applied-read.ts` + `decide-breaker.ts` + `completion-autoapply-actions.ts` | 历史自动应用卡完整只读投影与全局裁决速率展示；不拥有自动应用或撤销写入 |
+| `server/auto-applied-read.ts` + `completion-autoapply-actions.ts` | 历史自动应用卡完整只读投影与全局裁决速率展示；不拥有自动应用或撤销写入 |
 | `server/` | proposals reader/decider/retract、workbench 聚合、overnight digest |
 | `ui/TodayPage.tsx` / `InboxPage.tsx` / `CoachHub.tsx` | 今日、收件箱、Coach 周报 |
 
@@ -21,7 +21,7 @@
 - shipped 页面声明统一投影自 `src/kernel/ui-surfaces.ts`，禁止在 manifest 另写一份路径表。
 - 收件箱 count 与 TodayPage 复用同一 `workbench-summary` query key，React Query 自动去重。
 - `/today`、`/coach` 用到的 agency / onboarding 组件与读函数由路由壳注入（Start `server/start/routes/`）；shell 只 type-import 它们。
-- 工作台 due KPI 采样 Practice 的 `queryReviewDue`，由组合层传入：Start 读者 `server/start/workbench-reader.ts`、Hono handler `server/composed-routes.ts`（manifest 只声明 `/api/workbench/summary` 归属，不带 loader）；shell 不 import practice。
+- 工作台 due KPI 采样 Practice 的 `queryReviewDue`，由组合层传入：Start 侧 `server/start/workbench-adapters.ts` 调用 `loadWorkbenchSummary`、Hono handler `server/composed-routes.ts`（manifest 只声明 `/api/workbench/summary` 归属，不带 loader）；shell 不 import practice。
 - 7 天活动热力只计 actor 为 user 的学习活动（作答、复习、作答锚点、学习记录）。夜间系统事件不计入。
 
 ## ANTI-PATTERNS
