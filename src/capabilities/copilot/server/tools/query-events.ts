@@ -56,7 +56,7 @@ const InputSchema = z.object({
     .boolean()
     .optional()
     .describe(
-      'Include each row payload as bounded JSON text. Row cap 8k chars, page cap 48k; payload_truncated/payload_omitted say what did not fit. Fetch one exact eventId to read the rest.',
+      'Include each row payload as bounded JSON text. Row cap 8k chars, page cap 48k; payload_truncated/payload_omitted say what did not fit. Fetch one exact eventId to read the rest — an exact eventId read returns the complete payload regardless of caps.',
     ),
 });
 
@@ -182,7 +182,7 @@ const DESCRIPTION = [
   'window_complete: no cursor was passed, and a subject-scoped window is fully returned. It does not include causal descendants.',
   'remaining_window_complete: a cursor was passed and no further pages remain. coverage.complete_for_window stays false. Do not claim rows before the cursor.',
   'sinceDays is at most 180; sinceAt is an exact lower bound (inclusive). limit is 1–50 (default 20).',
-  'includePayload adds bounded payload text (row 8k, page 48k chars) and is off by default.',
+  'includePayload adds bounded payload text (row 8k, page 48k chars) and is off by default; an exact eventId read returns the complete payload regardless of caps.',
 ].join('\n');
 
 type ClaimStatus =
@@ -422,7 +422,14 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
     };
     if (!input.includePayload) return base;
     const full = JSON.stringify(payloadById.get(r.id) ?? null);
-    const rowBudget = Math.min(QUERY_EVENTS_PAYLOAD_CAPS.rowChars, payloadCharsLeft);
+    // An exact eventId fetch is the documented way to finish a truncated row:
+    // it must return the whole payload or that row can never retire the
+    // curator watermark (every read reports payload_truncated, the id never
+    // joins readIds, and the window replays the same rows forever).
+    const exactRow = filter?.eventId !== undefined && rows.length === 1;
+    const rowBudget = exactRow
+      ? full.length
+      : Math.min(QUERY_EVENTS_PAYLOAD_CAPS.rowChars, payloadCharsLeft);
     if (rowBudget <= 0) {
       omittedPayloadRows += 1;
       return { ...base, payload: null, payload_omitted: true, payload_chars: full.length };

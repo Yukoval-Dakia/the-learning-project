@@ -128,6 +128,7 @@ async function runCuratorTurn(db: Db, reason: 'nightly' | 'activity', runTimeout
                 observation.output as {
                   events?: {
                     id?: unknown;
+                    payload?: unknown;
                     payload_omitted?: unknown;
                     payload_truncated?: unknown;
                   }[];
@@ -135,13 +136,14 @@ async function runCuratorTurn(db: Db, reason: 'nightly' | 'activity', runTimeout
               ).events;
               if (Array.isArray(list)) {
                 for (const row of list) {
-                  // Only a complete payload counts as read: omitted or
-                  // truncated rows were listed but never shown to the model,
-                  // so counting them would advance the watermark past unread
-                  // evidence and silently drop it from the next window.
+                  // Only a complete payload string counts as read: listings
+                  // (includePayload=false, no payload field), omitted and
+                  // truncated rows were never shown to the model, so counting
+                  // them would advance the watermark past unread evidence.
                   if (
                     row &&
                     typeof row.id === 'string' &&
+                    typeof row.payload === 'string' &&
                     row.payload_omitted !== true &&
                     row.payload_truncated !== true
                   )
