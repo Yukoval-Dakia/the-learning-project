@@ -82,7 +82,6 @@ function slotIssuanceKey(streamItemId: string): string {
 const TOP_KNOWLEDGE = 8;
 // A fully held point still counts, at a quarter of an unheld one with the same open failures.
 const HOLD_FLOOR = 0.25;
-const CORRECTS_PER_KNOWLEDGE = 64;
 
 /** Where an open failure stands against the previous window of the same length. */
 type KnowledgeStanding = 'fixed' | 'still_unresolved' | 'added';
@@ -180,10 +179,12 @@ async function rankOpenKnowledgeFailures(
   const knowledgeIds = [...new Set(input.rows.flatMap((row) => knowledgeIdsOf(row)))];
   if (knowledgeIds.length === 0) return emptyKnowledgeRanking();
 
+  // Absence means no later independent success. The sample cap on this reader
+  // can be filled by other knowledge points, so the ranking reads the whole window.
   const corrects = await loadRecentCorrectAttemptsForKnowledge(db, {
     knowledgeIds,
     since: input.priorFrom,
-    limitPerKnowledge: CORRECTS_PER_KNOWLEDGE,
+    exhaustive: true,
   });
   const successAt = new Map<string, Date[]>();
   for (const [id, attempts] of corrects) {
