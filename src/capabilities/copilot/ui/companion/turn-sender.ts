@@ -176,11 +176,21 @@ export function createTurnSender(ctx: CompanionCtx): TurnSender {
       internals.nudgeSession,
       page ? { kind: page.kind, id: page.id } : undefined,
     );
+    const draftFocus =
+      !skill &&
+      !correction &&
+      s.derivationPolicy === 'allow' &&
+      route === '/practice' &&
+      focus?.kind === 'question' &&
+      focus.id === page?.id
+        ? page.readSavedDraft?.()
+        : undefined;
     return {
       session_id: sessionId,
       user_message: text,
       derivation_policy: s.derivationPolicy,
       triggered_by: 'chat' as const,
+      ...(draftFocus ? { draft_focus: draftFocus } : {}),
       ...(skill && s.derivationPolicy === 'allow' ? { skill_context: skill } : {}),
       ...(route ? { ambient_context: { route, ...(focus ? { focused_entity: focus } : {}) } } : {}),
       ...(correction ? { correction_target_turn_id: correction.turnId } : {}),
@@ -212,6 +222,7 @@ export function createTurnSender(ctx: CompanionCtx): TurnSender {
         ? {
             ...buildBody(sessionId, text),
             correction_target_turn_id: undefined,
+            draft_focus: undefined,
             skill_context: {
               skill: 'teaching' as const,
               ref: { kind: 'learning_item', id: explicit.occurrence.learning_item_id },

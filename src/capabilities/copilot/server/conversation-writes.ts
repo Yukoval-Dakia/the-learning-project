@@ -5,6 +5,7 @@ import type { FailureDiagnostics } from '@/ai/failure-diagnostics';
 import { createHash } from 'node:crypto';
 import { createId } from '@paralleldrive/cuid2';
 import type { ProviderFailureInfo } from '@/ai/provider-failure';
+import type { DraftFocusT } from '@/core/schema/assessment/draft-focus';
 import { type DerivationPolicyT, readDerivationPolicy } from '@/core/schema/derivation-policy';
 import type { Db, Tx } from '@/db/client';
 import { type WriteEventInput, writeEvent } from '@/kernel/events';
@@ -15,6 +16,7 @@ import {
 } from '@/kernel/events/copilot-actions';
 import { readEventDerivationPolicy } from '@/kernel/events/derivation-policy';
 import { ApiError } from '@/kernel/http';
+import { captureDraftFocus } from '@/kernel/records/current-draft';
 import { captureReviewAnswerBinding } from '@/kernel/records/review-answer-binding';
 import type { ReviewAnswerAttachment } from '@/kernel/tools/review-answer';
 import type { ConfirmationCommandT, ConfirmationOccurrenceT } from '../confirmation-contract';
@@ -52,6 +54,7 @@ export async function writeCopilotInputEvent(
     userMessage: string;
     derivationPolicy?: DerivationPolicyT;
     reviewAnswer?: ReviewAnswerAttachment;
+    draftFocus?: DraftFocusT;
     confirmation?: ConfirmationCommandT;
     triggeredBy?: 'chat' | 'chip';
     chipKind?: string;
@@ -71,7 +74,19 @@ export async function writeCopilotInputEvent(
       400,
     );
   }
-  if (params.reviewAnswer || params.confirmation)
+  if (
+    params.draftFocus &&
+    (params.derivationPolicy !== 'allow' ||
+      params.triggeredBy !== 'chat' ||
+      params.reviewAnswer ||
+      params.confirmation)
+  )
+    throw new ApiError(
+      'draft_read_denied',
+      'draft focus requires an explicit permitted chat ask',
+      403,
+    );
+  if (params.reviewAnswer || params.confirmation || params.draftFocus)
     return db.transaction((tx) => persistCopilotInputEvent(tx, params));
   return persistCopilotInputEvent(db, params);
 }
@@ -85,6 +100,7 @@ async function persistCopilotInputEvent(
   const userAskEventId =
     params.eventId ?? `${isChip ? 'copilot_chip' : 'copilot_user_ask'}_${createId()}`;
   const requestedReviewAnswer = params.reviewAnswer;
+  const draftFocus = params.draftFocus ? await captureDraftFocus(db, params.draftFocus) : undefined;
   const reviewAnswer = requestedReviewAnswer
     ? await db.transaction((tx) =>
         captureReviewAnswerBinding(tx, {
@@ -114,6 +130,7 @@ async function persistCopilotInputEvent(
       user_message: params.userMessage,
       derivation_policy: readDerivationPolicy({ derivation_policy: params.derivationPolicy }),
       ...(reviewAnswer ? { review_answer: reviewAnswer } : {}),
+      ...(draftFocus ? { draft_focus: draftFocus } : {}),
       ...(params.confirmation ? { confirmation: params.confirmation } : {}),
       ...(isChip ? { chip_kind: params.chipKind ?? null } : {}),
       // Redundant portable copy of the conversation envelope id.

@@ -9,7 +9,7 @@
 
 import { MessageSquareQuote } from 'lucide-react';
 import { useCallback, useState } from 'react';
-import { openCopilot, setCompanionFocus } from '@/ui/lib/use-copilot-dwell';
+import { openCopilot, readCompanionFocus, setCompanionFocus } from '@/ui/lib/use-copilot-dwell';
 import type { StreamItem } from '../practice-api';
 
 /** A quote is a handful of sentences, not the whole page. */
@@ -45,7 +45,15 @@ export function clipQuote(text: string): string {
 export function quoteToCompanion(item: StreamItem, clipped: string): void {
   if (item.item_kind === 'question') {
     const title = clipped.length > 28 ? `${clipped.slice(0, 27)}…` : clipped;
-    setCompanionFocus({ kind: 'question', id: item.ref_id, title });
+    const current = readCompanionFocus();
+    setCompanionFocus({
+      kind: 'question',
+      id: item.ref_id,
+      title,
+      ...(current?.kind === 'question' && current.id === item.ref_id
+        ? { readSavedDraft: current.readSavedDraft }
+        : {}),
+    });
   }
   openCopilot(`「${clipped}」\n`, { send: false });
 }

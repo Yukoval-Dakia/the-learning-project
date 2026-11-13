@@ -146,6 +146,7 @@ export type CopilotExecutionActivity =
     };
 
 export interface CopilotExecutionTurn {
+  currentDraftFocus?: import('@/core/schema/assessment/draft-focus').DraftFocusT;
   input: CopilotRunInput;
   sessionId: string;
   taskRunId: string;
@@ -379,7 +380,14 @@ export function createCopilotExecutionOwner(
     // supplies correlation via `correlatedToolUseId` (see pi-tools.ts).
     const isRetry =
       turn.learnerAskEventId !== undefined && turn.learnerAskEventId !== turn.sourceEventId;
-    const toolNames = answerOnly ? [...ANSWER_ONLY_TOOL_NAMES] : resolveDomainToolNames(surface);
+    const toolNames = answerOnly
+      ? [...ANSWER_ONLY_TOOL_NAMES]
+      : [
+          ...resolveDomainToolNames(surface),
+          ...(surface === 'copilot' && turn.currentDraftFocus && !isRetry
+            ? ['get_current_draft']
+            : []),
+        ];
     const domainMountOptions = {
       ctx: {
         db,
@@ -395,6 +403,9 @@ export function createCopilotExecutionOwner(
         ...(turn.learnerAskEventId ? { learnerAskEventId: turn.learnerAskEventId } : {}),
         ...(focused ? { ambientFocus: { kind: focused.kind, id: focused.id } } : {}),
         sourceLedger,
+        ...(surface === 'copilot' && !isRetry && turn.currentDraftFocus
+          ? { currentDraftFocus: turn.currentDraftFocus }
+          : {}),
         answerOnly,
       },
       serverName: DOMAIN_TOOL_MCP_SERVER_NAME,

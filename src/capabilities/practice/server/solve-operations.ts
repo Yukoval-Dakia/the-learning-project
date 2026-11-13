@@ -5,10 +5,13 @@ import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
+import { restoreIssuedHints } from '@/kernel/records/hint-continuity';
 import {
   CreateHintRequestBodySchema,
   CreateSolveSessionBodySchema,
+  HintHistoryResponseSchema,
   HintRequestBodySchema,
+  RestoreHintsBodySchema,
   StartSolveBodySchema,
 } from '../api/solve-contracts';
 import { SolveError, planSolveHintOutcome, startSolveSession } from './solve-session';
@@ -36,6 +39,24 @@ export async function createPracticeSolveSession(db: Db, raw: unknown) {
 export async function createPracticeHintRequest(db: Db, sessionId: string, raw: unknown) {
   const { question_id: questionId, ...body } = parseResourceInput(raw, CreateHintRequestBodySchema);
   return requestPracticeSolveHint(db, questionId, sessionId, body);
+}
+
+export async function restorePracticeHints(db: Db, raw: unknown) {
+  const input = parseResourceInput(raw, RestoreHintsBodySchema);
+  const state = await restoreIssuedHints(db, {
+    issuanceId: input.issuance_id,
+    questionId: input.question_id,
+  });
+  return HintHistoryResponseSchema.parse({
+    status: state.status,
+    next_rung: state.next_rung,
+    hints: state.hints.map((h) => ({
+      index: h.publication.rung,
+      text_md: h.publication.body,
+      kind: h.publication.kind,
+      disclosure_md: h.publication.disclosure,
+    })),
+  });
 }
 
 export async function startPracticeSolveSession(db: Db, questionId: string, raw: unknown) {
@@ -96,39 +117,41 @@ export async function requestPracticeSolveHint(
       db,
       sessionId,
       hintIndex,
+      requestId: parsed.data?.request_id,
       expectedQuestionId: questionId,
       issuanceId: parsed.data?.issuance_id,
     });
-    const hintRequestId = newId();
+    const hintRequestId = outcome.restored_id ?? newId();
     const replyGrounding = outcome.status === 'ok' ? outcome.reply_grounding : undefined;
-    const { help_latency: helpLatency, ...publicOutcome } = outcome;
+    const { help_latency: helpLatency, restored_id, ...publicOutcome } = outcome;
     const denominator = helpLatency ? readHelpLatency([helpLatency]).denominator : undefined;
     const reply_grounding = readReplyGrounding(replyGrounding);
-    await writeEvent(db, {
-      id: hintRequestId,
-      session_id: sessionId,
-      actor_kind: 'user',
-      actor_ref: 'self',
-      action: 'experimental:hint_request',
-      subject_kind: 'question',
-      subject_id: questionId,
-      outcome: publicOutcome.status === 'ok' ? 'success' : 'failure',
-      payload: {
-        hint_index: hintIndex,
-        ...(helpLatency && denominator ? { help_latency: helpLatency, denominator } : {}),
-        ...(reply_grounding ? { reply_grounding } : {}),
-        ...(publicOutcome.status === 'ok'
-          ? {}
-          : {
-              status: publicOutcome.status,
-              reason: publicOutcome.reason,
-              ...(publicOutcome.stop_retry ? { stop_retry: publicOutcome.stop_retry.retry } : {}),
-              ...(publicOutcome.status === 'fallback'
-                ? { help_kind: publicOutcome.help.kind }
-                : {}),
-            }),
-      },
-    });
+    if (!restored_id)
+      await writeEvent(db, {
+        id: hintRequestId,
+        session_id: sessionId,
+        actor_kind: 'user',
+        actor_ref: 'self',
+        action: 'experimental:hint_request',
+        subject_kind: 'question',
+        subject_id: questionId,
+        outcome: publicOutcome.status === 'ok' ? 'success' : 'failure',
+        payload: {
+          hint_index: hintIndex,
+          ...(helpLatency && denominator ? { help_latency: helpLatency, denominator } : {}),
+          ...(reply_grounding ? { reply_grounding } : {}),
+          ...(publicOutcome.status === 'ok'
+            ? {}
+            : {
+                status: publicOutcome.status,
+                reason: publicOutcome.reason,
+                ...(publicOutcome.stop_retry ? { stop_retry: publicOutcome.stop_retry.retry } : {}),
+                ...(publicOutcome.status === 'fallback'
+                  ? { help_kind: publicOutcome.help.kind }
+                  : {}),
+              }),
+        },
+      });
     if (publicOutcome.status === 'ok') {
       return { hint_request_id: hintRequestId, text_md: publicOutcome.text_md };
     }

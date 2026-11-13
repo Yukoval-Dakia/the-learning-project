@@ -752,7 +752,11 @@ async function persistToolCallLog(
       tool_name: dt.name,
       effect: dt.effect,
       input_json: parsedInput as Record<string, unknown>,
-      output_json: errorReason ? { error: errorReason } : (output as object | null),
+      output_json: errorReason
+        ? { error: errorReason }
+        : dt.name === 'get_current_draft'
+          ? { status: 'private_saved_draft', content_omitted: true }
+          : (output as object | null),
       error_reason: errorReason,
       iteration: 0,
       latency_ms: latencyMs,

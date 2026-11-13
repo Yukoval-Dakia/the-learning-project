@@ -1109,6 +1109,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/hint-history/restorations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["restoreHintHistory"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/ingestion": {
         parameters: {
             query?: never;
@@ -11765,6 +11781,12 @@ export interface operations {
                     correction_target_turn_id?: string;
                     /** @enum {string} */
                     derivation_policy?: "allow" | "answer_only" | "crisis";
+                    draft_focus?: {
+                        issuance_id: string;
+                        question_id: string;
+                        revision_id: string;
+                        save_epoch: number;
+                    };
                     durable?: boolean;
                     review_answer?: {
                         assessment: {
@@ -15371,6 +15393,142 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    restoreHintHistory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    issuance_id: string;
+                    question_id: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        hints: {
+                            disclosure_md: string | null;
+                            index: number;
+                            /** @enum {string} */
+                            kind: "ai" | "deterministic_next_step";
+                            text_md: string;
+                        }[];
+                        next_rung: number;
+                        /** @enum {string} */
+                        status: "outcome_unknown" | "legacy_body_unavailable" | "ready" | "empty";
+                    };
+                };
+            };
+            /** @description Malformed request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description State or version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Semantic validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Rate limited */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
             };
         };
     };
@@ -41263,6 +41421,7 @@ export interface operations {
                     hint_index?: number;
                     issuance_id?: string;
                     question_id: string;
+                    request_id?: string;
                 };
             };
         };

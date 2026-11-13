@@ -13,6 +13,7 @@ import {
   projectIssuedScoringBasis,
   projectPracticeIssuance,
 } from '@/core/schema/assessment';
+import type { HintPublicationT } from '@/core/schema/event/assistance-publication';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import type { Db, Tx } from '@/db/client';
 import {
@@ -271,6 +272,8 @@ export async function recordStudyAssistanceExposure(
     contentDigest: string;
     actorRef: string;
     dose?: number;
+    eventId?: string;
+    publication?: HintPublicationT;
   },
 ): Promise<string> {
   return database.transaction(async (tx) => {
@@ -305,7 +308,7 @@ export async function recordStudyAssistanceExposure(
         ? input.dose
         : null;
     return writeEvent(tx, {
-      id: `evt_help_${createId()}`,
+      id: input.eventId ?? `evt_help_${createId()}`,
       actor_kind: 'system',
       actor_ref: input.actorRef,
       action: STUDY_ASSISTANCE_ACTION,
@@ -319,6 +322,7 @@ export async function recordStudyAssistanceExposure(
         content_digest: input.contentDigest,
         dose,
         phase: submitted ? ('after_submit' as const) : ('before_submit' as const),
+        ...(input.publication ? { publication: input.publication } : {}),
       },
     });
   });

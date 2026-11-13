@@ -93,6 +93,7 @@ export interface ToolCallerActor {
 }
 
 export interface ToolContext {
+  currentDraftFocus?: import('@/core/schema/assessment/draft-focus').DraftFocusT;
   /** Validated preparation ticket supplied by the server, never model arguments. */
   supplyDemand?: EvidenceDemandV1T;
   /** Original execution owner authorizes the actual write transaction. */

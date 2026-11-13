@@ -195,7 +195,11 @@ export {
   placementProbeEnabled,
   selectOrphanPlacementCandidates,
 } from './placement/public';
-export { createPracticeHintRequest, createPracticeSolveSession } from './server/solve-operations';
+export {
+  createPracticeHintRequest,
+  createPracticeSolveSession,
+  restorePracticeHints,
+} from './server/solve-operations';
 export {
   abandonOrphanReviewSession,
   enqueueReviewSessionSummary,

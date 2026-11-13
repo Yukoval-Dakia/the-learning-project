@@ -21,7 +21,7 @@ import { startPracticeStreamItemClient } from '../practice-stream-item-client';
 import { startPracticeRecomposeClient } from '../practice-stream-recompose-client';
 import { startPracticeSubmitClient } from '../practice-submit-client';
 import { startResponseDraftClient } from '../response-draft-client';
-import { startHintClient, startSolveClient } from '../solve-client';
+import { startHintClient, startHintHistoryClient, startSolveClient } from '../solve-client';
 import { startStudyReferenceClient } from '../study-reference-client';
 import { StartWorkbenchShell, startNavigate } from '../workbench-shell';
 
@@ -30,6 +30,7 @@ const practiceClient: PracticeClient = {
   revealStudyReference: startStudyReferenceClient,
   solveStart: startSolveClient,
   solveHint: startHintClient,
+  restoreHints: startHintHistoryClient,
   fileAppeal: startPracticeAppealClient,
   getAdvice: startPracticeAdviceClient,
   advanceStreamItem: startPracticeStreamItemClient,

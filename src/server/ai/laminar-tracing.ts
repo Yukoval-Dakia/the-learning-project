@@ -122,6 +122,13 @@ export interface TraceExporter {
 let exporter: TraceExporter | undefined;
 let initializing: Promise<void> | undefined;
 const activeSpan = new AsyncLocalStorage<TraceSpan>();
+
+/** Provider/parser failures can echo private input even when transcripts are disabled. */
+export function traceSafeError<T>(error: T): T | string {
+  return activeSpan.getStore()?.transcriptScope === 'private'
+    ? '[private task diagnostic omitted]'
+    : error;
+}
 export const TRACE_FLUSH_TIMEOUT_MS = 500;
 // Background batch export, not shutdown: a batch with transcripts takes seconds, and a
 // shorter limit drops the whole batch.
@@ -229,7 +236,7 @@ export async function initializeLaminarTracing(
 
 // Set by each task span, inherited by everything under it. A task under a denied task stays
 // denied, whatever it declares, because its input may come from the parent's content.
-type TranscriptScope = 'unset' | 'allow' | 'deny';
+type TranscriptScope = 'unset' | 'allow' | 'deny' | 'private';
 
 export class TraceSpan {
   private ended = false;
@@ -271,6 +278,7 @@ export class TraceSpan {
       });
   }
   content(direction: 'input' | 'output', content?: SanitizedTraceText): void {
+    if (this.transcriptScope === 'private') return;
     if (typeof content?.summary === 'string') {
       this.attribute(
         `lmnr.span.${direction}`,
@@ -279,6 +287,7 @@ export class TraceSpan {
     }
   }
   transcript(direction: 'input' | 'output', project: () => unknown): void {
+    if (this.transcriptScope === 'private') return;
     if (this.ended || !this.sink) return;
     const allowedTaskRun = taskTranscriptsEnabled() && this.transcriptScope === 'allow';
     if (!allowedTaskRun && !developmentTranscriptsEnabled()) return;
@@ -306,8 +315,13 @@ export class TraceSpan {
 
 const TASK_SPANS: ReadonlySet<SpanName> = new Set(['task.run', 'copilot.run', 'copilot.finalize']);
 
-function transcriptScopeFor(name: SpanName, allowTranscript: boolean): TranscriptScope {
+function transcriptScopeFor(
+  name: SpanName,
+  allowTranscript: boolean,
+  privateContent?: boolean,
+): TranscriptScope {
   const inherited = activeSpan.getStore()?.transcriptScope ?? 'unset';
+  if (privateContent || inherited === 'private') return 'private';
   if (!TASK_SPANS.has(name)) return inherited;
   return allowTranscript && inherited !== 'deny' ? 'allow' : 'deny';
 }
@@ -315,7 +329,7 @@ function transcriptScopeFor(name: SpanName, allowTranscript: boolean): Transcrip
 export function startTraceSpan(
   name: SpanName,
   metadata: TraceMetadata = {},
-  options: { allowTranscript?: boolean } = {},
+  options: { allowTranscript?: boolean; privateContent?: boolean } = {},
 ): TraceSpan {
   let sink: TraceSinkSpan | undefined;
   telemetry(() => {
@@ -328,7 +342,7 @@ export function startTraceSpan(
   const span = new TraceSpan(
     sink,
     name,
-    transcriptScopeFor(name, options.allowTranscript === true),
+    transcriptScopeFor(name, options.allowTranscript === true, options.privateContent),
   );
   span.metadata(activeSpan.getStore()?.identityMetadata ?? {});
   span.metadata(metadata);
@@ -353,10 +367,15 @@ export async function traceOperation<T>(
     transcript?: { input: () => unknown; output: (result: T) => unknown };
     outcome?: (result: T) => 'success' | 'error' | 'cancelled';
     allowTranscript?: boolean;
+    privateContent?: boolean;
   } = {},
 ): Promise<T> {
-  if (!exporter) return callback();
-  const span = startTraceSpan(name, metadata, { allowTranscript: options.allowTranscript });
+  if (!exporter && !options.privateContent && activeSpan.getStore()?.transcriptScope !== 'private')
+    return callback();
+  const span = startTraceSpan(name, metadata, {
+    allowTranscript: options.allowTranscript,
+    privateContent: options.privateContent,
+  });
   telemetry(() => {
     span.content('input', options.content?.input);
     if (options.transcript) span.transcript('input', options.transcript.input);

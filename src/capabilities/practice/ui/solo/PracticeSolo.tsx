@@ -3,6 +3,7 @@ import { type Ref, useCallback, useState } from 'react';
 import type { PracticeIssuanceDtoT } from '@/core/schema/assessment';
 import { REASONING_TRACE_MAX_LEN } from '@/kernel/limits';
 import { useSubjects } from '@/ui/hooks/useSubjects';
+import { readCompanionFocus, setCompanionFocus } from '@/ui/lib/use-copilot-dwell';
 import { FoldList } from '@/ui-next/primitives/FoldList';
 import type { ChipTone } from '@/ui-next/public';
 import type { AttemptTimelineEvent } from '../attempt-timeline-adapter';
@@ -162,7 +163,7 @@ export function PracticeSolo({
   titleRef,
 }: PracticeSoloProps) {
   const [coachOpen, setCoachOpen] = useState(false);
-  // How many times the hint drawer has been opened; each opening starts a fresh ladder (YUK-1483).
+  // Each visit restores publications from the server before offering the next step.
   const [coachSession, setCoachSession] = useState(0);
   const openCoach = () => {
     setCoachOpen(true);
@@ -207,9 +208,25 @@ export function PracticeSolo({
   const { question, issuance } = engine;
   const q = question.data;
   const ready = issuance.status === 'ready' ? issuance : null;
+  const attachFocus = useCallback(
+    (node: HTMLDivElement | null) => {
+      if (!node || !q || !ready) return;
+      const focus = {
+        kind: 'question',
+        id: q.id,
+        title: '当前作答（已保存内容）',
+        readSavedDraft: engine.draft.readFocus,
+      };
+      setCompanionFocus(focus);
+      return () => {
+        if (readCompanionFocus()?.readSavedDraft === focus.readSavedDraft) setCompanionFocus(null);
+      };
+    },
+    [q, ready, engine.draft.readFocus],
+  );
 
   return (
-    <div data-screen-label={`散题作答 · ${item.ref_id}`}>
+    <div ref={attachFocus} data-screen-label={`散题作答 · ${item.ref_id}`}>
       <div data-swap-body="">
         <PracticePresentation
           engine={engine}

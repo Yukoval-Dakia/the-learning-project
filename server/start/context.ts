@@ -135,6 +135,9 @@ export type FrontdoorContext = {
   createSolveSession: (
     body: string,
   ) => Promise<Awaited<ReturnType<typeof createPracticeSolveSession>>>;
+  restoreHintHistory: (
+    body: string,
+  ) => ReturnType<typeof import('@/capabilities/practice/public').restorePracticeHints>;
   createHintRequest: (input: {
     sessionId: string;
     body: string;

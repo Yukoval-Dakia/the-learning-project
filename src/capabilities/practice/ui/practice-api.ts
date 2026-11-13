@@ -411,17 +411,33 @@ export const revealStudyReference = (
 // AI hint could not be generated, or `unavailable` with retry/skip. The latter two are not errors.
 export type SolveHintResponse = ApiOperationJsonResponse<'createSolveHintRequest'>;
 export type SolveHintFallbackHelp = Extract<SolveHintResponse, { status: 'fallback' }>['help'];
+export type HintHistoryResponse = ApiOperationJsonResponse<'restoreHintHistory'>;
+export const restoreHints = (
+  questionId: string,
+  issuanceId: string,
+): Promise<HintHistoryResponse> =>
+  apiOperationJson('restoreHintHistory', {
+    url: '/api/hint-history/restorations',
+    method: 'POST',
+    body: { question_id: questionId, issuance_id: issuanceId },
+  });
 
 export const solveHint = (
   questionId: string,
   sessionId: string,
   hintIndex: number,
   issuanceId?: string,
+  requestId?: string,
 ): Promise<SolveHintResponse> =>
   apiOperationJson('createSolveHintRequest', {
     url: `/api/solve-sessions/${encodeURIComponent(sessionId)}/hint-requests`,
     method: 'POST',
-    body: { question_id: questionId, hint_index: hintIndex, issuance_id: issuanceId },
+    body: {
+      question_id: questionId,
+      hint_index: hintIndex,
+      issuance_id: issuanceId,
+      request_id: requestId,
+    },
   });
 
 // ── 题库面 /questions（YUK-409, loom screen-questions）─────────────────────────

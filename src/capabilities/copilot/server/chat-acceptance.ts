@@ -99,6 +99,9 @@ async function dispatchAcceptedRun(
             triggered_by: parsed.triggered_by,
             ...(parsed.chip_kind ? { chip_kind: parsed.chip_kind } : {}),
             ...(parsed.ambient_context ? { ambient: parsed.ambient_context } : {}),
+            ...(parsed.draft_focus && acceptance.derivationPolicy === 'allow'
+              ? { draft_focus: parsed.draft_focus }
+              : {}),
             ...(parsed.correction_target_turn_id
               ? { correction_target_turn_id: parsed.correction_target_turn_id }
               : {}),
@@ -242,6 +245,9 @@ export async function acceptCopilotTurnAfterAdmission(
           dispatch: { source: 'unified_conversation' },
         },
         jobData: {
+          ...(parsed.draft_focus && acceptedDerivationPolicy === 'allow'
+            ? { draft_focus: parsed.draft_focus }
+            : {}),
           user_message: parsed.user_message,
           derivation_policy: acceptedDerivationPolicy,
           triggered_by: parsed.triggered_by,

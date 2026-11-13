@@ -36,7 +36,11 @@ import { createStartPracticeAppeal } from './start/practice-appeal-operation';
 import { answerStartConjectureProbe } from './start/probe-answer-operation';
 import { readStartPlacementProfile } from './start/profile-reader';
 import { saveStartResponseDraft } from './start/response-draft-operation';
-import { createStartHintRequest, createStartSolveSession } from './start/solve-operation';
+import {
+  createStartHintRequest,
+  createStartSolveSession,
+  restoreStartHintHistory,
+} from './start/solve-operation';
 import { revealStartStudyReference } from './start/study-reference-operation';
 import { readStartWorksheetExport } from './start/worksheet-export-reader';
 
@@ -119,6 +123,7 @@ export function createFrontdoorContext(api: Hono): FrontdoorContext {
     revealStudyReference: revealStartStudyReference,
     createSolveSession: createStartSolveSession,
     createHintRequest: createStartHintRequest,
+    restoreHintHistory: restoreStartHintHistory,
     createPracticeAppeal: createStartPracticeAppeal,
     previewReviewAdvice: previewStartReviewAdvice,
     submitPlacementAnswer: submitStartPlacementAnswer,

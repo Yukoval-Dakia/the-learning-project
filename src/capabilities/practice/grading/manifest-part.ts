@@ -199,6 +199,10 @@ export const gradingManifestPart: Omit<CapabilityManifest, 'name' | 'description
   copilotTools: {
     tools: [
       {
+        name: 'get_current_draft',
+        load: () => import('./tools/get-current-draft').then((m) => m.getCurrentDraftTool),
+      },
+      {
         name: 'submit_review_answer',
         load: () => import('./tools/submit-review-answer').then((m) => m.submitReviewAnswerTool),
       },

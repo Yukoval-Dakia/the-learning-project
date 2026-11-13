@@ -695,6 +695,7 @@ async function executeAcceptedCopilotRun(
         taskRunId,
         sourceEventId: runId,
         learnerAskEventId,
+        currentDraftFocus: data.draft_focus,
       },
       {
         cancellation: cancellationControl,

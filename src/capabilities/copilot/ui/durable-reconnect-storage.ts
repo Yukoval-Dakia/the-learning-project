@@ -1,3 +1,4 @@
+import { DraftFocus } from '@/core/schema/assessment/draft-focus';
 import { ConfirmationCommand } from '../confirmation-contract';
 // YUK-948 — reload handoff for POSTs whose 202 acceptance is not yet known.
 //
@@ -29,6 +30,7 @@ export type PersistedPendingCopilotRequestBody = Pick<
   | 'triggered_by'
   | 'skill_context'
   | 'ambient_context'
+  | 'draft_focus'
   | 'correction_target_turn_id'
 > & { session_id: string };
 
@@ -137,6 +139,9 @@ function parsePendingCopilotTurn(value: unknown): PersistedPendingCopilotTurn | 
       : ConfirmationCommand.safeParse(rawBody.confirmation);
   if (confirmation && !confirmation.success) return null;
   let ambientContext: CopilotChatRequestT['ambient_context'];
+  const draftFocus =
+    rawBody.draft_focus === undefined ? undefined : DraftFocus.safeParse(rawBody.draft_focus);
+  if (draftFocus && !draftFocus.success) return null;
   if (rawBody.ambient_context !== undefined) {
     const rawAmbient = objectRecord(rawBody.ambient_context);
     const route = boundedString(rawAmbient?.route, 200);
@@ -165,6 +170,7 @@ function parsePendingCopilotTurn(value: unknown): PersistedPendingCopilotTurn | 
       ...(confirmation?.success ? { confirmation: confirmation.data } : {}),
       ...(skillContext ? { skill_context: skillContext } : {}),
       ...(ambientContext ? { ambient_context: ambientContext } : {}),
+      ...(draftFocus?.success ? { draft_focus: draftFocus.data } : {}),
       ...(correctionTargetTurnId ? { correction_target_turn_id: correctionTargetTurnId } : {}),
     },
   };

@@ -3,7 +3,14 @@ import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetTestConfig } from '@/core/config/store';
 import { canonicalHash } from '@/core/migration/canonical';
-import { ai_task_runs, event, material_fsrs_state, question, source_asset } from '@/db/schema';
+import {
+  ai_task_runs,
+  event,
+  material_fsrs_state,
+  question,
+  source_asset,
+  source_document,
+} from '@/db/schema';
 import { issueAssessment } from '@/kernel/records/assessment-issuance';
 import {
   contractIntegrityDigest,
@@ -33,12 +40,26 @@ const figure = (asset_id: string) => ({
 });
 const reply = '先从图中找出保持不变的条件，再比较两组方向。';
 const runner = () =>
-  vi.fn<RunTaskFn>(async () => ({
-    text: JSON.stringify({ kind: 'explain', text_md: reply, suggested_next: 'continue' }),
-  }));
+  vi.fn<RunTaskFn>(async (_kind, _input, ctx) => {
+    await (ctx as { beforeProviderQuery: () => Promise<void> }).beforeProviderQuery();
+    return {
+      text: JSON.stringify({ kind: 'explain', text_md: reply, suggested_next: 'continue' }),
+    };
+  });
 
 async function seed(options: { inline?: string; unsupported?: boolean; reference?: string } = {}) {
   const now = new Date();
+  await db.insert(source_document).values({
+    id: 'media-source',
+    body_md: 'Synthetic authorized worksheet',
+    source_asset_ids: ['issued-diagram', 'unissued-diagram', 'private-diagram'],
+    provenance: {
+      usage_policy: { derivation_policy: 'allow' },
+      usage_epoch: 'media-source-epoch',
+    },
+    created_at: now,
+    updated_at: now,
+  });
   const base = {
     kind: 'choice',
     reference_md: options.reference ?? 'B',
@@ -46,6 +67,7 @@ async function seed(options: { inline?: string; unsupported?: boolean; reference
     knowledge_ids: [],
     difficulty: 3,
     source: 'web_sourced',
+    metadata: { source_document_id: 'media-source' },
     created_at: now,
     updated_at: now,
     version: 0,
@@ -240,6 +262,9 @@ describe('frozen solve image task payload', () => {
       figures: [figure('private-diagram')],
     });
     const runTaskFn = runner();
+    await planSolveHint({ db, sessionId: s.sessionId, hintIndex: 0, runTaskFn });
+    runTaskFn.mockClear();
+    r2.get.mockClear();
     const result = await planSolveHint({ db, sessionId: s.sessionId, hintIndex: 1, runTaskFn });
     expect(runTaskFn).toHaveBeenCalledOnce();
     const [kind, input] = runTaskFn.mock.calls[0];
@@ -260,7 +285,8 @@ describe('frozen solve image task payload', () => {
         contains_learner_handwriting: false,
       },
     ]);
-    expect(wire.messages[0].text_md).toContain('仍然不要直接说出最终答案');
+    expect(wire.messages.at(-1).text_md).toContain('仍然不要直接说出最终答案');
+    expect(wire.messages[0].text_md).toContain(reply);
     expect(input.text).not.toMatch(/MUTATED|UNISSUED|unissued-diagram|private-diagram/);
     expect(r2.get.mock.calls).toEqual([['frozen/issued-diagram']]);
     expect(result).toEqual({ text_md: reply });
@@ -268,6 +294,7 @@ describe('frozen solve image task payload', () => {
     expect(
       await db.select().from(event).where(eq(event.action, 'experimental:assessment_assistance')),
     ).toMatchObject([
+      { payload: { impact: 'unknown', content_digest: `sha256:${canonicalHash(reply)}` } },
       { payload: { impact: 'unknown', content_digest: `sha256:${canonicalHash(reply)}` } },
     ]);
     expect(await db.select().from(material_fsrs_state)).toHaveLength(0);

@@ -1,11 +1,5 @@
-// YUK-1473 — the hint drawer (解题会话) of the practice page, in the loft design language. Same
-// behaviour as the old PfCoach: a drawer from the right with a scrim, focus held inside while
-// open (shared useFocusTrap stack, so one Esc closes one layer), each opening a fresh six-step
-// hint ladder (HintLadder, YUK-354), 「看完整解」 through the issuance (recorded as not
-// independent), and the session never counts toward grading. While it is open the page's ⌘Enter
-// and number-key hotkeys are paused (the page passes hotkeysSuspended).
-// It portals to <body> inside its own UiNextRoot: the retained shell's containers must not clip or
-// re-anchor a fixed layer. Closed, the drawer stays mounted for its slide-out but is inert (A1).
+// Portal the drawer outside shell clipping. Closed content remains inert for
+// its exit animation; the history reader starts only after an explicit opening.
 
 import { Lightbulb, X } from 'lucide-react';
 import { createPortal } from 'react-dom';
@@ -18,7 +12,7 @@ import { usePracticeClient } from '../practice-client';
 export interface SoloCoachProps {
   open: boolean;
   presentation?: 'workspace';
-  /** Opening count; each opening gets a fresh hint ladder (closed content stays for the slide-out). */
+  /** Opening count rechecks stored-history authorization on each opening. */
   session: number;
   onClose: () => void;
   question: QuestionDetail;
@@ -66,7 +60,7 @@ export function SoloCoach({
         <header className="un-ps-coach-head">
           <Lightbulb size={15} aria-hidden="true" className="un-ps-coach-icon" />
           <span className="un-ps-coach-title">解题提示</span>
-          <span className="un-ps-hint">想看多深直接选</span>
+          <span className="un-ps-hint">按需再看一阶</span>
           <IconButton
             label="关闭"
             className="un-ps-coach-close"
@@ -78,21 +72,23 @@ export function SoloCoach({
           <p className="un-ps-hint">
             {submitted
               ? '这题已经交了，现在看提示不影响这次的记录。'
-              : '看了提示，这题不算独立做的；只打开这里不算。'}
-            越往后越接近答案，想看哪个直接点。
+              : '查看新提示或恢复旧提示都会计入援助；没有提示时，只打开这里不算。'}
+            越往后越接近答案，已看过的提示可以回看。
           </p>
-          <HintLadder
-            key={session}
-            question={question}
-            onReturnToAnswer={onClose}
-            issuanceId={issuanceId}
-            submitted={submitted}
-            requestFullSolution={
-              issuanceId
-                ? async () => (await revealStudyReference(issuanceId)).reference_md
-                : undefined
-            }
-          />
+          {session > 0 && (
+            <HintLadder
+              key={session}
+              question={question}
+              onReturnToAnswer={onClose}
+              issuanceId={issuanceId}
+              submitted={submitted}
+              requestFullSolution={
+                issuanceId
+                  ? async () => (await revealStudyReference(issuanceId)).reference_md
+                  : undefined
+              }
+            />
+          )}
         </div>
       </aside>
     </UiNextRoot>,
