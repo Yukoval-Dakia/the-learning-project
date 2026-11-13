@@ -2,8 +2,9 @@
 // probabilistic-AND and strict-< weakest attribution as
 // crates/calibration-native `propagate_priors`. The 41-point support and σ are
 // the shared grid functions. No answers are folded, so evidence stays 0.
+// An omitted root prior is the Rust uniform root.
 
-import { polySigmoid } from '@/core/poly-exp';
+import { polyExp, polySigmoid } from '@/core/poly-exp';
 import { GRID_THETA } from '@/core/theta-grid';
 
 export interface DayOnePrereqEdge {
@@ -32,12 +33,21 @@ export type DayOnePropagation =
   | { ok: true; posteriors: DayOneGridPosterior[] }
   | { ok: false; failure: DayOnePropagationFailure };
 
+/**
+ * Root distribution. `uniform` is the Rust `propagate_priors` root.
+ * `unit_precision` is a N(0, 1) offset prior, used only for a root whose
+ * ability or difficulty anchor is non-zero so that anchor is not averaged
+ * away across ±4 logits. Omitted means `uniform`.
+ */
+export type DayOneRootPrior = 'uniform' | 'unit_precision';
+
 export interface DayOnePropagationInput {
   kcIds: readonly number[];
   prereqEdges: readonly DayOnePrereqEdge[];
   bPerKc: readonly number[];
   domainThetaGlobal: readonly number[];
   shrinkCoeff: number;
+  rootPrior?: DayOneRootPrior;
 }
 
 const POINTS = GRID_THETA.length;
@@ -78,6 +88,46 @@ function uniform(): number[] {
   return Array.from({ length: POINTS }, () => mass);
 }
 
+let unitPrecisionCache: number[] | null = null;
+
+/** Discrete N(0, 1) on the frozen offset grid. Same weights for every seeded root. */
+function unitPrecisionPrior(): number[] {
+  if (!unitPrecisionCache) {
+    const weights = Array.from({ length: POINTS }, () => 0);
+    let total = 0;
+    for (let i = 0; i < POINTS; i++) {
+      const offset = GRID_THETA[i];
+      const weight = polyExp(-0.5 * offset * offset);
+      weights[i] = weight;
+      total = total + weight;
+    }
+    if (!(total > 0)) {
+      unitPrecisionCache = uniform();
+    } else {
+      for (let i = 0; i < POINTS; i++) weights[i] = weights[i] / total;
+      unitPrecisionCache = weights;
+    }
+  }
+  return unitPrecisionCache.slice();
+}
+
+function rootDistribution(
+  rootPrior: DayOneRootPrior | undefined,
+  thetaGlobal: number,
+  difficulty: number,
+): number[] {
+  const seeded = rootPrior === 'unit_precision' && (thetaGlobal !== 0 || difficulty !== 0);
+  return seeded ? unitPrecisionPrior() : uniform();
+}
+
+/** Posterior mean of the offset grid. Roots stay 0 so a symmetric prior does not nudge θ̂. */
+export function dayOneAbilityOffset(post: DayOneGridPosterior): number {
+  if (post.weakestPrereqId === undefined) return 0;
+  let acc = 0;
+  for (let i = 0; i < post.probs.length; i++) acc = acc + post.probs[i] * GRID_THETA[i];
+  return acc;
+}
+
 /** E[mastery] = Σ probs·σ(θ_global + grid − b), left fold, no fused multiply-add. */
 function expectedMastery(probs: readonly number[], thetaGlobal: number, b: number): number {
   let acc = 0;
@@ -92,7 +142,7 @@ function indexInRange(raw: number, n: number): boolean {
 }
 
 export function propagateDayOnePriors(input: DayOnePropagationInput): DayOnePropagation {
-  const { kcIds, prereqEdges, bPerKc, domainThetaGlobal, shrinkCoeff } = input;
+  const { kcIds, prereqEdges, bPerKc, domainThetaGlobal, shrinkCoeff, rootPrior } = input;
   const n = kcIds.length;
   if (bPerKc.length !== n || domainThetaGlobal.length !== n) {
     return {
@@ -171,7 +221,7 @@ export function propagateDayOnePriors(input: DayOnePropagationInput): DayOneProp
   for (const kc of order) {
     const prereqs = prereqsOf[kc];
     if (prereqs.length === 0) {
-      probs[kc] = uniform();
+      probs[kc] = rootDistribution(rootPrior, domainThetaGlobal[kc], bPerKc[kc]);
     } else {
       let prod = 1;
       let minMastery = Number.POSITIVE_INFINITY;
