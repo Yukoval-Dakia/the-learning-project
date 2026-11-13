@@ -1,10 +1,14 @@
 // Shared creation and structural materialization for event-native learning items.
-// Derived child_learning_item_ids / ai_score / due_at / reviewed_at remain outside the snapshot.
+// Derived child_learning_item_ids / ai_score / reviewed_at remain outside the snapshot.
 
 import { and, asc, eq, inArray, isNull, or } from 'drizzle-orm';
 import type { z } from 'zod';
 import { newId } from '@/core/ids';
-import { foldLearningItem } from '@/core/projections/learning_item';
+import {
+  type LearningItemPlanPatch,
+  applyLearningItemPlan,
+  foldLearningItem,
+} from '@/core/projections/learning_item';
 import type { LearningItemRowSnapshotT } from '@/core/schema/event/genesis';
 import type {
   LearningItemKnowledgeIdsRewriteExperimental,
@@ -42,6 +46,7 @@ export async function createPendingLearningItem(
     ...input,
     status: 'pending',
     user_pinned: false,
+    due_at: null,
     completed_at: null,
     dismissed_at: null,
     archived_at: null,
@@ -120,6 +125,7 @@ async function upsertProjectedLearningItem(
       parent_learning_item_id: projected.parent_learning_item_id,
       status: projected.status,
       user_pinned: projected.user_pinned,
+      due_at: projected.due_at ?? null,
       completed_at: projected.completed_at,
       dismissed_at: projected.dismissed_at,
       archived_at: projected.archived_at,
@@ -140,6 +146,7 @@ async function upsertProjectedLearningItem(
         parent_learning_item_id: projected.parent_learning_item_id,
         status: projected.status,
         user_pinned: projected.user_pinned,
+        due_at: projected.due_at ?? null,
         completed_at: projected.completed_at,
         dismissed_at: projected.dismissed_at,
         archived_at: projected.archived_at,
@@ -284,6 +291,72 @@ export async function applyLearningItemRepair(
   );
   await writeEvent(tx, { ...input, id: newId(), created_at: createdAt, ingest_at: requestedAt });
   await projectLearningItemGuarded(tx, input.subject_id);
+}
+
+export type SetLearningItemPlanResult =
+  | { ok: true; id: string; user_pinned: boolean; due_at: Date | null }
+  | { ok: false; reason: 'missing' | 'unanchored' | 'invalid' };
+
+function planPatchValid(patch: LearningItemPlanPatch): boolean {
+  if (patch.user_pinned === undefined && patch.due_at === undefined) return false;
+  return !(patch.due_at instanceof Date && !Number.isFinite(patch.due_at.getTime()));
+}
+
+/**
+ * Learner plan edit. The locked row is the current fact; the event replaces pin and
+ * deadline together so a later fold does not keep a stale half.
+ */
+export async function setLearningItemPlan(
+  db: Db,
+  itemId: string,
+  patch: LearningItemPlanPatch,
+  now: Date = new Date(),
+): Promise<SetLearningItemPlanResult> {
+  if (!planPatchValid(patch)) return { ok: false, reason: 'invalid' };
+  return db.transaction(async (tx) => {
+    const [current] = await tx
+      .select({
+        user_pinned: learning_item.user_pinned,
+        due_at: learning_item.due_at,
+      })
+      .from(learning_item)
+      .where(eq(learning_item.id, itemId))
+      .for('update');
+    if (!current) return { ok: false, reason: 'missing' };
+    if (!(await hasLearningItemGenesisAnchor(tx, itemId))) {
+      return { ok: false, reason: 'unanchored' };
+    }
+    const next = applyLearningItemPlan(
+      { user_pinned: current.user_pinned, due_at: current.due_at },
+      patch,
+    );
+    if (next === null) {
+      return {
+        ok: true,
+        id: itemId,
+        user_pinned: current.user_pinned,
+        due_at: current.due_at,
+      };
+    }
+    const createdAt = await nextProjectionEventTime(tx, 'learning_item', itemId, now);
+    await writeEvent(tx, {
+      id: newId(),
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'experimental:learning_item_plan',
+      subject_kind: 'learning_item',
+      subject_id: itemId,
+      outcome: 'success',
+      payload: {
+        user_pinned: next.user_pinned,
+        due_at: next.due_at === null ? null : next.due_at.toISOString(),
+      },
+      created_at: createdAt,
+      ingest_at: createdAt,
+    });
+    await projectLearningItemGuarded(tx, itemId);
+    return { ok: true, id: itemId, user_pinned: next.user_pinned, due_at: next.due_at };
+  });
 }
 
 // Read-only active learning-item reader for the Coach brief. Results are attention

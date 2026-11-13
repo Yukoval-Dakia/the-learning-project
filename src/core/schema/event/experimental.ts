@@ -205,6 +205,8 @@ export const RESERVED_EXPERIMENTAL_ACTIONS = new Set<string>([
   'experimental:learning_item_archive',
   'experimental:learning_item_knowledge_ids_rewrite',
   'experimental:learning_item_state_restore',
+  // Pin and plan deadline. The fold replaces both; a bad payload must not fall through.
+  'experimental:learning_item_plan',
   // The three artifact action events
   // (./artifact-events.ts) make every structural artifact mutation fold-visible + self-sufficient:
   // body_blocks_edit (full AFTER-snapshot), artifact_create (runtime creation BASE, unifying the 8

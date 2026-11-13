@@ -299,9 +299,9 @@ export async function backfillMistakeVariantGenesis(
   return { seeded, skipped };
 }
 
-// EXCLUDES the non-structural / derived columns (child_learning_item_ids / ai_score / due_at /
-// reviewed_at): they have no write path the fold owns, so they are not part of the structural
-// snapshot (mirrors the node shell's embed_* exclusion). user_pinned IS carried verbatim.
+// EXCLUDES the non-structural / derived columns (child_learning_item_ids / ai_score /
+// reviewed_at). due_at is the plan deadline and is fold truth, so the seed keeps it.
+// user_pinned is carried verbatim.
 function learningItemRowToSnapshot(row: LearningItemRow): LearningItemRowSnapshotT {
   return {
     id: row.id,
@@ -314,6 +314,7 @@ function learningItemRowToSnapshot(row: LearningItemRow): LearningItemRowSnapsho
     parent_learning_item_id: row.parent_learning_item_id,
     status: row.status,
     user_pinned: row.user_pinned,
+    due_at: row.due_at,
     completed_at: row.completed_at,
     dismissed_at: row.dismissed_at,
     archived_at: row.archived_at,

@@ -103,3 +103,23 @@ export const LearningItemStateRestoreExperimental = z.object({
     })
     .strict(),
 });
+
+/** Replace pin and the plan deadline together. `due_at` null clears the deadline. */
+export const LearningItemPlanExperimental = z.object({
+  actor_kind: z.literal('user'),
+  actor_ref: z.literal('self'),
+  action: z.literal('experimental:learning_item_plan'),
+  subject_kind: z.literal('learning_item'),
+  subject_id: z.string().min(1),
+  outcome: z.literal('success'),
+  payload: z
+    .object({
+      user_pinned: z.boolean(),
+      due_at: z.string().datetime().nullable(),
+    })
+    .strict(),
+  caused_by_event_id: z.string().optional(),
+  task_run_id: z.string().optional(),
+  cost_micro_usd: z.number().int().optional(),
+});
+export type LearningItemPlanExperimentalT = z.infer<typeof LearningItemPlanExperimental>;
