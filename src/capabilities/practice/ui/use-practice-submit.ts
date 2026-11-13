@@ -1,12 +1,5 @@
-// YUK-1473 — the practice submission engine, shared by every view of one stream item.
-// Extracted unchanged from the old PfSolo view (YUK-1483/1484/1485/1487/1489). Its view is now
-// the practice page (solo/PracticeSolo.tsx); PfPaper shares only buildCaptureFields and
-// shouldOfferProcessBox. The hook owns everything that is not drawing: the issuance command,
-// the draft and its restore, autosave (conflict hold, keepalive pagehide flush), the draft
-// conflict choice, 「返回流」 with its 8s cap, judge/submit/appeal, the 202-pending poll,
-// the self-rated mode, and two window listeners owned by ref callbacks. A view renders from
-// the returned state and wires the returned actions and ref callbacks; it never re-implements
-// any of them.
+// Owns solo issuance, draft recovery/autosave, visible answer time, submission and appeal.
+// Views wire its actions; PfPaper shares only buildCaptureFields and shouldOfferProcessBox.
 
 import { queryOptions, useQuery } from '@tanstack/react-query';
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -428,10 +421,8 @@ export function usePracticeSubmit({
   const readLatencyMs = () => {
     const timing = answerTimeRef.current;
     if (!timing) return null;
-    return computeLatencyMs(
-      0,
-      timing.elapsedMs + (timing.startedAt === null ? 0 : performance.now() - timing.startedAt),
-    );
+    const activeMs = timing.startedAt === null ? 0 : performance.now() - timing.startedAt;
+    return computeLatencyMs(0, timing.elapsedMs + activeMs);
   };
 
   const q = qQ.data ?? null;
