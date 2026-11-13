@@ -81,7 +81,7 @@ async function main() {
     return r;
   });
   await step('1b. brief regen → subject:yuwen (knowledge-resolved events)', async () => {
-    const events = await loadSubjectBriefEvents(db, 'yuwen', { lookbackDays: 30, now: NOW });
+    const events = await loadSubjectBriefEvents(db, 'yuwen', { now: NOW });
     show('subject events loaded', events.length);
     return regenerateMemoryBrief({
       db,

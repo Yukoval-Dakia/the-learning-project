@@ -13,6 +13,8 @@ import {
   AgentNotesResponseSchema,
   CreateLearningIntentBodySchema,
   LearningIntentProposalResponseSchema,
+  LearningItemPlanBody,
+  LearningItemPlanResponseSchema,
   ProbeAnswerBodySchema,
   ProbeAnswerParamsSchema,
   ProbeAnswerResponseSchema,
@@ -178,6 +180,15 @@ export const agencyCapability = defineCapability({
         responses: { 200: LearningIntentProposalResponseSchema, ...API_ERROR_RESPONSES },
         successStatus: 200,
         load: () => import('./api/learning-intent-create').then((m) => m.POST),
+      },
+      {
+        method: 'PATCH',
+        path: '/api/learning-items/[id]/plan',
+        operationId: 'setLearningItemPlan',
+        request: { params: ApiIdParamsSchema, body: LearningItemPlanBody },
+        responses: { 200: LearningItemPlanResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        load: () => import('./api/learning-item-plan').then((m) => m.PATCH),
       },
       {
         // at-entry 直写 goal（source='manual'），与 ADR-0025 proposal-materialize 路径

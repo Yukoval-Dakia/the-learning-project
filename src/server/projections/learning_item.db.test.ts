@@ -73,6 +73,7 @@ async function liveItem(id: string): Promise<LearningItemRowSnapshotT | null> {
     parent_learning_item_id: r.parent_learning_item_id,
     status: r.status,
     user_pinned: r.user_pinned,
+    due_at: r.due_at,
     completed_at: r.completed_at,
     dismissed_at: r.dismissed_at,
     archived_at: r.archived_at,

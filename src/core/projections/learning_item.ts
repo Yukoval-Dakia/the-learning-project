@@ -9,6 +9,7 @@ import {
   LearningItemArchiveExperimental,
   LearningItemCompleteExperimental,
   LearningItemKnowledgeIdsRewriteExperimental,
+  LearningItemPlanExperimental,
   LearningItemRelearnExperimental,
   LearningItemStateRestoreExperimental,
 } from '../schema/event/learning-item-events';
@@ -40,8 +41,9 @@ export function applyKnowledgeMergeToIds(
 // parent_learning_item_id, not the child array.
 //
 // Version semantics mirror the imperative writers: genesis verbatim, complete/relearn
-// +1, archive/retract no bump. Each transition applies only when the row matches the
-// imperative WHERE guard; otherwise it is a no-op. Gather is Q1 plus accepted merges.
+// and plan +1, archive/retract no bump. Each status transition applies only when the
+// row matches the imperative WHERE guard; otherwise it is a no-op. Gather is Q1 plus
+// accepted merges.
 
 // Rebuild the parse input from the flat row so each branch validates its payload.
 function toParseInput(fe: FoldEvent): unknown {
@@ -63,6 +65,37 @@ function byCreatedThenId(a: FoldEvent, b: FoldEvent): number {
   const tb = b.created_at.getTime();
   if (ta !== tb) return ta - tb;
   return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+}
+
+export type LearningItemPlanFact = {
+  user_pinned: boolean;
+  due_at: Date | null;
+};
+
+/** Omitted field keeps the current fact. `due_at: null` clears the deadline. */
+export type LearningItemPlanPatch = {
+  user_pinned?: boolean;
+  due_at?: Date | null;
+};
+
+function samePlanDeadline(left: Date | null, right: Date | null): boolean {
+  if (left === null || right === null) return left === right;
+  return left.getTime() === right.getTime();
+}
+
+/** Next pin and deadline, or null when the patch changes nothing. */
+export function applyLearningItemPlan(
+  current: LearningItemPlanFact,
+  patch: LearningItemPlanPatch,
+): LearningItemPlanFact | null {
+  const next: LearningItemPlanFact = {
+    user_pinned: patch.user_pinned ?? current.user_pinned,
+    due_at: patch.due_at === undefined ? current.due_at : patch.due_at,
+  };
+  if (next.user_pinned === current.user_pinned && samePlanDeadline(next.due_at, current.due_at)) {
+    return null;
+  }
+  return next;
 }
 
 function warnMalformed(action: string, eventId: string, error: unknown): void {
@@ -106,7 +139,11 @@ export function foldLearningItem(
         warnMalformed('experimental:genesis(row)', fe.id, seed.error);
         continue;
       }
-      row = { ...seed.data, knowledge_ids: [...seed.data.knowledge_ids] };
+      row = {
+        ...seed.data,
+        knowledge_ids: [...seed.data.knowledge_ids],
+        due_at: seed.data.due_at ?? null,
+      };
       continue;
     }
 
@@ -220,6 +257,38 @@ export function foldLearningItem(
         archived_reason: a.data.payload.reason,
         updated_at: fe.created_at,
       };
+      continue;
+    }
+
+    // Plan fact replaces pin and deadline together. A repeat of the current fact is a no-op.
+    if (
+      fe.action === 'experimental:learning_item_plan' &&
+      fe.subject_kind === 'learning_item' &&
+      fe.subject_id === itemId
+    ) {
+      const plan = LearningItemPlanExperimental.safeParse(toParseInput(fe));
+      if (!plan.success) {
+        warnMalformed('experimental:learning_item_plan', fe.id, plan.error);
+        continue;
+      }
+      const dueAt = plan.data.payload.due_at === null ? null : new Date(plan.data.payload.due_at);
+      const next = applyLearningItemPlan(
+        { user_pinned: row.user_pinned, due_at: row.due_at ?? null },
+        { user_pinned: plan.data.payload.user_pinned, due_at: dueAt },
+      );
+      if (next === null) continue;
+      // System adoption records a deadline the row already carried. Bumping version
+      // would make the fold disagree with that live row.
+      row =
+        plan.data.actor_kind === 'system'
+          ? { ...row, user_pinned: next.user_pinned, due_at: next.due_at }
+          : {
+              ...row,
+              user_pinned: next.user_pinned,
+              due_at: next.due_at,
+              updated_at: fe.created_at,
+              version: row.version + 1,
+            };
       continue;
     }
 

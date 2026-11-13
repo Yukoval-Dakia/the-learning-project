@@ -4,7 +4,7 @@
 // never tag `subject:*` in affected_scopes, so an affected_scopes filter would find
 // almost nothing and regenerate an empty brief every night.
 
-import { and, eq, gt, inArray, like, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, gte, inArray, like, lt, or, sql } from 'drizzle-orm';
 import type { Db } from '@/db/client';
 import { event, memory_brief_note } from '@/db/schema';
 import { eventAllowsDerivationSql } from '@/kernel/events/derivation-policy';
@@ -14,11 +14,13 @@ import {
   resolveLearningEventSubjects,
 } from '@/kernel/read-models/learner-activity';
 import { BRIEF_REFRESH_BUDGET } from '@/kernel/tools/budgets';
-import type { BriefEvent } from './brief';
+import { BRIEF_WINDOWS, type BriefEvent, type BriefWindowBound, briefWindowBounds } from './brief';
 
 const DEFAULT_LOOKBACK_DAYS = 30;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const SUBJECT_SCOPE_PREFIX = 'subject:';
+// Other subjects share each page. The window cap, not the page, bounds the sample.
+const SUBJECT_BRIEF_WINDOW_PAGE = BRIEF_REFRESH_BUDGET.maxEventsPerBrief * 4;
 
 export interface ActiveSubject {
   /** `subject:<id>` — the memory_brief_note scope_key for this subject. */
@@ -54,10 +56,10 @@ type QualifyingEventRow = {
 };
 
 /**
- * The floor shared by detection and regen. A built subject floors at its own
- * refreshed_at: only evidence strictly newer counts. A never-built subject falls
- * back to the bounded lookback window. Both paths must use this helper, otherwise
- * an event detected near the lookback edge can age out before regen reloads it.
+ * Detection floor. A built subject floors at its own refreshed_at: only evidence
+ * strictly newer counts as new activity. A never-built subject falls back to the
+ * bounded lookback. Regen does not use this floor; it samples each brief window,
+ * which reaches at least as far as the lookback.
  */
 export function subjectEventFloor(refreshedAt: Date | null, now: Date, lookbackDays: number): Date {
   return refreshedAt ?? new Date(now.getTime() - lookbackDays * DAY_MS);
@@ -177,69 +179,100 @@ export function selectSubjectsForRun(
     .slice(0, maxSubjectsPerRun);
 }
 
+type EventCursor = { at: Date; id: string };
+
+function toBriefEvent(row: QualifyingEventRow): BriefEvent {
+  return {
+    id: row.id,
+    action: row.action,
+    subject_kind: row.subject_kind,
+    subject_id: row.subject_id,
+    outcome: row.outcome,
+    payload: row.payload,
+    created_at: row.created_at,
+  };
+}
+
+function byNewestThenId(a: BriefEvent, b: BriefEvent): number {
+  const byTime = b.created_at.getTime() - a.created_at.getTime();
+  if (byTime !== 0) return byTime;
+  if (a.id === b.id) return 0;
+  return a.id < b.id ? 1 : -1;
+}
+
 /**
- * Load the knowledge-resolved qualifying window for one subject, newest first,
- * capped. Freshness is decided upstream by the sweep; this only gathers evidence.
- * Loading per subject keeps the job payload small at the cost of one bounded scan.
+ * Newest qualifying events for one subject inside one brief window, capped.
+ * Pages stop once the cap fills, so a busy week does not force a full-history read
+ * and other subjects' rows do not spend this subject's cap.
+ */
+async function loadSubjectWindowEvents(
+  db: Db,
+  subjectId: string,
+  bound: BriefWindowBound,
+  cap: number,
+): Promise<BriefEvent[]> {
+  const matched: BriefEvent[] = [];
+  let cursor: EventCursor | undefined;
+  while (matched.length < cap) {
+    const rows = (await db
+      .select({
+        id: event.id,
+        action: event.action,
+        subject_kind: event.subject_kind,
+        subject_id: event.subject_id,
+        outcome: event.outcome,
+        payload: event.payload,
+        created_at: event.created_at,
+      })
+      .from(event)
+      .where(
+        and(
+          inArray(event.action, [...LEARNING_ACTIVITY_ACTIONS]),
+          eventAllowsDerivationSql(),
+          bound.from ? gte(event.created_at, bound.from) : undefined,
+          bound.until ? lt(event.created_at, bound.until) : undefined,
+          cursor
+            ? or(
+                lt(event.created_at, cursor.at),
+                and(eq(event.created_at, cursor.at), lt(event.id, cursor.id)),
+              )
+            : undefined,
+        ),
+      )
+      .orderBy(desc(event.created_at), desc(event.id))
+      .limit(SUBJECT_BRIEF_WINDOW_PAGE)) as QualifyingEventRow[];
+    if (rows.length === 0) break;
+    const subjectByEventId = await resolveLearningEventSubjects(db, rows, 'default_subject');
+    for (const row of rows) {
+      if (subjectByEventId.get(row.id) !== subjectId) continue;
+      matched.push(toBriefEvent(row));
+      if (matched.length >= cap) break;
+    }
+    if (rows.length < SUBJECT_BRIEF_WINDOW_PAGE || matched.length >= cap) break;
+    const last = rows[rows.length - 1];
+    cursor = { at: last.created_at, id: last.id };
+  }
+  return matched;
+}
+
+/**
+ * Knowledge-resolved evidence for one subject brief, newest first. Each window
+ * keeps its own cap. Not floored at refreshed_at, which would hide earlier events.
+ * Unchanged window ids still keep their previous prose in regenerateMemoryBrief.
  */
 export async function loadSubjectBriefEvents(
   db: Db,
   subjectId: string,
-  opts: { lookbackDays?: number; now?: Date } = {},
+  opts: { now?: Date } = {},
 ): Promise<BriefEvent[]> {
   const now = opts.now ?? new Date();
-  const lookbackDays = opts.lookbackDays ?? DEFAULT_LOOKBACK_DAYS;
-
-  // Floor at this subject's own refreshed_at (lookback only when never built). The
-  // activity scan applies the same helper, so a subject flagged active always
-  // reloads at least one event; a flat lookback floor could silently starve an
-  // already-built subject whose evidence predates the window.
-  const briefRows = await db
-    .select({ refreshed_at: memory_brief_note.refreshed_at })
-    .from(memory_brief_note)
-    .where(eq(memory_brief_note.scope_key, `${SUBJECT_SCOPE_PREFIX}${subjectId}`))
-    .limit(1);
-  const refreshedAt = briefRows[0]?.refreshed_at ?? null;
-  const floor = subjectEventFloor(refreshedAt, now, lookbackDays);
-
-  const rows = (await db
-    .select({
-      id: event.id,
-      action: event.action,
-      subject_kind: event.subject_kind,
-      subject_id: event.subject_id,
-      outcome: event.outcome,
-      payload: event.payload,
-      created_at: event.created_at,
-    })
-    .from(event)
-    .where(
-      and(
-        inArray(event.action, [...LEARNING_ACTIVITY_ACTIONS]),
-        gt(event.created_at, floor),
-        eventAllowsDerivationSql(),
-      ),
-    )
-    .orderBy(sql`${event.created_at} DESC`)) as QualifyingEventRow[];
-
-  if (rows.length === 0) return [];
-
-  const subjectByEventId = await resolveLearningEventSubjects(db, rows, 'default_subject');
-
-  const out: BriefEvent[] = [];
-  for (const row of rows) {
-    if (subjectByEventId.get(row.id) !== subjectId) continue;
-    out.push({
-      id: row.id,
-      action: row.action,
-      subject_kind: row.subject_kind,
-      subject_id: row.subject_id,
-      outcome: row.outcome,
-      payload: row.payload,
-      created_at: row.created_at,
-    });
-    if (out.length >= BRIEF_REFRESH_BUDGET.maxEventsPerBrief) break;
-  }
+  const cap = BRIEF_REFRESH_BUDGET.maxEventsPerBrief;
+  const bounds = briefWindowBounds(now);
+  const samples = await Promise.all(
+    BRIEF_WINDOWS.map((key) => loadSubjectWindowEvents(db, subjectId, bounds[key], cap)),
+  );
+  const out = samples.flat().sort(byNewestThenId);
+  if (out.length === 0) return [];
   // The brief writer judges weakness vs. progress from outcome; native attempts
   // store none on the event, so read their effective verdict.
   const nativeOutcomes = await loadNativeAttemptOutcomes(

@@ -26,6 +26,7 @@ import {
   LearningItemArchiveExperimental,
   LearningItemCompleteExperimental,
   LearningItemKnowledgeIdsRewriteExperimental,
+  LearningItemPlanExperimental,
   LearningItemRelearnExperimental,
   LearningItemStateRestoreExperimental,
 } from './learning-item-events';
@@ -133,6 +134,7 @@ export const Event = z.union([
   LearningItemRelearnExperimental,
   LearningItemArchiveExperimental,
   LearningItemKnowledgeIdsRewriteExperimental,
+  LearningItemPlanExperimental,
   LearningItemStateRestoreExperimental,
   BodyBlocksEditExperimental,
   ArtifactCreateExperimental,

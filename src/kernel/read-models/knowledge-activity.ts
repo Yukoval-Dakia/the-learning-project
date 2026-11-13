@@ -2,7 +2,7 @@
 // spine (max created_at over events touching the node). Single owner of that
 // formula. Read-time derivation only: no view, no new table.
 
-import { and, eq, sql } from 'drizzle-orm';
+import { inArray, sql } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { filterActiveRows } from '@/kernel/events';
@@ -23,6 +23,10 @@ export interface KnowledgeAttemptHit {
   created_at: Date;
 }
 
+interface NativeAttemptTouch extends KnowledgeAttemptHit {
+  knowledge_ids: string[];
+}
+
 // Bounds the unnest parameter list per statement; the tree snapshot can carry
 // up to LOAD_TREE_SNAPSHOT_LIMIT (5000) ids.
 const ACTIVITY_QUERY_CHUNK = 500;
@@ -31,7 +35,9 @@ const ACTIVITY_QUERY_CHUNK = 500;
  * Latest learner event time per knowledge node. System and agent rows do not
  * move the clock. A native attempt is attached through its revision and the
  * frozen learning scope (`resolveVerdictsForNativeAttempts`), not the attempt
- * payload. Legacy rows still match a subject node or a payload reference.
+ * payload. The read starts from the requested ids: a submission receipt whose
+ * frozen scope mentions one of them, then that receipt's learner attempt.
+ * Legacy rows still match a subject node or a payload reference.
  * The UNION ALL arms are set-based index scans instead of a per-node correlated
  * aggregate (which seq-scanned event once per node):
  *   - `subject_kind/subject_id` rides event_subject_idx;
@@ -97,7 +103,7 @@ export async function lastKnowledgeActivityAt(
     }
   }
   const queried = new Set(ids);
-  for (const hit of await userNativeAttemptTouches(db)) {
+  for (const hit of await userNativeAttemptTouches(db, ids)) {
     for (const knowledgeId of hit.knowledge_ids) {
       if (!queried.has(knowledgeId)) continue;
       const prev = raw.get(knowledgeId);
@@ -115,16 +121,15 @@ export async function lastKnowledgeActivityAt(
   return out;
 }
 
-/** Newest learner attempts whose frozen scope includes this node or one merged into it. */
+/** Newest learner attempts issued to this node or one merged into it. */
 export async function recentNativeAttemptsForKnowledge(
   db: DbLike,
   knowledgeId: string,
   limit: number,
 ): Promise<KnowledgeAttemptHit[]> {
   if (limit <= 0) return [];
-  const history = (await loadMergedKnowledgeClosure(db)).closure(knowledgeId);
-  const hits = (await userNativeAttemptTouches(db))
-    .filter((hit) => hit.knowledge_ids.some((id) => history.has(id)))
+  const history = [...(await loadMergedKnowledgeClosure(db)).closure(knowledgeId)];
+  const hits = (await userNativeAttemptTouches(db, history))
     .sort(
       (a, b) =>
         b.created_at.getTime() - a.created_at.getTime() || b.event_id.localeCompare(a.event_id),
@@ -140,26 +145,73 @@ export async function recentNativeAttemptsForKnowledge(
   }));
 }
 
+const NATIVE_ATTEMPT_ACTION = 'experimental:assessment_attempt';
+const SUBMISSION_RECEIPT_ACTION = 'experimental:assessment_submission';
+
+/**
+ * Learner attempts whose frozen submission scope mentions `knowledgeIds`.
+ * Callers pass the merged closure they want counted. Mention is a superset of
+ * issued membership: an unissued part can carry the same id. The revision and
+ * that scope still decide the issued ids; the attempt payload is not a tag.
+ */
 async function userNativeAttemptTouches(
   db: DbLike,
-): Promise<Array<KnowledgeAttemptHit & { knowledge_ids: string[] }>> {
-  const rows = await db
-    .select()
-    .from(event)
-    .where(
-      and(
-        eq(event.actor_kind, 'user'),
-        eq(event.action, 'experimental:assessment_attempt'),
-        eq(event.subject_kind, 'question'),
-      ),
+  knowledgeIds: readonly string[],
+): Promise<NativeAttemptTouch[]> {
+  const wanted = new Set(knowledgeIds);
+  if (wanted.size === 0) return [];
+  const attemptIds = new Set<string>();
+  const wantedIds = [...wanted];
+  for (let start = 0; start < wantedIds.length; start += ACTIVITY_QUERY_CHUNK) {
+    const chunk = wantedIds.slice(start, start + ACTIVITY_QUERY_CHUNK);
+    const idArray = sql`ARRAY[${sql.join(
+      chunk.map((id) => sql`${id}`),
+      sql`, `,
+    )}]::text[]`;
+    // Both joins are top-level payload @>, so they can use event_payload_idx
+    // instead of scanning every learner attempt.
+    const found = await db.execute<{ id: string }>(sql`
+      SELECT DISTINCT e.id
+      FROM unnest(${idArray}) AS j(kc)
+      JOIN event receipt
+        ON receipt.action = ${SUBMISSION_RECEIPT_ACTION}
+       AND receipt.subject_kind = 'submission'
+       AND receipt.payload @> jsonb_build_object(
+            'learning_scope',
+            jsonb_build_object(
+              'questions',
+              jsonb_build_array(
+                jsonb_build_object('knowledge_ids', jsonb_build_array(to_jsonb(j.kc)))
+              )
+            )
+          )
+      JOIN event e
+        ON e.actor_kind = 'user'
+       AND e.action = ${NATIVE_ATTEMPT_ACTION}
+       AND e.subject_kind = 'question'
+       AND e.payload @> jsonb_build_object('submission_id', to_jsonb(receipt.subject_id))
+    `);
+    for (const row of found) attemptIds.add(row.id);
+  }
+  if (attemptIds.size === 0) return [];
+  const rows: Array<typeof event.$inferSelect> = [];
+  const ids = [...attemptIds];
+  for (let start = 0; start < ids.length; start += ACTIVITY_QUERY_CHUNK) {
+    rows.push(
+      ...(await db
+        .select()
+        .from(event)
+        .where(inArray(event.id, ids.slice(start, start + ACTIVITY_QUERY_CHUNK)))),
     );
+  }
   const active = await filterActiveRows(db, rows);
   if (active.length === 0) return [];
   const verdicts = await resolveVerdictsForNativeAttempts(db, active);
-  const hits: Array<KnowledgeAttemptHit & { knowledge_ids: string[] }> = [];
+  const hits: NativeAttemptTouch[] = [];
   for (const row of active) {
     const verdict = verdicts.get(row.id);
-    if (!verdict || verdict.knowledge_ids.length === 0) continue;
+    if (!verdict) continue;
+    if (!verdict.knowledge_ids.some((id) => wanted.has(id))) continue;
     const outcome = nativeAttemptOutcome(verdict);
     hits.push({
       event_id: row.id,

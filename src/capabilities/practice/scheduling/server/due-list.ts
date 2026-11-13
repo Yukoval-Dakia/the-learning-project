@@ -21,6 +21,7 @@ import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervent
 import { SchedulingStateSchema } from '@/core/schema/scheduling-state';
 import { steeringDefersKnowledgeIds } from '@/core/steering';
 import { type Db, type Tx, db } from '@/db/client';
+import { acquireSortedAdvisoryLocks } from '@/db/learning-state-lock';
 import { notDraftPredicate, questionSuspendedPredicate } from '@/db/predicates';
 import { event, material_fsrs_state, question } from '@/db/schema';
 import type { EffectiveTruth } from '@/kernel/events';
@@ -185,6 +186,19 @@ type ProbeSelectionMiss = {
   candidateCount: number;
 };
 
+/** No servable question left, or this page already gave the servable ones to earlier knowledge. */
+type UnselectedProbe = 'record_miss' | 'held_on_page';
+
+function unselectedProbe(
+  bucketIds: readonly string[],
+  usedQuestionIds: ReadonlySet<string>,
+): UnselectedProbe {
+  if (bucketIds.length > 0 && bucketIds.every((id) => usedQuestionIds.has(id))) {
+    return 'held_on_page';
+  }
+  return 'record_miss';
+}
+
 function probeSelectionMissPayload(
   knowledgeId: string,
   subjectId: string,
@@ -219,8 +233,8 @@ function probeSelectionMissPayload(
 }
 
 /**
- * One selection_miss per knowledge per learner day. Due-page reads and stream
- * compose share this branch; a second pass the same day must not flood the ledger.
+ * One selection_miss per knowledge per learner day. The check and the write share
+ * one transaction lock, so a second due read cannot insert before the first commits.
  */
 async function recordProbeSelectionMisses(
   activeDb: DbLike,
@@ -231,42 +245,50 @@ async function recordProbeSelectionMisses(
   const day = learnerLocalDay(now);
   const { from } = learnerDayWindowUtc(day, day);
   const knowledgeIds = [...new Set(misses.map((miss) => miss.knowledgeId))];
-  const already = await activeDb
-    .select({ subject_id: event.subject_id })
-    .from(event)
-    .where(
-      and(
-        eq(event.action, 'experimental:selection_miss'),
-        inArray(event.subject_id, knowledgeIds),
-        gte(event.created_at, from),
-      ),
+  const writeMisses = async (tx: Tx): Promise<void> => {
+    await acquireSortedAdvisoryLocks(tx, `selection-miss:${day}`, knowledgeIds);
+    const already = await tx
+      .select({ subject_id: event.subject_id })
+      .from(event)
+      .where(
+        and(
+          eq(event.action, 'experimental:selection_miss'),
+          inArray(event.subject_id, knowledgeIds),
+          gte(event.created_at, from),
+        ),
+      );
+    const seen = new Set(already.map((row) => row.subject_id));
+    const pending: ProbeSelectionMiss[] = [];
+    for (const miss of misses) {
+      if (seen.has(miss.knowledgeId)) continue;
+      seen.add(miss.knowledgeId);
+      pending.push(miss);
+    }
+    if (pending.length === 0) return;
+    const subjectIds = await batchResolveSubjectIds(
+      tx,
+      pending.map((miss) => ({ id: miss.knowledgeId, knowledge_ids: [miss.knowledgeId] })),
     );
-  const seen = new Set(already.map((row) => row.subject_id));
-  const pending: ProbeSelectionMiss[] = [];
-  for (const miss of misses) {
-    if (seen.has(miss.knowledgeId)) continue;
-    seen.add(miss.knowledgeId);
-    pending.push(miss);
+    const { DEFAULT_SELECTION_POLICY_VERSION, SELECTION_MISS_VERSION, writeSelectionMissEvent } =
+      await import('../../question-bank/public');
+    for (const miss of pending) {
+      await writeSelectionMissEvent(
+        tx,
+        probeSelectionMissPayload(
+          miss.knowledgeId,
+          subjectIds.get(miss.knowledgeId) ?? miss.knowledgeId,
+          miss.candidateCount,
+          SELECTION_MISS_VERSION,
+          DEFAULT_SELECTION_POLICY_VERSION,
+        ),
+      );
+    }
+  };
+  if ('$client' in activeDb) {
+    await activeDb.transaction(writeMisses);
+    return;
   }
-  if (pending.length === 0) return;
-  const subjectIds = await batchResolveSubjectIds(
-    activeDb,
-    pending.map((miss) => ({ id: miss.knowledgeId, knowledge_ids: [miss.knowledgeId] })),
-  );
-  const { DEFAULT_SELECTION_POLICY_VERSION, SELECTION_MISS_VERSION, writeSelectionMissEvent } =
-    await import('../../question-bank/public');
-  for (const miss of pending) {
-    await writeSelectionMissEvent(
-      activeDb,
-      probeSelectionMissPayload(
-        miss.knowledgeId,
-        subjectIds.get(miss.knowledgeId) ?? miss.knowledgeId,
-        miss.candidateCount,
-        SELECTION_MISS_VERSION,
-        DEFAULT_SELECTION_POLICY_VERSION,
-      ),
-    );
-  }
+  await writeMisses(activeDb);
 }
 
 type ScheduledDueRow = {
@@ -479,10 +501,15 @@ export async function queryReviewDue(
       usedQuestionIds: usedDueQuestionIds,
     });
     if (!selected) {
-      probeMisses.push({
-        knowledgeId: stateRow.knowledge_id,
-        candidateCount: probePrefetch.kcQuestions.get(stateRow.knowledge_id)?.length ?? 0,
-      });
+      const bucketIds = (probePrefetch.kcQuestions.get(stateRow.knowledge_id) ?? []).map(
+        (row) => row.id,
+      );
+      if (unselectedProbe(bucketIds, usedDueQuestionIds) === 'record_miss') {
+        probeMisses.push({
+          knowledgeId: stateRow.knowledge_id,
+          candidateCount: bucketIds.length,
+        });
+      }
       continue;
     }
     dueRows.push({

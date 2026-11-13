@@ -952,9 +952,54 @@ function addSettledCount(
   }
 }
 
+interface MergedSettledCountScope {
+  /** Every id the candidate scan must admit: each request's live closure. */
+  scanIds: readonly string[];
+  /** Answer knowledge id → requested plan ids that receive one count. */
+  attributeTo: ReadonlyMap<string, readonly string[]>;
+}
+
+async function mergedSettledCountScope(
+  db: DbLike,
+  requested: readonly string[],
+): Promise<MergedSettledCountScope> {
+  const merged = await loadMergedKnowledgeClosure(db);
+  const attributeTo = new Map<string, string[]>();
+  for (const planId of requested) {
+    const winner = merged.liveWinner(planId) ?? planId;
+    for (const member of merged.closure(winner)) {
+      const targets = attributeTo.get(member);
+      if (!targets) {
+        attributeTo.set(member, [planId]);
+        continue;
+      }
+      if (!targets.includes(planId)) targets.push(planId);
+    }
+  }
+  return { scanIds: [...attributeTo.keys()], attributeTo };
+}
+
+function planIdsForSettledAnswer(
+  answerKnowledgeIds: readonly string[],
+  attributeTo: ReadonlyMap<string, readonly string[]>,
+): string[] {
+  const planIds: string[] = [];
+  const seen = new Set<string>();
+  for (const knowledgeId of answerKnowledgeIds) {
+    for (const planId of attributeTo.get(knowledgeId) ?? []) {
+      if (seen.has(planId)) continue;
+      seen.add(planId);
+      planIds.push(planId);
+    }
+  }
+  return planIds;
+}
+
 /**
  * Settled right/wrong/partial counts on the requested knowledge points in
- * `[since, until)`. Pending, unsupported, and contested answers are left out.
+ * `[since, until)`. Each request is resolved through its live winner, then
+ * counted across that node's merged closure; totals stay keyed by the
+ * requested ids. Pending, unsupported, and contested answers are left out.
  * `complete: false` means the page cap stopped the scan: a zero is then not
  * proof that the point was skipped.
  */
@@ -967,10 +1012,10 @@ export async function loadSettledKnowledgeAnswerCounts(
   if (wanted.length === 0 || input.until.getTime() <= input.since.getTime()) {
     return { complete: true, counts };
   }
-  const wantedSet = new Set(wanted);
+  const scope = await mergedSettledCountScope(db, wanted);
   let cursor: { at: Date; id: string } | undefined;
   for (let page = 0; page < SETTLED_ANSWER_MAX_PAGES; page += 1) {
-    const legacy = legacyMentionsAny(wanted);
+    const legacy = legacyMentionsAny(scope.scanIds);
     const rows: EventRow[] = await db
       .select()
       .from(event)
@@ -982,7 +1027,7 @@ export async function loadSettledKnowledgeAnswerCounts(
           gte(event.created_at, input.since),
           lt(event.created_at, input.until),
           or(
-            and(eq(event.action, NATIVE_ATTEMPT_ACTION), nativeLearningScopeMentionsAny(wanted)),
+            and(eq(event.action, NATIVE_ATTEMPT_ACTION), nativeLearningScopeMentionsAny(scope.scanIds)),
             and(inArray(event.action, ['attempt', 'review']), legacy),
           ),
           cursor
@@ -1022,16 +1067,23 @@ export async function loadSettledKnowledgeAnswerCounts(
         const verdict = nativeVerdicts?.get(row.id);
         const outcome = nativeAttemptOutcome(verdict);
         if (outcome !== 'success' && outcome !== 'failure' && outcome !== 'partial') continue;
-        const knowledgeIds = verdict?.knowledge_ids.filter((id) => wantedSet.has(id)) ?? [];
-        addSettledCount(counts, knowledgeIds, outcome);
+        addSettledCount(
+          counts,
+          planIdsForSettledAnswer(verdict?.knowledge_ids ?? [], scope.attributeTo),
+          outcome,
+        );
         continue;
       }
       const outcome = legacyOutcomes?.get(row.id);
       if (!outcome) continue;
-      const knowledgeIds = stringArrayField(row.payload, 'referenced_knowledge_ids').filter((id) =>
-        wantedSet.has(id),
+      addSettledCount(
+        counts,
+        planIdsForSettledAnswer(
+          stringArrayField(row.payload, 'referenced_knowledge_ids'),
+          scope.attributeTo,
+        ),
+        outcome,
       );
-      addSettledCount(counts, knowledgeIds, outcome);
     }
 
     if (rows.length < SETTLED_ANSWER_PAGE) return { complete: true, counts };
