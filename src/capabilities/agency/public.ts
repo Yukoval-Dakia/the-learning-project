@@ -40,6 +40,8 @@ export {
   parseLearningIntentOutline,
   planLearningIntent,
 } from './server/learning-intent';
+export type { LearningPlanProgress } from './server/learning-item-completion-policy';
+export { loadLearningPlanProgress } from './server/learning-item-completion-policy';
 export {
   type LearningItemUndoDependencies,
   type LearningItemUsageProbe,
