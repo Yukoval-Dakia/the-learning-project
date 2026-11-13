@@ -1,4 +1,5 @@
 import { createId } from '@paralleldrive/cuid2';
+import { and, eq, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -7,7 +8,13 @@ import * as schema from '@/db/schema';
 import { knowledge, learning_item, question } from '@/db/schema';
 import { contractIntegrityDigest } from '@/kernel/records/assessment-normalization';
 import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
+import { applyQuestionBlockTransition } from '@/kernel/records/question-block-transitions';
+import { streamLocalDate } from '@/kernel/stream-date';
+import { loadEventSubscriptionRegistry } from '@/server/events/subscriptions/registry';
+import { bootstrapSubscription } from '@/server/events/subscriptions/runtime';
 import { resetDb } from '../../../../../tests/helpers/db';
+import { schedulingManifestPart } from '../manifest-part';
+import { getPracticeStream } from './stream-operations';
 import { composeNightly } from './stream-store';
 
 const DATE = '2026-08-10';
@@ -186,4 +193,108 @@ describe('Practice stream provider transaction boundary', () => {
     expect(loadMemoryPrior).toHaveBeenCalledTimes(1);
     expect(runTaskFn).toHaveBeenCalledTimes(1);
   });
+});
+
+/** @invariant concurrency: Concurrent upload delivery is idempotent and preserves existing learner rows.
+ * @fails-if Duplicate GET/backfill inserts a root twice or edits a completed/in-progress row.
+ */
+it('delivers newly imported roots once across concurrent today reads without editing learner rows', async () => {
+  const { db } = createTenConnectionDb();
+  const now = new Date(),
+    date = streamLocalDate();
+  const qid = await seedSamplableQuestion(db);
+  await db.insert(schema.practice_stream_item).values({
+    id: createId(),
+    date,
+    position: 1,
+    item_kind: 'question',
+    ref_id: qid,
+    source: 'on_demand',
+    status: 'in_progress',
+    reasoning: 'keep learner state',
+    added_by: 'user',
+    signals: { retained: true },
+  });
+  const before = await db.select().from(schema.practice_stream_item);
+  const batchId = createId(),
+    documentId = createId();
+  await db.insert(schema.source_document).values({
+    id: documentId,
+    title: 'Public synthetic upload',
+    provenance: { usage_policy: { derivation_policy: 'allow' } },
+    created_at: now,
+    updated_at: now,
+  });
+  await db.insert(schema.learning_session).values({
+    id: batchId,
+    type: 'ingestion',
+    status: 'completed',
+    source_document_id: documentId,
+    created_at: now,
+    updated_at: now,
+  });
+  const uploaded = await seedSamplableQuestion(db),
+    blockId = createId();
+  await db.insert(schema.question_block).values({
+    id: blockId,
+    ingestion_session_id: batchId,
+    source_document_id: documentId,
+    created_at: now,
+    updated_at: now,
+  });
+  await db.transaction((tx) =>
+    applyQuestionBlockTransition(
+      tx,
+      { kind: 'complete_import', blockId, questionId: uploaded, attemptEventId: null },
+      now,
+    ),
+  );
+  const registry = await loadEventSubscriptionRegistry(
+    [
+      {
+        name: 'practice',
+        description: 'Upload delivery invariant',
+        events: {
+          actions: [
+            'experimental:assessment_publish',
+            'experimental:question_block_lifecycle',
+            'experimental:upload_practice_delivery',
+            'experimental:stream_compose_control',
+          ],
+        },
+        subscriptions: {
+          handlers: (schedulingManifestPart.subscriptions?.handlers ?? []).filter(
+            (handler) => handler.id === 'practice.upload-ready',
+          ),
+        },
+      },
+    ],
+    db,
+  );
+  await bootstrapSubscription(db, registry, registry.subscriptions[0]);
+  const views = await Promise.all([getPracticeStream(db, {}), getPracticeStream(db, {})]);
+  expect(views.map((view) => view.items.filter((row) => row.ref_id === uploaded).length)).toEqual([
+    1, 1,
+  ]);
+  expect(
+    await db
+      .select()
+      .from(schema.practice_stream_item)
+      .where(eq(schema.practice_stream_item.id, before[0].id)),
+  ).toEqual(before);
+  const receipts = await db
+    .select()
+    .from(schema.event)
+    .where(
+      and(
+        eq(schema.event.action, 'experimental:upload_practice_delivery'),
+        eq(schema.event.subject_id, uploaded),
+      ),
+    );
+  expect(receipts).toHaveLength(1);
+  const [paid] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(schema.event)
+    .where(sql`task_run_id is not null OR cost_micro_usd is not null`);
+  expect(paid.count).toBe(0);
 });

@@ -11,6 +11,45 @@ import { CauseCategory } from './blocks';
 /** Canonical action name for mutable question-content audit events. */
 export const QUESTION_EDIT_ACTION = 'experimental:question_edit' as const;
 
+export const UploadPracticeDeliveryPayload = z.object({
+  version: z.literal(1),
+  batch_id: z.string().min(1),
+  root_id: z.string().min(1),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  row_id: z.string().min(1),
+  disposition: z.enum(['inserted', 'already_present']),
+  revision_id: z.string().min(1),
+  admission_generation: z.number().int().nonnegative(),
+});
+
+export const StreamComposeControlPayload = z.discriminatedUnion('phase', [
+  z.object({
+    version: z.literal(1),
+    phase: z.literal('attempt'),
+    date: z.string(),
+    mode: z.enum(['initial', 'explicit']),
+  }),
+  z.object({
+    version: z.literal(1),
+    phase: z.literal('result'),
+    date: z.string(),
+    attempt_id: z.string(),
+    status: z.enum(['success', 'failed']),
+    error_code: z.string().optional(),
+  }),
+]);
+
+export const PracticeDeliveryControlExperimental = z.union([
+  z.object({
+    action: z.literal('experimental:upload_practice_delivery'),
+    payload: UploadPracticeDeliveryPayload,
+  }),
+  z.object({
+    action: z.literal('experimental:stream_compose_control'),
+    payload: StreamComposeControlPayload,
+  }),
+]);
+
 // ====================================================================
 // UserCauseExperimental（待稳）
 // ====================================================================
@@ -147,6 +186,8 @@ export type MasteryProgressExperimentalT = z.infer<typeof MasteryProgressExperim
 // Adding a new specialised experimental schema? Add its action literal here too.
 
 export const RESERVED_EXPERIMENTAL_ACTIONS = new Set<string>([
+  'experimental:upload_practice_delivery',
+  'experimental:stream_compose_control',
   'experimental:user_cause',
   'experimental:record_capture',
   'experimental:memory_brief_refresh',

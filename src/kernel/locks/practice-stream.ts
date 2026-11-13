@@ -2,6 +2,12 @@ import { sql } from 'drizzle-orm';
 
 import type { Db, Tx } from '@/db/client';
 
+export function practiceStreamPartitionKeyParts(date: string, sessionId?: string | null) {
+  return sessionId
+    ? { namespace: 'stream:session', id: sessionId }
+    : { namespace: 'stream:compose', id: date };
+}
+
 /**
  * One physical `practice_stream_item` partition: the whole-profile daily stream shares
  * `stream:compose:<date>` with intervention delivery; a scoped review session has its own key.
@@ -11,7 +17,8 @@ export async function lockPracticeStreamPartition(
   date: string,
   sessionId?: string | null,
 ): Promise<void> {
-  const key = sessionId ? `stream:session:${sessionId}` : `stream:compose:${date}`;
+  const partition = practiceStreamPartitionKeyParts(date, sessionId);
+  const key = `${partition.namespace}:${partition.id}`;
   await db.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${key}))`);
 }
 

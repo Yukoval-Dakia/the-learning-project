@@ -31329,6 +31329,11 @@ export interface operations {
                             /** @enum {string} */
                             pace: "light" | "medium" | "dense";
                         };
+                        composition_error?: {
+                            /** @enum {string} */
+                            code: "compose_failed" | "compose_unknown";
+                            message: string;
+                        };
                         date: string;
                         items: {
                             answer_recorded: boolean;
@@ -31353,6 +31358,7 @@ export interface operations {
                             /** @enum {string} */
                             status: "pending" | "in_progress" | "done" | "skipped";
                             total_slots: number | null;
+                            upload_batch_label?: string;
                             /** @enum {string|null} */
                             verdict: "again" | "hard" | "good" | null;
                             verdict_effective: string | null;
@@ -31534,6 +31540,7 @@ export interface operations {
                             total_slots: number | null;
                             /** Format: date-time */
                             updated_at: string;
+                            upload_batch_label?: string;
                             /** @enum {string|null} */
                             verdict: "again" | "hard" | "good" | null;
                             verdict_effective: string | null;
@@ -31670,6 +31677,11 @@ export interface operations {
                             /** @enum {string} */
                             pace: "light" | "medium" | "dense";
                         };
+                        composition_error?: {
+                            /** @enum {string} */
+                            code: "compose_failed" | "compose_unknown";
+                            message: string;
+                        };
                         date: string;
                         items: {
                             answer_recorded: boolean;
@@ -31694,6 +31706,7 @@ export interface operations {
                             /** @enum {string} */
                             status: "pending" | "in_progress" | "done" | "skipped";
                             total_slots: number | null;
+                            upload_batch_label?: string;
                             /** @enum {string|null} */
                             verdict: "again" | "hard" | "good" | null;
                             verdict_effective: string | null;

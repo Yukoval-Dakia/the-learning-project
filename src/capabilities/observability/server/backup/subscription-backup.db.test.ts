@@ -65,6 +65,7 @@ const liveSubscriberIdentities = [
   ['practice.learner-return-wake', 1],
   ['practice.question-admission-enqueue', 1],
   ['practice.serving-recheck', 1],
+  ['practice.upload-ready', 1],
   ['practice.web-supply-observe', 1],
 ];
 const subscriberCount = liveSubscriberIdentities.length;
@@ -291,6 +292,7 @@ describe('YUK-766 subscription progress backup', () => {
       'practice.learner-return-wake',
       'practice.question-admission-enqueue',
       'practice.serving-recheck',
+      'practice.upload-ready',
       'practice.web-supply-observe',
     ]);
     const sourceIds = (id: string) =>
@@ -301,6 +303,7 @@ describe('YUK-766 subscription progress backup', () => {
       'agency.probe-publication-serve',
       'practice.question-admission-enqueue',
       'practice.serving-recheck',
+      'practice.upload-ready',
     ];
     for (const id of publish.slice(1)) {
       expect([...sourceIds(publish[0])].sort()).toEqual([...sourceIds(id)].sort());

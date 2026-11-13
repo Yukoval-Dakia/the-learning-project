@@ -35,13 +35,34 @@ export async function withLearningStateLock<T>(
   return apply(db);
 }
 
-/** 按 id 排序逐个取 `pg_advisory_xact_lock(hashtext('<namespace>:<id>'))`，避免重叠 id 集死锁。 */
+/** Failed nonblocking attempts retain earlier locks until the owner rolls back. */
+export function acquireSortedAdvisoryLocks(
+  tx: Tx,
+  namespace: string,
+  ids: readonly string[],
+): Promise<undefined>;
+export function acquireSortedAdvisoryLocks(
+  tx: Tx,
+  namespace: string,
+  ids: readonly string[],
+  options: { noWait: true },
+): Promise<boolean>;
 export async function acquireSortedAdvisoryLocks(
   tx: Tx,
   namespace: string,
   ids: readonly string[],
-): Promise<void> {
+  options?: { noWait: true },
+): Promise<boolean | undefined> {
   for (const id of [...ids].sort()) {
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`${namespace}:${id}`}))`);
+    const key = `${namespace}:${id}`;
+    if (options?.noWait) {
+      const [result] = await tx.execute<{ acquired: boolean }>(
+        sql`SELECT pg_try_advisory_xact_lock(hashtext(${key})) AS acquired`,
+      );
+      if (result?.acquired !== true) return false;
+    } else {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${key}))`);
+    }
   }
+  return options?.noWait ? true : undefined;
 }

@@ -45,6 +45,7 @@ const PracticeStreamViewItemSchema = z.object({
   ref_id: z.string(),
   source: PracticeStreamItemSourceSchema,
   reasoning: z.string(),
+  upload_batch_label: z.string().optional(),
   status: PracticeStreamItemStatusSchema,
   estimated_minutes: z.number().nonnegative(),
   knowledge_name: z.string().nullable(),
@@ -62,6 +63,9 @@ const PracticeStreamViewItemSchema = z.object({
 });
 
 export const PracticeStreamResponseSchema = z.object({
+  composition_error: z
+    .object({ code: z.enum(['compose_failed', 'compose_unknown']), message: z.string() })
+    .optional(),
   date: z.string(),
   scope: z
     .object({
@@ -99,6 +103,7 @@ const PersistedPracticeStreamItemSchema = z.object({
   source: PracticeStreamItemSourceSchema,
   status: PracticeStreamItemStatusSchema,
   reasoning: z.string(),
+  upload_batch_label: z.string().optional(),
   added_by: z.enum(['composer_nightly', 'composer_live', 'copilot', 'user']),
   signals: z.record(z.string(), z.unknown()),
   created_at: z.string().datetime(),

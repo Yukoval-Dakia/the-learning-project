@@ -5,9 +5,11 @@
 import { and, asc, desc, eq, gte, inArray, isNull, lt, sql } from 'drizzle-orm';
 import { getConfig } from '@/core/config/store';
 import { newId } from '@/core/ids';
+import { StreamComposeControlPayload } from '@/core/schema/event';
 import type { Db, Tx } from '@/db/client';
 import { notDraftPredicate, questionSuspendedPredicate } from '@/db/predicates';
 import { event, knowledge, learning_session, practice_stream_item, question } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import {
   lockPracticeStreamPartition,
@@ -58,6 +60,11 @@ import {
   buildStreamView,
   filterProspectiveStreamQuestions,
 } from './stream-view';
+import {
+  isUploadPracticeRow,
+  ordinaryStreamRowPredicate,
+  reconcileTodayUploadPractice,
+} from './upload-ready';
 
 // 候选收集 / 预算解析已迁 stream-inputs.ts，视图类型与单行投影已迁
 // stream-view.ts；以下 reexport 保持本模块既有导出面不变（既有消费者与测试的
@@ -109,7 +116,7 @@ export interface MaterializeResult {
 /**
  * Materialize a StreamPlan in plan order.
  *
- * Positions: refs in the plan get plan index + 1; surviving rows outside the plan are
+ * Default positions: refs in the plan get plan index + 1; surviving rows outside the plan are
  * appended after the plan in their existing order. All rows are renumbered so
  * ORDER BY position always yields the plan order, making the due subsequence equal to
  * retrievability ascending.
@@ -122,6 +129,7 @@ export async function materializeStream(
   db: DbLike,
   plan: StreamPlan,
   addedBy: StreamItemRow['added_by'],
+  preserveExistingPositions = false,
 ): Promise<MaterializeResult> {
   // 即便 plan 为空，也可能有 plan 外存活行需要 renumber（recompose 删 pending 后）；
   // 但若当日全空且 plan 空，无事可做。
@@ -153,6 +161,12 @@ export async function materializeStream(
   const fresh = plan.items
     .map((it, i) => ({ it, pos: i + 1 }))
     .filter(({ it }) => !existingByRef.has(it.ref_id));
+  if (preserveExistingPositions) {
+    const tail = existing.reduce((max, row) => Math.max(max, row.position), 0);
+    fresh.forEach((row, index) => {
+      row.pos = tail + index + 1;
+    });
+  }
   if (fresh.length > 0) {
     await db
       .insert(practice_stream_item)
@@ -188,7 +202,7 @@ export async function materializeStream(
   // 新插入的 fresh 行已落在正确 position，不在此重排。
   const planLen = plan.items.length;
   const planPosByRef = new Map(plan.items.map((it, i) => [it.ref_id, i + 1]));
-  for (const r of existing) {
+  for (const r of preserveExistingPositions ? [] : existing) {
     const target = planRefSet.has(r.ref_id)
       ? (planPosByRef.get(r.ref_id) as number)
       : planLen + 1 + survivorsOutsidePlan.findIndex((s) => s.ref_id === r.ref_id);
@@ -277,8 +291,14 @@ async function materializePreparedCollect(
   date: string,
   prepared: PreparedCompose,
   addedBy: StreamItemRow['added_by'],
+  preserveExistingPositions = false,
 ): Promise<ComposeOutcome> {
-  const { added, freshRefs } = await materializeStream(db, prepared.plan, addedBy);
+  const { added, freshRefs } = await materializeStream(
+    db,
+    prepared.plan,
+    addedBy,
+    preserveExistingPositions,
+  );
 
   // Collect π_i only for rows newly inserted this round. Surviving rows were sampled
   // again by collectComposerInputs but were already observed when first materialized;
@@ -332,6 +352,102 @@ async function writeObservationsBestEffort(
   }
 }
 
+const COMPOSE_CONTROL_ACTION = 'experimental:stream_compose_control';
+
+async function readLatestComposeAttempt(db: DbLike, date: string) {
+  const [row] = await db
+    .select()
+    .from(event)
+    .where(
+      and(
+        eq(event.action, COMPOSE_CONTROL_ACTION),
+        eq(event.subject_id, date),
+        sql`${event.payload}->>'phase' = 'attempt'`,
+      ),
+    )
+    .orderBy(desc(event.dispatch_seq))
+    .limit(1);
+  return row;
+}
+
+async function startComposeAttempt(
+  tx: Tx,
+  date: string,
+  mode: 'initial' | 'explicit',
+): Promise<string> {
+  const id = newId();
+  await writeEvent(tx, {
+    id,
+    actor_kind: 'system',
+    actor_ref: 'practice-compose',
+    action: COMPOSE_CONTROL_ACTION,
+    subject_kind: 'practice_stream',
+    subject_id: date,
+    payload: { version: 1, phase: 'attempt', date, mode },
+    affected_scopes: [],
+    ingest_at: new Date(),
+  });
+  return id;
+}
+
+async function finishComposeAttempt(
+  tx: Tx,
+  date: string,
+  attemptId: string,
+  status: 'success' | 'failed',
+  error?: unknown,
+): Promise<void> {
+  await writeEvent(tx, {
+    id: `${attemptId}:result`,
+    actor_kind: 'system',
+    actor_ref: 'practice-compose',
+    action: COMPOSE_CONTROL_ACTION,
+    subject_kind: 'practice_stream',
+    subject_id: date,
+    payload: {
+      version: 1,
+      phase: 'result',
+      date,
+      attempt_id: attemptId,
+      status,
+      ...(error ? { error_code: error instanceof ApiError ? error.code : 'compose_failed' } : {}),
+    },
+    affected_scopes: [],
+    ingest_at: new Date(),
+  });
+}
+
+async function readComposeError(
+  db: DbLike,
+  date: string,
+): Promise<StreamView['composition_error']> {
+  const attempt = await readLatestComposeAttempt(db, date);
+  if (!attempt) return undefined;
+  const [row] = await db
+    .select()
+    .from(event)
+    .where(eq(event.id, `${attempt.id}:result`));
+  const result = row ? StreamComposeControlPayload.parse(row.payload) : null;
+  if (result?.phase === 'result' && result.status === 'success') return undefined;
+  return {
+    code: result ? 'compose_failed' : 'compose_unknown',
+    message: result
+      ? '常规练习计划暂未生成，可继续练习刚上传的题目，或手动重组重试。'
+      : '常规练习计划的上次生成结果尚未确认，可继续练习刚上传的题目，或手动重组重试。',
+  };
+}
+
+// Upload marking cannot erase evidence of a pre-existing ordinary plan.
+function hasOrdinaryComposeEvidence(rows: readonly StreamItemRow[]): boolean {
+  return rows.some(
+    (row) =>
+      !isUploadPracticeRow(row) ||
+      row.source !== 'import' ||
+      row.added_by !== 'user' ||
+      (row.signals.upload_practice as Record<string, unknown>)?.existing_stream === true,
+  );
+}
+
 /**
  * Single-flight compose. A reserved connection holds the paid-work advisory lock while
  * prepare/Mem0/runTask run outside a transaction; a short probe under the
@@ -342,8 +458,9 @@ async function writeObservationsBestEffort(
  * Observations are collected in the transaction but written after commit (see
  * writeObservationsBestEffort), so telemetry cannot abort the stream.
  *
- * @returns Added rows; 0 when this call lost the race and no-ops.
+ * @returns Added rows; 0 when an ordinary plan or a durable attempt already exists.
  */
+
 async function singleFlightCompose(
   db: Db,
   date: string,
@@ -362,33 +479,35 @@ async function singleFlightCompose(
     date,
     lockDeadlineAt,
     async (lockedDb) => {
-      const count = await lockedDb.transaction(async (tx) => {
+      const attemptId = await lockedDb.transaction(async (tx) => {
         await lockDailyStreamPartition(tx, date);
-        const [result] = await tx
-          .select({ count: sql<number>`count(*)::int` })
+        const rows = await tx
+          .select()
           .from(practice_stream_item)
           .where(streamPartitionPredicate(date));
-        return result.count;
+        if (hasOrdinaryComposeEvidence(rows) || (await readLatestComposeAttempt(tx, date)))
+          return null;
+        return startComposeAttempt(tx, date, 'initial');
       });
-      if (count > 0) return { added: 0, observations: [], mixNote: null } satisfies ComposeOutcome;
-
+      if (!attemptId) return { added: 0, observations: [], mixNote: null } satisfies ComposeOutcome;
       const lockedDeps = deps.providerInvocation
-        ? {
-            ...deps,
-            providerInvocation: { ...deps.providerInvocation, db: lockedDb },
-          }
+        ? { ...deps, providerInvocation: { ...deps.providerInvocation, db: lockedDb } }
         : deps;
-      const prepared = await prepareCompose(lockedDb, date, policy, lockedDeps, capacity);
-      return lockedDb.transaction(async (tx) => {
-        await lockDailyStreamPartition(tx, date);
-        const [{ finalCount }] = await tx
-          .select({ finalCount: sql<number>`count(*)::int` })
-          .from(practice_stream_item)
-          .where(streamPartitionPredicate(date));
-        if (finalCount > 0)
-          return { added: 0, observations: [], mixNote: null } satisfies ComposeOutcome;
-        return materializePreparedCollect(tx, date, prepared, addedBy);
-      });
+      try {
+        const prepared = await prepareCompose(lockedDb, date, policy, lockedDeps, capacity);
+        return await lockedDb.transaction(async (tx) => {
+          await lockDailyStreamPartition(tx, date);
+          const outcome = await materializePreparedCollect(tx, date, prepared, addedBy, true);
+          await finishComposeAttempt(tx, date, attemptId, 'success');
+          return outcome;
+        });
+      } catch (error) {
+        await lockedDb.transaction(async (tx) => {
+          await lockDailyStreamPartition(tx, date);
+          await finishComposeAttempt(tx, date, attemptId, 'failed', error);
+        });
+        throw error;
+      }
     },
   );
 
@@ -735,7 +854,7 @@ async function trimStoredPendingItemsToBudget(
 }
 
 /**
- * 读当日流；为空且 composeIfEmpty 时 lazy compose（首次打开练习面的默认路径）。
+ * 读当日流；尚无普通编排事实且 composeIfEmpty 时 lazy compose（含仅上传的流）。
  *
  * 选题路径由 `opts.policy`（缺省 `resolveSelectionPolicy`，读 env / 默认 softmax_mfi）
  * 裁定：legacy 走确定性 composeDailyStream；softmax_mfi 走档2 LLM-strong 路径（含两级
@@ -765,21 +884,31 @@ export async function getStream(
     return getKnowledgeScopedStream(db, date, opts.knowledgeId, opts.materializeScoped ?? false);
   }
 
+  if (opts.composeIfEmpty) await reconcileTodayUploadPractice(db);
   let rows = await db
     .select()
     .from(practice_stream_item)
     .where(streamPartitionPredicate(date))
     .orderBy(asc(practice_stream_item.position));
 
-  if (rows.length === 0 && opts.composeIfEmpty) {
+  if (
+    !hasOrdinaryComposeEvidence(rows) &&
+    opts.composeIfEmpty &&
+    !(await readLatestComposeAttempt(db, date))
+  ) {
     // single-flight（advisory 锁 + 双重检查）——并发 lazy-compose 不双发 LLM。
-    await singleFlightCompose(
-      db,
-      date,
-      opts.policy ?? resolveSelectionPolicy(),
-      opts.composeDeps ?? {},
-      opts.capacity,
-    );
+    try {
+      await singleFlightCompose(
+        db,
+        date,
+        opts.policy ?? resolveSelectionPolicy(),
+        opts.composeDeps ?? {},
+        opts.capacity,
+      );
+    } catch (error) {
+      if (!(await readComposeError(db, date))) throw error;
+      console.error('[stream-store] initial compose failed; keeping available practice', error);
+    }
 
     // 取题瞬间 refill（compose 事务**提交后**、top-level `db`、best-effort）。检查活跃
     // 学习 KC 的活跃池，见底（< REFILL_POOL_THRESHOLD）则复用既有 dispatcher 补题。**flag-off
@@ -832,7 +961,7 @@ export async function getStream(
   }
 
   rows = (await filterProspectiveStreamQuestions(db, rows)).rows;
-  return buildStreamView({
+  const view = await buildStreamView({
     db,
     date,
     rows,
@@ -845,6 +974,8 @@ export async function getStream(
         ? '今天流里还没有东西——录几道题，或向我点播一份卷。'
         : '今天的流我排好了——从上往下做，卡住随时叫我。',
   });
+  const composition_error = await readComposeError(db, date);
+  return { ...view, ...(composition_error ? { composition_error } : {}) };
 }
 
 const LEGAL_TRANSITIONS: Record<StreamItemStatus, StreamItemStatus[]> = {
@@ -1006,13 +1137,22 @@ export async function recomposeStream(
     date,
     lockDeadlineAt,
     async (lockedDb) => {
-      const pendingIdsAtPrepare = await lockedDb.transaction(async (tx) => {
+      const { pendingIdsAtPrepare, attemptId } = await lockedDb.transaction(async (tx) => {
         await lockDailyStreamPartition(tx, date);
         const rows = await tx
           .select({ id: practice_stream_item.id })
           .from(practice_stream_item)
-          .where(and(streamPartitionPredicate(date), eq(practice_stream_item.status, 'pending')));
-        return rows.map((row) => row.id);
+          .where(
+            and(
+              streamPartitionPredicate(date),
+              eq(practice_stream_item.status, 'pending'),
+              ordinaryStreamRowPredicate,
+            ),
+          );
+        return {
+          pendingIdsAtPrepare: rows.map((row) => row.id),
+          attemptId: await startComposeAttempt(tx, date, 'explicit'),
+        };
       });
       const lockedDeps = deps.providerInvocation
         ? {
@@ -1020,28 +1160,39 @@ export async function recomposeStream(
             providerInvocation: { ...deps.providerInvocation, db: lockedDb },
           }
         : deps;
-      const prepared = await prepareCompose(
-        lockedDb,
-        date,
-        opts.policy ?? resolveSelectionPolicy(),
-        lockedDeps,
-        opts.capacity,
-      );
-      return lockedDb.transaction(async (tx) => {
-        await lockDailyStreamPartition(tx, date);
-        if (pendingIdsAtPrepare.length > 0) {
-          await tx
-            .delete(practice_stream_item)
-            .where(
-              and(
-                streamPartitionPredicate(date),
-                eq(practice_stream_item.status, 'pending'),
-                inArray(practice_stream_item.id, pendingIdsAtPrepare),
-              ),
-            );
-        }
-        return materializePreparedCollect(tx, date, prepared, 'composer_live');
-      });
+      try {
+        const prepared = await prepareCompose(
+          lockedDb,
+          date,
+          opts.policy ?? resolveSelectionPolicy(),
+          lockedDeps,
+          opts.capacity,
+        );
+        return await lockedDb.transaction(async (tx) => {
+          await lockDailyStreamPartition(tx, date);
+          if (pendingIdsAtPrepare.length > 0) {
+            await tx
+              .delete(practice_stream_item)
+              .where(
+                and(
+                  streamPartitionPredicate(date),
+                  eq(practice_stream_item.status, 'pending'),
+                  ordinaryStreamRowPredicate,
+                  inArray(practice_stream_item.id, pendingIdsAtPrepare),
+                ),
+              );
+          }
+          const outcome = await materializePreparedCollect(tx, date, prepared, 'composer_live');
+          await finishComposeAttempt(tx, date, attemptId, 'success');
+          return outcome;
+        });
+      } catch (error) {
+        await lockedDb.transaction(async (tx) => {
+          await lockDailyStreamPartition(tx, date);
+          await finishComposeAttempt(tx, date, attemptId, 'failed', error);
+        });
+        throw error;
+      }
     },
   );
 
@@ -1139,7 +1290,8 @@ export async function reRankAfterAnswer(
         r.status === 'pending' &&
         r.item_kind === 'question' &&
         (r.source === 'variant' || r.source === 'new_check') &&
-        !rowIsRecallLocked(r.signals),
+        !rowIsRecallLocked(r.signals) &&
+        !isUploadPracticeRow(r),
     );
     // 无待做非到期诊断行 → no-op（不动流、不写观测）。
     if (allPendingNonDue.length === 0)
