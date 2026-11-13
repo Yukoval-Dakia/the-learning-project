@@ -424,11 +424,15 @@ export function usePracticeSubmit({
   const [autoCommitted, setAutoCommitted] = useState(false);
   // 自动 commit 后可申诉的 evaluation id（名字是历史遗留）。null = 没有可申诉的记录，入口隐藏。
   const [autoCommitJudgeEventId, setAutoCommitJudgeEventId] = useState<string | null>(null);
-  // YUK-433 — solo 路径 RT capture：题面变可见那刻的墙钟时间戳。commit 时 now - 它 = 这次作答用时
-  // （computeLatencyMs clamp 后作为 latency_ms 发出，server 映射成事件 payload 的 duration_ms）。下面
-  // 的 effect 在新题就绪时 RESET（keyed on q?.id），保证 re-answer / next-item 都从干净的零点起算。
-  // null = 题面尚未就绪（计时器未起）→ computeLatencyMs 返回 null → 略过 latency_ms（不发噪声）。
-  const questionShownAtRef = useRef<number | null>(null);
+  const answerTimeRef = useRef<{ elapsedMs: number; startedAt: number | null } | null>(null);
+  const readLatencyMs = () => {
+    const timing = answerTimeRef.current;
+    if (!timing) return null;
+    return computeLatencyMs(
+      0,
+      timing.elapsedMs + (timing.startedAt === null ? 0 : performance.now() - timing.startedAt),
+    );
+  };
 
   const q = qQ.data ?? null;
   // What the server recorded about this answer, kept with the question it came from.
@@ -1012,15 +1016,26 @@ export function usePracticeSubmit({
     }
   };
 
-  // YUK-433 — solo 路径 RT capture：题面就绪（q 拿到）那刻起算计时器，per 题 RESET。host 给每个 StreamItem
-  // 复用本组件实例（query 的 key 含 item.ref_id）。依赖列表只用 q?.id 即足够且更准：换题时 queryKey 变 →
-  // qQ.data 先短暂仍是上一题（缓存）→ 新题数据回来 q?.id 才变，正是「这道题的题面真正可见」的那一刻；re-answer
-  // 同一题重取也会让 q?.id 重新落定 → 重新 stamp Date.now()，保证下一次 commit 算的是这次作答的墙钟用时。
-  // 纯 ref 写入，无 state/DOM 变更 → 零视觉/渲染 delta（instrumentation only）。
-  // 用 useLayoutEffect（非 useEffect）：layout 阶段在浏览器 paint **之前**同步跑，stamp 更贴近题面真正
-  // 变可见的时刻——useEffect 在 paint 之后异步跑会系统性低估 latency（PR review timing-accuracy note）。
+  // Start at question readiness, before paint. Each visit owns only its visible
+  // intervals; a question loaded in a background tab has no open interval yet.
   useLayoutEffect(() => {
-    if (q?.id) questionShownAtRef.current = Date.now();
+    answerTimeRef.current = null;
+    if (!q?.id) return;
+    const timing = {
+      elapsedMs: 0,
+      startedAt: document.visibilityState === 'visible' ? performance.now() : null,
+    };
+    answerTimeRef.current = timing;
+    const onVisibilityChange = () => {
+      const now = performance.now();
+      if (timing.startedAt !== null) timing.elapsedMs += Math.max(0, now - timing.startedAt);
+      timing.startedAt = document.visibilityState === 'visible' ? now : null;
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      answerTimeRef.current = null;
+    };
   }, [q?.id]);
 
   // A successful one-shot is already retired server-side. Restore its
@@ -1118,13 +1133,7 @@ export function usePracticeSubmit({
         // 并让客观判分流过 difficulty_calibration_label hook 产标签（B1 难度 firm-up 链解冻）。
         // Unknown points must never become a user rating; the server settles with rating=null.
         auto_rate: pv?.coarse_outcome === 'partial_unknown' ? true : opts.autoRate,
-        // YUK-433 — solo 路径 RT capture：这次作答的墙钟用时（题面就绪 → 此刻 commit）。在单一 commit()
-        // 路径里 stamp，故**两条提交分支都覆盖**：手动评级 commit（开放题）与客观题 auto_rate:true 自动
-        // commit 都经此。computeLatencyMs clamp 到 [0, 3_600_000]（对齐 server zod）；shownAt 为 null →
-        // 略过（不发噪声）。server 映射成事件 payload 的 duration_ms（无后端改动）。墙钟含 idle，已知噪声源。
-        latency_ms: opts.omitLatency
-          ? null
-          : computeLatencyMs(questionShownAtRef.current, Date.now()),
+        latency_ms: opts.omitLatency ? null : readLatencyMs(),
         // YUK-1051 (D10) — 开放作答的证据附件随提交冻结；空值不发（既有 wire 逐字不变）。
         ...(imageRefs.length > 0 ? { answer_image_refs: imageRefs } : {}),
       });
@@ -1214,7 +1223,7 @@ export function usePracticeSubmit({
     referenced_knowledge_ids: q ? q.labels.map((l) => l.id) : [],
     reasoning_trace: buildCaptureFields({ reasoningTrace, selfConfidence }).reasoning_trace ?? null,
     ...(selfConfidence === null ? {} : { self_confidence: selfConfidence }),
-    latency_ms: withLatency ? computeLatencyMs(questionShownAtRef.current, Date.now()) : null,
+    latency_ms: withLatency ? readLatencyMs() : null,
   });
   // A 200 replay restores the preview; accepted originals use the existing durable poller.
   const applyAdvice = async (
@@ -1303,7 +1312,7 @@ export function usePracticeSubmit({
           stream_item_id: item.id,
           ...buildCaptureFields({ reasoningTrace, selfConfidence }),
           auto_rate: true,
-          latency_ms: computeLatencyMs(questionShownAtRef.current, Date.now()),
+          latency_ms: readLatencyMs(),
           // YUK-1051 (D10) — 证据附件随一次性提交冻结（同 commit 路径纪律）。
           ...(imageRefs.length > 0 ? { answer_image_refs: imageRefs } : {}),
         });
