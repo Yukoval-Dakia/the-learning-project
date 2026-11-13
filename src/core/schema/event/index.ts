@@ -9,6 +9,7 @@ import {
   ExperimentalEvent,
   MasteryProgressExperimental,
   MemoryBriefRefreshExperimental,
+  PracticeDeliveryControlExperimental,
   RecordCaptureExperimental,
   UserCauseExperimental,
 } from './experimental';
@@ -115,6 +116,7 @@ export * from './subagent-events';
 // 必须作为独立迁移交付，而不是扩大该闸门的读取拒绝面。
 
 export const Event = z.union([
+  PracticeDeliveryControlExperimental,
   KnownEvent,
   UserCauseExperimental,
   RecordCaptureExperimental,

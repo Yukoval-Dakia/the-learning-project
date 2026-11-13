@@ -130,8 +130,8 @@ export function PfStream({
   const currentItem = items.find((it) => it.status === 'in_progress') ?? pending[0] ?? null;
   const allDone = items.length > 0 && stream.progress.done === items.length;
   const etaMin = stream.progress.estimated_remaining_minutes;
-  let openingLine = stream.opening_line;
-  if (allDone)
+  let openingLine = stream.composition_error?.message ?? stream.opening_line;
+  if (allDone && !stream.composition_error)
     openingLine = scope ? `「${scope.label}」这轮已经完成。` : '都织完了——下面是今天的线头。';
   let progressEta = `预计还剩 ~${etaMin} 分钟`;
   if (allDone) progressEta = scope ? '本轮完成' : '今日完成';
@@ -188,7 +188,7 @@ export function PfStream({
       id: it.id,
       morphKey: practiceMorphKey(it.id),
       title: anchor ?? srcMeta(it.source).label,
-      source: srcMeta(it.source).label,
+      source: it.upload_batch_label ?? srcMeta(it.source).label,
       kind: it.item_kind === 'paper' ? '整卷练习' : '单题练习',
       reason: it.reasoning,
       facts:

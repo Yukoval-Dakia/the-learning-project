@@ -12,6 +12,8 @@ import { event, material_fsrs_state, practice_stream_item, question } from '@/db
 import { lockPracticeStreamPartition } from '@/kernel/locks/practice-stream';
 import { scheduledTestableKnowledgeIds } from '@/kernel/read-models/knowledge-roles';
 
+import { isUploadPracticeRow } from './upload-ready';
+
 type DbLike = Db | Tx;
 
 const SETTLED_REVIEW_ACTIONS = new Set(['review', 'experimental:assessment_settlement']);
@@ -97,7 +99,11 @@ async function withdrawInTransaction(
     .from(practice_stream_item)
     .where(streamPartitionPredicate(date, sessionId));
   const pending = rows.filter(
-    (row) => row.status === 'pending' && row.item_kind === 'question' && row.source === 'decay',
+    (row) =>
+      row.status === 'pending' &&
+      row.item_kind === 'question' &&
+      row.source === 'decay' &&
+      !isUploadPracticeRow(row),
   );
   if (pending.length === 0) return 0;
 

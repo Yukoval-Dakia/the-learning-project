@@ -55,6 +55,7 @@ import {
 
 export const ingestionCapability = defineCapability({
   name: 'ingestion',
+  events: { actions: ['experimental:question_block_lifecycle'] },
   description:
     '录入：任何题目进系统的通道（拍照/PDF/DOCX/手输 → 原图留存 → OCR/VLM 三层提取 → 切块 → 标注 → 入库）。错题是题目的标记不是通道（D11）。',
   api: {
