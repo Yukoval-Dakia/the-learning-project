@@ -23,6 +23,8 @@ import {
   type SelectionPolicyConfig,
 } from '../../server/selection-constants';
 import {
+  dailyStreamEntrypoint,
+  earliestDailyStreamAnswerAt,
   enqueueReviewSessionSummary,
   startReviewSession,
   transitionReviewSessionState,
@@ -855,6 +857,21 @@ const LEGAL_TRANSITIONS: Record<StreamItemStatus, StreamItemStatus[]> = {
   done: [],
 };
 
+const OPEN_STREAM_STATUSES = ['pending', 'in_progress', 'skipped'] as const;
+
+async function openDailyItemCount(db: DbLike, date: string): Promise<number> {
+  const [{ remaining }] = await db
+    .select({ remaining: sql<number>`count(*)::int` })
+    .from(practice_stream_item)
+    .where(
+      and(
+        streamPartitionPredicate(date),
+        inArray(practice_stream_item.status, [...OPEN_STREAM_STATUSES]),
+      ),
+    );
+  return remaining;
+}
+
 async function completeScopedSessionIfDone(db: Db, row: StreamItemRow): Promise<void> {
   if (!row.session_id || row.status !== 'done') return;
   try {
@@ -878,6 +895,54 @@ async function completeScopedSessionIfDone(db: Db, row: StreamItemRow): Promise<
     // observability, but must not turn a confirmed answer into a false PATCH failure.
     console.error('[stream-store] scoped review session completion failed (best-effort)', {
       sessionId: row.session_id,
+      streamItemId: row.id,
+      err,
+    });
+  }
+}
+
+type DailyStreamClose = { kind: 'summarize'; sessionId: string } | { kind: 'skip' };
+
+/**
+ * The whole-profile partition cannot store a session id. When its last open slot
+ * closes, one review session for that calendar day is completed and the existing
+ * summary job is enqueued. A second close of the same day finds the session
+ * already completed and does not enqueue again.
+ */
+async function closeDailyStream(db: Db, date: string): Promise<DailyStreamClose> {
+  return db.transaction(async (tx) => {
+    await lockPracticeStreamPartition(tx, date);
+    if ((await openDailyItemCount(tx, date)) !== 0) return { kind: 'skip' };
+    const entrypoint = dailyStreamEntrypoint(date);
+    const existing = await tx
+      .select({ id: learning_session.id, status: learning_session.status })
+      .from(learning_session)
+      .where(and(eq(learning_session.type, 'review'), eq(learning_session.entrypoint, entrypoint)))
+      .orderBy(desc(learning_session.created_at), desc(learning_session.id));
+    if (existing.some((row) => row.status === 'completed')) return { kind: 'skip' };
+    const live = existing.find((row) => row.status === 'started' || row.status === 'paused');
+    const sessionId =
+      live?.id ??
+      (
+        await startReviewSession(tx, {
+          entrypoint,
+          startedAt: await earliestDailyStreamAnswerAt(tx, date),
+        })
+      ).sessionId;
+    const transition = await transitionReviewSessionState(tx, sessionId, 'completed');
+    return transition.changed ? { kind: 'summarize', sessionId } : { kind: 'skip' };
+  });
+}
+
+async function completeDailyStreamIfDone(db: Db, row: StreamItemRow): Promise<void> {
+  if (row.session_id || row.status !== 'done') return;
+  try {
+    if ((await openDailyItemCount(db, row.date)) !== 0) return;
+    const closed = await closeDailyStream(db, row.date);
+    if (closed.kind === 'summarize') await enqueueReviewSessionSummary(closed.sessionId);
+  } catch (err) {
+    console.error('[stream-store] daily stream completion failed (best-effort)', {
+      date: row.date,
       streamItemId: row.id,
       err,
     });
@@ -953,6 +1018,7 @@ export async function advanceStreamItem(
   if (!updated) return null;
 
   await completeScopedSessionIfDone(db, updated);
+  await completeDailyStreamIfDone(db, updated);
 
   // Rerank only completed question items, and only under the softmax policy: the legacy
   // path must stay deterministic, so its stream must not be randomly reshuffled.

@@ -1,8 +1,9 @@
 // SessionSummaryTask runner — practice-owned session domain operation.
 // The session_summary job handler (practice/session/jobs/session_summary.ts) calls this
-// after a review session completes (paper close/PATCH, KC-scoped stream completion, or
-// orphan abandonment). It builds a compact stats snapshot from chained events, runs the
-// task, and stores the result in learning_session.summary_md. The handler logs and
+// after a review session completes (paper close/PATCH, KC-scoped stream completion,
+// whole-profile daily stream completion, or orphan abandonment). It builds a compact
+// stats snapshot from chained events, runs the task, and stores the result in
+// learning_session.summary_md. The handler logs and
 // rethrows failures so pg-boss can retry; a missing summary degrades to the UI stub.
 //
 // YUK-1783 (B5): the model's observation is appended verbatim — no clause
@@ -37,6 +38,7 @@ import { LEARNER_ANSWER_ACTIONS } from '@/kernel/read-models/learner-activity';
 import { resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
 import type { BoundRunTaskTextFn } from '@/server/ai/runner-fn';
 import { resolveSubjectProfile } from '@/subjects/profile';
+import { dailyStreamDateOf, loadDailyStreamAnswers } from './daily-stream-answers';
 import { type SessionSummaryIssue, checkSessionSummaryClaims } from './session-summary-guard';
 
 const NOTABLE_LIMIT = 3;
@@ -218,6 +220,34 @@ async function findPendingAttributionIds(
   return pending;
 }
 
+async function loadSessionAnswerEvents(
+  db: Db,
+  sessionId: string,
+  dailyStreamDate: string | null,
+): Promise<AnswerEventRow[]> {
+  const onSession = await db
+    .select()
+    .from(event)
+    .where(
+      and(
+        eq(event.session_id, sessionId),
+        inArray(event.action, [...LEARNER_ANSWER_ACTIONS]),
+        eq(event.subject_kind, 'question'),
+      ),
+    )
+    .orderBy(asc(event.created_at), asc(event.dispatch_seq));
+  if (!dailyStreamDate) return onSession;
+  const seen = new Set(onSession.map((row) => row.id));
+  const merged = [...onSession];
+  for (const row of await loadDailyStreamAnswers(db, dailyStreamDate)) {
+    if (!seen.has(row.id)) merged.push(row);
+  }
+  merged.sort(
+    (a, b) => a.created_at.getTime() - b.created_at.getTime() || a.dispatch_seq - b.dispatch_seq,
+  );
+  return merged;
+}
+
 function buildNextFocusReason(input: {
   knowledgeName: string;
   incorrect: number;
@@ -232,8 +262,9 @@ function buildNextFocusReason(input: {
 /**
  * Generate and persist a markdown summary for a finished review session.
  * Re-runnable: a later request (for example after a late attribution) rewrites
- * summary_md and appends a fresh provenance event. Only learner answers on this
- * session_id are considered.
+ * summary_md and appends a fresh provenance event. Learner answers on this
+ * session_id are considered. A whole-profile daily stream keeps session_id null
+ * on its slots, so that session also includes answers on that day's slots.
  */
 export async function runSessionSummary(
   params: RunSessionSummaryParams,
@@ -248,6 +279,7 @@ export async function runSessionSummary(
       summary_md: learning_session.summary_md,
       started_at: learning_session.started_at,
       ended_at: learning_session.ended_at,
+      entrypoint: learning_session.entrypoint,
     })
     .from(learning_session)
     .where(eq(learning_session.id, sessionId))
@@ -255,17 +287,11 @@ export async function runSessionSummary(
   const sess = sessRows[0];
   if (!sess) return { status: 'skipped:no_session' };
 
-  const answerEvents: AnswerEventRow[] = await db
-    .select()
-    .from(event)
-    .where(
-      and(
-        eq(event.session_id, sessionId),
-        inArray(event.action, [...LEARNER_ANSWER_ACTIONS]),
-        eq(event.subject_kind, 'question'),
-      ),
-    )
-    .orderBy(asc(event.created_at), asc(event.dispatch_seq));
+  const answerEvents = await loadSessionAnswerEvents(
+    db,
+    sessionId,
+    dailyStreamDateOf(sess.entrypoint),
+  );
 
   if (answerEvents.length === 0) {
     return { status: 'skipped:no_events' };
