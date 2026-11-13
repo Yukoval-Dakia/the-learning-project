@@ -23745,8 +23745,6 @@ export interface operations {
                             /** Format: date-time */
                             due_at: string | null;
                             id: string;
-                            /** @enum {string} */
-                            status: "pending" | "in_progress";
                             title: string;
                             user_pinned: boolean;
                         }[];

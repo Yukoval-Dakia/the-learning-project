@@ -7,7 +7,6 @@ import './learning-item-plan.css';
 interface PlanRow {
   id: string;
   title: string;
-  status: 'pending' | 'in_progress';
   user_pinned: boolean;
   due_at: string | null;
 }
@@ -51,9 +50,21 @@ export function LearningItemPlanList(p: {
   const uid = useId();
   const heading = useRef<HTMLHeadingElement>(null);
   const triggers = useRef(new Map<string, HTMLButtonElement>());
-  const visible = p.expanded ? p.rows : p.rows.slice(0, 5);
+  const preview = p.rows.slice(0, 5);
+  const editingRow = p.rows.find((row) => row.id === p.editor?.id);
+  const editorOutsidePreview = editingRow && !preview.some((row) => row.id === editingRow.id);
+  // New earlier IDs can push a dirty editor beyond the preview during a refresh.
+  const visible = p.expanded
+    ? p.rows
+    : editorOutsidePreview
+      ? [...preview.slice(0, 4), editingRow]
+      : preview;
+  const restoreFocus = (id: string) => {
+    if (!p.expanded && editorOutsidePreview) heading.current?.focus();
+    else triggers.current.get(id)?.focus();
+  };
   const closeEditor = () => {
-    if (p.editor) triggers.current.get(p.editor.id)?.focus();
+    if (p.editor) restoreFocus(p.editor.id);
     p.editor?.onCancel();
   };
   return (
@@ -88,7 +99,6 @@ export function LearningItemPlanList(p: {
                   <div className="un-plan-identity">
                     <h3>{row.title || '未命名学习项'}</h3>
                     <div className="un-plan-meta">
-                      <span>{row.status === 'pending' ? '待开始' : '学习中'}</span>
                       {row.user_pinned && <Chip>已置顶</Chip>}
                       <span>
                         {row.due_at
@@ -119,7 +129,7 @@ export function LearningItemPlanList(p: {
                     className="un-plan-editor"
                     onSubmit={async (event) => {
                       event.preventDefault();
-                      if (await edit.onSave()) triggers.current.get(row.id)?.focus();
+                      if (await edit.onSave()) restoreFocus(row.id);
                     }}
                   >
                     <p className="un-plan-help">

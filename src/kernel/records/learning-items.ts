@@ -35,7 +35,6 @@ export async function listOpenLearningItemPlans(
     .select({
       id: learning_item.id,
       title: learning_item.title,
-      status: learning_item.status,
       user_pinned: learning_item.user_pinned,
       due_at: learning_item.due_at,
     })

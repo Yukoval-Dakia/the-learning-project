@@ -10,7 +10,6 @@ export {
   CauseCategory,
   FsrsRating,
   IngestionEntrypoint,
-  LearningItemOpenStatus,
   NoteSection,
   NoteVerificationResult,
   QuestionKind,

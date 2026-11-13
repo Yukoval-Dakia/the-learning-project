@@ -1,7 +1,6 @@
 import { z } from 'zod';
 import {
   ConjectureProbeResponseJudgement,
-  LearningItemOpenStatus,
   PROBE_NON_EVIDENCE_RESOLUTION,
   PROBE_RESOLUTIONS,
 } from '@/kernel/capability-contract-schemas';
@@ -141,7 +140,6 @@ export const LearningItemPlansResponseSchema = z.object({
   items: z.array(
     LearningItemPlanResponseSchema.extend({
       title: z.string(),
-      status: LearningItemOpenStatus,
     }),
   ),
   next_cursor: z.string().nullable(),
