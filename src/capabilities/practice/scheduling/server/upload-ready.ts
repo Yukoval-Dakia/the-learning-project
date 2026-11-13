@@ -4,7 +4,10 @@ import { createHash } from 'node:crypto';
 import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { UploadPracticeDeliveryPayload } from '@/core/schema/event';
 import type { Db, Tx } from '@/db/client';
-import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
+import {
+  acquireLearningStateWriteLock,
+  tryAcquireAdvisoryTransactionLock,
+} from '@/db/learning-state-lock';
 import {
   event,
   event_subscription_checkpoint,
@@ -17,7 +20,7 @@ import {
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
-import { tryLockPracticeStreamPartition } from '@/kernel/locks/practice-stream';
+import { practiceStreamPartitionKey } from '@/kernel/locks/practice-stream';
 import type { EventSubscriptionHandler } from '@/kernel/manifest';
 import {
   type PurposeSource,
@@ -251,7 +254,8 @@ async function reconcileBatchAttempt(db: Db, sessionId: string): Promise<number>
     const batch = await readUploadReadyBatch(tx, sessionId);
     if (!batch) return 0;
     const date = streamLocalDate();
-    if (!(await tryLockPracticeStreamPartition(tx, date))) throw new UploadPracticeContention();
+    if (!(await tryAcquireAdvisoryTransactionLock(tx, practiceStreamPartitionKey(date))))
+      throw new UploadPracticeContention();
     let added = 0;
     for (const ready of batch.ready) {
       const id = deliveryId(sessionId, ready.questionId);

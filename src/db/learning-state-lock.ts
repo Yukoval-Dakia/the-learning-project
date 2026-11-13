@@ -14,6 +14,14 @@ export async function acquireLearningStateWriteLock(tx: Tx): Promise<void> {
   await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${LEARNING_STATE_WRITE_LOCK}))`);
 }
 
+/** Callers holding other locks can roll back without waiting for another transaction. */
+export async function tryAcquireAdvisoryTransactionLock(tx: Tx, key: string): Promise<boolean> {
+  const [result] = await tx.execute<{ acquired: boolean }>(
+    sql`SELECT pg_try_advisory_xact_lock(hashtext(${key})) AS acquired`,
+  );
+  return result?.acquired === true;
+}
+
 /**
  * Run `fn` under the global learning-state write lock G, inside a transaction. Dispatch uses the
  * DOCUMENTED `'$client' in db` polarity (src/db/client.ts: a `Tx` does not carry `$client`) rather
