@@ -4,7 +4,8 @@
 定时与按需 job（manifest jobs 声明是唯一归属源），加上小 task（quiz_verify 等）给
 大 agent 留观察信号的 agent-notes 信道——hints not facts，带 provenance +
 expires_at。存储零新表：骑乘 event(action='experimental:agent_note')（U0 D10 /
-AF §4）。用户面只有只读观察窗（/agent-notes 页 + today 块）。
+AF §4）。用户面是只读观察窗（/agent-notes 页 + today 块），以及可更正的记忆页
+（/memory，可编辑 / 撤销 / 撤回主题）。
 
 - jobs/ — dreaming_nightly（agent 档，夜链成员：soft 依赖 knowledge_maintenance_nightly）/
   coach_daily（llm 档，不在夜链：学习者回来且计划过期时由 learner_return_wake 经
