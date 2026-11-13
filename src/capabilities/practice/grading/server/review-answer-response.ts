@@ -79,6 +79,7 @@ export function projectReviewAnswerResponse(body: CreateAttemptBody, result: Rev
     kind: 'committed' as const,
     body: {
       status: committed.status,
+      attempt_event_id: committed.attempt_id,
       assessment: {
         submission_id: committed.submission.submission_id,
         evaluation_group_id: committed.submission.evaluation_group_id,

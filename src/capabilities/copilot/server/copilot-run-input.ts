@@ -10,7 +10,11 @@ import type { Db } from '@/db/client';
 import { readEventDerivationPolicy } from '@/kernel/events/derivation-policy';
 import { HostOperationNotInstalledError } from '@/kernel/host-operation';
 import type { DomainToolSurface } from '@/kernel/tools/allowlists';
-import { COPILOT_HISTORY_BUDGET, type CopilotHistoryBudget } from '@/kernel/tools/budgets';
+import {
+  COPILOT_HISTORY_BUDGET,
+  type CopilotHistoryBudget,
+  estimateContextTokens,
+} from '@/kernel/tools/budgets';
 import type { CopilotCorrectionContract } from './correction-contract';
 import {
   type LearnerStateHeader,
@@ -69,6 +73,8 @@ export interface CopilotRunInput {
   proposal_feedback: ScopedProposalFeedbackCell[];
   conversation_history: CopilotHistoryTurn[];
   learner_state_header?: string;
+  /** 「自上条消息以来：……」 — only when the cached header predates new activity. */
+  since_last_message?: string;
   correction_contract: CopilotCorrectionContract;
   ambient_context?: CopilotAmbientContext;
   /**
@@ -80,12 +86,12 @@ export interface CopilotRunInput {
 }
 
 // Assemble bounded, history-only conversation_history from the session-scoped
-// turn reader. 防循环 invariants: each entry keeps role + text (AI replies also
-// keep event_id), while skill_turn / skill_context / session_id / prior-run inputs
-// (conversation_history, proposal_feedback, ambient_context) are structurally excluded. DOUBLE truncation: per-turn char
-// cap, then whole-array cap dropping the OLDEST real turns first. The pinned
-// header is counted and reserved first, and is never dropped while real turns
-// remain; an absent/empty header prepends nothing.
+// turn reader. Each entry keeps role + text (AI replies also keep event_id),
+// while skill_turn / skill_context / session_id / prior-run inputs are
+// structurally excluded. Turns stay whole. The token ceiling drops the oldest
+// whole turn first and does not charge the pinned header; an absent/empty
+// header prepends nothing. The newest turn is kept even when it alone exceeds
+// the ceiling, so a long reply is not sliced or discarded.
 export function assembleConversationHistory(
   turns: CopilotTurn[],
   budget: CopilotHistoryBudget,
@@ -99,25 +105,15 @@ export function assembleConversationHistory(
         (turn.role === 'user' || turn.role === 'ai') && allowsDerivation(turn),
     )
     .slice(-budget.maxTurns);
-  // Project role + text and AI event_id only, then per-turn truncate.
   const mapped: CopilotHistoryTurn[] = recent.map((t) => ({
     role: t.role,
-    text: t.text.length > budget.perTurnChars ? t.text.slice(0, budget.perTurnChars) : t.text,
+    text: t.text,
     ...(t.role === 'ai' ? { event_id: t.event_id } : {}),
   }));
   const pinned: CopilotHistoryTurn | null =
     pinnedHeaderMd && pinnedHeaderMd.length > 0 ? { role: 'context', text: pinnedHeaderMd } : null;
-  // Whole-array cap: drop the OLDEST real turn (front) until the serialized array,
-  // header included in the accounting, fits. Only real turns are dropped here.
-  const serialized = () => JSON.stringify(pinned ? [pinned, ...mapped] : mapped);
-  while (mapped.length > 0 && serialized().length > budget.totalChars) {
-    mapped.shift();
-  }
-  // If the header alone still exceeds totalChars after every real turn is drained,
-  // return empty history rather than an orphaned over-budget header.
-  if (pinned && mapped.length === 0 && serialized().length > budget.totalChars) {
-    return [];
-  }
+  const tokens = () => estimateContextTokens(JSON.stringify(mapped));
+  while (mapped.length > 1 && tokens() > budget.totalTokens) mapped.shift();
   return pinned ? [pinned, ...mapped] : mapped;
 }
 
@@ -261,10 +257,13 @@ export async function assembleCopilotRunInput(
     ...(chipKind ? { chip_kind: chipKind } : {}),
     proposal_feedback: learnerState.proposal_feedback,
     conversation_history: conversationHistory,
-    // The whole fetched window, not the char-truncated survivor set: binding a
+    // The whole fetched window, not the token-dropped survivor set: binding a
     // few extra turn ids is fail-closed, binding fewer would be a leak.
     bound_turn_event_ids: rawTurns.flatMap((t) => (t.event_id ? [t.event_id] : [])),
     learner_state_header: learnerState.header_md,
+    ...(learnerState.since_last_message
+      ? { since_last_message: learnerState.since_last_message }
+      : {}),
     correction_contract: {
       ...(restrictedCorrectionTarget ? { restricted_target: true } : {}),
       ...(correctionPositionsUnavailable ? { positions_unavailable: true } : {}),

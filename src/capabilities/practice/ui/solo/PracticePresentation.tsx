@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { AssetEvidencePreview } from '@/ui/components/response/AssetEvidencePreview';
 import { EvidenceComposer } from '@/ui/components/response/EvidenceComposer';
+import { LEARNER_HANDWRITING_NOTE } from '@/ui/components/response/learner-handwriting-note';
 import { ResponseSlotField, nativeSlotFieldSpec } from '@/ui/components/response/ResponseSlotField';
 import { nativeResponseEntry, nativeResponseValue } from '@/ui/components/response/response-types';
 import { ApiError } from '@/ui/lib/api';
@@ -15,10 +16,12 @@ import type {
   Submission,
 } from '@/ui-next/practice-studio/contracts';
 import { PracticeStudio } from '@/ui-next/practice-studio/PracticeStudio';
+import { attemptFacts } from '../attempt-facts';
 import { PresentationBlocks } from '../blocks/PresentationBlocks';
 import { outcomeFitsFeedbackCard } from '../judge-feedback';
 import { practiceSourceLabel } from '../PfStream';
 import type { StreamItem } from '../practice-api';
+import { useLearnerCause } from '../use-learner-cause';
 import {
   type Rating,
   appealEntryAvailable,
@@ -66,6 +69,7 @@ export interface PracticePresentationProps {
 export function PracticePresentation(props: PracticePresentationProps) {
   const { engine, item, pos, total, advancing, onBack, onDone } = props;
   const { question, issuance, draft, conflict, submit, appeal } = engine;
+  const causeEditor = useLearnerCause();
   const { phase, displayedPreview: feedback } = submit;
   const q = question.data;
   const ready = issuance.status === 'ready' ? issuance : null;
@@ -236,7 +240,14 @@ export function PracticePresentation(props: PracticePresentationProps) {
                   label={m.alt_text ?? m.caption ?? '题目材料'}
                 />
               )}
-              {m.caption && <figcaption>{m.caption}</figcaption>}
+              {(m.caption || m.contains_learner_handwriting === true) && (
+                <figcaption>
+                  {m.caption}
+                  {m.contains_learner_handwriting === true && (
+                    <span className="rs-fig-note">{LEARNER_HANDWRITING_NOTE}</span>
+                  )}
+                </figcaption>
+              )}
             </figure>,
           ),
         },
@@ -410,6 +421,7 @@ export function PracticePresentation(props: PracticePresentationProps) {
               : [],
           uncertainty: unknownScore ? '对了几处是确定的；分数还算不出来，不按 0 分记。' : undefined,
           aiGraded,
+          facts: attemptFacts(submit.recorded),
         },
       };
       if (!submit.autoCommitted && !unknownScore)
@@ -423,6 +435,12 @@ export function PracticePresentation(props: PracticePresentationProps) {
             : '这次没有建议，自己选一个',
           actions: [],
         };
+      if (submit.causeEdit) {
+        revelation.cause = causeEditor.editorFor({
+          attemptEventId: submit.causeEdit.attemptEventId,
+          current: submit.causeEdit.current,
+        });
+      }
       if (unsupported && !submit.autoCommitted && !submit.committedPreview)
         submission.secondary = [
           ...submission.secondary,

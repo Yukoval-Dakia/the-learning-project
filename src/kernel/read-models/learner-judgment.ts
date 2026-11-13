@@ -543,7 +543,7 @@ export async function readLearnerJudgments(
       }
     }
     const retention = retentionRead(scheduling);
-    // the any-event activity clock rides the same snapshot in its
+    // the learner activity clock rides the same snapshot in its
     // own savepoint; a failed derivation degrades to per-item null (display
     // clock, fail-soft) instead of aborting the ability/retention readings.
     let activity: ReadonlyMap<string, Date> = new Map();
@@ -614,29 +614,54 @@ export async function readQuestionCardReviewTiming(
   questionId: string,
   asOf: Date,
 ): Promise<ReviewTiming | null> {
-  const facts = await loadSchedulingReviewFacts(db, 'question', [questionId], asOf);
-  const fact = facts.get(questionId);
-  if (!fact) return null;
+  return (await readQuestionCardReviewTimings(db, [questionId], asOf)).get(questionId) ?? null;
+}
+
+/**
+ * Batch form of the unlabeled question card read: one scheduling-facts load and one
+ * duration read for the whole page. Cards that do not exist are simply absent.
+ */
+export async function readQuestionCardReviewTimings(
+  db: DbLike,
+  questionIds: readonly string[],
+  asOf: Date,
+): Promise<Map<string, ReviewTiming>> {
+  const out = new Map<string, ReviewTiming>();
+  const ids = [...new Set(questionIds)];
+  if (ids.length === 0) return out;
+  const facts = await loadSchedulingReviewFacts(db, 'question', ids, asOf);
+  if (facts.size === 0) return out;
+  const eventIds = [...facts.values()]
+    .map((fact) => fact.last_review_event_id)
+    .filter((id): id is string => id !== null);
   let durations: ReadonlyMap<string, number | null> | null = new Map();
-  if (fact.last_review_event_id) {
+  if (eventIds.length > 0) {
     try {
-      durations = await durationsByEventId(db, [fact.last_review_event_id]);
+      durations = await durationsByEventId(db, eventIds);
     } catch {
       durations = null;
     }
   }
-  const basis = cardBasis({
-    presence: 'present',
-    due_at: fact.due_at,
-    state_readable: fact.state_readable,
-    last_retrieval_at: fact.last_retrieval_at,
-    event_id: fact.last_review_event_id,
-    durations,
-  });
-  return reviewTiming({
-    asOf,
-    ability: unknown('question_card_has_no_ability_reading'),
-    retention: retentionAvailable(fact.reading),
-    ...basis,
-  });
+  for (const id of ids) {
+    const fact = facts.get(id);
+    if (!fact) continue;
+    const basis = cardBasis({
+      presence: 'present',
+      due_at: fact.due_at,
+      state_readable: fact.state_readable,
+      last_retrieval_at: fact.last_retrieval_at,
+      event_id: fact.last_review_event_id,
+      durations,
+    });
+    out.set(
+      id,
+      reviewTiming({
+        asOf,
+        ability: unknown('question_card_has_no_ability_reading'),
+        retention: retentionAvailable(fact.reading),
+        ...basis,
+      }),
+    );
+  }
+  return out;
 }

@@ -197,7 +197,11 @@ const PlacementProfileAxisSchema = z.object({
 const PlacementDayOnePriorClaimSchema = z.object({
   observation: z.literal('untested').describe('这份先验没有作答观测'),
   basis: z.literal('model_prior').describe('模型先验，不是校准结果'),
-  inputs: z.literal('neutral_zero').describe('难度锚和域能力输入全为 0，是中性假设'),
+  inputs: z
+    .enum(['neutral_zero', 'seeded_anchors'])
+    .describe(
+      'neutral_zero 是中性零锚；seeded_anchors 表示该知识点或先修用了实测有效能力或已标定难度',
+    ),
   mastery_role: z.literal('not_independent_mastery').describe('mean_mastery 不是独立掌握'),
 });
 

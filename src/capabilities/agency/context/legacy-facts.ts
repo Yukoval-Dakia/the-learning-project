@@ -18,6 +18,20 @@ export type LegacyFact = {
   evidence_ids: string[];
   payload: Record<string, unknown>;
 };
+
+/**
+ * Drop legacy facts bound to evidence the digest has withdrawn. One owner for
+ * the fact-side rule so every legacy-fact surface (index, paged read) reports
+ * the same set; the withdrawn-id derivation itself stays owned by topics.
+ */
+export function unwithdrawnLegacyFacts(
+  facts: LegacyFact[],
+  withheld: ReadonlySet<string>,
+): LegacyFact[] {
+  if (!withheld.size) return facts;
+  return facts.filter((fact) => !fact.evidence_ids.some((id) => withheld.has(id)));
+}
+
 export async function readLegacyFacts(db: Db | Tx): Promise<LegacyFact[]> {
   const [exists] = await db.execute<{ present: boolean }>(
     sql`SELECT to_regclass(${mem0CollectionTable()}) IS NOT NULL AS present`,

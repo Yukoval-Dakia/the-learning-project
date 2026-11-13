@@ -153,7 +153,10 @@
 // YUK-1768: edge_reconciliation_log dropped with the supersede write path — a
 // table removal changes the FK_ORDER payload contract the same way an add does
 // → 4.37 → 4.38 (lockstep, per the FK_ORDER rule below).
-export const SCHEMA_VERSION = '4.38';
+// YUK-2008: subject_doc + append-only subject_doc_journal are authored control-
+// plane truth sharing subject_change_seq. Both enter FK_ORDER, not exclusions.
+// NEW FK_ORDER tables → bump 4.38 → 4.39.
+export const SCHEMA_VERSION = '4.39';
 
 export const SUBSCRIPTION_PROGRESS_TABLES = [
   'event_subscription_checkpoint',
@@ -354,6 +357,11 @@ export const FK_ORDER = [
   'subject_trait_binding',
   'subject_control_journal',
   'subject_name_claim',
+  // YUK-2008: subject-doc catalog/body + append-only revision journal. Authored
+  // control-plane prose and provenance cannot be rebuilt after a restore; both
+  // share the existing subject_change_seq axis, so they restore with this family.
+  'subject_doc',
+  'subject_doc_journal',
   // YUK-452 Phase B (0074/0075): placement cold-starter admission 四表 — 冷启 admission
   // 与付费清算的持久台账（预算 claim / attempt / attempt↔question 链 / settled 成本组件，
   // 含 task_run_id 与 actual cost provenance）。丢了即 restore 后预算控制失忆（可重复

@@ -55,7 +55,6 @@ export const KEY_CONSUMERS: Readonly<Record<string, string | null>> = {
   JUDGE_DURABLE_ENABLED: 'src/capabilities/practice/grading/server/judge-durable-config.ts',
   JUDGE_FALLBACK_PROVIDER: 'src/capabilities/practice/grading/server/judge-durable-config.ts',
   MISCONCEPTION_PROMOTE_ENABLED: 'src/capabilities/agency/server/misconception-promote.ts',
-  MISCONCEPTION_HARD_CONFIRM_ENABLED: 'src/capabilities/agency/server/misconception-promote.ts',
   QUESTION_SUPPLY_REFILL_ENABLED: 'src/capabilities/practice/supply/server/refill.ts',
   JUDGE_CALIBRATION_SAMPLING_ENABLED:
     'src/capabilities/practice/grading/jobs/judge_calibration_sample.ts',

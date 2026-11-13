@@ -1,14 +1,18 @@
+import { useQueryClient } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
+import { CauseEditor } from '@/ui-next/practice-studio/CauseEditor';
+import type { CauseEditor as CauseEditorModel } from '@/ui-next/practice-studio/contracts';
 import { Card } from '@/ui-next/primitives/Card';
 import { FoldList } from '@/ui-next/primitives/FoldList';
 import { RetryLine } from '@/ui-next/primitives/RetryLine';
 import { SkeletonLines } from '@/ui-next/primitives/SkeletonLines';
 import { Button } from '@/ui-next/public';
+import { type LearnerCauseSeed, useLearnerCause } from '../use-learner-cause';
 import type { LibraryScope } from './library-url';
 import { type MistakeQuestion, RECORD_WORDS, causeWords, splitByEffect } from './mistake-read';
 import { LoadMore, QuestionLine, shortDay } from './QuestionLine';
-import { type LibraryLookups, useMistakeQuestions } from './use-library';
+import { LIBRARY_KEY, type LibraryLookups, useMistakeQuestions } from './use-library';
 
 function plainAnswer(md: string): string {
   const text = md
@@ -23,12 +27,14 @@ function MistakeLine({
   lookups,
   partial,
   navigate,
+  causeEditorFor,
 }: {
   group: MistakeQuestion;
   lookups: LibraryLookups;
   /** More mistake pages exist, so counts cover only what is loaded. */
   partial: boolean;
   navigate: (to: string) => void;
+  causeEditorFor?: (target: MistakeCauseTarget) => CauseEditorModel | undefined;
 }) {
   const { summary } = group;
   const counted = summary.effective_wrong_attempt_count > 0;
@@ -36,6 +42,22 @@ function MistakeLine({
   const record = group.records.find((r) => r.standing === 'stands') ?? group.records[0];
   const answer = record ? plainAnswer(record.wrongAnswerMd) : '';
   const notation = lookups.notationFor(group.knowledgeIds);
+  const causeEditor =
+    group.causeEdit && causeEditorFor
+      ? causeEditorFor({
+          attemptEventId: group.causeEdit.attemptEventId,
+          current: group.causeEdit.current
+            ? {
+                source: group.causeEdit.current.by === 'me' ? 'user' : 'agent',
+                primary_category: group.causeEdit.current.category,
+                label:
+                  group.causeEdit.current.label ??
+                  lookups.causeLabel(group.causeEdit.current.category),
+                note: group.causeEdit.current.note,
+              }
+            : null,
+        })
+      : undefined;
   return (
     <QuestionLine
       id={summary.question_id}
@@ -83,9 +105,12 @@ function MistakeLine({
           </span>
         )
       }
+      below={causeEditor ? <CauseEditor editor={causeEditor} /> : undefined}
     />
   );
 }
+
+export type MistakeCauseTarget = LearnerCauseSeed;
 
 function FoldedGroup({
   id,
@@ -130,14 +155,22 @@ export function MistakesView({
   lookups,
   navigate,
   onClearScope,
+  causeEditorFor,
 }: {
   scope: LibraryScope;
   scoped: boolean;
   lookups: LibraryLookups;
   navigate: (to: string) => void;
   onClearScope: () => void;
+  /** Injectable owner seam; the live page defaults to the practice cause routes. */
+  causeEditorFor?: (target: MistakeCauseTarget) => CauseEditorModel | undefined;
 }) {
   const { query: q, groups } = useMistakeQuestions(scope);
+  const queryClient = useQueryClient();
+  const learnerCause = useLearnerCause(() => {
+    void queryClient.invalidateQueries({ queryKey: [LIBRARY_KEY] });
+  });
+  const resolveCauseEditor = causeEditorFor ?? learnerCause.editorFor;
 
   if (q.isLoading) return <SkeletonLines rows={5} label="正在载入做错过的题" />;
   if (q.isError) return <RetryLine message="做错过的题没取到。" onRetry={() => void q.refetch()} />;
@@ -169,6 +202,7 @@ export function MistakesView({
       lookups={lookups}
       partial={partial}
       navigate={navigate}
+      causeEditorFor={resolveCauseEditor}
     />
   );
 

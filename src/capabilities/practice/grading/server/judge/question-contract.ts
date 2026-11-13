@@ -264,10 +264,6 @@ function nonEmpty(values: string[] | undefined): string[] {
   return (values ?? []).map((v) => v.trim()).filter((v) => v.length > 0);
 }
 
-// `resolveQuestionJudgeRoute` moved to `@/capabilities/practice/grading/server/judge/route-resolve` (F0,
-// PR #309 round-3) and is re-exported at the top of this file. The private
-// helpers it used (`parseRoute` / `isPreferred`) moved with it.
-
 export function buildLocalJudgeQuestion(
   q: JudgeQuestionRow,
   route: JudgeKind,

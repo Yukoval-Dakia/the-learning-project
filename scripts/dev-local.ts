@@ -11,7 +11,7 @@ import {
   testDbRefusalReason,
 } from './local-db-env';
 
-// YUK-365 (Codex review P2, Finding 2): load .env.local BEFORE .env, both
+// Load .env.local BEFORE .env, both
 // non-overriding, so the AI provider toggle (AI_PROVIDER_OVERRIDE /
 // CLAUDE_CODE_OAUTH_TOKEN, owner places these in .env.local) is in the parent env
 // passed to all three spawned children. The children (API → server/env loadEnv,

@@ -99,6 +99,14 @@ export interface ListProposalInboxOpts {
    * before this instant count. Admission checks still read current rows.
    */
   asOf?: Date;
+  /** Only rows created at or after this instant (the drawer's recent preview window). */
+  createdAfter?: Date;
+  /**
+   * Preview-only ordering: these kinds sort before everything else. The cursor
+   * encodes the full rank, so combining this with `cursor` would silently skip
+   * rows; callers that page must not set it.
+   */
+  kindFirst?: readonly AiProposalKindT[];
   limit?: number;
   cursor?: string;
 }
@@ -216,6 +224,8 @@ interface ProposalCursor {
   id: string;
   cooldown_active: number;
   acceptance_rate: number;
+  /** Rank of the row's kind under the caller's kindFirst order; 0 when unsorted. */
+  kind_priority: number;
 }
 
 interface LoadedProposalEvent {
@@ -392,6 +402,7 @@ function encodeProposalCursor(row: ProposalCursor): string {
       cooldown_active: row.cooldown_active,
       created_at: row.created_at.toISOString(),
       id: row.id,
+      kind_priority: row.kind_priority,
     }),
   ).toString('base64url');
 }
@@ -403,6 +414,7 @@ function decodeProposalCursor(cursor: string): ProposalCursor {
       cooldown_active?: unknown;
       created_at?: unknown;
       id?: unknown;
+      kind_priority?: unknown;
     };
     if (typeof parsed.id !== 'string' || typeof parsed.created_at !== 'string') {
       throw new Error('missing id or created_at');
@@ -419,11 +431,17 @@ function decodeProposalCursor(cursor: string): ProposalCursor {
       typeof parsed.acceptance_rate === 'number' && Number.isFinite(parsed.acceptance_rate)
         ? parsed.acceptance_rate
         : 0.5;
+    // Cursors minted before the kind rank existed only served the unsorted order.
+    const kindPriority =
+      typeof parsed.kind_priority === 'number' && Number.isFinite(parsed.kind_priority)
+        ? parsed.kind_priority
+        : 0;
     return {
       acceptance_rate: acceptanceRate,
       cooldown_active: cooldownActive,
       created_at: createdAt,
       id: parsed.id,
+      kind_priority: kindPriority,
     };
   } catch (err) {
     throw new ApiError(
@@ -475,27 +493,41 @@ function proposalAcceptanceRateExpr() {
   return sql<number>`COALESCE(${proposal_signals.acceptance_rate}, 0.5)`;
 }
 
-function proposalCursorWhere(cursor: ProposalCursor, nowIso: string) {
+function proposalKindFirstExpr(kinds: readonly AiProposalKindT[]) {
+  const list = sql.join(
+    kinds.map((kind) => sql`${kind}`),
+    sql`, `,
+  );
+  return sql<number>`CASE WHEN ${proposalPayloadKindExpr()} IN (${list}) THEN 0 ELSE 1 END`;
+}
+
+function proposalCursorWhere(cursor: ProposalCursor, nowIso: string, kindPriority: SQL<number>) {
   const cooldownActive = proposalCooldownActiveExpr(nowIso);
   const acceptanceRate = proposalAcceptanceRateExpr();
   const cursorCreatedAtIso = cursor.created_at.toISOString();
   return sql`
     (
-      ${cooldownActive} > ${cursor.cooldown_active}
+      ${kindPriority} > ${cursor.kind_priority}
       OR (
-        ${cooldownActive} = ${cursor.cooldown_active}
-        AND ${acceptanceRate} < ${cursor.acceptance_rate}
-      )
-      OR (
-        ${cooldownActive} = ${cursor.cooldown_active}
-        AND ${acceptanceRate} = ${cursor.acceptance_rate}
-        AND ${event.created_at} < ${cursorCreatedAtIso}::timestamptz
-      )
-      OR (
-        ${cooldownActive} = ${cursor.cooldown_active}
-        AND ${acceptanceRate} = ${cursor.acceptance_rate}
-        AND ${event.created_at} = ${cursorCreatedAtIso}::timestamptz
-        AND ${event.id} < ${cursor.id}
+        ${kindPriority} = ${cursor.kind_priority}
+        AND (
+          ${cooldownActive} > ${cursor.cooldown_active}
+          OR (
+            ${cooldownActive} = ${cursor.cooldown_active}
+            AND ${acceptanceRate} < ${cursor.acceptance_rate}
+          )
+          OR (
+            ${cooldownActive} = ${cursor.cooldown_active}
+            AND ${acceptanceRate} = ${cursor.acceptance_rate}
+            AND ${event.created_at} < ${cursorCreatedAtIso}::timestamptz
+          )
+          OR (
+            ${cooldownActive} = ${cursor.cooldown_active}
+            AND ${acceptanceRate} = ${cursor.acceptance_rate}
+            AND ${event.created_at} = ${cursorCreatedAtIso}::timestamptz
+            AND ${event.id} < ${cursor.id}
+          )
+        )
       )
     )
   `;
@@ -503,7 +535,10 @@ function proposalCursorWhere(cursor: ProposalCursor, nowIso: string) {
 
 async function loadProposalEvents(
   db: DbLike,
-  opts: Pick<ListProposalInboxOpts, 'limit' | 'cursor' | 'lane' | 'asOf'> & {
+  opts: Pick<
+    ListProposalInboxOpts,
+    'limit' | 'cursor' | 'lane' | 'asOf' | 'createdAfter' | 'kindFirst'
+  > & {
     nowIso?: string;
   } = {},
 ): Promise<LoadedProposalEvent[]> {
@@ -512,18 +547,29 @@ async function loadProposalEvents(
   const cooldownActive = proposalCooldownActiveExpr(nowIso);
   const acceptanceRate = proposalAcceptanceRateExpr();
   const asOfWhere = opts.asOf ? lt(event.created_at, opts.asOf) : undefined;
+  const createdAfterWhere = opts.createdAfter
+    ? gte(event.created_at, opts.createdAfter)
+    : undefined;
+  // The rank is part of the ordering, so refill cursors must carry it too. Without a
+  // kindFirst order every row ranks 0 and the predicate reduces to the previous one.
+  const kindPriority = opts.kindFirst?.length
+    ? proposalKindFirstExpr(opts.kindFirst)
+    : sql<number>`0`;
   const where = cursor
     ? and(
         proposalWhere(),
         proposalLaneWhere(opts.lane),
-        proposalCursorWhere(cursor, nowIso),
+        proposalCursorWhere(cursor, nowIso, kindPriority),
         asOfWhere,
+        createdAfterWhere,
       )
-    : and(proposalWhere(), proposalLaneWhere(opts.lane), asOfWhere);
+    : and(proposalWhere(), proposalLaneWhere(opts.lane), asOfWhere, createdAfterWhere);
+  const rank = opts.kindFirst?.length ? [kindPriority] : [];
   const query = db
     .select({
       acceptance_rate: acceptanceRate,
       cooldown_active: cooldownActive,
+      kind_priority: kindPriority,
       row: event,
     })
     .from(event)
@@ -535,7 +581,7 @@ async function loadProposalEvents(
       ),
     )
     .where(where)
-    .orderBy(cooldownActive, desc(acceptanceRate), desc(event.created_at), desc(event.id));
+    .orderBy(...rank, cooldownActive, desc(acceptanceRate), desc(event.created_at), desc(event.id));
   const rows = opts.limit === undefined ? await query : await query.limit(opts.limit);
   return rows.map((loaded) => ({
     row: loaded.row,
@@ -544,6 +590,7 @@ async function loadProposalEvents(
       cooldown_active: loaded.cooldown_active,
       created_at: loaded.row.created_at,
       id: loaded.row.id,
+      kind_priority: loaded.kind_priority,
     },
   }));
 }
@@ -838,6 +885,12 @@ export async function listProposalInboxPage(
   db: DbLike,
   opts: ListProposalInboxOpts = {},
 ): Promise<ProposalInboxPage> {
+  if (opts.kindFirst?.length && opts.cursor) {
+    throw new ApiError(
+      'validation_error',
+      'kindFirst changes the rank order and cannot be combined with a cursor',
+    );
+  }
   const rankingNowIso = new Date().toISOString();
   const pageLimit = opts.limit;
   if (pageLimit === undefined) {
@@ -845,6 +898,8 @@ export async function listProposalInboxPage(
       cursor: opts.cursor,
       lane: opts.lane,
       asOf: opts.asOf,
+      createdAfter: opts.createdAfter,
+      kindFirst: opts.kindFirst,
       nowIso: rankingNowIso,
     });
     return {
@@ -864,6 +919,8 @@ export async function listProposalInboxPage(
       cursor,
       lane: opts.lane,
       asOf: opts.asOf,
+      createdAfter: opts.createdAfter,
+      kindFirst: opts.kindFirst,
       limit: batchLimit,
       nowIso: rankingNowIso,
     });

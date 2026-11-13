@@ -50,6 +50,14 @@ import { costUsdToMicroUsd } from '@/kernel/cost';
 import { writeEvent } from '@/kernel/events';
 import type { QuizGenJobData, QuizGenTrigger } from '@/kernel/quiz-gen-contract';
 import {
+  type LearnerCurriculum,
+  readLearnerCurriculum,
+} from '@/kernel/read-models/learner-curriculum';
+import {
+  listSubjectDocCatalog,
+  subjectDocCatalogPiSkillDoc,
+} from '@/kernel/read-models/subject-docs';
+import {
   type PlacementVerificationAuthority,
   SupplyTraceV1,
   type SupplyTraceV1T,
@@ -61,12 +69,11 @@ import {
 } from '@/kernel/tools/allowlists';
 import { runAgentTask } from '@/server/ai/runner';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
-import { answerClassCompatible } from '@/subjects/question-kind';
 import {
-  resolveQuizGenSkillDocsForSubject,
-  resolveQuizGenSkills,
+  answerClassCompatible,
+  quizGenPackDocKey,
   skillKindToQuestionKind,
-} from '@/subjects/quiz-gen-skills';
+} from '@/subjects/question-kind';
 import {
   EXACT_DUPLICATE_EVENT_SAMPLE_CAP,
   dispatchPendingVerifyIntents,
@@ -74,8 +81,8 @@ import {
 import { type FewShotExample, renderFewShotBlock } from '../server/quiz/fewshot-retrieve';
 import { embedMaterialInPrompt } from '../server/quiz/quiz-gen-material';
 import { QuizGenOutputFailure, parseOutput } from '../server/quiz/quiz-gen-output';
-import type { DifficultyBand } from '../supply/public';
 import {
+  type DifficultyBand,
   PLACEMENT_ATTEMPT_HEARTBEAT_MS,
   PLACEMENT_QUEUE_EXPIRY_MS,
   PLACEMENT_STARTER_REQUIRED_COUNT,
@@ -96,6 +103,7 @@ import {
   releaseAuthorizedPaidCall,
   renewPlacementAttempt,
   reservePlacementGenerationCall,
+  resolveBandLevelTarget,
   startPlacementAttemptHeartbeat,
   terminalizePlacementUnknownCost,
 } from '../supply/public';
@@ -136,6 +144,8 @@ export const QUIZ_GEN_READ_TOOLS = [
   'expand_knowledge_subgraph',
   'find_knowledge_paths',
   'get_question_context',
+  // 科目经验文档库：题型规范/坏题反例/few-shot 正文按需读，启动只带目录。
+  'read_subject_doc',
 ] as const satisfies readonly DomainToolName[];
 
 // The handler only consumes { text, task_run_id?, cost_usd? } from the run
@@ -149,8 +159,8 @@ type RunAgentTaskFn = (
     db: Db;
     piToolMounts?: PiToolMount[];
     allowedTools?: string[];
-    // YUK-225 (S2 slice 4) — subject 规范包 bodies + subject context threaded to
-    // the runner so the (subject, kind) packs are injected into the system prompt.
+    // 本科目文档目录（渲染后的目录正文，不含文档正文）经 piSkillDocs 注入
+    // system prompt；正文由 agent 用 read_subject_doc 按需读。
     piSkillDocs?: readonly { name: string; body: string }[];
     subjectProfile?: SubjectProfile;
   },
@@ -231,6 +241,8 @@ export interface RunQuizGenParams {
   // requested_difficulty_band in plan/generate inputs (planner difficulty is a hint,
   // not a checked pin — bands are approximate producer semantics).
   difficultyBand?: DifficultyBand;
+  /** Inclusive 1–5 span for `difficultyBand`. null = no ordinal sits in the band. */
+  difficultyLevels?: { min: number; max: number } | null;
   // YUK-1011 — the supply target's 篇 pin (dispatcher forwards
   // constraints.compositeParentOnly as job data composite_parent_only). When set,
   // every plan item must carry composite:true and every generated question must
@@ -423,28 +435,29 @@ async function prepareQuizGeneration(params: RunQuizGenParams) {
   const planPiToolMounts: PiToolMount[] = [piDomainMount(planDomainMountOptions)];
   const planAllowedTools = QUIZ_GEN_READ_TOOLS.map((name) => toMcpAllowedToolName(name));
 
-  // YUK-225 (S2 slice 4) — 规范双轨.
-  // 轨 1: inject the subject's quiz-gen SKILL.md规范包 bodies into the system
-  //       prompt (piSkillDocs). 降级链: resolveQuizGenSkillDocsForSubject returns
-  //       undefined when the subject has no pack → promptFragments fallback.
+  // 规范双轨（YUK-225 结构）.
+  // 轨 1（文档库形态）: 启动只带本科目文档目录（piSkillDocs 注入渲染后的目录，
+  //       不含正文）；出题规范/坏题反例/范例正文由 agent 用 read_subject_doc 按
+  //       doc_key 按需读。目录为空（表未就绪/科目无文档）→ 不注入，提示词照旧。
   // 轨 2: retrieve a few already-pooled同题型 examples (high-tier first) and fold a
   //       few-shot block into the prompt. Best-effort: a retrieval failure must not
   //       block generation, so we log + continue with no block (降级).
-  const subjectSkillDocs = await resolveQuizGenSkillDocsForSubject(subjectProfile.id);
+  const docCatalog = await listSubjectDocCatalog(db, subjectProfile.id);
+  const subjectSkillDocs = await subjectDocCatalogPiSkillDoc(db, subjectProfile.id);
+  const packDocKeys = new Set(
+    [...docCatalog.own, ...docCatalog.shared].map((entry) => entry.doc_key),
+  );
 
   let fewShotBlock = '';
   if (resolved.knowledgeIds.length > 0) {
     // QuizGen runs emit mixed kinds; retrieve few-shot across the subject's
-    // skill-backed kinds (translation / reading_comprehension / calculation …)
+    // pack-backed kinds (translation / reading_comprehension / calculation …)
     // and merge a small set so each kind the model writes has an exemplar.
-    // resolveQuizGenSkills is async now; a sync Array.filter predicate would see a
-    // Promise (always !== undefined) and mark every kind skill-backed. Pre-compute
-    // the resolved values concurrently, then filter on the resolved array.
     const allKinds = subjectProfile.questionKinds ?? [];
-    const skillResolved = await Promise.all(
-      allKinds.map((k) => resolveQuizGenSkills(subjectProfile.id, k)),
-    );
-    const skillBackedKinds = allKinds.filter((_, i) => skillResolved[i] !== undefined);
+    const skillBackedKinds = allKinds.filter((k) => {
+      const packKey = quizGenPackDocKey(k);
+      return packKey !== null && packDocKeys.has(packKey);
+    });
     const collected: FewShotExample[] = [];
     for (const k of skillBackedKinds) {
       try {
@@ -491,6 +504,7 @@ async function planQuizGeneration(
   params: RunQuizGenParams,
   context: QuizGenerationContext,
   evidence: QuizGenerationEvidence,
+  curriculum: LearnerCurriculum,
 ): Promise<QuizGenPlanT> {
   const { db, trigger, resolved, count, run, planPiToolMounts, planAllowedTools, subjectProfile } =
     context;
@@ -520,11 +534,15 @@ async function planQuizGeneration(
       },
       knowledge_context: resolved.knowledgeNode ? [resolved.knowledgeNode] : [],
       count,
+      curriculum,
       ...(params.generationMethod ? { requested_generation_method: params.generationMethod } : {}),
       ...(params.kind ? { requested_kind: params.kind } : {}),
       ...(params.objectiveOnly ? { objective_only: true } : {}),
       ...(params.kindRequired ? { kind_required: true } : {}),
       ...(params.difficultyBand ? { requested_difficulty_band: params.difficultyBand } : {}),
+      ...(params.difficultyLevels !== undefined
+        ? { requested_difficulty_levels: params.difficultyLevels }
+        : {}),
       // YUK-1011 — the 篇 pin reaches the planner so EVERY item comes back
       // composite:true (gate-checked below; a violating plan regenerates).
       ...(params.compositeParentOnly ? { composite_parent_only: true } : {}),
@@ -535,6 +553,7 @@ async function planQuizGeneration(
       piToolMounts: planPiToolMounts,
       allowedTools: planAllowedTools,
       subjectProfile,
+      ...(context.subjectSkillDocs ? { piSkillDocs: context.subjectSkillDocs } : {}),
     });
     const parsedPlan = parsePlanOutput(evidence.planRunResult.text);
     if (!parsedPlan.ok) {
@@ -590,6 +609,7 @@ async function generateQuizDrafts(
   context: QuizGenerationContext,
   plan: QuizGenPlanT,
   evidence: QuizGenerationEvidence,
+  curriculum: LearnerCurriculum,
 ) {
   const {
     db,
@@ -612,6 +632,7 @@ async function generateQuizDrafts(
     },
     knowledge_context: resolved.knowledgeNode ? [resolved.knowledgeNode] : [],
     count,
+    curriculum,
     // ADR-0038 决定#2 — the ACCEPTED plan rides into the generation call as
     // structured input: one question per plan item, in order, honouring each
     // item's kind / knowledge_id / objective answer_anchor.
@@ -630,6 +651,9 @@ async function generateQuizDrafts(
     // YUK-287 — the supply target's difficulty band rides alongside so the agent
     // aims plan-item / question difficulty at it (soft hint; not a checked pin).
     ...(params.difficultyBand ? { requested_difficulty_band: params.difficultyBand } : {}),
+    ...(params.difficultyLevels !== undefined
+      ? { requested_difficulty_levels: params.difficultyLevels }
+      : {}),
     // YUK-1011 — the 篇 pin: every emitted question must carry a structured
     // stem + ≥2 sub_questions (prompt contract in quiz-generation.ts).
     ...(params.compositeParentOnly ? { composite_parent_only: true } : {}),
@@ -1049,9 +1073,10 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
     failureStage: 'plan',
   };
   try {
-    const plan = await planQuizGeneration(params, context, evidence);
+    const curriculum = await readLearnerCurriculum(params.db);
+    const plan = await planQuizGeneration(params, context, evidence, curriculum);
     evidence.failureStage = 'producer';
-    const generated = await generateQuizDrafts(params, context, plan, evidence);
+    const generated = await generateQuizDrafts(params, context, plan, evidence, curriculum);
     const persisted = await persistQuizDrafts(params, context, generated, evidence);
     await emitQuizGenerationEvent(params, context, plan, generated, persisted, evidence);
     await dispatchQuizVerification(context, persisted, evidence);
@@ -1147,6 +1172,11 @@ export function buildQuizGenHandler(
           ...(data.objective_only ? { objectiveOnly: true } : {}),
           ...(data.kind_required ? { kindRequired: true } : {}),
           ...(data.difficulty_band ? { difficultyBand: data.difficulty_band } : {}),
+          ...(data.difficulty_levels !== undefined
+            ? { difficultyLevels: data.difficulty_levels }
+            : data.difficulty_band
+              ? { difficultyLevels: resolveBandLevelTarget(data.difficulty_band, 0).levels }
+              : {}),
           // YUK-1011 — consume the 篇 pin the dispatcher has forwarded since
           // YUK-287 (was phase-deferred: forwarded but never read).
           ...(data.composite_parent_only ? { compositeParentOnly: true } : {}),

@@ -32,7 +32,7 @@ import {
   Undo2,
   Zap,
 } from 'lucide-react';
-import { type ReactNode, useId, useMemo, useState, useSyncExternalStore } from 'react';
+import { type ReactNode, useCallback, useId, useMemo, useState, useSyncExternalStore } from 'react';
 import { invalidateAfterProposalRetract, queryKeys } from '@/ui/lib/write-invalidation';
 import { ToastHost } from '@/ui-next/feedback/ToastHost';
 import { showToast } from '@/ui-next/feedback/toast-store';
@@ -415,7 +415,17 @@ export default function InboxPage({ navigate }: InboxPageProps) {
     retractAutoApplied,
     retractProposal,
   } = useWorkbenchClient();
-  const [resolved, setResolved] = useState<Record<string, string>>({});
+  // Decided here: counted out at once, faded and folded away, then gone from the list.
+  const [decided, setDecided] = useState<Record<string, true>>({});
+  const [gone, setGone] = useState<Record<string, true>>({});
+  const onResolve = useCallback((id: string, label: string, what: string) => {
+    setDecided((d) => ({ ...d, [id]: true }));
+    // A decision here can't be undone yet, so the toast only says what was done.
+    // A title can carry a whole question; the toast names it, it doesn't repeat it.
+    const name = what.length > 24 ? `${what.slice(0, 24)}…` : what;
+    showToast({ message: `${label}：${name}` });
+  }, []);
+  const onGone = useCallback((id: string) => setGone((g) => ({ ...g, [id]: true })), []);
   const [reverting, setReverting] = useState<Record<string, true>>({});
 
   const queryClient = useQueryClient();
@@ -464,7 +474,7 @@ export default function InboxPage({ navigate }: InboxPageProps) {
     return [...known, ...unknown];
   }, [decide]);
 
-  const decideRemaining = decide.filter((r) => !resolved[r.id]).length;
+  const decideRemaining = decide.filter((r) => !decided[r.id]).length;
 
   const weekAutoApplied = aaQ.data?.rows ?? [];
   const autoApplied = weekAutoApplied.filter((row) =>
@@ -559,7 +569,7 @@ export default function InboxPage({ navigate }: InboxPageProps) {
         {/* Outside the gate: a batch that empties the inbox can still be undone. */}
         <BatchConfirm
           eligibleIds={decide
-            .filter((p) => p.batch_confirm_eligible && !resolved[p.id])
+            .filter((p) => p.batch_confirm_eligible && !decided[p.id])
             .map((p) => p.id)}
         />
 
@@ -713,14 +723,15 @@ export default function InboxPage({ navigate }: InboxPageProps) {
                 </output>
               </TierNote>
             )}
-            {decide.length === 0 &&
+            {decide.every((r) => gone[r.id]) &&
               !backlog.isFetchingNextPage &&
               !backlog.isFetchNextPageError &&
               !decisionDiagnostics.incomplete && <TierNote>没有待裁决的提议。</TierNote>}
             {decide.length > 0 &&
               laneKinds.map((k) => {
-                const laneRows = decide.filter((r) => r.kind === k);
-                const live = laneRows.filter((r) => !resolved[r.id]).length;
+                const laneRows = decide.filter((r) => r.kind === k && !gone[r.id]);
+                if (laneRows.length === 0) return null;
+                const live = laneRows.filter((r) => !decided[r.id]).length;
                 const meta = kindMeta(k);
                 const LaneIcon = kindIcon(meta.icon);
                 return (
@@ -742,9 +753,10 @@ export default function InboxPage({ navigate }: InboxPageProps) {
                           key={p.id}
                           p={p}
                           index={i}
-                          resolved={resolved[p.id] ?? null}
+                          leaving={decided[p.id] === true}
                           navigate={navigate}
-                          onResolve={(id, label) => setResolved((r) => ({ ...r, [id]: label }))}
+                          onResolve={onResolve}
+                          onGone={onGone}
                           onError={showError}
                         />
                       ))}

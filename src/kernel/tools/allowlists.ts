@@ -20,6 +20,8 @@ export const READ_TOOLS = [
   'get_record_context',
   'get_question_context',
   'get_review_due',
+  // YUK-1790 LIGHT — Coach's candidate union read (session owner's composed pool).
+  'read_practice_candidates',
   'get_learning_item_context',
   // YUK-1794 B1 — Context warm-layer read (brief + facts layers). Granted to
   // coach / dreaming / copilot below; NOT to evaluator surfaces.
@@ -53,6 +55,15 @@ export const READ_TOOLS = [
   // `ingestion` surface below (same containment as the draft-structure reader).
   'read_source',
   'view_image',
+  // 科目经验文档库（subject_doc）：目录/正文/搜索三合一。设计读权限默认放开，
+  // 授权面在下方各 surface 逐个声明；job 侧挂载走显式 toolNames 不经 surface。
+  'read_subject_doc',
+  // Note body plus mark / edit / review / refine stats. Copilot grant is below.
+  'read_note',
+  // Pending proposal inbox rows (kind / title / created_at / id). Read-only over
+  // the kernel inbox projection; granted to copilot below so the companion can
+  // see what the learner still has to decide.
+  'list_pending_proposals',
 ] as const;
 
 export const PROPOSE_WRITE_TOOLS = [
@@ -268,6 +279,7 @@ export const COPILOT_TOOLS = [
   'write_note',
   // YUK-1772 — read-only deterministic note check (issues list, no verdict).
   'check_note',
+  'read_note',
   // YUK-1986 — 明确要答案时的记受助给答路径（owner「有记录的给」）。
   'reveal_answer',
   // YUK-1468 — Copilot 编辑面：edit_question（ops/document/validate/probe）。
@@ -276,6 +288,9 @@ export const COPILOT_TOOLS = [
   'edit_question',
   'read_agent_notes',
   'write_agent_note',
+  // 科目经验文档库：教学/笔记/出题规范与范例按 doc_key 按需读；copilot 是
+  // 设计定的共享消费面之一。
+  'read_subject_doc',
   // YUK-1407 — 判分纠错提案（对话中发现疑似误判时可落地；accept 仍人审）。
   'propose_grading_correction',
   // YUK-1548 — generative-UI blocks (diagram/figure in slice 1).
@@ -284,6 +299,8 @@ export const COPILOT_TOOLS = [
   // 唯一非 propose 的学习者数据直写：原话即事实（D3），确认句只能基于工具结果。
   'record_steering',
   'remember_learner',
+  // 学伴自己已提出、还没被裁决的提案（kind / 标题 / 创建时间 / id），用于避免重复提议。
+  'list_pending_proposals',
 ] as const satisfies readonly DomainToolName[];
 
 // YUK-1553 / YUK-1559 — Dreaming's grant is now an EXPLICIT list: it must not
@@ -338,6 +355,7 @@ const COACH_TOOLS = [
   'get_review_due',
   'get_learning_item_context',
   'get_question_context',
+  'read_practice_candidates',
   'propose_learning_item_completion',
   'propose_learning_item_relearn',
   'propose_learning_item_defer',
@@ -405,6 +423,7 @@ export const QUESTION_PREPARER_TOOLS = [
   'scan_coverage_gaps',
   'web_fetch_candidates',
   'jyeoo_fetch_candidates',
+  'read_subject_doc',
   'edit_question',
   'compose_presentation',
   'compose_block',

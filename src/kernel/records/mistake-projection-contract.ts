@@ -21,6 +21,24 @@ const MistakeCorrectionStateSchema = z.object({
 
 const PromptMaterialTextSchema = PublicMaterialView.omit({ asset_id: true });
 
+export const MistakeCauseSchema = z.object({
+  source: z.enum(['agent', 'user']),
+  primary_category: CauseCategory,
+  label: z.string(),
+  // Display backfill from active misconception titles; null when not a misc id.
+  primary_label: z.string().nullable(),
+  secondary_categories: z.array(CauseCategory),
+  // Display backfill for misc ids; absent entries fall back to raw ids.
+  secondary_labels: z.record(z.string(), z.string()),
+  user_notes: z.string().nullable(),
+  confidence: z.number().min(0).max(1).nullable(),
+});
+
+export const MistakeCauseEditSchema = z.object({
+  attempt_event_id: z.string(),
+  current: MistakeCauseSchema.nullable(),
+});
+
 /** Frozen public material only. Available means asset metadata matches; blob delivery is separate. */
 export const MistakePromptMaterialSchema = z.discriminatedUnion('availability', [
   PromptMaterialTextSchema.extend({
@@ -37,6 +55,7 @@ export const MistakePromptMaterialSchema = z.discriminatedUnion('availability', 
 
 export const MistakeProjectionSchema = z.object({
   id: z.string(),
+  attempt_event_id: z.string(),
   record_id: z.string(),
   question_id: z.string(),
   prompt_md: z.string(),
@@ -45,19 +64,12 @@ export const MistakeProjectionSchema = z.object({
   wrong_answer_md: z.string(),
   wrong_answer_image_refs: z.array(z.string()).default([]),
   knowledge_ids: z.array(z.string()),
-  cause: z
-    .object({
-      source: z.enum(['agent', 'user']),
-      primary_category: CauseCategory,
-      // Display backfill from active misconception titles; null when not a misc id.
-      primary_label: z.string().nullable(),
-      secondary_categories: z.array(CauseCategory),
-      // Display backfill for misc ids; absent entries fall back to raw ids.
-      secondary_labels: z.record(z.string(), z.string()),
-      user_notes: z.string().nullable(),
-      confidence: z.number().min(0).max(1).nullable(),
-    })
-    .nullable(),
+  cause: MistakeCauseSchema.nullable(),
+  /**
+   * Owner-projected attribution target. Exactly one eligible row per question may carry a
+   * non-null value; the UI must not derive this from outcome, correction state, or recency.
+   */
+  cause_edit: MistakeCauseEditSchema.nullable(),
   correction_state: MistakeCorrectionStateSchema,
   created_at: z.number().int().nonnegative(),
 });

@@ -34,6 +34,9 @@ export interface QuizGenJobData {
   // to learner θ̂). Forwarded as requested_difficulty_band into plan/generate inputs so
   // a band-gap target produces band-aimed questions instead of generic difficulty.
   difficulty_band?: DifficultyBand;
+  // Inclusive 1–5 span already inverted from `difficulty_band` at the learner's θ̂.
+  // null = no ordinal sits in the band. Absent = legacy payload (handler uses θ̂ = 0).
+  difficulty_levels?: { min: number; max: number } | null;
   // YUK-287 forwarded this 篇 (composite parent) pin phase-deferred; YUK-1011
   // consumes it: the run produces composite questions (stem+sub_questions
   // structured tree persisted on the parent + question_part child rows).

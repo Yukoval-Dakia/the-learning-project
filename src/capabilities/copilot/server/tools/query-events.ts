@@ -3,13 +3,14 @@
 // in a way that is painful to consume generically, while the raw columns (id /
 // actor / action / subject / outcome / caused_by / created_at) are all the LLM needs.
 
-import { and, desc, eq, gte, lt, lte, max, ne, or, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, lt, lte, max, ne, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { event } from '@/db/schema';
 import { getCorrectionStatuses } from '@/kernel/events';
 import { eventAllowsDerivationSql } from '@/kernel/events/derivation-policy';
+import { curatorEvidenceScope } from '@/kernel/read-models/curator-evidence-scope';
 // Courtesy default (20) lives in budgets.ts.
-import { TOOL_COURTESY_DEFAULTS } from '@/kernel/tools/budgets';
+import { QUERY_EVENTS_PAYLOAD_CAPS, TOOL_COURTESY_DEFAULTS } from '@/kernel/tools/budgets';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 
 const CursorSchema = z.object({
@@ -37,15 +38,26 @@ const InputSchema = z.object({
       actorRef: ExactStringSchema.optional(),
       action: ExactStringSchema.optional(),
       subjectKind: ExactStringSchema.optional(),
-      subjectId: ExactStringSchema.optional(),
+      subjectId: ExactStringSchema.optional().describe(
+        'One exact entity id, not a domain; subjectKind narrows it further.',
+      ),
       outcome: z.enum(['success', 'failure', 'partial']).optional(),
-      causedByEventId: ExactStringSchema.optional(),
-      siblingOfEventId: ExactStringSchema.optional(),
-      sinceDays: z.number().int().positive().max(180).optional(),
-      limit: z.number().int().min(1).max(50).optional(),
+      causedByEventId: ExactStringSchema.optional().describe('Direct children of this event.'),
+      siblingOfEventId: ExactStringSchema.optional().describe(
+        'Same non-null parent, excluding the focal event; cannot combine with eventId/causedByEventId.',
+      ),
+      sinceAt: z.string().datetime().optional(),
+      sinceDays: z.number().int().positive().max(180).optional().describe('At most 180 days back.'),
+      limit: z.number().int().min(1).max(50).optional().describe('1–50, default 20.'),
     })
     .optional(),
-  cursor: CursorSchema.optional(),
+  cursor: CursorSchema.optional().describe('Continuation token — resubmit with the same filters.'),
+  includePayload: z
+    .boolean()
+    .optional()
+    .describe(
+      'Include each row payload as bounded JSON text. Row cap 8k chars, page cap 48k; payload_truncated/payload_omitted say what did not fit. Fetch one exact eventId to read the rest — an exact eventId read returns the complete payload regardless of caps.',
+    ),
 });
 
 const EventRowSchema = z.object({
@@ -63,6 +75,12 @@ const EventRowSchema = z.object({
   correction_state: z.enum(['active', 'retracted', 'marked_wrong', 'superseded']),
   correction_event_id: z.string().nullable(),
   replacement_event_id: z.string().nullable(),
+  /** Present only with includePayload; JSON text, may be cut by the page budget. */
+  payload: z.string().nullable().optional(),
+  payload_truncated: z.boolean().optional(),
+  /** The row's full payload length even when omitted/truncated. */
+  payload_chars: z.number().int().nonnegative().optional(),
+  payload_omitted: z.boolean().optional(),
 });
 
 const OutputSchema = z.object({
@@ -124,6 +142,15 @@ const OutputSchema = z.object({
     observed_at: z.string().datetime(),
     observed_dispatch_seq: z.number().int().nonnegative(),
     window_start: z.string().datetime().nullable(),
+    payload: z
+      .object({
+        requested: z.boolean(),
+        row_max_chars: z.number().int().positive(),
+        page_max_chars: z.number().int().positive(),
+        returned_chars: z.number().int().nonnegative(),
+        omitted_rows: z.number().int().nonnegative(),
+      })
+      .optional(),
   }),
 });
 
@@ -141,6 +168,7 @@ function filterKey(filter: NonNullable<Input['filter']> | undefined): string {
     filter?.outcome ?? null,
     filter?.causedByEventId ?? null,
     filter?.siblingOfEventId ?? null,
+    filter?.sinceAt ?? null,
     filter?.sinceDays ?? null,
   ]);
 }
@@ -153,7 +181,8 @@ const DESCRIPTION = [
   'required_followup continue_with_next_cursor: resubmit the same filters with coverage.next_cursor. Do not drop filters or walk other events.',
   'window_complete: no cursor was passed, and a subject-scoped window is fully returned. It does not include causal descendants.',
   'remaining_window_complete: a cursor was passed and no further pages remain. coverage.complete_for_window stays false. Do not claim rows before the cursor.',
-  'sinceDays is at most 180; limit is 1–50 (default 20).',
+  'sinceDays is at most 180; sinceAt is an exact lower bound (inclusive). limit is 1–50 (default 20).',
+  'includePayload adds bounded payload text (row 8k, page 48k chars) and is off by default; an exact eventId read returns the complete payload regardless of caps.',
 ].join('\n');
 
 type ClaimStatus =
@@ -203,6 +232,19 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
       },
     ]);
   }
+  if (
+    input.cursor &&
+    filter.sinceAt &&
+    new Date(filter.sinceAt).toISOString() !== input.cursor.windowStart
+  ) {
+    throw new z.ZodError([
+      {
+        code: z.ZodIssueCode.custom,
+        message: 'cursor windowStart must match filter.sinceAt',
+        path: ['cursor', 'windowStart'],
+      },
+    ]);
+  }
   const currentFilterKey = filterKey(input.filter);
   if (input.cursor && currentFilterKey !== input.cursor.filterKey) {
     throw new z.ZodError([
@@ -220,11 +262,21 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
     : Number((await ctx.db.select({ value: max(event.dispatch_seq) }).from(event))[0]?.value ?? 0);
   const since = input.cursor?.windowStart
     ? new Date(input.cursor.windowStart)
-    : filter.sinceDays
-      ? new Date(observedAt.getTime() - filter.sinceDays * 86_400_000)
-      : undefined;
+    : filter.sinceAt
+      ? new Date(filter.sinceAt)
+      : filter.sinceDays
+        ? new Date(observedAt.getTime() - filter.sinceDays * 86_400_000)
+        : undefined;
 
   const conditions = [eventAllowsDerivationSql()];
+  // A Dreaming run may only read inside its evidence window — the same rule the
+  // canonical curator reader owns, shared through the host port so this tool
+  // never drifts from it. The window's anchor is the run's causal event; other
+  // callers keep the unrestricted read surface.
+  const curatorScoped = ctx.callerActor.kind === 'agent' && ctx.callerActor.ref === 'dreaming';
+  if (curatorScoped) {
+    conditions.push(await curatorEvidenceScope(ctx.db, ctx.causedByEventId));
+  }
   if (filter.eventId) conditions.push(eq(event.id, filter.eventId));
   if (filter.actorKind) conditions.push(eq(event.actor_kind, filter.actorKind));
   if (filter.actorRef) conditions.push(eq(event.actor_ref, filter.actorRef));
@@ -332,28 +384,69 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
     ctx.db,
     rows.map((row) => row.id),
   );
+  // Payload text is fetched only when requested: context_change-class rows
+  // carry full before/after blobs (~hundreds of KB), and the default row set
+  // must stay exactly the slim index callers already had.
+  const payloadById = new Map<string, unknown>();
+  if (input.includePayload && rows.length) {
+    const payloadRows = await ctx.db
+      .select({ id: event.id, payload: event.payload })
+      .from(event)
+      .where(
+        inArray(
+          event.id,
+          rows.map((row) => row.id),
+        ),
+      );
+    for (const row of payloadRows) payloadById.set(row.id, row.payload);
+  }
+  let payloadCharsLeft = QUERY_EVENTS_PAYLOAD_CAPS.pageChars;
+  let omittedPayloadRows = 0;
+  const events = rows.map((r) => {
+    const correction = correctionStatuses.get(r.id);
+    const base = {
+      id: r.id,
+      dispatch_seq: r.dispatch_seq,
+      actor_kind: r.actor_kind,
+      actor_ref: r.actor_ref,
+      action: r.action,
+      subject_kind: r.subject_kind,
+      subject_id: r.subject_id,
+      outcome: r.outcome ?? null,
+      caused_by_event_id: r.caused_by_event_id ?? null,
+      created_at: r.created_at.toISOString(),
+      session_id: r.session_id ?? null,
+      correction_state: correction?.state ?? 'active',
+      correction_event_id: correction?.correction_event_id ?? null,
+      replacement_event_id: correction?.replacement_event_id ?? null,
+    };
+    if (!input.includePayload) return base;
+    const full = JSON.stringify(payloadById.get(r.id) ?? null);
+    // An exact eventId fetch is the documented way to finish a truncated row:
+    // it must return the whole payload or that row can never retire the
+    // curator watermark (every read reports payload_truncated, the id never
+    // joins readIds, and the window replays the same rows forever).
+    const exactRow = filter?.eventId !== undefined && rows.length === 1;
+    const rowBudget = exactRow
+      ? full.length
+      : Math.min(QUERY_EVENTS_PAYLOAD_CAPS.rowChars, payloadCharsLeft);
+    if (rowBudget <= 0) {
+      omittedPayloadRows += 1;
+      return { ...base, payload: null, payload_omitted: true, payload_chars: full.length };
+    }
+    const payload = full.slice(0, rowBudget);
+    payloadCharsLeft -= payload.length;
+    return {
+      ...base,
+      payload,
+      payload_truncated: payload.length < full.length,
+      payload_chars: full.length,
+    };
+  });
 
   return OutputSchema.parse({
     required_followup: step.required_followup,
-    events: rows.map((r) => {
-      const correction = correctionStatuses.get(r.id);
-      return {
-        id: r.id,
-        dispatch_seq: r.dispatch_seq,
-        actor_kind: r.actor_kind,
-        actor_ref: r.actor_ref,
-        action: r.action,
-        subject_kind: r.subject_kind,
-        subject_id: r.subject_id,
-        outcome: r.outcome ?? null,
-        caused_by_event_id: r.caused_by_event_id ?? null,
-        created_at: r.created_at.toISOString(),
-        session_id: r.session_id ?? null,
-        correction_state: correction?.state ?? 'active',
-        correction_event_id: correction?.correction_event_id ?? null,
-        replacement_event_id: correction?.replacement_event_id ?? null,
-      };
-    }),
+    events,
     total: rows.length,
     filter_applied: {
       eventId: filter.eventId ?? null,
@@ -365,7 +458,9 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
       outcome: filter.outcome ?? null,
       causedByEventId: filter.causedByEventId ?? null,
       siblingOfEventId: filter.siblingOfEventId ?? null,
+      sinceAt: filter.sinceAt ?? null,
       sinceDays: filter.sinceDays ?? null,
+      ...(curatorScoped ? { curator_evidence_scope: true } : {}),
       limit,
     },
     subject_scope: {
@@ -418,6 +513,17 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
       observed_at: observedAt.toISOString(),
       observed_dispatch_seq: observedDispatchSeq,
       window_start: since?.toISOString() ?? null,
+      ...(input.includePayload
+        ? {
+            payload: {
+              requested: true,
+              row_max_chars: QUERY_EVENTS_PAYLOAD_CAPS.rowChars,
+              page_max_chars: QUERY_EVENTS_PAYLOAD_CAPS.pageChars,
+              returned_chars: QUERY_EVENTS_PAYLOAD_CAPS.pageChars - payloadCharsLeft,
+              omitted_rows: omittedPayloadRows,
+            },
+          }
+        : {}),
     },
   });
 }

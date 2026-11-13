@@ -1,5 +1,5 @@
+import { randomUUID } from 'node:crypto';
 import { and, asc, desc, eq, lte, ne, sql } from 'drizzle-orm';
-import type { SendOptions } from 'pg-boss';
 import type { Db, Tx } from '@/db/client';
 import { goal, learning_session, placement_starter_claim } from '@/db/schema';
 import { lockPlacementSupplyScopes } from '@/kernel/locks/placement-supply';
@@ -7,17 +7,15 @@ import {
   JOB_RETRY_DELAY_SECONDS,
   JOB_RETRY_LIMIT,
   type PlacementJobQueue,
-  enqueuePlacementJob,
-  enqueuePlacementSupplyExecuteJob,
-  fromPgBossDrizzleTx,
   placementJobState,
 } from '@/kernel/placement-jobs';
-import type { QuizGenJobData } from '@/kernel/quiz-gen-contract';
 import {
   resolveGoalPlacementScope,
   resolveNearbyPlacementScope,
 } from '@/kernel/read-models/placement-scope';
 import { EvidenceDemandV1, evidenceDemandToTargetContext } from '@/kernel/supply-contracts';
+import { getStartedBoss } from '@/server/boss/client';
+import { resolveBandLevelTarget } from './band-level';
 import { dispatchSupplyTarget } from './dispatcher';
 import { countPlacementInventory } from './placement-inventory';
 import {
@@ -25,6 +23,14 @@ import {
   PLACEMENT_STARTER_REQUIRED_COUNT,
 } from './placement-starter-attempts';
 import { resolvePlacementStarterGoalAuthority } from './placement-starter-store';
+import {
+  type SupplyDeliveryBoss,
+  type SupplyDeliveryOptions,
+  selectPendingSupplyDeliveries,
+  sendSupplyDelivery,
+  writeSupplyDeliveryIntent,
+  writeSupplyDeliveryReceipt,
+} from './supply-delivery-outbox';
 import type { QuestionSupplyTarget } from './target-discovery';
 
 const PLACEMENT_STARTER_COUNT = 8;
@@ -108,6 +114,7 @@ export function buildPlacementStarterTarget(claim: ClaimRow): QuestionSupplyTarg
     knowledgeIds: [claim.knowledge_id],
     kind: 'any',
     difficultyBand: 'near',
+    levelTarget: resolveBandLevelTarget('near', 0),
     desiredCount: PLACEMENT_STARTER_COUNT,
     minSourceTier: 3,
     // In-flight claims created before the 2026-11-02 policy keep closed-book quiz_gen; new
@@ -130,17 +137,16 @@ export function buildPlacementStarterTarget(claim: ClaimRow): QuestionSupplyTarg
 }
 
 type PlacementStarterAdmission = (tx: Tx, claim: ClaimRow) => Promise<boolean>;
-type SendSupplyExecute = (
-  data: Record<string, unknown>,
-  options: SendOptions,
-) => Promise<string | null>;
 
+/**
+ * Admit a pending claim and bind its delivery in the caller's transaction: the dispatch record,
+ * the complete job request under a fresh stable id, and the pending→queued CAS commit together.
+ * Nothing is sent here; `drainPlacementStarterDeliveries` sends after commit.
+ */
 export async function dispatchPlacementStarterClaimTx(
   tx: Tx,
   claimId: string,
-  send: (queue: 'quiz_gen', data: QuizGenJobData, options: SendOptions) => Promise<string | null>,
   admit: PlacementStarterAdmission = async () => true,
-  sendSupplyExecute: SendSupplyExecute = enqueuePlacementSupplyExecuteJob,
   sendOptions?: { startAfter?: Date },
 ): Promise<string | null> {
   const [claim] = await tx
@@ -152,10 +158,10 @@ export async function dispatchPlacementStarterClaimTx(
   if (!(await admit(tx, claim))) return null;
 
   const now = new Date();
-  // Enqueue + status→queued run in a SAVEPOINT (nested tx) so a nonterminal single-flight 23505 on
-  // the pending→queued update rolls back the enqueue (no orphan quiz_gen job) without aborting the
-  // outer tx — then we leave the claim pending for a later attempt. The outer FOR UPDATE lock on
-  // the claim persists across the savepoint.
+  // The binding + status→queued run in a SAVEPOINT (nested tx) so a nonterminal single-flight
+  // 23505 on the pending→queued update rolls back the dispatch record and the delivery intent
+  // without aborting the outer tx — then we leave the claim pending for a later attempt. The
+  // outer FOR UPDATE lock on the claim persists across the savepoint.
   try {
     return await tx.transaction(async (sp) => {
       const target = buildPlacementStarterTarget(claim);
@@ -171,6 +177,16 @@ export async function dispatchPlacementStarterClaimTx(
         )
         .orderBy(desc(learning_session.started_at))
         .limit(1);
+      const jobId = randomUUID();
+      const startAfter =
+        sendOptions?.startAfter != null ? { startAfter: sendOptions.startAfter.toISOString() } : {};
+      const bound: {
+        delivery?: { queue: PlacementJobQueue; data: object; options: SupplyDeliveryOptions };
+      } = {};
+      const bind = (queue: PlacementJobQueue, data: object, options: SupplyDeliveryOptions) => {
+        bound.delivery = { queue, data, options };
+        return Promise.resolve(jobId);
+      };
       const result = await dispatchSupplyTarget(sp, target, {
         atomic: true,
         cooldownDays: 0,
@@ -178,28 +194,35 @@ export async function dispatchPlacementStarterClaimTx(
         session_id: placementSession?.id ?? null,
         webSearchAvailable: () => true,
         enqueueQuizGen: (data) =>
-          send('quiz_gen', data, {
-            db: fromPgBossDrizzleTx(sp),
+          bind('quiz_gen', data, {
             retryLimit: JOB_RETRY_LIMIT,
             retryDelay: JOB_RETRY_DELAY_SECONDS,
             retryBackoff: true,
-            ...(sendOptions?.startAfter != null ? { startAfter: sendOptions.startAfter } : {}),
+            ...startAfter,
           }),
         // The supply_execute delivery carries the same transport contract the placement
         // consumer verifies: 3 deliveries, the original backoff, and the 120-minute expiry.
         enqueueSupplyExecute: (data) =>
-          sendSupplyExecute(data, {
-            db: fromPgBossDrizzleTx(sp),
+          bind('supply_execute', data, {
             retryLimit: JOB_RETRY_LIMIT,
             retryDelay: JOB_RETRY_DELAY_SECONDS,
             retryBackoff: true,
             expireInSeconds: PLACEMENT_QUEUE_EXPIRY_MS / 1_000,
-            ...(sendOptions?.startAfter != null ? { startAfter: sendOptions.startAfter } : {}),
+            ...startAfter,
           }),
       });
-      const jobId = result.jobId;
-      if (!jobId)
-        throw new Error(`pg-boss returned no job id for placement starter claim ${claim.id}`);
+      const delivery = bound.delivery;
+      if (result.jobId !== jobId || !delivery)
+        throw new Error(`placement starter claim ${claim.id} did not bind a delivery`);
+      await writeSupplyDeliveryIntent(sp, {
+        domain: 'placement_starter',
+        subjectId: claim.id,
+        queue: delivery.queue,
+        jobId,
+        data: delivery.data,
+        options: delivery.options,
+        now,
+      });
 
       await sp
         .update(placement_starter_claim)
@@ -222,12 +245,95 @@ export async function dispatchPlacementStarterClaimTx(
     // Another revision still owns the paid single-flight slot. The losing claim may be the CURRENT
     // authoritative revision, so terminalizing it would be irreversible: its deterministic
     // (revision, subject) identity cannot be re-created after the old flight eventually finishes.
-    // Keep it pending. The savepoint already rolled back the enqueue + observations, so this is a
-    // free deferral with no orphan job; /placement/start or the recovery sweeper can retry after the
-    // winner terminalizes. A genuinely stale pending claim is cancelled by the sweeper's explicit
-    // semantic-revision guard, where authority is known rather than guessed from a 23505.
+    // Keep it pending. The savepoint already rolled back the binding + observations, so this is a
+    // free deferral with no orphan delivery; /placement/start or the recovery sweeper can retry
+    // after the winner terminalizes. A genuinely stale pending claim is cancelled by the sweeper's
+    // explicit semantic-revision guard, where authority is known rather than guessed from a 23505.
     return null;
   }
+}
+
+/** Claim states in which a bound delivery is still the claim's own. */
+const DELIVERY_BOUND_STATUSES: ReadonlySet<string> = new Set([
+  'queued',
+  'running',
+  'verifying',
+  'retry_scheduled',
+]);
+
+export interface PlacementStarterDeliveryDrainResult {
+  scanned: number;
+  delivered: number;
+  voided: number;
+  failed: number;
+}
+
+/**
+ * The placement starter's single sender. Post-commit dispatch and the recovery cron both call it;
+ * concurrent passes converge on the bound id and the engine's dedup. A claim that no longer binds
+ * the delivery voids it instead of sending. After acceptance, lost deliveries stay with the
+ * recovery sweeper's in-flight leg.
+ */
+export async function drainPlacementStarterDeliveries(
+  db: Db,
+  boss: SupplyDeliveryBoss,
+  input: { jobId?: string; limit?: number } = {},
+): Promise<PlacementStarterDeliveryDrainResult> {
+  const rows = await selectPendingSupplyDeliveries(db, {
+    domain: 'placement_starter',
+    closedBy: ['accepted', 'void'],
+    jobId: input.jobId,
+    limit: input.limit ?? 50,
+  });
+  const result = { scanned: rows.length, delivered: 0, voided: 0, failed: 0 };
+  for (const intent of rows) {
+    try {
+      const [claim] = await db
+        .select({
+          status: placement_starter_claim.status,
+          jobId: placement_starter_claim.pg_boss_job_id,
+        })
+        .from(placement_starter_claim)
+        .where(eq(placement_starter_claim.id, intent.subject_id));
+      if (!claim || claim.jobId !== intent.job_id || !DELIVERY_BOUND_STATUSES.has(claim.status)) {
+        await writeSupplyDeliveryReceipt(db, intent, 'void', {
+          claim_status: claim?.status ?? null,
+        });
+        result.voided += 1;
+        continue;
+      }
+      const truth = await sendSupplyDelivery(boss, intent);
+      if (truth.kind === 'absent') {
+        result.failed += 1;
+        continue;
+      }
+      await writeSupplyDeliveryReceipt(db, intent, 'accepted', { engine_state: truth.state });
+      result.delivered += 1;
+    } catch (error) {
+      result.failed += 1;
+      console.error('[placement-starter] delivery send failed; intent stays pending', {
+        claim_id: intent.subject_id,
+        job_id: intent.job_id,
+        error: error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500),
+      });
+    }
+  }
+  return result;
+}
+
+/** True when the claim's bound delivery was committed but no engine acceptance is recorded. */
+export async function placementDeliveryAwaitingEngine(
+  db: Db,
+  jobId: string | null,
+): Promise<boolean> {
+  if (!jobId) return false;
+  const pending = await selectPendingSupplyDeliveries(db, {
+    domain: 'placement_starter',
+    closedBy: ['accepted', 'void'],
+    jobId,
+    limit: 1,
+  });
+  return pending.length > 0;
 }
 
 export async function dispatchPlacementStarterClaim(
@@ -236,16 +342,12 @@ export async function dispatchPlacementStarterClaim(
   admit?: PlacementStarterAdmission,
   sendOptions?: { startAfter?: Date },
 ): Promise<string | null> {
-  return db.transaction((tx) =>
-    dispatchPlacementStarterClaimTx(
-      tx,
-      claimId,
-      enqueuePlacementJob,
-      admit,
-      enqueuePlacementSupplyExecuteJob,
-      sendOptions,
-    ),
+  const jobId = await db.transaction((tx) =>
+    dispatchPlacementStarterClaimTx(tx, claimId, admit, sendOptions),
   );
+  // A failed send leaves the committed intent for the recovery cron's drain.
+  if (jobId) await drainPlacementStarterDeliveries(db, await getStartedBoss(), { jobId });
+  return jobId;
 }
 
 /**
@@ -430,7 +532,7 @@ export async function dispatchNextDuePendingPlacementClaim(
 // leads to a reap that is already gated behind the 6h grace window and the claim's own status
 // re-check, whereas defaulting unknown states to live would let a genuine zombie block every
 // later goal revision forever (the exact bug this sweeper exists to fix).
-// On 'expired' specifically (review PRRT…nAc suggested adding it to the state union): the
+// On 'expired' specifically: the
 // installed pg-boss v12.26.1 `job_state` enum has exactly six states — created / retry / active /
 // completed / cancelled / failed — and 'expired' is NOT among them; it is a v9/v10 state, and v12
 // handles a timed-out job by deleting and re-inserting it as retry or failed. That was verified

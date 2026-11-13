@@ -13,6 +13,7 @@ import {
   lockPracticeStreamPartition,
   lockPracticeStreamScope,
 } from '@/kernel/locks/practice-stream';
+import { loadNativeInterventionDiagnosticState } from '@/kernel/read-models/intervention-diagnostic-verdict';
 import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
 // 取题瞬间 refill（池见底补题）经根 public 按需调用：compose 后 best-effort，flag-off 为 no-op。
 import type { RefillDeps } from '../../public';
@@ -21,10 +22,16 @@ import {
   DEFAULT_TEMPERATURE,
   type SelectionPolicyConfig,
 } from '../../server/selection-constants';
-import { startReviewSession, transitionReviewSessionState } from '../../session/public';
+import {
+  enqueueReviewSessionSummary,
+  startReviewSession,
+  transitionReviewSessionState,
+} from '../../session/public';
 import { type CollectedSignal, collectCandidateSignals } from './candidate-signals';
 import { DEFAULT_COMPOSE_LOCK_WAIT_MS, withinComposePaidWorkLock } from './compose-paid-work-lock';
+import { attachPaperQuestionCounts } from './paper-rank';
 import { readQuestionPace } from './question-pace';
+import { selectScopedKnowledgeFill } from './scoped-fill';
 import {
   type SelectionObservationInput,
   recordSelectionObservation,
@@ -36,11 +43,13 @@ import {
   type ComposeSoftmaxResult,
   composeSoftmaxStream,
 } from './softmax-selection';
+import { withdrawStalePendingDueLines } from './stale-due-lines';
 import { planStoredStreamBudgetTrim, storedStreamExceedsBudget } from './stored-stream-budget';
 import { estimateStreamItemMinutes } from './stream-budget';
 import { type ComposerInputs, type StreamPlan, composeDailyStream } from './stream-composer';
 import { collectComposerInputs, resolveDailyPracticeBudget } from './stream-inputs';
 import { presentNonDueQuestion } from './stream-item-presentation';
+import { type StreamMixNote, streamMixNote, writeStreamMixNote } from './stream-mix-note';
 import { planStreamReplacement, prepareStreamReplacement } from './stream-replacement-plan';
 import { readStreamSelectionCandidates } from './stream-selection-candidates';
 import {
@@ -103,7 +112,7 @@ export interface MaterializeResult {
  * Positions: refs in the plan get plan index + 1; surviving rows outside the plan are
  * appended after the plan in their existing order. All rows are renumbered so
  * ORDER BY position always yields the plan order, making the due subsequence equal to
- * due_at ASC.
+ * retrievability ascending.
  *
  * `(date, position)` must stay NON-UNIQUE: renumbering temporarily gives two rows the
  * same position. Adding a unique index would fail mid-loop with 23505; free the slots
@@ -125,12 +134,6 @@ export async function materializeStream(
     .from(practice_stream_item)
     .where(streamPartitionPredicate(plan.date));
 
-  if (plan.diagnostics?.length) {
-    console.warn('[practice-stream] L3 learning-mix degradation', {
-      date: plan.date,
-      diagnostics: plan.diagnostics,
-    });
-  }
   const existingByRef = new Map(existing.map((r) => [r.ref_id, r]));
 
   if (plan.items.length === 0 && existing.length === 0) {
@@ -222,6 +225,8 @@ interface ComposeOutcome {
   added: number;
   /** Written after commit; empty on the legacy path. */
   observations: SelectionObservationInput[];
+  /** Written after commit so a note failure cannot roll the stream back. */
+  mixNote?: StreamMixNote | null;
 }
 
 interface PreparedCompose {
@@ -302,7 +307,7 @@ async function materializePreparedCollect(
     }
   }
 
-  return { added, observations };
+  return { added, observations, mixNote: streamMixNote(prepared.plan) };
 }
 
 /**
@@ -352,7 +357,7 @@ async function singleFlightCompose(
 ): Promise<number> {
   const lockDeadlineAt =
     deps.providerInvocation?.deadlineAt ?? new Date(Date.now() + DEFAULT_COMPOSE_LOCK_WAIT_MS);
-  const { added, observations } = await withinComposePaidWorkLock(
+  const { added, observations, mixNote } = await withinComposePaidWorkLock(
     db,
     date,
     lockDeadlineAt,
@@ -365,7 +370,7 @@ async function singleFlightCompose(
           .where(streamPartitionPredicate(date));
         return result.count;
       });
-      if (count > 0) return { added: 0, observations: [] } satisfies ComposeOutcome;
+      if (count > 0) return { added: 0, observations: [], mixNote: null } satisfies ComposeOutcome;
 
       const lockedDeps = deps.providerInvocation
         ? {
@@ -380,15 +385,33 @@ async function singleFlightCompose(
           .select({ finalCount: sql<number>`count(*)::int` })
           .from(practice_stream_item)
           .where(streamPartitionPredicate(date));
-        if (finalCount > 0) return { added: 0, observations: [] } satisfies ComposeOutcome;
+        if (finalCount > 0)
+          return { added: 0, observations: [], mixNote: null } satisfies ComposeOutcome;
         return materializePreparedCollect(tx, date, prepared, addedBy);
       });
     },
   );
 
-  // 事务已提交（流已稳）——锁外 best-effort 写观测；失败只丢遥测，绝不回滚流。
+  // 事务已提交（流已稳）——锁外 best-effort 写观测和积压说明；失败只丢遥测，绝不回滚流。
   await writeObservationsBestEffort(db, observations);
+  if (mixNote) await writeStreamMixNoteBestEffort(db, date, mixNote);
   return added;
+}
+
+async function writeStreamMixNoteBestEffort(
+  db: Db,
+  date: string,
+  note: StreamMixNote,
+): Promise<void> {
+  try {
+    await writeStreamMixNote(db, date, note);
+  } catch (err) {
+    console.error('[stream-store] stream mix note failed (post-commit, best-effort)', {
+      date,
+      kind: note.kind,
+      err,
+    });
+  }
 }
 
 /**
@@ -419,6 +442,59 @@ export async function composeNightly(
 }
 
 const SCOPED_QUESTION_LIMIT = 5;
+
+/** Same KC already asking for questions in this process. Cooldown cannot see an event that is not written yet. */
+const scopedSupplyInFlight = new Set<string>();
+
+function scopedOpeningLine(label: string, itemCount: number, preparing: boolean): string {
+  if (itemCount === 0) {
+    return preparing ? `「${label}」正在准备更多题。` : `「${label}」暂时没有可练的已发布题目。`;
+  }
+  const base = `这里仅显示「${label}」相关的题目——按顺序练即可。`;
+  return preparing ? `${base}正在准备更多题。` : base;
+}
+
+/**
+ * Ask the existing supply dispatcher for this KC. Fingerprint matches the nightly
+ * frontier target, so the 7-day cooldown is shared. Returns true only while a supply
+ * job is actually live; manual, failed, or a cooldown skip over a finished job is false.
+ */
+async function requestScopedQuestionSupply(
+  db: Db,
+  knowledgeId: string,
+  gap: number,
+): Promise<boolean> {
+  if (scopedSupplyInFlight.has(knowledgeId)) return true;
+  scopedSupplyInFlight.add(knowledgeId);
+  try {
+    const { demandToSupplyTarget, dispatchSupplyTarget, inFlightSupplyCount } = await import(
+      '../../public'
+    );
+    const target = await demandToSupplyTarget(
+      db,
+      {
+        knowledgeId,
+        gapType: 'frontier_zero',
+        limit: SCOPED_QUESTION_LIMIT,
+        cause: 'scoped practice has fewer than 5 servable questions',
+      },
+      gap,
+    );
+    const result = await dispatchSupplyTarget(db, target, { actorRef: 'question_supply_scoped' });
+    // Only a live job is "preparing": manual has no queue, and a cooldown skip may point at a finished job.
+    if (result.status === 'dispatched') return true;
+    if (result.status !== 'skipped' || !result.stopCondition.startsWith('cooldown:')) return false;
+    return (await inFlightSupplyCount(db, result.fingerprint)) > 0;
+  } catch (err) {
+    console.error('[stream-store] scoped supply dispatch failed (best-effort)', {
+      knowledgeId,
+      err,
+    });
+    return false;
+  } finally {
+    scopedSupplyInFlight.delete(knowledgeId);
+  }
+}
 
 function scopedSessionDateBounds(date: string): { start: Date; end: Date } {
   const start = new Date(`${date}T00:00:00+08:00`);
@@ -459,7 +535,7 @@ async function materializeKnowledgeScopedSession(
   date: string,
   knowledgeId: string,
   knowledgeLabel: string,
-): Promise<{ sessionId: string; rows: StreamItemRow[] }> {
+): Promise<{ sessionId: string; rows: StreamItemRow[]; supplyGap: number }> {
   return db.transaction(async (tx) => {
     // Scope identity lock prevents two first opens from creating duplicate sessions. Once the
     // session is known, also take the physical partition lock shared with answer-time rerank so
@@ -482,12 +558,18 @@ async function materializeKnowledgeScopedSession(
       .where(streamPartitionPredicate(date, sessionId))
       .orderBy(asc(practice_stream_item.position));
     const eligibleExisting = (await filterProspectiveStreamQuestions(tx, existing)).rows;
+    let supplyGap = 0;
     if (session.status === 'started' && eligibleExisting.length < SCOPED_QUESTION_LIMIT) {
-      // Deterministic, local-only selection: a user-requested scope must not pay the daily LLM
-      // compose cost or inherit unrelated whole-profile candidates. Pull only published questions
-      // carrying this KC; keep the session snapshot stable and fill newly available vacancies.
+      // A scoped open stays on this KC and does not pay for the daily LLM compose.
+      // Today's rows stay put; only vacancies are filled.
       const candidates = await tx
-        .select({ id: question.id })
+        .select({
+          id: question.id,
+          kind: question.kind,
+          knowledgeIds: question.knowledge_ids,
+          difficulty: question.difficulty,
+          source: question.source,
+        })
         .from(question)
         .where(
           and(
@@ -496,29 +578,36 @@ async function materializeKnowledgeScopedSession(
             // 契约准入门：suspended/withdrawn 组不作 scoped 填空。
             questionSuspendedPredicate(question),
           ),
-        )
-        .orderBy(asc(question.difficulty), desc(question.updated_at), asc(question.id));
+        );
       const admittedIds = await readAutomaticallyServableQuestionIds(
         tx,
         candidates.map((row) => row.id),
+        { includeInterventionDiagnostics: true },
       );
       const existingRefs = new Set(existing.map((row) => row.ref_id));
-      const available = candidates
-        .filter((candidate) => admittedIds.has(candidate.id) && !existingRefs.has(candidate.id))
-        .slice(0, SCOPED_QUESTION_LIMIT - eligibleExisting.length);
-      if (available.length > 0) {
+      const fill = await selectScopedKnowledgeFill(tx, {
+        now: new Date(),
+        questions: candidates,
+        admittedIds,
+        alreadyPlacedIds: existingRefs,
+        limit: SCOPED_QUESTION_LIMIT - eligibleExisting.length,
+      });
+      if (fill.servableCount < SCOPED_QUESTION_LIMIT) {
+        supplyGap = SCOPED_QUESTION_LIMIT - fill.servableCount;
+      }
+      if (fill.ids.length > 0) {
         const now = new Date();
         const startPosition = existing.reduce((max, row) => Math.max(max, row.position), 0) + 1;
         await tx
           .insert(practice_stream_item)
           .values(
-            available.map((candidate, index) => ({
+            fill.ids.map((id, index) => ({
               id: newId(),
               date,
               session_id: sessionId,
               position: startPosition + index,
               item_kind: 'question' as const,
-              ref_id: candidate.id,
+              ref_id: id,
               source: 'on_demand' as const,
               status: 'pending' as const,
               reasoning: `你点了「${knowledgeLabel}」专项——这道题只来自该知识点的现有题库。`,
@@ -537,7 +626,7 @@ async function materializeKnowledgeScopedSession(
       .from(practice_stream_item)
       .where(streamPartitionPredicate(date, sessionId))
       .orderBy(asc(practice_stream_item.position));
-    return { sessionId, rows };
+    return { sessionId, rows, supplyGap };
   });
 }
 
@@ -558,13 +647,19 @@ async function getKnowledgeScopedStream(
 
   let sessionId: string | null;
   let rows: StreamItemRow[];
+  let preparing = false;
   if (materialize) {
-    ({ sessionId, rows } = await materializeKnowledgeScopedSession(
+    const materialized = await materializeKnowledgeScopedSession(
       db,
       date,
       knowledgeId,
       knowledgeRow.name,
-    ));
+    );
+    sessionId = materialized.sessionId;
+    rows = materialized.rows;
+    if (materialized.supplyGap > 0) {
+      preparing = await requestScopedQuestionSupply(db, knowledgeId, materialized.supplyGap);
+    }
   } else {
     const session = await findKnowledgeScopedSession(db, date, knowledgeId);
     sessionId = session?.id ?? null;
@@ -602,10 +697,7 @@ async function getKnowledgeScopedStream(
     budget,
     scope,
     questionMinutes: questionPace.minutes,
-    openingLine:
-      rows.length === 0
-        ? `「${knowledgeRow.name}」暂时没有可练的已发布题目。`
-        : `这里仅显示「${knowledgeRow.name}」相关的题目——按顺序练即可。`,
+    openingLine: scopedOpeningLine(knowledgeRow.name, rows.length, preparing),
   });
 }
 
@@ -625,7 +717,7 @@ async function trimStoredPendingItemsToBudget(
 
     const { rows: eligible, recoveryRowIds } = await filterProspectiveStreamQuestions(tx, current);
     const deleteIds = planStoredStreamBudgetTrim({
-      rows: eligible,
+      rows: await attachPaperQuestionCounts(tx, eligible),
       recoveryRowIds,
       budgetMinutes,
       questionMinutes,
@@ -712,6 +804,17 @@ export async function getStream(
       .orderBy(asc(practice_stream_item.position));
   }
 
+  const hasPendingDecay = rows.some(
+    (row) => row.status === 'pending' && row.item_kind === 'question' && row.source === 'decay',
+  );
+  if (hasPendingDecay && (await withdrawStalePendingDueLines(db, date)) > 0) {
+    rows = await db
+      .select()
+      .from(practice_stream_item)
+      .where(streamPartitionPredicate(date))
+      .orderBy(asc(practice_stream_item.position));
+  }
+
   const [budget, questionPace] = await Promise.all([
     resolveDailyPracticeBudget(db),
     readQuestionPace(db),
@@ -719,7 +822,7 @@ export async function getStream(
   const gated = await filterProspectiveStreamQuestions(db, rows);
   rows = gated.rows;
   const exceedsBudget = storedStreamExceedsBudget({
-    rows,
+    rows: await attachPaperQuestionCounts(db, rows),
     recoveryRowIds: gated.recoveryRowIds,
     budgetMinutes: budget.minutes,
     questionMinutes: questionPace.minutes,
@@ -765,7 +868,10 @@ async function completeScopedSessionIfDone(db: Db, row: StreamItemRow): Promise<
         ),
       );
     if (remaining === 0) {
-      await transitionReviewSessionState(db, row.session_id, 'completed');
+      const transition = await transitionReviewSessionState(db, row.session_id, 'completed');
+      // Only a real transition writes the summary: a replay of an already completed
+      // session must not re-run the LLM from this path.
+      if (transition.changed) await enqueueReviewSessionSummary(row.session_id);
     }
   } catch (err) {
     // The stream-item transition is already committed. Session-envelope closeout is important
@@ -821,18 +927,16 @@ export async function advanceStreamItem(
         .from(event)
         .where(
           and(
-            eq(event.action, 'review'),
+            eq(event.action, 'experimental:assessment_attempt'),
             eq(event.subject_kind, 'question'),
             eq(event.subject_id, row.ref_id),
-            row.session_id === null
-              ? isNull(event.session_id)
-              : eq(event.session_id, row.session_id),
-            gte(event.created_at, row.created_at),
-            sql`${event.payload} ->> 'stream_item_id' = ${row.id}`,
+            sql`${event.payload}->>'issuance_id' = ${`iss_stream_${row.id}`}`,
           ),
         )
+        .orderBy(desc(event.created_at), desc(event.id))
         .limit(1);
-      if (!attempt) {
+      const recorded = attempt ? await loadNativeInterventionDiagnosticState(db, attempt.id) : null;
+      if (!recorded) {
         throw new ApiError(
           'conflict',
           'intervention diagnostics can be completed only after a recorded attempt',
@@ -897,7 +1001,7 @@ export async function recomposeStream(
   const deps = opts.composeDeps ?? {};
   const lockDeadlineAt =
     deps.providerInvocation?.deadlineAt ?? new Date(Date.now() + DEFAULT_COMPOSE_LOCK_WAIT_MS);
-  const { added, observations } = await withinComposePaidWorkLock(
+  const { added, observations, mixNote } = await withinComposePaidWorkLock(
     db,
     date,
     lockDeadlineAt,
@@ -941,8 +1045,9 @@ export async function recomposeStream(
     },
   );
 
-  // 事务已提交（流已稳）——锁外 best-effort 写观测。
+  // 事务已提交（流已稳）——锁外 best-effort 写观测和积压说明。
   await writeObservationsBestEffort(db, observations);
+  if (mixNote) await writeStreamMixNoteBestEffort(db, date, mixNote);
   return added;
 }
 
@@ -959,8 +1064,10 @@ export async function recomposeStream(
 // as compose), excluding frozen refs. targetCount is the number of replaceable pending
 // slots, not the pool size, so sampling is real IPPS (π_i < 1).
 // - Only items touching the answered question's KCs are reranked. Unrelated pending
-// items, due rows, paper rows, recall-locked rows, and done/in_progress/skipped rows
-// stay frozen: not deleted, not moved, not re-sampled.
+// items, paper rows, recall-locked rows, and done/in_progress/skipped rows stay
+// frozen: not deleted, not moved, not re-sampled. Pending decay rows whose card is
+// no longer due today, or whose knowledge was settled after the row was written,
+// are removed first; the decay rows that remain stay frozen.
 // - A row whose snapshot is not recall-locked but whose fresh classification is recall
 // stays in place (fail-closed); never drop it into a freed slot.
 // - Sample sizes fluctuate. Delete only slots that will actually be refilled
@@ -997,30 +1104,35 @@ export async function reRankAfterAnswer(
 ): Promise<number> {
   const { date, sessionId, answeredQuestionId } = opts;
 
-  // 受影响 KC = 刚答完那题的 knowledge_ids。空 → 无 θ̂ 移动锚点 → no-op（不触发重排）。
+  // 受影响 KC = 刚答完那题的 knowledge_ids。空则没有 θ̂ 锚点，不重排非到期行；
+  // 过期的待做到期行仍先撤下。
   const [answered] = await db
     .select({ knowledge_ids: question.knowledge_ids })
     .from(question)
     .where(eq(question.id, answeredQuestionId))
     .limit(1);
   const affectedKnowledgeIds = new Set((answered?.knowledge_ids ?? []).filter(Boolean));
-  if (affectedKnowledgeIds.size === 0) return 0;
 
   const { added, observations } = await db.transaction(async (tx) => {
     // Same key as every compose path, so rerank cannot race lazy/recompose/nightly.
     await lockPracticeStreamPartition(tx, date, sessionId);
+    // Pending decay rows that are no longer due today, or whose knowledge was settled
+    // after the row was written, leave before rerank. The decay rows that remain,
+    // plus paper, recall-locked, and completed/in-progress/skipped rows, stay frozen.
+    await withdrawStalePendingDueLines(tx, date, sessionId);
 
     const rows = await tx
       .select()
       .from(practice_stream_item)
       .where(streamPartitionPredicate(date, sessionId))
       .orderBy(asc(practice_stream_item.position));
-    if (rows.length === 0) return { added: 0, observations: [] } satisfies ComposeOutcome;
+    if (affectedKnowledgeIds.size === 0 || rows.length === 0) {
+      return { added: 0, observations: [] } satisfies ComposeOutcome;
+    }
 
     // Rerank scope: pending question items from variant/new_check whose snapshot is not
-    // recall-locked. Due rows, paper rows, recall-locked rows, and completed/in-progress/
-    // skipped rows are frozen. Frontier items are sampled at compose time but excluded
-    // here: frontier signals structural reachability, not θ̂ diagnostics, so answering must
+    // recall-locked. Frontier items are sampled at compose time but excluded here:
+    // frontier signals structural reachability, not θ̂ diagnostics, so answering must
     // not churn them. Changing either side must preserve that split.
     const allPendingNonDue = rows.filter(
       (r) =>

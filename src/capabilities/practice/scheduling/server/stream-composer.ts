@@ -1,9 +1,10 @@
 // composeDailyStream: pure stream composition core. No IO; input is collected by
 // stream-store.
 //
-// Order: decay warm-up first; variants interleaved every two decay items with the rest at
-// the tail; papers after loose items; new_check last; question ids deduped; the minutes
-// budget protects the due prefix then fills the rest; positions are contiguous from 1 and
+// Order: lowest-retrievability due items first; variants interleaved every two due items
+// with the rest at the tail; papers after loose items; new_check last; question ids deduped.
+// The minutes budget keeps that due prefix, reserves 1–2 non-due questions when candidates
+// exist, and defers the least forgettable due tail. Positions are contiguous from 1 and
 // reasoning templates are never empty. L3 learning-mix repairs repetition fatigue and adds
 // frontier-floor diagnostics.
 
@@ -12,7 +13,7 @@ import {
   applyL3LearningMixGuard,
   learningMixContextFromInputs,
 } from './post-filter';
-import { fitStreamToTimeBudget } from './stream-budget';
+import { capStreamToItemMax, fitStreamToTimeBudget } from './stream-budget';
 import {
   presentDueQuestion,
   presentNonDueQuestion,
@@ -61,6 +62,8 @@ export interface ComposerInputs {
     paperId: string;
     title: string;
     source: 'paper' | 'on_demand' | 'import';
+    /** Answerable slots. The minute budget prices the paper as this times the question pace. */
+    questionCount: number;
   }>;
   /** 容量护栏（两层语义：warn 零干预只告知；max 防事故硬顶） */
   capacity?: { warn?: number; max?: number };
@@ -88,6 +91,8 @@ export interface StreamPlanItem {
   // **零行为变更**：本 lane 不计算、不据此排序，materializeStream 落库时缺省 {}；
   // 值由 候选收集层填充。
   signals?: Record<string, unknown>;
+  /** In-memory paper price. Not a stored column; the view recounts slots. */
+  questionCount?: number;
 }
 
 export interface StreamPlan {
@@ -97,6 +102,8 @@ export interface StreamPlan {
   warned: boolean;
   /** structured stream-level L3 degradation signals; omitted when the mix is healthy. */
   diagnostics?: LearningMixDiagnostic[];
+  /** Due items that did not fit today's minute budget. */
+  deferredDueCount?: number;
 }
 
 const DEFAULT_WARN = 12;
@@ -152,6 +159,7 @@ export function composeDailyStream(inputs: ComposerInputs): StreamPlan {
   const papers: Draft[] = inputs.pendingPapers.map((p) => ({
     item_kind: 'paper',
     ref_id: p.paperId,
+    questionCount: p.questionCount,
     ...presentPracticePaper(p.title, p.source),
   }));
 
@@ -171,25 +179,16 @@ export function composeDailyStream(inputs: ComposerInputs): StreamPlan {
 
   const all = [...solo, ...papers, ...tail, ...frontierTail];
   const budgeted = fitStreamToTimeBudget(all, inputs.dailyBudgetMinutes, inputs.questionMinutes);
-  const protectedIndexes = budgeted.kept.flatMap((item, index) =>
-    item.source === 'intervention' ? [index] : [],
-  );
-  const optionalSlots = Math.max(0, max - protectedIndexes.length);
-  const optionalIndexes = budgeted.kept.flatMap((item, index) =>
-    item.source !== 'intervention' ? [index] : [],
-  );
-  const retainedIndexes = new Set([
-    ...protectedIndexes,
-    ...optionalIndexes.slice(0, optionalSlots),
-  ]);
-  const kept = budgeted.kept.filter((_, index) => retainedIndexes.has(index));
-  const overItemMax = kept.length < budgeted.kept.length;
+  const capped = capStreamToItemMax(budgeted.kept, max);
+  const droppedDue = budgeted.kept.filter((item) => item.source === 'decay').length;
+  const keptDue = capped.kept.filter((item) => item.source === 'decay').length;
 
   const plan: StreamPlan = {
     date: inputs.date,
-    items: kept.map((d, i) => ({ ...d, position: i + 1 })),
-    truncated: budgeted.truncated || overItemMax,
+    items: capped.kept.map((d, i) => ({ ...d, position: i + 1 })),
+    truncated: budgeted.truncated || capped.truncated,
     warned: all.length > warn || budgeted.truncated,
+    deferredDueCount: budgeted.deferredDueCount + (droppedDue - keptDue),
   };
   return applyL3LearningMixGuard(plan, learningMixContextFromInputs(inputs, frontierTail.length));
 }

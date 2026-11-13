@@ -1,9 +1,14 @@
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { event, question_block, source_document } from '@/db/schema';
+import { writeKnowledgeProposeEvent } from '@/capabilities/knowledge/server/proposals';
+import { event, knowledge, question_block, source_document } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { writeAiProposal } from '@/kernel/proposals/writer';
-import { backfillQuestionBlockGenesis } from '../../../../scripts/backfill-genesis-events';
+import {
+  backfillKnowledgeGenesis,
+  backfillQuestionBlockGenesis,
+} from '../../../../scripts/backfill-genesis-events';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { POST } from './proposal-decisions';
 
@@ -91,6 +96,7 @@ async function seedBlockMergeProposal(opts: {
   mergeBlockIds: string[];
 }): Promise<void> {
   await writeAiProposal(testDb(), {
+    actor_ref: 'dreaming',
     id: opts.proposalId,
     payload: {
       kind: 'block_merge',
@@ -240,5 +246,150 @@ describe('POST /api/proposals/[id]/decisions', () => {
     )[0];
     expect(primaryRow.merged_from_block_ids).toEqual([m1]);
     expect(primaryRow.version).toBe(1);
+  });
+
+  // @invariant security: only a proposal can be rated; every knowledge proposal shape the writers produce can be decided
+  // @fails-if the knowledge dismiss guard stops reading the inbox, or the generic writer stores knowledge_mutation as experimental:proposal; those rows answer 500
+  it('decides knowledge proposals of every stored shape and still refuses non-proposal events', async () => {
+    const db = testDb();
+    const now = new Date();
+    const ids = ['n_a', 'n_b', 'n_c', 'n_d', 'n_e', 'n_f', 'n_g', 'n_h'];
+    await db.insert(knowledge).values(
+      ids.map((id) => ({
+        id,
+        name: id,
+        domain: 'yuwen',
+        parent_id: null,
+        merged_from: [],
+        proposed_by_ai: false,
+        approval_status: 'approved' as const,
+        created_at: now,
+        updated_at: now,
+        version: 0,
+      })),
+    );
+    await backfillKnowledgeGenesis(db, now);
+    const merge = (from: string, into: string) => ({
+      mutation: 'merge' as const,
+      from_ids: [from],
+      into_id: into,
+      expected_versions: { [from]: 0, [into]: 0 },
+    });
+    const generic = (change: ReturnType<typeof merge> | Record<string, unknown>, target: string) =>
+      writeAiProposal(db, {
+        actor_ref: 'dreaming',
+        payload: {
+          kind: 'knowledge_mutation',
+          target: { subject_kind: 'knowledge', subject_id: target },
+          reason_md: '走查',
+          evidence_refs: [],
+          proposed_change: change as ReturnType<typeof merge>,
+          cooldown_key: `walk:${target}:${createId()}`,
+        },
+      });
+    const preFixShape = async (change: ReturnType<typeof merge>) => {
+      const id = createId();
+      await writeEvent(db, {
+        id,
+        session_id: null,
+        actor_kind: 'agent',
+        actor_ref: 'agent:copilot',
+        action: 'experimental:proposal',
+        subject_kind: 'knowledge',
+        subject_id: change.into_id,
+        outcome: 'partial',
+        payload: {
+          ai_proposal: {
+            kind: 'knowledge_mutation',
+            target: { subject_kind: 'knowledge', subject_id: change.into_id },
+            reason_md: '走查',
+            evidence_refs: [],
+            proposed_change: change,
+            cooldown_key: `walk:${id}`,
+          },
+        },
+        caused_by_event_id: null,
+        task_run_id: null,
+        cost_micro_usd: null,
+        created_at: now,
+      });
+      return id;
+    };
+    const [genesis] = await db
+      .select({ id: event.id })
+      .from(event)
+      .where(and(eq(event.action, 'experimental:genesis'), eq(event.subject_id, 'n_h')))
+      .limit(1);
+
+    const cases: Array<{ name: string; id: string; decision: string; status: number }> = [
+      {
+        name: 'generic writer merge, accept',
+        id: await generic(merge('n_b', 'n_a'), 'n_a'),
+        decision: 'accept',
+        status: 201,
+      },
+      {
+        name: 'generic writer reparent, dismiss',
+        id: await generic(
+          { mutation: 'reparent', node_id: 'n_c', new_parent_id: 'n_a', expected_version: 0 },
+          'n_c',
+        ),
+        decision: 'dismiss',
+        status: 201,
+      },
+      {
+        name: 'propose node, dismiss',
+        id: await writeKnowledgeProposeEvent(db, {
+          payload: { mutation: 'propose_new', name: 'new child', parent_id: 'n_a' },
+          reasoning: '走查',
+        }),
+        decision: 'dismiss',
+        status: 201,
+      },
+      {
+        name: 'experimental:knowledge_merge, accept',
+        id: await writeKnowledgeProposeEvent(db, {
+          payload: merge('n_e', 'n_d'),
+          reasoning: '走查',
+        }),
+        decision: 'accept',
+        status: 201,
+      },
+      {
+        name: 'stored experimental:proposal, dismiss',
+        id: await preFixShape(merge('n_g', 'n_f')),
+        decision: 'dismiss',
+        status: 201,
+      },
+      {
+        name: 'stored experimental:proposal, accept refused',
+        id: await preFixShape(merge('n_g', 'n_f')),
+        decision: 'accept',
+        status: 409,
+      },
+      { name: 'non-proposal event, dismiss', id: genesis.id, decision: 'dismiss', status: 404 },
+    ];
+
+    for (const c of cases) {
+      const res = await decide(c.id, { decision: c.decision });
+      const rates = await db
+        .select({ id: event.id })
+        .from(event)
+        .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, c.id)));
+      expect({ name: c.name, status: res.status, rates: rates.length }).toEqual({
+        name: c.name,
+        status: c.status,
+        rates: c.status === 201 ? 1 : 0,
+      });
+    }
+    const archived = await db
+      .select({ id: knowledge.id, archived_at: knowledge.archived_at })
+      .from(knowledge);
+    expect(
+      archived
+        .filter((row) => row.archived_at !== null)
+        .map((row) => row.id)
+        .sort(),
+    ).toEqual(['n_b', 'n_e']);
   });
 });

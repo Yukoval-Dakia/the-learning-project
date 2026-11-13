@@ -178,9 +178,9 @@ export const knowledgeCapability = defineCapability({
           import('./jobs/frontier_fill_nightly').then((m) => m.buildFrontierFillNightlyHandler),
       },
       {
-        // Multi-step maintenance producer and the nightly mesh-edge proposer: it reads the
-        // whole tree plus recent failures and proposes edges via propose_knowledge_edge.
-        // No real upstream, which is why it is a root.
+        // Multi-step maintenance producer and the nightly mesh-edge proposer: one run per
+        // subject with recent failures, reading only that subject's subtree and proposing
+        // edges via propose_knowledge_edge. No real upstream, which is why it is a root.
         name: 'knowledge_maintenance_nightly',
         dependsOn: [],
         eligibility: nightlyEligibility('structure'),
@@ -220,6 +220,19 @@ export const knowledgeCapability = defineCapability({
         queue: 'llm',
         load: () =>
           import('./jobs/projection_oracle_sweep').then((m) => m.buildProjectionOracleSweepHandler),
+      },
+      {
+        // Deterministic scan of admitted solution priors. A pair needs two
+        // questions; the existing edge writer keeps live, pending and dismissed
+        // pairs out. Nothing here is accepted. No model and no activity gate:
+        // the priors are already paid for.
+        name: 'solution_prior_prereq_nightly',
+        schedule: { cron: '55 4 * * *', tz: 'Asia/Shanghai' },
+        queue: 'fast',
+        load: () =>
+          import('./jobs/solution_prior_prereq_nightly').then(
+            (m) => m.buildSolutionPriorPrereqNightlyHandler,
+          ),
       },
     ],
   },

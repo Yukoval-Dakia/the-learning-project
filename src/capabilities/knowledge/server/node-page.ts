@@ -21,12 +21,14 @@ import {
   resolveOwningLearningItemIds,
 } from '@/kernel/read-models/artifact-backlinks';
 import { getArtifactCorrectionStates } from '@/kernel/read-models/artifact-corrections';
+import { recentNativeAttemptsForKnowledge } from '@/kernel/read-models/knowledge-activity';
 import {
   abilityReadingsByIdOrFail,
   readLearnerJudgments,
 } from '@/kernel/read-models/learner-judgment';
 import { isLearnerVisibleKnowledgeId } from '@/kernel/read-models/learner-knowledge-visibility';
 import { getRepresentativeKcBeta } from '@/kernel/read-models/mastery-projection';
+import { loadMergedKnowledgeClosure } from '@/kernel/read-models/merged-knowledge';
 import {
   type NoteSummary,
   interactiveForKnowledge,
@@ -249,6 +251,15 @@ export async function loadKnowledgeNodePage(
 
   // Five independent reads run concurrently; backlinks wait for the primary atomic.
   // Named promises prevent swapping the two NoteSummary results.
+  // Answer events keep the knowledge id they were written with, so the survivor
+  // page reads every id in its merged_from closure.
+  const answerHistoryIds = [...(await loadMergedKnowledgeClosure(db)).closure(knowledgeId)];
+  const answerHistoryMatch = sql.join(
+    answerHistoryIds.map(
+      (id) => sql`${event.payload}->'referenced_knowledge_ids' @> ${JSON.stringify([id])}::jsonb`,
+    ),
+    sql` OR `,
+  );
   // Primary atomic = newest non-archived note_atomic containing this node.
   const atomicPromise = db
     .select({
@@ -280,24 +291,25 @@ export async function loadKnowledgeNodePage(
       created_at: event.created_at,
     })
     .from(event)
-    .where(
-      sql`${event.payload}->'referenced_knowledge_ids' @> ${JSON.stringify([knowledgeId])}::jsonb`,
-    )
+    .where(answerHistoryMatch)
     .orderBy(desc(event.created_at))
     .limit(TIMELINE_LIMIT)
     .execute();
+  const nativeTimelinePromise = recentNativeAttemptsForKnowledge(db, knowledgeId, TIMELINE_LIMIT);
   const notesPromise = notesForKnowledge(db, knowledgeId);
   const interactivePromise = interactiveForKnowledge(db, knowledgeId);
   const profilePromise = resolveSubjectProfileForKnowledgeIds(db, [knowledgeId]);
   await Promise.all([
     atomicPromise,
     timelinePromise,
+    nativeTimelinePromise,
     notesPromise,
     interactivePromise,
     profilePromise,
   ]);
   const atomicRows = await atomicPromise;
   const timelineRows = await timelinePromise;
+  const nativeTimeline = await nativeTimelinePromise;
   const notes = await notesPromise;
   const interactiveArtifacts = await interactivePromise;
   const profile = await profilePromise;
@@ -365,14 +377,31 @@ export async function loadKnowledgeNodePage(
     }
   }
 
-  const timeline: NodePageTimelineEntry[] = timelineRows.map((r) => ({
-    event_id: r.event_id,
-    action: r.action,
-    subject_kind: r.subject_kind,
-    actor_kind: r.actor_kind,
-    outcome: r.outcome,
-    created_at: r.created_at.toISOString(),
-  }));
+  const timeline: NodePageTimelineEntry[] = [
+    ...timelineRows.map((r) => ({
+      event_id: r.event_id,
+      action: r.action,
+      subject_kind: r.subject_kind,
+      actor_kind: r.actor_kind,
+      outcome: r.outcome,
+      created_at: r.created_at.toISOString(),
+    })),
+    ...nativeTimeline.map((hit) => ({
+      event_id: hit.event_id,
+      action: hit.action,
+      subject_kind: hit.subject_kind,
+      actor_kind: hit.actor_kind,
+      outcome: hit.outcome,
+      created_at: hit.created_at.toISOString(),
+    })),
+  ]
+    .filter(
+      (row, index, rows) => rows.findIndex((other) => other.event_id === row.event_id) === index,
+    )
+    .sort(
+      (a, b) => b.created_at.localeCompare(a.created_at) || b.event_id.localeCompare(a.event_id),
+    )
+    .slice(0, TIMELINE_LIMIT);
 
   // A missing evidenced reading is insufficient evidence or a non-evaluable role,
   // not a cold-start low score. The decay bucket stays unknown, not untrained.

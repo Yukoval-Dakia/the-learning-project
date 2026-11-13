@@ -18,7 +18,11 @@ type DbLike = Db | Tx;
 export interface WriteAiProposalInput {
   id?: string;
   session_id?: string | null;
-  actor_ref?: string;
+  /**
+   * The producer this proposal came from. Required: a silent 'dreaming' default
+   * mislabelled every producer that forgot it, and the inbox shows the source.
+   */
+  actor_ref: string;
   outcome?: 'success' | 'partial';
   payload: AiProposalPayloadInputT;
   /**
@@ -101,6 +105,22 @@ function eventShapeForProposal(payload: AiProposalPayloadT): {
           ai_proposal: payload,
         },
       };
+    case 'knowledge_mutation': {
+      // The knowledge fold and accept read the mutation from the action and its
+      // fields from the payload top level; any other shape can never be applied.
+      const { mutation, ...fields } = payload.proposed_change;
+      return {
+        action: `experimental:knowledge_${mutation}`,
+        subject_kind: 'knowledge',
+        subject_id: proposalSubjectId(payload),
+        event_payload: {
+          ...fields,
+          reasoning: payload.reason_md,
+          evidence_refs: payload.evidence_refs,
+          ai_proposal: payload,
+        },
+      };
+    }
     default:
       return {
         action: 'experimental:proposal',
@@ -127,6 +147,10 @@ function overridePayloadWithoutReservedFields(
 }
 
 export async function writeAiProposal(db: DbLike, input: WriteAiProposalInput): Promise<string> {
+  const actorRef = input.actor_ref?.trim();
+  if (!actorRef) {
+    throw new Error('writeAiProposal requires a non-empty actor_ref');
+  }
   const payload = parseAiProposalPayload(input.payload);
   // One deterministic gate for every producer: the learner-facing line may not
   // smuggle internal ids / tool names / field names into the inbox or digest.
@@ -162,7 +186,7 @@ export async function writeAiProposal(db: DbLike, input: WriteAiProposalInput): 
     id: eventId,
     session_id: input.session_id ?? null,
     actor_kind: 'agent',
-    actor_ref: input.actor_ref ?? 'dreaming',
+    actor_ref: actorRef,
     action: eventShape.action,
     subject_kind: eventShape.subject_kind,
     subject_id: eventShape.subject_id,

@@ -44,6 +44,7 @@ export const LEARNER_COPY_FILES = [
   'src/capabilities/practice/ui/worksheet/WorksheetPrintPage.tsx',
   'src/capabilities/practice/ui/worksheet/worksheet-plan.ts',
   'src/capabilities/shell/ui/TodayPage.tsx',
+  'src/capabilities/shell/ui/overnight-band-copy.ts',
   'src/capabilities/practice/ui/library/LibraryPage.tsx',
   'src/capabilities/practice/ui/library/ScopeLine.tsx',
   'src/capabilities/practice/ui/library/QuestionLine.tsx',

@@ -23,8 +23,12 @@ import {
   structuredToPromptMarkdown,
 } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
-
+import {
+  matchPromptHeadQuestionNo,
+  parseQuestionNo,
+} from '@/kernel/proposals/block-merge-admission';
 import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
+import { type KnownSubject, getKnownSubjects } from '@/subjects/profile';
 import { redactIngestionText } from './privacy-guard';
 import type { LayoutQuality } from './tencent_mark_parser';
 
@@ -50,6 +54,8 @@ export type StructureResult = {
   figureHandwriting?: StructureOutputT['figure_handwriting'];
   /** Absent when no preFigures were supplied or none were assigned. */
   figureAssignments?: FigureAssignment[];
+  /** Durable run id of the StructureTask call — binds its cost to the session. */
+  task_run_id?: string;
 };
 
 // ---------- Tencent text hint rendering ----------
@@ -110,6 +116,22 @@ function canonicalizeExplicitMathDelimiters(text: string): string {
   );
 }
 
+// Deterministic repair for the two observed contamination modes: the model left
+// the printed number or a standalone section header line inside prompt_text.
+// Moving them into their own fields preserves the printed numbering and keeps
+// section text out of the stem. Only a strictly-shaped leading token moves —
+// anything ambiguous stays in prompt_text, and a head number conflicting with
+// the node's own question_no stays (it may be genuine content). The head shape
+// itself is matchPromptHeadQuestionNo's — the same parser merge admission uses
+// — so a decimal like `0.75` or an inline 「（1）（2）」 enumeration never
+// moves.
+
+// A leading line that is nothing but a Chinese-ordinal section header, e.g.
+// 「一、选择题」. Requires the line to end (newline or string end) right after
+// a section-y word so prose beginning 「一、…」 does not qualify.
+const SECTION_HEAD_LINE_RE =
+  /^\s*([一二三四五六七八九十]+、[^\n]{1,15}(?:题|卷|部分|篇|章|节|板块))[ \t]*(?:\n|$)/u;
+
 /**
  * Walks the VLM tree, assigns ids, and collects figure assignments into
  * `assignmentsOut` so the recursive walk needs no return value.
@@ -124,13 +146,36 @@ function nodeToStructured(
     isStem && node.sub_questions
       ? node.sub_questions.map((s) => nodeToStructured(s, assignmentsOut))
       : undefined;
+  let promptText = canonicalizeExplicitMathDelimiters(node.prompt_text);
+  let section = node.section?.trim() || undefined;
+  let questionNo = node.question_no?.trim() || undefined;
+
+  const sectionMatch = SECTION_HEAD_LINE_RE.exec(promptText);
+  if (sectionMatch && promptText.slice(sectionMatch[0].length).trim().length > 0) {
+    section = section ?? sectionMatch[1].trim();
+    promptText = promptText.slice(sectionMatch[0].length);
+  }
+
+  const numberMatch = matchPromptHeadQuestionNo(promptText);
+  if (numberMatch && numberMatch.parsed.kind !== 'unknown') {
+    const headNo = numberMatch.parsed.value;
+    const rest = promptText.slice(numberMatch.matchLength).replace(/^[ \t]+/, '');
+    const own = questionNo === undefined ? null : parseQuestionNo(questionNo);
+    const sameNumber = own !== null && own.kind !== 'unknown' && own.value === headNo;
+    if (rest.trim().length > 0 && (own === null || sameNumber)) {
+      questionNo = questionNo ?? String(headNo);
+      promptText = rest;
+    }
+  }
+
   const out: StructuredQuestionT = {
     id,
     role: node.role,
-    prompt_text: canonicalizeExplicitMathDelimiters(node.prompt_text),
+    prompt_text: promptText,
     source: 'vlm_structure',
   };
-  if (node.question_no) out.question_no = node.question_no;
+  if (questionNo) out.question_no = questionNo;
+  if (section) out.section = section;
   if (node.kind) out.kind = node.kind;
   if (node.options && node.options.length > 0)
     out.options = node.options.map((option) => ({
@@ -171,13 +216,57 @@ function nodeToStructured(
   return out;
 }
 
+// ---------- Page subjects → question subject ----------
+
+/** Known-subject page claims; a page claimed with two different subjects is dropped. */
+function pageSubjectMap(
+  claims: StructureOutputT['page_subjects'],
+  knownIds: ReadonlySet<string>,
+  pageCount: number,
+): Map<number, string> {
+  const out = new Map<number, string>();
+  const conflicted = new Set<number>();
+  for (const claim of claims ?? []) {
+    const subjectId = claim.subject_id?.trim();
+    if (!subjectId || !knownIds.has(subjectId) || claim.page_index >= pageCount) continue;
+    const prior = out.get(claim.page_index);
+    if (prior !== undefined && prior !== subjectId) conflicted.add(claim.page_index);
+    out.set(claim.page_index, subjectId);
+  }
+  for (const page of conflicted) out.delete(page);
+  return out;
+}
+
+function nodePages(node: StructureNodeT, into: Set<number>): Set<number> {
+  if (node.page_index != null) into.add(node.page_index);
+  for (const sub of node.sub_questions ?? []) nodePages(sub, into);
+  return into;
+}
+
+/**
+ * A question spanning several pages takes a subject only when every spanned page that
+ * reported one agrees; pages left unreported stay neutral. A node with no page_index
+ * is on page 0, matching the block's page span.
+ */
+function questionSubject(node: StructureNodeT, pages: Map<number, string>): string | undefined {
+  const spanned = nodePages(node, new Set());
+  if (spanned.size === 0) spanned.add(0);
+  const subjects = new Set(
+    [...spanned].flatMap((page) => {
+      const subjectId = pages.get(page);
+      return subjectId === undefined ? [] : [subjectId];
+    }),
+  );
+  return subjects.size === 1 ? [...subjects][0] : undefined;
+}
+
 // ---------- runStructureTask ----------
 
 export type StructureRunTaskFn = (
   kind: string,
   input: { text: string; images: Array<{ data: string; mediaType: string }> },
   ctx: unknown,
-) => Promise<{ text: string }>;
+) => Promise<{ text: string; task_run_id?: string }>;
 
 export type RunStructureTaskParams = {
   /** Page images in page order (page 0 first). base64 data, no data: prefix. */
@@ -196,6 +285,8 @@ export type RunStructureTaskParams = {
     position: string;
     bbox?: StructuredQuestionT['bbox'];
   }>;
+  /** Subject vocabulary for page_subjects; defaults to the live selectable registry. */
+  knownSubjects?: ReadonlyArray<KnownSubject>;
   /** Database bound by the production runner; tests may inject runTaskFn instead. */
   db?: Db;
   /** Inject in tests; defaults to the production runner. */
@@ -213,10 +304,12 @@ export async function runStructureTask(params: RunStructureTaskParams): Promise<
     throw new StructureTaskError('runStructureTask: no page images provided');
   }
 
+  const knownSubjects = params.knownSubjects ?? getKnownSubjects();
   const textPayload = JSON.stringify({
     // Redact the text hint; page images stay raw because they are the input itself.
     tencent_hint_md: redactIngestionText(params.tencentHintMd).text,
     page_count: params.pageCount,
+    known_subjects: knownSubjects,
     // Coordinates identify the exact crop for figure_ids self-assignment.
     ...(params.preFigures && params.preFigures.length > 0 ? { figures: params.preFigures } : {}),
   });
@@ -226,6 +319,7 @@ export async function runStructureTask(params: RunStructureTaskParams): Promise<
   }
   const runTaskFn = params.runTaskFn ?? makeRunTaskTextFn(params.db as Db);
   let llmText: string;
+  let taskRunId: string | undefined;
   try {
     const result = await runTaskFn(
       'StructureTask',
@@ -233,6 +327,7 @@ export async function runStructureTask(params: RunStructureTaskParams): Promise<
       params.ctx ?? {},
     );
     llmText = result.text;
+    taskRunId = result.task_run_id;
   } catch (err) {
     throw new StructureTaskError('StructureTask LLM call failed', { cause: err });
   }
@@ -254,7 +349,16 @@ export async function runStructureTask(params: RunStructureTaskParams): Promise<
   // Collect assignments while mapping; no-op without preFigures.
   const assignmentsOut: FigureAssignment[] | undefined =
     params.preFigures && params.preFigures.length > 0 ? [] : undefined;
-  const questions = parsed.questions.map((node) => nodeToStructured(node, assignmentsOut));
+  const pages = pageSubjectMap(
+    parsed.page_subjects,
+    new Set(knownSubjects.map((subject) => subject.id)),
+    params.pageCount,
+  );
+  const questions = parsed.questions.map((node) => {
+    const structured = nodeToStructured(node, assignmentsOut);
+    const subjectId = questionSubject(node, pages);
+    return subjectId === undefined ? structured : { ...structured, subject_id: subjectId };
+  });
   return {
     questions,
     layout_quality: parsed.layout_quality,
@@ -263,5 +367,6 @@ export async function runStructureTask(params: RunStructureTaskParams): Promise<
     content_lost: parsed.content_lost ?? null,
     figureHandwriting: parsed.figure_handwriting,
     ...(assignmentsOut && assignmentsOut.length > 0 ? { figureAssignments: assignmentsOut } : {}),
+    ...(taskRunId !== undefined ? { task_run_id: taskRunId } : {}),
   };
 }

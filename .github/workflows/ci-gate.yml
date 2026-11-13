@@ -41,7 +41,7 @@ jobs:
       - name: Static lane skipped
         if: steps.filter.outputs.static_changed == 'false'
         run: echo "Static lane not selected — lane is green."
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         if: steps.filter.outputs.static_changed != 'false'
         with:
           version: 11.13.1
@@ -103,7 +103,7 @@ jobs:
       - name: Audit lane skipped
         if: steps.filter.outputs.static_changed == 'false'
         run: echo "Audit lane not selected — lane is green."
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         if: steps.filter.outputs.static_changed != 'false'
         with:
           version: 11.13.1
@@ -158,7 +158,7 @@ jobs:
       - name: Audit lane skipped
         if: steps.filter.outputs.static_changed == 'false'
         run: echo "Audit lane not selected — lane is green."
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         if: steps.filter.outputs.static_changed != 'false'
         with:
           version: 11.13.1
@@ -213,7 +213,7 @@ jobs:
       - name: Audit lane skipped
         if: steps.filter.outputs.static_changed == 'false'
         run: echo "Audit lane not selected — lane is green."
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         if: steps.filter.outputs.static_changed != 'false'
         with:
           version: 11.13.1
@@ -250,6 +250,7 @@ jobs:
           pnpm audit:provider-lanes
           pnpm audit:model-source
           pnpm audit:advisory-locks
+          pnpm audit:review-action-readers
           pnpm audit:relations
           pnpm audit:mastery-provenance
 
@@ -270,7 +271,7 @@ jobs:
       - name: unit lane skipped
         if: steps.filter.outputs.unit_changed == 'false'
         run: echo "Docs-only change; unit lane skipped."
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         if: steps.filter.outputs.unit_changed != 'false'
         with:
           version: 11.13.1
@@ -313,7 +314,7 @@ jobs:
       - name: unit lane skipped
         if: steps.filter.outputs.unit_changed == 'false'
         run: echo "Docs-only change; unit lane skipped."
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         if: steps.filter.outputs.unit_changed != 'false'
         with:
           version: 11.13.1
@@ -356,7 +357,7 @@ jobs:
       - name: db lane skipped
         if: steps.filter.outputs.db_changed == 'false'
         run: echo "Docs-only change; db lane skipped."
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         if: steps.filter.outputs.db_changed != 'false'
         with:
           version: 11.13.1
@@ -402,7 +403,7 @@ jobs:
       - name: db lane skipped
         if: steps.filter.outputs.db_changed == 'false'
         run: echo "Docs-only change; db lane skipped."
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         if: steps.filter.outputs.db_changed != 'false'
         with:
           version: 11.13.1
@@ -448,7 +449,7 @@ jobs:
       - name: db lane skipped
         if: steps.filter.outputs.db_changed == 'false'
         run: echo "Docs-only change; db lane skipped."
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         if: steps.filter.outputs.db_changed != 'false'
         with:
           version: 11.13.1
@@ -494,7 +495,7 @@ jobs:
       - name: db lane skipped
         if: steps.filter.outputs.db_changed == 'false'
         run: echo "Docs-only change; db lane skipped."
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         if: steps.filter.outputs.db_changed != 'false'
         with:
           version: 11.13.1
@@ -540,7 +541,7 @@ jobs:
       - name: db lane skipped
         if: steps.filter.outputs.db_changed == 'false'
         run: echo "Docs-only change; db lane skipped."
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         if: steps.filter.outputs.db_changed != 'false'
         with:
           version: 11.13.1
@@ -586,7 +587,7 @@ jobs:
       - name: db lane skipped
         if: steps.filter.outputs.db_changed == 'false'
         run: echo "Docs-only change; db lane skipped."
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         if: steps.filter.outputs.db_changed != 'false'
         with:
           version: 11.13.1
@@ -632,7 +633,7 @@ jobs:
       - name: db lane skipped
         if: steps.filter.outputs.db_changed == 'false'
         run: echo "Docs-only change; db lane skipped."
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         if: steps.filter.outputs.db_changed != 'false'
         with:
           version: 11.13.1
@@ -678,7 +679,7 @@ jobs:
       - name: db lane skipped
         if: steps.filter.outputs.db_changed == 'false'
         run: echo "Docs-only change; db lane skipped."
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         if: steps.filter.outputs.db_changed != 'false'
         with:
           version: 11.13.1
@@ -724,7 +725,7 @@ jobs:
       - name: Migration lane skipped
         if: steps.filter.outputs.migration_changed == 'false'
         run: echo "Migration lane not selected — lane is green."
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         if: steps.filter.outputs.migration_changed != 'false'
         with:
           version: 11.13.1
@@ -757,7 +758,7 @@ jobs:
       - name: Build lane skipped
         if: steps.filter.outputs.build_changed == 'false'
         run: echo "Docs-only change; build lane skipped."
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         if: steps.filter.outputs.build_changed != 'false'
         with:
           version: 11.13.1
@@ -794,7 +795,7 @@ jobs:
       - name: Parity lane skipped
         if: steps.filter.outputs.parity_changed == 'false'
         run: echo "No parity-relevant change — lane is green."
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         if: steps.filter.outputs.parity_changed != 'false'
         with:
           version: 11.13.1
@@ -828,6 +829,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         if: steps.filter.outputs.parity_changed != 'false'
         with:
+          # rustc 1.100.0 (2026-11-09) broke napi's wasm32-wasip1-threads link:
+          # rust-lld errors with duplicate symbol `_initialize` because the
+          # target's crt1-reactor.o now exports it while napi CLI 3.7.2 still
+          # passes --export=_initialize explicitly. Pin to the last green
+          # toolchain until napi-rs/cli stops exporting _initialize on this
+          # target (tracked upstream); the parity lane must stay deterministic.
+          toolchain: 1.99.1
           targets: wasm32-wasip1-threads
       # v2 @ 2026-07-20. Cache Cargo registry/git data and this standalone crate's target.
       - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
@@ -882,7 +890,7 @@ jobs:
             fi
           fi
           echo "selected=$selected" >> "$GITHUB_OUTPUT"
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         if: steps.boundary.outputs.selected == 'true'
         with:
           version: 11.13.1

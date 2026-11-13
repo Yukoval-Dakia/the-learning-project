@@ -9,7 +9,7 @@
 | `domain.ts` | 知识域 / subject scoping |
 | `edges.ts` | mesh edge CRUD（5 类 `relation_type` + `experimental:*`）|
 | `edge-proposal-write.ts` | 边提议事件唯一写者：冷却键、gate 锁内查重、payload、`validate: 'rubric' \| 'bootstrap'` |
-| `node-page.ts` | 单节点页面聚合 reader |
+| `node-page.ts` | 单节点页面聚合 reader；时间线含 `merged_from` 闭包上的作答 |
 | `tools/knowledge-state.ts` | `get_knowledge_state`：一个知识点的掌握带、证据、衰减、到期、连续错、错因和保留度 |
 | `proposals.ts` | 知识节点 propose event + accept/dismiss（content-driven：cold-start-bridge / image-candidate-accept / agent proposal-tools / KnowledgeReviewTask 的写路径）|
 | `review.ts` | KnowledgeReviewTask（维护流 producer）：经 `knowledge_review` surface 挂共享 `propose_knowledge_*` 工具 |

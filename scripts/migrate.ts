@@ -13,7 +13,10 @@ import { drizzle } from 'drizzle-orm/postgres-js';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import postgres from 'postgres';
 import { seedKnowledge } from '@/capabilities/knowledge/public';
-import { reconcileBuiltinTraits } from '@/capabilities/observability/public';
+import {
+  reconcileBuiltinSubjectDocs,
+  reconcileBuiltinTraits,
+} from '@/capabilities/observability/public';
 import * as schema from '@/db/schema';
 
 const url = process.env.DATABASE_URL;
@@ -57,6 +60,15 @@ async function main(): Promise<void> {
       `[migrate] builtin trait reconcile: +${traits.insertedSubjects} subjects, ` +
         `+${traits.insertedTraits} traits, ${traits.upgradedTraits} upgraded, ` +
         `${traits.skippedTraits} up-to-date, ${traits.preservedTraits} owner-edited preserved`,
+    );
+
+    // 科目经验文档库种子：同一 migrate-init 写者与 owner-edited 保留纪律；
+    // 失败 fatal——文档库缺席时 agent 拿到空目录却被告知可以按需读。
+    const docs = await reconcileBuiltinSubjectDocs(db);
+    console.log(
+      `[migrate] builtin doc reconcile: +${docs.insertedDocs} docs, ` +
+        `${docs.upgradedDocs} upgraded, ${docs.skippedDocs} up-to-date, ` +
+        `${docs.preservedDocs} owner-edited preserved`,
     );
 
     // YUK-973: prepare legacy data before the canonical writers start. Failure is fatal;

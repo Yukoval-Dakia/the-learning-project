@@ -33,6 +33,7 @@ export interface ExecutablePiModelFacts {
   reasoning: boolean;
   contextWindow: number;
   maxInputTokens?: number;
+  inputSafetyRatio?: number;
   maxTokens: number;
   catalogReasoning: ModelProfileReasoning;
   thinkingLevelMap?: Record<string, string | null>;
@@ -96,6 +97,7 @@ function nativePiModels(
               reasoning: profile.capabilities.reasoning,
               contextWindow: profile.limits.contextWindowTokens,
               maxInputTokens: profile.limits.maxInputTokens,
+              inputSafetyRatio: profile.limits.inputSafetyRatio,
               maxTokens: profile.limits.maxOutputTokens,
               catalogReasoning: profile.reasoning,
               thinkingLevelMap:
@@ -145,6 +147,7 @@ function nativePiModels(
             reasoning: profile.capabilities.reasoning,
             contextWindow: profile.limits.contextWindowTokens,
             maxInputTokens: profile.limits.maxInputTokens,
+            inputSafetyRatio: profile.limits.inputSafetyRatio,
             maxTokens: profile.limits.maxOutputTokens,
             catalogReasoning: profile.reasoning,
             thinkingLevelMap:

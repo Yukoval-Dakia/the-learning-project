@@ -153,15 +153,13 @@ export function OptionListBlock({
               }}
               onFocus={() => setActive(item.id)}
             >
-              <span
-                className="un-blk-opt-mark"
-                data-empty={mark === null || undefined}
-                aria-hidden="true"
-              >
+              {/* The letter is part of the name a screen reader says (「B （0，1）」): the text below
+                  drops a repeated letter, so hiding this one left the option without it. */}
+              <span className="un-blk-opt-mark" data-empty={mark === null || undefined}>
                 {mark}
               </span>
               <MathMarkdown className="un-blk-opt-text" notation={notation}>
-                {displayOptionContent(item.label_md, marker === 'letter' ? mark : null)}
+                {displayOptionContent(item.label_md, mark)}
               </MathMarkdown>
             </button>
           );

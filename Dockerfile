@@ -23,6 +23,8 @@ ARG NPM_REGISTRY
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN if [ -n "$NPM_REGISTRY" ]; then export COREPACK_NPM_REGISTRY="$NPM_REGISTRY"; fi; pnpm build
+# Declared so the public SHA build-arg is accepted. The file is written in the runner stage.
+ARG TLP_SOURCE_COMMIT
 
 # Parent of the flat npm stages below; only their node_modules reach the final images.
 FROM node:24-bookworm-slim@sha256:01d566e8d94d8c619591d78652babfccd3c6992a3dffa9ed5ab39e11cf6c70e9 AS npmbase
@@ -116,9 +118,10 @@ RUN mkdir -p /var/lib/mem0 && chown node:node /var/lib/mem0
 FROM runtime-os AS runner
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/drizzle ./drizzle
-# Agent Skill assets — the pi skill-doc resolvers read
-# src/subjects/<id>/skills/ at runtime via readFile/readdirSync (not imported),
-# so a missing COPY is a silent prod degradation (resolver falls back to prose).
+# Agent Skill assets — _shared packs are still runtime-injected for Copilot via
+# readFile/readdirSync (not imported); per-subject packs are the builtin seed
+# sources the migrate container reads into subject_doc. A missing COPY is a
+# silent prod degradation (copilot falls back to prose / docs never seeded).
 # Coverage is asserted by src/subjects/skills-image-coverage.test.ts (YUK-610).
 COPY --from=builder /app/src/subjects/math/skills ./src/subjects/math/skills
 COPY --from=builder /app/src/subjects/yuwen/skills ./src/subjects/yuwen/skills
@@ -141,6 +144,10 @@ COPY --from=lmnrdeps /lmnr/node_modules ./vendor/lmnr/node_modules
 RUN ln -s ../vendor/lmnr/node_modules/@lmnr-ai ./node_modules/@lmnr-ai
 RUN test -f node_modules/@lmnr-ai/lmnr/package.json
 RUN test -s node_modules/@hyzyla/pdfium/dist/pdfium.wasm
+# /api/ready 读这个文件。不进 ENV：不是运行时可改的配置，新 SHA 也不会冲掉上面的 COPY 缓存。
+ARG TLP_SOURCE_COMMIT=""
+RUN printf '%s\n' "$TLP_SOURCE_COMMIT" > /app/BUILD_COMMIT \
+ && chown node:node /app/BUILD_COMMIT
 ENV API_PORT=8787 RW_FRONTDOOR=1
 # gate 选项 b：不设 RW_WORKER（worker 独立进程，compose worker 服务 command 覆盖跑 dist/worker.cjs）。
 EXPOSE 8787
@@ -169,10 +176,16 @@ COPY scripts/workspace/launch.c /tmp/launch.c
 RUN gcc -O2 -Wall -Wextra -Werror -o /workspace-launch /tmp/launch.c
 
 FROM chromium-os AS worker
+# Sandbox math libraries come from Debian, not pip: the reference BLAS that python3-numpy pulls in
+# starts no threads, so importing numpy cannot trip the sandbox uid's shared RLIMIT_NPROC, and no
+# pip or compiler lands in the image. workspace_exec's description names these versions; bump
+# them together. The import check runs as the sandbox uid with the launcher's `python3 -I`.
 RUN apt-get update && apt-get install -y --no-install-recommends python3 libcap2-bin \
+      python3-numpy=1:1.24.2-1+deb12u1 python3-sympy=1.11.1-1 python3-mpmath=1.2.1-2 \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 29082 agent-sandbox \
     && useradd --uid 29082 --gid 29082 --no-create-home --shell /usr/sbin/nologin agent-sandbox \
+    && setpriv --reuid=29082 --regid=29082 --clear-groups python3 -I -c 'import numpy, sympy' \
     && mkdir -p /var/lib/tlp/workspaces \
     && chown node:agent-sandbox /var/lib/tlp/workspaces \
     && chmod 1730 /var/lib/tlp/workspaces
@@ -181,6 +194,8 @@ COPY --from=workspace-launcher /workspace-launch /usr/local/libexec/workspace-la
 RUN chown root:node /usr/local/libexec/workspace-launch \
     && chmod 0750 /usr/local/libexec/workspace-launch \
     && setcap cap_setuid,cap_setgid+ep /usr/local/libexec/workspace-launch
+# Same public SHA as the runner build. The file arrives via the copy below.
+ARG TLP_SOURCE_COMMIT
 COPY --from=runner /app ./
 # YUK-1548 — mermaid + jsdom flat overlay for compose_block diagram validation
 # (worker-only; the app image only registers the tool module, never executes

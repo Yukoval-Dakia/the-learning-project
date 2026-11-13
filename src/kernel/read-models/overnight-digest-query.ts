@@ -1,13 +1,14 @@
 // Read-only last-night digest over the five nightly sources (degraded scan events fold
 // into degraded_kinds, not a sixth activity source). It never writes, never emits
-// calibration numbers, and keeps a quiet night as an explicit state. The window is
-// the previous Asia/Shanghai calendar day (fixed UTC+8, no last-visited anchor).
+// calibration numbers, and keeps a quiet night as an explicit state. The window starts
+// at the learner's last activity day (capped) and ends at today's Asia/Shanghai midnight.
 
 import { and, count, desc, eq, gte, lt, sql } from 'drizzle-orm';
 import type { ProviderCostWindow } from '@/core/schema/cost-observation';
 import type { Db, Tx } from '@/db/client';
 import { ai_task_runs, event } from '@/db/schema';
 import { countProposalsInWindow } from '@/kernel/proposals/inbox';
+import { loadLastLearnerEventAt } from '@/kernel/read-models/learner-activity';
 import { listNoteRefineChanges } from '@/kernel/read-models/note-refine-changes';
 import { isTaskFailureOutcome } from '@/kernel/records/ai-attempt-facts';
 import {
@@ -18,7 +19,7 @@ import {
   computeDegradedKinds,
   groupRunsByKind,
   hasOvernightActivity,
-  overnightWindow,
+  overnightWindowSince,
 } from './overnight-digest-summary';
 
 export type {
@@ -62,8 +63,8 @@ async function loadRunRows(db: DbLike, from: Date, to: Date): Promise<RunStatusC
   return rows.map((r) => ({ task_kind: r.task_kind, status: r.status, count: r.count }));
 }
 
-// listNoteRefineChanges only takes a lower bound; trim to < to in JS. The window is one
-// day, so the row count is bounded.
+// listNoteRefineChanges only takes a lower bound; trim to < to in JS. The window is
+// capped at OVERNIGHT_WINDOW_MAX_DAYS, so the row count stays bounded.
 async function countNoteChangesInWindow(db: DbLike, from: Date, to: Date): Promise<number> {
   const rows = await listNoteRefineChanges(db, { since: from });
   return rows.filter((r) => r.created_at < to).length;
@@ -141,7 +142,7 @@ export async function loadOvernightDigest(
   now: Date,
   readCosts: (db: DbLike, from: Date, to: Date) => Promise<ProviderCostWindow>,
 ): Promise<OvernightDigest> {
-  const { from, to } = overnightWindow(now);
+  const { from, to } = overnightWindowSince(now, await loadLastLearnerEventAt(db, now));
 
   const [
     runRows,

@@ -17,7 +17,7 @@ import {
   type SelectionPolicyConfig,
 } from '../../server/selection-constants';
 import { type CollectedSignal, collectCandidateSignals } from './candidate-signals';
-import { planNonDueSelection } from './non-due-selection-plan';
+import { nonDueFloorCandidateIds, planNonDueSelection } from './non-due-selection-plan';
 import { applyL3LearningMixGuard, learningMixContextFromInputs } from './post-filter';
 import {
   buildMemoryPriorAdvisoryBlock,
@@ -26,7 +26,11 @@ import {
 } from './selection-orchestrator';
 import { type WeightedCandidate, sampleByWeight } from './selection-sampler';
 import { reconcileSelectionAdvice, statisticalWeights } from './selection-weights';
-import { fitStreamToTimeBudget } from './stream-budget';
+import {
+  estimateStreamItemMinutes,
+  fitStreamToTimeBudget,
+  nonDueQuestionFloor,
+} from './stream-budget';
 import {
   type ComposerInputs,
   type StreamPlan,
@@ -58,6 +62,11 @@ export type FallbackLevel = 'none' | 'statistical' | 'legacy';
 export interface ComposeSoftmaxDeps {
   /** L2 LLM 编排器。省略 → 默认动态 import runTask（production 路径）。 */
   runTaskFn?: RunTaskFn;
+  /**
+   * Use the statistical sampler directly and skip L2 LLM orchestration. Return-wake
+   * compose runs for idle/dormant tiers where model batch work stays off.
+   */
+  statisticalOnly?: boolean;
   /**
    * mem0 learner-prior loader。省略 → production 动态 import server/ai/mem0 read seam；
    * 构造/搜索失败一律退空 prior，不改变 LLM fallback level。
@@ -136,7 +145,7 @@ export async function composeSoftmaxStream(
   // seen + materializeStream date+ref 唯一索引双保险）。
   const seen = new Set<string>();
 
-  // ① 到期项（L1 确定性）——presence + due_at ASC 序原样透传，NEVER sampled/reordered。
+  // ① 到期项（L1 确定性）——presence + 可回忆概率升序原样透传，NEVER sampled/reordered。
   const dueItems = inputs.dueItems.filter((d) => !seen.has(d.questionId) && seen.add(d.questionId));
   const allDueDrafts: Omit<StreamPlanItem, 'position'>[] = dueItems.map((d) => ({
     item_kind: 'question',
@@ -144,16 +153,26 @@ export async function composeSoftmaxStream(
     ...presentDueQuestion(d.knowledgeLabel, d.source),
     // 到期项不带选题信号（它们不经 sampler/MFI）——signals 缺省 {}（materialize 兜底）。
   }));
-  // 时间预算优先保留最早到期前缀，超预算到期题确定性延后。没有 budget 的显式
-  // DI/旧单测仍保留历史「全部 due presence」行为。
-  const dueDrafts = fitStreamToTimeBudget(
+  // 时间预算优先保留最容易忘的前缀，超预算时延后最不容易忘的到期题。有非到期候选时
+  // 先留出 1–2 题。没有 budget 的显式 DI/旧单测仍保留历史「全部 due presence」行为。
+  const floorCandidateRefIds = nonDueFloorCandidateIds(inputs, seen);
+  const questionSlots =
+    inputs.dailyBudgetMinutes === undefined
+      ? 0
+      : Math.floor(
+          inputs.dailyBudgetMinutes / estimateStreamItemMinutes('question', inputs.questionMinutes),
+        );
+  const reserveQuestionSlots = nonDueQuestionFloor(questionSlots, floorCandidateRefIds.length);
+  const dueFit = fitStreamToTimeBudget(
     allDueDrafts,
     inputs.dailyBudgetMinutes,
     inputs.questionMinutes,
-  ).kept;
+    { reserveQuestionSlots },
+  );
+  const dueDrafts = dueFit.kept;
 
-  // 到期项的 L1 真相序（预算筛选后仍保持 due_at ASC）——assertL3Invariants 据此校验 plan 里
-  // due 子序列**顺序**与 L1 一致（铁律②不止 presence，还含 intra-day 序）。
+  // 到期项的 L1 真相序（预算筛选后仍保持可回忆概率升序）——assertL3Invariants 据此校验
+  // plan 里 due 子序列**顺序**与 L1 一致（铁律②不止 presence，还含 intra-day 序）。
   const dueRefOrder = dueDrafts.map((d) => d.ref_id);
   const dueRefSet = new Set(dueRefOrder);
 
@@ -185,12 +204,13 @@ export async function composeSoftmaxStream(
     nonDueRaws.map((r) => [r.questionId, r.role]),
   );
 
-  // ③ 卷（paper）——透传，不进 MFI/sampler（卷不可拆，组卷层已处理内部题）。容量内置后。
+  // ③ 卷（paper）——保持收集时的相关度顺序，不进 MFI/sampler（卷不可拆）。容量内置后。
   const paperDrafts: Omit<StreamPlanItem, 'position'>[] = inputs.pendingPapers
     .filter((p) => !seen.has(p.paperId) && seen.add(p.paperId))
     .map((p) => ({
       item_kind: 'paper' as const,
       ref_id: p.paperId,
+      questionCount: p.questionCount,
       ...presentPracticePaper(p.title, p.source),
     }));
 
@@ -208,14 +228,16 @@ export async function composeSoftmaxStream(
     return legacyFallback(inputs);
   }
 
-  const { recallLocked, recallLockedRefs, samplable, effectiveTarget } = planNonDueSelection({
-    signals,
-    dueDrafts,
-    max,
-    dailyBudgetMinutes: inputs.dailyBudgetMinutes,
-    questionMinutes: inputs.questionMinutes,
-    targetCount: config.targetCount,
-  });
+  const { recallLocked, recallLockedRefs, samplable, floorPassthrough, effectiveTarget } =
+    planNonDueSelection({
+      signals,
+      dueDrafts,
+      max,
+      dailyBudgetMinutes: inputs.dailyBudgetMinutes,
+      questionMinutes: inputs.questionMinutes,
+      targetCount: config.targetCount,
+      floorCandidateRefIds,
+    });
 
   // signalByRef：所有非到期题的信号快照（含 recall-locked），物化进 StreamPlanItem.signals。
   const signalByRef = new Map<string, CollectedSignal>(signals.map((s) => [s.refId, s]));
@@ -228,6 +250,10 @@ export async function composeSoftmaxStream(
   if (samplable.length === 0) {
     // 无可抽样非到期候选（全到期/全 recall/全卷）——无需调 LLM，直接空抽样。
     weighted = [];
+  } else if (deps.statisticalOnly) {
+    // Explicit no-model path: keep the policy's sampler and π_i, skip the L2 call.
+    fallback = 'statistical';
+    weighted = statisticalWeights(samplable);
   } else {
     const llmResult = await tryLlmOrchestration(
       db,
@@ -257,6 +283,19 @@ export async function composeSoftmaxStream(
 
   // ── 组装：到期（L1 序） + recall 透传 + 抽中非到期（LLM arrangement 序） + 卷 + 收尾。
   const nonDueDrafts: Omit<StreamPlanItem, 'position'>[] = [];
+
+  const sampledRefIds = new Set(sampled.map((s) => s.refId));
+  // 抽样没覆盖到的保底项确定性补上，不记 π_i。已抽中的不重复。
+  for (const s of floorPassthrough) {
+    if (sampledRefIds.has(s.refId)) continue;
+    const role = roleByRef.get(s.refId);
+    nonDueDrafts.push({
+      item_kind: 'question',
+      ref_id: s.refId,
+      ...presentNonDueQuestion(role, labelByRef.get(s.refId)),
+      signals: s as unknown as Record<string, unknown>,
+    });
+  }
 
   // recall-locked 透传（确定性 same-question，不排序不换题——按 collect 顺序纳入）。
   for (const s of recallLocked) {
@@ -307,6 +346,7 @@ export async function composeSoftmaxStream(
     .filter((s) => roleByRef.get(s.refId) === 'frontier')
     .map((s) => s.refId);
   const frontierProtectedRefs = new Set(frontierSampledRefs.slice(0, frontierQuota));
+  const floorRefs = new Set(floorPassthrough.map((signal) => signal.refId));
   const budgeted = fitStreamToTimeBudget(
     assembled,
     inputs.dailyBudgetMinutes,
@@ -328,7 +368,7 @@ export async function composeSoftmaxStream(
     budgeted.kept,
     dueRefSet,
     sampledRefs,
-    frontierProtectedRefs,
+    new Set([...frontierProtectedRefs, ...floorRefs]),
     max,
   );
 
@@ -338,6 +378,7 @@ export async function composeSoftmaxStream(
       items: capacityResult.kept.map((d, i) => ({ ...d, position: i + 1 })),
       truncated: budgeted.truncated || capacityResult.truncated,
       warned: assembled.length > warn || budgeted.truncated,
+      deferredDueCount: dueFit.deferredDueCount + budgeted.deferredDueCount,
     } satisfies StreamPlan,
     learningMixContextFromInputs(
       inputs,
@@ -571,7 +612,7 @@ function assertL3Invariants(
     }
   }
   // 铁律②（intra-day 序，review 深防御）：plan.items 里到期项的子序列必须与
-  // inputs 的 L1 序（due_at ASC，dedup 后）逐一相等——LLM/装配绝不能重排到期项。
+  // inputs 的 L1 序（可回忆概率升序，dedup 与预算筛选后）逐一相等——LLM/装配绝不能重排到期项。
   const planDueSubsequence = plan.items.map((it) => it.ref_id).filter((r) => dueRefSet.has(r));
   if (
     planDueSubsequence.length !== dueRefOrder.length ||

@@ -29,6 +29,15 @@ export interface EnrollmentMarkers {
   confidence: number;
   figures_attached: number;
   student_work: boolean;
+  /** StructureTask's subject for this block (absent when it was unsure). Admission uses
+   *  it while the question has no knowledge; knowledge_ids[0] wins once present. */
+  subject_id?: string;
+}
+
+/** The block's StructureTask subject; v2 draft documents and fallback trees carry none. */
+function structureSubjectId(block: typeof question_block.$inferSelect): string | undefined {
+  const subjectId = (block.structured as { subject_id?: unknown } | null)?.subject_id;
+  return typeof subjectId === 'string' && subjectId.length > 0 ? subjectId : undefined;
 }
 
 export interface EnrollBlockIntoBankParams {
@@ -68,6 +77,9 @@ export async function enrollBlockIntoItemBank(
   params: EnrollBlockIntoBankParams,
 ): Promise<EnrolledBlock | null> {
   const { block } = params;
+  const subjectId = structureSubjectId(block);
+  const markers: EnrollmentMarkers =
+    subjectId === undefined ? params.markers : { ...params.markers, subject_id: subjectId };
   const pageRefs = params.pageRefs ?? pageScopedQuestionImageRefs(block);
   const hasCapturedAnswer = Boolean(block.wrong_answer_md?.trim()) || detectStudentWork(block);
   const provenance =
@@ -83,10 +95,13 @@ export async function enrollBlockIntoItemBank(
       pageRefs,
       now: params.now,
       docUsage: params.docUsage,
-      enrollmentMetadata: { ...params.markers },
+      enrollmentMetadata: { ...markers },
       generatedBy: provenance,
     });
     if (!captured) return null;
+    for (const warning of captured.warnings) {
+      console.warn(`[enroll:capture] ${warning}`);
+    }
     return params.db.transaction(async (tx) => {
       await acquireLearningStateWriteLock(tx);
       const [current] = await tx
@@ -176,7 +191,7 @@ export async function enrollBlockIntoItemBank(
       draftStatus: params.draftStatus ?? 'active',
       extraMetadata: {
         ...params.extraMetadata,
-        ingestion_enrollment: params.markers,
+        ingestion_enrollment: markers,
       },
       actorRef: `enroll:${params.generatedBy}`,
       now: params.now,

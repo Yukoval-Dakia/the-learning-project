@@ -2,15 +2,16 @@
 // placement_starter_recovery cron job (moved off the question_supply_nightly tail in YUK-1664
 // so recovery is driven by due obligations, not the nightly timetable).
 // pending_dispatch: re-drive. The claim committed but its separate dispatch never
-// enqueued a quiz_gen job; dispatchPlacementStarterClaimTx re-checks status under FOR UPDATE
+// bound a delivery; dispatchPlacementStarterClaimTx re-checks status under FOR UPDATE
 // and CASes pending to queued, so /placement/start and this sweeper cannot both dispatch.
 // retry_scheduled: reap only, never re-drive. pg-boss retries the same quiz_gen job; a
 // second enqueue would run two paid batches for one claim. If the owning job is confirmed
 // dead, terminalize as exhausted, because a zombie retry_scheduled row blocks later goal
 // revisions through placement_starter_claim_nonterminal_uq.
 // queued/running/verifying: fail-closed reap. A live lease owns the claim. Once no lease
-// remains and the owning job is confirmed non-live, fence the attempt (interrupted),
-// supersede its authorized questions, and terminalize as exhausted.
+// remains, the bound delivery was accepted by the engine, and the owning job is confirmed
+// non-live, fence the attempt (interrupted), supersede its authorized questions, and
+// terminalize as exhausted. The cron drains committed-but-unsent deliveries before any leg.
 // The reap legs and the re-drive leg use independent capped queries so a backlog in one
 // cannot starve the others. Every visited claim is acquired by a conditional UPDATE that
 // pushes next_reconcile_at forward, including declined and failed paths.
@@ -26,11 +27,14 @@ import {
   resolveGoalPlacementScope,
   resolveNearbyPlacementScope,
 } from '@/kernel/read-models/placement-scope';
+import { getStartedBoss } from '@/server/boss/client';
 import { countPlacementInventory } from './placement-inventory';
 import {
   dispatchPlacementStarterClaim,
+  drainPlacementStarterDeliveries,
   isPlacementStarterJobLive,
   placementClaimJobQueue,
+  placementDeliveryAwaitingEngine,
 } from './placement-starter';
 import {
   PLACEMENT_QUEUE_EXPIRY_MS,
@@ -99,6 +103,8 @@ export interface PlacementStarterRecoveryResult {
   inflightLeaseActive: number;
   /** Lease-expired/attempt-less in-flight claims deferred because the owning job remained live. */
   inflightJobLive: number;
+  /** In-flight claims deferred because their committed delivery has no engine acceptance yet. */
+  inflightDeliveryPending: number;
   /** Claims whose acquire CAS lost to a concurrent transition (already re-driven / terminalized elsewhere). */
   lost: number;
   /** Claims skipped because their goal row no longer exists (scope is unresolvable). */
@@ -147,6 +153,7 @@ export function emptyPlacementStarterRecoveryResult(
     inflightQueuePending: 0,
     inflightLeaseActive: 0,
     inflightJobLive: 0,
+    inflightDeliveryPending: 0,
     lost: 0,
     goalMissing: 0,
     staleRevision: 0,
@@ -483,6 +490,18 @@ async function sweepInflightClaim(
     result.inflightLeaseActive += 1;
     return;
   }
+  // A committed delivery the engine never accepted is not a lost one: the delivery drain still
+  // owes the send. Revisit on the next tick instead of reaping it.
+  if (await placementDeliveryAwaitingEngine(db, claim.pg_boss_job_id)) {
+    await rescheduleAcquiredClaim(
+      db,
+      claim,
+      backoffAt,
+      new Date(now.getTime() + MIN_CURSOR_ADVANCE_MS),
+    );
+    result.inflightDeliveryPending += 1;
+    return;
+  }
   // A mismatched active attempt is an integrity anomaly, not authority to destroy. Do not probe
   // only one of two jobs and guess; defer fail-closed for inspection.
   if (attempt && attempt.pgBossJobId !== claim.pg_boss_job_id) {
@@ -570,7 +589,7 @@ async function sweepPendingDispatch(
     );
     return;
   }
-  // NON-ACTIVE GOAL GUARD (review PRRT…upw3). A goal retracted to 'dormant' (the proposal retract
+  // NON-ACTIVE GOAL GUARD. A goal retracted to 'dormant' (the proposal retract
   // path, src/server/proposals/actions.ts) or finished as 'done' has left the active-goal flow, but
   // its stranded claim is untouched: `resolvePlacementStarterGoalAuthority` derives the revision
   // from genesis/scope events only, so a STATUS change does not invalidate it and the revision
@@ -590,7 +609,7 @@ async function sweepPendingDispatch(
     );
     return;
   }
-  // STALE-REVISION GUARD (review PRRT…ua3w). The live /placement/start path can only ever
+  // STALE-REVISION GUARD. The live /placement/start path can only ever
   // dispatch the CURRENT revision's claim — it dispatches exactly the ids its own materialize just
   // produced. This sweeper is the only code that can pick up an OLD revision's claim, and doing so
   // is actively destructive: with two revisions stranded pending_dispatch (a pg-boss outage
@@ -639,19 +658,19 @@ async function sweepPendingDispatch(
     // dispatched: a /placement/start that landed between our acquire (which moves only the cursor,
     // never the status) and our dispatch call would have dispatched it, and we would be handed
     // that job's id. Without this flag the sweeper credits itself for someone else's dispatch and
-    // logs "re-dispatched" for a claim it never drove (review PRRT…0VF).
+    // logs "re-dispatched" for a claim it never drove.
     let admitInvoked = false;
     // Same admission contract as /api/placement/start's cold path: serialize against pool
     // promotion for this KC scope, then pay ONLY if the scope still has no eligible item.
     const jobId = await dispatch(db, claim.id, async (tx) => {
       admitInvoked = true;
-      // AUTHORITATIVE RE-CHECK of BOTH goal preconditions (review PRRT…h8a, PRRT…upw3). The two
+      // AUTHORITATIVE RE-CHECK of BOTH goal preconditions. The two
       // checks above are lockless reads, so a goal re-scoped OR retracted between them and the
       // dispatch transaction taking the claim row lock would still get a paid batch dispatched —
       // and for the revision case that is the destructive outcome in full, not a near-miss. Redo
       // both HERE, inside the dispatch tx, holding the goal row locked so a concurrent scope or
       // status update must serialize against us.
-      // ── Why NOWAIT (review PRRT…HNf) ────────────────────────────────────────────────────
+      // ── Why NOWAIT ──────────────────────────────────────────────────────────────────
       // This path locks claim → goal, while materializePlacementStartersForGoal locks goal →
       // claim (goal FOR UPDATE, then INSERT ... ON CONFLICT DO NOTHING on the claim, which waits
       // on a claim row this sweeper holds). A plain FOR UPDATE here is therefore a genuine AB-BA
@@ -847,9 +866,8 @@ async function sweepRetryScheduled(
 
 /**
  * Due-work probe for the cron handler: one indexed LIMIT 1 read over the same status set the
- * three leg scans cover. When nothing is due the job returns without touching pg-boss
- * (getStartedBoss inside the per-claim probes/dispatch), a provider, or the sweeper's own
- * per-leg scans.
+ * three leg scans cover. When nothing is due the job returns without a pg-boss job probe, a
+ * provider, or the sweeper's own per-leg scans.
  */
 async function hasDueClaims(db: Db, now: Date): Promise<boolean> {
   const rows = await db
@@ -885,6 +903,9 @@ export function buildPlacementStarterRecoveryHandler(
   jobs: Job<Record<string, never>>[],
 ) => Promise<PlacementStarterRecoveryResult | { skipped: 'no_due_claims' }> {
   return async () => {
+    // Committed-but-unsent deliveries first: they are due regardless of the claim cursor, and
+    // the in-flight leg below must see them as sent before it judges job liveness.
+    await drainPlacementStarterDeliveries(db, await getStartedBoss());
     if (!(await hasDueClaims(db, deps.now ?? new Date()))) {
       return { skipped: 'no_due_claims' };
     }

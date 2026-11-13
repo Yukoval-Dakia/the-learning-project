@@ -154,8 +154,21 @@ export const SupplyTraceV1 = SupplyTargetContextV1.extend({
 }).strict();
 export type SupplyTraceV1T = z.infer<typeof SupplyTraceV1>;
 
-/** Supply difficulty band vocabulary; band assignment logic stays with the supply owner. */
+/** Supply difficulty band vocabulary. Cuts are logit distance from θ̂. */
 export type DifficultyBand = 'below' | 'near' | 'above' | 'stretch';
+
+/** |b − θ̂| inside this window is `near`. Matches the supply scanner's MFI window. */
+export const NEAR_WINDOW = 0.75;
+/** b − θ̂ above `near` and at most this window is `above`; past it is `stretch`. */
+export const STRETCH_WINDOW = 1.5;
+
+export function difficultyBandFor(b: number, thetaHat: number): DifficultyBand {
+  const delta = b - thetaHat;
+  if (delta < -NEAR_WINDOW) return 'below';
+  if (delta <= NEAR_WINDOW) return 'near';
+  if (delta <= STRETCH_WINDOW) return 'above';
+  return 'stretch';
+}
 
 export function parseEvidenceDemand(value: unknown): EvidenceDemandV1T {
   return EvidenceDemandV1.parse(value);

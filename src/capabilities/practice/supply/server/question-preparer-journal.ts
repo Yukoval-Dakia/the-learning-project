@@ -11,16 +11,26 @@ import {
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { lockQuestionSubmitRequest } from '@/kernel/locks/question-supply';
+import { writeAiTaskAttemptFinished } from '@/kernel/records/ai-attempt-facts';
 import { readTaskRunPublications } from '@/kernel/records/publication-receipt';
 import { unknownAttemptCostTruth } from '@/server/ai/attempt-cost';
-import { writeAiTaskAttemptFinished } from '@/server/ai/log';
-import { fromPgBossDrizzleTx, getStartedBoss } from '@/server/boss/client';
+import { getStartedBoss } from '@/server/boss/client';
 import {
   type QuestionPreparerData,
   QuestionPreparerJobData,
   preparerTerminal,
 } from './question-preparer-contract';
 import { settleNightlySourcingRun } from './spend-gate';
+import {
+  type SupplyDeliveryBoss,
+  type SupplyDeliveryOptions,
+  readSupplyDelivery,
+  selectPendingSupplyDeliveries,
+  sendSupplyDelivery,
+  supplyDeliveryJobId,
+  writeSupplyDeliveryIntent,
+  writeSupplyDeliveryReceipt,
+} from './supply-delivery-outbox';
 
 const action = 'experimental:question_preparer';
 export const preparerSpendKey = (jobId: string) => `question_preparer:${jobId}`;
@@ -194,6 +204,102 @@ export async function preparerCalls(db: Db | Tx, taskRunId: string) {
     .orderBy(tool_call_log.occurred_at);
 }
 
+/**
+ * Bind a successor segment delivery in the segment's own transaction. The finished record and the
+ * successor intent commit together, so a finished prior can never strand its successor; the drain
+ * sends after commit.
+ */
+export async function bindQuestionPreparerDelivery(
+  tx: Tx,
+  input: {
+    jobId: string;
+    data: QuestionPreparerData;
+    options?: SupplyDeliveryOptions;
+  },
+): Promise<string> {
+  await writeSupplyDeliveryIntent(tx, {
+    domain: 'question_preparer',
+    subjectId: input.data.ticket.demand_id,
+    queue: 'question_preparer_run',
+    jobId: input.jobId,
+    data: input.data,
+    options: input.options ?? {},
+  });
+  return input.jobId;
+}
+
+export interface QuestionPreparerDeliveryDrainResult {
+  scanned: number;
+  sent: number;
+  settled: number;
+  failed: number;
+}
+
+/**
+ * The segment journal's single sender and delivery recovery owner. An intent stays open until the
+ * journal records its job id or the engine reports the job terminal, because an accepted job the
+ * engine drops before any worker fetched it (retention, restore) would otherwise strand a ticket
+ * behind its cooldown or a finished prior without its successor. Re-sending reuses the bound id:
+ * nothing paid exists under it until the journal's unstarted claim, and the engine dedups a held
+ * id. Started segments stay with `recoverQuestionPreparer`.
+ */
+export async function drainQuestionPreparerDeliveries(
+  db: Db,
+  boss: SupplyDeliveryBoss,
+  input: { jobId?: string; limit?: number } = {},
+): Promise<QuestionPreparerDeliveryDrainResult> {
+  const rows = await selectPendingSupplyDeliveries(db, {
+    domain: 'question_preparer',
+    closedBy: ['settled'],
+    jobId: input.jobId,
+    limit: input.limit ?? 50,
+  });
+  const result = { scanned: rows.length, sent: 0, settled: 0, failed: 0 };
+  for (const intent of rows) {
+    try {
+      const journaled = await db
+        .select({ id: event.id })
+        .from(event)
+        .where(
+          inArray(event.id, [
+            `question_preparer_unstarted_${intent.job_id}`,
+            `question_preparer_finished_${intent.job_id}`,
+          ]),
+        )
+        .limit(1);
+      if (journaled.length > 0) {
+        await writeSupplyDeliveryReceipt(db, intent, 'settled', { by: 'journal' });
+        result.settled += 1;
+        continue;
+      }
+      let truth = await readSupplyDelivery(boss, intent);
+      if (truth.kind === 'absent') {
+        truth = await sendSupplyDelivery(boss, intent);
+        if (truth.kind !== 'absent') result.sent += 1;
+      }
+      if (truth.kind === 'absent') {
+        result.failed += 1;
+        continue;
+      }
+      await writeSupplyDeliveryReceipt(db, intent, 'accepted', { engine_state: truth.state });
+      if (truth.kind === 'terminal') {
+        await writeSupplyDeliveryReceipt(db, intent, 'settled', {
+          by: 'engine',
+          engine_state: truth.state,
+        });
+        result.settled += 1;
+      }
+    } catch (error) {
+      result.failed += 1;
+      console.error('[question-preparer] delivery send failed; intent stays pending', {
+        job_id: intent.job_id,
+        error: error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500),
+      });
+    }
+  }
+  return result;
+}
+
 /** Queue truth proves a segment dead. Unknown requests are settled, never replayed. */
 export async function recoverQuestionPreparer(db: Db, jobId: string, forceDead = false) {
   const [claim] = await db
@@ -205,10 +311,10 @@ export async function recoverQuestionPreparer(db: Db, jobId: string, forceDead =
   const boss = await getStartedBoss();
   const job = await boss.getJobById('question_preparer_run', jobId);
   if (!forceDead && job && ['created', 'retry', 'active'].includes(job.state)) return;
-  await db.transaction(async (tx) => {
+  const successor = await db.transaction(async (tx) => {
     await lockQuestionPreparerSegment(tx, data);
     const history = await preparerHistory(tx, data);
-    if (history.some((row) => row.id === `question_preparer_finished_${jobId}`)) return;
+    if (history.some((row) => row.id === `question_preparer_finished_${jobId}`)) return null;
     const started = history.some((row) => row.id === `question_preparer_started_unknown_${jobId}`);
     const registered = history
       .filter((row) => row.outcome === 'run_registered' && row.payload.job_id === jobId)
@@ -252,19 +358,17 @@ export async function recoverQuestionPreparer(db: Db, jobId: string, forceDead =
         : 'process_interrupted_before_provider',
       true,
     );
-    await boss.send(
-      'question_preparer_run',
-      { ...data, recovery: { prior_job_id: jobId } },
-      {
-        db: fromPgBossDrizzleTx(tx),
-        singletonKey: `question_preparer_recovery:${jobId}`,
-      },
-    );
+    return bindQuestionPreparerDelivery(tx, {
+      jobId: supplyDeliveryJobId(`question_preparer_recovery:${jobId}`),
+      data: { ...data, recovery: { prior_job_id: jobId } },
+    });
   });
+  if (successor) await drainQuestionPreparerDeliveries(db, boss, { jobId: successor });
 }
 
 export function buildQuestionPreparerRecoveryHandler(db: Db) {
   return async () => {
+    await drainQuestionPreparerDeliveries(db, await getStartedBoss());
     const claims = await db
       .select({ jobId: sql<string>`${event.payload}->>'job_id'` })
       .from(event)

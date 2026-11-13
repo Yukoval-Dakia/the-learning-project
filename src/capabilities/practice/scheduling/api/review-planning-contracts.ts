@@ -122,6 +122,16 @@ export const ReviewWeeklyQuerySchema = z.object({
   timezone: z.string().optional(),
 });
 
+const KnowledgeWeekCompareRow = z.object({
+  id: z.string(),
+  name: z.string(),
+  unresolved_count: z.number().int().nonnegative(),
+  prior_unresolved_count: z.number().int().nonnegative(),
+  weight: z.number().nonnegative(),
+  mastery: z.number().min(0).max(1).nullable(),
+  retention: z.number().min(0).max(1).nullable(),
+});
+
 export const ReviewWeeklyResponseSchema = z.object({
   window: z.object({
     days: z.number().int().min(1).max(90),
@@ -164,6 +174,15 @@ export const ReviewWeeklyResponseSchema = z.object({
       id: z.string(),
       name: z.string(),
       failure_count: z.number().int().positive(),
+      weight: z.number().positive(),
+      mastery: z.number().min(0).max(1).nullable(),
+      retention: z.number().min(0).max(1).nullable(),
+      versus_prior: z.enum(['still_unresolved', 'added']),
     }),
   ),
+  knowledge_week_compare: z.object({
+    fixed: z.array(KnowledgeWeekCompareRow),
+    still_unresolved: z.array(KnowledgeWeekCompareRow),
+    added: z.array(KnowledgeWeekCompareRow),
+  }),
 });

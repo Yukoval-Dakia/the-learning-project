@@ -14,6 +14,7 @@ import {
 
 export type LoomPiModel = Model<Api> & {
   maxInputTokens?: number;
+  inputSafetyRatio?: number;
   catalogReasoning?: ModelProfileReasoning;
   overrideDeclaredThinkingFormat?: string;
 };
@@ -124,6 +125,7 @@ export async function createLoomPiModels() {
             reasoning: executable.reasoning,
             contextWindow: executable.contextWindow,
             maxInputTokens: executable.maxInputTokens,
+            inputSafetyRatio: executable.inputSafetyRatio,
             maxTokens: executable.maxTokens,
             catalogReasoning: executable.catalogReasoning,
             overrideDeclaredThinkingFormat: executable.overrideDeclaredThinkingFormat,
@@ -162,6 +164,7 @@ export async function createLoomPiModels() {
           reasoning: executable.reasoning,
           contextWindow: executable.contextWindow,
           maxInputTokens: executable.maxInputTokens,
+          inputSafetyRatio: executable.inputSafetyRatio,
           maxTokens: executable.maxTokens,
           catalogReasoning: executable.catalogReasoning,
           thinkingLevelMap: thinkingLevelMapOf(executable.thinkingLevelMap),
@@ -217,6 +220,7 @@ export async function createLoomPiModels() {
           reasoning: executable.reasoning,
           contextWindow: executable.contextWindow,
           maxInputTokens: executable.maxInputTokens,
+          inputSafetyRatio: executable.inputSafetyRatio,
           maxTokens: executable.maxTokens,
           cost: {
             input: rates?.input ?? 0,

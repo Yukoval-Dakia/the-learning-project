@@ -17,6 +17,8 @@ import {
   source_document,
 } from '@/db/schema';
 import { proposalAutoApplyEnabled } from '@/kernel/proposals/auto-apply-marker';
+import { loadNativeReviewOccurrences } from '@/kernel/read-models/assessment-review-occurrences';
+import { LEARNING_ACTIVITY_ACTIONS } from '@/kernel/read-models/learner-activity';
 import { listMistakeProjectionRows } from '@/kernel/read-models/mistake-projection';
 import { type ColdStartState, buildColdStartState } from './cold-start-state';
 import { type TodayProposalKpi, loadTodayProposalKpi } from './proposal-kpi';
@@ -72,6 +74,7 @@ export interface WorkbenchPastSteering {
 export interface WorkbenchHeatDay {
   /** YYYY-MM-DD in the Asia/Shanghai day boundary. */
   day: string;
+  /** Learner learning-activity events that day. System and agent rows are not counted. */
   count: number;
 }
 
@@ -280,21 +283,42 @@ async function listActiveSessions(db: Db): Promise<WorkbenchSessionRow[]> {
     .limit(ACTIVE_SESSIONS_LIMIT);
   if (sessions.length === 0) return [];
 
-  const counts = await db
-    .select({ session_id: event.session_id, count: sql<number>`count(*)::int` })
-    .from(event)
-    .where(
-      and(
-        inArray(
-          event.session_id,
-          sessions.map((s) => s.id),
-        ),
-        eq(event.action, 'review'),
-        eq(event.subject_kind, 'question'),
-      ),
+  const sessionIds = new Set(sessions.map((s) => s.id));
+  const reviewedGroups = new Set((await loadNativeReviewOccurrences(db)).map((row) => row.groupId));
+  const anchors =
+    reviewedGroups.size === 0
+      ? []
+      : await db
+          .select({
+            session_id: event.session_id,
+            subject_id: event.subject_id,
+            payload: event.payload,
+          })
+          .from(event)
+          .where(
+            and(
+              inArray(event.session_id, [...sessionIds]),
+              eq(event.action, 'experimental:assessment_attempt'),
+              eq(event.subject_kind, 'question'),
+            ),
+          );
+  const questionsBySession = new Map<string, Set<string>>();
+  for (const anchor of anchors) {
+    const groupId = anchor.payload.evaluation_group_id;
+    if (
+      !anchor.session_id ||
+      !sessionIds.has(anchor.session_id) ||
+      typeof groupId !== 'string' ||
+      !reviewedGroups.has(groupId)
     )
-    .groupBy(event.session_id);
-  const countBySession = new Map(counts.map((c) => [c.session_id, c.count]));
+      continue;
+    const questions = questionsBySession.get(anchor.session_id) ?? new Set<string>();
+    questions.add(anchor.subject_id);
+    questionsBySession.set(anchor.session_id, questions);
+  }
+  const countBySession = new Map(
+    [...questionsBySession].map(([sessionId, questions]) => [sessionId, questions.size]),
+  );
 
   return sessions.map((s) => {
     const endedAt = s.ended_at ?? (s.status === 'started' ? new Date() : null);
@@ -311,9 +335,13 @@ async function listActiveSessions(db: Db): Promise<WorkbenchSessionRow[]> {
 }
 
 async function loadWeekHeat(db: Db): Promise<WorkbenchHeatDay[]> {
-  // 近 7 天（含今天）按 BJT 日界分天 event 计数——generate_series 在 SQL 侧
-  // 补零天，避免 JS/SQL 两套时区换算口径漂移；join 条件带 created_at 预过滤
-  // （宽放 8 天）避免对全表做日期时区转换。
+  // 近 7 天（含今天）按 BJT 日界分天，只计学习者自己的学习活动。夜间任务、判分
+  // 和定时任务的 actor 不是 user，或 action 不在学习活动集合里，不进热力。
+  // generate_series 在 SQL 侧补零天；join 条件带 created_at 预过滤（宽放 8 天）。
+  const learningActions = sql.join(
+    LEARNING_ACTIVITY_ACTIONS.map((action) => sql`${action}`),
+    sql`, `,
+  );
   const rows = await db.execute<{ day: string; count: number }>(sql`
     with days as (
       select generate_series(
@@ -327,6 +355,8 @@ async function loadWeekHeat(db: Db): Promise<WorkbenchHeatDay[]> {
     left join ${event}
       on ${event.created_at} >= now() - interval '8 days'
       and (${event.created_at} at time zone 'Asia/Shanghai')::date = days.day
+      and ${event.actor_kind} = 'user'
+      and ${event.action} in (${learningActions})
     group by days.day
     order by days.day
   `);

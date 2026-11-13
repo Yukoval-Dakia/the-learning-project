@@ -16,6 +16,11 @@ import type {
 import { getConfig } from '@/core/config/store';
 import { tracePiStream } from './laminar-tracing';
 import { createPiLlmMessageConverter, estimatePiTokens } from './pi-context-policy';
+import {
+  PiInputBudgetRejectedError,
+  type PiUsageCalibration,
+  decidePiInputFit,
+} from './pi-input-guard';
 import type { LoomPiModel } from './pi-models';
 import { withPiUsageEvidence } from './pi-usage-evidence';
 import { createProviderErrorCaptureFetch } from './provider-error-evidence';
@@ -24,13 +29,14 @@ import {
   PROVIDER_HTTP_TIMEOUT_MARGIN_MS,
   providerHttpTimeoutMs,
 } from './provider-http-timeout';
-import { watchProviderStream } from './provider-stream-watchdog';
+import { ProviderStreamIdleError, watchProviderStream } from './provider-stream-watchdog';
 import { createBudgetedProviderFetch } from './provider-transport';
 import type { ResolvedProvider } from './providers';
 import { reasoningModelView } from './reasoning-wire';
 import type { Options } from './sdk-types';
 import {
   type StructuredSubmitPolicy,
+  payloadToolNames,
   resolveStructuredSubmitPolicy,
   structuredSubmitWireFields,
 } from './structured-submit';
@@ -58,6 +64,9 @@ export class PiProviderWire {
 
   private failure: Error | undefined;
   private outputTokens = 0;
+  /** Last request's raw estimate + the previous provider-reported input. */
+  private lastRequestEstimate: number | undefined;
+  private lastUsageCalibration: PiUsageCalibration | undefined;
   private readonly counted = new WeakSet<AssistantMessage>();
   private readonly outputCap: number | undefined;
   private readonly idleMs: number;
@@ -75,6 +84,20 @@ export class PiProviderWire {
     return this.failure;
   }
 
+  /**
+   * Release an idle-stream failure so the interrupted request can be resent.
+   * Any other sticky failure (output cap) stays; false means none was idle.
+   */
+  releaseIdleFailure(): boolean {
+    if (!(this.failure instanceof ProviderStreamIdleError)) return false;
+    this.failure = undefined;
+    return true;
+  }
+
+  idleFailed(): boolean {
+    return this.failure instanceof ProviderStreamIdleError;
+  }
+
   throwIfFailed(): void {
     if (this.failure) throw this.failure;
   }
@@ -89,6 +112,13 @@ export class PiProviderWire {
   private settleOutput(message: AssistantMessage, capOnWire: boolean): AssistantMessage {
     if (!this.counted.has(message)) {
       this.counted.add(message);
+      // Learn the estimator's local bias from the provider's own count so the
+      // next request's pre-send check does not repeat it (YUK-1776).
+      if (this.lastRequestEstimate !== undefined && message.usage.input > 0)
+        this.lastUsageCalibration = {
+          estimated: this.lastRequestEstimate,
+          actual: message.usage.input,
+        };
       this.outputTokens += message.usage.output;
       if (
         this.outputCap !== undefined &&
@@ -221,6 +251,7 @@ export class PiProviderWire {
     // not effort names on the model's list).
     const effort = this.input.options.effort;
     const inputTokens = estimatePiTokens(wireContext.messages);
+    this.lastRequestEstimate = inputTokens;
     const remaining = model.contextWindow - inputTokens;
     const remainingOutput =
       this.outputCap === undefined ? Infinity : this.outputCap - this.outputTokens;
@@ -250,9 +281,22 @@ export class PiProviderWire {
             `Model '${model.provider}/${model.id}' does not declare reasoning effort '${effort}' in the runtime catalog`,
           );
         }
-        if (inputTokens > (model.maxInputTokens ?? model.contextWindow) || remaining <= 0) {
-          throw new Error(
-            `Model '${model.provider}/${model.id}' input exceeds its catalog token limit`,
+        const fit = decidePiInputFit({
+          estimatedTokens: inputTokens,
+          contextWindow: model.contextWindow,
+          maxInputTokens: model.maxInputTokens,
+          inputSafetyRatio: model.inputSafetyRatio,
+          lastUsage: this.lastUsageCalibration,
+        });
+        if (!fit.fits) {
+          // Positive unbilled evidence on the transport record — the Error
+          // itself is wrapped into a message string by pi-ai and cannot carry
+          // the fact to the lifecycle.
+          this.input.options.transportEvidence?.notePreSendRejection();
+          throw new PiInputBudgetRejectedError(
+            `Model '${model.provider}/${model.id}' input exceeds its catalog token limit ` +
+              `(${fit.reason}: estimated ${fit.estimatedTokens} × ${fit.safetyRatio.toFixed(2)} = ` +
+              `${fit.projectedTokens} > budget ${fit.budget})`,
           );
         }
         const transformed = await streamOptions?.onPayload?.(payload, requestModel);
@@ -266,6 +310,7 @@ export class PiProviderWire {
           ...structuredSubmitWireFields(
             submitPolicy,
             model.api === 'openai-responses' ? 'openai-responses' : 'openai-completions',
+            payloadToolNames(body as Record<string, unknown>),
           ),
         };
       },

@@ -66,6 +66,16 @@ export function projectCopilotActivity(
         retry: activity.retry,
         delay_ms: activity.delayMs,
       };
+    case 'request_retry':
+      return {
+        step_kind: 'request_retry',
+        task_run_id: activity.taskRunId,
+        retry: activity.retry,
+        max_retries: activity.maxRetries,
+        reason: activity.reason,
+        discard_chars: activity.discardProseChars,
+        discard_thinking_chars: activity.discardThinkingChars,
+      };
     case 'model_thinking':
       return { step_kind: 'model_thinking' };
     case 'block_draft':

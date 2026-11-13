@@ -17,7 +17,7 @@
 import { createId } from '@paralleldrive/cuid2';
 import { and, desc, eq, inArray, or, sql } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
-import { event } from '@/db/schema';
+import { drawing, event } from '@/db/schema';
 import { type WriteEventInput, writeEvent } from '@/kernel/events';
 import { HostOperationNotInstalledError } from '@/kernel/host-operation';
 import {
@@ -38,20 +38,30 @@ export const LEARNER_STATE_HEADER_ACTION = 'experimental:copilot_learner_state_h
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
-/** The cheap invalidation watermarks (ISO strings, null when the category has no
- *  events yet). Compared cached-vs-current to decide staleness. */
-export interface LearnerStateWatermarks {
-  attempt_at: string | null;
-  /** Latest `experimental:dreaming_scan` (outcome='success') created_at. */
-  dreaming_at: string | null;
-  /** Latest `rate` event (proposal accept/dismiss decision) created_at. */
-  proposal_decision_at: string | null;
-  /** Latest goal write (genesis/status/scope) created_at — steering changes
-   * refresh the header's steering lines the next turn (YUK-1770). */
-  goal_at: string | null;
+/**
+ * The cheap invalidation watermarks, in display order: every key carries an ISO
+ * timestamp or null when the category has no events yet. Compared cached-vs-current
+ * to decide staleness, and their diff is rendered as one line for the model.
+ */
+export const LEARNER_STATE_WATERMARKS = [
+  'attempt_at',
+  'dreaming_at',
+  'proposal_decision_at',
+  /** Latest goal write (genesis/status/scope): steering changes refresh the header. */
+  'goal_at',
   /** Latest source-purpose change: a withdrawn source must leave a cached header next turn. */
-  purpose_change_at: string | null;
-}
+  'purpose_change_at',
+  /** Latest `experimental:record_capture` — an approved capture the learner just got. */
+  'capture_at',
+  /** Latest note artifact reaching generation_status='ready' — the note is really readable. */
+  'artifact_at',
+  /** Latest note/drawing generation reaching `failed` — the learner is owed a word. */
+  'job_failure_at',
+] as const;
+
+export type LearnerStateWatermarkKey = (typeof LEARNER_STATE_WATERMARKS)[number];
+
+export type LearnerStateWatermarks = Record<LearnerStateWatermarkKey, string | null>;
 
 /** The already-scoped proposal-feedback digest carried in the header block. */
 export type ScopedProposalFeedbackCell = Pick<
@@ -73,6 +83,8 @@ export interface LearnerStateHeaderCache {
   assembled_at: string;
   day_bucket: string;
   watermarks: LearnerStateWatermarks;
+  /** False when the row predates some watermark keys — the diff is then unknown. */
+  watermarks_complete?: boolean;
   /** 本次装配的裁剪遥测（无裁剪时 dropped_units 为空数组，如实记录）。 */
   startup_trim?: StartupTrimRecord;
 }
@@ -82,6 +94,8 @@ export type PersistedLearnerStateHeaderCache = LearnerStateHeaderCache & { sessi
 export interface LearnerStateHeader {
   header_md: string;
   proposal_feedback: ScopedProposalFeedbackCell[];
+  /** One-line 「自上条消息以来：……」 diff for the model; absent when nothing advanced. */
+  since_last_message?: string;
 }
 
 // ── Pure helpers ─────────────────────────────────────────────────────────────
@@ -111,27 +125,51 @@ function watermarkAdvanced(cached: string | null, current: string | null): boole
 
 /**
  * Cheap invalidation predicate. The header is stale when the day rolled over OR
- * any watermark advanced (new attempt / dreaming ran / proposal decision /
- * Steering change).
+ * any watermark advanced (new attempt / capture / dreaming ran / generation
+ * finished or failed / proposal decision / Steering change).
  */
 export function isLearnerStateHeaderStale(
   cached: { day_bucket: string; watermarks: LearnerStateWatermarks },
   current: { day_bucket: string; watermarks: LearnerStateWatermarks },
 ): boolean {
   if (cached.day_bucket !== current.day_bucket) return true;
-  return (
-    watermarkAdvanced(cached.watermarks.attempt_at, current.watermarks.attempt_at) ||
-    watermarkAdvanced(cached.watermarks.dreaming_at, current.watermarks.dreaming_at) ||
-    watermarkAdvanced(
-      cached.watermarks.proposal_decision_at,
-      current.watermarks.proposal_decision_at,
-    ) ||
-    watermarkAdvanced(cached.watermarks.goal_at, current.watermarks.goal_at) ||
-    watermarkAdvanced(cached.watermarks.purpose_change_at, current.watermarks.purpose_change_at)
+  return LEARNER_STATE_WATERMARKS.some((key) =>
+    watermarkAdvanced(cached.watermarks[key], current.watermarks[key]),
   );
 }
 
-// Copilot proposes ONLY knowledge_edge, so the digest is edge-scoped:
+/**
+ * One learner-facing phrase per watermark. The header the model last saw was
+ * assembled at the cached watermarks, so this diff is what happened since — the
+ * part a cached header cannot show no matter how long the session lives.
+ */
+const WATERMARK_DIFF_PHRASES: Record<LearnerStateWatermarkKey, string> = {
+  attempt_at: '有新的作答或复习',
+  dreaming_at: '长期画像已更新',
+  proposal_decision_at: '有提议被处理',
+  goal_at: '学习目标有调整',
+  purpose_change_at: '资料来源用途有变更',
+  capture_at: '新录入学习记录',
+  artifact_at: '笔记或图片生成完成',
+  job_failure_at: '有生成任务失败',
+};
+
+/**
+ * Render the one-line 「自上条消息以来：……」 diff, or null when no category
+ * advanced. Only timestamps are compared; no event content crosses here.
+ */
+export function describeSinceLastMessage(
+  cached: LearnerStateWatermarks,
+  current: LearnerStateWatermarks,
+): string | null {
+  const parts = LEARNER_STATE_WATERMARKS.filter((key) =>
+    watermarkAdvanced(cached[key], current[key]),
+  ).map((key) => WATERMARK_DIFF_PHRASES[key]);
+  return parts.length > 0 ? `自上条消息以来：${parts.join('、')}` : null;
+}
+
+// Copilot proposes many kinds (relations, knowledge structure, learning-item
+// lifecycle, question drafts/edits, notes), so the digest is kind-agnostic:
 // reason-bearing cells first (they carry the failure mode Copilot learns most
 // from; the digest is sorted acceptance DESC, so a naive tail-drop would discard
 // them), then the serialized field is truncated to the whole-digest cap by
@@ -139,21 +177,16 @@ export function isLearnerStateHeaderStale(
 export function scopeCopilotProposalFeedback(
   digest: ProposalFeedbackCell[],
 ): ScopedProposalFeedbackCell[] {
-  const edgeCells = digest
-    .filter((cell) => cell.kind === 'knowledge_edge')
-    .map((cell) => ({
-      kind: cell.kind,
-      relation: cell.relation,
-      acceptance_rate: cell.acceptance_rate,
-      top_dismiss_reasons: cell.top_dismiss_reasons,
-      top_rubric_gates: cell.top_rubric_gates,
-    }));
-  const hasReasonContent = (c: (typeof edgeCells)[number]) =>
+  const cells: ScopedProposalFeedbackCell[] = digest.map((cell) => ({
+    kind: cell.kind,
+    relation: cell.relation,
+    acceptance_rate: cell.acceptance_rate,
+    top_dismiss_reasons: cell.top_dismiss_reasons,
+    top_rubric_gates: cell.top_rubric_gates,
+  }));
+  const hasReasonContent = (c: ScopedProposalFeedbackCell) =>
     c.top_dismiss_reasons.length > 0 || c.top_rubric_gates.length > 0;
-  const ordered = [
-    ...edgeCells.filter(hasReasonContent),
-    ...edgeCells.filter((c) => !hasReasonContent(c)),
-  ];
+  const ordered = [...cells.filter(hasReasonContent), ...cells.filter((c) => !hasReasonContent(c))];
   const scoped = [...ordered];
   while (
     scoped.length > 0 &&
@@ -193,33 +226,85 @@ const GOAL_WRITE_WATERMARK_ACTIONS = [
   'experimental:goal_scope_update',
 ] as const;
 
-/** One grouped MAX(created_at) query for the three invalidation categories. */
+const RECORD_CAPTURE_ACTION = 'experimental:record_capture';
+const ARTIFACT_LIFECYCLE_ACTION = 'experimental:artifact_lifecycle';
+
+// 产物终态而非 AI run：note 的 run 成功后仍可能在解析/落库失败，学习者编辑过的
+// 正文也会把 note 落 failed；drawing 更没有事件流，资产发布与授权栅栏都发生在
+// DrawingTask 之后。所以两种生成都读产物自己的终态（note 生命周期事件、
+// drawing 行状态），模型才不会把已失败的生成说成完成。
+const TERMINAL_GENERATION_STATUSES = ['ready', 'failed'] as const;
+
+/**
+ * One grouped MAX(created_at) query per source (events, drawing rows). Watermarks
+ * follow product terminal states, so the header never claims a note is ready
+ * while generation failed, and a failed drawing is never silent.
+ */
 export async function readLearnerStateWatermarks(db: DbLike): Promise<LearnerStateWatermarks> {
-  const rows = await db
-    .select({
-      action: event.action,
-      max_at: sql<Date>`max(${event.created_at})`,
-    })
-    .from(event)
-    .where(
-      or(
-        inArray(event.action, [...PRACTICE_WATERMARK_ACTIONS]),
-        and(eq(event.action, 'experimental:dreaming_scan'), eq(event.outcome, 'success')),
-        eq(event.action, 'rate'),
-        eq(event.action, 'experimental:context_change'),
-        eq(event.action, PURPOSE_CHANGE_ACTION),
-        and(
-          inArray(event.action, [...GOAL_WRITE_WATERMARK_ACTIONS]),
-          eq(event.subject_kind, 'goal'),
+  const [rows, noteRows, drawingRows] = await Promise.all([
+    db
+      .select({
+        action: event.action,
+        max_at: sql<Date>`max(${event.created_at})`,
+      })
+      .from(event)
+      .where(
+        or(
+          inArray(event.action, [...PRACTICE_WATERMARK_ACTIONS]),
+          and(eq(event.action, 'experimental:dreaming_scan'), eq(event.outcome, 'success')),
+          eq(event.action, 'rate'),
+          eq(event.action, 'experimental:context_change'),
+          eq(event.action, PURPOSE_CHANGE_ACTION),
+          eq(event.action, RECORD_CAPTURE_ACTION),
+          and(
+            inArray(event.action, [...GOAL_WRITE_WATERMARK_ACTIONS]),
+            eq(event.subject_kind, 'goal'),
+          ),
         ),
-      ),
-    )
-    .groupBy(event.action);
+      )
+      .groupBy(event.action),
+    db
+      .select({
+        status: sql<string>`${event.payload}->>'generation_status'`,
+        max_at: sql<Date>`max(${event.created_at})`,
+      })
+      .from(event)
+      .where(
+        and(
+          eq(event.action, ARTIFACT_LIFECYCLE_ACTION),
+          sql`${event.payload}->>'op' = 'set_generation_status'`,
+          inArray(sql<string>`${event.payload}->>'generation_status'`, [
+            ...TERMINAL_GENERATION_STATUSES,
+          ]),
+        ),
+      )
+      .groupBy(sql<string>`${event.payload}->>'generation_status'`),
+    db
+      .select({
+        status: drawing.status,
+        max_at: sql<Date>`max(${drawing.updated_at})`,
+      })
+      .from(drawing)
+      .where(inArray(drawing.status, [...TERMINAL_GENERATION_STATUSES]))
+      .groupBy(drawing.status),
+  ]);
   const byAction = new Map(rows.map((r) => [r.action, r.max_at]));
+  const byStatus = (source: ReadonlyArray<{ status: string; max_at: Date }>, status: string) =>
+    source.find((r) => r.status === status)?.max_at ?? null;
   const iso = (action: string): string | null => {
     const at = byAction.get(action);
     return at ? new Date(at).toISOString() : null;
   };
+  const isoDate = (at: Date | string | null | undefined): string | null =>
+    at ? new Date(at).toISOString() : null;
+  const ready = maxIso(
+    isoDate(byStatus(noteRows, 'ready')),
+    isoDate(byStatus(drawingRows, 'ready')),
+  );
+  const failed = maxIso(
+    isoDate(byStatus(noteRows, 'failed')),
+    isoDate(byStatus(drawingRows, 'failed')),
+  );
   return {
     attempt_at: PRACTICE_WATERMARK_ACTIONS.reduce<string | null>(
       (latest, action) => maxIso(latest, iso(action)),
@@ -232,6 +317,9 @@ export async function readLearnerStateWatermarks(db: DbLike): Promise<LearnerSta
       null,
     ),
     purpose_change_at: iso(PURPOSE_CHANGE_ACTION),
+    capture_at: iso(RECORD_CAPTURE_ACTION),
+    artifact_at: ready,
+    job_failure_at: failed,
   };
 }
 
@@ -270,15 +358,14 @@ function parseCache(payload: Record<string, unknown>): LearnerStateHeaderCache |
     proposal_feedback: pf,
     assembled_at: assembledAt,
     day_bucket: dayBucketVal,
-    watermarks: {
-      attempt_at: wmField('attempt_at'),
-      dreaming_at: wmField('dreaming_at'),
-      proposal_decision_at: wmField('proposal_decision_at'),
-      // Caches written before YUK-1770 lack the key → null → the next read sees
-      // goal_at advance and re-assembles once. Intended.
-      goal_at: wmField('goal_at'),
-      purpose_change_at: wmField('purpose_change_at'),
-    },
+    // Caches written before a watermark was introduced lack that key → null → the
+    // next read sees it advance and re-assembles once. Intended.
+    watermarks: Object.fromEntries(
+      LEARNER_STATE_WATERMARKS.map((key) => [key, wmField(key)]),
+    ) as LearnerStateWatermarks,
+    // A missing key means "unknown", not "nothing happened" — the since-last diff
+    // would otherwise announce every category on the first turn after a deploy.
+    watermarks_complete: LEARNER_STATE_WATERMARKS.every((key) => key in wmRaw),
   };
 }
 
@@ -435,6 +522,13 @@ export async function resolveLearnerStateHeader(
   ) {
     return { header_md: cached.header_md, proposal_feedback: cached.proposal_feedback };
   }
+  // 缓存里的水印是模型上次看到的头部对应的状态；两者之差就是「自上次发言以来」
+  // 发生的事。它不进缓存：它只描述这一轮与上一次装配之间的增量。旧缓存的缺键
+  // 分不清「没发生」与「没记录」，所以不渲染，避免把全部类别都报一遍。
+  const sinceLastMessage =
+    cached && cached.watermarks_complete !== false
+      ? describeSinceLastMessage(cached.watermarks, currentWatermarks)
+      : null;
 
   try {
     const [assembled, rawFeedback] = await Promise.all([assembleHeader(db, now), loadFeedback(db)]);
@@ -457,7 +551,11 @@ export async function resolveLearnerStateHeader(
         err,
       });
     }
-    return { header_md, proposal_feedback };
+    return {
+      header_md,
+      proposal_feedback,
+      ...(sinceLastMessage ? { since_last_message: sinceLastMessage } : {}),
+    };
   } catch (err) {
     if (err instanceof HostOperationNotInstalledError) throw err;
     console.error('[resolveLearnerStateHeader] assembly failed; degrading', {
@@ -465,7 +563,11 @@ export async function resolveLearnerStateHeader(
       err,
     });
     return cached
-      ? { header_md: cached.header_md, proposal_feedback: cached.proposal_feedback }
+      ? {
+          header_md: cached.header_md,
+          proposal_feedback: cached.proposal_feedback,
+          ...(sinceLastMessage ? { since_last_message: sinceLastMessage } : {}),
+        }
       : EMPTY_HEADER;
   }
 }

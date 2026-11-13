@@ -6,6 +6,7 @@ import { getConfig } from '@/core/config/store';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { parseTaskOutput } from '@/kernel/parse-task-output';
+import { readLearnerCurriculum } from '@/kernel/read-models/learner-curriculum';
 import {
   authorizeDemandRepair,
   readTaskRunPublications,
@@ -13,7 +14,7 @@ import {
 import { QUESTION_PREPARER_TOOLS, resolveMcpAllowedTools } from '@/kernel/tools/allowlists';
 import { runAgentTask } from '@/server/ai/runner';
 import { currentTaskSpendScope, withTaskSpendScope } from '@/server/ai/task-spend-scope';
-import { fromPgBossDrizzleTx, getStartedBoss } from '@/server/boss/client';
+import { getStartedBoss } from '@/server/boss/client';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import {
   BankAssessmentSchema,
@@ -28,7 +29,9 @@ import {
   preparerTerminal,
 } from './question-preparer-contract';
 import {
+  bindQuestionPreparerDelivery,
   defectCategory,
+  drainQuestionPreparerDeliveries,
   lockQuestionPreparerSegment,
   preparerCalls,
   preparerFinish,
@@ -46,6 +49,7 @@ import {
   priorSupplyRunCharge,
   settleNightlySourcingRun,
 } from './spend-gate';
+import { supplyDeliveryJobId } from './supply-delivery-outbox';
 
 function stripVolatile(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stripVolatile);
@@ -245,12 +249,12 @@ export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown, r
           `waiting_for_prior_segment:${previousId}`,
           true,
         );
-        await boss.send('question_preparer_run', data, {
-          db: fromPgBossDrizzleTx(tx),
-          startAfter: new Date(Date.now() + 30_000),
-          singletonKey: `question_preparer_wait:${jobId}`,
+        const deliver = await bindQuestionPreparerDelivery(tx, {
+          jobId: supplyDeliveryJobId(`question_preparer_wait:${jobId}`),
+          data,
+          options: { startAfter: new Date(Date.now() + 30_000).toISOString() },
         });
-        return { terminal: deferred };
+        return { terminal: deferred, deliver };
       }
       const previous = QuestionPreparerJobData.parse(row.payload.data);
       const done = preparerTerminal.parse(terminal.payload.terminal);
@@ -307,7 +311,11 @@ export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown, r
     await preparerRecord(tx, jobId, data, 'unstarted', contentRecord);
     return {};
   });
-  if ('terminal' in claim) return claim.terminal;
+  if ('terminal' in claim) {
+    if ('deliver' in claim && claim.deliver)
+      await drainQuestionPreparerDeliveries(db, boss, { jobId: claim.deliver });
+    return claim.terminal;
+  }
   if (claim.recover) {
     await recoverQuestionPreparer(db, claim.recover);
     throw new Error('dead segment recovered; retry this delivery against its terminal context');
@@ -422,11 +430,13 @@ export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown, r
         started = true;
         runIds.add(runId);
       },
-      () =>
-        runAgentTask(
+      async () => {
+        const curriculum = await readLearnerCurriculum(db);
+        return runAgentTask(
           'QuestionPreparerTask',
           {
             gap_ticket: data.ticket,
+            curriculum,
             steering: data.steering,
             admission_return: data.continuation?.verdict,
             admission_return_simulated: data.continuation?.simulated,
@@ -501,7 +511,8 @@ export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown, r
               }),
             ],
           },
-        ),
+        );
+      },
     );
   } catch (error) {
     executionError = error;

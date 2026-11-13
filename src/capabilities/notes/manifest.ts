@@ -1,5 +1,4 @@
 import { MASTERY_PROGRESS_ACTION } from '@/core/schema/event';
-import { DREAMING_NOTE_REFRESH_ACTION } from '@/core/schema/event/dreaming-note-refresh';
 import { API_ERROR_RESPONSES } from '@/kernel/http-contracts';
 import { defineCapability } from '@/kernel/manifest';
 import { nightlyEligibility } from '@/kernel/nightly-eligibility';
@@ -30,7 +29,7 @@ export const notesCapability = defineCapability({
   description:
     '笔记域：artifact 笔记的读（note-page 聚合 / notes-read 按知识点）、写（body-blocks 块编辑 ' +
     '乐观锁 / block-refs 反链索引）与 Living Note refine 链（triggers→policy→' +
-    'mutator|propose，YUK-358 决定6 后信号源 = mastery_change/dreaming，dwell/verify 已裁）。',
+    'mutator|propose；信号源 = mastery_change 与错因完成后的 mark_wrong）。',
   subscriptions: {
     handlers: [
       {
@@ -40,17 +39,6 @@ export const notesCapability = defineCapability({
         load: () =>
           import('./server/mastery-progress-subscription').then(
             (m) => m.buildMasteryProgressNoteRefineSubscriber,
-          ),
-      },
-      {
-        // Dreaming commits the refresh signal. Notes owns the refine enqueue.
-        // Delivery is after commit, so an enqueue failure cannot retry the scan.
-        id: 'notes.dreaming-note-refresh',
-        version: 1,
-        actions: [DREAMING_NOTE_REFRESH_ACTION],
-        load: () =>
-          import('./server/dreaming-note-refresh-subscription').then(
-            (m) => m.buildDreamingNoteRefreshSubscriber,
           ),
       },
     ],
@@ -233,6 +221,10 @@ export const notesCapability = defineCapability({
       {
         name: 'check_note',
         load: () => import('./server/tools/check-note').then((m) => m.checkNoteTool),
+      },
+      {
+        name: 'read_note',
+        load: () => import('./server/tools/read-note').then((m) => m.readNoteTool),
       },
     ],
   },

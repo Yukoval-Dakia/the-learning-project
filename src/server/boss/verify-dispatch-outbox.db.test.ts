@@ -57,7 +57,7 @@ async function snapshotDispatchState() {
   console.log('SNAPSHOT pgboss jobs:', JSON.stringify(jobs));
 }
 
-describe('verify dispatch outbox (YUK-700)', () => {
+describe('verify dispatch outbox', () => {
   let realBoss: ReturnType<typeof createBoss>;
 
   beforeAll(async () => {

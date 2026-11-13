@@ -84,6 +84,26 @@ export interface SelfRating {
   reason?: string;
   actions: readonly Action[];
 }
+/**
+ * Owner-projected cause editor. The practice owner decides whether the attempt may be attributed;
+ * this view only edits the projected choice and invokes the supplied actions.
+ */
+export interface CauseEditor {
+  current: { source: 'user' | 'agent'; label: string } | null;
+  options: readonly { id: string; label: string }[];
+  selected: string | null;
+  note: string;
+  mode: 'editable' | 'readonly' | 'disabled' | 'busy' | 'saved';
+  reason?: string;
+  notice?: Notice;
+  noticeTone?: 'status' | 'error' | 'saved';
+  actions: readonly Action[];
+  onSelect(optionId: string): void;
+  onNoteChange(value: string): void;
+  onAction(actionId: string): void;
+  /** Lets the owner read options on first expand without putting a loading effect in the presenter. */
+  onToggle?(open: boolean): void;
+}
 export interface Appeal {
   kind: 'available' | 'editing' | 'sending' | 'waiting' | 'failed' | 'resolved';
   notice: Notice;
@@ -101,6 +121,7 @@ export type Revelation =
       selfRating?: SelfRating;
       appeal?: Appeal;
       confidenceRecord?: string;
+      cause?: CauseEditor;
     };
 export interface QuestionPart {
   id: string;
@@ -121,6 +142,8 @@ export interface Result {
   uncertainty?: string;
   /** Some of this was judged by AI and has not been checked against people's marking. */
   aiGraded?: boolean;
+  /** Separate facts about this answer, as the server recorded them. */
+  facts?: readonly { label: string; value: string }[];
 }
 export interface Question {
   id: string;

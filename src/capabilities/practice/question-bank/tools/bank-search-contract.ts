@@ -4,10 +4,25 @@ export const BANK_SEARCH_POLICY = 'bank-evidence-v3';
 const Verdict = z.enum(['supported', 'contradicted', 'unknown']);
 export const SearchBankInputSchema = z
   .object({
-    query: z.string().max(400).optional(),
-    use: z.enum(['inventory', 'dedup', 'practice', 'inspect']).optional(),
-    count: z.number().int().min(0).optional(),
-    page_size: z.number().int().min(1).max(20).optional(),
+    query: z
+      .string()
+      .max(400)
+      .optional()
+      .describe('Retrieval text; keep the learner/demand wording.'),
+    use: z
+      .enum(['inventory', 'dedup', 'practice', 'inspect'])
+      .optional()
+      .describe(
+        'inventory searches admitted/servable stock for a gap ticket; dedup searches active, pending/withheld and draft candidates before adding a question; inspect reads all states. Defaults: question_preparer uses inventory (10/page), other callers practice (5/page).',
+      ),
+    count: z.number().int().min(0).optional().describe('Copy the ticket goal verbatim.'),
+    page_size: z
+      .number()
+      .int()
+      .min(1)
+      .max(20)
+      .optional()
+      .describe('Pagination only — never overrides the inventory goal.'),
     filters: z
       .object({
         subject: z.string().optional(),
@@ -26,13 +41,23 @@ export const SearchBankInputSchema = z
         exclude_refs: z.array(z.string()).max(50).optional(),
       })
       .strict()
-      .optional(),
+      .optional()
+      .describe(
+        'Deterministic scope. kinds is an allowed-type union, not one question of every kind; inventory knowledge_ids default to all on ONE question (knowledge_mode all). For dedup broaden knowledge/kind filters to avoid missing mislabeled duplicates. Numeric difficulty needs a known scale/range — never invent one from a relative band.',
+      ),
     conditions: z
       .array(z.object({ text: z.string().min(1).max(400), required: z.boolean() }).strict())
       .max(10)
-      .optional(),
-    like_ref: z.string().optional(),
-    cursor: z.string().max(6000).optional(),
+      .optional()
+      .describe(
+        'Ticket conditions with required/preferred semantics, judged by the caller with same-question joint evidence; unknown or contradicted cannot pass. Practice/inventory need at least one required condition.',
+      ),
+    like_ref: z.string().optional().describe('Find questions similar to this bank ref.'),
+    cursor: z
+      .string()
+      .max(6000)
+      .optional()
+      .describe('Continue the same snapshot: resend only the unchanged cursor.'),
   })
   .strict()
   .superRefine((v, ctx) => {
@@ -48,11 +73,84 @@ export const BankAssessmentSchema = z
   .object({
     ref: z.string(),
     parts: z.array(z.string()).min(1).max(20),
-    checks: z.array(Decision.extend({ condition: z.string() })).max(10),
+    checks: z
+      .array(
+        Decision.extend({
+          condition: z
+            .string()
+            .describe(
+              'Copy conditions[].id from this search_bank result (r1, r2, …). Do not paste the condition text.',
+            ),
+        }),
+      )
+      .max(10),
     joint: Decision,
   })
   .strict();
 export type BankAssessment = z.infer<typeof BankAssessmentSchema>;
+
+type SearchCondition = { id: string; text: string };
+type ConditionBinding =
+  | { status: 'bound'; id: string }
+  | { status: 'unknown'; token: string }
+  | { status: 'ambiguous'; token: string };
+
+function bindConditionToken(
+  token: string,
+  conditions: readonly SearchCondition[],
+): ConditionBinding {
+  if (conditions.some((condition) => condition.id === token)) return { status: 'bound', id: token };
+  const sameText = conditions.filter((condition) => condition.text === token);
+  if (sameText.length === 1) return { status: 'bound', id: sameText[0].id };
+  if (sameText.length > 1) return { status: 'ambiguous', token };
+  return { status: 'unknown', token };
+}
+
+function clipConditionText(text: string): string {
+  return text.length > 80 ? `${text.slice(0, 77)}...` : text;
+}
+
+function conditionJudgmentMessage(
+  conditions: readonly SearchCondition[],
+  bindings: readonly ConditionBinding[],
+): string {
+  const available =
+    conditions
+      .map((condition) => `${condition.id}=${JSON.stringify(clipConditionText(condition.text))}`)
+      .join(', ') || '(none)';
+  const problems = bindings.flatMap((binding) => {
+    if (binding.status === 'unknown')
+      return [`${JSON.stringify(binding.token)} is not a condition id`];
+    if (binding.status === 'ambiguous')
+      return [`${JSON.stringify(binding.token)} matches more than one condition; use its id`];
+    return [];
+  });
+  const detail = problems.length > 0 ? ` ${problems.join('; ')}.` : '';
+  return (
+    "checks[].condition must be a condition id from this search's conditions[].id, " +
+    'not the condition text. Each condition needs exactly one judgment. ' +
+    `Available: ${available}.${detail}`
+  );
+}
+
+/** Id wins. Unique exact condition text binds to that id so a pasted original still judges it. */
+export function bindConditionJudgments(
+  conditions: readonly SearchCondition[],
+  checks: BankAssessment['checks'],
+): { ok: true; checks: BankAssessment['checks'] } | { ok: false; message: string } {
+  const bindings = checks.map((check) => bindConditionToken(check.condition, conditions));
+  const bound = checks.flatMap((check, index) => {
+    const binding = bindings[index];
+    return binding?.status === 'bound' ? [{ ...check, condition: binding.id }] : [];
+  });
+  if (
+    bound.length !== checks.length ||
+    new Set(bound.map((check) => check.condition)).size !== bound.length ||
+    bound.length !== conditions.length
+  )
+    return { ok: false, message: conditionJudgmentMessage(conditions, bindings) };
+  return { ok: true, checks: bound };
+}
 export const BankHitSchema = z.object({
   id: z.string(),
   ref: z.string().nullable(),

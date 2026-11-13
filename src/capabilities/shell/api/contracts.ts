@@ -379,6 +379,7 @@ export const OvernightDigestResponseSchema = z.object({
       task_kind: z.string(),
       error_count: z.number().int().nonnegative(),
       recent_error_messages: z.array(z.string()),
+      last_at: z.string(),
     }),
   ),
 });
