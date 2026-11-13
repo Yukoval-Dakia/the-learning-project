@@ -24,6 +24,7 @@ import type {
   AgentNoteClient,
   AgentNotesBoard,
   LearningIntentComposer,
+  LearningItemPlanSection,
 } from '@/capabilities/agency/ui-public';
 import type { ColdStart } from '@/capabilities/onboarding/ui-public';
 import { describeCosts } from '@/ui/lib/cost-presentation';
@@ -62,6 +63,7 @@ export interface TodayPageProps {
   getPlacementProfile: PlacementProfileReader;
   AgentNotesBoard: typeof AgentNotesBoard;
   LearningIntentComposer: typeof LearningIntentComposer;
+  LearningItemPlanSection: typeof LearningItemPlanSection;
   ColdStart: typeof ColdStart;
 }
 
@@ -546,6 +548,7 @@ export default function TodayPage({
   getPlacementProfile,
   AgentNotesBoard,
   LearningIntentComposer,
+  LearningItemPlanSection,
   ColdStart,
 }: TodayPageProps) {
   const { getWorkbenchSummary } = useWorkbenchClient();
@@ -569,108 +572,123 @@ export default function TodayPage({
 
   // YUK-621：冷启动只认服务端聚合后的「所有学习证据皆空」。没有 active goal
   // 仍可正常查看题库、复习、历史与提议；loading / error 继续走 AreaGate。
-  if (s?.cold_start.is_empty) {
-    return <ColdStart navigate={navigate} />;
-  }
-
   return (
-    <main data-ui-next="" data-un-m3e="practice-foundation" className="un-root un-today-page">
-      <TodayHeader navigate={navigate} onCompanion={() => openCopilot()} />
+    <div
+      data-ui-next=""
+      data-un-m3e="practice-foundation"
+      className="un-root un-today-page"
+      role={s?.cold_start.is_empty ? undefined : 'main'}
+    >
+      {!s?.cold_start.is_empty && (
+        <TodayHeader navigate={navigate} onCompanion={() => openCopilot()} />
+      )}
 
       <div className="td-flow un-m3e-bridge">
-        <AreaGate
-          status={summaryStatus}
-          onRetry={() => void summaryQ.refetch()}
-          errorText="工作台聚合暂不可用。"
-          loading={<SkeletonLines rows={4} label="正在读取今日工作台" />}
-        >
-          {s && (
-            <>
-              <AiFailureNotice />
+        {s?.cold_start.is_empty ? (
+          <ColdStart navigate={navigate} />
+        ) : (
+          <AreaGate
+            status={summaryStatus}
+            onRetry={() => void summaryQ.refetch()}
+            errorText="工作台聚合暂不可用。"
+            loading={<SkeletonLines rows={4} label="正在读取今日工作台" />}
+          >
+            {s && (
+              <>
+                <AiFailureNotice />
 
-              {/* YUK-707 · workbench 位置 2 — 唯一「为你而备」主 handoff 交付，default-visible
+                {/* YUK-707 · workbench 位置 2 — 唯一「为你而备」主 handoff 交付，default-visible
                 ([裁决 主]，contract §0/§5）。navigate 供 YUK-709 confirmed → KC-scoped
                 practice 的 CTA 跳转。 */}
-              <TeachingBriefBand navigate={navigate} />
+                <TeachingBriefBand navigate={navigate} />
 
-              {/* YUK-520 (A1) — 最小交班缕：workbench 块（今日之线 layer ①）。仅在非冷启
+                {/* YUK-520 (A1) — 最小交班缕：workbench 块（今日之线 layer ①）。仅在非冷启
                 （cold_start=false）渲染，空夜态永不落 ColdStart。YUK-707 起降级为 brief 之下
                 的二级折叠盘（[裁决 5]），保留全部夜间活动事实。 */}
-              <OvernightDigestBand navigate={navigate} />
+                <OvernightDigestBand navigate={navigate} />
 
-              <KpiRow kpi={s.kpi} proposals={s.proposals} navigate={navigate} />
+                <KpiRow kpi={s.kpi} proposals={s.proposals} navigate={navigate} />
 
-              {/* YUK-476 起始画像卡片：active goal 存在时露出 per-KC band 摘要 + /profile 持久入口。
+                {/* YUK-476 起始画像卡片：active goal 存在时露出 per-KC band 摘要 + /profile 持久入口。
                 无 active goal 时只省略画像，不影响其余工作台。 */}
-              <SteeringList goals={s.active_goals} past={s.past_steerings} />
+                <SteeringList goals={s.active_goals} past={s.past_steerings} />
 
-              {newestGoal && (
-                <ProfileBand
-                  goal={newestGoal}
+                {newestGoal && (
+                  <ProfileBand
+                    goal={newestGoal}
+                    navigate={navigate}
+                    getPlacementProfile={getPlacementProfile}
+                  />
+                )}
+              </>
+            )}
+          </AreaGate>
+        )}
+        <LearningItemPlanSection navigate={navigate} />
+        {!s?.cold_start.is_empty && (
+          <>
+            {s && summaryStatus === 'ok' && (
+              <>
+                <LearningIntentComposer
+                  initialTopic={newestGoal?.title ?? ''}
+                  pendingCount={s.proposals.by_kind.learning_item ?? 0}
+                  autoApplyEnabled={s.auto_apply_enabled}
                   navigate={navigate}
-                  getPlacementProfile={getPlacementProfile}
                 />
-              )}
 
-              <LearningIntentComposer
-                initialTopic={newestGoal?.title ?? ''}
-                pendingCount={s.proposals.by_kind.learning_item ?? 0}
-                autoApplyEnabled={s.auto_apply_enabled}
-                navigate={navigate}
-              />
+                {threads.length > 0 && (
+                  <>
+                    <h2 className="un-today-section-title">接下来做什么</h2>
+                    <div className="un-today-tasks">
+                      {threads.map((th) => (
+                        <ThreadCard key={th.id} th={th} navigate={navigate} />
+                      ))}
+                    </div>
+                  </>
+                )}
 
-              {threads.length > 0 && (
-                <>
-                  <h2 className="un-today-section-title">接下来做什么</h2>
-                  <div className="un-today-tasks">
-                    {threads.map((th) => (
-                      <ThreadCard key={th.id} th={th} navigate={navigate} />
-                    ))}
+                <h2 className="un-today-section-title">继续学习与检查改动</h2>
+                <div className="un-today-columns">
+                  <div className="un-today-column">
+                    <SessionsStrip sessions={s.active_sessions} now={now} navigate={navigate} />
+                    <AiChangesStrip now={now} />
                   </div>
-                </>
-              )}
-
-              <h2 className="un-today-section-title">继续学习与检查改动</h2>
-              <div className="un-today-columns">
-                <div className="un-today-column">
-                  <SessionsStrip sessions={s.active_sessions} now={now} navigate={navigate} />
-                  <AiChangesStrip now={now} />
+                  <div className="un-today-column">
+                    <ProposalStrip proposals={s.proposals} navigate={navigate} />
+                    <CostRibbon />
+                  </div>
                 </div>
-                <div className="un-today-column">
-                  <ProposalStrip proposals={s.proposals} navigate={navigate} />
-                  <CostRibbon />
+              </>
+            )}
+
+            <AgentNotesBoard
+              notes={notesQ.data?.rows ?? []}
+              status={statefulStatus(notesQ.isLoading, notesQ.isError)}
+              now={now}
+              onRetry={() => void notesQ.refetch()}
+              onNavigate={navigate}
+            />
+
+            {s && (
+              <section className="td-week">
+                <h2 className="un-today-section-title">过去 7 天</h2>
+                <div className="td-card">
+                  <div className="td-card-head">
+                    <span className="td-card-ic" data-tone="accent" aria-hidden="true">
+                      <Target size={18} />
+                    </span>
+                    <h3 className="td-card-title">7 天活动热力</h3>
+                    <span className="td-card-aside td-chip un-num">
+                      共 {s.week_heat.reduce((acc, d) => acc + d.count, 0)} 次活动
+                    </span>
+                  </div>
+                  <WeekHeat heat={s.week_heat} />
                 </div>
-              </div>
-            </>
-          )}
-        </AreaGate>
-
-        <AgentNotesBoard
-          notes={notesQ.data?.rows ?? []}
-          status={statefulStatus(notesQ.isLoading, notesQ.isError)}
-          now={now}
-          onRetry={() => void notesQ.refetch()}
-          onNavigate={navigate}
-        />
-
-        {s && (
-          <section className="td-week">
-            <h2 className="un-today-section-title">过去 7 天</h2>
-            <div className="td-card">
-              <div className="td-card-head">
-                <span className="td-card-ic" data-tone="accent" aria-hidden="true">
-                  <Target size={18} />
-                </span>
-                <h3 className="td-card-title">7 天活动热力</h3>
-                <span className="td-card-aside td-chip un-num">
-                  共 {s.week_heat.reduce((acc, d) => acc + d.count, 0)} 次活动
-                </span>
-              </div>
-              <WeekHeat heat={s.week_heat} />
-            </div>
-          </section>
+              </section>
+            )}
+          </>
         )}
       </div>
-    </main>
+    </div>
   );
 }

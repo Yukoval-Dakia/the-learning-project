@@ -10,7 +10,7 @@
 /* ═══ Page wash (YUK-1324) ═══
    A soft tint at the top of the content column. It is the root's own background layer, so it can
    never be wider than the page: no 100vw box, no horizontal scroll at any width. */
-main[data-ui-next].un-today-page {
+[data-ui-next].un-today-page {
   background-image: linear-gradient(
     180deg,
     color-mix(in srgb, var(--un-md-sys-color-secondary-container) 55%, transparent) 0,

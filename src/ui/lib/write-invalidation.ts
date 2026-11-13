@@ -7,6 +7,7 @@
 import type { QueryClient, QueryKey } from '@tanstack/react-query';
 
 export const queryKeys = {
+  learningItemPlans: ['learning-item-plans'],
   workbenchSummary: ['workbench-summary'],
   overnightDigest: ['overnight-digest'],
   prepDeskProbes: ['prep-desk-probes'],
@@ -53,6 +54,7 @@ export function invalidateAfterProposalDecision(
 ): Promise<void> {
   return invalidate(qc, [
     { key: queryKeys.workbenchSummary },
+    { key: queryKeys.learningItemPlans },
     // A mounted inbox keeps the decided card in place; an active refetch of the paged decision
     // query would drop it and replay every loaded page. Mark stale so the next mount reloads.
     { key: queryKeys.pendingProposals, refetch: 'none' },
@@ -69,10 +71,17 @@ export function invalidateAfterProposalDecision(
 
 /**
  * Retract of an auto-applied proposal. It turns stale, never pending, so neither the decision
- * inbox nor the sidebar count moves; only the auto-applied block changes.
+ * inbox nor the sidebar count moves. Open plans may disappear after retraction.
  */
 export function invalidateAfterProposalRetract(qc: QueryClient): Promise<void> {
-  return invalidate(qc, [{ key: queryKeys.autoAppliedProposals }]);
+  return invalidate(qc, [
+    { key: queryKeys.autoAppliedProposals },
+    { key: queryKeys.learningItemPlans },
+  ]);
+}
+
+export function invalidateAfterLearningItemPlan(qc: QueryClient): Promise<void> {
+  return invalidate(qc, [{ key: queryKeys.learningItemPlans, refetch: 'none' }]);
 }
 
 /** Undo of one AI revision on a note, from the workbench strip or the note reader. */
