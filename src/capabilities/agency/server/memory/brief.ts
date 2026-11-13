@@ -82,6 +82,28 @@ export function briefWindowForAge(ageMs: number): BriefWindowKey {
   return 'long_term';
 }
 
+export type BriefWindowBound = {
+  /** Inclusive. Null stays open toward the past. */
+  from: Date | null;
+  /** Exclusive. Null stays open toward the future, so a future timestamp is this week. */
+  until: Date | null;
+};
+
+// `from` inclusive and `until` exclusive match briefWindowForAge's `<=` edges.
+export function briefWindowBounds(now: Date): {
+  recent_week: { from: Date; until: null };
+  recent_months: { from: Date; until: Date };
+  long_term: { from: null; until: Date };
+} {
+  const weekStart = new Date(now.getTime() - BRIEF_WINDOW_MAX_AGE_MS.recent_week);
+  const monthsStart = new Date(now.getTime() - BRIEF_WINDOW_MAX_AGE_MS.recent_months);
+  return {
+    recent_week: { from: weekStart, until: null },
+    recent_months: { from: monthsStart, until: weekStart },
+    long_term: { from: null, until: monthsStart },
+  };
+}
+
 const BRIEF_WINDOW_FIELDS = [
   { md: 'recent_week_md', ids: 'recent_week_evidence_ids' },
   { md: 'recent_months_md', ids: 'recent_months_evidence_ids' },
@@ -91,7 +113,7 @@ const BRIEF_WINDOW_FIELDS = [
   ids: 'recent_week_evidence_ids' | 'recent_months_evidence_ids' | 'long_term_evidence_ids';
 }[];
 
-const BRIEF_WINDOWS = [
+export const BRIEF_WINDOWS = [
   'recent_week',
   'recent_months',
   'long_term',
@@ -148,12 +170,14 @@ function evidenceWhere(scopeKey: string) {
 }
 
 function windowPredicates(now: Date) {
-  const weekStart = new Date(now.getTime() - BRIEF_WINDOW_MAX_AGE_MS.recent_week);
-  const monthsStart = new Date(now.getTime() - BRIEF_WINDOW_MAX_AGE_MS.recent_months);
+  const bounds = briefWindowBounds(now);
   return {
-    recent_week: gte(event.created_at, weekStart),
-    recent_months: and(gte(event.created_at, monthsStart), lt(event.created_at, weekStart)),
-    long_term: lt(event.created_at, monthsStart),
+    recent_week: gte(event.created_at, bounds.recent_week.from),
+    recent_months: and(
+      gte(event.created_at, bounds.recent_months.from),
+      lt(event.created_at, bounds.recent_months.until),
+    ),
+    long_term: lt(event.created_at, bounds.long_term.until),
   } as const;
 }
 

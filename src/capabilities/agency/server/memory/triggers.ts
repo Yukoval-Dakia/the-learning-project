@@ -33,9 +33,6 @@ import {
 } from './memory-reconcile-handoff-store';
 import { recoverPurposeChanges } from './purpose-repair';
 
-// Per-subject brief refresh lookback, also the bounded initial build for never-built
-// subjects.
-const BRIEF_REFRESH_LOOKBACK_DAYS = 30;
 const SUBJECT_SCOPE_PREFIX = 'subject:';
 
 export const MEMORY_EVENT_INGEST_QUEUE = 'memory_event_ingest';
@@ -391,15 +388,9 @@ export function buildContextPurposeRepairHandler(
             // guard still absorbs singleton re-fires and watermark skew.
             if (scopeKey.startsWith(SUBJECT_SCOPE_PREFIX)) {
               const subjectId = scopeKey.slice(SUBJECT_SCOPE_PREFIX.length);
-              // Reuse the sweep's now so detection and reload share the same lookback
-              // floor; a fresh clock here could age an edge event out.
+              // Same clock as the sweep, so a delayed job does not slide the 7d/90d edges.
               const now = job.data.now ? new Date(job.data.now) : new Date();
-              // loadSubjectBriefEvents floors at this subject's own refreshed_at, the same
-              // predicate detection uses, so a flagged subject always reloads an event.
-              const events = await loadSubjectBriefEvents(db, subjectId, {
-                lookbackDays: BRIEF_REFRESH_LOOKBACK_DAYS,
-                now,
-              });
+              const events = await loadSubjectBriefEvents(db, subjectId, { now });
               if (!purposeId && !(await subjectScopeHasNewEvidence(db, scopeKey, events))) return;
               await regenerateMemoryBrief({
                 db,
