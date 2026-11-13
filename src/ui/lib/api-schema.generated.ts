@@ -29904,10 +29904,10 @@ export interface operations {
                                      */
                                     basis: "model_prior";
                                     /**
-                                     * @description 难度锚和域能力输入全为 0，是中性假设
+                                     * @description neutral_zero 是中性零锚；seeded_anchors 表示该知识点或先修用了实测有效能力或已标定难度
                                      * @enum {string}
                                      */
-                                    inputs: "neutral_zero";
+                                    inputs: "neutral_zero" | "seeded_anchors";
                                     /**
                                      * @description mean_mastery 不是独立掌握
                                      * @enum {string}
@@ -29958,10 +29958,10 @@ export interface operations {
                                      */
                                     basis: "model_prior";
                                     /**
-                                     * @description 难度锚和域能力输入全为 0，是中性假设
+                                     * @description neutral_zero 是中性零锚；seeded_anchors 表示该知识点或先修用了实测有效能力或已标定难度
                                      * @enum {string}
                                      */
-                                    inputs: "neutral_zero";
+                                    inputs: "neutral_zero" | "seeded_anchors";
                                     /**
                                      * @description mean_mastery 不是独立掌握
                                      * @enum {string}
@@ -30011,10 +30011,10 @@ export interface operations {
                                      */
                                     basis: "model_prior";
                                     /**
-                                     * @description 难度锚和域能力输入全为 0，是中性假设
+                                     * @description neutral_zero 是中性零锚；seeded_anchors 表示该知识点或先修用了实测有效能力或已标定难度
                                      * @enum {string}
                                      */
-                                    inputs: "neutral_zero";
+                                    inputs: "neutral_zero" | "seeded_anchors";
                                     /**
                                      * @description mean_mastery 不是独立掌握
                                      * @enum {string}

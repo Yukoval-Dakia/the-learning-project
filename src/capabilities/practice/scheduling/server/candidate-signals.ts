@@ -1,9 +1,8 @@
 // YUK-361 Phase 3 Step A (Task 7) — 候选信号收集 collectCandidateSignals。
 //
 // 把非到期候选题/卷变成 `SelectionCandidateSignal[]`（core/selection-signals.ts 定义的
-// 形状）。**零选题行为变更**：本模块只读 DB（mastery_state / item_calibration）+ 复用
-// core 数学，**不接进 composeDailyStream / 不改可见选题顺序**（接线是 Step C，roadmap
-// Task 8 余）。
+// 形状）。只读 mastery_state、item_calibration 和先修先验。冷知识点的点估计会加上
+// 传播偏移，所以冷题的信息分会变；有证据的知识点仍用观测到的有效能力。
 //
 // 权威 spec：
 //   - docs/archive/superpowers/plans/2026-06-16-phase3-randomized-mfi-impl.md（Step A）
@@ -44,6 +43,7 @@ import {
   prepareCandidateDifficultyRead,
 } from '@/kernel/read-models/question-difficulty';
 import { MISCONCEPTION_RECURRENCE_ENABLED } from '../../server/selection-constants';
+import { loadPropagatedAbilityOffsets } from './day-one-priors';
 import { rotationClassForKind } from './variant-rotation';
 
 type DbLike = Db | Tx;
@@ -214,8 +214,8 @@ const COLD_START_EVIDENCE = 0;
  * 关心「这道题最薄弱的那个前提知识点掌握得多差」，故 thetaHat=θ̂_min，thetaPrecision
  * 取该最弱 KC 自己的 precision（不是跨 KC 平均——选题信息量评估锚在最弱环节）。
  *
- * 读每个 KC 的 mastery_state（getMasteryState，'knowledge' 维），冷启行（null）兜底
- * θ̂=0 / precision=1。无 KC（空 knowledgeIds）→ 返回 undefined/undefined（无个体能力锚，
+ * 读每个 KC 的 mastery_state（getMasteryState，'knowledge' 维）。无证据的 KC 用有效能力
+ * 加传播偏移，precision=1。无 KC（空 knowledgeIds）→ 返回 undefined/undefined（无个体能力锚，
  * 评分层退化为无 θ̂ 状态）。
  *
  * A2 (YUK-434) — the per-KC θ_hat is the OFFSET θ_KC; the value compared/returned is
@@ -224,8 +224,11 @@ const COLD_START_EVIDENCE = 0;
  *   domain compares at its inherited effective ability rather than cold 0; an orphan /
  *   domain-unresolvable KC degrades to θ_KC (effectiveThetaForKc catches + returns θ_KC).
  *   With the flag OFF (still a valid mocked-false regression) effectiveThetaForKc
- *   returns θ_KC UNCHANGED and resolves no domain/global row → read path BYTE-IDENTICAL
- *   to single-layer (weakest-by-θ_hat, same precision).
+ *   returns θ_KC UNCHANGED and resolves no domain/global row → the warm path stays
+ *   single-layer (weakest-by-θ_hat, same precision).
+ *   A cold KC (no evidence) then adds the propagated day-one ability offset: 0 for a
+ *   root, negative when prerequisites pull the prior down. Warm KCs keep the observed
+ *   effective theta.
  *
  * A3 (YUK-435) — also surface the WEAKEST KC's `evidence_count` (the per-KC cold-start
  *   regime gate for KLP scoring) from the row ALREADY READ here (zero new query). The
@@ -235,15 +238,14 @@ const COLD_START_EVIDENCE = 0;
  *   evidence_count is a single-learner sufficient statistic, KLP is a selection
  *   criterion (no estimation), so one learner's count is the whole signal.
  */
-// YUK-716 — pure over the two prefetched maps (`masteryByKc` = one `getMasteryStates` batch;
-// `effectiveThetaByKc` = one `effectiveThetaForKcBatch`). No DB reads here: the per-KC
-// `getMasteryState` + `effectiveThetaForKc` N+1 moved up into `collectCandidateSignals`'s bulk
-// prefetch. Semantics are byte-identical — the same θ̂_min pick, precision, evidence, grid, and
-// `θ_global = effective − θ_KC` restore, just read from maps instead of per-KC queries.
+// YUK-716 — pure over the prefetched maps. No DB reads here. Warm KCs keep the θ̂_min
+// pick. Cold KCs add `abilityOffsetByKc` before that comparison. θ_global stays
+// effective − θ_KC.
 function aggregateWeakestKc(
   knowledgeIds: string[],
   masteryByKc: Map<string, MasteryStateRow>,
   effectiveThetaByKc: Map<string, number>,
+  abilityOffsetByKc: Map<string, number> | null,
 ): {
   thetaHat?: number;
   thetaPrecision?: number;
@@ -265,18 +267,20 @@ function aggregateWeakestKc(
   for (const kid of knowledgeIds) {
     const row = masteryByKc.get(kid) ?? null;
     const thetaKc = row?.theta_hat ?? COLD_START_THETA;
-    // Effective theta (θ_global + θ_KC). Flag off / absent → === thetaKc (bit-identical).
-    const theta = effectiveThetaByKc.get(kid) ?? thetaKc;
+    // Effective theta (θ_global + θ_KC). Flag off / absent → === thetaKc.
+    const effective = effectiveThetaByKc.get(kid) ?? thetaKc;
     const precision = row?.theta_precision ?? COLD_START_PRECISION;
     const evidence = row?.evidence_count ?? COLD_START_EVIDENCE;
+    const propagated = evidence === 0 ? (abilityOffsetByKc?.get(kid) ?? 0) : 0;
+    const theta = effective + propagated;
     if (theta < weakestTheta) {
       weakestTheta = theta;
       weakestPrecision = precision;
       weakestEvidence = evidence;
       weakestGrid = row?.theta_grid_json ?? null;
-      // θ_global = effective − θ_KC offset (effectiveThetaForKc folds θ_global in; subtract
-      // the offset back out). Flag off → effective === θ_KC → θ_global = 0 (grid over raw b).
-      weakestThetaGlobal = theta - thetaKc;
+      // θ_global stays the domain anchor. The propagated offset is a per-KC shift on
+      // the point estimate, not a second domain layer.
+      weakestThetaGlobal = effective - thetaKc;
     }
   }
   return {
@@ -447,13 +451,14 @@ async function collectQuestionSignal(
   cand: CandidateInput,
   masteryByKc: Map<string, MasteryStateRow>,
   effectiveThetaByKc: Map<string, number>,
+  abilityOffsetByKc: Map<string, number> | null,
   difficultyRead: CandidateDifficultyRead,
   misconceptionRecurrence?: number,
   examRelevance?: number,
 ): Promise<CollectedSignal> {
   const knowledgeIds = cand.knowledgeIds ?? [];
   const { thetaHat, thetaPrecision, evidenceCount, gridPosterior, thetaGlobal } =
-    aggregateWeakestKc(knowledgeIds, masteryByKc, effectiveThetaByKc);
+    aggregateWeakestKc(knowledgeIds, masteryByKc, effectiveThetaByKc, abilityOffsetByKc);
   const { b, bSource } = await difficultyRead.read(cand.refId, cand.difficulty);
 
   // recall-eligibility（ADR-0030 by-kind 路由 → recall/application）。
@@ -603,6 +608,9 @@ export async function collectCandidateSignals(
       thetaKc: masteryByKc.get(kid)?.theta_hat ?? COLD_START_THETA,
     })),
   );
+  const coldKcIds = unionKcIds.filter((id) => (masteryByKc.get(id)?.evidence_count ?? 0) === 0);
+  const abilityOffsetByKc =
+    coldKcIds.length > 0 ? await loadPropagatedAbilityOffsets(db, coldKcIds) : null;
 
   // YUK-741 — recurrence is a request-level sidecar, not a per-candidate query. Flag OFF keeps
   // the historical hard short-circuit: no recurrence aggregate is issued and every value stays
@@ -626,6 +634,7 @@ export async function collectCandidateSignals(
           cand,
           masteryByKc,
           effectiveThetaByKc,
+          abilityOffsetByKc,
           difficultyRead,
           recurrenceByQuestion[questionIndex],
           examRelevanceForKnowledgeIds(steeringSets, cand.knowledgeIds ?? []),
