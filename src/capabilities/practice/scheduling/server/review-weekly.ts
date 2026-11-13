@@ -7,7 +7,7 @@
 // Single-shot per page load; computed at request time (no view). Acceptable at
 // single-user scale where the window is bounded and the event table is small.
 
-import { and, eq, gte, inArray, lte, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, lte, sql } from 'drizzle-orm';
 import type { z } from 'zod';
 import type { Db } from '@/db/client';
 import { event, knowledge } from '@/db/schema';
@@ -139,7 +139,10 @@ export async function loadWeeklyReview(db: Db, input: unknown) {
       created_at: event.created_at,
     })
     .from(event)
-    .where(and(eq(event.action, 'review'), eq(event.subject_kind, 'question'), inWindow));
+    .where(and(eq(event.action, 'review'), eq(event.subject_kind, 'question'), inWindow))
+    // Stable pre-dedupe order: rows sharing an issuance must always keep the same winner,
+    // and the newest review is the one that decided the answer's rating.
+    .orderBy(desc(event.created_at), desc(event.id));
   for (const row of legacyReviews) {
     const keys = reviewIdentityKeys({
       eventId: row.id,
