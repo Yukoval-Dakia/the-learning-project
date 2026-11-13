@@ -1,6 +1,6 @@
 // Daily stream IO shell: materialize StreamPlan and orchestrate reads/advances.
 // Pure selection lives in stream-composer.ts; candidate inputs in stream-inputs.ts;
-// projections in stream-view.ts.
+// projections in stream-view.ts; whole-profile close in daily-stream-close.ts.
 
 import { and, asc, desc, eq, gte, inArray, isNull, lt, sql } from 'drizzle-orm';
 import { getConfig } from '@/core/config/store';
@@ -25,14 +25,13 @@ import {
   type SelectionPolicyConfig,
 } from '../../server/selection-constants';
 import {
-  dailyStreamEntrypoint,
-  earliestDailyStreamAnswerAt,
   enqueueReviewSessionSummary,
   startReviewSession,
   transitionReviewSessionState,
 } from '../../session/public';
 import { type CollectedSignal, collectCandidateSignals } from './candidate-signals';
 import { DEFAULT_COMPOSE_LOCK_WAIT_MS, withinComposePaidWorkLock } from './compose-paid-work-lock';
+import { completeDailyStreamIfDone } from './daily-stream-close';
 import { attachPaperQuestionCounts } from './paper-rank';
 import { readQuestionPace } from './question-pace';
 import { selectScopedKnowledgeFill } from './scoped-fill';
@@ -988,21 +987,6 @@ const LEGAL_TRANSITIONS: Record<StreamItemStatus, StreamItemStatus[]> = {
   done: [],
 };
 
-const OPEN_STREAM_STATUSES = ['pending', 'in_progress', 'skipped'] as const;
-
-/**
- * A stored question the practice list no longer serves, and that has no
- * accepted answer to recover, stays in the table. It is not an open slot:
- * the day finishes when every slot still on that list is done.
- */
-async function openDailyItemCount(db: DbLike, date: string): Promise<number> {
-  const rows = await db.select().from(practice_stream_item).where(streamPartitionPredicate(date));
-  const visible = await filterProspectiveStreamQuestions(db, rows);
-  return visible.rows.filter((row) =>
-    (OPEN_STREAM_STATUSES as readonly string[]).includes(row.status),
-  ).length;
-}
-
 async function completeScopedSessionIfDone(db: Db, row: StreamItemRow): Promise<void> {
   if (!row.session_id || row.status !== 'done') return;
   try {
@@ -1026,54 +1010,6 @@ async function completeScopedSessionIfDone(db: Db, row: StreamItemRow): Promise<
     // observability, but must not turn a confirmed answer into a false PATCH failure.
     console.error('[stream-store] scoped review session completion failed (best-effort)', {
       sessionId: row.session_id,
-      streamItemId: row.id,
-      err,
-    });
-  }
-}
-
-type DailyStreamClose = { kind: 'summarize'; sessionId: string } | { kind: 'skip' };
-
-/**
- * The whole-profile partition cannot store a session id. When the last slot
- * still on the practice list closes, one review session for that calendar day
- * is completed and the existing summary job is enqueued. A second close of the
- * same day finds the session already completed and does not enqueue again.
- */
-async function closeDailyStream(db: Db, date: string): Promise<DailyStreamClose> {
-  return db.transaction(async (tx) => {
-    await lockPracticeStreamPartition(tx, date);
-    if ((await openDailyItemCount(tx, date)) !== 0) return { kind: 'skip' };
-    const entrypoint = dailyStreamEntrypoint(date);
-    const existing = await tx
-      .select({ id: learning_session.id, status: learning_session.status })
-      .from(learning_session)
-      .where(and(eq(learning_session.type, 'review'), eq(learning_session.entrypoint, entrypoint)))
-      .orderBy(desc(learning_session.created_at), desc(learning_session.id));
-    if (existing.some((row) => row.status === 'completed')) return { kind: 'skip' };
-    const live = existing.find((row) => row.status === 'started' || row.status === 'paused');
-    const sessionId =
-      live?.id ??
-      (
-        await startReviewSession(tx, {
-          entrypoint,
-          startedAt: await earliestDailyStreamAnswerAt(tx, date),
-        })
-      ).sessionId;
-    const transition = await transitionReviewSessionState(tx, sessionId, 'completed');
-    return transition.changed ? { kind: 'summarize', sessionId } : { kind: 'skip' };
-  });
-}
-
-async function completeDailyStreamIfDone(db: Db, row: StreamItemRow): Promise<void> {
-  if (row.session_id || row.status !== 'done') return;
-  try {
-    if ((await openDailyItemCount(db, row.date)) !== 0) return;
-    const closed = await closeDailyStream(db, row.date);
-    if (closed.kind === 'summarize') await enqueueReviewSessionSummary(closed.sessionId);
-  } catch (err) {
-    console.error('[stream-store] daily stream completion failed (best-effort)', {
-      date: row.date,
       streamItemId: row.id,
       err,
     });
