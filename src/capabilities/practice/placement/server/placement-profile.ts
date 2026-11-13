@@ -95,9 +95,9 @@ export async function readPlacementProfile(
     // per-KC caution/speed-accuracy descriptor (display-only; absent for KCs
     // the nightly batch hasn't reached the usage gate on).
     readLearnerAxisStates(db, scope),
-    // Null when the scope's prerequisite graph is rejected. In-scope priors are
-    // seeded from observed effective ability and calibrated difficulty, then
-    // propagated along prerequisites. This read does not assemble them.
+    // Null when the prerequisite graph is rejected. Priors are seeded from
+    // observed effective ability and calibrated difficulty, then propagated
+    // along prerequisites, including ancestors outside this scope.
     loadDayOnePriors(db, scope),
   ]);
   const nameById = new Map(nameRows.map((r) => [r.id, r.name]));
