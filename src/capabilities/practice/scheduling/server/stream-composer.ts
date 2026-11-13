@@ -62,6 +62,8 @@ export interface ComposerInputs {
     paperId: string;
     title: string;
     source: 'paper' | 'on_demand' | 'import';
+    /** Answerable slots. The minute budget prices the paper as this times the question pace. */
+    questionCount: number;
   }>;
   /** 容量护栏（两层语义：warn 零干预只告知；max 防事故硬顶） */
   capacity?: { warn?: number; max?: number };
@@ -89,6 +91,8 @@ export interface StreamPlanItem {
   // **零行为变更**：本 lane 不计算、不据此排序，materializeStream 落库时缺省 {}；
   // 值由 候选收集层填充。
   signals?: Record<string, unknown>;
+  /** In-memory paper price. Not a stored column; the view recounts slots. */
+  questionCount?: number;
 }
 
 export interface StreamPlan {
@@ -155,6 +159,7 @@ export function composeDailyStream(inputs: ComposerInputs): StreamPlan {
   const papers: Draft[] = inputs.pendingPapers.map((p) => ({
     item_kind: 'paper',
     ref_id: p.paperId,
+    questionCount: p.questionCount,
     ...presentPracticePaper(p.title, p.source),
   }));
 

@@ -204,12 +204,13 @@ export async function composeSoftmaxStream(
     nonDueRaws.map((r) => [r.questionId, r.role]),
   );
 
-  // ③ 卷（paper）——透传，不进 MFI/sampler（卷不可拆，组卷层已处理内部题）。容量内置后。
+  // ③ 卷（paper）——保持收集时的相关度顺序，不进 MFI/sampler（卷不可拆）。容量内置后。
   const paperDrafts: Omit<StreamPlanItem, 'position'>[] = inputs.pendingPapers
     .filter((p) => !seen.has(p.paperId) && seen.add(p.paperId))
     .map((p) => ({
       item_kind: 'paper' as const,
       ref_id: p.paperId,
+      questionCount: p.questionCount,
       ...presentPracticePaper(p.title, p.source),
     }));
 

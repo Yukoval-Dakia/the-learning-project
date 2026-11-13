@@ -330,7 +330,11 @@ function toStreamViewItem(
     source: row.source,
     reasoning: row.reasoning,
     status: row.status,
-    estimated_minutes: estimateStreamItemMinutes(row.item_kind, questionMinutes),
+    estimated_minutes: estimateStreamItemMinutes(
+      row.item_kind,
+      questionMinutes,
+      row.item_kind === 'paper' ? (metadata.totalSlots ?? 0) : undefined,
+    ),
     knowledge_name: metadata.knowledgeName,
     knowledge_notes: metadata.knowledgeNotes,
     paper_title: metadata.paperTitle,
@@ -388,14 +392,11 @@ export async function buildStreamView(input: {
   const { db, date, rows, budget, scope, openingLine } = input;
   const questionMinutes = input.questionMinutes ?? (await readQuestionPace(db)).minutes;
   const done = rows.filter((row) => row.status === 'done').length;
-  const estimatedTotalMinutes = rows.reduce(
-    (sum, row) => sum + estimateStreamItemMinutes(row.item_kind, questionMinutes),
-    0,
-  );
-  const estimatedRemainingMinutes = rows
-    .filter((row) => row.status === 'pending' || row.status === 'in_progress')
-    .reduce((sum, row) => sum + estimateStreamItemMinutes(row.item_kind, questionMinutes), 0);
   const items = await projectStreamViewItems(db, rows, questionMinutes);
+  const estimatedTotalMinutes = items.reduce((sum, item) => sum + item.estimated_minutes, 0);
+  const estimatedRemainingMinutes = items
+    .filter((item) => item.status === 'pending' || item.status === 'in_progress')
+    .reduce((sum, item) => sum + item.estimated_minutes, 0);
 
   return {
     date,
