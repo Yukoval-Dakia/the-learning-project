@@ -36,6 +36,7 @@ import { type ModelBinding, explicitProviderRouting } from './execution-adapter'
 import {
   type TraceSpan,
   isLaminarTracingEnabled,
+  isPrivateTraceContent,
   startTraceSpan,
   traceMetadata,
   traceSafeError,
@@ -832,8 +833,8 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
         task_run_id: this.taskRunId,
         task_kind: this.kind,
         tool_name: input.toolName,
-        input_json: input.inputJson,
-        output_json: input.outputJson ?? {},
+        input_json: isPrivateTraceContent() ? { content_omitted: true } : input.inputJson,
+        output_json: isPrivateTraceContent() ? { content_omitted: true } : (input.outputJson ?? {}),
         error_reason: input.errorReason,
         iteration: input.iteration,
         latency_ms: input.latencyMs,

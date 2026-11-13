@@ -2,17 +2,22 @@ import { and, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { canonicalHash } from '@/core/migration/canonical';
 import type { Tx } from '@/db/client';
-import { event, learning_session, question, source_document } from '@/db/schema';
+import { event, learning_session, question, source_asset, source_document } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
-import { sourceAllowsDerivation } from '@/kernel/read-models/usage-policy';
+import { documentUsageEpoch, sourceAllowsDerivation } from '@/kernel/read-models/usage-policy';
 
 const Sources = z.object({
   version: z.literal(1),
-  assets: z.array(z.string()),
+  assets: z.array(z.object({ id: z.string(), identity: z.string() })),
   questions: z.array(z.object({ id: z.string(), identity: z.string() })).min(1),
   documents: z.array(z.object({ id: z.string(), epoch: z.string(), digest: z.string() })).min(1),
 });
 export type StudySources = z.infer<typeof Sources>;
+const CropLineage = z.object({
+  role: z.literal('pipeline_figure'),
+  derived_from: z.object({ asset_id: z.string().min(1), digest: z.string().min(1) }),
+  op: z.object({ kind: z.literal('crop') }),
+});
 
 /** Called under the publication root lock. Only proven direct source sets qualify. */
 export async function captureStudySources(
@@ -28,7 +33,8 @@ export async function captureStudySources(
     .where(inArray(question.id, ids))
     .orderBy(question.id)
     .for('share');
-  if (rows.length !== ids.length) return null;
+  // Native part ids are local to the frozen contract, not question-row foreign keys.
+  // Existing legacy part rows contribute their own provenance when present.
   const root = rows.find((row) => row.id === groupId);
   const rootDocument = root?.metadata?.source_document_id;
   if (typeof rootDocument !== 'string' || !rootDocument) return null;
@@ -88,14 +94,55 @@ export async function captureStudySources(
     .for('share');
   if (docs.length !== documents.size) return null;
   const allowedAssets = new Set(docs.flatMap((doc) => doc.source_asset_ids));
-  if (assetIds.some((id) => !allowedAssets.has(id))) return null;
+  const requestedAssets = [...new Set(assetIds)].sort();
+  const candidates = requestedAssets.length
+    ? await tx.select().from(source_asset).where(inArray(source_asset.id, requestedAssets))
+    : [];
+  const parents = candidates.flatMap((asset) => {
+    const lineage = CropLineage.safeParse(asset.provenance);
+    return lineage.success ? [lineage.data.derived_from.asset_id] : [];
+  });
+  const lockedIds = [...new Set([...requestedAssets, ...parents])].sort();
+  // Crop writers own their storage-key lock. Never wait across that lock order.
+  const assets = lockedIds.length
+    ? await tx
+        .select()
+        .from(source_asset)
+        .where(inArray(source_asset.id, lockedIds))
+        .orderBy(source_asset.id)
+        .for('share', { noWait: true })
+    : [];
+  const assetBindings: StudySources['assets'] = [];
+  for (const id of requestedAssets) {
+    const asset = assets.find((row) => row.id === id);
+    if (!asset) return null;
+    if (!allowedAssets.has(id)) {
+      const lineage = CropLineage.safeParse(asset.provenance);
+      if (!lineage.success) return null;
+      const parent = assets.find((row) => row.id === lineage.data.derived_from.asset_id);
+      if (
+        asset.kind !== 'image' ||
+        !parent ||
+        !allowedAssets.has(parent.id) ||
+        lineage.data.derived_from.digest !== `sha256:${parent.sha256}`
+      )
+        return null;
+    }
+    assetBindings.push({
+      id,
+      identity: canonicalHash({
+        sha256: asset.sha256,
+        storage_key: asset.storage_key,
+        provenance: asset.provenance,
+      }),
+    });
+  }
   const snapshots: StudySources['documents'] = [];
   for (const doc of docs) {
     const provenance = doc.provenance as Record<string, unknown>;
     const policy = provenance.usage_policy as Record<string, unknown> | undefined;
     if (policy?.derivation_policy !== 'allow') return null;
-    const epoch = provenance.usage_epoch;
-    if (typeof epoch !== 'string' || !epoch) return null;
+    const epoch = documentUsageEpoch(provenance);
     snapshots.push({
       id: doc.id,
       epoch,
@@ -104,7 +151,7 @@ export async function captureStudySources(
   }
   return {
     version: 1 as const,
-    assets: [...new Set(assetIds)].sort(),
+    assets: assetBindings,
     questions,
     documents: snapshots,
   };

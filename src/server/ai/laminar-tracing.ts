@@ -125,9 +125,15 @@ const activeSpan = new AsyncLocalStorage<TraceSpan>();
 
 /** Provider/parser failures can echo private input even when transcripts are disabled. */
 export function traceSafeError<T>(error: T): T | string {
-  return activeSpan.getStore()?.transcriptScope === 'private'
-    ? '[private task diagnostic omitted]'
-    : error;
+  if (!isPrivateTraceContent()) return error;
+  const message = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
+  return message.includes('provider_stream_idle')
+    ? 'provider_stream_idle'
+    : '[private task diagnostic omitted]';
+}
+
+export function isPrivateTraceContent(): boolean {
+  return activeSpan.getStore()?.transcriptScope === 'private';
 }
 export const TRACE_FLUSH_TIMEOUT_MS = 500;
 // Background batch export, not shutdown: a batch with transcripts takes seconds, and a
