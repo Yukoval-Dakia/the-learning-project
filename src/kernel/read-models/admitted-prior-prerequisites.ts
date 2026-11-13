@@ -1,7 +1,11 @@
 // Admitted solution priors name prerequisite knowledge, but that list never
 // becomes a graph edge by itself. This read collects pairs where at least two
-// live admitted questions agree, and resolves a name to an existing point only
-// when that match is unique inside the dependent's subject. It does not write.
+// live admitted questions agree on one dependent point, and resolves a name to
+// an existing point only when that match is unique inside the dependent's
+// subject. A question with more than one live point contributes nothing: a
+// part lists prerequisites for that part, not for every point on the question.
+// Questions whose live source policy no longer allows derivation are not
+// counted. It does not write.
 
 import { and, eq } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
@@ -12,6 +16,7 @@ import {
   question_solution_prior,
 } from '@/db/schema';
 import { batchResolveEffectiveDomains } from '@/kernel/read-models/knowledge-tree';
+import { sourceAllowsDerivationSql } from '@/kernel/read-models/usage-policy';
 
 /** A pair is a suggestion only once this many distinct questions name it. */
 export const MIN_ADMITTED_PRIOR_PREREQUISITE_QUESTIONS = 2;
@@ -85,6 +90,21 @@ function resolvePrerequisite(
   return matches.length === 1 ? (matches[0] ?? null) : null;
 }
 
+/** Parts name prerequisites, not which tagged point they belong to. */
+function soleDependent(
+  targetKnowledgeIds: readonly string[],
+  index: PointIndex,
+): LiveKnowledgePoint | null {
+  let sole: LiveKnowledgePoint | null = null;
+  for (const targetId of targetKnowledgeIds) {
+    const target = index.byId.get(targetId);
+    if (target == null) continue;
+    if (sole != null && sole.id !== target.id) return null;
+    sole = target;
+  }
+  return sole;
+}
+
 export function prerequisiteEdgesFromAdmittedPriors(
   questions: readonly AdmittedQuestionPrior[],
   points: readonly LiveKnowledgePoint[],
@@ -93,24 +113,22 @@ export function prerequisiteEdgesFromAdmittedPriors(
   const index = indexLivePoints(points);
   const support = new Map<string, { from: string; to: string; questions: Set<string> }>();
   for (const question of questions) {
+    const target = soleDependent(question.targetKnowledgeIds, index);
+    if (target?.effectiveDomain == null) continue;
     const seen = new Set<string>();
-    for (const targetId of question.targetKnowledgeIds) {
-      const target = index.byId.get(targetId);
-      if (target?.effectiveDomain == null) continue;
-      for (const mention of question.prerequisites) {
-        const fromId = resolvePrerequisite(mention, target.effectiveDomain, index);
-        if (fromId == null || fromId === target.id) continue;
-        const key = `${fromId}\0${target.id}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        const bucket = support.get(key) ?? {
-          from: fromId,
-          to: target.id,
-          questions: new Set<string>(),
-        };
-        bucket.questions.add(question.questionId);
-        support.set(key, bucket);
-      }
+    for (const mention of question.prerequisites) {
+      const fromId = resolvePrerequisite(mention, target.effectiveDomain, index);
+      if (fromId == null || fromId === target.id) continue;
+      const key = `${fromId}\0${target.id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const bucket = support.get(key) ?? {
+        from: fromId,
+        to: target.id,
+        questions: new Set<string>(),
+      };
+      bucket.questions.add(question.questionId);
+      support.set(key, bucket);
     }
   }
   const edges: PrerequisiteEdgeSupport[] = [];
@@ -181,6 +199,8 @@ export async function loadAdmittedPriorPrerequisiteEdges(
           eq(question_group_lifecycle.withdrawn, false),
           eq(question_group_lifecycle.suspended, false),
           eq(question_solution_prior.origin, 'admission'),
+          // Admission freezes the prior; derivation consent is the live source policy.
+          sourceAllowsDerivationSql({ kind: 'question', id: question.id }),
         ),
       ),
     db
