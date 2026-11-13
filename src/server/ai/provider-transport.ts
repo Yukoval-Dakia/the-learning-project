@@ -143,6 +143,10 @@ export class ProviderTransportCollector {
   };
   private lastTransportError: ProviderTransportEvidence['last_transport_error'];
   private lastFailure: ProviderTransportEvidence['last_failure'];
+  /** Provider calls refused before a fetch was ever invoked (e.g. the pre-send
+   *  input budget guard) — they leave no request record, so they are counted
+   *  here instead of inside `requests`. */
+  private preSendRejections = 0;
   private readonly abortInitiators: TransportAbortMarker[] = [];
   /** One-shot loop attribution consumed by the next `beginFetch`. */
   private pendingLoop: 'root' | undefined;
@@ -193,6 +197,12 @@ export class ProviderTransportCollector {
 
   abortInitiatorKinds(): readonly TransportAbortInitiator[] {
     return this.abortInitiators.map((marker) => marker.kind);
+  }
+
+  /** A provider call was refused before its fetch was invoked — positive
+   *  unbilled evidence that survives `requests` staying empty. */
+  notePreSendRejection(): void {
+    this.preSendRejections += 1;
   }
 
   /**
@@ -478,6 +488,7 @@ export class ProviderTransportCollector {
             ? [...this.lanesSeen][0]
             : 'mixed',
       send_state: sendState,
+      ...(this.preSendRejections > 0 ? { pre_send_rejections: this.preSendRejections } : {}),
       totals: {
         requests: this.requestsSeen,
         dispatches: this.dispatchesSeen,

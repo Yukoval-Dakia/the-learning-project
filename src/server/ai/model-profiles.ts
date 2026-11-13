@@ -21,6 +21,8 @@ export interface ModelProfileLimits {
   contextWindowTokens?: number;
   maxInputTokens?: number;
   maxOutputTokens?: number;
+  /** Declared pre-send estimate margin (catalog override fact, not upstream). */
+  inputSafetyRatio?: number;
 }
 
 export interface ModelProfileReasoning {
@@ -122,6 +124,7 @@ export function resolveModelProfile(
       contextWindowTokens: facts.contextWindowTokens,
       maxInputTokens: facts.maxInputTokens,
       maxOutputTokens: facts.maxOutputTokens,
+      inputSafetyRatio: facts.inputSafetyRatio,
     },
     inputModalities: facts.inputModalities ?? 'unknown',
     baseUrl: facts.baseUrl,

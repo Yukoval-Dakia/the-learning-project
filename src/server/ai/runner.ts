@@ -375,8 +375,6 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
   let completeArtifact = false;
   const outputStats = emptyStreamTextStats();
   const settleUnobservedUsage = async () => {
-    // YUK-1557 — a cut stream with no usage frame still submitted a prompt:
-    // persist a bounded estimate, never a null cost. A reported frame wins.
     await args.lifecycle.recordEstimatedUsage({
       promptText: args.usagePrompt?.() ?? '',
       output: outputStats,
