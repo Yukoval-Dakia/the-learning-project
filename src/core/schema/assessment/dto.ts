@@ -740,6 +740,7 @@ export interface SaveSubmissionRequest {
   /** 幂等键：同 (group, key) 重复提交 —— payload 一致 replay；不同 conflict。 */
   idempotency_key: string;
   response_set: ResponseSetT;
+  expected_save_epoch?: number;
   group_evidence?: GroupEvidenceT[];
   /** 客户端指定 submission_id（重试幂等锚）；缺省服务端生成。 */
   submission_id?: SubmissionIdT;
@@ -756,6 +757,7 @@ export type SaveSubmissionResult =
       revision_id: RevisionIdT;
       issuance_id: IssuanceIdT;
     }
+  | { status: 'stale_draft'; current_save_epoch: number }
   | {
       status:
         | 'issuance_not_found'

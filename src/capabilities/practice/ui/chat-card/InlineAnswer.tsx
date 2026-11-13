@@ -140,8 +140,8 @@ export function InlineAnswer({
     <AnswerArea
       key={`${issuanceId}:${readCount}`}
       onLoadLatest={async () => {
-        await state.refetch();
-        setReadCount((count) => count + 1);
+        const latest = await state.refetch();
+        if (!latest.isError && latest.data) setReadCount((count) => count + 1);
       }}
       {...shared}
       issuanceId={issuanceId}
@@ -223,7 +223,7 @@ function AnswerArea({
     autosave.change(next, previous);
   };
 
-  const assessment = {
+  const assessment = () => ({
     issuance_id: issuanceId,
     evaluation_group_id: accepted?.evaluation_group_id ?? `group_${issuanceId}`,
     submission_id: accepted?.submission_id ?? `submission_${issuanceId}`,
@@ -232,10 +232,11 @@ function AnswerArea({
     response_set:
       accepted?.response_set ??
       (presentation
-        ? { entries: entriesForSubmit(presentation, slots, responses.entries) }
-        : responses),
+        ? { entries: entriesForSubmit(presentation, slots, latest.current.entries) }
+        : latest.current),
     group_evidence: [],
-  };
+    expected_save_epoch: ackedEpoch.current,
+  });
   const answerMd = responses.entries
     .map((entry) =>
       nativeResponseText(
@@ -244,12 +245,25 @@ function AnswerArea({
       ),
     )
     .join('\n');
-  const readAdvice = () => client.getAdvice(question.id, answerMd, [], assessment);
+  const holdStaleDraft = (error: unknown) => {
+    if (!(error instanceof ApiError) || error.code !== 'stale_draft') return false;
+    autosave.hold();
+    setConflict(true);
+    return true;
+  };
+  const readAdvice = async () => {
+    try {
+      return await client.getAdvice(question.id, answerMd, [], assessment());
+    } catch (error) {
+      holdStaleDraft(error);
+      throw error;
+    }
+  };
 
   // Coming back to a graded answer reads the same candidate again; nothing is graded twice.
   const resume = useQuery({
     queryKey: ['question-card-advice', issuanceId],
-    enabled: resumeGraded && !judged && !confirmed,
+    enabled: resumeGraded && !judged && !confirmed && !conflict,
     queryFn: readAdvice,
     retry: false,
   });
@@ -257,21 +271,11 @@ function AnswerArea({
     // Leaving during grading must not lose the last edit: it is saved before saving stops, and the
     // fields are locked from the moment this starts.
     mutationFn: async () => {
-      if (!(await flush())) throw new Error('the answer was not saved');
-      autosave.hold();
-      // Handing in deletes the saved draft. Another card or tab may have saved a newer answer, and
-      // this one has nothing to flush, so the server's copy is checked before it can be replaced.
-      // Once this card has graded, its own submission is there and the answer can no longer change.
-      if (!accepted && !judged) {
-        const latest = await client.getIssuanceState(issuanceId);
-        if (
-          latest.submissions.length > 0 ||
-          (latest.draft?.save_epoch ?? 0) !== ackedEpoch.current
-        ) {
-          setConflict(true);
-          return null;
-        }
+      if (!(await flush())) {
+        if (autosave.isHeld()) return null;
+        throw new Error('the answer was not saved');
       }
+      autosave.hold();
       return readAdvice();
     },
     onSuccess: (advice) => {
@@ -284,7 +288,9 @@ function AnswerArea({
       setJudged(advice);
       onAttemptChanged();
     },
-    onError: () => autosave.resume(),
+    onError: (error) => {
+      if (!holdStaleDraft(error)) autosave.resume();
+    },
   });
   const resumed = resume.data && !isSubmitPending(resume.data) ? resume.data : null;
   const graded = judged ?? resumed;
@@ -294,7 +300,7 @@ function AnswerArea({
       if (!rating) throw new Error('no recommended rating');
       return client.submitReview({
         question_id: question.id,
-        assessment,
+        assessment: assessment(),
         activation_intent: current.activation_intent,
         rating,
         response_md: answerMd,
@@ -310,6 +316,7 @@ function AnswerArea({
       setConfirmed(true);
     },
     onError: (error) => {
+      if (holdStaleDraft(error)) return;
       if (!(error instanceof ApiError) || error.status !== 409) return;
       // The question moved on after this answer was started, and no retry can record this result.
       if (error.code === 'stale_admission') {
@@ -420,7 +427,7 @@ function AnswerArea({
     );
   }
 
-  if (graded) {
+  if (graded && !conflict) {
     const rating = graded.judge.suggested_rating;
     return (
       <Frame

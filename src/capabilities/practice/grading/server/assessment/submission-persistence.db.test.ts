@@ -1,10 +1,14 @@
 // 原生 solve 提交路由 DB 测试（db 分区；testcontainer + resetDb）。
 // 断言契约：提交与会话转移原子提交、replay 幂等、revealed 答案只来自冻结 revision。
 
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ResponseSetT } from '@/core/schema/assessment';
 import {
+  assessment_response_draft,
+  assessment_submission,
+  evaluation_effective_head,
+  evaluation_group,
   event,
   learning_record,
   learning_session,
@@ -25,8 +29,10 @@ import { resetDb, testDb } from '../../../../../../tests/helpers/db';
 import { createSolveSubmissionResource } from '../../../api/resource-routes';
 import { startSolveSession } from '../../../server/solve-session';
 import * as Tutor from '../../../server/tutor-session';
+import { createSubmission } from '../../api/assessment-route';
 import { revealAnswerTool } from '../../tools/reveal-answer';
 import { snapshotIssuanceAssistance } from './assistance';
+import { saveResponseDraft } from './submit';
 
 const NOW = new Date('2026-09-25T00:00:00Z');
 
@@ -298,5 +304,122 @@ describe('reveal_answer assistance recording', () => {
     expect(await revealAnswerTool.execute(toolCtx, { question_id: pub.groupId })).toMatchObject({
       status: 'ambiguous',
     });
+  });
+});
+
+describe('submission draft preservation', () => {
+  beforeEach(resetDb);
+  // @invariant concurrency: a newer committed draft survives a stale submission, while an accepted replay leaves later drafts untouched @fails-if stale input creates a submission/group/receipt or deletes the newer answer, or replay consumes another draft
+  it('rejects stale input before writing and replays accepted input without consuming later drafts', async () => {
+    const db = testDb();
+    const pub = await publishAdmitted('draft_preservation');
+    const issued = await issueAssessment(db, { group_id: pub.groupId });
+    if (issued.status !== 'issued') throw new Error(issued.status);
+    const issuance_id = issued.issuance.issuance_id;
+    const responseA = rs(pub);
+    const responseB: ResponseSetT = {
+      entries: [{ slot_id: pub.slotId, kind: 'choice', option_ids: [pub.optionIds[1]] }],
+    };
+    const body = {
+      issuance_id,
+      evaluation_group_id: 'draft_group',
+      idempotency_key: 'draft_submit',
+      response_set: responseA,
+      expected_save_epoch: 1,
+    };
+    const send = (value = body) =>
+      createSubmission(
+        new Request('http://local/api/submissions', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(value),
+        }),
+      );
+    expect(
+      await saveResponseDraft(db, {
+        issuance_id,
+        response_set: responseA,
+        evaluation_group_ref: body.evaluation_group_id,
+      }),
+    ).toMatchObject({ status: 'saved', save_epoch: 1 });
+    const savedB = Promise.withResolvers<void>();
+    const releaseB = Promise.withResolvers<void>();
+    let blocker = 0;
+    const savingB = db.transaction(async (tx) => {
+      expect(
+        await saveResponseDraft(tx, {
+          issuance_id,
+          response_set: responseB,
+          evaluation_group_ref: body.evaluation_group_id,
+          expected_save_epoch: 1,
+        }),
+      ).toMatchObject({ status: 'saved', save_epoch: 2 });
+      const [connection] = await tx.execute<{ pid: number }>(sql`select pg_backend_pid() as pid`);
+      blocker = connection.pid;
+      savedB.resolve();
+      await releaseB.promise;
+    });
+    await Promise.race([savedB.promise, savingB]);
+    const submitting = send();
+    try {
+      await expect
+        .poll(async () => {
+          const waiting = await db.execute(sql`
+          select pid, wait_event_type, wait_event, pg_blocking_pids(pid) as blockers
+          from pg_stat_activity
+          where datname = current_database() and ${blocker} = any(pg_blocking_pids(pid))
+        `);
+          if (waiting.length) console.log('issuance lock wait', JSON.stringify(waiting));
+          return waiting.length;
+        })
+        .toBeGreaterThan(0);
+    } finally {
+      releaseB.resolve();
+      await savingB;
+    }
+    const stale = await submitting;
+    const staleBody = await stale.json();
+    const drafts = await db.select().from(assessment_response_draft);
+    console.log(
+      'draft preservation boundary',
+      JSON.stringify({
+        status: stale.status,
+        body: staleBody,
+        drafts,
+        submissions: await db.select().from(assessment_submission),
+        groups: await db.select().from(evaluation_group),
+      }),
+    );
+    expect(stale.status).toBe(409);
+    expect(staleBody).toMatchObject({ error: 'stale_draft', details: { current_save_epoch: 2 } });
+    expect(drafts).toMatchObject([{ response_set: responseB, save_epoch: 2 }]);
+    expect(await db.select().from(assessment_submission)).toHaveLength(0);
+    expect(await db.select().from(evaluation_group)).toHaveLength(0);
+    expect(await db.select().from(evaluation_effective_head)).toHaveLength(0);
+    expect(
+      await db.select().from(event).where(eq(event.action, 'experimental:assessment_submission')),
+    ).toHaveLength(0);
+    const accepted = await send({ ...body, response_set: responseB, expected_save_epoch: 2 });
+    expect(accepted.status).toBe(201);
+    const receipt = await accepted.json();
+    expect(
+      await saveResponseDraft(db, {
+        issuance_id,
+        response_set: responseA,
+        evaluation_group_ref: 'later_group',
+      }),
+    ).toMatchObject({ status: 'saved' });
+    const later = await db.select().from(assessment_response_draft);
+    const replay = await send({ ...body, response_set: responseB, expected_save_epoch: 0 });
+    expect(await replay.json()).toMatchObject({
+      status: 'replayed',
+      submission: receipt.submission,
+    });
+    expect(await db.select().from(assessment_response_draft)).toEqual(later);
+    expect(await db.select().from(assessment_submission)).toHaveLength(1);
+    expect(
+      await db.select().from(event).where(eq(event.action, 'experimental:assessment_submission')),
+    ).toHaveLength(1);
+    expect(await (await send()).json()).toMatchObject({ error: 'idempotency_conflict' });
   });
 });

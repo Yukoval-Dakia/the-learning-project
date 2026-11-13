@@ -708,40 +708,35 @@ export function usePracticeSubmit({
   // A cached question read may predate the commit (back, then reopen); until it is
   // refreshed it cannot clear an accepted answer, so submitting waits for it.
   const acceptedUnconfirmed = !!accepted && (answerRecorded || qQ.isFetching);
-  const assessmentInput = {
+  const assessmentInput = (draft = currentDraft()) => ({
     issuance_id: issuanceId,
     evaluation_group_id: accepted?.evaluation_group_id ?? `group_stream_${item.id}`,
     submission_id: accepted?.submission_id ?? `submission_stream_${item.id}`,
     idempotency_key: accepted?.idempotency_key ?? `submit_stream_${item.id}`,
-    // YUK-1497 — a block-drawn question hands in every bound select / blank slot still empty as
-    // an active blank (spec §1.2.2); the draft itself never holds those entries.
     response_set:
-      presentation && frozen
+      accepted?.response_set ??
+      (presentation && frozen
         ? {
             entries: entriesForSubmit(
               presentation,
               frozen.response_spec.slots,
-              nativeResponses.entries,
+              draft.response_set.entries,
             ),
           }
-        : nativeResponses,
-    group_evidence: nativeEvidence,
-  };
+        : draft.response_set),
+    group_evidence: accepted?.group_evidence ?? draft.group_evidence,
+    expected_save_epoch: ackedEpoch.current ?? restoredEpoch ?? 0,
+  });
   const draftValue = useMemo(
     () => ({ response_set: nativeResponses, group_evidence: nativeEvidence }),
     [nativeResponses, nativeEvidence],
   );
-  // YUK-1483 — autosave is driven by the edit events below. It is armed only while
-  // answering: the fields render after the issuance is restored and are disabled once
-  // an answer is accepted; judging/committing call hold(), and returning to answering
-  // after a failure calls resume().
-  const draftGroupRef = assessmentInput.evaluation_group_id;
+  // Flush edits before holding autosave; failed submissions resume only without a conflict.
+  const draftGroupRef = accepted?.evaluation_group_id ?? `group_stream_${item.id}`;
   const saveDraft = useCallback(
     async (value: typeof draftValue, ctx: { keepalive: boolean; chained: boolean }) => {
-      // YUK-1487 — always send an epoch (0 = no draft yet): without one the server skips the
-      // stale check, and an older in-flight save could overwrite a newer chained one. A save
-      // chained past an in-flight one sends acked + 1 so whichever lands second loses only
-      // if it is the older text (contract in useResponseDraftAutosave).
+      // A chained save reserves the in-flight save's next epoch; ordinary saves use its ACK.
+      // See useResponseDraftAutosave for the latest-wins ordering contract.
       const acked = ackedEpoch.current ?? restoredEpoch ?? 0;
       const ack = await saveResponseDraft(
         issuanceId,
@@ -786,24 +781,24 @@ export function usePracticeSubmit({
     holdOnConflict: true,
     onConflict: readServerVersion,
   });
-  // YUK-1485 — tab close / reload inside the 800ms debounce: flush the pending draft with
-  // keepalive, as ScreenPlacement does. The controller holds the latest edited value, so this
-  // sends the last keystrokes; while held (judging/committing) or after an accepted answer it
-  // sends nothing. Newer text than an in-flight save carries goes out as one chained keepalive
-  // save (YUK-1487). Armed by the answering root below.
+  // Keepalive flush preserves the latest edit on leave, including an in-flight save chain.
+  // A held controller sends nothing.
   const { flush: flushDraft } = autosave;
   const flushOnPagehide = useCallback(() => flushDraft({ keepalive: true }), [flushDraft]);
   // YUK-1497 / YUK-1719 — iOS may kill a backgrounded tab without pagehide: the same keepalive
   // flush also runs when the page turns hidden. One owner node arms both listeners.
   const attachPagehideFlush = usePagehideTransition(flushOnPagehide, true, flushOnPagehide);
-  // Latest edited draft, written synchronously by every edit handler (never during render).
-  // A handler captured by an older render — e.g. EvidenceComposer finishing an upload after
-  // an await — must build on this, not on its render's answer, or it would hand autosave a
-  // pre-upload answer and the save would drop newer typing. Tagged with the issuance it was
-  // edited under, so it is only used for the issuance currently restored.
+  // Old render handlers must use the latest edit under this issuance, including late uploads.
+  // Every edit updates this ref synchronously before autosave can send it.
   const latestDraft = useRef<{ issuanceId: string; value: typeof draftValue } | null>(null);
   const currentDraft = () =>
     latestDraft.current?.issuanceId === restoredIssuanceId ? latestDraft.current.value : draftValue;
+  const holdStaleDraft = (error: unknown) => {
+    if (!(error instanceof ApiError) || error.code !== 'stale_draft') return false;
+    autosave.hold();
+    readServerVersion();
+    return true;
+  };
   const editDraft = (next: typeof draftValue) => {
     const from = currentDraft();
     if (restoredIssuanceId) latestDraft.current = { issuanceId: restoredIssuanceId, value: next };
@@ -1101,11 +1096,12 @@ export function usePracticeSubmit({
       return;
     }
     setCommitting(true);
-    autosave.hold();
     try {
+      if (!accepted && !(await flushDraft())) return;
+      autosave.hold();
       const res = await submitReview({
         question_id: q.id,
-        assessment: assessmentInput,
+        assessment: assessmentInput(),
         activation_intent: issuanceMode === 'manual' ? undefined : activationIntent.current,
         self_report: issuanceMode === 'manual',
         session_id: sessionId ?? undefined,
@@ -1170,7 +1166,8 @@ export function usePracticeSubmit({
       }
       // advance=false（客观题自动 commit）→ 留在反馈卡让用户先看判定，「下一项」再 onDone()。
       if (opts.advance !== false) onDone();
-    } catch {
+    } catch (error) {
+      if (holdStaleDraft(error)) return;
       setPreview(null);
       recordAttempt(null);
       setCommittedPreview(null);
@@ -1264,9 +1261,10 @@ export function usePracticeSubmit({
     if (!q || isInterventionDiagnostic || issuanceMode === 'manual' || answerRecorded) return;
     setJudging(true);
     try {
-      const r = await getAdvice(q.id, answerMd, imageRefs, assessmentInput, adviceCommit(false));
+      const r = await getAdvice(q.id, answerMd, imageRefs, assessmentInput(), adviceCommit(false));
       await applyAdvice(r, true);
-    } catch {
+    } catch (error) {
+      if (holdStaleDraft(error)) return;
       if (!pendingRun) addToast(JUDGE_FAILURE_MESSAGE, 'info', 'alert');
     } finally {
       setJudging(false);
@@ -1286,8 +1284,9 @@ export function usePracticeSubmit({
   const runJudge = async () => {
     if (returningRef.current || !q || !canSubmit || issuanceMode === 'manual') return;
     setJudging(true);
-    autosave.hold();
     try {
+      if (!accepted && !(await flushDraft())) return;
+      autosave.hold();
       if (isInterventionDiagnostic) {
         // One-shot measurement integrity: do not call the repeatable advice
         // endpoint. The canonical attempt owns the first and only server judge,
@@ -1295,7 +1294,7 @@ export function usePracticeSubmit({
         // the probe, and uses its suggested rating via auto_rate.
         const res = await submitReview({
           question_id: q.id,
-          assessment: assessmentInput,
+          assessment: assessmentInput(),
           session_id: sessionId ?? undefined,
           // Required wire fallback only; auto_rate replaces it with the server
           // judge's suggested rating before persistence.
@@ -1323,9 +1322,10 @@ export function usePracticeSubmit({
         setAutoCommitJudgeEventId('assessment' in res ? res.assessment.candidate_id : null);
         return;
       }
-      const r = await getAdvice(q.id, answerMd, imageRefs, assessmentInput, adviceCommit(true));
+      const r = await getAdvice(q.id, answerMd, imageRefs, assessmentInput(), adviceCommit(true));
       await applyAdvice(r, false);
     } catch (e) {
+      if (holdStaleDraft(e)) return;
       if (isInterventionDiagnostic && e instanceof ApiError && e.status === 409) {
         const restored = await qQ.refetch();
         const committed = restored.data?.committed_attempt;
