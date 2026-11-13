@@ -12,15 +12,14 @@ import {
 } from '@/kernel/read-models/assessment-verdict';
 import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
 import {
+  countDerivationKnowledgeFailures,
   getFailureAttemptForDerivationById,
-  getFailureAttemptsForDerivation,
 } from '@/kernel/read-models/failure-attempts';
 import { getMasteryProjection, isObserved } from '@/kernel/read-models/mastery-projection';
 import { readSolutionPriorForServer } from '../../question-bank/public';
 import {
   type AttributionEvidence,
   type GradingEvidence,
-  KNOWLEDGE_FAILURE_SCAN_LIMIT,
   KNOWLEDGE_FAILURE_WINDOW_DAYS,
   type KnowledgeFailureCount14d,
   type PrerequisiteMasteryEvidence,
@@ -178,22 +177,10 @@ async function loadKnowledgeFailureCounts(
 ): Promise<KnowledgeFailureCount14d[]> {
   if (knowledgeIds.length === 0) return [];
   const since = new Date(now.getTime() - KNOWLEDGE_FAILURE_WINDOW_DAYS * 24 * 60 * 60 * 1000);
-  const failures = await getFailureAttemptsForDerivation(db, {
-    since,
-    limit: KNOWLEDGE_FAILURE_SCAN_LIMIT,
-    includeReviewFailures: true,
-  });
-  const wanted = new Set(knowledgeIds);
-  const counts = new Map<string, number>(knowledgeIds.map((id) => [id, 0]));
-  for (const failure of failures) {
-    for (const id of new Set(failure.referenced_knowledge_ids)) {
-      if (!wanted.has(id)) continue;
-      counts.set(id, (counts.get(id) ?? 0) + 1);
-    }
-  }
-  return [...counts.entries()].map(([knowledge_id, failure_count]) => ({
+  const counts = await countDerivationKnowledgeFailures(db, { knowledgeIds, since });
+  return knowledgeIds.map((knowledge_id) => ({
     knowledge_id,
-    failure_count,
+    failure_count: counts.get(knowledge_id) ?? 0,
   }));
 }
 
