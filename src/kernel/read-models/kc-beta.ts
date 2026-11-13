@@ -16,8 +16,8 @@ import { allowedEventIds } from '@/kernel/events/derivation-policy';
 import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
 import { loadAssessmentLearningScopes } from './assessment-learning-scope';
 import {
-  type AppliedSettlementEvent,
-  liveAppliedSettlements,
+  type CalibrationSettlement,
+  liveCalibrationSettlements,
   loadSettlementEvents,
 } from './assessment-settlements';
 import {
@@ -145,11 +145,10 @@ export async function getRepresentativeKcBeta(
 }
 
 function receiptAnchor(
-  member: AppliedSettlementEvent,
+  member: CalibrationSettlement,
   evidence: Map<string, string>,
 ): string | null {
   if (
-    member.fsrsOnly ||
     member.inputs.groupId !== member.groupId ||
     member.inputs.evaluationId !== member.evaluationId
   )
@@ -208,7 +207,7 @@ export async function readAnswerFirstKcBeta(
       row.payload.unsupported_judge === true ||
       (row.payload.judge as { coarse_outcome?: unknown } | undefined)?.coarse_outcome ===
         'unsupported';
-    if (unsupported || effective === 'unsupported') continue;
+    if (effective === 'unsupported' || (!verdict?.effective && unsupported)) continue;
     const outcome = effective ?? row.outcome;
     if (!['correct', 'incorrect', 'success', 'failure', 'partial'].includes(outcome ?? ''))
       continue;
@@ -243,10 +242,12 @@ export async function readAnswerFirstKcBeta(
     const ledger = await loadSettlementEvents(db);
     const unreadableEvaluations = new Set(
       ledger
-        .filter((row) => row.effect === 'applied' && row.inputs === null)
+        .filter(
+          (row) => (row.effect === 'applied' || row.effect === 'ineligible') && row.inputs === null,
+        )
         .map((row) => row.evaluationId),
     );
-    const live = liveAppliedSettlements(ledger).filter((member) => !member.fsrsOnly);
+    const live = liveCalibrationSettlements(ledger);
     const ledgerAllowed = await allowedIds(
       db,
       live.map((member) => member.id),
@@ -259,7 +260,7 @@ export async function readAnswerFirstKcBeta(
         .where(inArray(difficulty_calibration_evidence.attempt_event_id, part)))
         evidence.set(row.attempt_event_id, row.question_id);
     }
-    const byEvaluation = new Map<string, AppliedSettlementEvent[]>();
+    const byEvaluation = new Map<string, CalibrationSettlement[]>();
     for (const member of live)
       byEvaluation.set(member.evaluationId, [
         ...(byEvaluation.get(member.evaluationId) ?? []),

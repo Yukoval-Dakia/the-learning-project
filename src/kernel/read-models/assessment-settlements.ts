@@ -147,6 +147,13 @@ export interface SettlementEventRow {
   replayOf: string | null;
 }
 
+export interface CalibrationSettlement {
+  id: string;
+  groupId: string;
+  evaluationId: string;
+  inputs: SettlementPlan;
+}
+
 export function coerceMs(value: Date | string | null | undefined): number | null {
   if (value === null || value === undefined) return null;
   const d = value instanceof Date ? value : new Date(value);
@@ -306,6 +313,39 @@ export function liveAppliedSettlements(rows: SettlementEventRow[]): AppliedSettl
       inputs: fsrsOnly
         ? { ...row.inputs, theta: { applied: false, abstainReason: 'retained_user_rating' } }
         : row.inputs,
+    });
+  }
+  return live;
+}
+
+/** Calibration can survive learning abstention, but never a superseded verdict or FSRS-only retention. */
+export function liveCalibrationSettlements(rows: SettlementEventRow[]): CalibrationSettlement[] {
+  const { dead } = settlementReversions(rows);
+  const live: CalibrationSettlement[] = [];
+  for (const row of rows) {
+    if (dead.has(row.id) || row.fsrsOnly || row.occurrenceMs === null || row.inputs === null)
+      continue;
+    if (row.effect !== 'applied') {
+      const plan = row.inputs;
+      const score = plan.verdict?.normalized;
+      if (
+        row.effect !== 'ineligible' ||
+        plan.provenance?.source !== 'automatic' ||
+        plan.provenance.assisted !== false ||
+        typeof score !== 'number' ||
+        !Number.isFinite(score) ||
+        score < 0 ||
+        score > 1 ||
+        typeof plan.calibration?.questionId !== 'string' ||
+        !plan.calibration.questionId.trim()
+      )
+        continue;
+    }
+    live.push({
+      id: row.id,
+      groupId: row.groupId ?? '',
+      evaluationId: row.evaluationId ?? '',
+      inputs: row.inputs,
     });
   }
   return live;
