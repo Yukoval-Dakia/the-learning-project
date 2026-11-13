@@ -698,7 +698,7 @@ function summarizeResult(
     try {
       summary = dt.summarize(parsedInput as never, output as never);
     } catch (err) {
-      const summaryError = traceSafeError(err instanceof Error ? err.message : String(err));
+      const summaryError = traceSafeError(err, true);
       summary = `summary unavailable: ${summaryError}`;
       console.error('[mcp-bridge] tool summarize failed', {
         tool: dt.name,

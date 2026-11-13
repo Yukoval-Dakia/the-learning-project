@@ -890,7 +890,7 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
     const settled = await this.writeTerminal({
       status: 'failure',
       finishReason,
-      errorMessage: String(traceSafeError(error instanceof Error ? error.message : String(error))),
+      errorMessage: String(traceSafeError(error, true)),
       outcome: isTransientAgentFailure(error, this.armedTransport())
         ? 'failed_retryable'
         : 'failed_permanent',
@@ -904,7 +904,7 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
         task_run_id: this.taskRunId,
         kind: this.kind,
         intended_status: 'failure',
-        err: traceSafeError(writeError instanceof Error ? writeError.message : String(writeError)),
+        err: traceSafeError(writeError, true),
       });
     }
     return settled;
@@ -926,7 +926,7 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
         event: 'task_run_retry_marker_not_written',
         task_run_id: this.taskRunId,
         kind: this.kind,
-        err: traceSafeError(error instanceof Error ? error.message : String(error)),
+        err: traceSafeError(error, true),
       });
     }
   }

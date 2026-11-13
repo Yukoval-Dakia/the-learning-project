@@ -178,7 +178,7 @@ async function notifyTaskEvent(ctx: RunTaskCtx, message: RunnerMessage): Promise
     console.error('[runner] task event observer failed (continuing)', {
       subtype: message.subtype,
       task_id: message.task_id,
-      error: traceSafeError(error instanceof Error ? error.message : String(error)),
+      error: traceSafeError(error, true),
     });
   }
 }
@@ -1402,7 +1402,7 @@ async function streamTaskCollectingImpl(
           cost_basis: lifecycle.costBasis,
           cost_ref: lifecycle.costRef,
           partial: true,
-          error: traceSafeError(error instanceof Error ? error.message : String(error)),
+          error: traceSafeError(error, true),
           failureDiagnostics: failureDiagnosticsForResult,
           ...(providerFailure ? { providerFailure } : {}),
         };
@@ -1431,7 +1431,7 @@ async function streamTaskCollectingImpl(
         cost_basis: lifecycle.costBasis,
         cost_ref: lifecycle.costRef,
         partial: true,
-        error: traceSafeError(error instanceof Error ? error.message : String(error)),
+        error: traceSafeError(error, true),
       };
     }
     await lifecycle.markRetried();

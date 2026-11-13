@@ -10,6 +10,7 @@ import {
   taskTranscriptsEnabled,
 } from './laminar-transcript';
 import { hasPiUsageEvidence } from './pi-usage-evidence';
+import { ProviderStreamIdleError } from './provider-stream-watchdog';
 
 type Sdk = typeof import('@lmnr-ai/lmnr');
 type SpanName =
@@ -124,12 +125,14 @@ let initializing: Promise<void> | undefined;
 const activeSpan = new AsyncLocalStorage<TraceSpan>();
 
 /** Provider/parser failures can echo private input even when transcripts are disabled. */
-export function traceSafeError<T>(error: T): T | string {
-  if (!isPrivateTraceContent()) return error;
-  const message = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
-  return message.includes('provider_stream_idle')
-    ? 'provider_stream_idle'
-    : '[private task diagnostic omitted]';
+export function traceSafeError(error: unknown, messageOnly: true): string;
+export function traceSafeError<T>(error: T): T | string;
+export function traceSafeError<T>(error: T, messageOnly = false): T | string {
+  if (isPrivateTraceContent())
+    return error instanceof ProviderStreamIdleError
+      ? 'provider_stream_idle'
+      : '[private task diagnostic omitted]';
+  return messageOnly ? (error instanceof Error ? error.message : String(error)) : error;
 }
 
 export function isPrivateTraceContent(): boolean {
