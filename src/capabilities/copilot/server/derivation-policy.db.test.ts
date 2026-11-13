@@ -10,6 +10,7 @@ import { reconcileCopilotDurableRun, runCopilotRun } from '../jobs/copilot_run';
 import { writeCopilotReply } from './conversation-writes';
 import { createCopilotExecutionOwner } from './copilot-execution';
 import { assembleCopilotRunInput } from './copilot-run-input';
+import { claimCopilotExecutionFence } from './copilot-run-settlement';
 import { getAgentSdkSessionId, setAgentSdkSessionId } from './copilot-run-session-cursor';
 import { COPILOT_RUN_EVENTS, COPILOT_RUN_TABLE } from './copilot-run-status';
 import {
@@ -213,6 +214,9 @@ describe('accepted answer-only lifecycle', () => {
   // @fails-if cold, replay, compaction or correction reads include restricted content or metadata
   it('keeps ordinary→restricted→ordinary history visible while filtering cold/replay/compaction and correction references', async () => {
     const ordinary = await accept('allow', '日常标记：允许后续复验定义域与退化参数。');
+    await claimCopilotExecutionFence(testDb(), ordinary.run_id, {
+      historyReadSet: { version: 1, event_ids: [] },
+    });
     await writeCopilotReply(testDb(), {
       sessionId,
       userAskEventId: ordinary.run_id,
