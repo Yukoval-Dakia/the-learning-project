@@ -16,7 +16,8 @@ import {
   source_document,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { lockPracticeStreamPartition } from '@/kernel/locks/practice-stream';
+import { ApiError } from '@/kernel/http';
+import { tryLockPracticeStreamPartition } from '@/kernel/locks/practice-stream';
 import type { EventSubscriptionHandler } from '@/kernel/manifest';
 import {
   type PurposeSource,
@@ -141,30 +142,89 @@ function deliveryId(sessionId: string, rootId: string): string {
     .digest('hex')}`;
 }
 
+class UploadPracticeContention extends Error {}
+
+function isUploadLockContention(error: unknown): boolean {
+  const seen = new Set<unknown>();
+  for (
+    let cause = error, depth = 0;
+    cause && typeof cause === 'object' && depth < 8 && !seen.has(cause);
+    depth++
+  ) {
+    seen.add(cause);
+    if (cause instanceof UploadPracticeContention || ('code' in cause && cause.code === '55P03'))
+      return true;
+    cause = 'cause' in cause ? cause.cause : undefined;
+  }
+  return false;
+}
+
 async function reconcileBatch(db: Db, sessionId: string): Promise<number> {
+  const deadline = Date.now() + 3000;
+  for (let attempt = 0; ; attempt++) {
+    if (attempt > 0 && Date.now() >= deadline) {
+      throw new ApiError('upload_practice_busy', '刚上传的练习正在同步，请稍后刷新。', 503, {
+        'Retry-After': '1',
+      });
+    }
+    try {
+      return await reconcileBatchAttempt(db, sessionId);
+    } catch (error) {
+      if (!isUploadLockContention(error)) throw error;
+      if (attempt >= 5 || Date.now() >= deadline) {
+        throw new ApiError('upload_practice_busy', '刚上传的练习正在同步，请稍后刷新。', 503, {
+          'Retry-After': '1',
+        });
+      }
+      // The top-level transaction has rolled back, releasing G and every partial delivery.
+      const delay = Math.min(
+        25 * 2 ** attempt * (0.75 + Math.random() * 0.5),
+        deadline - Date.now(),
+      );
+      await new Promise((resolve) => setTimeout(resolve, Math.max(0, delay)));
+    }
+  }
+}
+
+async function reconcileBatchAttempt(db: Db, sessionId: string): Promise<number> {
   return db.transaction(async (tx) => {
+    await tx.execute(sql`SET LOCAL lock_timeout = '250ms'`);
     await acquireLearningStateWriteLock(tx);
+    const [session] = await tx
+      .select({ id: learning_session.id })
+      .from(learning_session)
+      .where(and(eq(learning_session.id, sessionId), eq(learning_session.type, 'ingestion')))
+      .for('share', { noWait: true });
+    if (!session) return 0;
     await tx
       .select({ id: question_block.id })
       .from(question_block)
       .where(eq(question_block.ingestion_session_id, sessionId))
       .orderBy(asc(question_block.id))
-      .for('share');
+      .for('share', { noWait: true });
     const members = await batchMembers(tx, sessionId);
     const rootIds = [...new Set(members.map((m) => m.rootId))].sort();
+    const questionIds = [
+      ...new Set(members.flatMap((m) => [m.rootId, m.block.imported_question_id ?? m.rootId])),
+    ].sort();
     if (!rootIds.length) return 0;
     await tx
       .select({ id: question.id })
       .from(question)
-      .where(inArray(question.id, rootIds))
+      .where(inArray(question.id, questionIds))
       .orderBy(asc(question.id))
-      .for('share');
+      .for('share', { noWait: true });
+    const lockedMembers = await batchMembers(tx, sessionId);
+    const binding = (rows: typeof members) =>
+      rows.map((m) => [m.block.id, m.block.imported_question_id, m.rootId]);
+    if (JSON.stringify(binding(members)) !== JSON.stringify(binding(lockedMembers)))
+      throw new UploadPracticeContention();
     await tx
       .select({ id: question_group_lifecycle.group_id })
       .from(question_group_lifecycle)
       .where(inArray(question_group_lifecycle.group_id, rootIds))
       .orderBy(asc(question_group_lifecycle.group_id))
-      .for('share');
+      .for('share', { noWait: true });
 
     // Discover the whole provenance closure before taking any document or partition lock.
     // writeEvent's session binding only reacquires a member of this same sorted set.
@@ -187,11 +247,11 @@ async function reconcileBatch(db: Db, sessionId: string): Promise<number> {
         .from(source_document)
         .where(inArray(source_document.id, [...documentIds]))
         .orderBy(asc(source_document.id))
-        .for('share');
+        .for('share', { noWait: true });
     const batch = await readUploadReadyBatch(tx, sessionId);
     if (!batch) return 0;
     const date = streamLocalDate();
-    await lockPracticeStreamPartition(tx, date);
+    if (!(await tryLockPracticeStreamPartition(tx, date))) throw new UploadPracticeContention();
     let added = 0;
     for (const ready of batch.ready) {
       const id = deliveryId(sessionId, ready.questionId);
@@ -218,13 +278,26 @@ async function reconcileBatch(db: Db, sessionId: string): Promise<number> {
             isNull(practice_stream_item.session_id),
             eq(practice_stream_item.ref_id, ready.questionId),
           ),
-        );
+        )
+        .for('update', { noWait: true });
       const marker = { version: 1, batch_id: sessionId };
       let rowId = existing?.id;
       if (existing?.status === 'pending') {
         await tx
           .update(practice_stream_item)
-          .set({ signals: { ...existing.signals, upload_practice: marker } })
+          .set({
+            signals: {
+              ...existing.signals,
+              upload_practice: {
+                ...marker,
+                ...(!isUploadPracticeRow(existing) ||
+                (existing.signals.upload_practice as Record<string, unknown>)?.existing_stream ===
+                  true
+                  ? { existing_stream: true }
+                  : {}),
+              },
+            },
+          })
           .where(eq(practice_stream_item.id, existing.id));
       } else if (!existing) {
         rowId = `${id}:row`;
@@ -310,8 +383,27 @@ export async function reconcileTodayUploadPractice(db: Db): Promise<number> {
 }
 
 export function buildUploadReadySubscriber(db: Db): EventSubscriptionHandler {
-  return async () => {
-    const added = await reconcileTodayUploadPractice(db);
+  return async ({ sourceEventId }) => {
+    const [source] = await db.select().from(event).where(eq(event.id, sourceEventId));
+    if (!source || !UPLOAD_READY_ACTIONS.includes(source.action))
+      return { status: 'skipped', reason: 'not an upload readiness source' };
+    const sourceMatch =
+      source.action === 'experimental:assessment_publish' && source.subject_kind === 'question'
+        ? sql`coalesce(${question.parent_question_id}, ${question.id}) = ${source.subject_id}`
+        : source.action === 'experimental:question_block_lifecycle' &&
+            source.subject_kind === 'question_block'
+          ? eq(question_block.id, source.subject_id)
+          : null;
+    if (!sourceMatch) return { status: 'skipped', reason: 'source has no batch binding' };
+    // Dispatch identity proves a newly committed obligation even when a paid receipt keeps an old clock.
+    const batches = await db
+      .selectDistinct({ id: question_block.ingestion_session_id })
+      .from(question_block)
+      .innerJoin(question, eq(question.id, question_block.imported_question_id))
+      .where(and(inArray(question_block.status, ACTIVE_BLOCK_STATUSES), sourceMatch))
+      .orderBy(asc(question_block.ingestion_session_id));
+    let added = 0;
+    for (const batch of batches) added += await reconcileBatch(db, batch.id);
     return { status: 'succeeded', detail: { added } };
   };
 }

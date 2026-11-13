@@ -116,7 +116,7 @@ export interface MaterializeResult {
 /**
  * Materialize a StreamPlan in plan order.
  *
- * Positions: refs in the plan get plan index + 1; surviving rows outside the plan are
+ * Default positions: refs in the plan get plan index + 1; surviving rows outside the plan are
  * appended after the plan in their existing order. All rows are renumbered so
  * ORDER BY position always yields the plan order, making the due subsequence equal to
  * retrievability ascending.
@@ -437,6 +437,17 @@ async function readComposeError(
   };
 }
 
+// Upload marking cannot erase evidence of a pre-existing ordinary plan.
+function hasOrdinaryComposeEvidence(rows: readonly StreamItemRow[]): boolean {
+  return rows.some(
+    (row) =>
+      !isUploadPracticeRow(row) ||
+      row.source !== 'import' ||
+      row.added_by !== 'user' ||
+      (row.signals.upload_practice as Record<string, unknown>)?.existing_stream === true,
+  );
+}
+
 /**
  * Single-flight compose. A reserved connection holds the paid-work advisory lock while
  * prepare/Mem0/runTask run outside a transaction; a short probe under the
@@ -447,8 +458,9 @@ async function readComposeError(
  * Observations are collected in the transaction but written after commit (see
  * writeObservationsBestEffort), so telemetry cannot abort the stream.
  *
- * @returns Added rows; 0 when this call lost the race and no-ops.
+ * @returns Added rows; 0 when an ordinary plan or a durable attempt already exists.
  */
+
 async function singleFlightCompose(
   db: Db,
   date: string,
@@ -469,11 +481,12 @@ async function singleFlightCompose(
     async (lockedDb) => {
       const attemptId = await lockedDb.transaction(async (tx) => {
         await lockDailyStreamPartition(tx, date);
-        const [result] = await tx
-          .select({ count: sql<number>`count(*)::int` })
+        const rows = await tx
+          .select()
           .from(practice_stream_item)
-          .where(and(streamPartitionPredicate(date), ordinaryStreamRowPredicate));
-        if (result.count > 0 || (await readLatestComposeAttempt(tx, date))) return null;
+          .where(streamPartitionPredicate(date));
+        if (hasOrdinaryComposeEvidence(rows) || (await readLatestComposeAttempt(tx, date)))
+          return null;
         return startComposeAttempt(tx, date, 'initial');
       });
       if (!attemptId) return { added: 0, observations: [], mixNote: null } satisfies ComposeOutcome;
@@ -841,7 +854,7 @@ async function trimStoredPendingItemsToBudget(
 }
 
 /**
- * 读当日流；为空且 composeIfEmpty 时 lazy compose（首次打开练习面的默认路径）。
+ * 读当日流；尚无普通编排事实且 composeIfEmpty 时 lazy compose（含仅上传的流）。
  *
  * 选题路径由 `opts.policy`（缺省 `resolveSelectionPolicy`，读 env / 默认 softmax_mfi）
  * 裁定：legacy 走确定性 composeDailyStream；softmax_mfi 走档2 LLM-strong 路径（含两级
@@ -879,7 +892,7 @@ export async function getStream(
     .orderBy(asc(practice_stream_item.position));
 
   if (
-    !rows.some((row) => !isUploadPracticeRow(row)) &&
+    !hasOrdinaryComposeEvidence(rows) &&
     opts.composeIfEmpty &&
     !(await readLatestComposeAttempt(db, date))
   ) {
