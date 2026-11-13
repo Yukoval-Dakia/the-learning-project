@@ -256,14 +256,11 @@ const NODE_VIOLATION_SQL = sql`CASE n.kind
               THEN e.payload->'history_read_set'->'event_ids' ELSE '[]'::jsonb END) ref
               WHERE jsonb_typeof(ref) IS DISTINCT FROM 'string' OR length(btrim(ref #>> '{}')) = 0
                 OR ref #>> '{}' IN (e.id, e.caused_by_event_id))
-            OR EXISTS (WITH RECURSIVE history_ancestors(id) AS (
-              SELECT ref #>> '{}' FROM jsonb_array_elements(CASE WHEN jsonb_typeof(e.payload->'history_read_set'->'event_ids') = 'array'
+            OR EXISTS (${purposeLineageSeeded(sql`
+              SELECT 'event'::text, ref #>> '{}' FROM jsonb_array_elements(CASE WHEN jsonb_typeof(e.payload->'history_read_set'->'event_ids') = 'array'
                 THEN e.payload->'history_read_set'->'event_ids' ELSE '[]'::jsonb END) ref
-              UNION
-              SELECT ref #>> '{}' FROM history_ancestors h JOIN event parent ON parent.id = h.id
-              CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(parent.payload->'history_read_set'->'event_ids') = 'array'
-                THEN parent.payload->'history_read_set'->'event_ids' ELSE '[]'::jsonb END) ref
-            ) SELECT 1 FROM history_ancestors h WHERE h.id = e.id)))
+            `)} SELECT 1 FROM purpose_lineage history_source
+              WHERE history_source.kind = 'event' AND history_source.id = e.id)))
           OR (e.action = 'experimental:copilot_user_ask' AND e.payload ? 'draft_focus' AND (
             jsonb_typeof(e.payload->'draft_focus'->'source_usage_epochs') IS DISTINCT FROM 'object'
             OR e.payload->'draft_focus'->'source_usage_epochs' = '{}'::jsonb

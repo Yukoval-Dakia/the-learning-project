@@ -134,14 +134,72 @@ SELECT NOT EXISTS (WITH RECURSIVE purpose_lineage(kind, id) AS (
               THEN e.payload->'history_read_set'->'event_ids' ELSE '[]'::jsonb END) ref
               WHERE jsonb_typeof(ref) IS DISTINCT FROM 'string' OR length(btrim(ref #>> '{}')) = 0
                 OR ref #>> '{}' IN (e.id, e.caused_by_event_id))
-            OR EXISTS (WITH RECURSIVE history_ancestors(id) AS (
-              SELECT ref #>> '{}' FROM jsonb_array_elements(CASE WHEN jsonb_typeof(e.payload->'history_read_set'->'event_ids') = 'array'
+            OR EXISTS (WITH RECURSIVE purpose_lineage(kind, id) AS (
+
+              SELECT 'event'::text, ref #>> '{}' FROM jsonb_array_elements(CASE WHEN jsonb_typeof(e.payload->'history_read_set'->'event_ids') = 'array'
                 THEN e.payload->'history_read_set'->'event_ids' ELSE '[]'::jsonb END) ref
-              UNION
-              SELECT ref #>> '{}' FROM history_ancestors h JOIN event parent ON parent.id = h.id
-              CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(parent.payload->'history_read_set'->'event_ids') = 'array'
-                THEN parent.payload->'history_read_set'->'event_ids' ELSE '[]'::jsonb END) ref
-            ) SELECT 1 FROM history_ancestors h WHERE h.id = e.id)))
+
+    UNION
+    SELECT edge.kind, edge.id FROM purpose_lineage n
+    CROSS JOIN LATERAL (
+      SELECT v.kind, v.id FROM question q
+      CROSS JOIN LATERAL (VALUES
+        ('document', q.metadata->>'source_document_id'),
+        ('document', q.metadata->'quiz_gen'->>'material_source_document_id'),
+        ('session', q.metadata->>'ingestion_session_id'),
+        ('record', q.metadata->>'source_record_id'),
+        ('question', q.parent_question_id), ('question', q.parent_variant_id),
+        ('question', NULLIF(q.root_question_id, q.id)),
+        ('event', q.metadata->>'source_attempt_event_id'),
+        ('event', CASE WHEN q.source = 'dreaming' THEN q.source_ref END)
+      ) v(kind, id) WHERE n.kind = 'question' AND q.id = n.id
+      UNION ALL
+      SELECT v.kind, v.id FROM learning_record r
+      CROSS JOIN LATERAL (VALUES
+        ('document', r.source_document_id), ('question', r.question_id),
+        ('event', r.origin_event_id), ('event', r.attempt_event_id)
+      ) v(kind, id) WHERE n.kind = 'record' AND r.id = n.id
+      UNION ALL
+      SELECT v.kind, v.id FROM event e
+      LEFT JOIN event b ON b.id = 'ingestion-usage:' || e.id
+        AND b.action = 'experimental:ingestion_usage_binding'
+        AND b.actor_kind = 'system' AND b.actor_ref = 'ingestion-usage'
+      CROSS JOIN LATERAL (VALUES
+        ('event', e.caused_by_event_id), ('session', e.session_id),
+        ('question', CASE WHEN e.subject_kind = 'question' THEN e.subject_id END),
+        ('question', CASE WHEN e.action = 'experimental:copilot_user_ask' THEN e.payload->'draft_focus'->>'question_id' END),
+        ('record', CASE WHEN e.subject_kind = 'record' THEN e.subject_id END),
+        ('document', CASE WHEN e.subject_kind = 'source_document' THEN e.subject_id END),
+        ('event', CASE WHEN e.subject_kind = 'event' THEN e.subject_id END),
+        ('record', CASE WHEN COALESCE(e.payload->'ai_proposal'->>'kind', CASE WHEN e.action = 'experimental:proposal' THEN e.payload->>'kind' END) = 'record_promotion'
+          THEN COALESCE(e.payload->'ai_proposal', e.payload)->'proposed_change'->>'record_id' END),
+        ('question', CASE WHEN COALESCE(e.payload->'ai_proposal'->>'kind', CASE WHEN e.action = 'experimental:proposal' THEN e.payload->>'kind' END) = 'variant_question'
+          THEN COALESCE(e.payload->'ai_proposal', e.payload)->'proposed_change'->>'source_question_id' END),
+        ('document', b.payload->>'document_id')
+      ) v(kind, id) WHERE n.kind = 'event' AND e.id = n.id
+      UNION ALL
+      SELECT 'event', ref #>> '{}' FROM event reply
+      CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(reply.payload->'history_read_set'->'event_ids') = 'array'
+        THEN reply.payload->'history_read_set'->'event_ids' ELSE '[]'::jsonb END) ref
+      WHERE n.kind = 'event' AND reply.id = n.id AND reply.action = 'experimental:copilot_reply'
+      UNION ALL
+      SELECT 'document', epoch.key FROM event ask
+      CROSS JOIN LATERAL jsonb_each_text(CASE WHEN jsonb_typeof(ask.payload->'draft_focus'->'source_usage_epochs') = 'object'
+        THEN ask.payload->'draft_focus'->'source_usage_epochs' ELSE '{}'::jsonb END) epoch
+      WHERE n.kind = 'event' AND ask.id = n.id AND ask.action = 'experimental:copilot_user_ask'
+      UNION ALL
+      SELECT CASE ref->>'kind' WHEN 'source_document' THEN 'document' ELSE ref->>'kind' END,
+        ref->>'id' FROM event note
+      CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(note.payload->'refs') = 'array'
+        THEN note.payload->'refs' ELSE '[]'::jsonb END) ref
+      WHERE n.kind = 'event' AND note.id = n.id AND note.action = 'experimental:agent_note'
+        AND ref->>'kind' IN ('source_document', 'question', 'record', 'event')
+      UNION ALL
+      SELECT 'document', s.source_document_id FROM learning_session s
+      WHERE n.kind = 'session' AND s.id = n.id
+) edge WHERE edge.id IS NOT NULL
+  ) SELECT 1 FROM purpose_lineage history_source
+              WHERE history_source.kind = 'event' AND history_source.id = e.id)))
           OR (e.action = 'experimental:copilot_user_ask' AND e.payload ? 'draft_focus' AND (
             jsonb_typeof(e.payload->'draft_focus'->'source_usage_epochs') IS DISTINCT FROM 'object'
             OR e.payload->'draft_focus'->'source_usage_epochs' = '{}'::jsonb
@@ -301,14 +359,72 @@ WITH RECURSIVE purpose_lineage(root_id, kind, id) AS (
               THEN e.payload->'history_read_set'->'event_ids' ELSE '[]'::jsonb END) ref
               WHERE jsonb_typeof(ref) IS DISTINCT FROM 'string' OR length(btrim(ref #>> '{}')) = 0
                 OR ref #>> '{}' IN (e.id, e.caused_by_event_id))
-            OR EXISTS (WITH RECURSIVE history_ancestors(id) AS (
-              SELECT ref #>> '{}' FROM jsonb_array_elements(CASE WHEN jsonb_typeof(e.payload->'history_read_set'->'event_ids') = 'array'
+            OR EXISTS (WITH RECURSIVE purpose_lineage(kind, id) AS (
+
+              SELECT 'event'::text, ref #>> '{}' FROM jsonb_array_elements(CASE WHEN jsonb_typeof(e.payload->'history_read_set'->'event_ids') = 'array'
                 THEN e.payload->'history_read_set'->'event_ids' ELSE '[]'::jsonb END) ref
-              UNION
-              SELECT ref #>> '{}' FROM history_ancestors h JOIN event parent ON parent.id = h.id
-              CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(parent.payload->'history_read_set'->'event_ids') = 'array'
-                THEN parent.payload->'history_read_set'->'event_ids' ELSE '[]'::jsonb END) ref
-            ) SELECT 1 FROM history_ancestors h WHERE h.id = e.id)))
+
+    UNION
+    SELECT edge.kind, edge.id FROM purpose_lineage n
+    CROSS JOIN LATERAL (
+      SELECT v.kind, v.id FROM question q
+      CROSS JOIN LATERAL (VALUES
+        ('document', q.metadata->>'source_document_id'),
+        ('document', q.metadata->'quiz_gen'->>'material_source_document_id'),
+        ('session', q.metadata->>'ingestion_session_id'),
+        ('record', q.metadata->>'source_record_id'),
+        ('question', q.parent_question_id), ('question', q.parent_variant_id),
+        ('question', NULLIF(q.root_question_id, q.id)),
+        ('event', q.metadata->>'source_attempt_event_id'),
+        ('event', CASE WHEN q.source = 'dreaming' THEN q.source_ref END)
+      ) v(kind, id) WHERE n.kind = 'question' AND q.id = n.id
+      UNION ALL
+      SELECT v.kind, v.id FROM learning_record r
+      CROSS JOIN LATERAL (VALUES
+        ('document', r.source_document_id), ('question', r.question_id),
+        ('event', r.origin_event_id), ('event', r.attempt_event_id)
+      ) v(kind, id) WHERE n.kind = 'record' AND r.id = n.id
+      UNION ALL
+      SELECT v.kind, v.id FROM event e
+      LEFT JOIN event b ON b.id = 'ingestion-usage:' || e.id
+        AND b.action = 'experimental:ingestion_usage_binding'
+        AND b.actor_kind = 'system' AND b.actor_ref = 'ingestion-usage'
+      CROSS JOIN LATERAL (VALUES
+        ('event', e.caused_by_event_id), ('session', e.session_id),
+        ('question', CASE WHEN e.subject_kind = 'question' THEN e.subject_id END),
+        ('question', CASE WHEN e.action = 'experimental:copilot_user_ask' THEN e.payload->'draft_focus'->>'question_id' END),
+        ('record', CASE WHEN e.subject_kind = 'record' THEN e.subject_id END),
+        ('document', CASE WHEN e.subject_kind = 'source_document' THEN e.subject_id END),
+        ('event', CASE WHEN e.subject_kind = 'event' THEN e.subject_id END),
+        ('record', CASE WHEN COALESCE(e.payload->'ai_proposal'->>'kind', CASE WHEN e.action = 'experimental:proposal' THEN e.payload->>'kind' END) = 'record_promotion'
+          THEN COALESCE(e.payload->'ai_proposal', e.payload)->'proposed_change'->>'record_id' END),
+        ('question', CASE WHEN COALESCE(e.payload->'ai_proposal'->>'kind', CASE WHEN e.action = 'experimental:proposal' THEN e.payload->>'kind' END) = 'variant_question'
+          THEN COALESCE(e.payload->'ai_proposal', e.payload)->'proposed_change'->>'source_question_id' END),
+        ('document', b.payload->>'document_id')
+      ) v(kind, id) WHERE n.kind = 'event' AND e.id = n.id
+      UNION ALL
+      SELECT 'event', ref #>> '{}' FROM event reply
+      CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(reply.payload->'history_read_set'->'event_ids') = 'array'
+        THEN reply.payload->'history_read_set'->'event_ids' ELSE '[]'::jsonb END) ref
+      WHERE n.kind = 'event' AND reply.id = n.id AND reply.action = 'experimental:copilot_reply'
+      UNION ALL
+      SELECT 'document', epoch.key FROM event ask
+      CROSS JOIN LATERAL jsonb_each_text(CASE WHEN jsonb_typeof(ask.payload->'draft_focus'->'source_usage_epochs') = 'object'
+        THEN ask.payload->'draft_focus'->'source_usage_epochs' ELSE '{}'::jsonb END) epoch
+      WHERE n.kind = 'event' AND ask.id = n.id AND ask.action = 'experimental:copilot_user_ask'
+      UNION ALL
+      SELECT CASE ref->>'kind' WHEN 'source_document' THEN 'document' ELSE ref->>'kind' END,
+        ref->>'id' FROM event note
+      CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(note.payload->'refs') = 'array'
+        THEN note.payload->'refs' ELSE '[]'::jsonb END) ref
+      WHERE n.kind = 'event' AND note.id = n.id AND note.action = 'experimental:agent_note'
+        AND ref->>'kind' IN ('source_document', 'question', 'record', 'event')
+      UNION ALL
+      SELECT 'document', s.source_document_id FROM learning_session s
+      WHERE n.kind = 'session' AND s.id = n.id
+) edge WHERE edge.id IS NOT NULL
+  ) SELECT 1 FROM purpose_lineage history_source
+              WHERE history_source.kind = 'event' AND history_source.id = e.id)))
           OR (e.action = 'experimental:copilot_user_ask' AND e.payload ? 'draft_focus' AND (
             jsonb_typeof(e.payload->'draft_focus'->'source_usage_epochs') IS DISTINCT FROM 'object'
             OR e.payload->'draft_focus'->'source_usage_epochs' = '{}'::jsonb

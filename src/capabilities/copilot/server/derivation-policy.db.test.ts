@@ -10,8 +10,8 @@ import { reconcileCopilotDurableRun, runCopilotRun } from '../jobs/copilot_run';
 import { writeCopilotReply } from './conversation-writes';
 import { createCopilotExecutionOwner } from './copilot-execution';
 import { assembleCopilotRunInput } from './copilot-run-input';
-import { claimCopilotExecutionFence } from './copilot-run-settlement';
 import { getAgentSdkSessionId, setAgentSdkSessionId } from './copilot-run-session-cursor';
+import { claimCopilotExecutionFence } from './copilot-run-settlement';
 import { COPILOT_RUN_EVENTS, COPILOT_RUN_TABLE } from './copilot-run-status';
 import {
   isCopilotWorkerSessionOwned,
