@@ -15,7 +15,7 @@ accept/dismiss 带 FOR UPDATE 防并发）、知识点创建/归档与合并归�
   knowledge_maintenance_nightly / kc_dedup_nightly / merge_attribution_sweep /
   projection_oracle_sweep / solution_prior_prereq_nightly（已准入解法先验里
   至少两题共同支持的先修对；一道题只有恰好一个仍在用的知识点时才计入，来源后来
-  改为不可派生的题不计入；只提议、不自动通过）；api/ — route body，由 manifest 的 load thunk 懒加载。
+  改为不可派生的题不计入；驳回过的同一对不再提议；只提议、不自动通过）；api/ — route body，由 manifest 的 load thunk 懒加载。
 - 包外消费方：practice / ingestion 经 kernel 读模型取知识点与 subject 派生（knowledge-tree /
   subject-profile / knowledge-validate / subject-resolution）；server 的 revert、proposal
   undo-guard、admin 配置事实与 agency 的 FailureAttempt 类型走 public.ts。

@@ -1,12 +1,18 @@
 // Nightly, propose-only. Admitted solution priors that agree on the same
-// prerequisite pair become one knowledge-edge suggestion. Live edges, a pending
-// twin, and a dismiss cooldown are refused by the existing edge writer, so this
-// job never accepts and never re-opens a pair the owner already turned down.
+// prerequisite pair become one knowledge-edge suggestion. The existing edge
+// writer refuses a live edge, a pending twin, and a dismiss still inside the
+// shared seven-day window. This job also refuses a pair that already has a
+// dismissal record, so the window expiring is not a reason to ask again.
 
+import { and, eq, gt, inArray } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
-import { writeKnowledgeEdgeProposal } from '@/capabilities/knowledge/server/edge-proposal-write';
+import {
+  knowledgeEdgeCooldownKeys,
+  writeKnowledgeEdgeProposal,
+} from '@/capabilities/knowledge/server/edge-proposal-write';
 import { LEARNER_SUMMARY_MAX_CHARS } from '@/core/schema/proposal';
 import type { Db } from '@/db/client';
+import { proposal_signals } from '@/db/schema';
 import { learnerSummaryIfAllowed } from '@/kernel/proposals/learner-summary';
 import {
   type PrerequisiteEdgeSupport,
@@ -58,6 +64,25 @@ function reasonFor(edge: PrerequisiteEdgeSupport): string {
   return text.length <= 4000 ? text : text.slice(0, 4000);
 }
 
+const EDGE_PROPOSAL_KIND = 'knowledge_edge';
+
+/** A past dismissal stays on the signal after the shared window ends. */
+async function ownerAlreadyRefused(db: Db, fromId: string, toId: string): Promise<boolean> {
+  const keys = knowledgeEdgeCooldownKeys(fromId, toId, RELATION_PREREQUISITE);
+  const [row] = await db
+    .select({ dismiss_count: proposal_signals.dismiss_count })
+    .from(proposal_signals)
+    .where(
+      and(
+        eq(proposal_signals.kind, EDGE_PROPOSAL_KIND),
+        inArray(proposal_signals.cooldown_key, keys),
+        gt(proposal_signals.dismiss_count, 0),
+      ),
+    )
+    .limit(1);
+  return row != null;
+}
+
 export async function runSolutionPriorPrerequisiteProposals(
   db: Db,
 ): Promise<SolutionPriorPrereqResult> {
@@ -65,6 +90,10 @@ export async function runSolutionPriorPrerequisiteProposals(
   const result = emptyResult();
   result.supported_pairs = edges.length;
   for (const edge of edges) {
+    if (await ownerAlreadyRefused(db, edge.fromKnowledgeId, edge.toKnowledgeId)) {
+      result.skipped_cooldown += 1;
+      continue;
+    }
     const learnerSummary = learnerLine(edge.fromName, edge.toName);
     const written = await writeKnowledgeEdgeProposal(db, {
       validate: 'rubric',
