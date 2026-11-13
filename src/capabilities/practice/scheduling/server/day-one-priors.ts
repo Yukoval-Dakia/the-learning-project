@@ -9,7 +9,7 @@
 import { and, eq, inArray, isNull } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
 import { knowledge_edge } from '@/db/schema';
-import { getRepresentativeKcBeta } from '@/kernel/read-models/mastery-projection';
+import { getRepresentativeKcBeta } from '@/kernel/read-models/kc-beta';
 import { effectiveThetaForKcBatch, getMasteryStates } from '@/kernel/read-models/mastery-state';
 import {
   type DayOneGridPosterior,

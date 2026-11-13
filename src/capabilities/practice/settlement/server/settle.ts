@@ -42,6 +42,14 @@ import { writeEvent } from '@/kernel/events';
 import { HostOperationNotInstalledError } from '@/kernel/host-operation';
 import { ApiError } from '@/kernel/http';
 import { lockAssessmentEvaluationGroup } from '@/kernel/locks/assessment-evaluation-group-lock';
+import {
+  type AppliedSettlementEvent,
+  type FsrsSubject,
+  type SettlementPlan,
+  liveAppliedSettlements,
+  loadSettlementEvents,
+  subjectKey,
+} from '@/kernel/read-models/assessment-settlements';
 import { resolveAbilityGlobalByKnowledgeId } from '@/kernel/read-models/mastery-state';
 import { installCandidateStateRebuild } from '@/kernel/records/scheduling-state';
 import { selectedForgettingEngine } from '@/kernel/scheduling';
@@ -57,15 +65,9 @@ import {
   schedulingSubjects,
 } from './settle-plan';
 import {
-  type AppliedSettlementEvent,
-  type FsrsSubject,
-  type SettlementPlan,
   byOccurrenceAsc,
-  liveAppliedSettlements,
-  loadSettlementEvents,
   candidateStateForRead as readCandidateStateForRead,
   replayClosure,
-  subjectKey,
 } from './settle-read';
 import {
   type ReplayRequired,

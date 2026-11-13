@@ -21,13 +21,13 @@ import {
   resolveOwningLearningItemIds,
 } from '@/kernel/read-models/artifact-backlinks';
 import { getArtifactCorrectionStates } from '@/kernel/read-models/artifact-corrections';
+import { getRepresentativeKcBeta } from '@/kernel/read-models/kc-beta';
 import { recentNativeAttemptsForKnowledge } from '@/kernel/read-models/knowledge-activity';
 import {
   abilityReadingsByIdOrFail,
   readLearnerJudgments,
 } from '@/kernel/read-models/learner-judgment';
 import { isLearnerVisibleKnowledgeId } from '@/kernel/read-models/learner-knowledge-visibility';
-import { getRepresentativeKcBeta } from '@/kernel/read-models/mastery-projection';
 import { loadMergedKnowledgeClosure } from '@/kernel/read-models/merged-knowledge';
 import {
   type NoteSummary,

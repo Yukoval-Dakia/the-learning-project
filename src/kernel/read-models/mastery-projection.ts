@@ -23,6 +23,7 @@ import { thetaSe } from '@/core/theta';
 import type { Db, Tx } from '@/db/client';
 import { knowledge_edge, mastery_state } from '@/db/schema';
 import { getNonKcKnowledgeIds } from '@/kernel/read-models/knowledge-roles';
+import { type KcBetaBasis, getRepresentativeKcBeta, readAnswerFirstKcBeta } from './kc-beta';
 
 type DbLike = Db | Tx;
 
@@ -88,6 +89,8 @@ export interface MasteryProjection {
   /** YUK-495 #41 — the representative β anchor fed to pfaLogit, exposed so the client can
    *  re-derive the band bit-for-bit from raw evidence (success/fail/β/precision). */
   beta: number;
+  /** Knowledge-axis difficulty population; independent of theta uncertainty and KG provenance. */
+  beta_basis?: KcBetaBasis;
   /** YUK-559 (S1) — provenance discriminant (read model). 'observed' for a KC's own
    *  mastery_state row; 'inferred' for a KG-borrowed synthesized entry. Never persisted. */
   provenance: MasteryProvenance;
@@ -189,16 +192,12 @@ export async function getMasteryProjection(
         inArray(mastery_state.subject_id, evaluableIds),
       ),
     );
-  // B1 FULL (YUK-420) — per-KC representative β = the KC's HARD-track item
-  // difficulty (logit). β feeds the difficulty-aware p(L) (harder KC ⇒ lower p(L)
-  // at fixed counts). KCs with no anchored hard-track item → β=0 (neutral
-  // difficulty origin), so cold-start / unanchored KCs project exactly as before
-  // (σ at b=0). Only KCs that HAVE a mastery_state row need a β (others are absent
-  // from the map), so we resolve β only for the rows we actually project.
-  const betaByKc = await getRepresentativeKcBeta(
-    db,
-    rows.map((r) => r.subject_id),
-  );
+  const projectedIds = rows.map((r) => r.subject_id);
+  const selectedBeta =
+    subjectKind === 'knowledge' ? await readAnswerFirstKcBeta(db, projectedIds) : null;
+  const betaByKc = selectedBeta
+    ? new Map([...selectedBeta].map(([id, selection]) => [id, selection.beta]))
+    : await getLegacyRepresentativeBeta(db, projectedIds);
   const projection = new Map<string, MasteryProjection>(
     rows.map((row) => {
       const beta = betaByKc.get(row.subject_id) ?? 0;
@@ -224,6 +223,9 @@ export async function getMasteryProjection(
           fail_count: row.fail_count,
           last_outcome_at: row.last_outcome_at ?? null,
           beta,
+          ...(selectedBeta
+            ? { beta_basis: selectedBeta.get(row.subject_id)?.basis ?? 'unavailable' }
+            : {}),
           // YUK-559 (S1) — this entry IS the KC's own mastery_state evidence.
           provenance: 'observed',
         },
@@ -417,6 +419,7 @@ async function applyKgSoftLayer(
         fail_count: 0,
         last_outcome_at: null,
         beta,
+        beta_basis: borrowedBeta.has(id) ? 'eligible_pool_fallback' : 'unavailable',
         // YUK-559 (S1) — synthesized KG-borrowed entry, NOT this KC's own evidence.
         provenance: 'inferred',
       });
@@ -466,37 +469,13 @@ async function loadEdgesForProjection(
   return splitProjectionEdgeRows(edgeRows);
 }
 
-/**
- * B1 FULL (YUK-420) — resolve a representative HARD-track item difficulty (β, on
- * the logit b-scale) per knowledge node, for the difficulty-aware p(L).
- *
- * Representative-b choice (documented): a KC is carried by MANY questions, each
- * possibly anchored by a HARD-track `item_calibration` row. There is no single
- * "the KC's b"; we summarise across the KC's hard-track items using the **MEDIAN**
- * of each item's effective b = COALESCE(b_post, b_anchor, b) — the same read
- * order as {@link effectiveB} (YUK-439: posterior b_post first, then cold-start
- * anchor b_anchor, then the legacy b column; b_calib left the chain). Median (not mean) is robust to a single
- * mis-anchored outlier item skewing the KC difficulty. SOFT-track rows are
- * EXCLUDED (ADR-0035: soft track never reaches p(L)/scheduling). Items with no
- * effective b at all are skipped; a KC with no anchored hard-track item gets NO
- * entry. `getMasteryProjection` defaults that absence to β=0 for its math, while
- * read models may use map presence as the authoritative has-anchor bit (YUK-528).
- *
- * READ-ONLY — pure SELECT against question.knowledge_ids (GIN @>) ⋈ item_calibration;
- * never writes any b column (item-half locked, G4).
- */
-export async function getRepresentativeKcBeta(
+// Other subject axes retain their established bank-median numeric semantics.
+async function getLegacyRepresentativeBeta(
   db: DbLike,
   knowledgeIds: string[],
 ): Promise<Map<string, number>> {
   const ids = Array.from(new Set(knowledgeIds.filter((id) => id.length > 0)));
   if (ids.length === 0) return new Map();
-  // For each requested KC, find questions carrying it (knowledge_ids @> '["<kc>"]',
-  // hitting the question_knowledge_ids_gin index), join their HARD-track
-  // item_calibration, and take the median effective b. unnest(<ids>) drives the
-  // per-KC grouping; jsonb_build_array(kc) keeps the GIN containment predicate
-  // index-friendly per KC. The id list is parameter-bound (sql.join), not string-
-  // interpolated — no injection surface.
   const idParams = sql.join(
     ids.map((id) => sql`${id}`),
     sql`, `,

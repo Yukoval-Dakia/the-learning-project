@@ -18,10 +18,13 @@ import { DIFFICULTY_PROXY_WEIGHT, difficultyToLogitB } from '@/core/theta';
 import type { Tx } from '@/db/client';
 import { item_calibration, item_family_calibration, mastery_state } from '@/db/schema';
 import {
+  type FamilyFoldRecord,
+  liveFamilyObservationQuestionIds,
+} from '@/kernel/read-models/assessment-settlements';
+import {
   getFamilyCalibration,
   resolveFamilyKeyForQuestion,
 } from '@/kernel/read-models/question-difficulty';
-import { liveFamilyObservationQuestionIds } from './settle-read';
 
 export {
   type FamilyCalibrationRow,
@@ -103,17 +106,6 @@ export interface UpdateFamilyCalibrationInput {
   /** Weak proxy anchors are down-weighted, matching the θ̂ update. Default 1. */
   anchorWeight?: number;
   now: Date;
-}
-
-/**
- * Receipt for one family observation. Revert/re-apply needs exact inverse inputs:
- * `folded` says whether the residual entered the mean, and `residual` is the weighted,
- * clamped value to subtract.
- */
-export interface FamilyFoldRecord {
-  familyKey: string;
-  folded: boolean;
-  residual: number;
 }
 
 export async function updateFamilyCalibration(

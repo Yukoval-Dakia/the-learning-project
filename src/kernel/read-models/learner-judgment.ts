@@ -242,7 +242,11 @@ function judgment(
   const entry = mastery.kind === 'available' ? mastery.values.get(id) : undefined;
   const memory = retention.kind === 'available' ? retention.values.get(id) : undefined;
   const ability: LearnerJudgment['ability'] = entry
-    ? { kind: 'available', reading: entry }
+    ? entry.beta_basis === 'unavailable'
+      ? unknown('beta_basis_unavailable')
+      : entry.beta_basis === 'answered_partial'
+        ? unknown('beta_basis_answered_partial')
+        : { kind: 'available', reading: entry }
     : mastery.kind === 'unknown'
       ? mastery
       : unknown('missing_mastery_state');

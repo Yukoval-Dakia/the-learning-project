@@ -4,7 +4,7 @@ import { afterAll, beforeAll, expect, it, vi } from 'vitest';
 import { capabilities } from '@/capabilities';
 import { runAttributionFollowup } from '@/capabilities/practice/failure-learning/jobs/attribution_followup';
 import { resetTestConfig, setTestConfig } from '@/core/config/store';
-import { knowledge, mastery_state, question } from '@/db/schema';
+import { item_calibration, knowledge, mastery_state, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { EvidenceDemandV1, type EvidenceDemandV1T } from '@/kernel/supply-contracts';
 import { __setPiAdapterForTests } from '@/server/ai/execution-adapter';
@@ -132,6 +132,13 @@ async function seedLearner() {
     knowledge_ids: ['k_param'],
     created_at: now,
     updated_at: now,
+  });
+  await db.insert(item_calibration).values({
+    id: 'ic_q1',
+    question_id: 'q1',
+    b: 0,
+    track: 'hard',
+    source: 'fixed_anchor',
   });
   await writeEvent(db, {
     id: 'attempt1',
