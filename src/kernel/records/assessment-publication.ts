@@ -41,6 +41,7 @@ import {
   validateScoringBasis,
   validateStructure,
 } from '@/core/schema/assessment';
+import { classifyChoiceOrder } from '@/core/schema/assessment/choice-order';
 import {
   LEGACY_DRAFT_STATUS,
   QUESTION_AVAILABILITY,
@@ -598,7 +599,17 @@ async function publishedLayersChanged(
       execution_plan: incoming.execution_plan,
       ...(incoming.presentation != null ? { presentation: incoming.presentation } : {}),
     });
-    return storedSeal.canonical !== incomingSeal.canonical;
+    if (storedSeal.canonical === incomingSeal.canonical) return false;
+    const classified = publishedContractSeal({
+      ...incomingSeal.parsed,
+      response_spec: classifyChoiceOrder(
+        incomingSeal.parsed.structure,
+        incomingSeal.parsed.response_spec,
+        incomingSeal.parsed.presentation,
+        incomingSeal.parsed.scoring_basis,
+      ),
+    });
+    return storedSeal.canonical !== classified.canonical;
   } catch {
     return true;
   }
@@ -639,7 +650,8 @@ export async function publishQuestionGroup(
 
   // Db → 顶层事务；Tx → SAVEPOINT；任一步失败都回滚本次发布的全部写入。
   return db.transaction(async (tx) => {
-    const { contract, group_id: groupId } = input;
+    const groupId = input.group_id;
+    let contract = input.contract;
 
     if (contract.structure.group_id !== groupId) {
       throw new Error(
@@ -728,6 +740,20 @@ export async function publishQuestionGroup(
         `publishQuestionGroup: contract layers do not match the published schema: ${detail}`,
       );
     }
+    const incomingSeal = seal;
+    contract = {
+      ...contract,
+      response_spec: classifyChoiceOrder(
+        contract.structure,
+        seal.parsed.response_spec,
+        shapedPresentation ?? undefined,
+        seal.parsed.scoring_basis,
+      ),
+    };
+    seal = publishedContractSeal({
+      ...contract,
+      ...(shapedPresentation != null ? { presentation: shapedPresentation } : {}),
+    });
     const integrityDigest = seal.canonical;
 
     // 发布与编辑共用 question → lifecycle 锁序。
@@ -828,7 +854,8 @@ export async function publishQuestionGroup(
       }
       const sameDocument =
         current != null &&
-        sameSealedDocument(current, seal, contract.integrity_digest, suppliedAccepted);
+        (sameSealedDocument(current, seal, contract.integrity_digest, suppliedAccepted) ||
+          sameSealedDocument(current, incomingSeal, contract.integrity_digest, suppliedAccepted));
       if (!suppliedAccepted && !sameDocument) {
         throw new Error(
           `publishQuestionGroup: integrity_digest mismatch (supplied ${contract.integrity_digest}, canonical ${seal.canonical}) — regenerate the contract via assessment-normalization`,

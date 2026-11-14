@@ -19425,6 +19425,8 @@ export interface operations {
                             response_spec: {
                                 slots: ({
                                     /** @enum {string} */
+                                    choice_order?: "independent" | "fixed";
+                                    /** @enum {string} */
                                     kind: "single_choice";
                                     options: {
                                         label: string;
@@ -19439,6 +19441,8 @@ export interface operations {
                                     };
                                     slot_id: string;
                                 } | {
+                                    /** @enum {string} */
+                                    choice_order?: "independent" | "fixed";
                                     /** @enum {string} */
                                     kind: "multi_choice";
                                     max_select: number;
@@ -19591,6 +19595,8 @@ export interface operations {
                                             label_md: string;
                                         }[];
                                     };
+                                    /** @enum {string} */
+                                    choice_order?: "independent" | "fixed";
                                     items: {
                                         coordinates?: {
                                             [key: string]: string;
@@ -19741,6 +19747,8 @@ export interface operations {
                             response_spec: {
                                 slots: ({
                                     /** @enum {string} */
+                                    choice_order?: "independent" | "fixed";
+                                    /** @enum {string} */
                                     kind: "single_choice";
                                     options: {
                                         label: string;
@@ -19755,6 +19763,8 @@ export interface operations {
                                     };
                                     slot_id: string;
                                 } | {
+                                    /** @enum {string} */
+                                    choice_order?: "independent" | "fixed";
                                     /** @enum {string} */
                                     kind: "multi_choice";
                                     max_select: number;
@@ -19907,6 +19917,8 @@ export interface operations {
                                             label_md: string;
                                         }[];
                                     };
+                                    /** @enum {string} */
+                                    choice_order?: "independent" | "fixed";
                                     items: {
                                         coordinates?: {
                                             [key: string]: string;
@@ -20289,6 +20301,8 @@ export interface operations {
                             response_spec: {
                                 slots: ({
                                     /** @enum {string} */
+                                    choice_order?: "independent" | "fixed";
+                                    /** @enum {string} */
                                     kind: "single_choice";
                                     options: {
                                         label: string;
@@ -20303,6 +20317,8 @@ export interface operations {
                                     };
                                     slot_id: string;
                                 } | {
+                                    /** @enum {string} */
+                                    choice_order?: "independent" | "fixed";
                                     /** @enum {string} */
                                     kind: "multi_choice";
                                     max_select: number;
@@ -20455,6 +20471,8 @@ export interface operations {
                                             label_md: string;
                                         }[];
                                     };
+                                    /** @enum {string} */
+                                    choice_order?: "independent" | "fixed";
                                     items: {
                                         coordinates?: {
                                             [key: string]: string;
@@ -25800,6 +25818,8 @@ export interface operations {
                                         response_spec: {
                                             slots: ({
                                                 /** @enum {string} */
+                                                choice_order?: "independent" | "fixed";
+                                                /** @enum {string} */
                                                 kind: "single_choice";
                                                 options: {
                                                     label: string;
@@ -25814,6 +25834,8 @@ export interface operations {
                                                 };
                                                 slot_id: string;
                                             } | {
+                                                /** @enum {string} */
+                                                choice_order?: "independent" | "fixed";
                                                 /** @enum {string} */
                                                 kind: "multi_choice";
                                                 max_select: number;
@@ -25966,6 +25988,8 @@ export interface operations {
                                                         label_md: string;
                                                     }[];
                                                 };
+                                                /** @enum {string} */
+                                                choice_order?: "independent" | "fixed";
                                                 items: {
                                                     coordinates?: {
                                                         [key: string]: string;
@@ -26552,6 +26576,8 @@ export interface operations {
                                         response_spec: {
                                             slots: ({
                                                 /** @enum {string} */
+                                                choice_order?: "independent" | "fixed";
+                                                /** @enum {string} */
                                                 kind: "single_choice";
                                                 options: {
                                                     label: string;
@@ -26566,6 +26592,8 @@ export interface operations {
                                                 };
                                                 slot_id: string;
                                             } | {
+                                                /** @enum {string} */
+                                                choice_order?: "independent" | "fixed";
                                                 /** @enum {string} */
                                                 kind: "multi_choice";
                                                 max_select: number;
@@ -26718,6 +26746,8 @@ export interface operations {
                                                         label_md: string;
                                                     }[];
                                                 };
+                                                /** @enum {string} */
+                                                choice_order?: "independent" | "fixed";
                                                 items: {
                                                     coordinates?: {
                                                         [key: string]: string;
@@ -28294,6 +28324,8 @@ export interface operations {
                                             response_spec: {
                                                 slots: ({
                                                     /** @enum {string} */
+                                                    choice_order?: "independent" | "fixed";
+                                                    /** @enum {string} */
                                                     kind: "single_choice";
                                                     options: {
                                                         label: string;
@@ -28308,6 +28340,8 @@ export interface operations {
                                                     };
                                                     slot_id: string;
                                                 } | {
+                                                    /** @enum {string} */
+                                                    choice_order?: "independent" | "fixed";
                                                     /** @enum {string} */
                                                     kind: "multi_choice";
                                                     max_select: number;
@@ -28460,6 +28494,8 @@ export interface operations {
                                                             label_md: string;
                                                         }[];
                                                     };
+                                                    /** @enum {string} */
+                                                    choice_order?: "independent" | "fixed";
                                                     items: {
                                                         coordinates?: {
                                                             [key: string]: string;
@@ -29545,6 +29581,8 @@ export interface operations {
                                         response_spec: {
                                             slots: ({
                                                 /** @enum {string} */
+                                                choice_order?: "independent" | "fixed";
+                                                /** @enum {string} */
                                                 kind: "single_choice";
                                                 options: {
                                                     label: string;
@@ -29559,6 +29597,8 @@ export interface operations {
                                                 };
                                                 slot_id: string;
                                             } | {
+                                                /** @enum {string} */
+                                                choice_order?: "independent" | "fixed";
                                                 /** @enum {string} */
                                                 kind: "multi_choice";
                                                 max_select: number;
@@ -29711,6 +29751,8 @@ export interface operations {
                                                         label_md: string;
                                                     }[];
                                                 };
+                                                /** @enum {string} */
+                                                choice_order?: "independent" | "fixed";
                                                 items: {
                                                     coordinates?: {
                                                         [key: string]: string;
@@ -30700,6 +30742,8 @@ export interface operations {
                                         response_spec: {
                                             slots: ({
                                                 /** @enum {string} */
+                                                choice_order?: "independent" | "fixed";
+                                                /** @enum {string} */
                                                 kind: "single_choice";
                                                 options: {
                                                     label: string;
@@ -30714,6 +30758,8 @@ export interface operations {
                                                 };
                                                 slot_id: string;
                                             } | {
+                                                /** @enum {string} */
+                                                choice_order?: "independent" | "fixed";
                                                 /** @enum {string} */
                                                 kind: "multi_choice";
                                                 max_select: number;
@@ -30866,6 +30912,8 @@ export interface operations {
                                                         label_md: string;
                                                     }[];
                                                 };
+                                                /** @enum {string} */
+                                                choice_order?: "independent" | "fixed";
                                                 items: {
                                                     coordinates?: {
                                                         [key: string]: string;
@@ -37718,6 +37766,8 @@ export interface operations {
                             display_response_spec: {
                                 slots: ({
                                     /** @enum {string} */
+                                    choice_order?: "independent" | "fixed";
+                                    /** @enum {string} */
                                     kind: "single_choice";
                                     options: {
                                         label: string;
@@ -37732,6 +37782,8 @@ export interface operations {
                                     };
                                     slot_id: string;
                                 } | {
+                                    /** @enum {string} */
+                                    choice_order?: "independent" | "fixed";
                                     /** @enum {string} */
                                     kind: "multi_choice";
                                     max_select: number;
@@ -37884,6 +37936,8 @@ export interface operations {
                                             label_md: string;
                                         }[];
                                     };
+                                    /** @enum {string} */
+                                    choice_order?: "independent" | "fixed";
                                     items: {
                                         coordinates?: {
                                             [key: string]: string;
@@ -43490,6 +43544,8 @@ export interface operations {
                                 response_spec: {
                                     slots: ({
                                         /** @enum {string} */
+                                        choice_order?: "independent" | "fixed";
+                                        /** @enum {string} */
                                         kind: "single_choice";
                                         options: {
                                             label: string;
@@ -43504,6 +43560,8 @@ export interface operations {
                                         };
                                         slot_id: string;
                                     } | {
+                                        /** @enum {string} */
+                                        choice_order?: "independent" | "fixed";
                                         /** @enum {string} */
                                         kind: "multi_choice";
                                         max_select: number;
@@ -43656,6 +43714,8 @@ export interface operations {
                                                 label_md: string;
                                             }[];
                                         };
+                                        /** @enum {string} */
+                                        choice_order?: "independent" | "fixed";
                                         items: {
                                             coordinates?: {
                                                 [key: string]: string;
@@ -43837,6 +43897,8 @@ export interface operations {
                                 response_spec: {
                                     slots: ({
                                         /** @enum {string} */
+                                        choice_order?: "independent" | "fixed";
+                                        /** @enum {string} */
                                         kind: "single_choice";
                                         options: {
                                             label: string;
@@ -43851,6 +43913,8 @@ export interface operations {
                                         };
                                         slot_id: string;
                                     } | {
+                                        /** @enum {string} */
+                                        choice_order?: "independent" | "fixed";
                                         /** @enum {string} */
                                         kind: "multi_choice";
                                         max_select: number;
@@ -44003,6 +44067,8 @@ export interface operations {
                                                 label_md: string;
                                             }[];
                                         };
+                                        /** @enum {string} */
+                                        choice_order?: "independent" | "fixed";
                                         items: {
                                             coordinates?: {
                                                 [key: string]: string;
@@ -44295,6 +44361,8 @@ export interface operations {
                                 response_spec: {
                                     slots: ({
                                         /** @enum {string} */
+                                        choice_order?: "independent" | "fixed";
+                                        /** @enum {string} */
                                         kind: "single_choice";
                                         options: {
                                             label: string;
@@ -44309,6 +44377,8 @@ export interface operations {
                                         };
                                         slot_id: string;
                                     } | {
+                                        /** @enum {string} */
+                                        choice_order?: "independent" | "fixed";
                                         /** @enum {string} */
                                         kind: "multi_choice";
                                         max_select: number;
@@ -44461,6 +44531,8 @@ export interface operations {
                                                 label_md: string;
                                             }[];
                                         };
+                                        /** @enum {string} */
+                                        choice_order?: "independent" | "fixed";
                                         items: {
                                             coordinates?: {
                                                 [key: string]: string;

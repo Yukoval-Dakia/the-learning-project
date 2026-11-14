@@ -16,6 +16,7 @@ import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { SourceGroundingVerifyResult } from '@/capabilities/practice/grading/server/judge/source-grounding-verify';
+import { classifyChoiceOrder } from '@/core/schema/assessment/choice-order';
 import type { WebSourcedProvenanceT } from '@/core/schema/provenance';
 import {
   event,
@@ -345,7 +346,20 @@ describe('runSourceVerify', () => {
       .from(question_revision)
       .where(eq(question_revision.group_id, qid));
     expect(revisions.map((row) => row.revision_id)).toEqual([admitted.revision_id]);
-    expect(revisions[0]?.integrity_digest).toBe(publishedContractSeal(resolved).canonical);
+    // Publication derives choice_order from frozen content; the stored digest is the
+    // canonical seal of the classified resolved contract, not the raw caller input.
+    const publishedSeal = publishedContractSeal(resolved);
+    expect(revisions[0]?.integrity_digest).toBe(
+      publishedContractSeal({
+        ...resolved,
+        response_spec: classifyChoiceOrder(
+          publishedSeal.parsed.structure,
+          publishedSeal.parsed.response_spec,
+          publishedSeal.parsed.presentation,
+          publishedSeal.parsed.scoring_basis,
+        ),
+      }).canonical,
+    );
     expect(revisions[0]?.integrity_digest).not.toBe(baseDigest);
     const publishes = await db
       .select()
