@@ -82,13 +82,17 @@ export const readStartAutoApplied = (window?: { from: string; to?: string }) =>
   });
 export const retractStartAutoApplied = (input: unknown) =>
   withStartDb(async (db) => {
-    const { batchRetractAutoAppliedProposals } = await import('@/server/proposals/batch-retract');
+    const { batchRetractAutoAppliedProposals } = await import(
+      '@/server/orchestration/proposal-decisions/batch-retract'
+    );
     return batchRetractAutoAppliedProposals(db, input);
   });
 
 export const acceptStartProposalBatch = (input: unknown) =>
   withStartDb(async (db) => {
-    const { batchAcceptProposals } = await import('@/server/proposals/batch-accept');
+    const { batchAcceptProposals } = await import(
+      '@/server/orchestration/proposal-decisions/batch-accept'
+    );
     return batchAcceptProposals(db, input);
   });
 export const readStartProposalBatches = () =>
