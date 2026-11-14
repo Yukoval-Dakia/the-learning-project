@@ -22,15 +22,13 @@ beforeEach(resetDb);
 it('keeps completion tool evidence and its derived reply unavailable after source epoch changes', async () => {
   const db = testDb();
   const now = new Date();
-  await db
-    .insert(source_document)
-    .values({
-      id: 'source',
-      title: 'synthetic',
-      provenance: { usage_policy: { derivation_policy: 'allow' }, usage_epoch: 'initial' },
-      created_at: now,
-      updated_at: now,
-    });
+  await db.insert(source_document).values({
+    id: 'source',
+    title: 'synthetic',
+    provenance: { usage_policy: { derivation_policy: 'allow' }, usage_epoch: 'initial' },
+    created_at: now,
+    updated_at: now,
+  });
   await db.insert(learning_session).values([
     {
       id: 'ingestion',
