@@ -111,10 +111,11 @@ export function PracticeStudio(p: ReadingProps) {
   const q = page.question;
   const primary = q.submission.primary;
   const afterFeedback = q.revelation.kind === 'revealed';
-  const result = afterFeedback ? q.revelation.result : undefined;
-  const showKnowledgeNotes =
-    (result?.verdict === 'incorrect' || result?.verdict === 'partial') &&
-    !!result.knowledgeNotes?.length;
+  const result = q.revelation.kind === 'revealed' ? q.revelation.result : undefined;
+  const knowledgeNotes =
+    result && (result.verdict === 'incorrect' || result.verdict === 'partial')
+      ? result.knowledgeNotes
+      : undefined;
   const actionRow = (
     <div ref={lifecycle?.submitActionsRef} className="un-st-submit">
       {q.submission.confidence && (
@@ -236,8 +237,8 @@ export function PracticeStudio(p: ReadingProps) {
           actions={
             afterFeedback ? (
               <>
-                {showKnowledgeNotes && (
-                  <KnowledgeNoteContinuation notes={result?.knowledgeNotes ?? []} />
+                {knowledgeNotes && knowledgeNotes.length > 0 && (
+                  <KnowledgeNoteContinuation notes={knowledgeNotes} />
                 )}
                 {actionRow}
               </>
