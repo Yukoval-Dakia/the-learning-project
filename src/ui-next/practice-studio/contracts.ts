@@ -84,6 +84,11 @@ export interface SelfRating {
   reason?: string;
   actions: readonly Action[];
 }
+export interface KnowledgeNoteLink {
+  knowledge_id: string;
+  note_id: string;
+  title: string;
+}
 /**
  * Owner-projected cause editor. The practice owner decides whether the attempt may be attributed;
  * this view only edits the projected choice and invokes the supplied actions.
@@ -144,6 +149,8 @@ export interface Result {
   aiGraded?: boolean;
   /** Separate facts about this answer, as the server recorded them. */
   facts?: readonly { label: string; value: string }[];
+  /** Existing knowledge/note continuation for a wrong or partial result. */
+  knowledgeNotes?: readonly KnowledgeNoteLink[];
 }
 export interface Question {
   id: string;
