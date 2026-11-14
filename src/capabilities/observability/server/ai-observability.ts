@@ -13,6 +13,31 @@ import {
 
 type DbLike = Db | Tx;
 
+async function withAdminRunReadSnapshot<T>(
+  db: DbLike,
+  read: (snapshot: Tx) => Promise<T>,
+): Promise<T> {
+  if ('$client' in db) {
+    return db.transaction(read, {
+      isolationLevel: 'repeatable read',
+      accessMode: 'read only',
+    });
+  }
+
+  const settings = await db.execute<{ isolation: string; read_only: string }>(sql`
+    select current_setting('transaction_isolation') as isolation,
+           current_setting('transaction_read_only') as read_only
+  `);
+  const setting = settings[0];
+  if (
+    setting?.read_only !== 'on' ||
+    (setting.isolation !== 'repeatable read' && setting.isolation !== 'serializable')
+  ) {
+    throw new Error('admin run reads require a read-only snapshot transaction');
+  }
+  return read(db);
+}
+
 const ADMIN_RUN_SELECTION = {
   id: ai_task_runs.id,
   task_kind: ai_task_runs.task_kind,
@@ -417,155 +442,159 @@ export async function listAdminRunsPage(
   db: DbLike,
   opts: AdminRunListOpts = {},
 ): Promise<AdminRunListPage> {
-  const conditions = [];
-  if (opts.status) conditions.push(eq(ai_task_runs.status, opts.status));
-  if (opts.taskKind) conditions.push(eq(ai_task_runs.task_kind, opts.taskKind));
-  if (opts.cursor) {
-    const cursor = decodeAdminRunCursor(opts.cursor);
-    conditions.push(
-      or(
-        lt(ai_task_runs.started_at, cursor.startedAt),
-        and(eq(ai_task_runs.started_at, cursor.startedAt), lt(ai_task_runs.id, cursor.id)),
-      ) as NonNullable<ReturnType<typeof or>>,
-    );
-  }
-  const where = conditions.length > 0 ? and(...conditions) : undefined;
-  const limit = normalizeLimit(opts.limit);
+  return withAdminRunReadSnapshot(db, async (snapshot) => {
+    const conditions = [];
+    if (opts.status) conditions.push(eq(ai_task_runs.status, opts.status));
+    if (opts.taskKind) conditions.push(eq(ai_task_runs.task_kind, opts.taskKind));
+    if (opts.cursor) {
+      const cursor = decodeAdminRunCursor(opts.cursor);
+      conditions.push(
+        or(
+          lt(ai_task_runs.started_at, cursor.startedAt),
+          and(eq(ai_task_runs.started_at, cursor.startedAt), lt(ai_task_runs.id, cursor.id)),
+        ) as NonNullable<ReturnType<typeof or>>,
+      );
+    }
+    const where = conditions.length > 0 ? and(...conditions) : undefined;
+    const limit = normalizeLimit(opts.limit);
 
-  const fetchedRows = await db
-    .select(ADMIN_RUN_SELECTION)
-    .from(ai_task_runs)
-    .where(where)
-    .orderBy(desc(ai_task_runs.started_at), desc(ai_task_runs.id))
-    .limit(limit + 1);
-  const hasMore = fetchedRows.length > limit;
-  const rows = hasMore ? fetchedRows.slice(0, limit) : fetchedRows;
-  const lastRow = rows.at(-1);
-  const nextCursor = hasMore && lastRow ? encodeAdminRunCursor(lastRow) : null;
+    const fetchedRows = await snapshot
+      .select(ADMIN_RUN_SELECTION)
+      .from(ai_task_runs)
+      .where(where)
+      .orderBy(desc(ai_task_runs.started_at), desc(ai_task_runs.id))
+      .limit(limit + 1);
+    const hasMore = fetchedRows.length > limit;
+    const rows = hasMore ? fetchedRows.slice(0, limit) : fetchedRows;
+    const lastRow = rows.at(-1);
+    const nextCursor = hasMore && lastRow ? encodeAdminRunCursor(lastRow) : null;
 
-  const countConditions = [];
-  if (opts.status) countConditions.push(eq(ai_task_runs.status, opts.status));
-  if (opts.taskKind) countConditions.push(eq(ai_task_runs.task_kind, opts.taskKind));
-  const totalRows = await db
-    .select({ count: sql<number>`count(*)::int` })
-    .from(ai_task_runs)
-    .where(countConditions.length > 0 ? and(...countConditions) : undefined);
-  const total = totalRows[0]?.count ?? rows.length;
+    const countConditions = [];
+    if (opts.status) countConditions.push(eq(ai_task_runs.status, opts.status));
+    if (opts.taskKind) countConditions.push(eq(ai_task_runs.task_kind, opts.taskKind));
+    const totalRows = await snapshot
+      .select({ count: sql<number>`count(*)::int` })
+      .from(ai_task_runs)
+      .where(countConditions.length > 0 ? and(...countConditions) : undefined);
+    const total = totalRows[0]?.count ?? rows.length;
 
-  const runIds = rows.map((row) => row.id);
-  const ledgerByRun = await ledgerRowsByRunId(db, runIds);
-  const toolCounts = await toolCountsByRunId(db, runIds);
+    const runIds = rows.map((row) => row.id);
+    const ledgerByRun = await ledgerRowsByRunId(snapshot, runIds);
+    const toolCounts = await toolCountsByRunId(snapshot, runIds);
 
-  return {
-    rows: rows.map((row) =>
-      projectRun(row, ledgerByRun.get(row.id) ?? [], toolCounts.get(row.id) ?? 0),
-    ),
-    limit,
-    next_cursor: nextCursor,
-    total,
-    truncated: hasMore,
-  };
+    return {
+      rows: rows.map((row) =>
+        projectRun(row, ledgerByRun.get(row.id) ?? [], toolCounts.get(row.id) ?? 0),
+      ),
+      limit,
+      next_cursor: nextCursor,
+      total,
+      truncated: hasMore,
+    };
+  });
 }
 
 export async function getAdminRunTimeline(
   db: DbLike,
   id: string,
 ): Promise<AdminRunTimeline | null> {
-  const rows = await db
-    .select(ADMIN_RUN_SELECTION)
-    .from(ai_task_runs)
-    .where(eq(ai_task_runs.id, id))
-    .limit(1);
-  const runRow = rows[0];
-  if (!runRow) return null;
+  return withAdminRunReadSnapshot(db, async (snapshot) => {
+    const rows = await snapshot
+      .select(ADMIN_RUN_SELECTION)
+      .from(ai_task_runs)
+      .where(eq(ai_task_runs.id, id))
+      .limit(1);
+    const runRow = rows[0];
+    if (!runRow) return null;
 
-  const ledger = await db
-    .select()
-    .from(cost_ledger)
-    .where(eq(cost_ledger.task_run_id, id))
-    .orderBy(asc(cost_ledger.occurred_at), asc(cost_ledger.id));
-  const toolCalls = await db
-    .select(ADMIN_TOOL_CALL_SELECTION)
-    .from(tool_call_log)
-    .where(eq(tool_call_log.task_run_id, id))
-    .orderBy(asc(tool_call_log.occurred_at), asc(tool_call_log.iteration), asc(tool_call_log.id));
+    const ledger = await snapshot
+      .select()
+      .from(cost_ledger)
+      .where(eq(cost_ledger.task_run_id, id))
+      .orderBy(asc(cost_ledger.occurred_at), asc(cost_ledger.id));
+    const toolCalls = await snapshot
+      .select(ADMIN_TOOL_CALL_SELECTION)
+      .from(tool_call_log)
+      .where(eq(tool_call_log.task_run_id, id))
+      .orderBy(asc(tool_call_log.occurred_at), asc(tool_call_log.iteration), asc(tool_call_log.id));
 
-  const timeline: AdminRunTimelineEvent[] = [
-    {
-      type: 'run_started',
-      at: runRow.started_at,
-      label: `${runRow.task_kind} started`,
-      id: runRow.id,
-    },
-    ...toolCalls.map(
-      (entry): AdminRunTimelineEvent => ({
-        type: 'tool_call',
-        at: entry.occurred_at,
-        label: entry.tool_name,
-        id: entry.id,
-        tool_name: entry.tool_name,
-        iteration: entry.iteration,
-        latency_ms: entry.latency_ms,
-        cost: entry.cost,
-      }),
-    ),
-    ...ledger.map(
-      (entry): AdminRunTimelineEvent => ({
-        type: 'cost_ledger',
-        at: entry.occurred_at,
-        label: entry.outcome,
-        id: entry.id,
-        cost: entry.cost ?? undefined,
-        currency: entry.currency,
-        entry_kind: entry.entry_kind === 'attempt' ? 'attempt' : 'legacy',
+    const timeline: AdminRunTimelineEvent[] = [
+      {
+        type: 'run_started',
+        at: runRow.started_at,
+        label: `${runRow.task_kind} started`,
+        id: runRow.id,
+      },
+      ...toolCalls.map(
+        (entry): AdminRunTimelineEvent => ({
+          type: 'tool_call',
+          at: entry.occurred_at,
+          label: entry.tool_name,
+          id: entry.id,
+          tool_name: entry.tool_name,
+          iteration: entry.iteration,
+          latency_ms: entry.latency_ms,
+          cost: entry.cost,
+        }),
+      ),
+      ...ledger.map(
+        (entry): AdminRunTimelineEvent => ({
+          type: 'cost_ledger',
+          at: entry.occurred_at,
+          label: entry.outcome,
+          id: entry.id,
+          cost: entry.cost ?? undefined,
+          currency: entry.currency,
+          entry_kind: entry.entry_kind === 'attempt' ? 'attempt' : 'legacy',
+          cost_basis:
+            entry.cost_basis === 'reported' ||
+            entry.cost_basis === 'estimated' ||
+            entry.cost_basis === 'unknown'
+              ? entry.cost_basis
+              : null,
+          cost_ref: entry.cost_ref,
+          tokens_in: entry.tokens_in ?? undefined,
+          tokens_out: entry.tokens_out ?? undefined,
+          outcome: entry.outcome,
+          pgboss_job_id: entry.pgboss_job_id,
+        }),
+      ),
+    ];
+    if (runRow.finished_at) {
+      timeline.push({
+        type: 'run_finished',
+        at: runRow.finished_at,
+        label: runRow.status,
+        id: runRow.id,
+        outcome: runRow.finish_reason ?? runRow.status,
+        cost: runRow.cost_usd ?? undefined,
+        currency:
+          runRow.cost_basis === null
+            ? undefined
+            : (ledger.find((entry) => entry.entry_kind === 'attempt')?.currency ?? 'USD'),
         cost_basis:
-          entry.cost_basis === 'reported' ||
-          entry.cost_basis === 'estimated' ||
-          entry.cost_basis === 'unknown'
-            ? entry.cost_basis
+          runRow.cost_basis === 'reported' ||
+          runRow.cost_basis === 'estimated' ||
+          runRow.cost_basis === 'unknown'
+            ? runRow.cost_basis
             : null,
-        cost_ref: entry.cost_ref,
-        tokens_in: entry.tokens_in ?? undefined,
-        tokens_out: entry.tokens_out ?? undefined,
-        outcome: entry.outcome,
-        pgboss_job_id: entry.pgboss_job_id,
-      }),
-    ),
-  ];
-  if (runRow.finished_at) {
-    timeline.push({
-      type: 'run_finished',
-      at: runRow.finished_at,
-      label: runRow.status,
-      id: runRow.id,
-      outcome: runRow.finish_reason ?? runRow.status,
-      cost: runRow.cost_usd ?? undefined,
-      currency:
-        runRow.cost_basis === null
-          ? undefined
-          : (ledger.find((entry) => entry.entry_kind === 'attempt')?.currency ?? 'USD'),
-      cost_basis:
-        runRow.cost_basis === 'reported' ||
-        runRow.cost_basis === 'estimated' ||
-        runRow.cost_basis === 'unknown'
-          ? runRow.cost_basis
-          : null,
-      cost_ref: runRow.cost_ref,
-    });
-  }
-  timeline.sort(
-    (a, b) =>
-      a.at.getTime() - b.at.getTime() ||
-      (a.id ?? '').localeCompare(b.id ?? '') ||
-      a.type.localeCompare(b.type),
-  );
+        cost_ref: runRow.cost_ref,
+      });
+    }
+    timeline.sort(
+      (a, b) =>
+        a.at.getTime() - b.at.getTime() ||
+        (a.id ?? '').localeCompare(b.id ?? '') ||
+        a.type.localeCompare(b.type),
+    );
 
-  return {
-    run: projectRun(runRow, ledger, toolCalls.length),
-    ledger,
-    tool_calls: toolCalls,
-    timeline,
-  };
+    return {
+      run: projectRun(runRow, ledger, toolCalls.length),
+      ledger,
+      tool_calls: toolCalls,
+      timeline,
+    };
+  });
 }
 
 export async function getAdminCost(
