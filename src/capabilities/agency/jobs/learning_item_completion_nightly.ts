@@ -5,10 +5,11 @@ import { runLearningItemCompletionNightly } from '../server/learning-item-comple
 export function buildLearningItemCompletionNightlyHandler(db: Db) {
   return async () => {
     const result = await runLearningItemCompletionNightly(db);
-    console.log('[learning_item_completion_nightly]', result);
+    const goals = await runLearningItemCompletionNightly(db, 'goal');
+    console.log('[learning_item_completion_nightly]', { learningItems: result, goals });
     return reportJobYield('learning_item_completion_nightly', {
-      attempted: result.considered,
-      succeeded: result.considered,
+      attempted: result.considered + goals.considered,
+      succeeded: result.considered + goals.considered,
       failed: 0,
     });
   };

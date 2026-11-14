@@ -60,6 +60,7 @@ type GoalMutation =
       status: GoalStatus;
       actorRef: string;
       now: Date;
+      causedByEventId?: string;
       /** YUK-1770 — withdrawal provenance (reason + verbatim learner words). */
       statusExtras?: {
         reason_md?: string;
@@ -259,6 +260,7 @@ export async function mutateGoal(db: GoalDb, goalId: string, input: GoalMutation
         subject_kind: 'goal',
         subject_id: goalId,
         outcome: 'success',
+        caused_by_event_id: input.kind === 'status' ? input.causedByEventId : undefined,
         payload: {
           ...rowPatch,
           ...(input.kind === 'status' && input.statusExtras

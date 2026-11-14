@@ -647,7 +647,10 @@ const proposalPresenters: { [K in AiProposalPayloadT['kind']]: ProposalPresenter
     },
   },
   completion: {
-    title: () => '确认学习项已完成',
+    title: (payload) =>
+      payload.target.subject_kind === 'goal'
+        ? titled('确认目标已达成', payload.proposed_change.goal_title)
+        : '确认学习项已完成',
     summary: (payload) => {
       const change = recordOf(payload.proposed_change);
 

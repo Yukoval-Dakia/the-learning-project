@@ -22,6 +22,14 @@ export interface ActiveGoal {
   steering: SteeringGoalDataT | null;
 }
 
+export async function resolveGoalKnowledgeIds(
+  db: DbLike,
+  row: Pick<ActiveGoal, 'scope_mode' | 'subject_id' | 'scope_knowledge_ids'>,
+): Promise<string[]> {
+  if (row.scope_mode === 'explicit') return row.scope_knowledge_ids;
+  return row.subject_id ? resolveSubjectKnowledgeIds(db, row.subject_id) : [];
+}
+
 /**
  * Active goals in sequence_hint order, fed into the Coach input. Read-only; it does
  * not touch the FSRS-due / review backbone.
@@ -80,7 +88,7 @@ export async function listActiveGoalsWithResolvedScope(db: DbLike): Promise<Acti
   for (const g of goals) {
     if (g.scope_mode !== 'subject_live' || !g.subject_id) continue;
     if (!bySubject.has(g.subject_id)) {
-      bySubject.set(g.subject_id, await resolveSubjectKnowledgeIds(db, g.subject_id));
+      bySubject.set(g.subject_id, await resolveGoalKnowledgeIds(db, g));
     }
   }
   return goals.map((g) =>

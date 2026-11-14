@@ -124,8 +124,10 @@ export function foldGoal(goalId: string, events: FoldEvent[]): GoalRowSnapshotT 
       if (!acceptedAt) continue; // un-accepted proposal → no row
       const materializedGoal = materializedGoalByProposeId.get(fe.id);
       if (materializedGoal !== undefined && materializedGoal !== goalId) continue;
-      const aiProposal = (fe.payload as { ai_proposal?: { proposed_change?: unknown } })
-        .ai_proposal;
+      const aiProposal = (
+        fe.payload as { ai_proposal?: { kind?: unknown; proposed_change?: unknown } }
+      ).ai_proposal;
+      if (aiProposal?.kind !== 'goal_scope') continue;
       const pc = GoalProposedChange.safeParse(aiProposal?.proposed_change ?? {});
       if (!pc.success) {
         warnMalformed('experimental:proposal(goal)', fe.id, pc.error);

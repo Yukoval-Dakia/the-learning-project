@@ -1124,13 +1124,19 @@ export async function readCompletionProposalHistory(tx: Tx) {
   return rows.flatMap((row) => {
     const payload = safeDeriveLegacyAiProposal(row);
     if (payload?.kind !== 'completion') return [];
+    const subjectKind = payload.target.subject_kind;
+    if (subjectKind !== 'learning_item' && subjectKind !== 'goal') return [];
     const parsed = parseCompletionReceipt(payload.proposed_change.receipt);
     if (!payload.target.subject_id) return [];
     return [
       {
         id: row.id,
         itemId: payload.target.subject_id,
-        verifiedReceipt: parsed?.item_id === payload.target.subject_id,
+        subjectKind,
+        verifiedReceipt:
+          parsed?.item_id === payload.target.subject_id &&
+          payload.proposed_change[subjectKind === 'goal' ? 'goal_id' : 'learning_item_id'] ===
+            parsed?.item_id,
         status: deriveProposalStatus(row, corrections.get(row.id), rates.get(row.id)),
         proposedAt: row.created_at,
         decidedAt: corrections.get(row.id)?.decided_at ?? rates.get(row.id)?.created_at ?? null,
