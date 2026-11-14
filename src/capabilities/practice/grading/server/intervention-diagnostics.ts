@@ -23,8 +23,12 @@ import { streamLocalDate } from '@/kernel/stream-date';
 import { projectEvaluationToJudgeResult } from './judge/evaluation-authority';
 import { readJudgeQuestionActivity } from './judge-run-observation';
 
+function resolveInterventionStreamLocalDate(now: Date): string {
+  return streamLocalDate(now);
+}
+
 export const interventionDiagnosticLeaves: InterventionDiagnosticLeaves = {
-  streamLocalDate,
+  streamLocalDate: resolveInterventionStreamLocalDate,
   readJudgeQuestionActivity,
   async enrollQuestionSchedule(tx, questionId, dueAt) {
     await enrollFsrsStateIfAbsent(tx, {
