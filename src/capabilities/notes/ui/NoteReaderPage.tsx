@@ -226,10 +226,17 @@ export default function NoteReaderPage({
   sendBlur?: typeof editingBlur;
 }) {
   const qc = useQueryClient();
-  const noteQ = useQuery({ queryKey: queryKeys.notePage(id), queryFn: () => read(id) });
+  const noteQ = useQuery({
+    queryKey: queryKeys.notePage(id),
+    queryFn: () => read(id),
+    retry: (failures, error) =>
+      !(error instanceof ApiError && error.status === 404) && failures < 3,
+  });
   const changesQ = useQuery({
     queryKey: queryKeys.noteAiChanges(id),
     queryFn: () => readAiChanges(id),
+    retry: (failures, error) =>
+      !(error instanceof ApiError && error.status === 404) && failures < 3,
   });
 
   const [mode, setMode] = useState<'read' | 'edit'>('read');
