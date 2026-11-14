@@ -4,6 +4,7 @@ import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events/index';
+import { readServablePoolMembership } from '@/kernel/read-models/servable-pool-membership';
 import { DEFAULT_EVIDENCE_DEADLINE_DAYS } from '@/kernel/supply-contracts';
 
 type DbLike = Db | Tx;
@@ -79,6 +80,15 @@ export interface SelectionMissDemand {
   eventId: string;
   recordedAt: Date;
   miss: SelectionMissV1;
+  /**
+   * Canonically servable pool members for this KC right now (kernel
+   * readServablePoolMembership). `memberCount > 0` means the gap the miss
+   * recorded is currently fulfilled — the KC has servable questions today — so
+   * a supply consumer should not treat the miss as still-open acquisition work.
+   * The miss row is kept: if the pool drains again before the window expires
+   * the same miss resurfaces as unfulfilled on the next read.
+   */
+  memberCount: number;
 }
 
 /** Latest selection_miss per knowledge inside the supply evidence window. A bad payload is skipped. */
@@ -107,7 +117,17 @@ export async function readOpenSelectionMissDemands(
     }
     if (seen.has(miss.knowledge_id)) continue;
     seen.add(miss.knowledge_id);
-    demands.push({ eventId: row.id, recordedAt: row.created_at, miss });
+    demands.push({ eventId: row.id, recordedAt: row.created_at, miss, memberCount: 0 });
+  }
+  // Fulfillment = same current eligible pool the variant-rotation prefetch
+  // serves from. A KC with ≥1 admitted member has its recorded gap satisfied;
+  // keep the event row (day history unchanged) and let the consumer drop it.
+  const membership = await readServablePoolMembership(
+    db,
+    demands.map((demand) => demand.miss.knowledge_id),
+  );
+  for (const demand of demands) {
+    demand.memberCount = membership.memberCount.get(demand.miss.knowledge_id) ?? 0;
   }
   return demands;
 }

@@ -8,10 +8,11 @@ import { and, eq, gte, inArray, sql } from 'drizzle-orm';
 import { mfiScore } from '@/core/selection-signals';
 import { difficultyToLogitB } from '@/core/theta';
 import type { Db, Tx } from '@/db/client';
-import { isPoolVisible, notDraftPredicate, questionSuspendedPredicate } from '@/db/predicates';
+import { isPoolVisible, questionSuspendedPredicate } from '@/db/predicates';
 import { event, question } from '@/db/schema';
 import { effectiveThetaForKcBatch, getMasteryStates } from '@/kernel/read-models/mastery-state';
 import { readHardCalibrationBs } from '@/kernel/read-models/question-difficulty';
+import { servablePoolCandidatePredicate } from '@/kernel/read-models/servable-pool-membership';
 import { assessmentAttemptEventId } from '@/kernel/records/assessment-attempt-identity';
 import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
 
@@ -120,10 +121,6 @@ const QUESTION_PROJECTION = {
   difficulty: question.difficulty,
 } as const;
 
-function knowledgeContains(knowledgeId: string) {
-  return sql`${question.knowledge_ids} @> ${JSON.stringify([knowledgeId])}::jsonb`;
-}
-
 function toProbe(row: QuestionRow): SelectedProbe {
   return {
     question_id: row.id,
@@ -216,24 +213,14 @@ export async function prefetchProbeSelection(
   const knowledgeIds = Array.from(new Set(inputs.map((i) => i.knowledgeId)));
   const kcQuestions = new Map<string, QuestionRow[]>();
   if (knowledgeIds.length > 0) {
-    // OR-of-containments over the due KC set, PARENTHESISED so it composes with the
-    // non-draft predicate as `notDraft AND (c1 OR c2 …)` (drizzle's `and` would otherwise
-    // fold the bare OR chain at the wrong precedence).
-    const containment = sql`(${sql.join(
-      knowledgeIds.map((kc) => knowledgeContains(kc)),
-      sql` OR `,
-    )})`;
+    // Candidate pool = the shared servable-pool predicate (kernel read-model):
+    // non-draft AND OR-of-containments over the due KC set AND not in a
+    // suspended/withdrawn lifecycle group — identical to the selection_miss
+    // fulfillment read, so a replenished KC stops looking like a gap.
     const rows = (await dbHandle
       .select(QUESTION_PROJECTION)
       .from(question)
-      .where(
-        and(
-          notDraftPredicate(question.draft_status),
-          containment,
-          // 契约准入门：suspended/withdrawn 组不进变式轮换池。
-          questionSuspendedPredicate(question),
-        ),
-      )
+      .where(servablePoolCandidatePredicate(knowledgeIds))
       .orderBy(question.created_at, question.id)) as QuestionRow[];
     const admittedIds = await readAutomaticallyServableQuestionIds(
       dbHandle,
