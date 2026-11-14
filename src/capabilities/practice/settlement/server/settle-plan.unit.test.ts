@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { applyCauseLeanToAutomaticRating } from './settle-plan';
 
 describe('applyCauseLeanToAutomaticRating', () => {
-  // @invariant grading: the settled automatic rating is deterministic in (verdict, base rating, effective cause lean) — same partial score and same cause always produce the same schedule
-  // @fails-if a partial verdict's carelessness cause stops opening toward good, or a conceptual cause stops holding at again; non-partial verdicts must ignore the lean
+  // @invariant grading: the settled automatic rating is deterministic in (verdict, base rating, effective cause lean) — same partial score and same cause always produce the same schedule, at both the group receipt and the per-KC card level
+  // @fails-if a partial verdict's carelessness cause stops opening toward good, or a conceptual cause stops holding at again on either the group rating or an up-observed KC card; non-partial verdicts must ignore the lean
   it.each([
     // partial + carelessness lean opens the schedule toward good
     ['partial', 'hard', 1, 'good'],
@@ -11,6 +11,10 @@ describe('applyCauseLeanToAutomaticRating', () => {
     ['partial', 'hard', -1, 'again'],
     // partial + no declared lean keeps the base bucket
     ['partial', 'hard', 0, 'hard'],
+    // per-KC up observation on a partial verdict: same lean, same direction
+    ['partial', 'good', 1, 'good'],
+    ['partial', 'good', -1, 'again'],
+    ['partial', 'good', 0, 'good'],
     // correct/incorrect/unsupported ignore the cause entirely
     ['correct', 'good', -1, 'good'],
     ['correct', 'easy', 1, 'easy'],

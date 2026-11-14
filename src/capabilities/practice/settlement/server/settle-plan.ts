@@ -31,8 +31,6 @@ import {
   type SettlementPlan,
   subjectKey,
 } from '@/kernel/read-models/assessment-settlements';
-import { effectiveCauseCategoryForFailureAttempt } from '@/kernel/read-models/cause-policy';
-import { getFailureAttempts } from '@/kernel/read-models/failure-attempts';
 import { getNonKcKnowledgeIds } from '@/kernel/read-models/knowledge-roles';
 import type { AbilityGlobalByKnowledgeId } from '@/kernel/read-models/mastery-state';
 import { SYNTHETIC_SUBJECT_ROOT_RE } from '@/kernel/read-models/placement-scope';
@@ -242,27 +240,11 @@ export async function loadScope(tx: Tx, input: ActivationSettleInput): Promise<S
 }
 
 /**
- * Cause-scan window shared with the preview-side advisor. Five attempts is deep
- * enough to survive label-less re-failures after an explicit cause, shallow
- * enough that long-resolved learning stops nudging the rating.
- */
-const SETTLEMENT_CAUSE_SCAN_LIMIT = 5;
-
-/**
- * Resolve the effective cause for the automatic settlement rating on this group.
- * Mirrors `resolveAdviceCauseForQuestion` (same scan window, same
- * effective-cause fold) but lives in the settlement writer because owner rules
- * forbid a grading→failure-learning import. The current attempt is excluded:
- * its cause is not yet recorded when settlement plans the rating, and the
- * settlement's own verdict must drive this attempt's own schedule.
- *
- * `causeEditable` widens the scan to the same attempts the learner-cause
- * write owner accepts for attribution — learner-labelled partial verdicts
- * therefore lean the settled rating too. The preview advisor reads a
- * narrower window (failure-only for native attempts), so a labelled partial
- * can settle a lean its own preview never announced. Keeping the wider pool
- * is the write-side eligibility the learner actually used; the preview's
- * narrower scan is a known display gap, not a second cause policy.
+ * Resolve the cause lean for the automatic settlement rating on this group.
+ * Preview advice uses the same kernel scan, so the same current/authorized
+ * question history produces the same lean. Settlement excludes this
+ * submission's own attempt: its cause is not recorded yet when the plan is
+ * derived, and its verdict must not be nudged by a future attribution.
  *
  * The profile's own `rating_lean` vocabulary is the only interpretation:
  * without a declared lean the cause stays neutral.
@@ -272,17 +254,12 @@ async function resolveSettlementCauseLean(
   input: ActivationSettleInput,
   groupRow: QuestionLite | null,
 ): Promise<-1 | 0 | 1> {
-  const attemptEventId = assessmentAttemptEventId(input.submission.submission_id);
-  const recentFailures = await getFailureAttempts(tx, {
-    questionIds: [input.questionGroupId],
-    limit: SETTLEMENT_CAUSE_SCAN_LIMIT + 1,
-    causeEditable: true,
-  });
-  const causeCategory = recentFailures
-    .filter((failure) => failure.attempt_event_id !== attemptEventId)
-    .map(effectiveCauseCategoryForFailureAttempt)
-    .find((category) => category !== null);
-  if (!causeCategory) return 0;
+  const causeCategory = await resolveCurrentEffectiveCauseForQuestion(
+    tx,
+    input.questionGroupId,
+    assessmentAttemptEventId(input.submission.submission_id),
+  );
+  if (causeCategory === null) return 0;
 
   const knowledgeIds = groupRow?.knowledge_ids ?? [];
   const subjectProfile = await resolveSubjectProfileForKnowledgeIds(tx, knowledgeIds);
@@ -421,11 +398,17 @@ export function derivePlan(input: ActivationSettleInput, scope: SettlementScope)
       : scopeKcIds.map((knowledgeId) => {
           const observation = observations.find((row) => row.kc_id === knowledgeId);
           const direction = observation?.direction;
+          // KC-local evidence keeps its contract: full-credit up follows the
+          // automatic rating, explicit down stays again, no evidence abstains.
+          // For a partial verdict the settled cause lean moves the same up
+          // observation — carelessness stays at good while conceptual confusion
+          // pulls the KC card back to again — so the lean reaches the actual
+          // per-KC schedule rather than stopping at the group receipt.
           const observationRating =
             direction === 'up'
               ? verdict.verdict === 'correct' && verdict.normalized === 1
                 ? automaticRating
-                : 'good'
+                : applyCauseLeanToAutomaticRating(verdict.verdict, 'good', scope.causeLean)
               : direction === 'down'
                 ? 'again'
                 : null;
