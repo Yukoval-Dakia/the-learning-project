@@ -1,6 +1,7 @@
 import { inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import { settlementReversions } from '@/core/assessment-settlement-liveness';
+import { FsrsRating } from '@/core/schema/business';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { filterActiveRows } from '@/kernel/events';
@@ -21,7 +22,7 @@ const SettlementReceipt = z.object({
       kind: z.literal('plan'),
       groupId: z.string(),
       occurrenceAt: z.string(),
-      rating: z.enum(['again', 'hard', 'good']).nullable(),
+      rating: FsrsRating.nullable(),
       ratingSource: z.enum(['user', 'verdict', 'none']),
     })
     .nullish(),
@@ -34,7 +35,7 @@ export interface NativeReviewOccurrence {
   settlementId: string;
   questionIds: string[];
   occurredAt: Date;
-  rating: 'again' | 'hard' | 'good';
+  rating: z.infer<typeof FsrsRating>;
   ratingSource: 'user' | 'verdict' | 'none';
   outcome: 'success' | 'failure' | 'partial' | 'pending' | 'unsupported';
   fsrsSubjects: string[];

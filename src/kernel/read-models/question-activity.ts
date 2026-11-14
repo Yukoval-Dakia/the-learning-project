@@ -2,6 +2,8 @@
 // envelope storage lives in @/kernel/events.
 
 import { and, desc, eq, inArray, ne } from 'drizzle-orm';
+import type { z } from 'zod';
+import type { FsrsRating } from '@/core/schema/business';
 import type { FsrsStateSchemaT } from '@/core/schema/event/blocks';
 import type { Db, Tx } from '@/db/client';
 import { event, question } from '@/db/schema';
@@ -16,6 +18,8 @@ import { miscCauseLabelMap, resolveMiscCauseLabels } from '@/kernel/read-models/
 import { recordedDurationMs } from '@/kernel/read-models/review-timing';
 
 type DbLike = Db | Tx;
+type FsrsRatingT = z.infer<typeof FsrsRating>;
+
 // ============================================================================
 // ReviewEvent — FSRS review log view.
 // ============================================================================
@@ -23,7 +27,7 @@ type DbLike = Db | Tx;
 export type ReviewEvent = {
   review_event_id: string;
   question_id: string;
-  fsrs_rating: 'again' | 'hard' | 'good';
+  fsrs_rating: FsrsRatingT;
   /** Absent on a native settlement receipt; the rating and outcome are the review. */
   fsrs_state_after: FsrsStateSchemaT | null;
   user_response_md: string | null;
@@ -133,7 +137,7 @@ export type QuestionTimelineEntry =
       event_id: string;
       dispatch_seq: number;
       created_at: Date;
-      fsrs_rating: 'again' | 'hard' | 'good';
+      fsrs_rating: FsrsRatingT;
       outcome: 'success' | 'failure';
       duration_ms: number | null;
     };
@@ -280,7 +284,7 @@ export async function getQuestionTimeline(
     }
     // review
     const payload = row.payload as {
-      fsrs_rating: 'again' | 'hard' | 'good';
+      fsrs_rating: FsrsRatingT;
       duration_ms?: number;
     };
     return {

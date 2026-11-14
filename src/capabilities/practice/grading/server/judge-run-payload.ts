@@ -378,10 +378,16 @@ async function projectNativeAttemptVerdict(db: Db | Tx, anchor: EventRow | undef
       : [];
   const recordedRating = settlement?.payload.rating;
   const currentRating = settlement
-    ? recordedRating === 'again' || recordedRating === 'hard' || recordedRating === 'good'
+    ? recordedRating === 'again' ||
+      recordedRating === 'hard' ||
+      recordedRating === 'good' ||
+      recordedRating === 'easy'
       ? recordedRating
       : null
-    : explicitRating === 'again' || explicitRating === 'hard' || explicitRating === 'good'
+    : explicitRating === 'again' ||
+        explicitRating === 'hard' ||
+        explicitRating === 'good' ||
+        explicitRating === 'easy'
       ? explicitRating
       : effective
         ? ratingFromCoarseOutcome(effective.verdict.verdict)
