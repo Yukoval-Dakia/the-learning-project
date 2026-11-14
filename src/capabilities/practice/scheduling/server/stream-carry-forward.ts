@@ -25,17 +25,6 @@ const CARRIED_STREAM_STATUSES = ['pending', 'in_progress'] as const;
 const PROGRESS_OWNED_STATUSES: ReadonlySet<string> = new Set(['done', 'skipped', 'in_progress']);
 
 /**
- * Global carry admission for a multi-partition finalize tx, re-exported from
- * the canonical lock home. Canonical order is admission -> target -> sources
- * (ascending): a carry-capable finalize takes admission before its target
- * `stream:compose:<date>` lock, so a tx already holding admission never waits
- * on another tx's target partition and no two-transaction cycle exists.
- */
-const lockStreamCarryAdmission = lockPracticeStreamCarryAdmission;
-
-export { lockStreamCarryAdmission };
-
-/**
  * Learning-day carry-forward (YUK-2125): when a compose materializes a *new* learning
  * day, every still-open row on earlier whole-profile partitions migrates into the new
  * day instead of being stranded on a calendar day the learner never sees again.
@@ -72,7 +61,7 @@ export async function carryForwardOpenStreamItems(
   // Admission already held by the finalize caller (G before target before
   // sources); re-taking is a no-op re-entrant lock so carry never runs
   // unadmitted.
-  await lockStreamCarryAdmission(tx);
+  await lockPracticeStreamCarryAdmission(tx);
   const sourceDates = await tx
     .selectDistinct({ date: practice_stream_item.date })
     .from(practice_stream_item)

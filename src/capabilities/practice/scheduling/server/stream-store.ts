@@ -12,6 +12,7 @@ import { event, knowledge, learning_session, practice_stream_item, question } fr
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import {
+  lockPracticeStreamCarryAdmission,
   lockPracticeStreamPartition,
   lockPracticeStreamScope,
 } from '@/kernel/locks/practice-stream';
@@ -49,7 +50,7 @@ import {
 import { withdrawStalePendingDueLines } from './stale-due-lines';
 import { planStoredStreamBudgetTrim, storedStreamExceedsBudget } from './stored-stream-budget';
 import { estimateStreamItemMinutes } from './stream-budget';
-import { carryForwardOpenStreamItems, lockStreamCarryAdmission } from './stream-carry-forward';
+import { carryForwardOpenStreamItems } from './stream-carry-forward';
 import { type ComposerInputs, type StreamPlan, composeDailyStream } from './stream-composer';
 import { collectComposerInputs, resolveDailyPracticeBudget } from './stream-inputs';
 import { presentNonDueQuestion } from './stream-item-presentation';
@@ -510,7 +511,7 @@ async function singleFlightCompose(
           // Admission must precede the target partition lock; otherwise a tx
           // holding its target and waiting on G can cycle with the G holder
           // waiting on that target.
-          await lockStreamCarryAdmission(tx);
+          await lockPracticeStreamCarryAdmission(tx);
           await lockDailyStreamPartition(tx, date);
           const outcome = await materializePreparedCollect(tx, date, prepared, addedBy, true);
           const carry = await carryForwardOpenStreamItems(tx, date, outcome.freshRefs);
@@ -1201,7 +1202,7 @@ export async function recomposeStream(
         return await lockedDb.transaction(async (tx) => {
           // Canonical order G -> target -> sources whenever carry may run;
           // carryForward === false keeps the plain target-only pattern.
-          if (opts.carryForward !== false) await lockStreamCarryAdmission(tx);
+          if (opts.carryForward !== false) await lockPracticeStreamCarryAdmission(tx);
           await lockDailyStreamPartition(tx, date);
           if (pendingIdsAtPrepare.length > 0) {
             await tx
