@@ -17,7 +17,7 @@ import {
   steeringWindowCoversToday,
 } from '@/core/steering';
 import type { Db, Tx } from '@/db/client';
-import { readLearnerProfilesAsBatch } from '@/kernel/learner-profile';
+import { readLearnerProfilesAsBatch } from '@/kernel/learner-profile/read';
 import {
   type ActiveGoal,
   listActiveGoalsWithResolvedScope,

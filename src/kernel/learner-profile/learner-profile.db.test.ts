@@ -13,13 +13,12 @@ import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { newId } from '@/core/ids';
+import { rebuildCandidate } from '@/core/scheduling/candidate';
 import { db } from '@/db/client';
 import { knowledge, learner_profile, mastery_state, material_fsrs_state } from '@/db/schema';
-import {
-  appendLearnerProfileIntent,
-  drainLearnerProfileRefresh,
-  readLearnerProfiles,
-} from '@/kernel/learner-profile';
+import { appendLearnerProfileIntent } from '@/kernel/learner-profile/intents';
+import { readLearnerProfiles } from '@/kernel/learner-profile/read';
+import { drainLearnerProfileRefresh } from '@/kernel/learner-profile/refresh';
 import { readLearnerJudgments } from '@/kernel/read-models/learner-judgment';
 import { resetDb } from '../../../tests/helpers/db';
 
@@ -75,6 +74,20 @@ async function seedFsrs(kcId: string) {
   });
 }
 
+async function seedCandidate(kcId: string) {
+  const now = new Date();
+  const state = rebuildCandidate(kcId, [], now, 'initial');
+  await db.insert(material_fsrs_state).values({
+    id: newId(),
+    subject_kind: 'knowledge',
+    subject_id: kcId,
+    state,
+    due_at: state.due,
+    last_review_event_id: null,
+    updated_at: now,
+  });
+}
+
 describe('learner-profile canonical projection', () => {
   beforeEach(async () => {
     await resetDb();
@@ -84,6 +97,8 @@ describe('learner-profile canonical projection', () => {
   // projection and the canonical reader on the same JSON shape.
   const wire = (v: unknown) => JSON.parse(JSON.stringify(v));
 
+  // @invariant data: sealed canonical facts remain readable across persistence and later clocks.
+  // @fails-if JSONB date revival changes current-row numbers or freezes retention at the build clock.
   it('rebuilds the persisted row from settled records through intent→drain→read', async () => {
     const kc = `kc_${createId()}`;
     await seedKnowledge(kc);
@@ -165,11 +180,67 @@ describe('learner-profile canonical projection', () => {
     expect(t1Retention as number).toBeLessThan(t0Retention as number);
   });
 
+  // @invariant data: candidate model due timestamps survive JSON persistence in both row paths.
+  // @fails-if ISO modelDue values fail Epoch validation or current and stale reads disagree at one as_of.
+  it('rebuilds candidate current and stale rows from the same canonical numbers', async () => {
+    const kc = `kc_${createId()}`;
+    await seedKnowledge(kc);
+    await seedMastery(kc);
+    await seedCandidate(kc);
+    await db.transaction(async (tx) => {
+      await appendLearnerProfileIntent(tx, {
+        knowledgeId: kc,
+        sourceKind: 'settlement_event',
+        sourceRef: `stl_test_${createId()}`,
+      });
+    });
+
+    const asOf = new Date();
+    const stale = await readLearnerProfiles(db, { knowledge_ids: [kc], as_of: asOf });
+    await drainLearnerProfileRefresh(db);
+    const [row] = await db
+      .select({ canonical_state: learner_profile.canonical_state })
+      .from(learner_profile)
+      .where(eq(learner_profile.knowledge_id, kc));
+    const persisted = JSON.parse(JSON.stringify(row.canonical_state)) as {
+      scheduling: {
+        state: { modelDue?: { kind: string; at?: unknown; checkedThrough?: unknown } };
+      };
+    };
+    const modelDue = persisted.scheduling.state.modelDue;
+    expect(modelDue).toBeDefined();
+    if (modelDue?.kind === 'due_now' || modelDue?.kind === 'scheduled') {
+      expect(typeof modelDue.at).toBe('number');
+      modelDue.at = new Date(modelDue.at as number).toISOString();
+    } else if (modelDue?.kind === 'beyond_horizon') {
+      expect(typeof modelDue.checkedThrough).toBe('number');
+      modelDue.checkedThrough = new Date(modelDue.checkedThrough as number).toISOString();
+    } else {
+      throw new Error(`unexpected candidate modelDue kind: ${modelDue?.kind}`);
+    }
+    await db
+      .update(learner_profile)
+      .set({ canonical_state: persisted })
+      .where(eq(learner_profile.knowledge_id, kc));
+
+    const current = await readLearnerProfiles(db, { knowledge_ids: [kc], as_of: asOf });
+    const canonical = await readLearnerJudgments(db, {
+      knowledge_ids: [kc],
+      context: 'any',
+      as_of: asOf,
+    });
+    expect(current.items[0].freshness.kind).toBe('current');
+    expect(wire(stale.items[0].judgment)).toEqual(wire(canonical.items[0]));
+    expect(wire(current.items[0].judgment)).toEqual(wire(canonical.items[0]));
+  });
+
   // One operational-failure contract across owned components: a contended
   // component read must abort the drain (strict ProfileComponentError) and
   // leave the intent retryable — never a degraded row consumed under
   // 'current'. Each entry locks the table a different component reads.
   for (const lockedTable of ['material_fsrs_state', 'event'] as const) {
+    // @invariant concurrency: a failed component read leaves refresh work retryable.
+    // @fails-if drain consumes the intent or writes a profile row before all strict reads succeed.
     it(`leaves the intent retryable when ${lockedTable} is contended`, async () => {
       const kc = `kc_${createId()}`;
       await seedKnowledge(kc);
@@ -206,7 +277,7 @@ describe('learner-profile canonical projection', () => {
         const drainDb = drizzle(drainClient, {
           schema,
         }) as unknown as import('@/db/client').Db;
-        const { drainLearnerProfileRefresh } = await import('@/kernel/learner-profile');
+        const { drainLearnerProfileRefresh } = await import('@/kernel/learner-profile/refresh');
         await expect(drainLearnerProfileRefresh(drainDb)).rejects.toThrow();
       } finally {
         await holder`ROLLBACK`.catch(() => {});
@@ -234,7 +305,7 @@ describe('learner-profile canonical projection', () => {
       ).toBe(0);
 
       // Retryable: a clean drain completes the profile from the retained intent.
-      const { drainLearnerProfileRefresh } = await import('@/kernel/learner-profile');
+      const { drainLearnerProfileRefresh } = await import('@/kernel/learner-profile/refresh');
       const retried = await drainLearnerProfileRefresh(db);
       expect(retried.refreshed).toBe(1);
       const rows = await db

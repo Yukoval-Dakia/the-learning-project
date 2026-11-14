@@ -9,7 +9,11 @@
 
 import { and, eq, inArray } from 'drizzle-orm';
 import type { LearnerJudgment } from '@/core/schema/learner-judgment';
-import type { RetentionReading, SchedulingState } from '@/core/schema/scheduling-state';
+import {
+  type RetentionReading,
+  type SchedulingState,
+  SchedulingStateSchema,
+} from '@/core/schema/scheduling-state';
 import type { Db, Tx } from '@/db/client';
 import { event, material_fsrs_state } from '@/db/schema';
 import { allowedEventIds } from '@/kernel/events/derivation-policy';
@@ -73,11 +77,72 @@ export interface SchedulingStateEntry {
  * projection; the row never stores a frozen R(t) or stale wording.
  */
 export interface PersistedProfileState {
-  mastery: MasteryProjection | null;
-  scheduling: (Omit<SchedulingStateEntry, 'due_at'> & { due_at: string }) | null;
+  mastery:
+    | (Omit<MasteryProjection, 'last_outcome_at'> & {
+        last_outcome_at: Date | string | null;
+      })
+    | null;
+  scheduling:
+    | (Omit<SchedulingStateEntry, 'due_at' | 'state'> & {
+        due_at: Date | string;
+        state: SchedulingState | Record<string, unknown>;
+      })
+    | null;
   duration: { event_id: string | null; present: boolean; ms: number | null };
-  activity: string | null;
+  activity: Date | string | null;
   non_kc: boolean;
+}
+
+function persistedDate(value: unknown, field: string): Date {
+  const parsed =
+    value instanceof Date
+      ? value
+      : typeof value === 'string' || typeof value === 'number'
+        ? new Date(value)
+        : null;
+  if (!parsed || Number.isNaN(parsed.getTime())) {
+    throw new Error(`invalid persisted ${field}`);
+  }
+  return parsed;
+}
+
+function persistedEpochMs(value: unknown, field: string): number {
+  const parsed =
+    value instanceof Date
+      ? value.getTime()
+      : typeof value === 'number'
+        ? value
+        : typeof value === 'string'
+          ? /^-?\d+$/.test(value)
+            ? Number(value)
+            : Date.parse(value)
+          : Number.NaN;
+  if (!Number.isSafeInteger(parsed)) throw new Error(`invalid persisted ${field}`);
+  return parsed;
+}
+
+function schedulingStateFromPersisted(raw: unknown): SchedulingState {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error('invalid persisted scheduling state');
+  }
+  const state = { ...(raw as Record<string, unknown>) };
+  if ('due' in state) state.due = persistedDate(state.due, 'scheduling.state.due');
+  if ('last_review' in state && state.last_review !== null) {
+    state.last_review = persistedDate(state.last_review, 'scheduling.state.last_review');
+  }
+  if (state.modelDue && typeof state.modelDue === 'object' && !Array.isArray(state.modelDue)) {
+    const modelDue = { ...(state.modelDue as Record<string, unknown>) };
+    if ('at' in modelDue)
+      modelDue.at = persistedEpochMs(modelDue.at, 'scheduling.state.modelDue.at');
+    if ('checkedThrough' in modelDue) {
+      modelDue.checkedThrough = persistedEpochMs(
+        modelDue.checkedThrough,
+        'scheduling.state.modelDue.checkedThrough',
+      );
+    }
+    state.modelDue = modelDue;
+  }
+  return SchedulingStateSchema.parse(state);
 }
 
 async function loadSchedulingReviewFacts(
@@ -319,7 +384,7 @@ export function persistedStateForKc(
     mastery: masteryEntry,
     scheduling: sched
       ? {
-          state: sched.state,
+          state: sched.state_readable ? schedulingStateFromPersisted(sched.state) : sched.state,
           due_at: sched.due_at.toISOString(),
           state_readable: sched.state_readable,
           last_review_event_id: sched.last_review_event_id,
@@ -348,42 +413,28 @@ export function judgmentFromPersistedState(
 ): LearnerJudgment {
   const masteryValues = new Map<string, MasteryProjection>();
   if (persisted.mastery) {
-    // JSONB round-trip turns timestamps into ISO strings; revive them before
-    // the projection reads last_outcome_at.getTime() for evidence age.
-    const m = persisted.mastery as MasteryProjection & { last_outcome_at: Date | string | null };
     masteryValues.set(knowledgeId, {
-      ...m,
+      ...persisted.mastery,
       last_outcome_at:
-        m.last_outcome_at === null || m.last_outcome_at instanceof Date
-          ? m.last_outcome_at
-          : new Date(m.last_outcome_at),
+        persisted.mastery.last_outcome_at === null
+          ? null
+          : persistedDate(persisted.mastery.last_outcome_at, 'mastery.last_outcome_at'),
     });
   }
   const schedulingValues = new Map<string, SchedulingReviewFact>();
   const retentionValues = new Map<string, RetentionReading>();
   if (persisted.scheduling) {
-    // JSONB round-trip turns the sealed card's timestamps into ISO strings;
-    // revive them before ts-fsrs or lastRetrievalAt reads .getTime()/.toISOString().
-    const rawState = persisted.scheduling.state as SchedulingState & {
-      due?: Date | string;
-      last_review?: Date | string | null;
-    };
-    const state: SchedulingState = {
-      ...rawState,
-      ...(rawState.due !== undefined && !(rawState.due instanceof Date)
-        ? { due: new Date(rawState.due) }
-        : {}),
-      ...(rawState.last_review != null && !(rawState.last_review instanceof Date)
-        ? { last_review: new Date(rawState.last_review) }
-        : {}),
-    } as SchedulingState;
-    const reading: RetentionReading = persisted.scheduling.state_readable
+    const dueAt = persistedDate(persisted.scheduling.due_at, 'scheduling.due_at');
+    const state = persisted.scheduling.state_readable
+      ? schedulingStateFromPersisted(persisted.scheduling.state)
+      : null;
+    const reading: RetentionReading = state
       ? retrievabilityForKc(state, asOf)
       : UNREADABLE_RETENTION;
     schedulingValues.set(knowledgeId, {
       reading,
-      due_at: new Date(persisted.scheduling.due_at),
-      last_retrieval_at: persisted.scheduling.state_readable ? lastRetrievalAt(state) : null,
+      due_at: dueAt,
+      last_retrieval_at: state ? lastRetrievalAt(state) : null,
       state_readable: persisted.scheduling.state_readable,
       last_review_event_id: persisted.scheduling.last_review_event_id,
     });
@@ -401,6 +452,6 @@ export function judgmentFromPersistedState(
     scheduling: { kind: 'available', values: schedulingValues },
     durations,
     nonKcIds: persisted.non_kc ? new Set([knowledgeId]) : new Set(),
-    activity: persisted.activity ? new Date(persisted.activity) : null,
+    activity: persisted.activity ? persistedDate(persisted.activity, 'activity') : null,
   });
 }

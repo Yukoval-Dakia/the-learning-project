@@ -17,7 +17,6 @@ import {
   buildLearnerJudgmentItem,
   isComponentFailureReason,
   retentionAvailable,
-  retentionValue,
 } from '@/kernel/learner-profile/build-judgment';
 import { lastKnowledgeActivityAt } from '@/kernel/read-models/knowledge-activity';
 import { getNonKcKnowledgeIds } from '@/kernel/read-models/knowledge-roles';

@@ -8,7 +8,7 @@ import { event, memory_brief_note } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { allowedEventIds, lockEventDerivationSources } from '@/kernel/events/derivation-policy';
 import { ApiError } from '@/kernel/http';
-import { readLearnerProfileNumbers } from '@/kernel/learner-profile';
+import { readLearnerProfileNumbers } from '@/kernel/learner-profile/numbers';
 import { lockPurposeBrief } from '@/kernel/locks/memory-locks';
 import { briefPurposeCurrent, latestPurposeWithdrawal } from '@/kernel/read-models/purpose-change';
 import { markBriefPurpose } from '../server/memory/brief-purpose';

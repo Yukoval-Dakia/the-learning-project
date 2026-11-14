@@ -14,7 +14,7 @@ import type { z } from 'zod';
 import type { Db } from '@/db/client';
 import { event, knowledge } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
-import { readLearnerProfileNumbers } from '@/kernel/learner-profile';
+import { readLearnerProfileNumbers } from '@/kernel/learner-profile/numbers';
 import { loadNativeReviewOccurrences } from '@/kernel/read-models/assessment-review-occurrences';
 import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
 import {

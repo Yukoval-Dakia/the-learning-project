@@ -96,8 +96,8 @@ export const learner_profile = pgTable(
 );
 
 // Durable idempotent refresh intent: written atomically in the canonical writer's
-// own transaction after every fact write and final receipt. `seq` is commit-order
-// evidence from a dedicated sequence; pending intents (not MAX(event_id)) decide
+// own transaction after every fact write and final receipt. `seq` records
+// allocation order only; pending intents (not MAX(event_id or seq)) decide
 // freshness, so late-committing intents are never skipped.
 export const learner_profile_refresh_intent = pgTable(
   'learner_profile_refresh_intent',
