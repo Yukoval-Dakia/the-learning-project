@@ -11,19 +11,19 @@ import { getCorrectionStatuses, writeEvent } from '@/kernel/events';
 import { PROPOSAL_BATCH_ACCEPT_ACTION } from '@/kernel/proposals/batch-confirm';
 import { getProposalInboxRow } from '@/kernel/proposals/inbox';
 import { writeAiProposal } from '@/kernel/proposals/writer';
-import { migrateCanonicalProjections } from '../../../scripts/migrate-canonical-projections';
-import { resetDb, testDb } from '../../../tests/helpers/db';
+import { acceptAiProposal } from '@/server/proposals/accept-action';
+import { retractAiProposal } from '@/server/proposals/retract-action';
+import { migrateCanonicalProjections } from '../../../../scripts/migrate-canonical-projections';
+import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
   seedCompletionLearningItem,
   seedCompletionProposal as seedNativeProposal,
-} from '../../../tests/helpers/native-completion';
-import { acceptAiProposal } from './accept-action';
+} from '../../../../tests/helpers/native-completion';
 import {
   batchAcceptProposals,
   installBatchConfirmEligibility,
   proposalBatchId,
 } from './batch-accept';
-import { retractAiProposal } from './retract-action';
 
 const NOW = new Date('2026-11-08T00:00:00Z');
 

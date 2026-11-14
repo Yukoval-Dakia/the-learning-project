@@ -301,7 +301,7 @@ export const dbTestInclude = [
   'src/server/projections/parity-writers-c3.db.test.ts',
   'src/server/proposals/accept-records-flip.db.test.ts',
   'src/server/proposals/actions.test.ts',
-  'src/server/proposals/batch-accept.db.test.ts',
+  'src/server/orchestration/proposal-decisions/batch-accept.db.test.ts',
   'src/server/proposals/edge-decide-advisory-lock.db.test.ts',
   'src/server/proposals/retract-clock.db.test.ts',
   'src/server/proposals/signals.test.ts',

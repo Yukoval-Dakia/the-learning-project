@@ -59,8 +59,8 @@ import {
   PROPOSAL_BATCH_ACCEPT_ACTION,
   installBatchConfirmEligibleKinds,
 } from '@/kernel/proposals/batch-confirm';
-import { acceptAiProposal } from './accept-action';
-import { proposalLifecycleRegistry } from './lifecycle-context';
+import { acceptAiProposal } from '@/server/proposals/accept-action';
+import { proposalLifecycleRegistry } from '@/server/proposals/lifecycle-context';
 
 export type BatchAcceptItemStatus = 'accepted' | 'already_accepted' | 'rejected' | 'failed';
 

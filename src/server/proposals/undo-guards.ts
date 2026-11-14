@@ -39,7 +39,7 @@ import {
   createAutoAppliedUndoGuardRegistry,
   installAutoAppliedUndoGuardRegistry,
 } from '@/kernel/proposals/auto-applied-undo';
-import { installBatchConfirmEligibility } from './batch-accept';
+import { installBatchConfirmEligibility } from '@/server/orchestration/proposal-decisions/batch-accept';
 
 export function buildProposalUndoGuards(): AutoAppliedUndoGuardRegistry {
   const guards: AutoAppliedUndoGuardSet = {
