@@ -1,6 +1,9 @@
 import type { CauseCategoryT } from '@/core/schema/event/blocks';
 import type { EffectiveTruth } from '@/kernel/events';
-import type { FailureAttempt } from '@/kernel/read-models/failure-attempts';
+import {
+  type FailureAttempt,
+  getCurrentFailureAttemptsForDerivation,
+} from '@/kernel/read-models/failure-attempts';
 
 export type EffectiveFailureCause =
   | {
@@ -64,6 +67,38 @@ export function effectiveCauseForFailureAttempt(
     };
   }
 
+  return null;
+}
+
+/** Shared cause-scan window for preview advice and settlement rating. */
+export const EFFECTIVE_CAUSE_SCAN_LIMIT = 5;
+
+export type EffectiveCauseReadDb = Parameters<typeof getCurrentFailureAttemptsForDerivation>[0];
+
+/**
+ * Resolve the newest current, derivation-authorized effective cause for a question.
+ *
+ * The derivation sibling applies both facts review/settlement need: it retains
+ * only each attempt chain's current effective row and withholds restricted
+ * payload or withdrawn-consent evidence. Callers that know a newly recorded
+ * attempt must pass its event id so the scan does not let that attempt's own
+ * pending attribution shift its settlement.
+ */
+export async function resolveCurrentEffectiveCauseForQuestion(
+  db: EffectiveCauseReadDb,
+  questionId: string,
+  excludeAttemptEventId?: string,
+): Promise<CauseCategoryT | null> {
+  const failures = await getCurrentFailureAttemptsForDerivation(db, {
+    questionIds: [questionId],
+    limit: EFFECTIVE_CAUSE_SCAN_LIMIT + 1,
+    causeEditable: true,
+  });
+  for (const failure of failures) {
+    if (failure.attempt_event_id === excludeAttemptEventId) continue;
+    const cause = effectiveCauseCategoryForFailureAttempt(failure);
+    if (cause !== null) return cause;
+  }
   return null;
 }
 

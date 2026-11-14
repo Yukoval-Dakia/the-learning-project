@@ -31,9 +31,11 @@ import {
   type SettlementPlan,
   subjectKey,
 } from '@/kernel/read-models/assessment-settlements';
+import { resolveCurrentEffectiveCauseForQuestion } from '@/kernel/read-models/cause-policy';
 import { getNonKcKnowledgeIds } from '@/kernel/read-models/knowledge-roles';
 import type { AbilityGlobalByKnowledgeId } from '@/kernel/read-models/mastery-state';
 import { SYNTHETIC_SUBJECT_ROOT_RE } from '@/kernel/read-models/placement-scope';
+import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
 import { assessmentAttemptEventId } from '@/kernel/records/assessment-attempt-identity';
 import { selectedForgettingEngine } from '@/kernel/scheduling';
 import type { ActivationSettleInput } from './activate';
@@ -97,6 +99,13 @@ interface SettlementScope {
   capture: NonNullable<ActivationSettleInput['forgettingCapture']>;
   assistance: 'independent' | 'assisted' | 'unknown';
   schedulingPolicy: unknown;
+  /**
+   * +1 for a carelessness-lean, -1 for conceptual-lean, 0 for no effective
+   * cause or a profile that declares no lean on it. Resolved inside the
+   * settlement transaction, so the same read policy feeds the automatic
+   * rating and never re-classifies the attempt.
+   */
+  causeLean: -1 | 0 | 1;
 }
 
 export async function loadScope(tx: Tx, input: ActivationSettleInput): Promise<SettlementScope> {
@@ -199,6 +208,11 @@ export async function loadScope(tx: Tx, input: ActivationSettleInput): Promise<S
       : 'unknown';
   const numeric = (key: string) =>
     typeof original?.payload[key] === 'number' ? original.payload[key] : null;
+  const causeLean = await resolveSettlementCauseLean(
+    tx,
+    input,
+    byId.get(input.questionGroupId) ?? null,
+  );
   return {
     frozenLearningScope: frozen !== null,
     schedulingPolicy: original?.payload.scheduling_policy,
@@ -222,7 +236,60 @@ export async function loadScope(tx: Tx, input: ActivationSettleInput): Promise<S
     plan,
     issuedPartIds: partIds,
     fullScope,
+    causeLean,
   };
+}
+
+/**
+ * Resolve the cause lean for the automatic settlement rating on this group.
+ * Preview advice uses the same kernel scan, so the same current/authorized
+ * question history produces the same lean. Settlement excludes this
+ * submission's own attempt: its cause is not recorded yet when the plan is
+ * derived, and its verdict must not be nudged by a future attribution.
+ *
+ * The profile's own `rating_lean` vocabulary is the only interpretation:
+ * without a declared lean the cause stays neutral.
+ */
+async function resolveSettlementCauseLean(
+  tx: Tx,
+  input: ActivationSettleInput,
+  groupRow: QuestionLite | null,
+): Promise<-1 | 0 | 1> {
+  const causeCategory = await resolveCurrentEffectiveCauseForQuestion(
+    tx,
+    input.questionGroupId,
+    assessmentAttemptEventId(input.submission.submission_id),
+  );
+  if (causeCategory === null) return 0;
+
+  const knowledgeIds = groupRow?.knowledge_ids ?? [];
+  const subjectProfile = await resolveSubjectProfileForKnowledgeIds(tx, knowledgeIds);
+  const declared = subjectProfile.causeCategories.find(
+    (category) => category.id === causeCategory,
+  )?.rating_lean;
+  if (declared === 'carelessness') return 1;
+  if (declared === 'conceptual') return -1;
+  // Historical `conceptual*` ids from the pre-profile vocabulary carry their
+  // original conceptual lean only when the current profile does not re-declare
+  // them; the advisor applies the same fallback on its read path.
+  if (causeCategory.startsWith('conceptual')) return -1;
+  return 0;
+}
+
+/**
+ * The cause lean only moves a partial-credit verdict — carelessness opens the
+ * schedule toward good, conceptual confusion holds it at again. Correct,
+ * incorrect and unsupported verdicts keep their settled rating so the cause
+ * cannot turn a right answer into a review or an unsupported judgment into a
+ * scheduled card. Exported for the deterministic rating invariant test.
+ */
+export function applyCauseLeanToAutomaticRating(
+  verdict: 'correct' | 'partial' | 'incorrect' | 'unsupported',
+  baseAutomaticRating: 'again' | 'hard' | 'good' | 'easy' | null,
+  causeLean: -1 | 0 | 1,
+): 'again' | 'hard' | 'good' | 'easy' | null {
+  if (verdict !== 'partial' || causeLean === 0) return baseAutomaticRating;
+  return causeLean === 1 ? 'good' : 'again';
 }
 
 export function derivePlan(input: ActivationSettleInput, scope: SettlementScope): SettlementPlan {
@@ -294,7 +361,7 @@ export function derivePlan(input: ActivationSettleInput, scope: SettlementScope)
   // candidate 引擎的 forgettingSuppressed 同型）；用户显式自评（userRating）不受影响。
   const autoRatingSuppressed =
     provenance.source === 'automatic' && (provenance.assisted || learnerAssisted);
-  const automaticRating =
+  const baseAutomaticRating =
     provenance.source === 'automatic'
       ? automaticSchedulingRating({
           verdict: verdict.verdict,
@@ -305,6 +372,11 @@ export function derivePlan(input: ActivationSettleInput, scope: SettlementScope)
           durationMs: scope.capture.latency_ms,
         })
       : ratingForVerdict(verdict.verdict);
+  const automaticRating = applyCauseLeanToAutomaticRating(
+    verdict.verdict,
+    baseAutomaticRating,
+    scope.causeLean,
+  );
   const rating = scope.preserveScheduling
     ? null
     : (input.userRating ?? (autoRatingSuppressed ? null : automaticRating));
@@ -327,11 +399,17 @@ export function derivePlan(input: ActivationSettleInput, scope: SettlementScope)
       : scopeKcIds.map((knowledgeId) => {
           const observation = observations.find((row) => row.kc_id === knowledgeId);
           const direction = observation?.direction;
+          // KC-local evidence keeps its contract: full-credit up follows the
+          // automatic rating, explicit down stays again, no evidence abstains.
+          // For a partial verdict the settled cause lean moves the same up
+          // observation — carelessness stays at good while conceptual confusion
+          // pulls the KC card back to again — so the lean reaches the actual
+          // per-KC schedule rather than stopping at the group receipt.
           const observationRating =
             direction === 'up'
               ? verdict.verdict === 'correct' && verdict.normalized === 1
                 ? automaticRating
-                : 'good'
+                : applyCauseLeanToAutomaticRating(verdict.verdict, 'good', scope.causeLean)
               : direction === 'down'
                 ? 'again'
                 : null;

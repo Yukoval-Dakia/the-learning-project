@@ -13,7 +13,7 @@
 // 严守只读契约（item-更新半边锁死 G4）：本模块**永不写** item_calibration / mastery_state。
 // b 锚只读 track='hard'（软轨 b 永不进 p(L)/调度，ADR-0035）。
 
-import { and, eq, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, or } from 'drizzle-orm';
 import { learnerLocalDay } from '@/core/learner-day';
 import type { QuestionKindT } from '@/core/schema/judge-routing';
 import {
@@ -27,11 +27,13 @@ import {
 import { steeringWindowCoversToday } from '@/core/steering';
 import { THETA_GRID_ENABLED, type ThetaGridPosterior, klpScoreFromGrid } from '@/core/theta-grid';
 import type { Db, Tx } from '@/db/client';
-import { knowledge, knowledge_edge, mistake_variant, question } from '@/db/schema';
+import { knowledge, knowledge_edge, question } from '@/db/schema';
 import {
   type ActiveGoal,
   listActiveGoalsWithResolvedScope,
 } from '@/kernel/read-models/active-goal-scope';
+import { effectiveCauseCategoryForFailureAttempt } from '@/kernel/read-models/cause-policy';
+import { getCurrentFailureAttemptsForDerivation } from '@/kernel/read-models/failure-attempts';
 import {
   type MasteryStateRow,
   effectiveThetaForKcBatch,
@@ -309,16 +311,16 @@ function aggregateWeakestKc(
 //   UpdateThetaForAttemptInput 里根本没有承载它的字段，结构性切断）。
 //
 // 单用户工具（CLAUDE.md Auth：「single-user tool；no per-user auth」）——schema 里
-// mistake_variant / question / mastery_state 全无 user_id 列。故每条 mistake_variant 行
+// question / mastery_state / event 全无 user_id 列。故每条有效错因记录
 // 就是 THIS learner 自己的错误记录。本信号是**纯 per-learner SELF-STATE tally**
 // （sufficient-statistic 式计数），归一化常数 owner-fixed（module const，同其它选题权重），
 // **绝不估计任何 cross-examinee 量**（admissibility HARD，n=1 admissible）。
 //
 // 链接（KC-based，prompt PREFER）：候选题触及 KC 集 K（cand.knowledgeIds）。
-//   1. 找触及任一 kc∈K 的题：question.knowledge_ids @> [kc]（已有 GIN 索引）。
-//   2. 这些题上的错误：mistake_variant.parent_question_id ∈ 那些题 id，按 cause_category
-//      group + count（每行 = 该错因家族的一次复发）。
-//   3. 复发分 = 跨 cause_category 的 MAX 计数（这道题最常复发的那个错误观念有多顽固）。
+//   1. 找出在任一 kc∈K 上有错误记录的题：getCurrentFailureAttemptsForDerivation
+//      给出有效错因（user_cause 优先于 judge），question→knowledge_ids 折回候选集。
+//   2. 按 cause_family group + count（每个有效错因在该候选集内的一次复发）。
+//   3. 复发分 = 跨 cause_family 的 MAX 计数（这道题最常复发的那个错误观念有多顽固）。
 //   4. 归一化：min(1, maxCount / NORMALIZATION_CONST)（owner-fixed const，非学习/估计量）。
 //   无任何错误数据（learner 在候选 KC 上无 cause 记录）→ undefined（NEVER zero-fill：
 //   undefined=「无数据」，0=「测得为零」——评分层据此 MFI-only 退化 vs 当硬零处理）。
@@ -348,18 +350,18 @@ function recurrenceKnowledgeSetKey(knowledgeIds: readonly string[]): string {
 /**
  * Per-learner cross-attempt cause-family recurrence for every candidate KC set in one request.
  *
- * This is the YUK-741 set-based read boundary. It issues at most ONE aggregate query over the
- * union of all requested KCs, retaining `parent_question_id → question.knowledge_ids` in each
- * grouped evidence row. The in-memory fold then projects each row only into candidate sets whose
- * KCs intersect that question. A Set de-duplicates candidate-set routing, so a question carrying
- * two KCs from the same candidate contributes each mistake exactly once — identical to the old
- * boolean OR predicate rather than double-counting through a KC unnest join.
+ * Recurrence reads effective causes on current failure attempts — the same
+ * per-attempt cause a learner-facing mistake read resolves (active user_cause
+ * wins over the latest active judge). A relabeled mistake moves its family
+ * count with it; the stored mistake_variant row no longer pins the signal.
+ * The derivation-facing reader withholds restricted payload and withdrawn-
+ * consent rows so only confirmed evidence feeds the tally.
  *
- * SELF-STATE sufficient statistic (single-user tool → every mistake_variant row is THIS
- * learner's). Only status='active' + non-null cause rows count. Draft/dismissed/broken rows retain
- * their cause_category in storage but are not confirmed recurrence evidence, so they remain
- * excluded. For each candidate, counts are summed per cause family across matching parent
- * questions, then the maximum family count is normalised through the owner-fixed RECURRENCE_NORM.
+ * Question-level KCs come from the `question` row (the attempt's frozen scope
+ * stays out of the linkage). Each attempt contributes its effective cause once
+ * per candidate set whose KCs intersect that question's declared ids, summed
+ * per family; the maximum family count is normalised through the owner-fixed
+ * RECURRENCE_NORM.
  *
  * The returned array is aligned to `candidateKnowledgeIds`. NEVER zero-fill:
  *   - empty K (candidate has no KCs) → undefined;
@@ -393,47 +395,40 @@ export async function batchAggregateMisconceptionRecurrence(
   const unionKcIds = Array.from(setKeysByKc.keys());
   if (unionKcIds.length === 0) return inputKeys.map(() => undefined);
 
-  // Preserve the established `@>` shape so question_knowledge_ids_gin(jsonb_path_ops) remains
-  // usable. `?|` is intentionally avoided because that operator is unsupported by path_ops.
-  const unionContainment = sql.join(
-    unionKcIds.map(
-      (knowledgeId) => sql`${question.knowledge_ids} @> ${JSON.stringify([knowledgeId])}::jsonb`,
-    ),
-    sql` OR `,
+  // Recurrence now counts effective causes on failure attempts touching the
+  // candidate KCs, not stored mistake_variant rows. The reader resolves active
+  // user_cause (learner overrides) over the latest active judge on the same
+  // effective attempt, so a relabeled cause family moves with the learner's
+  // own classification instead of a frozen mistake_variant row. Failures are
+  // scanned once; the question→KC join then folds each attempt's effective
+  // cause into every intersecting candidate set.
+  const recentFailures = await getCurrentFailureAttemptsForDerivation(db, {
+    causeEditable: true,
+    limit: null,
+  });
+  const failedQuestionIds = [...new Set(recentFailures.map((row) => row.question_id))];
+  const questionKcRows = failedQuestionIds.length
+    ? await db
+        .select({ questionId: question.id, knowledgeIds: question.knowledge_ids })
+        .from(question)
+        .where(inArray(question.id, failedQuestionIds))
+    : [];
+  const knowledgeIdsByQuestion = new Map(
+    questionKcRows.map((row) => [row.questionId, row.knowledgeIds] as const),
   );
 
-  // One row per (parent question, cause family) retains the evidence linkage needed to fold the
-  // same row into every intersecting candidate set without fetching one aggregate per candidate.
-  const evidenceRows = await db
-    .select({
-      questionId: question.id,
-      knowledgeIds: question.knowledge_ids,
-      causeCategory: mistake_variant.cause_category,
-      recurrenceCount: sql<number>`count(*)::int`,
-    })
-    .from(mistake_variant)
-    .innerJoin(question, eq(question.id, mistake_variant.parent_question_id))
-    .where(
-      and(
-        isNotNull(mistake_variant.cause_category),
-        eq(mistake_variant.status, 'active'),
-        sql`(${unionContainment})`,
-      ),
-    )
-    .groupBy(question.id, question.knowledge_ids, mistake_variant.cause_category);
-
   const countsBySetAndCause = new Map<string, Map<string, number>>();
-  for (const row of evidenceRows) {
-    // One question may carry multiple requested KCs. Route to each candidate-set key once so its
-    // evidence count matches the reference `kc1 OR kc2` query rather than being multiplied.
+  for (const failure of recentFailures) {
+    const causeCategory = effectiveCauseCategoryForFailureAttempt(failure);
+    if (causeCategory === null) continue;
+    const knowledgeIds = knowledgeIdsByQuestion.get(failure.question_id) ?? [];
     const matchingSetKeys = new Set<string>();
-    for (const knowledgeId of row.knowledgeIds) {
+    for (const knowledgeId of knowledgeIds) {
       for (const key of setKeysByKc.get(knowledgeId) ?? []) matchingSetKeys.add(key);
     }
-    if (row.causeCategory === null) continue; // narrowed by SQL; retain a fail-closed TS guard.
     for (const key of matchingSetKeys) {
       const byCause = countsBySetAndCause.get(key) ?? new Map<string, number>();
-      byCause.set(row.causeCategory, (byCause.get(row.causeCategory) ?? 0) + row.recurrenceCount);
+      byCause.set(causeCategory, (byCause.get(causeCategory) ?? 0) + 1);
       countsBySetAndCause.set(key, byCause);
     }
   }
