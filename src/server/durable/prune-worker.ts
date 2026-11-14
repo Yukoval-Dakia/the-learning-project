@@ -1,145 +1,50 @@
 import { DBOS } from '@dbos-inc/dbos-sdk';
-import { sql } from 'drizzle-orm';
 import type { PgBoss } from 'pg-boss';
 import type { Db } from '@/db/client';
-import type { JobDecl } from '@/kernel/manifest';
-import { FAST_QUEUE_OPTS, createOrUpdateQueue } from '@/server/boss/queue-config';
-import { waitForRunnableEpoch } from '@/server/migration/contract-epoch/epoch';
+import type { MountedDurableFamily } from '@/kernel/manifest';
 import {
-  type JudgeWorkerBoundary,
-  createJudgeBackend,
-  prepareJudgeBackend,
-  registerJudgeWorkflows,
-} from './judge-worker';
-import {
-  PRUNE_DBOS_SCHEMA,
-  PRUNE_FAMILY,
-  commitPrune,
-  drainLegacyPrune,
-  hasRecentDbosPruneReceipt,
-  installPruneProducerFence,
-  readPrunePhase,
-} from './prune-family';
-import {
-  REVIEW_ORPHAN_FAMILY,
-  type ReviewOrphanBoundaryHook,
-  installReviewOrphanProducerFence,
-} from './review-orphan-family';
-import { createReviewOrphanBackend, registerReviewOrphanWorkflow } from './review-orphan-worker';
-import { installSessionOrphanProducerFence } from './session-orphan-backend';
-import type { SessionOrphanBoundaryHook } from './session-orphan-family';
-import {
-  createSessionOrphanBackend,
-  registerSessionOrphanWorkflows,
-} from './session-orphan-worker';
+  type AdmittedFamily,
+  type FamilyBoundaries,
+  mountDurableFamilies,
+} from './family-contract';
+import { PRUNE_DBOS_SCHEMA } from './prune-family';
 
-export type PruneBoundary = 'business-committed' | 'checkpoint-saved';
-export function registerPruneWorkflow(
-  db: Db,
-  boundary: (name: PruneBoundary) => Promise<void> = async () => {},
-) {
-  return DBOS.registerWorkflow(
-    async (scheduledDate: Date, _context: unknown): Promise<void> => {
-      const workflowId = DBOS.workflowID;
-      if (!workflowId) throw new Error('Prune requires a durable workflow identity');
-      const cutoff = new Date(scheduledDate.getTime() - 30 * 86400 * 1000);
-      await DBOS.runStep(
-        async () => {
-          await waitForRunnableEpoch(db);
-          await commitPrune(db, workflowId, cutoff);
-          await boundary('business-committed');
-        },
-        { name: 'prune-business-commit', retriesAllowed: false },
-      );
-      await boundary('checkpoint-saved');
-    },
-    { name: PRUNE_FAMILY },
-  );
-}
-
-type PruneWorkerOptions = {
-  boss: PgBoss;
-  db: Db;
-  decl: JobDecl;
-  boundary?: (name: PruneBoundary) => Promise<void>;
-  reconcileIntervalMs?: number;
-};
+/**
+ * The generic durable-family host. It mounts every admitted family through its
+ * own adapter (`AdmittedFamily.adapter.mount`), launches DBOS once, and runs a
+ * single reconcile/stop loop over the mounted handles. It holds no family or
+ * member name — families contribute themselves through the manifest
+ * `durable.load` contract.
+ */
 export type DurableWorkerOptions = {
   boss: PgBoss;
   db: Db;
-  declarations: {
-    pruneEvents: JobDecl;
-    reviewOrphans: JobDecl;
-    conversationOrphans: JobDecl;
-    placementOrphans: JobDecl;
-    judgeRun?: JobDecl;
-    judgeReconcile?: JobDecl;
-  };
-  boundary?: (name: PruneBoundary) => Promise<void>;
-  reviewBoundary?: ReviewOrphanBoundaryHook;
-  sessionBoundary?: SessionOrphanBoundaryHook;
-  judgeBoundary?: JudgeWorkerBoundary;
+  families: readonly AdmittedFamily[];
+  boundaries?: FamilyBoundaries;
   reconcileIntervalMs?: number;
 };
-type HostOptions = PruneWorkerOptions & {
-  reviewDecl?: JobDecl;
-  conversationDecl?: JobDecl;
-  placementDecl?: JobDecl;
-  reviewBoundary?: ReviewOrphanBoundaryHook;
-  sessionBoundary?: SessionOrphanBoundaryHook;
-  judgeDecl?: JobDecl;
-  judgeReconcileDecl?: JobDecl;
-  judgeBoundary?: JudgeWorkerBoundary;
-};
+
 type Host = {
   boss: PgBoss;
   db: Db;
   key: string;
-  promise: Promise<ReturnType<typeof registerPruneWorkflow>>;
+  promise: Promise<MountedDurableFamily[]>;
   shutdown?: () => Promise<void>;
   stopPromise?: Promise<number>;
 };
 let registration: Host | undefined;
 
-function declarationKey(options: HostOptions) {
-  for (const [decl, name] of [
-    [options.decl, PRUNE_FAMILY],
-    [options.reviewDecl, REVIEW_ORPHAN_FAMILY],
-    [options.conversationDecl, 'prune_orphan_conversation_sessions'],
-    [options.placementDecl, 'prune_orphan_placement_sessions'],
-  ] as const) {
-    if (!decl && name !== PRUNE_FAMILY) continue;
-    if (
-      !decl ||
-      decl.name !== name ||
-      decl.backend !== 'dbos' ||
-      decl.queue !== 'fast' ||
-      !decl.schedule ||
-      !decl.schedule.cron.trim() ||
-      !decl.schedule.tz.trim() ||
-      decl.load ||
-      decl.schedule.singletonKey !== undefined ||
-      decl.schedule.singletonSeconds !== undefined
-    )
-      throw new Error(`Invalid admitted declaration ${name}`);
-  }
-  // Freeze the admitted surface; later expansion or a changed contract fails explicitly.
+function declarationKey(families: readonly AdmittedFamily[]) {
+  // Freeze the admitted surface; a changed family set or contract fails
+  // explicitly rather than silently remounting a different host.
   return JSON.stringify(
-    [
-      options.decl,
-      options.reviewDecl,
-      options.conversationDecl,
-      options.placementDecl,
-      options.judgeDecl,
-      options.judgeReconcileDecl,
-    ].map((decl) =>
-      decl
-        ? {
-            name: decl.name,
-            schedule: decl.schedule ? { cron: decl.schedule.cron, tz: decl.schedule.tz } : null,
-          }
-        : null,
-    ),
+    families.map(({ adapter, decls }) => [
+      adapter.label,
+      Object.values(decls).map((decl) => ({
+        name: decl.name,
+        schedule: decl.schedule ? { cron: decl.schedule.cron, tz: decl.schedule.tz } : null,
+      })),
+    ]),
   );
 }
 
@@ -160,8 +65,8 @@ export async function stopDurableWorker(): Promise<number> {
   return host.stopPromise;
 }
 
-function startHost(options: HostOptions) {
-  const key = declarationKey(options);
+function startHost(options: DurableWorkerOptions) {
+  const key = declarationKey(options.families);
   if (registration) {
     if (
       registration.boss !== options.boss ||
@@ -187,106 +92,19 @@ function startHost(options: HostOptions) {
   });
   return host.promise;
 }
-/** Compatibility entry for the live prune-only process fixtures. */
-export async function startPruneWorker(options: PruneWorkerOptions) {
+
+/** Mount admitted families; each adapter returns its own reconcile/stop handle. */
+export async function startDurableWorker(
+  options: DurableWorkerOptions,
+): Promise<MountedDurableFamily[]> {
   return startHost(options);
-}
-/** Production collects all four families before registering workflows or launching DBOS. */
-export async function startDurableWorker(options: DurableWorkerOptions): Promise<void> {
-  if (
-    !options.declarations.reviewOrphans ||
-    !options.declarations.conversationOrphans ||
-    !options.declarations.placementOrphans
-  )
-    throw new Error('Production DBOS admission requires all four families');
-  await startHost({
-    ...options,
-    decl: options.declarations.pruneEvents,
-    reviewDecl: options.declarations.reviewOrphans,
-    conversationDecl: options.declarations.conversationOrphans,
-    placementDecl: options.declarations.placementOrphans,
-    judgeDecl: options.declarations.judgeRun,
-    judgeReconcileDecl: options.declarations.judgeReconcile,
-  });
 }
 
 async function mountHost(
-  {
-    boss,
-    db,
-    decl,
-    boundary,
-    reviewDecl,
-    reviewBoundary,
-    conversationDecl,
-    placementDecl,
-    sessionBoundary,
-    judgeDecl,
-    judgeReconcileDecl,
-    judgeBoundary,
-    reconcileIntervalMs = 15000,
-  }: HostOptions,
+  { boss, db, families, boundaries = {}, reconcileIntervalMs = 15000 }: DurableWorkerOptions,
   host: Host,
-) {
-  await createOrUpdateQueue(boss, PRUNE_FAMILY, FAST_QUEUE_OPTS);
-  await installPruneProducerFence(db);
-  if (reviewDecl) {
-    await createOrUpdateQueue(boss, REVIEW_ORPHAN_FAMILY, FAST_QUEUE_OPTS);
-    await installReviewOrphanProducerFence(db);
-  }
-  if (conversationDecl && placementDecl) {
-    await createOrUpdateQueue(boss, 'prune_orphan_conversation_sessions', FAST_QUEUE_OPTS);
-    await createOrUpdateQueue(boss, 'prune_orphan_placement_sessions', FAST_QUEUE_OPTS);
-    await installSessionOrphanProducerFence(db);
-  }
-  const workflow = registerPruneWorkflow(db, boundary);
-  if (!!judgeDecl !== !!judgeReconcileDecl)
-    throw new Error('Judge execution and reconciliation must mount together');
-  if (judgeDecl && judgeReconcileDecl) await prepareJudgeBackend(boss, db);
-  const judgeWorkflows =
-    judgeDecl && judgeReconcileDecl ? registerJudgeWorkflows(db, judgeBoundary) : undefined;
-  const judgeBackend =
-    judgeDecl && judgeReconcileDecl && judgeWorkflows
-      ? createJudgeBackend({
-          boss,
-          db,
-          runDecl: judgeDecl,
-          reconcileDecl: judgeReconcileDecl,
-          workflows: judgeWorkflows,
-        })
-      : undefined;
-  const reviewWorkflow = reviewDecl ? registerReviewOrphanWorkflow(db, reviewBoundary) : undefined;
-  const reviewBackend =
-    reviewDecl && reviewWorkflow
-      ? createReviewOrphanBackend({ boss, db, decl: reviewDecl, workflow: reviewWorkflow })
-      : undefined;
-  const sessionWorkflows =
-    conversationDecl && placementDecl
-      ? registerSessionOrphanWorkflows(db, sessionBoundary)
-      : undefined;
-  const sessionBackends =
-    conversationDecl && placementDecl && sessionWorkflows
-      ? [
-          createSessionOrphanBackend({
-            boss,
-            db,
-            binding: {
-              family: 'prune_orphan_conversation_sessions',
-              decl: conversationDecl,
-              workflow: sessionWorkflows.conversationOrphans,
-            },
-          }),
-          createSessionOrphanBackend({
-            boss,
-            db,
-            binding: {
-              family: 'prune_orphan_placement_sessions',
-              decl: placementDecl,
-              workflow: sessionWorkflows.placementOrphans,
-            },
-          }),
-        ]
-      : [];
+): Promise<MountedDurableFamily[]> {
+  const mounted = await mountDurableFamilies({ boss, db, families, boundaries });
   DBOS.setConfig({
     name: 'tlp-housekeeping',
     systemDatabaseUrl: process.env.DATABASE_URL,
@@ -298,7 +116,6 @@ async function mountHost(
     tracingEnabled: false,
   });
   let timer: ReturnType<typeof setInterval> | undefined;
-  let mounted = false;
   let stopping = false;
   let pending = Promise.resolve();
   let shutdownPromise: Promise<void> | undefined;
@@ -309,11 +126,7 @@ async function mountHost(
         clearInterval(timer);
         await pending;
         const errors: unknown[] = [];
-        for (const backend of [
-          ...(reviewBackend ? [reviewBackend] : []),
-          ...sessionBackends,
-          ...(judgeBackend ? [judgeBackend] : []),
-        ]) {
+        for (const backend of mounted) {
           try {
             await backend.stop();
           } catch (error) {
@@ -331,59 +144,13 @@ async function mountHost(
   };
   try {
     await DBOS.launch();
-    const schedule = decl.schedule;
-    if (!schedule) throw new Error('Missing prune schedule');
-    const reconcile = async () => {
-      if (stopping) return;
-      await db.transaction(async (tx) => {
-        // SHARE lets pg-boss's producer trigger read the row; transitions take
-        // UPDATE and cannot race a stale cron registration.
-        await tx.execute(sql`select phase from prune_job_events_control for share`);
-        const phase = await readPrunePhase(tx);
-        if (phase === 'dbos') {
-          await boss.unschedule(PRUNE_FAMILY);
-          await DBOS.applySchedules([
-            {
-              scheduleName: PRUNE_FAMILY,
-              workflowFn: workflow,
-              schedule: schedule.cron,
-              cronTimezone: schedule.tz,
-              automaticBackfill: false,
-            },
-          ]);
-          await DBOS.resumeSchedule(PRUNE_FAMILY);
-        } else if (await DBOS.getSchedule(PRUNE_FAMILY)) {
-          await DBOS.pauseSchedule(PRUNE_FAMILY);
-        }
-        if (phase === 'pg-boss' || phase === 'draining-pg-boss') {
-          if (!mounted) {
-            await boss.work(PRUNE_FAMILY, { pollingIntervalSeconds: 2, batchSize: 1 }, async () => {
-              await waitForRunnableEpoch(db);
-              await drainLegacyPrune(db);
-            });
-            mounted = true;
-          }
-        } else if (mounted) {
-          await boss.offWork(PRUNE_FAMILY, { wait: false });
-          mounted = false;
-        }
-        if (phase === 'pg-boss' && !(await hasRecentDbosPruneReceipt(tx)))
-          await boss.schedule(PRUNE_FAMILY, schedule.cron, {}, { tz: schedule.tz });
-        else await boss.unschedule(PRUNE_FAMILY);
-      });
-    };
     const reconcileAll = async () => {
       if (stopping) return;
       const errors: unknown[] = [];
-      // One family failing must not starve the other family on this same tick.
-      for (const reconcileFamily of [
-        reconcile,
-        ...(reviewBackend ? [() => reviewBackend.reconcile()] : []),
-        ...sessionBackends.map((backend) => () => backend.reconcile()),
-        ...(judgeBackend ? [() => judgeBackend.reconcile()] : []),
-      ]) {
+      // One family failing must not starve the other families on this tick.
+      for (const backend of mounted) {
         try {
-          await reconcileFamily();
+          await backend.reconcile();
         } catch (error) {
           errors.push(error);
         }
@@ -397,7 +164,7 @@ async function mountHost(
       });
     }, reconcileIntervalMs);
     timer.unref();
-    return workflow;
+    return mounted;
   } catch (error) {
     try {
       await host.shutdown();

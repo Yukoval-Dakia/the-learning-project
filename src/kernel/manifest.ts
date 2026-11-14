@@ -142,6 +142,96 @@ export interface JobDecl {
   beforeEligibility?: (db: any) => Promise<void>;
   /** 懒加载 handler 工厂（ApiRouteDecl.load 同构语义）；无 load 的 decl 是纯归属元数据，不被挂载。 */
   load?: () => Promise<JobHandlerFactory>;
+  /**
+   * Durable-family contract. Declared by a `backend:'dbos'` job: `family`
+   * groups the job into its owning family and `load` lazily resolves that
+   * family's mount adapter. The manifest stays the sole job-contribution
+   * owner — it declares the member and its family; the adapter (resolved
+   * through `load`, which the manifest fills with a lazy `import()` into the
+   * platform `boss` mount layer) owns admission shape, backend provisioning,
+   * reconcile and recovery. The registrar groups members by `family`, hands
+   * each group to its loaded adapter, and does not enumerate member names.
+   */
+  durable?: {
+    /** Stable family key this member belongs to (e.g. 'judge', 'prune'). */
+    family: string;
+    /**
+     * Lazily resolve the family's mount adapter. Structural type so the
+     * manifest needs no `src/server/durable` import; the adapter's concrete
+     * body lives in the platform `boss/durable` adapter over the family's
+     * `src/server/durable` logic.
+     */
+    load: () => Promise<DurableFamilyAdapter>;
+  };
+}
+
+/**
+ * A durable family's mount adapter, resolved lazily through `JobDecl.durable.load`.
+ * The family owns its member admission rules (`members`), backend provisioning,
+ * reconcile and stop. The shared host calls `mount` once per admitted family
+ * with that family's own declarations; the host stays free of member names.
+ */
+export interface DurableFamilyAdapter {
+  /** Human-readable label used in admission errors. */
+  label: string;
+  /** Member rules the family declares; the registrar validates against them. */
+  members: readonly DurableMemberRule[];
+  /**
+   * Whether production admission requires this family's full member set.
+   * `paired` members may each be optional; a `required` family must have every
+   * `required` member admitted whenever any durable family is mounted.
+   */
+  required: boolean;
+  /**
+   * Other family keys that must be present for production admission. Each
+   * family repeats the production peer contract so a partially assembled
+   * manifest cannot silently erase the complete-set requirement.
+   */
+  requiredPeers: readonly string[];
+  /**
+   * Provision queues, producer fences, workflows and the backend for this
+   * family, then return its lifecycle handle. `decls` holds only this family's
+   * admitted members keyed by member name.
+   */
+  mount: (context: {
+    boss: unknown;
+    db: unknown;
+    decls: Readonly<Record<string, JobDecl>>;
+    boundaries: Readonly<Record<string, unknown>>;
+  }) => Promise<MountedDurableFamily | undefined>;
+}
+
+/** The admitted declaration shape a single durable family member must satisfy. */
+export interface DurableMemberRule {
+  /** The member's manifest job name. */
+  name: string;
+  queue: 'llm' | 'agent' | 'fast';
+  /** Whether this member must declare a cron schedule. */
+  scheduled: boolean;
+  /** Whether a schedule may carry singleton throttling. */
+  singleton: 'allowed' | 'forbidden';
+  /**
+   * Whether this member must be present for the family to be admitted. A
+   * `pairedWith` member may be individually optional but must arrive with its
+   * pair.
+   */
+  required: boolean;
+  /** Another member (by name) that must be admitted together with this one. */
+  pairedWith?: string;
+}
+
+/** A mounted family backend on the shared host lifecycle. */
+export interface MountedDurableFamily {
+  /** Reconcile one backend tick (switch legacy/DBOS schedule to family phase). */
+  reconcile: () => Promise<void>;
+  /** Stop any pg-boss consumers this family mounted. */
+  stop: () => Promise<void>;
+  /**
+   * The family's registered DBOS workflow, when one exists. The host returns it
+   * to callers (e.g. the same-process duplicate-registration identity check)
+   * without interpreting it.
+   */
+  workflow?: unknown;
 }
 
 /**

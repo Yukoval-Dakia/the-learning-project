@@ -4,8 +4,10 @@ import { type Clock, PgBoss, systemClock } from 'pg-boss';
 import postgres from 'postgres';
 import { z } from 'zod';
 import * as schema from '@/db/schema';
+import type { PruneBoundary, PruneWorkflow } from '@/server/boss/durable/prune';
+import { admitDurableFamilies } from '@/server/durable/family-contract';
 import { changePrunePhase, retireFailedPrune } from '@/server/durable/prune-family';
-import { startPruneWorker, stopDurableWorker } from '@/server/durable/prune-worker';
+import { startDurableWorker, stopDurableWorker } from '@/server/durable/prune-worker';
 import dbosPackage from '../../node_modules/@dbos-inc/dbos-sdk/package.json';
 import pgBossPackage from '../../node_modules/pg-boss/package.json';
 import { acceleratePruneCron, clockSearchPath, pruneDeclarations } from './fixture';
@@ -90,41 +92,51 @@ async function main() {
     clockOffsetMs = z.number().parse(state.offset_ms);
   }
   if (cronTest) await syncClock();
+  const decl = cronTest
+    ? pruneDeclarations.pruneEvents
+    : ({
+        name: 'prune_job_events',
+        backend: 'dbos',
+        queue: 'fast',
+        schedule: { cron: '0 4 * * *', tz: 'Asia/Shanghai' },
+        durable: {
+          family: 'prune',
+          load: () => import('@/server/boss/durable/prune').then((m) => m.pruneFamily),
+        },
+      } as const);
+  const families = await admitDurableFamilies([decl], { scope: 'family' });
   await boss.start();
   try {
     const options = {
       boss,
       db,
-      decl: cronTest
-        ? pruneDeclarations.pruneEvents
-        : {
-            name: 'prune_job_events',
-            backend: 'dbos',
-            queue: 'fast',
-            schedule: { cron: '0 4 * * *', tz: 'Asia/Shanghai' },
-          },
+      families,
       reconcileIntervalMs: 50,
-      boundary: async (boundary) => {
-        if (cronTest && boundary === 'business-committed') {
-          await new Promise<void>((resolve) => {
-            releaseBusiness.add(resolve);
-            process.send?.({
-              kind: 'cron-business-held',
-              workflowId: DBOS.workflowID,
-              at: new Date().toISOString(),
+      boundaries: {
+        prune: async (boundary: PruneBoundary) => {
+          if (cronTest && boundary === 'business-committed') {
+            await new Promise<void>((resolve) => {
+              releaseBusiness.add(resolve);
+              process.send?.({
+                kind: 'cron-business-held',
+                workflowId: DBOS.workflowID,
+                at: new Date().toISOString(),
+              });
             });
-          });
-          return;
-        }
-        if (process.env.TLP_PRUNE_PAUSE_AT !== boundary) return;
-        process.send?.({ kind: 'boundary', boundary, pid: process.pid });
-        await new Promise<void>(() => {});
+            return;
+          }
+          if (process.env.TLP_PRUNE_PAUSE_AT !== boundary) return;
+          process.send?.({ kind: 'boundary', boundary, pid: process.pid });
+          await new Promise<void>(() => {});
+        },
       },
-    } satisfies Parameters<typeof startPruneWorker>[0];
-    const [workflow, repeated] = await Promise.all([
-      startPruneWorker(options),
-      startPruneWorker(options),
+    } satisfies Parameters<typeof startDurableWorker>[0];
+    const [mounted, repeatedMounted] = await Promise.all([
+      startDurableWorker(options),
+      startDurableWorker(options),
     ]);
+    const workflow = mounted.find((family) => family.workflow)?.workflow as PruneWorkflow;
+    const repeated = repeatedMounted.find((family) => family.workflow)?.workflow as PruneWorkflow;
     if (workflow !== repeated)
       throw new Error('Repeated same-process registration duplicated DBOS');
     process.send?.({

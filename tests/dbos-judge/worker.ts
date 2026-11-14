@@ -18,7 +18,8 @@ import { JudgePendingAttemptPayload } from '@/core/schema/event/judge-pending-ev
 import * as schema from '@/db/schema';
 import { __setPiAdapterForTests } from '@/server/ai/execution-adapter';
 import { PiAgentAdapter } from '@/server/ai/pi-agent-adapter';
-import { registerJudgeWorkflows } from '@/server/durable/judge-worker';
+import { admitDurableFamilies } from '@/server/durable/family-contract';
+import { type JudgeWorkerBoundary, registerJudgeWorkflows } from '@/server/durable/judge-worker';
 import { PRUNE_DBOS_SCHEMA } from '@/server/durable/prune-family';
 import { startDurableWorker, stopDurableWorker } from '@/server/durable/prune-worker';
 import { fixtureErrorMessage } from '../dbos-review-orphan/fixture-process';
@@ -226,39 +227,13 @@ async function main() {
     schedule: false,
   });
   boss.on('error', (error) => report({ kind: 'boss-error', error: String(error) }));
-  const declarations = {
-    pruneEvents: {
-      name: 'prune_job_events',
-      backend: 'dbos',
-      queue: 'fast',
-      schedule: { cron: '0 4 * * *', tz: 'Asia/Shanghai' },
-    },
-    reviewOrphans: {
-      name: 'prune_orphan_review_sessions',
-      backend: 'dbos',
-      queue: 'fast',
-      schedule: { cron: '15 4 * * *', tz: 'Asia/Shanghai' },
-    },
-    conversationOrphans: {
-      name: 'prune_orphan_conversation_sessions',
-      backend: 'dbos',
-      queue: 'fast',
-      schedule: { cron: '25 4 * * *', tz: 'Asia/Shanghai' },
-    },
-    placementOrphans: {
-      name: 'prune_orphan_placement_sessions',
-      backend: 'dbos',
-      queue: 'fast',
-      schedule: { cron: '35 4 * * *', tz: 'Asia/Shanghai' },
-    },
-    judgeRun: { name: 'judge_run', backend: 'dbos', queue: 'llm' },
-    judgeReconcile: {
-      name: 'judge_pending_reconcile',
-      backend: 'dbos',
-      queue: 'fast',
-      schedule: { cron: '50 * * * *', tz: 'Asia/Shanghai' },
-    },
-  } satisfies Parameters<typeof startDurableWorker>[0]['declarations'];
+  // Reuse the complete production manifest so the judge pair mounts with the
+  // same housekeeping families as the real worker.
+  const { capabilities } = await import('@/capabilities');
+  const families = await admitDurableFamilies(
+    capabilities.flatMap((capability) => capability.jobs?.handlers ?? []),
+    { scope: 'production' },
+  );
   const stop = async () => {
     if (reconcileInput) await DBOS.shutdown();
     else {
@@ -337,9 +312,11 @@ async function main() {
     await startDurableWorker({
       boss,
       db: database,
-      declarations,
+      families,
+      boundaries: {
+        judge: (async (event) => pause(event.kind)) satisfies JudgeWorkerBoundary,
+      },
       reconcileIntervalMs: 100,
-      judgeBoundary: async (event) => pause(event.kind),
     });
     report({
       kind: 'ready',

@@ -150,6 +150,10 @@ export const gradingManifestPart: Omit<CapabilityManifest, 'name' | 'description
         pollingIntervalSeconds: 2,
         batchSize: 1,
         includeMetadata: true,
+        durable: {
+          family: 'judge',
+          load: () => import('@/server/boss/durable/judge').then((m) => m.judgeFamily),
+        },
       },
       // YUK-777 A3 — durable judge 的 domain-state-scan reconcile sweeper。扫「作答已录、
       // 判词未落」的 pending attempt，经同一 rate-limited 入队面重投 judge_run。自身不做
@@ -164,6 +168,10 @@ export const gradingManifestPart: Omit<CapabilityManifest, 'name' | 'description
           singletonSeconds: 60 * 60,
         },
         queue: 'fast',
+        durable: {
+          family: 'judge',
+          load: () => import('@/server/boss/durable/judge').then((m) => m.judgeFamily),
+        },
       },
       // YUK-1496 C2（G3 模型判分准入，migration 线）— 留出题准入 run：冻结
       // 留出题集（每科 ≥30、带独立参考分）过生产同源判分端口，逐题 agreement
