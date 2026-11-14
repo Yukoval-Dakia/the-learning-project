@@ -75,10 +75,77 @@ function registeredOperation(value: unknown): unknown {
   return isRegistration(value) ? value.operation : value;
 }
 
+type AnyFunction = (...args: never[]) => unknown;
+
+function sameFunction(left: AnyFunction, right: AnyFunction): boolean {
+  return (
+    left === right ||
+    (left.length === right.length &&
+      left.name === right.name &&
+      left.toString() === right.toString())
+  );
+}
+
+function equivalentHostOperations(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true;
+  if (typeof left === 'function' && typeof right === 'function') {
+    return sameFunction(left as AnyFunction, right as AnyFunction);
+  }
+  if (Array.isArray(left) && Array.isArray(right)) {
+    return (
+      left.length === right.length &&
+      left.every((value, index) => equivalentHostOperations(value, right[index]))
+    );
+  }
+  if (left instanceof Set && right instanceof Set) {
+    return (
+      left.size === right.size &&
+      [...left].every((value) =>
+        [...right].some((candidate) => equivalentHostOperations(value, candidate)),
+      )
+    );
+  }
+  if (left instanceof Map && right instanceof Map) {
+    return (
+      left.size === right.size &&
+      [...left].every(([key, value]) => {
+        const matchingKey = [...right.keys()].find((candidate) =>
+          equivalentHostOperations(key, candidate),
+        );
+        return matchingKey !== undefined && equivalentHostOperations(value, right.get(matchingKey));
+      })
+    );
+  }
+  if (
+    typeof left === 'object' &&
+    left !== null &&
+    typeof right === 'object' &&
+    right !== null &&
+    Object.getPrototypeOf(left) === Object.prototype &&
+    Object.getPrototypeOf(right) === Object.prototype
+  ) {
+    const leftKeys = Object.keys(left);
+    const rightKeys = Object.keys(right);
+    const rightValues = right as Record<string, unknown>;
+    return (
+      leftKeys.length === rightKeys.length &&
+      leftKeys.every(
+        (key) =>
+          key in right &&
+          equivalentHostOperations(left[key as keyof typeof left], rightValues[key]),
+      )
+    );
+  }
+  return false;
+}
+
 export function installHostOperation<T>(key: string, operation: T): void {
   const registry = sharedRegistry();
   const installed = registry.get(key);
-  if (installed !== undefined && registeredOperation(installed) !== operation) {
+  if (
+    installed !== undefined &&
+    !equivalentHostOperations(registeredOperation(installed), operation)
+  ) {
     throw new HostOperationConflictError(
       `host operation "${key}" is already installed with a different operation`,
     );

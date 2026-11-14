@@ -5,6 +5,10 @@ import {
   installedHostOperation,
   runHostOperationInstallation,
 } from './host-operation';
+import {
+  batchConfirmEligibleKind,
+  installBatchConfirmEligibleKinds,
+} from './proposals/batch-confirm';
 
 describe('host operation installation lifecycle', () => {
   // @invariant concurrency: one phase installs once, conflicting direct installs fail, and failed preparation can retry
@@ -47,5 +51,33 @@ describe('host operation installation lifecycle', () => {
       installHostOperation('lifecycle-test:recover', 'recovered');
     });
     expect(installedHostOperation('lifecycle-test:recover')).toBe('recovered');
+  });
+
+  // @invariant concurrency: repeated composition installs may allocate an equivalent binding without losing conflict detection
+  // @fails-if reject a freshly allocated equivalent Set or accept a changed Set as the same implementation
+  it('keeps repeated composition installation safe without hiding changed bindings', () => {
+    const buildRegistry = () =>
+      new Map([
+        [
+          'review_required',
+          async (database: { value: string }, input: { proposalId: string }) => {
+            await Promise.resolve(database);
+            return input.proposalId;
+          },
+        ],
+      ]);
+    const firstRegistry = buildRegistry();
+    const secondRegistry = buildRegistry();
+    installHostOperation('lifecycle-test:equivalent', firstRegistry);
+    installHostOperation('lifecycle-test:equivalent', secondRegistry);
+    expect(installedHostOperation('lifecycle-test:equivalent')).toBe(secondRegistry);
+
+    installBatchConfirmEligibleKinds(['review_required', 'correction']);
+    installBatchConfirmEligibleKinds(['review_required', 'correction']);
+
+    expect(batchConfirmEligibleKind('review_required')).toBe(true);
+    expect(() => installBatchConfirmEligibleKinds(['review_required', 'withdrawal'])).toThrow(
+      HostOperationConflictError,
+    );
   });
 });
