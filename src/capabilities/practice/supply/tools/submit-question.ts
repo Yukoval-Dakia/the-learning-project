@@ -30,27 +30,25 @@ import { SupplyTraceV1, withSupplyTraceDifficultyEvidence } from '@/kernel/suppl
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import {
-  type VerifyRecoveryMark,
-  canonicalQuestionContentHash,
-  dispatchPendingVerifyIntents,
-  embedQuestionTextForIngest,
-  mergeExactQuestionDuplicateKnowledgeIds,
-  questionEmbedStamp,
-  writeVerifyDispatchIntent,
-} from '../../question-bank/public';
-import {
   type DeclaredGroupDomainOutcome,
   type SubmitResult,
+  type VerifyRecoveryMark,
   canonicalJson,
+  canonicalQuestionContentHash,
   claimSubmitRequestId,
   declaredCandidateDocument,
   declaredCandidateReceipt,
+  dispatchPendingVerifyIntents,
+  embedQuestionTextForIngest,
   findSubmitReceipt,
   insertSourcedDraft,
+  mergeExactQuestionDuplicateKnowledgeIds,
   persistDeclaredQuestionGroup,
+  questionEmbedStamp,
   submitDraftQuestion,
   writeSubmitReceiptEvent,
-} from '../../question-bank/server/question-publication/submit-question';
+  writeVerifyDispatchIntent,
+} from '../../question-bank/public';
 import {
   candidateContentIssues,
   questionPreparerCandidateBindingIssue,

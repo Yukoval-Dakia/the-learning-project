@@ -119,12 +119,12 @@ export const runQuestionSupplyNightly: typeof import('./jobs/question_supply_nig
 export {
   EditQuestionInput,
   type EditQuestionInputT,
+  deriveKind,
   probeDraftEdit,
   saveDraftEdit,
+  submitDraftQuestion,
   validateDraftEdit,
-} from '../question-bank/server/question-publication/edit-question';
-export { deriveKind } from '../question-bank/server/question-publication/submit-decision';
-export { submitDraftQuestion } from '../question-bank/server/question-publication/submit-question';
+} from '../question-bank/public';
 export {
   dispatchPlacementStarterClaim,
   isPlacementStarterJobLive,
