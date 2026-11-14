@@ -67,6 +67,12 @@ export interface AdminRunListRow {
   cost_usd: number | null;
   cost_basis: 'reported' | 'estimated' | 'unknown' | null;
   cost_ref: string | null;
+  /** Currency of the run's single known amount; null when the run has no known amount. */
+  cost_currency: string | null;
+  /** Ledger entries of this run whose amount is unknown (never a fabricated zero). */
+  cost_unknown_entries: number;
+  /** Per-currency truth of this run; different currencies are never added together. */
+  cost_by_currency: AdminRunCostBucket[];
   error_message: string | null;
   started_at: Date;
   finished_at: Date | null;
@@ -75,6 +81,23 @@ export interface AdminRunListRow {
   ledger_rows: number;
   tool_call_count: number;
   pgboss_job_ids: string[];
+}
+
+/**
+ * One run's cost truth per currency. Same field vocabulary as the cost ledger
+ * aggregates so the shared presentation helper can describe a window without
+ * inventing a new aggregation truth.
+ */
+export interface AdminRunCostBucket {
+  currency: string;
+  cost: number;
+  reported_cost: number;
+  estimated_cost: number;
+  legacy_cost: number;
+  reported_attempts: number;
+  estimated_attempts: number;
+  unknown_attempts: number;
+  legacy_rows: number;
 }
 
 export interface AdminRunListPage {
@@ -94,6 +117,10 @@ export interface AdminRunTimelineEvent {
   iteration?: number;
   latency_ms?: number;
   cost?: number;
+  /** Currency of `cost`; absent when the event carries no amount. */
+  currency?: string;
+  /** Whether the ledger row is a classified attempt or a historical legacy row. */
+  entry_kind?: 'legacy' | 'attempt';
   cost_basis?: 'reported' | 'estimated' | 'unknown' | null;
   cost_ref?: string | null;
   tokens_in?: number;
@@ -274,18 +301,76 @@ function projectRun(
   ledgerRows: Array<typeof cost_ledger.$inferSelect>,
   toolCallCount: number,
 ): AdminRunListRow {
-  // A classified run takes money only from attempt rows; legacy rows stay for
+  // A classified run takes money only from its own attempt truth; legacy rows stay for
   // diagnostics but must not turn unknown into zero or double-count. Unclassified
   // runs still use legacy rows.
-  const costProjectionRows =
-    row.cost_basis === null
-      ? ledgerRows
-      : ledgerRows.filter((entry) => entry.entry_kind === 'attempt');
-  const knownLedgerCosts = costProjectionRows
-    .map((entry) => entry.cost)
-    .filter((cost): cost is number => cost !== null);
-  const ledgerCost =
-    knownLedgerCosts.length > 0 ? knownLedgerCosts.reduce((sum, cost) => sum + cost, 0) : null;
+  const classifiedBasis =
+    row.cost_basis === 'reported' || row.cost_basis === 'estimated' || row.cost_basis === 'unknown'
+      ? row.cost_basis
+      : null;
+  const attemptRows = ledgerRows.filter((entry) => entry.entry_kind === 'attempt');
+  const legacyRows = ledgerRows.filter((entry) => entry.entry_kind === 'legacy');
+  const buckets = new Map<string, AdminRunCostBucket>();
+  const bucketFor = (currency: string): AdminRunCostBucket => {
+    const existing = buckets.get(currency);
+    if (existing) return existing;
+    const created: AdminRunCostBucket = {
+      currency,
+      cost: 0,
+      reported_cost: 0,
+      estimated_cost: 0,
+      legacy_cost: 0,
+      reported_attempts: 0,
+      estimated_attempts: 0,
+      unknown_attempts: 0,
+      legacy_rows: 0,
+    };
+    buckets.set(currency, created);
+    return created;
+  };
+
+  if (classifiedBasis !== null) {
+    // The paired attempt row carries the currency of the attempt's amount.
+    const currency = attemptRows[0]?.currency ?? 'USD';
+    const bucket = bucketFor(currency);
+    if (classifiedBasis === 'reported') {
+      bucket.reported_cost = row.cost_usd ?? 0;
+      bucket.cost += bucket.reported_cost;
+      bucket.reported_attempts = 1;
+    } else if (classifiedBasis === 'estimated') {
+      bucket.estimated_cost = row.cost_usd ?? 0;
+      bucket.cost += bucket.estimated_cost;
+      bucket.estimated_attempts = 1;
+    } else {
+      // Unknown basis: the amount stays unknown, never a fabricated zero.
+      bucket.unknown_attempts = 1;
+    }
+  } else if (row.cost_usd !== null) {
+    // An unclassified run may still carry a historical amount on the run row.
+    const bucket = bucketFor('USD');
+    bucket.legacy_cost = row.cost_usd;
+    bucket.cost += row.cost_usd;
+    bucket.legacy_rows = 1;
+  } else {
+    // Unclassified without a run amount: the ledger's legacy rows are the truth,
+    // kept per currency so different currencies are never added together.
+    for (const entry of legacyRows) {
+      const bucket = bucketFor(entry.currency);
+      bucket.legacy_cost += entry.cost ?? 0;
+      bucket.cost += entry.cost ?? 0;
+      bucket.legacy_rows += 1;
+    }
+  }
+  const costBuckets = [...buckets.values()].sort((left, right) =>
+    left.currency.localeCompare(right.currency),
+  );
+  // A bucket with only unknown entries carries no known amount at all, and two
+  // currencies are never added together into one number.
+  const knownBuckets = costBuckets.filter(
+    (bucket) =>
+      bucket.reported_attempts > 0 || bucket.estimated_attempts > 0 || bucket.legacy_rows > 0,
+  );
+  const ledgerCost = knownBuckets.length === 1 ? knownBuckets[0].cost : null;
   return {
     id: row.id,
     task_kind: row.task_kind,
@@ -297,14 +382,13 @@ function projectRun(
     usage_json: row.usage_json,
     // A classified attempt is authoritative even when unknown; only unclassified
     // rows may fall back to legacy cost.
-    cost_usd: row.cost_basis !== null ? row.cost_usd : (row.cost_usd ?? ledgerCost),
-    cost_basis:
-      row.cost_basis === 'reported' ||
-      row.cost_basis === 'estimated' ||
-      row.cost_basis === 'unknown'
-        ? row.cost_basis
-        : null,
+    cost_usd: classifiedBasis !== null ? row.cost_usd : (row.cost_usd ?? ledgerCost),
+    cost_basis: classifiedBasis,
     cost_ref: row.cost_ref,
+    // More than one currency in one run cannot be presented as a single amount.
+    cost_currency: costBuckets.length === 1 ? costBuckets[0].currency : null,
+    cost_unknown_entries: costBuckets.reduce((sum, bucket) => sum + bucket.unknown_attempts, 0),
+    cost_by_currency: costBuckets,
     error_message: row.error_message,
     started_at: row.started_at,
     finished_at: row.finished_at,
@@ -432,6 +516,8 @@ export async function getAdminRunTimeline(
         label: entry.outcome,
         id: entry.id,
         cost: entry.cost ?? undefined,
+        currency: entry.currency,
+        entry_kind: entry.entry_kind === 'attempt' ? 'attempt' : 'legacy',
         cost_basis:
           entry.cost_basis === 'reported' ||
           entry.cost_basis === 'estimated' ||
@@ -454,6 +540,10 @@ export async function getAdminRunTimeline(
       id: runRow.id,
       outcome: runRow.finish_reason ?? runRow.status,
       cost: runRow.cost_usd ?? undefined,
+      currency:
+        runRow.cost_basis === null
+          ? undefined
+          : (ledger.find((entry) => entry.entry_kind === 'attempt')?.currency ?? 'USD'),
       cost_basis:
         runRow.cost_basis === 'reported' ||
         runRow.cost_basis === 'estimated' ||
@@ -723,6 +813,8 @@ function adminTimelineEventDto(event: AdminRunTimelineEvent): AdminRunTimelineEv
     'iteration',
     'latency_ms',
     'cost',
+    'currency',
+    'entry_kind',
     'cost_basis',
     'cost_ref',
     'tokens_in',
