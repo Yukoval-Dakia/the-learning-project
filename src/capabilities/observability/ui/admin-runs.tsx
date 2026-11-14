@@ -188,7 +188,7 @@ function TaskFailureAlertsPanel({
   if (alertsQ.error)
     return (
       <div className="adm-chip-row" role="alert">
-        <p className="adm-warn">运行状态暂时读不到，下面的运行记录仍可查看。</p>
+        <p className="adm-warn">运行状态暂时读不到，可单独重试。</p>
         <Button variant="quiet" onClick={() => void alertsQ.refetch()}>
           重试状态检查
         </Button>
