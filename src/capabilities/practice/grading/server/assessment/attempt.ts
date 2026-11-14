@@ -1,5 +1,6 @@
 import { eq } from 'drizzle-orm';
 import { crisisDerivationPayload } from '@/core/crisis/classify';
+import { ATTEMPT_SCHEDULING_POLICY } from '@/core/scheduling/attempt-rating';
 import {
   type ActivateEvaluationIntentT,
   type AssessmentAttemptCaptureT,
@@ -255,6 +256,7 @@ export async function recordFormalAttemptCapture(
     outcome: null,
     payload: {
       version: 1,
+      scheduling_policy: ATTEMPT_SCHEDULING_POLICY,
       ...(source ? { source } : {}),
       submission_id: submission.submission_id,
       evaluation_group_id: submission.evaluation_group_id,
@@ -298,7 +300,7 @@ export async function commitFormalAttempt(
     selfReport?: boolean;
     modelAdmission?: 'durable';
     judgeExecution?: JudgeExecution;
-    userRating?: 'again' | 'hard' | 'good';
+    userRating?: 'again' | 'hard' | 'good' | 'easy';
     capture?: FormalAttemptCapture;
     signal?: AbortSignal;
     requireUnassistedModelEvidence?: boolean;

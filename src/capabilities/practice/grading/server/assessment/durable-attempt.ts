@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import { canonicalHash } from '@/core/migration/canonical';
 import {
   type ActivateEvaluationIntentT,
@@ -61,7 +61,7 @@ export async function dispatchNativeAttempt(
   options: {
     enabled: boolean;
     capture: FormalAttemptCapture;
-    userRating?: 'again' | 'hard' | 'good';
+    userRating?: 'again' | 'hard' | 'good' | 'easy';
     /** A candidate an earlier synchronous preview sealed: the worker activates exactly it. */
     activationIntent?: ActivateEvaluationIntentT;
     requireUnassistedModelEvidence?: boolean;
@@ -344,10 +344,38 @@ export async function executeNativeAttempt(
         500,
       );
     // final_rating is what the activation actually settled. Settlement and the
-    // receipt read the same sealed user_rating inside one transaction, so the
-    // seal is the honest source; a pre-seal receipt (old runs) means settlement
-    // was verdict-derived, never a learner rating the seal did not record.
-    const finalRating = status === 'effective' ? (sealedClaim.rating ?? derivedRating) : null;
+    // receipt run inside one transaction: when this resolution is the activation
+    // callback, the settlement row is already committed in tx and its sealed
+    // plan rating is the authoritative settled grade (e.g. a
+    // server-derived 'easy' the coarse outcome cannot express). Pre-seal receipts
+    // and held/superseded paths have no settlement, so they fall back to the
+    // sealed user claim, then the verdict-derived rating.
+    const [settlement] =
+      status === 'effective'
+        ? await tx
+            .select({ payload: event.payload })
+            .from(event)
+            .where(
+              and(
+                eq(event.action, 'experimental:assessment_settlement'),
+                eq(event.subject_id, input.evaluation_group_id),
+                sql`${event.payload}->>'evaluation_id' = ${candidateId}`,
+                sql`${event.payload}->>'effect' = 'applied'`,
+              ),
+            )
+            .orderBy(desc(event.created_at), desc(event.id))
+            .limit(1)
+        : [];
+    const settledPlanRating = settlement?.payload.rating;
+    const settledRating =
+      settledPlanRating === 'again' ||
+      settledPlanRating === 'hard' ||
+      settledPlanRating === 'good' ||
+      settledPlanRating === 'easy'
+        ? settledPlanRating
+        : null;
+    const finalRating =
+      status === 'effective' ? (settledRating ?? sealedClaim.rating ?? derivedRating) : null;
     const wanted = {
       id: job.run_id,
       session_id: input.capture.session_id ?? null,

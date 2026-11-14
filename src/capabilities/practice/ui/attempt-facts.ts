@@ -59,7 +59,7 @@ const VERDICT_WORDS: Record<NonNullable<AttemptEvidence['verdict']>['outcome'], 
   unsupported: '这题判不准',
 };
 
-const CLAIM_WORDS = { again: '再练', hard: '模糊', good: '会了' } as const;
+const CLAIM_WORDS = { again: '再练', hard: '模糊', good: '会了', easy: '轻松' } as const;
 
 export function attemptFacts(evidence: AttemptEvidence | null): readonly AttemptFact[] {
   if (!evidence) return [];

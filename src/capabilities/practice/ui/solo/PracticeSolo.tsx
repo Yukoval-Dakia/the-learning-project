@@ -42,7 +42,12 @@ type MaterialView = PracticeIssuanceDtoT['materials'][number];
 /** This try's own record entry lands around its hand-in time; nobody re-answers within this. */
 const SAME_TRY_WINDOW_SEC = 2;
 
-const RATING_LABEL: Record<Rating, string> = { again: '再练', hard: '模糊', good: '会了' };
+const RATING_LABEL: Record<Rating, string> = {
+  again: '再练',
+  hard: '模糊',
+  good: '会了',
+  easy: '轻松',
+};
 
 const ATTEMPT_TEXT = {
   success: { label: '做对了', tone: 'positive' },

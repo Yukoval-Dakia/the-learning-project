@@ -49,7 +49,7 @@ import { type PracticeClient, usePracticeClient } from './practice-client';
 import { verdictNeedsLearnerRating } from './submit-recovery';
 import { useAttemptCauseEdit } from './use-attempt-cause-edit';
 
-export type Rating = 'again' | 'hard' | 'good';
+export type Rating = 'again' | 'hard' | 'good' | 'easy';
 type IssuanceMode = 'auto_score' | 'manual';
 type IssuanceState = Awaited<ReturnType<PracticeClient['getIssuanceState']>>;
 
@@ -469,7 +469,7 @@ export function usePracticeSubmit({
           ? null
           : r &&
               typeof r.final_rating === 'string' &&
-              ['again', 'hard', 'good'].includes(r.final_rating)
+              ['again', 'hard', 'good', 'easy'].includes(r.final_rating)
             ? (r.final_rating as Rating)
             : 'hard';
       if (outcome) {

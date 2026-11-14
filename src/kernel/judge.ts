@@ -64,7 +64,7 @@ export interface JudgeCommitOptions {
   selfReport?: boolean;
   modelAdmission?: 'durable';
   judgeExecution?: JudgeWorkflowInputT;
-  userRating?: 'again' | 'hard' | 'good';
+  userRating?: 'again' | 'hard' | 'good' | 'easy';
   capture?: AssessmentAttemptCaptureT;
   signal?: AbortSignal;
   requireUnassistedModelEvidence?: boolean;
