@@ -18,7 +18,13 @@ import { installPracticeHost } from '@/capabilities/practice/public';
 import { defaultPresentation } from '@/core/schema/assessment/presentation';
 import { QuestionDraftDocument } from '@/core/schema/question-draft';
 import type { Db } from '@/db/client';
-import * as schema from '@/db/schema';
+import {
+  learning_session,
+  question_block,
+  question_group_lifecycle,
+  question_revision,
+  source_asset,
+} from '@/db/schema';
 import { issueAssessment } from '@/kernel/records/assessment-issuance';
 import { contractIntegrityDigest } from '@/kernel/records/assessment-normalization';
 import {
@@ -35,8 +41,6 @@ import {
   transitionContractEpoch,
 } from '@/server/migration/contract-epoch/epoch';
 import { CODE_CONTRACT_EPOCH } from '@/server/migration/contract-epoch/rules';
-
-const { source_asset, learning_session, question_block, question_revision } = schema;
 
 const MANUAL_ADMISSION = {
   state: 'admitted' as const,
@@ -299,8 +303,8 @@ export async function createCanonicalPracticeFixture(
   const lifecycle = (
     await db
       .select()
-      .from(schema.question_group_lifecycle)
-      .where(eq(schema.question_group_lifecycle.group_id, questionId))
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, questionId))
   )[0];
   const published = await publishQuestionGroup(db, {
     group_id: questionId,
@@ -318,8 +322,8 @@ export async function createCanonicalPracticeFixture(
   const after = (
     await db
       .select()
-      .from(schema.question_group_lifecycle)
-      .where(eq(schema.question_group_lifecycle.group_id, questionId))
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, questionId))
   )[0];
   const revision = (
     await db
