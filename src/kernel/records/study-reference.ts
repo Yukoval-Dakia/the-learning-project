@@ -414,7 +414,7 @@ async function recordNoteExposure(
     .from(question)
     .where(eq(question.id, input.questionId))
     .limit(1);
-  if (!identity || !identity.knowledge_ids?.includes(input.note.entryKnowledgeId)) {
+  if (!identity?.knowledge_ids?.includes(input.note.entryKnowledgeId)) {
     throw new ApiError('note_context_mismatch', 'note does not belong to this question', 409);
   }
   const eventId = `evt_note_open_${sha256CanonicalJson({
