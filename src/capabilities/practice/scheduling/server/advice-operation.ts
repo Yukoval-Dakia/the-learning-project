@@ -5,15 +5,14 @@
 // settles the attempt through createAttempt; otherwise nothing past the candidate is written
 // and the learner commits, with their own rating, through createAttempt.
 //
-// Cause resolution lives in `resolveAdviceCauseForQuestion()` so this route and
-// submit share one read policy. It scans a recent-attempt window rather than the
-// latest row, so an older labelled failure is not masked by a label-less retry.
+// Cause resolution delegates to the kernel's shared current/authorized scan so
+// this preview reads the same effective cause facts the settlement commits on.
 
-import { resolveAdviceCauseForQuestion } from '@/capabilities/practice/failure-learning/public';
 import { requestReviewAdviceLifecycle } from '@/capabilities/practice/grading/public';
 import { judgeResultToRatingAdvice } from '@/capabilities/practice/scheduling/server/rating-advisor';
 import type { Db } from '@/db/client';
 import { ApiError } from '@/kernel/http';
+import { resolveCurrentEffectiveCauseForQuestion } from '@/kernel/read-models/cause-policy';
 import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
 import { ReviewAdviceBodySchema } from '../api/review-planning-contracts';
 
@@ -46,11 +45,13 @@ export async function previewReviewAdvice(db: Db, raw: unknown, signal: AbortSig
     lifecycle.state.knowledge_ids,
   );
 
-  // Resolve effective cause via the shared `resolveAdviceCauseForQuestion`
-  // helper. It folds `effectiveCauseCategoryForFailureAttempt` over a
-  // recent-attempt window (active user_cause wins over the latest active agent
-  // judge) until it finds a cause; null keeps the default partial-credit bucket.
-  const causeCategory = await resolveAdviceCauseForQuestion(db, lifecycle.state.question_id);
+  // Resolve the effective cause via the shared kernel resolver. The same
+  // current/authorized scan feeds settlement, so the preview's advice is the
+  // rating the commit will actually settle; null keeps the default bucket.
+  const causeCategory = await resolveCurrentEffectiveCauseForQuestion(
+    db,
+    lifecycle.state.question_id,
+  );
   const advice = judgeResultToRatingAdvice(lifecycle.state.judge, {
     causeCategory,
     // lean/anchors resolve through the subject's own rating_lean /
