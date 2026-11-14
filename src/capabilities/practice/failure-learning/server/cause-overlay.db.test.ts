@@ -2,12 +2,19 @@
 // 覆盖：reader 过滤语义（active-only / subject-scope / 序）、proposal→accept→row、
 // idempotent accept、retract→archived、attribution 合并读取（ov_ 进候选 + 校验
 // 不 clamp）、variant targetable、other tally→propose 全链。
+// YUK-2130 —— accept 回标证据 + 决策水位 + 弃权/撞名冷却。
 
+import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { event, knowledge, question } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import { writeAiProposal } from '@/kernel/proposals/writer';
+import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
+import { getFailureAttemptsForDerivation } from '@/kernel/read-models/failure-attempts';
 import { acceptAiProposal } from '@/server/proposals/actions';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
+import { maybeProposeCauseCategoryFromOthers } from './cause-catalog';
 import { getCauseCategoryOverlaysByIds } from './cause-overlay';
 
 async function writeCauseCategoryProposal(opts: {
@@ -81,5 +88,189 @@ describe('cause_category proposal → accept → overlay row', () => {
 
     const rows = await getCauseCategoryOverlaysByIds(testDb(), ['ov_race']);
     expect(rows).toHaveLength(1);
+  });
+});
+
+// ─── YUK-2130 —— accept 时回标 'other' 证据 + 决策水位 + 生产者冷却 ───
+
+const SUBJECT_DOMAIN = 'yuwen';
+const KC_ID = 'kc_cause_relabel';
+const QUESTION_ID = 'q_cause_relabel';
+
+async function seedCauseRelabelFixture(): Promise<void> {
+  const now = new Date('2026-08-10T00:00:00.000Z');
+  await testDb().insert(knowledge).values({
+    id: KC_ID,
+    name: '回标知识点',
+    domain: SUBJECT_DOMAIN,
+    parent_id: null,
+    merged_from: [],
+    proposed_by_ai: false,
+    approval_status: 'approved',
+    created_at: now,
+    updated_at: now,
+    version: 0,
+  });
+  await testDb()
+    .insert(question)
+    .values({
+      id: QUESTION_ID,
+      kind: 'short_answer',
+      prompt_md: 'p',
+      reference_md: 'r',
+      source: 'manual',
+      knowledge_ids: [KC_ID],
+      created_at: now,
+      updated_at: now,
+    });
+}
+
+/** 写一条真实链 attempt → judge('other')，返回 attempt/judge id。 */
+async function seedOtherJudgedFailure(
+  attemptId: string,
+  judgeId: string,
+  createdAt: Date,
+): Promise<void> {
+  await writeEvent(testDb(), {
+    id: attemptId,
+    actor_kind: 'user',
+    actor_ref: 'self',
+    action: 'attempt',
+    subject_kind: 'question',
+    subject_id: QUESTION_ID,
+    outcome: 'failure',
+    payload: {
+      answer_md: 'wrong',
+      answer_image_refs: [],
+      referenced_knowledge_ids: [KC_ID],
+    },
+    created_at: createdAt,
+  });
+  await writeEvent(testDb(), {
+    id: judgeId,
+    actor_kind: 'agent',
+    actor_ref: 'attribution',
+    action: 'judge',
+    subject_kind: 'event',
+    subject_id: attemptId,
+    outcome: 'success',
+    payload: {
+      cause: {
+        primary_category: 'other',
+        secondary_categories: [],
+        analysis_md: '归不进现有类目',
+        confidence: 0.7,
+      },
+      referenced_knowledge_ids: [KC_ID],
+    },
+    caused_by_event_id: attemptId,
+    created_at: new Date(createdAt.getTime() + 60_000),
+  });
+}
+
+async function proposalWithEvidence(categoryId: string, evidenceEventIds: string[]) {
+  return writeAiProposal(testDb(), {
+    actor_ref: 'attribution',
+    payload: {
+      kind: 'cause_category',
+      target: { subject_kind: 'subject_profile', subject_id: SUBJECT_DOMAIN },
+      reason_md: '复发 other',
+      evidence_refs: evidenceEventIds.map((id) => ({ kind: 'event' as const, id })),
+      cooldown_key: `cause_category:${SUBJECT_DOMAIN}`,
+      proposed_change: {
+        category_id: categoryId,
+        label: '回标类目',
+        source: 'llm_propose',
+      },
+    },
+  });
+}
+
+async function effectiveCategories(): Promise<Map<string, string | null>> {
+  const failures = await getFailureAttemptsForDerivation(testDb(), {
+    includeReviewFailures: true,
+    limit: null,
+  });
+  return new Map(
+    failures.map((failure) => [
+      failure.attempt_event_id,
+      effectiveCauseForFailureAttempt(failure)?.primary_category ?? null,
+    ]),
+  );
+}
+
+describe('YUK-2130 accept → canonical relabel + decision watermark', () => {
+  beforeEach(async () => {
+    await resetDb();
+    await seedCauseRelabelFixture();
+  });
+
+  // @invariant grading: accepting a cause-category proposal rewrites exactly the evidence rows'
+  //   effective categories through the canonical supersede path — mistakes read shows the new
+  //   category, raw judge rows stay append-only — and the accept watermark fences off every
+  //   pre-accept 'other' so the producer cannot re-pay a naming pass on evidence it just acted on.
+  // @fails-if accept skips the supersede (raw row mutated or effective read unchanged), unlisted
+  //   'other' rows are relabelled, or pre-accept 'other' rows still count toward the recurrence
+  //   floor and re-invoke the paid task.
+  it('accept relabels its evidence via supersede; post-accept tally excludes pre-accept others', async () => {
+    // 3 条 evidence 'other'（触发提案那批）+ 2 条不在 evidence_refs 的旧 'other'。
+    // 若 accept 水位失效，它们会和 accept 后那条新 other 一起凑满 floor=3 →
+    // producer 会再调 LLM；水位正确则 tally=1，未到 floor，直接返回。
+    for (const index of [0, 1, 2]) {
+      await seedOtherJudgedFailure(
+        `att_evidence_${index}`,
+        `judge_evidence_${index}`,
+        new Date(Date.UTC(2026, 7, 10, 9, index)),
+      );
+    }
+    for (const index of [0, 1]) {
+      await seedOtherJudgedFailure(
+        `att_unlisted_${index}`,
+        `judge_unlisted_${index}`,
+        new Date(Date.UTC(2026, 7, 10, 8, index)),
+      );
+    }
+
+    const proposalId = await proposalWithEvidence('ov_relabelled', [
+      'judge_evidence_0',
+      'judge_evidence_1',
+      'judge_evidence_2',
+    ]);
+    const accepted = await acceptAiProposal(testDb(), proposalId);
+    expect(accepted.lifecycle_outcome ?? 'accepted').toBe('accepted');
+
+    const categories = await effectiveCategories();
+    expect(categories.get('att_evidence_0')).toBe('ov_relabelled');
+    expect(categories.get('att_evidence_1')).toBe('ov_relabelled');
+    expect(categories.get('att_evidence_2')).toBe('ov_relabelled');
+    // 未列在证据里的旧 'other' 不动（保留原判；靠 accept 水位挡回 tally）。
+    expect(categories.get('att_unlisted_0')).toBe('other');
+    expect(categories.get('att_unlisted_1')).toBe('other');
+
+    // 原判保留 superseded 链：raw judge 行还在，但 effective 已替换。
+    const [replaced] = await testDb()
+      .select({ payload: event.payload })
+      .from(event)
+      .where(eq(event.id, 'judge_evidence_0'));
+    expect(
+      (replaced?.payload as { cause?: { primary_category?: string } } | undefined)?.cause
+        ?.primary_category,
+    ).toBe('other');
+
+    // accept 水位之后来一条真 'other'：tally 只该见到它（1 < floor=3），
+    // producer 未到付费任务就返回。水位若漏，2 条 unlisted 旧 other 会让 tally=3
+    // → runTaskFn 被调 → 抛出即失败。
+    await seedOtherJudgedFailure('att_post', 'judge_post', new Date());
+    const { resolveSubjectProfile } = await import('@/subjects/profile');
+    const runTaskFn = async () => {
+      throw new Error('paid task must not run: pre-accept others leaked past the watermark');
+    };
+    await expect(
+      maybeProposeCauseCategoryFromOthers({
+        db: testDb(),
+        profile: resolveSubjectProfile(SUBJECT_DOMAIN),
+        runTaskFn,
+      }),
+    ).resolves.toBeUndefined();
   });
 });

@@ -1,11 +1,21 @@
 // cause_category 提议的 accept / retract applier（错因词表扩张）。accept 经
-// kernel 裁决模板：校验在 prepare，overlay INSERT 与唯一 rate 写在 effect，
-// 信号 after_commit。这是 cause_category_overlay 的唯一写边界
-// （audit:schema 的 write path）；行落地后进入 attribution 合并词表
-// （listActiveCauseCategoryOverlays）。
-import { and, eq } from 'drizzle-orm';
+// kernel 裁决模板：校验在 prepare，overlay INSERT + 证据事件 canonical
+// supersede 与唯一 rate 写在 effect，信号 after_commit。这是
+// cause_category_overlay 的唯一写边界（audit:schema 的 write path）；行落地后
+// 进入 attribution 合并词表（listActiveCauseCategoryOverlays）。
+//
+// YUK-2130 —— accept 时把提议 evidence_refs 里仍是 effective 'other' 的
+// judge / user_cause 事件逐个写替代事件 + correct(supersede)：mistakes /
+// weakpoints / tally 消费方沿 effective-truth 链看到新类目，原判留档可查，
+// 重放按确定性 id 幂等。rate payload 记录 `other_watermark`（被回标证据里最晚
+// 的 effective event created_at；没有可回标证据时退化为 accept 时刻）让生产
+// 者只统计水位之后的「真新」other。
+import { and, eq, inArray } from 'drizzle-orm';
+import { canonicalHash } from '@/core/migration/canonical';
+import type { CauseCategoryT } from '@/core/schema/event/blocks';
 import type { Db, Tx } from '@/db/client';
-import { cause_category_overlay } from '@/db/schema';
+import { cause_category_overlay, event } from '@/db/schema';
+import { getCorrectionStatuses, writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import type {
   ProposalAcceptApplier,
@@ -30,6 +40,8 @@ export interface CauseCategoryAcceptResult {
   kind: 'cause_category';
   rate_event_id: string;
   category_id: string;
+  /** 本次裁决事务里 canonical supersede 到新类目的证据事件 id（重放=空）。 */
+  relabelled_event_ids?: string[];
   idempotent?: boolean;
 }
 
@@ -49,6 +61,190 @@ interface PreparedCauseCategoryAccept {
   source: 'owner' | 'llm_propose';
   subjectId: string;
   evidenceEventIds: string[];
+}
+
+/**
+ * 每条 evidence ref 在 accept 时刻的实际回标结果。
+ * `skipped` 记一句机器可读的缘由——重放/审计/测试不靠日志猜。
+ */
+type RelabelOutcome =
+  | {
+      status: 'relabelled';
+      original_event_id: string;
+      replacement_event_id: string;
+      correction_event_id: string;
+      effective_created_at: string;
+    }
+  | { status: 'skipped'; event_id: string; reason: string };
+
+// 确定性 id（重放/重试重复写入时 writeEvent 按 id 幂等，不产生第二行）。
+function relabelReplacementId(proposalId: string, originalEventId: string): string {
+  return `evt_cause_relabel_${canonicalHash({ proposal: proposalId, original: originalEventId }).slice(0, 24)}`;
+}
+function relabelCorrectionId(proposalId: string, originalEventId: string): string {
+  return `evt_cause_relabel_correction_${canonicalHash({ proposal: proposalId, original: originalEventId }).slice(0, 24)}`;
+}
+
+/**
+ * 把仍是 effective 'other' 的 evidence 事件逐个 canonical supersede 到
+ * `categoryId`。返回每条的处置 + 所有被回标行里最晚的 effective created_at
+ * （作 other_watermark；没有可回标的就返回 null，调用方退化为 accept 时刻）。
+ *
+ * 原 event 行不动（append-only）：新建一条同形事件（judge → judge /
+ * user_cause → user_cause）把 primary_category 换成新类目，再写
+ * correct(supersede) 指向它。effective-truth 链上的消费方——mistakes /
+ * weakpoints / tally——自动读替代事件，原判保留在 correction_state 里。
+ */
+async function relabelOtherEvidenceToCategory(
+  tx: Tx,
+  input: {
+    proposalId: string;
+    categoryId: CauseCategoryT;
+    evidenceEventIds: string[];
+    reasonMd: string;
+    now: Date;
+  },
+): Promise<{ outcomes: RelabelOutcome[]; watermark: Date | null }> {
+  const outcomes: RelabelOutcome[] = [];
+  let watermark: Date | null = null;
+  const ids = [...new Set(input.evidenceEventIds)];
+  if (ids.length === 0) return { outcomes, watermark };
+
+  const rows = await tx.select().from(event).where(inArray(event.id, ids));
+  const rowById = new Map(rows.map((row) => [row.id, row]));
+  const statuses = await getCorrectionStatuses(tx, ids);
+
+  // affected_refs 只能放 ActivityRef（'event' 不在枚举内）。correct 的 subject
+  // 是 judge/user_cause 事件，它的 subject_id 指向 attempt 事件——回查 attempt
+  // 拿 question id，correct 才有合规的活动引用。
+  const attemptIds = [
+    ...new Set(
+      rows
+        .filter((row) => row.subject_kind === 'event')
+        .map((row) => row.subject_id)
+        .filter((id): id is string => typeof id === 'string'),
+    ),
+  ];
+  const attemptRows =
+    attemptIds.length === 0
+      ? []
+      : await tx
+          .select({ id: event.id, subject_id: event.subject_id })
+          .from(event)
+          .where(inArray(event.id, attemptIds));
+  const questionIdByAttemptId = new Map(attemptRows.map((row) => [row.id, row.subject_id]));
+
+  for (const originalId of ids) {
+    const original = rowById.get(originalId);
+    if (!original) {
+      outcomes.push({ status: 'skipped', event_id: originalId, reason: 'missing' });
+      continue;
+    }
+    if (original.action !== 'judge' && original.action !== 'experimental:user_cause') {
+      outcomes.push({ status: 'skipped', event_id: originalId, reason: 'not_a_cause_event' });
+      continue;
+    }
+    const status = statuses.get(originalId);
+    if (status === undefined || status.state !== 'active') {
+      outcomes.push({
+        status: 'skipped',
+        event_id: originalId,
+        reason: `correction_state:${status?.state ?? 'unknown'}`,
+      });
+      continue;
+    }
+    const questionId = questionIdByAttemptId.get(original.subject_id);
+    if (typeof questionId !== 'string') {
+      outcomes.push({ status: 'skipped', event_id: originalId, reason: 'attempt_missing' });
+      continue;
+    }
+
+    const replacementId = relabelReplacementId(input.proposalId, originalId);
+    const correctionId = relabelCorrectionId(input.proposalId, originalId);
+
+    if (original.action === 'judge') {
+      const cause = (original.payload as { cause?: { primary_category?: unknown } }).cause;
+      if (cause?.primary_category !== 'other') {
+        outcomes.push({ status: 'skipped', event_id: originalId, reason: 'not_other' });
+        continue;
+      }
+      await writeEvent(tx, {
+        id: replacementId,
+        session_id: original.session_id,
+        actor_kind: original.actor_kind,
+        actor_ref: original.actor_ref,
+        action: 'judge',
+        subject_kind: original.subject_kind,
+        subject_id: original.subject_id,
+        outcome: original.outcome,
+        payload: {
+          ...(original.payload as Record<string, unknown>),
+          cause: { ...cause, primary_category: input.categoryId },
+          relabelled_from_event_id: originalId,
+        },
+        // Canonical anchor is the attempt (subject_id == caused_by keeps the
+        // failure-attempts anchorKeyFor lookup symmetric for chained reads).
+        caused_by_event_id: original.caused_by_event_id ?? original.subject_id,
+        task_run_id: original.task_run_id,
+        cost_micro_usd: original.cost_micro_usd,
+        created_at: input.now,
+      });
+    } else {
+      const primaryCategory = (original.payload as { primary_category?: unknown }).primary_category;
+      if (primaryCategory !== 'other') {
+        outcomes.push({ status: 'skipped', event_id: originalId, reason: 'not_other' });
+        continue;
+      }
+      await writeEvent(tx, {
+        id: replacementId,
+        session_id: original.session_id,
+        actor_kind: original.actor_kind,
+        actor_ref: original.actor_ref,
+        action: 'experimental:user_cause',
+        subject_kind: original.subject_kind,
+        subject_id: original.subject_id,
+        outcome: original.outcome,
+        payload: {
+          ...(original.payload as Record<string, unknown>),
+          primary_category: input.categoryId,
+          relabelled_from_event_id: originalId,
+        },
+        caused_by_event_id: original.caused_by_event_id ?? original.subject_id,
+        task_run_id: original.task_run_id,
+        cost_micro_usd: original.cost_micro_usd,
+        created_at: input.now,
+      });
+    }
+
+    await writeEvent(tx, {
+      id: correctionId,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: originalId,
+      outcome: 'success',
+      payload: {
+        correction_kind: 'supersede',
+        replacement_event_id: replacementId,
+        reason_md: input.reasonMd,
+        affected_refs: [{ kind: 'question', id: questionId }],
+      },
+      caused_by_event_id: input.proposalId,
+      created_at: input.now,
+    });
+
+    const effectiveAt = original.created_at;
+    if (watermark === null || effectiveAt > watermark) watermark = effectiveAt;
+    outcomes.push({
+      status: 'relabelled',
+      original_event_id: originalId,
+      replacement_event_id: replacementId,
+      correction_event_id: correctionId,
+      effective_created_at: effectiveAt.toISOString(),
+    });
+  }
+  return { outcomes, watermark };
 }
 
 // 防绕过：生产者契约是 ov_ 命名空间；applier 也守住——非 ov_ id 会在合并词表
@@ -131,10 +327,16 @@ export const causeCategoryProposalAcceptApplier: ProposalAcceptApplier = async (
     replay: async (rate: RecordedProposalRate): Promise<CauseCategoryAcceptResult> => {
       const { categoryId } = parseCauseCategoryChange(input);
       await loadActiveOverlayRowOrThrow(db as Db, input.proposalId, categoryId);
+      const relabelled = (rate.payload as { relabelled_event_ids?: unknown }).relabelled_event_ids;
       return {
         kind: 'cause_category',
         rate_event_id: rate.id,
         category_id: categoryId,
+        ...(Array.isArray(relabelled)
+          ? {
+              relabelled_event_ids: relabelled.filter((id): id is string => typeof id === 'string'),
+            }
+          : {}),
         idempotent: true,
       };
     },
@@ -182,13 +384,43 @@ export const causeCategoryProposalAcceptApplier: ProposalAcceptApplier = async (
       if (inserted.length === 0) {
         throw new ApiError('conflict', CATEGORY_ID_TAKEN_MESSAGE, 409);
       }
-      const rateEventId = await writeRate({ created_at: now });
+
+      // YUK-2130 —— 在同一张裁决事务里把仍是 effective 'other' 的证据事件
+      // canonical supersede 到新类目（replacement + correct 按确定性 id 幂等，
+      // 重试/并发不会产生第二行）。
+      const relabel = await relabelOtherEvidenceToCategory(tx, {
+        proposalId: input.proposalId,
+        categoryId: prepared.categoryId,
+        evidenceEventIds: prepared.evidenceEventIds,
+        reasonMd: `accepted cause_category proposal ${input.proposalId} → ${prepared.categoryId}`,
+        now,
+      });
+      // 决策水位 = 被回标证据里最晚 effective created_at（无证据时退化为 accept
+      // 时刻）。生产者 tally 只统计水位之后仍是 'other' 的新样本。
+      const otherWatermark = relabel.watermark ?? now;
+
+      const rateEventId = await writeRate({
+        created_at: now,
+        payload: {
+          ...(input.proposal.payload.cooldown_key !== undefined
+            ? { cooldown_key: input.proposal.payload.cooldown_key }
+            : {}),
+          other_watermark: otherWatermark.toISOString(),
+          relabelled_event_ids: relabel.outcomes
+            .filter((outcome) => outcome.status === 'relabelled')
+            .map((outcome) => outcome.original_event_id),
+          relabel_outcomes: relabel.outcomes,
+        },
+      });
       return {
         status: 'accepted',
         result: {
           kind: 'cause_category',
           rate_event_id: rateEventId,
           category_id: prepared.categoryId,
+          relabelled_event_ids: relabel.outcomes
+            .filter((outcome) => outcome.status === 'relabelled')
+            .map((outcome) => outcome.original_event_id),
         },
       };
     },
