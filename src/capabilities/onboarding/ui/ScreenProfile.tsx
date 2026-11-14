@@ -386,10 +386,6 @@ function KcRow({
   // YUK-495 #41 — calm ochre hairline on a KC whose displayed numbers don't re-derive.
   const drifted = verdict?.kind === 'drift';
 
-  // YUK-1587 — evidence presentation: a low-confidence row states its evidence-record count
-  // and 「初步」 instead of a numeric interval (evidence count = records, not questions
-  // answered independently correctly; the wire carries no per-attempt refs to show here).
-  // The band itself keeps its qualitative shape; only the printed number is withheld.
   const bandLabel = kc.low_confidence ? '初步' : `可能区间 ${pct(lo)}–${pct(hi)}`;
   const evidenceLabel = untested ? '暂无证据记录' : `${kc.evidence_count} 条证据记录`;
 
