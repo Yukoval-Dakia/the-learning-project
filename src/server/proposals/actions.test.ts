@@ -1,5 +1,9 @@
 import { and, eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import {
+  proposeComputedCompletion,
+  runLearningItemCompletionNightly,
+} from '@/capabilities/agency/server/learning-item-completion-producer';
 import { completion_evidence, event, knowledge, learning_item } from '@/db/schema';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import {
@@ -12,7 +16,12 @@ import {
   seedCompletionLearningItem,
   seedCompletionProposal,
 } from '../../../tests/helpers/native-completion';
-import { type ProposalLifecycleResult, acceptAiProposal, retractAiProposal } from './actions';
+import {
+  type ProposalLifecycleResult,
+  acceptAiProposal,
+  dismissAiProposal,
+  retractAiProposal,
+} from './actions';
 
 const KNOWLEDGE_BASE = {
   domain: 'yuwen',
@@ -72,6 +81,43 @@ describe('retractAiProposal — completion / relearn row reversal (YUK-471)', ()
   });
   beforeEach(async () => {
     await resetDb();
+  });
+
+  // @invariant concurrency: retries claim one verified completion slot beside unverified pending cards, while human dismissal still gates re-proposal
+  // @fails-if legacy pending consumes v1 dedupe or budget, retries duplicate v1, or a terminal dismissal is ignored
+  it('creates one verified completion beside legacy pending and respects human dismissal', async () => {
+    const db = testDb();
+    await seedCompletionLearningItem(db, 'legacy-item');
+    for (let i = 0; i < 3; i++) {
+      await writeAiProposal(db, {
+        id: `legacy-${i}`,
+        actor_ref: 'synthetic-fixture',
+        payload: {
+          kind: 'completion',
+          target: { subject_kind: 'learning_item', subject_id: 'legacy-item' },
+          reason_md: '旧格式建议',
+          evidence_refs: [],
+          proposed_change: { learning_item_id: 'legacy-item' },
+        },
+      });
+    }
+    const propose = () =>
+      proposeComputedCompletion(db, 'legacy-item', { actorRef: 'synthetic-fixture' });
+    const first = await propose();
+    expect(first.status).toBe('proposed');
+    if (first.status !== 'proposed') throw new Error('expected verified completion');
+    expect(await propose()).toMatchObject({
+      status: 'skipped:duplicate_pending',
+      proposal_id: first.proposal_id,
+    });
+    expect((await runLearningItemCompletionNightly(db)).proposed).toBe(0);
+    await expect(acceptAiProposal(db, 'legacy-0')).rejects.toMatchObject({ status: 409 });
+    await dismissAiProposal(db, first.proposal_id);
+    expect(await propose()).toMatchObject({ status: 'skipped:cooldown' });
+    expect(
+      await db.select().from(event).where(eq(event.action, 'experimental:proposal')),
+    ).toHaveLength(4);
+    expect(await db.select().from(completion_evidence)).toHaveLength(0);
   });
 
   // @invariant data: retracting an accepted completion restores the learning item and removes the proposal evidence

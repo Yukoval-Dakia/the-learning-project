@@ -29,7 +29,11 @@ export async function proposeComputedCompletion(
         withFencedNativeMasteryRead(tx, async (reader) => {
           const now = new Date();
           const history = await readCompletionProposalHistory(tx);
-          const sameItem = history.filter((h) => h.itemId === itemId);
+          // Unverified legacy pending cards cannot claim a v1 slot; real human
+          // terminal decisions still constrain consent and re-proposal.
+          const sameItem = history.filter(
+            (h) => h.itemId === itemId && (h.verifiedReceipt || h.status !== 'pending'),
+          );
           const pending = sameItem.find((h) => h.status === 'pending');
           if (pending)
             return {
@@ -38,8 +42,9 @@ export async function proposeComputedCompletion(
               learning_item_id: itemId,
             };
           if (
-            history.filter((h) => learnerLocalDay(h.proposedAt) === learnerLocalDay(now)).length >=
-            3
+            history.filter(
+              (h) => h.verifiedReceipt && learnerLocalDay(h.proposedAt) === learnerLocalDay(now),
+            ).length >= 3
           )
             return { status: 'skipped:budget' as const, learning_item_id: itemId };
           let actionable = 0;

@@ -5,7 +5,7 @@
 
 import { and, desc, eq, gte, inArray, lt, lte, max, ne, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { publicAssistancePayload } from '@/core/schema/event/assistance-publication';
+import { publicEventPayload } from '@/core/schema/event/public-payload';
 import { event } from '@/db/schema';
 import { getCorrectionStatuses } from '@/kernel/events';
 import { eventAllowsDerivationSql } from '@/kernel/events/derivation-policy';
@@ -400,7 +400,7 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
         ),
       );
     for (const row of payloadRows)
-      payloadById.set(row.id, publicAssistancePayload(row.action, row.payload));
+      payloadById.set(row.id, publicEventPayload(row.action, row.payload));
   }
   let payloadCharsLeft = QUERY_EVENTS_PAYLOAD_CAPS.pageChars;
   let omittedPayloadRows = 0;

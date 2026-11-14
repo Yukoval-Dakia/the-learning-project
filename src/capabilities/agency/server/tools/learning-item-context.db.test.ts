@@ -5,7 +5,10 @@ import {
   writeCopilotReply,
 } from '@/capabilities/copilot/server/conversation-writes';
 import { claimCopilotExecutionFence } from '@/capabilities/copilot/server/copilot-run-settlement';
+import { queryEventsTool } from '@/capabilities/copilot/server/tools/query-events';
+import { getRecentCopilotTurns } from '@/capabilities/copilot/server/turns';
 import { changeIngestionPurpose } from '@/capabilities/ingestion/server/purpose-change';
+import { GET as readEvent } from '@/capabilities/observability/api/event-detail';
 import { learning_session, source_document } from '@/db/schema';
 import { sourceAllowsDerivation } from '@/kernel/read-models/usage-policy';
 import { acceptAiProposal } from '@/server/proposals/actions';
@@ -17,8 +20,8 @@ import {
 import { getLearningItemContextTool } from './learning-item-context';
 
 beforeEach(resetDb);
-// @invariant security: a completion summary consumed by a model retains its frozen source authority in later reply history
-// @fails-if revoking then relaxing a source lets the old tool summary or derived reply re-enter model context
+// @invariant security: protected completion facts leave only through the bound owner; generic events disclose operation metadata only
+// @fails-if generic API/tool output exposes completion proof, or revoking then relaxing a source revives a bound derived reply
 it('keeps completion tool evidence and its derived reply unavailable after source epoch changes', async () => {
   const db = testDb();
   const now = new Date();
@@ -41,6 +44,7 @@ it('keeps completion tool evidence and its derived reply unavailable after sourc
     {
       id: 'conversation',
       type: 'conversation',
+      entrypoint: 'copilot',
       status: 'active',
       created_at: now,
       updated_at: now,
@@ -69,6 +73,29 @@ it('keeps completion tool evidence and its derived reply unavailable after sourc
     });
   const allowed = await read();
   expect(allowed.evidence?.[0].summary).toContain('掌握度');
+  const generic = await queryEventsTool.execute(ctx, {
+    filter: { eventId: 'proposal' },
+    includePayload: true,
+  });
+  const metadata = generic.events[0].payload;
+  expect(JSON.parse(metadata ?? 'null')).toEqual({ kind: 'completion' });
+  const metadataAsk = await writeCopilotInputEvent(db, {
+    sessionId: 'conversation',
+    userMessage: '查看操作记录',
+    derivationPolicy: 'allow',
+    now,
+  });
+  await claimCopilotExecutionFence(db, metadataAsk, {
+    historyReadSet: { version: 1, event_ids: [] },
+  });
+  const metadataReply = await writeCopilotReply(db, {
+    sessionId: 'conversation',
+    userAskEventId: metadataAsk,
+    replyText: metadata ?? '',
+    actorRef: 'copilot',
+    taskRunId: 'synthetic-metadata',
+    now,
+  });
   const reply = await writeCopilotReply(db, {
     sessionId: 'conversation',
     userAskEventId: ask,
@@ -88,5 +115,19 @@ it('keeps completion tool evidence and its derived reply unavailable after sourc
     });
     expect((await read()).evidence?.[0].summary).toBe('完成依据暂不可用');
     expect(await sourceAllowsDerivation(db, source)).toBe(false);
+    const detail = await readEvent(new Request('http://owned.invalid/api/events/proposal'), {
+      id: 'proposal',
+    });
+    expect(detail.status).toBe(200);
+    expect(await detail.json()).toMatchObject({ event: { payload: { kind: 'completion' } } });
+    expect(
+      await sourceAllowsDerivation(db, { kind: 'event', id: metadataReply.replyEventId }),
+    ).toBe(true);
+    const history = await getRecentCopilotTurns(db, {
+      sessionId: 'conversation',
+      forModel: true,
+    });
+    expect(history.some((turn) => turn.reply_event_id === metadataReply.replyEventId)).toBe(true);
+    expect(history.some((turn) => turn.reply_event_id === reply.replyEventId)).toBe(false);
   }
 });
