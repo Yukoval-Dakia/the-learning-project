@@ -6,6 +6,7 @@ import { and, eq, inArray, or, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import { AgentRunError } from '@/ai/agent-run-error';
 import { canonicalProviderName } from '@/ai/task-spec';
+import { readQuestionAdmissionConfig } from '@/core/config/question-admission';
 import {
   admitPaidEffectDeliveryControl,
   lockPaidEffectControlFamily,
@@ -78,10 +79,7 @@ import {
   buildAdmissionPublishInput,
   projectAdmittedQuestionRow,
 } from '../server/admission/resolved-publication';
-import {
-  resolveQuestionAdmissionPolicyId,
-  runQuestionAdmission,
-} from '../server/admission/run-admission';
+import { runQuestionAdmission } from '../server/admission/run-admission';
 import {
   SolutionPriorRecord,
   loadPriorKnowledgeCandidates,
@@ -120,12 +118,6 @@ export interface QuestionAdmissionRunResult {
   revision_ordinal?: number;
   per_unit: { scoring_unit_id: string; status: string; reason?: string }[];
 }
-const SOLVER2_PROVIDER_RAW = process.env.QUESTION_ADMISSION_SOLVER2_PROVIDER;
-const SOLVER2_PROVIDER = SOLVER2_PROVIDER_RAW
-  ? (canonicalProviderName(SOLVER2_PROVIDER_RAW) as Provider)
-  : undefined;
-const SOLVER2_MODEL = process.env.QUESTION_ADMISSION_SOLVER2_MODEL;
-
 async function loadDefinition(db: Db | Tx, rootId: string) {
   const [root] = await db.select().from(question).where(eq(question.id, rootId)).limit(1);
   if (!root) throw new ApiError('not_found', `question '${rootId}' not found`, 404);
@@ -304,6 +296,7 @@ export async function runAdmissionForQuestion(
     // Same family -> delivery -> root -> lifecycle -> effect lock order on every entry.
     await lockPaidEffectControlFamily(tx, ADMISSION_FAMILY);
     await assertAdmissionDelivery(tx, delivery);
+    const admissionConfig = readQuestionAdmissionConfig();
     const { root, lifecycle } = await lockAdmissionGroup(tx, rootId);
     if (!root) throw new ApiError('not_found', `question '${rootId}' not found`, 404);
     if (
@@ -326,7 +319,7 @@ export async function runAdmissionForQuestion(
           eq(question_revision.group_id, rootId),
           inArray(question_admission_verification.policy_id, [
             ...QUESTION_ADMISSION_POLICY_IDS,
-            resolveQuestionAdmissionPolicyId(),
+            admissionConfig.policyId,
           ]),
           sql`${question_admission_verification.evidence}->>'pack' = 'question_admission'`,
           // bind the terminal verdict to the CURRENT content through
@@ -362,11 +355,8 @@ export async function runAdmissionForQuestion(
           admission_generation: lifecycle?.scoring_admission_generation ?? 0,
           contract,
           ...(await frozenSubjectFor(tx, rootId)),
-          policy_id: resolveQuestionAdmissionPolicyId(),
-          solver2:
-            SOLVER2_PROVIDER || SOLVER2_MODEL
-              ? { provider: SOLVER2_PROVIDER, model: SOLVER2_MODEL }
-              : null,
+          policy_id: admissionConfig.policyId,
+          solver2: admissionConfig.solver2,
         }),
       ),
     );

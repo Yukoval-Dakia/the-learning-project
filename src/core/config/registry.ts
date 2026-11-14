@@ -9,6 +9,10 @@
 import { z } from 'zod';
 import { STUCK_RUN_THRESHOLD_MS } from '@/core/ai-run-limits';
 import { PedagogyMethodId } from '@/core/pedagogy/method-library';
+import {
+  QUESTION_ADMISSION_POLICY_ID,
+  QUESTION_ADMISSION_POLICY_IDS,
+} from '@/core/question-admission-policy';
 import { TASK_OUTPUT_CAP_TOKENS } from './task-output-limits';
 
 /** DB 层值的运行时形状（jsonb 载荷）。 */
@@ -919,6 +923,50 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     note: 'P2: enforce 断流风险',
     description: 'provider session 准入模式',
     consumers: ['server.ai.provider-session-admission'],
+    reload: 'per-call',
+    exposure: 'operator',
+  },
+  // ── question admission frozen-input configuration ─────────────────────────
+  QUESTION_ADMISSION_POLICY_ID: {
+    schema: z
+      .string()
+      .min(1, 'empty question admission policy is invalid')
+      .refine(
+        (value) =>
+          value === QUESTION_ADMISSION_POLICY_ID ||
+          !(QUESTION_ADMISSION_POLICY_IDS as readonly string[]).includes(value),
+        { message: 'obsolete question admission policy' },
+      ),
+    codeDefault: QUESTION_ADMISSION_POLICY_ID,
+    envName: 'QUESTION_ADMISSION_POLICY_ID',
+    // Paid input requires a non-empty policy; envSetup's empty-string collapse maps
+    // `KEY=` to unset, while a copied literal from another source still fails schema.
+    envParse: (raw) => (raw.trim() === '' ? undefined : raw),
+    tier: 'A',
+    description: 'question admission contract policy id frozen into paid input',
+    consumers: ['practice.question-admission'],
+    reload: 'per-call',
+    exposure: 'operator',
+  },
+  QUESTION_ADMISSION_SOLVER2_PROVIDER: {
+    schema: z.string().min(1),
+    codeDefault: undefined,
+    envName: 'QUESTION_ADMISSION_SOLVER2_PROVIDER',
+    envParse: (raw) => (raw === '' ? undefined : raw),
+    tier: 'A',
+    description: 'question admission solver B provider override',
+    consumers: ['practice.question-admission'],
+    reload: 'per-call',
+    exposure: 'operator',
+  },
+  QUESTION_ADMISSION_SOLVER2_MODEL: {
+    schema: z.string().min(1),
+    codeDefault: undefined,
+    envName: 'QUESTION_ADMISSION_SOLVER2_MODEL',
+    envParse: (raw) => (raw === '' ? undefined : raw),
+    tier: 'A',
+    description: 'question admission solver B model override',
+    consumers: ['practice.question-admission'],
     reload: 'per-call',
     exposure: 'operator',
   },
