@@ -132,6 +132,66 @@ async function countEvents(action: string): Promise<number> {
   return rows.length;
 }
 
+describe('review advice answer lifecycle', () => {
+  // @invariant grading: automatic advice commits one accepted original and freezes the learner's duration and confidence into both the attempt and settlement replay inputs
+  // @fails-if preview and commit create separate submissions, the nested committed response drops the rating claim, or settlement reads different capture values from the attempt
+  it('commits one automatic advice original with frozen learner capture', async () => {
+    const db = testDb();
+    const f = await nativeSoloHttpFixture(db);
+    const result = await previewReviewAdvice(
+      db,
+      {
+        question_id: f.id,
+        assessment: f.assessment,
+        response_md: 'A',
+        answer_image_refs: [],
+        accept_pending: true,
+        commit: {
+          session_id: 'review-advice-session',
+          reasoning_trace: 'controlled variables',
+          self_confidence: 4,
+          latency_ms: 1234,
+          referenced_knowledge_ids: f.knowledgeIds,
+        },
+      },
+      new AbortController().signal,
+    );
+    if ('verdict' in result || !result.committed)
+      throw new Error('automatic advice stayed uncommitted');
+
+    expect(result.automatic_commit).toBe(true);
+    expect(result.committed).toMatchObject({
+      status: 'effective',
+      evidence: { self_claim: { rating: null, confidence: 4 } },
+      judge: { auto_rated: true },
+    });
+    expect(await db.select().from(assessment_submission)).toHaveLength(1);
+    expect(await countEvents('experimental:assessment_attempt')).toBe(1);
+    expect(await countEvents('experimental:assessment_settlement')).toBe(1);
+
+    const [attempt] = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:assessment_attempt'));
+    expect(attempt?.payload).toMatchObject({
+      response_md: 'A',
+      reasoning_trace: 'controlled variables',
+      self_confidence: 4,
+      duration_ms: 1234,
+    });
+    const [settlement] = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:assessment_settlement'));
+    expect(settlement?.payload.replay_inputs).toMatchObject({
+      theta: { responseTimeMs: 1234 },
+      forgettingInput: {
+        fact: { self_confidence: 4, latency_ms: 1234, confidence: 'high' },
+      },
+    });
+  });
+});
+
 describe('conversation question card confirmation', () => {
   // @invariant grading: a chat-card answer stays a recoverable submission plus one assisted candidate until the learner confirms, and repeated identical confirmation converges on one attempt, one activation and one schedule
   // @fails-if preview writes an attempt/activation/settlement, the second confirmation advances the head or writes another attempt/activation/settlement, or the final card/attempt loses the conversation binding or its unknown-help snapshot
