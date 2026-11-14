@@ -820,7 +820,7 @@ function readFrozenPlainNumber(raw: string, identity: NumericKeyIdentity): Froze
 
 /**
  * 纯数值读取：冻结 Unicode 策略 + trim + PLAIN_NUMBER + finite，不解释表达式。
- * 同一个确定性 parse 既用于判分，也用于准入双解的跨 kind 一致性；新键用宽度折叠，
+ * 同一个确定性 parse 既用于判分，也用于准入盲解键与定稿键的跨 kind 比较；新键用宽度折叠，
  * 缺省版本保留旧 NFKC。对不上往返写法的字面量不返回折叠值。
  */
 export function parseFrozenNumericAnswer(raw: string, identity: NumericKeyIdentity): number | null {
@@ -1183,13 +1183,13 @@ function declaredKeysAgree(
     if (!ca.ok) {
       return {
         agree: false,
-        detail: `solver A aliases invalid under declared shape: ${ca.reason}`,
+        detail: `first key aliases invalid under declared shape: ${ca.reason}`,
       };
     }
     if (!cb.ok) {
       return {
         agree: false,
-        detail: `solver B aliases invalid under declared shape: ${cb.reason}`,
+        detail: `second key aliases invalid under declared shape: ${cb.reason}`,
       };
     }
     const canonicalA = compiledCanonicalOf(ca.compiled);
@@ -1197,7 +1197,7 @@ function declaredKeysAgree(
     if (canonicalA == null || canonicalB == null || canonicalA !== canonicalB) {
       return {
         agree: false,
-        detail: `independent solves disagree as declared objects: ${canonicalA} vs ${canonicalB}`,
+        detail: `keys disagree as declared objects: ${canonicalA} vs ${canonicalB}`,
       };
     }
     const accepted = [...a.accepted, ...b.accepted.filter((t) => !a.accepted.includes(t))];

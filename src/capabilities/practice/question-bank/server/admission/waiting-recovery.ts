@@ -12,6 +12,7 @@ import {
   readPaidEffectControl,
 } from '@/core/paid-work/server/paid-effect-control';
 import {
+  DUAL_SOLVE_QUESTION_ADMISSION_PAID_UNIT,
   QUESTION_ADMISSION_CONTRACT_VERSION,
   QUESTION_ADMISSION_PAID_UNIT,
   QUESTION_ADMISSION_PAID_UNITS,
@@ -65,8 +66,13 @@ const QuotaWait = AdmissionRecovery.extend({
 });
 const WaitingStage = z.object({ kind: z.literal('waiting'), recovery: QuotaWait });
 
+/**
+ * Waits that may lose their wake-up. A dual-solve (@4) wait is re-delivered too: the
+ * delivery closes it and re-enqueues its publication under the current contract.
+ */
+const WAITING_PAID_UNITS = [QUESTION_ADMISSION_PAID_UNIT, DUAL_SOLVE_QUESTION_ADMISSION_PAID_UNIT];
 const LEGACY_PAID_UNITS = QUESTION_ADMISSION_PAID_UNITS.filter(
-  (unit) => unit !== QUESTION_ADMISSION_PAID_UNIT,
+  (unit) => !(WAITING_PAID_UNITS as readonly string[]).includes(unit),
 );
 
 type RecoveryAttempt = { kind: 'rearmed'; jobId: string } | { kind: 'skipped'; reason: string };
@@ -171,7 +177,10 @@ async function readCandidates(
         c.result_json, c.state, c.created_at
       FROM paid_effect c
       WHERE c.family = ${ADMISSION_FAMILY}
-        AND c.unit = ${QUESTION_ADMISSION_PAID_UNIT}
+        AND c.unit IN (${sql.join(
+          WAITING_PAID_UNITS.map((unit) => sql`${unit}`),
+          sql`, `,
+        )})
       ORDER BY c.entity_id, c.entity_revision, c.unit, c.created_at DESC
     ), quota_waits AS (
       SELECT DISTINCT ON (s.entity_id, s.entity_revision)
@@ -439,7 +448,7 @@ export async function recoverExpiredAdmissionWaits(
               eq(paid_effect.family, ADMISSION_FAMILY),
               eq(paid_effect.entity_id, candidate.groupId),
               eq(paid_effect.entity_revision, candidate.entityRevision),
-              eq(paid_effect.unit, QUESTION_ADMISSION_PAID_UNIT),
+              inArray(paid_effect.unit, WAITING_PAID_UNITS),
               eq(paid_effect.input_digest, candidate.inputDigest),
             ),
           )

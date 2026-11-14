@@ -340,7 +340,6 @@ export function buildAdmissionPublishInput(args: {
     ...resolvedPart,
   };
 
-  const verifierContext = input.solver2 ? 'independent_model' : 'same_model_isolated_context';
   const admission: PublishAdmission = args.admitted
     ? {
         state: 'admitted',
@@ -353,7 +352,7 @@ export function buildAdmissionPublishInput(args: {
               verifier: 'independent_model',
               verified_at: receipt.recorded_at,
             },
-            note: `YUK-1445 dual blind solve + frozen probe calibration (${input.policy_id}); verifier_context=${verifierContext}`,
+            note: `blind solve + author key or adjudication + frozen probe calibration (${input.policy_id})`,
           },
           model_slice: null,
         },

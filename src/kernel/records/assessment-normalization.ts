@@ -23,6 +23,7 @@ import type {
   ResponseSlotT,
   ResponseSpecT,
   ScoringBasisT,
+  ScoringUnitCriterionT,
 } from '@/core/schema/assessment';
 import {
   ExecutionPlan,
@@ -38,7 +39,7 @@ import {
   extractAnswerHeadForFrozenBasis,
   isExactCapableReference,
 } from '@/core/schema/assessment/answer-compare';
-import { ConjectureProbeSpec, ConjectureProbeSpecV2 } from '@/core/schema/business';
+import { ConjectureProbeSpec, ConjectureProbeSpecV2, JudgeKind } from '@/core/schema/business';
 import type { FigureRefT, StructuredQuestionT } from '@/core/schema/structured_question';
 
 import { createProbeV2Criterion } from './assessment-probe-criterion';
@@ -443,6 +444,27 @@ function missingReferenceIssue(leaf: LeafInput): ConversionIssue {
   };
 }
 
+const MISSING_REFERENCE_PLACEHOLDER = '（无参考答案 —— 发布为待补规则，转换未决）';
+
+/**
+ * Published revisions do not carry rule_statement_origins, so admission recognises the
+ * placeholder this module wrote by its exact text; it is never a printed rule.
+ */
+export function isMissingReferencePlaceholder(criterion: ScoringUnitCriterionT): boolean {
+  if (criterion.kind !== 'rule_reference' || criterion.source !== 'system_proposed') return false;
+  const statement = criterion.statement_md;
+  if (statement === MISSING_REFERENCE_PLACEHOLDER) return true;
+  const judgeIntent = statement.slice(
+    `${MISSING_REFERENCE_PLACEHOLDER}\n\n（判分意图：`.length,
+    statement.length - 1,
+  );
+  return (
+    statement.startsWith(`${MISSING_REFERENCE_PLACEHOLDER}\n\n（判分意图：`) &&
+    statement.endsWith('）') &&
+    JudgeKind.safeParse(judgeIntent).success
+  );
+}
+
 /** 答案原文 + judge 意图标记；答案缺失时才用 rubric/占位，provenance 相应降级。 */
 function buildRuleStatement(
   answerText: string | null,
@@ -456,7 +478,7 @@ function buildRuleStatement(
     parts.push(rubricToStatementMd(leaf.rubric));
     origin = 'rubric';
   } else {
-    parts.push('（无参考答案 —— 发布为待补规则，转换未决）');
+    parts.push(MISSING_REFERENCE_PLACEHOLDER);
     origin = 'placeholder';
   }
   if (leaf.judgeKindOverride != null) {

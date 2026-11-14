@@ -11,7 +11,7 @@ import { fromPgBossDrizzleTx } from '@/db/pg-boss-drizzle';
 import { getStartedBoss } from '@/server/boss/client';
 import { ADMISSION_FAMILY, admissionJobId } from './enqueue';
 import { FrozenAdmissionInput } from './receipt';
-import { readRouteLoginWait } from './stages';
+import { readRouteLoginWait, stagePolicySql } from './stages';
 
 export async function maintainAdmissionLoginRecovery(
   db: Db,
@@ -51,10 +51,10 @@ export async function enqueueAdmissionLoginRecovery(
     stage_digest: string;
   }>(sql`
       WITH latest AS (
-        SELECT DISTINCT ON (entity_id, entity_revision, input_json->>'call_index')
+        SELECT DISTINCT ON (entity_id, entity_revision, ${stagePolicySql}, input_json->>'call_index')
           entity_id, entity_revision, state, input_json, input_digest, result_json
         FROM paid_effect WHERE family = 'question_admission_stage'
-        ORDER BY entity_id, entity_revision, input_json->>'call_index', (input_json->>'attempt')::int DESC
+        ORDER BY entity_id, entity_revision, ${stagePolicySql}, input_json->>'call_index', (input_json->>'attempt')::int DESC
       ) SELECT c.entity_id AS group_id, c.input_json AS input, s.input_digest AS stage_digest
       FROM latest s JOIN paid_effect c
         ON c.family = ${ADMISSION_FAMILY} AND c.entity_id = s.entity_id

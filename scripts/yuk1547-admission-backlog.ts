@@ -552,18 +552,9 @@ async function dbBoot(): Promise<Db> {
 // ─── expected route resolution (mirrors the job) ────────────────────────────
 
 function expectedRoutes(): { solverA: ExpectedRoute; solverB: ExpectedRoute } {
+  // The second blind solve is retired; the B probe now checks the same route.
   const solverA = resolveTaskBinding(TASK_KIND);
-  const solver2Provider = process.env.QUESTION_ADMISSION_SOLVER2_PROVIDER;
-  const solver2Model = process.env.QUESTION_ADMISSION_SOLVER2_MODEL;
-  const override =
-    solver2Provider || solver2Model
-      ? {
-          ...(solver2Provider ? { provider: solver2Provider as Provider } : {}),
-          ...(solver2Model ? { model: solver2Model } : {}),
-        }
-      : undefined;
-  const solverB = resolveTaskBinding(TASK_KIND, override);
-  return { solverA: solverA as ExpectedRoute, solverB: solverB as ExpectedRoute };
+  return { solverA: solverA as ExpectedRoute, solverB: solverA as ExpectedRoute };
 }
 
 const routePair = (route: ExpectedRoute) => `${route.provider}/${route.model}`;

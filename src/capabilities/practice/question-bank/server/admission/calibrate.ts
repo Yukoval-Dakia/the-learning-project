@@ -133,7 +133,7 @@ const blankFacts = (correct: 0 | 1): RuleFacts => ({ kind: 'single', correct });
 /**
  * 冻结一个已 resolve 单元的探针集：以 agreed key 为参照，按单元形态构造
  * reference / equivalent / typical_wrong / over_select / blank_state /
- * unknown_state 探针（key 由双解或裁决确定，确认正确的写法仍须实测满分；slot 必须来自
+ * unknown_state 探针（key 由作者键接受的盲解或裁决确定，确认正确的写法仍须实测满分；slot 必须来自
  * resolved spec 的 select/blank 槽；unit 是 resolved basis 的判据+规则）。
  * 与键归一化等价的 wrong 探针会被跳过（如实记录 skipped）。
  */
