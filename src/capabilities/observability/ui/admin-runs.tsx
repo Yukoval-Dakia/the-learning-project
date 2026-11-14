@@ -169,18 +169,16 @@ function AlertRecordedCell({ recordedAt }: { recordedAt: string | null | undefin
   );
 }
 
-/**
- * YUK-1738 — task kinds that keep failing, read live from observability. Shown only when
- * there is at least one alert; a failed read is one quiet line and never blocks the run list.
- * YUK-1765 — an `unsealed` alert is not a failure (the reply was delivered), so it has its own
- * panel and never reads as 「失败 0 / 1 次」.
- */
+// Dependency and process reports can need attention while every task succeeds.
+// Keep their evidence separate from task failure rates and delivered replies.
 function TaskFailureAlertsPanel({
   read,
   onOpenRun,
+  onOpenConfig,
 }: {
   read: () => Promise<TaskFailureAlertsRead>;
   onOpenRun: (runId: string) => void;
+  onOpenConfig: () => void;
 }) {
   const alertsQ = useQuery({
     queryKey: ['admin-task-failure-alerts'],
@@ -188,9 +186,16 @@ function TaskFailureAlertsPanel({
     refetchInterval: 60_000,
   });
   if (alertsQ.error)
-    return <p className="adm-warn">持续失败告警暂时读不到，下面的运行记录不受影响。</p>;
+    return (
+      <div className="adm-chip-row" role="alert">
+        <p className="adm-warn">运行状态暂时读不到，下面的运行记录仍可查看。</p>
+        <Button variant="quiet" onClick={() => void alertsQ.refetch()}>
+          重试状态检查
+        </Button>
+      </div>
+    );
   const data = alertsQ.data;
-  if (!data || data.alerts.length === 0) return null;
+  if (!data) return <SkeletonLines rows={2} label="运行状态检查中" />;
   const failing = data.alerts.filter((alert) => alert.rule !== 'unsealed');
   const unsealed = data.alerts.filter((alert) => alert.rule === 'unsealed');
   return (
@@ -278,6 +283,86 @@ function TaskFailureAlertsPanel({
           </div>
         </AdminPanel>
       )}
+      {data.dependency_notices.length > 0 && (
+        <AdminPanel
+          id="adm-dependency-notices"
+          title="外部资料暂时受限"
+          sub={`依赖检查记录 · ${formatTime(data.checked_at)} 检查`}
+          aside={<Chip tone="caution">{data.dependency_notices.length} 项</Chip>}
+          flush
+        >
+          <div className="adm-table-scroll">
+            <table className="adm-table">
+              <thead>
+                <tr>
+                  <th scope="col">影响</th>
+                  <th scope="col" className="adm-num">
+                    连续不可用
+                  </th>
+                  <th scope="col">最近记录</th>
+                  <th scope="col">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.dependency_notices.map((notice) => (
+                  <tr key={notice.dependency}>
+                    <td>
+                      <span className="adm-run-task">{notice.learner_title}</span>
+                      <p className="adm-quiet">{notice.learner_detail}</p>
+                      <span className="adm-quiet">开始于 {formatTime(notice.since)}</span>
+                    </td>
+                    <td className="adm-num">{notice.failures} 次</td>
+                    <td className="adm-mono adm-quiet">{formatTime(notice.last_failure_at)}</td>
+                    <td>
+                      <Button onClick={() => onOpenRun(notice.latest_run_id)}>查看相关运行</Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </AdminPanel>
+      )}
+      {data.config_incomplete.length > 0 && (
+        <AdminPanel
+          id="adm-config-incomplete"
+          title="进程报告了配置缺项"
+          sub={`API 为本次检查；后台任务进程为最近一天内的启动报告，可能早于配置修复 · ${formatTime(data.checked_at)} 检查`}
+          aside={
+            <Button variant="quiet" onClick={onOpenConfig}>
+              查看配置
+            </Button>
+          }
+          flush
+        >
+          <div className="adm-table-scroll">
+            <table className="adm-table">
+              <thead>
+                <tr>
+                  <th scope="col">进程</th>
+                  <th scope="col">缺少的设置</th>
+                  <th scope="col">记录时间</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.config_incomplete.map((report) => (
+                  <tr key={report.process}>
+                    <td>{report.process === 'api' ? 'API 服务' : '后台任务进程'}</td>
+                    <td>
+                      <div className="adm-chip-row">
+                        {report.missing.map((name) => (
+                          <code key={name}>{name}</code>
+                        ))}
+                      </div>
+                    </td>
+                    <td className="adm-mono adm-quiet">{formatTime(report.seen_at)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </AdminPanel>
+      )}
     </>
   );
 }
@@ -348,6 +433,7 @@ export function AdminRunsSurface({
   };
   const refreshRuns = () => {
     void queryClient.invalidateQueries({ queryKey: ['admin-runs'] });
+    void queryClient.invalidateQueries({ queryKey: ['admin-task-failure-alerts'] });
     if (selectedRunId) {
       void queryClient.invalidateQueries({ queryKey: ['admin-run-detail', selectedRunId] });
     }
@@ -368,7 +454,11 @@ export function AdminRunsSurface({
         }
       />
 
-      <TaskFailureAlertsPanel read={readTaskFailureAlerts} onOpenRun={openAlertRun} />
+      <TaskFailureAlertsPanel
+        read={readTaskFailureAlerts}
+        onOpenRun={openAlertRun}
+        onOpenConfig={() => navigate('/admin/config')}
+      />
 
       <AdminKpis>
         <AdminKpi label="运行记录" value={runs.length} note={`${runs.length} / ${totalRuns} 条`} />
