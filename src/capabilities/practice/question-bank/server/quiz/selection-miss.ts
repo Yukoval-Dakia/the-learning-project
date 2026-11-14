@@ -4,6 +4,7 @@ import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events/index';
+import { readServablePoolMembership } from '@/kernel/read-models/servable-pool-membership';
 import { DEFAULT_EVIDENCE_DEADLINE_DAYS } from '@/kernel/supply-contracts';
 
 type DbLike = Db | Tx;
@@ -81,7 +82,45 @@ export interface SelectionMissDemand {
   miss: SelectionMissV1;
 }
 
-/** Latest selection_miss per knowledge inside the supply evidence window. A bad payload is skipped. */
+// The only reason whose recorded demand is provably "the pool had no servable
+// item": the v1 classifier emits NO_ALLOWED_USE_ITEM only when a live
+// knowledge's candidate pool was empty. NO_ACCESSIBLE_ITEM and
+// NO_INDEPENDENT_FAMILY record distinct accessibility/family axes — an all-zero
+// row carrying one of them is ambiguous, not a proven empty pool. Constrained
+// axes and INSUFFICIENT_ELIGIBLE_ITEMS can't be re-evaluated from `any member
+// exists` alone, so they stay open — fail closed.
+const ABSOLUTE_EMPTY_REASON: SelectionMissV1['reason'] = 'NO_ALLOWED_USE_ITEM';
+
+// The recorded constraint set only has to be self-consistent for an
+// absolute-empty miss: the knowledge was live and every evaluated count is 0.
+// A row that fails this check is ambiguous — retain it rather than guess.
+function isConsistentAbsoluteEmpty(miss: SelectionMissV1): boolean {
+  if (miss.selection_policy_version !== DEFAULT_SELECTION_POLICY_VERSION) return false;
+  if (miss.reason !== ABSOLUTE_EMPTY_REASON) return false;
+  const constraints = miss.evaluated_constraints;
+  return (
+    constraints.live_knowledge === true &&
+    constraints.candidate_count === 0 &&
+    constraints.near_difficulty_count === 0 &&
+    constraints.required_kind_count === 0 &&
+    constraints.trusted_source_count === 0 &&
+    constraints.accessible_count === 0 &&
+    constraints.scorable_count === 0 &&
+    (constraints.independent_family_count === 0 || constraints.independent_family_count === null) &&
+    (constraints.exposed_family_count === 0 || constraints.exposed_family_count === null) &&
+    constraints.quarantined_count === 0
+  );
+}
+
+/**
+ * Latest selection_miss per knowledge inside the supply evidence window whose
+ * recorded gap is still open. A bad payload is skipped. A miss closes only when
+ * its recorded evidence proves an unconstrained empty pool (known absolute-empty
+ * reason NO_ALLOWED_USE_ITEM + known selection policy + live knowledge +
+ * consistent all-zero counts) and the KC now has a canonically servable member;
+ * constrained reasons, unknown policy versions, dead-knowledge records, and
+ * ambiguous constraint shapes stay open.
+ */
 export async function readOpenSelectionMissDemands(
   db: DbLike,
   now: Date,
@@ -109,5 +148,20 @@ export async function readOpenSelectionMissDemands(
     seen.add(miss.knowledge_id);
     demands.push({ eventId: row.id, recordedAt: row.created_at, miss });
   }
-  return demands;
+  // Fulfillment = same current eligible pool the variant-rotation prefetch
+  // serves from (kernel servable-pool membership). Only a proven absolute-empty
+  // NO_ALLOWED_USE_ITEM miss closes on memberCount > 0; the event row is kept
+  // either way, so a pool that drains before the window expires resurfaces on
+  // the next read.
+  const membership = await readServablePoolMembership(
+    db,
+    demands.map((demand) => demand.miss.knowledge_id),
+  );
+  return demands.filter(
+    (demand) =>
+      !(
+        isConsistentAbsoluteEmpty(demand.miss) &&
+        (membership.memberCount.get(demand.miss.knowledge_id) ?? 0) > 0
+      ),
+  );
 }
