@@ -579,24 +579,43 @@ export const observabilityCapability = defineCapability({
         backend: 'dbos',
         queue: 'fast',
         schedule: { cron: '0 4 * * *', tz: 'Asia/Shanghai' },
+        durable: {
+          family: 'prune',
+          load: () => import('@/server/boss/durable/prune').then((m) => m.pruneFamily),
+        },
       },
       {
         name: 'prune_orphan_review_sessions',
         backend: 'dbos',
         queue: 'fast',
         schedule: { cron: '15 4 * * *', tz: 'Asia/Shanghai' },
+        durable: {
+          family: 'review-orphan',
+          load: () =>
+            import('@/server/boss/durable/review-orphan').then((m) => m.reviewOrphanFamily),
+        },
       },
       {
         name: 'prune_orphan_conversation_sessions',
         backend: 'dbos',
         queue: 'fast',
         schedule: { cron: '25 4 * * *', tz: 'Asia/Shanghai' },
+        durable: {
+          family: 'session-orphan',
+          load: () =>
+            import('@/server/boss/durable/session-orphan').then((m) => m.sessionOrphanFamily),
+        },
       },
       {
         name: 'prune_orphan_placement_sessions',
         backend: 'dbos',
         queue: 'fast',
         schedule: { cron: '35 4 * * *', tz: 'Asia/Shanghai' },
+        durable: {
+          family: 'session-orphan',
+          load: () =>
+            import('@/server/boss/durable/session-orphan').then((m) => m.sessionOrphanFamily),
+        },
       },
       // YUK-601 PR7 (v3.2 §7) — 夜间装配漂移审计（--strict：invalid → job failed
       // 可见）。04:26 避开 04:25 conversation 清理；fast 档纯 DB 无 LLM。

@@ -14,6 +14,7 @@ import {
   createJobQueue,
   createOrUpdateQueue,
 } from '@/server/boss/queue-config';
+import { admitDurableFamilies } from '@/server/durable/family-contract';
 import { startDurableWorker } from '@/server/durable/prune-worker';
 import { fenceAwareJobHandler } from '@/server/migration/contract-epoch/boss-fence';
 import {
@@ -178,58 +179,15 @@ export async function registerCapabilityJobs(
   const decls = capabilities
     .flatMap((cap) => cap.jobs?.handlers ?? [])
     .filter((d) => d.load || d.backend === 'dbos');
-  const durable = decls.filter((d) => d.backend === 'dbos');
-  const names = new Set<string>();
-  for (const decl of durable) {
-    if (
-      names.has(decl.name) ||
-      ![
-        'prune_job_events',
-        'prune_orphan_review_sessions',
-        'prune_orphan_conversation_sessions',
-        'prune_orphan_placement_sessions',
-        'judge_run',
-        'judge_pending_reconcile',
-      ].includes(decl.name) ||
-      decl.queue !== (decl.name === 'judge_run' ? 'llm' : 'fast') ||
-      (decl.name === 'judge_run' ? !!decl.schedule : !decl.schedule) ||
-      decl.load ||
-      (decl.schedule && (!decl.schedule.cron.trim() || !decl.schedule.tz.trim())) ||
-      (decl.name !== 'judge_pending_reconcile' &&
-        (decl.schedule?.singletonKey !== undefined ||
-          decl.schedule?.singletonSeconds !== undefined))
-    )
-      throw new Error(`Invalid or duplicate admitted DBOS family ${decl.name}`);
-    names.add(decl.name);
-  }
-  const pruneEvents = durable.find((d) => d.name === 'prune_job_events');
-  const reviewOrphans = durable.find((d) => d.name === 'prune_orphan_review_sessions');
-  const conversationOrphans = durable.find((d) => d.name === 'prune_orphan_conversation_sessions');
-  const placementOrphans = durable.find((d) => d.name === 'prune_orphan_placement_sessions');
-  const judgeRun = durable.find((d) => d.name === 'judge_run');
-  const judgeReconcile = durable.find((d) => d.name === 'judge_pending_reconcile');
-  if (!!judgeRun !== !!judgeReconcile)
-    throw new Error('Judge execution and reconciliation require paired ownership');
-  if (
-    durable.length &&
-    (!pruneEvents || !reviewOrphans || !conversationOrphans || !placementOrphans)
-  )
-    throw new Error('Production DBOS admission requires the complete four-family set');
+  const families = await admitDurableFamilies(decls, { scope: 'production' });
   const ordinary = decls.filter((d) => d.backend !== 'dbos');
   // Chain targets retain their existing order; complete admission was validated before any mounting.
   for (const decl of ordinary.filter((d) => !d.schedule)) await mountJob(boss, db, decl);
-  if (pruneEvents && reviewOrphans && conversationOrphans && placementOrphans)
+  if (families.length)
     await startDurableWorker({
       boss,
       db,
-      declarations: {
-        pruneEvents,
-        reviewOrphans,
-        conversationOrphans,
-        placementOrphans,
-        judgeRun,
-        judgeReconcile,
-      },
+      families,
     });
   for (const decl of ordinary.filter((d) => d.schedule)) await mountJob(boss, db, decl);
 }

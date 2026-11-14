@@ -200,7 +200,10 @@ async function main() {
     };
   }
   const pauseNative = cron ? accelerateReviewCron(boss) : undefined;
-  const declarations = reviewDeclarations;
+  const { admitDurableFamilies } = await import('@/server/durable/family-contract');
+  const families = await admitDurableFamilies(Object.values(reviewDeclarations), {
+    scope: 'production',
+  });
   try {
     stage = 'pg-boss-start';
     await boss.start();
@@ -208,8 +211,8 @@ async function main() {
     await host.startDurableWorker({
       boss,
       db,
-      declarations,
-      reviewBoundary,
+      families,
+      boundaries: { reviewOrphan: reviewBoundary },
       reconcileIntervalMs: 100,
     });
     stage = 'ready';
