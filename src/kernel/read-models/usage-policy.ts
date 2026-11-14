@@ -6,6 +6,10 @@
 
 import { type SQL, type SQLWrapper, eq, sql } from 'drizzle-orm';
 import { type DerivationPolicyT, readDerivationPolicy } from '@/core/schema/derivation-policy';
+import {
+  CompletionSources,
+  type FrozenCompletionSources,
+} from '@/core/schema/learning-item-completion';
 import type { Db, Tx } from '@/db/client';
 import { learning_session, source_document } from '@/db/schema';
 import { ingestionQuestionSourceListSql } from './admission-source';
@@ -95,6 +99,11 @@ export type PurposeSource = {
   id: string | SQLWrapper;
 };
 
+const COMPLETION_SOURCES_SQL = sql`CASE WHEN e.action = 'experimental:completion_evidence_read'
+  THEN e.payload->'sources' ELSE coalesce(e.payload->'ai_proposal', e.payload)->'proposed_change'->'receipt'->'sources' END`;
+const COMPLETION_EVENT_SQL = sql`(e.action = 'experimental:completion_evidence_read'
+  OR (e.action = 'experimental:proposal' AND coalesce(e.payload->'ai_proposal', e.payload)->>'kind' = 'completion'))`;
+
 const PURPOSE_EDGES_SQL = sql`
       SELECT v.kind, v.id FROM question q
       CROSS JOIN LATERAL (VALUES
@@ -131,6 +140,18 @@ const PURPOSE_EDGES_SQL = sql`
           THEN COALESCE(e.payload->'ai_proposal', e.payload)->'proposed_change'->>'source_question_id' END),
         ('document', b.payload->>'document_id')
       ) v(kind, id) WHERE n.kind = 'event' AND e.id = n.id
+      UNION ALL
+      SELECT 'event', binding.id FROM event e
+      JOIN event binding ON binding.action = 'experimental:completion_evidence_read'
+        AND binding.caused_by_event_id = e.caused_by_event_id
+        AND binding.task_run_id = e.task_run_id
+      WHERE n.kind = 'event' AND e.id = n.id AND e.action = 'experimental:copilot_reply'
+      UNION ALL
+      SELECT ref->>'kind', ref->>'id' FROM event e
+      CROSS JOIN LATERAL (SELECT ${COMPLETION_SOURCES_SQL} AS sources) proof
+      CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(proof.sources->'nodes') = 'array'
+        THEN proof.sources->'nodes' ELSE '[]'::jsonb END) ref
+      WHERE n.kind = 'event' AND e.id = n.id AND ${COMPLETION_EVENT_SQL}
       UNION ALL
       SELECT 'event', ref #>> '{}' FROM event reply
       CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(reply.payload->'history_read_set'->'event_ids') = 'array'
@@ -245,6 +266,22 @@ const NODE_VIOLATION_SQL = sql`CASE n.kind
               WHERE NOT coalesce(ref->>'kind' IN ('source_document', 'question', 'record', 'event', 'knowledge'), false)
                 OR jsonb_typeof(ref->'id') IS DISTINCT FROM 'string' OR length(ref->>'id') = 0)))
           OR (e.payload ? 'derivation_policy' AND e.payload->>'derivation_policy' IS DISTINCT FROM 'allow')
+          OR (${COMPLETION_EVENT_SQL} AND EXISTS (
+            SELECT 1 FROM (SELECT ${COMPLETION_SOURCES_SQL} AS sources) proof
+            WHERE jsonb_typeof(proof.sources) IS DISTINCT FROM 'object'
+              OR jsonb_typeof(proof.sources->'nodes') IS DISTINCT FROM 'array'
+              OR proof.sources->'nodes' = '[]'::jsonb
+              OR jsonb_typeof(proof.sources->'epochs') IS DISTINCT FROM 'object'
+              OR EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(proof.sources->'nodes') = 'array'
+                THEN proof.sources->'nodes' ELSE '[]'::jsonb END) ref
+                WHERE NOT coalesce(ref->>'kind' IN ('question','record','event','document','session'), false)
+                  OR jsonb_typeof(ref->'id') IS DISTINCT FROM 'string' OR length(btrim(ref->>'id')) = 0
+                  OR (ref->>'kind' = 'document' AND NOT coalesce(proof.sources->'epochs' ? (ref->>'id'), false)))
+              OR EXISTS (SELECT 1 FROM jsonb_each_text(CASE WHEN jsonb_typeof(proof.sources->'epochs') = 'object'
+                THEN proof.sources->'epochs' ELSE '{}'::jsonb END) epoch
+                LEFT JOIN source_document document ON document.id = epoch.key
+                WHERE document.id IS NULL OR epoch.value IS DISTINCT FROM document.provenance->>'usage_epoch')
+          ))
           OR (e.action = 'experimental:copilot_reply' AND (
             ((e.payload ? 'history_read_set' OR e.task_run_id IS NOT NULL OR EXISTS (
               SELECT 1 FROM job_events j WHERE j.business_table = 'copilot_run' AND j.business_id = e.caused_by_event_id
@@ -411,6 +448,68 @@ export async function readSourceUsageEpochs(
   return Object.fromEntries(rows.map((row) => [row.id, documentUsageEpoch(row.provenance)]));
 }
 
+/** Completion freezes every original ancestor, not just today's surviving document edges. */
+export async function readCompletionSources(
+  db: Db | Tx,
+  sources: FrozenCompletionSources['nodes'],
+): Promise<FrozenCompletionSources | null> {
+  if (!sources.length) return null;
+  const nodes = await db.execute<{ kind: string; id: string; denied: boolean }>(sql`
+    ${purposeLineageSources(sources)} SELECT n.kind, n.id, (NOT public.tlp_source_allows_derivation(n.kind, n.id) OR EXISTS (
+      SELECT 1 FROM event reply WHERE n.kind = 'event' AND reply.id = n.id
+        AND reply.action = 'experimental:copilot_reply'
+        AND (jsonb_typeof(reply.payload->'history_read_set') IS DISTINCT FROM 'object'
+          OR reply.payload->'history_read_set'->'version' IS DISTINCT FROM '1'::jsonb
+          OR jsonb_typeof(reply.payload->'history_read_set'->'event_ids') IS DISTINCT FROM 'array')
+    )) AS denied
+    FROM purpose_lineage n ORDER BY n.kind, n.id`);
+  if (nodes.some((n) => n.denied)) return null;
+  const docs = await db.execute<{ id: string; epoch: string | null; policy: string | null }>(sql`
+    ${purposeLineageSources(sources)} SELECT d.id, d.provenance->>'usage_epoch' AS epoch,
+      d.provenance->'usage_policy'->>'derivation_policy' AS policy
+    FROM source_document d WHERE d.id IN (SELECT id FROM purpose_lineage WHERE kind = 'document')
+    ORDER BY d.id`);
+  if (docs.some((d) => d.policy !== 'allow' || !d.epoch)) return null;
+  return CompletionSources.parse({
+    nodes: nodes.map(({ kind, id }) => ({ kind, id })),
+    epochs: Object.fromEntries(docs.map((d) => [d.id, d.epoch])),
+  });
+}
+
+export async function completionSourcesCurrent(
+  db: Db | Tx,
+  frozen: FrozenCompletionSources,
+): Promise<boolean> {
+  const current = await readCompletionSources(db, frozen.nodes);
+  return (
+    current !== null &&
+    Object.entries(frozen.epochs).every(([id, epoch]) => current.epochs[id] === epoch)
+  );
+}
+
+/** Caller owns the event/evaluation fences. Never wait behind a writer needing those fences. */
+export async function lockCompletionSources(
+  tx: Tx,
+  sources: FrozenCompletionSources,
+): Promise<void> {
+  const tables = {
+    question: 'question',
+    record: 'learning_record',
+    session: 'learning_session',
+    document: 'source_document',
+  } as const;
+  for (const [kind, table] of Object.entries(tables)) {
+    const ids = sources.nodes.filter((n) => n.kind === kind).map((n) => n.id);
+    if (!ids.length) continue;
+    const rows = await tx.execute(sql`SELECT id FROM ${sql.identifier(table)}
+      WHERE id IN (${sql.join(
+        ids.map((id) => sql`${id}`),
+        sql`, `,
+      )}) ORDER BY id FOR SHARE NOWAIT`);
+    if (rows.length !== ids.length) throw new Error('completion source disappeared');
+  }
+}
+
 export function sourceHasCrisisSql(source: PurposeSource) {
   return sql`EXISTS (${purposeLineage(source)} SELECT 1 FROM purpose_lineage n
     LEFT JOIN source_document d ON n.kind = 'document' AND d.id = n.id
@@ -475,7 +574,13 @@ WITH RECURSIVE purpose_lineage(root_id, kind, id) AS (
   SELECT n.root_id, edge.kind, edge.id FROM purpose_lineage n
   CROSS JOIN LATERAL (${PURPOSE_EDGES_SQL}) edge WHERE edge.id IS NOT NULL
 ), node_verdicts AS MATERIALIZED (
-  SELECT n.kind, n.id, ${NODE_VIOLATION_SQL} AS denied
+  SELECT n.kind, n.id, (NOT public.tlp_source_allows_derivation(n.kind, n.id) OR EXISTS (
+      SELECT 1 FROM event reply WHERE n.kind = 'event' AND reply.id = n.id
+        AND reply.action = 'experimental:copilot_reply'
+        AND (jsonb_typeof(reply.payload->'history_read_set') IS DISTINCT FROM 'object'
+          OR reply.payload->'history_read_set'->'version' IS DISTINCT FROM '1'::jsonb
+          OR jsonb_typeof(reply.payload->'history_read_set'->'event_ids') IS DISTINCT FROM 'array')
+    )) AS denied
   FROM (SELECT DISTINCT kind, id FROM purpose_lineage) n
 )
 SELECT DISTINCT seed.id FROM unnest(question_ids) seed(id)

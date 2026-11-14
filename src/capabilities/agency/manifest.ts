@@ -243,6 +243,15 @@ export const agencyCapability = defineCapability({
     // server/boss/register-capability-jobs.ts 收集挂载，此处声明是唯一归属源。
     handlers: [
       {
+        name: 'learning_item_completion_nightly',
+        dependsOn: [],
+        queue: 'fast',
+        load: () =>
+          import('./jobs/learning_item_completion_nightly').then(
+            (m) => m.buildLearningItemCompletionNightlyHandler,
+          ),
+      },
+      {
         name: 'curator_activity',
         queue: 'agent',
         load: () => import('./context/activity').then((m) => m.buildCuratorActivityHandler),

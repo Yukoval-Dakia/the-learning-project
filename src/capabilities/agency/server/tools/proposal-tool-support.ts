@@ -8,6 +8,9 @@ import { listProposalInboxRows } from '@/kernel/proposals/inbox';
 export const LearningItemProposalOutputSchema = z.object({
   status: z.enum([
     'proposed',
+    'skipped:not_eligible',
+    'skipped:budget',
+    'skipped:cooldown',
     'skipped:not_found',
     'skipped:invalid_state',
     'skipped:duplicate_pending',

@@ -7,8 +7,11 @@ import {
   hasLearningItemGenesisAnchor,
 } from '@/kernel/records/learning-items';
 import { learningItemLiveRowToSnapshot } from '@/server/projections/parity';
-import { migrateCanonicalProjections } from '../../../scripts/migrate-canonical-projections';
 import { resetDb, testDb } from '../../../tests/helpers/db';
+import {
+  seedCompletionLearningItem,
+  seedCompletionProposal,
+} from '../../../tests/helpers/native-completion';
 import { type ProposalLifecycleResult, acceptAiProposal, retractAiProposal } from './actions';
 
 const KNOWLEDGE_BASE = {
@@ -75,34 +78,8 @@ describe('retractAiProposal — completion / relearn row reversal (YUK-471)', ()
   // @fails-if retract leaves the item completed, or leaves the ai_propose/evidence event behind
   it('retracting an ACCEPTED completion re-opens the item + deletes the ai_propose evidence', async () => {
     const db = testDb();
-    const now = new Date();
-    await db.insert(learning_item).values({
-      id: 'li_done',
-      source: 'manual',
-      title: '完成候选',
-      content: 'content',
-      knowledge_ids: [],
-      status: 'in_progress',
-      created_at: now,
-      updated_at: now,
-    });
-    await migrateCanonicalProjections(db);
-    await writeAiProposal(db, {
-      actor_ref: 'dreaming',
-      id: 'completion_retract_p1',
-      payload: {
-        kind: 'completion',
-        target: { subject_kind: 'learning_item', subject_id: 'li_done' },
-        reason_md: 'item appears mastered',
-        evidence_refs: [],
-        proposed_change: {
-          learning_item_id: 'li_done',
-          triggering_signals: ['check_all_passed'],
-          evidence_json: {},
-        },
-        cooldown_key: 'completion:li_done',
-      },
-    });
+    await seedCompletionLearningItem(db, 'li_done');
+    await seedCompletionProposal(db, 'completion_retract_p1', 'li_done');
     await acceptAiProposal(db, 'completion_retract_p1');
 
     // Sanity: accept landed.
@@ -127,7 +104,7 @@ describe('retractAiProposal — completion / relearn row reversal (YUK-471)', ()
     item = (
       await db.select().from(learning_item).where(eq(learning_item.id, 'li_done')).limit(1)
     )[0];
-    expect(item.status).toBe('in_progress');
+    expect(item.status).toBe('pending');
     expect(item.completed_at).toBeNull();
     expect(item.version).toBe(2); // accept bumped 0→1, retract bumped 1→2
 

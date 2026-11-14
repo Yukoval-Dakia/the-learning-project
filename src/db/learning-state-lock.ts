@@ -14,6 +14,14 @@ export async function acquireLearningStateWriteLock(tx: Tx): Promise<void> {
   await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${LEARNING_STATE_WRITE_LOCK}))`);
 }
 
+/** Completion already holds relation fences and must never wait behind a G-first writer. */
+export async function tryLearningStateWriteLock(tx: Tx): Promise<boolean> {
+  const [row] = await tx.execute<{ acquired: boolean }>(
+    sql`SELECT pg_try_advisory_xact_lock(hashtext(${LEARNING_STATE_WRITE_LOCK})) AS acquired`,
+  );
+  return row?.acquired === true;
+}
+
 /**
  * Run `fn` under the global learning-state write lock G, inside a transaction. Dispatch uses the
  * DOCUMENTED `'$client' in db` polarity (src/db/client.ts: a `Tx` does not carry `$client`) rather
