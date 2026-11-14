@@ -70,16 +70,27 @@ export async function getCorrectionStatus(
   return statuses.get(targetEventId) ?? activeCorrectionStatus();
 }
 
+export function getCorrectionStatuses(
+  db: DbLike,
+  targetEventIds: string[],
+  opts?: { createdBefore?: Date },
+): Promise<Map<string, CorrectionStatus>>;
+export function getCorrectionStatuses(
+  db: DbLike,
+  targetEventIds: string[],
+  opts: { createdBefore?: Date; includeReceipts: true },
+): Promise<Map<string, CorrectionStatusWithReceipt>>;
 export async function getCorrectionStatuses(
   db: DbLike,
   targetEventIds: string[],
-  opts: { createdBefore?: Date } = {},
-): Promise<Map<string, CorrectionStatus>> {
-  const receipts = await getCorrectionStatusesWithReceipts(db, targetEventIds, opts);
+  opts: { createdBefore?: Date; includeReceipts?: boolean } = {},
+): Promise<Map<string, CorrectionStatus | CorrectionStatusWithReceipt>> {
+  const receipts = await foldCorrectionStatuses(db, targetEventIds, opts);
+  if (opts.includeReceipts === true) return receipts;
   return new Map([...receipts].map(([targetEventId, receipt]) => [targetEventId, receipt.status]));
 }
 
-export async function getCorrectionStatusesWithReceipts(
+async function foldCorrectionStatuses(
   db: DbLike,
   targetEventIds: string[],
   opts: { createdBefore?: Date } = {},

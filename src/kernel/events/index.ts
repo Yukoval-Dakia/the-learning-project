@@ -5,13 +5,12 @@ export {
   takeActiveRows,
 } from './active-rows';
 export { eventCorrectionsGlobalLockKey } from './correction-lock';
-export type { CorrectionStatus, CorrectionStatusWithReceipt } from './corrections';
+export type { CorrectionStatus } from './corrections';
 export {
   activeCorrectionStatus,
   eventCorrectionActiveSql,
   getCorrectionStatus,
   getCorrectionStatuses,
-  getCorrectionStatusesWithReceipts,
 } from './corrections';
 export { eventAllowsDerivationSql, readEventDerivationPolicy } from './derivation-policy';
 export {

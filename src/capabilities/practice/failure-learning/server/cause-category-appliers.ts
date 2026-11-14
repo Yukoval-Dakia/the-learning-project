@@ -12,11 +12,7 @@ import { canonicalHash } from '@/core/migration/canonical';
 import type { CauseCategoryT } from '@/core/schema/event/blocks';
 import type { Db, Tx } from '@/db/client';
 import { cause_category_overlay, event } from '@/db/schema';
-import {
-  getCorrectionStatuses,
-  getCorrectionStatusesWithReceipts,
-  writeEvent,
-} from '@/kernel/events';
+import { getCorrectionStatuses, writeEvent } from '@/kernel/events';
 import {
   lockEventCorrectionSource,
   lockEventCorrectionsAll,
@@ -519,7 +515,7 @@ export const causeCategoryProposalRetractApplier: ProposalRetractApplier = async
     // Canonical fold, under the locks: the winning receipt id per target. A
     // learner mark_wrong/retract (or restore) committed after the accept is the
     // current correction truth — the recheck below never overwrites it.
-    const receipts = await getCorrectionStatusesWithReceipts(tx, undoTargets);
+    const receipts = await getCorrectionStatuses(tx, undoTargets, { includeReceipts: true });
     for (const outcome of relabelOutcomes) {
       if (
         !outcome ||

@@ -12,7 +12,7 @@ import type { AiProposalPayloadT } from '@/core/schema/proposal';
 import type { Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { cause_category_overlay } from '@/db/schema/knowledge';
-import { getCorrectionStatusesWithReceipts } from '@/kernel/events';
+import { getCorrectionStatuses } from '@/kernel/events';
 import {
   lockEventCorrectionSource,
   lockEventCorrectionsAll,
@@ -209,7 +209,7 @@ async function inspectCauseCategories(
       const targetIds = check.relabelledPairs.flatMap((pair) =>
         pair.replacementId ? [pair.originalId, pair.replacementId] : [pair.originalId],
       );
-      const receipts = await getCorrectionStatusesWithReceipts(db, targetIds);
+      const receipts = await getCorrectionStatuses(db, targetIds, { includeReceipts: true });
       const originalLearnerCorrected = check.relabelledPairs.some((pair) => {
         const receipt = receipts.get(pair.originalId);
         return (
