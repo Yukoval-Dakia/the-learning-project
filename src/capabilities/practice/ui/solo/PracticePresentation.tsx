@@ -424,6 +424,11 @@ export function PracticePresentation(props: PracticePresentationProps) {
           uncertainty: unknownScore ? '对了几处是确定的；分数还算不出来，不按 0 分记。' : undefined,
           aiGraded,
           facts: attemptFacts(submit.recorded),
+          knowledgeNotes:
+            (outcome === 'incorrect' || outcome === 'partial' || outcome === 'partial_unknown') &&
+            item.knowledge_notes.length > 0
+              ? item.knowledge_notes.map((note) => ({ ...note }))
+              : undefined,
         },
       };
       if (!submit.autoCommitted && !unknownScore)
