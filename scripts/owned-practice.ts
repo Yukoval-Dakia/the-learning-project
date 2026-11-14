@@ -160,8 +160,28 @@ async function main(): Promise<number> {
   let pg: OwnedPgHandle | undefined;
   let server: ReturnType<typeof spawn> | undefined;
   const ownedChildren: OwnedChild[] = [];
-  const trackedPids = () =>
-    ownedChildren.filter((c) => !c.exited && c.child.pid).map((c) => c.child.pid as number);
+  // Every spawn is detached, so each tracked child leads its own process group
+  // keyed by its leader pid. A leader's 'close' does NOT prove the group is
+  // gone: a same-group descendant spawned with stdio 'ignore' survives the
+  // leader's exit, is filtered out of trackedPids, and would outlive the owned
+  // PG + slot. Group liveness is therefore decided by kill(-pgid, 0), never by
+  // leader close.
+  const groupAlive = (pid: number): boolean => {
+    try {
+      process.kill(-pid, 0);
+      return true;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === 'ESRCH') return false;
+      if (code === 'EPERM') return true;
+      throw error;
+    }
+  };
+  const trackedGroups = () =>
+    ownedChildren
+      .map((c) => c.child.pid)
+      .filter((pid): pid is number => typeof pid === 'number')
+      .filter((pid) => groupAlive(pid));
 
   // Every spawn below is detached so the child leads its own process group;
   // on SIGINT/SIGTERM we kill each tracked group (negative pid), let main
@@ -169,9 +189,9 @@ async function main(): Promise<number> {
   // refuse to start any further work. groupKill below is also called from
   // finally so a workload/server child cannot outlive the entry.
   let cancelled: 'SIGINT' | 'SIGTERM' | null = null;
-  let cancellationReaping: Promise<void> | undefined;
+  let cancellationReaping: Promise<number[]> | undefined;
   const groupKill = (signal: 'SIGTERM' | 'SIGKILL') => {
-    for (const pid of trackedPids()) {
+    for (const pid of trackedGroups()) {
       try {
         process.kill(-pid, signal);
       } catch (error) {
@@ -179,24 +199,39 @@ async function main(): Promise<number> {
       }
     }
   };
-  const waitForChild = (owned: OwnedChild, timeoutMs: number): Promise<void> =>
+  const waitForGroupGone = (pid: number, timeoutMs: number): Promise<void> =>
     new Promise((resolveWait) => {
-      if (owned.exited) return resolveWait();
-      const timer = setTimeout(() => resolveWait(), timeoutMs);
-      owned.child.once('close', () => {
-        clearTimeout(timer);
-        resolveWait();
-      });
+      const started = Date.now();
+      const poll = () => {
+        if (!groupAlive(pid) || Date.now() - started >= timeoutMs) {
+          resolveWait();
+          return;
+        }
+        setTimeout(poll, 50);
+      };
+      poll();
     });
-  const reapChildren = async (graceMs: number) => {
-    const live = ownedChildren.filter((c) => !c.exited);
-    if (live.length === 0) return;
+  // Returns pids whose group was still alive after the SIGTERM grace and the
+  // SIGKILL follow-up wait; a non-empty result means an owned descendant
+  // outlived its leader and the run must not be recorded as success.
+  const reapChildren = async (graceMs: number): Promise<number[]> => {
+    if (trackedGroups().length === 0) return [];
     groupKill('SIGTERM');
-    await Promise.all(live.map((c) => waitForChild(c, graceMs)));
-    const stubborn = ownedChildren.filter((c) => !c.exited);
-    if (stubborn.length === 0) return;
+    await Promise.all(
+      ownedChildren
+        .map((c) => c.child.pid)
+        .filter((pid): pid is number => typeof pid === 'number')
+        .map((pid) => waitForGroupGone(pid, graceMs)),
+    );
+    if (trackedGroups().length === 0) return [];
     groupKill('SIGKILL');
-    await Promise.all(stubborn.map((c) => waitForChild(c, 2000)));
+    await Promise.all(
+      ownedChildren
+        .map((c) => c.child.pid)
+        .filter((pid): pid is number => typeof pid === 'number')
+        .map((pid) => waitForGroupGone(pid, 2000)),
+    );
+    return trackedGroups();
   };
   const onSignal = (signal: 'SIGINT' | 'SIGTERM') => {
     if (cancelled) return;
@@ -209,10 +244,19 @@ async function main(): Promise<number> {
     } catch {
       /* evidence dir may be gone; cancellation still proceeds */
     }
-    cancellationReaping = reapChildren(8000).catch((error) => {
-      receipts('cancel_reap_failed', { message: String(error) });
-      exit = 1;
-    });
+    cancellationReaping = reapChildren(8000)
+      .then((leftover) => {
+        if (leftover.length > 0) {
+          receipts('cancel_reap_leftover', { pgids: leftover });
+          exit = 1;
+        }
+        return leftover;
+      })
+      .catch((error) => {
+        receipts('cancel_reap_failed', { message: String(error) });
+        exit = 1;
+        return [];
+      });
   };
   process.on('SIGINT', onSignal);
   process.on('SIGTERM', onSignal);
@@ -476,10 +520,14 @@ async function main(): Promise<number> {
   } finally {
     process.removeListener('SIGINT', onSignal);
     process.removeListener('SIGTERM', onSignal);
-    // Group-kill every tracked child (migration/workload via runCapture and
-    // the built server) and reap before touching PG: a workload must not
-    // outlive its database, and no owned child may outlive this entry.
-    await (cancellationReaping ?? reapChildren(8000));
+    // Group-kill every tracked child group (migration/workload via runCapture
+    // and the built server) and reap before touching PG: a workload must not
+    // outlive its database, and no owned descendant may outlive this entry.
+    const leftover = await (cancellationReaping ?? reapChildren(8000));
+    if (leftover.length > 0) {
+      receipts('owned_group_leftover', { pgids: leftover });
+      exit = 1;
+    }
     if (server) {
       save('server-cleanup.json', {
         at: now(),

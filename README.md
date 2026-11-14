@@ -224,9 +224,11 @@ owned container + volume after re-verifying ownership labels. A workload
 failure or a cleanup miss exits nonzero — never upgraded to PASS.
 The entry refuses to start while any repo-private `.env*` file is present
 (`*.example` excepted): `loadEnv` in a child would otherwise fill unset keys
-from real credentials and bypass the allowlisted env. SIGINT/SIGTERM kill the
-tracked child groups and unwind the same cleanup path — the owned Postgres is
-still removed, the exit just stays nonzero.
+from real credentials and bypass the allowlisted env. Each spawned child leads
+its own process group; SIGINT/SIGTERM kill the tracked child *groups* (a
+leader's exit does not end its group — a same-group descendant can outlive it)
+and unwind the same cleanup path — the owned Postgres is still removed, the
+exit just stays nonzero.
 
 ```bash
 pnpm owned:practice --evidence-dir /abs/run --case /abs/workload.mts [--server]
