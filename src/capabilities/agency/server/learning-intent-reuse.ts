@@ -2,7 +2,7 @@
 // The orchestrator owns proposal/accept behavior; this module owns only bounded reads.
 
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import { artifact, knowledge_edge, learning_item } from '@/db/schema';
 import { artifactReuseAllowed } from '@/kernel/read-models/usage-policy';
 import type { LearningItemRecord } from '@/kernel/records/learning-items';
@@ -11,6 +11,11 @@ export interface ExistingLearningIntentItemSnapshot {
   readonly item: LearningItemRecord;
   readonly note: typeof artifact.$inferSelect;
   readonly allowed: boolean;
+}
+
+export interface ExistingLearningIntentItemReference {
+  readonly item_id: string;
+  readonly note_id: string;
 }
 
 export interface LearningIntentPrerequisiteEdge {
@@ -35,7 +40,14 @@ export async function readExistingItemSnapshots(
       and(
         isNull(learning_item.archived_at),
         inArray(learning_item.status, ['pending', 'in_progress', 'done']),
-        sql`${learning_item.knowledge_ids} && ${JSON.stringify([...knowledgeIds])}::jsonb`,
+        sql`EXISTS (
+          SELECT 1
+          FROM jsonb_array_elements_text(${learning_item.knowledge_ids}) AS item_knowledge_id
+          WHERE item_knowledge_id IN (${sql.join(
+            [...knowledgeIds].map((id) => sql`${id}`),
+            sql`, `,
+          )})
+        )`,
       ),
     )
     .orderBy(learning_item.created_at, learning_item.id);
@@ -64,6 +76,37 @@ export async function readExistingItemSnapshots(
   return out;
 }
 
+export async function readExistingItemReference(
+  tx: Tx,
+  reference: ExistingLearningIntentItemReference,
+): Promise<ExistingLearningIntentItemSnapshot | null> {
+  const [item] = await tx
+    .select()
+    .from(learning_item)
+    .where(eq(learning_item.id, reference.item_id))
+    .for('update');
+  if (
+    !item ||
+    item.archived_at !== null ||
+    item.dismissed_at !== null ||
+    !['pending', 'in_progress', 'done'].includes(item.status) ||
+    item.primary_artifact_id !== reference.note_id
+  )
+    return null;
+  const [note] = await tx
+    .select()
+    .from(artifact)
+    .where(eq(artifact.id, reference.note_id))
+    .for('update');
+  if (!note || note.archived_at !== null) return null;
+  if (
+    !item.source_ref ||
+    !(await artifactReuseAllowed(tx, { kind: 'event', id: item.source_ref }, reference.note_id))
+  )
+    return null;
+  return { item, note, allowed: true };
+}
+
 export async function readPrerequisiteEdges(
   db: Db,
   topicNode: { id: string } | null,
@@ -86,6 +129,7 @@ export async function readPrerequisiteEdges(
     );
 }
 
+/** Stable case-insensitive key for request, paid-effect, and proposal matching. */
 export function normalizeLearningIntentTopic(topic: string): string {
-  return topic.trim().toLowerCase();
+  return topic.trim().normalize('NFKC').toLowerCase();
 }

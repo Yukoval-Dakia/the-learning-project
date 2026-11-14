@@ -80,6 +80,7 @@ export interface LearningItemAcceptResult {
   created_knowledge_ids: string[];
   actions: Array<{
     kind: 'hub' | 'atomic' | 'long';
+    proposal_item_id: string | null;
     knowledge_ids: string[];
     action: 'create' | 'skip' | 'reuse';
     reason: 'new' | 'mastered' | 'existing_item';
@@ -215,21 +216,6 @@ export async function acceptLearningItemProposal(
             kind: 'learning_item',
             rate_event_id: rate.id,
             ...summary,
-            actions: [
-              {
-                kind: 'hub',
-                knowledge_ids:
-                  summary.atomic_learning_item_ids.length +
-                    summary.long_learning_item_ids.length ===
-                  0
-                    ? [summary.root_knowledge_id]
-                    : [summary.root_knowledge_id],
-                action: 'create',
-                reason: 'new',
-                learning_item_id: summary.hub_learning_item_id,
-                note_id: summary.hub_artifact_id,
-              },
-            ],
             enqueued_note_generate_jobs: enqueued,
             idempotent: true,
           };
@@ -321,6 +307,7 @@ async function summarizeLearningItemMaterialization(
   const liRows = await db
     .select({
       id: learning_item.id,
+      title: learning_item.title,
       parent_learning_item_id: learning_item.parent_learning_item_id,
       primary_artifact_id: learning_item.primary_artifact_id,
       knowledge_ids: learning_item.knowledge_ids,
@@ -373,9 +360,13 @@ async function summarizeLearningItemMaterialization(
     const artifactId = row.primary_artifact_id;
     return artifactId ? artifactTypeById.get(artifactId) === 'note_long' : false;
   });
+  const proposal = await readProposalEventForActions(db, proposalId);
+  const plannedAtomics = proposal?.payload.atomics ?? [];
+  const plannedLongs = proposal?.payload.longs ?? [];
   const actions = [
     {
       kind: 'hub' as const,
+      proposal_item_id: null as string | null,
       knowledge_ids: [rootKnowledgeId],
       action: 'create' as const,
       reason: 'new' as const,
@@ -384,6 +375,12 @@ async function summarizeLearningItemMaterialization(
     },
     ...atomicItems.map((row) => ({
       kind: 'atomic' as const,
+      proposal_item_id:
+        plannedAtomics.findIndex((item) => item.knowledge_id === (row.knowledge_ids[0] ?? '')) >= 0
+          ? `atomic:${plannedAtomics.findIndex(
+              (item) => item.knowledge_id === (row.knowledge_ids[0] ?? ''),
+            )}`
+          : (row.knowledge_ids[0] ?? null),
       knowledge_ids: row.knowledge_ids,
       action: 'create' as const,
       reason: 'new' as const,
@@ -392,6 +389,18 @@ async function summarizeLearningItemMaterialization(
     })),
     ...longItems.map((row) => ({
       kind: 'long' as const,
+      proposal_item_id:
+        plannedLongs.findIndex(
+          (item) =>
+            item.title === row.title &&
+            JSON.stringify(item.knowledge_ids) === JSON.stringify(row.knowledge_ids),
+        ) >= 0
+          ? `long:${plannedLongs.findIndex(
+              (item) =>
+                item.title === row.title &&
+                JSON.stringify(item.knowledge_ids) === JSON.stringify(row.knowledge_ids),
+            )}`
+          : row.title,
       knowledge_ids: row.knowledge_ids,
       action: 'create' as const,
       reason: 'new' as const,
@@ -415,6 +424,21 @@ async function summarizeLearningItemMaterialization(
     created_knowledge_ids: [],
     actions,
   };
+}
+
+async function readProposalEventForActions(db: Db, proposalId: string) {
+  const rows = await db
+    .select({ payload: event.payload })
+    .from(event)
+    .where(eq(event.id, proposalId))
+    .limit(1);
+  const payload = rows[0]?.payload as
+    | {
+        atomics?: Array<{ knowledge_id: string }>;
+        longs?: Array<{ title: string; knowledge_ids: string[] }>;
+      }
+    | undefined;
+  return payload ? { payload } : null;
 }
 
 type LearningItemRow = typeof learning_item.$inferSelect;

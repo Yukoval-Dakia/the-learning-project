@@ -14,7 +14,8 @@ export type GraphFault =
   | { type: 'missing_atomic'; id: string }
   | { type: 'duplicate_atomic'; id: string }
   | { type: 'unknown_atomic'; id: string }
-  | { type: 'unknown_long'; id: string };
+  | { type: 'unknown_long'; id: string }
+  | { type: 'prerequisite_order'; prerequisite: string; dependent: string };
 
 export function checkProposalGraph(
   graph: ProposalGraph,
@@ -66,8 +67,16 @@ export function checkProposalPrerequisites(
   | { type: 'ok' }
   | { type: 'unknown'; id: string }
   | { type: 'self'; id: string }
-  | { type: 'missing'; prerequisite: string; dependent: string } {
+  | { type: 'missing'; prerequisite: string; dependent: string }
+  | { type: 'order'; prerequisite: string; dependent: string } {
   const known = new Set([graph.rootKey, ...graph.childKeys]);
+  const order = new Map<string, number>([
+    [graph.rootKey, 0],
+    ...atomics.map((item, index) => [item.knowledge_id, index + 1] as const),
+    ...longs.flatMap((item, index) =>
+      item.knowledge_ids.map((id) => [id, atomics.length + index + 1] as const),
+    ),
+  ]);
   const edges = new Set(
     prerequisites.map(
       (edge) => `${edge.prerequisite_knowledge_id}->${edge.dependent_knowledge_id}`,
@@ -79,16 +88,27 @@ export function checkProposalPrerequisites(
       prerequisites: item.prerequisite_knowledge_ids,
     })),
     ...longs.map((item) => ({
-      id: item.knowledge_ids[0],
+      ids: item.knowledge_ids,
       prerequisites: item.prerequisite_knowledge_ids,
     })),
   ];
   for (const ref of refs) {
     for (const prerequisiteId of ref.prerequisites) {
       if (!known.has(prerequisiteId)) return { type: 'unknown', id: prerequisiteId };
-      if (prerequisiteId === ref.id) return { type: 'self', id: prerequisiteId };
-      if (!edges.has(`${prerequisiteId}->${ref.id}`))
-        return { type: 'missing', prerequisite: prerequisiteId, dependent: ref.id };
+      const dependentIds = 'ids' in ref ? ref.ids : [ref.id];
+      if (dependentIds.some((id) => id === prerequisiteId))
+        return { type: 'self', id: prerequisiteId };
+      const matches = dependentIds.filter((id) => edges.has(`${prerequisiteId}->${id}`));
+      if (matches.length === 0)
+        return { type: 'missing', prerequisite: prerequisiteId, dependent: dependentIds[0] };
+      const prerequisiteIndex = order.get(prerequisiteId);
+      const ordered = matches.some((id) => {
+        const dependentIndex = order.get(id);
+        return (
+          prerequisiteIndex != null && dependentIndex != null && prerequisiteIndex < dependentIndex
+        );
+      });
+      if (!ordered) return { type: 'order', prerequisite: prerequisiteId, dependent: matches[0] };
     }
   }
   return { type: 'ok' };
@@ -106,5 +126,7 @@ export function graphFaultDetail(fault: GraphFault): string {
       return `atomic knowledge id ${fault.id} outside the root and children`;
     case 'unknown_long':
       return `long knowledge id ${fault.id} outside the root and children`;
+    case 'prerequisite_order':
+      return `knowledge id ${fault.dependent} precedes its prerequisite ${fault.prerequisite}`;
   }
 }

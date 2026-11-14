@@ -34,6 +34,7 @@ export const fastTestInclude = [
   'src/capabilities/ingestion/server/handwriting-trace.runner.test.ts',
   'src/capabilities/ingestion/server/structure-normalize.unit.test.ts',
   'src/capabilities/ingestion/server/tencent_mark_parser.unit.test.ts',
+  'src/capabilities/agency/server/learning-intent-graph-validation.unit.test.ts',
   'src/capabilities/notes/tasks/note-generate-output.unit.test.ts',
   'src/core/blocks/scene/plot.test.ts',
   'src/capabilities/observability/api/backup-import.unit.test.ts',

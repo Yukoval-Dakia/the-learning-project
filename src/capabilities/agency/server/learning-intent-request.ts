@@ -39,6 +39,7 @@ import {
   learningIntentFailureFact,
   planLearningIntent,
 } from './learning-intent';
+import { normalizeLearningIntentTopic } from './learning-intent-reuse';
 
 const FAMILY = 'learning_intent_outline';
 const UNIT = 'outline';
@@ -116,7 +117,7 @@ function delay(ms: number): Promise<void> {
 function storedIntentTopic(payload: ProposalInboxRow['payload']): string | null {
   if (payload.kind !== 'learning_item') return null;
   const topic = payload.proposed_change.topic;
-  return typeof topic === 'string' && topic.length > 0 ? topic.trim().toLowerCase() : null;
+  return typeof topic === 'string' && topic.length > 0 ? normalizeLearningIntentTopic(topic) : null;
 }
 
 function attemptNumber(revision: string): number {
@@ -216,6 +217,7 @@ function domainError(
 }
 
 async function loadTopicAttempts(db: Db | Tx, topic: string): Promise<TopicAttempt[]> {
+  const topicKey = normalizeLearningIntentTopic(topic);
   const stored = await db
     .select({
       family: paid_effect.family,
@@ -235,7 +237,7 @@ async function loadTopicAttempts(db: Db | Tx, topic: string): Promise<TopicAttem
     .where(
       and(
         eq(paid_effect.family, FAMILY),
-        eq(paid_effect.entity_id, topic),
+        eq(paid_effect.entity_id, topicKey),
         eq(paid_effect.unit, UNIT),
       ),
     );
@@ -268,7 +270,7 @@ async function replayPendingLearningIntent(
     kind: 'learning_item',
   });
   for (const candidate of pending) {
-    if (storedIntentTopic(candidate.payload) !== topic) continue;
+    if (storedIntentTopic(candidate.payload) !== normalizeLearningIntentTopic(topic)) continue;
     // Only a proposal born during the attempt can be that attempt's outcome.
     if (notBefore && candidate.proposed_at.getTime() < notBefore.getTime()) continue;
     const restored = LearningIntentProposalResponseSchema.safeParse({
@@ -394,7 +396,7 @@ export function learningIntentTopic(payload: {
     return null;
   }
   const topic = (payload.proposed_change as { topic?: unknown }).topic;
-  return typeof topic === 'string' && topic.length > 0 ? topic : null;
+  return typeof topic === 'string' && topic.length > 0 ? normalizeLearningIntentTopic(topic) : null;
 }
 
 async function decisionForAttempt(
@@ -417,12 +419,13 @@ async function decisionForAttempt(
 }
 
 function freshInput(topic: string, rows: readonly TopicAttempt[]) {
+  const topicKey = normalizeLearningIntentTopic(topic);
   return {
     family: FAMILY,
-    entityId: topic,
+    entityId: topicKey,
     entityRevision: String(nextAttempt(rows)),
     unit: UNIT,
-    input: { topic },
+    input: { topic: topicKey },
   };
 }
 

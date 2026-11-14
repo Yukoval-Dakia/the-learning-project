@@ -52,6 +52,7 @@ import {
 import {
   type ExistingLearningIntentItemSnapshot,
   normalizeLearningIntentTopic,
+  readExistingItemReference,
   readExistingItemSnapshots,
   readPrerequisiteEdges as readStoredPrerequisiteEdges,
 } from './learning-intent-reuse';
@@ -163,6 +164,7 @@ export interface LearningIntentMaterializeResult {
 
 export interface LearningIntentMaterializeAction {
   kind: 'hub' | 'atomic' | 'long';
+  proposal_item_id: string | null;
   knowledge_ids: string[];
   action: 'create' | 'skip' | 'reuse';
   reason: 'new' | 'mastered' | 'existing_item';
@@ -264,6 +266,11 @@ function rejectPrerequisiteFault(result: ReturnType<typeof checkProposalPrerequi
     throw new LearningIntentError(
       'invalid_atomic_knowledge_id',
       `proposal prerequisite ${result.id} is self-referential`,
+    );
+  if (result.type === 'order')
+    throw new LearningIntentError(
+      'invalid_atomic_knowledge_id',
+      `proposal orders dependent ${result.dependent} before prerequisite ${result.prerequisite}`,
     );
   throw new LearningIntentError(
     'invalid_atomic_knowledge_id',
@@ -1217,12 +1224,14 @@ export async function acceptLearningIntent(
   const { hub, topic } = spec;
   const proposalTaskRunId = spec.taskRunId;
   const proposalCostMicroUsd = spec.costMicroUsd;
-  const resolvedAtomics = spec.atomics.map((atomic) => ({
+  const resolvedAtomics = spec.atomics.map((atomic, index) => ({
     ...atomic,
+    proposal_item_id: `atomic:${index}`,
     knowledge_id: boundKnowledgeId(bindings, atomic.knowledge_id, 'atomic'),
   }));
-  const resolvedLongs = spec.longs.map((long) => ({
+  const resolvedLongs = spec.longs.map((long, index) => ({
     ...long,
+    proposal_item_id: `long:${index}`,
     knowledge_ids: long.knowledge_ids.map((knowledgeId) =>
       boundKnowledgeId(bindings, knowledgeId, 'long'),
     ),
@@ -1233,6 +1242,11 @@ export async function acceptLearningIntent(
       entry,
     ]),
   );
+  const currentReferences = new Map<string, { item_id: string; note_id: string }>();
+  for (const entry of spec.existingItems) {
+    const snapshot = await readExistingItemReference(tx, entry);
+    if (snapshot) currentReferences.set(entry.item_id, entry);
+  }
   const mastered = new Set(spec.masteredKnowledgeIds.map((id) => bindings.get(id) ?? id));
   const actions: LearningIntentMaterializeAction[] = [];
 
@@ -1256,6 +1270,7 @@ export async function acceptLearningIntent(
   );
   actions.push({
     kind: 'hub',
+    proposal_item_id: null,
     knowledge_ids: [rootKnowledgeId],
     action: 'create',
     reason: 'new',
@@ -1268,9 +1283,10 @@ export async function acceptLearningIntent(
   const atomicArtifactIds: string[] = [];
   for (const atomic of resolvedAtomics) {
     const existing = existingByKnowledge.get(atomic.knowledge_id);
-    if (existing) {
+    if (existing && currentReferences.has(existing.item_id)) {
       actions.push({
         kind: 'atomic',
+        proposal_item_id: atomic.proposal_item_id,
         knowledge_ids: [atomic.knowledge_id],
         action: 'reuse',
         reason: 'existing_item',
@@ -1284,6 +1300,7 @@ export async function acceptLearningIntent(
     if (mastered.has(atomic.knowledge_id)) {
       actions.push({
         kind: 'atomic',
+        proposal_item_id: atomic.proposal_item_id,
         knowledge_ids: [atomic.knowledge_id],
         action: 'skip',
         reason: 'mastered',
@@ -1313,6 +1330,7 @@ export async function acceptLearningIntent(
     );
     actions.push({
       kind: 'atomic',
+      proposal_item_id: atomic.proposal_item_id,
       knowledge_ids: [atomic.knowledge_id],
       action: 'create',
       reason: 'new',
@@ -1326,9 +1344,10 @@ export async function acceptLearningIntent(
   const longArtifactIds: string[] = [];
   for (const long of resolvedLongs) {
     const existing = long.knowledge_ids.map((id) => existingByKnowledge.get(id)).find(Boolean);
-    if (existing) {
+    if (existing && currentReferences.has(existing.item_id)) {
       actions.push({
         kind: 'long',
+        proposal_item_id: long.proposal_item_id,
         knowledge_ids: long.knowledge_ids,
         action: 'reuse',
         reason: 'existing_item',
@@ -1339,9 +1358,10 @@ export async function acceptLearningIntent(
       longArtifactIds.push(existing.note_id);
       continue;
     }
-    if (long.knowledge_ids.some((id) => mastered.has(id))) {
+    if (long.knowledge_ids.length > 0 && long.knowledge_ids.every((id) => mastered.has(id))) {
       actions.push({
         kind: 'long',
+        proposal_item_id: long.proposal_item_id,
         knowledge_ids: long.knowledge_ids,
         action: 'skip',
         reason: 'mastered',
@@ -1371,6 +1391,7 @@ export async function acceptLearningIntent(
     );
     actions.push({
       kind: 'long',
+      proposal_item_id: long.proposal_item_id,
       knowledge_ids: long.knowledge_ids,
       action: 'create',
       reason: 'new',
@@ -1407,13 +1428,11 @@ export async function acceptLearningIntent(
 
   for (let i = 0; i < resolvedAtomics.length; i++) {
     const atomicNode = resolvedAtomics[i];
-    const action = actions.find(
-      (entry) => entry.kind === 'atomic' && entry.knowledge_ids.includes(atomicNode.knowledge_id),
-    );
+    const action = actions.find((entry) => entry.proposal_item_id === atomicNode.proposal_item_id);
     if (action?.action !== 'create') continue;
     await createNote(tx, {
       kind: 'atomic',
-      id: atomicArtifactIds[i],
+      id: action.note_id ?? atomicArtifactIds[i],
       title: atomicNode.title,
       oneLineIntent: atomicNode.one_line_intent,
       knowledgeIds: [atomicNode.knowledge_id],
@@ -1427,15 +1446,11 @@ export async function acceptLearningIntent(
 
   for (let i = 0; i < resolvedLongs.length; i++) {
     const longNode = resolvedLongs[i];
-    const action = actions.find(
-      (entry) =>
-        entry.kind === 'long' &&
-        entry.knowledge_ids.some((id) => longNode.knowledge_ids.includes(id)),
-    );
+    const action = actions.find((entry) => entry.proposal_item_id === longNode.proposal_item_id);
     if (action?.action !== 'create') continue;
     await createNote(tx, {
       kind: 'long',
-      id: longArtifactIds[i],
+      id: action.note_id ?? longArtifactIds[i],
       title: longNode.title,
       oneLineIntent: longNode.one_line_intent,
       knowledgeIds: longNode.knowledge_ids,
