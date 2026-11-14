@@ -18,6 +18,19 @@ export const AdminRunParamsSchema = z.object({ id: z.string().min(1) });
 export const AdminCostQuerySchema = z.object({ days: z.string().optional() });
 export const AdminFailuresQuerySchema = z.object({ limit: z.string().optional() });
 
+/** One run's cost truth per currency; mirrors the shared cost-breakdown vocabulary. */
+export const AdminRunCostBucketSchema = z.object({
+  currency: z.string(),
+  cost: z.number(),
+  reported_cost: z.number(),
+  estimated_cost: z.number(),
+  legacy_cost: z.number(),
+  reported_attempts: z.number().int().nonnegative(),
+  estimated_attempts: z.number().int().nonnegative(),
+  unknown_attempts: z.number().int().nonnegative(),
+  legacy_rows: z.number().int().nonnegative(),
+});
+
 export const AdminRunSchema = z.object({
   id: z.string(),
   task_kind: z.string(),
@@ -30,6 +43,11 @@ export const AdminRunSchema = z.object({
   cost_usd: z.number().nullable(),
   cost_basis: z.enum(['reported', 'estimated', 'unknown']).nullable(),
   cost_ref: z.string().nullable(),
+  // Currency of the run's known amount; null when the run has no single known currency.
+  cost_currency: z.string().nullable(),
+  // Ledger entries whose amount is unknown; never counted as zero spend.
+  cost_unknown_entries: z.number().int().nonnegative(),
+  cost_by_currency: z.array(AdminRunCostBucketSchema),
   error_message: z.string().nullable(),
   started_at: z.string().datetime(),
   finished_at: z.string().datetime().nullable(),
@@ -86,6 +104,8 @@ const AdminRunTimelineEventSchema = z.object({
   iteration: z.number().int().optional(),
   latency_ms: z.number().optional(),
   cost: z.number().optional(),
+  currency: z.string().optional(),
+  entry_kind: z.enum(['legacy', 'attempt']).optional(),
   cost_basis: z.enum(['reported', 'estimated', 'unknown']).nullable().optional(),
   cost_ref: z.string().nullable().optional(),
   tokens_in: z.number().int().optional(),

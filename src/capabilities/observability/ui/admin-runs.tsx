@@ -18,7 +18,11 @@ import {
   AdminPanel,
 } from './admin-frame';
 import {
+  type AdminRunCostTruth,
   type AdminSurfaceProps,
+  costBasisLabel,
+  describeCostWindow,
+  describeRunCost,
   formatMoney,
   formatTime,
   shortId,
@@ -58,6 +62,68 @@ function formatDuration(ms: number | null): string {
   if (ms < 1000) return `${Math.round(ms)}ms`;
   if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
   return `${Math.round(ms / 60_000)}m`;
+}
+
+/**
+ * One run's cost cell: the known amount with its basis, or an explicit
+ * unknown. A real zero stays a zero; a missing amount never reads as one.
+ */
+function runCostCell(run: AdminRunRow): string {
+  const truth = describeRunCost(run);
+  if (truth.amount === null) {
+    return truth.unknownEntries > 0 ? '费用未知' : '无费用记录';
+  }
+  return formatMoney(truth.amount, truth.currency ?? 'USD');
+}
+
+/** The detail block's cost line: amount plus the basis it came from. */
+function runCostLine(truth: AdminRunCostTruth): string {
+  if (truth.amount === null) {
+    return truth.unknownEntries > 0 ? `费用未知 · ${truth.unknownEntries} 次未知` : '无费用记录';
+  }
+  const basis = costBasisLabel(truth.basis);
+  const unknown = truth.unknownEntries > 0 ? ` · ${truth.unknownEntries} 次未知` : '';
+  return `${formatMoney(truth.amount, truth.currency ?? 'USD')} · ${basis}${unknown}`;
+}
+
+/**
+ * One timeline event's cost text. A ledger row without an amount is an
+ * unknown amount, not a zero; a tool call's cost column is a local tool
+ * cost with no price of its own.
+ */
+function timelineCostText(event: TimelineEvent): string | null {
+  if (event.type === 'tool_call') return null;
+  if (event.type === 'cost_ledger') {
+    const currency = event.currency ?? 'USD';
+    if (typeof event.cost === 'number') {
+      const basis =
+        event.entry_kind === 'legacy'
+          ? '历史口径'
+          : event.cost_basis === 'reported'
+            ? '已报告'
+            : event.cost_basis === 'estimated'
+              ? '估算'
+              : '未知';
+      return `${formatMoney(event.cost, currency)} · ${basis}`;
+    }
+    return '费用未知';
+  }
+  if (event.type === 'run_finished') {
+    const currency = event.currency ?? 'USD';
+    if (typeof event.cost === 'number') {
+      const basis =
+        event.cost_basis === 'reported'
+          ? '已报告'
+          : event.cost_basis === 'estimated'
+            ? '估算'
+            : event.cost_basis === 'unknown'
+              ? '未知'
+              : '历史口径';
+      return `${formatMoney(event.cost, currency)} · ${basis}`;
+    }
+    return event.cost_basis === 'unknown' ? '费用未知' : null;
+  }
+  return null;
 }
 
 export function timelineTone(event: Pick<TimelineEvent, 'type' | 'label' | 'outcome'>): ChipTone {
@@ -416,7 +482,9 @@ export function AdminRunsSurface({
   const totals = useMemo(() => {
     const failed = runs.filter((run) => run.status === 'failure').length;
     const running = runs.filter((run) => run.status === 'running').length;
-    const spend = runs.reduce((sum, run) => sum + (run.cost_usd ?? 0), 0);
+    // Known subtotal per currency plus explicit unknown counts; a missing
+    // amount never becomes a zero spend and currencies are never added.
+    const spend = describeCostWindow(runs);
     const toolCalls = runs.reduce((sum, run) => sum + run.tool_call_count, 0);
     return { failed, running, spend, toolCalls };
   }, [runs]);
@@ -470,8 +538,8 @@ export function AdminRunsSurface({
         <AdminKpi label="运行中" value={totals.running} note="尚未结束" />
         <AdminKpi
           label="费用"
-          value={formatMoney(totals.spend)}
-          note={`${totals.toolCalls} 次工具调用`}
+          value={totals.spend.amount}
+          note={`${totals.toolCalls} 次工具调用 · ${totals.spend.note}`}
         />
       </AdminKpis>
 
@@ -525,7 +593,7 @@ export function AdminRunsSurface({
                       <td>
                         <Chip tone={statusTone(run.status)}>{statusLabel(run.status)}</Chip>
                       </td>
-                      <td className="adm-num adm-mono">{formatMoney(run.cost_usd)}</td>
+                      <td className="adm-num adm-mono">{runCostCell(run)}</td>
                       <td className="adm-num adm-mono">{run.tool_call_count}</td>
                       <td className="adm-mono adm-quiet">{formatTime(run.started_at)}</td>
                     </tr>
@@ -559,7 +627,7 @@ export function AdminRunsSurface({
                   <span>run {shortId(detailQ.data.run.id)}</span>
                   <span>job {detailQ.data.run.pgboss_job_ids.join(', ') || 'none'}</span>
                   <span>{formatDuration(detailQ.data.run.duration_ms)}</span>
-                  <span>{formatMoney(detailQ.data.run.cost_usd)}</span>
+                  <span>{runCostLine(describeRunCost(detailQ.data.run))}</span>
                 </div>
                 <RunOutcomeSummary key={detailQ.data.run.id} run={detailQ.data.run} />
                 <ol className="adm-events">
@@ -580,7 +648,7 @@ export function AdminRunsSurface({
                         <div className="adm-event-meta">
                           {formatTime(event.at)}
                           {typeof event.latency_ms === 'number' && ` · ${event.latency_ms}ms`}
-                          {typeof event.cost === 'number' && ` · ${formatMoney(event.cost)}`}
+                          {timelineCostText(event) && ` · ${timelineCostText(event)}`}
                           {typeof event.tokens_in === 'number' &&
                             ` · tokens ${event.tokens_in}/${event.tokens_out}`}
                         </div>

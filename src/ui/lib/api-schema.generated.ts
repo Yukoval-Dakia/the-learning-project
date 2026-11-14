@@ -5374,7 +5374,20 @@ export interface operations {
                         data: {
                             /** @enum {string|null} */
                             cost_basis: "reported" | "estimated" | "unknown" | null;
+                            cost_by_currency: {
+                                cost: number;
+                                currency: string;
+                                estimated_attempts: number;
+                                estimated_cost: number;
+                                legacy_cost: number;
+                                legacy_rows: number;
+                                reported_attempts: number;
+                                reported_cost: number;
+                                unknown_attempts: number;
+                            }[];
+                            cost_currency: string | null;
                             cost_ref: string | null;
+                            cost_unknown_entries: number;
                             cost_usd: number | null;
                             duration_ms: number | null;
                             error_message: string | null;
@@ -5407,7 +5420,20 @@ export interface operations {
                         rows: {
                             /** @enum {string|null} */
                             cost_basis: "reported" | "estimated" | "unknown" | null;
+                            cost_by_currency: {
+                                cost: number;
+                                currency: string;
+                                estimated_attempts: number;
+                                estimated_cost: number;
+                                legacy_cost: number;
+                                legacy_rows: number;
+                                reported_attempts: number;
+                                reported_cost: number;
+                                unknown_attempts: number;
+                            }[];
+                            cost_currency: string | null;
                             cost_ref: string | null;
+                            cost_unknown_entries: number;
                             cost_usd: number | null;
                             duration_ms: number | null;
                             error_message: string | null;
@@ -5577,7 +5603,20 @@ export interface operations {
                         run: {
                             /** @enum {string|null} */
                             cost_basis: "reported" | "estimated" | "unknown" | null;
+                            cost_by_currency: {
+                                cost: number;
+                                currency: string;
+                                estimated_attempts: number;
+                                estimated_cost: number;
+                                legacy_cost: number;
+                                legacy_rows: number;
+                                reported_attempts: number;
+                                reported_cost: number;
+                                unknown_attempts: number;
+                            }[];
+                            cost_currency: string | null;
                             cost_ref: string | null;
+                            cost_unknown_entries: number;
                             cost_usd: number | null;
                             duration_ms: number | null;
                             error_message: string | null;
@@ -5608,6 +5647,9 @@ export interface operations {
                             /** @enum {string|null} */
                             cost_basis?: "reported" | "estimated" | "unknown" | null;
                             cost_ref?: string | null;
+                            currency?: string;
+                            /** @enum {string} */
+                            entry_kind?: "legacy" | "attempt";
                             id?: string;
                             iteration?: number;
                             label: string;
