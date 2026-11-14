@@ -7,6 +7,7 @@
 import { ArrowRight, Inbox, Link2, Minus, Plus, RotateCcw } from 'lucide-react';
 import { memo, useMemo, useRef, useState } from 'react';
 
+import { masteryBandView } from '@/core/mastery-band';
 import { subjectContentPropsForDomain } from '@/ui/lib/subject';
 import { Button, IconButton } from '@/ui-next/public';
 import type { MeshGraphNode } from './ghost-endpoints';
@@ -30,10 +31,22 @@ function edgeDash(isCrossSubject: boolean, dash: string): string | undefined {
   return dash === '0' ? undefined : dash;
 }
 
-// Text in the middle of a node: containers say so, unpracticed nodes show a dash.
-function nodeCenterText(isContainer: boolean, pct: number | null): string | number {
+function nodeCenterText({
+  isContainer,
+  unknown,
+  lowConf,
+  evidenceCount,
+}: {
+  isContainer: boolean;
+  unknown: boolean;
+  lowConf: boolean;
+  evidenceCount: number | null | undefined;
+}): string {
   if (isContainer) return '容器';
-  return pct == null ? '—' : pct;
+  if (unknown) return '未知';
+  if (lowConf) return '初步';
+  if (evidenceCount == null) return '未知';
+  return `${evidenceCount} 条`;
 }
 
 // YUK-717 — pan/zoom 每帧 setView(~60/s)，但边/节点元素只依赖 pos/nodes/edges/
@@ -99,16 +112,33 @@ const MeshNode = memo(function MeshNode({
   onPick: (node: KnowledgeTreeNode) => void;
 }) {
   const m = isContainer ? null : node.mastery;
-  const pct = m == null ? null : Math.round(m * 100);
   const tone = masteryTone(m ?? undefined);
+  const band = masteryBandView({
+    mastery: node.mastery,
+    mastery_lo: node.mastery_lo,
+    mastery_hi: node.mastery_hi,
+    low_confidence: node.low_confidence,
+    evidence_count: node.evidence_count,
+  });
   const r = isHub ? 24 : 18;
   const circ = 2 * Math.PI * r;
   const label = layoutMeshLabel(node.name);
+  const centerText = nodeCenterText({
+    isContainer,
+    unknown: band.unknown,
+    lowConf: band.lowConf,
+    evidenceCount: node.evidence_count,
+  });
+  const evidenceLabel =
+    node.evidence_count == null ? '证据数量未提供' : `${node.evidence_count} 条证据记录`;
+  const stateLabel = isContainer
+    ? '容器'
+    : `${evidenceLabel}${band.unknown || band.lowConf ? ' · 初步' : ''}`;
   return (
     <g
       className={`kn-node${isActive ? ' is-active' : ''}${node.isGhost ? ' is-ghost' : ''}`}
       transform={`translate(${x} ${y})`}
-      aria-label={`${label.fullName}${node.isGhost ? '（其他科目）' : ''}`}
+      aria-label={`${label.fullName}${node.isGhost ? '（其他科目）' : ''} · ${stateLabel}`}
       // biome-ignore lint/a11y/useSemanticElements: SVG <g> 不能是 <button>；role=button + tabIndex 是可聚焦图节点的正确 ARIA（旧 KnowledgeGraph 同例）
       role="button"
       tabIndex={0}
@@ -122,12 +152,12 @@ const MeshNode = memo(function MeshNode({
         }
       }}
     >
-      <title>{label.fullName}</title>
+      <title>{`${label.fullName} · ${stateLabel}`}</title>
       {/* 透明命中圈：比可见 disc 大一圈，保证小节点也好点（A2）。 */}
       <circle className="kn-node-hit" r={r + 6} />
       {/* 三层节点：填充 disc → 满轨底环 → 掌握度弧。选中 / 聚焦 / 他科 的描边全交给 CSS
           （.kn-node.is-active .kn-disc 胜过 .kn-disc.tone-*），颜色走 M3 角色。 */}
-      <circle className={`kn-disc tone-${pct == null ? 'none' : tone}`} r={r} />
+      <circle className={`kn-disc tone-${m == null ? 'none' : tone}`} r={r} />
       <circle r={r} fill="none" className="kn-track" />
       {/* mastery=null（从未练）只渲 track，不渲 arc——无掌握度可绘。 */}
       {m != null && (
@@ -143,7 +173,7 @@ const MeshNode = memo(function MeshNode({
         />
       )}
       <text y={4} textAnchor="middle" className="kn-node-pct">
-        {nodeCenterText(isContainer, pct)}
+        {centerText}
       </text>
       <rect
         x={-label.width / 2}
