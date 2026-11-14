@@ -24,11 +24,11 @@ description: 线负责人与协调线的交付契约：一条线 4 个写手槽�
 
 ## 车道状态
 
-一个切片只处于四种状态之一：写、审、修、合。等 CI 时用 `watch_pull_request` 挂上监视，然后去处理下一个槽。只读评估最长 15 分钟，结束时派出一个写手：原切片，或你选定的替代切片。
+一个切片只处于四种状态之一：写、审、修、合。等 CI 时挂上 PR 监视（T3 `watch_pull_request`；Codex 下一轮直接重查 `gh pr checks`），然后去处理下一个槽。只读评估最长 15 分钟，结束时派出一个写手：原切片，或你选定的替代切片。
 
 ## 阻塞
 
-阻塞是下一个任务。归你的，派写手。归别的线的，用 `t3_thread_send` 把复现和建议修法发给那条线；30 分钟后仍未动，你开 PR 修并告知对方。main 上的共享红项，谁先看到谁修。模型额度用尽时换同档的另一个模型继续。
+阻塞是下一个任务。归你的，派写手。归别的线的，发跨线消息给那条线（通道见「工具对应」）：复现和你建议的修法；30 分钟后仍未动，你开 PR 修并告知对方。main 上的共享红项，谁先看到谁修。模型额度用尽时换同档的另一个模型继续。
 
 ## 你自己决定的事
 
@@ -61,7 +61,7 @@ description: 线负责人与协调线的交付契约：一条线 4 个写手槽�
 
 ## 汇报
 
-每 2 小时一次，12 行以内，发给协调线：
+每 2 小时一次，12 行以内，发给协调线（Codex：`codex queue --thread coord --message … --resume`）：
 
 - 已合：PR 号 + 一句成果。
 - 在途：每槽一行，状态用写/审/修/合。
@@ -74,8 +74,21 @@ description: 线负责人与协调线的交付契约：一条线 4 个写手槽�
 
 协调线不写代码、不复跑验证，只做三件事：
 
-1. 用 `schedule_task` 每 30 分钟运行 [`patrol.sh`](patrol.sh)，把每条 `ACTION` 行原样 `t3_thread_send` 给对应的线。
+1. 巡检：每 30 分钟运行 [`patrol.sh`](patrol.sh)，把每条 `ACTION` 行原样投递给对应的线（Codex：launchd 定时 `PATROL_QUEUE=1 bash patrol.sh` 自动 `codex queue`；T3：`schedule_task` + `t3_thread_send`）。
 2. 裁决跨线冲突：共享文件的写入顺序、dev 栈名额、发版顺序。当场定，不排队。
 3. 把各线“要你定”的事项合并成一条消息给 Owner。
 
 某条线连续两次巡检 `active=0`，协调线读它最近的输出，指出卡在哪一步并给出下一个要派的切片。
+
+## 工具对应
+
+| 动作 | T3 Code | Codex 桌面 |
+|---|---|---|
+| 派子任务 | `delegate_task` | `spawn_agent` |
+| 等待子任务 | 完成通知唤醒 | `wait_agent`（timeout 可到 3600000）或等完成通知 |
+| 给子任务追加指令 | `delegate_task` 续派 | `send_input`；已关闭的先 `resume_agent` |
+| 跨线消息 | `t3_thread_send` | `codex queue --thread lead-<线> --message … --resume`；失败时用 Linear 评论，巡检会转发 ACTION |
+| 定时巡检 | `schedule_task` | launchd/cron 每 30 分钟 `PATROL_QUEUE=1 bash patrol.sh` |
+| PR 监视 | `watch_pull_request` | 下一轮直接查 `gh pr checks` |
+
+Codex 的两条硬限制：子任务不能再生子任务，所以线负责人和写手都照此文件各归各位，不再往下委托；顶层线程名用 `lead-ui`、`lead-arch`、`lead-feat`、`coord`，巡检按名字投递。
