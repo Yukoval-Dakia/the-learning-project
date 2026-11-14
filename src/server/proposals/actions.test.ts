@@ -7,7 +7,11 @@ import {
 import { completion_evidence, event, goal, knowledge, learning_item } from '@/db/schema';
 import { getProposalInboxRow, listProposalInboxRows } from '@/kernel/proposals/inbox';
 import { writeAiProposal } from '@/kernel/proposals/writer';
-import { createManualGoal, updateGoalStatus } from '@/kernel/records/goal-commands';
+import {
+  createManualGoal,
+  updateGoalScope,
+  updateGoalStatus,
+} from '@/kernel/records/goal-commands';
 import {
   gatherAndFoldLearningItem,
   hasLearningItemGenesisAnchor,
@@ -123,9 +127,9 @@ describe('retractAiProposal — completion / relearn row reversal (YUK-471)', ()
     expect(await db.select().from(completion_evidence)).toHaveLength(0);
   });
 
-  // @invariant concurrency: retiring a goal closes its completion offer in single and batch reads before another acceptance
-  // @fails-if a done or dormant goal still exposes usable completion evidence or remains batch-confirmable
-  it('requires an active goal for completion evidence in single and batch inbox reads', async () => {
+  // @invariant concurrency: goal scope or status drift closes its completion offer in single and batch reads before another acceptance
+  // @fails-if a title-only goal update still exposes usable completion evidence or remains batch-confirmable
+  it('requires current goal scope and status for completion evidence in inbox reads', async () => {
     const db = testDb();
     installBatchConfirmEligibility();
     await seedCompletionLearningItem(db, 'goal-completion-boundary');
@@ -143,6 +147,26 @@ describe('retractAiProposal — completion / relearn row reversal (YUK-471)', ()
       );
       if (proposal.status !== 'proposed') throw new Error('expected eligible goal completion');
       for (const active of [true, false]) {
+        if (!active && retirement === 'dormant') {
+          await updateGoalScope(db, goalId, { title: '范围外标题' });
+          const staleSingle = await getProposalInboxRow(db, proposal.proposal_id);
+          const staleBatch = await listProposalInboxRows(db, {
+            kind: 'completion',
+            status: 'pending',
+          });
+          for (const row of [
+            staleSingle,
+            staleBatch.find((entry) => entry.id === proposal.proposal_id),
+          ]) {
+            if (!row) throw new Error('scope-drifted offer must remain readable');
+            expect(row.not_acceptable_reason).toBe('completion_evidence_unavailable');
+            expect(row.batch_confirm_eligible).toBe(false);
+            expect('completion_summary' in row.payload.proposed_change).toBe(false);
+          }
+          await expect(acceptAiProposal(db, proposal.proposal_id)).rejects.toMatchObject({
+            status: 409,
+          });
+        }
         if (!active) {
           if (retirement === 'accept') await acceptAiProposal(db, proposal.proposal_id);
           else await updateGoalStatus(db, goalId, retirement);

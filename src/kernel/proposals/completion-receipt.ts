@@ -6,11 +6,13 @@ import {
   CompletionSources,
 } from '@/core/schema/learning-item-completion';
 import type { Db, Tx } from '@/db/client';
-import { event, goal, learning_item, materialized_id_index } from '@/db/schema';
+import { event, goal, knowledge, learning_item, materialized_id_index } from '@/db/schema';
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
 import { writeEvent } from '@/kernel/events';
 import { resolveGoalKnowledgeIds } from '@/kernel/read-models/active-goal-scope';
 import { completionSourcesCurrent, readCompletionSources } from '@/kernel/read-models/usage-policy';
+import { gatherAndFoldGoal, goalRowToSnapshot } from '@/kernel/records/goal-history';
+import { gatherAndFoldKnowledgeNode } from '@/kernel/records/knowledge-node-history';
 import { learnerSummaryIfAllowed } from './learner-summary';
 
 export function parseCompletionReceipt(value: unknown): CompletionReceipt | null {
@@ -78,6 +80,8 @@ export async function completionReceiptDisplayAllowed(
   if (!(await completionSourcesCurrent(db, receipt.sources))) return false;
   let ids: string[];
   let sourceRef: string | null;
+  let goalNodes: Array<typeof knowledge.$inferSelect> = [];
+  let goalScope: ReturnType<typeof goalCompletionScope> | null = null;
   if (subjectKind === 'goal') {
     const [currentGoal] = await db.select().from(goal).where(eq(goal.id, receipt.item_id));
     if (
@@ -89,8 +93,40 @@ export async function completionReceiptDisplayAllowed(
       )
     )
       return false;
+    const [birth] = await db
+      .select()
+      .from(materialized_id_index)
+      .where(
+        and(
+          eq(materialized_id_index.subject_kind, 'goal'),
+          eq(materialized_id_index.materialized_id, receipt.item_id),
+        ),
+      );
+    if (!birth) return false;
+    const folded = await gatherAndFoldGoal(db, receipt.item_id);
+    if (
+      !folded ||
+      sha256CanonicalJson(folded) !== sha256CanonicalJson(goalRowToSnapshot(currentGoal))
+    )
+      return false;
     ids = await resolveGoalKnowledgeIds(db, currentGoal);
     sourceRef = currentGoal.source_ref;
+    if (!ids.length) return false;
+    goalNodes = await db
+      .select()
+      .from(knowledge)
+      .where(inArray(knowledge.id, ids))
+      .orderBy(knowledge.id);
+    for (const node of goalNodes) {
+      const foldedNode = await gatherAndFoldKnowledgeNode(db, node.id);
+      if (
+        !foldedNode ||
+        (foldedNode.role ?? 'kc') !== node.role ||
+        foldedNode.version !== node.version
+      )
+        return false;
+    }
+    goalScope = goalCompletionScope(currentGoal, birth.anchor_event_id, ids, goalNodes);
   } else {
     const [item] = await db
       .select()
@@ -110,6 +146,7 @@ export async function completionReceiptDisplayAllowed(
   }
   if (JSON.stringify([...new Set(ids)].sort()) !== JSON.stringify(receipt.knowledge_ids))
     return false;
+  if (goalScope !== null && sha256CanonicalJson(goalScope) !== receipt.scope_digest) return false;
   const births = ids.length
     ? await db
         .select()
@@ -128,6 +165,33 @@ export async function completionReceiptDisplayAllowed(
     ...(sourceRef ? [{ kind: 'event' as const, id: sourceRef }] : []),
   ];
   return (await readCompletionSources(db, roots)) !== null;
+}
+
+export function goalCompletionScope(
+  currentGoal: Parameters<typeof goalRowToSnapshot>[0],
+  goalBirth: string,
+  knowledgeIds: string[],
+  nodes: Array<typeof knowledge.$inferSelect>,
+) {
+  return {
+    item: {
+      subject_kind: 'goal' as const,
+      ...goalRowToSnapshot(currentGoal),
+      created_at: currentGoal.created_at.toISOString(),
+      updated_at: currentGoal.updated_at.toISOString(),
+      knowledge_ids: [...knowledgeIds].sort(),
+      genesis: goalBirth,
+    },
+    nodes: nodes.map((n) => ({
+      id: n.id,
+      version: n.version,
+      role: n.role,
+      parent: n.parent_id,
+      merged_from: [...n.merged_from].sort(),
+      approval: n.approval_status,
+      archived_at: n.archived_at?.toISOString() ?? null,
+    })),
+  };
 }
 
 export function completionReceiptSummary(receipt: CompletionReceipt, goalTitle?: string): string {

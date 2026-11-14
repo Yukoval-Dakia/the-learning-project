@@ -9,6 +9,7 @@ import {
 import type { Db, Tx } from '@/db/client';
 import { event, goal, knowledge, learning_item, materialized_id_index } from '@/db/schema';
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
+import { goalCompletionScope } from '@/kernel/proposals/completion-receipt';
 import { resolveGoalKnowledgeIds } from '@/kernel/read-models/active-goal-scope';
 import type {
   FencedNativeMasteryReader,
@@ -262,39 +263,32 @@ export async function readCompletionReceipt(
     );
     if (!progress.every((entry) => entry.eligible)) return null;
   }
-  const scope = {
-    item: currentGoal
-      ? {
-          subject_kind: 'goal',
-          ...goalRowToSnapshot(currentGoal),
-          created_at: currentGoal.created_at.toISOString(),
-          updated_at: currentGoal.updated_at.toISOString(),
-          knowledge_ids: ids,
-          genesis: birth.anchor_event_id,
-        }
-      : item
-        ? {
-            id: item.id,
-            version: item.version,
-            status: item.status,
-            source: item.source,
-            source_ref: item.source_ref,
-            parent: item.parent_learning_item_id,
-            children: [...item.child_learning_item_ids].sort(),
-            knowledge_ids: ids,
-            genesis: birth.anchor_event_id,
-          }
-        : null,
-    nodes: nodes.map((n) => ({
-      id: n.id,
-      version: n.version,
-      role: n.role,
-      parent: n.parent_id,
-      merged_from: [...n.merged_from].sort(),
-      approval: n.approval_status,
-      archived_at: n.archived_at?.toISOString() ?? null,
-    })),
-  };
+  const scope = currentGoal
+    ? goalCompletionScope(currentGoal, birth.anchor_event_id, ids, nodes)
+    : {
+        item: item
+          ? {
+              id: item.id,
+              version: item.version,
+              status: item.status,
+              source: item.source,
+              source_ref: item.source_ref,
+              parent: item.parent_learning_item_id,
+              children: [...item.child_learning_item_ids].sort(),
+              knowledge_ids: ids,
+              genesis: birth.anchor_event_id,
+            }
+          : null,
+        nodes: nodes.map((n) => ({
+          id: n.id,
+          version: n.version,
+          role: n.role,
+          parent: n.parent_id,
+          merged_from: [...n.merged_from].sort(),
+          approval: n.approval_status,
+          archived_at: n.archived_at?.toISOString() ?? null,
+        })),
+      };
   const knowledgeProof = ids.map((id) => {
     const fact = basis.facts.get(id);
     const p = fact?.projection;
