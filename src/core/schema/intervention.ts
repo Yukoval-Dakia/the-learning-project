@@ -82,6 +82,9 @@ const PriorIntervention = z
   .object({
     intervention_id: z.string().trim().min(1).max(240),
     version: z.number().int().positive(),
+    // Legacy snapshots omit this identity; readers must not attribute those
+    // entries to a current conjecture.
+    conjecture_event_id: z.string().trim().min(1).max(240).optional(),
     method_id: PedagogyMethodId,
     method_definition_version: z.string().trim().min(1).max(120),
     outcome: InterventionOutcome,
