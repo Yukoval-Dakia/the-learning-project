@@ -28,6 +28,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   writeFileSync,
 } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -77,6 +78,19 @@ const OWNED_DIRTY_SCOPE = new Set([
   'README.md',
 ]);
 
+// Repo-private env files (.env/.env.*, but not *.example templates) may carry
+// live credentials. loadEnv in a child fills unset keys from them, which would
+// bypass the allowlisted owned env, so the entry refuses to run while any are
+// present rather than read or inherit them.
+const PRIVATE_ENV_FILE = /^\.env(?:\..+)?$/;
+const ENV_EXAMPLE_FILE = /\.example$/;
+
+function privateEnvFiles(repoRoot: string): string[] {
+  return readdirSync(repoRoot).filter(
+    (name) => PRIVATE_ENV_FILE.test(name) && !ENV_EXAMPLE_FILE.test(name),
+  );
+}
+
 function dirtyPaths(porcelain: string): string[] {
   return porcelain
     .split('\n')
@@ -110,6 +124,12 @@ function ownedSlug(prefix: string): string {
   return `${prefix}-${randomUUID().replace(/-/g, '').slice(0, 10)}`;
 }
 
+interface OwnedChild {
+  child: ReturnType<typeof spawn>;
+  label: string;
+  exited: boolean;
+}
+
 async function main(): Promise<number> {
   const evidenceDir = arg('evidence-dir');
   const casePath = arg('case');
@@ -139,12 +159,77 @@ async function main(): Promise<number> {
   let exit = 1;
   let pg: OwnedPgHandle | undefined;
   let server: ReturnType<typeof spawn> | undefined;
+  const ownedChildren: OwnedChild[] = [];
+  const trackedPids = () =>
+    ownedChildren.filter((c) => !c.exited && c.child.pid).map((c) => c.child.pid as number);
+
+  // Every spawn below is detached so the child leads its own process group;
+  // on SIGINT/SIGTERM we kill each tracked group (negative pid), let main
+  // unwind through the normal await/finally path (no process.exit here), and
+  // refuse to start any further work. groupKill below is also called from
+  // finally so a workload/server child cannot outlive the entry.
+  let cancelled: 'SIGINT' | 'SIGTERM' | null = null;
+  const groupKill = (signal: 'SIGTERM' | 'SIGKILL') => {
+    for (const pid of trackedPids()) {
+      try {
+        process.kill(-pid, signal);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
+      }
+    }
+  };
+  const waitForChild = (owned: OwnedChild, timeoutMs: number): Promise<void> =>
+    new Promise((resolveWait) => {
+      if (owned.exited) return resolveWait();
+      const timer = setTimeout(() => resolveWait(), timeoutMs);
+      owned.child.once('close', () => {
+        clearTimeout(timer);
+        resolveWait();
+      });
+    });
+  const reapChildren = async (graceMs: number) => {
+    const live = ownedChildren.filter((c) => !c.exited);
+    if (live.length === 0) return;
+    groupKill('SIGTERM');
+    await Promise.all(live.map((c) => waitForChild(c, graceMs)));
+    const stubborn = ownedChildren.filter((c) => !c.exited);
+    if (stubborn.length === 0) return;
+    groupKill('SIGKILL');
+    await Promise.all(stubborn.map((c) => waitForChild(c, 2000)));
+  };
+  const onSignal = (signal: 'SIGINT' | 'SIGTERM') => {
+    if (cancelled) return;
+    cancelled = signal;
+    try {
+      appendFileSync(
+        join(evidenceDir, 'harness-receipts.jsonl'),
+        `${JSON.stringify({ at: now(), kind: 'cancelled', signal })}\n`,
+      );
+    } catch {
+      /* evidence dir may be gone; cancellation still proceeds */
+    }
+    groupKill('SIGTERM');
+  };
+  process.on('SIGINT', onSignal);
+  process.on('SIGTERM', onSignal);
+  const throwIfCancelled = () => {
+    if (cancelled) throw new OwnedPgError(`cancelled by ${cancelled}`);
+  };
+
   const serverPort = wantServer ? await freeLoopbackPort() : null;
   if (serverPort !== null && OWNED_EXCLUDED_PORTS.has(serverPort)) {
     throw new OwnedPgError('random API port collided with an excluded port');
   }
 
   try {
+    const privateEnv = privateEnvFiles(REPO);
+    if (privateEnv.length > 0) {
+      throw new OwnedPgError(
+        `refusing owned run: repo-private env file(s) present (${privateEnv.join('; ')}) — ` +
+          'children would inherit real credentials through loadEnv; remove them before running',
+      );
+    }
+
     // ---- preflight: source, runtime, daemon identity, no shared target ----
     const head = execFileSync('git', ['-C', REPO, 'rev-parse', 'HEAD'], {
       encoding: 'utf8',
@@ -197,6 +282,7 @@ async function main(): Promise<number> {
     save('existing-containers.json', { at: now(), out: existing.stdout });
 
     // ---- owned Postgres ----
+    throwIfCancelled();
     const database = `owned_${randomUUID().replace(/-/g, '').slice(0, 16)}`;
     pg = await startOwnedPg({ socketPath, owner: runId, database });
     save('container.json', { at: now(), ...pg, databaseUrl: '<derived>' });
@@ -276,7 +362,7 @@ async function main(): Promise<number> {
     const migrationStart = now();
     const migrate = await runCapture(
       [...baseArgv, join(REPO, 'scripts/migrate.ts')],
-      { cwd: REPO, env: tsxEnv },
+      { cwd: REPO, env: tsxEnv, ownedChildren, label: 'migration' },
       join(evidenceDir, 'migration'),
     );
     recordCommand(['tsx', 'scripts/migrate.ts'], migrate.exit, migrationStart);
@@ -285,6 +371,7 @@ async function main(): Promise<number> {
 
     // ---- optional API server on a random loopback port ----
     if (wantServer) {
+      throwIfCancelled();
       const serverBundle = join(REPO, 'dist/server.cjs');
       if (!existsSync(serverBundle)) {
         throw new OwnedPgError(
@@ -313,6 +400,11 @@ async function main(): Promise<number> {
           detached: true,
         },
       );
+      const serverOwned: OwnedChild = { child: server, label: 'server', exited: false };
+      ownedChildren.push(serverOwned);
+      server.once('close', () => {
+        serverOwned.exited = true;
+      });
       const serverOut = createWriteStream(join(evidenceDir, 'server.stdout'));
       const serverErr = createWriteStream(join(evidenceDir, 'server.stderr'));
       server.stdout?.pipe(serverOut);
@@ -327,6 +419,7 @@ async function main(): Promise<number> {
       const apiBase = `http://127.0.0.1:${apiPort}`;
       let ready = false;
       for (let i = 0; i < 240 && !ready; i++) {
+        throwIfCancelled();
         if (server.exitCode !== null) {
           throw new OwnedPgError(`built server exited ${server.exitCode} during boot`);
         }
@@ -355,10 +448,11 @@ async function main(): Promise<number> {
     }
 
     // ---- trusted workload ----
+    throwIfCancelled();
     const caseStart = now();
     const workload = await runCapture(
       [...baseArgv, casePath],
-      { cwd: REPO, env: tsxEnv },
+      { cwd: REPO, env: tsxEnv, ownedChildren, label: 'workload' },
       join(evidenceDir, 'workload'),
     );
     recordCommand(['tsx', casePath], workload.exit, caseStart);
@@ -375,17 +469,19 @@ async function main(): Promise<number> {
     receipts('run_failed', { message });
     exit = 1;
   } finally {
+    process.removeListener('SIGINT', onSignal);
+    process.removeListener('SIGTERM', onSignal);
+    // Group-kill every tracked child (migration/workload via runCapture and
+    // the built server) and reap before touching PG: a workload must not
+    // outlive its database, and no owned child may outlive this entry.
+    await reapChildren(8000);
     if (server) {
-      const pid = server.pid;
-      server.kill('SIGTERM');
-      for (let i = 0; i < 40 && server.exitCode === null; i++) await sleep(250);
-      if (server.exitCode === null) server.kill('SIGKILL');
-      save('server-cleanup.json', { at: now(), pid, exitCode: server.exitCode });
-      try {
-        if (pid) process.kill(-pid, 'SIGKILL');
-      } catch {
-        /* group already gone */
-      }
+      save('server-cleanup.json', {
+        at: now(),
+        pid: server.pid,
+        exitCode: server.exitCode,
+        signalCode: server.signalCode,
+      });
     }
     if (pg) {
       const receipt = await cleanupOwnedPg(pg);
@@ -403,7 +499,12 @@ async function main(): Promise<number> {
 
 function runCapture(
   argv: string[],
-  options: { cwd: string; env: NodeJS.ProcessEnv },
+  options: {
+    cwd: string;
+    env: NodeJS.ProcessEnv;
+    ownedChildren?: OwnedChild[];
+    label: string;
+  },
   prefix: string,
 ): Promise<{ exit: number }> {
   return new Promise((resolvePromise) => {
@@ -413,10 +514,16 @@ function runCapture(
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: true,
     });
+    const owned: OwnedChild = { child, label: options.label, exited: false };
+    options.ownedChildren?.push(owned);
     child.stdout?.on('data', (d: Buffer) => appendFileSync(`${prefix}.stdout`, d));
     child.stderr?.on('data', (d: Buffer) => appendFileSync(`${prefix}.stderr`, d));
-    child.once('close', (code) => resolvePromise({ exit: code ?? 1 }));
+    child.once('close', (code) => {
+      owned.exited = true;
+      resolvePromise({ exit: code ?? 1 });
+    });
     child.once('error', (error) => {
+      owned.exited = true;
       appendFileSync(`${prefix}.stderr`, String(error));
       resolvePromise({ exit: 1 });
     });

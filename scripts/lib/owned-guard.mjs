@@ -9,8 +9,9 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import { registerHooks, syncBuiltinESMExports } from 'node:module';
 import net from 'node:net';
+import path from 'node:path';
 import tls from 'node:tls';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const repoBase = process.env.OWNED_REPO_BASE;
 if (repoBase) {
@@ -91,7 +92,9 @@ globalThis.fetch = async (input, ...args) => {
   ) {
     return realFetch(input, ...args);
   }
-  record({ kind: 'fetch_denied', url: url.href });
+  // Never retain the URL: userinfo, path, and query can carry credentials, so
+  // the audit keeps only that a fetch was denied, not where it pointed.
+  record({ kind: 'fetch_denied' });
   throw Error('FORBIDDEN_FETCH_PROVIDER_OR_EXTERNAL');
 };
 
@@ -109,30 +112,90 @@ net.Server.prototype.listen = function (...args) {
   throw Error('FORBIDDEN_LISTEN');
 };
 
-function isCredentialPath(path) {
-  const value =
-    path instanceof URL
-      ? path.pathname
-      : typeof path === 'string'
-        ? path
-        : Buffer.isBuffer(path)
-          ? path.toString()
-          : '';
-  return typeof value === 'string' && process.env.HOME && value.startsWith(`${process.env.HOME}/.`);
+const envFilePattern = /^\.env(?:\..+)?$/;
+const allowedEnvFile = /^\.env(?:\..*)?\.example$/;
+
+// Path check used by every read/copy/stream deny below: resolve against cwd
+// when relative, decode file: URLs, and follow symlinks that already exist so
+// a link cannot launder a denied target.
+function pathLikeToString(value) {
+  if (value instanceof URL) {
+    if (value.protocol === 'file:') {
+      try {
+        return fileURLToPath(value);
+      } catch {
+        return value.pathname;
+      }
+    }
+    return '';
+  }
+  if (Buffer.isBuffer(value)) return value.toString();
+  if (typeof value === 'string') return value;
+  return '';
 }
+
+function canonicalize(value) {
+  const raw = pathLikeToString(value);
+  if (!raw) return '';
+  const absolute = path.resolve(raw);
+  try {
+    return fs.realpathSync(absolute);
+  } catch {
+    return absolute;
+  }
+}
+
+// Deny sources: any $HOME/.<name> private file (canonicalized), plus any
+// repo-private .env* file (except *.example templates). A file that does not
+// exist yet still denies by its canonicalized path — the check happens on the
+// source argument, not on creation.
+function isDeniedReadPath(value) {
+  const canonical = canonicalize(value);
+  if (!canonical) return false;
+  const home = process.env.HOME;
+  // Canonicalize HOME too: on macOS /tmp resolves to /private/tmp, so a raw
+  // prefix match against the unresolved HOME misses realpath'ed paths.
+  const canonicalHome = home ? canonicalize(home) : '';
+  if (canonicalHome && canonical === canonicalHome) return false;
+  if (canonicalHome && canonical.startsWith(`${canonicalHome}/.`)) return true;
+  const base = path.basename(canonical);
+  return envFilePattern.test(base) && !allowedEnvFile.test(base);
+}
+
+function denyCredentialRead() {
+  record({ kind: 'credential_file_denied' });
+  throw Error('FORBIDDEN_CREDENTIAL_FILE_READ');
+}
+
 for (const [obj, keys] of [
-  [fs, ['readFileSync', 'readFile', 'openSync', 'open']],
-  [fsp, ['readFile', 'open']],
+  [
+    fs,
+    [
+      'readFileSync',
+      'readFile',
+      'openSync',
+      'open',
+      'copyFileSync',
+      'copyFile',
+      'cpSync',
+      'cp',
+      'createReadStream',
+      'readdirSync',
+      'readdir',
+    ],
+  ],
+  [fsp, ['readFile', 'open', 'copyFile', 'cp']],
 ]) {
   for (const key of keys) {
     const real = obj[key];
+    if (typeof real !== 'function') continue;
     obj[key] = function (path, ...rest) {
-      if (isCredentialPath(path)) {
-        record({ kind: 'credential_file_denied' });
-        throw Error('FORBIDDEN_CREDENTIAL_FILE_READ');
-      }
+      // First arg is always a path here; the copy family also takes a path as
+      // its second arg, so check both positions.
+      if (isDeniedReadPath(path) || isDeniedReadPath(rest[0])) denyCredentialRead();
       return real.call(this, path, ...rest);
     };
   }
 }
+
 syncBuiltinESMExports();
