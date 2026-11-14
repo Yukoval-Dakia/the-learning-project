@@ -63,6 +63,7 @@ const server = {
   KC_DEDUP_DISTANCE_MAX: optionalString,
   KC_DEDUP_MAX_PAIRS: optionalString,
   KC_DEDUP_WINDOW_DAYS: optionalString,
+  LEARNING_DAY_INACTIVITY_GAP_HOURS: optionalString,
   // Tracing controls; the tracing owner still refuses unsupported global-context flags.
   LMNR_DEBUG: optionalString,
   LMNR_DEV_TRANSCRIPTS: optionalString,
@@ -214,6 +215,7 @@ export const BOOT_ENV_OWNERS = {
   KC_DEDUP_DISTANCE_MAX: 'hot',
   KC_DEDUP_MAX_PAIRS: 'hot',
   KC_DEDUP_WINDOW_DAYS: 'hot',
+  LEARNING_DAY_INACTIVITY_GAP_HOURS: 'hot',
   LMNR_DEBUG: 'boot',
   LMNR_DEV_TRANSCRIPTS: 'boot',
   LMNR_PROJECT_API_KEY: 'secret',

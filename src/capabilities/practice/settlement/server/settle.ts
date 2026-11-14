@@ -41,6 +41,10 @@ import {
 import { writeEvent } from '@/kernel/events';
 import { HostOperationNotInstalledError } from '@/kernel/host-operation';
 import { ApiError } from '@/kernel/http';
+import {
+  PROFILE_INTENT_SOURCE,
+  appendLearnerProfileIntent,
+} from '@/kernel/learner-profile/intents';
 import { lockAssessmentEvaluationGroup } from '@/kernel/locks/assessment-evaluation-group-lock';
 import {
   type AppliedSettlementEvent,
@@ -79,6 +83,53 @@ import {
 export const ASSESSMENT_SETTLEMENT_ACTION = 'experimental:assessment_settlement';
 export const ASSESSMENT_SETTLEMENT_VERSION = 1 as const;
 
+/**
+ * Atomic learner-profile refresh intent after a sealed settlement receipt.
+ * Runs inside the caller's transaction, after the final receipt row, so the
+ * intent commits or rolls back with the truth change. Applies to every effect:
+ * applied, ineligible, replay_required and withdrawn, because each can move
+// effective facts the profile reads. sourceRef is the sealed settlement event
+ * id; identical re-emission collapses on the idempotent unique key.
+ */
+async function emitProfileRefreshIntents(
+  tx: Tx,
+  settlementEventId: string,
+  knowledgeIds: ReadonlySet<string> | readonly string[],
+): Promise<void> {
+  for (const kc of knowledgeIds) {
+    await appendLearnerProfileIntent(tx, {
+      knowledgeId: kc,
+      sourceKind: PROFILE_INTENT_SOURCE.settlement,
+      sourceRef: settlementEventId,
+    });
+  }
+}
+
+/** Every KC this settlement could have touched: its whole sealed scope. Using the
+ * scope (not only written subjects) keeps replay_required / ineligible receipts
+ * covered — they name the conflict domain even when nothing was applied. */
+function profileKcsForPlan(plan: SettlementPlan): Set<string> {
+  return new Set(plan.scopeKcIds);
+}
+
+/** Union of plan KCs plus every KC carried by members of the reverted/reapplied set. */
+function profileKcsForPlanAndMembers(
+  plan: SettlementPlan | null,
+  members: readonly AppliedSettlementEvent[],
+): Set<string> {
+  const ids = plan ? profileKcsForPlan(plan) : new Set<string>();
+  for (const member of members) {
+    for (const k of member.subjects) {
+      const [kind, id] = k.split(':', 2);
+      if (kind === 'knowledge' && id) ids.add(id);
+    }
+    if (member.inputs) {
+      for (const kc of profileKcsForPlan(member.inputs)) ids.add(kc);
+    }
+  }
+  return ids;
+}
+
 /** Read-only legacy conversion. Historical receipts and the stored projection are never rewritten. */
 export async function candidateStateForRead(tx: Tx, subject: FsrsSubject, now: Date) {
   return readCandidateStateForRead(tx, subject, now, rederiveSettlementPlan);
@@ -108,6 +159,9 @@ async function writeSettlementEvent(
     appliedOutcome: ApplyOutcome | null;
     reasonDetail?: Record<string, unknown>;
     fsrsOnly?: boolean;
+    /** Extra KCs this receipt invalidates beyond the plan's own (e.g. a
+     * withdrawn closure's members, which carry no plan of their own). */
+    profileKcs?: ReadonlySet<string>;
   },
 ): Promise<void> {
   const plan = input.plan;
@@ -171,6 +225,9 @@ async function writeSettlementEvent(
     ingest_at: input.activatedAt,
     created_at: input.activatedAt,
   });
+  const kcs = profileKcsForPlanAndMembers(plan, []);
+  if (input.profileKcs) for (const kc of input.profileKcs) kcs.add(kc);
+  await emitProfileRefreshIntents(tx, input.id, kcs);
 }
 
 async function noteFaultyQuestionInference(
@@ -680,6 +737,9 @@ export async function withdrawCapturedOccurrence(
       previous_generation: head.generation,
       generation: head.generation + 1,
     },
+    // Withdrawal carries no plan of its own; the reverted closure's KCs are
+    // the facts the profile must rebuild for.
+    profileKcs: profileKcsForPlanAndMembers(null, revertOrder),
   });
   await tx
     .update(evaluation_effective_head)

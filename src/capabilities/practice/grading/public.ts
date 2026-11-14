@@ -92,9 +92,6 @@ export {
   runSourceGroundingVerify,
 } from './server/judge/source-grounding-verify';
 export { judgeFallbackProvider } from './server/judge-durable-config';
-export { MODEL_SLICE_PINNED_TASK_KINDS } from './server/model-slice-pins';
-export const divertReviewAnswer: typeof import('./server/review-operation').divertReviewAnswer =
-  async (...args) => (await import('./server/review-operation')).divertReviewAnswer(...args);
 // Judge engine identity and census belong to grading; the shared DBOS host consumes them.
 export {
   JUDGE_DBOS_QUEUE,
@@ -114,13 +111,22 @@ export {
   JudgeDurablePendingResponseSchema,
 } from './server/judge-run-status';
 export { installModelAdmissionPins } from './server/model-admission-pins';
+export { MODEL_SLICE_PINNED_TASK_KINDS } from './server/model-slice-pins';
 export { projectAttemptEvidence } from './server/review-answer-response';
-export type { ReviewAnswerContext, ReviewAnswerResult } from './server/review-operation';
+export type {
+  ReviewAnswerAdviceRequest,
+  ReviewAnswerAdviceResult,
+  ReviewAnswerContext,
+  ReviewAnswerResult,
+} from './server/review-operation';
 
 export const submitReviewAnswer: typeof import('./server/review-operation').submitReviewAnswer =
   async (...args) => (await import('./server/review-operation')).submitReviewAnswer(...args);
 export const requestReviewAnswer: typeof import('./server/review-operation').requestReviewAnswer =
   async (...args) => (await import('./server/review-operation')).requestReviewAnswer(...args);
+export const requestReviewAdviceLifecycle: typeof import('./server/review-operation').requestReviewAdviceLifecycle =
+  async (...args) =>
+    (await import('./server/review-operation')).requestReviewAdviceLifecycle(...args);
 export type { ReviewAnswerReceipt } from './tools/submit-review-answer';
 
 export async function installInterventionDiagnosticLeaves(): Promise<void> {

@@ -11,10 +11,10 @@
 
 import { and, desc, eq, gte, inArray, lte, sql } from 'drizzle-orm';
 import type { z } from 'zod';
-import type { RetentionReading } from '@/core/schema/scheduling-state';
 import type { Db } from '@/db/client';
 import { event, knowledge } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
+import { readLearnerProfileNumbers } from '@/kernel/learner-profile/numbers';
 import { loadNativeReviewOccurrences } from '@/kernel/read-models/assessment-review-occurrences';
 import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
 import {
@@ -22,9 +22,7 @@ import {
   getCurrentFailureAttempts,
 } from '@/kernel/read-models/failure-attempts';
 import { loadRecentCorrectAttemptsForKnowledge } from '@/kernel/read-models/learner-activity';
-import { getMasteryProjection } from '@/kernel/read-models/mastery-projection';
 import { resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
-import { getFsrsRetrievabilityByIds } from '@/kernel/records/scheduling-state';
 import { ReviewWeeklyQuerySchema } from '../api/review-planning-contracts';
 import {
   buildCalendarReportWindow,
@@ -117,12 +115,6 @@ function clamp01(value: number): number {
   if (value < 0) return 0;
   if (value > 1) return 1;
   return value;
-}
-
-function retentionScore(reading: RetentionReading | undefined): number | null {
-  if (typeof reading === 'number') return clamp01(reading);
-  if (reading?.kind === 'score') return clamp01(reading.value);
-  return null;
 }
 
 /** Weaker known hold. Missing mastery and retention leave the count unscaled. */
@@ -218,9 +210,8 @@ async function rankOpenKnowledgeFailures(
   const emitted = [...tallies.entries()].filter(([, tally]) => standingOf(tally) !== null);
   if (emitted.length === 0) return emptyKnowledgeRanking();
   const ids = emitted.map(([id]) => id);
-  const [projection, retentionById, nameRows] = await Promise.all([
-    getMasteryProjection(db, ids),
-    getFsrsRetrievabilityByIds(db, 'knowledge', ids, input.now),
+  const [profileNumbers, nameRows] = await Promise.all([
+    readLearnerProfileNumbers(db, { knowledge_ids: ids, as_of: input.now }),
     db
       .select({ id: knowledge.id, name: knowledge.name })
       .from(knowledge)
@@ -228,10 +219,12 @@ async function rankOpenKnowledgeFailures(
   ]);
   const nameById = new Map(nameRows.map((row) => [row.id, row.name]));
   const ranked = emitted.map(([id, tally]) => {
-    const masteryRow = projection.get(id);
+    const profileRow = profileNumbers.items.get(id);
     const mastery =
-      masteryRow && masteryRow.evidence_count > 0 ? clamp01(masteryRow.mastery) : null;
-    const retention = retentionScore(retentionById.get(id));
+      profileRow && (profileRow.evidence_count ?? 0) > 0 && profileRow.mastery !== null
+        ? clamp01(profileRow.mastery)
+        : null;
+    const retention = profileRow?.retention ?? null;
     const standing = standingOf(tally);
     if (!standing) throw new Error('knowledge failure standing missing');
     return {

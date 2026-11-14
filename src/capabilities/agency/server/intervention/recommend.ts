@@ -17,6 +17,7 @@ export interface RecommendPedagogyInput {
   snapshot: InterventionSnapshotT;
   runTaskFn: TaskTextRunFn;
   subjectProfile: SubjectProfile;
+  currentPriorInterventions?: InterventionSnapshotT['prior_interventions'];
 }
 
 function parseRecommendationModelOutput(
@@ -37,13 +38,34 @@ export async function recommendPedagogy(
 ): Promise<PedagogyRecommendationT> {
   const policy = selectPedagogyCandidates(input.snapshot.learner_context);
   const disabled = new Set(input.snapshot.disabled_method_ids);
-  const candidates = policy.candidates.filter((method) => !disabled.has(method.id));
-  const excluded = [
-    ...policy.excluded,
-    ...policy.candidates
-      .filter((method) => disabled.has(method.id))
-      .map((method) => ({ method_id: method.id, reason: 'disabled' as const })),
-  ];
+  const priorInterventions = input.currentPriorInterventions ?? input.snapshot.prior_interventions;
+  const priorIneffective = new Set(
+    priorInterventions
+      .filter(
+        (intervention) =>
+          intervention.outcome === 'ineffective' &&
+          intervention.conjecture_event_id === input.snapshot.conjecture.conjecture_id,
+      )
+      .map((intervention) => intervention.method_id),
+  );
+  const candidates = policy.candidates.filter(
+    (method) => !disabled.has(method.id) && !priorIneffective.has(method.id),
+  );
+  const excludedByMethod = new Map<
+    string,
+    {
+      method_id: string;
+      reason: 'contraindicated' | 'not_indicated' | 'disabled' | 'prior_ineffective';
+    }
+  >(policy.excluded.map((exclusion) => [exclusion.method_id, exclusion]));
+  for (const method of policy.candidates) {
+    if (disabled.has(method.id)) {
+      excludedByMethod.set(method.id, { method_id: method.id, reason: 'disabled' });
+    } else if (priorIneffective.has(method.id)) {
+      excludedByMethod.set(method.id, { method_id: method.id, reason: 'prior_ineffective' });
+    }
+  }
+  const excluded = [...excludedByMethod.values()];
   const candidateIds = candidates.map((method) => method.id);
 
   if (candidateIds.length === 0) {
@@ -67,7 +89,7 @@ export async function recommendPedagogy(
       snapshot: input.snapshot,
       candidate_methods: candidates,
       excluded_methods: excluded,
-      prior_interventions: input.snapshot.prior_interventions,
+      prior_interventions: priorInterventions.slice(0, 20),
       ...(candidateIds.length === 1 ? { sole_candidate: true } : {}),
       output_contract: {
         allowed_method_ids: candidateIds,

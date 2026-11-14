@@ -1684,6 +1684,234 @@ describe('intervention preparation closed loop', () => {
     expect(activated[0]?.value).toBe(0);
   });
 
+  // @invariant concurrency: activation re-reads the selected method's current
+  // same-conjecture outcome inside the correction lock and refuses a method that
+  // became ineffective before the active write
+  // @fails-if settle from outside the transaction after the loop guard but
+  // before activation — activation would turn a current ineffective method active
+  it('blocks activation when a concurrent settlement makes its method ineffective', async () => {
+    const db = testDb();
+    const seeded = await seedEvidenceFor('activation_outcome_race');
+    await handleProbeResultInterventionDelivery(db, delivery(seeded.probeResultId), {
+      boss: {
+        send: async (_name, _data, options) => options.id,
+        getJobById: async () => null,
+      },
+    });
+    const [opened] = await db.select().from(intervention);
+    const record = await loadInterventionVersion(db, opened.id, opened.version);
+    if (!record) throw new Error('intervention disappeared');
+    const recommended = await saveRecommendation(db, record, {
+      kind: 'recommendation',
+      recommendation_version: INTERVENTION_CONTRACT_VERSION,
+      method_id: 'worked_example',
+      method_definition_version: PEDAGOGY_METHOD_DEFINITION_VERSION,
+      rationale_md: '先用完整示范显式区分内外层。',
+      safety_constraints: ['不得把一次表现写成能力定论'],
+      candidate_ids: ['worked_example'],
+      excluded: [],
+      model_run_id: 'activation_outcome_race_recommendation_run',
+    });
+    const packageValue = InterventionPackage.parse({
+      ...authorOutput(1),
+      intervention_id: recommended.id,
+      intervention_version: recommended.version,
+      package_version: INTERVENTION_CONTRACT_VERSION,
+      method_id: 'worked_example',
+      method_definition_version: PEDAGOGY_METHOD_DEFINITION_VERSION,
+      author_task_run_id: 'activation_outcome_race_author_run',
+    });
+    const priorAt = new Date(seeded.now.getTime() + 5_000);
+    for (const sourceEventId of [
+      'probe_result_prior_activation_outcome_race',
+      `probe_result_settlement_${recommended.id}`,
+    ]) {
+      await db.insert(event).values({
+        id: sourceEventId,
+        actor_kind: 'system',
+        actor_ref: 'test:settlement',
+        action: 'experimental:probe_result',
+        subject_kind: 'question',
+        subject_id: `probe_${sourceEventId}`,
+        outcome: 'success',
+        payload: {
+          conjecture_event_id: seeded.conjectureId,
+          outcome: 0,
+          resolution: 'evidence_for',
+        },
+        caused_by_event_id: seeded.conjectureId,
+        created_at: priorAt,
+      });
+    }
+    await db.insert(intervention).values({
+      id: 'prior_activation_outcome_race',
+      version: 1,
+      revision: 0,
+      source_probe_result_event_id: 'probe_result_prior_activation_outcome_race',
+      conjecture_event_id: seeded.conjectureId,
+      status: 'settled',
+      delivery_mode: 'shadow',
+      outcome: 'ineffective',
+      idempotency_key: 'prior_activation_outcome_race',
+      preparation_job_id: null,
+      snapshot_json: {
+        ...recommended.snapshot,
+        intervention_id: 'prior_activation_outcome_race',
+        intervention_version: 1,
+      },
+      recommendation_json: {
+        kind: 'recommendation',
+        recommendation_version: INTERVENTION_CONTRACT_VERSION,
+        method_id: 'worked_example',
+        method_definition_version: PEDAGOGY_METHOD_DEFINITION_VERSION,
+        rationale_md: '历史方法对当前误解无效。',
+        safety_constraints: ['不得把一次表现写成能力定论'],
+        candidate_ids: ['worked_example'],
+        excluded: [],
+        model_run_id: 'prior_activation_outcome_race_run',
+      },
+      package_json: packageValue,
+      settlement_json: {
+        schema_version: INTERVENTION_CONTRACT_VERSION,
+        diagnostics: {
+          immediate: {
+            kind: 'immediate',
+            question_id: 'prior_activation_outcome_race_immediate',
+            due_at: priorAt.toISOString(),
+            status: 'failed',
+            review_event_id: 'prior_activation_outcome_race_review',
+            verdict_event_id: 'prior_activation_outcome_race_verdict',
+            completed_at: priorAt.toISOString(),
+          },
+          delayed: {
+            kind: 'delayed',
+            question_id: 'prior_activation_outcome_race_delayed',
+            due_at: priorAt.toISOString(),
+            status: 'failed',
+            review_event_id: 'prior_activation_outcome_race_review',
+            verdict_event_id: 'prior_activation_outcome_race_verdict',
+            completed_at: priorAt.toISOString(),
+          },
+          transfer: {
+            kind: 'transfer',
+            question_id: 'prior_activation_outcome_race_transfer',
+            due_at: priorAt.toISOString(),
+            status: 'failed',
+            review_event_id: 'prior_activation_outcome_race_review',
+            verdict_event_id: 'prior_activation_outcome_race_verdict',
+            completed_at: priorAt.toISOString(),
+          },
+        },
+        scheduled_at: priorAt.toISOString(),
+        completed_at: priorAt.toISOString(),
+      },
+      preparation_attempts_json: [],
+      preparation_waits: 0,
+      preparation_wait_until: null,
+      failure_code: null,
+      created_at: priorAt,
+      updated_at: priorAt,
+      activated_at: priorAt,
+    });
+
+    let activation: ReturnType<typeof activateIntervention> | undefined;
+    await db.transaction(async (tx) => {
+      await tx.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtextextended(${eventCorrectionsGlobalLockKey()}, 0))`,
+      );
+      activation = activateIntervention(db, {
+        interventionId: recommended.id,
+        version: recommended.version,
+        preparationJobId: preparationJobIdOf(opened),
+        package: packageValue,
+      });
+      const state = await Promise.race([
+        activation.then(() => 'settled' as const),
+        new Promise<'blocked'>((resolve) => setTimeout(() => resolve('blocked'), 50)),
+      ]);
+      expect(state).toBe('blocked');
+      await tx.insert(intervention).values({
+        id: `settlement_${recommended.id}`,
+        version: 1,
+        revision: 0,
+        source_probe_result_event_id: `probe_result_settlement_${recommended.id}`,
+        conjecture_event_id: seeded.conjectureId,
+        status: 'settled',
+        delivery_mode: 'shadow',
+        outcome: 'ineffective',
+        idempotency_key: `settlement_${recommended.id}`,
+        preparation_job_id: null,
+        snapshot_json: {
+          ...recommended.snapshot,
+          intervention_id: `settlement_${recommended.id}`,
+          intervention_version: 1,
+        },
+        recommendation_json: {
+          kind: 'recommendation',
+          recommendation_version: INTERVENTION_CONTRACT_VERSION,
+          method_id: 'worked_example',
+          method_definition_version: PEDAGOGY_METHOD_DEFINITION_VERSION,
+          rationale_md: '并发结算后方法已证明无效。',
+          safety_constraints: ['不得把一次表现写成能力定论'],
+          candidate_ids: ['worked_example'],
+          excluded: [],
+          model_run_id: `settlement_${recommended.id}_run`,
+        },
+        package_json: packageValue,
+        settlement_json: {
+          schema_version: INTERVENTION_CONTRACT_VERSION,
+          diagnostics: {
+            immediate: {
+              kind: 'immediate',
+              question_id: `settlement_${recommended.id}_immediate`,
+              due_at: priorAt.toISOString(),
+              status: 'failed',
+              review_event_id: `settlement_${recommended.id}_review`,
+              verdict_event_id: `settlement_${recommended.id}_verdict`,
+              completed_at: priorAt.toISOString(),
+            },
+            delayed: {
+              kind: 'delayed',
+              question_id: `settlement_${recommended.id}_delayed`,
+              due_at: priorAt.toISOString(),
+              status: 'failed',
+              review_event_id: `settlement_${recommended.id}_review`,
+              verdict_event_id: `settlement_${recommended.id}_verdict`,
+              completed_at: priorAt.toISOString(),
+            },
+            transfer: {
+              kind: 'transfer',
+              question_id: `settlement_${recommended.id}_transfer`,
+              due_at: priorAt.toISOString(),
+              status: 'failed',
+              review_event_id: `settlement_${recommended.id}_review`,
+              verdict_event_id: `settlement_${recommended.id}_verdict`,
+              completed_at: priorAt.toISOString(),
+            },
+          },
+          scheduled_at: priorAt.toISOString(),
+          completed_at: priorAt.toISOString(),
+        },
+        preparation_attempts_json: [],
+        preparation_waits: 0,
+        preparation_wait_until: null,
+        failure_code: null,
+        created_at: priorAt,
+        updated_at: priorAt,
+        activated_at: priorAt,
+      });
+    });
+    if (!activation) throw new Error('activation was not started');
+    const result = await activation;
+
+    expect(result).toMatchObject({
+      status: 'preparation_failed',
+      failure_code: 'recommendation_outcome_stale',
+      package: null,
+      activated_at: null,
+    });
+  });
+
   // @invariant security: a draft package whose review stage fails is retained on the author_failed attempt for server audit but never crosses into the learner surface (package_json, materialized diagnostics, due review stream)
   // @fails-if drop the draft from the persisted attempt, write package_json on a failed intervention, or materialize intervention_diagnostic questions for it; the draft-equality, null package, and zero-diagnostics assertions fail
   it('persists the authored draft on review-stage failure without exposing it to the learner surface', async () => {

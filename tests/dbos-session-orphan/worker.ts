@@ -146,6 +146,7 @@ async function main() {
     process.env.TLP_SESSION_FAMILY,
   );
   const host = await import('@/server/durable/prune-worker');
+  const { admitDurableFamilies } = await import('@/server/durable/family-contract');
   let holdForward = cron;
   let releaseForward: (() => void) | undefined;
   const heldRows = new Set<() => void>();
@@ -228,7 +229,11 @@ async function main() {
     };
   }
   const pauseNative = cron ? accelerateSessionCron(boss) : undefined;
-  const declarations = sessionDeclarations;
+  // Preserve the production housekeeping composition while exercising the
+  // selected session family's real backend and recovery.
+  const families = await admitDurableFamilies(Object.values(sessionDeclarations), {
+    scope: 'production',
+  });
   try {
     stage = 'pg-boss-start';
     await boss.start();
@@ -236,8 +241,8 @@ async function main() {
     await host.startDurableWorker({
       boss,
       db,
-      declarations,
-      sessionBoundary,
+      families,
+      boundaries: { sessionOrphan: sessionBoundary },
       reconcileIntervalMs: 100,
     });
     stage = 'ready';

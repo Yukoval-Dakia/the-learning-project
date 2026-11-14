@@ -9,6 +9,26 @@ import {
 } from './api/contracts';
 
 export const settlementManifestPart: Omit<CapabilityManifest, 'name' | 'description'> = {
+  events: {
+    // Settlement receipts are the canonical writer signal for derived learner
+    // state: the profile-refresh subscriber consumes them.
+    actions: ['experimental:assessment_settlement'],
+  },
+  subscriptions: {
+    handlers: [
+      // YUK-2083 — 每个 sealed settlement receipt 唤醒 learner-profile 排干；
+      // intent 行在结算自己事务内提交，错过唤醒由队列分钟兜底恢复。
+      {
+        id: 'practice.learner-profile-refresh',
+        version: 1,
+        actions: ['experimental:assessment_settlement'],
+        load: () =>
+          import('./server/profile-refresh-subscription').then(
+            (m) => m.buildLearnerProfileRefreshSubscriber,
+          ),
+      },
+    ],
+  },
   api: {
     routes: [
       {
@@ -35,6 +55,24 @@ export const settlementManifestPart: Omit<CapabilityManifest, 'name' | 'descript
   },
   jobs: {
     handlers: [
+      // YUK-2083 — learner-profile 刷新 worker：按提交顺序排干 durable
+      // intent（G 锁 → KC 排序锁 → CAS），读侧 getter 在同快照兜底陈期行。
+      // 秒级 poll + 每分兜底，fast 层无 DLQ（幂等重排可重试，意图不丢）。
+      {
+        name: 'learner_profile_refresh',
+        queue: 'fast',
+        pollingIntervalSeconds: 2,
+        batchSize: 1,
+        notify: true,
+        schedule: {
+          cron: '* * * * *',
+          tz: 'Asia/Shanghai',
+          singletonKey: 'learner_profile_refresh-sweep',
+          singletonSeconds: 55,
+        },
+        load: () =>
+          import('./jobs/learner-profile-refresh').then((m) => m.buildLearnerProfileRefreshHandler),
+      },
       // YUK-870 (F3.5b) — rejudge 注册自中央渐缩簿收编（等价平移红线：LLM 档
       // 1h expire + DLQ、非默认 1s polling、batchSize 1——原中央行的 inline 动态
       // import + handleRejudge 循环 flatten 成 jobs/rejudge.ts 的标准工厂）。

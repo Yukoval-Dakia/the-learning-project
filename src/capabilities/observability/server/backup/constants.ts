@@ -156,7 +156,9 @@
 // YUK-2008: subject_doc + append-only subject_doc_journal are authored control-
 // plane truth sharing subject_change_seq. Both enter FK_ORDER, not exclusions.
 // NEW FK_ORDER tables → bump 4.38 → 4.39.
-export const SCHEMA_VERSION = '4.39';
+// Learner profiles and pending refresh intents are durable projection/recovery
+// state. Excluding either would let a restore serve an old profile as current.
+export const SCHEMA_VERSION = '4.40';
 
 export const SUBSCRIPTION_PROGRESS_TABLES = [
   'event_subscription_checkpoint',
@@ -290,6 +292,8 @@ export const FK_ORDER = [
   'artifact_block_ref',
   'answer',
   'event',
+  'learner_profile',
+  'learner_profile_refresh_intent',
   // Event/artifact parents precede checkpoint → delivery → effect.
   ...SUBSCRIPTION_PROGRESS_TABLES,
   // YUK-791 — versioned intervention aggregate. Its source/conjecture refs are

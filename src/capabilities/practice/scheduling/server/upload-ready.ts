@@ -28,7 +28,7 @@ import {
   sourceAllowsDerivation,
 } from '@/kernel/read-models/usage-policy';
 import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
-import { streamLocalDate } from '@/kernel/stream-date';
+import { resolveLearningDayDate, streamLocalDate } from '@/kernel/stream-date';
 
 export const UPLOAD_READY_SUBSCRIBER = 'practice.upload-ready';
 export const UPLOAD_READY_ACTIONS = [
@@ -253,7 +253,9 @@ async function reconcileBatchAttempt(db: Db, sessionId: string): Promise<number>
         .for('share', { noWait: true });
     const batch = await readUploadReadyBatch(tx, sessionId);
     if (!batch) return 0;
-    const date = streamLocalDate();
+    // 上传进「今天」的流——与读路径同一学习日裁定：深夜上传落在延续学习日分区，
+    // 不会在零点边界写进空的新日历日。
+    const date = await resolveLearningDayDate(tx);
     const partition = practiceStreamPartitionKeyParts(date);
     if (
       !(await acquireSortedAdvisoryLocks(tx, partition.namespace, [partition.id], { noWait: true }))

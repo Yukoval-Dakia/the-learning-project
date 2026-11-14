@@ -13,8 +13,9 @@ function money(value: number, currency: string, precision: number): string {
 export function describeCosts(
   rows: readonly CostBucket[],
   precision: 2 | 4 = 2,
-): { amount: string; note: string } {
-  if (rows.length === 0) return { amount: '暂无费用记录', note: '当前窗口没有费用记录' };
+): { amount: string; note: string; breakdown: string[] } {
+  if (rows.length === 0)
+    return { amount: '暂无费用记录', note: '当前窗口没有费用记录', breakdown: [] };
   const buckets = new Map<string, CostBucket>();
   for (const row of rows) {
     const previous = buckets.get(row.currency);
@@ -76,5 +77,9 @@ export function describeCosts(
       );
     notes.push(parts.join(' · '));
   }
-  return { amount: amounts.join(' · '), note: `已知小计不含未知费用；${notes.join('；')}` };
+  return {
+    amount: amounts.join(' · '),
+    note: `已知小计不含未知费用；${notes.join('；')}`,
+    breakdown: notes,
+  };
 }
