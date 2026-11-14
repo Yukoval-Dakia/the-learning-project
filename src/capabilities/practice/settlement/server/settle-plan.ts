@@ -31,9 +31,12 @@ import {
   type SettlementPlan,
   subjectKey,
 } from '@/kernel/read-models/assessment-settlements';
+import { effectiveCauseCategoryForFailureAttempt } from '@/kernel/read-models/cause-policy';
+import { getFailureAttempts } from '@/kernel/read-models/failure-attempts';
 import { getNonKcKnowledgeIds } from '@/kernel/read-models/knowledge-roles';
 import type { AbilityGlobalByKnowledgeId } from '@/kernel/read-models/mastery-state';
 import { SYNTHETIC_SUBJECT_ROOT_RE } from '@/kernel/read-models/placement-scope';
+import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
 import { assessmentAttemptEventId } from '@/kernel/records/assessment-attempt-identity';
 import { selectedForgettingEngine } from '@/kernel/scheduling';
 import type { ActivationSettleInput } from './activate';
@@ -97,6 +100,13 @@ interface SettlementScope {
   capture: NonNullable<ActivationSettleInput['forgettingCapture']>;
   assistance: 'independent' | 'assisted' | 'unknown';
   schedulingPolicy: unknown;
+  /**
+   * +1 for a carelessness-lean, -1 for conceptual-lean, 0 for no effective
+   * cause or a profile that declares no lean on it. Resolved inside the
+   * settlement transaction, so the same read policy feeds the automatic
+   * rating and never re-classifies the attempt.
+   */
+  causeLean: -1 | 0 | 1;
 }
 
 export async function loadScope(tx: Tx, input: ActivationSettleInput): Promise<SettlementScope> {
@@ -199,6 +209,11 @@ export async function loadScope(tx: Tx, input: ActivationSettleInput): Promise<S
       : 'unknown';
   const numeric = (key: string) =>
     typeof original?.payload[key] === 'number' ? original.payload[key] : null;
+  const causeLean = await resolveSettlementCauseLean(
+    tx,
+    input,
+    byId.get(input.questionGroupId) ?? null,
+  );
   return {
     frozenLearningScope: frozen !== null,
     schedulingPolicy: original?.payload.scheduling_policy,
@@ -222,7 +237,81 @@ export async function loadScope(tx: Tx, input: ActivationSettleInput): Promise<S
     plan,
     issuedPartIds: partIds,
     fullScope,
+    causeLean,
   };
+}
+
+/**
+ * Cause-scan window shared with the preview-side advisor. Five attempts is deep
+ * enough to survive label-less re-failures after an explicit cause, shallow
+ * enough that long-resolved learning stops nudging the rating.
+ */
+const SETTLEMENT_CAUSE_SCAN_LIMIT = 5;
+
+/**
+ * Resolve the effective cause for the automatic settlement rating on this group.
+ * Mirrors `resolveAdviceCauseForQuestion` (same scan window, same
+ * effective-cause fold) but lives in the settlement writer because owner rules
+ * forbid a grading→failure-learning import. The current attempt is excluded:
+ * its cause is not yet recorded when settlement plans the rating, and the
+ * settlement's own verdict must drive this attempt's own schedule.
+ *
+ * `causeEditable` widens the scan to the same attempts the learner-cause
+ * write owner accepts for attribution — learner-labelled partial verdicts
+ * therefore lean the settled rating too. The preview advisor reads a
+ * narrower window (failure-only for native attempts), so a labelled partial
+ * can settle a lean its own preview never announced. Keeping the wider pool
+ * is the write-side eligibility the learner actually used; the preview's
+ * narrower scan is a known display gap, not a second cause policy.
+ *
+ * The profile's own `rating_lean` vocabulary is the only interpretation:
+ * without a declared lean the cause stays neutral.
+ */
+async function resolveSettlementCauseLean(
+  tx: Tx,
+  input: ActivationSettleInput,
+  groupRow: QuestionLite | null,
+): Promise<-1 | 0 | 1> {
+  const attemptEventId = assessmentAttemptEventId(input.submission.submission_id);
+  const recentFailures = await getFailureAttempts(tx, {
+    questionIds: [input.questionGroupId],
+    limit: SETTLEMENT_CAUSE_SCAN_LIMIT + 1,
+    causeEditable: true,
+  });
+  const causeCategory = recentFailures
+    .filter((failure) => failure.attempt_event_id !== attemptEventId)
+    .map(effectiveCauseCategoryForFailureAttempt)
+    .find((category) => category !== null);
+  if (!causeCategory) return 0;
+
+  const knowledgeIds = groupRow?.knowledge_ids ?? [];
+  const subjectProfile = await resolveSubjectProfileForKnowledgeIds(tx, knowledgeIds);
+  const declared = subjectProfile.causeCategories.find(
+    (category) => category.id === causeCategory,
+  )?.rating_lean;
+  if (declared === 'carelessness') return 1;
+  if (declared === 'conceptual') return -1;
+  // Historical `conceptual*` ids from the pre-profile vocabulary carry their
+  // original conceptual lean only when the current profile does not re-declare
+  // them; the advisor applies the same fallback on its read path.
+  if (causeCategory.startsWith('conceptual')) return -1;
+  return 0;
+}
+
+/**
+ * The cause lean only moves a partial-credit verdict — carelessness opens the
+ * schedule toward good, conceptual confusion holds it at again. Correct,
+ * incorrect and unsupported verdicts keep their settled rating so the cause
+ * cannot turn a right answer into a review or an unsupported judgment into a
+ * scheduled card. Exported for the deterministic rating invariant test.
+ */
+export function applyCauseLeanToAutomaticRating(
+  verdict: 'correct' | 'partial' | 'incorrect' | 'unsupported',
+  baseAutomaticRating: 'again' | 'hard' | 'good' | 'easy' | null,
+  causeLean: -1 | 0 | 1,
+): 'again' | 'hard' | 'good' | 'easy' | null {
+  if (verdict !== 'partial' || causeLean === 0) return baseAutomaticRating;
+  return causeLean === 1 ? 'good' : 'again';
 }
 
 export function derivePlan(input: ActivationSettleInput, scope: SettlementScope): SettlementPlan {
@@ -294,7 +383,7 @@ export function derivePlan(input: ActivationSettleInput, scope: SettlementScope)
   // candidate 引擎的 forgettingSuppressed 同型）；用户显式自评（userRating）不受影响。
   const autoRatingSuppressed =
     provenance.source === 'automatic' && (provenance.assisted || learnerAssisted);
-  const automaticRating =
+  const baseAutomaticRating =
     provenance.source === 'automatic'
       ? automaticSchedulingRating({
           verdict: verdict.verdict,
@@ -305,6 +394,11 @@ export function derivePlan(input: ActivationSettleInput, scope: SettlementScope)
           durationMs: scope.capture.latency_ms,
         })
       : ratingForVerdict(verdict.verdict);
+  const automaticRating = applyCauseLeanToAutomaticRating(
+    verdict.verdict,
+    baseAutomaticRating,
+    scope.causeLean,
+  );
   const rating = scope.preserveScheduling
     ? null
     : (input.userRating ?? (autoRatingSuppressed ? null : automaticRating));
