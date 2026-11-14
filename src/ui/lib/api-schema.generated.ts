@@ -23805,6 +23805,14 @@ export interface operations {
                         atomics: {
                             knowledge_id: string;
                             one_line_intent: string;
+                            prerequisite_knowledge_ids?: string[];
+                            title: string;
+                        }[];
+                        /** @default [] */
+                        existing_items: {
+                            item_id: string;
+                            knowledge_id: string;
+                            note_id: string;
                             title: string;
                         }[];
                         hub: {
@@ -23819,10 +23827,18 @@ export interface operations {
                         longs: {
                             knowledge_ids: string[];
                             one_line_intent: string;
+                            prerequisite_knowledge_ids?: string[];
                             title: string;
                         }[];
+                        /** @default [] */
+                        mastered_knowledge_ids: string[];
                         /** @enum {string} */
                         plan_case: "3a_topic_missing" | "3b_children_missing" | "3c_existing_graph";
+                        /** @default [] */
+                        prerequisite_edges: {
+                            dependent_knowledge_id: string;
+                            prerequisite_knowledge_id: string;
+                        }[];
                         proposal_id: string;
                         proposed_knowledge?: {
                             children: {

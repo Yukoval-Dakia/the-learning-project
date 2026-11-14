@@ -1097,7 +1097,7 @@ async function logAcceptedWithoutProbe(db: Db, now: Date): Promise<void> {
           FROM ${event} AS latest_rate
           WHERE latest_rate.action = 'rate'
             AND latest_rate.caused_by_event_id = ${event.id}
-          ORDER BY latest_rate.created_at DESC, latest_rate.id DESC
+          ORDER BY latest_rate.created_at DESC, latest_rate.dispatch_seq DESC, latest_rate.id DESC
           LIMIT 1
         ) IN ('accept', 'reverse', 'change_type')`,
         sql`NOT EXISTS (
@@ -1199,7 +1199,7 @@ async function loadFindingBrief(db: Db, now: Date): Promise<TeachingBrief | null
           FROM ${event} AS latest_rate
           WHERE latest_rate.action = 'rate'
             AND latest_rate.caused_by_event_id = ${event.id}
-          ORDER BY latest_rate.created_at DESC, latest_rate.id DESC
+          ORDER BY latest_rate.created_at DESC, latest_rate.dispatch_seq DESC, latest_rate.id DESC
           LIMIT 1
         ), '') NOT IN (${sql.join(
           [...TERMINAL_PROPOSAL_RATINGS].map((rating) => sql`${rating}`),
@@ -1215,7 +1215,7 @@ async function loadFindingBrief(db: Db, now: Date): Promise<TeachingBrief | null
           WHERE correction.action = 'correct'
             AND correction.subject_kind = 'event'
             AND correction.subject_id = ${event.id}
-          ORDER BY correction.created_at DESC, correction.id DESC
+          ORDER BY correction.created_at DESC, correction.dispatch_seq DESC, correction.id DESC
           LIMIT 1
         ), '') NOT IN ('retract', 'mark_wrong', 'supersede')`,
       ),

@@ -156,7 +156,7 @@ function rateStatus(rate: EventRow | undefined): ProposalStatus {
 
 /**
  * SQL form of rateStatus: true when the proposal's latest chained rate (same
- * created_at/id order as loadLatestRateByProposal) carries a terminal rating.
+ * created_at/dispatch_seq/id order as loadLatestRateByProposal) carries a terminal rating.
  * `proposalId` must reference an outer table other than the inner aliases.
  */
 export function proposalLatestRateTerminalSql(proposalId: SQLWrapper): SQL<boolean> {
@@ -172,8 +172,8 @@ export function proposalLatestRateTerminalSql(proposalId: SQLWrapper): SQL<boole
         SELECT 1 FROM ${event} AS newer_rate
         WHERE newer_rate.action = 'rate'
           AND newer_rate.caused_by_event_id = ${proposalId}
-          AND (newer_rate.created_at > latest_rate.created_at
-            OR (newer_rate.created_at = latest_rate.created_at AND newer_rate.id > latest_rate.id))
+          AND (newer_rate.created_at, newer_rate.dispatch_seq, newer_rate.id)
+            > (latest_rate.created_at, latest_rate.dispatch_seq, latest_rate.id)
       )
   )`;
 }
@@ -625,7 +625,7 @@ async function loadLatestRateByProposal(
         asOf ? lt(event.created_at, asOf) : undefined,
       ),
     )
-    .orderBy(desc(event.created_at), desc(event.id));
+    .orderBy(desc(event.created_at), desc(event.dispatch_seq), desc(event.id));
 
   const latest = new Map<string, EventRow>();
   for (const row of rateRows) {

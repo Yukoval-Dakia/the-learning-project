@@ -78,9 +78,20 @@ export interface LearningItemAcceptResult {
   long_artifact_ids: string[];
   root_knowledge_id: string;
   created_knowledge_ids: string[];
+  actions: Array<{
+    kind: 'hub' | 'atomic' | 'long';
+    proposal_item_id: string | null;
+    knowledge_ids: string[];
+    action: 'create' | 'skip' | 'reuse';
+    reason: 'new' | 'mastered' | 'existing_item';
+    learning_item_id: string | null;
+    note_id: string | null;
+  }>;
   enqueued_note_generate_jobs: number;
   idempotent?: boolean;
 }
+
+type LearningItemAcceptAction = LearningItemAcceptResult['actions'][number];
 
 export type EnqueueLearningIntentNoteFn = (artifactId: string) => Promise<boolean>;
 
@@ -197,16 +208,21 @@ export async function acceptLearningItemProposal(
         ...(opts.actor ? { actor: opts.actor } : {}),
         signal: 'after_commit',
         replay: async (rate: RecordedProposalRate): Promise<LearningItemAcceptResult> => {
-          const summary = await summarizeLearningItemMaterialization(db, proposalId);
+          const receipt = readLearningItemAcceptReceipt(rate.payload);
+          const summary = receipt.available
+            ? receipt.value
+            : await summarizeLearningItemMaterialization(db, proposalId);
           const enqueued = await enqueueLearningIntentNotes(
             db,
-            [...summary.atomic_artifact_ids, ...summary.long_artifact_ids],
+            summary.actions
+              .filter((action) => action.action === 'create' && action.note_id)
+              .map((action) => action.note_id as string),
             opts.enqueueLearningIntentNote,
           );
           return {
             kind: 'learning_item',
-            rate_event_id: rate.id,
             ...summary,
+            rate_event_id: rate.id,
             enqueued_note_generate_jobs: enqueued,
             idempotent: true,
           };
@@ -252,6 +268,7 @@ export async function acceptLearningItemProposal(
               long_artifact_ids: materialized.long_artifact_ids,
               root_knowledge_id: materialized.root_knowledge_id,
               created_knowledge_ids: materialized.created_knowledge_ids,
+              actions: materialized.actions,
               enqueued_note_generate_jobs: 0,
             },
           };
@@ -277,7 +294,9 @@ export async function acceptLearningItemProposal(
 
   const enqueued = await enqueueLearningIntentNotes(
     db,
-    [...run.result.atomic_artifact_ids, ...run.result.long_artifact_ids],
+    run.result.actions
+      .filter((action) => action.action === 'create' && action.note_id)
+      .map((action) => action.note_id as string),
     opts.enqueueLearningIntentNote,
   );
   return { ...run.result, enqueued_note_generate_jobs: enqueued };
@@ -295,6 +314,7 @@ async function summarizeLearningItemMaterialization(
   const liRows = await db
     .select({
       id: learning_item.id,
+      title: learning_item.title,
       parent_learning_item_id: learning_item.parent_learning_item_id,
       primary_artifact_id: learning_item.primary_artifact_id,
       knowledge_ids: learning_item.knowledge_ids,
@@ -347,6 +367,54 @@ async function summarizeLearningItemMaterialization(
     const artifactId = row.primary_artifact_id;
     return artifactId ? artifactTypeById.get(artifactId) === 'note_long' : false;
   });
+  const proposal = await readProposalEventForActions(db, proposalId);
+  const plannedAtomics = proposal?.payload.atomics ?? [];
+  const plannedLongs = proposal?.payload.longs ?? [];
+  const actions = [
+    {
+      kind: 'hub' as const,
+      proposal_item_id: null as string | null,
+      knowledge_ids: [rootKnowledgeId],
+      action: 'create' as const,
+      reason: 'new' as const,
+      learning_item_id: hub.id,
+      note_id: hubArtifactId,
+    },
+    ...atomicItems.map((row) => ({
+      kind: 'atomic' as const,
+      proposal_item_id:
+        plannedAtomics.findIndex((item) => item.knowledge_id === (row.knowledge_ids[0] ?? '')) >= 0
+          ? `atomic:${plannedAtomics.findIndex(
+              (item) => item.knowledge_id === (row.knowledge_ids[0] ?? ''),
+            )}`
+          : (row.knowledge_ids[0] ?? null),
+      knowledge_ids: row.knowledge_ids,
+      action: 'create' as const,
+      reason: 'new' as const,
+      learning_item_id: row.id,
+      note_id: row.primary_artifact_id,
+    })),
+    ...longItems.map((row) => ({
+      kind: 'long' as const,
+      proposal_item_id:
+        plannedLongs.findIndex(
+          (item) =>
+            item.title === row.title &&
+            JSON.stringify(item.knowledge_ids) === JSON.stringify(row.knowledge_ids),
+        ) >= 0
+          ? `long:${plannedLongs.findIndex(
+              (item) =>
+                item.title === row.title &&
+                JSON.stringify(item.knowledge_ids) === JSON.stringify(row.knowledge_ids),
+            )}`
+          : row.title,
+      knowledge_ids: row.knowledge_ids,
+      action: 'create' as const,
+      reason: 'new' as const,
+      learning_item_id: row.id,
+      note_id: row.primary_artifact_id,
+    })),
+  ];
 
   return {
     hub_learning_item_id: hub.id,
@@ -361,7 +429,85 @@ async function summarizeLearningItemMaterialization(
       .filter((id): id is string => Boolean(id)),
     root_knowledge_id: rootKnowledgeId,
     created_knowledge_ids: [],
+    actions,
   };
+}
+
+function readLearningItemAcceptReceipt(
+  payload: unknown,
+): { available: false } | { available: true; value: LearningItemAcceptResult } {
+  const record = asPlainRecord(payload);
+  const receipt = asPlainRecord(record.learning_item_accept_receipt);
+  const stringArray = (value: unknown): value is string[] =>
+    Array.isArray(value) && value.every((id) => typeof id === 'string');
+  const optionalId = (value: unknown): string | null => (typeof value === 'string' ? value : null);
+  const requiredId = (value: unknown): value is string => typeof value === 'string';
+  const parseAction = (value: unknown): LearningItemAcceptAction | null => {
+    const candidate = asPlainRecord(value);
+    if (
+      !['hub', 'atomic', 'long'].includes(String(candidate.kind)) ||
+      !['create', 'skip', 'reuse'].includes(String(candidate.action)) ||
+      !['new', 'mastered', 'existing_item'].includes(String(candidate.reason)) ||
+      !stringArray(candidate.knowledge_ids)
+    ) {
+      return null;
+    }
+    return {
+      kind: candidate.kind as LearningItemAcceptAction['kind'],
+      proposal_item_id: optionalId(candidate.proposal_item_id),
+      knowledge_ids: candidate.knowledge_ids,
+      action: candidate.action as LearningItemAcceptAction['action'],
+      reason: candidate.reason as LearningItemAcceptAction['reason'],
+      learning_item_id: optionalId(candidate.learning_item_id),
+      note_id: optionalId(candidate.note_id),
+    };
+  };
+  if (
+    !requiredId(receipt.hub_learning_item_id) ||
+    !stringArray(receipt.atomic_learning_item_ids) ||
+    !stringArray(receipt.long_learning_item_ids) ||
+    !requiredId(receipt.hub_artifact_id) ||
+    !stringArray(receipt.atomic_artifact_ids) ||
+    !stringArray(receipt.long_artifact_ids) ||
+    !requiredId(receipt.root_knowledge_id) ||
+    !stringArray(receipt.created_knowledge_ids) ||
+    !Array.isArray(receipt.actions) ||
+    !receipt.actions.every((action) => parseAction(action) !== null)
+  ) {
+    return { available: false };
+  }
+  return {
+    available: true,
+    value: {
+      kind: 'learning_item',
+      rate_event_id: '',
+      hub_learning_item_id: receipt.hub_learning_item_id,
+      atomic_learning_item_ids: receipt.atomic_learning_item_ids,
+      long_learning_item_ids: receipt.long_learning_item_ids,
+      hub_artifact_id: receipt.hub_artifact_id,
+      atomic_artifact_ids: receipt.atomic_artifact_ids,
+      long_artifact_ids: receipt.long_artifact_ids,
+      root_knowledge_id: receipt.root_knowledge_id,
+      created_knowledge_ids: receipt.created_knowledge_ids,
+      actions: receipt.actions.map((action) => parseAction(action) as LearningItemAcceptAction),
+      enqueued_note_generate_jobs: 0,
+    },
+  };
+}
+
+async function readProposalEventForActions(db: Db, proposalId: string) {
+  const rows = await db
+    .select({ payload: event.payload })
+    .from(event)
+    .where(eq(event.id, proposalId))
+    .limit(1);
+  const payload = rows[0]?.payload as
+    | {
+        atomics?: Array<{ knowledge_id: string }>;
+        longs?: Array<{ title: string; knowledge_ids: string[] }>;
+      }
+    | undefined;
+  return payload ? { payload } : null;
 }
 
 type LearningItemRow = typeof learning_item.$inferSelect;

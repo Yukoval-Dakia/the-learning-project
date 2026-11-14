@@ -92,6 +92,9 @@ export interface WriteLearningItemProposalInput extends CommonProducerInput {
   auto_apply_eligible?: boolean;
   knowledge_node: unknown;
   proposed_knowledge?: unknown;
+  existing_items?: readonly unknown[];
+  mastered_knowledge_ids?: readonly string[];
+  prerequisite_edges?: readonly unknown[];
   hub: unknown;
   atomics: unknown[];
   longs?: unknown[];
@@ -108,6 +111,11 @@ export async function writeLearningItemProposal(
     ...(input.plan_case ? { plan_case: input.plan_case } : {}),
     knowledge_node: input.knowledge_node,
     ...(input.proposed_knowledge ? { proposed_knowledge: input.proposed_knowledge } : {}),
+    ...(input.existing_items ? { existing_items: input.existing_items } : {}),
+    ...(input.mastered_knowledge_ids
+      ? { mastered_knowledge_ids: input.mastered_knowledge_ids }
+      : {}),
+    ...(input.prerequisite_edges ? { prerequisite_edges: input.prerequisite_edges } : {}),
     hub: input.hub,
     atomics: input.atomics,
     longs: input.longs ?? [],

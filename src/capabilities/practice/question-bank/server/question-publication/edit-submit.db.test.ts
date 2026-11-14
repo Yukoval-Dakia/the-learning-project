@@ -32,7 +32,7 @@ import {
 } from '@/kernel/records/assessment-publication';
 import { draftDocumentToContract } from '@/kernel/records/question-draft-contract';
 import { acceptAiProposal } from '@/server/proposals/actions';
-import { resetDb, testDb } from '../../../tests/helpers/db';
+import { resetDb, testDb } from '../../../../../../tests/helpers/db';
 import { saveDraftEdit, validateDraftEdit } from './edit-question';
 import { submitDraftQuestion } from './submit-question';
 
