@@ -88,6 +88,7 @@ export interface KnowledgeNoteLink {
   knowledge_id: string;
   note_id: string;
   title: string;
+  source: { issuance_id: string; question_id: string };
 }
 /**
  * Owner-projected cause editor. The practice owner decides whether the attempt may be attributed;

@@ -15,6 +15,20 @@ export const getStartNotePage = createServerFn({ method: 'GET' })
     ),
   );
 
+export const openStartPracticeNote = createServerFn({ method: 'POST' })
+  .validator(
+    (input: { id: string; issuance_id: string; question_id: string; entry_knowledge_id: string }) =>
+      input,
+  )
+  .handler(async ({ context, data }) =>
+    JSON.stringify(
+      await runAuthenticatedStartWorkbench(context, getRequest(), async () => {
+        const { openStartPracticeNotePage } = await context.adapters.notes();
+        return openStartPracticeNotePage(data);
+      }),
+    ),
+  );
+
 // Date fields retain the same ISO JSON representation as the old HTTP response.
 export const getStartNoteAiChanges = createServerFn({ method: 'GET' })
   .validator((input: { id: string }) => input)

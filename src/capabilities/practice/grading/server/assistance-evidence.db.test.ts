@@ -4,7 +4,9 @@
 
 import { and, eq, inArray } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { event, mastery_state, material_fsrs_state } from '@/db/schema';
+import { openPracticeNotePage } from '@/capabilities/notes/public';
+import { artifact, event, mastery_state, material_fsrs_state } from '@/db/schema';
+import { sha256CanonicalJson } from '@/kernel/canonical-json';
 import { writeEvent } from '@/kernel/events';
 import { STUDY_ASSISTANCE_ACTION } from '@/kernel/records/study-reference';
 import {
@@ -311,5 +313,95 @@ describe('assistance evidence separation', () => {
       kinds: ['hint'],
       phase: null,
     });
+  });
+
+  // @invariant concurrency: a post-submit note open returns the same page
+  // snapshot that the durable note exposure digests; concurrent same-version
+  // opens and a second valid knowledge entry replay one identity without
+  // changing the already sealed submission receipt
+  // @fails-if the second valid entry conflicts, two note events exist, the
+  // response digest differs from the stored exposure, or the submission
+  // receipt is rewritten after the open
+  it('records one durable note exposure for concurrent opens and entry replay', async () => {
+    const db = testDb();
+    const f = await nativeSoloHttpFixture(db, { knowledgeIds: ['kc_a', 'kc_b'] });
+    const submission = await createAttempt(nativeHttpRequest(f.body()));
+    expect(submission.status).toBe(200);
+    const submissionBody = await submission.json();
+    const beforeReceipt = await readSubmissionAssistanceReceipt(
+      db,
+      submissionBody.assessment.submission_id,
+    );
+    const noteId = `note_${f.id}`;
+    await db.insert(artifact).values({
+      id: noteId,
+      type: 'note_atomic',
+      title: '控制变量笔记',
+      knowledge_ids: f.knowledgeIds,
+      intent_source: 'test',
+      source: 'test',
+      body_blocks: {
+        type: 'doc',
+        content: [
+          {
+            type: 'paragraph',
+            attrs: { id: 'note-body', source_markdown: '先固定水量，再改变坡度。' },
+            content: [{ type: 'text', text: '先固定水量，再改变坡度。' }],
+          },
+        ],
+      },
+      generation_status: 'ready',
+      created_at: new Date(),
+      updated_at: new Date(),
+      version: 7,
+    });
+    const open = (entryKnowledgeId: string) =>
+      openPracticeNotePage(db, {
+        id: noteId,
+        issuance_id: f.body().assessment.issuance_id,
+        question_id: f.id,
+        entry_knowledge_id: entryKnowledgeId,
+      });
+    const [first, second] = await Promise.all([open(f.knowledgeIds[0]), open(f.knowledgeIds[0])]);
+    const replay = await open(f.knowledgeIds[1]);
+    for (const result of [first, second, replay]) {
+      expect(result.page.version).toBe(7);
+      expect(result.exposure).toMatchObject({
+        event_id: first.exposure.event_id,
+        kind: 'note',
+        phase: 'after_submit',
+        note_id: noteId,
+        note_version: result.page.version,
+      });
+      expect(result.exposure.content_digest).toBe(
+        `sha256:${sha256CanonicalJson({
+          format: 'practice-note-open/v1',
+          note_id: result.page.id,
+          note_type: result.page.type,
+          note_version: result.page.version,
+          title: result.page.title,
+          body_blocks: result.page.body_blocks,
+        })}`,
+      );
+    }
+    const exposures = await exposuresFor(f.body().assessment.issuance_id);
+    expect(exposures).toHaveLength(1);
+    expect(exposures[0].payload).toMatchObject({
+      version: 2,
+      kind: 'note',
+      impact: 'answer_help',
+      content_digest: first.exposure.content_digest,
+      dose: null,
+      phase: 'after_submit',
+      note: {
+        id: noteId,
+        version: 7,
+        question_id: f.id,
+        entry_knowledge_id: f.knowledgeIds[0],
+      },
+    });
+    await expect(
+      readSubmissionAssistanceReceipt(db, submissionBody.assessment.submission_id),
+    ).resolves.toEqual(beforeReceipt);
   });
 });

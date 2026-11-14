@@ -25,6 +25,7 @@ import {
   question,
   question_revision,
 } from '@/db/schema';
+import { sha256CanonicalJson } from '@/kernel/canonical-json';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 
@@ -275,6 +276,39 @@ export async function loadIssuanceStudyCoordinate(
 
 export type StudyAssistancePhase = 'before_submit' | 'after_submit';
 
+export interface NoteAssistanceExposureInput {
+  issuanceId: string;
+  questionId: string;
+  kind: 'note';
+  contentDigest: string;
+  note: { id: string; version: number; entryKnowledgeId: string };
+}
+
+export interface NoteAssistanceExposureReceipt {
+  event_id: string;
+  kind: 'note';
+  phase: 'after_submit';
+  content_digest: string;
+  note_id: string;
+  note_version: number;
+}
+
+export type StudyAssistanceExposureInput =
+  | {
+      issuanceId: string;
+      questionId: string;
+      kind: 'hint' | 'solution' | 'chat_context';
+      impact: StudyAssistanceImpact;
+      contentDigest: string;
+      actorRef: string;
+      dose?: number;
+      eventId?: string;
+      publication?: HintPublicationT;
+    }
+  | NoteAssistanceExposureInput;
+
+export type StudyAssistanceEventInput = Exclude<StudyAssistanceExposureInput, { kind: 'note' }>;
+
 /**
  * Record one assistance exposure. Locks the issuance and re-checks the
  * coordinate inside that lock, sharing the lock with submission snapshots.
@@ -285,20 +319,18 @@ export type StudyAssistancePhase = 'before_submit' | 'after_submit';
  * `phase` is decided here under the issuance lock: once a submission row
  * exists the exposure is post-submit review, not pre-submit assistance.
  */
+export function recordStudyAssistanceExposure(
+  database: Db | Tx,
+  input: StudyAssistanceEventInput,
+): Promise<string>;
+export function recordStudyAssistanceExposure(
+  database: Db | Tx,
+  input: NoteAssistanceExposureInput,
+): Promise<NoteAssistanceExposureReceipt>;
 export async function recordStudyAssistanceExposure(
   database: Db | Tx,
-  input: {
-    issuanceId: string;
-    questionId: string;
-    kind: 'hint' | 'solution' | 'chat_context';
-    impact: StudyAssistanceImpact;
-    contentDigest: string;
-    actorRef: string;
-    dose?: number;
-    eventId?: string;
-    publication?: HintPublicationT;
-  },
-): Promise<string> {
+  input: StudyAssistanceExposureInput,
+): Promise<string | NoteAssistanceExposureReceipt> {
   return database.transaction(async (tx) => {
     const [issuance] = await tx
       .select()
@@ -318,6 +350,22 @@ export async function recordStudyAssistanceExposure(
     ) {
       throw new ApiError('coordinate_mismatch', 'assistance is outside the frozen issuance', 409);
     }
+    if (input.kind === 'note') {
+      const studyCoordinate = await loadIssuanceStudyCoordinate(
+        tx,
+        input.issuanceId,
+        input.questionId,
+      );
+      if (studyCoordinate.status === 'not_found') {
+        throw new ApiError('not_found', 'issued assessment not found', 404);
+      }
+      if (studyCoordinate.status === 'coordinate_mismatch') {
+        throw new ApiError('coordinate_mismatch', 'assistance is outside the frozen issuance', 409);
+      }
+      if (studyCoordinate.status === 'reveal_unavailable') {
+        throw new ApiError('study_restricted', 'assistance is unavailable for this study', 409);
+      }
+    }
     const [submitted] = await tx
       .select({ submission_id: assessment_submission.submission_id })
       .from(assessment_submission)
@@ -330,6 +378,12 @@ export async function recordStudyAssistanceExposure(
       input.dose >= 0
         ? input.dose
         : null;
+    if (input.kind === 'note') {
+      if (!submitted) {
+        throw new ApiError('submission_required', 'notes open only after submission', 409);
+      }
+      return recordNoteExposure(tx, input);
+    }
     return writeEvent(tx, {
       id: input.eventId ?? `evt_help_${createId()}`,
       actor_kind: 'system',
@@ -349,4 +403,89 @@ export async function recordStudyAssistanceExposure(
       },
     });
   });
+}
+
+async function recordNoteExposure(
+  tx: Tx,
+  input: NoteAssistanceExposureInput,
+): Promise<NoteAssistanceExposureReceipt> {
+  const [identity] = await tx
+    .select({ id: question.id, knowledge_ids: question.knowledge_ids })
+    .from(question)
+    .where(eq(question.id, input.questionId))
+    .limit(1);
+  if (!identity?.knowledge_ids?.includes(input.note.entryKnowledgeId)) {
+    throw new ApiError('note_context_mismatch', 'note does not belong to this question', 409);
+  }
+  const eventId = `evt_note_open_${sha256CanonicalJson({
+    format: 'practice-note-open-id/v1',
+    issuance_id: input.issuanceId,
+    note_id: input.note.id,
+    note_version: input.note.version,
+    content_digest: input.contentDigest,
+  })}`;
+  const payload = {
+    version: 2,
+    kind: 'note',
+    impact: 'answer_help',
+    content_digest: input.contentDigest,
+    dose: null,
+    phase: 'after_submit',
+    note: {
+      id: input.note.id,
+      version: input.note.version,
+      question_id: input.questionId,
+      entry_knowledge_id: input.note.entryKnowledgeId,
+    },
+  };
+  const [existing] = await tx
+    .select({ id: event.id, payload: event.payload })
+    .from(event)
+    .where(eq(event.id, eventId))
+    .limit(1);
+  const receipt: NoteAssistanceExposureReceipt = {
+    event_id: eventId,
+    kind: 'note',
+    phase: 'after_submit',
+    content_digest: input.contentDigest,
+    note_id: input.note.id,
+    note_version: input.note.version,
+  };
+  if (existing) {
+    if (
+      existing.payload.kind !== 'note' ||
+      existing.payload.impact !== 'answer_help' ||
+      existing.payload.content_digest !== input.contentDigest ||
+      existing.payload.dose !== null ||
+      existing.payload.phase !== 'after_submit' ||
+      !noteProvenanceMatches(existing.payload.note, {
+        id: input.note.id,
+        version: input.note.version,
+      })
+    ) {
+      throw new ApiError(
+        'exposure_identity_conflict',
+        'note exposure identity is inconsistent',
+        409,
+      );
+    }
+    return receipt;
+  }
+  await writeEvent(tx, {
+    id: eventId,
+    actor_kind: 'system',
+    actor_ref: 'notes:practice-open',
+    action: STUDY_ASSISTANCE_ACTION,
+    subject_kind: 'issuance',
+    subject_id: input.issuanceId,
+    outcome: null,
+    payload,
+  });
+  return receipt;
+}
+
+function noteProvenanceMatches(value: unknown, expected: { id: string; version: number }): boolean {
+  if (!value || typeof value !== 'object') return false;
+  const note = value as Record<string, unknown>;
+  return note.id === expected.id && note.version === expected.version;
 }

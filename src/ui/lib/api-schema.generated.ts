@@ -10985,7 +10985,7 @@ export interface operations {
                         attempt_event_id: string;
                         evidence: {
                             assistance: {
-                                kinds: ("hint" | "solution" | "chat_context")[];
+                                kinds: ("hint" | "solution" | "chat_context" | "note")[];
                                 max_dose: number | null;
                                 /** @enum {string|null} */
                                 phase: "before_submit" | "after_submit" | null;
@@ -20620,7 +20620,7 @@ export interface operations {
                                     confidence?: number;
                                     evidence?: {
                                         assistance: {
-                                            kinds: ("hint" | "solution" | "chat_context")[];
+                                            kinds: ("hint" | "solution" | "chat_context" | "note")[];
                                             max_dose: number | null;
                                             /** @enum {string|null} */
                                             phase: "before_submit" | "after_submit" | null;
@@ -21372,7 +21372,7 @@ export interface operations {
                             confidence?: number;
                             evidence?: {
                                 assistance: {
-                                    kinds: ("hint" | "solution" | "chat_context")[];
+                                    kinds: ("hint" | "solution" | "chat_context" | "note")[];
                                     max_dose: number | null;
                                     /** @enum {string|null} */
                                     phase: "before_submit" | "after_submit" | null;
@@ -26911,7 +26911,7 @@ export interface operations {
                                                 confidence?: number;
                                                 evidence?: {
                                                     assistance: {
-                                                        kinds: ("hint" | "solution" | "chat_context")[];
+                                                        kinds: ("hint" | "solution" | "chat_context" | "note")[];
                                                         max_dose: number | null;
                                                         /** @enum {string|null} */
                                                         phase: "before_submit" | "after_submit" | null;
@@ -28659,7 +28659,7 @@ export interface operations {
                                                     confidence?: number;
                                                     evidence?: {
                                                         assistance: {
-                                                            kinds: ("hint" | "solution" | "chat_context")[];
+                                                            kinds: ("hint" | "solution" | "chat_context" | "note")[];
                                                             max_dose: number | null;
                                                             /** @enum {string|null} */
                                                             phase: "before_submit" | "after_submit" | null;
@@ -29916,7 +29916,7 @@ export interface operations {
                                                 confidence?: number;
                                                 evidence?: {
                                                     assistance: {
-                                                        kinds: ("hint" | "solution" | "chat_context")[];
+                                                        kinds: ("hint" | "solution" | "chat_context" | "note")[];
                                                         max_dose: number | null;
                                                         /** @enum {string|null} */
                                                         phase: "before_submit" | "after_submit" | null;
@@ -39991,7 +39991,7 @@ export interface operations {
                             attempt_event_id: string;
                             evidence: {
                                 assistance: {
-                                    kinds: ("hint" | "solution" | "chat_context")[];
+                                    kinds: ("hint" | "solution" | "chat_context" | "note")[];
                                     max_dose: number | null;
                                     /** @enum {string|null} */
                                     phase: "before_submit" | "after_submit" | null;
@@ -40081,7 +40081,7 @@ export interface operations {
                         evaluation_group_id: string;
                         evidence: {
                             assistance: {
-                                kinds: ("hint" | "solution" | "chat_context")[];
+                                kinds: ("hint" | "solution" | "chat_context" | "note")[];
                                 max_dose: number | null;
                                 /** @enum {string|null} */
                                 phase: "before_submit" | "after_submit" | null;

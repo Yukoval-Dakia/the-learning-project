@@ -135,7 +135,7 @@ export const SubmissionCreatedSchema = z.object({
 export const AttemptAssistanceSchema = z.object({
   status: z.enum(['independent', 'assisted', 'unknown']),
   max_dose: z.number().int().nonnegative().nullable(),
-  kinds: z.array(z.enum(['hint', 'solution', 'chat_context'])),
+  kinds: z.array(z.enum(['hint', 'solution', 'chat_context', 'note'])),
   phase: z.enum(['before_submit', 'after_submit']).nullable(),
 });
 

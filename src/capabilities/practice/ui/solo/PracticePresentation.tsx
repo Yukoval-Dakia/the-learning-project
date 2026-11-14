@@ -427,7 +427,10 @@ export function PracticePresentation(props: PracticePresentationProps) {
           knowledgeNotes:
             (outcome === 'incorrect' || outcome === 'partial' || outcome === 'partial_unknown') &&
             item.knowledge_notes.length > 0
-              ? item.knowledge_notes.map((note) => ({ ...note }))
+              ? item.knowledge_notes.map((note) => ({
+                  ...note,
+                  source: { issuance_id: ready.id, question_id: item.ref_id },
+                }))
               : undefined,
         },
       };

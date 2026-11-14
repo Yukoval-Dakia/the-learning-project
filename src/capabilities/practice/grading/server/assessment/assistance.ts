@@ -18,7 +18,7 @@ export interface AssistanceReceipt {
   /** Deepest hint-ladder rung proven by the events; null when it cannot be bounded. */
   max_dose: number | null;
   /** Sorted unique exposure kinds present in the receipt. */
-  kinds: Array<'hint' | 'solution' | 'chat_context'>;
+  kinds: Array<'hint' | 'solution' | 'chat_context' | 'note'>;
   /** 'after_submit' once any v2 event was recorded post-submit; null when a v1 event leaves the phase unprovable. */
   phase: AssistancePhase | null;
 }
