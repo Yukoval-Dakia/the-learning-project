@@ -37,12 +37,26 @@ export async function recommendPedagogy(
 ): Promise<PedagogyRecommendationT> {
   const policy = selectPedagogyCandidates(input.snapshot.learner_context);
   const disabled = new Set(input.snapshot.disabled_method_ids);
-  const candidates = policy.candidates.filter((method) => !disabled.has(method.id));
+  const priorIneffective = new Set(
+    input.snapshot.prior_interventions
+      .filter((intervention) => intervention.outcome === 'ineffective')
+      .map((intervention) => intervention.method_id),
+  );
+  const candidates = policy.candidates.filter(
+    (method) => !disabled.has(method.id) && !priorIneffective.has(method.id),
+  );
   const excluded = [
     ...policy.excluded,
-    ...policy.candidates
-      .filter((method) => disabled.has(method.id))
-      .map((method) => ({ method_id: method.id, reason: 'disabled' as const })),
+    ...policy.candidates.flatMap((method) => {
+      const exclusions = [];
+      if (disabled.has(method.id)) {
+        exclusions.push({ method_id: method.id, reason: 'disabled' as const });
+      }
+      if (priorIneffective.has(method.id)) {
+        exclusions.push({ method_id: method.id, reason: 'prior_ineffective' as const });
+      }
+      return exclusions;
+    }),
   ];
   const candidateIds = candidates.map((method) => method.id);
 

@@ -175,7 +175,7 @@ export const PedagogyRecommendationStructuredOutput = z
 const PedagogyPolicyExclusion = z
   .object({
     method_id: PedagogyMethodId,
-    reason: z.enum(['contraindicated', 'not_indicated', 'disabled']),
+    reason: z.enum(['contraindicated', 'not_indicated', 'disabled', 'prior_ineffective']),
   })
   .strict();
 

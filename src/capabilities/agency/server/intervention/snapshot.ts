@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { and, desc, eq, isNotNull, sql } from 'drizzle-orm';
+import { and, desc, eq, isNotNull } from 'drizzle-orm';
 import { z } from 'zod';
 import { getConfig, getConfigFlag } from '@/core/config/store';
 import {
@@ -187,7 +187,7 @@ export async function buildInterventionSnapshotFromProbeResult(
       and(
         eq(intervention.status, 'settled'),
         isNotNull(intervention.outcome),
-        sql`${intervention.snapshot_json} #>> '{conjecture,knowledge_id}' = ${change.knowledge_id}`,
+        eq(intervention.conjecture_event_id, probeResult.conjecture_event_id),
       ),
     )
     .orderBy(desc(intervention.updated_at), desc(intervention.version))
