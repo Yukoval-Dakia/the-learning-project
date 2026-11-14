@@ -112,10 +112,10 @@ importers:
         version: 2.2.0(cytoscape@3.34.4)
       drizzle-orm:
         specifier: ^0.45.4
-        version: 0.45.4(patch_hash=d727202a754044294b921e3c7f704ad47f8451638129d49bca59483ae6b102f7)(@cloudflare/workers-types@4.20260508.1)(@opentelemetry/api@1.9.1)(@types/pg@8.23.1)(better-sqlite3@12.11.1)(pg@8.23.1)(postgres@3.4.9)
+        version: 0.45.4(patch_hash=d727202a754044294b921e3c7f704ad47f8451638129d49bca59483ae6b102f7)(@cloudflare/workers-types@4.20260508.1)(@opentelemetry/api@1.9.1)(@types/pg@8.23.1)(better-sqlite3@12.11.1)(pg@8.23.1)(postgres@4.1.0)
       drizzle-zod:
         specifier: ^0.7.1
-        version: 0.7.1(drizzle-orm@0.45.4(patch_hash=d727202a754044294b921e3c7f704ad47f8451638129d49bca59483ae6b102f7)(@cloudflare/workers-types@4.20260508.1)(@opentelemetry/api@1.9.1)(@types/pg@8.23.1)(better-sqlite3@12.11.1)(pg@8.23.1)(postgres@3.4.9))(zod@4.6.7)
+        version: 0.7.1(drizzle-orm@0.45.4(patch_hash=d727202a754044294b921e3c7f704ad47f8451638129d49bca59483ae6b102f7)(@cloudflare/workers-types@4.20260508.1)(@opentelemetry/api@1.9.1)(@types/pg@8.23.1)(better-sqlite3@12.11.1)(pg@8.23.1)(postgres@4.1.0))(zod@4.6.7)
       fast-xml-parser:
         specifier: ^5.11.2
         version: 5.11.2
@@ -156,8 +156,8 @@ importers:
         specifier: 1.64.1
         version: 1.64.1
       postgres:
-        specifier: ^3.4.5
-        version: 3.4.9
+        specifier: ^4.1.0
+        version: 4.1.0
       react:
         specifier: ^19.3.1
         version: 19.3.1
@@ -5032,9 +5032,9 @@ packages:
     resolution: {integrity: sha512-9ZhXKM/rw350N1ovuWHbGxnGh/SNJ4cnxHiM0rxE4VN41wsg8P8zWn9hv/buK00RP4WvlOyr/RBDiptyxVbkZQ==}
     engines: {node: '>=0.10.0'}
 
-  postgres@3.4.9:
-    resolution: {integrity: sha512-GD3qdB0x1z9xgFI6cdRD6xu2Sp2WCOEoe3mtnyB5Ee0XrrL5Pe+e4CCnJrRMnL1zYtRDZmQQVbvOttLnKDLnaw==}
-    engines: {node: '>=12'}
+  postgres@4.1.0:
+    resolution: {integrity: sha512-s+0WH67YAyLdBQUb6XczbziBhY+C9uiQsg9S8R5RHdZhk6sdyK6202E+T2tXpiInSEEjDLRSJ3OpYBe3PN6MsQ==}
+    engines: {node: '>=18'}
 
   powershell-utils@0.2.1:
     resolution: {integrity: sha512-C+y9x90UElAddDZmV4qOx9W53B61PO7cIqWz2dQsWlwswuq4mr8NEwytdGKboYbQlGZ3awrkTeNvcZiZNHnQ8A==}
@@ -9501,18 +9501,18 @@ snapshots:
       esbuild: 0.28.2
       tsx: 4.23.12
 
-  drizzle-orm@0.45.4(patch_hash=d727202a754044294b921e3c7f704ad47f8451638129d49bca59483ae6b102f7)(@cloudflare/workers-types@4.20260508.1)(@opentelemetry/api@1.9.1)(@types/pg@8.23.1)(better-sqlite3@12.11.1)(pg@8.23.1)(postgres@3.4.9):
+  drizzle-orm@0.45.4(patch_hash=d727202a754044294b921e3c7f704ad47f8451638129d49bca59483ae6b102f7)(@cloudflare/workers-types@4.20260508.1)(@opentelemetry/api@1.9.1)(@types/pg@8.23.1)(better-sqlite3@12.11.1)(pg@8.23.1)(postgres@4.1.0):
     optionalDependencies:
       '@cloudflare/workers-types': 4.20260508.1
       '@opentelemetry/api': 1.9.1
       '@types/pg': 8.23.1
       better-sqlite3: 12.11.1
       pg: 8.23.1
-      postgres: 3.4.9
+      postgres: 4.1.0
 
-  drizzle-zod@0.7.1(drizzle-orm@0.45.4(patch_hash=d727202a754044294b921e3c7f704ad47f8451638129d49bca59483ae6b102f7)(@cloudflare/workers-types@4.20260508.1)(@opentelemetry/api@1.9.1)(@types/pg@8.23.1)(better-sqlite3@12.11.1)(pg@8.23.1)(postgres@3.4.9))(zod@4.6.7):
+  drizzle-zod@0.7.1(drizzle-orm@0.45.4(patch_hash=d727202a754044294b921e3c7f704ad47f8451638129d49bca59483ae6b102f7)(@cloudflare/workers-types@4.20260508.1)(@opentelemetry/api@1.9.1)(@types/pg@8.23.1)(better-sqlite3@12.11.1)(pg@8.23.1)(postgres@4.1.0))(zod@4.6.7):
     dependencies:
-      drizzle-orm: 0.45.4(patch_hash=d727202a754044294b921e3c7f704ad47f8451638129d49bca59483ae6b102f7)(@cloudflare/workers-types@4.20260508.1)(@opentelemetry/api@1.9.1)(@types/pg@8.23.1)(better-sqlite3@12.11.1)(pg@8.23.1)(postgres@3.4.9)
+      drizzle-orm: 0.45.4(patch_hash=d727202a754044294b921e3c7f704ad47f8451638129d49bca59483ae6b102f7)(@cloudflare/workers-types@4.20260508.1)(@opentelemetry/api@1.9.1)(@types/pg@8.23.1)(better-sqlite3@12.11.1)(pg@8.23.1)(postgres@4.1.0)
       zod: 4.6.7
 
   dunder-proto@1.0.1:
@@ -11288,7 +11288,7 @@ snapshots:
     dependencies:
       xtend: 4.0.2
 
-  postgres@3.4.9: {}
+  postgres@4.1.0: {}
 
   powershell-utils@0.2.1: {}
 
