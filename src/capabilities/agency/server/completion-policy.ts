@@ -20,6 +20,7 @@ export interface LearningItemKcProgress {
     lo: number;
     hi: number;
     band: string;
+    lowConfidence: boolean;
     lastOutcomeAt: string | null;
   } | null;
   eligible: boolean;
@@ -68,6 +69,7 @@ export function evaluateCompletionKnowledge(
             lo: projection.mastery_lo,
             hi: projection.mastery_hi,
             band: A5_BANDS[band.band],
+            lowConfidence: band.lowConf,
             lastOutcomeAt: projection.last_outcome_at?.toISOString() ?? null,
           }
         : null;
