@@ -114,7 +114,10 @@ describe('learner-profile canonical projection', () => {
     const drained = await drainLearnerProfileRefresh(db);
     expect(drained.refreshed).toBe(1);
 
-    const rows = await db.select().from(learner_profile).where(eq(learner_profile.knowledge_id, kc));
+    const rows = await db
+      .select()
+      .from(learner_profile)
+      .where(eq(learner_profile.knowledge_id, kc));
     expect(rows).toHaveLength(1);
     expect(rows[0].profile_version).toBe(1);
     expect((rows[0].consumed_intent_ids as string[]).length).toBe(1);
