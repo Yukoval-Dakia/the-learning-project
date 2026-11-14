@@ -1,8 +1,10 @@
 // Atomic learner-profile refresh intents. A canonical writer appends one intent
 // inside its own transaction after every fact write and final receipt. `seq`
-// comes from a dedicated sequence (commit order at write time); freshness is
-// decided by pending intents, never by MAX(event_id) or created_at, so a
-// late-committing intent can never be skipped by a worker high-water mark.
+// comes from a dedicated sequence — it is allocation order at nextval() time,
+// not commit order, so a later-committing intent can carry a smaller seq.
+// Freshness is decided by the pending-intent set alone, never by seq,
+// MAX(event_id) or created_at, so a late-committing intent can never be
+// skipped by a worker high-water mark.
 // Append is idempotent on (knowledge_id, source_kind, source_ref): retries and
 // replays of the same canonical operation collapse to one intent.
 

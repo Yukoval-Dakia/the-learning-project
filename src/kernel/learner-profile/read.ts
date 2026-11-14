@@ -1,14 +1,21 @@
-// Read-only learner-profile getter. One repeatable-read snapshot: rows that are
-// current return their stored projection; rows with pending intents are stale,
-// so the getter rebuilds the same canonical LearnerJudgment inside the same
-// snapshot and reports freshness metadata. It never writes a row or an intent,
-// and never returns an unrefreshed row as current.
+// Read-only learner-profile getter. One repeatable-read snapshot: a current row
+// re-derives the LearnerJudgment at the caller's as_of from its persisted
+// stable canonical facts (R(t), evidence age and wording are never read as
+// constants); rows with pending intents are stale, so the getter rebuilds the
+// same canonical judgment inside the same snapshot and reports per-item
+// freshness. It never writes a row or an intent, and never returns an
+// unrefreshed row as current.
 
 import { and, inArray, isNull, sql } from 'drizzle-orm';
 import type { LearnerJudgment, LearnerJudgmentBatch } from '@/core/schema/learner-judgment';
 import type { Db, Tx } from '@/db/client';
 import { learner_profile, learner_profile_refresh_intent } from '@/db/schema';
-import { buildProfileJudgments, loadCanonicalProfileInputs } from './build';
+import {
+  type PersistedProfileState,
+  buildProfileJudgments,
+  judgmentFromPersistedState,
+  loadCanonicalProfileInputs,
+} from './build';
 
 type DbLike = Db | Tx;
 
@@ -66,11 +73,13 @@ export async function readLearnerProfiles(
       pendingIntentIdsByKc(tx, ids),
     ]);
     const rowByKc = new Map(rows.map((row) => [row.knowledge_id, row]));
-    // Rebuild stale or missing rows in the same snapshot from canonical inputs.
+    // Rebuild stale, missing, or unversioned rows in the same snapshot. A row
+    // without persisted canonical state predates this contract and cannot
+    // serve a re-derived read, so it is treated as missing.
     const staleIds = ids.filter((id) => {
       const row = rowByKc.get(id);
       const pending = pendingByKc.get(id);
-      return !row || (pending !== undefined && pending.length > 0);
+      return !row || row.canonical_state === null || (pending !== undefined && pending.length > 0);
     });
     const rebuilt = new Map<string, LearnerJudgment>();
     if (staleIds.length > 0) {
@@ -82,7 +91,8 @@ export async function readLearnerProfiles(
     return ids.map((id) => {
       const row = rowByKc.get(id);
       const pending = pendingByKc.get(id);
-      const stale = !row || (pending !== undefined && pending.length > 0);
+      const usable = row !== undefined && row.canonical_state !== null;
+      const stale = !usable || (pending !== undefined && pending.length > 0);
       if (stale) {
         return {
           knowledge_id: id,
@@ -92,6 +102,9 @@ export async function readLearnerProfiles(
           judgment: rebuilt.get(id) as LearnerJudgment,
         };
       }
+      // Current: the persisted stable facts re-derive R(t), evidence age and
+      // judgement at this read's as_of through the shared projection. The row
+      // owns the sealed facts; time is derived here, never read as a constant.
       return {
         knowledge_id: id,
         freshness: {
@@ -99,7 +112,11 @@ export async function readLearnerProfiles(
           profile_version: row.profile_version,
           built_at: row.built_at,
         },
-        judgment: rowToJudgment(row),
+        judgment: judgmentFromPersistedState(
+          id,
+          row.canonical_state as unknown as PersistedProfileState,
+          asOf,
+        ),
       };
     });
   };
@@ -190,26 +207,6 @@ export async function readLearnerProfiles(
   }
   const items = await run(db);
   return { as_of: asOf, items };
-}
-
-type ProfileRow = typeof learner_profile.$inferSelect;
-
-function rowToJudgment(row: ProfileRow): LearnerJudgment {
-  return {
-    knowledge_id: row.knowledge_id,
-    ability: row.ability as LearnerJudgment['ability'],
-    p_correct_now: row.p_correct_now as LearnerJudgment['p_correct_now'],
-    ability_claim: row.ability_claim as LearnerJudgment['ability_claim'],
-    retention: row.retention as LearnerJudgment['retention'],
-    evidence_timing: row.evidence_timing as LearnerJudgment['evidence_timing'],
-    review_timing: row.review_timing as unknown as LearnerJudgment['review_timing'],
-    retention_forecast: row.retention_forecast as LearnerJudgment['retention_forecast'],
-    uncertainty: row.uncertainty as LearnerJudgment['uncertainty'],
-    would_change_it: row.would_change_it as LearnerJudgment['would_change_it'],
-    patterns: row.patterns as LearnerJudgment['patterns'],
-    corrections: row.corrections as LearnerJudgment['corrections'],
-    judgement: row.judgement ?? '',
-  };
 }
 
 /**

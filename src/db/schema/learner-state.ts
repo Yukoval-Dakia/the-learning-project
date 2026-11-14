@@ -83,6 +83,11 @@ export const learner_profile = pgTable(
     corrections: jsonb('corrections').$type<JsonObject | null>(),
     retention_forecast: jsonb('retention_forecast').$type<JsonObject | null>(),
     judgement: text('judgement'),
+    // Sealed canonical facts (mastery projection, FSRS state, durations,
+    // activity clock, role flag). The read path re-derives R(t), evidence age
+    // and judgement text from this at the caller's as_of — never from a
+    // persisted derived constant.
+    canonical_state: jsonb('canonical_state').$type<JsonObject | null>(),
     component_versions: jsonb('component_versions').$type<JsonObject>().notNull().default({}),
     updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
     created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -98,8 +103,9 @@ export const learner_profile_refresh_intent = pgTable(
   'learner_profile_refresh_intent',
   {
     id: text('id').primaryKey(),
-    // Dedicated commit-order sequence; freshness is judged by pending intents,
-    // never by MAX(event_id) — see kernel/learner-profile/intents.ts.
+    // Allocation-order sequence only — NOT a commit-order watermark. Freshness
+    // is judged by the pending-intent set, never MAX(seq/event_id) — see
+    // kernel/learner-profile/intents.ts.
     seq: bigint('seq', { mode: 'number' })
       .notNull()
       .default(sql`nextval('learner_profile_refresh_intent_seq')`),

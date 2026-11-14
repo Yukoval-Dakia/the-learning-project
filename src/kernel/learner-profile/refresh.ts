@@ -17,7 +17,7 @@ import type { Db, Tx } from '@/db/client';
 import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
 import { learner_profile, learner_profile_refresh_intent } from '@/db/schema';
 import { reviewTimingJson } from '@/kernel/read-models/review-timing';
-import { buildProfileJudgments, loadCanonicalProfileInputs } from './build';
+import { buildProfileJudgments, loadCanonicalProfileInputs, persistedStateForKc } from './build';
 
 const DRAIN_LIMIT = 200;
 
@@ -86,7 +86,10 @@ export async function drainLearnerProfileRefresh(db: Db): Promise<{ refreshed: n
     }
 
     const asOf = new Date();
-    const inputs = await loadCanonicalProfileInputs(tx, knowledgeIds, asOf);
+    // Strict mode: an operational component failure rolls back the whole
+    // drain — pending intents stay retryable instead of being consumed under a
+    // degraded UNKNOWN row. Legitimate missing evidence stays a named unknown.
+    const inputs = await loadCanonicalProfileInputs(tx, knowledgeIds, asOf, { mode: 'throw' });
     const judgments = buildProfileJudgments(knowledgeIds, inputs, asOf);
     let refreshed = 0;
 
@@ -111,6 +114,10 @@ export async function drainLearnerProfileRefresh(db: Db): Promise<{ refreshed: n
           built_at: asOf,
           consumed_intent_ids: consumed,
           ...payload,
+          canonical_state: persistedStateForKc(item.knowledge_id, inputs) as unknown as Record<
+            string,
+            unknown
+          >,
           component_versions: componentVersions,
         });
       } else {
@@ -123,6 +130,10 @@ export async function drainLearnerProfileRefresh(db: Db): Promise<{ refreshed: n
             built_at: asOf,
             consumed_intent_ids: consumed,
             ...payload,
+            canonical_state: persistedStateForKc(item.knowledge_id, inputs) as unknown as Record<
+              string,
+              unknown
+            >,
             component_versions: componentVersions,
             updated_at: asOf,
           })

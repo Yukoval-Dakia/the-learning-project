@@ -9,7 +9,7 @@
 
 import { and, eq, inArray } from 'drizzle-orm';
 import type { LearnerJudgment } from '@/core/schema/learner-judgment';
-import type { RetentionReading } from '@/core/schema/scheduling-state';
+import type { RetentionReading, SchedulingState } from '@/core/schema/scheduling-state';
 import type { Db, Tx } from '@/db/client';
 import { event, material_fsrs_state } from '@/db/schema';
 import { allowedEventIds } from '@/kernel/events/derivation-policy';
@@ -52,6 +52,32 @@ export interface CanonicalProfileInputs {
   selectedEngine:
     | { kind: 'selected'; engine: 'fsrs' | 'forgetting_candidate' }
     | { kind: 'unknown'; reason: string };
+  /** Per-KC resolved sealed memory state — the stable fact a drain persists so
+   *  a later read re-evaluates R(t) at its own as_of instead of reusing a
+   *  frozen constant. Ids without a card are absent. */
+  schedulingState: Map<string, SchedulingStateEntry>;
+}
+
+/** The sealed memory-state fact the profile persists for one KC. */
+export interface SchedulingStateEntry {
+  state: SchedulingState;
+  due_at: Date;
+  state_readable: boolean;
+  last_review_event_id: string | null;
+}
+
+/**
+ * The stable canonical facts a drain persists per KC. Time-derived fields —
+ * retention reading, evidence age, review timing, disagreement, judgement —
+ * are re-derived from these at the caller's as_of through the shared
+ * projection; the row never stores a frozen R(t) or stale wording.
+ */
+export interface PersistedProfileState {
+  mastery: MasteryProjection | null;
+  scheduling: (Omit<SchedulingStateEntry, 'due_at'> & { due_at: string }) | null;
+  duration: { event_id: string | null; present: boolean; ms: number | null };
+  activity: string | null;
+  non_kc: boolean;
 }
 
 async function loadSchedulingReviewFacts(
@@ -59,8 +85,13 @@ async function loadSchedulingReviewFacts(
   subjectKind: 'question' | 'knowledge',
   ids: string[],
   now: Date,
-): Promise<Map<string, SchedulingReviewFact>> {
-  if (ids.length === 0) return new Map();
+): Promise<{
+  facts: Map<string, SchedulingReviewFact>;
+  states: Map<string, SchedulingStateEntry>;
+}> {
+  const facts = new Map<string, SchedulingReviewFact>();
+  const states = new Map<string, SchedulingStateEntry>();
+  if (ids.length === 0) return { facts, states };
   const rows = await db
     .select()
     .from(material_fsrs_state)
@@ -70,30 +101,49 @@ async function loadSchedulingReviewFacts(
         inArray(material_fsrs_state.subject_id, ids),
       ),
     );
-  const values = new Map<string, SchedulingReviewFact>();
   for (const raw of rows) {
     const eventId = raw.last_review_event_id ?? null;
     try {
       const row = await resolveSchedulingProjection(db, subjectKind, raw.subject_id, raw, now);
-      values.set(raw.subject_id, {
+      facts.set(raw.subject_id, {
         reading: retrievabilityForKc(row.state, now),
         due_at: row.due_at,
         last_retrieval_at: lastRetrievalAt(row.state),
         state_readable: true,
         last_review_event_id: eventId,
       });
+      states.set(raw.subject_id, {
+        state: row.state,
+        due_at: row.due_at,
+        state_readable: true,
+        last_review_event_id: eventId,
+      });
     } catch (err) {
-      if (err instanceof HostOperationNotInstalledError) throw err;
-      values.set(raw.subject_id, {
+      // Legitimate unreadable stored state: the sealed card fails the schema
+      // parse ('invalid scheduling state'). HostOperationNotInstalledError and
+      // any other error are operational — they propagate so the caller's
+      // component-failure mode decides, never a swallowed consume.
+      const unreadable = err instanceof Error && err.message === 'invalid scheduling state';
+      if (err instanceof HostOperationNotInstalledError || !unreadable) throw err;
+      facts.set(raw.subject_id, {
         reading: UNREADABLE_RETENTION,
         due_at: raw.due_at,
         last_retrieval_at: null,
         state_readable: false,
         last_review_event_id: eventId,
       });
+      // Persist the sealed raw state too: an unreadable card is itself a
+      // stable fact; the read path re-derives the same UNREADABLE_RETENTION
+      // named unknown from state_readable=false.
+      states.set(raw.subject_id, {
+        state: raw.state as SchedulingState,
+        due_at: raw.due_at,
+        state_readable: false,
+        last_review_event_id: eventId,
+      });
     }
   }
-  return values;
+  return { facts, states };
 }
 
 async function durationsByEventId(
@@ -123,20 +173,46 @@ function retentionRead(
   return { kind: 'available', values };
 }
 
+export class ProfileComponentError extends Error {
+  constructor(
+    readonly component: 'mastery' | 'retention' | 'durations' | 'engine' | 'activity',
+    cause: unknown,
+  ) {
+    super(`canonical ${component} read failed`, { cause });
+    this.name = 'ProfileComponentError';
+  }
+}
+
+type ComponentFailureMode = { mode: 'throw' } | { mode: 'degrade' };
+
 /**
  * Load every canonical input for `ids` inside `tx`'s snapshot. Component reads
- * use savepoints so a failed component degrades to its named unknown without
-// aborting the others.
+ * use savepoints so a failed component is contained without aborting the
+ * others. `onComponentFailure` decides what an operational read failure means:
+ * the drain passes 'throw' so its transaction rolls back and the pending
+ * intents stay retryable; the read-only getter passes 'degrade' so a live
+ * component outage yields named unknowns for that read instead of failing it.
+ * A legitimate lack of evidence (no mastery row, no card) is never a failure —
+ * it reaches the projection as `missing_*_state`.
  */
 export async function loadCanonicalProfileInputs(
   tx: Tx,
   ids: string[],
   asOf: Date,
+  onComponentFailure: ComponentFailureMode = { mode: 'degrade' },
 ): Promise<CanonicalProfileInputs> {
+  const fail = (
+    component: 'mastery' | 'retention' | 'durations' | 'engine' | 'activity',
+    cause: unknown,
+  ) => {
+    if (onComponentFailure.mode === 'throw') throw new ProfileComponentError(component, cause);
+  };
+
   let selectedEngine: CanonicalProfileInputs['selectedEngine'];
   try {
     selectedEngine = { kind: 'selected', engine: selectedForgettingEngine() };
-  } catch {
+  } catch (err) {
+    fail('engine', err);
     selectedEngine = { kind: 'unknown', reason: 'engine_selection_unavailable' };
   }
 
@@ -146,35 +222,39 @@ export async function loadCanonicalProfileInputs(
       kind: 'available',
       values: await tx.transaction((part) => getMasteryProjection(part, ids)),
     };
-  } catch {
+  } catch (err) {
+    fail('mastery', err);
     mastery = { kind: 'unknown', reason: 'mastery_component_unavailable' };
   }
 
   let scheduling: ComponentRead<SchedulingReviewFact>;
+  let schedulingState: CanonicalProfileInputs['schedulingState'] = new Map();
   let nonKcIds: ReadonlySet<string> = new Set();
   let durations: ReadonlyMap<string, number | null> | null = new Map();
   try {
-    scheduling = {
-      kind: 'available',
-      values: await tx.transaction(async (part) => {
-        nonKcIds = await getNonKcKnowledgeIds(part, ids);
-        return loadSchedulingReviewFacts(
-          part,
-          'knowledge',
-          ids.filter((id) => !nonKcIds.has(id)),
-          asOf,
-        );
-      }),
-    };
-    const eventIds = [...scheduling.values.values()].flatMap((fact) =>
+    const loaded = await tx.transaction(async (part) => {
+      nonKcIds = await getNonKcKnowledgeIds(part, ids);
+      return loadSchedulingReviewFacts(
+        part,
+        'knowledge',
+        ids.filter((id) => !nonKcIds.has(id)),
+        asOf,
+      );
+    });
+    scheduling = { kind: 'available', values: loaded.facts };
+    schedulingState = loaded.states;
+    const eventIds = [...loaded.facts.values()].flatMap((fact) =>
       fact.last_review_event_id ? [fact.last_review_event_id] : [],
     );
     try {
       durations = await tx.transaction((part) => durationsByEventId(part, eventIds));
-    } catch {
+    } catch (err) {
+      fail('durations', err);
       durations = null;
     }
-  } catch {
+  } catch (err) {
+    if (err instanceof ProfileComponentError) throw err;
+    fail('retention', err);
     scheduling = { kind: 'unknown', reason: 'retention_component_unavailable' };
     durations = null;
   }
@@ -183,6 +263,11 @@ export async function loadCanonicalProfileInputs(
   try {
     activity = await tx.transaction((part) => lastKnowledgeActivityAt(part, ids));
   } catch (err) {
+    // An operational failure in the activity clock must not silently persist
+    // an empty last_activity_at and consume the intent. Strict mode throws so
+    // the drain rolls back and keeps the intent retryable; the read-only
+    // getter degrades to an absent clock instead of failing the read.
+    fail('activity', err);
     console.warn('[learner-profile] activity clock derivation failed', err);
     activity = new Map();
   }
@@ -195,6 +280,7 @@ export async function loadCanonicalProfileInputs(
     nonKcIds,
     activity,
     selectedEngine,
+    schedulingState,
   };
 }
 
@@ -216,4 +302,105 @@ export function buildProfileJudgments(
       activity: inputs.activity.get(id) ?? null,
     }),
   );
+}
+
+/** Serialize one KC's stable canonical inputs into the persisted state shape. */
+export function persistedStateForKc(
+  knowledgeId: string,
+  inputs: CanonicalProfileInputs,
+): PersistedProfileState {
+  const masteryEntry =
+    inputs.mastery.kind === 'available' ? (inputs.mastery.values.get(knowledgeId) ?? null) : null;
+  const sched = inputs.schedulingState.get(knowledgeId) ?? null;
+  const fact =
+    inputs.scheduling.kind === 'available' ? inputs.scheduling.values.get(knowledgeId) : undefined;
+  const eventId = sched?.last_review_event_id ?? fact?.last_review_event_id ?? null;
+  return {
+    mastery: masteryEntry,
+    scheduling: sched
+      ? {
+          state: sched.state,
+          due_at: sched.due_at.toISOString(),
+          state_readable: sched.state_readable,
+          last_review_event_id: sched.last_review_event_id,
+        }
+      : null,
+    duration: {
+      event_id: eventId,
+      present: eventId !== null && (inputs.durations?.has(eventId) ?? false),
+      ms: eventId !== null ? (inputs.durations?.get(eventId) ?? null) : null,
+    },
+    activity: inputs.activity.get(knowledgeId)?.toISOString() ?? null,
+    non_kc: inputs.nonKcIds.has(knowledgeId),
+  };
+}
+
+/**
+ * Rebuild a current row's judgment at the caller's `as_of` from its persisted
+ * stable facts. Retention reading, evidence age, review timing, disagreement
+ * and judgement all re-evaluate through the shared projection — only the
+ * sealed facts come from the row, never a frozen derived value.
+ */
+export function judgmentFromPersistedState(
+  knowledgeId: string,
+  persisted: PersistedProfileState,
+  asOf: Date,
+): LearnerJudgment {
+  const masteryValues = new Map<string, MasteryProjection>();
+  if (persisted.mastery) {
+    // JSONB round-trip turns timestamps into ISO strings; revive them before
+    // the projection reads last_outcome_at.getTime() for evidence age.
+    const m = persisted.mastery as MasteryProjection & { last_outcome_at: Date | string | null };
+    masteryValues.set(knowledgeId, {
+      ...m,
+      last_outcome_at:
+        m.last_outcome_at === null || m.last_outcome_at instanceof Date
+          ? m.last_outcome_at
+          : new Date(m.last_outcome_at),
+    });
+  }
+  const schedulingValues = new Map<string, SchedulingReviewFact>();
+  const retentionValues = new Map<string, RetentionReading>();
+  if (persisted.scheduling) {
+    // JSONB round-trip turns the sealed card's timestamps into ISO strings;
+    // revive them before ts-fsrs or lastRetrievalAt reads .getTime()/.toISOString().
+    const rawState = persisted.scheduling.state as SchedulingState & {
+      due?: Date | string;
+      last_review?: Date | string | null;
+    };
+    const state: SchedulingState = {
+      ...rawState,
+      ...(rawState.due !== undefined && !(rawState.due instanceof Date)
+        ? { due: new Date(rawState.due) }
+        : {}),
+      ...(rawState.last_review != null && !(rawState.last_review instanceof Date)
+        ? { last_review: new Date(rawState.last_review) }
+        : {}),
+    } as SchedulingState;
+    const reading: RetentionReading = persisted.scheduling.state_readable
+      ? retrievabilityForKc(state, asOf)
+      : UNREADABLE_RETENTION;
+    schedulingValues.set(knowledgeId, {
+      reading,
+      due_at: new Date(persisted.scheduling.due_at),
+      last_retrieval_at: persisted.scheduling.state_readable ? lastRetrievalAt(state) : null,
+      state_readable: persisted.scheduling.state_readable,
+      last_review_event_id: persisted.scheduling.last_review_event_id,
+    });
+    retentionValues.set(knowledgeId, reading);
+  }
+  const durations = new Map<string, number | null>();
+  if (persisted.duration.event_id && persisted.duration.present) {
+    durations.set(persisted.duration.event_id, persisted.duration.ms);
+  }
+  return buildLearnerJudgmentItem({
+    knowledgeId,
+    mastery: { kind: 'available', values: masteryValues },
+    retention: { kind: 'available', values: retentionValues },
+    asOf,
+    scheduling: { kind: 'available', values: schedulingValues },
+    durations,
+    nonKcIds: persisted.non_kc ? new Set([knowledgeId]) : new Set(),
+    activity: persisted.activity ? new Date(persisted.activity) : null,
+  });
 }
