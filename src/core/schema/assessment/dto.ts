@@ -4,6 +4,7 @@ import {
   type GradingProvenanceEntryT,
   type JudgeResultV2T,
 } from '../capability';
+import { choiceContent, choiceLetter, resolveChoiceOrder } from './choice-order';
 import { projectIssuedScoringBasis } from './evaluation';
 import type { EvaluationGroupIdT, IssuanceIdT, RevisionIdT, SubmissionIdT } from './ids';
 import type {
@@ -138,12 +139,36 @@ export function projectPracticeIssuance(
     const byId = new Map(options.map((option) => [option.option_id, option] as const));
     return served.map((optionId) => byId.get(optionId)).filter((o): o is T => o != null);
   };
+  const choicePolicies = resolveChoiceOrder(
+    revision.structure,
+    revision.response_spec,
+    revision.presentation,
+    revision.scoring_basis,
+  );
+  const independent = (slotId: string) =>
+    choicePolicies.slots.some(
+      (slot) =>
+        slot.slot_id === slotId && 'choice_order' in slot && slot.choice_order === 'independent',
+    );
   const projectedSlots = revision.response_spec.slots
     // 只投影发出 part 范围内的槽位；选项按冻结顺序呈现。
     .filter((slot) => boundParts.has(slot.part_id))
     .map((slot) => {
       if (slot.kind === 'single_choice' || slot.kind === 'multi_choice') {
-        return { ...slot, options: applyServedOrder(slot.options, slot.slot_id) };
+        const options = applyServedOrder(slot.options, slot.slot_id);
+        const relabel =
+          independent(slot.slot_id) &&
+          options.some((option, index) => option.option_id !== slot.options[index]?.option_id);
+        return {
+          ...slot,
+          options: relabel
+            ? options.map((option, index) => ({
+                ...option,
+                label: choiceLetter(index),
+                text: choiceContent(option.text, option.label),
+              }))
+            : options,
+        };
       }
       if (slot.kind === 'matching') {
         return { ...slot, right_options: applyServedOrder(slot.right_options, slot.slot_id) };
@@ -154,7 +179,18 @@ export function projectPracticeIssuance(
         const served = (orderById.get(slot.slot_id) ?? [])
           .map((itemId) => byId.get(itemId))
           .filter((item): item is (typeof slot.items)[number] => item != null);
-        return { ...slot, items: served };
+        const relabel =
+          independent(slot.slot_id) &&
+          served.some((item, index) => item.item_id !== slot.items[index]?.item_id);
+        return {
+          ...slot,
+          items: relabel
+            ? served.map((item, index) => ({
+                ...item,
+                label_md: `${choiceLetter(index)}. ${choiceContent(item.label_md ?? '', choiceLetter(slot.items.indexOf(item)))}`,
+              }))
+            : served,
+        };
       }
       return slot;
     });

@@ -1415,8 +1415,8 @@ describe('edit/submit question boundary', () => {
     );
   });
 
-  // @invariant concurrency: a new issuance cannot pin a superseded revision, while replaying the original issuance still returns it
-  // @fails-if a new issuance of the previous revision succeeds after a newer revision is current
+  // @invariant concurrency: issuance freezes occurrence order under the group lock; replay retains its binding even after revision replacement
+  // @fails-if concurrent occurrences reuse order, same-ID replay changes its binding, or a new issuance can pin a superseded revision
   it('refuses a new issuance of a superseded revision', async () => {
     const db = testDb();
     const kc = 'kc-pin';
@@ -1436,6 +1436,14 @@ describe('edit/submit question boundary', () => {
     });
     expect(issued.status, JSON.stringify(issued)).toBe('issued');
     if (issued.status !== 'issued' && issued.status !== 'replayed') return;
+    const [next, retry] = await Promise.all([
+      issueAssessment(db, { group_id: qid, issuance_id: 'iss-next-order' }),
+      issueAssessment(db, { group_id: qid, issuance_id: 'iss-next-order' }),
+    ]);
+    expect([next.status, retry.status].sort()).toEqual(['issued', 'replayed']);
+    if (!('issuance' in next) || !('issuance' in retry)) return;
+    expect(next.issuance.binding).toEqual(retry.issuance.binding);
+    expect(next.issuance.binding.option_order).not.toEqual(issued.issuance.binding.option_order);
     const previousRevision = issued.issuance.binding.revision_id;
     const saved = await saveDraftEdit(db, {
       input: {
@@ -1481,6 +1489,7 @@ describe('edit/submit question boundary', () => {
       actorRef: 'test:issue',
     });
     expect(replayed.status, JSON.stringify(replayed)).toBe('replayed');
+    if ('issuance' in replayed) expect(replayed.issuance.binding).toEqual(issued.issuance.binding);
   });
 
   // @invariant data: choice questions that share a stem but not their options are not near-duplicates

@@ -13,6 +13,8 @@ import {
   projectIssuedScoringBasis,
   projectPracticeIssuance,
 } from '@/core/schema/assessment';
+import { resolveChoiceOrder } from '@/core/schema/assessment/choice-order';
+import { orderableOptionIds } from '@/core/schema/assessment/revision';
 import type { HintPublicationT } from '@/core/schema/event/assistance-publication';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import type { Db, Tx } from '@/db/client';
@@ -172,7 +174,7 @@ export function projectFrozenStudyReference(
       .filter((part) => issuedParts.has(part.part_id))
       .flatMap((part) => part.material_ids),
   );
-  const solution = revision.structure.materials
+  let solution = revision.structure.materials
     .filter(
       (material) =>
         scopedMaterials.has(material.material_id) &&
@@ -182,6 +184,27 @@ export function projectFrozenStudyReference(
     .filter((text): text is string => Boolean(text))
     .join('\n\n');
   const scoringBasisMd = scoringBasisReferenceMd(face, revision, issuedPartIds);
+  // Bare canonical answer letters name the original positions. After reordering,
+  // reveal the same stable key using the issued labels; never rewrite frozen bytes.
+  if (
+    /^[A-Z](?:[\s,，、]*[A-Z])*$/.test(solution.trim()) &&
+    resolveChoiceOrder(
+      revision.structure,
+      revision.response_spec,
+      revision.presentation,
+      revision.scoring_basis,
+    ).slots.some(
+      (slot) =>
+        'choice_order' in slot &&
+        slot.choice_order === 'independent' &&
+        issuance.binding.option_order.some(
+          (order) =>
+            order.slot_id === slot.slot_id &&
+            order.option_ids.some((id, index) => id !== orderableOptionIds(slot)?.[index]),
+        ),
+    )
+  )
+    solution = scoringBasisMd;
   return {
     practiceDto: face,
     promptMd: issuedPromptMd(face),
