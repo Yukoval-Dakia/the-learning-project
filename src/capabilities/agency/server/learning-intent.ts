@@ -35,6 +35,26 @@ import {
 // re-exports it so existing consumers keep their import paths.
 import { LearningIntentError, parseLearningIntentOutline } from '../tasks/learning-intent';
 import { type TaskTextRunFn, costUsdToMicroUsd } from './ai-runtime';
+import {
+  type GraphFault,
+  type ProposalGraph,
+  checkProposalGraph,
+  checkProposalPrerequisites,
+  graphFaultDetail,
+} from './learning-intent-graph-validation';
+import {
+  readAtomics as readProposalAtomics,
+  readExistingItems as readProposalExistingItems,
+  readLongs as readProposalLongs,
+  readPrerequisiteEdges as readProposalPrerequisiteEdges,
+  readStringId as readProposalStringId,
+} from './learning-intent-proposal-read';
+import {
+  type ExistingLearningIntentItemSnapshot,
+  normalizeLearningIntentTopic,
+  readExistingItemSnapshots,
+  readPrerequisiteEdges as readStoredPrerequisiteEdges,
+} from './learning-intent-reuse';
 
 export type { LearningIntentOutline } from '../tasks/learning-intent';
 export { LearningIntentError, parseLearningIntentOutline };
@@ -74,12 +94,14 @@ export interface AtomicProposal {
   knowledge_id: string;
   title: string;
   one_line_intent: string;
+  prerequisite_knowledge_ids: string[];
 }
 
 export interface LongProposal {
   knowledge_ids: string[];
   title: string;
   one_line_intent: string;
+  prerequisite_knowledge_ids: string[];
 }
 
 export type LearningIntentPlanCase =
@@ -106,9 +128,24 @@ export interface LearningIntentProposal {
   plan_case: LearningIntentPlanCase;
   knowledge_node: { id: string; name: string; domain: string | null };
   proposed_knowledge?: ProposedKnowledgeGraph;
+  existing_items: ExistingLearningIntentItem[];
+  mastered_knowledge_ids: string[];
+  prerequisite_edges: readonly LearningIntentPrerequisiteEdge[];
   hub: HubProposal;
   atomics: AtomicProposal[];
   longs: LongProposal[];
+}
+
+export interface ExistingLearningIntentItem {
+  knowledge_id: string;
+  item_id: string;
+  note_id: string;
+  title: string;
+}
+
+export interface LearningIntentPrerequisiteEdge {
+  prerequisite_knowledge_id: string;
+  dependent_knowledge_id: string;
 }
 
 export interface LearningIntentMaterializeResult {
@@ -121,6 +158,16 @@ export interface LearningIntentMaterializeResult {
   enqueued_note_generate_jobs: number;
   root_knowledge_id: string;
   created_knowledge_ids: string[];
+  actions: LearningIntentMaterializeAction[];
+}
+
+export interface LearningIntentMaterializeAction {
+  kind: 'hub' | 'atomic' | 'long';
+  knowledge_ids: string[];
+  action: 'create' | 'skip' | 'reuse';
+  reason: 'new' | 'mastered' | 'existing_item';
+  learning_item_id: string | null;
+  note_id: string | null;
 }
 
 export type RunTaskFn = TaskTextRunFn;
@@ -129,6 +176,14 @@ export interface PlanLearningIntentParams {
   db: Db;
   topic: string;
   runTaskFn: RunTaskFn;
+}
+
+interface LearningIntentExistingContext {
+  readonly existingSnapshots: Map<string, ExistingItemSnapshot>;
+  readonly prerequisiteEdges: readonly {
+    prerequisite_knowledge_id: string;
+    dependent_knowledge_id: string;
+  }[];
 }
 
 // ---------- Knowledge graph lookup ----------
@@ -140,19 +195,6 @@ interface KnowledgeNodeRow {
   parent_id: string | null;
   version: number;
 }
-
-/** Ids in one namespace: a proposed temp_id or an existing knowledge id. */
-interface ProposalGraph {
-  readonly rootKey: string;
-  readonly childKeys: readonly string[];
-}
-
-type GraphFault =
-  | { readonly type: 'duplicate_id'; readonly id: string }
-  | { readonly type: 'missing_atomic'; readonly id: string }
-  | { readonly type: 'duplicate_atomic'; readonly id: string }
-  | { readonly type: 'unknown_atomic'; readonly id: string }
-  | { readonly type: 'unknown_long'; readonly id: string };
 
 interface ReviewedKnowledgeNode {
   readonly id: string;
@@ -209,62 +251,24 @@ function normalizeProposedNode(
   };
 }
 
-function checkProposalGraph(
-  graph: ProposalGraph,
-  atomics: readonly AtomicProposal[],
-  longs: readonly LongProposal[],
-): GraphFault | null {
-  const seen = new Map<string, true>();
-  const duplicate = (id: string): GraphFault | null => {
-    if (seen.has(id)) return { type: 'duplicate_id', id };
-    seen.set(id, true);
-    return null;
-  };
-  const rootFault = duplicate(graph.rootKey);
-  if (rootFault) return rootFault;
-  for (const id of graph.childKeys) {
-    const fault = duplicate(id);
-    if (fault) return fault;
-  }
-
-  const atomicCount = new Map<string, number>();
-  for (const atomic of atomics) {
-    const id = atomic.knowledge_id;
-    if (id === graph.rootKey || !seen.has(id)) return { type: 'unknown_atomic', id };
-    const count = (atomicCount.get(id) ?? 0) + 1;
-    if (count > 1) return { type: 'duplicate_atomic', id };
-    atomicCount.set(id, count);
-  }
-  for (const id of graph.childKeys) {
-    if ((atomicCount.get(id) ?? 0) !== 1) return { type: 'missing_atomic', id };
-  }
-
-  for (const long of longs) {
-    for (const id of long.knowledge_ids) {
-      if (!seen.has(id)) return { type: 'unknown_long', id };
-    }
-  }
-  return null;
-}
-
-function graphFaultDetail(fault: GraphFault): string {
-  switch (fault.type) {
-    case 'duplicate_id':
-      return `a repeated knowledge id ${fault.id}`;
-    case 'missing_atomic':
-      return `knowledge id ${fault.id} with no atomic`;
-    case 'duplicate_atomic':
-      return `more than one atomic for knowledge id ${fault.id}`;
-    case 'unknown_atomic':
-      return `atomic knowledge id ${fault.id} outside the root and children`;
-    case 'unknown_long':
-      return `long knowledge id ${fault.id} outside the root and children`;
-  }
-}
-
 function rejectGraphFault(fault: GraphFault, source: 'outline' | 'proposal'): never {
   const who = source === 'outline' ? 'LLM proposed' : 'proposal contains';
   throw new LearningIntentError('invalid_atomic_knowledge_id', `${who} ${graphFaultDetail(fault)}`);
+}
+
+function rejectPrerequisiteFault(result: ReturnType<typeof checkProposalPrerequisites>): void {
+  if (result.type === 'ok') return;
+  if (result.type === 'unknown')
+    rejectGraphFault({ type: 'unknown_long', id: result.id }, 'proposal');
+  if (result.type === 'self')
+    throw new LearningIntentError(
+      'invalid_atomic_knowledge_id',
+      `proposal prerequisite ${result.id} is self-referential`,
+    );
+  throw new LearningIntentError(
+    'invalid_atomic_knowledge_id',
+    `proposal prerequisite ${result.prerequisite} -> ${result.dependent} has no recorded graph edge`,
+  );
 }
 
 function reviewNode(node: KnowledgeNodeRow): ReviewedKnowledgeNode {
@@ -458,6 +462,8 @@ async function loadChildren(db: Db, parentId: string): Promise<KnowledgeNodeRow[
     .where(and(eq(knowledge.parent_id, parentId), isNull(knowledge.archived_at)));
 }
 
+type ExistingItemSnapshot = ExistingLearningIntentItemSnapshot;
+
 // ---------- planLearningIntent ----------
 
 /**
@@ -485,11 +491,23 @@ export async function planLearningIntent(
         ? '3b_children_missing'
         : '3c_existing_graph';
 
+  const existingSnapshots = await readExistingItemSnapshots(db, node, children);
+  const prerequisiteEdges = await readStoredPrerequisiteEdges(db, node, children);
   const input = {
-    topic,
+    topic: normalizeLearningIntentTopic(topic),
     plan_case: planCase,
     knowledge_node: node ? { id: node.id, name: node.name, domain: node.domain } : null,
     child_nodes: children.map((c) => ({ id: c.id, name: c.name })),
+    existing_items: [...existingSnapshots.entries()].map(([knowledgeId, snapshot]) => ({
+      knowledge_id: knowledgeId,
+      item_id: snapshot.item.id,
+      note_id: snapshot.note.id,
+      title: snapshot.item.title,
+    })),
+    mastered_knowledge_ids: children
+      .filter((child) => existingSnapshots.get(child.id)?.item.status === 'done')
+      .map((child) => child.id),
+    prerequisite_edges: [...prerequisiteEdges],
     existing_descendants_count: children.length,
     // The prompt contract points domain values at this list; 'general' is deliberately
     // absent (fallback identity, never a node domain).
@@ -504,7 +522,10 @@ export async function planLearningIntent(
     subjectProfile: resolveSubjectProfile(node?.domain),
   });
   try {
-    return await persistLearningIntentOutline(db, topic, planCase, node, children, result);
+    return await persistLearningIntentOutline(db, topic, planCase, node, children, result, {
+      existingSnapshots,
+      prerequisiteEdges,
+    });
   } catch (err) {
     const costBasis = result.cost_basis ?? 'unknown';
     const taskRunId = result.task_run_id ?? null;
@@ -538,8 +559,19 @@ async function persistLearningIntentOutline(
   node: KnowledgeNodeRow | null,
   children: KnowledgeNodeRow[],
   result: Awaited<ReturnType<RunTaskFn>>,
+  context: LearningIntentExistingContext,
 ): Promise<LearningIntentProposal> {
   const outline = parseLearningIntentOutline(result.text);
+  const { existingSnapshots, prerequisiteEdges } = context;
+  const completedKnowledgeIds = children
+    .filter((child) => existingSnapshots.get(child.id)?.item.status === 'done')
+    .map((child) => child.id);
+  const existingItems = [...existingSnapshots.entries()].map(([knowledgeId, snapshot]) => ({
+    knowledge_id: knowledgeId,
+    item_id: snapshot.item.id,
+    note_id: snapshot.note.id,
+    title: snapshot.item.title,
+  }));
 
   let knowledgeNode: LearningIntentProposal['knowledge_node'];
   let proposedKnowledge: ProposedKnowledgeGraph | undefined;
@@ -553,8 +585,17 @@ async function persistLearningIntentOutline(
       { rootKey: node.id, childKeys: children.map((child) => child.id) },
       outline.atomics,
       outline.longs,
+      prerequisiteEdges,
     );
     if (fault) rejectGraphFault(fault, 'outline');
+    rejectPrerequisiteFault(
+      checkProposalPrerequisites(
+        { rootKey: node.id, childKeys: children.map((child) => child.id) },
+        outline.atomics,
+        outline.longs,
+        prerequisiteEdges,
+      ),
+    );
     reviewedKnowledge = {
       root: reviewNode(node),
       children: children.map(reviewNode),
@@ -603,8 +644,17 @@ async function persistLearningIntentOutline(
       { rootKey, childKeys: proposedChildren.map((child) => child.temp_id) },
       outline.atomics,
       outline.longs,
+      [],
     );
     if (fault) rejectGraphFault(fault, 'outline');
+    rejectPrerequisiteFault(
+      checkProposalPrerequisites(
+        { rootKey, childKeys: proposedChildren.map((child) => child.temp_id) },
+        outline.atomics,
+        outline.longs,
+        [],
+      ),
+    );
     if (planCase === '3b_children_missing' && node) {
       reviewedKnowledge = { root: reviewNode(node) };
     }
@@ -624,6 +674,9 @@ async function persistLearningIntentOutline(
     knowledge_node_id: node?.id ?? null,
     knowledge_node: knowledgeNode,
     proposed_knowledge: proposedKnowledge,
+    existing_items: existingItems,
+    mastered_knowledge_ids: completedKnowledgeIds,
+    prerequisite_edges: [...prerequisiteEdges],
     task_run_id: result.task_run_id ?? null,
     cost_micro_usd: costUsdToMicroUsd(result.cost_usd),
     hub: outline.hub,
@@ -648,6 +701,9 @@ async function persistLearningIntentOutline(
     auto_apply_eligible: planCase === '3c_existing_graph',
     knowledge_node: knowledgeNode,
     proposed_knowledge: proposedKnowledge,
+    existing_items: existingItems,
+    mastered_knowledge_ids: completedKnowledgeIds,
+    prerequisite_edges: prerequisiteEdges,
     hub: outline.hub,
     atomics: outline.atomics,
     longs: outline.longs,
@@ -665,6 +721,9 @@ async function persistLearningIntentOutline(
     plan_case: planCase,
     knowledge_node: knowledgeNode,
     ...(proposedKnowledge ? { proposed_knowledge: proposedKnowledge } : {}),
+    existing_items: existingItems,
+    mastered_knowledge_ids: completedKnowledgeIds,
+    prerequisite_edges: prerequisiteEdges,
     hub: outline.hub,
     atomics: outline.atomics,
     longs: outline.longs,
@@ -729,6 +788,9 @@ interface ProposalEventRow {
     knowledge_node_id: string | null;
     knowledge_node?: { id: string; name: string; domain: string | null };
     proposed_knowledge?: ProposedKnowledgeGraph;
+    existing_items?: ExistingLearningIntentItem[];
+    mastered_knowledge_ids?: string[];
+    prerequisite_edges?: LearningIntentPrerequisiteEdge[];
     reviewed_knowledge?: ReviewedKnowledge;
     task_run_id?: string | null;
     cost_micro_usd?: number | null;
@@ -785,13 +847,11 @@ function requireTempId(value: unknown, label: string): string {
 }
 
 function readStringId(value: unknown, label: string): string {
-  if (typeof value !== 'string' || value.length === 0) {
-    throw new LearningIntentError(
-      'invalid_atomic_knowledge_id',
-      `${label} is missing a knowledge id`,
-    );
+  try {
+    return readProposalStringId(value, label);
+  } catch (err) {
+    throw new LearningIntentError('invalid_atomic_knowledge_id', (err as Error).message);
   }
-  return value;
 }
 
 function readProposedNode(value: unknown, label: string): ProposedKnowledgeNode {
@@ -820,44 +880,35 @@ function readProposedChildren(
 }
 
 function readAtomics(value: unknown): AtomicProposal[] {
-  if (!Array.isArray(value) || value.length === 0) {
-    throw new LearningIntentError('llm_parse_failed', 'proposal is missing atomics');
+  try {
+    return readProposalAtomics(value);
+  } catch (err) {
+    throw new LearningIntentError('llm_parse_failed', (err as Error).message);
   }
-  return value.map((item, index) => {
-    if (!item || typeof item !== 'object') {
-      throw new LearningIntentError(
-        'llm_parse_failed',
-        `proposal atomic ${index} is not an object`,
-      );
-    }
-    const row = item as AtomicProposal;
-    return { ...row, knowledge_id: readStringId(row.knowledge_id, `atomic ${index}`) };
-  });
 }
 
 function readLongs(value: unknown): LongProposal[] {
-  if (value === undefined || value === null) return [];
-  if (!Array.isArray(value)) {
-    throw new LearningIntentError('llm_parse_failed', 'proposal longs is not a list');
+  try {
+    return readProposalLongs(value);
+  } catch (err) {
+    throw new LearningIntentError('llm_parse_failed', (err as Error).message);
   }
-  return value.map((item, index) => {
-    if (!item || typeof item !== 'object') {
-      throw new LearningIntentError('llm_parse_failed', `proposal long ${index} is not an object`);
-    }
-    const row = item as LongProposal;
-    if (!Array.isArray(row.knowledge_ids) || row.knowledge_ids.length === 0) {
-      throw new LearningIntentError(
-        'invalid_atomic_knowledge_id',
-        `proposal long ${index} is missing knowledge ids`,
-      );
-    }
-    return {
-      ...row,
-      knowledge_ids: row.knowledge_ids.map((id, idIndex) =>
-        readStringId(id, `long ${index} knowledge id ${idIndex}`),
-      ),
-    };
-  });
+}
+
+function readExistingItems(value: unknown): ExistingLearningIntentItem[] {
+  try {
+    return readProposalExistingItems(value);
+  } catch (err) {
+    throw new LearningIntentError('llm_parse_failed', (err as Error).message);
+  }
+}
+
+function readPrerequisiteEdges(value: unknown): LearningIntentPrerequisiteEdge[] {
+  try {
+    return readProposalPrerequisiteEdges(value);
+  } catch (err) {
+    throw new LearningIntentError('llm_parse_failed', (err as Error).message);
+  }
 }
 
 function readReviewedNode(value: unknown): ReviewedKnowledgeNode | null {
@@ -934,6 +985,9 @@ interface AcceptSpec {
   readonly costMicroUsd: number | null;
   /** Old 3c proposals did not record children. Their legal set is the locked active children. */
   readonly resolveActiveChildren: boolean;
+  readonly existingItems: readonly ExistingLearningIntentItem[];
+  readonly masteredKnowledgeIds: readonly string[];
+  readonly prerequisiteEdges: readonly LearningIntentPrerequisiteEdge[];
 }
 
 function readAcceptSpec(payload: ProposalEventRow['payload']): AcceptSpec {
@@ -954,6 +1008,13 @@ function readAcceptSpec(payload: ProposalEventRow['payload']): AcceptSpec {
     taskRunId: payload.task_run_id ?? null,
     costMicroUsd: payload.cost_micro_usd ?? null,
     resolveActiveChildren: false,
+    existingItems: readExistingItems(payload.existing_items),
+    masteredKnowledgeIds: Array.isArray(payload.mastered_knowledge_ids)
+      ? payload.mastered_knowledge_ids.map((id, index) =>
+          readStringId(id, `mastered knowledge id ${index}`),
+        )
+      : [],
+    prerequisiteEdges: readPrerequisiteEdges(payload.prerequisite_edges),
   };
 
   if (planCase === '3a_topic_missing') {
@@ -1064,6 +1125,9 @@ export async function acceptLearningIntent(
   }
   const fault = checkProposalGraph(spec.graph, spec.atomics, spec.longs);
   if (fault) rejectGraphFault(fault, 'proposal');
+  rejectPrerequisiteFault(
+    checkProposalPrerequisites(spec.graph, spec.atomics, spec.longs, spec.prerequisiteEdges),
+  );
   await assertKnowledgeCompatible(tx, spec.existing);
 
   const now = new Date();
@@ -1163,6 +1227,14 @@ export async function acceptLearningIntent(
       boundKnowledgeId(bindings, knowledgeId, 'long'),
     ),
   }));
+  const existingByKnowledge = new Map(
+    spec.existingItems.map((entry) => [
+      bindings.get(entry.knowledge_id) ?? entry.knowledge_id,
+      entry,
+    ]),
+  );
+  const mastered = new Set(spec.masteredKnowledgeIds.map((id) => bindings.get(id) ?? id));
+  const actions: LearningIntentMaterializeAction[] = [];
 
   // Hub LearningItem
   const hubLiId = newId();
@@ -1182,11 +1254,44 @@ export async function acceptLearningIntent(
     },
     now,
   );
+  actions.push({
+    kind: 'hub',
+    knowledge_ids: [rootKnowledgeId],
+    action: 'create',
+    reason: 'new',
+    learning_item_id: hubLiId,
+    note_id: hubArtifactId,
+  });
 
   // Atomic LearningItems
   const atomicLiIds: string[] = [];
   const atomicArtifactIds: string[] = [];
   for (const atomic of resolvedAtomics) {
+    const existing = existingByKnowledge.get(atomic.knowledge_id);
+    if (existing) {
+      actions.push({
+        kind: 'atomic',
+        knowledge_ids: [atomic.knowledge_id],
+        action: 'reuse',
+        reason: 'existing_item',
+        learning_item_id: existing.item_id,
+        note_id: existing.note_id,
+      });
+      atomicLiIds.push(existing.item_id);
+      atomicArtifactIds.push(existing.note_id);
+      continue;
+    }
+    if (mastered.has(atomic.knowledge_id)) {
+      actions.push({
+        kind: 'atomic',
+        knowledge_ids: [atomic.knowledge_id],
+        action: 'skip',
+        reason: 'mastered',
+        learning_item_id: null,
+        note_id: null,
+      });
+      continue;
+    }
     const atomicLiId = newId();
     const atomicArtifactId = newId();
     atomicLiIds.push(atomicLiId);
@@ -1206,12 +1311,45 @@ export async function acceptLearningIntent(
       },
       now,
     );
+    actions.push({
+      kind: 'atomic',
+      knowledge_ids: [atomic.knowledge_id],
+      action: 'create',
+      reason: 'new',
+      learning_item_id: atomicLiId,
+      note_id: atomicArtifactId,
+    });
   }
 
   // Long LearningItems
   const longLiIds: string[] = [];
   const longArtifactIds: string[] = [];
   for (const long of resolvedLongs) {
+    const existing = long.knowledge_ids.map((id) => existingByKnowledge.get(id)).find(Boolean);
+    if (existing) {
+      actions.push({
+        kind: 'long',
+        knowledge_ids: long.knowledge_ids,
+        action: 'reuse',
+        reason: 'existing_item',
+        learning_item_id: existing.item_id,
+        note_id: existing.note_id,
+      });
+      longLiIds.push(existing.item_id);
+      longArtifactIds.push(existing.note_id);
+      continue;
+    }
+    if (long.knowledge_ids.some((id) => mastered.has(id))) {
+      actions.push({
+        kind: 'long',
+        knowledge_ids: long.knowledge_ids,
+        action: 'skip',
+        reason: 'mastered',
+        learning_item_id: null,
+        note_id: null,
+      });
+      continue;
+    }
     const longLiId = newId();
     const longArtifactId = newId();
     longLiIds.push(longLiId);
@@ -1231,6 +1369,14 @@ export async function acceptLearningIntent(
       },
       now,
     );
+    actions.push({
+      kind: 'long',
+      knowledge_ids: long.knowledge_ids,
+      action: 'create',
+      reason: 'new',
+      learning_item_id: longLiId,
+      note_id: longArtifactId,
+    });
   }
 
   // Notes owns artifact rows, create events, and durable generation intents. Agency
@@ -1247,14 +1393,24 @@ export async function acceptLearningIntent(
     proposalId,
     rateEventId,
     taskRunId: proposalTaskRunId ?? null,
-    linkedArtifactIds: [...atomicArtifactIds, ...longArtifactIds],
-    atomicArtifactIds,
-    longArtifactIds,
+    linkedArtifactIds: [
+      ...actions.filter((action) => action.note_id).map((action) => action.note_id as string),
+    ],
+    atomicArtifactIds: actions
+      .filter((action) => action.kind === 'atomic' && action.note_id)
+      .map((action) => action.note_id as string),
+    longArtifactIds: actions
+      .filter((action) => action.kind === 'long' && action.note_id)
+      .map((action) => action.note_id as string),
     createdAt: now,
   });
 
   for (let i = 0; i < resolvedAtomics.length; i++) {
     const atomicNode = resolvedAtomics[i];
+    const action = actions.find(
+      (entry) => entry.kind === 'atomic' && entry.knowledge_ids.includes(atomicNode.knowledge_id),
+    );
+    if (action?.action !== 'create') continue;
     await createNote(tx, {
       kind: 'atomic',
       id: atomicArtifactIds[i],
@@ -1271,6 +1427,12 @@ export async function acceptLearningIntent(
 
   for (let i = 0; i < resolvedLongs.length; i++) {
     const longNode = resolvedLongs[i];
+    const action = actions.find(
+      (entry) =>
+        entry.kind === 'long' &&
+        entry.knowledge_ids.some((id) => longNode.knowledge_ids.includes(id)),
+    );
+    if (action?.action !== 'create') continue;
     await createNote(tx, {
       kind: 'long',
       id: longArtifactIds[i],
@@ -1306,5 +1468,6 @@ export async function acceptLearningIntent(
     enqueued_note_generate_jobs: 0, // caller enqueues
     root_knowledge_id: rootKnowledgeId,
     created_knowledge_ids: createdKnowledgeIds,
+    actions,
   };
 }

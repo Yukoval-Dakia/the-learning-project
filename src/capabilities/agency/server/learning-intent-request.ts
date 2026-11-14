@@ -116,7 +116,7 @@ function delay(ms: number): Promise<void> {
 function storedIntentTopic(payload: ProposalInboxRow['payload']): string | null {
   if (payload.kind !== 'learning_item') return null;
   const topic = payload.proposed_change.topic;
-  return typeof topic === 'string' && topic.length > 0 ? topic : null;
+  return typeof topic === 'string' && topic.length > 0 ? topic.trim().toLowerCase() : null;
 }
 
 function attemptNumber(revision: string): number {
@@ -275,7 +275,19 @@ async function replayPendingLearningIntent(
       proposal_id: candidate.id,
       ...candidate.payload.proposed_change,
     });
-    if (restored.success) return restored.data;
+    if (restored.success) {
+      return {
+        ...restored.data,
+        atomics: restored.data.atomics.map((atomic) => ({
+          ...atomic,
+          prerequisite_knowledge_ids: atomic.prerequisite_knowledge_ids ?? [],
+        })),
+        longs: restored.data.longs.map((long) => ({
+          ...long,
+          prerequisite_knowledge_ids: long.prerequisite_knowledge_ids ?? [],
+        })),
+      };
+    }
   }
   return null;
 }

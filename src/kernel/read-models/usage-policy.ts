@@ -428,6 +428,19 @@ export async function sourceAllowsDerivation(db: Db | Tx, source: PurposeSource)
   return rows[0]?.allowed === true;
 }
 
+/** Reject model-supplied reuse references unless the stored lineage authorizes derivation. */
+export async function artifactReuseAllowed(
+  db: Db | Tx,
+  source: PurposeSource,
+  artifactId: string,
+): Promise<boolean> {
+  if (!(await sourceAllowsDerivation(db, source))) return false;
+  const rows = await db.execute<{ allowed: boolean }>(sql`
+    SELECT public.tlp_source_allows_derivation('artifact', ${artifactId}) AS allowed
+  `);
+  return rows[0]?.allowed === true;
+}
+
 /** Accept/serve locks documents in stable order, then reads the live policy again.
  * The purpose writer updates these same rows; no provider IO belongs in this lock.
  */

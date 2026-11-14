@@ -78,6 +78,14 @@ export interface LearningItemAcceptResult {
   long_artifact_ids: string[];
   root_knowledge_id: string;
   created_knowledge_ids: string[];
+  actions: Array<{
+    kind: 'hub' | 'atomic' | 'long';
+    knowledge_ids: string[];
+    action: 'create' | 'skip' | 'reuse';
+    reason: 'new' | 'mastered' | 'existing_item';
+    learning_item_id: string | null;
+    note_id: string | null;
+  }>;
   enqueued_note_generate_jobs: number;
   idempotent?: boolean;
 }
@@ -207,6 +215,21 @@ export async function acceptLearningItemProposal(
             kind: 'learning_item',
             rate_event_id: rate.id,
             ...summary,
+            actions: [
+              {
+                kind: 'hub',
+                knowledge_ids:
+                  summary.atomic_learning_item_ids.length +
+                    summary.long_learning_item_ids.length ===
+                  0
+                    ? [summary.root_knowledge_id]
+                    : [summary.root_knowledge_id],
+                action: 'create',
+                reason: 'new',
+                learning_item_id: summary.hub_learning_item_id,
+                note_id: summary.hub_artifact_id,
+              },
+            ],
             enqueued_note_generate_jobs: enqueued,
             idempotent: true,
           };
@@ -252,6 +275,7 @@ export async function acceptLearningItemProposal(
               long_artifact_ids: materialized.long_artifact_ids,
               root_knowledge_id: materialized.root_knowledge_id,
               created_knowledge_ids: materialized.created_knowledge_ids,
+              actions: materialized.actions,
               enqueued_note_generate_jobs: 0,
             },
           };
@@ -277,7 +301,9 @@ export async function acceptLearningItemProposal(
 
   const enqueued = await enqueueLearningIntentNotes(
     db,
-    [...run.result.atomic_artifact_ids, ...run.result.long_artifact_ids],
+    run.result.actions
+      .filter((action) => action.action === 'create' && action.note_id)
+      .map((action) => action.note_id as string),
     opts.enqueueLearningIntentNote,
   );
   return { ...run.result, enqueued_note_generate_jobs: enqueued };
@@ -347,6 +373,32 @@ async function summarizeLearningItemMaterialization(
     const artifactId = row.primary_artifact_id;
     return artifactId ? artifactTypeById.get(artifactId) === 'note_long' : false;
   });
+  const actions = [
+    {
+      kind: 'hub' as const,
+      knowledge_ids: [rootKnowledgeId],
+      action: 'create' as const,
+      reason: 'new' as const,
+      learning_item_id: hub.id,
+      note_id: hubArtifactId,
+    },
+    ...atomicItems.map((row) => ({
+      kind: 'atomic' as const,
+      knowledge_ids: row.knowledge_ids,
+      action: 'create' as const,
+      reason: 'new' as const,
+      learning_item_id: row.id,
+      note_id: row.primary_artifact_id,
+    })),
+    ...longItems.map((row) => ({
+      kind: 'long' as const,
+      knowledge_ids: row.knowledge_ids,
+      action: 'create' as const,
+      reason: 'new' as const,
+      learning_item_id: row.id,
+      note_id: row.primary_artifact_id,
+    })),
+  ];
 
   return {
     hub_learning_item_id: hub.id,
@@ -361,6 +413,7 @@ async function summarizeLearningItemMaterialization(
       .filter((id): id is string => Boolean(id)),
     root_knowledge_id: rootKnowledgeId,
     created_knowledge_ids: [],
+    actions,
   };
 }
 
