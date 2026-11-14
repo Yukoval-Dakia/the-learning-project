@@ -21,7 +21,8 @@
     padding-block: var(--un-sp-2);
   }
   & summary:focus-visible,
-  & button:focus-visible {
+  & button:focus-visible,
+  & a:focus-visible {
     outline: 2px solid var(--un-md-sys-color-primary);
     outline-offset: 3px;
   }
@@ -58,6 +59,30 @@
 .lp-progress-heading [data-ready="true"] {
   color: var(--un-positive);
 }
+.lp-progress-unavailable {
+  color: var(--un-text-3);
+  font-size: var(--un-fs-1);
+}
+.lp-progress-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--un-sp-2);
+  margin-block: var(--un-sp-3);
+}
+.lp-progress-action {
+  display: inline-flex;
+  align-items: center;
+  min-height: 40px;
+  padding-inline: var(--un-sp-3);
+  border-radius: var(--un-md-sys-shape-medium);
+  color: var(--un-md-sys-color-primary);
+  font-size: var(--un-fs-2);
+  font-weight: 600;
+  text-decoration: none;
+}
+.lp-progress-action:hover {
+  background: color-mix(in srgb, var(--un-md-sys-color-primary) 10%, transparent);
+}
 .lp-progress-kcs > li {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -68,5 +93,9 @@
   .lp-progress-kcs > li {
     grid-template-columns: minmax(0, 1fr);
     gap: 0;
+  }
+  .lp-progress-actions {
+    align-items: stretch;
+    flex-direction: column;
   }
 }
