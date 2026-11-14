@@ -236,6 +236,7 @@ async function main(): Promise<number> {
   const onSignal = (signal: 'SIGINT' | 'SIGTERM') => {
     if (cancelled) return;
     cancelled = signal;
+    exit = 1;
     try {
       appendFileSync(
         join(evidenceDir, 'harness-receipts.jsonl'),
@@ -518,8 +519,6 @@ async function main(): Promise<number> {
     receipts('run_failed', { message });
     exit = 1;
   } finally {
-    process.removeListener('SIGINT', onSignal);
-    process.removeListener('SIGTERM', onSignal);
     // Group-kill every tracked child group (migration/workload via runCapture
     // and the built server) and reap before touching PG: a workload must not
     // outlive its database, and no owned descendant may outlive this entry.
@@ -545,6 +544,8 @@ async function main(): Promise<number> {
     timings.finished = now();
     save('timings.json', timings);
     save('finish.json', { at: now(), exit, runId });
+    process.removeListener('SIGINT', onSignal);
+    process.removeListener('SIGTERM', onSignal);
     console.log(JSON.stringify({ runId, exit, evidenceDir }));
   }
   return exit;
