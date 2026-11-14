@@ -40,7 +40,8 @@ function internalLink(
   href: string,
   navigate: (to: string) => void,
 ) {
-  if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+  if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)
+    return;
   event.preventDefault();
   navigate(href);
 }
