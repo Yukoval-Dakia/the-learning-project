@@ -19,12 +19,12 @@ import {
   initialSchedulingState,
   retireQuestionFsrsState,
 } from '@/kernel/records/scheduling-state';
-import { streamLocalDate } from '@/kernel/stream-date';
+import { resolveLearningDayDate } from '@/kernel/stream-date';
 import { projectEvaluationToJudgeResult } from './judge/evaluation-authority';
 import { readJudgeQuestionActivity } from './judge-run-observation';
 
 export const interventionDiagnosticLeaves: InterventionDiagnosticLeaves = {
-  streamLocalDate,
+  streamLocalDate: (tx, now) => resolveLearningDayDate(tx, now),
   readJudgeQuestionActivity,
   async enrollQuestionSchedule(tx, questionId, dueAt) {
     await enrollFsrsStateIfAbsent(tx, {

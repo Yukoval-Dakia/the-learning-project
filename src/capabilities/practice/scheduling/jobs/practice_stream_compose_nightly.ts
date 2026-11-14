@@ -14,10 +14,11 @@
 //   - 夜间 job 跑完用户首读 → lazy-compose 命中同一双重检查 no-op（不 double-compose）。
 //   - 用户先首读再夜间 job → 夜间 job 命中双重检查 no-op（不覆盖已产流）。
 //
-// 本地日：用 `streamLocalDate()`（**显式 Asia/Shanghai 时区**）——与读路径
-// （api/stream.ts:resolveDate）**完全同款**（同一 helper），保证夜间预产与用户首读的 date 键一致
+// 本地日：用 `resolveLearningDayDate()`（学习日裁定——连续练习活动跨零点不切日，与
+// 读路径 api/stream.ts:resolveDate 的「today」**完全同款**），保证夜间预产与用户首读的 date 键一致
 // （幂等前提：两条路径必须就「今天是哪天」达成一致）。cron 在 Asia/Shanghai tz 触发
-// （manifest `'30 5 * * *'`）；进程本地时区在 UTC 容器里会把「今天」算成前一天，因此不能依赖它。
+// （manifest `'30 5 * * *'`）。05:30 距深夜活动通常已 > 不活跃间隔 → 落到新学习日；
+// 若学习者恰好仍在连续练习（罕见），则与读路径一致沿用同一学习日。
 //
 // 失败语义：composeNightly 内部走两级 fallback（永不 throw 出选题逻辑）；handler 顶层 try/catch
 // 记日志后 rethrow → pg-boss 重试（DB 故障等可重试错误照常传播）。
@@ -26,7 +27,7 @@ import { randomUUID } from 'node:crypto';
 import type { Job } from 'pg-boss';
 
 import type { Db } from '@/db/client';
-import { streamLocalDate } from '@/kernel/stream-date';
+import { resolveLearningDayDate } from '@/kernel/stream-date';
 import { buildSeededSelectionRng } from '../server/selection-seed';
 import { composeNightly } from '../server/stream-store';
 
@@ -44,7 +45,7 @@ export async function runStreamComposeNightly(
   db: Db,
   operationAnchor: string = randomUUID(),
 ): Promise<StreamComposeNightlyResult> {
-  const date = streamLocalDate();
+  const date = await resolveLearningDayDate(db);
   // 夜间预产 compose 事件种子化（独立 eventKind='compose-nightly'，
   // 与用户首读 lazy compose / 手动 recompose 各派生独立 seed）。幂等不变（今天已物化 → no-op）。
   const added = await composeNightly(db, date, {

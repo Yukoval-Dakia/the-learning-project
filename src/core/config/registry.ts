@@ -492,6 +492,17 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     reload: 'per-call',
     exposure: 'operator',
   },
+  LEARNING_DAY_INACTIVITY_GAP_HOURS: {
+    schema: z.number().int().positive(),
+    codeDefault: 4,
+    envName: 'LEARNING_DAY_INACTIVITY_GAP_HOURS',
+    envParse: posIntEnv,
+    tier: 'A',
+    description: '学习日切换的不活跃间隔小时数（连续练习活动跨零点不切日）',
+    consumers: ['practice.stream-learning-day'],
+    reload: 'per-call',
+    exposure: 'operator',
+  },
   HUB_SYNC_MODE: {
     schema: z.enum(['off', 'shadow', 'apply']),
     codeDefault: 'off',
