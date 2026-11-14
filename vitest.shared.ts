@@ -62,6 +62,7 @@ export const fastTestInclude = [
   'src/core/capability/judges/unit_dimension.test.ts',
   'src/core/coldstart-solver-parity.unit.test.ts',
   'src/core/coldstart-solver.unit.test.ts',
+  'src/core/config/question-admission.unit.test.ts',
   'src/core/forgetting/forgetting.unit.test.ts',
   'src/core/graph-laplacian.test.ts',
   'src/core/migration/redact.test.ts',

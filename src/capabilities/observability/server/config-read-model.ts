@@ -26,6 +26,7 @@ import type {
   AdminConfigTaskFacts,
 } from '@/core/config/contracts/admin';
 import { selectGlobalPin } from '@/core/config/model-overrides';
+import { QUESTION_ADMISSION_CONFIG_KEYS } from '@/core/config/question-admission';
 import type { ConfigSource, ConfigValue } from '@/core/config/store';
 import {
   CONFIG_REGISTRY,
@@ -120,6 +121,9 @@ export const KEY_CONSUMERS: Readonly<Record<string, string | null>> = {
   'lane.global.provider': 'src/server/ai/providers.ts',
   'lane.global.model': 'src/server/ai/providers.ts',
   'locale.learner': 'src/ai/task-prompts.ts',
+  ...Object.fromEntries(
+    QUESTION_ADMISSION_CONFIG_KEYS.map((key) => [key, 'src/core/config/question-admission.ts']),
+  ),
 };
 
 /** budget=false 表示尚未全部接线；细分状态以 budget_wiring 为准。 */

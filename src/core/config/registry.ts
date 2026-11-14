@@ -930,6 +930,7 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
   QUESTION_ADMISSION_POLICY_ID: {
     schema: z
       .string()
+      .min(1, 'empty question admission policy is invalid')
       .refine(
         (value) =>
           value === QUESTION_ADMISSION_POLICY_ID ||
@@ -938,8 +939,9 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
       ),
     codeDefault: QUESTION_ADMISSION_POLICY_ID,
     envName: 'QUESTION_ADMISSION_POLICY_ID',
-    // Empty string is an explicit policy id, not an absent env value.
-    envParse: (raw) => raw,
+    // Paid input requires a non-empty policy; envSetup's empty-string collapse maps
+    // `KEY=` to unset, while a copied literal from another source still fails schema.
+    envParse: (raw) => (raw.trim() === '' ? undefined : raw),
     tier: 'A',
     description: 'question admission contract policy id frozen into paid input',
     consumers: ['practice.question-admission'],

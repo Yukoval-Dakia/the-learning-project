@@ -6,7 +6,7 @@ import {
 } from '@/core/question-admission-policy';
 import { getConfigMany, getConfigSnapshotEpoch, resolveKeyDef } from './store';
 
-const QUESTION_ADMISSION_CONFIG_KEYS = [
+export const QUESTION_ADMISSION_CONFIG_KEYS = [
   'QUESTION_ADMISSION_POLICY_ID',
   'QUESTION_ADMISSION_SOLVER2_PROVIDER',
   'QUESTION_ADMISSION_SOLVER2_MODEL',
