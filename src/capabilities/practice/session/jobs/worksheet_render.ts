@@ -442,8 +442,18 @@ export async function runWorksheetRender(
   deps: { appOrigin?: string; internalToken?: string; signal?: AbortSignal } = {},
 ): Promise<WorksheetRenderResult> {
   try {
-    const appOrigin =
-      deps.appOrigin ?? resolveWorksheetRenderAppOrigin(process.env.WORKSHEET_RENDER_APP_ORIGIN);
+    let appOrigin: string;
+    try {
+      appOrigin =
+        deps.appOrigin ?? resolveWorksheetRenderAppOrigin(process.env.WORKSHEET_RENDER_APP_ORIGIN);
+    } catch (error) {
+      throw new WorksheetRenderPermanentError(
+        'worksheet_render: WORKSHEET_RENDER_APP_ORIGIN is invalid',
+        {
+          cause: error,
+        },
+      );
+    }
     if (appOrigin === '') {
       throw new WorksheetRenderPermanentError(
         'worksheet_render: WORKSHEET_RENDER_APP_ORIGIN is empty',

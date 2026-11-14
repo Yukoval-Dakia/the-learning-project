@@ -45,7 +45,10 @@
   `src/capabilities/practice/question-bank/server/admission/reauthorization.ts`。
   admission 三个进 registry 是 per-call，付费边界保持 fail-closed。
 
-已在 `STAY_IN_PLACE_ENV` 的 4 个隐身名不再另表：`DB_POOL_MAX`（`src/db/pool.ts`）、
-`DEV_HOST`（`server/dev-frontdoor.ts`）、`OPENAI_CHATGPT_AUTH_FILE`
+`DB_POOL_MAX` 已进 boot schema，由 `src/core/config/server/env.ts` 的
+`resolveDbPoolMax` 单点解析，保持 restart-only。
+
+已在 `STAY_IN_PLACE_ENV` 的 3 个隐身名不再另表：`DEV_HOST`
+（`server/dev-frontdoor.ts`）、`OPENAI_CHATGPT_AUTH_FILE`
 （`src/server/ai/pi-models.ts`）、`PLAYWRIGHT_BROWSERS_PATH`
 （`src/capabilities/practice/question-bank/server/custom-block-preview/chromium-runner.ts`）。

@@ -333,8 +333,10 @@ export function resolveApiPort(rawApiPort: string | undefined): number {
  * from getServerEnv because audits and boot preparation may parse it before DATABASE_URL exists.
  */
 export function resolveDbPoolMax(rawPoolMax: string | undefined): number | undefined {
-  const trimmed = rawPoolMax?.trim();
-  if (trimmed === undefined || trimmed === '') return undefined;
+  if (rawPoolMax === undefined || rawPoolMax === '') return undefined;
+  const trimmed = rawPoolMax.trim();
+  if (trimmed === '')
+    throw new Error(`DB_POOL_MAX must be a positive integer, got: ${JSON.stringify(rawPoolMax)}`);
   const parsed = Number(trimmed);
   if (!Number.isInteger(parsed) || parsed <= 0) {
     throw new Error(`DB_POOL_MAX must be a positive integer, got: ${JSON.stringify(rawPoolMax)}`);
