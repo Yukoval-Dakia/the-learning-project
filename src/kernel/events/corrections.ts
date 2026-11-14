@@ -41,7 +41,9 @@ function rowToCorrectEventInput(row: EventRow): unknown {
  * SQL pre-filter for getCorrectionStatuses' latest-write-wins fold: true when the
  * target's latest kind-valid correction leaves it active. Readers use it to drop
  * corrected rows before a LIMIT window; the TS fold (full schema, dispatch_seq
- * tiebreak) stays authoritative.
+ * tiebreak) stays authoritative. Keep the SQL ordering identical to that fold;
+ * otherwise a same-timestamp correction can pass or fail this predicate contrary
+ * to the canonical winner.
  */
 export function eventCorrectionActiveSql(targetEventId: SQLWrapper) {
   return sql`COALESCE((
@@ -57,7 +59,7 @@ export function eventCorrectionActiveSql(targetEventId: SQLWrapper) {
             ('retract', 'mark_wrong', 'restore')
           AND NOT correction.payload ? 'replacement_event_id')
       )
-    ORDER BY correction.created_at DESC, correction.id DESC
+    ORDER BY correction.created_at DESC, correction.dispatch_seq DESC, correction.id DESC
     LIMIT 1
   ), '') NOT IN ('retract', 'mark_wrong', 'supersede')`;
 }

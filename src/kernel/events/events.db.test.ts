@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { deterministicId } from '@/core/ids';
 import { event } from '@/db/schema';
 import { resetDb, testDb } from '../../../tests/helpers/db';
-import { writeEvent, writeEvents } from './index';
+import { eventCorrectionActiveSql, writeEvent, writeEvents } from './index';
 
 describe('writeEvent', () => {
   beforeEach(async () => {
@@ -68,5 +68,61 @@ describe('writeEvent', () => {
     // First write wins (no overwrite on conflict)
     const payload = rows[0].payload as { answer_md: string };
     expect(payload.answer_md).toBe('wrong');
+  });
+
+  // @invariant data: SQL-only active-event predicates use the same winner order as canonical correction folding.
+  // @fails-if a same-timestamp restore wins by dispatch_seq but the SQL predicate selects a later row by id and exposes the target as active.
+  it('uses dispatch_seq before id for same-timestamp correction winners', async () => {
+    const db = testDb();
+    const sameClock = new Date('2026-05-01T00:00:00Z');
+    const base = {
+      actor_kind: 'user' as const,
+      actor_ref: 'self',
+      action: 'correct' as const,
+      subject_kind: 'event' as const,
+      subject_id: 'evt-correction-tiebreak',
+      outcome: 'success' as const,
+      caused_by_event_id: 'evt-correction-tiebreak',
+      created_at: sameClock,
+    };
+    await db.insert(event).values({
+      id: 'evt-correction-tiebreak',
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'experimental:test_batch',
+      subject_kind: 'event',
+      subject_id: 'evt-correction-tiebreak',
+      outcome: 'success',
+      payload: {},
+      created_at: sameClock,
+    });
+    await db.insert(event).values([
+      {
+        ...base,
+        id: 'a_retract',
+        payload: {
+          correction_kind: 'retract' as const,
+          reason_md: 'withdraw the event',
+          affected_refs: [{ kind: 'question' as const, id: 'q1' }],
+        },
+        dispatch_seq: 1,
+      },
+      {
+        ...base,
+        id: 'z_restore',
+        payload: {
+          correction_kind: 'restore' as const,
+          reason_md: 'restore the event',
+          affected_refs: [{ kind: 'question' as const, id: 'q1' }],
+        },
+        dispatch_seq: 2,
+      },
+    ]);
+
+    const [active] = await db
+      .select({ active: eventCorrectionActiveSql(event.id) })
+      .from(event)
+      .where(eq(event.id, 'evt-correction-tiebreak'));
+    expect(active?.active).toBe(true);
   });
 });
