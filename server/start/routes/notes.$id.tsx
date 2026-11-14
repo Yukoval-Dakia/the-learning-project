@@ -44,9 +44,9 @@ function NoteReaderPage() {
     if (contextPresent && !locationComplete) {
       return async () => {
         throw new ApiError(
-          'validation_error',
           'note issuance, question, and entry are required',
           400,
+          'validation_error',
         );
       };
     }
