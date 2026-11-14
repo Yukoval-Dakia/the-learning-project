@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { DraftFocus } from '@/core/schema/assessment/draft-focus';
 import { DerivationPolicy } from '@/core/schema/derivation-policy';
 import { ReviewAnswerAttachmentSchema } from '@/kernel/tools/review-answer';
 import { ConfirmationCommand, type ConfirmationOccurrenceT } from '../confirmation-contract';
@@ -78,6 +79,7 @@ export function readCopilotSkillTurn(
 
 export const CopilotChatRequest = z
   .object({
+    draft_focus: DraftFocus.optional(),
     session_id: z.string().min(1).max(160).optional(),
     user_message: z.string().min(1).max(4000),
     derivation_policy: DerivationPolicy.optional(),
@@ -101,6 +103,25 @@ export const CopilotChatRequest = z
     correction_target_turn_id: z.string().min(1).max(160).optional(),
   })
   .superRefine((request, ctx) => {
+    if (
+      request.draft_focus &&
+      (request.triggered_by !== 'chat' ||
+        request.derivation_policy !== 'allow' ||
+        request.skill_context ||
+        request.review_answer ||
+        request.confirmation ||
+        request.correction_target_turn_id ||
+        request.ambient_context?.route !== '/practice' ||
+        request.ambient_context.focused_entity?.kind !== 'question' ||
+        request.ambient_context.focused_entity.id !== request.draft_focus.question_id)
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['draft_focus'],
+        message:
+          'saved draft requires the exact focused practice question and an explicit permitted chat ask',
+      });
+    }
     if (
       request.confirmation &&
       (request.review_answer ||

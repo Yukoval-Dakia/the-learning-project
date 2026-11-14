@@ -4,6 +4,15 @@ import {
   runWithHttpProviderSessionDeadline,
 } from '@/server/http/provider-session-deadline';
 import type { FrontdoorContext } from './context';
+export const restoreStartHintHistory: FrontdoorContext['restoreHintHistory'] = async (body) => {
+  try {
+    const { restorePracticeHints } = await import('@/capabilities/practice/public');
+    const { db } = await import('@/db/client');
+    return await restorePracticeHints(db, JSON.parse(body));
+  } catch (error) {
+    throw errorResponse(error);
+  }
+};
 
 export const createStartSolveSession: FrontdoorContext['createSolveSession'] = (body) =>
   runWithHttpProviderSessionDeadline(Date.now() + HTTP_PROVIDER_SESSION_BUDGET_MS, async () => {

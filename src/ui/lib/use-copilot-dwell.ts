@@ -140,6 +140,7 @@ export function openCopilotForNudge(nudge: CopilotNudgeOpen): void {
 
 /** What the learner is looking at, as the companion shows and sends it. */
 export interface CompanionFocus {
+  readSavedDraft?: () => import('@/core/schema/assessment/draft-focus').DraftFocusT | undefined;
   /** Entity kind sent as focused_entity.kind, e.g. 'question' | 'knowledge' | 'note' | 'learning_session'. */
   kind: string;
   id: string;

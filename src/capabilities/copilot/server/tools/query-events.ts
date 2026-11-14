@@ -5,6 +5,7 @@
 
 import { and, desc, eq, gte, inArray, lt, lte, max, ne, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
+import { publicAssistancePayload } from '@/core/schema/event/assistance-publication';
 import { event } from '@/db/schema';
 import { getCorrectionStatuses } from '@/kernel/events';
 import { eventAllowsDerivationSql } from '@/kernel/events/derivation-policy';
@@ -390,7 +391,7 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
   const payloadById = new Map<string, unknown>();
   if (input.includePayload && rows.length) {
     const payloadRows = await ctx.db
-      .select({ id: event.id, payload: event.payload })
+      .select({ id: event.id, action: event.action, payload: event.payload })
       .from(event)
       .where(
         inArray(
@@ -398,7 +399,8 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
           rows.map((row) => row.id),
         ),
       );
-    for (const row of payloadRows) payloadById.set(row.id, row.payload);
+    for (const row of payloadRows)
+      payloadById.set(row.id, publicAssistancePayload(row.action, row.payload));
   }
   let payloadCharsLeft = QUERY_EVENTS_PAYLOAD_CAPS.pageChars;
   let omittedPayloadRows = 0;

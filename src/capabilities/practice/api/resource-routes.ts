@@ -1,13 +1,24 @@
 import type { ZodType } from 'zod';
 import { db } from '@/db/client';
 import { ApiError, canonicalResourceResponse, errorResponse } from '@/kernel/http';
-import { createPracticeHintRequest, createPracticeSolveSession } from '../server/solve-operations';
+import {
+  createPracticeHintRequest,
+  createPracticeSolveSession,
+  restorePracticeHints,
+} from '../server/solve-operations';
 import { createAnswerDraft, createPracticePaperSubmission } from '../session/public';
 import { CreatePaperAnswerDraftBodySchema } from './paper-contracts';
 import { CreateSolveSubmissionBodySchema } from './solve-contracts';
 import { createSolveSubmission } from './solve-submit';
 
 type JsonObject = Record<string, unknown>;
+export async function restoreHintHistoryResource(req: Request): Promise<Response> {
+  try {
+    return Response.json(await restorePracticeHints(db, await req.json()));
+  } catch (error) {
+    return errorResponse(error);
+  }
+}
 
 async function parseJsonBody<T>(req: Request, schema: ZodType<T>): Promise<T> {
   const raw = await req.json().catch(() => null);

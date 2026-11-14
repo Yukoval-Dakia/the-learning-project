@@ -1093,6 +1093,8 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       childUsage: this.childUsage,
     });
     if (terminal) {
+      if (terminal.type === 'result' && terminal.subtype !== 'success' && this.wire.idleFailed())
+        terminal.provider_failure = { ...terminal.provider_failure, stream_idle: true };
       yield costCeiling?.closed && terminal.type === 'result' && terminal.subtype === 'success'
         ? { ...terminal, stop_reason: MAX_BUDGET_STOP_REASON }
         : terminal;

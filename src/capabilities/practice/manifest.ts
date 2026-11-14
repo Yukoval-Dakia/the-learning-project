@@ -12,7 +12,9 @@ import {
   CreateHintRequestBodySchema,
   CreateSolveSessionBodySchema,
   CreateSolveSubmissionBodySchema,
+  HintHistoryResponseSchema,
   HintRequestResponseSchema,
+  RestoreHintsBodySchema,
   SolveSessionCreatedSchema,
   SolveSessionParamsSchema,
   SolveSessionResponseSchema,
@@ -58,6 +60,8 @@ export const practiceCapability = defineCapability({
       'experimental:assessment_activation',
       'experimental:assessment_publish',
       'experimental:hint_request',
+      'experimental:hint_generation_claim',
+      'experimental:hint_send_admission',
       // Inference only: repeated independent wrongs against independent corrects
       // on other admitted questions of the same KC. Not a serving hold.
       QUESTION_OR_ANSWER_MAY_BE_FAULTY_ACTION,
@@ -70,6 +74,15 @@ export const practiceCapability = defineCapability({
     // 段由 server/app.ts 的 toHonoPath 转 :id/:sid 并把捕获参数透传 handler。
     // 注：/api/practice/[id]/answer 实际是 POST（P2a 声明误写 PUT，壳与包从来是 POST）。
     routes: [
+      {
+        method: 'POST',
+        path: '/api/hint-history/restorations',
+        operationId: 'restoreHintHistory',
+        request: { body: RestoreHintsBodySchema },
+        responses: { 200: HintHistoryResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        load: () => import('./api/resource-routes').then((m) => m.restoreHintHistoryResource),
+      },
       {
         method: 'POST',
         path: '/api/solve-sessions',

@@ -5,6 +5,7 @@ import type { ConnectionOptions, JobWithMetadata, SendOptions } from 'pg-boss';
 
 import { PICKUP_TIMEOUT_MS } from '@/capabilities/copilot/durable-pickup';
 import { canonicalHash } from '@/core/migration/canonical';
+import { DraftFocus } from '@/core/schema/assessment/draft-focus';
 import {
   DerivationPolicy,
   type DerivationPolicyT,
@@ -27,6 +28,7 @@ export const COPILOT_SESSION_QUEUE_PROTOCOL_VERSION = 2;
 
 /** The exact worker input persisted while a later turn waits behind its session head. */
 export interface CopilotAcceptedJobData {
+  draft_focus?: import('@/core/schema/assessment/draft-focus').DraftFocusT;
   user_message: string;
   confirmation?: ConfirmationCommandT;
   derivation_policy?: DerivationPolicyT;
@@ -111,6 +113,13 @@ export function parsePersistedJobData(
     return undefined;
   }
   if (!DerivationPolicy.optional().safeParse(value.derivation_policy).success) return undefined;
+  if (
+    value.draft_focus !== undefined &&
+    (value.derivation_policy !== 'allow' ||
+      value.triggered_by !== 'chat' ||
+      !DraftFocus.safeParse(value.draft_focus).success)
+  )
+    return undefined;
   if (value.confirmation !== undefined) ConfirmationCommand.parse(value.confirmation);
   return value as unknown as CopilotRunJobData;
 }
@@ -290,6 +299,7 @@ export async function reserveCopilotDurableAcceptance(
       chipKind: input.jobData?.chip_kind,
       derivationPolicy: readDerivationPolicy(input.jobData ?? input.queuedPayload),
       reviewAnswer: input.reviewAnswer,
+      draftFocus: input.jobData?.draft_focus,
       confirmation: input.confirmation,
       now: new Date(),
       ...(deterministicRunId ? { eventId: deterministicRunId } : {}),

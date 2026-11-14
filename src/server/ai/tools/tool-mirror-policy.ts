@@ -1,5 +1,42 @@
 import type { ToolCallerActor, ToolEffect, ToolMirrorPolicy } from '@/kernel/tools/types';
+import { isPrivateTraceContent } from '../laminar-tracing';
 import { getTool } from './registry';
+
+type ToolObservation =
+  | {
+      kind: 'tool_started';
+      toolName: string;
+      input: Record<string, unknown>;
+      toolUseId?: string;
+    }
+  | {
+      kind: 'tool_finished';
+      toolName: string;
+      input: Record<string, unknown>;
+      toolUseId?: string;
+      summary: string;
+      errorReason?: string;
+    };
+
+/** Project before an observer queues work outside the originating private scope. */
+export function projectToolObservationForPersistence(
+  observation: ToolObservation,
+): ToolObservation {
+  if (!isPrivateTraceContent()) return observation;
+  const metadata = {
+    toolName: observation.toolName,
+    input: { content_omitted: true },
+    ...(observation.toolUseId ? { toolUseId: observation.toolUseId } : {}),
+  };
+  return observation.kind === 'tool_started'
+    ? { kind: 'tool_started', ...metadata }
+    : {
+        kind: 'tool_finished',
+        ...metadata,
+        summary: observation.errorReason ? 'Tool failed' : 'Tool completed',
+        ...(observation.errorReason ? { errorReason: 'private_tool_failed' } : {}),
+      };
+}
 
 function matchesAgentRef(ref: string, family: string): boolean {
   const bare = ref.replace(/^agent:/i, '').toLowerCase();

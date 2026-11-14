@@ -34,6 +34,7 @@ import type {
 } from '@/kernel/tools/types';
 import { TOOL_OUTPUT_IMAGES_FIELD } from '@/kernel/tools/types';
 import { zodToToolParametersSchema } from '@/kernel/zod-json-schema';
+import { isPrivateTraceContent, traceSafeError } from '../laminar-tracing';
 import { sanitizeArgumentsEvidence, sanitizeProviderErrorText } from '../provider-error-evidence';
 import { __resolveMirrorPolicy } from './tool-mirror-policy';
 
@@ -663,7 +664,11 @@ async function notifyResult(
       // Review the exact input that produced this output, not the larger request
       // the model originally attempted.
       input: execInput,
-      output: errorReason ? { error: errorReason } : output,
+      output: errorReason
+        ? { error: errorReason }
+        : dt.name === 'get_current_draft'
+          ? { status: 'private_saved_draft', content_omitted: true }
+          : output,
       error_reason: errorReason ?? null,
       executed: executionStarted,
       ...(effectContract ? { proposal_effect_contract: effectContract } : {}),
@@ -674,7 +679,7 @@ async function notifyResult(
     console.error('[mcp-bridge] onResult failed', {
       tool: dt.name,
       task_run_id: ctx.taskRunId,
-      err: observationErr,
+      err: traceSafeError(observationErr),
     });
   }
 }
@@ -693,12 +698,12 @@ function summarizeResult(
     try {
       summary = dt.summarize(parsedInput as never, output as never);
     } catch (err) {
-      const summaryError = err instanceof Error ? err.message : String(err);
+      const summaryError = traceSafeError(err, true);
       summary = `summary unavailable: ${summaryError}`;
       console.error('[mcp-bridge] tool summarize failed', {
         tool: dt.name,
         task_run_id: ctx.taskRunId,
-        err,
+        err: traceSafeError(err),
       });
     }
   } else {
@@ -743,6 +748,7 @@ async function persistToolCallLog(
   const { parsedInput } = input;
   const { output, safeOperation, safeToolOperations } = execution;
   const errorReason = errorReasonOf(execution.result);
+  const privateContent = isPrivateTraceContent() || dt.name === 'get_current_draft';
   const latencyMs = Date.now() - startedAt;
   let toolCallLogId: string | undefined;
   try {
@@ -751,9 +757,17 @@ async function persistToolCallLog(
       task_kind: taskKind,
       tool_name: dt.name,
       effect: dt.effect,
-      input_json: parsedInput as Record<string, unknown>,
-      output_json: errorReason ? { error: errorReason } : (output as object | null),
-      error_reason: errorReason,
+      input_json: privateContent
+        ? { content_omitted: true }
+        : (parsedInput as Record<string, unknown>),
+      output_json: errorReason
+        ? { error: privateContent ? 'private_tool_error' : errorReason }
+        : dt.name === 'get_current_draft'
+          ? { status: 'private_saved_draft', content_omitted: true }
+          : privateContent
+            ? { content_omitted: true }
+            : (output as object | null),
+      error_reason: errorReason && privateContent ? 'private_tool_error' : errorReason,
       iteration: 0,
       latency_ms: latencyMs,
       cost: 0,
@@ -764,7 +778,7 @@ async function persistToolCallLog(
     console.error('[mcp-bridge] writeToolCallLog failed', {
       tool: dt.name,
       task_run_id: ctx.taskRunId,
-      err: logErr,
+      err: traceSafeError(logErr),
     });
   }
 
@@ -775,7 +789,7 @@ async function persistToolCallLog(
       console.error('[mcp-bridge] terminal ToolOperations log link failed', {
         operation_id: safeOperation.id,
         tcl_id: toolCallLogId,
-        err: linkErr,
+        err: traceSafeError(linkErr),
       });
     }
   }
@@ -827,7 +841,7 @@ async function mirrorToolUse(
             tool: dt.name,
             tcl_id: toolCallLogId,
             event_id: mirrorId,
-            err: linkErr,
+            err: traceSafeError(linkErr),
           });
         }
       }
@@ -836,7 +850,7 @@ async function mirrorToolUse(
       console.error('[mcp-bridge] tool_use mirror writeEvent failed', {
         tool: dt.name,
         task_run_id: ctx.taskRunId,
-        err: mirrorErr,
+        err: traceSafeError(mirrorErr),
       });
     }
   }
@@ -854,7 +868,7 @@ async function settleExecution(call: ToolCallContext, execution: ExecutionPhase)
       console.error('[mcp-bridge] onExecuteSettled failed', {
         tool: dt.name,
         task_run_id: ctx.taskRunId,
-        err: settleErr,
+        err: traceSafeError(settleErr),
       });
     }
   }

@@ -8,6 +8,8 @@
 export const DOMAIN_TOOL_MCP_SERVER_NAME = 'loom';
 
 export const READ_TOOLS = [
+  // Inventory only. An accepted focused Companion ask grants this dynamically.
+  'get_current_draft',
   'query_mistakes',
   'query_events',
   'get_attempt_context',

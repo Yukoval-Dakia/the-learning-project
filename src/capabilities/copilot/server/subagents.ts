@@ -27,9 +27,10 @@ const GENERATION_TOOL_NAMES = new Set([
   toMcpAllowedToolName('generate_question_candidate'),
 ]);
 const SAFE_LOOM_READ_TOOLS = new Set<string>(
-  READ_TOOLS.filter((name) => !GENERATION_TOOL_NAMES.has(toMcpAllowedToolName(name))).map((name) =>
-    toMcpAllowedToolName(name),
-  ),
+  READ_TOOLS.filter(
+    (name) =>
+      name !== 'get_current_draft' && !GENERATION_TOOL_NAMES.has(toMcpAllowedToolName(name)),
+  ).map((name) => toMcpAllowedToolName(name)),
 );
 const SAFE_WEB_SEARCH_TOOLS = new Set<string>(EXA_MCP_ALLOWED_TOOLS);
 

@@ -21,11 +21,7 @@ import type { Db } from '@/db/client';
 import { chartPublishedAfterBinding } from '@/kernel/blocks/chart';
 import { projectLearnerToolInput } from '@/kernel/learning-content';
 import { recordAiTaskReplyUnsealed } from '@/kernel/records/ai-attempt-facts';
-import {
-  DOMAIN_TOOL_MCP_SERVER_NAME,
-  resolveDomainToolNames,
-  resolveMcpAllowedTools,
-} from '@/kernel/tools/allowlists';
+import { DOMAIN_TOOL_MCP_SERVER_NAME, resolveDomainToolNames } from '@/kernel/tools/allowlists';
 import { resolveContextBudget } from '@/kernel/tools/budgets';
 import { ContextBudgetTracker } from '@/kernel/tools/context-throttle';
 import { ANSWER_ONLY_TOOL_NAMES, derivationToolDenial } from '@/kernel/tools/derivation-policy';
@@ -34,7 +30,10 @@ import type { ModelBinding } from '@/server/ai/execution-adapter';
 import { type StreamCollectResult, runAgentTask, streamTaskCollecting } from '@/server/ai/runner';
 import { isToolArgumentContractFailure } from '@/server/ai/tool-param-contract';
 import { getTool } from '@/server/ai/tools/registry';
-import { shouldEmitToolUseForCaller } from '@/server/ai/tools/tool-mirror-policy';
+import {
+  projectToolObservationForPersistence,
+  shouldEmitToolUseForCaller,
+} from '@/server/ai/tools/tool-mirror-policy';
 import { resolveCopilotSkillDocs } from '@/subjects/copilot-skills';
 import type { CopilotThinkingEndResult } from '../thinking-lane-contract';
 import type { CopilotRunCancellationControl } from './copilot-run-cancellation';
@@ -146,6 +145,7 @@ export type CopilotExecutionActivity =
     };
 
 export interface CopilotExecutionTurn {
+  currentDraftFocus?: import('@/core/schema/assessment/draft-focus').DraftFocusT;
   input: CopilotRunInput;
   sessionId: string;
   taskRunId: string;
@@ -242,7 +242,11 @@ async function emitActivity(
   activity: CopilotExecutionActivity,
 ): Promise<void> {
   try {
-    await policy.observe?.(activity);
+    await policy.observe?.(
+      activity.kind === 'tool_started' || activity.kind === 'tool_finished'
+        ? projectToolObservationForPersistence(activity)
+        : activity,
+    );
   } catch (error) {
     console.error('[copilot-execution] activity observer failed', { kind: activity.kind, error });
   }
@@ -379,7 +383,14 @@ export function createCopilotExecutionOwner(
     // supplies correlation via `correlatedToolUseId` (see pi-tools.ts).
     const isRetry =
       turn.learnerAskEventId !== undefined && turn.learnerAskEventId !== turn.sourceEventId;
-    const toolNames = answerOnly ? [...ANSWER_ONLY_TOOL_NAMES] : resolveDomainToolNames(surface);
+    const toolNames = answerOnly
+      ? [...ANSWER_ONLY_TOOL_NAMES]
+      : [
+          ...resolveDomainToolNames(surface),
+          ...(surface === 'copilot' && turn.currentDraftFocus && !isRetry
+            ? ['get_current_draft']
+            : []),
+        ];
     const domainMountOptions = {
       ctx: {
         db,
@@ -395,6 +406,9 @@ export function createCopilotExecutionOwner(
         ...(turn.learnerAskEventId ? { learnerAskEventId: turn.learnerAskEventId } : {}),
         ...(focused ? { ambientFocus: { kind: focused.kind, id: focused.id } } : {}),
         sourceLedger,
+        ...(surface === 'copilot' && !isRetry && turn.currentDraftFocus
+          ? { currentDraftFocus: turn.currentDraftFocus }
+          : {}),
         answerOnly,
       },
       serverName: DOMAIN_TOOL_MCP_SERVER_NAME,
@@ -503,9 +517,7 @@ export function createCopilotExecutionOwner(
         : []),
     ];
     const baseAllowedTools = [
-      ...(answerOnly
-        ? ANSWER_ONLY_TOOL_NAMES.map((name) => `mcp__${DOMAIN_TOOL_MCP_SERVER_NAME}__${name}`)
-        : resolveMcpAllowedTools(surface)),
+      ...domainMountOptions.toolNames.map((name) => `mcp__${DOMAIN_TOOL_MCP_SERVER_NAME}__${name}`),
       ...(exa ? EXA_MCP_ALLOWED_TOOLS : []),
     ];
     const subagentsEnabled = !answerOnly && (policy.subagentsEnabled ?? isCopilotSubagentEnabled());

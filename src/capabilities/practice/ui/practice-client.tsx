@@ -12,6 +12,7 @@ import {
   getStream,
   issueAssessment,
   recomposeStream,
+  restoreHints,
   revealStudyReference,
   saveResponseDraft,
   solveHint,
@@ -22,6 +23,7 @@ import {
 } from './practice-api';
 
 export type PracticeClient = {
+  restoreHints: typeof restoreHints;
   submitPaperSlot: typeof submitPaperSlot;
   endPaperSession: typeof endPaperSession;
   startPaperSession: typeof startPaperSession;
@@ -44,6 +46,7 @@ export type PracticeClient = {
   readJudgeRunStatus?: (runId: string) => Promise<ApiOperationJsonResponse<'getJudgeRunStatus'>>;
 };
 const httpPracticeClient: PracticeClient = {
+  restoreHints,
   submitPaperSlot,
   endPaperSession,
   startPaperSession,

@@ -44,7 +44,7 @@ import {
   type RunnerMessage,
   resolveExecutionAdapter,
 } from './execution-adapter';
-import { traceMetadata, traceOperation } from './laminar-tracing';
+import { traceMetadata, traceOperation, traceSafeError } from './laminar-tracing';
 import { taskMayExportTranscript } from './laminar-transcript';
 import { logMissingToolMountsWarning } from './log';
 import { PROVIDER_HTTP_TIMEOUT_MARGIN_MS } from './provider-http-timeout';
@@ -178,7 +178,7 @@ async function notifyTaskEvent(ctx: RunTaskCtx, message: RunnerMessage): Promise
     console.error('[runner] task event observer failed (continuing)', {
       subtype: message.subtype,
       task_id: message.task_id,
-      error: error instanceof Error ? error.message : String(error),
+      error: traceSafeError(error, true),
     });
   }
 }
@@ -724,6 +724,7 @@ export async function runTask(
     signal: ctx.signal,
     content: ctx.laminarContent,
     allowTranscript: taskMayExportTranscript(kind, ctx.laminarTranscript),
+    privateContent: ['TeachingTurnTask', 'TeachingTurnVisionTask', 'CopilotTask'].includes(kind),
   });
 }
 
@@ -1045,6 +1046,9 @@ export function streamTask(kind: string, input: unknown, initialCtx: StreamTaskC
           signal: lifecycle.abortController.signal,
           outcome: (result) => (result ? 'success' : 'error'),
           allowTranscript: taskMayExportTranscript(kind, ctx.laminarTranscript),
+          privateContent: ['TeachingTurnTask', 'TeachingTurnVisionTask', 'CopilotTask'].includes(
+            kind,
+          ),
           content: ctx.laminarContent
             ? {
                 input: ctx.laminarContent.input,
@@ -1118,6 +1122,7 @@ export async function streamTaskCollecting(
       content: ctx.laminarContent,
       outcome: (result) => (result.partial ? 'error' : 'success'),
       allowTranscript: taskMayExportTranscript(kind, ctx.laminarTranscript),
+      privateContent: ['TeachingTurnTask', 'TeachingTurnVisionTask', 'CopilotTask'].includes(kind),
     },
   );
 }
@@ -1397,7 +1402,7 @@ async function streamTaskCollectingImpl(
           cost_basis: lifecycle.costBasis,
           cost_ref: lifecycle.costRef,
           partial: true,
-          error: error instanceof Error ? error.message : String(error),
+          error: traceSafeError(error, true),
           failureDiagnostics: failureDiagnosticsForResult,
           ...(providerFailure ? { providerFailure } : {}),
         };
@@ -1426,7 +1431,7 @@ async function streamTaskCollectingImpl(
         cost_basis: lifecycle.costBasis,
         cost_ref: lifecycle.costRef,
         partial: true,
-        error: error instanceof Error ? error.message : String(error),
+        error: traceSafeError(error, true),
       };
     }
     await lifecycle.markRetried();

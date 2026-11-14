@@ -4,6 +4,21 @@ import { MAX_HINT_COUNT, MAX_HINT_INDEX } from '@/core/schema/event/known';
 import { CreateSubmissionBodySchema } from './assessment-contracts';
 
 export const SolveSessionParamsSchema = z.object({ sid: z.string().trim().min(1) });
+export const RestoreHintsBodySchema = z
+  .object({ issuance_id: z.string().min(1), question_id: z.string().min(1) })
+  .strict();
+export const HintHistoryResponseSchema = z.object({
+  status: z.enum(['outcome_unknown', 'legacy_body_unavailable', 'ready', 'empty']),
+  next_rung: z.number().int(),
+  hints: z.array(
+    z.object({
+      index: z.number().int(),
+      text_md: z.string(),
+      kind: z.enum(['ai', 'deterministic_next_step']),
+      disclosure_md: z.string().nullable(),
+    }),
+  ),
+});
 export const QuestionSolveParamsSchema = z.object({
   id: z.string().trim().min(1),
   sid: z.string().trim().min(1),
@@ -37,11 +52,13 @@ export const SolveSessionResponseSchema = z
 
 export const HintRequestBodySchema = z
   .object({
+    request_id: z.string().min(1).max(160).optional(),
     hint_index: z.number().int().min(0).max(MAX_HINT_INDEX).default(0),
     issuance_id: z.string().min(1).optional(),
   })
   .nullable();
 export const CreateHintRequestBodySchema = z.object({
+  request_id: z.string().min(1).max(160).optional(),
   question_id: z.string().trim().min(1),
   hint_index: z.number().int().min(0).max(MAX_HINT_INDEX).optional(),
   issuance_id: z.string().min(1).optional(),

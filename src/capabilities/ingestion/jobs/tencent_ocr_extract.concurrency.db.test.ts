@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   type AssistantMessage,
   type Context,
@@ -11,6 +11,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import { enrichEvidenceCells } from '@/capabilities/agency/server/conjecture/evidence-enrichment';
 import { reserveIngestionOperation } from '@/capabilities/ingestion/server/operation-store';
 import { TencentSubmitInProgressError } from '@/capabilities/ingestion/server/provider-attempts';
+import { changeIngestionPurpose } from '@/capabilities/ingestion/server/purpose-change';
 import type { DescribeResponse } from '@/capabilities/ingestion/server/tencent_mark';
 import { createPiModelExecutor } from '@/capabilities/practice/grading/server/pi-model-executor';
 import { installPracticeHost } from '@/capabilities/practice/public';
@@ -31,6 +32,7 @@ import {
   question_block,
   question_group_lifecycle,
   source_asset,
+  source_document,
 } from '@/db/schema';
 import { withAnswerClass } from '@/kernel/records/answer-class-write';
 import { issueAssessment } from '@/kernel/records/assessment-issuance';
@@ -449,7 +451,9 @@ async function expectModelReadersSee(
   });
   const hintContexts = captureProviderContexts();
   // The scripted provider returns '{}', so parsing the hint fails after the request is sent.
-  await planSolveHint({ db, sessionId: session.sessionId, hintIndex: 0 }).catch(() => undefined);
+  await planSolveHint({ db, sessionId: session.sessionId, hintIndex: 0 }).catch((error) => {
+    if (hintContexts.length === 0) throw error;
+  });
   const [hintRequest] = hintContexts;
   if (!hintRequest) throw new Error('solve hint never reached the provider');
   const hintUser = hintRequest.messages.find((message) => message.role === 'user');
@@ -651,6 +655,19 @@ it('gives every question figure to blind solve, grading, the companion and conje
       );
       if (expected.marker === null) continue;
       if (!block.source_document_id) throw new Error('block has no source document');
+
+      if (expected.hint) {
+        const [doc] = await db
+          .select()
+          .from(source_document)
+          .where(eq(source_document.id, block.source_document_id));
+        await changeIngestionPurpose(db, sessionId, {
+          request_id: randomUUID(),
+          source_document_id: doc.id,
+          expected_version: doc.version,
+          target: 'allow',
+        });
+      }
 
       const enrolled = await enrollBlockIntoItemBank({
         db,
