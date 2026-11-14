@@ -39,7 +39,7 @@ function eligibleRecoveryError(questionId: AnyColumn, now: Date, epoch?: AnyColu
       ${epoch ? sql`AND e.id = ${epoch}->>'recovery_epoch'` : sql``}
       AND NOT EXISTS (SELECT 1 FROM ${event} n
         WHERE n.subject_kind = e.subject_kind AND n.subject_id = e.subject_id AND n.action = e.action
-          AND (n.created_at, n.id) > (e.created_at, e.id))
+          AND (n.created_at, n.dispatch_seq, n.id) > (e.created_at, e.dispatch_seq, e.id))
   )`;
 }
 
@@ -889,6 +889,7 @@ export async function recoverOrphanVerifyDispatches(
           outcome: event.outcome,
           payload: event.payload,
           createdAt: event.created_at,
+          dispatchSeq: event.dispatch_seq,
         })
         .from(event)
         .where(inArray(event.subject_id, ids));
@@ -920,7 +921,10 @@ export async function recoverOrphanVerifyDispatches(
           (r) => r.action === `experimental:${verifier}`,
         );
         const latestVerify = verifyRows.sort(
-          (a, b) => b.createdAt.getTime() - a.createdAt.getTime() || b.id.localeCompare(a.id),
+          (a, b) =>
+            b.createdAt.getTime() - a.createdAt.getTime() ||
+            b.dispatchSeq - a.dispatchSeq ||
+            b.id.localeCompare(a.id),
         )[0];
         const scoped = (intentsByQuestion.get(row.id) ?? []).filter(
           (entry) => entry.payload.verifier_kind === verifier,
@@ -1023,6 +1027,7 @@ export async function recoverOrphanVerifyDispatches(
             outcome: event.outcome,
             payload: event.payload,
             createdAt: event.created_at,
+            dispatchSeq: event.dispatch_seq,
           })
           .from(event)
           .where(
@@ -1037,7 +1042,10 @@ export async function recoverOrphanVerifyDispatches(
           );
         const verifyRows = scopedEvents.filter((r) => r.action === 'experimental:source_verify');
         const latestVerify = verifyRows.sort(
-          (a, b) => b.createdAt.getTime() - a.createdAt.getTime() || b.id.localeCompare(a.id),
+          (a, b) =>
+            b.createdAt.getTime() - a.createdAt.getTime() ||
+            b.dispatchSeq - a.dispatchSeq ||
+            b.id.localeCompare(a.id),
         )[0];
         if (latestVerify == null || latestVerify.id !== candidate.epoch) continue;
         const recoveryIntents = scopedEvents.filter(
