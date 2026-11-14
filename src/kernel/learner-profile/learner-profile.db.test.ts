@@ -76,7 +76,16 @@ async function seedFsrs(kcId: string) {
 
 async function seedCandidate(kcId: string) {
   const now = new Date();
-  const state = rebuildCandidate(kcId, [], now, 'initial');
+  const rebuilt = rebuildCandidate(kcId, [], now, 'initial');
+  const state = {
+    ...rebuilt,
+    modelDue: {
+      kind: 'due_now',
+      at: now.getTime() + 3 * 24 * 60 * 60 * 1000,
+      target: 0.8,
+    },
+    dueKind: 'due_now',
+  } as typeof rebuilt;
   await db.insert(material_fsrs_state).values({
     id: newId(),
     subject_kind: 'knowledge',
