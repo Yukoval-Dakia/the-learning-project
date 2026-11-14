@@ -328,6 +328,31 @@ export function resolveApiPort(rawApiPort: string | undefined): number {
   return parsed;
 }
 
+/**
+ * Single parse point for the restart-only Postgres pool cap. This stays independent
+ * from getServerEnv because audits and boot preparation may parse it before DATABASE_URL exists.
+ */
+export function resolveDbPoolMax(rawPoolMax: string | undefined): number | undefined {
+  const trimmed = rawPoolMax?.trim();
+  if (trimmed === undefined || trimmed === '') return undefined;
+  const parsed = Number(trimmed);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(`DB_POOL_MAX must be a positive integer, got: ${JSON.stringify(rawPoolMax)}`);
+  }
+  return parsed;
+}
+
+/**
+ * Single parse point for the worker-side print-page origin. Empty is a deliberate
+ * permanent failure; unset keeps the local default.
+ */
+export function resolveWorksheetRenderAppOrigin(rawOrigin: string | undefined): string {
+  if (rawOrigin === undefined) return 'http://localhost:8787';
+  const trimmed = rawOrigin.trim();
+  if (trimmed === '') return '';
+  return z.string().url().parse(trimmed);
+}
+
 export type BossAutomationMode = 'enabled' | 'disabled';
 
 /**
