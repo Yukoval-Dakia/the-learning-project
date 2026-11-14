@@ -70,13 +70,15 @@ export function checkProposalPrerequisites(
   | { type: 'missing'; prerequisite: string; dependent: string }
   | { type: 'order'; prerequisite: string; dependent: string } {
   const known = new Set([graph.rootKey, ...graph.childKeys]);
-  const order = new Map<string, number>([
-    [graph.rootKey, 0],
-    ...atomics.map((item, index) => [item.knowledge_id, index + 1] as const),
-    ...longs.flatMap((item, index) =>
-      item.knowledge_ids.map((id) => [id, atomics.length + index + 1] as const),
-    ),
-  ]);
+  const order = new Map<string, number>([[graph.rootKey, 0]]);
+  for (const [index, item] of atomics.entries()) {
+    if (!order.has(item.knowledge_id)) order.set(item.knowledge_id, index + 1);
+  }
+  for (const [index, item] of longs.entries()) {
+    for (const id of item.knowledge_ids) {
+      if (!order.has(id)) order.set(id, atomics.length + index + 1);
+    }
+  }
   const edges = new Set(
     prerequisites.map(
       (edge) => `${edge.prerequisite_knowledge_id}->${edge.dependent_knowledge_id}`,
@@ -101,8 +103,8 @@ export function checkProposalPrerequisites(
       const matches = dependentIds.filter((id) => edges.has(`${prerequisiteId}->${id}`));
       if (matches.length === 0)
         return { type: 'missing', prerequisite: prerequisiteId, dependent: dependentIds[0] };
-      const prerequisiteIndex = order.get(prerequisiteId);
       const ordered = matches.some((id) => {
+        const prerequisiteIndex = order.get(prerequisiteId);
         const dependentIndex = order.get(id);
         return (
           prerequisiteIndex != null && dependentIndex != null && prerequisiteIndex < dependentIndex

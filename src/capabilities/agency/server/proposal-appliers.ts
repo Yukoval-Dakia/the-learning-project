@@ -91,6 +91,8 @@ export interface LearningItemAcceptResult {
   idempotent?: boolean;
 }
 
+type LearningItemAcceptAction = LearningItemAcceptResult['actions'][number];
+
 export type EnqueueLearningIntentNoteFn = (artifactId: string) => Promise<boolean>;
 
 export async function enqueueLearningIntentNotes(
@@ -206,16 +208,21 @@ export async function acceptLearningItemProposal(
         ...(opts.actor ? { actor: opts.actor } : {}),
         signal: 'after_commit',
         replay: async (rate: RecordedProposalRate): Promise<LearningItemAcceptResult> => {
-          const summary = await summarizeLearningItemMaterialization(db, proposalId);
+          const receipt = readLearningItemAcceptReceipt(rate.payload);
+          const summary = receipt.available
+            ? receipt.value
+            : await summarizeLearningItemMaterialization(db, proposalId);
           const enqueued = await enqueueLearningIntentNotes(
             db,
-            [...summary.atomic_artifact_ids, ...summary.long_artifact_ids],
+            summary.actions
+              .filter((action) => action.action === 'create' && action.note_id)
+              .map((action) => action.note_id as string),
             opts.enqueueLearningIntentNote,
           );
           return {
             kind: 'learning_item',
-            rate_event_id: rate.id,
             ...summary,
+            rate_event_id: rate.id,
             enqueued_note_generate_jobs: enqueued,
             idempotent: true,
           };
@@ -423,6 +430,68 @@ async function summarizeLearningItemMaterialization(
     root_knowledge_id: rootKnowledgeId,
     created_knowledge_ids: [],
     actions,
+  };
+}
+
+function readLearningItemAcceptReceipt(
+  payload: unknown,
+): { available: false } | { available: true; value: LearningItemAcceptResult } {
+  const record = asPlainRecord(payload);
+  const receipt = asPlainRecord(record.learning_item_accept_receipt);
+  const stringArray = (value: unknown): value is string[] =>
+    Array.isArray(value) && value.every((id) => typeof id === 'string');
+  const optionalId = (value: unknown): string | null => (typeof value === 'string' ? value : null);
+  const requiredId = (value: unknown): value is string => typeof value === 'string';
+  const parseAction = (value: unknown): LearningItemAcceptAction | null => {
+    const candidate = asPlainRecord(value);
+    if (
+      !['hub', 'atomic', 'long'].includes(String(candidate.kind)) ||
+      !['create', 'skip', 'reuse'].includes(String(candidate.action)) ||
+      !['new', 'mastered', 'existing_item'].includes(String(candidate.reason)) ||
+      !stringArray(candidate.knowledge_ids)
+    ) {
+      return null;
+    }
+    return {
+      kind: candidate.kind as LearningItemAcceptAction['kind'],
+      proposal_item_id: optionalId(candidate.proposal_item_id),
+      knowledge_ids: candidate.knowledge_ids,
+      action: candidate.action as LearningItemAcceptAction['action'],
+      reason: candidate.reason as LearningItemAcceptAction['reason'],
+      learning_item_id: optionalId(candidate.learning_item_id),
+      note_id: optionalId(candidate.note_id),
+    };
+  };
+  if (
+    !requiredId(receipt.hub_learning_item_id) ||
+    !stringArray(receipt.atomic_learning_item_ids) ||
+    !stringArray(receipt.long_learning_item_ids) ||
+    !requiredId(receipt.hub_artifact_id) ||
+    !stringArray(receipt.atomic_artifact_ids) ||
+    !stringArray(receipt.long_artifact_ids) ||
+    !requiredId(receipt.root_knowledge_id) ||
+    !stringArray(receipt.created_knowledge_ids) ||
+    !Array.isArray(receipt.actions) ||
+    !receipt.actions.every((action) => parseAction(action) !== null)
+  ) {
+    return { available: false };
+  }
+  return {
+    available: true,
+    value: {
+      kind: 'learning_item',
+      rate_event_id: '',
+      hub_learning_item_id: receipt.hub_learning_item_id,
+      atomic_learning_item_ids: receipt.atomic_learning_item_ids,
+      long_learning_item_ids: receipt.long_learning_item_ids,
+      hub_artifact_id: receipt.hub_artifact_id,
+      atomic_artifact_ids: receipt.atomic_artifact_ids,
+      long_artifact_ids: receipt.long_artifact_ids,
+      root_knowledge_id: receipt.root_knowledge_id,
+      created_knowledge_ids: receipt.created_knowledge_ids,
+      actions: receipt.actions.map((action) => parseAction(action) as LearningItemAcceptAction),
+      enqueued_note_generate_jobs: 0,
+    },
   };
 }
 

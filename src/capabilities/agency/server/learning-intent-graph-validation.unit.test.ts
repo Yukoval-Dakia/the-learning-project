@@ -26,6 +26,19 @@ describe('learning intent prerequisite validation', () => {
     expect(checkProposalPrerequisites(graph, atomics, longs, edges)).toEqual({ type: 'ok' });
   });
 
+  // @invariant data: a knowledge id's first plan position stays authoritative when a long overlaps an atomic
+  // @fails-if a long's later occurrence overwrites the atomic position and rejects a valid prerequisite edge
+  it('keeps the first position when atomic and long knowledge ids overlap', () => {
+    const overlapGraph = { rootKey: 'root', childKeys: ['first', 'second', 'third'] };
+    const atomics = [atomic('first'), atomic('second', ['first']), atomic('third')];
+    const longs = [long(['first', 'third'])];
+    const edges = [{ prerequisite_knowledge_id: 'first', dependent_knowledge_id: 'second' }];
+    expect(checkProposalGraph(overlapGraph, atomics, longs, edges)).toBeNull();
+    expect(checkProposalPrerequisites(overlapGraph, atomics, longs, edges)).toEqual({
+      type: 'ok',
+    });
+  });
+
   // @invariant data: prerequisite graph ordering rejects a dependent emitted before its prerequisite
   // @fails-if an existing edge is accepted without enforcing the plan's topological order
   it('rejects a dependent ordered before its prerequisite', () => {
