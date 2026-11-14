@@ -139,6 +139,8 @@ function rs(pub: Published): ResponseSetT {
 
 describe('formal manual candidate and atomic activation', () => {
   beforeEach(resetDb);
+  // @invariant concurrency: 作答、会话与结算原子提交，重放复用冻结身份。
+  // @fails-if 会话更新失败仍写入学习状态，或重放再次结算、返回可变参考答案。
   it('commits native solve input and session transitions atomically, replays once, and reveals only the frozen reference', async () => {
     const pub = await publishAdmitted('native_solve');
     const issued = await issueAssessment(testDb(), { group_id: pub.groupId });
