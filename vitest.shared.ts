@@ -36,6 +36,7 @@ export const fastTestInclude = [
   'src/capabilities/ingestion/server/tencent_mark_parser.unit.test.ts',
   'src/capabilities/notes/tasks/note-generate-output.unit.test.ts',
   'src/core/blocks/scene/plot.test.ts',
+  'src/kernel/host-operation.unit.test.ts',
   'src/capabilities/observability/api/backup-import.unit.test.ts',
   'src/capabilities/observability/server/backup/restore-stream.unit.test.ts',
   'src/capabilities/practice/grading/jobs/model_slice_admission_run.test.ts',
