@@ -169,6 +169,7 @@ async function main(): Promise<number> {
   // refuse to start any further work. groupKill below is also called from
   // finally so a workload/server child cannot outlive the entry.
   let cancelled: 'SIGINT' | 'SIGTERM' | null = null;
+  let cancellationReaping: Promise<void> | undefined;
   const groupKill = (signal: 'SIGTERM' | 'SIGKILL') => {
     for (const pid of trackedPids()) {
       try {
@@ -208,7 +209,10 @@ async function main(): Promise<number> {
     } catch {
       /* evidence dir may be gone; cancellation still proceeds */
     }
-    groupKill('SIGTERM');
+    cancellationReaping = reapChildren(8000).catch((error) => {
+      receipts('cancel_reap_failed', { message: String(error) });
+      exit = 1;
+    });
   };
   process.on('SIGINT', onSignal);
   process.on('SIGTERM', onSignal);
@@ -455,6 +459,7 @@ async function main(): Promise<number> {
       { cwd: REPO, env: tsxEnv, ownedChildren, label: 'workload' },
       join(evidenceDir, 'workload'),
     );
+    throwIfCancelled();
     recordCommand(['tsx', casePath], workload.exit, caseStart);
     timings.case_end = now();
     if (workload.exit !== 0) {
@@ -474,7 +479,7 @@ async function main(): Promise<number> {
     // Group-kill every tracked child (migration/workload via runCapture and
     // the built server) and reap before touching PG: a workload must not
     // outlive its database, and no owned child may outlive this entry.
-    await reapChildren(8000);
+    await (cancellationReaping ?? reapChildren(8000));
     if (server) {
       save('server-cleanup.json', {
         at: now(),
