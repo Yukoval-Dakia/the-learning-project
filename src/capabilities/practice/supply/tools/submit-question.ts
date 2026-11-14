@@ -4,19 +4,6 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import type { SendOptions } from 'pg-boss';
 import { z } from 'zod';
-import {
-  type DeclaredGroupDomainOutcome,
-  type SubmitResult,
-  canonicalJson,
-  claimSubmitRequestId,
-  declaredCandidateDocument,
-  declaredCandidateReceipt,
-  findSubmitReceipt,
-  insertSourcedDraft,
-  persistDeclaredQuestionGroup,
-  submitDraftQuestion,
-  writeSubmitReceiptEvent,
-} from '@/capabilities/practice/question-bank/public';
 import { parseDraftRef } from '@/core/question-draft-ref';
 import { AgentRef } from '@/core/schema/business';
 import {
@@ -39,7 +26,9 @@ import {
 } from '@/kernel/records/publication-receipt';
 import { draftCanonicalIdentity } from '@/kernel/records/question-draft-contract';
 import type { PlacementVerificationAuthority } from '@/kernel/supply-contracts';
+import { SupplyTraceV1, withSupplyTraceDifficultyEvidence } from '@/kernel/supply-contracts';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
+import { resolveSubjectProfile } from '@/subjects/profile';
 import {
   type VerifyRecoveryMark,
   canonicalQuestionContentHash,
@@ -49,26 +38,19 @@ import {
   questionEmbedStamp,
   writeVerifyDispatchIntent,
 } from '../../question-bank/public';
-import { flatCandidatePublication, publicationDisplay } from './submit-publication';
-
-export type {
-  EditQuestionInputT,
-  EditQuestionResult,
-  SubmitResult,
-} from '@/capabilities/practice/question-bank/public';
-// 冻结 revision 的题型投影与提交使用同一实现。
-export {
-  EditQuestionInput,
-  deriveKind,
+import {
+  type DeclaredGroupDomainOutcome,
+  type SubmitResult,
+  canonicalJson,
+  claimSubmitRequestId,
+  declaredCandidateDocument,
+  declaredCandidateReceipt,
+  findSubmitReceipt,
   insertSourcedDraft,
-  probeDraftEdit,
-  saveDraftEdit,
+  persistDeclaredQuestionGroup,
   submitDraftQuestion,
-  validateDraftEdit,
-} from '@/capabilities/practice/question-bank/public';
-
-import { SupplyTraceV1, withSupplyTraceDifficultyEvidence } from '@/kernel/supply-contracts';
-import { resolveSubjectProfile } from '@/subjects/profile';
+  writeSubmitReceiptEvent,
+} from '../../question-bank/server/question-publication/submit-question';
 import {
   candidateContentIssues,
   questionPreparerCandidateBindingIssue,
@@ -91,6 +73,7 @@ import {
   matchesWhitelist,
   maxNgramOverlap,
 } from '../server/sourced-dedup';
+import { flatCandidatePublication, publicationDisplay } from './submit-publication';
 
 const SOURCED_CREATED_BY_BY_ROUTE = {
   jyeoo_fetch: AgentRef.parse({ by: 'system', task_kind: 'JyeooFetch' }),

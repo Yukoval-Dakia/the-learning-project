@@ -117,6 +117,15 @@ export const runQuestionSupplyNightly: typeof import('./jobs/question_supply_nig
   async (...args) =>
     (await import('./jobs/question_supply_nightly')).runQuestionSupplyNightly(...args);
 export {
+  EditQuestionInput,
+  type EditQuestionInputT,
+  probeDraftEdit,
+  saveDraftEdit,
+  validateDraftEdit,
+} from '../question-bank/server/question-publication/edit-question';
+export { deriveKind } from '../question-bank/server/question-publication/submit-decision';
+export { submitDraftQuestion } from '../question-bank/server/question-publication/submit-question';
+export {
   dispatchPlacementStarterClaim,
   isPlacementStarterJobLive,
   placementClaimJobQueue,
@@ -171,19 +180,12 @@ export {
 } from './server/supply-plan-gate';
 export { knowledgeNodesWithPlacementClaims } from './server/undo-usage';
 export {
-  EditQuestionInput,
-  type EditQuestionInputT,
   type StoreSourcedQuestionDeps,
   type SubmitQuestionDeps,
-  deriveKind,
   dispatchSourceVerifyIntents,
   executeStoreSourcedQuestion,
-  probeDraftEdit,
   readCandidateSubmitReceipt,
-  saveDraftEdit,
   submitCopilotAuthoredDraft,
-  submitDraftQuestion,
   submitPlacementSupplyCandidate,
   submitQuestionTool,
-  validateDraftEdit,
 } from './tools/submit-question';
