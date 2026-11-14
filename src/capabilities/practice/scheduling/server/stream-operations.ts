@@ -109,10 +109,8 @@ export async function recomposePracticeStream(
 ): Promise<PracticeStreamRecomposeResult> {
   const parsed = RecomposePracticeStreamBodySchema.safeParse(rawBody);
   if (!parsed.success) throw new ApiError('validation_error', 'invalid body', 400);
-  const date = resolveDate(
-    parsed.data.date ?? null,
-    await resolveLearningDayDate(database, opts?.now),
-  );
+  const learningDay = await resolveLearningDayDate(database, opts?.now);
+  const date = resolveDate(parsed.data.date ?? null, learningDay);
   // manual recomposition can reach SelectionOrchestratorTask. Count
   // the request immediately before that work so a click/retry loop cannot turn
   // into an unbounded sequence of paid model calls.
@@ -125,6 +123,10 @@ export async function recomposePracticeStream(
   // 用 date 当 triggerId 是因为**物化幂等**是真 feature（同日重跑 = 同选集，双重检查命中不 double-compose））。
   const recomposeInvocationId = newId();
   const added = await recomposeStream(database, date, {
+    // Carry-forward only when the target is the current learning day: an
+    // explicit past `?date=` recomposes that day in place and must not drag
+    // open rows from still-earlier partitions into it.
+    carryForward: date === learningDay,
     composeDeps: {
       rng: buildSeededSelectionRng(date, 'recompose', recomposeInvocationId),
       providerInvocation: {

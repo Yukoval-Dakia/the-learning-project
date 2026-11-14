@@ -12,6 +12,36 @@ import { streamPartitionPredicate } from './stream-store';
 const CARRIED_STREAM_STATUSES = ['pending', 'in_progress'] as const;
 
 /**
+ * Statuses that own progress a carry must never overwrite or delete. A target
+ * row already carrying closed or open progress (`done`, `skipped`, or an
+ * `in_progress` row with its own `iss_stream_<id>` binding) wins a same-ref
+ * collision; a `pending` target row has zero progress and loses to the carried
+ * row that owns the learner's state. Deletion is therefore keyed on progress,
+ * never on insert provenance alone.
+ */
+const PROGRESS_OWNED_STATUSES: ReadonlySet<string> = new Set(['done', 'skipped', 'in_progress']);
+
+/**
+ * Single global carry-admission key: at most one transaction may hold source
+ * partition locks inside a finalize tx. Canonical order for a carry-capable
+ * finalize tx is G -> target -> sources (ascending): admission is taken before
+ * the target `stream:compose:<date>` lock, so a tx already holding G never
+ * waits on another tx's target partition and no two-transaction cycle exists.
+ * `lockStreamCarryAdmission` is the public acquire point;
+ * `carryForwardOpenStreamItems` re-takes it (xact locks are re-entrant) so
+ * carry never runs unadmitted even if a future caller forgets admission.
+ */
+const CARRY_FORWARD_LOCK_KEY = 'stream:carry-forward';
+
+/**
+ * Acquire the global carry-admission lock inside `tx`. Call before the target
+ * partition lock in any finalize transaction that will run carry-forward.
+ */
+export async function lockStreamCarryAdmission(tx: Tx): Promise<void> {
+  await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${CARRY_FORWARD_LOCK_KEY}))`);
+}
+
+/**
  * Learning-day carry-forward (YUK-2125): when a compose materializes a *new* learning
  * day, every still-open row on earlier whole-profile partitions migrates into the new
  * day instead of being stranded on a calendar day the learner never sees again.
@@ -24,22 +54,31 @@ const CARRIED_STREAM_STATUSES = ['pending', 'in_progress'] as const;
  *
  * Same-ref collisions against `practice_stream_daily_ref_unique` are resolved by
  * progress, never blindly:
- * - ref newly inserted by *this* plan (`freshRefs`): the plan row is a duplicate
- *   with no progress — delete it and carry the row that owns the learner's state.
- * - ref already on the target before this compose (uploads, kept rows): the target
- *   row owns the ref — drop the stale carried duplicate.
+ * - the target row carries no progress of its own (a freshly inserted plan row,
+ *   or a zero-progress `pending` upload/recompose-survivor row): it is a
+ *   duplicate — delete it and carry the row that owns the learner's state.
+ * - the target row already owns progress (`done`/`skipped` history, or its own
+ *   `in_progress` issuance binding): it wins the ref — drop the stale carried
+ *   duplicate. Deletion is keyed on progress, never on insert provenance alone.
  *
  * Must run inside the compose finalize transaction after `materializePreparedCollect`
  * (so carried rows append after the fresh plan, matching the survivors-outside-plan
- * convention), with the target partition lock already held; each source partition is
- * locked in ascending-date order before its rows move, so a carried row can never
- * race with a rerank on its source partition.
+ * convention). A single global `stream:carry-forward` advisory lock is taken
+ * before any per-source `stream:compose:<date>` lock, so two composes on
+ * different target days can never wait on each other's partitions into a
+ * deadlock; per-source locks are then taken in ascending-date order so a
+ * carried row never races a single-partition writer (rerank / intervention)
+ * on its source partition.
  */
 export async function carryForwardOpenStreamItems(
   tx: Tx,
   date: string,
   freshRefs?: Set<string>,
 ): Promise<{ moved: number; deletedIds: Set<string> }> {
+  // Admission already held by the finalize caller (G before target before
+  // sources); re-taking is a no-op re-entrant lock so carry never runs
+  // unadmitted.
+  await lockStreamCarryAdmission(tx);
   const sourceDates = await tx
     .selectDistinct({ date: practice_stream_item.date })
     .from(practice_stream_item)
@@ -68,21 +107,31 @@ export async function carryForwardOpenStreamItems(
       .orderBy(asc(practice_stream_item.position));
     if (openRows.length === 0) continue;
     const targetRows = await tx
-      .select({ id: practice_stream_item.id, ref_id: practice_stream_item.ref_id })
+      .select({
+        id: practice_stream_item.id,
+        ref_id: practice_stream_item.ref_id,
+        status: practice_stream_item.status,
+      })
       .from(practice_stream_item)
       .where(streamPartitionPredicate(date));
-    const targetIdByRef = new Map(targetRows.map((row) => [row.ref_id, row.id]));
+    const targetByRef = new Map(targetRows.map((row) => [row.ref_id, row]));
     const duplicateTargetIds: string[] = [];
     const staleCarriedIds: string[] = [];
     const carryRows: typeof openRows = [];
     for (const row of openRows) {
-      const targetId = targetIdByRef.get(row.ref_id);
-      if (targetId === undefined) {
+      const target = targetByRef.get(row.ref_id);
+      if (target === undefined) {
         carryRows.push(row);
-      } else if (freshRefs?.has(row.ref_id)) {
-        duplicateTargetIds.push(targetId);
+      } else if (freshRefs?.has(row.ref_id) || !PROGRESS_OWNED_STATUSES.has(target.status)) {
+        // The target row has no progress of its own: a freshly inserted plan
+        // row (`freshRefs`) or a zero-progress pending row (upload insert,
+        // kept recompose survivor). The carried row owns the learner's state —
+        // delete the duplicate target, carry the progress-owning row.
+        duplicateTargetIds.push(target.id);
         carryRows.push(row);
       } else {
+        // Target already owns progress (done/skipped, or its own in_progress
+        // binding): it wins the ref; drop the stale carried duplicate.
         staleCarriedIds.push(row.id);
       }
     }

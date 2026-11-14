@@ -49,7 +49,7 @@ import {
 import { withdrawStalePendingDueLines } from './stale-due-lines';
 import { planStoredStreamBudgetTrim, storedStreamExceedsBudget } from './stored-stream-budget';
 import { estimateStreamItemMinutes } from './stream-budget';
-import { carryForwardOpenStreamItems } from './stream-carry-forward';
+import { carryForwardOpenStreamItems, lockStreamCarryAdmission } from './stream-carry-forward';
 import { type ComposerInputs, type StreamPlan, composeDailyStream } from './stream-composer';
 import { collectComposerInputs, resolveDailyPracticeBudget } from './stream-inputs';
 import { presentNonDueQuestion } from './stream-item-presentation';
@@ -506,6 +506,11 @@ async function singleFlightCompose(
       try {
         const prepared = await prepareCompose(lockedDb, date, policy, lockedDeps, capacity);
         return await lockedDb.transaction(async (tx) => {
+          // Carry-capable finalize: canonical order G -> target -> sources.
+          // Admission must precede the target partition lock; otherwise a tx
+          // holding its target and waiting on G can cycle with the G holder
+          // waiting on that target.
+          await lockStreamCarryAdmission(tx);
           await lockDailyStreamPartition(tx, date);
           const outcome = await materializePreparedCollect(tx, date, prepared, addedBy, true);
           const carry = await carryForwardOpenStreamItems(tx, date, outcome.freshRefs);
@@ -1144,6 +1149,14 @@ export async function recomposeStream(
     composeDeps?: ComposeSoftmaxDeps;
     /** 容量注入（DI，仅测试用）。production 省略。 */
     capacity?: ComposerInputs['capacity'];
+    /**
+     * Whether this compose may carry older open rows into `date`. True only when
+     * `date` is the learner's current learning day (lazy compose of today,
+     * nightly pre-compose of the resolved learning day). An explicit historical
+     * `?date=` recompose must not mutate partitions the caller did not name —
+     * it recomposes `date` in place and leaves every other partition untouched.
+     */
+    carryForward?: boolean;
   } = {},
 ): Promise<number> {
   const deps = opts.composeDeps ?? {};
@@ -1186,6 +1199,9 @@ export async function recomposeStream(
           opts.capacity,
         );
         return await lockedDb.transaction(async (tx) => {
+          // Canonical order G -> target -> sources whenever carry may run;
+          // carryForward === false keeps the plain target-only pattern.
+          if (opts.carryForward !== false) await lockStreamCarryAdmission(tx);
           await lockDailyStreamPartition(tx, date);
           if (pendingIdsAtPrepare.length > 0) {
             await tx
@@ -1200,7 +1216,10 @@ export async function recomposeStream(
               );
           }
           const outcome = await materializePreparedCollect(tx, date, prepared, 'composer_live');
-          const carry = await carryForwardOpenStreamItems(tx, date, outcome.freshRefs);
+          const carry =
+            opts.carryForward === false
+              ? { moved: 0, deletedIds: new Set<string>() }
+              : await carryForwardOpenStreamItems(tx, date, outcome.freshRefs);
           if (carry.deletedIds.size > 0) {
             outcome.observations = outcome.observations.filter(
               (obs) => !obs.streamItemId || !carry.deletedIds.has(obs.streamItemId),

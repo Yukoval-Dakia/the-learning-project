@@ -94,7 +94,10 @@ export async function loadLastLearnerEventAt(db: DbLike, before?: Date): Promise
  * is under `gapMs`. Returns null when the newest allowed activity is already at
  * least `gapMs` old (or there is no activity at all): the streak is closed and the
  * caller treats "now" as a fresh learning day. Only `actor_kind='user'` events in
- * LEARNING_ACTIVITY_ACTIONS count, so background jobs never keep a day open.
+ * LEARNING_ACTIVITY_ACTIONS count. Rows carrying a settlement `generated_by`
+ * provenance (`workflow_judge`, `ingestion_capture`, `rescue`, `user_retry`) are
+ * background writes stamped at workflow-completion time, not a live learner
+ * action — they cannot re-open or extend a streak.
  *
  * The walk is bounded: it stops at the first gap that closes the streak, so a
  * long active history is not scanned. `before` bounds the window end (defaults to
@@ -120,6 +123,11 @@ export async function loadLearnerActivityStreakStart(
           eq(event.actor_kind, 'user'),
           inArray(event.action, [...LEARNING_ACTIVITY_ACTIONS]),
           lt(event.created_at, before),
+          // Exclude background settlement writes: `generated_by` marks a
+          // workflow/judge/capture-produced fact stamped at completion time,
+          // not the learner's own action moment. Only un-provenanced events
+          // (a live learner attempt/review/capture) count as activity.
+          isNull(sql`${event.payload}->>'generated_by'`),
           cursor
             ? or(
                 lt(event.created_at, cursor.at),
