@@ -2,9 +2,16 @@
 // recompose 保留非 pending 项。composer 混排规则本体在 stream-composer.unit.test.ts。
 
 import { createId } from '@paralleldrive/cuid2';
-import { eq } from 'drizzle-orm';
+import { and, asc, eq, isNull } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { knowledge, learning_session, question } from '@/db/schema';
+import {
+  event,
+  knowledge,
+  learning_session,
+  material_fsrs_state,
+  practice_stream_item,
+  question,
+} from '@/db/schema';
 import { contractIntegrityDigest } from '@/kernel/records/assessment-normalization';
 import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
 import { __resetRateLimitForTests } from '@/kernel/request-rate-limit';
@@ -22,8 +29,60 @@ vi.mock('@/server/ai/runner', () => ({
     (runTaskMock as unknown as (...a: unknown[]) => unknown)(...args),
 }));
 
+import { getPracticeStream, updatePracticeStreamItem } from '../server/stream-operations';
 import { GET, PATCH } from './stream';
 import { PracticeStreamResponseSchema } from './stream-contracts';
+
+async function insertDueQuestion(dueAt: Date): Promise<string> {
+  const qid = await seedScopedQuestion({ knowledgeId: createId() });
+  await testDb()
+    .insert(material_fsrs_state)
+    .values({
+      id: createId(),
+      subject_kind: 'question',
+      subject_id: qid,
+      state: {
+        due: dueAt,
+        stability: 1,
+        difficulty: 5,
+        scheduled_days: 1,
+        learning_steps: 0,
+        reps: 1,
+        lapses: 0,
+        state: 'review' as const,
+        last_review: dueAt,
+      },
+      due_at: dueAt,
+      last_review_event_id: null,
+      updated_at: dueAt,
+    });
+  return qid;
+}
+
+/** 学习者真实作答活动（actor_kind='user'）——学习日裁定的唯一活动信号来源。 */
+async function insertLearnerAttempt(at: Date, questionId: string, streamItemId?: string) {
+  await testDb()
+    .insert(event)
+    .values({
+      id: createId(),
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'attempt',
+      subject_kind: 'question',
+      subject_id: questionId,
+      outcome: 'success',
+      payload: streamItemId ? { stream_item_id: streamItemId } : {},
+      created_at: at,
+    });
+}
+
+function dailyRows(date: string) {
+  return testDb()
+    .select()
+    .from(practice_stream_item)
+    .where(and(eq(practice_stream_item.date, date), isNull(practice_stream_item.session_id)))
+    .orderBy(asc(practice_stream_item.position));
+}
 
 async function seedScopedQuestion(input: {
   knowledgeId: string;
@@ -187,5 +246,114 @@ describe('practice stream API', () => {
       .from(learning_session)
       .where(eq(learning_session.id, sessionId));
     expect(session?.status).toBe('completed');
+  });
+
+  // @invariant data: a still-open practice stream survives calendar midnight on the
+  // same learning day, and a genuinely new learning day migrates prior
+  // pending/in_progress rows with their identity, status and position — never
+  // duplicating a ref, dropping progress, or stranding open work on an unread date.
+  // @fails-if resolve "today" by calendar day or by the latest activity's day
+  // (post-midnight action flips the partition and recomposes); carry without
+  // progress-aware dedupe (a re-materialized ref double-inserts or the carried
+  // row loses state); migrate by delete+insert (row id / issuance binding lost).
+  it('YUK-2125: 连续夜间练习跨零点不丢流不重复 compose；>4h 不活跃后 pending/in_progress 随新学习日迁入', async () => {
+    // 23:50（Asia/Shanghai）开始学习日 D1：懒编排产出当日流。
+    const t2350 = new Date('2026-11-13T23:50:00+08:00');
+    const t0010 = new Date('2026-11-14T00:10:00+08:00');
+    const t0900 = new Date('2026-11-14T09:00:00+08:00');
+    const DAY1 = '2026-11-13';
+    const DAY2 = '2026-11-14';
+
+    // due_at 钉在 D1 深夜（模拟时刻）：既对首次 compose 到期，也让
+    // withdrawStalePendingDueLines 在 D1/D2 读来都判定卡片仍属该学习日。
+    const due1 = await insertDueQuestion(t2350);
+    const due2 = await insertDueQuestion(t2350);
+    const due3 = await insertDueQuestion(t2350);
+
+    const opened = await getPracticeStream(testDb(), { date: 'today' }, { now: t2350 });
+    expect(opened.date).toBe(DAY1);
+    expect(opened.items.length).toBeGreaterThanOrEqual(3);
+    const composeCalls = runTaskMock.mock.calls.length;
+
+    // 做 2 题（23:5x 作答活动），留 1 题 pending + 1 题 in_progress。
+    const openItems = opened.items.filter((item) => item.status === 'pending');
+    const doneItem = openItems[0];
+    const inProgressItem = openItems[1];
+    await updatePracticeStreamItem(testDb(), doneItem.id, { status: 'done' });
+    await insertLearnerAttempt(t2350, doneItem.ref_id, doneItem.id);
+    await insertLearnerAttempt(new Date('2026-11-13T23:58:00+08:00'), inProgressItem.ref_id);
+    await updatePracticeStreamItem(testDb(), inProgressItem.id, { status: 'in_progress' });
+
+    // 00:10 继续作答（真实的跨零点练习动作）并刷新：学习日仍未切——
+    // 关键断言：解析的是**连续活动段首日**而非「最近一次活动的日历日」，否则
+    // 00:10 的作答会把学习日翻到 D2（连续会话被切断）。
+    const refreshed = await getPracticeStream(testDb(), { date: 'today' }, { now: t0010 });
+    expect(refreshed.date).toBe(DAY1);
+    expect(runTaskMock.mock.calls.length).toBe(composeCalls);
+    const refreshedById = new Map(refreshed.items.map((item) => [item.id, item.status]));
+    expect(refreshedById.get(doneItem.id)).toBe('done');
+    expect(refreshedById.get(inProgressItem.id)).toBe('in_progress');
+    expect(refreshed.items.length).toBe(opened.items.length);
+
+    // 00:10 真实作答 + 00:20 再刷新：最近一次活动已落在 D2 的日历日，学习日
+    // 仍须钉在段首日 D1（连续活动保同一学习日身份）。
+    const t0020 = new Date('2026-11-14T00:20:00+08:00');
+    await updatePracticeStreamItem(testDb(), inProgressItem.id, { status: 'done' });
+    await insertLearnerAttempt(t0010, inProgressItem.ref_id, inProgressItem.id);
+    const afterMidnight = await getPracticeStream(testDb(), { date: 'today' }, { now: t0020 });
+    expect(afterMidnight.date).toBe(DAY1);
+    expect(runTaskMock.mock.calls.length).toBe(composeCalls);
+    const afterById = new Map(afterMidnight.items.map((item) => [item.id, item.status]));
+    expect(afterById.get(inProgressItem.id)).toBe('done');
+
+    // 第三题保持 in_progress 作为跨日保护对象（已 done 的两行留 D1 历史）。
+    const carriedCandidate = openItems[2];
+    await updatePracticeStreamItem(testDb(), carriedCandidate.id, { status: 'in_progress' });
+
+    // 09:00（距最近活动 >4h）→ 新学习日 D2：compose 产出新日计划，
+    // 旧分区 pending/in_progress 整批迁入 D2（行 id 不变、无重复 ref），done 留在 D1。
+    const nextDay = await getPracticeStream(testDb(), { date: 'today' }, { now: t0900 });
+    expect(nextDay.date).toBe(DAY2);
+
+    const day1Rows = await dailyRows(DAY1);
+    expect(day1Rows.every((row) => row.status === 'done' || row.status === 'skipped')).toBe(true);
+    const day2Rows = await dailyRows(DAY2);
+    const day2Ids = new Set(day2Rows.map((row) => row.id));
+    expect(day2Ids.has(carriedCandidate.id)).toBe(true);
+    const remainingPending = openItems.slice(3);
+    for (const item of remainingPending) {
+      expect(day2Ids.has(item.id)).toBe(true);
+    }
+    expect(day2Ids.has(doneItem.id)).toBe(false);
+    expect(day2Ids.has(inProgressItem.id)).toBe(false);
+    const refIds = day2Rows.map((row) => row.ref_id);
+    expect(new Set(refIds).size).toBe(refIds.length);
+    for (const qid of [due1, due2, due3]) {
+      expect(refIds.filter((ref) => ref === qid).length).toBeLessThanOrEqual(1);
+    }
+    // D2 视图里被迁入的行仍可见且状态保留（保护候选不丢进度）。
+    const viewById = new Map(nextDay.items.map((item) => [item.id, item.status]));
+    expect(viewById.get(carriedCandidate.id)).toBe('in_progress');
+
+    // 连续活动跨越第二个午夜：D2 深夜 23:00 作答 + D3 00:05 作答，
+    // D3 00:15 刷新仍钉在段首日 D2（学习日身份随连续会话延续）。
+    const tD2late = new Date('2026-11-14T23:00:00+08:00');
+    const tD3early = new Date('2026-11-15T00:05:00+08:00');
+    const tD3read = new Date('2026-11-15T00:15:00+08:00');
+    const carriedItem = day2Rows.find((row) => row.id === carriedCandidate.id);
+    expect(carriedItem).toBeDefined();
+    await insertLearnerAttempt(tD2late, carriedCandidate.ref_id, carriedCandidate.id);
+    await insertLearnerAttempt(tD3early, carriedCandidate.ref_id, carriedCandidate.id);
+    const secondMidnight = await getPracticeStream(testDb(), { date: 'today' }, { now: tD3read });
+    expect(secondMidnight.date).toBe(DAY2);
+
+    // 显式历史日期读：不触发学习日裁定、不新 compose、不迁入迁出。
+    const composeCallsBeforeHistory = runTaskMock.mock.calls.length;
+    const history = await getPracticeStream(testDb(), { date: '2026-11-10' }, { now: tD3read });
+    expect(history.date).toBe('2026-11-10');
+    expect(history.items).toHaveLength(0);
+    expect(runTaskMock.mock.calls.length).toBe(composeCallsBeforeHistory);
+    const historyRows = await dailyRows('2026-11-10');
+    expect(historyRows).toHaveLength(0);
   });
 });

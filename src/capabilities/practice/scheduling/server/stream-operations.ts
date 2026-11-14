@@ -8,7 +8,7 @@ import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { ApiError } from '@/kernel/http';
 import { checkRateLimit } from '@/kernel/request-rate-limit';
-import { streamLocalDate } from '@/kernel/stream-date';
+import { resolveLearningDayDate, streamLocalDate } from '@/kernel/stream-date';
 import {
   PracticeStreamCalendarDateSchema,
   PracticeStreamQuerySchema,
@@ -41,11 +41,14 @@ export interface PracticeStreamRecomposeResult extends StreamView {
 }
 
 /**
- * 'today' / 缺省 → 用户本地日（Asia/Shanghai，）。读路径与夜间预产 job 共用
- * `streamLocalDate`，故两者对「今天是哪天」恒一致（夜间预产的 date 键 = 用户首读
- * lazy-compose 的 date 键 → 幂等双重检查命中，不 double-compose）。
+ * 'today' / 缺省 → 学习日裁定 `resolveLearningDayDate`（连续练习活动跨零点不切日；
+ * 详见 `@/kernel/stream-date`）。读路径与夜间预产 job 共用同一裁定，故两者对
+ * 「今天是哪个学习日」恒一致（夜间预产的 date 键 = 用户首读 lazy-compose 的 date
+ * 键 → 幂等双重检查命中，不 double-compose）。
+ *
+ * 显式 `?date=YYYY-MM-DD` 保留原日历日语义（历史读不走学习日裁定）。
  */
-function resolveDate(raw: string | null): string {
+function resolveDate(raw: string | null, learningDay: string): string {
   if (raw && raw !== 'today') {
     const parsed = PracticeStreamCalendarDateSchema.safeParse(raw);
     if (!parsed.success) {
@@ -53,22 +56,28 @@ function resolveDate(raw: string | null): string {
     }
     return parsed.data;
   }
-  return streamLocalDate();
+  return learningDay;
 }
 
 /**
  * 读当日流（GET /api/practice/stream）。`rawQuery` 为未校验 query record
  * （HTTP 侧即 `Object.fromEntries(url.searchParams)`）。
  */
-export async function getPracticeStream(database: Db, rawQuery: unknown): Promise<StreamView> {
+export async function getPracticeStream(
+  database: Db,
+  rawQuery: unknown,
+  opts?: { now?: Date },
+): Promise<StreamView> {
   const parsedQuery = PracticeStreamQuerySchema.safeParse(rawQuery);
   if (!parsedQuery.success) {
     throw new ApiError('validation_error', 'invalid query parameters', 400);
   }
-  const date = resolveDate(parsedQuery.data.date ?? null);
+  const learningDay = await resolveLearningDayDate(database, opts?.now);
+  const date = resolveDate(parsedQuery.data.date ?? null, learningDay);
   const knowledgeId = parsedQuery.data.kc;
-  // 只有「今天」才 lazy compose——翻看历史日期不应凭空生出新流。
-  const isToday = date === streamLocalDate();
+  // 只有「今天」才 lazy compose——翻看历史日期不应凭空生出新流。`date=today` 或
+  // 显式 `?date=` 恰好等于当前学习日时等价于「今天」。
+  const isToday = date === learningDay;
   const composeInvocationId = newId();
   // compose 事件种子化（仅 isToday 才可能触发 compose；历史日期不 compose，不派生 seed）。
   return getStream(database, date, {
@@ -96,10 +105,14 @@ export async function getPracticeStream(database: Db, rawQuery: unknown): Promis
 export async function recomposePracticeStream(
   database: Db,
   rawBody: unknown,
+  opts?: { now?: Date },
 ): Promise<PracticeStreamRecomposeResult> {
   const parsed = RecomposePracticeStreamBodySchema.safeParse(rawBody);
   if (!parsed.success) throw new ApiError('validation_error', 'invalid body', 400);
-  const date = resolveDate(parsed.data.date ?? null);
+  const date = resolveDate(
+    parsed.data.date ?? null,
+    await resolveLearningDayDate(database, opts?.now),
+  );
   // manual recomposition can reach SelectionOrchestratorTask. Count
   // the request immediately before that work so a click/retry loop cannot turn
   // into an unbounded sequence of paid model calls.

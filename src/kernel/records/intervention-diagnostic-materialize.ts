@@ -32,7 +32,8 @@ import { lockInterventionDiagnosticDelivery } from '@/kernel/locks/intervention-
 import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
 
 export interface InterventionDiagnosticLeaves {
-  streamLocalDate(now: Date): string;
+  /** Learning-day date (YYYY-MM-DD) for the live-stream append, resolved inside `tx`. */
+  streamLocalDate(tx: Tx, now: Date): Promise<string>;
   /** Any durable judge-run activity keeps a one-shot claim closed. */
   readJudgeQuestionActivity(
     tx: Tx,
@@ -150,7 +151,7 @@ async function appendImmediateDiagnosticToLiveStream(
   },
   leaves: InterventionDiagnosticLeaves,
 ): Promise<void> {
-  const date = leaves.streamLocalDate(input.now);
+  const date = await leaves.streamLocalDate(tx, input.now);
   // Serialize with lazy/nightly/recompose writers. If no stream exists, leave it empty;
   // the next normal composition picks up this newly-due card. If today's stream exists,
   // append atomically so its non-empty fast path cannot strand the intervention until
