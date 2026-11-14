@@ -32,7 +32,7 @@ export function isPlainChoice(slot: ResponseSlotT): boolean {
 // Deliberately conservative: a variable named A, an image, or unparsed markup
 // can hide a positional dependency. Uncertain cases preserve the printed order.
 const dependent =
-  /以上|上述|前述|下述|上面|下面|全[部都不]|[均都皆].{0,4}(?:对|错|正确|错误|不是|不|是|非)|前[一两二三四五六七八九十几]|后[一两二三四五六七八九十几]|第[一二三四五六七八九十\d]+[个项]|[上下左右]侧|[①-⑳]|上記|下記|すべて|いずれも|どちらも|両方|\b(?:all|none|above|below|both|neither|former|latter|previous|preceding|following|first|second|third|fourth|last|left|right)\b|(?<![a-z])[a-z](?![a-z])|!\[|[<>]/iu;
+  /以上|以下|上述|前述|下述|下列|其余|上面|下面|前面|前边|前头|前项|后面|后边|前者|后者|全[部都不]|[均都皆].{0,4}(?:对|错|正确|错误|不是|不|是|非)|前[一两二三四五六七八九十几]|后[一两二三四五六七八九十几]|第[一二三四五六七八九十\d]+[个项]|[上下左右]侧|[①-⑳]|上記|下記|すべて|いずれも|どちらも|両方|\b(?:all|none|above|below|both|neither|former|latter|previous|preceding|following|first|second|third|fourth|last|left|right)\b|(?<![a-z])[a-z](?![a-z])|!\[|[<>]/iu;
 const compactLetters = /(?<![A-Za-z])[A-Z]{2,4}(?![A-Za-z0-9])/;
 
 /** Server publication owns this fact; producer-supplied markers are recomputed. */
