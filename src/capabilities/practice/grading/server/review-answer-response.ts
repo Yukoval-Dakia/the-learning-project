@@ -1,6 +1,9 @@
 import type { z } from 'zod';
+import type { JudgeResultV2T } from '@/core/schema/capability';
 import type { FsrsRating } from '@/kernel/capability-contract-schemas';
+import type { FormalAttemptPreview } from '@/kernel/judge';
 import type { CreateAttemptBody } from '../../api/contracts';
+import type { NormalizedReviewSubmitActivityRef } from './activity-ref';
 import type { AssistanceReceipt } from './assessment/assistance';
 import type { SealedSelfClaim } from './assessment/self-claim';
 import { ratingFromCoarseOutcome } from './judge-rating';
@@ -65,6 +68,79 @@ export function projectJudgeRunPending(runId: string) {
   };
 }
 
+export type ReviewAnswerJudge = JudgeResultV2T & {
+  route: 'evaluate_submission';
+  suggested_rating: z.infer<typeof FsrsRating> | null;
+};
+
+export interface ReviewAnswerAdviceState {
+  activity_ref: NormalizedReviewSubmitActivityRef['activity_ref'];
+  question_id: string;
+  knowledge_ids: string[];
+  submission_id: string;
+  evaluation_group_id: string;
+  candidate_id: string;
+  activation_intent: FormalAttemptPreview['activation_intent'];
+  automatic_commit: boolean;
+  judge: ReviewAnswerJudge;
+  evidence: ReturnType<typeof projectAttemptEvidence>;
+}
+
+function projectReviewAnswerJudge(judged: JudgeResultV2T) {
+  return {
+    route: 'evaluate_submission',
+    score: judged.score,
+    coarse_outcome: judged.coarse_outcome,
+    ...(judged.coarse_outcome === 'partial_unknown' ? { partial_units: judged.partial_units } : {}),
+    confidence: judged.confidence,
+    feedback_md: judged.feedback_md,
+    evidence_json: judged.evidence_json,
+    capability_ref: judged.capability_ref,
+    ...(judged.grading_provenance ? { grading_provenance: judged.grading_provenance } : {}),
+    suggested_rating: ratingFromCoarseOutcome(judged.coarse_outcome),
+  };
+}
+
+export function projectReviewAdviceJudge(judged: JudgeResultV2T): ReviewAnswerJudge {
+  return {
+    route: 'evaluate_submission',
+    score: judged.score,
+    score_meaning: judged.score_meaning,
+    coarse_outcome: judged.coarse_outcome,
+    ...(judged.coarse_outcome === 'partial_unknown' ? { partial_units: judged.partial_units } : {}),
+    confidence: judged.confidence,
+    feedback_md: judged.feedback_md,
+    evidence_json: judged.evidence_json,
+    capability_ref: judged.capability_ref,
+    ...(judged.grading_provenance ? { grading_provenance: judged.grading_provenance } : {}),
+    suggested_rating: ratingFromCoarseOutcome(judged.coarse_outcome),
+  } as ReviewAnswerJudge;
+}
+
+export function projectReviewAnswerAdviceState(input: {
+  identity: NormalizedReviewSubmitActivityRef;
+  knowledgeIds: readonly string[];
+  prepared: FormalAttemptPreview;
+}): ReviewAnswerAdviceState {
+  const judged = input.prepared.candidate.result;
+  return {
+    activity_ref: input.identity.activity_ref,
+    question_id: input.identity.question_id,
+    knowledge_ids: [...input.knowledgeIds],
+    submission_id: input.prepared.submission.submission_id,
+    evaluation_group_id: input.prepared.submission.evaluation_group_id,
+    candidate_id: input.prepared.candidate.evaluation.record.evaluation_id,
+    activation_intent: input.prepared.activation_intent,
+    automatic_commit: input.prepared.automatic_commit,
+    judge: projectReviewAdviceJudge(judged),
+    evidence: projectAttemptEvidence({
+      assistance: input.prepared.assistance,
+      verdict: { outcome: judged.coarse_outcome, score: judged.score },
+      self_claim: null,
+    }),
+  };
+}
+
 // Both transports expose the same accepted attempt and durable-pending JSON projection.
 export function projectReviewAnswerResponse(body: CreateAttemptBody, result: ReviewAnswerResult) {
   if (result.kind === 'pending') {
@@ -104,22 +180,7 @@ export function projectReviewAnswerResponse(body: CreateAttemptBody, result: Rev
       }),
       judge: body.self_report
         ? null
-        : {
-            route: 'evaluate_submission',
-            score: judged.score,
-            coarse_outcome: judged.coarse_outcome,
-            ...(judged.coarse_outcome === 'partial_unknown'
-              ? { partial_units: judged.partial_units }
-              : {}),
-            confidence: judged.confidence,
-            feedback_md: judged.feedback_md,
-            evidence_json: judged.evidence_json,
-            capability_ref: judged.capability_ref,
-            ...(judged.grading_provenance ? { grading_provenance: judged.grading_provenance } : {}),
-            suggested_rating: ratingFromCoarseOutcome(judged.coarse_outcome),
-            auto_rated: body.auto_rate,
-            judge_event_id: null,
-          },
+        : { ...projectReviewAnswerJudge(judged), auto_rated: body.auto_rate, judge_event_id: null },
     },
   };
 }

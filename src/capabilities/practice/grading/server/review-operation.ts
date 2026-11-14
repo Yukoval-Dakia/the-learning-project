@@ -19,13 +19,23 @@ import { ApiError } from '@/kernel/http';
 import { type CreateAttemptBody, CreateAttemptBodySchema } from '../../api/contracts';
 import { validatePlacementSubmission } from '../../placement/public';
 import { type ReviewSubmitIdentityInput, normalizeReviewSubmitActivityRef } from './activity-ref';
-import { type FormalAttemptCapture, commitFormalAttempt } from './assessment/attempt';
+import {
+  type FormalAttemptCapture,
+  commitFormalAttempt,
+  previewFormalAttempt,
+} from './assessment/attempt';
 import type { NativeAttemptDispatchPort } from './assessment/native-attempt-dispatch-port';
 import { type SealedSelfClaim, readSealedSelfClaim } from './assessment/self-claim';
 import { judgeDurableEnabled } from './judge-durable-config';
+import { ratingFromCoarseOutcome } from './judge-rating';
 import { readJudgeRunPermanent } from './judge-run-observation';
 import { nativeJudgeRunId } from './judge-run-status';
-import { projectJudgeRunPending, projectReviewAnswerResponse } from './review-answer-response';
+import {
+  type ReviewAnswerAdviceState,
+  projectJudgeRunPending,
+  projectReviewAnswerAdviceState,
+  projectReviewAnswerResponse,
+} from './review-answer-response';
 
 type QuestionRow = typeof question.$inferSelect;
 
@@ -40,6 +50,7 @@ async function validateSubmit(
   database: Db,
   body: ReviewAnswerHandover,
   now: Date,
+  rejectInterventionDiagnostic = false,
 ): Promise<ValidatedSubmit> {
   const identity = normalizeReviewSubmitActivityRef(body);
   const questionId = identity.question_id;
@@ -50,6 +61,12 @@ async function validateSubmit(
     throw new ApiError('not_found', `question ${questionId} not found`, 404);
   }
   if (q.source === INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE) {
+    if (rejectInterventionDiagnostic)
+      throw new ApiError(
+        'conflict',
+        `intervention diagnostic ${questionId} must be judged by its one-shot submission`,
+        409,
+      );
     const diagnostic = InterventionDiagnosticQuestionMetadata.safeParse(
       q.metadata?.intervention_diagnostic,
     );
@@ -309,6 +326,32 @@ export type ReviewAnswerResult =
       sealed_claim: SealedSelfClaim | null;
     };
 
+export interface ReviewAnswerAdviceRequest extends ReviewSubmitIdentityInput {
+  assessment: NonNullable<CreateAttemptBody['assessment']>;
+  response_md: string;
+  answer_image_refs: readonly string[];
+  commit?: FormalAttemptCapture;
+  accept_pending?: boolean;
+}
+
+export type ReviewAnswerAdviceResult =
+  | {
+      kind: 'pending';
+      pending: ReturnType<typeof projectJudgeRunPending>;
+    }
+  | {
+      kind: 'preview';
+      state: ReviewAnswerAdviceState;
+    }
+  | {
+      kind: 'committed';
+      state: ReviewAnswerAdviceState;
+      committed: Extract<
+        ReturnType<typeof projectReviewAnswerResponse>,
+        { kind: 'committed' }
+      >['body'];
+    };
+
 /**
  * Submit an authorized learner original. Network callers own authentication and
  * parsing; model tool arguments are never authority for a learner submission.
@@ -466,6 +509,65 @@ export async function submitReviewAnswer(
     throw err;
   }
 }
+
+/** Advice delegates its answer lifecycle here and keeps only rating policy and presentation. */
+export async function requestReviewAdviceLifecycle(
+  database: Db,
+  request: ReviewAnswerAdviceRequest,
+  context: { signal: AbortSignal },
+): Promise<ReviewAnswerAdviceResult> {
+  const identity = normalizeReviewSubmitActivityRef(request);
+  const handover: ReviewAnswerHandover = {
+    ...identity,
+    ...(request.commit ?? {}),
+    assessment: request.assessment,
+    response_md: request.response_md,
+  };
+  const validated = await validateSubmit(database, handover, new Date(), true);
+
+  let replay:
+    | { candidateId?: string; hold?: { reason: 'unjudgeable'; detail: string } }
+    | undefined;
+  if (request.commit && request.accept_pending) {
+    const pending = await divertReviewAnswer(database, handover);
+    if (pending && 'verdict' in pending) return { kind: 'pending', pending };
+    if (pending?.kind === 'terminal') replay = pending;
+  }
+
+  const prepared = await previewFormalAttempt(
+    database,
+    'advice_preview',
+    identity.question_id,
+    request.assessment,
+    context.signal,
+    replay,
+  );
+  const state = projectReviewAnswerAdviceState({
+    identity,
+    knowledgeIds: validated.q.knowledge_ids ?? [],
+    prepared,
+  });
+  const suggestedRating = ratingFromCoarseOutcome(prepared.candidate.result.coarse_outcome);
+  if (!request.commit || !prepared.automatic_commit || suggestedRating === null)
+    return { kind: 'preview', state };
+
+  const commitBody = CreateAttemptBodySchema.parse({
+    ...request.commit,
+    question_id: identity.question_id,
+    assessment: request.assessment,
+    activation_intent: prepared.activation_intent,
+    rating: suggestedRating,
+    auto_rate: true,
+    response_md: request.response_md,
+    answer_image_refs: [...request.answer_image_refs],
+  });
+  const result = await submitReviewAnswer(database, commitBody, { durableEnabled: false });
+  const response = projectReviewAnswerResponse(commitBody, result);
+  if (response.kind === 'pending')
+    throw new ApiError('corrupt_state', 'advice commit was diverted to durable judging', 500);
+  return { kind: 'committed', state, committed: response.body };
+}
+
 /**
  * POST /api/attempts for both doors: a missing or malformed body reaches the schema as null.
  * Callers keep only transport shaping (the Hono 202 divert headers, Start JSON).

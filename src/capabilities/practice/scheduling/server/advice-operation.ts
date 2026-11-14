@@ -9,21 +9,10 @@
 // submit share one read policy. It scans a recent-attempt window rather than the
 // latest row, so an older labelled failure is not masked by a label-less retry.
 
-import { eq } from 'drizzle-orm';
 import { resolveAdviceCauseForQuestion } from '@/capabilities/practice/failure-learning/public';
-import {
-  divertReviewAnswer,
-  normalizeReviewSubmitActivityRef,
-  previewFormalAttempt,
-  projectAttemptEvidence,
-  questionKnowledgeIdsForJudge,
-  ratingFromCoarseOutcome,
-  requestReviewAnswer,
-} from '@/capabilities/practice/grading/public';
+import { requestReviewAdviceLifecycle } from '@/capabilities/practice/grading/public';
 import { judgeResultToRatingAdvice } from '@/capabilities/practice/scheduling/server/rating-advisor';
-import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import type { Db } from '@/db/client';
-import { question } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
 import { ReviewAdviceBodySchema } from '../api/review-planning-contracts';
@@ -36,119 +25,50 @@ export async function previewReviewAdvice(db: Db, raw: unknown, signal: AbortSig
   }
 
   const body = parsed.data;
-  const identity = normalizeReviewSubmitActivityRef(body);
-  const questionId = identity.question_id;
-  const qRows = await db.select().from(question).where(eq(question.id, questionId)).limit(1);
-  const q = qRows[0];
-  if (!q) {
-    throw new ApiError('not_found', `question ${questionId} not found`, 404);
-  }
-  if (q.source === INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE) {
-    throw new ApiError(
-      'conflict',
-      `intervention diagnostic ${questionId} must be judged by its one-shot submission`,
-      409,
-    );
-  }
-
-  let replay:
-    | { candidateId?: string; hold?: { reason: 'unjudgeable'; detail: string } }
-    | undefined;
-  if (body.commit && body.accept_pending) {
-    const pending = await divertReviewAnswer(db, {
-      ...body.commit,
-      question_id: questionId,
+  const lifecycle = await requestReviewAdviceLifecycle(
+    db,
+    {
+      activity_ref: body.activity_ref,
+      question_id: body.question_id,
+      mistake_id: body.mistake_id,
       assessment: body.assessment,
       response_md: body.response_md,
-    });
-    if (pending && 'verdict' in pending) return pending;
-    if (pending?.kind === 'terminal') replay = pending;
-  }
+      answer_image_refs: body.answer_image_refs,
+      commit: body.commit,
+      accept_pending: body.accept_pending,
+    },
+    { signal },
+  );
+  if (lifecycle.kind === 'pending') return lifecycle.pending;
 
   const subjectProfile = await resolveSubjectProfileForKnowledgeIds(
     db,
-    questionKnowledgeIdsForJudge(q),
+    lifecycle.state.knowledge_ids,
   );
-  const {
-    candidate: invoked,
-    submission,
-    activation_intent,
-    automatic_commit,
-    assistance,
-  } = await previewFormalAttempt(db, 'advice_preview', questionId, body.assessment, signal, replay);
-  const suggestedRating = ratingFromCoarseOutcome(invoked.result.coarse_outcome);
 
   // Resolve effective cause via the shared `resolveAdviceCauseForQuestion`
   // helper. It folds `effectiveCauseCategoryForFailureAttempt` over a
   // recent-attempt window (active user_cause wins over the latest active agent
   // judge) until it finds a cause; null keeps the default partial-credit bucket.
-  const causeCategory = await resolveAdviceCauseForQuestion(db, questionId);
-  const advice = judgeResultToRatingAdvice(invoked.result, {
+  const causeCategory = await resolveAdviceCauseForQuestion(db, lifecycle.state.question_id);
+  const advice = judgeResultToRatingAdvice(lifecycle.state.judge, {
     causeCategory,
     // lean/anchors resolve through the subject's own rating_lean /
     // ratingPolicy declarations.
     subjectProfile,
   });
 
-  // The practice page applies the same split: an open answer or one without a suggested rating
-  // keeps its learner confidence and rating step.
-  const commit =
-    body.commit && automatic_commit && suggestedRating !== null
-      ? await requestReviewAnswer(
-          db,
-          async () => ({
-            ...body.commit,
-            question_id: questionId,
-            assessment: body.assessment,
-            activation_intent,
-            rating: suggestedRating,
-            auto_rate: true,
-            response_md: body.response_md,
-            answer_image_refs: body.answer_image_refs,
-          }),
-          // No abort signal: the original is already accepted, and a reload that stopped the
-          // commit half-way would leave it accepted but never recorded or settled. Every unit is
-          // deterministic here, so the durable divert can never apply.
-          { durableEnabled: false },
-        )
-      : null;
-  if (commit?.kind === 'pending') {
-    throw new ApiError('corrupt_state', 'advice commit was diverted to durable judging', 500);
-  }
-
   return {
-    activity_ref: identity.activity_ref,
-    question_id: questionId,
-    submission_id: submission.submission_id,
-    evaluation_group_id: submission.evaluation_group_id,
-    candidate_id: invoked.evaluation.record.evaluation_id,
-    activation_intent,
-    automatic_commit,
-    judge: {
-      route: 'evaluate_submission',
-      score: invoked.result.score,
-      score_meaning: invoked.result.score_meaning,
-      coarse_outcome: invoked.result.coarse_outcome,
-      ...(invoked.result.coarse_outcome === 'partial_unknown'
-        ? { partial_units: invoked.result.partial_units }
-        : {}),
-      confidence: invoked.result.confidence,
-      feedback_md: invoked.result.feedback_md,
-      evidence_json: invoked.result.evidence_json,
-      capability_ref: invoked.result.capability_ref,
-      ...(invoked.result.grading_provenance
-        ? { grading_provenance: invoked.result.grading_provenance }
-        : {}),
-      suggested_rating: suggestedRating,
-    },
+    activity_ref: lifecycle.state.activity_ref,
+    question_id: lifecycle.state.question_id,
+    submission_id: lifecycle.state.submission_id,
+    evaluation_group_id: lifecycle.state.evaluation_group_id,
+    candidate_id: lifecycle.state.candidate_id,
+    activation_intent: lifecycle.state.activation_intent,
+    automatic_commit: lifecycle.state.automatic_commit,
+    judge: lifecycle.state.judge,
     advice,
-    // Pre-commit facts for the page that shows 看过/判分 before the next
-    // question: no rating operation has run yet, so the claim stays null.
-    evidence: projectAttemptEvidence({
-      assistance,
-      verdict: { outcome: invoked.result.coarse_outcome, score: invoked.result.score },
-      self_claim: null,
-    }),
-    ...(commit ? { committed: commit.body } : {}),
+    evidence: lifecycle.state.evidence,
+    ...(lifecycle.kind === 'committed' ? { committed: lifecycle.committed } : {}),
   };
 }

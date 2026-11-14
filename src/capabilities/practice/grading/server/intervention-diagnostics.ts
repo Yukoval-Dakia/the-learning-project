@@ -6,7 +6,7 @@ import {
   INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
   InterventionDiagnosticQuestionMetadata,
 } from '@/core/schema/intervention';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { getEventById } from '@/kernel/events';
 import {
@@ -23,8 +23,12 @@ import { resolveLearningDayDate } from '@/kernel/stream-date';
 import { projectEvaluationToJudgeResult } from './judge/evaluation-authority';
 import { readJudgeQuestionActivity } from './judge-run-observation';
 
+function resolveInterventionStreamLocalDate(tx: Tx, now: Date): Promise<string> {
+  return resolveLearningDayDate(tx, now);
+}
+
 export const interventionDiagnosticLeaves: InterventionDiagnosticLeaves = {
-  streamLocalDate: (tx, now) => resolveLearningDayDate(tx, now),
+  streamLocalDate: resolveInterventionStreamLocalDate,
   readJudgeQuestionActivity,
   async enrollQuestionSchedule(tx, questionId, dueAt) {
     await enrollFsrsStateIfAbsent(tx, {
