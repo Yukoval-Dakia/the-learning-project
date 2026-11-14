@@ -4,12 +4,19 @@ import {
   proposeComputedCompletion,
   runLearningItemCompletionNightly,
 } from '@/capabilities/agency/server/learning-item-completion-producer';
-import { completion_evidence, event, knowledge, learning_item } from '@/db/schema';
+import { completion_evidence, event, goal, knowledge, learning_item } from '@/db/schema';
+import { getProposalInboxRow, listProposalInboxRows } from '@/kernel/proposals/inbox';
 import { writeAiProposal } from '@/kernel/proposals/writer';
+import {
+  createManualGoal,
+  updateGoalScope,
+  updateGoalStatus,
+} from '@/kernel/records/goal-commands';
 import {
   gatherAndFoldLearningItem,
   hasLearningItemGenesisAnchor,
 } from '@/kernel/records/learning-items';
+import { installBatchConfirmEligibility } from '@/server/orchestration/proposal-decisions/batch-accept';
 import { learningItemLiveRowToSnapshot } from '@/server/projections/parity';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import {
@@ -118,6 +125,78 @@ describe('retractAiProposal — completion / relearn row reversal (YUK-471)', ()
       await db.select().from(event).where(eq(event.action, 'experimental:proposal')),
     ).toHaveLength(4);
     expect(await db.select().from(completion_evidence)).toHaveLength(0);
+  });
+
+  // @invariant concurrency: goal scope or status drift closes its completion offer in single and batch reads before another acceptance
+  // @fails-if a title-only goal update still exposes usable completion evidence or remains batch-confirmable
+  it('requires current goal scope and status for completion evidence in inbox reads', async () => {
+    const db = testDb();
+    installBatchConfirmEligibility();
+    await seedCompletionLearningItem(db, 'goal-completion-boundary');
+    for (const retirement of ['accept', 'done', 'dormant'] as const) {
+      const goalId = await createManualGoal(db, {
+        title: '合成完成目标',
+        scope_knowledge_ids: ['goal-completion-boundary-kc'],
+        sequence_hint: 0,
+      });
+      const proposal = await proposeComputedCompletion(
+        db,
+        goalId,
+        { actorRef: 'synthetic-fixture' },
+        'goal',
+      );
+      if (proposal.status !== 'proposed') throw new Error('expected eligible goal completion');
+      for (const active of [true, false]) {
+        if (!active && retirement === 'dormant') {
+          await updateGoalScope(db, goalId, { title: '范围外标题' });
+          const staleSingle = await getProposalInboxRow(db, proposal.proposal_id);
+          const staleBatch = await listProposalInboxRows(db, {
+            kind: 'completion',
+            status: 'pending',
+          });
+          for (const row of [
+            staleSingle,
+            staleBatch.find((entry) => entry.id === proposal.proposal_id),
+          ]) {
+            if (!row) throw new Error('scope-drifted offer must remain readable');
+            expect(row.not_acceptable_reason).toBe('completion_evidence_unavailable');
+            expect(row.batch_confirm_eligible).toBe(false);
+            expect('completion_summary' in row.payload.proposed_change).toBe(false);
+          }
+          await expect(acceptAiProposal(db, proposal.proposal_id)).rejects.toMatchObject({
+            status: 409,
+          });
+        }
+        if (!active) {
+          if (retirement === 'accept') await acceptAiProposal(db, proposal.proposal_id);
+          else await updateGoalStatus(db, goalId, retirement);
+        }
+        const single = await getProposalInboxRow(db, proposal.proposal_id);
+        const batch = await listProposalInboxRows(db, {
+          kind: 'completion',
+          status: !active && retirement === 'accept' ? 'accepted' : 'pending',
+        });
+        for (const row of [single, batch.find((entry) => entry.id === proposal.proposal_id)]) {
+          if (!row) throw new Error('completion offer must remain readable');
+          if (row.payload.kind !== 'completion') throw new Error('expected a completion offer');
+          expect(row.not_acceptable_reason).toBe(active ? null : 'completion_evidence_unavailable');
+          expect(row.batch_confirm_eligible).toBe(active);
+          expect(row.payload.proposed_change.completion_summary !== undefined).toBe(active);
+        }
+      }
+      if (retirement === 'accept') {
+        await retractAiProposal(db, proposal.proposal_id);
+        const [restored] = await db
+          .select({ status: goal.status })
+          .from(goal)
+          .where(eq(goal.id, goalId));
+        expect(restored?.status).toBe('active');
+      } else {
+        await expect(acceptAiProposal(db, proposal.proposal_id)).rejects.toMatchObject({
+          status: 409,
+        });
+      }
+    }
   });
 
   // @invariant data: retracting an accepted completion restores the learning item and removes the proposal evidence
