@@ -32,8 +32,7 @@ function NoteReaderPage() {
   const { id } = Route.useParams();
   const { entry, issuance, question } = Route.useSearch();
   const read = (() => {
-    const contextPresent =
-      entry !== undefined || issuance !== undefined || question !== undefined;
+    const contextPresent = issuance !== undefined || question !== undefined;
     const locationComplete =
       entry !== undefined &&
       entry.length > 0 &&
