@@ -217,6 +217,7 @@ export async function executePlan(
       knowledgeIds: theta.knowledgeIds,
       questionId: theta.anchorQuestionId,
       outcome: theta.outcome,
+      responseTimeMs: theta.responseTimeMs,
       ...(theta.kcEvidence ? { kcEvidence: theta.kcEvidence } : {}),
       difficulty: theta.anchorDifficulty,
       attemptEventId: settlementEventId,

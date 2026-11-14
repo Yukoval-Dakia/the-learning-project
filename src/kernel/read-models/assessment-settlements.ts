@@ -35,6 +35,8 @@ export interface FsrsSubject {
 interface ThetaApply {
   applied: true;
   outcome: 0 | 1;
+  /** Frozen accepted latency. Absent on legacy plans, which retain binary updates. */
+  responseTimeMs?: number | null;
   knowledgeIds: string[];
   /** Present when KCs do not share one full-weight direction. */
   kcEvidence?: KcEvidenceApply[];
@@ -174,6 +176,12 @@ function planFromPayload(raw: unknown): SettlementPlan | null {
   if (typeof p.fsrsSubjects === 'undefined' || !Array.isArray(p.fsrsSubjects)) return null;
   if (!Array.isArray(p.kcObservations) || typeof p.theta !== 'object' || p.theta === null) {
     return null;
+  }
+  if ('responseTimeMs' in p.theta) {
+    const ms = p.theta.responseTimeMs;
+    if (ms !== null && (typeof ms !== 'number' || !Number.isFinite(ms) || ms < 0)) {
+      return null;
+    }
   }
   return p as unknown as SettlementPlan;
 }

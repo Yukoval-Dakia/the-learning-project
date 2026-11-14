@@ -377,6 +377,12 @@ export function derivePlan(input: ActivationSettleInput, scope: SettlementScope)
       theta = {
         applied: true,
         outcome: thetaDecision.outcome,
+        responseTimeMs:
+          scope.capture.latency_ms !== null &&
+          Number.isFinite(scope.capture.latency_ms) &&
+          scope.capture.latency_ms >= 0
+            ? scope.capture.latency_ms
+            : null,
         knowledgeIds: thetaDecision.knowledgeIds,
         ...(thetaDecision.kcEvidence ? { kcEvidence: thetaDecision.kcEvidence } : {}),
         anchorQuestionId: anchor.id,
