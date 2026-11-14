@@ -113,15 +113,13 @@ export default function LearningPlanProgress({
                       <div>
                         <strong>{kc.name ?? '知识点暂不可用'}</strong>
                         <p>
-                          {kc.mastery ? (
-                            <>
-                              <b>{kc.mastery.band}</b> · {Math.round(kc.mastery.point * 100)}% ·
-                              模型范围 {Math.round(kc.mastery.lo * 100)}–
-                              {Math.round(kc.mastery.hi * 100)}%
-                            </>
-                          ) : (
-                            '掌握程度未知；入口只打开真实知识点与练习范围，不代表已有证据达标。'
-                          )}
+                          {!kc.mastery
+                            ? '掌握程度未知；入口只打开真实知识点与练习范围，不代表已有证据达标。'
+                            : kc.mastery.lowConfidence === true
+                              ? `${kc.mastery.band} · 初步 · 低置信`
+                              : kc.mastery.lowConfidence === false
+                                ? `${kc.mastery.band} · ${Math.round(kc.mastery.point * 100)}% · 模型范围 ${Math.round(kc.mastery.lo * 100)}–${Math.round(kc.mastery.hi * 100)}%`
+                                : `${kc.mastery.band} · 置信程度未提供，暂不显示精确百分比`}
                         </p>
                         {kc.mastery?.lastOutcomeAt && (
                           <p className="lp-progress-note">
