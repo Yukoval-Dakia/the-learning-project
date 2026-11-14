@@ -35,6 +35,7 @@
     "test:db:watch": "node scripts/local-heavy.mjs 'vitest --config vitest.db.config.ts'",
     "test:migration": "node scripts/local-heavy.mjs 'vitest run --config vitest.migration.config.ts'",
     "smoke:local": "tsx scripts/smoke-local.ts",
+    "owned:practice": "node scripts/local-heavy.mjs 'tsx scripts/owned-practice.ts'",
     "api:smoke": "tsx scripts/gen-postman.ts && tsx scripts/api-smoke.ts",
     "gen:postman": "tsx scripts/gen-postman.ts",
     "gen:model-catalog": "tsx scripts/gen-model-catalog.ts",
