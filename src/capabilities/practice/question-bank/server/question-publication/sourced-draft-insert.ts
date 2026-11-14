@@ -5,6 +5,7 @@
 
 import { sql } from 'drizzle-orm';
 import { mergeExactQuestionDuplicateKnowledgeIds } from '@/capabilities/practice/public';
+import { sanitizeSourcedMarkup } from '@/capabilities/practice/question-bank/server/question-publication/sourced-markup';
 import { isExactCapableReference } from '@/core/schema/assessment/answer-compare';
 import {
   DifficultyEvidence,
@@ -22,7 +23,6 @@ import {
   publishQuestionGroupFromRow,
 } from '@/kernel/records/assessment-publication';
 import { type SupplyTraceV1T, withSupplyTraceDifficultyEvidence } from '@/kernel/supply-contracts';
-import { sanitizeSourcedMarkup } from '@/server/questions/sourced-markup';
 
 // Single-sourced from the schema so both producers type created_by identically.
 type AgentRefValue = (typeof question.$inferInsert)['created_by'];

@@ -38,7 +38,7 @@ import {
   revisionToDraftDocument,
   scoringRoundTripIsFaithful,
 } from '@/kernel/records/question-draft-contract';
-import type { SubmitResult, SubmitUnitOutcome } from '@/server/questions/submit-question';
+import type { SubmitResult, SubmitUnitOutcome } from './submit-question';
 
 export function canonicalJson(value: unknown): string {
   return JSON.stringify(value, (_key, v) =>

@@ -540,6 +540,35 @@
 [data-ui-next] .un-st-feedback .un-st-disclosure {
   margin-top: var(--un-sp-4);
 }
+[data-ui-next] .un-st-knowledge-notes {
+  margin-top: var(--un-sp-4);
+  padding-top: var(--un-sp-3);
+  border-top: 1px solid var(--st-line);
+}
+[data-ui-next] .un-st-knowledge-notes h3 {
+  margin: 0 0 var(--un-sp-2);
+}
+[data-ui-next] .un-st-knowledge-notes ul {
+  display: grid;
+  gap: var(--un-sp-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+[data-ui-next] .un-st-knowledge-note-row p {
+  margin: 0 0 var(--un-sp-1);
+  color: var(--st-muted);
+  font-size: 14px;
+}
+[data-ui-next] .un-st-knowledge-note-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--un-sp-2);
+}
+[data-ui-next] .un-st-knowledge-note-links a {
+  color: var(--st-accent);
+  text-decoration: none;
+}
 [data-ui-next] .un-st-answer-confidence {
   border: 0;
   margin: 0 0 16px;

@@ -984,7 +984,7 @@ async function getPartitionedFailureRows(
   const ranked = db
     .select({
       id: event.id,
-      rn: sql<number>`row_number() OVER (PARTITION BY ${event.subject_id} ORDER BY ${event.created_at} DESC, ${event.id} DESC)`.as(
+      rn: sql<number>`row_number() OVER (PARTITION BY ${event.subject_id} ORDER BY ${event.created_at} DESC, ${event.dispatch_seq} DESC, ${event.id} DESC)`.as(
         'rn',
       ),
     })
@@ -1016,7 +1016,7 @@ async function getPartitionedFailureRows(
     .where(
       sql`${ranked.rn} > ${partitionOffset} AND ${ranked.rn} <= ${partitionOffset + partitionLimit}`,
     )
-    .orderBy(desc(event.created_at), desc(event.id));
+    .orderBy(desc(event.created_at), desc(event.dispatch_seq), desc(event.id));
   return rows;
 }
 

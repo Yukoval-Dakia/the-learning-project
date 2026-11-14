@@ -38,6 +38,30 @@ import {
   dispatchPendingVerifyIntents,
   writeVerifyDispatchIntent,
 } from '@/capabilities/practice/public';
+import {
+  type EditQuestionResult,
+  TxAbort,
+  findDraftSaveReceipt,
+  saveDraftEditInTx,
+} from '@/capabilities/practice/question-bank/server/question-publication/edit-question';
+import {
+  SOURCE_KIND_TO_QUESTION_SOURCE,
+  admissionForContentEdit,
+  attributableSourceIssue,
+  canonicalJson,
+  contractBarrierIssues,
+  conversionWithheld,
+  deriveKind,
+  presentationForDraft,
+  runAdmissionChecks,
+} from '@/capabilities/practice/question-bank/server/question-publication/submit-decision';
+import {
+  type BindIssue,
+  type BoundIdMap,
+  assertTypedGroupChildrenInsertable,
+  bindDeclaredGroupIds,
+  typedChildChoicesMd,
+} from '@/capabilities/practice/question-bank/server/question-publication/typed-group';
 import { newId } from '@/core/ids';
 import { encodeDraftRef, parseDraftRef } from '@/core/question-draft-ref';
 import { AgentRef } from '@/core/schema/business';
@@ -75,32 +99,8 @@ import {
   draftCanonicalIdentity,
   draftDocumentToContract,
 } from '@/kernel/records/question-draft-contract';
-import {
-  type EditQuestionResult,
-  TxAbort,
-  findDraftSaveReceipt,
-  saveDraftEditInTx,
-} from '@/server/questions/edit-question';
-import {
-  SOURCE_KIND_TO_QUESTION_SOURCE,
-  admissionForContentEdit,
-  attributableSourceIssue,
-  canonicalJson,
-  contractBarrierIssues,
-  conversionWithheld,
-  deriveKind,
-  presentationForDraft,
-  runAdmissionChecks,
-} from '@/server/questions/submit-decision';
-import type { SubmitDraftInput, SubmitResult } from '@/server/questions/submit-question';
-import {
-  type BindIssue,
-  type BoundIdMap,
-  assertTypedGroupChildrenInsertable,
-  bindDeclaredGroupIds,
-  typedChildChoicesMd,
-} from '@/server/questions/typed-group';
 import { type DraftSubmitVector, deduplicateNewDraftInTx } from './draft-submit-dedup';
+import type { SubmitDraftInput, SubmitResult } from './submit-question';
 import { ticketScopeIssue } from './ticket-scope';
 
 type BlockRow = typeof question_block.$inferSelect;

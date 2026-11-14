@@ -43,7 +43,7 @@ import {
   lockAutoAppliedUndoOwnerRows,
 } from '@/kernel/proposals/auto-applied-undo';
 import { PROPOSAL_AUTOAPPLY_ACTION } from '@/kernel/proposals/auto-apply';
-import { retractAiProposal } from './retract-action';
+import { retractAiProposal } from '@/server/proposals/retract-action';
 
 export type BatchRetractItemStatus = 'reverted' | 'blocked' | 'already_reverted' | 'failed';
 

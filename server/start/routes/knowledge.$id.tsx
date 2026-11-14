@@ -29,16 +29,20 @@ const Page = lazy(() =>
 );
 export const Route = createFileRoute('/knowledge/$id')({
   ssr: false,
+  validateSearch: (search: Record<string, unknown>) => ({
+    returnToPlan: search.returnTo === 'learning-plan',
+  }),
   component: KnowledgeDetailPage,
 });
 
 function KnowledgeDetailPage() {
   const { id } = Route.useParams();
+  const { returnToPlan } = Route.useSearch();
   return (
     <StartWorkbenchShell pathname={`/knowledge/${encodeURIComponent(id)}`}>
       <KnowledgeClientProvider value={knowledgeClient}>
         <Suspense>
-          <Page id={id} navigate={startNavigate} />
+          <Page id={id} navigate={startNavigate} returnToPlan={returnToPlan} />
         </Suspense>
       </KnowledgeClientProvider>
     </StartWorkbenchShell>

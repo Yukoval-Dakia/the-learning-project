@@ -6,6 +6,7 @@ import {
   VERIFY_DISPATCH_BOUND_ACTION,
   VERIFY_DISPATCH_COMPLETE_ACTION,
   dispatchPendingVerifyIntents,
+  recoverOrphanVerifyDispatches,
   verifyDeliveryJobId,
   verifyDispatchBoundEventIdForIntent,
   writeVerifyDispatchIntent,
@@ -212,5 +213,75 @@ describe('verify dispatch outbox', () => {
       .from(event)
       .where(and(eq(event.action, VERIFY_DISPATCH_COMPLETE_ACTION), eq(event.subject_id, 'q-x')));
     expect(completions.some((row) => row.id.startsWith('verify-dispatch-complete-'))).toBe(true);
+  });
+
+  // @invariant concurrency: same-clock source-verify rows use dispatch_seq before id for the recovery epoch.
+  // @fails-if the older-id error wins and recovery re-drives it despite the higher-dispatch_seq error becoming canonical.
+  it('recovers the canonical same-clock source-verify error by dispatch_seq', async () => {
+    await seedQuestion('q-recovery-tie', 'web_sourced', {
+      created_at: new Date('2026-05-01T00:00:00Z'),
+    });
+    const sameClock = new Date('2026-05-02T00:00:00Z');
+    await db.insert(event).values([
+      {
+        id: 'a_old_error',
+        actor_kind: 'system',
+        actor_ref: 'source_verify',
+        action: 'experimental:source_verify',
+        subject_kind: 'question',
+        subject_id: 'q-recovery-tie',
+        outcome: 'error',
+        payload: { recovery_eligible: true },
+        created_at: sameClock,
+        dispatch_seq: 100,
+      },
+      {
+        id: 'z_new_error',
+        actor_kind: 'system',
+        actor_ref: 'source_verify',
+        action: 'experimental:source_verify',
+        subject_kind: 'question',
+        subject_id: 'q-recovery-tie',
+        outcome: 'error',
+        payload: { recovery_eligible: true },
+        created_at: sameClock,
+        dispatch_seq: 101,
+      },
+    ]);
+
+    const enqueued: string[][] = [];
+    const result = await recoverOrphanVerifyDispatches(db, {
+      enqueue: async (_verifier, questionIds) => {
+        enqueued.push([...questionIds]);
+      },
+      sourceVerifyRecoveryPreflight: async () => {},
+      now: new Date('2026-05-03T01:00:00Z'),
+    });
+
+    expect(result.dispatched).toBe(1);
+    expect(enqueued).toEqual([['q-recovery-tie']]);
+    const recoveryIntents = await db
+      .select({ payload: event.payload })
+      .from(event)
+      .where(
+        and(
+          eq(event.action, 'experimental:verify_dispatch_intent'),
+          eq(event.subject_id, 'q-recovery-tie'),
+        ),
+      );
+    expect(
+      recoveryIntents
+        .map((row) => row.payload)
+        .some(
+          (payload) => (payload as { recovery_epoch?: string }).recovery_epoch === 'z_new_error',
+        ),
+    ).toBe(true);
+    expect(
+      recoveryIntents
+        .map((row) => row.payload)
+        .some(
+          (payload) => (payload as { recovery_epoch?: string }).recovery_epoch === 'a_old_error',
+        ),
+    ).toBe(false);
   });
 });

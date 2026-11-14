@@ -328,7 +328,7 @@ export async function classifyAutoAppliedUndoBatch(
     })
     .from(event)
     .where(and(eq(event.action, 'rate'), inArray(event.caused_by_event_id, ids)))
-    .orderBy(desc(event.created_at), desc(event.id))) as Array<{
+    .orderBy(desc(event.created_at), desc(event.dispatch_seq), desc(event.id))) as Array<{
     proposalId: string | null;
     payload: unknown;
     createdAt: Date;

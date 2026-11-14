@@ -12,6 +12,12 @@ export type CorrectionStatus =
   | { state: 'marked_wrong'; correction_event_id: string; replacement_event_id: null }
   | { state: 'superseded'; correction_event_id: string; replacement_event_id: string };
 
+/** Canonical state plus the receipt that won the timestamp/dispatch/id fold. */
+export interface CorrectionStatusWithReceipt {
+  readonly status: CorrectionStatus;
+  readonly winning_correction_event_id: string | null;
+}
+
 export function activeCorrectionStatus(): CorrectionStatus {
   return { state: 'active', correction_event_id: null, replacement_event_id: null };
 }
@@ -35,7 +41,9 @@ function rowToCorrectEventInput(row: EventRow): unknown {
  * SQL pre-filter for getCorrectionStatuses' latest-write-wins fold: true when the
  * target's latest kind-valid correction leaves it active. Readers use it to drop
  * corrected rows before a LIMIT window; the TS fold (full schema, dispatch_seq
- * tiebreak) stays authoritative.
+ * tiebreak) stays authoritative. Keep the SQL ordering identical to that fold;
+ * otherwise a same-timestamp correction can pass or fail this predicate contrary
+ * to the canonical winner.
  */
 export function eventCorrectionActiveSql(targetEventId: SQLWrapper) {
   return sql`COALESCE((
@@ -51,7 +59,7 @@ export function eventCorrectionActiveSql(targetEventId: SQLWrapper) {
             ('retract', 'mark_wrong', 'restore')
           AND NOT correction.payload ? 'replacement_event_id')
       )
-    ORDER BY correction.created_at DESC, correction.id DESC
+    ORDER BY correction.created_at DESC, correction.dispatch_seq DESC, correction.id DESC
     LIMIT 1
   ), '') NOT IN ('retract', 'mark_wrong', 'supersede')`;
 }
@@ -64,14 +72,39 @@ export async function getCorrectionStatus(
   return statuses.get(targetEventId) ?? activeCorrectionStatus();
 }
 
+export function getCorrectionStatuses(
+  db: DbLike,
+  targetEventIds: string[],
+  opts?: { createdBefore?: Date },
+): Promise<Map<string, CorrectionStatus>>;
+export function getCorrectionStatuses(
+  db: DbLike,
+  targetEventIds: string[],
+  opts: { createdBefore?: Date; includeReceipts: true },
+): Promise<Map<string, CorrectionStatusWithReceipt>>;
 export async function getCorrectionStatuses(
   db: DbLike,
   targetEventIds: string[],
+  opts: { createdBefore?: Date; includeReceipts?: boolean } = {},
+): Promise<Map<string, CorrectionStatus | CorrectionStatusWithReceipt>> {
+  const receipts = await foldCorrectionStatuses(db, targetEventIds, opts);
+  if (opts.includeReceipts === true) return receipts;
+  return new Map([...receipts].map(([targetEventId, receipt]) => [targetEventId, receipt.status]));
+}
+
+async function foldCorrectionStatuses(
+  db: DbLike,
+  targetEventIds: string[],
   opts: { createdBefore?: Date } = {},
-): Promise<Map<string, CorrectionStatus>> {
+): Promise<Map<string, CorrectionStatusWithReceipt>> {
   const ids = Array.from(new Set(targetEventIds));
-  const statuses = new Map<string, CorrectionStatus>();
-  for (const id of ids) statuses.set(id, activeCorrectionStatus());
+  const statuses = new Map<string, CorrectionStatusWithReceipt>();
+  for (const id of ids) {
+    statuses.set(id, {
+      status: activeCorrectionStatus(),
+      winning_correction_event_id: null,
+    });
+  }
   if (ids.length === 0) return statuses;
 
   const rows = await db
@@ -104,28 +137,40 @@ export async function getCorrectionStatuses(
     switch (correction_kind) {
       case 'retract':
         statuses.set(targetEventId, {
-          state: 'retracted',
-          correction_event_id: row.id,
-          replacement_event_id: null,
+          status: {
+            state: 'retracted',
+            correction_event_id: row.id,
+            replacement_event_id: null,
+          },
+          winning_correction_event_id: row.id,
         });
         break;
       case 'mark_wrong':
         statuses.set(targetEventId, {
-          state: 'marked_wrong',
-          correction_event_id: row.id,
-          replacement_event_id: null,
+          status: {
+            state: 'marked_wrong',
+            correction_event_id: row.id,
+            replacement_event_id: null,
+          },
+          winning_correction_event_id: row.id,
         });
         break;
       case 'supersede':
         if (!replacement_event_id) continue;
         statuses.set(targetEventId, {
-          state: 'superseded',
-          correction_event_id: row.id,
-          replacement_event_id,
+          status: {
+            state: 'superseded',
+            correction_event_id: row.id,
+            replacement_event_id,
+          },
+          winning_correction_event_id: row.id,
         });
         break;
       case 'restore':
-        statuses.set(targetEventId, activeCorrectionStatus());
+        statuses.set(targetEventId, {
+          status: activeCorrectionStatus(),
+          winning_correction_event_id: row.id,
+        });
         break;
     }
   }

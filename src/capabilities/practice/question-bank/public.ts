@@ -56,6 +56,28 @@ export type {
 export { readQuestionDetail } from './server/question-detail-read';
 export { readPracticeQuestionList } from './server/question-list-read';
 export {
+  EditQuestionInput,
+  type EditQuestionInputT,
+  type EditQuestionResult,
+  probeDraftEdit,
+  saveDraftEdit,
+  validateDraftEdit,
+} from './server/question-publication/edit-question';
+export { deriveKind } from './server/question-publication/submit-decision';
+export {
+  type DeclaredGroupDomainOutcome,
+  type SubmitResult,
+  canonicalJson,
+  claimSubmitRequestId,
+  declaredCandidateDocument,
+  declaredCandidateReceipt,
+  findSubmitReceipt,
+  insertSourcedDraft,
+  persistDeclaredQuestionGroup,
+  submitDraftQuestion,
+  writeSubmitReceiptEvent,
+} from './server/question-publication/submit-question';
+export {
   archivePracticeQuestion,
   restorePracticeQuestion,
   updatePracticeQuestion,

@@ -2,6 +2,18 @@ import { createHash } from 'node:crypto';
 import { createId } from '@paralleldrive/cuid2';
 import { and, desc, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
+import {
+  type InvalidatedScope,
+  computeInvalidatedScope,
+  relevantChangesForOps,
+} from '@/capabilities/practice/question-bank/server/question-publication/draft-edit-impact';
+import {
+  type AppliedChange,
+  EditOp,
+  type EditOpT,
+  type OpIssue,
+  applyEditOps,
+} from '@/capabilities/practice/question-bank/server/question-publication/draft-ops';
 import { newId } from '@/core/ids';
 import { DRAFT_REF_VERSION, encodeDraftRef, parseDraftRef } from '@/core/question-draft-ref';
 import {
@@ -46,18 +58,6 @@ import {
 } from '@/kernel/records/question-draft-contract';
 import { questionMaterialPlotParamIssues } from '@/kernel/records/question-material-gate';
 import { OpaqueJsonInput } from '@/kernel/tools/types';
-import {
-  type InvalidatedScope,
-  computeInvalidatedScope,
-  relevantChangesForOps,
-} from '@/server/questions/draft-edit-impact';
-import {
-  type AppliedChange,
-  EditOp,
-  type EditOpT,
-  type OpIssue,
-  applyEditOps,
-} from '@/server/questions/draft-ops';
 import { ticketScopeIssue } from './ticket-scope';
 
 // ====================================================================

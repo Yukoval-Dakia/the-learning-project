@@ -1111,6 +1111,9 @@
   }
 
   & .kn-hero-cta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--un-sp-2);
     margin-left: auto;
   }
 

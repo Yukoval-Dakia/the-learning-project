@@ -594,3 +594,63 @@ export async function ensureProposalDecisionSignal(
     await rebuildProposalDecisionSignal(tx, proposal, dismissReason);
   });
 }
+
+/**
+ * Producer-side cooldown write with no decision attached (YUK-2130). A producer
+ * that ran the paid step and decided not to propose — model abstained, or the
+ * minted id already exists — needs the same durable suppression a dismiss leaves
+ * behind; otherwise every subsequent trigger re-pays for the same evaluation.
+ *
+ * The row is created when missing so the cooldown survives cold start; counts and
+ * acceptance_rate are left untouched (0/0 rate stays 0, matching the corrective
+ * dismiss cold-start convention). `cooldown_until` only ever moves later via
+ * GREATEST, never backwards.
+ *
+ * Callers that need the check-then-write to be atomic must run inside
+ * `withProposalGateLock` on the same key family; this helper takes the same
+ * `(kind, cooldown_key)` lock before writing so concurrent producers serialize
+ * on it like decision writers do.
+ */
+export async function recordProposalProducerCooldown(
+  db: DbLike,
+  kind: string,
+  cooldownKey: string,
+  until: Date,
+): Promise<void> {
+  const nowIso = new Date().toISOString();
+  const untilIso = until.toISOString();
+  await withProposalSignalLock(db, kind, cooldownKey, async (tx) => {
+    await tx.execute(sql`
+      INSERT INTO proposal_signals (
+        id,
+        kind,
+        cooldown_key,
+        accept_count,
+        dismiss_count,
+        acceptance_rate,
+        dismiss_reason,
+        cooldown_until,
+        created_at,
+        updated_at
+      )
+      VALUES (
+        ${newId()},
+        ${kind},
+        ${cooldownKey},
+        0,
+        0,
+        0,
+        NULL,
+        ${untilIso}::timestamptz,
+        ${nowIso}::timestamptz,
+        ${nowIso}::timestamptz
+      )
+      ON CONFLICT (kind, cooldown_key) DO UPDATE SET
+        cooldown_until = GREATEST(
+          COALESCE(proposal_signals.cooldown_until, '-infinity'::timestamptz),
+          ${untilIso}::timestamptz
+        ),
+        updated_at = ${nowIso}::timestamptz
+    `);
+  });
+}

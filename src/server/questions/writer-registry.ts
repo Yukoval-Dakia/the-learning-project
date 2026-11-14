@@ -42,7 +42,7 @@ export const QUESTION_CONTENT_WRITER_REGISTRY: Record<string, QuestionContentWri
     tickets: ['YUK-1043'],
     note: 'editQuestion：判分输入字段（题面/答案/选项/题型）变更 ⇒ 先锁组根再改子行、同事务统一发布（part 编辑锁序 question 根→子行）；archiveQuestion ⇒ 组根 archive 落 withdrawn，单 part archive ⇒ 重发组 revision（tombstone part 退出组契约）。',
   },
-  'src/server/questions/sourced-draft-insert.ts': {
+  'src/capabilities/practice/question-bank/server/question-publication/sourced-draft-insert.ts': {
     status: 'publisher-converged',
     tickets: ['YUK-1043'],
     note: 'web_sourced/jyeoo 新草稿 ⇒ 同事务铸首版 revision（admission withheld/unverified_rules；source_verify 通过后由 promote 重新发布为准入态）。',
@@ -68,7 +68,7 @@ export const QUESTION_CONTENT_WRITER_REGISTRY: Record<string, QuestionContentWri
     note: 'INSERT 走 sourced-draft-insert（converged）；图题事后富集 UPDATE（structured/figures/judge_override/multimodal —— 改变判分输入）之后同事务重发组 revision（复审 P1-6 补齐；纯 metadata 富集 digest 不变 ⇒ 幂等 noop）。',
   },
   // submit-question.ts 委托 shared-submit.ts，自身无 content 写点；登记在 shared-submit。
-  'src/server/questions/shared-submit.ts': {
+  'src/capabilities/practice/question-bank/server/question-publication/shared-submit.ts': {
     status: 'publisher-converged',
     tickets: ['YUK-1468', 'YUK-1568'],
     note: '草稿提交闸内核：question 行 INSERT/UPDATE（prompt_md/reference_md/choices_md/structured —— v2 文档的 legacy 投影）与 publishQuestionGroup 同事务铸 revision（未决转换 withheld、CAS/dedup 冲突拒绝、admission 维度如实入契约）；typed 声明多 part 组的 question_part 子行 INSERT 同闭包（per-site：写点所在函数即 seam 调用方，锁/查重在 typed-group）。',

@@ -27,12 +27,14 @@ const LearningIntentAtomicSchema = z.object({
   knowledge_id: z.string().min(1),
   title: z.string().min(1),
   one_line_intent: z.string().min(1),
+  prerequisite_knowledge_ids: z.array(z.string().min(1)).optional(),
 });
 
 const LearningIntentLongSchema = z.object({
   knowledge_ids: z.array(z.string().min(1)).min(1),
   title: z.string().min(1),
   one_line_intent: z.string().min(1),
+  prerequisite_knowledge_ids: z.array(z.string().min(1)).optional(),
 });
 
 export const LearningIntentProposalResponseSchema = z.object({
@@ -46,6 +48,25 @@ export const LearningIntentProposalResponseSchema = z.object({
       children: z.array(LearningIntentProposedKnowledgeNodeSchema),
     })
     .optional(),
+  existing_items: z
+    .array(
+      z.object({
+        knowledge_id: z.string().min(1),
+        item_id: z.string().min(1),
+        note_id: z.string().min(1),
+        title: z.string().min(1),
+      }),
+    )
+    .default([]),
+  mastered_knowledge_ids: z.array(z.string().min(1)).default([]),
+  prerequisite_edges: z
+    .array(
+      z.object({
+        prerequisite_knowledge_id: z.string().min(1),
+        dependent_knowledge_id: z.string().min(1),
+      }),
+    )
+    .default([]),
   hub: z.object({
     title: z.string().min(1),
     summary_md: z.string().min(1),

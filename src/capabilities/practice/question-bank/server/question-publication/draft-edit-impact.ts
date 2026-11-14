@@ -1,11 +1,14 @@
-import type { QuestionDraftDocumentT } from '@/core/schema/question-draft';
-import type { AppliedChange, EditOpT } from '@/server/questions/draft-ops';
+import type {
+  AppliedChange,
+  EditOpT,
+} from '@/capabilities/practice/question-bank/server/question-publication/draft-ops';
 import {
   type EditTargetT,
   type Located,
   findPresentationBlock,
   locate,
-} from '@/server/questions/draft-target';
+} from '@/capabilities/practice/question-bank/server/question-publication/draft-target';
+import type { QuestionDraftDocumentT } from '@/core/schema/question-draft';
 
 // Which solve, calibration, rule, retrieval, and display work an accepted edit
 // invalidates, and the CAS snapshot of the fields that batch is about to change.
