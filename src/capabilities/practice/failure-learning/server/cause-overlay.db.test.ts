@@ -9,10 +9,13 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { event, knowledge, proposal_signals, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
+import { classifyAutoAppliedUndoBatch } from '@/kernel/proposals/auto-applied-undo';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
 import { getFailureAttemptsForDerivation } from '@/kernel/read-models/failure-attempts';
 import { acceptAiProposal } from '@/server/proposals/actions';
+import { retractAiProposal } from '@/server/proposals/retract-action';
+import { installProposalUndoGuards } from '@/server/proposals/undo-guards';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { maybeProposeCauseCategoryFromOthers } from './cause-catalog';
 import { getCauseCategoryOverlaysByIds } from './cause-overlay';
@@ -286,5 +289,84 @@ describe('YUK-2130 accept → canonical relabel + decision watermark', () => {
       .where(eq(proposal_signals.cooldown_key, `cause_category:${SUBJECT_DOMAIN}`));
     // No paid naming pass ran on pre-accept evidence: no producer cooldown written.
     expect(cooldownRows[0]?.cooldown_until ?? null).toBeNull();
+
+    // Undo must restore only this accept's still-effective effect. A learner
+    // mark_wrong/retract on a superseded original (T2, after accept T1) is the
+    // current correction truth — undo archives the category but leaves that
+    // correction effective; restoring over it would erase the learner's call.
+    installProposalUndoGuards();
+    await writeEvent(testDb(), {
+      id: `autoapply_${proposalId}`,
+      actor_kind: 'agent',
+      actor_ref: 'attribution',
+      action: 'experimental:auto_apply',
+      subject_kind: 'subject_profile',
+      subject_id: SUBJECT_DOMAIN,
+      outcome: 'success',
+      payload: { proposal_id: proposalId, kind: 'cause_category' },
+      caused_by_event_id: proposalId,
+      created_at: new Date(),
+    });
+    // Learner marks the first relabelled original wrong (mark_wrong), retracts
+    // the second (retract) — both canonical corrections on raw event ids. The
+    // canonical fold orders by created_at, then dispatch_seq, then id; pinning
+    // these to the same created_at as the accept's supersede while giving the
+    // learner ids a lex-lower value means dispatch_seq alone decides the winner.
+    // That ordering is exactly what an id-only / created_at-only ordering gets
+    // backwards — the learner receipt must still win.
+    const [supersede0] = await testDb()
+      .select({ created_at: event.created_at })
+      .from(event)
+      .where(eq(event.subject_id, 'judge_evidence_0'));
+    const sameClock = supersede0?.created_at ?? new Date();
+    await writeEvent(testDb(), {
+      id: 'a_learner_wrong',
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: 'judge_evidence_0',
+      outcome: 'success',
+      payload: {
+        correction_kind: 'mark_wrong',
+        reason_md: 'learner: this judgment was wrong',
+        affected_refs: [{ kind: 'question', id: QUESTION_ID }],
+      },
+      caused_by_event_id: 'judge_evidence_0',
+      created_at: sameClock,
+    });
+    await writeEvent(testDb(), {
+      id: 'a_learner_retract',
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: 'judge_evidence_1',
+      outcome: 'success',
+      payload: {
+        correction_kind: 'retract',
+        reason_md: 'learner: withdraw that judgment',
+        affected_refs: [{ kind: 'question', id: QUESTION_ID }],
+      },
+      caused_by_event_id: 'judge_evidence_1',
+      created_at: sameClock,
+    });
+
+    // The undo guard surfaces the learner-correction block before any write.
+    const decisions = await classifyAutoAppliedUndoBatch(testDb(), [proposalId]);
+    expect(decisions.get(proposalId)?.status).toBe('blocked');
+    expect(decisions.get(proposalId)?.code).toBe('relabelled_original_learner_corrected');
+
+    // Single-card retract is the canonical undo lane: it archives the category
+    // and reverts only this accept's still-effective materialization. The two
+    // learner-corrected originals keep their corrections (no effective 'other');
+    // the untouched third original restores to 'other'.
+    await retractAiProposal(testDb(), proposalId, { reason_md: 'undo' });
+    const afterUndo = await effectiveCategories();
+    // Learner-corrected originals have no effective active cause left — the
+    // learner's mark_wrong/retract is the terminal correction truth.
+    expect(afterUndo.get('att_evidence_0') ?? null).toBeNull(); // mark_wrong preserved
+    expect(afterUndo.get('att_evidence_1') ?? null).toBeNull(); // retract preserved
+    expect(afterUndo.get('att_evidence_2')).toBe('other'); // normal undo still works
   });
 });

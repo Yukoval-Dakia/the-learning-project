@@ -486,6 +486,36 @@ export const causeCategoryProposalRetractApplier: ProposalRetractApplier = async
   const relabelOutcomes = (rate?.payload as { relabel_outcomes?: unknown } | undefined)
     ?.relabel_outcomes;
   if (Array.isArray(relabelOutcomes)) {
+    // Lock the correction stream before re-reading it, in the same order the
+    // accept and writeEvents use. A learner correction committed after the
+    // accept is visible to the recheck below; one in flight waits on these
+    // locks instead of racing the restore.
+    const undoTargets = [
+      ...new Set(
+        relabelOutcomes.flatMap((outcome) => {
+          if (
+            !outcome ||
+            typeof outcome !== 'object' ||
+            (outcome as { status?: unknown }).status !== 'relabelled'
+          ) {
+            return [] as string[];
+          }
+          return (['original_event_id', 'replacement_event_id'] as const)
+            .map((key) => (outcome as Record<string, unknown>)[key])
+            .filter((id): id is string => typeof id === 'string' && id.length > 0);
+        }),
+      ),
+    ].sort();
+    if (undoTargets.length > 0) {
+      await lockEventCorrectionsAll(tx);
+      for (const targetId of undoTargets) {
+        await lockEventCorrectionSource(tx, targetId);
+      }
+    }
+    // Canonical fold, under the locks: the winning receipt id per target. A
+    // learner mark_wrong/retract (or restore) committed after the accept is the
+    // current correction truth — the recheck below never overwrites it.
+    const statuses = await getCorrectionStatuses(tx, undoTargets);
     for (const outcome of relabelOutcomes) {
       if (
         !outcome ||
@@ -503,43 +533,68 @@ export const causeCategoryProposalRetractApplier: ProposalRetractApplier = async
           ? [{ kind: 'question' as const, id: (outcome as { question_id: string }).question_id }]
           : [{ kind: 'open_inquiry' as const, id: input.proposalId }];
       if (typeof original_event_id === 'string') {
-        // Restore the original first: its latest correction becomes 'restore',
-        // so it returns to 'active' — before the replacement is retracted the
-        // chain would otherwise keep resolving to the (now-retracted) leaf.
-        await writeEvent(tx, {
-          id: `evt_cause_relabel_restore_${canonicalHash({ proposal: input.proposalId, original: original_event_id }).slice(0, 24)}`,
-          actor_kind: 'user',
-          actor_ref: 'self',
-          action: 'correct',
-          subject_kind: 'event',
-          subject_id: original_event_id,
-          outcome: 'success',
-          payload: {
-            correction_kind: 'restore',
-            reason_md: `retract cause_category accept ${input.proposalId} — restore original label`,
-            affected_refs: affectedRefs,
-          },
-          caused_by_event_id: input.proposalId,
-          created_at: input.correction_at,
-        });
+        // Restore only when this accept's supersede is still the original's
+        // winning correction. Any later learner mutation — mark_wrong, retract,
+        // or a restore of someone else's correction — makes a different receipt
+        // the winner; restoring over it would erase that learner truth.
+        const acceptCorrectionId =
+          typeof (outcome as { correction_event_id?: unknown }).correction_event_id === 'string'
+            ? (outcome as { correction_event_id: string }).correction_event_id
+            : null;
+        const originalStatus = statuses.get(original_event_id);
+        if (
+          originalStatus !== undefined &&
+          originalStatus.correction_event_id === acceptCorrectionId
+        ) {
+          // Restore the original first: its latest correction becomes 'restore',
+          // so it returns to 'active' — before the replacement is retracted the
+          // chain would otherwise keep resolving to the (now-retracted) leaf.
+          await writeEvent(tx, {
+            id: `evt_cause_relabel_restore_${canonicalHash({ proposal: input.proposalId, original: original_event_id }).slice(0, 24)}`,
+            actor_kind: 'user',
+            actor_ref: 'self',
+            action: 'correct',
+            subject_kind: 'event',
+            subject_id: original_event_id,
+            outcome: 'success',
+            payload: {
+              correction_kind: 'restore',
+              reason_md: `retract cause_category accept ${input.proposalId} — restore original label`,
+              affected_refs: affectedRefs,
+            },
+            caused_by_event_id: input.proposalId,
+            created_at: input.correction_at,
+          });
+        }
       }
       if (typeof replacement_event_id === 'string') {
-        await writeEvent(tx, {
-          id: `evt_cause_relabel_revert_${canonicalHash({ proposal: input.proposalId, replacement: replacement_event_id }).slice(0, 24)}`,
-          actor_kind: 'user',
-          actor_ref: 'self',
-          action: 'correct',
-          subject_kind: 'event',
-          subject_id: replacement_event_id,
-          outcome: 'success',
-          payload: {
-            correction_kind: 'retract',
-            reason_md: `retract cause_category accept ${input.proposalId} — undo relabel replacement`,
-            affected_refs: affectedRefs,
-          },
-          caused_by_event_id: input.proposalId,
-          created_at: input.correction_at,
-        });
+        // Retract the replacement only while it has no winning correction —
+        // still in this accept's materialized state. A learner mark_wrong /
+        // retract / restore on it is the current truth and must not be
+        // cancelled by a stale revert.
+        const replacementStatus = statuses.get(replacement_event_id);
+        if (
+          replacementStatus !== undefined &&
+          replacementStatus.state === 'active' &&
+          replacementStatus.correction_event_id === null
+        ) {
+          await writeEvent(tx, {
+            id: `evt_cause_relabel_revert_${canonicalHash({ proposal: input.proposalId, replacement: replacement_event_id }).slice(0, 24)}`,
+            actor_kind: 'user',
+            actor_ref: 'self',
+            action: 'correct',
+            subject_kind: 'event',
+            subject_id: replacement_event_id,
+            outcome: 'success',
+            payload: {
+              correction_kind: 'retract',
+              reason_md: `retract cause_category accept ${input.proposalId} — undo relabel replacement`,
+              affected_refs: affectedRefs,
+            },
+            caused_by_event_id: input.proposalId,
+            created_at: input.correction_at,
+          });
+        }
       }
     }
   }

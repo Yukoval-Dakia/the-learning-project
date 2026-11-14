@@ -12,6 +12,11 @@ import type { AiProposalPayloadT } from '@/core/schema/proposal';
 import type { Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { cause_category_overlay } from '@/db/schema/knowledge';
+import { getCorrectionStatuses } from '@/kernel/events';
+import {
+  lockEventCorrectionSource,
+  lockEventCorrectionsAll,
+} from '@/kernel/events/correction-lock';
 import {
   AUTO_APPLIED_UNDO_CLEAR,
   type AutoAppliedUndoBlock,
@@ -28,6 +33,10 @@ const REASONS = {
   cause_already_archived: '这个错因类目已经被归档，不需要再撤销。',
   cause_not_active: '这个错因类目当前不在词表里，不能撤销。',
   cause_used_in_attribution: '已经有错因判定用了这个类目，撤销会让这些判定失去解释，所以先保留了。',
+  relabelled_original_learner_corrected:
+    '这条改动回标过的原始判定后来被你更正过，撤销会覆盖那次更正，所以先保留了。',
+  relabelled_replacement_learner_corrected:
+    '这条改动写入的回标后来被你更正过，撤销会覆盖那次更正，所以先保留了。',
 } as const;
 
 type CauseBlockCode = keyof typeof REASONS;
@@ -51,6 +60,10 @@ interface CauseCheck {
   readonly categoryId: string;
   /** Event ids this accept's own effect materialized; not "later" content. */
   readonly ownEventIds: ReadonlySet<string>;
+  /** This accept's supersede correction ids; restoring any other correction is learner loss. */
+  readonly ownSupersedeIds: ReadonlySet<string>;
+  /** Original → replacement event pairs the accept wrote. */
+  readonly relabelledPairs: readonly RelabelledPair[];
 }
 
 /** Own relabel rows are part of this accept; counting them as later use would block every undo. */
@@ -72,6 +85,46 @@ function ownRelabelEventIds(ratePayload: unknown): ReadonlySet<string> {
   return ids;
 }
 
+/** This accept's own supersede correction ids; only these may be "restored" away by undo. */
+function ownSupersedeCorrectionIds(ratePayload: unknown): ReadonlySet<string> {
+  const outcomes = (ratePayload as { relabel_outcomes?: unknown } | undefined)?.relabel_outcomes;
+  const ids = new Set<string>();
+  if (!Array.isArray(outcomes)) return ids;
+  for (const outcome of outcomes) {
+    if (!outcome || typeof outcome !== 'object') continue;
+    if ((outcome as { status?: unknown }).status !== 'relabelled') continue;
+    const value = (outcome as Record<string, unknown>).correction_event_id;
+    if (typeof value === 'string' && value.length > 0) ids.add(value);
+  }
+  return ids;
+}
+
+interface RelabelledPair {
+  readonly originalId: string;
+  readonly replacementId: string;
+}
+
+/** Original → replacement pairs this accept materialized, for the learner-correction block. */
+function ownRelabelledPairs(ratePayload: unknown): RelabelledPair[] {
+  const outcomes = (ratePayload as { relabel_outcomes?: unknown } | undefined)?.relabel_outcomes;
+  const pairs: RelabelledPair[] = [];
+  if (!Array.isArray(outcomes)) return pairs;
+  for (const outcome of outcomes) {
+    if (!outcome || typeof outcome !== 'object') continue;
+    if ((outcome as { status?: unknown }).status !== 'relabelled') continue;
+    const originalId = (outcome as Record<string, unknown>).original_event_id;
+    const replacementId = (outcome as Record<string, unknown>).replacement_event_id;
+    if (typeof originalId === 'string' && originalId.length > 0) {
+      pairs.push({
+        originalId,
+        replacementId:
+          typeof replacementId === 'string' && replacementId.length > 0 ? replacementId : '',
+      });
+    }
+  }
+  return pairs;
+}
+
 async function inspectCauseCategories(
   db: DbLike,
   inputs: readonly AutoAppliedUndoGuardInput[],
@@ -88,6 +141,8 @@ async function inspectCauseCategories(
       proposalId: input.proposalId,
       categoryId,
       ownEventIds: ownRelabelEventIds(input.ratePayload),
+      ownSupersedeIds: ownSupersedeCorrectionIds(input.ratePayload),
+      relabelledPairs: ownRelabelledPairs(input.ratePayload),
     });
   }
   if (checks.length === 0) return verdicts;
@@ -154,6 +209,41 @@ async function inspectCauseCategories(
     if (hasIndependentUse) {
       verdicts.set(check.proposalId, block('cause_used_in_attribution'));
     }
+    if (!verdicts.has(check.proposalId) && check.relabelledPairs.length > 0) {
+      // Canonical fold, under the correction locks the retract applier also
+      // holds: the winning receipt id per target. An original is safe to
+      // restore only when its winning receipt is exactly this accept's own
+      // supersede — any later learner mark_wrong/retract/restore makes a
+      // different receipt the winner, and restoring over it would erase that
+      // learner truth. A replacement is safe to retract only while it still
+      // has no winning correction. Either case makes undo refuse.
+      const targetIds = check.relabelledPairs.flatMap((pair) =>
+        pair.replacementId ? [pair.originalId, pair.replacementId] : [pair.originalId],
+      );
+      const statuses = await getCorrectionStatuses(db, targetIds);
+      const originalLearnerCorrected = check.relabelledPairs.some((pair) => {
+        const status = statuses.get(pair.originalId);
+        return (
+          status === undefined ||
+          status.correction_event_id === null ||
+          !check.ownSupersedeIds.has(status.correction_event_id)
+        );
+      });
+      if (originalLearnerCorrected) {
+        verdicts.set(check.proposalId, block('relabelled_original_learner_corrected'));
+      } else {
+        const replacementLearnerCorrected = check.relabelledPairs.some((pair) => {
+          if (!pair.replacementId) return false;
+          const status = statuses.get(pair.replacementId);
+          return (
+            status === undefined || status.state !== 'active' || status.correction_event_id !== null
+          );
+        });
+        if (replacementLearnerCorrected) {
+          verdicts.set(check.proposalId, block('relabelled_replacement_learner_corrected'));
+        }
+      }
+    }
     if (!verdicts.has(check.proposalId)) {
       verdicts.set(check.proposalId, AUTO_APPLIED_UNDO_CLEAR);
     }
@@ -169,6 +259,25 @@ async function lockCauseCategory(tx: Tx, input: AutoAppliedUndoGuardInput): Prom
     .from(cause_category_overlay)
     .where(eq(cause_category_overlay.id, categoryId))
     .for('update');
+  // Take the canonical correction locks for every event this accept's relabel
+  // touched, in the same order the accept and writeEvents use. The in-transaction
+  // inspect that follows reads correction state under these locks; a concurrent
+  // learner correction on a superseded original or a replacement waits here
+  // instead of sneaking past the recheck.
+  const pairs = ownRelabelledPairs(input.ratePayload);
+  const targetIds = [
+    ...new Set(
+      pairs.flatMap((pair) =>
+        pair.replacementId ? [pair.originalId, pair.replacementId] : [pair.originalId],
+      ),
+    ),
+  ].sort();
+  if (targetIds.length > 0) {
+    await lockEventCorrectionsAll(tx);
+    for (const targetId of targetIds) {
+      await lockEventCorrectionSource(tx, targetId);
+    }
+  }
 }
 
 export const causeCategoryUndoGuard: AutoAppliedUndoOwnerGuard = {

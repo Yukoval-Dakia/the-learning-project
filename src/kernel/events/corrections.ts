@@ -7,7 +7,10 @@ type DbLike = Db | Tx;
 type EventRow = typeof event.$inferSelect;
 
 export type CorrectionStatus =
-  | { state: 'active'; correction_event_id: null; replacement_event_id: null }
+  // 'active' carries the latest winning receipt id when one exists (a restore
+  // leaves the target active *because of* that receipt). Callers that compare a
+  // specific correction's recency need it; state-only readers are unaffected.
+  | { state: 'active'; correction_event_id: string | null; replacement_event_id: null }
   | { state: 'retracted'; correction_event_id: string; replacement_event_id: null }
   | { state: 'marked_wrong'; correction_event_id: string; replacement_event_id: null }
   | { state: 'superseded'; correction_event_id: string; replacement_event_id: string };
@@ -125,7 +128,11 @@ export async function getCorrectionStatuses(
         });
         break;
       case 'restore':
-        statuses.set(targetEventId, activeCorrectionStatus());
+        statuses.set(targetEventId, {
+          state: 'active',
+          correction_event_id: row.id,
+          replacement_event_id: null,
+        });
         break;
     }
   }
