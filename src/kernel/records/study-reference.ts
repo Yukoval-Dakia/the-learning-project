@@ -461,7 +461,6 @@ async function recordNoteExposure(
       !noteProvenanceMatches(existing.payload.note, {
         id: input.note.id,
         version: input.note.version,
-        entryKnowledgeId: input.note.entryKnowledgeId,
       })
     ) {
       throw new ApiError('exposure_identity_conflict', 'note exposure identity is inconsistent', 409);
@@ -483,13 +482,9 @@ async function recordNoteExposure(
 
 function noteProvenanceMatches(
   value: unknown,
-  expected: { id: string; version: number; entryKnowledgeId: string },
+  expected: { id: string; version: number },
 ): boolean {
   if (!value || typeof value !== 'object') return false;
   const note = value as Record<string, unknown>;
-  return (
-    note.id === expected.id &&
-    note.version === expected.version &&
-    note.entry_knowledge_id === expected.entryKnowledgeId
-  );
+  return note.id === expected.id && note.version === expected.version;
 }
