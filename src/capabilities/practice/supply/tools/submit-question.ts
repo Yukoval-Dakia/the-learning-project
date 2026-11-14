@@ -4,6 +4,19 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import type { SendOptions } from 'pg-boss';
 import { z } from 'zod';
+import {
+  type DeclaredGroupDomainOutcome,
+  type SubmitResult,
+  canonicalJson,
+  claimSubmitRequestId,
+  declaredCandidateDocument,
+  declaredCandidateReceipt,
+  findSubmitReceipt,
+  insertSourcedDraft,
+  persistDeclaredQuestionGroup,
+  submitDraftQuestion,
+  writeSubmitReceiptEvent,
+} from '@/capabilities/practice/question-bank/public';
 import { parseDraftRef } from '@/core/question-draft-ref';
 import { AgentRef } from '@/core/schema/business';
 import {
@@ -28,19 +41,6 @@ import { draftCanonicalIdentity } from '@/kernel/records/question-draft-contract
 import type { PlacementVerificationAuthority } from '@/kernel/supply-contracts';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 import {
-  type DeclaredGroupDomainOutcome,
-  type SubmitResult,
-  canonicalJson,
-  claimSubmitRequestId,
-  declaredCandidateDocument,
-  declaredCandidateReceipt,
-  findSubmitReceipt,
-  insertSourcedDraft,
-  persistDeclaredQuestionGroup,
-  submitDraftQuestion,
-  writeSubmitReceiptEvent,
-} from '@/server/questions/submit-question';
-import {
   type VerifyRecoveryMark,
   canonicalQuestionContentHash,
   dispatchPendingVerifyIntents,
@@ -55,7 +55,7 @@ export type {
   EditQuestionInputT,
   EditQuestionResult,
   SubmitResult,
-} from '@/server/questions/submit-question';
+} from '@/capabilities/practice/question-bank/public';
 // 冻结 revision 的题型投影与提交使用同一实现。
 export {
   EditQuestionInput,
@@ -65,7 +65,7 @@ export {
   saveDraftEdit,
   submitDraftQuestion,
   validateDraftEdit,
-} from '@/server/questions/submit-question';
+} from '@/capabilities/practice/question-bank/public';
 
 import { SupplyTraceV1, withSupplyTraceDifficultyEvidence } from '@/kernel/supply-contracts';
 import { resolveSubjectProfile } from '@/subjects/profile';
