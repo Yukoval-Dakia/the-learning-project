@@ -1,4 +1,21 @@
 import { z } from 'zod';
+import {
+  EditTarget,
+  type EditTargetT,
+  OpError,
+  type OpIssueCode,
+  fail,
+  findPresentationBlock,
+  integrityIssues,
+  locate,
+  remintItemId,
+  remintMaterialId,
+  requireCriterion,
+  requireItem,
+  requireMaterial,
+  requirePart,
+  requireUnit,
+} from '@/capabilities/practice/question-bank/server/question-publication/draft-target';
 import { BlankAnswerShape } from '@/core/schema/assessment';
 import { VersionedAssetRef } from '@/core/schema/assessment/materials';
 import { ScoringRule } from '@/core/schema/assessment/scoring-rule';
@@ -19,24 +36,6 @@ import {
   mintDraftAssetId,
   sha256Hex,
 } from '@/core/schema/question-draft';
-
-import {
-  EditTarget,
-  type EditTargetT,
-  OpError,
-  type OpIssueCode,
-  fail,
-  findPresentationBlock,
-  integrityIssues,
-  locate,
-  remintItemId,
-  remintMaterialId,
-  requireCriterion,
-  requireItem,
-  requireMaterial,
-  requirePart,
-  requireUnit,
-} from '@/server/questions/draft-target';
 
 // edit_question ops engine (pure, no IO).
 //

@@ -16,7 +16,7 @@ import {
 } from '@/capabilities/practice/question-bank/server/question-bank-write';
 import { event, question, question_group_lifecycle } from '@/db/schema';
 import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
-import { resetDb, testDb } from '../../../tests/helpers/db';
+import { resetDb, testDb } from '../../../../../../tests/helpers/db';
 
 const ADMITTED = {
   state: 'admitted' as const,

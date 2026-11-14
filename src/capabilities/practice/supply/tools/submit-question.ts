@@ -26,49 +26,29 @@ import {
 } from '@/kernel/records/publication-receipt';
 import { draftCanonicalIdentity } from '@/kernel/records/question-draft-contract';
 import type { PlacementVerificationAuthority } from '@/kernel/supply-contracts';
+import { SupplyTraceV1, withSupplyTraceDifficultyEvidence } from '@/kernel/supply-contracts';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
+import { resolveSubjectProfile } from '@/subjects/profile';
 import {
   type DeclaredGroupDomainOutcome,
   type SubmitResult,
+  type VerifyRecoveryMark,
   canonicalJson,
+  canonicalQuestionContentHash,
   claimSubmitRequestId,
   declaredCandidateDocument,
   declaredCandidateReceipt,
-  findSubmitReceipt,
-  insertSourcedDraft,
-  persistDeclaredQuestionGroup,
-  submitDraftQuestion,
-  writeSubmitReceiptEvent,
-} from '@/server/questions/submit-question';
-import {
-  type VerifyRecoveryMark,
-  canonicalQuestionContentHash,
   dispatchPendingVerifyIntents,
   embedQuestionTextForIngest,
+  findSubmitReceipt,
+  insertSourcedDraft,
   mergeExactQuestionDuplicateKnowledgeIds,
+  persistDeclaredQuestionGroup,
   questionEmbedStamp,
+  submitDraftQuestion,
+  writeSubmitReceiptEvent,
   writeVerifyDispatchIntent,
 } from '../../question-bank/public';
-import { flatCandidatePublication, publicationDisplay } from './submit-publication';
-
-export type {
-  EditQuestionInputT,
-  EditQuestionResult,
-  SubmitResult,
-} from '@/server/questions/submit-question';
-// 冻结 revision 的题型投影与提交使用同一实现。
-export {
-  EditQuestionInput,
-  deriveKind,
-  insertSourcedDraft,
-  probeDraftEdit,
-  saveDraftEdit,
-  submitDraftQuestion,
-  validateDraftEdit,
-} from '@/server/questions/submit-question';
-
-import { SupplyTraceV1, withSupplyTraceDifficultyEvidence } from '@/kernel/supply-contracts';
-import { resolveSubjectProfile } from '@/subjects/profile';
 import {
   candidateContentIssues,
   questionPreparerCandidateBindingIssue,
@@ -91,6 +71,7 @@ import {
   matchesWhitelist,
   maxNgramOverlap,
 } from '../server/sourced-dedup';
+import { flatCandidatePublication, publicationDisplay } from './submit-publication';
 
 const SOURCED_CREATED_BY_BY_ROUTE = {
   jyeoo_fetch: AgentRef.parse({ by: 'system', task_kind: 'JyeooFetch' }),
