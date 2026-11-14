@@ -67,6 +67,7 @@ export async function admitDurableFamilies(
 ): Promise<AdmittedFamily[]> {
   const scope = options.scope ?? 'production';
   const durable = decls.filter((decl) => decl.backend === 'dbos');
+  if (!durable.length) return [];
   const adapters = new Map<string, DurableFamilyAdapter>();
   const groups = new Map<string, JobDecl[]>();
   const declarationOwners = new Map<string, string>();
