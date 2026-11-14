@@ -91,6 +91,9 @@ export async function readCauseJudgment(
   const asOf = new Date(parsed.as_of.getTime());
   const failures = await getFailureAttemptsForDerivation(db, {
     limit: ids.length === 0 ? HEADER_FAILURE_WINDOW : NODE_FAILURE_WINDOW,
+    // Cause statistics should see the same attributable window as the writers:
+    // partial attempts carry judged losses too.
+    causeEditable: true,
   });
   const attributed = failures.map((failure) => ({
     at: failure.created_at,

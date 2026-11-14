@@ -216,7 +216,9 @@ export async function runVariantVerify(
 
   // Always use the canonical cause-policy helper, never read judge
   // events directly.
-  const failure = await getFailureAttemptForDerivationById(db, attemptEventId);
+  const failure = await getFailureAttemptForDerivationById(db, attemptEventId, {
+    causeEditable: true,
+  });
   if (!failure) return { status: 'skipped:no_attempt' };
   const cause = effectiveCauseForFailureAttempt(failure);
   if (!cause) return { status: 'skipped:no_cause' };

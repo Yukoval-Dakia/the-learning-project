@@ -54,6 +54,7 @@ export const fastTestInclude = [
   'src/capabilities/practice/grading/server/judge/multimodal-direct-judge.test.ts',
   'src/capabilities/practice/grading/server/judge/preview-provenance-token.test.ts',
   'src/capabilities/practice/grading/server/judge/steps-judge.test.ts',
+  'src/capabilities/practice/failure-learning/server/failure-learning-native.unit.test.ts',
   'src/capabilities/practice/supply/server/jyeoo-spawn.test.ts',
   'src/kernel/placement-starter-outcome.unit.test.ts',
   'src/kernel/read-models/knowledge-state.unit.test.ts',
