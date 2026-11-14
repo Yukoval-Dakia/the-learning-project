@@ -31,11 +31,6 @@ function edgeDash(isCrossSubject: boolean, dash: string): string | undefined {
   return dash === '0' ? undefined : dash;
 }
 
-// Text in the middle of a node (YUK-1587): the disc carries evidence, not a raw
-// mastery percent. Containers say so; an absent/unknown band (no projection yet)
-// is the explicit 未知 first-class state, low-confidence or soft-source evidence
-// is 初步, and a calibrated node prints its evidence-record count. The count is
-// evidence records, never answered/correct items; missing evidence never reads 0.
 function nodeCenterText({
   isContainer,
   unknown,
