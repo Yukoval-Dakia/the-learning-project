@@ -281,6 +281,9 @@ export async function deriveActionableWeakPoints(
     since,
     includeReviewFailures: true,
     limit: scanLimit,
+    // Attributable partial attempts carry the same loss evidence as failures;
+    // excluding them would undercount weakness sources this reader aggregates.
+    causeEditable: true,
   });
 
   const unknownCounts = new Map<WeakPointUnknownReasonT, { count: number; samples: string[] }>();
