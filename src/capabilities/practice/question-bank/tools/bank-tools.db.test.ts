@@ -1076,11 +1076,12 @@ describe('bank tools boundary invariants (search_bank / read_bank / check_bank)'
     expect(stock.goal).toEqual({ use: 'inventory', count: 12 });
     expect(stock.hits.map((h) => h.id)).toEqual(['receipt-question']);
     expect(stock.conditions[0].text).toContain('correct response');
+    const expiredStockAt = Date.now();
     await db
       .update(schema.bank_search_snapshot)
       .set({
-        as_of: new Date(Date.now() - 20 * 60_000),
-        expires_at: new Date(Date.now() - 5 * 60_000),
+        as_of: new Date(expiredStockAt - 20 * 60_000),
+        expires_at: new Date(expiredStockAt - 5 * 60_000),
       })
       .where(eq(schema.bank_search_snapshot.search_id, stock.search_id));
     await expect(
@@ -1133,9 +1134,10 @@ describe('bank tools boundary invariants (search_bank / read_bank / check_bank)'
     expect(
       await db.select().from(event).where(eq(event.id, 'fbgap|stale-gap-request')),
     ).toHaveLength(0);
+    const expiredGapAt = Date.now();
     await db.update(schema.bank_search_snapshot).set({
-      as_of: new Date(Date.now() - 20 * 60_000),
-      expires_at: new Date(Date.now() - 5 * 60_000),
+      as_of: new Date(expiredGapAt - 20 * 60_000),
+      expires_at: new Date(expiredGapAt - 5 * 60_000),
     });
     const replay = await fileBankGapTool.execute(
       { ...owner, taskRunId: 'retry-after-response-loss' },
