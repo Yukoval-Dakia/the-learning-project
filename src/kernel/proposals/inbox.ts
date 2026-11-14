@@ -1132,7 +1132,7 @@ export async function readCompletionProposalHistory(tx: Tx) {
       {
         id: row.id,
         itemId: payload.target.subject_id,
-        subjectKind,
+        subjectKind: subjectKind === 'goal' ? ('goal' as const) : ('learning_item' as const),
         verifiedReceipt:
           parsed?.item_id === payload.target.subject_id &&
           payload.proposed_change[subjectKind === 'goal' ? 'goal_id' : 'learning_item_id'] ===
